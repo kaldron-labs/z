@@ -65,10 +65,16 @@ public:
     if (!m_local && !token) return 1;
     session.requested = [this](ZuBSpan frame) {
       auto msg = Ztc::msg(frame);
-      auto request = msg ? msg->body_as_Request() : nullptr;
+      auto request = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Request ?
+	    Ztc::msgBody(msg).get<Ztc::Body::Request>() : ZiFB::View<Ztc::Request>{};
       if (!request) { m_failed = true; return; }
-      if (!request->subscribe()) ++m_cancels;
-      else if (request->group() == Ztc::fbs::Group::App) ++m_inventoryReqs;
+      if (request.get<Ztc::ZfField(Request, alertDate)>() ||
+	  request.get<Ztc::ZfField(Request, alertSeqNo)>()) {
+	m_failed = true;
+	return;
+      }
+      if (!request.get<Ztc::ZfField(Request, subscribe)>()) ++m_cancels;
+      else if (request.get<Ztc::ZfField(Request, group)>() == Ztc::Group::App) ++m_inventoryReqs;
       else ++m_detailReqs;
     };
     session.ready = [this](const ZDash::ModuleHost &host) {
@@ -607,21 +613,21 @@ private:
     };
     auto telemetry = [&deliver, phase](ZuCSpan device, uint64_t generation,
 	int rag, bool shutdown = false) {
-      Zfb::IOBuilder builder{Frame{new FrameBuf}};
-      auto dev = Zfb::Save::str(builder, device);
-      auto id = Zfb::Save::str(builder, "publisher");
-      // Shutdown is an empty protocol marker with no ZfbStruct payload type.
-      auto value = shutdown ? Ztc::fbs::CreateShutdown(builder).Union() :
-	ZfbStruct::save(builder, Ztc::AppTelemetry{
+      Ztc::Builder builder{Frame{new FrameBuf}};
+      auto builderNested = builder.startNested();
+      auto dev = device;
+      auto id = builder.string("publisher");
+      auto value = shutdown ? ZiFB::saveObject(builder, Ztc::Shutdown{}) :
+	ZiFB::saveObject(builder, Ztc::AppTelemetry{
 	  .version = "test", .startTime = ZuDateTime{2026, 10, 1, 12, 34,
             phase == 12 ? 57 : 56, 123456789},
 	  .ztcver = ZuSemVer{1234567},
-	  .rag = Ztc::RAG::T(rag)}).Union();
+	  .rag = Ztc::RAG::T(rag)});
       auto tel = Ztc::saveTelemetry(builder, id, 0,
-	shutdown ? Ztc::fbs::TelemetryBody::Shutdown :
-	  Ztc::fbs::TelemetryBody::AppTelemetry, value);
-      builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
-	tel.Union(), 1, dev, generation));
+	shutdown ? Ztc::TelemetryBody::Shutdown :
+	  Ztc::TelemetryBody::AppTelemetry, value);
+      builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::Telemetry,
+	tel, 1, dev, generation));
       deliver(builder.buf());
     };
     switch (phase) {
@@ -629,10 +635,13 @@ private:
 	{
 	  auto frame = m_host.request_();
 	  auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
-	  auto req = msg ? msg->body_as_Request() : nullptr;
-	  if (!req || msg->deviceId() || req->id() ||
-	      req->group() != Ztc::fbs::Group::App || !req->subscribe() ||
-	      !req->interval()) {
+	  auto req = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Request ?
+	    Ztc::msgBody(msg).get<Ztc::Body::Request>() : ZiFB::View<Ztc::Request>{};
+	  if (!req || msg.get<Ztc::ZfField(Msg, deviceID)>() ||
+	    req.get<Ztc::ZfField(Request, id)>() ||
+	      req.get<Ztc::ZfField(Request, group)>() != Ztc::Group::App ||
+		!req.get<Ztc::ZfField(Request, subscribe)>() ||
+	      !req.get<Ztc::ZfField(Request, interval)>()) {
 	    m_failed = true;
 	    m_host.stop();
 	    return;
@@ -642,10 +651,11 @@ private:
 	telemetry("test-b", 1, Ztc::RAG::Green);
 	break;
       case 2: {
-	Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	auto eos = ZfbStruct::save(builder, Ztc::EOS{ZuID{"inventory"}, 0});
-	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS,
-	  eos.Union(), 1));
+	Ztc::Builder builder{Frame{new FrameBuf}};
+	auto builderNested = builder.startNested();
+	auto eos = ZiFB::saveObject(builder, Ztc::EOS{ZuID{"inventory"}, 0});
+	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::EOS,
+	  eos, 1));
 	deliver(builder.buf());
       } break;
       case 3:
@@ -662,7 +672,7 @@ private:
 	// Exercise every concrete row allocator, placeholder parent and payload.
 	auto send = [this]<typename T>(const T &data) {
 	  constexpr auto group = []() {
-	    using namespace Ztc::fbs;
+	    using namespace Ztc;
 	    if constexpr (ZuIsSame<T, Ztc::HeapTelemetry>{}) return Group::Heap;
 	    else if constexpr (ZuIsSame<T, Ztc::HashTelemetry>{}) return Group::Hash;
 	    else if constexpr (ZuIsSame<T, Ztc::ThreadTelemetry>{}) return Group::Thread;
@@ -676,15 +686,16 @@ private:
 	  }();
 	  auto subID = m_host.subscription_("test-a", "publisher", unsigned(group));
 	  if (!subID) { m_failed = true; return; }
-	  Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	  auto device = Zfb::Save::str(builder, "test-a");
-	  auto id = Zfb::Save::str(builder, "publisher");
-	  auto value = ZfbStruct::save(builder, data);
+	  Ztc::Builder builder{Frame{new FrameBuf}};
+	  auto builderNested = builder.startNested();
+	  auto device = "test-a"_z;
+	  auto id = builder.string("publisher");
+	  auto value = ZiFB::saveObject(builder, data);
 	  auto tel = Ztc::saveTelemetry(builder, id, 0,
-	    Ztc::fbs::TelemetryBodyTraits<ZfbType<T>>::enum_value,
-	    value.Union());
-	  builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
-	    tel.Union(), subID, device, 2));
+	    Ztc::TelemetryValue::Index<T>{},
+	    value);
+	  builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::Telemetry,
+	    tel, subID, device, 2));
 	  auto frame = builder.buf();
 	  // Exercise production filtering through independently admitted groups.
 	  if (!Ztc::msg(ZuBSpan{frame->data(), frame->length}) ||
@@ -704,27 +715,28 @@ private:
 	  send(db);
 	  if (phase == 7) {
 	    auto sub = m_host.subscription_("test-a", "publisher",
-		unsigned(Ztc::fbs::Group::Hash));
-	    Zfb::IOBuilder ack{Frame{new FrameBuf}};
-	    auto device = Zfb::Save::str(ack, "test-a");
-	    auto body = ZfbStruct::save(ack, Ztc::Ack{
-		ZuID{"publisher"}, 0, 1000, uint8_t(Ztc::fbs::AckStatus::Failed)});
-	    ack.Finish(Ztc::saveMsg(ack, Ztc::fbs::Body::Ack,
-		body.Union(), sub, device, 2));
+		unsigned(Ztc::Group::Hash));
+	    Ztc::Builder ack{Frame{new FrameBuf}};
+	    auto ackNested = ack.startNested();
+	    auto device = "test-a"_z;
+	    auto body = ZiFB::saveObject(ack, Ztc::Ack{
+		ZuID{"publisher"}, 0, 1000, uint8_t(Ztc::AckStatus::Failed)});
+	    ack.finish(Ztc::saveMsg(ack, ackNested, Ztc::Body::Ack,
+		body, sub, device, 2));
 	    deliver(ack.buf());
 	    if (!sub || m_host.subscription_("test-a", "publisher",
-		unsigned(Ztc::fbs::Group::Hash))) m_failed = true;
+		unsigned(Ztc::Group::Hash))) m_failed = true;
 	    // A late cancelled reply cannot add a row or resurrect its route.
-	    Zfb::IOBuilder late{Frame{new FrameBuf}};
-	    device = Zfb::Save::str(late, "test-a");
-	    auto id = Zfb::Save::str(late, "publisher");
+	    Ztc::Builder late{Frame{new FrameBuf}};
+	    auto lateNested = late.startNested();
+	    auto id = late.string("publisher");
 	    auto hash = sample<Ztc::HashTelemetry>();
 	    hash.addr = 0x5678;
-	    auto value = ZfbStruct::save(late, hash);
+	    auto value = ZiFB::saveObject(late, hash);
 	    auto tel = Ztc::saveTelemetry(late, id, 0,
-		Ztc::fbs::TelemetryBody::HashTelemetry, value.Union());
-	    late.Finish(Ztc::saveMsg(late, Ztc::fbs::Body::Telemetry,
-		tel.Union(), sub, device, 2));
+		Ztc::TelemetryBody::HashTelemetry, value);
+	    late.finish(Ztc::saveMsg(late, lateNested, Ztc::Body::Telemetry,
+		tel, sub, device, 2));
 	    deliver(late.buf());
 	    // Unrelated detail delivery and inventory survive the rejection.
 	    send(sample<Ztc::HeapTelemetry>());
@@ -761,38 +773,41 @@ private:
 	send(table);
       } break;
       case 10: { // Source-attributed EOS is still only a snapshot boundary.
-	Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	auto device = Zfb::Save::str(builder, "test-a");
-	auto eos = ZfbStruct::save(builder, Ztc::EOS{ZuID{"publisher"}, 123});
-	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::EOS,
-	  eos.Union(), 1, device, 2));
+	Ztc::Builder builder{Frame{new FrameBuf}};
+	auto builderNested = builder.startNested();
+	auto device = "test-a"_z;
+	auto eos = ZiFB::saveObject(builder, Ztc::EOS{ZuID{"publisher"}, 123});
+	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::EOS,
+	  eos, 1, device, 2));
 	deliver(builder.buf());
       } break;
       case 13: { // Explicit transport loss preserves objects and selection.
-	Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	auto device = Zfb::Save::str(builder, "test-a");
-	auto error = ZfbStruct::save(builder, Ztc::Error{
+	Ztc::Builder builder{Frame{new FrameBuf}};
+	auto builderNested = builder.startNested();
+	auto device = "test-a"_z;
+	auto error = ZiFB::saveObject(builder, Ztc::Error{
 	  Ztc::ErrorMessage{"agent disconnected"}, ZuID{"publisher"},
 	  0, int(Ztc::HubError::AgentGone)});
-	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Error,
-	  error.Union(), 1, device, 2));
+	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::Error,
+	  error, 1, device, 2));
 	deliver(builder.buf());
       } break;
       case 11: {
 	telemetry("test-a", 3, Ztc::RAG::Green);
 	telemetry("test-a", 2, Ztc::RAG::Red); // obsolete transport generation
-	Zfb::IOBuilder builder{Frame{new FrameBuf}};
-	auto device = Zfb::Save::str(builder, "test-a");
-	auto id = Zfb::Save::str(builder, "publisher");
+	Ztc::Builder builder{Frame{new FrameBuf}};
+	auto builderNested = builder.startNested();
+	auto device = "test-a"_z;
+	auto id = builder.string("publisher");
 	auto heap = sample<Ztc::HeapTelemetry>();
 	heap.heapAllocs = 1379;
-	auto value = ZfbStruct::save(builder, heap);
+	auto value = ZiFB::saveObject(builder, heap);
 	auto tel = Ztc::saveTelemetry(builder, id, 0,
-	  Ztc::fbs::TelemetryBody::HeapTelemetry, value.Union());
+	  Ztc::TelemetryBody::HeapTelemetry, value);
 	auto sub = m_host.subscription_("test-a", "publisher",
-	  unsigned(Ztc::fbs::Group::Heap));
-	builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Telemetry,
-	  tel.Union(), sub, device, 3));
+	  unsigned(Ztc::Group::Heap));
+	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::Telemetry,
+	  tel, sub, device, 3));
 	deliver(builder.buf());
       } break;
       case 12:

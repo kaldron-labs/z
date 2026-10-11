@@ -9,8 +9,6 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZtcDB.hh>
 #include <zlib/ZtcFB.hh>
@@ -21,52 +19,47 @@ using namespace ZuTestUtil;
 void defaults()
 {
   ZuTestScope(defaults);
+  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  auto table = builder.startTable();
+  auto bytes = builder.finish(builder.endTable(table));
+  auto loaded = ZiFB::view<Ztc::Request>(bytes);
+  ZuCheck(loaded.get<Ztc::ZfField(Request, seqNo)>() == ZuCmp<uint64_t>::null());
+  builder.clear();
+  table = builder.startTable();
+  ZiFB::field<Ztc::ZfField(Request, seqNo)>(builder, table, uint64_t(0));
+  bytes = builder.finish(builder.endTable(table));
+  loaded = ZiFB::view<Ztc::Request>(bytes);
+  ZuCheck(loaded.get<Ztc::ZfField(Request, seqNo)>() == 0);
 
-  Zfb::Builder fbb;
-  auto request = Ztc::fbs::CreateRequest(fbb);
-  fbb.Finish(request);
-  auto loaded = Zfb::GetRoot<Ztc::fbs::Request>(fbb.GetBufferPointer());
-  ZuCheck(loaded->seqNo() == ZuCmp<uint64_t>::null());
-
-  Zfb::Builder zeroBuilder;
-  auto zero = Ztc::fbs::CreateRequest(
-    zeroBuilder, 0, Ztc::fbs::Group::App);
-  zeroBuilder.Finish(zero);
-  loaded = Zfb::GetRoot<Ztc::fbs::Request>(zeroBuilder.GetBufferPointer());
-  ZuCheck(loaded->seqNo() == 0);
-
-  Zfb::Builder errorBuilder;
-  auto error = Ztc::fbs::CreateError(errorBuilder);
-  errorBuilder.Finish(error);
-  auto loadedError =
-    Zfb::GetRoot<Ztc::fbs::Error>(errorBuilder.GetBufferPointer());
-  ZuCheck(loadedError->seqNo() == ZuCmp<uint64_t>::null());
-
-  Zfb::Builder zeroErrorBuilder;
-  auto zeroError = Ztc::fbs::CreateError(zeroErrorBuilder, {}, 0);
-  zeroErrorBuilder.Finish(zeroError);
-  loadedError =
-    Zfb::GetRoot<Ztc::fbs::Error>(zeroErrorBuilder.GetBufferPointer());
-  ZuCheck(loadedError->seqNo() == 0);
+  builder.clear();
+  table = builder.startTable();
+  bytes = builder.finish(builder.endTable(table));
+  auto error = ZiFB::view<Ztc::Error>(bytes);
+  ZuCheck(error.get<Ztc::ZfField(Error, seqNo)>() == ZuCmp<uint64_t>::null());
+  builder.clear();
+  table = builder.startTable();
+  ZiFB::field<Ztc::ZfField(Error, seqNo)>(builder, table, uint64_t(0));
+  bytes = builder.finish(builder.endTable(table));
+  error = ZiFB::view<Ztc::Error>(bytes);
+  ZuCheck(error.get<Ztc::ZfField(Error, seqNo)>() == 0);
 
   Ztc::Error source{Ztc::ErrorMessage{"queue full"}, ZuID{"publisher"}, 7, 5};
-  Zfb::Builder roundtrip;
-  roundtrip.Finish(ZfbStruct::save(roundtrip, source));
-  auto errorObject = ZfbStruct::verify<Ztc::Error>(
-    {roundtrip.GetBufferPointer(), unsigned(roundtrip.GetSize())});
-  ZuCheck(errorObject);
-  auto restored = ZfbStruct::ctor<Ztc::Error>(errorObject);
+  builder.clear();
+  bytes = builder.finish(ZiFB::saveObject(builder, source));
+  ZuCheck(ZiFB::verify<Ztc::Error>(bytes));
+  auto restored = ZiFB::load<Ztc::Error>(bytes);
   ZuCheck(restored.id == source.id && restored.seqNo == source.seqNo &&
     restored.code == source.code && restored.message == source.message);
 
-  Zfb::Builder optionalBuilder;
-  auto optional = Ztc::fbs::CreateRequestDirect(
-    optionalBuilder, 1, Ztc::fbs::Group::App, "");
-  optionalBuilder.Finish(optional);
-  loaded = Zfb::GetRoot<Ztc::fbs::Request>(
-    optionalBuilder.GetBufferPointer());
-  ZuCheck(loaded && loaded->filter() && !loaded->filter()->size() &&
-    !loaded->id());
+  builder.clear();
+  auto empty = builder.string("");
+  table = builder.startTable();
+  ZiFB::fieldOffset<Ztc::ZfField(Request, filter)>(builder, table, empty);
+  bytes = builder.finish(builder.endTable(table));
+  loaded = ZiFB::view<Ztc::Request>(bytes);
+  ZuCheck(loaded.has<Ztc::ZfField(Request, filter)>() &&
+    !loaded.get<Ztc::ZfField(Request, filter)>() &&
+    !loaded.has<Ztc::ZfField(Request, id)>());
 }
 
 void app()
@@ -76,28 +69,28 @@ void app()
   data.version = "10.0.0";
   data.role = "telemetry";
   data.startTime = ZuDateTime{2026, 10, 1, 12, 34, 56, 123456789};
-  data.ztcver = ZuSemVer{UINT32_C(12034056)};
+  data.ztcver = ZuSemVer{uint32_t(12034056)};
   data.state = ZmEngineState::Running;
   data.degraded = true;
   data.rag = Ztc::RAG::Amber;
 
-  Zfb::Builder fbb;
-  fbb.Finish(ZfbStruct::save(fbb, data));
-  auto fbo = ZfbStruct::verify<Ztc::AppTelemetry>(
-    {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
+  Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+  auto bytes = fbb.finish(ZiFB::saveObject(fbb, data));
+  ZuCheck(ZiFB::verify<Ztc::AppTelemetry>(bytes));
+  auto fbo = ZiFB::view<Ztc::AppTelemetry>(bytes);
   ZuCheck(fbo);
-  ZuCheck(Zfb::Load::str(fbo->version()) == data.version);
-  ZuCheck(Zfb::Load::str(fbo->role()) == data.role);
-  ZuCheck(fbo->startTime());
-  ZuCheck(fbo->startTime()->julian() == data.startTime.julian());
-  ZuCheck(fbo->startTime()->sec() == data.startTime.sec());
-  ZuCheck(fbo->startTime()->nsec() == data.startTime.nsec());
-  ZuCheck(fbo->ztcver() == data.ztcver.value());
-  ZuCheck(fbo->state() == data.state);
-  ZuCheck(fbo->degraded() == data.degraded);
-  ZuCheck(fbo->rag() == Ztc::fbs::RAG::Amber);
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, version)>() == data.version);
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, role)>() == data.role);
+  ZuCheck(fbo.has<Ztc::ZfField(AppTelemetry, startTime)>());
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, startTime)>().julian() == data.startTime.julian());
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, startTime)>().sec() == data.startTime.sec());
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, startTime)>().nsec() == data.startTime.nsec());
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, ztcver)>() == data.ztcver);
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, state)>() == data.state);
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, degraded)>() == data.degraded);
+  ZuCheck(fbo.get<Ztc::ZfField(AppTelemetry, rag)>() == Ztc::RAG::Amber);
 
-  auto loaded = ZfbStruct::ctor<Ztc::AppTelemetry>(fbo);
+  auto loaded = ZiFB::Handler<Ztc::AppTelemetry>{fbo}.ctor();
   ZuCheck(loaded.version == data.version);
   ZuCheck(loaded.role == data.role);
   ZuCheck(loaded.startTime == data.startTime);
@@ -112,29 +105,30 @@ void alert()
   ZuTestScope(alert);
   Ztc::AlertTelemetry data;
   data.message = "alert message";
-  data.time = ZuTime{INT64_C(0x123456789), 987654321};
-  data.seqNo = UINT64_C(0xfedcba9876543210);
-  data.tid = UINT64_C(0xabcdef0123456789);
-  data.date = UINT32_C(20991231);
+  data.time = ZuTime{int64_t(0x123456789), 987654321};
+  data.seqNo = uint64_t(0xfedcba9876543210);
+  data.tid = uint64_t(0xabcdef0123456789);
+  data.date = uint32_t(20991231);
   data.severity = -7;
 
-  Zfb::Builder fbb;
-  fbb.Finish(ZfbStruct::save(fbb, data));
-  auto fbo = ZfbStruct::verify<Ztc::AlertTelemetry>(
-    {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
+  Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+  auto bytes = fbb.finish(ZiFB::saveObject(fbb, data));
+  ZuCheck(ZiFB::verify<Ztc::AlertTelemetry>(bytes));
+  auto fbo = ZiFB::view<Ztc::AlertTelemetry>(bytes);
   ZuCheck(fbo);
-  ZuCheck(Zfb::Load::str(fbo->message()) == data.message);
-  ZuCheck(fbo->time());
+  ZuCheck(fbo.get<Ztc::ZfField(AlertTelemetry, message)>() == data.message);
+  ZuCheck(fbo.get<Ztc::ZfField(AlertTelemetry, time)>());
   ZuTime time;
-  if (fbo->time())
-    time = ZuTime{fbo->time()->sec(), fbo->time()->nsec()};
+  if (fbo.get<Ztc::ZfField(AlertTelemetry, time)>())
+    time = ZuTime{fbo.get<Ztc::ZfField(AlertTelemetry, time)>().sec(),
+      fbo.get<Ztc::ZfField(AlertTelemetry, time)>().nsec()};
   ZuCheck(time == data.time);
-  ZuCheck(fbo->seqNo() == data.seqNo);
-  ZuCheck(fbo->tid() == data.tid);
-  ZuCheck(fbo->date() == data.date);
-  ZuCheck(fbo->severity() == data.severity);
+  ZuCheck(fbo.get<Ztc::ZfField(AlertTelemetry, seqNo)>() == data.seqNo);
+  ZuCheck(fbo.get<Ztc::ZfField(AlertTelemetry, tid)>() == data.tid);
+  ZuCheck(fbo.get<Ztc::ZfField(AlertTelemetry, date)>() == data.date);
+  ZuCheck(fbo.get<Ztc::ZfField(AlertTelemetry, severity)>() == data.severity);
 
-  auto loaded = ZfbStruct::ctor<Ztc::AlertTelemetry>(fbo);
+  auto loaded = ZiFB::Handler<Ztc::AlertTelemetry>{fbo}.ctor();
   ZuCheck(loaded.message == data.message);
   ZuCheck(loaded.time == data.time);
   ZuCheck(loaded.seqNo == data.seqNo);
@@ -142,39 +136,40 @@ void alert()
   ZuCheck(loaded.date == data.date);
   ZuCheck(loaded.severity == data.severity);
 
-  Zfb::Builder msgBuilder;
-  msgBuilder.ForceDefaults(true);
-  auto id = msgBuilder.CreateString("app");
-  auto value = ZfbStruct::save(msgBuilder, data);
-  auto telemetry = Ztc::saveTelemetry(
-    msgBuilder, id, 0,
-    Ztc::fbs::TelemetryBody::AlertTelemetry, value.Union());
-  msgBuilder.Finish(Ztc::saveMsg(
-    msgBuilder, Ztc::fbs::Body::Telemetry, telemetry.Union()));
-  auto msg = flatbuffers::GetMutableRoot<Ztc::fbs::Msg>(
-    msgBuilder.GetBufferPointer());
-  auto mutableTelemetry = msg->mutable_body_as_Telemetry();
-  ZuCheck(mutableTelemetry);
-  ZuCheck(mutableTelemetry && mutableTelemetry->mutate_seqNo(data.seqNo));
-  ZuCheck(mutableTelemetry && mutableTelemetry->seqNo() == data.seqNo);
+  Ztc::Builder msgBuilder{new ZiIOBufAlloc<>()};
+  auto nested = msgBuilder.startNested();
+  auto id = msgBuilder.string("app");
+  auto value = ZiFB::saveObject(msgBuilder, data);
+  auto telemetry = Ztc::saveTelemetry<true>(msgBuilder, id, 0,
+    Ztc::TelemetryBody::AlertTelemetry, value);
+  auto message = msgBuilder.finish(Ztc::saveMsg(msgBuilder, nested,
+    Ztc::Body::Telemetry, telemetry));
+  auto msg = Ztc::msg(message);
+  ZuCheck(msg);
+  auto tel = Ztc::msgBody(msg).get<Ztc::Body::Telemetry>();
+  auto slot = tel.field<Ztc::ZfField(Telemetry, seqNo)>();
+  ZuCheck(slot);
+  if (slot) ZiFB::write<uint64_t>(const_cast<uint8_t *>(slot), data.seqNo);
+  ZuCheck(tel.get<Ztc::ZfField(Telemetry, seqNo)>() == data.seqNo);
 }
 
 void framing()
 {
   ZuTestScope(framing);
-  Zfb::IOBuilder fbb{
+  Ztc::Builder fbb{
     Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
+  auto nested = fbb.startNested();
   Ztc::Request data;
   data.filter = "app";
   data.id = "target";
-  data.seqNo = UINT64_C(0x123456789abcdef0);
-  data.group = uint8_t(Ztc::fbs::Group::App);
-  auto request = ZfbStruct::save(fbb, data);
-  fbb.Finish(Ztc::saveMsg(
-    fbb, Ztc::fbs::Body::Request, request.Union()));
+  data.seqNo = uint64_t(0x123456789abcdef0);
+  data.group = uint8_t(Ztc::Group::App);
+  auto request = ZiFB::saveObject(fbb, data);
+  fbb.finish(Ztc::saveMsg(
+    fbb, nested, Ztc::Body::Request, request));
 
-  auto body = fbb.GetBufferPointer();
-  auto bodyLength = unsigned(fbb.GetSize());
+  auto body = fbb.data();
+  auto bodyLength = unsigned(fbb.size());
   auto buf = Ztc::saveHdr(fbb);
   ZuCheck(buf);
   ZuCheck(buf->data() + sizeof(Ztc::Hdr) == body);
@@ -184,13 +179,13 @@ void framing()
   auto hdr = buf->ptr<Ztc::Hdr>();
   auto msg = Ztc::msg(hdr);
   ZuCheck(msg);
-  ZuCheck(msg->body_type() == Ztc::fbs::Body::Request);
-  auto loaded = msg->body_as_Request();
+  ZuCheck(Ztc::msgBody(msg).tag() == Ztc::Body::Request);
+  auto loaded = Ztc::msgBody(msg).get<Ztc::Body::Request>();
   ZuCheck(loaded);
-  ZuCheck(loaded->seqNo() == UINT64_C(0x123456789abcdef0));
-  ZuCheck(loaded->group() == Ztc::fbs::Group::App);
-  ZuCheck(Zfb::Load::str(loaded->filter()) == "app");
-  ZuCheck(Zfb::Load::str(loaded->id()) == "target");
+  ZuCheck(loaded.get<Ztc::ZfField(Request, seqNo)>() == uint64_t(0x123456789abcdef0));
+  ZuCheck(loaded.get<Ztc::ZfField(Request, group)>() == Ztc::Group::App);
+  ZuCheck(loaded.get<Ztc::ZfField(Request, filter)>() == "app");
+  ZuCheck(loaded.get<Ztc::ZfField(Request, id)>() == "target");
 
   uint32_t length = hdr->length;
   hdr->length = UINT32_MAX;
@@ -204,7 +199,7 @@ void framing()
     ZmRef<ZiIOBuf>	buf;
     unsigned		length;
 
-    unsigned GetSize() const { return length; }
+    unsigned size() const { return length; }
     ZmRef<ZiIOBuf> buf_() { return ZuMv(buf); }
   };
   struct NoHeadroomBuilder : public NoHeadroom {
@@ -219,120 +214,112 @@ void framing()
   ZuCheck(noHeadroomBuf->data() == noHeadroomBody &&
     noHeadroomBuf->length == 1 && noHeadroomBuf->data()[0] == 42);
 
-  Zfb::IOBuilder invalidOuter{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
-  auto invalidOuterRequest = Ztc::fbs::CreateRequestDirect(
-    invalidOuter, 2, Ztc::fbs::Group::App, "*");
-  invalidOuter.Finish(Ztc::saveMsg(
-    invalidOuter, Ztc::fbs::Body(127), invalidOuterRequest.Union()));
+  Ztc::Builder invalidOuter{Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
+  auto outerNested = invalidOuter.startNested();
+  auto req = ZiFB::saveObject(invalidOuter, Ztc::Request{.seqNo = 2});
+  invalidOuter.finish(Ztc::saveMsg(invalidOuter, outerNested,
+    Ztc::Body::Request, req));
   auto invalidOuterBuf = Ztc::saveHdr(invalidOuter);
-  ZuCheck(invalidOuterBuf &&
-    !Ztc::msg(invalidOuterBuf->ptr<Ztc::Hdr>()));
+  auto outer = Ztc::msg_(invalidOuterBuf->ptr<Ztc::Hdr>());
+  auto payload = ZiFB::view<Ztc::Payload>(outer.get<Ztc::ZfField(Msg, data)>());
+  auto tag = ZiFB::TableView{payload.data()}.field(
+    ZiFB::Meta<Ztc::Payload>::id<Ztc::ZfField(Payload, body)>() - 1);
+  *const_cast<uint8_t *>(tag) = 127;
+  ZuCheck(!Ztc::msg(invalidOuterBuf->ptr<Ztc::Hdr>()));
 
-  Zfb::IOBuilder invalidValue{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
-  Ztc::AppTelemetry invalidValueData;
-  auto invalidID = invalidValue.CreateString("app");
-  auto invalidValueOffset = ZfbStruct::save(invalidValue, invalidValueData);
-  auto invalidTelemetry = Ztc::saveTelemetry(
-    invalidValue, invalidID, 3, Ztc::fbs::TelemetryBody(127),
-    invalidValueOffset.Union());
-  invalidValue.Finish(Ztc::saveMsg(
-    invalidValue, Ztc::fbs::Body::Telemetry, invalidTelemetry.Union()));
+  Ztc::Builder invalidValue{Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
+  auto valueNested = invalidValue.startNested();
+  auto id = invalidValue.string("app");
+  auto value = ZiFB::saveObject(invalidValue, Ztc::AppTelemetry{});
+  auto telemetry = Ztc::saveTelemetry(invalidValue, id, 3,
+    Ztc::TelemetryBody::AppTelemetry, value);
+  invalidValue.finish(Ztc::saveMsg(invalidValue, valueNested,
+    Ztc::Body::Telemetry, telemetry));
   auto invalidValueBuf = Ztc::saveHdr(invalidValue);
-  ZuCheck(invalidValueBuf &&
-    !Ztc::msg(invalidValueBuf->ptr<Ztc::Hdr>()));
+  auto tel = Ztc::msgBody(Ztc::msg_(invalidValueBuf->ptr<Ztc::Hdr>()))
+    .get<Ztc::Body::Telemetry>();
+  tag = ZiFB::TableView{tel.data()}.field(
+    ZiFB::Meta<Ztc::Telemetry>::id<Ztc::ZfField(Telemetry, value)>() - 1);
+  *const_cast<uint8_t *>(tag) = 127;
+  ZuCheck(!Ztc::msg(invalidValueBuf->ptr<Ztc::Hdr>()));
 }
 
-void goldenWire()
+void requestFields()
 {
-  ZuTestScope(goldenWire);
-
-  // Exact capacity is intentional: this is the reviewed protocol capture.
-  static const uint8_t capture[] = {
-    0x68, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x08, 0x00, 0x0e, 0x00,
-    0x07, 0x00, 0x08, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-    0x18, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x00, 0x28, 0x00, 0x14, 0x00,
-    0x06, 0x00, 0x08, 0x00, 0x0c, 0x00, 0x07, 0x00, 0x10, 0x00, 0x1c, 0x00,
-    0x12, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x01, 0x20, 0x00, 0x00, 0x00,
-    0x40, 0x30, 0x20, 0x10, 0x7b, 0x27, 0x35, 0x01, 0xf0, 0xde, 0xbc, 0x9a,
-    0x78, 0x56, 0x34, 0x12, 0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
-    0x00, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00, 0x00, 0x54, 0x78, 0x3a, 0x68,
-    0x75, 0x62, 0x3a, 0x6c, 0x69, 0x6e, 0x6b, 0x2a, 0x00, 0x00, 0x00, 0x00
-  };
-
-  Zfb::IOBuilder fbb{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
-  auto request = Ztc::fbs::CreateRequestDirect(
-    fbb, UINT64_C(0x123456789abcdef0), Ztc::fbs::Group::Queue,
-    "Tx:hub:link*", UINT32_C(0x10203040), true,
-    UINT32_C(20260731), UINT64_C(0xfedcba9876543210));
-  fbb.Finish(Ztc::saveMsg(
-    fbb, Ztc::fbs::Body::Request, request.Union()));
-  auto buf = Ztc::saveHdr(fbb);
-  ZuCheck(buf && buf->length == sizeof(capture));
-  ZuCheck(buf && !memcmp(buf->data(), capture, sizeof(capture)));
-  auto msg = Ztc::msg(reinterpret_cast<const Ztc::Hdr *>(capture));
-  auto loaded = msg ? msg->body_as_Request() : nullptr;
-  ZuCheck(loaded && loaded->seqNo() == UINT64_C(0x123456789abcdef0) &&
-    loaded->group() == Ztc::fbs::Group::Queue &&
-    Zfb::Load::str(loaded->filter()) == "Tx:hub:link*" &&
-    loaded->interval() == UINT32_C(0x10203040) && loaded->subscribe() &&
-    loaded->alertDate() == UINT32_C(20260731) &&
-    loaded->alertSeqNo() == UINT64_C(0xfedcba9876543210) &&
-    !loaded->id());
+  ZuTestScope(requestFields);
+  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>})};
+  auto nested = builder.startNested();
+  Ztc::Request data{
+    .filter = "Tx:hub:link*", .seqNo = uint64_t(0x123456789abcdef0),
+    .alertSeqNo = uint64_t(0xfedcba9876543210), .interval = 0x10203040,
+    .alertDate = 20260731, .group = Ztc::Group::Queue, .subscribe = true};
+  auto request = ZiFB::saveObject(builder, data);
+  builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Request, request));
+  auto buf = Ztc::saveHdr(builder);
+  ZuCheck(buf);
+  auto msg = Ztc::msg(buf->ptr<Ztc::Hdr>());
+  ZuCheck(msg);
+  auto loaded = Ztc::msgBody(msg).get<Ztc::Body::Request>();
+  ZuCheck(loaded.get<Ztc::ZfField(Request, seqNo)>() == data.seqNo &&
+    loaded.get<Ztc::ZfField(Request, group)>() == data.group &&
+    loaded.get<Ztc::ZfField(Request, filter)>() == data.filter &&
+    loaded.get<Ztc::ZfField(Request, interval)>() == data.interval &&
+    loaded.get<Ztc::ZfField(Request, subscribe)>() &&
+    loaded.get<Ztc::ZfField(Request, alertDate)>() == data.alertDate &&
+    loaded.get<Ztc::ZfField(Request, alertSeqNo)>() == data.alertSeqNo &&
+    !loaded.get<Ztc::ZfField(Request, id)>());
 }
 
 template <typename T>
-bool unionValue(Ztc::fbs::TelemetryBody type, const T &data)
+bool unionValue(unsigned type, const T &data)
 {
-  Zfb::Builder fbb;
-  auto id = fbb.CreateString("app");
-  auto value =
-    ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
+  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  auto nested = builder.startNested();
+  auto id = builder.string("app");
+  auto value = ZiFB::saveObject<T, ZuFacet::Core, ZfFieldFilter::All>(builder, data);
   auto telemetry = Ztc::saveTelemetry(
-    fbb, id, UINT64_C(0xabcdef0123456789), type, value.Union());
-  fbb.Finish(Ztc::saveMsg(
-    fbb, Ztc::fbs::Body::Telemetry, telemetry.Union()));
-  Zfb::Verifier verifier{fbb.GetBufferPointer(), fbb.GetSize()};
-  if (!verifier.VerifyBuffer<Ztc::fbs::Msg>()) return false;
-  auto msg = Zfb::GetRoot<Ztc::fbs::Msg>(fbb.GetBufferPointer());
-  auto loaded = msg && Ztc::validMsg(msg) ? msg->body_as_Telemetry() : nullptr;
-  return loaded && Zfb::Load::str(loaded->id()) == "app" &&
-    loaded->seqNo() == UINT64_C(0xabcdef0123456789) &&
-    loaded->value_type() == type && loaded->value();
+    builder, id, uint64_t(0xabcdef0123456789), type, value);
+  auto bytes = builder.finish(Ztc::saveMsg(builder, nested,
+    Ztc::Body::Telemetry, telemetry));
+  auto msg = Ztc::msg(bytes);
+  if (!msg) return false;
+  auto loaded = Ztc::msgBody(msg).template get<Ztc::Body::Telemetry>();
+  auto payload = loaded.template get<Ztc::ZfField(Telemetry, value)>();
+  return loaded.template get<Ztc::ZfField(Telemetry, id)>() == "app" &&
+    loaded.template get<Ztc::ZfField(Telemetry, seqNo)>() == uint64_t(0xabcdef0123456789) &&
+    payload.tag() == type && payload.data();
 }
 
 void telemetryUnions()
 {
   ZuTestScope(telemetryUnions);
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::HeapTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::HeapTelemetry,
     Ztc::HeapTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::HashTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::HashTelemetry,
     Ztc::HashTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::ThreadTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::ThreadTelemetry,
     Ztc::ThreadTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::CxnTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::CxnTelemetry,
     Ztc::CxnTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::MxTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::MxTelemetry,
     Ztc::MxTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::QueueTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::QueueTelemetry,
     Ztc::QueueTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::HubTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::HubTelemetry,
     Ztc::HubTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::LinkTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::LinkTelemetry,
     Ztc::LinkTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::PoolTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::PoolTelemetry,
     Ztc::PoolTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::DBTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::DBTelemetry,
     Ztc::DBTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::DBHostTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::DBHostTelemetry,
     Ztc::DBHostTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::DBTableTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::DBTableTelemetry,
     Ztc::DBTableTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::AppTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::AppTelemetry,
     Ztc::AppTelemetry{}));
-  ZuCheck(unionValue(Ztc::fbs::TelemetryBody::AlertTelemetry,
+  ZuCheck(unionValue(Ztc::TelemetryBody::AlertTelemetry,
     Ztc::AlertTelemetry{}));
 }
 
@@ -438,117 +425,122 @@ void telemetryValues()
   {
     Ztc::HeapTelemetry data;
     data.id = "heap";
-    data.cacheSize = UINT64_C(0x100000001);
+    data.cacheSize = uint64_t(0x100000001);
     data.cpuset[3] = true;
-    data.cacheAllocs = UINT64_C(0x200000002);
-    data.heapAllocs = UINT64_C(0x300000003);
-    data.cacheFrees = UINT64_C(0x100000001);
-    data.heapFrees = UINT64_C(0x100000002);
-    data.crossFrees = UINT64_C(0x400000004);
-    data.globalHeapAllocs = UINT64_C(0x600000006);
-    data.globalHeapFrees = UINT64_C(0x700000007);
-    data.globalHeapMax = UINT64_C(0x500000005);
-    data.size = UINT32_C(0x80000001);
-    data.partition = UINT16_C(0x8001);
+    data.cacheAllocs = uint64_t(0x200000002);
+    data.heapAllocs = uint64_t(0x300000003);
+    data.cacheFrees = uint64_t(0x100000001);
+    data.heapFrees = uint64_t(0x100000002);
+    data.crossFrees = uint64_t(0x400000004);
+    data.globalHeapAllocs = uint64_t(0x600000006);
+    data.globalHeapFrees = uint64_t(0x700000007);
+    data.globalHeapMax = uint64_t(0x500000005);
+    data.size = uint32_t(0x80000001);
+    data.partition = uint16_t(0x8001);
     data.sharded = 3;
     data.alignment = 64;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::HeapTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    auto loaded = ZfbStruct::ctor<Ztc::HeapTelemetry>(fbo);
-    ZuCheck(fbo && fbo->cacheSize() == data.cacheSize &&
-      fbo->crossFrees() == data.crossFrees);
-    ZuCheck(fbo && fbo->size() == data.size &&
-      fbo->partition() == data.partition &&
-      fbo->alignment() == data.alignment);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::HeapTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::HeapTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::HeapTelemetry>(fbb.span()) : ZiFB::View<Ztc::HeapTelemetry>{};
+    auto loaded = ZiFB::Handler<Ztc::HeapTelemetry>{fbo}.ctor();
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HeapTelemetry, cacheSize)>() == data.cacheSize &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, crossFrees)>() == data.crossFrees);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HeapTelemetry, size)>() == data.size &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, partition)>() == data.partition &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, alignment)>() == data.alignment);
     ZuCheck(loaded.id == data.id && loaded.cpuset[3] &&
       loaded.cacheAllocs == data.cacheAllocs &&
       loaded.heapAllocs == data.heapAllocs && loaded.cacheFrees == data.cacheFrees);
-    ZuCheck(fbo && fbo->heapFrees() == data.heapFrees &&
-      fbo->globalHeapMax() == data.globalHeapMax);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HeapTelemetry, heapFrees)>() == data.heapFrees &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, globalHeapMax)>() == data.globalHeapMax);
     ZuCheck(loaded.heapFrees == data.heapFrees &&
       loaded.crossFrees == data.crossFrees && loaded.globalHeapMax == data.globalHeapMax);
-    ZuCheck(fbo && fbo->globalHeapAllocs() == data.globalHeapAllocs &&
-      fbo->globalHeapFrees() == data.globalHeapFrees);
+    ZuCheck(fbo &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, globalHeapAllocs)>() == data.globalHeapAllocs &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, globalHeapFrees)>() == data.globalHeapFrees);
     ZuCheck(loaded.globalHeapAllocs == data.globalHeapAllocs &&
       loaded.globalHeapFrees == data.globalHeapFrees);
     ZuCheck(loaded.size == data.size && loaded.partition == data.partition &&
       loaded.sharded == data.sharded && loaded.alignment == data.alignment);
-    ZuCheck(fbo && fbo->allocated() == data.allocated() &&
-      fbo->rag() == Ztc::fbs::RAG::Red);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HeapTelemetry, allocated)>() == data.allocated() &&
+      fbo.get<Ztc::ZfField(HeapTelemetry, rag)>() == Ztc::RAG::Red);
   }
   {
     Ztc::HashTelemetry data;
     data.id = "hash";
-    data.addr = uintptr_t(UINT64_C(0xabcdef0123456789));
+    data.addr = uintptr_t(uint64_t(0xabcdef0123456789));
     data.loadFactor = 1.25;
     data.effLoadFactor = 0.75;
-    data.count = UINT64_C(0x100000005);
-    data.maxCount = UINT64_C(0x200000009);
-    data.nodeSize = UINT32_C(0x80000005);
+    data.count = uint64_t(0x100000005);
+    data.maxCount = uint64_t(0x200000009);
+    data.nodeSize = uint32_t(0x80000005);
     data.resized = 7;
     data.bits = 17;
     data.cBits = 9;
     data.linear = 1;
     data.shadow = 2;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::HashTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    ZuCheck(fbo && fbo->addr() == data.addr &&
-      fbo->count() == data.count && fbo->nodeSize() == data.nodeSize);
-    ZuCheck(fbo && fbo->maxCount() == data.maxCount);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::HashTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::HashTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::HashTelemetry>(fbb.span()) : ZiFB::View<Ztc::HashTelemetry>{};
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HashTelemetry, addr)>() == data.addr &&
+      fbo.get<Ztc::ZfField(HashTelemetry, count)>() == data.count &&
+	fbo.get<Ztc::ZfField(HashTelemetry, nodeSize)>() == data.nodeSize);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HashTelemetry, maxCount)>() == data.maxCount);
     if (fbo) {
-      auto loaded = ZfbStruct::ctor<Ztc::HashTelemetry>(fbo);
+      auto loaded = ZiFB::Handler<Ztc::HashTelemetry>{fbo}.ctor();
       ZuCheck(loaded.count == data.count && loaded.maxCount == data.maxCount);
       loaded.count = 0;
       loaded.effLoadFactor = 0;
-      Zfb::Builder drained;
-      drained.Finish(
-	ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(drained, loaded));
-      auto roundtrip = ZfbStruct::verify<Ztc::HashTelemetry>(
-	{drained.GetBufferPointer(), unsigned(drained.GetSize())});
-      ZuCheck(roundtrip && !roundtrip->count() &&
-	roundtrip->maxCount() == data.maxCount);
+      Ztc::Builder drained{new ZiIOBufAlloc<>()};
+      drained.finish(
+	ZiFB::saveObject<Ztc::HashTelemetry, ZuFacet::Core, ZfFieldFilter::All>(drained, loaded));
+      auto roundtrip = ZiFB::verify<Ztc::HashTelemetry>(drained.span()) ?
+      ZiFB::view<Ztc::HashTelemetry>(drained.span()) : ZiFB::View<Ztc::HashTelemetry>{};
+      ZuCheck(roundtrip && !roundtrip.get<Ztc::ZfField(HashTelemetry, count)>() &&
+	roundtrip.get<Ztc::ZfField(HashTelemetry, maxCount)>() == data.maxCount);
     }
-    ZuCheck(fbo && fbo->loadFactor() == data.loadFactor &&
-      fbo->effLoadFactor() == data.effLoadFactor &&
-      fbo->resized() == data.resized);
-    ZuCheck(fbo && fbo->bits() == data.bits &&
-      fbo->cBits() == data.cBits && fbo->linear() == data.linear &&
-      fbo->shadow() == data.shadow && fbo->rag() == Ztc::fbs::RAG::Red);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HashTelemetry, loadFactor)>() == data.loadFactor &&
+      fbo.get<Ztc::ZfField(HashTelemetry, effLoadFactor)>() == data.effLoadFactor &&
+      fbo.get<Ztc::ZfField(HashTelemetry, resized)>() == data.resized);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HashTelemetry, bits)>() == data.bits &&
+      fbo.get<Ztc::ZfField(HashTelemetry, cBits)>() == data.cBits &&
+	fbo.get<Ztc::ZfField(HashTelemetry, linear)>() == data.linear &&
+      fbo.get<Ztc::ZfField(HashTelemetry, shadow)>() == data.shadow &&
+	fbo.get<Ztc::ZfField(HashTelemetry, rag)>() == Ztc::RAG::Red);
   }
   {
     Ztc::ThreadTelemetry data;
     data.name = "thread";
-    data.tid = UINT64_C(0xabcdef0123456789);
-    data.stackSize = UINT64_C(0x100000006);
+    data.tid = uint64_t(0xabcdef0123456789);
+    data.stackSize = uint64_t(0x100000006);
     data.cpuset[5] = true;
     data.cpuUsage = 0.625;
-    data.allocStack = UINT64_C(0x200000006);
-    data.allocHeap = UINT64_C(0x300000006);
+    data.allocStack = uint64_t(0x200000006);
+    data.allocHeap = uint64_t(0x300000006);
     data.sysPriority = INT32_MIN + 7;
-    data.sid = UINT16_C(0x8002);
-    data.partition = UINT16_C(0x8003);
+    data.sid = uint16_t(0x8002);
+    data.partition = uint16_t(0x8003);
     data.priority = ZmThreadPriority::High;
     data.main = true;
     data.detached = true;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::ThreadTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    auto loaded = ZfbStruct::ctor<Ztc::ThreadTelemetry>(fbo);
-    ZuCheck(fbo && fbo->tid() == data.tid &&
-      fbo->stackSize() == data.stackSize && fbo->sid() == data.sid &&
-      fbo->partition() == data.partition);
-    ZuCheck(fbo && fbo->cpuUsage() == data.cpuUsage &&
-      fbo->allocStack() == data.allocStack &&
-      fbo->allocHeap() == data.allocHeap &&
-      fbo->sysPriority() == data.sysPriority);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::ThreadTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::ThreadTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::ThreadTelemetry>(fbb.span()) : ZiFB::View<Ztc::ThreadTelemetry>{};
+    auto loaded = ZiFB::Handler<Ztc::ThreadTelemetry>{fbo}.ctor();
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(ThreadTelemetry, tid)>() == data.tid &&
+      fbo.get<Ztc::ZfField(ThreadTelemetry, stackSize)>() == data.stackSize &&
+	fbo.get<Ztc::ZfField(ThreadTelemetry, sid)>() == data.sid &&
+      fbo.get<Ztc::ZfField(ThreadTelemetry, partition)>() == data.partition);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(ThreadTelemetry, cpuUsage)>() == data.cpuUsage &&
+      fbo.get<Ztc::ZfField(ThreadTelemetry, allocStack)>() == data.allocStack &&
+      fbo.get<Ztc::ZfField(ThreadTelemetry, allocHeap)>() == data.allocHeap &&
+      fbo.get<Ztc::ZfField(ThreadTelemetry, sysPriority)>() == data.sysPriority);
     ZuCheck(loaded.cpuset[5] && loaded.priority == data.priority &&
       loaded.main && loaded.detached);
   }
@@ -556,187 +548,207 @@ void telemetryValues()
     Ztc::QueueTelemetry data;
     data.ownerID = "owner";
     data.id = "queue";
-    data.inBytes = UINT64_C(0x100000011);
-    data.outBytes = UINT64_C(0x200000012);
-    data.inCount = UINT64_C(0x300000013);
-    data.outCount = UINT64_C(0x400000014);
-    data.count = UINT64_C(0x500000015);
-    data.size = UINT32_C(0x80000015);
-    data.full = UINT32_C(0x80000016);
+    data.inBytes = uint64_t(0x100000011);
+    data.outBytes = uint64_t(0x200000012);
+    data.inCount = uint64_t(0x300000013);
+    data.outCount = uint64_t(0x400000014);
+    data.count = uint64_t(0x500000015);
+    data.size = uint32_t(0x80000015);
+    data.full = uint32_t(0x80000016);
     data.type = Ztc::QueueType::Tx;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::QueueTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    ZuCheck(fbo && Zfb::Load::str(fbo->ownerID()) == data.ownerID &&
-      Zfb::Load::str(fbo->id()) == data.id &&
-      int(fbo->type()) == int(data.type));
-    ZuCheck(fbo && fbo->inBytes() == data.inBytes &&
-      fbo->outBytes() == data.outBytes && fbo->inCount() == data.inCount &&
-      fbo->outCount() == data.outCount && fbo->count() == data.count);
-    ZuCheck(fbo && fbo->size() == data.size && fbo->full() == data.full);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::QueueTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::QueueTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::QueueTelemetry>(fbb.span()) : ZiFB::View<Ztc::QueueTelemetry>{};
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(QueueTelemetry, ownerID)>() == data.ownerID &&
+      fbo.get<Ztc::ZfField(QueueTelemetry, id)>() == data.id &&
+      int(fbo.get<Ztc::ZfField(QueueTelemetry, type)>()) == int(data.type));
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(QueueTelemetry, inBytes)>() == data.inBytes &&
+      fbo.get<Ztc::ZfField(QueueTelemetry, outBytes)>() == data.outBytes &&
+	fbo.get<Ztc::ZfField(QueueTelemetry, inCount)>() == data.inCount &&
+      fbo.get<Ztc::ZfField(QueueTelemetry, outCount)>() == data.outCount &&
+	fbo.get<Ztc::ZfField(QueueTelemetry, count)>() == data.count);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(QueueTelemetry, size)>() == data.size &&
+      fbo.get<Ztc::ZfField(QueueTelemetry, full)>() == data.full);
   }
   {
     Ztc::CxnTelemetry data;
     data.mxID = "mx";
-    data.socket = UINT64_C(0xabcdef0123456789);
-    data.rxCalls = UINT64_C(0x100000021);
-    data.rxBytes = UINT64_C(0x200000022);
-    data.txCalls = UINT64_C(0x300000023);
-    data.txBytes = UINT64_C(0x400000024);
-    data.rxBufSize = UINT32_C(0x80000021);
-    data.rxBufLen = UINT32_C(0x70000022);
-    data.txBufSize = UINT32_C(0x80000023);
-    data.txBufLen = UINT32_C(0x70000024);
+    data.socket = uint64_t(0xabcdef0123456789);
+    data.rxCalls = uint64_t(0x100000021);
+    data.rxBytes = uint64_t(0x200000022);
+    data.txCalls = uint64_t(0x300000023);
+    data.txBytes = uint64_t(0x400000024);
+    data.rxBufSize = uint32_t(0x80000021);
+    data.rxBufLen = uint32_t(0x70000022);
+    data.txBufSize = uint32_t(0x80000023);
+    data.txBufLen = uint32_t(0x70000024);
     data.mreqAddr = ZiIP{"239.1.2.3"};
     data.mreqIf = ZiIP{"10.1.2.3"};
-    data.mreqIfIndex = UINT32_C(0x80000025);
+    data.mreqIfIndex = uint32_t(0x80000025);
     data.mif = ZiIP{"10.2.3.4"};
-    data.mifIndex = UINT32_C(0x80000026);
-    data.ttl = UINT32_C(0x80000027);
+    data.mifIndex = uint32_t(0x80000026);
+    data.ttl = uint32_t(0x80000027);
     data.localIP = ZiIP{"127.0.0.1"};
     data.remoteIP = ZiIP{"127.0.0.2"};
-    data.localPort = UINT16_C(50001);
-    data.remotePort = UINT16_C(50002);
+    data.localPort = uint16_t(50001);
+    data.remotePort = uint16_t(50002);
     data.flags = 5;
     data.type = ZiCxnType::TCPOut;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::CxnTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    auto loaded = ZfbStruct::ctor<Ztc::CxnTelemetry>(fbo);
-    ZuCheck(fbo && fbo->socket() == data.socket &&
-      fbo->rxCalls() == data.rxCalls && fbo->rxBytes() == data.rxBytes &&
-      fbo->txCalls() == data.txCalls && fbo->txBytes() == data.txBytes);
-    ZuCheck(fbo && fbo->rxBufSize() == data.rxBufSize &&
-      fbo->rxBufLen() == data.rxBufLen &&
-      fbo->txBufSize() == data.txBufSize &&
-      fbo->txBufLen() == data.txBufLen);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::CxnTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::CxnTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::CxnTelemetry>(fbb.span()) : ZiFB::View<Ztc::CxnTelemetry>{};
+    auto loaded = ZiFB::Handler<Ztc::CxnTelemetry>{fbo}.ctor();
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(CxnTelemetry, socket)>() == data.socket &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, rxCalls)>() == data.rxCalls &&
+	fbo.get<Ztc::ZfField(CxnTelemetry, rxBytes)>() == data.rxBytes &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, txCalls)>() == data.txCalls &&
+	fbo.get<Ztc::ZfField(CxnTelemetry, txBytes)>() == data.txBytes);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(CxnTelemetry, rxBufSize)>() == data.rxBufSize &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, rxBufLen)>() == data.rxBufLen &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, txBufSize)>() == data.txBufSize &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, txBufLen)>() == data.txBufLen);
     ZuCheck(loaded.mreqAddr == data.mreqAddr && loaded.mreqIf == data.mreqIf &&
       loaded.mif == data.mif && loaded.localIP == data.localIP &&
       loaded.remoteIP == data.remoteIP);
-    ZuCheck(fbo && fbo->mreqIfIndex() == data.mreqIfIndex &&
-      fbo->mifIndex() == data.mifIndex && fbo->ttl() == data.ttl &&
-      fbo->localPort() == data.localPort &&
-      fbo->remotePort() == data.remotePort && fbo->flags() == data.flags &&
-      int(fbo->type()) == int(data.type));
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(CxnTelemetry, mreqIfIndex)>() == data.mreqIfIndex &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, mifIndex)>() == data.mifIndex &&
+	fbo.get<Ztc::ZfField(CxnTelemetry, ttl)>() == data.ttl &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, localPort)>() == data.localPort &&
+      fbo.get<Ztc::ZfField(CxnTelemetry, remotePort)>() == data.remotePort &&
+	fbo.get<Ztc::ZfField(CxnTelemetry, flags)>() == data.flags &&
+      int(fbo.get<Ztc::ZfField(CxnTelemetry, type)>()) == int(data.type));
   }
   {
     Ztc::MxTelemetry data;
     data.id = "mx";
-    data.stackSize = UINT32_C(0x80000031);
-    data.queueSize = UINT32_C(0x80000032);
-    data.spin = UINT32_C(0x80000033);
-    data.timeout = UINT32_C(0x80000034);
-    data.rxBufSize = UINT32_C(0x80000035);
-    data.txBufSize = UINT32_C(0x80000036);
-    data.rxThread = UINT16_C(0x8004);
-    data.txThread = UINT16_C(0x8005);
-    data.partition = UINT16_C(0x8006);
+    data.stackSize = uint32_t(0x80000031);
+    data.queueSize = uint32_t(0x80000032);
+    data.spin = uint32_t(0x80000033);
+    data.timeout = uint32_t(0x80000034);
+    data.rxBufSize = uint32_t(0x80000035);
+    data.txBufSize = uint32_t(0x80000036);
+    data.rxThread = uint16_t(0x8004);
+    data.txThread = uint16_t(0x8005);
+    data.partition = uint16_t(0x8006);
     data.state = ZmEngineState::Running;
     data.ll = 1;
     data.priority = 7;
     data.nThreads = 9;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::MxTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    ZuCheck(fbo && fbo->stackSize() == data.stackSize &&
-      fbo->queueSize() == data.queueSize && fbo->spin() == data.spin &&
-      fbo->timeout() == data.timeout);
-    ZuCheck(fbo && fbo->rxBufSize() == data.rxBufSize &&
-      fbo->txBufSize() == data.txBufSize &&
-      fbo->rxThread() == data.rxThread && fbo->txThread() == data.txThread &&
-      fbo->partition() == data.partition);
-    ZuCheck(fbo && int(fbo->state()) == int(data.state) &&
-      fbo->ll() == data.ll &&
-      fbo->priority() == data.priority && fbo->nThreads() == data.nThreads);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::MxTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::MxTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::MxTelemetry>(fbb.span()) : ZiFB::View<Ztc::MxTelemetry>{};
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(MxTelemetry, stackSize)>() == data.stackSize &&
+      fbo.get<Ztc::ZfField(MxTelemetry, queueSize)>() == data.queueSize &&
+	fbo.get<Ztc::ZfField(MxTelemetry, spin)>() == data.spin &&
+      fbo.get<Ztc::ZfField(MxTelemetry, timeout)>() == data.timeout);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(MxTelemetry, rxBufSize)>() == data.rxBufSize &&
+      fbo.get<Ztc::ZfField(MxTelemetry, txBufSize)>() == data.txBufSize &&
+      fbo.get<Ztc::ZfField(MxTelemetry, rxThread)>() == data.rxThread &&
+	fbo.get<Ztc::ZfField(MxTelemetry, txThread)>() == data.txThread &&
+      fbo.get<Ztc::ZfField(MxTelemetry, partition)>() == data.partition);
+    ZuCheck(fbo && int(fbo.get<Ztc::ZfField(MxTelemetry, state)>()) == int(data.state) &&
+      fbo.get<Ztc::ZfField(MxTelemetry, ll)>() == data.ll &&
+      fbo.get<Ztc::ZfField(MxTelemetry, priority)>() == data.priority &&
+	fbo.get<Ztc::ZfField(MxTelemetry, nThreads)>() == data.nThreads);
   }
   {
     Ztc::HubTelemetry data;
     data.id = "hub";
     data.mxID = "mx";
-    data.down = UINT16_C(0x8001);
-    data.disabled = UINT16_C(0x8002);
-    data.transient = UINT16_C(0x8003);
-    data.up = UINT16_C(0x8004);
-    data.reconn = UINT16_C(0x8005);
-    data.failed = UINT16_C(0x8006);
-    data.nLinks = UINT16_C(0x8007);
+    data.down = uint16_t(0x8001);
+    data.disabled = uint16_t(0x8002);
+    data.transient = uint16_t(0x8003);
+    data.up = uint16_t(0x8004);
+    data.reconn = uint16_t(0x8005);
+    data.failed = uint16_t(0x8006);
+    data.nLinks = uint16_t(0x8007);
     data.rxThread = 201;
     data.txThread = 202;
     data.linkType = Ztc::LinkType::QUIC;
     data.state = ZmEngineState::Running;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::HubTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    ZuCheck(fbo && Zfb::Load::str(fbo->id()) == data.id &&
-      Zfb::Load::str(fbo->mxID()) == data.mxID &&
-      fbo->down() == data.down && fbo->disabled() == data.disabled &&
-      fbo->transient() == data.transient && fbo->up() == data.up);
-    ZuCheck(fbo && fbo->reconn() == data.reconn &&
-      fbo->failed() == data.failed && fbo->nLinks() == data.nLinks &&
-      fbo->rxThread() == data.rxThread && fbo->txThread() == data.txThread &&
-      int(fbo->linkType()) == int(data.linkType) &&
-      int(fbo->state()) == int(data.state) &&
-      fbo->rag() == Ztc::fbs::RAG::Green);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::HubTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::HubTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::HubTelemetry>(fbb.span()) : ZiFB::View<Ztc::HubTelemetry>{};
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HubTelemetry, id)>() == data.id &&
+      fbo.get<Ztc::ZfField(HubTelemetry, mxID)>() == data.mxID &&
+      fbo.get<Ztc::ZfField(HubTelemetry, down)>() == data.down &&
+	fbo.get<Ztc::ZfField(HubTelemetry, disabled)>() == data.disabled &&
+      fbo.get<Ztc::ZfField(HubTelemetry, transient)>() == data.transient &&
+	fbo.get<Ztc::ZfField(HubTelemetry, up)>() == data.up);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(HubTelemetry, reconn)>() == data.reconn &&
+      fbo.get<Ztc::ZfField(HubTelemetry, failed)>() == data.failed &&
+	fbo.get<Ztc::ZfField(HubTelemetry, nLinks)>() == data.nLinks &&
+      fbo.get<Ztc::ZfField(HubTelemetry, rxThread)>() == data.rxThread &&
+	fbo.get<Ztc::ZfField(HubTelemetry, txThread)>() == data.txThread &&
+      int(fbo.get<Ztc::ZfField(HubTelemetry, linkType)>()) == int(data.linkType) &&
+      int(fbo.get<Ztc::ZfField(HubTelemetry, state)>()) == int(data.state) &&
+      fbo.get<Ztc::ZfField(HubTelemetry, rag)>() == Ztc::RAG::Green);
   }
   {
     Ztc::LinkTelemetry data;
     data.hubID = "hub";
     data.id = "link";
-    data.rxCalls = UINT64_C(0x100000041);
-    data.txCalls = UINT64_C(0x200000042);
-    data.rxBytes = UINT64_C(0x300000043);
-    data.txBytes = UINT64_C(0x400000044);
-    data.reconnects = UINT32_C(0x80000045);
+    data.rxCalls = uint64_t(0x100000041);
+    data.txCalls = uint64_t(0x200000042);
+    data.rxBytes = uint64_t(0x300000043);
+    data.txBytes = uint64_t(0x400000044);
+    data.reconnects = uint32_t(0x80000045);
     data.type = Ztc::LinkType::TLS;
     data.state = Ztc::LinkState::Failed;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::LinkTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    ZuCheck(fbo && Zfb::Load::str(fbo->hubID()) == data.hubID &&
-      Zfb::Load::str(fbo->id()) == data.id &&
-      fbo->rxCalls() == data.rxCalls && fbo->txCalls() == data.txCalls &&
-      fbo->rxBytes() == data.rxBytes && fbo->txBytes() == data.txBytes);
-    ZuCheck(fbo && fbo->reconnects() == data.reconnects &&
-      int(fbo->type()) == int(data.type) &&
-      int(fbo->state()) == int(data.state) &&
-      fbo->rag() == Ztc::fbs::RAG::Red);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::LinkTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::LinkTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::LinkTelemetry>(fbb.span()) : ZiFB::View<Ztc::LinkTelemetry>{};
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(LinkTelemetry, hubID)>() == data.hubID &&
+      fbo.get<Ztc::ZfField(LinkTelemetry, id)>() == data.id &&
+      fbo.get<Ztc::ZfField(LinkTelemetry, rxCalls)>() == data.rxCalls &&
+	fbo.get<Ztc::ZfField(LinkTelemetry, txCalls)>() == data.txCalls &&
+      fbo.get<Ztc::ZfField(LinkTelemetry, rxBytes)>() == data.rxBytes &&
+	fbo.get<Ztc::ZfField(LinkTelemetry, txBytes)>() == data.txBytes);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(LinkTelemetry, reconnects)>() == data.reconnects &&
+      int(fbo.get<Ztc::ZfField(LinkTelemetry, type)>()) == int(data.type) &&
+      int(fbo.get<Ztc::ZfField(LinkTelemetry, state)>()) == int(data.state) &&
+      fbo.get<Ztc::ZfField(LinkTelemetry, rag)>() == Ztc::RAG::Red);
   }
   {
     Ztc::PoolTelemetry data;
     data.hubID = "hub";
     data.id = "pool";
-    data.rxCalls = UINT64_C(0x100000051);
-    data.rxBytes = UINT64_C(0x200000052);
-    data.txCalls = UINT64_C(0x300000053);
-    data.txBytes = UINT64_C(0x400000054);
-    data.idle = UINT16_C(0x8008);
-    data.busy = UINT16_C(0x8009);
-    data.down = UINT16_C(0x800a);
+    data.rxCalls = uint64_t(0x100000051);
+    data.rxBytes = uint64_t(0x200000052);
+    data.txCalls = uint64_t(0x300000053);
+    data.txBytes = uint64_t(0x400000054);
+    data.idle = uint16_t(0x8008);
+    data.busy = uint16_t(0x8009);
+    data.down = uint16_t(0x800a);
     data.type = Ztc::LinkType::TCP;
     data.state = Ztc::PoolState::Failed;
-    Zfb::Builder fbb;
-    fbb.Finish(
-      ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-    auto fbo = ZfbStruct::verify<Ztc::PoolTelemetry>(
-      {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-    ZuCheck(fbo && Zfb::Load::str(fbo->hubID()) == data.hubID &&
-      Zfb::Load::str(fbo->id()) == data.id &&
-      fbo->rxCalls() == data.rxCalls && fbo->rxBytes() == data.rxBytes &&
-      fbo->txCalls() == data.txCalls && fbo->txBytes() == data.txBytes);
-    ZuCheck(fbo && fbo->idle() == data.idle && fbo->busy() == data.busy &&
-      fbo->down() == data.down && int(fbo->type()) == int(data.type) &&
-      int(fbo->state()) == int(data.state) &&
-      fbo->rag() == Ztc::fbs::RAG::Red);
+    Ztc::Builder fbb{new ZiIOBufAlloc<>()};
+    fbb.finish(
+      ZiFB::saveObject<Ztc::PoolTelemetry, ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
+    auto fbo = ZiFB::verify<Ztc::PoolTelemetry>(fbb.span()) ?
+      ZiFB::view<Ztc::PoolTelemetry>(fbb.span()) : ZiFB::View<Ztc::PoolTelemetry>{};
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(PoolTelemetry, hubID)>() == data.hubID &&
+      fbo.get<Ztc::ZfField(PoolTelemetry, id)>() == data.id &&
+      fbo.get<Ztc::ZfField(PoolTelemetry, rxCalls)>() == data.rxCalls &&
+	fbo.get<Ztc::ZfField(PoolTelemetry, rxBytes)>() == data.rxBytes &&
+      fbo.get<Ztc::ZfField(PoolTelemetry, txCalls)>() == data.txCalls &&
+	fbo.get<Ztc::ZfField(PoolTelemetry, txBytes)>() == data.txBytes);
+    ZuCheck(fbo && fbo.get<Ztc::ZfField(PoolTelemetry, idle)>() == data.idle &&
+      fbo.get<Ztc::ZfField(PoolTelemetry, busy)>() == data.busy &&
+      fbo.get<Ztc::ZfField(PoolTelemetry, down)>() == data.down &&
+	int(fbo.get<Ztc::ZfField(PoolTelemetry, type)>()) == int(data.type) &&
+      int(fbo.get<Ztc::ZfField(PoolTelemetry, state)>()) == int(data.state) &&
+      fbo.get<Ztc::ZfField(PoolTelemetry, rag)>() == Ztc::RAG::Red);
   }
 }
 
@@ -747,7 +759,7 @@ int main()
   ZuTestCall(app);
   ZuTestCall(alert);
   ZuTestCall(framing);
-  ZuTestCall(goldenWire);
+  ZuTestCall(requestFields);
   ZuTestCall(telemetryUnions);
   ZuTestCall(rag);
   ZuTestCall(telemetryValues);

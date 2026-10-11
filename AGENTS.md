@@ -65,5 +65,5 @@ The repository is organized by module prefix (for example `zu`, `zm`, `zt`, `ze`
 - For PRs, include a short summary, list touched modules, and note tests run plus platform/toolchain details.
 
 ## Dependencies & Configuration Notes
-Core dependencies include `libck`, `hwloc`, `pcre`, `zpicotls`, and `flatbuffers`. Optional components include `libpq` (PostgreSQL) and `gtk+3`; enable/disable via `z.config` (`-P`, `-G`) or `configure` flags.
+Core dependencies include `libck`, `hwloc`, `pcre`, and `zpicotls`. Canonical `flatbuffers` and `flatc` are used only by explicit FlatBuffers interop targets. Optional components include `libpq` (PostgreSQL) and `gtk+3`; enable/disable via `z.config` (`-P`, `-G`) or `configure` flags.
 Add external dependencies in `configure.ac`; use `PKG_CHECK_MODULES` when the dependency is available through pkg-config, falling back to dependency-specific `m4` logic when needed.

@@ -1210,13 +1210,12 @@ static void records()
   role.actions.length(128);
   role.actions.set(7);
 
-  Zfb::IOBuilder fbb{new ZiIOBufAlloc<>()};
-  fbb.Finish(ZfbStruct::save(fbb, role));
+  ZiFB::IOBuilder<ZiFB::BufferAlign<Zum::Role>::N> fbb{new ZiIOBufAlloc<>()};
+  fbb.finish(ZiFB::saveObject(fbb, role));
   auto buf = fbb.buf();
-  flatbuffers::Verifier verifier{buf->data(), buf->length};
-  ZuCheck(Zum::fbs::VerifyRoleBuffer(verifier));
-  auto saved = ZfbStruct::root<Zum::Role>(buf->data());
-  auto loaded = ZfbStruct::ctor<Zum::Role>(saved);
+  ZuBSpan bytes{buf->data(), buf->length};
+  ZuCheck(ZiFB::verify<Zum::Role>(bytes));
+  auto loaded = ZiFB::load<Zum::Role>(bytes);
   ZuCheck(loaded.id == role.id);
   ZuCheck(loaded.name == role.name);
   ZuCheck(loaded.actions[7]);
@@ -1226,10 +1225,10 @@ static void records()
 template <typename T>
 static T roundTrip(const T &value)
 {
-  Zfb::IOBuilder fbb{new ZiIOBufAlloc<>()};
-  fbb.Finish(ZfbStruct::save(fbb, value));
+  ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new ZiIOBufAlloc<>()};
+  fbb.finish(ZiFB::saveObject(fbb, value));
   auto buf = fbb.buf();
-  return ZfbStruct::ctor<T>(ZfbStruct::root<T>(buf->data()));
+  return ZiFB::load<T>({buf->data(), buf->length});
 }
 
 static void appRecords()
@@ -2060,7 +2059,7 @@ static void enrollmentSaga()
     ZmRef<M> saga = new M{};
     saga->init(ZuMv(binding));
     Zdb_::SagaPayload payload;
-    M::save(saga, payload);
+    ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
     auto loaded = M::load(Zum::KeyBinding::Type{}(), payload);
     ZuCheck(bool(loaded));
     ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2081,7 +2080,7 @@ static void enrollmentSaga()
     ZmRef<M> saga = new M{};
     saga->init(ZuMv(rekey));
     Zdb_::SagaPayload payload;
-    M::save(saga, payload);
+    ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
     auto loaded = M::load(Zum::SecretRekey::Type{}(), payload);
     ZuCheck(bool(loaded));
     ZuCheck(loaded->u.cdispatch([field](auto I, const auto &change) {
@@ -2107,7 +2106,7 @@ static void enrollmentSaga()
   ZmRef<M> saga = new M{};
   saga->init(ZuMv(enrollment));
   Zdb_::SagaPayload payload;
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   auto loaded = M::load(Zum::Enrollment::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &enrollment) {
@@ -2146,7 +2145,7 @@ static void enrollmentSaga()
     .purpose = Zum::GrantPurpose::AddCredential, .state = Zum::State::Active};
   saga = new M{};
   saga->init(ZuMv(add));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::CredentialAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &add) {
@@ -2180,7 +2179,7 @@ static void enrollmentSaga()
     .operation = Zum::MgmtOp::userRecover, .idempotence = "recover"};
   saga = new M{};
   saga->init(ZuMv(recovery));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::RecoveryStart::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &recovery) {
@@ -2218,7 +2217,7 @@ static void enrollmentSaga()
     .updated = 122, .state = Zum::State::Suspended, .authVersion = 2, .version = 7};
   saga = new M{};
   saga->init(ZuMv(recoveryEnroll));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::RecoveryEnroll::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &recovery) {
@@ -2258,7 +2257,7 @@ static void enrollmentSaga()
     .kind = Zum::GrantKind::Code, .state = Zum::State::Active};
   saga = new M{};
   saga->init(ZuMv(family));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::CodeFamily::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &family) {
@@ -2296,7 +2295,7 @@ static void enrollmentSaga()
       .expires = 86400, .created = 120, .updated = 120}};
   saga = new M{};
   saga->init(ZuMv(appEnrollment));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::AppEnrollment::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &enrollment) {
@@ -2333,7 +2332,7 @@ static void enrollmentSaga()
     .created = 123};
   saga = new M{};
   saga->init(ZuMv(projection));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ExternalProjection::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &projection) {
@@ -2362,7 +2361,7 @@ static void enrollmentSaga()
       .version = 1, .created = 123, .updated = 123}};
   saga = new M{};
   saga->init(ZuMv(appAction));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::AppActionAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &action) {
@@ -2397,7 +2396,7 @@ static void enrollmentSaga()
       .requestDigest = Zum::Bytes{ZuBSpan{"assignment"}}}, .error = 409};
   saga = new M{};
   saga->init(ZuMv(assignment));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::AssignmentAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &add) {
@@ -2426,7 +2425,7 @@ static void enrollmentSaga()
     .assignRoles = true, .ifMatch = "\"v3\"", .error = 400};
   saga = new M{};
   saga->init(ZuMv(memberChange));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::AssignmentChange::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2455,7 +2454,7 @@ static void enrollmentSaga()
     .state = Zum::State::Suspended, .error = 400};
   saga = new M{};
   saga->init(ZuMv(roleActions));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::RoleEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2484,7 +2483,7 @@ static void enrollmentSaga()
     .state = Zum::State::Disabled, .error = 409};
   saga = new M{};
   saga->init(ZuMv(actionEdit));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ActionEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2509,7 +2508,7 @@ static void enrollmentSaga()
     .stateOnly = true, .state = Zum::State::Disabled, .error = 409};
   saga = new M{};
   saga->init(ZuMv(appChange));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::AppChange::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2536,7 +2535,7 @@ static void enrollmentSaga()
     .email = "updated@example.test", .fields = 3, .error = 409};
   saga = new M{};
   saga->init(ZuMv(userEdit));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::UserEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2563,7 +2562,7 @@ static void enrollmentSaga()
     .error = 409};
   saga = new M{};
   saga->init(ZuMv(credEdit));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::CredEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2611,7 +2610,7 @@ static void enrollmentSaga()
   providerEdit.stateOnly = false;
   saga = new M{};
   saga->init(ZuMv(providerEdit));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ProviderEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2663,7 +2662,7 @@ static void enrollmentSaga()
   clientEdit.stateOnly = false;
   saga = new M{};
   saga->init(ZuMv(clientEdit));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ClientEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2705,7 +2704,7 @@ static void enrollmentSaga()
   rotation.overlapSeconds = 60;
   saga = new M{};
   saga->init(ZuMv(rotation));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ClientEdit::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2735,7 +2734,7 @@ static void enrollmentSaga()
   keyRetire.before.state = Zum::State::Active;
   saga = new M{};
   saga->init(ZuMv(keyRetire));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::KeyRetire::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2780,7 +2779,7 @@ static void enrollmentSaga()
     ZmRef<M> saved = new M{};
     saved->init(ZuMv(change));
     Zdb_::SagaPayload bytes;
-    M::save(saved, bytes);
+    ZuCheck(M::save(saved, bytes) == ZiFB::Error::OK);
     auto restored = M::load(typename Edit::Type{}(), bytes);
     ZuCheck(bool(restored));
     ZuCheck(restored->u.cdispatch([](auto I, const auto &value) {
@@ -2824,7 +2823,7 @@ static void enrollmentSaga()
   mapDelete.before.owner = 0;
   saga = new M{};
   saga->init(ZuMv(mapDelete));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::RoleMapDelete::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2855,7 +2854,7 @@ static void enrollmentSaga()
   mapPut.ifMatch = "\"v1\"";
   saga = new M{};
   saga->init(ZuMv(mapPut));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::RoleMapPut::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2890,7 +2889,7 @@ static void enrollmentSaga()
   policyPut.ifNoneMatch.null();
   saga = new M{};
   saga->init(ZuMv(policyPut));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::PolicyPut::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -2923,7 +2922,7 @@ static void enrollmentSaga()
     ZmRef<M> saved = new M{};
     saved->init(ZuMv(change));
     Zdb_::SagaPayload bytes;
-    M::save(saved, bytes);
+    ZuCheck(M::save(saved, bytes) == ZiFB::Error::OK);
     auto restored = M::load(typename Edit::Type{}(), bytes);
     ZuCheck(bool(restored));
     ZuCheck(restored->u.cdispatch([](auto I, const auto &value) {
@@ -2981,7 +2980,7 @@ static void enrollmentSaga()
   providerAdd.values.name = "upstream";
   saga = new M{};
   saga->init(ZuMv(providerAdd));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ProviderAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -3016,7 +3015,7 @@ static void enrollmentSaga()
     ZmRef<M> saved = new M{};
     saved->init(ZuMv(change));
     Zdb_::SagaPayload bytes;
-    M::save(saved, bytes);
+    ZuCheck(M::save(saved, bytes) == ZiFB::Error::OK);
     auto restored = M::load(Zum::RoleAdd::Type{}(), bytes);
     ZuCheck(bool(restored));
     ZuCheck(restored->u.cdispatch([](auto I, const auto &value) {
@@ -3053,7 +3052,7 @@ static void enrollmentSaga()
   invitation.grant.userID = 49;
   saga = new M{};
   saga->init(ZuMv(invitation));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::UserInvite::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -3093,7 +3092,7 @@ static void enrollmentSaga()
   clientAdd.values.grants = Zum::ClientGrant::AuthCode();
   saga = new M{};
   saga->init(ZuMv(clientAdd));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ClientAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -3153,7 +3152,7 @@ static void enrollmentSaga()
   keyAdd.before.version = 0;
   saga = new M{};
   saga->init(ZuMv(keyAdd));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::KeyAdd::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -3186,7 +3185,7 @@ static void enrollmentSaga()
   ZuCheck(revoke.count() == 1);
   saga = new M{};
   saga->init(ZuMv(revoke));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::Revoke::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -3206,7 +3205,7 @@ static void enrollmentSaga()
   cleanup.grants.push(Zum::grantDelete(grant));
   saga = new M{};
   saga->init(ZuMv(cleanup));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::GrantCleanup::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {
@@ -3226,7 +3225,7 @@ static void enrollmentSaga()
     .idleDeadline = 146, .absoluteDeadline = 148, .version = 3});
   saga = new M{};
   saga->init(ZuMv(sessionCleanup));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::SessionCleanup::Type{}(), payload);
   ZuCheck(loaded && loaded->u.cdispatch([](auto I, const auto &change) {
     if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::SessionCleanup>{})
@@ -3242,7 +3241,7 @@ static void enrollmentSaga()
     .expires = 146, .state = Zum::State::Active, .version = 4});
   saga = new M{};
   saga->init(ZuMv(refreshCleanup));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::RefreshCleanup::Type{}(), payload);
   ZuCheck(loaded && loaded->u.cdispatch([](auto I, const auto &change) {
     if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::RefreshCleanup>{})
@@ -3261,7 +3260,7 @@ static void enrollmentSaga()
     .state = Zum::State::Active, .version = 6, .updated = 145});
   saga = new M{};
   saga->init(ZuMv(appCleanup));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::AppCleanup::Type{}(), payload);
   ZuCheck(loaded && loaded->u.cdispatch([](auto I, const auto &change) {
     if constexpr (ZuIsSame<typename M::Union::template Type<I>, Zum::AppCleanup>{})
@@ -3292,7 +3291,7 @@ static void enrollmentSaga()
     mergedConsent.state == Zum::State::Active && mergedConsent.created == 148));
   saga = new M{};
   saga->init(ZuMv(consentCode));
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   loaded = M::load(Zum::ConsentCode::Type{}(), payload);
   ZuCheck(bool(loaded));
   ZuCheck(loaded->u.cdispatch([](auto I, const auto &change) {

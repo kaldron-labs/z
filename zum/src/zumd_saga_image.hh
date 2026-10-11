@@ -15,30 +15,29 @@
 
 #include <zlib/ZumTypes.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
 namespace Zum {
 
 struct SagaImage {
+  using Buf = ZiIOBufAlloc<ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    "Zum.Saga.Image">;
+
   template <typename T>
   static Bytes save(const T &item)
   {
-    // The builder is bounded by the caller's maintenance batch limit; use
-    // the dedicated saga-image heap for the retained copy.
-    Zfb::IOBuilder fbb{new ZiIOBufAlloc<ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zum.Saga.Image">{}};
-    fbb.Finish(ZfbStruct::save(fbb, item));
-    return Bytes{ZuBSpan{fbb.GetBufferPointer(), fbb.GetSize()}};
+    ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new Buf{}};
+    fbb.finish(ZiFB::saveObject(fbb, item));
+    return Bytes{fbb.span()};
   }
 
   template <typename T>
   static bool load(ZuBSpan bytes, T &item)
   {
-    auto fbo = ZfbStruct::verify<T>(bytes);
-    if (!fbo) return false;
-    item = ZfbStruct::ctor<T>(fbo);
+    if (!ZiFB::verify<T>(bytes)) return false;
+    item = ZiFB::load<T>(bytes);
     return true;
   }
 };

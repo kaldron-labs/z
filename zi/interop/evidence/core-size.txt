@@ -1,0 +1,20 @@
+   text	   data	    bss	    dec	    hex	filename
+ 373694	      8	      1	 373703	  5b3c7	zf/src/.libs/ZfFB.o
+  35077	      8	      0	  35085	   890d	zf/src/.libs/ZfFBReflect.o
+    762	      0	      0	    762	    2fa	zi/src/.libs/ZiFB.o
+Current Clang debug objects; size reports code/read-only data together as text.
+This is a footprint, not a release-size estimate or a baseline delta.
+
+Largest symbols in ZfFB.o (ordinary metadata matchers dominate):
+0000000000000000 0000000000001b14 W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_RPCCall_Core, true, 5u>::match(ZuSpan<char const>)
+0000000000000000 0000000000001bb1 W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_EnumVal_Core, true, 5u>::match(ZuSpan<char const>)
+0000000000000000 0000000000001ec2 W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_Service_Core, true, 5u>::match(ZuSpan<char const>)
+0000000000000000 00000000000029cc W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_Schema_Core, true, 8u>::match(ZuSpan<char const>)
+0000000000000000 0000000000002c40 W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_Enum_Core, true, 7u>::match(ZuSpan<char const>)
+0000000000000000 0000000000002e17 W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_Object_Core, true, 8u>::match(ZuSpan<char const>)
+0000000000000000 0000000000003a5b W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::ZfFields_Field_Core, true, 14u>::match(ZuSpan<char const>)
+0000000000000000 0000000000003a5b W Zu_::AhoCorasick::Matcher<ZfFB::Reflect::BaseType::Map_, true, 20u>::match(ZuSpan<char const>)
+e22976c2c3e38390cf3383140964d22003d48df85fa75c651a76c0e6b38bd0c5  zf/src/ZfFB.cc
+597d6b5362fb3034f3d59de9461a8898ee50803d6ef24b84ead4a303d718673a  zf/src/ZfFBReflect.cc
+e90b12e2c8ca0683de71bf0f6b949261845bf8bf49e641788c01a422eaabf02a  zf/src/ZfFBWire.hh
+4016a09bde3b2e19d59a0b64ab340381d5fc72054edd91409c187e0bbb78878f  zf/src/ZfFBView.hh

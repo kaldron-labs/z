@@ -1,0 +1,214 @@
+Representative release BFBS emitter
+
+Rechecked after scheduler-dependent recompilation on 2026-10-08:
+the complete representative function disassembly below is byte-for-byte
+identical as objdump text, and both source hashes remain unchanged.
+The rebuilt whole executable SHA-256 is
+7c8f1b958a62519c0097ba0789da20baf79c41219d0bfef4a7961fd847b9085a.
+The original executable hash is retained below as historical provenance.
+This recheck preserves the representative-function scope of the review.
+
+Command: objdump -d -C zf/test/.libs/ZfFBSchemaTest
+Configuration: Clang 23, -march=x86-64-v2 -O3 -g -DNDEBUG
+Fixture: recursive Root/Child schema with Required, Skip and scalar defaults.
+
+Inspection:
+- Schema root offset (0x20), BFBS identifier, object count and enum count
+  are literal stores; child emission uses statically selected direct calls.
+- Conditional jumps in this function inspect ZtString destination capacity,
+  ownership/storage tags, or the stack canary. Growth branches call the
+  destination's grow_/size methods. These are streaming/security mechanics
+  exempt under Q2, not runtime metadata decisions.
+- This is one representative root emitter, not a claim that every transitive
+  stream/allocator helper or every application instantiation is branch-free.
+- Source inspection of SchemaOut emitters resolves graph/layout/field choices
+  with consteval, if constexpr and ZuUnroll. The zero helper's runtime loop
+  streams padding bytes. Table/catalog constructors retain generated BFBS
+  directly; they neither persist it nor verify it before native consumption.
+
+SHA-256:
+feb9a8577e436a8e1294ad53d051df3b5169bf6d920cd68b89993c5dfa25c76d  zf/src/ZfFBReflect.hh
+0e26537f4de46e00904cf01a0e1d0aa16605a1a80aab4308ea3f8b690812a408  zf/test/ZfFBSchemaTest.cc
+8d68de8a79d84b0803561d362f97cf3e531b16a5908a062dc98b83b80531c367  zf/test/.libs/ZfFBSchemaTest
+
+0000000000006430 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)>:
+    6430:	55                   	push   %rbp
+    6431:	41 57                	push   %r15
+    6433:	41 56                	push   %r14
+    6435:	41 55                	push   %r13
+    6437:	41 54                	push   %r12
+    6439:	53                   	push   %rbx
+    643a:	48 83 ec 18          	sub    $0x18,%rsp
+    643e:	48 89 fb             	mov    %rdi,%rbx
+    6441:	64 48 8b 04 25 28 00 	mov    %fs:0x28,%rax
+    6448:	00 00 
+    644a:	48 89 44 24 10       	mov    %rax,0x10(%rsp)
+    644f:	49 be ff ff ff ff ff 	movabs $0x3fffffffffffffff,%r14
+    6456:	ff ff 3f 
+    6459:	4c 8b 3f             	mov    (%rdi),%r15
+    645c:	49 8b 47 10          	mov    0x10(%r15),%rax
+    6460:	49 8b 4f 18          	mov    0x18(%r15),%rcx
+    6464:	48 89 cd             	mov    %rcx,%rbp
+    6467:	4c 21 f5             	and    %r14,%rbp
+    646a:	48 8d 75 05          	lea    0x5(%rbp),%rsi
+    646e:	48 89 c7             	mov    %rax,%rdi
+    6471:	4c 21 f7             	and    %r14,%rdi
+    6474:	4d 8d 6e 01          	lea    0x1(%r14),%r13
+    6478:	4c 85 e8             	test   %r13,%rax
+    647b:	0f 84 e2 01 00 00    	je     6663 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x233>
+    6481:	48 39 fe             	cmp    %rdi,%rsi
+    6484:	0f 87 d9 01 00 00    	ja     6663 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x233>
+    648a:	4c 89 f8             	mov    %r15,%rax
+    648d:	48 85 c9             	test   %rcx,%rcx
+    6490:	78 03                	js     6495 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x65>
+    6492:	49 8b 07             	mov    (%r15),%rax
+    6495:	c7 04 28 20 00 00 00 	movl   $0x20,(%rax,%rbp,1)
+    649c:	41 80 67 17 7f       	andb   $0x7f,0x17(%r15)
+    64a1:	49 bc 00 00 00 00 00 	movabs $0xc000000000000000,%r12
+    64a8:	00 00 c0 
+    64ab:	48 8d 45 04          	lea    0x4(%rbp),%rax
+    64af:	49 8b 4f 18          	mov    0x18(%r15),%rcx
+    64b3:	48 89 ca             	mov    %rcx,%rdx
+    64b6:	4c 21 e2             	and    %r12,%rdx
+    64b9:	48 09 c2             	or     %rax,%rdx
+    64bc:	49 89 57 18          	mov    %rdx,0x18(%r15)
+    64c0:	48 85 c9             	test   %rcx,%rcx
+    64c3:	78 03                	js     64c8 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x98>
+    64c5:	4d 8b 3f             	mov    (%r15),%r15
+    64c8:	41 c6 44 2f 04 00    	movb   $0x0,0x4(%r15,%rbp,1)
+    64ce:	4c 8b 3b             	mov    (%rbx),%r15
+    64d1:	49 8b 47 10          	mov    0x10(%r15),%rax
+    64d5:	49 8b 4f 18          	mov    0x18(%r15),%rcx
+    64d9:	48 89 cd             	mov    %rcx,%rbp
+    64dc:	4c 21 f5             	and    %r14,%rbp
+    64df:	48 8d 55 04          	lea    0x4(%rbp),%rdx
+    64e3:	48 8d 75 05          	lea    0x5(%rbp),%rsi
+    64e7:	48 89 c7             	mov    %rax,%rdi
+    64ea:	4c 21 f7             	and    %r14,%rdi
+    64ed:	4c 85 e8             	test   %r13,%rax
+    64f0:	0f 84 82 01 00 00    	je     6678 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x248>
+    64f6:	48 39 fe             	cmp    %rdi,%rsi
+    64f9:	0f 87 79 01 00 00    	ja     6678 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x248>
+    64ff:	4c 89 f8             	mov    %r15,%rax
+    6502:	48 85 c9             	test   %rcx,%rcx
+    6505:	78 03                	js     650a <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0xda>
+    6507:	49 8b 07             	mov    (%r15),%rax
+    650a:	c7 04 28 42 46 42 53 	movl   $0x53424642,(%rax,%rbp,1)
+    6511:	48 b8 ff ff ff ff ff 	movabs $0x7fffffffffffffff,%rax
+    6518:	ff ff 7f 
+    651b:	49 21 47 10          	and    %rax,0x10(%r15)
+    651f:	49 8b 47 18          	mov    0x18(%r15),%rax
+    6523:	48 89 c1             	mov    %rax,%rcx
+    6526:	4c 21 e1             	and    %r12,%rcx
+    6529:	48 09 d1             	or     %rdx,%rcx
+    652c:	49 89 4f 18          	mov    %rcx,0x18(%r15)
+    6530:	48 85 c0             	test   %rax,%rax
+    6533:	78 03                	js     6538 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x108>
+    6535:	4d 8b 3f             	mov    (%r15),%r15
+    6538:	41 c6 44 2f 04 00    	movb   $0x0,0x4(%r15,%rbp,1)
+    653e:	48 8d 74 24 08       	lea    0x8(%rsp),%rsi
+    6543:	48 89 df             	mov    %rbx,%rdi
+    6546:	e8 85 01 00 00       	call   66d0 <void ZfFB::SchemaOut::Table<ZfFB::Reflect::Schema, ZfField_UDT<ZfFB::Reflect::ZuField_Schema_objects, false>, ZfField_UDT<ZfFB::Reflect::ZuField_Schema_enums, false>, ZfField_UDT<ZfFB::Reflect::ZuField_Schema_rootTable, false>, ZfField_UInt64<ZfFB::Reflect::ZuField_Schema_advancedFeatures, false> >::emit<Stream, ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)::{lambda<typename $T0>()#1}>(Stream&, ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)::{lambda<typename $T0>()#1}&&)>
+    654b:	4c 8b 3b             	mov    (%rbx),%r15
+    654e:	49 8b 47 10          	mov    0x10(%r15),%rax
+    6552:	49 8b 4f 18          	mov    0x18(%r15),%rcx
+    6556:	48 89 cd             	mov    %rcx,%rbp
+    6559:	4c 21 f5             	and    %r14,%rbp
+    655c:	48 8d 75 05          	lea    0x5(%rbp),%rsi
+    6560:	48 89 c7             	mov    %rax,%rdi
+    6563:	4c 21 f7             	and    %r14,%rdi
+    6566:	4c 85 e8             	test   %r13,%rax
+    6569:	0f 84 22 01 00 00    	je     6691 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x261>
+    656f:	48 39 fe             	cmp    %rdi,%rsi
+    6572:	0f 87 19 01 00 00    	ja     6691 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x261>
+    6578:	4c 89 f8             	mov    %r15,%rax
+    657b:	48 85 c9             	test   %rcx,%rcx
+    657e:	78 03                	js     6583 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x153>
+    6580:	49 8b 07             	mov    (%r15),%rax
+    6583:	c7 04 28 02 00 00 00 	movl   $0x2,(%rax,%rbp,1)
+    658a:	48 b8 ff ff ff ff ff 	movabs $0x7fffffffffffffff,%rax
+    6591:	ff ff 7f 
+    6594:	49 21 47 10          	and    %rax,0x10(%r15)
+    6598:	48 8d 45 04          	lea    0x4(%rbp),%rax
+    659c:	49 8b 4f 18          	mov    0x18(%r15),%rcx
+    65a0:	48 89 ca             	mov    %rcx,%rdx
+    65a3:	4c 21 e2             	and    %r12,%rdx
+    65a6:	48 09 c2             	or     %rax,%rdx
+    65a9:	49 89 57 18          	mov    %rdx,0x18(%r15)
+    65ad:	48 85 c9             	test   %rcx,%rcx
+    65b0:	78 03                	js     65b5 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x185>
+    65b2:	4d 8b 3f             	mov    (%r15),%r15
+    65b5:	41 c6 44 2f 04 00    	movb   $0x0,0x4(%r15,%rbp,1)
+    65bb:	48 89 5c 24 08       	mov    %rbx,0x8(%rsp)
+    65c0:	48 8d 7c 24 08       	lea    0x8(%rsp),%rdi
+    65c5:	e8 c6 03 00 00       	call   6990 <decltype(auto) ZuUnroll::all<ZuTypeList<Child, Root>, ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)::{lambda<typename $T0>()#2}>(ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)::{lambda<typename $T0>()#2}&&)>
+    65ca:	4c 8b 3b             	mov    (%rbx),%r15
+    65cd:	49 8b 47 10          	mov    0x10(%r15),%rax
+    65d1:	49 8b 4f 18          	mov    0x18(%r15),%rcx
+    65d5:	48 89 cd             	mov    %rcx,%rbp
+    65d8:	4c 21 f5             	and    %r14,%rbp
+    65db:	48 8d 75 05          	lea    0x5(%rbp),%rsi
+    65df:	49 21 c6             	and    %rax,%r14
+    65e2:	4c 85 e8             	test   %r13,%rax
+    65e5:	0f 84 bb 00 00 00    	je     66a6 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x276>
+    65eb:	4c 39 f6             	cmp    %r14,%rsi
+    65ee:	0f 87 b2 00 00 00    	ja     66a6 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x276>
+    65f4:	4c 89 f8             	mov    %r15,%rax
+    65f7:	48 85 c9             	test   %rcx,%rcx
+    65fa:	78 03                	js     65ff <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x1cf>
+    65fc:	49 8b 07             	mov    (%r15),%rax
+    65ff:	48 8d 4d 04          	lea    0x4(%rbp),%rcx
+    6603:	c7 04 28 00 00 00 00 	movl   $0x0,(%rax,%rbp,1)
+    660a:	48 b8 ff ff ff ff ff 	movabs $0x7fffffffffffffff,%rax
+    6611:	ff ff 7f 
+    6614:	49 21 47 10          	and    %rax,0x10(%r15)
+    6618:	49 8b 47 18          	mov    0x18(%r15),%rax
+    661c:	49 21 c4             	and    %rax,%r12
+    661f:	49 09 cc             	or     %rcx,%r12
+    6622:	4d 89 67 18          	mov    %r12,0x18(%r15)
+    6626:	48 85 c0             	test   %rax,%rax
+    6629:	78 03                	js     662e <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x1fe>
+    662b:	4d 8b 3f             	mov    (%r15),%r15
+    662e:	41 c6 44 2f 04 00    	movb   $0x0,0x4(%r15,%rbp,1)
+    6634:	48 89 df             	mov    %rbx,%rdi
+    6637:	e8 f4 0c 00 00       	call   7330 <void ZfFB::SchemaOut::ObjectNode<Child, ZfFB::SchemaOut::Graph<Root, ZuFacet::Core> >::emit<Stream>(Stream&)>
+    663c:	48 89 df             	mov    %rbx,%rdi
+    663f:	e8 5c 56 00 00       	call   bca0 <void ZfFB::SchemaOut::ObjectNode<Root, ZfFB::SchemaOut::Graph<Root, ZuFacet::Core> >::emit<Stream>(Stream&)>
+    6644:	64 48 8b 04 25 28 00 	mov    %fs:0x28,%rax
+    664b:	00 00 
+    664d:	48 3b 44 24 10       	cmp    0x10(%rsp),%rax
+    6652:	75 6a                	jne    66be <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x28e>
+    6654:	48 83 c4 18          	add    $0x18,%rsp
+    6658:	5b                   	pop    %rbx
+    6659:	41 5c                	pop    %r12
+    665b:	41 5d                	pop    %r13
+    665d:	41 5e                	pop    %r14
+    665f:	41 5f                	pop    %r15
+    6661:	5d                   	pop    %rbp
+    6662:	c3                   	ret
+    6663:	e8 58 05 00 00       	call   6bc0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::grow_(unsigned long, unsigned long)>
+    6668:	4c 89 ff             	mov    %r15,%rdi
+    666b:	48 89 c6             	mov    %rax,%rsi
+    666e:	e8 5d 04 00 00       	call   6ad0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::size(unsigned long)>
+    6673:	e9 1d fe ff ff       	jmp    6495 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x65>
+    6678:	e8 43 05 00 00       	call   6bc0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::grow_(unsigned long, unsigned long)>
+    667d:	4c 89 ff             	mov    %r15,%rdi
+    6680:	48 89 c6             	mov    %rax,%rsi
+    6683:	e8 48 04 00 00       	call   6ad0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::size(unsigned long)>
+    6688:	48 8d 55 04          	lea    0x4(%rbp),%rdx
+    668c:	e9 79 fe ff ff       	jmp    650a <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0xda>
+    6691:	e8 2a 05 00 00       	call   6bc0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::grow_(unsigned long, unsigned long)>
+    6696:	4c 89 ff             	mov    %r15,%rdi
+    6699:	48 89 c6             	mov    %rax,%rsi
+    669c:	e8 2f 04 00 00       	call   6ad0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::size(unsigned long)>
+    66a1:	e9 dd fe ff ff       	jmp    6583 <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x153>
+    66a6:	4c 89 f7             	mov    %r14,%rdi
+    66a9:	e8 12 05 00 00       	call   6bc0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::grow_(unsigned long, unsigned long)>
+    66ae:	4c 89 ff             	mov    %r15,%rdi
+    66b1:	48 89 c6             	mov    %rax,%rsi
+    66b4:	e8 17 04 00 00       	call   6ad0 <Zt_::String<char, ZtStringHeapID_<ZuConstant<ZuString<20u>, ZuString<20u>{char [20]{(char)90, (char)102, (char)70, (char)66, (char)83, (char)99, (char)104, (char)101, (char)109, (char)97, (char)84, (char)101, (char)115, (char)116, (char)46, (char)84, (char)101, (char)120, (char)116}}>, ZtString_Defaults> >::size(unsigned long)>
+    66b9:	e9 41 ff ff ff       	jmp    65ff <void ZfFB::SchemaOut::Schema<Root, ZuFacet::Core>::emit<Stream>(Stream&)+0x1cf>
+    66be:	e8 8d ca ff ff       	call   3150 <__stack_chk_fail@plt>
+    66c3:	66 2e 0f 1f 84 00 00 	cs nopw 0x0(%rax,%rax,1)
+    66ca:	00 00 00 
+    66cd:	0f 1f 00             	nopl   (%rax)

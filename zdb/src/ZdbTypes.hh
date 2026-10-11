@@ -16,10 +16,14 @@
 #include <zlib/ZuInt.hh>
 #include <zlib/ZuCmp.hh>
 
+#include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
 namespace Zdb_ {
+
+// Owned binary reflection schema; views borrow this storage until store close.
+ZuDerive(SchemaBuf, (ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Schema">>));
 
 // shard
 using Shard = uint8_t;

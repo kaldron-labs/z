@@ -461,7 +461,7 @@ struct StructModel {
   template <typename Field>
   using Map = typename Field::template Adapt<Adapter>;
   template <typename Facet>
-  using Fields = ZuTypeMap<Map, ZuFields<Shape, Facet>>;
+  using Fields = ZuTypeMap<Map, ZuActiveFields<Shape, Facet>>;
 };
 
 template <typename S, typename Params>

@@ -383,10 +383,7 @@ RawHTTPCxn::RawHTTPCxn(
 
 void RawHTTPCxn::connected(ZiIOContext &io)
 {
-  if (!m_rxBuf->alloc(ZiIOBuf_DefltSize)) {
-    io.disconnect();
-    return;
-  }
+  m_rxBuf->alloc(ZiIOBuf_DefltSize);
   io.init(
     ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}},
     m_rxBuf->data(), m_rxBuf->size, 0);

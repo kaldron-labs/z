@@ -17,7 +17,7 @@ static ZdbPQ::XFields fields(unsigned n)
   for (unsigned i = 0; i < n; i++) {
     ZdbPQ::IDString id;
     id << char('a' + i);
-    fields.push(ZdbPQ::XField{ZuMv(id), nullptr, nullptr, 0});
+    fields.push(ZdbPQ::XField{ZuMv(id), nullptr, {}, 0});
   }
   return fields;
 }

@@ -775,8 +775,6 @@ static ZuUnion<void, ZeException> appendSshRSA_(
   unsigned n = keySize;
   unsigned b64len = ZuBase64::enclen<false>(n);
   auto scratch = ZmScratch(uint8_t, n + b64len, AgeScratchHeap);
-  if (!scratch.data())
-    return ZeEXCEPT(Error, "ZtlsAge", "SSH RSA allocation failed");
   auto wrapped = scratch.data();
   auto encoded = wrapped + n;
   auto r = key.oaepEncrypt(fileKey, SshRSALabel,
@@ -870,8 +868,6 @@ ZuUnion<void, ZeException> Age::encrypt(
   if (!rng.random(fileKey))
     return ZeEXCEPT(Error, "ZtlsAge", "file key generation failed");
   auto header = ZtScratch(AgeHeaderScratch, HeaderStackSize);
-  if (!header.data())
-    return ZeEXCEPT(Error, "ZtlsAge", "header allocation failed");
   header << Version;
   try {
     for (unsigned i = 0; i < n; ++i) {
@@ -1027,7 +1023,6 @@ static bool parseSshRSA_(
       bodyChars != ZuBase64::enclen<false>(keySize)) return false;
   unsigned n = keySize;
   auto scratch = ZmScratch(uint8_t, bodyChars + n, AgeScratchHeap);
-  if (!scratch.data()) return false;
   auto encoded = scratch.data();
   auto recovered = encoded + bodyChars;
   ZuGuard clear{[recovered, n]() { ZuClear(recovered, n); }};
@@ -1114,12 +1109,8 @@ ZuUnion<size_t, ZeException> Age::decrypt(
   if (!identities)
     return ZeEXCEPT(Error, "ZtlsAge", "no identities");
   auto readBuffer = ZmScratch(uint8_t, ReadBufferSize, AgeScratchHeap);
-  if (!readBuffer.data())
-    return ZeEXCEPT(Error, "ZtlsAge", "reader allocation failed");
   AgeReader reader{file, {readBuffer.data(), ReadBufferSize}};
   auto header = ZtScratch(AgeHeaderScratch, HeaderStackSize);
-  if (!header.data())
-    return ZeEXCEPT(Error, "ZtlsAge", "header allocation failed");
   size_t macStart = 0;
   for (;;) {
     size_t start = header.length();

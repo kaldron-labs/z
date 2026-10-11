@@ -1,0 +1,19 @@
+Temporary breakpoint 1 at 0x5721: file zifbiobench.cc, line 572.
+warning: the debug information found in "/usr/lib/debug/usr/lib/ld-linux-x86-64.so.2.debug" does not match "/lib64/ld-linux-x86-64.so.2" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+
+Temporary breakpoint 1, main (argc=4, argv=0x7fffffffdb08) at zifbiobench.cc:572
+572	  if (argc != 4 && argc != 5) {
+# fixed_pool=4
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,64,3,312,1040,0.000002305,6
+native,reuse,64,3,312,1040,0.000002375,6
+canonical,fresh,64,3,312,1040,0.001945507,6
+native,fresh,64,3,312,1040,0.001955075,6
+[Inferior 1 (process 1309108) exited normally]
+allocation counters: {"canonical/fresh": {"capacity_extensions": 0, "empty_extensions": 0, "growth_copy_bytes": 0, "growth_copy_calls": 0, "pool_empty_requests": 0, "pool_requests": 4, "variable_bytes": 0, "variable_requests": 0, "variable_sizes": {}}, "canonical/reuse": {"capacity_extensions": 0, "empty_extensions": 0, "growth_copy_bytes": 0, "growth_copy_calls": 0, "pool_empty_requests": 0, "pool_requests": 1, "variable_bytes": 0, "variable_requests": 0, "variable_sizes": {}}, "native/fresh": {"capacity_extensions": 0, "empty_extensions": 0, "growth_copy_bytes": 0, "growth_copy_calls": 0, "pool_empty_requests": 0, "pool_requests": 4, "variable_bytes": 0, "variable_requests": 0, "variable_sizes": {}}, "native/reuse": {"capacity_extensions": 0, "empty_extensions": 0, "growth_copy_bytes": 0, "growth_copy_calls": 0, "pool_empty_requests": 0, "pool_requests": 1, "variable_bytes": 0, "variable_requests": 0, "variable_sizes": {}}}

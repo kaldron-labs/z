@@ -20,6 +20,30 @@
 
 using namespace ZuTestUtil;
 
+struct FieldBase { int value; };
+ZfStruct(, FieldBase, (value,, Int32));
+ZfStructImpl(FieldBase);
+struct FieldDerived : public FieldBase { };
+struct FieldShim : public ZuStructShim<FieldShim, FieldBase> {
+  int value() const { return 0; }
+};
+struct Plain { int value; };
+ZuStruct(Plain, (value));
+
+namespace FieldLookup {
+struct Untagged { };
+struct Tagged {
+  friend ZuFields<FieldBase> ZuFields_(Tagged *, ZuFacet::Core *);
+};
+struct Derived : public Tagged { };
+}
+
+ZuAssert((ZuIsSame<ZuFields<FieldBase>, ZfFields_FieldBase>{}));
+ZuAssert((ZuIsSame<ZuFields<FieldDerived>, ZuFields<FieldBase>>{}));
+ZuAssert((ZuIsSame<ZuFields<FieldLookup::Untagged>, ZuTypeList<>>{}));
+ZuAssert((ZuIsSame<ZuFields<FieldLookup::Tagged>, ZuFields<FieldBase>>{}));
+ZuAssert((ZuIsSame<ZuFields<FieldLookup::Derived>, ZuFields<FieldBase>>{}));
+
 struct Empty { };
 ZfStruct(, Empty);
 ZfStructImpl(Empty);
@@ -460,6 +484,14 @@ int main(int argc, char **argv)
   ZuCheck((ZfVFieldMatcher<Foo, ZuFacet::Bah>()("int_") ==
       ZuTypeIndex<ZfField(Foo_Bah, int_), ZuFields<Foo, ZuFacet::Bah>>{}));
   ZuCheck(ZfVFieldMatcher<Empty>()("unknown") < 0);
+  ZuCheck(ZfVFieldMatcher<FieldBase>()("value") == 0);
+  ZuCheck(ZfVFieldMatcher<FieldDerived>() == ZfVFieldMatcher<FieldBase>());
+  ZuCheck(ZfVFieldMatcher<FieldShim>()("value") == 0);
+  ZuCheck(ZfVFieldMatcher<Plain>()("value") == 0);
+  ZuCheck(ZfVFieldMatcher<Plain>()("unknown") < 0);
+  ZuCheck(ZfVFieldMatcher<FieldLookup::Untagged>()("value") < 0);
+  ZuCheck((ZfVFieldMatcher<FieldBase, ZuFacet::Bah>()("value") < 0));
+  ZuCheck(ZfVFields<FieldShim>().length() == 1);
 
   {
     auto intField = fields[ZfFieldIndex(Foo, int_)];

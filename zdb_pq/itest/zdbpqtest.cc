@@ -6,6 +6,8 @@
 
 #include <zlib/ZuLib.hh>
 #include <zlib/ZuTestUtil.hh>
+#include <libpq-fe.h>
+#include <string.h>
 
 #include <zlib/ZmTrap.hh>
 
@@ -24,6 +26,7 @@
 #include <zlib/Zdb.hh>
 
 #include "ZdbTest.hh"
+#include "ZdbRepairTest.hh"
 
 using namespace zdbtest;
 using namespace ZuTestUtil;
@@ -76,6 +79,100 @@ ZmRef<ZdbTable<Order>> payments;
 ZuPtr<ZiMultiplex> mx;
 
 ZmSemaphore done;
+
+struct DiagOne { int64_t a; };
+ZfStruct(, DiagOne, (a, (Ctor<0>, Keys<0>), Int64));
+ZiFB::Table<"test.DiagOne"> ZiFBType(DiagOne *);
+struct DiagTwo { int64_t a; int64_t b; };
+ZfStruct(, DiagTwo,
+  (a, (Ctor<0>, Keys<0>), Int64),
+  (b, (Ctor<1>), Int64));
+ZiFB::Table<"test.DiagTwo"> ZiFBType(DiagTwo *);
+
+template <typename T>
+static void mismatch(
+  PGconn *conn, ZuCSpan id, ZuCSpan columns, const char *expected)
+{
+  ZuTestScope(mismatch);
+  using namespace Zdb_;
+  auto exec = [conn](const ZtString<> &sql) {
+    auto result = PQexec(conn, sql.data());
+    bool ok = result && PQresultStatus(result) == PGRES_COMMAND_OK;
+    if (!ok) log(PQerrorMessage(conn));
+    if (result) PQclear(result);
+    ZuCHECK(ok, "diagnostic fixture DDL");
+    return ok;
+  };
+  ZtString<> sql;
+  sql << "DROP TABLE IF EXISTS public.\"" << id << '"';
+  if (!exec(sql)) return;
+  sql.null();
+  sql << "CREATE TABLE public.\"" << id << "\" (" << columns << ')';
+  if (!exec(sql)) return;
+  SchemaBuf bytes(ZiFB::SchemaOut::Schema<T>::Size);
+  ZiFB::saveSchema<T>(bytes);
+  auto schema = Schema::from<T>(bytes);
+  auto result = ZmBlock<OpenResult>{}([id, schema](auto wake) {
+    db->store()->open(false, IDString{id}, ZfVFields<T>(), ZfVKeyFields<T>(),
+      schema, Table<T>::allocBuf, ZuMv(wake));
+  });
+  ZuCHECK(result.template is<Event>(), "OID mismatch completes open with error");
+  if (result.template is<Event>()) {
+    ZtString<> text;
+    text << result.template p<Event>();
+    ZuCHECK(strstr(text.data(), expected), "diagnostic identifies failing field or missing-column count");
+    if (!strstr(expected, "field["))
+      ZuCHECK(!strstr(text.data(), "field["), "general diagnostic has no invented field index");
+  } else if (result.template is<OpenData>()) {
+    auto table = result.template p<OpenData>().storeTbl;
+    ZmBlock<>{}([table](auto wake) { table->close(ZuMv(wake)); });
+  }
+  sql.null();
+  sql << "DROP TABLE public.\"" << id << '"';
+  exec(sql);
+}
+
+static void repairColumns(const char *connect)
+{
+  ZuTestScopeRT(repairColumns);
+  auto conn = PQconnectdb(connect);
+  bool ok = conn && PQstatus(conn) == CONNECTION_OK;
+  ZuCHECK(ok, "conversion fixture connection");
+  if (!ok) { if (conn) PQfinish(conn); return; }
+  // Reset this fixture's durable stream position before starting at UN zero.
+  auto result = PQexec(conn,
+    "DROP TABLE IF EXISTS public.repair; DELETE FROM zdb.mrd WHERE tbl='arepair'");
+  ok = result && PQresultStatus(result) == PGRES_COMMAND_OK;
+  if (!ok) log(PQerrorMessage(conn));
+  if (result) PQclear(result);
+  PQfinish(conn);
+  ZuCHECK(ok, "conversion fixture reset");
+  if (ok) ZuTestCallRT(zdbtest::repairBindings, db->store());
+}
+
+static void schemaMismatch(const char *connect)
+{
+  ZuTestScope(schemaMismatch);
+  auto conn = PQconnectdb(connect);
+  bool ok = conn && PQstatus(conn) == CONNECTION_OK;
+  ZuCHECK(ok, "diagnostic fixture connection");
+  if (!ok) { if (conn) PQfinish(conn); return; }
+  const char *reserved = "\"_shard\" uint1, \"_un\" uint8, \"_sn\" uint16, \"_vn\" int8, ";
+  ZtString<> columns;
+  columns << reserved << "a int4";
+  mismatch<DiagOne>(conn, "repair_diag_one", columns, "field[0]={id=a");
+  // Physical/catalog order differs from metadata; both names are counted before a fails.
+  columns.null(); columns << reserved << "b int8, a int4";
+  mismatch<DiagTwo>(conn, "repair_diag_shuffled", columns, "field[0]={id=a");
+  columns.null(); columns << reserved << "a int8, b int4";
+  mismatch<DiagTwo>(conn, "repair_diag_last", columns, "field[1]={id=b");
+  columns.null(); columns << reserved << "a int8";
+  mismatch<DiagTwo>(conn, "repair_diag_missing", columns, "matched=1 nFields=2");
+  mismatch<DiagOne>(conn, "repair_diag_reserved",
+    "\"_shard\" int4, \"_un\" uint8, \"_sn\" uint16, \"_vn\" int8, a int8",
+    "failed=1 matched=0 nFields=1");
+  PQfinish(conn);
+}
 
 void sigint()
 {
@@ -422,7 +519,9 @@ int main(int argc_, char **argv)
     });
     ZuCHECK(active, "DB remains active after repeated inserts");
 
+    ZuTestCall(repairColumns, options.connect.data());
     ZuTestCall(cursors);
+    ZuTestCall(schemaMismatch, options.connect.data());
 
     db->stop(); // closes all tables
 

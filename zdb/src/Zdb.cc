@@ -383,7 +383,7 @@ void DB::sagaResult(
     case OpResult::NotReady: {
       auto head = m_sagaQueue.headPtr();
       if (ZuUnlikely(m_sagaState != SagaState::Rebuilding ||
-	  !head || static_cast<SagaNode__ *>(head)->saga != saga)) {
+	  !head || static_cast<Saga *>(head) != saga)) {
 	sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga deferral"));
 	return;
       }
@@ -438,7 +438,7 @@ void DB::sagaEnd(Saga *saga)
     ZmAssert(m_sagaHash);
     if (m_sagaBlocked == saga) m_sagaBlocked = nullptr;
     auto listNode = m_sagaQueue.headPtr();
-    ZmAssert(listNode && static_cast<SagaNode__ *>(listNode)->saga == saga);
+    ZmAssert(listNode && static_cast<Saga *>(listNode) == saga);
     auto hashNode = static_cast<SagaHash::Node *>(listNode);
     m_sagaQueue.delNode(listNode);
     m_sagaHash->delNode(hashNode);
@@ -657,7 +657,7 @@ void DB::sagaReplay()
     sagaActivateDone();
     return;
   }
-  auto saga = static_cast<SagaNode__ *>(node)->saga;
+  ZmRef<Saga> saga = static_cast<Saga *>(node);
   if (saga->fwd() && *saga->deadline() && saga->deadline() <= Zm::now()) {
     unsigned step = saga->shards.length();
     while (step && saga->shards[step - 1] == Shard(-1)) --step;
@@ -865,22 +865,6 @@ void DB::stop_2()
       ZiLOG(Fatal, "Zdb", "data store stop failed");
     }
     run([this]() { drainShards(0, [this]() { stopped(true); }); });
-  });
-}
-
-void DB::drainShards(unsigned shard, DrainFn fn)
-{
-  ZmAssert(invoked());
-  if (shard == nShards()) {
-    fn();
-    return;
-  }
-  // Store close/stop has emitted all write callbacks. Drain their shard work
-  // before final() may release the table objects referenced by those callbacks.
-  shardRun(Shard(shard), [this, shard, fn = ZuMv(fn)]() mutable {
-    run([this, shard, fn = ZuMv(fn)]() mutable {
-      drainShards(shard + 1, ZuMv(fn));
-    });
   });
 }
 
@@ -1648,42 +1632,35 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
 {
   ZmAssert(invoked(shard));
 
-  // build from outbound replication buffer cache
+  // Copy the complete serialized message, preserving field presence, vtables
+  // and nested data. Only the replication/recovery discriminator changes.
   if (auto buf = findBufUN(shard, un)) {
-    auto record = record_(msg_(buf->hdr()));
-    auto repData = Zfb::Load::bytes(record->data());
-    Zfb::IOBuilder fbb{allocBuf()};
-    Zfb::Offset<Zfb::Vector<uint8_t>> data;
-    if (repData) {
-      uint8_t *ptr;
-      data = Zfb::Save::pvector_(fbb, repData.length(), ptr);
-      if (!data.IsNull() && ptr)
-	memcpy(ptr, repData.data(), repData.length());
-    }
-    ZmAssert(record->shard() == shard);
-    auto msg = fbs::CreateMsg(fbb, fbs::Body::Recovery,
-	fbs::CreateRecord(
-	  fbb, Zfb::Save::str(fbb, Zfb::Load::str(record->table())),
-	  record->un(), record->sn(), record->vn(), shard, data).Union());
-    fbb.Finish(msg);
-    return saveHdr(fbb, this);
+    ZmAssert(record_(msg_(buf->hdr())).get<Msg::ZfField(Record, shard)>() == shard);
+    auto copy = allocBuf();
+    // Both allocations have pooled base alignment. Preserve the source
+    // residue required by this row/envelope, including its nested roots.
+    copy->skip = buf->skip & (rowAlign() - 1);
+    if (!copy->append(buf->cspan())) return nullptr;
+    copy->owner = this;
+    auto message = msg_(copy->hdr());
+    constexpr unsigned tagID =
+      ZiFB::Meta<Msg::Root>::id<Msg::ZfField(Root, body)>() - 1;
+    auto tag = ZiFB::TableView{message.data()}.field(tagID);
+    ZiFB::write<uint8_t>(const_cast<uint8_t *>(tag), Msg::Tag::Recovery);
+    return copy;
   }
   // build from row cache (without falling through to reading from disk)
   if (auto row = findUN(shard, un))
-    return row->replicate(int(fbs::Body::Recovery));
+    return row->replicate(Msg::Tag::Recovery);
   return nullptr;
 }
 
 // send commit to replica
 void AnyTable::commitSend(Shard shard, UN un)
 {
-  Zfb::IOBuilder fbb{allocBuf()};
-  {
-    auto id = Zfb::Save::str(fbb, config().id);
-    auto msg = fbs::CreateMsg(
-      fbb, fbs::Body::Commit, fbs::CreateCommit(fbb, id, un, shard).Union());
-    fbb.Finish(msg);
-  }
+  ZiFB::IOBuilder<> fbb{allocBuf()};
+  auto commit = saveCommit(fbb, config().id, un, shard);
+  fbb.finish(saveMsg(fbb, commit, Msg::Tag::Commit));
   m_db->replicate(saveHdr(fbb, this));
 }
 
@@ -1695,19 +1672,14 @@ ZmRef<IOBuf> AnyRow::replicate(int type)
   ZdbDEBUG(m_table->db(), ZeString{}
     << "AnyRow::replicate(" << type << ')');
 
-  Zfb::IOBuilder fbb{m_table->allocBuf()};
-  auto data = Zfb::Save::nest(fbb, [this](Zfb::Builder &fbb) {
-    if (!m_vn) return m_table->rowSave(fbb, ptr_());
-    if (m_vn > 0) return m_table->rowSaveUpd(fbb, ptr_());
-    return m_table->rowSaveDel(fbb, ptr_());
-  });
-  {
-    auto id = Zfb::Save::str(fbb, m_table->config().id);
-    auto sn = ZfbTransform::UInt128::save(m_sn);
-    auto msg = fbs::CreateMsg(fbb, static_cast<fbs::Body>(type),
-      fbs::CreateRecord(fbb, id, m_un, &sn, m_vn, m_shard, data).Union());
-    fbb.Finish(msg);
-  }
+  Builder fbb{m_table->allocBuf(), m_table->rowAlign()};
+  auto nested = fbb.startNested();
+  auto root = !m_vn ? m_table->rowSave(fbb, ptr_()) :
+    m_vn > 0 ? m_table->rowSaveUpd(fbb, ptr_()) :
+      m_table->rowSaveDel(fbb, ptr_());
+  auto data = fbb.endNested(nested, root);
+  auto record = saveRecord(fbb, m_table->config().id, m_un, m_sn, m_vn, m_shard, data);
+  fbb.finish(saveMsg(fbb, record, type));
   return saveHdr(fbb, m_table);
 }
 
@@ -1746,11 +1718,11 @@ int Cxn_::msgRead2(ZmRef<IOBuf> buf)
 
     auto length = uint32_t(hdr->length);
 
-    switch (msg->body_type()) {
-      case fbs::Body::Heartbeat:
-      case fbs::Body::Replication:
-      case fbs::Body::Recovery:
-      case fbs::Body::Commit:
+    switch (msg.get<Msg::ZfField(Root, body)>().tag()) {
+      case Msg::Tag::Heartbeat:
+      case Msg::Tag::Replication:
+      case Msg::Tag::Recovery:
+      case Msg::Tag::Commit:
 	if (ZuLikely(buf->length))
 	  m_db->run([cxn = ZmRef(this), buf = ZuMv(buf)]() mutable {
 	    cxn->msgRead3(ZuMv(buf));
@@ -1775,17 +1747,16 @@ void Cxn_::msgRead3(ZmRef<IOBuf> buf)
 
   if (!up()) return;
 
-  auto msg = Zdb_::msg(buf->hdr());
-  if (!msg) return;
-  switch (msg->body_type()) {
-    case fbs::Body::Heartbeat:
+  auto msg = Zdb_::msg_(buf->hdr()); // verified before the DB-thread handoff
+  switch (msg.get<Msg::ZfField(Root, body)>().tag()) {
+    case Msg::Tag::Heartbeat:
       hbRcvd(hb(msg));
       break;
-    case fbs::Body::Replication:
-    case fbs::Body::Recovery:
+    case Msg::Tag::Replication:
+    case Msg::Tag::Recovery:
       repRecordRcvd(ZuMv(buf));
       break;
-    case fbs::Body::Commit:
+    case Msg::Tag::Commit:
       repCommitRcvd(ZuMv(buf));
       break;
     default:
@@ -1793,12 +1764,12 @@ void Cxn_::msgRead3(ZmRef<IOBuf> buf)
   }
 }
 
-void Cxn_::hbRcvd(const fbs::Heartbeat *hb)
+void Cxn_::hbRcvd(Msg::HeartbeatView hb)
 {
-  if (ZuUnlikely(hb->nShards() != m_db->nShards())) {
+  if (ZuUnlikely(hb.get<Msg::ZfField(Heartbeat, nShards)>() != m_db->nShards())) {
     ZiLOG(Error, "Zdb", ([
-      host = ZeString{Zfb::Load::str(hb->host())},
-      peerNShards = hb->nShards(), nShards = m_db->nShards()
+      host = ZeString{hb.get<Msg::ZfField(Heartbeat, host)>()},
+      peerNShards = hb.get<Msg::ZfField(Heartbeat, nShards)>(), nShards = m_db->nShards()
     ](auto &s) {
       s << "peer " << host << " has " << peerNShards
 	<< " shards; local DB has " << nShards;
@@ -1806,17 +1777,16 @@ void Cxn_::hbRcvd(const fbs::Heartbeat *hb)
     disconnect();
     return;
   }
-  if (auto dbState = hb->dbState())
-    if (auto tableStates = dbState->tableStates())
-      for (auto tableState: *tableStates)
-	if (ZuUnlikely(tableState->shard() >= m_db->nShards())) {
-	  disconnect();
-	  return;
-	}
+  if (auto dbState = hb.get<Msg::ZfField(Heartbeat, dbState)>())
+    for (auto tableState: dbState.get<Msg::ZfField(DBState, tableStates)>())
+      if (ZuUnlikely(tableState.get<Msg::ZfField(TableState, shard)>() >= m_db->nShards())) {
+	disconnect();
+	return;
+      }
 
   if (!m_host)
     m_db->associate(
-      static_cast<Cxn *>(this), Zfb::Load::str(hb->host()));
+      static_cast<Cxn *>(this), hb.get<Msg::ZfField(Heartbeat, host)>());
 
   if (!m_host) { disconnect(); return; }
 
@@ -1824,7 +1794,7 @@ void Cxn_::hbRcvd(const fbs::Heartbeat *hb)
 }
 
 // process received heartbeat
-void DB::hbRcvd(Host *host, const fbs::Heartbeat *hb)
+void DB::hbRcvd(Host *host, Msg::HeartbeatView hb)
 {
   ZdbDEBUG(this, ZeString{} << "hbDataRcvd()\n"
     << " host=" << ZuPrintPtr{host} << '\n'
@@ -1835,8 +1805,8 @@ void DB::hbRcvd(Host *host, const fbs::Heartbeat *hb)
     << " recovering=" << m_recovering
     << " replicating=" << Host::replicating(m_next));
 
-  host->state(hb->state());
-  host->dbState().load(hb->dbState());
+  host->state(hb.get<Msg::ZfField(Heartbeat, state)>());
+  host->dbState().load(hb.get<Msg::ZfField(Heartbeat, dbState)>());
 
   using namespace HostState;
 
@@ -1936,15 +1906,16 @@ void Cxn_::hbSend()
   ZmAssert(m_db->invoked());
 
   Host *self = m_db->self();
-  Zfb::IOBuilder fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
-  {
-    const auto &dbState = self->dbState();
-    auto id = Zfb::Save::str(fbb, self->id());
-    auto msg = fbs::CreateMsg(fbb, fbs::Body::Heartbeat,
-	fbs::CreateHeartbeat(fbb, id,
-	  m_db->state(), m_db->nShards(), dbState.save(fbb)).Union());
-    fbb.Finish(msg);
-  }
+  ZiFB::IOBuilder<> fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
+  auto id = fbb.string(self->id());
+  auto state = self->dbState().save(fbb);
+  auto table = fbb.startTable();
+  ZiFB::fieldOffset<Msg::ZfField(Heartbeat, host)>(fbb, table, id);
+  ZiFB::field<Msg::ZfField(Heartbeat, state)>(fbb, table, m_db->state());
+  ZiFB::field<Msg::ZfField(Heartbeat, nShards)>(fbb, table, m_db->nShards());
+  ZiFB::fieldOffset<Msg::ZfField(Heartbeat, dbState)>(fbb, table, state);
+  auto heartbeat = fbb.endTable(table);
+  fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));
 
   send(saveHdr(fbb, this));
 
@@ -1976,20 +1947,21 @@ void Cxn_::repRecordRcvd(ZmRef<IOBuf> buf)
   if (m_db->repStore()) return; // backing data store is replicated
   auto record = Zdb_::record(msg_(buf->hdr())); // caller verified msg
   if (!record) return;
-  ZuCSpan id = Zfb::Load::str(record->table());
+  ZuCSpan id = record.get<Msg::ZfField(Record, table)>();
   AnyTable *table = m_db->table(id);
   if (ZuUnlikely(!table)) return;
+
+  auto shard = record.get<Msg::ZfField(Record, shard)>();
+  if (ZuUnlikely(shard >= m_db->nShards())) return;
+  if (ZuUnlikely(!table->rowVerify(record))) return;
 
   ZdbDEBUG(m_db, (ZeString{}
     << "repRecordRcvd(host=" << m_host->id() << ", "
     << Record_Print{record, table}));
 
-  auto shard = record->shard();
-  if (ZuUnlikely(shard >= m_db->nShards())) return;
-
   m_db->replicated(
-    m_host, id, shard, record->un(),
-    ZfbTransform::UInt128::load(record->sn()));
+    m_host, id, shard, record.get<Msg::ZfField(Record, un)>(),
+    record.get<Msg::ZfField(Record, sn)>());
   table->invoke(shard, [table, shard, buf = ZuMv(buf)]() mutable {
     table->repRecordRcvd(shard, ZuMv(buf));
   });
@@ -2002,16 +1974,17 @@ void Cxn_::repCommitRcvd(ZmRef<IOBuf> buf)
 
   if (!m_host) return;
   auto commit = Zdb_::commit(msg_(buf->hdr())); // caller verified msg
-  auto id = Zfb::Load::str(commit->table());
+  auto id = commit.get<Msg::ZfField(Commit, table)>();
   AnyTable *table = m_db->table(id);
   if (ZuUnlikely(!table)) return;
 
   ZdbDEBUG(m_db, ZeString{}
-    << "repCommitRcvd(host=" << m_host->id() << ", " << commit->un() << ')');
+    << "repCommitRcvd(host=" << m_host->id() << ", "
+    << commit.get<Msg::ZfField(Commit, un)>() << ')');
 
-  auto shard = commit->shard();
+  auto shard = commit.get<Msg::ZfField(Commit, shard)>();
   if (ZuUnlikely(shard >= m_db->nShards())) return;
-  table->invoke(shard, [table, shard, un = commit->un()]() mutable {
+  table->invoke(shard, [table, shard, un = commit.get<Msg::ZfField(Commit, un)>()]() mutable {
     table->repCommitRcvd(shard, un);
   });
 }
@@ -2176,11 +2149,11 @@ void AnyTable::repCommitRcvd(Shard shard, UN un)
 }
 
 // recover record
-void AnyTable::recover(Shard shard, const fbs::Record *record)
+void AnyTable::recover(Shard shard, Msg::RecordView record)
 {
-  m_db->recoveredSN(ZfbTransform::UInt128::load(record->sn()));
-  recoveredUN(shard, record->un());
   rowRecover(record);
+  m_db->recoveredSN(record.get<Msg::ZfField(Record, sn)>());
+  recoveredUN(shard, record.get<Msg::ZfField(Record, un)>());
 }
 
 // outbound replication + persistency
@@ -2193,17 +2166,17 @@ void AnyTable::write(Shard shard, ZmRef<IOBuf> buf, bool active)
   if (ZuLikely(active) || !db->repStore()) {
     // leader, or follower without replicated data store - will
     // evict buf when write to data store is committed
-    db->invoke([db, buf]() mutable { db->replicate(buf); });
+    db->invoke([db, buf]() mutable { db->replicate(ZuMv(buf)); });
     store(shard, ZuMv(buf));
   } else {
     // follower with replicated data store - will evict buf
     // when leader subsequently sends commit, unless message is recovery
     auto msg = msg_(buf->hdr());
-    auto un = record_(msg)->un();
-    bool recovery = msg->body_type() == fbs::Body::Recovery;
-    db->invoke([db, buf = ZuMv(buf)]() mutable { db->replicate(buf); });
+    auto un = record_(msg).get<Msg::ZfField(Record, un)>();
+    bool recovery = recovery_(msg);
+    db->invoke([db, buf = ZuMv(buf)]() mutable { db->replicate(ZuMv(buf)); });
     if (recovery)
-      invoke(shard, [this, shard, un]() { evictBuf(shard, un); });
+      evictBuf(shard, un);
   }
 }
 
@@ -2227,8 +2200,8 @@ void AnyTable::committed(ZmRef<IOBuf> buf, CommitResult result)
 {
   auto msg = msg_(buf->hdr());
   auto record = record_(msg);
-  auto shard = record->shard();
-  auto un = record->un();
+  auto shard = record.get<Msg::ZfField(Record, shard)>();
+  auto un = record.get<Msg::ZfField(Record, un)>();
   if (ZuUnlikely(result.is<Event>())) {
     ZiLogEvent(ZuMv(result).p<Event>());
     ZiLOG(Fatal, "Zdb", ([id = this->id(), shard, un](auto &s) {
@@ -2238,7 +2211,7 @@ void AnyTable::committed(ZmRef<IOBuf> buf, CommitResult result)
     db->run([db]() { db->fail(); }); // trigger failover
     return;
   }
-  bool recovery = msg->body_type() == fbs::Body::Recovery;
+  bool recovery = recovery_(msg);
   run(shard, [this, shard, un, recovery]() {
     evictBuf(shard, un);
     if (!recovery) commitSend(shard, un);

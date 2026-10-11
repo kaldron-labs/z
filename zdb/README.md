@@ -115,7 +115,9 @@ is `Normal`. Cache policy does not replace backing storage or change ownership.
 
 ## Tables, rows, and shard ownership
 
-Define a row with `ZfbStruct` metadata and a matching generated FlatBuffers schema.
+Define a row with ordinary `ZfStruct` metadata and a `ZiFB::Table` ADL tag.
+Each table generates and owns its BFBS reflection buffer during construction;
+stores consume that span without schema files or external codegen.
 
 Declare primary key fields with `Keys<0>`, secondary indices with other key IDs,
 and updateable fields with `Mutable`. Use `Group<KeyID>` for grouped queries.
@@ -297,7 +299,7 @@ Supply `Context` and the catalog type as DB template arguments; the catalog's
 `List` names the saga definitions. Every definition in `SagaCatalog::List` must
 derive from `ZdbSagaBase<Context>` and declare its `Base` alias. Definitions have
 unique stable `Type` strings, positive `NSteps`, and contiguous phase numbers
-starting at zero. Serialize the request payload with `ZfbStruct`; the base
+starting at zero. Serialize the request payload with `ZiFB` from `ZfStruct` metadata; the base
 pointers are runtime data and must not be serialized. Aggregate construction
 includes an empty base, for example `BalanceTransfer{{}, ...}`.
 
@@ -766,3 +768,41 @@ DB's final shard drain can safely release tables.
 Run the relevant binaries from the configured build tree. For debugging or memory
 checks, use `./libtool exec gdb ...` or `./libtool exec valgrind ...`; do not invoke
 `.libs` binaries directly.
+## Repair2 performance fixture
+
+The `bench/` directory contains a shared workload header used by the existing
+`test/ZdbSagaTest --repair-bench` mode. It has no separate library or build
+framework. See [bench/README.md](bench/README.md) for measurement scope and the
+matched-schema HEAD comparator.
+
+Saga definition save returns the native codec error code. A serialization error
+rejects submission through the existing submission callback, without throwing or
+writing a journal row. `ZdbSagaTest` includes a missing-required-field admission
+fixture for this path; existing exceptions from application code retain their
+established handling.
+
+`test/ZdbRepairTest.hh` supplies the supported-column conversion fixture shared
+by `test/ZdbSagaTest` and `../zdb_pq/itest/zdbpqtest`. It covers native Float32
+scalars/vectors and CStringVec with double/StringVec controls, defaults,
+empty/single/multiple elements, primary/secondary keys, selection, updates,
+recovery, reopen and deletion. Run `make -C zdb/test test` and
+`make -C zdb_pq/itest test` from the repository root; the latter requires the
+disposable postgres database, extensions, `ZDB_MODULE` and `ZDB_CONNECT`
+described above.
+
+The same header also supplies the native Float32/CStringVec saga fixture used by
+`ZdbSagaTest` and both stores’ `zdbsagatest` integration programs. It covers
+forward insert/update, compensation, mutable Float32 secondary keys, uncached
+selection, deletion and journal cleanup. Run both store integration targets with
+their documented disposable database setup. The data-store fixture additionally
+checks existing parameter-size failure callbacks with synthetic length words;
+these checks do not allocate large parameter buffers.
+
+The shared native-field saga fixture also has controlled restart variants: it
+pauses after updating Float32/CStringVec fields, fails/stops the DB, reinitializes
+and checks replay success or compensation, cold row decoding and journal cleanup.
+These variants are registered in the existing memory and both store saga programs.
+They are distinct from separate-process crash fixtures. Executable acceptance of
+the new variants is pending milestone20. The parameter callback fixture also
+requires the existing size-policy diagnostic, so an unrelated backend error does
+not satisfy its error assertion.

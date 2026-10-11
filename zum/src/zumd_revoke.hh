@@ -25,8 +25,6 @@
 #include <zlib/zumd_token.hh>
 #include <zlib/zumd_request.hh>
 #include <zlib/zumd_ssf_db.hh>
-#include <zlib/zum_saga_fbs.h>
-#include <zlib/zum_maintenance_fbs.h>
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsMD.hh>
@@ -335,12 +333,13 @@ struct Revoke : public ZdbSagaBase<DBContext> {
     requestComplete(this, {}, updated, ZuMv(complete)); return {};
   }
 };
-ZfbStruct(ZumAPI, Revoke,
-  (sessions, (Ctor<0>),		BytesVec),
-  (consents, (Ctor<1>),		BytesVec),
-  (grants, (Ctor<2>),		BytesVec),
-  (updated, (Ctor<3>),		Int64),
-  (request, (Ctor<4>),		UDT));
+ZfStruct(ZumAPI, Revoke,
+  (sessions,	(Ctor<0>),	BytesVec),
+  (consents,	(Ctor<1>),	BytesVec),
+  (grants,	(Ctor<2>),	BytesVec),
+  (updated,	(Ctor<3>),	Int64),
+  (request,	(Ctor<4>),	UDT));
+ZiFB::Table<"Zum.fbs.Revoke"> ZiFBType(Revoke *);
 
 struct SSFDeliveryAdd : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -400,8 +399,9 @@ struct SSFDeliveryAdd : public ZdbSagaBase<DBContext> {
     return {};
   }
 };
-ZfbStruct(ZumAPI, SSFDeliveryAdd,
+ZfStruct(ZumAPI, SSFDeliveryAdd,
   (delivery, (Ctor<0>),		UDT));
+ZiFB::Table<"Zum.fbs.SSFDeliveryAdd"> ZiFBType(SSFDeliveryAdd *);
 
 // Maintenance deletes are terminal: their reverse saga steps are idempotent
 // no-ops.  These images retain only the key and fields used to reject a row
@@ -413,12 +413,13 @@ struct GrantDelete {
   State::T	state = State::Pending;
   uint128_t	owner = 0;
 };
-ZfbStruct(ZumAPI, GrantDelete,
-  (id, (Ctor<0>),				Bytes),
-  (digest, (Ctor<1>),				Bytes),
-  (expires, (Ctor<2>),				Int64),
-  (state, (Ctor<3>, Enum<State::Map>),		Int8),
-  (owner, (Ctor<4>),				UInt128));
+ZfStruct(ZumAPI, GrantDelete,
+  (id,		(Ctor<0>),			Bytes),
+  (digest,	(Ctor<1>),			Bytes),
+  (expires,	(Ctor<2>),			Int64),
+  (state,	(Ctor<3>, Enum<State::Map>),	Int8),
+  (owner,	(Ctor<4>),			UInt128));
+ZiFB::Table<"Zum.fbs.GrantDelete"> ZiFBType(GrantDelete *);
 ZuDerive(GrantDeleteVec, (ZtArray<GrantDelete,
   ZtArrayHeapID<"Zum.Maintenance.Grant">>));
 inline GrantDelete grantDelete(const Grant &item) {
@@ -441,12 +442,13 @@ struct SessionDelete {
   uint64_t	version = 0;
   uint128_t	owner = 0;
 };
-ZfbStruct(ZumAPI, SessionDelete,
-  (digest, (Ctor<0>),			Bytes),
-  (idleDeadline, (Ctor<1>),		Int64),
-  (absoluteDeadline, (Ctor<2>),		Int64),
-  (version, (Ctor<3>),			UInt64),
-  (owner, (Ctor<4>),			UInt128));
+ZfStruct(ZumAPI, SessionDelete,
+  (digest,		(Ctor<0>),	Bytes),
+  (idleDeadline,	(Ctor<1>),	Int64),
+  (absoluteDeadline,	(Ctor<2>),	Int64),
+  (version,		(Ctor<3>),	UInt64),
+  (owner,		(Ctor<4>),	UInt128));
+ZiFB::Table<"Zum.fbs.SessionDelete"> ZiFBType(SessionDelete *);
 ZuDerive(SessionDeleteVec, (ZtArray<SessionDelete,
   ZtArrayHeapID<"Zum.Maintenance.Session">>));
 template <typename Tuple> inline SessionDelete sessionDelete(const Tuple &item) {
@@ -466,12 +468,13 @@ struct RefreshDelete {
   uint64_t	version = 0;
   uint128_t	owner = 0;
 };
-ZfbStruct(ZumAPI, RefreshDelete,
-  (id, (Ctor<0>),				Bytes),
-  (expires, (Ctor<1>),				Int64),
-  (state, (Ctor<2>, Enum<State::Map>),		Int8),
-  (version, (Ctor<3>),				UInt64),
-  (owner, (Ctor<4>),				UInt128));
+ZfStruct(ZumAPI, RefreshDelete,
+  (id,		(Ctor<0>),			Bytes),
+  (expires,	(Ctor<1>),			Int64),
+  (state,	(Ctor<2>, Enum<State::Map>),	Int8),
+  (version,	(Ctor<3>),			UInt64),
+  (owner,	(Ctor<4>),			UInt128));
+ZiFB::Table<"Zum.fbs.RefreshDelete"> ZiFBType(RefreshDelete *);
 ZuDerive(RefreshDeleteVec, (ZtArray<RefreshDelete,
   ZtArrayHeapID<"Zum.Maintenance.Refresh">>));
 template <typename Tuple> inline RefreshDelete refreshDelete(const Tuple &item) {
@@ -493,14 +496,15 @@ struct EvidenceDelete {
   int64_t	updated = 0;
   uint128_t	owner = 0;
 };
-ZfbStruct(ZumAPI, EvidenceDelete,
-  (appID, (Ctor<0>),		UInt64),
-  (userID, (Ctor<1>),		UInt64),
-  (providerID, (Ctor<2>),	UInt64),
-  (deadline, (Ctor<3>),		Int64),
-  (version, (Ctor<4>),		UInt64),
-  (updated, (Ctor<5>),		Int64),
-  (owner, (Ctor<6>),		UInt128));
+ZfStruct(ZumAPI, EvidenceDelete,
+  (appID,	(Ctor<0>),	UInt64),
+  (userID,	(Ctor<1>),	UInt64),
+  (providerID,	(Ctor<2>),	UInt64),
+  (deadline,	(Ctor<3>),	Int64),
+  (version,	(Ctor<4>),	UInt64),
+  (updated,	(Ctor<5>),	Int64),
+  (owner,	(Ctor<6>),	UInt128));
+ZiFB::Table<"Zum.fbs.EvidenceDelete"> ZiFBType(EvidenceDelete *);
 ZuDerive(EvidenceDeleteVec, (ZtArray<EvidenceDelete,
   ZtArrayHeapID<"Zum.Maintenance.Evidence">>));
 template <typename Tuple> inline EvidenceDelete evidenceDelete(const Tuple &item) {
@@ -525,61 +529,18 @@ struct ConsentDelete {
   int64_t	updated = 0;
   uint128_t	owner = 0;
 };
-ZfbStruct(ZumAPI, ConsentDelete,
-  (userID, (Ctor<0>),				UInt64),
-  (clientID, (Ctor<1>),				String),
-  (appID, (Ctor<2>),				UInt64),
-  (state, (Ctor<3>, Enum<State::Map>),		Int8),
-  (version, (Ctor<4>),				UInt64),
-  (updated, (Ctor<5>),				Int64),
-  (owner, (Ctor<6>),				UInt128));
+ZfStruct(ZumAPI, ConsentDelete,
+  (userID,	(Ctor<0>),			UInt64),
+  (clientID,	(Ctor<1>),			String),
+  (appID,	(Ctor<2>),			UInt64),
+  (state,	(Ctor<3>, Enum<State::Map>),	Int8),
+  (version,	(Ctor<4>),			UInt64),
+  (updated,	(Ctor<5>),			Int64),
+  (owner,	(Ctor<6>),			UInt128));
+ZiFB::Table<"Zum.fbs.ConsentDelete"> ZiFBType(ConsentDelete *);
 ZuDerive(ConsentDeleteVec, (ZtArray<ConsentDelete,
   ZtArrayHeapID<"Zum.Maintenance.Consent">>));
 
-} // namespace Zum
-
-namespace ZfbTransform {
-
-template <typename C, typename F>
-struct UDTArray {
-  enum { IsInline = 0 };
-  using Vec = Zfb::Vector<Zfb::Offset<F>>;
-
-  template <
-    typename = void, template <typename> class = ZuAlwaysTrue,
-    typename Builder, typename Array>
-  static auto save(Builder &fbb, const Array &a) {
-    return Zfb::Save::vectorIter<F>(fbb, a.length(),
-      [&a](Builder &fbb, uint64_t i) mutable {
-	return ZfbStruct::save(fbb, a[i]);
-      });
-  }
-
-  template <typename O>
-  static O load(const Vec *v) {
-    O a;
-    if (!v) return a;
-    for (uint64_t i = 0; i < v->size(); i++)
-      a.push(ZfbStruct::ctor<C>(v->Get(i)));
-    return a;
-  }
-};
-
-struct GrantDeleteVec : UDTArray<Zum::GrantDelete, Zum::fbs::GrantDelete> {};
-struct SessionDeleteVec : UDTArray<Zum::SessionDelete, Zum::fbs::SessionDelete> {};
-struct RefreshDeleteVec : UDTArray<Zum::RefreshDelete, Zum::fbs::RefreshDelete> {};
-struct EvidenceDeleteVec : UDTArray<Zum::EvidenceDelete, Zum::fbs::EvidenceDelete> {};
-struct ConsentDeleteVec : UDTArray<Zum::ConsentDelete, Zum::fbs::ConsentDelete> {};
-
-} // namespace ZfbTransform
-
-namespace Zum {
-
-ZfbTransform::GrantDeleteVec ZfbTransformer_(GrantDeleteVec *);
-ZfbTransform::SessionDeleteVec ZfbTransformer_(SessionDeleteVec *);
-ZfbTransform::RefreshDeleteVec ZfbTransformer_(RefreshDeleteVec *);
-ZfbTransform::EvidenceDeleteVec ZfbTransformer_(EvidenceDeleteVec *);
-ZfbTransform::ConsentDeleteVec ZfbTransformer_(ConsentDeleteVec *);
 template <typename Tuple> inline ConsentDelete consentDelete(const Tuple &item) {
   constexpr unsigned user = ZuTypeIndex<ZuStringT<"userID">, ZuFieldIDs<Consent>>{};
   constexpr unsigned client = ZuTypeIndex<ZuStringT<"clientID">, ZuFieldIDs<Consent>>{};
@@ -635,10 +596,11 @@ struct GrantCleanup : public ZdbSagaBase<DBContext> {
     requestComplete(this, {}, updated, ZuMv(complete)); return {};
   }
 };
-ZfbStruct(ZumAPI, GrantCleanup,
-  (grants, (Ctor<0>),		UDT),
-  (updated, (Ctor<1>),		Int64),
-  (request, (Ctor<2>),		UDT));
+ZfStruct(ZumAPI, GrantCleanup,
+  (grants,	(Ctor<0>),	UDT),
+  (updated,	(Ctor<1>),	Int64),
+  (request,	(Ctor<2>),	UDT));
+ZiFB::Table<"Zum.fbs.GrantCleanup"> ZiFBType(GrantCleanup *);
 
 struct SessionCleanup : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -678,9 +640,10 @@ struct SessionCleanup : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(1, zum.session, Update) { complete(true); return {}; }
 };
-ZfbStruct(ZumAPI, SessionCleanup,
-  (sessions, (Ctor<0>),		UDT),
-  (updated, (Ctor<1>),		Int64));
+ZfStruct(ZumAPI, SessionCleanup,
+  (sessions,	(Ctor<0>),	UDT),
+  (updated,	(Ctor<1>),	Int64));
+ZiFB::Table<"Zum.fbs.SessionCleanup"> ZiFBType(SessionCleanup *);
 
 struct RefreshCleanup : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -717,9 +680,10 @@ struct RefreshCleanup : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(1, zum.refresh, Update) { complete(true); return {}; }
 };
-ZfbStruct(ZumAPI, RefreshCleanup,
-  (refreshes, (Ctor<0>),	UDT),
-  (updated, (Ctor<1>),		Int64));
+ZfStruct(ZumAPI, RefreshCleanup,
+  (refreshes,	(Ctor<0>),	UDT),
+  (updated,	(Ctor<1>),	Int64));
+ZiFB::Table<"Zum.fbs.RefreshCleanup"> ZiFBType(RefreshCleanup *);
 
 struct AppCleanup : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -784,11 +748,12 @@ struct AppCleanup : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(2, zum.app, Update) { complete(true); return {}; }
 };
-ZfbStruct(ZumAPI, AppCleanup,
-  (appID, (Ctor<0>),		UInt64),
-  (evidence, (Ctor<1>),		UDT),
-  (consents, (Ctor<2>),		UDT),
-  (updated, (Ctor<3>),		Int64));
+ZfStruct(ZumAPI, AppCleanup,
+  (appID,	(Ctor<0>),	UInt64),
+  (evidence,	(Ctor<1>),	UDT),
+  (consents,	(Ctor<2>),	UDT),
+  (updated,	(Ctor<3>),	Int64));
+ZiFB::Table<"Zum.fbs.AppCleanup"> ZiFBType(AppCleanup *);
 
 
 // The compact payloads above deliberately use new saga type identifiers.
@@ -807,10 +772,11 @@ struct GrantCleanupV2 : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(2, zum.request, Update) { complete(false); return {}; }
 };
-ZfbStruct(ZumAPI, GrantCleanupV2,
-  (grants, (Ctor<0>),		BytesVec),
-  (updated, (Ctor<1>),		Int64),
-  (request, (Ctor<2>),		UDT));
+ZfStruct(ZumAPI, GrantCleanupV2,
+  (grants,	(Ctor<0>),	BytesVec),
+  (updated,	(Ctor<1>),	Int64),
+  (request,	(Ctor<2>),	UDT));
+ZiFB::Table<"Zum.fbs.GrantCleanupV2"> ZiFBType(GrantCleanupV2 *);
 
 struct SessionCleanupV1 : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -823,9 +789,10 @@ struct SessionCleanupV1 : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(1, zum.session, Update) { complete(false); return {}; }
 };
-ZfbStruct(ZumAPI, SessionCleanupV1,
-  (sessions, (Ctor<0>),		BytesVec),
-  (updated, (Ctor<1>),		Int64));
+ZfStruct(ZumAPI, SessionCleanupV1,
+  (sessions,	(Ctor<0>),	BytesVec),
+  (updated,	(Ctor<1>),	Int64));
+ZiFB::Table<"Zum.fbs.SessionCleanupV1"> ZiFBType(SessionCleanupV1 *);
 
 struct RefreshCleanupV1 : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -838,9 +805,10 @@ struct RefreshCleanupV1 : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(1, zum.refresh, Update) { complete(false); return {}; }
 };
-ZfbStruct(ZumAPI, RefreshCleanupV1,
-  (refreshes, (Ctor<0>),	BytesVec),
-  (updated, (Ctor<1>),		Int64));
+ZfStruct(ZumAPI, RefreshCleanupV1,
+  (refreshes,	(Ctor<0>),	BytesVec),
+  (updated,	(Ctor<1>),	Int64));
+ZiFB::Table<"Zum.fbs.RefreshCleanupV1"> ZiFBType(RefreshCleanupV1 *);
 
 struct AppCleanupV1 : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -858,11 +826,12 @@ struct AppCleanupV1 : public ZdbSagaBase<DBContext> {
   }
   ZdbSagaStep(2, zum.app, Update) { complete(false); return {}; }
 };
-ZfbStruct(ZumAPI, AppCleanupV1,
-  (appID, (Ctor<0>),		UInt64),
-  (evidence, (Ctor<1>),		BytesVec),
-  (consents, (Ctor<2>),		BytesVec),
-  (updated, (Ctor<3>),		Int64));
+ZfStruct(ZumAPI, AppCleanupV1,
+  (appID,	(Ctor<0>),	UInt64),
+  (evidence,	(Ctor<1>),	BytesVec),
+  (consents,	(Ctor<2>),	BytesVec),
+  (updated,	(Ctor<3>),	Int64));
+ZiFB::Table<"Zum.fbs.AppCleanupV1"> ZiFBType(AppCleanupV1 *);
 
 } // namespace Zum
 

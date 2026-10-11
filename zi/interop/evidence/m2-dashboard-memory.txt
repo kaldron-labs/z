@@ -1,0 +1,246 @@
+Dashboard final Memcheck possible-loss attribution
+Retained Clang debug, ZdashTest.sh, 2026-10-07.
+No suppression for these allocations.
+
+Category: records, blocks, bytes
+Rust/glycin: [27, 38, 40228]
+Mesa ralloc/GLSL: [3, 3, 2608]
+glibc dynamic TLS: [3, 3, 1488]
+
+==829951== 32 bytes in 1 blocks are possibly lost in loss record 4,519 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B87941: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B87941: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B87941: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B87941: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 32 bytes in 1 blocks are possibly lost in loss record 4,520 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B735C8: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 32 bytes in 1 blocks are possibly lost in loss record 4,521 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B735C8: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 32 bytes in 1 blocks are possibly lost in loss record 4,522 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9CDCABC: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9CDCABC: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9CDCABC: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9CDCABC: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 48 bytes in 1 blocks are possibly lost in loss record 5,595 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x12D5BAFA: ralloc_size (ralloc.c:118)
+==829951==    by 0x12D5BAFA: ralloc_context (ralloc.c:105)
+==829951==    by 0x12EEC4D7: glsl_type_singleton_init_or_ref (glsl_types.c:485)
+==829951==    by 0x130D5BD7: llvmpipe_create_screen (lp_screen.c:1030)
+
+==829951== 64 bytes in 1 blocks are possibly lost in loss record 6,207 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9BA6A77: <alloc::raw_vec::RawVecInner>::finish_grow (library/alloc/src/raw_vec/mod.rs:0)
+==829951==    by 0x9BA69A6: <alloc::raw_vec::RawVecInner>::grow_amortized (library/alloc/src/raw_vec/mod.rs:528)
+==829951==    by 0x9D1901C: grow_one<alloc::alloc::Global> (library/alloc/src/raw_vec/mod.rs:492)
+==829951==    by 0x9D1901C: alloc::raw_vec::RawVec<T,A>::grow_one (library/alloc/src/raw_vec/mod.rs:188)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,274 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B768DE: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B768DE: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B768DE: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B768DE: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,275 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B76A5B: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B76A5B: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B76A5B: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B76A5B: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,276 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B2E07E: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B2E07E: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B2E07E: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B2E07E: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,277 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B36FA5: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B36FA5: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B36FA5: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B36FA5: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,278 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B150CC: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B150CC: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B150CC: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B150CC: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,279 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B11A43: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B11A43: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B11A43: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B11A43: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,280 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9AA1188: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9AA1188: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9AA1188: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9AA1188: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,281 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9AD96E0: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9AD96E0: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9AD96E0: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9AD96E0: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,282 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9AD992A: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9AD992A: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9AD992A: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9AD992A: alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,283 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9CEFD13: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9CEFD13: <alloc::alloc::Global>::alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9CEFC4C: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9CEFC4C: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 72 bytes in 1 blocks are possibly lost in loss record 6,284 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9CEFD13: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9CEFD13: <alloc::alloc::Global>::alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9CEFC4C: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9CEFC4C: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 96 bytes in 1 blocks are possibly lost in loss record 8,343 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B735C8: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 96 bytes in 1 blocks are possibly lost in loss record 8,344 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:14)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B735C8: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9B735C8: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+
+==829951== 432 bytes in 1 blocks are possibly lost in loss record 9,246 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x1275DDDD: ralloc_size (ralloc.c:118)
+==829951==    by 0x1275E6D7: _mesa_set_create (set.c:171)
+==829951==    by 0x1275E6D7: _mesa_pointer_set_create (set.c:682)
+==829951==    by 0x1274E128: __glXInitialize (glxext.c:997)
+
+==829951== 496 bytes in 1 blocks are possibly lost in loss record 9,283 of 10,028
+==829951==    at 0x5A09D13: calloc (vg_replace_malloc.c:1675)
+==829951==    by 0x518245F: calloc (rtld-malloc.h:44)
+==829951==    by 0x518245F: allocate_dtv (dl-tls.c:477)
+==829951==    by 0x5182FE5: _dl_allocate_tls (dl-tls.c:734)
+==829951==    by 0x9228E2F: allocate_stack (allocatestack.c:568)
+
+==829951== 496 bytes in 1 blocks are possibly lost in loss record 9,284 of 10,028
+==829951==    at 0x5A09D13: calloc (vg_replace_malloc.c:1675)
+==829951==    by 0x518245F: calloc (rtld-malloc.h:44)
+==829951==    by 0x518245F: allocate_dtv (dl-tls.c:477)
+==829951==    by 0x5182FE5: _dl_allocate_tls (dl-tls.c:734)
+==829951==    by 0x9228E2F: allocate_stack (allocatestack.c:568)
+
+==829951== 496 bytes in 1 blocks are possibly lost in loss record 9,285 of 10,028
+==829951==    at 0x5A09D13: calloc (vg_replace_malloc.c:1675)
+==829951==    by 0x518245F: calloc (rtld-malloc.h:44)
+==829951==    by 0x518245F: allocate_dtv (dl-tls.c:477)
+==829951==    by 0x5182FE5: _dl_allocate_tls (dl-tls.c:734)
+==829951==    by 0x9228E2F: allocate_stack (allocatestack.c:568)
+
+==829951== 504 bytes in 1 blocks are possibly lost in loss record 9,294 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9CEFD13: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9CEFD13: <alloc::alloc::Global>::alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9CEFC4C: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9CEFC4C: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 896 bytes in 1 blocks are possibly lost in loss record 9,499 of 10,028
+==829951==    at 0x5A0ABD9: posix_memalign (vg_replace_malloc.c:2226)
+==829951==    by 0x9B71FC3: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:83)
+==829951==    by 0x9B71FC3: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:28)
+==829951==    by 0x9B71FC3: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B71FC3: alloc (library/alloc/src/alloc.rs:101)
+
+==829951== 896 bytes in 1 blocks are possibly lost in loss record 9,500 of 10,028
+==829951==    at 0x5A0ABD9: posix_memalign (vg_replace_malloc.c:2226)
+==829951==    by 0x9B71FC3: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:83)
+==829951==    by 0x9B71FC3: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:28)
+==829951==    by 0x9B71FC3: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9B71FC3: alloc (library/alloc/src/alloc.rs:101)
+
+==829951== 916 bytes in 1 blocks are possibly lost in loss record 9,501 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9CEFD13: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9CEFD13: <alloc::alloc::Global>::alloc_impl_runtime (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9D39922: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9D39922: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 2,048 bytes in 1 blocks are possibly lost in loss record 9,759 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9BA6B55: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9BA6B55: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 2,048 bytes in 1 blocks are possibly lost in loss record 9,760 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9BA6B55: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9BA6B55: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 2,048 bytes in 1 blocks are possibly lost in loss record 9,761 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9BA6B55: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9BA6B55: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 2,048 bytes in 1 blocks are possibly lost in loss record 9,762 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x9BA6B55: alloc (library/alloc/src/alloc.rs:101)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:210)
+==829951==    by 0x9BA6B55: UnknownInlinedFun (library/alloc/src/alloc.rs:332)
+==829951==    by 0x9BA6B55: allocate (library/alloc/src/alloc.rs:449)
+
+==829951== 2,128 bytes in 1 blocks are possibly lost in loss record 9,767 of 10,028
+==829951==    at 0x5A028A8: malloc (vg_replace_malloc.c:446)
+==829951==    by 0x12D5BB5D: ralloc_size (ralloc.c:118)
+==829951==    by 0x12D5CCD1: linear_context_with_opts (ralloc.c:1131)
+==829951==    by 0x12D5CCD1: linear_context (ralloc.c:1113)
+==829951==    by 0x12EEC4E7: glsl_type_singleton_init_or_ref (glsl_types.c:486)
+
+==829951== 27,648 bytes in 12 blocks are possibly lost in loss record 10,007 of 10,028
+==829951==    at 0x5A0ABD9: posix_memalign (vg_replace_malloc.c:2226)
+==829951==    by 0x9BA2F05: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:83)
+==829951==    by 0x9BA2F05: UnknownInlinedFun (library/std/src/sys/alloc/unix.rs:28)
+==829951==    by 0x9BA2F05: UnknownInlinedFun (library/std/src/alloc.rs:455)
+==829951==    by 0x9BA2F05: alloc (library/alloc/src/alloc.rs:101)
+
+==829951==    definitely lost: 0 bytes in 0 blocks
+==829951==    indirectly lost: 0 bytes in 0 blocks
+==829951==      possibly lost: 44,324 bytes in 44 blocks
+==829951==    still reachable: 2,435,093 bytes in 34,782 blocks
+==829951==         suppressed: 2,198,327 bytes in 19,145 blocks
+==829951== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 3 from 3)

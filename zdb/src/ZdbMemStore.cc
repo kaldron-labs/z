@@ -32,7 +32,7 @@ void StoreTbl::count(KeyID keyID, ZmRef<IOBuf> buf, CountFn countFn)
     unsigned nParams = m_keyGroup[keyID];
 
     auto key = loadTuple_(
-      nParams, keyFields, xKeyFields, Zfb::GetAnyRoot(buf->data()));
+      nParams, keyFields, xKeyFields, ZiFB::TableView{ZiFB::root(buf->cspan())});
 
     const auto &index = m_indices[keyID];
     auto row = index.find<ZmRBTreeGreater>(key);
@@ -63,7 +63,7 @@ void StoreTbl::select(
     unsigned nParams = selectNext ? keyFields.length() : keyGroup;
 
     auto key = loadTuple_(
-      nParams, keyFields, xKeyFields, Zfb::GetAnyRoot(buf->data()));
+      nParams, keyFields, xKeyFields, ZiFB::TableView{ZiFB::root(buf->cspan())});
 
     const auto &index = m_indices[keyID];
     auto row = inclusive ?
@@ -71,12 +71,12 @@ void StoreTbl::select(
       index.find<ZmRBTreeGreater>(key);
     unsigned i = 0;
     while (i++ < limit && row && equals_(row->key(), key, keyGroup)) {
-      Zfb::IOBuilder fbb{m_bufAllocFn()};
+      unsigned align = selectRow ? m_rowAlign : xKeyFields.bufAlign;
+      ZiFB::IOBuilder<ZiFB::Wire::MaxAlign> fbb{m_bufAllocFn(), align};
       if (!selectRow) {
-	auto key = extractKey(m_fields, m_keyFields, keyID, row->val()->data);
-	fbb.Finish(saveTuple(fbb, xKeyFields, key));
+	fbb.finish(saveTuple<true>(fbb, xKeyFields, row->val()->data));
       } else {
-	fbb.Finish(saveTuple(fbb, m_xFields, row->val()->data));
+	fbb.finish(saveTuple(fbb, m_xFields, row->val()->data));
       }
       TupleData tupleData{
 	.keyID = selectRow ? KeyID(ZuStructKeyID::All) : keyID,
@@ -96,7 +96,7 @@ void StoreTbl::find(KeyID keyID, ZmRef<IOBuf> buf, RowFn rowFn)
     ZmAssert(keyID >= 0 && keyID < m_indices.length());
 
     auto key = loadTuple(
-      m_keyFields[keyID], m_xKeyFields[keyID], Zfb::GetAnyRoot(buf->data()));
+      m_keyFields[keyID], m_xKeyFields[keyID], ZiFB::TableView{ZiFB::root(buf->cspan())});
     ZmRef<const MemRow> row = m_indices[keyID].findVal(key);
     if (row) {
       RowData data{.buf = saveRow<false>(row)};
@@ -127,15 +127,15 @@ void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn)
   m_store->run([this, buf = ZuMv(buf), commitFn = ZuMv(commitFn)]() mutable {
     // idempotence check
     auto record = record_(msg_(buf->hdr()));
-    auto shard = record->shard();
-    auto un = record->un();
+    auto shard = record.get<Msg::ZfField(Record, shard)>();
+    auto un = record.get<Msg::ZfField(Record, un)>();
     auto &maxUN = m_maxUN[shard];
     if (maxUN != ZdbNullUN() && un <= maxUN) {
       commitFn(ZuMv(buf), CommitResult{});
       return;
     }
     // load row, perform insert/update/delete
-    ZmRef<MemRow> row = loadRow(buf).mutableRef();
+    ZmRef<MemRow> row = loadRow(record, shard, un).mutableRef();
     if (!row->vn)
       insert(ZuMv(row), ZuMv(buf), ZuMv(commitFn));
     else if (row->vn > 0)
@@ -151,13 +151,13 @@ void StoreTbl::insert(
   m_maxUN[row->shard] = row->un, m_maxSN = row->sn;
   unsigned n = m_keyFields.length();
   for (unsigned i = 0; i < n; i++) {
-    auto key = extractKey(m_fields, m_keyFields, i, row->data);
+    auto key = extractKey(m_xKeyFields[i], row->data);
     ZmAssert(key.length() == m_keyFields[i].length());
     if (!i && m_indices[i].findVal(key)) {
       commitFn(ZuMv(buf), CommitResult{});
       return;
     }
-    m_indices[i].add(key, row.constRef());
+    m_indices[i].add(ZuMv(key), row.constRef());
   }
   m_indexUN.addNode(ZuMv(row));
   commitFn(ZuMv(buf), CommitResult{});
@@ -169,7 +169,7 @@ ZuDerive(Tuples,
 void StoreTbl::update(
   ZmRef<MemRow> updRow, ZmRef<IOBuf> buf, CommitFn commitFn)
 {
-  auto key = extractKey(m_fields, m_keyFields, 0, updRow->data);
+  auto key = extractKey(m_xKeyFields[0], updRow->data);
   ZmRef<MemRow> row = m_indices[0].findVal(key).mutableRef();
   if (row) {
     m_maxUN[updRow->shard] = updRow->un, m_maxSN = updRow->sn;
@@ -178,7 +178,7 @@ void StoreTbl::update(
     unsigned n = m_keyFields.length();
     auto origKeys = ZmScratch(Tuple, n - 1, Tuples::VHeap);
     for (unsigned i = 1; i < n; i++) {
-      auto key = extractKey(m_fields, m_keyFields, i, row->data);
+      auto key = extractKey(m_xKeyFields[i], row->data);
       ZmAssert(key.length() == m_keyFields[i].length());
       new (origKeys.push()) Tuple(ZuMv(key)); // not Tuple{}
     }
@@ -195,17 +195,19 @@ void StoreTbl::update(
     // update secondary indices if corresponding key changed
     for (unsigned i = 1; i < n; i++) {
       auto j = i - 1;
-      auto key = extractKey(m_fields, m_keyFields, i, row->data);
+      auto key = extractKey(m_xKeyFields[i], row->data);
       if (key != origKeys[j]) {
 	m_indices[i].del(origKeys[j], row.constRef());
-	m_indices[i].add(key, row.constRef());
+	m_indices[i].add(ZuMv(key), row.constRef());
       }
     }
 
     commitFn(ZuMv(buf), CommitResult{});
   } else {
     commitFn(ZuMv(buf), CommitResult{
-	ZeEXCEPT(Error, "ZdbMem", ([id = this->id(), key](auto &s, const auto &) {
+	ZeEXCEPT(Error, "ZdbMem", ([
+	  id = this->id(), key = ZuMv(key)
+	](auto &s, const auto &) {
 	  s << id << " update(" << ZuJoin(key, ", ")
 	    << ") failed - record missing";
 	}))});
@@ -215,21 +217,23 @@ void StoreTbl::update(
 void StoreTbl::del(
   ZmRef<MemRow> delRow, ZmRef<IOBuf> buf, CommitFn commitFn)
 {
-  auto key = extractKey(m_fields, m_keyFields, 0, delRow->data);
+  auto key = extractKey(m_xKeyFields[0], delRow->data);
   ZmRef<MemRow> row = m_indices[0].delVal(key).mutableRef();
   if (row) {
     m_maxUN[delRow->shard] = delRow->un, m_maxSN = delRow->sn;
     m_indexUN.delNode(row);
     unsigned n = m_keyFields.length();
     for (unsigned i = 1; i < n; i++) {
-      auto key = extractKey(m_fields, m_keyFields, i, row->data);
+      auto key = extractKey(m_xKeyFields[i], row->data);
       ZmAssert(key.length() == m_keyFields[i].length());
       m_indices[i].del(key, row.constRef());
     }
     commitFn(ZuMv(buf), CommitResult{});
   } else {
     commitFn(ZuMv(buf), CommitResult{
-	ZeEXCEPT(Error, "ZdbMem", ([id = this->id(), key](auto &s, const auto &) {
+	ZeEXCEPT(Error, "ZdbMem", ([
+	  id = this->id(), key = ZuMv(key)
+	](auto &s, const auto &) {
 	  s << id << " del(" << ZuJoin(key, ", ")
 	    << ") failed - record missing";
 	}))});

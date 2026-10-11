@@ -152,7 +152,7 @@ static void run()
 	  ZiLOG(Info, "zdbreptest",
 	    ([buf](auto &s) {
 	      s << "inserted JSON: ";
-	      ZfJSON::save<ZuFacet::JSON, ZfFieldFilter::All>(s, *(buf->fbo_<Order>()));
+	      ZfJSON::save<ZuFacet::JSON, ZfFieldFilter::All>(s, buf->fbo_<Order>());
 	    }));
 	  id = o->data().orderID;
 	  ZiLOG(Info, "zdbreptest", ([id](auto &s) { s << "orderID=" << id; }));

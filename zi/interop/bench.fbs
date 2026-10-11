@@ -1,0 +1,16 @@
+// Migration-only canonical baseline fixture; never a production build input.
+namespace Bench.fbs;
+table Row { seq:ulong; data:[ubyte]; }
+table Wide {
+  seq:ulong;
+  data:[ubyte];
+  label:string;
+  values:[long];
+  price:double;
+  qty:int;
+  active:bool;
+}
+struct Point { x:long; y:long; }
+table Child { value:ulong; }
+table Vectors { seq:ulong; data:[ubyte]; points:[Point]; children:[Child]; }
+root_type Row;

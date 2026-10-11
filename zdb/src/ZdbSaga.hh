@@ -42,15 +42,13 @@
 
 #include <zlib/ZePlatform.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
+#include <zlib/ZiFBReflect.hh>
+
 
 #include <zlib/ZdbBuf.hh>
 #include <zlib/ZdbTypes.hh>
 
-#include <zlib/zdb_saga_fbs.h>
-#include <zlib/zdb_saga_step_fbs.h>
-#include <zlib/zdb_saga_type_fbs.h>
 
 #ifndef ZdbSaga_BuiltinSize
 // Initial inline payload allocation, not a payload limit. 256 bytes covers
@@ -98,14 +96,14 @@ struct SagaData {
   friend ZuStringT<"Zdb.Saga.Buf"> ZdbBufHeapID(SagaData *);
 };
 
-ZfbStruct(ZdbAPI, SagaData,
+ZfStruct(ZdbAPI, SagaData,
   (type,	(Ctor<0>, Keys<0>),	String),
-  (id,	(Ctor<1>, Keys<0>),		UInt128),
+  (id,		(Ctor<1>, Keys<0>),	UInt128),
   (shard,	(Ctor<2>),		UInt8),
   (data,	(Ctor<3>),		Bytes),
   (deadline,	(Ctor<4>),		Time));
 
-ZfbRoot(SagaData);
+ZiFB::Table<"Zdb_.fbs.SagaData"> ZiFBType(SagaData *);
 
 struct SagaStep {
   SagaType	type;
@@ -118,20 +116,21 @@ struct SagaStep {
   friend ZuStringT<"Zdb.Saga.Step.Buf"> ZdbBufHeapID(SagaStep *);
 };
 
-ZfbStruct(ZdbAPI, SagaStep,
+ZfStruct(ZdbAPI, SagaStep,
   (type,	(Ctor<0>, Keys<0>),	String),
-  (id,	(Ctor<1>, Keys<0>),		UInt128),
+  (id,		(Ctor<1>, Keys<0>),	UInt128),
   (step,	(Ctor<2>, Keys<0>),	UInt32),
   (shard,	(Ctor<3>),		UInt8),
-  (un,	(Ctor<4>),			UInt64));
+  (un,		(Ctor<4>),		UInt64));
 
-ZfbRoot(SagaStep);
+ZiFB::Table<"Zdb_.fbs.SagaStep"> ZiFBType(SagaStep *);
 
 ZtEnumNS(ZdbAPI, SagaOp, int8_t,
   Invalid,
   Insert,
   Update,
   Delete);
+namespace SagaOp { ZiFB::Enum<"Zdb_.fbs.SagaOp"> ZiFBType(Map *); }
 
 struct SagaTypeStep {
   SagaType	type;
@@ -141,14 +140,14 @@ struct SagaTypeStep {
   bool		repeat = false;
 };
 
-ZfbStruct(ZdbAPI, SagaTypeStep,
+ZfStruct(ZdbAPI, SagaTypeStep,
   (type,	(Ctor<0>, Keys<0>),		String),
   (step,	(Ctor<2>, Keys<0>),		UInt32),
   (table,	(Ctor<1>),			String),
-  (op,	(Ctor<3>, Enum<SagaOp::Map>),		Int8),
+  (op,		(Ctor<3>, Enum<SagaOp::Map>),	Int8),
   (repeat,	(Ctor<4>),			Bool));
 
-ZfbRoot(SagaTypeStep);
+ZiFB::Table<"Zdb_.fbs.SagaTypeStep"> ZiFBType(SagaTypeStep *);
 
 ZuDerive(SagaRecoveryFn,
   (ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>));
@@ -184,7 +183,7 @@ namespace SagaState {
 }
 
 struct SagaRunData {
-  SagaShards	shards;
+  SagaShards	shards; // indexed by step
 };
 
 struct Saga_ : public ZmPolymorph, public SagaRunData {
@@ -245,9 +244,6 @@ private:
   SagaRec	*m_rec = nullptr;	// staged recovery step
 };
 
-template <typename T, typename Complete>
-using SagaFn = ZmFn<void(Row<T> *, Complete), ZmFnHeapID<"Zdb.Saga.Fn">>;
-
 template <typename Complete, typename L>
 struct SagaInsert {
   Complete	complete;
@@ -289,7 +285,18 @@ struct SagaFindUpdate;
 template <typename Impl, typename Call>
 struct SagaFindDelete;
 
-class Saga : public Saga_ {
+ZmListDerive(SagaList, Saga_,
+  ZmListNode<Saga_, ZmListShadow<>>);
+
+inline const SagaKey &SagaKeyAxor(const Saga_ &saga) {
+  return saga.key();
+}
+
+ZmHashDerive(SagaHash, SagaList::Node,
+  (ZmHashNode<SagaList::Node,
+    ZmHashKey<SagaKeyAxor, ZmHashHeapID<"">>>));
+
+class Saga : public SagaHash::Node {
 friend DB;
 template <typename, typename> friend struct MSaga;
 template <typename, typename, typename> friend struct SagaFindUpdate;
@@ -317,7 +324,7 @@ public:
   void del(Impl *, ZmRef<Row<T>>, Complete &&, L &&);
   template <unsigned KeyID, typename Impl, typename Complete, typename L>
   void findDel(
-    Impl *, Shard, const typename Impl::template Key<KeyID> &,
+    Impl *, Shard, typename Impl::template Key<KeyID>,
     Complete &&, L &&);
 
 protected:
@@ -389,27 +396,6 @@ private:
   static void terminal_(DB *, ZmRef<M>, Complete, bool);
 };
 
-struct SagaNode__ : public ZmPolymorph {
-  ZmRef<Saga> saga;
-
-  SagaNode__(ZmRef<Saga> saga_) : saga{ZuMv(saga_)} { }
-};
-
-ZmListDerive(SagaList, SagaNode__,
-  ZmListNode<SagaNode__,
-    ZmListShadow<>>);
-
-inline const SagaKey &SagaKeyAxor(const SagaList::Node &node) {
-  return static_cast<const SagaNode__ &>(node).saga->key();
-}
-
-ZmHashDerive(SagaHash, SagaList::Node,
-  (ZmHashNode<SagaList::Node,
-    ZmHashKey<SagaKeyAxor,
-      ZmHashHeapID<"Zdb.Saga.Node">>>));
-
-ZuDerive(SagaNode, SagaHash::Node);
-
 template <typename Sagas>
 using SagaUnion =
   ZuTypeApply<ZuUnion, typename Sagas::template Unshift<void>>;
@@ -444,6 +430,7 @@ using SagaTypeSeen = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">>;
 struct SagaCatalog__ {
   StoreTbl	*table = nullptr;
   SagaTypeSeen	seen;
+  SchemaBuf	schema = SchemaBuf(ZiFB::SchemaOut::Schema<SagaTypeStep>::Size);
   SagaType	type;
   ZeException	error;
   UN		nextUN = 0;
@@ -452,6 +439,8 @@ struct SagaCatalog__ {
   unsigned	pageCount = 0;
   unsigned	writeType = 0;
   unsigned	writeStep = 0;
+
+  SagaCatalog__() { ZiFB::saveSchema<SagaTypeStep>(schema); }
 
   template <typename Catalog> void load(SagaTypeStep);
   template <typename Catalog> void end();
@@ -677,9 +666,8 @@ struct MSaga : public MSaga_<Catalog, MSagaHeap<Catalog>> {
     bool loaded = ZuSwitch::dispatch<Sagas::N>(unsigned(i),
 	[saga = saga.ptr(), data](auto I) {
 	  using Def = ZuType<I, Sagas>;
-	  auto fbo = ZfbStruct::verify<Def>(data);
-	  if (ZuUnlikely(!fbo)) return false;
-	  ZfbStruct::new_<Def>(saga->u.template new_<Def>(), fbo,
+	  if (ZuUnlikely(!ZiFB::verify<Def>(data))) return false;
+	  ZiFB::handler<Def>(data).new_(saga->u.template new_<Def>(),
 	    typename Def::Base{});
 	  return true;
 	});
@@ -690,31 +678,33 @@ struct MSaga : public MSaga_<Catalog, MSagaHeap<Catalog>> {
     return saga;
   }
 
-  static void save(const M *saga, SagaPayload &data) {
-    saga->u.cdispatch([&data](auto, const auto &def) {
-      Zfb::IOBuilder fbb{new IOBufAlloc<SagaData>{}};
-      fbb.Finish(ZfbStruct::save(fbb, def));
-      unsigned n = fbb.GetSize();
-      data.length(n, false);
-      memcpy(data.data(), fbb.GetBufferPointer(), n);
+  static int save(const M *saga, SagaPayload &data) {
+    return saga->u.cdispatch([&data](auto, const auto &def) {
+      data.length(0);
+      return ZiFB::save(data, def);
     });
   }
 
   template <typename Context, typename Complete>
   static void run(Context *context, ZmRef<M> saga, Complete &&complete) {
-    runImpl(context, ZuMv(saga),
-      SagaCompleteFn{[complete = ZuFwd<Complete>(complete)](
-	bool ok) mutable { complete(ok); }});
+    runImpl(context, ZuMv(saga), completeFn(ZuFwd<Complete>(complete)));
   }
 
   template <typename Complete>
   static void run(ZmRef<M> saga, Complete &&complete) {
-    runImpl(ZuMv(saga),
-      SagaCompleteFn{[complete = ZuFwd<Complete>(complete)](
-	bool ok) mutable { complete(ok); }});
+    runImpl(ZuMv(saga), completeFn(ZuFwd<Complete>(complete)));
   }
 
 private:
+  template <typename Complete>
+  static SagaCompleteFn completeFn(Complete &&complete) {
+    if constexpr (ZuIsSame<ZuDecay<Complete>, SagaCompleteFn>{})
+      return ZuFwd<Complete>(complete);
+    else
+      return SagaCompleteFn{[complete = ZuFwd<Complete>(complete)](
+	bool ok) mutable { complete(ok); }};
+  }
+
   template <typename Context>
   static void runImpl(
       Context *context, ZmRef<M> saga, SagaCompleteFn complete) {

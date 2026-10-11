@@ -99,7 +99,6 @@ public:
       if constexpr (HasBuffer<Bytes>{}) {
 	uint64_t offset = m_out.length();
 	auto ptr = m_out.ensure(offset + n);
-	if (!ptr && n) { m_ok = false; return *this; }
 	if (n) memcpy(ptr + offset, data, n);
 	m_out.length(offset + n);
       }
@@ -115,7 +114,6 @@ public:
       if constexpr (HasBuffer<Bytes>{}) {
 	uint64_t offset = m_out.length();
 	auto ptr = m_out.ensure(offset + n);
-	if (!ptr && n) { m_ok = false; return *this; }
 	if (n) n = ZuPrint<U>::print(reinterpret_cast<char *>(ptr + offset), n, v);
 	m_out.length(offset + n);
       } else {
@@ -169,7 +167,6 @@ public:
       m_bytes.length(start_ + PrefixReserve);
       offset = m_bytes.length();
       auto ptr = m_bytes.ensure(offset + size);
-      if (!ptr && size) return -1;
       length = size ? ZuPrint<P>::print(
 	reinterpret_cast<char *>(ptr + offset), size, value) : 0;
       if (length > size) return -1;

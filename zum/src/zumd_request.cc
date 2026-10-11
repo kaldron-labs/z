@@ -14,31 +14,22 @@ Requests_<Heap>::RequestData::RequestData(Requests_ *requests, Fn cancel) :
   m_requests{requests}, m_cancel{ZuMv(cancel)} { }
 
 template <typename Heap>
-void Requests_<Heap>::RequestData::complete(Fn fn)
-{
-  auto self = ZmRef<Node>{static_cast<Node *>(this)};
-  m_requests->invoke_([self = ZuMv(self), fn = ZuMv(fn)]() mutable {
-    self->finish_(ZuMv(fn));
-  });
-}
-
-template <typename Heap>
 void Requests_<Heap>::RequestData::start_(ZuTime deadline)
 {
   m_requests->start_(this, deadline);
 }
 
 template <typename Heap>
-void Requests_<Heap>::RequestData::finish_(Fn fn)
+bool Requests_<Heap>::RequestData::finish_()
 {
-  m_requests->finish_(this, ZuMv(fn));
+  return m_requests->finish_(this);
 }
 
 template <typename Heap>
 void Requests_<Heap>::RequestData::cancel_()
 {
   auto cancel = ZuMv(m_cancel);
-  finish_(ZuMv(cancel));
+  if (finish_() && cancel) cancel();
 }
 
 template <typename Heap>
@@ -60,46 +51,20 @@ bool Requests_<Heap>::init(ZmScheduler *scheduler, unsigned sid, unsigned limit)
 }
 
 template <typename Heap>
-void Requests_<Heap>::invoke_(Fn fn)
-{
-  m_scheduler->invoke([fn = ZuMv(fn)]() mutable { fn(); }, m_sid);
-}
-
-template <typename Heap>
 void Requests_<Heap>::activate()
 {
   m_up = 1;
 }
 
 template <typename Heap>
-bool Requests_<Heap>::run(
-    ZuTime deadline, StartFn start, RequestData::Fn cancel)
-{
-  if (!m_scheduler || !deadline || !start || !cancel || !m_up) return false;
-  for (;;) {
-    unsigned count = m_count;
-    if (count >= m_limit || !m_up) return false;
-    if (m_count.cmpXch(count + 1, count) == count) break;
-  }
-  ZmRef<Node> request = new Node{this, ZuMv(cancel)};
-  m_scheduler->run([
-    self = ZmRef<Requests>{this}, request = ZuMv(request),
-    deadline, start = ZuMv(start)
-  ]() mutable {
-    self->admit_(ZuMv(request), deadline, ZuMv(start));
-  }, m_sid);
-  return true;
-}
-
-template <typename Heap>
-void Requests_<Heap>::admit_(ZmRef<Node> request, ZuTime deadline, StartFn start)
+bool Requests_<Heap>::admit_(Node *request, ZuTime deadline)
 {
   if (!m_up || m_closing) {
     request->cancel_();
-    return;
+    return false;
   }
   request->start_(deadline);
-  start(ZuMv(request));
+  return true;
 }
 
 template <typename Heap>
@@ -127,14 +92,14 @@ void Requests_<Heap>::del_(ZmScheduler::Timer *timer)
 }
 
 template <typename Heap>
-void Requests_<Heap>::finish_(RequestData *request, RequestData::Fn fn)
+bool Requests_<Heap>::finish_(RequestData *request)
 {
-  if (request->m_done) return;
+  if (request->m_done) return false;
   request->m_done = true;
   del_(&request->m_timer);
   remove_(request);
   request->m_cancel = typename RequestData::Fn{};
-  if (fn) fn();
+  return true;
 }
 
 template <typename Heap>

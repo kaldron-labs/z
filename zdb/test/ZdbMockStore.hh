@@ -25,7 +25,7 @@ public:
   StoreTbl(
     Store *store, bool internal, IDString id, unsigned nShards,
     ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
-    const reflection::Schema *schema, IOBufAllocFn bufAllocFn
+    Schema schema, IOBufAllocFn bufAllocFn
   ) : ZdbMem::StoreTbl{
     store, internal, ZuMv(id), nShards,
     ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)

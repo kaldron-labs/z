@@ -437,8 +437,8 @@ static void testFailure()
 
   ZmRef<ZiIOBuf> first = new Zjrpc::StdioBuf{};
   ZmRef<ZiIOBuf> second = new Zjrpc::StdioBuf{};
-  ZuCHECK(first->alloc(TestFrameBytes) && second->alloc(TestFrameBytes),
-    "test frame allocation failed");
+  first->alloc(TestFrameBytes);
+  second->alloc(TestFrameBytes);
   memset(first->data(), 'x', TestFrameBytes);
   memset(second->data(), 'y', TestFrameBytes);
   first->length = second->length = TestFrameBytes;

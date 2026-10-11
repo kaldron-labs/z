@@ -8,6 +8,8 @@
 
 namespace Ztc {
 
+ZfStructImpl(DBTableTelemetry);
+
 ZtEnumImplNS(DBCacheMode);
 
 } // namespace Ztc

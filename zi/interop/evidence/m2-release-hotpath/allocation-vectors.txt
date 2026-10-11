@@ -1,0 +1,14 @@
+warning: the debug information found in "/usr/lib/debug/usr/lib/ld-linux-x86-64.so.2.debug" does not match "/lib64/ld-linux-x86-64.so.2" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,65536,3,639192,245760,0.002539576,6
+native,reuse,65536,3,639192,245760,0.002547049,6
+canonical,fresh,65536,3,639192,245760,0.00730472,6
+native,fresh,65536,3,639192,245760,0.007474015,6
+[Inferior 1 (process 1218566) exited normally]
+allocation counters: {"canonical/fresh": {"pool_requests": 4, "variable_bytes": 1720320, "variable_requests": 12, "variable_sizes": {"65536": 3, "98304": 3, "163840": 3, "245760": 3}}, "canonical/reuse": {"pool_requests": 1, "variable_bytes": 573440, "variable_requests": 4, "variable_sizes": {"65536": 1, "98304": 1, "163840": 1, "245760": 1}}, "native/fresh": {"pool_requests": 4, "variable_bytes": 1720320, "variable_requests": 12, "variable_sizes": {"65536": 3, "98304": 3, "163840": 3, "245760": 3}}, "native/reuse": {"pool_requests": 1, "variable_bytes": 573440, "variable_requests": 4, "variable_sizes": {"65536": 1, "98304": 1, "163840": 1, "245760": 1}}}

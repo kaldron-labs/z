@@ -1,9 +1,12 @@
 # TODO
 
 - Flatbuffers
+
 - SBE (simple binary encoding)
 - protobuf
 - FIX
+
+- fix all the `1 << 30` etc. to be `1<<30`
 
 ## zdash
 

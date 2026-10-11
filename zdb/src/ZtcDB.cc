@@ -14,6 +14,8 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZmScratch.hh>
 
+namespace Ztc { ZfStructImpl(DBTelemetry); }
+
 class ZtcDBMgr_ {
 friend Ztc::DBMgr;
 

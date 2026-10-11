@@ -1,0 +1,28 @@
+./ZfASN1Test ............ ok
+./ZfCBORTest ............ ok
+./ZfDBUSTest ............ ok
+./ZfCfTest .............. ok
+./ZfCLITest ............. ok
+./ZfCSVTest ............. ok
+./ZfStructTest .......... ok
+./ZfTreeTest ............ ok
+./ZfURITest ............. ok
+./ZfYAMLTest ............ ok
+./ZfConfigTest .......... ok
+./ZfSkipTest ............ ok
+./ZfFBMetaTest .......... ok
+./ZfFBWireTest .......... ok
+./ZfFBBuilderTest ....... ok
+./ZfFBViewTest .......... ok
+./ZfFBSchemaTest ........ ok
+./ZfFBValueTest ......... ok
+./ZfFBLoadTest .......... ok
+./ZfFBUnionTest ......... ok
+./ZfFBStreamTest ........ ok
+All tests successful.
+Files=21, Tests=414, 420ms wallclock (80ms usr + 20ms sys = 100ms CPU)
+Result: PASS
+./ZiFBTest .............. ok
+All tests successful.
+Files=1, Tests=4, 28ms wallclock (10ms usr + 0ms sys = 10ms CPU)
+Result: PASS

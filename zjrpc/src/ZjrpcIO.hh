@@ -109,7 +109,7 @@ public:
     m_max = max;
     if (length > max) return false;
     m_body = new InputBuf{};
-    if (length && !m_body->alloc(length)) { m_body = nullptr; return false; }
+    if (length) m_body->alloc(length);
     return true;
   }
   bool feed(ZuSpan<uint8_t> span) {

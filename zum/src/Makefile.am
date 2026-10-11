@@ -1,43 +1,12 @@
 METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src \
-	-I$(top_srcdir)/ztls/src -I$(top_srcdir)/zfb/src \
+	-I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zrest/src \
 	-I$(top_srcdir)/zdb/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-FBS = \
-	zum_issuer.fbs \
-	zum_app.fbs \
-	zum_user.fbs \
-	zum_cred.fbs \
-	zum_assignment.fbs \
-	zum_action.fbs \
-	zum_role.fbs \
-	zum_client.fbs \
-	zum_client_access.fbs \
-	zum_admin_access.fbs \
-	zum_provider.fbs \
-	zum_auth_policy.fbs \
-	zum_ext_identity.fbs \
-	zum_role_map.fbs \
-	zum_evidence.fbs \
-	zum_session.fbs \
-	zum_consent.fbs \
-	zum_grant.fbs \
-	zum_refresh.fbs \
-	zum_saga.fbs \
-	zum_sign_key.fbs \
-	zum_request.fbs \
-	zum_ssf.fbs \
-	zum_ssf_delivery.fbs \
-	zum_maintenance.fbs
-FBS_H = ${FBS:%.fbs=%_fbs.h}
-${FBS_H}: %_fbs.h: fbs/%.fbs $(top_builddir)/scripts/fbscodegen
-	$(top_builddir)/scripts/fbscodegen -b --schema --bfbs-gen-embed -c --cpp-std c++17 --cpp-field-case-style lower -I fbs -I $(top_srcdir)/zfb/src/fbs $<
-BUILT_SOURCES = ${FBS_H}
-CLEANFILES = ${FBS_H}
 pkginclude_HEADERS = ZumLib.hh ZumTypes.hh ZumURI.hh ZumJWTVerify.hh ZumService.hh ZumMgmt.hh
 noinst_HEADERS = zum_cli.hh ZumVaultClient.hh ZumVaultService.hh ZumVaultUtil.hh \
 	zumd.hh zumd_admin.hh zumd_authorize.hh zumd_db.hh zumd_discovery.hh zumd_secret.hh \
@@ -47,8 +16,6 @@ noinst_HEADERS = zum_cli.hh ZumVaultClient.hh ZumVaultService.hh ZumVaultUtil.hh
 	zumd_ssf_db.hh \
 	zumd_http.hh zumd_jwt.hh zumd_oauth.hh zumd_oidc.hh zumd_passkey.hh \
 	zumd_request.hh zumd_server.hh zumd_session.hh zumd_token.hh zumd_webauthn.hh
-nodist_noinst_HEADERS = ${FBS_H}
-dist_noinst_DATA = $(addprefix fbs/,${FBS})
 lib_LTLIBRARIES = libZum.la
 bin_PROGRAMS = zum zumd
 libZum_la_CPPFLAGS = $(AM_CPPFLAGS) -DZUM_EXPORTS

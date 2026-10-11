@@ -27,7 +27,7 @@
 
 #include <zlib/ZfStruct.hh>
 
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZdbTypes.hh>
 
@@ -36,9 +36,10 @@
 #include <zlib/ZtcRAGMap.hh>
 #include <zlib/ZtcTypes.hh>
 
-#include <zlib/ztc_db_fbs.h>
 
 namespace Ztc {
+
+namespace RAG { ZiFB::Enum<"Ztc.fbs.RAG"> ZiFBType(Map *); }
 
 using DBString = Zdb_::String;
 using DBThreads = Zdb_::Threads;
@@ -82,27 +83,29 @@ struct DBTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBTelemetry *);
 };
-ZfbStruct(ZdbAPI, DBTelemetry,
-    (thread,		(Ctor<0>),					String),
-    (threads,	(Ctor<1>),						StringVec),
-    (nShards,	(Ctor<2>),						UInt32),
-    (self,		(Ctor<3>, Keys<0>),				String),
-    (leader,		(Ctor<4>, Mutable),				String),
-    (prev,		(Ctor<5>, Mutable),				String),
-    (next,		(Ctor<6>, Mutable),				String),
-    (nCxns,		(Ctor<7>, Mutable, Series),			UInt32),
-    (heartbeatFreq,	(Ctor<8>),					UInt32),
-    (heartbeatTimeout, (Ctor<9>),					UInt32),
-    (reconnectFreq,	(Ctor<10>),					UInt32),
-    (electionTimeout, (Ctor<11>),					UInt32),
-    (nTables,	(Ctor<12>),						UInt16),
-    (nHosts,		(Ctor<13>),					UInt8),
-    (nPeers,		(Ctor<14>),					UInt8),
-    (state,		(Ctor<15>, Mutable, Enum<DBHostState::Map>),	Int8),
-    (active,		(Ctor<16>, Mutable),				UInt8),
-    (recovering,	(Ctor<17>, Mutable),				UInt8),
-    (replicating,	(Ctor<18>, Mutable),				UInt8),
-    ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
+ZfStruct(ZdbAPI, DBTelemetry,
+  (thread,		(Ctor<0>),					String),
+  (threads,		(Ctor<1>),					StringVec),
+  (nShards,		(Ctor<2>),					UInt32),
+  (self,		(Ctor<3>, Keys<0>),				String),
+  (leader,		(Ctor<4>, Mutable),				String),
+  (prev,		(Ctor<5>, Mutable),				String),
+  (next,		(Ctor<6>, Mutable),				String),
+  (nCxns,		(Ctor<7>, Mutable, Series),			UInt32),
+  (heartbeatFreq,	(Ctor<8>),					UInt32),
+  (heartbeatTimeout,	(Ctor<9>),					UInt32),
+  (reconnectFreq,	(Ctor<10>),					UInt32),
+  (electionTimeout,	(Ctor<11>),					UInt32),
+  (nTables,		(Ctor<12>),					UInt16),
+  (nHosts,		(Ctor<13>),					UInt8),
+  (nPeers,		(Ctor<14>),					UInt8),
+  (state,		(Ctor<15>, Mutable, Enum<DBHostState::Map>),	Int8),
+  (active,		(Ctor<16>, Mutable),				UInt8),
+  (recovering,		(Ctor<17>, Mutable),				UInt8),
+  (replicating,		(Ctor<18>, Mutable),				UInt8),
+  ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),		Int8));
+
+ZiFB::Table<"Ztc.fbs.DBTelemetry"> ZiFBType(DBTelemetry *);
 
 struct ZdbAPI DB {
   using AllDBTablesFn = ZmFn<void(DBTable *), AllFnHeapID>;

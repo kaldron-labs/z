@@ -23,16 +23,18 @@
 
 #include <zlib/ZfStruct.hh>
 
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZtcTypes.hh>
 #include <zlib/ZtcRAGMap.hh>
 
-#include <zlib/ztc_db_fbs.h>
 
 namespace Ztc {
 
-ZfbEnumNS(ZdbAPI, DBCacheMode, Normal, All);
+namespace RAG { ZiFB::Enum<"Ztc.fbs.RAG"> ZiFBType(Map *); }
+
+ZtEnumNS(ZdbAPI, DBCacheMode, int8_t, Normal, All);
+namespace DBCacheMode { ZiFB::Enum<"Ztc.fbs.DBCacheMode"> ZiFBType(Map *); }
 
 using DBTableID =
   ZtString<ZtStringHeapID<"Ztc.DBTableID">>;
@@ -58,16 +60,18 @@ struct DBTableTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBTableTelemetry *);
 };
-ZfbStruct(ZdbAPI, DBTableTelemetry,
-    (dbID,		(Ctor<0>, Keys<0>),			String),
-    (id,		(Ctor<1>, Keys<0>),			String),
-    (cacheMode,	(Ctor<7>, Enum<DBCacheMode::Map>),		Int8),
-    (cacheSize,	(Ctor<6>),					UInt32),
-    (count,		(Ctor<2>, Mutable, Series, Delta),	UInt64),
-    (cacheLoads,	(Ctor<3>, Mutable, Series, Delta),	UInt64),
-    (cacheMisses,	(Ctor<4>, Mutable, Series, Delta),	UInt64),
-    (cacheEvictions,	(Ctor<5>, Mutable, Series, Delta),	UInt64),
-    ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),	Int8));
+ZfStruct(ZdbAPI, DBTableTelemetry,
+  (dbID,		(Ctor<0>, Keys<0>),			String),
+  (id,			(Ctor<1>, Keys<0>),			String),
+  (cacheMode,		(Ctor<7>, Enum<DBCacheMode::Map>),	Int8),
+  (cacheSize,		(Ctor<6>),				UInt32),
+  (count,		(Ctor<2>, Mutable, Series, Delta),	UInt64),
+  (cacheLoads,		(Ctor<3>, Mutable, Series, Delta),	UInt64),
+  (cacheMisses,		(Ctor<4>, Mutable, Series, Delta),	UInt64),
+  (cacheEvictions,	(Ctor<5>, Mutable, Series, Delta),	UInt64),
+  ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),	Int8));
+
+ZiFB::Table<"Ztc.fbs.DBTableTelemetry"> ZiFBType(DBTableTelemetry *);
 
 struct DBTable {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

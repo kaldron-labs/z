@@ -4,10 +4,9 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuTestUtil.hh>
+#include <string.h>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtcAppTypes.hh>
 #include <zlib/ZtcMsg.hh>
@@ -55,14 +54,14 @@ static void protocol()
   ZuTestScope(protocol);
   auto check = [](ZuCSpan deviceID, uint64_t subID, unsigned group,
       bool subscribe, uint64_t generation) {
-    Zfb::Builder builder;
-    auto device = builder.CreateString(deviceID.data(), deviceID.length());
-    auto request = Ztc::fbs::CreateRequest(builder, 9,
-      Ztc::fbs::Group(group), 0, 1000, subscribe);
-    builder.Finish(Ztc::saveMsg(builder,
-      Ztc::fbs::Body::Request, request.Union(), subID, device, generation));
-    return Ztc::Hubd::validFrontMessage(
-      Ztc::fbs::GetMsg(builder.GetBufferPointer()));
+    Ztc::Builder builder{new ZiIOBufAlloc<>()};
+    auto nested = builder.startNested();
+    auto request = ZiFB::saveObject(builder, Ztc::Request{
+      .seqNo = 9, .interval = 1000, .group = uint8_t(group),
+      .subscribe = subscribe});
+    auto bytes = builder.finish(Ztc::saveMsg(builder, nested,
+      Ztc::Body::Request, request, subID, deviceID, generation));
+    return Ztc::Hubd::validFrontMessage(ZiFB::view<Ztc::Msg>(bytes));
   };
   ZuCheck(check("device-1", 7, 0, true, 0));
   ZuCheck(check("device-1", 7, 0, false, 0));
@@ -70,78 +69,120 @@ static void protocol()
   ZuCheck(!check("device-1", 0, 0, true, 0));
   ZuCheck(!check("device-1", 7, 255, true, 0));
   ZuCheck(!check("device-1", 7, 0, true, 3));
-  ZuCheck(!Ztc::Hubd::validFrontMessage(nullptr));
-  ZuCheck(!Ztc::Hubd::validAgentMessage(nullptr));
+  ZuCheck(!Ztc::Hubd::validFrontMessage({}));
+  ZuCheck(!Ztc::validMsg({}));
 
   auto app = [](ZuCSpan deviceID, unsigned group, ZuCSpan filter) {
-    Zfb::Builder builder;
-    auto device = deviceID ?
-      builder.CreateString(deviceID.data(), deviceID.length()) :
-      flatbuffers::Offset<flatbuffers::String>{};
-    auto filter_ = filter ?
-      builder.CreateString(filter.data(), filter.length()) :
-      flatbuffers::Offset<flatbuffers::String>{};
-    auto request = Ztc::fbs::CreateRequest(builder, 0,
-      Ztc::fbs::Group(group), filter_, 0, true);
-    builder.Finish(Ztc::saveMsg(builder,
-      Ztc::fbs::Body::Request, request.Union(), 7, device));
-    return Ztc::Hubd::validAppRequest(
-      Ztc::fbs::GetMsg(builder.GetBufferPointer()));
+    Ztc::Builder builder{new ZiIOBufAlloc<>()};
+    auto nested = builder.startNested();
+    auto request = ZiFB::saveObject(builder, Ztc::Request{
+      .filter = Ztc::RequestFilter{filter}, .seqNo = 0,
+      .group = uint8_t(group), .subscribe = true});
+    auto bytes = builder.finish(Ztc::saveMsg(builder, nested,
+      Ztc::Body::Request, request, 7, deviceID));
+    return Ztc::Hubd::validAppRequest(ZiFB::view<Ztc::Msg>(bytes));
   };
-  ZuCheck(app({}, unsigned(Ztc::fbs::Group::App), {}));
-  ZuCheck(app("", unsigned(Ztc::fbs::Group::App), "*"));
-  ZuCheck(!app("device-1", unsigned(Ztc::fbs::Group::App), {}));
-  ZuCheck(!app({}, unsigned(Ztc::fbs::Group::Heap), {}));
-  ZuCheck(!app({}, unsigned(Ztc::fbs::Group::App), "app-*"));
+  ZuCheck(app({}, unsigned(Ztc::Group::App), {}));
+  ZuCheck(app("", unsigned(Ztc::Group::App), "*"));
+  ZuCheck(!app("device-1", unsigned(Ztc::Group::App), {}));
+  ZuCheck(!app({}, unsigned(Ztc::Group::Heap), {}));
+  ZuCheck(!app({}, unsigned(Ztc::Group::App), "app-*"));
 
-  Zfb::Builder inventoryBuilder;
-  auto inventoryDevice = inventoryBuilder.CreateString("", 0);
-  auto inventoryFilter = inventoryBuilder.CreateString("*");
-  auto inventoryRequest = Ztc::fbs::CreateRequest(inventoryBuilder, 0,
-    Ztc::fbs::Group::App, inventoryFilter, 1000, true);
-  inventoryBuilder.Finish(Ztc::saveMsg(inventoryBuilder,
-    Ztc::fbs::Body::Request, inventoryRequest.Union(), 7, inventoryDevice));
-  ZuCheck(Ztc::Hubd::validAppRequest(
-    Ztc::fbs::GetMsg(inventoryBuilder.GetBufferPointer())));
+  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  auto nested = builder.startNested();
+  auto request = ZiFB::saveObject(builder, Ztc::Request{
+    .filter = "*", .seqNo = 0, .interval = 1000,
+    .group = Ztc::Group::App, .subscribe = true});
+  auto payload = builder.startTable();
+  ZiFB::fieldUnion<Ztc::ZfField(Payload, body)>(builder, payload,
+    ZiFB::UnionOffset<Ztc::BodyValue>{request, Ztc::Body::Request});
+  auto data = builder.endNested(nested, builder.endTable(payload));
+  auto empty = builder.string("");
+  auto table = builder.startTable();
+  ZiFB::fieldOffset<Ztc::ZfField(Msg, data)>(builder, table, data);
+  ZiFB::field<Ztc::ZfField(Msg, subID)>(builder, table, uint64_t(7));
+  ZiFB::fieldOffset<Ztc::ZfField(Msg, deviceID)>(builder, table, empty);
+  auto bytes = builder.finish(builder.endTable(table));
+  auto msg = Ztc::msg(bytes);
+  ZuCheck(msg && msg.has<Ztc::ZfField(Msg, deviceID)>());
+  ZuCheck(Ztc::Hubd::validAppRequest(msg));
 }
 
 static void messages()
 {
   ZuTestScope(messages);
-  auto verify = [](auto make, Ztc::fbs::Body expected) {
-    Zfb::Builder builder;
+  auto verify = [](auto make, unsigned expected) {
+    Ztc::Builder builder{new ZiIOBufAlloc<>()};
+    auto nested = builder.startNested();
     auto body = make(builder);
-    auto device = builder.CreateString("device-1");
-    builder.Finish(Ztc::saveMsg(
-      builder, expected, body.Union(), 7, device, 3));
-    if (!Zfb::Verifier{builder.GetBufferPointer(), builder.GetSize()}.
-          VerifyBuffer<Ztc::fbs::Msg>()) return false;
-    auto msg = Ztc::fbs::GetMsg(builder.GetBufferPointer());
-    return Ztc::Hubd::validAgentMessage(msg) &&
-      msg->body_type() == expected && msg->subId() == 7 &&
-      msg->agentGen() == 3 && msg->deviceId()->string_view() == "device-1";
+    auto bytes = builder.finish(Ztc::saveMsg(
+      builder, nested, expected, body, 7, "device-1", 3));
+    auto msg = Ztc::msg(bytes);
+    return msg &&
+      Ztc::msgBody(msg).tag() == expected &&
+      msg.template get<Ztc::ZfField(Msg, subID)>() == 7 &&
+      msg.template get<Ztc::ZfField(Msg, agentGen)>() == 3 &&
+      msg.template get<Ztc::ZfField(Msg, deviceID)>() == "device-1";
   };
   ZuCheck(verify([](auto &builder) {
-    return ZfbStruct::save(builder, Ztc::Ack{ZuID{"app"}, 9, 1000});
-  }, Ztc::fbs::Body::Ack));
+    return ZiFB::saveObject(builder, Ztc::Ack{ZuID{"app"}, 9, 1000});
+  }, Ztc::Body::Ack));
   ZuCheck(!verify([](auto &builder) {
-    return ZfbStruct::save(builder, Ztc::Ack{ZuID{"app"}, 9, 1000, 255});
-  }, Ztc::fbs::Body::Ack));
+    return ZiFB::saveObject(builder, Ztc::Ack{ZuID{"app"}, 9, 1000, 255});
+  }, Ztc::Body::Ack));
   ZuCheck(verify([](auto &builder) {
-    auto id = builder.CreateString("app");
+    auto id = builder.string("app");
     Ztc::AppTelemetry value;
-    auto valueOffset = ZfbStruct::save(builder, value);
+    auto valueOffset = ZiFB::saveObject(builder, value);
     return Ztc::saveTelemetry(
-      builder, id, 9, Ztc::fbs::TelemetryBody::AppTelemetry,
-      valueOffset.Union());
-  }, Ztc::fbs::Body::Telemetry));
+      builder, id, 9, Ztc::TelemetryBody::AppTelemetry,
+      valueOffset);
+  }, Ztc::Body::Telemetry));
   ZuCheck(verify([](auto &builder) {
-    return ZfbStruct::save(builder, Ztc::EOS{ZuID{"app"}, 9});
-  }, Ztc::fbs::Body::EOS));
+    return ZiFB::saveObject(builder, Ztc::EOS{ZuID{"app"}, 9});
+  }, Ztc::Body::EOS));
   ZuCheck(verify([](auto &builder) {
-    return ZfbStruct::save(builder,
+    return ZiFB::saveObject(builder,
       Ztc::Error{Ztc::ErrorMessage{"failed"}, ZuID{"app"}, 9, 1});
-  }, Ztc::fbs::Body::Error));
+  }, Ztc::Body::Error));
+}
+
+static void payloadCopy()
+{
+  ZuTestScope(payloadCopy);
+  Ztc::Builder routed{new ZiIOBufAlloc<>()};
+  ZuBSpan bytes;
+  {
+    Ztc::Builder source{new ZiIOBufAlloc<>()};
+    auto nested = source.startNested();
+    auto id = source.string("publisher");
+    auto value = ZiFB::saveObject(source, Ztc::AppTelemetry{});
+    auto telemetry = Ztc::saveTelemetry<true>(source, id, 0,
+      Ztc::TelemetryBody::AppTelemetry, value);
+    auto original = source.finish(Ztc::saveMsg(source, nested,
+      Ztc::Body::Telemetry, telemetry));
+    auto msg = Ztc::msg(original);
+    ZuCheck(msg);
+    auto payload = msg.get<Ztc::ZfField(Msg, data)>();
+    auto copied = routed.copyRoot(payload, Ztc::Builder::Align);
+    bytes = routed.finish(Ztc::saveMsg(routed, copied, 27, "device", 4));
+    auto output = Ztc::msg(bytes);
+    ZuCheck(output);
+    auto emitted = output.get<Ztc::ZfField(Msg, data)>();
+    ZuCheck(emitted.length() == payload.length() &&
+      !memcmp(emitted.data(), payload.data(), payload.length()));
+  }
+  // The nested span remains independently usable after its source is freed.
+  auto output = Ztc::msg(bytes);
+  ZuCheck(output && output.get<Ztc::ZfField(Msg, subID)>() == 27);
+  auto payload = output.get<Ztc::ZfField(Msg, data)>();
+  ZuCheck(ZiFB::verify<Ztc::Payload>(payload));
+  auto telemetry = Ztc::msgBody(output).get<Ztc::Body::Telemetry>();
+  ZuCheck(telemetry.has<Ztc::ZfField(Telemetry, seqNo)>() &&
+    telemetry.get<Ztc::ZfField(Telemetry, seqNo)>() == 0);
+  ZiFB::write<ZiFB::Offset>(const_cast<uint8_t *>(payload.data()), UINT32_MAX);
+  ZuCheck(ZiFB::verify<Ztc::Msg>(bytes));
+  ZuCheck(!Ztc::msg(bytes));
 }
 
 static void routing()
@@ -245,17 +286,18 @@ static void routing()
 static bool app(Ztc::Hubd &hub, uint64_t agent, uint64_t generation,
     ZuCSpan publisher, ZuCSpan version, uint64_t seqNo = 0)
 {
-  Zfb::Builder builder;
-  auto id = builder.CreateString(publisher.data(), publisher.length());
+  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  auto nested = builder.startNested();
+  auto id = builder.string(publisher);
   Ztc::AppTelemetry value;
   value.version = version;
-  auto app_ = ZfbStruct::save(builder, value);
+  auto app_ = ZiFB::saveObject(builder, value);
   auto telemetry = Ztc::saveTelemetry(builder, id, seqNo,
-    Ztc::fbs::TelemetryBody::AppTelemetry, app_.Union());
-  builder.Finish(Ztc::saveMsg(builder,
-    Ztc::fbs::Body::Telemetry, telemetry.Union()));
+    Ztc::TelemetryBody::AppTelemetry, app_);
+  auto bytes = builder.finish(Ztc::saveMsg(builder, nested,
+    Ztc::Body::Telemetry, telemetry));
   return hub.app(agent, generation,
-    Ztc::fbs::GetMsg(builder.GetBufferPointer())->body_as_Telemetry());
+    Ztc::msgBody(ZiFB::view<Ztc::Msg>(bytes)).get<Ztc::Body::Telemetry>());
 }
 
 static void appInventoryLimits()
@@ -296,28 +338,31 @@ static void appInventory()
     void operator ()(Ztc::HubFrame frame) {
       auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
       if (!msg) { attributed = false; return; }
-      types.push(uint8_t(msg->body_type()));
-      if (msg->body_type() == Ztc::fbs::Body::Telemetry) {
-        auto telemetry = msg->body_as_Telemetry();
-        attributed = attributed && msg->deviceId() &&
-          msg->deviceId()->string_view() == "device-1" &&
-          msg->agentGen() == 3 && telemetry && telemetry->id() &&
-          telemetry->id()->string_view() == "publisher-1" &&
-          !telemetry->seqNo() &&
-          (telemetry->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry ||
-           telemetry->value_type() == Ztc::fbs::TelemetryBody::Shutdown);
-        sourceShutdown |= telemetry && telemetry->value_type() ==
-          Ztc::fbs::TelemetryBody::Shutdown;
-      } else if (msg->body_type() == Ztc::fbs::Body::Error) {
-        auto error = msg->body_as_Error();
-        sourceGone = error && msg->deviceId() &&
-          msg->deviceId()->string_view() == "device-1" &&
-          msg->agentGen() == 3 && error->id() &&
-          error->id()->string_view() == "publisher-1" &&
-          error->code() == Ztc::HubError::AgentGone;
-      } else if (msg->body_type() == Ztc::fbs::Body::EOS) {
-        attributed &= !msg->deviceId() && !msg->agentGen() &&
-          msg->body_as_EOS()->id()->string_view() == "inventory";
+      types.push(uint8_t(Ztc::msgBody(msg).tag()));
+      if (Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry) {
+	auto telemetry = Ztc::msgBody(msg).get<Ztc::Body::Telemetry>();
+	attributed = attributed && msg.get<Ztc::ZfField(Msg, deviceID)>() &&
+	  msg.get<Ztc::ZfField(Msg, deviceID)>() == "device-1" &&
+	  msg.get<Ztc::ZfField(Msg, agentGen)>() == 3 && telemetry &&
+	    telemetry.get<Ztc::ZfField(Telemetry, id)>() &&
+	  telemetry.get<Ztc::ZfField(Telemetry, id)>() == "publisher-1" &&
+	  !telemetry.get<Ztc::ZfField(Telemetry, seqNo)>() &&
+	  (telemetry
+	    .get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::AppTelemetry ||
+	   telemetry.get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::Shutdown);
+	sourceShutdown |= telemetry && telemetry.get<Ztc::ZfField(Telemetry, value)>().tag() ==
+	  Ztc::TelemetryBody::Shutdown;
+      } else if (Ztc::msgBody(msg).tag() == Ztc::Body::Error) {
+	auto error = Ztc::msgBody(msg).get<Ztc::Body::Error>();
+	sourceGone = error && msg.get<Ztc::ZfField(Msg, deviceID)>() &&
+	  msg.get<Ztc::ZfField(Msg, deviceID)>() == "device-1" &&
+	  msg.get<Ztc::ZfField(Msg, agentGen)>() == 3 && error.get<Ztc::ZfField(Error, id)>() &&
+	  error.get<Ztc::ZfField(Error, id)>() == "publisher-1" &&
+	  error.get<Ztc::ZfField(Error, code)>() == Ztc::HubError::AgentGone;
+      } else if (Ztc::msgBody(msg).tag() == Ztc::Body::EOS) {
+	attributed &= !msg.get<Ztc::ZfField(Msg, deviceID)>() &&
+	  !msg.get<Ztc::ZfField(Msg, agentGen)>() &&
+	  Ztc::msgBody(msg).get<Ztc::Body::EOS>().get<Ztc::ZfField(EOS, id)>() == "inventory";
       }
     }
   } frames;
@@ -326,23 +371,23 @@ static void appInventory()
   ZuCheck(app(hub, 10, 3, "publisher-1", "v1"));
   ZuCheck(hub.appSubscribe(20, 7, 0, error));
   ZuCheck(frames.attributed && frames.types.length() == 3 &&
-    frames.types[0] == uint8_t(Ztc::fbs::Body::Telemetry) &&
-    frames.types[1] == uint8_t(Ztc::fbs::Body::Ack) &&
-    frames.types[2] == uint8_t(Ztc::fbs::Body::EOS));
+    frames.types[0] == uint8_t(Ztc::Body::Telemetry) &&
+    frames.types[1] == uint8_t(Ztc::Body::Ack) &&
+    frames.types[2] == uint8_t(Ztc::Body::EOS));
 
   frames.types.length(0);
   ZuCheck(hub.appSubscribe(20, 8, 1000, error));
   ZuCheck(frames.types.length() == 3 &&
-    frames.types[0] == uint8_t(Ztc::fbs::Body::Ack) &&
-    frames.types[1] == uint8_t(Ztc::fbs::Body::Telemetry) &&
-    frames.types[2] == uint8_t(Ztc::fbs::Body::EOS));
+    frames.types[0] == uint8_t(Ztc::Body::Ack) &&
+    frames.types[1] == uint8_t(Ztc::Body::Telemetry) &&
+    frames.types[2] == uint8_t(Ztc::Body::EOS));
   ZuCheck(app(hub, 10, 3, "publisher-1", "v2"));
   ZuCheck(frames.types.length() == 4 &&
-    frames.types[3] == uint8_t(Ztc::fbs::Body::Telemetry));
+    frames.types[3] == uint8_t(Ztc::Body::Telemetry));
   ZuCheck(hub.appRemove(10, 3, "publisher-1"));
   ZuCheck(frames.sourceShutdown && !frames.sourceGone && frames.attributed &&
     frames.types.length() == 5 &&
-    frames.types[4] == uint8_t(Ztc::fbs::Body::Telemetry));
+    frames.types[4] == uint8_t(Ztc::Body::Telemetry));
   ZuCheck(hub.appRemove(10, 3, "publisher-1"));
   ZuCheck(hub.appUnsubscribe(20, 8));
   ZuCheck(hub.appUnsubscribe(20, 8));
@@ -350,7 +395,7 @@ static void appInventory()
   ZuCheck(hub.appSubscribe(20, 9, 1000, error));
   ZuCheck(hub.removeAgent(10, "device-1", 3));
   ZuCheck(frames.sourceGone && frames.attributed && frames.types.length() == 9 &&
-    frames.types[8] == uint8_t(Ztc::fbs::Body::Error));
+    frames.types[8] == uint8_t(Ztc::Body::Error));
   ZuCheck(hub.stop());
 }
 
@@ -381,6 +426,7 @@ int main()
   ZuTestMain();
   ZuTestCall(ZtcHubTest_::protocol);
   ZuTestCall(ZtcHubTest_::messages);
+  ZuTestCall(ZtcHubTest_::payloadCopy);
   ZuTestCall(ZtcHubTest_::routing);
   ZuTestCall(ZtcHubTest_::appInventory);
   ZuTestCall(ZtcHubTest_::appInventoryLimits);

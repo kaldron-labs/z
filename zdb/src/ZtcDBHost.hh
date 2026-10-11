@@ -24,14 +24,15 @@
 
 #include <zlib/ZfStruct.hh>
 
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZtcTypes.hh>
 #include <zlib/ZtcRAGMap.hh>
 
-#include <zlib/ztc_db_fbs.h>
 
 namespace Ztc {
+
+namespace RAG { ZiFB::Enum<"Ztc.fbs.RAG"> ZiFBType(Map *); }
 
 ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Instantiated,
@@ -40,6 +41,7 @@ ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Active,
   Inactive,
   Stopping);
+namespace DBHostState { ZiFB::Enum<"Ztc.fbs.DBHostState"> ZiFBType(Map *); }
 
 struct DBHostTelemetry {
   ZiIP		ip;
@@ -65,15 +67,17 @@ struct DBHostTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBHostTelemetry *);
 };
-ZfbStruct(ZdbAPI, DBHostTelemetry,
-    (ip,		(Ctor<0>),					UDT),
-    (dbID,		(Ctor<1>, Keys<0>),				String),
-    (id,		(Ctor<2>, Keys<0>),				String),
-    (priority,	(Ctor<3>),						UInt32),
-    (state,		(Ctor<5>, Mutable, Enum<DBHostState::Map>),	Int8),
-    (voted,		(Ctor<6>, Mutable, Series),			Bool),
-    (port,		(Ctor<4>),					UInt16),
-    ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
+ZfStruct(ZdbAPI, DBHostTelemetry,
+  (ip,		(Ctor<0>),					UDT),
+  (dbID,	(Ctor<1>, Keys<0>),				String),
+  (id,		(Ctor<2>, Keys<0>),				String),
+  (priority,	(Ctor<3>),					UInt32),
+  (state,	(Ctor<5>, Mutable, Enum<DBHostState::Map>),	Int8),
+  (voted,	(Ctor<6>, Mutable, Series),			Bool),
+  (port,	(Ctor<4>),					UInt16),
+  ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
+
+ZiFB::Table<"Ztc.fbs.DBHostTelemetry"> ZiFBType(DBHostTelemetry *);
 
 struct DBHost {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));
@@ -81,14 +85,6 @@ struct DBHost {
   virtual void telemetry(DBHostTelemetry &) const = 0;
 };
 
-ZuAssert(
-  int(DBHostState::Instantiated) == int(fbs::DBHostState::Instantiated));
-ZuAssert(
-  int(DBHostState::Initialized) == int(fbs::DBHostState::Initialized));
-ZuAssert(int(DBHostState::Electing) == int(fbs::DBHostState::Electing));
-ZuAssert(int(DBHostState::Active) == int(fbs::DBHostState::Active));
-ZuAssert(int(DBHostState::Inactive) == int(fbs::DBHostState::Inactive));
-ZuAssert(int(DBHostState::Stopping) == int(fbs::DBHostState::Stopping));
 
 } // Ztc
 

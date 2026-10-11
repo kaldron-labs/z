@@ -17,7 +17,7 @@ latency-sensitive applications and servers. Hallmarks of the library are:
     - No use of STL/Boost coroutines, threads, promise/futures, asio, etc.
 8. Prefer message-passing and shared-nothing sharding to lock-free algorithms or locking
 9. Explicitly interoperable with C
-10. Lean C dependencies: SSL (picotls fork), lock-free (ck), hardware locality (hwloc), regular expressions (pcre), serialization (flatbuffers), backtracing (bfd)
+10. Lean C dependencies: SSL (picotls fork), lock-free (ck), hardware locality (hwloc), regular expressions (pcre), backtracing (bfd)
 11. Extensive advanced use of the C macro pre-processor
 12. Use of prefixes alongside namespaces, aligning with C and pre-processor naming
 13. Brevity - short names, less typing

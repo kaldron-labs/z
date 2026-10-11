@@ -162,10 +162,9 @@ void run()
   {
     Zdb_::DBState state{2};
     state.update("o", ZdbShard{1}, 42);
-    Zfb::Builder fbb;
-    fbb.Finish(state.save(fbb));
-    auto fbo = flatbuffers::GetRoot<Zdb_::fbs::DBState>(
-      fbb.GetBufferPointer());
+    Zdb_::Builder fbb{new ZiIOBufAlloc<>()};
+    auto bytes = fbb.finish(state.save(fbb));
+    auto fbo = ZiFB::view<Zdb_::Msg::DBState>(bytes);
     Zdb_::DBState loaded{fbo};
     auto found = loaded.find("o", ZdbShard{1});
     ZuCheck(found);
@@ -426,7 +425,7 @@ void run()
       *ok &= result == ZdbOpResult::Skipped && !row && next == 2;
     });
 
-    orders->findUpd<0>(0, ZuFwdTuple("MISSING", UINT64_C(99)), 2,
+    orders->findUpd<0>(0, ZuFwdTuple("MISSING", uint64_t(99)), 2,
 	[ok, callbacks, missing](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
@@ -434,14 +433,14 @@ void run()
       missing->post();
     });
 
-    orders->findUpd<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 3,
+    orders->findUpd<0>(0, ZuFwdTuple("IBM", uint64_t(1)), 3,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
       *ok &= result == ZdbOpResult::NotReady && !row && next == 2;
     });
 
-    orders->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple("IBM", UINT64_C(1)), 2,
+    orders->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple("IBM", uint64_t(1)), 2,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
@@ -451,14 +450,14 @@ void run()
       *ok &= bool(row->commit());
     });
 
-    orders->findUpd<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 2,
+    orders->findUpd<0>(0, ZuFwdTuple("IBM", uint64_t(1)), 2,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
       *ok &= result == ZdbOpResult::Skipped && !row && next == 3;
     });
 
-    orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 3,
+    orders->findDel<0>(0, ZuFwdTuple("IBM", uint64_t(1)), 3,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
@@ -466,13 +465,13 @@ void run()
       if (row) *ok &= bool(row->commit());
     });
 
-    orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 3,
+    orders->findDel<0>(0, ZuFwdTuple("IBM", uint64_t(1)), 3,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
       *ok &= result == ZdbOpResult::Skipped && !row && next == 4;
     });
-    orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(1)), 5,
+    orders->findDel<0>(0, ZuFwdTuple("IBM", uint64_t(1)), 5,
 	[ok, callbacks](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
@@ -556,7 +555,7 @@ void run()
     orders = orders.ptr(), ok = &exactUNOK,
     callbacks = &exactUNCallbacks, stable = &exactUNStable
   ]() {
-    orders->findUpd<0>(0, ZuFwdTuple("MISSING", UINT64_C(100)), 7,
+    orders->findUpd<0>(0, ZuFwdTuple("MISSING", uint64_t(100)), 7,
 	[orders, ok, callbacks, stable](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
@@ -564,7 +563,7 @@ void run()
       *ok &= orders->invoked(0);
       stable->post();
     });
-    orders->findDel<0>(0, ZuFwdTuple("MISSING", UINT64_C(101)), 7,
+    orders->findDel<0>(0, ZuFwdTuple("MISSING", uint64_t(101)), 7,
 	[orders, ok, callbacks, stable](ZdbOpResult::T result,
 	  ZdbRow<Order> *row, ZdbUN next) {
       ++*callbacks;
@@ -591,7 +590,7 @@ void run()
     lookupDone = &lookupDone
   ]() {
     asyncOrder->push("before");
-    orders->find<0>(0, ZuFwdTuple("MISSING", UINT64_C(99)), [
+    orders->find<0>(0, ZuFwdTuple("MISSING", uint64_t(99)), [
       asyncOrder, lookupDone
     ](ZdbRowRef<Order>) {
       asyncOrder->push("lookup");

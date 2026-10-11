@@ -10,6 +10,13 @@
 
 namespace Zdf {
 ZtEnumImplNS(StoreState);
+namespace DB {
+ZfStructImpl(SeriesFixed);
+ZfStructImpl(SeriesFloat);
+ZfStructImpl(BlkFixed);
+ZfStructImpl(BlkFloat);
+ZfStructImpl(BlkData);
+}
 }
 
 using namespace Zdf;

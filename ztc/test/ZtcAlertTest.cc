@@ -9,7 +9,6 @@
 #include <zlib/ZuDateTime.hh>
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/Zfb.hh>
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
@@ -186,65 +185,52 @@ bool alertSubscribe(
     int fd, uint64_t seqNo, uint32_t interval = 100,
     uint32_t date = 0, uint64_t alertSeqNo = 0)
 {
-  Zfb::IOBuilder fbb{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
-  auto request = Ztc::fbs::CreateRequestDirect(
-    fbb, seqNo, Ztc::fbs::Group::Alert, "*", interval, true,
+  auto frame = ZtcTestClient::request(seqNo, Ztc::Group::Alert, "*", interval, true,
     date, alertSeqNo);
-  fbb.Finish(Ztc::saveMsg(
-    fbb, Ztc::fbs::Body::Request, request.Union()));
-  auto frame = Ztc::saveHdr(fbb);
   if (!frame || !alertWriteAll(fd, frame->cspan())) return false;
 
   auto ackFrame = alertReadFrame(fd);
-  auto ackMsg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : nullptr;
-  auto ack = ackMsg && ackMsg->body_type() == Ztc::fbs::Body::Ack ?
-    ackMsg->body_as_Ack() : nullptr;
-  if (!ack || ack->seqNo() != seqNo ||
-      ack->status() != Ztc::fbs::AckStatus::OK) return false;
+  auto ackMsg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
+  auto ack = ackMsg && Ztc::msgBody(ackMsg).tag() == Ztc::Body::Ack ?
+    Ztc::msgBody(ackMsg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+  if (!ack || ack.get<Ztc::ZfField(Ack, seqNo)>() != seqNo ||
+      ack.get<Ztc::ZfField(Ack, status)>() != Ztc::AckStatus::OK) return false;
 
   auto doneFrame = alertReadFrame(fd);
-  auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : nullptr;
+  auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto done = doneMsg &&
-      doneMsg->body_type() == Ztc::fbs::Body::EOS ?
-    doneMsg->body_as_EOS() : nullptr;
-  return done && done->seqNo() == seqNo;
+      Ztc::msgBody(doneMsg).tag() == Ztc::Body::EOS ?
+    Ztc::msgBody(doneMsg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+  return done && done.get<Ztc::ZfField(EOS, seqNo)>() == seqNo;
 }
 
-Ztc::fbs::AckStatus alertRequestStatus(
+Ztc::AckStatus::T alertRequestStatus(
     int fd, uint64_t seqNo, uint32_t date, uint64_t alertSeqNo)
 {
-  Zfb::IOBuilder fbb{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
-  auto request = Ztc::fbs::CreateRequestDirect(
-    fbb, seqNo, Ztc::fbs::Group::Alert, "*", 0, true,
+  auto frame = ZtcTestClient::request(seqNo, Ztc::Group::Alert, "*", 0, true,
     date, alertSeqNo);
-  fbb.Finish(Ztc::saveMsg(
-    fbb, Ztc::fbs::Body::Request, request.Union()));
-  auto frame = Ztc::saveHdr(fbb);
   if (!frame || !alertWriteAll(fd, frame->cspan()))
-    return Ztc::fbs::AckStatus::Failed;
+    return Ztc::AckStatus::Failed;
   auto ackFrame = alertReadFrame(fd);
-  auto msg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : nullptr;
-  auto ack = msg && msg->body_type() == Ztc::fbs::Body::Ack ?
-    msg->body_as_Ack() : nullptr;
-  return ack && ack->seqNo() == seqNo ?
-    ack->status() : Ztc::fbs::AckStatus::Failed;
+  auto msg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
+  auto ack = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Ack ?
+    Ztc::msgBody(msg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+  return ack && ack.get<Ztc::ZfField(Ack, seqNo)>() == seqNo ?
+    ack.get<Ztc::ZfField(Ack, status)>() : Ztc::AckStatus::Failed;
 }
 
-const Ztc::fbs::AlertTelemetry *alertReceive(
+ZiFB::View<Ztc::AlertTelemetry> alertReceive(
     int fd, uint64_t seqNo, ZmRef<ZiIOBuf> &frame)
 {
   frame = alertReadFrame(fd);
-  auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : nullptr;
-  auto telemetry = msg && msg->body_type() == Ztc::fbs::Body::Telemetry ?
-    msg->body_as_Telemetry() : nullptr;
-  if (!telemetry || telemetry->seqNo() != seqNo ||
-      telemetry->value_type() !=
-	Ztc::fbs::TelemetryBody::AlertTelemetry) return nullptr;
-  return telemetry->value_as_AlertTelemetry();
+  auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
+  auto telemetry = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
+    Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+  if (!telemetry || telemetry.get<Ztc::ZfField(Telemetry, seqNo)>() != seqNo ||
+      telemetry.get<Ztc::ZfField(Telemetry, value)>().tag() !=
+	Ztc::TelemetryBody::AlertTelemetry) return {};
+  return telemetry.get<Ztc::ZfField(Telemetry, value)>()
+    .get<Ztc::TelemetryBody::AlertTelemetry>();
 }
 
 using AlertKeys = ZtArray<ZuTuple<uint32_t, uint64_t>,
@@ -252,61 +238,48 @@ using AlertKeys = ZtArray<ZuTuple<uint32_t, uint64_t>,
 
 bool replayMany(int fd, uint64_t seqNo, const AlertKeys &keys)
 {
-  Zfb::IOBuilder builder{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
-  auto request = Ztc::fbs::CreateRequestDirect(
-    builder, seqNo, Ztc::fbs::Group::Alert, "*", 0, true);
-  builder.Finish(Ztc::saveMsg(
-    builder, Ztc::fbs::Body::Request, request.Union()));
-  auto requestFrame = Ztc::saveHdr(builder);
+  auto requestFrame = ZtcTestClient::request(seqNo, Ztc::Group::Alert, "*", 0, true);
   if (!requestFrame || !alertWriteAll(fd, requestFrame->cspan())) return false;
 
   auto ackFrame = alertReadFrame(fd);
-  auto ackMsg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : nullptr;
-  auto ack = ackMsg && ackMsg->body_type() == Ztc::fbs::Body::Ack ?
-    ackMsg->body_as_Ack() : nullptr;
-  if (!ack || ack->seqNo() != seqNo ||
-      ack->status() != Ztc::fbs::AckStatus::OK) return false;
+  auto ackMsg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
+  auto ack = ackMsg && Ztc::msgBody(ackMsg).tag() == Ztc::Body::Ack ?
+    Ztc::msgBody(ackMsg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+  if (!ack || ack.get<Ztc::ZfField(Ack, seqNo)>() != seqNo ||
+      ack.get<Ztc::ZfField(Ack, status)>() != Ztc::AckStatus::OK) return false;
 
   unsigned n = keys.length();
   for (unsigned i = 0; i < n; ++i) {
     ZmRef<ZiIOBuf> frame;
     auto alert = alertReceive(fd, seqNo, frame);
-    if (!alert || alert->date() != keys[i].p<0>() ||
-	alert->seqNo() != keys[i].p<1>()) return false;
+    if (!alert || alert.get<Ztc::ZfField(AlertTelemetry, date)>() != keys[i].p<0>() ||
+	alert.get<Ztc::ZfField(AlertTelemetry, seqNo)>() != keys[i].p<1>()) return false;
   }
   auto doneFrame = alertReadFrame(fd);
-  auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : nullptr;
+  auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto done = doneMsg &&
-      doneMsg->body_type() == Ztc::fbs::Body::EOS ?
-    doneMsg->body_as_EOS() : nullptr;
-  return done && done->seqNo() == seqNo;
+      Ztc::msgBody(doneMsg).tag() == Ztc::Body::EOS ?
+    Ztc::msgBody(doneMsg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+  return done && done.get<Ztc::ZfField(EOS, seqNo)>() == seqNo;
 }
 
 bool appDegraded(int fd, uint64_t seqNo)
 {
-  Zfb::IOBuilder builder{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
-  auto request = Ztc::fbs::CreateRequestDirect(
-    builder, seqNo, Ztc::fbs::Group::App, "*", 0, true);
-  builder.Finish(Ztc::saveMsg(
-    builder, Ztc::fbs::Body::Request, request.Union()));
-  auto requestFrame = Ztc::saveHdr(builder);
+  auto requestFrame = ZtcTestClient::request(seqNo, Ztc::Group::App, "*", 0, true);
   if (!requestFrame || !alertWriteAll(fd, requestFrame->cspan())) return false;
   auto ack = alertReadFrame(fd);
   auto telemetryFrame = alertReadFrame(fd);
   auto done = alertReadFrame(fd);
   if (!ack || !done) return false;
   auto msg = telemetryFrame ?
-    Ztc::msg(telemetryFrame->ptr<Ztc::Hdr>()) : nullptr;
-  auto telemetry = msg && msg->body_type() == Ztc::fbs::Body::Telemetry ?
-    msg->body_as_Telemetry() : nullptr;
-  auto app = telemetry && telemetry->seqNo() == seqNo &&
-      telemetry->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry ?
-    telemetry->value_as_AppTelemetry() : nullptr;
-  return app && app->degraded();
+    Ztc::msg(telemetryFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
+  auto telemetry = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
+    Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+  auto app = telemetry && telemetry.get<Ztc::ZfField(Telemetry, seqNo)>() == seqNo &&
+      telemetry.get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::AppTelemetry ?
+    telemetry.get<Ztc::ZfField(Telemetry, value)>()
+      .get<Ztc::TelemetryBody::AppTelemetry>() : ZiFB::View<Ztc::AppTelemetry>{};
+  return app && app.get<Ztc::ZfField(AppTelemetry, degraded)>();
 }
 
 void liveAlerts()
@@ -331,7 +304,7 @@ void liveAlerts()
 
   int fd1 = alertConnect(app);
   ZuCheck(fd1 >= 0);
-  constexpr uint64_t SeqNo1 = UINT64_C(0x123456789abcdef0);
+  constexpr uint64_t SeqNo1 = uint64_t(0x123456789abcdef0);
   ZuCheck(alertSubscribe(fd1, SeqNo1));
 
   auto sink = app.alertSink();
@@ -340,18 +313,19 @@ void liveAlerts()
   message << "123456789";
   time.nsec() = 123456789;
   ZeEventInfo info{
-    time, Zm::ThreadID(UINT64_C(0x12345678)), Ze::Warning,
+    time, Zm::ThreadID(uint64_t(0x12345678)), Ze::Warning,
     "file", 1, "function", "component"};
   sink->post(message, info);
 
   ZmRef<ZiIOBuf> frame1;
   auto alert1 = alertReceive(fd1, SeqNo1, frame1);
   ZuCheck(alert1);
-  ZuCheck(alert1 && Zfb::Load::str(alert1->message()) == "12345");
-  ZuCheck(alert1 && alert1->seqNo() == 0);
-  ZuCheck(alert1 && alert1->date() == ZuDateTime{time}.yyyymmdd());
-  ZuCheck(alert1 && alert1->tid() == UINT64_C(0x12345678));
-  ZuCheck(alert1 && alert1->severity() == Ze::Warning);
+  ZuCheck(alert1 && alert1.get<Ztc::ZfField(AlertTelemetry, message)>() == "12345");
+  ZuCheck(alert1 && alert1.get<Ztc::ZfField(AlertTelemetry, seqNo)>() == 0);
+  ZuCheck(alert1 &&
+    alert1.get<Ztc::ZfField(AlertTelemetry, date)>() == ZuDateTime{time}.yyyymmdd());
+  ZuCheck(alert1 && alert1.get<Ztc::ZfField(AlertTelemetry, tid)>() == uint64_t(0x12345678));
+  ZuCheck(alert1 && alert1.get<Ztc::ZfField(AlertTelemetry, severity)>() == Ze::Warning);
 
   ZtcTestClient::close(fd1);
   ZuCheck(app.stop());
@@ -386,7 +360,7 @@ void liveAlerts()
   ZmRef<ZiIOBuf> recoveredFrame;
   auto recoveredAlert =
     alertReceive(fd, RecoveredSeqNo, recoveredFrame);
-  ZuCheck(recoveredAlert && recoveredAlert->seqNo() == 1);
+  ZuCheck(recoveredAlert && recoveredAlert.get<Ztc::ZfField(AlertTelemetry, seqNo)>() == 1);
   ZtcTestClient::close(fd);
   ZuCheck(recovered.stop());
   recovered.final();
@@ -408,35 +382,28 @@ void liveAlerts()
   int replayFD = alertConnect(replay);
   ZuCheck(replayFD >= 0);
   constexpr uint64_t ReplaySeqNo = RecoveredSeqNo + 1;
-  Zfb::IOBuilder replayBuilder{
-    Ztc::frameBuf(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestTx">{}})};
-  auto replayRequest = Ztc::fbs::CreateRequestDirect(
-    replayBuilder, ReplaySeqNo, Ztc::fbs::Group::Alert, "*", 0, true,
+  auto requestFrame = ZtcTestClient::request(ReplaySeqNo, Ztc::Group::Alert, "*", 0, true,
     date, 0);
-  replayBuilder.Finish(Ztc::saveMsg(
-    replayBuilder, Ztc::fbs::Body::Request, replayRequest.Union()));
-  auto requestFrame = Ztc::saveHdr(replayBuilder);
   ZuCheck(requestFrame && alertWriteAll(replayFD, requestFrame->cspan()));
   auto replayAck = alertReadFrame(replayFD);
   auto replayAckMsg =
-    replayAck ? Ztc::msg(replayAck->ptr<Ztc::Hdr>()) : nullptr;
+    replayAck ? Ztc::msg(replayAck->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto ack = replayAckMsg &&
-      replayAckMsg->body_type() == Ztc::fbs::Body::Ack ?
-    replayAckMsg->body_as_Ack() : nullptr;
-  ZuCheck(ack && ack->seqNo() == ReplaySeqNo &&
-    ack->status() == Ztc::fbs::AckStatus::OK);
+      Ztc::msgBody(replayAckMsg).tag() == Ztc::Body::Ack ?
+    Ztc::msgBody(replayAckMsg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+  ZuCheck(ack && ack.get<Ztc::ZfField(Ack, seqNo)>() == ReplaySeqNo &&
+    ack.get<Ztc::ZfField(Ack, status)>() == Ztc::AckStatus::OK);
   ZmRef<ZiIOBuf> replayFrame;
   auto replayAlert = alertReceive(replayFD, ReplaySeqNo, replayFrame);
-  ZuCheck(replayAlert && replayAlert->date() == date &&
-    replayAlert->seqNo() == 1);
+  ZuCheck(replayAlert && replayAlert.get<Ztc::ZfField(AlertTelemetry, date)>() == date &&
+    replayAlert.get<Ztc::ZfField(AlertTelemetry, seqNo)>() == 1);
   auto replayDone = alertReadFrame(replayFD);
   auto replayDoneMsg =
-    replayDone ? Ztc::msg(replayDone->ptr<Ztc::Hdr>()) : nullptr;
+    replayDone ? Ztc::msg(replayDone->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto complete = replayDoneMsg &&
-      replayDoneMsg->body_type() == Ztc::fbs::Body::EOS ?
-    replayDoneMsg->body_as_EOS() : nullptr;
-  ZuCheck(complete && complete->seqNo() == ReplaySeqNo);
+      Ztc::msgBody(replayDoneMsg).tag() == Ztc::Body::EOS ?
+    Ztc::msgBody(replayDoneMsg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+  ZuCheck(complete && complete.get<Ztc::ZfField(EOS, seqNo)>() == ReplaySeqNo);
   ZtcTestClient::close(replayFD);
   ZuCheck(replay.stop());
   replay.final();
@@ -485,7 +452,7 @@ void crossDateReplay()
     !ZiStat{expiredIndex}.exists());
   int fd = alertConnect(app);
   ZuCheck(fd >= 0);
-  constexpr uint64_t LiveSeqNo = UINT64_C(0x3344556677889900);
+  constexpr uint64_t LiveSeqNo = uint64_t(0x3344556677889900);
   ZuCheck(alertSubscribe(fd, LiveSeqNo));
   auto sink = app.alertSink();
   ZeLogBuf message;
@@ -496,19 +463,21 @@ void crossDateReplay()
   sink->post(message, yesterdayInfo);
   ZmRef<ZiIOBuf> firstFrame;
   auto first = alertReceive(fd, LiveSeqNo, firstFrame);
-  ZuCheck(first && first->date() == yesterdayID && !first->seqNo());
+  ZuCheck(first && first.get<Ztc::ZfField(AlertTelemetry, date)>() == yesterdayID &&
+    !first.get<Ztc::ZfField(AlertTelemetry, seqNo)>());
   sink->post(message, yesterdayInfo);
   ZmRef<ZiIOBuf> firstTailFrame;
   auto firstTail = alertReceive(fd, LiveSeqNo, firstTailFrame);
-  ZuCheck(firstTail && firstTail->date() == yesterdayID &&
-    firstTail->seqNo() == 1);
+  ZuCheck(firstTail && firstTail.get<Ztc::ZfField(AlertTelemetry, date)>() == yesterdayID &&
+    firstTail.get<Ztc::ZfField(AlertTelemetry, seqNo)>() == 1);
   ZeEventInfo todayInfo{
     today.as_time(), Zm::ThreadID{12}, Ze::Warning,
     "file", 2, "function", "component"};
   sink->post(message, todayInfo);
   ZmRef<ZiIOBuf> secondFrame;
   auto second = alertReceive(fd, LiveSeqNo, secondFrame);
-  ZuCheck(second && second->date() == todayID && !second->seqNo());
+  ZuCheck(second && second.get<Ztc::ZfField(AlertTelemetry, date)>() == todayID &&
+    !second.get<Ztc::ZfField(AlertTelemetry, seqNo)>());
   ZtcTestClient::close(fd);
   ZuCheck(app.stop());
   app.final();
@@ -526,7 +495,7 @@ void crossDateReplay()
   ZuCheck(alertRequestStatus(
     replayFD, LiveSeqNo + 2,
     Ztc::Alert_::addDays(yesterdayID, -int(cf.alertRetention)), 0) ==
-    Ztc::fbs::AckStatus::Invalid);
+    Ztc::AckStatus::Invalid);
   ZtcTestClient::close(replayFD);
   ZuCheck(replay.stop());
   replay.final();
@@ -567,13 +536,19 @@ void crossDateReplay()
       frame->length = unsigned(identitySize);
       if (data.pread(0, frame->data(), frame->length) ==
 	  int(frame->length)) {
-	auto root = flatbuffers::GetMutableRoot<Ztc::fbs::Msg>(
-	  frame->data() + sizeof(Ztc::Hdr));
-	auto telemetry = root ? root->mutable_body_as_Telemetry() : nullptr;
-	auto alert = telemetry ?
-	  telemetry->mutable_value_as_AlertTelemetry() : nullptr;
-	identityMutated = alert && alert->mutate_seqNo(1) &&
-	  data.pwrite(0, frame->data(), frame->length) == Zi::OK;
+	auto root = Ztc::msg(frame->ptr<Ztc::Hdr>());
+	if (root && Ztc::msgBody(root).tag() == Ztc::Body::Telemetry) {
+	  auto telemetry = Ztc::msgBody(root).get<Ztc::Body::Telemetry>();
+	  auto value = telemetry.get<Ztc::ZfField(Telemetry, value)>();
+	  if (value.tag() == Ztc::TelemetryBody::AlertTelemetry) {
+	    auto alert = value.get<Ztc::TelemetryBody::AlertTelemetry>();
+	    if (auto slot = alert.field<Ztc::ZfField(AlertTelemetry, seqNo)>()) {
+	      ZiFB::write<uint64_t>(const_cast<uint8_t *>(slot), 1);
+	      identityMutated =
+		data.pwrite(0, frame->data(), frame->length) == Zi::OK;
+	    }
+	  }
+	}
       }
     }
   }

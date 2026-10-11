@@ -14,6 +14,7 @@
 #include <zlib/ZtlsPico.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmVHeap.hh>
 #include <zlib/ZiIOBuf.hh>
 
@@ -29,7 +30,6 @@ struct Counters {
   ZmAtomic<uint64_t> internal_free{0};
   ZmAtomic<uint64_t> origin_align_fail{0};
   ZmAtomic<uint64_t> origin_ensure_fail{0};
-  ZmAtomic<uint64_t> internal_alloc_fail{0};
 };
 
 Counters counters;
@@ -65,12 +65,11 @@ ZuAssert(IOBufAlignBits >= PTLS_X86_CACHE_LINE_ALIGN_BITS,
   "ZiIOBuf_Align must satisfy zpicotls fusion alignment");
 #endif
 
-static uint8_t *internal_alloc_(size_t capacity)
+static uint8_t *internal_alloc_(unsigned capacity)
 {
 #if ZtlsPico_ASAN
-  if (ZuUnlikely(capacity > UINT32_MAX)) return nullptr;
   return static_cast<uint8_t *>(
-    Zm::alignedAlloc<ZiIOBuf_Align>(unsigned(capacity)));
+    ZmHeapAlloc<ZiIOBuf_Align>(capacity));
 #else
   return static_cast<uint8_t *>(Zi::VHeap::valloc(capacity));
 #endif
@@ -122,11 +121,9 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
     return pbuf->base;
   }
 
-  auto newp = internal_alloc_(capacity);
-  if (ZuUnlikely(!newp)) {
-    counters.internal_alloc_fail++;
-    return nullptr;
-  }
+  // Empty/oversized requests are rejected before allocation in every build.
+  if (ZuUnlikely(!capacity || capacity > UINT32_MAX)) return nullptr;
+  auto newp = internal_alloc_(unsigned(capacity));
   if (pbuf->off) memcpy(newp, pbuf->base, pbuf->off);
   ptls_clear_memory(pbuf->base, pbuf->off);
   if (pbuf->is_allocated) internal_free_(pbuf->base);
@@ -169,8 +166,7 @@ Stats stats()
     counters.origin_free.load_(),
     counters.internal_free.load_(),
     counters.origin_align_fail.load_(),
-    counters.origin_ensure_fail.load_(),
-    counters.internal_alloc_fail.load_()
+    counters.origin_ensure_fail.load_()
   };
 }
 
@@ -182,7 +178,6 @@ void reset_stats()
   counters.internal_free = 0;
   counters.origin_align_fail = 0;
   counters.origin_ensure_fail = 0;
-  counters.internal_alloc_fail = 0;
 }
 
 bool AeadCtx::init(
@@ -196,7 +191,6 @@ bool AeadCtx::init(
     return false;
 
   auto storage = CtxHeap::valloc(algo->context_size);
-  if (!storage) return false;
   auto ctx = reinterpret_cast<ptls_aead_context_t *>(
     storage);
   *ctx = ptls_aead_context_t{algo};
@@ -248,7 +242,6 @@ bool CipherCtx::init(ptls_cipher_algorithm_t *algo, bool enc, const void *key)
     return false;
 
   auto storage = CtxHeap::valloc(algo->context_size);
-  if (!storage) return false;
   auto ctx = reinterpret_cast<ptls_cipher_context_t *>(
     storage);
   *ctx = ptls_cipher_context_t{algo};

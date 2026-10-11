@@ -1,0 +1,34 @@
+// Independent canonical oracle for envelope, control and shutdown traffic.
+// This intentionally covers a subset of payload alternatives; numeric tags
+// retain their protocol values. Full metadata exports are checked separately.
+namespace Peer;
+table Request {
+  seq_no:ulong = 18446744073709551615;
+  group:ubyte = 255;
+  filter:string;
+  interval:uint = 4294967295;
+  subscribe:bool;
+  alert_date:uint = 4294967295;
+  alert_seq_no:ulong = 18446744073709551615;
+  id:string;
+}
+table Ack {
+  id:string;
+  seq_no:ulong = 18446744073709551615;
+  status:ubyte = 255;
+  interval:uint = 4294967295;
+}
+table Shutdown {}
+union TelemetryBody { Shutdown = 14 }
+table Telemetry { id:string; seq_no:ulong; value:TelemetryBody; }
+table EOS { id:string; seq_no:ulong = 18446744073709551615; }
+table Error {
+  id:string;
+  seq_no:ulong = 18446744073709551615;
+  code:int = -2147483648;
+  message:string;
+}
+union Body { Request, Ack, Telemetry, EOS, Error }
+table Payload { body:Body; }
+table Msg { data:[ubyte]; sub_id:ulong; device_id:string; agent_gen:ulong; }
+root_type Msg;

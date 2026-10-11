@@ -1,0 +1,36 @@
+Functions sorted by metric: Exclusive Total CPU Time
+
+Excl. Total   Incl. Total    Name
+CPU           CPU
+ sec.      %   sec.      %
+0.338 100.00  0.338 100.00   <Total>
+0.057  16.81  0.067  19.76   <static>@0xa5beb (<libc.so.6>)
+0.029   8.55  0.165  48.67   void Bench::run<Bench::Native, false, Bench::Row>(ZuSpan<char const>, Bench::Row const&, unsigned int, bool, Bench::Schemas<Bench::Row> const*)
+0.025   7.37  0.173  51.33   void Bench::run<Bench::Canonical, false, Bench::Row>(ZuSpan<char const>, Bench::Row const&, unsigned int, bool, Bench::Schemas<Bench::Row> const*)
+0.022   6.49  0.028   8.26   flatbuffers::FlatBufferBuilderImpl<false>::EndTable(unsigned int)
+0.016   4.72  0.016   4.72   <static>@0x175980 (<libc.so.6>)
+0.015   4.42  0.028   8.26   _ZN11flatbuffers21FlatBufferBuilderImplILb0EE12CreateVectorIhTtTpTyENS_6OffsetETtTpTyENS_6VectorEEET0_IJT1_IJT_EEEEPKS7_m
+0.015   4.42  0.015   4.42   unsigned int ZfFB::Arena<ZiFB::IOStorage<8u> >::scalar<unsigned int>(unsigned int)
+0.015   4.42  0.079  23.30   void* ZmHeapCache::alloc<64u>()
+0.014   4.13  0.018   5.31   Bench::IOBuilder::buf(ZmRef<Zi::IOBuf>)
+0.012   3.54  0.012   3.54   void flatbuffers::FlatBufferBuilderImpl<false>::AddElement<unsigned long>(unsigned short, unsigned long, unsigned long)
+0.010   2.95  0.010   2.95   <static>@0xa4384 (<libc.so.6>)
+0.010   2.95  0.013   3.83   ZfFB::Builder<ZiFB::IOStorage<8u> >::endTable(ZfFB::TableState)
+0.010   2.95  0.015   4.42   ZuSpan<unsigned char const> ZfFB::Builder<ZiFB::IOStorage<8u> >::finish<false>(unsigned int, char const*)
+0.009   2.65  0.021   6.19   ZmThreadContext::self()
+0.009   2.65  0.009   2.65   pthread_getspecific
+0.007   2.06  0.007   2.06   flatbuffers::FlatBufferBuilderImpl<false>::Finish(unsigned int, char const*, bool)
+0.007   2.06  0.008   2.36   unsigned int ZfFB::Arena<ZiFB::IOStorage<8u> >::scalar<unsigned long>(unsigned long)
+0.005   1.47  0.005   1.47   ZmHeapCache::free(void*)
+0.005   1.47  0.005   1.47   ZmThreadContext::publish()
+0.005   1.47  0.006   1.77   unsigned int ZfFB::Builder<ZiFB::IOStorage<8u> >::vector<ZfFB::saveValue<ZfFB::FieldWire<ZfField_Bytes<Bench::ZuField_Row_data, false> >, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u>, ZuSpan<unsigned char const> >(ZiFB::IOBuilder<8u>&, ZuSpan<unsigned char const> const&, unsigned int)::{lambda(unsigned char*)#1}>(unsigned int, unsigned int, unsigned int, ZfFB::saveValue<ZfFB::FieldWire<ZfField_Bytes<Bench::ZuField_Row_data, false> >, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u>, ZuSpan<unsigned char const> >(ZiFB::IOBuilder<8u>&, ZuSpan<unsigned char const> const&, unsigned int)::{lambda(unsigned char*)#1}&&)
+0.005   1.47  0.064  18.88   unsigned int ZfFB::saveObject<Bench::Row, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Bench::Row const&)
+0.005   1.47  0.077  22.71   void Bench::Canonical::save<Bench::Row>(Bench::IOBuilder&, Bench::Row const&)
+0.004   1.18  0.004   1.18   Bench::IOBuilder::buf()
+0.004   1.18  0.006   1.77   ZmHeapCacheT<ZuConstant<ZuString<8u>, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>, 1152u, 64u, false, 0u>::instance()
+0.004   1.18  0.004   1.18   flatbuffers::FlatBufferBuilderImpl<false>::~FlatBufferBuilderImpl()
+0.004   1.18  0.007   2.06   flatbuffers::vector_downward<unsigned int>::reallocate(unsigned long)
+0.004   1.18  0.004   1.18   void flatbuffers::FlatBufferBuilderImpl<false>::AddElement<unsigned int>(unsigned short, unsigned int, unsigned int)
+0.003   0.88  0.064  18.88   <static>@0xa8ab4 (<libc.so.6>)
+0.003   0.88  0.003   0.88   Bench::IOBuilder::allocate(unsigned long)
+

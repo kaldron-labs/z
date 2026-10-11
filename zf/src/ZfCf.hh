@@ -446,7 +446,7 @@ struct AsObject {
 
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &o) {
-      using Fields = ZuTypeGrep<Filter, ZuFields<O, Facet>>;
+      using Fields = ZuTypeGrep<Filter, ZuActiveFields<O, Facet>>;
       s << '{';
       bool first = true;
       ZuUnroll::all<Fields>([&s, &o, &first]<typename Field>() {

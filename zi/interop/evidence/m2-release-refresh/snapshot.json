@@ -1,0 +1,28 @@
+{
+  "cpu": 6,
+  "pool": "default, ZIFB_BENCH_POOL unset",
+  "rounds": 11,
+  "cases": 30,
+  "comparisons": 110,
+  "flatbuffers": "25.12.19",
+  "flatc": "flatc version 25.12.19",
+  "compiler": "clang version 23.1.1",
+  "sha256": {
+    "zf/src/ZfFB.hh": "ca34a393aa01956003cedbed8b1333c20bb11c5be692a7145d26595ff6371290",
+    "zf/src/ZfFB.cc": "6e1d87bdadce5a0e50a13e7312feb4a2040e49f4cb6bd35e7c713b918fe7e54a",
+    "zf/src/ZfFBReflect.hh": "feb9a8577e436a8e1294ad53d051df3b5169bf6d920cd68b89993c5dfa25c76d",
+    "zf/src/ZfFBReflect.cc": "2c14738aba1539002ffd93815911a03f5921f4572bc8d26f06f6e2cda583e6f1",
+    "zi/src/ZiFB.hh": "429bf999dcb5de5a81a65c26ff1dad20361d731b14872cd65073ab5f85e29b71",
+    "zi/interop/iobaseline.hh": "e670e66b07e11776978052da0d30dbaa5121133453e13641bd39e5d90f93944f",
+    "zi/interop/zifbiobench.cc": "89988e396e5d8bf6f8a3769ed661a938c4a697bb3947444ae49b3ce20128d918",
+    "zdb/interop/zdbmsginterop.cc": "017c2d7c1274a77511344ed94d40287f5e8a861c928251393f5612ed4ff505ba",
+    "ztc/interop/ztcmsginterop.cc": "f37768a1c9ae70630ec584600da79386fd7f83292aaada1ed3333bc7bd7e91c7",
+    "/tmp/zffb-release-reflection.o": "a3b1b15edfecd4085cb6a87c75d1d6b840e624b6dfac3b2f62fd3b4510eeafa1",
+    "/tmp/.libs/zifb-release-bench": "f3e8629fc4e8873a02d40b9cdbf8573483ee2618ec1f39926203cc7ea53a5ad1",
+    "zdb/interop/.libs/zdbmsginterop": "086345c3ca86c8cfc9600d8b4e58d59a59da0395e638dc92dc0f323ed8a3628e",
+    "ztc/interop/.libs/ztcmsginterop": "043be6c620ccaa8a4bb2727d62ad841dd1ac6cb32ce22739cfa67b21ac79d8fa",
+    "zf/src/.libs/libZf.so": "844a526422d0a53d771379162e937b96faaa1794dfb9a56c8a8fe70e3a6bbf02",
+    "zi/src/.libs/libZi.so": "550aa36df358115c7c1fa93857b92bb00d4213105e4d25872b00b9b6c6ec4b1c",
+    "zm/src/.libs/libZm.so": "ca21f65b8895007e95e1d8b206a6d46fa2dee9927e336a030dc3d99246a0b8bd"
+  }
+}

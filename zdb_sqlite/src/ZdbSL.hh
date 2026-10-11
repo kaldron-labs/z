@@ -21,13 +21,15 @@
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZdbStore.hh>
+#include <zlib/ZiFBReflect.hh>
 
 namespace ZdbSL {
 
 using namespace Zdb_;
+namespace R = ZiFB::Reflect;
 
 ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbSL.SQLString">>);
 
@@ -40,24 +42,31 @@ namespace OpenState {
 }
 
 struct FieldInfo {
-  const reflection::Field	*field = nullptr;
+  R::FieldView		field;
   uint8_t			type = 0;
   uint8_t			storage = 0;
   uint8_t			fixedSize = 0;
+  unsigned			align = 1;	// resolved BFBS force_align
 };
 
 struct XField {
   IDString		id;
   const ZfVField	*vfield = nullptr;
   FieldInfo		field;
+  unsigned		bufAlign = ZiFB::Wire::Align;
 };
-ZuDerive(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbSL.XField">>));
+struct XFields : public ZtArray<XField, ZtArrayHeapID<"ZdbSL.XField">> {
+  ZuDerive_(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbSL.XField">>))
+  unsigned bufAlign = ZiFB::Wire::Align;
+};
 struct XFieldRef {
   const XField	*field = nullptr;
   bool		descend = false;
 };
-ZuDerive(XFieldRefs,
-  (ZtArray<XFieldRef, ZtArrayHeapID<"ZdbSL.XFieldRef">>));
+struct XFieldRefs : public ZtArray<XFieldRef, ZtArrayHeapID<"ZdbSL.XFieldRef">> {
+  ZuDerive_(XFieldRefs, (ZtArray<XFieldRef, ZtArrayHeapID<"ZdbSL.XFieldRef">>))
+  unsigned bufAlign = ZiFB::Wire::Align;
+};
 ZuDerive(XKeyFields,
   (ZtArray<XFieldRefs, ZtArrayHeapID<"ZdbSL.XKeyField">>));
 ZuDerive(KeyGroup,
@@ -96,9 +105,24 @@ public:
   StoreTbl(
     Store *, bool, IDString, unsigned,
     ZfVFieldArray, ZfVKeyFieldArray,
-    const reflection::Schema *, IOBufAllocFn);
+    Schema, IOBufAllocFn);
   virtual ~StoreTbl();
 
+  // Closed store tables may outlive the previous BFBS owner.
+  void schema(Schema schema) {
+    m_xFields.bufAlign = ZiFB::Wire::Align;
+    for (auto &field: m_xFields) {
+      field.field.field = schema.field(field.vfield->id);
+      field.field.align = R::alignment(field.field.field);
+      field.bufAlign = R::bufferAlign(schema.view, field.field.field);
+      if (m_xFields.bufAlign < field.bufAlign) m_xFields.bufAlign = field.bufAlign;
+    }
+    for (auto &key: m_xKeyFields) {
+      key.bufAlign = ZiFB::Wire::Align;
+      for (const auto &field: key)
+	if (key.bufAlign < field.field->bufAlign) key.bufAlign = field.field->bufAlign;
+    }
+  }
   Store *store() const { return m_store; }
   const IDString &id() const { return m_id; }
   bool internal() const { return m_internal; }
@@ -183,7 +207,7 @@ public:
   void stop(StopFn);
   void open(
     bool, IDString, ZfVFieldArray, ZfVKeyFieldArray,
-    const reflection::Schema *, IOBufAllocFn, OpenFn);
+    Schema, IOBufAllocFn, OpenFn);
 
   bool stopping() const { return m_stopping; }
   sqlite3 *conn() const { return m_conn; }

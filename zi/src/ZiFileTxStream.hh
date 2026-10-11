@@ -65,14 +65,13 @@ public:
 private:
   ZuRef<Buf> allocBuf_() { return new Buf; }
   void fail() { m_buf = {}; m_failed = true; }
-  bool ensureBuf() {
+  void ensureBuf() {
     if (!m_buf) m_buf = allocBuf_();
-    if (ZuUnlikely(!m_buf)) { fail(); return false; }
-    return true;
   }
   bool sendBuf() {
     if (ZuUnlikely(!flush())) return false;
-    return ensureBuf();
+    ensureBuf();
+    return true;
   }
 
 public:
@@ -83,7 +82,7 @@ public:
       if (ZuUnlikely(m_file.write(data, length) != Zi::OK)) fail();
       return;
     }
-    if (ZuUnlikely(!ensureBuf())) return;
+    ensureBuf();
     if (length > maxSize - m_buf->length() && ZuUnlikely(!sendBuf())) return;
     m_buf->append(ZuBSpan{data, length});
   }
@@ -107,7 +106,8 @@ private:
       m_failed = true; // preceding output may still flush
       return;
     }
-    if (!length || ZuUnlikely(!ensureBuf())) return;
+    if (!length) return;
+    ensureBuf();
     unsigned bufLen = m_buf->length();
     if (length > maxSize - bufLen) {
       if (ZuUnlikely(!sendBuf())) return;

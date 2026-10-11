@@ -1,7 +1,7 @@
 # Dashboard module tests
 
-`make -C zdash test` runs the schema test and the real dashboard with the
-libtool-built `test/.libs/zdash_test.so` module. Both emit TAP, evaluated by
+`make -C zdash test` runs the real dashboard with the libtool-built
+`test/.libs/zdash_test.so` module, which emits TAP evaluated by
 `prove`. The shell fixture requires `xvfb-run`, forces X11 on a disposable
 display and never maps the dashboard onto the desktop. The synthetic window
 is mapped on Xvfb and must paint after detail records populate its model;
@@ -74,3 +74,20 @@ and sanitizer errors remain fatal.
 `fontconfig.valgrind` provides the corresponding narrow Memcheck suppression
 for Fontconfig's XML pattern cache, without suppressing Z allocations or
 invalid memory accesses.
+
+The ZiFB migration's final Clang debug Memcheck run passed the mapped dashboard
+fixture, including 33 partial drains, 37 GTK events and queued-data teardown.
+The XML pattern cache suppressions include its separately reported indirect
+value/binding allocations. With those suppressions, Memcheck reported zero
+errors and zero definitely or indirectly lost bytes.
+
+The report retains 44,324 possibly lost bytes in 44 blocks: Rust/glycin
+allocations, Mesa ralloc/GLSL contexts, and three glibc dynamic TLS allocations.
+All 33 loss records were reviewed by allocation stack; none originates in a
+Z allocator. These are not suppressed or counted as proven leak-free.
+The [allocation-stack record](../../zi/interop/evidence/m2-dashboard-memory.txt)
+attributes 40,228 bytes to Rust/glycin, 2,608 to Mesa, and 1,488 to glibc TLS.
+The run used `libtool exec valgrind --leak-check=full
+--show-leak-kinds=definite,indirect,possible
+--errors-for-leak-kinds=definite,indirect --error-exitcode=97`, with
+`fontconfig.valgrind`, through the existing `ZdashTest.sh` fixture.

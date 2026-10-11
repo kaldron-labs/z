@@ -1,0 +1,17 @@
+Rejected empty-attribute alignment shortcut
+
+Release Clang; CPU 6; payload 64; 1000000 iterations; 11 alternating samples.
+Commands after incremental libZf build:
+  taskset -c 6 /tmp/zifb-release-bench 1000000 64 11 ops
+  taskset -c 6 /tmp/zifb-release-bench 1000000 64 11 wideops
+Zf 21/415 and canonical interop 1/41 passed.
+
+Native median ns, schema-cross baseline -> shortcut:
+                       own BFBS    canonical BFBS   native BFBS
+  narrow               23.674 -> 23.376  22.697 -> 22.728  23.714 -> 23.343
+  wide                 51.828 -> 52.665  51.369 -> 50.774  51.938 -> 52.445
+Canonical own-BFBS medians changed 19.420 -> 19.624 narrow and
+50.417 -> 49.780 wide. No consistent benefit; remove the extra branch.
+These are medians of sample-average timings, not per-message tail latency.
+
+Experimental ZfFBReflect.cc SHA-256: 15419cc68ec16f5efe40706353db1ff6470324e193aa005f998fed1870bf6409

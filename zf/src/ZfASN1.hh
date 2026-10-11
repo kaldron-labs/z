@@ -732,7 +732,7 @@ struct AsObject {
     template <typename Field>
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
-    using AllFields = ZuFields<O, Facet>;
+    using AllFields = ZuActiveFields<O, Facet>;
 
     // sort fields per ASN.1 order
     template <typename Field>

@@ -139,17 +139,6 @@ const VKeyMatch::Action *VKeyMatch::match(uint8_t c) const
   return nullptr;
 }
 
-void Terminal::open(ZmScheduler *sched, unsigned thread,
-    OpenFn openFn, ErrorFn errorFn) // async
-{
-  m_sched = sched;
-  m_thread = thread;
-  invoke([this, openFn = ZuMv(openFn), errorFn = ZuMv(errorFn)]() mutable {
-    m_errorFn = ZuMv(errorFn);
-    openFn(this->open_());
-  });
-}
-
 using TerminalPtr = Terminal *;
 
 bool Terminal::isOpen() const // synchronous
@@ -168,27 +157,6 @@ bool Terminal::isOpen_() const
 #else
   return m_conout != INVALID_HANDLE_VALUE;
 #endif
-}
-
-void Terminal::close(CloseFn fn) // async
-{
-  invoke([this, fn = ZuMv(fn)]() { this->close_(); fn(); });
-}
-
-void Terminal::start(StartFn startFn, KeyFn keyFn) // async
-{
-  Guard guard(m_lock);
-  m_sched->push([
-    this, startFn = ZuMv(startFn), keyFn = ZuMv(keyFn)
-  ]() mutable {
-    if (!start_()) return;
-    StartFn{ZuMv(startFn)}();
-    m_keyFn = ZuMv(keyFn);
-    m_sched->wakeFn(m_thread, ZmScheduler::WakeFn{this, [](Terminal *this_) {
-      this_->wake();
-    }});
-    read();
-  }, m_thread);
 }
 
 bool Terminal::running() const // synchronous

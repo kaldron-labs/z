@@ -192,52 +192,49 @@ struct QuoteID {
 
 static QuoteID quoteID(ZuCSpan id) { return {id}; }
 
-static unsigned resolveType(
-  const Zfb::Vector<Zfb::Offset<reflection::Field>> *fields,
-  const ZfVField *field, ZuCSpan id, const reflection::Field *&fbField)
+static unsigned resolveType(const ZfVField *field, R::FieldView fbField)
 {
-  // StoreTbl receives erased Zf metadata, so run-time reflection is the
-  // required boundary for matching it to the generated FlatBuffer schema.
-  fbField = fields->LookupByKey(id);
   if (!fbField) return Type::Void;
   auto ftype = field->type;
-  switch (fbField->type()->base_type()) {
-    case reflection::String:
-      if (ftype->code == ZfFieldTC::CString ||
-          ftype->code == ZfFieldTC::String) return Type::String;
+  unsigned code = ftype->code;
+  switch (R::type(fbField).get<R::ZfField(Type, baseType)>()) {
+    case R::BaseType::String:
+      if (code == ZfFieldTC::CString ||
+          code == ZfFieldTC::String) return Type::String;
       break;
-    case reflection::Bool:
-      if (ftype->code == ZfFieldTC::Bool) return Type::Bool;
+    case R::BaseType::Bool:
+      if (code == ZfFieldTC::Bool) return Type::Bool;
       break;
-    case reflection::Byte:
-      if (ftype->code == ZfFieldTC::Int8) return Type::Int8;
+    case R::BaseType::Byte:
+      if (code == ZfFieldTC::Int8) return Type::Int8;
       break;
-    case reflection::UByte:
-      if (ftype->code == ZfFieldTC::UInt8) return Type::UInt8;
+    case R::BaseType::UByte:
+      if (code == ZfFieldTC::UInt8) return Type::UInt8;
       break;
-    case reflection::Short:
-      if (ftype->code == ZfFieldTC::Int16) return Type::Int16;
+    case R::BaseType::Short:
+      if (code == ZfFieldTC::Int16) return Type::Int16;
       break;
-    case reflection::UShort:
-      if (ftype->code == ZfFieldTC::UInt16) return Type::UInt16;
+    case R::BaseType::UShort:
+      if (code == ZfFieldTC::UInt16) return Type::UInt16;
       break;
-    case reflection::Int:
-      if (ftype->code == ZfFieldTC::Int32) return Type::Int32;
+    case R::BaseType::Int:
+      if (code == ZfFieldTC::Int32) return Type::Int32;
       break;
-    case reflection::UInt:
-      if (ftype->code == ZfFieldTC::UInt32) return Type::UInt32;
+    case R::BaseType::UInt:
+      if (code == ZfFieldTC::UInt32) return Type::UInt32;
       break;
-    case reflection::Long:
-      if (ftype->code == ZfFieldTC::Int64) return Type::Int64;
+    case R::BaseType::Long:
+      if (code == ZfFieldTC::Int64) return Type::Int64;
       break;
-    case reflection::ULong:
-      if (ftype->code == ZfFieldTC::UInt64) return Type::UInt64;
+    case R::BaseType::ULong:
+      if (code == ZfFieldTC::UInt64) return Type::UInt64;
       break;
-    case reflection::Double:
-      if (ftype->code == ZfFieldTC::Float) return Type::Float;
+    case R::BaseType::Float:
+    case R::BaseType::Double:
+      if (code == ZfFieldTC::Float) return Type::Float;
       break;
-    case reflection::Obj:
-      switch (ftype->code) {
+    case R::BaseType::Obj:
+      switch (code) {
         case ZfFieldTC::Int128: return Type::Int128;
         case ZfFieldTC::UInt128: return Type::UInt128;
         case ZfFieldTC::Fixed: return Type::Fixed;
@@ -245,50 +242,50 @@ static unsigned resolveType(
         case ZfFieldTC::Time: return Type::Time;
         case ZfFieldTC::DateTime: return Type::DateTime;
         case ZfFieldTC::UDT:
-          if (ftype->info.udt()->id == "Bitmap") return Type::Bitmap;
-          if (ftype->info.udt()->id == "IP") return Type::IP;
-          break;
+	  if (ftype->info.udt()->id == "Bitmap") return Type::Bitmap;
+	  break;
       }
       break;
-    case reflection::Union:
-      if (ftype->code == ZfFieldTC::UDT && ftype->info.udt()->id == "IP")
+    case R::BaseType::Union:
+      if (code == ZfFieldTC::UDT && ftype->info.udt()->id == "IP")
         return Type::IP;
       break;
-    case reflection::Vector:
-      switch (fbField->type()->element()) {
-        case reflection::String:
-          if (ftype->code == ZfFieldTC::StringVec) return Type::StringVec;
+    case R::BaseType::Vector:
+      switch (R::type(fbField).get<R::ZfField(Type, element)>()) {
+	case R::BaseType::String:
+          if (code == ZfFieldTC::CStringVec || code == ZfFieldTC::StringVec) return Type::StringVec;
           break;
-        case reflection::Byte:
-          if (ftype->code == ZfFieldTC::Int8Vec) return Type::Int8Vec;
+	case R::BaseType::Byte:
+          if (code == ZfFieldTC::Int8Vec) return Type::Int8Vec;
           break;
-        case reflection::UByte:
-          if (ftype->code == ZfFieldTC::Bytes) return Type::Bytes;
-          if (ftype->code == ZfFieldTC::UInt8Vec) return Type::UInt8Vec;
+	case R::BaseType::UByte:
+          if (code == ZfFieldTC::Bytes) return Type::Bytes;
+          if (code == ZfFieldTC::UInt8Vec) return Type::UInt8Vec;
           break;
-        case reflection::Short:
-          if (ftype->code == ZfFieldTC::Int16Vec) return Type::Int16Vec;
+	case R::BaseType::Short:
+          if (code == ZfFieldTC::Int16Vec) return Type::Int16Vec;
           break;
-        case reflection::UShort:
-          if (ftype->code == ZfFieldTC::UInt16Vec) return Type::UInt16Vec;
+	case R::BaseType::UShort:
+          if (code == ZfFieldTC::UInt16Vec) return Type::UInt16Vec;
           break;
-        case reflection::Int:
-          if (ftype->code == ZfFieldTC::Int32Vec) return Type::Int32Vec;
+	case R::BaseType::Int:
+          if (code == ZfFieldTC::Int32Vec) return Type::Int32Vec;
           break;
-        case reflection::UInt:
-          if (ftype->code == ZfFieldTC::UInt32Vec) return Type::UInt32Vec;
+	case R::BaseType::UInt:
+          if (code == ZfFieldTC::UInt32Vec) return Type::UInt32Vec;
           break;
-        case reflection::Long:
-          if (ftype->code == ZfFieldTC::Int64Vec) return Type::Int64Vec;
+	case R::BaseType::Long:
+          if (code == ZfFieldTC::Int64Vec) return Type::Int64Vec;
           break;
-        case reflection::ULong:
-          if (ftype->code == ZfFieldTC::UInt64Vec) return Type::UInt64Vec;
+	case R::BaseType::ULong:
+          if (code == ZfFieldTC::UInt64Vec) return Type::UInt64Vec;
           break;
-        case reflection::Double:
-          if (ftype->code == ZfFieldTC::FloatVec) return Type::FloatVec;
+	case R::BaseType::Float:
+	case R::BaseType::Double:
+          if (code == ZfFieldTC::FloatVec) return Type::FloatVec;
           break;
-        case reflection::Obj:
-          switch (ftype->code) {
+	case R::BaseType::Obj:
+          switch (code) {
             case ZfFieldTC::BytesVec: return Type::BytesVec;
             case ZfFieldTC::Int128Vec: return Type::Int128Vec;
             case ZfFieldTC::UInt128Vec: return Type::UInt128Vec;
@@ -482,14 +479,35 @@ ZuDerive(VarBufScratch,
   (ZtArray<uint8_t, ZtArrayHeapID<"ZdbSL.VarBuf",
     ZtArraySharded<true>>>));
 
-static uint64_t vecSize(uint64_t n, unsigned width)
-{
-  return sizeof(uint32_t) + n * width;
+template <typename T, unsigned Code>
+static auto vector(ZiFB::TableView fbo, R::FieldView field) {
+  using W = ZiFB::Value<ZuSpan<const T>, Code>;
+  return ZiFB::VectorValue<typename W::Elem>{fbo.object(field.get<R::ZfField(Field, id)>())};
 }
 
-static uint64_t encodedSize(const XField &xfield, const Zfb::Table *fbo)
+template <typename T, unsigned Code>
+static auto loadInline(ZiFB::TableView fbo, const XField &field) {
+  auto p = R::address(fbo, field.field.field);
+  if (!p) return T(field.vfield->constant.template get<Code>(
+    ZfVField::cget(ZfVFieldConstant::Deflt)));
+  return ZiFB::valueAt<ZiFB::Value<T, Code>>(p);
+}
+
+static auto bitmapData(ZiFB::TableView fbo, R::FieldView field) {
+  using namespace ZiFB::Values;
+  return ZiFB::View<Bitmap>{fbo.object(field.get<R::ZfField(Field, id)>())}.
+    get<ZfField(Bitmap, data)>();
+}
+
+static ZiIP loadIP(ZiFB::TableView fbo, R::FieldView field) {
+  return ZiFB::IPMap::load(ZiFB::UnionView<ZiIP>{R::tag(fbo, field),
+    fbo.object(field.get<R::ZfField(Field, id)>())});
+}
+
+static uint64_t encodedSize(
+  const XField &xfield, ZiFB::TableView fbo, unsigned limit)
 {
-  const reflection::Field &field = *xfield.field.field;
+  auto field = xfield.field.field;
   switch (xfield.field.type) {
     case Type::String:
     case Type::Bytes:
@@ -503,15 +521,11 @@ static uint64_t encodedSize(const XField &xfield, const Zfb::Table *fbo)
     case Type::Int64:
       return 0;
     case Type::Bitmap: {
-      auto bitmap = fbo->GetPointer<const Zfb::Bitmap *>(field.offset());
-      auto data = bitmap ? bitmap->data() : nullptr;
-      return vecSize(data ? data->size() : 0, sizeof(uint64_t));
+      auto data = bitmapData(fbo, field);
+      return vecSize(data.length(), sizeof(uint64_t), limit);
     }
     case Type::IP: {
-      ZiIP ip = ZfbTransform::IP::load(
-        static_cast<Zfb::IP>(
-          fbo->GetField<uint8_t>(field.offset() - 2, 0)),
-        fbo->GetPointer<const void *>(field.offset()));
+      ZiIP ip = loadIP(fbo, field);
       switch (ip.type()) {
         case ZiIPType::V4: return 1 + sizeof(in_addr);
         case ZiIPType::V6: return 1 + sizeof(in6_addr);
@@ -520,73 +534,71 @@ static uint64_t encodedSize(const XField &xfield, const Zfb::Table *fbo)
     }
     case Type::StringVec: {
       auto values =
-        Zfb::GetFieldV<Zfb::Offset<Zfb::String>>(*fbo, field);
-      uint64_t size = sizeof(uint32_t);
-      unsigned n = values ? values->size() : 0;
-      for (unsigned i = 0; i < n; ++i) {
-        uint64_t length = values->Get(i)->size();
-        if (length > UINT64_MAX - sizeof(uint32_t) ||
-            size > UINT64_MAX - sizeof(uint32_t) - length)
-          return UINT64_MAX;
-        size += sizeof(uint32_t) + length;
-      }
-      return size;
+	vector<ZuCSpan, ZfFieldTC::StringVec>(fbo, field);
+      return vecVarSize(values.length(), limit, [values](unsigned i) {
+	return values[i].length();
+      });
     }
     case Type::BytesVec: {
       auto values =
-        Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, field);
-      uint64_t size = sizeof(uint32_t);
-      unsigned n = values ? values->size() : 0;
-      for (unsigned i = 0; i < n; ++i) {
-        auto data = values->Get(i)->data();
-        uint64_t length = data ? data->size() : 0;
-        if (length > UINT64_MAX - sizeof(uint32_t) ||
-            size > UINT64_MAX - sizeof(uint32_t) - length)
-          return UINT64_MAX;
-        size += sizeof(uint32_t) + length;
-      }
-      return size;
+	vector<ZuBSpan, ZfFieldTC::BytesVec>(fbo, field);
+      return vecVarSize(values.length(), limit, [values](unsigned i) {
+	return values[i].length();
+      });
     }
-#define ZdbSL_VecSize(Type_, Elem_) \
-    case Type::Type_: { \
-      auto values = Zfb::GetFieldV<Elem_>(*fbo, field); \
-      return vecSize(values ? values->size() : 0, xfield.field.fixedSize); \
-    }
-    ZdbSL_VecSize(Int8Vec, int8_t)
-    ZdbSL_VecSize(UInt8Vec, uint8_t)
-    ZdbSL_VecSize(Int16Vec, int16_t)
-    ZdbSL_VecSize(UInt16Vec, uint16_t)
-    ZdbSL_VecSize(Int32Vec, int32_t)
-    ZdbSL_VecSize(UInt32Vec, uint32_t)
-    ZdbSL_VecSize(Int64Vec, int64_t)
-    ZdbSL_VecSize(UInt64Vec, uint64_t)
-    ZdbSL_VecSize(Int128Vec, Zfb::Int128 *)
-    ZdbSL_VecSize(UInt128Vec, Zfb::UInt128 *)
-    ZdbSL_VecSize(FloatVec, double)
-    ZdbSL_VecSize(FixedVec, Zfb::Fixed *)
-    ZdbSL_VecSize(DecimalVec, Zfb::Decimal *)
-    ZdbSL_VecSize(TimeVec, Zfb::Time *)
-    ZdbSL_VecSize(DateTimeVec, Zfb::DateTime *)
-#undef ZdbSL_VecSize
+    case Type::Int8Vec:
+    case Type::UInt8Vec:
+    case Type::Int16Vec:
+    case Type::UInt16Vec:
+    case Type::Int32Vec:
+    case Type::UInt32Vec:
+    case Type::Int64Vec:
+    case Type::UInt64Vec:
+    case Type::Int128Vec:
+    case Type::UInt128Vec:
+    case Type::FloatVec:
+    case Type::FixedVec:
+    case Type::DecimalVec:
+    case Type::TimeVec:
+    case Type::DateTimeVec:
+      return vecSize(R::vector(fbo, field).length(), xfield.field.fixedSize, limit);
     default:
       return xfield.field.fixedSize;
   }
 }
 
+static Event paramSizeError()
+{
+  return ZeEXCEPT(Error, "ZdbSL", "parameter buffer exceeds size limit");
+}
+
 template <typename Fields>
 static unsigned planInput(
-  sqlite3 *cxn, unsigned lengthLimit, unsigned n,
-  const Fields &fields, const Zfb::Table *fbo, ZuSpan<VarPart> parts)
+  unsigned lengthLimit, unsigned n,
+  const Fields &fields, ZiFB::TableView fbo, ZuSpan<VarPart> parts)
 {
-  uint64_t total = 0;
+  unsigned limit = lengthLimit < Zdb_::MaxBufSize ?
+    lengthLimit : unsigned(Zdb_::MaxBufSize);
+  unsigned total = 0;
   for (unsigned i = 0; i < n; ++i) {
-    uint64_t size = encodedSize(fieldAt(fields, i), fbo);
-    if (size > lengthLimit || size > UINT_MAX || total > UINT_MAX - size)
-      throw cxnError(cxn, "encode SQLite value", SQLITE_TOOBIG);
-    parts[i] = {unsigned(total), unsigned(size)};
-    total += size;
+    const auto &field = fieldAt(fields, i);
+    uint64_t size = encodedSize(field, fbo, limit);
+    unsigned borrowed = 0;
+    switch (field.field.type) {
+      case Type::String:
+	borrowed = R::string(fbo, field.field.field).length();
+	break;
+      case Type::Bytes:
+	borrowed = R::vector(fbo, field.field.field).bytes().length();
+	break;
+      default: break;
+    }
+    if (size > limit || borrowed > limit || size > Zdb_::MaxBufSize - total)
+      return UINT_MAX;
+    parts[i] = {total, unsigned(size)};
+    total += unsigned(size);
   }
-  return unsigned(total);
+  return total;
 }
 
 static void saveCount(uint8_t *&ptr, unsigned n)
@@ -596,63 +608,56 @@ static void saveCount(uint8_t *&ptr, unsigned n)
 }
 
 template <typename V, typename L>
-static void savePVec(uint8_t *ptr, const V *values, L &&save)
+static void savePVec(uint8_t *ptr, const V &values, L &&save)
 {
-  unsigned n = values ? values->size() : 0;
+  unsigned n = values.length();
   saveCount(ptr, n);
-  for (unsigned i = 0; i < n; ++i) save(ptr, values->Get(i));
+  for (unsigned i = 0; i < n; ++i) save(ptr, values[i]);
 }
 
 static void encodeField(
-  uint8_t *ptr, const XField &xfield, const Zfb::Table *fbo)
+  uint8_t *ptr, const XField &xfield, ZiFB::TableView fbo)
 {
-  const reflection::Field &field = *xfield.field.field;
+  auto field = xfield.field.field;
   switch (xfield.field.type) {
     case Type::UInt64:
-      saveU64(ptr, Zfb::GetFieldI<uint64_t>(*fbo, field));
+      saveU64(ptr, R::scalar<uint64_t>(fbo, field));
       break;
     case Type::Int128:
-      saveS128(ptr, ZfbTransform::Int128::load(
-        fbo->GetStruct<const Zfb::Int128 *>(field.offset())));
+      saveS128(ptr, loadInline<int128_t, ZfFieldTC::Int128>(fbo, xfield));
       break;
     case Type::UInt128:
-      saveU128(ptr, ZfbTransform::UInt128::load(
-        fbo->GetStruct<const Zfb::UInt128 *>(field.offset())));
+      saveU128(ptr, loadInline<uint128_t, ZfFieldTC::UInt128>(fbo, xfield));
       break;
     case Type::Float:
-      saveFloat(ptr, Zfb::GetFieldF<double>(*fbo, field));
+      if (R::type(field).get<R::ZfField(Type, baseType)>() == R::BaseType::Float)
+	saveFloat(ptr, R::scalar<float>(fbo, field));
+      else
+	saveFloat(ptr, R::scalar<double>(fbo, field));
       break;
     case Type::Fixed:
-      saveFixed(ptr, ZfbTransform::Fixed::load(
-        fbo->GetStruct<const Zfb::Fixed *>(field.offset())));
+      saveFixed(ptr, loadInline<ZuFixed, ZfFieldTC::Fixed>(fbo, xfield));
       break;
     case Type::Decimal:
-      saveDecimal(ptr, ZfbTransform::Decimal::load(
-        fbo->GetStruct<const Zfb::Decimal *>(field.offset())));
+      saveDecimal(ptr, loadInline<ZuDecimal, ZfFieldTC::Decimal>(fbo, xfield));
       break;
     case Type::Time:
-      saveTime(ptr, ZfbTransform::Time::load(
-        fbo->GetStruct<const Zfb::Time *>(field.offset())));
+      saveTime(ptr, loadInline<ZuTime, ZfFieldTC::Time>(fbo, xfield));
       break;
     case Type::DateTime:
-      saveDateTime(ptr, ZfbTransform::DateTime::load(
-        fbo->GetStruct<const Zfb::DateTime *>(field.offset())));
+      saveDateTime(ptr, loadInline<ZuDateTime, ZfFieldTC::DateTime>(fbo, xfield));
       break;
     case Type::Bitmap: {
-      auto bitmap = fbo->GetPointer<const Zfb::Bitmap *>(field.offset());
-      auto data = bitmap ? bitmap->data() : nullptr;
-      unsigned n = data ? data->size() : 0;
+      auto data = bitmapData(fbo, field);
+      unsigned n = data.length();
       saveCount(ptr, n);
       for (unsigned i = 0; i < n; ++i) {
-        saveUnsigned(ptr, data->Get(i));
+	saveUnsigned(ptr, data[i]);
         ptr += sizeof(uint64_t);
       }
     } break;
     case Type::IP: {
-      ZiIP ip = ZfbTransform::IP::load(
-        static_cast<Zfb::IP>(
-          fbo->GetField<uint8_t>(field.offset() - 2, 0)),
-        fbo->GetPointer<const void *>(field.offset()));
+      ZiIP ip = loadIP(fbo, field);
       switch (ip.type()) {
         case ZiIPType::V4:
           *ptr++ = 4;
@@ -669,40 +674,40 @@ static void encodeField(
     } break;
     case Type::StringVec: {
       auto values =
-        Zfb::GetFieldV<Zfb::Offset<Zfb::String>>(*fbo, field);
-      unsigned n = values ? values->size() : 0;
+	vector<ZuCSpan, ZfFieldTC::StringVec>(fbo, field);
+      unsigned n = values.length();
       saveCount(ptr, n);
       for (unsigned i = 0; i < n; ++i) {
-        auto value = values->Get(i);
-        unsigned length = value->size();
+	auto value = values[i];
+	unsigned length = value.length();
         saveCount(ptr, length);
-        memcpy(ptr, value->Data(), length);
+	memcpy(ptr, value.data(), length);
         ptr += length;
       }
     } break;
     case Type::BytesVec: {
       auto values =
-        Zfb::GetFieldV<Zfb::Offset<Zfb::Bytes>>(*fbo, field);
-      unsigned n = values ? values->size() : 0;
+	vector<ZuBSpan, ZfFieldTC::BytesVec>(fbo, field);
+      unsigned n = values.length();
       saveCount(ptr, n);
       for (unsigned i = 0; i < n; ++i) {
-        auto data = values->Get(i)->data();
-        unsigned length = data ? data->size() : 0;
+	auto data = values[i];
+	unsigned length = data.length();
         saveCount(ptr, length);
-        if (length) memcpy(ptr, data->Data(), length);
+	if (length) memcpy(ptr, data.data(), length);
         ptr += length;
       }
     } break;
 #define ZdbSL_SaveUVec(Type_, Elem_) \
     case Type::Type_: { \
-      auto values = Zfb::GetFieldV<Elem_>(*fbo, field); \
+      auto values = vector<Elem_, ZfFieldTC::Type_>(fbo, field); \
       savePVec(ptr, values, [](uint8_t *&out, Elem_ value) { \
         saveUnsigned(out, value); out += sizeof(Elem_); \
       }); \
     } break
 #define ZdbSL_SaveSVec(Type_, Elem_, UInt_) \
     case Type::Type_: { \
-      auto values = Zfb::GetFieldV<Elem_>(*fbo, field); \
+      auto values = vector<Elem_, ZfFieldTC::Type_>(fbo, field); \
       savePVec(ptr, values, [](uint8_t *&out, Elem_ value) { \
         saveSigned<Elem_, UInt_>(out, value); out += sizeof(Elem_); \
       }); \
@@ -717,35 +722,33 @@ static void encodeField(
     ZdbSL_SaveUVec(UInt64Vec, uint64_t);
 #undef ZdbSL_SaveSVec
 #undef ZdbSL_SaveUVec
-#define ZdbSL_SaveObjVec(Type_, FBType_, Native_, Width_, Transform_, Save_) \
+#define ZdbSL_SaveObjVec(Type_, Native_, Width_, Save_) \
     case Type::Type_: { \
-      auto values = Zfb::GetFieldV<FBType_ *>(*fbo, field); \
-      savePVec(ptr, values, [](uint8_t *&out, const FBType_ *value) { \
-        Native_ native = ZfbTransform::Transform_::load(value); \
-        Save_(out, native); \
+      auto values = vector<Native_, ZfFieldTC::Type_>(fbo, field); \
+      savePVec(ptr, values, [](uint8_t *&out, Native_ value) { \
+	Save_(out, value); \
         out += sizeof(Width_); \
       }); \
     } break
-    ZdbSL_SaveObjVec(
-      Int128Vec, Zfb::Int128, int128_t, int128_t, Int128, saveS128);
-    ZdbSL_SaveObjVec(
-      UInt128Vec, Zfb::UInt128, uint128_t, uint128_t, UInt128, saveU128);
-    ZdbSL_SaveObjVec(
-      FixedVec, Zfb::Fixed, ZuFixed, int128_t, Fixed, saveFixed);
-    ZdbSL_SaveObjVec(
-      DecimalVec, Zfb::Decimal, ZuDecimal, int128_t, Decimal, saveDecimal);
-    ZdbSL_SaveObjVec(
-      TimeVec, Zfb::Time, ZuTime, TimeData, Time, saveTime);
-    ZdbSL_SaveObjVec(
-      DateTimeVec, Zfb::DateTime, ZuDateTime, DateTimeData,
-      DateTime, saveDateTime);
+    ZdbSL_SaveObjVec(Int128Vec, int128_t, int128_t, saveS128);
+    ZdbSL_SaveObjVec(UInt128Vec, uint128_t, uint128_t, saveU128);
+    ZdbSL_SaveObjVec(FixedVec, ZuFixed, int128_t, saveFixed);
+    ZdbSL_SaveObjVec(DecimalVec, ZuDecimal, int128_t, saveDecimal);
+    ZdbSL_SaveObjVec(TimeVec, ZuTime, TimeData, saveTime);
+    ZdbSL_SaveObjVec(DateTimeVec, ZuDateTime, DateTimeData, saveDateTime);
 #undef ZdbSL_SaveObjVec
     case Type::FloatVec: {
-      auto values = Zfb::GetFieldV<double>(*fbo, field);
-      savePVec(ptr, values, [](uint8_t *&out, double value) {
-        saveFloat(out, value);
-        out += sizeof(double);
-      });
+      auto encode = [ptr, field, fbo]<typename T>() {
+	auto values = vector<T, ZfFieldTC::FloatVec>(fbo, field);
+	savePVec(ptr, values, [](uint8_t *&out, T value) {
+	  saveFloat(out, double(value));
+	  out += sizeof(double);
+	});
+      };
+      if (R::type(field).get<R::ZfField(Type, element)>() == R::BaseType::Float)
+	encode.template operator ()<float>();
+      else
+	encode.template operator ()<double>();
     } break;
     default:
       break;
@@ -755,37 +758,37 @@ static void encodeField(
 template <typename Fields>
 static void bindInput(
   sqlite3 *cxn, sqlite3_stmt *stmt, unsigned first,
-  unsigned n, const Fields &fields, const Zfb::Table *fbo,
+  unsigned n, const Fields &fields, ZiFB::TableView fbo,
   ZuSpan<const VarPart> parts, ZuSpan<uint8_t> data)
 {
   static const char emptyText = 0;
   static const uint8_t emptyBlob = 0;
   for (unsigned i = 0; i < n; ++i) {
     const XField &xfield = fieldAt(fields, i);
-    const reflection::Field &field = *xfield.field.field;
+    auto field = xfield.field.field;
     int rc;
     switch (xfield.field.type) {
       case Type::String: {
-        ZuCSpan value = Zfb::Load::str(Zfb::GetFieldS(*fbo, field));
+	ZuCSpan value = R::string(fbo, field);
         rc = sqlite3_bind_text64(stmt, first + i,
           value.length() ? value.data() : &emptyText, value.length(),
           SQLITE_STATIC, SQLITE_UTF8);
       } break;
       case Type::Bytes: {
         ZuBSpan value =
-          Zfb::Load::bytes(Zfb::GetFieldV<uint8_t>(*fbo, field));
+	  R::vector(fbo, field).bytes();
         rc = sqlite3_bind_blob64(stmt, first + i,
           value.length() ? value.data() : &emptyBlob, value.length(),
           SQLITE_STATIC);
       } break;
       case Type::Bool:
         rc = sqlite3_bind_int64(
-          stmt, first + i, Zfb::GetFieldI<bool>(*fbo, field));
+	  stmt, first + i, R::scalar<uint8_t>(fbo, field));
         break;
 #define ZdbSL_BindInt(Type_, CType_) \
       case Type::Type_: \
         rc = sqlite3_bind_int64( \
-          stmt, first + i, Zfb::GetFieldI<CType_>(*fbo, field)); \
+	  stmt, first + i, R::scalar<CType_>(fbo, field)); \
         break
       ZdbSL_BindInt(Int8, int8_t);
       ZdbSL_BindInt(UInt8, uint8_t);
@@ -1013,7 +1016,7 @@ void Store::stop_1(StopFn fn)
 void Store::open(
   bool internal, IDString id,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
-  const reflection::Schema *schema, IOBufAllocFn bufAllocFn, OpenFn openFn)
+  Schema schema, IOBufAllocFn bufAllocFn, OpenFn openFn)
 {
   run([
     this, internal, id = ZuMv(id), fields = ZuMv(fields),
@@ -1034,6 +1037,7 @@ void Store::open(
         }))});
         return;
       }
+      tbl->schema(schema);
       tbl->open(ZuMv(openFn));
       return;
     }
@@ -1052,7 +1056,7 @@ void Store::open(
 StoreTbl::StoreTbl(
   Store *store, bool internal, IDString id, unsigned nShards,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
-  const reflection::Schema *schema, IOBufAllocFn bufAllocFn)
+  Schema schema, IOBufAllocFn bufAllocFn)
 :
   m_store{store}, m_id{ZuMv(id)},
   m_bufAllocFn{ZuMv(bufAllocFn)}, m_internal{internal}
@@ -1060,14 +1064,13 @@ StoreTbl::StoreTbl(
   SQLString physical;
   physical << (m_internal ? "i_" : "a_") << m_id;
   m_relation = quoteID(physical);
-  auto fbFields = schema->root_table()->fields();
   unsigned n = fields.length();
   m_xFields.size(n);
   ZmRef<FieldMapObj> fieldMap = new FieldMapObj{n};
   for (unsigned i = 0; i < n; ++i) {
-    ZtCase::camelSnake(fields[i]->id, [this, &fields, fieldMap, fbFields, i](ZuCSpan id_) {
-      const reflection::Field *fbField = nullptr;
-      unsigned type = resolveType(fbFields, fields[i], id_, fbField);
+    ZtCase::camelSnake(fields[i]->id, [this, &fields, fieldMap, schema, i](ZuCSpan id_) {
+      auto fbField = schema.field(fields[i]->id);
+      unsigned type = resolveType(fields[i], fbField);
       XField *xfield = m_xFields.push();
       new (xfield) XField{
         .id = IDString{id_}, .vfield = fields[i],
@@ -1075,7 +1078,8 @@ StoreTbl::StoreTbl(
           .field = fbField,
           .type = uint8_t(type),
           .storage = uint8_t(storageID(type)),
-          .fixedSize = uint8_t(fixedSize(type))
+	  .fixedSize = uint8_t(fixedSize(type)),
+	  .align = R::alignment(fbField)
         }};
       if (!xfield->field.field || !xfield->field.type)
         throw ZeEXCEPT(Fatal, "ZdbSL", ([id = ZeString{id_}](auto &s, const auto &) {
@@ -1117,6 +1121,7 @@ StoreTbl::StoreTbl(
     m_keyDirs[i] = dir;
   }
   m_maxUN.length(nShards);
+  this->schema(schema);
   m_stmts.keys.length(n);
   memset(m_stmts.keys.data(), 0, n * sizeof(KeyStmts));
 }
@@ -1665,7 +1670,8 @@ void StoreTbl::finalize_()
   finalize(m_stmts.mrd);
 }
 
-using Offset = Zfb::Offset<void>;
+using Offset = ZiFB::Offset;
+using Builder = ZiFB::IOBuilder<ZiFB::Wire::MaxAlign>;
 
 struct SavedOffset {
   Offset	offset;
@@ -1679,7 +1685,7 @@ ZuDerive(SavedOffsetsScratch,
 static ZuCSpan columnText(sqlite3_stmt *stmt, unsigned col)
 {
   return {
-    reinterpret_cast<const char *>(sqlite3_column_text(stmt, col)),
+    sqlite3_column_text(stmt, col),
     unsigned(sqlite3_column_bytes(stmt, col))};
 }
 
@@ -1692,72 +1698,82 @@ static bool vecData(ZuBSpan &data, unsigned width, unsigned &n)
   return true;
 }
 
-static bool varVecData(ZuBSpan &data, unsigned &n)
-{
-  uint32_t count;
-  if (!loadUnsigned(data, count)) return false;
-  ZuBSpan scan = data;
-  for (unsigned i = 0; i < count; ++i) {
-    uint32_t length;
-    if (!loadUnsigned(scan, length) || scan.length() < length) return false;
-    scan.offset(length);
-  }
-  if (scan.length()) return false;
-  n = count;
-  return true;
-}
-
-template <typename T, typename L>
-static SavedOffset savePVec(Zfb::Builder &fbb, ZuBSpan data, L &&load)
+template <typename T, unsigned Width = sizeof(T), typename L>
+static SavedOffset savePVec(Builder &fbb, ZuBSpan data, unsigned align, L &&load)
 {
   unsigned n;
-  if (!vecData(data, sizeof(T), n)) return {};
-  return {Zfb::Save::pvectorIter<T>(
-    fbb, n, [&data, load = ZuFwd<L>(load)](unsigned) mutable {
-      T value = load(data.data());
-      data.offset(sizeof(T));
-      return value;
-    }).Union(), 0, true};
+  if (!vecData(data, Width, n)) return {};
+  auto offset = fbb.vector(n, sizeof(T), (align > sizeof(T) ? align : sizeof(T)),
+    [data, n, &load](uint8_t *out) {
+      for (unsigned i = 0; i < n; ++i)
+	ZiFB::write<T>(out + i * sizeof(T), T(load(data.data() + i * Width)));
+    });
+  return {offset, 0, true};
 }
 
-template <typename FB, typename T, typename L, typename S>
+template <typename T, unsigned Code, typename L>
 static SavedOffset saveStructVec(
-  Zfb::Builder &fbb, ZuBSpan data, unsigned width, L &&load, S &&save)
+  Builder &fbb, ZuBSpan data, unsigned width, unsigned align, L &&load)
 {
+  using W = ZiFB::Value<T, Code>;
   unsigned n;
   if (!vecData(data, width, n)) return {};
-  return {Zfb::Save::structVecIter<FB>(
-    fbb, n, [&data, width,
-      load = ZuFwd<L>(load), save = ZuFwd<S>(save)](FB *out, unsigned) mutable {
-      T value = load(data.data());
-      data.offset(width);
-      *out = save(value);
-    }).Union(), 0, true};
+  auto offset = fbb.vector(n, W::Size, (align > W::Align ? align : W::Align),
+    [data, n, width, &load](uint8_t *out) {
+      for (unsigned i = 0; i < n; ++i)
+	ZiFB::writeInline(out + i * W::Size, W::toWire(load(data.data() + i * width)));
+    });
+  return {offset, 0, true};
+}
+
+template <bool Bytes>
+static SavedOffset saveVarVec(Builder &fbb, ZuBSpan data, unsigned align) {
+  uint32_t n;
+  // Each element needs a length word, even when empty. Bound scratch by
+  // the external input before allocating, then parse each header once.
+  if (!loadUnsigned(data, n) || n > data.length()/sizeof(uint32_t)) return {};
+  auto offsets = ZtScratch(ZiFB::Offsets, n, n);
+  for (unsigned i = 0; i < n; ++i) {
+    uint32_t length;
+    if (!loadUnsigned(data, length) || length > data.length()) return {};
+    ZuBSpan value{data.data(), length};
+    data.offset(length);
+    if constexpr (Bytes)
+      offsets[i] = ZiFB::saveObject(fbb, ZiFB::Values::Bytes{value});
+    else
+      offsets[i] = fbb.string(value);
+  }
+  if (data.length()) return {};
+  fbb.align(align, n * sizeof(Offset));
+  return {fbb.offsets(offsets), 0, true};
 }
 
 static SavedOffset saveOffset(
-  Zfb::Builder &fbb, sqlite3_stmt *stmt, unsigned col, unsigned type)
+  Builder &fbb, sqlite3_stmt *stmt, unsigned col, const FieldInfo &field)
 {
+  unsigned type = field.type;
+  unsigned align = field.align;
   if (type == Type::String) {
     if (sqlite3_column_type(stmt, col) != SQLITE_TEXT) return {};
-    return {Zfb::Save::str(fbb, columnText(stmt, col)).Union(), 0, true};
+    return {fbb.string(columnText(stmt, col)), 0, true};
   }
   if (sqlite3_column_type(stmt, col) != SQLITE_BLOB) return {};
   ZuBSpan data = columnBlob(stmt, col);
   switch (type) {
     case Type::Bytes:
-      return {Zfb::Save::bytes(fbb, data).Union(), 0, true};
+      return {fbb.copyRoot(data, align), 0, true};
     case Type::Bitmap: {
       unsigned n;
       if (!vecData(data, sizeof(uint64_t), n)) return {};
-      auto offset = Zfb::CreateBitmap(
-        fbb, Zfb::Save::pvectorIter<uint64_t>(
-          fbb, n, [&data](unsigned) {
-            uint64_t value = loadUnsigned_<uint64_t>(data.data());
-            data.offset(sizeof(value));
-            return value;
-          }));
-      return {offset.Union(), 0, true};
+      auto words = fbb.vector(n, sizeof(uint64_t), alignof(uint64_t),
+	[data, n](uint8_t *out) {
+	  for (unsigned i = 0; i < n; ++i)
+	    ZiFB::write<uint64_t>(out + i * sizeof(uint64_t),
+	      loadUnsigned_<uint64_t>(data.data() + i * sizeof(uint64_t)));
+	});
+      auto table = fbb.startTable();
+      ZiFB::fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, words);
+      return {fbb.endTable(table), 0, true};
     }
     case Type::IP: {
       if (!data.length()) return {};
@@ -1783,42 +1799,18 @@ static SavedOffset saveOffset(
         default:
           return {};
       }
-      auto saved = ZfbTransform::IP::save(fbb, ip);
-      return {saved.offset, uint8_t(saved.type), true};
+      auto saved = ZiFB::saveUnion<ZiIP, ZuFacet::Core, ZfFieldFilter::All>(fbb, ip);
+      return {saved.offset, saved.tag, true};
     }
-    case Type::StringVec: {
-      unsigned n;
-      if (!varVecData(data, n)) return {};
-      auto offset = Zfb::Save::strVecIter(fbb, n, [&data](unsigned) {
-        uint32_t length = loadUnsigned_<uint32_t>(data.data());
-        data.offset(sizeof(length));
-        ZuCSpan value{
-          reinterpret_cast<const char *>(data.data()), length};
-        data.offset(length);
-        return value;
-      });
-      return {offset.Union(), 0, true};
-    }
-    case Type::BytesVec: {
-      unsigned n;
-      if (!varVecData(data, n)) return {};
-      auto offset = Zfb::Save::vectorIter<Zfb::Bytes>(
-        fbb, n, [&data](Zfb::Builder &fbb, unsigned) {
-          uint32_t length = loadUnsigned_<uint32_t>(data.data());
-          data.offset(sizeof(length));
-          ZuBSpan value{data.data(), length};
-          data.offset(length);
-          return Zfb::CreateBytes(fbb, Zfb::Save::bytes(fbb, value));
-        });
-      return {offset.Union(), 0, true};
-    }
+    case Type::StringVec: return saveVarVec<false>(fbb, data, align);
+    case Type::BytesVec: return saveVarVec<true>(fbb, data, align);
 #define ZdbSL_SaveUVec(Type_, Elem_) \
     case Type::Type_: \
-      return savePVec<Elem_>(fbb, data, \
+      return savePVec<Elem_>(fbb, data, align, \
 	[](const uint8_t *in) { return loadUnsigned_<Elem_>(in); })
 #define ZdbSL_SaveSVec(Type_, Elem_, UInt_) \
     case Type::Type_: \
-      return savePVec<Elem_>(fbb, data, \
+      return savePVec<Elem_>(fbb, data, align, \
 	[](const uint8_t *in) { return loadSigned_<Elem_, UInt_>(in); })
     ZdbSL_SaveSVec(Int8Vec, int8_t, uint8_t);
     ZdbSL_SaveUVec(UInt8Vec, uint8_t);
@@ -1831,31 +1823,27 @@ static SavedOffset saveOffset(
 #undef ZdbSL_SaveSVec
 #undef ZdbSL_SaveUVec
     case Type::Int128Vec:
-      return saveStructVec<Zfb::Int128, int128_t>(
-	fbb, data, sizeof(int128_t), loadS128_,
-	[](int128_t value) { return ZfbTransform::Int128::save(value); });
+      return saveStructVec<int128_t, ZfFieldTC::Int128>(
+	fbb, data, sizeof(int128_t), align, loadS128_);
     case Type::UInt128Vec:
-      return saveStructVec<Zfb::UInt128, uint128_t>(
-	fbb, data, sizeof(uint128_t), loadU128_,
-	[](uint128_t value) { return ZfbTransform::UInt128::save(value); });
+      return saveStructVec<uint128_t, ZfFieldTC::UInt128>(
+	fbb, data, sizeof(uint128_t), align, loadU128_);
     case Type::FloatVec:
-      return savePVec<double>(fbb, data, loadFloat_);
+      if (R::type(field.field).get<R::ZfField(Type, element)>() == R::BaseType::Float)
+	return savePVec<float, sizeof(double)>(fbb, data, align, loadFloat_);
+      return savePVec<double>(fbb, data, align, loadFloat_);
     case Type::FixedVec:
-      return saveStructVec<Zfb::Fixed, ZuFixed>(
-	fbb, data, sizeof(int128_t), loadFixed_,
-	[](ZuFixed value) { return ZfbTransform::Fixed::save(value); });
+      return saveStructVec<ZuFixed, ZfFieldTC::Fixed>(
+	fbb, data, sizeof(int128_t), align, loadFixed_);
     case Type::DecimalVec:
-      return saveStructVec<Zfb::Decimal, ZuDecimal>(
-	fbb, data, sizeof(int128_t), loadDecimal_,
-	[](ZuDecimal value) { return ZfbTransform::Decimal::save(value); });
+      return saveStructVec<ZuDecimal, ZfFieldTC::Decimal>(
+	fbb, data, sizeof(int128_t), align, loadDecimal_);
     case Type::TimeVec:
-      return saveStructVec<Zfb::Time, ZuTime>(
-	fbb, data, sizeof(TimeData), loadTime_,
-	[](ZuTime value) { return ZfbTransform::Time::save(value); });
+      return saveStructVec<ZuTime, ZfFieldTC::Time>(
+	fbb, data, sizeof(TimeData), align, loadTime_);
     case Type::DateTimeVec:
-      return saveStructVec<Zfb::DateTime, ZuDateTime>(
-	fbb, data, sizeof(DateTimeData), loadDateTime_,
-	[](ZuDateTime value) { return ZfbTransform::DateTime::save(value); });
+      return saveStructVec<ZuDateTime, ZfFieldTC::DateTime>(
+	fbb, data, sizeof(DateTimeData), align, loadDateTime_);
     default:
       return {};
   }
@@ -1867,18 +1855,29 @@ static bool hasOffset(unsigned type)
     type == Type::Bitmap || type == Type::IP || isVec(type);
 }
 
+template <unsigned Code, typename T>
+static void saveInline(
+  Builder &fbb, ZiFB::TableState &table, const FieldInfo &field, const T &value)
+{
+  using W = ZiFB::Value<T, Code>;
+  auto align = field.align;
+  fbb.fieldInline(table, field.field.get<R::ZfField(Field, id)>(), W::Size,
+    (align > W::Align ? align : W::Align),
+    [&value](uint8_t *out) { ZiFB::writeInline(out, W::toWire(value)); });
+}
+
 static bool saveValue(
-  Zfb::Builder &fbb, sqlite3_stmt *stmt, unsigned col,
+  Builder &fbb, ZiFB::TableState &table, sqlite3_stmt *stmt, unsigned col,
   const XField &xfield, const SavedOffset &saved)
 {
-  const reflection::Field *field = xfield.field.field;
+  auto field = xfield.field.field;
   unsigned type = xfield.field.type;
   if (hasOffset(type)) {
     if (!saved.valid) return false;
-    if (!saved.offset.o) return true;
     if (type == Type::IP)
-      fbb.AddElement<uint8_t>(field->offset() - 2, saved.ipType, 0);
-    fbb.AddOffset(field->offset(), saved.offset);
+      R::saveUnion(fbb, table, field, saved.ipType, saved.offset);
+    else
+      R::saveOffset(fbb, table, field, saved.offset);
     return true;
   }
   if (xfield.field.storage == Storage::Integer) {
@@ -1886,13 +1885,11 @@ static bool saveValue(
     sqlite3_int64 value = sqlite3_column_int64(stmt, col);
     switch (type) {
       case Type::Bool:
-        fbb.AddElement<bool>(
-          field->offset(), bool(value), field->default_integer());
+	R::saveScalar<uint8_t>(fbb, table, field, bool(value));
         return true;
 #define ZdbSL_SaveInt(Type_, CType_) \
       case Type::Type_: \
-        fbb.AddElement<CType_>( \
-          field->offset(), CType_(value), field->default_integer()); \
+	R::saveScalar<CType_>(fbb, table, field, value); \
         return true
       ZdbSL_SaveInt(Int8, int8_t);
       ZdbSL_SaveInt(UInt8, uint8_t);
@@ -1911,50 +1908,45 @@ static bool saveValue(
     case Type::UInt64: {
       uint64_t value;
       if (!loadU64(data, value)) return false;
-      fbb.AddElement<uint64_t>(
-        field->offset(), value, field->default_integer());
+      R::saveScalar<uint64_t>(fbb, table, field, value);
     } return true;
     case Type::Float: {
       double value;
       if (!loadFloat(data, value)) return false;
-      fbb.AddElement<double>(
-        field->offset(), value, field->default_real());
+      if (R::type(field).get<R::ZfField(Type, baseType)>() == R::BaseType::Float)
+	R::saveScalar<float>(fbb, table, field, float(value));
+      else
+	R::saveScalar<double>(fbb, table, field, value);
     } return true;
     case Type::Int128: {
       int128_t value;
       if (!loadS128(data, value)) return false;
-      auto fb = ZfbTransform::Int128::save(value);
-      fbb.AddStruct(field->offset(), &fb);
+      saveInline<ZfFieldTC::Int128>(fbb, table, xfield.field, value);
     } return true;
     case Type::UInt128: {
       uint128_t value;
       if (!loadU128(data, value)) return false;
-      auto fb = ZfbTransform::UInt128::save(value);
-      fbb.AddStruct(field->offset(), &fb);
+      saveInline<ZfFieldTC::UInt128>(fbb, table, xfield.field, value);
     } return true;
     case Type::Fixed: {
       ZuFixed value;
       if (!loadFixed(data, value)) return false;
-      auto fb = ZfbTransform::Fixed::save(value);
-      fbb.AddStruct(field->offset(), &fb);
+      saveInline<ZfFieldTC::Fixed>(fbb, table, xfield.field, value);
     } return true;
     case Type::Decimal: {
       ZuDecimal value;
       if (!loadDecimal(data, value)) return false;
-      auto fb = ZfbTransform::Decimal::save(value);
-      fbb.AddStruct(field->offset(), &fb);
+      saveInline<ZfFieldTC::Decimal>(fbb, table, xfield.field, value);
     } return true;
     case Type::Time: {
       ZuTime value;
       if (!loadTime(data, value)) return false;
-      auto fb = ZfbTransform::Time::save(value);
-      fbb.AddStruct(field->offset(), &fb);
+      saveInline<ZfFieldTC::Time>(fbb, table, xfield.field, value);
     } return true;
     case Type::DateTime: {
       ZuDateTime value;
       if (!loadDateTime(data, value)) return false;
-      auto fb = ZfbTransform::DateTime::save(value);
-      fbb.AddStruct(field->offset(), &fb);
+      saveInline<ZfFieldTC::DateTime>(fbb, table, xfield.field, value);
     } return true;
     default:
       return false;
@@ -1963,26 +1955,26 @@ static bool saveValue(
 
 template <typename Fields>
 static Offset saveTuple(
-    Zfb::Builder &fbb, sqlite3_stmt *stmt, const Fields &fields,
+    Builder &fbb, sqlite3_stmt *stmt, const Fields &fields,
     unsigned base = 0)
 {
   unsigned n = fields.length();
   auto offsets = ZtScratch(SavedOffsetsScratch, n, n);
   for (unsigned i = 0; i < n; ++i)
     offsets[i] = hasOffset(fieldAt(fields, i).field.type) ?
-      saveOffset(fbb, stmt, base + i, fieldAt(fields, i).field.type) :
+      saveOffset(fbb, stmt, base + i, fieldAt(fields, i).field) :
       SavedOffset{};
-  auto start = fbb.StartTable();
+  auto table = fbb.startTable();
   for (unsigned i = 0; i < n; ++i)
-    if (!saveValue(fbb, stmt, base + i, fieldAt(fields, i), offsets[i]))
+    if (!saveValue(fbb, table, stmt, base + i, fieldAt(fields, i), offsets[i]))
       throw ZeEXCEPT(Fatal, "ZdbSL", "invalid stored tuple value");
-  return Offset{fbb.EndTable(start)};
+  return fbb.endTable(table);
 }
 template <typename Fields>
 ZmRef<IOBuf> StoreTbl::tuple_(sqlite3_stmt *stmt, const Fields &fields)
 {
-  Zfb::IOBuilder fbb{m_bufAllocFn()};
-  fbb.Finish(saveTuple(fbb, stmt, fields));
+  Builder fbb{m_bufAllocFn(), fields.bufAlign};
+  fbb.finish(saveTuple(fbb, stmt, fields));
   return fbb.buf();
 }
 
@@ -1999,16 +1991,14 @@ ZmRef<IOBuf> StoreTbl::row_(sqlite3_stmt *stmt)
       !loadU128(columnBlob(stmt, 2), sn))
     throw ZeEXCEPT(Fatal, "ZdbSL", "invalid stored row sequence metadata");
   VN vn = sqlite3_column_int64(stmt, 3);
-  Zfb::IOBuilder fbb{m_bufAllocFn()};
-  auto data = Zfb::Save::nest(fbb, [this, &fbb, stmt](Zfb::Builder &) {
-    return saveTuple(fbb, stmt, m_xFields, 4);
-  });
-  auto sn_ = ZfbTransform::UInt128::save(sn);
-  auto msg = fbs::CreateMsg(
-    fbb, Recovery ? fbs::Body::Recovery : fbs::Body::Replication,
-    fbs::CreateRecord(
-      fbb, Zfb::Save::str(fbb, id()), un, &sn_, vn, shard, data).Union());
-  fbb.Finish(msg);
+  constexpr unsigned msgAlign = ZiFB::BufferAlign<Msg::Root>::N;
+  Builder fbb{m_bufAllocFn(),
+    m_xFields.bufAlign > msgAlign ? m_xFields.bufAlign : msgAlign};
+  auto nested = fbb.startNested();
+  auto root = saveTuple(fbb, stmt, m_xFields, 4);
+  auto data = fbb.endNested(nested, root);
+  auto record = saveRecord(fbb, id(), un, sn, vn, shard, data);
+  fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
   return saveHdr(fbb);
 }
 
@@ -2038,10 +2028,11 @@ void StoreTbl::count_(KeyID keyID, ZmRef<IOBuf> buf, CountFn fn)
   Reset reset{stmt};
   try {
     unsigned n = m_keyGroup[keyID];
-    auto fbo = Zfb::GetAnyRoot(buf->data());
+    ZiFB::TableView fbo{ZiFB::root(buf->cspan())};
     auto parts = ZtScratch(VarPartsScratch, n, n);
-    auto size = planInput(m_store->conn(), m_store->lengthLimit(),
+    auto size = planInput(m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
+    if (size == UINT_MAX) { fn(CountResult{paramSizeError()}); return; }
     auto scratch = ZtScratch(VarBufScratch, size, size);
     bindInput(m_store->conn(), stmt, 1,
       n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
@@ -2085,10 +2076,11 @@ void StoreTbl::select_(
   Reset reset{stmt};
   try {
     unsigned n = selectNext ? m_xKeyFields[keyID].length() : m_keyGroup[keyID];
-    auto fbo = Zfb::GetAnyRoot(buf->data());
+    ZiFB::TableView fbo{ZiFB::root(buf->cspan())};
     auto parts = ZtScratch(VarPartsScratch, n, n);
-    auto size = planInput(m_store->conn(), m_store->lengthLimit(),
+    auto size = planInput(m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
+    if (size == UINT_MAX) { fn(TupleResult{paramSizeError()}); return; }
     auto scratch = ZtScratch(VarBufScratch, size, size);
     bindInput(m_store->conn(), stmt, 1,
       n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
@@ -2126,10 +2118,11 @@ void StoreTbl::find_(KeyID keyID, ZmRef<IOBuf> buf, RowFn fn)
   Reset reset{stmt};
   try {
     unsigned n = m_xKeyFields[keyID].length();
-    auto fbo = Zfb::GetAnyRoot(buf->data());
+    ZiFB::TableView fbo{ZiFB::root(buf->cspan())};
     auto parts = ZtScratch(VarPartsScratch, n, n);
-    auto size = planInput(m_store->conn(), m_store->lengthLimit(),
+    auto size = planInput(m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
+    if (size == UINT_MAX) { fn(RowResult{paramSizeError()}); return; }
     auto scratch = ZtScratch(VarBufScratch, size, size);
     bindInput(m_store->conn(), stmt, 1,
       n, m_xKeyFields[keyID], fbo, parts.cspan(), scratch.span());
@@ -2200,10 +2193,10 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
     return;
   }
   auto record = record_(msg_(buf->hdr()));
-  Shard shard = record->shard();
-  UN un = record->un();
-  SN sn = ZfbTransform::UInt128::load(record->sn());
-  VN vn = record->vn();
+  Shard shard = record.get<Msg::ZfField(Record, shard)>();
+  UN un = record.get<Msg::ZfField(Record, un)>();
+  SN sn = record.get<Msg::ZfField(Record, sn)>();
+  VN vn = record.get<Msg::ZfField(Record, vn)>();
   if (shard >= m_maxUN.length()) {
     fn(ZuMv(buf), CommitResult{ZeEXCEPT(Error, "ZdbSL", "invalid write shard")});
     return;
@@ -2216,95 +2209,104 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
   bool inserted = false;
   bool removed = false;
   try {
-    Txn txn{cxn, m_store->beginStmt(), m_store->commitStmt()};
-    auto fbo = Zfb::GetAnyRoot(record->data()->data());
-    UNData unData;
-    SNData snData;
-    bool mrd = false;
-    auto insertRow = [&]() {
-      sqlite3_stmt *stmt = m_stmts.insert;
-      Reset reset{stmt};
-      if (sqlite3_bind_int64(stmt, 1, shard) != SQLITE_OK)
-        throw cxnError(cxn, "bind insert shard");
-      bindMeta(cxn, stmt, 2, un, sn, vn, unData, snData);
-      unsigned n = m_xFields.length();
-      auto parts = ZtScratch(VarPartsScratch, n, n);
-      auto size = planInput(
-        cxn, m_store->lengthLimit(), n, m_xFields, fbo, parts.span());
-      auto scratch = ZtScratch(VarBufScratch, size, size);
-      bindInput(cxn, stmt, 5, n, m_xFields, fbo,
-        parts.cspan(), scratch.span());
-      done(cxn, stmt);
-      return sqlite3_changes(cxn) == 1;
-    };
-    if (!vn) {
-      inserted = insertRow();
-      mrd = !inserted;
-    } else if (vn > 0) {
-      sqlite3_stmt *stmt = m_stmts.update;
-      Reset reset{stmt};
-      bindMeta(cxn, stmt, 1, un, sn, vn, unData, snData);
-      unsigned nUpdate = m_xUpdFields.length();
-      unsigned nKey = m_xKeyFields[0].length();
-      auto updateParts = ZtScratch(VarPartsScratch, nUpdate, nUpdate);
-      auto keyParts = ZtScratch(VarPartsScratch, nKey, nKey);
-      auto updateSize = planInput(cxn, m_store->lengthLimit(),
-        nUpdate, m_xUpdFields, fbo, updateParts.span());
-      auto keySize = planInput(cxn, m_store->lengthLimit(),
-        nKey, m_xKeyFields[0], fbo, keyParts.span());
-      if (keySize > UINT_MAX - updateSize)
-        throw cxnError(cxn, "encode SQLite values", SQLITE_TOOBIG);
-      unsigned size = updateSize + keySize;
-      auto scratch = ZtScratch(VarBufScratch, size, size);
-      bindInput(cxn, stmt, 4, nUpdate, m_xUpdFields, fbo,
-        updateParts.cspan(), {scratch.data(), updateSize});
-      bindInput(cxn, stmt, 4 + nUpdate, nKey, m_xKeyFields[0], fbo,
-        keyParts.cspan(), {scratch.data() + updateSize, keySize});
-      done(cxn, stmt);
-      if (sqlite3_changes(cxn) != 1) {
-	// A new leader can first replicate an already updated record.
+    auto ok = [this, cxn, record, &inserted, &removed, shard, un, sn, vn]() {
+      Txn txn{cxn, m_store->beginStmt(), m_store->commitStmt()};
+      ZiFB::TableView fbo{ZiFB::root(record.get<Msg::ZfField(Record, data)>())};
+      UNData unData;
+      SNData snData;
+      bool mrd = false;
+      bool inputError = false;
+      auto insertRow = [this, cxn, shard, un, sn, vn, &unData, &snData,
+	  fbo, &inputError]() {
+	sqlite3_stmt *stmt = m_stmts.insert;
+	Reset reset{stmt};
+	if (sqlite3_bind_int64(stmt, 1, shard) != SQLITE_OK)
+	  throw cxnError(cxn, "bind insert shard");
+	bindMeta(cxn, stmt, 2, un, sn, vn, unData, snData);
+	unsigned n = m_xFields.length();
+	auto parts = ZtScratch(VarPartsScratch, n, n);
+	auto size = planInput(
+	  m_store->lengthLimit(), n, m_xFields, fbo, parts.span());
+	if (size == UINT_MAX) { inputError = true; return false; }
+	auto scratch = ZtScratch(VarBufScratch, size, size);
+	bindInput(cxn, stmt, 5, n, m_xFields, fbo,
+	  parts.cspan(), scratch.span());
+	done(cxn, stmt);
+	return sqlite3_changes(cxn) == 1;
+      };
+      if (!vn) {
 	inserted = insertRow();
-	if (!inserted)
-	  throw ZeEXCEPT(Error, "ZdbSL", "update failed - primary key missing");
+	if (inputError) return false;
+	mrd = !inserted;
+      } else if (vn > 0) {
+	sqlite3_stmt *stmt = m_stmts.update;
+	Reset reset{stmt};
+	bindMeta(cxn, stmt, 1, un, sn, vn, unData, snData);
+	unsigned nUpdate = m_xUpdFields.length();
+	unsigned nKey = m_xKeyFields[0].length();
+	auto updateParts = ZtScratch(VarPartsScratch, nUpdate, nUpdate);
+	auto keyParts = ZtScratch(VarPartsScratch, nKey, nKey);
+	auto updateSize = planInput(m_store->lengthLimit(),
+	  nUpdate, m_xUpdFields, fbo, updateParts.span());
+	auto keySize = planInput(m_store->lengthLimit(),
+	  nKey, m_xKeyFields[0], fbo, keyParts.span());
+	if (updateSize == UINT_MAX || keySize == UINT_MAX ||
+	    keySize > Zdb_::MaxBufSize - updateSize) return false;
+	unsigned size = updateSize + keySize;
+	auto scratch = ZtScratch(VarBufScratch, size, size);
+	bindInput(cxn, stmt, 4, nUpdate, m_xUpdFields, fbo,
+	  updateParts.cspan(), {scratch.data(), updateSize});
+	bindInput(cxn, stmt, 4 + nUpdate, nKey, m_xKeyFields[0], fbo,
+	  keyParts.cspan(), {scratch.data() + updateSize, keySize});
+	done(cxn, stmt);
+	if (sqlite3_changes(cxn) != 1) {
+	  // A new leader can first replicate an already updated record.
+	  inserted = insertRow();
+	  if (inputError) return false;
+	  if (!inserted)
+	    throw ZeEXCEPT(Error, "ZdbSL", "update failed - primary key missing");
+	}
+      } else {
+	sqlite3_stmt *stmt = m_stmts.del;
+	Reset reset{stmt};
+	unsigned n = m_xKeyFields[0].length();
+	auto parts = ZtScratch(VarPartsScratch, n, n);
+	auto size = planInput(m_store->lengthLimit(),
+	  n, m_xKeyFields[0], fbo, parts.span());
+	if (size == UINT_MAX) return false;
+	auto scratch = ZtScratch(VarBufScratch, size, size);
+	bindInput(cxn, stmt, 1,
+	  n, m_xKeyFields[0], fbo, parts.cspan(), scratch.span());
+	done(cxn, stmt);
+	if (sqlite3_changes(cxn) != 1)
+	  throw ZeEXCEPT(Error, "ZdbSL", "delete failed - primary key missing");
+	removed = true;
+	mrd = true;
       }
-    } else {
-      sqlite3_stmt *stmt = m_stmts.del;
-      Reset reset{stmt};
-      unsigned n = m_xKeyFields[0].length();
-      auto parts = ZtScratch(VarPartsScratch, n, n);
-      auto size = planInput(cxn, m_store->lengthLimit(),
-        n, m_xKeyFields[0], fbo, parts.span());
-      auto scratch = ZtScratch(VarBufScratch, size, size);
-      bindInput(cxn, stmt, 1,
-        n, m_xKeyFields[0], fbo, parts.cspan(), scratch.span());
-      done(cxn, stmt);
-      if (sqlite3_changes(cxn) != 1)
-        throw ZeEXCEPT(Error, "ZdbSL", "delete failed - primary key missing");
-      removed = true;
-      mrd = true;
-    }
-    if (mrd) {
-      sqlite3_stmt *stmt = m_stmts.mrd;
-      Reset reset{stmt};
-      unData = un;
-      snData = sn;
-      if (sqlite3_bind_int(stmt, 1, m_internal) != SQLITE_OK ||
-          sqlite3_bind_text64(stmt, 2, m_id.data(), m_id.length(),
-            SQLITE_STATIC, SQLITE_UTF8) != SQLITE_OK ||
-          sqlite3_bind_int64(stmt, 3, shard) != SQLITE_OK ||
-          sqlite3_bind_blob64(stmt, 4, &unData, sizeof(unData),
-            SQLITE_STATIC) != SQLITE_OK ||
-          sqlite3_bind_blob64(stmt, 5, &snData, sizeof(snData),
-            SQLITE_STATIC) != SQLITE_OK)
-        throw cxnError(cxn, "bind delete high-water state");
-      done(cxn, stmt);
-    }
-    txn.commit();
-    m_maxUN[shard] = un;
-    if (m_maxSN == ZdbNullSN() || sn > m_maxSN) m_maxSN = sn;
-    if (inserted) ++m_count;
-    if (removed) --m_count;
-    fn(ZuMv(buf), CommitResult{});
+      if (mrd) {
+	sqlite3_stmt *stmt = m_stmts.mrd;
+	Reset reset{stmt};
+	unData = un;
+	snData = sn;
+	if (sqlite3_bind_int(stmt, 1, m_internal) != SQLITE_OK ||
+	    sqlite3_bind_text64(stmt, 2, m_id.data(), m_id.length(),
+	      SQLITE_STATIC, SQLITE_UTF8) != SQLITE_OK ||
+	    sqlite3_bind_int64(stmt, 3, shard) != SQLITE_OK ||
+	    sqlite3_bind_blob64(stmt, 4, &unData, sizeof(unData),
+	      SQLITE_STATIC) != SQLITE_OK ||
+	    sqlite3_bind_blob64(stmt, 5, &snData, sizeof(snData),
+	      SQLITE_STATIC) != SQLITE_OK)
+	  throw cxnError(cxn, "bind delete high-water state");
+	done(cxn, stmt);
+      }
+      txn.commit();
+      m_maxUN[shard] = un;
+      if (m_maxSN == ZdbNullSN() || sn > m_maxSN) m_maxSN = sn;
+      if (inserted) ++m_count;
+      if (removed) --m_count;
+      return true;
+    }();
+    fn(ZuMv(buf), ok ? CommitResult{} : CommitResult{paramSizeError()});
   } catch (const ZeException &e) {
     fn(ZuMv(buf), CommitResult{e});
   }

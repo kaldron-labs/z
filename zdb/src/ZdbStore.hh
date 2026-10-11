@@ -13,13 +13,16 @@
 #include <zlib/ZdbLib.hh>
 #endif
 
-#include <flatbuffers/reflection.h>
+#include <limits.h>
 
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmPolymorph.hh>
 
 #include <zlib/ZfStruct.hh>
+#include <zlib/ZiFBReflect.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -32,6 +35,33 @@
 #include <zlib/ZdbTypes.hh>
 
 namespace Zdb_ {
+
+// Borrowed BFBS plus a compiled native-ID resolver. Backends populate their
+// existing XField records once; no second field-map container is retained.
+struct Schema {
+  ZiFB::Reflect::SchemaView view;
+  unsigned (*fieldSlot)(ZuCSpan);
+
+  template <typename O>
+  static Schema from(ZuBSpan bytes) {
+    return {ZiFB::view<ZiFB::Reflect::Schema>(bytes), [](ZuCSpan name) -> unsigned {
+      using Fields = ZuActiveFields<O>;
+      using Slots = typename ZiFB::SchemaOut::ObjectNode<ZuUnder<O>,
+	ZiFB::SchemaOut::Graph<O>>::Fields;
+      static constexpr auto matcher = ZuMatcher<ZfFieldMatcher<O, ZuFacet::Core>>();
+      return ZuSwitch::dispatch<Fields::N>(matcher.exact(name), [](auto I) -> unsigned {
+	using F = ZuType<I, Fields>;
+	return unsigned(ZuTypeIndex<ZiFB::SchemaOut::Slot<F>, Slots>{});
+      }, UINT_MAX);
+    }};
+  }
+  auto field(ZuCSpan name) const {
+    namespace R = ZiFB::Reflect;
+    auto i = fieldSlot(name);
+    return i != UINT_MAX ?
+      R::rootObject(view).get<R::ZfField(Object, fields)>()[i] : R::FieldView{};
+  }
+};
 
 class Store;
 class StoreTbl;
@@ -96,7 +126,9 @@ using CountResult = ZuUnion<
 // count callback
 using CountFn = ZmFn<void(CountResult), ZmFnHeapID<"Zdb.Store.CountFn">>;
 
-// tuple data
+// Tuple buffers are serialized locally by the store from decoded values.
+// Consumers load them directly; nested opaque payloads retain their own
+// verification boundary when recovered from external storage.
 struct TupleData {
   KeyID			keyID;	// ZuStructKeyID::All for entire row tuple
   ZmRef<IOBuf>		buf;	// tuple data without replication header
@@ -173,7 +205,7 @@ public:
       IDString id,			// name of table
       ZfVFieldArray fields,		// fields
       ZfVKeyFieldArray keyFields,	// keys and their fields
-      const reflection::Schema *schema,	// flatbuffer reflection schema
+      Schema schema,	// borrows table-owned BFBS until close
       IOBufAllocFn,			// buffer allocator
       OpenFn) = 0;			// open result callback
 };

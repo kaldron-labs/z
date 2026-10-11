@@ -1,7 +1,0 @@
-namespace ZDash.fbs;
-table VerReq {
-				// intentionally empty
-}
-table Version {
-  z		: string;
-}

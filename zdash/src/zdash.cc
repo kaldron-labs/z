@@ -81,13 +81,12 @@ using FrameBuf = ZiIOBufAlloc<1024, FrameMax, "ZDash.Frame">;
 
 struct Subscription {
   using Filter = Ztc::RequestFilter;
-  using Group = Ztc::fbs::Group;
   String	deviceID;
   ZuID		publisherID;
   Filter	filter{"*"};
   uint64_t	id = 1;
   unsigned	interval = 1000;
-  Group		group = Group::App;
+  Ztc::Group::T	group = Ztc::Group::App;
   uint64_t	generation = 0;
 };
 
@@ -110,51 +109,53 @@ ZmRBTreeDerive(RoutedSources, RoutedSource,
 
 static Frame requestFrame(const Subscription &sub, bool subscribe)
 {
-  Zfb::IOBuilder builder{Frame{new FrameBuf}};
-  auto device = sub.deviceID ? Zfb::Save::str(builder, sub.deviceID) :
-    Zfb::Offset<flatbuffers::String>{};
-  auto filter = Zfb::Save::str(builder, sub.filter);
-  auto publisher = sub.publisherID ? Zfb::Save::str(builder, sub.publisherID) :
-    Zfb::Offset<flatbuffers::String>{};
-  // An inventory request must omit id, not encode an empty string. The
-  // generated builder preserves that distinction at this protocol boundary.
-  Ztc::fbs::RequestBuilder requestBuilder{builder};
-  requestBuilder.add_seqNo(0);
-  requestBuilder.add_group(sub.group);
-  requestBuilder.add_filter(filter);
-  requestBuilder.add_id(publisher);
-  requestBuilder.add_interval(subscribe ? sub.interval : 0);
-  requestBuilder.add_subscribe(subscribe);
-  auto request = requestBuilder.Finish();
-  builder.Finish(Ztc::saveMsg(builder, Ztc::fbs::Body::Request,
-    request.Union(), sub.id, device));
+  Ztc::Builder builder{Frame{new FrameBuf}};
+  auto nested = builder.startNested();
+  auto filter = builder.string(sub.filter);
+  auto publisher = sub.publisherID ? builder.string(sub.publisherID) : 0;
+  auto table = builder.startTable();
+  ZiFB::field<Ztc::ZfField(Request, seqNo)>(builder, table, uint64_t(0));
+  ZiFB::field<Ztc::ZfField(Request, group)>(builder, table, sub.group);
+  ZiFB::fieldOffset<Ztc::ZfField(Request, filter)>(builder, table, filter);
+  ZiFB::fieldOffset<Ztc::ZfField(Request, id)>(builder, table, publisher);
+  ZiFB::field<Ztc::ZfField(Request, interval)>(builder, table,
+    subscribe ? sub.interval : 0);
+  ZiFB::field<Ztc::ZfField(Request, subscribe)>(builder, table, subscribe);
+  ZiFB::field<Ztc::ZfField(Request, alertDate)>(builder, table, uint32_t(0));
+  ZiFB::field<Ztc::ZfField(Request, alertSeqNo)>(builder, table, uint64_t(0));
+  auto request = builder.endTable(table);
+  builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Request,
+    request, sub.id, sub.deviceID));
   return builder.buf();
 }
 
-static bool accepts(const Subscription &sub, const Ztc::fbs::Msg *msg)
+static bool accepts(const Subscription &sub, Ztc::MsgView msg)
 {
-  if (!Ztc::validMsg(msg) || msg->subId() != sub.id) return false;
-  auto device = Zfb::Load::str(msg->deviceId());
-  if (sub.deviceID && (device != sub.deviceID || !msg->agentGen()))
+  // receive_ has already verified the message; only subscription matching remains.
+  if (msg.get<Ztc::ZfField(Msg, subID)>() != sub.id) return false;
+  auto body = Ztc::msgBody(msg);
+  auto generation = msg.get<Ztc::ZfField(Msg, agentGen)>();
+  auto device = msg.get<Ztc::ZfField(Msg, deviceID)>();
+  if (sub.deviceID && (device != sub.deviceID || !generation))
     return false;
-  if (sub.generation && msg->agentGen() &&
-      msg->agentGen() != sub.generation) return false;
-  switch (msg->body_type()) {
-    case Ztc::fbs::Body::Ack:
-    case Ztc::fbs::Body::Error:
+  if (sub.generation && generation &&
+      generation != sub.generation) return false;
+  switch (body.tag()) {
+    case Ztc::Body::Ack:
+    case Ztc::Body::Error:
       return true;
-    case Ztc::fbs::Body::EOS:
+    case Ztc::Body::EOS:
       // Snapshot completion may be per source or for the entire inventory.
-      return (device && msg->agentGen()) ||
-	(!sub.deviceID && !device && !msg->agentGen() &&
-	  Zfb::Load::str(msg->body_as_EOS()->id()) == "inventory");
-    case Ztc::fbs::Body::Telemetry: {
-      if (!device || !msg->agentGen()) return false;
-      auto tel = msg->body_as_Telemetry();
-      if (sub.publisherID && Zfb::Load::str(tel->id()) != sub.publisherID)
+      return (device && generation) ||
+	(!sub.deviceID && !device && !generation &&
+	  body.get<Ztc::Body::EOS>().get<Ztc::ZfField(EOS, id)>() == "inventory");
+    case Ztc::Body::Telemetry: {
+      if (!device || !generation) return false;
+      auto tel = body.get<Ztc::Body::Telemetry>();
+      if (sub.publisherID && tel.get<Ztc::ZfField(Telemetry, id)>() != sub.publisherID)
 	return false;
-      using namespace Ztc::fbs;
-      switch (tel->value_type()) {
+      using namespace Ztc;
+      switch (tel.get<Ztc::ZfField(Telemetry, value)>().tag()) {
 	case TelemetryBody::AppTelemetry: return sub.group == Group::App;
 	case TelemetryBody::HeapTelemetry: return sub.group == Group::Heap;
 	case TelemetryBody::HashTelemetry: return sub.group == Group::Hash;
@@ -247,7 +248,6 @@ using TypeList = ZuTypeList<
   Ztc::HubTelemetry, Ztc::LinkTelemetry, Ztc::DBTableTelemetry,
   Ztc::DBHostTelemetry, Ztc::DBTelemetry, Ztc::AppTelemetry,
   Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
-using FBTypeList = ZuTypeMap<ZfbType, TypeList>;
 
 template <typename Data>
 using KeyFields = typename ZuStructKeyT_<Data, 0>::Fields;
@@ -316,8 +316,7 @@ template <typename Data_> struct Item_ : public Item__<Data_> {
   void			*gtkRow_ = nullptr;
 
   Item_() = default;
-  template <typename FBType>
-  Item_(FBType *fbo) : value{ZfbStruct::ctor<Data>(fbo)} { }
+  Item_(ZiFB::View<Data> fbo) : value{ZiFB::Handler<Data>{fbo}.ctor()} { }
 
   Item_(const Item_ &) = delete;
   Item_ &operator =(const Item_ &) = delete;
@@ -357,9 +356,8 @@ class ItemTree : public ItemTree_<T> {
 public:
   using Node = typename ItemTree_<T>::Node;
   void add(Node *node) { this->addNode(node); }
-  template <typename FBType>
-  Node *lookup(const FBType *fbo) const {
-    return this->findPtr(ZuStructKey(*fbo));
+  Node *lookup(ZiFB::View<T> fbo) const {
+    return this->findPtr(ZuStructKey(fbo));
   }
 };
 template <typename T> class ItemSingleton {
@@ -371,8 +369,7 @@ public:
   using Node = SingletonItem<T>;
   ItemSingleton() = default;
   ~ItemSingleton() { if (m_node) delete m_node; }
-  template <typename FBType>
-  Node *lookup(const FBType *) const { return m_node; }
+  Node *lookup(ZiFB::View<T>) const { return m_node; }
   Node *get() const { return m_node; }
   void add(Node *node) { if (m_node) delete m_node; m_node = node; }
 private:
@@ -801,12 +798,12 @@ public:
 	using T = ZuDecay<decltype(*ptr->item)>;
 	if constexpr (ZuIsSame<Row, App>{}) {
 	  SourceInfo source{ptr->item->publisher_, ptr->item->device_, ptr->item->generation_};
-	  ZuUnroll::all<ZuFields<SourceInfo>>([&fn, &source]<typename Field>() {
+	  ZuUnroll::all<ZuActiveFields<SourceInfo>>([&fn, &source]<typename Field>() {
 	    fn(Field{}, source);
 	  });
 	}
 	using Fields = ZuTypeGrep<ZfStructPrint::Print_Filter,
-	  ZuFields<typename T::Data>>;
+	  ZuActiveFields<typename T::Data>>;
 	ZuUnroll::all<Fields>([&fn, ptr]<typename Field>() {
 	  fn(Field{}, ptr->item->value);
 	});
@@ -1209,17 +1206,11 @@ public:
     m_maxSubs = config.maxSubscriptions;
     if (!config.groups.length()) config.groups = Strings(defaultGroups());
     for (auto &name: config.groups) {
-      bool found = false;
-      for (auto group: Ztc::fbs::EnumValuesGroup()) {
-	if (name != Ztc::fbs::EnumNameGroup(group)) continue;
-	if (group > Ztc::fbs::Group::DB) return false;
-	unsigned bit = 1U << unsigned(group);
-	if (m_groups & bit) return false;
-	m_groups |= bit;
-	found = true;
-	break;
-      }
-      if (!found) return false;
+      auto group = Ztc::Group::lookup(name);
+      if (group > Ztc::Group::DB) return false;
+      unsigned bit = 1U << group;
+      if (m_groups & bit) return false;
+      m_groups |= bit;
     }
 
     m_queueBytes = config.queueBytes;
@@ -1343,10 +1334,10 @@ public:
 	m_gtkClosing = true;
 	ZGtk::App::sched()->del(&m_refreshTimer);
 	gtkRun([this]() {
-	  detach({[this]() {
+	  detach([this]() {
 	    gtkFinal_();
 	    m_executed.post();
-	  }});
+	  });
 	});
       });
       m_executed.wait();
@@ -1428,56 +1419,61 @@ public:
     auto msg = Ztc::msg(data);
     if (!msg) return Zws::CloseCode::InvalidData;
     if (m_closing) return Zws::CloseCode::Normal;
-    auto sub = msg->subId() == m_sub.id ? &m_sub :
-      m_subs.findPtr(msg->subId());
+    auto body = Ztc::msgBody(msg);
+    auto subID = msg.get<Ztc::ZfField(Msg, subID)>();
+    auto device = msg.get<Ztc::ZfField(Msg, deviceID)>();
+    auto generation = msg.get<Ztc::ZfField(Msg, agentGen)>();
+    auto sub = subID == m_sub.id ? &m_sub :
+      m_subs.findPtr(subID);
     if (filter && !sub) {
       // Cancelled routes retain no state; IDs are never reused in a session.
-      if (msg->subId() > 1 && msg->subId() < m_nextSub)
+      if (subID > 1 && subID < m_nextSub)
 	return Zws::CloseCode::Normal;
       return Zws::CloseCode::InvalidData;
     }
     if (filter && !accepts(*sub, msg))
       return Zws::CloseCode::InvalidData;
     bool inventory = sub == &m_sub;
-    switch (msg->body_type()) {
-      case Ztc::fbs::Body::Ack:
-	if (msg->body_as_Ack()->status() == Ztc::fbs::AckStatus::OK) break;
-	ZiLOG(Error, "zdash", ([id = msg->subId()](auto &s) {
+    switch (body.tag()) {
+      case Ztc::Body::Ack:
+	if (body.get<Ztc::Body::Ack>()
+	  .get<Ztc::ZfField(Ack, status)>() == Ztc::AckStatus::OK) break;
+	ZiLOG(Error, "zdash", ([id = subID](auto &s) {
 	  s << "subscription rejected id=" << id;
 	}));
 	if (inventory) return Zws::CloseCode::Policy;
-	m_subs.del(msg->subId());
+	m_subs.del(subID);
 	break;
-      case Ztc::fbs::Body::Error:
-	ZiLOG(Error, "zdash", ([id = msg->subId(), message = ZeString{
-	    Zfb::Load::str(msg->body_as_Error()->message())}](auto &s) {
+      case Ztc::Body::Error:
+	ZiLOG(Error, "zdash", ([id = subID, message = ZeString{
+	    body.get<Ztc::Body::Error>().get<Ztc::ZfField(Error, message)>()}](auto &s) {
 	  s << "ztchub subscription=" << id << ": " << message;
 	}));
 	if (inventory) {
-	  auto error = msg->body_as_Error();
-	  if (error->code() != Ztc::HubError::AgentGone ||
-	      !msg->deviceId() || !msg->agentGen()) return Zws::CloseCode::Policy;
-	  retire_(Zfb::Load::str(msg->deviceId()),
-	    Zfb::Load::str(error->id()), msg->agentGen(), false);
+	  auto error = body.get<Ztc::Body::Error>();
+	  if (error.get<Ztc::ZfField(Error, code)>() != Ztc::HubError::AgentGone ||
+	      !device || !generation) return Zws::CloseCode::Policy;
+	  retire_(device,
+	    error.get<Ztc::ZfField(Error, id)>(), generation, false);
 	  if (!processTelemetry_(data)) return Zws::CloseCode::TooLarge;
 	} else
-	  m_subs.del(msg->subId());
+	  m_subs.del(subID);
 	break;
-      case Ztc::fbs::Body::EOS:
+      case Ztc::Body::EOS:
 	// Snapshot boundary only; the GTK view applies pushed records in order.
 	break;
-      case Ztc::fbs::Body::Telemetry: {
-	auto tel = msg->body_as_Telemetry();
-	auto device = Zfb::Load::str(msg->deviceId());
-	auto publisher = Zfb::Load::str(tel->id());
+      case Ztc::Body::Telemetry: {
+	auto tel = body.get<Ztc::Body::Telemetry>();
+	auto publisher = tel.get<Ztc::ZfField(Telemetry, id)>();
 	if (inventory && ((m_sourceDevice && m_sourceDevice != device) ||
 	    (m_sourcePublisher && m_sourcePublisher != publisher))) break;
 	if (!processTelemetry_(data)) return Zws::CloseCode::TooLarge;
 	if (inventory) {
-	  if (tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry)
-	    discover_(device, publisher, msg->agentGen());
-	  else if (tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown)
-	    retire_(device, publisher, msg->agentGen());
+	  if (tel.get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::AppTelemetry)
+	    discover_(device, publisher, generation);
+	  else if (tel
+	    .get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::Shutdown)
+	    retire_(device, publisher, generation);
 	}
       } break;
       default: return Zws::CloseCode::Protocol;
@@ -1506,7 +1502,7 @@ public:
       cancel_(source);
     }
     unsigned count = 0;
-    for (auto group: Ztc::fbs::EnumValuesGroup())
+    for (Ztc::Group::T group = 0; group < Ztc::Group::N; ++group)
       if (m_groups & (1U << unsigned(group))) ++count;
     if (m_subs.count_() + count >= m_maxSubs ||
 	m_routes.count_() >= m_maxSubs) {
@@ -1516,7 +1512,7 @@ public:
     source = new RoutedSources::Node{RoutedSource{
       String{device}, String{publisher}, generation, {}}};
     m_routes.addNode(source);
-    for (auto group: Ztc::fbs::EnumValuesGroup()) {
+    for (Ztc::Group::T group = 0; group < Ztc::Group::N; ++group) {
       if (!(m_groups & (1U << unsigned(group)))) continue;
       if (!m_nextSub || m_nextSub == UINT64_MAX) {
 	ZiLOG(Error, "zdash", "subscription IDs exhausted");
@@ -1641,16 +1637,10 @@ public:
     m_gtkReady = m_telRing.attach() == Zu::OK;
     if (m_gtkReady && m_module && m_module->ready) {
       ModuleHost host;
-      host.rxRun = [this](ZmFn<void()> fn) {
-	ZGtk::App::sched()->run([this, fn = ZuMv(fn)]() mutable {
-	  if (!m_closing) fn();
-	}, RxSID);
-      };
-      host.gtkRun = [this](ZmFn<void()> fn) {
-	gtkRun([this, fn = ZuMv(fn)]() mutable {
-	  if (!m_gtkClosing) fn();
-	});
-      };
+      host.rxRun = {ZGtk::App::sched(), RxSID,
+	[this]() { return !m_closing; }};
+      host.gtkRun = {ZGtk::App::sched(), ZGtk::App::sid(),
+	[this]() { return !m_gtkClosing; }};
       host.request_ = [this]() { return requestFrame(m_sub, true); };
       host.subscription_ = [this](ZuCSpan device, ZuCSpan publisher,
 	  unsigned group) -> uint64_t {
@@ -1786,12 +1776,13 @@ private:
   }
 
   void processTel2_(ZuBSpan data) {
-    auto msg = Ztc::fbs::GetMsg(data.data()); // verified on Rx
-    auto device = Zfb::Load::str(msg->deviceId());
-    auto generation = msg->agentGen();
+    auto msg = ZiFB::view<Ztc::Msg>(data); // verified on Rx
+    auto body = Ztc::msgBody(msg);
+    auto device = msg.get<Ztc::ZfField(Msg, deviceID)>();
+    auto generation = msg.get<Ztc::ZfField(Msg, agentGen)>();
     ZmAssert(sched()->invoked(sid()));
-    if (msg->body_type() == Ztc::fbs::Body::Error) {
-      auto publisher = Zfb::Load::str(msg->body_as_Error()->id());
+    if (body.tag() == Ztc::Body::Error) {
+      auto publisher = body.get<Ztc::Body::Error>().get<Ztc::ZfField(Error, id)>();
       if (auto old = m_sources.findPtr(ZuFwdTuple(device, publisher));
 	  old && old->generation == generation) {
 	old->connected = false;
@@ -1801,28 +1792,31 @@ private:
       }
       return;
     }
-    if (msg->body_type() != Ztc::fbs::Body::Telemetry) return;
-    auto tel = msg->body_as_Telemetry();
-    auto publisher = Zfb::Load::str(tel->id());
-    if (tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown) {
+    if (body.tag() != Ztc::Body::Telemetry) return;
+    auto tel = body.get<Ztc::Body::Telemetry>();
+    auto value = tel.get<Ztc::ZfField(Telemetry, value)>();
+    auto publisher = tel.get<Ztc::ZfField(Telemetry, id)>();
+    if (value.tag() == Ztc::TelemetryBody::Shutdown) {
       if (auto old = m_sources.findPtr(
 	  ZuFwdTuple(device, publisher)); old && old->generation <= generation)
 	removeSource_(old);
       return;
     }
-    bool app = tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry;
+    bool app = value.tag() == Ztc::TelemetryBody::AppTelemetry;
     ZuDateTime startTime;
     if (app)
-      if (auto time = tel->value_as_AppTelemetry()->startTime())
-	startTime = ZfbTransform::DateTime::load(time);
+      startTime = value
+	.get<Ztc::TelemetryBody::AppTelemetry>()
+	.get<Ztc::ZfField(AppTelemetry, startTime)>();
     auto src = source_(device, publisher, generation, startTime);
     if (!src) return;
     if (app) src->connected = true;
     else if (!src->connected) return;
-    switch (tel->value_type()) {
+    switch (value.tag()) {
 #define ZDashLoad(Name) \
-      case Ztc::fbs::TelemetryBody::Name: \
-	processTel3_(src, tel->value_as_##Name()); break;
+      case Ztc::TelemetryBody::Name: \
+	processTel3_(src, value \
+	  .get<Ztc::TelemetryBody::Name>()); break;
       ZDashLoad(HeapTelemetry)
       ZDashLoad(HashTelemetry)
       ZDashLoad(ThreadTelemetry)
@@ -1976,17 +1970,14 @@ private:
 	  return _->tables();
 	});
   }
-  template <typename FBType,
-    typename = decltype(void(bool(ZuIs_<FBType, Ztc::fbs::AlertTelemetry>{})))>
-  void
-  processTel3_(Source *src, const FBType *fbo) {
-    if constexpr (!ZuIs_<FBType, Ztc::fbs::AlertTelemetry>{}) {
-      ZuTypeIndex<FBType, Telemetry::FBTypeList> I;
-      using T = ZuType<I, Telemetry::TypeList>;
+  template <typename T>
+  void processTel3_(Source *src, ZiFB::View<T> fbo) {
+    if constexpr (!ZuIsSame<T, Ztc::AlertTelemetry>{}) {
+      ZuTypeIndex<T, Telemetry::TypeList> I;
       auto &container = src->telemetry.p<I>();
       using Item = TelItem<T>;
       if (auto item = container.lookup(fbo)) {
-	ZfbStruct::update(item->value, fbo);
+	ZiFB::Handler<T>{fbo}.update(item->value);
 	if constexpr (ZuIsSame<T, Ztc::AppTelemetry>{})
 	  item->generation_ = src->generation;
 	m_gtkModel->updated(GtkTree::row(item));
@@ -1996,11 +1987,10 @@ private:
 	addGtkRow(src, item);
       }
     } else {
-      ZuTypeIndex<FBType, Telemetry::FBTypeList> i;
-      using T = ZuType<i, Telemetry::TypeList>;
+      ZuTypeIndex<T, Telemetry::TypeList> i;
       auto &container = src->telemetry.p<i>();
       if (container.data.length() >= m_alertRows) container.data.splice(0, 1);
-      processAlert(new (container.data.push()) T{ZfbStruct::ctor<T>(fbo)});
+      processAlert(new (container.data.push()) T{ZiFB::Handler<T>{fbo}.ctor()});
     }
   }
 

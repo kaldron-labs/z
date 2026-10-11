@@ -1,0 +1,72 @@
+/tmp/zifb-release-bench 1 0 1 vectors
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,0,1,56,1040,0.000001886,1
+native,reuse,0,1,56,1040,0.000001467,1
+canonical,fresh,0,1,56,1040,0.000001466,1
+native,fresh,0,1,56,1040,0.000001467,1
+/tmp/zifb-release-bench 1 0 1 write
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,0,1,40,1040,0.000001397,1
+native,reuse,0,1,40,1040,0.000001886,1
+canonical,fresh,0,1,40,1040,0.000001397,1
+native,fresh,0,1,40,1040,0.000001467,1
+/tmp/zifb-release-bench 1 0 1 widewrite
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,0,1,128,1040,0.000001886,1
+native,reuse,0,1,120,1040,0.000001886,1
+canonical,fresh,0,1,128,1040,0.000001397,1
+native,fresh,0,1,120,1040,0.000001886,1
+/tmp/zifb-release-bench 1 64 1 vectors
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,64,1,280,1040,0.000001886,1
+native,reuse,64,1,280,1040,0.000001816,1
+canonical,fresh,64,1,280,1040,0.000001816,1
+native,fresh,64,1,280,1040,0.000001397,1
+/tmp/zifb-release-bench 1 64 1 write
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,64,1,104,1040,0.000001885,1
+native,reuse,64,1,104,1040,0.000001466,1
+canonical,fresh,64,1,104,1040,0.000001397,1
+native,fresh,64,1,104,1040,0.000001397,1
+/tmp/zifb-release-bench 1 64 1 widewrite
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,64,1,264,1040,0.000001886,1
+native,reuse,64,1,264,1040,0.000001886,1
+canonical,fresh,64,1,264,1040,0.000001466,1
+native,fresh,64,1,264,1040,0.000001886,1
+/tmp/zifb-release-bench 1 1024 1 vectors
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,1024,1,3400,4648,0.000006077,1
+native,reuse,1024,1,3400,4648,0.000003771,1
+canonical,fresh,1024,1,3400,4648,0.00000433,1
+native,fresh,1024,1,3400,4648,0.000003841,1
+/tmp/zifb-release-bench 1 1024 1 write
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,1024,1,1064,1560,0.000002444,1
+native,reuse,1024,1,1064,1560,0.000001466,1
+canonical,fresh,1024,1,1064,1560,0.000001886,1
+native,fresh,1024,1,1064,1560,0.000001396,1
+/tmp/zifb-release-bench 1 1024 1 widewrite
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,1024,1,2184,2584,0.000003772,1
+native,reuse,1024,1,2184,2584,0.000001886,1
+canonical,fresh,1024,1,2184,2584,0.000002374,1
+native,fresh,1024,1,2184,2584,0.000001886,1
+/tmp/zifb-release-bench 1 65536 1 vectors
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,65536,1,213064,245760,0.00020289,1
+native,reuse,65536,1,213064,245760,0.000162521,1
+canonical,fresh,65536,1,213064,245760,0.00022042,1
+native,fresh,65536,1,213064,245760,0.000162033,1
+/tmp/zifb-release-bench 1 65536 1 write
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,65536,1,65576,98304,0.000010895,1
+native,reuse,65536,1,65576,98304,0.000022279,1
+canonical,fresh,65536,1,65576,98304,0.00003094,1
+native,fresh,65536,1,65576,98304,0.000031499,1
+/tmp/zifb-release-bench 1 65536 1 widewrite
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,65536,1,131208,163840,0.000082972,1
+native,reuse,65536,1,131208,163840,0.000075918,1
+canonical,fresh,65536,1,131208,163840,0.000077943,1
+native,fresh,65536,1,131208,163840,0.00007068,1

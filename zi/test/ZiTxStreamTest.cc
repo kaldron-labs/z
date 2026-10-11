@@ -48,14 +48,14 @@ struct StreamHarness {
   SentBufs		sent;
   unsigned		allocCount = 0;
   bool			sendOK = true;
-  unsigned		allocFail = 0;
+  unsigned		rejectAt = 0;
 
   ZmRef<ZiIOBuf> alloc(unsigned headRoom) {
-    if (allocFail && ++allocCount == allocFail) return nullptr;
+    // Model lower-layer admission rejection, not Z heap allocation failure.
+    if (++allocCount == rejectAt) return nullptr;
     ZmRef<ZiIOBuf> buf = new StreamAlloc{};
     buf->skip = headRoom;
     buf->length = 0;
-    if (!allocFail) ++allocCount;
     return buf;
   }
 
@@ -225,9 +225,9 @@ void testOversizePrintableFails()
   ZuCheck(d.sent[0].buf->cspan() == "prefix");
 }
 
-void testDelegateAndAllocation()
+void testDelegateAndAdmission()
 {
-  ZuTestScope(testDelegateAndAllocation);
+  ZuTestScope(testDelegateAndAdmission);
 
   StreamHarness h;
   unsigned calls = 0;
@@ -239,7 +239,7 @@ void testDelegateAndAllocation()
   ZuCheck(h.sent[2].length == 2);
 
   StreamHarness initial;
-  initial.allocFail = 1;
+  initial.rejectAt = 1;
   TestTxStream noBuf{initial, 12, 2, 1};
   noBuf << "a" << Delegate{&calls};
   ZuCheck(noBuf.failed() && !noBuf.flush());
@@ -247,7 +247,7 @@ void testDelegateAndAllocation()
   ZuCheck(calls == 1);
 
   StreamHarness rollover;
-  rollover.allocFail = 2;
+  rollover.rejectAt = 2;
   TestTxStream noNext{rollover, 12, 2, 1};
   noNext << Delegate{&calls} << "ignored";
   ZuCheck(noNext.failed() && !noNext.flush());
@@ -447,7 +447,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRealPrimitiveFormatting);
   ZuTestCall(testFlushElidesEmptyBuffer);
   ZuTestCall(testOversizePrintableFails);
-  ZuTestCall(testDelegateAndAllocation);
+  ZuTestCall(testDelegateAndAdmission);
   ZuTestCall(testMoveFailure);
   ZuTestCall(testLayerFailure);
   ZuTestCall(testExactCapacityAndDestruction);

@@ -8,6 +8,8 @@
 
 namespace Ztc {
 
+ZfStructImpl(DBHostTelemetry);
+
 ZtEnumImplNS(DBHostState);
 
 } // namespace Ztc

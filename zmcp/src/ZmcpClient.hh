@@ -153,7 +153,7 @@ inline void parameterHeader(ZuCSpan name, const V &value, L &&l)
 template <typename O, typename L>
 inline void parameterHeaders(const O &object, L &&l)
 {
-  using Fields = ZuFields<O, ZuFacet::JSON>;
+  using Fields = ZuActiveFields<O, ZuFacet::JSON>;
   ZuUnroll::all<Fields>([&object, &l]<typename Field>() {
     using Props = typename Field::Props;
     using Header = ZuFieldProp::MCP::GetHeader<Props>;

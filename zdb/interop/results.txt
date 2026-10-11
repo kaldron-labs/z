@@ -1,0 +1,7 @@
+make: Entering directory '/home/count0/src/z/zdb/interop'
+prove ./zdbmsginterop
+./zdbmsginterop ......... ok
+All tests successful.
+Files=1, Tests=4, 29ms wallclock (20ms usr + 0ms sys = 20ms CPU)
+Result: PASS
+make: Leaving directory '/home/count0/src/z/zdb/interop'

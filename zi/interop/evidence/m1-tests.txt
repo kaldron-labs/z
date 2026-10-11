@@ -1,0 +1,115 @@
+make: Entering directory '/home/count0/src/z/zf/test'
+prove ZfASN1Test ZfCBORTest ZfDBUSTest ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest ZfURITest ZfYAMLTest ZfConfigTest ZfSkipTest ZfFBMetaTest ZfFBWireTest ZfFBBuilderTest ZfFBViewTest ZfFBSchemaTest ZfFBValueTest ZfFBLoadTest ZfFBUnionTest ZfFBStreamTest
+ZfASN1Test .............. ok
+ZfCSVTest ............... ok
+ZfTreeTest .............. ok
+ZfCLITest ............... ok
+ZfDBUSTest .............. ok
+ZfStructTest ............ ok
+ZfConfigTest ............ ok
+ZfFBMetaTest ............ ok
+ZfURITest ............... ok
+ZfSkipTest .............. ok
+ZfFBWireTest ............ ok
+ZfCBORTest .............. ok
+ZfFBBuilderTest ......... ok
+ZfFBSchemaTest .......... ok
+ZfFBValueTest ........... ok
+ZfFBLoadTest ............ ok
+ZfFBUnionTest ........... ok
+ZfFBViewTest ............ ok
+ZfYAMLTest .............. ok
+ZfFBStreamTest .......... ok
+ZfCfTest ................ ok
+All tests successful.
+Files=21, Tests=409, 150ms wallclock (110ms usr + 20ms sys = 130ms CPU)
+Result: PASS
+make: Leaving directory '/home/count0/src/z/zf/test'
+
+zi/test/ZiFBTest ......... ok
+zu/test/ZuArrayTest ...... ok
+zu/test/ZuCmpTest ........ ok
+zf/interop/zffbinterop ... ok
+zu/test/ZuSearchTest ..... ok
+All tests successful.
+Files=5, Tests=206, 286ms wallclock (260ms usr + 10ms sys = 270ms CPU)
+Result: PASS
+
+Expanded mapped-value, nested-copy and evolution interop cases:
+zf/interop/zffbinterop ... ok
+All tests successful.
+Files=1, Tests=40, 71ms wallclock (60ms usr + 0ms sys = 60ms CPU)
+Result: PASS
+
+Scalar access refinement: all 21 zf/test binaries pass, 410 top-level TAP tests.
+ZiFBTest and zffbinterop pass, 44 top-level TAP tests combined.
+GDB growth traces: 64, 1024, 65536 bytes; all inferiors exited normally.
+See growth-*.txt for counters and README.md for measurement limits.
+
+Contiguous scalar-vector copy and width-conversion regression batch:
+make: Entering directory '/home/count0/src/z/zf/test'
+prove ZfASN1Test ZfCBORTest ZfDBUSTest ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest ZfURITest ZfYAMLTest ZfConfigTest ZfSkipTest ZfFBMetaTest ZfFBWireTest ZfFBBuilderTest ZfFBViewTest ZfFBSchemaTest ZfFBValueTest ZfFBLoadTest ZfFBUnionTest ZfFBStreamTest
+ZfASN1Test .............. ok
+ZfCSVTest ............... ok
+ZfCLITest ............... ok
+ZfDBUSTest .............. ok
+ZfTreeTest .............. ok
+ZfStructTest ............ ok
+ZfConfigTest ............ ok
+ZfFBMetaTest ............ ok
+ZfURITest ............... ok
+ZfSkipTest .............. ok
+ZfCBORTest .............. ok
+ZfFBBuilderTest ......... ok
+ZfFBWireTest ............ ok
+ZfFBSchemaTest .......... ok
+ZfFBValueTest ........... ok
+ZfFBLoadTest ............ ok
+ZfFBViewTest ............ ok
+ZfFBUnionTest ........... ok
+ZfYAMLTest .............. ok
+ZfFBStreamTest .......... ok
+ZfCfTest ................ ok
+All tests successful.
+Files=21, Tests=411, 127ms wallclock (80ms usr + 30ms sys = 110ms CPU)
+Result: PASS
+make: Leaving directory '/home/count0/src/z/zf/test'
+zi/test/ZiFBTest ......... ok
+zf/interop/zffbinterop ... ok
+All tests successful.
+Files=2, Tests=44, 74ms wallclock (60ms usr + 10ms sys = 70ms CPU)
+Result: PASS
+
+Wire-accessor and floating default interoperability batch:
+make: Entering directory '/home/count0/src/z/zf/test'
+prove ZfASN1Test ZfCBORTest ZfDBUSTest ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest ZfURITest ZfYAMLTest ZfConfigTest ZfSkipTest ZfFBMetaTest ZfFBWireTest ZfFBBuilderTest ZfFBViewTest ZfFBSchemaTest ZfFBValueTest ZfFBLoadTest ZfFBUnionTest ZfFBStreamTest
+ZfASN1Test .............. ok
+ZfCSVTest ............... ok
+ZfCLITest ............... ok
+ZfDBUSTest .............. ok
+ZfTreeTest .............. ok
+ZfConfigTest ............ ok
+ZfFBMetaTest ............ ok
+ZfStructTest ............ ok
+ZfURITest ............... ok
+ZfSkipTest .............. ok
+ZfFBBuilderTest ......... ok
+ZfCBORTest .............. ok
+ZfFBSchemaTest .......... ok
+ZfFBWireTest ............ ok
+ZfFBValueTest ........... ok
+ZfFBLoadTest ............ ok
+ZfFBViewTest ............ ok
+ZfYAMLTest .............. ok
+ZfFBUnionTest ........... ok
+ZfCfTest ................ ok
+ZfFBStreamTest .......... ok
+All tests successful.
+Files=21, Tests=411, 135ms wallclock (100ms usr + 30ms sys = 130ms CPU)
+Result: PASS
+make: Leaving directory '/home/count0/src/z/zf/test'
+zi/test/ZiFBTest ......... ok
+zf/interop/zffbinterop ... ok
+All tests successful.
+Files=2, Tests=45, 82ms wallclock (60ms usr + 10ms sys = 70ms CPU)
+Result: PASS

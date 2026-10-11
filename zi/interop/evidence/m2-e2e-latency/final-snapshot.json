@@ -1,0 +1,9 @@
+{
+  "files": {
+    "ztc/itest/ztchubloadtest.cc": "4dbae0ee3da7c7140321c4480ceb21fee94da4f8401a9248aeecd209cad689c6",
+    "ztc/itest/ztchubtest.py": "11353d614ee32c66105d39b6ae29fb9ec5faee0346d55795f5ca9797e255fa48",
+    "ztc/itest/.libs/ztchubloadtest": "602866959c4deb7ff2bdd45b9901b3aa4dd68815639b0183f28878393e82a613",
+    "ztc/src/.libs/ztchub": "652a1d2c8f1d2043823b4390994307e9b3937627ca64acb31dee60793786f68f"
+  },
+  "note": "Three clock reads per sample, including receive; identical release configuration. No production code changed during this diagnosis."
+}

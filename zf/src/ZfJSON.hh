@@ -122,7 +122,7 @@ struct GetIDs_<ZuTypeList<Field...>> {
   using T = ZuTypeList<GetID<Field>...>;
 };
 template <typename O>
-struct GetIDs_ : public GetIDs_<ZuFields<O>> { };
+struct GetIDs_ : public GetIDs_<ZuActiveFields<O>> { };
 template <typename U>
 using GetIDs = typename GetIDs_<U>::T;
 template <typename Fields>
@@ -533,7 +533,7 @@ struct AsObject {
     template <typename Field>
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
-    using AllFields = ZuFields<O, Facet>;
+    using AllFields = ZuActiveFields<O, Facet>;
     using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
     using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
     using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;

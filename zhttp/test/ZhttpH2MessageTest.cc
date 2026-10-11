@@ -39,7 +39,7 @@ bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
   enum { Header = 9 };
   unsigned length = Header + payload.length();
   ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::WireBufAlloc{};
-  if (!buf->alloc(length)) return false;
+  buf->alloc(length);
   buf->length = length;
   auto io = static_cast<ZiIOBuf *>(buf.ptr());
   memset(io->data(), 0, Header);

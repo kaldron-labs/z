@@ -23,15 +23,11 @@
 
 #include <zlib/ZvMxParams.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/Zdb.hh>
 #include <zlib/ZdbMemStore.hh>
 
-#include "zdbsaga_account_fbs.h"
-#include "zdbsaga_intent_fbs.h"
-#include "zdbsaga_transfer_fbs.h"
 
 namespace zdbsaga {
 
@@ -44,13 +40,17 @@ struct Account {
   friend ZuStringT<"Zdb.Example.Account.Buf"> ZdbBufHeapID(Account *);
 };
 
-ZfbStruct(, Account,
-  (id,	(Ctor<0>, Keys<0>),		UInt64),
+ZfStruct(, Account,
+  (id,		(Ctor<0>, Keys<0>),	UInt64),
   (balance,	(Ctor<1>, Mutable),	Int64));
 
-ZfbRoot(Account);
+ZiFB::Table<"zdbsaga.fbs.Account"> ZiFBType(Account *);
+ZfStructImpl(Account);
 
-ZfbEnumNS(, TransferStatus, Pending, Complete)
+ZtEnumNS(, TransferStatus, int8_t, Pending, Complete);
+namespace TransferStatus {
+  ZiFB::Enum<"zdbsaga.fbs.TransferStatus"> ZiFBType(Map *);
+}
 ZtEnumImplNS(TransferStatus);
 
 struct Transfer {
@@ -65,14 +65,15 @@ struct Transfer {
   friend ZuStringT<"Zdb.Example.Transfer.Buf"> ZdbBufHeapID(Transfer *);
 };
 
-ZfbStruct(, Transfer,
-  (id,	(Ctor<0>, Keys<0>),					UInt64),
+ZfStruct(, Transfer,
+  (id,		(Ctor<0>, Keys<0>),				UInt64),
   (fromID,	(Ctor<1>),					UInt64),
   (toID,	(Ctor<2>),					UInt64),
   (amount,	(Ctor<3>),					Int64),
   (status,	(Ctor<4>, Enum<TransferStatus::Map>, Mutable),	Int8));
 
-ZfbRoot(Transfer);
+ZiFB::Table<"zdbsaga.fbs.Transfer"> ZiFBType(Transfer *);
+ZfStructImpl(Transfer);
 
 ZdbTableDerive(AccountTable, Account);
 ZdbTableDerive(TransferTable, Transfer);
@@ -180,11 +181,14 @@ using BalanceSteps = ZuTypeList<
   ZdbSagaStep_<ZuStringT<"transfer">, ZdbSagaOp::Update>>;
 ZuAssert((ZuIsSame<Zdb_::SagaSteps<BalanceTransfer>, BalanceSteps>{}));
 
-ZfbStruct(, BalanceTransfer,
-  (transferID,	(Ctor<0>),		UInt64),
-  (fromID,		(Ctor<1>),	UInt64),
-  (toID,		(Ctor<2>),	UInt64),
-  (amount,		(Ctor<3>),	Int64));
+ZfStruct(, BalanceTransfer,
+  (transferID,	(Ctor<0>),	UInt64),
+  (fromID,	(Ctor<1>),	UInt64),
+  (toID,	(Ctor<2>),	UInt64),
+  (amount,	(Ctor<3>),	Int64));
+
+ZiFB::Table<"zdbsaga.fbs.BalanceTransfer"> ZiFBType(BalanceTransfer *);
+ZfStructImpl(BalanceTransfer);
 
 ZdbSagaDerive(SagaCatalog, BalanceTransfer);
 ZdbSagaImpl(SagaCatalog, BalanceTransfer)

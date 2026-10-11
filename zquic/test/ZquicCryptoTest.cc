@@ -168,7 +168,7 @@ void testCryptoFlightOffsets()
   ZuCHECK(Zquic::sendCryptoFlights(
       txCrypto, diag, reinterpret_cast<const uint8_t *>("abc"), 3,
       one, 16, {}, send) &&
-      sends == 1 && diag.cryptoBytesTx == 3,
+      sends == 1 && diag.cryptoBytesTx == Zquic::DiagCounter{3},
     "single-epoch crypto flights failed");
 
   Zquic::CryptoStream multiCrypto[Zquic::PktNumSpace::N];
@@ -179,7 +179,7 @@ void testCryptoFlightOffsets()
       multiCrypto, multiDiag,
       reinterpret_cast<const uint8_t *>("abcdef"), 6,
       multi, 16, {}, send) &&
-      sends == 4 && multiDiag.cryptoBytesTx == 6,
+      sends == 4 && multiDiag.cryptoBytesTx == Zquic::DiagCounter{6},
     "multi-epoch crypto flights failed");
 
   size_t descending[5] = {0, 3, 2, 3, 3};
@@ -192,7 +192,7 @@ void testCryptoFlightOffsets()
 	multiCrypto, multiDiag,
 	reinterpret_cast<const uint8_t *>("abc"), 3,
 	beyond, 16, {}, send) &&
-      multiDiag.failures == 2,
+      multiDiag.failures == Zquic::DiagCounter{2},
     "invalid crypto offsets diagnostics mismatch");
 }
 

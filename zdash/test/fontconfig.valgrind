@@ -11,3 +11,33 @@
    fun:FcInit
    ...
 }
+# Children of the same XML-config pattern cache, reported separately when
+# indirect leaks are enabled. Do not match unrelated Fontconfig allocations.
+{
+   fontconfig_process_cache_value
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:malloc
+   fun:strdup
+   ...
+   fun:FcValueSave
+   fun:FcPatternObjectAddWithBinding
+   ...
+   fun:FcEndElement
+   ...
+   fun:FcInit
+   ...
+}
+{
+   fontconfig_process_cache_binding
+   Memcheck:Leak
+   match-leak-kinds: indirect
+   fun:calloc
+   ...
+   fun:FcPatternObjectAddWithBinding
+   ...
+   fun:FcEndElement
+   ...
+   fun:FcInit
+   ...
+}

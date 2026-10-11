@@ -74,7 +74,7 @@ template <typename Field>
 using FieldFilter = ZuTypeIn<ZuFieldProp::Series, typename Field::Props>;
 template <typename O, bool TimeIndex>
 struct Fields_ {
-  using T = ZuTypeGrep<FieldFilter, ZuFields<O>>;
+  using T = ZuTypeGrep<FieldFilter, ZuActiveFields<O>>;
 };
 // if the data-frame is time-indexed, unshift a TimeField onto the field list
 template <typename O>

@@ -16,7 +16,6 @@
 #include <zlib/zumd_app_db.hh>
 #include <zlib/zumd_saga_image.hh>
 #include <zlib/zumd_request_db.hh>
-#include <zlib/zum_saga_fbs.h>
 
 namespace Zum {
 
@@ -24,9 +23,10 @@ struct CatalogEdit {
   Bytes before;
   Bytes after;
 };
-ZfbStruct(ZumAPI, CatalogEdit,
-  (before, (Ctor<0>),		Bytes),
-  (after, (Ctor<1>),		Bytes));
+ZfStruct(ZumAPI, CatalogEdit,
+  (before,	(Ctor<0>),	Bytes),
+  (after,	(Ctor<1>),	Bytes));
+ZiFB::Table<"Zum.fbs.CatalogEdit"> ZiFBType(CatalogEdit *);
 
 struct CatalogRows {
   BytesVec added;
@@ -40,9 +40,10 @@ struct CatalogRows {
       SagaImage::save(before), SagaImage::save(after)}));
   }
 };
-ZfbStruct(ZumAPI, CatalogRows,
-  (added, (Ctor<0>),		BytesVec),
-  (changed, (Ctor<1>),		BytesVec));
+ZfStruct(ZumAPI, CatalogRows,
+  (added,	(Ctor<0>),	BytesVec),
+  (changed,	(Ctor<1>),	BytesVec));
+ZiFB::Table<"Zum.fbs.CatalogRows"> ZiFBType(CatalogRows *);
 
 struct CatalogPublish : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -273,14 +274,15 @@ struct CatalogPublish : public ZdbSagaBase<DBContext> {
   }
 
 };
-ZfbStruct(ZumAPI, CatalogPublish,
-  (before, (Ctor<0>),		UDT),
-  (after, (Ctor<1>),		UDT),
-  (actions, (Ctor<2>),		UDT),
-  (roles, (Ctor<3>),		UDT),
-  (clients, (Ctor<4>),		UDT),
-  (clientAccess, (Ctor<5>),	UDT),
-  (request, (Ctor<6>),		UDT));
+ZfStruct(ZumAPI, CatalogPublish,
+  (before,		(Ctor<0>),	UDT),
+  (after,		(Ctor<1>),	UDT),
+  (actions,		(Ctor<2>),	UDT),
+  (roles,		(Ctor<3>),	UDT),
+  (clients,		(Ctor<4>),	UDT),
+  (clientAccess,	(Ctor<5>),	UDT),
+  (request,		(Ctor<6>),	UDT));
+ZiFB::Table<"Zum.fbs.CatalogPublish"> ZiFBType(CatalogPublish *);
 
 } // namespace Zum
 

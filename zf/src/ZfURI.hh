@@ -874,7 +874,7 @@ struct AsObject {
     template <typename Field>
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;
 
-    using AllFields = ZuFields<O, Facet>;
+    using AllFields = ZuActiveFields<O, Facet>;
     using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
     using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
     using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
@@ -2015,7 +2015,7 @@ inline S &savePath_(S &s, const O &o) {
       savePath_<Facet, Filter>(s, v);
     });
   } else {
-    using PathFields_ = PathFields<ZuTypeGrep<Filter, ZuFields<T, Facet>>>;
+    using PathFields_ = PathFields<ZuTypeGrep<Filter, ZuActiveFields<T, Facet>>>;
     if constexpr (PathFields_::N > 0) {
       ZuUnroll::all<PathFields_>([&s, &o]<typename Field>() {
 	using Type = typename Field::Type;

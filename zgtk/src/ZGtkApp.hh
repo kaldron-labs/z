@@ -29,9 +29,16 @@ public:
   void i18n(Zi::Name domain, Zi::Name dataDir);
 
   void attach(ZmScheduler *sched, unsigned sid); // calls ZmTrap::trap()
-  using DetachFn = ZmFn<void(), ZmFnHeapID<"ZGtk.App.DetachFn">>;
-  ZuInline void detach() { detach(DetachFn{}); }
-  void detach(DetachFn);
+  ZuInline void detach() { detach([]() {}); }
+  template <typename L>
+  void detach(L &&l) {
+    m_sched->wakeFn(m_sid, ZmScheduler::WakeFn{});
+    m_sched->push([this, l = ZuFwd<L>(l)]() mutable {
+      detach_();
+      l();
+    }, m_sid);
+    wake_();
+  }
 
   ZuInline ZmScheduler *sched() const { return m_sched; }
   ZuInline unsigned sid() const { return m_sid; }
@@ -45,7 +52,7 @@ public:
 
 private:
   void attach_();		// runs on Gtk thread
-  void detach_(DetachFn);	// ''
+  void detach_();	// ''
 
   void wake();
   void wake_();		// ''

@@ -876,7 +876,7 @@ protected:
 	  !m_tokenSecret &&
 	  !AddressToken::generateSecret(m_tokenSecret))
 	return false;
-      if (!init_alpn_(params.alpn())) return false;
+      init_alpn_(params.alpn());
       if (m_qlogParams.enabled() &&
 	  !ZquicLogger::init(m_qlogTrace, m_qlogParams, vantage))
 	return false;
@@ -1062,20 +1062,19 @@ private:
     return true;
   }
 
-  bool init_alpn_(const ParamStrings &alpn) {
+  void init_alpn_(const ParamStrings &alpn) {
     m_alpn = {};
     m_alpnData = {};
-    if (!alpn) return true;
+    if (!alpn) return;
     unsigned bytes = 0;
     for (auto &s : alpn) bytes += s.length();
-    if (bytes && !m_alpnData.ensure(bytes)) return false;
+    if (bytes) m_alpnData.ensure(bytes);
     m_alpn.ensure(alpn.length());
     for (auto &s : alpn) {
       unsigned offset = m_alpnData.length();
       m_alpnData << ZuBSpan{s};
       m_alpn.push(ptls_iovec_t{m_alpnData.data() + offset, s.length()});
     }
-    return true;
   }
 
   // immutable after init()

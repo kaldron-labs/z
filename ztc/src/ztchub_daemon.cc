@@ -193,53 +193,53 @@ using InventoryBuf = ZiIOBufAlloc<1024, 1U << 30, "Ztc.Hub.Inventory">;
 static HubFrame inventoryFrame(const Inventory &value, uint64_t subID)
 {
   HubFrame frame = new InventoryBuf;
-  frame->skip = Zfb::IOBuilder::Align;
-  Zfb::IOBuilder builder{ZuMv(frame)};
-  auto device = builder.CreateString(value.deviceID.data(),
-    value.deviceID.length());
-  auto publisher = builder.CreateString(value.publisherID.data(),
-    value.publisherID.length());
-  auto app = ZfbStruct::save(builder, value.app);
+  frame->skip = Ztc::Builder::Align;
+  Ztc::Builder builder{ZuMv(frame)};
+  auto nested = builder.startNested();
+  auto publisher = builder.string(value.publisherID);
+  auto app = ZiFB::saveObject(builder, value.app);
   auto telemetry = saveTelemetry(builder, publisher, 0,
-    fbs::TelemetryBody::AppTelemetry, app.Union());
-  builder.Finish(saveMsg(builder, fbs::Body::Telemetry, telemetry.Union(),
-    subID, device, value.generation));
+    TelemetryBody::AppTelemetry, app);
+  builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
+    subID, value.deviceID, value.generation));
   return builder.buf();
 }
 
 static HubFrame inventoryAck(uint64_t subID, uint32_t interval)
 {
   HubFrame frame = new InventoryBuf;
-  frame->skip = Zfb::IOBuilder::Align;
-  Zfb::IOBuilder builder{ZuMv(frame)};
-  auto ack = ZfbStruct::save(builder, Ack{
+  frame->skip = Ztc::Builder::Align;
+  Ztc::Builder builder{ZuMv(frame)};
+  auto nested = builder.startNested();
+  auto ack = ZiFB::saveObject(builder, Ack{
     .id = "inventory", .seqNo = 0, .interval = interval,
-    .status = uint8_t(fbs::AckStatus::OK)});
-  builder.Finish(saveMsg(builder, fbs::Body::Ack, ack.Union(), subID));
+    .status = uint8_t(AckStatus::OK)});
+  builder.finish(saveMsg(builder, nested, Body::Ack, ack, subID));
   return builder.buf();
 }
 
 static HubFrame inventoryEOS(uint64_t subID)
 {
   HubFrame frame = new InventoryBuf;
-  frame->skip = Zfb::IOBuilder::Align;
-  Zfb::IOBuilder builder{ZuMv(frame)};
-  auto eos = ZfbStruct::save(builder, EOS{ZuID{"inventory"}, 0});
-  builder.Finish(saveMsg(builder, fbs::Body::EOS, eos.Union(), subID));
+  frame->skip = Ztc::Builder::Align;
+  Ztc::Builder builder{ZuMv(frame)};
+  auto nested = builder.startNested();
+  auto eos = ZiFB::saveObject(builder, EOS{ZuID{"inventory"}, 0});
+  builder.finish(saveMsg(builder, nested, Body::EOS, eos, subID));
   return builder.buf();
 }
 
 static HubFrame inventoryGone(const Inventory &value, uint64_t subID)
 {
   HubFrame frame = new InventoryBuf;
-  frame->skip = Zfb::IOBuilder::Align;
-  Zfb::IOBuilder builder{ZuMv(frame)};
-  auto device = Zfb::Save::str(builder, value.deviceID);
-  auto error = ZfbStruct::save(builder, Error{
+  frame->skip = Ztc::Builder::Align;
+  Ztc::Builder builder{ZuMv(frame)};
+  auto nested = builder.startNested();
+  auto error = ZiFB::saveObject(builder, Error{
     ErrorMessage{"agent disconnected"}, ZuID{value.publisherID},
     0, int(HubError::AgentGone)});
-  builder.Finish(saveMsg(builder, fbs::Body::Error, error.Union(),
-    subID, device, value.generation));
+  builder.finish(saveMsg(builder, nested, Body::Error, error,
+    subID, value.deviceID, value.generation));
   return builder.buf();
 }
 
@@ -247,15 +247,15 @@ static HubFrame inventoryGone(const Inventory &value, uint64_t subID)
 static HubFrame inventoryShutdown(const Inventory &value, uint64_t subID)
 {
   HubFrame frame = new InventoryBuf;
-  frame->skip = Zfb::IOBuilder::Align;
-  Zfb::IOBuilder builder{ZuMv(frame)};
-  auto device = Zfb::Save::str(builder, value.deviceID);
-  auto publisher = Zfb::Save::str(builder, value.publisherID);
-  auto shutdown = fbs::CreateShutdown(builder);
+  frame->skip = Ztc::Builder::Align;
+  Ztc::Builder builder{ZuMv(frame)};
+  auto nested = builder.startNested();
+  auto publisher = builder.string(value.publisherID);
+  auto shutdown = ZiFB::saveObject(builder, Shutdown{});
   auto telemetry = saveTelemetry(builder, publisher, 0,
-    fbs::TelemetryBody::Shutdown, shutdown.Union());
-  builder.Finish(saveMsg(builder, fbs::Body::Telemetry, telemetry.Union(),
-    subID, device, value.generation));
+    TelemetryBody::Shutdown, shutdown);
+  builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
+    subID, value.deviceID, value.generation));
   return builder.buf();
 }
 
@@ -888,27 +888,26 @@ Zum::ServiceManifest Hubd::manifest() const
   return value;
 }
 
-bool Hubd::validAgentMessage(const fbs::Msg *msg)
+bool Hubd::validFrontMessage(MsgView msg)
 {
-  return Ztc::validMsg(msg);
+  return Ztc::validMsg(msg) &&
+    msgBody(msg).tag() == Body::Request &&
+    msg.get<ZfField(Msg, subID)>() && msg.get<ZfField(Msg, deviceID)>() &&
+    !msg.get<ZfField(Msg, agentGen)>();
 }
 
-bool Hubd::validFrontMessage(const fbs::Msg *msg)
+bool Hubd::validAppRequest(MsgView msg)
 {
-  return Ztc::validMsg(msg) && msg->body_type() == fbs::Body::Request &&
-    msg->subId() && msg->deviceId() && msg->deviceId()->size() &&
-    !msg->agentGen();
-}
-
-bool Hubd::validAppRequest(const fbs::Msg *msg)
-{
-  if (!Ztc::validMsg(msg) || msg->body_type() != fbs::Body::Request ||
-      !msg->subId() || msg->agentGen() ||
-      (msg->deviceId() && msg->deviceId()->size())) return false;
-  auto request = msg->body_as_Request();
-  return request && request->group() == fbs::Group::App && !request->id() &&
-    (!request->filter() || request->filter()->string_view() == "*") &&
-    !request->alertDate() && !request->alertSeqNo();
+  if (!Ztc::validMsg(msg) ||
+      msgBody(msg).tag() != Body::Request ||
+      !msg.get<ZfField(Msg, subID)>() || msg.get<ZfField(Msg, agentGen)>() ||
+      msg.get<ZfField(Msg, deviceID)>()) return false;
+  auto request = msgBody(msg).get<Body::Request>();
+  auto filter = request.get<ZfField(Request, filter)>();
+  return request.get<ZfField(Request, group)>() == Group::App &&
+    !request.get<ZfField(Request, id)>() && (!filter || filter == "*") &&
+    !request.get<ZfField(Request, alertDate)>() &&
+    !request.get<ZfField(Request, alertSeqNo)>();
 }
 
 bool Hubd::authorized(
@@ -1081,29 +1080,30 @@ bool Hubd::addSubscription(uint64_t frontEndID, uint64_t subID,
 }
 
 bool Hubd::app(uint64_t agentSessionID, uint64_t agentGeneration,
-    const fbs::Telemetry *telemetry)
+    TelemetryView telemetry)
 {
-  if (!m_state || !telemetry || telemetry->seqNo() ||
-      telemetry->value_type() != fbs::TelemetryBody::AppTelemetry) return false;
+  if (!m_state || !telemetry || telemetry.get<ZfField(Telemetry, seqNo)>() ||
+      telemetry
+        .get<ZfField(Telemetry, value)>().tag() != TelemetryBody::AppTelemetry) return false;
   auto session = m_state->agentSessions.findPtr(agentSessionID);
   if (!session || session->val().generation != agentGeneration) return false;
   auto agent = m_state->agents.findPtr(session->val().deviceID);
   if (!agent || agent->val().sessionID != agentSessionID ||
       agent->val().generation != agentGeneration) return false;
-  auto publisherID = Zfb::Load::str(telemetry->id());
-  auto app_ = telemetry->value_as_AppTelemetry();
+  auto publisherID = telemetry.get<ZfField(Telemetry, id)>();
+  auto app_ = telemetry.get<ZfField(Telemetry, value)>().get<TelemetryBody::AppTelemetry>();
   if (!publisherID || !app_) return false;
   auto key = ZuFwdTuple(session->val().deviceID, agentGeneration, publisherID);
   auto node = m_state->inventories.findPtr(key);
   if (!node) {
     if (agent->val().appCount >= m_state->cf.publishersPerAgent) return false;
     node = new Hubd_::Inventories::Node{Hubd_::Inventory{
-      session->val().deviceID, publisherID, ZfbStruct::ctor<AppTelemetry>(app_),
+      session->val().deviceID, publisherID, ZiFB::Handler<AppTelemetry>{app_}.ctor(),
       agentGeneration}};
     m_state->inventories.addNode(node);
     ++agent->val().appCount;
   } else
-    node->val().app = ZfbStruct::ctor<AppTelemetry>(app_);
+    node->val().app = ZiFB::Handler<AppTelemetry>{app_}.ctor();
   Hubd_::inventorySend(*m_state, node->val());
   return true;
 }

@@ -5,13 +5,53 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <math.h>
+#include <limits.h>
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZdbSLCodec.hh>
+#include <zlib/ZdbBuf.hh>
 
 using namespace ZuTestUtil;
+
+static void paramBounds()
+{
+  ZuTestScope(paramBounds);
+  for (unsigned limit: {3U, 4U, 31U, unsigned(Zdb_::MaxBufSize)}) {
+    for (unsigned width: {1U, 2U, 4U, 8U, 12U, 16U}) {
+      if (limit < sizeof(uint32_t)) {
+	ZuCheck(ZdbSL::vecSize(0, width, limit) == UINT64_MAX);
+	continue;
+      }
+      uint64_t n = (limit - sizeof(uint32_t))/width;
+      ZuCheck(ZdbSL::vecSize(n, width, limit) == sizeof(uint32_t) + n * width);
+      ZuCheck(ZdbSL::vecSize(n + 1, width, limit) == UINT64_MAX);
+      ZuCheck(ZdbSL::vecSize(UINT64_MAX, width, limit) == UINT64_MAX);
+    }
+    ZuCheck(ZdbSL::sizeAdd(0, limit, limit) == limit);
+    ZuCheck(ZdbSL::sizeAdd(limit, 1, limit) == UINT64_MAX);
+    ZuCheck(ZdbSL::sizeAdd(UINT64_MAX, 1, limit) == UINT64_MAX);
+    ZuCheck(ZdbSL::sizeAdd(1, UINT64_MAX, limit) == UINT64_MAX);
+  }
+  enum { Limit = Zdb_::MaxBufSize };
+  ZuCheck(ZdbSL::vecVarSize(2, Limit, [](unsigned i) { return i + 1; }) == 15);
+  ZuCheck(ZdbSL::vecVarSize(1, Limit, [](unsigned) { return Limit - 8; }) == Limit);
+  ZuCheck(ZdbSL::vecVarSize(1, Limit, [](unsigned) { return Limit - 7; }) == UINT64_MAX);
+  ZuCheck(ZdbSL::vecVarSize(1, Limit, [](unsigned) { return UINT64_MAX; }) == UINT64_MAX);
+  unsigned visits = 0;
+  ZuCheck(ZdbSL::vecVarSize(UINT_MAX, Limit, [&visits](unsigned) {
+    ++visits; return 0;
+  }) == UINT64_MAX);
+  ZuCheck(!visits);
+  // A smaller connection budget applies before payload traversal too.
+  ZuCheck(ZdbSL::vecVarSize(1, 7, [&visits](unsigned) {
+    ++visits; return 0;
+  }) == UINT64_MAX);
+  ZuCheck(!visits);
+  ZuCheck(ZdbSL::sizeAdd(Limit/2, Limit/2, Limit) == Limit);
+  ZuCheck(ZdbSL::sizeAdd(Limit/2, uint64_t(Limit)/2 + 1, Limit) == UINT64_MAX);
+}
 
 static void integers()
 {
@@ -133,6 +173,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(paramBounds);
   ZuTestCall(integers);
   ZuTestCall(floating);
   ZuTestCall(decimal);
