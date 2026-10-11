@@ -46,7 +46,7 @@ void testArray()
   ZuCheck(a.span().length() == 0);
   ZuCheck(a.cspan().length() == 0);
 
-  a << 1 << 2;
+  a << 1<<2;
   ZuCheck(a.span().length() == 2);
   ZuCheck(a.cspan().length() == 2);
   auto span = a.span();

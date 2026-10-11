@@ -275,7 +275,7 @@ void testLocalAndStackAvail()
   ZuTestScope(testLocalAndStackAvail);
 
   struct Big {
-    char data[1 << 20];
+    char data[1<<20];
     int magic = 77;
   };
 

@@ -245,15 +245,15 @@ enum {
   PayloadNonceSize = 16,
   KeySize = 32,
   TagSize = 16,
-  ChunkSize = 64 << 10,
+  ChunkSize = 64<<10,
   ChunkCipherSize = ChunkSize + TagSize,
   HeaderStackSize = 4096, // common headers stay on the stack
-  HeaderMaxSize = 1 << 20, // resource policy for untrusted input
+  HeaderMaxSize = 1<<20, // resource policy for untrusted input
   RecipientMax = 256, // cap work when scanning large mixed headers
   ReadBufferSize = 4096, // amortize file reads while parsing lines
   ScryptLogN = 18,
   ScryptMaxLogN = 18,
-  ScryptMaxMemory = 512 << 20
+  ScryptMaxMemory = 512<<20
 };
 static constexpr auto Version = "age-encryption.org/v1\n"_z;
 static constexpr auto ScryptLabel = "age-encryption.org/v1/scrypt"_z;
