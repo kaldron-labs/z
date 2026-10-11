@@ -26,7 +26,7 @@
 #include <zlib/Zdb.hh>
 
 #include "ZdbTest.hh"
-#include "ZdbSLTypes.hh"
+#include "zdbsltypes.hh"
 
 using namespace zdbtest;
 using namespace zdbsltest;
@@ -261,6 +261,10 @@ static void setTypes(AllTypes &v)
   v.int128Value = -(int128_t(1)<<100) + 7;
   v.uint128Value = (uint128_t(1)<<100) + 9;
   v.floatValue = -1.25;
+  v.realValue = -2.5f;
+  v.mappedTime = {23};
+  v.realVec = {-INFINITY, -0.0f, 1.5f, INFINITY, NAN};
+  v.names = {"", "short", "a CStringVec element longer than builtin string storage"};
   v.fixedValue = ZuFixed{"-12.3400", 4};
   v.decimalValue = ZuDecimal{"123.000000000000000001"};
   v.timeValue = ZuTime{-1, 999999999};
@@ -300,6 +304,13 @@ static bool checkTypes(const AllTypes &v)
     v.int64Value == INT64_MIN && v.uint64Value == UINT64_MAX &&
     v.int128Value == -(int128_t(1)<<100) + 7 &&
     v.uint128Value == (uint128_t(1)<<100) + 9 &&
+    v.mappedTime.sec == 23 && v.realValue == -2.5f && v.realVec.length() == 5 &&
+    isinf(v.realVec[0]) && v.realVec[0] < 0 &&
+    v.realVec[1] == 0 && v.realVec[2] == 1.5f &&
+    isinf(v.realVec[3]) && v.realVec[3] > 0 && isnan(v.realVec[4]) &&
+    v.names.length() == 3 && ZuCSpan{v.names[0]} == "" &&
+    ZuCSpan{v.names[1]} == "short" &&
+    ZuCSpan{v.names[2]} == "a CStringVec element longer than builtin string storage" &&
     v.floatValue == -1.25 && v.fixedValue == ZuFixed{"-12.34", 2} &&
     v.decimalValue == ZuDecimal{"123.000000000000000001"} &&
     v.timeValue == ZuTime{-1, 999999999} &&
@@ -322,7 +333,8 @@ static bool checkTypes(const AllTypes &v)
       -(int128_t(1)<<100), -1, (int128_t(1)<<100)} &&
     v.uint128Vec == ZtArray<uint128_t>{0, 1, (uint128_t(1)<<100)} &&
     v.floatVec.length() == 5 && isinf(v.floatVec[0]) &&
-    v.floatVec[0] < 0 && v.floatVec[1] == 0 && !signbit(v.floatVec[1]) &&
+    // SQLite REAL normalizes signed zero; the memory store preserves it.
+    v.floatVec[0] < 0 && v.floatVec[1] == 0 &&
     v.floatVec[2] == 1.5 && isinf(v.floatVec[3]) &&
     v.floatVec[3] > 0 && isnan(v.floatVec[4]) &&
     v.fixedVec.length() == 3 && !*v.fixedVec[0] && *v.fixedVec[1] &&
@@ -335,6 +347,21 @@ static bool checkTypes(const AllTypes &v)
       ZuDateTime{},
       ZuDateTime{ZuDateTime::Julian{-1}, 86399, 999999999},
       ZuDateTime{ZuDateTime::Julian{0}, 0, 0}};
+}
+
+static bool emptyTypes(const AllTypes &v)
+{
+  return !v.boolValue && !v.int8Value && !v.uint8Value &&
+    !v.int16Value && !v.uint16Value && !v.int32Value && !v.uint32Value &&
+    !v.int64Value && !v.uint64Value && !v.int128Value && !v.uint128Value &&
+    v.mappedTime.sec == 23 && v.realValue == 0 && !v.realVec && !v.names &&
+    v.floatValue == 0 && v.fixedValue == ZuFixed{} && v.decimalValue == ZuDecimal{} &&
+    v.timeValue == ZuTime{} && v.dateTimeValue == ZuDateTime{} &&
+    !v.stringValue && !v.bytesValue && !v.bitmapValue && !v.ipValue &&
+    !v.stringVec && !v.bytesVec && !v.int8Vec && !v.uint8Vec &&
+    !v.int16Vec && !v.uint16Vec && !v.int32Vec && !v.uint32Vec &&
+    !v.int64Vec && !v.uint64Vec && !v.int128Vec && !v.uint128Vec &&
+    !v.floatVec && !v.fixedVec && !v.decimalVec && !v.timeVec && !v.dateTimeVec;
 }
 
 static void types()
@@ -400,20 +427,59 @@ static void types()
     allTypes->evict<0>(0, ZuFwdTuple(uint64_t{2}));
     allTypes->find<0>(0, ZuFwdTuple(uint64_t{2}),
       [&emptyMatched](ZmRef<ZdbRow<AllTypes>> row) {
-	if (row) {
-	  auto &v = row->data();
-	  emptyMatched = v.id == 2 && !v.stringValue && !v.bytesValue &&
-	    !v.bitmapValue && !v.ipValue && !v.stringVec && !v.bytesVec &&
-	    !v.int8Vec && !v.uint8Vec && !v.int16Vec && !v.uint16Vec &&
-	    !v.int32Vec && !v.uint32Vec && !v.int64Vec && !v.uint64Vec &&
-	    !v.int128Vec && !v.uint128Vec && !v.floatVec && !v.fixedVec &&
-	    !v.decimalVec && !v.timeVec && !v.dateTimeVec;
-	}
+	emptyMatched = row && row->data().id == 2 && emptyTypes(row->data());
 	done.post();
       });
   });
   done.wait();
   ZuCHECK(emptyMatched, "empty type families round trip");
+
+  for (bool clear : {true, false}) {
+    bool updated = ZmBlock<bool>{}([clear](auto complete) {
+      allTypes->run(0, [clear, complete = ZuMv(complete)]() mutable {
+	allTypes->evict<0>(0, ZuFwdTuple(uint64_t{1}));
+	allTypes->findUpd<0, ZuSeq<1>>(0, ZuFwdTuple(uint64_t{1}),
+	  [clear, complete = ZuMv(complete)](ZmRef<ZdbRow<AllTypes>> row) mutable {
+	    if (!row) { complete(false); return; }
+	    if (clear) row->data() = AllTypes{.id = 1};
+	    else setTypes(row->data());
+	    complete(row->commit());
+	  });
+      });
+    });
+    ZuCHECK(updated, "cold update of all type families");
+    bool matched = ZmBlock<bool>{}([clear](auto complete) {
+      allTypes->run(0, [clear, complete = ZuMv(complete)]() mutable {
+	allTypes->evict<0>(0, ZuFwdTuple(uint64_t{1}));
+	allTypes->find<0>(0, ZuFwdTuple(uint64_t{1}),
+	  [clear, complete = ZuMv(complete)](ZmRef<ZdbRow<AllTypes>> row) mutable {
+	    complete(row && (clear ?
+	      row->data().id == 1 && emptyTypes(row->data()) : checkTypes(row->data())));
+	  });
+      });
+    });
+    ZuCHECK(matched, "cold read after whole-field update");
+  }
+  bool removed = ZmBlock<bool>{}([](auto complete) {
+    allTypes->run(0, [complete = ZuMv(complete)]() mutable {
+      allTypes->evict<0>(0, ZuFwdTuple(uint64_t{1}));
+      allTypes->findDel<1>(0, ZuFwdTuple(ZuTime{-1, 999999999},
+	ZuDateTime{ZuDateTime::Julian{-1}, 86399, 999999999}),
+	[complete = ZuMv(complete)](ZmRef<ZdbRow<AllTypes>> row) mutable {
+	  complete(row && row->data().id == 1 && row->commit());
+	});
+    });
+  });
+  ZuCHECK(removed, "cold secondary-key delete of all type families");
+  bool absent = ZmBlock<bool>{}([](auto complete) {
+    allTypes->run(0, [complete = ZuMv(complete)]() mutable {
+      allTypes->find<0>(0, ZuFwdTuple(uint64_t{1}),
+	[complete = ZuMv(complete)](ZmRef<ZdbRow<AllTypes>> row) mutable {
+	  complete(!row);
+	});
+    });
+  });
+  ZuCHECK(absent, "primary key absent after secondary-key delete");
 }
 
 int main(int argc_, char **argv)

@@ -35,7 +35,7 @@ def exercise(directory):
     # before initial-admin enrollment in this activation scenario.
     catalog = server.with_name("ZumMgmt.cc").read_text()
     routes = re.findall(r'ZUM_ROUTE\(\s*(\w+),\s*(\w+),\s*"([^"]+)"\s*\)', catalog)
-    assert len(routes) == 60 and len({name for name, _, _ in routes}) == len(routes)
+    assert len(routes) == 61 and len({name for name, _, _ in routes}) == len(routes)
     base = Path(__file__).with_name("zumd.cf").read_text()
     processes, logs = [], []
     for listener in reservations:

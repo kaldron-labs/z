@@ -14,10 +14,11 @@
 //   - how new buffers are allocated - the allocBuf_ callback:
 //     - ZmRef<IOBuf> allocBuf_(unsigned headRoom)
 //     - return a new buffer with skip == headRoom
+//     - null rejects admission or reports lower-layer failure, not heap OOM
 //   - how buffers are sent - the sendBuf_ callback
-//     - bool sendBuf_(ZmRef<IOBuf> buf, bool final)
+//     - bool sendBuf_(ZmRef<IOBuf> buf, bool flush)
 //     - send buf (via lower-level protocol)
-//     - final is false for rollover and true for flush/destruction
+//     - flush is false for rollover and true for flush/destruction
 //     - return false on failure
 // - failed() is sticky; flush() returns false after failure
 // - oversized printables retain an earlier prefix for one final flush
@@ -40,6 +41,11 @@
 
 #include <zlib/ZiIOBuf.hh>
 
+// ADL tag for streams accepting ownership of transmit buffers.
+inline ZuFalse ZiIsTxStream_(...);
+template <typename S>
+using ZiIsTxStream = decltype(ZiIsTxStream_(ZuDeclVal<S *>()));
+
 namespace Zi {
 
 using TxErrorFn =
@@ -48,6 +54,7 @@ using TxErrorFn =
 struct Flush { };
 inline Flush flush() { return {}; }
 
+
 // CRTP - implementation must conform to the following interface:
 #if 0
 struct Impl : public TxStream<Impl> {
@@ -55,7 +62,7 @@ struct Impl : public TxStream<Impl> {
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom);
 
-  bool sendBuf_(ZmRef<ZiIOBuf>, bool final);
+  bool sendBuf_(ZmRef<ZiIOBuf>, bool flush);
 };
 #endif
 
@@ -106,35 +113,35 @@ protected:
 
 private:
   bool allocBuf() {
-    m_buf = impl()->allocBuf_(m_headRoom);
-    if (ZuUnlikely(!m_buf || m_buf->failed())) {
-      fail();
-      return false;
-    }
-    return true;
+    m_buf = allocBuf(m_headRoom);
+    return !m_failed;
   }
   bool ensureBuf() { return m_buf || allocBuf(); }
-  bool submitBuf(ZmRef<ZiIOBuf> buf, bool final) {
+  bool sendBuf(ZmRef<ZiIOBuf> buf, bool flush) {
     if (ZuUnlikely(!buf || buf->failed() ||
-	!impl()->sendBuf_(ZuMv(buf), final))) {
+	!impl()->sendBuf_(ZuMv(buf), flush))) {
       fail();
       return false;
     }
-    return true;
+    return !m_failed;
   }
   bool nextBuf() {
-    if (ZuUnlikely(!submitBuf(ZuMv(m_buf), false))) return false;
+    if (ZuUnlikely(!sendBuf(ZuMv(m_buf), false))) return false;
     return allocBuf();
   }
 
 public:
-  // Checked handoff for layers and retained output calling below append().
-  bool sendBuf(ZmRef<ZiIOBuf> buf, bool final) {
-    if (ZuUnlikely(m_failed)) return false;
-    return submitBuf(ZuMv(buf), final);
+  // Detached allocation for codecs constructing directly in output storage.
+  ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
+    if (ZuUnlikely(m_failed)) return nullptr;
+    auto buf = impl()->allocBuf_(headRoom);
+    if (ZuUnlikely(!buf || buf->failed())) {
+      fail();
+      return nullptr;
+    }
+    return buf;
   }
 
-public:
   void append(const uint8_t *data, unsigned length) {
     if (!length || ZuUnlikely(m_failed)) return;
     if (ZuUnlikely(!ensureBuf())) return;
@@ -186,6 +193,12 @@ private:
 	reinterpret_cast<char *>(ptr + bufLen), length_, p);
   }
 
+  void append(ZmRef<ZiIOBuf> buf) {
+    if (ZuUnlikely(m_failed)) return;
+    if (ZuUnlikely(m_buf && !sendBuf(ZuMv(m_buf), false))) return;
+    m_buf = ZuMv(buf);
+  }
+
   template <typename U, typename R = void>
   using MatchChar = ZuIfT<ZuEquiv<U, char>{}, R>;
 
@@ -224,11 +237,15 @@ public:
     }
   }
 
+  TxStream &operator <<(ZmRef<ZiIOBuf> buf) {
+    append(ZuMv(buf));
+    return *this;
+  }
+
   // A rejected printable may leave a valid prefix; send it once without
-  // clearing failure. Allocation/send failures have already released m_buf.
+  // clearing failure. Rejected requests/send failures have released m_buf.
   bool flush() {
-    if (m_buf && m_buf->length)
-      submitBuf(ZuMv(m_buf), true);
+    if (m_buf && m_buf->length) sendBuf(ZuMv(m_buf), true);
     m_buf = {};
     return !m_failed;
   }
@@ -236,6 +253,8 @@ public:
     flush();
     return *this;
   }
+
+  friend ZuTrue ZiIsTxStream_(TxStream *);
 
 private:
   unsigned		m_maxSize;
@@ -250,7 +269,7 @@ private:
 struct Impl : public TxLayer<Impl, ...> {
   using Base = TxStream<Impl, ...>;
 
-  bool prepareBuf_(ZiIOBuf *, bool final); // prepare for sending
+  bool prepareBuf_(ZiIOBuf *, bool flush); // prepare for sending
 };
 #endif
 
@@ -288,9 +307,11 @@ public:
     return m_below.allocBuf_(headRoom);
   }
 
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    if (ZuUnlikely(!impl()->prepareBuf_(buf, final))) return false;
-    return m_below.sendBuf(ZuMv(buf), final);
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool flush) {
+    if (ZuUnlikely(!impl()->prepareBuf_(buf, flush))) return false;
+    m_below << ZuMv(buf);
+    if (flush) m_below << Flush{};
+    return !m_below.failed();
   }
 
 private:

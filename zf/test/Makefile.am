@@ -10,7 +10,7 @@ LDADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = \
 	ZfASN1Test ZfCBORTest ZfDBUSTest ZfCfTest ZfCLITest ZfCSVTest ZfStructTest ZfTreeTest \
-	ZfURITest ZfYAMLTest ZfConfigTest
+	ZfURITest ZfYAMLTest ZfConfigTest ZfSkipTest
 noinst_HEADERS = ZfHeapTest.hh ZfMapTest.hh
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
@@ -28,3 +28,5 @@ ZfURITest_SOURCES = ZfURITest.cc
 ZfYAMLTest_SOURCES = ZfYAMLTest.cc
 
 ZfConfigTest_SOURCES = ZfConfigTest.cc
+ZfSkipTest_SOURCES = ZfSkipTest.cc
+EXTRA_DIST = README.md

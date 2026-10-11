@@ -11,9 +11,9 @@
 
 #include <iostream>
 
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuLib.hh>
-#include <zlib/Zfb.hh>
 #include <zlib/ZiRing.hh>
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZtcFB.hh>
@@ -23,10 +23,11 @@
 using Frame = ZiIOBufAlloc<1024, Ztc::AppCf::DefltMaxFrame,
   "Zum.ZtcProbe.Frame">;
 
-static ZmRef<ZiIOBuf> request(ZuCSpan id, Ztc::fbs::Group group,
+static ZmRef<ZiIOBuf> request(ZuCSpan id, Ztc::Group::T group,
     uint64_t seqNo, uint32_t interval, bool subscribe)
 {
-  Zfb::IOBuilder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+  auto nested = builder.startNested();
   Ztc::Request value;
   value.id = id;
   value.filter = "*";
@@ -34,9 +35,9 @@ static ZmRef<ZiIOBuf> request(ZuCSpan id, Ztc::fbs::Group group,
   value.interval = interval;
   value.group = uint8_t(group);
   value.subscribe = subscribe;
-  auto encoded = ZfbStruct::save(builder, value);
-  builder.Finish(Ztc::saveMsg(
-    builder, Ztc::fbs::Body::Request, encoded.Union()));
+  auto encoded = ZiFB::saveObject(builder, value);
+  builder.finish(Ztc::saveMsg(
+    builder, nested, Ztc::Body::Request, encoded));
   return Ztc::saveHdr(builder);
 }
 
@@ -50,7 +51,7 @@ static bool send(Ztc::Ring &ring, ZmRef<ZiIOBuf> frame)
   return true;
 }
 
-static int probe(ZuCSpan id, Ztc::fbs::Group group, bool hold,
+static int probe(ZuCSpan id, Ztc::Group::T group, bool hold,
     int expectedDB = -1)
 {
   const char *name = ::getenv("ZTC_RING");
@@ -74,7 +75,7 @@ static int probe(ZuCSpan id, Ztc::fbs::Group group, bool hold,
     return 1;
   }
   uint64_t seqNo = 1;
-  if (!send(requests, request(id, Ztc::fbs::Group::App,
+  if (!send(requests, request(id, Ztc::Group::App,
         ZuCmp<uint64_t>::null(), 0, false)) ||
       !send(requests, request(id, group, seqNo, hold ? 1000 : 0, true))) {
     std::cerr << "request send failed\n";
@@ -85,21 +86,24 @@ static int probe(ZuCSpan id, Ztc::fbs::Group group, bool hold,
     const void *ptr = telemetry.shift();
     if (!ptr) continue;
     auto msg = Ztc::msg(static_cast<const Ztc::Hdr *>(ptr));
-    if (msg && msg->body_type() == Ztc::fbs::Body::Ack) {
-      auto value = msg->body_as_Ack();
-      if (value && value->seqNo() == seqNo &&
-          value->status() == Ztc::fbs::AckStatus::OK)
+    if (msg && Ztc::msgBody(msg).tag() == Ztc::Body::Ack) {
+      auto value = Ztc::msgBody(msg).get<Ztc::Body::Ack>();
+      if (value && value.get<Ztc::ZfField(Ack, seqNo)>() == seqNo &&
+	  value.get<Ztc::ZfField(Ack, status)>() == Ztc::AckStatus::OK)
         ack = true;
-    } else if (msg && msg->body_type() == Ztc::fbs::Body::Telemetry) {
-      auto value = msg->body_as_Telemetry();
-      if (value && value->seqNo() == seqNo &&
-	  value->value_type() != Ztc::fbs::TelemetryBody::NONE) {
+    } else if (msg && Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry) {
+      auto value = Ztc::msgBody(msg).get<Ztc::Body::Telemetry>();
+      if (value && value.get<Ztc::ZfField(Telemetry, seqNo)>() == seqNo &&
+	  value.get<Ztc::ZfField(Telemetry, value)>().tag() != Ztc::TelemetryBody::None) {
 	if (expectedDB < 0) data = true;
-	else if (auto db = value->value_as_DBTelemetry())
-	  data = db->active() == expectedDB;
+	else if (value.get<Ztc::ZfField(Telemetry, value)>().tag() ==
+	    Ztc::TelemetryBody::DBTelemetry)
+	  data = value.get<Ztc::ZfField(Telemetry, value)>()
+	    .get<Ztc::TelemetryBody::DBTelemetry>()
+	    .get<Ztc::ZfField(DBTelemetry, active)>() == expectedDB;
       }
-      if (value && value->value_type() ==
-          Ztc::fbs::TelemetryBody::Shutdown) {
+      if (value && value.get<Ztc::ZfField(Telemetry, value)>().tag() ==
+	  Ztc::TelemetryBody::Shutdown) {
         telemetry.shift2(Ztc::ringSize(ptr));
         return hold && ack && data ? 0 : 1;
       }
@@ -121,10 +125,10 @@ static int probe(ZuCSpan id, Ztc::fbs::Group group, bool hold,
     if (!ptr) continue;
     auto msg = Ztc::msg(static_cast<const Ztc::Hdr *>(ptr));
     bool shutdown = false;
-    if (msg && msg->body_type() == Ztc::fbs::Body::Telemetry) {
-      auto value = msg->body_as_Telemetry();
-      shutdown = value && value->value_type() ==
-        Ztc::fbs::TelemetryBody::Shutdown;
+    if (msg && Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry) {
+      auto value = Ztc::msgBody(msg).get<Ztc::Body::Telemetry>();
+      shutdown = value && value.get<Ztc::ZfField(Telemetry, value)>().tag() ==
+	Ztc::TelemetryBody::Shutdown;
     }
     telemetry.shift2(Ztc::ringSize(ptr));
     if (shutdown) return 0;
@@ -158,7 +162,7 @@ int main(int argc, char **argv)
     char c;
     while (std::cin.get(c)) {
       if (c == 'p') {
-	if (!send(telemetry, request(id, Ztc::fbs::Group::App,
+	if (!send(telemetry, request(id, Ztc::Group::App,
 	      1, 0, true))) return 1;
 	std::cout << "pushed" << std::endl;
       } else if (c == 'g') {
@@ -175,15 +179,20 @@ int main(int argc, char **argv)
     return 0;
   }
   ZuCSpan groupName{argv[2]};
-  Ztc::fbs::Group group;
-  if (groupName == "app") group = Ztc::fbs::Group::App;
-  else if (groupName == "mx") group = Ztc::fbs::Group::Mx;
-  else if (groupName == "db") group = Ztc::fbs::Group::DB;
-  else if (groupName == "db-active" || groupName == "db-passive")
-    group = Ztc::fbs::Group::DB;
-  else return 1;
-  int expectedDB = groupName == "db-active" ? 1 :
-    groupName == "db-passive" ? 0 : -1;
+  struct IDs {
+    using Keys = ZuStringTL<"app", "mx", "db", "db-active", "db-passive">;
+  };
+  static constexpr auto matcher = ZuMatcher<IDs>();
+  Ztc::Group::T group;
+  int expectedDB = -1;
+  switch (matcher.exact(groupName)) {
+    case 0: group = Ztc::Group::App; break;
+    case 1: group = Ztc::Group::Mx; break;
+    case 2: group = Ztc::Group::DB; break;
+    case 3: group = Ztc::Group::DB; expectedDB = 1; break;
+    case 4: group = Ztc::Group::DB; expectedDB = 0; break;
+    default: return 1;
+  }
   return probe(id, group, argc == 4 && ZuCSpan{argv[3]} == "hold",
     expectedDB);
 }

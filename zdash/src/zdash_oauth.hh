@@ -46,9 +46,6 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
-
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
 

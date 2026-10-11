@@ -1,0 +1,23 @@
+Vector-padding release snapshot
+
+Captured after the vector-padding batch, before further source edits.
+Clang release flags: -march=x86-64-v2 -O3 -g -DNDEBUG
+Canonical reflection uses the matching release object documented in
+../m2-release-initial/reflection-build.txt and link.txt.
+
+Measurements (sequential, CPU 6):
+taskset -c 6 /tmp/zifb-release-bench 1000000 64 11
+taskset -c 6 /tmp/zifb-release-bench 1000000 64 11 wide
+taskset -c 6 /tmp/zifb-release-bench 1000 65536 11 vectors
+
+SHA-256:
+ca34a393aa01956003cedbed8b1333c20bb11c5be692a7145d26595ff6371290  zf/src/ZfFB.hh
+feb9a8577e436a8e1294ad53d051df3b5169bf6d920cd68b89993c5dfa25c76d  zf/src/ZfFBReflect.hh
+a78ae0572ca6f18f51098997ce27405e4abde81a62e61b07a4f58239f28a5596  zf/src/ZfFBReflect.cc
+d0d768f8c9702f6da1cf9b252382973abfd7fc07103ca0a4b4f7ae5103c626db  zf/test/ZfFBStreamTest.cc
+31de143aadfa75060ef768372a7f42c87a8f8511f8d8a32368b04051cd449c9b  zi/interop/zifbiobench.cc
+e670e66b07e11776978052da0d30dbaa5121133453e13641bd39e5d90f93944f  zi/interop/iobaseline.hh
+429bf999dcb5de5a81a65c26ff1dad20361d731b14872cd65073ab5f85e29b71  zi/src/ZiFB.hh
+547f8c5448b2e7896d8fe4a5b80a18501d2bf55767820e35cc43cf7bba6f8487  zi/src/ZiIOBuf.hh
+8671e832bb48ff326484d1985118732e122baebfe27414e99bcea1a15d3c7d07  /tmp/.libs/zifb-release-bench
+ad073e431b4717e4706ce23142e93c7ee65eaa93415c9b664a89c8ffc09bbcd5  zf/src/.libs/libZf.so

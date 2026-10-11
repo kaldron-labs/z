@@ -1,0 +1,14 @@
+warning: the debug information found in "/usr/lib/debug/usr/lib/ld-linux-x86-64.so.2.debug" does not match "/lib64/ld-linux-x86-64.so.2" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,65536,2,426128,245760,0.001634146,3
+native,reuse,65536,2,426128,297256,0.001784306,3
+canonical,fresh,65536,2,426128,245760,0.00295701,3
+native,fresh,65536,2,426128,297256,0.00336174,3
+[Inferior 1 (process 1162461) exited normally]
+growth counters: {"canonical/fresh": {"failures": 0, "growth_allocations": 0, "growth_copy_bytes": 0, "pool_requests": 0, "requests": 0, "variable_bytes": 1146880, "variable_requests": 8, "variable_sizes": {"65536": 2, "98304": 2, "163840": 2, "245760": 2}}, "canonical/reuse": {"failures": 0, "growth_allocations": 0, "growth_copy_bytes": 0, "pool_requests": 0, "requests": 0, "variable_bytes": 573440, "variable_requests": 4, "variable_sizes": {"65536": 1, "98304": 1, "163840": 1, "245760": 1}}, "native/fresh": {"failures": 0, "growth_allocations": 0, "growth_copy_bytes": 0, "pool_requests": 0, "requests": 0, "variable_bytes": 1388224, "variable_requests": 8, "variable_sizes": {"66576": 2, "132112": 2, "198168": 2, "297256": 2}}, "native/reuse": {"failures": 0, "growth_allocations": 0, "growth_copy_bytes": 0, "pool_requests": 0, "requests": 0, "variable_bytes": 694112, "variable_requests": 4, "variable_sizes": {"66576": 1, "132112": 1, "198168": 1, "297256": 1}}}

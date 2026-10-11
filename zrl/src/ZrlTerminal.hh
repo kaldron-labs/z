@@ -169,10 +169,6 @@ public:
   using ErrorFn = ZmFn<void(ZuCSpan),
     ZmFnHeapID<"Zrl.Terminal.ErrorFn">>;
 
-  using OpenFn = ZmFn<void(bool), ZmFnHeapID<"Zrl.Terminal.OpenFn">>;
-  using CloseFn = ZmFn<void(), ZmFnHeapID<"Zrl.Terminal.CloseFn">>;
-
-  using StartFn = ZmFn<void(), ZmFnHeapID<"Zrl.Terminal.StartFn">>;
   using KeyFn = ZmFn<bool(int32_t), ZmFnHeapID<"Zrl.Terminal.KeyFn">>;
 
   void init(unsigned vkeyInterval) {
@@ -182,13 +178,36 @@ public:
     m_errorFn = ErrorFn{};
   }
 
-  void open(ZmScheduler *sched, unsigned thread, OpenFn, ErrorFn);
-  void close(CloseFn);
+  template <typename L>
+  void open(ZmScheduler *sched, unsigned thread, L &&l, ErrorFn errorFn) {
+    m_sched = sched;
+    m_thread = thread;
+    invoke([this, l = ZuFwd<L>(l), errorFn = ZuMv(errorFn)]() mutable {
+      m_errorFn = ZuMv(errorFn);
+      l(open_());
+    });
+  }
+  template <typename L>
+  void close(L &&l) {
+    invoke([this, l = ZuFwd<L>(l)]() mutable { close_(); l(); });
+  }
 
   bool isOpen() const; // blocking
   bool isOpen_() const; // terminal thread
 
-  void start(StartFn startFn, KeyFn keyFn); // start editor
+  template <typename L>
+  void start(L &&l, KeyFn keyFn) { // start editor
+    Guard guard(m_lock);
+    m_sched->push([this, l = ZuFwd<L>(l), keyFn = ZuMv(keyFn)]() mutable {
+      if (!start_()) return;
+      l();
+      m_keyFn = ZuMv(keyFn);
+      m_sched->wakeFn(m_thread, ZmScheduler::WakeFn{this, [](Terminal *this_) {
+	this_->wake();
+      }});
+      read();
+    }, m_thread);
+  }
   void stop();
 
   bool running() const; // blocking

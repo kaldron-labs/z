@@ -968,7 +968,7 @@ template <
   typename S, typename O>
 void saveObject(S &s, const O &o, SaveCtx &ctx)
 {
-  using Fields = ZuTypeGrep<Filter, ZuFields<O, Facet>>;
+  using Fields = ZuTypeGrep<Filter, ZuActiveFields<O, Facet>>;
   if (ctx.inline_) {
     bool first = true;
     s << '{';

@@ -38,7 +38,19 @@ public:
   public:
     ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Request.Fn">>));
 
-    void complete(Fn);
+    template <typename L>
+    void complete(L &&l) {
+      auto self = ZmRef<Node>{static_cast<Node *>(this)};
+      m_requests->invoke_([self = ZuMv(self), l = ZuFwd<L>(l)]() mutable {
+	if (self->finish_()) {
+	  if constexpr (ZuIs_<ZuDecay<L>, ZmAnyFn>{}) {
+	    if (l) l();
+	  } else {
+	    l();
+	  }
+	}
+      });
+    }
 
   private:
   friend Requests_;
@@ -48,7 +60,7 @@ public:
     RequestData(Requests_ *, Fn);
 
     void start_(ZuTime);
-    void finish_(Fn);
+    bool finish_();
     void cancel_();
     void timeout_();
 
@@ -63,8 +75,6 @@ public:
     ZmListNode<RequestData, ZmListHeapID<"Zum.Request">>);
   using Node = RequestList::Node;
 
-  ZuDerive(StartFn, (ZmFn<void(ZmRef<Node>),
-    ZmFnHeapID<"Zum.Requests.StartFn">>));
   ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Requests.Fn">>));
 
   Requests_() = default;
@@ -73,7 +83,25 @@ public:
   void activate();
   void deactivate(Fn = {});
 
-  bool run(ZuTime deadline, StartFn, RequestData::Fn cancel);
+  template <typename L>
+  bool run(ZuTime deadline, L &&l, RequestData::Fn cancel) {
+    if (!m_scheduler || !deadline || !cancel || !m_up) return false;
+    if constexpr (ZuIs_<ZuDecay<L>, ZmAnyFn>{})
+      if (!l) return false;
+    for (;;) {
+      unsigned count = m_count;
+      if (count >= m_limit || !m_up) return false;
+      if (m_count.cmpXch(count + 1, count) == count) break;
+    }
+    ZmRef<Node> request = new Node{this, ZuMv(cancel)};
+    m_scheduler->run([
+      self = ZmRef<Requests_>{this}, request = ZuMv(request),
+      deadline, l = ZuFwd<L>(l)
+    ]() mutable {
+      if (self->admit_(request.ptr(), deadline)) l(ZuMv(request));
+    }, m_sid);
+    return true;
+  }
 
   bool active() const { return m_up; }
   unsigned count() const { return m_count; }
@@ -82,10 +110,13 @@ public:
   unsigned sid() const { return m_sid; }
 
 private:
-  void invoke_(Fn);
-  void admit_(ZmRef<Node>, ZuTime, StartFn);
+  template <typename L>
+  void invoke_(L &&l) {
+    m_scheduler->invoke(ZuFwd<L>(l), m_sid);
+  }
+  bool admit_(Node *, ZuTime);
   void start_(RequestData *, ZuTime);
-  void finish_(RequestData *, RequestData::Fn);
+  bool finish_(RequestData *);
   void arm_(RequestData *, ZmScheduler::Timer *, ZuTime);
   void del_(ZmScheduler::Timer *);
   void remove_(RequestData *);

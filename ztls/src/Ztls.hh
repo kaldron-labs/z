@@ -425,7 +425,7 @@ private:
   // this is the internal TCP-level connected; once handshake is completed,
   // the application's connected_() will be called
   void connected_0(Cxn *cxn, ZiIOContext &io) { // runs on I/O Rx thread
-    app()->rxRun([impl = ZmRef(this->impl()), cxn = ZmRef(cxn)]() {
+    app()->rxInvoke([impl = ZmRef(this->impl()), cxn = ZmRef(cxn)]() {
       impl->connected_1(ZuMv(cxn));
     });
     Rx::template recv<parseHdr<RxBufAlloc>, &Impl::recvRecord>(io);
@@ -452,7 +452,7 @@ private:
   int recvRecord(const ZiIOContext &io, ZmRef<ZiIOBuf> buf) {
     auto n = int(buf->length);
     auto cxn = static_cast<Cxn *>(io.cxn);
-    app()->rxRun([
+    app()->rxInvoke([
       impl = ZmRef(this->impl()),
       cxn = ZmRef(cxn),
       buf = ZuMv(buf)
@@ -693,7 +693,7 @@ private:
   ZmRef<ZiIOBuf> rxTxBuf_(ptls_buffer_t &pbuf) {
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     if (ZuUnlikely(buf->size < TxRecordCapacity))
-      if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) return nullptr;
+      buf->ensure(TxRecordCapacity);
     auto base = buf->data_(); // record base; skip is 0 on this path
     auto align_bits = rxAlignBits_();
     if (!aligned_(base, align_bits)) return nullptr;
@@ -773,7 +773,7 @@ private:
     if (ZuUnlikely(buf->size < required))
       if (ZuUnlikely(!buf->ensure(required))) {
 	app()->error_(ZeEXCEPT(Error, "Ztls",
-	  "TLS Rx buffer growth failed"));
+	  "TLS Rx buffer capacity/status rejected"));
 	disconnect_(false);
 	return nullptr;
       }
@@ -857,7 +857,7 @@ private:
   ZmRef<ZiIOBuf> allocTxBuf_(unsigned headroom) { // App/Tx threads
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     if (ZuUnlikely(buf->size < TxRecordCapacity))
-      if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) return nullptr;
+      buf->ensure(TxRecordCapacity);
     // Application plaintext is staged after record headroom.
     buf->skip = headroom;
     buf->length = 0;
@@ -989,10 +989,7 @@ private:
       "TLS Tx plaintext bounds exceeded", return false);
 
     if (ZuUnlikely(buf->size < TxRecordCapacity))
-      if (ZuUnlikely(!buf->ensure(TxRecordCapacity - buf->skip))) {
-	queueTxError_(gen, "TLS Tx buffer growth failed");
-	return false;
-      }
+      buf->ensure(TxRecordCapacity - buf->skip);
 
     ptls_buffer_t pbuf;
     // Application Tx encrypts data() into a serialized record at data_().
@@ -1033,7 +1030,7 @@ private:
       "TLS Tx buffer allocation outside Tx thread", return nullptr);
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     if (ZuUnlikely(buf->size < TxRecordCapacity))
-      if (ZuUnlikely(!buf->ensure(TxRecordCapacity))) return nullptr;
+      buf->ensure(TxRecordCapacity);
     auto base = buf->data_();
     auto align_bits = txAlignBits_();
     if (!aligned_(base, align_bits)) return nullptr;
@@ -1051,7 +1048,7 @@ private:
     ptls_buffer_t pbuf;
     auto buf = txBuf_(pbuf);
     if (ZuUnlikely(!buf)) {
-      queueTxError_(gen, "TLS KeyUpdate buffer allocation failed");
+      queueTxError_(gen, "TLS KeyUpdate buffer geometry rejected");
       return;
     }
     int n = ptls_tx_update_key(
@@ -1855,7 +1852,7 @@ private:
     init_cipher_suites_();
     m_ctx.cipher_suites = m_cipherSuites;
     m_ctx.server_cipher_preference = 1;
-    if (!init_alpn_(params.alpn())) return false;
+    init_alpn_(params.alpn());
     if (asyncConfigured_())
       if (!startAsyncLoop_()) return false;
     if (!l(params)) {
@@ -2197,13 +2194,13 @@ protected:
   }
 
 protected:
-  bool init_alpn_(const ParamStrings &alpn) {
+  void init_alpn_(const ParamStrings &alpn) {
     m_alpn = {};
     m_alpnData = {};
-    if (!alpn.length()) return true;
+    if (!alpn.length()) return;
     unsigned bytes = 0;
     for (auto &s : alpn) bytes += s.length();
-    if (bytes && !m_alpnData.ensure(bytes)) return false;
+    if (bytes) m_alpnData.ensure(bytes);
     m_alpn.ensure(alpn.length());
     for (auto &s : alpn) {
       unsigned offset = m_alpnData.length();
@@ -2212,7 +2209,6 @@ protected:
 	m_alpnData.data() + offset,
 	s.length()});
     }
-    return true;
   }
 
 private:

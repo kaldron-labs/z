@@ -796,7 +796,6 @@ static int unprotect_(
       uint8_t, ZtArrayHeapID<"Zquic.PktProt.Plain">>;
     auto plain = ZmScratch(uint8_t, cipherLen, Plain::VHeap);
     plain.length(cipherLen);
-    if (cipherLen && !plain) return fail();
     n = ptls_aead_decrypt(
       ctx, plain.data(), packet + payloadOffset,
       cipherLen, pn, packet, payloadOffset);

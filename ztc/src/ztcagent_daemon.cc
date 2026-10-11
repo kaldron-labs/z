@@ -157,6 +157,7 @@ struct StateData {
   bool tokenPending = false;
   bool awaitingProvision = false;
   ZmRef<Agent::Link>	link;
+  ZmSemaphore	*linkDone = nullptr; // Rx-owned; points to stop()'s stack
   Ring	telRing;
   ZmThread	telThread;
   ZmAtomic<unsigned>	stop = 0;
@@ -194,43 +195,46 @@ namespace Agent_ {
 
 static bool rewriteSeq(uint8_t *data, uint64_t seqNo)
 {
-  auto message = flatbuffers::GetMutableRoot<fbs::Msg>(data);
-  if (!message) return false;
-  switch (message->body_type()) {
-    case fbs::Body::Telemetry:
-      return message->mutable_body_as_Telemetry()->mutate_seqNo(seqNo);
-    case fbs::Body::Ack:
-      return message->mutable_body_as_Ack()->mutate_seqNo(seqNo);
-    case fbs::Body::Error: {
-      auto error = message->mutable_body_as_Error();
-      return error && error->seqNo() != ZuCmp<uint64_t>::null() &&
-        error->mutate_seqNo(seqNo);
-    }
-    case fbs::Body::EOS:
-      return message->mutable_body_as_EOS()->mutate_seqNo(seqNo);
-    default:
-      return false;
+  auto message = ZiFB::View<Msg>{ZiFB::follow(data)};
+  auto body = msgBody(message);
+  auto rewrite = [body, seqNo]<typename F>() {
+    auto value = ZiFB::View<typename F::O>{body.data()};
+    auto field = value.template field<F>();
+    if (!field) return false;
+    ZiFB::write<uint64_t>(const_cast<uint8_t *>(field), seqNo);
+    return true;
+  };
+  switch (body.tag()) {
+    case Body::Telemetry: return rewrite.template operator()<ZfField(Telemetry, seqNo)>();
+    case Body::Ack: return rewrite.template operator()<ZfField(Ack, seqNo)>();
+    case Body::Error:
+      return body.get<Body::Error>().get<ZfField(Error, seqNo)>() !=
+	ZuCmp<uint64_t>::null() && rewrite.template operator()<ZfField(Error, seqNo)>();
+    case Body::EOS: return rewrite.template operator()<ZfField(EOS, seqNo)>();
+    default: return false;
   }
 }
 
 static ZmRef<ZiIOBuf> requestFrame(const Request &request)
 {
-  Zfb::IOBuilder builder{
+  Ztc::Builder builder{
     frameBuf(ZmRef<ZiIOBuf>{new Frame})};
-  auto value = ZfbStruct::save(builder, request);
-  builder.Finish(saveMsg(builder, fbs::Body::Request,
-    value.Union()));
+  auto nested = builder.startNested();
+  auto value = ZiFB::saveObject(builder, request);
+  builder.finish(saveMsg(builder, nested, Body::Request,
+    value));
   return saveHdr(builder);
 }
 
 static ZmRef<ZiIOBuf> hubErrorFrame(
     const ZuID &id, uint64_t seqNo, int32_t code, ZuCSpan message)
 {
-  Zfb::IOBuilder builder{ZmRef<ZiIOBuf>{new Frame}};
-  auto error = ZfbStruct::save(builder, Error{
+  Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
+  auto nested = builder.startNested();
+  auto error = ZiFB::saveObject(builder, Error{
     ErrorMessage{message}, id ? id : ZuID{"ztcagent"}, seqNo, code});
-  builder.Finish(saveMsg(builder, fbs::Body::Error,
-    error.Union()));
+  builder.finish(saveMsg(builder, nested, Body::Error,
+    error));
   return builder.buf();
 }
 
@@ -282,7 +286,7 @@ static bool requestApp(Agent::State *state, Pub_ *pub)
     .filter = "*",
     .id = pub->id,
     .seqNo = seqNo,
-    .group = uint8_t(fbs::Group::App),
+    .group = uint8_t(Group::App),
     .subscribe = true};
   if (!writeRequest(state, pub->ring, requestFrame(request))) {
     pub->appSeqNo = 0;
@@ -306,12 +310,13 @@ static void shutdown(Agent::State *state, Pub_ *pub,
     uint64_t generation)
 {
   if (!pub) return;
-  Zfb::IOBuilder builder{ZmRef<ZiIOBuf>{new Frame}};
-  auto id = builder.CreateString(pub->id.data(), pub->id.length());
-  auto value = fbs::CreateShutdown(builder);
+  Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
+  auto nested = builder.startNested();
+  auto id = builder.string(pub->id);
+  auto value = ZiFB::saveObject(builder, Shutdown{});
   auto telemetry = saveTelemetry(builder, id, 0,
-    fbs::TelemetryBody::Shutdown, value.Union());
-  builder.Finish(saveMsg(builder, fbs::Body::Telemetry, telemetry.Union()));
+    TelemetryBody::Shutdown, value);
+  builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry));
   transmit(state, builder.buf(), generation);
 }
 
@@ -359,10 +364,11 @@ static void finishReq(Agent::State *state, Req *req)
       transmit(state, hubErrorFrame({}, req->request.seqNo,
 	HubError::SnapshotFailed, "snapshot incomplete"), req->cxnGen);
     else {
-      Zfb::IOBuilder builder{ZmRef<ZiIOBuf>{new Frame}};
-      auto eos = ZfbStruct::save(builder,
+      Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
+      auto nested = builder.startNested();
+      auto eos = ZiFB::saveObject(builder,
 	  EOS{ZuID{"ztcagent"}, req->request.seqNo});
-      builder.Finish(saveMsg(builder, fbs::Body::EOS, eos.Union()));
+      builder.finish(saveMsg(builder, nested, Body::EOS, eos));
       transmit(state, builder.buf(), req->cxnGen);
     }
   }
@@ -383,7 +389,8 @@ static void delPub(Agent::State *state, Pub_ *pub)
     unlinkLeg(leg);
     finishReq(state, req);
   }
-  if (auto prior = state->pubIdx.delVal(pub->id)) ZmAssert(prior == pub);
+  [[maybe_unused]] auto prior = state->pubIdx.delVal(pub->id);
+  ZmAssert(!prior || prior == pub);
   state->pubs.delNode(static_cast<Pubs::Node *>(pub));
 }
 
@@ -487,11 +494,10 @@ static void admitRequest(Agent::State *state,
     ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (state->routeGeneration != generation || !frame) return;
-  auto root = Zfb::GetRoot<fbs::Msg>(frame->data());
-  auto value = root && root->body_type() == fbs::Body::Request ?
-    root->body_as_Request() : nullptr;
-  if (!value) return;
-  auto request = ZfbStruct::ctor<Ztc::Request>(value);
+  auto root = ZiFB::view<Msg>({frame->data(), frame->length});
+  if (msgBody(root).tag() != Body::Request) return;
+  auto value = msgBody(root).get<Body::Request>();
+  auto request = ZiFB::Handler<Request>{value}.ctor();
   if (!request.subscribe) {
     if (auto req = state->reqs.findPtr(request.seqNo)) delReq(state, req);
     return;
@@ -528,25 +534,25 @@ static void routeTelemetry(Agent::State *state,
     ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (state->routeGeneration != generation || !frame) return;
-  auto message = Zfb::GetRoot<fbs::Msg>(frame->data());
+  auto message = ZiFB::view<Msg>({frame->data(), frame->length});
   if (!message) return;
-  auto body = message->body();
-  if (!body) return;
+  auto body = msgBody(message);
+  if (!body.data()) return;
   ZuCSpan id;
   uint64_t seqNo = ZuCmp<uint64_t>::null();
   bool terminal = false;
-  switch (message->body_type()) {
-    case fbs::Body::Telemetry: {
-      auto value = message->body_as_Telemetry();
+  switch (body.tag()) {
+    case Body::Telemetry: {
+      auto value = body.get<Body::Telemetry>();
       if (!value) return;
-      id = Zfb::Load::str(value->id());
-      if (value->value_type() == fbs::TelemetryBody::AppTelemetry && id) {
+      id = value.get<ZfField(Telemetry, id)>();
+      if (value.get<ZfField(Telemetry, value)>().tag() == TelemetryBody::AppTelemetry && id) {
 	ZuID pubID{id};
 	if (pubID != id) return;
 	if (!addPub(state, ZuMv(pubID))) return;
 	auto pub = state->pubs.findPtr(id);
 	if (!pub) return;
-	seqNo = value->seqNo();
+	seqNo = value.get<ZfField(Telemetry, seqNo)>();
 	if (!seqNo || seqNo == pub->val().appSeqNo) {
 	  if (seqNo) {
 	    if (pub->val().app) {
@@ -560,8 +566,8 @@ static void routeTelemetry(Agent::State *state,
 	  return;
 	}
       }
-      if (value->value_type() == fbs::TelemetryBody::Shutdown && id &&
-          !value->seqNo()) {
+      if (value.get<ZfField(Telemetry, value)>().tag() == TelemetryBody::Shutdown && id &&
+	  !value.get<ZfField(Telemetry, seqNo)>()) {
         ZuID pubID{id};
         auto pub = pubID == id ? state->pubs.findPtr(pubID) : nullptr;
         if (!pub) return;
@@ -569,28 +575,28 @@ static void routeTelemetry(Agent::State *state,
         delPub(state, &pub->val());
         return;
       }
-      seqNo = value->seqNo();
+      seqNo = value.get<ZfField(Telemetry, seqNo)>();
       if (!seqNo) return;
     } break;
-    case fbs::Body::Ack: {
-      auto value = message->body_as_Ack();
+    case Body::Ack: {
+      auto value = body.get<Body::Ack>();
       if (!value) return;
-      id = Zfb::Load::str(value->id());
-      seqNo = value->seqNo();
+      id = value.get<ZfField(Ack, id)>();
+      seqNo = value.get<ZfField(Ack, seqNo)>();
 	ZuID pubID{id};
 	auto pub = pubID == id ? state->pubs.findPtr(pubID) : nullptr;
 	if (pub && seqNo == pub->val().appSeqNo) {
-	  if (value->status() != fbs::AckStatus::OK)
+	  if (value.get<ZfField(Ack, status)>() != AckStatus::OK)
 	    pub->val().appSeqNo = 0;
 	  return;
 	}
-      terminal = value->status() != fbs::AckStatus::OK;
+      terminal = value.get<ZfField(Ack, status)>() != AckStatus::OK;
     } break;
-    case fbs::Body::EOS: {
-      auto value = message->body_as_EOS();
+    case Body::EOS: {
+      auto value = body.get<Body::EOS>();
       if (!value) return;
-      id = Zfb::Load::str(value->id());
-      seqNo = value->seqNo();
+      id = value.get<ZfField(EOS, id)>();
+      seqNo = value.get<ZfField(EOS, seqNo)>();
 	ZuID pubID{id};
 	auto pub = pubID == id ? state->pubs.findPtr(pubID) : nullptr;
 	if (pub && seqNo && seqNo == pub->val().appSeqNo) {
@@ -602,11 +608,11 @@ static void routeTelemetry(Agent::State *state,
       if (!seqNo) return;
       terminal = true;
     } break;
-    case fbs::Body::Error: {
-      auto value = message->body_as_Error();
+    case Body::Error: {
+      auto value = body.get<Body::Error>();
       if (!value) return;
-      id = Zfb::Load::str(value->id());
-      seqNo = value->seqNo();
+      id = value.get<ZfField(Error, id)>();
+      seqNo = value.get<ZfField(Error, seqNo)>();
       terminal = true;
     } break;
     default: return;
@@ -617,7 +623,7 @@ static void routeTelemetry(Agent::State *state,
   auto leg = pub ? pub->val().legs.findPtr(seqNo) : nullptr;
   if (!leg || leg->val().req->cxnGen != generation) return;
   auto req = leg->val().req;
-  bool eos = message->body_type() == fbs::Body::EOS;
+  bool eos = body.tag() == Body::EOS;
   if (eos) terminal = !req->request.interval;
   if (!rewriteSeq(frame->data(), req->request.seqNo)) return;
   // A one-shot fan-out has one aggregate EOS, emitted by finishReq().
@@ -680,15 +686,14 @@ static void telemetry(Agent::State *state)
         break;
       }
       ZmRef<ZiIOBuf> frame = new Frame;
-      if (frame->alloc(size)) {
-        memcpy(frame->data(), hdr->data(), size);
-        frame->length = size;
-        auto generation = state->currentGeneration.load_();
-        state->mx->run([state, frame = ZuMv(frame), generation, size]() mutable {
-          Agent_::releaseTelemetry(state, size);
-          Agent_::routeTelemetry(state, ZuMv(frame), generation);
-        }, 1);
-      } else releaseTelemetry(state, size);
+      frame->alloc(size);
+      memcpy(frame->data(), hdr->data(), size);
+      frame->length = size;
+      auto generation = state->currentGeneration.load_();
+      state->mx->run([state, frame = ZuMv(frame), generation, size]() mutable {
+	Agent_::releaseTelemetry(state, size);
+	Agent_::routeTelemetry(state, ZuMv(frame), generation);
+      }, 1);
     }
     state->telRing.shift2(recordSize);
   }
@@ -793,6 +798,16 @@ static void retry(Agent::State *state)
     ZmScheduler::Update, [state](auto &&arm) {
       return arm([state]() { requestToken(state); });
     }, 1);
+}
+
+static void linkDown(Agent::State *state)
+{
+  state->link = nullptr;
+  retry(state);
+  if (auto done = state->linkDone) {
+    state->linkDone = nullptr;
+    done->post();
+  }
 }
 
 static void connectToken(Agent::State *state)
@@ -1018,8 +1033,11 @@ bool Agent::stop()
   m_state->stop = 1;
   m_state->mx->del(&m_state->reconnectTimer);
   m_state->mx->del(&m_state->pubGCTimer);
-  m_state->client.rxRun([state = m_state]() {
-    if (state->link) state->link->close();
+  ZmSemaphore linkDone;
+  m_state->client.rxRun([state = m_state, &linkDone]() {
+    if (!state->link) { linkDone.post(); return; }
+    state->linkDone = &linkDone;
+    state->link->disconnect();
   });
   if (m_state->telThread.tid()) m_state->telThread.join();
   ZmSemaphore routeDone;
@@ -1034,12 +1052,14 @@ bool Agent::stop()
     routeDone.post();
   }, 1);
   routeDone.wait();
+  // The WebSocket disconnect callback follows the TLS Rx/Tx cleanup and
+  // codec drain. Keep its owner and scheduler alive until it completes.
+  linkDone.wait();
   if (m_state->telRing.rdrID() >= 0) m_state->telRing.detach();
   m_state->telRing.close();
   m_state->http.final();
   m_state->httpFn = {};
   bool ok = m_state->client.stop();
-  m_state->link = nullptr;
   m_state->client.final();
   m_state->mx->stop();
   m_state->started = false;
@@ -1101,16 +1121,14 @@ void Agent::disconnected(Link &link, bool)
   m_state->mx->run([state = m_state, generation]() {
     Agent_::fence(state, generation);
   }, 1);
-  m_state->link = nullptr;
-  Agent_::retry(m_state);
+  Agent_::linkDown(m_state);
 }
 
 template <typename Link>
 void Agent::connectFailed(Link &link, bool)
 {
   if (&link != m_state->link.ptr()) return;
-  m_state->link = nullptr;
-  Agent_::retry(m_state);
+  Agent_::linkDown(m_state);
 }
 
 template <typename Link>
@@ -1141,16 +1159,13 @@ int Agent::messageEnd(Link &link)
   if (&link != m_state->link.ptr()) return -1;
   auto msg = Ztc::msg(ZuBSpan{
     m_state->rxFrame.data(), m_state->rxFrame.length()});
-  if (!msg || msg->body_type() != fbs::Body::Request ||
+  if (!msg || msgBody(msg).tag() != Body::Request ||
       !m_state->currentGeneration.load_()) {
     link.close(Zws::CloseCode::Protocol);
     return -1;
   }
   ZmRef<ZiIOBuf> frame = new Agent_::Frame;
-  if (!frame->alloc(m_state->rxFrame.length())) {
-    link.close(Zws::CloseCode::TooLarge);
-    return -1;
-  }
+  frame->alloc(m_state->rxFrame.length());
   memcpy(frame->data(), m_state->rxFrame.data(), m_state->rxFrame.length());
   frame->length = m_state->rxFrame.length();
   auto generation = m_state->currentGeneration.load_();

@@ -956,7 +956,7 @@ struct AsObject {
       ZfFieldFilter::Upd<Field>{}() &&
       ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{}()>;
 
-    using AllFields = ZuFields<O, Facet>;
+    using AllFields = ZuActiveFields<O, Facet>;
     using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
     using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
     using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
@@ -2017,7 +2017,7 @@ struct Option {
 };
 template <typename O, typename Facet>
 constexpr unsigned nOptions_() {
-  using AllFields = ZuFields<O, Facet>;
+  using AllFields = ZuActiveFields<O, Facet>;
   using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
   unsigned n = 0;
   ZuUnroll::all<SaveFields>([&n]<typename Field>() {
@@ -2042,7 +2042,7 @@ constexpr unsigned nOptions() {
 }
 template <typename O, typename Facet, typename Hash>
 void initOptions(Hash &hash, ZuCSpan prefix = {}) {
-  using AllFields = ZuFields<O, Facet>;
+  using AllFields = ZuActiveFields<O, Facet>;
   using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
   ZuUnroll::all<SaveFields>([&hash, &prefix]<typename Field>() {
     using Props = typename Field::Props;
@@ -2097,7 +2097,7 @@ private:
   template <typename U>
   static OptType::T longOptType_(ZuCSpan key_, ZuCSpan prefix = {}) {
     OptType::T type = -1;
-    using AllFields = ZuFields<U, Facet>;
+    using AllFields = ZuActiveFields<U, Facet>;
     using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
     ZuUnroll::all<SaveFields>([&type, &key_, &prefix]<typename Field>() {
       if (type >= 0) return;

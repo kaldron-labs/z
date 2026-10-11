@@ -123,7 +123,8 @@ private:
     auto buf = this->allocBuf_(this->headRoom());
     if (ZuUnlikely(!buf || buf->failed() || !prepareBuf_(buf, true)))
       return false;
-    return m_lower.sendBuf(ZuMv(buf), true);
+    m_lower << ZuMv(buf) << Zi::Flush{};
+    return !m_lower.failed();
   }
 
   Lower		&m_lower;

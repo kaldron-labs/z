@@ -1058,7 +1058,7 @@ struct AsObject {
   struct Handler {
     enum { Alignment = 8 };
     using O = O_;
-    using WireFields = ZuFields<O, Facet>;
+    using WireFields = ZuActiveFields<O, Facet>;
     using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, WireFields>;
     template <typename Field>
     using CtorIndex = ZuFieldProp::GetCtor<typename Field::Props>;

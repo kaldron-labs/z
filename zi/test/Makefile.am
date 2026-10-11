@@ -13,17 +13,19 @@ libZiTest_la_SOURCES = ZiTestResidue.cc
 noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
-	ZiIOBufTest ZiFBTest ZiEventLoopTest \
+	ZiIOBufTest ZiFBTest ZiFBReflectTest ZiFBIOTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
 	ZiDaemonTest ZiPIDFileTest ZiResolverTest
-noinst_HEADERS = ZiTestPorts.hh ZiTestResidue.hh
+noinst_HEADERS = ZiTestPorts.hh ZiTestResidue.hh ZiFBTest.hh
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZiFileTest_SOURCES = ZiFileTest.cc
 ZiFBTest_SOURCES = ZiFBTest.cc
+ZiFBReflectTest_SOURCES = ZiFBReflectTest.cc
+ZiFBIOTest_SOURCES = ZiFBIOTest.cc
 ZiFileAgeTest_SOURCES = ZiFileAgeTest.cc
 ZiGlobTest_SOURCES = ZiGlobTest.cc
 ZiRingTest_SOURCES = ZiRingTest.cc
@@ -45,3 +47,5 @@ ZiLogTest_SOURCES = ZiLogTest.cc
 ZiMxLoopTest_SOURCES = ZiMxLoopTest.cc
 ZiDaemonTest_SOURCES = ZiDaemonTest.cc
 ZiPIDFileTest_SOURCES = ZiPIDFileTest.cc
+
+EXTRA_DIST = README.md

@@ -24,7 +24,6 @@ struct Stats {
   uint64_t	internal_free = 0;
   uint64_t	origin_align_fail = 0;
   uint64_t	origin_ensure_fail = 0;
-  uint64_t	internal_alloc_fail = 0;
 };
 
 ZtlsAPI void install();

@@ -10,6 +10,7 @@
 #define ZdbSLCodec_HH
 
 #include <string.h>
+#include <stdint.h>
 
 #include <zlib/ZuByteSwap.hh>
 #include <zlib/ZuDateTime.hh>
@@ -19,6 +20,31 @@
 #include <zlib/ZuTime.hh>
 
 namespace ZdbSL {
+
+inline uint64_t sizeAdd(uint64_t size, uint64_t more, unsigned limit)
+{
+  if (size > limit || more > limit - size) return UINT64_MAX;
+  return size + more;
+}
+
+inline uint64_t vecSize(uint64_t n, unsigned width, unsigned limit)
+{
+  if (limit < sizeof(uint32_t) ||
+      n > (limit - sizeof(uint32_t))/width) return UINT64_MAX;
+  return sizeof(uint32_t) + n * width;
+}
+
+template <typename L>
+inline uint64_t vecVarSize(unsigned n, unsigned limit, L &&length)
+{
+  uint64_t size = vecSize(n, sizeof(uint32_t), limit);
+  if (size == UINT64_MAX) return size;
+  for (unsigned i = 0; i < n; ++i) {
+    size = sizeAdd(size, length(i), limit);
+    if (size == UINT64_MAX) return size;
+  }
+  return size;
+}
 
 template <typename T>
 inline void saveUnsigned(uint8_t *ptr, T value)

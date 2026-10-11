@@ -393,15 +393,15 @@ struct ClientInput {
   StringVec identityScopes;
 };
 ZfStruct(, (ClientInput, JSON),
-  (id,		(JSON::Opt),							String),
-  (appID,		(JSON::ID<"app_id">, Required, JSON::String<>),		UInt64),
-  (label,		(JSON::Opt),						String),
-  (profile,		(Required),						String),
-  (redirectURIs,	(JSON::ID<"redirect_uris">, JSON::Opt),			StringVec),
+  (id,			(JSON::Opt),					String),
+  (appID,		(JSON::ID<"app_id">, Required, JSON::String<>),	UInt64),
+  (label,		(JSON::Opt),					String),
+  (profile,		(Required),					String),
+  (redirectURIs,	(JSON::ID<"redirect_uris">, JSON::Opt),		StringVec),
   (grants,		(Flags<ClientGrant::Map>,
     JSON::String<ClientGrant::Fmt>, JSON::Opt),				UInt8),
   (refreshAllowed,	(JSON::ID<"refresh_allowed">, JSON::Opt),	Bool),
-  (identityScopes,	(JSON::ID<"identity_scopes">, JSON::Opt),		StringVec));
+  (identityScopes,	(JSON::ID<"identity_scopes">, JSON::Opt),	StringVec));
 
 struct ClientUpdateInput {
   String label;
@@ -416,7 +416,7 @@ ZfStruct(, (ClientUpdateInput, JSON),
   (label,		(JSON::Opt),					String),
   (redirectURIs,	(JSON::ID<"redirect_uris">, JSON::Opt),		StringVec),
   (grants,		(Flags<ClientGrant::Map>,
-    JSON::String<ClientGrant::Fmt>, JSON::Opt),			UInt8),
+    JSON::String<ClientGrant::Fmt>, JSON::Opt),				UInt8),
   (identityScopes,	(JSON::ID<"identity_scopes">, JSON::Opt),	StringVec));
 
 struct ClientAccessInput {
@@ -485,13 +485,13 @@ struct AuthPolicyInput {
   String state;
 };
 ZfStruct(, (AuthPolicyInput, JSON),
-  (providerID,	(JSON::ID<"provider_id">, JSON::Opt, JSON::String<>),	UInt64),
-  (localFirst,	(JSON::ID<"local_first">, Required),		Bool),
+  (providerID,		(JSON::ID<"provider_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (localFirst,		(JSON::ID<"local_first">, Required),			Bool),
   (eligibilityMode,	(JSON::ID<"eligibility_mode">, Required),		String),
   (eligibilityClaim,	(JSON::ID<"eligibility_claim">, JSON::Opt),		String),
-  (eligibilityValues,(JSON::ID<"eligibility_values">, JSON::Opt),		StringVec),
-  (assignmentMaxAge,(JSON::ID<"assignment_max_age">, Required),			UInt32),
-  (sessionIdle,	(JSON::ID<"session_idle">, Required),				UInt32),
+  (eligibilityValues,	(JSON::ID<"eligibility_values">, JSON::Opt),		StringVec),
+  (assignmentMaxAge,	(JSON::ID<"assignment_max_age">, Required),		UInt32),
+  (sessionIdle,		(JSON::ID<"session_idle">, Required),			UInt32),
   (sessionAbsolute,	(JSON::ID<"session_absolute">, Required),		UInt32),
   (tokenLifetime,	(JSON::ID<"token_lifetime">, Required),			UInt32),
   (consentPolicy,	(JSON::ID<"consent_policy">, Required),			String),
@@ -528,18 +528,18 @@ struct GrantSelector {
   uint32_t limit = 0;
 };
 ZfStruct(, (GrantSelector, JSON),
-  (id,		(JSON::Opt),		String),
-  (userID,		(JSON::ID<"user_id">, JSON::Opt, JSON::String<>),	UInt64),
-  (appID,		(JSON::ID<"app_id">, JSON::Opt, JSON::String<>),	UInt64),
-  (limit,		(Required),	UInt32));
+  (id,		(JSON::Opt),						String),
+  (userID,	(JSON::ID<"user_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (appID,	(JSON::ID<"app_id">, JSON::Opt, JSON::String<>),	UInt64),
+  (limit,	(Required),						UInt32));
 
 struct CleanupInput {
   int64_t before = 0;
   uint32_t limit = 0;
 };
 ZfStruct(, (CleanupInput, JSON),
-  (before,		(JSON::Opt),	Int64),
-  (limit,		(Required),		UInt32));
+  (before,	(JSON::Opt),	Int64),
+  (limit,	(Required),	UInt32));
 
 struct SignKeyInput {
   AppID appID = 0;
@@ -605,23 +605,23 @@ struct QueryFields {
     "cursor", "limit">;
 };
 ZfStruct(, (QueryInput, URI),
-  (id,		(Mutable),					String),
-  (name,		(Mutable),				String),
-  (source,		(Mutable),				String),
-  (appID,		(URI::ID<"app_id">, Mutable),		String),
-  (userID,		(URI::ID<"user_id">, Mutable),		String),
-  (clientID,		(URI::ID<"client_id">, Mutable),	String),
-  (providerID,	(URI::ID<"provider_id">, Mutable),		String),
-  (actorKind,	(URI::ID<"actor_kind">, Mutable),		String),
-  (actorID,		(URI::ID<"actor_id">, Mutable),		String),
-  (value,		(Mutable),				String),
-  (keyID,		(URI::ID<"key_id">, Mutable),		String),
-  (issuer,		(Mutable),				String),
-  (subject,		(Mutable),				String),
-  (operation,	(Mutable),					String),
-  (idempotence,	(Mutable),					String),
-  (cursor,		(Mutable),				String),
-  (limit,		(Mutable),			UInt32));
+  (id,		(Mutable),				String),
+  (name,	(Mutable),				String),
+  (source,	(Mutable),				String),
+  (appID,	(URI::ID<"app_id">, Mutable),		String),
+  (userID,	(URI::ID<"user_id">, Mutable),		String),
+  (clientID,	(URI::ID<"client_id">, Mutable),	String),
+  (providerID,	(URI::ID<"provider_id">, Mutable),	String),
+  (actorKind,	(URI::ID<"actor_kind">, Mutable),	String),
+  (actorID,	(URI::ID<"actor_id">, Mutable),		String),
+  (value,	(Mutable),				String),
+  (keyID,	(URI::ID<"key_id">, Mutable),		String),
+  (issuer,	(Mutable),				String),
+  (subject,	(Mutable),				String),
+  (operation,	(Mutable),				String),
+  (idempotence,	(Mutable),				String),
+  (cursor,	(Mutable),				String),
+  (limit,	(Mutable),				UInt32));
 
 // Require a complete framework parse and reject its null sentinel.
 static bool adminUInt(ZuCSpan text, uint64_t &value)
@@ -738,7 +738,7 @@ static bool adminBody(String &body, T &value)
   auto handler = ZfJSON::handler<T, ZuFacet::JSON>(roots[0].ptr());
   if (!handler.valid) return false;
   bool required = true;
-  ZuUnroll::all<ZuFields<T, ZuFacet::JSON>>([&]<typename Field>() {
+  ZuUnroll::all<ZuActiveFields<T, ZuFacet::JSON>>([&handler, &required]<typename Field>() {
     if constexpr (ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{}())
       if (!handler.template hasField<Field>()) required = false;
   });
@@ -2668,9 +2668,9 @@ template <typename Record, typename Key>
 static String adminCursorEncode(
     ZuBSpan secret, int operation, AppID appID, const Key &key)
 {
-  Zfb::IOBuilder fbb{new ZiIOBufAlloc<>()};
-  fbb.Finish(ZfbStruct::save(fbb, key));
-  unsigned dataLength = fbb.GetSize();
+  ZiFB::IOBuilder<ZiFB::BufferAlign<Key>::N> fbb{new ZiIOBufAlloc<>()};
+  fbb.finish(ZiFB::saveObject(fbb, key));
+  unsigned dataLength = fbb.size();
   constexpr unsigned headerLength = 10;
   constexpr unsigned macLength = Ztls::HMAC<>::Size;
   Bytes raw;
@@ -2679,7 +2679,7 @@ static String adminCursorEncode(
   raw[1] = uint8_t(operation);
   ZuBigEndian<uint64_t> app{appID};
   memcpy(raw.data() + 2, &app, sizeof(app));
-  memcpy(raw.data() + headerLength, fbb.GetBufferPointer(), dataLength);
+  memcpy(raw.data() + headerLength, fbb.data(), dataLength);
   Ztls::HMAC<> hmac;
   hmac.start(secret);
   hmac.update({raw.data(), headerLength + dataLength});
@@ -2722,13 +2722,12 @@ static bool adminCursorDecode(
     return false;
   }
   using Record = typename Table::T;
-  auto fbo = ZfbStruct::verify<Record>(
-    {raw.data() + headerLength, dataLength});
-  if (!fbo) {
+  ZuBSpan bytes{raw.data() + headerLength, dataLength};
+  if (!ZiFB::verify<Record>(bytes)) {
     ZuClear(raw);
     return false;
   }
-  key = ZfbStruct::ctor<typename Table::template Key<KeyID>>(fbo);
+  key = ZiFB::load<typename Table::template Key<KeyID>>(bytes);
   ZuClear(raw);
   return true;
 }

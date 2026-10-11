@@ -6,6 +6,7 @@
 
 #include <zlib/ZdbPQ.hh>
 
+
 #include <zlib/ZmDemangle.hh>
 
 #include <zlib/ZtCase.hh>
@@ -813,7 +814,7 @@ void Store::open(
   bool internal,
   IDString id,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
-  const reflection::Schema *schema,
+  Schema schema,
   IOBufAllocFn bufAllocFn, OpenFn openFn)
 {
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
@@ -840,6 +841,7 @@ void Store::open(
 	    }))});
 	return;
       }
+      storeTbl->schema(schema);
       storeTbl->open(ZuMv(openFn));
       return;
     }
@@ -861,62 +863,62 @@ void Store::enqueue(Work::Task task)
 
 // resolve Value union discriminator from flatbuffers reflection data
 static XField xField(
-  const Zfb::Vector<Zfb::Offset<reflection::Field>> *fbFields_,
+  R::FieldView fbField,
   const ZfVField *field,
   const IDString &id)
 {
   // resolve flatbuffers reflection data for field
-  const reflection::Field *fbField = fbFields_->LookupByKey(id);
-  if (!fbField) return {{}, nullptr, 0};
+  if (!fbField) return {{}, nullptr, {}, 0};
   unsigned type = 0;
   auto ftype = field->type;
-  switch (fbField->type()->base_type()) {
-    case reflection::String:
+  switch (R::type(fbField).get<R::ZfField(Type, baseType)>()) {
+    case R::BaseType::String:
       if (ftype->code == ZfFieldTC::CString ||
 	  ftype->code == ZfFieldTC::String)
 	type = Value::Index<String>{};
       break;
-    case reflection::Bool:
+    case R::BaseType::Bool:
       if (ftype->code == ZfFieldTC::Bool)
 	type = Value::Index<Bool>{};
       break;
-    case reflection::Byte:
+    case R::BaseType::Byte:
       if (ftype->code == ZfFieldTC::Int8)
 	type = Value::Index<Int8>{};
       break;
-    case reflection::UByte:
+    case R::BaseType::UByte:
       if (ftype->code == ZfFieldTC::UInt8)
 	type = Value::Index<UInt8>{};
       break;
-    case reflection::Short:
+    case R::BaseType::Short:
       if (ftype->code == ZfFieldTC::Int16)
 	type = Value::Index<Int16>{};
       break;
-    case reflection::UShort:
+    case R::BaseType::UShort:
       if (ftype->code == ZfFieldTC::UInt16)
 	type = Value::Index<UInt16>{};
       break;
-    case reflection::Int:
+    case R::BaseType::Int:
       if (ftype->code == ZfFieldTC::Int32)
 	type = Value::Index<Int32>{};
       break;
-    case reflection::UInt:
+    case R::BaseType::UInt:
       if (ftype->code == ZfFieldTC::UInt32)
 	type = Value::Index<UInt32>{};
       break;
-    case reflection::Long:
+    case R::BaseType::Long:
       if (ftype->code == ZfFieldTC::Int64)
 	type = Value::Index<Int64>{};
       break;
-    case reflection::ULong:
+    case R::BaseType::ULong:
       if (ftype->code == ZfFieldTC::UInt64)
 	type = Value::Index<UInt64>{};
       break;
-    case reflection::Double:
+    case R::BaseType::Float:
+    case R::BaseType::Double:
       if (ftype->code == ZfFieldTC::Float)
 	type = Value::Index<Float>{};
       break;
-    case reflection::Obj: {
+    case R::BaseType::Obj: {
       switch (ftype->code) {
 	case ZfFieldTC::Int128:
 	  type = Value::Index<Int128>{};
@@ -936,65 +938,62 @@ static XField xField(
 	case ZfFieldTC::DateTime:
 	  type = Value::Index<DateTime>{};
 	  break;
-	case ZfFieldTC::UDT: {
-	  auto typeID = ftype->info.udt()->id;
-	  if (typeID == "Bitmap") {
-	    type = Value::Index<Bitmap>{};
-	    break;
-	  }
-	  if (typeID == "IP") {
-	    type = Value::Index<IP>{};
-	    break;
-	  }
-	}
+	case ZfFieldTC::UDT:
+	  if (ftype->info.udt()->id == "Bitmap") type = Value::Index<Bitmap>{};
+	  break;
       }
     } break;
-    case reflection::Vector:
-      switch (fbField->type()->element()) {
+    case R::BaseType::Union:
+      if (ftype->code == ZfFieldTC::UDT && ftype->info.udt()->id == "IP")
+	type = Value::Index<IP>{};
+      break;
+    case R::BaseType::Vector:
+      switch (R::type(fbField).get<R::ZfField(Type, element)>()) {
 	default: break;
-	case reflection::String:
-	  if (ftype->code == ZfFieldTC::StringVec)
+	case R::BaseType::String:
+	  if (ftype->code == ZfFieldTC::CStringVec || ftype->code == ZfFieldTC::StringVec)
 	    type = Value::Index<StringVec>{};
 	  break;
-	case reflection::Byte:
+	case R::BaseType::Byte:
 	  if (ftype->code == ZfFieldTC::Int8Vec)
 	    type = Value::Index<Int8Vec>{};
 	  break;
-	case reflection::UByte:
+	case R::BaseType::UByte:
 	  if (ftype->code == ZfFieldTC::Bytes)
 	    type = Value::Index<Bytes>{};
 	  else if (ftype->code == ZfFieldTC::UInt8Vec)
 	    type = Value::Index<UInt8Vec>{};
 	  break;
-	case reflection::Short:
+	case R::BaseType::Short:
 	  if (ftype->code == ZfFieldTC::Int16Vec)
 	    type = Value::Index<Int16Vec>{};
 	  break;
-	case reflection::UShort:
+	case R::BaseType::UShort:
 	  if (ftype->code == ZfFieldTC::UInt16Vec)
 	    type = Value::Index<UInt16Vec>{};
 	  break;
-	case reflection::Int:
+	case R::BaseType::Int:
 	  if (ftype->code == ZfFieldTC::Int32Vec)
 	    type = Value::Index<Int32Vec>{};
 	  break;
-	case reflection::UInt:
+	case R::BaseType::UInt:
 	  if (ftype->code == ZfFieldTC::UInt32Vec)
 	    type = Value::Index<UInt32Vec>{};
 	  break;
-	case reflection::Long:
+	case R::BaseType::Long:
 	  if (ftype->code == ZfFieldTC::Int64Vec)
 	    type = Value::Index<Int64Vec>{};
 	  break;
-	case reflection::ULong:
+	case R::BaseType::ULong:
 	  if (ftype->code == ZfFieldTC::UInt64Vec)
 	    type = Value::Index<UInt64Vec>{};
 	  break;
-	case reflection::Double:
+	case R::BaseType::Float:
+	case R::BaseType::Double:
 	  if (ftype->code == ZfFieldTC::FloatVec)
 	    type = Value::Index<FloatVec>{};
 	  break;
-	case reflection::Obj:
+	case R::BaseType::Obj:
 	  switch (ftype->code) {
 	    case ZfFieldTC::BytesVec:
 	      type = Value::Index<BytesVec>{};
@@ -1024,13 +1023,14 @@ static XField xField(
     default:
       break;
   }
-  return {id, field, fbField, type};
+  return {id, field, fbField, type, R::alignment(fbField),
+    ZiFB::Wire::Align};
 }
 
 StoreTbl::StoreTbl(
   Store *store, bool internal, IDString id, unsigned nShards,
   ZfVFieldArray fields, ZfVKeyFieldArray keyFields,
-  const reflection::Schema *schema, IOBufAllocFn bufAllocFn
+  Schema schema, IOBufAllocFn bufAllocFn
 ) :
   m_store{store}, m_id{ZuMv(id)},
   m_bufAllocFn{ZuMv(bufAllocFn)}, m_internal{internal}
@@ -1041,9 +1041,6 @@ StoreTbl::StoreTbl(
   m_stmtID << ns << m_id_;
   m_relation << '"' << (m_internal ? "zdb" : "public")
     << "\".\"" << m_id_ << '"';
-  const reflection::Object *rootTbl = schema->root_table();
-  const Zfb::Vector<Zfb::Offset<reflection::Field>> *fbFields_ =
-    rootTbl->fields();
   unsigned n = fields.length();
   m_xFields.size(n);
   {
@@ -1055,8 +1052,8 @@ StoreTbl::StoreTbl(
   }
   for (unsigned i = 0; i < n; i++)
     ZtCase::camelSnake(fields[i]->id,
-      [this, fields, fbFields_, i](ZuCSpan id) {
-	m_xFields.push(xField(fbFields_, fields[i], id));
+      [this, fields, schema, i](ZuCSpan id) {
+	m_xFields.push(xField(schema.field(fields[i]->id), fields[i], id));
 	auto type = m_xFields[i].type;
 	if (type == Value::Index<String>{} ||
 	    type == Value::Index<Bytes>{} ||
@@ -1102,6 +1099,7 @@ StoreTbl::StoreTbl(
 	s << id << " key " << i << " has mixed ascending/descending fields";
       }));
   }
+  this->schema(schema);
   m_maxUN.length(nShards);
 }
 
@@ -1128,6 +1126,7 @@ void StoreTbl::open(OpenFn openFn)
   if (m_openState.phase() == OpenState::Reopen) { openCount(); return; }
   if (!m_fieldMap) initFieldMap();
   m_openState.reset();
+  m_badField = ZuCmp<unsigned>::null();
   mkTable();
 }
 
@@ -1386,16 +1385,20 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
       open_enqueue(true, false);
     } else {
       // table exists but not all fields matched
-      auto i = m_openState.field();
+      auto i = m_badField;
       auto e = ZeEXCEPT(Fatal, "ZdbPQ", ([
 	id = this->m_id_,
-	failed = m_openState.failed(),
-	i, field = m_xFields[i].vfield,
+	failed = m_openState.failed(), matched = m_openState.field(),
+	i, field = ZuNull(i) ? nullptr : m_xFields[i].vfield,
 	nFields = m_xFields.length()
       ](auto &s, const auto &) {
+	s << "inconsistent schema for table " << id;
+	if (!field) {
+	  s << " failed=" << failed << " matched=" << matched << " nFields=" << nFields;
+	  return;
+	}
 	auto ftype = field->type;
-	s << "inconsistent schema for table " << id
-	  << " field[" << i << "]={id=" << field->id
+	s << " field[" << i << "]={id=" << field->id
 	  << " typeCode=" << ZfFieldTC::name(field->type->code);
 	if (ftype->code == ZfFieldTC::UDT) {
 	  auto udtInfo = ftype->info.udt();
@@ -1455,6 +1458,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
     })); */
 
     if (!m_openState.failed() && !match) {
+      m_badField = field;
       m_openState.setFailed();
       return;
     }
@@ -2279,22 +2283,15 @@ void StoreTbl::select(
 #define ParamAlloc(nParams) \
   auto params = ZmScratch(Value, unsigned(nParams), Tuple::VHeap)
 
-#define VarAlloc(nParams, xfields, fbo) \
+#define VarAlloc(nParams, xfields, fbo, op) \
   unsigned nVars = 0; \
   for (unsigned i = 0; i < nParams; i++) \
     if (isVar(xFieldAt(m_xFields, xfields, i).type)) nVars++; \
   auto varBufParts = ZmScratch(VarBufPart, nVars, VarBufParts::VHeap); \
-  unsigned varBufSize_ = 0; \
-  if (nVars > 0) { \
-    for (unsigned i = 0; i < nParams; i++) { \
-      const auto &xField = xFieldAt(m_xFields, xfields, i); \
-      if (!isVar(xField.type)) continue; \
-      auto field = xField.field; \
-      unsigned size = ZuSwitch::dispatch<Value::N>(xField.type, \
-	  [field, fbo](auto Type) { return varBufSize<Type>(field, fbo); }); \
-      varBufParts.push(VarBufPart{varBufSize_, size}); \
-      varBufSize_ += size; \
-    } \
+  unsigned varBufSize_ = planTuple(varBufParts, nParams, m_xFields, xfields, fbo); \
+  if (ZuUnlikely(varBufSize_ == UINT_MAX)) { \
+    op##_failed(op, ZeEXCEPT(Error, "ZdbPQ", "parameter buffer exceeds Zdb size limit")); \
+    return SendState::Unsent; \
   } \
   auto varBuf = ZmScratch(uint8_t, varBufSize_, VarBuf::VHeap)
 
@@ -2304,11 +2301,11 @@ int StoreTbl::count_send(Work::Count &count)
 
   const auto &xKey = m_xKeys[count.keyID];
   auto nParams = xKey.group;
-  auto fbo = Zfb::GetAnyRoot(count.buf->data());
+  ZiFB::TableView fbo{ZiFB::root(count.buf->cspan())};
 
   IDAlloc();
   ParamAlloc(nParams);
-  VarAlloc(nParams, xKey.fields, fbo);
+  VarAlloc(nParams, xKey.fields, fbo, count);
 
   if (nParams > 0)
     loadTuple(
@@ -2351,13 +2348,13 @@ int StoreTbl::select_send(Work::Select &select)
   const auto &xKey = m_xKeys[select.keyID];
   auto nParams =
     select.selectNext ? xKey.fields.length() : xKey.group;
-  auto fbo = Zfb::GetAnyRoot(select.buf->data());
+  ZiFB::TableView fbo{ZiFB::root(select.buf->cspan())};
 
   IDAlloc();
   nParams += 1; // +1 for limit
   ParamAlloc(nParams);
   nParams -= 1;
-  VarAlloc(nParams, xKey.fields, fbo);
+  VarAlloc(nParams, xKey.fields, fbo, select);
 
   if (nParams > 0)
     loadTuple(
@@ -2405,9 +2402,9 @@ void StoreTbl::select_rcvd(Work::Select &select, PGresult *res)
 	goto inconsistent;
     }
     auto buf = select.selectRow ?
-      select_save(tuple, m_xFields, m_xOffsets) :
+      select_save(tuple, m_xFields, m_xOffsets, m_rowAlign) :
       select_save(
-	tuple, m_xKeys[keyID].fields, m_xKeys[keyID].offsets);
+	tuple, m_xKeys[keyID].fields, m_xKeys[keyID].offsets, m_xKeys[keyID].bufAlign);
     // res can go out of scope now - everything is saved in buf
     select.tupleFn(TupleResult{TupleData{
       .keyID = select.selectRow ? KeyID(ZuStructKeyID::All) : keyID,
@@ -2424,10 +2421,10 @@ inconsistent:
 }
 template <typename Fields>
 ZmRef<IOBuf> StoreTbl::select_save(
-  ZuSpan<const Value> tuple, const Fields &fields, unsigned nOffsets)
+  ZuSpan<const Value> tuple, const Fields &fields, unsigned nOffsets, unsigned align)
 {
-  Zfb::IOBuilder fbb{m_bufAllocFn()};
-  fbb.Finish(saveTuple(fbb, m_xFields, fields, nOffsets, tuple));
+  Builder fbb{m_bufAllocFn(), align};
+  fbb.finish(saveTuple(fbb, m_xFields, fields, nOffsets, tuple));
   return fbb.buf();
 }
 void StoreTbl::select_failed(Work::Select &select, ZeException e)
@@ -2457,11 +2454,11 @@ int StoreTbl::find_send(Work::Find &find)
 {
   const auto &xKeyFields = m_xKeys[find.keyID].fields;
   auto nParams = xKeyFields.length();
-  auto fbo = Zfb::GetAnyRoot(find.buf->data());
+  ZiFB::TableView fbo{ZiFB::root(find.buf->cspan())};
 
   IDAlloc();
   ParamAlloc(nParams);
-  VarAlloc(nParams, xKeyFields, fbo);
+  VarAlloc(nParams, xKeyFields, fbo, find);
 
   loadTuple(
     params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
@@ -2551,24 +2548,19 @@ inconsistent:
 template <bool Recovery>
 ZmRef<IOBuf> StoreTbl::find_save(ZuSpan<const Value> tuple)
 {
-  Zfb::IOBuilder fbb{m_bufAllocFn()};
-  auto data = Zfb::Save::nest(fbb, [this, tuple](Zfb::Builder &fbb) mutable {
-    tuple.offset(4); // skip shard, un, sn, vn
-    return saveTuple(fbb, m_xFields, m_xFields, m_xOffsets, tuple);
-  });
-  {
-    auto shard = Shard(tuple[0].p<UInt8>().v);
-    UN un = tuple[1].p<UInt64>().v;
-    SN sn = tuple[2].p<UInt128>().v;
-    VN vn = tuple[3].p<Int64>().v;
-    auto sn_ = ZfbTransform::UInt128::save(sn);
-    auto msg = fbs::CreateMsg(
-      fbb, Recovery ? fbs::Body::Recovery : fbs::Body::Replication,
-      fbs::CreateRecord(
-	fbb, Zfb::Save::str(fbb, this->id()),
-	un, &sn_, vn, shard, data).Union());
-    fbb.Finish(msg);
-  }
+  constexpr unsigned msgAlign = ZiFB::BufferAlign<Msg::Root>::N;
+  Builder fbb{m_bufAllocFn(), m_rowAlign > msgAlign ? m_rowAlign : msgAlign};
+  auto nested = fbb.startNested();
+  auto payload = tuple;
+  payload.offset(4); // skip shard, un, sn, vn
+  auto root = saveTuple(fbb, m_xFields, m_xFields, m_xOffsets, payload);
+  auto data = fbb.endNested(nested, root);
+  auto shard = Shard(tuple[0].p<UInt8>().v);
+  UN un = tuple[1].p<UInt64>().v;
+  SN sn = tuple[2].p<UInt128>().v;
+  VN vn = tuple[3].p<Int64>().v;
+  auto record = saveRecord(fbb, this->id(), un, sn, vn, shard, data);
+  fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
   return saveHdr(fbb);
 }
 void StoreTbl::find_failed(Work::Find &find, ZeException e)
@@ -2641,9 +2633,9 @@ int StoreTbl::write_send(Work::Write &write)
   })); */
 
   auto record = record_(msg_(write.buf->hdr()));
-  auto shard = record->shard();
-  auto un =record->un(); 
-  auto sn = ZfbTransform::UInt128::load(record->sn());
+  auto shard = record.get<Msg::ZfField(Record, shard)>();
+  auto un = record.get<Msg::ZfField(Record, un)>();
+  auto sn = record.get<Msg::ZfField(Record, sn)>();
 
   if (!write.mrd) {
     auto &maxUN = m_maxUN[shard];
@@ -2653,7 +2645,7 @@ int StoreTbl::write_send(Work::Write &write)
     }
   }
 
-  /* ZiLOG(Debug, "ZdbPQ", ([un, sn, vn = record->vn()](auto &s) {
+  /* ZiLOG(Debug, "ZdbPQ", ([un, sn, vn = record.get<Msg::ZfField(Record, vn)>()](auto &s) {
     s << "UN=" << un << " SN=" << ZuBoxed(sn) << " VN=" << vn;
   })); */
 
@@ -2667,32 +2659,32 @@ int StoreTbl::write_send(Work::Write &write)
     return m_store->sendPrepared<SendState::Sync>(id, params);
   }
 
-  auto fbo = Zfb::GetAnyRoot(record->data()->data());
-  if (!record->vn()) { // insert
+  ZiFB::TableView fbo{ZiFB::root(record.get<Msg::ZfField(Record, data)>())};
+  if (!record.get<Msg::ZfField(Record, vn)>()) { // insert
     auto nParams = m_xFields.length() + 4; // +4 for shard, un, sn, vn
     IDAlloc();
     ParamAlloc(nParams);
     nParams -= 4;
-    VarAlloc(nParams, m_xFields, fbo);
+    VarAlloc(nParams, m_xFields, fbo, write);
     id << m_stmtID << "_ins";
     new (params.push()) Value{UInt8{shard}};
     new (params.push()) Value{UInt64{un}};
     new (params.push()) Value{UInt128{sn}};
-    new (params.push()) Value{UInt64{record->vn()}};
+    new (params.push()) Value{UInt64{record.get<Msg::ZfField(Record, vn)>()}};
     loadTuple(
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_xFields, m_xFields, fbo);
     return m_store->sendPrepared<SendState::Sync>(id, params);
-  } else if (record->vn() > 0) { // update
+  } else if (record.get<Msg::ZfField(Record, vn)>() > 0) { // update
     auto nParams = m_xUpdFields.length() + 3; // +3 for un, sn, vn
     IDAlloc();
     ParamAlloc(nParams);
     nParams -= 3;
-    VarAlloc(nParams, m_xUpdFields, fbo);
+    VarAlloc(nParams, m_xUpdFields, fbo, write);
     id << m_stmtID << "_upd";
     new (params.push()) Value{UInt64{un}};
     new (params.push()) Value{UInt128{sn}};
-    new (params.push()) Value{UInt64{record->vn()}};
+    new (params.push()) Value{UInt64{record.get<Msg::ZfField(Record, vn)>()}};
     loadTuple(
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
       m_store->oids(), nParams, m_xFields, m_xUpdFields, fbo);
@@ -2701,7 +2693,7 @@ int StoreTbl::write_send(Work::Write &write)
     auto nParams = m_xKeys[0].fields.length();
     IDAlloc();
     ParamAlloc(nParams);
-    VarAlloc(nParams, m_xKeys[0].fields, fbo);
+    VarAlloc(nParams, m_xKeys[0].fields, fbo, write);
     id << m_stmtID << "_del";
     loadTuple(
       params, ZuSpan(varBuf.data(), varBuf.size()), varBufParts.cspan(),
@@ -2720,30 +2712,30 @@ void StoreTbl::write_rcvd(Work::Write &write, PGresult *res)
   auto record = record_(msg_(write.buf->hdr()));
   if (res) {
     if (!write.mrd) {
-      if (!record->vn()) {
+      if (!record.get<Msg::ZfField(Record, vn)>()) {
 	write.skipped = !strcmp(PQcmdTuples(res), "0");
       } else if (strcmp(PQcmdTuples(res), "1")) {
 	write_failed(write, ZeEXCEPT(Error, "ZdbPQ", ([
-	  operation = ZeString{record->vn() > 0 ? "update" : "delete"}
+	  operation = ZeString{record.get<Msg::ZfField(Record, vn)>() > 0 ? "update" : "delete"}
 	](auto &s) {
 	  s << operation << " failed - primary key missing";
 	})));
 	return;
       }
     }
-    if (write.mrd || (record->vn() >= 0 && !write.skipped)) {
-      auto shard = record->shard();
-      auto un = record->un();
-      auto sn = ZfbTransform::UInt128::load(record->sn());
+    if (write.mrd || (record.get<Msg::ZfField(Record, vn)>() >= 0 && !write.skipped)) {
+      auto shard = record.get<Msg::ZfField(Record, shard)>();
+      auto un = record.get<Msg::ZfField(Record, un)>();
+      auto sn = record.get<Msg::ZfField(Record, sn)>();
       m_maxUN[shard] = un;
       if (m_maxSN == ZdbNullSN() || sn > m_maxSN) m_maxSN = sn;
     }
     return;
   }
-  if ((record->vn() < 0 || write.skipped) && !write.mrd) {
+  if ((record.get<Msg::ZfField(Record, vn)>() < 0 || write.skipped) && !write.mrd) {
     // Preserve the stream position when no row carries this UN.
 
-    /* ZiLOG(Debug, "ZdbPQ", ([vn = record->vn(), mrd = write.mrd](auto &s) {
+    /* ZiLOG(Debug, "ZdbPQ", ([vn = record.get<Msg::ZfField(Record, vn)>(), mrd = write.mrd](auto &s) {
       s << "VN=" << vn << " mrd=" << mrd;
     })); */
 

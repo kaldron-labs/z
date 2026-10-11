@@ -1,0 +1,1202 @@
+Print limit set to 0
+Functions sorted by metric: Exclusive Total CPU Time
+Callers and callees sorted by metric: Attributed Total CPU Time
+
+Attr. Total     Name
+CPU
+  sec.      %
+21.695   0.    *<Total>
+21.425  98.75   <static>@0x97aaa (<libc.so.6>)
+ 0.150   0.69   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.070   0.32   <static>@0xe341 (<libzpicotls-fusion.so>)
+ 0.030   0.14   ptls_fusion_aesgcm_decrypt
+ 0.020   0.09   <static>@0x1767d6 (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 3.953  83.51   ZmRing_::Blocker::wait(ZmAtomic<unsigned int>&, unsigned int, ZmRing_::ParamData const&)
+ 0.781  16.49   ZmRing_::Blocker::wake(ZmAtomic<unsigned int>&)
+ 4.733 100.00  *syscall
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.303 100.00   ZiConnection::send()
+ 4.303 100.00  *send
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 3.983 100.00   ZiConnection::recv()
+ 3.983 100.00  *recv
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 3.002 100.00   clock_gettime
+ 3.002 100.00  *__vdso_clock_gettime
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.703  97.71   ZmScheduler::work()
+ 0.110   2.29   ZiLog::work_()
+ 0.851  17.67  *ZmRing_::Blocker::wait(ZmAtomic<unsigned int>&, unsigned int, ZmRing_::ParamData const&)
+ 3.953  82.12   syscall
+ 0.010   0.21   __errno_location
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.921  71.88   <static>@0xa5beb (<libc.so.6>)
+ 0.230  17.97   <static>@0xa8ab4 (<libc.so.6>)
+ 0.100   7.81   Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.020   1.56   ZiIOBufAlloc<1024u, 65536u, ZuString<15u>{char [15]{(char)90, (char)116, (char)99, (char)46, (char)76, (char)111, (char)97, (char)100, (char)46, (char)70, (char)114, (char)97, (char)109, (char)101}}>::~ZiIOBufAlloc()
+ 0.010   0.78   posix_memalign
+ 0.      0.     Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.      0.     ZmScheduler::work()
+ 0.831  64.84  *<static>@0xa5beb (<libc.so.6>)
+ 0.260  20.31   <static>@0xa4384 (<libc.so.6>)
+ 0.100   7.81   __lll_lock_wait_private
+ 0.040   3.12   mprotect
+ 0.030   2.34   madvise
+ 0.020   1.56   munmap
+ 0.      0.     <static>@0xa5beb (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.570 100.00   ZiMultiplex::rx()
+ 0.570 100.00  *epoll_wait
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.180  69.23   <static>@0xa5beb (<libc.so.6>)
+ 0.080  30.77   <static>@0xa4384 (<libc.so.6>)
+ 0.260 100.00  *<static>@0xa4384 (<libc.so.6>)
+ 0.      0.     <static>@0xa4384 (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.060  15.38   <Total>
+ 0.180  46.15   <static>@0x1767d6 (<libcrypto.so.3>)
+ 0.120  30.77   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.020   5.13   EVP_CipherInit_ex
+ 0.010   2.56   CRYPTO_ctr128_encrypt_ctr32
+ 0.      0.     EVP_EncryptUpdate
+ 0.190  48.72  *<static>@0x264e6d (<libcrypto.so.3>)
+ 0.130  33.33   getpid
+ 0.040  10.26   EVP_CipherInit_ex
+ 0.010   2.56   <static>@0x175980 (<libc.so.6>)
+ 0.010   2.56   CRYPTO_ctr128_encrypt_ctr32
+ 0.010   2.56   EVP_EncryptUpdate
+ 0.      0.     <static>@0x264e6d (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+21.315 100.00   _ZZN15ZmThreadContextC1IZN11ZmScheduler7start__EvE3$_0TnN6ZuIfT_IXaanttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TENS4_8ArgList_ISC_vE1TEvEEEcvbtlNS4_9IsVoidRetIS8_SF_NS4_7Return_ISC_SF_E1TEEEEEiE1TELi0EEES8_RK14ZmThreadParamsiENUlPvE_8__invokeESR_
+ 0.190   0.89  *ZmScheduler::work()
+ 5.484  25.73   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex6wakeRxEvE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlPvE_8__invokeESS_
+ 4.793  22.49   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlPvE_8__invokeES13_
+ 4.703  22.07   ZmRing_::Blocker::wait(ZmAtomic<unsigned int>&, unsigned int, ZmRing_::ParamData const&)
+ 4.383  20.56   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZZN11ZtcHubLoad_3App3armEvENKUlOT_E_clIZN11ZmScheduler3addISE_EEvPN14ZmRBTree_NodeTINSG_6Timer_ENSG_16ScheduleTree_NTPEE4NodeE6ZuTimeiSD_jEUlSC_E_EEDaSD_EUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_ISC_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSC_ENUlPvE_8__invokeES16_
+ 1.301   6.10   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE10recvRecordERK11ZiIOContextS13_INSN_5IOBufEEEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1H_ENUlPvE_8__invokeES1S_
+ 0.340   1.60   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE4sendES13_INSN_5IOBufEEmEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1E_ENUlPvE_8__invokeES1P_
+ 0.040   0.19   <static>@0xa5beb (<libc.so.6>)
+ 0.030   0.14   ZmHeapCache::free(void*)
+ 0.030   0.14   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlPvE_8__invokeESS_
+ 0.010   0.05   __lll_lock_wake_private
+ 0.010   0.05   void* ZmRing_::Ring<ZmRingMW<true, ZmRing_::Defaults>, ZmRing_::ParamData, ZmRing_::Blocker, ZmRing_::CtrlMgr_<ZmRing_::CtrlMem, ZmRing_::Ctrl<false>, false>, ZmRing_::DataMgr<ZmRing_::DataMem, ZmRing_::MirrorMem, void, true, false>, ZmRing_::RingExt>::push_<false, true, false, true, void>(unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.100  55.56   <static>@0xa5beb (<libc.so.6>)
+ 0.080  44.44   <static>@0xa8ab4 (<libc.so.6>)
+ 0.180 100.00  *__lll_lock_wait_private
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.060  46.15   <static>@0xe341 (<libzpicotls-fusion.so>)
+ 0.040  30.77   Zi::IOBuf::append(unsigned char const*, unsigned int)
+ 0.010   7.69   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.010   7.69   Ztc::AppTelemetry ZfFB::Handler<Ztc::AppTelemetry, ZuFacet::Core>::Construct<ZfField_String<Ztc::ZuField_AppTelemetry_version, false>, ZfField_String<Ztc::ZuField_AppTelemetry_role, false>, ZfField_DateTime<Ztc::ZuField_AppTelemetry_startTime, false>, ZfField_UDT<Ztc::ZuField_AppTelemetry_ztcver, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_state, false>, ZfField_Bool<Ztc::ZuField_AppTelemetry_degraded, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_rag, false> >::ctor<>(ZfFB::Handler<Ztc::AppTelemetry, ZuFacet::Core> const&)
+ 0.010   7.69   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.130 100.00  *<static>@0x175980 (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030  23.08   Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.030  23.08   ZiIOBufAlloc<1024u, 65536u, ZuString<15u>{char [15]{(char)90, (char)116, (char)99, (char)46, (char)76, (char)111, (char)97, (char)100, (char)46, (char)70, (char)114, (char)97, (char)109, (char)101}}>::~ZiIOBufAlloc()
+ 0.030  23.08   ZmScheduler::work()
+ 0.030  23.08   ZtcHubLoad_::App::tick()
+ 0.010   7.69   Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.130 100.00  *ZmHeapCache::free(void*)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.070  53.85   <static>@0xa8ab4 (<libc.so.6>)
+ 0.050  38.46   Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.010   7.69   ZmScheduler::work()
+ 0.130 100.00  *__lll_lock_wake_private
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.130 100.00   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.130 100.00  *getpid
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.021 100.00   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 0.110  10.78  *int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.741  72.55   clock_gettime
+ 0.050   4.90   bool ZfFB::verifyObject<Ztc::Payload, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.040   3.92   void Zt_::String<char, ZtString_Defaults>::append__<Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}>(Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}, unsigned long)
+ 0.030   2.94   Ztc::AppTelemetry ZfFB::Handler<Ztc::AppTelemetry, ZuFacet::Core>::Construct<ZfField_String<Ztc::ZuField_AppTelemetry_version, false>, ZfField_String<Ztc::ZuField_AppTelemetry_role, false>, ZfField_DateTime<Ztc::ZuField_AppTelemetry_startTime, false>, ZfField_UDT<Ztc::ZuField_AppTelemetry_ztcver, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_state, false>, ZfField_Bool<Ztc::ZuField_AppTelemetry_degraded, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_rag, false> >::ctor<>(ZfFB::Handler<Ztc::AppTelemetry, ZuFacet::Core> const&)
+ 0.010   0.98   <static>@0x175980 (<libc.so.6>)
+ 0.010   0.98   Zt_::String<char, ZtString_Defaults>::~String()
+ 0.010   0.98   Ztc::validMsg(ZfFB::View<Ztc::Msg, ZuFacet::Core>)
+ 0.010   0.98   bool ZfFB::verify<Ztc::Msg, false, ZuFacet::Core>(ZuSpan<unsigned char const> const&, char const*, ZfFB::VerifyLimits)
+ 0.010   0.98   bool operator==<ZuSpan<char const>, Zt_::String<char, ZtString_Defaults>, (ZuSpan<char const>*)0, void>(ZuSpan<char const> const&, Zt_::String<char, ZtString_Defaults> const&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.881  98.88   ZmScheduler::push_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.010   1.12   ZmScheduler::tryRun_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.100  11.24  *ZmScheduler::tryPush_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.791  88.76   ZmRing_::Blocker::wake(ZmAtomic<unsigned int>&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.100 100.00   <static>@0xe341 (<libzpicotls-fusion.so>)
+ 0.100 100.00  *ptls_fusion_aesgcm_encrypt
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.383 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZZN11ZtcHubLoad_3App3armEvENKUlOT_E_clIZN11ZmScheduler3addISE_EEvPN14ZmRBTree_NodeTINSG_6Timer_ENSG_16ScheduleTree_NTPEE4NodeE6ZuTimeiSD_jEUlSC_E_EEDaSD_EUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_ISC_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSC_ENUlPvE_8__invokeES16_
+ 0.070   1.60  *ZtcHubLoad_::App::tick()
+ 2.272  51.83   clock_gettime
+ 1.701  38.81   void ZtcHubLoad_::send<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&, ZmRef<Zi::IOBuf>)
+ 0.110   2.51   void* ZmHeapCache::alloc<64u>()
+ 0.060   1.37   unsigned int ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)
+ 0.040   0.91   auto Ztc::saveTelemetry<false, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, unsigned int, unsigned int)
+ 0.030   0.68   ZmHeapCache::free(void*)
+ 0.020   0.46   void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Payload_body, false>, ZfFB::Meta<Ztc::Payload, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::BodyValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::BodyValue>)
+ 0.020   0.46   void ZmScheduler::add<ZtcHubLoad_::App::arm()::{lambda(auto:1&&)#1}>(ZmRBTree_NodeT<ZmScheduler::Timer_, ZmScheduler::ScheduleTree_NTP>::Node*, ZuTime, int, ZtcHubLoad_::App::arm()::{lambda(auto:1&&)#1}&&, unsigned int)
+ 0.010   0.23   ZfFB::Builder<ZiFB::IOStorage<8u> >::endTable(ZfFB::TableState)
+ 0.010   0.23   ZfFB::Builder<ZiFB::IOStorage<8u> >::offset(unsigned int)
+ 0.010   0.23   ZfFB::Builder<ZiFB::IOStorage<8u> >::string(ZuSpan<char const>)
+ 0.010   0.23   ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::vfree(void const*)
+ 0.010   0.23   auto Ztc::saveMsg<ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, ZuSpan<char const>, unsigned long)
+ 0.010   0.23   void Zt_::String<char, ZtString_Defaults>::append__<Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}>(Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}, unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.380 100.00   Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::submitBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.070  18.42  *Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>::prepareBuf_(Zi::IOBuf*, bool)
+ 0.310  81.58   Ztls::Backend::random_bytes(ZuSpan<unsigned char>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.310 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE4sendES13_INSN_5IOBufEEmEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1E_ENUlPvE_8__invokeES1P_
+ 0.060  19.35  *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send_(ZmRef<Zi::IOBuf>, unsigned long)
+ 0.130  41.94   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::finalizeTxBuf_(st_ptls_buffer_t&, ZmRef<Zi::IOBuf>)
+ 0.120  38.71   <static>@0x6433 (<libzpicotls-core.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.301 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE10recvRecordERK11ZiIOContextS13_INSN_5IOBufEEEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1H_ENUlPvE_8__invokeES1S_
+ 0.060   4.62  *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE10recvRecordERK11ZiIOContextS13_INSN_5IOBufEEEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1H_ENKUlPvE_clES1S_
+ 1.241  95.38   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::record_(ZmRef<Zi::IOBuf>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.503 100.00   ZiMultiplex::rx()
+ 0.050   1.11  *ZiConnection::recv()
+ 3.983  88.44   recv
+ 0.470  10.44   _ZZN4ZiRxIN3Zws12H1ClientLinkIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINS4_3TLSELi0EEEEEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseI10ZuConstantI8ZuStringILj13EEXtlSF_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEEE4recvITnDaXadL_ZN4Ztls8parseHdrISJ_EEiRK11ZiIOContextPNS9_5IOBufEEETnDaXadL_ZNSM_4LinkINS0_8H1ClientIS3_S7_EES8_SJ_NSA_I14ZiTxQueue_NodeLj8208ELj104857600ESC_ISD_ISF_XtlSF_tlSG_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSM_3CxnIS8_PS8_EE5ZmRefIS12_EE10recvRecordESQ_S13_ISR_EEEEEvRSO_ENKUlSS_S17_E_clESS_S17_
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.081 100.00   ZmScheduler::run_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.050   4.63  *ZmScheduler::push_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.881  81.48   ZmScheduler::tryPush_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.090   8.33   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlmE_8__invokeEm
+ 0.040   3.70   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlmE_8__invokeEm
+ 0.020   1.85   void ZmQueue<ZmScheduler::Fn, ZmScheduler::Queue__NTP, ZmScheduler::Queue_>::push<ZmScheduler::Fn>(ZmScheduler::Fn&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.410  39.05   ZmVHeap_<ZiIOBuf_HeapID, 1024u, 1048576u, 64u, false>::valloc(unsigned long)
+ 0.310  29.52   ZmRef<Zi::IOBuf> Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::txAllocBuf<true>(unsigned int)
+ 0.220  20.95   _ZZN4ZiRxIN3Zws12H1ClientLinkIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINS4_3TLSELi0EEEEEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseI10ZuConstantI8ZuStringILj13EEXtlSF_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEEE4recvITnDaXadL_ZN4Ztls8parseHdrISJ_EEiRK11ZiIOContextPNS9_5IOBufEEETnDaXadL_ZNSM_4LinkINS0_8H1ClientIS3_S7_EES8_SJ_NSA_I14ZiTxQueue_NodeLj8208ELj104857600ESC_ISD_ISF_XtlSF_tlSG_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSM_3CxnIS8_PS8_EE5ZmRefIS12_EE10recvRecordESQ_S13_ISR_EEEEEvRSO_ENKUlSS_S17_E_clESS_S17_
+ 0.110  10.48   ZtcHubLoad_::App::tick()
+ 0.050   4.76  *void* ZmHeapCache::alloc<64u>()
+ 1.001  95.24   posix_memalign
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.090  81.82   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlmE_8__invokeEm
+ 0.020  18.18   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlmE_8__invokeEm
+ 0.050  45.45  *void* ZmHeapCache::alloc<8u>()
+ 0.060  54.55   posix_memalign
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020  50.00   unsigned int ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)
+ 0.010  25.00   ZtcHubLoad_::App::tick()
+ 0.010  25.00   auto Ztc::saveTelemetry<false, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, unsigned int, unsigned int)
+ 0.040 100.00  *ZfFB::Builder<ZiFB::IOStorage<8u> >::endTable(ZfFB::TableState)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010  25.00   ZtcHubLoad_::App::tick()
+ 0.010  25.00   auto Ztc::saveMsg<ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, ZuSpan<char const>, unsigned long)
+ 0.010  25.00   void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Payload_body, false>, ZfFB::Meta<Ztc::Payload, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::BodyValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::BodyValue>)
+ 0.010  25.00   void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Telemetry_value, false>, ZfFB::Meta<Ztc::Telemetry, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::TelemetryValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::TelemetryValue>)
+ 0.040 100.00  *ZfFB::Builder<ZiFB::IOStorage<8u> >::offset(unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.450 100.00   ZiConnection::send()
+ 0.040   8.89  *ZiTx<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >::send(ZmRef<ZiTxQueue_Node>)::{lambda(ZmRef<Zi::IOBuf>, ZiIOContext&)#1}::operator()(ZmRef<Zi::IOBuf>, ZiIOContext&) const::{lambda(Zi::IOBuf*, ZiIOContext&)#1}::operator()(Zi::IOBuf*, ZiIOContext&) const
+ 0.410  91.11   Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.420 100.00   Zi::TxStream<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::sendBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.040   9.52  *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)
+ 0.380  90.48   void ZmScheduler::invoke<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)::{lambda()#1}>(Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)::{lambda()#1}&&, unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.040 100.00   <static>@0xa5beb (<libc.so.6>)
+ 0.040 100.00  *mprotect
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020  50.00   ZmHeapCacheT<ZuConstant<ZuString<15u>, ZuString<15u>{char [15]{(char)90, (char)109, (char)83, (char)99, (char)104, (char)101, (char)100, (char)117, (char)108, (char)101, (char)114, (char)46, (char)70, (char)110}}>, 8u, 8u, false, 0u>::instance()
+ 0.010  25.00   ZmHeapCacheT<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false, 0u>::instance()
+ 0.010  25.00   ZmThreadContext::self()
+ 0.040 100.00  *pthread_getspecific
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.040 100.00   EVP_CipherInit_ex
+ 0.030  75.00  *<static>@0x16e238 (<libcrypto.so.3>)
+ 0.010  25.00   EVP_CIPHER_CTX_get_key_length
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.070  36.84   <Total>
+ 0.100  52.63   <static>@0x6433 (<libzpicotls-core.so>)
+ 0.020  10.53   <static>@0x1a23a (<libzpicotls-core.so>)
+ 0.030  15.79  *<static>@0xe341 (<libzpicotls-fusion.so>)
+ 0.100  52.63   ptls_fusion_aesgcm_encrypt
+ 0.060  31.58   <static>@0x175980 (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.773  99.79   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlPvE_8__invokeES13_
+ 0.010   0.21   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlPvE_8__invokeESS_
+ 0.030   0.63  *ZiConnection::send()
+ 4.303  89.96   send
+ 0.450   9.41   ZiTx<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >::send(ZmRef<ZiTxQueue_Node>)::{lambda(ZmRef<Zi::IOBuf>, ZiIOContext&)#1}::operator()(ZmRef<Zi::IOBuf>, ZiIOContext&) const::{lambda(Zi::IOBuf*, ZiIOContext&)#1}::operator()(Zi::IOBuf*, ZiIOContext&) const
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020  66.67   ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::vfree(void const*)
+ 0.010  33.33   ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::valloc(unsigned long)
+ 0.030 100.00  *ZmHeapCacheT<ZtString_Defaults::HeapID, 64u, 1u, false, 2u>::instance()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.310 100.00   Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>::prepareBuf_(Zi::IOBuf*, bool)
+ 0.030   9.68  *Ztls::Backend::random_bytes(ZuSpan<unsigned char>)
+ 0.280  90.32   RAND_bytes_ex
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.221 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::record_(ZmRef<Zi::IOBuf>)
+ 0.030   2.46  *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rcvd_(ZmRef<Zi::IOBuf>)
+ 1.151  94.26   Zhttp::ClientLink<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zhttp::Profile<Zhttp::TLS, 0> >::process(Zi::RxStream<ZiRxQueue>&)
+ 0.020   1.64   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rxBuf(st_ptls_buffer_t&, Zi::IOBuf*)
+ 0.020   1.64   ptls_receive
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.230 100.00   _ZZN4ZiRxIN3Zws12H1ClientLinkIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINS4_3TLSELi0EEEEEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseI10ZuConstantI8ZuStringILj13EEXtlSF_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEEE4recvITnDaXadL_ZN4Ztls8parseHdrISJ_EEiRK11ZiIOContextPNS9_5IOBufEEETnDaXadL_ZNSM_4LinkINS0_8H1ClientIS3_S7_EES8_SJ_NSA_I14ZiTxQueue_NodeLj8208ELj104857600ESC_ISD_ISF_XtlSF_tlSG_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSM_3CxnIS8_PS8_EE5ZmRefIS12_EE10recvRecordESQ_S13_ISR_EEEEEvRSO_ENKUlSS_S17_E_clESS_S17_
+ 0.030  13.04  *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)
+ 0.200  86.96   void ZmScheduler::invoke<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)::{lambda()#1}>(Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)::{lambda()#1}&&, unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.340 100.00   ZmScheduler::work()
+ 0.030   8.82  *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE4sendES13_INSN_5IOBufEEmEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1E_ENUlPvE_8__invokeES1P_
+ 0.310  91.18   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send_(ZmRef<Zi::IOBuf>, unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.141 100.00   Zhttp::ClientLink<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zhttp::Profile<Zhttp::TLS, 0> >::process(Zi::RxStream<ZiRxQueue>&)
+ 0.030   2.63  *int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::process<Zi::RxStream<ZiRxQueue> >(Zhttp::Stream<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >, Zi::RxStream<ZiRxQueue>&)
+ 1.101  96.49   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::frame_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 0.010   0.88   long Zi::RxStream<ZiRxQueue>::splice<Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::process<Zi::RxStream<ZiRxQueue> >(Zhttp::Stream<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >, Zi::RxStream<ZiRxQueue>&)::{lambda(ZuSpan<unsigned char const>)#1}, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), Zi::RxPass>(Zi::RxStream<ZiRxQueue>&, Zi::RxStream<ZiRxQueue>&&, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), unsigned long, unsigned long, Zi::RxPass&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   <static>@0xa5beb (<libc.so.6>)
+ 0.030 100.00  *madvise
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   <Total>
+ 0.030 100.00  *ptls_fusion_aesgcm_decrypt
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.200 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)
+ 0.030  15.00  *void ZmScheduler::invoke<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)::{lambda()#1}>(Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)::{lambda()#1}&&, unsigned int)
+ 0.170  85.00   ZmScheduler::run_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   <static>@0x1f0cf5 (<libcrypto.so.3>)
+ 0.020 100.00  *<static>@0x1b84af (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.991 100.00   posix_memalign
+ 0.020   2.02  *<static>@0xa8ab4 (<libc.so.6>)
+ 0.821  82.83   <static>@0xa5beb (<libc.so.6>)
+ 0.080   8.08   __lll_lock_wait_private
+ 0.070   7.07   __lll_lock_wake_private
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.240 100.00   RAND_bytes_ex
+ 0.020   8.33  *EVP_RAND_generate
+ 0.220  91.67   <static>@0x1767d6 (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010  50.00   Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+ 0.010  50.00   void ZtcHubLoad_::send<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&, ZmRef<Zi::IOBuf>)
+ 0.020 100.00  *Zi::TxStream<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlPvE_8__invokeES13_
+ 0.020 100.00  *ZmFn<bool (ZiIOContext&), ZmFnHeapID_<ZuConstant<ZuString<7u>, ZuString<7u>{char [7]{(char)90, (char)105, (char)73, (char)79, (char)70, (char)110}}>, ZmFn_Defaults> >::LambdaMvRefInvoker<ZiTxQueue_Node, ZiTx<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >::send(ZmRef<ZiTxQueue_Node>)::{lambda(ZmRef<Zi::IOBuf>, ZiIOContext&)#1}, true, false>::invoke(unsigned long&, ZiIOContext&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.050 100.00   Zt_::String<char, ZtString_Defaults>::size(unsigned long)
+ 0.020  40.00  *ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::valloc(unsigned long)
+ 0.020  40.00   void* ZmHeapCache::alloc<1u>()
+ 0.010  20.00   ZmHeapCacheT<ZtString_Defaults::HeapID, 64u, 1u, false, 2u>::instance()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.020  66.67  *Ztc::AppTelemetry ZfFB::Handler<Ztc::AppTelemetry, ZuFacet::Core>::Construct<ZfField_String<Ztc::ZuField_AppTelemetry_version, false>, ZfField_String<Ztc::ZuField_AppTelemetry_role, false>, ZfField_DateTime<Ztc::ZuField_AppTelemetry_startTime, false>, ZfField_UDT<Ztc::ZuField_AppTelemetry_ztcver, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_state, false>, ZfField_Bool<Ztc::ZuField_AppTelemetry_degraded, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_rag, false> >::ctor<>(ZfFB::Handler<Ztc::AppTelemetry, ZuFacet::Core> const&)
+ 0.010  33.33   <static>@0x175980 (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rcvd_(ZmRef<Zi::IOBuf>)
+ 0.020 100.00  *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rxBuf(st_ptls_buffer_t&, Zi::IOBuf*)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   ZmQueue<ZmScheduler::Fn, ZmScheduler::Queue__NTP, ZmScheduler::Queue_>::extend(unsigned int)
+ 0.020 100.00  *_ZN13ZuArrayFn_OpsIN11ZmScheduler2FnE5ZuCmpIS1_ELb0EE9moveElemsILb1ES1_S1_TnDTcmcvT1_cl9ZuDeclValIOT0_EEcvi_EELi0ELb0EEEvPS1_PS7_m
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   ZmScheduler::work()
+ 0.020  66.67  *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlPvE_8__invokeESS_
+ 0.010  33.33   ZiConnection::send()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 2.272  75.17   ZtcHubLoad_::App::tick()
+ 0.741  24.50   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.010   0.33   _ZZN11ZmScheduler3addIZN11ZtcHubLoad_3App3armEvEUlOT_E_EEvPN14ZmRBTree_NodeTINS_6Timer_ENS_16ScheduleTree_NTPEE4NodeE6ZuTimeiS4_jENKUlS3_E_clIZZNS2_3armEvENKS5_clISD_EEDaS4_EUlvE_EEDaS3_
+ 0.020   0.66  *clock_gettime
+ 3.002  99.34   __vdso_clock_gettime
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.081 100.00   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::frame_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 0.020   1.85  *int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 1.021  94.44   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.030   2.78   _ZN2Zi8RxStreamI9ZiRxQueueE7consumeILj0ETn8ZuStringXtlS4_ILj1EEEEZN5Zhttp8bodyEachIS2_ZN11ZtcHubLoad_3App7processIN3Zws12H1ClientLinkIS9_NS6_7ProfileINS6_3TLSELi0EEEEES2_EEiRT_RT0_EUl6ZuSpanIhEE_EEbSI_OSJ_EUlSM_E_RSN_EElOT1_OT2_
+ 0.010   0.93   long Zi::RxStream<ZiRxQueue>::splice<Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)::{lambda(ZuSpan<unsigned char const>)#1}, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), Zi::RxPass>(Zi::RxStream<ZiRxQueue>&, Zi::RxStream<ZiRxQueue>&&, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), unsigned long, unsigned long, Zi::RxPass&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.101 100.00   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::process<Zi::RxStream<ZiRxQueue> >(Zhttp::Stream<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >, Zi::RxStream<ZiRxQueue>&)
+ 0.020   1.82  *int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::frame_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 1.081  98.18   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   <static>@0xa5beb (<libc.so.6>)
+ 0.020 100.00  *munmap
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.001  92.59   void* ZmHeapCache::alloc<64u>()
+ 0.060   5.56   void* ZmHeapCache::alloc<8u>()
+ 0.020   1.85   void* ZmHeapCache::alloc<1u>()
+ 0.020   1.85  *posix_memalign
+ 0.991  91.67   <static>@0xa8ab4 (<libc.so.6>)
+ 0.060   5.56   <static>@0xa5beb (<libc.so.6>)
+ 0.010   0.93   malloc
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.701 100.00   ZtcHubLoad_::App::tick()
+ 0.020   1.18  *void ZtcHubLoad_::send<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&, ZmRef<Zi::IOBuf>)
+ 0.821  48.24   Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+ 0.791  46.47   Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::append(unsigned char const*, unsigned int)
+ 0.060   3.53   ZiIOBufAlloc<1024u, 65536u, ZuString<15u>{char [15]{(char)90, (char)116, (char)99, (char)46, (char)76, (char)111, (char)97, (char)100, (char)46, (char)70, (char)114, (char)97, (char)109, (char)101}}>::~ZiIOBufAlloc()
+ 0.010   0.59   Zi::TxStream<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.120 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send_(ZmRef<Zi::IOBuf>, unsigned long)
+ 0.010   8.33  *<static>@0x6433 (<libzpicotls-core.so>)
+ 0.100  83.33   <static>@0xe341 (<libzpicotls-fusion.so>)
+ 0.010   8.33   ptls_buffer__do_pushv
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.010  50.00  *CRYPTO_ctr128_encrypt_ctr32
+ 0.010  50.00   <static>@0x264e6d (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x16e238 (<libcrypto.so.3>)
+ 0.010 100.00  *EVP_CIPHER_CTX_get_key_length
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.060 100.00   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.010  16.67  *EVP_EncryptUpdate
+ 0.050  83.33   <static>@0x264e6d (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   OSSL_DECODER_CTX_new_for_pkey
+ 0.010 100.00  *OPENSSL_sk_deep_copy
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.280 100.00   Ztls::Backend::random_bytes(ZuSpan<unsigned char>)
+ 0.010   3.57  *RAND_bytes_ex
+ 0.240  85.71   EVP_RAND_generate
+ 0.020   7.14   <static>@0x1f0cf5 (<libcrypto.so.3>)
+ 0.010   3.57   <static>@0x1a18ba (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   ZtcHubLoad_::App::tick()
+ 0.010 100.00  *ZfFB::Builder<ZiFB::IOStorage<8u> >::string(ZuSpan<char const>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.151 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rcvd_(ZmRef<Zi::IOBuf>)
+ 0.010   0.87  *Zhttp::ClientLink<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zhttp::Profile<Zhttp::TLS, 0> >::process(Zi::RxStream<ZiRxQueue>&)
+ 1.141  99.13   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::process<Zi::RxStream<ZiRxQueue> >(Zhttp::Stream<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >, Zi::RxStream<ZiRxQueue>&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.811 100.00   Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+ 0.010   1.23  *Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::submitBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.420  51.85   Zi::TxStream<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::sendBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.380  46.91   Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>::prepareBuf_(Zi::IOBuf*, bool)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.130 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::finalizeTxBuf_(st_ptls_buffer_t&, ZmRef<Zi::IOBuf>)
+ 0.010   7.69  *ZiConnection::send(ZmFn<bool (ZiIOContext&), ZmFnHeapID_<ZuConstant<ZuString<7u>, ZuString<7u>{char [7]{(char)90, (char)105, (char)73, (char)79, (char)70, (char)110}}>, ZmFn_Defaults> >)
+ 0.120  92.31   ZmScheduler::run_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.060 100.00   void ZtcHubLoad_::send<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&, ZmRef<Zi::IOBuf>)
+ 0.010  16.67  *ZiIOBufAlloc<1024u, 65536u, ZuString<15u>{char [15]{(char)90, (char)116, (char)99, (char)46, (char)76, (char)111, (char)97, (char)100, (char)46, (char)70, (char)114, (char)97, (char)109, (char)101}}>::~ZiIOBufAlloc()
+ 0.030  50.00   ZmHeapCache::free(void*)
+ 0.020  33.33   <static>@0xa5beb (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   _ZN2Zi5IOBuf6ensureITnDaXadL_Z6ZmGrowmmEEEEPhj
+ 0.010 100.00  *ZmGrow(unsigned long, unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.751 100.00   Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::append(unsigned char const*, unsigned int)
+ 0.010   1.33  *ZmRef<Zi::IOBuf> Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::txAllocBuf<true>(unsigned int)
+ 0.430  57.33   _ZN2Zi5IOBuf6ensureITnDaXadL_Z6ZmGrowmmEEEEPhj
+ 0.310  41.33   void* ZmHeapCache::alloc<64u>()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.791 100.00   ZmScheduler::tryPush_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.010   1.27  *ZmRing_::Blocker::wake(ZmAtomic<unsigned int>&)
+ 0.781  98.73   syscall
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   ZmThreadContext::self()
+ 0.010 100.00  *ZmThreadContext::publish()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   unsigned int ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)
+ 0.010  33.33  *ZmThreadContext::self()
+ 0.010  33.33   ZmThreadContext::publish()
+ 0.010  33.33   pthread_getspecific
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.420 100.00   _ZN2Zi5IOBuf6ensureITnDaXadL_Z6ZmGrowmmEEEEPhj
+ 0.010   2.38  *ZmVHeap_<ZiIOBuf_HeapID, 1024u, 1048576u, 64u, false>::valloc(unsigned long)
+ 0.410  97.62   void* ZmHeapCache::alloc<64u>()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.010 100.00  *Ztc::validMsg(ZfFB::View<Ztc::Msg, ZuFacet::Core>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.241 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE10recvRecordERK11ZiIOContextS13_INSN_5IOBufEEEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1H_ENKUlPvE_clES1S_
+ 0.010   0.81  *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::record_(ZmRef<Zi::IOBuf>)
+ 1.221  98.39   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rcvd_(ZmRef<Zi::IOBuf>)
+ 0.010   0.81   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::handshake_(ZmRef<Zi::IOBuf>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.470 100.00   ZiConnection::recv()
+ 0.010   2.13  *_ZZN4ZiRxIN3Zws12H1ClientLinkIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINS4_3TLSELi0EEEEEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseI10ZuConstantI8ZuStringILj13EEXtlSF_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEEE4recvITnDaXadL_ZN4Ztls8parseHdrISJ_EEiRK11ZiIOContextPNS9_5IOBufEEETnDaXadL_ZNSM_4LinkINS0_8H1ClientIS3_S7_EES8_SJ_NSA_I14ZiTxQueue_NodeLj8208ELj104857600ESC_ISD_ISF_XtlSF_tlSG_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSM_3CxnIS8_PS8_EE5ZmRefIS12_EE10recvRecordESQ_S13_ISR_EEEEEvRSO_ENKUlSS_S17_E_clESS_S17_
+ 0.230  48.94   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)
+ 0.220  46.81   void* ZmHeapCache::alloc<64u>()
+ 0.010   2.13   ZmHeapCacheT<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false, 0u>::instance()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   ZmRing_::Blocker::wait(ZmAtomic<unsigned int>&, unsigned int, ZmRing_::ParamData const&)
+ 0.010 100.00  *__errno_location
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.040 100.00   ZtcHubLoad_::App::tick()
+ 0.010  25.00  *auto Ztc::saveTelemetry<false, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, unsigned int, unsigned int)
+ 0.020  50.00   void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Telemetry_value, false>, ZfFB::Meta<Ztc::Telemetry, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::TelemetryValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::TelemetryValue>)
+ 0.010  25.00   ZfFB::Builder<ZiFB::IOStorage<8u> >::endTable(ZfFB::TableState)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.050 100.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.010  20.00  *bool ZfFB::verifyObject<Ztc::Payload, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.030  60.00   bool ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.010  20.00   bool ZfFB::verifyUnion<ZfFB::FieldWire<ZfField_UDT<Ztc::ZuField_Payload_body, false> > >(ZfFB::Verifier&, ZfFB::TableBounds const&, unsigned int, unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   bool ZfFB::verifyObject<Ztc::Payload, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.010  33.33  *bool ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.010  33.33   bool ZfFB::verifyUnion<ZfFB::FieldWire<ZfField_UDT<Ztc::ZuField_Telemetry_value, false> > >(ZfFB::Verifier&, ZfFB::TableBounds const&, unsigned int, unsigned int)
+ 0.010  33.33   decltype(auto) ZuUnroll::all<ZuTypeList<ZfField_String<Ztc::ZuField_Telemetry_id, false>, ZfField_UInt64<Ztc::ZuField_Telemetry_seqNo, false>, ZfField_UDT<Ztc::ZuField_Telemetry_value, false> >, bool, ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}>(bool, ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   bool ZfFB::verifyObject<Ztc::Payload, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.010 100.00  *bool ZfFB::verifyUnion<ZfFB::FieldWire<ZfField_UDT<Ztc::ZuField_Payload_body, false> > >(ZfFB::Verifier&, ZfFB::TableBounds const&, unsigned int, unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   bool ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.010 100.00  *bool ZfFB::verifyUnion<ZfFB::FieldWire<ZfField_UDT<Ztc::ZuField_Telemetry_value, false> > >(ZfFB::Verifier&, ZfFB::TableBounds const&, unsigned int, unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.010 100.00  *bool operator==<ZuSpan<char const>, Zt_::String<char, ZtString_Defaults>, (ZuSpan<char const>*)0, void>(ZuSpan<char const> const&, Zt_::String<char, ZtString_Defaults> const&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   bool ZfFB::verify<Ztc::Msg, false, ZuFacet::Core>(ZuSpan<unsigned char const> const&, char const*, ZfFB::VerifyLimits)
+ 0.010 100.00  *decltype(auto) ZuUnroll::all<ZuTypeList<ZfField_Bytes<Ztc::ZuField_Msg_data, false>, ZfField_UInt64<Ztc::ZuField_Msg_subID, false>, ZfField_String<Ztc::ZuField_Msg_deviceID, false>, ZfField_UInt64<Ztc::ZuField_Msg_agentGen, false> >, bool, ZfFB::verifyObject<Ztc::Msg, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}>(bool, ZfFB::verifyObject<Ztc::Msg, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   unsigned int ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)
+ 0.010 100.00  *decltype(auto) ZuUnroll::all<ZuTypeList<ZfField_String<Ztc::ZuField_AppTelemetry_version, false>, ZfField_String<Ztc::ZuField_AppTelemetry_role, false>, ZfField_DateTime<Ztc::ZuField_AppTelemetry_startTime, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_state, false>, ZfField_Bool<Ztc::ZuField_AppTelemetry_degraded, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_rag, false>, ZfField_UDT<Ztc::ZuField_AppTelemetry_ztcver, false> >, ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)::{lambda<typename $T0>()#2}>(ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)::{lambda<typename $T0>()#2}&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   bool ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)
+ 0.010 100.00  *decltype(auto) ZuUnroll::all<ZuTypeList<ZfField_String<Ztc::ZuField_Telemetry_id, false>, ZfField_UInt64<Ztc::ZuField_Telemetry_seqNo, false>, ZfField_UDT<Ztc::ZuField_Telemetry_value, false> >, bool, ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}>(bool, ZfFB::verifyObject<Ztc::Telemetry, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.010 100.00  *free
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 0.010 100.00  *long Zi::RxStream<ZiRxQueue>::splice<Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)::{lambda(ZuSpan<unsigned char const>)#1}, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), Zi::RxPass>(Zi::RxStream<ZiRxQueue>&, Zi::RxStream<ZiRxQueue>&&, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), unsigned long, unsigned long, Zi::RxPass&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::process<Zi::RxStream<ZiRxQueue> >(Zhttp::Stream<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >, Zi::RxStream<ZiRxQueue>&)
+ 0.010 100.00  *long Zi::RxStream<ZiRxQueue>::splice<Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::process<Zi::RxStream<ZiRxQueue> >(Zhttp::Stream<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >, Zi::RxStream<ZiRxQueue>&)::{lambda(ZuSpan<unsigned char const>)#1}, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), Zi::RxPass>(Zi::RxStream<ZiRxQueue>&, Zi::RxStream<ZiRxQueue>&&, ZmRef<ZiRxQueue_Node> (&)(), ZmRef<ZiRxQueue_Node> (&)(), unsigned long, unsigned long, Zi::RxPass&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   posix_memalign
+ 0.010 100.00  *malloc
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x1a18ba (<libcrypto.so.3>)
+ 0.010 100.00  *pthread_once
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x6433 (<libzpicotls-core.so>)
+ 0.010 100.00  *ptls_buffer__do_pushv
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Payload_body, false>, ZfFB::Meta<Ztc::Payload, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::BodyValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::BodyValue>)
+ 0.010 100.00  *void ZfFB::Builder<ZiFB::IOStorage<8u> >::field<unsigned char>(ZfFB::TableState&, unsigned int, unsigned char, unsigned char, bool)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   auto Ztc::saveTelemetry<false, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, unsigned int, unsigned int)
+ 0.010  50.00  *void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Telemetry_value, false>, ZfFB::Meta<Ztc::Telemetry, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::TelemetryValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::TelemetryValue>)
+ 0.010  50.00   ZfFB::Builder<ZiFB::IOStorage<8u> >::offset(unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   ZmScheduler::work()
+ 0.010 100.00  *void* ZmRing_::Ring<ZmRingMW<true, ZmRing_::Defaults>, ZmRing_::ParamData, ZmRing_::Blocker, ZmRing_::CtrlMgr_<ZmRing_::CtrlMem, ZmRing_::Ctrl<false>, false>, ZmRing_::DataMgr<ZmRing_::DataMem, ZmRing_::MirrorMem, void, true, false>, ZmRing_::RingExt>::push_<false, true, false, true, void>(unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+21.425 100.00   <static>@0x97aaa (<libc.so.6>)
+ 0.      0.    *<static>@0x14aed (<libgp-collector.so>)
+21.425 100.00   ZmThread_start
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020   8.33   <Total>
+ 0.220  91.67   EVP_RAND_generate
+ 0.      0.    *<static>@0x1767d6 (<libcrypto.so.3>)
+ 0.240 100.00   <static>@0x264e6d (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   RAND_bytes_ex
+ 0.      0.    *<static>@0x1a18ba (<libcrypto.so.3>)
+ 0.010 100.00   pthread_once
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020  66.67   ptls_receive
+ 0.010  33.33   ptls_handshake
+ 0.      0.    *<static>@0x1a23a (<libzpicotls-core.so>)
+ 0.020  66.67   <static>@0xe341 (<libzpicotls-fusion.so>)
+ 0.010  33.33   <static>@0x1d72a (<libzpicotls-core.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x1a23a (<libzpicotls-core.so>)
+ 0.      0.    *<static>@0x1d72a (<libzpicotls-core.so>)
+ 0.010 100.00   <static>@0xa42a (<libzpicotls-core.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   RAND_bytes_ex
+ 0.      0.    *<static>@0x1f0cf5 (<libcrypto.so.3>)
+ 0.020 100.00   <static>@0x1b84af (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x6ae02 (<libcrypto.so.3>)
+ 0.      0.    *<static>@0x2635ee (<libcrypto.so.3>)
+ 0.010 100.00   OSSL_DECODER_CTX_new_for_pkey
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x6e082 (<libcrypto.so.3>)
+ 0.      0.     ASN1_item_d2i_ex
+ 0.      0.    *<static>@0x6ae02 (<libcrypto.so.3>)
+ 0.010 100.00   <static>@0x2635ee (<libcrypto.so.3>)
+ 0.      0.     <static>@0x6e082 (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x6ae02 (<libcrypto.so.3>)
+ 0.      0.    *<static>@0x6e082 (<libcrypto.so.3>)
+ 0.010 100.00   <static>@0x6ae02 (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0xa42a (<libzpicotls-core.so>)
+ 0.      0.    *<static>@0x7b7f (<libzpicotls-openssl.so>)
+ 0.010 100.00   ASN1_item_d2i_ex
+
+Attr. Total     Name
+CPU
+  sec.      %
+21.425 100.00   <Total>
+ 0.      0.    *<static>@0x97aaa (<libc.so.6>)
+21.425 100.00   <static>@0x14aed (<libgp-collector.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x1d72a (<libzpicotls-core.so>)
+ 0.      0.    *<static>@0xa42a (<libzpicotls-core.so>)
+ 0.010 100.00   <static>@0x7b7f (<libzpicotls-openssl.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x7b7f (<libzpicotls-openssl.so>)
+ 0.      0.    *ASN1_item_d2i_ex
+ 0.010 100.00   <static>@0x6ae02 (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.110 100.00   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.      0.    *EVP_CipherInit_ex
+ 0.070  63.64   <static>@0x264e6d (<libcrypto.so.3>)
+ 0.040  36.36   <static>@0x16e238 (<libcrypto.so.3>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   <static>@0x2635ee (<libcrypto.so.3>)
+ 0.      0.    *OSSL_DECODER_CTX_new_for_pkey
+ 0.010 100.00   OPENSSL_sk_deep_copy
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.040 100.00   Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::append(unsigned char const*, unsigned int)
+ 0.      0.    *Zi::IOBuf::append(unsigned char const*, unsigned int)
+ 0.040 100.00   <static>@0x175980 (<libc.so.6>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   _ZN2Zi8RxStreamI9ZiRxQueueE7consumeILj0ETn8ZuStringXtlS4_ILj1EEEEZN5Zhttp8bodyEachIS2_ZN11ZtcHubLoad_3App7processIN3Zws12H1ClientLinkIS9_NS6_7ProfileINS6_3TLSELi0EEEEES2_EEiRT_RT0_EUl6ZuSpanIhEE_EEbSI_OSJ_EUlSM_E_RSN_EElOT1_OT2_
+ 0.      0.    *Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.020  66.67   <static>@0xa5beb (<libc.so.6>)
+ 0.010  33.33   ZmHeapCache::free(void*)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.410 100.00   ZiTx<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >::send(ZmRef<ZiTxQueue_Node>)::{lambda(ZmRef<Zi::IOBuf>, ZiIOContext&)#1}::operator()(ZmRef<Zi::IOBuf>, ZiIOContext&) const::{lambda(Zi::IOBuf*, ZiIOContext&)#1}::operator()(Zi::IOBuf*, ZiIOContext&) const
+ 0.      0.    *Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+ 0.320  78.05   <static>@0xa5beb (<libc.so.6>)
+ 0.050  12.20   __lll_lock_wake_private
+ 0.030   7.32   ZmHeapCache::free(void*)
+ 0.010   2.44   free
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.821 100.00   void ZtcHubLoad_::send<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&, ZmRef<Zi::IOBuf>)
+ 0.      0.    *Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+ 0.811  98.78   Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::submitBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.010   1.22   Zi::TxStream<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::flush()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.791 100.00   void ZtcHubLoad_::send<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&, ZmRef<Zi::IOBuf>)
+ 0.      0.    *Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::append(unsigned char const*, unsigned int)
+ 0.751  94.94   ZmRef<Zi::IOBuf> Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::txAllocBuf<true>(unsigned int)
+ 0.040   5.06   Zi::IOBuf::append(unsigned char const*, unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.420 100.00   Zi::TxStream<Zi::TxLayer<Zws::TxLayer<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true>, true, Ztls::Random>, Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> > >::submitBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.      0.    *Zi::TxStream<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::TxStream_<true> >::sendBuf(ZmRef<Zi::IOBuf>, bool)
+ 0.420 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.110 100.00   _ZZN15ZmThreadContextC1IZN5ZiLog7start__EvE3$_0TnN6ZuIfT_IXaanttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TENS4_8ArgList_ISC_vE1TEvEEEcvbtlNS4_9IsVoidRetIS8_SF_NS4_7Return_ISC_SF_E1TEEEEEiE1TELi0EEES8_RK14ZmThreadParamsiENUlPvE_8__invokeESR_
+ 0.      0.    *ZiLog::work_()
+ 0.110 100.00   ZmRing_::Blocker::wait(ZmAtomic<unsigned int>&, unsigned int, ZmRing_::ParamData const&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 5.484 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex6wakeRxEvE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlPvE_8__invokeESS_
+ 0.      0.    *ZiMultiplex::rx()
+ 4.503  82.12   ZiConnection::recv()
+ 0.570  10.40   epoll_wait
+ 0.410   7.48   ZmScheduler::run_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   _ZZN4ZiRxIN3Zws12H1ClientLinkIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINS4_3TLSELi0EEEEEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseI10ZuConstantI8ZuStringILj13EEXtlSF_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEEE4recvITnDaXadL_ZN4Ztls8parseHdrISJ_EEiRK11ZiIOContextPNS9_5IOBufEEETnDaXadL_ZNSM_4LinkINS0_8H1ClientIS3_S7_EES8_SJ_NSA_I14ZiTxQueue_NodeLj8208ELj104857600ESC_ISD_ISF_XtlSF_tlSG_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSM_3CxnIS8_PS8_EE5ZmRefIS12_EE10recvRecordESQ_S13_ISR_EEEEEvRSO_ENKUlSS_S17_E_clESS_S17_
+ 0.      0.    *ZmHeapCacheT<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false, 0u>::instance()
+ 0.010 100.00   pthread_getspecific
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlmE_8__invokeEm
+ 0.      0.    *ZmHeapCacheT<ZuConstant<ZuString<15u>, ZuString<15u>{char [15]{(char)90, (char)109, (char)83, (char)99, (char)104, (char)101, (char)100, (char)117, (char)108, (char)101, (char)114, (char)46, (char)70, (char)110}}>, 8u, 8u, false, 0u>::instance()
+ 0.020 100.00   pthread_getspecific
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   void ZmQueue<ZmScheduler::Fn, ZmScheduler::Queue__NTP, ZmScheduler::Queue_>::push<ZmScheduler::Fn>(ZmScheduler::Fn&&)
+ 0.      0.    *ZmQueue<ZmScheduler::Fn, ZmScheduler::Queue__NTP, ZmScheduler::Queue_>::extend(unsigned int)
+ 0.020 100.00   _ZN13ZuArrayFn_OpsIN11ZmScheduler2FnE5ZuCmpIS1_ELb0EE9moveElemsILb1ES1_S1_TnDTcmcvT1_cl9ZuDeclValIOT0_EEcvi_EELi0ELb0EEEvPS1_PS7_m
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.410  37.96   ZiMultiplex::rx()
+ 0.380  35.19   void ZmScheduler::invoke<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)::{lambda()#1}>(Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)::{lambda()#1}&&, unsigned int)
+ 0.170  15.74   void ZmScheduler::invoke<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)::{lambda()#1}>(Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::recvRecord(ZiIOContext const&, ZmRef<Zi::IOBuf>)::{lambda()#1}&&, unsigned int)
+ 0.120  11.11   ZiConnection::send(ZmFn<bool (ZiIOContext&), ZmFnHeapID_<ZuConstant<ZuString<7u>, ZuString<7u>{char [7]{(char)90, (char)105, (char)73, (char)79, (char)70, (char)110}}>, ZmFn_Defaults> >)
+ 0.      0.    *ZmScheduler::run_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 1.081 100.00   ZmScheduler::push_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   _ZZN11ZmScheduler3addIZN11ZtcHubLoad_3App3armEvEUlOT_E_EEvPN14ZmRBTree_NodeTINS_6Timer_ENS_16ScheduleTree_NTPEE4NodeE6ZuTimeiS4_jENKUlS3_E_clIZZNS2_3armEvENKS5_clISD_EEDaS4_EUlvE_EEDaS3_
+ 0.      0.    *ZmScheduler::tryRun_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.010 100.00   ZmScheduler::tryPush_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+21.425 100.00   <static>@0x14aed (<libgp-collector.so>)
+ 0.      0.    *ZmThread_start
+21.315  99.49   _ZZN15ZmThreadContextC1IZN11ZmScheduler7start__EvE3$_0TnN6ZuIfT_IXaanttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TENS4_8ArgList_ISC_vE1TEvEEEcvbtlNS4_9IsVoidRetIS8_SF_NS4_7Return_ISC_SF_E1TEEEEEiE1TELi0EEES8_RK14ZmThreadParamsiENUlPvE_8__invokeESR_
+ 0.110   0.51   _ZZN15ZmThreadContextC1IZN5ZiLog7start__EvE3$_0TnN6ZuIfT_IXaanttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TENS4_8ArgList_ISC_vE1TEvEEEcvbtlNS4_9IsVoidRetIS8_SF_NS4_7Return_ISC_SF_E1TEEEEEiE1TELi0EEES8_RK14ZmThreadParamsiENUlPvE_8__invokeESR_
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010  50.00   Zt_::String<char, ZtString_Defaults>::~String()
+ 0.010  50.00   ZtcHubLoad_::App::tick()
+ 0.      0.    *ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::vfree(void const*)
+ 0.020 100.00   ZmHeapCacheT<ZtString_Defaults::HeapID, 64u, 1u, false, 2u>::instance()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.050 100.00   void Zt_::String<char, ZtString_Defaults>::append__<Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}>(Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}, unsigned long)
+ 0.      0.    *Zt_::String<char, ZtString_Defaults>::size(unsigned long)
+ 0.050 100.00   ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::valloc(unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.      0.    *Zt_::String<char, ZtString_Defaults>::~String()
+ 0.010 100.00   ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::vfree(void const*)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.130 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send_(ZmRef<Zi::IOBuf>, unsigned long)
+ 0.      0.    *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::finalizeTxBuf_(st_ptls_buffer_t&, ZmRef<Zi::IOBuf>)
+ 0.130 100.00   ZiConnection::send(ZmFn<bool (ZiIOContext&), ZmFnHeapID_<ZuConstant<ZuString<7u>, ZuString<7u>{char [7]{(char)90, (char)105, (char)73, (char)79, (char)70, (char)110}}>, ZmFn_Defaults> >)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::record_(ZmRef<Zi::IOBuf>)
+ 0.      0.    *Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::handshake_(ZmRef<Zi::IOBuf>)
+ 0.010 100.00   ptls_handshake
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.430 100.00   ZmRef<Zi::IOBuf> Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::txAllocBuf<true>(unsigned int)
+ 0.      0.    *_ZN2Zi5IOBuf6ensureITnDaXadL_Z6ZmGrowmmEEEEPhj
+ 0.420  97.67   ZmVHeap_<ZiIOBuf_HeapID, 1024u, 1048576u, 64u, false>::valloc(unsigned long)
+ 0.010   2.33   ZmGrow(unsigned long, unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.030 100.00   int Zws::Codec<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, false, Ztls::Random>::data_<Zi::RxStream<ZiRxQueue> >(Zi::RxStream<ZiRxQueue>&)
+ 0.      0.    *_ZN2Zi8RxStreamI9ZiRxQueueE7consumeILj0ETn8ZuStringXtlS4_ILj1EEEEZN5Zhttp8bodyEachIS2_ZN11ZtcHubLoad_3App7processIN3Zws12H1ClientLinkIS9_NS6_7ProfileINS6_3TLSELi0EEEEES2_EEiRT_RT0_EUl6ZuSpanIhEE_EEbSI_OSJ_EUlSM_E_RSN_EElOT1_OT2_
+ 0.030 100.00   Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >::~IOBufAlloc__()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   void ZmScheduler::add<ZtcHubLoad_::App::arm()::{lambda(auto:1&&)#1}>(ZmRBTree_NodeT<ZmScheduler::Timer_, ZmScheduler::ScheduleTree_NTP>::Node*, ZuTime, int, ZtcHubLoad_::App::arm()::{lambda(auto:1&&)#1}&&, unsigned int)
+ 0.      0.    *_ZZN11ZmScheduler3addIZN11ZtcHubLoad_3App3armEvEUlOT_E_EEvPN14ZmRBTree_NodeTINS_6Timer_ENS_16ScheduleTree_NTPEE4NodeE6ZuTimeiS4_jENKUlS3_E_clIZZNS2_3armEvENKS5_clISD_EEDaS4_EUlvE_EEDaS3_
+ 0.010  50.00   ZmScheduler::tryRun_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.010  50.00   clock_gettime
+
+Attr. Total     Name
+CPU
+  sec.      %
+21.315 100.00   ZmThread_start
+ 0.      0.    *_ZZN15ZmThreadContextC1IZN11ZmScheduler7start__EvE3$_0TnN6ZuIfT_IXaanttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TENS4_8ArgList_ISC_vE1TEvEEEcvbtlNS4_9IsVoidRetIS8_SF_NS4_7Return_ISC_SF_E1TEEEEEiE1TELi0EEES8_RK14ZmThreadParamsiENUlPvE_8__invokeESR_
+21.315 100.00   ZmScheduler::work()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.110 100.00   ZmThread_start
+ 0.      0.    *_ZZN15ZmThreadContextC1IZN5ZiLog7start__EvE3$_0TnN6ZuIfT_IXaanttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TENS4_8ArgList_ISC_vE1TEvEEEcvbtlNS4_9IsVoidRetIS8_SF_NS4_7Return_ISC_SF_E1TEEEEEiE1TELi0EEES8_RK14ZmThreadParamsiENUlPvE_8__invokeESR_
+ 0.110 100.00   ZiLog::work_()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.040 100.00   ZmScheduler::push_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.      0.    *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex2rxEvE3$_2TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlmE_8__invokeEm
+ 0.020  50.00   ZmHeapCacheT<ZuConstant<ZuString<15u>, ZuString<15u>{char [15]{(char)90, (char)109, (char)83, (char)99, (char)104, (char)101, (char)100, (char)117, (char)108, (char)101, (char)114, (char)46, (char)70, (char)110}}>, 8u, 8u, false, 0u>::instance()
+ 0.020  50.00   void* ZmHeapCache::alloc<8u>()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 5.484 100.00   ZmScheduler::work()
+ 0.      0.    *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN11ZiMultiplex6wakeRxEvE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSH_ENUlPvE_8__invokeESS_
+ 5.484 100.00   ZiMultiplex::rx()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.793 100.00   ZmScheduler::work()
+ 0.      0.    *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlPvE_8__invokeES13_
+ 4.773  99.58   ZiConnection::send()
+ 0.020   0.42   ZmFn<bool (ZiIOContext&), ZmFnHeapID_<ZuConstant<ZuString<7u>, ZuString<7u>{char [7]{(char)90, (char)105, (char)73, (char)79, (char)70, (char)110}}>, ZmFn_Defaults> >::LambdaMvRefInvoker<ZiTxQueue_Node, ZiTx<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >::send(ZmRef<ZiTxQueue_Node>)::{lambda(ZmRef<Zi::IOBuf>, ZiIOContext&)#1}, true, false>::invoke(unsigned long&, ZiIOContext&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.090 100.00   ZmScheduler::push_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.      0.    *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN12ZiConnection4sendE4ZmFnIFbR11ZiIOContextE11ZmFnHeapID_IS1_IS2_ILj7EEXtlSG_tlA7_cLc90ELc105ELc73ELc79ELc70ELc110EEEEE13ZmFn_DefaultsEEE3$_0TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSS_ENUlmE_8__invokeEm
+ 0.090 100.00   void* ZmHeapCache::alloc<8u>()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 1.301 100.00   ZmScheduler::work()
+ 0.      0.    *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE10recvRecordERK11ZiIOContextS13_INSN_5IOBufEEEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1H_ENUlPvE_8__invokeES1S_
+ 1.301 100.00   _ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZN4Ztls4LinkIN3Zws8H1ClientIN11ZtcHubLoad_3AppEN5Zhttp7ProfileINSG_3TLSELi0EEEEENSC_12H1ClientLinkISF_SJ_EEN2Zi12IOBufAlloc__I14ZiRxQueue_NodeLj8208ELj104857600E10ZmHeapBaseIS1_IS2_ILj13EEXtlSR_tlA13_cLc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc82ELc120EEEEELj8320ELj64ELb0EEEENSO_I14ZiTxQueue_NodeLj8208ELj104857600ESQ_IS1_ISR_XtlSR_tlSS_Lc90ELc104ELc116ELc116ELc112ELc46ELc84ELc76ELc83ELc46ELc84ELc120EEEEELj8320ELj64ELb0EEEENSA_3CxnISM_PSM_EE5ZmRefIS12_EE10recvRecordERK11ZiIOContextS13_INSN_5IOBufEEEUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_IT_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERS1H_ENKUlPvE_clES1S_
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 4.383 100.00   ZmScheduler::work()
+ 0.      0.    *_ZZN9ZmRingFn_I15ZmRingFnHeapID_I10ZuConstantI8ZuStringILj15EEXtlS3_tlA15_cLc90ELc109ELc83ELc99ELc104ELc101ELc100ELc117ELc108ELc101ELc114ELc46ELc70ELc110EEEEE17ZmRingFn_DefaultsEJEEC1IZZN11ZtcHubLoad_3App3armEvENKUlOT_E_clIZN11ZmScheduler3addISE_EEvPN14ZmRBTree_NodeTINSG_6Timer_ENSG_16ScheduleTree_NTPEE4NodeE6ZuTimeiSD_jEUlSC_E_EEDaSD_EUlvE_TnN6ZuIfT_IXnttlN14ZuLambdaTraits12IsStateless_IN8ZuStrip_IN8ZuDeref_ISC_E1TEE1TE10ZuTypeListIJEEvEEEEiE1TELi0EEERSC_ENUlPvE_8__invokeES16_
+ 4.383 100.00   ZtcHubLoad_::App::tick()
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   ZtcHubLoad_::App::tick()
+ 0.      0.    *auto Ztc::saveMsg<ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, unsigned int, unsigned long, ZuSpan<char const>, unsigned long)
+ 0.010 100.00   ZfFB::Builder<ZiFB::IOStorage<8u> >::offset(unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.      0.    *bool ZfFB::verify<Ztc::Msg, false, ZuFacet::Core>(ZuSpan<unsigned char const> const&, char const*, ZfFB::VerifyLimits)
+ 0.010 100.00   decltype(auto) ZuUnroll::all<ZuTypeList<ZfField_Bytes<Ztc::ZuField_Msg_data, false>, ZfField_UInt64<Ztc::ZuField_Msg_subID, false>, ZfField_String<Ztc::ZuField_Msg_deviceID, false>, ZfField_UInt64<Ztc::ZuField_Msg_agentGen, false> >, bool, ZfFB::verifyObject<Ztc::Msg, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}>(bool, ZfFB::verifyObject<Ztc::Msg, ZuFacet::Core>(ZfFB::Verifier&, unsigned int)::{lambda<typename $T0>(bool)#1}&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.010 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::handshake_(ZmRef<Zi::IOBuf>)
+ 0.      0.    *ptls_handshake
+ 0.010 100.00   <static>@0x1a23a (<libzpicotls-core.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::rcvd_(ZmRef<Zi::IOBuf>)
+ 0.      0.    *ptls_receive
+ 0.020 100.00   <static>@0x1a23a (<libzpicotls-core.so>)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.060 100.00   ZtcHubLoad_::App::tick()
+ 0.      0.    *unsigned int ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)
+ 0.030  50.00   ZmThreadContext::self()
+ 0.020  33.33   ZfFB::Builder<ZiFB::IOStorage<8u> >::endTable(ZfFB::TableState)
+ 0.010  16.67   decltype(auto) ZuUnroll::all<ZuTypeList<ZfField_String<Ztc::ZuField_AppTelemetry_version, false>, ZfField_String<Ztc::ZuField_AppTelemetry_role, false>, ZfField_DateTime<Ztc::ZuField_AppTelemetry_startTime, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_state, false>, ZfField_Bool<Ztc::ZuField_AppTelemetry_degraded, false>, ZfField_Int8<Ztc::ZuField_AppTelemetry_rag, false>, ZfField_UDT<Ztc::ZuField_AppTelemetry_ztcver, false> >, ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)::{lambda<typename $T0>()#2}>(ZfFB::saveObject<Ztc::AppTelemetry, ZuFacet::Core, ZfFieldFilter::Save, ZiFB::IOBuilder<8u> >(ZiFB::IOBuilder<8u>&, Ztc::AppTelemetry const&)::{lambda<typename $T0>()#2}&&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   ZtcHubLoad_::App::tick()
+ 0.      0.    *void ZfFB::fieldUnion<ZfField_UDT<Ztc::ZuField_Payload_body, false>, ZfFB::Meta<Ztc::Payload, ZuFacet::Core>, ZiFB::IOBuilder<8u>, Ztc::BodyValue>(ZiFB::IOBuilder<8u>&, ZfFB::TableState&, ZfFB::UnionOffset<Ztc::BodyValue>)
+ 0.010  50.00   ZfFB::Builder<ZiFB::IOStorage<8u> >::offset(unsigned int)
+ 0.010  50.00   void ZfFB::Builder<ZiFB::IOStorage<8u> >::field<unsigned char>(ZfFB::TableState&, unsigned int, unsigned char, unsigned char, bool)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   ZmScheduler::push_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+ 0.      0.    *void ZmQueue<ZmScheduler::Fn, ZmScheduler::Queue__NTP, ZmScheduler::Queue_>::push<ZmScheduler::Fn>(ZmScheduler::Fn&&)
+ 0.020 100.00   ZmQueue<ZmScheduler::Fn, ZmScheduler::Queue__NTP, ZmScheduler::Queue_>::extend(unsigned int)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   ZtcHubLoad_::App::tick()
+ 0.      0.    *void ZmScheduler::add<ZtcHubLoad_::App::arm()::{lambda(auto:1&&)#1}>(ZmRBTree_NodeT<ZmScheduler::Timer_, ZmScheduler::ScheduleTree_NTP>::Node*, ZuTime, int, ZtcHubLoad_::App::arm()::{lambda(auto:1&&)#1}&&, unsigned int)
+ 0.020 100.00   _ZZN11ZmScheduler3addIZN11ZtcHubLoad_3App3armEvEUlOT_E_EEvPN14ZmRBTree_NodeTINS_6Timer_ENS_16ScheduleTree_NTPEE4NodeE6ZuTimeiS4_jENKUlS3_E_clIZZNS2_3armEvENKS5_clISD_EEDaS4_EUlvE_EEDaS3_
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.380 100.00   Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)
+ 0.      0.    *void ZmScheduler::invoke<Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)::{lambda()#1}>(Ztls::Link<Zws::H1Client<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zi::IOBufAlloc__<ZiRxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)82, (char)120}}>, 8320u, 64u, false> >, Zi::IOBufAlloc__<ZiTxQueue_Node, 8208u, 104857600u, ZmHeapBase<ZuConstant<ZuString<13u>, ZuString<13u>{char [13]{(char)90, (char)104, (char)116, (char)116, (char)112, (char)46, (char)84, (char)76, (char)83, (char)46, (char)84, (char)120}}>, 8320u, 64u, false> >, Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*>, ZmRef<Ztls::Cxn<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >, Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >*> > >::send(ZmRef<Zi::IOBuf>, unsigned long)::{lambda()#1}&&, unsigned int)
+ 0.380 100.00   ZmScheduler::run_(ZmScheduler::Thread*, ZmScheduler::Fn&)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.040  80.00   int ZtcHubLoad_::App::messageEnd<Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> > >(Zws::H1ClientLink<ZtcHubLoad_::App, Zhttp::Profile<Zhttp::TLS, 0> >&)
+ 0.010  20.00   ZtcHubLoad_::App::tick()
+ 0.      0.    *void Zt_::String<char, ZtString_Defaults>::append__<Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}>(Zt_::String<char, ZtString_Defaults>::append_<ZuBox__<unsigned int, ZuBox_Defaults>&, void>(ZuBox__<unsigned int, ZuBox_Defaults>&)::{lambda(char*, unsigned long)#1}, unsigned long)
+ 0.050 100.00   Zt_::String<char, ZtString_Defaults>::size(unsigned long)
+
+Attr. Total     Name
+CPU
+  sec.      %
+ 0.020 100.00   ZmVHeap_<ZtString_Defaults::HeapID, 16u, 1024u, 1u, false>::valloc(unsigned long)
+ 0.      0.    *void* ZmHeapCache::alloc<1u>()
+ 0.020 100.00   posix_memalign
+

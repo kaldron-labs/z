@@ -1374,6 +1374,13 @@ VSet::scan(
 
 } // ZfStruct_
 
+// Skip has metadata only, including no ReadOnly/accessor contract. Select
+// the non-writable field specialization without inspecting absent accessors.
+template <typename Field, bool = ZuFieldActive<Field>{}>
+struct ZfFieldWritable : public ZuFalse { };
+template <typename Field>
+struct ZfFieldWritable<Field, true> : public ZuBool<!Field::ReadOnly> { };
+
 // ZfField compile-time encapsulates an individual field, derives from ZuField
 template <typename Base_>
 struct ZfField_ : public Base_ {
@@ -1435,7 +1442,7 @@ static constexpr decltype(auto) ZfFieldDeflt() {
     return (Def);
 };
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_CString : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_CString<Override<Base>>;
@@ -1546,7 +1553,7 @@ struct ZfField_String_Get<Base,
   }
 };
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_String :
     public ZfField_<Base>,
     public ZfField_String_Get<Base> {
@@ -1635,7 +1642,7 @@ struct ZfField_Bytes_Get<Base,
     }}};
   }
 };
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Bytes :
     public ZfField_<Base>,
     public ZfField_Bytes_Get<Base> {
@@ -1706,7 +1713,7 @@ ZfVFieldType *ZfFieldType_Bool<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_Bool<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Bool : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Bool<Override<Base>>;
@@ -1917,7 +1924,7 @@ struct ZfFieldType_##Code_##_Def { \
   static constexpr auto minimum() { return ZuCmp<T>::minimum(); } \
   static constexpr auto maximum() { return ZuCmp<T>::maximum(); } \
 }; \
-template <typename Base, bool = Base::ReadOnly> \
+template <typename Base, bool = !ZfFieldWritable<Base>{}> \
 struct ZfField_##Code_ : public ZfField_<Base> { \
   template <template <typename> class Override> \
   using Adapt = ZfField_##Code_<Override<Base>>; \
@@ -2019,7 +2026,7 @@ struct ZfField_Float_Def {
   static constexpr auto minimum() { return T{-ZuFP<ZuUnder<T>>::inf()}; }
   static constexpr auto maximum() { return T{ZuFP<ZuUnder<T>>::inf()}; }
 };
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Float : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Float<Override<Base>>;
@@ -2108,7 +2115,7 @@ struct ZfField_Fixed_Def {
   static constexpr ZuFixed minimum() { return {ZuFixedMin, 0}; }
   static constexpr ZuFixed maximum() { return {ZuFixedMax, 0}; }
 };
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Fixed : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Fixed<Override<Base>>;
@@ -2201,7 +2208,7 @@ struct ZfField_Decimal_Def {
     return {ZuDecimal::Unscaled{ZuDecimal::maximum()}};
   }
 };
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Decimal : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Decimal<Override<Base>>;
@@ -2282,7 +2289,7 @@ ZfVFieldType *ZfFieldType_Time<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_Time<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Time : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Time<Override<Base>>;
@@ -2356,7 +2363,7 @@ ZfVFieldType *ZfFieldType_DateTime<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_DateTime<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_DateTime : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DateTime<Override<Base>>;
@@ -2457,7 +2464,8 @@ struct ZfVFieldType_UDT_Scan {
 };
 template <typename T>
 struct ZfVFieldType_UDT_Scan<
-  T, decltype((ZuDeclVal<T &>() = ZuCSpan()), void())
+  T, ZuIfT<!ZuTraits<T>::IsArray,
+    decltype((ZuDeclVal<T &>() = ZuCSpan()), void())>
 > {
   static auto scanFn() {
     return [](
@@ -2525,7 +2533,7 @@ struct ZfField_UDT_Get<Base,
     }}};
   }
 };
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_UDT :
     public ZfField_<Base>,
     public ZfField_UDT_Get<Base> {
@@ -2613,7 +2621,7 @@ ZfVFieldType *ZfFieldType_CStringVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_CStringVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_CStringVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_CStringVec<Override<Base>>;
@@ -2696,7 +2704,7 @@ ZfVFieldType *ZfFieldType_StringVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_StringVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_StringVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_StringVec<Override<Base>>;
@@ -2779,7 +2787,7 @@ ZfVFieldType *ZfFieldType_BytesVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_BytesVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_BytesVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_BytesVec<Override<Base>>;
@@ -2896,7 +2904,7 @@ ZfVFieldType *ZfFieldType_##Code_##Vec<T, Props>::vtype() { \
   return ZmSingleton<ZfVFieldType_##Code_##Vec<T, Props>>::instance(); \
 } \
  \
-template <typename Base, bool = Base::ReadOnly> \
+template <typename Base, bool = !ZfFieldWritable<Base>{}> \
 struct ZfField_##Code_##Vec : public ZfField_<Base> { \
   template <template <typename> class Override> \
   using Adapt = ZfField_##Code_##Vec<Override<Base>>; \
@@ -2996,7 +3004,7 @@ ZfVFieldType *ZfFieldType_FloatVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_FloatVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_FloatVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_FloatVec<Override<Base>>;
@@ -3079,7 +3087,7 @@ ZfVFieldType *ZfFieldType_FixedVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_FixedVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_FixedVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_FixedVec<Override<Base>>;
@@ -3162,7 +3170,7 @@ ZfVFieldType *ZfFieldType_DecimalVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_DecimalVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_DecimalVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DecimalVec<Override<Base>>;
@@ -3246,7 +3254,7 @@ ZfVFieldType *ZfFieldType_TimeVec<T, Props>::vtype() {
   return ZmSingleton<ZfVFieldType_TimeVec<T, Props>>::instance();
 }
 
-template <typename Base, bool = Base::ReadOnly>
+template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_TimeVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_TimeVec<Override<Base>>;
@@ -3332,7 +3340,7 @@ ZfVFieldType *ZfFieldType_DateTimeVec<T, Props>::vtype() {
 
 template <
   typename Base,
-  bool = Base::ReadOnly>
+  bool = !ZfFieldWritable<Base>{}>
 struct ZfField_DateTimeVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DateTimeVec<Override<Base>>;
@@ -3383,7 +3391,7 @@ struct ZfField_DateTimeVec<Base, false> :
 #define ZfField(O, ID) ZfField_##O##_##ID
 
 // get field index within fields
-#define ZfFieldIndex(O, ID) (ZuTypeIndex<ZfField(O, ID), ZuFields<O>>{})
+#define ZfFieldIndex(O, ID) (ZuTypeIndex<ZfField(O, ID), ZuActiveFields<O>>{})
 
 // main structure declaration macros ZfStruct()
 #define ZfField_Decl__(O, ID, Base, Type) \
@@ -3398,13 +3406,22 @@ struct ZfField_DateTimeVec<Base, false> :
   ZuPP_Defer(ZfField)(O, ZuPP_Eval_(ZfField_AxorID(Axor)))
 #define ZfField_Type(O, Args) ZuPP_Defer(ZfField_Type_)(O, ZuPP_Strip(Args))
 
+// Keep matcher instantiation in ZfStructImpl without wrapping field typelists.
+typedef int (*ZfVFieldMatchFn)(ZuCSpan);
+ZuFalse ZfFieldMatcher_(...); // default
+
+template <typename O, typename Facet>
+struct ZfFieldMatcher {
+  using Keys = ZuFieldIDs<ZuActiveFields<O, Facet>>;
+  static int match(ZuCSpan s) {
+    static constexpr auto matcher = ZuMatcher<ZfFieldMatcher>();
+    return matcher.match(s);
+  }
+};
+
 #define ZfStruct_Render__(API, O, Facet) \
-  struct API ZfFields_##O##_##Facet { \
-    using Fields = ZfFields_##O; \
-    using Keys = ZuFieldIDs<Fields>; \
-    static int match(ZuCSpan); \
-  }; \
-  ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *);
+  ZfFields_##O ZuFields_(O *, ZuFacet::Facet *); \
+  API ZfVFieldMatchFn ZfFieldMatcher_(O *, ZuFacet::Facet *);
 #define ZfStruct_Render_(API_O, Facet) \
   ZuPP_Defer(ZfStruct_Render__)(ZuPP_Strip(API_O), Facet)
 #define ZfStruct_Render(API_O, ...) \
@@ -3443,20 +3460,16 @@ struct ZfField_DateTimeVec<Base, false> :
 
 #define ZfStructRender(API, O, Facet, ...) \
   ZuPP_Eval(ZuPP_MapArg(ZfField_RenderDecl, (O, Facet), __VA_ARGS__)) \
-  struct API ZfFields_##O##_##Facet { \
-    using Fields = ZuTypeList< \
-      ZuPP_Eval(ZuPP_MapArgComma(ZfField_RenderType, (O, Facet), __VA_ARGS__))>; \
-    using Keys = ZuFieldIDs<Fields>; \
-    static int match(ZuCSpan); \
-  }; \
-  ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *)
+  using ZfFields_##O##_##Facet = ZuTypeList< \
+    ZuPP_Eval(ZuPP_MapArgComma(ZfField_RenderType, (O, Facet), __VA_ARGS__))>; \
+  ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *); \
+  API ZfVFieldMatchFn ZfFieldMatcher_(O *, ZuFacet::Facet *)
 
 // structure implementation code (lives in `.cc`)
 // ZfStructImpl(Object[, Facet]); Facet defaults to Core
 #define ZfStructImpl_(O, Facet) \
-  int ZfFields_##O##_##Facet::match(ZuCSpan s) { \
-    static constexpr auto matcher = ZuMatcher<ZfFields_##O##_##Facet>(); \
-    return matcher.match(s); \
+  ZfVFieldMatchFn ZfFieldMatcher_(O *, ZuFacet::Facet *) { \
+    return ZfFieldMatcher<O, ZuFacet::Facet>::match; \
   }
 #define ZfStructImpl_1(O) ZfStructImpl_(O, Core)
 #define ZfStructImpl_2(O, Facet) ZfStructImpl_(O, Facet)
@@ -3482,7 +3495,7 @@ struct ZfStructPrint : public ZuPrintDelegate {
     ZuBool<!ZuTypeIn<ZuFieldProp::Hidden, typename U::Props>{}>;
   template <typename S, typename O>
   static void print(S &s, const O &o) {
-    using Fields = ZuTypeGrep<Print_Filter, ZuFields<O>>;
+    using Fields = ZuTypeGrep<Print_Filter, ZuActiveFields<O>>;
     s << '{';
     ZuUnroll::all<Fields>([&s, &o]<typename Field>() {
       if constexpr (ZuTypeIndex<Field, Fields>{}) s << ',';
@@ -3496,9 +3509,9 @@ struct ZfStructPrint : public ZuPrintDelegate {
 
 using ZfVFieldArray = ZuSpan<const ZfVField *>;
 
-template <typename Meta, typename VField>
+template <typename Fields_, typename VField>
 class ZfVFieldFactory {
-  using Fields = typename ZuFields__<Meta>::T;
+  using Fields = ZuTypeGrep<ZuFieldActive, Fields_>;
   enum { N = Fields::N };
 
   const VField		m_fields[N];
@@ -3519,20 +3532,24 @@ public:
 
   ZfVFieldFactory() : ZfVFieldFactory{ZuMkSeq<N>{}} { }
 };
-template <typename Meta, typename VField = ZfVField>
+template <typename Fields, typename VField = ZfVField>
 inline ZfVFieldArray ZfVFields_() {
-  using Factory = ZfVFieldFactory<Meta, VField>;
+  using Factory = ZfVFieldFactory<Fields, VField>;
   return Factory::instance()->fields;
 }
 template <typename O, typename VField = ZfVField>
 inline ZfVFieldArray ZfVFields() {
-  return ZfVFields_<ZuFieldMeta<O>, VField>();
+  return ZfVFields_<ZuFields<O>, VField>();
 }
 
-typedef int (*ZfVFieldMatchFn)(ZuCSpan);
 template <typename O, typename Facet = ZuFacet::Core>
 inline ZfVFieldMatchFn ZfVFieldMatcher() {
-  return ZuFieldMeta<O, Facet>::match;
+  if constexpr (ZuIsSame<decltype(ZfFieldMatcher_(
+      ZuDeclVal<O *>(), ZuDeclVal<Facet *>())), ZuFalse>{})
+    return ZfFieldMatcher<O, Facet>::match;
+  else
+    return ZfFieldMatcher_(static_cast<O *>(nullptr),
+	static_cast<Facet *>(nullptr));
 }
 
 // run-time keys
@@ -3576,34 +3593,42 @@ inline ZfVKeyFieldArray ZfVKeyFields() {
 
 // ZfFieldFiltered<ZfFieldFilter::Load, Fields>;
 namespace ZfFieldFilter {
-  template <typename> using All = ZuTrue;
+  template <typename Field> using All = ZuFieldActive<Field>;
 
   template <typename Field>
-  using Load = ZuBool<!Field::ReadOnly>;
+  using Load = ZfFieldWritable<Field>;
 
   template <typename Field>
-  using Ctor = ZuFieldProp::HasCtor<typename Field::Props>;
+  using Ctor = ZuBool<ZuFieldActive<Field>{} &&
+    ZuFieldProp::HasCtor<typename Field::Props>{}>;
 
   template <typename Field>
   using Init = ZuBool<
-    !Field::ReadOnly &&
+    ZfFieldWritable<Field>{} &&
     !ZuFieldProp::HasCtor<typename Field::Props>{}>;
 
   // Save is all fields that are either writable, used for constructing
   // the object, or part of a key (a key field can be synthetic)
-  template <typename Field>
-  using Save = ZuBool<
+  template <typename Field, typename = void>
+  struct Save_ : public ZuBool<ZuFieldActive<Field>{} && (
     bool(Load<Field>{}) ||
     bool(Ctor<Field>{}) ||
-    bool(ZuFieldProp::GetKeys<typename Field::Props>::N)>;
+    bool(ZuFieldProp::GetKeys<typename Field::Props>::N))> { };
+  // Borrowed field adapters are read-only but retain the source field's
+  // serialization membership. ReadOnly still governs load/set factories.
+  template <typename Field>
+  struct Save_<Field, decltype(Field::SourceSave, void())> :
+    public ZuBool<ZuFieldActive<Field>{} && Field::SourceSave> { };
+  template <typename Field> using Save = Save_<Field>;
 
   template <typename Field>
-  using Upd = ZuBool<
+  using Upd = ZuBool<ZuFieldActive<Field>{} && (
     bool(ZuTypeIn<ZuFieldProp::Mutable, typename Field::Props>{}) ||
-    bool(ZuFieldProp::Key<typename Field::Props, 0>{})>;
+    bool(ZuFieldProp::Key<typename Field::Props, 0>{}))>;
 
   template <typename Field>
-  using Del = ZuBool<bool(ZuFieldProp::GetKeys<typename Field::Props>::N)>;
+  using Del = ZuBool<ZuFieldActive<Field>{} &&
+    bool(ZuFieldProp::GetKeys<typename Field::Props>::N)>;
 }
 
 // ZfVStructInfo aggregates the field metadata a run-time

@@ -50,7 +50,6 @@ static bool extract(
   if (ikm.length() > UINT_MAX - prefix) return false;
   unsigned n = unsigned(prefix + ikm.length());
   auto buf = ZmScratch(uint8_t, n, ScratchHeap);
-  if (!buf.data()) return false;
   auto p = buf.data();
   memcpy(p, Version.data(), Version.length());
   p += Version.length();
@@ -72,7 +71,6 @@ static bool expand(
   if (info.length() > UINT_MAX - prefix) return false;
   unsigned n = unsigned(prefix + info.length());
   auto buf = ZmScratch(uint8_t, n, ScratchHeap);
-  if (!buf.data()) return false;
   auto p = buf.data();
   p[0] = uint8_t(output.length() >> 8);
   p[1] = uint8_t(output.length());

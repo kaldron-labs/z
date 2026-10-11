@@ -70,18 +70,13 @@ struct IOBuf_ : public ZiTxBuf {
   auto hdr() { return ptr<Hdr>(); }
 
   template <typename T>
-  const ZfbType<T> *fbo() const {
-    auto record = Zdb_::record(msg(hdr()));
-    if (ZuUnlikely(!record)) return nullptr;
-    auto data = Zfb::Load::bytes(record->data());
-    return ZfbStruct::verify<T>(data);
+  ZiFB::View<T> fbo() const {
+    return Zdb_::data<T>(Zdb_::record(msg(hdr())));
   }
-  // trusted buffer (written locally)
+  // trusted buffer (written locally or already verified at ingress)
   template <typename T>
-  const ZfbType<T> *fbo_() const {
-    auto record = record_(msg_(hdr()));
-    auto data = Zfb::Load::bytes(record->data());
-    return ZfbStruct::root<T>(&data[0]);
+  ZiFB::View<T> fbo_() const {
+    return Zdb_::data_<T>(record_(msg_(hdr())));
   }
 
   struct Print {
@@ -94,7 +89,7 @@ struct IOBuf_ : public ZiTxBuf {
 };
 
 inline UN IOBuf_UNAxor(const IOBuf_ &buf) {
-  return record_(msg_(buf.hdr()))->un();
+  return record_(msg_(buf.hdr())).get<Msg::ZfField(Record, un)>();
 }
 
 constexpr const auto &BufCache_ID() { return "Zdb.BufCache"; }

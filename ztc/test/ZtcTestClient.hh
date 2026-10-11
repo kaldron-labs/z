@@ -16,7 +16,6 @@
 
 #include <zlib/ZtArray.hh>
 
-#include <zlib/Zfb.hh>
 
 #include <zlib/ZiProgram.hh>
 #include <zlib/ZtcApp.hh>
@@ -34,12 +33,13 @@ using Frame = ZiIOBufAlloc<1024,
   Ztc::AppCf::DefltMaxFrame, "Ztc.TestClient.Frame">;
 
 inline ZmRef<ZiIOBuf> request(
-    uint64_t seqNo, Ztc::fbs::Group group, ZuCSpan filter,
+    uint64_t seqNo, Ztc::Group::T group, ZuCSpan filter,
     uint32_t interval, bool subscribe,
     uint32_t alertDate = 0, uint64_t alertSeqNo = 0,
     ZuCSpan id = {})
 {
-  Zfb::IOBuilder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+  Ztc::Builder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+  auto nested = fbb.startNested();
   Ztc::Request data;
   data.filter = filter;
   data.id = id;
@@ -49,9 +49,9 @@ inline ZmRef<ZiIOBuf> request(
   data.alertDate = alertDate;
   data.group = uint8_t(group);
   data.subscribe = subscribe;
-  auto request_ = ZfbStruct::save(fbb, data);
-  fbb.Finish(Ztc::saveMsg(
-    fbb, Ztc::fbs::Body::Request, request_.Union()));
+  auto request_ = ZiFB::saveObject(fbb, data);
+  fbb.finish(Ztc::saveMsg(
+    fbb, nested, Ztc::Body::Request, request_));
   return Ztc::saveHdr(fbb);
 }
 
@@ -95,7 +95,7 @@ public:
     if (m_reqRing.closed()) return false;
     if (m_resetPending) {
       auto reset = request(
-	ZuCmp<uint64_t>::null(), Ztc::fbs::Group::App, {}, 0, false);
+	ZuCmp<uint64_t>::null(), Ztc::Group::App, {}, 0, false);
       if (!reset || !sendRaw(reset->cspan())) return false;
       m_resetPending = false;
     }
@@ -112,7 +112,8 @@ public:
       }
       unsigned size = Ztc::ringSize(ptr);
       ZmRef<ZiIOBuf> frame = new Frame;
-      if (size <= Ztc::AppCf::DefltMaxFrame && frame->alloc(size)) {
+      if (size <= Ztc::AppCf::DefltMaxFrame) {
+	frame->alloc(size);
 	memcpy(frame->data(), ptr, size);
 	frame->length = size;
       } else
@@ -120,12 +121,14 @@ public:
       m_telRing.shift2(size);
       if (!frame) return {};
       auto msg = Ztc::msg(frame->ptr<Ztc::Hdr>());
-      auto tel = msg && msg->body_type() == Ztc::fbs::Body::Telemetry ?
-	msg->body_as_Telemetry() : nullptr;
-      if (skipStartup && tel && !tel->seqNo() &&
-	  (tel->value_type() == Ztc::fbs::TelemetryBody::AppTelemetry ||
-	   tel->value_type() == Ztc::fbs::TelemetryBody::Shutdown))
-	continue;
+      if (skipStartup && msg &&
+	  Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry) {
+	auto tel = Ztc::msgBody(msg).get<Ztc::Body::Telemetry>();
+	auto type = tel.get<Ztc::ZfField(Telemetry, value)>().tag();
+	if (!tel.get<Ztc::ZfField(Telemetry, seqNo)>() &&
+	    (type == Ztc::TelemetryBody::AppTelemetry ||
+	     type == Ztc::TelemetryBody::Shutdown)) continue;
+      }
       return frame;
     }
     return {};

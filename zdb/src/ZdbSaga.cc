@@ -11,6 +11,9 @@
 namespace Zdb_ {
 
 ZtEnumImplNS(SagaOp);
+ZfStructImpl(SagaData);
+ZfStructImpl(SagaStep);
+ZfStructImpl(SagaTypeStep);
 
 bool Saga::prepare_(
     AnyTable *table, Shard shard, SagaOp::T op,

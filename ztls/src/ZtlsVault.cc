@@ -600,8 +600,6 @@ VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
 
   auto key = ZtScratch(VaultScratch,
     (env ? 5 + env.length() : 7) + name.length() + 1);
-  if (!key.data())
-    return ZeEXCEPT(Error, "ZtlsVault", "key allocation failed");
   if (env)
     key << "env/" << env << '/' << name;
   else

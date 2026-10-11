@@ -41,8 +41,6 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsRandom.hh>
@@ -885,13 +883,13 @@ using FrameBuf = ZiIOBufAlloc<1024, 1U << 20, "Ztc.Example.Frame">;
 
 static Frame requestFrame(ZuCSpan deviceID, uint64_t subID, bool subscribe)
 {
-  Zfb::IOBuilder builder{Frame{new FrameBuf}};
-  auto device = builder.CreateString(deviceID.data(), deviceID.length());
-  auto request = ZfbStruct::save(builder, Ztc::Request{
+  Ztc::Builder builder{Frame{new FrameBuf}};
+  auto nested = builder.startNested();
+  auto request = ZiFB::saveObject(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
-    .group = uint8_t(Ztc::fbs::Group::App), .subscribe = subscribe});
-  builder.Finish(Ztc::saveMsg(
-    builder, Ztc::fbs::Body::Request, request.Union(), subID, device));
+    .group = uint8_t(Ztc::Group::App), .subscribe = subscribe});
+  builder.finish(Ztc::saveMsg(
+    builder, nested, Ztc::Body::Request, request, subID, deviceID));
   return builder.buf();
 }
 
@@ -950,25 +948,28 @@ struct App {
   int messageEnd(Link_ &link)
   {
     auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
-    if (!msg || !msg->deviceId() || !msg->agentGen() ||
-        msg->subId() != subID || Zfb::Load::str(msg->deviceId()) != deviceID) {
+    if (!msg || !msg.get<Ztc::ZfField(Msg, deviceID)>() ||
+      !msg.get<Ztc::ZfField(Msg, agentGen)>() ||
+	msg.get<Ztc::ZfField(Msg, subID)>() != subID ||
+	  msg.get<Ztc::ZfField(Msg, deviceID)>() != deviceID) {
       link.close(Zws::CloseCode::InvalidData);
       failed = true;
       return -1;
     }
-    switch (msg->body_type()) {
-      case Ztc::fbs::Body::Telemetry: {
+    switch (Ztc::msgBody(msg).tag()) {
+      case Ztc::Body::Telemetry: {
         received = true;
         std::cout << "telemetry device=" <<
-          msg->deviceId()->string_view() <<
-          " generation=" << msg->agentGen() << '\n' << std::flush;
+	  msg.get<Ztc::ZfField(Msg, deviceID)>() <<
+	  " generation=" << msg.get<Ztc::ZfField(Msg, agentGen)>() << '\n' << std::flush;
         done->post();
       } break;
-      case Ztc::fbs::Body::Ack:
-        if (msg->body_as_Ack()->status() == Ztc::fbs::AckStatus::OK) break;
+      case Ztc::Body::Ack:
+	if (Ztc::msgBody(msg).get<Ztc::Body::Ack>()
+	  .get<Ztc::ZfField(Ack, status)>() == Ztc::AckStatus::OK) break;
         [[fallthrough]];
-      case Ztc::fbs::Body::EOS:
-      case Ztc::fbs::Body::Error:
+      case Ztc::Body::EOS:
+      case Ztc::Body::Error:
         failed = !received;
         done->post();
         break;

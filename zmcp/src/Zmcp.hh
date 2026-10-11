@@ -1105,7 +1105,7 @@ ZfStruct(ZmcpAPI, (ObjectShape, JSON),
 
 template <typename O>
 struct Object : public ZuStructShim<Object<O>, ObjectShape> {
-  using Fields = ZuFields<O, ZuFacet::JSON>;
+  using Fields = ZuActiveFields<O, ZuFacet::JSON>;
 
   ZuCSpan type() const { return "object"; }
   Properties_<Fields> properties() const { return {}; }

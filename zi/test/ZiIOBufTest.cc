@@ -77,20 +77,12 @@ void testPrependAndGrow()
   buf->clear();
   buf->skip = buf->size;
   uint8_t *tail = buf->prepend(4);
-  if (!tail) {
-    ZuCheck(false);
-    return;
-  }
   memcpy(tail, "tail", 4);
 
   auto oldSize = buf->size;
 
   // Force a prepend requiring growth.
-  uint8_t *p = buf->prepend(32);
-  if (!p) {
-    ZuCheck(false);
-    return;
-  }
+  buf->prepend(32);
   ZuCheck(buf->length == 36);
   ZuCheck(buf->size >= oldSize);
 }

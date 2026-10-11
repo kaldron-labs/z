@@ -14,16 +14,15 @@
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/Zdb.hh>
 
-#include "zdbtest_fbs.h"
 
 namespace zdbtest {
 
-ZfbEnumNS(, Side, Buy, Sell)
+ZtEnumNS(, Side, int8_t, Buy, Sell);
+namespace Side { ZiFB::Enum<"zdbtest.fbs.Side"> ZiFBType(Map *); }
 
 struct Order {
   ZuCArray<32>		symbol;
@@ -42,7 +41,7 @@ struct Order {
   friend ZuStringT<"zdbtest.order.buf"> ZdbBufHeapID(Order *);
 };
 
-ZfbStruct(, (Order, JSON),
+ZfStruct(, (Order, JSON),
   (symbol,	(Ctor<0>, Keys<0>),				String),
   (orderID,	(Ctor<1>, Keys<0>, Mutable),			UInt64),
   (link,	(Ctor<2>, (Keys<1, 2>), Group<2>, Descend<2>),	String),
@@ -52,8 +51,8 @@ ZfbStruct(, (Order, JSON),
   (prices,	(Ctor<6>, Mutable),				Int32Vec),
   (qtys,	(Ctor<7>, Mutable),				Int32Vec),
   (flags,	(Ctor<8>, Mutable, Deflt<"4,8,16-42"_z>),	UDT));
+ZiFB::Table<"zdbtest.fbs.Order"> ZiFBType(Order *);
 
-ZfbRoot(Order);	// bind Order to flatbuffer schema
 
 ZdbTableDerive(OrderTable, Order);
 

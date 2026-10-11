@@ -1,0 +1,44 @@
+Original removed adapter: git show HEAD:zfb/src/ZfbStruct.hh
+
+  Handler_(const FBType *fbo_) : fbo{fbo_} { }
+
+  template <template <typename> class Filter>
+  static Offset<FBType> save(Zfb::Builder &fbb, const O &o) {
+    return SaveFieldsFn<Filter>::save(fbb, o);
+  }
+
+private:
+  template <unsigned ...I, typename ...Args>
+  O ctor_(ZuSeq<I...>, Args &&...args) const {
+    return O{
+      ZuFwd<Args>(args)..., ZuType<I, CtorFields>::load_(fbo)...};
+  }
+  template <unsigned ...I, typename ...Args>
+  O *alloc_(ZuSeq<I...>, Args &&...args) const {
+    return new O{
+      ZuFwd<Args>(args)..., ZuType<I, CtorFields>::load_(fbo)...};
+  }
+  template <unsigned ...I, typename ...Args>
+  void new__(void *o, ZuSeq<I...>, Args &&...args) const {
+    new (o) O{
+      ZuFwd<Args>(args)..., ZuType<I, CtorFields>::load_(fbo)...};
+  }
+
+public:
+  template <
+    bool RO = ReadOnly,
+    typename = ZuIfT<!RO, void>,
+    typename ...Args>
+  O ctor(Args &&...args) const {
+    if constexpr (!InitFields::N) // exploit guaranteed copy elision
+      return ctor_(ZuMkSeq<CtorFields::N>{}, ZuFwd<Args>(args)...);
+    else {
+      O o = ctor_(ZuMkSeq<CtorFields::N>{}, ZuFwd<Args>(args)...);
+      ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
+	Field::load(o, fbo);
+      });
+      return o;
+    }
+  }
+  template <
+    bool RO = ReadOnly,

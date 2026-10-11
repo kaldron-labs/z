@@ -21,8 +21,8 @@ Zi::Username Zi::username(ZeError *e)
   ssize_t size = sysconf(_SC_GETPW_R_SIZE_MAX);
   if (size > UINT_MAX) return name;
   unsigned bufSize = size < 0 ? (1<<14) : unsigned(size);
+  if (!bufSize) return name;
   auto pwdBuf = ZmScratch(char, bufSize);
-  if (!pwdBuf.data()) return name;
 
   int s = getpwuid_r(geteuid(), &pwd, pwdBuf.data(), bufSize, &result);
   if (!result && s != 0) {

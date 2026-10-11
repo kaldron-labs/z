@@ -324,7 +324,7 @@ ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input,
   unsigned total = info.total;
   unsigned tail = input->length - total;
   ZmRef<ZiIOBuf> copied = new FrameAlloc{};
-  if (!copied->ensure(tail < total ? tail : total)) return {};
+  copied->ensure(tail < total ? tail : total);
   if (tail < total) {
     memcpy(copied->data(), input->data() + total, tail);
     copied->length = tail;
@@ -363,10 +363,8 @@ bool Connection::frame_()
   FrameInfo info = parsed.info;
   if (m_input->length == parsed.info.total)
     complete = ZuMv(m_input);
-  else if (!(complete = splitFrame_(m_input, info))) {
-    rxFail_({0, ENOMEM, CxnError::Resource});
-    return false;
-  }
+  else
+    complete = splitFrame_(m_input, info);
   if (m_frameFn) m_frameFn(ZuMv(complete), info);
   return true;
 }
@@ -416,7 +414,7 @@ void Connection::rxRead_()
     }
     if (want > budget) want = budget;
     if (!m_input->ensure(n + want)) {
-      rxFail_({0, ENOMEM, CxnError::Resource});
+      rxFail_({0, 0, CxnError::Resource});
       return;
     }
     int received = int(::recv(m_socket, m_input->end(), want, 0));

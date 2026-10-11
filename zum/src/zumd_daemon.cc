@@ -56,9 +56,10 @@ public:
   }
 
 private:
-  void post_(ZmFn<void()> fn)
+  template <typename L>
+  void post_(L &&l)
   {
-    m_scheduler->run([fn = ZuMv(fn)]() mutable { fn(); }, m_sid);
+    m_scheduler->run(ZuFwd<L>(l), m_sid);
   }
 
   void grant_(MaintenanceResult grant)

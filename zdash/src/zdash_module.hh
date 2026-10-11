@@ -11,6 +11,7 @@
 #include <gtk/gtk.h>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmScheduler.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZiIOBuf.hh>
 
@@ -25,11 +26,24 @@ struct SourceView {
   int rag = 0;
 };
 
+struct ModuleRun {
+  ZmScheduler *sched = nullptr;
+  unsigned sid = 0;
+  ZmFn<bool()> active;
+
+  template <typename L>
+  void operator ()(L &&l) const {
+    sched->run([active = active, l = ZuFwd<L>(l)]() mutable {
+      if (active()) l();
+    }, sid);
+  }
+};
+
 // Calls ending in _ require the indicated owner. Posted work must not outlive
 // the session; closing is delivered on GTK after Rx and refresh work drain.
 struct ModuleHost {
-  ZmFn<void(ZmFn<void()>)> rxRun;
-  ZmFn<void(ZmFn<void()>)> gtkRun;
+  ModuleRun rxRun;
+  ModuleRun gtkRun;
   ZmFn<ZmRef<ZiIOBuf>()> request_;		// Rx
   ZmFn<uint64_t(ZuCSpan, ZuCSpan, unsigned)> subscription_;	// Rx
   ZmFn<bool(ZuBSpan, bool)> receive_;		// Rx; bool selects subscription filter

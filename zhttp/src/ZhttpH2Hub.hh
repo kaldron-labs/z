@@ -565,16 +565,20 @@ public:
     if (!buf || buf->failed()) { fail_(); return nullptr; }
     return buf;
   }
-  bool sendBuf(ZmRef<ZiIOBuf> buf, bool) {
-    if (failed()) return false;
-    if (!buf || buf->failed()) return fail_();
+  HeaderBlock &operator <<(ZmRef<ZiIOBuf> buf) {
+    if (failed()) return *this;
+    if (!buf || buf->failed()) { fail_(); return *this; }
     if (m_deferred) {
       m_data.push(ZuMv(buf));
-      return true;
+      return *this;
     }
     if (!m_native.template sendData<AppThread>(m_streamID, ZuMv(buf)))
-      return fail_();
-    return true;
+      fail_();
+    return *this;
+  }
+  HeaderBlock &operator <<(Zi::Flush) {
+    flush();
+    return *this;
   }
   void defer(uint64_t max = uint64_t(-1)) {
     if (failed()) return;
@@ -1912,7 +1916,8 @@ private:
 	    (frame[4] & Flag::EndHeaders))
 	  m_headerStream = 0;
 	auto tx = impl_()->txStream_();
-	if (!tx.sendBuf(ZuMv(pending), false)) {
+	tx << ZuMv(pending) << Zi::Flush{};
+	if (tx.failed()) {
 	  m_frameAdmission.pop();
 	  // A failed header/continuation send leaves peer compression state
 	  // uncertain. Stop the connection rather than continue draining it.

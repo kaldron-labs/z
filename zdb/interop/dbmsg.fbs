@@ -1,0 +1,51 @@
+// Independent interop fixture adapted from the captured message contract.
+namespace Zf;
+struct UInt128 { h:ulong; l:ulong; }
+struct Time { sec:int64; nsec:int32; }
+namespace Zdb_.fbs;
+table TableState {
+  table:string;
+  un:uint64;
+  shard:uint8;
+}
+table DBState {
+  sn:Zf.UInt128;
+  table_states:[TableState];
+}
+table Heartbeat {
+  host:string;
+  state:uint32;
+  n_shards:uint32;
+  db_state:DBState;
+}
+table Record {
+  table:string;		// table ID
+  un:uint64;		// update number - secondary key
+  sn:Zf.UInt128;	// database sequence number
+  vn:int64;		// record version number - -ve if deleted
+  shard:uint8;		// shard
+  data:[ubyte];		// nested row data - contains keys if row is deleted
+}
+table Commit {
+  table:string;
+  un:uint64;
+  shard:uint8;
+}
+union Body {
+  Heartbeat:Heartbeat,
+  Replication:Record,
+  Recovery:Record,
+  Commit:Commit
+}
+table Msg {
+  body:Body;
+}
+table BenchRow { id:uint32; }
+table BenchSagaData {
+  type:string;
+  id:Zf.UInt128;
+  shard:uint8 = 255;
+  data:[ubyte];
+  deadline:Zf.Time;
+}
+root_type Msg;

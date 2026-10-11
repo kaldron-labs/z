@@ -782,7 +782,7 @@ struct AsObject {
   template <typename O_, typename Facet, typename Props = ZuTypeList<>>
   struct Handler {
     using O = O_;
-    using AllFields = ZuFields<O, Facet>;
+    using AllFields = ZuActiveFields<O, Facet>;
     using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
     using CtorFields = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;
     using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;

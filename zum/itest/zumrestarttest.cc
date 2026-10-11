@@ -162,7 +162,7 @@ static bool stageEnrollment(Zum::DB *db, Zum::DBContext *context)
     .beforeGrant = ZuMv(ceremony)
   });
   Zdb_::SagaPayload payload;
-  M::save(saga, payload);
+  if (M::save(saga, payload)) return false;
   return ZmBlock<bool>{}([
     db, payload = ZuMv(payload)
   ](auto wake) mutable {
@@ -209,7 +209,7 @@ static bool stageAppEnrollment(
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
   saga->init(ZuMv(enrollment));
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   return ZmBlock<bool>{}([
     db, sagaID, payload = ZuMv(payload)
   ](auto wake) mutable {
@@ -284,7 +284,7 @@ static bool stageActionAdd(
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
   saga->init(ZuMv(add));
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
@@ -553,7 +553,7 @@ static bool stageMemberChange(
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
   saga->init(ZuMv(change));
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
@@ -732,7 +732,7 @@ static bool stageRekey(Zum::DB *db, Table *table, Def change,
   ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
   saga->init(ZuMv(change));
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
@@ -847,7 +847,7 @@ static bool stageInvitation(Zum::DB *db, Zum::DBContext *context,
   auto copy = change;
   saga->init(ZuMv(copy));
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
@@ -1003,7 +1003,7 @@ static bool stageCatalog(Zum::DB *db, Zum::DBContext *context,
   saga->init(ZuMv(copy));
   unsigned nSteps = Zum::MSaga::stepCount(saga.ptr());
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto steps = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
@@ -1205,7 +1205,7 @@ static bool stageRoleDelete(Zum::DB *db, Zum::DBContext *context,
   saga->init(ZuMv(copy));
   unsigned steps = Zum::MSaga::stepCount(saga.ptr());
   Zdb_::SagaPayload payload;
-  Zum::MSaga::save(saga, payload);
+  if (Zum::MSaga::save(saga, payload)) return false;
   auto data = internalTable<Zdb_::SagaData>(db, "saga");
   auto journals = internalTable<Zdb_::SagaStep>(db, "saga_step");
   if (!insertRecord(data.ptr(), Zdb_::SagaData{
@@ -1355,7 +1355,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
     ZmRef<Zum::MSaga> saga = new Zum::MSaga{};
     saga->init(change);
     Zdb_::SagaPayload payload;
-    Zum::MSaga::save(saga, payload);
+    ZuCheck(Zum::MSaga::save(saga, payload) == ZiFB::Error::OK);
     auto data = internalTable<Zdb_::SagaData>(db, "saga");
     ZuCheck(insertRecord(data.ptr(), Zdb_::SagaData{
       .type = Zum::RoleDelete::Type{}(), .id = ZdbSagaID{app.id},

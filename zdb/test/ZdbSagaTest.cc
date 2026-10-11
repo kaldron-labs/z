@@ -16,6 +16,8 @@
 
 #include "ZdbMockStore.hh"
 #include "ZdbTest.hh"
+#include "ZdbRepairTest.hh"
+#include <zlib/ZiFBReflect.hh>
 
 using namespace ZuTestUtil;
 
@@ -49,8 +51,9 @@ struct SagaA : public ZdbSagaBase<Context> {
   ZdbSagaStep(2, payment, Delete) { return {}; }
 };
 
-ZfbStruct(, SagaA,
+ZfStruct(, SagaA,
   (value, (Ctor<0>),		UInt64));
+ZiFB::Table<"zdbtest.fbs.SagaA"> ZiFBType(SagaA *);
 
 struct SagaB : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -64,8 +67,9 @@ struct SagaB : public ZdbSagaBase<Context> {
   ZdbSagaStep(0, payment, Update) { return {}; }
 };
 
-ZfbStruct(, SagaB,
+ZfStruct(, SagaB,
   (value, (Ctor<0>),		UInt32));
+ZiFB::Table<"zdbtest.fbs.SagaB"> ZiFBType(SagaB *);
 
 ZdbSagaDerive(Sagas, SagaA, SagaB);
 ZdbSagaImpl(Sagas, SagaA, SagaB)
@@ -82,9 +86,10 @@ struct RepeatSaga : public ZdbSagaBase<Context> {
   ZdbSagaRepeatStep(2, payment, Delete, second) { return {}; }
   ZdbSagaStep(3, payment, Update) { return {}; }
 };
-ZfbStruct(, RepeatSaga,
-  (first, (Ctor<0>),		UInt64),
-  (second, (Ctor<1>),		UInt64));
+ZfStruct(, RepeatSaga,
+  (first,	(Ctor<0>),	UInt64),
+  (second,	(Ctor<1>),	UInt64));
+ZiFB::Table<"zdbtest.fbs.RepeatSaga"> ZiFBType(RepeatSaga *);
 ZdbSagaDerive(RepeatSagas, RepeatSaga);
 ZdbSagaImpl(RepeatSagas, RepeatSaga)
 
@@ -264,8 +269,9 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
 	  saga->findDel<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
 	    ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
 	      if (context->failReverse) {
+		auto failed = context->reverseFailed;
 		complete(false);
-		if (context->reverseFailed) context->reverseFailed->post();
+		if (failed) failed->post();
 		return;
 	      }
 	      complete(bool(row->commit()));
@@ -345,8 +351,9 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
   }
 };
 
-ZfbStruct(, LiveSaga,
+ZfStruct(, LiveSaga,
   (orderID, (Ctor<0>),		UInt64));
+ZiFB::Table<"zdbtest.fbs.LiveSaga"> ZiFBType(LiveSaga *);
 
 ZdbSagaDerive(LiveSagas, LiveSaga);
 ZdbSagaImpl(LiveSagas, LiveSaga)
@@ -358,8 +365,9 @@ struct ShortSaga : public ZdbSagaBase<LiveContext> {
   uint64_t orderID = 0;
   ZdbSagaStep(0, o, Insert) { return {}; }
 };
-ZfbStruct(, ShortSaga,
+ZfStruct(, ShortSaga,
   (orderID, (Ctor<0>),		UInt64));
+ZiFB::Table<"zdbtest.fbs.ShortSaga"> ZiFBType(ShortSaga *);
 
 struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   using Base = ZdbSagaBase<LiveContext>;
@@ -370,8 +378,9 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   ZdbSagaStep(1, o, Delete) { return {}; }
   ZdbSagaStep(2, o, Delete) { return {}; }
 };
-ZfbStruct(, ChangedSaga,
+ZfStruct(, ChangedSaga,
   (orderID, (Ctor<0>),		UInt64));
+ZiFB::Table<"zdbtest.fbs.ChangedSaga"> ZiFBType(ChangedSaga *);
 
 ZdbSagaDerive(ShortCatalog, ShortSaga);
 ZdbSagaImpl(ShortCatalog, ShortSaga)
@@ -381,6 +390,7 @@ ZdbSagaImpl(ChangedCatalog, ChangedSaga)
 struct PayloadContext : public ZmPolymorph {
   ZmSemaphore entered;
   Zdb_::SagaCompleteFn complete;
+  unsigned runs = 0;
 };
 
 struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
@@ -400,23 +410,41 @@ struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
     return {};
   }
 };
-ZfbStruct(, PayloadSaga,
+ZfStruct(, PayloadSaga,
   (data, (Ctor<0>),	Bytes));
+ZiFB::Table<"zdbtest.fbs.PayloadSaga"> ZiFBType(PayloadSaga *);
 
 ZdbSagaDerive(PayloadCatalog, PayloadSaga);
 ZdbSagaImpl(PayloadCatalog, PayloadSaga)
+
+struct RequiredSaga : public ZdbSagaBase<PayloadContext> {
+  using Base = ZdbSagaBase<PayloadContext>;
+  using Base::context;
+  using Base::saga;
+  using Type = ZuStringT<"requiredSaga">;
+  enum { NSteps = 1 };
+  const char *name = nullptr;
+
+  ZdbSagaStep(0, o, Update) {
+    ++context->runs;
+    complete(false);
+    return {};
+  }
+};
+ZfStruct(, RequiredSaga, (name, (Ctor<0>, Required), CString));
+ZiFB::Table<"zdbtest.fbs.RequiredSaga"> ZiFBType(RequiredSaga *);
+ZdbSagaDerive(RequiredCatalog, RequiredSaga);
+ZdbSagaImpl(RequiredCatalog, RequiredSaga)
 
 } // zdbtest
 
 template <typename T>
 static T roundTrip(const T &data)
 {
-  Zfb::IOBuilder fbb{new Zdb_::IOBufAlloc<T>{}};
-  fbb.Finish(ZfbStruct::save(fbb, data));
-  auto fbo = ZfbStruct::verify<T>(
-    {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
-  ZmAssert(fbo);
-  return ZfbStruct::ctor<T>(fbo);
+  ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new Zdb_::IOBufAlloc<T>{}};
+  auto bytes = fbb.finish(ZiFB::saveObject(fbb, data));
+  ZmAssert(ZiFB::verify<T>(bytes));
+  return ZiFB::load<T>(bytes);
 }
 
 static bool data(unsigned size)
@@ -451,9 +479,9 @@ static void rows()
   Zdb_::SagaStep step{
     .type = "orderNew",
     .id = (uint128_t(1)<<96) | 7,
-    .step = UINT32_C(0xf1234567),
+    .step = uint32_t(0xf1234567),
     .shard = 63,
-    .un = UINT64_C(0xf123456789abcdef)
+    .un = uint64_t(0xf123456789abcdef)
   };
   auto loadedStep = roundTrip(step);
   ZuCheck(loadedStep.type == step.type);
@@ -490,7 +518,7 @@ static bool payload(unsigned size)
   ZmRef<M> saga = new M{};
   saga->init(zdbtest::PayloadSaga{{}, ZuMv(input)});
   Zdb_::SagaPayload saved;
-  M::save(saga, saved);
+  if (M::save(saga, saved)) return false;
   auto loaded = M::load(zdbtest::PayloadSaga::Type{}(), saved);
   return loaded->u.cdispatch([size](auto, const auto &def) {
     if (def.data.length() != size) return false;
@@ -523,7 +551,7 @@ static void dispatch()
   ZuCheck(op == ZdbSagaOp::Delete);
 
   Zdb_::SagaPayload data;
-  M::save(saga, data);
+  ZuCheck(M::save(saga, data) == ZiFB::Error::OK);
   ZmRef<M> loaded = M::load("sagaA", data);
   ZuCheck(M::type(loaded) == "sagaA");
   ZuCheck(loaded->u.cdispatch([](auto, const auto &def) {
@@ -677,7 +705,7 @@ static void repeatedLayout()
   ZmRef<M> saga = new M{};
   saga->init(ZuMv(def));
   Zdb_::SagaPayload payload;
-  M::save(saga, payload);
+  ZuCheck(M::save(saga, payload) == ZiFB::Error::OK);
   auto loaded = M::load(Def::Type{}(), payload);
   ZuCheck(M::stepCount(loaded.ptr()) == 7);
   ZuCSpan table;
@@ -836,8 +864,10 @@ static void collisions()
   ZuCheck(init.is<InitData>());
   StoreTbl *table = nullptr;
   ZmSemaphore opened;
+  SchemaBuf schema = SchemaBuf(ZiFB::SchemaOut::Schema<Order>::Size);
+  ZiFB::saveSchema<Order>(schema);
   store->open(false, "collisions", ZfVFields<Order>(), ZfVKeyFields<Order>(),
-    reflection::GetSchema(ZfbSchema<Order>::data()), Table<Order>::allocBuf,
+    Schema::from<Order>(schema), Table<Order>::allocBuf,
     [&table, &opened](OpenResult result) {
       if (result.is<OpenData>()) table = result.p<OpenData>().storeTbl;
       opened.post();
@@ -848,14 +878,12 @@ static void collisions()
   auto insert = [table](UN un, uint64_t seqNo) {
     Order row{"IBM", 1, "FIX0", "collision", seqNo,
       zdbtest::Side::Buy, {100}, {1}};
-    Zfb::IOBuilder fbb{Table<Order>::allocBuf()};
-    auto data = Zfb::Save::nest(fbb, [&row](Zfb::Builder &fbb) {
-      return ZfbStruct::save(fbb, row).Union();
-    });
-    auto sn = ZfbTransform::UInt128::save(SN{un});
-    fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Replication,
-      fbs::CreateRecord(fbb, Zfb::Save::str(fbb, "collisions"),
-	un, &sn, 0, 0, data).Union()));
+    Builder fbb{Table<Order>::allocBuf()};
+    auto nested = fbb.startNested();
+    auto data = fbb.endNested(nested, ZiFB::saveObject(fbb, row));
+    fbb.finish(saveMsg(fbb,
+      saveRecord(fbb, "collisions", un, SN{un}, 0, 0, data),
+      Msg::Tag::Replication));
     bool ok = false;
     ZmSemaphore done;
     table->write(saveHdr(fbb), [&ok, &done](ZmRef<IOBuf>, CommitResult result) {
@@ -871,16 +899,16 @@ static void collisions()
   bool unchanged = false;
   unsigned rows = 0;
   ZmSemaphore selected;
-  Zfb::IOBuilder fbb{Table<Order>::allocBuf()};
+  Builder fbb{Table<Order>::allocBuf()};
   using GroupKey = typename SplitKey<Order, 0>::GroupKey;
-  fbb.Finish(ZfbStruct::save(fbb, GroupKey{}).Union());
+  fbb.finish(ZiFB::saveObject(fbb, GroupKey{}));
   table->select(true, false, false, 0, fbb.buf(), 10,
     [&unchanged, &rows, &selected](TupleResult result) {
       if (result.is<TupleData>()) {
 	++rows;
 	auto &data = result.p<TupleData>();
-	auto fbo = ZfbStruct::verify<Order>({data.buf->data(), data.buf->length});
-	unchanged = fbo && ZfbStruct::ctor<Order>(fbo).seqNo == 7;
+	ZuBSpan bytes{data.buf->data(), data.buf->length};
+	unchanged = ZiFB::verify<Order>(bytes) && ZiFB::load<Order>(bytes).seqNo == 7;
 	return;
       }
       selected.post();
@@ -892,8 +920,11 @@ static void collisions()
   table->close([&closed]() { closed.post(); });
   closed.wait();
   bool position = false;
+  SchemaBuf replacement = SchemaBuf(ZiFB::SchemaOut::Schema<Order>::Size);
+  ZiFB::saveSchema<Order>(replacement);
+  schema = ZuMv(replacement); // release the first open's metadata owner
   store->open(false, "collisions", ZfVFields<Order>(), ZfVKeyFields<Order>(),
-    reflection::GetSchema(ZfbSchema<Order>::data()), Table<Order>::allocBuf,
+    Schema::from<Order>(schema), Table<Order>::allocBuf,
     [&position, &table, &opened](OpenResult result) {
       if (result.is<OpenData>()) {
 	auto &data = result.p<OpenData>();
@@ -911,6 +942,94 @@ static void collisions()
   ZuCheck(mx.stop());
 }
 
+struct HeapCount {
+  uint64_t allocs = 0;
+  uint64_t frees = 0;
+};
+
+static HeapCount heapCount(ZuCSpan id)
+{
+  HeapCount count;
+  Ztc::HeapMgr::all([id, &count](Ztc::Heap *heap) {
+    if (heap->telKey().p<0>() != id) return;
+    Ztc::HeapTelemetry data;
+    heap->telemetry(data);
+    count.allocs += data.cacheAllocs + data.heapAllocs;
+    count.frees += data.cacheFrees + data.heapFrees;
+  });
+  return count;
+}
+
+template <typename F, typename T>
+static void valueOwnership(
+  const typename F::O &row, ZuCSpan id, unsigned expected)
+{
+  using O = typename F::O;
+  auto buf = ZtScratch(ZiFB::Buffer, 0);
+  ZiFB::ArrayStorage<ZiFB::BufferAlign<O>::N> storage{buf};
+  ZiFB::Builder<decltype(storage)> builder{storage};
+  auto bytes = builder.finish(
+    ZiFB::saveObject<O, ZuFacet::Core, ZfFieldFilter::All>(builder, row));
+  ZuCheckRT(!builder.failed());
+  Zdb_::SchemaBuf schemaBuf = Zdb_::SchemaBuf(ZiFB::SchemaOut::Schema<O>::Size);
+  ZiFB::saveSchema<O>(schemaBuf);
+  auto schema = Zdb_::Schema::from<O>(schemaBuf);
+  ZfVField native{F{}};
+  auto field = ZdbMem::xField(schema.field(F::id()), &native, schema.view);
+  ZuCheckRT(field.type == ZdbMem::Value::Index<T>{});
+  auto before = heapCount(id);
+  {
+    ZdbMem::Value value;
+    ZdbMem::loadValue(value, field, ZiFB::TableView{ZiFB::root(bytes)});
+    auto loaded = heapCount(id);
+    ZuCheckRT(value.is<T>());
+    ZuCheckRT(loaded.allocs - before.allocs == expected);
+    // The destination remains alive; no owning temporary was freed.
+    ZuCheckRT(loaded.frees == before.frees);
+  }
+  auto after = heapCount(id);
+  ZuCheckRT(after.frees - before.frees == expected);
+}
+
+static void repairOwnership()
+{
+  ZuTestScopeRT(repairOwnership);
+  zdbtest::Order order{};
+  order.flags = ZtBitmap{"0,63,64,130"};
+  valueOwnership<zdbtest::ZfField(Order, flags), ZtBitmap>(order, "ZtBitmap", 1);
+  order.flags = ZtBitmap{};
+  valueOwnership<zdbtest::ZfField(Order, flags), ZtBitmap>(order, "ZtBitmap", 0);
+  order.prices = {INT_MIN, 0, INT_MAX};
+  valueOwnership<zdbtest::ZfField(Order, prices), ZdbMem::Int32Vec>(order, "ZdbMem.Vec", 1);
+  zdbtest::RepairRow row{};
+  row.stamp = "required";
+  row.reals = {-0.0f, -2.5f, __builtin_inff(), __builtin_nanf("")};
+  row.names = {"short", "a long string needing final owning element storage"};
+  valueOwnership<zdbtest::ZfField(RepairRow, reals), ZdbMem::FloatVec>(row, "ZdbMem.Vec", 1);
+  valueOwnership<zdbtest::ZfField(RepairRow, names), ZdbMem::StringVec>(row, "ZdbMem.Vec", 1);
+  valueOwnership<zdbtest::ZfField(RepairRow, names), ZdbMem::StringVec>(row, "ZdbMem.String", 1);
+  row.reals = {};
+  row.names = {};
+  valueOwnership<zdbtest::ZfField(RepairRow, reals), ZdbMem::FloatVec>(row, "ZdbMem.Vec", 0);
+  valueOwnership<zdbtest::ZfField(RepairRow, names), ZdbMem::StringVec>(row, "ZdbMem.Vec", 0);
+
+}
+
+static void repairBindings()
+{
+  ZuTestScopeRT(repairBindings);
+  using namespace Zdb_;
+  auto config = cf();
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  ZuCheckRT(mx.start());
+  ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
+  ZuCheckRT(store->init(config->resolve("zdb.store"), &mx, 1, {}).is<InitData>());
+  ZuTestCallRT(zdbtest::repairBindings, store.ptr());
+  store->final();
+  store = {};
+  ZuCheckRT(mx.stop());
+}
+
 static void up(Zdb *, ZdbHost *)
 {
   active_->post();
@@ -919,6 +1038,16 @@ static void up(Zdb *, ZdbHost *)
 static void down(Zdb *, bool)
 {
   down_->post();
+}
+
+static void repairSaga(bool fail, bool restart = false)
+{
+  ZuTestScopeRT(repairSaga);
+  auto config = cf(true);
+  ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
+  if (restart) store->preserve();
+  ZuTestCallRT(zdbtest::repairSaga, config->resolve("zdb"),
+    config->resolve("mx"), ZuMv(store), fail, ZdbShard{0}, false, restart);
 }
 
 static void live(unsigned race, bool separate = false, bool secondary = false)
@@ -1001,14 +1130,14 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
       db->run([orders, secondary, &replaced, &interloper]() {
 	orders->run(0, [orders, secondary, &replaced, &interloper]() {
 	  if (secondary)
-	    orders->findUpd<0, ZuSeq<1, 2>>(0, ZuFwdTuple("IBM", UINT64_C(42)),
+	    orders->findUpd<0, ZuSeq<1, 2>>(0, ZuFwdTuple("IBM", uint64_t(42)),
 	      [](ZdbRow<zdbtest::Order> *row) {
 		if (!row) return;
 		row->data().link = "MOVED";
 		row->data().clOrdID = "gone";
 		row->commit();
 	      });
-	  orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(42)),
+	  orders->findDel<0>(0, ZuFwdTuple("IBM", uint64_t(42)),
 	    [](ZdbRow<zdbtest::Order> *row) {
 	      if (row) row->commit();
 	    });
@@ -1056,7 +1185,7 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
   bool absent = false;
   ZmSemaphore found;
   orders->run(0, [orders = orders.ptr(), &absent, &found]() {
-    orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(42)),
+    orders->find<0>(0, ZuFwdTuple("IBM", uint64_t(42)),
       [&absent, &found](ZdbRowRef<zdbtest::Order> row) {
 	absent = !row;
 	found.post();
@@ -1154,7 +1283,7 @@ static void recovery(
     // A different actor deletes the row before the saga reaches findDel.
     ZmBlock<>{}([orders = orders.ptr()](auto wake) {
       orders->run(0, [orders, wake = ZuMv(wake)]() mutable {
-	orders->findDel<0>(0, ZuFwdTuple("IBM", UINT64_C(43)),
+	orders->findDel<0>(0, ZuFwdTuple("IBM", uint64_t(43)),
 	  [wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *o) mutable {
 	    if (o) o->commit();
 	    wake();
@@ -1281,7 +1410,7 @@ static void recovery(
     ZmBlock<>{}([orders = orders.ptr(), &retained, afterDelete](auto wake) {
       orders->run(0, [orders, &retained, afterDelete,
 	  wake = ZuMv(wake)]() mutable {
-	orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(43)),
+	orders->find<0>(0, ZuFwdTuple("IBM", uint64_t(43)),
 	  [&retained, afterDelete,
 	    wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> o) mutable {
 	    retained = o && (!afterDelete || o->data().seqNo == 99);
@@ -1536,14 +1665,12 @@ static bool catalogWrite(const Zdb_::OpenData &data, unsigned mode)
     SagaOp::T(partial ? SagaOp::Delete : SagaOp::Update)};
   // Catalog columns are immutable: replace a row with delete/insert.
   for (unsigned i = 0, n = partial ? 1 : 2; i < n; ++i) {
-    Zfb::IOBuilder fbb{Table<SagaTypeStep>::allocBuf()};
-    auto payload = Zfb::Save::nest(fbb, [&row](Zfb::Builder &fbb) {
-      return ZfbStruct::save(fbb, row).Union();
-    });
-    auto sn = ZfbTransform::UInt128::save(data.sn + i + 1);
-    fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Replication,
-      fbs::CreateRecord(fbb, Zfb::Save::str(fbb, "saga_type"),
-	data.un[0] + i + 1, &sn, i ? 0 : -1, 0, payload).Union()));
+    Builder fbb{Table<SagaTypeStep>::allocBuf()};
+    auto nested = fbb.startNested();
+    auto payload = fbb.endNested(nested, ZiFB::saveObject(fbb, row));
+    fbb.finish(saveMsg(fbb,
+      saveRecord(fbb, "saga_type", data.un[0] + i + 1,
+	data.sn + i + 1, i ? 0 : -1, 0, payload), Msg::Tag::Replication));
     if (!ZmBlock<bool>{}([
       table = data.storeTbl, buf = saveHdr(fbb)
     ](auto wake) mutable {
@@ -1572,10 +1699,12 @@ static bool catalogStart(
   bool reconciled = false;
   if (started) {
     // Successful reconciliation must release the direct store handle.
-    OpenResult result = ZmBlock<OpenResult>{}([store](auto wake) {
+    SchemaBuf schema = SchemaBuf(ZiFB::SchemaOut::Schema<SagaTypeStep>::Size);
+    ZiFB::saveSchema<SagaTypeStep>(schema);
+    OpenResult result = ZmBlock<OpenResult>{}([store, &schema](auto wake) {
       store->open(true, "saga_type",
 	ZfVFields<SagaTypeStep>(), ZfVKeyFields<SagaTypeStep>(),
-	reflection::GetSchema(ZfbSchema<SagaTypeStep>::data()),
+	Schema::from<SagaTypeStep>(schema),
 	Table<SagaTypeStep>::allocBuf,
 	[wake = ZuMv(wake)](OpenResult result) mutable { wake(ZuMv(result)); });
     });
@@ -1887,6 +2016,50 @@ static void admission()
   ZuCheck(mx.stop());
 }
 
+static void requiredAdmission()
+{
+  ZuTestScope(requiredAdmission);
+  using Context = zdbtest::PayloadContext;
+  using Catalog = zdbtest::RequiredCatalog;
+  using M = ZdbMSaga<Catalog>;
+  auto config = cf(true);
+  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  ZuCheck(mx.start());
+  ZmRef<zdbtest::Store> store = new zdbtest::Store{};
+  ZmRef<ZdbSagaDB<Context, Catalog>> db = new ZdbSagaDB<Context, Catalog>{};
+  db->init(ZdbCf{config->resolve("zdb")}, &mx, {}, store);
+  auto orders = db->initTable<zdbtest::Order>("o");
+  ZmRef<Context> context = new Context{};
+  db->sagas(context);
+  ZuCheck(db->start());
+  ZmRef<M> saga = new M{};
+  saga->init(zdbtest::RequiredSaga{{}, nullptr});
+  Zdb_::SagaPayload saved;
+  saved.length(3, false);
+  ZuCheck(M::save(saga, saved) == ZiFB::Error::Required);
+  ZuCheck(!saved.length());
+  unsigned completed = 0;
+  bool admitted = ZmBlock<bool>{}([db = db.ptr(), saga, &completed](auto wake) mutable {
+    db->saga(0, 1, ZuMv(saga),
+      [wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
+      [&completed](bool) { ++completed; });
+  });
+  ZuCheck(!admitted);
+  bool clean = ZmBlock<bool>{}([db = db.ptr()](auto wake) {
+    db->run([db, wake = ZuMv(wake)]() mutable {
+      wake(!db->table("saga")->count() && !db->table("saga_step")->count());
+    });
+  });
+  ZuCheck(clean);
+  ZuCheck(db->stop());
+  ZuCheck(!context->runs && !completed);
+  orders = {};
+  db->final();
+  db = {};
+  store = {};
+  ZuCheck(mx.stop());
+}
+
 static void payloadAdmission(unsigned size)
 {
   ZuTestScopeRT(payloadAdmission);
@@ -1909,7 +2082,7 @@ static void payloadAdmission(unsigned size)
   ZmRef<M> saga = new M{};
   saga->init(zdbtest::PayloadSaga{{}, ZuMv(data)});
   Zdb_::SagaPayload saved;
-  M::save(saga, saved);
+  ZuCheckRT(M::save(saga, saved) == ZiFB::Error::OK);
   bool admitted = ZmBlock<bool>{}([
     db = db.ptr(), saga, context = context.ptr()
   ](auto wake) mutable {
@@ -2519,11 +2692,21 @@ static void abandonRollback()
   ZuCheckRT(mx.stop());
 }
 
-int main()
+#include "../bench/ZdbRepairBench.hh"
+
+int main(int argc, char **argv)
 {
   ZiLog::init("ZdbSagaTest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
+  if (argc == 5 && (!strcmp(argv[1], "--repair-bench") ||
+      !strcmp(argv[1], "--repair-latency"))) {
+    int result = RepairBench::run(ZuBox<unsigned>{argv[2]},
+	ZuBox<unsigned>{argv[3]}, ZuBox<unsigned>{argv[4]},
+	!strcmp(argv[1], "--repair-bench"));
+    ZiLog::stop();
+    return result;
+  }
   ZuTestMain();
   ZuTestCall(rows);
   ZuTestCall(groupKeys);
@@ -2541,6 +2724,7 @@ int main()
   ZuTestCall(scanFail, false, true);
   ZuTestCall(scanFail, true, true);
   ZuTestCall(admission);
+  ZuTestCall(requiredAdmission);
   ZuTestCall(payloadAdmission, 0);
   ZuTestCall(payloadAdmission, ZdbSaga_BuiltinSize);
   ZuTestCall(payloadAdmission, 2 * ZdbSaga_BuiltinSize);
@@ -2555,6 +2739,12 @@ int main()
   ZuTestCall(indexes);
   ZuTestCall(tableIDs);
   ZuTestCall(collisions);
+  ZuTestCall(repairBindings);
+  ZuTestCall(repairOwnership);
+  ZuTestCall(repairSaga, false);
+  ZuTestCall(repairSaga, true);
+  ZuTestCall(repairSaga, false, true);
+  ZuTestCall(repairSaga, true, true);
   ZuTestCall(live, 0);
   ZuTestCall(live, 0, true);
   ZuTestCall(live, 1);

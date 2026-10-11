@@ -90,8 +90,9 @@ context supplied by `Zum::Service`. Missing authentication context fails
 closed. Role assignment and token issuance remain Zum operations.
 
 Agents and front ends use the same unversioned `ztc` WSS subprotocol and
-[`Ztc.fbs.Msg`](src/fbs/ztc_msg.fbs) schema. Each binary WebSocket message
-contains exactly one verified root. `Request.subscribe` selects subscribe or
+[`Ztc::Msg`](src/ZtcMsg.hh) metadata-defined schema. Each binary WebSocket message
+contains exactly one verified envelope with an independently verified nested
+payload root. `Request.subscribe` selects subscribe or
 unsubscribe; root metadata carries the session-scoped subscription ID, device
 ID, and agent connection generation. The hub derives source attribution from
 the authenticated principal and restores the front-end subscription ID on
@@ -153,11 +154,14 @@ diagnostic runs; those do not replace the declared workload gate.
 
 ### FlatBuffers boundary
 
-Payload serialization uses `ZfbStruct`. `ZtcMsg.hh` contains the two generated
-union-composition calls for already serialized body offsets, which do not have
-a built-in `ZfbStruct` field representation. In-place sequence mutation remains
-at the agent routing boundary to avoid rebuilding telemetry. These are the
-low-level exceptions; ordinary payload loading and saving use metadata.
+Payload serialization uses `ZiFB` from ordinary `ZfStruct` metadata.
+`ZtcMsg.hh` composes the body into an independent nested `Payload` root,
+then writes its byte vector and routing metadata into `Msg`. Routing copies
+this span unchanged and replaces only the outer routing fields; it does not
+repeat field omission/default decisions. External envelopes and their nested
+payloads are verified at ingress. Trusted process-local handoffs use views.
+In-place sequence mutation remains at the agent boundary; alert producers
+explicitly emit the mutable sequence slot even when its initial value is zero.
 
 `ztchub` requires `ssfDeliveryURL`, the public HTTPS URL of its SSF listener
 (e.g. `https://hub.example:8444/ssf`). It registers that receiver with `zumd`

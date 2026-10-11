@@ -73,9 +73,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
-
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZfCf.hh>
 
@@ -85,6 +83,7 @@
 #include <zlib/ZdbMsg.hh>
 #include <zlib/ZdbStore.hh>
 #include <zlib/ZdbSaga.hh>
+#include <zlib/ZiFBReflect.hh>
 
 #define ZdbTableDerive(Name, T_) \
   struct Name; \
@@ -130,6 +129,10 @@ template <typename U>
 using Zdb_EvictHook = typename Zdb_EvictHook_<ZuDecay<U>>::T;
 
 namespace Zdb_ {
+
+// Erased row writers must support any schema's forced alignment. Actual
+// root padding still follows the fields emitted, not this storage bound.
+using Builder = ZiFB::IOBuilder<ZiFB::Wire::MaxAlign>;
 
 namespace HostState {
   using namespace Ztc::DBHostState;
@@ -190,7 +193,7 @@ private:
   int msgRead2(ZmRef<IOBuf>);
   void msgRead3(ZmRef<IOBuf>);
 
-  void hbRcvd(const fbs::Heartbeat *);
+  void hbRcvd(Msg::HeartbeatView);
   void hbTimeout();
   void hbSend();
 
@@ -219,40 +222,38 @@ struct DBState : public DBState_ {
 
   DBState(unsigned size) : DBState_{ZmHashParams{size}} { }
 
-  DBState(const fbs::DBState *dbState) :
-    DBState_{ZmHashParams{dbState->tableStates()->size()}},
-    sn{ZfbTransform::UInt128::load(dbState->sn())}
+  DBState(ZiFB::View<Msg::DBState> dbState) :
+    DBState_{ZmHashParams{dbState.get<Msg::ZfField(DBState, tableStates)>().length()}},
+    sn{dbState.get<Msg::ZfField(DBState, sn)>()}
   {
-    Zfb::Load::all(dbState->tableStates(),
-	[this](unsigned, const fbs::TableState *tableState) {
-	  add(Zfb::Load::str(tableState->table()), tableState->shard(),
-	    tableState->un());
-	});
+    for (auto state: dbState.get<Msg::ZfField(DBState, tableStates)>())
+      add(state.get<Msg::ZfField(TableState, table)>(),
+	state.get<Msg::ZfField(TableState, shard)>(),
+	state.get<Msg::ZfField(TableState, un)>());
   }
-  void load(const fbs::DBState *dbState) {
-    sn = ZfbTransform::UInt128::load(dbState->sn());
-    Zfb::Load::all(dbState->tableStates(),
-	[this](unsigned, const fbs::TableState *tableState) {
-	  update(Zfb::Load::str(tableState->table()), tableState->shard(),
-	    tableState->un());
-	});
+  void load(ZiFB::View<Msg::DBState> dbState) {
+    sn = dbState.get<Msg::ZfField(DBState, sn)>();
+    for (auto state: dbState.get<Msg::ZfField(DBState, tableStates)>())
+      update(state.get<Msg::ZfField(TableState, table)>(),
+	state.get<Msg::ZfField(TableState, shard)>(),
+	state.get<Msg::ZfField(TableState, un)>());
   }
-  Zfb::Offset<fbs::DBState> save(Zfb::Builder &fbb) const {
-    auto sn_ = ZfbTransform::UInt128::save(sn);
-    auto i = citer();
-    return fbs::CreateDBState(
-      fbb, &sn_, Zfb::Save::vectorIter<fbs::TableState>(
-	fbb, i.count(),
-	[&i](Zfb::Builder &fbb, unsigned) {
-	  if (auto state = i())
-	    return fbs::CreateTableState(
-	      fbb,
-	      Zfb::Save::str(fbb, state->template p<0>().template p<0>()),
-	      state->template p<1>(),
-	      state->template p<0>().template p<1>());
-	  else
-	    return Zfb::Offset<fbs::TableState>{};
-	}));
+  template <typename B>
+  ZiFB::Offset save(B &fbb) const {
+    unsigned n = count_();
+    auto offsets = ZtScratch(ZiFB::Offsets, n);
+    {
+      auto i = citer();
+      while (auto state = i())
+	offsets.push(ZiFB::saveObject(fbb, Msg::TableState{
+	  state->template p<0>().template p<0>(), state->template p<1>(),
+	  state->template p<0>().template p<1>()}));
+    }
+    auto states = fbb.offsets(offsets);
+    auto table = fbb.startTable();
+    ZiFB::field<Msg::ZfField(DBState, sn)>(fbb, table, sn);
+    ZiFB::fieldOffset<Msg::ZfField(DBState, tableStates)>(fbb, table, states);
+    return fbb.endTable(table);
   }
 
   void reset() {
@@ -437,7 +438,7 @@ using FieldFilter =
   ZuBool<!ZuTypeIn<ZuFieldProp::Series, typename Field::Props>{}>;
 
 template <typename O, typename Facet = ZuFacet::Core>
-using Fields = ZuTypeGrep<FieldFilter, ZuFields<O, Facet>>;
+using Fields = ZuTypeGrep<FieldFilter, ZuActiveFields<O, Facet>>;
 
 template <typename T_>
 class Row_ : public AnyRow {
@@ -632,18 +633,21 @@ protected:
   virtual ZmRef<AnyRow> rowLoad(IOBuf *, Shard) = 0;
 
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
-  virtual Zfb::Offset<void> rowSave(Zfb::Builder &, const void *) const = 0;
-  virtual Zfb::Offset<void> rowSaveUpd(Zfb::Builder &, const void *) const = 0;
-  virtual Zfb::Offset<void> rowSaveDel(Zfb::Builder &, const void *) const = 0;
-  // rowRecover(record) - process recovered FB record (untrusted source)
-  virtual void rowRecover(const fbs::Record *) = 0;
+  virtual ZiFB::Offset rowSave(Builder &, const void *) const = 0;
+  virtual ZiFB::Offset rowSaveUpd(Builder &, const void *) const = 0;
+  virtual ZiFB::Offset rowSaveDel(Builder &, const void *) const = 0;
+  virtual unsigned rowAlign() const = 0;
+  // Validate nested row data at network ingress, before replication state changes.
+  virtual bool rowVerify(Msg::RecordView) const = 0;
+  // rowRecover(record) - process a verified recovered FB record
+  virtual void rowRecover(Msg::RecordView) = 0;
 
   // rowFields() - run-time field array
   virtual ZfVFieldArray rowFields() const = 0;
   // rowKeyFields() - run-time key field arrays
   virtual ZfVKeyFieldArray rowKeyFields() const = 0;
   // rowSchema() - flatbuffer reflection schema
-  virtual const reflection::Schema *rowSchema() const = 0;
+  virtual Schema rowSchema() const = 0;
 
   // rowPrint(stream, ptr) - print row
   virtual void rowPrint(ZuVStream &, const void *) const = 0;
@@ -712,8 +716,8 @@ private:
   void repRecordRcvd(Shard shard, ZmRef<IOBuf> buf);
   void repCommitRcvd(Shard shard, UN un);
 
-  // recovery - DB thread
-  void recover(Shard shard, const fbs::Record *record);
+  // recovery - shard thread, verified record
+  void recover(Shard shard, Msg::RecordView record);
 
   // UN
   bool allocUN(Shard shard, UN un) {
@@ -766,10 +770,10 @@ struct RepBuf_ : public ZmPolymorph {
   RepBuf_(ZmRef<IOBuf> buf_) : buf{ZuMv(buf_)} { buf->rep = this; }
 
   using T = T_;
-  using FB = ZfbType<T>;
-  const FB *fbo() const { return buf->fbo<T>(); }
+  using FB = ZiFB::View<T>;
+  FB fbo() const { return buf->fbo<T>(); }
   // trusted buffer (written locally), e.g. in buffer cache
-  const FB *fbo_() const { return buf->fbo_<T>(); }
+  FB fbo_() const { return buf->fbo_<T>(); }
 
   // transform original fields, overriding get/set
   template <typename Base>
@@ -781,7 +785,10 @@ struct RepBuf_ : public ZmPolymorph {
     enum { ReadOnly = true };
     // using decltype(auto) here creates a circular dependency
     static decltype(Orig::get(ZuDeclVal<const FB &>())) get(const O &o) {
-      return Orig::get(*(o.fbo_()));
+      return getView(o.fbo_());
+    }
+    static decltype(Orig::get(ZuDeclVal<const FB &>())) getView(const FB &view) {
+      return Orig::get(view);
     }
     template <typename U> static void set(O &, U &&);
   };
@@ -798,6 +805,27 @@ struct RepBuf_ : public ZmPolymorph {
   // override printing
   friend ZfStructPrint ZuPrintType(RepBuf_ *);
 };
+
+} // Zdb_
+
+// Extract all key fields from one borrowed row view. Field-by-field adaptation
+// otherwise repeats envelope and nested-root navigation for each key member.
+template <typename T, template <typename> class Filter, typename ...Fields>
+struct ZuStructTuple_Render<Zdb_::RepBuf_<T>, Filter, ZuTypeList<Fields...>> {
+  using O = Zdb_::RepBuf_<T>;
+
+  template <template <typename> class Ref>
+  static auto get_(const O &o) {
+    auto view = o.fbo_();
+    return ZuStructTupleT<O, Ref, ZuAsIs, Filter>{
+      Fields::getView(view)...
+    };
+  }
+  static auto get(const O &o) { return get_<ZuMkCRef>(o); }
+  static auto get(O &&o) { return get_<ZuMkRRef>(o); }
+};
+
+namespace Zdb_ {
 
 // replication buffer cache
 ZmPolyHashDeriveT((T), BufCache, (RepBuf_<T>),
@@ -942,8 +970,10 @@ public:
   static ZmRef<IOBuf> allocBuf() { return new IOBufAlloc<T>{}; }
 
   Table_(DB *db, TableCf *cf, bool internal) :
-    AnyTable{db, cf, internal, Table_::allocBuf}
+    AnyTable{db, cf, internal, Table_::allocBuf},
+    m_schema(ZiFB::SchemaOut::Schema<T>::Size)
   {
+    ZiFB::saveSchema<T>(m_schema);
     unsigned n = nShards_();
     ZuID cacheID = "Zdb.Cache."; cacheID << cf->id;
     ZuID bufCacheID = "Zdb.BufCache."; bufCacheID << cf->id;
@@ -961,61 +991,65 @@ private:
   // - construct row from flatbuffer (trusted source)
   ZmRef<AnyRow> rowLoad(IOBuf *buf, Shard shard) override {
     auto record = record_(msg_(buf->hdr()));
-    if (record->vn() < 0) return {}; // deleted
-    auto data = Zfb::Load::bytes(record->data());
+    if (record.get<Msg::ZfField(Record, vn)>() < 0) return {}; // deleted
+    auto data = record.get<Msg::ZfField(Record, data)>();
     ZiAssert(data, "Zdb",
       (id = this->id()), "missing record data in table " << id, return {});
-    auto fbo = ZfbStruct::root<T>(&data[0]);
+    auto fbo = ZiFB::view<T>(data);
     ZiAssert(fbo, "Zdb",
       (id = this->id()), "bad record data in table " << id, return {});
     ZmRef<Row<T>> row = new Row<T>(impl(), shard);
-    ZfbStruct::new_<T>(row->ptr(), fbo);
+    ZiFB::handler(fbo).new_(row->ptr());
     row->init(
-      record->shard(), record->un(),
-      ZfbTransform::UInt128::load(record->sn()), record->vn());
+      record.get<Msg::ZfField(Record, shard)>(), record.get<Msg::ZfField(Record, un)>(),
+      record.get<Msg::ZfField(Record, sn)>(), record.get<Msg::ZfField(Record, vn)>());
     return row;
   }
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
-  Zfb::Offset<void> rowSave(Zfb::Builder &fbb, const void *ptr) const override {
-    return ZfbStruct::save(fbb, *static_cast<const T *>(ptr)).Union();
+  ZiFB::Offset rowSave(Builder &fbb, const void *ptr) const override {
+    return ZiFB::saveObject(fbb, *static_cast<const T *>(ptr));
   }
-  Zfb::Offset<void> rowSaveUpd(
-      Zfb::Builder &fbb, const void *ptr) const override {
-    return ZfbStruct::saveUpd(fbb, *static_cast<const T *>(ptr)).Union();
+  unsigned rowAlign() const override {
+    constexpr auto row = ZiFB::BufferAlign<T>::N;
+    constexpr auto msg = ZiFB::BufferAlign<Msg::Root>::N;
+    return row > msg ? row : msg;
   }
-  Zfb::Offset<void> rowSaveDel(
-      Zfb::Builder &fbb, const void *ptr) const override {
-    return ZfbStruct::saveDel(fbb, *static_cast<const T *>(ptr)).Union();
+  ZiFB::Offset rowSaveUpd(Builder &fbb, const void *ptr) const override {
+    return ZiFB::saveObject<T, ZuFacet::Core, ZfFieldFilter::Upd>(
+      fbb, *static_cast<const T *>(ptr));
   }
-  // rowRecover(record) - process recovered record (untrusted source)
-  void rowRecover(const fbs::Record *record) override {
-    auto fbo = ZfbStruct::verify<T>(Zfb::Load::bytes(record->data()));
-    if (!fbo) return;
-    auto shard = record->shard();
-    // mark outdated buffers as stale
-    ZuUnroll::all<KeyIDs>([this, shard, fbo](auto KeyID) {
-      auto key = ZuStructKey<KeyID>(*fbo);
-      auto i = m_bufCache[shard].template iter<KeyID>(ZuMv(key));
-      while (auto repBuf = i()) {
-	if (!repBuf->stale) {
-	  repBuf->stale = true;
-	  break;
-	}
-      }
-    });
+  ZiFB::Offset rowSaveDel(Builder &fbb, const void *ptr) const override {
+    return ZiFB::saveObject<T, ZuFacet::Core, ZuStructKeyFilter<0>::template Filter>(
+      fbb, *static_cast<const T *>(ptr));
+  }
+  bool rowVerify(Msg::RecordView record) const override {
+    return bool(data<T>(record));
+  }
+  // rowRecover(record) - process a verified recovered record
+  void rowRecover(Msg::RecordView record) override {
+    auto fbo = data_<T>(record);
+    auto shard = record.get<Msg::ZfField(Record, shard)>();
+    // Every buffer-cache index retains the same node. Invalidating all
+    // versions by immutable key 0 also invalidates their secondary entries,
+    // without interpreting fields omitted by update/delete projection.
+    {
+      auto i = m_bufCache[shard].template iter<0>(ZuStructKey<0>(fbo));
+      while (auto repBuf = i()) repBuf->stale = true;
+    }
     // maintain cache consistency
-    if (record->vn() >= 0) {
-      // primary key is immutable
-      if constexpr (KeyIDs::N > 1)
-	// no load or eviction here, this is just a key lookup in the cache
-	if (ZmRef<Row<T>> row =
-	    m_cache[shard].find(ZuStructKey<0>(*fbo)))
+    if (record.get<Msg::ZfField(Record, vn)>() >= 0) {
+      // Primary key is immutable. No load or eviction here.
+      if (ZmRef<Row<T>> row = m_cache[shard].find(ZuStructKey<0>(fbo))) {
+	if constexpr (KeyIDs::N > 1)
 	  m_cache[shard].template update<ZuTypeTail<1, KeyIDs>>(ZuMv(row),
 	    [fbo](const ZmRef<Row<T>> &row) {
-	      ZfbStruct::update(row->data(), fbo);
+	      ZiFB::handler(fbo).update(row->data());
 	    });
+	else
+	  ZiFB::handler(fbo).update(row->data());
+      }
     } else {
-      m_cache[shard].template del<0>(ZuStructKey<0>(*fbo));
+      m_cache[shard].template del<0>(ZuStructKey<0>(fbo));
     }
   }
 
@@ -1036,8 +1070,8 @@ private:
     }(ZuMkSeq<KeyIDs::N>{});
   }
   // rowSchema() - flatbuffer reflection schema
-  const reflection::Schema *rowSchema() const override {
-    return reflection::GetSchema(ZfbSchema<T>::data());
+  Schema rowSchema() const override {
+    return Schema::from<T>(m_schema);
   }
 
   // rowPrint(stream, ptr) - print row
@@ -1046,22 +1080,22 @@ private:
   }
   // rowPrintFB(stream, data) - print flatbuffer
   void rowPrintFB(ZuVStream &s, ZuBSpan data) const override {
-    auto fbo = ZfbStruct::verify<T>(data);
-    if (!fbo) return;
-    s << *fbo;
+    if (!ZiFB::verify<T>(data)) return;
+    s << ZiFB::view<T>(data);
   }
 
   // find buffer in buffer cache
   template <unsigned KeyID>
-  ZuTuple<ZmRef<IOBuf>, bool>
+  ZmRef<IOBuf>
   findBuf(Shard shard, const Key<KeyID> &key) const {
     auto i = m_bufCache[shard].template iter<KeyID>(key);
-    bool found = false;
     while (auto repBuf = i()) {
-      if (!repBuf->stale) return {repBuf->buf, true};
-      found = true;
+      if (repBuf->stale) continue;
+      // Update records are projections, not complete rows for cold loads.
+      auto vn = record_(msg_(repBuf->buf->hdr())).template get<Msg::ZfField(Record, vn)>();
+      if (vn <= 0) return repBuf->buf;
     }
-    return {ZmRef<IOBuf>{}, found};
+    return {};
   }
 
   // find, falling through row cache, buffer cache, backing data store
@@ -1079,13 +1113,8 @@ private:
 
     template <typename L>
     void operator ()(const Key<KeyID> &key, L &&l) {
-      auto [buf, found] = table->template findBuf<KeyID>(shard, key);
-      if (buf) {
+      if (auto buf = table->template findBuf<KeyID>(shard, key)) {
 	l(table->rowLoad(buf, shard));
-	return;
-      }
-      if (found) {
-	l(nullptr);
 	return;
       }
       table->template retrieve<KeyID>(shard, key, ZuFwd<L>(l));
@@ -1105,11 +1134,20 @@ private:
 
   // buffer cache
   void cacheBuf_(Shard shard, ZmRef<IOBuf> buf) override {
-    m_bufCache[shard].add(new RepBuf<T>{ZuMv(buf)});
+    bool projected = record_(msg_(buf->hdr())).get<Msg::ZfField(Record, vn)>() != 0;
+    ZmRef<RepBuf<T>> repBuf = new RepBuf<T>{ZuMv(buf)};
+    if (projected)
+      m_bufCache[shard].template hash<0>()->addNode(ZuMv(repBuf));
+    else
+      m_bufCache[shard].add(ZuMv(repBuf));
   }
   ZmRef<IOBuf> evictBuf_(Shard shard, IOBuf *buf) override {
-    if (auto repBuf = m_bufCache[shard].delNode(
-	static_cast<RepBuf<T> *>(static_cast<RepBuf_<T> *>(buf->rep))))
+    auto node = static_cast<RepBuf<T> *>(static_cast<RepBuf_<T> *>(buf->rep));
+    bool projected = record_(msg_(buf->hdr())).get<Msg::ZfField(Record, vn)>() != 0;
+    ZmRef<RepBuf<T>> repBuf = projected ?
+      m_bufCache[shard].template hash<0>()->delNode(node) :
+      m_bufCache[shard].delNode(node);
+    if (repBuf)
       return ZuMv(repBuf->buf);
     return nullptr;
   }
@@ -1281,7 +1319,7 @@ public:
   inline void findUpd(Shard shard, Key<KeyID> key, L &&l) {
     findUpd_<KeyID>(shard, ZuMv(key),
 	[this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
-	if (ZuUnlikely(!row)) { l(row); return; }
+	if (ZuUnlikely(!row)) { l(row.ptr()); return; }
 	update<KeyIDs_>(ZuMv(row), ZuMv(l));
       });
   }
@@ -1352,11 +1390,11 @@ public:
 
   // find and delete record (with key, without row)
   template <unsigned KeyID, typename L>
-  inline void findDel(Shard shard, const Key<KeyID> &key, L &&l)
+  inline void findDel(Shard shard, Key<KeyID> key, L &&l)
   {
-    findUpd_<KeyID>(shard, key,
+    findUpd_<KeyID>(shard, ZuMv(key),
 	[this, l = ZuFwd<L>(l)](ZmRef<Row<T>> row) mutable {
-	if (ZuUnlikely(!row)) { l(row); return; }
+	if (ZuUnlikely(!row)) { l(row.ptr()); return; }
 	del(ZuMv(row), ZuMv(l));
       });
   }
@@ -1364,7 +1402,7 @@ public:
   // find and delete record at an intended UN (with key, without row)
   // - lambda(OpResult::T, ZdbRow<T> *, UN)
   template <unsigned KeyID, typename L>
-  inline void findDel(Shard shard, const Key<KeyID> &key, UN un, L &&l) {
+  inline void findDel(Shard shard, Key<KeyID> key, UN un, L &&l) {
     ZiAssert(invoked(shard), "Zdb", (shard),
       "findDel called outside shard " << ZuBoxed(shard), return);
 
@@ -1374,7 +1412,7 @@ public:
       l(result, nullptr, next);
       return;
     }
-    findUpd_<KeyID>(shard, key,
+    findUpd_<KeyID>(shard, ZuMv(key),
       [this, shard, un, l = ZuFwd<L>(l)](
 	ZmRef<Row<T>> row) mutable {
 	if (ZuLikely(row)) {
@@ -1502,7 +1540,7 @@ private:
 	decCount();
 	break;
     }
-    ZmRef<IOBuf> buf = row->replicate(int(fbs::Body::Replication));
+    ZmRef<IOBuf> buf = row->replicate(Msg::Tag::Replication);
     write(shard, buf, true);
     return buf;
   }
@@ -1531,6 +1569,8 @@ private:
   }
 
 private:
+  SchemaBuf			m_schema;
+
   // row caches
   ZuDerive(CacheArray, (ZtArray<Cache<T>>));
   CacheArray			m_cache;
@@ -2026,7 +2066,20 @@ private:
   void stop_1();
   void stop_2();
   using DrainFn = ZmFn<void(), ZmFnHeapID<"Zdb.DrainFn">>;
-  void drainShards(unsigned, DrainFn);
+  template <typename L>
+  void drainShards(unsigned shard, L &&l) {
+    ZmAssert(invoked());
+    if (shard == nShards()) {
+      l();
+      return;
+    }
+    // Drain shard callbacks before final() releases their tables.
+    shardRun(Shard(shard), [this, shard, l = ZuFwd<L>(l)]() mutable {
+      run([this, shard, l = ZuMv(l)]() mutable {
+	drainShards(shard + 1, ZuMv(l));
+      });
+    });
+  }
 
   // leader election and activation/deactivation
   void holdElection();		// elect new leader
@@ -2078,7 +2131,7 @@ private:
   void associate(Cxn *cxn, Host *host);
 
   // heartbeats and voting
-  void hbRcvd(Host *host, const fbs::Heartbeat *hb);
+  void hbRcvd(Host *host, Msg::HeartbeatView hb);
   void vote(Host *host);
 
   void hbStart();
@@ -2233,11 +2286,8 @@ inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
 
   auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
-  // using Key = GroupKey<KeyID>;
-
-  Zfb::IOBuilder fbb{allocBuf()};
-  fbb.Finish(ZfbStruct::save(fbb, key).Union());
-  // fbb.Finish(ZfbStruct::SaveFieldsFn<Key, ZuFacet::Core, ZuFields<Key>, ZfFieldFilter::Save>::save(fbb, key).Union());
+  Builder fbb{allocBuf(), ZiFB::BufferAlign<GroupKey<KeyID>>::N};
+  fbb.finish(ZiFB::saveObject(fbb, key));
   auto keyBuf = fbb.buf();
   AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
@@ -2257,9 +2307,8 @@ inline void Table_<Impl_>::select_(
 
   auto context = ZmRef(new Context{this, ZuFwd<L>(l)});
 
-  Zfb::IOBuilder fbb{allocBuf()};
-  fbb.Finish(ZfbStruct::save(fbb, selectKey).Union());
-  // fbb.Finish(ZfbStruct::SaveFieldsFn<SelectKey, ZuFields<SelectKey>, ZfFieldFilter::Load>::save(fbb, selectKey).Union());
+  Builder fbb{allocBuf(), ZiFB::BufferAlign<SelectKey>::N};
+  fbb.finish(ZiFB::saveObject(fbb, selectKey));
   auto keyBuf = fbb.buf();
 
   auto tupleFn = TupleFn{ZuMv(context),
@@ -2279,10 +2328,10 @@ inline void Table_<Impl_>::select_(
 	context->fn(typename Context::Result{}, 0);
 	return;
       }
-      auto tupleData = result.p<TupleData>();
-      auto fbo = ZfbStruct::root<T>(tupleData.buf->data());
-      auto tuple = ZfbStruct::ctor<Tuple_>(fbo);
-      context->fn(typename Context::Result{ZuMv(tuple)}, tupleData.count);
+      const auto &tupleData = result.p<TupleData>();
+      typename Context::Result output;
+      ZiFB::handler<Tuple_>(tupleData.buf->cspan()).new_(output.template new_<Tuple_>());
+      context->fn(ZuMv(output), tupleData.count);
     }};
 
   storeTbl()->select(
@@ -2317,8 +2366,8 @@ inline void Table_<Impl_>::retrieve(
   auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
-  Zfb::IOBuilder fbb{allocBuf()};
-  fbb.Finish(ZfbStruct::save(fbb, context->key));
+  Builder fbb{allocBuf(), ZiFB::BufferAlign<Key_>::N};
+  fbb.finish(ZiFB::saveObject(fbb, context->key));
   auto keyBuf = fbb.buf();
   AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
@@ -2328,7 +2377,7 @@ inline void Saga::insert(
     Impl *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
 {
   using Complete_ = ZuDecay<Complete>;
-  using Fn = SagaFn<T, Complete_>;
+  using Fn = ZuDecay<L>;
   using Call = SagaInsert<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
@@ -2397,7 +2446,7 @@ inline void Saga::update(
     Impl *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
 {
   using Complete_ = ZuDecay<Complete>;
-  using Fn = SagaFn<T, Complete_>;
+  using Fn = ZuDecay<L>;
   using Call = SagaUpdate<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
@@ -2455,9 +2504,8 @@ inline void Saga::findUpd(
     typename Impl::template Key<KeyID> key,
     Complete &&complete, L &&l)
 {
-  using T = typename Impl::T;
   using Complete_ = ZuDecay<Complete>;
-  using Fn = SagaFn<T, Complete_>;
+  using Fn = ZuDecay<L>;
   using Call = SagaUpdate<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
@@ -2499,7 +2547,7 @@ inline void Saga::del(
     Impl *table, ZmRef<Row<T>> row, Complete &&complete, L &&l)
 {
   using Complete_ = ZuDecay<Complete>;
-  using Fn = SagaFn<T, Complete_>;
+  using Fn = ZuDecay<L>;
   using Call = SagaDelete<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
@@ -2560,23 +2608,21 @@ inline void Saga::del_(
 template <unsigned KeyID, typename Impl, typename Complete, typename L>
 inline void Saga::findDel(
     Impl *table, Shard shard,
-    const typename Impl::template Key<KeyID> &key,
+    typename Impl::template Key<KeyID> key,
     Complete &&complete, L &&l)
 {
-  using T = typename Impl::T;
   using Complete_ = ZuDecay<Complete>;
-  using Fn = SagaFn<T, Complete_>;
+  using Fn = ZuDecay<L>;
   using Call = SagaDelete<Complete_, Fn>;
 
   Call call{ZuFwd<Complete>(complete), Fn{ZuFwd<L>(l)}};
   ZiAssert(table && table->invoked(shard), "Zdb", (),
     "saga find-delete invoked off shard", ::abort());
   if (ZuUnlikely(!m_fwd)) {
-    table->template findDel<KeyID>(shard, key, ZuMv(call));
+    table->template findDel<KeyID>(shard, ZuMv(key), ZuMv(call));
     return;
   }
-  using Key = typename Impl::template Key<KeyID>;
-  findDel_<KeyID>(table, shard, Key{key}, ZuMv(call));
+  findDel_<KeyID>(table, shard, ZuMv(key), ZuMv(call));
 }
 
 template <unsigned KeyID, typename Impl, typename Call>
@@ -2931,7 +2977,13 @@ inline bool SagaDB<Context, Catalog, Complete, M_>::saga(
       new (row->ptr()) SagaData{
 	.type = type, .id = id, .shard = shard, .deadline = deadline
       };
-      M::save(saga, row->data().data);
+      if (auto error = M::save(saga, row->data().data)) {
+	ZiLOG(Error, "Zdb", ([error](auto &s) {
+	  s << "saving saga definition failed - codec error " << error;
+	}));
+	submit(false);
+	return;
+      }
       saga->init_(this, SagaKey{type, id}, shard, m_sagaEpoch, stepCount,
 	deadline);
     } catch (ZeException &e) {
@@ -3005,7 +3057,7 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalog()
   m_store->open(
     true, "saga_type", ZfVFields<SagaTypeStep>(),
     ZfVKeyFields<SagaTypeStep>(),
-    reflection::GetSchema(ZfbSchema<SagaTypeStep>::data()),
+    Schema::from<SagaTypeStep>(context->schema),
     TableT<SagaTypeStep>::allocBuf,
     [this, context = ZuMv(context)](OpenResult result) mutable {
       run([this, context = ZuMv(context), result = ZuMv(result)]() mutable {
@@ -3044,15 +3096,15 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogScan(ZmRef<SagaCa
   ZmAssert(invoked());
   context->pageCount = 0;
 
-  Zfb::IOBuilder fbb{TableT<SagaTypeStep>::allocBuf()};
+  ZiFB::IOBuilder<ZiFB::BufferAlign<SagaTypeStep>::N> fbb{TableT<SagaTypeStep>::allocBuf()};
   if (next) {
     using Key = ZuStructKeyT<SagaTypeStep, 0>;
     Key key{context->type, uint32_t(context->step - 1)};
-    fbb.Finish(ZfbStruct::save(fbb, key).Union());
+    fbb.finish(ZiFB::saveObject(fbb, key));
   } else {
     using GroupKey = typename SplitKey<SagaTypeStep, 0>::GroupKey;
     GroupKey key;
-    fbb.Finish(ZfbStruct::save(fbb, key).Union());
+    fbb.finish(ZiFB::saveObject(fbb, key));
   }
   auto keyBuf = fbb.buf();
   context->table->select(
@@ -3068,14 +3120,7 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogScan(ZmRef<SagaCa
       if (result.is<TupleData>()) {
 	if (context->error) return;
 	auto data = ZuMv(result).p<TupleData>();
-	auto fbo = ZfbStruct::verify<SagaTypeStep>(
-	  {data.buf->data(), data.buf->length});
-	if (ZuUnlikely(!fbo)) {
-	  context->error = ZeEXCEPT(
-	    Fatal, "Zdb", "invalid saga_type row");
-	  return;
-	}
-	context->template load<Catalog>(ZfbStruct::ctor<SagaTypeStep>(fbo));
+	context->template load<Catalog>(ZiFB::load<SagaTypeStep>(data.buf->cspan()));
 	context->pageCount = data.count;
 	return;
       }
@@ -3117,15 +3162,12 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogWrite(ZmRef<SagaC
   ++context->writeStep;
   UN un = context->nextUN++;
   SN sn = allocSN();
-  Zfb::IOBuilder fbb{TableT<SagaTypeStep>::allocBuf()};
-  auto data = Zfb::Save::nest(fbb, [&row](Zfb::Builder &fbb) {
-    return ZfbStruct::save(fbb, row).Union();
-  });
-  auto sn_ = ZfbTransform::UInt128::save(sn);
-  auto msg = fbs::CreateMsg(fbb, fbs::Body::Replication,
-    fbs::CreateRecord(
-      fbb, Zfb::Save::str(fbb, "saga_type"), un, &sn_, 0, 0, data).Union());
-  fbb.Finish(msg);
+  ZiFB::IOBuilder<ZiFB::BufferAlign<SagaTypeStep>::N> fbb{TableT<SagaTypeStep>::allocBuf()};
+  auto nested = fbb.startNested();
+  auto root = ZiFB::saveObject(fbb, row);
+  auto data = fbb.endNested(nested, root);
+  auto record = saveRecord(fbb, "saga_type", un, sn, 0, 0, data);
+  fbb.finish(saveMsg(fbb, record, Msg::Tag::Replication));
   context->table->write(saveHdr(fbb), CommitFn{[this, context](ZmRef<IOBuf>, CommitResult result) mutable {
       if (ZuUnlikely(result.is<Event>()))
 	context->error = ZuMv(result).p<Event>();
@@ -3176,9 +3218,8 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaScanData(ZmRef<SagaScan>
   using Tuple = typename TableT<SagaData>::Tuple;
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
-      auto tuple = ZuMv(result).template p<Tuple>();
-      ZuTupleCall(ZuMv(tuple), [context](auto &&...args) {
-	context->dataRows.push(SagaData{ZuFwd<decltype(args)>(args)...});
+      ZuTupleCall(ZuMv(result).template p<Tuple>(), [context](auto &&...args) {
+	new (context->dataRows.push()) SagaData{ZuFwd<decltype(args)>(args)...};
       });
       context->pageCount = count;
       return;
@@ -3222,9 +3263,8 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadData(ZmRef<SagaScan>
 	throw ZeEXCEPT(Fatal, "Zdb", "invalid recovered saga length");
       saga->init_(this, SagaKey{type, row.id}, row.shard, m_sagaEpoch,
 	stepCount, row.deadline);
-      ZmRef<SagaNode> node = new SagaNode{ZuMv(saga)};
-      m_sagaHash->addNode(node.ptr());
-      m_sagaQueue.pushNode(static_cast<SagaList::Node *>(node.ptr()));
+      m_sagaHash->addNode(saga.ptr());
+      m_sagaQueue.pushNode(saga.ptr());
     }
   } catch (ZeException &e) {
     sagaActivateFail(ZuMv(e));
@@ -3255,9 +3295,8 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaScanSteps(ZmRef<SagaScan
   using Tuple = typename TableT<SagaStep>::Tuple;
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
-      auto tuple = ZuMv(result).template p<Tuple>();
-      ZuTupleCall(ZuMv(tuple), [context](auto &&...args) {
-	context->stepRows.push(SagaStep{ZuFwd<decltype(args)>(args)...});
+      ZuTupleCall(ZuMv(result).template p<Tuple>(), [context](auto &&...args) {
+	new (context->stepRows.push()) SagaStep{ZuFwd<decltype(args)>(args)...};
       });
       context->pageCount = count;
       return;
@@ -3289,7 +3328,7 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaLoadSteps(ZmRef<SagaScan
     const auto &row = context->stepRows[i];
     auto node = m_sagaHash->findPtr(ZuFwdTuple(row.type, row.id));
     if (!node) continue;
-    auto saga = static_cast<SagaNode__ *>(node)->saga.ptr();
+    auto saga = static_cast<Saga *>(node);
     ZuCSpan tableID;
     SagaOp::T op = SagaOp::Invalid;
     if (ZuUnlikely(row.shard >= nShards() ||
@@ -3393,16 +3432,16 @@ inline void DBState::print(S &s) const {
 }
 
 struct Record_Print {
-  const fbs::Record *record = nullptr;
+  Msg::RecordView record;
   const AnyTable *table = nullptr;
   template <typename S> void print(S &s) const {
-    auto id = Zfb::Load::str(record->table());
-    auto data = Zfb::Load::bytes(record->data());
+    auto id = record.get<Msg::ZfField(Record, table)>();
+    auto data = record.get<Msg::ZfField(Record, data)>();
     s << "{db=" << id
-      << " shard=" << ZuBoxed(record->shard())
-      << " un=" << record->un()
-      << " sn=" << ZuBoxed(ZfbTransform::UInt128::load(record->sn()))
-      << " vn=" << record->vn() << "}";
+      << " shard=" << ZuBoxed(record.get<Msg::ZfField(Record, shard)>())
+      << " un=" << record.get<Msg::ZfField(Record, un)>()
+      << " sn=" << ZuBoxed(record.get<Msg::ZfField(Record, sn)>())
+      << " vn=" << record.get<Msg::ZfField(Record, vn)>() << "}";
     if (data) {
       s << " data=";
       if (table) {
@@ -3419,12 +3458,12 @@ struct Record_Print {
 };
 
 struct HB_Print {
-  const fbs::Heartbeat *hb = nullptr;
+  Msg::HeartbeatView hb;
   template <typename S> void print(S &s) const {
-    auto id = Zfb::Load::str(hb->host());
+    auto id = hb.get<Msg::ZfField(Heartbeat, host)>();
     s << "{host=" << id
-      << " state=" << HostState::name(hb->state())
-      << " dbState=" << DBState{hb->dbState()} << "}";
+      << " state=" << HostState::name(hb.get<Msg::ZfField(Heartbeat, state)>())
+      << " dbState=" << DBState{hb.get<Msg::ZfField(Heartbeat, dbState)>()} << "}";
   }
   friend ZuPrintFn ZuPrintType(HB_Print *);
 };

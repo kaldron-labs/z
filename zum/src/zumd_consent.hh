@@ -15,7 +15,6 @@
 
 #include <zlib/zumd_identity_db.hh>
 #include <zlib/zumd_app_db.hh>
-#include <zlib/zum_saga_fbs.h>
 
 namespace Zum {
 
@@ -207,12 +206,13 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
     return {};
   }
 };
-ZfbStruct(ZumAPI, ConsentCode,
-  (beforeGrant, (Ctor<0>),		UDT),
-  (afterGrant, (Ctor<1>),		UDT),
-  (beforeConsent, (Ctor<2>),		UDT),
-  (roleIDs, (Ctor<3>),			UInt64Vec),
-  (now, (Ctor<4>),			Int64));
+ZfStruct(ZumAPI, ConsentCode,
+  (beforeGrant,		(Ctor<0>),	UDT),
+  (afterGrant,		(Ctor<1>),	UDT),
+  (beforeConsent,	(Ctor<2>),	UDT),
+  (roleIDs,		(Ctor<3>),	UInt64Vec),
+  (now,			(Ctor<4>),	Int64));
+ZiFB::Table<"Zum.fbs.ConsentCode"> ZiFBType(ConsentCode *);
 
 } // namespace Zum
 

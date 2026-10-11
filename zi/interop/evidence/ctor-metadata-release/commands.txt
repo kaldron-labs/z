@@ -1,0 +1,8 @@
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 ops
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 wideops
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 ops
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 wideops
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 ops
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 wideops
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11
+./libtool exec taskset -c 6 /tmp/zifb-ctor-release-bench 1000000 64 11 wide

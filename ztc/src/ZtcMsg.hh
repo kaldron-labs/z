@@ -22,15 +22,16 @@
 
 #include <zlib/ZmRef.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZtBuiltin.hh>
 
-#include <zlib/ztc_msg_fbs.h>
+#include <zlib/ZtcFB.hh>
+#include <zlib/ZtcDB.hh>
 
 namespace Ztc {
 
 namespace HubError {
-  enum T : int8_t {
+  using T = int8_t;
+  enum {
     NoAgent = 1,
     DuplicateSub,
     BadReq,
@@ -41,26 +42,123 @@ namespace HubError {
   };
 }
 
-namespace fbs { Msg ZfbType_(Msg *); }
+inline constexpr auto Protocol = "ztc"_z;
 
-inline constexpr ZuCSpan Protocol{"ztc"};
+struct Shutdown { };
+ZfStruct(ZtcAPI, Shutdown);
+ZiFB::Table<"Ztc.fbs.Shutdown"> ZiFBType(Shutdown *);
 
-// ZfbStruct saves payload fields. These two union boundaries compose already
-// serialized offsets; ZfbStruct has no built-in prebuilt union-offset field.
-inline auto saveMsg(Zfb::Builder &builder, fbs::Body type,
-    Zfb::Offset<void> body, uint64_t subID = 0,
-    Zfb::Offset<flatbuffers::String> deviceID = {}, uint64_t generation = 0)
-{
-  return fbs::CreateMsg(builder, type, body, subID, deviceID, generation);
+namespace TelemetryBody {
+  enum {
+    None, HeapTelemetry, HashTelemetry, ThreadTelemetry, CxnTelemetry,
+    MxTelemetry, QueueTelemetry, HubTelemetry, LinkTelemetry, PoolTelemetry,
+    DBTelemetry, DBHostTelemetry, DBTableTelemetry, AppTelemetry, Shutdown,
+    AlertTelemetry
+  };
+}
+ZuDerive(TelemetryValue, (ZuUnion<void,
+  HeapTelemetry, HashTelemetry, ThreadTelemetry, CxnTelemetry,
+  MxTelemetry, QueueTelemetry, HubTelemetry, LinkTelemetry, PoolTelemetry,
+  DBTelemetry, DBHostTelemetry, DBTableTelemetry, AppTelemetry, Shutdown,
+  AlertTelemetry>));
+ZiFB::Union<"Ztc.fbs.TelemetryBody",
+  ZiFB::Alt<"HeapTelemetry", HeapTelemetry>,
+  ZiFB::Alt<"HashTelemetry", HashTelemetry>,
+  ZiFB::Alt<"ThreadTelemetry", ThreadTelemetry>,
+  ZiFB::Alt<"CxnTelemetry", CxnTelemetry>,
+  ZiFB::Alt<"MxTelemetry", MxTelemetry>,
+  ZiFB::Alt<"QueueTelemetry", QueueTelemetry>,
+  ZiFB::Alt<"HubTelemetry", HubTelemetry>,
+  ZiFB::Alt<"LinkTelemetry", LinkTelemetry>,
+  ZiFB::Alt<"PoolTelemetry", PoolTelemetry>,
+  ZiFB::Alt<"DBTelemetry", DBTelemetry>,
+  ZiFB::Alt<"DBHostTelemetry", DBHostTelemetry>,
+  ZiFB::Alt<"DBTableTelemetry", DBTableTelemetry>,
+  ZiFB::Alt<"AppTelemetry", AppTelemetry>,
+  ZiFB::Alt<"Shutdown", Shutdown>,
+  ZiFB::Alt<"AlertTelemetry", AlertTelemetry>> ZiFBType(TelemetryValue *);
+struct Telemetry {
+  ZuCSpan id;
+  uint64_t seqNo;
+  TelemetryValue value;
+};
+ZfStruct(ZtcAPI, Telemetry,
+  (id,,				String),
+  (seqNo,	(Deflt<0>),	UInt64),
+  (value,,			UDT));
+ZiFB::Table<"Ztc.fbs.Telemetry"> ZiFBType(Telemetry *);
+
+namespace Body { enum { None, Request, Ack, Telemetry, EOS, Error }; }
+ZuDerive(BodyValue, (ZuUnion<void, Request, Ack, Telemetry, EOS, Error>));
+ZiFB::Union<"Ztc.fbs.Body",
+  ZiFB::Alt<"Request", Request>, ZiFB::Alt<"Ack", Ack>,
+  ZiFB::Alt<"Telemetry", Telemetry>, ZiFB::Alt<"EOS", EOS>,
+  ZiFB::Alt<"Error", Error>> ZiFBType(BodyValue *);
+struct Payload { BodyValue body; };
+ZfStruct(ZtcAPI, Payload, (body,, UDT));
+ZiFB::Table<"Ztc.fbs.Payload"> ZiFBType(Payload *);
+struct Msg {
+  ZuBSpan data;
+  uint64_t subID;
+  ZuCSpan deviceID;
+  uint64_t agentGen;
+};
+ZfStruct(ZtcAPI, Msg,
+  (data,,			Bytes),
+  (subID,	(Deflt<0>),	UInt64),
+  (deviceID,,			String),
+  (agentGen,	(Deflt<0>),	UInt64));
+ZiFB::Table<"Ztc.fbs.Msg"> ZiFBType(Msg *);
+using MsgView = ZiFB::View<Msg>;
+using TelemetryView = ZiFB::View<Telemetry>;
+using Builder = ZiFB::IOBuilder<ZiFB::BufferAlign<Payload>::N>;
+
+// Trusted access after ingress verification, or to a locally generated span.
+inline auto msgBody(MsgView msg) {
+  return ZiFB::view<Payload>(msg.get<ZfField(Msg, data)>())
+    .get<ZfField(Payload, body)>();
 }
 
-inline auto saveTelemetry(Zfb::Builder &builder,
-    Zfb::Offset<flatbuffers::String> id, uint64_t seqNo,
-    fbs::TelemetryBody type, Zfb::Offset<void> value)
-{
-  return fbs::CreateTelemetry(builder, id, seqNo, type, value);
+template <typename B>
+auto saveMsg(B &builder, ZiFB::Offset data, uint64_t subID = 0,
+    ZuCSpan deviceID = {}, uint64_t generation = 0) {
+  auto device = deviceID ? builder.string(deviceID) : 0;
+  ZtBuiltin<ZiFB::Offsets, ZiFB::Meta<Msg>::N> offsets;
+  offsets.length(ZiFB::Meta<Msg>::N);
+  auto table = builder.startTable(offsets.data());
+  ZiFB::fieldOffset<ZfField(Msg, data)>(builder, table, data);
+  ZiFB::field<ZfField(Msg, subID)>(builder, table, subID);
+  ZiFB::fieldOffset<ZfField(Msg, deviceID)>(builder, table, device);
+  ZiFB::field<ZfField(Msg, agentGen)>(builder, table, generation);
+  return builder.endTable(table);
 }
 
+template <typename B>
+auto saveMsg(B &builder, ZiFB::NestedState nested, unsigned type,
+    ZiFB::Offset body, uint64_t subID = 0, ZuCSpan deviceID = {},
+    uint64_t generation = 0) {
+  ZtBuiltin<ZiFB::Offsets, ZiFB::Meta<Payload>::N> offsets;
+  offsets.length(ZiFB::Meta<Payload>::N);
+  auto table = builder.startTable(offsets.data());
+  ZiFB::fieldUnion<ZfField(Payload, body)>(builder, table,
+    ZiFB::UnionOffset<BodyValue>{body, uint8_t(type)});
+  auto root = builder.endTable(table);
+  auto payload = builder.endNested(nested, root);
+  return saveMsg(builder, payload, subID, deviceID, generation);
+}
+
+template <bool ForceSeq = false, typename B>
+auto saveTelemetry(B &builder, ZiFB::Offset id, uint64_t seqNo,
+    unsigned type, ZiFB::Offset value) {
+  auto table = builder.startTable();
+  ZiFB::fieldOffset<ZfField(Telemetry, id)>(builder, table, id);
+  using Seq = ZfField(Telemetry, seqNo);
+  builder.template field<uint64_t>(table, ZiFB::Meta<Telemetry>::id<Seq>(),
+    seqNo, ZiFB::defaultValue<Seq>(), ForceSeq);
+  ZiFB::fieldUnion<ZfField(Telemetry, value)>(builder, table,
+    ZiFB::UnionOffset<TelemetryValue>{value, uint8_t(type)});
+  return builder.endTable(table);
+}
 
 #pragma pack(push, 4)
 struct Hdr {
@@ -75,17 +173,17 @@ struct Hdr {
 ZuAssert(sizeof(Hdr) == 4);
 
 inline ZmRef<ZiIOBuf> frameBuf(ZmRef<ZiIOBuf> buf) {
-  ZuAssert(sizeof(Hdr) <= Zfb::IOBuilder::Align);
-  buf->skip = Zfb::IOBuilder::Align;
+  ZuAssert(sizeof(Hdr) <= Builder::Align);
+  buf->skip = Builder::Align;
   return buf;
 }
 
 template <typename Builder, typename Owner>
 inline auto saveHdr(Builder &fbb, Owner *owner) {
-  auto length = fbb.GetSize();
+  auto length = fbb.size();
   auto buf = fbb.buf();
   if (ZuUnlikely(
-	!buf || length > UINT32_MAX || buf->skip < sizeof(Hdr)))
+	!buf || buf->skip < sizeof(Hdr)))
     return decltype(buf){};
   buf->owner = owner;
   auto ptr = buf->prepend(sizeof(Hdr));
@@ -129,78 +227,49 @@ inline ZuBSpan msgData(const Hdr *hdr) {
     unsigned(sizeof(Hdr) + uint32_t(hdr->length))};
 }
 
-inline bool validTelemetry(const fbs::Telemetry *telemetry) {
-  if (ZuUnlikely(!telemetry || !telemetry->id() ||
-      !telemetry->id()->size() || !telemetry->value())) return false;
-  switch (telemetry->value_type()) {
-    case fbs::TelemetryBody::HeapTelemetry:
-    case fbs::TelemetryBody::HashTelemetry:
-    case fbs::TelemetryBody::ThreadTelemetry:
-    case fbs::TelemetryBody::CxnTelemetry:
-    case fbs::TelemetryBody::MxTelemetry:
-    case fbs::TelemetryBody::QueueTelemetry:
-    case fbs::TelemetryBody::HubTelemetry:
-    case fbs::TelemetryBody::LinkTelemetry:
-    case fbs::TelemetryBody::PoolTelemetry:
-    case fbs::TelemetryBody::DBTelemetry:
-    case fbs::TelemetryBody::DBHostTelemetry:
-    case fbs::TelemetryBody::DBTableTelemetry:
-    case fbs::TelemetryBody::AppTelemetry:
-    case fbs::TelemetryBody::Shutdown:
-    case fbs::TelemetryBody::AlertTelemetry:
-      return true;
-    default:
-      return false;
+inline bool validTelemetry(TelemetryView telemetry) {
+  if (!telemetry || !telemetry.get<ZfField(Telemetry, id)>()) return false;
+  auto value = telemetry.get<ZfField(Telemetry, value)>();
+  return value.data() && value.tag() >= TelemetryBody::HeapTelemetry &&
+    value.tag() <= TelemetryBody::AlertTelemetry;
+}
+
+inline bool validRequest(ZiFB::View<Request> request) {
+  if (!request) return false;
+  auto group = request.get<ZfField(Request, group)>();
+  return group >= Group::Heap && group <= Group::Alert;
+}
+
+inline bool validMsg(MsgView msg) {
+  if (!msg) return false;
+  auto body = msgBody(msg);
+  if (!body.data()) return false;
+  switch (body.tag()) {
+    case Body::Request: return validRequest(body.get<Body::Request>());
+    case Body::Ack: {
+      auto value = body.get<Body::Ack>();
+      auto status = value.get<ZfField(Ack, status)>();
+      return value.get<ZfField(Ack, id)>() &&
+	status >= AckStatus::OK && status <= AckStatus::Failed;
+    }
+    case Body::EOS: return !!body.get<Body::EOS>().get<ZfField(EOS, id)>();
+    case Body::Error: return !!body.get<Body::Error>().get<ZfField(Error, id)>();
+    case Body::Telemetry: return validTelemetry(body.get<Body::Telemetry>());
+    default: return false;
   }
 }
 
-inline bool validRequest(const fbs::Request *request) {
-  if (ZuUnlikely(!request)) return false;
-  auto group = int(request->group());
-  return group >= int(fbs::Group::Heap) &&
-    group <= int(fbs::Group::Alert);
+inline MsgView msg(ZuBSpan data) {
+  if (!ZiFB::verify<Msg>(data)) return {};
+  auto root = ZiFB::view<Msg>(data);
+  if (!ZiFB::verify<Payload>(root.get<ZfField(Msg, data)>())) return {};
+  return validMsg(root) ? root : MsgView{};
 }
-
-inline bool validMsg(const fbs::Msg *msg) {
-  if (ZuUnlikely(!msg || !msg->body())) return false;
-  switch (msg->body_type()) {
-    case fbs::Body::Request:
-      return validRequest(msg->body_as_Request());
-    case fbs::Body::Ack: {
-      auto body = msg->body_as_Ack();
-      return body && body->id() && body->id()->size() &&
-        body->status() >= fbs::AckStatus::OK &&
-        body->status() <= fbs::AckStatus::Failed;
-    }
-    case fbs::Body::EOS: {
-      auto body = msg->body_as_EOS();
-      return body && body->id() && body->id()->size();
-    }
-    case fbs::Body::Error: {
-      auto body = msg->body_as_Error();
-      return body && body->id() && body->id()->size();
-    }
-    case fbs::Body::Telemetry:
-      return validTelemetry(msg->body_as_Telemetry());
-    default:
-      return false;
-  }
+inline MsgView msg(const Hdr *hdr) {
+  return hdr ? msg(ZuBSpan{hdr->data(), uint32_t(hdr->length)}) : MsgView{};
 }
-
-inline const fbs::Msg *msg(ZuBSpan data)
-{
-  if (data.length() < sizeof(flatbuffers::uoffset_t)) return nullptr;
-  auto root = ZfbStruct::verify<fbs::Msg>(data);
-  return validMsg(root) ? root : nullptr;
-}
-
-inline const fbs::Msg *msg(const Hdr *hdr)
-{
-  return hdr ? msg(ZuBSpan{hdr->data(), uint32_t(hdr->length)}) : nullptr;
-}
-
-inline const fbs::Msg *msg_(const Hdr *hdr) {
-  return Zfb::GetRoot<fbs::Msg>(hdr->data());
+inline MsgView msg_(const Hdr *hdr) {
+  return ZiFB::view<Msg>({hdr->data(), uint32_t(hdr->length)});
 }
 
 } // Ztc

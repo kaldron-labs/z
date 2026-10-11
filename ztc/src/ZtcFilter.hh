@@ -22,7 +22,7 @@
 #include <zlib/ZtcLink.hh>
 #include <zlib/ZtcQueue.hh>
 
-#include <zlib/ztc_msg_fbs.h>
+#include <zlib/ZtcFB.hh>
 
 namespace Ztc {
 namespace Filter_ {
@@ -54,7 +54,7 @@ struct Component {
 
 class Filter {
 public:
-  bool compile(fbs::Group group, ZuCSpan input, unsigned maxLength) {
+  bool compile(Group::T group, ZuCSpan input, unsigned maxLength) {
     if (input.length() > maxLength) return false;
     m_text.length(0);
     m_keyLength = 0;
@@ -83,25 +83,25 @@ public:
     }
 
     switch (group) {
-      case fbs::Group::Heap:
-      case fbs::Group::Hash:
-      case fbs::Group::Mx:
-      case fbs::Group::DB:
-      case fbs::Group::App:
+      case Group::Heap:
+      case Group::Hash:
+      case Group::Mx:
+      case Group::DB:
+      case Group::App:
 	if (first >= 0) return false;
 	if (!component(m_c0, raw, 0, raw.length(), true)) return false;
 	break;
-      case fbs::Group::Alert:
+      case Group::Alert:
 	if (first >= 0) return false;
 	if (!component(m_c0, raw, 0, raw.length(), false) ||
 	    m_c0.mode != Mode::All) return false;
 	break;
-      case fbs::Group::Thread:
+      case Group::Thread:
 	if (first >= 0) return false;
 	if (!component(m_c0, raw, 0, raw.length(), false)) return false;
 	if (!number(m_c0, raw)) return false;
 	break;
-      case fbs::Group::Hub:
+      case Group::Hub:
 	if (first < 0 || second >= 0) return false;
 	if (!component(m_c0, raw, 0, unsigned(first), false) ||
 	    !component(
@@ -110,7 +110,7 @@ public:
 	  return false;
 	if (!linkType(m_c0, raw)) return false;
 	break;
-      case fbs::Group::Queue:
+      case Group::Queue:
 	if (first < 0) return false;
 	if (!component(m_c0, raw, 0, unsigned(first), false))
 	  return false;
@@ -288,27 +288,27 @@ private:
     return true;
   }
 
-  bool canonical(fbs::Group group, ZuCSpan input, unsigned maxLength) {
+  bool canonical(Group::T group, ZuCSpan input, unsigned maxLength) {
     m_text.length(0);
     m_all = false;
     switch (group) {
-      case fbs::Group::Heap:
-      case fbs::Group::Hash:
-      case fbs::Group::Mx:
-      case fbs::Group::DB:
-      case fbs::Group::App:
+      case Group::Heap:
+      case Group::Hash:
+      case Group::Mx:
+      case Group::DB:
+      case Group::App:
 	append(m_c0, input);
 	break;
-      case fbs::Group::Alert:
+      case Group::Alert:
 	append(m_c0, input);
 	break;
-      case fbs::Group::Thread:
+      case Group::Thread:
 	if (m_c0.mode == Mode::All)
 	  m_text << '*';
 	else
 	  m_text << m_c0.value;
 	break;
-      case fbs::Group::Hub:
+      case Group::Hub:
 	if (m_c0.mode == Mode::All)
 	  m_text << '*';
 	else
@@ -316,7 +316,7 @@ private:
 	m_text << ':';
 	append(m_c1, input);
 	break;
-      case fbs::Group::Queue:
+      case Group::Queue:
 	if (m_c0.mode == Mode::All)
 	  m_text << '*';
 	else
@@ -333,42 +333,42 @@ private:
     m_keyLength = m_text.length();
 
     switch (group) {
-      case fbs::Group::Heap:
-      case fbs::Group::Hash:
-      case fbs::Group::Mx:
-      case fbs::Group::DB:
-      case fbs::Group::App:
+      case Group::Heap:
+      case Group::Hash:
+      case Group::Mx:
+      case Group::DB:
+      case Group::App:
 	if (!decode(m_c0, input)) return false;
 	break;
-      case fbs::Group::Hub:
+      case Group::Hub:
 	if (!decode(m_c1, input)) return false;
 	break;
-      case fbs::Group::Queue:
+      case Group::Queue:
 	if (!decode(m_c1, input) || !decode(m_c2, input)) return false;
 	break;
-      case fbs::Group::Alert:
-      case fbs::Group::Thread:
+      case Group::Alert:
+      case Group::Thread:
 	break;
       default:
 	return false;
     }
 
     switch (group) {
-      case fbs::Group::Heap:
-      case fbs::Group::Hash:
-      case fbs::Group::Thread:
-      case fbs::Group::Mx:
-      case fbs::Group::DB:
-      case fbs::Group::App:
+      case Group::Heap:
+      case Group::Hash:
+      case Group::Thread:
+      case Group::Mx:
+      case Group::DB:
+      case Group::App:
 	m_all = m_c0.mode == Mode::All;
 	break;
-      case fbs::Group::Alert:
+      case Group::Alert:
 	m_all = m_c0.mode == Mode::All;
 	break;
-      case fbs::Group::Hub:
+      case Group::Hub:
 	m_all = m_c0.mode == Mode::All && m_c1.mode == Mode::All;
 	break;
-      case fbs::Group::Queue:
+      case Group::Queue:
 	m_all = m_c0.mode == Mode::All &&
 	  m_c1.mode == Mode::All && m_c2.mode == Mode::All;
 	break;

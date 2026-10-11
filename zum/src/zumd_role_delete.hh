@@ -17,7 +17,6 @@
 #include <zlib/zumd_provider_db.hh>
 #include <zlib/zumd_saga_image.hh>
 #include <zlib/zumd_request_db.hh>
-#include <zlib/zum_saga_fbs.h>
 
 namespace Zum {
 
@@ -252,15 +251,16 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
 
 };
 
-ZfbStruct(ZumAPI, RoleDelete,
-  (app, (Ctor<0>),		UDT),
-  (role, (Ctor<1>),		UDT),
-  (members, (Ctor<2>),		BytesVec),
-  (clients, (Ctor<3>),		BytesVec),
-  (admins, (Ctor<4>),		BytesVec),
-  (maps, (Ctor<5>),		BytesVec),
-  (updated, (Ctor<6>),		Int64),
-  (request, (Ctor<7>),		UDT));
+ZfStruct(ZumAPI, RoleDelete,
+  (app,		(Ctor<0>),	UDT),
+  (role,	(Ctor<1>),	UDT),
+  (members,	(Ctor<2>),	BytesVec),
+  (clients,	(Ctor<3>),	BytesVec),
+  (admins,	(Ctor<4>),	BytesVec),
+  (maps,	(Ctor<5>),	BytesVec),
+  (updated,	(Ctor<6>),	Int64),
+  (request,	(Ctor<7>),	UDT));
+ZiFB::Table<"Zum.fbs.RoleDelete"> ZiFBType(RoleDelete *);
 
 } // namespace Zum
 

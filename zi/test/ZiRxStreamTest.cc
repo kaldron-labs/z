@@ -316,12 +316,13 @@ void testExtractWaitAndError()
 int64_t spliceN(
   ZiRxStream<RxQueue> &src, ZiRxStream<RxQueue> &dst,
   unsigned total, unsigned head, unsigned tail,
-  unsigned &allocs, bool fail = false)
+  unsigned &allocs, bool reject = false)
 {
   unsigned remaining = total;
-  auto alloc = [&allocs, fail]() -> ZmRef<RxQueue::Node> {
+  auto alloc = [&allocs, reject]() -> ZmRef<RxQueue::Node> {
     ++allocs;
-    if (fail) return {};
+    // Model a rejected buffer request; nonzero Z heap allocations do not fail.
+    if (reject) return {};
     return new RxBufAlloc{};
   };
   return src.splice(
@@ -417,9 +418,9 @@ void testSpliceFragmentedAndEmpty()
   ZuCheck(consumeExact(src, 4, "rest"));
 }
 
-void testSpliceAllocFailure()
+void testSpliceAdmissionRejection()
 {
-  ZuTestScope(testSpliceAllocFailure);
+  ZuTestScope(testSpliceAdmissionRejection);
 
   ZiRxStream<RxQueue> src;
   ZiRxStream<RxQueue> dst;
@@ -606,7 +607,7 @@ int main(int argc, char **argv)
   ZuTestCall(testSpliceWaitAndFullNode);
   ZuTestCall(testSpliceBoundaryCopies);
   ZuTestCall(testSpliceFragmentedAndEmpty);
-  ZuTestCall(testSpliceAllocFailure);
+  ZuTestCall(testSpliceAdmissionRejection);
   ZuTestCall(testSpliceTransform);
   ZuTestCall(testIncompleteAppend);
   ZuTestCall(testCopyAndEach);

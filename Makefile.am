@@ -1,7 +1,6 @@
 ACLOCAL_AMFLAGS = -I m4
 METASOURCES = AUTO
-EXTRA_DIST = GUIDELINES.md naming.md z.config .lsan-suppressions \
-	scripts/fbscodegen \
+EXTRA_DIST = GUIDELINES.md z.config .lsan-suppressions \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
 SUBDIRS = zu zm zt ze zf zi zv zrl
@@ -11,7 +10,6 @@ endif
 SUBDIRS += ztcp ztls zquic zhttp zws
 SUBDIRS += zrest
 SUBDIRS += zjrpc zmcp
-SUBDIRS += zfb
 SUBDIRS += zdb
 if LIBPQ
 SUBDIRS += zdb_pq
@@ -27,7 +25,7 @@ SUBDIRS += zgtk
 endif
 # SUBDIRS += zdash
 
-DIST_SUBDIRS = zu zm zt ze zf zi zv zrl zdbus ztcp ztls zquic zhttp zws zrest zjrpc zmcp zfb zdb ztc \
+DIST_SUBDIRS = zu zm zt ze zf zi zv zrl zdbus ztcp ztls zquic zhttp zws zrest zjrpc zmcp zdb ztc \
 	zdb_pq zdb_sqlite zdf zum zgtk # zdash
 
 .PHONY: test

@@ -4,10 +4,33 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZtcFB.hh>
+#include <zlib/ZtcMsg.hh>
 
 namespace Ztc {
 
+ZfStructImpl(Request);
+ZfStructImpl(Ack);
+ZfStructImpl(EOS);
+ZfStructImpl(Error);
+ZfStructImpl(HeapTelemetry);
+ZfStructImpl(HashTelemetry);
+ZfStructImpl(ThreadTelemetry);
+ZfStructImpl(CxnTelemetry);
+ZfStructImpl(MxTelemetry);
+ZfStructImpl(QueueTelemetry);
+ZfStructImpl(HubTelemetry);
+ZfStructImpl(LinkTelemetry);
+ZfStructImpl(PoolTelemetry);
+ZfStructImpl(AppTelemetry);
+ZfStructImpl(AlertTelemetry);
+
+
+ZfStructImpl(Shutdown);
+ZfStructImpl(Telemetry);
+ZfStructImpl(Payload);
+ZfStructImpl(Msg);
+ZtEnumImplNS(Group);
+ZtEnumImplNS(AckStatus);
 ZtEnumImplNS(EngineState);
 ZtEnumImplNS(CxnType);
 ZtEnumImplNS(QueueType);

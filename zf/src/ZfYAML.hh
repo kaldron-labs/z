@@ -746,7 +746,7 @@ struct AsObject {
 
     enum { Block = 1, Scalar = 0 };
 
-    using AllFields = ZuFields<O, Facet>;
+    using AllFields = ZuActiveFields<O, Facet>;
 
     template <template <typename> class Filter, typename S>
     static void save_(S &s, const O &o, unsigned indent_) {

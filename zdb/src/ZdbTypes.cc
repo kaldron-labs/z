@@ -5,10 +5,20 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZdbTypes.hh>
+#include <zlib/ZdbMsg.hh>
 
 namespace Zdb_ {
 
 ZtEnumImplNS(RowState);
 ZtEnumImplNS(OpResult);
+
+namespace Msg {
+ZfStructImpl(TableState);
+ZfStructImpl(DBState);
+ZfStructImpl(Heartbeat);
+ZfStructImpl(Record);
+ZfStructImpl(Commit);
+ZfStructImpl(Root);
+} // Msg
 
 } // namespace Zdb_

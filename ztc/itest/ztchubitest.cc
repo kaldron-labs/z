@@ -78,6 +78,7 @@ static void productionInit()
   ZuCheck(mx.start());
   auto cf = config();
   cf.managementURL = "https://zum.example";
+  cf.ssfDeliveryURL = "https://ztchub.example/ssf";
   Zum::ServiceHTTPFn http{[](Zum::ServiceHTTPRequest,
       Zum::ServiceHTTPDoneFn) { }};
   Ztc::Hubd hub;

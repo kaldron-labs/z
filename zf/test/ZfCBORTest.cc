@@ -47,13 +47,13 @@ ZfStruct(, ArrayObject,
 ZfStructRender(, ArrayObject, CBOR, values);
 
 ZfStruct(, IntKeyObject,
-  (value,	(Mutable),	Int32));
+  (value,	(Ctor<0>, Mutable),	Int32));
 
 ZfStructRender(, IntKeyObject, CBOR,
   (value, (CBOR::ID<"4294967296">, CBOR::IntID)));
 
 ZfStruct(, MinIntKeyObject,
-  (value,	(Mutable),	Int32));
+  (value,	(Ctor<0>, Mutable),	Int32));
 
 ZfStructRender(, MinIntKeyObject, CBOR,
   (value, (CBOR::ID<"-18446744073709551616">, CBOR::IntID)));
@@ -64,8 +64,8 @@ ZfStruct(, TextObject,
 ZfStructRender(, TextObject, CBOR, value);
 
 ZfStruct(, LongKeyObject,
-  (value,		(Mutable),	Int32),
-  (shortValue,	(Mutable),		Int32));
+  (value,	(Ctor<0>, Mutable),	Int32),
+  (shortValue,	(Ctor<1>, Mutable),	Int32));
 
 ZfStructRender(, LongKeyObject, CBOR,
   (value, (CBOR::ID<"abcdefghijklmnopqrstuvwxyz0123456789">)),

@@ -566,8 +566,21 @@ public:
   }
 
   // start/stop
-  using StartFn = ZmFn<void(Editor &), ZmFnHeapID<"Zrl.Editor.StartFn">>;
-  void start(StartFn = {});
+  void start() { start([](Editor &) {}); }
+  template <typename L>
+  void start(L &&l) {
+    m_tty.start(
+      [this, l = ZuFwd<L>(l)]() mutable {
+	m_context = { .histSaveOff = m_config.histOffset };
+	m_tty.opost_on();
+	l(*this);
+	m_tty.opost_off();
+	prompt_();
+      },
+      Terminal::KeyFn{this, [](Editor *this_, int32_t vkey) {
+	return this_->process(vkey);
+      }});
+  }
   void stop();
   bool running() const;
 

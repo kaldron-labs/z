@@ -6,19 +6,19 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZtcDB.hh>
 
 using namespace ZuTestUtil;
 
+using Buffer = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Test.FB">>;
+
 template <typename T>
-const ZfbType<T> *save(Zfb::Builder &fbb, const T &data)
+ZiFB::View<T> save(Buffer &bytes, const T &data)
 {
-  fbb.Finish(
-    ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data));
-  return ZfbStruct::verify<T>(
-    {fbb.GetBufferPointer(), unsigned(fbb.GetSize())});
+  ZiFB::save<false, ZuFacet::Core, ZfFieldFilter::All>(bytes, data);
+  return ZiFB::verify<T>(bytes) ? ZiFB::view<T>(bytes) : ZiFB::View<T>{};
 }
 
 void table()
@@ -27,27 +27,27 @@ void table()
   Ztc::DBTableTelemetry data;
   data.dbID = "database";
   data.id = "table_identifier_longer_than_twenty_eight_bytes_01";
-  data.count = UINT64_C(0xf123456789abcdef);
-  data.cacheLoads = UINT64_C(0xe123456789abcdef);
-  data.cacheMisses = UINT64_C(0xd123456789abcdef);
-  data.cacheEvictions = UINT64_C(0xc123456789abcdef);
-  data.cacheSize = UINT32_C(0x71234567);
+  data.count = uint64_t(0xf123456789abcdef);
+  data.cacheLoads = uint64_t(0xe123456789abcdef);
+  data.cacheMisses = uint64_t(0xd123456789abcdef);
+  data.cacheEvictions = uint64_t(0xc123456789abcdef);
+  data.cacheSize = unsigned(0x71234567);
   data.cacheMode = Ztc::DBCacheMode::All;
 
-  Zfb::Builder fbb;
+  Buffer fbb;
   auto fbo = save(fbb, data);
   ZuCheck(fbo);
-  ZuCheck(Zfb::Load::str(fbo->dbID()) == data.dbID);
-  ZuCheck(Zfb::Load::str(fbo->id()) == data.id);
-  ZuCheck(fbo->count() == data.count);
-  ZuCheck(fbo->cacheLoads() == data.cacheLoads);
-  ZuCheck(fbo->cacheMisses() == data.cacheMisses);
-  ZuCheck(fbo->cacheEvictions() == data.cacheEvictions);
-  ZuCheck(fbo->cacheSize() == data.cacheSize);
-  ZuCheck(fbo->cacheMode() == Ztc::fbs::DBCacheMode::All);
-  ZuCheck(fbo->rag() == data.rag());
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, dbID)>() == data.dbID);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, id)>() == data.id);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, count)>() == data.count);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, cacheLoads)>() == data.cacheLoads);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, cacheMisses)>() == data.cacheMisses);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, cacheEvictions)>() == data.cacheEvictions);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, cacheSize)>() == data.cacheSize);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, cacheMode)>() == Ztc::DBCacheMode::All);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, rag)>() == data.rag());
 
-  auto loaded = ZfbStruct::ctor<Ztc::DBTableTelemetry>(fbo);
+  auto loaded = ZiFB::Handler<Ztc::DBTableTelemetry>{fbo}.ctor();
   ZuCheck(loaded.dbID == data.dbID);
   ZuCheck(loaded.id == data.id);
   ZuCheck(loaded.count == data.count);
@@ -65,25 +65,26 @@ void host()
   data.ip = ZiIP{"2001:db8::1234"};
   data.dbID = "database";
   data.id = "host";
-  data.priority = UINT32_C(0x81234567);
+  data.priority = unsigned(0x81234567);
   data.port = 43210;
   data.state = Ztc::DBHostState::Active;
   data.voted = 1;
 
-  Zfb::Builder fbb;
+  Buffer fbb;
   auto fbo = save(fbb, data);
   ZuCheck(fbo);
-  ZuCheck(fbo->ip_type() == Zfb::IP::IPv6);
-  ZuCheck(fbo->ip());
-  ZuCheck(Zfb::Load::str(fbo->dbID()) == data.dbID);
-  ZuCheck(Zfb::Load::str(fbo->id()) == data.id);
-  ZuCheck(fbo->priority() == data.priority);
-  ZuCheck(fbo->port() == data.port);
-  ZuCheck(fbo->state() == Ztc::fbs::DBHostState::Active);
-  ZuCheck(fbo->voted() == data.voted);
-  ZuCheck(fbo->rag() == Ztc::RAG::Green);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, ip)>().type() == ZiIP::V6);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, ip)>() == data.ip);
+  ZuCheck(fbo.has<Ztc::ZfField(DBHostTelemetry, ip)>());
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, dbID)>() == data.dbID);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, id)>() == data.id);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, priority)>() == data.priority);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, port)>() == data.port);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, state)>() == Ztc::DBHostState::Active);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, voted)>() == data.voted);
+  ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, rag)>() == Ztc::RAG::Green);
 
-  auto loaded = ZfbStruct::ctor<Ztc::DBHostTelemetry>(fbo);
+  auto loaded = ZiFB::Handler<Ztc::DBHostTelemetry>{fbo}.ctor();
   ZuCheck(loaded.ip == data.ip);
   ZuCheck(loaded.dbID == data.dbID);
   ZuCheck(loaded.id == data.id);
@@ -100,12 +101,12 @@ void db()
   data.thread = "db-thread";
   data.threads.push("thread-1");
   data.threads.push("thread-2");
-  data.nShards = UINT32_C(0x81234567);
+  data.nShards = unsigned(0x81234567);
   data.self = "self";
   data.leader = "leader";
   data.prev = "prev";
   data.next = "next";
-  data.nCxns = UINT32_C(0x81234567);
+  data.nCxns = unsigned(0x81234567);
   data.heartbeatFreq = 101;
   data.heartbeatTimeout = 102;
   data.reconnectFreq = 103;
@@ -118,33 +119,33 @@ void db()
   data.recovering = 4;
   data.replicating = 5;
 
-  Zfb::Builder fbb;
+  Buffer fbb;
   auto fbo = save(fbb, data);
   ZuCheck(fbo);
-  ZuCheck(Zfb::Load::str(fbo->thread()) == data.thread);
-  ZuCheck(fbo->threads()->size() == 2);
-  ZuCheck(Zfb::Load::str(fbo->threads()->Get(0)) == "thread-1");
-  ZuCheck(Zfb::Load::str(fbo->threads()->Get(1)) == "thread-2");
-  ZuCheck(fbo->nShards() == data.nShards);
-  ZuCheck(Zfb::Load::str(fbo->self()) == data.self);
-  ZuCheck(Zfb::Load::str(fbo->leader()) == data.leader);
-  ZuCheck(Zfb::Load::str(fbo->prev()) == data.prev);
-  ZuCheck(Zfb::Load::str(fbo->next()) == data.next);
-  ZuCheck(fbo->nCxns() == data.nCxns);
-  ZuCheck(fbo->heartbeatFreq() == data.heartbeatFreq);
-  ZuCheck(fbo->heartbeatTimeout() == data.heartbeatTimeout);
-  ZuCheck(fbo->reconnectFreq() == data.reconnectFreq);
-  ZuCheck(fbo->electionTimeout() == data.electionTimeout);
-  ZuCheck(fbo->nTables() == data.nTables);
-  ZuCheck(fbo->nHosts() == data.nHosts);
-  ZuCheck(fbo->nPeers() == data.nPeers);
-  ZuCheck(fbo->state() == Ztc::fbs::DBHostState::Inactive);
-  ZuCheck(fbo->active() == data.active);
-  ZuCheck(fbo->recovering() == data.recovering);
-  ZuCheck(fbo->replicating() == data.replicating);
-  ZuCheck(fbo->rag() == Ztc::RAG::Amber);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, thread)>() == data.thread);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, threads)>().length() == 2);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, threads)>()[0] == "thread-1");
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, threads)>()[1] == "thread-2");
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, nShards)>() == data.nShards);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, self)>() == data.self);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, leader)>() == data.leader);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, prev)>() == data.prev);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, next)>() == data.next);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, nCxns)>() == data.nCxns);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, heartbeatFreq)>() == data.heartbeatFreq);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, heartbeatTimeout)>() == data.heartbeatTimeout);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, reconnectFreq)>() == data.reconnectFreq);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, electionTimeout)>() == data.electionTimeout);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, nTables)>() == data.nTables);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, nHosts)>() == data.nHosts);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, nPeers)>() == data.nPeers);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, state)>() == Ztc::DBHostState::Inactive);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, active)>() == data.active);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, recovering)>() == data.recovering);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, replicating)>() == data.replicating);
+  ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, rag)>() == Ztc::RAG::Amber);
 
-  auto loaded = ZfbStruct::ctor<Ztc::DBTelemetry>(fbo);
+  auto loaded = ZiFB::Handler<Ztc::DBTelemetry>{fbo}.ctor();
   ZuCheck(loaded.thread == data.thread);
   ZuCheck(loaded.threads.length() == 2);
   ZuCheck(loaded.nShards == data.nShards);

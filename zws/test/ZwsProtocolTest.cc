@@ -33,7 +33,8 @@ struct WireTx : public ZiTxStream<WireTx> {
   ~WireTx() { this->flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    if (!allocOK) return nullptr;
+    // Admission can reject a request before any Z heap allocation.
+    if (!admitOK) return nullptr;
     ZmRef<ZiIOBuf> buf = new BufAlloc{};
     buf->skip = headRoom;
     return buf;
@@ -54,7 +55,7 @@ struct WireTx : public ZiTxStream<WireTx> {
   ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Final">> finals;
   unsigned				flushCalls = 0;
   unsigned sends = 0;
-  bool allocOK = true;
+  bool admitOK = true;
   bool sendOK = true;
 };
 
@@ -815,7 +816,7 @@ void tx()
   }
   {
     WireTx lower;
-    lower.allocOK = false;
+    lower.admitOK = false;
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
     tx << "abc";
     ZuCHECK(tx.failed() && !tx.flush() && !lower.sends);

@@ -822,7 +822,9 @@ public:
   bool commit() {
     if (!seal()) { m_entries.length(0); return false; }
     for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
-      if (!m_lower.sendBuf(ZuMv(m_entries[i].buf), m_entries[i].final)) {
+      m_lower << ZuMv(m_entries[i].buf);
+      if (m_entries[i].final) m_lower << Zi::Flush{};
+      if (m_lower.failed()) {
 	this->fail();
 	m_entries.length(0);
 	return false;

@@ -1,0 +1,46 @@
+Release growth and copy trace, 2026-10-08
+
+Command (sequential, x86-64 SysV retained Clang release binary):
+  DEBUGINFOD_URLS= ./libtool exec gdb -q -nx -batch \
+    -iex 'maintenance set worker-threads 0' \
+    -iex 'set debuginfod enabled off' -iex 'set auto-load off' \
+    -x zi/interop/trace-growth.py --args /tmp/zifb-release-bench 3 64 1
+Repeat with '3 64 1 wide' and '3 65536 1 vectors'.
+
+The script discovers the relocated instruction addresses after stopping at
+main and requires three memcpy/memmove call sites in each emitted growth
+function. It counts actual size arguments immediately before those calls;
+no optimized source locals or inferred zeroes are used for copied bytes.
+Entry registers and native arena fields supply capacity-extension counts.
+Allocation counters include Bench::run setup/teardown as before.
+
+All three preflights and inferior runs completed normally. Canonical/native
+pool and variable allocation requests/sizes, growth copy calls and bytes
+match in both modes. Row/wide at 64 bytes: zero extensions/copies. Wide's
+41/64-byte allocations are row setup, not builder growth.
+
+Vectors at 65536 bytes (three iterations):
+  reuse: 4 variable requests, 573440 requested bytes;
+    4 copy calls, 294916 copied bytes; 3 nonempty capacity extensions.
+  fresh: 12 variable requests, 1720320 requested bytes;
+    12 copy calls, 884748 copied bytes; 9 nonempty capacity extensions.
+Variable sizes: 65536, 98304, 163840, 245760 (once reuse, thrice fresh).
+Native has one additional EMPTY capacity-extension call per initial buffer:
+its arena starts from pooled capacity, whereas canonical starts from zero
+logical capacity and enters its allocation path. This adds no physical
+allocation or copying relative to canonical. Empty extensions are reported
+separately; raw total counts are retained, not silently normalized.
+
+Scope: growth-path data movement only, excluding payload, scratch and scalar
+writes. These representative measurements resolve the previously unavailable
+copy counters; they do not establish nested-message or full application
+allocation parity, nor timing acceptance. Debugger timings are excluded.
+
+SHA-256:
+efd120e71ab317b63115f41beef4b2165f8d5eb205b4acd67d1e69e229ae94da  zi/interop/trace-growth.py
+a2012deb4c668456ea73dd753d7170e7498917252afbe852ee700ae0ad58a275  zi/interop/zifbiobench.cc
+e670e66b07e11776978052da0d30dbaa5121133453e13641bd39e5d90f93944f  zi/interop/iobaseline.hh
+429bf999dcb5de5a81a65c26ff1dad20361d731b14872cd65073ab5f85e29b71  zi/src/ZiFB.hh
+547f8c5448b2e7896d8fe4a5b80a18501d2bf55767820e35cc43cf7bba6f8487  zi/src/ZiIOBuf.hh
+ca34a393aa01956003cedbed8b1333c20bb11c5be692a7145d26595ff6371290  zf/src/ZfFB.hh
+855dffae190392a129d63ed7b6c18ef23f650d26e2bc6a131041618b90534ce3  /tmp/.libs/zifb-release-bench

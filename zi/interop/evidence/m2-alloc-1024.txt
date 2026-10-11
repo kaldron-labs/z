@@ -1,0 +1,22 @@
+warning: the debug information found in "/usr/lib/debug/usr/lib/ld-linux-x86-64.so.2.debug" does not match "/lib64/ld-linux-x86-64.so.2" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libm.so.6.debug" does not match "/usr/lib/libm.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+warning: the debug information found in "/usr/lib/debug/usr/lib/libc.so.6.debug" does not match "/usr/lib/libc.so.6" (CRC mismatch).
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+warning: RTTI symbol not found for class 'ZiIOBufAlloc<980u, 104857600u, ZuString<8u>{char [8]{(char)90, (char)105, (char)73, (char)79, (char)66, (char)117, (char)102}}>'
+codec,mode,payload,count,total_bytes,capacity,seconds,checksum
+canonical,reuse,1024,3,3192,1560,0.001500339,6
+native,reuse,1024,3,3192,1560,0.001122286,6
+canonical,fresh,1024,3,3192,1560,0.00375888,6
+native,fresh,1024,3,3192,1560,0.003792893,6
+[Inferior 1 (process 820569) exited normally]
+growth counters: {"canonical/fresh": {"failures": 0, "growth_allocations": 3, "growth_copy_bytes": 3120, "pool_requests": 4, "requests": 3, "variable_bytes": 4680, "variable_requests": 3, "variable_sizes": {"1560": 3}}, "canonical/reuse": {"failures": 0, "growth_allocations": 1, "growth_copy_bytes": 1040, "pool_requests": 1, "requests": 1, "variable_bytes": 1560, "variable_requests": 1, "variable_sizes": {"1560": 1}}, "native/fresh": {"failures": 0, "growth_allocations": 3, "growth_copy_bytes": 3120, "pool_requests": 4, "requests": 3, "variable_bytes": 4680, "variable_requests": 3, "variable_sizes": {"1560": 3}}, "native/reuse": {"failures": 0, "growth_allocations": 1, "growth_copy_bytes": 1040, "pool_requests": 1, "requests": 1, "variable_bytes": 1560, "variable_requests": 1, "variable_sizes": {"1560": 1}}}

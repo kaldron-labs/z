@@ -23,8 +23,6 @@
 #include <zlib/ZmThread.hh>
 #include <zlib/ZmVHeap.hh>
 
-#include <zlib/Zfb.hh>
-#include <zlib/ZfbStruct.hh>
 
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiDir.hh>
@@ -69,25 +67,24 @@ using SubKey = uint64_t;
 using DueKey = ZuTuple<ZuTime, uint64_t>;
 
 struct PendingAlert {
-  explicit operator bool() const { return bool(frame); }
-
   ZmRef<ZiIOBuf>	frame;
   uint64_t		seqNo = 0;
   uint32_t		date = 0;
+
+  explicit operator bool() const { return bool(frame); }
 };
 
 using AlertFrames = ZmQueue<PendingAlert,
   ZmQueueHeapID<"Ztc.App.AlertPending">>;
 
-class Subscription_ {
-public:
+struct Subscription_ {
   Pending_		*snapshot = nullptr;
   Filter_::Filter	filter;
   ZuTime		due;
   uint64_t		seqNo = 0;
   uint64_t		order = 0;
   uint32_t		interval = 0;
-  fbs::Group		group = fbs::Group::Heap;
+  Group::T		group = Group::Heap;
   AlertFrames		pending;
   uint64_t		highSeqNo = 0;
   uint64_t		replaySeqNo = 0;
@@ -103,13 +100,12 @@ public:
   bool			replayFailed = false;
 };
 
-class PendingData {
-public:
+struct PendingData {
   Subscription_	*sub = nullptr;
   uint64_t		seqNo = 0;
   uint32_t		offset = 0;
   uint8_t		stage = 0;
-  fbs::Group		group = fbs::Group::Heap;
+  Group::T		group = Group::Heap;
   HeapSamples		heaps;
   HashSamples		hashes;
   ThreadSamples		threads;
@@ -435,21 +431,24 @@ private:
     if (total > uint64_t(dataSize) - offset)
       return LoadResult::Incomplete;
     ZmRef<ZiIOBuf> loaded = new AlertFrame;
-    if (!loaded->alloc(unsigned(total))) return LoadResult::IOError;
+    loaded->alloc(unsigned(total));
     loaded->length = unsigned(total);
     if (data.pread(
 	  Zi::Offset(offset), loaded->data(), unsigned(total)) != int(total))
       return LoadResult::IOError;
     auto root = msg(loaded->ptr<Hdr>());
-    auto telemetry = root && root->body_type() == fbs::Body::Telemetry ?
-      root->body_as_Telemetry() : nullptr;
-    auto alert = telemetry && telemetry->value_type() ==
-	fbs::TelemetryBody::AlertTelemetry ?
-      telemetry->value_as_AlertTelemetry() : nullptr;
-    if (!alert || !telemetry->id() ||
-	ZuCSpan{telemetry->id()->c_str(), telemetry->id()->size()} != m_id ||
-	telemetry->seqNo() || alert->date() != date ||
-	alert->seqNo() != seqNo) return LoadResult::Corrupt;
+    if (!root || msgBody(root).tag() != Body::Telemetry)
+      return LoadResult::Corrupt;
+    auto telemetry = msgBody(root).get<Body::Telemetry>();
+    auto value = telemetry.get<ZfField(Telemetry, value)>();
+    if (value.tag() != TelemetryBody::AlertTelemetry)
+      return LoadResult::Corrupt;
+    auto alert = value.get<TelemetryBody::AlertTelemetry>();
+    if (telemetry.get<ZfField(Telemetry, id)>() != m_id ||
+	telemetry.get<ZfField(Telemetry, seqNo)>() ||
+	alert.get<ZfField(AlertTelemetry, date)>() != date ||
+	alert.get<ZfField(AlertTelemetry, seqNo)>() != seqNo)
+      return LoadResult::Corrupt;
     frame = ZuMv(loaded);
     return LoadResult::OK;
   }
@@ -613,7 +612,7 @@ ZuDerive(AlertSink, (AlertSink__<AlertSinkHeap>));
 
 struct StateData {
   StateData() {
-    unsigned n = unsigned(fbs::Group::Alert);
+    unsigned n = unsigned(Group::Alert);
     due.size(n);
     for (unsigned i = 0; i < n; ++i)
       new (due.push()) SubDueIdx;
@@ -732,28 +731,30 @@ namespace App_ {
 
 template <typename T>
 ZmRef<ZiIOBuf> telemetryFrame(
-  ZuCSpan id, uint64_t seqNo, fbs::TelemetryBody type, const T &data)
+  ZuCSpan id, uint64_t seqNo, unsigned type, const T &data)
 {
-  Zfb::IOBuilder fbb{
+  Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
-  auto id_ = fbb.CreateString(id.data(), id.length());
+  auto nested = fbb.startNested();
+  auto id_ = fbb.string(id);
   auto value =
-    ZfbStruct::save<ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
+    ZiFB::saveObject<T, ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
   auto telemetry =
-    saveTelemetry(fbb, id_, seqNo, type, value.Union());
-  fbb.Finish(
-    saveMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
+    saveTelemetry(fbb, id_, seqNo, type, value);
+  fbb.finish(
+    saveMsg(fbb, nested, Body::Telemetry, telemetry));
   return saveHdr(fbb);
 }
 
 ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
 {
-  Zfb::IOBuilder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
-  auto id_ = fbb.CreateString(id.data(), id.length());
-  auto value = fbs::CreateShutdown(fbb);
+  Ztc::Builder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
+  auto nested = fbb.startNested();
+  auto id_ = fbb.string(id);
+  auto value = ZiFB::saveObject(fbb, Shutdown{});
   auto telemetry = saveTelemetry(fbb, id_, 0,
-    fbs::TelemetryBody::Shutdown, value.Union());
-  fbb.Finish(saveMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
+    TelemetryBody::Shutdown, value);
+  fbb.finish(saveMsg(fbb, nested, Body::Telemetry, telemetry));
   return saveHdr(fbb);
 }
 
@@ -762,11 +763,11 @@ ZmRef<ZiIOBuf> alertFrame(uint64_t seqNo, const ZiIOBuf *canonical)
   ZmRef<ZiIOBuf> frame = new MsgFrame;
   frame->append(canonical->data(), canonical->length);
   if (ZuUnlikely(frame->length != canonical->length)) return {};
-  auto root = flatbuffers::GetMutableRoot<fbs::Msg>(
-    frame->data() + sizeof(Hdr));
-  auto telemetry = root->mutable_body_as_Telemetry();
-  if (ZuUnlikely(!telemetry || !telemetry->mutate_seqNo(seqNo)))
-    return {};
+  auto root = msg_(frame->ptr<Hdr>());
+  auto telemetry = msgBody(root).get<Body::Telemetry>();
+  auto field = telemetry.field<ZfField(Telemetry, seqNo)>();
+  if (ZuUnlikely(!field)) return {};
+  ZiFB::write<uint64_t>(const_cast<uint8_t *>(field), seqNo);
   return frame;
 }
 
@@ -1201,7 +1202,7 @@ void App::rag_(RAG::T rag)
   m_rag = rag;
   auto i = m_state->subs.iter();
   while (auto sub = i())
-    if (sub->group == fbs::Group::App) sub->dirty = true;
+    if (sub->group == Group::App) sub->dirty = true;
 }
 
 void App::alert_(ZmRef<App_::AlertEvent> event)
@@ -1219,19 +1220,24 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     }
     uint64_t alertSeqNo = m_state->alertSeqNo++;
 
-    Zfb::IOBuilder fbb{
+    Ztc::Builder fbb{
       frameBuf(ZmRef<ZiIOBuf>{new App_::AlertFrame})};
-    fbb.ForceDefaults(true);
-    auto id = fbb.CreateString(m_cf.id.data(), m_cf.id.length());
-    auto message =
-      fbb.CreateString(event->message().data(), event->message().length());
-    Zfb::Time time{event->time.sec(), event->time.nsec()};
-    auto value = fbs::CreateAlertTelemetry(
-      fbb, message, &time, alertSeqNo, event->tid, date, event->severity);
-    auto telemetry = saveTelemetry(
-      fbb, id, 0, fbs::TelemetryBody::AlertTelemetry, value.Union());
-    fbb.Finish(
-      saveMsg(fbb, fbs::Body::Telemetry, telemetry.Union()));
+    auto nested = fbb.startNested();
+    auto id = fbb.string(m_cf.id);
+    auto message = fbb.string(event->message());
+    auto table = fbb.startTable();
+    ZiFB::fieldOffset<ZfField(AlertTelemetry, message)>(fbb, table, message);
+    ZiFB::field<ZfField(AlertTelemetry, time)>(fbb, table, event->time);
+    ZiFB::field<ZfField(AlertTelemetry, seqNo)>(fbb, table, alertSeqNo);
+    ZiFB::field<ZfField(AlertTelemetry, tid)>(fbb, table, event->tid);
+    ZiFB::field<ZfField(AlertTelemetry, date)>(fbb, table, date);
+    ZiFB::field<ZfField(AlertTelemetry, severity)>(fbb, table, event->severity);
+    auto value = fbb.endTable(table);
+    // Replay copies this span and updates seqNo in place, including from zero.
+    auto telemetry = saveTelemetry<true>(
+      fbb, id, 0, TelemetryBody::AlertTelemetry, value);
+    fbb.finish(
+      saveMsg(fbb, nested, Body::Telemetry, telemetry));
     ZmRef<ZiIOBuf> canonical = saveHdr(fbb);
     if (ZuUnlikely(!canonical || canonical->length > m_cf.maxFrame)) {
       m_state->degraded = true;
@@ -1247,7 +1253,7 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
 
     auto i = m_state->subs.iter();
     while (App_::Subscription *sub = i()) {
-      if (sub->group != fbs::Group::Alert) continue;
+      if (sub->group != Group::Alert) continue;
       if (sub->replaying) {
 	if (sub->oneShot) continue;
 	if (sub->pending.count_() >= m_cf.alertReplay) {
@@ -1526,7 +1532,8 @@ void App::reqRun_()
 
       unsigned size = ringSize(ptr);
       ZmRef<ZiIOBuf> buf = new App_::ReqFrame;
-      if (size <= m_cf.maxFrame && buf->alloc(size)) {
+      if (size <= m_cf.maxFrame) {
+	buf->alloc(size);
 	memcpy(buf->data(), ptr, size);
 	buf->length = size;
       } else
@@ -1607,85 +1614,85 @@ bool App::publishApp_(uint64_t seqNo)
   AppTelemetry data;
   appTelemetry_(data);
   return publishRaw_(App_::telemetryFrame(
-    m_cf.id, seqNo, fbs::TelemetryBody::AppTelemetry, data),
+    m_cf.id, seqNo, TelemetryBody::AppTelemetry, data),
     App_::Delivery::Telemetry);
 }
 
 void App::request_(ZmRef<ZiIOBuf> buf)
 {
   auto root = msg_(buf->ptr<Hdr>());
-  if (ZuUnlikely(root->body_type() != fbs::Body::Request)) {
+  if (ZuUnlikely(msgBody(root).tag() != Body::Request)) {
     sendError_(ZuCmp<uint64_t>::null(), 1, "expected Request message");
     return;
   }
-  auto request = root->body_as_Request();
+  auto request = msgBody(root).get<Body::Request>();
   if (ZuUnlikely(!request)) return;
-  uint64_t seqNo = request->seqNo();
-  ZuCSpan id = Zfb::Load::str(request->id());
+  uint64_t seqNo = request.get<ZfField(Request, seqNo)>();
+  ZuCSpan id = request.get<ZfField(Request, id)>();
   if (id && id != m_cf.id) return;
   if (seqNo == ZuCmp<uint64_t>::null()) {
     clearSubscriptions_();
     m_state->minReqSeqNo = 0;
     return;
   }
-  if (request->subscribe()) {
+  if (request.get<ZfField(Request, subscribe)>()) {
     if (m_state->minReqSeqNo == ZuCmp<uint64_t>::null() ||
 	seqNo < m_state->minReqSeqNo)
       return;
     m_state->minReqSeqNo = seqNo + 1;
   }
-  ZuCSpan filter = Zfb::Load::str(request->filter());
-  auto group = request->group();
+  ZuCSpan filter = request.get<ZfField(Request, filter)>();
+  auto group = request.get<ZfField(Request, group)>();
   if (ZuUnlikely(
-	int(group) < int(fbs::Group::Heap) ||
-	int(group) > int(fbs::Group::Alert))) {
-    sendAck_(seqNo, fbs::AckStatus::Invalid);
+	int(group) < int(Group::Heap) ||
+	int(group) > int(Group::Alert))) {
+    sendAck_(seqNo, AckStatus::Invalid);
     return;
   }
   Filter_::Filter compiled;
   if (ZuUnlikely(!compiled.compile(group, filter, m_cf.maxFilter))) {
-    sendAck_(seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, AckStatus::Invalid);
     return;
   }
-  uint32_t alertDate = request->alertDate();
-  uint64_t alertSeqNo = request->alertSeqNo();
-  if (group != fbs::Group::Alert) {
+  uint32_t alertDate = request.get<ZfField(Request, alertDate)>();
+  uint64_t alertSeqNo = request.get<ZfField(Request, alertSeqNo)>();
+  if (group != Group::Alert) {
     if (alertDate || alertSeqNo) {
-      sendAck_(seqNo, fbs::AckStatus::Invalid);
+      sendAck_(seqNo, AckStatus::Invalid);
       return;
     }
   } else if ((alertDate && !App_::AlertStore::validDate(alertDate)) ||
       (!alertDate && alertSeqNo)) {
-    sendAck_(seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, AckStatus::Invalid);
     return;
   } else if (alertDate && m_state->alertDate &&
       (alertDate < m_state->store.earliest(m_state->alertDate) ||
        alertDate > m_state->alertDate ||
        (alertDate == m_state->alertDate && m_state->alertSeqNo &&
 	alertSeqNo >= m_state->alertSeqNo))) {
-    sendAck_(seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, AckStatus::Invalid);
     return;
   }
-  if (!request->subscribe()) {
+  if (!request.get<ZfField(Request, subscribe)>()) {
     unsubscribe_(seqNo, group, compiled);
     return;
   }
-  uint32_t interval = request->interval();
+  uint32_t interval = request.get<ZfField(Request, interval)>();
   if (!interval) {
-    if (group == fbs::Group::Alert) {
+    if (group == Group::Alert) {
       subscribe_(seqNo, group, ZuMv(compiled), 0,
 	alertDate, alertSeqNo);
 	return;
       }
     if (!snapshot_(seqNo, group, compiled)) {
-      sendAck_(seqNo, fbs::AckStatus::Failed);
+      sendAck_(seqNo, AckStatus::Failed);
       return;
     }
-    sendAck_(seqNo, fbs::AckStatus::OK);
+    sendAck_(seqNo, AckStatus::OK);
     return;
   }
   if (ZuUnlikely(interval > m_cf.maxInterval)) {
-    sendAck_(seqNo, fbs::AckStatus::Invalid);
+    sendAck_(seqNo, AckStatus::Invalid);
     return;
   }
   if (interval < m_cf.minInterval) interval = m_cf.minInterval;
@@ -1694,17 +1701,17 @@ void App::request_(ZmRef<ZiIOBuf> buf)
 }
 
 void App::subscribe_(
-    uint64_t seqNo, fbs::Group group,
+    uint64_t seqNo, Group::T group,
     Filter_::Filter filter, uint32_t interval,
     uint32_t alertDate, uint64_t alertSeqNo)
 {
   App_::Subscription *sub = m_state->subs.findPtr(seqNo);
   App_::Pending_ *sameSeq = m_state->pending.findVal(seqNo);
-  if (group != fbs::Group::Alert &&
+  if (group != Group::Alert &&
       (((!sub || !sub->running) &&
 	m_state->pending.count_() >= m_cf.maxPending) ||
        (sameSeq && (!sub || sameSeq != sub->snapshot)))) {
-    sendAck_(seqNo, fbs::AckStatus::Failed);
+    sendAck_(seqNo, AckStatus::Failed);
     return;
   }
   if (sub) {
@@ -1716,7 +1723,7 @@ void App::subscribe_(
     sub->dirty = true;
   } else {
     if (ZuUnlikely(m_state->subs.count_() >= m_cf.maxSubs)) {
-      sendAck_(seqNo, fbs::AckStatus::Failed);
+      sendAck_(seqNo, AckStatus::Failed);
       return;
     }
     sub = new App_::Subscription;
@@ -1725,12 +1732,12 @@ void App::subscribe_(
     sub->order = ++m_state->nextOrder;
     sub->interval = interval;
     sub->group = group;
-    if (group == fbs::Group::Alert)
+    if (group == Group::Alert)
       sub->pending.init(ZmQueueParams{}.initial(m_cf.alertReplay));
     m_state->subs.addNode(sub);
   }
-  sendAck_(seqNo, fbs::AckStatus::OK, interval);
-  if (group == fbs::Group::Alert) {
+  sendAck_(seqNo, AckStatus::OK, interval);
+  if (group == Group::Alert) {
     sub->oneShot = !interval;
     sub->replayDate = alertDate;
     sub->replaySeqNo = alertSeqNo;
@@ -1742,7 +1749,7 @@ void App::subscribe_(
 }
 
 void App::unsubscribe_(
-    uint64_t seqNo, fbs::Group group,
+    uint64_t seqNo, Group::T group,
     const Filter_::Filter &filter)
 {
   if (App_::Subscription *sub = m_state->subs.findPtr(seqNo);
@@ -1762,7 +1769,7 @@ void App::unsubscribe_(
     m_state->subs.delNode(sub);
     armTimer_();
   }
-  sendAck_(seqNo, fbs::AckStatus::OK);
+  sendAck_(seqNo, AckStatus::OK);
 }
 
 void App::runSubscription_(App_::Subscription_ *sub_)
@@ -1972,7 +1979,7 @@ void App::clearSubscriptions_()
 }
 
 bool App::snapshot_(
-    uint64_t seqNo, fbs::Group group,
+    uint64_t seqNo, Group::T group,
     const Filter_::Filter &filter, App_::Subscription_ *sub_)
 {
   App_::PendingKey key{seqNo};
@@ -1985,7 +1992,7 @@ bool App::snapshot_(
   pending->group = group;
 
   switch (group) {
-    case fbs::Group::Heap: {
+    case Group::Heap: {
       auto save = [pending](const auto &captures) {
 	App_::copySamples(pending->heaps, captures);
       };
@@ -2003,7 +2010,7 @@ bool App::snapshot_(
 	  }, save);
     }
       break;
-    case fbs::Group::Hash: {
+    case Group::Hash: {
       auto save = [pending](const auto &captures) {
 	App_::copySamples(pending->hashes, captures);
       };
@@ -2021,7 +2028,7 @@ bool App::snapshot_(
 	  }, save);
     }
       break;
-    case fbs::Group::Thread: {
+    case Group::Thread: {
       auto save = [pending](const auto &captures) {
 	App_::copySamples(pending->threads, captures);
       };
@@ -2034,7 +2041,7 @@ bool App::snapshot_(
 	  }, save);
     }
       break;
-    case fbs::Group::Mx: {
+    case Group::Mx: {
       MxMgr::guard([this, pending, &filter]() {
 	pending->mxs.size(m_mxIdx.count_());
 	pending->cxns.size(m_cxnIdx.count_());
@@ -2062,7 +2069,7 @@ bool App::snapshot_(
       });
     }
       break;
-    case fbs::Group::Queue: {
+    case Group::Queue: {
       auto collect = [this, pending, &filter]
 	  <unsigned TypeMode, unsigned OwnerMode, unsigned IDMode>() {
 	MxMgr::guard([this, pending, &filter]() {
@@ -2116,7 +2123,7 @@ bool App::snapshot_(
 	dispatchOwner.template operator()<Filter_::Mode::Exact>();
     }
       break;
-    case fbs::Group::Hub: {
+    case Group::Hub: {
       HubMgr::guard(
 	  [this, pending, &filter]() {
 	pending->hubs.size(m_hubIdx.count_());
@@ -2177,7 +2184,7 @@ bool App::snapshot_(
       });
     }
       break;
-    case fbs::Group::DB: {
+    case Group::DB: {
       DBMgr::guard(
 	  [this, pending, &filter]() {
 	pending->dbs.size(m_dbIdx.count_());
@@ -2211,7 +2218,7 @@ bool App::snapshot_(
       });
     }
       break;
-    case fbs::Group::App:
+    case Group::App:
       if (!filter.all() &&
 	  (filter.mode0() == Filter_::Mode::Exact ?
 	    !filter.stringExact(m_cf.id) :
@@ -2219,7 +2226,7 @@ bool App::snapshot_(
       appTelemetry_(pending->app);
       pending->appCaptured = true;
       break;
-    case fbs::Group::Alert:
+    case Group::Alert:
     default:
       delete pending;
       return false;
@@ -2243,7 +2250,7 @@ void App::snapshotBatch_(uint64_t seqNo)
   unsigned budget = m_cf.maxPending;
   bool done = false;
   auto sendBatch = [this, pending, seqNo, &budget](
-      fbs::TelemetryBody type, const auto &samples) {
+      unsigned type, const auto &samples) {
     unsigned n = samples.length();
     while (pending->offset < n && budget) {
       publish_(App_::telemetryFrame(
@@ -2254,44 +2261,44 @@ void App::snapshotBatch_(uint64_t seqNo)
   };
 
   switch (pending->group) {
-    case fbs::Group::Heap:
-      done = sendBatch(fbs::TelemetryBody::HeapTelemetry, pending->heaps);
+    case Group::Heap:
+      done = sendBatch(TelemetryBody::HeapTelemetry, pending->heaps);
       break;
-    case fbs::Group::Hash:
-      done = sendBatch(fbs::TelemetryBody::HashTelemetry, pending->hashes);
+    case Group::Hash:
+      done = sendBatch(TelemetryBody::HashTelemetry, pending->hashes);
       break;
-    case fbs::Group::Thread:
-      done = sendBatch(fbs::TelemetryBody::ThreadTelemetry, pending->threads);
+    case Group::Thread:
+      done = sendBatch(TelemetryBody::ThreadTelemetry, pending->threads);
       break;
-    case fbs::Group::Mx:
+    case Group::Mx:
       while (budget && pending->stage < 2) {
 	bool stageDone = pending->stage ?
-	  sendBatch(fbs::TelemetryBody::CxnTelemetry, pending->cxns) :
-	  sendBatch(fbs::TelemetryBody::MxTelemetry, pending->mxs);
+	  sendBatch(TelemetryBody::CxnTelemetry, pending->cxns) :
+	  sendBatch(TelemetryBody::MxTelemetry, pending->mxs);
 	if (!stageDone) break;
 	++pending->stage;
 	pending->offset = 0;
       }
       done = pending->stage == 2;
       break;
-    case fbs::Group::Queue:
-      done = sendBatch(fbs::TelemetryBody::QueueTelemetry, pending->queues);
+    case Group::Queue:
+      done = sendBatch(TelemetryBody::QueueTelemetry, pending->queues);
       break;
-    case fbs::Group::Hub:
+    case Group::Hub:
       while (budget && pending->stage < 3) {
 	bool stageDone;
 	switch (pending->stage) {
 	  case 0:
 	    stageDone = sendBatch(
-	      fbs::TelemetryBody::HubTelemetry, pending->hubs);
+	      TelemetryBody::HubTelemetry, pending->hubs);
 	    break;
 	  case 1:
 	    stageDone = sendBatch(
-	      fbs::TelemetryBody::LinkTelemetry, pending->links);
+	      TelemetryBody::LinkTelemetry, pending->links);
 	    break;
 	  default:
 	    stageDone = sendBatch(
-	      fbs::TelemetryBody::PoolTelemetry, pending->pools);
+	      TelemetryBody::PoolTelemetry, pending->pools);
 	    break;
 	}
 	if (!stageDone) break;
@@ -2300,21 +2307,21 @@ void App::snapshotBatch_(uint64_t seqNo)
       }
       done = pending->stage == 3;
       break;
-    case fbs::Group::DB:
+    case Group::DB:
       while (budget && pending->stage < 3) {
 	bool stageDone;
 	switch (pending->stage) {
 	  case 0:
 	    stageDone = sendBatch(
-	      fbs::TelemetryBody::DBTelemetry, pending->dbs);
+	      TelemetryBody::DBTelemetry, pending->dbs);
 	    break;
 	  case 1:
 	    stageDone = sendBatch(
-	      fbs::TelemetryBody::DBHostTelemetry, pending->hosts);
+	      TelemetryBody::DBHostTelemetry, pending->hosts);
 	    break;
 	  default:
 	    stageDone = sendBatch(
-	      fbs::TelemetryBody::DBTableTelemetry, pending->tables);
+	      TelemetryBody::DBTableTelemetry, pending->tables);
 	    break;
 	}
 	if (!stageDone) break;
@@ -2323,15 +2330,15 @@ void App::snapshotBatch_(uint64_t seqNo)
       }
       done = pending->stage == 3;
       break;
-    case fbs::Group::App:
+    case Group::App:
       if (pending->appCaptured && !pending->offset) {
 	publish_(App_::telemetryFrame(m_cf.id, seqNo,
-	  fbs::TelemetryBody::AppTelemetry, pending->app));
+	  TelemetryBody::AppTelemetry, pending->app));
 	pending->offset = 1;
       }
       done = !pending->appCaptured || pending->offset;
       break;
-    case fbs::Group::Alert:
+    case Group::Alert:
     default:
       done = true;
       break;
@@ -2369,30 +2376,33 @@ void App::snapshotDone_(App_::Pending_ *pending)
 }
 
 void App::sendAck_(
-    uint64_t seqNo, fbs::AckStatus status, uint32_t interval)
+    uint64_t seqNo, AckStatus::T status, uint32_t interval)
 {
-  Zfb::IOBuilder fbb{
+  Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
-  auto ack = ZfbStruct::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
-  fbb.Finish(saveMsg(fbb, fbs::Body::Ack, ack.Union()));
+  auto nested = fbb.startNested();
+  auto ack = ZiFB::saveObject(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
+  fbb.finish(saveMsg(fbb, nested, Body::Ack, ack));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
 void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
 {
-  Zfb::IOBuilder fbb{
+  Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
-  auto error = ZfbStruct::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
-  fbb.Finish(saveMsg(fbb, fbs::Body::Error, error.Union()));
+  auto nested = fbb.startNested();
+  auto error = ZiFB::saveObject(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
+  fbb.finish(saveMsg(fbb, nested, Body::Error, error));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 
 void App::sendEOS_(uint64_t seqNo)
 {
-  Zfb::IOBuilder fbb{
+  Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
-  auto eos = ZfbStruct::save(fbb, EOS{m_cf.id, seqNo});
-  fbb.Finish(saveMsg(fbb, fbs::Body::EOS, eos.Union()));
+  auto nested = fbb.startNested();
+  auto eos = ZiFB::saveObject(fbb, EOS{m_cf.id, seqNo});
+  fbb.finish(saveMsg(fbb, nested, Body::EOS, eos));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
 

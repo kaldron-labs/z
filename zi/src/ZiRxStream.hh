@@ -18,6 +18,7 @@
 //     - frame(span) has the same boundary contract as consume()
 //     - alloc() returns a queue-compatible pooled buffer when gathering or
 //       preserving a coalesced trailing remainder is required
+//     - null rejects the request; nonzero Z heap allocations use ZmHeapFail
 //   - empty()   - true when no readable bytes remain
 //   - length()  - maintained readable-byte count
 // - queue operations:
@@ -301,13 +302,15 @@ public:
 	unsigned right = node->length - consumed;
 	if (consumed <= right) {
 	  auto frame = alloc();
-	  if (ZuUnlikely(!frame || !frame->alloc(consumed))) return -1;
+	  if (ZuUnlikely(!frame)) return -1;
+	  frame->alloc(consumed);
 	  frame->append(node->span().data(), consumed);
 	  out = ZuMv(frame);
 	  node->advance(consumed);
 	} else {
 	  auto next = alloc();
-	  if (ZuUnlikely(!next || !next->alloc(right))) return -1;
+	  if (ZuUnlikely(!next)) return -1;
+	  next->alloc(right);
 	  next->append(node->span().data() + consumed, right);
 	  node->length = consumed;
 	  out = m_queue.shift();
@@ -321,7 +324,8 @@ public:
     }
 
     auto buf = alloc();
-    if (ZuUnlikely(!buf || !buf->alloc(length))) return -1;
+    if (ZuUnlikely(!buf)) return -1;
+    buf->alloc(length);
     {
       unsigned remaining = length;
       auto i = m_queue.citer();

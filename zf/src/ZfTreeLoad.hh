@@ -103,7 +103,7 @@ struct Object {
     ZfFieldFilter::Upd<Field>{}() &&
     ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{}()>;
 
-  using AllFields = ZuFields<O, Facet>;
+  using AllFields = ZuActiveFields<O, Facet>;
   using LoadFields = ZuTypeGrep<ZfFieldFilter::Load, AllFields>;
   using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
   using CtorFields_ = ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>;

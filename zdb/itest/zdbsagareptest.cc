@@ -93,8 +93,9 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	return {};
   }
 };
-ZfbStruct(, LiveSaga,
+ZfStruct(, LiveSaga,
   (orderID, (Ctor<0>),		UInt64));
+ZiFB::Table<"zdbtest.fbs.LiveSaga"> ZiFBType(LiveSaga *);
 
 ZdbSagaDerive(SagaCatalog, LiveSaga);
 ZdbSagaImpl(SagaCatalog, LiveSaga)
@@ -246,7 +247,7 @@ static void recovery(unsigned mode)
   bool once = ZmBlock<bool>{}([
       orders = secondOrders.ptr(), mode](auto wake) {
     orders->run(0, [orders, mode, wake = ZuMv(wake)]() mutable {
-      orders->find<0>(0, ZuFwdTuple("IBM", UINT64_C(42)),
+      orders->find<0>(0, ZuFwdTuple("IBM", uint64_t(42)),
 	[mode, wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
 	  wake(mode == Mode::RetryFailure ? !row :
 	    row && row->data().qtys[0] == 8);

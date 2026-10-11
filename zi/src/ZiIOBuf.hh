@@ -110,14 +110,11 @@ public:
 
   uint8_t *alloc(unsigned newSize) {
     if (ZuLikely(newSize <= size)) return data();
-    if (auto jumbo = static_cast<uint8_t *>(valloc(newSize))) {
-      size = newSize;
-      if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
-      data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
-      return jumbo;
-    }
-    size = 0;
-    return nullptr;
+    auto jumbo = static_cast<uint8_t *>(valloc(newSize));
+    size = newSize;
+    if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
+    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
+    return jumbo;
   }
 
   void free(uint8_t *ptr) {
@@ -181,19 +178,18 @@ public:
     }
     newSize_ = Grow(size, newSize_);
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize_));
-    if (ZuLikely(jumbo)) {
-      if (head) memcpy(jumbo + skip, old, head);
-      if (tail)
-	memcpy(jumbo + newSize_ - tail, old + oldSize - tail, tail);
-      size = newSize_;
-    } else
-      skip = length = size = 0;
+    if (head) memcpy(jumbo + skip, old, head);
+    if (tail)
+      memcpy(jumbo + newSize_ - tail, old + oldSize - tail, tail);
+    size = newSize_;
     if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
-    return jumbo ? jumbo + skip : nullptr;
+    return jumbo + skip;
   }
 
   // ensure at least newSize bytes in buffer, preserving any existing data
+  // - null means failed output status, size overflow, or insufficient Grow
+  // - allocation failure is handled by ZmHeapFail
   template <auto Grow = ZmGrow>
   uint8_t *ensure(unsigned newSize) {
     if (ZuUnlikely(failed_ || newSize > UINT32_MAX - skip)) {
@@ -207,7 +203,6 @@ public:
     newSize = grown;
     auto old = data_();
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
-    if (ZuUnlikely(!jumbo)) { failed_ = true; return nullptr; }
     if (length) memcpy(jumbo + skip, old + skip, length);
     size = newSize;
     if (ZuUnlikely(data__ &Jumbo)) vfree(old);
@@ -235,7 +230,6 @@ public:
     }
     newSize = Grow(size, newSize);
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
-    if (ZuUnlikely(!jumbo)) { failed_ = true; return nullptr; }
     auto newSkip = newSize - length;
     if (length) memcpy(jumbo + newSkip, old + skip, length);
     size = newSize;

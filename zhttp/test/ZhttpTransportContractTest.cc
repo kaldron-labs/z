@@ -396,7 +396,8 @@ struct H2Native {
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
-    if (!allocOK) return nullptr;
+    // Admission can reject a request before any Z heap allocation.
+    if (!admitOK) return nullptr;
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
     buf->skip = headRoom;
     buf->length = 0;
@@ -424,7 +425,7 @@ struct H2Native {
   bool headerOK = true;
   bool dataOK = true;
   bool endOK = true;
-  bool allocOK = true;
+  bool admitOK = true;
   unsigned headers = 0;
   unsigned headerFrames = 0;
   unsigned data = 0;
@@ -860,7 +861,7 @@ void testCommitFailures()
   ZuCheck(encoder.bind(seeds));
   for (unsigned failure = 0; failure < 4; ++failure) {
     H2Native native;
-    native.allocOK = failure != 0;
+    native.admitOK = failure != 0;
     native.headerOK = failure != 1;
     native.dataOK = failure != 2;
     native.endOK = failure != 3;

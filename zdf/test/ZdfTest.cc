@@ -18,7 +18,7 @@
 #include <zlib/ZfCf.hh>
 #include <zlib/ZvMxParams.hh>
 
-#include <zlib/ZfbStruct.hh>
+#include <zlib/ZiFB.hh>
 
 #include <zlib/ZdbMemStore.hh>
 

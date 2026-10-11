@@ -764,9 +764,10 @@ public:
   }
 
 private:
-  void invoke_(ZmFn<void()> fn)
+  template <typename L>
+  void invoke_(L &&l)
   {
-    m_scheduler->run([fn = ZuMv(fn)]() mutable { fn(); }, m_sid);
+    m_scheduler->run(ZuFwd<L>(l), m_sid);
   }
 
   static void clearSecret_(OIDCConfig &config)

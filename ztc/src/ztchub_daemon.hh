@@ -173,9 +173,8 @@ public:
   void setRefreshRevocationFn(Zum::ServiceRefreshFn);
   void receiveSET(Zum::ServiceSETRequest, Zum::ServiceSETDoneFn);
 
-  static bool validAgentMessage(const fbs::Msg *);
-  static bool validFrontMessage(const fbs::Msg *);
-  static bool validAppRequest(const fbs::Msg *);
+  static bool validFrontMessage(MsgView);
+  static bool validAppRequest(MsgView);
   static bool authorized(const Zum::ServicePrincipal &, ZuCSpan action);
 
   bool addAgent(uint64_t sessionID, ZuCSpan deviceID, uint64_t generation,
@@ -197,7 +196,7 @@ public:
   bool removeSubscription(uint64_t frontEndID, uint64_t subID);
   bool removeSubscription(uint64_t frontEndID, uint64_t subID, HubRouteFn);
   bool app(uint64_t agentSessionID, uint64_t agentGeneration,
-    const fbs::Telemetry *);
+    TelemetryView);
   bool appRemove(uint64_t agentSessionID, uint64_t agentGeneration,
     ZuCSpan publisherID);
   bool appSubscribe(uint64_t frontEndID, uint64_t subID,

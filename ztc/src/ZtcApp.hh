@@ -41,7 +41,7 @@
 #include <zlib/ZtcHub.hh>
 #include <zlib/ZtcMx.hh>
 #include <zlib/ZtcThread.hh>
-#include <zlib/ztc_msg_fbs.h>
+#include <zlib/ZtcMsg.hh>
 
 namespace Ztc {
 
@@ -58,7 +58,7 @@ namespace App_ {
   class IngressData;
   struct Pending_;
   struct State;
-  class Subscription_;
+  struct Subscription_;
 }
 
 struct AppSchedCf {
@@ -224,15 +224,15 @@ private:
   void rag_(RAG::T);
   void alert_(ZmRef<App_::AlertEvent>);
   bool snapshot_(
-    uint64_t, fbs::Group, const Filter_::Filter &,
+    uint64_t, Group::T, const Filter_::Filter &,
     App_::Subscription_ * = nullptr);
   void snapshotBatch_(uint64_t);
   void snapshotDone_(App_::Pending_ *);
   void subscribe_(
-    uint64_t, fbs::Group, Filter_::Filter, uint32_t,
+    uint64_t, Group::T, Filter_::Filter, uint32_t,
     uint32_t = 0, uint64_t = 0);
   void unsubscribe_(
-    uint64_t, fbs::Group, const Filter_::Filter &);
+    uint64_t, Group::T, const Filter_::Filter &);
   void runSubscription_(App_::Subscription_ *);
   void replay_(App_::Subscription_ *);
   void replayBatch_(uint64_t);
@@ -244,7 +244,7 @@ private:
   bool publish_(ZmRef<ZiIOBuf>);
   bool publishApp_(uint64_t);
   void appTelemetry_(AppTelemetry &);
-  void sendAck_(uint64_t, fbs::AckStatus, uint32_t = 0);
+  void sendAck_(uint64_t, AckStatus::T, uint32_t = 0);
   void sendError_(uint64_t, int32_t, ZuCSpan);
   void sendEOS_(uint64_t);
 

@@ -26,6 +26,8 @@
 #include <zlib/Zdb.hh>
 
 #include "ZdbTest.hh"
+#include "ZdbRepairTest.hh"
+#include <zlib/ZiFBReflect.hh>
 
 using namespace ZuTestUtil;
 
@@ -130,8 +132,9 @@ struct LiveSaga : public ZdbSagaBase<Context> {
   }
 };
 
-ZfbStruct(, LiveSaga,
+ZfStruct(, LiveSaga,
   (orderID, (Ctor<0>),		UInt64));
+ZiFB::Table<"zdbtest.fbs.LiveSaga"> ZiFBType(LiveSaga *);
 
 struct BatchSaga : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -208,7 +211,7 @@ struct BatchSaga : public ZdbSagaBase<Context> {
     ZuAssert(Fwd);
     if (!begin<Fwd>(complete)) return {};
     context->items->run(1, [this, complete = ZuMv(complete)]() mutable {
-      saga->findDel<0>(context->items, 1, ZuFwdTuple("BATCH", UINT64_C(0)),
+      saga->findDel<0>(context->items, 1, ZuFwdTuple("BATCH", uint64_t(0)),
 	ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
 	  if (context->holdIntent && hold(complete)) return;
 	  complete(bool(row->commit()));
@@ -217,9 +220,10 @@ struct BatchSaga : public ZdbSagaBase<Context> {
     return {};
   }
 };
-ZfbStruct(, BatchSaga,
-  (ids, (Ctor<0>),		UInt64Vec),
-  (failAt, (Ctor<1>),		UInt32));
+ZfStruct(, BatchSaga,
+  (ids,		(Ctor<0>),	UInt64Vec),
+  (failAt,	(Ctor<1>),	UInt32));
+ZiFB::Table<"zdbtest.fbs.BatchSaga"> ZiFBType(BatchSaga *);
 
 struct SagaCatalog {
   using List = ZuTypeList<LiveSaga, BatchSaga>;
@@ -276,7 +280,7 @@ static bool erase(ZdbTable<zdbtest::Order> *table, ZdbShard shard)
 {
   return ZmBlock<bool>{}([table, shard](auto wake) {
     table->run(shard, [table, shard, wake = ZuMv(wake)]() mutable {
-      table->findDel<0>(shard, ZuFwdTuple("SAGA", UINT64_C(1)),
+      table->findDel<0>(shard, ZuFwdTuple("SAGA", uint64_t(1)),
 	[wake = ZuMv(wake)](ZdbRow<zdbtest::Order> *row) mutable {
 	  wake(!row || row->commit());
 	});
@@ -421,7 +425,7 @@ static void exercise(unsigned mode)
 
   bool updated = ZmBlock<bool>{}([table = orders.ptr()](auto wake) {
     table->run(0, [table, wake = ZuMv(wake)]() mutable {
-      table->find<0>(0, ZuFwdTuple("SAGA", UINT64_C(1)),
+      table->find<0>(0, ZuFwdTuple("SAGA", uint64_t(1)),
 	[wake = ZuMv(wake)](ZdbRowRef<zdbtest::Order> row) mutable {
 	  wake(row && row->data().qtys[0] == 8);
 	});
@@ -552,7 +556,7 @@ static void batches(
     }
     ZuCheckRT(ZmBlock<bool>{}([items = items.ptr(), fail, expired](auto wake) {
       items->run(1, [items, fail, expired, wake = ZuMv(wake)]() mutable {
-	items->findDel<0>(1, ZuFwdTuple("BATCH", UINT64_C(0)),
+	items->findDel<0>(1, ZuFwdTuple("BATCH", uint64_t(0)),
 	  [fail, expired, wake = ZuMv(wake)](
 	      ZdbRow<zdbtest::Order> *row) mutable {
 	    bool valid = bool(row) == (fail || expired);
@@ -571,13 +575,13 @@ static void batches(
 }
 
 static Zdb_::OpenResult open(
-    Zdb_::Store *store, bool internal, Zdb_::IDString id)
+    Zdb_::Store *store, bool internal, Zdb_::IDString id, Zdb_::Schema schema)
 {
   using namespace Zdb_;
   using zdbtest::Order;
-  return ZmBlock<OpenResult>{}([store, internal, id = ZuMv(id)](auto wake) mutable {
+  return ZmBlock<OpenResult>{}([store, internal, id = ZuMv(id), schema](auto wake) mutable {
     store->open(internal, ZuMv(id), ZfVFields<Order>(), ZfVKeyFields<Order>(),
-      reflection::GetSchema(ZfbSchema<Order>::data()), Table<Order>::allocBuf,
+      schema, Table<Order>::allocBuf,
       [wake = ZuMv(wake)](OpenResult result) mutable {
 	if (result.is<ZeException>()) ZiLogEvent(result.p<ZeException>());
 	wake(ZuMv(result));
@@ -599,14 +603,11 @@ static bool write(Zdb_::OpenData &state, ZuCSpan id, int vn, int qty)
   UN un = state.un[0] == nullUN() ? 0 : state.un[0] + 1;
   SN sn = state.sn + 1;
   Order row{"NS", 1, "NS", "probe", 0, zdbtest::Side::Buy, {100}, {qty}};
-  Zfb::IOBuilder fbb{Table<Order>::allocBuf()};
-  auto data = Zfb::Save::nest(fbb, [&row](Zfb::Builder &fbb) {
-    return ZfbStruct::save(fbb, row).Union();
-  });
-  auto sn_ = ZfbTransform::UInt128::save(sn);
-  fbb.Finish(fbs::CreateMsg(fbb, fbs::Body::Replication,
-    fbs::CreateRecord(fbb, Zfb::Save::str(fbb, id),
-      un, &sn_, vn, 0, data).Union()));
+  Builder fbb{Table<Order>::allocBuf()};
+  auto nested = fbb.startNested();
+  auto data = fbb.endNested(nested, ZiFB::saveObject(fbb, row));
+  fbb.finish(saveMsg(fbb, saveRecord(fbb, id, un, sn, vn, 0, data),
+    Msg::Tag::Replication));
   bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveHdr(fbb)](auto wake) mutable {
     table->write(ZuMv(buf),
       [wake = ZuMv(wake)](ZmRef<IOBuf>, CommitResult result) mutable {
@@ -622,17 +623,18 @@ static int read(Zdb_::StoreTbl *table)
   using namespace Zdb_;
   using zdbtest::Order;
   Table<Order>::Key<0> key{"NS", 1};
-  Zfb::IOBuilder fbb{Table<Order>::allocBuf()};
-  fbb.Finish(ZfbStruct::save(fbb, key));
+  Builder fbb{Table<Order>::allocBuf()};
+  fbb.finish(ZiFB::saveObject(fbb, key));
   return ZmBlock<int>{}([table, buf = fbb.buf()](auto wake) mutable {
     table->find(0, ZuMv(buf), [wake = ZuMv(wake)](RowResult result) mutable {
       if (result.is<void>()) { wake(-1); return; }
       if (!result.is<RowData>()) { wake(-2); return; }
       auto buf = ZuMv(result).p<RowData>().buf;
       auto rec = record(msg(buf->hdr()));
-      auto fbo = rec ? ZfbStruct::verify<Order>(Zfb::Load::bytes(rec->data())) : nullptr;
-      if (!fbo) { wake(-2); return; }
-      auto row = ZfbStruct::ctor<Order>(fbo);
+      if (!rec) { wake(-2); return; }
+      auto bytes = rec.get<Msg::ZfField(Record, data)>();
+      if (!ZiFB::verify<Order>(bytes)) { wake(-2); return; }
+      auto row = ZiFB::load<Order>(bytes);
       wake(row.qtys.length() == 1 ? row.qtys[0] : -2);
     });
   });
@@ -660,8 +662,12 @@ static void namespaces(bool maxID)
     ZuCheckRT(mx.stop());
     return;
   }
-  auto app = open(db->store(), false, id);
-  auto internal = open(db->store(), true, id);
+  SchemaBuf appSchema = SchemaBuf(ZiFB::SchemaOut::Schema<zdbtest::Order>::Size);
+  SchemaBuf internalSchema = SchemaBuf(ZiFB::SchemaOut::Schema<zdbtest::Order>::Size);
+  ZiFB::saveSchema<zdbtest::Order>(appSchema);
+  ZiFB::saveSchema<zdbtest::Order>(internalSchema);
+  auto app = open(db->store(), false, id, Schema::from<zdbtest::Order>(appSchema));
+  auto internal = open(db->store(), true, id, Schema::from<zdbtest::Order>(internalSchema));
   bool opened = app.is<OpenData>() && internal.is<OpenData>();
   ZuCheckRT(opened);
   if (opened) {
@@ -680,8 +686,8 @@ static void namespaces(bool maxID)
     ZuCheckRT(read(a.storeTbl) == 13 && read(b.storeTbl) == 23);
     close(a.storeTbl);
     close(b.storeTbl);
-    auto app2 = open(db->store(), false, id);
-    auto internal2 = open(db->store(), true, id);
+    auto app2 = open(db->store(), false, id, Schema::from<zdbtest::Order>(appSchema));
+    auto internal2 = open(db->store(), true, id, Schema::from<zdbtest::Order>(internalSchema));
     bool reopened = app2.is<OpenData>() && internal2.is<OpenData>();
     ZuCheckRT(reopened);
     if (reopened) {
@@ -707,8 +713,9 @@ static void namespaces(bool maxID)
 	bool started = db->start();
 	ZuCheckRT(started);
 	if (!started) break;
-	auto app3 = open(db->store(), false, id);
-	auto internal3 = open(db->store(), true, id);
+	auto app3 = open(db->store(), false, id, Schema::from<zdbtest::Order>(appSchema));
+	auto internal3 = open(db->store(), true, id,
+	  Schema::from<zdbtest::Order>(internalSchema));
 	bool deleted = app3.is<OpenData>() && internal3.is<OpenData>();
 	ZuCheckRT(deleted);
 	if (deleted) {
@@ -791,6 +798,14 @@ static void failure(const char *self, const char *option)
   if (failed) ZuTestCallRT(exercise, Mode::Live);
 }
 
+static void repairColumns(bool fail, bool restart = false)
+{
+  ZuTestScopeRT(repairColumns);
+  auto cf = config();
+  ZuTestCallRT(zdbtest::repairSaga, cf.ptr(), cf->resolve("mx"),
+    ZmRef<Zdb_::Store>{}, fail, ZdbShard{2}, !restart, restart);
+}
+
 int main(int argc, char **argv)
 {
   Options options;
@@ -804,6 +819,10 @@ int main(int argc, char **argv)
     return 1; // a successful cut never returns
   }
   ZuTestMain();
+  ZuTestCall(repairColumns, false);
+  ZuTestCall(repairColumns, true);
+  ZuTestCall(repairColumns, false, true);
+  ZuTestCall(repairColumns, true, true);
   ZuTestCall(namespaces, false);
   ZuTestCall(namespaces, true);
   ZuTestCall(exercise, Mode::Live);

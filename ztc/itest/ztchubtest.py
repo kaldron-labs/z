@@ -271,7 +271,9 @@ def run_load(root, fixture, directory, hub, app_id, prefix, role_id,
                       json.dumps(token) + ", wss: " + json.dumps(wss) +
                       ", ca: " + json.dumps(str(cert)) + ", " +
                       ", ".join(key + ": " + str(counts[key]) for key in
-                                ("clients", "subs", "publishers", "rounds")) + "\n")
+                                ("clients", "subs", "publishers", "rounds")) +
+                      ", messagesPS: " + os.environ.get("ZTC_LOAD_MESSAGES_PS", "0") +
+                      ", turn: " + os.environ.get("ZTC_LOAD_TURN", "64") + "\n")
     config.chmod(0o600)
     peer = subprocess.Popen([str(root / "ztc/itest/ztchubloadtest"), str(config)],
                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -310,7 +312,7 @@ def run_load(root, fixture, directory, hub, app_id, prefix, role_id,
                                           ("\n# peer returncode " +
                                            str(peer.returncode)).encode())
     for line in output.decode(errors="replace").splitlines():
-        if line.startswith("# load "):
+        if line.startswith(("# load ", "# latency ")):
             print(line, flush=True)
     assert peer.returncode == 0, "WSS workload/SLO failed; see load.log"
 
@@ -396,6 +398,14 @@ def main():
             "telemetryBytes: 65536, queueMem: 1073741824, "
             "expectedAgents: 2, publishersPerAgent: 64, activeFrontEnds: 2, "
             "subscriptionsPerFrontEnd: 2, ")
+        # After the deliberate overflow phase, full heap snapshots need the
+        # same capacity on a promoted standby as on a restarted single hub.
+        snapshot_capacity = (
+            "controlFrames: 64, telemetryFrames: 1024, "
+            "controlBytes: 1048576, telemetryBytes: 4194304, "
+            "queueMem: 1073741824, expectedAgents: 2, "
+            "publishersPerAgent: 64, activeFrontEnds: 2, "
+            "subscriptionsPerFrontEnd: 16, ")
         config_text = (
             "listeners: [" +
             "{bind: \"127.0.0.1\", path: \"/ztc\", cert: " +
@@ -462,7 +472,8 @@ def main():
         if cluster:
             standby_config = directory / "ztchub-standby.cf"
             standby_config.write_text(
-                config_text.replace(str(front_port), str(standby_port))
+                config_text.replace(capacity, snapshot_capacity)
+                .replace(str(front_port), str(standby_port))
                 .replace(str(second_port), str(standby_port + 1))
                 .replace(str(ssf_port), str(standby_ssf_port))
                 .replace(str(second_ssf_port), str(standby_ssf_port + 1)))
@@ -909,12 +920,7 @@ def main():
             hub = None
             # The earlier overflow phase deliberately uses four-frame queues.
             # Size the restarted hub for complete real heap snapshots.
-            config.write_text(config_text.replace(capacity,
-                "controlFrames: 64, telemetryFrames: 1024, "
-                "controlBytes: 1048576, telemetryBytes: 4194304, "
-                "queueMem: 1073741824, expectedAgents: 2, "
-                "publishersPerAgent: 64, activeFrontEnds: 2, "
-                "subscriptionsPerFrontEnd: 16, "))
+            config.write_text(config_text.replace(capacity, snapshot_capacity))
             resumed_env = dict(env)
             resumed_env.pop("ZUM_CLIENT_SECRET")
             resumed_env.pop("ZUM_SSF_AUTH")
