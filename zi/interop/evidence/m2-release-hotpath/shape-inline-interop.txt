@@ -1,4 +1,0 @@
-zf/interop/zffbinterop ... ok
-All tests successful.
-Files=1, Tests=41, 74ms wallclock (60ms usr + 0ms sys = 60ms CPU)
-Result: PASS

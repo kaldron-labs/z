@@ -1,4 +1,0 @@
-Source SHA256: c4b7a46d0d65d8502ff9c1dd8d999b17722f8afeeeec3b314dec2d9c79fdabbf
-25.12.19
-flatc version 25.12.19
-clang++ -std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function -march=x86-64-v2 -O3 -g -DNDEBUG -c /tmp/zffb-canonical-reflection.cpp -o /tmp/zffb-release-reflection.o
