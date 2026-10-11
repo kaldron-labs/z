@@ -169,16 +169,17 @@ inline ZmRef<ZiIOBuf> stdioFrame(const M &message, unsigned maxLine)
 }
 
 struct StdioRecord {
-  // Shared pooled I/O buffers cannot carry this channel's private queue link.
+  // Tx accepts caller-owned buffers shared with other queues and users.
   ZmRef<ZiIOBuf> buf;
 };
 
-template <ZuString ID>
-using StdioQueue_ = ZmList<StdioRecord,
-  ZmListNode<StdioRecord, ZmListHeapID<ID>>>;
+ZmListDerive(StdioRxQueue, ZiIOBuf,
+  ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
+using StdioRxBuf = Zi::IOBufAlloc<StdioRxQueue::Node, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Stdio.Buf">>;
 
-ZuDerive(StdioRxQueue, (StdioQueue_<"Zjrpc.Stdio.RxQueue">));
-ZuDerive(StdioTxQueue, (StdioQueue_<"Zjrpc.Stdio.TxQueue">));
+ZmListDerive(StdioTxQueue, StdioRecord,
+  ZmListNode<StdioRecord, ZmListHeapID<"Zjrpc.Stdio.TxQueue">>);
 
 namespace StdioState {
   enum { Initial, Open, Closing, Failed, Closed };
@@ -320,8 +321,8 @@ private:
 	  rxOutcome_(StdioOutcome::Failed);
 	  break;
 	}
-	ZmRef<ZiIOBuf> buf = new StdioBuf{};
-	int n = input.read(buf->data(), buf->size, false);
+	ZmRef<StdioRxQueue::Node> buf = new StdioRxBuf{};
+	int n = input.read(buf->ZiIOBuf::data(), buf->size, false);
 	if (m_rxStopping) break;
 	if (n <= 0) {
 	  rxOutcome_(n == Zi::EndOfFile ?
@@ -379,7 +380,7 @@ private:
     m_mx->push([this]() { txExited_(); }, m_txThread);
   }
 
-  bool rxEnqueue_(ZmRef<ZiIOBuf> buf) {
+  bool rxEnqueue_(ZmRef<StdioRxQueue::Node> buf) {
     bool post = false;
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
@@ -389,7 +390,7 @@ private:
 	  buf->length > m_limits.maxQueueBytes - m_rxQueuedBytes)
 	return false;
       unsigned length = buf->length;
-      m_rxQueue.push(StdioRecord{ZuMv(buf)});
+      m_rxQueue.pushNode(ZuMv(buf));
       m_rxQueuedBytes += length;
       ++m_rxQueued;
       if (!m_rxDequeuing) post = m_rxDequeuing = true;
@@ -417,20 +418,19 @@ private:
     }
     unsigned visited = 0;
     while (visited < m_limits.workBatch) {
-      StdioRecord record;
+      ZmRef<StdioRxQueue::Node> node;
       {
 	ZmGuard<ZmPLock> guard(m_rxLock);
-	auto node = m_rxQueue.shift();
+	node = m_rxQueue.shift();
 	if (!node) break;
-	record = ZuMv(node->data());
 	--m_rxQueued;
-	m_rxQueuedBytes -= record.buf->length;
+	m_rxQueuedBytes -= node->length;
       }
       ++visited;
       bool accepted = true;
       bool framed = false;
       try {
-	framed = m_framer.feed(ZuCSpan{record.buf->cspan()},
+	framed = m_framer.feed(ZuCSpan{node->cspan()},
 	  [this, &accepted](ZmRef<ZiIOBuf> frame) {
 	    if (!accepted) return;
 	    try {
@@ -493,7 +493,7 @@ private:
 	if (!node) break;
 	++visited;
 	--m_rxQueued;
-	m_rxQueuedBytes -= node->data().buf->length;
+	m_rxQueuedBytes -= node->length;
       }
 	remaining = m_rxQueued;
 	if (!remaining) m_rxDequeuing = false;

@@ -16,6 +16,8 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
 
+#include <zpicotls/openssl.h>
+
 #include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
@@ -269,6 +271,32 @@ struct TestLink :
     Base::configLocalParams_(app);
   }
 
+  bool longProbe(
+    const Zquic::TrafficSecret &secret, unsigned pnLength, bool early,
+    ZmRef<ZiIOBuf> &packet) {
+    if (!Base::txInstallKeySecret_(early ?
+	Zquic::PktKeyLevel::ZeroRTT : Zquic::PktKeyLevel::Handshake, secret))
+      return false;
+    Zquic::PktBuild payload;
+    int n = Zquic::FrameCodec::writePing(
+      payload.scratch(), payload.scratchAvail());
+    if (n <= 0 || !payload.commitScratch(unsigned(n))) return false;
+    auto alloc = []() {
+      return ZmRef<ZiIOBuf>{new Zquic::PktTxBufAlloc<>{nullptr}};
+    };
+    auto send = [&packet](auto buf, ZiSockAddr) {
+      packet = ZuMv(buf);
+      return true;
+    };
+    if (early)
+      return Base::sendProtZeroRTTPkt_(
+	Base::CIDSel::Peer, Base::CIDSel::Local, pnLength,
+	payload, {}, {}, nullptr, false, alloc, send);
+    return Base::sendProtHandshakePkt_(
+      Base::CIDSel::Peer, Base::CIDSel::Local, pnLength,
+      payload, {}, {}, nullptr, false, alloc, send);
+  }
+
   const Zquic::TransportParams &localParams() const {
     return Base::localTransportParams_();
   }
@@ -469,6 +497,10 @@ struct TestLink :
   void scheduleStream(const ZmRef<TestStream> &stream) {
     Base::streamWritable_(stream);
   }
+  ZmRef<TestStream> nextScheduledStream() {
+    return Base::nextWritableStream_();
+  }
+  void clearScheduledStreams() { Base::clearWritableStreams_(); }
   void postPeerLimits(uint64_t duplex, uint64_t simplex) {
     Base::postPeerStreamLimitsTx_(duplex, simplex);
   }
@@ -649,6 +681,48 @@ static ZmRef<ZiIOBuf> streamPkt_(
 
 } // namespace
 
+void testLongProbePadding()
+{
+  ZuTestScope(testLongProbePadding);
+
+  HubFixture fixture;
+  Zquic::TrafficSecret secret;
+  ZuBArray<32> material(32, false);
+  memset(material.data(), 0x35, material.length());
+  ZuCHECK(Zquic::PktProt::deriveSecret(
+      secret, &ptls_openssl_aes128gcmsha256, material),
+    "long probe secret derivation failed");
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  link->setRuntimeCIDs(
+    Zquic::CxnID{"local000"}, Zquic::CxnID{"peer0000"});
+  for (unsigned early = 0; early < 2; ++early) {
+    for (unsigned pnLength = 1; pnLength <= 4; ++pnLength) {
+      ZmRef<ZiIOBuf> packet;
+      bool sent = link->longProbe(secret, pnLength, bool(early), packet);
+      ZuCHECK(sent && packet, "tiny long probe protection failed");
+      if (!sent || !packet) continue;
+      Zquic::LongHdr header;
+      ZuCHECK(Zquic::Pkt::parseLong(packet->cspan(), header) >= 0 &&
+	packet->length >= header.pnOffset + 4 + 16 &&
+	uint64_t(header.pnOffset) + header.length == packet->length,
+        "long padding/sample or encoded packet length mismatch");
+      uint64_t pn = 0;
+      unsigned offset = 0;
+      int n = Zquic::PktProt::unprotectLong(
+        packet->data_(), packet->length, secret, 0,
+        header.pnOffset, pn, offset);
+      unsigned expected = pnLength < 4 ? 4 - pnLength : 1;
+      ZuCHECK(n == int(expected) && pn == pnLength - 1 &&
+	packet->data_()[offset] == Zquic::FrameType::Ping,
+        "long probe plaintext or packet number mismatch");
+      for (unsigned i = 1; i < expected; ++i)
+        ZuCHECK(packet->data_()[offset + i] == 0,
+	"long probe padding is not PADDING");
+    }
+  }
+  ZuCHECK(!link->diag().failures(), "long probes counted as failures");
+}
+
 void testParams()
 {
   ZuTestScope(testParams);
@@ -760,6 +834,39 @@ void testStreamShape()
   client->closeForTest(42);
   ZuCHECK(client->closed() && client->closeError() == 42,
     "link close state mismatch");
+}
+
+void testWritableMembership()
+{
+  ZuTestScope(testWritableMembership);
+
+  HubFixture fixture;
+  ZmRef<TestLink> link = new TestLink{&fixture.app};
+  auto first = link->stream();
+  auto second = link->stream();
+  ZuCHECK(first && second, "writable stream setup failed");
+  if (!first || !second) return;
+  int refs = first->refCount();
+  link->scheduleStream(first);
+  link->scheduleStream(first);
+  link->scheduleStream(second);
+  ZuCHECK(link->scheduledStreams() == 2 && first->refCount() == refs + 1,
+    "duplicate writable notification added membership or ownership");
+  auto dequeued = link->nextScheduledStream();
+  ZuCHECK(dequeued == first && !first->txQueued(),
+    "writable dequeue lost FIFO order or queued flag");
+  link->scheduleStream(first);
+  ZuCHECK(link->nextScheduledStream() == second &&
+      link->nextScheduledStream() == first && !link->scheduledStreams(),
+    "writable requeue did not preserve FIFO order");
+  dequeued = nullptr;
+  ZuCHECK(first->refCount() == refs, "writable dequeue retained ownership");
+  link->scheduleStream(first);
+  link->scheduleStream(second);
+  link->clearScheduledStreams();
+  ZuCHECK(!first->txQueued() && !second->txQueued() &&
+      !link->scheduledStreams() && first->refCount() == refs,
+    "writable cancellation retained membership, flags, or ownership");
 }
 
 void testAlignedSurfaceShape()
@@ -2043,7 +2150,9 @@ int main(int argc, char **argv)
 
   ZuTestMain();
   ZuTestCall(testParams);
+  ZuTestCall(testLongProbePadding);
   ZuTestCall(testStreamShape);
+  ZuTestCall(testWritableMembership);
   ZuTestCall(testAlignedSurfaceShape);
   ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testStreamLimitOwnership);

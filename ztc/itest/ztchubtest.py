@@ -810,6 +810,10 @@ def main():
         browser.wait(timeout=15)
         assert browser.returncode == 0
 
+        # Leave a browser session armed so the hub restart must cancel its
+        # expiry callback and release the same session node during shutdown.
+        session_cookie(ssf_port, front_token, origin1)
+
         example_port = free_port()
         example_client = app_client(
             fixture, admin, app_id, prefix, role["Client"]["id"],

@@ -11,8 +11,11 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <zlib/ZuPtr.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmList.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
@@ -22,8 +25,7 @@ using namespace ZuTestUtil;
 
 namespace {
 
-constexpr unsigned TLSBufSize = (64<<10); // 64K
-constexpr unsigned MaxTLSMessages = 32;
+constexpr unsigned TLSBufSize = Zquic::CryptoStream::MaxBufSize;
 
 #ifdef Zquic_DEBUG
 static ZtString<> readFile_(const Zi::Path &path)
@@ -86,41 +88,27 @@ struct TempDir {
 
 };
 
-struct TLSMessage {
-  size_t	epoch = 0;
-  unsigned	length = 0;
-  uint8_t	data[TLSBufSize]{};
+struct TLSMessage : public ZiIOBuf {
+  size_t epoch = 0;
+  using ZiIOBuf::ZiIOBuf;
 };
 
-struct TLSPeer {
-  Zquic::Crypto		*crypto = nullptr;
-  Zquic::CryptoStream	tx[4];
-  Zquic::CryptoStream	rx[4];
+ZmListDerive(TLSQueue, TLSMessage,
+  ZmListNode<TLSMessage, ZmListHeapID<"">>);
+using TLSBuf = Zi::IOBufAlloc<TLSQueue::Node, ZiIOBuf_DefltSize,
+  TLSBufSize, ZuStringT<"Zquic.Test.TLSBuf">>;
+
+template <typename Heap = ZuVoid>
+struct TLSPeer_ : public Heap {
+  Zquic::Crypto		*crypto;
+  // picotls uses four TLS encryption epochs.
+  ZuArray<Zquic::CryptoStream, 4> tx;
+  ZuArray<Zquic::CryptoStream, 4> rx;
+
+  explicit TLSPeer_(Zquic::Crypto *crypto_) :
+    crypto{crypto_}, tx(4), rx(4) { }
 };
-
-struct TLSQueue {
-  TLSMessage	messages[MaxTLSMessages];
-  unsigned	count = 0;
-
-  bool push(size_t epoch, const uint8_t *data, unsigned len)
-  {
-    if (count >= MaxTLSMessages || len > TLSBufSize) return false;
-    messages[count].epoch = epoch;
-    messages[count].length = len;
-    if (len) memcpy(messages[count].data, data, len);
-    ++count;
-    return true;
-  }
-
-  bool pop(TLSMessage &msg)
-  {
-    if (!count) return false;
-    msg = messages[0];
-    if (--count)
-      memmove(messages, messages + 1, count * sizeof(TLSMessage));
-    return true;
-  }
-};
+using TLSPeer = TLSPeer_<ZmHeap<"Zquic.Test.TLSPeer", TLSPeer_<>>>;
 
 bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     size_t offsets[5])
@@ -129,10 +117,16 @@ bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
     unsigned off = unsigned(offsets[epoch]);
     unsigned len = unsigned(offsets[epoch + 1] - offsets[epoch]);
-    uint8_t frame[TLSBufSize];
-    int n = peer.tx[epoch].writeFrame(
-      frame, sizeof(frame), bytes_(data + off, len));
-    if (n < 0 || !queue.push(epoch, frame, unsigned(n))) return false;
+    auto &tx = peer.tx[epoch];
+    unsigned size = 1 + Zquic::VarInt::length(tx.txOffset()) +
+      Zquic::VarInt::length(len) + len;
+    if (size > TLSBufSize) return false;
+    ZmRef<TLSQueue::Node> msg = new TLSBuf{};
+    int n = tx.writeFrame(msg->alloc(size), size, bytes_(data + off, len));
+    if (n < 0) return false;
+    msg->epoch = epoch;
+    msg->length = unsigned(n);
+    queue.pushNode(ZuMv(msg));
   }
   return true;
 }
@@ -148,7 +142,7 @@ bool handleTLS_(
   if (msg) {
     Zquic::Frame frame;
     unsigned used = 0;
-    if (Zquic::FrameCodec::parse(bytes_(msg->data, msg->length), frame, used) ||
+    if (Zquic::FrameCodec::parse(msg->cspan(), frame, used) ||
 	used != msg->length)
       return false;
     if (dst.rx[inEpoch].receiveFrame(frame, in))
@@ -161,26 +155,25 @@ bool handleTLS_(
 
 bool drainTLS_(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
 {
-  TLSMessage msg;
-  while (in.pop(msg)) {
-    if (dst.crypto->tlsReadEpoch() != msg.epoch) return false;
-    if (!handleTLS_(dst, out, &msg)) return false;
+  while (auto msg = in.shift()) {
+    if (dst.crypto->tlsReadEpoch() != msg->epoch) return false;
+    if (!handleTLS_(dst, out, msg.ptr())) return false;
   }
   return true;
 }
 
 bool exchangeTLS_(Zquic::Crypto &client, Zquic::Crypto &server)
 {
-  TLSPeer c{&client};
-  TLSPeer s{&server};
+  ZuPtr<TLSPeer> c = new TLSPeer{&client};
+  ZuPtr<TLSPeer> s = new TLSPeer{&server};
   TLSQueue c2s, s2c;
-  if (!handleTLS_(c, c2s, nullptr)) return false;
+  if (!handleTLS_(*c, c2s, nullptr)) return false;
   for (unsigned round = 0; round < 16; ++round) {
-    if (!drainTLS_(s, c2s, s2c)) return false;
-    if (!drainTLS_(c, s2c, c2s)) return false;
+    if (!drainTLS_(*s, c2s, s2c)) return false;
+    if (!drainTLS_(*c, s2c, c2s)) return false;
     if (client.oneRTTReady() && server.oneRTTReady())
       return true;
-    if (!c2s.count && !s2c.count) break;
+    if (!c2s.count_() && !s2c.count_()) break;
   }
   return client.oneRTTReady() && server.oneRTTReady();
 }
@@ -291,6 +284,29 @@ void testCryptoStreamFrames()
     "duplicate CRYPTO data was delivered");
   ZuCHECK(diag.cryptoBytesRx == 10,
     "CRYPTO Rx diagnostics failed");
+
+  Zquic::CryptoStream asyncRx;
+  ZtString<> delivered;
+  asyncRx.deliveryFn([&delivered](ZuBSpan bytes) {
+    delivered << ZuCSpan{bytes};
+  });
+  ZuCHECK(!asyncRx.receive(5, "world", contiguous) && !delivered &&
+      asyncRx.rangeCount() == 1,
+    "asynchronous CRYPTO delivered a gap");
+  ZuCHECK(!asyncRx.receive(3, "lowor", contiguous) &&
+      !asyncRx.receive(0, "hello", contiguous) &&
+      delivered == "helloworld" && !asyncRx.rangeCount() &&
+      asyncRx.rxOffset() == 10,
+    "asynchronous CRYPTO overlap reassembly lost bytes");
+  ZuCHECK(!asyncRx.receive(20, "pending", contiguous) &&
+      asyncRx.rangeCount() == 1,
+    "CRYPTO reset setup failed");
+  asyncRx.reset();
+  delivered.null();
+  ZuCHECK(!asyncRx.rangeCount() && !asyncRx.rxOffset() &&
+      !asyncRx.receive(0, "reused", contiguous) &&
+      ZuCSpan{contiguous} == "reused" && !delivered,
+    "CRYPTO reset retained fragments or prevented reuse");
 }
 
 void testMessageLevelTLSHandshake()

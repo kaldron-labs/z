@@ -902,12 +902,19 @@ class OutstandingFrames {
     uint64_t, RangeVal,
     ZmRBTreeUnique<true,
       ZmRBTreeHeapID<"Zquic.Pkt.OutstandingRange">>>;
-  struct Flow : public ZuObject {
+  struct FlowData {
+    OutstandingFlowKey id;
     RangeTree ranges;
+
+    explicit FlowData(const OutstandingFlowKey &id_) : id{id_} { }
   };
-  using Flows = ZmHashKV<
-    OutstandingFlowKey, ZmRef<Flow>,
-    ZmHashHeapID<"Zquic.Pkt.OutstandingFlow">>;
+  static const OutstandingFlowKey &flowID(const FlowData &flow) {
+    return flow.id;
+  }
+  using Flows = ZmHash<FlowData,
+    ZmHashNode<FlowData,
+      ZmHashKey<flowID, ZmHashHeapID<"Zquic.Pkt.OutstandingFlow">>>>;
+  using Flow = Flows::Node;
   using Exact = ZmHashKV<
     SentFrameKey, unsigned,
     ZmHashHeapID<"Zquic.Pkt.OutstandingExact">>;
@@ -1004,8 +1011,8 @@ public:
       while (auto node = iter()) {
 	auto other = o.m_flows ? o.m_flows->findPtr(node->key()) : nullptr;
 	if (!other) return false;
-	const RangeTree &l = node->val()->ranges;
-	const RangeTree &r = other->val()->ranges;
+	const RangeTree &l = node->ranges;
+	const RangeTree &r = other->ranges;
 	if (l.count_() != r.count_()) return false;
 	auto rangeIter = l.citer();
 	while (auto range = rangeIter()) {
@@ -1057,18 +1064,14 @@ private:
   }
   Flow *flow_(const OutstandingFlowKey &key) {
     if (m_flows)
-      if (auto node = m_flows->findPtr(key)) return node->val();
+      if (auto node = m_flows->findPtr(key)) return node;
     if (!m_flows)
       m_flows = new Flows{ZmHashParams().bits(3).loadFactor(1).cBits(2)};
-    ZmRef<Flow> flow = new Flow{};
-    Flow *ptr = flow;
-    m_flows->add(key, ZuMv(flow));
-    return ptr;
+    return m_flows->add(key);
   }
   const Flow *findFlow_(const OutstandingFlowKey &key) const {
     if (!m_flows) return nullptr;
-    auto node = m_flows->findPtr(key);
-    return node ? node->val().ptr() : nullptr;
+    return m_flows->findPtr(key);
   }
   void split_(Flow &flow, uint64_t offset) {
     auto node = flow.ranges.template findPtr<ZmRBTreeLessEqual>(offset);
@@ -1113,7 +1116,7 @@ private:
     if (first >= end || !m_flows) return;
     auto flowNode = m_flows->findPtr(key);
     if (!flowNode) return;
-    Flow &flow = *flowNode->val();
+    Flow &flow = *flowNode;
     split_(flow, first);
     split_(flow, end);
     uint64_t pos = first;

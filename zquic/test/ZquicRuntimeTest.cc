@@ -156,6 +156,7 @@ struct TestServer :
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   void clearLinks();
+  void disconnected(Link *, bool);
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
   unsigned localPort() const { return ZquicTestPort::Runtime; }
   bool sendPkt(const ZmRef<ZiIOBuf> &buf) {
@@ -270,12 +271,15 @@ struct TestServerLink :
   TestServerLink(TestServer *app) : Base{app} { }
 
   void connected(Zquic::Connected) { ++connectedCount; }
-	void disconnected(bool) { ++disconnectedCount; }
 	void streamed(ZmRef<Stream>) { ++streamedCount; }
   void forceCloseTimeout() {
-    app()->txInvoke(this, [link = ZmRef<TestServerLink>{this}]() mutable {
-      link->Base::closeTimeout_();
-      return link.ptr();
+    ZmBlock<>{}([this](auto wake) {
+      app()->txRun([
+	link = ZmRef<TestServerLink>{this}, wake = ZuMv(wake)
+      ]() mutable {
+	link->Base::closeTimeout_();
+	wake();
+      });
     });
   }
 
@@ -283,6 +287,12 @@ struct TestServerLink :
 	ZmAtomic<unsigned> disconnectedCount = 0;
 	ZmAtomic<unsigned> streamedCount = 0;
 };
+
+void TestServer::disconnected(Link *link, bool peer)
+{
+  Zquic::Server<TestServer, TestServerLink>::disconnected(link, peer);
+  ++link->disconnectedCount;
+}
 
 ZmRef<TestServer::Link> TestServer::link(unsigned i)
 {
@@ -325,11 +335,18 @@ void waitThread(ZiMultiplex &mx, unsigned thread)
 	});
 }
 
-void waitDisconnect(ZiMultiplex &mx)
+template <typename App>
+void waitDisconnect(App &app)
 {
-  waitThread(mx, mx.txThread());
+  auto &mx = *app.mx();
+  waitThread(mx, app.txThread());
+  waitThread(mx, app.rxThread());
+  // UDP endpoint teardown hands its completion from mx Rx to mx Tx,
+  // then back to the QUIC app's Tx shard.
   waitThread(mx, mx.rxThread());
   waitThread(mx, mx.txThread());
+  waitThread(mx, app.txThread());
+  waitThread(mx, app.rxThread());
 }
 
 #ifdef Zquic_DEBUG
@@ -429,6 +446,7 @@ void testEndpointOpen()
   TempDir temp;
   ZuCHECK(temp.init(), "runtime temporary TLS certificate generation failed");
   ZtString<> qlogPath = temp.pathOf("endpoint.sqlog");
+  ZtString<> clientQLogPath = temp.pathOf("client.sqlog");
 
   ZiMultiplex mx(
       ZiMxParams()
@@ -478,6 +496,9 @@ void testEndpointOpen()
   ZuCHECK(client.init(
       Zquic::ClientParams(&mx, "3", "4")
 	.caPath(temp.certPath.cspan())
+	.qlog(true)
+	.qlogPath(clientQLogPath.cspan())
+	.qlogRingSize(1<<16)
 	.maxData(32768)
 	.maxStreamData(8192)
 	.maxStreamsDuplex(8)
@@ -551,7 +572,13 @@ void testEndpointOpen()
       diag(serverLink).rx.cryptoBytesRx,
     "runtime CRYPTO byte diagnostics mismatch");
 #endif
-  ZuCHECK(!diag(clientLink).failures(),
+  auto clientDiag = diag(clientLink);
+  if (clientDiag.failures()) {
+    dumpDiag("client failures", clientDiag, clientLink->crypto().diag());
+    std::cout << "# rx failures=" << uint64_t(clientDiag.rx.failures) <<
+      " tx failures=" << uint64_t(clientDiag.tx.failures) << '\n';
+  }
+  ZuCHECK(!clientDiag.failures(),
     "runtime client failure diagnostics mismatch");
   ZuCHECK(!diag(serverLink).failures(),
     "runtime server failure diagnostics mismatch");
@@ -603,15 +630,22 @@ void testEndpointOpen()
 	ZmBlock<>{}([&clientLink](auto wake) {
 	  clientLink->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
 	});
-	waitDisconnect(mx);
-	ZuCHECK(serverLink->closed(), "runtime server did not observe client close");
+	waitDisconnect(server);
+	ZuCHECK(waitUntil([&serverLink]() { return serverLink->closed(); }),
+	  "runtime server did not observe client close");
+	// The endpoint shards are 3/4, not the multiplexer's default 1/2.
+	// Complete expiry before stop can cancel the pending close work.
+	waitThread(mx, server.txThread());
 	serverLink->forceCloseTimeout();
+	ZuCHECK(waitUntil([&serverLink]() {
+	    return serverLink->disconnectedCount == 1;
+	  }), "runtime server drain expiry did not disconnect");
 	ZuCHECK(server.stop(), "runtime server stop failed");
-	waitDisconnect(mx);
+	waitDisconnect(server);
 	ZuCHECK(!clientLink->cxn() && clientLink->disconnectedCount == 1 &&
 	    !server.connected(),
 	  "runtime endpoints remained connected after close");
-  waitDisconnect(mx);
+  waitDisconnect(server);
 
   serverRxBidi = nullptr;
   serverRxUni = nullptr;
@@ -776,7 +810,7 @@ void testHandshakeCryptoLoss()
       }) && !server.connected(),
       "loss runtime endpoints remained connected after close");
     clientClosed.wait();
-    waitDisconnect(mx);
+    waitDisconnect(server);
     clientLink = nullptr;
     serverLink = nullptr;
     client.final();
@@ -885,7 +919,7 @@ void testSrvMultiCxn()
 	return true;
       });
     server.stop();
-    waitDisconnect(mx);
+    waitDisconnect(server);
     for (unsigned i = 0; i < TestSrvCxnCount; ++i)
       clients[i] = nullptr;
     for (unsigned i = 0; i < TestSrvCxnCount; ++i)
@@ -952,7 +986,7 @@ void testSrvMultiCxn()
       return true;
     }) && !server.connected(),
     "multi runtime endpoints remained connected after close");
-  waitDisconnect(mx);
+  waitDisconnect(server);
 
   c0s = nullptr;
   c1s = nullptr;
@@ -1081,7 +1115,7 @@ void testRetryAddrValidate()
   clientLink->disconnect();
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
     "retry runtime first connection did not close");
-  waitDisconnect(mx);
+  waitDisconnect(server);
 
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZmRef<TestServer::Link> serverLink2;
@@ -1122,7 +1156,7 @@ void testRetryAddrValidate()
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }) &&
       !server.connected(),
     "retry runtime endpoints remained connected after close");
-  waitDisconnect(mx);
+  waitDisconnect(server);
 
   clientLink = nullptr;
   serverLink = nullptr;
@@ -1263,7 +1297,7 @@ void testRejectedTokenQLog()
   clientLink->disconnect();
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
     "rejected-token runtime initial connection did not close");
-  waitDisconnect(mx);
+  waitDisconnect(server);
 
   unsigned accepted = 1;
   unsigned modes[] = {
@@ -1299,12 +1333,12 @@ void testRejectedTokenQLog()
     clientLink->disconnect();
     ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
       "rejected-token runtime connection did not close");
-    waitDisconnect(mx);
+    waitDisconnect(server);
   }
   server.stop();
   ZuCHECK(waitUntil([&server]() { return !server.connected(); }),
     "rejected-token runtime server remained connected");
-  waitDisconnect(mx);
+  waitDisconnect(server);
   server.clearLinks();
   server.final();
 
@@ -1344,7 +1378,7 @@ void testRejectedTokenQLog()
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
     "rejected-token policy connection did not close");
   policyServer.stop();
-  waitDisconnect(mx);
+  waitDisconnect(policyServer);
   policyLink = nullptr;
   policyServer.clearLinks();
   policyServer.final();
@@ -1463,7 +1497,7 @@ void testIdleTimeoutQLog()
   ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
     "idle runtime client did not close on idle timeout");
   server.stop();
-  waitDisconnect(mx);
+  waitDisconnect(server);
 
   clientLink = nullptr;
   serverLink = nullptr;

@@ -219,9 +219,17 @@ private:
 #endif
 };
 
-// Links are owned by their protocol endpoint and can appear in other registries.
-ZmHashDeriveT((Link_), ServerLinks_, ZmRef<Link_>,
-  (ZmHashHeapID<"Zquic.Server.LinkHash">));
+struct EndpointLink : public ZmPolymorph { };
+
+inline const EndpointLink *EndpointLinkKey(const EndpointLink &link) {
+  return &link;
+}
+
+// Endpoint membership owns the link alongside outstanding callbacks. Concrete
+// application links provide the allocator; this inner node only adds the link.
+ZmHashDerive(ServerLinks, EndpointLink,
+  (ZmHashNode<EndpointLink,
+    ZmHashKey<EndpointLinkKey, ZmHashHeapID<"">>>));
 
 using EndpointDiscFn = ZmFn<void(), ZmFnHeapID<"Zquic.Endpoint.DiscFn">>;
 using EndpointRebindFn =

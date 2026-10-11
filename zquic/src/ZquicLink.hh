@@ -37,7 +37,7 @@ struct LinkStateSnapshot {
 
 template <typename App, typename Impl, typename TxBufAlloc_, typename Stream_>
 class Link :
-  public ZmPolymorph,
+  public Zquic_::ServerLinks::Node,
   public Ztc::Link {
 template <typename, typename>
 friend class Server;
@@ -77,8 +77,7 @@ public:
     64>;
   using Streams = Streams_<Stream>;
   using StreamsRef = ZmRef<Streams>;
-  using TxStreams = ZmHashKV<int64_t, StreamRef,
-    ZmHashHeapID<"Zquic.Stream.TxHash">>;
+  using TxStreams = Zquic::TxStreams;
   using TxStreamsRef = ZmRef<TxStreams>;
   using ClosedStreams =
     ZmHashKV<uint64_t, bool,
@@ -90,9 +89,7 @@ public:
   using NewCxnIDControls =
     ZmQueue<ControlFrame,
       ZmQueueHeapID<"Zquic.Link.NewCxnID">>;
-  using StreamQueue =
-    ZmQueue<StreamRef,
-      ZmQueueHeapID<"Zquic.Link.StreamQueue">>;
+  using StreamQueue = Zquic::StreamQueue;
   static constexpr unsigned OpenQueuedBatch = 32;
   static constexpr unsigned StreamFlushBatch = 64;
   // PATH_RESPONSE frames are concrete replies; cap queued payloads at the
@@ -251,7 +248,7 @@ public:
     n += m_newCxnIDControls.count_();
     auto iter = m_txStreams->citer();
     while (auto node = iter())
-      n += node->val()->queuedControlFrames();
+      n += static_cast<const Stream *>(node)->queuedControlFrames();
     return n;
   }
   uint64_t rxDataCreditUsed() const { return m_rxDataCredit.used(); }
@@ -370,7 +367,7 @@ protected:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC Tx stream lookup outside Tx thread", return {});
     auto node = m_txStreams->findPtr(id);
-    return node ? node->val() : StreamRef{};
+    return node ? StreamRef{static_cast<Stream *>(node)} : StreamRef{};
   }
 
   void publishStreamRx_(StreamRef stream) {
@@ -384,7 +381,7 @@ protected:
       "QUIC stream Tx publication outside Tx thread", return);
     if (!stream || stream->id() < 0 || m_txStreams->findPtr(stream->id()))
       return;
-    m_txStreams->add(stream->id(), ZuMv(stream));
+    m_txStreams->addNode(ZmRef<typename TxStreams::Node>{ZuMv(stream)});
   }
 
 public:
@@ -530,7 +527,8 @@ public:
   void streamWritable_(const StreamRef &stream) {
     if (!stream || stream->id() < 0 || stream->txQueued()) return;
     stream->txQueued(true);
-    m_streamQueue.push(stream);
+    m_streamQueue.pushNode(
+      static_cast<typename StreamQueue::Node *>(stream.ptr()));
   }
   void scheduleStreamWritable_(StreamRef stream) {
     if (!stream || stream->id() < 0) return;
@@ -4225,7 +4223,7 @@ protected:
   void statelessResetTx_(bool notifyDisconnect) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stateless-reset cleanup outside Tx thread", return);
-    m_streamQueue.clean();
+    clearWritableStreams_();
     for (auto &p : m_txPkts) p.clear();
     delTimers_();
     app()->rxRun([
@@ -4270,11 +4268,14 @@ protected:
   }
 
   StreamRef nextWritableStream_() {
-    StreamRef stream = m_streamQueue.head();
+    StreamRef stream{m_streamQueue.shift()};
     if (!stream) return nullptr;
-    m_streamQueue.shift();
     stream->txQueued(false);
     return stream;
+  }
+
+  void clearWritableStreams_() {
+    while (nextWritableStream_()) { }
   }
 
   bool streamTxPending_(const StreamRef &stream) const {
@@ -5627,7 +5628,7 @@ protected:
     cancelKeyDiscardTimer_();
     cancelPMTUDTimer_();
     cancelPathTimer_();
-    m_streamQueue.clean();
+    clearWritableStreams_();
     for (auto &p : m_txPkts) p.clear();
     if (!m_closeTimerOut)
       scheduleCloseTimer_(peerCloseDeadline_());
@@ -7793,6 +7794,9 @@ nextSpace:
       return false;
     }
     ZmRef<ZiIOBuf> buf = allocTxPkt();
+    if (!payload.padForProtSample(
+	  pnLength, txSecret_(PktNumSpace::Handshake).tagLen))
+      return false;
     int headerLen = Pkt::writeHandshake(
       buf->data_(), buf->size, cid_(dcid), cid_(scid),
       payload.bytes() +
@@ -7879,6 +7883,9 @@ nextSpace:
     ZmRef<ZiIOBuf> buf = allocTxPkt();
     const TrafficSecret &secret =
       txKeySecret_(PktKeyLevel::ZeroRTT);
+    if (!payload.padForProtSample(
+	  pnLength, secret.tagLen))
+      return false;
     int headerLen = Pkt::writeLong(
       buf->data_(), buf->size, PktType::ZeroRTT,
       cid_(dcid), cid_(scid),
@@ -7887,9 +7894,6 @@ nextSpace:
 	PktNumber::encode(
 	  buf->data_() + headerLen, buf->size - unsigned(headerLen),
 	  m_txPN[PktNumSpace::AppData], pnLength) != int(pnLength))
-      return false;
-    if (!payload.padForProtSample(
-	  unsigned(headerLen), pnLength, secret.tagLen))
       return false;
     uint64_t pn = m_txPN[PktNumSpace::AppData];
     int n = PktProt::protectLongV(
@@ -7982,8 +7986,7 @@ nextSpace:
       m_txPN[PktNumSpace::AppData], pnLength, m_txKeyPhase);
     if (headerLen < 0) return false;
     if (!payload.padForProtSample(
-	  unsigned(headerLen) - pnLength, pnLength,
-	  txSecret_(PktNumSpace::AppData).tagLen))
+	  pnLength, txSecret_(PktNumSpace::AppData).tagLen))
       return false;
     if (pmtudSize) {
       unsigned tagLen = txSecret_(PktNumSpace::AppData).tagLen;
@@ -9047,7 +9050,7 @@ private:
     m_pathResponses.clean();
     m_newCxnIDControls.clean();
     auto iter = m_txStreams->iter();
-    while (auto node = iter()) node->val()->clearControls();
+    while (auto node = iter()) static_cast<Stream *>(node)->clearControls();
   }
 
   bool controlStillValid_(const ControlFrame &frame) const {
@@ -9252,7 +9255,8 @@ private:
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream Tx retirement completion outside Tx thread", return);
     auto node = m_txStreams->findPtr(id);
-    if (node && node->val().ptr() == stream.ptr()) (void)m_txStreams->del(id);
+    if (node && static_cast<Stream *>(node) == stream.ptr())
+      (void)m_txStreams->del(id);
   }
   bool streamCreditSettled_(const Stream *stream) const {
     uint64_t id = uint64_t(stream->id());

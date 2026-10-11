@@ -37,15 +37,19 @@ struct Agent {
   uint32_t	appCount = 0;
 };
 
-template <typename Heap = ZuVoid>
-struct BrowserSession_ : public Heap, public ZmObject {
+struct BrowserSession_ : public ZmObject {
   Zum::ServicePrincipal principal;
   HubString cookie;
   ZmScheduler::Timer expiry;
 };
-ZuDerive(BrowserSessionHeap,
-  (ZmHeap<"Ztc.Hub.BrowserSession", BrowserSession_<>>));
-ZuDerive(BrowserSession, (BrowserSession_<BrowserSessionHeap>));
+inline const HubString &BrowserCookieAxor(const BrowserSession_ &session) {
+  return session.cookie;
+}
+ZmHashDerive(BrowserSessions, BrowserSession_,
+  (ZmHashNode<BrowserSession_,
+    ZmHashKey<BrowserCookieAxor,
+      ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.BrowserSession">>>>));
+using BrowserSession = BrowserSessions::Node;
 
 inline ZuCSpan Agent_KeyAxor(const Agent &agent) { return agent.deviceID; }
 ZmHashDerive(Agents, Agent,
@@ -132,8 +136,6 @@ struct Session {
 };
 using Sessions = ZmHashKV<uint64_t, Session,
   ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.Session">>>;
-using BrowserSessions = ZmHashKV<HubString, ZmRef<BrowserSession>,
-  ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.BrowserSession">>>;
 struct TokenSession {
   uint64_t sessionID = 0;
 };
@@ -183,7 +185,7 @@ static void clearBrowsers(StateData &state)
 {
   if (state.multiplex) {
     auto i = state.browserSessions.iter();
-    while (auto node = i()) state.multiplex->del(&node->val()->expiry);
+    while (auto node = i()) state.multiplex->del(&node->expiry);
   }
   state.browserSessions.clean();
 }
@@ -986,7 +988,7 @@ bool Hubd::createBrowserSession(
         state->browserSessions.del(session->cookie);
       });
     }, m_state->multiplex->rxThread());
-  m_state->browserSessions.add(cookie, ZuMv(session));
+  m_state->browserSessions.addNode(ZuMv(session));
   return true;
 }
 
@@ -996,9 +998,9 @@ bool Hubd::browserPrincipal(ZuCSpan cookie, Zum::ServicePrincipal &principal)
   if (!m_state || !cookie) return false;
   auto node = m_state->browserSessions.del(cookie);
   if (!node) return false;
-  if (m_state->multiplex) m_state->multiplex->del(&node->val()->expiry);
-  if (node->val()->principal.expires <= Zm::now().sec()) return false;
-  principal = ZuMv(node->val()->principal);
+  if (m_state->multiplex) m_state->multiplex->del(&node->expiry);
+  if (node->principal.expires <= Zm::now().sec()) return false;
+  principal = ZuMv(node->principal);
   return true;
 }
 
