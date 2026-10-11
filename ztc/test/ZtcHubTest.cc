@@ -224,6 +224,9 @@ static void routing()
     browserPrincipal.actions.length() == 1 &&
     browserPrincipal.actions[0] == "Request");
   ZuCheck(!hub.browserPrincipal("missing", browserPrincipal));
+  ZuCheck(!hub.browserPrincipal(cookie, browserPrincipal));
+  Ztc::HubString unusedCookie;
+  ZuCheck(hub.createBrowserSession(browser, unusedCookie));
 
   auto combined = browser;
   combined.actions.push("Telemetry");

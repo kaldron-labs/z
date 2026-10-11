@@ -12,9 +12,32 @@
 
 namespace Zquic {
 
+class StreamData : public ZmPolymorph {
+public:
+  explicit StreamData(int64_t id) : m_id{id} { }
+  int64_t id() const { return m_id; }
+
+private:
+  const int64_t m_id;
+};
+
+inline int64_t StreamIDKey(const StreamData &stream) {
+  return stream.id();
+}
+
+// Rx and Tx retire independently; both registries retain the same object.
+ZmHashDerive(TxStreams, StreamData,
+  (ZmHashNode<StreamData,
+    ZmHashKey<StreamIDKey, ZmHashHeapID<"">>>));
+
+// Writable notifications can outlive Tx registry retirement. Retain the
+// queued object independently until dequeue, as the former reference queue did.
+ZmListDerive(StreamQueue, TxStreams::Node,
+  ZmListNode<TxStreams::Node, ZmListHeapID<"">>);
+
 template <typename Link_, typename Impl, typename TxBufAlloc_>
 class Stream :
-  public ZmPolymorph,
+  public StreamQueue::Node,
   // Rx thread exclusive base. Only the Rx thread may use ZmPQRx APIs/state.
   public ZmPQRx<
     Stream<Link_, Impl, TxBufAlloc_>,
@@ -42,10 +65,9 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  Stream(Link *link, int64_t id) : m_link{link}, m_id{id} { }
+  Stream(Link *link, int64_t id) : StreamQueue::Node{id}, m_link{link} { }
 
   Link *link() const { return m_link; }
-  int64_t id() const { return m_id; }
   uint64_t txBytes() const { return m_txBytes; }
   uint64_t txBufferedBytes() const { return m_txBufferedBytes; }
   uint64_t txCreditLimit() const { return m_txCredit.limit(); }
@@ -178,24 +200,24 @@ public:
     return queueControl_(
       m_maxStreamDataControl,
       ControlFrame::flowUpdate(FlowUpdate{
-	FrameType::MaxStreamData, uint64_t(m_id), value,
+	FrameType::MaxStreamData, uint64_t(id()), value,
 	Zquic::StreamType::Duplex}));
   }
   bool queueDataBlocked(uint64_t value) {
     return queueControl_(
       m_dataBlockedCtl,
       ControlFrame::blocked(
-	FrameType::StreamDataBlocked, uint64_t(m_id), value));
+	FrameType::StreamDataBlocked, uint64_t(id()), value));
   }
   bool queueResetStream(uint64_t appError, uint64_t finalSize) {
     return queueControl_(
       m_resetStreamControl,
-      ControlFrame::resetStream(uint64_t(m_id), appError, finalSize));
+      ControlFrame::resetStream(uint64_t(id()), appError, finalSize));
   }
   bool queueStopSending(uint64_t appError) {
     return queueControl_(
       m_stopSendingControl,
-      ControlFrame::stopSending(uint64_t(m_id), appError));
+      ControlFrame::stopSending(uint64_t(id()), appError));
   }
   bool nextQueuedControl(ControlFrame &frame) const {
     if (m_maxStreamDataControl.queued) {
@@ -264,7 +286,7 @@ public:
     m_rx.push(ZuMv(buf));
     if (m_link)
       ZquicLOG(m_link->app()->qlogTrace(), ([
-	streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
+	streamID = id() >= 0 ? uint64_t(id()) : U64Null,
 	streamOffset = data.offset,
 	length = uint64_t(data.length),
 	linkInfo = m_link->linkInfo()
@@ -491,11 +513,11 @@ public:
     if (m_resetSent) return;
     m_resetSent = true;
     setTxError_(StreamError::Reset, appError);
-    if (m_link && m_id >= 0)
-      m_link->localResetStream_(uint64_t(m_id), appError, m_txBytes);
-    if (m_link && m_id >= 0)
+    if (m_link && id() >= 0)
+      m_link->localResetStream_(uint64_t(id()), appError, m_txBytes);
+    if (m_link && id() >= 0)
       m_link->streamResetSent_(
-	uint64_t(m_id), appError, m_txBytes);
+	uint64_t(id()), appError, m_txBytes);
     if (!m_txCompleted) {
       m_txCompleted = true;
       impl()->txComplete_(false);
@@ -510,10 +532,10 @@ public:
     rxRun_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
       stream->applyStopRx_(appError);
     });
-    if (m_link && m_id >= 0)
-      m_link->localStopSending_(uint64_t(m_id), appError);
-    if (m_link && m_id >= 0)
-      m_link->streamStopSendingSent_(uint64_t(m_id), appError);
+    if (m_link && id() >= 0)
+      m_link->localStopSending_(uint64_t(id()), appError);
+    if (m_link && id() >= 0)
+      m_link->streamStopSendingSent_(uint64_t(id()), appError);
     notifyTx_();
   }
 
@@ -556,8 +578,8 @@ public:
   bool receiveReset(const Frame &frame) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC RESET_STREAM receive outside Rx thread", return false);
-    if (frame.type != FrameType::ResetStream || m_id < 0 ||
-	frame.streamID != uint64_t(m_id) ||
+    if (frame.type != FrameType::ResetStream || id() < 0 ||
+	frame.streamID != uint64_t(id()) ||
 	m_rxDelivered > frame.length ||
 	rxPendingBeyond_(frame.length))
       return false;
@@ -570,8 +592,8 @@ public:
   }
 
   bool receiveBlocked(const Frame &frame) const {
-    if (frame.type != FrameType::StreamDataBlocked || m_id < 0 ||
-	frame.streamID != uint64_t(m_id))
+    if (frame.type != FrameType::StreamDataBlocked || id() < 0 ||
+	frame.streamID != uint64_t(id()))
       return false;
     if (m_rxState.finalSizeKnown() && frame.value > m_rxState.finalSize())
       return false;
@@ -581,8 +603,8 @@ public:
   bool receiveStop(const Frame &frame) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC STOP_SENDING receive outside Rx thread", return false);
-    if (frame.type != FrameType::StopSending || m_id < 0 ||
-	frame.streamID != uint64_t(m_id))
+    if (frame.type != FrameType::StopSending || id() < 0 ||
+	frame.streamID != uint64_t(id()))
       return false;
     m_stopReceived = true;
     uint64_t appError = frame.errorCode;
@@ -639,8 +661,8 @@ private:
     BufDiag *diag, ZmRef<ZiIOBuf> packet) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream receive outside Rx thread", return false);
-    if (frame.type != FrameType::Stream || m_id < 0 ||
-	frame.streamID != uint64_t(m_id) ||
+    if (frame.type != FrameType::Stream || id() < 0 ||
+	frame.streamID != uint64_t(id()) ||
 	frame.length != frame.payload.length() ||
 	frame.length > BufSize)
       return false;
@@ -759,7 +781,7 @@ private:
     Tx::send(ZuMv(buf));
     if (m_link)
       ZquicLOG(m_link->app()->qlogTrace(), ([
-	streamID = m_id >= 0 ? uint64_t(m_id) : U64Null,
+	streamID = id() >= 0 ? uint64_t(id()) : U64Null,
 	streamOffset = m_txBytes,
 	length = uint64_t(length),
 	linkInfo = m_link->linkInfo()
@@ -819,7 +841,7 @@ public:
   }
 
   void notifyTx_() {
-    if (m_link && m_id >= 0) {
+    if (m_link && id() >= 0) {
       m_link->streamWritable_(ZmRef<Impl>{impl()});
       m_link->flushTx_();
     }
@@ -829,7 +851,7 @@ public:
     bool		queued = false;
   };
   bool queueControl_(PendingControl &slot, const ControlFrame &frame) {
-    if (m_id < 0 || !frame) return false;
+    if (id() < 0 || !frame) return false;
     if (slot.frame == frame) {
       if (slot.queued) return false;
       slot.queued = true;
@@ -875,7 +897,6 @@ public:
 private:
   // immutable
   Link			*m_link = nullptr;
-  int64_t		m_id;
 
   // shared admission state and published configuration
   ZmAtomic<unsigned>	m_txQueueCount = 0;

@@ -138,7 +138,7 @@ void testPktBuildMetadata()
     "QUIC Initial minimum padding metadata mismatch");
 
   build.reset();
-  ZuCHECK(build.padForProtSample(5, 1, 16) &&
+  ZuCHECK(build.padForProtSample(1, 16) &&
       build.count() == 1 &&
       build.bytes() == 3,
     "packet protection sample padding metadata mismatch");

@@ -20,8 +20,8 @@ in `README.md`.
 
 # Buffers
 
-`Zquic` uses role-specific `ZiIOBuf` allocation aliases from
-`ZquicBuf.hh`.  Keep those roles distinct:
+`Zquic` exposes role-specific `ZiIOBuf` allocation aliases through
+`Zquic.hh`. Keep those roles distinct:
 
 - `PktRxBufAlloc` defaults to the `"Zquic.Pkt.Rx"` heap for received UDP
   datagrams and in-place QUIC packet protection removal.

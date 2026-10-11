@@ -257,12 +257,12 @@ int CryptoStream::receive(
   if (!rxNovelSpans(m_rxQueue, first, end, spans)) return -1;
   uint64_t bytes = rxSpanBytes(spans);
   if (!queueRxSpans(spans, offset, payload,
-	[](unsigned) -> ZmRef<ZiIOBuf> {
+	[](unsigned) -> ZmRef<CryptoRxPQueue::Node> {
 	  return new CryptoRxBufAlloc<BufSize, MaxBufSize>{nullptr};
 	},
-	[this](ZmRef<ZiIOBuf> buf, uint64_t offset, unsigned) {
-	  Rx::rcvd(new CryptoRxPQueue::Node{
-	    RxData{ZuMv(buf), offset}});
+	[this](ZmRef<CryptoRxPQueue::Node> buf, uint64_t offset, unsigned) {
+	  buf->offset = offset;
+	  Rx::rcvd(ZuMv(buf));
 	}))
     return -1;
 
@@ -292,13 +292,13 @@ void CryptoStream::appendDelivery_(const uint8_t *p, uint64_t length)
 void CryptoStream::process(Msg *node)
 {
   if (!node) return;
-  RxData &data = node->data();
-  if (!data.buf || !data.buf->length) return;
-  const uint8_t *p = data.buf->data();
-  appendDelivery_(p, data.buf->length);
+  CryptoRxData &data = node->data();
+  if (!data.length) return;
+  const uint8_t *p = data.data();
+  appendDelivery_(p, data.length);
   if (m_asyncDelivery)
-    m_deliveryFn(ZuBSpan{p, data.buf->length});
-  m_rxOffset += data.buf->length;
+    m_deliveryFn(ZuBSpan{p, data.length});
+  m_rxOffset += data.length;
 }
 
 bool InitialCrypto::derive(InitialKeyMaterial &out, const CxnID &dcid)

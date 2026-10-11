@@ -326,17 +326,16 @@ struct HTTPFixedBuilder : public Zhttp::ResBuilder {
   }
 };
 
-using SSEBuf = ZiIOBufAlloc<ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, "Zjrpc.HTTP.SSE">;
-
-struct SSERecord {
-  // Shared pooled I/O buffers cannot carry this builder's private queue link.
-  ZmRef<ZiIOBuf> buf;
+struct SSEData : public ZiIOBuf {
+  using ZiIOBuf::ZiIOBuf;
   bool terminal = false;
 };
 
-ZmListDerive(SSEQueue, SSERecord,
-  ZmListNode<SSERecord, ZmListHeapID<"Zjrpc.SSE.Queue">>);
+ZmListDerive(SSEQueue, SSEData,
+  ZmListNode<SSEData, ZmListHeapID<"">>);
+
+using SSEBuf = Zi::IOBufAlloc<SSEQueue::Node, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.HTTP.SSE">>;
 
 using ResumeFn = ZmFn<bool(), ZmFnHeapID<"Zjrpc.SSE.Resume">>;
 using SSECloseFn = ZmFn<void(), ZmFnHeapID<"Zjrpc.SSE.Close">>;
@@ -522,8 +521,8 @@ public:
       return Zhttp::WriteOutcome::Stream;
     }
     --m_queued;
-    m_queuedBytes -= record->buf->length;
-    out << ZuCSpan{*record->buf};
+    m_queuedBytes -= record->length;
+    out << ZuCSpan{record->cspan()};
     return record->terminal ?
       Zhttp::WriteOutcome::End : Zhttp::WriteOutcome::Stream;
   }
@@ -536,7 +535,7 @@ private:
       abort_();
       return false;
     }
-    ZmRef<ZiIOBuf> buf = new SSEBuf{};
+    ZmRef<SSEQueue::Node> buf = new SSEBuf{};
     *buf << "id: " << m_sequence++ << "\ndata: ";
     unsigned jsonOffset = buf->length;
     unsigned jsonMax = m_limits.maxJSONBytes < m_limits.maxSSEEventBytes ?
@@ -562,7 +561,8 @@ private:
     }
     m_queuedBytes += buf->length;
     ++m_queued;
-    m_queue.push(SSERecord{ZuMv(buf), terminal});
+    buf->terminal = terminal;
+    m_queue.pushNode(ZuMv(buf));
     if (terminal) m_state = SSEState::TerminalQueued;
     if (m_resume &&
 	(m_owner ? !post_() : !m_resume())) {

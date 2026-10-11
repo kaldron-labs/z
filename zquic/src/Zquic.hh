@@ -266,7 +266,7 @@ namespace Zquic {
 using Zquic_::Cxn;
 using Zquic_::CxnRouter;
 using Zquic_::Endpoint_;
-using Zquic_::ServerLinks_;
+using Zquic_::ServerLinks;
 
 // Connection bootstrap
 struct ZquicAPI CxnIDGen {
@@ -1196,7 +1196,7 @@ public:
   using App = App_;
   using Link = Link_;
   using LinkRef = ZmRef<Link>;
-  using LinkTable = ServerLinks_<Link>;
+  using LinkTable = ServerLinks;
   using LinkRefs =
     ZtArray<LinkRef, ZtArrayHeapID<"Zquic.Server.LinkRefs">>;
   using Base = Hub<App>;
@@ -1372,18 +1372,20 @@ private:
     auto links = ZmScratch(LinkRef, n, typename LinkRefs::VHeap);
     {
       auto i = table->citer();
-      while (LinkRef ref = i.val())
-	links.push(ZuMv(ref));
+      while (auto node = i())
+	links.push(LinkRef{static_cast<Link *>(node)});
     }
     links.all(ZuFwd<L>(l));
   }
 
   void txDrained_() {
     auto i = m_links->citer();
-    while (LinkRef ref = i.val())
+    while (auto node = i()) {
+      LinkRef ref{static_cast<Link *>(node)};
       ref->app()->txRun([link = ZuMv(ref)]() mutable {
 	link->txDrained_();
       });
+    }
   }
 
   void failed_0(bool transient) {
@@ -1510,8 +1512,8 @@ private:
     if (!link) return false;
     if (this->state() != ZmEngineState::Running) return false;
     Link *ptr = link.ptr();
-    if (m_links->findVal(ptr)) return true;
-    m_links->add(ZuMv(link));
+    if (m_links->findPtr(ptr)) return true;
+    m_links->addNode(ZmRef<typename LinkTable::Node>{ZuMv(link)});
     return true;
   }
 
@@ -1556,7 +1558,8 @@ private:
     m_stopCount = 0;
     {
       auto i = m_links->citer();
-      while (LinkRef ref = i.val()) {
+      while (auto node = i()) {
+	LinkRef ref{static_cast<Link *>(node)};
 	ref->disconnect();
 	++m_stopCount;
       }

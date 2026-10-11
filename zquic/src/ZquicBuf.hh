@@ -67,12 +67,6 @@ using StreamTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = (64<<10), // 64K
-  ZuString HeapID = "Zquic.Crypto.RxBuf">
-using CryptoRxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
-
-template <
-  unsigned Size = BufSize,
-  unsigned MaxSize = (64<<10), // 64K
   ZuString HeapID = "Zquic.Crypto.TxBuf">
 using CryptoTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 

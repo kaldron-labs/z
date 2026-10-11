@@ -23,28 +23,34 @@ ZmRef<ZiIOBuf> packet_(ZuBSpan data)
   return packet;
 }
 
-void testRxDataClipping()
+void testCryptoRxClipping()
 {
-  ZuTestScope(testRxDataClipping);
+  ZuTestScope(testCryptoRxClipping);
 
-  ZmRef<ZiIOBuf> buf = new Zquic::CryptoRxBufAlloc<>{nullptr};
+  ZmRef<Zquic::CryptoRxPQueue::Node> buf =
+    new Zquic::CryptoRxBufAlloc<>{nullptr};
   fill_(buf, "abcdef");
-  buf->skip = 1;
-  buf->length = 4;
+  auto &data = buf->data();
+  data.skip = 1;
+  data.length = 4;
+  data.offset = 10;
 
-  Zquic::RxData data{buf, 10};
-  ZuCHECK(data.key() == 10 && data.length() == 4,
-    "RxData initial key/length mismatch");
+  ZuCHECK(data.key() == 10 && data.length == 4,
+    "CRYPTO initial key/length mismatch");
   ZuCHECK(data.clipHead(2) == 2 &&
-      data.key() == 12 &&
-      data.buf->skip == 3 &&
-      data.length() == 2,
-    "RxData head clipping mismatch");
+      data.key() == 12 && data.skip == 3 && data.length == 2,
+    "CRYPTO head clipping mismatch");
   ZuCHECK(data.clipTail(1) == 1 &&
-      data.key() == 12 &&
-      data.buf->skip == 3 &&
-      data.length() == 1,
-    "RxData tail clipping mismatch");
+      data.key() == 12 && data.skip == 3 && data.length == 1,
+    "CRYPTO tail clipping mismatch");
+
+  ZtString<> payload;
+  payload.length(Zquic::BufSize * 2);
+  memset(payload.data(), 'x', payload.length());
+  data.clear();
+  ZuCHECK(data.append(payload) && data.length == payload.length() &&
+      data.cspan() == ZuBSpan{payload} && data.offset == 12,
+    "CRYPTO buffer growth lost payload or stream metadata");
 }
 
 void testRxOverlapDrop()
@@ -62,7 +68,7 @@ void testRxOverlapDrop()
   q.add(new Zquic::StreamRxPQueue::Node{
     dup, dup->data(), dup->length, nullptr, 5});
   ZuCHECK(q.count_() == count,
-    "fully duplicate RxData mutated retained queue");
+    "fully duplicate STREAM data mutated retained queue");
 
   q.add(new Zquic::StreamRxPQueue::Node{
     second, second->data(), 5, nullptr, 0});
@@ -80,7 +86,7 @@ void testRxOverlapDrop()
     return true;
   });
   ZuCHECK(spans == 1 && firstKey == 0 && firstLength == 15 && q.verify(),
-    "overlapping RxData did not normalize to one span");
+    "overlapping STREAM data did not normalize to one span");
 }
 
 void testOutOfOrderDrain()
@@ -504,7 +510,7 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testRxDataClipping);
+  ZuTestCall(testCryptoRxClipping);
   ZuTestCall(testRxOverlapDrop);
   ZuTestCall(testOutOfOrderDrain);
   ZuTestCall(testAckRanges);

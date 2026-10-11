@@ -296,13 +296,9 @@ public:
     return bytes <= n || pad(bytes - n);
   }
 
-  bool padForProtSample(
-    unsigned pnOffset, unsigned pnLength, unsigned tagLen)
-  {
-    unsigned headerLen = pnOffset + pnLength;
-    unsigned minPktLen = pnOffset + 4 + 16;
-    unsigned minPayloadLen = minPktLen > headerLen + tagLen ?
-      minPktLen - headerLen - tagLen : 0;
+  bool padForProtSample(unsigned pnLength, unsigned tagLen) {
+    unsigned minPayloadLen = 4 + 16 > pnLength + tagLen ?
+      4 + 16 - pnLength - tagLen : 0;
     return padTo(minPayloadLen);
   }
 

@@ -18,30 +18,21 @@
 
 namespace Zquic {
 
-struct RxData {
-  ZmRef<ZiIOBuf>	buf;
+struct CryptoRxData : public ZiIOBuf {
+  using ZiIOBuf::ZiIOBuf;
   uint64_t		offset = 0;
 
-  RxData() = default;
-  RxData(ZmRef<ZiIOBuf> buf_, uint64_t offset_) :
-    buf{ZuMv(buf_)}, offset{offset_} { }
-
   uint64_t key() const { return offset; }
-  uint64_t length() const { return buf ? buf->length : 0; }
 
   uint64_t clipHead(uint64_t n) {
-    uint64_t length = this->length();
-    if (!length) return 0;
     if (n > length) n = length;
     offset += n;
-    buf->skip += n;
-    return buf->length -= n;
+    skip += n;
+    return length -= n;
   }
   uint64_t clipTail(uint64_t n) {
-    uint64_t length = this->length();
-    if (!length) return 0;
     if (n > length) n = length;
-    return buf->length -= n;
+    return length -= n;
   }
   template <typename I>
   void write(const I &) { }
@@ -470,12 +461,21 @@ using StreamRxPQueue =
 	      ZmPQueueLevels<2>>>>>>>;
 
 using CryptoRxPQueue =
-  ZmPQueue<RxData,
-    ZmPQueueNode<ZuObject,
-      ZmPQueueHeapID<"Zquic.Crypto.RxQueue",
-	ZmPQueueOverwrite<false,
-	  ZmPQueueBits<2,
-	    ZmPQueueLevels<2>>>>>>;
+  ZmPQueue<CryptoRxData,
+    ZmPQueueNode<CryptoRxData,
+      ZmPQueueHeapID<"",
+	ZmPQueueFn<ZmPQueueDefaultFn<CryptoRxData,
+	  ZmPQueueDefaultKeyAxor(), ZquicPQueueBufLenAxor()>,
+	  ZmPQueueOverwrite<false,
+	    ZmPQueueBits<2,
+	      ZmPQueueLevels<2>>>>>>>;
+
+template <
+  unsigned Size = BufSize,
+  unsigned MaxSize = (64<<10), // 64K
+  ZuString HeapID = "Zquic.Crypto.RxBuf">
+using CryptoRxBufAlloc = Zi::IOBufAlloc<
+  CryptoRxPQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
 
 using TxDataPQueue =
   ZmPQueue<StreamTxData,
@@ -536,7 +536,7 @@ inline bool queueRxSpans(
 	length64 > payload.length() - payloadOffset)
       return false;
     unsigned length = unsigned(length64);
-    ZmRef<ZiIOBuf> buf = alloc(length);
+    auto buf = alloc(length);
     if (ZuUnlikely(!buf)) return false;
     buf->append(ZuBSpan{payload.data() + payloadOffset, length});
     enqueue(ZuMv(buf), spans[i].first, length);
