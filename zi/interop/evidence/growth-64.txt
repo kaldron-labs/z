@@ -1,9 +1,0 @@
-[Thread debugging using libthread_db enabled]
-Using host libthread_db library "/usr/lib/libthread_db.so.1".
-codec,mode,payload,count,total_bytes,capacity,seconds,checksum
-canonical,reuse,64,3,312,1040,0.000010057,6
-native,reuse,64,3,312,1040,0.000006285,6
-canonical,fresh,64,3,312,1040,0.000007124,6
-native,fresh,64,3,312,1040,0.00000475,6
-[Inferior 1 (process 674870) exited normally]
-growth counters: {}
