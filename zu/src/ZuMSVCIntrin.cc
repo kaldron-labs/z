@@ -48,7 +48,7 @@ int main()
 
   CHECK(_mul_full_overflow_i32(2, 3, &i32, &j32));
   CHECK(_mul_full_overflow_u32(2, 3, &u32, &v32));
-  CHECK(_mul_full_overflow_i32(~0 & ~(1 << 31), ~0 & ~(1 << 31), &i32, &j32));
+  CHECK(_mul_full_overflow_i32(~0 & ~(1<<31), ~0 & ~(1<<31), &i32, &j32));
   CHECK(_mul_full_overflow_u32(~0, ~0, &u32, &v32));
 
   CHECK(_mul_full_overflow_i64(2, 3, &i64, &j64));

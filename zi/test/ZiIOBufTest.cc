@@ -91,7 +91,7 @@ void testSpanOffsetAndLargeEnsure()
 {
   ZuTestScope(testSpanOffsetAndLargeEnsure);
 
-  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<16, 1 << 20>{};
+  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<16, 1<<20>{};
   *buf << "0123456789";
 
   auto s = buf->cspan(1000);

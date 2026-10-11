@@ -21,7 +21,7 @@ static bool readFile(ZuCSpan path, Bytes &bytes)
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};
   if (!file) return false;
   auto n = file.size();
-  if (n < 0 || n > (64 << 20)) return false;
+  if (n < 0 || n > (64<<20)) return false;
   bytes.length(n);
   return file.read(bytes.data(), n) == n;
 }
@@ -110,7 +110,7 @@ static int run(int argc, char **argv)
   ZiFile input{argv[4], ZiFile::ReadOnly | ZiFile::GC};
   if (!input) return 1;
   auto n = input.size();
-  if (n < 0 || n > (64 << 20)) return 1;
+  if (n < 0 || n > (64<<20)) return 1;
   Bytes plaintext;
   plaintext.length(n);
   Ztls::Random rng;

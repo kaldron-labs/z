@@ -100,13 +100,13 @@ static void scryptFile()
     ZtlsAge::ScryptRecipient{ZuBSpan{"passphrase"}};
   ZtlsAge::Identity identity =
     ZtlsAge::ScryptIdentity{ZuBSpan{"passphrase"}};
-  enum { PlainSize = (64 << 10) + 17 };
+  enum { PlainSize = (64<<10) + 17 };
   Bytes plain;
   plain.length(PlainSize);
   for (unsigned i = 0; i < PlainSize; ++i) plain[i] = uint8_t(i * 13);
   Bytes recovered;
   recovered.length(PlainSize);
-  constexpr unsigned sizes[] = {0, 64 << 10, PlainSize};
+  constexpr unsigned sizes[] = {0, 64<<10, PlainSize};
   for (auto size : sizes) {
     ZiFile output{path, ZiFile::Write | ZiFile::GC, 0600};
     ZuCheckRT(output);
@@ -265,7 +265,7 @@ static void malformedFile()
   ZtlsAge::Recipient recipient = ZtlsAge::X25519Recipient{publicKey};
   ZtlsAge::Identity identity = ZtlsAge::X25519Identity{seed};
   Bytes plain, cipher, recovered;
-  plain.length((64 << 10) + 17);
+  plain.length((64<<10) + 17);
   recovered.length(plain.length());
   for (unsigned i = 0, n = plain.length(); i < n; ++i)
     plain[i] = uint8_t(i * 29);
@@ -292,7 +292,7 @@ static void malformedFile()
       break;
     }
   }
-  ZuCheckRT(payload && payload + 16 + (64 << 10) + 16 < cipher.length());
+  ZuCheckRT(payload && payload + 16 + (64<<10) + 16 < cipher.length());
   struct Case {
     size_t length;
     size_t change;
@@ -304,7 +304,7 @@ static void malformedFile()
     {cipher.length(), 0, 'X', false},
     {payload, payload - 2, '!', false},
     {payload + 15, 0, 0, false},
-    {payload + 16 + (64 << 10) + 16, 0, 0, true},
+    {payload + 16 + (64<<10) + 16, 0, 0, true},
     {cipher.length() - 1, 0, 0, true},
     {cipher.length(), cipher.length() - 1,
       uint8_t(cipher[cipher.length() - 1] ^ 1), true}
@@ -323,7 +323,7 @@ static void malformedFile()
       .template is<ZeException>());
     if (test.clearsChunk) {
       bool cleared = true;
-      for (unsigned i = 0; i < (64 << 10); ++i)
+      for (unsigned i = 0; i < (64<<10); ++i)
         cleared &= !recovered[i];
       ZuCheckRT(cleared);
     }
