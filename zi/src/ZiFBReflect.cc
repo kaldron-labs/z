@@ -13,15 +13,25 @@ namespace ZiFB::Reflect {
 
 ZtEnumImplNS(BaseType);
 ZfStructImpl(Type);
+ZfStructImpl(Type, FB);
 ZfStructImpl(KeyValue);
+ZfStructImpl(KeyValue, FB);
 ZfStructImpl(EnumVal);
+ZfStructImpl(EnumVal, FB);
 ZfStructImpl(Enum);
+ZfStructImpl(Enum, FB);
 ZfStructImpl(Field);
+ZfStructImpl(Field, FB);
 ZfStructImpl(Object);
+ZfStructImpl(Object, FB);
 ZfStructImpl(RPCCall);
+ZfStructImpl(RPCCall, FB);
 ZfStructImpl(Service);
+ZfStructImpl(Service, FB);
 ZfStructImpl(SchemaFile);
+ZfStructImpl(SchemaFile, FB);
 ZfStructImpl(Schema);
+ZfStructImpl(Schema, FB);
 
 } // ZiFB::Reflect
 

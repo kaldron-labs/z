@@ -33,11 +33,12 @@
 namespace Bench {
 
 struct Row { uint64_t seq; ZuBSpan data; };
-ZfStruct(, (Row, JSON),
+ZfStruct(, (Row, FB, JSON),
   (seq,		(Ctor<0>, Deflt<0>),	UInt64),
   (data,	(Ctor<1>),		Bytes));
 ZfStructImpl(Row);
-ZiFB::Table<"bench.Row"> ZiFBType(Row *);
+ZfStructImpl(Row, FB);
+ZiFB::AsTable<"bench.Row"> ZiFB_Fmt(Row *);
 
 using Text = ZtString<ZtStringHeapID<"zffbiobench.Text">>;
 using Numbers = ZtArray<int64_t, ZtArrayHeapID<"zffbiobench.Numbers">>;
@@ -50,7 +51,7 @@ struct Wide {
   int32_t qty;
   bool active;
 };
-ZfStruct(, (Wide, JSON),
+ZfStruct(, (Wide, FB, JSON),
   (seq,		(Ctor<0>, Deflt<0>),	UInt64),
   (data,	(Ctor<1>),		Bytes),
   (label,	(Ctor<2>),		String),
@@ -59,28 +60,29 @@ ZfStruct(, (Wide, JSON),
   (qty,		(Ctor<5>, Deflt<0>),	Int32),
   (active,	(Ctor<6>),		Bool));
 ZfStructImpl(Wide);
-ZiFB::Table<"bench.Wide"> ZiFBType(Wide *);
+ZfStructImpl(Wide, FB);
+ZiFB::AsTable<"bench.Wide"> ZiFB_Fmt(Wide *);
 
 struct Point { int64_t x, y; };
-ZfStruct(, Point,
+ZfStruct(, (Point, FB),
   (x,,	Int64),
   (y,,	Int64));
-ZiFB::Inline<"bench.Point"> ZiFBType(Point *);
+ZiFB::AsStruct<"bench.Point"> ZiFB_Fmt(Point *);
 struct Child { uint64_t value; };
-ZfStruct(, Child, (value, (Deflt<0>), UInt64));
-ZiFB::Table<"bench.Child"> ZiFBType(Child *);
+ZfStruct(, (Child, FB), (value, (Deflt<0>), UInt64));
+ZiFB::AsTable<"bench.Child"> ZiFB_Fmt(Child *);
 struct Vectors {
   uint64_t seq;
   ZuBSpan data;
   ZuSpan<const Point> points;
   ZuSpan<const Child *> children;
 };
-ZfStruct(, Vectors,
+ZfStruct(, (Vectors, FB),
   (seq,		(Deflt<0>),	UInt64),
   (data,,			Bytes),
   (points,,			UDT),
   (children,,			UDT));
-ZiFB::Table<"bench.Vectors"> ZiFBType(Vectors *);
+ZiFB::AsTable<"bench.Vectors"> ZiFB_Fmt(Vectors *);
 
 // Row/Wide borrowed views need canonical adapters. Preserve the old
 // declaration-order emission and mapped-vector access, without retaining the
@@ -211,7 +213,7 @@ struct Native {
   using Builder = ZiFB::IOBuilder<>;
   template <typename O>
   static void save(Builder &b, const O &row) {
-    b.finish(ZiFB::saveObject(b, row));
+    b.finish(ZiFB::save(b, row));
   }
   static uint64_t read(ZuBSpan bytes) {
     return ZiFB::root(bytes).scalar<uint64_t>(0, 0);
@@ -241,7 +243,7 @@ struct Schemas {
   ZiFB::Reflect::SchemaView view, canonicalView;
   ZiFB::Reflect::FieldView field;
   // Fixed by the benchmark schema, in native declaration order.
-  ZuArray<Field, ZiFB::Meta<O>::N> fields;
+  ZuArray<Field, ZiFB::As<O>::template Handler<O>::N> fields;
 
   Schemas() {
     const char *decl;
@@ -260,7 +262,7 @@ struct Schemas {
       canonical.builder_.GetBufferPointer(), canonical.builder_.GetSize()});
     field = ZiFB::Reflect::field(ZiFB::Reflect::rootObject(view), ZuCSpan{"seq"});
     ZuUnroll::all<ZuFields<O>>([this]<typename F>() {
-      constexpr auto name = ZiFB::Meta<O>::template fieldName<F>();
+      constexpr auto name = ZuFieldProp::FB::name<F>();
       auto nativeField = ZiFB::Reflect::field(ZiFB::Reflect::rootObject(view), name.cspan());
       fields.push(Field{schema->root_table()->fields()->LookupByKey(name.data()),
 	nativeField, ZiFB::Reflect::alignment(nativeField)});
@@ -285,7 +287,7 @@ void write(typename Codec::Builder &b, const O &row, const Schemas<O> &schema)
       auto &&value = F::get(row);
       if constexpr (Native) {
 	auto align = schema.fields[I].align;
-	offsets[I] = ZiFB::saveValue<W, ZuFacet::Core, ZfFieldFilter::All>(
+	offsets[I] = ZiFB::saveValue<W, ZuFacet::FB, ZfFieldFilter::All>(
 	  b, value, (align > ZiFB::valueAlign<W>() ? align : ZiFB::valueAlign<W>()));
       } else if constexpr (W::Kind == ZiFB::ValueKind::String)
 	offsets[I] = b.CreateString(value.data(), value.length()).o;
@@ -672,8 +674,12 @@ void transmit(ZuBSpan payload, unsigned count, unsigned rounds) {
 int main(int argc, char **argv)
 {
 #ifndef NDEBUG
-  std::cerr << "Performance measurements require a release build\n";
-  return 1;
+  if (!getenv("ZIFB_BENCH_CURRENT")) {
+    std::cerr << "Release comparison requires NDEBUG; set ZIFB_BENCH_CURRENT "
+      "for a before/after comparison in the current configuration\n";
+    return 1;
+  }
+  std::cout << "# current configuration comparison (debug)\n";
 #endif
   if (argc != 4 && argc != 5) {
     std::cerr << "Usage: zifbiobench COUNT BYTES ROUNDS "

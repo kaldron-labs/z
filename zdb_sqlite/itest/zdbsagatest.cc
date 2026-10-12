@@ -132,9 +132,9 @@ struct LiveSaga : public ZdbSagaBase<Context> {
   }
 };
 
-ZfStruct(, LiveSaga,
+ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::Table<"zdbtest.fbs.LiveSaga"> ZiFBType(LiveSaga *);
+ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
 
 struct BatchSaga : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -220,10 +220,10 @@ struct BatchSaga : public ZdbSagaBase<Context> {
     return {};
   }
 };
-ZfStruct(, BatchSaga,
+ZfStruct(, (BatchSaga, FB),
   (ids,		(Ctor<0>),	UInt64Vec),
   (failAt,	(Ctor<1>),	UInt32));
-ZiFB::Table<"zdbtest.fbs.BatchSaga"> ZiFBType(BatchSaga *);
+ZiFB::AsTable<"zdbtest.fbs.BatchSaga"> ZiFB_Fmt(BatchSaga *);
 
 struct SagaCatalog {
   using List = ZuTypeList<LiveSaga, BatchSaga>;
@@ -605,7 +605,7 @@ static bool write(Zdb_::OpenData &state, ZuCSpan id, int vn, int qty)
   Order row{"NS", 1, "NS", "probe", 0, zdbtest::Side::Buy, {100}, {qty}};
   Builder fbb{Table<Order>::allocBuf()};
   auto nested = fbb.startNested();
-  auto data = fbb.endNested(nested, ZiFB::saveObject(fbb, row));
+  auto data = fbb.endNested(nested, ZiFB::save(fbb, row));
   fbb.finish(saveMsg(fbb, saveRecord(fbb, id, un, sn, vn, 0, data),
     Msg::Tag::Replication));
   bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveHdr(fbb)](auto wake) mutable {
@@ -624,7 +624,7 @@ static int read(Zdb_::StoreTbl *table)
   using zdbtest::Order;
   Table<Order>::Key<0> key{"NS", 1};
   Builder fbb{Table<Order>::allocBuf()};
-  fbb.finish(ZiFB::saveObject(fbb, key));
+  fbb.finish(ZiFB::save(fbb, key));
   return ZmBlock<int>{}([table, buf = fbb.buf()](auto wake) mutable {
     table->find(0, ZuMv(buf), [wake = ZuMv(wake)](RowResult result) mutable {
       if (result.is<void>()) { wake(-1); return; }

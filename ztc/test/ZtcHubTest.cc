@@ -56,7 +56,7 @@ static void protocol()
       bool subscribe, uint64_t generation) {
     Ztc::Builder builder{new ZiIOBufAlloc<>()};
     auto nested = builder.startNested();
-    auto request = ZiFB::saveObject(builder, Ztc::Request{
+    auto request = ZiFB::save(builder, Ztc::Request{
       .seqNo = 9, .interval = 1000, .group = uint8_t(group),
       .subscribe = subscribe});
     auto bytes = builder.finish(Ztc::saveMsg(builder, nested,
@@ -75,7 +75,7 @@ static void protocol()
   auto app = [](ZuCSpan deviceID, unsigned group, ZuCSpan filter) {
     Ztc::Builder builder{new ZiIOBufAlloc<>()};
     auto nested = builder.startNested();
-    auto request = ZiFB::saveObject(builder, Ztc::Request{
+    auto request = ZiFB::save(builder, Ztc::Request{
       .filter = Ztc::RequestFilter{filter}, .seqNo = 0,
       .group = uint8_t(group), .subscribe = true});
     auto bytes = builder.finish(Ztc::saveMsg(builder, nested,
@@ -90,18 +90,20 @@ static void protocol()
 
   Ztc::Builder builder{new ZiIOBufAlloc<>()};
   auto nested = builder.startNested();
-  auto request = ZiFB::saveObject(builder, Ztc::Request{
+  auto request = ZiFB::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = 1000,
     .group = Ztc::Group::App, .subscribe = true});
+  using PayloadH = ZiFB::As<Ztc::Payload>::Handler<Ztc::Payload>;
+  using MsgH = ZiFB::As<Ztc::Msg>::Handler<Ztc::Msg>;
   auto payload = builder.startTable();
-  ZiFB::fieldUnion<Ztc::ZfField(Payload, body)>(builder, payload,
+  PayloadH::fieldUnion<Ztc::ZfField(Payload, body)>(builder, payload,
     ZiFB::UnionOffset<Ztc::BodyValue>{request, Ztc::Body::Request});
   auto data = builder.endNested(nested, builder.endTable(payload));
   auto empty = builder.string("");
   auto table = builder.startTable();
-  ZiFB::fieldOffset<Ztc::ZfField(Msg, data)>(builder, table, data);
-  ZiFB::field<Ztc::ZfField(Msg, subID)>(builder, table, uint64_t(7));
-  ZiFB::fieldOffset<Ztc::ZfField(Msg, deviceID)>(builder, table, empty);
+  MsgH::fieldOffset<Ztc::ZfField(Msg, data)>(builder, table, data);
+  MsgH::field<Ztc::ZfField(Msg, subID)>(builder, table, uint64_t(7));
+  MsgH::fieldOffset<Ztc::ZfField(Msg, deviceID)>(builder, table, empty);
   auto bytes = builder.finish(builder.endTable(table));
   auto msg = Ztc::msg(bytes);
   ZuCheck(msg && msg.has<Ztc::ZfField(Msg, deviceID)>());
@@ -125,24 +127,24 @@ static void messages()
       msg.template get<Ztc::ZfField(Msg, deviceID)>() == "device-1";
   };
   ZuCheck(verify([](auto &builder) {
-    return ZiFB::saveObject(builder, Ztc::Ack{ZuID{"app"}, 9, 1000});
+    return ZiFB::save(builder, Ztc::Ack{ZuID{"app"}, 9, 1000});
   }, Ztc::Body::Ack));
   ZuCheck(!verify([](auto &builder) {
-    return ZiFB::saveObject(builder, Ztc::Ack{ZuID{"app"}, 9, 1000, 255});
+    return ZiFB::save(builder, Ztc::Ack{ZuID{"app"}, 9, 1000, 255});
   }, Ztc::Body::Ack));
   ZuCheck(verify([](auto &builder) {
     auto id = builder.string("app");
     Ztc::AppTelemetry value;
-    auto valueOffset = ZiFB::saveObject(builder, value);
+    auto valueOffset = ZiFB::save(builder, value);
     return Ztc::saveTelemetry(
       builder, id, 9, Ztc::TelemetryBody::AppTelemetry,
       valueOffset);
   }, Ztc::Body::Telemetry));
   ZuCheck(verify([](auto &builder) {
-    return ZiFB::saveObject(builder, Ztc::EOS{ZuID{"app"}, 9});
+    return ZiFB::save(builder, Ztc::EOS{ZuID{"app"}, 9});
   }, Ztc::Body::EOS));
   ZuCheck(verify([](auto &builder) {
-    return ZiFB::saveObject(builder,
+    return ZiFB::save(builder,
       Ztc::Error{Ztc::ErrorMessage{"failed"}, ZuID{"app"}, 9, 1});
   }, Ztc::Body::Error));
 }
@@ -156,7 +158,7 @@ static void payloadCopy()
     Ztc::Builder source{new ZiIOBufAlloc<>()};
     auto nested = source.startNested();
     auto id = source.string("publisher");
-    auto value = ZiFB::saveObject(source, Ztc::AppTelemetry{});
+    auto value = ZiFB::save(source, Ztc::AppTelemetry{});
     auto telemetry = Ztc::saveTelemetry<true>(source, id, 0,
       Ztc::TelemetryBody::AppTelemetry, value);
     auto original = source.finish(Ztc::saveMsg(source, nested,
@@ -294,7 +296,7 @@ static bool app(Ztc::Hubd &hub, uint64_t agent, uint64_t generation,
   auto id = builder.string(publisher);
   Ztc::AppTelemetry value;
   value.version = version;
-  auto app_ = ZiFB::saveObject(builder, value);
+  auto app_ = ZiFB::save(builder, value);
   auto telemetry = Ztc::saveTelemetry(builder, id, seqNo,
     Ztc::TelemetryBody::AppTelemetry, app_);
   auto bytes = builder.finish(Ztc::saveMsg(builder, nested,

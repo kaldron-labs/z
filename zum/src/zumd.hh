@@ -69,24 +69,24 @@ ZtEnumNS(ZumAPI, EligibilityMode, int8_t, ClaimValues, MappedRole);
 ZtEnumNS(ZumAPI, ConsentPolicy, int8_t, Explicit, Preauthorized);
 ZtEnumNS(ZumAPI, RequestStatus, int8_t, Pending, Complete);
 
-namespace State { ZiFB::Enum<"Zum.fbs.State"> ZiFBType(Map *); }
-namespace ClientGrant { ZiFB::Enum<"Zum.fbs.ClientGrant"> ZiFBType(Map *); }
-namespace ClientProfile { ZiFB::Enum<"Zum.fbs.ClientProfile"> ZiFBType(Map *); }
-namespace ClientType { ZiFB::Enum<"Zum.fbs.ClientType"> ZiFBType(Map *); }
-namespace GrantKind { ZiFB::Enum<"Zum.fbs.GrantKind"> ZiFBType(Map *); }
-namespace GrantPurpose { ZiFB::Enum<"Zum.fbs.GrantPurpose"> ZiFBType(Map *); }
-namespace AuditOutcome { ZiFB::Enum<"Zum.fbs.AuditOutcome"> ZiFBType(Map *); }
-namespace AuditEvent { ZiFB::Enum<"Zum.fbs.AuditEvent"> ZiFBType(Map *); }
-namespace RefreshMatch { ZiFB::Enum<"Zum.fbs.RefreshMatch"> ZiFBType(Map *); }
-namespace RefreshRotate { ZiFB::Enum<"Zum.fbs.RefreshRotate"> ZiFBType(Map *); }
-namespace BootstrapPhase { ZiFB::Enum<"Zum.fbs.BootstrapPhase"> ZiFBType(Map *); }
-namespace UserSource { ZiFB::Enum<"Zum.fbs.UserSource"> ZiFBType(Map *); }
-namespace Origin { ZiFB::Enum<"Zum.fbs.Origin"> ZiFBType(Map *); }
-namespace ActorKind { ZiFB::Enum<"Zum.fbs.ActorKind"> ZiFBType(Map *); }
-namespace ClaimSource { ZiFB::Enum<"Zum.fbs.ClaimSource"> ZiFBType(Map *); }
-namespace EligibilityMode { ZiFB::Enum<"Zum.fbs.EligibilityMode"> ZiFBType(Map *); }
-namespace ConsentPolicy { ZiFB::Enum<"Zum.fbs.ConsentPolicy"> ZiFBType(Map *); }
-namespace RequestStatus { ZiFB::Enum<"Zum.fbs.RequestStatus"> ZiFBType(Map *); }
+namespace State { ZiFB::AsEnum<"Zum.fbs.State"> ZiFB_Fmt(Map *); }
+namespace ClientGrant { ZiFB::AsEnum<"Zum.fbs.ClientGrant"> ZiFB_Fmt(Map *); }
+namespace ClientProfile { ZiFB::AsEnum<"Zum.fbs.ClientProfile"> ZiFB_Fmt(Map *); }
+namespace ClientType { ZiFB::AsEnum<"Zum.fbs.ClientType"> ZiFB_Fmt(Map *); }
+namespace GrantKind { ZiFB::AsEnum<"Zum.fbs.GrantKind"> ZiFB_Fmt(Map *); }
+namespace GrantPurpose { ZiFB::AsEnum<"Zum.fbs.GrantPurpose"> ZiFB_Fmt(Map *); }
+namespace AuditOutcome { ZiFB::AsEnum<"Zum.fbs.AuditOutcome"> ZiFB_Fmt(Map *); }
+namespace AuditEvent { ZiFB::AsEnum<"Zum.fbs.AuditEvent"> ZiFB_Fmt(Map *); }
+namespace RefreshMatch { ZiFB::AsEnum<"Zum.fbs.RefreshMatch"> ZiFB_Fmt(Map *); }
+namespace RefreshRotate { ZiFB::AsEnum<"Zum.fbs.RefreshRotate"> ZiFB_Fmt(Map *); }
+namespace BootstrapPhase { ZiFB::AsEnum<"Zum.fbs.BootstrapPhase"> ZiFB_Fmt(Map *); }
+namespace UserSource { ZiFB::AsEnum<"Zum.fbs.UserSource"> ZiFB_Fmt(Map *); }
+namespace Origin { ZiFB::AsEnum<"Zum.fbs.Origin"> ZiFB_Fmt(Map *); }
+namespace ActorKind { ZiFB::AsEnum<"Zum.fbs.ActorKind"> ZiFB_Fmt(Map *); }
+namespace ClaimSource { ZiFB::AsEnum<"Zum.fbs.ClaimSource"> ZiFB_Fmt(Map *); }
+namespace EligibilityMode { ZiFB::AsEnum<"Zum.fbs.EligibilityMode"> ZiFB_Fmt(Map *); }
+namespace ConsentPolicy { ZiFB::AsEnum<"Zum.fbs.ConsentPolicy"> ZiFB_Fmt(Map *); }
+namespace RequestStatus { ZiFB::AsEnum<"Zum.fbs.RequestStatus"> ZiFB_Fmt(Map *); }
 
 namespace CoreRole {
   enum : uint64_t { Superuser = 1, CatalogPublisher = 2 };
@@ -121,7 +121,7 @@ struct Issuer {
 
   friend ZfStructPrint ZuPrintType(Issuer *);
 };
-ZfStruct(ZumAPI, (Issuer, JSON),
+ZfStruct(ZumAPI, (Issuer, FB, JSON),
   (id,			(Ctor<0>, Keys<0>),					String),
   (schemaVersion,	(JSON::ID<"schema_version">, Ctor<1>, Mutable,
     Deflt<0>),									UInt32),
@@ -135,7 +135,7 @@ ZfStruct(ZumAPI, (Issuer, JSON),
   (keyCheck,		(JSON::ID<"key_check">, Ctor<6>, Mutable, Hidden),	Bytes),
   (pendingKeyCheck,	(JSON::ID<"pending_key_check">, Ctor<7>, Mutable,
     Hidden),									Bytes));
-ZiFB::Table<"Zum.fbs.Issuer"> ZiFBType(Issuer *);
+ZiFB::AsTable<"Zum.fbs.Issuer"> ZiFB_Fmt(Issuer *);
 
 struct App {
   AppID		id = 0;
@@ -154,7 +154,7 @@ struct App {
 
   friend ZfStructPrint ZuPrintType(App *);
 };
-ZfStruct(ZumAPI, (App, JSON),
+ZfStruct(ZumAPI, (App, FB, JSON),
   (id,			(Ctor<0>, Keys<0>, Descend<0>, JSON::String<>),	UInt64),
   (name,		(Ctor<1>, Keys<1>),				String),
   (label,		(Ctor<2>, Mutable),				String),
@@ -172,7 +172,7 @@ ZfStruct(ZumAPI, (App, JSON),
   (updated,		(Ctor<10>, Mutable),				Int64),
   (owner,		(Ctor<11>, Mutable, Hidden),			UInt128),
   (audience,		(Ctor<12>),					String));
-ZiFB::Table<"Zum.fbs.App"> ZiFBType(App *);
+ZiFB::AsTable<"Zum.fbs.App"> ZiFB_Fmt(App *);
 
 struct Assignment {
   AppID		appID = 0;
@@ -187,7 +187,7 @@ struct Assignment {
 
   friend ZfStructPrint ZuPrintType(Assignment *);
 };
-ZfStruct(ZumAPI, (Assignment, JSON),
+ZfStruct(ZumAPI, (Assignment, FB, JSON),
   (appID,	(JSON::ID<"app_id">, Ctor<0>, Keys<0>,
     JSON::String<>),						UInt64),
   (userID,	(JSON::ID<"user_id">, Ctor<1>, (Keys<0, 1>), Group<1>,
@@ -201,7 +201,7 @@ ZfStruct(ZumAPI, (Assignment, JSON),
   (created,	(Ctor<6>),					Int64),
   (updated,	(Ctor<7>, Mutable),				Int64),
   (owner,	(Ctor<8>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.Assignment"> ZiFBType(Assignment *);
+ZiFB::AsTable<"Zum.fbs.Assignment"> ZiFB_Fmt(Assignment *);
 
 struct User {
   UserID	id = 0;
@@ -219,7 +219,7 @@ struct User {
 
   friend ZfStructPrint ZuPrintType(User *);
 };
-ZfStruct(ZumAPI, (User, JSON),
+ZfStruct(ZumAPI, (User, FB, JSON),
   (id,		(Ctor<0>, Keys<0>, Descend<0>, JSON::String<>),	UInt64),
   (source,	(Ctor<1>, Keys<2>, Enum<UserSource::Map>),	Int8),
   (name,	(Ctor<2>, Keys<2>, Mutable),			String),
@@ -233,7 +233,7 @@ ZfStruct(ZumAPI, (User, JSON),
   (authVersion,	(JSON::ID<"auth_version">, Ctor<10>, Mutable, JSON::String<>,
     Deflt<1>),							UInt64),
   (version,	(Ctor<11>, Mutable, JSON::String<>, Deflt<1>),	UInt64));
-ZiFB::Table<"Zum.fbs.User"> ZiFBType(User *);
+ZiFB::AsTable<"Zum.fbs.User"> ZiFB_Fmt(User *);
 
 struct Cred {
   Bytes		id;
@@ -252,7 +252,7 @@ struct Cred {
 
   friend ZfStructPrint ZuPrintType(Cred *);
 };
-ZfStruct(ZumAPI, (Cred, JSON),
+ZfStruct(ZumAPI, (Cred, FB, JSON),
   (id,			(Ctor<0>, Keys<0>, JSON::Base64URL),			Bytes),
   (userID,		(JSON::ID<"user_id">, Ctor<1>, Keys<1>, Group<1>,
     JSON::String<>),								UInt64),
@@ -269,7 +269,7 @@ ZfStruct(ZumAPI, (Cred, JSON),
   (userVersion,		(JSON::ID<"user_version">, Ctor<11>, JSON::String<>,
     Deflt<1>),									UInt64),
   (version,		(Ctor<12>, Mutable, JSON::String<>, Deflt<1>),		UInt64));
-ZiFB::Table<"Zum.fbs.Cred"> ZiFBType(Cred *);
+ZiFB::AsTable<"Zum.fbs.Cred"> ZiFB_Fmt(Cred *);
 
 struct Action {
   AppID		appID = 0;
@@ -287,7 +287,7 @@ struct Action {
 
   friend ZfStructPrint ZuPrintType(Action *);
 };
-ZfStruct(ZumAPI, (Action, JSON),
+ZfStruct(ZumAPI, (Action, FB, JSON),
   (appID,		(JSON::ID<"app_id">, Ctor<0>, (Keys<0, 1>),
     JSON::String<>),							UInt64),
   (id,			(Ctor<1>, Keys<0>),				UInt32),
@@ -302,7 +302,7 @@ ZfStruct(ZumAPI, (Action, JSON),
   (created,		(Ctor<9>),					Int64),
   (updated,		(Ctor<10>, Mutable),				Int64),
   (owner,		(Ctor<11>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.Action"> ZiFBType(Action *);
+ZiFB::AsTable<"Zum.fbs.Action"> ZiFB_Fmt(Action *);
 
 struct Role {
   AppID		appID = 0;
@@ -321,7 +321,7 @@ struct Role {
 
   friend ZfStructPrint ZuPrintType(Role *);
 };
-ZfStruct(ZumAPI, (Role, JSON),
+ZfStruct(ZumAPI, (Role, FB, JSON),
   (appID,		(JSON::ID<"app_id">, Ctor<0>, (Keys<0, 1>),
     JSON::String<>),							UInt64),
   (id,			(Ctor<1>, Keys<0>, JSON::String<>),		UInt64),
@@ -337,7 +337,7 @@ ZfStruct(ZumAPI, (Role, JSON),
   (created,		(Ctor<10>),					Int64),
   (updated,		(Ctor<11>, Mutable),				Int64),
   (owner,		(Ctor<12>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.Role"> ZiFBType(Role *);
+ZiFB::AsTable<"Zum.fbs.Role"> ZiFB_Fmt(Role *);
 
 struct Client {
   String	id;
@@ -360,7 +360,7 @@ struct Client {
 
   friend ZfStructPrint ZuPrintType(Client *);
 };
-ZfStruct(ZumAPI, (Client, JSON),
+ZfStruct(ZumAPI, (Client, FB, JSON),
   (id,				(Ctor<0>, Keys<0>),				String),
   (appID,			(JSON::ID<"app_id">, Ctor<1>, Keys<1>, Group<1>,
     JSON::String<>),								UInt64),
@@ -386,7 +386,7 @@ ZfStruct(ZumAPI, (Client, JSON),
     Mutable, Hidden),								Bytes),
   (previousSecretExpires,	(JSON::ID<"previous_secret_expires">, Ctor<16>,
     Mutable),									Int64));
-ZiFB::Table<"Zum.fbs.Client"> ZiFBType(Client *);
+ZiFB::AsTable<"Zum.fbs.Client"> ZiFB_Fmt(Client *);
 
 struct ClientAccess {
   String	clientID;
@@ -401,7 +401,7 @@ struct ClientAccess {
 
   friend ZfStructPrint ZuPrintType(ClientAccess *);
 };
-ZfStruct(ZumAPI, (ClientAccess, JSON),
+ZfStruct(ZumAPI, (ClientAccess, FB, JSON),
   (clientID,	(JSON::ID<"client_id">, Ctor<0>, (Keys<0, 1>),
     Group<0>),							String),
   (appID,	(JSON::ID<"app_id">, Ctor<1>, (Keys<0, 1>), Group<1>,
@@ -415,7 +415,7 @@ ZfStruct(ZumAPI, (ClientAccess, JSON),
   (created,	(Ctor<6>),					Int64),
   (updated,	(Ctor<7>, Mutable),				Int64),
   (owner,	(Ctor<8>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.ClientAccess"> ZiFBType(ClientAccess *);
+ZiFB::AsTable<"Zum.fbs.ClientAccess"> ZiFB_Fmt(ClientAccess *);
 
 struct AdminAccess {
   ActorKind::T	actorKind = ActorKind::User;
@@ -431,7 +431,7 @@ struct AdminAccess {
 
   friend ZfStructPrint ZuPrintType(AdminAccess *);
 };
-ZfStruct(ZumAPI, (AdminAccess, JSON),
+ZfStruct(ZumAPI, (AdminAccess, FB, JSON),
   (actorKind,		(JSON::ID<"actor_kind">, Ctor<0>, (Keys<0, 1>), Group<1>,
     Enum<ActorKind::Map>),						Int8),
   (actorID,		(JSON::ID<"actor_id">, Ctor<1>, (Keys<0, 1>),
@@ -446,7 +446,7 @@ ZfStruct(ZumAPI, (AdminAccess, JSON),
   (created,		(Ctor<7>),					Int64),
   (updated,		(Ctor<8>, Mutable),				Int64),
   (owner,		(Ctor<9>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.AdminAccess"> ZiFBType(AdminAccess *);
+ZiFB::AsTable<"Zum.fbs.AdminAccess"> ZiFB_Fmt(AdminAccess *);
 
 struct Provider {
   ProviderID	id = 0;
@@ -465,7 +465,7 @@ struct Provider {
 
   friend ZfStructPrint ZuPrintType(Provider *);
 };
-ZfStruct(ZumAPI, (Provider, JSON),
+ZfStruct(ZumAPI, (Provider, FB, JSON),
   (id,			(Ctor<0>, Keys<0>, Descend<0>, JSON::String<>),		UInt64),
   (name,		(Ctor<1>, Keys<1>),					String),
   (issuer,		(Ctor<2>, Mutable),					String),
@@ -480,7 +480,7 @@ ZfStruct(ZumAPI, (Provider, JSON),
   (created,		(Ctor<10>),						Int64),
   (updated,		(Ctor<11>, Mutable),					Int64),
   (owner,		(Ctor<12>, Mutable, Hidden),				UInt128));
-ZiFB::Table<"Zum.fbs.Provider"> ZiFBType(Provider *);
+ZiFB::AsTable<"Zum.fbs.Provider"> ZiFB_Fmt(Provider *);
 
 struct AuthPolicy {
   AppID		appID = 0;
@@ -502,7 +502,7 @@ struct AuthPolicy {
 
   friend ZfStructPrint ZuPrintType(AuthPolicy *);
 };
-ZfStruct(ZumAPI, (AuthPolicy, JSON),
+ZfStruct(ZumAPI, (AuthPolicy, FB, JSON),
   (appID,		(JSON::ID<"app_id">, Ctor<0>, Keys<0>,
     JSON::String<>),								UInt64),
   (providerID,		(JSON::ID<"provider_id">, Ctor<1>, Mutable,
@@ -524,7 +524,7 @@ ZfStruct(ZumAPI, (AuthPolicy, JSON),
   (created,		(Ctor<13>),						Int64),
   (updated,		(Ctor<14>, Mutable),					Int64),
   (owner,		(Ctor<15>, Mutable, Hidden),				UInt128));
-ZiFB::Table<"Zum.fbs.AuthPolicy"> ZiFBType(AuthPolicy *);
+ZiFB::AsTable<"Zum.fbs.AuthPolicy"> ZiFB_Fmt(AuthPolicy *);
 
 struct ExtIdentity {
   ProviderID	providerID = 0;
@@ -538,7 +538,7 @@ struct ExtIdentity {
 
   friend ZfStructPrint ZuPrintType(ExtIdentity *);
 };
-ZfStruct(ZumAPI, (ExtIdentity, JSON),
+ZfStruct(ZumAPI, (ExtIdentity, FB, JSON),
   (providerID,	(JSON::ID<"provider_id">, Ctor<0>, Keys<0>,
     JSON::String<>),						UInt64),
   (issuer,	(Ctor<1>, Keys<0>),				String),
@@ -549,7 +549,7 @@ ZfStruct(ZumAPI, (ExtIdentity, JSON),
   (created,	(Ctor<5>),					Int64),
   (updated,	(Ctor<6>, Mutable),				Int64),
   (owner,	(Ctor<7>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.ExtIdentity"> ZiFBType(ExtIdentity *);
+ZiFB::AsTable<"Zum.fbs.ExtIdentity"> ZiFB_Fmt(ExtIdentity *);
 
 struct RoleMap {
   AppID		appID = 0;
@@ -564,7 +564,7 @@ struct RoleMap {
 
   friend ZfStructPrint ZuPrintType(RoleMap *);
 };
-ZfStruct(ZumAPI, (RoleMap, JSON),
+ZfStruct(ZumAPI, (RoleMap, FB, JSON),
   (appID,	(JSON::ID<"app_id">, Ctor<0>, (Keys<0, 1>), (Group<0, 1>),
     JSON::String<>),						UInt64),
   (providerID,	(JSON::ID<"provider_id">, Ctor<1>, (Keys<0, 1>), Group<0>,
@@ -577,7 +577,7 @@ ZfStruct(ZumAPI, (RoleMap, JSON),
   (created,	(Ctor<6>),					Int64),
   (updated,	(Ctor<7>, Mutable),				Int64),
   (owner,	(Ctor<8>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.RoleMap"> ZiFBType(RoleMap *);
+ZiFB::AsTable<"Zum.fbs.RoleMap"> ZiFB_Fmt(RoleMap *);
 
 struct Evidence {
   AppID		appID = 0;
@@ -598,7 +598,7 @@ struct Evidence {
 
   friend ZfStructPrint ZuPrintType(Evidence *);
 };
-ZfStruct(ZumAPI, (Evidence, JSON),
+ZfStruct(ZumAPI, (Evidence, FB, JSON),
   (appID,			(JSON::ID<"app_id">, Ctor<0>, (Keys<0, 2>), Group<2>,
     JSON::String<>),								UInt64),
   (userID,			(JSON::ID<"user_id">, Ctor<1>, Keys<0>,
@@ -618,7 +618,7 @@ ZfStruct(ZumAPI, (Evidence, JSON),
   (created,			(Ctor<11>),					Int64),
   (updated,			(Ctor<12>, Mutable),				Int64),
   (owner,			(Ctor<13>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.Evidence"> ZiFBType(Evidence *);
+ZiFB::AsTable<"Zum.fbs.Evidence"> ZiFB_Fmt(Evidence *);
 
 struct Session {
   Bytes		digest;
@@ -638,7 +638,7 @@ struct Session {
 
   friend ZfStructPrint ZuPrintType(Session *);
 };
-ZfStruct(ZumAPI, (Session, JSON),
+ZfStruct(ZumAPI, (Session, FB, JSON),
   (digest,		(Ctor<0>, (Keys<0, 1>), Hidden),			Bytes),
   (userID,		(JSON::ID<"user_id">, Ctor<1>, Keys<1>, Group<1>,
     JSON::String<>),								UInt64),
@@ -656,7 +656,7 @@ ZfStruct(ZumAPI, (Session, JSON),
   (created,		(Ctor<11>),						Int64),
   (updated,		(Ctor<12>, Mutable),					Int64),
   (owner,		(Ctor<13>, Mutable, Hidden),				UInt128));
-ZiFB::Table<"Zum.fbs.Session"> ZiFBType(Session *);
+ZiFB::AsTable<"Zum.fbs.Session"> ZiFB_Fmt(Session *);
 
 struct Consent {
   UserID	userID = 0;
@@ -671,7 +671,7 @@ struct Consent {
 
   friend ZfStructPrint ZuPrintType(Consent *);
 };
-ZfStruct(ZumAPI, (Consent, JSON),
+ZfStruct(ZumAPI, (Consent, FB, JSON),
   (userID,	(JSON::ID<"user_id">, Ctor<0>, (Keys<0, 1>), Group<1>,
     JSON::String<>),						UInt64),
   (clientID,	(JSON::ID<"client_id">, Ctor<1>, (Keys<0, 1>)),	String),
@@ -684,7 +684,7 @@ ZfStruct(ZumAPI, (Consent, JSON),
   (created,	(Ctor<6>),					Int64),
   (updated,	(Ctor<7>, Mutable),				Int64),
   (owner,	(Ctor<8>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.Consent"> ZiFBType(Consent *);
+ZiFB::AsTable<"Zum.fbs.Consent"> ZiFB_Fmt(Consent *);
 
 struct Grant {
   // All kinds: id, issuer, created, expires, kind, purpose, state, owner.
@@ -753,7 +753,7 @@ struct Grant {
 
   friend ZfStructPrint ZuPrintType(Grant *);
 };
-ZfStruct(ZumAPI, (Grant, JSON),
+ZfStruct(ZumAPI, (Grant, FB, JSON),
   (id,			(Ctor<0>, (Keys<0, 2, 3>), JSON::Base64URL),		Bytes),
   (issuer,		(Ctor<17>),						String),
   (userID,		(JSON::ID<"user_id">, Ctor<9>, Keys<2>, Group<2>, Mutable,
@@ -811,7 +811,7 @@ ZfStruct(ZumAPI, (Grant, JSON),
     Deflt<false>),								Bool),
   (scope,		(Ctor<37>, Mutable),					String),
   (nonce,		(Ctor<38>, Hidden),					String));
-ZiFB::Table<"Zum.fbs.Grant"> ZiFBType(Grant *);
+ZiFB::AsTable<"Zum.fbs.Grant"> ZiFB_Fmt(Grant *);
 
 struct Refresh {
   Bytes		id;
@@ -847,7 +847,7 @@ struct Refresh {
 
   friend ZfStructPrint ZuPrintType(Refresh *);
 };
-ZfStruct(ZumAPI, (Refresh, JSON),
+ZfStruct(ZumAPI, (Refresh, FB, JSON),
   (id,			(Ctor<0>, (Keys<0, 2, 3>), JSON::Base64URL),		Bytes),
   (issuer,		(Ctor<17>),						String),
   (userID,		(JSON::ID<"user_id">, Ctor<9>, Keys<2>, Group<2>, Mutable,
@@ -891,7 +891,7 @@ ZfStruct(ZumAPI, (Refresh, JSON),
     JSON::String<>),								UInt64),
   (version,		(Ctor<40>, Mutable, JSON::String<>, Deflt<1>),		UInt64),
   (updated,		(Ctor<41>, Mutable),					Int64));
-ZiFB::Table<"Zum.fbs.Refresh"> ZiFBType(Refresh *);
+ZiFB::AsTable<"Zum.fbs.Refresh"> ZiFB_Fmt(Refresh *);
 
 struct SignKey {
   String	id;
@@ -910,7 +910,7 @@ struct SignKey {
 
   friend ZfStructPrint ZuPrintType(SignKey *);
 };
-ZfStruct(ZumAPI, (SignKey, JSON),
+ZfStruct(ZumAPI, (SignKey, FB, JSON),
   (id,			(Ctor<0>, Keys<0>),				String),
   (issuer,		(Ctor<1>, Keys<2>, Group<2>),			String),
   (algorithm,		(Ctor<2>),					String),
@@ -926,7 +926,7 @@ ZfStruct(ZumAPI, (SignKey, JSON),
   (created,		(Ctor<10>),					Int64),
   (updated,		(Ctor<11>, Mutable),				Int64),
   (owner,		(Ctor<12>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.SignKey"> ZiFBType(SignKey *);
+ZiFB::AsTable<"Zum.fbs.SignKey"> ZiFB_Fmt(SignKey *);
 
 struct SSFRx {
   int64_t expires = 0;
@@ -940,7 +940,7 @@ struct SSFRx {
   uint128_t owner = 0;
   unsigned errors = 0;
 };
-ZfStruct(ZumAPI, SSFRx,
+ZfStruct(ZumAPI, (SSFRx, FB),
   (expires,		(Ctor<0>, Keys<2>, Mutable),	Int64),
   (appID,		(Ctor<1>, Keys<1>, Group<1>),	UInt64),
   (receiverID,		(Ctor<2>, (Keys<0, 1, 2>)),	String),
@@ -951,7 +951,7 @@ ZfStruct(ZumAPI, SSFRx,
   (updated,		(Ctor<7>, Mutable),		Int64),
   (owner,		(Ctor<8>, Mutable, Hidden),	UInt128),
   (errors,		(Ctor<9>, Mutable),		UInt32));
-ZiFB::Table<"Zum.fbs.SSFRx"> ZiFBType(SSFRx *);
+ZiFB::AsTable<"Zum.fbs.SSFRx"> ZiFB_Fmt(SSFRx *);
 
 struct SSFDelivery {
 	String	eventID;
@@ -964,7 +964,7 @@ struct SSFDelivery {
   uint64_t receiverRevision = 0;
   uint128_t owner = 0;
 };
-ZfStruct(ZumAPI, SSFDelivery,
+ZfStruct(ZumAPI, (SSFDelivery, FB),
   (eventID,		(Ctor<0>, (Keys<0, 1>)),	String),
   (receiverID,		(Ctor<1>, (Keys<0, 1>)),	String),
   (familyIssuer,	(Ctor<2>),			String),
@@ -974,7 +974,7 @@ ZfStruct(ZumAPI, SSFDelivery,
   (nextDelivery,	(Ctor<6>, Mutable),		Int64),
   (receiverRevision,	(Ctor<7>),			UInt64),
   (owner,		(Ctor<8>, Mutable, Hidden),	UInt128));
-ZiFB::Table<"Zum.fbs.SSFDelivery"> ZiFBType(SSFDelivery *);
+ZiFB::AsTable<"Zum.fbs.SSFDelivery"> ZiFB_Fmt(SSFDelivery *);
 
 // Ephemeral diagnostic event, not a database record.
 struct Audit {
@@ -1009,7 +1009,7 @@ struct IdemRequest {
 
   friend ZfStructPrint ZuPrintType(IdemRequest *);
 };
-ZfStruct(ZumAPI, (IdemRequest, JSON),
+ZfStruct(ZumAPI, (IdemRequest, FB, JSON),
   (actorKind,		(JSON::ID<"actor_kind">, Ctor<0>, Keys<0>,
     Enum<ActorKind::Map>),						Int8),
   (actorID,		(JSON::ID<"actor_id">, Ctor<1>, Keys<0>),	String),
@@ -1025,7 +1025,7 @@ ZfStruct(ZumAPI, (IdemRequest, JSON),
   (created,		(Ctor<10>),					Int64),
   (updated,		(Ctor<11>, Mutable),				Int64),
   (owner,		(Ctor<12>, Mutable, Hidden),			UInt128));
-ZiFB::Table<"Zum.fbs.IdemRequest"> ZiFBType(IdemRequest *);
+ZiFB::AsTable<"Zum.fbs.IdemRequest"> ZiFB_Fmt(IdemRequest *);
 
 ZumExtern ZtBitmap intersectActions(ZtBitmap, const ZtBitmap &);
 ZumExtern ZtBitmap effectiveActions(

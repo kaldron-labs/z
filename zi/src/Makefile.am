@@ -26,3 +26,12 @@ libZi_la_LIBADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.l
 	$(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+
+
+bin_PROGRAMS = zflatc
+zflatc_SOURCES = zflatc.cc
+zflatc_LDFLAGS = @Z_LDFLAGS@
+zflatc_LDADD = libZi.la $(top_builddir)/zf/src/libZf.la \
+	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
+	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@

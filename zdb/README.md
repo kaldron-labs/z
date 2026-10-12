@@ -115,7 +115,7 @@ is `Normal`. Cache policy does not replace backing storage or change ownership.
 
 ## Tables, rows, and shard ownership
 
-Define a row with ordinary `ZfStruct` metadata and a `ZiFB::Table` ADL tag.
+Define a row with ordinary `ZfStruct` metadata and a `ZiFB::AsTable` / `ZiFB_Fmt` ADL declaration.
 Each table generates and owns its BFBS reflection buffer during construction;
 stores consume that span without schema files or external codegen.
 

@@ -251,7 +251,7 @@ struct RoleDelete : public ZdbSagaBase<DBContext> {
 
 };
 
-ZfStruct(ZumAPI, RoleDelete,
+ZfStruct(ZumAPI, (RoleDelete, FB),
   (app,		(Ctor<0>),	UDT),
   (role,	(Ctor<1>),	UDT),
   (members,	(Ctor<2>),	BytesVec),
@@ -260,7 +260,7 @@ ZfStruct(ZumAPI, RoleDelete,
   (maps,	(Ctor<5>),	BytesVec),
   (updated,	(Ctor<6>),	Int64),
   (request,	(Ctor<7>),	UDT));
-ZiFB::Table<"Zum.fbs.RoleDelete"> ZiFBType(RoleDelete *);
+ZiFB::AsTable<"Zum.fbs.RoleDelete"> ZiFB_Fmt(RoleDelete *);
 
 } // namespace Zum
 

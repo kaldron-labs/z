@@ -51,9 +51,9 @@ struct SagaA : public ZdbSagaBase<Context> {
   ZdbSagaStep(2, payment, Delete) { return {}; }
 };
 
-ZfStruct(, SagaA,
+ZfStruct(, (SagaA, FB),
   (value, (Ctor<0>),		UInt64));
-ZiFB::Table<"zdbtest.fbs.SagaA"> ZiFBType(SagaA *);
+ZiFB::AsTable<"zdbtest.fbs.SagaA"> ZiFB_Fmt(SagaA *);
 
 struct SagaB : public ZdbSagaBase<Context> {
   using Base = ZdbSagaBase<Context>;
@@ -67,9 +67,9 @@ struct SagaB : public ZdbSagaBase<Context> {
   ZdbSagaStep(0, payment, Update) { return {}; }
 };
 
-ZfStruct(, SagaB,
+ZfStruct(, (SagaB, FB),
   (value, (Ctor<0>),		UInt32));
-ZiFB::Table<"zdbtest.fbs.SagaB"> ZiFBType(SagaB *);
+ZiFB::AsTable<"zdbtest.fbs.SagaB"> ZiFB_Fmt(SagaB *);
 
 ZdbSagaDerive(Sagas, SagaA, SagaB);
 ZdbSagaImpl(Sagas, SagaA, SagaB)
@@ -86,10 +86,10 @@ struct RepeatSaga : public ZdbSagaBase<Context> {
   ZdbSagaRepeatStep(2, payment, Delete, second) { return {}; }
   ZdbSagaStep(3, payment, Update) { return {}; }
 };
-ZfStruct(, RepeatSaga,
+ZfStruct(, (RepeatSaga, FB),
   (first,	(Ctor<0>),	UInt64),
   (second,	(Ctor<1>),	UInt64));
-ZiFB::Table<"zdbtest.fbs.RepeatSaga"> ZiFBType(RepeatSaga *);
+ZiFB::AsTable<"zdbtest.fbs.RepeatSaga"> ZiFB_Fmt(RepeatSaga *);
 ZdbSagaDerive(RepeatSagas, RepeatSaga);
 ZdbSagaImpl(RepeatSagas, RepeatSaga)
 
@@ -351,9 +351,9 @@ struct LiveSaga : public ZdbSagaBase<LiveContext> {
   }
 };
 
-ZfStruct(, LiveSaga,
+ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::Table<"zdbtest.fbs.LiveSaga"> ZiFBType(LiveSaga *);
+ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
 
 ZdbSagaDerive(LiveSagas, LiveSaga);
 ZdbSagaImpl(LiveSagas, LiveSaga)
@@ -365,9 +365,9 @@ struct ShortSaga : public ZdbSagaBase<LiveContext> {
   uint64_t orderID = 0;
   ZdbSagaStep(0, o, Insert) { return {}; }
 };
-ZfStruct(, ShortSaga,
+ZfStruct(, (ShortSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::Table<"zdbtest.fbs.ShortSaga"> ZiFBType(ShortSaga *);
+ZiFB::AsTable<"zdbtest.fbs.ShortSaga"> ZiFB_Fmt(ShortSaga *);
 
 struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   using Base = ZdbSagaBase<LiveContext>;
@@ -378,9 +378,9 @@ struct ChangedSaga : public ZdbSagaBase<LiveContext> {
   ZdbSagaStep(1, o, Delete) { return {}; }
   ZdbSagaStep(2, o, Delete) { return {}; }
 };
-ZfStruct(, ChangedSaga,
+ZfStruct(, (ChangedSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::Table<"zdbtest.fbs.ChangedSaga"> ZiFBType(ChangedSaga *);
+ZiFB::AsTable<"zdbtest.fbs.ChangedSaga"> ZiFB_Fmt(ChangedSaga *);
 
 ZdbSagaDerive(ShortCatalog, ShortSaga);
 ZdbSagaImpl(ShortCatalog, ShortSaga)
@@ -410,9 +410,9 @@ struct PayloadSaga : public ZdbSagaBase<PayloadContext> {
     return {};
   }
 };
-ZfStruct(, PayloadSaga,
+ZfStruct(, (PayloadSaga, FB),
   (data, (Ctor<0>),	Bytes));
-ZiFB::Table<"zdbtest.fbs.PayloadSaga"> ZiFBType(PayloadSaga *);
+ZiFB::AsTable<"zdbtest.fbs.PayloadSaga"> ZiFB_Fmt(PayloadSaga *);
 
 ZdbSagaDerive(PayloadCatalog, PayloadSaga);
 ZdbSagaImpl(PayloadCatalog, PayloadSaga)
@@ -431,8 +431,8 @@ struct RequiredSaga : public ZdbSagaBase<PayloadContext> {
     return {};
   }
 };
-ZfStruct(, RequiredSaga, (name, (Ctor<0>, Required), CString));
-ZiFB::Table<"zdbtest.fbs.RequiredSaga"> ZiFBType(RequiredSaga *);
+ZfStruct(, (RequiredSaga, FB), (name, (Ctor<0>, Required), CString));
+ZiFB::AsTable<"zdbtest.fbs.RequiredSaga"> ZiFB_Fmt(RequiredSaga *);
 ZdbSagaDerive(RequiredCatalog, RequiredSaga);
 ZdbSagaImpl(RequiredCatalog, RequiredSaga)
 
@@ -442,7 +442,7 @@ template <typename T>
 static T roundTrip(const T &data)
 {
   ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new Zdb_::IOBufAlloc<T>{}};
-  auto bytes = fbb.finish(ZiFB::saveObject(fbb, data));
+  auto bytes = fbb.finish(ZiFB::save(fbb, data));
   ZmAssert(ZiFB::verify<T>(bytes));
   return ZiFB::load<T>(bytes);
 }
@@ -880,7 +880,7 @@ static void collisions()
       zdbtest::Side::Buy, {100}, {1}};
     Builder fbb{Table<Order>::allocBuf()};
     auto nested = fbb.startNested();
-    auto data = fbb.endNested(nested, ZiFB::saveObject(fbb, row));
+    auto data = fbb.endNested(nested, ZiFB::save(fbb, row));
     fbb.finish(saveMsg(fbb,
       saveRecord(fbb, "collisions", un, SN{un}, 0, 0, data),
       Msg::Tag::Replication));
@@ -901,7 +901,7 @@ static void collisions()
   ZmSemaphore selected;
   Builder fbb{Table<Order>::allocBuf()};
   using GroupKey = typename SplitKey<Order, 0>::GroupKey;
-  fbb.finish(ZiFB::saveObject(fbb, GroupKey{}));
+  fbb.finish(ZiFB::save(fbb, GroupKey{}));
   table->select(true, false, false, 0, fbb.buf(), 10,
     [&unchanged, &rows, &selected](TupleResult result) {
       if (result.is<TupleData>()) {
@@ -969,7 +969,7 @@ static void valueOwnership(
   ZiFB::ArrayStorage<ZiFB::BufferAlign<O>::N> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
   auto bytes = builder.finish(
-    ZiFB::saveObject<O, ZuFacet::Core, ZfFieldFilter::All>(builder, row));
+    ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(builder, row));
   ZuCheckRT(!builder.failed());
   Zdb_::SchemaBuf schemaBuf = Zdb_::SchemaBuf(ZiFB::SchemaOut::Schema<O>::Size);
   ZiFB::saveSchema<O>(schemaBuf);
@@ -1667,7 +1667,7 @@ static bool catalogWrite(const Zdb_::OpenData &data, unsigned mode)
   for (unsigned i = 0, n = partial ? 1 : 2; i < n; ++i) {
     Builder fbb{Table<SagaTypeStep>::allocBuf()};
     auto nested = fbb.startNested();
-    auto payload = fbb.endNested(nested, ZiFB::saveObject(fbb, row));
+    auto payload = fbb.endNested(nested, ZiFB::save(fbb, row));
     fbb.finish(saveMsg(fbb,
       saveRecord(fbb, "saga_type", data.un[0] + i + 1,
 	data.sn + i + 1, i ? 0 : -1, 0, payload), Msg::Tag::Replication));

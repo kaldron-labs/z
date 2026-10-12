@@ -121,7 +121,7 @@ static Frame subscribe(ZuCSpan deviceID, uint32_t interval,
 {
   Ztc::Builder builder{new ZiIOBufAlloc<>()};
   auto nested = builder.startNested();
-  auto request = ZiFB::saveObject(builder, Ztc::Request{
+  auto request = ZiFB::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = interval,
     .group = group, .subscribe = true});
   builder.finish(Ztc::saveMsg(
@@ -133,7 +133,7 @@ static Frame ack(uint64_t seqNo)
 {
   Ztc::Builder builder{new ZiIOBufAlloc<>()};
   auto nested = builder.startNested();
-  auto value = ZiFB::saveObject(builder, Ztc::Ack{ZuID{"wire"}, seqNo, 1000});
+  auto value = ZiFB::save(builder, Ztc::Ack{ZuID{"wire"}, seqNo, 1000});
   builder.finish(Ztc::saveMsg(
     builder, nested, Ztc::Body::Ack, value));
   return finish(builder);
@@ -151,7 +151,7 @@ static Frame telemetry(uint64_t seqNo, uint32_t payload)
   Ztc::AppTelemetry value;
   value.version = "wire";
   value.role = "wire";
-  auto data = ZiFB::saveObject(builder, value);
+  auto data = ZiFB::save(builder, value);
   auto tel = Ztc::saveTelemetry(
     builder, idOffset, seqNo, Ztc::TelemetryBody::AppTelemetry,
     data);
@@ -166,7 +166,7 @@ static bool emptySnapshot(const Ztc::AppCf &cf)
   using MsgFrame = ZiIOBufAlloc<1024, 1U<<20, "Ztc.Wire.Snapshot">;
   Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
   auto nested = builder.startNested();
-  auto eos = ZiFB::saveObject(builder, Ztc::EOS{cf.id, 0});
+  auto eos = ZiFB::save(builder, Ztc::EOS{cf.id, 0});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::EOS, eos));
   auto frame = Ztc::saveHdr(builder);
   Ztc::Ring ring;
@@ -187,7 +187,7 @@ static Frame unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
 {
   Ztc::Builder builder{new ZiIOBufAlloc<>()};
   auto nested = builder.startNested();
-  auto value = ZiFB::saveObject(builder, Ztc::Request{
+  auto value = ZiFB::save(builder, Ztc::Request{
     .filter = inventory ? "*" : "", .seqNo = 0,
     .group = uint8_t(inventory ? Ztc::Group::App : Ztc::Group::Heap),
     .subscribe = false});

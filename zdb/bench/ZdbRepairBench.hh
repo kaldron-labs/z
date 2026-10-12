@@ -115,7 +115,7 @@ static auto key(const T &value)
 {
 #ifdef ZiFB_HH
   Zdb_::Builder b{Zdb_::Table<zdbtest::Order>::allocBuf(), ZiFB::BufferAlign<T>::N};
-  b.finish(ZiFB::saveObject(b, value));
+  b.finish(ZiFB::save(b, value));
 #else
   Zfb::IOBuilder b{Zdb_::Table<zdbtest::Order>::allocBuf()};
   b.Finish(ZfbStruct::save(b, value));
@@ -131,7 +131,7 @@ static auto record(const zdbtest::Order &row, Zdb_::UN un, Zdb_::VN vn)
   Builder b{Table<zdbtest::Order>::allocBuf(), ZiFB::BufferAlign<zdbtest::Order>::N};
   auto nested = b.startNested();
   auto data = b.endNested(nested,
-    ZiFB::saveObject<zdbtest::Order, ZuFacet::Core, Filter>(b, row));
+    ZiFB::save<ZuFacet::FB, Filter>(b, row));
   b.finish(saveMsg(b, saveRecord(b, "repairbench", un, SN{un}, vn, 0, data),
     Msg::Tag::Replication));
 #else
@@ -291,10 +291,10 @@ static void store(unsigned count, unsigned rounds, unsigned width)
       // Native core deletion and the inherited HEAD producer are measured
       // separately by the complete saga workload below.
       measure(samples, "codec.delete", [&row, &un, &del]() -> uint64_t {
-	del = record<ZuStructKeyFilter<0>::template Filter>(row, un++, -3); return del->length;
+	del = record<ZfFieldFilter::Del>(row, un++, -3); return del->length;
       });
       if (!round && !i)
-	shape("delete", del, fieldMask<ZuStructKeyFilter<0>::template Filter>());
+	shape("delete", del, fieldMask<ZfFieldFilter::Del>());
       measure(samples, "store.delete", [&write, &del]() { return write(ZuMv(del)); });
     }
     output(samples, 11, round);

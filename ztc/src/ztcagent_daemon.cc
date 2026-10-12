@@ -220,7 +220,7 @@ static ZmRef<ZiIOBuf> requestFrame(const Request &request)
   Ztc::Builder builder{
     frameBuf(ZmRef<ZiIOBuf>{new Frame})};
   auto nested = builder.startNested();
-  auto value = ZiFB::saveObject(builder, request);
+  auto value = ZiFB::save(builder, request);
   builder.finish(saveMsg(builder, nested, Body::Request,
     value));
   return saveHdr(builder);
@@ -231,7 +231,7 @@ static ZmRef<ZiIOBuf> hubErrorFrame(
 {
   Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
   auto nested = builder.startNested();
-  auto error = ZiFB::saveObject(builder, Error{
+  auto error = ZiFB::save(builder, Error{
     ErrorMessage{message}, id ? id : ZuID{"ztcagent"}, seqNo, code});
   builder.finish(saveMsg(builder, nested, Body::Error,
     error));
@@ -313,7 +313,7 @@ static void shutdown(Agent::State *state, Pub_ *pub,
   Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
   auto nested = builder.startNested();
   auto id = builder.string(pub->id);
-  auto value = ZiFB::saveObject(builder, Shutdown{});
+  auto value = ZiFB::save(builder, Shutdown{});
   auto telemetry = saveTelemetry(builder, id, 0,
     TelemetryBody::Shutdown, value);
   builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry));
@@ -366,7 +366,7 @@ static void finishReq(Agent::State *state, Req *req)
     else {
       Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
       auto nested = builder.startNested();
-      auto eos = ZiFB::saveObject(builder,
+      auto eos = ZiFB::save(builder,
 	  EOS{ZuID{"ztcagent"}, req->request.seqNo});
       builder.finish(saveMsg(builder, nested, Body::EOS, eos));
       transmit(state, builder.buf(), req->cxnGen);
@@ -497,7 +497,7 @@ static void admitRequest(Agent::State *state,
   auto root = ZiFB::view<Msg>({frame->data(), frame->length});
   if (msgBody(root).tag() != Body::Request) return;
   auto value = msgBody(root).get<Body::Request>();
-  auto request = ZiFB::Handler<Request>{value}.ctor();
+  auto request = ZiFB::handler<Request>(value).ctor();
   if (!request.subscribe) {
     if (auto req = state->reqs.findPtr(request.seqNo)) delReq(state, req);
     return;

@@ -199,7 +199,7 @@ static HubFrame inventoryFrame(const Inventory &value, uint64_t subID)
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
   auto publisher = builder.string(value.publisherID);
-  auto app = ZiFB::saveObject(builder, value.app);
+  auto app = ZiFB::save(builder, value.app);
   auto telemetry = saveTelemetry(builder, publisher, 0,
     TelemetryBody::AppTelemetry, app);
   builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
@@ -213,7 +213,7 @@ static HubFrame inventoryAck(uint64_t subID, uint32_t interval)
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto ack = ZiFB::saveObject(builder, Ack{
+  auto ack = ZiFB::save(builder, Ack{
     .id = "inventory", .seqNo = 0, .interval = interval,
     .status = uint8_t(AckStatus::OK)});
   builder.finish(saveMsg(builder, nested, Body::Ack, ack, subID));
@@ -226,7 +226,7 @@ static HubFrame inventoryEOS(uint64_t subID)
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto eos = ZiFB::saveObject(builder, EOS{ZuID{"inventory"}, 0});
+  auto eos = ZiFB::save(builder, EOS{ZuID{"inventory"}, 0});
   builder.finish(saveMsg(builder, nested, Body::EOS, eos, subID));
   return builder.buf();
 }
@@ -237,7 +237,7 @@ static HubFrame inventoryGone(const Inventory &value, uint64_t subID)
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto error = ZiFB::saveObject(builder, Error{
+  auto error = ZiFB::save(builder, Error{
     ErrorMessage{"agent disconnected"}, ZuID{value.publisherID},
     0, int(HubError::AgentGone)});
   builder.finish(saveMsg(builder, nested, Body::Error, error,
@@ -253,7 +253,7 @@ static HubFrame inventoryShutdown(const Inventory &value, uint64_t subID)
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
   auto publisher = builder.string(value.publisherID);
-  auto shutdown = ZiFB::saveObject(builder, Shutdown{});
+  auto shutdown = ZiFB::save(builder, Shutdown{});
   auto telemetry = saveTelemetry(builder, publisher, 0,
     TelemetryBody::Shutdown, shutdown);
   builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
@@ -1100,12 +1100,12 @@ bool Hubd::app(uint64_t agentSessionID, uint64_t agentGeneration,
   if (!node) {
     if (agent->val().appCount >= m_state->cf.publishersPerAgent) return false;
     node = new Hubd_::Inventories::Node{Hubd_::Inventory{
-      session->val().deviceID, publisherID, ZiFB::Handler<AppTelemetry>{app_}.ctor(),
+      session->val().deviceID, publisherID, ZiFB::handler<AppTelemetry>(app_).ctor(),
       agentGeneration}};
     m_state->inventories.addNode(node);
     ++agent->val().appCount;
   } else
-    node->val().app = ZiFB::Handler<AppTelemetry>{app_}.ctor();
+    node->val().app = ZiFB::handler<AppTelemetry>(app_).ctor();
   Hubd_::inventorySend(*m_state, node->val());
   return true;
 }

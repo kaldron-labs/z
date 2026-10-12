@@ -46,11 +46,12 @@ struct Schema {
   static Schema from(ZuBSpan bytes) {
     return {ZiFB::view<ZiFB::Reflect::Schema>(bytes), [](ZuCSpan name) -> unsigned {
       using Fields = ZuActiveFields<O>;
+      using H = typename ZiFB::As<O>::template Handler<O>;
       using Slots = typename ZiFB::SchemaOut::ObjectNode<ZuUnder<O>,
 	ZiFB::SchemaOut::Graph<O>>::Fields;
       static constexpr auto matcher = ZuMatcher<ZfFieldMatcher<O, ZuFacet::Core>>();
       return ZuSwitch::dispatch<Fields::N>(matcher.exact(name), [](auto I) -> unsigned {
-	using F = ZuType<I, Fields>;
+	using F = typename H::template Effective<ZuType<I, Fields>>;
 	return unsigned(ZuTypeIndex<ZiFB::SchemaOut::Slot<F>, Slots>{});
       }, UINT_MAX);
     }};

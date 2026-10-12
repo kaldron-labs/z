@@ -22,6 +22,9 @@
 
 using namespace ZuTestUtil;
 
+ZuStructFacet(ShortCSV);
+ZfCSVConfig(ShortCSV, ZfCSV_MaxRowLen<8>);
+
 struct RangeData {
   int value = 42;
 };
@@ -48,6 +51,7 @@ struct CSVText {
 
 ZfStruct(, (CSVText, CSV),
   (text, (Ctor<0>),	String));
+ZuStructReflect(CSVText, ZuFacet::ShortCSV, ZuFacet::CSV);
 
 struct CSVInit {
   int value = 0;
@@ -232,7 +236,7 @@ void testWriterBoundaries()
 
   {
     ZtString<> out;
-    auto writer = ZfCSV::write<CSVText, ZuFacet::CSV, 8>(out);
+    auto writer = ZfCSV::write<CSVText, ZuFacet::ShortCSV>(out);
     CSVText row{"1234"};
     ZuCheck(writer(row));
     ZuCheck(!writer.overflow);
@@ -240,7 +244,7 @@ void testWriterBoundaries()
   }
   {
     ZtString<> out;
-    auto writer = ZfCSV::write<CSVText, ZuFacet::CSV, 8>(out);
+    auto writer = ZfCSV::write<CSVText, ZuFacet::ShortCSV>(out);
     CSVText row{"12345"};
     ZuCheck(writer(row));
     ZuCheck(!writer.overflow);
@@ -248,12 +252,28 @@ void testWriterBoundaries()
   }
   {
     ZtString<> out;
-    auto writer = ZfCSV::write<CSVText, ZuFacet::CSV, 8>(out);
+    auto writer = ZfCSV::write<CSVText, ZuFacet::ShortCSV>(out);
     CSVText row{"123456"};
     ZuCheck(!writer(row));
     ZuCheck(writer.overflow);
     ZuCheck(out == "text\n");
   }
+}
+
+static void testPullLimit()
+{
+  ZuTestScope(testPullLimit);
+  ZtString<> out;
+  unsigned n = 0;
+  auto result = ZfCSV::write<CSVText, ZuFacet::ShortCSV>(out,
+    [&n](auto emit) {
+      if (n++) return false;
+      emit(CSVText{"123456"});
+      return true;
+    });
+  ZuCheck(result.template is<bool>());
+  ZuCheck(result.template p<bool>());
+  ZuCheck(out == "text\n");
 }
 
 void testIntegerRange()
@@ -313,6 +333,7 @@ int main(int argc, char **argv)
   ZuTestCall(testQuoteAndCodecWrappers);
   ZuTestCall(testScanBoolAndBytesFmt);
   ZuTestCall(testWriterBoundaries);
+  ZuTestCall(testPullLimit);
   ZuTestCall(testIntegerRange);
   ZuTestCall(testRealRange);
   ZuTestCall(testReaderConsumptionAndInit);

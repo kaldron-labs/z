@@ -1,0 +1,2 @@
+include "flatcbuiltinroot.fbs";
+root_type Zf.Bytes;

@@ -31,10 +31,10 @@
 
 namespace Ztc {
 
-namespace RAG { ZiFB::Enum<"Ztc.fbs.RAG"> ZiFBType(Map *); }
+namespace RAG { ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *); }
 
 ZtEnumNS(ZdbAPI, DBCacheMode, int8_t, Normal, All);
-namespace DBCacheMode { ZiFB::Enum<"Ztc.fbs.DBCacheMode"> ZiFBType(Map *); }
+namespace DBCacheMode { ZiFB::AsEnum<"Ztc.fbs.DBCacheMode"> ZiFB_Fmt(Map *); }
 
 using DBTableID =
   ZtString<ZtStringHeapID<"Ztc.DBTableID">>;
@@ -60,7 +60,7 @@ struct DBTableTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBTableTelemetry *);
 };
-ZfStruct(ZdbAPI, DBTableTelemetry,
+ZfStruct(ZdbAPI, (DBTableTelemetry, FB),
   (dbID,		(Ctor<0>, Keys<0>),			String),
   (id,			(Ctor<1>, Keys<0>),			String),
   (cacheMode,		(Ctor<7>, Enum<DBCacheMode::Map>),	Int8),
@@ -71,7 +71,7 @@ ZfStruct(ZdbAPI, DBTableTelemetry,
   (cacheEvictions,	(Ctor<5>, Mutable, Series, Delta),	UInt64),
   ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),	Int8));
 
-ZiFB::Table<"Ztc.fbs.DBTableTelemetry"> ZiFBType(DBTableTelemetry *);
+ZiFB::AsTable<"Ztc.fbs.DBTableTelemetry"> ZiFB_Fmt(DBTableTelemetry *);
 
 struct DBTable {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

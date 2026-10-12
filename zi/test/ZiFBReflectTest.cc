@@ -48,7 +48,7 @@ static void reflection()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto bytes = builder.finish(ZiFB::saveObject(builder, schema), "BFBS");
+  auto bytes = builder.finish(ZiFB::save(builder, schema), "BFBS");
   ZuCheck(!builder.failed() && ZiFB::verify<R::Schema>(bytes, "BFBS"));
   auto view = ZiFB::view<R::Schema>(bytes);
   auto root = view.get<R::ZfField(Schema, rootTable)>();
@@ -58,26 +58,75 @@ static void reflection()
   ZuCheck(f.get<R::ZfField(Field, type)>().get<R::ZfField(Type, baseType)>() ==
     R::BaseType::Long);
   ZuCheck(view.get<R::ZfField(Schema, enums)>().length() == 0);
-  ZuCheck(ZiFB::Meta<R::EnumVal>::id<R::ZfField(EnumVal, unionType)>() == 3);
-  ZuCheck(ZiFB::Meta<R::EnumVal>::Fields::N == 6);
-  ZuCheck(ZiFB::Meta<R::EnumVal>::Active::N == 5);
+  ZuCheck(ZiFB::As<R::EnumVal>::template Handler<R::EnumVal>::id<R::ZfField(EnumVal, unionType)>() == 3);
+  ZuCheck(ZiFB::As<R::EnumVal>::template Handler<R::EnumVal>::SchemaFields::N == 6);
+  ZuCheck(ZiFB::As<R::EnumVal>::template Handler<R::EnumVal>::AllFields::N == 5);
 }
+
+namespace FacetTest {
+
+struct Child { int value = 0; int omitted = -7; };
+struct Row { ZuCSpan name; Child child; };
+ZfStruct(, Child, (value,, Int32), (omitted,, Int32));
+ZfStructRender(, Child, FB, value);
+ZfStruct(, Row, (name,, String), (child,, UDT));
+ZfStructRender(, Row, FB, (name, Required, FB::ID<"label">), child);
+ZiFB::AsTable<"test.FacetChild"> ZiFB_Fmt(Child *);
+ZiFB::AsTable<"test.FacetRow"> ZiFB_Fmt(Row *);
+ZuDerive(Text, (ZtString<ZtStringHeapID<"ZiFBReflectTest.Facet">>));
+
+static void run()
+{
+  ZuTestScope(facet);
+  auto buf = ZtScratch(ZiFB::Buffer, 0);
+  ZiFB::ArrayStorage<> storage{buf};
+  ZiFB::Builder<decltype(storage)> builder{storage};
+  auto bytes = builder.finish(ZiFB::save(builder, Row{"row", {31, 37}}));
+  ZuCheck(!builder.failed() && ZiFB::verify<Row>(bytes));
+  auto row = ZiFB::handler<Row>(bytes).ctor();
+  ZuCheck(row.name == "row" && row.child.value == 31 && row.child.omitted == -7);
+  auto child = ZiFB::view<Row>(bytes).get<ZfField(Row, child)>();
+  ZuCheck(!child.has<ZfField(Child, omitted)>());
+
+  builder.clear();
+  bytes = builder.finish(builder.endTable(builder.startTable()));
+  ZuCheck(!ZiFB::verify<Row>(bytes));
+  ZuCheck((ZiFB::verify<Row, ZuFacet::Core>(bytes)));
+
+  auto schemaBytes = ZtScratch(Text, 0);
+  ZiFB::saveSchema<Row>(schemaBytes);
+  namespace R = ZiFB::Reflect;
+  auto schema = ZiFB::view<R::Schema>(schemaBytes);
+  auto fields = schema.get<R::ZfField(Schema, rootTable)>().get<R::ZfField(Object, fields)>();
+  ZuCheck(fields[1].get<R::ZfField(Field, name)>() == "label");
+  ZuCheck(fields[1].get<R::ZfField(Field, required)>());
+
+  auto fbs = ZtScratch(Text, 0);
+  auto fb = ZtScratch(Text, 0);
+  auto core = ZtScratch(Text, 0);
+  ZiFB::saveFBS<Row>(fbs);
+  ZiFB::saveFBS<Row, ZuFacet::FB>(fb);
+  ZiFB::saveFBS<Row, ZuFacet::Core>(core);
+  ZuCheck(fbs == fb && fbs != core);
+}
+
+} // FacetTest
 
 namespace SchemaTest {
 
 struct Root;
 struct Child { int value; const Root *parent; };
 struct Root { ZuCSpan name; const Child *child; bool enabled; };
-ZfStruct(, Child,
+ZfStruct(, (Child, FB),
   (value,	(Deflt<-42>),	Int32),
   (parent,,			UDT));
-ZfStruct(, Root,
+ZfStruct(, (Root, FB),
   (name,			(Required),	String),
   ((retired, Skip, int),	(Deflt<7>),	Int32),
   (child,,					UDT),
   (enabled,			(Deflt<true>),	Bool));
-ZiFB::Table<"test.Child"> ZiFBType(Child *);
-ZiFB::Table<"test.Root"> ZiFBType(Root *);
+ZiFB::AsTable<"test.Child"> ZiFB_Fmt(Child *);
+ZiFB::AsTable<"test.Root"> ZiFB_Fmt(Root *);
 
 ZuDerive(Text, (ZtString<ZtStringHeapID<"ZiFBReflectTest.Text">>));
 
@@ -207,7 +256,7 @@ static void reflected()
   auto table = builder.startTable();
   R::saveScalar(builder, table, seq, 7U, true);
   R::saveInline(builder, table, schema, stamp,
-    [](uint8_t *p) { ZiFB::writeInline(p, Stamp{123}); });
+    [](uint8_t *p) { ZiFB::save(p, Stamp{123}); });
   R::saveOffset(builder, table, bytes, payload);
   auto out = builder.finish(builder.endTable(table));
   ZuCheck(!builder.failed() && R::verify(schema, out) && ZiFB::verify<Row>(out));
@@ -312,6 +361,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(reflection);
+  ZuTestCall(FacetTest::run);
   ZuTestCall(SchemaTest::run);
   ZuTestCall(UnionTest::schema);
   ZuTestCall(StreamTest::facets);

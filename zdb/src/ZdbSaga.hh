@@ -45,10 +45,8 @@
 #include <zlib/ZiFB.hh>
 #include <zlib/ZiFBReflect.hh>
 
-
 #include <zlib/ZdbBuf.hh>
 #include <zlib/ZdbTypes.hh>
-
 
 #ifndef ZdbSaga_BuiltinSize
 // Initial inline payload allocation, not a payload limit. 256 bytes covers
@@ -96,14 +94,14 @@ struct SagaData {
   friend ZuStringT<"Zdb.Saga.Buf"> ZdbBufHeapID(SagaData *);
 };
 
-ZfStruct(ZdbAPI, SagaData,
+ZfStruct(ZdbAPI, (SagaData, FB),
   (type,	(Ctor<0>, Keys<0>),	String),
   (id,		(Ctor<1>, Keys<0>),	UInt128),
   (shard,	(Ctor<2>),		UInt8),
   (data,	(Ctor<3>),		Bytes),
   (deadline,	(Ctor<4>),		Time));
 
-ZiFB::Table<"Zdb_.fbs.SagaData"> ZiFBType(SagaData *);
+ZiFB::AsTable<"Zdb_.fbs.SagaData"> ZiFB_Fmt(SagaData *);
 
 struct SagaStep {
   SagaType	type;
@@ -116,21 +114,21 @@ struct SagaStep {
   friend ZuStringT<"Zdb.Saga.Step.Buf"> ZdbBufHeapID(SagaStep *);
 };
 
-ZfStruct(ZdbAPI, SagaStep,
+ZfStruct(ZdbAPI, (SagaStep, FB),
   (type,	(Ctor<0>, Keys<0>),	String),
   (id,		(Ctor<1>, Keys<0>),	UInt128),
   (step,	(Ctor<2>, Keys<0>),	UInt32),
   (shard,	(Ctor<3>),		UInt8),
   (un,		(Ctor<4>),		UInt64));
 
-ZiFB::Table<"Zdb_.fbs.SagaStep"> ZiFBType(SagaStep *);
+ZiFB::AsTable<"Zdb_.fbs.SagaStep"> ZiFB_Fmt(SagaStep *);
 
 ZtEnumNS(ZdbAPI, SagaOp, int8_t,
   Invalid,
   Insert,
   Update,
   Delete);
-namespace SagaOp { ZiFB::Enum<"Zdb_.fbs.SagaOp"> ZiFBType(Map *); }
+namespace SagaOp { ZiFB::AsEnum<"Zdb_.fbs.SagaOp"> ZiFB_Fmt(Map *); }
 
 struct SagaTypeStep {
   SagaType	type;
@@ -140,14 +138,14 @@ struct SagaTypeStep {
   bool		repeat = false;
 };
 
-ZfStruct(ZdbAPI, SagaTypeStep,
+ZfStruct(ZdbAPI, (SagaTypeStep, FB),
   (type,	(Ctor<0>, Keys<0>),		String),
   (step,	(Ctor<2>, Keys<0>),		UInt32),
   (table,	(Ctor<1>),			String),
   (op,		(Ctor<3>, Enum<SagaOp::Map>),	Int8),
   (repeat,	(Ctor<4>),			Bool));
 
-ZiFB::Table<"Zdb_.fbs.SagaTypeStep"> ZiFBType(SagaTypeStep *);
+ZiFB::AsTable<"Zdb_.fbs.SagaTypeStep"> ZiFB_Fmt(SagaTypeStep *);
 
 ZuDerive(SagaRecoveryFn,
   (ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>));

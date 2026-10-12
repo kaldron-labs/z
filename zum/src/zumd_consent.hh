@@ -206,13 +206,13 @@ struct ConsentCode : public ZdbSagaBase<DBContext> {
     return {};
   }
 };
-ZfStruct(ZumAPI, ConsentCode,
+ZfStruct(ZumAPI, (ConsentCode, FB),
   (beforeGrant,		(Ctor<0>),	UDT),
   (afterGrant,		(Ctor<1>),	UDT),
   (beforeConsent,	(Ctor<2>),	UDT),
   (roleIDs,		(Ctor<3>),	UInt64Vec),
   (now,			(Ctor<4>),	Int64));
-ZiFB::Table<"Zum.fbs.ConsentCode"> ZiFBType(ConsentCode *);
+ZiFB::AsTable<"Zum.fbs.ConsentCode"> ZiFB_Fmt(ConsentCode *);
 
 } // namespace Zum
 

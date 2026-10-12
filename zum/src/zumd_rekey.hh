@@ -63,13 +63,13 @@ struct KeyBinding : public ZdbSagaBase<DBContext> {
     return {};
   }
 };
-ZfStruct(ZumAPI, KeyBinding,
+ZfStruct(ZumAPI, (KeyBinding, FB),
   (issuer,		(Ctor<0>),	String),
   (beforeCheck,		(Ctor<1>),	Bytes),
   (afterCheck,		(Ctor<2>),	Bytes),
   (beforePending,	(Ctor<3>),	Bytes),
   (afterPending,	(Ctor<4>),	Bytes));
-ZiFB::Table<"Zum.fbs.KeyBinding"> ZiFBType(KeyBinding *);
+ZiFB::AsTable<"Zum.fbs.KeyBinding"> ZiFB_Fmt(KeyBinding *);
 
 struct SecretRekey : public ZdbSagaBase<DBContext> {
   using Base = ZdbSagaBase<DBContext>;
@@ -134,7 +134,7 @@ struct SecretRekey : public ZdbSagaBase<DBContext> {
     return {};
   }
 };
-ZfStruct(ZumAPI, SecretRekey,
+ZfStruct(ZumAPI, (SecretRekey, FB),
   (field,	(Ctor<0>, Deflt<SecretRekey::ProviderField>),	UInt32),
   (providerID,	(Ctor<1>),					UInt64),
   (appID,	(Ctor<2>),					UInt64),
@@ -142,7 +142,7 @@ ZfStruct(ZumAPI, SecretRekey,
   (keyID,	(Ctor<4>),					String),
   (before,	(Ctor<5>),					Bytes),
   (after,	(Ctor<6>),					Bytes));
-ZiFB::Table<"Zum.fbs.SecretRekey"> ZiFBType(SecretRekey *);
+ZiFB::AsTable<"Zum.fbs.SecretRekey"> ZiFB_Fmt(SecretRekey *);
 
 } // namespace Zum
 

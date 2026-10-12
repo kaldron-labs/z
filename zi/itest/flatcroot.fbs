@@ -1,0 +1,8 @@
+include "flatcdep.fbs";
+namespace flatcdep;
+
+union Body { Child:O0, Point }
+table H0 { child:O0; children:[O0]; body:Body; amount:Zf.Fixed;
+  axial:Axes; retired:Retired;
+  retired_names:[string] (deprecated); retired_data:[uint] (deprecated); }
+root_type H0;

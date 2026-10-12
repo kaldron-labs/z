@@ -16,13 +16,16 @@
 
 using namespace ZuTestUtil;
 
+ZuStructFacet(Prefixed);
+ZiFBConfig(Prefixed, ZiFB_SizePrefixed<>);
+
 namespace State {
   ZtEnum(, State, int8_t, Idle, Ready);
-  ZiFB::Enum<"test.State"> ZiFBType(Map *);
+  ZiFB::AsEnum<"test.State"> ZiFB_Fmt(Map *);
 }
 namespace Perms {
   ZtFlags(, Perms, uint8_t, Read, Write, Admin);
-  ZiFB::Enum<"test.Perms"> ZiFBType(Map *);
+  ZiFB::AsEnum<"test.Perms"> ZiFB_Fmt(Map *);
 }
 ZtEnumImplNS(State);
 ZtEnumImplNS(Perms);
@@ -37,10 +40,10 @@ struct Root {
   ZuSpan<const int8_t> states;
   uint8_t perms;
 };
-ZfStruct(, Child,
+ZfStruct(, (Child, FB),
   (value,	(Deflt<-42>),	Int32),
   (parent,,			UDT));
-ZfStruct(, Root,
+ZfStruct(, (Root, FB),
   (name,			(Required),				String),
   ((retired, Skip, int),	(Deflt<7>),				Int32),
   (child,,								UDT),
@@ -49,8 +52,10 @@ ZfStruct(, Root,
   (unknown,			(Deflt<-7>, Enum<State::Map>),		Int8),
   (states,			(Enum<State::Map>, FB::Align<32>),	Int8Vec),
   (perms,			(Deflt<3>, Flags<Perms::Map>),		UInt8));
-ZiFB::Table<"test.Child"> ZiFBType(Child *);
-ZiFB::Table<"test.Root"> ZiFBType(Root *);
+ZiFB::AsTable<"test.Child"> ZiFB_Fmt(Child *);
+ZiFB::AsTable<"test.Root"> ZiFB_Fmt(Root *);
+ZuStructReflect(Root, ZuFacet::Prefixed, ZuFacet::FB);
+ZuStructReflect(Child, ZuFacet::Prefixed, ZuFacet::FB);
 
 ZuDerive(Text, (ZtString<ZtStringHeapID<"zifbinterop.Text">>));
 
@@ -143,25 +148,25 @@ static void compare(const reflection::Schema &a, const reflection::Schema &b)
 }
 
 struct Record { unsigned seq; };
-ZfStruct(, Record, (seq, (Deflt<0>), UInt32));
-ZiFB::Table<"test.Record"> ZiFBType(Record *);
+ZfStruct(, (Record, FB), (seq, (Deflt<0>), UInt32));
+ZiFB::AsTable<"test.Record"> ZiFB_Fmt(Record *);
 struct Tail { uint16_t value; };
-ZfStruct(, Tail, (value, (Deflt<23>, FB::Align<16>), UInt16));
-ZiFB::Inline<"test.ZTail"> ZiFBType(Tail *);
+ZfStruct(, (Tail, FB), (value, (Deflt<23>, FB::Align<16>), UInt16));
+ZiFB::AsStruct<"test.ZTail"> ZiFB_Fmt(Tail *);
 struct Quad { uint8_t bytes[4]; Tail tail; };
-ZfStruct(, Quad,
+ZfStruct(, (Quad, FB),
   (bytes,,	Bytes),
   (tail,,	UDT));
-ZiFB::Inline<"test.Quad"> ZiFBType(Quad *);
+ZiFB::AsStruct<"test.Quad"> ZiFB_Fmt(Quad *);
 ZuDerive(Body, (ZuUnion<void, Record, Record, Quad>));
-ZiFB::Union<"test.Body", ZiFB::Alt<"Replication", Record>,
-  ZiFB::Alt<"Recovery", Record>, ZiFB::Alt<"Quad", Quad>> ZiFBType(Body *);
+ZiFB::AsUnion<"test.Body", ZiFB::Alt<"Replication", Record>,
+  ZiFB::Alt<"Recovery", Record>, ZiFB::Alt<"Quad", Quad>> ZiFB_Fmt(Body *);
 struct Message { Body body; unsigned seq; };
-ZfStruct(, Message,
+ZfStruct(, (Message, FB),
   ((retired, Skip, Body),,					UDT),
   (body,			(Required, FB::ID<"value">),	UDT),
   (seq,				(Deflt<0>),			UInt32));
-ZiFB::Table<"test.Message"> ZiFBType(Message *);
+ZiFB::AsTable<"test.Message"> ZiFB_Fmt(Message *);
 
 static void unions()
 {
@@ -214,12 +219,12 @@ static void unions()
   Message message;
   message.seq = 17;
   message.body.p<2>(Record{42});
-  auto out = builder.finish(ZiFB::saveObject(builder, message));
+  auto out = builder.finish(ZiFB::save(builder, message));
   ZuCheck(flatbuffers::Verify(*expected, *expected->root_table(), out.data(), out.length()));
   ZuCheck(ZiFB::Reflect::verify(reflected, out));
   builder.clear();
   message.body.p<3>(Quad{{1, 2, 3, 4}, {123}});
-  out = builder.finish(ZiFB::saveObject(builder, message));
+  out = builder.finish(ZiFB::save(builder, message));
   ZuCheck(flatbuffers::Verify(*expected, *expected->root_table(), out.data(), out.length()));
   ZuCheck(ZiFB::Reflect::verify(reflected, out));
   bool jsonOK = imported.ParseJson(
@@ -234,11 +239,11 @@ static void unions()
 }
 
 struct Bitmaps { ZuBitmap<65> fixed; ZmBitmap hw; ZtBitmap dynamic; };
-ZfStruct(, Bitmaps,
+ZfStruct(, (Bitmaps, FB),
   (fixed,	(Ctor<0>),	UDT),
   (hw,		(Ctor<1>),	UDT),
   (dynamic,	(Ctor<2>),	UDT));
-ZiFB::Table<"test.Bitmaps"> ZiFBType(Bitmaps *);
+ZiFB::AsTable<"test.Bitmaps"> ZiFB_Fmt(Bitmaps *);
 
 static void bitmaps()
 {
@@ -292,7 +297,7 @@ struct Values {
   ZuSpan<const int128_t> numbers;
   ZuSpan<const ZuBSpan> bytes;
 };
-ZfStruct(, Values,
+ZfStruct(, (Values, FB),
   (signedValue,,	Int128),
   (unsignedValue,,	UInt128),
   (fixed,,		Fixed),
@@ -301,7 +306,7 @@ ZfStruct(, Values,
   (date,,		DateTime),
   (numbers,,		Int128Vec),
   (bytes,,		BytesVec));
-ZiFB::Table<"test.Values"> ZiFBType(Values *);
+ZiFB::AsTable<"test.Values"> ZiFB_Fmt(Values *);
 
 static void values()
 {
@@ -393,14 +398,14 @@ struct Floating {
   double absent, positive, negative, tiny;
   ZuSpan<const float> values;
 };
-ZfStruct(, Floating,
+ZfStruct(, (Floating, FB),
   (small,,					Float),
   (absent,,					Float),
   (positive,	(Deflt<ZuFP<double>::inf()>),	Float),
   (negative,	(Deflt<-ZuFP<double>::inf()>),	Float),
   (tiny,	(Deflt<0x1p-1074>),		Float),
   (values,,					FloatVec));
-ZiFB::Table<"test.Floating"> ZiFBType(Floating *);
+ZiFB::AsTable<"test.Floating"> ZiFB_Fmt(Floating *);
 
 static void floating()
 {
@@ -482,7 +487,7 @@ static void nested()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto outside = ZiFB::saveObject(builder, Record{7});
+  auto outside = ZiFB::save(builder, Record{7});
   auto state = builder.startNested();
   auto inner = builder.startTable();
   builder.field<uint32_t>(inner, 0, 0, 0, true);
@@ -525,12 +530,12 @@ static void nested()
 }
 
 struct Evolved { ZuCSpan tail; unsigned seq; int changed; };
-ZfStruct(, Evolved,
+ZfStruct(, (Evolved, FB),
   (tail,			(Ctor<0>, FB::FieldID<3>),			String),
   (seq,				(Ctor<1>, FB::FieldID<0>, Deflt<0>, Keys<0>),	UInt32),
   ((retired, Skip, int),	(FB::FieldID<1>, Deflt<9>),			Int32),
   (changed,			(Ctor<2>, FB::FieldID<2>, Deflt<7>, Mutable),	Int32));
-ZiFB::Table<"test.Evolved"> ZiFBType(Evolved *);
+ZiFB::AsTable<"test.Evolved"> ZiFB_Fmt(Evolved *);
 
 static void evolution()
 {
@@ -583,7 +588,7 @@ static void evolution()
 
   auto update = ZtScratch(Text, 0);
   Evolved row{"not selected", 29, 31};
-  ZuCheck((ZiFB::save<false, ZuFacet::Core, ZfFieldFilter::Upd>(update, row) ==
+  ZuCheck((ZiFB::save<ZuFacet::FB, ZfFieldFilter::Upd>(update, row) ==
     ZiFB::Error::OK));
   ZuBSpan out{update};
   ZuCheck(flatbuffers::Verify(*schema, *schema->root_table(), out.data(), out.length()));
@@ -591,7 +596,7 @@ static void evolution()
   ZuCheck(table->GetField<uint32_t>(4, 0) == 29 && table->GetField<int32_t>(8, 7) == 31);
   ZuCheck(!table->CheckField(6) && !table->CheckField(10));
   update.clear();
-  ZuCheck((ZiFB::save<false, ZuFacet::Core, ZfFieldFilter::Del>(update, row) ==
+  ZuCheck((ZiFB::save<ZuFacet::FB, ZfFieldFilter::Del>(update, row) ==
     ZiFB::Error::OK));
   out = update;
   table = flatbuffers::GetRoot<flatbuffers::Table>(out.data());
@@ -657,7 +662,7 @@ int main(int argc, char **argv)
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<32> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage, 32};
-  auto output = builder.finish(ZiFB::saveObject(builder, row));
+  auto output = builder.finish(ZiFB::save(builder, row));
   ZuCheck(!builder.failed());
   auto statesView = ZiFB::view<Root>(output).get<ZfField(Root, states)>();
   ZuCheck(!(uintptr_t(statesView.data()) & 31));
@@ -680,11 +685,11 @@ int main(int argc, char **argv)
   ZuCheck(flatbuffers::GetFieldS(*table, *name)->string_view() == "native");
 
   auto prefixed = ZtScratch(Text, 0);
-  ZuCheck(ZiFB::save<true>(prefixed, row) == ZiFB::Error::OK);
+  ZuCheck(ZiFB::save<ZuFacet::Prefixed>(prefixed, row) == ZiFB::Error::OK);
   ZuBSpan prefixedBytes{prefixed};
   ZuCheck(flatbuffers::VerifySizePrefixed(*canonicalSchema, *canonicalSchema->root_table(),
     prefixedBytes.data(), prefixedBytes.length()));
-  ZuCheck(R::verify<true>(reflected, prefixedBytes));
+  ZuCheck(R::verify<ZuFacet::Prefixed>(reflected, prefixedBytes));
 
   bool jsonOK = imported.ParseJson("{\"name\":\"canonical\",\"child\":{\"value\":23,"
     "\"parent\":{\"name\":\"parent\",\"child\":{\"value\":29}}}}");
@@ -708,9 +713,9 @@ int main(int argc, char **argv)
   ZuCheck(jsonOK);
   if (!jsonOK) { log(imported.error_); return 1; }
   incoming = {imported.builder_.GetBufferPointer(), imported.builder_.GetSize()};
-  ZuCheck((ZiFB::verify<Root, true>(incoming)));
-  ZuCheck(R::verify<true>(reflected, incoming));
-  auto prefixedView = ZiFB::view<Root, true>(incoming);
+  ZuCheck((ZiFB::verify<Root, ZuFacet::Prefixed>(incoming)));
+  ZuCheck(R::verify<ZuFacet::Prefixed>(reflected, incoming));
+  auto prefixedView = ZiFB::view<Root, ZuFacet::Prefixed>(incoming);
   ZuCheck(prefixedView.get<ZfField(Root, name)>() == "prefixed");
   ZuCheck(prefixedView.get<ZfField(Root, states)>()[0] == State::Ready);
 

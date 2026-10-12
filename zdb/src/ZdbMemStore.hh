@@ -507,14 +507,14 @@ Offset saveOffset(B &fbb, const XField &field, const A &value) {
     if constexpr (I == Value::Index<FloatVec>{}) {
       if (R::type(field.field).get<R::ZfField(Type, element)>() == R::BaseType::Float)
 	return ZiFB::saveValue<ZiFB::Vector<ZiFB::Scalar<float>>,
-	  ZuFacet::Core, ZfFieldFilter::All>(fbb, value.template p<I>(),
+	  ZuFacet::FB, ZfFieldFilter::All>(fbb, value.template p<I>(),
 	    align > sizeof(float) ? align : sizeof(float));
     }
     if constexpr (W::Kind == ZiFB::ValueKind::Union)
-      return ZiFB::saveUnion<typename W::Native, ZuFacet::Core, ZfFieldFilter::All>(
+      return ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(
 	fbb, value.template p<I>()).offset;
     else if constexpr (ZiFB::IsOffset<W>) {
-      return ZiFB::saveValue<W, ZuFacet::Core, ZfFieldFilter::All>(
+      return ZiFB::saveValue<W, ZuFacet::FB, ZfFieldFilter::All>(
 	fbb, value.template p<I>(), (align > ZiFB::valueAlign<W>() ? align : ZiFB::valueAlign<W>()));
     }
   }
@@ -537,10 +537,10 @@ void saveValue(B &fbb, ZiFB::TableState &table, Offset offset,
     else if constexpr (W::Kind == ZiFB::ValueKind::Inline) {
       fbb.fieldInline(table, field.get<R::ZfField(Field, id)>(),
 	W::Size, (align > W::Align ? align : W::Align), [&value](uint8_t *p) {
-	  ZiFB::writeInline(p, W::toWire(value.template p<I>()));
+	  ZiFB::save(p, W::toWire(value.template p<I>()));
 	});
     } else if constexpr (W::Kind == ZiFB::ValueKind::Union)
-      R::saveUnion(fbb, table, field, ZiFB::Type<typename W::Native>::tag(value.template p<I>()), offset);
+      R::saveUnion(fbb, table, field, ZiFB::As<typename W::Native>::tag(value.template p<I>()), offset);
     else
       R::saveOffset(fbb, table, field, offset);
   }

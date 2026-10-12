@@ -38,7 +38,28 @@
 
 ZuStructFacet(TOML);
 
+// --- facet configuration
+
+struct ZfTOML_DefltConfig {
+  enum { ScalarScratchSize = 128, PathScratchSize = 128 };
+};
+
+template <unsigned _, typename NTP = ZfTOML_DefltConfig>
+struct ZfTOML_ScalarScratchSize : public NTP { enum { ScalarScratchSize = _ }; };
+
+template <unsigned _, typename NTP = ZfTOML_DefltConfig>
+struct ZfTOML_PathScratchSize : public NTP { enum { PathScratchSize = _ }; };
+
+ZfTOML_DefltConfig ZfTOML_Config(...); // default
+
+// Configure a facet at top level; overloads live in its namespace for ADL.
+#define ZfTOMLConfig(Facet, Config) \
+  namespace ZuFacet { ZuPP_Strip(Config) ZfTOML_Config(Facet *); }
+
 namespace ZfTOML {
+
+template <typename Facet>
+using Config = decltype(ZfTOML_Config(ZuDeclVal<Facet *>()));
 
 using namespace ZfJSON;
 
@@ -565,10 +586,7 @@ ZuDerive(ScalarScratch, (ZtString<ZtStringSharded<true,
   ZtStringHeapID<"ZfTOML.ScalarBuf">>>));
 ZuDerive(PathScratch, (ZtString<ZtStringSharded<true,
   ZtStringHeapID<"ZfTOML.Path">>>));
-enum {
-  ScalarScratchSize = 128, // covers ordinary formatted scalar spellings
-  PathScratchSize = 128    // covers ordinary configuration header paths
-};
+
 
 inline ZuCSpan unquote(ScalarScratch &buf)
 {
@@ -680,7 +698,7 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
       BasicOut<S> out{s};
       ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(out, v);
     } else {
-      auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
+      auto buf = ZtScratch(ScalarScratch, Config<Facet>::ScalarScratchSize);
       ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(buf, v);
       saveText<Props>(s, unquote(buf), key);
     }
@@ -712,7 +730,7 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
 	  BasicOut<S> out{s};
 	  ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(out, v);
 	} else {
-	  auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
+	  auto buf = ZtScratch(ScalarScratch, Config<Facet>::ScalarScratchSize);
 	  ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(buf, v);
 	  saveText<Props>(s, unquote(buf), key);
 	}
@@ -730,7 +748,7 @@ void saveScalar(S &s, const T &v, ZuCSpan key = {})
 	BasicOut<S> out{s};
 	ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(out, v);
       } else {
-	auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
+	auto buf = ZtScratch(ScalarScratch, Config<Facet>::ScalarScratchSize);
 	ZfJSON::saveValue<Facet, Filter, TypeCode, Props>(buf, v);
 	saveText<Props>(s, unquote(buf), key);
       }
@@ -903,7 +921,7 @@ void saveValue(S &s, const T &v, SaveCtx &ctx, ZuCSpan key)
 	BasicOut<S> out{s};
 	Handler::template save<Filter>(out, v_);
       } else {
-	auto buf = ZtScratch(ScalarScratch, ScalarScratchSize);
+	auto buf = ZtScratch(ScalarScratch, Config<Facet>::ScalarScratchSize);
 	Handler::template save<Filter>(buf, v_);
 	saveText<Props>(s, unquote(buf), key);
       }
@@ -934,7 +952,7 @@ bool saveEntry(
       if (route == Assignment) return false;
       break;
   }
-  auto path = ZtScratch(PathScratch, PathScratchSize);
+  auto path = ZtScratch(PathScratch, Config<Facet>::PathScratchSize);
   if (ctx.prefix) path << ctx.prefix << '.';
   saveKey(path, key);
   SaveCtx child{ctx.output, path, ctx.inline_};

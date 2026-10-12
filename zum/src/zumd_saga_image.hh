@@ -29,7 +29,7 @@ struct SagaImage {
   static Bytes save(const T &item)
   {
     ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new Buf{}};
-    fbb.finish(ZiFB::saveObject(fbb, item));
+    fbb.finish(ZiFB::save(fbb, item));
     return Bytes{fbb.span()};
   }
 

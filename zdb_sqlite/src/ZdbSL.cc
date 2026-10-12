@@ -1721,7 +1721,7 @@ static SavedOffset saveStructVec(
   auto offset = fbb.vector(n, W::Size, (align > W::Align ? align : W::Align),
     [data, n, width, &load](uint8_t *out) {
       for (unsigned i = 0; i < n; ++i)
-	ZiFB::writeInline(out + i * W::Size, W::toWire(load(data.data() + i * width)));
+	ZiFB::save(out + i * W::Size, W::toWire(load(data.data() + i * width)));
     });
   return {offset, 0, true};
 }
@@ -1739,7 +1739,7 @@ static SavedOffset saveVarVec(Builder &fbb, ZuBSpan data, unsigned align) {
     ZuBSpan value{data.data(), length};
     data.offset(length);
     if constexpr (Bytes)
-      offsets[i] = ZiFB::saveObject(fbb, ZiFB::Values::Bytes{value});
+      offsets[i] = ZiFB::save(fbb, ZiFB::Values::Bytes{value});
     else
       offsets[i] = fbb.string(value);
   }
@@ -1772,7 +1772,7 @@ static SavedOffset saveOffset(
 	      loadUnsigned_<uint64_t>(data.data() + i * sizeof(uint64_t)));
 	});
       auto table = fbb.startTable();
-      ZiFB::fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, words);
+      ZiFB::As<ZiFB::Values::Bitmap>::template Handler<ZiFB::Values::Bitmap>::template fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, words);
       return {fbb.endTable(table), 0, true};
     }
     case Type::IP: {
@@ -1799,7 +1799,7 @@ static SavedOffset saveOffset(
         default:
           return {};
       }
-      auto saved = ZiFB::saveUnion<ZiIP, ZuFacet::Core, ZfFieldFilter::All>(fbb, ip);
+      auto saved = ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, ip);
       return {saved.offset, saved.tag, true};
     }
     case Type::StringVec: return saveVarVec<false>(fbb, data, align);
@@ -1863,7 +1863,7 @@ static void saveInline(
   auto align = field.align;
   fbb.fieldInline(table, field.field.get<R::ZfField(Field, id)>(), W::Size,
     (align > W::Align ? align : W::Align),
-    [&value](uint8_t *out) { ZiFB::writeInline(out, W::toWire(value)); });
+    [&value](uint8_t *out) { ZiFB::save(out, W::toWire(value)); });
 }
 
 static bool saveValue(

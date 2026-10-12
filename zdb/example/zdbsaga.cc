@@ -40,16 +40,17 @@ struct Account {
   friend ZuStringT<"Zdb.Example.Account.Buf"> ZdbBufHeapID(Account *);
 };
 
-ZfStruct(, Account,
+ZfStruct(, (Account, FB),
   (id,		(Ctor<0>, Keys<0>),	UInt64),
   (balance,	(Ctor<1>, Mutable),	Int64));
 
-ZiFB::Table<"zdbsaga.fbs.Account"> ZiFBType(Account *);
+ZiFB::AsTable<"zdbsaga.fbs.Account"> ZiFB_Fmt(Account *);
 ZfStructImpl(Account);
+ZfStructImpl(Account, FB);
 
 ZtEnumNS(, TransferStatus, int8_t, Pending, Complete);
 namespace TransferStatus {
-  ZiFB::Enum<"zdbsaga.fbs.TransferStatus"> ZiFBType(Map *);
+  ZiFB::AsEnum<"zdbsaga.fbs.TransferStatus"> ZiFB_Fmt(Map *);
 }
 ZtEnumImplNS(TransferStatus);
 
@@ -65,15 +66,16 @@ struct Transfer {
   friend ZuStringT<"Zdb.Example.Transfer.Buf"> ZdbBufHeapID(Transfer *);
 };
 
-ZfStruct(, Transfer,
+ZfStruct(, (Transfer, FB),
   (id,		(Ctor<0>, Keys<0>),				UInt64),
   (fromID,	(Ctor<1>),					UInt64),
   (toID,	(Ctor<2>),					UInt64),
   (amount,	(Ctor<3>),					Int64),
   (status,	(Ctor<4>, Enum<TransferStatus::Map>, Mutable),	Int8));
 
-ZiFB::Table<"zdbsaga.fbs.Transfer"> ZiFBType(Transfer *);
+ZiFB::AsTable<"zdbsaga.fbs.Transfer"> ZiFB_Fmt(Transfer *);
 ZfStructImpl(Transfer);
+ZfStructImpl(Transfer, FB);
 
 ZdbTableDerive(AccountTable, Account);
 ZdbTableDerive(TransferTable, Transfer);
@@ -181,14 +183,15 @@ using BalanceSteps = ZuTypeList<
   ZdbSagaStep_<ZuStringT<"transfer">, ZdbSagaOp::Update>>;
 ZuAssert((ZuIsSame<Zdb_::SagaSteps<BalanceTransfer>, BalanceSteps>{}));
 
-ZfStruct(, BalanceTransfer,
+ZfStruct(, (BalanceTransfer, FB),
   (transferID,	(Ctor<0>),	UInt64),
   (fromID,	(Ctor<1>),	UInt64),
   (toID,	(Ctor<2>),	UInt64),
   (amount,	(Ctor<3>),	Int64));
 
-ZiFB::Table<"zdbsaga.fbs.BalanceTransfer"> ZiFBType(BalanceTransfer *);
+ZiFB::AsTable<"zdbsaga.fbs.BalanceTransfer"> ZiFB_Fmt(BalanceTransfer *);
 ZfStructImpl(BalanceTransfer);
+ZfStructImpl(BalanceTransfer, FB);
 
 ZdbSagaDerive(SagaCatalog, BalanceTransfer);
 ZdbSagaImpl(SagaCatalog, BalanceTransfer)

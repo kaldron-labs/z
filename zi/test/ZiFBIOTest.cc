@@ -11,12 +11,15 @@
 
 using namespace ZuTestUtil;
 
+ZuStructFacet(Prefixed);
+ZiFBConfig(Prefixed, ZiFB_SizePrefixed<>);
+
 struct Address { ZiIP ip; };
-ZfStruct(, Address, (ip, (Ctor<0>), UDT));
-ZiFB::Table<"test.Address"> ZiFBType(Address *);
-ZuAssert(ZiFB::Meta<Address>::N == 2);
-ZuAssert(ZiFB::Layout<ZiFB::IPv4>::Size == 4);
-ZuAssert(ZiFB::Layout<ZiFB::IPv6>::Size == 16);
+ZfStruct(, (Address, FB), (ip, (Ctor<0>), UDT));
+ZiFB::AsTable<"test.Address"> ZiFB_Fmt(Address *);
+ZuAssert(ZiFB::As<Address>::template Handler<Address>::N == 2);
+ZuAssert(ZiFB::As<ZiFB::IPv4>::template Handler<ZiFB::IPv4>::Size == 4);
+ZuAssert(ZiFB::As<ZiFB::IPv6>::template Handler<ZiFB::IPv6>::Size == 16);
 
 static void addresses()
 {
@@ -30,7 +33,7 @@ static void addresses()
   auto check = [&builder](ZiIP ip) {
     ZuTestScope(check);
     builder.clear();
-    auto bytes = builder.finish(ZiFB::saveObject(builder, Address{ip}));
+    auto bytes = builder.finish(ZiFB::save(builder, Address{ip}));
     ZuCheck(!builder.failed() && ZiFB::verify<Address>(bytes));
     ZuCheck(ZiFB::view<Address>(bytes).get<ZfField(Address, ip)>() == ip);
     ZuCheck(ZiFB::handler<Address>(bytes).ctor().ip == ip);
@@ -118,6 +121,25 @@ static void abandonment()
   ZuCheck(ZiFB::root(buf->cspan()).vector(0).string() == "reused");
 }
 
+static void framingTailRoom()
+{
+  ZuTestScope(framingTailRoom);
+  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<208>;
+  ZiFB::IOBuilder<ZiFB::Wire::MaxAlign> builder{owner};
+  ::save(builder, ZuBSpan{"tail room"});
+  auto buf = builder.buf();
+  auto data = buf->data();
+  auto size = buf->size;
+  auto length = buf->length;
+  auto avail = buf->avail();
+  ZuCheck(avail && buf->skip >= sizeof(uint32_t));
+  ZiFB::write<uint32_t>(buf->prepend(sizeof(uint32_t)), length);
+  ZuCheck(buf.ptr() == owner.ptr() && buf->size == size);
+  ZuCheck(buf->data() + sizeof(uint32_t) == data && buf->avail() == avail);
+  ZuCheck(ZiFB::read<uint32_t>(buf->data()) == length);
+  ZuCheck(ZiFB::root({data, length}).vector(0).string() == "tail room");
+}
+
 static void runtimeAlign(unsigned align)
 {
   ZuTestScopeRT(runtimeAlign);
@@ -164,8 +186,9 @@ static void runtimeAlign(unsigned align)
 }
 
 struct Message { ZuBSpan payload; };
-ZfStruct(, Message, (payload, (Required, FB::Align<32>), Bytes));
-ZiFB::Table<"test.Message"> ZiFBType(Message *);
+ZfStruct(, (Message, FB), (payload, (Required, FB::Align<32>), Bytes));
+ZiFB::AsTable<"test.Message"> ZiFB_Fmt(Message *);
+ZuStructReflect(Message, ZuFacet::Prefixed, ZuFacet::FB);
 
 struct TxTest : public ZiTxStream<TxTest> {
   using Base = ZiTxStream<TxTest>;
@@ -258,7 +281,7 @@ static void ioRelocation()
     GrowStorage storage{owner, Align, stream.maxSize(), stream.tailRoom()};
     storage.tailRoom = stream.tailRoom();
     ZiFB::Builder<GrowStorage> builder{storage, Align};
-    auto bytes = builder.finish(ZiFB::saveObject(builder, msg));
+    auto bytes = builder.finish(ZiFB::save(builder, msg));
     ZuCheck(!builder.failed() && bytes == stream.output);
     ZuCheck(storage.reallocs && storage.headBytes + storage.tailBytes);
     if (bytes.length() <= capacity) {
@@ -284,17 +307,17 @@ static void txStream()
   ZuTestScope(txStream);
   Message msg{"direct"};
   ZiFB::Buffer expected;
-  ZuCheck(ZiFB::save<true>(expected, msg, "TXFB") == ZiFB::Error::OK);
+  ZuCheck(ZiFB::save<ZuFacet::Prefixed>(expected, msg, "TXFB") == ZiFB::Error::OK);
   TxTest stream;
   ZiTxStream<TxTest> &base = stream;
-  ZuCheck(ZiFB::save<true>(base, msg, "TXFB") == ZiFB::Error::OK);
+  ZuCheck(ZiFB::save<ZuFacet::Prefixed>(base, msg, "TXFB") == ZiFB::Error::OK);
   ZuCheck(stream.allocs == 1 && stream.sends == 1 && stream.final);
   ZuCheck(stream.sent.ptr() == stream.allocated.ptr());
   ZuCheck(stream.sent->skip > stream.headRoom());
   ZuCheck(stream.sent->avail() >= stream.tailRoom());
   ZuCheck(stream.output == expected);
-  ZuCheck((ZiFB::verify<Message, true>(stream.output, "TXFB")));
-  auto data = ZiFB::view<Message, true>(stream.sent->cspan()).
+  ZuCheck((ZiFB::verify<Message, ZuFacet::Prefixed>(stream.output, "TXFB")));
+  auto data = ZiFB::view<Message, ZuFacet::Prefixed>(stream.sent->cspan()).
     get<ZfField(Message, payload)>().data();
   ZuCheck(!(uintptr_t(data) & 31));
 
@@ -310,7 +333,7 @@ static void txStream()
   // The completed output is within the emitted-buffer limit; scratch grows
   // the arena, then detach compacts the output within the same owner.
   TxTest fitting;
-  enum { Align = ZiFB::BufferAlign<Message, ZuFacet::Core>::N };
+  enum { Align = ZiFB::BufferAlign<Message, ZuFacet::FB>::N };
   unsigned head = (fitting.headRoom() + Align - 1) & ~(Align - 1);
   unsigned capacity = (fitting.maxSize() - head - fitting.tailRoom()) & ~(Align - 1);
   msg.payload = {payload.data(), capacity - (Align<<1) + 1};
@@ -360,6 +383,7 @@ int main(int argc, char **argv)
   ZuTestCall(ioRelocation);
   ZuTestCall(pooled);
   ZuTestCall(alignment);
+  ZuTestCall(framingTailRoom);
   ZuTestCall(runtimeAlign, 8);
   ZuTestCall(runtimeAlign, 16);
   ZuTestCall(runtimeAlign, 32);

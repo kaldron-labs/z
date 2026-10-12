@@ -46,7 +46,7 @@ namespace BaseType {
   ZtEnum(ZiAPI, BaseType, int8_t,
     None, UType, Bool, Byte, UByte, Short, UShort, Int, UInt, Long, ULong,
     Float, Double, String, Vector, Obj, Union, Array, Vector64, MaxBaseType);
-  ZiFB::Enum<"reflection.BaseType"> ZiFBType(Map *);
+  ZiFB::AsEnum<"reflection.BaseType"> ZiFB_Fmt(Map *);
 }
 
 struct Type {
@@ -55,20 +55,20 @@ struct Type {
   uint16_t			fixedLength;
   unsigned			baseSize, elementSize;
 };
-ZfStruct(ZiAPI, Type,
+ZfStruct(ZiAPI, (Type, FB),
   (baseType,	(Deflt<0>, Enum<BaseType::Map>),	Int8),
   (element,	(Deflt<0>, Enum<BaseType::Map>),	Int8),
   (index,	(Deflt<-1>),				Int32),
   (fixedLength,	(Deflt<0>),				UInt16),
   (baseSize,	(Deflt<4>),				UInt32),
   (elementSize,	(Deflt<0>),				UInt32));
-Table<"reflection.Type"> ZiFBType(Type *);
+AsTable<"reflection.Type"> ZiFB_Fmt(Type *);
 
 struct KeyValue { ZuCSpan key, value; };
-ZfStruct(ZiAPI, KeyValue,
+ZfStruct(ZiAPI, (KeyValue, FB),
   (key,		(Required),	String),
   (value,,			String));
-Table<"reflection.KeyValue"> ZiFBType(KeyValue *);
+AsTable<"reflection.KeyValue"> ZiFB_Fmt(KeyValue *);
 
 struct Object;
 struct EnumVal {
@@ -78,14 +78,14 @@ struct EnumVal {
   ZuSpan<const ZuCSpan>		documentation;
   ZuSpan<const KeyValue *>	attributes;
 };
-ZfStruct(ZiAPI, EnumVal,
+ZfStruct(ZiAPI, (EnumVal, FB),
   (name,				(Required),	String),
   (value,				(Deflt<0>),	Int64),
   ((object, Skip, const Object *),,			UDT),
   (unionType,,						UDT),
   (documentation,,					StringVec),
   (attributes,,						UDT));
-Table<"reflection.EnumVal"> ZiFBType(EnumVal *);
+AsTable<"reflection.EnumVal"> ZiFB_Fmt(EnumVal *);
 
 struct Enum {
   ZuCSpan			name;
@@ -96,7 +96,7 @@ struct Enum {
   ZuSpan<const ZuCSpan>		documentation;
   ZuCSpan			declarationFile;
 };
-ZfStruct(ZiAPI, Enum,
+ZfStruct(ZiAPI, (Enum, FB),
   (name,		(Required),	String),
   (values,		(Required),	UDT),
   (isUnion,		(Deflt<false>),	Bool),
@@ -104,7 +104,7 @@ ZfStruct(ZiAPI, Enum,
   (attributes,,				UDT),
   (documentation,,			StringVec),
   (declarationFile,,			String));
-Table<"reflection.Enum"> ZiFBType(Enum *);
+AsTable<"reflection.Enum"> ZiFB_Fmt(Enum *);
 
 struct Field {
   ZuCSpan			name;
@@ -119,7 +119,7 @@ struct Field {
   uint16_t			padding;
   bool				offset64;
 };
-ZfStruct(ZiAPI, Field,
+ZfStruct(ZiAPI, (Field, FB),
   (name,		(Required),	String),
   (type,		(Required),	UDT),
   (id,			(Deflt<0>),	UInt16),
@@ -134,7 +134,7 @@ ZfStruct(ZiAPI, Field,
   (optional,		(Deflt<false>),	Bool),
   (padding,		(Deflt<0>),	UInt16),
   (offset64,		(Deflt<false>),	Bool));
-Table<"reflection.Field"> ZiFBType(Field *);
+AsTable<"reflection.Field"> ZiFB_Fmt(Field *);
 
 struct Object {
   ZuCSpan			name;
@@ -145,7 +145,7 @@ struct Object {
   ZuSpan<const ZuCSpan>		documentation;
   ZuCSpan			declarationFile;
 };
-ZfStruct(ZiAPI, Object,
+ZfStruct(ZiAPI, (Object, FB),
   (name,		(Required),	String),
   (fields,		(Required),	UDT),
   (isStruct,		(Deflt<false>),	Bool),
@@ -154,7 +154,7 @@ ZfStruct(ZiAPI, Object,
   (attributes,,				UDT),
   (documentation,,			StringVec),
   (declarationFile,,			String));
-Table<"reflection.Object"> ZiFBType(Object *);
+AsTable<"reflection.Object"> ZiFB_Fmt(Object *);
 
 struct RPCCall {
   ZuCSpan			name;
@@ -162,13 +162,13 @@ struct RPCCall {
   ZuSpan<const KeyValue *>	attributes;
   ZuSpan<const ZuCSpan>		documentation;
 };
-ZfStruct(ZiAPI, RPCCall,
+ZfStruct(ZiAPI, (RPCCall, FB),
   (name,		(Required),	String),
   (request,		(Required),	UDT),
   (response,		(Required),	UDT),
   (attributes,,				UDT),
   (documentation,,			StringVec));
-Table<"reflection.RPCCall"> ZiFBType(RPCCall *);
+AsTable<"reflection.RPCCall"> ZiFB_Fmt(RPCCall *);
 
 struct Service {
   ZuCSpan			name;
@@ -177,22 +177,22 @@ struct Service {
   ZuSpan<const ZuCSpan>		documentation;
   ZuCSpan			declarationFile;
 };
-ZfStruct(ZiAPI, Service,
+ZfStruct(ZiAPI, (Service, FB),
   (name,		(Required),	String),
   (calls,,				UDT),
   (attributes,,				UDT),
   (documentation,,			StringVec),
   (declarationFile,,			String));
-Table<"reflection.Service"> ZiFBType(Service *);
+AsTable<"reflection.Service"> ZiFB_Fmt(Service *);
 
 struct SchemaFile {
   ZuCSpan			filename;
   ZuSpan<const ZuCSpan>		includedFilenames;
 };
-ZfStruct(ZiAPI, SchemaFile,
+ZfStruct(ZiAPI, (SchemaFile, FB),
   (filename,		(Required),	String),
   (includedFilenames,,			StringVec));
-Table<"reflection.SchemaFile"> ZiFBType(SchemaFile *);
+AsTable<"reflection.SchemaFile"> ZiFB_Fmt(SchemaFile *);
 
 struct Schema {
   ZuSpan<const Object *>	objects;
@@ -203,7 +203,7 @@ struct Schema {
   uint64_t			advancedFeatures;
   ZuSpan<const SchemaFile *>	fbsFiles;
 };
-ZfStruct(ZiAPI, Schema,
+ZfStruct(ZiAPI, (Schema, FB),
   (objects,		(Required),	UDT),
   (enums,		(Required),	UDT),
   (fileIdent,,				String),
@@ -212,7 +212,7 @@ ZfStruct(ZiAPI, Schema,
   (services,,				UDT),
   (advancedFeatures,	(Deflt<0>),	UInt64),
   (fbsFiles,,				UDT));
-Table<"reflection.Schema"> ZiFBType(Schema *);
+AsTable<"reflection.Schema"> ZiFB_Fmt(Schema *);
 
 using SchemaView = ZiFB::View<Schema>;
 using ObjectView = ZiFB::View<Object>;
@@ -224,10 +224,10 @@ using EnumValView = ZiFB::View<EnumVal>;
 // Only the external-schema entry point runs both structural and semantic
 // checks. Generated BFBS goes straight to view<Schema>() instead.
 ZiAPI bool schemaLayout(SchemaView);
-template <bool SizePrefix = false>
+template <typename Facet = ZuFacet::FB>
 bool verifySchema(const ZuBSpan &bytes, VerifyLimits limits = {}) {
-  return ZiFB::verify<Schema, SizePrefix>(bytes, "BFBS", limits) &&
-    schemaLayout(ZiFB::view<Schema, SizePrefix>(bytes));
+  return ZiFB::verify<Schema, Facet>(bytes, "BFBS", limits) &&
+    schemaLayout(SchemaView{ZiFB::root<Config<Facet>::SizePrefixed>(bytes)});
 }
 
 // These handles borrow BFBS bytes; stores retain them in existing field
@@ -301,17 +301,17 @@ void saveUnion(B &b, TableState &table, FieldView f, uint8_t tag, Offset value) 
 // External payloads use these visitors over an already trusted schema.
 // They share the typed reader's bounds primitives and traversal budgets.
 ZiAPI bool verifyObject(Verifier &, SchemaView, ObjectView, unsigned at);
-template <bool SizePrefix = false>
+template <typename Facet = ZuFacet::FB>
 bool verify(SchemaView s, ObjectView o, const ZuBSpan &bytes,
   const char *id = nullptr, VerifyLimits limits = {}) {
   Verifier v{bytes, limits};
   unsigned at;
-  return o && v.template root<SizePrefix>(at, id) && verifyObject(v, s, o, at);
+  return o && v.template root<Config<Facet>::SizePrefixed>(at, id) && verifyObject(v, s, o, at);
 }
-template <bool SizePrefix = false>
+template <typename Facet = ZuFacet::FB>
 bool verify(SchemaView s, const ZuBSpan &bytes,
   const char *id = nullptr, VerifyLimits limits = {}) {
-  return verify<SizePrefix>(s, rootObject(s), bytes, id, limits);
+  return verify<Facet>(s, rootObject(s), bytes, id, limits);
 }
 
 } // ZiFB::Reflect
@@ -347,7 +347,7 @@ constexpr unsigned round(unsigned n, unsigned align) {
 template <typename O, typename ...F>
 struct Table {
   using Fields = ZuTypeList<F...>;
-  using M = Meta<O>;
+  using M = typename As<O>::template Handler<O>;
   static consteval unsigned alignment() {
     unsigned align = sizeof(SOffset);
     ZuUnroll::all<Fields>([&align]<typename G>() {
@@ -460,7 +460,7 @@ struct EnumRef {
   using Map = Map_;
   using WireType = W;
   enum { Flags = Flags_ };
-  friend Type<Map> ZiFBType(EnumRef *);
+  friend As<Map> ZiFB_Fmt(EnumRef *);
 };
 
 template <typename F, bool = ZuFieldProp::HasFlags<typename F::Props>{}>
@@ -488,7 +488,7 @@ struct FieldEnum<F, true> {
   ZuAssert(!ZuTraits<W>::IsFloatingPoint);
   ZuAssert(!Flags || Names::N <= (sizeof(W)<<3) - unsigned(ZuTraits<W>::IsSigned));
   static consteval bool representable() {
-    if constexpr (Flags || V::Kind != ValueKind::Scalar || IsInline<ZuUnder<typename F::O>>{})
+    if constexpr (Flags || V::Kind != ValueKind::Scalar || IsStruct<ZuUnder<typename F::O>>{})
       return true;
     else return defaultValue<F>() >= 0 && uint64_t(defaultValue<F>()) < Names::N;
   }
@@ -503,13 +503,14 @@ struct FieldEnum<F, true> {
 template <typename F> using FieldDeps = ZuTypeConcat<
   typename WireDeps<FieldWire<F>>::T, typename FieldEnum<F>::Types>;
 
-template <typename O, typename Facet = ZuFacet::Core, unsigned Kind_ = Type<O>::Kind>
+template <typename O, typename Facet = ZuFacet::FB, unsigned Kind_ = As<O>::Kind>
 struct Children {
-  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<FieldDeps, typename Meta<O, Facet>::Fields>>;
+  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<FieldDeps,
+    typename As<O>::template Handler<O, Facet>::SchemaFields>>;
 };
 template <typename O, typename Facet>
 struct Children<O, Facet, Kind::Union> {
-  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireAltDeps, typename Type<O>::Types>>;
+  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireAltDeps, typename As<O>::Types>>;
 };
 template <typename O, typename Facet>
 struct Children<O, Facet, Kind::Enum> { using T = ZuTypeList<>; };
@@ -520,9 +521,9 @@ struct NameIndex {
   template <ZuString Other>
   constexpr bool operator >(NameIndex<Other>) const { return Name > Other; }
 };
-template <typename O> using ObjectName = NameIndex<Type<O>::name()>;
+template <typename O> using ObjectName = NameIndex<As<O>::name()>;
 template <typename O> using IsObject = ZuBool<
-  Type<O>::Kind == Kind::Table || Type<O>::Kind == Kind::Inline>;
+  As<O>::Kind == Kind::Table || As<O>::Kind == Kind::Inline>;
 template <typename O> using IsEnum = ZuBool<!IsObject<O>{}>;
 
 template <typename F, bool Tag_ = false>
@@ -539,19 +540,41 @@ using Slots = ZuIf<FieldWire<F>::Kind == ValueKind::Union,
   ZuTypeList<Slot<F>, Slot<F, true>>, ZuTypeList<Slot<F>>>;
 template <typename S> using SlotName = NameIndex<S::name()>;
 
-template <typename Root, typename Facet = ZuFacet::Core>
+// Owning union alternatives may differ only in their container heap policy.
+// The schema identity includes their names and canonical wire payload types.
+template <typename A>
+using UnionAlt = Alt<A::name(), typename Value<typename A::T, ZfFieldTC::UDT>::Native>;
+template <ZuString Name, typename ...A> struct UnionShape { };
+template <typename O, bool = IsUnion<O>{}>
+struct SchemaShape { using T = O; };
+template <typename O>
+struct SchemaShape<O, true> {
+  template <typename ...A> using Shape = UnionShape<As<O>::name(), A...>;
+  using T = ZuTypeApply<Shape, ZuTypeMap<UnionAlt, typename As<O>::Types>>;
+};
+template <typename O> using Shape = typename SchemaShape<O>::T;
+template <typename L> struct SchemaUniq;
+template <> struct SchemaUniq<ZuTypeList<>> { using T = ZuTypeList<>; };
+template <typename O, typename ...P>
+struct SchemaUniq<ZuTypeList<O, P...>> {
+  using Tail = typename SchemaUniq<ZuTypeList<P...>>::T;
+  using T = ZuIf<ZuTypeIn<Shape<O>, ZuTypeMap<Shape, Tail>>{},
+    Tail, typename Tail::template Unshift<O>>;
+};
+
+template <typename Root, typename Facet = ZuFacet::FB>
 struct Graph {
   template <typename O> using Children_ = Children<O, Facet>;
-  template <typename O> using Fields = typename Meta<O, Facet>::Fields;
+  template <typename O> using Fields = typename As<O>::template Handler<O, Facet>::SchemaFields;
   using Unsorted = typename Reach<ZuTypeList<ZuUnder<Root>>, ZuTypeList<>, Children_>::T;
   using Objects = ZuTypeSort<ObjectName, ZuTypeGrep<IsObject, Unsorted>>;
-  using Enums = ZuTypeSort<ObjectName, ZuTypeGrep<IsEnum, Unsorted>>;
+  using Enums = ZuTypeSort<ObjectName, typename SchemaUniq<ZuTypeGrep<IsEnum, Unsorted>>::T>;
   static consteval bool namesUnique() {
     bool ok = true;
     ZuUnroll::all<Unsorted>([&ok]<typename O>() {
       ZuUnroll::all<Unsorted>([&ok]<typename P>() {
-	if constexpr (!ZuIsSame<O, P>{})
-	  if (Type<O>::name() == Type<P>::name()) ok = false;
+	if constexpr (!ZuIsSame<Shape<O>, Shape<P>>{})
+	  if (As<O>::name() == As<P>::name()) ok = false;
       });
     });
     return ok;
@@ -631,7 +654,7 @@ consteval int typeIndex() {
   if constexpr (V::Kind == ValueKind::Table || V::Kind == ValueKind::Inline)
     return ZuTypeIndex<typename V::Native, typename G::Objects>{};
   else if constexpr (V::Kind == ValueKind::Union)
-    return ZuTypeIndex<typename V::Native, typename G::Enums>{};
+    return ZuTypeIndex<Shape<typename V::Native>, ZuTypeMap<Shape, typename G::Enums>>{};
   else if constexpr (V::Kind == ValueKind::Vector || V::Kind == ValueKind::Array)
     return typeIndex<typename V::Elem, G>();
   else return -1;
@@ -649,7 +672,8 @@ struct Attribute {
     scalar<Offset>(stream, NodeAt + KV::Data - sizeof(Offset));
     KV::emit(stream, []<typename F>() {
       constexpr unsigned from = NodeAt + KV::Data + KV::template offset<F>();
-      if constexpr (Meta<R::KeyValue>::template id<F>() == 0) return KeyAt - from;
+      if constexpr (As<R::KeyValue>::template Handler<R::KeyValue>::template id<F>() == 0)
+	return KeyAt - from;
       else return ValueAt - from;
     });
     Key::emit(stream);
@@ -664,10 +688,10 @@ using FlagsAttr = Attribute<"bit_flags", String<"0">>;
 template <typename O, typename Entry, typename G>
 struct FieldNode {
   using F = typename Entry::Field;
-  enum { Tag = Entry::Tag, ID = Meta<O>::template id<F>() - Tag };
+  enum { Tag = Entry::Tag, ID = As<O>::template Handler<O>::template id<F>() - Tag };
   using V = FieldWire<F>;
-  enum { IsInline = Type<O>::Kind == Kind::Inline };
-  enum { Align = !Tag && !IsInline ? V::ForcedAlign : 0 };
+  enum { IsStruct = As<O>::Kind == Kind::Inline };
+  enum { Align = !Tag && !IsStruct ? V::ForcedAlign : 0 };
   using Header = ZuIf<Align != 0, AlignedFieldTable, FieldTable>;
   using Name = String<Entry::name()>;
   enum { Data = Header::Data, NameAt = Header::Size, TypeAt = NameAt + Name::Size };
@@ -679,36 +703,37 @@ struct FieldNode {
   enum { Size = size() };
 
   static consteval unsigned padding() {
-    if constexpr (!IsInline) return 0;
+    if constexpr (!IsStruct) return 0;
     else {
       using Fields = ZuFields<O>;
       constexpr unsigned i = ID;
       unsigned end;
       if constexpr (i + 1 < Fields::N)
-	end = Layout<O>::template offset<ZuType<i + 1, Fields>>();
-      else end = Layout<O>::Size;
-      return end - Layout<O>::template offset<ZuType<i, Fields>>() - V::Size;
+	end = As<O>::template Handler<O>::template offset<ZuType<i + 1, Fields>>();
+      else end = As<O>::template Handler<O>::Size;
+      return end - As<O>::template Handler<O>::template offset<ZuType<i, Fields>>() - V::Size;
     }
   }
   template <typename S>
   static void emit(S &stream) {
     Header::emit(stream, []<typename H>() {
-      constexpr unsigned id = Meta<R::Field>::template id<H>();
+      constexpr unsigned id = As<R::Field>::template Handler<R::Field>::template id<H>();
       if constexpr (id == 0) return NameAt - Header::Data - Header::template offset<H>();
       else if constexpr (id == 1)
 	return TypeAt + TypeTable::Data - Header::Data - Header::template offset<H>();
       else if constexpr (id == 2) return ID;
       else if constexpr (id == 3) {
-	if constexpr (IsInline) return Layout<O>::template offset<ZuType<ID, ZuFields<O>>>();
+	if constexpr (IsStruct)
+	  return As<O>::template Handler<O>::template offset<ZuType<ID, ZuFields<O>>>();
 	else return Wire::VHeader + ID * sizeof(VOffset);
       } else if constexpr (id == 4) {
-	if constexpr (!IsInline && V::Kind == ValueKind::Scalar) {
+	if constexpr (!IsStruct && V::Kind == ValueKind::Scalar) {
 	  if constexpr (!ZuTraits<typename V::WireType>::IsFloatingPoint)
 	    return int64_t(defaultValue<F>());
 	  else return int64_t(0);
 	} else return int64_t(0);
       } else if constexpr (id == 5) {
-	if constexpr (!IsInline && V::Kind == ValueKind::Scalar) {
+	if constexpr (!IsStruct && V::Kind == ValueKind::Scalar) {
 	  if constexpr (ZuTraits<typename V::WireType>::IsFloatingPoint)
 	    return double(defaultValue<F>());
 	  else return 0.0;
@@ -717,12 +742,12 @@ struct FieldNode {
       else if constexpr (id == 7) return !Tag && V::Required;
       else if constexpr (id == 9) return AttrAt - Header::Data - Header::template offset<H>();
       else if constexpr (id == 11)
-	return !Tag && !IsInline && !V::Required && V::Kind != ValueKind::Scalar;
+	return !Tag && !IsStruct && !V::Required && V::Kind != ValueKind::Scalar;
       else return padding();
     });
     Name::emit(stream);
     TypeTable::emit(stream, []<typename H>() {
-      constexpr unsigned id = Meta<R::Type>::template id<H>();
+      constexpr unsigned id = As<R::Type>::template Handler<R::Type>::template id<H>();
       if constexpr (id == 0) {
 	if constexpr (Tag) return R::BaseType::UType;
 	else if constexpr (V::Code_ == ZfFieldTC::Bool) return R::BaseType::Bool;
@@ -761,14 +786,14 @@ struct FieldNode {
 template <typename O, typename G>
 struct ObjectNode {
   static consteval unsigned forcedAlign() {
-    if constexpr (Type<O>::Kind == Kind::Inline) return Layout<O>::ForcedAlign;
+    if constexpr (As<O>::Kind == Kind::Inline) return As<O>::template Handler<O>::ForcedAlign;
     else return 0;
   }
   enum { Align = forcedAlign() };
   using Header = ZuIf<Align != 0, AlignedObjectTable, ObjectTable>;
   using Fields = ZuTypeSort<SlotName,
     ZuTypeApply<ZuTypeConcat, ZuTypeMap<Slots, typename G::template Fields<O>>>>;
-  using Name = String<Type<O>::name()>;
+  using Name = String<As<O>::name()>;
   enum { Data = Header::Data, NameAt = Header::Size, FieldsAt = NameAt + Name::Size };
   enum { VecEnd = FieldsAt + sizeof(Offset) * (Fields::N + 1) };
   enum { NodesAt = round(VecEnd, FieldTable::Align) };
@@ -795,15 +820,17 @@ struct ObjectNode {
   template <typename S>
   static void emit(S &stream) {
     Header::emit(stream, []<typename F>() {
-      constexpr unsigned id = Meta<R::Object>::template id<F>();
+      constexpr unsigned id = As<R::Object>::template Handler<R::Object>::template id<F>();
       if constexpr (id == 0) return NameAt - Header::Data - Header::template offset<F>();
       else if constexpr (id == 1) return FieldsAt - Header::Data - Header::template offset<F>();
-      else if constexpr (id == 2) return Type<O>::Kind == Kind::Inline;
+      else if constexpr (id == 2) return As<O>::Kind == Kind::Inline;
       else if constexpr (id == 3) {
-	if constexpr (Type<O>::Kind == Kind::Inline) return unsigned(Layout<O>::Align);
+	if constexpr (As<O>::Kind == Kind::Inline)
+	  return unsigned(As<O>::template Handler<O>::Align);
 	else return 1U;
       } else if constexpr (id == 4) {
-	if constexpr (Type<O>::Kind == Kind::Inline) return unsigned(Layout<O>::Size);
+	if constexpr (As<O>::Kind == Kind::Inline)
+	  return unsigned(As<O>::template Handler<O>::Size);
 	else return 0U;
       } else return AttrAt - Header::Data - Header::template offset<F>();
     });
@@ -832,7 +859,7 @@ struct EnumInfo {
 };
 template <typename U>
 struct EnumInfo<U, true> {
-  using Alts = typename Type<U>::Types;
+  using Alts = typename As<U>::Types;
   enum { N = Alts::N + 1, Base = R::BaseType::UType, Width = 1, Flags = false };
   template <unsigned I> static consteval int64_t value() { return I; }
   template <unsigned I>
@@ -853,7 +880,7 @@ struct EnumValNode {
   template <typename S>
   static void emit(S &stream) {
     EnumValTable::emit(stream, []<typename F>() {
-      constexpr unsigned id = Meta<R::EnumVal>::template id<F>();
+      constexpr unsigned id = As<R::EnumVal>::template Handler<R::EnumVal>::template id<F>();
       constexpr unsigned from = EnumValTable::Data + EnumValTable::template offset<F>();
       if constexpr (id == 0) return NameAt - from;
       else if constexpr (id == 1) return EnumInfo<U>::template value<I>();
@@ -861,14 +888,14 @@ struct EnumValNode {
     });
     Name::emit(stream);
     TypeTable::emit(stream, []<typename F>() {
-      constexpr unsigned id = Meta<R::Type>::template id<F>();
+      constexpr unsigned id = As<R::Type>::template Handler<R::Type>::template id<F>();
       if constexpr (id == 0) {
 	if constexpr (Payload) return R::BaseType::Obj;
 	else return R::BaseType::None;
       } else if constexpr (id == 2) {
 	if constexpr (!Payload) return -1;
 	else {
-	  using A = ZuType<I - 1, typename Type<U>::Types>;
+	  using A = ZuType<I - 1, typename As<U>::Types>;
 	  return typeIndex<Value<typename A::T, ZfFieldTC::UDT>, G>();
 	}
       } else if constexpr (id == 4) return Payload ? 4U : 1U;
@@ -881,7 +908,7 @@ struct EnumValNode {
 
 template <typename U, typename G>
 struct EnumNode {
-  using Name = String<Type<U>::name()>;
+  using Name = String<As<U>::name()>;
   using Info = EnumInfo<U>;
   using Header = ZuIf<Info::Flags, FlagsTable, EnumTable>;
   enum { Data = Header::Data, N = Info::N, NameAt = Header::Size };
@@ -898,7 +925,7 @@ struct EnumNode {
   template <typename S>
   static void emit(S &stream) {
     Header::emit(stream, []<typename F>() {
-      constexpr unsigned id = Meta<R::Enum>::template id<F>();
+      constexpr unsigned id = As<R::Enum>::template Handler<R::Enum>::template id<F>();
       constexpr unsigned from = Header::Data + Header::template offset<F>();
       if constexpr (id == 0) return NameAt - from;
       else if constexpr (id == 1) return ValuesAt - from;
@@ -908,7 +935,7 @@ struct EnumNode {
     });
     Name::emit(stream);
     TypeTable::emit(stream, []<typename F>() {
-      constexpr unsigned id = Meta<R::Type>::template id<F>();
+      constexpr unsigned id = As<R::Type>::template Handler<R::Type>::template id<F>();
       if constexpr (id == 0) return Info::Base;
       else if constexpr (id == 2) return ZuTypeIndex<U, typename G::Enums>{}();
       else if constexpr (id == 4) return unsigned(Info::Width);
@@ -926,7 +953,7 @@ struct EnumNode {
   }
 };
 
-template <typename T, typename Facet = ZuFacet::Core>
+template <typename T, typename Facet = ZuFacet::FB>
 struct Schema {
   using Root = ZuUnder<T>;
   using G = Graph<T, Facet>;
@@ -965,7 +992,7 @@ struct Schema {
     return n;
   }
   enum { Size = size() };
-  ZuAssert(Type<Root>::Kind == Kind::Table);
+  ZuAssert(As<Root>::Kind == Kind::Table);
   ZuAssert(Size < Wire::MaxSize);
   template <typename S>
   static void emit(S &stream) {
@@ -973,7 +1000,7 @@ struct Schema {
     stream << ZuCSpan{"BFBS", Wire::Identifier};
     RootTable::emit(stream, []<typename F>() {
       constexpr unsigned from = RootAt + RootTable::Data + RootTable::template offset<F>();
-      constexpr unsigned id = Meta<R::Schema>::template id<F>();
+      constexpr unsigned id = As<R::Schema>::template Handler<R::Schema>::template id<F>();
       if constexpr (id == 0) return ObjectsAt - from;
       else if constexpr (id == 1) return EnumsAt - from;
       else if constexpr (id == 4) return objectAt<Root>() + ObjectNode<Root, G>::Data - from;
@@ -999,7 +1026,7 @@ struct Schema {
 
 namespace ZiFB {
 
-template <typename O, typename Facet = ZuFacet::Core, typename S>
+template <typename O, typename Facet = ZuFacet::FB, typename S>
 void saveSchema(S &stream) { SchemaOut::Schema<O, Facet>::emit(stream); }
 
 } // ZiFB
@@ -1027,7 +1054,7 @@ void type(S &stream) {
     stream << ']';
   } else if constexpr (V::Kind == ValueKind::Table || V::Kind == ValueKind::Inline ||
       V::Kind == ValueKind::Union)
-    stream << Type<typename V::Native>::name();
+    stream << As<typename V::Native>::name();
   else
     ZuAssert(V::Kind != ValueKind::Union);
 }
@@ -1069,7 +1096,7 @@ template <typename O, typename Tail, typename Seen, bool = ZuTypeIn<O, Seen>{}>
 struct InlineOne : public InlineOrder<Tail, Seen> { };
 template <typename O, typename Tail, typename Seen>
 struct InlineOne<O, Tail, Seen, false> {
-  using Children = ZuTypeGrep<IsInline, typename SchemaOut::Children<O>::T>;
+  using Children = ZuTypeGrep<IsStruct, typename SchemaOut::Children<O>::T>;
   using Before = typename InlineOrder<Children, Seen>::T;
   using T = typename InlineOrder<Tail, typename Before::template Push<O>>::T;
 };
@@ -1079,19 +1106,19 @@ struct InlineOrder<ZuTypeList<O, Tail...>, Seen> :
 template <typename Seen>
 struct InlineOrder<ZuTypeList<>, Seen> { using T = Seen; };
 
-template <typename O> using IsTable = ZuBool<Type<O>::Kind == Kind::Table>;
+template <typename O> using IsTable = ZuBool<As<O>::Kind == Kind::Table>;
 
 template <typename O, typename S>
 void union_(S &stream) {
-  static constexpr auto Name = Type<O>::name();
+  static constexpr auto Name = As<O>::name();
   constexpr unsigned split = qualifier<Name>();
   ZuAssert(split && split + 1 < Name.length());
   stream << "namespace " << ZuCSpan{Name.data(), split} << ";\nunion "
     << ZuCSpan{Name.data() + split + 1, Name.length() - split - 1} << " {\n";
-  using Alts = typename Type<O>::Types;
+  using Alts = typename As<O>::Types;
   ZuUnroll::all<Alts>([&stream]<typename A>() {
     using V = Value<typename A::T, ZfFieldTC::UDT>;
-    stream << "  " << A::name() << ':' << Type<typename V::Native>::name()
+    stream << "  " << A::name() << ':' << As<typename V::Native>::name()
       << " = " << ZuBox<unsigned>{ZuTypeIndex<A, Alts>{} + 1};
     if constexpr (ZuTypeIndex<A, Alts>{} + 1 < Alts::N) stream << ',';
     stream << '\n';
@@ -1101,7 +1128,7 @@ void union_(S &stream) {
 
 template <typename O, typename S>
 void enum_(S &stream) {
-  static constexpr auto Name = Type<O>::name();
+  static constexpr auto Name = As<O>::name();
   constexpr unsigned split = qualifier<Name>();
   ZuAssert(split && split + 1 < Name.length());
   using Info = SchemaOut::EnumInfo<O>;
@@ -1120,33 +1147,34 @@ void enum_(S &stream) {
 
 template <typename O, typename Facet, typename S>
 void object(S &stream) {
-  using M = Meta<O, Facet>;
-  static constexpr auto Name = Type<O>::name();
+  using M = typename As<O>::template Handler<O, Facet>;
+  static constexpr auto Name = As<O>::name();
   constexpr unsigned split = qualifier<Name>();
   ZuAssert(split && split + 1 < Name.length()); // explicit qualified names
   stream << "namespace " << ZuCSpan{Name.data(), split} << ";\n";
-  if constexpr (Type<O>::Kind == Kind::Inline) stream << "struct ";
+  if constexpr (As<O>::Kind == Kind::Inline) stream << "struct ";
   else stream << "table ";
   stream << ZuCSpan{Name.data() + split + 1, Name.length() - split - 1};
-  if constexpr (Type<O>::Kind == Kind::Inline) {
-    if constexpr (Layout<O>::ForcedAlign)
-      stream << " (force_align: " << ZuBox<unsigned>{Layout<O>::ForcedAlign} << ')';
+  if constexpr (As<O>::Kind == Kind::Inline) {
+    if constexpr (As<O>::template Handler<O>::ForcedAlign)
+      stream << " (force_align: "
+	<< ZuBox<unsigned>{As<O>::template Handler<O>::ForcedAlign} << ')';
   }
   stream << " {\n";
-  ZuUnroll::all<typename M::Fields>([&stream]<typename F>() {
+  ZuUnroll::all<typename M::SchemaFields>([&stream]<typename F>() {
     using V = FieldWire<F>;
     stream << "  " << ZuFieldProp::FB::name<F>() << ':';
     if constexpr (SchemaOut::FieldEnum<F>::Present) {
       using E = typename SchemaOut::FieldEnum<F>::E;
       if constexpr (V::Kind == ValueKind::Vector || V::Kind == ValueKind::Array)
 	stream << '[';
-      stream << Type<E>::name();
+      stream << As<E>::name();
       if constexpr (V::Kind == ValueKind::Array) stream << ':' << ZuBox<unsigned>{V::Count};
       if constexpr (V::Kind == ValueKind::Vector || V::Kind == ValueKind::Array)
 	stream << ']';
     } else if constexpr (V::Code_ == ZfFieldTC::Bool) stream << "bool";
     else type<V>(stream);
-    if constexpr (Type<O>::Kind == Kind::Table) {
+    if constexpr (As<O>::Kind == Kind::Table) {
       if constexpr (V::Kind == ValueKind::Scalar) { stream << " = "; deflt<F>(stream); }
       stream << " (id: " << ZuBox<unsigned>{M::template id<F>()};
       if constexpr (!ZuFieldActive<F>{}) stream << ", deprecated";
@@ -1164,12 +1192,12 @@ void object(S &stream) {
 
 namespace ZiFB {
 
-template <typename O, typename Facet = ZuFacet::Core, typename S>
+template <typename O, typename Facet = ZuFacet::FB, typename S>
 void saveFBS(S &stream) {
-  ZuAssert(Type<ZuUnder<O>>::Kind == Kind::Table);
+  ZuAssert(As<ZuUnder<O>>::Kind == Kind::Table);
   using G = SchemaOut::Graph<O, Facet>;
   using Inlines = typename FBS::InlineOrder<
-    ZuTypeGrep<IsInline, typename G::Objects>>::T;
+    ZuTypeGrep<IsStruct, typename G::Objects>>::T;
   using Tables = ZuTypeGrep<FBS::IsTable, typename G::Objects>;
   ZuUnroll::all<typename G::Enums>([&stream]<typename T>() {
     if constexpr (!IsUnion<T>{}) FBS::enum_<T>(stream);
@@ -1179,7 +1207,7 @@ void saveFBS(S &stream) {
     if constexpr (IsUnion<T>{}) FBS::union_<T>(stream);
   });
   ZuUnroll::all<Tables>([&stream]<typename T>() { FBS::object<T, Facet>(stream); });
-  stream << "root_type " << Type<ZuUnder<O>>::name() << ";\n";
+  stream << "root_type " << As<ZuUnder<O>>::name() << ";\n";
 }
 
 } // ZiFB

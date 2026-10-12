@@ -738,7 +738,7 @@ ZmRef<ZiIOBuf> telemetryFrame(
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
   auto value =
-    ZiFB::saveObject<T, ZuFacet::Core, ZfFieldFilter::All>(fbb, data);
+    ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data);
   auto telemetry =
     saveTelemetry(fbb, id_, seqNo, type, value);
   fbb.finish(
@@ -751,7 +751,7 @@ ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
   Ztc::Builder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
-  auto value = ZiFB::saveObject(fbb, Shutdown{});
+  auto value = ZiFB::save(fbb, Shutdown{});
   auto telemetry = saveTelemetry(fbb, id_, 0,
     TelemetryBody::Shutdown, value);
   fbb.finish(saveMsg(fbb, nested, Body::Telemetry, telemetry));
@@ -1226,12 +1226,13 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     auto id = fbb.string(m_cf.id);
     auto message = fbb.string(event->message());
     auto table = fbb.startTable();
-    ZiFB::fieldOffset<ZfField(AlertTelemetry, message)>(fbb, table, message);
-    ZiFB::field<ZfField(AlertTelemetry, time)>(fbb, table, event->time);
-    ZiFB::field<ZfField(AlertTelemetry, seqNo)>(fbb, table, alertSeqNo);
-    ZiFB::field<ZfField(AlertTelemetry, tid)>(fbb, table, event->tid);
-    ZiFB::field<ZfField(AlertTelemetry, date)>(fbb, table, date);
-    ZiFB::field<ZfField(AlertTelemetry, severity)>(fbb, table, event->severity);
+    using H = ZiFB::As<AlertTelemetry>::template Handler<AlertTelemetry>;
+    H::template fieldOffset<ZfField(AlertTelemetry, message)>(fbb, table, message);
+    H::template field<ZfField(AlertTelemetry, time)>(fbb, table, event->time);
+    H::template field<ZfField(AlertTelemetry, seqNo)>(fbb, table, alertSeqNo);
+    H::template field<ZfField(AlertTelemetry, tid)>(fbb, table, event->tid);
+    H::template field<ZfField(AlertTelemetry, date)>(fbb, table, date);
+    H::template field<ZfField(AlertTelemetry, severity)>(fbb, table, event->severity);
     auto value = fbb.endTable(table);
     // Replay copies this span and updates seqNo in place, including from zero.
     auto telemetry = saveTelemetry<true>(
@@ -2381,7 +2382,7 @@ void App::sendAck_(
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto nested = fbb.startNested();
-  auto ack = ZiFB::saveObject(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
+  auto ack = ZiFB::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
   fbb.finish(saveMsg(fbb, nested, Body::Ack, ack));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
@@ -2391,7 +2392,7 @@ void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto nested = fbb.startNested();
-  auto error = ZiFB::saveObject(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
+  auto error = ZiFB::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
   fbb.finish(saveMsg(fbb, nested, Body::Error, error));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
@@ -2401,7 +2402,7 @@ void App::sendEOS_(uint64_t seqNo)
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto nested = fbb.startNested();
-  auto eos = ZiFB::saveObject(fbb, EOS{m_cf.id, seqNo});
+  auto eos = ZiFB::save(fbb, EOS{m_cf.id, seqNo});
   fbb.finish(saveMsg(fbb, nested, Body::EOS, eos));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }

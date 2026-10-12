@@ -163,8 +163,7 @@ public:
   void age();
 
 private:
-  static constexpr unsigned MaxRowLen = 4096;
-  using Writer = ZiCSV::PushFile<ZiSinkEvent, ZuFacet::Core, MaxRowLen>;
+  using Writer = ZiCSV::PushFile<ZiSinkEvent, ZuFacet::Core>;
 
   void init();
 

@@ -9,6 +9,7 @@
 namespace Ztc {
 
 ZfStructImpl(DBTableTelemetry);
+ZfStructImpl(DBTableTelemetry, FB);
 
 ZtEnumImplNS(DBCacheMode);
 

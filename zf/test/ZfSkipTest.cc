@@ -27,7 +27,7 @@ struct Row {
 };
 
 ZfStruct(, (Row, JSON, CSV, CBOR, ASN1, DBUS, URI, CLI, Cf, TOML, YAML),
-  ((old, Skip, int),		(Ctor<9>, Mutable, Keys<5>, Deflt<7>),		Int32),
+  ((old, Skip, int),		(Ctor<9>, Mutable, (Keys<0, 5>), Deflt<7>),		Int32),
   (value,
     (Ctor<0>, Mutable, Keys<0>, CLI::Long<"value">),				Int32),
   ((text, Skip, ZuCSpan),	(Required),					String),
@@ -77,6 +77,38 @@ ZuAssert(!ZfFieldFilter::Del<Old>{});
 ZuDerive(Text, (ZtString<ZtStringHeapID<"ZfSkipTest">>));
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"ZfSkipTest">>));
 
+ZuStructFacet(SmallTOML);
+ZfTOMLConfig(SmallTOML, (
+  ZfTOML_ScalarScratchSize<1, ZfTOML_PathScratchSize<1>>));
+
+struct TOMLChild {
+  Bytes bytes;
+};
+struct TOMLRoot {
+  TOMLChild child;
+};
+ZfStruct(, (TOMLChild, TOML, SmallTOML),
+  (bytes, (Mutable, TOML::Literal), Bytes));
+ZfStruct(, (TOMLRoot, TOML, SmallTOML),
+  (child, (Mutable), UDT));
+
+static void tomlConfig()
+{
+  ZuTestScope(tomlConfig);
+  TOMLRoot orig;
+  orig.child.bytes = ZuBSpan{"scratch fallback"};
+  Text deflt, small;
+  ZfTOML::save(deflt, orig);
+  ZfTOML::save<ZuFacet::SmallTOML>(small, orig);
+  ZuCheck(small == deflt);
+  auto parsed = ZfTOML::scan(small);
+  ZuCheck(parsed.p<0>() >= 0);
+  TOMLRoot copy;
+  ZfTOML::handler<TOMLRoot, ZuFacet::SmallTOML>(
+    parsed.p<1>().ptr()).load(copy);
+  ZuCheck(copy.child.bytes == orig.child.bytes);
+}
+
 static void metadata()
 {
   ZuTestScope(metadata);
@@ -105,6 +137,9 @@ static void json()
   auto out = ZtScratch(Text, 0);
   ZfJSON::save<ZuFacet::JSON, ZuAlwaysTrue>(out, Row{11, 12});
   ZuCheck(out == "{\"value\":11,\"tail\":12}");
+  out.length_(0);
+  ZfJSON::save<ZuFacet::JSON, ZfFieldFilter::Del>(out, Row{11, 12});
+  ZuCheck(out == "{\"value\":11}");
   char input[] = "{\"old\":99,\"value\":21,\"text\":\"ignored\",\"tail\":22}";
   auto parsed = ZfJSON::scan(input);
   auto h = ZfJSON::handler<Row>((*parsed.p<1>())[0]);
@@ -189,6 +224,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(metadata);
+  ZuTestCall(tomlConfig);
   ZuTestCall(json);
   ZuTestCall(binary);
   ZuTestCall(csv);

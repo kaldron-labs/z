@@ -149,9 +149,7 @@ using Config = decltype(ZfCLI_Config(ZuDeclVal<Facet *>()));
 // - configure CLI for specific facet
 // - must be used in top-level namespace
 #define ZfCLIConfig(Facet, Config) \
-  namespace ZfCLI { \
-    ZuPP_Strip(Config) ZfCLI_Config(ZuFacet::Facet *); \
-  }
+  namespace ZuFacet { ZuPP_Strip(Config) ZfCLI_Config(Facet *); }
 
 namespace ZfCLI {
 
@@ -2429,7 +2427,7 @@ int load(O &o, const Argv &argv) {
 template <typename Facet = ZuFacet::CLI, typename O>
 int load(O &o, int argc, const char *const *argv) {
   InArgv<> in(argc, argv);
-  return load(o, in.argv);
+  return load<Facet>(o, in.argv);
 }
 
 } // ZfCLI

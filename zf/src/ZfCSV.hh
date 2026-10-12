@@ -35,7 +35,25 @@
 
 ZuStructFacet(CSV); // canonical CSV facet, others can be defined
 
+// --- facet configuration
+
+struct ZfCSV_DefltConfig {
+  enum { MaxRowLen = 4096 };
+};
+
+template <unsigned _, typename NTP = ZfCSV_DefltConfig>
+struct ZfCSV_MaxRowLen : public NTP { enum { MaxRowLen = _ }; };
+
+ZfCSV_DefltConfig ZfCSV_Config(...); // default
+
+// Configure a facet at top level; overloads live in its namespace for ADL.
+#define ZfCSVConfig(Facet, Config) \
+  namespace ZuFacet { ZuPP_Strip(Config) ZfCSV_Config(Facet *); }
+
 namespace ZfCSV {
+
+template <typename Facet>
+using Config = decltype(ZfCSV_Config(ZuDeclVal<Facet *>()));
 
 // bytes format
 using namespace ZtBytesFmt;
@@ -653,10 +671,10 @@ struct Writer {
 template <
   typename O,
   typename Facet,
-  unsigned MaxRowLen,
   typename Out>
 struct Push : public Writer<O, Facet> {
   using Base = Writer<O, Facet>;
+  enum { MaxRowLen = Config<Facet>::MaxRowLen };
 
   Out		&out;
   bool		overflow = false;	// maximum row length exceeded
@@ -696,33 +714,31 @@ public:
     return true;
   }
 
-  bool operator !() { return overflow; }
+  bool operator !() const { return overflow; }
   ZuOpBool
 };
 
 template <
   typename O,
   typename Facet = ZuFacet::CSV,
-  unsigned MaxRowLen = 4096,
   typename Out>
 inline auto write(Out &out) {
-  return Push<O, Facet, MaxRowLen, Out>{out};
+  return Push<O, Facet, Out>{out};
 }
 template <
   typename O,
   typename Facet = ZuFacet::CSV,
-  unsigned MaxRowLen = 4096,
   typename Out>
 inline auto write(Columns columns, Out &out) {
-  return Push<O, Facet, MaxRowLen, Out>{columns, out};
+  return Push<O, Facet, Out>{columns, out};
 }
 
 template <
   typename O,
-  typename Facet,
-  unsigned MaxRowLen>
+  typename Facet>
 struct Pull : public Writer<O, Facet> {
   using Base = Writer<O, Facet>;
+  enum { MaxRowLen = Config<Facet>::MaxRowLen };
 
   bool		overflow = false;
 
@@ -756,7 +772,7 @@ public:
     write(out, ZuMv(l));
   }
 
-  bool operator !() { return overflow; }
+  bool operator !() const { return overflow; }
   ZuOpBool
 };
 
@@ -769,10 +785,9 @@ public:
 template <
   typename O,
   typename Facet = ZuFacet::CSV,
-  unsigned MaxRowLen = 4096,
   typename Out, typename L>
 inline ZuUnion<void, bool> write(Out &out, L l) {
-  Pull pull(out, ZuMv(l));
+  Pull<O, Facet> pull(out, ZuMv(l));
   if (pull) return {};
   return pull.overflow;
 }
@@ -780,10 +795,9 @@ inline ZuUnion<void, bool> write(Out &out, L l) {
 template <
   typename O,
   typename Facet = ZuFacet::CSV,
-  unsigned MaxRowLen = 4096,
   typename Out, typename L>
 inline ZuUnion<void, bool> write(Columns columns, Out &out, L l) {
-  Pull pull(columns, out, ZuMv(l));
+  Pull<O, Facet> pull(columns, out, ZuMv(l));
   if (pull) return {};
   return pull.overflow;
 }

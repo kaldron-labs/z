@@ -17,6 +17,9 @@
 
 using namespace ZuTestUtil;
 
+ZuStructFacet(ShortCSV);
+ZfCSVConfig(ShortCSV, ZfCSV_MaxRowLen<16>);
+
 struct CSVRow {
   ZuCArray<64>	text;
   int32_t	id = 0;
@@ -25,6 +28,7 @@ struct CSVRow {
 ZfStruct(, CSVRow,
   (text, (Ctor<0>),	String),
   (id,   (Ctor<1>),	Int32));
+ZuStructReflect(CSVRow, ZuFacet::ShortCSV, ZuFacet::Core);
 
 namespace ZiCSVTest_ {
 Zi::Path g_csv;
@@ -147,7 +151,7 @@ void testOverflowAndMissingFileErrors()
   ZuTestScope(testOverflowAndMissingFileErrors);
 
   unsigned i = 0;
-  auto w = ZiCSV::writeFile<CSVRow, ZuFacet::Core, 16>(
+  auto w = ZiCSV::writeFile<CSVRow, ZuFacet::ShortCSV>(
       g_overflow, ZiCSV::Replace, [&i](auto emit) {
     if (i++) return false;
     CSVRow row;
@@ -157,6 +161,20 @@ void testOverflowAndMissingFileErrors()
     return true;
   });
   ZuCheck(w.template is<ZeException>());
+
+  {
+    auto writer = ZiCSV::writeFile<CSVRow>(g_overflow, ZiCSV::Replace);
+    CSVRow row;
+    row.text = "this row exceeds the configured read capacity";
+    row.id = 7;
+    ZuCheck(writer(row));
+  }
+  auto bounded = ZiCSV::reader<CSVRow, ZuFacet::ShortCSV>();
+  unsigned rows = 0;
+  auto overflow = bounded.readFile(g_overflow,
+    [&rows](const auto &) { ++rows; });
+  ZuCheck(overflow.template is<ZeException>());
+  ZuCheck(!rows);
 
   auto reader = ZiCSV::reader<CSVRow>();
   auto r = reader.readFile(ZiFile::append(ZiFile::dirname(g_csv), "missing.csv"),

@@ -33,7 +33,7 @@ struct SeriesFixed {
   friend ZfStructPrint ZuPrintType(SeriesFixed *);
 };
 
-ZfStruct(ZdfAPI, SeriesFixed,
+ZfStruct(ZdfAPI, (SeriesFixed, FB),
   (id,		(Ctor<0>, Keys<0>, Descend<0>),	UInt32),
   (name,	(Ctor<1>, Keys<1>),		String),
   (first,	(Ctor<2>, Mutable),		Int64),
@@ -41,7 +41,7 @@ ZfStruct(ZdfAPI, SeriesFixed,
   (epoch,	(Ctor<3>),			DateTime),
   (blkOffset,	(Ctor<4>, Mutable),		UInt64));
 
-ZiFB::Table<"Zdf.DB.fbs.SeriesFixed"> ZiFBType(SeriesFixed *);
+ZiFB::AsTable<"Zdf.DB.fbs.SeriesFixed"> ZiFB_Fmt(SeriesFixed *);
 
 struct SeriesFloat {
   SeriesID	id;		// 1-based
@@ -53,14 +53,14 @@ struct SeriesFloat {
   friend ZfStructPrint ZuPrintType(SeriesFloat *);
 };
 
-ZfStruct(ZdfAPI, SeriesFloat,
+ZfStruct(ZdfAPI, (SeriesFloat, FB),
   (id,		(Ctor<0>, Keys<0>, Descend<0>),	UInt32),
   (name,	(Ctor<1>, Keys<1>),		String),
   (first,	(Ctor<2>, Mutable),		Float),
   (epoch,	(Ctor<3>),			DateTime),
   (blkOffset,	(Ctor<4>, Mutable),		UInt64));
 
-ZiFB::Table<"Zdf.DB.fbs.SeriesFloat"> ZiFBType(SeriesFloat *);
+ZiFB::AsTable<"Zdf.DB.fbs.SeriesFloat"> ZiFB_Fmt(SeriesFloat *);
 
 struct BlkFixed {
   BlkOffset	blkOffset;
@@ -73,7 +73,7 @@ struct BlkFixed {
   friend ZfStructPrint ZuPrintType(BlkFixed *);
 };
 
-ZfStruct(ZdfAPI, BlkFixed,
+ZfStruct(ZdfAPI, (BlkFixed, FB),
   (seriesID,	(Ctor<3>, Keys<0>, Group<0>),	UInt32),
   (blkOffset,	(Ctor<0>, Keys<0>),		UInt64),
   (offset,	(Ctor<1>, Mutable),		UInt64),
@@ -81,7 +81,7 @@ ZfStruct(ZdfAPI, BlkFixed,
   (count,	(Ctor<4>, Mutable),		UInt16),
   (ndp,		(Ctor<5>, Mutable),		UInt8));
 
-ZiFB::Table<"Zdf.DB.fbs.BlkFixed"> ZiFBType(BlkFixed *);
+ZiFB::AsTable<"Zdf.DB.fbs.BlkFixed"> ZiFB_Fmt(BlkFixed *);
 
 struct BlkFloat {
   BlkOffset	blkOffset;
@@ -93,14 +93,14 @@ struct BlkFloat {
   friend ZfStructPrint ZuPrintType(BlkFloat *);
 };
 
-ZfStruct(ZdfAPI, BlkFloat,
+ZfStruct(ZdfAPI, (BlkFloat, FB),
   (seriesID,	(Ctor<3>, Keys<0>, Group<0>),	UInt32),
   (blkOffset,	(Ctor<0>, Keys<0>),		UInt64),
   (offset,	(Ctor<1>, Mutable),		UInt64),
   (last,	(Ctor<2>, Mutable),		Float),
   (count,	(Ctor<4>, Mutable),		UInt16));
 
-ZiFB::Table<"Zdf.DB.fbs.BlkFloat"> ZiFBType(BlkFloat *);
+ZiFB::AsTable<"Zdf.DB.fbs.BlkFloat"> ZiFB_Fmt(BlkFloat *);
 
 using BlkDataBuf = ZuArray<uint8_t, BlkSize>;
 
@@ -118,12 +118,12 @@ struct BlkData {
   friend BlkData_Evict ZdbEvictHook(BlkData *);
 };
 
-ZfStruct(ZdfAPI, BlkData,
+ZfStruct(ZdfAPI, (BlkData, FB),
   (seriesID,	(Ctor<1>, Keys<0>, Group<0>, Descend<0>),	UInt32),
   (blkOffset,	(Ctor<0>, Keys<0>, Descend<0>),			UInt64),
   (buf,		(Mutable),					Bytes));
 
-ZiFB::Table<"Zdf.DB.fbs.BlkData"> ZiFBType(BlkData *);
+ZiFB::AsTable<"Zdf.DB.fbs.BlkData"> ZiFB_Fmt(BlkData *);
 
 ZdbTableDerive(SeriesFixedTable, SeriesFixed);
 ZdbTableDerive(SeriesFloatTable, SeriesFloat);

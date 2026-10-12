@@ -16,19 +16,19 @@
 using namespace ZuTestUtil;
 
 struct AlignedRow { ZuBSpan data; };
-ZfStruct(, AlignedRow, (data, (FB::Align<32>), Bytes));
-ZiFB::Table<"test.AlignedRow"> ZiFBType(AlignedRow *);
+ZfStruct(, (AlignedRow, FB), (data, (FB::Align<32>), Bytes));
+ZiFB::AsTable<"test.AlignedRow"> ZiFB_Fmt(AlignedRow *);
 
 struct FloatRow {
   float real;
   ZtArray<float> values;
   ZtArray<const char *> names;
 };
-ZfStruct(, FloatRow,
+ZfStruct(, (FloatRow, FB),
   (real, (Ctor<0>, Deflt<1.5>), Float),
   (values, (Ctor<1>), FloatVec),
   (names, (Ctor<2>), CStringVec));
-ZiFB::Table<"test.FloatRow"> ZiFBType(FloatRow *);
+ZiFB::AsTable<"test.FloatRow"> ZiFB_Fmt(FloatRow *);
 
 struct BoundRow {
   ZuCSpan text;
@@ -36,9 +36,9 @@ struct BoundRow {
   ZtArray<int8_t> a;
   ZtArray<int8_t> b;
 };
-ZfStruct(, BoundRow,
+ZfStruct(, (BoundRow, FB),
   (text,, String), (bytes,, Bytes), (a,, Int8Vec), (b,, Int8Vec));
-ZiFB::Table<"test.BoundRow"> ZiFBType(BoundRow *);
+ZiFB::AsTable<"test.BoundRow"> ZiFB_Fmt(BoundRow *);
 
 static void paramPlanning()
 {
@@ -60,7 +60,7 @@ static void paramPlanning()
   const uint8_t byte[] = {1};
   BoundRow row{"x", byte, {1}, {1}};
   ZiFB::IOBuilder<> input{new ZiIOBufAlloc<>};
-  input.finish(ZiFB::saveObject(input, row));
+  input.finish(ZiFB::save(input, row));
   auto source = input.buf();
   ZiFB::TableView table{ZiFB::root(source->cspan())};
   auto parts = ZtScratch(ZdbPQ::VarBufParts, 2);
@@ -113,7 +113,7 @@ static void floatWire()
     FloatRow row{real, {-0.0f, 1.25f, -2.5f},
       {"", "short", "a CStringVec element longer than builtin string storage"}};
     ZiFB::IOBuilder<> input{new ZiIOBufAlloc<>};
-    input.finish(ZiFB::saveObject(input, row));
+    input.finish(ZiFB::save(input, row));
     auto source = input.buf();
     ZiFB::TableView fbo{ZiFB::root(source->cspan())};
     auto parts = ZtScratch(ZdbPQ::VarBufParts, 2);

@@ -345,6 +345,11 @@ ZfURIConfig(Bah, (
       ZfURI_Annotated<true,
 	ZfURI_Wrapped<true>>>>));
 
+ZuAssert(ZfURI::Config<ZuFacet::Bah>::ObjectFmt == ZfURI::Array);
+ZuAssert(ZfURI::Config<ZuFacet::Bah>::ArrayFmt == ZfURI::Delimited);
+ZuAssert(ZfURI::Config<ZuFacet::Bah>::Annotated);
+ZuAssert(ZfURI::Config<ZuFacet::Bah>::Wrapped);
+
 void roundTrip()
 {
   ZuTestScope(roundTrip);

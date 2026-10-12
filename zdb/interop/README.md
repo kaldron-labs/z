@@ -1,3 +1,9 @@
+For the ZiFB adapter reorganization in `refactor.md`, retain the current build
+configuration. `ZIFB_BENCH_CURRENT=1` enables the unchanged benchmark workloads
+for matching before/after comparisons in the retained configuration. Compare native
+ZiFB against its frozen pre-refactor sources; historical release comparisons
+below retain their original scope. All builds for this refactor use `-j4`.
+
 # Database message interoperability
 
 ## Current repair acceptance
@@ -166,7 +172,7 @@ consumer batch has been rebuilt or accepted. M2 must cover nested extraction,
 corruption, byte-preserving forwarding, sequence mutation and alert replay.
 
 Dashboard production request/receive code and its GTK exercise module now use
-native nested envelopes, borrowed keys, and `ZiFB::Handler` construction/update.
+native nested envelopes, borrowed keys, and `ZiFB::handler` construction/update.
 Group parsing uses the existing Z enum lookup. Data-frame table declarations
 also use native metadata. These remain source-only changes queued for M2;
 the obsolete dashboard schema-existence test and schemas must be removed in

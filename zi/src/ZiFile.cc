@@ -737,21 +737,26 @@ error:
   return Zi::IOError;
 }
 
-void ZiFile::close()
+int ZiFile::close()
 {
-  if (m_handle == Zi::nullHandle()) return;
+  if (m_handle == Zi::nullHandle()) return Zi::OK;
 
-  if (m_flags & Shadow) goto closed;
+  int result = Zi::OK;
+  if (!(m_flags & Shadow)) {
 
 #ifndef _WIN32
-  ::close(m_handle);
+    if (::close(m_handle) < 0) {
 #else
-  CloseHandle(m_handle);
+    if (!CloseHandle(m_handle)) {
 #endif
+      m_error = ZeLastError;
+      result = Zi::IOError;
+    }
+  }
 
-closed:
   m_handle = Zi::nullHandle();
   m_flags = 0;
+  return result;
 }
 
 void ZiMMapFile::close()
