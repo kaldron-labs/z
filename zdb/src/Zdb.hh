@@ -74,6 +74,7 @@
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiFB.hh>
+#include <zlib/ZiFBReflect.hh>
 
 #include <zlib/ZfCf.hh>
 
@@ -83,7 +84,6 @@
 #include <zlib/ZdbMsg.hh>
 #include <zlib/ZdbStore.hh>
 #include <zlib/ZdbSaga.hh>
-#include <zlib/ZiFBReflect.hh>
 
 #define ZdbTableDerive(Name, T_) \
   struct Name; \
@@ -231,31 +231,6 @@ struct DBState : public DBState_ {
 	state.get<Msg::ZfField(TableState, shard)>(),
 	state.get<Msg::ZfField(TableState, un)>());
   }
-  void load(ZiFB::View<Msg::DBState> dbState) {
-    sn = dbState.get<Msg::ZfField(DBState, sn)>();
-    for (auto state: dbState.get<Msg::ZfField(DBState, tableStates)>())
-      update(state.get<Msg::ZfField(TableState, table)>(),
-	state.get<Msg::ZfField(TableState, shard)>(),
-	state.get<Msg::ZfField(TableState, un)>());
-  }
-  template <typename B>
-  ZiFB::Offset save(B &fbb) const {
-    unsigned n = count_();
-    auto offsets = ZtScratch(ZiFB::Offsets, n);
-    {
-      auto i = citer();
-      while (auto state = i())
-	offsets.push(ZiFB::saveObject(fbb, Msg::TableState{
-	  state->template p<0>().template p<0>(), state->template p<1>(),
-	  state->template p<0>().template p<1>()}));
-    }
-    auto states = fbb.offsets(offsets);
-    auto table = fbb.startTable();
-    ZiFB::field<Msg::ZfField(DBState, sn)>(fbb, table, sn);
-    ZiFB::fieldOffset<Msg::ZfField(DBState, tableStates)>(fbb, table, states);
-    return fbb.endTable(table);
-  }
-
   void reset() {
     sn = 0;
     clean();
@@ -310,6 +285,71 @@ struct DBState : public DBState_ {
   template <typename S> void print(S &) const;
   friend ZuPrintFn ZuPrintType(DBState *);
 };
+
+// The native hash uses the canonical message schema without materializing
+// an array of TableState objects. Loading merges into an existing peer state.
+struct DBStateFmt : public ZiFB::As<Msg::DBState> {
+  template <typename O, typename Facet = ZuFacet::FB>
+  class Handler : public ZiFB::As<Msg::DBState>::template Handler<Msg::DBState, Facet> {
+    using Base = ZiFB::As<Msg::DBState>::template Handler<Msg::DBState, Facet>;
+  public:
+    explicit Handler(ZiFB::View<O, Facet> view) :
+      Base{{ZiFB::View<Msg::DBState, Facet>{view.data()}}} { }
+
+    void load(DBState &o) const {
+      auto dbState = this->view;
+      o.sn = dbState.template get<Msg::ZfField(DBState, sn)>();
+      for (auto state: dbState.template get<Msg::ZfField(DBState, tableStates)>())
+	o.update(state.template get<Msg::ZfField(TableState, table)>(),
+	  state.template get<Msg::ZfField(TableState, shard)>(),
+	  state.template get<Msg::ZfField(TableState, un)>());
+    }
+    void update(DBState &o) const { load(o); }
+
+    template <template <typename> class Filter = ZfFieldFilter::Save, typename B>
+    static ZiFB::Offset save(B &fbb, const DBState &o) {
+      ZiFB::Offset states = 0;
+      if constexpr (Filter<Msg::ZfField(DBState, tableStates)>{}) {
+	unsigned n = o.count_();
+	auto offsets = ZtScratch(ZiFB::Offsets, n);
+	{
+	  auto i = o.citer();
+	  while (auto state = i())
+	    offsets.push(ZiFB::save(fbb, Msg::TableState{
+	      state->template p<0>().template p<0>(), state->template p<1>(),
+	      state->template p<0>().template p<1>()}));
+	}
+	states = fbb.offsets(offsets);
+      }
+      auto table = fbb.startTable();
+      if constexpr (Filter<Msg::ZfField(DBState, sn)>{})
+	Base::template field<Msg::ZfField(DBState, sn)>(fbb, table, o.sn);
+      if constexpr (Filter<Msg::ZfField(DBState, tableStates)>{})
+	Base::template fieldOffset<Msg::ZfField(DBState, tableStates)>(fbb, table, states);
+      return fbb.endTable(table);
+    }
+
+  private:
+    // The inherited factories construct borrowed Msg::DBState, not a hash.
+    using Base::ctor;
+    using Base::alloc;
+    using Base::new_;
+  };
+};
+DBStateFmt ZiFB_Fmt(DBState *);
+
+// Native send data retains the canonical heartbeat field IDs and wire name.
+struct Heartbeat {
+  ZuCSpan host;
+  uint32_t state, nShards;
+  const DBState *dbState;
+};
+ZfStruct(ZdbAPI, (Heartbeat, FB),
+  (host,,			String),
+  (state,	(Deflt<0>),	UInt32),
+  (nShards,	(Deflt<0>),	UInt32),
+  (dbState,,			UDT));
+ZiFB::As<Msg::Heartbeat> ZiFB_Fmt(Heartbeat *);
 
 // --- generic row
 
@@ -1007,7 +1047,7 @@ private:
   }
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
   ZiFB::Offset rowSave(Builder &fbb, const void *ptr) const override {
-    return ZiFB::saveObject(fbb, *static_cast<const T *>(ptr));
+    return ZiFB::save(fbb, *static_cast<const T *>(ptr));
   }
   unsigned rowAlign() const override {
     constexpr auto row = ZiFB::BufferAlign<T>::N;
@@ -1015,11 +1055,11 @@ private:
     return row > msg ? row : msg;
   }
   ZiFB::Offset rowSaveUpd(Builder &fbb, const void *ptr) const override {
-    return ZiFB::saveObject<T, ZuFacet::Core, ZfFieldFilter::Upd>(
+    return ZiFB::save<ZuFacet::FB, ZfFieldFilter::Upd>(
       fbb, *static_cast<const T *>(ptr));
   }
   ZiFB::Offset rowSaveDel(Builder &fbb, const void *ptr) const override {
-    return ZiFB::saveObject<T, ZuFacet::Core, ZuStructKeyFilter<0>::template Filter>(
+    return ZiFB::save<ZuFacet::FB, ZfFieldFilter::Del>(
       fbb, *static_cast<const T *>(ptr));
   }
   bool rowVerify(Msg::RecordView record) const override {
@@ -2287,7 +2327,7 @@ inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
   auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
   Builder fbb{allocBuf(), ZiFB::BufferAlign<GroupKey<KeyID>>::N};
-  fbb.finish(ZiFB::saveObject(fbb, key));
+  fbb.finish(ZiFB::save(fbb, key));
   auto keyBuf = fbb.buf();
   AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
@@ -2308,7 +2348,7 @@ inline void Table_<Impl_>::select_(
   auto context = ZmRef(new Context{this, ZuFwd<L>(l)});
 
   Builder fbb{allocBuf(), ZiFB::BufferAlign<SelectKey>::N};
-  fbb.finish(ZiFB::saveObject(fbb, selectKey));
+  fbb.finish(ZiFB::save(fbb, selectKey));
   auto keyBuf = fbb.buf();
 
   auto tupleFn = TupleFn{ZuMv(context),
@@ -2367,7 +2407,7 @@ inline void Table_<Impl_>::retrieve(
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
   Builder fbb{allocBuf(), ZiFB::BufferAlign<Key_>::N};
-  fbb.finish(ZiFB::saveObject(fbb, context->key));
+  fbb.finish(ZiFB::save(fbb, context->key));
   auto keyBuf = fbb.buf();
   AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
@@ -3100,11 +3140,11 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogScan(ZmRef<SagaCa
   if (next) {
     using Key = ZuStructKeyT<SagaTypeStep, 0>;
     Key key{context->type, uint32_t(context->step - 1)};
-    fbb.finish(ZiFB::saveObject(fbb, key));
+    fbb.finish(ZiFB::save(fbb, key));
   } else {
     using GroupKey = typename SplitKey<SagaTypeStep, 0>::GroupKey;
     GroupKey key;
-    fbb.finish(ZiFB::saveObject(fbb, key));
+    fbb.finish(ZiFB::save(fbb, key));
   }
   auto keyBuf = fbb.buf();
   context->table->select(
@@ -3164,7 +3204,7 @@ inline void SagaDB<Context, Catalog, Complete, M_>::sagaCatalogWrite(ZmRef<SagaC
   SN sn = allocSN();
   ZiFB::IOBuilder<ZiFB::BufferAlign<SagaTypeStep>::N> fbb{TableT<SagaTypeStep>::allocBuf()};
   auto nested = fbb.startNested();
-  auto root = ZiFB::saveObject(fbb, row);
+  auto root = ZiFB::save(fbb, row);
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, "saga_type", un, sn, 0, 0, data);
   fbb.finish(saveMsg(fbb, record, Msg::Tag::Replication));

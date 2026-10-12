@@ -1,3 +1,10 @@
+For the `refactor.md` adapter reorganization, retain the current configuration.
+Use `ZIFB_BENCH_CURRENT=1` to run identical before/after workloads when that
+configuration is debug. This bypasses only the harness startup guard; compiler
+flags, workload, and correctness prechecks are unchanged. Compare native ZiFB
+before/after results, not canonical-library release performance. The historical
+release acceptance and evidence below retain their original scope.
+
 # FlatBuffers interoperability and pooled comparison
 
 ## Current repair acceptance

@@ -163,7 +163,7 @@ void run()
     Zdb_::DBState state{2};
     state.update("o", ZdbShard{1}, 42);
     Zdb_::Builder fbb{new ZiIOBufAlloc<>()};
-    auto bytes = fbb.finish(state.save(fbb));
+    auto bytes = fbb.finish(ZiFB::save(fbb, state));
     auto fbo = ZiFB::view<Zdb_::Msg::DBState>(bytes);
     Zdb_::DBState loaded{fbo};
     auto found = loaded.find("o", ZdbShard{1});

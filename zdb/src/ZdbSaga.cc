@@ -12,8 +12,11 @@ namespace Zdb_ {
 
 ZtEnumImplNS(SagaOp);
 ZfStructImpl(SagaData);
+ZfStructImpl(SagaData, FB);
 ZfStructImpl(SagaStep);
+ZfStructImpl(SagaStep, FB);
 ZfStructImpl(SagaTypeStep);
+ZfStructImpl(SagaTypeStep, FB);
 
 bool Saga::prepare_(
     AnyTable *table, Shard shard, SagaOp::T op,

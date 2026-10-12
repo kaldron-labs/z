@@ -56,10 +56,10 @@ inline ZeException ioError(const Path &path, const ZiFile &file) {
 
 template <
   typename O,
-  typename Facet,
-  unsigned MaxRowLen>
+  typename Facet>
 struct PushFile : Writer<O, Facet> {
   using Base = Writer<O, Facet>;
+  enum { MaxRowLen = ZfCSV::Config<Facet>::MaxRowLen };
 
   Path		path;
   ZiFile	file;
@@ -162,32 +162,30 @@ public:
     return write(data.data(), data.length());
   }
 
-  bool operator !() { return error; }
+  bool operator !() const { return error; }
   ZuOpBool
 };
 
 template <
   typename O,
-  typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096>
+  typename Facet = ZuFacet::Core>
 inline auto writeFile(Path path, WriteMode mode) {
-  return PushFile<O, Facet, MaxRowLen>{ZuMv(path), mode};
+  return PushFile<O, Facet>{ZuMv(path), mode};
 }
 
 template <
   typename O,
-  typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096>
+  typename Facet = ZuFacet::Core>
 inline auto writeFile(Columns columns, Path path, WriteMode mode) {
-  return PushFile<O, Facet, MaxRowLen>{columns, ZuMv(path), mode};
+  return PushFile<O, Facet>{columns, ZuMv(path), mode};
 }
 
 template <
   typename O,
-  typename Facet,
-  unsigned MaxRowLen>
+  typename Facet>
 struct PullFile : public Writer<O, Facet> {
   using Base = Writer<O, Facet>;
+  enum { MaxRowLen = ZfCSV::Config<Facet>::MaxRowLen };
 
   ZeException	error;
 
@@ -304,10 +302,9 @@ public:
 template <
   typename O,
   typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096,
   typename L>
 ZuUnion<void, ZeException> writeFile(Path path, WriteMode mode, L l) {
-  PullFile<O, Facet, MaxRowLen> pull(ZuMv(path), mode, ZuMv(l));
+  PullFile<O, Facet> pull(ZuMv(path), mode, ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
 }
@@ -315,11 +312,10 @@ ZuUnion<void, ZeException> writeFile(Path path, WriteMode mode, L l) {
 template <
   typename O,
   typename Facet = ZuFacet::Core,
-  unsigned MaxRowLen = 4096,
   typename L>
 ZuUnion<void, ZeException> writeFile(
     Columns columns, Path path, WriteMode mode, L l) {
-  PullFile<O, Facet, MaxRowLen> pull(
+  PullFile<O, Facet> pull(
     columns, ZuMv(path), mode, ZuMv(l));
   if (pull) return {};
   return ZuMv(pull.error);
@@ -329,11 +325,12 @@ template <typename O_, typename Facet = ZuFacet::Core>
 struct Reader : public ZfCSV::Reader<O_, Facet> {
   using O = O_;
   using Base = ZfCSV::Reader<O, Facet>;
+  enum { MaxRowLen = ZfCSV::Config<Facet>::MaxRowLen };
   using Base::Base;
   template <typename ...Args>
   Reader(Args &&...args) : Base(ZuFwd<Args>(args)...) { }
 
-  template <unsigned MaxRowLen = 4096, typename Path, typename L>
+  template <typename Path, typename L>
   ZuUnion<void, ZeException> readFile(const Path &path, L l) {
     ZiFile file;
     if (file.open(path, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK) goto error;

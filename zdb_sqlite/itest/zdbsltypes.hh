@@ -85,7 +85,7 @@ struct AllTypes {
   friend ZuStringT<"zdbsltest.allTypes.buf"> ZdbBufHeapID(AllTypes *);
 };
 
-ZfStruct(, AllTypes,
+ZfStruct(, (AllTypes, FB),
   (id,			(Ctor<0>, Keys<0>),				UInt64),
   (stringValue,		(Ctor<1>, Mutable),				String),
   (bytesValue,		(Ctor<2>, Mutable),				Bytes),
@@ -128,7 +128,7 @@ ZfStruct(, AllTypes,
   (realVec,		(Ctor<39>, Mutable),				FloatVec),
   ((names, AliasFn, cstrings, cstrings), (Ctor<40>, Mutable),		CStringVec),
   (mappedTime,		(Ctor<41>, Mutable, Deflt<MappedTime{23}>),	Time));
-ZiFB::Table<"zdbsltest.fbs.AllTypes"> ZiFBType(AllTypes *);
+ZiFB::AsTable<"zdbsltest.fbs.AllTypes"> ZiFB_Fmt(AllTypes *);
 
 ZdbTableDerive(AllTypesTable, AllTypes);
 

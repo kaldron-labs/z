@@ -20,6 +20,9 @@
 using namespace ZuTestUtil;
 
 ZuStructFacet(Bah);
+ZuStructFacet(SmallASN1);
+ZfASN1Config(SmallASN1, (
+  ZfASN1_StashSize<1, ZfASN1_OIDSize<1, ZfASN1_VecSize<1>>>));
 
 struct Foo {
   ZuCSpan string;
@@ -49,6 +52,8 @@ ZfStructRender(, Foo, Bah,
   bytesVec, t,
   (iv,     ASN1::Type<OID>));
 
+ZuStructReflect(Foo, ZuFacet::SmallASN1, ZuFacet::Bah);
+
 void roundTrip()
 {
   ZuTestScope(roundTrip);
@@ -61,6 +66,16 @@ void roundTrip()
   ZtString<> asn1;
   ZfASN1::save<ZuFacet::Bah>(asn1, foo);
   log("asn1:", ZtHexDump_{asn1.span()});
+
+  ZtString<> small;
+  ZfASN1::save<ZuFacet::SmallASN1>(small, foo);
+  ZuCheck(small == asn1);
+  auto copy = ZfASN1::handler<Foo, ZuFacet::SmallASN1>(small).ctor();
+  ZuCheck(copy.string == foo.string);
+  ZuCheck(copy.bytesVec.length() == foo.bytesVec.length());
+  for (unsigned i = 0; i < foo.bytesVec.length(); i++)
+    ZuCheck(copy.bytesVec[i] == foo.bytesVec[i]);
+  for (unsigned i = 0; i < 4; i++) ZuCheck(copy.iv[i] == foo.iv[i]);
 
   Foo bar = ZfASN1::handler<Foo, ZuFacet::Bah>(asn1).ctor();
   log(bar);

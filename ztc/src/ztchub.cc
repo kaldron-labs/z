@@ -295,7 +295,7 @@ static Ztc::HubFrame errorFrame(uint64_t subID, ZuCSpan deviceID,
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto error = ZiFB::saveObject(builder, Ztc::Error{
+  auto error = ZiFB::save(builder, Ztc::Error{
     Ztc::ErrorMessage{message}, deviceID ? ZuID{deviceID} : ZuID{"inventory"},
     0, int(code)});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Error,
@@ -309,7 +309,7 @@ static Ztc::HubFrame unsubscribeFrame(const Ztc::RouteInfo &route)
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto request = ZiFB::saveObject(builder,
+  auto request = ZiFB::save(builder,
     Ztc::Request{.seqNo = route.requestSeqNo});
   builder.finish(Ztc::saveMsg(builder, nested,
     Ztc::Body::Request, request));
@@ -739,7 +739,7 @@ struct App {
       }
       uint64_t agent = 0, generation = 0, seqNo = 0;
       Ztc::HubError::T error = Ztc::HubError::BadReq;
-      auto requestData = ZiFB::Handler<Ztc::Request>{request}.ctor();
+      auto requestData = ZiFB::handler<Ztc::Request>(request).ctor();
       if (!hub->addSubscription(state.sessionID, subID,
 	  deviceID, requestData,
 	  agent, generation, seqNo, error)) {
@@ -754,7 +754,7 @@ struct App {
         "Ztc.Hub.Frame">}};
       auto nested = builder.startNested();
       requestData.seqNo = seqNo;
-      auto request_ = ZiFB::saveObject(builder, requestData);
+      auto request_ = ZiFB::save(builder, requestData);
       builder.finish(Ztc::saveMsg(builder, nested,
 	Ztc::Body::Request, request_));
       if (!hub->sendAgent(agent, generation, builder.buf())) {

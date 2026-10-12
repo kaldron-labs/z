@@ -13,7 +13,7 @@ libZiTest_la_SOURCES = ZiTestResidue.cc
 noinst_PROGRAMS = \
 	ZiFileTest ZiFileAgeTest ZiGlobTest \
 	ZiRingTest ZiRingTest2 \
-	ZiIOBufTest ZiFBTest ZiFBReflectTest ZiFBIOTest ZiEventLoopTest \
+	ZiIOBufTest ZiFBTest ZiFlatcTest ZiFBReflectTest ZiFBIOTest ZiEventLoopTest \
 	ZiDirTest ZiIPTest ZiModuleTest ZiPlatformTest ZiIOContextTest ZiCSVTest \
 	ZiRxTest ZiTxTest ZiTxStreamTest ZiRxStreamTest ZiLogTest ZiMxLoopTest \
 	ZiDaemonTest ZiPIDFileTest ZiResolverTest
@@ -24,6 +24,8 @@ test: $(noinst_PROGRAMS)
 	prove $(noinst_PROGRAMS)
 ZiFileTest_SOURCES = ZiFileTest.cc
 ZiFBTest_SOURCES = ZiFBTest.cc
+ZiFlatcTest_SOURCES = ZiFlatcTest.cc
+ZiFlatcTest_LDFLAGS = @Z_LDFLAGS@
 ZiFBReflectTest_SOURCES = ZiFBReflectTest.cc
 ZiFBIOTest_SOURCES = ZiFBIOTest.cc
 ZiFileAgeTest_SOURCES = ZiFileAgeTest.cc

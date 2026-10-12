@@ -92,7 +92,7 @@ static void request()
   request.group = Ztc::Group::Heap;
   request.interval = 7;
   request.subscribe = true;
-  auto payload = ZiFB::saveObject(builder, request);
+  auto payload = ZiFB::save(builder, request);
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Request,
     payload, 19, "device", 23));
   auto owner = builder.buf();
@@ -238,7 +238,7 @@ struct Native {
       b.finish(Ztc::saveMsg(b, data, seq, "device", 23));
     } else {
       auto nested = b.startNested();
-      auto value = ZiFB::saveObject(b, row);
+      auto value = ZiFB::save(b, row);
       b.finish(Ztc::saveMsg(b, nested, Ztc::Body::Request,
 	value, seq, "device", 23));
     }

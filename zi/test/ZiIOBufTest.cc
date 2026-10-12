@@ -106,6 +106,48 @@ void testSpanOffsetAndLargeEnsure()
   ZuCheck(out == "0123456789");
 }
 
+void testPrependTailRoom()
+{
+  ZuTestScope(testPrependTailRoom);
+
+  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<8, 4096>{};
+  buf->owner = &buf;
+  auto data = buf->data_();
+  auto size = buf->size;
+  buf->skip = 8;
+  buf->length = 4;
+  memcpy(buf->data(), "tail", 4);
+  auto end = buf->end();
+  auto avail = buf->avail();
+  memcpy(buf->prepend(4), "head", 4);
+  ZuCheck(buf->cspan() == "headtail");
+  ZuCheck(buf->data_() == data && buf->size == size);
+  ZuCheck(buf->end() == end && buf->avail() == avail);
+  ZuCheck(buf->owner == &buf);
+
+  // Insufficient headroom, but the combined free space avoids allocation.
+  buf->skip = 2;
+  buf->length = 4;
+  memcpy(buf->data(), "tail", 4);
+  memcpy(buf->prepend(4), "head", 4);
+  ZuCheck(buf->cspan() == "headtail");
+  ZuCheck(buf->data_() == data && buf->size == size);
+  ZuCheck(buf->skip + buf->length == size && buf->owner == &buf);
+
+  // Existing headroom must not be subtracted from the required capacity.
+  buf->skip = 2;
+  buf->length = size - buf->skip;
+  auto length = buf->length;
+  for (unsigned i = 0; i < length; ++i) buf->data()[i] = i;
+  memcpy(buf->prepend(4), "head", 4);
+  ZuCheck(buf->size >= length + 4 && buf->length == length + 4);
+  ZuCheck((ZuBSpan{buf->data(), 4} == "head"));
+  bool intact = true;
+  for (unsigned i = 0; i < length; ++i)
+    if (buf->data()[i + 4] != uint8_t(i)) intact = false;
+  ZuCheck(intact && buf->owner == &buf);
+}
+
 struct HugePrint;
 struct HugePrintFn : ZuPrintBuffer {
   static unsigned length(const HugePrint &) { return UINT_MAX; }
@@ -167,6 +209,7 @@ int main(int argc, char **argv)
   ZuTestCall(testSliceAndEnsurePreserveSpan);
   ZuTestCall(testAdvanceRewind);
   ZuTestCall(testPrependAndGrow);
+  ZuTestCall(testPrependTailRoom);
   ZuTestCall(testSpanOffsetAndLargeEnsure);
   ZuTestCall(testOutputFailure);
   return 0;

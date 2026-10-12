@@ -114,15 +114,16 @@ static Frame requestFrame(const Subscription &sub, bool subscribe)
   auto filter = builder.string(sub.filter);
   auto publisher = sub.publisherID ? builder.string(sub.publisherID) : 0;
   auto table = builder.startTable();
-  ZiFB::field<Ztc::ZfField(Request, seqNo)>(builder, table, uint64_t(0));
-  ZiFB::field<Ztc::ZfField(Request, group)>(builder, table, sub.group);
-  ZiFB::fieldOffset<Ztc::ZfField(Request, filter)>(builder, table, filter);
-  ZiFB::fieldOffset<Ztc::ZfField(Request, id)>(builder, table, publisher);
-  ZiFB::field<Ztc::ZfField(Request, interval)>(builder, table,
+  using H = ZiFB::As<Ztc::Request>::template Handler<Ztc::Request>;
+  H::template field<Ztc::ZfField(Request, seqNo)>(builder, table, uint64_t(0));
+  H::template field<Ztc::ZfField(Request, group)>(builder, table, sub.group);
+  H::template fieldOffset<Ztc::ZfField(Request, filter)>(builder, table, filter);
+  H::template fieldOffset<Ztc::ZfField(Request, id)>(builder, table, publisher);
+  H::template field<Ztc::ZfField(Request, interval)>(builder, table,
     subscribe ? sub.interval : 0);
-  ZiFB::field<Ztc::ZfField(Request, subscribe)>(builder, table, subscribe);
-  ZiFB::field<Ztc::ZfField(Request, alertDate)>(builder, table, uint32_t(0));
-  ZiFB::field<Ztc::ZfField(Request, alertSeqNo)>(builder, table, uint64_t(0));
+  H::template field<Ztc::ZfField(Request, subscribe)>(builder, table, subscribe);
+  H::template field<Ztc::ZfField(Request, alertDate)>(builder, table, uint32_t(0));
+  H::template field<Ztc::ZfField(Request, alertSeqNo)>(builder, table, uint64_t(0));
   auto request = builder.endTable(table);
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Request,
     request, sub.id, sub.deviceID));
@@ -316,7 +317,7 @@ template <typename Data_> struct Item_ : public Item__<Data_> {
   void			*gtkRow_ = nullptr;
 
   Item_() = default;
-  Item_(ZiFB::View<Data> fbo) : value{ZiFB::Handler<Data>{fbo}.ctor()} { }
+  Item_(ZiFB::View<Data> fbo) : value{ZiFB::handler<Data>(fbo).ctor()} { }
 
   Item_(const Item_ &) = delete;
   Item_ &operator =(const Item_ &) = delete;
@@ -1977,7 +1978,7 @@ private:
       auto &container = src->telemetry.p<I>();
       using Item = TelItem<T>;
       if (auto item = container.lookup(fbo)) {
-	ZiFB::Handler<T>{fbo}.update(item->value);
+	ZiFB::handler<T>(fbo).update(item->value);
 	if constexpr (ZuIsSame<T, Ztc::AppTelemetry>{})
 	  item->generation_ = src->generation;
 	m_gtkModel->updated(GtkTree::row(item));
@@ -1990,7 +1991,7 @@ private:
       ZuTypeIndex<T, Telemetry::TypeList> i;
       auto &container = src->telemetry.p<i>();
       if (container.data.length() >= m_alertRows) container.data.splice(0, 1);
-      processAlert(new (container.data.push()) T{ZiFB::Handler<T>{fbo}.ctor()});
+      processAlert(new (container.data.push()) T{ZiFB::handler<T>(fbo).ctor()});
     }
   }
 

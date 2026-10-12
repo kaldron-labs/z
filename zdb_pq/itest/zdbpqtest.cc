@@ -81,13 +81,13 @@ ZuPtr<ZiMultiplex> mx;
 ZmSemaphore done;
 
 struct DiagOne { int64_t a; };
-ZfStruct(, DiagOne, (a, (Ctor<0>, Keys<0>), Int64));
-ZiFB::Table<"test.DiagOne"> ZiFBType(DiagOne *);
+ZfStruct(, (DiagOne, FB), (a, (Ctor<0>, Keys<0>), Int64));
+ZiFB::AsTable<"test.DiagOne"> ZiFB_Fmt(DiagOne *);
 struct DiagTwo { int64_t a; int64_t b; };
-ZfStruct(, DiagTwo,
+ZfStruct(, (DiagTwo, FB),
   (a, (Ctor<0>, Keys<0>), Int64),
   (b, (Ctor<1>), Int64));
-ZiFB::Table<"test.DiagTwo"> ZiFBType(DiagTwo *);
+ZiFB::AsTable<"test.DiagTwo"> ZiFB_Fmt(DiagTwo *);
 
 template <typename T>
 static void mismatch(

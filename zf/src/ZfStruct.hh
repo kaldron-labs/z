@@ -3589,7 +3589,7 @@ inline ZfVKeyFieldArray ZfVKeyFields() {
 // - Init - fields initialized post-construction
 // - Save - fields used to fully persist an object
 // - Upd - mutable fields that may be present in an update, and the primary key
-// - Del - all key fields
+// - Del - primary key fields
 
 // ZfFieldFiltered<ZfFieldFilter::Load, Fields>;
 namespace ZfFieldFilter {
@@ -3628,7 +3628,7 @@ namespace ZfFieldFilter {
 
   template <typename Field>
   using Del = ZuBool<ZuFieldActive<Field>{} &&
-    bool(ZuFieldProp::GetKeys<typename Field::Props>::N)>;
+    bool(ZuFieldProp::Key<typename Field::Props, 0>{})>;
 }
 
 // ZfVStructInfo aggregates the field metadata a run-time

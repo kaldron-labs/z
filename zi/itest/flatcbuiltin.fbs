@@ -1,0 +1,2 @@
+namespace Zf;
+table Bytes { data:[ubyte]; }

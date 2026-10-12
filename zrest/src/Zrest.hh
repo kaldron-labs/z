@@ -92,7 +92,7 @@ struct Request {
   static constexpr unsigned SignBodyBufSize = 1<<10;
 
   using Query_URI_Facet = ZuFacet::URI;
-  using Body_URI_Facet = ZuFacet::IncrementalURI;
+  using Body_URI_Facet = ZuFacet::URI;
   using Body_JSON_Facet = ZuFacet::JSON;
 };
 
@@ -109,7 +109,7 @@ struct Response {
   static constexpr unsigned SignBodyBufSize = 1<<10;
 
   using Body_JSON_Facet = ZuFacet::JSON;
-  using Body_URI_Facet = ZuFacet::IncrementalURI;
+  using Body_URI_Facet = ZuFacet::URI;
 };
 
 template <typename Req>

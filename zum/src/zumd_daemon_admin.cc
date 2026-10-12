@@ -2669,7 +2669,7 @@ static String adminCursorEncode(
     ZuBSpan secret, int operation, AppID appID, const Key &key)
 {
   ZiFB::IOBuilder<ZiFB::BufferAlign<Key>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(ZiFB::saveObject(fbb, key));
+  fbb.finish(ZiFB::save(fbb, key));
   unsigned dataLength = fbb.size();
   constexpr unsigned headerLength = 10;
   constexpr unsigned macLength = Ztls::HMAC<>::Size;

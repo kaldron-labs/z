@@ -8,8 +8,11 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmObject.hh>
+#include <zlib/ZmRef.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtCase.hh>
@@ -25,46 +28,46 @@ using namespace ZuTestUtil;
 namespace MetaTest {
 
 struct Ping { };
-ZfStruct(, Ping);
-ZiFB::Table<"test.Ping"> ZiFBType(Ping *);
+ZfStruct(, (Ping, FB));
+ZiFB::AsTable<"test.Ping"> ZiFB_Fmt(Ping *);
 
 struct Body { };
-ZiFB::Union<"test.Body",
-  ZiFB::Alt<"Ping", Ping>, ZiFB::Alt<"Again", Ping>> ZiFBType(Body *);
+ZiFB::AsUnion<"test.Body",
+  ZiFB::Alt<"Ping", Ping>, ZiFB::Alt<"Again", Ping>> ZiFB_Fmt(Body *);
 
 struct Implicit {
   unsigned id;
   Body body;
   uint64_t roleIDs;
 };
-ZfStruct(, Implicit,
+ZfStruct(, (Implicit, FB),
   ((retired, Skip, int),	(Deflt<7>),	Int32),
   (id,				(Keys<0>),	UInt32),
   (body,,					UDT),
   (roleIDs,,					UInt64));
 ZfStructRender(, Implicit, Wire, (roleIDs, FB::ID<"roles">), id);
-ZiFB::Table<"test.Implicit"> ZiFBType(Implicit *);
+ZiFB::AsTable<"test.Implicit"> ZiFB_Fmt(Implicit *);
 
 struct Explicit {
   uint64_t value;
   Body body;
   unsigned tail;
 };
-ZfStruct(, Explicit,
+ZfStruct(, (Explicit, FB),
   (value,			(FB::FieldID<3>),	UInt64),
   ((retired, Skip, int),	(FB::FieldID<0>),	Int32),
   (body,			(FB::FieldID<2>),	UDT),
   (tail,			(FB::FieldID<4>),	UInt32));
-ZiFB::Table<"test.Explicit"> ZiFBType(Explicit *);
+ZiFB::AsTable<"test.Explicit"> ZiFB_Fmt(Explicit *);
 
-using MI = ZiFB::Meta<Implicit>;
-using ME = ZiFB::Meta<Explicit>;
-using MF = ZiFB::Meta<Implicit, ZuFacet::Wire>;
+using MI = typename ZiFB::As<Implicit>::template Handler<Implicit>;
+using ME = typename ZiFB::As<Explicit>::template Handler<Explicit>;
+using MF = typename ZiFB::As<Implicit>::template Handler<Implicit, ZuFacet::Wire>;
 using Key = ZuStructKeyT<Implicit>;
-using MK = ZiFB::Meta<Key>;
+using MK = typename ZiFB::As<Key>::template Handler<Key>;
 ZuAssert(MI::N == 5);
-ZuAssert(MI::Fields::N == 4);
-ZuAssert(MI::Active::N == 3);
+ZuAssert(MI::SchemaFields::N == 4);
+ZuAssert(MI::AllFields::N == 3);
 ZuAssert(MI::id<ZfField(Implicit, retired)>() == 0);
 ZuAssert(MI::id<ZfField(Implicit, id)>() == 1);
 ZuAssert(MI::id<ZfField(Implicit, body)>() == 3);
@@ -74,52 +77,85 @@ ZuAssert(ME::id<ZfField(Explicit, retired)>() == 0);
 ZuAssert(ME::id<ZfField(Explicit, body)>() == 2);
 ZuAssert(ME::id<ZfField(Explicit, tail)>() == 4);
 ZuAssert(MF::N == MI::N);
-ZuAssert(MF::Fields::N == 4);
-ZuAssert(MF::Active::N == 2);
+ZuAssert(MF::SchemaFields::N == 4);
+ZuAssert(MF::AllFields::N == 2);
 ZuAssert(MF::id<ZfField(Implicit_Wire, roleIDs)>() == 4);
 ZuAssert(MK::N == MI::N);
-ZuAssert((MK::id<ZuType<0, MK::Active>>() == 1));
-ZuAssert(MI::name() == "test.Implicit");
-ZuAssert(MI::fieldName<ZfField(Implicit, roleIDs)>() == "role_i_ds");
-ZuAssert(MF::fieldName<ZfField(Implicit_Wire, roleIDs)>() == "roles");
+ZuAssert((MK::id<ZuType<0, MK::AllFields>>() == 1));
+ZuAssert(ZiFB::As<Implicit>::name() == "test.Implicit");
+ZuAssert(ZuFieldProp::FB::name<ZfField(Implicit, roleIDs)>() == "role_i_ds");
+ZuAssert(ZuFieldProp::FB::name<ZfField(Implicit_Wire, roleIDs)>() == "roles");
 ZuAssert(ZiFB::IsUnion<Body>{});
-ZuAssert(ZiFB::Type<Body>::Types::N == 2);
+ZuAssert(ZiFB::As<Body>::Types::N == 2);
+
+// Schema and static saving must not instantiate a native constructor/setter.
+class SaveOnly {
+public:
+  SaveOnly() = delete;
+  explicit SaveOnly(unsigned value) : m_value{value} { }
+  unsigned value() const { return m_value; }
+private:
+  unsigned m_value;
+};
+ZfStruct(, (SaveOnly, FB), ((value, RdFn), (Deflt<0>), UInt32));
+ZuTrue ZuStructRO_(SaveOnly *);
+ZiFB::AsTable<"test.SaveOnly"> ZiFB_Fmt(SaveOnly *);
+using SaveH = ZiFB::As<SaveOnly>::Handler<SaveOnly>;
+
+template <typename T, typename = void>
+struct CanBuildSave : public ZuFalse { };
+template <typename T>
+struct CanBuildSave<T, decltype(ZiFB::save(
+  ZuDeclVal<ZiFB::IOBuilder<> &>(), ZuDeclVal<const T &>()), void())> :
+  public ZuTrue { };
+ZuAssert(CanBuildSave<SaveOnly>{});
+ZuAssert(!CanBuildSave<int>{});
+ZuAssert(SaveH::SchemaFields::N == 1);
+ZuAssert(SaveH::N == 1);
+ZuAssert(!ZiFB::IsUnion<ValueTest::Packed>{});
+ZuAssert(!ZiFB::IsStruct<ValueTest::Packed>{});
+ZuAssert((ZuIsSame<ZiFB::As<ValueTest::Packed>, void>{}));
 
 // Compile each ZIFB_BAD_* branch separately; each must fail to compile.
 #if defined(ZIFB_BAD_MIXED)
 struct Bad { int a, b; };
-ZfStruct(, Bad,
+ZfStruct(, (Bad, FB),
   (a,	(FB::FieldID<0>),	Int32),
   (b,,				Int32));
-ZuAssert(sizeof(ZiFB::Meta<Bad>) > 0);
+ZiFB::AsTable<"test.Bad"> ZiFB_Fmt(Bad *);
+ZuAssert(sizeof(ZiFB::As<Bad>::template Handler<Bad>) > 0);
 #elif defined(ZIFB_BAD_GAP)
 struct Bad { int a, b; };
-ZfStruct(, Bad,
+ZfStruct(, (Bad, FB),
   (a,	(FB::FieldID<0>),	Int32),
   (b,	(FB::FieldID<2>),	Int32));
-ZuAssert(sizeof(ZiFB::Meta<Bad>) > 0);
+ZiFB::AsTable<"test.Bad"> ZiFB_Fmt(Bad *);
+ZuAssert(sizeof(ZiFB::As<Bad>::template Handler<Bad>) > 0);
 #elif defined(ZIFB_BAD_UNION)
 struct Bad { Body body; };
-ZfStruct(, Bad, (body, (FB::FieldID<0>), UDT));
-ZuAssert(sizeof(ZiFB::Meta<Bad>) > 0);
+ZfStruct(, (Bad, FB), (body, (FB::FieldID<0>), UDT));
+ZiFB::AsTable<"test.Bad"> ZiFB_Fmt(Bad *);
+ZuAssert(sizeof(ZiFB::As<Bad>::template Handler<Bad>) > 0);
 #elif defined(ZIFB_BAD_NAME)
 struct Bad { int a, b; };
-ZfStruct(, Bad,
+ZfStruct(, (Bad, FB),
   (a,,			Int32),
   (b,	(FB::ID<"a">),	Int32));
-ZuAssert(sizeof(ZiFB::Meta<Bad>) > 0);
+ZiFB::AsTable<"test.Bad"> ZiFB_Fmt(Bad *);
+ZuAssert(sizeof(ZiFB::As<Bad>::template Handler<Bad>) > 0);
 #elif defined(ZIFB_BAD_ALIGN)
 struct Bad { ZuBSpan bytes; };
-ZfStruct(, Bad, (bytes, (FB::Align<3>), Bytes));
+ZfStruct(, (Bad, FB), (bytes, (FB::Align<3>), Bytes));
 ZuAssert(ZuFieldProp::FB::align<ZfField(Bad, bytes)>() == 3);
 #elif defined(ZIFB_BAD_TAG_NAME)
 struct Bad { Body body; unsigned bodyType; };
-ZfStruct(, Bad,
+ZfStruct(, (Bad, FB),
   (body,,	UDT),
   (bodyType,,	UInt32));
-ZuAssert(sizeof(ZiFB::Meta<Bad>) > 0);
+ZiFB::AsTable<"test.Bad"> ZiFB_Fmt(Bad *);
+ZuAssert(sizeof(ZiFB::As<Bad>::template Handler<Bad>) > 0);
 #elif defined(ZIFB_BAD_ALT_NAME)
-using Bad = ZiFB::Union<"test.Bad", ZiFB::Alt<"NONE", int>>;
+using Bad = ZiFB::AsUnion<"test.Bad", ZiFB::Alt<"NONE", int>>;
 ZuAssert(sizeof(Bad) > 0);
 #endif
 
@@ -127,9 +163,19 @@ static void run()
 {
   ZuTestScope(meta);
   ZuCheck(MI::N == 5 && ME::N == 5);
-  ZuCheck(MK::name() == MI::name());
+  ZuCheck(ZiFB::As<Key>::name() == ZiFB::As<Implicit>::name());
+  ZiFB::IOBuilder<> builder{new ZiIOBufAlloc<>};
+  // All includes a read-only getter without ctor/key metadata; Save omits it.
+  auto bytes = builder.finish(
+    ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(builder, SaveOnly{42}));
+  ZuCheck(!builder.failed() && ZiFB::verify<SaveOnly>(bytes));
+  auto view = ZiFB::view<SaveOnly>(bytes);
+  ZuCheck(view.get<ZfField(SaveOnly, value)>() == 42);
+  auto h = ZiFB::handler(view);
+  ZuAssert((ZuIsSame<decltype(h), SaveH>{}));
+  (void)h;
   ZtCase::camelSnake("roleIDs", [](ZuCSpan name) {
-    ZuCheck(name == MI::fieldName<ZfField(Implicit, roleIDs)>());
+    ZuCheck(name == ZuFieldProp::FB::name<ZfField(Implicit, roleIDs)>());
   });
 }
 
@@ -438,10 +484,10 @@ static void alignment()
 namespace ViewTest {
 
 struct Point { uint8_t tag; int64_t value; };
-ZfStruct(, (Point, JSON),
+ZfStruct(, (Point, FB, JSON),
   (tag,		(Deflt<0>, FB::Align<32>),	UInt8),
   (value,	(Deflt<0>),			Int64));
-ZiFB::Inline<"test.Point"> ZiFBType(Point *);
+ZiFB::AsStruct<"test.Point"> ZiFB_Fmt(Point *);
 
 struct Row {
   uint64_t seq;
@@ -449,32 +495,32 @@ struct Row {
   Point point;
   ZuSpan<const uint64_t> values;
 };
-ZfStruct(, Row,
-  (seq,				(Deflt<UINT64_MAX>),	UInt64),
+ZfStruct(, (Row, FB),
+  (seq,				(Deflt<UINT64_MAX>, Keys<1>),	UInt64),
   ((retired, Skip, int),	(Deflt<0>),		Int32),
   (name,			(Required, Keys<0>),	String),
   (point,,						UDT),
   (values,			(FB::Align<32>),	UInt64Vec));
 ZfStructRender(, Row, JSON, seq, (name, JSON::ID<"label">), point, values);
-ZiFB::Table<"test.Row"> ZiFBType(Row *);
+ZiFB::AsTable<"test.Row"> ZiFB_Fmt(Row *);
 
 struct Scalars {
   ZuSpan<const int64_t> narrow;
   ZuSpan<const float> floats;
   ZuSpan<const double> doubles;
 };
-ZfStruct(, Scalars,
+ZfStruct(, (Scalars, FB),
   (narrow,,	Int32Vec),
   (floats,,	FloatVec),
   (doubles,,	FloatVec));
-ZiFB::Table<"test.Scalars"> ZiFBType(Scalars *);
+ZiFB::AsTable<"test.Scalars"> ZiFB_Fmt(Scalars *);
 
 ZuDerive(Text, (ZtString<ZtStringHeapID<"ZiFBTest.View.Text">>));
 
-ZuAssert(ZiFB::Layout<Point>::Align == 32);
-ZuAssert(ZiFB::Layout<Point>::Size == 32);
-ZuAssert(ZiFB::Layout<Point>::offset<ZfField(Point, tag)>() == 0);
-ZuAssert(ZiFB::Layout<Point>::offset<ZfField(Point, value)>() == 8);
+ZuAssert(ZiFB::As<Point>::template Handler<Point>::Align == 32);
+ZuAssert(ZiFB::As<Point>::template Handler<Point>::Size == 32);
+ZuAssert(ZiFB::As<Point>::template Handler<Point>::offset<ZfField(Point, tag)>() == 0);
+ZuAssert(ZiFB::As<Point>::template Handler<Point>::offset<ZfField(Point, value)>() == 8);
 
 static void payload()
 {
@@ -484,7 +530,7 @@ static void payload()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<32> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage, 32};
-  auto bytes = builder.finish(ZiFB::saveObject(builder, row));
+  auto bytes = builder.finish(ZiFB::save(builder, row));
   ZuCheckRT(!builder.failed() && ZiFB::verify<Row>(bytes));
   auto view = ZiFB::view<Row>(bytes);
   ZuCheckRT(!view.has<ZfField(Row, seq)>());
@@ -504,7 +550,7 @@ static void payload()
     auto keyBuf = ZtScratch(ZiFB::Buffer, 0);
     ZiFB::ArrayStorage<ZiFB::BufferAlign<decltype(key)>::N> keyStorage{keyBuf};
     ZiFB::Builder<decltype(keyStorage)> keyBuilder{keyStorage};
-    auto keyBytes = keyBuilder.finish(ZiFB::saveObject(keyBuilder, key));
+    auto keyBytes = keyBuilder.finish(ZiFB::save(keyBuilder, key));
     ZuCheckRT(!keyBuilder.failed() && ZiFB::verify<Row>(keyBytes));
     auto keyView = ZiFB::view<Row>(keyBytes);
     ZuCheckRT(keyView.get<ZfField(Row, name)>() == row.name);
@@ -533,19 +579,19 @@ static void payload()
   builder.clear();
   auto projected = builder.finish(builder.endTable(builder.startTable()));
   ZuCheckRT(!ZiFB::verify<Row>(projected));
-  ZuCheckRT((ZiFB::verify<Row, false, ZuFacet::Core, ZuAlwaysFalse>(projected)));
-  ZuCheckRT(!(ZiFB::verify<Row, false, ZuFacet::Core,
-    ZuStructKeyFilter<0>::template Filter>(projected)));
+  ZuCheckRT((ZiFB::verify<Row, ZuFacet::FB, ZuAlwaysFalse>(projected)));
+  ZuCheckRT(!(ZiFB::verify<Row, ZuFacet::FB,
+    ZfFieldFilter::Del>(projected)));
   builder.clear();
   auto bad = builder.startTable();
-  builder.field<uint32_t>(bad, ZiFB::Meta<Row>::id<ZfField(Row, name)>(), UINT32_MAX, 0);
+  builder.field<uint32_t>(bad, ZiFB::As<Row>::template Handler<Row>::id<ZfField(Row, name)>(), UINT32_MAX, 0);
   auto malformed = builder.finish(builder.endTable(bad));
   // Excluded fields still require valid wire data when present.
-  ZuCheckRT(!(ZiFB::verify<Row, false, ZuFacet::Core, ZuAlwaysFalse>(malformed)));
+  ZuCheckRT(!(ZiFB::verify<Row, ZuFacet::FB, ZuAlwaysFalse>(malformed)));
 
   builder.clear();
   row.name = {};
-  ZiFB::saveObject(builder, row);
+  ZiFB::save(builder, row);
   ZuCheckRT(builder.error() == ZiFB::Error::Required);
 }
 
@@ -558,7 +604,7 @@ static void scalars()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto bytes = builder.finish(ZiFB::saveObject(builder, Scalars{narrow, floats, doubles}));
+  auto bytes = builder.finish(ZiFB::save(builder, Scalars{narrow, floats, doubles}));
   ZuCheck(!builder.failed() && ZiFB::verify<Scalars>(bytes));
   auto view = ZiFB::view<Scalars>(bytes);
   auto n = view.get<ZfField(Scalars, narrow)>();
@@ -577,9 +623,18 @@ static void keyProjection()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto bytes = builder.finish(ZiFB::saveObject(builder, key));
+  auto bytes = builder.finish(ZiFB::save(builder, key));
   ZuCheck(!builder.failed() && ZiFB::verify<Row>(bytes));
   auto view = ZiFB::view<Row>(bytes);
+  ZuCheck(view.get<ZfField(Row, name)>() == "key");
+  ZuCheck(view.has<ZfField(Row, name)>());
+  ZuCheck(!view.has<ZfField(Row, seq)>());
+  ZuCheck(!view.has<ZfField(Row, values)>());
+
+  builder.clear();
+  bytes = builder.finish(ZiFB::save<ZuFacet::FB, ZfFieldFilter::Del>(builder, row));
+  ZuCheck(!builder.failed() && ZiFB::verify<Row>(bytes));
+  view = ZiFB::view<Row>(bytes);
   ZuCheck(view.get<ZfField(Row, name)>() == "key");
   ZuCheck(view.has<ZfField(Row, name)>());
   ZuCheck(!view.has<ZfField(Row, seq)>());
@@ -602,8 +657,7 @@ static void bitmaps()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto output = builder.finish(ZiFB::saveObject<Bitmaps, ZuFacet::Core,
-    ZfFieldFilter::Del>(builder, row));
+  auto output = builder.finish(ZiFB::save<ZuFacet::FB, ZfFieldFilter::Del>(builder, row));
   ZuCheck(!builder.failed() && ZiFB::verify<Bitmaps>(output));
   auto view = ZiFB::view<Bitmaps>(output);
   auto fixed = view.get<ZfField(Bitmaps, fixed)>();
@@ -616,18 +670,18 @@ static void bitmaps()
 
   builder.clear();
   row.hw.set(31).set(32).set(63).set(64).set(128);
-  output = builder.finish(ZiFB::saveObject(builder, row));
+  output = builder.finish(ZiFB::save(builder, row));
   hw = ZiFB::view<Bitmaps>(output).get<ZfField(Bitmaps, hw)>();
   ZuCheck(hw.get(0) && hw.get(31) && hw.get(32) && hw.get(63) && hw.get(64) && hw.get(128));
   ZuCheck(!hw.get(127));
 
   builder.clear();
   row.hw.zero();
-  output = builder.finish(ZiFB::saveObject(builder, row));
+  output = builder.finish(ZiFB::save(builder, row));
   ZuCheck(!ZiFB::view<Bitmaps>(output).get<ZfField(Bitmaps, hw)>());
   builder.clear();
   row.hw.fill(); // an infinite bitmap has no finite wire representation
-  ZiFB::saveObject(builder, row);
+  ZiFB::save(builder, row);
   ZuCheck(builder.error() == ZiFB::Error::Value);
 }
 
@@ -646,7 +700,7 @@ static void run()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto output = builder.finish(ZiFB::saveObject(builder, row));
+  auto output = builder.finish(ZiFB::save(builder, row));
   ZuCheck(!builder.failed() && ZiFB::verify<Row>(output));
   auto view = ZiFB::view<Row>(output);
   ZuCheck(view.get<ZfField(Row, signedValue)>() == row.signedValue);
@@ -675,11 +729,11 @@ static void run()
 namespace LoadTest {
 
 struct Elem { int value; };
-ZfStruct(, Elem, (value, (Ctor<0>, Deflt<0>), Int32));
-ZiFB::Table<"test.Elem"> ZiFBType(Elem *);
+ZfStruct(, (Elem, FB), (value, (Ctor<0>, Deflt<0>), Int32));
+ZiFB::AsTable<"test.Elem"> ZiFB_Fmt(Elem *);
 struct Point { int value = 0; };
-ZfStruct(, Point, (value, (Deflt<0>), Int32));
-ZiFB::Inline<"test.Point"> ZiFBType(Point *);
+ZfStruct(, (Point, FB), (value, (Deflt<0>), Int32));
+ZiFB::AsStruct<"test.Point"> ZiFB_Fmt(Point *);
 
 template <typename Heap = ZuVoid>
 struct Row_ : public Heap {
@@ -695,7 +749,7 @@ struct Row_ : public Heap {
 };
 ZuDerive(RowHeap, (ZmHeap<"ZiFBTest.Load.Row", Row_<>>));
 ZuDerive(Row, (Row_<RowHeap>));
-ZfStruct(, Row,
+ZfStruct(, (Row, FB),
   (id,				(Ctor<0>, Keys<0>, Deflt<0>),	UInt32),
   (name,			(Ctor<1>, Mutable),		String),
   ((retired, Skip, int),	(Ctor<7>, Mutable, Keys<3>),	Int32),
@@ -703,7 +757,7 @@ ZfStruct(, Row,
   (point,,							UDT),
   (changed,			(Mutable, Deflt<0>),		UInt64),
   (unchanged,			(Deflt<0>),			Int32));
-ZiFB::Table<"test.LoadRow"> ZiFBType(Row *);
+ZiFB::AsTable<"test.LoadRow"> ZiFB_Fmt(Row *);
 
 static void check(const Row &row, unsigned context)
 {
@@ -714,8 +768,8 @@ static void check(const Row &row, unsigned context)
 }
 
 struct BoolCtor { bool active; };
-ZfStruct(, BoolCtor, (active, (Ctor<0>), Bool));
-ZiFB::Table<"test.BoolCtor"> ZiFBType(BoolCtor *);
+ZfStruct(, (BoolCtor, FB), (active, (Ctor<0>), Bool));
+ZiFB::AsTable<"test.BoolCtor"> ZiFB_Fmt(BoolCtor *);
 
 static void boolean()
 {
@@ -725,7 +779,7 @@ static void boolean()
   ZiFB::Builder<decltype(storage)> builder{storage};
   for (bool active : {false, true}) {
     builder.clear();
-    auto bytes = builder.finish(ZiFB::saveObject(builder, BoolCtor{active}));
+    auto bytes = builder.finish(ZiFB::save(builder, BoolCtor{active}));
     ZuCheck(ZiFB::verify<BoolCtor>(bytes));
     auto view = ZiFB::view<BoolCtor>(bytes);
     ZuAssert((ZuIsSame<decltype(view.get<ZfField(BoolCtor, active)>()), bool>{}));
@@ -751,7 +805,7 @@ static void run()
   auto buf = ZtScratch(ZiFB::Buffer, 0);
   ZiFB::ArrayStorage<> storage{buf};
   ZiFB::Builder<decltype(storage)> builder{storage};
-  auto bytes = builder.finish(ZiFB::saveObject(builder, source));
+  auto bytes = builder.finish(ZiFB::save(builder, source));
   ZuCheck(!builder.failed() && ZiFB::verify<Row>(bytes));
   auto h = ZiFB::handler<Row>(bytes);
   auto row = h.ctor(2U);
@@ -771,7 +825,7 @@ static void run()
   source.name = "updated";
   source.changed = 23;
   source.unchanged = 29;
-  auto update = builder.finish(ZiFB::saveObject<Row, ZuFacet::Core, ZfFieldFilter::Upd>(builder,
+  auto update = builder.finish(ZiFB::save<ZuFacet::FB, ZfFieldFilter::Upd>(builder,
     source));
   ZiFB::handler<Row>(update).update(row);
   ZuCheck(row.name == "updated" && row.changed == 23 && row.unchanged == 17);
@@ -786,6 +840,175 @@ static void run()
 
 } // LoadTest
 
+namespace NestedLoadTest {
+
+struct Value {
+  int selected = 0;
+  int omitted = -7;
+};
+ZfStruct(, (Value, FB),
+  (selected,, Int32),
+  (omitted,, Int32));
+ZfStructRender(, Value, Wire, selected);
+ZiFB::AsTable<"test.NestedValue"> ZiFB_Fmt(Value *);
+ZuDerive(Values, (ZtArray<Value, ZtArrayHeapID<"ZiFBTest.Nested.Values">>));
+ZuDerive(Body, (ZuUnion<void, Value>));
+ZiFB::AsUnion<"test.NestedBody", ZiFB::Alt<"Value", Value>> ZiFB_Fmt(Body *);
+
+static int live = 0;
+
+template <typename Heap = ZuVoid>
+struct Obj_ : public Heap, public ZmObject {
+  int selected = 0;
+  int omitted = -7;
+
+  Obj_() { ++live; }
+  ~Obj_() { --live; }
+};
+ZuDerive(ObjHeap, (ZmHeap<"ZiFBTest.Nested.Obj", Obj_<>>));
+ZuDerive(Obj, (Obj_<ObjHeap>));
+ZfStruct(, (Obj, FB),
+  (selected,, Int32),
+  (omitted,, Int32));
+ZfStructRender(, Obj, Wire, selected);
+ZiFB::AsTable<"test.NestedObj"> ZiFB_Fmt(Obj *);
+
+template <typename P>
+struct PtrBody : public ZuUnion<void, P> {
+  ZuDerive_(PtrBody, (ZuUnion<void, P>));
+};
+template <typename P>
+ZiFB::AsUnion<"test.NestedPtrBody", ZiFB::Alt<"Obj", Obj>> ZiFB_Fmt(PtrBody<P> *);
+
+struct Point {
+  int selected = 0;
+  int omitted = -7;
+};
+ZfStruct(, (Point, FB), (selected,, Int32), (omitted,, Int32));
+ZfStructRender(, Point, Wire, selected);
+ZiFB::AsStruct<"test.NestedPoint"> ZiFB_Fmt(Point *);
+
+struct Points {
+  ZuArray<Point, 2> values;
+};
+ZfStruct(, (Points, FB), (values,, UDT));
+ZfStructRender(, Points, Wire, values);
+ZiFB::AsStruct<"test.NestedPoints"> ZiFB_Fmt(Points *);
+
+template <typename P>
+struct Row {
+  using Ptrs = ZtArray<P, ZtArrayHeapID<"ZiFBTest.Nested.Ptrs">>;
+  P child{};
+  P absent{};
+  Ptrs children;
+  Value value;
+  Values values;
+  Body body;
+  PtrBody<P> ptrBody;
+  Point point;
+  Points points;
+};
+using RawRow = Row<Obj *>;
+using PtrRow = Row<ZuPtr<Obj>>;
+using RefRow = Row<ZmRef<Obj>>;
+
+#define NestedLoadRow(T) \
+  ZfStruct(, (T, FB), \
+    (child,, UDT), (absent,, UDT), (children,, UDT), \
+    (value,, UDT), (values,, UDT), (body,, UDT), (ptrBody,, UDT), \
+    (point,, UDT), (points,, UDT)); \
+  ZfStructRender(, T, Wire, child, absent, children, value, values, body, ptrBody, \
+    point, points); \
+  ZiFB::AsTable<"test.NestedRow"> ZiFB_Fmt(T *)
+NestedLoadRow(RawRow);
+NestedLoadRow(PtrRow);
+NestedLoadRow(RefRow);
+#undef NestedLoadRow
+
+template <typename T>
+static void check(const T &row, int omitted)
+{
+  ZuTestScope(check);
+  ZuCheck(row.child && row.child->selected == 11 && row.child->omitted == omitted);
+  ZuCheck(!row.absent);
+  ZuCheck(row.children.length() == 1);
+  ZuCheck(row.children[0] && row.children[0]->selected == 13 &&
+    row.children[0]->omitted == omitted);
+  ZuCheck(row.value.selected == 17 && row.value.omitted == omitted);
+  ZuCheck(row.values.length() == 1 && row.values[0].selected == 19 &&
+    row.values[0].omitted == omitted);
+  ZuCheck(row.body.type() == 1 && row.body.template p<1>().selected == 23 &&
+    row.body.template p<1>().omitted == omitted);
+  ZuCheck(row.ptrBody.type() == 1 && row.ptrBody.template p<1>() &&
+    row.ptrBody.template p<1>()->selected == 31 &&
+    row.ptrBody.template p<1>()->omitted == omitted);
+  ZuCheck(row.point.selected == 37 && row.point.omitted == omitted);
+  ZuCheck(row.points.values.length() == 2);
+  ZuCheck(row.points.values[0].selected == 41 && row.points.values[0].omitted == omitted);
+  ZuCheck(row.points.values[1].selected == 43 && row.points.values[1].omitted == omitted);
+}
+
+static void run()
+{
+  ZuTestScope(nestedLoad);
+  ZuCheck(live == 0);
+  {
+    PtrRow source;
+    source.child = new Obj;
+    source.child->selected = 11;
+    source.child->omitted = 29;
+    source.children.push(new Obj);
+    source.children[0]->selected = 13;
+    source.children[0]->omitted = 29;
+    source.value = {17, 29};
+    source.values.push(Value{19, 29});
+    source.body.p<1>(Value{23, 29});
+    source.ptrBody.p<1>(new Obj);
+    source.ptrBody.p<1>()->selected = 31;
+    source.ptrBody.p<1>()->omitted = 29;
+    source.point = {37, 29};
+    source.points.values.push(Point{41, 29});
+    source.points.values.push(Point{43, 29});
+    auto buf = ZtScratch(ZiFB::Buffer, 0);
+    ZiFB::ArrayStorage<> storage{buf};
+    ZiFB::Builder<decltype(storage)> builder{storage};
+    auto bytes = builder.finish(ZiFB::save(builder, source));
+    ZuCheck(!builder.failed() && ZiFB::verify<PtrRow>(bytes));
+
+    auto body = ZiFB::view<PtrRow>(bytes).get<ZfField(PtrRow, body)>();
+    auto wireBody = ZiFB::handler<Body, ZuFacet::Wire>(body).ctor();
+    ZuCheck(wireBody.p<1>().selected == 23 && wireBody.p<1>().omitted == -7);
+    ZuCheck(ZiFB::handler(body).ctor().p<1>().omitted == 29);
+
+    // Core encoding contains omitted=29. Wire loading must leave the native
+    // initializer intact in every nested destination, not reset to Core.
+    auto raw = ZiFB::load<RawRow, ZuFacet::Wire>(bytes);
+    ZuTestCall(check, raw, -7);
+    delete raw.child;
+    delete raw.children[0];
+    delete raw.ptrBody.p<1>();
+    {
+      auto ptr = ZiFB::load<PtrRow, ZuFacet::Wire>(bytes);
+      ZuTestCall(check, ptr, -7);
+      auto ref = ZiFB::load<RefRow, ZuFacet::Wire>(bytes);
+      ZuTestCall(check, ref, -7);
+      ZuCheck(ref.child->refCount() == 1 && ref.children[0]->refCount() == 1);
+      ZuCheck(ptr.child.ptr() != source.child.ptr());
+      auto core = ZiFB::load<PtrRow>(bytes);
+      ZuTestCall(check, core, 29);
+      ZiFB::handler<PtrRow, ZuFacet::Wire>(bytes).load(ptr);
+      ZuTestCall(check, ptr, -7);
+      buf.null();
+      ZuTestCall(check, ptr, -7);
+      ZuTestCall(check, ref, -7);
+    }
+    ZuCheck(live == 3);
+  }
+  ZuCheck(live == 0);
+}
+
+} // NestedLoadTest
+
 namespace UnionTest {
 
 static void run()
@@ -796,7 +1019,7 @@ static void run()
   ZiFB::Builder<decltype(storage)> builder{storage};
   Message message{17, {}};
   message.body.p<2>(Record{42});
-  auto output = builder.finish(ZiFB::saveObject(builder, message));
+  auto output = builder.finish(ZiFB::save(builder, message));
   ZuCheck(!builder.failed() && ZiFB::verify<Message>(output));
   auto body = ZiFB::view<Message>(output).get<ZfField(Message, body)>();
   ZuCheck(body.tag() == 2 && body.get<2>().get<ZfField(Record, value)>() == 42);
@@ -805,26 +1028,28 @@ static void run()
 
   builder.clear();
   message.body.p<4>(Point{-23});
-  output = builder.finish(ZiFB::saveObject(builder, message));
+  output = builder.finish(ZiFB::save(builder, message));
   ZuCheck(ZiFB::verify<Message>(output));
   ZuCheck(ZiFB::handler<Message>(output).ctor().body.p<4>().value == -23);
+  body = ZiFB::view<Message>(output).get<ZfField(Message, body)>();
+  ZuCheck(ZiFB::handler(body).ctor().p<4>().value == -23);
 
   builder.clear();
   message.body.p<3>(Empty{});
-  output = builder.finish(ZiFB::saveObject(builder, message));
+  output = builder.finish(ZiFB::save(builder, message));
   ZuCheck(ZiFB::verify<Message>(output));
   ZuCheck(ZiFB::handler<Message>(output).ctor().body.type() == 3);
 
   builder.clear();
   message.body.null();
-  output = builder.finish(ZiFB::saveObject(builder, message));
+  output = builder.finish(ZiFB::save(builder, message));
   ZuCheck(ZiFB::verify<Message>(output));
   ZuCheck(ZiFB::view<Message>(output).get<ZfField(Message, body)>().tag() == 0);
 
   builder.clear();
-  auto payload = ZiFB::saveObject(builder, Record{99});
+  auto payload = ZiFB::save(builder, Record{99});
   auto table = builder.startTable();
-  ZiFB::fieldUnion<ZfField(Message, body)>(builder, table, ZiFB::UnionOffset<Body>{payload, 1});
+  ZiFB::As<Message>::Handler<Message>::template fieldUnion<ZfField(Message, body)>(builder, table, ZiFB::UnionOffset<Body>{payload, 1});
   output = builder.finish(builder.endTable(table));
   ZuCheck(!builder.failed() && ZiFB::verify<Message>(output));
   ZuCheck(ZiFB::view<Message>(output).get<ZfField(Message, body)>().get<1>()
@@ -838,7 +1063,7 @@ static void run()
 
   builder.clear();
   table = builder.startTable();
-  ZiFB::fieldUnion<ZfField(Message, body)>(builder, table, ZiFB::UnionOffset<Body>{0, 2});
+  ZiFB::As<Message>::Handler<Message>::template fieldUnion<ZfField(Message, body)>(builder, table, ZiFB::UnionOffset<Body>{0, 2});
   ZuCheck(builder.error() == ZiFB::Error::Union);
 }
 
@@ -846,27 +1071,31 @@ static void run()
 
 namespace StreamTest {
 
-template <bool SizePrefix>
+template <typename Facet>
 static void roundtrip()
 {
   ZuTestScope(roundtrip);
   auto text = ZtScratch(Text, 0);
   Stream stream{text};
   Row row{7, {123}, ZuBSpan{"a\0b", 3}};
-  ZuCheck(ZiFB::save<SizePrefix>(stream, row, "STRM") == ZiFB::Error::OK);
+  ZuCheck(ZiFB::save<Facet>(stream, row, "STRM") == ZiFB::Error::OK);
   ZuBSpan bytes{text};
-  ZuCheck((ZiFB::verify<Row, SizePrefix>(bytes, "STRM")));
-  auto result = ZiFB::load<Row, SizePrefix>(bytes);
+  if constexpr (ZiFB::Config<Facet>::SizePrefixed) {
+    ZuCheck(ZiFB::read<ZiFB::Offset>(bytes.data()) == bytes.length() - sizeof(ZiFB::Offset));
+    ZuCheck(!ZiFB::verify<Row>(bytes, "STRM"));
+  }
+  ZuCheck((ZiFB::verify<Row, Facet>(bytes, "STRM")));
+  auto result = ZiFB::load<Row, Facet>(bytes);
   ZuCheck(result.seq == 7 && result.stamp.value == 123);
   ZuCheck(result.bytes == row.bytes);
-  auto view = ZiFB::view<Row, SizePrefix>(bytes);
+  auto view = ZiFB::view<Row, Facet>(bytes);
   ZuCheck(!view.template has<ZfField(Row, seq)>());
   ZuCheck(result.bytes.data() == view.template get<ZfField(Row, bytes)>().data());
 
   // Invalid required data never publishes a partially constructed span.
   auto before = text.length();
   row.bytes = {};
-  ZuCheck(ZiFB::save<SizePrefix>(stream, row) == ZiFB::Error::Required);
+  ZuCheck(ZiFB::save<Facet>(stream, row) == ZiFB::Error::Required);
   ZuCheck(text.length() == before);
 }
 
@@ -893,7 +1122,8 @@ int main(int argc, char **argv)
   ZuTestCall(ViewTest::scalars);
   ZuTestCall(ValueTest::run);
   ZuTestCall(LoadTest::run);
+  ZuTestCall(NestedLoadTest::run);
   ZuTestCall(UnionTest::run);
-  ZuTestCall((StreamTest::roundtrip<false>));
-  ZuTestCall((StreamTest::roundtrip<true>));
+  ZuTestCall((StreamTest::roundtrip<ZuFacet::FB>));
+  ZuTestCall((StreamTest::roundtrip<ZuFacet::Prefixed>));
 }

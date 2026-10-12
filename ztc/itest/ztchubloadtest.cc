@@ -87,7 +87,7 @@ static Frame request(ZuCSpan device, uint64_t sub, bool subscribe)
 {
   Ztc::Builder builder{Frame{new Buf}};
   auto nested = builder.startNested();
-  auto body = ZiFB::saveObject(builder, Ztc::Request{
+  auto body = ZiFB::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
     .group = uint8_t(Ztc::Group::App), .subscribe = subscribe});
   builder.finish(Ztc::saveMsg(builder, nested,
@@ -199,7 +199,7 @@ struct App {
       Ztc::Builder builder{Frame{new Buf}};
       auto nested = builder.startNested();
       auto id = builder.string(name);
-      auto value = ZiFB::saveObject(builder, Ztc::AppTelemetry{
+      auto value = ZiFB::save(builder, Ztc::AppTelemetry{
 	.version = ZuID{"load"}, .role = ZuID{"publisher"},
 	.startTime = ZuTime{ZuTime::Nano{start + int64_t(sent * 1000000000/pace())}},
 	.ztcver = ZuSemVer{publisher}});
@@ -287,7 +287,7 @@ struct App {
       routes.push(Route{&link, body.get<Ztc::ZfField(Request, seqNo)>()});
       Ztc::Builder builder{Frame{new Buf}};
       auto nested = builder.startNested();
-      auto ack = ZiFB::saveObject(builder,
+      auto ack = ZiFB::save(builder,
 	Ztc::Ack{ZuID{"publisher"}, body.get<Ztc::ZfField(Request, seqNo)>(), 1000});
       builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Ack, ack));
       send(link, builder.buf());

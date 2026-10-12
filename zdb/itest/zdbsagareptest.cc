@@ -93,9 +93,9 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	return {};
   }
 };
-ZfStruct(, LiveSaga,
+ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::Table<"zdbtest.fbs.LiveSaga"> ZiFBType(LiveSaga *);
+ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
 
 ZdbSagaDerive(SagaCatalog, LiveSaga);
 ZdbSagaImpl(SagaCatalog, LiveSaga)

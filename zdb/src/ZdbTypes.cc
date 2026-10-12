@@ -14,11 +14,17 @@ ZtEnumImplNS(OpResult);
 
 namespace Msg {
 ZfStructImpl(TableState);
+ZfStructImpl(TableState, FB);
 ZfStructImpl(DBState);
+ZfStructImpl(DBState, FB);
 ZfStructImpl(Heartbeat);
+ZfStructImpl(Heartbeat, FB);
 ZfStructImpl(Record);
+ZfStructImpl(Record, FB);
 ZfStructImpl(Commit);
+ZfStructImpl(Commit, FB);
 ZfStructImpl(Root);
+ZfStructImpl(Root, FB);
 } // Msg
 
 } // namespace Zdb_

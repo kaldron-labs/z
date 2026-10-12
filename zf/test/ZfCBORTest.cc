@@ -11,6 +11,9 @@
 using namespace ZuTestUtil;
 using namespace ZuFieldProp;
 
+ZuStructFacet(SmallCBOR);
+ZfCBORConfig(SmallCBOR, ZfCBOR_VecSize<1>);
+
 ZuDerive(OwnedText, (ZtString<ZtStringHeapID<"ZfCBORTest.Text">>));
 ZuDerive(OwnedBytes, (ZtArray<uint8_t, ZtArrayHeapID<"ZfCBORTest.Bytes">>));
 ZuDerive(TestBuf, (ZtString<ZtStringHeapID<"ZfCBORTest.Buf">>));
@@ -45,6 +48,20 @@ ZfStruct(, ArrayObject,
   (values,	(Mutable),	Int32Vec));
 
 ZfStructRender(, ArrayObject, CBOR, values);
+ZuStructReflect(ArrayObject, ZuFacet::SmallCBOR, ZuFacet::CBOR);
+
+struct Child {
+  int value = 0;
+  int omitted = -7;
+};
+struct Parent {
+  Child child;
+};
+ZfStruct(, (Child, CBOR),
+  (value, (Mutable), Int32),
+  (omitted, (Mutable, Deflt<0>), Int32));
+ZfStructRender(, Child, SmallCBOR, value);
+ZfStruct(, (Parent, CBOR, SmallCBOR), (child, (Mutable), UDT));
 
 ZfStruct(, IntKeyObject,
   (value,	(Ctor<0>, Mutable),	Int32));
@@ -114,42 +131,42 @@ static void scalar()
     uint8_t value[] = {uint8_t(i < 24 ? 0xe0 | i : 0xf8), uint8_t(i)};
     ZuCheck(bool(ZfCBOR::scan({value, i < 24 ? 1U : 2U})));
   }
-  auto nullValue = ZfCBOR::loadValue<ZfFieldTC::Int32, Props, int32_t>(null);
+  auto nullValue = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Int32, Props, int32_t>(null);
   ZuCheck(nullValue == ZuCmp<int32_t>::null());
 
   using SimpleProps = ZuTypeList<CBOR::Simple>;
   uint8_t simple255[] = {0xf8, 0xff};
-  auto simpleValue = ZfCBOR::loadValue<ZfFieldTC::UInt8, SimpleProps, uint8_t>(
+  auto simpleValue = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::UInt8, SimpleProps, uint8_t>(
     simple255);
   ZuCheck(simpleValue == 255);
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::UInt8, SimpleProps>(
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::UInt8, SimpleProps>(
     out, simpleValue);
   ZuCheck((ZuBSpan{out} == ZuBSpan{simple255}));
 
   OwnedBytes vec{1, 24};
   out.length(0);
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::UInt8Vec, SimpleProps>(out, vec);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::UInt8Vec, SimpleProps>(out, vec);
   uint8_t simpleVec[] = {0x82, 0xe1, 0xf8, 0x18};
   ZuCheck((ZuBSpan{out} == ZuBSpan{simpleVec}));
 
   using TagProps = ZuTypeList<CBOR::Tag<100>>;
   uint8_t tagged[] = {0xd8, 0x64, 0x01};
-  auto taggedValue = ZfCBOR::loadValue<ZfFieldTC::Int32, TagProps, int32_t>(
+  auto taggedValue = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Int32, TagProps, int32_t>(
     tagged);
   ZuCheck(taggedValue == 1);
   out.length(0);
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Int32, TagProps>(out,
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Int32, TagProps>(out,
     taggedValue);
   ZuCheck((ZuBSpan{out} == ZuBSpan{tagged}));
 
   uint8_t taggedVec[] = {0xd8, 0x64, 0x82, 0x01, 0x02};
-  auto taggedValues = ZfCBOR::loadValue<ZfFieldTC::Int32Vec, TagProps,
+  auto taggedValues = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Int32Vec, TagProps,
     IntValues>(taggedVec);
   ZuCheck(taggedValues.length() == 2 && taggedValues[1] == 2);
   IntValues values{1, 2};
   out.length(0);
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Int32Vec, TagProps>(out, values);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Int32Vec, TagProps>(out, values);
   ZuCheck((ZuBSpan{out} == ZuBSpan{taggedVec}));
 
   using TaggedArray = ZfCBOR::AsArray<ZfFieldTC::Int32>::Handler<
@@ -175,11 +192,11 @@ static void containers()
   uint8_t chunkedText[] = {0x7f, 0x62, 'a', 'b', 0x63, 'c', 'd', 'e', 0xff};
   uint8_t chunkedBytes[] = {0x5f, 0x42, 1, 2, 0x43, 3, 4, 5, 0xff};
   using Props = ZuTypeList<>;
-  auto borrowed = ZfCBOR::loadValue<ZfFieldTC::String, Props, ZuCSpan>(
+  auto borrowed = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::String, Props, ZuCSpan>(
     chunkedText);
-  auto text = ZfCBOR::loadValue<ZfFieldTC::String, Props, OwnedText>(
+  auto text = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::String, Props, OwnedText>(
     chunkedText);
-  auto bytes = ZfCBOR::loadValue<ZfFieldTC::Bytes, Props, OwnedBytes>(
+  auto bytes = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Bytes, Props, OwnedBytes>(
     chunkedBytes);
   ZuCheck(!borrowed);
   ZuCheck(text == "abcde");
@@ -252,7 +269,7 @@ static void object()
   ZuCheck(context.index(fields));
   ZuCheck((fields[KtyI] == ZuBSpan{encoded + 12, 1}));
   ZuCheck((fields[DataI] == ZuBSpan{encoded + 8, 3}));
-  ZuCheck((ZfCBOR::loadValue<ZfFieldTC::Int32, ZuTypeList<>, int32_t>(
+  ZuCheck((ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Int32, ZuTypeList<>, int32_t>(
     ZuBSpan{encoded + 12, 1}) == 3));
   Object object{};
   ZfCBOR::handler<Object>(encoded).load(object);
@@ -337,6 +354,35 @@ static void arrays()
   ZuCheck((ZuBSpan{out} == ZuBSpan{expected}));
 }
 
+static void facetConfig()
+{
+  ZuTestScope(facetConfig);
+  ArrayObject orig;
+  orig.values = {1, 2, 3};
+  TestBuf out;
+  ZfCBOR::save(out, orig);
+  ArrayObject copy;
+  ZfCBOR::handler<ArrayObject, ZuFacet::SmallCBOR>(out).load(copy);
+  ZuCheck(copy.values == orig.values);
+  TestBuf small;
+  ZfCBOR::save<ZuFacet::SmallCBOR>(small, copy);
+  ZuCheck(small == out);
+
+  Parent parent{{31, 37}}, loaded;
+  out.null();
+  ZfCBOR::save(out, parent);
+  ZfCBOR::handler<Parent, ZuFacet::SmallCBOR>(out).load(loaded);
+  ZuCheck(loaded.child.value == 31);
+  ZuCheck(loaded.child.omitted == -7);
+  small.null();
+  ZfCBOR::save<ZuFacet::SmallCBOR>(small, parent);
+  ZuCheck(small.length() < out.length());
+  Parent canonical;
+  ZfCBOR::handler<Parent>(small).load(canonical);
+  ZuCheck(canonical.child.value == 31);
+  ZuCheck(canonical.child.omitted == 0);
+}
+
 static void floats()
 {
   ZuTestScope(floats);
@@ -344,27 +390,27 @@ static void floats()
   uint8_t single[] = {0xfa, 0x3f, 0xc0, 0x00, 0x00};
   uint8_t nan[] = {0xfb, 0x7f, 0xf8, 0, 0, 0, 0, 0, 1};
   using Props = ZuTypeList<>;
-  auto one = ZfCBOR::loadValue<ZfFieldTC::Float, Props, double>(halfOne);
-  auto oneHalf = ZfCBOR::loadValue<ZfFieldTC::Float, Props, double>(single);
-  auto nanValue = ZfCBOR::loadValue<ZfFieldTC::Float, Props, double>(nan);
+  auto one = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Float, Props, double>(halfOne);
+  auto oneHalf = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Float, Props, double>(single);
+  auto nanValue = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Float, Props, double>(nan);
   uint8_t huge[] = {0xfb, 0x7f, 0xe1, 0xcc, 0xf3,
     0x85, 0xeb, 0xc8, 0xa0};
-  auto overflow = ZfCBOR::loadValue<ZfFieldTC::Float, Props, float>(huge);
+  auto overflow = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Float, Props, float>(huge);
   ZuCheck(one == 1.0);
   ZuCheck(oneHalf == 1.5);
   ZuCheck(ZuFP<double>::nan(nanValue));
   ZuCheck(overflow == 0.0f);
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Float, Props>(out, 1.0);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Float, Props>(out, 1.0);
   ZuCheck((ZuBSpan{out} == ZuBSpan{halfOne}));
   out.length(0);
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Float, Props>(out,
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Float, Props>(out,
     ZuFP<double>::nan());
   uint8_t canonicalNaN[] = {0xf9, 0x7e, 0};
   ZuCheck((ZuBSpan{out} == ZuBSpan{canonicalNaN}));
 
   out.length(0);
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Float, Props>(out, -0.0);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Float, Props>(out, -0.0);
   uint8_t negativeZero[] = {0xf9, 0x80, 0};
   ZuCheck((ZuBSpan{out} == ZuBSpan{negativeZero}));
 }
@@ -374,22 +420,22 @@ static void decimal()
   ZuTestScope(decimal);
   uint8_t fixed_[] = {0xc4, 0x82, 0x21, 0x19, 0x04, 0x12};
   using Props = ZuTypeList<>;
-  auto fixed = ZfCBOR::loadValue<ZfFieldTC::Fixed, Props, ZuFixed>(fixed_);
+  auto fixed = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Fixed, Props, ZuFixed>(fixed_);
   ZuCheck(fixed.mantissa == 1042);
   ZuCheck(fixed.ndp == 2);
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Fixed, Props>(out, fixed);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Fixed, Props>(out, fixed);
   ZuCheck((ZuBSpan{out} == ZuBSpan{fixed_}));
 
   uint8_t decimal_[] = {0xc4, 0x82, 0x00, 0x19, 0x30, 0x39};
-  auto value = ZfCBOR::loadValue<ZfFieldTC::Decimal, Props, ZuDecimal>(decimal_);
+  auto value = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Decimal, Props, ZuDecimal>(decimal_);
   ZuCheck(value.value == int128_t(12345) * ZuDecimal::scale());
 
   uint8_t exact[] = {0xc4, 0x82, 0x32, 0x1a, 0x00, 0x01, 0xe2, 0x3a};
   uint8_t inexact[] = {0xc4, 0x82, 0x32, 0x1a, 0x00, 0x01, 0xe2, 0x3b};
-  value = ZfCBOR::loadValue<ZfFieldTC::Decimal, Props, ZuDecimal>(exact);
+  value = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Decimal, Props, ZuDecimal>(exact);
   ZuCheck(value.value == 12345);
-  auto invalid = ZfCBOR::loadValue<ZfFieldTC::Decimal, Props, ZuDecimal>(inexact);
+  auto invalid = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Decimal, Props, ZuDecimal>(inexact);
   ZuCheck(invalid.value == ZuDecimal::null());
 }
 
@@ -398,20 +444,20 @@ static void time()
   ZuTestScope(time);
   using Props = ZuTypeList<>;
   uint8_t integral[] = {0xc1, 0x1a, 0x65, 0x53, 0xf1, 0x00};
-  auto value = ZfCBOR::loadValue<ZfFieldTC::Time, Props, ZuTime>(integral);
+  auto value = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Time, Props, ZuTime>(integral);
   ZuCheck(value.as_time_t() == 1700000000);
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::Time, Props>(out, value);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::Time, Props>(out, value);
   ZuCheck((ZuBSpan{out} == ZuBSpan{integral}));
 
   uint8_t text[] = {0xc0, 0x74, '2', '0', '2', '4', '-', '0', '1', '-',
     '0', '2', 'T', '0', '3', ':', '0', '4', ':', '0', '5', 'Z'};
-  auto fromText = ZfCBOR::loadValue<ZfFieldTC::Time, Props, ZuTime>(text);
+  auto fromText = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Time, Props, ZuTime>(text);
   auto expected = ZuDateTime{ZuDateTimeScan::ISO{}, "2024-01-02T03:04:05Z"};
   ZuCheck(fromText == expected.as_time());
 
   uint8_t high[] = {0xc1, 0xfb, 0x43, 0xe0, 0, 0, 0, 0, 0, 0};
-  auto clamped = ZfCBOR::loadValue<ZfFieldTC::Time, Props, ZuTime>(high);
+  auto clamped = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Time, Props, ZuTime>(high);
   ZuCheck(clamped.as_time_t() == ZuCmp<int64_t>::maximum() - 1);
   ZuCheck(clamped.nanosecs() % 1000000000 == 999999999);
 }
@@ -422,13 +468,13 @@ static void dateTime()
   using Props = ZuTypeList<>;
   uint8_t encoded[] = {0xc0, 0x74, '2', '0', '2', '4', '-', '0', '1', '-',
     '0', '2', 'T', '0', '3', ':', '0', '4', ':', '0', '5', 'Z'};
-  auto value = ZfCBOR::loadValue<ZfFieldTC::DateTime, Props, ZuDateTime>(encoded);
+  auto value = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::DateTime, Props, ZuDateTime>(encoded);
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::DateTime, Props>(out, value);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::DateTime, Props>(out, value);
   ZuCheck((ZuBSpan{out} == ZuBSpan{encoded}));
 
   uint8_t epoch[] = {0xc1, 0x1a, 0x65, 0x53, 0xf1, 0x00};
-  auto fromEpoch = ZfCBOR::loadValue<ZfFieldTC::DateTime, Props, ZuDateTime>(epoch);
+  auto fromEpoch = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::DateTime, Props, ZuDateTime>(epoch);
   ZuCheck(fromEpoch.as_time_t() == 1700000000);
 }
 
@@ -440,12 +486,12 @@ static void bignum()
     0x00, 0x00, 0x00, 0x00};
   uint8_t negative[] = {0xc3, 0x49, 0x01, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00};
-  auto p = ZfCBOR::loadValue<ZfFieldTC::UInt128, Props, uint128_t>(positive);
-  auto n = ZfCBOR::loadValue<ZfFieldTC::Int128, Props, int128_t>(negative);
+  auto p = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::UInt128, Props, uint128_t>(positive);
+  auto n = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::Int128, Props, int128_t>(negative);
   ZuCheck(p == (uint128_t(1) << 64));
   ZuCheck(n == -int128_t(uint128_t(1) << 64) - 1);
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::UInt128, Props>(out, p);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::UInt128, Props>(out, p);
   ZuCheck((ZuBSpan{out} == ZuBSpan{positive}));
 }
 
@@ -455,11 +501,11 @@ static void udt()
   using Props = ZuTypeList<>;
   uint8_t encoded[] = {0xa2, 0x01, 0x03, 0x64, 'd', 'a', 't', 'a',
     0x42, 0x00, 0x01};
-  auto value = ZfCBOR::loadValue<ZfFieldTC::UDT, Props, Object>(encoded);
+  auto value = ZfCBOR::loadValue<ZuFacet::CBOR, ZfFieldTC::UDT, Props, Object>(encoded);
   ZuCheck(value.kty == 3);
   ZuCheck((value.data == ZuBSpan{encoded + 9, 2}));
   TestBuf out;
-  ZfCBOR::saveValue<decltype(out), ZfFieldTC::UDT, Props>(out, value);
+  ZfCBOR::saveValue<ZuFacet::CBOR, decltype(out), ZfFieldTC::UDT, Props>(out, value);
   ZuCheck((ZuBSpan{out} == ZuBSpan{encoded}));
 }
 
@@ -507,6 +553,7 @@ int main(int argc, char **argv)
   ZuTestCall(longKey);
   ZuTestCall(text);
   ZuTestCall(arrays);
+  ZuTestCall(facetConfig);
   ZuTestCall(floats);
   ZuTestCall(decimal);
   ZuTestCall(time);

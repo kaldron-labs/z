@@ -12,10 +12,15 @@ namespace Zdf {
 ZtEnumImplNS(StoreState);
 namespace DB {
 ZfStructImpl(SeriesFixed);
+ZfStructImpl(SeriesFixed, FB);
 ZfStructImpl(SeriesFloat);
+ZfStructImpl(SeriesFloat, FB);
 ZfStructImpl(BlkFixed);
+ZfStructImpl(BlkFixed, FB);
 ZfStructImpl(BlkFloat);
+ZfStructImpl(BlkFloat, FB);
 ZfStructImpl(BlkData);
+ZfStructImpl(BlkData, FB);
 }
 }
 

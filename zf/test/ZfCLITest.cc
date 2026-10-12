@@ -122,6 +122,24 @@ ZfStruct(, (Foo, Bah),
   (ubool, (Ctor<17>),								Bool) */);
 
 ZfCLIConfig(Bah, (ZfCLI_ArrayFmt<ZfCLI::Delimited>));
+ZuAssert(ZfCLI::Config<ZuFacet::Bah>::ArrayFmt == ZfCLI::Delimited);
+
+struct Forward {
+  int value = 0;
+};
+ZfStruct(, (Forward, CLI), (value, (CLI::Long<"value">), Int32));
+ZfStructRender(, Forward, Bah, (value, (CLI::Long<"other">)));
+
+static void argvFacet()
+{
+  ZuTestScope(argvFacet);
+  char prog[] = "test", opt[] = "--other", val[] = "17";
+  const char *argv[] = {prog, opt, val};
+  Forward row;
+  ZfCLI::load<ZuFacet::Bah>(row, 3, argv);
+  ZuCheck(row.value == 17);
+}
+
 
 struct LongOnly {
   unsigned	port = 0;
@@ -640,6 +658,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(roundTrip);
+  ZuTestCall(argvFacet);
   ZuTestCall(fieldlessUDT);
   ZuTestCall(allocation);
   ZuTestCall(bareArraySave);

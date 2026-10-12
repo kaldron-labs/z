@@ -22,7 +22,7 @@
 namespace zdbtest {
 
 ZtEnumNS(, Side, int8_t, Buy, Sell);
-namespace Side { ZiFB::Enum<"zdbtest.fbs.Side"> ZiFBType(Map *); }
+namespace Side { ZiFB::AsEnum<"zdbtest.fbs.Side"> ZiFB_Fmt(Map *); }
 
 struct Order {
   ZuCArray<32>		symbol;
@@ -41,7 +41,7 @@ struct Order {
   friend ZuStringT<"zdbtest.order.buf"> ZdbBufHeapID(Order *);
 };
 
-ZfStruct(, (Order, JSON),
+ZfStruct(, (Order, FB, JSON),
   (symbol,	(Ctor<0>, Keys<0>),				String),
   (orderID,	(Ctor<1>, Keys<0>, Mutable),			UInt64),
   (link,	(Ctor<2>, (Keys<1, 2>), Group<2>, Descend<2>),	String),
@@ -51,7 +51,7 @@ ZfStruct(, (Order, JSON),
   (prices,	(Ctor<6>, Mutable),				Int32Vec),
   (qtys,	(Ctor<7>, Mutable),				Int32Vec),
   (flags,	(Ctor<8>, Mutable, Deflt<"4,8,16-42"_z>),	UDT));
-ZiFB::Table<"zdbtest.fbs.Order"> ZiFBType(Order *);
+ZiFB::AsTable<"zdbtest.fbs.Order"> ZiFB_Fmt(Order *);
 
 
 ZdbTableDerive(OrderTable, Order);

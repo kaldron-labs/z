@@ -48,6 +48,9 @@
 
 namespace Zdb_ {
 
+ZfStructImpl(Heartbeat);
+ZfStructImpl(Heartbeat, FB);
+
 TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
   TableCf{id_}
 {
@@ -1644,7 +1647,7 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
     copy->owner = this;
     auto message = msg_(copy->hdr());
     constexpr unsigned tagID =
-      ZiFB::Meta<Msg::Root>::id<Msg::ZfField(Root, body)>() - 1;
+      ZiFB::As<Msg::Root>::template Handler<Msg::Root>::id<Msg::ZfField(Root, body)>() - 1;
     auto tag = ZiFB::TableView{message.data()}.field(tagID);
     ZiFB::write<uint8_t>(const_cast<uint8_t *>(tag), Msg::Tag::Recovery);
     return copy;
@@ -1806,7 +1809,8 @@ void DB::hbRcvd(Host *host, Msg::HeartbeatView hb)
     << " replicating=" << Host::replicating(m_next));
 
   host->state(hb.get<Msg::ZfField(Heartbeat, state)>());
-  host->dbState().load(hb.get<Msg::ZfField(Heartbeat, dbState)>());
+  auto dbState = hb.get<Msg::ZfField(Heartbeat, dbState)>();
+  ZiFB::handler(ZiFB::View<DBState>{dbState.data()}).load(host->dbState());
 
   using namespace HostState;
 
@@ -1907,14 +1911,8 @@ void Cxn_::hbSend()
 
   Host *self = m_db->self();
   ZiFB::IOBuilder<> fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
-  auto id = fbb.string(self->id());
-  auto state = self->dbState().save(fbb);
-  auto table = fbb.startTable();
-  ZiFB::fieldOffset<Msg::ZfField(Heartbeat, host)>(fbb, table, id);
-  ZiFB::field<Msg::ZfField(Heartbeat, state)>(fbb, table, m_db->state());
-  ZiFB::field<Msg::ZfField(Heartbeat, nShards)>(fbb, table, m_db->nShards());
-  ZiFB::fieldOffset<Msg::ZfField(Heartbeat, dbState)>(fbb, table, state);
-  auto heartbeat = fbb.endTable(table);
+  auto heartbeat = ZiFB::save(fbb, Heartbeat{
+    self->id(), uint32_t(m_db->state()), m_db->nShards(), &self->dbState()});
   fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));
 
   send(saveHdr(fbb, this));

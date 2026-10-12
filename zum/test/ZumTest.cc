@@ -1211,7 +1211,7 @@ static void records()
   role.actions.set(7);
 
   ZiFB::IOBuilder<ZiFB::BufferAlign<Zum::Role>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(ZiFB::saveObject(fbb, role));
+  fbb.finish(ZiFB::save(fbb, role));
   auto buf = fbb.buf();
   ZuBSpan bytes{buf->data(), buf->length};
   ZuCheck(ZiFB::verify<Zum::Role>(bytes));
@@ -1226,7 +1226,7 @@ template <typename T>
 static T roundTrip(const T &value)
 {
   ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(ZiFB::saveObject(fbb, value));
+  fbb.finish(ZiFB::save(fbb, value));
   auto buf = fbb.buf();
   return ZiFB::load<T>({buf->data(), buf->length});
 }

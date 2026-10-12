@@ -1213,7 +1213,7 @@ Offset saveArray(Builder &fbb, unsigned align, ZuBSpan bytes) {
 	if constexpr (W::Kind == ZiFB::ValueKind::Scalar)
 	  ZiFB::write<typename W::WireType>(out + i * W::Size, value);
 	else
-	  ZiFB::writeInline(out + i * W::Size, W::toWire(value));
+	  ZiFB::save(out + i * W::Size, W::toWire(value));
       }
     });
 }
@@ -1237,10 +1237,10 @@ void saveOffset(Builder &fbb, Offsets &offsets,
 	  ZiFB::write<uint64_t>(out + i * sizeof(uint64_t), words[i + 1]);
       });
     auto table = fbb.startTable();
-    ZiFB::fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, data);
+    ZiFB::As<ZiFB::Values::Bitmap>::template Handler<ZiFB::Values::Bitmap>::template fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, data);
     offsets.push(fbb.endTable(table));
   } else if constexpr (Type == Value::Index<IP>{}) {
-    auto saved = ZiFB::saveUnion<ZiIP, ZuFacet::Core, ZfFieldFilter::All>(
+    auto saved = ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(
       fbb, value.p<Type>().ziIP());
     offsets.push(saved.offset, saved.tag);
   } else if constexpr (Type == Value::Index<StringVec>{} || Type == Value::Index<BytesVec>{}) {
@@ -1253,7 +1253,7 @@ void saveOffset(Builder &fbb, Offsets &offsets,
       if constexpr (Type == Value::Index<StringVec>{})
 	elements[i] = fbb.string(data);
       else
-	elements[i] = ZiFB::saveObject(fbb, ZiFB::Values::Bytes{data});
+	elements[i] = ZiFB::save(fbb, ZiFB::Values::Bytes{data});
     }
     fbb.align(align, count * sizeof(Offset));
     offsets.push(fbb.offsets(elements));
@@ -1319,7 +1319,7 @@ void saveValue(Builder &fbb, ZiFB::TableState &table, const Offsets &offsets,
     else {
       fbb.fieldInline(table, field.get<R::ZfField(Field, id)>(), W::Size,
 	(align > W::Align ? align : W::Align),
-	[&native](uint8_t *out) { ZiFB::writeInline(out, W::toWire(native)); });
+	[&native](uint8_t *out) { ZiFB::save(out, W::toWire(native)); });
     }
   }
 }

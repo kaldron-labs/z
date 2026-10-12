@@ -9,19 +9,29 @@
 namespace ZiFB::Values {
 
 ZfStructImpl(Int128);
+ZfStructImpl(Int128, FB);
 ZfStructImpl(UInt128);
+ZfStructImpl(UInt128, FB);
 ZfStructImpl(Fixed);
+ZfStructImpl(Fixed, FB);
 ZfStructImpl(Decimal);
+ZfStructImpl(Decimal, FB);
 ZfStructImpl(Time);
+ZfStructImpl(Time, FB);
 ZfStructImpl(DateTime);
+ZfStructImpl(DateTime, FB);
 ZfStructImpl(Bytes);
+ZfStructImpl(Bytes, FB);
 ZfStructImpl(Bitmap);
+ZfStructImpl(Bitmap, FB);
 
 } // ZiFB::Values
 
 namespace ZiFB {
 
 ZfStructImpl(IPv4);
+ZfStructImpl(IPv4, FB);
 ZfStructImpl(IPv6);
+ZfStructImpl(IPv6, FB);
 
 } // ZiFB

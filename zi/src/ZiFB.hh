@@ -57,6 +57,34 @@
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiTxStream.hh>
 
+ZuStructFacet(FB);
+
+// --- facet configuration
+
+struct ZiFB_DefltConfig {
+  enum { SizePrefixed = false };
+};
+
+template <bool _, typename NTP = ZiFB_DefltConfig>
+struct ZiFB_SizePrefixed_ : public NTP { enum { SizePrefixed = _ }; };
+template <typename NTP = ZiFB_DefltConfig>
+using ZiFB_SizePrefixed = ZiFB_SizePrefixed_<true, NTP>;
+
+ZiFB_DefltConfig ZiFB_Config(...); // default
+
+// ZiFBConfig(Facet, Config) - configure a facet at top-level namespace.
+// Pass ZiFB::Config<ZuFacet::Base> as the tail NTP to extend a base facet.
+// Custom overloads live in the facet namespace for ADL.
+#define ZiFBConfig(Facet, Config) \
+  namespace ZuFacet { ZuPP_Strip(Config) ZiFB_Config(Facet *); }
+
+namespace ZiFB {
+
+template <typename Facet>
+using Config = decltype(ZiFB_Config(ZuDeclVal<Facet *>()));
+
+}
+
 // --- field properties
 
 namespace ZuFieldProp::FB {
@@ -103,13 +131,24 @@ struct Named {
   static constexpr auto name() { return Name; }
 };
 template <ZuString Name>
-using Table = Named<Name, Kind::Table>;
+struct AsTable : public Named<Name, Kind::Table> {
+  template <typename O, typename Facet = ZuFacet::FB> class Handler;
+  template <typename O> struct Value;
+  template <typename Fields> struct IDs;
+  template <typename F> struct IsNestedField;
+  template <unsigned N, typename F>
+  static decltype(auto) withOffsets(F &&fn);
+};
 template <ZuString Name>
-using Inline = Named<Name, Kind::Inline>;
+struct AsStruct : public Named<Name, Kind::Inline> {
+  template <typename O, typename Facet = ZuFacet::FB> class Handler;
+  template <typename O> struct Value;
+  template <typename O> struct Layout;
+};
 // Enum names are attached to the existing Z enum map; its Names typelist
 // remains the source of enumerator names and ordinals.
 template <ZuString Name>
-using Enum = Named<Name, Kind::Enum>;
+using AsEnum = Named<Name, Kind::Enum>;
 
 // The ordinal in the alternative list is the tag minus one (zero is NONE).
 // Distinct alternatives may name the same C++ payload type.
@@ -119,7 +158,9 @@ struct Alt {
   static constexpr auto name() { return Name; }
 };
 template <ZuString Name, typename ...Alts>
-struct Union : public Named<Name, Kind::Union> {
+struct AsUnion : public Named<Name, Kind::Union> {
+  template <typename O, typename Facet = ZuFacet::FB> struct Handler;
+  template <typename O> struct Value;
   using Types = ZuTypeList<Alts...>;
   ZuAssert(sizeof...(Alts) < 256);
   static consteval bool namesUnique() {
@@ -145,36 +186,35 @@ struct Union : public Named<Name, Kind::Union> {
 } // ZiFB
 
 // ADL provides type names/representation; fields stay in ordinary ZfStruct.
-// Example: ZiFB::Table<"app.Row"> ZiFBType(Row *);
-void ZiFBType(...);
+// Example: ZiFB::AsTable<"app.Row"> ZiFB_Fmt(Row *);
+void ZiFB_Fmt(...);
 
 namespace ZiFB {
 
 template <typename T>
-using Type = decltype(ZiFBType(ZuDeclVal<ZuDecay<T> *>()));
+using As = decltype(ZiFB_Fmt(ZuDeclVal<ZuUnder<T> *>()));
 
 template <typename T, typename = void>
 struct IsUnion : public ZuFalse { };
 template <typename T>
-struct IsUnion<T, decltype(Type<T>::Kind, void())> :
-  public ZuBool<Type<T>::Kind == Kind::Union> { };
+struct IsUnion<T, decltype(As<T>::Kind, void())> :
+  public ZuBool<As<T>::Kind == Kind::Union> { };
 
 template <typename T, typename = void>
-struct IsInline : public ZuFalse { };
+struct IsStruct : public ZuFalse { };
 template <typename T>
-struct IsInline<T, decltype(Type<T>::Kind, void())> :
-  public ZuBool<Type<T>::Kind == Kind::Inline> { };
+struct IsStruct<T, decltype(As<T>::Kind, void())> :
+  public ZuBool<As<T>::Kind == Kind::Inline> { };
 
-template <typename Field>
-using FieldSlots = ZuUnsigned<1 + unsigned(IsUnion<typename Field::T>{})>;
-
-template <typename FieldList> struct FieldIDs;
+template <ZuString Name>
 template <typename ...Field>
-struct FieldIDs<ZuTypeList<Field...>> {
+struct AsTable<Name>::IDs<ZuTypeList<Field...>> {
+  template <typename F>
+  using Slots = ZuUnsigned<1 + unsigned(IsUnion<typename F::T>{})>;
   using Fields = ZuTypeList<Field...>;
   // Vtables have two uint16_t header words followed by one word per slot.
   enum { MaxFields = (UINT16_MAX - (sizeof(uint16_t)<<1))/sizeof(uint16_t) };
-  enum { N = (0U + ... + FieldSlots<Field>{}) };
+  enum { N = (0U + ... + Slots<Field>{}) };
   enum { Explicit = (ZuFieldProp::HasValue<
     typename Field::Props, ZuFieldProp::FB::FieldID>{} && ...) };
   enum { Implicit = (!ZuFieldProp::HasValue<
@@ -189,9 +229,9 @@ struct FieldIDs<ZuTypeList<Field...>> {
 	typename F::Props, ZuFieldProp::FB::FieldID>{};
     } else {
       constexpr unsigned I = ZuTypeIndex<F, Fields>{};
-      unsigned n = FieldSlots<F>{} - 1;
+      unsigned n = Slots<F>{} - 1;
       ZuUnroll::all<Fields>([&n]<typename G>() {
-	if constexpr (ZuTypeIndex<G, Fields>{} < I) n += FieldSlots<G>{};
+	if constexpr (ZuTypeIndex<G, Fields>{} < I) n += Slots<G>{};
       });
       return n;
     }
@@ -204,63 +244,12 @@ struct FieldIDs<ZuTypeList<Field...>> {
     unsigned next = 0;
     bool ok = true;
     ZuUnroll::all<Ordered>([&next, &ok]<typename F>() {
-      next += FieldSlots<F>{};
+      next += Slots<F>{};
       if (id<F>() != next - 1) ok = false;
     });
     return ok;
   }
   ZuAssert(valid());
-};
-
-template <typename O, typename Facet = ZuFacet::Core>
-struct Meta : public FieldIDs<ZuFields<ZuUnder<O>>> {
-  using Root = ZuUnder<O>;
-  using Complete = ZuFields<Root>;
-  using IDs = FieldIDs<Complete>;
-  using Selected = ZuFields<O, Facet>;
-  using Active = ZuActiveFields<O, Facet>;
-  using Wire = Type<Root>;
-
-  template <typename F>
-  struct Find {
-    template <typename G>
-    using Match = ZuBool<ZuString{F::id()} == ZuString{G::id()}>;
-    using Matches = ZuTypeGrep<Match, Selected>;
-    using Candidates = typename Matches::template Push<F>;
-    using T = ZuType<0, Candidates>;
-  };
-  template <typename F> using Effective = typename Find<F>::T;
-  // Facets can rename/select fields, but never renumber the complete schema.
-  using Fields = ZuTypeMap<Effective, Complete>;
-
-  template <typename F>
-  static consteval unsigned id() {
-    using Matches = ZuTypeGrep<Find<F>::template Match, Complete>;
-    ZuAssert(Matches::N == 1);
-    return IDs::template id<ZuType<0, Matches>>();
-  }
-
-  static constexpr auto name() { return Wire::name(); }
-
-  template <typename F>
-  static consteval auto fieldName() { return ZuFieldProp::FB::name<F>(); }
-
-  static consteval bool namesUnique() {
-    bool ok = true;
-    ZuUnroll::all<Fields>([&ok]<typename F>() {
-      ZuUnroll::all<Fields>([&ok]<typename G>() {
-	if constexpr (ZuTypeIndex<F, Fields>{} < ZuTypeIndex<G, Fields>{}) {
-	  if (fieldName<F>() == fieldName<G>()) ok = false;
-	  if constexpr (IsUnion<typename F::T>{})
-	    if (fieldName<F>() + ZuString{"_type"} == fieldName<G>()) ok = false;
-	  if constexpr (IsUnion<typename G::T>{})
-	    if (fieldName<F>() == fieldName<G>() + ZuString{"_type"}) ok = false;
-	}
-      });
-    });
-    return ok;
-  }
-  ZuAssert(namesUnique());
 };
 
 // --- input functions
@@ -959,42 +948,42 @@ private:
 namespace ZiFB::Values {
 
 struct Int128 { uint64_t h, l; };
-ZfStruct(ZiAPI, Int128,
+ZfStruct(ZiAPI, (Int128, FB),
   (h,	(Deflt<0>),	UInt64),
   (l,	(Deflt<0>),	UInt64));
-Inline<"Zf.Int128"> ZiFBType(Int128 *);
+AsStruct<"Zf.Int128"> ZiFB_Fmt(Int128 *);
 struct UInt128 { uint64_t h, l; };
-ZfStruct(ZiAPI, UInt128,
+ZfStruct(ZiAPI, (UInt128, FB),
   (h,	(Deflt<0>),	UInt64),
   (l,	(Deflt<0>),	UInt64));
-Inline<"Zf.UInt128"> ZiFBType(UInt128 *);
+AsStruct<"Zf.UInt128"> ZiFB_Fmt(UInt128 *);
 struct Fixed { int64_t mantissa; uint8_t ndp; };
-ZfStruct(ZiAPI, Fixed,
+ZfStruct(ZiAPI, (Fixed, FB),
   (mantissa,	(Deflt<0>),	Int64),
   (ndp,		(Deflt<0>),	UInt8));
-Inline<"Zf.Fixed"> ZiFBType(Fixed *);
+AsStruct<"Zf.Fixed"> ZiFB_Fmt(Fixed *);
 struct Decimal { uint64_t h, l; };
-ZfStruct(ZiAPI, Decimal,
+ZfStruct(ZiAPI, (Decimal, FB),
   (h,	(Deflt<0>),	UInt64),
   (l,	(Deflt<0>),	UInt64));
-Inline<"Zf.Decimal"> ZiFBType(Decimal *);
+AsStruct<"Zf.Decimal"> ZiFB_Fmt(Decimal *);
 struct Time { int64_t sec; int32_t nsec; };
-ZfStruct(ZiAPI, Time,
+ZfStruct(ZiAPI, (Time, FB),
   (sec,		(Deflt<0>),	Int64),
   (nsec,	(Deflt<0>),	Int32));
-Inline<"Zf.Time"> ZiFBType(Time *);
+AsStruct<"Zf.Time"> ZiFB_Fmt(Time *);
 struct DateTime { int32_t julian, sec, nsec; };
-ZfStruct(ZiAPI, DateTime,
+ZfStruct(ZiAPI, (DateTime, FB),
   (julian,	(Deflt<0>),	Int32),
   (sec,		(Deflt<0>),	Int32),
   (nsec,	(Deflt<0>),	Int32));
-Inline<"Zf.DateTime"> ZiFBType(DateTime *);
+AsStruct<"Zf.DateTime"> ZiFB_Fmt(DateTime *);
 struct Bytes { ZuBSpan data; };
-ZfStruct(ZiAPI, Bytes, (data,, Bytes));
-Table<"Zf.Bytes"> ZiFBType(Bytes *);
+ZfStruct(ZiAPI, (Bytes, FB), (data,, Bytes));
+AsTable<"Zf.Bytes"> ZiFB_Fmt(Bytes *);
 struct Bitmap { ZuSpan<const uint64_t> data; };
-ZfStruct(ZiAPI, Bitmap, ((data, Rd), (Ctor<0>), UInt64Vec));
-Table<"Zf.Bitmap"> ZiFBType(Bitmap *);
+ZfStruct(ZiAPI, (Bitmap, FB), ((data, Rd), (Ctor<0>), UInt64Vec));
+AsTable<"Zf.Bitmap"> ZiFB_Fmt(Bitmap *);
 
 template <typename B>
 struct BitmapMap {
@@ -1022,25 +1011,7 @@ struct HwBitmapMap {
   enum { Parts = sizeof(uint64_t)/sizeof(unsigned long) };
   ZuAssert(Parts == 1 || Parts == 2);
   template <typename B>
-  static unsigned saveTo(B &b, const ZmBitmap &v) {
-    int last = v.last();
-    if (last < 0 && !!v) { b.fail(Error::Value); return 0; }
-    unsigned n = last < 0 ? 0 : (unsigned(last)>>6) + 1;
-    auto data = b.vector(n, sizeof(uint64_t), alignof(uint64_t),
-      [&v, n](uint8_t *p) {
-	for (unsigned i = 0; i < n; ++i) {
-	  uint64_t word = 0;
-	  ZuUnroll::all<Parts>([&v, i, &word](auto j) {
-	    word |= uint64_t(hwloc_bitmap_to_ith_ulong(v, i * Parts + j)) <<
-	      (j * (sizeof(unsigned long)<<3));
-	  });
-	  write<uint64_t>(p + i * sizeof(uint64_t), word);
-	}
-      });
-    auto table = b.startTable();
-    b.fieldOffset(table, Meta<Bitmap>::template id<ZfField(Bitmap, data)>(), data);
-    return b.endTable(table);
-  }
+  static unsigned saveTo(B &b, const ZmBitmap &v);
   template <typename V>
   static ZmBitmap load(const V &v) {
     auto data = v.template get<ZfField(Bitmap, data)>();
@@ -1151,12 +1122,8 @@ namespace ZiFB {
 template <typename T>
 using Transform = decltype(ZiFBTransform(ZuDeclVal<ZuDecay<T> *>()));
 
-struct Identity {
-  template <typename T> static constexpr const T &save(const T &v) { return v; }
-  template <typename T> static constexpr T load(T v) { return v; }
-};
 template <typename T_, unsigned Code_, typename = void>
-struct Mapping : public Identity {
+struct Mapping {
   using T = T_;
   enum { Code = Code_, Mapped = false };
 };
@@ -1180,6 +1147,20 @@ ZiFB_ValueMap(Decimal);
 ZiFB_ValueMap(Time);
 ZiFB_ValueMap(DateTime);
 #undef ZiFB_ValueMap
+
+// Union alternatives use UDT rather than a field's scalar typecode. Recover
+// the same canonical value mappings without inventing native wire structs.
+#define ZiFB_UDTMap(Type_, Code_) \
+  template <> \
+  struct Mapping<Type_, ZfFieldTC::UDT> : \
+      public Mapping<Type_, ZfFieldTC::Code_> { }
+ZiFB_UDTMap(int128_t, Int128);
+ZiFB_UDTMap(uint128_t, UInt128);
+ZiFB_UDTMap(ZuFixed, Fixed);
+ZiFB_UDTMap(ZuDecimal, Decimal);
+ZiFB_UDTMap(ZuTime, Time);
+ZiFB_UDTMap(ZuDateTime, DateTime);
+#undef ZiFB_UDTMap
 
 // --- field layout
 
@@ -1213,20 +1194,21 @@ struct Vector : public WireValue {
   enum { Kind = ValueKind::Vector, Size = sizeof(Offset), Align = sizeof(Offset) };
 };
 
-template <typename O> struct Layout;
-template <typename O, unsigned Kind_ = Type<O>::Kind> struct Object;
+template <ZuString Name>
 template <typename O>
-struct Object<O, Kind::Table> : public WireValue {
+struct AsTable<Name>::Value : public WireValue {
   using Native = O;
   enum { Kind = ValueKind::Table, Size = sizeof(Offset), Align = sizeof(Offset) };
 };
+template <ZuString Name>
 template <typename O>
-struct Object<O, Kind::Inline> : public WireValue {
+struct AsStruct<Name>::Value : public WireValue {
   using Native = O;
   enum { Kind = ValueKind::Inline, Size = Layout<O>::Size, Align = Layout<O>::Align };
 };
+template <ZuString Name, typename ...Alts>
 template <typename O>
-struct Object<O, Kind::Union> : public WireValue {
+struct AsUnion<Name, Alts...>::Value : public WireValue {
   using Native = O;
   enum { Kind = ValueKind::Union, Size = sizeof(Offset), Align = sizeof(Offset) };
 };
@@ -1250,7 +1232,7 @@ template <typename T>
 struct Rep<T, ZfFieldTC::Bytes> : public Vector<Scalar<uint8_t>> { };
 
 template <typename T, bool = ZuTraits<T>::IsArray>
-struct UDTValue : public Object<ObjectType<T>> { };
+struct UDTValue : public As<ObjectType<T>>::template Value<ObjectType<T>> { };
 template <typename T>
 struct UDTValue<T, true> :
   public Vector<Value<typename ZuTraits<T>::Elem, ZfFieldTC::UDT>> { };
@@ -1262,7 +1244,7 @@ struct Rep<T, Code, ZuIfT<ZfFieldTC::IsVec<Code>{}>> :
   public Vector<Value<typename ZuTraits<T>::Elem, ZfFieldTC::Elem<Code>{}>> { };
 
 // BytesVec uses a wrapper table; FlatBuffers has no vector-of-vectors.
-struct BytesValue : public Object<Values::Bytes> {
+struct BytesValue : public As<Values::Bytes>::template Value<Values::Bytes> {
   enum { Mapped = true };
   static auto toWire(ZuBSpan v) { return Values::BytesMap::save(v); }
   template <typename V>
@@ -1291,9 +1273,11 @@ struct Value : public Rep<typename Mapping<T, Code>::T, Mapping<T, Code>::Code> 
 template <typename T> struct ArrayCount : public ZuUnsigned<0> { };
 template <typename T, unsigned N>
 struct ArrayCount<T[N]> : public ZuUnsigned<N> { };
+template <typename T, unsigned N>
+struct ArrayCount<ZuArray<T, N>> : public ZuUnsigned<N> { };
 
 template <typename F, bool = ArrayCount<typename F::T>{} &&
-  IsInline<ZuUnder<typename F::O>>{}>
+  IsStruct<ZuUnder<typename F::O>>{}>
 struct FieldValue_ : public Value<typename F::T, F::Code> { };
 template <typename F>
 struct FieldValue_<F, true> : public Value<typename F::T, F::Code> {
@@ -1305,8 +1289,6 @@ struct FieldValue_<F, true> : public Value<typename F::T, F::Code> {
   ZuAssert(Elem::Kind == ValueKind::Scalar || Elem::Kind == ValueKind::Inline);
   ZuAssert(Count <= UINT16_MAX);
 };
-template <typename F> using FieldValue = FieldValue_<F>;
-
 template <typename V>
 consteval unsigned valueAlign() {
   if constexpr (V::Kind == ValueKind::Vector) return V::Elem::Align;
@@ -1314,11 +1296,11 @@ consteval unsigned valueAlign() {
 }
 
 template <typename F>
-struct FieldWire : public FieldValue<F> {
-  using V = FieldValue<F>;
+struct FieldWire : public FieldValue_<F> {
+  using V = FieldValue_<F>;
   enum { Required = ZuTypeIn<ZuFieldProp::Required, typename F::Props>{} };
   enum { ForcedAlign = ZuFieldProp::FB::align<F>() };
-  enum { InStruct = IsInline<ZuUnder<typename F::O>>{} };
+  enum { InStruct = IsStruct<ZuUnder<typename F::O>>{} };
   ZuAssert(!Required || (ZuFieldActive<F>{} && V::Kind != ValueKind::Scalar));
   ZuAssert(!ForcedAlign || InStruct || V::Kind == ValueKind::Vector);
   static consteval unsigned alignment() {
@@ -1337,8 +1319,9 @@ consteval auto defaultValue() {
   return T(FieldWire<F>::toWire(F::deflt()));
 }
 
+template <ZuString Name>
 template <typename O>
-struct Layout {
+struct AsStruct<Name>::Layout {
   using Fields = ZuFields<O>;
   static consteval unsigned forcedAlign() {
     unsigned n = 0;
@@ -1404,19 +1387,10 @@ template <typename F> using WireFieldDeps = typename WireDeps<FieldWire<F>>::T;
 template <typename A>
 using WireAltDeps = typename WireDeps<Value<typename A::T, ZfFieldTC::UDT>>::T;
 
-template <typename O, typename Facet = ZuFacet::Core, unsigned Kind_ = Type<O>::Kind>
-struct WireChildren {
-  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireFieldDeps, typename Meta<O, Facet>::Fields>>;
-};
-template <typename O, typename Facet>
-struct WireChildren<O, Facet, Kind::Union> {
-  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireAltDeps, typename Type<O>::Types>>;
-};
-
 // One compile-time traversal supplies storage requirements and schema
 // reachability. The latter adds enum dependencies through its Children policy.
-template <typename Pending, typename Seen = ZuTypeList<>,
-  template <typename> class Children = WireChildren> struct Reach;
+template <typename Pending, typename Seen,
+  template <typename> class Children> struct Reach;
 template <typename O, typename Tail, typename Seen,
   template <typename> class Children, bool = ZuTypeIn<O, Seen>{}>
 struct ReachOne : public Reach<Tail, Seen, Children> { };
@@ -1429,14 +1403,12 @@ struct Reach<ZuTypeList<O, Tail...>, Seen, Children> :
 template <typename Seen, template <typename> class Children>
 struct Reach<ZuTypeList<>, Seen, Children> { using T = Seen; };
 
-template <typename O, typename Facet, unsigned Kind_ = Type<ZuUnder<O>>::Kind>
-struct BufferChildren {
-  using T = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireFieldDeps, ZuActiveFields<O, Facet>>>;
-};
 template <typename O, typename Facet>
-struct BufferChildren<O, Facet, Kind::Union> : public WireChildren<ZuUnder<O>, Facet> { };
+struct BufferChildren {
+  using T = typename As<O>::template Handler<O, Facet>::Children;
+};
 
-template <typename Root, typename Facet = ZuFacet::Core>
+template <typename Root, typename Facet = ZuFacet::FB>
 struct BufferAlign {
   template <typename O> using Children = BufferChildren<O, Facet>;
   // Retain the root projection: original IDs determine wire slots, while
@@ -1449,8 +1421,9 @@ struct BufferAlign {
 	ZuUnroll::all<ZuActiveFields<O, Facet>>([&n]<typename F>() {
 	  if (n < FieldWire<F>::alignment()) n = FieldWire<F>::alignment();
 	});
-	if constexpr (IsInline<ZuUnder<O>>{})
-	  if (n < Layout<ZuUnder<O>>::Align) n = Layout<ZuUnder<O>>::Align;
+	if constexpr (IsStruct<ZuUnder<O>>{})
+	  if (n < As<O>::template Handler<ZuUnder<O>>::Align)
+	    n = As<O>::template Handler<ZuUnder<O>>::Align;
       }
     });
     return n;
@@ -1460,7 +1433,7 @@ struct BufferAlign {
 
 // --- borrowed field access and verification
 
-template <typename O, typename Facet = ZuFacet::Core> class View;
+template <typename O, typename Facet = ZuFacet::FB> class View;
 template <typename V> class VectorValue;
 template <typename V> auto valueAt(const uint8_t *);
 
@@ -1472,7 +1445,7 @@ public:
   const uint8_t *data() const { return m_data; }
   template <unsigned Tag>
   auto get() const {
-    using Types = typename Type<U>::Types;
+    using Types = typename As<U>::Types;
     ZuAssert(Tag && Tag <= Types::N);
     ZmAssert(m_tag == Tag);
     using Alt = ZuType<Tag - 1, Types>;
@@ -1570,7 +1543,7 @@ class View {
   friend Fields<F> ZuFields_(View *, F *);
 
 public:
-  using Metadata = Meta<O, Facet>;
+  using Metadata = typename As<O>::template Handler<O, Facet>;
   View() = default;
   explicit View(const uint8_t *p) : m_data{p} { }
   explicit View(TableView view) : m_data{view.data()} { }
@@ -1579,19 +1552,16 @@ public:
   ZuOpBool
 
   template <typename F>
-  const uint8_t *field() const {
-    if constexpr (Type<typename Metadata::Root>::Kind == Kind::Inline)
-      return m_data ? m_data + Layout<typename Metadata::Root>::template offset<F>() : nullptr;
-    else
-      return TableView{m_data}.field(Metadata::template id<F>());
+  ZuInline const uint8_t *field() const {
+    return Metadata::template field<F>(m_data);
   }
   template <typename F>
-  bool has() const { return field<F>(); }
+  bool has() const { return Metadata::template field<F>(m_data); }
 
   template <typename F>
   auto get() const {
     using V = FieldWire<F>;
-    auto p = field<F>();
+    auto p = Metadata::template field<F>(m_data);
     if constexpr (V::Kind == ValueKind::Scalar) {
       using T = typename V::WireType;
       return V::fromWire(p ? read<T>(p) : defaultValue<F>());
@@ -1613,31 +1583,13 @@ private:
   const uint8_t *m_data = nullptr;
 };
 
-template <typename O, bool SizePrefix = false, typename Facet = ZuFacet::Core>
-View<O, Facet> view(const ZuBSpan &bytes) { return View<O, Facet>{root<SizePrefix>(bytes)}; }
+template <typename O, typename Facet = ZuFacet::FB>
+View<O, Facet> view(const ZuBSpan &bytes) {
+  return View<O, Facet>{root<Config<Facet>::SizePrefixed>(bytes)};
+}
 
-template <typename O, typename Facet = ZuFacet::Core,
-  template <typename> class Filter = ZfFieldFilter::All>
-bool verifyObject(Verifier &, unsigned);
 template <typename V>
 bool verifyValue(Verifier &, unsigned, unsigned = valueAlign<V>());
-
-template <typename V, bool Required = V::Required>
-bool verifyUnion(Verifier &v, const TableBounds &bounds, unsigned id, unsigned field) {
-  unsigned tagAt;
-  if (!v.field(bounds, id - 1, 1, 1, tagAt)) return false;
-  unsigned tag = tagAt ? read<uint8_t>(v.data() + tagAt) : 0;
-  using Types = typename Type<typename V::Native>::Types;
-  if (tag > Types::N || (Required && !tag)) return false;
-  if (!field) return !tag && !Required;
-  if (!v.offset_(field, field)) return false;
-  if (!tag) return true;
-  return ZuSwitch::dispatch<Types::N>(tag - 1, [&v, field](auto i) {
-    using Alt = ZuType<i, Types>;
-    using W = Value<typename Alt::T, ZfFieldTC::UDT>;
-    return verifyValue<W>(v, field);
-  });
-}
 
 template <typename V>
 bool verifyValue(Verifier &v, unsigned at, unsigned alignment) {
@@ -1658,80 +1610,36 @@ bool verifyValue(Verifier &v, unsigned at, unsigned alignment) {
     }
     return true;
   } else if constexpr (V::Kind == ValueKind::Table || V::Kind == ValueKind::Inline)
-    return verifyObject<typename V::Native>(v, at);
+    return As<typename V::Native>::template Handler<typename V::Native>::verify(v, at);
   else {
     ZuAssert(V::Kind != ValueKind::Union);
     return false;
   }
 }
 
-template <typename O, typename Facet, template <typename> class Filter>
-bool verifyObject(Verifier &v, unsigned at) {
-  using M = Meta<O, Facet>;
-  using Fields = ZuTypeGrep<ZuFieldActive, typename M::Fields>;
-  if constexpr (Type<typename M::Root>::Kind == Kind::Inline) {
-    using L = Layout<typename M::Root>;
-    return v.range(at, L::Size, L::Align);
-  } else {
-    if (!v.enter()) return false;
-    TableBounds bounds;
-    bool ok = ZuUnroll::all<Fields>(v.table(at, bounds),
-      [&v, &bounds]<typename F>(bool ok) {
-	if (!ok) return false;
-	using V = FieldWire<F>;
-	constexpr bool required = V::Required && bool(Filter<F>{});
-	unsigned field;
-	if (!v.field(bounds, M::template id<F>(), V::Size, V::Align, field))
-	  return false;
-	if constexpr (V::Kind == ValueKind::Union)
-	  return verifyUnion<V, required>(v, bounds, M::template id<F>(), field);
-	else {
-	  if (!field) return !required;
-	  if constexpr (IsOffset<V>)
-	    return v.offset_(field, field) &&
-	      verifyValue<V>(v, field, V::alignment());
-	  return true;
-	}
-      });
-    v.leave();
-    return ok;
-  }
-}
+// --- typed object handlers
 
-// --- object load handler
-
-template <typename O, typename Facet = ZuFacet::Core> class Handler;
-
-template <typename T, typename U>
+template <typename T, typename Facet, typename U>
 auto nativeValue(const U &value) {
   if constexpr (IsView<U>{}) {
-    ZuAssert(!ZuTraits<T>::IsPointer,
-      "use a borrowed view for pointer-valued wire metadata");
-    return Handler<T>{View<T>{value.data()}}.ctor();
+    using O = ObjectType<T>;
+    using H = typename As<O>::template Handler<O, Facet>;
+    if constexpr (ZuTraits<T>::IsPointer)
+      return value ? H{{View<O, Facet>{value.data()}}}.alloc() : nullptr;
+    else
+      return H{{View<O, Facet>{value.data()}}}.ctor();
   } else return value;
-}
-
-template <typename T, typename U>
-T nativeUnion(UnionView<U> value) {
-  T out;
-  if (!value.tag()) return out;
-  using Types = typename Type<U>::Types;
-  ZuSwitch::dispatch<Types::N>(value.tag() - 1, [&out, value](auto i) {
-    using E = typename T::template Type<i + 1>;
-    out.template p<i + 1>(nativeValue<E>(value.template get<i + 1>()));
-  });
-  return out;
 }
 
 // Materialize table elements only when the destination requests native
 // objects. Ordinary borrowed vector access never constructs those objects.
-template <typename T, typename V>
+template <typename T, typename Facet, typename V>
 class NativeArray {
 public:
   explicit NativeArray(V value) : m_value{value} { }
   unsigned length() const { return m_value.length(); }
-  auto operator [](unsigned i) const { return nativeValue<T>(m_value[i]); }
-  using Elem = decltype(nativeValue<T>(ZuDeclVal<typename V::Elem>()));
+  auto operator [](unsigned i) const { return nativeValue<T, Facet>(m_value[i]); }
+  using Elem = decltype(nativeValue<T, Facet>(ZuDeclVal<typename V::Elem>()));
   using const_iterator = ZuIter<const NativeArray, Elem>;
   const_iterator begin() const { return {*this, 0}; }
   const_iterator end() const { return {*this, length()}; }
@@ -1741,46 +1649,84 @@ private:
 };
 
 template <typename O, typename Facet>
-class Handler {
-  using M = Meta<O, Facet>;
-  using Fields = typename M::Active;
-  template <typename F> using CtorIndex = ZuFieldProp::GetCtor<typename F::Props>;
-  using CtorFields = ZuTypeSort<CtorIndex, ZuTypeGrep<ZfFieldFilter::Ctor, Fields>>;
-  using InitFields = ZuTypeGrep<ZfFieldFilter::Init, Fields>;
+struct ObjectHandler {
+  View<O, Facet> view;
+
+  using Root = ZuUnder<O>;
+  using Complete = ZuFields<Root>;
+  using Selected = ZuFields<O, Facet>;
+  using AllFields = ZuActiveFields<O, Facet>;
 
   template <typename F>
-  auto field() const {
+  struct Find {
+    template <typename G>
+    using Match = ZuBool<ZuString{F::id()} == ZuString{G::id()}>;
+    using Matches = ZuTypeGrep<Match, Selected>;
+    using Candidates = typename Matches::template Push<F>;
+    using T = ZuType<0, Candidates>;
+  };
+  template <typename F> using Effective = typename Find<F>::T;
+  // Facets can rename/select fields, but never renumber the complete schema.
+  using SchemaFields = ZuTypeMap<Effective, Complete>;
+
+  static consteval bool namesUnique() {
+    using namespace ZuFieldProp::FB;
+    bool ok = true;
+    ZuUnroll::all<SchemaFields>([&ok]<typename F>() {
+      ZuUnroll::all<SchemaFields>([&ok]<typename G>() {
+	if constexpr (ZuTypeIndex<F, SchemaFields>{} < ZuTypeIndex<G, SchemaFields>{}) {
+	  if (name<F>() == name<G>()) ok = false;
+	  if constexpr (IsUnion<typename F::T>{})
+	    if (name<F>() + "_type"_z == name<G>()) ok = false;
+	  if constexpr (IsUnion<typename G::T>{})
+	    if (name<F>() == name<G>() + "_type"_z) ok = false;
+	}
+      });
+    });
+    return ok;
+  }
+  ZuAssert(namesUnique());
+
+private:
+  template <typename F> using CtorIndex = ZuFieldProp::GetCtor<typename F::Props>;
+  using CtorFields = ZuTypeSort<CtorIndex, ZuTypeGrep<ZfFieldFilter::Ctor, AllFields>>;
+  using InitFields = ZuTypeGrep<ZfFieldFilter::Init, AllFields>;
+
+  template <typename F>
+  auto loadField() const {
     using W = FieldWire<F>;
-    using V = decltype(m_view.template get<F>());
+    using V = decltype(view.template get<F>());
     if constexpr (IsView<V>{}) {
-      auto value = m_view.template get<F>();
+      auto value = view.template get<F>();
       if constexpr (W::Kind == ValueKind::Inline &&
 	!ZuIsSame<decltype(F::deflt()), void>{})
 	if (!value) return typename F::T(F::deflt());
-      return nativeValue<typename F::T>(value);
-    } else if constexpr (W::Kind == ValueKind::Vector && W::Code_ != ZfFieldTC::Bytes) {
+      return nativeValue<typename F::T, Facet>(value);
+    } else if constexpr ((W::Kind == ValueKind::Vector ||
+	W::Kind == ValueKind::Array) && W::Code_ != ZfFieldTC::Bytes) {
       using T = typename ZuTraits<typename F::T>::Elem;
       if constexpr (IsView<typename V::Elem>{})
-	return NativeArray<T, V>{m_view.template get<F>()};
-      else return m_view.template get<F>();
+	return NativeArray<T, Facet, V>{view.template get<F>()};
+      else return view.template get<F>();
     } else if constexpr (W::Kind == ValueKind::Union && !W::Mapped)
-      return nativeUnion<typename F::T>(m_view.template get<F>());
-    else return m_view.template get<F>();
+      return As<typename W::Native>::template Handler<typename W::Native, Facet>::
+	template ctor<typename F::T>(view.template get<F>());
+    else return view.template get<F>();
   }
 
   template <typename ...F>
   struct Construct {
     template <typename ...Args>
-    static O ctor(const Handler &h, Args &&...args) {
-      return O{ZuFwd<Args>(args)..., h.template field<F>()...};
+    static O ctor(const ObjectHandler &h, Args &&...args) {
+      return O{ZuFwd<Args>(args)..., h.template loadField<F>()...};
     }
     template <typename ...Args>
-    static O *alloc(const Handler &h, Args &&...args) {
-      return new O{ZuFwd<Args>(args)..., h.template field<F>()...};
+    static O *alloc(const ObjectHandler &h, Args &&...args) {
+      return new O{ZuFwd<Args>(args)..., h.template loadField<F>()...};
     }
     template <typename ...Args>
-    static void new_(void *ptr, const Handler &h, Args &&...args) {
-      new (ptr) O{ZuFwd<Args>(args)..., h.template field<F>()...};
+    static void new_(void *ptr, const ObjectHandler &h, Args &&...args) {
+      new (ptr) O{ZuFwd<Args>(args)..., h.template loadField<F>()...};
     }
   };
   using Ctor = ZuTypeApply<Construct, CtorFields>;
@@ -1789,13 +1735,11 @@ class Handler {
   void apply(O &o) const {
     if constexpr (List::N)
       ZuUnroll::all<List>([this, &o]<typename F>() {
-	if constexpr (!F::ReadOnly) F::set(o, this->template field<F>());
+	if constexpr (!F::ReadOnly) F::set(o, this->template loadField<F>());
       });
   }
 
 public:
-  explicit Handler(View<O, Facet> view) : m_view{view} { }
-
   template <bool ReadOnly = ZuStructRO<O>{}, typename = ZuIfT<!ReadOnly>,
     typename ...Args>
   O ctor(Args &&...args) const {
@@ -1822,13 +1766,167 @@ public:
   }
   template <template <typename> class Filter = ZfFieldFilter::Load,
     bool ReadOnly = ZuStructRO<O>{}, typename = ZuIfT<!ReadOnly>>
-  void load(O &o) const { apply<ZuTypeGrep<Filter, Fields>>(o); }
+  void load(O &o) const { apply<ZuTypeGrep<Filter, AllFields>>(o); }
   template <bool ReadOnly = ZuStructRO<O>{}, typename = ZuIfT<!ReadOnly>>
-  void update(O &o) const { apply<ZuTypeGrep<ZfFieldFilter::Upd, Fields>>(o); }
-
-private:
-  View<O, Facet> m_view;
+  void update(O &o) const { apply<ZuTypeGrep<ZfFieldFilter::Upd, AllFields>>(o); }
 };
+
+template <typename U>
+struct UnionOffset {
+  Offset offset;
+  uint8_t tag;
+};
+
+template <ZuString Name>
+template <typename O, typename Facet>
+class AsTable<Name>::Handler : public ObjectHandler<O, Facet> {
+  using Base = ObjectHandler<O, Facet>;
+  using ID = IDs<typename Base::Complete>;
+public:
+  using typename Base::Root;
+  using typename Base::Complete;
+  using typename Base::AllFields;
+  using typename Base::SchemaFields;
+  template <typename F> using Effective = typename Base::template Effective<F>;
+  enum { N = ID::N };
+  using Children = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireFieldDeps, AllFields>>;
+
+  template <typename F>
+  static consteval unsigned id() {
+    using Find = typename Base::template Find<F>;
+    using Matches = ZuTypeGrep<Find::template Match, Complete>;
+    ZuAssert(Matches::N == 1);
+    return ID::template id<ZuType<0, Matches>>();
+  }
+  template <typename F>
+  ZuInline static const uint8_t *field(const uint8_t *p) {
+    return TableView{p}.field(id<F>());
+  }
+  template <template <typename> class Filter = ZfFieldFilter::All>
+  static bool verify(Verifier &, unsigned);
+  template <template <typename> class Filter = ZfFieldFilter::Save, typename B>
+  static unsigned save(B &, const O &);
+  template <typename F, typename B, typename T, typename Table>
+  static void field(B &, Table &, const T &);
+  template <typename F, typename B, typename Table>
+  static void fieldOffset(B &, Table &, Offset);
+  template <typename F, typename B, typename U, typename Table>
+  static void fieldUnion(B &, Table &, UnionOffset<U>);
+};
+
+template <ZuString Name>
+template <typename O, typename Facet>
+class AsStruct<Name>::Handler : public ObjectHandler<O, Facet>,
+  public Layout<ZuUnder<O>> {
+  using Base = ObjectHandler<O, Facet>;
+  using L = Layout<ZuUnder<O>>;
+public:
+  using typename Base::Root;
+  using typename Base::AllFields;
+  using typename Base::SchemaFields;
+  using Children = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireFieldDeps, AllFields>>;
+  template <typename F>
+  static consteval unsigned id() {
+    using Find = typename Base::template Find<F>;
+    using Complete = typename Base::Complete;
+    using Matches = ZuTypeGrep<Find::template Match, Complete>;
+    ZuAssert(Matches::N == 1);
+    return ZuTypeIndex<ZuType<0, Matches>, Complete>{};
+  }
+  template <typename F>
+  ZuInline static const uint8_t *field(const uint8_t *p) {
+    using CoreField = ZuType<id<F>(), typename Base::Complete>;
+    return p ? p + L::template offset<CoreField>() : nullptr;
+  }
+  template <template <typename> class Filter = ZfFieldFilter::All>
+  static bool verify(Verifier &v, unsigned at) {
+    return v.range(at, L::Size, L::Align);
+  }
+  static void save(uint8_t *, const O &);
+};
+
+template <ZuString Name, typename ...Alts>
+template <typename U, typename Facet>
+struct AsUnion<Name, Alts...>::Handler {
+  UnionView<U> view;
+
+  using Wire = As<U>;
+  using Types = typename Wire::Types;
+  using Children = ZuTypeApply<ZuTypeConcat, ZuTypeMap<WireAltDeps, Types>>;
+  template <typename T = U>
+  ZuInline T ctor() const { return ctor<T>(view); }
+  template <typename T = U>
+  static T ctor(UnionView<U>);
+  template <template <typename> class Filter = ZfFieldFilter::Save,
+    typename B, typename T>
+  static UnionOffset<U> save(B &, const T &);
+  template <bool Required>
+  static bool verify(Verifier &, const TableBounds &, unsigned, unsigned);
+};
+
+template <ZuString Name, typename ...Alts>
+template <typename U, typename Facet>
+template <typename T>
+T AsUnion<Name, Alts...>::Handler<U, Facet>::ctor(UnionView<U> value) {
+  T out;
+  if (!value.tag()) return out;
+  using Types = typename As<U>::Types;
+  ZuSwitch::dispatch<Types::N>(value.tag() - 1, [&out, value](auto i) {
+    using E = typename T::template Type<i + 1>;
+    out.template p<i + 1>(nativeValue<E, Facet>(value.template get<i + 1>()));
+  });
+  return out;
+}
+
+template <ZuString Name>
+template <typename O, typename Facet>
+template <template <typename> class Filter>
+bool AsTable<Name>::Handler<O, Facet>::verify(Verifier &v, unsigned at) {
+  using Fields = ZuTypeGrep<ZuFieldActive, SchemaFields>;
+  if (!v.enter()) return false;
+  TableBounds bounds;
+  bool ok = ZuUnroll::all<Fields>(v.table(at, bounds),
+    [&v, &bounds]<typename F>(bool ok) {
+	if (!ok) return false;
+	using V = FieldWire<F>;
+	constexpr bool required = V::Required && bool(Filter<F>{});
+	unsigned field;
+	if (!v.field(bounds, id<F>(), V::Size, V::Align, field))
+	  return false;
+	if constexpr (V::Kind == ValueKind::Union)
+	  return As<typename V::Native>::template Handler<typename V::Native>::
+	    template verify<required>(v, bounds, id<F>(), field);
+	else {
+	  if (!field) return !required;
+	  if constexpr (IsOffset<V>)
+	    return v.offset_(field, field) &&
+	      verifyValue<V>(v, field, V::alignment());
+	  return true;
+	}
+    });
+  v.leave();
+  return ok;
+}
+
+template <ZuString Name, typename ...Alts>
+template <typename U, typename Facet>
+template <bool Required>
+bool AsUnion<Name, Alts...>::Handler<U, Facet>::verify(
+  Verifier &v, const TableBounds &bounds, unsigned id, unsigned field)
+{
+  unsigned tagAt;
+  if (!v.field(bounds, id - 1, 1, 1, tagAt)) return false;
+  unsigned tag = tagAt ? read<uint8_t>(v.data() + tagAt) : 0;
+  if (tag > Types::N || (Required && !tag)) return false;
+  if (!field) return !tag && !Required;
+  if (!v.offset_(field, field)) return false;
+  if (!tag) return true;
+  return ZuSwitch::dispatch<Types::N>(tag - 1, [&v, field](auto i) {
+    using Alt = ZuType<i, Types>;
+    using W = ZiFB::Value<typename Alt::T, ZfFieldTC::UDT>;
+    return verifyValue<W>(v, field);
+  });
+}
 
 // --- object save
 
@@ -1836,8 +1934,9 @@ ZuDerive(Offsets, (ZtArray<Offset, ZtArrayHeapID<"ZiFB.Offsets">>));
 
 // Bound inline offset storage to one platform cache line. Slot counts are
 // fixed by metadata; larger schemas retain ZtScratch with its named heap fallback.
+template <ZuString Name>
 template <unsigned N, typename F>
-decltype(auto) withOffsets(F &&fn) {
+decltype(auto) AsTable<Name>::withOffsets(F &&fn) {
   enum { Builtin = Zm::CacheLineSize/sizeof(Offset) };
   if constexpr (N <= Builtin) {
     // ZuArray requires nonzero capacity even for a zero-field table.
@@ -1849,20 +1948,9 @@ decltype(auto) withOffsets(F &&fn) {
   }
 }
 
-
-template <typename U>
-struct UnionOffset {
-  Offset offset;
-  uint8_t tag;
-};
-
-template <typename O, typename Facet = ZuFacet::Core,
-  template <typename> class Filter = ZfFieldFilter::Save, typename B>
-unsigned saveObject(B &, const O &);
-
-template <typename O>
-void writeInline(uint8_t *p, const O &o) {
-  using L = Layout<O>;
+template <ZuString Name>
+template <typename O, typename Facet>
+void AsStruct<Name>::Handler<O, Facet>::save(uint8_t *p, const O &o) {
   unsigned end = 0;
   ZuUnroll::all<typename L::Fields>([p, &o, &end]<typename F>() {
     using V = FieldWire<F>;
@@ -1877,11 +1965,13 @@ void writeInline(uint8_t *p, const O &o) {
 	if constexpr (E::Kind == ValueKind::Scalar)
 	  write<typename E::WireType>(p + at + i * E::Size, E::toWire(value[i]));
 	else
-	  writeInline(p + at + i * E::Size, E::toWire(value[i]));
+	  As<typename E::Native>::template Handler<typename E::Native>::save(
+	    p + at + i * E::Size, E::toWire(value[i]));
       }
     }
     else
-      writeInline(p + at, V::toWire(F::get(o)));
+      As<typename V::Native>::template Handler<typename V::Native>::save(
+	  p + at, V::toWire(F::get(o)));
     end = at + V::Size;
   });
   if (end < L::Size) memset(p + end, 0, L::Size - end);
@@ -1917,11 +2007,15 @@ unsigned saveValue(B &builder, const T &native, unsigned alignment = valueAlign<
 	// Once the native field is selected, its transformed representation
 	// is complete. Root key/update filters do not prune helper internals.
 	if constexpr (V::Mapped)
-	  return saveObject<typename V::Native, ZuFacet::Core, ZfFieldFilter::All>(builder, o);
+	  return As<typename V::Native>::
+	    template Handler<typename V::Native, ZuFacet::FB>::
+	      template save<ZfFieldFilter::All>(builder, o);
 	else if constexpr (AllValues<Filter>{})
-	  return saveObject<typename V::Native, Facet, ZfFieldFilter::All>(builder, o);
+	  return As<typename V::Native>::template Handler<typename V::Native, Facet>::
+	    template save<ZfFieldFilter::All>(builder, o);
 	else
-	  return saveObject<typename V::Native, Facet, ZfFieldFilter::Save>(builder, o);
+	  return As<typename V::Native>::template Handler<typename V::Native, Facet>::
+	    template save<ZfFieldFilter::Save>(builder, o);
       };
       if constexpr (ZuTraits<W>::IsPointer)
 	return value ? save(*value) : 0;
@@ -1953,7 +2047,8 @@ unsigned saveValue(B &builder, const T &native, unsigned alignment = valueAlign<
 		  write<typename E::WireType>(p + i * E::Size, E::toWire(value[i]));
 	    } else
 	      for (unsigned i = 0; i < count; ++i)
-		writeInline(p + i * E::Size, E::toWire(value[i]));
+		As<typename E::Native>::template Handler<typename E::Native>::save(
+		  p + i * E::Size, E::toWire(value[i]));
 	  });
       } else {
 	// An empty offset vector has no children or temporary offsets.
@@ -1979,23 +2074,23 @@ unsigned saveValue(B &builder, const T &native, unsigned alignment = valueAlign<
   }
 }
 
-template <typename U, typename Facet, template <typename> class Filter,
-  typename B, typename T>
-UnionOffset<U> saveUnion(B &builder, const T &value) {
-  using Wire = Type<U>;
-  using Types = typename Wire::Types;
+template <ZuString Name, typename ...Alts>
+template <typename U, typename Facet>
+template <template <typename> class Filter, typename B, typename T>
+UnionOffset<U> AsUnion<Name, Alts...>::Handler<U, Facet>::save(B &builder, const T &value) {
   unsigned tag = Wire::tag(value);
   if (!tag) return {0, 0};
   if (tag > Types::N) { builder.fail(Error::Union); return {0, 0}; }
   unsigned offset = ZuSwitch::dispatch<Types::N>(tag - 1,
     [&builder, &value](auto i) {
       using Alt = ZuType<i, Types>;
-      using V = Value<typename Alt::T, ZfFieldTC::UDT>;
+      using V = ZiFB::Value<typename Alt::T, ZfFieldTC::UDT>;
       const auto &payload = Wire::template value<i + 1>(value);
       if constexpr (V::Kind == ValueKind::Inline) {
 	builder.align(V::Align, V::Size);
 	if (auto p = builder.push(V::Size)) {
-	  writeInline(p, V::toWire(payload));
+	  As<typename V::Native>::template Handler<typename V::Native>::
+	    save(p, V::toWire(payload));
 	  return builder.size();
 	}
 	return 0U;
@@ -2010,66 +2105,77 @@ UnionOffset<U> saveUnion(B &builder, const T &value) {
 
 // Typed field composition shares object-save defaults and inline layout.
 // Children are built before startTable; fieldOffset attaches their offsets.
-template <typename F, typename M = Meta<typename F::O>,
-  typename B, typename T, typename Table>
-void field(B &builder, Table &table, const T &value) {
+template <ZuString Name>
+template <typename O, typename Facet>
+template <typename F, typename B, typename T, typename Table>
+void AsTable<Name>::Handler<O, Facet>::field(B &builder, Table &table, const T &value) {
   using V = FieldWire<F>;
-  constexpr unsigned id = M::template id<F>();
+  constexpr unsigned id = Handler::template id<F>();
   if constexpr (V::Kind == ValueKind::Scalar)
     builder.template field<typename V::WireType>(table, id,
       V::toWire(value), defaultValue<F>());
   else {
     ZuAssert(V::Kind == ValueKind::Inline);
     builder.fieldInline(table, id, V::Size, V::alignment(),
-      [&value](uint8_t *p) { writeInline(p, V::toWire(value)); });
+      [&value](uint8_t *p) {
+	As<typename V::Native>::template Handler<typename V::Native>::
+	  save(p, V::toWire(value));
+      });
   }
 }
 
-template <typename F, typename M = Meta<typename F::O>, typename B, typename Table>
-void fieldOffset(B &builder, Table &table, Offset value) {
+template <ZuString Name>
+template <typename O, typename Facet>
+template <typename F, typename B, typename Table>
+void AsTable<Name>::Handler<O, Facet>::fieldOffset(B &builder, Table &table, Offset value) {
   using V = FieldWire<F>;
   ZuAssert((V::Kind == ValueKind::String || V::Kind == ValueKind::Vector ||
     V::Kind == ValueKind::Table));
   if constexpr (V::Required)
     if (!value) { builder.fail(Error::Required); return; }
-  builder.fieldOffset(table, M::template id<F>(), value);
+  builder.fieldOffset(table, Handler::template id<F>(), value);
 }
 
 // Compose already-built union payloads without a temporary native union.
-template <typename F, typename M = Meta<typename F::O>,
-  typename B, typename U, typename Table>
-void fieldUnion(B &builder, Table &table, UnionOffset<U> value) {
+template <ZuString Name>
+template <typename O, typename Facet>
+template <typename F, typename B, typename U, typename Table>
+void AsTable<Name>::Handler<O, Facet>::fieldUnion(
+  B &builder, Table &table, UnionOffset<U> value)
+{
   using V = FieldWire<F>;
   ZuAssert(V::Kind == ValueKind::Union);
   ZuAssert((ZuIsSame<typename V::Native, U>{}));
-  if (value.tag > Type<U>::Types::N || bool(value.tag) != bool(value.offset)) {
+  if (value.tag > As<U>::Types::N || bool(value.tag) != bool(value.offset)) {
     builder.fail(Error::Union);
     return;
   }
   if constexpr (V::Required) {
     if (!value.offset) { builder.fail(Error::Required); return; }
   }
-  constexpr unsigned id = M::template id<F>();
+  constexpr unsigned id = Handler::template id<F>();
   builder.template field<uint8_t>(table, id - 1, value.tag, 0);
   builder.fieldOffset(table, id, value.offset);
 }
 
+template <ZuString Name>
 template <typename F>
-using IsNestedField = ZuBool<FieldWire<F>::Kind == ValueKind::String ||
+struct AsTable<Name>::IsNestedField : public ZuBool<FieldWire<F>::Kind == ValueKind::String ||
   FieldWire<F>::Kind == ValueKind::Vector || FieldWire<F>::Kind == ValueKind::Table ||
-  FieldWire<F>::Kind == ValueKind::Union>;
+  FieldWire<F>::Kind == ValueKind::Union> { };
 
-template <typename O, typename Facet, template <typename> class Filter, typename B>
-unsigned saveObject(B &builder, const O &o) {
+template <ZuString Name>
+template <typename O, typename Facet>
+template <template <typename> class Filter, typename B>
+unsigned AsTable<Name>::Handler<O, Facet>::save(B &builder, const O &o) {
   ZuAssert(!IsView<O>{}, "copy a complete serialized span with copyRoot");
-  using M = Meta<O, Facet>;
-  using Fields = ZuTypeGrep<Filter, typename M::Active>;
+  using Fields = ZuTypeGrep<Filter, AllFields>;
   using Nested = ZuTypeGrep<IsNestedField, Fields>;
   if constexpr (Fields::N <= 1 && !Nested::N) {
     // A scalar-only singleton has no child scratch to reuse.
     auto table = builder.startTable();
     ZuUnroll::all<Fields>([&builder, &table, &o]<typename F>() {
-      field<F, M>(builder, table, F::get(o));
+      field<F>(builder, table, F::get(o));
     });
     return builder.endTable(table);
   } else {
@@ -2077,15 +2183,15 @@ unsigned saveObject(B &builder, const O &o) {
     enum { Count = []() consteval {
       unsigned n = 0;
       ZuUnroll::all<Fields>([&n]<typename F>() {
-	constexpr unsigned end = M::template id<F>() + 1;
+	constexpr unsigned end = Handler::template id<F>() + 1;
 	if (n < end) n = end;
       });
       return n;
     }() };
     return withOffsets<Count>([&builder, &o](auto &offsets) {
-      ZuUnroll::all<typename M::Complete>([&offsets]<typename F>() {
-	using Effective = typename M::template Effective<F>;
-	constexpr unsigned id = M::template id<F>();
+      ZuUnroll::all<Complete>([&offsets]<typename F>() {
+	using Effective = typename Base::template Effective<F>;
+	constexpr unsigned id = Handler::template id<F>();
 	if constexpr (id < Count && !ZuTypeIn<Effective, Fields>{}) {
 	  offsets[id] = 0;
 	  if constexpr (FieldWire<F>::Kind == ValueKind::Union) offsets[id - 1] = 0;
@@ -2095,24 +2201,25 @@ unsigned saveObject(B &builder, const O &o) {
 	using V = FieldWire<F>;
 	unsigned offset;
 	if constexpr (V::Kind == ValueKind::Union) {
-	  auto value = saveUnion<typename V::Native, Facet, Filter>(builder,
+	  auto value = As<typename V::Native>::template Handler<typename V::Native, Facet>::
+	    template save<Filter>(builder,
 	    V::toWire(F::get(o)));
 	  offset = value.offset;
-	  offsets[M::template id<F>() - 1] = value.tag;
+	  offsets[Handler::template id<F>() - 1] = value.tag;
 	} else
 	  offset = saveValue<V, Facet, Filter>(builder, F::get(o), V::alignment());
-	offsets[M::template id<F>()] = offset;
+	offsets[Handler::template id<F>()] = offset;
       });
       auto table = builder.startTable(offsets.data());
       ZuUnroll::all<Fields>([&builder, &table, &o, &offsets]<typename F>() {
 	using V = FieldWire<F>;
 	if constexpr (V::Kind == ValueKind::Scalar || V::Kind == ValueKind::Inline) {
-	  field<F, M>(builder, table, F::get(o));
+	  field<F>(builder, table, F::get(o));
 	} else if constexpr (V::Kind == ValueKind::Union) {
-	  fieldUnion<F, M>(builder, table, UnionOffset<typename V::Native>{
-	    offsets[M::template id<F>()], uint8_t(offsets[M::template id<F>() - 1])});
+	  fieldUnion<F>(builder, table, UnionOffset<typename V::Native>{
+	    offsets[Handler::template id<F>()], uint8_t(offsets[Handler::template id<F>() - 1])});
 	} else if constexpr (IsNestedField<F>{}) {
-	  fieldOffset<F, M>(builder, table, offsets[M::template id<F>()]);
+	  fieldOffset<F>(builder, table, offsets[Handler::template id<F>()]);
 	} else {
 	  ZuAssert(V::Kind != ValueKind::Union);
 	}
@@ -2122,18 +2229,40 @@ unsigned saveObject(B &builder, const O &o) {
   }
 }
 
+template <typename B>
+unsigned Values::HwBitmapMap::saveTo(B &b, const ZmBitmap &v) {
+    int last = v.last();
+    if (last < 0 && !!v) { b.fail(Error::Value); return 0; }
+    unsigned n = last < 0 ? 0 : (unsigned(last)>>6) + 1;
+    auto data = b.vector(n, sizeof(uint64_t), alignof(uint64_t),
+      [&v, n](uint8_t *p) {
+	for (unsigned i = 0; i < n; ++i) {
+	  uint64_t word = 0;
+	  ZuUnroll::all<Parts>([&v, i, &word](auto j) {
+	    word |= uint64_t(hwloc_bitmap_to_ith_ulong(v, i * Parts + j)) <<
+	      (j * (sizeof(unsigned long)<<3));
+	  });
+	  write<uint64_t>(p + i * sizeof(uint64_t), word);
+	}
+      });
+    auto table = b.startTable();
+    b.fieldOffset(table,
+      As<Bitmap>::template Handler<Bitmap>::template id<ZfField(Bitmap, data)>(), data);
+    return b.endTable(table);
+  }
+
 // --- pooled I/O construction and address mapping
 
 // The array bounds are the protocol address widths, independent of native
 // socket structure layout. Addresses retain network byte order on the wire.
 struct IPv4 { uint8_t addr[4]; };
-ZfStruct(ZiAPI, IPv4, (addr,, Bytes));
-ZiFB::Inline<"Zi.IPv4"> ZiFBType(IPv4 *);
+ZfStruct(ZiAPI, (IPv4, FB), (addr,, Bytes));
+ZiFB::AsStruct<"Zi.IPv4"> ZiFB_Fmt(IPv4 *);
 struct IPv6 { uint8_t addr[16]; };
-ZfStruct(ZiAPI, IPv6, (addr,, Bytes));
-ZiFB::Inline<"Zi.IPv6"> ZiFBType(IPv6 *);
+ZfStruct(ZiAPI, (IPv6, FB), (addr,, Bytes));
+ZiFB::AsStruct<"Zi.IPv6"> ZiFB_Fmt(IPv6 *);
 
-struct IP : public ZiFB::Union<"Zi.IP",
+struct IP : public ZiFB::AsUnion<"Zi.IP",
     ZiFB::Alt<"IPv4", IPv4>, ZiFB::Alt<"IPv6", IPv6>> {
   static unsigned tag(const ZiIP &v) { return v.type(); }
   template <unsigned I>
@@ -2282,36 +2411,91 @@ public:
   const ZiIOBuf *cspan() const { return Storage::buffer(); }
 };
 
+// A native container used as a root retains its canonical mapped table's
+// schema and codec. Loading materializes through the existing conversion.
+template <typename Map>
+struct AsMapped : public As<typename Map::T> {
+  ZuAssert(As<typename Map::T>::Kind == Kind::Table);
+  template <typename O, typename Facet = ZuFacet::FB>
+  class Handler : public As<typename Map::T>::template Handler<typename Map::T, Facet> {
+    using Wire = typename Map::T;
+    using Base = typename As<Wire>::template Handler<Wire, Facet>;
+  public:
+    explicit Handler(View<O, Facet> value) : Base{{View<Wire, Facet>{value.data()}}} { }
+    O ctor() const { return O{Map::load(this->view)}; }
+    O *alloc() const { return new O{Map::load(this->view)}; }
+    void new_(void *ptr) const { new (ptr) O{Map::load(this->view)}; }
+    void load(O &o) const { o = Map::load(this->view); }
+    void update(O &o) const {
+      if constexpr (ZuTypeGrep<ZfFieldFilter::Upd, typename Base::AllFields>::N)
+	load(o);
+    }
+    template <template <typename> class Filter = ZfFieldFilter::Save, typename B>
+    static unsigned save(B &builder, const O &o) {
+      return Base::template save<Filter>(builder, Map::save(o));
+    }
+  };
+};
+
 // --- load/save entry points
 
-template <typename O, bool SizePrefix = false, typename Facet = ZuFacet::Core,
+// Detect Builder and derived builders without erasing the caller's type.
+template <typename Storage> ZuTrue IsBuilder_(Builder<Storage> *);
+ZuFalse IsBuilder_(...);
+template <typename T>
+using IsBuilder = decltype(IsBuilder_(ZuDeclVal<T *>()));
+
+// Compose into an existing arena; finishing and ownership stay with the caller.
+template <typename Facet = ZuFacet::FB,
+  template <typename> class Filter = ZfFieldFilter::Save,
+  typename B, typename O, typename = ZuIfT<IsBuilder<B>{}>,
+  typename = decltype(As<O>::Kind)>
+ZuInline auto save(B &builder, const O &o) {
+  return As<O>::template Handler<O, Facet>::template save<Filter>(builder, o);
+}
+
+// Write an inline wire struct directly into supplied destination storage.
+template <typename O>
+ZuInline void save(uint8_t *p, const O &o) {
+  As<O>::template Handler<O>::save(p, o);
+}
+
+template <typename O, typename Facet = ZuFacet::FB,
   template <typename> class Filter = ZfFieldFilter::All>
 bool verify(const ZuBSpan &bytes, const char *id = nullptr, VerifyLimits limits = {}) {
   Verifier verifier{bytes, limits};
   unsigned at;
-  return verifier.template root<SizePrefix>(at, id) &&
-    verifyObject<O, Facet, Filter>(verifier, at);
+  return verifier.template root<Config<Facet>::SizePrefixed>(at, id) &&
+    As<O>::template Handler<O, Facet>::template verify<Filter>(verifier, at);
 }
 
 template <typename O, typename Facet>
-Handler<O, Facet> handler(View<O, Facet> value) { return Handler<O, Facet>{value}; }
+ZuInline auto handler(const View<O, Facet> &value) {
+  return typename As<O>::template Handler<O, Facet>{{value}};
+}
 
-template <typename O, bool SizePrefix = false, typename Facet = ZuFacet::Core>
-Handler<O, Facet> handler(const ZuBSpan &bytes) {
-  return Handler<O, Facet>{view<O, SizePrefix, Facet>(bytes)};
+template <typename U, typename Facet = ZuFacet::FB>
+ZuInline auto handler(const UnionView<U> &value) {
+  return typename As<U>::template Handler<U, Facet>{value};
+}
+
+template <typename O, typename Facet = ZuFacet::FB>
+auto handler(const ZuBSpan &bytes) {
+  return typename As<O>::template Handler<O, Facet>{{view<O, Facet>(bytes)}};
 }
 
 // Generic streams need only byte-span insertion. Transmit streams build in
 // detached output storage and flush it. Return codes report codec errors;
 // destination failures remain in S. Failed construction emits no object bytes.
-template <bool SizePrefix = false, typename Facet = ZuFacet::Core,
-  template <typename> class Filter = ZfFieldFilter::Save, typename S, typename O>
+template <typename Facet = ZuFacet::FB,
+  template <typename> class Filter = ZfFieldFilter::Save, typename S, typename O,
+  typename = ZuIfT<!IsBuilder<S>{} && !ZuIsSame<ZuDecay<S>, uint8_t *>{}>>
 int save(S &stream, const O &o, const char *id = nullptr) {
-  ZuAssert(Type<ZuUnder<O>>::Kind == Kind::Table);
+  ZuAssert(As<ZuUnder<O>>::Kind == Kind::Table);
   constexpr unsigned Align = BufferAlign<O, Facet>::N;
   auto save_ = [&o, id]<typename B, typename Emit>(B &builder, Emit emit) {
-    auto bytes = builder.template finish<SizePrefix>(
-      saveObject<O, Facet, Filter>(builder, o), id);
+    auto bytes = builder.template finish<Config<Facet>::SizePrefixed>(
+      As<O>::template Handler<O, Facet>::template save<Filter>(builder, o), id);
     if (builder.failed()) return builder.error();
     emit(bytes);
     return int(Error::OK);
@@ -2345,15 +2529,15 @@ int save(S &stream, const O &o, const char *id = nullptr) {
 
 // Loading is for trusted bytes: verify external data once at its ingress
 // boundary. Borrowed strings/vectors in O retain the input span's lifetime.
-template <typename O, bool SizePrefix = false, typename Facet = ZuFacet::Core,
+template <typename O, typename Facet = ZuFacet::FB,
   typename ...Args>
 O load(const ZuBSpan &bytes, Args &&...args) {
-  return handler<O, SizePrefix, Facet>(bytes).ctor(ZuFwd<Args>(args)...);
+  return handler<O, Facet>(bytes).ctor(ZuFwd<Args>(args)...);
 }
 
 } // ZiFB
 
-ZiFB::IP ZiFBType(ZiIP *);
+ZiFB::IP ZiFB_Fmt(ZiIP *);
 ZiFB::IPMap ZiFBTransform(ZiIP *);
 inline ZuCSpan ZfVFieldTypeID(ZiIP *) { return "IP"; }
 

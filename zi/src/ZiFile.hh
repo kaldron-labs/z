@@ -194,7 +194,7 @@ public:
   void openStdOut();
   void openStdErr();
 
-  void close();
+  int close();
 
   Offset size();
   ZiStat fstat() const;

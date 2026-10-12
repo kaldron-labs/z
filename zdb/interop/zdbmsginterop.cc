@@ -24,8 +24,8 @@ namespace M = Zdb_::Msg;
 namespace C = Zdb_::fbs;
 
 struct Row { unsigned id; };
-ZfStruct(, Row, (id, (Deflt<0>), UInt32));
-ZiFB::Table<"test.Row"> ZiFBType(Row *);
+ZfStruct(, (Row, FB), (id, (Deflt<0>), UInt32));
+ZiFB::AsTable<"test.Row"> ZiFB_Fmt(Row *);
 enum { RowAlign = ZiFB::BufferAlign<Row>::N > ZiFB::BufferAlign<M::Root>::N ?
   ZiFB::BufferAlign<Row>::N : ZiFB::BufferAlign<M::Root>::N };
 ZuDerive(Text, (ZtString<ZtStringHeapID<"zdbmsginterop.Text">>));
@@ -67,7 +67,7 @@ static void records()
   // pooled downward arena, including storage for forced row alignment.
   ZiFB::IOBuilder<ZiFB::Wire::MaxAlign> builder{new Zdb_::IOBufAlloc<>, RowAlign};
   auto nested = builder.startNested();
-  auto root = ZiFB::saveObject(builder, Row{42});
+  auto root = ZiFB::save(builder, Row{42});
   auto data = builder.endNested(nested, root);
   auto payload = Zdb_::saveRecord(builder, "rows", 7, 123, -3, 1, data);
   builder.finish(Zdb_::saveMsg(builder, payload, M::Tag::Replication));
@@ -202,14 +202,14 @@ struct ReadRecord {
   Zdb_::Shard shard;
   Zdb_::SagaPayload data;
 };
-ZfStruct(, ReadRecord,
+ZfStruct(, (ReadRecord, FB),
   (table,	(Ctor<0>),		String),
   (un,		(Ctor<1>, Deflt<0>),	UInt64),
   (sn,		(Ctor<2>),		UInt128),
   (vn,		(Ctor<3>, Deflt<0>),	Int64),
   (shard,	(Ctor<4>, Deflt<0>),	UInt8),
   (data,	(Ctor<5>),		Bytes));
-ZiFB::Table<"bench.ReadRecord"> ZiFBType(ReadRecord *);
+ZiFB::AsTable<"bench.ReadRecord"> ZiFB_Fmt(ReadRecord *);
 
 static uint64_t allocations()
 {
@@ -342,7 +342,7 @@ struct Native {
   static Builder make() { return Builder{new Zdb_::IOBufAlloc<>, RowAlign}; }
   static void save(Builder &b, uint64_t seq) {
     auto nested = b.startNested();
-    auto root = ZiFB::saveObject(b, Row{42});
+    auto root = ZiFB::save(b, Row{42});
     auto data = b.endNested(nested, root);
     auto record = Zdb_::saveRecord(b, "rows", seq, 123, -3, 1, data);
     b.finish(Zdb_::saveMsg(b, record, M::Tag::Replication));
@@ -514,7 +514,7 @@ public:
 
   void save(const Zdb_::SagaData &row, uint64_t seq) {
     auto nested = startNested();
-    auto data = endNested(nested, ZiFB::saveObject(*this, row));
+    auto data = endNested(nested, ZiFB::save(*this, row));
     auto record = Zdb_::saveRecord(*this, "saga", seq, 123, -3, 1, data);
     finish(Zdb_::saveMsg(*this, record, M::Tag::Replication));
     if (failed()) Zm::exit(1);
@@ -602,30 +602,33 @@ static int sagaBuffers(unsigned count, unsigned rounds, unsigned payload)
 int main(int argc, char **argv)
 {
   if (argc == 5 && !strcmp(argv[1], "--saga-buffers")) {
-#ifdef NDEBUG
+#ifndef NDEBUG
+    if (!getenv("ZIFB_BENCH_CURRENT")) {
+      std::cerr << "Set ZIFB_BENCH_CURRENT for a current-configuration comparison\n";
+      return 1;
+    }
+#endif
     return Bench::sagaBuffers(ZuBox<unsigned>{argv[2]}, ZuBox<unsigned>{argv[3]},
       ZuBox<unsigned>{argv[4]});
-#else
-    std::cerr << "Performance measurements require a release build\n";
-    return 1;
-#endif
   }
   if (argc == 5 && !strcmp(argv[1], "--reads")) {
-#ifdef NDEBUG
+#ifndef NDEBUG
+    if (!getenv("ZIFB_BENCH_CURRENT")) {
+      std::cerr << "Set ZIFB_BENCH_CURRENT for a current-configuration comparison\n";
+      return 1;
+    }
+#endif
     return Bench::reads(ZuBox<unsigned>{argv[2]}, ZuBox<unsigned>{argv[3]},
       ZuBox<unsigned>{argv[4]});
-#else
-    std::cerr << "Performance measurements require a release build\n";
-    return 1;
-#endif
   }
   if (argc == 4 && !strcmp(argv[1], "--bench")) {
-#ifdef NDEBUG
-    return Bench::run(ZuBox<unsigned>{argv[2]}, ZuBox<unsigned>{argv[3]});
-#else
-    std::cerr << "Performance measurements require a release build\n";
-    return 1;
+#ifndef NDEBUG
+    if (!getenv("ZIFB_BENCH_CURRENT")) {
+      std::cerr << "Set ZIFB_BENCH_CURRENT for a current-configuration comparison\n";
+      return 1;
+    }
 #endif
+    return Bench::run(ZuBox<unsigned>{argv[2]}, ZuBox<unsigned>{argv[3]});
   }
   parse(argc, argv);
   ZuTestMain();

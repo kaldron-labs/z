@@ -24,6 +24,28 @@
 
 ZuStructFacet(CBOR);
 
+// --- facet configuration
+
+struct ZfCBOR_DefltConfig {
+  enum { VecSize = 8 };
+};
+
+template <unsigned _, typename NTP = ZfCBOR_DefltConfig>
+struct ZfCBOR_VecSize : public NTP { enum { VecSize = _ }; };
+
+ZfCBOR_DefltConfig ZfCBOR_Config(...); // default
+
+// Configure a facet at top level; overloads live in its namespace for ADL.
+#define ZfCBORConfig(Facet, Config) \
+  namespace ZuFacet { ZuPP_Strip(Config) ZfCBOR_Config(Facet *); }
+
+namespace ZfCBOR {
+
+template <typename Facet>
+using Config = decltype(ZfCBOR_Config(ZuDeclVal<Facet *>()));
+
+}
+
 namespace ZuFieldProp::CBOR {
 
 template <ZuString ID_> struct ID { };
@@ -349,21 +371,21 @@ inline bool untag(ZuBSpan &span, uint64_t tag)
   return true;
 }
 
-template <unsigned TypeCode, typename Props, typename T>
+template <typename Facet, unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(ZuBSpan span);
-template <typename T, typename Props>
+template <typename Facet, typename T, typename Props>
 inline T loadUDT(ZuBSpan span);
 
 ZuDerive(LoadVec_, (ZtArray<ZuBSpan, ZtArrayHeapID<"ZfCBOR.LoadVec">>));
-template <unsigned TypeCode, typename Props, typename T>
-struct LoadVec : public ZuMArray<LoadVec<TypeCode, Props, T>, LoadVec_, T> {
+template <typename Facet, unsigned TypeCode, typename Props, typename T>
+struct LoadVec : public ZuMArray<LoadVec<Facet, TypeCode, Props, T>, LoadVec_, T> {
   using Base = ZuMArray<LoadVec, LoadVec_, T>;
   using Base::underlying;
 
   // Matches ZfASN1: representative sequences are generally small.
-  enum { BuiltinSize = 8 };
+  enum { BuiltinSize = Config<Facet>::VecSize };
 
-  ZuBSpan	builtin[BuiltinSize];
+  ZuBSpan	builtin[BuiltinSize ? BuiltinSize : 1];
   LoadVec_	underlying_ = LoadVec_(&builtin[0], 0, BuiltinSize, false);
 
   LoadVec(ZuBSpan span) : Base(underlying_) {
@@ -394,7 +416,7 @@ struct LoadVec : public ZuMArray<LoadVec<TypeCode, Props, T>, LoadVec_, T> {
   }
 
   auto get(unsigned i) const & {
-    return loadValue<ZuFieldProp::CBOR::GetType<Props, TypeCode>{}, Props, T>(
+    return loadValue<Facet, ZuFieldProp::CBOR::GetType<Props, TypeCode>{}, Props, T>(
       underlying[i]);
   }
   template <typename V> void set(unsigned, const V &) { }
@@ -502,7 +524,7 @@ inline ZuDecimal decimalValue(ZuBSpan span);
 inline ZuTime timeValue(ZuBSpan span);
 inline ZuDateTime dateTimeValue(ZuBSpan span);
 
-template <unsigned TypeCode, typename Props, typename T>
+template <typename Facet, unsigned TypeCode, typename Props, typename T>
 inline auto loadValue(ZuBSpan span)
 {
   ZuAssert(ZfFieldTC::IsVec<TypeCode>{} ||
@@ -513,8 +535,8 @@ inline auto loadValue(ZuBSpan span)
     using Elem = ZfFieldTC::Type<ElemCode>;
     constexpr uint64_t Tag = ZuFieldProp::CBOR::GetTag<Props>{};
     if constexpr (Tag != UINT64_MAX)
-      if (!untag(span, Tag)) return LoadVec<ElemCode, ElemProps, Elem>(ZuBSpan{});
-    return LoadVec<ElemCode, ElemProps, Elem>(span);
+      if (!untag(span, Tag)) return LoadVec<Facet, ElemCode, ElemProps, Elem>(ZuBSpan{});
+    return LoadVec<Facet, ElemCode, ElemProps, Elem>(span);
   } else {
   Detail::Head head;
   auto result = scan(span);
@@ -560,7 +582,7 @@ inline auto loadValue(ZuBSpan span)
   } else if constexpr (TypeCode == ZfFieldTC::DateTime) {
     return dateTimeValue(span);
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    return loadUDT<T, Props>(span);
+    return loadUDT<Facet, T, Props>(span);
   } else if constexpr (
       TypeCode == ZfFieldTC::Int8 ||
       TypeCode == ZfFieldTC::Int16 ||
@@ -592,8 +614,8 @@ inline ZuFixed fixedValue(ZuBSpan span)
 {
   ZuBSpan exponent, mantissa;
   if (!pair(span, 4, exponent, mantissa)) return {};
-  int64_t e = loadValue<ZfFieldTC::Int64, ZuTypeList<>, int64_t>(exponent);
-  int128_t m = loadValue<ZfFieldTC::Int128, ZuTypeList<>, int128_t>(mantissa);
+  int64_t e = loadValue<ZuFacet::CBOR, ZfFieldTC::Int64, ZuTypeList<>, int64_t>(exponent);
+  int128_t m = loadValue<ZuFacet::CBOR, ZfFieldTC::Int128, ZuTypeList<>, int128_t>(mantissa);
   if (e > 0 || e < -255 || m < ZuFixedMin || m > ZuFixedMax) return {};
   return {int64_t(m), unsigned(-e)};
 }
@@ -602,8 +624,8 @@ inline ZuDecimal decimalValue(ZuBSpan span)
 {
   ZuBSpan exponent, mantissa;
   if (!pair(span, 4, exponent, mantissa)) return {};
-  int64_t e = loadValue<ZfFieldTC::Int64, ZuTypeList<>, int64_t>(exponent);
-  int128_t m = loadValue<ZfFieldTC::Int128, ZuTypeList<>, int128_t>(mantissa);
+  int64_t e = loadValue<ZuFacet::CBOR, ZfFieldTC::Int64, ZuTypeList<>, int64_t>(exponent);
+  int128_t m = loadValue<ZuFacet::CBOR, ZfFieldTC::Int128, ZuTypeList<>, int128_t>(mantissa);
   if (e >= -18) {
     if (e > 20) return m ? ZuDecimal{} : ZuDecimal::Unscaled{0};
     int128_t scale, value;
@@ -633,7 +655,7 @@ inline ZuTime timeValue(ZuBSpan span)
   Detail::Head head;
   if (!Detail::head(span, head)) return {};
   if (head.major == 0 || head.major == 1)
-    return loadValue<ZfFieldTC::Int64, ZuTypeList<>, int64_t>(span);
+    return loadValue<ZuFacet::CBOR, ZfFieldTC::Int64, ZuTypeList<>, int64_t>(span);
   if (head.major != 7 || (head.ai != 25 && head.ai != 26 && head.ai != 27))
     return {};
   double value = floatValue<double>(span);
@@ -669,10 +691,10 @@ namespace ZfCBOR {
 template <typename O>
 using As = decltype(ZfCBOR_Fmt(ZuDeclVal<O *>()));
 
-template <typename T, typename Props>
+template <typename Facet, typename T, typename Props>
 inline T loadUDT(ZuBSpan span)
 {
-  return typename As<T>::template Handler<T, ZuFacet::CBOR, Props>{
+  return typename As<T>::template Handler<T, Facet, Props>{
     ZuFalse{}, span}.ctor();
 }
 
@@ -775,7 +797,7 @@ struct CBOROrder {
   constexpr const KeyOrderValue &operator ()() const { return V; }
 };
 
-template <typename S, unsigned TypeCode, typename Props, typename T>
+template <typename Facet, typename S, unsigned TypeCode, typename Props, typename T>
 inline void saveValue(S &s, const T &v);
 
 struct AsObject {
@@ -806,10 +828,10 @@ struct AsObject {
 	  FieldProps, Field::Type::Code>{} };
 	if constexpr (!ZuFieldProp::CBOR::GetOptional<FieldProps>{}) {
 	  saveKey<S, Field>(s);
-	  saveValue<S, TypeCode, FieldProps>(s, Field::get(o));
+	  saveValue<Facet, S, TypeCode, FieldProps>(s, Field::get(o));
 	} else if (!ZuNull(Field::get(o))) {
 	  saveKey<S, Field>(s);
-	  saveValue<S, TypeCode, FieldProps>(s, Field::get(o));
+	  saveValue<Facet, S, TypeCode, FieldProps>(s, Field::get(o));
 	}
       });
     }
@@ -823,8 +845,8 @@ struct AsObject {
 	typename Field::Props, Field::Type::Code>{} };
       using T = typename Field::T;
       using R = decltype(
-	loadValue<TypeCode, typename Field::Props, T>(ZuBSpan{}));
-      if (fields[I]) return loadValue<TypeCode, typename Field::Props, T>(fields[I]);
+	loadValue<Facet, TypeCode, typename Field::Props, T>(ZuBSpan{}));
+      if (fields[I]) return loadValue<Facet, TypeCode, typename Field::Props, T>(fields[I]);
       if constexpr (ZfFieldTC::IsVec<TypeCode>{}) return R(ZuBSpan{});
       else return R{Field::deflt()};
     }
@@ -903,7 +925,7 @@ struct AsArray {
     using O = O_;
     using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
     using ElemProps = ZuFieldProp::CBOR::GetElemProps<Props>;
-    using Vec = LoadVec<ElemCode, ElemProps, Elem>;
+    using Vec = LoadVec<Facet, ElemCode, ElemProps, Elem>;
 
     Vec	vec;
 
@@ -924,7 +946,7 @@ struct AsArray {
       unsigned n = ZuTraits<O>::length(o);
       writeHead(s, 4, n);
       for (unsigned i = 0; i < n; ++i)
-      saveValue<S, ZuFieldProp::CBOR::GetType<ElemProps, ElemCode>{},
+      saveValue<Facet, S, ZuFieldProp::CBOR::GetType<ElemProps, ElemCode>{},
 	ElemProps>(s, o[i]);
     }
     template <typename ...Args>
@@ -1056,7 +1078,7 @@ inline void saveInt(S &s, T value)
   }
 }
 
-template <typename S, unsigned TypeCode, typename Props, typename T>
+template <typename Facet, typename S, unsigned TypeCode, typename Props, typename T>
 inline void saveValue(S &s, const T &v)
 {
   ZuAssert(ZfFieldTC::IsVec<TypeCode>{} ||
@@ -1114,7 +1136,7 @@ inline void saveValue(S &s, const T &v)
     unsigned n = ZuTraits<T>::length(v);
     writeHead(s, 4, n);
     for (unsigned i = 0; i < n; ++i)
-      saveValue<S, ZuFieldProp::CBOR::GetType<ElemProps, ElemCode>{},
+      saveValue<Facet, S, ZuFieldProp::CBOR::GetType<ElemProps, ElemCode>{},
 	ElemProps>(s, v[i]);
   } else if constexpr (
       TypeCode == ZfFieldTC::Int8 || TypeCode == ZfFieldTC::Int16 ||
@@ -1124,7 +1146,7 @@ inline void saveValue(S &s, const T &v)
       TypeCode == ZfFieldTC::UInt64 || TypeCode == ZfFieldTC::UInt128) {
     saveInt(s, v);
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using Handler = typename As<T>::template Handler<T, ZuFacet::CBOR, Props>;
+    using Handler = typename As<T>::template Handler<T, Facet, Props>;
     Handler::save(s, v);
   }
 }

@@ -78,9 +78,9 @@
 //
 // both arrays and nested objects can also be embedded as JSON
 //
-// IncrementalURI permits loading from a path query then enriching
-// the same object from a x-www-form-urlencoded body without overwriting
-// already-loaded data
+// ZfURIConfig(Facet, ZfURI_Incremental<>) permits loading from a path query
+// then enriching the same object from a x-www-form-urlencoded body without
+// resetting fields absent from the body
 //
 // finally, Zrest permits appending a signature to a query or body
 //
@@ -144,7 +144,6 @@
 #include <zlib/ZePlatform.hh>
 
 ZuStructFacet(URI); // canonical URI facet, others can be defined
-ZuStructFacet(IncrementalURI); // variant with Incremental = true
 
 // --- configuration (per-mapping)
 
@@ -223,9 +222,7 @@ namespace ZfURIError {
 // - to further modify a Base facet pass tail NTP as:
 //   ZfURI::Config<ZuFacet::Base>
 #define ZfURIConfig(Facet, Config) \
-  ZuPP_Strip(Config) ZfURI_Config(ZuFacet::Facet *);
-
-ZfURIConfig(IncrementalURI, ZfURI_Incremental<>);
+  namespace ZuFacet { ZuPP_Strip(Config) ZfURI_Config(Facet *); }
 
 namespace ZfURI {
 

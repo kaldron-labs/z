@@ -1,0 +1,10 @@
+// Separate dependency generation must share a namespace without helper clashes.
+namespace flatcdep;
+struct Axes { axes:[uint:3]; }
+table Retired { retired:[string] (deprecated); }
+
+struct Point (force_align:16) { x:int; axes:[ushort:3]; }
+table O0 { value:uint; heap:string; e0:[string]; base:[uint]; }
+
+namespace Zf;
+struct Fixed { mantissa:long; ndp:ubyte; }

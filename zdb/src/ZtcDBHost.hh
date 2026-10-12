@@ -32,7 +32,7 @@
 
 namespace Ztc {
 
-namespace RAG { ZiFB::Enum<"Ztc.fbs.RAG"> ZiFBType(Map *); }
+namespace RAG { ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *); }
 
 ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Instantiated,
@@ -41,7 +41,7 @@ ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Active,
   Inactive,
   Stopping);
-namespace DBHostState { ZiFB::Enum<"Ztc.fbs.DBHostState"> ZiFBType(Map *); }
+namespace DBHostState { ZiFB::AsEnum<"Ztc.fbs.DBHostState"> ZiFB_Fmt(Map *); }
 
 struct DBHostTelemetry {
   ZiIP		ip;
@@ -67,7 +67,7 @@ struct DBHostTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBHostTelemetry *);
 };
-ZfStruct(ZdbAPI, DBHostTelemetry,
+ZfStruct(ZdbAPI, (DBHostTelemetry, FB),
   (ip,		(Ctor<0>),					UDT),
   (dbID,	(Ctor<1>, Keys<0>),				String),
   (id,		(Ctor<2>, Keys<0>),				String),
@@ -77,7 +77,7 @@ ZfStruct(ZdbAPI, DBHostTelemetry,
   (port,	(Ctor<4>),					UInt16),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
 
-ZiFB::Table<"Ztc.fbs.DBHostTelemetry"> ZiFBType(DBHostTelemetry *);
+ZiFB::AsTable<"Ztc.fbs.DBHostTelemetry"> ZiFB_Fmt(DBHostTelemetry *);
 
 struct DBHost {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

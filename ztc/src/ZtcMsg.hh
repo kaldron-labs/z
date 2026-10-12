@@ -45,8 +45,8 @@ namespace HubError {
 inline constexpr auto Protocol = "ztc"_z;
 
 struct Shutdown { };
-ZfStruct(ZtcAPI, Shutdown);
-ZiFB::Table<"Ztc.fbs.Shutdown"> ZiFBType(Shutdown *);
+ZfStruct(ZtcAPI, (Shutdown, FB));
+ZiFB::AsTable<"Ztc.fbs.Shutdown"> ZiFB_Fmt(Shutdown *);
 
 namespace TelemetryBody {
   enum {
@@ -61,7 +61,7 @@ ZuDerive(TelemetryValue, (ZuUnion<void,
   MxTelemetry, QueueTelemetry, HubTelemetry, LinkTelemetry, PoolTelemetry,
   DBTelemetry, DBHostTelemetry, DBTableTelemetry, AppTelemetry, Shutdown,
   AlertTelemetry>));
-ZiFB::Union<"Ztc.fbs.TelemetryBody",
+ZiFB::AsUnion<"Ztc.fbs.TelemetryBody",
   ZiFB::Alt<"HeapTelemetry", HeapTelemetry>,
   ZiFB::Alt<"HashTelemetry", HashTelemetry>,
   ZiFB::Alt<"ThreadTelemetry", ThreadTelemetry>,
@@ -76,39 +76,39 @@ ZiFB::Union<"Ztc.fbs.TelemetryBody",
   ZiFB::Alt<"DBTableTelemetry", DBTableTelemetry>,
   ZiFB::Alt<"AppTelemetry", AppTelemetry>,
   ZiFB::Alt<"Shutdown", Shutdown>,
-  ZiFB::Alt<"AlertTelemetry", AlertTelemetry>> ZiFBType(TelemetryValue *);
+  ZiFB::Alt<"AlertTelemetry", AlertTelemetry>> ZiFB_Fmt(TelemetryValue *);
 struct Telemetry {
   ZuCSpan id;
   uint64_t seqNo;
   TelemetryValue value;
 };
-ZfStruct(ZtcAPI, Telemetry,
+ZfStruct(ZtcAPI, (Telemetry, FB),
   (id,,				String),
   (seqNo,	(Deflt<0>),	UInt64),
   (value,,			UDT));
-ZiFB::Table<"Ztc.fbs.Telemetry"> ZiFBType(Telemetry *);
+ZiFB::AsTable<"Ztc.fbs.Telemetry"> ZiFB_Fmt(Telemetry *);
 
 namespace Body { enum { None, Request, Ack, Telemetry, EOS, Error }; }
 ZuDerive(BodyValue, (ZuUnion<void, Request, Ack, Telemetry, EOS, Error>));
-ZiFB::Union<"Ztc.fbs.Body",
+ZiFB::AsUnion<"Ztc.fbs.Body",
   ZiFB::Alt<"Request", Request>, ZiFB::Alt<"Ack", Ack>,
   ZiFB::Alt<"Telemetry", Telemetry>, ZiFB::Alt<"EOS", EOS>,
-  ZiFB::Alt<"Error", Error>> ZiFBType(BodyValue *);
+  ZiFB::Alt<"Error", Error>> ZiFB_Fmt(BodyValue *);
 struct Payload { BodyValue body; };
-ZfStruct(ZtcAPI, Payload, (body,, UDT));
-ZiFB::Table<"Ztc.fbs.Payload"> ZiFBType(Payload *);
+ZfStruct(ZtcAPI, (Payload, FB), (body,, UDT));
+ZiFB::AsTable<"Ztc.fbs.Payload"> ZiFB_Fmt(Payload *);
 struct Msg {
   ZuBSpan data;
   uint64_t subID;
   ZuCSpan deviceID;
   uint64_t agentGen;
 };
-ZfStruct(ZtcAPI, Msg,
+ZfStruct(ZtcAPI, (Msg, FB),
   (data,,			Bytes),
   (subID,	(Deflt<0>),	UInt64),
   (deviceID,,			String),
   (agentGen,	(Deflt<0>),	UInt64));
-ZiFB::Table<"Ztc.fbs.Msg"> ZiFBType(Msg *);
+ZiFB::AsTable<"Ztc.fbs.Msg"> ZiFB_Fmt(Msg *);
 using MsgView = ZiFB::View<Msg>;
 using TelemetryView = ZiFB::View<Telemetry>;
 using Builder = ZiFB::IOBuilder<ZiFB::BufferAlign<Payload>::N>;
@@ -123,13 +123,14 @@ template <typename B>
 auto saveMsg(B &builder, ZiFB::Offset data, uint64_t subID = 0,
     ZuCSpan deviceID = {}, uint64_t generation = 0) {
   auto device = deviceID ? builder.string(deviceID) : 0;
-  ZtBuiltin<ZiFB::Offsets, ZiFB::Meta<Msg>::N> offsets;
-  offsets.length(ZiFB::Meta<Msg>::N);
+  using H = ZiFB::As<Msg>::template Handler<Msg>;
+  ZtBuiltin<ZiFB::Offsets, H::N> offsets;
+  offsets.length(H::N);
   auto table = builder.startTable(offsets.data());
-  ZiFB::fieldOffset<ZfField(Msg, data)>(builder, table, data);
-  ZiFB::field<ZfField(Msg, subID)>(builder, table, subID);
-  ZiFB::fieldOffset<ZfField(Msg, deviceID)>(builder, table, device);
-  ZiFB::field<ZfField(Msg, agentGen)>(builder, table, generation);
+  H::template fieldOffset<ZfField(Msg, data)>(builder, table, data);
+  H::template field<ZfField(Msg, subID)>(builder, table, subID);
+  H::template fieldOffset<ZfField(Msg, deviceID)>(builder, table, device);
+  H::template field<ZfField(Msg, agentGen)>(builder, table, generation);
   return builder.endTable(table);
 }
 
@@ -137,10 +138,11 @@ template <typename B>
 auto saveMsg(B &builder, ZiFB::NestedState nested, unsigned type,
     ZiFB::Offset body, uint64_t subID = 0, ZuCSpan deviceID = {},
     uint64_t generation = 0) {
-  ZtBuiltin<ZiFB::Offsets, ZiFB::Meta<Payload>::N> offsets;
-  offsets.length(ZiFB::Meta<Payload>::N);
+  using H = ZiFB::As<Payload>::template Handler<Payload>;
+  ZtBuiltin<ZiFB::Offsets, H::N> offsets;
+  offsets.length(H::N);
   auto table = builder.startTable(offsets.data());
-  ZiFB::fieldUnion<ZfField(Payload, body)>(builder, table,
+  H::template fieldUnion<ZfField(Payload, body)>(builder, table,
     ZiFB::UnionOffset<BodyValue>{body, uint8_t(type)});
   auto root = builder.endTable(table);
   auto payload = builder.endNested(nested, root);
@@ -151,11 +153,12 @@ template <bool ForceSeq = false, typename B>
 auto saveTelemetry(B &builder, ZiFB::Offset id, uint64_t seqNo,
     unsigned type, ZiFB::Offset value) {
   auto table = builder.startTable();
-  ZiFB::fieldOffset<ZfField(Telemetry, id)>(builder, table, id);
+  using H = ZiFB::As<Telemetry>::template Handler<Telemetry>;
+  H::template fieldOffset<ZfField(Telemetry, id)>(builder, table, id);
   using Seq = ZfField(Telemetry, seqNo);
-  builder.template field<uint64_t>(table, ZiFB::Meta<Telemetry>::id<Seq>(),
+  builder.template field<uint64_t>(table, H::id<Seq>(),
     seqNo, ZiFB::defaultValue<Seq>(), ForceSeq);
-  ZiFB::fieldUnion<ZfField(Telemetry, value)>(builder, table,
+  H::template fieldUnion<ZfField(Telemetry, value)>(builder, table,
     ZiFB::UnionOffset<TelemetryValue>{value, uint8_t(type)});
   return builder.endTable(table);
 }

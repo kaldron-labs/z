@@ -71,7 +71,31 @@
 
 ZuStructFacet(ASN1); // canonical ASN.1 facet, others can be defined
 
+// --- facet configuration
+
+struct ZfASN1_DefltConfig {
+  enum { StashSize = 32, OIDSize = 16, VecSize = 8 };
+};
+
+template <unsigned _, typename NTP = ZfASN1_DefltConfig>
+struct ZfASN1_StashSize : public NTP { enum { StashSize = _ }; };
+
+template <unsigned _, typename NTP = ZfASN1_DefltConfig>
+struct ZfASN1_OIDSize : public NTP { enum { OIDSize = _ }; };
+
+template <unsigned _, typename NTP = ZfASN1_DefltConfig>
+struct ZfASN1_VecSize : public NTP { enum { VecSize = _ }; };
+
+ZfASN1_DefltConfig ZfASN1_Config(...); // default
+
+// Configure a facet at top level; overloads live in its namespace for ADL.
+#define ZfASN1Config(Facet, Config) \
+  namespace ZuFacet { ZuPP_Strip(Config) ZfASN1_Config(Facet *); }
+
 namespace ZfASN1 {
+
+template <typename Facet>
+using Config = decltype(ZfASN1_Config(ZuDeclVal<Facet *>()));
 
 // ZfASN1::Spec is a subsidiary namespace that apps can import to access
 // ASN.1 encoding-related constants and functions without dragging
@@ -889,14 +913,15 @@ struct AsObject {
 
 // LoadOID wraps an array of uint64_t OID elements
 using LoadOID_ = ZtArray<uint64_t, ZtArrayHeapID<"ZfASN1.LoadOID">>;
+template <typename Facet>
 struct LoadOID : public LoadOID_ {
   using Base = LoadOID_;
   using Base::push;
 
   // built-in size; ASN.1 OIDs are generally shorter than 16 elements
-  enum { BuiltinSize = 16 };
+  enum { BuiltinSize = Config<Facet>::OIDSize };
 
-  uint64_t	builtin[BuiltinSize];
+  uint64_t	builtin[BuiltinSize ? BuiltinSize : 1];
 
   LoadOID(ZuSpan<char> span) : Base(&builtin[0], 0, BuiltinSize, false) {
     uint64_t n = span.length();
@@ -931,9 +956,9 @@ struct LoadVec :
   using Base::underlying;
 
   // built-in size; ASN.1 sequences are generally small
-  enum { BuiltinSize = 8 };
+  enum { BuiltinSize = Config<Facet>::VecSize };
 
-  ZuSpan<char>	builtin[BuiltinSize];
+  ZuSpan<char>	builtin[BuiltinSize ? BuiltinSize : 1];
   LoadVec_	underlying_ = LoadVec_(&builtin[0], 0, BuiltinSize, false);
 
   LoadVec(ZuSpan<char> span) : Base(underlying_) {
@@ -1909,7 +1934,7 @@ inline auto loadValue(ZuSpan<char> span)
     if constexpr (ASNType{} == OID) {
       using Elem = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
       ZuAssert((ZuIsConstructible<uint64_t, Elem>{}));
-      return LoadOID(span);
+      return LoadOID<Facet>(span);
     } else {
       enum { ElemCode = ZfFieldTC::Elem<TypeCode>{} };
       using ElemProps = ZuFieldProp::ASN1::GetElemProps<Props>;
@@ -1922,11 +1947,10 @@ inline auto loadValue(ZuSpan<char> span)
 
 template <
   typename Facet = ZuFacet::ASN1,
-  unsigned StashSize = 32,
   typename S, typename O>
 inline S &save(S &s, const O &v)
 {
-  auto stash = ZtScratch(SaveScratch, StashSize);
+  auto stash = ZtScratch(SaveScratch, Config<Facet>::StashSize);
   using Handler = typename As<O>::template Handler<O, Facet>;
   Handler::save1(stash, v);
   Handler::save2(s, v, stash);

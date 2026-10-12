@@ -31,6 +31,9 @@
 
 ZuStructFacet(Wire);
 
+ZuStructFacet(Prefixed);
+ZiFBConfig(Prefixed, ZiFB_SizePrefixed<>);
+
 namespace ValueTest {
 
 struct Packed { unsigned word = 0; };
@@ -53,7 +56,7 @@ struct Row {
   ZuSpan<const ZuBSpan> bytes;
   Packed packed;
 };
-ZfStruct(, Row,
+ZfStruct(, (Row, FB),
   (signedValue,,	Int128),
   (unsignedValue,,	UInt128),
   (fixed,,		Fixed),
@@ -63,14 +66,14 @@ ZfStruct(, Row,
   (values,,		Int128Vec),
   (bytes,,		BytesVec),
   (packed,,		UDT));
-ZiFB::Table<"test.Values"> ZiFBType(Row *);
+ZiFB::AsTable<"test.Values"> ZiFB_Fmt(Row *);
 
-ZuAssert(ZiFB::Layout<ZiFB::Values::Int128>::Size == 16);
-ZuAssert(ZiFB::Layout<ZiFB::Values::UInt128>::Size == 16);
-ZuAssert(ZiFB::Layout<ZiFB::Values::Fixed>::Size == 16);
-ZuAssert(ZiFB::Layout<ZiFB::Values::Decimal>::Size == 16);
-ZuAssert(ZiFB::Layout<ZiFB::Values::Time>::Size == 16);
-ZuAssert(ZiFB::Layout<ZiFB::Values::DateTime>::Size == 12);
+ZuAssert(ZiFB::As<ZiFB::Values::Int128>::template Handler<ZiFB::Values::Int128>::Size == 16);
+ZuAssert(ZiFB::As<ZiFB::Values::UInt128>::template Handler<ZiFB::Values::UInt128>::Size == 16);
+ZuAssert(ZiFB::As<ZiFB::Values::Fixed>::template Handler<ZiFB::Values::Fixed>::Size == 16);
+ZuAssert(ZiFB::As<ZiFB::Values::Decimal>::template Handler<ZiFB::Values::Decimal>::Size == 16);
+ZuAssert(ZiFB::As<ZiFB::Values::Time>::template Handler<ZiFB::Values::Time>::Size == 16);
+ZuAssert(ZiFB::As<ZiFB::Values::DateTime>::template Handler<ZiFB::Values::DateTime>::Size == 12);
 ZuAssert(ZiFB::FieldWire<ZfField(Row, packed)>::Size == 4);
 
 struct Bitmaps {
@@ -79,51 +82,53 @@ struct Bitmaps {
   ZmBitmap hw;
   ZuSpan<const ZuBSpan> bytes;
 };
-ZfStruct(, Bitmaps,
+ZfStruct(, (Bitmaps, FB),
   (fixed,	(Keys<0>),	UDT),
   (dynamic,	(Keys<0>),	UDT),
   (hw,		(Keys<0>),	UDT),
   (bytes,	(Keys<0>),	BytesVec));
-ZiFB::Table<"test.Bitmaps"> ZiFBType(Bitmaps *);
+ZiFB::AsTable<"test.Bitmaps"> ZiFB_Fmt(Bitmaps *);
 
 } // ValueTest
 
 namespace UnionTest {
 
 struct Record { unsigned value; };
-ZfStruct(, Record, (value, (Ctor<0>, Deflt<0>), UInt32));
-ZiFB::Table<"test.Record"> ZiFBType(Record *);
+ZfStruct(, (Record, FB), (value, (Ctor<0>, Deflt<0>), UInt32));
+ZiFB::AsTable<"test.Record"> ZiFB_Fmt(Record *);
 struct Empty { };
-ZfStruct(, Empty);
-ZiFB::Table<"test.Empty"> ZiFBType(Empty *);
+ZfStruct(, (Empty, FB));
+ZiFB::AsTable<"test.Empty"> ZiFB_Fmt(Empty *);
 struct Point { int value; };
-ZfStruct(, Point, (value, (Ctor<0>, Deflt<0>), Int32));
-ZiFB::Inline<"test.Point"> ZiFBType(Point *);
+ZfStruct(, (Point, FB), (value, (Ctor<0>, Deflt<0>), Int32));
+ZiFB::AsStruct<"test.Point"> ZiFB_Fmt(Point *);
 ZuDerive(Body, (ZuUnion<void, Record, Record, Empty, Point>));
-ZiFB::Union<"test.Body", ZiFB::Alt<"Replication", Record>,
+ZiFB::AsUnion<"test.Body", ZiFB::Alt<"Replication", Record>,
   ZiFB::Alt<"Recovery", Record>, ZiFB::Alt<"Empty", Empty>,
-  ZiFB::Alt<"Point", Point>> ZiFBType(Body *);
+  ZiFB::Alt<"Point", Point>> ZiFB_Fmt(Body *);
 struct Message { unsigned seq; Body body; };
-ZfStruct(, Message,
+ZfStruct(, (Message, FB),
   (seq,		(Ctor<0>, Deflt<0>),	UInt32),
   (body,	(Ctor<1>),		UDT));
-ZiFB::Table<"test.Message"> ZiFBType(Message *);
-ZuAssert(ZiFB::Meta<Message>::N == 3);
-ZuAssert(ZiFB::Meta<Message>::id<ZfField(Message, body)>() == 2);
+ZiFB::AsTable<"test.Message"> ZiFB_Fmt(Message *);
+ZuAssert(ZiFB::As<Message>::template Handler<Message>::N == 3);
+ZuAssert(ZiFB::As<Message>::template Handler<Message>::id<ZfField(Message, body)>() == 2);
 
 } // UnionTest
 
 namespace StreamTest {
 
 struct Stamp { uint64_t value; };
-ZfStruct(, Stamp, (value, (Ctor<0>, FB::Align<16>), UInt64));
-ZiFB::Inline<"test.Stamp"> ZiFBType(Stamp *);
+ZfStruct(, (Stamp, FB), (value, (Ctor<0>, FB::Align<16>), UInt64));
+ZiFB::AsStruct<"test.Stamp"> ZiFB_Fmt(Stamp *);
 struct Row { unsigned seq; Stamp stamp; ZuBSpan bytes; };
-ZfStruct(, Row,
+ZfStruct(, (Row, FB),
   (seq,		(Ctor<0>, Deflt<7>),			UInt32),
   (stamp,	(Ctor<1>),				UDT),
   (bytes,	(Ctor<2>, Required, FB::Align<32>),	Bytes));
-ZiFB::Table<"test.Row"> ZiFBType(Row *);
+ZiFB::AsTable<"test.Row"> ZiFB_Fmt(Row *);
+ZuStructReflect(Row, ZuFacet::Prefixed, ZuFacet::FB);
+ZuStructReflect(Stamp, ZuFacet::Prefixed, ZuFacet::FB);
 ZfStructRender(, Row, Wire,
   (seq, FB::ID<"sequence">), stamp, (bytes, FB::ID<"payload">));
 
@@ -132,11 +137,11 @@ struct Batch {
   ZuSpan<const ZuCSpan> names;
   ZuSpan<const Stamp> stamps;
 };
-ZfStruct(, Batch,
+ZfStruct(, (Batch, FB),
   (rows,,	UDT),
   (names,,	StringVec),
   (stamps,,	UDT));
-ZiFB::Table<"test.Batch"> ZiFBType(Batch *);
+ZiFB::AsTable<"test.Batch"> ZiFB_Fmt(Batch *);
 
 ZuDerive(Text, (ZtString<ZtStringHeapID<"ZiFBTest.Stream.Text">>));
 struct Stream {
@@ -145,7 +150,8 @@ struct Stream {
 };
 
 ZuAssert(ZiFB::BufferAlign<Row>::N == 32);
-ZuAssert(ZiFB::Layout<Stamp>::Size == 16);
+ZuAssert(ZiFB::As<Stamp>::template Handler<Stamp>::Size == 16);
+ZuAssert(ZiFB::As<Stamp>::template Handler<Stamp>::Fields::N == 1);
 
 } // StreamTest
 

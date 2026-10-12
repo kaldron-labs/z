@@ -213,14 +213,15 @@ public:
   // prepend to buffer (e.g. for a protocol header)
   template <auto Grow = ZmGrow>
   uint8_t *prepend(unsigned length_) {
-    ZmAssert(size == skip + length);
+    // Aligned arenas and sliced spans can leave unused trailing storage.
+    ZmAssert(uint64_t(skip) + length <= size);
     if (ZuLikely(skip >= length_)) {
       skip -= length_;
       length += length_;
       return data();
     }
     auto old = data_();
-    auto newSize = length + (length_ - skip);
+    auto newSize = length + length_;
     if (ZuLikely(newSize <= size)) {
       auto newSkip = size - length;
       if (length) memmove(old + newSkip, old + skip, length);
@@ -237,7 +238,7 @@ public:
     length += length_;
     if (ZuUnlikely(data__ &Jumbo)) vfree(old);
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
-    return jumbo + skip;
+    return data();
   }
 
   bool append(const uint8_t *data, unsigned length_) {

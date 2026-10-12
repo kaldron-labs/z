@@ -39,7 +39,7 @@
 
 namespace Ztc {
 
-namespace RAG { ZiFB::Enum<"Ztc.fbs.RAG"> ZiFBType(Map *); }
+namespace RAG { ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *); }
 
 using DBString = Zdb_::String;
 using DBThreads = Zdb_::Threads;
@@ -83,7 +83,7 @@ struct DBTelemetry {
 
   friend ZfStructPrint ZuPrintType(DBTelemetry *);
 };
-ZfStruct(ZdbAPI, DBTelemetry,
+ZfStruct(ZdbAPI, (DBTelemetry, FB),
   (thread,		(Ctor<0>),					String),
   (threads,		(Ctor<1>),					StringVec),
   (nShards,		(Ctor<2>),					UInt32),
@@ -105,7 +105,7 @@ ZfStruct(ZdbAPI, DBTelemetry,
   (replicating,		(Ctor<18>, Mutable),				UInt8),
   ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),		Int8));
 
-ZiFB::Table<"Ztc.fbs.DBTelemetry"> ZiFBType(DBTelemetry *);
+ZiFB::AsTable<"Ztc.fbs.DBTelemetry"> ZiFB_Fmt(DBTelemetry *);
 
 struct ZdbAPI DB {
   using AllDBTablesFn = ZmFn<void(DBTable *), AllFnHeapID>;
