@@ -261,6 +261,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Red Flag: invariant function call in a loop conditional
   Problem: inefficient repeated calling of a function that returns an invariant value
   Fix: use a local variable to cache the value before the loop
+- Red Flag: repeated string comparisons in a lookup loop or `ZuUnroll`.
+  Problem: each key is inefficiently compared with multiple candidates.
+  Fix: use the indexed matching pattern in "Compile-time data and matching".
 - Red Flag: repeated invariant array operator use, e.g. `if (x[i] == 'y' || x[i] == 'z') ...`
   Problem: inefficient repeated calling of `operator []`, potential memory contention
   Fix: use a local variable to cache the value: `auto c = x[i]; if (c == 'y' || c == 'z') ...`
@@ -537,6 +540,22 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use `ZuType`, `ZuTypeIndex`, `ZuTypeMap`, `ZuTypeSlice`, etc. to transform type lists and sequences.
 - Use `ZuString`/`ZuStringT` for compile-time strings and `ZuStringTL` for compile-time string lists.
 - Use `ZuMatcher` for token matching among multiple possibilities; use `==` for a single possibility.
+- Do not use linear or quadratic searches that repeatedly compare strings or integers,
+  in order to match a candidate against a set of possible values: this includes
+  loops, `ZuUnroll`, and chains of comparisons.
+  - For fixed string field IDs, map each parsed name to its field index with a
+    compile-time `ZuMatcher`, then record the input position in a run-time
+    fixed-size primitive `lookup[]` indexed by field. Load fields through
+    `lookup[]`, following `ZfJSON` as the canonical control-flow example.
+    Put `ZuMatcher` implementations in `.cc` files.
+  - For integer field IDs, follow the same field-indexed `lookup[]` flow, but
+    use a `ZmLHash<..., ZmLHashStatic<...>>` populated once from compile-time
+    field metadata instead of `ZuMatcher`. Do not construct the map per parsed
+    object or on another hot path.
+  - A one-time linear search during program startup, initialization or initial
+    configuration is acceptable
+- Apply the format's duplicate rule to recognized fields. Detecting duplicate
+  unrecognized keys is a non-goal.
 
 ### Storage and lifetime
 - Use `ZmHeap` and `ZmVHeap` to adopt a recycling zero-overhead block allocator, with heap identification, telemetry and configurable tuning
@@ -595,7 +614,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   rather than arbitrary powers of two for maxima unless a protocol or
   implementation imposes a smaller bound.
 - Use metadata integrations instead of ad hoc parsing: JSON `ZfJSON`, ASN.1 `ZfASN1`, CLI `ZfCLI`, CSV `ZfCSV`, URI query `ZfURI`, and FlatBuffers `ZiFB`.
-- Use `ZiFB::save`, `ZiFB::load`, typed views, and `ZiFB::Handler` for
+- Use `ZiFB::save`, `ZiFB::load`, typed views, and `ZiFB::handler` for
   object construction, loading and updates from `ZfStruct` metadata.
   Use `ZiFB::IOBuilder` for pooled I/O buffers. Already serialized nested
   roots are copied as byte spans, preserving field presence and defaults.
