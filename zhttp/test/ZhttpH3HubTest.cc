@@ -465,7 +465,8 @@ struct StreamServerSession {
 };
 
 struct StreamServer :
-  public Zhttp::ProtocolServer<StreamServer, Zhttp::H3QUIC> {
+  public Zhttp::ProtocolServer<
+    StreamServer, Zhttp::H3QUIC, StreamServerLink> {
   using Link = StreamServerLink;
 
   StreamState	*state = nullptr;

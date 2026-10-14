@@ -159,7 +159,7 @@ struct ServerSession {
 
 template <typename Profile>
 struct Server :
-  public Zhttp::ProtocolServer<Server<Profile>, Profile> {
+  public Zhttp::ProtocolServer<Server<Profile>, Profile, ServerLink<Profile>> {
   using Link = ServerLink<Profile>;
 
   State	*state = nullptr;
@@ -381,7 +381,8 @@ struct UpgradeSession {
 
 template <typename Profile>
 struct UpgradeServer :
-  public Zhttp::ProtocolServer<UpgradeServer<Profile>, Profile> {
+  public Zhttp::ProtocolServer<
+    UpgradeServer<Profile>, Profile, UpgradeSrvLink<Profile>> {
   using Link = UpgradeSrvLink<Profile>;
 
   UpgradeState	*state = nullptr;
