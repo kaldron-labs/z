@@ -162,6 +162,12 @@ extern "C" {
 #endif /* _WIN32 */
 
 namespace ZuTest_ {
+  // Give each test scope a concrete, linkable object. GCC can leave an
+  // unresolved reference when a block-scope static in a function template is
+  // used as a non-type template argument by step_().
+  template <typename Tag, ZuString Name, bool Dynamic = false>
+  inline ZuTest_Scope scope_ = { Name.data_, 0, Dynamic };
+
 // this is carefully written to ensure static initialization
 // in the image without COMDAT or ODR conflicts
 // - gcc: cannot place vague-linkage template statics in the shared ZuTest
@@ -201,7 +207,8 @@ struct ZuTest_Context {
   ZuTestMgr::start()
 
 #define ZuTestScope_(name) \
-  static ZuTest_Scope ZuTest_scope = { name, 0, false }; \
+  using ZuTest_scope_tag = decltype([]{}); \
+  auto &ZuTest_scope = ZuTest_::scope_<ZuTest_scope_tag, name>; \
   ZuTest_Context ZuTest_context(&ZuTest_scope)
 
 #define ZuTestScope(name) \
@@ -217,7 +224,8 @@ struct ZuTest_Context {
   } while (0)
 
 #define ZuTestScopeRT_(name) \
-  static ZuTest_Scope ZuTest_scope = { name, 0, true }; \
+  using ZuTest_scope_tag = decltype([]{}); \
+  auto &ZuTest_scope = ZuTest_::scope_<ZuTest_scope_tag, name, true>; \
   ZuTest_Context ZuTest_context(&ZuTest_scope)
 
 #define ZuTestScopeRT(name) \
