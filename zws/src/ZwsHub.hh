@@ -234,8 +234,10 @@ struct ExtendedServerSession {
 
 template <typename App, typename Profile>
 class ExtendedServer :
-  public Zhttp::ProtocolServer<ExtendedServer<App, Profile>, Profile> {
-  using Base = Zhttp::ProtocolServer<ExtendedServer, Profile>;
+  public Zhttp::ProtocolServer<
+    ExtendedServer<App, Profile>, Profile, ExtendedServerLink<App, Profile>> {
+  using Base = Zhttp::ProtocolServer<
+    ExtendedServer<App, Profile>, Profile, ExtendedServerLink<App, Profile>>;
 
 public:
   ZuAssert(Zhttp::ProfileTraits<Profile>::Multiplexed);

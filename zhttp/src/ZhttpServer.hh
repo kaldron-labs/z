@@ -228,7 +228,7 @@ struct ServerSession {
   int request(Link &, Parser &) { return 1; }
 };
 
-template <typename App, typename Profile>
+template <typename App, typename Profile, typename LogicalLink = void>
 class ProtocolServer :
   public ProfileTraits<Profile>::Transport::template Server<App> {
   using HTTP = ProfileTraits<Profile>;
@@ -1108,8 +1108,8 @@ private:
 
 } // namespace TLS_
 
-template <typename App>
-class ProtocolServer<App, H2TLS> : public H2_::ServerHub<App> {
+template <typename App, typename LogicalLink>
+class ProtocolServer<App, H2TLS, LogicalLink> : public H2_::ServerHub<App> {
 public:
   using Base = H2_::ServerHub<App>;
   enum { TLS = 1, Multiplexed = 1 };
@@ -1126,15 +1126,15 @@ public:
 
 namespace H3_ {
 
-template <typename App> struct SrvLink;
-template <typename App> struct ServerStream;
+template <typename App, typename LogicalLink> struct SrvLink;
+template <typename App, typename LogicalLink> struct ServerStream;
 
-template <typename App>
+template <typename App, typename LogicalLink>
 class ServerHub :
-  public Zquic::Server<ServerHub<App>, SrvLink<App>>,
-  public Faults<ServerHub<App>> {
+  public Zquic::Server<ServerHub<App, LogicalLink>, SrvLink<App, LogicalLink>>,
+  public Faults<ServerHub<App, LogicalLink>> {
 public:
-  using Link = SrvLink<App>;
+  using Link = SrvLink<App, LogicalLink>;
   using Base = Zquic::Server<ServerHub, Link>;
   using StopFn =
     ZmFn<void(bool), ZmFnHeapID<"Zhttp.H3.ServerStop">>;
@@ -1190,16 +1190,16 @@ private:
   }
 };
 
-template <typename App>
+template <typename App, typename LogicalLink>
 struct ServerStream :
-  public Zquic::SrvStream<SrvLink<App>, ServerStream<App>>,
-  public H3::CxnStream<ServerStream<App>,
-    H3::Cxn<SrvLink<App>, ZmRef<ServerStream<App>>>> {
-  using Link = SrvLink<App>;
+  public Zquic::SrvStream<SrvLink<App, LogicalLink>, ServerStream<App, LogicalLink>>,
+  public H3::CxnStream<ServerStream<App, LogicalLink>,
+    H3::Cxn<SrvLink<App, LogicalLink>, ZmRef<ServerStream<App, LogicalLink>>>> {
+  using Link = SrvLink<App, LogicalLink>;
   using Base = Zquic::SrvStream<Link, ServerStream>;
   using H3Cxn = H3::Cxn<Link, ZmRef<ServerStream>>;
   using CxnStream = H3::CxnStream<ServerStream, H3Cxn>;
-  using Logical = typename App::Link;
+  using Logical = LogicalLink;
   using Base::Base;
 
   int process(Zquic::RxStream &rx) {
@@ -1238,12 +1238,13 @@ public:
 
 };
 
-template <typename App>
+template <typename App, typename LogicalLink>
 struct SrvLink :
   public Zquic::SrvLink<
-    ServerHub<App>, SrvLink<App>, ServerStream<App>> {
-  using Hub = ServerHub<App>;
-  using Stream = ServerStream<App>;
+    ServerHub<App, LogicalLink>, SrvLink<App, LogicalLink>,
+    ServerStream<App, LogicalLink>> {
+  using Hub = ServerHub<App, LogicalLink>;
+  using Stream = ServerStream<App, LogicalLink>;
   using Base = Zquic::SrvLink<Hub, SrvLink, Stream>;
   using StreamRef = ZmRef<Stream>;
   using H3Cxn = H3::Cxn<SrvLink, StreamRef>;
@@ -1450,9 +1451,9 @@ public:
 template <typename App, typename Impl, typename Session>
 class ServerLink<App, Impl, H3QUIC, Session> :
   public ZmObject, public H3_::LogicalStream<Impl> {
-  using Hub = H3_::ServerHub<App>;
-  using NativeLink = H3_::SrvLink<App>;
-  using NativeStream = H3_::ServerStream<App>;
+  using Hub = H3_::ServerHub<App, Impl>;
+  using NativeLink = H3_::SrvLink<App, Impl>;
+  using NativeStream = H3_::ServerStream<App, Impl>;
 
 public:
   enum { TLS = 1, Multiplexed = 1 };
@@ -1564,10 +1565,11 @@ private:
   uint16_t		m_remotePort = 0;
 };
 
-template <typename App>
-class ProtocolServer<App, H3QUIC> : public H3_::ServerHub<App> {
+template <typename App, typename LogicalLink>
+class ProtocolServer<App, H3QUIC, LogicalLink> :
+    public H3_::ServerHub<App, LogicalLink> {
 public:
-  using Base = H3_::ServerHub<App>;
+  using Base = H3_::ServerHub<App, LogicalLink>;
   using Traits = Transport_::Traits<QUIC>;
   enum { TLS = 1, Multiplexed = 1 };
 
@@ -1733,8 +1735,15 @@ public:
       m_link{link}, m_method{method},
       m_sequence{link->rxState().requestSequence()},
       m_session{link->session()} {
+    m_refOwner = this;
     ZmREF(link);
-    m_release = [this](void *ptr) { ZmDEREF(static_cast<Link *>(ptr)); };
+    m_release = [](void *ptr, const void *route) {
+#ifdef ZmObject_DEBUG
+      ZmRef__::ZmDEREF_(static_cast<Link *>(ptr), route);
+#else
+      ZmRef__::ZmDEREF_(static_cast<Link *>(ptr));
+#endif
+    };
     m_send = [](void *ptr, uint64_t sequence, ZmRef<Builder> response) {
       static_cast<Link *>(ptr)->routeSend(sequence, ZuMv(response));
     };
@@ -1763,7 +1772,7 @@ public:
   }
   void close() const { if (m_link) m_close(m_link); }
   void reset() {
-    if (m_link) m_release(m_link);
+    if (m_link) m_release(m_link, m_refOwner);
     m_link = nullptr;
   }
 
@@ -1771,6 +1780,7 @@ private:
   void move_(Route &other) {
     m_link = other.m_link;
     m_release = other.m_release;
+    m_refOwner = other.m_refOwner;
     m_send = other.m_send;
     m_close = other.m_close;
     m_method = other.m_method;
@@ -1780,7 +1790,8 @@ private:
   }
 
   void *m_link = nullptr;
-  void (*m_release)(void *) = nullptr;
+  void (*m_release)(void *, const void *) = nullptr;
+  const void *m_refOwner = nullptr;
   void (*m_send)(void *, uint64_t, ZmRef<Builder>) = nullptr;
   void (*m_close)(void *) = nullptr;
   Method::T m_method = Method::GET;
@@ -2633,7 +2644,9 @@ private:
   };
 
   template <typename Profile>
-  struct Hub : public ProtocolServer<Hub<Profile>, Profile> {
+  struct Hub : public ProtocolServer<
+      Hub<Profile>, Profile,
+      typename Server::template Link<Profile>> {
     using HTTP = ProfileTraits<Profile>;
     using Link_ = typename Server::template Link<Profile>;
     using Link = Link_;

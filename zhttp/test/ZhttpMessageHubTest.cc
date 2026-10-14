@@ -359,7 +359,8 @@ struct ServerSession {
 };
 
 template <typename Profile>
-struct Server : public Zhttp::ProtocolServer<Server<Profile>, Profile> {
+struct Server : public Zhttp::ProtocolServer<
+    Server<Profile>, Profile, ServerLink<Profile>> {
   using Link = ServerLink<Profile>;
   State *state = nullptr;
 
