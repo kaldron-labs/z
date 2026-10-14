@@ -1954,15 +1954,9 @@ struct WSServerLinkState {
   ZuUnion<void, WSConnection<App, Impl, Catalog, Link>> rpc;
 };
 
-} // namespace Zmcp
-
-namespace Zws {
 template <typename Impl, typename Catalog, typename Profile>
-struct AppLinkState<Zmcp::WSServer<Impl, Catalog, Profile>, void> :
-  public Zmcp::WSServerLinkState<Impl, Catalog, Profile> { };
-} // namespace Zws
-
-namespace Zmcp {
+auto appLinkState(WSServer<Impl, Catalog, Profile> *) ->
+  WSServerLinkState<Impl, Catalog, Profile>;
 
 template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
 class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
