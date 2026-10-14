@@ -21,11 +21,16 @@
 
 namespace Zws {
 
+// Applications may supply link state through a nested type or an ADL overload.
+// The overload also works while App is incomplete during link instantiation.
+template <typename App>
+auto appLinkState(App *) -> typename App::LinkState;
+
 template <typename App, typename = void>
 struct AppLinkState { };
 template <typename App>
-struct AppLinkState<App, decltype(
-  (typename App::LinkState *)nullptr, void())> : public App::LinkState { };
+struct AppLinkState<App, decltype(appLinkState((App *)nullptr), void())> :
+  public decltype(appLinkState((App *)nullptr)) { };
 
 ZtEnumStruct(ZwsAPI, Opcode, uint8_t,
   Continuation = 0x0,

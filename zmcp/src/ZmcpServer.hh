@@ -1883,34 +1883,22 @@ private:
   bool			m_ssePosted = false;
 };
 
-template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
-class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
-    public Zjrpc::WSIO<WSServer<Impl, Catalog, Profile>> {
-  using Common = Server<WSServer, Impl, Catalog>;
-  using Common::m_impl;
-  using Common::m_mx;
-  using Common::m_limits;
-  using Common::m_txThread;
-  using Common::m_up;
-  using IO = Zjrpc::WSIO<WSServer>;
-  friend Common;
-  friend IO;
-public:
-  using WS = Zws::Server<WSServer, Profile>;
-  using Link = typename WS::Link;
-  using Config = typename WS::Config;
+template <typename Impl, typename Catalog, typename Profile> class WSServer;
 
-  class Connection : public Server<Connection, Impl, Catalog>,
-      public Zjrpc::Dispatcher<Connection, Impl, Catalog,
+template <typename Owner, typename Impl, typename Catalog, typename Link>
+class WSConnection : public Server<
+      WSConnection<Owner, Impl, Catalog, Link>, Impl, Catalog>,
+      public Zjrpc::Dispatcher<WSConnection<Owner, Impl, Catalog, Link>, Impl, Catalog,
 	Context, Server_::DispatchPolicy<Catalog>> {
-    using Base = Server<Connection, Impl, Catalog>;
+    using Self = WSConnection<Owner, Impl, Catalog, Link>;
+    using Base = Server<Self, Impl, Catalog>;
     using Base::m_up;
-    using Dispatch = Zjrpc::Dispatcher<Connection, Impl, Catalog,
+    using Dispatch = Zjrpc::Dispatcher<Self, Impl, Catalog,
       Context, Server_::DispatchPolicy<Catalog>>;
     friend Dispatch;
     friend Base;
   public:
-    bool init(WSServer *server, Link *link) {
+    bool init(Owner *server, Link *link) {
       m_server = server;
       m_link = link;
       if (!Base::initPeer_(server->mx(), server->ownerThread(),
@@ -1949,17 +1937,48 @@ public:
       done();
     }
 
-    WSServer *m_server = nullptr;
+    Owner *m_server = nullptr;
     Link *m_link = nullptr;
     Context m_rpcContext;
     Zjrpc::InboundCalls m_pending;
     Peer<Catalog> m_peer;
     Server_::ContextRef m_context;
-  };
-  struct LinkState {
-    Zjrpc::WSRx rx;
-    ZuUnion<void, Connection> rpc;
-  };
+};
+
+template <typename Impl, typename Catalog, typename Profile>
+struct WSServerLinkState {
+  using App = WSServer<Impl, Catalog, Profile>;
+  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
+    Zws::ExtendedServerLink<App, Profile>, Zws::H1ServerLink<App, Profile>>;
+  Zjrpc::WSRx rx;
+  ZuUnion<void, WSConnection<App, Impl, Catalog, Link>> rpc;
+};
+
+template <typename Impl, typename Catalog, typename Profile>
+auto appLinkState(WSServer<Impl, Catalog, Profile> *) ->
+  WSServerLinkState<Impl, Catalog, Profile>;
+
+template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
+class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
+    public Zjrpc::WSIO<WSServer<Impl, Catalog, Profile>> {
+  using Common = Server<WSServer, Impl, Catalog>;
+  using Common::m_impl;
+  using Common::m_mx;
+  using Common::m_limits;
+  using Common::m_txThread;
+  using Common::m_up;
+  using IO = Zjrpc::WSIO<WSServer>;
+  friend Common;
+  friend IO;
+public:
+  using WS = Zws::Server<WSServer, Profile>;
+  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
+    Zws::ExtendedServerLink<WSServer, Profile>,
+    Zws::H1ServerLink<WSServer, Profile>>;
+  using Config = typename WS::Config;
+
+  using Connection = WSConnection<WSServer, Impl, Catalog, Link>;
+  friend Connection;
 
   ~WSServer() { final(); }
   bool init(const Zhttp::HubConfig &hub, ZiIP address, unsigned port,

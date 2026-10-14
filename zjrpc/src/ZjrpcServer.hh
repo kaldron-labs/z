@@ -295,28 +295,20 @@ private:
   bool m_done = false;
 };
 
-template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
-class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
-    public WSIO<WSServer<Impl, Catalog, Profile>> {
-  using Common = Server<WSServer, Impl, Catalog>;
-  using IO = WSIO<WSServer>;
-  friend IO;
-public:
-  using WS = Zws::Server<WSServer, Profile>;
-  using Link = typename WS::Link;
-  using Config = typename WS::Config;
+template <typename Impl, typename Catalog, typename Profile> class WSServer;
 
-  // The native Zws link owns its RPC state in place. No parallel peer registry
-  // or second link type is needed; application callbacks receive that link.
-  class Connection : public Dispatcher<Connection, Impl, Catalog, Link>,
-      public Caller<Connection, Catalog> {
-    using Dispatch = Dispatcher<Connection, Impl, Catalog, Link>;
-    using Calls = Caller<Connection, Catalog>;
+template <typename Server, typename Impl, typename Catalog, typename Link>
+class WSConnection : public Dispatcher<
+      WSConnection<Server, Impl, Catalog, Link>, Impl, Catalog, Link>,
+      public Caller<WSConnection<Server, Impl, Catalog, Link>, Catalog> {
+    using Self = WSConnection<Server, Impl, Catalog, Link>;
+    using Dispatch = Dispatcher<Self, Impl, Catalog, Link>;
+    using Calls = Caller<Self, Catalog>;
     friend Dispatch;
     friend Calls;
-    friend BatchCaller<Connection>;
+    friend BatchCaller<Self>;
   public:
-    Connection(WSServer *server, Link *link) :
+    WSConnection(Server *server, Link *link) :
       m_server{server}, m_link{link}, m_inbound{server->histSize()} {
       (void)Calls::init(limits().maxPending);
     }
@@ -353,18 +345,43 @@ public:
     template <typename L> void continue_(L &&l) { m_server->ws().txRun(ZuFwd<L>(l)); }
     void fail_() { m_up = false; m_link->close(Zws::CloseCode::Internal); }
 
-    WSServer *m_server;
+    Server *m_server;
     Link *m_link;
     InboundCalls m_inbound;
     ZmAtomic<unsigned> m_up = 1;
-  };
-  struct LinkState {
-    WSRx rx;
-    // Construct once before publishing the connected link to the application.
-    // Drain on disconnect, but retain the object until the native link dies:
-    // off-shard Caller entry points may still inspect its atomic up/ingress state.
-    ZuUnion<void, Connection> rpc;
-  };
+};
+
+template <typename Impl, typename Catalog, typename Profile>
+struct WSServerLinkState {
+  using App = WSServer<Impl, Catalog, Profile>;
+  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
+    Zws::ExtendedServerLink<App, Profile>, Zws::H1ServerLink<App, Profile>>;
+  WSRx rx;
+  // Retain RPC state until the link dies: off-shard callers may still inspect
+  // its atomic up and ingress state after disconnect.
+  ZuUnion<void, WSConnection<App, Impl, Catalog, Link>> rpc;
+};
+
+template <typename Impl, typename Catalog, typename Profile>
+auto appLinkState(WSServer<Impl, Catalog, Profile> *) ->
+  WSServerLinkState<Impl, Catalog, Profile>;
+
+template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
+class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
+    public WSIO<WSServer<Impl, Catalog, Profile>> {
+  using Common = Server<WSServer, Impl, Catalog>;
+  using IO = WSIO<WSServer>;
+  friend IO;
+public:
+  using WS = Zws::Server<WSServer, Profile>;
+  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
+    Zws::ExtendedServerLink<WSServer, Profile>,
+    Zws::H1ServerLink<WSServer, Profile>>;
+  using Config = typename WS::Config;
+
+  // The native Zws link owns its RPC state in place.
+  using Connection = WSConnection<WSServer, Impl, Catalog, Link>;
+  friend Connection;
 
   ~WSServer() { final(); }
   bool init(const Zhttp::HubConfig &hub, ZiIP address, unsigned port,

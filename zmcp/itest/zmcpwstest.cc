@@ -189,7 +189,7 @@ struct LegacyApp {
       {Zmcp::LegacyVersion{}(), {}, {"legacy-test", "1"}}});
   }
   void request(LegacyTools *, const Zmcp::MetaParams &, auto &, auto token) {
-    token->complete(Zjrpc::Reply<LegacyToolsOK>{{Zmcp::Era::Legacy}});
+    token->complete(Zjrpc::Reply<LegacyToolsOK>{LegacyToolsOK::Body{Zmcp::Era::Legacy}});
   }
   void request(LegacyCall *, const LegacyCall::Object &params, auto &, auto token) {
     valid &= params.name == Echo::ToolID{}();
