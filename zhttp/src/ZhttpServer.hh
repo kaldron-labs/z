@@ -1734,7 +1734,7 @@ public:
       m_sequence{link->rxState().requestSequence()},
       m_session{link->session()} {
     ZmREF(link);
-    m_release = [](void *ptr) { ZmDEREF(static_cast<Link *>(ptr)); };
+    m_release = [this](void *ptr) { ZmDEREF(static_cast<Link *>(ptr)); };
     m_send = [](void *ptr, uint64_t sequence, ZmRef<Builder> response) {
       static_cast<Link *>(ptr)->routeSend(sequence, ZuMv(response));
     };
