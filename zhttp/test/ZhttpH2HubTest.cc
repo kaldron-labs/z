@@ -696,7 +696,7 @@ struct ServerSession {
   bool streamResponse_ = false;
 };
 
-struct Server : public Zhttp::ProtocolServer<Server, Zhttp::H2TLS> {
+struct Server : public Zhttp::ProtocolServer<Server, Zhttp::H2TLS, ServerLink> {
   using Link = ServerLink;
   State *state = nullptr;
 
