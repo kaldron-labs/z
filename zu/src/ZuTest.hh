@@ -208,7 +208,7 @@ struct ZuTest_Context {
 
 #define ZuTestScope_(name) \
   using ZuTest_scope_tag = decltype([]{}); \
-  auto &ZuTest_scope = ZuTest_::scope_<ZuTest_scope_tag, name>; \
+  static auto &ZuTest_scope = ZuTest_::scope_<ZuTest_scope_tag, name>; \
   ZuTest_Context ZuTest_context(&ZuTest_scope)
 
 #define ZuTestScope(name) \
@@ -225,7 +225,7 @@ struct ZuTest_Context {
 
 #define ZuTestScopeRT_(name) \
   using ZuTest_scope_tag = decltype([]{}); \
-  auto &ZuTest_scope = ZuTest_::scope_<ZuTest_scope_tag, name, true>; \
+  static auto &ZuTest_scope = ZuTest_::scope_<ZuTest_scope_tag, name, true>; \
   ZuTest_Context ZuTest_context(&ZuTest_scope)
 
 #define ZuTestScopeRT(name) \
