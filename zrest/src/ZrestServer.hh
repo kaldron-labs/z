@@ -814,7 +814,13 @@ struct ResBuilder : public ZmObject, public MResBuilder<Catalog> {
     m_done = [](void *ptr, const Zhttp::ResponseResult &result) {
       static_cast<Work *>(ptr)->retired(result);
     };
-    m_release = [](void *ptr) { ZmDEREF(static_cast<Work *>(ptr)); };
+    m_release = [](void *ptr, const void *owner) {
+#ifdef ZmObject_DEBUG
+      ZmRef__::ZmDEREF_(static_cast<Work *>(ptr), owner);
+#else
+      ZmRef__::ZmDEREF_(static_cast<Work *>(ptr));
+#endif
+    };
   }
 
   Zhttp::Method::T method() const { return m_method; }
@@ -831,13 +837,13 @@ struct ResBuilder : public ZmObject, public MResBuilder<Catalog> {
     auto work = m_work;
     m_work = nullptr;
     try { m_done(work, result); } catch (...) { }
-    m_release(work);
+    m_release(work, this);
   }
 
 private:
   void *m_work = nullptr;
   void (*m_done)(void *, const Zhttp::ResponseResult &) = nullptr;
-  void (*m_release)(void *) = nullptr;
+  void (*m_release)(void *, const void *) = nullptr;
   Zhttp::Method::T m_method = Zhttp::Method::GET;
 };
 
@@ -871,9 +877,14 @@ struct Work : public ZmObject {
       using Token = Completion<Req, Owner>;
       ZmRef<Token> token = new Token{
 	m_owner.load_(), this, m_scheduler, m_thread};
+      ZmMVREF(token.ptr(), &token, this);
       m_token = ZuMv(token).release();
-      m_tokenRelease = [](void *ptr) {
-	ZmDEREF(static_cast<Token *>(ptr));
+      m_tokenRelease = [](void *ptr, const void *owner) {
+#ifdef ZmObject_DEBUG
+	ZmRef__::ZmDEREF_(static_cast<Token *>(ptr), owner);
+#else
+	ZmRef__::ZmDEREF_(static_cast<Token *>(ptr));
+#endif
       };
       m_tokenInvalidate = [](void *ptr, bool cancelled) {
 	static_cast<Token *>(ptr)->invalidate(cancelled);
@@ -978,7 +989,7 @@ private:
     if (!m_token) return;
     auto ptr = m_token;
     m_token = nullptr;
-    m_tokenRelease(ptr);
+    m_tokenRelease(ptr, this);
   }
 
   ZmAtomic<Owner *> m_owner;
@@ -988,7 +999,7 @@ private:
   Zhttp::Route<Response> m_route;
   ZmRef<SSEProducer> m_producer;
   void *m_token = nullptr;
-  void (*m_tokenRelease)(void *) = nullptr;
+  void (*m_tokenRelease)(void *, const void *) = nullptr;
   void (*m_tokenInvalidate)(void *, bool) = nullptr;
   bool m_selected = false;
   bool m_cancelled = false;
