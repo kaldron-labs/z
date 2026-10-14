@@ -366,9 +366,11 @@ struct H1ServerSession {
 
 template <typename App, typename Profile>
 class H1Server :
-  public Zhttp::ProtocolServer<H1Server<App, Profile>, Profile> {
+  public Zhttp::ProtocolServer<
+    H1Server<App, Profile>, Profile, H1ServerLink<App, Profile>> {
   using Traits = typename Zhttp::ProfileTraits<Profile>::Transport;
-  using Base = Zhttp::ProtocolServer<H1Server, Profile>;
+  using Base = Zhttp::ProtocolServer<
+    H1Server, Profile, H1ServerLink<App, Profile>>;
 
 public:
   ZuAssert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
