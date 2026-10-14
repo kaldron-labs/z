@@ -228,7 +228,7 @@ struct ServerSession {
   int request(Link &, Parser &) { return 1; }
 };
 
-template <typename App, typename Profile, typename LogicalLink = void>
+template <typename App, typename Profile, typename StreamLink = void>
 class ProtocolServer :
   public ProfileTraits<Profile>::Transport::template Server<App> {
   using HTTP = ProfileTraits<Profile>;
@@ -1108,8 +1108,8 @@ private:
 
 } // namespace TLS_
 
-template <typename App, typename LogicalLink>
-class ProtocolServer<App, H2TLS, LogicalLink> : public H2_::ServerHub<App> {
+template <typename App, typename StreamLink>
+class ProtocolServer<App, H2TLS, StreamLink> : public H2_::ServerHub<App> {
 public:
   using Base = H2_::ServerHub<App>;
   enum { TLS = 1, Multiplexed = 1 };
@@ -1126,15 +1126,15 @@ public:
 
 namespace H3_ {
 
-template <typename App, typename LogicalLink> struct SrvLink;
-template <typename App, typename LogicalLink> struct ServerStream;
+template <typename App, typename StreamLink> struct SrvLink;
+template <typename App, typename StreamLink> struct ServerStream;
 
-template <typename App, typename LogicalLink>
+template <typename App, typename StreamLink>
 class ServerHub :
-  public Zquic::Server<ServerHub<App, LogicalLink>, SrvLink<App, LogicalLink>>,
-  public Faults<ServerHub<App, LogicalLink>> {
+  public Zquic::Server<ServerHub<App, StreamLink>, SrvLink<App, StreamLink>>,
+  public Faults<ServerHub<App, StreamLink>> {
 public:
-  using Link = SrvLink<App, LogicalLink>;
+  using Link = SrvLink<App, StreamLink>;
   using Base = Zquic::Server<ServerHub, Link>;
   using StopFn =
     ZmFn<void(bool), ZmFnHeapID<"Zhttp.H3.ServerStop">>;
@@ -1190,16 +1190,16 @@ private:
   }
 };
 
-template <typename App, typename LogicalLink>
+template <typename App, typename StreamLink>
 struct ServerStream :
-  public Zquic::SrvStream<SrvLink<App, LogicalLink>, ServerStream<App, LogicalLink>>,
-  public H3::CxnStream<ServerStream<App, LogicalLink>,
-    H3::Cxn<SrvLink<App, LogicalLink>, ZmRef<ServerStream<App, LogicalLink>>>> {
-  using Link = SrvLink<App, LogicalLink>;
+  public Zquic::SrvStream<SrvLink<App, StreamLink>, ServerStream<App, StreamLink>>,
+  public H3::CxnStream<ServerStream<App, StreamLink>,
+    H3::Cxn<SrvLink<App, StreamLink>, ZmRef<ServerStream<App, StreamLink>>>> {
+  using Link = SrvLink<App, StreamLink>;
   using Base = Zquic::SrvStream<Link, ServerStream>;
   using H3Cxn = H3::Cxn<Link, ZmRef<ServerStream>>;
   using CxnStream = H3::CxnStream<ServerStream, H3Cxn>;
-  using Logical = LogicalLink;
+  using Logical = StreamLink;
   using Base::Base;
 
   int process(Zquic::RxStream &rx) {
@@ -1238,13 +1238,13 @@ public:
 
 };
 
-template <typename App, typename LogicalLink>
+template <typename App, typename StreamLink>
 struct SrvLink :
   public Zquic::SrvLink<
-    ServerHub<App, LogicalLink>, SrvLink<App, LogicalLink>,
-    ServerStream<App, LogicalLink>> {
-  using Hub = ServerHub<App, LogicalLink>;
-  using Stream = ServerStream<App, LogicalLink>;
+    ServerHub<App, StreamLink>, SrvLink<App, StreamLink>,
+    ServerStream<App, StreamLink>> {
+  using Hub = ServerHub<App, StreamLink>;
+  using Stream = ServerStream<App, StreamLink>;
   using Base = Zquic::SrvLink<Hub, SrvLink, Stream>;
   using StreamRef = ZmRef<Stream>;
   using H3Cxn = H3::Cxn<SrvLink, StreamRef>;
@@ -1565,11 +1565,11 @@ private:
   uint16_t		m_remotePort = 0;
 };
 
-template <typename App, typename LogicalLink>
-class ProtocolServer<App, H3QUIC, LogicalLink> :
-    public H3_::ServerHub<App, LogicalLink> {
+template <typename App, typename StreamLink>
+class ProtocolServer<App, H3QUIC, StreamLink> :
+    public H3_::ServerHub<App, StreamLink> {
 public:
-  using Base = H3_::ServerHub<App, LogicalLink>;
+  using Base = H3_::ServerHub<App, StreamLink>;
   using Traits = Transport_::Traits<QUIC>;
   enum { TLS = 1, Multiplexed = 1 };
 
