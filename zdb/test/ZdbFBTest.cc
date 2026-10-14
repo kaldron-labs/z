@@ -5,6 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtString.hh>
 
 #include <zlib/Zdb.hh>
 
@@ -87,6 +89,31 @@ static void heartbeat()
   ZuCheck(peer.find("orders", 1) && peer.find("other", 1));
 }
 
+static void heartbeatPrint()
+{
+  ZuTestScope(heartbeatPrint);
+  Msg::TableState orders{"orders", 11, 1}, other{"other", 7, 0};
+  ZtArray<const Msg::TableState *> rows{&orders, &other};
+  Msg::DBState state{23, rows};
+  ZiFB::Buffer buf;
+  ZiFB::ArrayStorage<> storage{buf};
+  ZiFB::Builder<decltype(storage)> builder{storage};
+  auto bytes = builder.finish(ZiFB::save(builder,
+    Msg::Heartbeat{"self", HostState::Active, 2, &state}));
+  ZtString text;
+  text << HB_Print{ZiFB::view<Msg::Heartbeat>(bytes)};
+  ZuCheck(text == "{host=self state=Active dbState={sn=23 "
+    "dbs=[{orders.1,11},{other.0,7}]}}");
+
+  builder.clear();
+  state.tableStates = {};
+  bytes = builder.finish(ZiFB::save(builder,
+    Msg::Heartbeat{"self", HostState::Active, 2, &state}));
+  text = ZtString{};
+  text << HB_Print{ZiFB::view<Msg::Heartbeat>(bytes)};
+  ZuCheck(text == "{host=self state=Active dbState={sn=23 dbs=[]}}");
+}
+
 static void empty()
 {
   ZuTestScope(empty);
@@ -131,5 +158,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(SchemaTest::run);
   ZuTestCall(heartbeat);
+  ZuTestCall(heartbeatPrint);
   ZuTestCall(empty);
 }

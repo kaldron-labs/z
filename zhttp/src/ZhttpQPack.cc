@@ -68,7 +68,7 @@ static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
 
 bool Params::neverIndex(ZuBSpan name) const
 {
-  if (neverIndex_->find(name)) return true;
+  if (neverIndex_ && neverIndex_->find(name)) return true;
   static constexpr auto matcher = ZuMatcher<NeverIndexIDs>();
   return matcher.exact(name) >= 0;
 }

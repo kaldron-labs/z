@@ -33,15 +33,15 @@ static MaintenanceResult maintenanceAdd(
 
 class MaintenanceRun_ : public ZmPolymorph {
 public:
-  MaintenanceRun_(DB *db, DBContext *context, Ztls::Random *rng,
+  MaintenanceRun_(DB *db, Ztls::Random *rng,
       ZmScheduler *scheduler, unsigned sid, MaintenanceFn complete) :
-    m_db{db}, m_context{context}, m_rng{rng}, m_scheduler{scheduler},
+    m_db{db}, m_rng{rng}, m_scheduler{scheduler},
     m_sid{sid}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
     ZmAssert(m_scheduler->invoked(m_sid));
-    daemonGrantCleanup(m_db, m_context, m_rng, DaemonCleanupLimit::Rows,
+    daemonGrantCleanup(m_db, m_rng, DaemonCleanupLimit::Rows,
       [self = ZmRef<MaintenanceRun_>{this}](MaintenanceResult result) mutable {
 	self->post_([self = ZuMv(self), result = ZuMv(result)]() mutable {
 	  self->grant_(ZuMv(result));
@@ -66,7 +66,7 @@ private:
   {
     ZmAssert(m_scheduler->invoked(m_sid));
     if (m_stopping) { finish_(ZuMv(grant)); return; }
-    daemonRefreshCleanup(m_db, m_context, m_rng, DaemonCleanupLimit::Rows,
+    daemonRefreshCleanup(m_db, m_rng, DaemonCleanupLimit::Rows,
       [self = ZmRef<MaintenanceRun_>{this}, grant = ZuMv(grant)](
 	  MaintenanceResult refresh) mutable {
 	self->post_([self = ZuMv(self), grant = ZuMv(grant),
@@ -81,7 +81,7 @@ private:
     ZmAssert(m_scheduler->invoked(m_sid));
     auto result = maintenanceAdd(ZuMv(grant), ZuMv(refresh));
     if (m_stopping) { finish_(ZuMv(result)); return; }
-    daemonSessionCleanup(m_db, m_context, m_rng, DaemonCleanupLimit::Rows,
+    daemonSessionCleanup(m_db, m_rng, DaemonCleanupLimit::Rows,
       [self = ZmRef<MaintenanceRun_>{this}, result = ZuMv(result)](
 	  MaintenanceResult session) mutable {
 	self->post_([self = ZuMv(self), result = ZuMv(result),
@@ -101,7 +101,6 @@ private:
   }
 
   DB		*m_db = nullptr;
-  DBContext	*m_context = nullptr;
   Ztls::Random	*m_rng = nullptr;
   ZmScheduler	*m_scheduler = nullptr;
   unsigned	m_sid = 0;
@@ -236,9 +235,9 @@ String Daemon::enrollPage_(AppID appID)
 template <typename Heap = ZuVoid>
 class AuthRouteLoad__ : public Heap, public ZmObject  {
 public:
-  AuthRouteLoad__(DBContext *context, Bytes dbKey, String authorizationBase,
+  AuthRouteLoad__(DB *db, Bytes dbKey, String authorizationBase,
       AppID appID, String login, AuthRouteDoneFn complete) :
-    m_context{context}, m_dbKey{ZuMv(dbKey)},
+    m_db{db}, m_dbKey{ZuMv(dbKey)},
     m_authorizationBase{ZuMv(authorizationBase)}, m_appID{appID},
     m_login{ZuMv(login)}, m_complete{ZuMv(complete)} { }
 
@@ -250,11 +249,11 @@ public:
 
   void start()
   {
-    if (!m_context || !m_appID || !loginNormalize(m_login)) {
+    if (!m_db || !m_appID || !loginNormalize(m_login)) {
       finish_(AuthRouteType::Error);
       return;
     }
-    auto users = m_context->users;
+    auto users = m_db->users;
     users->run(0, [self = ZmRef<AuthRouteLoad__>{this}, users]() mutable {
       auto key = ZuMvTuple(UserSource::Local, self->m_login);
       users->find<2>(0, ZuMv(key), [
@@ -270,7 +269,7 @@ public:
 private:
   void policy_()
   {
-    auto policies = m_context->authPolicies;
+    auto policies = m_db->authPolicies;
     policies->run(0, [self = ZmRef<AuthRouteLoad__>{this}, policies]() mutable {
       auto key = ZuFwdTuple(self->m_appID);
       policies->find<0>(0, ZuMv(key), [
@@ -302,7 +301,7 @@ private:
 
   void provider_()
   {
-    auto providers = m_context->providers;
+    auto providers = m_db->providers;
     providers->run(0, [self = ZmRef<AuthRouteLoad__>{this}, providers]() mutable {
       auto key = ZuFwdTuple(self->m_providerID);
       providers->find<0>(0, ZuMv(key), [
@@ -359,7 +358,7 @@ private:
   {
     using Table = RoleMapTable;
     using Tuple = Table::Tuple;
-    auto maps = m_context->roleMaps;
+    auto maps = m_db->roleMaps;
     maps->selectRows<0>(ZuFwdTuple(m_appID, m_providerID),
         AuthRouteLimit::Scan, [
         self = ZmRef<AuthRouteLoad__>{this}](
@@ -392,7 +391,7 @@ private:
       else finish_(AuthRouteType::OIDC);
       return;
     }
-    auto roles = m_context->roles;
+    auto roles = m_db->roles;
     roles->run(0, [self = ZmRef<AuthRouteLoad__>{this}, roles]() mutable {
       auto map = self->m_maps[self->m_mapIndex++];
       auto key = ZuFwdTuple(self->m_appID, map.roleID);
@@ -419,7 +418,7 @@ private:
       ZuMv(m_config) : OIDCConfig{}, .type = type});
   }
 
-  DBContext		*m_context = nullptr;
+  DB		*m_db = nullptr;
   Bytes			m_dbKey;
   String		m_authorizationBase;
   AppID			m_appID = 0;
@@ -440,7 +439,7 @@ void Daemon::authRoute_(
     AppID appID, String login, AuthRouteDoneFn complete)
 {
   ZmRef<AuthRouteLoad_> load = new AuthRouteLoad_{
-    m_context, m_config.dbKey, m_config.issuer, appID,
+    m_db, m_config.dbKey, m_config.issuer, appID,
     ZuMv(login), ZuMv(complete)};
   load->start();
 }
@@ -450,9 +449,9 @@ bool Daemon::loadKey_()
   ServerConfig config;
   int64_t now = Zm::now().sec();
   SignKey key = ZmBlock<SignKey>{}([this, now, &config](auto wake) mutable {
-    m_context->signKeys->run(0, [this, now, expires = now + config.accessLifetime,
+    m_db->signKeys->run(0, [this, now, expires = now + config.accessLifetime,
       maxKeys = config.limits.jwks, wake = ZuMv(wake)]() mutable {
-      signKeyLoad(m_context, m_config.issuer, now, expires, maxKeys, [
+      signKeyLoad(m_db, m_config.issuer, now, expires, maxKeys, [
         wake = ZuMv(wake)](SignKey key) mutable { wake(ZuMv(key)); });
     });
   });
@@ -479,9 +478,10 @@ bool Daemon::loadKey_()
 }
 
 bool Daemon::init(
-    DB *db, DBContext *context, Requests *requests, ZiMultiplex *mx,
+    DB *db, Requests *requests, ZiMultiplex *mx,
     DaemonConfig config)
 {
+  if (m_httpInited) return true;
   Zhttp::URL parsed{config.issuer};
   auto authorizationBase = parsed.url();
   if (!parsed.ok() || !authorizationBase.host ||
@@ -495,10 +495,10 @@ bool Daemon::init(
   config.issuer.null();
   config.issuer << authorizationBase.origin();
   m_db = db;
-  m_context = context;
   m_requests = requests;
   m_mx = mx;
   m_config = ZuMv(config);
+  m_finalized = false;
   ServerConfig provider{
     .issuer = m_config.issuer, .rpID = m_config.rpID,
     .rpName = m_config.rpName, .requestTimeout = m_config.requestTimeout,
@@ -512,7 +512,7 @@ bool Daemon::init(
       } else if (m_config.refreshRevoke)
         m_config.refreshRevoke(appID, ZuMv(refreshID), expires);
     }}};
-  if (!m_db || !m_context || !m_requests || !m_mx || !m_config.issuer ||
+  if (!m_db || !m_requests || !m_mx || !m_config.issuer ||
       !m_config.rpID || !m_config.requestTimeout ||
       !m_rng.init())
     return false;
@@ -552,7 +552,8 @@ bool Daemon::init(
     }
     complete(ZuMv(signature));
   }};
-  if (!m_provider.init(m_db, m_context, m_requests, ZuMv(provider),
+  if (!m_providerInited && !m_provider.init(
+      m_db, m_requests, ZuMv(provider),
       []() { return Zm::now().sec(); },
       [](AppID appID, Bytes id, String options) {
         return page_(appID, ZuMv(id), ZuMv(options));
@@ -581,14 +582,15 @@ bool Daemon::init(
           AppID appID, String login, AuthRouteDoneFn complete) {
         authRoute_(appID, ZuMv(login), ZuMv(complete));
       })) return false;
+  m_providerInited = true;
   HTTP<Daemon>::init(m_provider);
   DaemonParser parser;
   parser.init(*this);
   auto http = Zhttp::ServerConfig().localIP(ZiIP(m_config.addr))
     .port(m_config.port).idleTimeout(30)
     .retainedBodyMax(ServerLimitMax::JSON).tcp();
-  m_httpInited = m_http.init(
-    Zhttp::HubConfig{m_mx, "rx", "tx"}, ZuMv(http), this);
+  m_httpInited = HTTPServer::init(
+    Zhttp::HubConfig{m_mx, "rx", "tx"}, ZuMv(http));
   return m_httpInited;
 }
 
@@ -604,14 +606,14 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
     if (!m_config.ssfIssuer) m_config.ssfIssuer = m_config.issuer;
     m_ssf = new SSFTransmitter{};
     if (!m_ssf->init(SSFTransmitterConfig{
-        .db = m_db, .context = m_context, .requests = m_requests,
+        .db = m_db, .requests = m_requests,
         .issuer = m_config.ssfIssuer,
         .secretIssuer = m_config.issuer, .dbKey = m_config.dbKey, .rng = &m_rng,
         .key = SignKey{.id = m_signKeyID,
           .issuer = m_config.ssfIssuer},
         .keyLoad = SSFKeyFn{[this](String issuer, SignKeyFn complete) mutable {
           int64_t now = Zm::now().sec();
-          signKeyLoad(m_context, ZuMv(issuer), now,
+          signKeyLoad(m_db, ZuMv(issuer), now,
               now + m_config.requestTimeout, 1,
               ZuMv(complete));
         }},
@@ -630,7 +632,7 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
 bool Daemon::start()
 {
   if (m_finalized) return false;
-  if (!m_httpInited || !m_http.start()) return false;
+  if (!m_httpInited || !HTTPServer::start()) return false;
   auto scheduler = m_requests->scheduler();
   unsigned sid = m_requests->sid();
   if (scheduler->invoked(sid)) cleanupStart_();
@@ -669,7 +671,7 @@ void Daemon::stop()
   if (m_ssf) m_ssf->stop();
   if (m_requests) m_requests->deactivate();
   m_provider.stop();
-  if (m_httpInited) (void)m_http.stop();
+  if (m_httpInited) (void)HTTPServer::stop();
 }
 
 void Daemon::cleanupStart_()
@@ -703,10 +705,10 @@ void Daemon::cleanup_()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
   if (!m_started || m_cleanupState != DaemonCleanupState::Idle ||
-      !m_context || !m_db) return;
+      !m_db) return;
   m_cleanupState = DaemonCleanupState::Running;
   ZiLOG(Debug, "zumd", "maintenance cleanup started");
-  ZmRef<MaintenanceRun_> run = new MaintenanceRun_{m_db, m_context, &m_rng,
+  ZmRef<MaintenanceRun_> run = new MaintenanceRun_{m_db, &m_rng,
     m_requests->scheduler(), m_requests->sid(),
     [this](MaintenanceResult result) mutable { cleanupDone_(ZuMv(result)); }};
   m_cleanupRun = run;
@@ -753,11 +755,10 @@ void Daemon::final()
 {
   if (m_finalized) return;
   stop();
-  if (m_httpInited) {
-    m_http.final();
-    m_httpInited = false;
-  }
+  HTTPServer::final();
+  m_httpInited = false;
   m_provider.final();
+  m_providerInited = false;
   m_ssf = nullptr;
   m_sign = SignFn{};
   m_key = nullptr;

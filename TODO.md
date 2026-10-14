@@ -1,12 +1,22 @@
 # TODO
 
-- Flatbuffers
+- fix indentation, e.g. `Zrest.hh:435`
 
-- SBE (simple binary encoding)
-- protobuf
-- FIX
+`grpc.md`: update to align with revised `zhttp`, `zrest`, `zjrpc`
+- `zrest`, `zjrpc` now have consistent APIs with consistent capabilities
+- `zhttp` is client/server symmetric CRTP
 
-- fix all the `1 << 30` etc. to be `1<<30`
+implement `grpc.md`
+
+- reorg:
+  - `ZiFB` -> `Zfb` under `zfb`
+  - `ZiPB` -> `Zpb` under `zpb`
+
+- `Zsbe`: SBE (simple binary encoding)
+- `Zfix`: FIX
+  - each `ZfStruct` is a message
+    - nested are repeated groups
+  - `FIX::Tag<42>` property to associate tag IDs
 
 ## zdash
 
@@ -19,6 +29,7 @@
   - need to prove OIDC integration
 
 ## Zdf
+
 - permit app to specify dataframe and/or series epoch, so
   time-series with time values from the past can be handled
 - need single call to load cudf column from zdf reader

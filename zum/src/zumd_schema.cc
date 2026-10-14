@@ -5,44 +5,45 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/zumd_db.hh>
+#include <zlib/zumd_identity_db.hh>
+#include <zlib/zumd_app_db.hh>
+#include <zlib/zumd_provider_db.hh>
+#include <zlib/zumd_request_db.hh>
 #include <zlib/zumd_key_db.hh>
 #include <zlib/zumd_ssf_db.hh>
 
 namespace Zum {
 
-ZmRef<DBContext> registerSchema(DB *db)
+void registerSchema(DB *db)
 {
-  ZmRef<DBContext> context = new DBContext{};
-  context->db = db;
-  context->issuers = db->initTable<Issuer>("zum.issuer");
-  context->apps = db->initTable<App>("zum.app");
-  context->users = db->initTable<User>("zum.user");
-  context->creds = db->initTable<Cred>("zum.cred");
-  context->assignments = db->initTable<Assignment>("zum.assignment");
-  context->actions = db->initTable<Action>("zum.action");
-  context->roles = db->initTable<Role>("zum.role");
-  context->clients = db->initTable<Client>("zum.client");
-  context->clientAccess =
+  db->issuers = db->initTable<Issuer>("zum.issuer");
+  db->apps = db->initTable<App>("zum.app");
+  db->users = db->initTable<User>("zum.user");
+  db->creds = db->initTable<Cred>("zum.cred");
+  db->assignments = db->initTable<Assignment>("zum.assignment");
+  db->actions = db->initTable<Action>("zum.action");
+  db->roles = db->initTable<Role>("zum.role");
+  db->clients = db->initTable<Client>("zum.client");
+  db->clientAccess =
     db->initTable<ClientAccess>("zum.client_access");
-  context->adminAccess =
+  db->adminAccess =
     db->initTable<AdminAccess>("zum.admin_access");
-  context->providers = db->initTable<Provider>("zum.provider");
-  context->authPolicies =
+  db->providers = db->initTable<Provider>("zum.provider");
+  db->authPolicies =
     db->initTable<AuthPolicy>("zum.auth_policy");
-  context->extIdentities =
+  db->extIdentities =
     db->initTable<ExtIdentity>("zum.ext_identity");
-  context->roleMaps = db->initTable<RoleMap>("zum.role_map");
-  context->evidence = db->initTable<Evidence>("zum.evidence");
-  context->sessions = db->initTable<Session>("zum.session");
-  context->consents = db->initTable<Consent>("zum.consent");
-  context->grants = db->initTable<Grant>("zum.grant");
-  context->refresh = db->initTable<Refresh>("zum.refresh");
-  context->signKeys = db->initTable<SignKey>("zum.sign_key");
-  context->requests = db->initTable<IdemRequest>("zum.request");
-  context->ssfRx = db->initTable<SSFRx>("zum.ssf_rx");
-  context->ssfDeliveries = db->initTable<SSFDelivery>("zum.ssf_delivery");
-  sagaInit(db, context);
-  return context;
+  db->roleMaps = db->initTable<RoleMap>("zum.role_map");
+  db->evidence = db->initTable<Evidence>("zum.evidence");
+  db->sessions = db->initTable<Session>("zum.session");
+  db->consents = db->initTable<Consent>("zum.consent");
+  db->grants = db->initTable<Grant>("zum.grant");
+  db->refresh = db->initTable<Refresh>("zum.refresh");
+  db->signKeys = db->initTable<SignKey>("zum.sign_key");
+  db->requests = db->initTable<IdemRequest>("zum.request");
+  db->ssfRx = db->initTable<SSFRx>("zum.ssf_rx");
+  db->ssfDeliveries = db->initTable<SSFDelivery>("zum.ssf_delivery");
+  sagaInit(db);
 }
 
 } // namespace Zum

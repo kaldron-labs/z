@@ -97,9 +97,7 @@ struct QPackLimits {
 
 class Params {
 public:
-  Params() :
-    index_{new QPackNameSet},
-    neverIndex_{new QPackNameSet} { }
+  Params() = default;
 
   Params &&maxHeaderListSize(unsigned v) {
     maxHeaderListSize_ = v;
@@ -130,7 +128,7 @@ public:
   }
   Params &&qpackIndex(ZuBSpan name) {
     name = headerName_(name);
-    if (!index_->find(name)) {
+    if (!index_ || !index_->find(name)) {
       detach_(index_);
       index_->add(HeaderName{name}, true);
     }
@@ -138,7 +136,7 @@ public:
   }
   Params &&qpackNeverIndex(ZuBSpan name) {
     name = headerName_(name);
-    if (!neverIndex_->find(name)) {
+    if (!neverIndex_ || !neverIndex_->find(name)) {
       detach_(neverIndex_);
       neverIndex_->add(HeaderName{name}, true);
     }
@@ -146,7 +144,8 @@ public:
   }
 
   bool indexAllowed(ZuBSpan name) const {
-    return !neverIndex_->find(name) && index_->find(name);
+    return index_ && index_->find(name) &&
+      (!neverIndex_ || !neverIndex_->find(name));
   }
   ZhttpAPI bool neverIndex(ZuBSpan name) const;
 
@@ -164,10 +163,13 @@ public:
 
 private:
   static void detach_(ZmRef<QPackNameSet> &set) {
+    if (!set) { set = new QPackNameSet; return; }
     if (set->refCount() <= 1) return;
     ZmRef<QPackNameSet> copy{new QPackNameSet};
-    auto i = set->iter();
-    while (auto entry = i()) copy->add(entry->key(), true);
+    {
+      auto i = set->iter();
+      while (auto entry = i()) copy->add(entry->key(), true);
+    }
     set = ZuMv(copy);
   }
 

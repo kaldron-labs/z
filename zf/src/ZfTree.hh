@@ -13,7 +13,6 @@
 #include <zlib/ZfLib.hh>
 #endif
 
-#include <limits.h>
 #include <stdint.h>
 
 #include <zlib/ZuDateTime.hh>
@@ -57,8 +56,6 @@ public:
   template <typename Data>
   decltype(auto) data(this auto &&);
 
-  // path is in "Member" format, see ZfURI.hh
-  const AnyNode *resolve(ZuCSpan path) const;
   template <typename S> void path(S &s) const;
 
   static constexpr unsigned LNodeSize = 512;
@@ -144,51 +141,6 @@ inline decltype(auto) AnyNode::data(this auto &&self) {
   using Self = decltype(self);
   using NodeT = Node<Data>;
   return ZuFwdLike<Self>(ZuFwdLike<Self, NodeT>(self).data);
-}
-
-ZuInline constexpr bool isdigit__(char c) {
-  return c >= '0' && c <= '9';
-}
-
-inline const AnyNode *AnyNode::resolve(ZuCSpan path) const {
-  const AnyNode *node = this;
-  while (path) {
-    unsigned i = 0, n = path.length();
-    if (path[0] == '[') {
-      if (!node->has<Array>() || n < 3) return nullptr;
-      unsigned index = 0;
-      while (++i < n) {
-	auto c = path[i];
-	if (!isdigit__(c)) break;
-	unsigned digit = c - '0';
-	if (index > (UINT_MAX - digit) / 10) return nullptr;
-	index = (index * 10) + digit;
-      }
-      if (i == 1 || i >= n || path[i] != ']') return nullptr;
-      const auto &array = node->data<Array>();
-      if (index >= array.length() || !array[index]) return nullptr;
-      node = array[index].ptr();
-      ++i;
-      if (i < n) {
-	if (path[i] == '[') { path.offset(i); continue; }
-	if (path[i] != '.' || ++i >= n || path[i] == '[') return nullptr;
-      }
-    } else {
-      if (!node->has<Object>() || path[0] == '.') return nullptr;
-      while (++i < n && path[i] != '[' && path[i] != '.');
-      ZuCSpan id{path.data(), i};
-      const auto &fields = node->data<Object>();
-      node = nullptr;
-      for (auto &&field: fields)
-	if (field.p<0>() == id) node = field.p<1>().ptr();
-      if (!node) return nullptr;
-      if (i < n && path[i] == '.') {
-	if (++i >= n || path[i] == '[') return nullptr;
-      }
-    }
-    path.offset(i);
-  }
-  return node;
 }
 
 // path() intentionally uses linear search

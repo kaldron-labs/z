@@ -4,7 +4,23 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZvThreadParams.hh>
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZvMxParams.hh>
+
+struct CxnKeys {
+  using Keys = ZuStringTL<"mif", "mreqs">;
+};
+
+void zvCxnFields(const ZfCf::AnyNode *cf,
+    const ZfCf::AnyNode *(&lookup)[2])
+{
+  static constexpr auto matcher = ZuMatcher<CxnKeys>();
+  const auto &fields = cf->data<ZfCf::AnyNode::Object>();
+  for (const auto &field: fields) {
+    int id = matcher.exact(field.p<0>());
+    if (id >= 0) lookup[id] = field.p<1>().ptr();
+  }
+}
 
 ZtEnumImplNS(ZmThreadPriority);
 

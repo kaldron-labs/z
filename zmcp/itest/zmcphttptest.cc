@@ -448,7 +448,49 @@ static ZtString<> headerValue(const ZtString<> &response, ZuCSpan name)
   return ZuCSpan{response.data() + begin, unsigned(end)};
 }
 
-struct LegacyApp {
+template <typename Server>
+class LegacyParser : public Zmcp::HTTPParser<LegacyParser<Server>> {
+  using Base = Zmcp::HTTPParser<LegacyParser<Server>>;
+
+public:
+  void init(Server &app) { m_app = &app; }
+  ZuCSpan endpoint() const { return "/mcp"; }
+  const Zjrpc::Limits &limits() const { return m_app->limits; }
+  bool origin(ZuCSpan) const { return true; }
+
+  template <typename Link>
+  void receiveHTTP(
+      Link *link, ZmRef<ZiIOBuf> body, const Zmcp::HTTPMeta &meta) {
+    m_app->receive(link, ZuMv(body), meta);
+  }
+
+  template <typename Link>
+  void deleteHTTP(Link *link, const Zmcp::HTTPMeta &) {
+    m_app->accepted(link);
+  }
+
+  template <typename Link>
+  void originHTTP(Link *link) { m_app->accepted(link); }
+
+  template <typename Link>
+  void corruptHTTP(Link *link) { link->disconnect(); }
+
+  void reset() {
+    Base::reset();
+    m_app = nullptr;
+  }
+
+private:
+  Server *m_app = nullptr;
+};
+
+
+struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
+    Zmcp::HTTPBuilderQ<Catalog>> {
+  using HTTP = Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
+    Zmcp::HTTPBuilderQ<Catalog>>;
+  using HTTP::connected;
+  using HTTP::disconnected;
   using ResBuilderQ = Zmcp::HTTPBuilderQ<Catalog>;
 
   static constexpr auto SessionID = "legacy-session"_z;
@@ -463,41 +505,6 @@ struct LegacyApp {
   bool rejectSession = false;
   bool dropTransport = false;
   bool sessionless = false;
-
-  class Parser : public Zmcp::HTTPParser<Parser> {
-    using Base = Zmcp::HTTPParser<Parser>;
-
-  public:
-    void init(LegacyApp &app) { m_app = &app; }
-    ZuCSpan endpoint() const { return "/mcp"; }
-    const Zjrpc::Limits &limits() const { return m_app->limits; }
-    bool origin(ZuCSpan) const { return true; }
-
-    template <typename Link>
-    void receiveHTTP(
-        Link *link, ZmRef<ZiIOBuf> body, const Zmcp::HTTPMeta &meta) {
-      m_app->receive(link, ZuMv(body), meta);
-    }
-
-    template <typename Link>
-    void deleteHTTP(Link *link, const Zmcp::HTTPMeta &) {
-      m_app->accepted(link);
-    }
-
-    template <typename Link>
-    void originHTTP(Link *link) { m_app->accepted(link); }
-
-    template <typename Link>
-    void corruptHTTP(Link *link) { link->disconnect(); }
-
-    void reset() {
-      Base::reset();
-      m_app = nullptr;
-    }
-
-  private:
-    LegacyApp *m_app = nullptr;
-  };
 
   template <typename Link>
   void receive(
@@ -584,14 +591,32 @@ static void httpTest()
 
   App app;
   Zmcp::HTTPServer<App, Catalog> server;
-  Zmcp::ServerConfig config;
-  config.localIP(ZiIP{"127.0.0.1"}).port(port).tcp();
-  config.absentOrigin(true).legacyLifetime(1);
-  bool initialized = server.init(
-    Zhttp::HubConfig{&mx, "1", "2"}, ZuMv(config), &app);
+  Zhttp::HubConfig hub{&mx, "1", "2"};
+  auto serverConfig = [port](bool invalid) {
+    Zmcp::ServerConfig config;
+    config.localIP(ZiIP{"127.0.0.1"}).port(port).tcp();
+    if (invalid)
+      config.tls(Zhttp::H2Config{}
+	.certPath("/nonexistent/mcp-retry-cert.pem")
+	.keyPath("/nonexistent/mcp-retry-key.pem"));
+    config.absentOrigin(true).legacyLifetime(1);
+    return config;
+  };
+  ZuCheck(!server.init(hub, serverConfig(true), &app));
+  bool initialized = server.init(hub, serverConfig(false), &app);
   ZuCheck(initialized);
   bool started = initialized && server.start();
   ZuCheck(started);
+  ZmSemaphore httpStarted;
+  bool httpStartOK = false;
+  if (started) {
+    server.start([&](bool ok) {
+      httpStartOK = ok;
+      httpStarted.post();
+    });
+    httpStarted.wait();
+    ZuCheck(httpStartOK);
+  }
   if (started) app.listening_.wait();
 
   ZtString<> body;
@@ -848,13 +873,12 @@ static void httpTest()
     Zquic::Test::loopbackPort(ZmcpITestPort::Legacy);
   ZuCheck(legacyPort);
   LegacyApp legacyApp;
-  Zhttp::Server<LegacyApp> legacyServer;
   Zhttp::ServerConfig legacyConfig;
   legacyConfig.localIP(ZiIP{"127.0.0.1"}).port(legacyPort).tcp();
-  bool legacyInited = legacyServer.init(
-    Zhttp::HubConfig{&mx, "1", "2"}, ZuMv(legacyConfig), &legacyApp);
+  bool legacyInited = legacyApp.init(
+    Zhttp::HubConfig{&mx, "1", "2"}, ZuMv(legacyConfig));
   ZuCheck(legacyInited);
-  bool legacyStarted = legacyInited && legacyServer.start();
+  bool legacyStarted = legacyInited && legacyApp.start();
   ZuCheck(legacyStarted);
   if (legacyStarted) legacyApp.listening_.wait();
 
@@ -961,8 +985,8 @@ static void httpTest()
   sessionlessClient.final();
   ZuCheck(sessionlessApp.closes == 1 && !sessionlessApp.failures);
   ZuCheck(legacyApp.connections > legacyConnections && !legacyApp.failures);
-  if (legacyStarted) ZuCheck(legacyServer.stop());
-  legacyServer.final();
+  if (legacyStarted) ZuCheck(legacyApp.stop());
+  legacyApp.final();
 
   unsigned statelessPort =
     Zquic::Test::loopbackPort(ZmcpITestPort::Stateless);
@@ -1009,7 +1033,19 @@ static void httpTest()
   ZuCheck(statelessApp.streamOpens == statelessApp.streamCloses);
   statelessServer.final();
 
-  if (initialized) ZuCheck(server.stop());
+  if (initialized) {
+    ZmSemaphore httpStopped;
+    bool httpStopOK = false;
+    server.HTTP::stop([&](bool ok) {
+      httpStopOK = ok;
+      httpStopped.post();
+    });
+    httpStopped.wait();
+    ZuCheck(httpStopOK && server.state() == ZmEngineState::Stopped &&
+      server.up());
+    ZuCheck(server.stop());
+    ZuCheck(!server.up());
+  }
   ZuCheck(app.transportOpens > 0);
   ZuCheck(app.transportCloses == app.transportOpens);
   ZuCheck(app.sessionOpens == 1);
@@ -1018,6 +1054,20 @@ static void httpTest()
   ZuCheck(app.modernContexts == 12);
   ZuCheck(app.legacyContexts == 3);
   server.final();
+  bool reused = server.init(hub, serverConfig(false), &app);
+  ZuCheck(reused);
+  if (reused) {
+    bool restarted = server.start();
+    ZuCheck(restarted);
+    if (restarted) {
+      app.listening_.wait();
+      ZuCheck(server.stop());
+    }
+  }
+  server.final();
+  Zmcp::HTTPServer<App, Catalog> partial;
+  ZuCheck(!partial.init(hub, serverConfig(true), &app));
+  partial.final();
   mx.stop();
 }
 

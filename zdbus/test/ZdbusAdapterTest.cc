@@ -276,6 +276,8 @@ static void unknownHeader()
 static void catalog()
 {
   ZuTestScope(catalog);
+  ZuCheck((Zdbus_::signatureMatch<ZuTypeList<>>("su") == -1));
+  ZuCheck((Zdbus_::errorMatch<ZuTypeList<>>("org.example.Test.Failed") == -1));
   Args source{{"catalog"}, 73};
   ReplyBuilder reply;
   reply.init(&source);

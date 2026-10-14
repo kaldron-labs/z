@@ -16,6 +16,7 @@
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmRBTree.hh>
 #include <zlib/ZmRef.hh>
 
 #include <zlib/ZtPlatform.hh>
@@ -90,41 +91,57 @@ private:
 ZuDerive(EphemeralHeap, (ZmHeap<"Ztls.Vault.Ephemeral", Ephemeral_<>>));
 ZuDerive(Ephemeral, Ephemeral_<EphemeralHeap>);
 
-template <typename Heap = ZuVoid>
-class Values_ : public Heap,
-    public ZmHashKV<ZuCSpan, ZuBSpan,
-      ZmHashHeapID<"Ztls.Vault.FileEntry">> {
-};
-ZuDerive(ValuesHeap, (ZmHeap<"Ztls.Vault.FileValues", Values_<>>));
-ZuDerive(Values, Values_<ValuesHeap>);
-inline ZfJSON::AsMap<ZfFieldTC::Bytes> ZfJSON_Fmt(Values *);
-
-template <typename Heap = ZuVoid>
-class Accounts_ : public Heap,
-    public ZmHashKV<ZuCSpan, Values *,
-      ZmHashHeapID<"Ztls.Vault.FileAccount">> {
-public:
-  ~Accounts_() {
-    auto i = this->citer();
-    while (auto node = i()) delete node->val();
+struct Values : ZmRBTreeKV<ZuCSpan, ZuBSpan,
+    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>> {
+  using Base = ZmRBTreeKV<ZuCSpan, ZuBSpan,
+    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>>;
+  void add(ZuCSpan key, ZuBSpan value) {
+    if (auto node = find(key)) node->val() = value;
+    else Base::add(key, value);
   }
 };
-ZuDerive(AccountsHeap, (ZmHeap<"Ztls.Vault.FileAccounts", Accounts_<>>));
-ZuDerive(Accounts, Accounts_<AccountsHeap>);
+inline ZfJSON::AsMap<ZfFieldTC::Bytes> ZfJSON_Fmt(Values *);
+
+struct Accounts : ZmRBTreeKV<ZuCSpan, Values,
+    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileAccount">>> {
+  using Base = ZmRBTreeKV<ZuCSpan, Values,
+    ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileAccount">>>;
+  void add(ZuCSpan key, Values value) {
+    if (auto node = find(key)) node->val() = ZuMv(value);
+    else Base::add(key, ZuMv(value));
+  }
+};
 inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(Accounts *);
 
 struct FileData {
   uint32_t version = 0;
-  Accounts *accounts = nullptr;
-
-  FileData() = default;
-  FileData(const FileData &) = delete;
-  FileData &operator =(const FileData &) = delete;
-  ~FileData() { delete accounts; }
+  Accounts accounts;
 };
 ZfStruct(ZtlsAPI, (FileData, JSON),
   (version, (Mutable),		UInt32),
   (accounts, (Mutable),		UDT));
+
+// Loading a single credential retains only the selected parse-tree views.
+struct FileView {
+  uint32_t version = 0;
+  ZfJSON::Union<> accounts;
+};
+ZfStruct(ZtlsAPI, (FileView, JSON),
+  (version, (Mutable),		UInt32),
+  (accounts, (Mutable),		UDT));
+
+struct FilePick {
+  using Key = ZuCSpan;
+  using Val = ZfJSON::Union<>;
+  ZuCSpan wanted;
+  const ZfJSON::AnyNode *node = nullptr;
+
+  void clean() { node = nullptr; }
+  void add(ZuCSpan key, Val value) {
+    if (key == wanted) node = value.p<const ZfJSON::AnyNode *>();
+  }
+};
+inline ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(FilePick *);
 
 using FileText = ZtCArray<ZtArraySecret<true,
   ZtArrayHeapID<"Ztls.Vault.FileText">>>;
@@ -180,18 +197,23 @@ public:
 
   VaultResult load(ZuCSpan key, VaultLoadFn fn) override {
     FileText text;
-    FileData data;
-    auto result = read_(data, text);
+    FileView data;
+    ZuPtr<ZfJSON::AnyNode> parsed;
+    auto result = read_(data, text, parsed);
     if (result.template is<ZeException>()) return result;
-    if (!data.accounts)
+    if (!data.version)
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    auto account = data.accounts->find(m_account);
-    if (!account)
+    FilePick account{m_account};
+    ZfJSON::handler<FilePick>(data.accounts.p<const ZfJSON::AnyNode *>()).load(account);
+    if (!account.node)
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    auto entry = account->val()->find(key);
-    if (!entry)
+    FilePick entry{key};
+    ZfJSON::handler<FilePick>(account.node).load(entry);
+    if (!entry.node)
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
-    auto value = entry->val();
+    auto value = ZfJSON::loadValue<ZuFacet::JSON, ZfFieldFilter::Load,
+      ZfFieldTC::Bytes, ZuTypeList<>, ZuBSpan>(
+	const_cast<ZfJSON::AnyNode *>(entry.node));
     // JSON decoding keeps byte values as views into the mutable file buffer.
     fn(ZuSpan<uint8_t>{const_cast<uint8_t *>(value.data()),
       value.length()});
@@ -201,29 +223,23 @@ public:
   VaultResult save(ZuCSpan key, ZuBSpan value) override {
     FileText text;
     FileData data;
-    auto result = read_(data, text);
+    ZuPtr<ZfJSON::AnyNode> parsed;
+    auto result = read_(data, text, parsed);
     if (result.template is<ZeException>()) return result;
-    if (!data.accounts) {
-      data.version = 1;
-      data.accounts = new Accounts;
+    if (!data.version) data.version = 1;
+    auto account = data.accounts.find(m_account);
+    if (!account) {
+      data.accounts.add(m_account, Values{});
+      account = data.accounts.find(m_account);
     }
-    auto account = data.accounts->find(m_account);
-    Values *values;
-    if (account)
-      values = account->val();
-    else {
-      values = new Values;
-      data.accounts->add(m_account, values);
-    }
-    if (auto entry = values->find(key)) {
-      entry->val() = value;
-    } else
-      values->add(key, value);
+    account->val().add(key, value);
     return write_(data);
   }
 
 private:
-  VaultResult read_(FileData &data, FileText &text) const {
+  template <typename Data>
+  VaultResult read_(Data &data, FileText &text,
+      ZuPtr<ZfJSON::AnyNode> &nodes) const {
     ZiFile file;
     if (file.open(m_path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC)
 	!= Zi::OK) {
@@ -249,11 +265,14 @@ private:
 	return c != ' ' && c != '\t' && c != '\n' && c != '\r';
       }) >= 0)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
-    auto &root = (*parsed.p<1>())[0];
+    nodes = ZuMv(parsed.p<1>());
+    auto &root = (*nodes)[0];
     if (!root->has<ZfJSON::AnyNode::Object>())
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
+    bool hasAccounts = false;
     for (const auto &field : root->data<ZfJSON::AnyNode::Object>()) {
       if (field.template p<0>() != "accounts") continue;
+      hasAccounts = true;
       const auto &accounts = field.template p<1>();
       if (!accounts->has<ZfJSON::AnyNode::Object>())
 	return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
@@ -266,16 +285,12 @@ private:
 	    return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
       }
     }
-    auto handler = ZfJSON::handler<FileData>(root);
+    auto handler = ZfJSON::handler<Data>(root);
     if (!handler.valid)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     handler.load(data);
-    if (data.version != 1 || !data.accounts)
+    if (data.version != 1 || !hasAccounts)
       return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
-    auto i = data.accounts->citer();
-    while (auto node = i())
-      if (!node->val())
-	return ZeEXCEPT(Error, "ZtlsVault", "malformed aggregate");
     return {};
   }
 

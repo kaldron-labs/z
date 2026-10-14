@@ -237,7 +237,7 @@ struct XFields : public ZtArray<XField, ZtArrayHeapID<"ZdbMem.XField">> {
 ZuDerive(XKeyFields, (ZtArray<XFields, ZtArrayHeapID<"ZdbMem.XKeyField">>));
 
 // resolve Value union discriminator from flatbuffers reflection data
-XField xField(
+inline XField xField(
   R::FieldView fbField, const ZfVField *field,
   R::SchemaView schema)
 {
@@ -546,7 +546,7 @@ void saveValue(B &fbb, ZiFB::TableState &table, Offset offset,
   }
 }
 
-void loadValue(Value &value, const XField &field, ZiFB::TableView table) {
+inline void loadValue(Value &value, const XField &field, ZiFB::TableView table) {
   auto p = R::address(table, field.field);
   ZuSwitch::dispatch<Value::N>(field.type, [&value, &field, table, p](auto I) {
     unsigned tag = 0;
@@ -567,7 +567,7 @@ ZuDerive(Tuple, (ZtArray<Value, ZtArrayHeapID<"ZdbMem.Tuple">>));
 // load tuple from flatbuffer
 // - when called from select(), nParams is < fields.length()
 template <typename Filter>
-Tuple loadTuple_(
+inline Tuple loadTuple_(
   unsigned nParams,
   const ZfVFieldArray &fields,
   const XFields &xFields,
@@ -592,12 +592,12 @@ Tuple loadTuple_(
   return loadTuple_(nParams, fields, xFields, fbo,
     [](const ZfVField *) { return true; });
 }
-Tuple loadTuple(
+inline Tuple loadTuple(
   const ZfVFieldArray &fields, const XFields &xFields, ZiFB::TableView fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo);
 }
-Tuple loadUpdTuple(
+inline Tuple loadUpdTuple(
   const ZfVFieldArray &fields, const XFields &xFields, ZiFB::TableView fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo,
@@ -605,7 +605,7 @@ Tuple loadUpdTuple(
       return bool(field->props & ZfVFieldProp::Mutable()) || (field->keys & 1);
     });
 }
-Tuple loadDelTuple(
+inline Tuple loadDelTuple(
   const ZfVFieldArray &fields, const XFields &xFields, ZiFB::TableView fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo,
@@ -637,7 +637,7 @@ Offset saveTuple(B &fbb, const XFields &xFields, ZuSpan<const Value> tuple) {
 }
 
 // update tuple
-void updTuple(const ZfVFieldArray &fields, Tuple &data, Tuple &&update) {
+inline void updTuple(const ZfVFieldArray &fields, Tuple &data, Tuple &&update) {
   ZmAssert(fields.length() == data.length());
   ZmAssert(data.length() == update.length());
   unsigned n = data.length();
@@ -649,7 +649,7 @@ void updTuple(const ZfVFieldArray &fields, Tuple &data, Tuple &&update) {
 }
 
 // extract key from tuple
-Tuple extractKey(const XFields &fields, const Tuple &data) {
+inline Tuple extractKey(const XFields &fields, const Tuple &data) {
   Tuple key(fields.length()); // not {}
   for (const auto &field : fields) {
     ZmAssert(field.index < data.length());

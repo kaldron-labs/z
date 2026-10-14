@@ -125,17 +125,33 @@ static void testHTTP()
   Zjrpc::HTTPServer<SrvApp, Catalog> server;
   Zjrpc::HTTPClient<CliApp, Catalog> client;
   Zhttp::HubConfig hub{&mx, "1", "2"};
-  Zjrpc::ServerConfig serverConfig;
-  serverConfig.endpoint("/rpc").http([](auto &http) {
-    http.localIP(ZiIP{"127.0.0.1"}).port(21100).tcp();
-  });
-  bool initialized = server.init(hub, ZuMv(serverConfig), &srv);
+  auto serverConfig = [](bool invalid) {
+    Zjrpc::ServerConfig config;
+    config.endpoint("/rpc").http([invalid](auto &http) {
+      http.localIP(ZiIP{"127.0.0.1"}).port(21100).tcp();
+      if (invalid)
+	http.tls(Zhttp::H2Config{}
+	  .certPath("/nonexistent/jrpc-retry-cert.pem")
+	  .keyPath("/nonexistent/jrpc-retry-key.pem"));
+    });
+    return config;
+  };
+  ZuCheck(!server.init(hub, serverConfig(true), &srv));
+  bool initialized = server.init(hub, serverConfig(false), &srv);
   ZuCheck(initialized);
   if (!initialized) { mx.stop(); return; }
   srv.context = Zjrpc::HTTPPeer::create(server);
   bool started = server.start();
   ZuCheck(started);
   if (!started) { server.final(); mx.stop(); return; }
+  ZmSemaphore httpStarted;
+  bool httpStartOK = false;
+  server.start([&](bool ok) {
+    httpStartOK = ok;
+    httpStarted.post();
+  });
+  httpStarted.wait();
+  ZuCheck(httpStartOK);
   srv.listening_.wait();
   Zjrpc::ClientConfig clientConfig;
   clientConfig.endpoint("/rpc").http([](auto &http) {
@@ -169,11 +185,42 @@ static void testHTTP()
     ZuCheck(aggregate->reply.entries().length() == 2);
     ZuCheck(client.notify<Echo>(Value{1}));
     srv.notified.wait();
-    ZuCheck(client.stop());
+    ZmSemaphore clientStopped;
+    bool clientStopOK = false;
+    client.stop([&](bool ok) {
+      clientStopOK = ok;
+      clientStopped.post();
+    });
+    clientStopped.wait();
+    ZuCheck(clientStopOK && !client.up());
   }
   client.final();
+  ZmSemaphore httpStopped;
+  bool httpStopOK = false;
+  server.HTTP::stop([&](bool ok) {
+    httpStopOK = ok;
+    httpStopped.post();
+  });
+  httpStopped.wait();
+  ZuCheck(httpStopOK && server.state() == ZmEngineState::Stopped && server.up());
   ZuCheck(server.stop());
+  ZuCheck(!server.up());
+  srv.context = nullptr;
   server.final();
+  bool reused = server.init(hub, serverConfig(false), &srv);
+  ZuCheck(reused);
+  if (reused) {
+    bool restarted = server.start();
+    ZuCheck(restarted);
+    if (restarted) {
+      srv.listening_.wait();
+      ZuCheck(server.stop());
+    }
+  }
+  server.final();
+  Zjrpc::HTTPServer<SrvApp, Catalog> partial;
+  ZuCheck(!partial.init(hub, serverConfig(true), &srv));
+  partial.final();
   mx.stop();
   ZuCheck(srv.calls == 4 && srv.enriched == 3 && !srv.failures);
   ZuCheck(cli.enriched == 2 && !cli.failures);

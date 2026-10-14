@@ -18,6 +18,7 @@
 #include <zlib/ZuLib.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuICmp.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPercent.hh>
 #include <zlib/ZuPtr.hh>
 
@@ -275,6 +276,19 @@ static bool metadataURL(ZuCSpan issuerURL, bool loopbackTest,
 static bool contains(const StringVec &values, ZuCSpan value)
 {
   for (const auto &item: values) if (item == value) return true;
+  return false;
+}
+
+static bool grantTypesSupported(const StringVec &values)
+{
+  struct IDs { using Keys = ZuStringTL<"authorization_code", "refresh_token">; };
+  static constexpr auto matcher = ZuMatcher<IDs>();
+  uint8_t lookup[2]{};
+  for (const auto &value: values) {
+    int id = matcher.exact(value);
+    if (id >= 0) lookup[id] = 1;
+    if (lookup[0] && lookup[1]) return true;
+  }
   return false;
 }
 
@@ -612,10 +626,15 @@ ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
   ZmListNode<CallbackBuilder_, ZmListHeapID<"zum.CallbackBuilder">>);
 using CallbackBuilderNode = CallbackBuilderQ::Node;
 
-class CallbackApp {
+struct CallbackKeys {
+  using Keys = ZuStringTL<"code", "state", "error">;
+};
+
+class CallbackApp : public Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ> {
 public:
-  using Parser = CallbackParser;
-  using ResBuilderQ = CallbackBuilderQ;
+  using HTTP = Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
 
   template <typename Link>
   void callback(Link *link, const CallbackReq &request, bool ok)
@@ -627,22 +646,24 @@ public:
       query = span;
     } else ok = false;
     if (!query.mutable_()) query.length(query.length());
-    unsigned seen = 0;
+    uint8_t lookup[3]{};
     bool duplicate = false;
     String code_, state_, error_;
-    if (ok) ok = formEach({query.data(), query.length()}, [&seen, &duplicate,
-	&code_, &state_, &error_](
-          ZuCSpan name, ZuCSpan value) {
-        if (name == "code") {
-	  duplicate |= bool(seen & 1U); code_ = value; seen |= 1U; return;
-        }
-        if (name == "state") {
-	  duplicate |= bool(seen & 2U); state_ = value; seen |= 2U; return;
-        }
-        if (name == "error") {
-	  duplicate |= bool(seen & 4U); error_ = value; seen |= 4U; return;
+    static constexpr auto matcher = ZuMatcher<CallbackKeys>();
+    if (ok) ok = formEach({query.data(), query.length()},
+      [&](ZuCSpan name, ZuCSpan value) {
+        int id = matcher.exact(name);
+        if (id < 0) return;
+        duplicate |= bool(lookup[id]);
+        lookup[id] = 1;
+        switch (id) {
+          case 0: code_ = value; break;
+          case 1: state_ = value; break;
+          case 2: error_ = value; break;
         }
       });
+    unsigned seen = unsigned(lookup[0]) | (unsigned(lookup[1]) << 1) |
+      (unsigned(lookup[2]) << 2);
     ok = ok && !duplicate && !received && state_ == expectedState &&
       ((seen == 3U && code_) || (seen == 6U && error_));
     if (ok) {
@@ -725,8 +746,7 @@ static bool metadataJSON(String &json, ZuCSpan issuerURL, Metadata &metadata)
     metadata.tokenEndpoint && metadata.jwksURI &&
     metadata.revocationEndpoint &&
     contains(metadata.responseTypesSupported, "code") &&
-    contains(metadata.grantTypesSupported, "authorization_code") &&
-    contains(metadata.grantTypesSupported, "refresh_token") &&
+    grantTypesSupported(metadata.grantTypesSupported) &&
     contains(metadata.codeChallengeMethods, "S256");
 }
 
@@ -1009,18 +1029,16 @@ int main(int argc, char **argv)
     String state = ok ? encode(random) : String{};
     CallbackApp callback;
     callback.expectedState = state;
-    Zhttp::Server<CallbackApp> callbackServer;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
       .retainedBodyMax(BodyMax).tcp();
-    bool callbackInited = callbackServer.init(
-      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig),
-      &callback);
-    bool callbackUp = callbackInited && callbackServer.start();
+    bool callbackInited = callback.init(
+      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
+    bool callbackUp = callbackInited && callback.start();
     if (!callbackUp) {
       std::cerr << "zum: callback listener start failed\n";
-      if (callbackInited) (void)callbackServer.stop();
-      callbackServer.final();
+      if (callbackInited) (void)callback.stop();
+      callback.final();
       return false;
     }
     String redirect{"http://127.0.0.1:"};
@@ -1055,8 +1073,8 @@ int main(int argc, char **argv)
     }
     if (verifier && verifier.mutable_())
       ZuClear(verifier);
-    (void)callbackServer.stop();
-    callbackServer.final();
+    (void)callback.stop();
+    callback.final();
     return ok;
   };
 

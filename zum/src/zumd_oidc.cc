@@ -6,7 +6,11 @@
 
 #include <zlib/zumd_oidc.hh>
 #include <zlib/zumd_db.hh>
+#include <zlib/zumd_identity_db.hh>
+#include <zlib/zumd_provider_db.hh>
+#include <zlib/zumd_saga_external_projection.hh>
 
+#include <limits.h>
 #include <string.h>
 
 #include <zlib/ZuBase64.hh>
@@ -25,6 +29,7 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmPQueue.hh>
+#include <zlib/ZmRBTree.hh>
 #include <zlib/ZmScheduler.hh>
 
 #include <zlib/ZiLog.hh>
@@ -149,15 +154,6 @@ static bool jsonLoad(String &json, ZuPtr<ZfJSON::AnyNode> &root, T &value)
   return true;
 }
 
-static ZfJSON::AnyNode *jsonField(
-    const ZfJSON::AnyNode *object, ZuCSpan name)
-{
-  if (!object || !object->has<ZfJSON::AnyNode::Object>()) return nullptr;
-  for (auto &field: object->data<ZfJSON::AnyNode::Object>())
-    if (field.p<0>() == name) return field.p<1>();
-  return nullptr;
-}
-
 static bool hasScope(const StringVec &scopes, ZuCSpan name)
 {
   for (auto &scope: scopes) if (scope == name) return true;
@@ -252,6 +248,44 @@ static bool stringsValue(
   return true;
 }
 
+// Map-load only the configured claims; names are selected at run time.
+struct OIDCClaim {
+  ZuCSpan name;
+  StringVec &values;
+  bool present = false;
+
+  bool load(ZuCSpan key, const ZfJSON::AnyNode *node, unsigned limit) {
+    if (!name || key != name) return true;
+    if (present) return false;
+    present = true;
+    return stringsValue(node, limit, values);
+  }
+};
+struct OIDCClaimMap {
+  using Key = ZuCSpan;
+  using Val = ZfJSON::Union<>;
+
+  OIDCClaim roles;
+  OIDCClaim eligibility;
+  unsigned limit;
+  bool valid = true;
+
+  friend ZfJSON::AsMap<ZfFieldTC::UDT> ZfJSON_Fmt(OIDCClaimMap *);
+
+  void clean() {
+    roles.present = eligibility.present = false;
+    roles.values.null();
+    eligibility.values.null();
+    valid = true;
+  }
+  void add(Key key, Val value) {
+    if (!valid) return;
+    auto node = value.p<const ZfJSON::AnyNode *>();
+    valid = roles.load(key, node, limit) &&
+      eligibility.load(key, node, limit);
+  }
+};
+
 static bool hasAudience(const StringVec &audiences, ZuCSpan audience)
 {
   for (auto &value: audiences) if (value == audience) return true;
@@ -293,20 +327,18 @@ bool oidcVerifyIDToken(
     wire.audience = ZuMv(values);
     next.audience = ZuMv(wire.audience.template p<StringVec>());
   } else return false;
-  bool rolesPresent = false, eligibilityPresent = false;
-  if (config.claimSource == ClaimSource::IDToken) {
-    if (config.roles == OIDCRoles::Mapped) {
-      auto value = jsonField(root, config.roleClaim);
-      rolesPresent = value &&
-        stringsValue(value, limits.roleValues, next.roleValues);
-      if (value && !rolesPresent) return false;
-    }
-    if (config.eligibilityMode == EligibilityMode::ClaimValues) {
-      auto value = jsonField(root, config.eligibilityClaim);
-      eligibilityPresent = value &&
-        stringsValue(value, limits.roleValues, next.eligibilityValues);
-      if (value && !eligibilityPresent) return false;
-    }
+  OIDCClaimMap extra{
+    {config.roles == OIDCRoles::Mapped ? ZuCSpan{config.roleClaim} : ZuCSpan{},
+      next.roleValues},
+    {config.eligibilityMode == EligibilityMode::ClaimValues ?
+      ZuCSpan{config.eligibilityClaim} : ZuCSpan{}, next.eligibilityValues},
+    limits.roleValues};
+  if (config.claimSource == ClaimSource::IDToken &&
+      (extra.roles.name || extra.eligibility.name)) {
+    auto handler = ZfJSON::handler<OIDCClaimMap>(root);
+    if (!handler.valid) return false;
+    handler.load(extra);
+    if (!extra.valid) return false;
   }
   if (next.issuer != config.issuer ||
       !next.subject || next.nonce != nonce ||
@@ -317,7 +349,7 @@ bool oidcVerifyIDToken(
       now - limits.clockSkew >= next.expires ||
       (config.claimSource == ClaimSource::IDToken &&
        config.eligibilityMode == EligibilityMode::ClaimValues &&
-       !eligibilityPresent)) return false;
+       !extra.eligibility.present)) return false;
   if (config.maxAgePresent && now > next.authTime &&
       uint64_t(now - next.authTime) > config.maxAge &&
       uint64_t(now - next.authTime) - config.maxAge > uint64_t(limits.clockSkew))
@@ -347,10 +379,10 @@ IDVec oidcMapRoles(
 template <typename Heap = ZuVoid>
 class OIDCUserLoad__ : public Heap, public ZmObject  {
 public:
-  OIDCUserLoad__(DBContext *context, String subject,
+  OIDCUserLoad__(DB *db, String subject,
       const OIDCConfig &config, StringVec roleValues,
       StringVec eligibilityValues, int64_t now, OIDCUserFn complete) :
-    m_context{context}, m_subject{ZuMv(subject)}, m_appID{config.appID},
+    m_db{db}, m_subject{ZuMv(subject)}, m_appID{config.appID},
     m_providerID{config.providerID}, m_issuer{config.issuer},
     m_roleValues(ZuMv(roleValues)),
     m_eligibilityValues(ZuMv(eligibilityValues)),
@@ -363,7 +395,7 @@ public:
 
   void start()
   {
-    if (!m_context || !m_subject || !m_appID || !m_providerID ||
+    if (!m_db || !m_subject || !m_appID || !m_providerID ||
         !m_assignmentMaxAge || m_now <= 0 || !m_complete || !m_rng.init()) {
       finish_(false);
       return;
@@ -387,7 +419,7 @@ public:
 private:
   void identity_()
   {
-    auto identities = m_context->extIdentities;
+    auto identities = m_db->extIdentities;
     identities->run(0, [self = ZmRef<OIDCUserLoad__>{this},
         identities]() mutable {
       identities->find<0>(0, ZuFwdTuple(self->m_providerID,
@@ -420,13 +452,11 @@ private:
     Bytes handle;
     handle.length(32, false);
     if (!m_rng.random(handle)) { finish_(false); return; }
-    ExternalProjection projection{.providerID = m_providerID,
+    ExternalProjectionArgs projection{.providerID = m_providerID,
       .issuer = m_issuer, .subject = m_subject, .userID = userID,
       .name = ZuMv(name), .handle = ZuMv(handle), .created = m_now};
-    ZmRef<MSaga> saga = new MSaga{};
-    saga->init(ZuMv(projection));
-    auto db = static_cast<DB *>(m_context->users->db());
-    if (!sagaSubmit(db, sagaID, ZuMv(saga),
+    auto db = static_cast<DB *>(m_db->users->db());
+    if (!sagaSubmit(db, sagaID, externalProjection(ZuMv(projection)),
         [self = ZmRef<OIDCUserLoad__>{this}](bool ok) mutable {
           if (!ok) self->finish_(false);
         }, [self = ZmRef<OIDCUserLoad__>{this}](bool ok) mutable {
@@ -437,7 +467,7 @@ private:
 
   void user_(UserID userID)
   {
-    auto users = m_context->users;
+    auto users = m_db->users;
     users->run(0, [self = ZmRef<OIDCUserLoad__>{this}, users, userID]() mutable {
       users->find<0>(0, ZuFwdTuple(userID), [
           self = ZuMv(self)](ZdbRowRef<User> row) mutable {
@@ -465,7 +495,7 @@ private:
 
   void evidence_()
   {
-    auto evidence = m_context->evidence;
+    auto evidence = m_db->evidence;
     evidence->run(0, [self = ZmRef<OIDCUserLoad__>{this}, evidence]() mutable {
       auto key = ZuFwdTuple(self->m_appID, self->m_user.id, self->m_providerID);
       evidence->findUpd<0, ZuSeq<1>>(0, ZuMv(key), [self = ZuMv(self), evidence](
@@ -504,7 +534,7 @@ private:
       ok ? ZuMv(m_roles) : IDVec{}, ok ? ZuMv(m_evidence) : Evidence{});
   }
 
-  DBContext		*m_context = nullptr;
+  DB		*m_db = nullptr;
   String		m_subject;
   AppID			m_appID = 0;
   ProviderID		m_providerID = 0;
@@ -530,22 +560,17 @@ ZuDerive(OIDCUserLoadHeap,
 ZuDerive(OIDCUserLoad_, (OIDCUserLoad__<OIDCUserLoadHeap>));
 
 void oidcLoadUser(
-    DBContext *context, String subject, const OIDCConfig &config,
+    DB *db, String subject, const OIDCConfig &config,
     StringVec roleValues, StringVec eligibilityValues,
     int64_t now, OIDCUserFn complete)
 {
-  ZmRef<OIDCUserLoad_> load = new OIDCUserLoad_{context, ZuMv(subject),
+  ZmRef<OIDCUserLoad_> load = new OIDCUserLoad_{db, ZuMv(subject),
     config, ZuMv(roleValues), ZuMv(eligibilityValues), now, ZuMv(complete)};
   load->start();
 }
 
-struct OIDCKey {
-  String	id;
-  Bytes		publicKey;
-};
-
-ZuDerive(OIDCKeyVec,
-  (ZtArray<OIDCKey, ZtArrayHeapID<"Zum.OIDC.KeySet">>));
+using OIDCKeyIDs = ZmRBTree<String,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"Zum.OIDC.KeyIDs">>>;
 
 class OIDCReqData : public ZmObject {
 public:
@@ -620,19 +645,29 @@ static bool userinfoResponse(
   OIDCUserInfo wire;
   if (!jsonLoad(json, root, wire)) return false;
   StringVec nextRoles, nextEligibility;
-  bool roles = config.roles != OIDCRoles::Mapped ||
-    stringsValue(jsonField(root, config.roleClaim), limits.roleValues, nextRoles);
-  bool eligibility = config.eligibilityMode != EligibilityMode::ClaimValues ||
-    stringsValue(jsonField(root, config.eligibilityClaim),
-      limits.roleValues, nextEligibility);
-  if (wire.subject != subject || !roles || !eligibility) return false;
+  OIDCClaimMap extra{
+    {config.roles == OIDCRoles::Mapped ? ZuCSpan{config.roleClaim} : ZuCSpan{},
+      nextRoles},
+    {config.eligibilityMode == EligibilityMode::ClaimValues ?
+      ZuCSpan{config.eligibilityClaim} : ZuCSpan{}, nextEligibility},
+    limits.roleValues};
+  if (extra.roles.name || extra.eligibility.name) {
+    auto handler = ZfJSON::handler<OIDCClaimMap>(root);
+    if (!handler.valid) return false;
+    handler.load(extra);
+  }
+  if (wire.subject != subject || !extra.valid ||
+      (config.roles == OIDCRoles::Mapped && !extra.roles.present) ||
+      (config.eligibilityMode == EligibilityMode::ClaimValues &&
+       !extra.eligibility.present)) return false;
   roleValues = ZuMv(nextRoles);
   eligibilityValues = ZuMv(nextEligibility);
   return true;
 }
 
 static bool jwksResponse(
-    String &json, const OIDCLimits &limits, OIDCKeyVec &keys)
+    String &json, const OIDCLimits &limits, ZuCSpan requested,
+    Bytes &publicKey)
 {
   if (!json || json.length() > limits.response) return false;
   if (!json.mutable_()) json.length(json.length());
@@ -640,28 +675,29 @@ static bool jwksResponse(
   OIDCJWKSResponse response;
   if (!jsonLoad(json, root, response) || !response.keys ||
       response.keys.length() > limits.keys) return false;
-  OIDCKeyVec next;
+  OIDCKeyIDs ids;
+  Bytes selected;
   for (auto &wire: response.keys) {
     if (!wire.kid || wire.kty != "EC" || wire.crv != "P-256" ||
         !wire.x || !wire.y || (wire.use && wire.use != "sig") ||
         (wire.alg && wire.alg != "ES256")) continue;
-    OIDCKey key{.id = ZuMv(wire.kid)};
-    key.publicKey.length(Ztls::COSE::ES256::PublicKeySize, false);
-    key.publicKey[0] = 4;
-    if (ZuBase64URL::decode({key.publicKey.data() + 1,
+    Bytes key;
+    key.length(Ztls::COSE::ES256::PublicKeySize, false);
+    key[0] = 4;
+    if (ZuBase64URL::decode({key.data() + 1,
           Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{wire.x}) !=
           Ztls::COSE::ES256::CoordinateSize ||
-        ZuBase64URL::decode({key.publicKey.data() + 1 +
+        ZuBase64URL::decode({key.data() + 1 +
           Ztls::COSE::ES256::CoordinateSize, Ztls::COSE::ES256::CoordinateSize},
           ZuBSpan{wire.y}) != Ztls::COSE::ES256::CoordinateSize ||
-        !Ztls::COSE::ES256::validPK(key.publicKey))
+        !Ztls::COSE::ES256::validPK(key))
       continue;
-    for (auto &existing: next)
-      if (existing.id == key.id) return false;
-    next.push(ZuMv(key));
+    if (ids.find(wire.kid)) return false;
+    if (wire.kid == requested) selected = ZuMv(key);
+    ids.add(ZuMv(wire.kid));
   }
-  if (!next) return false;
-  keys = ZuMv(next);
+  if (!selected) return false;
+  publicKey = ZuMv(selected);
   return true;
 }
 
@@ -698,18 +734,18 @@ template <typename Heap = ZuVoid>
 class OIDCState_ : public Heap, public ZmObject  {
 public:
   bool init(
-      ZmScheduler *scheduler, unsigned sid, DBContext *context,
+      ZmScheduler *scheduler, unsigned sid, DB *db,
       OIDCLimits limits, unsigned pendingLimit,
       uint64_t timeout, OIDCClockFn clock, OIDCHTTPFn http)
   {
     if (!scheduler || !sid || sid > scheduler->params().nThreads() ||
-        !context || !limits.response ||
+        !db || !limits.response ||
         !limits.keys || !pendingLimit || !timeout || !clock || !http ||
         !m_rng.init())
       return false;
     m_scheduler = scheduler;
     m_sid = sid;
-    m_context = context;
+    m_db = db;
     m_limits = limits;
     m_pendingLimit = pendingLimit;
     m_timeout = timeout;
@@ -997,18 +1033,13 @@ private:
 
   void keys_(ZmRef<OIDCReq> request, unsigned status, String body)
   {
-    OIDCKeyVec keys;
+    Bytes publicKey;
     if (!active_(request) || status != 200 ||
-        !jwksResponse(body, m_limits, keys)) {
+        !jwksResponse(body, m_limits, request->keyID, publicKey)) {
       fail_(request);
       return;
     }
-    for (const auto &key: keys)
-      if (key.id == request->keyID) {
-	verify_(request, key.publicKey);
-	return;
-      }
-    fail_(request);
+    verify_(request, publicKey);
   }
 
   void verify_(ZmRef<OIDCReq> request, ZuBSpan publicKey)
@@ -1063,7 +1094,7 @@ private:
   void load_(ZmRef<OIDCReq> request, String subject, StringVec roleValues,
       StringVec eligibilityValues, int64_t authTime, int64_t now)
   {
-    oidcLoadUser(m_context, ZuMv(subject), request->config,
+    oidcLoadUser(m_db, ZuMv(subject), request->config,
       ZuMv(roleValues), ZuMv(eligibilityValues), now,
       [self = ZmRef<OIDCState_>{this}, request, authTime](
           bool ok, User user, IDVec roleIDs, Evidence evidence) mutable {
@@ -1121,7 +1152,7 @@ private:
 
   ZmScheduler	*m_scheduler = nullptr;
   unsigned	m_sid = 0;
-  DBContext	*m_context = nullptr;
+  DB	*m_db = nullptr;
   OIDCLimits	m_limits;
   unsigned	m_pendingLimit = 0;
   uint64_t	m_timeout = 0;
@@ -1138,13 +1169,13 @@ OIDC::OIDC() = default;
 OIDC::~OIDC() { final(); }
 
 bool OIDC::init(
-    ZmScheduler *scheduler, unsigned sid, DBContext *context,
+    ZmScheduler *scheduler, unsigned sid, DB *db,
     OIDCLimits limits, unsigned pendingLimit,
     uint64_t timeout, OIDCClockFn clock, OIDCHTTPFn http)
 {
   if (m_state) return false;
   ZmRef<OIDCState> state = new OIDCState;
-  if (!state->init(scheduler, sid, context, limits,
+  if (!state->init(scheduler, sid, db, limits,
       pendingLimit, timeout, ZuMv(clock), ZuMv(http))) return false;
   m_state = ZuMv(state);
   return true;

@@ -7,8 +7,10 @@
 #include <string.h>
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZtcHash.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
@@ -1522,13 +1524,19 @@ void testSettingsKeyBoundary()
     CxnStream stream;
     Zhttp::H3::HdrBytes settings;
     putSetting(settings, 0x08, 1);
-    putSetting(settings, 0x08, 1);
+    putSetting(settings, 0x08, 0);
     Zhttp::H3::HdrBytes bytes;
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
+    ZuCHECK(stream.process(stream) ==
+	Zhttp::H3::CxnState::PeerSettingsReceived && !stream.extendedConnect,
+      "repeated SETTINGS did not apply the last valid capability value");
+    bytes.length(0);
+    putFrame(bytes, 0x04, ZuBSpan{});
+    stream.push(bytes);
     ZuCHECK(stream.process(stream) == Zhttp::H3::CxnState::Error,
-      "duplicate SETTINGS_ENABLE_CONNECT_PROTOCOL was accepted");
+      "a second SETTINGS frame was accepted");
   }
   {
     CxnStream stream;
@@ -1554,8 +1562,9 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) == Zhttp::H3::CxnState::Error,
-      "duplicate SETTINGS key after 32 unique keys was accepted");
+    ZuCHECK(stream.process(stream) ==
+	Zhttp::H3::CxnState::PeerSettingsReceived && stream.settings == 34,
+      "repeated unknown SETTINGS key was rejected");
   }
   {
     CxnStream stream;
@@ -1935,7 +1944,7 @@ void testInitializationSeeds()
 {
   ZuTestScope(testInitializationSeeds);
 
-  Zhttp::HeaderSeedCatalog catalog;
+  Zhttp::HeaderSeedCatalog<ZuTypeList<SeedHeaders>> catalog;
   Zhttp::H3::Params params;
   catalog.add<SeedHeaders>(params, 512);
   const auto &seeds = catalog.entries();
@@ -2012,6 +2021,40 @@ void testInitializationSeeds()
       Zhttp::QPackSeedResult::Failed && !failed.capacity() &&
       !failed.insertCount() && !failed.used(),
     "failed seed write mutated connection table state");
+}
+
+void testSeedCatalogLookup()
+{
+  ZuTestScope(testSeedCatalogLookup);
+
+  struct First {
+    using List = ZhttpHeaders(
+      "x-switch", ("x-shared", "one"), ("x-before", "one"));
+  };
+  struct Second {
+    using List = ZhttpHeaders(
+      ("x-switch", "fixed"), ("x-shared", "one"),
+      ("x-shared", "two"), "x-later");
+  };
+  struct Third {
+    using List = ZhttpHeaders(
+      ("x-before", "one"), "x-later", ("x-switch", "fixed"),
+      ("x-before", "two"));
+  };
+  Zhttp::HeaderSeedCatalog<ZuTypeList<First, Second, Third>> catalog;
+  Zhttp::H3::Params params;
+  catalog.add<First>(params, 512);
+  catalog.add<Second>(params, 512);
+  catalog.add<Third>(params, 512);
+  const auto &seeds = catalog.entries();
+  ZuCHECK(seeds.length() == 6 &&
+      seeds[0].name == "x-shared" && seeds[0].value == "one" &&
+      seeds[1].name == "x-before" && seeds[1].value == "one" &&
+      seeds[2].name == "x-switch" && seeds[2].value == "fixed" &&
+      seeds[3].name == "x-shared" && seeds[3].value == "two" &&
+      seeds[4].name == "x-later" && !seeds[4].exact &&
+      seeds[5].name == "x-before" && seeds[5].value == "two",
+    "QPACK seed lookup preserves cross-catalog deduplication and splice order");
 }
 
 void testBuilderPeerCapacity()
@@ -2139,6 +2182,43 @@ void testBuilderSectionFallback()
     "denied section tracking emitted a dynamic reference");
   ZuCHECK(builder.tx.sectionAck(3) && !builder.tx.sectionCount(),
     "section fallback acknowledgement failed");
+}
+
+void testPolicyAllocations()
+{
+  ZuTestScope(testPolicyAllocations);
+  unsigned names = 0, settings = 0;
+  Ztc::HashMgr::watch([&names, &settings](Ztc::Hash *hash) {
+    struct IDs {
+      using Keys = ZuStringTL<"Zhttp.H3.Params.Names", "Zhttp.H3.SettingsKeys">;
+    };
+    static constexpr auto matcher = ZuMatcher<IDs>();
+    switch (matcher.exact(hash->telKey().p<0>())) {
+      case 0: ++names; break;
+      case 1: ++settings; break;
+    }
+  }, {});
+  {
+    CxnStream cxn;
+    ParserStream request;
+    ResponseParserStream response;
+    BuilderState builder;
+    ZuCHECK(!names && !settings,
+      "default stream or policy constructed a lookup hash");
+    builder.params.qpackIndex("accept").qpackNeverIndex("cookie");
+    ZuCHECK(names == 2, "configured QPACK policy did not create its two tables");
+    names = 0;
+    for (unsigned i = 0; i < 3; ++i) {
+      CaptureTxStream stream;
+      builder.begin(stream);
+      ZuSpan<uint8_t> payload;
+      ZuCHECK(headersPayload(stream.bytes, payload),
+        "allocation probe did not build a HEADERS frame");
+    }
+    ZuCHECK(!names && !settings,
+      "repeated header builds constructed policy or SETTINGS lookup hashes");
+  }
+  Ztc::HashMgr::unwatch();
 }
 
 void testBuilderQueryPath()
@@ -2308,6 +2388,8 @@ int main(int argc, char **argv)
   ZuTestCall(testHuffmanInstructionStorage);
   ZuTestCall(testInstructionParserSplit);
   ZuTestCall(testInitializationSeeds);
+  ZuTestCall(testSeedCatalogLookup);
+  ZuTestCall(testPolicyAllocations);
   ZuTestCall(testBuilderQueryPath);
   ZuTestCall(testBuilderCardinality);
   ZuTestCall(testBuilderExtendedConnect);

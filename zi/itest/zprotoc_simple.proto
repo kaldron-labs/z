@@ -1,0 +1,104 @@
+syntax = "proto3";
+package demo;
+
+enum Shade {
+  SHADE_NONE = 0;
+  SHADE_BLUE = 5;
+  SHADE_RED = 7;
+  SHADE_NEG = -5;
+}
+
+message Row {
+  message Child {
+    uint32 value = 1;
+  }
+  enum Kind {
+    KIND_NONE = 0;
+    KIND_TWO = 2;
+  }
+  uint32 id = 1;
+  sint64 change = 3;
+  bool enabled = 4;
+  double ratio = 5;
+  fixed32 stamp = 6;
+  string label = 7;
+  bytes payload = 8;
+  float score = 9;
+  repeated sint32 samples = 10;
+  repeated string tags = 11;
+  repeated bytes chunks = 12;
+  Extra peer = 13;
+  repeated Extra peers = 14;
+  Shade shade = 15;
+  repeated Shade shades = 16;
+  Child child = 17;
+  repeated Child children = 18;
+  Kind kind = 19;
+  oneof choice {
+    OptionA first = 20;
+    OptionB second = 21;
+  }
+  map<int32, string> labels = 22;
+  map<string, OptionA> items = 23;
+  map<sint32, fixed64> totals = 24;
+  map<string, Shade> shadesByName = 25;
+  repeated bool flags = 26;
+  map<uint32, bytes> blobsById = 27;
+}
+
+message Extra {
+  uint64 value = 1;
+  Row back = 2;
+}
+
+message OptionA {
+  uint32 value = 1;
+}
+
+message OptionB {
+  string label = 1;
+}
+
+message ChoiceOnly {
+  oneof selection {
+    OptionA first = 1;
+    OptionB second = 2;
+  }
+}
+
+message MultiChoice {
+  oneof left {
+    OptionA a = 1;
+    OptionB b = 2;
+  }
+  oneof right {
+    OptionB c = 3;
+    OptionA d = 4;
+  }
+}
+
+message FloatRow {
+  repeated float values = 1;
+  repeated double precise = 2;
+}
+
+message NumericRow {
+  int32 i32 = 1;
+  uint32 u32 = 2;
+  int64 i64 = 3;
+  uint64 u64 = 4;
+  sint32 s32 = 5;
+  sint64 s64 = 6;
+  fixed32 f32 = 7;
+  fixed64 f64 = 8;
+  sfixed32 sf32 = 9;
+  sfixed64 sf64 = 10;
+  float r32 = 11;
+  double r64 = 12;
+  repeated int32 i32s = 13;
+  repeated uint64 u64s = 14;
+  repeated sint64 s64s = 15;
+  repeated fixed32 f32s = 16;
+  repeated sfixed64 sf64s = 17;
+  repeated double r64s = 18;
+}

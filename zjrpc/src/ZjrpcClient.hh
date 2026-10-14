@@ -107,6 +107,9 @@ class HTTPClient : public Client<HTTPClient<Impl, Catalog>, Impl, Catalog>,
   friend Dispatcher<HTTPClient, Impl, Catalog>;
   friend struct HTTPRequestData<Impl, Catalog>;
 public:
+  using HTTP::start;
+  using HTTP::stop;
+
   ~HTTPClient() { final(); }
   bool init(const Zhttp::HubConfig &hub, Zhttp::Destination destination,
       ClientConfig config, Impl *impl, const Zhttp::TCPConfig &tcp = {},
@@ -134,14 +137,25 @@ public:
     });
   }
   bool stop() {
-    if (!m_mx) return true;
-    m_up = false;
-    if (m_started) HTTP::stop();
-    m_started = false;
-    ZmBlock<>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable { drain_(ZuMv(wake)); }, m_owner);
+    return ZmBlock<bool>{}([this](auto wake) mutable {
+      this->stop(ZuMv(wake));
     });
-    return !m_failure;
+  }
+  template <typename Done>
+  void stop(Done &&done) {
+    if (!m_mx) { done(true); return; }
+    m_up = false;
+    bool started = m_started;
+    m_started = false;
+    auto drain = [this, done = ZuFwd<Done>(done)](bool ok) mutable {
+      m_mx->run([this, done = ZuMv(done), ok]() mutable {
+	drain_([this, done = ZuMv(done), ok]() mutable {
+	  done(ok && !m_failure);
+	});
+      }, m_owner);
+    };
+    if (started) HTTP::stop(ZuMv(drain));
+    else drain(true);
   }
   void final() {
     if (!m_mx) return;
@@ -172,7 +186,7 @@ public:
       return message.empty() && policy != RoutePolicy::Abort;
     }, nullptr);
   }
-  bool receiveSSE(RequestData *request, SSEEvent event, const Meta &) {
+  bool receiveSSE(RequestData *request, Zhttp::SSEEvent event, const Meta &) {
     bool ok = receive(request, ZuMv(event.body));
     request->responseOK = ok;
     return ok;

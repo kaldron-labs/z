@@ -1,0 +1,18 @@
+syntax = "proto2";
+package shared;
+
+enum State {
+  STATE_NONE = 0;
+  STATE_ON = 3;
+}
+
+message Record {
+  enum Kind {
+    KIND_NONE = 0;
+    KIND_READY = 2;
+  }
+  message Detail {
+    optional uint32 value = 1;
+  }
+  optional uint32 id = 1;
+}

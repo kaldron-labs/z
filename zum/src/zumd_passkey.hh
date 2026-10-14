@@ -20,7 +20,7 @@
 namespace Zum {
 
 struct DB;
-struct DBContext;
+struct DB;
 
 struct EnrollmentBeginConfig {
   String	issuer;
@@ -100,35 +100,35 @@ using BootstrapFn = CapabilityFn;
 using RecoveryIssueFn = CapabilityFn;
 
 ZumExtern bool bootstrapIssue(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   BootstrapConfig, BootstrapFn);
 ZumExtern bool recoveryIssue(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   RecoveryIssueConfig, RecoveryIssueFn);
 ZumExtern bool recoveryBegin(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String capability, Bytes bindingDigest, RecoveryBeginConfig,
   EnrollmentBeginFn);
 ZumExtern bool recoveryFinish(
-  Requests *, ZuTime deadline, DB *, DBContext *, Bytes ceremonyID,
+  Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
   Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
   EnrollmentFinishFn);
 ZumExtern bool enrollmentBegin(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes bindingDigest, EnrollmentBeginConfig, EnrollmentBeginFn);
 ZumExtern bool bootstrapBegin(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String capability, Bytes bindingDigest, EnrollmentBeginConfig,
   EnrollmentBeginFn);
 ZumExtern bool enrollmentFinish(
-  Requests *, ZuTime deadline, DB *, DBContext *, Bytes ceremonyID,
+  Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
   Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
   EnrollmentFinishFn);
 ZumExtern bool credentialBegin(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes bindingDigest, CredentialBeginConfig, EnrollmentBeginFn);
 ZumExtern bool credentialFinish(
-  Requests *, ZuTime deadline, DB *, DBContext *, Bytes ceremonyID,
+  Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
   Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
   EnrollmentFinishFn);
 

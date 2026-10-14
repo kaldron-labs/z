@@ -9,6 +9,7 @@
 #include <signal.h>
 
 #include <zlib/ZuSort.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZtRegex.hh>
 #include <zlib/ZmScratch.hh>
@@ -18,6 +19,18 @@
 #include <zlib/ZrlEditor.hh>
 
 namespace Zrl {
+
+struct ModifierKeys {
+  using Keys = ZuStringTL<"Shift", "Ctrl", "Alt">;
+};
+
+struct OpFlagKeys {
+  using Keys = ZuStringTL<"Mv", "Del", "Copy", "Draw", "Vis", "Unix",
+    "Past", "KeepArg", "KeepReg">;
+};
+
+static constexpr auto modifierMatcher = ZuMatcher<ModifierKeys>();
+static constexpr auto opFlagMatcher = ZuMatcher<OpFlagKeys>();
 
 ZtEnumImplNS(Op);
 ZtEnumImplNS(ModeType);
@@ -448,10 +461,12 @@ int VKey_parse(int32_t &vkey_, ZuCSpan s, int off)
     if (ZtREGEX("\G\s*\[").m(s, c, off)) {
       off += c[1].length();
       while (ZtREGEX("\G\s*(\w+)").m(s, c, off)) {
-	if (c[2] == "Shift") vkey |= VKey::Shift;
-	else if (c[2] == "Ctrl") vkey |= VKey::Ctrl;
-	else if (c[2] == "Alt") vkey |= VKey::Alt;
-	else return -off;
+	switch (modifierMatcher.exact(c[2])) {
+	  case 0: vkey |= VKey::Shift; break;
+	  case 1: vkey |= VKey::Ctrl; break;
+	  case 2: vkey |= VKey::Alt; break;
+	  default: return -off;
+	}
 	off += c[2].length();
 	if (!ZtREGEX("\G\s*\|").m(s, c, off)) break;
 	off += c[1].length();
@@ -511,16 +526,18 @@ int Cmd::parse(ZuCSpan s, int off)
   if (ZtREGEX("\G\s*\[").m(s, c, off)) {
     off += c[1].length();
     while (ZtREGEX("\G\s*(\w+)").m(s, c, off)) {
-      if (c[1] == "Mv") m_value |= Op::Mv;
-      else if (c[1] == "Del") m_value |= Op::Del;
-      else if (c[1] == "Copy") m_value |= Op::Copy;
-      else if (c[1] == "Draw") m_value |= Op::Draw;
-      else if (c[1] == "Vis") m_value |= Op::Vis;
-      else if (c[1] == "Unix") m_value |= Op::Unix;
-      else if (c[1] == "Past") m_value |= Op::Past;
-      else if (c[1] == "KeepArg") m_value |= Op::KeepArg;
-      else if (c[1] == "KeepReg") m_value |= Op::KeepReg;
-      else return -off;
+      switch (opFlagMatcher.exact(c[1])) {
+	case 0: m_value |= Op::Mv; break;
+	case 1: m_value |= Op::Del; break;
+	case 2: m_value |= Op::Copy; break;
+	case 3: m_value |= Op::Draw; break;
+	case 4: m_value |= Op::Vis; break;
+	case 5: m_value |= Op::Unix; break;
+	case 6: m_value |= Op::Past; break;
+	case 7: m_value |= Op::KeepArg; break;
+	case 8: m_value |= Op::KeepReg; break;
+	default: return -off;
+      }
       off += c[1].length();
       if (!ZtREGEX("\G\s*\|").m(s, c, off)) break;
       off += c[1].length();

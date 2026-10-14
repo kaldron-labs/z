@@ -322,7 +322,7 @@ void DiscoveryRequest::start()
     resolveNext();
     return;
   }
-  m_aliases.push(m_query);
+  m_aliases.push(Alias{m_query, m_query.hash()});
   query();
 }
 
@@ -381,13 +381,15 @@ void DiscoveryRequest::queried(ZiResolver_::QueryResult result)
       finish({0, DiscoveryCode::AliasLimit});
       return;
     }
+    const auto &target = records[i].target;
+    uint32_t code = target.hash();
     for (unsigned j = 0, l = m_aliases.length(); j < l; ++j)
-      if (m_aliases[j] == records[i].target) {
+      if (m_aliases[j].code == code && m_aliases[j].name == target) {
 	finish({0, DiscoveryCode::AliasLoop});
 	return;
       }
-    m_query = records[i].target;
-    m_aliases.push(m_query);
+    m_query = target;
+    m_aliases.push(Alias{m_query, code});
     query();
     return;
   }

@@ -713,11 +713,11 @@ static void collections()
   ZuCheck(field(root, "point")->has<ZfTOML::AnyNode::Object>());
   auto inlineDotted = ZfTOML::scan(
     "inline = {a.b = 1, a.c = 2,}\n").p<1>();
-  ZuCheck(inlineDotted->resolve("inline.a.b") &&
-    inlineDotted->resolve("inline.a.c"));
-  ZuCheck(root->resolve("owner.name"));
-  ZuCheck(root->resolve("products[0].name"));
-  ZuCheck(root->resolve("products[1].name"));
+  ZuCheck(field(field(field(inlineDotted, "inline"), "a"), "b") &&
+    field(field(field(inlineDotted, "inline"), "a"), "c"));
+  ZuCheck(field(field(root, "owner"), "name"));
+  ZuCheck(field(field(root, "products")->data<ZfTOML::AnyNode::Array>()[0].ptr(), "name"));
+  ZuCheck(field(field(root, "products")->data<ZfTOML::AnyNode::Array>()[1].ptr(), "name"));
 }
 
 static void strings()
@@ -1257,7 +1257,7 @@ static void keysOwnershipBOM()
   auto tree = ZfTOML::scan(source).p<1>();
   ZuCheck(source == original);
   source.null();
-  ZuCheck(tree->resolve("bare-key")->data<ZfTOML::AnyNode::String>() == "value");
+  ZuCheck(field(tree, "bare-key")->data<ZfTOML::AnyNode::String>() == "value");
   auto dotted = field(tree, "a.b");
   auto empty = field(dotted, "");
   ZuCheck(dotted);
@@ -1265,14 +1265,25 @@ static void keysOwnershipBOM()
   ZuCheck(empty && empty->data<ZfTOML::AnyNode::String>() == "quoted");
   ZuCheck(field(field(tree, "outer"), "unsafe key"));
   ZuCheck(tree->parent == nullptr);
-  ZuCheck(tree->resolve("outer.unsafe key.number")->parent->parent ==
+  ZuCheck(field(field(field(tree, "outer"), "unsafe key"), "number")->parent->parent ==
     field(tree, "outer"));
 
   auto unicode = ZfTOML::scan(
     "\"\xe2\x98\xba\" = 1\n123 = 2\na . b = 3\n").p<1>();
   ZuCheck(field(unicode, "\xe2\x98\xba") && field(unicode, "123") &&
-    unicode->resolve("a.b"));
+    field(field(unicode, "a"), "b"));
   ZuCheck(error("same = 1\n\"same\" = 2\n").find("duplicate key") >= 0);
+
+  source.null();
+  for (unsigned i = 0; i < 40; ++i)
+    source << "key" << i << " = " << i << '\n';
+  source << "[other]\n";
+  for (unsigned i = 0; i < 40; ++i)
+    source << "key" << i << " = " << i + 1 << '\n';
+  auto large = ZfTOML::scan(source).p<1>();
+  ZuCheck(field(large, "key39") && field(field(large, "other"), "key39"));
+  source << "key0 = 99\n";
+  ZuCheck(error(source).find("duplicate key") >= 0);
 
   auto blank = ZfTOML::scan(" \t# comment\r\n\r").p<1>();
   ZuCheck(blank->has<ZfTOML::AnyNode::Object>() &&
@@ -1450,7 +1461,7 @@ static void stateLimits()
   for (unsigned i = 0; i < 40; ++i)
     many << "[table" << i << "]\nvalue = " << i << '\n';
   auto tree = ZfTOML::scan(many).p<1>();
-  ZuCheck(tree->resolve("table39.value"));
+  ZuCheck(field(field(tree, "table39"), "value"));
 
   ZuCheck(ZfTOML::scan("a = 1\n", ZfTOML::Limits{128, 2}).p<0>() == 6);
   ZuCheck(ZfTOML::scan("a = [[1]]\n", ZfTOML::Limits{2, 64}).p<0>() == 10);
@@ -2320,8 +2331,8 @@ static void files()
   auto result = ZvTOML::load(rootPath);
   ZuCheck(result.p<0>() == ZiStat{rootPath}.size());
   auto root = ZuMv(result.p<1>());
-  ZuCheck(root->resolve("value")->data<ZfTOML::AnyNode::String>() == "mapped");
-  ZuCheck(root->resolve("nested.items[1]")->data<ZfTOML::AnyNode::String>() ==
+  ZuCheck(field(root, "value")->data<ZfTOML::AnyNode::String>() == "mapped");
+  ZuCheck(field(field(root, "nested"), "items")->data<ZfTOML::AnyNode::Array>()[1].ptr()->data<ZfTOML::AnyNode::String>() ==
     "two");
 
   auto nestedPath = path("nested.toml");
@@ -2337,7 +2348,7 @@ static void files()
 #ifndef _WIN32
   ZuCheck(::chmod(rootPath, 0444) == 0);
   result = ZvTOML::load(rootPath);
-  ZuCheck(result.p<1>()->resolve("value")->
+  ZuCheck(field(result.p<1>(), "value")->
     data<ZfTOML::AnyNode::String>() == "mapped");
   ::chmod(rootPath, 0644);
 #endif

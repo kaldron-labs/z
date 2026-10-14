@@ -19,7 +19,7 @@
 
 namespace Zum {
 
-struct DBContext;
+struct DB;
 struct DB;
 
 namespace AuthorizeIssue {
@@ -74,23 +74,23 @@ ZuDerive(AuthorizeCodeFn, (ZmFn<void(int, String),
   ZmFnHeapID<"Zum.AuthorizeCodeFn">>));
 
 ZumExtern bool authorizeRequest(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String query, Bytes bindingDigest, AuthorizeConfig, AuthorizeFn);
 ZumExtern bool authorizeFinish(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, AssertionInput,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 ZumExtern bool authorizeOIDCFinish(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, User, IDVec roleIDs,
   Evidence, int64_t authTime, AuthorizeFinishConfig, PolicyFn,
   AuthorizeCodeFn);
 ZumExtern bool authorizeSessionFinish(
-  Requests *, ZuTime deadline, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, Session,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 ZumExtern bool authorizeConsentFinish(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, bool approve,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 

@@ -1,0 +1,32 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2026 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+#ifndef zumd_saga_role_add_HH
+#define zumd_saga_role_add_HH
+
+#include <zlib/zumd_saga.hh>
+#include <zlib/zumd_saga_admin_result.hh>
+#include <zlib/zumd.hh>
+
+namespace Zum {
+
+struct RoleAddArgs {
+  App app;
+  Role before;
+  Role values;
+  int64_t updated = 0;
+  IdemRequest request;
+  ZmRef<AdminEditResult<Role>> result;
+  bool unchanged() const { return false; }
+};
+
+Zdb_::SagaDef roleAddDef();
+SagaRef roleAdd(ZuBSpan);
+SagaRef roleAdd(RoleAddArgs);
+
+} // namespace Zum
+
+#endif /* zumd_saga_role_add_HH */

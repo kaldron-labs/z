@@ -17,6 +17,7 @@
 
 #include <zlib/ZmPolyHash.hh>
 
+#include <zlib/ZiFB.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiTx.hh>
 
@@ -110,6 +111,13 @@ struct IOBuf : public BufCacheUN::Node {
 template <typename T = void>
 using IOBufAlloc =
   Zi::IOBufAlloc<IOBuf, ZdbBuf_Size<T>{}, MaxBufSize, ZdbBuf_HeapID<T>>;
+
+template <typename T>
+class RowBuilder : public ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> {
+  using Base = ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N>;
+public:
+  RowBuilder() : Base{new IOBufAlloc<T>{}} { }
+};
 
 typedef ZmRef<IOBuf> (*IOBufAllocFn)();
 

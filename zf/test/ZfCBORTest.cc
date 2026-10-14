@@ -36,12 +36,23 @@ struct MinIntKeyObject {
   int32_t	value;
 };
 
+struct MixedIntKeyObject {
+  int32_t	positive, negative;
+};
+
 struct TextObject {
   ZuCSpan	value;
 };
 
 struct LongKeyObject {
   int32_t	value, shortValue;
+};
+
+struct DuplicateIDObject {
+  int32_t	first, second;
+};
+struct DuplicateIntIDObject {
+  int32_t	first, second;
 };
 
 ZfStruct(, ArrayObject,
@@ -75,6 +86,13 @@ ZfStruct(, MinIntKeyObject,
 ZfStructRender(, MinIntKeyObject, CBOR,
   (value, (CBOR::ID<"-18446744073709551616">, CBOR::IntID)));
 
+ZfStruct(, MixedIntKeyObject,
+  (positive, (Mutable), Int32),
+  (negative, (Mutable), Int32));
+ZfStructRender(, MixedIntKeyObject, CBOR,
+  (positive, (CBOR::ID<"1">, CBOR::IntID)),
+  (negative, (CBOR::ID<"-1">, CBOR::IntID)));
+
 ZfStruct(, TextObject,
   (value,	(Mutable),	String));
 
@@ -87,6 +105,19 @@ ZfStruct(, LongKeyObject,
 ZfStructRender(, LongKeyObject, CBOR,
   (value, (CBOR::ID<"abcdefghijklmnopqrstuvwxyz0123456789">)),
   (shortValue, (CBOR::ID<"z">)));
+
+ZfStruct(, DuplicateIDObject,
+  (first, (Mutable), Int32),
+  (second, (Mutable), Int32));
+ZfStructRender(, DuplicateIDObject, CBOR,
+  (first, (CBOR::ID<"x">)),
+  (second, (CBOR::ID<"x">)));
+ZfStruct(, DuplicateIntIDObject,
+  (first, (Mutable), Int32),
+  (second, (Mutable), Int32));
+ZfStructRender(, DuplicateIntIDObject, CBOR,
+  (first, (CBOR::ID<"1">, CBOR::IntID)),
+  (second, (CBOR::ID<"1">, CBOR::IntID)));
 
 struct IntArray : public IntValues {
   ZuDerive_(IntArray, IntValues);
@@ -309,6 +340,15 @@ static void intKey()
   ZuCheck((ZuBSpan{out} == ZuBSpan{minExpected}));
   auto minLoaded = ZfCBOR::handler<MinIntKeyObject>(minExpected).ctor();
   ZuCheck(minLoaded.value == 7);
+
+  uint8_t mixed[] = {0xa2, 0x01, 0x07, 0x20, 0x08};
+  auto mixedLoaded = ZfCBOR::handler<MixedIntKeyObject>(mixed).ctor();
+  ZuCheck(mixedLoaded.positive == 7 && mixedLoaded.negative == 8);
+
+  uint8_t repeated[] = {0xa2, 0x01, 0x02, 0x01, 0x03};
+  DuplicateIntIDObject duplicate{9, 0};
+  ZfCBOR::handler<DuplicateIntIDObject>(repeated).load(duplicate);
+  ZuCheck(ZuNull(duplicate.first) && duplicate.second == 3);
 }
 
 static void longKey()
@@ -335,6 +375,11 @@ static void text()
   ZfCBOR::handler<TextObject>(encoded).load(object);
   ZuCheck(object.value == "hello");
   ZuCheck(object.value.data() == reinterpret_cast<const char *>(encoded + 8));
+
+  uint8_t repeated[] = {0xa2, 0x61, 'x', 0x01, 0x61, 'x', 0x02};
+  DuplicateIDObject duplicate{9, 0};
+  ZfCBOR::handler<DuplicateIDObject>(repeated).load(duplicate);
+  ZuCheck(ZuNull(duplicate.first) && duplicate.second == 2);
 }
 
 static void arrays()

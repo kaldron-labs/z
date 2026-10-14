@@ -15,7 +15,7 @@
 
 #include <zlib/Zdb.hh>
 #include <zlib/zumd.hh>
-#include <zlib/zumd_db_context.hh>
+#include <zlib/zumd_db.hh>
 
 namespace Zum {
 

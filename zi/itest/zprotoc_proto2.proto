@@ -1,0 +1,50 @@
+syntax = "proto2";
+package legacy;
+
+enum State {
+  STATE_UNKNOWN = 0;
+  STATE_READY = 3;
+}
+
+message Row {
+  reserved 20 to 22;
+  reserved "removed";
+  required uint32 id = 1;
+  optional bool active = 2;
+  repeated sint32 samples = 3 [packed = true];
+  optional State state = 4 [default = STATE_READY];
+  optional uint32 retry = 5 [default = 9];
+  optional bool visible = 6 [default = true];
+  optional sint32 offset = 7 [default = -7];
+  optional float gain = 8 [default = 1.25];
+  optional double factor = 9 [default = -2.5];
+  optional string label = 10 [default = "a\n\"b"];
+  optional bytes raw = 11 [default = "\001\377"];
+  optional string icon = 12 [default = "\u263A"];
+  optional string nulled = 13 [default = "a\u0000b"];
+  optional float ceiling = 14 [default = inf];
+  optional double floor = 15 [default = -inf];
+}
+
+message Retained {
+  reserved 2 to 4;
+  reserved "former";
+  optional uint32 id = 1;
+  optional string label = 5;
+}
+
+message FirstChoice {
+  required uint32 id = 1;
+}
+
+message FinalChoice {
+  optional uint32 id = 1;
+}
+
+message ChoiceRow {
+  oneof choice {
+    FirstChoice first = 4;
+    FinalChoice final = 9;
+  }
+  map<string, uint32> counts = 10;
+}

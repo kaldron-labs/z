@@ -20,6 +20,8 @@
 #include <zlib/ZfCLI.hh>
 
 #include <zlib/ZfCf.hh>
+
+#include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/Zdb.hh>
@@ -360,13 +362,14 @@ int main(int argc_, char **argv)
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams("mx", cf->resolve("mx"))};
+    auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdffptest", "multiplexer start failed");
 
     db = new Zdb();
 
-    ZdbCf dbCf{cf->resolve("zdb")};
+    ZdbCf dbCf{cfFields.zdb.p<const ZfCf::AnyNode *>()};
 
     Zdf::Store::dbCf(cf, dbCf);
 

@@ -71,18 +71,18 @@ from `zum/itest`:
 export ZDB_MODULE=$PWD/../../zdb_sqlite/src/.libs/libZdbSL.so
 export ZDB_CONNECT=/tmp/zum-restart.db
 export ZUM_CLUSTER_PEER_CONNECT=/tmp/zum-cluster-b.db
-make -j3 && make -j3 test
+make -j1 && make -j1 test
 ```
 
 The fixture loads the configured store module, reconstructs the Zdb instance
 between staging and recovery, and runs the enrollment completion and
 compensation checks. Action creation additionally reconstructs the database at
-each of its four saga steps, both with an intent awaiting its effect and after
+each of its six saga steps, both with an intent awaiting its effect and after
 the effect is committed, plus the initial payload-only image. It checks stable
 IDs, exactly-once allocation/version changes, released ownership, empty saga
 journals, and duplicate-name compensation after a committed app reservation.
 These are explicitly staged durable images, not process-kill injection.
-The new `invitationRecovery` case stages all17 intent/effect boundaries of
+The new `invitationRecovery` case stages all 17 intent/effect boundaries of
 UserInvite.v2 with an existing external identity matching the invited local
 name. It checks exactly one external authority/version increment, released
 owners, pending local invitation/capability and completed request. A stale
@@ -91,8 +91,8 @@ compensation, leaving the external record unchanged and removing the invitation.
 See the ledger for execution status; written cases are not evidence of a pass.
 This invitation case and the complete 14-scenario SQLite restart suite pass
 against the current schema; detailed commands/results are in the ledger.
-The `memberRecovery` case stages all nine intent/effect boundaries of the
-four-step assignment change saga. Recovery must publish the assignment's role
+The `memberRecovery` case stages the intent/effect boundaries of the
+six-step assignment change saga. Recovery must publish the assignment's role
 and state replacement together with exactly one assignment/app version advance,
 release both owners, and empty the journals. A stale assignment snapshot after
 the application reservation must compensate without changing either record.
@@ -100,7 +100,7 @@ The `grantUpdate` case separately verifies persistence of changed role IDs,
 scope, authority source, and provider ID across a drained SQLite reopen;
 it is a metadata test, not external OIDC-provider interoperability coverage.
 `roleRemoval` stages the typed role-deletion payload and every intent/effect cut
-across its 24 expanded steps, reopening SQLite for all 49 durable images.
+across its 20 expanded steps, reopening SQLite for all 41 durable images.
 The repeated reference branches contain two rows in each of assignment, client
 access, admin access and role mapping. Separate cases cover empty
 reference sets and a stale second mapping that forces compensation after the
@@ -109,7 +109,7 @@ settings, restored before-images on rollback, logical versions, released owners
 and empty journals. The complete boundary matrix passes in the current
 SQLite restart suite.
 Catalog recovery first covers payload-only completion and compensation. The
-expanded fixture additionally stages all 29 intent/effect cuts for its 14 phases
+expanded fixture additionally stages all 24 intent/effect cuts for its 12 active steps
 with one inserted and one replaced row per action and role definition, plus a
 stale role after earlier effects have committed. It checks app publication,
 original IDs, role removals, logical versions, owners and empty journals. The complete
@@ -401,3 +401,8 @@ its private temporary directory and prints only its path, preserving diagnostics
 without printing secrets. The encryption key remains process-local and is not
 retained, so use a new disposable database for each invocation. Neither fixture
 creates or drops its database.
+
+`zumrestarttest` also recovers role creation across every intent/effect boundary,
+including replay of an already inserted role and compensation when a disabled
+or tombstoned identity reserves its name. The HTTP flow checks duplicate role
+creation and idempotent replay before and after restart.

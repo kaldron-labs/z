@@ -63,18 +63,13 @@ using LegacyVersion = ZuStringT<"2025-11-25">;
 using LogLevels = ZuStringTL<
   "debug", "info", "notice", "warning",
   "error", "critical", "alert", "emergency">;
-struct LogLevelIDs { using Keys = LogLevels; };
 
 namespace LogLevel {
   enum { Disabled = -1, Debug, Info, Notice, Warning,
     Error, Critical, Alert, Emergency };
 }
 
-inline int logLevel(ZuCSpan name)
-{
-  constexpr auto matcher = ZuMatcher<LogLevelIDs>();
-  return matcher.exact(name);
-}
+ZmcpAPI int logLevel(ZuCSpan name);
 
 template <typename L>
 inline void logLevelName(int level, L &&l)
@@ -461,6 +456,41 @@ struct CallReply : public Zjrpc::StructModel<CallReply<Req>, CallReplyShape> {
   Structured structuredContent_;
 };
 
+template <typename Responses>
+struct ReplyStatusMap {
+  struct Entry {
+    int id;
+    unsigned index;
+  };
+
+  ZuArray<Entry, Responses::N> entries{};
+
+  consteval ReplyStatusMap() {
+    ZuUnroll::all<Responses>([this]<typename Res>() {
+      entries.push(Entry{Res::Status, ZuTypeIndex<Res, Responses>{}});
+    });
+    for (unsigned i = 1, n = entries.length(); i < n; ++i) {
+      auto entry = entries[i];
+      unsigned j = i;
+      while (j && entry.id < entries[j - 1].id) {
+	entries[j] = entries[j - 1];
+	--j;
+      }
+      entries[j] = entry;
+    }
+  }
+
+  int find(int id) const {
+    unsigned l = 0, r = entries.length();
+    while (l < r) {
+      unsigned m = (l + r) >> 1;
+      if (entries[m].id <= id) l = m + 1;
+      else r = m;
+    }
+    return l && entries[l - 1].id == id ? int(entries[l - 1].index) : -1;
+  }
+};
+
 template <typename Req>
 inline ReplyUnion<Req> loadToolReply(const ZfJSON::AnyNode *node)
 {
@@ -469,10 +499,8 @@ inline ReplyUnion<Req> loadToolReply(const ZfJSON::AnyNode *node)
   auto reply = Zjrpc::loadObject<CallReply<Req>>(node);
   int code = reply.structuredContent().code();
   const auto *data = Zjrpc::raw(reply.structuredContent().data());
-  int index = -1;
-  ZuUnroll::all<Responses>([code, &index]<typename Res>() {
-    if (code == Res::Status) index = ZuTypeIndex<Res, Responses>{};
-  });
+  static constexpr auto map = ReplyStatusMap<Responses>{};
+  int index = map.find(code);
   if (index < 0) return out;
   ZuSwitch::dispatch<Responses::N>(index, [&out, data](auto I) {
     using Res = ZuType<I, Responses>;
@@ -1602,18 +1630,7 @@ namespace LegacyState {
   enum { Fresh, Initializing, Ready, Closing, Closed };
 }
 
-using MethodIDs = ZuStringTL<
-  "server/discover",
-  "initialize",
-  "notifications/initialized",
-  "ping",
-  "tools/list",
-  "tools/call",
-  "notifications/cancelled",
-  "notifications/progress",
-  "notifications/message",
-  "logging/setLevel">;
-struct MethodID { using Keys = MethodIDs; };
+ZmcpAPI int serverMethod(ZuCSpan name);
 
 struct EmptyResult {
   ServerMetaOpt meta;
@@ -1879,8 +1896,7 @@ private:
     if (envelope.kind != Zjrpc::MessageKind::Request &&
 	envelope.kind != Zjrpc::MessageKind::Notification)
       return true;
-    constexpr auto matcher = ZuMatcher<MethodID>();
-    int method = matcher.exact(envelope.method());
+    int method = serverMethod(envelope.method());
     switch (method) {
       case 0: discover_(emit, envelope.id()); break;
       case 1: initialize_(emit, envelope.id()); break;

@@ -103,6 +103,43 @@ load writable fields, and `update(existing)` to apply the update filter.
 Check each codec's parse/handler result before accessing data; their error
 contracts differ.
 
+### Standard construction, load, and update contract
+
+`ZfStruct` adapters use the shared `ZfFieldFilter` rules, as implemented by
+`ZfJSON`, `ZfURI`, and `ZiFB`. Apply these rules to the active fields of the
+selected facet:
+
+| Operation | Field selection and action |
+| --- | --- |
+| `ctor()`, `alloc()`, `new_()` | Pass `Ctor<I>` fields to the constructor in index order, then initialize `Init` fields through their setters. `Init` means writable fields without `Ctor<I>`. |
+| `load(o)` | Set `Load` fields: all writable fields, including writable `Ctor<I>` fields. Do not rerun the constructor. |
+| `update(o)` | Select `Upd` fields: fields marked `Mutable` and primary-key fields (`Keys<0>`). Getter-only fields cannot be written. Do not rerun the constructor. |
+
+`Ctor<I>` selects a construction argument; it does not itself make a field
+read-only or mutable. Getter-only accessors (`Rd`, `RdFn`, and their alias or
+lambda forms) can supply constructor arguments, but subsequent `load()` or
+`update()` calls cannot change those fields. An adapter must not reconstruct
+an existing object merely to bypass that restriction. Conversely, a writable
+constructor field participates in `load()` and participates in `update()` if
+it is mutable or a primary-key field.
+
+Every field to be materialized must either be supplied through `Ctor<I>` or
+have a writable accessor for initial loading. Getter-only fields without a
+constructor binding are output-only; loading does not write them. Fields
+which are writable but neither mutable nor primary keys can be initially
+loaded and explicitly reloaded, but ordinary updates leave them alone.
+
+Constructing a nested value or a newly selected union alternative invokes its
+constructor and initializes its remaining fields. Loading an existing object
+uses setters for the selected fields; constructor-only values stay unchanged.
+Replacing a writable containing field with a newly constructed value is a
+separate operation from loading the existing nested object.
+
+These rules define field selection and construction, not a universal policy
+for missing input. Preserve each format's presence, default, `Reset`, and
+container semantics. In particular, do not infer that every field is updated
+merely because it is present in an update payload.
+
 ### JSON and URI
 
 #### JSON
@@ -273,9 +310,9 @@ Use format facets when each representation needs different names or properties.
   `Defines`. The free `scan()` function throws on syntax, directive, or
   trailing-input failure. See [ZfCfTest.cc](test/ZfCfTest.cc).
 
-`ZfTree::AnyNode::resolve(path)` locates configuration nodes and `path(out)`
-formats their location for diagnostics. Use these facilities when the schema
-is dynamic; use typed handlers when the configuration shape is known.
+Load known configuration fields through typed handlers and dynamic object
+fields through `AsMap`. `ZfTree::AnyNode::path(out)` formats a node's location
+for diagnostics.
 [ZfConfigTest.cc](test/ZfConfigTest.cc) demonstrates consistent typed updates
 and range validation across the three formats and CLI.
 

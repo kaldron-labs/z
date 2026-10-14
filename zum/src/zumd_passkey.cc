@@ -8,6 +8,10 @@
 #include <zlib/zumd_passkey.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_db_ops.hh>
+#include <zlib/zumd_saga_enrollment.hh>
+#include <zlib/zumd_saga_credential_add.hh>
+#include <zlib/zumd_saga_recovery_start.hh>
+#include <zlib/zumd_saga_recovery_enroll.hh>
 
 #include <zlib/zumd_admin.hh>
 
@@ -139,10 +143,10 @@ template <typename Heap = ZuVoid>
 class EnrollmentBegin__ : public Heap, public ZmPolymorph  {
 public:
   EnrollmentBegin__(
-      DBContext *context, Ztls::Random *rng, String capability,
+      DB *db, Ztls::Random *rng, String capability,
       Bytes bindingDigest,
       EnrollmentBeginConfig config, EnrollmentBeginFn complete) :
-    m_context{context}, m_rng{rng}, m_capability{ZuMv(capability)},
+    m_db{db}, m_rng{rng}, m_capability{ZuMv(capability)},
     m_bindingDigest{ZuMv(bindingDigest)},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
@@ -150,7 +154,7 @@ public:
 
   void start()
   {
-    if (!m_context || !m_rng || !m_bindingDigest || !m_config.issuer ||
+    if (!m_db || !m_rng || !m_bindingDigest || !m_config.issuer ||
 	!m_config.rpID || !m_config.rpName || m_config.now <= 0 ||
 	m_config.expires <= m_config.now || !m_config.timeout) {
       finish_(WebAuthnError::Storage, {});
@@ -197,10 +201,10 @@ private:
   void bootstrap_()
   {
     Bytes id = m_capID;
-    m_context->grants->run(0, [
+    m_db->grants->run(0, [
       self = ZmRef<EnrollmentBegin__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_db->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Grant> row) mutable {
 	if (!row || row->data().kind != GrantKind::Capability ||
@@ -260,12 +264,12 @@ private:
 	m_config.name, m_config.displayName, m_config.timeout)
     };
     if (!create) {
-      m_context->grants->run(0, [
+      m_db->grants->run(0, [
 	self = ZmRef<EnrollmentBegin__>{this}, id = ZuMv(id),
 	challenge = Bytes{challenge}, handle = Bytes{handle},
 	result = ZuMv(result)
       ]() mutable {
-	self->m_context->grants->template findUpd<0, ZuSeq<1, 2>>(
+	self->m_db->grants->template findUpd<0, ZuSeq<1, 2>>(
 	  0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self),
 	    challenge = ZuMv(challenge), handle = ZuMv(handle),
 	    result = ZuMv(result)](ZdbRow<Grant> *row) mutable {
@@ -316,7 +320,7 @@ private:
       .label = ZuMv(m_config.label)
     };
     ZuClear(random);
-    authorizationInsert(m_context, ZuMv(grant), [
+    authorizationInsert(m_db, ZuMv(grant), [
       self = ZmRef<EnrollmentBegin__>{this}, result = ZuMv(result)
     ](bool ok) mutable {
       self->finish_(ok ? WebAuthnError::OK : WebAuthnError::Storage,
@@ -324,7 +328,7 @@ private:
     });
   }
 
-  DBContext	*m_context = nullptr;
+  DB	*m_db = nullptr;
   Ztls::Random	*m_rng = nullptr;
   String	m_capability;
   Bytes		m_capID;
@@ -343,25 +347,25 @@ template <typename Heap = ZuVoid>
 class EnrollmentFinish__ : public Heap, public ZmPolymorph  {
 public:
   EnrollmentFinish__(
-      DB *db, DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
+      DB *db, Bytes ceremonyID, Bytes bindingDigest,
       RegistrationInput input, EnrollmentFinishConfig config,
       EnrollmentFinishFn complete) :
-    m_db{db}, m_context{context}, m_ceremonyID{ZuMv(ceremonyID)},
+    m_db{db}, m_ceremonyID{ZuMv(ceremonyID)},
     m_bindingDigest{ZuMv(bindingDigest)}, m_input{ZuMv(input)},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_db || !m_context || m_ceremonyID.length() != 16 ||
+    if (!m_db || m_ceremonyID.length() != 16 ||
 	!m_bindingDigest) {
       finish_(WebAuthnError::Storage);
       return;
     }
     Bytes id = m_ceremonyID;
-    m_context->grants->run(0, [
+    m_db->grants->run(0, [
       self = ZmRef<EnrollmentFinish__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_db->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
     });
@@ -382,7 +386,7 @@ private:
       finish_(WebAuthnError::Ceremony);
       return;
     }
-    Enrollment enrollment;
+    EnrollmentArgs enrollment;
     int error = enrollmentPrepare(row->data(), m_bindingDigest, m_input,
       m_config.origin, m_config.rpID,
       m_config.credentialIDMax,
@@ -409,7 +413,7 @@ private:
       .detail = "enrollment"
     };
     if (enrollment.precreated) {
-      auto table = m_context->users;
+      auto table = m_db->users;
       UserID id = enrollment.userID;
       table->run(0, [self = ZmRef<EnrollmentFinish__>{this}, table, id,
 	  enrollment = ZuMv(enrollment)]() mutable {
@@ -425,14 +429,12 @@ private:
     submit_(ZuMv(enrollment));
   }
 
-  void submit_(Enrollment enrollment)
+  void submit_(EnrollmentArgs enrollment)
   {
     ZuTime deadline{enrollment.beforeGrant.expires};
     ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
-    ZmRef<MSaga> saga = new MSaga{};
-    saga->init(ZuMv(enrollment));
-    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+    if (!sagaSubmit(m_db, m_sagaID, Zum::enrollment(ZuMv(enrollment)),
       SagaFn{ZmRef<EnrollmentFinish__>{this}, ZmFnPtr<&EnrollmentFinish__::sagaSubmit_>{}},
       SagaFn{ZmRef<EnrollmentFinish__>{this}, ZmFnPtr<&EnrollmentFinish__::saga_>{}},
       deadline))
@@ -453,7 +455,6 @@ private:
   }
 
   DB		*m_db = nullptr;
-  DBContext	*m_context = nullptr;
   Bytes		m_ceremonyID;
   Bytes		m_bindingDigest;
   RegistrationInput m_input;
@@ -472,14 +473,14 @@ template <typename Heap = ZuVoid>
 class CredentialBegin__ : public Heap, public ZmPolymorph  {
 public:
   CredentialBegin__(
-      DBContext *context, Ztls::Random *rng, Bytes bindingDigest,
+      DB *db, Ztls::Random *rng, Bytes bindingDigest,
       CredentialBeginConfig config, EnrollmentBeginFn complete) :
-    m_context{context}, m_rng{rng}, m_bindingDigest{ZuMv(bindingDigest)},
+    m_db{db}, m_rng{rng}, m_bindingDigest{ZuMv(bindingDigest)},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_context || !m_rng || !m_bindingDigest || !m_config.issuer ||
+    if (!m_db || !m_rng || !m_bindingDigest || !m_config.issuer ||
 	!m_config.rpID || !m_config.rpName || !m_config.displayName ||
 	!m_config.userID || m_config.now <= 0 ||
 	m_config.expires <= m_config.now || !m_config.timeout) {
@@ -500,7 +501,7 @@ private:
 
   void user_()
   {
-    auto users = m_context->users;
+    auto users = m_db->users;
     UserID id = m_config.userID;
     users->run(0, [self = ZmRef<CredentialBegin__>{this}, users, id]() {
       users->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
@@ -549,7 +550,7 @@ private:
       .label = ZuMv(m_config.label)
     };
     ZuClear(random);
-    authorizationInsert(m_context, ZuMv(grant), [
+    authorizationInsert(m_db, ZuMv(grant), [
       self = ZmRef<CredentialBegin__>{this}, result = ZuMv(result)
     ](bool ok) mutable {
       self->finish_(ok ? WebAuthnError::OK : WebAuthnError::Storage,
@@ -557,7 +558,7 @@ private:
     });
   }
 
-  DBContext	*m_context = nullptr;
+  DB	*m_db = nullptr;
   Ztls::Random	*m_rng = nullptr;
   Bytes		m_bindingDigest;
   CredentialBeginConfig m_config;
@@ -572,25 +573,25 @@ template <typename Heap = ZuVoid>
 class CredentialFinish__ : public Heap, public ZmPolymorph  {
 public:
   CredentialFinish__(
-      DB *db, DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
+      DB *db, Bytes ceremonyID, Bytes bindingDigest,
       RegistrationInput input, EnrollmentFinishConfig config,
       EnrollmentFinishFn complete) :
-    m_db{db}, m_context{context}, m_ceremonyID{ZuMv(ceremonyID)},
+    m_db{db}, m_ceremonyID{ZuMv(ceremonyID)},
     m_bindingDigest{ZuMv(bindingDigest)}, m_input{ZuMv(input)},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_db || !m_context || m_ceremonyID.length() != 16 ||
+    if (!m_db || m_ceremonyID.length() != 16 ||
 	!m_bindingDigest) {
       finish_(WebAuthnError::Storage);
       return;
     }
     Bytes id = m_ceremonyID;
-    m_context->grants->run(0, [
+    m_db->grants->run(0, [
       self = ZmRef<CredentialFinish__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_db->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
     });
@@ -611,7 +612,7 @@ private:
       finish_(WebAuthnError::Ceremony);
       return;
     }
-    CredentialAdd add;
+    CredentialAddArgs add;
     int error = credentialPrepare(row->data(), m_bindingDigest, m_input,
       m_config.origin, m_config.rpID,
       m_config.credentialIDMax, m_config.now, add);
@@ -632,10 +633,8 @@ private:
     };
     ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
-    ZmRef<MSaga> saga = new MSaga{};
     ZuTime deadline{add.beforeGrant.expires};
-    saga->init(ZuMv(add));
-    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+    if (!sagaSubmit(m_db, m_sagaID, credentialAdd(ZuMv(add)),
       SagaFn{ZmRef<CredentialFinish__>{this},
 	ZmFnPtr<&CredentialFinish__::sagaSubmit_>{}},
       SagaFn{ZmRef<CredentialFinish__>{this},
@@ -656,7 +655,6 @@ private:
   }
 
   DB		*m_db = nullptr;
-  DBContext	*m_context = nullptr;
   Bytes		m_ceremonyID;
   Bytes		m_bindingDigest;
   RegistrationInput m_input;
@@ -674,14 +672,14 @@ template <typename Heap = ZuVoid>
 class RecoveryIssue__ : public Heap, public ZmPolymorph  {
 public:
   RecoveryIssue__(
-      DB *db, DBContext *context, Ztls::Random *rng,
+      DB *db, Ztls::Random *rng,
       RecoveryIssueConfig config, RecoveryIssueFn complete) :
-    m_db{db}, m_context{context}, m_rng{rng},
+    m_db{db}, m_rng{rng},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_db || !m_context || !m_rng) {
+    if (!m_db || !m_rng) {
       finish_(false);
       return;
     }
@@ -704,10 +702,10 @@ private:
   void user_()
   {
     UserID id = m_config.userID;
-    m_context->users->run(0, [
+    m_db->users->run(0, [
       self = ZmRef<RecoveryIssue__>{this}, id
     ]() mutable {
-      self->m_context->users->template find<0>(0, ZuFwdTuple(id), [
+      self->m_db->users->template find<0>(0, ZuFwdTuple(id), [
 	self = ZuMv(self)
       ](ZdbRowRef<User> user) mutable {
 	if (!user) {
@@ -736,7 +734,7 @@ private:
       .outcome = AuditOutcome::Success,
       .detail = "recovery suspended"
     };
-    RecoveryStart recovery{
+    RecoveryStartArgs recovery{
       .capabilityID = ZuMv(capability.id),
       .digest = ZuMv(capability.digest),
       .issuer = m_config.issuer,
@@ -752,9 +750,7 @@ private:
     ZdbSagaID sagaID;
     ZuAssert((sizeof(sagaID) == 16));
     memcpy(&sagaID, recovery.capabilityID.data(), sizeof(sagaID));
-    ZmRef<MSaga> saga = new MSaga{};
-    saga->init(ZuMv(recovery));
-    if (!sagaSubmit(m_db, sagaID, ZuMv(saga),
+    if (!sagaSubmit(m_db, sagaID, recoveryStart(ZuMv(recovery)),
       SagaFn{ZmRef<RecoveryIssue__>{this},
 	ZmFnPtr<&RecoveryIssue__::sagaSubmit_>{}},
       SagaFn{ZmRef<RecoveryIssue__>{this},
@@ -775,7 +771,6 @@ private:
   }
 
   DB		*m_db = nullptr;
-  DBContext	*m_context = nullptr;
   Ztls::Random	*m_rng = nullptr;
   RecoveryIssueConfig m_config;
   RecoveryIssueFn m_complete;
@@ -791,10 +786,10 @@ template <typename Heap = ZuVoid>
 class RecoveryBegin__ : public Heap, public ZmPolymorph  {
 public:
   RecoveryBegin__(
-      DBContext *context, Ztls::Random *rng, String capability,
+      DB *db, Ztls::Random *rng, String capability,
       Bytes bindingDigest, RecoveryBeginConfig config,
       EnrollmentBeginFn complete) :
-    m_context{context}, m_rng{rng}, m_capability{ZuMv(capability)},
+    m_db{db}, m_rng{rng}, m_capability{ZuMv(capability)},
     m_bindingDigest{ZuMv(bindingDigest)}, m_config{ZuMv(config)},
     m_complete{ZuMv(complete)} { }
 
@@ -802,7 +797,7 @@ public:
 
   void start()
   {
-    if (!m_context || !m_rng || !m_capability || !m_bindingDigest ||
+    if (!m_db || !m_rng || !m_capability || !m_bindingDigest ||
 	!m_config.issuer || !m_config.rpID || !m_config.rpName ||
 	!m_config.displayName || m_config.now <= 0 ||
 	m_config.expires <= m_config.now || !m_config.timeout ||
@@ -813,10 +808,10 @@ public:
     ZuClear(m_capability);
     m_capability.null();
     Bytes id = m_capID;
-    m_context->grants->run(0, [
+    m_db->grants->run(0, [
       self = ZmRef<RecoveryBegin__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_db->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
     });
@@ -856,8 +851,8 @@ private:
     m_userID = row->data().userID;
     m_userVersion = row->data().userVersion;
     m_actor = row->data().actor;
-    m_context->users->run(0, [self = ZmRef<RecoveryBegin__>{this}]() {
-      self->m_context->users->template find<0>(0, ZuFwdTuple(self->m_userID), [
+    m_db->users->run(0, [self = ZmRef<RecoveryBegin__>{this}]() {
+      self->m_db->users->template find<0>(0, ZuFwdTuple(self->m_userID), [
 	self = ZuMv(self)
       ](ZdbRowRef<User> row) mutable { self->user_(ZuMv(row)); });
     });
@@ -895,12 +890,12 @@ private:
     };
     ZuClear(random);
     Bytes id = m_capID;
-    m_context->grants->run(0, [
+    m_db->grants->run(0, [
       self = ZmRef<RecoveryBegin__>{this}, id = ZuMv(id),
       challenge = ZuMv(challenge), handle = ZuMv(handle),
       result = ZuMv(result)
     ]() mutable {
-      self->m_context->grants->template findUpd<0, ZuSeq<1>>(
+      self->m_db->grants->template findUpd<0, ZuSeq<1>>(
 	0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self), challenge = ZuMv(challenge),
 	handle = ZuMv(handle), result = ZuMv(result)
@@ -931,7 +926,7 @@ private:
     });
   }
 
-  DBContext	*m_context = nullptr;
+  DB	*m_db = nullptr;
   Ztls::Random	*m_rng = nullptr;
   String	m_capability;
   Bytes		m_capID;
@@ -953,25 +948,25 @@ template <typename Heap = ZuVoid>
 class RecoveryFinish__ : public Heap, public ZmPolymorph  {
 public:
   RecoveryFinish__(
-      DB *db, DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
+      DB *db, Bytes ceremonyID, Bytes bindingDigest,
       RegistrationInput input, EnrollmentFinishConfig config,
       EnrollmentFinishFn complete) :
-    m_db{db}, m_context{context}, m_ceremonyID{ZuMv(ceremonyID)},
+    m_db{db}, m_ceremonyID{ZuMv(ceremonyID)},
     m_bindingDigest{ZuMv(bindingDigest)}, m_input{ZuMv(input)},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_db || !m_context || m_ceremonyID.length() != 16 ||
+    if (!m_db || m_ceremonyID.length() != 16 ||
 	!m_bindingDigest) {
       finish_(WebAuthnError::Storage);
       return;
     }
     Bytes id = m_ceremonyID;
-    m_context->grants->run(0, [
+    m_db->grants->run(0, [
       self = ZmRef<RecoveryFinish__>{this}, id = ZuMv(id)
     ]() mutable {
-      self->m_context->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
+      self->m_db->grants->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	self = ZuMv(self)
       ](ZdbRowRef<Grant> row) mutable { self->grant_(ZuMv(row)); });
     });
@@ -994,10 +989,10 @@ private:
     }
     m_ceremony = row->data();
     UserID id = m_ceremony.userID;
-    m_context->users->run(0, [
+    m_db->users->run(0, [
       self = ZmRef<RecoveryFinish__>{this}, id
     ]() mutable {
-      self->m_context->users->template find<0>(0, ZuFwdTuple(id), [
+      self->m_db->users->template find<0>(0, ZuFwdTuple(id), [
 	self = ZuMv(self)
       ](ZdbRowRef<User> row) mutable { self->user_(ZuMv(row)); });
     });
@@ -1009,7 +1004,7 @@ private:
       finish_(WebAuthnError::Credential);
       return;
     }
-    RecoveryEnroll recovery;
+    RecoveryEnrollArgs recovery;
     int error = recoveryPrepare(m_ceremony, row->data(), m_bindingDigest,
       m_input, m_config.origin, m_config.rpID,
       m_config.credentialIDMax, m_config.now, recovery);
@@ -1040,10 +1035,8 @@ private:
     ZuAssert((sizeof(m_sagaID) == 16));
     memcpy(&m_sagaID, m_ceremonyID.data(), sizeof(m_sagaID));
     reinterpret_cast<uint8_t *>(&m_sagaID)[0] ^= 0x80;
-    ZmRef<MSaga> saga = new MSaga{};
     ZuTime deadline{recovery.beforeGrant.expires};
-    saga->init(ZuMv(recovery));
-    if (!sagaSubmit(m_db, m_sagaID, ZuMv(saga),
+    if (!sagaSubmit(m_db, m_sagaID, recoveryEnroll(ZuMv(recovery)),
       SagaFn{ZmRef<RecoveryFinish__>{this}, ZmFnPtr<&RecoveryFinish__::sagaSubmit_>{}},
       SagaFn{ZmRef<RecoveryFinish__>{this}, ZmFnPtr<&RecoveryFinish__::saga_>{}},
       deadline))
@@ -1064,7 +1057,6 @@ private:
   }
 
   DB		*m_db = nullptr;
-  DBContext	*m_context = nullptr;
   Bytes		m_ceremonyID;
   Bytes		m_bindingDigest;
   Grant		m_ceremony;
@@ -1081,10 +1073,10 @@ ZuDerive(RecoveryFinish_Heap,
 ZuDerive(RecoveryFinish_, (RecoveryFinish__<RecoveryFinish_Heap>));
 
 static void bootstrapIssue_(
-    DBContext *context, Ztls::Random &rng, BootstrapConfig config,
+    DB *db, Ztls::Random &rng, BootstrapConfig config,
     BootstrapFn complete)
 {
-  if (!context || !config.issuer || !config.appID || config.now <= 0 ||
+  if (!db || !config.issuer || !config.appID || config.now <= 0 ||
       config.expires <= config.now) {
     complete(false, String{});
     return;
@@ -1118,8 +1110,8 @@ static void bootstrapIssue_(
   };
   String token = ZuMv(capability.token);
   Bytes id = grant.id;
-  context->grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [
-    context, grant = ZuMv(grant), token = ZuMv(token),
+  db->grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [
+    db, grant = ZuMv(grant), token = ZuMv(token),
     complete = ZuMv(complete)
   ](ZdbRowRef<Grant> existing) mutable {
     if (existing) {
@@ -1127,7 +1119,7 @@ static void bootstrapIssue_(
       complete(false, String{});
       return;
     }
-    authorizationInsert(context, ZuMv(grant), [
+    authorizationInsert(db, ZuMv(grant), [
       token = ZuMv(token), complete = ZuMv(complete)
     ](bool ok) mutable {
       if (!ok) {
@@ -1140,26 +1132,26 @@ static void bootstrapIssue_(
 }
 
 static void recoveryIssue_(
-    DB *db, DBContext *context, Ztls::Random &rng,
+    DB *db, Ztls::Random &rng,
     RecoveryIssueConfig config, RecoveryIssueFn complete)
 {
   ZmRef<RecoveryIssue_> request = new RecoveryIssue_{
-    db, context, &rng, ZuMv(config), ZuMv(complete)};
+    db, &rng, ZuMv(config), ZuMv(complete)};
   request->start();
 }
 
 bool bootstrapIssue(
-    Requests *requests, ZuTime deadline, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, BootstrapConfig config, BootstrapFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<CapabilityComplete_> state =
     new CapabilityComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, context, &rng, config = ZuMv(config)
+    state, db, &rng, config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    bootstrapIssue_(context, rng, ZuMv(config), [state](
+    bootstrapIssue_(db, rng, ZuMv(config), [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
     });
@@ -1167,17 +1159,17 @@ bool bootstrapIssue(
 }
 
 bool recoveryIssue(
-    Requests *requests, ZuTime deadline, DB *db, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, RecoveryIssueConfig config, RecoveryIssueFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<CapabilityComplete_> state =
     new CapabilityComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, db, context, &rng, config = ZuMv(config)
+    state, db, &rng, config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    recoveryIssue_(db, context, rng, ZuMv(config), [state](
+    recoveryIssue_(db, rng, ZuMv(config), [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
     });
@@ -1185,14 +1177,14 @@ bool recoveryIssue(
 }
 
 bool recoveryBegin(
-    Requests *requests, ZuTime deadline, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, String capability, Bytes bindingDigest,
     RecoveryBeginConfig config, EnrollmentBeginFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<PasskeyBeginComplete_> state =
     new PasskeyBeginComplete_{ZuMv(complete)};
-  ZmRef<RecoveryBegin_> operation = new RecoveryBegin_{context, &rng,
+  ZmRef<RecoveryBegin_> operation = new RecoveryBegin_{db, &rng,
     ZuMv(capability), ZuMv(bindingDigest), ZuMv(config), [state](
 	int error, EnrollmentBeginResult result) mutable {
       state->complete(error, ZuMv(result));
@@ -1205,7 +1197,7 @@ bool recoveryBegin(
 }
 
 bool recoveryFinish(
-    Requests *requests, ZuTime deadline, DB *db, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Bytes ceremonyID, Bytes bindingDigest, RegistrationInput input,
     EnrollmentFinishConfig config, EnrollmentFinishFn complete)
 {
@@ -1213,12 +1205,12 @@ bool recoveryFinish(
   ZmRef<PasskeyFinishComplete_> state =
     new PasskeyFinishComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, db, context, ceremonyID = ZuMv(ceremonyID),
+    state, db, ceremonyID = ZuMv(ceremonyID),
     bindingDigest = ZuMv(bindingDigest), input = ZuMv(input),
     config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    ZmRef<RecoveryFinish_> operation = new RecoveryFinish_{db, context,
+    ZmRef<RecoveryFinish_> operation = new RecoveryFinish_{db,
       ZuMv(ceremonyID), ZuMv(bindingDigest), ZuMv(input), ZuMv(config),
       [state](int error) mutable { state->complete(error); }};
     operation->start();
@@ -1226,7 +1218,7 @@ bool recoveryFinish(
 }
 
 bool enrollmentBegin(
-    Requests *requests, ZuTime deadline, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, Bytes bindingDigest, EnrollmentBeginConfig config,
     EnrollmentBeginFn complete)
 {
@@ -1234,11 +1226,11 @@ bool enrollmentBegin(
   ZmRef<PasskeyBeginComplete_> state =
     new PasskeyBeginComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, context, &rng, bindingDigest = ZuMv(bindingDigest),
+    state, db, &rng, bindingDigest = ZuMv(bindingDigest),
     config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    ZmRef<EnrollmentBegin_> operation = new EnrollmentBegin_{context, &rng,
+    ZmRef<EnrollmentBegin_> operation = new EnrollmentBegin_{db, &rng,
       {}, ZuMv(bindingDigest), ZuMv(config), [state](
 	  int error, EnrollmentBeginResult result) mutable {
 	state->complete(error, ZuMv(result));
@@ -1248,14 +1240,14 @@ bool enrollmentBegin(
 }
 
 bool bootstrapBegin(
-    Requests *requests, ZuTime deadline, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, String capability, Bytes bindingDigest,
     EnrollmentBeginConfig config, EnrollmentBeginFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<PasskeyBeginComplete_> state =
     new PasskeyBeginComplete_{ZuMv(complete)};
-  ZmRef<EnrollmentBegin_> operation = new EnrollmentBegin_{context, &rng,
+  ZmRef<EnrollmentBegin_> operation = new EnrollmentBegin_{db, &rng,
     ZuMv(capability), ZuMv(bindingDigest), ZuMv(config), [state](
 	int error, EnrollmentBeginResult result) mutable {
       state->complete(error, ZuMv(result));
@@ -1268,7 +1260,7 @@ bool bootstrapBegin(
 }
 
 bool enrollmentFinish(
-    Requests *requests, ZuTime deadline, DB *db, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Bytes ceremonyID, Bytes bindingDigest, RegistrationInput input,
     EnrollmentFinishConfig config, EnrollmentFinishFn complete)
 {
@@ -1276,12 +1268,12 @@ bool enrollmentFinish(
   ZmRef<PasskeyFinishComplete_> state =
     new PasskeyFinishComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, db, context, ceremonyID = ZuMv(ceremonyID),
+    state, db, ceremonyID = ZuMv(ceremonyID),
     bindingDigest = ZuMv(bindingDigest), input = ZuMv(input),
     config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    ZmRef<EnrollmentFinish_> operation = new EnrollmentFinish_{db, context,
+    ZmRef<EnrollmentFinish_> operation = new EnrollmentFinish_{db,
       ZuMv(ceremonyID), ZuMv(bindingDigest), ZuMv(input), ZuMv(config),
       [state](int error) mutable { state->complete(error); }};
     operation->start();
@@ -1289,7 +1281,7 @@ bool enrollmentFinish(
 }
 
 bool credentialBegin(
-    Requests *requests, ZuTime deadline, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, Bytes bindingDigest, CredentialBeginConfig config,
     EnrollmentBeginFn complete)
 {
@@ -1297,11 +1289,11 @@ bool credentialBegin(
   ZmRef<PasskeyBeginComplete_> state =
     new PasskeyBeginComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, context, &rng, bindingDigest = ZuMv(bindingDigest),
+    state, db, &rng, bindingDigest = ZuMv(bindingDigest),
     config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    ZmRef<CredentialBegin_> operation = new CredentialBegin_{context, &rng,
+    ZmRef<CredentialBegin_> operation = new CredentialBegin_{db, &rng,
       ZuMv(bindingDigest), ZuMv(config), [state](
 	  int error, EnrollmentBeginResult result) mutable {
 	state->complete(error, ZuMv(result));
@@ -1311,7 +1303,7 @@ bool credentialBegin(
 }
 
 bool credentialFinish(
-    Requests *requests, ZuTime deadline, DB *db, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     Bytes ceremonyID, Bytes bindingDigest, RegistrationInput input,
     EnrollmentFinishConfig config, EnrollmentFinishFn complete)
 {
@@ -1319,12 +1311,12 @@ bool credentialFinish(
   ZmRef<PasskeyFinishComplete_> state =
     new PasskeyFinishComplete_{ZuMv(complete)};
   return requests->run(deadline, [
-    state, db, context, ceremonyID = ZuMv(ceremonyID),
+    state, db, ceremonyID = ZuMv(ceremonyID),
     bindingDigest = ZuMv(bindingDigest), input = ZuMv(input),
     config = ZuMv(config)
   ](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    ZmRef<CredentialFinish_> operation = new CredentialFinish_{db, context,
+    ZmRef<CredentialFinish_> operation = new CredentialFinish_{db,
       ZuMv(ceremonyID), ZuMv(bindingDigest), ZuMv(input), ZuMv(config),
       [state](int error) mutable { state->complete(error); }};
     operation->start();

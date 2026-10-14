@@ -20,7 +20,7 @@
 
 namespace Zum {
 
-struct DBContext;
+struct DB;
 
 namespace SessionError { enum { OK = -1, Invalid, Expired, Storage }; }
 
@@ -42,16 +42,16 @@ ZuDerive(SessionDoneFn, (ZmFn<void(int),
   ZmFnHeapID<"Zum.SessionDoneFn">>));
 
 ZumExtern bool sessionIssue(
-  Requests *, ZuTime, DBContext *, Ztls::Random &, SessionConfig, SessionFn);
+  Requests *, ZuTime, DB *, Ztls::Random &, SessionConfig, SessionFn);
 ZumExtern bool sessionIssueGrant(
-  Requests *, ZuTime, DBContext *, Ztls::Random &, Bytes grantID,
+  Requests *, ZuTime, DB *, Ztls::Random &, Bytes grantID,
   String issuer, int64_t now, int64_t idleLifetime, int64_t absoluteLifetime,
   SessionFn);
 ZumExtern bool sessionUse(
-  Requests *, ZuTime, DBContext *, String token, String issuer,
+  Requests *, ZuTime, DB *, String token, String issuer,
   int64_t now, int64_t idleLifetime, SessionFn);
 ZumExtern bool sessionRevoke(
-  Requests *, ZuTime, DBContext *, String token, String issuer,
+  Requests *, ZuTime, DB *, String token, String issuer,
   int64_t now, SessionDoneFn);
 
 } // namespace Zum

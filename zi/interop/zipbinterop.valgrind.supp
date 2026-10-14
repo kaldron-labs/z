@@ -1,0 +1,8 @@
+{
+   protobuf_parser_type_name_table
+   Memcheck:Leak
+   match-leak-kinds: possible
+   fun:_Znwm
+   ...
+   fun:*GetTypeNameTableEv
+}

@@ -1,9 +1,19 @@
 # zrest interoperability tests
 
-`make -C zrest/itest test` runs `zrestmatrix`, which supervises the C++ and Go
-clients and servers over verified localhost TLS. The Go tool and the pinned Go
-module dependencies are required for the full matrix; without Go the driver
-reports a TAP skip.
+`make -C zrest/itest test` runs `zrestendpoint` and `zrestmatrix`.
+`zrestendpoint` exercises the reusable REST client and server on localhost
+HTTP/1.1, HTTP/2 and HTTP/3. It checks fixed JSON/raw request and response
+round trips, streamed JSON/raw uploads and responses, retry-limit failure,
+deferred H1 ordering, independent H2/H3 streams, declared errors, redirects,
+fixed-length and streamed SSE delivery, client stop during a partial event,
+late off-shard duplicate completion, shutdown, same-object endpoint reuse,
+and bounded admission; run it
+directly as `./zrest/itest/zrestendpoint`. `zrestmatrix`
+supervises the C++ and Go clients and servers over verified localhost TLS.
+The endpoint test also snapshots REST heap allocations and scheduler enqueues
+around one healthy H1 ping.
+The Go tool and pinned Go module dependencies are required for the full matrix;
+without Go the driver reports a TAP skip.
 
 The driver emits its twelve cases through `ZuTest` in a matrix subtest.
 Child diagnostics use `ZuTestUtil::log`; `-q` or the test harness suppresses

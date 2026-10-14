@@ -25,7 +25,7 @@ class ZiMultiplex;
 
 namespace Zum {
 
-struct DBContext;
+struct DB;
 
 // OIDC state, nonce, and PKCE verifier each carry 256 bits of entropy.
 enum { OIDCRandomSize = 32 };
@@ -152,7 +152,7 @@ public:
   ~OIDC();
 
   bool init(
-    ZmScheduler *, unsigned sid, DBContext *, OIDCLimits,
+    ZmScheduler *, unsigned sid, DB *, OIDCLimits,
     unsigned pendingLimit, uint64_t timeout, OIDCClockFn, OIDCHTTPFn);
   void final();
 
@@ -197,7 +197,7 @@ ZumExtern bool oidcVerifyIDToken(
   ZuCSpan token, ZuBSpan publicKey, ZuCSpan nonce,
   const OIDCConfig &, int64_t now, const OIDCLimits &, OIDCClaims &);
 ZumExtern void oidcLoadUser(
-  DBContext *, String subject, const OIDCConfig &, StringVec roleValues,
+  DB *, String subject, const OIDCConfig &, StringVec roleValues,
   StringVec eligibilityValues, int64_t now, OIDCUserFn);
 
 } // namespace Zum

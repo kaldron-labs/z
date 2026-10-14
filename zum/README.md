@@ -5,6 +5,12 @@ component. It provides `libZum`, an embeddable service-side authentication
 library, and `zumd`, the persistent OAuth 2.0/OIDC server that supplies the
 identity, authorization and management services used by Zum applications.
 
+`zumd` loads `Z_HEAPTUNE` at startup through `ZiHeapTune`. Transient scope
+selection trees use the `Zum.ScopeNames` and `Zum.ScopeIDs` node heaps;
+configure their recycling capacities by heap ID, partition and `vshift`
+in that tuning file. One scope-name node holds the identity, granted,
+requested and selected membership flags. Zdb indexes resolve role records.
+
 ## Optional `zumd` telemetry
 
 `zumd` can publish local App, multiplex and database telemetry through

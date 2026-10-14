@@ -115,6 +115,33 @@ inline bool streamBodyAbsent(bool optional)
   return optional;
 }
 
+struct Stats {
+  ZmAtomic<unsigned> activeConnections = 0;
+  ZmAtomic<unsigned> activeRequests = 0;
+  ZmAtomic<unsigned> queuedResponses = 0;
+  ZmAtomic<uint64_t> retainedBytes = 0;
+  ZmAtomic<uint64_t> serverFaults = 0;
+  ZmAtomic<uint64_t> rejectedRequests = 0;
+  ZmAtomic<uint64_t> parseFailures = 0;
+  ZmAtomic<uint64_t> bodyFailures = 0;
+  ZmAtomic<uint64_t> responseBuildFailures = 0;
+  ZmAtomic<uint64_t> transportFailures = 0;
+};
+
+inline bool bodyAllowed_(Method::T method, unsigned status)
+{
+  if (method == Method::HEAD || (status >= 100 && status < 200) ||
+      status == 204 || status == 304)
+    return false;
+  return method != Method::CONNECT || status < 200 || status >= 300;
+}
+
+inline bool contentLengthForbidden_(Method::T method, unsigned status)
+{
+  return (status >= 100 && status < 200) || status == 204 ||
+    (method == Method::CONNECT && status >= 200 && status < 300);
+}
+
 } // namespace Server_
 
 using StreamCancelFn = ZmFn<void(), ZmFnHeapID<"Zhttp.StreamCancel">>;
@@ -1664,9 +1691,17 @@ private:
 
 // Application response Builder base. The application ResBuilder_ derives from
 // an intrusive object base followed by ResBuilder. The final application
-// ResBuilder is ResBuilderQ::Node, an intrusive ZmList::Node which adds the
+// ResBuilder is ResQ::Node, an intrusive ZmList::Node which adds the
 // heap base ahead of, and publicly derives from, the application data type.
 // Each node represents exactly one response and is never reset or repurposed.
+ZtEnumStruct(ZhttpAPI, ResponseCode, int8_t,
+  Submitted, Failed, Discarded);
+
+struct ResponseResult {
+  ResponseCode::T code = ResponseCode::Discarded;
+  bool ok() const { return code == ResponseCode::Submitted; }
+};
+
 struct ResBuilder : public Builder {
   // Original request method, used to suppress forbidden response bodies.
   Method::T method() const { return Method::GET; }
@@ -1676,22 +1711,107 @@ struct ResBuilder : public Builder {
 
   // Called exactly once when an active streaming producer becomes unusable.
   void close() { }
+
+  // Local builder retirement; Submitted does not imply peer consumption.
+  void completed(const ResponseResult &) { }
+
+  uint64_t routeSequence() const { return m_routeSequence; }
+  void routeSequence(uint64_t value) { m_routeSequence = value; }
+private:
+  uint64_t m_routeSequence = 0;
 };
 
-template <typename App_>
-class Server : public ZmEngine<Server<App_>> {
+// A parser can retain the response destination without retaining its callback
+// link pointer. The concrete link reference is released when the ticket dies;
+// sending transfers a separate reference to the existing Tx response path.
+template <typename Builder>
+class Route {
 public:
-  using Engine = ZmEngine<Server<App_>>;
-  using App = App_;
-  using AppParser = typename App::Parser;
-  using ReqHdrCatalog = typename AppParser::HdrCatalog;
-  ZuAssert((ZuIs_<AppParser, Zhttp::Parser>{}),
-    "Zhttp::Server requires App::Parser to derive from Zhttp::Parser");
-  using ResBuilderQ = typename App::ResBuilderQ;
-  using ResBuilder = typename ResBuilderQ::Node;
-  using ResBuilder_ = typename ResBuilderQ::T;
+  Route() = default;
+  template <typename Link>
+  Route(Link *link, Method::T method) :
+      m_link{link}, m_method{method},
+      m_sequence{link->rxState().requestSequence()},
+      m_session{link->session()} {
+    ZmREF(link);
+    m_release = [](void *ptr) { ZmDEREF(static_cast<Link *>(ptr)); };
+    m_send = [](void *ptr, uint64_t sequence, ZmRef<Builder> response) {
+      static_cast<Link *>(ptr)->routeSend(sequence, ZuMv(response));
+    };
+    m_close = [](void *ptr) {
+      auto link = ZmRef(static_cast<Link *>(ptr));
+      link->app()->txRun([link = ZuMv(link)]() mutable {
+	link->disconnect();
+      });
+    };
+  }
+  Route(const Route &) = delete;
+  Route &operator =(const Route &) = delete;
+  Route(Route &&other) { move_(other); }
+  Route &operator =(Route &&other) {
+    if (this != &other) { reset(); move_(other); }
+    return *this;
+  }
+  ~Route() { reset(); }
+
+  explicit operator bool() const { return m_link; }
+  Method::T method() const { return m_method; }
+  uint64_t sequence() const { return m_sequence; }
+  Session session() const { return m_session; }
+  void send(ZmRef<Builder> response) const {
+    if (m_link && response) m_send(m_link, m_sequence, ZuMv(response));
+  }
+  void close() const { if (m_link) m_close(m_link); }
+  void reset() {
+    if (m_link) m_release(m_link);
+    m_link = nullptr;
+  }
+
+private:
+  void move_(Route &other) {
+    m_link = other.m_link;
+    m_release = other.m_release;
+    m_send = other.m_send;
+    m_close = other.m_close;
+    m_method = other.m_method;
+    m_sequence = other.m_sequence;
+    m_session = other.m_session;
+    other.m_link = nullptr;
+  }
+
+  void *m_link = nullptr;
+  void (*m_release)(void *) = nullptr;
+  void (*m_send)(void *, uint64_t, ZmRef<Builder>) = nullptr;
+  void (*m_close)(void *) = nullptr;
+  Method::T m_method = Method::GET;
+  uint64_t m_sequence = 0;
+  Session m_session;
+};
+
+template <typename Q, bool Ordered>
+struct RouteState { };
+template <typename Q>
+struct RouteState<Q, true> {
+  Q m_routeResponses;
+  uint64_t m_routeNext = 1;
+};
+
+template <typename Impl_, typename ReqParser_, typename ResQ_>
+class Server : public ZmEngine<Server<Impl_, ReqParser_, ResQ_>> {
+  friend ZmEngine<Server<Impl_, ReqParser_, ResQ_>>;
+public:
+  using Engine = ZmEngine<Server<Impl_, ReqParser_, ResQ_>>;
+  using Impl = Impl_;
+  using ReqParser = ReqParser_;
+  using ResQ = ResQ_;
+  using ReqHdrCatalog = typename ReqParser::HdrCatalog;
+  using ResBuilder = typename ResQ::Node;
+  using ResBuilder_ = typename ResQ::T;
+  using ResponseHeaders = typename ResponseHeaderSets<ResBuilder_>::T;
+  ZuAssert((ZuIs_<ReqParser, Zhttp::Parser>{}),
+    "Zhttp::Server requires ReqParser to derive from Zhttp::Parser");
   ZuAssert((ZuIs_<ResBuilder, ResBuilder_>{}),
-    "Zhttp::Server requires ResBuilderQ::Node to derive from ResBuilder_");
+    "Zhttp::Server requires ResQ::Node to derive from ResBuilder_");
   ZuAssert(ZuIsObject<ResBuilder_>{},
     "Zhttp::Server requires ResBuilder_ to be intrusively reference-counted");
   ZuAssert((ZuIs_<ResBuilder_, Zhttp::ResBuilder>{}),
@@ -1717,25 +1837,13 @@ private:
   template <typename Profile> struct Parser;
   template <typename Profile, typename Link_> struct Responses;
 
-  struct Stats {
-    ZmAtomic<unsigned> activeConnections = 0;
-    ZmAtomic<unsigned> activeRequests = 0;
-    ZmAtomic<unsigned> queuedResponses = 0;
-    ZmAtomic<uint64_t> retainedBytes = 0;
-    ZmAtomic<uint64_t> serverFaults = 0;
-    ZmAtomic<uint64_t> rejectedRequests = 0;
-    ZmAtomic<uint64_t> parseFailures = 0;
-    ZmAtomic<uint64_t> bodyFailures = 0;
-    ZmAtomic<uint64_t> responseBuildFailures = 0;
-    ZmAtomic<uint64_t> transportFailures = 0;
-  };
-
   const ServerConfig &config() const { return m_config; }
-  App *app() const { return m_app; }
+  auto impl() { return static_cast<Impl *>(this); }
+  auto impl() const { return static_cast<const Impl *>(this); }
   const MessageString &altSvc() const { return m_altSvc; }
   unsigned txThread() const { return m_txThread; }
-  Stats &stats() { return m_stats; }
-  const Stats &stats() const { return m_stats; }
+  Server_::Stats &stats() { return m_stats; }
+  const Server_::Stats &stats() const { return m_stats; }
   template <typename Driver>
   typename StreamTaskQ::Node *streamTaskAdd_(ZuRef<Driver> driver) {
     return m_streamTasks.push(StreamTask{ZuMv(driver)});
@@ -1752,6 +1860,14 @@ private:
       Parser, ReqHdrCatalog>;
     using State = typename Base::State;
 
+    template <typename AppParser>
+    static auto bodyMax_(AppParser &parser, uint64_t max, int) ->
+        decltype(parser.bodyMax(max), void()) {
+      parser.bodyMax(max);
+    }
+    template <typename AppParser>
+    static void bodyMax_(AppParser &, uint64_t, long) { }
+
     void bind(Server *server_, ProfileLink<Profile> *link_) {
       server = server_;
       link = link_;
@@ -1759,7 +1875,8 @@ private:
     }
 
     void begin() {
-      appParser.init(*server->app());
+      appParser.init(*server->impl());
+      bodyMax_(appParser, server->config().retainedBodyMax(), 0);
       active = true;
       notified = false;
     }
@@ -1785,7 +1902,7 @@ private:
     void header(
 	Zhttp::FieldSection::T section,
 	ZuBSpan key, ZuSpan<uint8_t> value) {
-      if constexpr (Fields::HasRuntime<AppParser>{})
+      if constexpr (Fields::HasRuntime<ReqParser>{})
 	parser_().header(section, key, value);
     }
     bool bodyInfo(BodyType::T type, uint64_t length) {
@@ -1811,12 +1928,12 @@ private:
     }
 
   private:
-    AppParser &parser_() { return appParser; }
+    ReqParser &parser_() { return appParser; }
 
   public:
     Server		*server = nullptr;
     ProfileLink<Profile>	*link = nullptr;
-    AppParser	appParser;
+    ReqParser	appParser;
     bool	active = false;
     bool	notified = false;
   };
@@ -1932,18 +2049,6 @@ private:
     using Ops::status;
   };
 
-  static bool bodyAllowed_(Method::T method, unsigned status) {
-    if (method == Method::HEAD || (status >= 100 && status < 200) ||
-	status == 204 || status == 304)
-      return false;
-    return method != Method::CONNECT || status < 200 || status >= 300;
-  }
-
-  static bool contentLengthForbidden_(Method::T method, unsigned status) {
-    return (status >= 100 && status < 200) || status == 204 ||
-      (method == Method::CONNECT && status >= 200 && status < 300);
-  }
-
   template <typename Profile, typename Link_, typename Builder>
   struct ServerTxOps {
     Server	*server;
@@ -1993,9 +2098,10 @@ private:
     unsigned status = builder.status();
     auto policy = builder.bodyPolicy();
     Method::T method = builder.method();
-    if (!BodyPolicy::hasBody(policy) || !bodyAllowed_(method, status)) {
+    if (!BodyPolicy::hasBody(policy) ||
+	!Server_::bodyAllowed_(method, status)) {
       ResponseTx<Profile, Builder, false, false> response{
-	this, builder, contentLengthForbidden_(method, status)};
+	this, builder, Server_::contentLengthForbidden_(method, status)};
 	auto tx = link.transmit_(response);
       response.begin(tx);
       response.finish(tx);
@@ -2242,7 +2348,8 @@ private:
   }
 
   template <typename Profile, typename Link_>
-  struct Responses {
+  struct Responses : private RouteState<ResQ,
+      !ProfileTraits<Profile>::Multiplexed> {
     auto impl() { return static_cast<Link_ *>(this); }
     auto impl() const { return static_cast<const Link_ *>(this); }
 
@@ -2255,6 +2362,21 @@ private:
 	link = ZuMv(link), response = ZuMv(response)]() mutable {
 	link->responseSend_(ZuMv(response));
       });
+    }
+
+    void routeSend(uint64_t sequence, ZmRef<ResBuilder> response) {
+      if constexpr (ProfileTraits<Profile>::Multiplexed) {
+	send(ZuMv(response));
+      } else {
+	if (!response) return;
+	auto link = ZmRef(impl());
+	auto server = link->app()->server;
+	++server->stats().queuedResponses;
+	link->app()->txRun([
+	  link = ZuMv(link), response = ZuMv(response), sequence]() mutable {
+	  link->responseRoute_(sequence, ZuMv(response));
+	});
+      }
     }
 
     void responseDisconnected_() {
@@ -2274,11 +2396,53 @@ private:
     friend Server;
     template <typename P, typename L, typename H> friend struct StreamBody_;
 
+    void responseRoute_(uint64_t sequence, ZmRef<ResBuilder> response) {
+      auto server = impl()->app()->server;
+      server->assertTx_();
+      if (!impl()->active() || sequence < this->m_routeNext) {
+	--server->stats().queuedResponses;
+	response->data().completed({ResponseCode::Discarded});
+	return;
+      }
+      response->data().routeSequence(sequence);
+      if (sequence == this->m_routeNext) {
+	++this->m_routeNext;
+	responseSend_(ZuMv(response));
+	while (auto next = this->m_routeResponses.headNode()) {
+	  if (next->data().routeSequence() != this->m_routeNext) break;
+	  ++this->m_routeNext;
+	  responseSend_(this->m_routeResponses.shift());
+	}
+	return;
+      }
+      bool duplicate = false, inserted = false;
+      {
+	auto iter = this->m_routeResponses.iter();
+	while (auto next = iter()) {
+	  auto ordered = next->data().routeSequence();
+	  if (sequence == ordered) { duplicate = true; break; }
+	  if (sequence < ordered) {
+	    iter.unshiftNode(response.ptr());
+	    inserted = true;
+	    break;
+	  }
+	}
+      }
+      if (duplicate) {
+	--server->stats().queuedResponses;
+	response->data().completed({ResponseCode::Discarded});
+	return;
+      }
+      if (inserted) return;
+      this->m_routeResponses.pushNode(ZuMv(response));
+    }
+
     void responseSend_(ZmRef<ResBuilder> response) {
       auto server = impl()->app()->server;
       server->assertTx_();
       if (!impl()->active()) {
 	--server->stats().queuedResponses;
+	response->data().completed({ResponseCode::Discarded});
 	return;
       }
       m_responses.pushNode(ZuMv(response));
@@ -2310,11 +2474,16 @@ private:
       auto server = impl()->app()->server;
       responseCancel_({});
       responseRelease_(m_retainedBytes);
+      auto done = ZuMv(m_response);
       m_response = nullptr;
+      bool disconnect = m_disconnect;
+      ResponseCode::T code = ok ? ResponseCode::Submitted :
+	ResponseCode::Failed;
+      done->data().completed({code});
       if (!ok) ++server->stats().transportFailures;
-	if (!ok)
+      if (!ok)
 	ZiLOG(Warning, "Zhttp", "HTTP response transport failed");
-      if (!ok || m_disconnect) {
+      if (!ok || disconnect) {
 	responseCancelPending_();
 	impl()->disconnect();
 	return;
@@ -2338,15 +2507,24 @@ private:
       if (m_response.ptr() != response) return;
       responseCancel_({});
       responseRelease_(m_retainedBytes);
+      auto failed = ZuMv(m_response);
       m_response = nullptr;
+      failed->data().completed({ResponseCode::Failed});
       responseCancelPending_();
       impl()->disconnect();
     }
 
     void responseCancelPending_() {
       auto server = impl()->app()->server;
-      while (m_responses.shift())
+      while (auto response = m_responses.shift()) {
 	--server->stats().queuedResponses;
+	response->data().completed({ResponseCode::Discarded});
+      }
+      if constexpr (!ProfileTraits<Profile>::Multiplexed)
+	while (auto response = this->m_routeResponses.shift()) {
+	  --server->stats().queuedResponses;
+	  response->data().completed({ResponseCode::Discarded});
+	}
     }
 
     void responseCancelAll_() {
@@ -2356,7 +2534,9 @@ private:
       responseCancelPending_();
       if (m_response) {
 	responseRelease_(m_retainedBytes);
+	auto discarded = ZuMv(m_response);
 	m_response = nullptr;
+	discarded->data().completed({ResponseCode::Discarded});
       }
     }
 
@@ -2377,7 +2557,7 @@ private:
       server->stats().retainedBytes -= n;
     }
 
-    ResBuilderQ		m_responses;
+    ResQ			m_responses;
     ZmRef<ResBuilder>	m_response;
     StreamCancelFn	m_cancel;
     uint64_t		m_retainedBytes = 0;
@@ -2393,6 +2573,8 @@ private:
     using Base = ServerSession<Session, Parser_, Message>;
     using Base::parser;
 
+    uint64_t requestSequence() const { return m_requestSequence; }
+
     template <typename Link_, typename Rx>
     int process(Link_ &link, Rx &rx) {
       if (terminal) return 0;
@@ -2402,6 +2584,7 @@ private:
 	if constexpr (Message::ID == Version::H1)
 	  if (!rx.length()) return 0;
 	if (!server->admitRequest_()) return -1;
+	++m_requestSequence;
 	parser.begin();
       }
       return Base::process(link, rx);
@@ -2446,6 +2629,7 @@ private:
     }
 
     bool terminal = false;
+    uint64_t m_requestSequence = 0;
   };
 
   template <typename Profile>
@@ -2465,34 +2649,34 @@ private:
     void connected(LinkT &link, const ConnectedInfo &) {
       server->registerTxError_(link);
       if constexpr (!HTTP::Multiplexed)
-	server->connected(&link, HTTP::Transport::ID);
-      server->app()->connected(HTTP::Transport::ID);
+	server->sessionConnected_(&link, HTTP::Transport::ID);
+      server->impl()->connected(HTTP::Transport::ID);
     }
     template <typename LinkT>
     void disconnected(LinkT &link, bool) {
       link.responseDisconnected_();
       if constexpr (!HTTP::Multiplexed)
-	server->disconnected(&link, HTTP::Transport::ID);
+	server->sessionDisconnected_(&link, HTTP::Transport::ID);
     }
     void connected(Zhttp::Session session) {
-      server->connected(session);
+      server->sessionConnected_(session);
     }
     void disconnected(Zhttp::Session session) {
-      server->disconnected(session);
+      server->sessionDisconnected_(session);
     }
     void release() {
       server->release(HTTP::Transport::ID);
     }
     template <typename Info>
     void listening(const Info &info) {
-      server->app()->listening(HTTP::Transport::ID, info.port);
+      server->impl()->listening(HTTP::Transport::ID, info.port);
     }
     void listening() {
-      server->app()->listening(
+      server->impl()->listening(
 	HTTP::Transport::ID, server->config().port());
     }
     void listenFailed(bool transient) {
-      server->app()->listenFailed(HTTP::Transport::ID, transient);
+      server->impl()->listenFailed(HTTP::Transport::ID, transient);
       server->failServer_();
     }
   };
@@ -2512,7 +2696,7 @@ private:
   struct TLSHub : public TLS_::ServerHub<TLSHub> {
     using H1Link = TLSH1Link;
     using H2Link = TLSH2Link;
-    using ResponseHeaders = typename ResponseHeaderSets<App>::T;
+    using ResponseHeaders = typename Server::ResponseHeaders;
     Server *server = nullptr;
 
     TLSHub(Server *server_) : server{server_} { }
@@ -2528,24 +2712,24 @@ private:
     template <typename Link_>
     void connected(Link_ &link, const ConnectedInfo &) {
       server->registerTxError_(link);
-      server->app()->connected(Transport::TLS);
+      server->impl()->connected(Transport::TLS);
     }
     template <typename Link_>
     void disconnected(Link_ &link, bool) {
       link.responseDisconnected_();
     }
     void connected(Zhttp::Session session) {
-      server->connected(session);
+      server->sessionConnected_(session);
     }
     void disconnected(Zhttp::Session session) {
-      server->disconnected(session);
+      server->sessionDisconnected_(session);
     }
     void release() { server->release(Transport::TLS); }
     void listening(const ZiListenInfo &info) {
-      server->app()->listening(Transport::TLS, info.port);
+      server->impl()->listening(Transport::TLS, info.port);
     }
     void listenFailed(bool transient) {
-      server->app()->listenFailed(Transport::TLS, transient);
+      server->impl()->listenFailed(Transport::TLS, transient);
       server->failServer_();
     }
   };
@@ -2581,28 +2765,31 @@ public:
 
   void txErrorFn(ZiTxErrorFn fn) { m_txErrorFn = ZuMv(fn); }
 
+  void connected(Zhttp::Session) { }
+  void disconnected(Zhttp::Session) { }
+
   bool init(
-    const HubConfig &hub, ServerConfig config, App *app) {
-    return Engine::lock(ZmEngineState::Stopped, [&]() {
-      return init_(hub, ZuMv(config), app);
+    const HubConfig &hub, ServerConfig config) {
+    return Engine::lock(ZmEngineState::Stopped, [this, &hub, &config]() {
+      return init_(hub, ZuMv(config));
     });
   }
 
 private:
-  friend Engine;
-
   bool init_(
-    const HubConfig &hub, ServerConfig config, App *app) {
-    if (!app || !config.port() || !hub.mx()) return false;
+    const HubConfig &hub, ServerConfig config) {
+    if (!config.port() || !hub.mx()) return false;
+    if (m_hubs.count()) return true;
     m_mx = hub.mx();
     m_rxThread = hub.rxThread() ?
       m_mx->sid(hub.rxThread()) : m_mx->rxThread();
     m_txThread = hub.txThread() ?
       m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_config = ZuMv(config);
-    m_app = app;
+    m_hpackSeeds.clear();
+    m_qpackSeeds.clear();
     if (m_config.tlsEnabled()) {
-      using Sets = typename ResponseHeaderSets<App>::T;
+      using Sets = ResponseHeaders;
       uint32_t capacity = m_config.tlsConfig().hpackTxCapacity();
       ZuUnroll::all<Sets>([this, capacity]<typename HdrCatalog>() {
 	m_hpackSeeds.template add<HdrCatalog>(capacity);
@@ -2613,7 +2800,7 @@ private:
       auto params = H3::Params().qpackLimits({
 	quic.qpackRxCapacity(), quic.qpackTxCapacity(),
 	quic.qpackRxBlocked(), quic.qpackTxSections()});
-      using Sets = typename ResponseHeaderSets<App>::T;
+      using Sets = ResponseHeaders;
       ZuUnroll::all<Sets>([this, &params, &quic]<typename HdrCatalog>() {
 	m_qpackSeeds.template add<HdrCatalog>(
 	  params, quic.qpackTxCapacity());
@@ -2626,14 +2813,20 @@ private:
       m_altSvc << "h3=\":" << m_config.port() << "\"; ma=" <<
 	m_config.altSvcMaxAge();
     if (m_config.tcpEnabled() &&
-	!m_hubs.init(m_tcp, hub, m_config.tcpConfig()))
+	!m_hubs.init(m_tcp, hub, m_config.tcpConfig())) {
+      m_tcp.final();
       return false;
+    }
     if (m_config.tlsEnabled() &&
-	!m_hubs.init(m_tls, hub, m_config.tlsConfig()))
+	!m_hubs.init(m_tls, hub, m_config.tlsConfig())) {
+      m_tls.final();
       return false;
+    }
     if (m_config.quicEnabled() &&
-	!m_hubs.init(m_quic, hub, m_config.quicHubConfig()))
+	!m_hubs.init(m_quic, hub, m_config.quicHubConfig())) {
+      m_quic.final();
       return false;
+    }
     return m_hubs.count();
   }
 
@@ -2690,11 +2883,13 @@ public:
     ZmAssert(!m_stats.retainedBytes.load_());
     ZmAssert(m_streamTasks.empty_());
     m_hubs.final();
+    m_hpackSeeds.final();
+    m_qpackSeeds.final();
     m_altSvc.null();
+    m_txErrorFn = ZiTxErrorFn{};
     m_mx = nullptr;
     m_rxThread = 0;
     m_txThread = 0;
-    m_app = nullptr;
     m_config = {};
   }
 
@@ -2802,42 +2997,40 @@ private:
 
   void release(Transport::T transport) {
     --m_stats.activeConnections;
-    m_app->disconnected(transport);
+    impl()->disconnected(transport);
   }
 
-  void connected(const void *id, Transport::T transport) {
-    connected(Zhttp::Session{uintptr_t(id), transport});
+  void sessionConnected_(const void *id, Transport::T transport) {
+    sessionConnected_(Zhttp::Session{uintptr_t(id), transport});
   }
 
-  void connected(Zhttp::Session session) {
-    Server_::connected(
-      m_app, session, 0);
+  void sessionConnected_(Zhttp::Session session) {
+    impl()->connected(session);
   }
 
-  void disconnected(const void *id, Transport::T transport) {
-    disconnected(Zhttp::Session{uintptr_t(id), transport});
+  void sessionDisconnected_(const void *id, Transport::T transport) {
+    sessionDisconnected_(Zhttp::Session{uintptr_t(id), transport});
   }
 
-  void disconnected(Zhttp::Session session) {
-    Server_::disconnected(
-      m_app, session, 0);
+  void sessionDisconnected_(Zhttp::Session session) {
+    impl()->disconnected(session);
   }
 
   ZiMultiplex		*m_mx = nullptr;
   ServerConfig		m_config;
   MessageString		m_altSvc;
-  App			*m_app = nullptr;
   Hub<H1TCP>		m_tcp;
   TLSHub		m_tls;
   Hub<H3QUIC>		m_quic;
-  HeaderSeedCatalog	m_qpackSeeds;
+  using QPackSeeds = HeaderSeedCatalog<ResponseHeaders>;
+  QPackSeeds		m_qpackSeeds;
   HPackSeedCatalog	m_hpackSeeds;
   Hubs			m_hubs;
   ZiTxErrorFn		m_txErrorFn;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
 
-  Stats			m_stats;
+  Server_::Stats		m_stats;
   ZmAtomic<unsigned>	m_admitRequests = 0;
   ZmAtomic<unsigned>	m_failed = 0;
 

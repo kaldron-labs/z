@@ -88,7 +88,8 @@ template <
   unsigned TypeCode, typename Props, typename T>
 auto loadValue(const ZfTree::AnyNode *);
 
-template <typename Policy, typename O_, typename Facet>
+template <typename Policy, typename O_, typename Facet,
+  bool RejectDuplicate = false>
 struct Object {
   using O = O_;
   using AnyNode = ZfTree::AnyNode;
@@ -129,7 +130,12 @@ struct Object {
       const auto &fields = node->data<AnyNode::Object>();
       for (unsigned i = 0, n = fields.length(); i < n; i++) {
 	auto j = matcher.exact(fields[i].p<0>());
-	if (j >= 0) lookup[j] = i;
+	if (j >= 0) {
+	  if constexpr (RejectDuplicate)
+	    if (lookup[j] >= 0)
+	      Policy::duplicateKey(node, fields[i].p<0>());
+	  lookup[j] = i;
+	}
       }
     }
   }

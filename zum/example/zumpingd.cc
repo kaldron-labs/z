@@ -207,10 +207,11 @@ struct Builder : public ZmObject, public Zrest::MResBuilder<Catalog> { };
 ZmListDerive(BuilderQ, Builder,
   ZmListNode<Builder, ZmListHeapID<"zumpingd.Reply">>);
 
-class App {
+class App : public Zhttp::Server<App, ::Parser, BuilderQ> {
 public:
-  using Parser = ::Parser;
-  using ResBuilderQ = BuilderQ;
+  using HTTP = Zhttp::Server<App, ::Parser, BuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
   Zum::Service service;
 
   template <typename Req, typename Link>
@@ -380,17 +381,16 @@ int main(int argc, char **argv)
       ok = false;
     }
   }
-  Zhttp::Server<App> server;
   bool listener = false;
   if (ok) {
     auto settings = Zhttp::ServerConfig().localIP(ZiIP(config.addr))
       .port(config.port).idleTimeout(30).retainedBodyMax(BodyMax).tcp();
-    listener = server.init(Zhttp::HubConfig{&mx, "rx", "tx"}, ZuMv(settings), &app);
-    ok = listener && server.start();
+    listener = app.init(Zhttp::HubConfig{&mx, "rx", "tx"}, ZuMv(settings));
+    ok = listener && app.start();
   }
   if (ok) done.wait();
   else std::cerr << "zumpingd: service authentication, publication or listener failed\n";
-  if (listener) { (void)server.stop(); server.final(); }
+  if (listener) { (void)app.stop(); app.final(); }
   if (initialized) {
     ZmSemaphore drained;
     app.service.stop([&drained](int) { drained.post(); });

@@ -116,6 +116,14 @@ static void cases(const Zi::Path &dir)
     });
   });
   ZuCheckRT(run(tool, cwd, log(), "--help") == 0);
+  ZuCheckRT(run(executable(dir, "zifbmapcheck"), cwd, log()) == 0);
+  ZuCheckRT(run(executable(dir, "zifbmapimport"), cwd, log()) == 0);
+  ZuCheckRT(run(executable(dir, "zifbmapref"), cwd, log()) == 0);
+  auto mapStem = path("native_map");
+  auto mapReverse = path("reverse_map.bin");
+  ZuCheckRT(run(executable(dir, "zifbmapexport"), cwd, log(), mapStem) == 0);
+  ZuCheckRT(run(executable(dir, "zifbmapgenerated"), cwd, log(), mapStem, mapReverse) == 0);
+  ZuCheckRT(run(executable(dir, "zifbmapexport"), cwd, log(), "--verify", mapReverse) == 0);
   ZuCheckRT(run(executable(dir, "zifbroot"), cwd, log()) == 0);
   ZuCheckRT(run(executable(dir, "zifbroot_alt"), cwd, log()) == 0);
   ZuCheckRT(run(executable(dir, "zifbroot_zuobject"), cwd, log()) == 0);
@@ -149,9 +157,11 @@ static void cases(const Zi::Path &dir)
   });
   ZuCheckRT(ZiFile::mkdir(path("sub")) == Zi::OK);
   ZuCheckRT(ZiFile::mkdir(path("out")) == Zi::OK);
-  ZuCheckRT(write("sub/foo.fbs", "namespace test; table Row { display_name:string; } root_type test.Row;"));
+  ZuCheckRT(write("sub/foo.fbs", "// zflatc_source_only_6c4e\nnamespace test; table Row { display_name:string; } root_type test.Row;"));
   ZuCheckRT(run(tool, cwd, log(), "sub/foo.fbs") == 0);
   ZuCheckRT(ZiStat{path("sub/foo.hh")}.exists() && ZiStat{path("sub/foo.cc")}.exists());
+  ZuCheckRT(read("sub/foo.hh").find("zflatc_source_only_6c4e") < 0);
+  ZuCheckRT(read("sub/foo.cc").find("zflatc_source_only_6c4e") < 0);
   ZuCheckRT(run(tool, cwd, log(), "sub/foo.fbs", "-o", "foo") == 0);
   ZuCheckRT(ZiStat{path("foo.hh")}.exists() && ZiStat{path("foo.cc")}.exists());
   ZuCheckRT(run(tool, cwd, log(), "sub/foo.fbs", "--alt", "-o", "out/bar") == 0);

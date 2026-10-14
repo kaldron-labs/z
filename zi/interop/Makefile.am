@@ -8,7 +8,62 @@ LDADD = $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ @FB_INTEROP_LIBS@
-noinst_PROGRAMS = zifbiobench zifbinterop
+noinst_PROGRAMS = zifbiobench zifbinterop zifbmapinterop zifbmapbench
+if HAVE_PB_INTEROP
+noinst_PROGRAMS += zipbinterop
+PB_INTEROP_TEST = zipbinterop
+endif
+zipbinterop_SOURCES = zipbinterop.cc
+nodist_zipbinterop_SOURCES = zipb-gen/interop.cc zipb-gen/interop.hh \
+	zipb-gen/zprotoc_values.cc zipb-gen/zprotoc_values.hh \
+	zipb-gen/zprotoc_address.cc zipb-gen/zprotoc_address.hh \
+	zipb-gen/zprotoc_values_row.cc zipb-gen/zprotoc_values_row.hh
+zipbinterop_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/zipb-gen \
+	-DZIPB_INTEROP_PROTO='"$(abs_srcdir)/zipbinterop_generated.proto"' \
+	-DZIPB_VALUES_PROTO='"$(abs_top_srcdir)/zi/itest/zprotoc_values.proto"' \
+	-DZIPB_ADDRESS_PROTO='"$(abs_top_srcdir)/zi/itest/zprotoc_address.proto"' \
+	-DZIPB_VALUES_ROW_PROTO='"$(abs_top_srcdir)/zi/itest/zprotoc_values_row.proto"'
+zipbinterop-zipbinterop.$(OBJEXT): zipb-gen/interop.hh \
+	zipb-gen/zprotoc_values_row.hh
+zipb-gen/interop.hh zipb-gen/interop.cc &: \
+	$(srcdir)/zipbinterop_generated.proto $(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zipb-gen
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc \
+		$(srcdir)/zipbinterop_generated.proto -o zipb-gen/interop
+zipb-gen/zprotoc_values.hh zipb-gen/zprotoc_values.cc &: \
+	$(top_srcdir)/zi/itest/zprotoc_values.proto \
+	$(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zipb-gen
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc \
+		$(top_srcdir)/zi/itest/zprotoc_values.proto \
+		-o zipb-gen/zprotoc_values
+zipb-gen/zprotoc_address.hh zipb-gen/zprotoc_address.cc &: \
+	$(top_srcdir)/zi/itest/zprotoc_address.proto \
+	$(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zipb-gen
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc \
+		$(top_srcdir)/zi/itest/zprotoc_address.proto \
+		-o zipb-gen/zprotoc_address
+zipb-gen/zprotoc_values_row.hh zipb-gen/zprotoc_values_row.cc &: \
+	$(top_srcdir)/zi/itest/zprotoc_values_row.proto \
+	zipb-gen/zprotoc_values.hh zipb-gen/zprotoc_address.hh \
+	$(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zipb-gen
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc -I $(top_srcdir)/zi/itest \
+		$(top_srcdir)/zi/itest/zprotoc_values_row.proto \
+		-o zipb-gen/zprotoc_values_row
+CLEANFILES = zipb-gen/interop.hh zipb-gen/interop.cc \
+	zipb-gen/zprotoc_values.hh zipb-gen/zprotoc_values.cc \
+	zipb-gen/zprotoc_address.hh zipb-gen/zprotoc_address.cc \
+	zipb-gen/zprotoc_values_row.hh zipb-gen/zprotoc_values_row.cc
+EXTRA_DIST = README.md bench.fbs maps.fbs trace-growth.py \
+	zipbinterop_generated.proto zipbinterop.valgrind.supp
+zipbinterop_CXXFLAGS = @Z_CXXFLAGS@ @PB_INTEROP_CFLAGS@
+zipbinterop_LDADD = $(top_builddir)/zi/src/libZi.la \
+	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
+	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
+	$(top_builddir)/zu/src/libZu.la \
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ @PB_INTEROP_LIBS@
 zifbiobench_SOURCES = zifbiobench.cc iobaseline.hh
 .PHONY: fb-deps
 fb-deps:
@@ -17,11 +72,19 @@ $(am_zifbiobench_OBJECTS): | fb-deps
 $(am_zifbiobench_OBJECTS): bench_generated.h
 bench_generated.h: $(srcdir)/bench.fbs
 	flatc --cpp --cpp-std c++17 -o . $<
-CLEANFILES = bench_generated.h
-EXTRA_DIST = README.md bench.fbs trace-growth.py
+CLEANFILES += bench_generated.h maps_generated.h
 
 zifbinterop_SOURCES = zifbinterop.cc
 $(am_zifbinterop_OBJECTS): | fb-deps
+
+zifbmapinterop_SOURCES = zifbmapinterop.cc
+$(am_zifbmapinterop_OBJECTS): | fb-deps
+$(am_zifbmapinterop_OBJECTS): maps_generated.h
+maps_generated.h: $(srcdir)/maps.fbs
+	flatc --cpp --cpp-std c++17 -o . $<
+zifbmapbench_SOURCES = zifbmapbench.cc
+$(am_zifbmapbench_OBJECTS): | fb-deps
+$(am_zifbmapbench_OBJECTS): maps_generated.h
 
 EXTRA_DIST += contracts.md codec-history.md \
 	evidence/m2-core-deps.txt \
@@ -52,7 +115,9 @@ EXTRA_DIST += evidence/accessor-build.json evidence/core-size.txt \
 
 .PHONY: test
 test: $(noinst_PROGRAMS)
-	prove zifbinterop
+	prove zifbinterop zifbmapinterop $(PB_INTEROP_TEST)
+
+EXTRA_DIST += zipb.md
 
 EXTRA_DIST += evidence/m2-save-64.csv \
 	evidence/m2-save-1024.csv \

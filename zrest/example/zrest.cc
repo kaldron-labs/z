@@ -19,6 +19,7 @@
 
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPercent.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -62,6 +63,10 @@ enum {
   RespBodyMax = 1U<<20
 };
 
+struct CallbackFieldIDs {
+  using Keys = ZuStringTL<"code", "state", "iss", "error">;
+};
+
 struct Options {
   ZuCSpan	ca;
   ZuCSpan	issuerURL{"https://localhost:8443/oauth2/ping"};
@@ -74,6 +79,7 @@ struct Options {
   unsigned	concurrency = 1;
   unsigned	links = 1;
   unsigned	linkMax = 1;
+  unsigned	maxPending = Zrest::Default::MaxPending;
   unsigned	retries = 0;
   unsigned	timeout = ClientTimeout;
   unsigned	stallTimeout = H3StallTimeout;
@@ -114,6 +120,7 @@ ZfStruct(, (Options, CLI),
   (concurrency, (CLI::Opt<'j'>, CLI::Long<"jobs">),		UInt32),
   (links,      (CLI::Long<"links">),				UInt32),
   (linkMax,   (CLI::Long<"link-max">),				UInt32),
+  (maxPending, (CLI::Long<"max-pending">),			UInt32),
   (retries,   (CLI::Long<"retries">),				UInt32),
   (timeout,   (CLI::Long<"timeout">),				UInt32),
   (stallTimeout, (CLI::Long<"stall-timeout">),			UInt32),
@@ -164,23 +171,21 @@ struct Call_ : public Heap, public ZmObject {
   OAuthString	target;
   OAuthSecret	body;
   OAuthSecret	authorization;
-  mutable ZmAtomic<unsigned> finished = 0;
 
-  template <unsigned Status, typename Response>
-  void complete(const Response *response) const {
-    if (finished.cmpXch(1, 0)) return;
-    result->status = Status;
-    result->body = response->data;
-    result->contentType = response->contentType;
-    result->cacheControl = response->cacheControl;
-    result->pragma = response->pragma;
-    result->contentTypeCount = response->contentTypeCount;
-    result->cacheControlCount = response->cacheControlCount;
-    result->pragmaCount = response->pragmaCount;
+  template <typename Response>
+  void process(Zrest::Reply<Response> reply) const {
+    const auto &response = reply.bodyObject();
+    result->status = Response::Status;
+    result->body = response.data;
+    result->contentType = response.contentType;
+    result->cacheControl = response.cacheControl;
+    result->pragma = response.pragma;
+    result->contentTypeCount = response.contentTypeCount;
+    result->cacheControlCount = response.cacheControlCount;
+    result->pragmaCount = response.pragmaCount;
     result->done.post();
   }
   void failed() const {
-    if (finished.cmpXch(1, 0)) return;
     result->done.post();
   }
 };
@@ -248,13 +253,6 @@ struct DynamicBuilder : public Zrest::ReqBuilder<Impl, Call> {
       emitTarget([this](auto &s) { s << this->object->target; });
     });
   }
-  template <typename Link, typename Response>
-  void process(Link *, const Response &response) const {
-    this->object->template complete<Response::Status>(response.object.ptr());
-  }
-  template <typename Link> void failed(Link *) const {
-    this->object->failed();
-  }
 };
 
 struct MetadataBuilder :
@@ -286,42 +284,9 @@ using Requests = ZuTypeList<MetadataBuilder, FormBuilder, PingBuilder>;
 ZrestCatalogDerive(Catalog, Requests);
 ZrestCatalogImpl(Catalog)
 
-struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Catalog> {
-  using Reqs = Requests;
-  uint64_t id = 0;
-  uint64_t key() const { return id; }
-  uint64_t length() const { return 1; }
-  void completed(const Zhttp::Result &) {
-    u.cdispatch([](auto, const auto &request) { request.object->failed(); });
-  }
-};
-
-struct ResParser : public Zrest::MResParser<Catalog, ReqBuilder_> { };
-
-class Client;
-struct Pool;
-template <typename Heap> class Pool_;
-ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
-  ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
-    ZmPQueueHeapID<"zrest.ReqBuilder">>>);
-using ReqBuilder = ReqBuilderQ::Node;
-ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
-
-template <typename Heap = ZuVoid>
-class Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
-  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
-public:
-  Pool_(Client *client) : Base{client} { }
-  ReqBuilderQ *txQueue() { return &m_requests; }
-  void archive_(ReqBuilder *) { }
-  ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
-private:
-  ReqBuilderQ m_requests;
-};
-ZuDerive(PoolHeap, (ZmHeap<"zrest.Pool", Pool_<>>));
-ZuDerive(Pool, (Pool_<PoolHeap>));
-
-class Client : public Zhttp::Client<Client, Pool> {
+struct ClientApp { };
+class Client : public Zrest::Client<ClientApp, Catalog> {
+  using Base = Zrest::Client<ClientApp, Catalog>;
 public:
   template <typename Builder>
   ZmRef<Result> submit(unsigned pool, OAuthString target,
@@ -332,12 +297,7 @@ public:
     call->target = ZuMv(target);
     call->body = ZuMv(body);
     call->authorization = ZuMv(authorization);
-    txRun(0, [this, pool, call = ZuMv(call)]() mutable {
-      ZmRef<ReqBuilder> request = new ReqBuilder{};
-      request->id = m_id++;
-      request->template init<Builder>(call.ptr());
-      if (!send(pool, ZuMv(request))) call->failed();
-    });
+    if (!Base::template call<Builder>(pool, call, call)) call->failed();
     return result;
   }
 
@@ -350,8 +310,6 @@ public:
     return result;
   }
 
-private:
-  uint64_t m_id = 0;
 };
 
 template <typename Fn>
@@ -411,36 +369,22 @@ struct CallbackReq : public Zrest::ReqParser<CallbackReq, CallbackData> {
   using Responses = ZuTypeList<CallbackOK, CallbackBad, CallbackGone>;
   enum { Exact = 1, Query = Zrest::QueryPolicy::Raw };
   static constexpr uint64_t QueryLimit = OAuthURLMax;
-  CallbackApp *app = nullptr;
-  template <typename Link> void complete(Link *, bool);
 };
 
 using CallbackRequests = ZuTypeList<CallbackReq>;
 ZrestCatalogDerive(CallbackCatalog, CallbackRequests);
 ZrestCatalogImpl(CallbackCatalog)
-struct CallbackParser : public Zrest::MReqParser<CallbackCatalog> {
-  using Base = Zrest::MReqParser<CallbackCatalog>;
-  CallbackApp *app = nullptr;
-  void init(CallbackApp &app_) { app = &app_; Base::init(app_); }
-  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
-    if (!Base::operation(method, target)) return false;
-    u.dispatch([this](auto, auto &request) { request.app = app; });
-    return true;
-  }
-};
-using CallbackBuilder = Zrest::MResBuilder<CallbackCatalog>;
-struct CallbackBuilder_ : public ZmObject, public CallbackBuilder { };
-ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
-  ZmListNode<CallbackBuilder_, ZmListHeapID<"zrest.CallbackBuilder">>);
-using CallbackBuilderNode = CallbackBuilderQ::Node;
+using CallbackDecoder = Zrest::MReqParser<CallbackCatalog>;
+using CallbackServer = Zrest::Server<CallbackApp, CallbackCatalog,
+  CallbackDecoder>;
 
 class CallbackApp {
 public:
-  using Parser = CallbackParser;
-  using ResBuilderQ = CallbackBuilderQ;
+  using Token = Zrest::Completion<CallbackReq, CallbackServer>;
 
-  template <typename Link>
-  void callback(Link *link, const CallbackReq &request, bool ok) {
+  void request(CallbackReq *, const CallbackReq &request,
+      const Zrest::RequestContext &context, ZmRef<Token> token) {
+    bool ok = context.ok();
     OAuthSecret code_;
     OAuthString state_, issuerURL_, error_;
     unsigned seen = 0;
@@ -450,12 +394,15 @@ public:
       if (query && query[0] == '?') query.offset(1);
       ok = formEach(query, [&seen, &duplicate, &code_, &state_,
 	  &issuerURL_, &error_](ZuCSpan name, ZuCSpan value) {
+        static constexpr auto matcher = ZuMatcher<CallbackFieldIDs>();
         unsigned bit;
-        if (name == "code") { bit = 1; code_ = value; }
-        else if (name == "state") { bit = 2; state_ = value; }
-        else if (name == "iss") { bit = 4; issuerURL_ = value; }
-        else if (name == "error") { bit = 8; error_ = value; }
-        else return false;
+        switch (matcher.exact(name)) {
+          case 0: bit = 1; code_ = value; break;
+          case 1: bit = 2; state_ = value; break;
+          case 2: bit = 4; issuerURL_ = value; break;
+          case 3: bit = 8; error_ = value; break;
+          default: return false;
+        }
         duplicate |= bool(seen & bit);
         seen |= bit;
         return true;
@@ -475,14 +422,12 @@ public:
     body->data = ok && code ?
       "<!doctype html><h1>Authorized</h1><p>You may close this window.</p>" :
       "<!doctype html><h1>Authorization failed</h1>";
-    ZmRef<CallbackBuilderNode> response = new CallbackBuilderNode{};
     if (gone)
-      response->template init<CallbackGone, CallbackReq>(body.ptr());
+      token->complete(Zrest::Reply<CallbackGone>{body});
     else if (ok)
-      response->template init<CallbackOK, CallbackReq>(body.ptr());
+      token->complete(Zrest::Reply<CallbackOK>{body});
     else
-      response->template init<CallbackBad, CallbackReq>(body.ptr());
-    link->send(ZuMv(response));
+      token->complete(Zrest::Reply<CallbackBad>{body});
     if (ok) done.post();
   }
 
@@ -500,11 +445,6 @@ public:
   unsigned	port = 0;
   bool		received = false;
 };
-
-template <typename Link>
-void CallbackReq::complete(Link *link, bool ok) {
-  app->callback(link, *this, ok);
-}
 
 struct Tokens {
   OAuthSecret access;
@@ -544,6 +484,20 @@ static bool loadJSON(Result &result, Object &object, bool noStore = true)
 static bool contains(const OAuthStringVec &values, ZuCSpan expected)
 {
   for (const auto &value: values) if (value == expected) return true;
+  return false;
+}
+
+static bool grantTypesSupported(const OAuthStringVec &values)
+{
+  uint8_t lookup[2]{};
+  for (const auto &value: values) {
+    if (value.length() == 18) {
+      if (value == "authorization_code") lookup[0] = 1;
+    } else if (value.length() == 13) {
+      if (value == "refresh_token") lookup[1] = 1;
+    }
+    if (lookup[0] && lookup[1]) return true;
+  }
   return false;
 }
 
@@ -730,6 +684,7 @@ static void usage(int code = 1)
     "  -i, --interval=N    seconds between waves, fractions accepted\n"
     "  --links=N           persistent links per destination\n"
     "  --link-max=N        per-link pipeline/stream limit\n"
+  "  --max-pending=N     maximum admitted REST calls\n"
     "  --retries=N         transient connection retries\n"
     "  --timeout=N         HTTP completion timeout\n"
     "  -3, --http3=MODE    force, prefer, disable\n"
@@ -754,7 +709,8 @@ int main(int argc, char **argv)
   if (argc != 1 || !options.issuerURL || !options.clientID || !options.scope ||
       !options.resource || !options.browser || !options.callbackTimeout ||
       !options.requests || !options.concurrency || !options.links ||
-      !options.linkMax || !options.timeout || !::isfinite(options.interval) ||
+      !options.linkMax || !options.maxPending || !options.timeout ||
+      !::isfinite(options.interval) ||
       options.interval < 0 || options.http3 < 0 ||
       options.http3 >= Http3Mode::N || options.http2 < 0 ||
       options.http2 >= Http2Mode::N) usage();
@@ -808,7 +764,8 @@ int main(int argc, char **argv)
     default: h2Policy = Zhttp::H2Policy::Prefer; break;
   }
   bool secure = issuerURL.scheme == Zhttp::Scheme::https;
-  auto config = Zhttp::Config().links(options.links)
+  Zrest::ClientConfig config;
+  config.links(options.links)
     .concurrency(options.concurrency).linkMax(options.linkMax)
     .requestTimeout(options.timeout).maxRedirects(MaxRedirects)
     .maxRetries(options.retries).retainedBodyMax(RespBodyMax)
@@ -817,14 +774,18 @@ int main(int argc, char **argv)
     .secure(secure).tcp(true)
     .tls(secure && policy != Zhttp::ProtoPolicy::ForceH3)
     .quic(secure && policy != Zhttp::ProtoPolicy::DisableH3);
+  Zrest::Limits limits;
+  limits.maxPending = options.maxPending;
+  config.limits(limits);
   auto h2 = Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy);
   auto quic = Zhttp::QUICConfig{}.caPath(options.ca)
     .keyLogPath(options.keyLog).heartbeat(options.quicHeartbeat ?
       ZuTime{options.quicHeartbeat} : ZuTime{});
 
   Client client;
+  ClientApp clientApp;
   bool clientInited = client.init(
-    Zhttp::HubConfig{&mx, "rx", "tx"}, 2, config,
+    Zhttp::HubConfig{&mx, "rx", "tx"}, 2, ZuMv(config), &clientApp,
     Zhttp::TCPConfig{}, h2, quic);
   bool poolsInited = clientInited && client.pool(0,
     Zhttp::Destination{issuerURL.host, issuerURL.port, issuerURL.ipv6Literal}) &&
@@ -847,8 +808,7 @@ int main(int argc, char **argv)
   OAuthMetadata metadata;
   ok = metadataResult->status == 200 && loadJSON(*metadataResult, metadata) &&
     metadata.issuerURL == options.issuerURL && contains(metadata.responseTypes, "code") &&
-    contains(metadata.grantTypes, "authorization_code") &&
-    contains(metadata.grantTypes, "refresh_token") &&
+    grantTypesSupported(metadata.grantTypes) &&
     contains(metadata.codeChallengeMethods, "S256") &&
     contains(metadata.scopes, options.scope) &&
     contains(metadata.tokenAuthMethods, "none") &&
@@ -878,14 +838,15 @@ int main(int argc, char **argv)
   if (ok) state = encode<OAuthSecret>(random);
 
   CallbackApp callback;
-  Zhttp::Server<CallbackApp> callbackServer;
+  CallbackServer callbackServer;
   bool callbackInited = false, callbackUp = false;
   pid_t browserPID = -1;
   if (ok) {
     unsigned port = callbackPort();
-    auto callbackConfig = Zhttp::ServerConfig()
-      .localIP(ZiIP("127.0.0.1")).port(port)
+    Zrest::ServerConfig callbackConfig;
+    callbackConfig.localIP(ZiIP("127.0.0.1")).port(port)
       .idleTimeout(options.callbackTimeout).retainedBodyMax(OAuthURLMax).tcp();
+    callbackConfig.limits(limits);
     callbackInited = port && callbackServer.init(
       Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"},
       ZuMv(callbackConfig), &callback);

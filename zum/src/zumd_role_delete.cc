@@ -7,7 +7,9 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/zumd_daemon.hh>
 #include <zlib/zumd_db.hh>
-#include <zlib/zumd_role_delete.hh>
+#include <zlib/zumd_saga_role_delete.hh>
+#include <zlib/zumd_app_db.hh>
+#include <zlib/zumd_provider_db.hh>
 #include <zlib/zumd_saga_image.hh>
 
 namespace Zum {
@@ -112,17 +114,17 @@ ZuDerive(RoleScan_, (RoleScan__<Table, RoleScanHeap<Table>>));
 template <typename Heap = ZuVoid>
 class RoleDelete__ : public Heap, public ZmObject  {
 public:
-  RoleDelete__(DB *db, DBContext *context, Ztls::Random *rng,
+  RoleDelete__(DB *db, Ztls::Random *rng,
       AppID appID, RoleID roleID, String ifMatch, IdemRequest request,
       AdminDoneFn complete) :
-    m_db{db}, m_context{context}, m_rng{rng}, m_appID{appID}, m_roleID{roleID},
+    m_db{db}, m_rng{rng}, m_appID{appID}, m_roleID{roleID},
     m_ifMatch{ZuMv(ifMatch)}, m_complete{ZuMv(complete)}
     { m_change.request = ZuMv(request); }
 
   void start()
   {
     if (!m_ifMatch) { finish_(428, "precondition_required"); return; }
-    auto apps = m_context->apps;
+    auto apps = m_db->apps;
     apps->run(0, [self = ZmRef<RoleDelete__>{this}, apps]() mutable {
       apps->find<0>(0, ZuFwdTuple(self->m_appID), [self = ZuMv(self)](
 	  ZdbRowRef<App> row) mutable {
@@ -140,7 +142,7 @@ public:
 private:
   void role_()
   {
-    auto roles = m_context->roles;
+    auto roles = m_db->roles;
     roles->run(0, [self = ZmRef<RoleDelete__>{this}, roles]() mutable {
       roles->find<0>(0, ZuFwdTuple(self->m_appID, self->m_roleID),
 	[self = ZuMv(self)](ZdbRowRef<Role> row) mutable {
@@ -178,10 +180,10 @@ private:
   void scan_()
   {
     switch (m_phase) {
-      case 0: scan_(m_context->assignments, m_change.members); break;
-      case 1: scan_(m_context->clientAccess, m_change.clients); break;
-      case 2: scan_(m_context->adminAccess, m_change.admins); break;
-      case 3: scan_(m_context->roleMaps, m_change.maps); break;
+      case 0: scan_(m_db->assignments, m_change.members); break;
+      case 1: scan_(m_db->clientAccess, m_change.clients); break;
+      case 2: scan_(m_db->adminAccess, m_change.admins); break;
+      case 3: scan_(m_db->roleMaps, m_change.maps); break;
       default: submit_(); break;
     }
   }
@@ -192,9 +194,7 @@ private:
     if (!m_rng->random({reinterpret_cast<uint8_t *>(&id), sizeof(id)}) || !id) {
       finish_(503, "unavailable"); return;
     }
-    ZmRef<MSaga> saga = new MSaga{};
-    saga->init(ZuMv(m_change));
-    if (!sagaSubmit(m_db, id, ZuMv(saga),
+    if (!sagaSubmit(m_db, id, roleDelete(ZuMv(m_change)),
 	[self = ZmRef<RoleDelete__>{this}](bool ok) mutable {
 	  if (!ok) self->finish_(503, "unavailable");
 	}, [self = ZmRef<RoleDelete__>{this}](bool ok) mutable {
@@ -205,7 +205,7 @@ private:
   void completed_(bool ok)
   {
     if (ok) { finish_(200); return; }
-    auto roles = m_context->roles;
+    auto roles = m_db->roles;
     roles->run(0, [self = ZmRef<RoleDelete__>{this}, roles]() mutable {
       roles->find<0>(0, ZuFwdTuple(self->m_appID, self->m_roleID),
 	[self = ZuMv(self)](ZdbRowRef<Role> row) mutable {
@@ -241,13 +241,12 @@ private:
   }
 
   DB		*m_db;
-  DBContext	*m_context;
   Ztls::Random	*m_rng;
   AppID		m_appID;
   RoleID	m_roleID;
   String	m_ifMatch;
   AdminDoneFn	m_complete;
-  RoleDelete	m_change;
+  RoleDeleteArgs m_change;
   uint64_t	m_version = 0;
   unsigned	m_phase = 0;
 };
@@ -259,7 +258,7 @@ void Daemon::roleDelete_(AppID appID, RoleID roleID,
     String ifMatch, IdemRequest request, AdminDoneFn complete)
 {
   ZmRef<RoleDelete_> remove = new RoleDelete_{
-    m_db, m_context, &m_rng, appID, roleID, ZuMv(ifMatch),
+    m_db, &m_rng, appID, roleID, ZuMv(ifMatch),
     ZuMv(request), ZuMv(complete)};
   remove->start();
 }

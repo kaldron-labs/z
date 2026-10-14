@@ -11,13 +11,13 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiProgram.hh ZiRing.hh ZiDaemon.hh ZiPIDFile.hh \
-	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh ZiFB.hh ZiFBReflect.hh \
+	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh ZiFB.hh ZiFBReflect.hh ZiPB.hh ZiPBReflect.hh \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
 	ZiResolver.hh ZiHeapTune.hh ZiHashTune.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh
 lib_LTLIBRARIES = libZi.la
 libZi_la_SOURCES = \
-	ZiDir.cc ZiFB.cc ZiFBReflect.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
+	ZiDir.cc ZiFB.cc ZiFBReflect.cc ZiPB.cc ZiPBReflect.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
 	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc ZiProgram.cc \
 	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiPIDFile.cc \
 	ZiResolver.cc ZtcHub.cc \
@@ -28,10 +28,16 @@ libZi_la_LIBADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.l
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 
-bin_PROGRAMS = zflatc
+bin_PROGRAMS = zflatc zprotoc
 zflatc_SOURCES = zflatc.cc
 zflatc_LDFLAGS = @Z_LDFLAGS@
 zflatc_LDADD = libZi.la $(top_builddir)/zf/src/libZf.la \
+	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
+	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+zprotoc_SOURCES = zprotoc.cc
+zprotoc_LDFLAGS = @Z_LDFLAGS@
+zprotoc_LDADD = libZi.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@

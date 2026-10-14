@@ -13,6 +13,7 @@
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZuUnroll.hh>
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZumMgmt.hh>
@@ -171,10 +172,63 @@ ZfStruct(, (Options, CLI),
   (userID, (CLI::Long<"user-id">),				String),
   (valueKey, (CLI::Long<"value-key">),				String));
 
+} // namespace ZumCLI
+
+namespace ZfCLI {
+template <>
+struct LongMatcher<ZumCLI::Options, ZuFacet::CLI> {
+  static ZumAPI int exact(ZuCSpan key);
+};
+} // namespace ZfCLI
+
+namespace ZumCLI {
+
+using OptionKeys = typename ZfCLI::Parser<Options>::LongKeys_;
+static_assert(OptionKeys::N <= 64);
+
+consteval uint64_t optionMask(ZuCSpan names)
+{
+  uint64_t mask = 0;
+  while (names.length()) {
+    while (names.length() && names[0] == ' ') names.offset(1);
+    if (!names.length()) break;
+    unsigned length = 0;
+    while (length < names.length() && names[length] != ':' &&
+        names[length] != ' ') ++length;
+    bool found = false;
+    ZuUnroll::all<OptionKeys::N>([&](auto I) {
+      constexpr auto key = ZuType<I, OptionKeys>::V;
+      if (key.length() != length) return;
+      for (unsigned j = 0; j < length; ++j)
+        if ((names[j] == '_' ? '-' : names[j]) != key[j]) return;
+      mask |= 1ULL << I;
+      found = true;
+    });
+    if (!found) throw "unknown command option";
+    while (names.length() && names[0] != ' ') names.offset(1);
+  }
+  return mask;
+}
+
 struct Spec {
   ZuCSpan required;
   ZuCSpan optional;
   ZuCSpan positional = {};
+  uint64_t allowed = 0;
+
+  constexpr Spec() = default;
+
+  template <unsigned R, unsigned O, unsigned P>
+  consteval Spec(const char (&r)[R], const char (&o)[O],
+      const char (&p)[P]) :
+    required{r, R - 1}, optional{o, O - 1}, positional{p, P - 1},
+    allowed{optionMask({o, O - 1}) | optionMask(
+      "config:s if-match:s if-none-match:s idempotence:s help:b no-browser:b")}
+  { }
+
+  template <unsigned R, unsigned O>
+  consteval Spec(const char (&r)[R], const char (&o)[O]) :
+    Spec{r, o, ""} { }
 };
 
 inline Spec spec(int op)
@@ -477,22 +531,18 @@ inline bool request(const ZfCLI::Parser<Options> &parser, int op,
     return false;
   }
   // Only global controls and this command's optional fields may be named.
-  auto i = object.citer();
-  while (auto item = i()) {
-    auto key = item->key();
-    if (key == "config" || key == "command" || key == "if-match" ||
-	key == "if-none-match" || key == "idempotence" ||
-	key == "help" || key == "no-browser" || key == "arg10" ||
-	(key.length() == 4 && key[0] == 'a' && key[1] == 'r' &&
-	 key[2] == 'g' && key[3] >= '1' && key[3] <= '9')) continue;
-    bool allowed = false;
-    for (auto fields = args.optional; fields;) {
-      if (option(name(word(fields))) == key) { allowed = true; break; }
-    }
-    if (!allowed) {
+  uint64_t unexpected = parser.longOptions() & ~args.allowed;
+  if (unexpected) {
+    auto i = object.citer();
+    while (auto item = i()) {
+      auto key = item->key();
+      int id = ZfCLI::Parser<Options>::longOptionID(key);
+      if (id < 0 || !(unexpected & (1ULL << id))) continue;
       error = "unexpected option for command: "; error << key;
       return false;
     }
+    error = "unexpected option for command";
+    return false;
   }
   json = "{";
   bool first = true;

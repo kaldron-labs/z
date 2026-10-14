@@ -14,6 +14,8 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZfCf.hh>
+
+#include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/Zdb.hh>
@@ -104,14 +106,15 @@ static void run()
   ZmTrap::trap();
 
   try {
-    mx = new ZiMultiplex{ZvMxParams("mx", cf->resolve("mx"))};
+    auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsmoketest", "multiplexer start failed");
 
     store = new zdbtest::Store();
     db = new Zdb();
 
-    db->init(ZdbCf{cf->resolve("zdb")}, mx, ZdbHandler{
+    db->init(ZdbCf{cfFields.zdb.p<const ZfCf::AnyNode *>()}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
 	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';
@@ -200,7 +203,7 @@ static void run()
     orders = {};
     db->final();
 
-    db->init(ZdbCf{cf->resolve("zdb")}, mx, ZdbHandler{
+    db->init(ZdbCf{cfFields.zdb.p<const ZfCf::AnyNode *>()}, mx, ZdbHandler{
       .upFn = [](Zdb *, ZdbHost *host) {
 	ZiLOG(Info, "zdbsmoketest", ([id = host ? ZuID{host->id()} : ZuID{"unset"}](auto &s) {
 	  s << "ACTIVE (was " << id << ')';

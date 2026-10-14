@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuSwitch.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZfDBUS.hh>
 #include <zlib/ZdbusAdapter.hh>
 
@@ -106,6 +107,25 @@ using BodySignatureTag = SignatureTag<ZfDBUS::signatureConst<
   BodyObject<Schema>, typename Schema::Body_DBUS_Facet>()>;
 
 template <typename Schema>
+using BodySignatureKey = ZuStringT<ZfDBUS::sigString<
+  ZfDBUS::signatureConst<BodyObject<Schema>,
+    typename Schema::Body_DBUS_Facet>()>()>;
+
+template <typename Schemas>
+struct SignatureIDs { using Keys = ZuTypeMap<BodySignatureKey, Schemas>; };
+
+template <typename Schema>
+struct ErrorKey_ {
+  using T = ErrorName<Schema>;
+  ZuAssert((!ZuIsSame<T, ZuVoid>{}));
+};
+template <typename Schema>
+using ErrorKey = typename ErrorKey_<Schema>::T;
+
+template <typename Errors>
+struct ErrorIDs { using Keys = ZuTypeMap<ErrorKey, Errors>; };
+
+template <typename Schema>
 ZuCSpan bodySignature()
 {
   using Body = BodyObject<Schema>;
@@ -117,28 +137,21 @@ ZuCSpan bodySignature()
 template <typename Schemas>
 int signatureMatch(ZuCSpan signature)
 {
-  int match = -1;
-  unsigned index = 0;
-  ZuUnroll::all<Schemas>([&match, &index, signature]<typename Schema>() {
-    if (bodySignature<Schema>() == signature) match = int(index);
-    ++index;
-  });
-  return match;
+  if constexpr (!Schemas::N) return -1;
+  else {
+    static constexpr auto matcher = ZuMatcher<SignatureIDs<Schemas>>();
+    return matcher.exact(signature);
+  }
 }
 
 template <typename Errors>
 int errorMatch(ZuCSpan name)
 {
-  int match = -1;
-  unsigned index = 0;
-  ZuUnroll::all<Errors>([&match, &index, name]<typename Schema>() {
-    using Fixed = FixedHeader<Header::ErrorName,
-      typename Schema::HeaderCatalog>;
-    ZuAssert((!ZuIsSame<Fixed, ZuVoid>{}));
-    if (Fixed{}() == name) match = int(index);
-    ++index;
-  });
-  return match;
+  if constexpr (!Errors::N) return -1;
+  else {
+    static constexpr auto matcher = ZuMatcher<ErrorIDs<Errors>>();
+    return matcher.exact(name);
+  }
 }
 
 template <typename Schema, typename Fn>

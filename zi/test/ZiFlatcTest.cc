@@ -98,6 +98,25 @@ static bool invalid(ZuCSpan text)
   try { Schema schema; parsed(schema, text); } catch (const Failure &) { return true; }
   return false;
 }
+static bool invalidAt(ZuCSpan text, ZuCSpan marker, ZuCSpan reason)
+{
+  try { Schema schema; parsed(schema, text); }
+  catch (const Failure &failure) {
+    return failure.message == reason && failure.loc.offset == text.find(marker);
+  }
+  return false;
+}
+static bool invalidEmit(ZuCSpan text)
+{
+  try {
+    Schema schema;
+    parsed(schema, text);
+    Options opts;
+    opts.output = "unit";
+    Emit{schema, 0, opts}.header();
+  } catch (const Failure &) { return true; }
+  return false;
+}
 
 static void syntax()
 {
@@ -115,8 +134,43 @@ static void syntax()
   ZuCheck(invalid("table A { value: int; value: int; }"));
   ZuCheck(invalid("table A { value: int (id:1); }"));
   ZuCheck(invalid("table A { value: int (unknown); }"));
+  ZuCheck(invalid("table A { value:[int] (key); }"));
+  ZuCheck(invalid("struct A { value:int (key); }"));
+  ZuCheck(invalid("table A { a:int (key); b:int (key); }"));
+  ZuCheck(invalid("table A { value:int (key, deprecated); }"));
+  Schema keyed;
+  parsed(keyed, "namespace test; table Row { key:string (key); value:int; extra:int; }");
+  ZuCheck(keyed.objects[0].fields[0].key && keyed.objects[0].fields[0].required);
+  Options opts;
+  opts.output = "keyed";
+  auto generated = Emit{keyed, 0, opts}.header();
+  ZuCheck(strstr(generated.data(), "FB::Key") != nullptr);
+  ZuCheck(strstr(generated.data(), "extra") != nullptr);
+  ZuCheck(!mapEntry(keyed, keyed.objects[0]));
+  ZuCheck(strstr(generated.data(), "::Map_<") == nullptr);
+  Schema maps;
+  parsed(maps, "namespace test; table PairsEntry { key:int (key); value:string; } "
+    "table Pairs { entries:[PairsEntry]; } root_type Pairs;");
+  ZuCheck(mapEntry(maps, maps.objects[0]));
+  auto mapHeader = Emit{maps, 0, opts}.header();
+  ZuCheck(strstr(mapHeader.data(), "ZiFB::AsMap<\"test.Pairs\"") != nullptr);
+  ZuCheck(strstr(mapHeader.data(), "Zflatc_::PairsEntry::Map_<") != nullptr);
+  ZuCheck(invalidEmit("table PairsEntry { key:int (key); value:int; } "
+    "table Pairs { other:int; }"));
+  ZuCheck(invalidEmit("table PairsEntry { key:int (key); value:int; } "
+    "table Other { entry:PairsEntry; }"));
   ZuCheck(invalid("table A { badName: int; }"));
   ZuCheck(invalid("table A { foo_bar:int; fooBar:int; }"));
+  ZuCheck(invalidAt("enum E:byte { A, A }",
+    "A }", "duplicate enum/union name"));
+  Schema enumDefaults;
+  parsed(enumDefaults, "table Row { first:E = B; second:E = A; } "
+    "enum E:byte { A, B }");
+  ZuCheck(defaultExpr(enumDefaults, enumDefaults.objects[0].fields[0]) == "1" &&
+    defaultExpr(enumDefaults, enumDefaults.objects[0].fields[1]) == "0");
+  ZuCheck(invalidAt("table T {} union U { T } "
+    "table A { value:U; value_type:ubyte; }",
+    "value:U", "union tag-name collision"));
   ZuCheck(invalid("table A { class:int; }"));
   ZuCheck(invalid("table A { bad_:int; }"));
   ZuCheck(invalid("namespace Zflatc_; table A {}"));
@@ -201,6 +255,13 @@ static void emission()
   Emit emit{schema, 0, opts};
   auto hh = emit.header();
   auto cc = emit.source("unit.hh");
+  opts.output = "dir-a/unit";
+  auto guardA = Emit{schema, 0, opts}.header();
+  opts.output = "dir_a/unit";
+  auto guardB = Emit{schema, 0, opts}.header();
+  ZuCheck(guardA.find("#ifndef Zflatc_dir_2Da_2Funit_HH") >= 0);
+  ZuCheck(guardB.find("#ifndef Zflatc_dir_5Fa_2Funit_HH") >= 0);
+  opts.output = "unit";
   ZuCheck(hh.find("ZtStringHeapID<\"test.Row.displayName\">") >= 0);
   ZuCheck(hh.find("ZtStringHeapID<\"test.Row.names\">") >= 0);
   ZuCheck(hh.find("ZtArrayHeapID<\"test.Row.names\">") >= 0);

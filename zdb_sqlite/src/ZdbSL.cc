@@ -7,10 +7,10 @@
 #include <string.h>
 
 #include <zlib/ZuJoin.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuSwitch.hh>
 
-#include <zlib/ZmLHash.hh>
-#include <zlib/ZmObject.hh>
+#include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZtCase.hh>
 #include <zlib/ZtScratch.hh>
@@ -22,14 +22,8 @@
 
 namespace ZdbSL {
 
-static const char *fieldMapID() { return "ZdbSL.FieldMap"; }
-ZmLHashKVDerive(FieldMap, IDString, unsigned,
-  ZmLHashID<fieldMapID, ZmLHashLocal<>>);
-struct FieldMapObj : public ZmObject {
-  FieldMap map;
-
-  FieldMapObj(unsigned n) : map{ZmHashParams(n)} { }
-};
+using FieldMap = ZmRBTreeKV<ZuCSpan, unsigned,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZdbSL.FieldMap">>>;
 
 struct ExpectedIndex {
   SQLString		id;
@@ -39,14 +33,8 @@ struct ExpectedIndex {
 };
 ZuDerive(ExpectedIndices,
   (ZtArray<ExpectedIndex, ZtArrayHeapID<"ZdbSL.ExpectedIndex">>));
-static const char *indexMapID() { return "ZdbSL.IndexMap"; }
-ZmLHashKVDerive(IndexMap, ZuCSpan, unsigned,
-  ZmLHashID<indexMapID, ZmLHashLocal<>>);
-struct IndexMapObj : public ZmObject {
-  IndexMap map;
-
-  IndexMapObj(unsigned n) : map{ZmHashParams(n)} { }
-};
+using IndexMap = ZmRBTreeKV<ZuCSpan, unsigned,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZdbSL.IndexMap">>>;
 
 ZtEnumImplNS(Synchronous);
 
@@ -305,24 +293,26 @@ static unsigned resolveType(const ZfVField *field, R::FieldView fbField)
 
 static void validateCoreStrict(sqlite3 *cxn)
 {
+  struct TableKeys {
+    using Keys = ZuStringTL<"zdbsl_meta", "zdbsl_schema", "zdbsl_mrd">;
+  };
+  static constexpr auto matcher = ZuMatcher<TableKeys>();
   Stmt stmt;
   stmt.ptr = prepare(cxn,
     "SELECT \"name\", \"strict\" FROM pragma_table_list "
     "WHERE \"schema\"='main' AND \"name\" IN "
     "('zdbsl_meta','zdbsl_schema','zdbsl_mrd')");
-  bool meta = false, schema = false, mrd = false;
+  uint8_t lookup[3]{};
   int rc;
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
     ZuCSpan table{
       reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)),
       unsigned(sqlite3_column_bytes(stmt, 0))};
-    bool strict = sqlite3_column_int(stmt, 1) == 1;
-    if (table == "zdbsl_meta") meta = strict;
-    else if (table == "zdbsl_schema") schema = strict;
-    else if (table == "zdbsl_mrd") mrd = strict;
+    int id = matcher.exact(table);
+    if (id >= 0) lookup[id] = sqlite3_column_int(stmt, 1) == 1;
   }
   if (rc != SQLITE_DONE) throw cxnError(cxn, "inspect STRICT tables", rc);
-  if (!meta || !schema || !mrd)
+  if (!lookup[0] || !lookup[1] || !lookup[2])
     throw ZeEXCEPT(Fatal, "ZdbSL", "internal table is missing or not STRICT");
 }
 
@@ -1066,9 +1056,9 @@ StoreTbl::StoreTbl(
   m_relation = quoteID(physical);
   unsigned n = fields.length();
   m_xFields.size(n);
-  ZmRef<FieldMapObj> fieldMap = new FieldMapObj{n};
+  FieldMap fieldMap;
   for (unsigned i = 0; i < n; ++i) {
-    ZtCase::camelSnake(fields[i]->id, [this, &fields, fieldMap, schema, i](ZuCSpan id_) {
+    ZtCase::camelSnake(fields[i]->id, [this, &fields, &fieldMap, schema, i](ZuCSpan id_) {
       auto fbField = schema.field(fields[i]->id);
       unsigned type = resolveType(fields[i], fbField);
       XField *xfield = m_xFields.push();
@@ -1085,7 +1075,7 @@ StoreTbl::StoreTbl(
         throw ZeEXCEPT(Fatal, "ZdbSL", ([id = ZeString{id_}](auto &s, const auto &) {
           s << "unsupported or inconsistent field " << id;
         }));
-      fieldMap->map.add(xfield->id, i);
+      fieldMap.add(xfield->id, i);
       if (fields[i]->props & ZfVFieldProp::Mutable())
         m_xUpdFields.push(XFieldRef{.field = xfield});
     });
@@ -1101,8 +1091,8 @@ StoreTbl::StoreTbl(
       if (keyFields[i][j]->group & (uint64_t(1)<<i)) m_keyGroup[i] = j + 1;
       bool descend = keyFields[i][j]->descend & (uint64_t(1)<<i);
       ZtCase::camelSnake(keyFields[i][j]->id,
-          [this, fieldMap, i, descend](ZuCSpan id_) {
-        auto field = fieldMap->map.findVal(id_);
+          [this, &fieldMap, i, descend](ZuCSpan id_) {
+        auto field = fieldMap.findVal(id_);
         m_xKeyFields[i].push(XFieldRef{
           .field = &m_xFields[field], .descend = descend});
       });
@@ -1310,9 +1300,9 @@ void StoreTbl::schema_()
     if (columns != m_xFields.length() + 4)
       throw ZeEXCEPT(Fatal, "ZdbSL", "physical table has missing columns");
 
-    ZmRef<IndexMapObj> indexMap = new IndexMapObj{nIndices};
+    IndexMap indexMap;
     for (unsigned i = 0; i < nIndices; ++i)
-      indexMap->map.add(expectedIndices[i].id, i);
+      indexMap.add(expectedIndices[i].id, i);
     {
       SQLString pragma;
       pragma << "PRAGMA index_list(" << quoteID(physical) << ')';
@@ -1323,7 +1313,7 @@ void StoreTbl::schema_()
         ZuCSpan id{
           reinterpret_cast<const char *>(sqlite3_column_text(list, 1)),
           unsigned(sqlite3_column_bytes(list, 1))};
-        unsigned i = indexMap->map.findVal(id);
+        unsigned i = indexMap.findVal(id);
         if (ZuNull(i))
           throw ZeEXCEPT(Fatal, "ZdbSL", "unexpected index definition");
         ExpectedIndex &expected = expectedIndices[i];
@@ -1335,7 +1325,7 @@ void StoreTbl::schema_()
       }
       if (rc != SQLITE_DONE) throw cxnError(cxn, "PRAGMA index_list", rc);
     }
-    indexMap = nullptr;
+    indexMap.clean();
     for (unsigned i = 0; i < nIndices; ++i) {
       const ExpectedIndex &expectedIndex = expectedIndices[i];
       if (!expectedIndex.seen)

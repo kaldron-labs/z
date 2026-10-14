@@ -86,7 +86,6 @@ namespace SyntaxErrorCode {
   enum {
     Syntax,
     Indent,
-    DuplicateKey,
     Directive,
     Tag,
     ComplexKey,
@@ -148,8 +147,7 @@ private:
 ZfExtern ZuTuple<int, ZuPtr<AnyNode>> scan(
   ZuCSpan span, Limits limits = {});
 
-// resolve local $ref objects and flatten schema composition
-ZfExtern ZuPtr<AnyNode> resolve(ZuPtr<AnyNode> &&root);
+// flatten schema composition
 ZfExtern ZuPtr<AnyNode> flatten(
   ZuPtr<AnyNode> &&root, bool oneOf = false, bool anyOf = false);
 
@@ -255,9 +253,9 @@ inline auto badType(const AnyNode *node, ZuCSpan expected) {
   };
 }
 
-inline auto badPointer(ZuCSpan path, ZuCSpan ref) {
-  return [path = ZeString{path}, ref = ZeString{ref}](auto &s) {
-    s << '"' << path << "\": invalid $ref \"" << ref << '"';
+inline auto duplicateKey(const AnyNode *node, ZuCSpan key) {
+  return [path = ZeString{fullKey(node, key)}](auto &s) {
+    s << '"' << path << "\": duplicate key";
   };
 }
 
@@ -358,6 +356,10 @@ struct ZfAPI YAMLPolicy {
   using Handler = typename As<O>::template Handler<O, Facet>;
   template <typename O>
   using IsObjPtr = ZfYAML::IsObjPtr<O>;
+
+  [[noreturn]] static void duplicateKey(const AnyNode *node, ZuCSpan key) {
+    throw ZfYAML_EXCEPT(ZfYAMLError::duplicateKey(node, key));
+  }
 
   static int intBase(ZuCSpan span);
   static bool implicit(ZuCSpan span);
@@ -739,9 +741,9 @@ bool saveField(S &s, const O &o, unsigned indent_, bool first)
 
 struct AsObject {
   template <typename O_, typename Facet>
-  struct Handler : public ZfTreeLoad::Object<YAMLPolicy, O_, Facet> {
+  struct Handler : public ZfTreeLoad::Object<YAMLPolicy, O_, Facet, true> {
     using O = O_;
-    using Base = ZfTreeLoad::Object<YAMLPolicy, O, Facet>;
+    using Base = ZfTreeLoad::Object<YAMLPolicy, O, Facet, true>;
     using Base::Base;
 
     enum { Block = 1, Scalar = 0 };

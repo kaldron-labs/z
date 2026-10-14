@@ -7,6 +7,36 @@
 // Native OAuth and protected HTTP example
 
 #include "native.hh"
+#include <zlib/ZuMatcher.hh>
+
+namespace ZumNative {
+
+struct CallbackKeys {
+  using Keys = ZuStringTL<"code", "state", "error">;
+};
+
+bool parseCallback(ZuCSpan query, CallbackQuery &result)
+{
+  uint8_t lookup[3]{};
+  bool duplicate = false;
+  static constexpr auto matcher = ZuMatcher<CallbackKeys>();
+  bool valid = formEach(query, [&](ZuCSpan name, ZuCSpan value) {
+    int id = matcher.exact(name);
+    if (id < 0) return;
+    duplicate |= bool(lookup[id]);
+    lookup[id] = 1;
+    switch (id) {
+      case 0: result.code = value; break;
+      case 1: result.state = value; break;
+      case 2: result.error = value; break;
+    }
+  });
+  result.seen = unsigned(lookup[0]) | (unsigned(lookup[1]) << 1) |
+    (unsigned(lookup[2]) << 2);
+  return valid && !duplicate;
+}
+
+} // namespace ZumNative
 
 using namespace ZumNative;
 

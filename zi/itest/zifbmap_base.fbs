@@ -1,0 +1,6 @@
+namespace map_import;
+
+table Item { value:int = 17; }
+table ValuesEntry { key:string (key); value:Item; }
+table Values { entries:[ValuesEntry]; }
+root_type Values;

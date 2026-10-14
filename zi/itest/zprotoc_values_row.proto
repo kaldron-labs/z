@@ -1,0 +1,30 @@
+syntax = "proto3";
+package demo;
+
+import "zprotoc_values.proto";
+import "zprotoc_address.proto";
+
+message ValueRow {
+  Zf.Int128 signedWide = 1;
+  Zf.UInt128 unsignedWide = 2;
+  Zf.Fixed fixed = 3;
+  Zf.Decimal decimal = 4;
+  Zf.Time time = 5;
+  Zf.DateTime dateTime = 6;
+  repeated Zf.Int128 signedValues = 7;
+  repeated Zf.UInt128 unsignedValues = 8;
+  repeated Zf.Fixed fixedValues = 9;
+  repeated Zf.Decimal decimalValues = 10;
+  repeated Zf.Time timeValues = 11;
+  repeated Zf.DateTime dateValues = 12;
+  map<string, Zf.Fixed> indexed = 13;
+  Zi.IP ip = 14;
+  repeated Zi.IP ips = 15;
+  Zf.Bitmap bitmap = 16;
+  repeated Zf.Bitmap bitmaps = 17;
+  Zf.HwBitmap hwBitmap = 18;
+  repeated Zf.HwBitmap hwBitmaps = 19;
+  map<string, Zi.IP> ipsByName = 20;
+  map<string, Zf.Bitmap> bitsByName = 21;
+  map<string, Zf.HwBitmap> hwByName = 22;
+}

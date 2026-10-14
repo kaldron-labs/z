@@ -63,6 +63,17 @@ static void lifecycle()
   ZuCheck(hub.stop() && hub.state() == Ztc::HubdState::Down);
 }
 
+static void authorization()
+{
+  ZuTestScope(authorization);
+  auto value = principal("user", "Request");
+  ZuCheck(Ztc::Hubd::authorized(value, "Request"));
+  value.authMethod = "oidc";
+  ZuCheck(Ztc::Hubd::authorized(value, "Request"));
+  value.authMethod = "password";
+  ZuCheck(!Ztc::Hubd::authorized(value, "Request"));
+}
+
 static void productionInit()
 {
   ZuTestScope(productionInit);
@@ -181,6 +192,7 @@ int main()
 {
   ZuTestMain();
   ZuTestCall(lifecycle);
+  ZuTestCall(authorization);
   ZuTestCall(productionInit);
   ZuTestCall(routingScale);
 }

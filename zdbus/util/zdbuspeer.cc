@@ -12,6 +12,8 @@
 
 #include <dbus/dbus.h>
 
+#include <zlib/ZuMatcher.hh>
+
 namespace Peer {
 
 constexpr const char *Path = "/org/example/ZdbusPeer";
@@ -20,6 +22,7 @@ constexpr const char *PeerName = "org.example.ZdbusPeer";
 constexpr const char *ServiceName = "org.example.ZdbusService";
 constexpr const char *ErrorName = "org.example.ZdbusPeer.Rejected";
 enum { ReplyTimeoutMs = 5000, MessageBudget = 64 };
+struct ModeIDs { using Keys = ZuStringTL<"service", "caller", "subscriber">; };
 
 static bool writeAll(const char *text, unsigned length)
 {
@@ -433,10 +436,12 @@ int main(int argc, char **argv)
   DBusConnection *cxn = Peer::connect(argv[1]);
   if (!cxn) return 1;
   bool ok = false;
-  if (!strcmp(argv[2], "service")) ok = Peer::service(cxn);
-  else if (!strcmp(argv[2], "caller")) ok = Peer::caller(cxn);
-  else if (!strcmp(argv[2], "subscriber"))
-    ok = Peer::subscriber(cxn);
+  static constexpr auto matcher = ZuMatcher<Peer::ModeIDs>();
+  switch (matcher.exact(argv[2])) {
+    case 0: ok = Peer::service(cxn); break;
+    case 1: ok = Peer::caller(cxn); break;
+    case 2: ok = Peer::subscriber(cxn); break;
+  }
   Peer::close(cxn);
   return ok ? 0 : 1;
 }

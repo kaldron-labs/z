@@ -468,6 +468,10 @@ int main(int argc, char **argv)
     auto duplicateHandler = ZfJSON::handler<Foo>(
       (*duplicateParsed.p<1>())[0]);
     ZuCheck(duplicateParsed.p<1>() && !duplicateHandler.valid);
+    char unknown[] = "{\"id\":1,\"unknown\":1,\"unknown\":2}";
+    auto unknownParsed = ZfJSON::scan(unknown);
+    ZuCheck(unknownParsed.p<1>() && ZfJSON::handler<Foo>(
+      (*unknownParsed.p<1>())[0]).valid);
   }
 
   using Fields = ZuFields<Foo>;

@@ -788,7 +788,7 @@ private:
   template <typename Response, typename Request, typename Link>
   void send_(ZmRef<Link> link, ZmRef<HTTPResponse> object)
   {
-    using ResBuilder = typename App::ResBuilderQ::Node;
+    using ResBuilder = typename App::HTTPServer::ResBuilder;
     ZmRef<ResBuilder> response = new ResBuilder{};
     response->template init<Response, Request>(object.ptr());
     link->send(ZuMv(response));

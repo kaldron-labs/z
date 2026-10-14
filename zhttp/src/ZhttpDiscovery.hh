@@ -139,6 +139,11 @@ public:
   void cancel();
 
 private:
+  struct Alias {
+    URLString name;
+    uint32_t code;
+  };
+
   void query();
   void queried(ZiResolver_::QueryResult);
   void resolveNext();
@@ -154,7 +159,7 @@ private:
   URLString		m_target;
   SvcRecords		m_records;
   Endpoints		m_endpoints;
-  ZtArray<URLString,
+  ZtArray<Alias,
     ZtArrayHeapID<"Zhttp.Discovery.Alias">> m_aliases;
   DiscoveryFn		m_fn;
   ZmRef<ZiResolver_::Query> m_resolver;

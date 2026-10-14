@@ -101,7 +101,7 @@ static void method(ZdbusServer &server, PeerState &state,
         return Zdbus_::BuildResult{{}, {}, Zdbus_::BuildError::Body};
       SearchRes reply;
       if (state.key &&
-          arg.attributes.attrs->findVal("key") == state.key) {
+          arg.attributes.owned.findVal("key") == state.key) {
         if (state.key == "global/locked")
           reply.locked.push(Text{ItemPath});
         else
@@ -139,12 +139,11 @@ static void method(ZdbusServer &server, PeerState &state,
       CreateItemArg arg;
       if (!parse(frame, info, arg))
         return Zdbus_::BuildResult{{}, {}, Zdbus_::BuildError::Body};
-      auto attrs = arg.properties.find(
-        "org.freedesktop.Secret.Item.Attributes");
-      if (!attrs || !attrs->val().is<AttrsView>())
+      auto &attrs = arg.properties.attributes;
+      if (!attrs.is<AttrsView>())
         return Zdbus_::BuildResult{{}, {}, Zdbus_::BuildError::Body};
       Text requestedKey{
-        attrs->val().p<AttrsView>().attrs->findVal("key")};
+        attrs.p<AttrsView>().owned.findVal("key")};
       if (requestedKey == "global/denied") {
         head.type = Zdbus_::MessageType::Error;
         head.errorName = "org.freedesktop.Secret.Error.IsLocked";

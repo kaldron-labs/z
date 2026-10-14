@@ -1028,43 +1028,10 @@ ZfStruct(ZumAPI, (IdemRequest, FB, JSON),
 ZiFB::AsTable<"Zum.fbs.IdemRequest"> ZiFB_Fmt(IdemRequest *);
 
 ZumExtern ZtBitmap intersectActions(ZtBitmap, const ZtBitmap &);
-ZumExtern ZtBitmap effectiveActions(
-  unsigned actionCount, const IDVec &principalRoleIDs,
-  const IDVec &scopeRoleIDs, ZuSpan<const Role>, ZuSpan<const Action>);
-ZumExtern bool assignmentValid(
-  const App &, const Assignment &, ZuSpan<const Role>);
-ZumExtern bool scopeValid(
-  const App &, const Role &, ZuSpan<const Role>);
-ZumExtern ZtBitmap appEffectiveActions(
-  const App &, const Assignment &, const Role &,
-  ZuSpan<const Role>, ZuSpan<const Action>);
 ZumExtern bool actionAlloc(App &, ActionID &);
-ZumExtern int selectScopes(
-  const Client &, const ClientAccess &, ZuCSpan requested,
-  ZuSpan<const Role>, ScopeSelection &);
-ZumExtern int selectGrantedScopes(
-  const Client &, const ClientAccess &, const IDVec &grantedRoleIDs,
-  bool requestedPresent, ZuCSpan requested,
-  ZuSpan<const Role>, ScopeSelection &);
-ZumExtern int selectGrantedScopes(
-  const Client &, const ClientAccess &, const IDVec &grantedRoleIDs,
-  ZuCSpan granted,
-  bool requestedPresent, ZuCSpan requested,
-  ZuSpan<const Role>, ScopeSelection &);
 ZumExtern bool interactivePrincipal(
   const Grant &, const User &, const Cred &, const Client &);
 ZumExtern bool clientPrincipal(const Client &);
-ZumExtern int interactiveAuthority(
-  const Grant &, const User &, const Cred &, const Client &,
-  bool requestedPresent, ZuCSpan requested, unsigned actionCount,
-  const ClientAccess &, ZuSpan<const Role>, ZuSpan<const Role>,
-  ZuSpan<const Action>,
-  ScopeSelection &, ZtBitmap &);
-ZumExtern int clientAuthority(
-  const Client &, const ClientAccess &, ZuCSpan requested,
-  unsigned actionCount, ZuSpan<const Role>, ZuSpan<const Role>,
-  ZuSpan<const Action>,
-  ScopeSelection &, ZtBitmap &);
 ZumExtern RefreshMatch::T refreshMatch(const Refresh &, ZuBSpan digest);
 ZumExtern RefreshRotate::T refreshRotate(
   Refresh &, ZuBSpan presentedDigest, Bytes nextDigest,

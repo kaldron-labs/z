@@ -71,21 +71,28 @@ inline ZiIP zvCxnIP(const ZfCf::AnyNode *cf)
   return ZiIP{cf->data<ZfCf::AnyNode::String>()};
 }
 
+ZvAPI void zvCxnFields(const ZfCf::AnyNode *,
+  const ZfCf::AnyNode *(&lookup)[2]);
+
 inline ZiCxnOptions ZvCxnOptions(
     const ZfCf::AnyNode *cf, ZiCxnOptions options = {})
 {
   if (!cf) return options;
   ZfCf::handler<ZiCxnOptions>(cf).update(options);
   if (options.multicast()) {
-    if (auto mif = cf->resolve("mif")) options.mif(zvCxnIP(mif));
-    if (auto mreqs = cf->resolve("mreqs")) {
+    const ZfCf::AnyNode *lookup[2]{};
+    zvCxnFields(cf, lookup);
+    if (lookup[0]) options.mif(zvCxnIP(lookup[0]));
+    if (auto mreqs = lookup[1]) {
 	if (!mreqs->has<ZfCf::AnyNode::Object>())
 	  throw ZfCf_EXCEPT(ZfCfError::badType(mreqs, "object"));
 	for (auto &field: mreqs->data<ZfCf::AnyNode::Object>()) {
 	  auto &mreq = field.p<1>();
 	  if (!mreq->has<ZfCf::AnyNode::Object>())
 	    throw ZfCf_EXCEPT(ZfCfError::badType(mreq, "object"));
-	  auto interface = mreq->resolve("interface");
+	  const ZfCf::AnyNode *interface = nullptr;
+	  for (auto &f: mreq->data<ZfCf::AnyNode::Object>())
+	    if (f.p<0>() == "interface") interface = f.p<1>().ptr();
 	  if (!interface)
 	    throw ZfCf_EXCEPT(ZfCfError::required(mreq, "interface"));
 	  ZiIP addr{field.p<0>()}, mif{zvCxnIP(interface)};
@@ -110,21 +117,27 @@ inline ZiMxParams ZvMxParams(
   if (!cf) return params;
 
   ZfCf::handler<ZmSchedParams>(cf).update(sched);
-  if (auto threads = cf->resolve("threads")) {
+  const ZfCf::AnyNode *threads = nullptr;
+  for (auto &field: cf->data<ZfCf::AnyNode::Object>())
+    if (field.p<0>() == "threads") threads = field.p<1>().ptr();
+  if (threads) {
       if (!threads->has<ZfCf::AnyNode::Object>())
 	throw ZfCf_EXCEPT(ZfCfError::badType(threads, "object"));
       for (auto &field: threads->data<ZfCf::AnyNode::Object>()) {
-	auto parsed = ZuBox<unsigned>::eov(field.p<0>());
-	if (parsed.p<0>() != int(field.p<0>().length()) ||
-	    !parsed.p<1>() || parsed.p<1>() > sched.nThreads())
+	auto key = ZuCSpan{field.p<0>()};
+	auto parsed = ZuBox<unsigned>::eov(key);
+	unsigned sid = sched.sid(key);
+	if ((parsed.p<0>() > 0 &&
+	     (parsed.p<0>() != int(key.length()) || !parsed.p<1>())) ||
+	    !sid || sid > sched.nThreads())
 	  throw ZeEXCEPT(Error, "ZvMxParams", ([
 	    key = ZfCfError::fullKey(field.p<1>()),
 	    value = ZeString{field.p<0>()}, max = sched.nThreads()
 	  ](auto &s) {
-	    s << '"' << key << "\": invalid scheduler SID \"" << value <<
-	      "\"; expected [1, " << max << ']';
+	    s << '"' << key << "\": invalid scheduler SID or name \"" <<
+	      value << "\"; expected [1, " << max <<
+	      "] or a configured thread name";
 	  }));
-	unsigned sid = parsed.p<1>();
 	ZfCf::handler<ZmSchedTParams>(field.p<1>()).update(sched.thread(sid));
       }
     }

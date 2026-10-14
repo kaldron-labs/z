@@ -1,0 +1,41 @@
+syntax = "proto3";
+package Zf;
+
+message Int128 {
+  uint64 h = 1;
+  uint64 l = 2;
+}
+
+message UInt128 {
+  uint64 h = 1;
+  uint64 l = 2;
+}
+
+message Fixed {
+  int64 mantissa = 1;
+  uint32 ndp = 2;
+}
+
+message Decimal {
+  uint64 h = 1;
+  uint64 l = 2;
+}
+
+message Time {
+  int64 sec = 1;
+  int32 nsec = 2;
+}
+
+message DateTime {
+  int32 julian = 1;
+  int32 sec = 2;
+  int32 nsec = 3;
+}
+
+message Bitmap {
+  bytes words = 1;
+}
+
+message HwBitmap {
+  string ranges = 1;
+}

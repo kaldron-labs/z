@@ -31,6 +31,7 @@
 #include <zlib/ZuIter.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuSort.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuStruct.hh>
@@ -92,6 +93,7 @@ namespace ZuFieldProp::FB {
 template <unsigned N> struct FieldID { };
 template <ZuString Name> struct ID { };
 template <unsigned N> struct Align { };
+struct Key { };
 
 template <typename Field>
 consteval auto name() {
@@ -145,6 +147,28 @@ struct AsStruct : public Named<Name, Kind::Inline> {
   template <typename O> struct Value;
   template <typename O> struct Layout;
 };
+// Name identifies the root adapter; entry tables append "Entry".
+// Maps remain UDTs in ZfStruct. Native intent comes only from ADL AsMap selection.
+template <typename Fmt, typename K, typename V> struct MapEntry;
+template <ZuString Name, unsigned KeyCode, unsigned ValCode,
+  typename KeyProps = ZuTypeList<>, typename ValProps = ZuTypeList<>>
+struct AsMap : public Named<Name, Kind::Table> {
+  template <typename O, typename Facet = ZuFacet::FB> class Handler;
+  template <typename O> struct Value;
+  enum { KC = KeyCode, VC = ValCode };
+  using KP = KeyProps;
+  using VP = ValProps;
+  template <typename K, typename V> using Entry = MapEntry<AsMap, K, V>;
+  template <typename O> struct Root;
+};
+template <typename O> class MapView;
+template <typename T> struct IsMapView : public ZuFalse { };
+template <typename O> struct IsMapView<MapView<O>> : public ZuTrue { };
+template <typename V, typename = void> struct IsMapWire : public ZuFalse { };
+template <typename V>
+struct IsMapWire<V, decltype(ZuDeclVal<typename V::MapType *>(), void())> :
+  public ZuTrue { };
+
 // Enum names are attached to the existing Z enum map; its Names typelist
 // remains the source of enumerator names and ordinals.
 template <ZuString Name>
@@ -163,19 +187,6 @@ struct AsUnion : public Named<Name, Kind::Union> {
   template <typename O> struct Value;
   using Types = ZuTypeList<Alts...>;
   ZuAssert(sizeof...(Alts) < 256);
-  static consteval bool namesUnique() {
-    bool ok = true;
-    ZuUnroll::all<Types>([&ok]<typename A>() {
-      if (A::name() == ZuString{"NONE"}) ok = false;
-      unsigned n = 0;
-      ZuUnroll::all<Types>([&n]<typename B>() {
-	if (A::name() == B::name()) ++n;
-      });
-      if (n != 1) ok = false;
-    });
-    return ok;
-  }
-  ZuAssert(namesUnique());
   // ZuUnion<void, ...> gives NONE tag zero and positional alternatives.
   // Positions, not payload types, distinguish repeated payload alternatives.
   template <typename T> static unsigned tag(const T &v) { return v.type(); }
@@ -1266,8 +1277,66 @@ struct Value : public Rep<typename Mapping<T, Code>::T, Mapping<T, Code>::Code> 
   static auto fromWire(U v) {
     if constexpr (Mapped) return Map::load(v);
     else if constexpr (Code_ == ZfFieldTC::Bool) return v != 0;
-    else return v;
+    else return Rep<typename Map::T, Map::Code>::fromWire(v);
   }
+};
+
+// Synthetic fields use the same field protocol as ZfStruct. Their membership
+// is independent of application facets; nested values still receive the facet.
+template <typename O_, typename T_, unsigned Code_, ZuString ID,
+  typename Props_, auto Get>
+struct MapField {
+  using O = O_;
+  using T = T_;
+  using Props = Props_;
+  using Orig = MapField;
+  enum { Code = Code_, ReadOnly = false };
+  template <template <typename> class Override> using Adapt = Override<Orig>;
+  static constexpr auto id() { return ID; }
+  static decltype(auto) get(const O &o) { return Get(o); }
+  static constexpr decltype(auto) deflt() {
+    return ZfFieldDeflt<Props, [] {
+      using W = ZiFB::Value<T, Code>;
+      if constexpr (W::Mapped && __is_constructible(T)) return T{};
+      else if constexpr (W::Kind == ValueKind::Scalar) return typename W::WireType(0);
+      else if constexpr (__is_constructible(T)) return T{};
+    }>();
+  }
+};
+template <typename Fmt, typename K, typename V>
+struct MapEntry {
+  const K &key;
+  const V &value;
+
+  using KF = MapField<MapEntry, K, Fmt::KC, "key",
+    typename Fmt::KP::template Push<ZuFieldProp::FB::Key>,
+    [](const MapEntry &o) -> const K & { return o.key; }>;
+  using VF = MapField<MapEntry, V, Fmt::VC, "value", typename Fmt::VP,
+    [](const MapEntry &o) -> const V & { return o.value; }>;
+  template <typename Facet>
+  friend ZuTypeList<KF, VF> ZuFields_(MapEntry *, Facet *);
+  friend AsTable<Fmt::name() + "Entry"_z> ZiFB_Fmt(MapEntry *);
+};
+
+template <ZuString Name, unsigned KC, unsigned VC, typename KP, typename VP>
+template <typename O>
+struct AsMap<Name, KC, VC, KP, VP>::Root {
+  const O &entries;
+
+  using F = MapField<Root, O, ZfFieldTC::UDT, "entries", ZuTypeList<>,
+    [](const Root &o) -> const O & { return o.entries; }>;
+  template <typename Facet>
+  friend ZuTypeList<F> ZuFields_(Root *, Facet *);
+  friend AsTable<Name> ZiFB_Fmt(Root *);
+};
+
+template <ZuString Name, unsigned KC, unsigned VC, typename KP, typename VP>
+template <typename O>
+struct AsMap<Name, KC, VC, KP, VP>::Value : public Vector<
+  ZiFB::Value<Entry<typename O::Key, typename O::Val>, ZfFieldTC::UDT>> {
+  using MapType = O;
+  template <typename V>
+  static auto fromWire(const V &v) { return MapView<O>{v}; }
 };
 
 template <typename T> struct ArrayCount : public ZuUnsigned<0> { };
@@ -1298,7 +1367,11 @@ consteval unsigned valueAlign() {
 template <typename F>
 struct FieldWire : public FieldValue_<F> {
   using V = FieldValue_<F>;
-  enum { Required = ZuTypeIn<ZuFieldProp::Required, typename F::Props>{} };
+  enum { Key = ZuTypeIn<ZuFieldProp::FB::Key, typename F::Props>{} };
+  enum { Required = ZuTypeIn<ZuFieldProp::Required, typename F::Props>{} ||
+    (Key && V::Kind == ValueKind::String) };
+  ZuAssert(!Key || (!V::Mapped &&
+    (V::Kind == ValueKind::Scalar || V::Kind == ValueKind::String)));
   enum { ForcedAlign = ZuFieldProp::FB::align<F>() };
   enum { InStruct = IsStruct<ZuUnder<typename F::O>>{} };
   ZuAssert(!Required || (ZuFieldActive<F>{} && V::Kind != ValueKind::Scalar));
@@ -1310,6 +1383,10 @@ struct FieldWire : public FieldValue_<F> {
     else return ForcedAlign > valueAlign<V>() ? ForcedAlign : valueAlign<V>();
   }
 };
+
+template <typename V, typename = void> struct IsKeyWire : public ZuFalse { };
+template <typename V>
+struct IsKeyWire<V, decltype(V::Key, void())> : public ZuBool<V::Key> { };
 
 template <typename F>
 consteval auto defaultValue() {
@@ -1617,11 +1694,54 @@ bool verifyValue(Verifier &v, unsigned at, unsigned alignment) {
   }
 }
 
+// Canonical string keys compare as C strings; scalar keys use wire ordering.
+// No semantic validation is performed here or during materialization.
+template <typename V, typename L, typename R>
+int mapKeyCmp(const L &l, const R &r) {
+  if constexpr (V::Kind == ValueKind::String) {
+    ZuCSpan a{l}, b{r};
+    return strcmp(a.data() ? a.data() : "", b.data() ? b.data() : "");
+  } else return l < r ? -1 : l > r ? 1 : 0;
+}
+
+template <typename O>
+class MapView : public VectorValue<typename As<O>::template Value<O>::Elem> {
+  using Base = VectorValue<typename As<O>::template Value<O>::Elem>;
+public:
+  using Entry = typename As<O>::template Entry<typename O::Key, typename O::Val>;
+  using Base::Base;
+  MapView() = default;
+  explicit MapView(Base v) : Base{v} { }
+
+  auto key(unsigned i) const { return (*this)[i].template get<typename Entry::KF>(); }
+  auto value(unsigned i) const { return (*this)[i].template get<typename Entry::VF>(); }
+
+  // Like canonical LookupByKey, this assumes sorted input. Loading a map does
+  // not use this path and accepts entries in any order, including duplicates.
+  template <typename K>
+  View<Entry> find(const K &key_) const {
+    unsigned lo = 0, hi = this->length();
+    while (lo < hi) {
+      unsigned mid = lo + ((hi - lo)>>1);
+      int cmp = mapKeyCmp<FieldWire<typename Entry::KF>>(key(mid), key_);
+      if (cmp < 0) lo = mid + 1;
+      else if (cmp > 0) hi = mid;
+      else return (*this)[mid];
+    }
+    return View<Entry>{};
+  }
+};
+
 // --- typed object handlers
 
 template <typename T, typename Facet, typename U>
 auto nativeValue(const U &value) {
-  if constexpr (IsView<U>{}) {
+  if constexpr (IsMapView<U>{}) {
+    using O = ObjectType<T>;
+    using H = typename As<O>::template Handler<O, Facet>;
+    if constexpr (ZuTraits<T>::IsPointer) return value ? H{value}.alloc() : nullptr;
+    else return H{value}.ctor();
+  } else if constexpr (IsView<U>{}) {
     using O = ObjectType<T>;
     using H = typename As<O>::template Handler<O, Facet>;
     if constexpr (ZuTraits<T>::IsPointer)
@@ -1696,7 +1816,9 @@ private:
   auto loadField() const {
     using W = FieldWire<F>;
     using V = decltype(view.template get<F>());
-    if constexpr (IsView<V>{}) {
+    if constexpr (IsMapView<V>{})
+      return nativeValue<typename F::T, Facet>(view.template get<F>());
+    else if constexpr (IsView<V>{}) {
       auto value = view.template get<F>();
       if constexpr (W::Kind == ValueKind::Inline &&
 	!ZuIsSame<decltype(F::deflt()), void>{})
@@ -1994,14 +2116,21 @@ struct AllValues<ZfFieldFilter::All> : public ZuTrue { };
 template <typename V, typename Facet, template <typename> class Filter,
   typename B, typename T>
 unsigned saveValue(B &builder, const T &native, unsigned alignment = valueAlign<V>()) {
-  if constexpr (CanSaveTo<V, B, T>{}) {
+  if constexpr (IsMapWire<V>{}) {
+    using O = typename V::MapType;
+    using H = typename As<O>::template Handler<O, Facet>;
+    if constexpr (ZuTraits<T>::IsPointer)
+      return native ? H::template saveEntries<Filter>(builder, *native) : 0;
+    else return H::template saveEntries<Filter>(builder, native);
+  } else if constexpr (CanSaveTo<V, B, T>{}) {
     return V::Map::saveTo(builder, native);
   } else {
     const auto &value = V::toWire(native);
     using W = ZuDecay<decltype(value)>;
     if constexpr (V::Kind == ValueKind::String) {
       ZuCSpan text{value};
-      return text.data() ? builder.string(text) : 0;
+      if constexpr (IsKeyWire<V>{}) return builder.string(text);
+      else return text.data() ? builder.string(text) : 0;
     } else if constexpr (V::Kind == ValueKind::Table) {
       auto save = [&builder](const auto &o) {
 	// Once the native field is selected, its transformed representation
@@ -2228,6 +2357,137 @@ unsigned AsTable<Name>::Handler<O, Facet>::save(B &builder, const O &o) {
     });
   }
 }
+
+// Synthetic entry/root fields are always retained. Application values still
+// use the ordinary Save filter, unless the caller explicitly requests All.
+template <typename F> struct MapFields : public ZuTrue { };
+
+template <ZuString Name, unsigned KC, unsigned VC, typename KP, typename VP>
+template <typename O, typename Facet>
+class AsMap<Name, KC, VC, KP, VP>::Handler :
+  public AsTable<Name>::template Handler<Root<O>, Facet> {
+  using R = Root<O>;
+  using Base = typename AsTable<Name>::template Handler<R, Facet>;
+public:
+  using E = Entry<typename O::Key, typename O::Val>;
+  using EH = typename AsTable<Name + "Entry"_z>::template Handler<E, Facet>;
+  using Val = typename O::Val;
+  using Key = typename O::Key;
+  using Base::verify;
+
+  explicit Handler(View<O, Facet> v) :
+    Base{{View<R, Facet>{v.data()}}},
+    m_entries{View<R, Facet>{v.data()}.template get<typename R::F>()} { }
+  explicit Handler(MapView<O> entries) :
+    Base{{View<R, Facet>{}}}, m_entries{entries} { }
+  MapView<O> entries() const { return m_entries; }
+
+  template <template <typename> class Filter = ZfFieldFilter::Save, typename B>
+  static unsigned saveEntries(B &b, const O &o) {
+    // Count by traversal: the interface does not require count(), and iteration
+    // may select fewer entries than a container's physical count. The caller
+    // owns the container and keeps it stable for the complete serialization.
+    unsigned count = 0;
+    {
+      auto i = o.citer();
+      while (auto node = i()) {
+	if (++count >= Wire::MaxSize/sizeof(Offset)) {
+	  b.fail(Error::Capacity);
+	  return 0;
+	}
+      }
+    }
+    auto offsets = ZtScratch(Offsets, count, count);
+    unsigned n = 0;
+    {
+      auto i = o.citer();
+      while (auto node = i()) {
+	E e{node->key(), node->val()};
+	if constexpr (AllValues<Filter>{})
+	  offsets[n++] = EH::template save<ZfFieldFilter::All>(b, e);
+	else offsets[n++] = EH::template save<MapFields>(b, e);
+	if (b.failed()) return 0;
+      }
+    }
+    // Offsets are end-relative, so growth while constructing entries cannot
+    // invalidate scratch or borrowed comparisons. Sort the serialized keys.
+    auto key = [&b](Offset at) {
+      return View<E>{b.data() + b.size() - at}.template get<typename E::KF>();
+    };
+    ZuSort(offsets.data(), n, [key](Offset a, Offset c) {
+      return mapKeyCmp<FieldWire<typename E::KF>>(key(a), key(c));
+    });
+    return b.offsets(offsets);
+  }
+  template <template <typename> class Filter = ZfFieldFilter::Save, typename B>
+  static unsigned save(B &b, const O &o) {
+    auto entries_ = saveEntries<Filter>(b, o);
+    auto table = b.startTable();
+    b.fieldOffset(table, 0, entries_);
+    return b.endTable(table);
+  }
+
+  O ctor() const {
+    O o;
+    load_(o);
+    return o;
+  }
+  O *alloc() const {
+    auto o = new O();
+    load_(*o);
+    return o;
+  }
+  void new_(void *ptr) const { load_(*new (ptr) O()); }
+  void load(O &o) const {
+    if constexpr (RawVal) {
+      auto i = o.citer();
+      while (auto node = i()) release(node);
+    }
+    o.clean();
+    load_(o);
+  }
+  void update(O &o) const { load_(o); }
+
+private:
+  enum { RawVal = ZuTraits<Val>::IsPointer && ZuTraits<Val>::IsPrimitive };
+  template <typename Node>
+  static void release(Node *node) {
+    // Clear the slot before releasing the pointee, so node destruction (which
+    // may itself own raw values) sees null. Smart pointers release normally.
+    auto &slot = const_cast<Val &>(node->val());
+    auto p = slot;
+    slot = nullptr;
+    delete p;
+  }
+  Val value(unsigned i) const {
+    using W = FieldWire<typename E::VF>;
+    auto v = m_entries.value(i);
+    if constexpr (IsView<decltype(v)>{} || IsMapView<decltype(v)>{})
+      return nativeValue<Val, Facet>(v);
+    else if constexpr (W::Kind == ValueKind::Union && !W::Mapped)
+      return As<typename W::Native>::template Handler<typename W::Native, Facet>::
+	template ctor<Val>(v);
+    else if constexpr (W::Kind == ValueKind::Vector && W::Code_ != ZfFieldTC::Bytes) {
+      using T = typename ZuTraits<Val>::Elem;
+      if constexpr (IsView<typename decltype(v)::Elem>{})
+	return Val{NativeArray<T, Facet, decltype(v)>{v}};
+      else return Val{v};
+    } else return Val{v};
+  }
+  void load_(O &o) const {
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
+      Key key{m_entries.key(i)};
+      Val val = value(i);
+      {
+	auto old = o.del(key);
+	if constexpr (RawVal) { if (old) release(&*old); }
+      }
+      o.add(ZuMv(key), ZuMv(val));
+    }
+  }
+
+  MapView<O> m_entries;
+};
 
 template <typename B>
 unsigned Values::HwBitmapMap::saveTo(B &b, const ZmBitmap &v) {

@@ -207,6 +207,14 @@ PKG_CHECK_MODULES([FB_INTEROP], [flatbuffers >= 24], [], [
   FB_INTEROP_LIBS=
 ])
 
+# Canonical protobuf is used only by the explicit ZiPB interop target.
+PKG_CHECK_MODULES([PB_INTEROP], [protobuf >= 25], [z_have_pb_interop=yes], [
+  z_have_pb_interop=no
+  PB_INTEROP_CFLAGS=
+  PB_INTEROP_LIBS=
+])
+AM_CONDITIONAL([HAVE_PB_INTEROP], [test "x$z_have_pb_interop" = "xyes"])
+
 # postgres libpq (optional)
 AC_ARG_WITH([pq], AS_HELP_STRING([--with-pq], [Build with PostgreSQL]))
 AS_IF([test ".$with_pq" = ".yes"], [

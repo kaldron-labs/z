@@ -19,7 +19,7 @@
 
 namespace Zum {
 
-struct DBContext;
+struct DB;
 
 ZumExtern bool appIssuerPath(AppID, String &);
 ZumExtern bool appEndpointPath(AppID, ZuCSpan group, ZuCSpan endpoint,
@@ -36,7 +36,7 @@ ZumExtern String jwksJSON(const StringVec &publicJwks);
 ZuDerive(DiscoveryFn, (ZmFn<void(bool, String),
   ZmFnHeapID<"Zum.DiscoveryFn">>));
 ZumExtern bool jwksLoad(
-  Requests *, ZuTime deadline, DBContext *, ZuCSpan issuer, int64_t now,
+  Requests *, ZuTime deadline, DB *, ZuCSpan issuer, int64_t now,
   unsigned maxKeys, DiscoveryFn);
 
 } // namespace Zum

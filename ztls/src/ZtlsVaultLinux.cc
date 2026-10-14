@@ -7,6 +7,7 @@
 // Linux Secret Service store, transported by the in-tree D-Bus client.
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
@@ -20,6 +21,20 @@
 #include "ZtlsVaultSS.hh"
 
 namespace Ztls_ {
+
+namespace SS {
+
+int propID(ZuCSpan key)
+{
+  struct IDs {
+    using Keys = ZuStringTL<"org.freedesktop.Secret.Collection.Label",
+      "org.freedesktop.Secret.Item.Label", "org.freedesktop.Secret.Item.Attributes">;
+  };
+  static constexpr auto matcher = ZuMatcher<IDs>();
+  return matcher.exact(key);
+}
+
+} // SS
 
 namespace VaultLinux_ {
 
@@ -86,8 +101,7 @@ public:
   }
 
   Ztls::VaultResult load(ZuCSpan key, Ztls::VaultLoadFn fn) override {
-    SS::Attrs attrs;
-    attributes_(attrs, key);
+    SS::Attrs attrs{m_program, m_account, key};
     SS::SearchArg arg{SS::AttrsView{&attrs}};
     SS::Paths unlocked, locked;
     auto result = call_<SS::SearchArg, SS::SearchRes>(
@@ -129,8 +143,7 @@ public:
     if (result.template is<ZeException>()) return result;
     if (collection == "/") {
       SS::CreateCollectionArg arg;
-      arg.properties.add("org.freedesktop.Secret.Collection.Label",
-        SS::Variant{SS::Text{m_program}});
+      arg.properties.label = SS::Text{m_program};
       arg.alias = "default";
       result = call_<SS::CreateCollectionArg, SS::CreateCollectionRes>(
         ServicePath, ServiceIF, "CreateCollection", arg,
@@ -157,13 +170,10 @@ public:
     if (!unlocked.length())
       return ZeEXCEPT(Error, "ZtlsVault", "collection remains locked");
 
-    SS::Attrs attrs;
-    attributes_(attrs, key);
+    SS::Attrs attrs{m_program, m_account, key};
     SS::CreateItemArg item;
-    item.properties.add("org.freedesktop.Secret.Item.Label",
-      SS::Variant{SS::Text{key}});
-    item.properties.add("org.freedesktop.Secret.Item.Attributes",
-      SS::Variant{SS::AttrsView{&attrs}});
+    item.properties.label = SS::Text{key};
+    item.properties.attributes = SS::AttrsView{&attrs};
     item.secret = SS::Secret{m_session, {}, value,
       SS::Text{"application/octet-stream"}};
     item.replace = true;
@@ -179,12 +189,6 @@ public:
   }
 
 private:
-  void attributes_(SS::Attrs &attrs, ZuCSpan key) const {
-    attrs.add("service", m_program);
-    attrs.add("account", m_account);
-    attrs.add("key", key);
-  }
-
   Ztls::VaultResult unlock_(const SS::Paths &objects,
       SS::Paths &unlocked) {
     SS::UnlockArg arg{objects};
