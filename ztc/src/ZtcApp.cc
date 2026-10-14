@@ -164,7 +164,7 @@ using AlertTail = ZmQueue<ZmRef<ZiIOBuf>,
 
 class AlertStore {
 public:
-  using LoadResult = int;
+  using LoadResult = Alert_::LoadResult;
 
   void init(
       Zi::Path prefix, ZuID id, uint32_t maxFrame, unsigned retention) {
