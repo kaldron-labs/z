@@ -228,7 +228,7 @@ struct ServerSession {
   int request(Link &, Parser &) { return 1; }
 };
 
-template <typename App, typename Profile, typename StreamLink = void>
+template <typename App, typename Profile, typename StreamLink>
 class ProtocolServer :
   public ProfileTraits<Profile>::Transport::template Server<App> {
   using HTTP = ProfileTraits<Profile>;
@@ -268,8 +268,8 @@ public:
 
   ZiConnection *accepted(const ZiCxnInfo &ci) {
     if (!impl()->admit(ci)) return nullptr;
-    using Link = typename App::Link;
-    return new typename Link::Cxn(new Link{impl(), ci}, ci);
+    return new typename StreamLink::Cxn(
+      new StreamLink{impl(), ci}, ci);
   }
 
   bool admit(const ZiCxnInfo &) { return true; }
