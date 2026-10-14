@@ -146,7 +146,7 @@ static void testHTTP()
   if (!started) { server.final(); mx.stop(); return; }
   ZmSemaphore httpStarted;
   bool httpStartOK = false;
-  server.start([&](bool ok) {
+  server.start([&httpStartOK, &httpStarted](bool ok) {
     httpStartOK = ok;
     httpStarted.post();
   });
@@ -187,7 +187,7 @@ static void testHTTP()
     srv.notified.wait();
     ZmSemaphore clientStopped;
     bool clientStopOK = false;
-    client.stop([&](bool ok) {
+    client.stop([&clientStopOK, &clientStopped](bool ok) {
       clientStopOK = ok;
       clientStopped.post();
     });
@@ -197,7 +197,7 @@ static void testHTTP()
   client.final();
   ZmSemaphore httpStopped;
   bool httpStopOK = false;
-  server.HTTP::stop([&](bool ok) {
+  server.HTTP::stop([&httpStopOK, &httpStopped](bool ok) {
     httpStopOK = ok;
     httpStopped.post();
   });

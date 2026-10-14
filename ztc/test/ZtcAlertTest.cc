@@ -51,7 +51,7 @@ struct FakeRecover {
     offset = offsets[unsigned(seqNo)];
     return true;
   }
-  Ztc::Alert_::LoadResult::T frame(
+  int frame(
       uint64_t seqNo, uint64_t offset, unsigned &length) const {
     if (seqNo == uint64_t(failFrameSeqNo))
       return Ztc::Alert_::LoadResult::IOError;

@@ -20,7 +20,7 @@ bool parseCallback(ZuCSpan query, CallbackQuery &result)
   uint8_t lookup[3]{};
   bool duplicate = false;
   static constexpr auto matcher = ZuMatcher<CallbackKeys>();
-  bool valid = formEach(query, [&](ZuCSpan name, ZuCSpan value) {
+  bool valid = formEach(query, [&lookup, &duplicate, &result](ZuCSpan name, ZuCSpan value) {
     int id = matcher.exact(name);
     if (id < 0) return;
     duplicate |= bool(lookup[id]);

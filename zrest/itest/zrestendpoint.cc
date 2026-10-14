@@ -945,13 +945,13 @@ void multiplexed(bool h3)
 
   ZmSemaphore serverDone, clientDone;
   ZmAtomic<int> serverStopOK = -1, clientStopOK = -1;
-  if (serverInited) server.stop([&](bool ok) {
+  if (serverInited) server.stop([&serverStopOK, &serverDone](bool ok) {
     serverStopOK = ok;
     serverDone.post();
   });
   ZuCheck(serverInited &&
     serverDone.timedwait(Zm::now(10)) == 0 && serverStopOK.load_() == 1);
-  if (clientInited) client.stop([&](bool ok) {
+  if (clientInited) client.stop([&clientStopOK, &clientDone](bool ok) {
     clientStopOK = ok;
     clientDone.post();
   });
@@ -1031,7 +1031,7 @@ void retryLimit()
   bool finished = accepted && call->done.timedwait(Zm::now(10)) == 0;
   ZuCheck(finished && !call->processed.load_() &&
     call->failures.load_() == 1 && call->retries.load_() == 2 &&
-    call->code.load_() == Zrest::Failure::Transport);
+    call->code.load_() == Zrest::Failure::Code::Transport);
   if (inited) {
     ZuCheck(client.stop());
     client.final();
@@ -1262,7 +1262,7 @@ void call()
     !app.invalid.load_());
 
   ZmSemaphore entered, release;
-  mx.run([&]() {
+  mx.run([&entered, &release]() {
     entered.post();
     release.wait();
   }, mx.sid("rx"));

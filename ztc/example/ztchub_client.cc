@@ -549,7 +549,7 @@ public:
     String code_, state_, error_;
     static constexpr auto matcher = ZuMatcher<CallbackKeys>();
     if (ok) ok = formEach({form.data(), form.length()},
-      [&](ZuCSpan name, ZuCSpan value) {
+      [&lookup, &duplicate, &code_, &state_, &error_](ZuCSpan name, ZuCSpan value) {
         int id = matcher.exact(name);
         if (id < 0) return;
         duplicate |= bool(lookup[id]);

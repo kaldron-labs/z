@@ -184,7 +184,7 @@ struct LongMatcher<ZumCLI::Options, ZuFacet::CLI> {
 namespace ZumCLI {
 
 using OptionKeys = typename ZfCLI::Parser<Options>::LongKeys_;
-static_assert(OptionKeys::N <= 64);
+ZuAssert(OptionKeys::N <= 64);
 
 consteval uint64_t optionMask(ZuCSpan names)
 {
@@ -196,7 +196,7 @@ consteval uint64_t optionMask(ZuCSpan names)
     while (length < names.length() && names[length] != ':' &&
         names[length] != ' ') ++length;
     bool found = false;
-    ZuUnroll::all<OptionKeys::N>([&](auto I) {
+    ZuUnroll::all<OptionKeys::N>([&mask, &names, length, &found](auto I) {
       constexpr auto key = ZuType<I, OptionKeys>::V;
       if (key.length() != length) return;
       for (unsigned j = 0; j < length; ++j)

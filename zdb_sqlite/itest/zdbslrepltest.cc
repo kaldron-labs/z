@@ -89,8 +89,12 @@ int main()
   ZmSemaphore started;
   bool leaderStarted = false;
   bool followerStarted = false;
-  leader->start([&](bool ok) { leaderStarted = ok; started.post(); });
-  follower->start([&](bool ok) { followerStarted = ok; started.post(); });
+  leader->start([&leaderStarted, &started](bool ok) {
+    leaderStarted = ok; started.post();
+  });
+  follower->start([&followerStarted, &started](bool ok) {
+    followerStarted = ok; started.post();
+  });
   started.wait();
   started.wait();
   ZuCheck(leaderStarted && followerStarted);
