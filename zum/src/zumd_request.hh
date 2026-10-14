@@ -21,6 +21,10 @@
 
 namespace Zum {
 
+namespace RequestListState {
+  enum { None, Active, Draining };
+}
+
 template <typename Heap = ZuVoid>
 class Requests_ : public Heap, public ZmObject {
 
@@ -55,8 +59,6 @@ public:
   private:
   friend Requests_;
 
-    enum class List : uint8_t { None, Active, Draining };
-
     RequestData(Requests_ *, Fn);
 
     void start_(ZuTime);
@@ -67,7 +69,7 @@ public:
     Requests_		*m_requests = nullptr;
     ZmScheduler::Timer	m_timer;
     Fn			m_cancel;
-    List			m_list = List::None;
+    int8_t		m_list = RequestListState::None;
     bool			m_done = false;
   };
 

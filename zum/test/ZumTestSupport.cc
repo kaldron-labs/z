@@ -52,7 +52,7 @@ bool oidcParams(
   location.splice(0, unsigned(offset + 1));
   uint8_t lookup[2]{};
   Zum::formEach({location.data(), location.length()},
-    [&](ZuCSpan name, ZuCSpan value) {
+    [&lookup, &state, &nonce](ZuCSpan name, ZuCSpan value) {
       int id = matcher.exact(name);
       if (id < 0) return;
       lookup[id] = 1;

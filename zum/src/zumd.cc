@@ -378,7 +378,7 @@ int main(int argc, char **argv)
   Ztc::App publisher;
   bool publisherStarted = false;
   bool publisherStopped = true;
-  auto stopPublisher = [&]() {
+  auto stopPublisher = [&publisher, &publisherStarted, &publisherStopped]() {
     if (publisherStarted) {
       if (!publisher.stop()) {
         publisherStopped = false;
@@ -402,7 +402,7 @@ int main(int argc, char **argv)
       int id = matcher.exact(fields[i].p<0>());
       if (id >= 0) lookup[id] = i;
     }
-    auto node = [&](unsigned id) -> const ZfCf::AnyNode * {
+    auto node = [&lookup, &fields](unsigned id) -> const ZfCf::AnyNode * {
       int i = lookup[id];
       return i >= 0 ? fields[i].p<1>().ptr() : nullptr;
     };

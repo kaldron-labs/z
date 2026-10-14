@@ -1061,7 +1061,7 @@ int main(int argc, char **argv)
     });
     bool ready = false;
     ZmSemaphore started;
-    hub.start([&](int error) { ready = error == Zum::ServiceError::OK;
+    hub.start([&ready, &started](int error) { ready = error == Zum::ServiceError::OK;
       if (!ready) std::cerr << "ztchub startup error=" << error << '\n';
       started.post(); });
     started.wait();

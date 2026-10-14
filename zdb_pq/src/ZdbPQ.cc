@@ -1392,7 +1392,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
       // table exists but not all fields matched
       auto i = m_badField;
       auto e = ZeEXCEPT(Fatal, "ZdbPQ", ([
-	id = this->m_id_,
+	id = m_id_,
 	failed = m_openState.failed(), matched = m_openState.field(),
 	i, field = ZuNull(i) ? nullptr : m_xFields[i].vfield,
 	nFields = m_xFields.length()

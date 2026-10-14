@@ -66,8 +66,8 @@ inline bool valid(const Limits &limits)
 }
 
 struct Failure {
-  enum Code { Stopped, Limit, Transport, Timeout, Decode, Status };
-  Code code = Transport;
+  struct Code { enum { Stopped, Limit, Transport, Timeout, Decode, Status }; };
+  int code = Code::Transport;
   Zhttp::Result http;
 };
 
@@ -431,7 +431,7 @@ int resMatch(unsigned request, unsigned status)
 	  static constexpr unsigned ResI = J;
 	  using Res = ZuType<ResI, Responses>;
 	  return GetResIndex<Reqs, Res>{};
-	      }, -1);
+	}, -1);
     }
   }, -1);
 }

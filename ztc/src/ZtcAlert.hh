@@ -20,7 +20,7 @@ namespace Ztc {
 namespace Alert_ {
 
 namespace LoadResult {
-  enum T { OK, Missing, Incomplete, Corrupt, IOError };
+  enum { OK, Missing, Incomplete, Corrupt, IOError };
 }
 
 inline bool validDate(uint32_t date)
@@ -53,7 +53,7 @@ bool recover(IO &io, uint64_t &count, Zi::Offset &dataEnd)
     if (!io.index(seqNo, offset) || offset != uint64_t(dataEnd))
       return false;
     unsigned length = 0;
-    LoadResult::T result = io.frame(seqNo, offset, length);
+    int result = io.frame(seqNo, offset, length);
     if (result == LoadResult::Incomplete && seqNo + 1 == entries) {
       entries = seqNo;
       break;

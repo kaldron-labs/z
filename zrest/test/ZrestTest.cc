@@ -242,7 +242,7 @@ static void endpointHandoffTest()
 
   Zrest::ClientReq<EndpointApp, EndpointCatalog> refused;
   refused.init<EndpointReq>(object, call);
-  refused.failure.code = Zrest::Failure::Limit;
+  refused.failure.code = Zrest::Failure::Code::Limit;
   refused.deliver();
   ZuCheck(call->processed == 1 && call->failures == 1);
 }

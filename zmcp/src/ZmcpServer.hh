@@ -1037,7 +1037,7 @@ public:
   ~IOServer() { this->final(); }
 
   bool init(ZiMultiplex *mx, Zjrpc::StdioConfig config, Impl *impl) {
-    if (this->m_mx || !impl || !mx || !mx->txThread()) return false;
+    if (m_mx || !impl || !mx || !mx->txThread()) return false;
     if (!initPeer_(mx, mx->txThread(), config.limits(), impl, m_histSize)) return false;
     new (m_stdio.template new_<IO>()) IO{
       this, m_mx, m_txThread, ZuMv(config)};
@@ -1049,26 +1049,26 @@ public:
   }
 
   bool start() {
-    if (!this->m_stdio.template ptr<IO>() || !this->m_up.load_() ||
-	this->m_stdioStarted || this->m_stdioDone.load_()) return false;
+    if (!m_stdio.template ptr<IO>() || !m_up.load_() ||
+	m_stdioStarted || m_stdioDone.load_()) return false;
     return ZmBlock<bool>{}([this](auto wake) mutable {
-      this->m_mx->run([this, wake = ZuMv(wake)]() mutable {
+      m_mx->run([this, wake = ZuMv(wake)]() mutable {
 	bool ok = false;
 	try {
-	  this->m_context = Server_::openContext(
-	    this->m_impl, SessionTag{}, 0, true, ZuCSpan{});
-	  m_rpcContext = Context{nullptr, this->m_context.ptr()};
-	  ok = this->m_stdio.template p<IO>().start_();
+	  m_context = Server_::openContext(
+	    m_impl, SessionTag{}, 0, true, ZuCSpan{});
+	  m_rpcContext = Context{nullptr, m_context.ptr()};
+	  ok = m_stdio.template p<IO>().start_();
 	} catch (...) {
 	}
-	this->m_stdioStarted = ok;
+	m_stdioStarted = ok;
 	if (!ok) {
-	  this->m_context.close();
-	  this->m_up = false;
-	  this->m_stdioDone = true;
+	  m_context.close();
+	  m_up = false;
+	  m_stdioDone = true;
 	}
 	wake(ok);
-      }, this->m_txThread);
+      }, m_txThread);
     });
   }
 
@@ -1085,13 +1085,13 @@ public:
   bool stop() { return this->stopStdio_(); }
 
   void final() {
-    if (!this->m_mx) return;
+    if (!m_mx) return;
     (void)this->stopStdio_();
-    this->m_stdio.null();
-    this->m_peer.close();
-    this->m_impl = nullptr;
-    this->m_mx = nullptr;
-    this->m_txThread = 0;
+    m_stdio.null();
+    m_peer.close();
+    m_impl = nullptr;
+    m_mx = nullptr;
+    m_txThread = 0;
   }
 
 private:
@@ -1146,7 +1146,7 @@ private:
 
   template <typename M>
   bool send_(const M &message) {
-    return this->m_up.load_() && m_stdio.template p<IO>().send_(message);
+    return m_up.load_() && m_stdio.template p<IO>().send_(message);
   }
   void fail_() { this->failStdio_(); }
 
@@ -1887,6 +1887,11 @@ template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
 class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
     public Zjrpc::WSIO<WSServer<Impl, Catalog, Profile>> {
   using Common = Server<WSServer, Impl, Catalog>;
+  using Common::m_impl;
+  using Common::m_mx;
+  using Common::m_limits;
+  using Common::m_txThread;
+  using Common::m_up;
   using IO = Zjrpc::WSIO<WSServer>;
   friend Common;
   friend IO;
@@ -1899,6 +1904,7 @@ public:
       public Zjrpc::Dispatcher<Connection, Impl, Catalog,
 	Context, Server_::DispatchPolicy<Catalog>> {
     using Base = Server<Connection, Impl, Catalog>;
+    using Base::m_up;
     using Dispatch = Zjrpc::Dispatcher<Connection, Impl, Catalog,
       Context, Server_::DispatchPolicy<Catalog>>;
     friend Dispatch;
@@ -1926,10 +1932,10 @@ public:
   private:
     template <typename M>
     bool send_(const M &message) {
-      return this->m_up.load_() && m_server->wsAccept() && m_server->send_(*m_link, message);
+      return m_up.load_() && m_server->wsAccept() && m_server->send_(*m_link, message);
     }
     void fail_() {
-      this->m_up = false;
+      m_up = false;
       m_peer.close();
       m_link->close(Zws::CloseCode::Internal);
     }
@@ -1958,30 +1964,30 @@ public:
   ~WSServer() { final(); }
   bool init(const Zhttp::HubConfig &hub, ZiIP address, unsigned port,
       Config profile, Zjrpc::WSConfig config, Impl *impl) {
-    if (this->m_mx || !hub.mx() || !impl || !port || !Zjrpc::valid(config.limits()))
+    if (m_mx || !hub.mx() || !impl || !port || !Zjrpc::valid(config.limits()))
       return false;
-    this->m_impl = impl;
-    this->m_mx = hub.mx();
-    this->m_txThread = hub.txThread() ? this->m_mx->sid(hub.txThread()) : this->m_mx->txThread();
-    this->m_limits = config.limits();
+    m_impl = impl;
+    m_mx = hub.mx();
+    m_txThread = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
+    m_limits = config.limits();
     auto transport = new (m_ws.template new_<WS>()) WS{this, ZuMv(address), port};
     if (!transport->init(hub, ZuMv(profile), config.binding())) {
       m_ws.null();
-      this->m_impl = nullptr;
-      this->m_mx = nullptr;
+      m_impl = nullptr;
+      m_mx = nullptr;
       return false;
     }
-    this->m_up = true;
+    m_up = true;
     return true;
   }
   bool start() {
-    if (!this->m_mx || m_started || !wsAccept() || !ws().start()) return false;
+    if (!m_mx || m_started || !wsAccept() || !ws().start()) return false;
     m_started = true;
     return true;
   }
   bool stop() {
-    if (!this->m_mx) return true;
-    this->m_up = false;
+    if (!m_mx) return true;
+    m_up = false;
     bool ok = !m_started || ws().stop();
     m_started = false;
     ZmBlock<>{}([this](auto wake) mutable {
@@ -1993,25 +1999,25 @@ public:
     return ok;
   }
   void final() {
-    if (!this->m_mx) return;
+    if (!m_mx) return;
     (void)stop();
     ws().final();
     m_ws.null();
-    this->m_impl = nullptr;
-    this->m_mx = nullptr;
-    this->m_txThread = 0;
+    m_impl = nullptr;
+    m_mx = nullptr;
+    m_txThread = 0;
   }
   WS &ws() { return m_ws.template p<WS>(); }
   const WS &ws() const { return m_ws.template p<WS>(); }
-  bool wsAccept() const { return this->m_up.load_(); }
+  bool wsAccept() const { return m_up.load_(); }
 
   bool accept(Link &link, ZuBSpan host, ZuBSpan target, ZuBSpan offered,
       Zws::HandshakeString &selected) {
-    return wsAccept() && this->m_impl->accept(link, host, target, offered, selected);
+    return wsAccept() && m_impl->accept(link, host, target, offered, selected);
   }
-  void listening(const ZiListenInfo &info) { Zws::H1_::listening(*this->m_impl, info, 0); }
-  void listening() { Zws::H1_::listening(*this->m_impl, 0); }
-  void listenFailed(bool transient) { Zws::H1_::listenFailed(*this->m_impl, transient, 0); }
+  void listening(const ZiListenInfo &info) { Zws::H1_::listening(*m_impl, info, 0); }
+  void listening() { Zws::H1_::listening(*m_impl, 0); }
+  void listenFailed(bool transient) { Zws::H1_::listenFailed(*m_impl, transient, 0); }
   void connected(Link &link, Zhttp::ConnectedInfo info) {
     link.state().rx.open();
     ZmRef<Zjrpc::WSOpen<Link>> action = new Zjrpc::WSOpen<Link>{&link, ZuMv(info)};
@@ -2024,7 +2030,7 @@ public:
 	  link->close(Zws::CloseCode::Internal);
 	  return;
 	}
-	Zws::H1_::connected(*this->m_impl, *link, ZuMv(action->info), 0);
+	Zws::H1_::connected(*m_impl, *link, ZuMv(action->info), 0);
       } catch (...) { link->close(Zws::CloseCode::Internal); }
     });
   }
@@ -2045,7 +2051,7 @@ public:
   void error(Link &link, Zws::Failure::T failure) {
     ws().txRun([this, link = ZmRef{&link}, failure]() mutable {
       try {
-	Zws::H1_::error(*this->m_impl, *link, failure, 0);
+	Zws::H1_::error(*m_impl, *link, failure, 0);
       } catch (...) { link->close(Zws::CloseCode::Internal); }
     });
   }
@@ -2056,12 +2062,12 @@ public:
   }
 
 private:
-  Impl *impl() const { return this->m_impl; }
+  Impl *impl() const { return m_impl; }
   template <typename M>
   bool send_(Link &link, const M &message) { return IO::sendWS_(link, message); }
   void disconnected_(ZmRef<Link> link, bool peer) {
     --m_closing;
-    try { Zws::H1_::disconnected(*this->m_impl, *link, peer, 0); } catch (...) { }
+    try { Zws::H1_::disconnected(*m_impl, *link, peer, 0); } catch (...) { }
     stopped_();
   }
   void stopped_() {

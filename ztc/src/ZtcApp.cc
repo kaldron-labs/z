@@ -164,7 +164,7 @@ using AlertTail = ZmQueue<ZmRef<ZiIOBuf>,
 
 class AlertStore {
 public:
-  using LoadResult = Alert_::LoadResult::T;
+  using LoadResult = int;
 
   void init(
       Zi::Path prefix, ZuID id, uint32_t maxFrame, unsigned retention) {
@@ -1561,7 +1561,7 @@ void App::reqRun_()
   }
 }
 
-bool App::publishRaw_(ZmRef<ZiIOBuf> buf, App_::Delivery::T delivery)
+bool App::publishRaw_(ZmRef<ZiIOBuf> buf, int delivery)
 {
   if (!buf) return false;
   if (m_state->telRing.closed() &&

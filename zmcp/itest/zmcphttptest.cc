@@ -610,7 +610,7 @@ static void httpTest()
   ZmSemaphore httpStarted;
   bool httpStartOK = false;
   if (started) {
-    server.start([&](bool ok) {
+    server.start([&httpStartOK, &httpStarted](bool ok) {
       httpStartOK = ok;
       httpStarted.post();
     });
@@ -1036,7 +1036,7 @@ static void httpTest()
   if (initialized) {
     ZmSemaphore httpStopped;
     bool httpStopOK = false;
-    server.HTTP::stop([&](bool ok) {
+    server.HTTP::stop([&httpStopOK, &httpStopped](bool ok) {
       httpStopOK = ok;
       httpStopped.post();
     });

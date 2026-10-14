@@ -52,7 +52,7 @@ namespace Filter_ {
   class Filter;
 }
 namespace App_ {
-  struct Delivery { enum T { Telemetry, Control }; };
+  namespace Delivery { enum { Telemetry, Control }; }
   class AlertEvent;
   struct Ingress;
   class IngressData;
@@ -240,7 +240,7 @@ private:
   void failReplay_(App_::Subscription_ *, ZuCSpan);
   void armTimer_();
   void clearSubscriptions_();
-  bool publishRaw_(ZmRef<ZiIOBuf>, App_::Delivery::T);
+  bool publishRaw_(ZmRef<ZiIOBuf>, int);
   bool publish_(ZmRef<ZiIOBuf>);
   bool publishApp_(uint64_t);
   void appTelemetry_(AppTelemetry &);

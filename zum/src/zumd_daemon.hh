@@ -79,9 +79,6 @@ namespace DaemonCleanupState { enum { Idle, Running, Stopping }; }
 
 template <typename Heap = ZuVoid>
 struct DaemonResponse_ : public Heap, public HTTPResponse {
-  static void *operator new(size_t) { return Heap::operator new(0); }
-  static void operator delete(void *p) noexcept { Heap::operator delete(p); }
-
   String	allow;
 };
 ZuDerive(DaemonResponseHeap,

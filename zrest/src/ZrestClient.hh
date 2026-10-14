@@ -778,19 +778,19 @@ struct ClientReq : public ZmObject, public MReqBuilder<Catalog> {
 	});
 	if (!delivered) {
 	  failure.http = httpResult;
-	  failure.code = Failure::Status;
+	  failure.code = Failure::Code::Status;
 	  failedFn(call_, failure);
 	}
       } else {
 	if (completed_) {
 	  failure.http = httpResult;
-	  if (decodeFailed) failure.code = Failure::Decode;
-	  else if (httpResult.ok()) failure.code = Failure::Status;
+	  if (decodeFailed) failure.code = Failure::Code::Decode;
+	  else if (httpResult.ok()) failure.code = Failure::Code::Status;
 	  else if (httpResult.code == Zhttp::ResultCode::TimedOut)
-	    failure.code = Failure::Timeout;
+	    failure.code = Failure::Code::Timeout;
 	  else if (httpResult.code == Zhttp::ResultCode::Cancelled)
-	    failure.code = Failure::Stopped;
-	  else failure.code = Failure::Transport;
+	    failure.code = Failure::Code::Stopped;
+	  else failure.code = Failure::Code::Transport;
 	}
 	failedFn(call_, failure);
       }
@@ -938,14 +938,14 @@ private:
   void admit_(unsigned pool, ZmRef<Request> request, bool ingress) {
     if (!m_up) {
       if (ingress) --m_ingress;
-      request->failure.code = Failure::Stopped;
+      request->failure.code = Failure::Code::Stopped;
       request->deliver();
       return;
     }
     if (++m_pending > m_limits.maxPending) {
       --m_pending;
       if (ingress) --m_ingress;
-      request->failure.code = Failure::Limit;
+      request->failure.code = Failure::Code::Limit;
       request->deliver();
       return;
     }
@@ -954,7 +954,7 @@ private:
     if (HTTP::send(pool, request)) return;
     --m_pending;
     request->client = nullptr;
-    request->failure.code = Failure::Stopped;
+    request->failure.code = Failure::Code::Stopped;
     request->deliver();
   }
 

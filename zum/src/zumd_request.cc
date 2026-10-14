@@ -71,7 +71,7 @@ template <typename Heap>
 void Requests_<Heap>::start_(RequestData *request, ZuTime deadline)
 {
   Node *node = static_cast<Node *>(request);
-  request->m_list = RequestData::List::Active;
+  request->m_list = RequestListState::Active;
   m_requests.pushNode(node);
   arm_(request, &request->m_timer, deadline);
 }
@@ -107,16 +107,16 @@ void Requests_<Heap>::remove_(RequestData *request)
 {
   Node *node = static_cast<Node *>(request);
   switch (request->m_list) {
-  case RequestData::List::Active:
+  case RequestListState::Active:
     m_requests.delNode(node);
     break;
-  case RequestData::List::Draining:
+  case RequestListState::Draining:
     m_draining.delNode(node);
     break;
-  case RequestData::List::None:
+  case RequestListState::None:
     break;
   }
-  request->m_list = RequestData::List::None;
+  request->m_list = RequestListState::None;
   --m_count;
 }
 
@@ -140,7 +140,7 @@ void Requests_<Heap>::deactivate_()
 {
   while (auto request = m_requests.shift()) {
     Node *node = request.ptr();
-    node->m_list = RequestData::List::Draining;
+    node->m_list = RequestListState::Draining;
     m_draining.pushNode(ZuMv(request));
     node->cancel_();
   }
