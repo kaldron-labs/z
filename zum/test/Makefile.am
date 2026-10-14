@@ -44,6 +44,7 @@ zumd_oidc_objects = \
 zum_test_libs = $(top_builddir)/zum/src/libZum.la \
 	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
+	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zv/src/libZv.la \
