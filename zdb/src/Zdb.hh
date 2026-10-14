@@ -1096,18 +1096,19 @@ private:
   // rowFields() - run-time field array
   ZfVFieldArray rowFields() const override { return ZfVFields<T>(); }
   // rowKeyFields() - run-time key field arrays
+  struct KeyFieldStorage {
+    ZuArray<ZfVFieldArray, KeyIDs::N> data;
+    KeyFieldStorage() : data(KeyIDs::N, false) {
+      init(ZuMkSeq<KeyIDs::N>{});
+    }
+    template <unsigned ...I>
+    void init(ZuSeq<I...>) {
+      ((data[I] = SplitKey<T, I>::storeFields()), ...);
+    }
+  };
   ZfVKeyFieldArray rowKeyFields() const override {
-    return []<unsigned ...I>(ZuSeq<I...>) -> ZfVKeyFieldArray {
-      // Immutable metadata storage is exactly the schema's number of keys.
-      struct Fields {
-	ZuArray<ZfVFieldArray, sizeof...(I)> data;
-	Fields() : data(sizeof...(I), false) {
-	  ((data[I] = SplitKey<T, I>::storeFields()), ...);
-	}
-      };
-      static const Fields fields;
-      return fields.data;
-    }(ZuMkSeq<KeyIDs::N>{});
+    static const KeyFieldStorage fields;
+    return fields.data;
   }
   // rowSchema() - flatbuffer reflection schema
   Schema rowSchema() const override {

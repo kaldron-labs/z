@@ -225,7 +225,7 @@ static void recovery(unsigned mode)
       leader = leader.ptr(), saga = ZuMv(saga)](auto wake) mutable {
     leader->saga(0, 1, ZuMv(saga),
       [wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
-      [context = leader.ptr()](bool ok) {
+      [context = leader](bool ok) {
 	if (ok) ++context->completed; else ++context->errors;
       });
   });
