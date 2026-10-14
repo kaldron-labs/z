@@ -811,14 +811,14 @@ struct ResBuilder : public ZmObject, public MResBuilder<Catalog> {
     m_method = method;
     m_work = work;
     ZmREF(work);
-    m_done = [](void *ptr, const Zhttp::ResponseResult &result) {
-      static_cast<Work *>(ptr)->retired(result);
-    };
-    m_release = [](void *ptr, const void *owner) {
+    m_done = [](void *ptr, const void *owner,
+	const Zhttp::ResponseResult &result) {
+      auto work = static_cast<Work *>(ptr);
+      try { work->retired(result); } catch (...) { }
 #ifdef ZmObject_DEBUG
-      ZmRef__::ZmDEREF_(static_cast<Work *>(ptr), owner);
+      ZmRef__::ZmDEREF_(work, owner);
 #else
-      ZmRef__::ZmDEREF_(static_cast<Work *>(ptr));
+      ZmRef__::ZmDEREF_(work);
 #endif
     };
   }
@@ -836,14 +836,13 @@ struct ResBuilder : public ZmObject, public MResBuilder<Catalog> {
     if (!m_work) return;
     auto work = m_work;
     m_work = nullptr;
-    try { m_done(work, result); } catch (...) { }
-    m_release(work, this);
+    m_done(work, this, result);
   }
 
 private:
   void *m_work = nullptr;
-  void (*m_done)(void *, const Zhttp::ResponseResult &) = nullptr;
-  void (*m_release)(void *, const void *) = nullptr;
+  void (*m_done)(void *, const void *,
+    const Zhttp::ResponseResult &) = nullptr;
   Zhttp::Method::T m_method = Zhttp::Method::GET;
 };
 
