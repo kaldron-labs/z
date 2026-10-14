@@ -50,6 +50,18 @@ void write(const Zi::Path &path, ZuCSpan data)
   }
 }
 
+static const ZfCf::AnyNode *field(
+    const ZfCf::AnyNode *node, ZuCSpan id)
+{
+  if (!node || !node->has<ZfCf::AnyNode::Object>()) return nullptr;
+  const auto &fields = node->data<ZfCf::AnyNode::Object>();
+  for (unsigned i = fields.length(); i; ) {
+    const auto &entry = fields[--i];
+    if (entry.p<0>() == id) return entry.p<1>();
+  }
+  return nullptr;
+}
+
 ZuCSpan string(const ZfCf::AnyNode *node)
 {
   if (!node || !node->has<ZfCf::AnyNode::String>()) return {};
@@ -102,14 +114,14 @@ void files()
   ZuCheck(result.p<0>() == ZiStat{rootPath}.size());
   auto root = ZuMv(result.p<1>());
   ZuCheck(calls == 1);
-  ZuCheck(string(root->resolve("rootTop")) == g_dir);
-  ZuCheck(string(root->resolve("rootCur")) == g_dir);
-  ZuCheck(string(root->resolve("childCur")) == g_dir);
-  ZuCheck(string(root->resolve("grandCur")) == nestedDir);
-  ZuCheck(string(root->resolve("grandTop")) == g_dir);
-  ZuCheck(string(root->resolve("afterCur")) == g_dir);
-  ZuCheck(string(root->resolve("application")) == "forwarded");
-  ZuCheck(string(root->resolve("retained")) == "mapped");
+  ZuCheck(string(field(root, "rootTop")) == g_dir);
+  ZuCheck(string(field(root, "rootCur")) == g_dir);
+  ZuCheck(string(field(root, "childCur")) == g_dir);
+  ZuCheck(string(field(root, "grandCur")) == nestedDir);
+  ZuCheck(string(field(root, "grandTop")) == g_dir);
+  ZuCheck(string(field(root, "afterCur")) == g_dir);
+  ZuCheck(string(field(root, "application")) == "forwarded");
+  ZuCheck(string(field(root, "retained")) == "mapped");
 
   ZiFile::remove(grandPath);
   ZiFile::remove(childPath);
@@ -178,13 +190,13 @@ void nestedObjectAndDuplicates()
     "%include(object-include.cf)\n"
     "}\n");
   auto result = ZvCf::load(rootPath);
-  ZuCheck(string(result.p<1>()->resolve("value")) == "after");
-  ZuCheck(string(result.p<1>()->resolve("object.inside")) == "included");
+  ZuCheck(string(field(result.p<1>(), "value")) == "after");
+  ZuCheck(string(field(field(result.p<1>(), "object"), "inside")) == "included");
 
 #ifndef _WIN32
   ZuCheck(::chmod(rootPath, 0444) == 0);
   result = ZvCf::load(rootPath);
-  ZuCheck(string(result.p<1>()->resolve("value")) == "after");
+  ZuCheck(string(field(result.p<1>(), "value")) == "after");
   ::chmod(rootPath, 0644);
 #endif
 

@@ -260,6 +260,39 @@ void testWriterBoundaries()
   }
 }
 
+void testWriterHeaderMatch()
+{
+  ZuTestScope(testWriterHeaderMatch);
+  ZfCSV::Writer<RealRangeData, ZuFacet::CSV> writer;
+  char reordered[] = "decimal,float_,fixed\n";
+  ZfCSV::Header header;
+  ZuCheck(ZfCSV::split(ZuSpan<char>{reordered, sizeof(reordered) - 1},
+    header) > 0);
+  ZuCheck(writer.matchHdr(header));
+  ZuCheck(writer.columns[0] == 2 && writer.columns[1] == 0 &&
+    writer.columns[2] == 1);
+
+  char repeated[] = "decimal,decimal,fixed\n";
+  ZuCheck(ZfCSV::split(ZuSpan<char>{repeated, sizeof(repeated) - 1},
+    header) > 0);
+  ZuCheck(!writer.matchHdr(header));
+
+  ZuCheck(writer.columns[0] == 2 && writer.columns[1] == 0 &&
+    writer.columns[2] == 1);
+
+  char unknown[] = "decimal,unknown,fixed\n";
+  ZuCheck(ZfCSV::split(ZuSpan<char>{unknown, sizeof(unknown) - 1},
+    header) > 0);
+  ZuCheck(!writer.matchHdr(header));
+
+  unsigned invalid[] = {3};
+  ZfCSV::Writer<RealRangeData, ZuFacet::CSV> invalidWriter{
+    ZfCSV::Columns{invalid, 1}};
+  char one[] = "float_\n";
+  ZuCheck(ZfCSV::split(ZuSpan<char>{one, sizeof(one) - 1}, header) > 0);
+  ZuCheck(!invalidWriter.matchHdr(header));
+}
+
 static void testPullLimit()
 {
   ZuTestScope(testPullLimit);
@@ -333,6 +366,7 @@ int main(int argc, char **argv)
   ZuTestCall(testQuoteAndCodecWrappers);
   ZuTestCall(testScanBoolAndBytesFmt);
   ZuTestCall(testWriterBoundaries);
+  ZuTestCall(testWriterHeaderMatch);
   ZuTestCall(testPullLimit);
   ZuTestCall(testIntegerRange);
   ZuTestCall(testRealRange);

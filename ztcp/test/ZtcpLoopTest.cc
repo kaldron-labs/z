@@ -198,7 +198,10 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
     app()->state->clientConnected = 1;
     sendBytes(*this, Ping);
   }
-  void disconnected(bool) { }
+  void disconnected(bool) {
+    ZTCP_CHECK_RT(this->txQueue.empty_(),
+      "disconnect completed before I/O Tx drained");
+  }
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Pong)) return 0;
@@ -243,7 +246,10 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
     (void)tx;
     app()->state->serverConnected = 1;
   }
-  void disconnected(bool) { }
+  void disconnected(bool) {
+    ZTCP_CHECK_RT(this->txQueue.empty_(),
+      "disconnect completed before I/O Tx drained");
+  }
 
   int process(Ztcp::RxStream &rx) {
     if (!consume(rx, Ping)) return 0;

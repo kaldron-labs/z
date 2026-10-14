@@ -709,7 +709,10 @@ public:
 
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
-      Ztc::HubMgr::del(this);
+      if (m_registered) {
+	Ztc::HubMgr::del(this);
+	m_registered = false;
+      }
       ZquicLogger::final(m_qlogTrace);
       m_mx = nullptr;
       m_rxThread = 0;
@@ -882,7 +885,10 @@ protected:
 	return false;
       return l(params);
     });
-    if (ok) Ztc::HubMgr::add(this);
+    if (ok) {
+      Ztc::HubMgr::add(this);
+      m_registered = true;
+    }
     return ok;
   }
 
@@ -1108,6 +1114,7 @@ private:
   bool			m_retryAddrValidate = false;
   bool			m_newTokenAddrValidate = false;
   bool			m_addrValidatePeerPort = false;
+  bool			m_registered = false;
 
 };
 
@@ -1553,8 +1560,7 @@ private:
     Base::rxRun([this]() { stop_0(); });
   }
 
-  void stop_0() {		// Rx thread - disconnect endpoint and links
-    Endpoint::disconnect();
+  void stop_0() {		// Rx thread - disconnect links
     m_stopCount = 0;
     {
       auto i = m_links->citer();
@@ -1568,9 +1574,13 @@ private:
     if (!m_stopCount) stop_1();
   }
 
-  void stop_1() {		// Rx thread - clean links / resume hub stop
+  void stop_1() {		// Rx thread - clean links / drain endpoint
     m_links->clean();
-    Base::stop_0();
+    Base::txRun([this]() {
+      Endpoint::disconnect([this]() {
+	Base::rxRun([this]() { Base::stop_0(); });
+      });
+    });
   }
 
   bool sendVerNeg_(const LongHdr &h, ZiSockAddr addr) {

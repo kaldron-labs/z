@@ -27,6 +27,7 @@
 #include <zlib/ZuIntrin.hh>
 
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmRBTree.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmScratch.hh>
 
@@ -1823,25 +1824,16 @@ private:
   void write_failed(Work::Write &, ZeException);
 
 private:
-  ZuDerive(FieldID, ZtString<ZtStringHeapID<"ZdbPQ.FieldID">>);
-  ZmLHashKVDerive(FieldMapHash, FieldID, unsigned, ZmLHashLocal<>);
-  template <typename Heap = ZuVoid> struct FieldMap_ : FieldMapHash, Heap {
-    using FieldMapHash::FieldMapHash;
-  };
-  ZuDerive(FieldMapHeap, (ZmHeap<"ZdbPQ.FieldMap", FieldMap_<>>));
-  ZuDerive(FieldMap, (FieldMap_<FieldMapHeap>));
+  using FieldMap = ZmRBTreeKV<ZuCSpan, unsigned,
+    ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZdbPQ.FieldMap">>>;
   struct IndexState : IndexMatch {
     IDString	id;
     KeyID	keyID = 0;
   };
   ZuDerive(IndexStates,
     (ZtArray<IndexState, ZtArrayHeapID<"ZdbPQ.IndexState">>));
-  ZmLHashKVDerive(IndexMapHash, ZuCSpan, unsigned, ZmLHashLocal<>);
-  template <typename Heap = ZuVoid> struct IndexMap_ : IndexMapHash, Heap {
-    using IndexMapHash::IndexMapHash;
-  };
-  ZuDerive(IndexMapHeap, (ZmHeap<"ZdbPQ.IndexMap", IndexMap_<>>));
-  ZuDerive(IndexMap, (IndexMap_<IndexMapHeap>));
+  using IndexMap = ZmRBTreeKV<ZuCSpan, unsigned,
+    ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZdbPQ.IndexMap">>>;
   ZuDerive(MissingIndices,
     (ZtArray<KeyID, ZtArrayHeapID<"ZdbPQ.MissingIndex">>));
   ZuDerive(MaxUN, (ZtArray<UN, ZtArrayHeapID<"ZdbPQ.MaxUN">>));
@@ -1856,9 +1848,9 @@ private:
   XKeys			m_xKeys;
   uint16_t		m_xOffsets = 0;
   unsigned		m_rowAlign = ZiFB::Wire::Align;
-  ZuPtr<FieldMap>	m_fieldMap;
+  FieldMap		m_fieldMap;
   IndexStates		m_indexStates;
-  ZuPtr<IndexMap>	m_indexMap;
+  IndexMap		m_indexMap;
   MissingIndices	m_missingIndices;
   uint16_t		m_missingPos = 0;
   IOBufAllocFn		m_bufAllocFn;

@@ -9,7 +9,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuMatcher.hh>
 
-#include <zlib/ZmLHash.hh>
+#include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
@@ -23,7 +23,6 @@ ZuCSpan reason(uint8_t code)
   switch (code) {
     case ZfYAML::SyntaxErrorCode::Syntax: return {};
     case ZfYAML::SyntaxErrorCode::Indent: return "invalid indentation";
-    case ZfYAML::SyntaxErrorCode::DuplicateKey: return "duplicate key";
     case ZfYAML::SyntaxErrorCode::Directive: return "directive not supported";
     case ZfYAML::SyntaxErrorCode::Tag: return "tag not supported";
     case ZfYAML::SyntaxErrorCode::ComplexKey: return "complex key not supported";
@@ -67,8 +66,16 @@ static constexpr auto false_ = ZuMatcher<FalseIDs>();
 
 bool YAMLPolicy::implicit(ZuCSpan s)
 {
-  return true_.exact(s) >= 0 || false_.exact(s) >= 0 ||
-    s == "~" || s == "null" || s == "Null" || s == "NULL";
+  if (true_.exact(s) >= 0 || false_.exact(s) >= 0) return true;
+  switch (s.length()) {
+    case 1: return s[0] == '~';
+    case 4:
+      switch (s[0]) {
+	case 'n': return s == "null";
+	case 'N': return s[1] == 'u' ? s == "Null" : s == "NULL";
+      }
+  }
+  return false;
 }
 
 static bool intDigits(
@@ -165,9 +172,8 @@ struct Anchor {
 
 ZuDerive(Anchors, (ZtArray<Anchor, ZtArrayHeapID<"ZfYAML.Anchors">>));
 
-static const char *anchorMapID() { return "ZfYAML.AnchorMap"; }
-using AnchorMap = ZmLHashKV<
-  AName, unsigned, ZmLHashID<anchorMapID, ZmLHashLocal<>>>;
+using AnchorMap = ZmRBTreeKV<AName, unsigned,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZfYAML.AnchorMap">>>;
 
 static int utf8Err(ZuCSpan s, bool controls)
 {
@@ -379,14 +385,14 @@ struct Scan::Impl {
   {
     unsigned i = anchors.length();
     anchors.push(Anchor{});
-    if (anchorMap.find(name)) anchorMap.del(name);
-    anchorMap.add(ZuMv(name), i);
+    if (auto n = anchorMap.find(name)) n->val() = i;
+    else anchorMap.add(ZuMv(name), i);
     return i;
   }
 
   Anchor *findAnchor(ZuCSpan name)
   {
-    if (auto n = anchorMap.find(name)) return &anchors[n->p<1>()];
+    if (auto n = anchorMap.find(name)) return &anchors[n->val()];
     return nullptr;
   }
 
@@ -752,12 +758,6 @@ struct Scan::Impl {
     return -1;
   }
 
-  bool duplicate(const AnyNode::Object &object, ZuCSpan key) const
-  {
-    for (auto &f: object) if (f.p<0>() == key) return true;
-    return false;
-  }
-
   Value alias(unsigned pos, AnyNode *parent, unsigned namePos)
   {
     AName name;
@@ -954,10 +954,6 @@ struct Scan::Impl {
       if (at(pos) == ',' || at(pos) == '}') v = null(pos, out);
       else v = eov(pos, out, Context::FlowMap, 0);
       if (!v.node) return {};
-      if (duplicate(out->data<AnyNode::Object>(), k)) {
-	bad(pos, SyntaxErrorCode::DuplicateKey);
-	return {};
-      }
       if (v.depth > depth) depth = v.depth;
       out->data<AnyNode::Object>().push(
 	AnyNode::Field{ZuMv(k), ZuMv(v.node)});
@@ -1052,10 +1048,6 @@ struct Scan::Impl {
       bool quotedKey = at(l.content) == '\'' || at(l.content) == '"';
       if (!quotedKey && k == "<<") {
 	bad(l.content, SyntaxErrorCode::MergeKey);
-	return {};
-      }
-      if (duplicate(out->data<AnyNode::Object>(), k)) {
-	bad(l.content, SyntaxErrorCode::DuplicateKey);
 	return {};
       }
       p = c + 1;
@@ -1183,181 +1175,33 @@ ZuTuple<int, ZuPtr<AnyNode>> scan(ZuCSpan span, Limits limits)
   return Scan{span, limits}.scan();
 }
 
-static int fld(const AnyNode::Object &o, ZuCSpan key)
-{
-  for (unsigned i = 0, n = o.length(); i < n; ++i)
-    if (o[i].p<0>() == key) return i;
-  return -1;
-}
+struct FieldKey {
+  const AnyNode::Object *object;
+  uint64_t offset;
+  ZuCSpan query;
+
+  ZuCSpan id() const {
+    return offset == UINT64_MAX ? query : ZuCSpan{(*object)[offset].p<0>()};
+  }
+  int cmp(const FieldKey &v) const {
+    if (int c = ZuCmp<const AnyNode::Object *>::cmp(object, v.object)) return c;
+    return id().cmp(v.id());
+  }
+};
+using FieldIndex = ZmRBTree<FieldKey,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZfYAML.FieldIndex">>>;
+using ScalarIndex = ZmRBTree<ZuCSpan,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZfYAML.ScalarIndex">>>;
+
+static bool stringScalar(const AnyNode *node)
+  { return node->has<AnyNode::String>() &&
+      node->scalarType == ScalarTC::String; }
 
 static AnyNode::Field erase_(AnyNode::Object &o, unsigned i)
 {
   AnyNode::Field out{ZuMv(o[i])};
   o.splice(i, 1);
   return out;
-}
-
-static bool ancestor(const AnyNode *node, const AnyNode *target)
-{
-  for (; node; node = node->parent) if (node == target) return true;
-  return false;
-}
-
-using ResolveActive = ZtArray<
-  const AnyNode *, ZtArrayHeapID<"ZfYAML.ResolveActive">>;
-
-static bool active(const ResolveActive &active, const AnyNode *target)
-{
-  for (auto v: active) if (v == target) return true;
-  return false;
-}
-
-static bool pctDecode(ZuCSpan in, AnyNode::String &out)
-{
-  for (unsigned i = 0, n = in.length(); i < n; ++i) {
-    char c = in[i];
-    if (c != '%') {
-      out << c;
-      continue;
-    }
-    if (i + 2 >= n) return false;
-    unsigned v = 0;
-    for (unsigned j = 0; j < 2; ++j) {
-      c = in[++i];
-      unsigned d;
-      if (c >= '0' && c <= '9') d = c - '0';
-      else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
-      else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-      else return false;
-      v = (v << 4) | d;
-    }
-    out << char(v);
-  }
-  // Match decodeURIComponent's UTF-8 validation after percent decoding.
-  return utf8Err(out, true) < 0;
-}
-
-static bool index_(ZuCSpan s, unsigned &v)
-{
-  unsigned n = s.length();
-  if (!n || (n > 1 && s[0] == '0')) return false;
-  v = 0;
-  for (unsigned i = 0; i < n; ++i) {
-    if (s[i] < '0' || s[i] > '9') return false;
-    unsigned d = s[i] - '0';
-    if (v > (UINT_MAX - d) / 10) return false;
-    v = v * 10 + d;
-  }
-  return true;
-}
-
-static const AnyNode *pointer(
-    const AnyNode *root, ZuCSpan ref, const AnyNode *site)
-{
-  if (ref.length() < 2 || ref[0] != '#' || ref[1] != '/') return nullptr;
-  const AnyNode *node = root;
-  unsigned pos = 2;
-  unsigned n = ref.length();
-  for (;;) {
-    unsigned end = pos;
-    while (end < n && ref[end] != '/') ++end;
-    AnyNode::String key;
-    if (!pctDecode({ref.data() + pos, end - pos}, key)) {
-      ZeString path;
-      site->path(path);
-      throw ZfYAML_EXCEPT(ZfYAMLError::badPointer(path, ref));
-    }
-    AnyNode::String decoded;
-    for (unsigned i = 0, n = key.length(); i < n; ++i) {
-      if (key[i] == '~' && i + 1 < n) {
-	if (key[i + 1] == '1') { decoded << '/'; ++i; continue; }
-	if (key[i + 1] == '0') { decoded << '~'; ++i; continue; }
-      }
-      decoded << key[i];
-    }
-    if (node->has<AnyNode::Object>()) {
-      int i = fld(node->data<AnyNode::Object>(), decoded);
-      if (i < 0) return nullptr;
-      node = node->data<AnyNode::Object>()[i].p<1>();
-    } else if (node->has<AnyNode::Array>()) {
-      unsigned i;
-      if (!index_(decoded, i) || i >= node->data<AnyNode::Array>().length())
-	return nullptr;
-      node = node->data<AnyNode::Array>()[i];
-    } else {
-      return nullptr;
-    }
-    if (end == n) return node;
-    pos = end + 1;
-  }
-}
-
-ZuPtr<AnyNode> resolve(ZuPtr<AnyNode> &&root)
-{
-  if (!root) return {};
-  struct Work {
-    AnyNode		*node = nullptr;
-    const AnyNode	*target = nullptr;
-  };
-  ZtArray<Work, ZtArrayHeapID<"ZfYAML.ResolveStack">> stack;
-  ResolveActive activeSet;
-  stack.push(Work{root});
-  while (stack) {
-    Work w{ZuMv(stack[stack.length() - 1])};
-    stack.pop();
-    if (w.target) {
-      if (activeSet && activeSet[activeSet.length() - 1] == w.target)
-	activeSet.pop();
-      continue;
-    }
-    AnyNode *node = w.node;
-    const AnyNode *expanded = nullptr;
-    if (node->has<AnyNode::Object>()) {
-      auto &o = node->data<AnyNode::Object>();
-      int ri = fld(o, "$ref");
-      if (ri >= 0) {
-	auto refNode = o[ri].template p<1>().ptr();
-	if (refNode->has<AnyNode::String>() &&
-	    refNode->scalarType == ScalarTC::String) {
-	  ZuCSpan ref = refNode->data<AnyNode::String>();
-	  auto target = pointer(root, ref, node);
-	  if (target && target->has<AnyNode::Object>() &&
-	      !ancestor(node, target) && !active(activeSet, target)) {
-	    auto base = clone_(target, node);
-	    auto &dst = base->data<AnyNode::Object>();
-	    AnyNode::Object rest;
-	    for (unsigned i = 0, n = o.length(); i < n; ++i)
-	      if (int(i) != ri) rest.push(ZuMv(o[i]));
-	    for (auto &f: rest) {
-	      int di = fld(dst, f.p<0>());
-	      if (di >= 0) {
-		dst[di].template p<1>() = ZuMv(f.p<1>());
-		dst[di].template p<1>()->parent = node;
-	      } else {
-		f.p<1>()->parent = node;
-		dst.push(ZuMv(f));
-	      }
-	    }
-	    o = ZuMv(dst);
-	    for (auto &f: o) f.p<1>()->parent = node;
-	    expanded = target;
-	  }
-	}
-      }
-    }
-    if (expanded) {
-      activeSet.push(expanded);
-      stack.push(Work{nullptr, expanded});
-    }
-    if (node->has<AnyNode::Array>()) {
-      auto &a = node->data<AnyNode::Array>();
-      for (unsigned i = a.length(); i; --i) stack.push(Work{a[i - 1]});
-    } else if (node->has<AnyNode::Object>()) {
-      for (auto &f: node->data<AnyNode::Object>())
-	stack.push(Work{f.template p<1>()});
-    }
-  }
-  return ZuMv(root);
 }
 
 static bool same(const AnyNode *a, const AnyNode *b)
@@ -1403,11 +1247,19 @@ static void merge_(
     if (!src->has<AnyNode::Object>()) mergeError(dst);
     auto &d = dst->data<AnyNode::Object>();
     auto &s = src->data<AnyNode::Object>();
+    FieldIndex index;
+    for (unsigned i = d.length(); i; ) {
+      --i;
+      FieldKey key{&d, i, {}};
+      if (!index.find(key)) index.add(key);
+    }
     for (auto &f: s) {
-      int i = fld(d, f.p<0>());
+      auto found = index.find(FieldKey{&d, UINT64_MAX, f.p<0>()});
+      int i = found ? int(found->data().offset) : -1;
       if (i < 0) {
 	f.p<1>()->parent = dst;
 	d.push(ZuMv(f));
+	index.add(FieldKey{&d, d.length() - 1, {}});
       } else {
 	merge_(d[i].p<1>(), ZuMv(f.p<1>()), dst);
       }
@@ -1417,14 +1269,25 @@ static void merge_(
   if (!src->has<AnyNode::Array>()) mergeError(dst);
   auto &d = dst->data<AnyNode::Array>();
   auto &s = src->data<AnyNode::Array>();
-  // Schema arrays are normally short; linear membership preserves order and
-  // avoids allocating a second index for each allOf merge.
+  ScalarIndex index;
+  for (auto &v: d)
+    if (stringScalar(v)) {
+      ZuCSpan key{v->data<AnyNode::String>()};
+      if (!index.find(key)) index.add(key);
+    }
   for (auto &v: s) {
     bool found = false;
-    for (auto &dv: d) if (same(dv, v)) { found = true; break; }
+    bool isString = stringScalar(v);
+    if (isString) {
+      found = bool(index.find(v->data<AnyNode::String>()));
+    } else {
+      for (auto &dv: d) if (same(dv, v)) { found = true; break; }
+    }
     if (!found) {
       v->parent = dst;
       d.push(ZuMv(v));
+      if (isString)
+	index.add(d[d.length() - 1]->data<AnyNode::String>());
     }
   }
 }
@@ -1464,6 +1327,24 @@ struct FTask {
 using FFrames = ZtArray<FFrame, ZtArrayHeapID<"ZfYAML.FlattenFrames">>;
 using FTasks = ZtArray<FTask, ZtArrayHeapID<"ZfYAML.FlattenStack">>;
 
+using FlattenIndex = ZmRBTree<FieldKey,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZfYAML.FlattenIndex">>>;
+
+static void flattenAdd(FlattenIndex &index, const AnyNode::Object &o)
+{
+  for (unsigned i = o.length(); i; ) {
+    --i;
+    FieldKey key{&o, i, {}};
+    if (!index.find(key)) index.add(key);
+  }
+}
+
+static void flattenDel(FlattenIndex &index, const AnyNode::Object &o)
+{
+  for (auto &f: o)
+    index.del(FieldKey{&o, UINT64_MAX, f.p<0>()});
+}
+
 static ZuPtr<AnyNode> &fslot(FFrames &frames, FSlot slot)
 {
   if (slot.direct) return *slot.direct;
@@ -1475,6 +1356,7 @@ static void flatten_(
 {
   FFrames frames;
   FTasks tasks;
+  FlattenIndex fields;
   tasks.push(FTask{FSlot{&root}, nullptr,
     UINT_MAX, 0, FOp::Enter, oneOf, anyOf});
   while (tasks) {
@@ -1502,6 +1384,7 @@ static void flatten_(
 	for (auto &f: node->data<AnyNode::Object>())
 	  frame.snapshot.push(
 	    AnyNode::Field{f.p<0>(), clone_(f.p<1>(), nullptr)});
+	flattenAdd(fields, node->data<AnyNode::Object>());
 	unsigned fi = frames.length();
 	frames.push(ZuMv(frame));
 	tasks.push(FTask{{}, nullptr, fi, 0, FOp::Object});
@@ -1519,6 +1402,7 @@ static void flatten_(
       case FOp::Object: {
 	auto &frame = frames[task.frame];
 	if (frame.index >= frame.snapshot.length()) {
+	  flattenDel(fields, frame.node->data<AnyNode::Object>());
 	  frame.snapshot.null();
 	  frame.all = {};
 	  break;
@@ -1526,21 +1410,42 @@ static void flatten_(
 	auto &o = frame.node->data<AnyNode::Object>();
 	auto &entry = frame.snapshot[frame.index++];
 	AnyNode::String key{entry.p<0>()};
-	int i = fld(o, key);
-	if (key == "allOf" && entry.p<1>()->has<AnyNode::Array>()) {
-	  if (i >= 0) erase_(o, i);
+	unsigned kind = 0;
+	if (key.length() == 5) {
+	  switch (key[0]) {
+	    case 'a':
+	      if (key[1] == 'l' && key == "allOf") kind = 1;
+	      else if (key[1] == 'n' && key == "anyOf") kind = 3;
+	      break;
+	    case 'o':
+	      if (key == "oneOf") kind = 2;
+	      break;
+	  }
+	}
+	auto found = fields.find(FieldKey{&o, UINT64_MAX, key});
+	int i = found ? int(found->data().offset) : -1;
+	if (kind == 1 && entry.p<1>()->has<AnyNode::Array>()) {
+	  if (i >= 0) {
+	    flattenDel(fields, o);
+	    erase_(o, i);
+	    flattenAdd(fields, o);
+	  }
 	  frame.all = ZuMv(entry.p<1>());
 	  frame.allIndex = 0;
 	  tasks.push(task);
 	  tasks.push(FTask{{}, nullptr, task.frame, 0, FOp::All});
 	  break;
 	}
-	if ((key == "oneOf" || key == "anyOf") &&
+	if ((kind == 2 || kind == 3) &&
 	    entry.p<1>()->has<AnyNode::Array>()) {
-	  bool enabled = key == "oneOf" ? frame.oneOf : frame.anyOf;
+	  bool enabled = kind == 2 ? frame.oneOf : frame.anyOf;
 	  auto &a = entry.p<1>()->data<AnyNode::Array>();
 	  if (enabled) {
-	    if (i >= 0) erase_(o, i);
+	    if (i >= 0) {
+	      flattenDel(fields, o);
+	      erase_(o, i);
+	      flattenAdd(fields, o);
+	    }
 	    if (a) {
 	      auto p = childPath(frame.node, key);
 	      throw ZfYAML_EXCEPT(ZfYAMLError::badAlternative(p, key));
@@ -1551,17 +1456,19 @@ static void flatten_(
 	  if (i < 0) {
 	    o.push(AnyNode::Field{key, ZuMv(entry.p<1>())});
 	    i = o.length() - 1;
+	    fields.add(FieldKey{&o, unsigned(i), {}});
 	  } else {
 	    o[i].p<1>() = ZuMv(entry.p<1>());
 	  }
 	  tasks.push(task);
 	  tasks.push(FTask{FSlot{&o[i].p<1>()}, frame.node,
-	    UINT_MAX, 0, FOp::Enter, key == "oneOf", key == "anyOf"});
+	    UINT_MAX, 0, FOp::Enter, kind == 2, kind == 3});
 	  break;
 	}
 	if (i < 0) {
 	  o.push(AnyNode::Field{key, ZuMv(entry.p<1>())});
 	  i = o.length() - 1;
+	  fields.add(FieldKey{&o, unsigned(i), {}});
 	} else {
 	  o[i].p<1>() = ZuMv(entry.p<1>());
 	}
@@ -1585,7 +1492,11 @@ static void flatten_(
       case FOp::Merge: {
 	auto &frame = frames[task.frame];
 	auto &owner = fslot(frames, frame.owner);
+	unsigned before = frame.node->data<AnyNode::Object>().length();
 	merge_(owner, ZuMv(frame.incoming), frame.node->parent);
+	auto &o = frame.node->data<AnyNode::Object>();
+	for (unsigned i = before; i < o.length(); ++i)
+	  fields.add(FieldKey{&o, i, {}});
       } break;
     }
   }

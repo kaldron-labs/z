@@ -390,7 +390,7 @@ void testTxStorageAndUpdates()
     char name[24], value[24];
     snprintf(name, sizeof(name), "x-hpack-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
-    if (!table.insert({name, value})) {
+    if (!table.insert({ZuCSpan{&name[0]}, ZuCSpan{&value[0]}})) {
       inserted = false;
       break;
     }
@@ -513,6 +513,25 @@ void testWarmPlans()
     "frozen HPACK lookup did not match the selected response plan");
 }
 
+void testWarmPlanDuplicates()
+{
+  ZuTestScope(testWarmPlanDuplicates);
+
+  struct Headers {
+    using List = ZhttpHeaders(
+      ("x-duplicate", "one"), ("x-duplicate", "one"),
+      ("x-duplicate", "two"), ("authorization", "secret"),
+      ("cookie", "a=b"), ("set-cookie", "a=b"));
+  };
+  Zhttp::HPackSeedCatalog catalog;
+  catalog.add<Headers>(512);
+  const auto &entries = catalog.entries();
+  ZuCHECK(entries.length() == 2 &&
+      entries[0].name == "x-duplicate" && entries[0].value == "one" &&
+      entries[1].name == "x-duplicate" && entries[1].value == "two",
+    "HPACK seed plan keeps distinct values, deduplicates pairs, and skips sensitive names");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -530,4 +549,5 @@ int main(int argc, char **argv)
   ZuTestCall(testTxStorageAndUpdates);
   ZuTestCall(testWarmPlan);
   ZuTestCall(testWarmPlans);
+  ZuTestCall(testWarmPlanDuplicates);
 }

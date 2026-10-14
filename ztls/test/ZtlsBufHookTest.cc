@@ -449,6 +449,8 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     }
     void disconnected(bool peer) {
       auto &state = this->app()->state;
+      if (!this->txQueue.empty_())
+	state.fail("client disconnect completed before I/O Tx drained");
       state.client_peer_closed = peer;
       state.done_one();
     }
@@ -536,7 +538,12 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       state.server_tlsver = unsigned(info.version);
       state.server_cipher = this->tlsInfo().cipherID;
     }
-    void disconnected(bool) { this->app()->state.done_one(); }
+    void disconnected(bool) {
+      auto &state = this->app()->state;
+      if (!this->txQueue.empty_())
+	state.fail("server disconnect completed before I/O Tx drained");
+      state.done_one();
+    }
     void txProtected_() {
       auto app = this->app();
       auto tid = Zm::getTID();

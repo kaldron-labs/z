@@ -6,7 +6,10 @@
 
 #include "zumd_bootstrap.hh"
 #include <zlib/zumd_db.hh>
+#include <zlib/zumd_identity_db.hh>
+#include <zlib/zumd_app_db.hh>
 #include <zlib/zumd_key_db.hh>
+#include <zlib/zumd_oauth.hh>
 
 #include <fcntl.h>
 #include <errno.h>
@@ -135,14 +138,14 @@ template <typename Heap = ZuVoid>
 class ServerBootstrap__ : public Heap, public ZmPolymorph  {
 public:
   ServerBootstrap__(
-      Requests *requests, DBContext *context, Ztls::Random &rng,
+      Requests *requests, DB *db, Ztls::Random &rng,
       ServerBootstrapConfig config, ServerBootstrapFn complete) :
-    m_requests{requests}, m_context{context}, m_rng{&rng},
+    m_requests{requests}, m_db{db}, m_rng{&rng},
     m_config{ZuMv(config)}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_requests || !m_context || !m_config.issuer ||
+    if (!m_requests || !m_db || !m_config.issuer ||
         !m_config.dbKey || m_config.now <= 0 ||
         !m_config.ttl) {
       finish_(false);
@@ -154,7 +157,7 @@ public:
       finish_(false);
       return;
     }
-    auto issuers = m_context->issuers;
+    auto issuers = m_db->issuers;
     String id = m_config.issuer;
     issuers->run(0, [self = ZmRef<ServerBootstrap__>{this}, issuers,
 	id = ZuMv(id)]() mutable {
@@ -201,19 +204,28 @@ private:
       table->template find<0>(0, ZuMv(key), [self = ZuMv(self), table,
 	  data = ZuMv(data), next](ZdbRowRef<T> existing) mutable {
 	if (existing) {
-	  (self.ptr()->*next)(true);
+	  bool ok = true;
+	  if constexpr (ZuIsSame<T, Role>{}) ok = existing->data().name == data.name;
+	  (self.ptr()->*next)(ok);
 	  return;
 	}
-	ZdbRowRef<T> row = new ZdbRow<T>{table, ZdbShard{0}};
-	table->insert(ZuMv(row), [self = ZuMv(self), data = ZuMv(data),
-	    next](ZdbRow<T> *row) mutable {
-	  if (!row) {
-	    (self.ptr()->*next)(false);
-	    return;
-	  }
-	  new (row->ptr()) T{ZuMv(data)};
-	  (self.ptr()->*next)(row->commit());
-	});
+	auto apply = [self = ZuMv(self), table, next](T data, bool ok) mutable {
+	  if (!ok) { (self.ptr()->*next)(false); return; }
+	  ZdbRowRef<T> row = new ZdbRow<T>{table, ZdbShard{0}};
+	  table->insert(ZuMv(row), [self = ZuMv(self), data = ZuMv(data),
+	      next](ZdbRow<T> *row) mutable {
+	    if (!row) { (self.ptr()->*next)(false); return; }
+	    new (row->ptr()) T{ZuMv(data)};
+	    (self.ptr()->*next)(row->commit());
+	  });
+	};
+	if constexpr (ZuIsSame<T, Role>{}) {
+	  auto key = ZuStructKeyT<Role, 1>{ZuStructKey<1>(data)};
+	  table->template find<1>(0, ZuMv(key),
+	    [data = ZuMv(data), apply = ZuMv(apply)](ZdbRowRef<Role> row) mutable {
+	      apply(ZuMv(data), !row);
+	    });
+	} else apply(ZuMv(data), true);
       });
     });
   }
@@ -244,7 +256,7 @@ private:
     }
     m_issuer = issuer;
     m_result.initialized = true;
-    ensure_(m_context->issuers, ZuMv(issuer), &ServerBootstrap__::issuerAdded_);
+    ensure_(m_db->issuers, ZuMv(issuer), &ServerBootstrap__::issuerAdded_);
   }
 
   void issuerAdded_(bool ok)
@@ -293,7 +305,7 @@ private:
 
   void repairAdmin_()
   {
-    auto clients = m_context->clients;
+    auto clients = m_db->clients;
     String id = m_issuer.initialClientID;
     clients->run(0, [self = ZmRef<ServerBootstrap__>{this}, clients,
 	id = ZuMv(id)]() mutable {
@@ -326,7 +338,7 @@ private:
       audience.length(audience.length() - 1);
     audience << "/admin";
     auto now = m_config.now;
-    ensure_(m_context->apps, App{
+    ensure_(m_db->apps, App{
       .id = m_issuer.coreAppID, .name = "zum", .label = "Zum",
       .state = State::Active, .nextActionID = CoreAction::N,
       .authVersion = 1, .catalogRevision = 1,
@@ -345,7 +357,7 @@ private:
     }
     auto id = m_actionID++;
     auto now = m_config.now;
-    ensure_(m_context->actions, Action{
+    ensure_(m_db->actions, Action{
       .appID = m_issuer.coreAppID, .id = id,
       .name = coreAction(id), .label = coreAction(id),
       .state = State::Active, .origin = Origin::Standard,
@@ -359,7 +371,7 @@ private:
     for (ActionID i = 0; i < CoreAction::N; ++i)
       if (coreAction(i)) actions.set(i);
     auto now = m_config.now;
-    ensure_(m_context->roles, Role{
+    ensure_(m_db->roles, Role{
       .appID = m_issuer.coreAppID, .id = CoreRole::Superuser,
       .name = "zum.admin", .label = "Zum superuser",
       .actions = ZuMv(actions), .state = State::Active,
@@ -374,7 +386,7 @@ private:
     actions.set(MgmtOp::operationQuery);
     actions.set(MgmtOp::catalogPublish);
     auto now = m_config.now;
-    ensure_(m_context->roles, Role{
+    ensure_(m_db->roles, Role{
       .appID = m_issuer.coreAppID, .id = CoreRole::CatalogPublisher,
       .name = "zum.catalog", .label = "Zum catalog publisher",
       .actions = ZuMv(actions), .state = State::Active,
@@ -394,7 +406,7 @@ private:
 	  ClientGrant::Refresh()), .refreshAllowed = true,
       .state = State::Active};
     seedClientSettings(m_config, client);
-    ensure_(m_context->clients, ZuMv(client),
+    ensure_(m_db->clients, ZuMv(client),
       &ServerBootstrap__::seedClientAccess_);
   }
 
@@ -402,7 +414,7 @@ private:
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
-    ensure_(m_context->clientAccess, ClientAccess{
+    ensure_(m_db->clientAccess, ClientAccess{
       .clientID = m_issuer.initialClientID, .appID = m_issuer.coreAppID,
       .roleIDs = IDVec{CoreRole::Superuser, CoreRole::CatalogPublisher},
       .state = State::Active,
@@ -413,7 +425,7 @@ private:
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
-    ensure_(m_context->users, User{
+    ensure_(m_db->users, User{
       .id = m_issuer.initialUserID, .source = UserSource::Local,
       .name = m_config.admin, .email = m_config.admin,
       .created = now, .updated = now, .state = State::Pending},
@@ -424,7 +436,7 @@ private:
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
-    ensure_(m_context->assignments, Assignment{
+    ensure_(m_db->assignments, Assignment{
       .appID = m_issuer.coreAppID, .userID = m_issuer.initialUserID,
       .roleIDs = IDVec{CoreRole::Superuser}, .state = State::Active,
       .created = now, .updated = now}, &ServerBootstrap__::seedPolicy_);
@@ -434,7 +446,7 @@ private:
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
-    ensure_(m_context->authPolicies, AuthPolicy{
+    ensure_(m_db->authPolicies, AuthPolicy{
       .appID = m_issuer.coreAppID, .localFirst = true,
       .assignmentMaxAge = 300, .sessionIdle = 1800,
       .sessionAbsolute = 43200, .tokenLifetime = 300,
@@ -451,7 +463,7 @@ private:
       finish_(false);
       return;
     }
-    ensure_(m_context->signKeys, ZuMv(signer),
+    ensure_(m_db->signKeys, ZuMv(signer),
       &ServerBootstrap__::seedCoreSigner_);
   }
 
@@ -468,7 +480,7 @@ private:
       finish_(false);
       return;
     }
-    ensure_(m_context->signKeys, ZuMv(signer),
+    ensure_(m_db->signKeys, ZuMv(signer),
       &ServerBootstrap__::seedComplete_);
   }
 
@@ -481,7 +493,7 @@ private:
 
   void phase_(BootstrapPhase::T from, BootstrapPhase::T to, Next next)
   {
-    auto issuers = m_context->issuers;
+    auto issuers = m_db->issuers;
     String id = m_config.issuer;
     issuers->run(0, [self = ZmRef<ServerBootstrap__>{this}, issuers,
 	id = ZuMv(id), from, to, next]() mutable {
@@ -516,7 +528,7 @@ private:
       finish_(false);
       return;
     }
-    if (!bootstrapIssue(m_requests, Zm::now() + ZuTime{15}, m_context, *m_rng,
+    if (!bootstrapIssue(m_requests, Zm::now() + ZuTime{15}, m_db, *m_rng,
         BootstrapConfig{.issuer = ZuMv(issuer),
           .appID = m_issuer.coreAppID,
           .userName = m_config.admin, .label = "bootstrap passkey",
@@ -546,7 +558,7 @@ private:
 
   void admin_()
   {
-    auto users = m_context->users;
+    auto users = m_db->users;
     auto id = m_issuer.initialUserID;
     users->run(0, [self = ZmRef<ServerBootstrap__>{this}, users, id]() mutable {
       users->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
@@ -607,7 +619,7 @@ private:
       finish_(false);
       return;
     }
-    auto grants = m_context->grants;
+    auto grants = m_db->grants;
     GrantPurpose::T purpose =
       enrolled ? GrantPurpose::AddCredential : GrantPurpose::Bootstrap;
     Grant replacement{
@@ -634,7 +646,7 @@ private:
           replacement = ZuMv(replacement),
           token = ZuMv(token)](ZdbRow<Grant> *row) mutable {
 	if (!row) {
-	  auto grants = self->m_context->grants;
+	  auto grants = self->m_db->grants;
 	  ZdbRowRef<Grant> fresh = new ZdbRow<Grant>{grants, ZdbShard{0}};
 	  grants->insert(ZuMv(fresh), [self = ZuMv(self),
 	      replacement = ZuMv(replacement), token = ZuMv(token)](
@@ -676,7 +688,7 @@ private:
   }
 
   Requests		*m_requests = nullptr;
-  DBContext		*m_context = nullptr;
+  DB		*m_db = nullptr;
   Ztls::Random		*m_rng = nullptr;
   ServerBootstrapConfig m_config;
   ServerBootstrapFn	m_complete;
@@ -691,11 +703,11 @@ ZuDerive(ServerBootstrap_Heap,
 ZuDerive(ServerBootstrap_, (ServerBootstrap__<ServerBootstrap_Heap>));
 
 void serverBootstrap(
-    DB *, Requests *requests, DBContext *context, Ztls::Random &rng,
+    DB *db, Requests *requests, Ztls::Random &rng,
     ServerBootstrapConfig config, ServerBootstrapFn complete)
 {
   ZmRef<ServerBootstrap_> bootstrap = new ServerBootstrap_{
-    requests, context, rng, ZuMv(config), ZuMv(complete)};
+    requests, db, rng, ZuMv(config), ZuMv(complete)};
   bootstrap->start();
 }
 

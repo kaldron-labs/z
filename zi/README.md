@@ -5,6 +5,9 @@ installed headers as `<zlib/ZiFB.hh>` and link with `libZi` and its framework
 dependencies. This page documents FlatBuffers; see [zf](../zf/README.md) for
 the shared field metadata and text/configuration codecs.
 
+The native protobuf component and its vocabulary/support
+matrix are tracked in [zipb.md](zipb.md).
+
 ## FlatBuffers
 
 **`ZiFB` is intended for latency-sensitive use cases**, alongside `ZfJSON`
@@ -112,6 +115,89 @@ fixed arrays, and union alternatives. Pointer members receive a newly allocated 
 its handler's `alloc()`, or null when absent; `ZuPtr` and `ZmRef` manage that
 ownership, while callers must release raw-pointer results. Inline wire offsets
 still come from the complete Core layout, regardless of the loading facet.
+
+### Associative containers
+
+Map formatting is selected through ADL, using the same container interface as
+`ZfJSON::AsMap`: `Key`, `Val`, `citer()` with nodes exposing `key()`/`val()`,
+and `add`, `del`, and `clean`. The format declaration is:
+
+```cpp
+ZiFB::AsMap<Name, KeyCode, ValCode, KeyProps, ValProps> ZiFB_Fmt(Container *);
+```
+
+`Name` is the qualified root-adapter name; the entry table appends `Entry`.
+`KeyCode` and `ValCode` are `ZfFieldTC` codes. Both property lists default to
+`ZuTypeList<>`; they supply ordinary field properties such as scalar defaults
+and enum metadata. Keys use canonical scalar or string representations.
+Values use the existing vocabulary conversions, recursive handlers and facets.
+For example, an application can choose a value tree:
+
+```cpp
+ZuDerive(Counts, (ZmRBTreeKV<unsigned, ZtString<>,
+  ZmRBTreeHeapID<"example.Counts">>));
+ZiFB::AsMap<"example.Counts", ZfFieldTC::UInt32, ZfFieldTC::String>
+  ZiFB_Fmt(Counts *);
+
+struct Row { Counts counts; };
+ZfStruct(, (Row, FB), (counts,, UDT));
+ZiFB::AsTable<"example.Row"> ZiFB_Fmt(Row *);
+```
+
+Its wire shapes are:
+
+```fbs
+namespace example;
+table CountsEntry { key:uint (key); value:string; }
+table Counts { entries:[CountsEntry]; }
+table Row { counts:[CountsEntry]; }
+```
+
+Map fields contain entry vectors directly; roots use the `entries` table
+adapter. Nested maps use the same entry-vector representation in their value
+field. Synthetic key/value/entries fields survive application filters and
+facets, while nested application values retain the selected facet.
+`zflatc` recognizes a table named `NameEntry` when it has exactly `key` at
+ID 0 marked `(key)` and `value` at ID 1 (ID 2 for a union value). It emits a
+native tree map for vectors of that entry, with an ADL `AsMap<Name,...>`
+declaration. A generated field's map uses the field's heap ID. The table
+`Name { entries:[NameEntry]; }` remains a normal generated root wrapper with
+a native map in `entries`; the map can also be saved as a root through its
+own `AsMap` handler. Generated `--ref` fields hold the map through `ZmRef`.
+Keyed tables with other fields remain ordinary tables, preserving those
+fields. `zflatc` rejects a conflicting `Name` table or a singular field
+referring to `NameEntry`, where the map and ordinary table would claim the
+same wire name. Schema imports keep their generated header guards and map
+declarations. Header guards encode the complete output path, so similarly
+named headers in different directories remain distinct.
+The library makes no concrete-container ownership choice. Applications hold
+`ZmHash` through `ZmRef` because it derives from `ZmPolymorph`; `ZmRBTree` may
+be a value. Pointer traits select allocation for pointer-backed fields, and
+ordinary field construction handles value-backed maps.
+
+`save` constructs entries from node references, retains only offsets in
+workload-sized scratch, and sorts the serialized keys for canonical
+`LookupByKey`. Scalar comparisons and C-string comparisons match the wire
+key representation. Borrowed access uses `handler<Counts>(bytes).entries()` or
+`view<Row>(bytes).get<ZfField(Row, counts)>()`. The returned map view provides
+`length()`, entry indexing, `key(i)`, `value(i)`, and `find(key)`; `find` returns
+an entry view and assumes sorted input.
+
+`load` clears the destination, and `update` replaces supplied keys while
+retaining other entries. Both consume wire order and keep the last value for
+a repeated key. Materialization accepts unsorted input. Existing structural
+verification remains explicit at ingress; handlers do not validate ordering,
+uniqueness, or key contents. `ctor()` requires a movable value container;
+`alloc()`, placement `new_()`, and loading into an existing container support
+reference-owned containers through the same handler.
+
+Values with pointer traits may use raw pointers, framework smart pointers,
+or application wrappers accepting implicit raw-pointer adoption. Replacement
+and clearing release owned raw pointees exactly once, clearing their node
+slots before node destruction. Smart pointers retain their own release
+semantics. Final container destruction and the lifetime of borrowed fields
+remain the application's responsibility; plain raw-pointer KV nodes do not
+release their pointees automatically.
 
 ### I/O and framing
 

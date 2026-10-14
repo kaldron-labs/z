@@ -13,7 +13,8 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
-tap_drivers = zringmatrix zitestresidue zheaptune zhashtune zflatctest
+tap_drivers = zringmatrix zitestresidue zheaptune zhashtune zflatctest \
+	zprotoctest zprotocproto2
 noinst_PROGRAMS = $(tap_drivers) zheapwork zhashwork
 zringmatrix_SOURCES = zringmatrix.cc
 zitestresidue_SOURCES = zitestresidue.cc
@@ -41,7 +42,117 @@ if HAVE_GO
 endif
 
 
-noinst_PROGRAMS += zifbsave zifbcheck
+noinst_PROGRAMS += zifbsave zifbcheck zifbmapcheck zifbmapimport zifbmapref \
+	zifbmapexport zifbmapgenerated
+
+noinst_PROGRAMS += zprotocconsumer zprotocimport
+tap_drivers += zprotocvalues
+noinst_PROGRAMS += zprotocvalues
+zprotocvalues_SOURCES = zprotocvalues.cc
+nodist_zprotocvalues_SOURCES = zprotoc-out/zprotoc_values.cc \
+	zprotoc-out/zprotoc_values.hh zprotoc-out/zprotoc_values_row.cc \
+	zprotoc-out/zprotoc_values_row.hh zprotoc-out/zprotoc_address.cc \
+	zprotoc-out/zprotoc_address.hh
+zprotocvalues_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/zprotoc-out
+zprotocvalues-zprotocvalues.$(OBJEXT): zprotoc-out/zprotoc_values_row.hh
+zprotoc-out/zprotoc_values.hh zprotoc-out/zprotoc_values.cc &: \
+	$(srcdir)/zprotoc_values.proto $(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zprotoc-out
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc $(srcdir)/zprotoc_values.proto \
+		-o zprotoc-out/zprotoc_values
+zprotoc-out/zprotoc_address.hh zprotoc-out/zprotoc_address.cc &: \
+	$(srcdir)/zprotoc_address.proto $(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zprotoc-out
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc $(srcdir)/zprotoc_address.proto \
+		-o zprotoc-out/zprotoc_address
+zprotoc-out/zprotoc_values_row.hh zprotoc-out/zprotoc_values_row.cc &: \
+	$(srcdir)/zprotoc_values_row.proto zprotoc-out/zprotoc_values.hh \
+	zprotoc-out/zprotoc_address.hh \
+	$(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zprotoc-out
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc -I $(srcdir) \
+		$(srcdir)/zprotoc_values_row.proto \
+		-o zprotoc-out/zprotoc_values_row
+CLEANFILES = zprotoc-out/zprotoc_values.hh zprotoc-out/zprotoc_values.cc \
+	zprotoc-out/zprotoc_values_row.hh zprotoc-out/zprotoc_values_row.cc \
+	zprotoc-out/zprotoc_address.hh zprotoc-out/zprotoc_address.cc
+EXTRA_DIST += zprotoc_values.proto zprotoc_values_row.proto \
+	zprotoc_address.proto
+zprotoctest_SOURCES = zprotoctest.cc
+zprotoctest_DEPENDENCIES = $(LDADD) zprotocconsumer$(EXEEXT) zprotocimport$(EXEEXT)
+zprotocconsumer_SOURCES = zprotocconsumer.cc
+nodist_zprotocconsumer_SOURCES = zprotoc-out/simple.cc zprotoc-out/simple.hh
+zprotocconsumer_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/zprotoc-out
+zprotocconsumer-zprotocconsumer.$(OBJEXT): zprotoc-out/simple.hh
+zprotoc-out/simple.hh zprotoc-out/simple.cc &: $(srcdir)/zprotoc_simple.proto $(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zprotoc-out
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc $(srcdir)/zprotoc_simple.proto -o zprotoc-out/simple --export ZiAPI
+CLEANFILES += zprotoc-out/simple.hh zprotoc-out/simple.cc
+EXTRA_DIST += zprotoc_simple.proto
+zprotocproto2_SOURCES = zprotocproto2.cc
+nodist_zprotocproto2_SOURCES = zprotoc-out/proto2.cc zprotoc-out/proto2.hh
+zprotocproto2_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/zprotoc-out
+zprotocproto2-zprotocproto2.$(OBJEXT): zprotoc-out/proto2.hh
+zprotoc-out/proto2.hh zprotoc-out/proto2.cc &: \
+	$(srcdir)/zprotoc_proto2.proto $(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zprotoc-out
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc $(srcdir)/zprotoc_proto2.proto \
+		-o zprotoc-out/proto2
+CLEANFILES += zprotoc-out/proto2.hh zprotoc-out/proto2.cc
+EXTRA_DIST += zprotoc_proto2.proto
+zprotocimport_SOURCES = zprotocimport.cc
+nodist_zprotocimport_SOURCES = zprotoc-out/zprotoc_base.cc \
+	zprotoc-out/zprotoc_base.hh zprotoc-out/zprotoc_user.cc \
+	zprotoc-out/zprotoc_user.hh
+zprotocimport_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/zprotoc-out
+zprotocimport-zprotocimport.$(OBJEXT): zprotoc-out/zprotoc_base.hh \
+	zprotoc-out/zprotoc_user.hh
+zprotoc-out/zprotoc_base.hh zprotoc-out/zprotoc_base.cc &: \
+	$(srcdir)/zprotoc_base.proto $(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zprotoc-out
+	$(AM_V_at)$(top_builddir)/zi/src/zprotoc $(srcdir)/zprotoc_base.proto \
+		-o zprotoc-out/zprotoc_base
+zprotoc-out/zprotoc_user.hh zprotoc-out/zprotoc_user.cc &: \
+	$(srcdir)/zprotoc_import/user.proto zprotoc-out/zprotoc_base.hh \
+	$(top_builddir)/zi/src/zprotoc$(EXEEXT)
+	$(AM_V_GEN)$(top_builddir)/zi/src/zprotoc -I $(srcdir) \
+		$(srcdir)/zprotoc_import/user.proto -o zprotoc-out/zprotoc_user
+CLEANFILES += zprotoc-out/zprotoc_base.hh zprotoc-out/zprotoc_base.cc \
+	zprotoc-out/zprotoc_user.hh zprotoc-out/zprotoc_user.cc
+EXTRA_DIST += zprotoc_base.proto zprotoc_import/user.proto
+zifbmapcheck_SOURCES = zifbmapcheck.cc
+nodist_zifbmapcheck_SOURCES = zflatcmap.cc zflatcmap.hh
+zifbmapcheck.$(OBJEXT): zflatcmap.hh
+zflatcmap.hh zflatcmap.cc &: $(top_srcdir)/zi/interop/maps.fbs $(top_builddir)/zi/src/zflatc$(EXEEXT)
+	$(AM_V_GEN)$(top_builddir)/zi/src/zflatc $(top_srcdir)/zi/interop/maps.fbs -o zflatcmap
+CLEANFILES += zflatcmap.hh zflatcmap.cc
+zifbmapimport_SOURCES = zifbmapimport.cc zifbmapconsumer.cc
+nodist_zifbmapimport_SOURCES = zifbmap_base.cc zifbmap_base.hh \
+	zifbmap_user.cc zifbmap_user.hh
+zifbmapimport-zifbmapimport.$(OBJEXT) zifbmapimport-zifbmapconsumer.$(OBJEXT): \
+	zifbmap_base.hh zifbmap_user.hh
+zifbmap_base.hh zifbmap_base.cc &: $(srcdir)/zifbmap_base.fbs $(top_builddir)/zi/src/zflatc$(EXEEXT)
+	$(AM_V_GEN)$(top_builddir)/zi/src/zflatc $(srcdir)/zifbmap_base.fbs -o zifbmap_base
+zifbmap_user.hh zifbmap_user.cc &: $(srcdir)/zifbmap_user.fbs zifbmap_base.hh $(top_builddir)/zi/src/zflatc$(EXEEXT)
+	$(AM_V_GEN)$(top_builddir)/zi/src/zflatc $(srcdir)/zifbmap_user.fbs -o zifbmap_user
+CLEANFILES += zifbmap_base.hh zifbmap_base.cc zifbmap_user.hh zifbmap_user.cc
+EXTRA_DIST += zifbmap_base.fbs zifbmap_user.fbs
+zifbmapref_SOURCES = zifbmapref.cc
+nodist_zifbmapref_SOURCES = zflatcmapref.cc zflatcmapref.hh
+zifbmapref-zifbmapref.$(OBJEXT): zflatcmapref.hh
+zflatcmapref.hh zflatcmapref.cc &: $(top_srcdir)/zi/interop/maps.fbs $(top_builddir)/zi/src/zflatc$(EXEEXT)
+	$(AM_V_GEN)$(top_builddir)/zi/src/zflatc $(top_srcdir)/zi/interop/maps.fbs -o zflatcmapref --ref ZmPolymorph
+CLEANFILES += zflatcmapref.hh zflatcmapref.cc
+zifbmapexport_SOURCES = zifbmapexport.cc zifbmapfixture.hh zflatcfixture.hh
+zifbmapgenerated_SOURCES = zifbmapgenerated.cc zflatcfixture.hh
+nodist_zifbmapgenerated_SOURCES = zflatcmapnative.cc zflatcmapnative.hh
+zifbmapgenerated.$(OBJEXT): zflatcmapnative.hh
+zflatcmapout/native.fbs zflatcmapout/native.bfbs zflatcmapout/native.bin &: zifbmapexport$(EXEEXT)
+	$(AM_V_GEN)$(MKDIR_P) zflatcmapout
+	$(AM_V_at)./zifbmapexport zflatcmapout/native > zflatcmapout/export.tap
+zflatcmapnative.hh zflatcmapnative.cc &: zflatcmapout/native.fbs $(top_builddir)/zi/src/zflatc$(EXEEXT)
+	$(AM_V_GEN)$(top_builddir)/zi/src/zflatc zflatcmapout/native.fbs -o zflatcmapnative
+CLEANFILES += zflatcmapnative.hh zflatcmapnative.cc
 zifbsave_SOURCES = zifbsave.cc zflatcfixture.hh
 zifbsave_LDFLAGS = @Z_LDFLAGS@
 zifbcheck_SOURCES = zifbcheck.cc zifbaux.cc zflatcfixture.hh
@@ -63,9 +174,9 @@ zifbcheck.$(OBJEXT): zflatcgen.hh
 zflatcgen.hh zflatcgen.cc &: zflatc-out/original.fbs $(top_builddir)/zi/src/zflatc$(EXEEXT)
 	$(AM_V_GEN)$(top_builddir)/zi/src/zflatc zflatc-out/original.fbs -o zflatcgen
 
-CLEANFILES = zflatcgen.hh zflatcgen.cc
+CLEANFILES += zflatcgen.hh zflatcgen.cc
 clean-local:
-	rm -rf zflatc-out zflatc-inc zflatc-inc-alt
+	rm -rf zflatc-out zflatc-inc zflatc-inc-alt zflatcmapout zprotoc-out
 
 zifbaux.$(OBJEXT): zflatcgen.hh
 

@@ -14,6 +14,10 @@
 #endif
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuIntrin.hh>
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuMArray.hh>
 
@@ -21,6 +25,8 @@
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtScratch.hh>
+
+#include <zlib/ZmLHash.hh>
 
 ZuStructFacet(CBOR);
 
@@ -302,27 +308,83 @@ consteval IntIDValue intIDValue()
   return {uint64_t(negative ? value - 1 : value), negative};
 }
 
+struct IntIDKey {
+  uint64_t	arg;
+  uint8_t	major;
+
+  uint32_t hash() const {
+    return ZuHash<uint64_t>::hash(arg) ^ ZuHash<uint8_t>::hash(major);
+  }
+  friend bool operator ==(const IntIDKey &l, const IntIDKey &r) {
+    return l.arg == r.arg && l.major == r.major;
+  }
+};
+
+template <typename Fields, typename IntFields>
+struct IntIDMap : ZmLHashKV<IntIDKey, unsigned,
+  ZmLHashStatic<(IntFields::N > 1 ? ZuIntrin::log2(IntFields::N) : 1),
+    ZmLHashLocal<>>> {
+  using Base = ZmLHashKV<IntIDKey, unsigned,
+    ZmLHashStatic<(IntFields::N > 1 ? ZuIntrin::log2(IntFields::N) : 1),
+      ZmLHashLocal<>>>;
+
+  IntIDMap() {
+    ZuUnroll::all<IntFields>([this]<typename Field>() {
+      ZuAssert(validIntID<Field>());
+      constexpr IntIDValue id = intIDValue<Field>();
+      IntIDKey key{id.arg, uint8_t(id.negative ? 1 : 0)};
+      this->del(key);
+      this->add(key, unsigned(ZuTypeIndex<Field, Fields>{}));
+    });
+  }
+
+  int find(unsigned major, uint64_t arg) const {
+    unsigned field = Base::findVal(IntIDKey{arg, uint8_t(major)});
+    return ZuCmp<unsigned>::null(field) ? -1 : int(field);
+  }
+};
+
 template <typename Props, typename Fields>
 struct LoadContext {
   ZuBSpan	input;
 
+  template <typename Field>
+  using TextField = ZuBool<!ZuFieldProp::CBOR::IsIntID<
+    typename Field::Props>{}>;
+  template <typename Field>
+  using IntField = ZuFieldProp::CBOR::IsIntID<typename Field::Props>;
+  using TextFields = ZuTypeRev<ZuTypeGrep<TextField, Fields>>;
+  using IntFields = ZuTypeGrep<IntField, Fields>;
+  struct TextIDs {
+    using Keys = ZuTypeMap<ZuFieldProp::CBOR::GetID, TextFields>;
+  };
+
   LoadContext(ZuBSpan input_) : input(input_) { }
 
-  template <typename Field>
-  static bool match(ZuBSpan key)
+  static void assign(
+    FieldSpansScratch &fields, ZuBSpan key, ZuBSpan value)
   {
     Detail::Head head;
-    if (!Detail::head(key, head)) return false;
-    auto id = ZuFieldProp::CBOR::GetID<Field>{}().cspan();
-    using FieldProps = typename Field::Props;
-    if constexpr (!ZuFieldProp::CBOR::IsIntID<FieldProps>{}) {
+    if (!Detail::head(key, head)) return;
+    if (head.major == 3) {
       ZuBSpan text;
-      return Detail::content(key, head, text) && head.major == 3 &&
-	ZuCSpan(text) == id;
-    } else {
-	ZuAssert(validIntID<Field>());
-	constexpr IntIDValue value = intIDValue<Field>();
-	return head.major == (value.negative ? 1 : 0) && head.arg == value.arg;
+      if (!Detail::content(key, head, text)) return;
+      if constexpr (TextFields::N) {
+	static constexpr auto matcher = ZuMatcher<TextIDs>();
+	int j = matcher.exact(ZuCSpan{text});
+	if (j >= 0)
+	  ZuSwitch::dispatch<TextFields::N>(unsigned(j),
+	    [&fields, &value](auto I) {
+	      using Matched = ZuType<I, TextFields>;
+	      fields[ZuTypeIndex<Matched, Fields>{}] = value;
+	    });
+      }
+    } else if (head.major == 0 || head.major == 1) {
+      if constexpr (IntFields::N) {
+	static const IntIDMap<Fields, IntFields> map;
+	int j = map.find(head.major, head.arg);
+	if (j >= 0) fields[j] = value;
+      }
     }
   }
 
@@ -352,10 +414,7 @@ struct LoadContext {
       p += key.length();
       if (!Detail::item({p, unsigned(end - p)}, value)) break;
       p += value.length();
-      ZuUnroll::all<Fields>([&fields, &key, &value]<typename Field>() {
-	if (match<Field>(key))
-	  fields[ZuTypeIndex<Field, Fields>{}] = value;
-      });
+      assign(fields, key, value);
     }
     for (unsigned i = 0, l = fields.length(); i < l; ++i) fields[i] = {};
     return false;

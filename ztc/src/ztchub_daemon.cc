@@ -12,6 +12,7 @@
 
 #include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuCmp.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
@@ -26,6 +27,21 @@
 
 namespace Ztc {
 namespace Hubd_ {
+
+struct RoleKeys {
+  using Keys = ZuStringTL<"Client", "Agent">;
+};
+
+static constexpr auto roleMatcher = ZuMatcher<RoleKeys>();
+
+static bool userAuthMethod(ZuCSpan method)
+{
+  switch (method.length()) {
+    case 7: return method == "passkey";
+    case 4: return method == "oidc";
+    default: return false;
+  }
+}
 
 struct Agent {
   Agent(uint64_t sessionID_, ZuCSpan deviceID_, uint64_t generation_) :
@@ -882,8 +898,10 @@ Zum::ServiceManifest Hubd::manifest() const
     value.catalog.actions.push(Zum::CatalogAction{{}, name});
   for (auto &name: m_state->cf.roles) {
     Zum::StringVec actions;
-    if (name == "Client") actions.push("Request");
-    else if (name == "Agent") actions.push("Telemetry");
+    switch (Hubd_::roleMatcher.exact(name)) {
+      case 0: actions.push("Request"); break;
+      case 1: actions.push("Telemetry"); break;
+    }
     value.catalog.roles.push(Zum::CatalogRole{
       ZuMv(actions), {}, name});
   }
@@ -917,8 +935,7 @@ bool Hubd::authorized(
 {
   return principal.audience && principal.expires > Zm::now().sec() &&
     (action == "Telemetry" ? principal.authMethod == "client_credentials" :
-      action == "Request" &&
-        (principal.authMethod == "passkey" || principal.authMethod == "oidc")) &&
+      action == "Request" && Hubd_::userAuthMethod(principal.authMethod)) &&
     Hubd_::hasAction(principal, action);
 }
 

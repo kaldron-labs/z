@@ -796,12 +796,19 @@ private:
       // drain Tx while keeping cxn/impl referenced
       app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
 	impl->clearTx_();
-	auto app = impl->app();
-	app->rxRun([
+	// TLS Tx has stopped producing; drain its queued socket sends next.
+	auto mx = cxn->mx();
+	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	]() mutable {
-	  impl->disconnected_1(peer);
-	  (void)cxn;
+	  impl->Tx::txQueue.clean();
+	  auto app = impl->app();
+	  app->rxRun([
+	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
+	  ]() mutable {
+	    impl->disconnected_1(peer);
+	    (void)cxn;
+	  });
 	});
       });
     });
@@ -1701,15 +1708,25 @@ public:
       ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} {
     memset(&m_ctx, 0, sizeof(m_ctx));
   }
-  ~Hub() {
+  ~Hub() { release_(); }
+
+private:
+  void release_() {
     if (m_ctx.certificates.list) {
       for (unsigned i = 0; i < m_ctx.certificates.count; ++i)
 	::free(m_ctx.certificates.list[i].base);
       ::free(m_ctx.certificates.list);
     }
     Backend::verify_cert_free(m_verify);
+    m_verify = nullptr;
     Backend::cert_store_free(m_cacert);
+    m_cacert = nullptr;
+    memset(&m_ctx, 0, sizeof(m_ctx));
+    m_alpnData.init();
+    m_alpn.init();
   }
+
+public:
 
   bool init(HubParams params) {
     return init_(ZuMv(params), [](const HubParams &) { return true; });
@@ -1748,6 +1765,7 @@ protected:
     m_errorFn = ZuMv(params.errorFn());
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
+    m_stopping = false;
     m_mx = params.mx();
     m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
     m_txThread = thread_(params.txThread(), m_mx->txThread());
@@ -1765,6 +1783,7 @@ protected:
     });
     if (!ok) return false;
     Ztc::HubMgr::add(this);
+    m_registered = true;
     return true;
   }
 
@@ -1866,8 +1885,12 @@ public:
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
       m_stopping = true;
-      Ztc::HubMgr::del(this);
+      if (m_registered) {
+	Ztc::HubMgr::del(this);
+	m_registered = false;
+      }
       final_();
+      release_();
       return true;
     });
     ZiAssert(ok, "Ztls", (),
@@ -2262,6 +2285,7 @@ private:
   unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
   bool				m_stopping = false;
+  bool				m_registered = false;
 
   // shared
   // Exceptional lock-guarded registry used by lifecycle and telemetry callers.
@@ -2458,15 +2482,23 @@ friend Base;
   App *app() { return static_cast<App *>(this); }
 
   Server() { }
-  ~Server() {
+  ~Server() { release_(); }
+
+private:
+  void release_() {
     Backend::ticket_key_free(m_ticketKey);
+    m_ticketKey = nullptr;
     Backend::sign_cert_free(m_sign);
+    m_sign = nullptr;
     Backend::pkey_free(m_key);
+    m_key = nullptr;
   }
+
+public:
 
   bool init(ServerParams params);
 
-  void final() { Base::final(); }
+  void final() { Base::final(); release_(); }
 
   void listen() {
     mx()->listen(
@@ -2599,6 +2631,8 @@ template <typename App>
 bool Server<App>::init(ServerParams params)
 {
   using Link = typename App::Link;
+
+  m_stopDrained = false;
 
   if (!params.certPath()) {
     auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();

@@ -462,6 +462,12 @@ struct HasReqCompleted<U, decltype(
   ZuDeclVal<U &>().completed(ZuDeclVal<const Result &>()), void())> :
   public ZuTrue { };
 
+template <typename U, typename = void>
+struct HasReqRetired : public ZuFalse { };
+template <typename U>
+struct HasReqRetired<U, decltype(
+  ZuDeclVal<U &>().retired(), void())> : public ZuTrue { };
+
 // Protocol-neutral client session.  App supplies request intent and
 // response handling; HTTP-version-specific builders, parsers, EOF rules, and
 // link completion remain library-owned.
@@ -491,6 +497,14 @@ public:
     "libZhttp owns request transfer-encoding framing");
 
 private:
+  template <typename Parser>
+  static auto bodyMax_(Parser &parser, uint64_t max, int) ->
+      decltype(parser.bodyMax(max), void()) {
+    parser.bodyMax(max);
+  }
+  template <typename Parser>
+  static void bodyMax_(Parser &, uint64_t, long) { }
+
   struct ReqOps {
     using Spans = HeaderSpans<ReqHdrCatalog>;
 
@@ -690,6 +704,7 @@ public:
       m_operationOK = m_app->poolOperation(
 	*request, m_requestMethod, m_target);
     m_response.init(*m_requestApp);
+    bodyMax_(m_response, m_app->retainedBodyMax(), 0);
     m_responseActive = true;
     static_cast<ParserSink_ &>(m_parser) = {
       m_app, m_link, request, &m_response, &m_responseActive};
@@ -5696,8 +5711,13 @@ public:
   }
 
   void send(ZmRef<ReqBuilder> request) {
+    if (!request) return;
     txRun_([this, request = ZuMv(request)]() mutable {
-      (void)submit_(ZuMv(request));
+      if (submit_(request)) return;
+      rxRun_([this, request = ZuMv(request)]() mutable {
+	complete_(*request, ResultCode::Cancelled);
+	if constexpr (HasReqRetired<ReqBuilder>{}) request->retired();
+      });
     });
   }
   bool submit_(ZmRef<ReqBuilder> request) {
@@ -6165,9 +6185,14 @@ public:
   }
   template <typename Link>
   void header(
-    Link &, LiveReq &, ResParser &parser,
+    Link &, LiveReq &attempt, ResParser &parser,
     Zhttp::FieldSection::T section,
     ZuBSpan key, ZuSpan<uint8_t> value) {
+    if (section == Zhttp::FieldSection::Final &&
+	ZuICmp<ZuBSpan>::equals(key, "location"))
+      attempt.route.redirectState =
+	attempt.route.redirect.resolve(attempt.route.url.url(), value).ok() ?
+	RedirectState::Valid : RedirectState::Invalid;
     if constexpr (Fields::HasRuntime<ResParser>{})
       parser.header(section, key, value);
   }
@@ -6337,13 +6362,13 @@ private:
     if (m_rxStopping || !request) {
       if (request) {
 	complete_(*request, ResultCode::Cancelled);
-	terminal_(key_(request));
+	terminal_(request);
       }
       return;
     }
     if (!m_free) {
       complete_(*request, ResultCode::Failed);
-      terminal_(key_(request));
+      terminal_(request);
       return;
     }
     unsigned slot = m_free.pop();
@@ -7078,11 +7103,12 @@ private:
     assertRx_();
     cancelTimer_(attempt);
     auto key = key_(attempt.request);
+    auto request = attempt.request;
     emit_(*attempt.request, result_(attempt, code));
     closing_(attempt);
     link.retire(reuse);
     releaseAttempt_(attempt, key);
-    terminal_(key);
+    terminal_(request);
   }
 
   void complete_(ReqBuilder &request, ResultCode::T code) {
@@ -7127,10 +7153,11 @@ private:
     assertRx_();
     cancelTimer_(attempt);
     auto key = key_(attempt.request);
+    auto request = attempt.request;
     emit_(*attempt.request, result_(attempt, code));
     if (attempt.phase != AttemptPhase::Idle) closing_(attempt);
     releaseAttempt_(attempt, key);
-    terminal_(key);
+    terminal_(request);
   }
 
   void releaseAttempt_(LiveReq &attempt, typename Tx::Key key) {
@@ -7211,12 +7238,21 @@ private:
     }
   }
 
-  void terminal_(typename Tx::Key key) {
+  void terminal_(ReqBuilder *request) {
     assertRx_();
-    txRun_([this, key]() {
+    auto key = key_(request);
+    ZmRef<ReqBuilder> retained;
+    if constexpr (HasReqRetired<ReqBuilder>{}) retained = request;
+    txRun_([this, key, retained = ZuMv(retained)]() mutable {
       assertTx_();
       if (m_txActive) --m_txActive;
       Tx::ackd(key);
+      // completed() reports the HTTP result on Rx.  retired() runs only
+      // after Tx has released the queue entry, with the builder kept alive.
+      if constexpr (HasReqRetired<ReqBuilder>{})
+	rxRun_([retained = ZuMv(retained)]() mutable {
+	  retained->retired();
+	});
       if (!m_txIngressStopped) Tx::start();
       idleTx_();
     });
@@ -7288,7 +7324,7 @@ private:
   TCPPool	m_tcp;
   TLSPool	m_tls;
   QUICPool	m_quic;
-  HeaderSeedCatalog m_qpackSeeds;
+  HeaderSeedCatalog<ZuTypeList<ReqHdrCatalog>> m_qpackSeeds;
   HPackSeedCatalog m_hpackSeeds;
   Hubs		m_hubs;
   ZiTxErrorFn	m_txErrorFn;

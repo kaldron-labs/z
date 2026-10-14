@@ -7,6 +7,8 @@
 #ifndef ZdbRepairTest_HH
 #define ZdbRepairTest_HH
 
+#include "ZdbRepairDefs.hh"
+
 #include <string.h>
 
 #include <zlib/ZuMatcher.hh>
@@ -20,35 +22,6 @@
 
 namespace zdbtest {
 
-struct RepairRow {
-  uint64_t id;
-  ZtArray<float> reals;
-  ZtArray<ZtString<>> names;
-  ZtString<> stamp;
-  float real;
-  ZiIP ip;
-  double wide;
-  ZtArray<ZtString<>> strings;
-
-  const auto &cstrings() const & { return names; }
-  auto &cstrings() & { return names; }
-  auto &&cstrings() && { return ZuMv(names); }
-  void cstrings(ZfStruct_::CStringVec v) {
-    names.length(0);
-    names.size(v.length());
-    v.all([this](const char *s) { new (names.push()) ZtString<>{s}; });
-  }
-};
-ZfStruct(, (RepairRow, FB),
-  (id,		(Ctor<0>, (Keys<0, 2>)),		UInt64),
-  (reals,	(Ctor<1>, Mutable),		FloatVec),
-  ((names, AliasFn, cstrings, cstrings), (Ctor<2>, Mutable), CStringVec),
-  (stamp,	(Ctor<3>, Required, Keys<2>, Group<2>), String),
-  (real,	(Ctor<4>, Keys<1>, Mutable, Deflt<1.5>), Float),
-  (ip,		(Ctor<5>, Mutable),		UDT),
-  (wide,	(Ctor<6>, Mutable),		Float),
-  (strings,	(Ctor<7>, Mutable),		StringVec));
-ZiFB::AsTable<"repair.Row"> ZiFB_Fmt(RepairRow *);
 template <typename F>
 using RepairDefaults = ZuBool<!ZuIsSame<F, ZfField(RepairRow, real)>{}>;
 
@@ -298,124 +271,29 @@ inline void repairSize(Zdb_::Store *store)
   ZuCheckRT(counts == 1 && selects == 1 && finds == 1 && writes == 2);
 }
 
-struct RepairContext : public ZmPolymorph {
-  ZdbTable<RepairRow> *table = nullptr;
-  ZmSemaphore *paused = nullptr;
-  Zdb_::SagaCompleteFn resume;
-  unsigned inserts = 0, updates = 0, deletes = 0;
-  bool valid = true;
-};
-
-inline bool repairValues(const RepairRow &row, bool updated)
-{
-  return row.real == (updated ? -2.5f : 1.5f) &&
-    row.reals.length() == 2 && row.reals[0] == (updated ? 3.5f : -0.0f) &&
-    row.reals[1] == -7.25f && row.names.length() == 2 &&
-    ZuCSpan{row.names[0]} == (updated ? "updated" : "initial") &&
-    ZuCSpan{row.names[1]} == "a long CStringVec element retained in the store" &&
-    row.stamp == "required immutable value";
-}
-
-// Exercise native row commits through saga intent/effect and compensation.
-struct RepairSaga : public ZdbSagaBase<RepairContext> {
-  using Base = ZdbSagaBase<RepairContext>;
-  using Base::context;
-  using Base::saga;
-  using Type = ZuStringT<"repairSaga">;
-  enum { NSteps = 3 };
-  uint64_t id = 0;
-  bool fail = false;
-
-  ZdbSagaStep(0, repair_saga, Insert) {
-    auto table = context->table;
-    table->run(0, [this, table, complete = ZuMv(complete)]() mutable {
-      if constexpr (Fwd) {
-	ZdbRowRef<RepairRow> row = new ZdbRow<RepairRow>{table, 0};
-	saga->insert(table, ZuMv(row), ZuMv(complete),
-	  [this](ZdbRow<RepairRow> *row, auto &&complete) mutable {
-	    ++context->inserts;
-	    new (row->ptr()) RepairRow{id, {-0.0f, -7.25f},
-	      {"initial", "a long CStringVec element retained in the store"},
-	      "required immutable value", 1.5f, {}, 12.5, {"control"}};
-	    complete(bool(row->commit()));
-	  });
-      } else {
-	saga->findDel<0>(table, 0, ZuFwdTuple(id), ZuMv(complete),
-	  [this](ZdbRow<RepairRow> *row, auto &&complete) mutable {
-	    ++context->deletes;
-	    context->valid &= repairValues(row->data(), false);
-	    complete(bool(row->commit()));
-	  });
-      }
-    });
-    return {};
-  }
-
-  ZdbSagaStep(1, repair_saga, Update) {
-    auto table = context->table;
-    table->run(0, [this, table, complete = ZuMv(complete)]() mutable {
-      saga->findUpd<1, ZuSeq<1>>(table, 0, ZuFwdTuple(Fwd ? 1.5f : -2.5f),
-	ZuMv(complete), [this](ZdbRow<RepairRow> *row, auto &&complete) mutable {
-	  ++context->updates;
-	  context->valid &= repairValues(row->data(), !Fwd);
-	  row->data().real = Fwd ? -2.5f : 1.5f;
-	  row->data().reals[0] = Fwd ? 3.5f : -0.0f;
-	  row->data().names[0] = Fwd ? "updated" : "initial";
-	  complete(bool(row->commit()));
-	});
-    });
-    return {};
-  }
-
-  ZdbSagaStep(2, repair_saga, Update) {
-    ZuAssert(Fwd);
-    if (context->paused) {
-      context->resume = ZuMv(complete);
-      context->paused->post();
-      return {};
-    }
-    if (fail) complete(false);
-    else saga->skip(ZuMv(complete));
-    return {};
-  }
-};
-ZfStruct(, (RepairSaga, FB),
-  (id,		(Ctor<0>),	UInt64),
-  (fail,	(Ctor<1>),	Bool));
-ZiFB::AsTable<"repair.Saga"> ZiFB_Fmt(RepairSaga *);
-struct RepairCatalog {
-  using List = ZuTypeList<RepairSaga>;
-  static int match(ZuCSpan type) {
-    struct IDs { using Keys = Zdb_::SagaTypes<List>; };
-    static constexpr auto matcher = ZuMatcher<IDs>();
-    return matcher.exact(type);
-  }
-};
-
 inline void repairSaga(
     const ZfCf::AnyNode *cf, const ZfCf::AnyNode *mxCf,
     ZmRef<Zdb_::Store> store, bool fail,
     ZdbShard sagaShard = 0, bool paramLimits = false, bool restart = false)
 {
   ZuTestScopeRT(repairSaga);
-  using DB = ZdbSagaDB<RepairContext, RepairCatalog>;
-  using M = ZdbMSaga<RepairCatalog>;
+  using DB = RepairDB;
+  using M = ZdbAnySaga<RepairDB>;
   ZiMultiplex mx{ZvMxParams("mx", mxCf)};
   ZuCheckRT(mx.start());
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {}, store);
   auto table = db->initTable<RepairRow>("repair_saga");
-  ZmRef<RepairContext> context = new RepairContext{};
-  context->table = table;
+  ZmRef<RepairDB> context = db;
+  context->rows = table;
   ZmSemaphore paused;
   if (restart) context->paused = &paused;
-  db->sagas(context);
+  db->sagas({repairSagaDef()});
   bool started = db->start();
   ZuCheckRT(started);
   if (started) {
     if (paramLimits && !fail) ZuTestCallRT(repairSize, db->store());
-    ZmRef<M> saga = new M{};
-    saga->init(RepairSaga{{}, uint64_t(fail) + 1, fail});
+    ZmRef<M> saga = repairDef(uint64_t(fail) + 1, fail);
     ZmSemaphore submitted, completed;
     bool admitted = false, outcome = false;
     ZuCheckRT(db->saga(sagaShard, uint64_t(fail) + 1, ZuMv(saga),
@@ -435,11 +313,12 @@ inline void repairSaga(
 	ZuCheckRT(db->stop());
 	table = {};
 	db->final();
+	db = new RepairDB{};
 	db->init(ZdbCf{cf}, &mx, {}, store);
 	table = db->initTable<RepairRow>("repair_saga");
-	context = new RepairContext{};
-	context->table = table;
-	db->sagas(context);
+	context = db;
+	context->rows = table;
+	db->sagas({repairSagaDef()});
 	started = db->start();
 	ZuCheckRT(started);
 	if (!started) {

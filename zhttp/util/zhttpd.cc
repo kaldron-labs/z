@@ -464,9 +464,10 @@ struct Parser : public Zhttp::Parser {
   RequestData	request;
 };
 
-struct App {
-  using Parser = ::Parser;
-  using ResBuilderQ = ::ResBuilderQ;
+struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
+  using HTTP = Zhttp::Server<App, ::Parser, ::ResBuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
   using WorkFn = ZmFn<void(), ZmFnHeapID<"zhttpd.WorkFn">>;
 
   struct Work_ : public ZmObject {
@@ -639,8 +640,6 @@ ZiMxParams mxParams(const Options &options)
   return params;
 }
 
-using Server = Zhttp::Server<App>;
-
 struct Zhttpd::Application::Impl {
   Impl(Options options) :
     mx{mxParams(options)}, app{&state}
@@ -651,7 +650,6 @@ struct Zhttpd::Application::Impl {
   State		state;
   ZiMultiplex	mx;
   App		app;
-  Server	server;
   bool		mxStarted = false;
   bool		serverInited = false;
   bool		serverStarted = false;
@@ -735,15 +733,15 @@ bool Zhttpd::Application::initServer()
       .migrationCloseOnFailure(options.quicMigrationCloseOnFailure)
       .rxDrop(rxDrop).txDrop(txDrop));
   }
-  m_impl->server.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+  m_impl->app.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
     ZiLOG(Error, "zhttpd", ([e](auto &s) {
       s << "transmit error: " << e;
     }));
     return false;
   }});
-  m_impl->serverInited = m_impl->server.init(
+  m_impl->serverInited = m_impl->app.init(
     Zhttp::HubConfig{&m_impl->mx, "3", "4"},
-    ZuMv(config), &m_impl->app);
+    ZuMv(config));
   return m_impl->serverInited;
 }
 
@@ -751,14 +749,14 @@ bool Zhttpd::Application::startServer()
 {
   if (!m_impl || !m_impl->serverInited || m_impl->serverStarted)
     return false;
-  m_impl->serverStarted = m_impl->server.start();
+  m_impl->serverStarted = m_impl->app.start();
   return m_impl->serverStarted;
 }
 
 bool Zhttpd::Application::stopServer()
 {
   if (!m_impl || !m_impl->serverInited) return true;
-  bool ok = m_impl->server.stop();
+  bool ok = m_impl->app.stop();
   m_impl->app.drain();
   m_impl->serverStarted = false;
   return ok;
@@ -767,7 +765,7 @@ bool Zhttpd::Application::stopServer()
 void Zhttpd::Application::finalServer()
 {
   if (!m_impl || !m_impl->serverInited) return;
-  m_impl->server.final();
+  m_impl->app.final();
   m_impl->serverInited = false;
   m_impl->serverStarted = false;
 }
@@ -798,7 +796,7 @@ unsigned Zhttpd::Application::errors() const
 #ifdef Zquic_DEBUG
 void Zhttpd::Application::printQUICDiag()
 {
-  if (m_impl && m_impl->serverInited) m_impl->server.printQUICDiag();
+  if (m_impl && m_impl->serverInited) m_impl->app.printQUICDiag();
 }
 #endif
 
@@ -872,8 +870,7 @@ int main(int argc, char **argv)
   state.txThread = mx.sid("4");
   state.fileThread = mx.sid("5");
   App app{&state};
-  Server server;
-  server.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
+  app.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
     ZiLOG(Error, "zhttpd", ([e](auto &s) {
       s << "transmit error: " << e;
     }));
@@ -921,21 +918,21 @@ int main(int argc, char **argv)
     h3Enabled = true;
 #endif
   }
-  bool serverInited = server.init(
+  bool serverInited = app.init(
     Zhttp::HubConfig{&mx, "3", "4"},
-    ZuMv(serverConfig), &app);
+    ZuMv(serverConfig));
   if (!serverInited) {
     ZiLOG(Error, "zhttpd", "HTTP server initialization failed");
-    server.final();
+    app.final();
     mx.stop();
     state.log.final();
     ZiLog::stop();
     return 1;
   }
-  if (!server.start()) {
+  if (!app.start()) {
     ZiLOG(Error, "zhttpd", "HTTP hub start failed");
-    (void)server.stop();
-    server.final();
+    (void)app.stop();
+    app.final();
     mx.stop();
     state.log.final();
     ZiLog::stop();
@@ -968,13 +965,13 @@ int main(int argc, char **argv)
     if (h3Enabled && state.options.quicDiag &&
 	(quicElapsed += step) >= state.options.quicDiag) {
       quicElapsed = 0;
-      server.printQUICDiag();
+      app.printQUICDiag();
     }
 #endif
   }
-  if (!server.stop()) state.errors = 1;
+  if (!app.stop()) state.errors = 1;
   app.drain();
-  server.final();
+  app.final();
   mx.stop();
   state.log.final();
   ZiLog::stop();

@@ -99,6 +99,11 @@ struct Variant : public ZuUnion<uint32_t, Text, ZfDBUS::Any> {
   friend ZuDefaultRDecayer ZuRDecayer(Variant *);
   friend ZfDBUS::AsVariant ZfDBUS_Fmt(Variant *);
 };
+struct DuplicateVariant : public ZuUnion<Text, ZtString<>, ZfDBUS::Any> {
+  ZuDerive_(DuplicateVariant, (ZuUnion<Text, ZtString<>, ZfDBUS::Any>));
+  friend ZuDefaultRDecayer ZuRDecayer(DuplicateVariant *);
+  friend ZfDBUS::AsVariant ZfDBUS_Fmt(DuplicateVariant *);
+};
 using VariantDict = ZfMapTest<"ZfDBUSTest.VariantDict",
   ZmLHashKV<Text, Variant>>;
 inline ZfDBUS::AsMap<> ZfDBUS_Fmt(VariantDict *);
@@ -409,6 +414,15 @@ static void containers()
   auto textCopy = ZfDBUS::handler<Variant>({buffer, "v"}).ctor();
   ZuCheck(textCopy.template is<Text>() &&
     textCopy.template p<Text>() == "value");
+
+  DuplicateVariant duplicate{ZtString<>{"first"}};
+  buffer.length(0);
+  ZfDBUS::save(buffer, duplicate);
+  auto duplicateHandler = ZfDBUS::handler<DuplicateVariant>({buffer, "v"});
+  ZuCheck(bool(duplicateHandler));
+  auto duplicateCopy = duplicateHandler.ctor();
+  ZuCheck(duplicateCopy.template is<Text>() &&
+    duplicateCopy.template p<Text>() == "first");
 
   PathArrayBody paths{{"/a", "/b"}};
   ZuCheck(ZfDBUS::signature<PathArrayBody>() == "ao");

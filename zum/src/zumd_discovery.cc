@@ -8,10 +8,16 @@
 #include <zlib/zumd_key_db.hh>
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuMatcher.hh>
+
+#include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
 namespace Zum {
+
+using ScopeIndex = ZmRBTree<ZuCSpan,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"Zum.Discovery.ScopeIndex">>>;
 
 bool appIssuerPath(AppID appID, String &path)
 {
@@ -168,20 +174,20 @@ static bool jwksJSON_(StringVec &sources, String &json, bool strict)
 template <typename Heap = ZuVoid>
 class SignKeyLoad__ : public Heap, public ZmObject  {
 public:
-  SignKeyLoad__(DBContext *context, String issuer, int64_t now,
+  SignKeyLoad__(DB *db, String issuer, int64_t now,
       int64_t expires, unsigned maxKeys, SignKeyFn complete) :
-    m_context{context}, m_issuer{ZuMv(issuer)}, m_now{now},
+    m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now},
     m_expires{expires}, m_maxKeys{maxKeys}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_context || !m_issuer || m_now <= 0 || m_expires <= m_now ||
+    if (!m_db || !m_issuer || m_now <= 0 || m_expires <= m_now ||
 	!m_maxKeys || m_maxKeys == UINT_MAX) {
       m_complete(SignKey{});
       return;
     }
     using Tuple = SignKeyTable::Tuple;
-    m_context->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
+    m_db->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
       self = ZmRef<SignKeyLoad__>{this}
     ](ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
@@ -209,7 +215,7 @@ public:
 	return;
       }
       String id = self->m_id;
-      auto table = self->m_context->signKeys;
+      auto table = self->m_db->signKeys;
       table->run(0, [table, id = ZuMv(id), self = ZuMv(self)]() mutable {
 	table->template find<0>(0, ZuFwdTuple(ZuMv(id)), [
 	  self = ZuMv(self)
@@ -230,7 +236,7 @@ public:
   }
 
 private:
-  DBContext *m_context;
+  DB *m_db;
   String m_issuer;
   int64_t m_now;
   int64_t m_expires;
@@ -244,11 +250,11 @@ ZuDerive(SignKeyLoadHeap,
   (ZmHeap<"Zum.zumd.discovery.SignKeyLoad", SignKeyLoad__<>>));
 ZuDerive(SignKeyLoad_, (SignKeyLoad__<SignKeyLoadHeap>));
 
-void signKeyLoad(DBContext *context, String issuer, int64_t now,
+void signKeyLoad(DB *db, String issuer, int64_t now,
     int64_t expires, unsigned maxKeys, SignKeyFn complete)
 {
   ZmRef<SignKeyLoad_> load = new SignKeyLoad_{
-    context, ZuMv(issuer), now, expires, maxKeys, ZuMv(complete)};
+    db, ZuMv(issuer), now, expires, maxKeys, ZuMv(complete)};
   load->start();
 }
 
@@ -312,12 +318,18 @@ static bool endpoints(ZuCSpan authorizationBase, ZuCSpan issuer,
 String metadataJSON(
     ZuCSpan authorizationBase, AppID appID, const StringVec &scopes)
 {
+  struct BuiltinScopes {
+    using Keys = ZuStringTL<"openid", "profile", "email", "offline_access">;
+  };
+  static constexpr auto matcher = ZuMatcher<BuiltinScopes>();
   StringVec supported{"openid", "profile", "email", "offline_access"};
-  for (const auto &scope: scopes) {
-    bool duplicate = false;
-    for (const auto &existing: supported)
-      if (existing == scope) { duplicate = true; break; }
-    if (!duplicate) supported.push(scope);
+  ScopeIndex index;
+  for (unsigned i = 0, n = scopes.length(); i < n; ++i) {
+    const auto &scope = scopes[i];
+    if (matcher.exact(scope) >= 0) continue;
+    if (index.find(scope)) continue;
+    index.add(scope);
+    supported.push(scope);
   }
   Metadata metadata;
   String issuer;
@@ -352,20 +364,20 @@ template <typename Heap = ZuVoid>
 class JWKSLoad__ : public Heap, public ZmPolymorph  {
 public:
   JWKSLoad__(
-      DBContext *context, String issuer, int64_t now, unsigned maxKeys,
+      DB *db, String issuer, int64_t now, unsigned maxKeys,
       DiscoveryFn complete) :
-    m_context{context}, m_issuer{ZuMv(issuer)}, m_now{now}, m_maxKeys{maxKeys},
+    m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now}, m_maxKeys{maxKeys},
     m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    if (!m_context || m_now <= 0 || !m_maxKeys || m_maxKeys == UINT_MAX) {
+    if (!m_db || m_now <= 0 || !m_maxKeys || m_maxKeys == UINT_MAX) {
       finish_(false);
       return;
     }
     using Table = SignKeyTable;
     using Tuple = Table::Tuple;
-    m_context->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
+    m_db->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
       self = ZmRef<JWKSLoad__>{this}
     ](ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
@@ -398,7 +410,7 @@ private:
     complete(ok, ZuMv(json));
   }
 
-  DBContext	*m_context = nullptr;
+  DB	*m_db = nullptr;
   String	m_issuer;
   int64_t	m_now = 0;
   unsigned	m_maxKeys = 0;
@@ -411,18 +423,18 @@ ZuDerive(JWKSLoadHeap, (ZmHeap<"Zum.zumd.discovery.JWKSLoad", JWKSLoad__<>>));
 ZuDerive(JWKSLoad_, (JWKSLoad__<JWKSLoadHeap>));
 
 bool jwksLoad(
-    Requests *requests, ZuTime deadline, DBContext *context,
+    Requests *requests, ZuTime deadline, DB *db,
     ZuCSpan issuer, int64_t now, unsigned maxKeys, DiscoveryFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<DiscoveryComplete_> state =
     new DiscoveryComplete_{ZuMv(complete)};
-  return requests->run(deadline, [state, context, issuer = String{issuer},
+  return requests->run(deadline, [state, db, issuer = String{issuer},
       now, maxKeys](
       ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
     ZmRef<JWKSLoad_> load = new JWKSLoad_{
-      context, ZuMv(issuer), now, maxKeys, [state](
+      db, ZuMv(issuer), now, maxKeys, [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
     }};

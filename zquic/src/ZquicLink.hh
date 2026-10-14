@@ -638,11 +638,16 @@ protected:
 public:
   bool disconnect(bool peer = false) {
     if (m_disconnecting.xch(1)) return false;
-    app()->txRun([link = impl(), peer]() mutable {
-      link->delTimers_();
-      link->Self::disconnected(peer);
-    });
+    disconnect_(peer, []() { });
     return true;
+  }
+  template <typename L>
+  void disconnect_(bool peer, L &&l) {
+    m_disconnecting = 1;
+    app()->txRun([link = impl(), peer, l = ZuFwd<L>(l)]() mutable {
+      link->delTimers_();
+      link->Self::disconnected(peer, ZuMv(l));
+    });
   }
   void disconnecting_(bool disconnecting) {
     m_disconnecting = unsigned(disconnecting);
@@ -3169,11 +3174,16 @@ protected:
   bool sendPassiveMigChal_() { return false; }
   void statelessReset() { ++m_rxDiag.unhandledAppEvents; }
   void disconnected(bool peer) {
-    app()->rxRun([link = impl(), peer]() {
-      link->Self::disconnected_0(peer);
+    disconnected(peer, []() { });
+  }
+  template <typename L>
+  void disconnected(bool peer, L &&l) {
+    app()->rxRun([link = impl(), peer, l = ZuFwd<L>(l)]() mutable {
+      link->Self::disconnected_0(peer, ZuMv(l));
     });
   }
-  void disconnected_0(bool peer) {
+  template <typename L>
+  void disconnected_0(bool peer, L &&l) {
     auto mx = app()->mx();
     if (mx && mx->running() && app()->txThread()) {
       ZiAssert(rxInvoked_(), "Zquic", (),
@@ -3183,10 +3193,15 @@ protected:
       m_crypto.resetTLS();
       app()->retireLinkRoutes_(impl());
       LinkStateSnapshot snapshot = linkSnapshotRx_();
-      app()->txRun([link = impl(), peer, snapshot]() mutable {
+      app()->txRun([
+	link = impl(), peer, snapshot, l = ZuFwd<L>(l)
+      ]() mutable {
 	link->applyLinkSnapshotTx_(snapshot);
-	link->app()->rxRun([link, peer]() mutable {
-	  link->Self::disconnected_(peer);
+	link->app()->mx()->txRun([link, peer, l = ZuMv(l)]() mutable {
+	  link->app()->rxRun([link, peer, l = ZuMv(l)]() mutable {
+	    link->Self::disconnected_(peer);
+	    l();
+	  });
 	});
       });
       return;
@@ -3200,6 +3215,7 @@ protected:
     m_txLinkState = LinkState::Closed;
     m_publicLinkState = unsigned(LinkState::Closed);
     m_crypto.resetTLS();
+    l();
   }
   void disconnected_(bool peer) {
     app()->disconnected(impl(), peer);
@@ -4237,8 +4253,9 @@ protected:
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stateless-reset completion outside Rx thread", return);
     impl()->statelessReset();
-    if (notifyDisconnect) impl()->disconnected(true);
+    if (notifyDisconnect) impl()->resetDisconnected_();
   }
+  void resetDisconnected_() { impl()->disconnected(true); }
 
   template <
     unsigned TLSBufSize_, typename SendFlights,

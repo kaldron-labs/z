@@ -735,7 +735,7 @@ protected:
   void pushIterateNode(I &iter, Node *node) {
     Node *prevNode = iter.m_node;
 
-    if (!prevNode) { push(node); return; }
+    if (!prevNode) { pushNode(node); return; }
 
     nodeRef(node);
     if (Node *nextNode = next(prevNode)) {
@@ -758,7 +758,7 @@ protected:
   void unshiftIterateNode(I &iter, Node *node) {
     Node *nextNode = iter.m_node;
 
-    if (!nextNode) { unshift(node); return; }
+    if (!nextNode) { unshiftNode(node); return; }
 
     nodeRef(node);
     if (Node *prevNode = prev(nextNode)) {

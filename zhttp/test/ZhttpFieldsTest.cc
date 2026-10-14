@@ -116,6 +116,8 @@ bool invalidCases()
     !Source::field(forbidden, "connection", "close", header) &&
     !Source::field(forbidden, "te", "gzip", header) &&
     !Source::field(forbidden, "Upper", "value", header);
+  Zhttp::Fields::Semantics<true> allowed;
+  bool allowedTe = Source::field(allowed, "te", "trailers", header);
 
   Zhttp::Fields::Semantics<true> missing;
   bool missingPseudo =
@@ -144,7 +146,7 @@ bool invalidCases()
   bool invalidTrailer =
     !Source::field(trailers, "content-length", "0", header);
 
-  return pseudoOrder && duplicatePseudo && forbiddenField &&
+  return pseudoOrder && duplicatePseudo && forbiddenField && allowedTe &&
     missingPseudo && invalidConnect && disabledConnect && invalidTrailer;
 }
 

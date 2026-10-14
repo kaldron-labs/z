@@ -14,14 +14,14 @@ pkginclude_HEADERS = ZhttpLib.hh ZhttpCore.hh ZhttpURL.hh ZhttpFields.hh \
 	ZhttpCompression.hh ZhttpHPack.hh ZhttpQPack.hh \
 	ZhttpH1.hh ZhttpH2.hh ZhttpH2Hub.hh ZhttpH3.hh \
 	ZhttpTransport.hh ZhttpDiscovery.hh Zhttp.hh \
-	ZhttpClient.hh ZhttpServer.hh
+	ZhttpClient.hh ZhttpServer.hh ZhttpSSE.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
 libZhttp_la_SOURCES = ZhttpLib.cc ZhttpCore.cc ZhttpURL.cc \
 	ZhttpAltSvc.cc ZhttpDiscovery.cc ZhttpTransport.cc \
 	ZhttpCompression.cc ZhttpFields.cc \
 	ZhttpH1.cc ZhttpH2.cc ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
-	ZhttpClient.cc ZhttpServer.cc
+	ZhttpClient.cc ZhttpSSE.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/ztls/src/libZtls.la \

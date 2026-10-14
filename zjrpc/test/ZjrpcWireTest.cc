@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZhttpSSE.hh>
 #include <zlib/ZjrpcHTTP.hh>
 #include <zlib/ZjrpcStdio.hh>
 #include <zlib/ZjrpcWS.hh>
@@ -74,11 +75,11 @@ struct ReqParser : public Zjrpc::HTTPRequestParser<ReqParser, AppHeaders> {
 static void sseTest()
 {
   ZuTestScope(sse);
-  Zjrpc::SSEDecoder decoder{128, 128};
+  Zhttp::SSEDecoder decoder{128, 128};
   unsigned events = 0;
   ZtString<> data, id;
   int64_t retry = -1;
-  auto event = [&events, &data, &id, &retry](const Zjrpc::SSEEvent &event) {
+  auto event = [&events, &data, &id, &retry](const Zhttp::SSEEvent &event) {
     ++events;
     data.length_(0);
     data << event.data();
@@ -95,28 +96,47 @@ static void sseTest()
   ZuCheck(decoder.feed("data: {}\n\ndata: {\"id\":2}\n\n", event));
   ZuCheck(events == 3);
 
-  Zjrpc::SSEDecoder bounded{8, 128};
+  Zhttp::SSEDecoder bounded{8, 128};
   ZuCheck(bounded.feed("data: {}\n\n", event));
   ZuCheck(events == 4);
   ZuCheck(!bounded.feed("data: {}x\n\n", event));
-  ZuCheck(bounded.state() == Zjrpc::SSEDecoder::Closed && events == 4);
+  ZuCheck(bounded.state() == Zhttp::SSEDecoder::Closed && events == 4);
   bounded.reset(8, 128);
   ZuCheck(bounded.feed("data: ", event));
   ZuCheck(!bounded.feed("{}x\n\n", event));
-  ZuCheck(bounded.state() == Zjrpc::SSEDecoder::Closed && events == 4);
+  ZuCheck(bounded.state() == Zhttp::SSEDecoder::Closed && events == 4);
 
   ZtString<> out;
-  Zjrpc::saveSSE(out, "9", 1000, "{\"result\":{}}");
+  Zhttp::saveSSE(out, "9", 1000, "{\"result\":{}}");
   ZuCheck(out ==
     "id: 9\nretry: 1000\ndata: {\"result\":{}}\n\n");
+  out.length_(0);
+  ZuCheck(Zhttp::saveSSE(out, "9", 1000, "first\nsecond"));
+  ZuCheck(out == "id: 9\nretry: 1000\ndata: first\ndata: second\n\n");
+  Zhttp::SSEDecoder round{128, 128};
+  ZtString<> roundData;
+  ZuCheck(round.feed(out, [&roundData](const Zhttp::SSEEvent &event) {
+    roundData = event.data();
+  }));
+  ZuCheck(roundData == "first\nsecond");
+  out.length_(0);
+  ZuCheck(Zhttp::saveSSE(out, {}, -1, "\nsecond"));
+  round.reset(128, 128);
+  ZuCheck(round.feed(out, [&roundData](const Zhttp::SSEEvent &event) {
+    roundData = event.data();
+  }));
+  ZuCheck(roundData == "\nsecond");
+  out.length_(0);
+  ZuCheck(!Zhttp::saveSSE(out, "bad\nid", -1, "data"));
+  ZuCheck(!out);
 }
 
 static void sseLifetimeTest()
 {
   ZuTestScope(sseLifetime);
-  Zjrpc::SSEDecoder decoder{128, 128};
+  Zhttp::SSEDecoder decoder{128, 128};
   ZmRef<ZiIOBuf> first, next;
-  auto event = [&first, &next](Zjrpc::SSEEvent event) {
+  auto event = [&first, &next](Zhttp::SSEEvent event) {
     if (!first) first = ZuMv(event.body);
     else next = ZuMv(event.body);
   };
@@ -255,7 +275,7 @@ static void sseOutputTest()
     return true;
   });
   ZuCheck(messages == 2);
-  Zjrpc::SSEDecoder decoder{1024, 1024};
+  Zhttp::SSEDecoder decoder{1024, 1024};
   unsigned events = 0;
   ZuCheck(decoder.feed(out.data, [&events](const auto &) { ++events; }));
   ZuCheck(events == 2);

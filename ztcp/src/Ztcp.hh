@@ -296,12 +296,19 @@ private:
       impl->disconnected_(cxn.ptr());
       auto app = impl->app();
       app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
-	auto app = impl->app();
-	app->rxRun([
+	// Application Tx has drained; drain its queued socket sends next.
+	auto mx = cxn->mx();
+	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	]() mutable {
-	  impl->disconnected_1(peer);
-	  (void)cxn;
+	  impl->Tx::txQueue.clean();
+	  auto app = impl->app();
+	  app->rxRun([
+	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
+	  ]() mutable {
+	    impl->disconnected_1(peer);
+	    (void)cxn;
+	  });
 	});
       });
     });
@@ -724,6 +731,7 @@ protected:
     m_txThread = thread_(params.txThread, m_mx->txThread());
     if (!ZuFwd<L>(l)(params)) return false;
     Ztc::HubMgr::add(this);
+    m_registered = true;
     return true;
   }
 
@@ -769,7 +777,10 @@ private:
 public:
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
-      Ztc::HubMgr::del(this);
+      if (m_registered) {
+	Ztc::HubMgr::del(this);
+	m_registered = false;
+      }
       final_();
       return true;
     });
@@ -909,6 +920,7 @@ private:
   const ZuID		m_id;
   ZiMultiplex		*m_mx = nullptr;
   ErrorFn		m_errorFn;
+  bool			m_registered = false;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
 

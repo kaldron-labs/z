@@ -7,6 +7,8 @@
 #include <zlib/ZdbPQ.hh>
 
 
+#include <zlib/ZuMatcher.hh>
+
 #include <zlib/ZmDemangle.hh>
 
 #include <zlib/ZtCase.hh>
@@ -15,6 +17,10 @@
 #include <zlib/ZiLog.hh>
 
 namespace ZdbPQ {
+
+struct InternalFieldIDs {
+  using Keys = ZuStringTL<"_shard", "_un", "_sn", "_vn">;
+};
 
 ZtEnumImplNS(SendState);
 
@@ -1035,7 +1041,6 @@ StoreTbl::StoreTbl(
   m_store{store}, m_id{ZuMv(id)},
   m_bufAllocFn{ZuMv(bufAllocFn)}, m_internal{internal}
 {
-  m_fieldMap = new FieldMap{ZmHashParams(fields.length())};
   ZtCase::camelSnake(m_id, [this](ZuCSpan id) { m_id_ = id; });
   char ns = m_internal ? 'i' : 'a';
   m_stmtID << ns << m_id_;
@@ -1062,7 +1067,7 @@ StoreTbl::StoreTbl(
 	if (fields[i]->props & ZfVFieldProp::Mutable()) {
 	  m_xUpdFields.push(XFieldIx(i));
 	}
-	m_fieldMap->add(id, i);
+	m_fieldMap.add(m_xFields[i].id_, i);
       });
   n = keyFields.length();
   m_xKeys.size(n);
@@ -1077,7 +1082,7 @@ StoreTbl::StoreTbl(
       bool descend = field->descend & (uint64_t(1)<<i);
       k += descend;
       ZtCase::camelSnake(field->id, [this, xKey, i, descend](ZuCSpan id) {
-	auto field = m_fieldMap->findVal(id);
+	auto field = m_fieldMap.findVal(id);
 	ZmAssert(!ZuNull(field));
 	xKey->fields.push(XKeyField{XFieldIx(field), uint8_t(descend)});
 	auto type = m_xFields[field].type;
@@ -1110,9 +1115,9 @@ StoreTbl::~StoreTbl()
 void StoreTbl::initFieldMap()
 {
   unsigned n = m_xFields.length();
-  m_fieldMap = new FieldMap{ZmHashParams(n)};
+  m_fieldMap.clean();
   for (unsigned i = 0; i < n; i++)
-    m_fieldMap->add(m_xFields[i].id_, i);
+    m_fieldMap.add(m_xFields[i].id_, i);
 }
 
 void StoreTbl::open(OpenFn openFn)
@@ -1124,7 +1129,7 @@ void StoreTbl::open(OpenFn openFn)
   m_maxSN = ZdbNullSN();
   m_openFn = ZuMv(openFn);
   if (m_openState.phase() == OpenState::Reopen) { openCount(); return; }
-  if (!m_fieldMap) initFieldMap();
+  if (!m_fieldMap.count_()) initFieldMap();
   m_openState.reset();
   m_badField = ZuCmp<unsigned>::null();
   mkTable();
@@ -1274,8 +1279,8 @@ void StoreTbl::open_failed(Event e)
 
   m_openState.phase(OpenState::Opened);
   m_openState.setFailed();
-  m_fieldMap = {};
-  m_indexMap = {};
+  m_fieldMap.clean();
+  m_indexMap.clean();
   m_indexStates.null();
   m_missingIndices.null();
 
@@ -1291,8 +1296,8 @@ void StoreTbl::opened()
   // ZiLOG(Debug, "ZdbPQ", ([](auto &s) { }));
 
   m_openState.phase(OpenState::Opened);
-  m_fieldMap = {};
-  m_indexMap = {};
+  m_fieldMap.clean();
+  m_indexMap.clean();
   m_indexStates.null();
   m_missingIndices.null();
 
@@ -1368,7 +1373,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
 
   if (m_openState.create()) {
     if (!res) {
-      m_fieldMap = {};
+      m_fieldMap.clean();
       mkIndices();
     }
     return;
@@ -1377,7 +1382,7 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
   if (!res) {
     if (!m_openState.failed() && m_openState.field() >= m_xFields.length()) {
       // table exists, all fields ok, proceed to indices
-      m_fieldMap = {};
+      m_fieldMap.clean();
       mkIndices();
     } else if (!m_openState.failed() && !m_openState.field()) {
       // table does not exist, create it
@@ -1429,20 +1434,19 @@ void StoreTbl::mkTable_rcvd(PGresult *res)
     unsigned oid = reinterpret_cast<UInt32 *>(PQgetvalue(res, i, 1))->v;
     unsigned field = ZuCmp<unsigned>::null();
     unsigned type = ZuCmp<unsigned>::null();
-    if (id == "_shard") {
-      type = Value::Index<UInt8>{};
-    } else if (id == "_un") {
-      type = Value::Index<UInt64>{};
-    } else if (id == "_sn") {
-      type = Value::Index<UInt128>{};
-    } else if (id == "_vn") {
-      type = Value::Index<Int64>{};
-    } else {
-      field = m_fieldMap->findVal(id);
-      if (!ZuNull(field)) {
-	m_openState.incField();
-	type = m_xFields[field].type;
-      }
+    static constexpr auto matcher = ZuMatcher<InternalFieldIDs>();
+    switch (matcher.exact(id)) {
+      case 0: type = Value::Index<UInt8>{}; break;
+      case 1: type = Value::Index<UInt64>{}; break;
+      case 2: type = Value::Index<UInt128>{}; break;
+      case 3: type = Value::Index<Int64>{}; break;
+      default:
+	field = m_fieldMap.findVal(id);
+	if (!ZuNull(field)) {
+	  m_openState.incField();
+	  type = m_xFields[field].type;
+	}
+      break;
     }
     bool match = false;
     if (!ZuNull(type))
@@ -1469,13 +1473,13 @@ void StoreTbl::mkIndices()
 {
   m_openState.phase(OpenState::MkIndices);
   unsigned n = m_xKeys.length();
-  m_indexMap = new IndexMap{ZmHashParams(n)};
+  m_indexMap.clean();
   m_indexStates.size(n);
   for (unsigned i = 0; i < n; i++) {
     auto state = new (m_indexStates.push()) IndexState{};
     state->id << m_id_ << '_' << ZuBoxed(i);
     state->keyID = KeyID(i);
-    m_indexMap->add(ZuCSpan(state->id), i);
+    m_indexMap.add(ZuCSpan(state->id), i);
   }
   m_missingIndices.null();
   m_missingPos = 0;
@@ -1565,7 +1569,7 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
 	}
       }
     }
-    m_indexMap = {};
+    m_indexMap.clean();
     m_indexStates.null();
     if (m_openState.failed()) {
       m_missingIndices.null();
@@ -1593,7 +1597,7 @@ void StoreTbl::mkIndices_rcvd(PGresult *res)
   }
   for (unsigned i = 0; i < n; i++) {
     ZuCSpan id(PQgetvalue(res, i, 0), PQgetlength(res, i, 0));
-    unsigned index = m_indexMap->findVal(id);
+    unsigned index = m_indexMap.findVal(id);
     if (ZuNull(index)) continue;
     if (PQgetlength(res, i, 1) != 1 ||
 	PQgetlength(res, i, 2) != sizeof(UInt32) ||

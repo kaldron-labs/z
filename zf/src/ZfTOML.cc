@@ -10,7 +10,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuUTF.hh>
 
-#include <zlib/ZmLHash.hh>
+#include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtScratch.hh>
@@ -70,18 +70,34 @@ struct HeaderPlan {
   unsigned	missing = 0;
 };
 
-ZuDerive(StatesScratch, (ZtArray<TableState,
-  ZtArrayHeapID<"ZfTOML.TableState", ZtArraySharded<true>>>));
 ZuDerive(KeyPartsScratch, (ZtArray<AnyNode::String,
   ZtArrayHeapID<"ZfTOML.KeyPath", ZtArraySharded<true>>>));
 
-static const char *stateIndexID() { return "ZfTOML.TableStateIndex"; }
-using StateIndex = ZmLHashKV<
-  AnyNode *, unsigned,
-  ZmLHashID<stateIndexID, ZmLHashLocal<>>>;
+static auto stateKey(const TableState &v) { return v.node; }
+ZmRBTreeDerive(States, TableState,
+  ZmRBTreeKey<stateKey, ZmRBTreeUnique<true,
+    ZmRBTreeHeapID<"ZfTOML.TableState">>>);
+
+struct FieldKey {
+  AnyNode *object;
+  unsigned offset;
+  ZuCSpan query;
+
+  ZuCSpan id() const {
+    if (offset == UINT_MAX) return query;
+    return object->data<AnyNode::Object>()[offset].p<0>();
+  }
+
+  int cmp(const FieldKey &v) const {
+    if (int c = ZuCmp<AnyNode *>::cmp(object, v.object)) return c;
+    return id().cmp(v.id());
+  }
+};
+
+ZmRBTreeDerive(FieldIndex, FieldKey,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"ZfTOML.FieldIndex">>);
 
 enum {
-  StateLinearMax = 32, // measured mainstream configuration-table count
   KeyScratchMax = 8,  // covers conventional dotted configuration-key depth
   UTF8Max = 4,        // Unicode scalar UTF-8 encoding maximum (RFC 3629)
   DecimalDigits = 18, // ZuDecimal's fixed fractional precision
@@ -242,14 +258,28 @@ ZuTuple<int, ZuDecimal> TOMLPolicy::decimalEOV(ZuCSpan span)
   return {int(span.length()), out.decimal};
 }
 
+static int specialFloat(ZuCSpan token)
+{
+  unsigned n = token.length(), sign = 0;
+  if (n == 4 && (token[0] == '+' || token[0] == '-')) sign = 1;
+  else if (n != 3) return 0;
+  ZuCSpan word{token.data() + sign, 3};
+  switch (word[0]) {
+    case 'i':
+      if (word != "inf") return 0;
+      return token[0] == '-' ? -1 : 1;
+    case 'n': return word == "nan" ? 2 : 0;
+  }
+  return 0;
+}
+
 ZuTuple<int, double> TOMLPolicy::floatEOV(ZuCSpan span)
 {
-  if (span == "inf" || span == "+inf")
-    return {int(span.length()), ZuCmp<double>::inf()};
-  if (span == "-inf")
-    return {int(span.length()), -ZuCmp<double>::inf()};
-  if (span == "nan" || span == "+nan" || span == "-nan")
-    return {int(span.length()), ZuIntrin::nan<double>()};
+  switch (specialFloat(span)) {
+    case 1: return {int(span.length()), ZuCmp<double>::inf()};
+    case -1: return {int(span.length()), -ZuCmp<double>::inf()};
+    case 2: return {int(span.length()), ZuIntrin::nan<double>()};
+  }
   auto integer = tomlIntEOV<ZuBox<int64_t>>(span);
   if (integer.p<0>() >= 0 && unsigned(integer.p<0>()) == span.length())
     return {integer.p<0>(), double(integer.p<1>().val())};
@@ -264,8 +294,8 @@ ZuTuple<int, double> TOMLPolicy::floatEOV(ZuCSpan span)
 struct Scan::Impl {
   Scan		&scan;
   ZuCSpan	in;
-  StatesScratch	&states;
-  StateIndex	stateIndex;
+  States	states;
+  FieldIndex	fields;
   Limits	limits;
   unsigned	pos = 0;
   unsigned	line = 1;
@@ -274,8 +304,8 @@ struct Scan::Impl {
   AnyNode	*root = nullptr;
   AnyNode	*table = nullptr;
 
-  Impl(Scan &scan_, StatesScratch &states_) :
-    scan{scan_}, in{scan_.m_span}, states{states_}, limits{scan_.m_limits} { }
+  Impl(Scan &scan_) :
+    scan{scan_}, in{scan_.m_span}, limits{scan_.m_limits} { }
 
   char at(unsigned i) const { return i < in.length() ? in[i] : 0; }
 
@@ -536,37 +566,27 @@ struct Scan::Impl {
 
   TableState *state(AnyNode *node_)
   {
-    if (states.length() > StateLinearMax) {
-      auto found = stateIndex.find(node_);
-      return found ? &states[found->p<1>()] : nullptr;
-    }
-    for (unsigned i = 0, n = states.length(); i < n; ++i)
-      if (auto &state = states[i]; state.node == node_) return &state;
-    return nullptr;
+    auto found = states.findPtr(node_);
+    return found ? &found->data() : nullptr;
   }
 
   void addState(AnyNode *node_, uint8_t kind, uint8_t array = ArrayState::Static)
   {
-    new (states.push()) TableState{node_, kind, array};
-    unsigned n = states.length();
-    if (n > StateLinearMax + 1) {
-      stateIndex.add(node_, n - 1);
-    } else if (n > StateLinearMax) {
-      for (unsigned i = 0; i < n; ++i) {
-	auto &state = states[i];
-	stateIndex.add(state.node, i);
-      }
-    }
+    states.add(TableState{node_, kind, array});
   }
 
   AnyNode::Field *field(AnyNode *object, ZuCSpan id)
   {
-    auto &fields = object->data<AnyNode::Object>();
-    for (unsigned i = 0, n = fields.length(); i < n; ++i) {
-      auto &field = fields[i];
-      if (field.p<0>() == id) return &field;
-    }
-    return nullptr;
+    auto found = fields.findPtr(FieldKey{object, UINT_MAX, id});
+    return found ? &object->data<AnyNode::Object>()[found->data().offset] : nullptr;
+  }
+
+  void addField(
+      AnyNode *object, AnyNode::String id, ZuPtr<AnyNode> value)
+  {
+    auto &data = object->data<AnyNode::Object>();
+    data.push(AnyNode::Field{ZuMv(id), ZuMv(value)});
+    fields.add(FieldKey{object, unsigned(data.length() - 1), {}});
   }
 
   AnyNode *latest(AnyNode *array)
@@ -601,8 +621,7 @@ struct Scan::Impl {
     auto child = node<AnyNode::Object>(object);
     if (!child) return nullptr;
     AnyNode *ptr = child;
-    object->data<AnyNode::Object>().push(
-      AnyNode::Field{AnyNode::String{id}, ZuMv(child)});
+    addField(object, AnyNode::String{id}, ZuMv(child));
     addState(ptr, kind);
     return ptr;
   }
@@ -646,8 +665,7 @@ struct Scan::Impl {
       if (!object) return false;
     }
     value->parent = object;
-    object->data<AnyNode::Object>().push(
-      AnyNode::Field{ZuMv(parts[n - 1]), ZuMv(value)});
+    addField(object, ZuMv(parts[n - 1]), ZuMv(value));
     return true;
   }
 
@@ -697,8 +715,7 @@ struct Scan::Impl {
 
   bool floating(ZuCSpan token)
   {
-    if (token == "inf" || token == "+inf" || token == "-inf" ||
-        token == "nan" || token == "+nan" || token == "-nan") return true;
+    if (specialFloat(token)) return true;
     NumberValue out;
     return decimalNumber(token, out);
   }
@@ -810,8 +827,7 @@ struct Scan::Impl {
       bad(SyntaxErrorCode::DateTime);
       return {};
     }
-    bool isFloat = token == "inf" || token == "+inf" || token == "-inf" ||
-      token == "nan" || token == "+nan" || token == "-nan";
+    bool isFloat = specialFloat(token);
     bool based = token.length() > 2 && token[0] == '0' &&
       (token[1] == 'x' || token[1] == 'o' || token[1] == 'b');
     for (unsigned i = 0, n = token.length(); i < n && !isFloat; ++i)
@@ -967,8 +983,7 @@ struct Scan::Impl {
         auto value = node<AnyNode::Array>(object);
         if (!value) return false;
         array_ = value;
-        object->data<AnyNode::Object>().push(
-          AnyNode::Field{ZuMv(parts[n - 1]), ZuMv(value)});
+        addField(object, ZuMv(parts[n - 1]), ZuMv(value));
         addState(array_, ObjState::Implicit, ArrayState::Tables);
       } else {
         array_ = f->template p<1>();
@@ -1036,10 +1051,7 @@ struct Scan::Impl {
 
 ZuTuple<int, ZuPtr<const AnyNode>> Scan::scan()
 {
-  // 32 metadata records covers ordinary application configuration files;
-  // ZtScratch transparently promotes larger table-heavy documents.
-  auto states = ZtScratch(StatesScratch, StateLinearMax);
-  return Impl{*this, states}.run();
+  return Impl{*this}.run();
 }
 
 ZuTuple<int, ZuPtr<const AnyNode>> scan(ZuCSpan span, Limits limits)

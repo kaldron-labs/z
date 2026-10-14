@@ -20,7 +20,7 @@
 namespace Zum {
 
 struct DB;
-struct DBContext;
+struct DB;
 
 namespace TokenIssue {
   enum { OK = -1 };
@@ -62,10 +62,10 @@ struct RevokeConfig {
 };
 
 ZumExtern bool tokenRequest(
-  Requests *, ZuTime deadline, DB *, DBContext *, Ztls::Random &,
+  Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String form, String authorization, TokenConfig, SignFn, TokenFn);
 ZumExtern bool revokeRequest(
-  Requests *, ZuTime deadline, DBContext *, String form,
+  Requests *, ZuTime deadline, DB *, String form,
   String authorization, RevokeConfig, RevokeFn);
 
 } // namespace Zum

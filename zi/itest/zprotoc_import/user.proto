@@ -1,0 +1,30 @@
+syntax = "proto2";
+import "zprotoc_base.proto";
+package demo;
+
+message Imported {
+  optional shared.Record record = 1;
+  repeated shared.Record records = 2;
+  optional shared.State state = 3;
+  repeated shared.State states = 4;
+  optional shared.Record.Detail detail = 5;
+  map<string, shared.Record> recordsByName = 6;
+}
+
+message EnumOnly {
+  optional shared.State state = 1;
+}
+
+message EnumFirst {
+  optional shared.State state = 1;
+  optional shared.Record record = 2;
+  optional shared.Record.Detail detail = 3;
+}
+
+message DetailOnly {
+  optional shared.Record.Detail detail = 1;
+}
+
+message KindOnly {
+  optional shared.Record.Kind kind = 1;
+}

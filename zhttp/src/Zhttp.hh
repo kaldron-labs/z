@@ -20,6 +20,7 @@
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuFmt.hh>
+#include <zlib/ZuSeq.hh>
 #include <zlib/ZuStream.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuSwitch.hh>
@@ -150,6 +151,8 @@ struct Parser { // base class with defaulted types and member functions
 
   template <typename Context>
   void init(Context &) { }
+
+  bool finishBody() { return true; }
 
   // Informational response field sections are suppressed by default. Return
   // true to receive their status() and header() callbacks.
@@ -530,16 +533,62 @@ struct HeaderSeed {
 using HeaderSeeds =
   ZtArray<HeaderSeed, ZtArrayHeapID<"Zhttp.HeaderSeeds">>;
 
+template <typename List, unsigned I>
+consteval auto seedID() {
+  using Key = typename List::template Key<I>;
+  using Values = typename List::template Value<I>;
+  if constexpr (Values::N) {
+    using Value = HeaderValue<Values>;
+    return Key{}() + "\x1f"_z + Value{}();
+  } else return Key{}() + "\x1e"_z;
+}
+
+template <typename List, typename Seq> struct SeedIDs_;
+template <typename List, unsigned ...I>
+struct SeedIDs_<List, ZuSeq<I...>> {
+  using Keys = ZuTypeList<ZuStringT<seedID<List, I>()>...>;
+};
+template <typename List>
+using SeedIDs = SeedIDs_<List, ZuMkSeq<List::N>>;
+
+template <typename Sets> struct SeedSetIDs_;
+template <typename ...Catalogs>
+struct SeedSetIDs_<ZuTypeList<Catalogs...>> {
+  using Names = ZuTypeConcat<typename HeaderList<Catalogs>::Keys...>;
+  using Pairs = ZuTypeConcat<typename SeedIDs<HeaderList<Catalogs>>::Keys...>;
+};
+
 // Initialization-owned immutable source for connection-local HPACK/QPACK
 // bootstrap state.  Application Builder instances are never consulted.
+template <typename Sets>
 class HeaderSeedCatalog {
+  using IDs = SeedSetIDs_<Sets>;
+  using Names = typename IDs::Names;
+  using Pairs = typename IDs::Pairs;
+
 public:
+  HeaderSeedCatalog() {
+    for (unsigned i = 0; i < Names::N; ++i) m_nameLookup[i] = -1;
+    for (unsigned i = 0; i < Pairs::N; ++i) m_pairLookup[i] = -1;
+  }
+
+  void clear() {
+    m_entries.length(0);
+    for (unsigned i = 0; i < Names::N; ++i) m_nameLookup[i] = -1;
+    for (unsigned i = 0; i < Pairs::N; ++i) m_pairLookup[i] = -1;
+  }
+  void final() { m_entries.init(); }
+
   template <typename HdrCatalog>
   void add(const H3::Params &params, uint32_t capacity) {
+    ZuAssert((ZuTypeIn<HdrCatalog, Sets>{}));
     using List = HeaderList<HdrCatalog>;
     ZuUnroll::all<List::N>([this, &params, capacity](auto I) {
       using Key = typename List::template Key<I>;
       using Value = typename List::template Value<I>;
+      using Pair = ZuStringT<seedID<List, I>()>;
+      constexpr int nameSlot = ZuTypeIndex<Key, Names>{};
+      constexpr int pairSlot = ZuTypeIndex<Pair, Pairs>{};
       H3::QPackTxString name;
       name << Key{}();
       if (!name || name[0] == ':' || Fields::forbidden(name) ||
@@ -547,16 +596,20 @@ public:
 	return;
       if constexpr (!Value::N) {
 	uint64_t index = 0;
-	if (H3::QPack::staticNameIndex(name, index) || findName_(name)) return;
-	add_(ZuMv(name), {}, false, capacity);
+	if (H3::QPack::staticNameIndex(name, index) ||
+	    m_nameLookup[nameSlot] >= 0) return;
+	int pos = add_(ZuMv(name), {}, false, capacity);
+	if (pos >= 0) m_nameLookup[nameSlot] = pos;
       } else {
 	H3::QPackTxString value;
 	value << HeaderValue<Value>{}();
 	if (H3::QPack::staticIndex(name, value) >= 0 ||
-	    findExact_(name, value))
+	    m_pairLookup[pairSlot] >= 0)
 	  return;
-	removeNameOnly_(name);
-	add_(ZuMv(name), ZuMv(value), true, capacity);
+	removeNameOnly_(nameSlot);
+	int pos = add_(ZuMv(name), ZuMv(value), true, capacity);
+	if (pos >= 0)
+	  m_nameLookup[nameSlot] = m_pairLookup[pairSlot] = pos;
       }
     });
   }
@@ -566,34 +619,30 @@ public:
   ZuOpBool
 
 private:
-  bool findName_(ZuBSpan name) const {
-    for (unsigned i = 0, n = m_entries.length(); i < n; ++i)
-      if (m_entries[i].name == name) return true;
-    return false;
+  static void shift_(int *lookup, unsigned n, int pos) {
+    for (unsigned i = 0; i < n; ++i)
+      if (lookup[i] == pos) lookup[i] = -1;
+      else if (lookup[i] > pos) --lookup[i];
   }
-  bool findExact_(ZuBSpan name, ZuBSpan value) const {
-    for (unsigned i = 0, n = m_entries.length(); i < n; ++i)
-      if (m_entries[i].exact && m_entries[i].name == name &&
-	  m_entries[i].value == value)
-	return true;
-    return false;
+  void removeNameOnly_(unsigned nameSlot) {
+    int pos = m_nameLookup[nameSlot];
+    if (pos < 0 || m_entries[pos].exact) return;
+    m_entries.splice(pos, 1);
+    shift_(m_nameLookup, Names::N, pos);
+    shift_(m_pairLookup, Pairs::N, pos);
   }
-  void removeNameOnly_(ZuBSpan name) {
-    for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
-      if (m_entries[i].exact || m_entries[i].name != name) continue;
-      m_entries.splice(i, 1);
-      return;
-    }
-  }
-  void add_(H3::QPackTxString name, H3::QPackTxString value,
+  int add_(H3::QPackTxString name, H3::QPackTxString value,
       bool exact, uint32_t capacity) {
     uint64_t size = uint64_t(name.length()) + value.length() + 32;
-    if (size > capacity) return;
+    if (size > capacity) return -1;
     new (m_entries.push()) HeaderSeed{
       ZuMv(name), ZuMv(value), uint32_t(size), exact};
+    return m_entries.length() - 1;
   }
 
   HeaderSeeds	m_entries;
+  int		m_nameLookup[Names::N ? Names::N : 1];
+  int		m_pairLookup[Pairs::N ? Pairs::N : 1];
 };
 
 struct HPackSeed {
@@ -616,21 +665,30 @@ using HPackSeedPlans =
 
 class HPackSeedCatalog {
 public:
+  void clear() { m_plans.length(0); }
+  void final() { m_plans.init(); }
+
   template <typename HdrCatalog>
   void add(uint32_t capacity) {
     HPackSeedPlan plan;
     using List = HeaderList<HdrCatalog>;
-    ZuUnroll::all<List::N>([&plan, capacity](auto I) {
+    using Pairs = typename SeedIDs<List>::Keys;
+    int lookup[List::N ? List::N : 1];
+    for (unsigned i = 0; i < List::N; ++i) lookup[i] = -1;
+    ZuUnroll::all<List::N>([&plan, &lookup, capacity](auto I) {
       using Key = typename List::template Key<I>;
       using Value = typename List::template Value<I>;
       if constexpr (Value::N) {
+	using Pair = ZuStringT<seedID<List, I>()>;
+	constexpr int j = ZuTypeIndex<Pair, Pairs>{};
 	H3::QPackTxString name;
 	H3::QPackTxString value;
 	name << Key{}();
 	value << HeaderValue<Value>{}();
 	if (!name || name[0] == ':' || Fields::forbidden(name) ||
 	    H2::HPack::staticIndex(name, value) > 0 ||
-	    sensitive_(name) || find_(plan.entries, name, value))
+	    ZuTypeIn<Key, ZuStringTL<
+	      "authorization", "cookie", "set-cookie">>{} || lookup[j] >= 0)
 	  return;
 	uint64_t size = uint64_t(name.length()) + value.length() + 32;
 	if (size > capacity) return;
@@ -652,6 +710,7 @@ public:
 	    Compression::putString(seed.fallback, 0, 7, seed.value) < 0)
 	  return;
 	new (plan.entries.push()) HPackSeed{ZuMv(seed)};
+	lookup[j] = plan.entries.length() - 1;
       }
     });
     new (m_plans.push()) HPackSeedPlan{ZuMv(plan)};
@@ -664,18 +723,6 @@ public:
   }
 
 private:
-  static bool sensitive_(ZuBSpan name) {
-    return name == "authorization" || name == "cookie" ||
-      name == "set-cookie";
-  }
-  static bool find_(
-      const HPackSeeds &entries, ZuBSpan name, ZuBSpan value) {
-    for (unsigned i = 0, n = entries.length(); i < n; ++i)
-      if (entries[i].name == name && entries[i].value == value)
-	return true;
-    return false;
-  }
-
   HPackSeedPlans	m_plans;
 };
 

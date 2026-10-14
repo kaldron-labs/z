@@ -26,7 +26,7 @@
 namespace Zum {
 
 struct DB;
-struct DBContext;
+struct DB;
 
 struct ServerBootstrapConfig {
   String	issuer;
@@ -54,7 +54,7 @@ ZuDerive(ServerBootstrapFn, (ZmFn<void(bool, ServerBootstrapResult),
   ZmFnHeapID<"Zum.ServerBootstrapFn">>));
 
 void serverBootstrap(
-  DB *, Requests *, DBContext *, Ztls::Random &,
+  DB *, Requests *, Ztls::Random &,
   ServerBootstrapConfig, ServerBootstrapFn);
 
 } // namespace Zum

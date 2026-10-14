@@ -16,6 +16,7 @@
 #include <zlib/ZuObject.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuRef.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuTraits.hh>
 
 #include <zlib/ZmFn.hh>
@@ -28,6 +29,7 @@
 #include <zlib/Zhttp.hh>
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
+#include <zlib/ZhttpSSE.hh>
 
 #include <zlib/Zjrpc.hh>
 #include <zlib/ZjrpcDispatch.hh>
@@ -35,139 +37,6 @@
 #include <zlib/ZjrpcPending.hh>
 
 namespace Zjrpc {
-
-ZuDerive(SSELine, (ZtString<ZtStringHeapID<"Zjrpc.SSE.Line">>));
-ZuDerive(SSEID, (ZtString<ZtStringHeapID<"Zjrpc.SSE.ID">>));
-
-struct SSEEvent {
-  // The consumer may move/parse body in place; id is borrowed for the callback.
-  ZmRef<ZiIOBuf> body;
-  ZuCSpan id;
-  int64_t retry = -1;
-  ZuCSpan data() const { if (body) return body->cspan(); return {}; }
-};
-
-class SSEDecoder {
-public:
-  enum { Open, Closed };
-
-  SSEDecoder() = default;
-  SSEDecoder(unsigned maxLine, unsigned maxData) { reset(maxLine, maxData); }
-
-  void reset(unsigned maxLine, unsigned maxData) {
-    m_line.length_(0);
-    reset_();
-    m_maxLine = maxLine;
-    m_maxData = maxData;
-    m_state = Open;
-  }
-
-  int state() const { return m_state; }
-  void close() {
-    m_state = Closed;
-    m_line.length_(0);
-    reset_();
-  }
-
-  template <typename L>
-  bool feed(ZuCSpan input, L &&l) {
-    if (m_state == Closed) return false;
-    unsigned n = input.length();
-    unsigned begin = 0;
-    for (unsigned i = 0; i < n; ++i) {
-      if (input[i] != '\n') continue;
-      auto line = ZuCSpan{input}.offset(begin).trunc(i - begin);
-      if (m_line.length()) {
-	if (!append_(line)) return false;
-	line_(m_line, l);
-      } else {
-	if (line.length() > m_maxLine) { close(); return false; }
-	line_(line, l);
-      }
-      m_line.length_(0);
-      if (m_state == Closed) return false;
-      begin = i + 1;
-    }
-    if (begin == n) return true;
-    return append_(ZuCSpan(input.data() + begin, n - begin));
-  }
-
-private:
-  bool append_(ZuCSpan span) {
-    unsigned lineLength = m_line.length();
-    if (ZuUnlikely(lineLength > m_maxLine ||
-	span.length() > m_maxLine - lineLength)) {
-      close();
-      return false;
-    }
-    m_line << span;
-    return true;
-  }
-
-  void reset_() {
-    m_data = nullptr;
-    m_id.length_(0);
-    m_retry = -1;
-  }
-
-  template <typename L>
-  void line_(ZuCSpan line, L &l) {
-    line.chomp([](char c) { return c == '\r'; });
-    if (!line) {
-      if (m_data && m_data->length) l(SSEEvent{ZuMv(m_data), m_id, m_retry});
-      reset_();
-      return;
-    }
-    if (line[0] == ':') {
-      return;
-    }
-    unsigned lineLength = line.length();
-    unsigned colon = 0;
-    while (colon < lineLength && line[colon] != ':') ++colon;
-    ZuCSpan field{line.data(), colon};
-    ZuCSpan value;
-    if (colon < lineLength) {
-      value = ZuCSpan(line.data() + colon + 1,
-	  lineLength - colon - 1);
-      if (value && value[0] == ' ') value.offset(1);
-    }
-    if (field == "data") {
-      unsigned dataLength = m_data ? m_data->length : 0;
-      unsigned valueLength = value.length();
-      unsigned separator = bool(dataLength);
-      if (ZuUnlikely(separator > m_maxData ||
-	  valueLength > m_maxData - separator ||
-	  dataLength > m_maxData - separator - valueLength)) {
-	close();
-	return;
-      }
-      if (!m_data) m_data = new InputBuf{};
-      if ((dataLength && !m_data->append(ZuBSpan{"\n"})) || !m_data->append(value))
-	close();
-    } else if (field == "id") {
-      m_id = value;
-    } else if (field == "retry") {
-      int64_t retry = ZuBox<int64_t>{value};
-      if (retry >= 0) m_retry = retry;
-    }
-  }
-
-  SSELine	m_line;
-  ZmRef<ZiIOBuf>	m_data;
-  SSEID		m_id;
-  unsigned	m_maxLine = 0;
-  unsigned	m_maxData = 0;
-  int64_t	m_retry = -1;
-  int		m_state = Open;
-};
-
-template <typename S>
-inline void saveSSE(S &s, ZuCSpan id, int64_t retry, ZuCSpan json)
-{
-  if (id) s << "id: " << id << '\n';
-  if (retry >= 0) s << "retry: " << retry << '\n';
-  s << "data: " << json << "\n\n";
-}
 
 ZuDerive(HTTPValue, (ZtString<ZtStringHeapID<"Zjrpc.HTTP.Value">>));
 
@@ -536,7 +405,8 @@ private:
       return false;
     }
     ZmRef<SSEQueue::Node> buf = new SSEBuf{};
-    *buf << "id: " << m_sequence++ << "\ndata: ";
+    Zhttp::saveSSEHead(*buf, uint64_t(m_sequence++), -1);
+    *buf << "data: ";
     unsigned jsonOffset = buf->length;
     unsigned jsonMax = m_limits.maxJSONBytes < m_limits.maxSSEEventBytes ?
       m_limits.maxJSONBytes : m_limits.maxSSEEventBytes;
@@ -552,7 +422,8 @@ private:
       return false;
     }
     unsigned jsonLength = buf->length - jsonOffset;
-    *buf << "\n\n";
+    *buf << '\n';
+    Zhttp::saveSSEEnd(*buf);
     if (ZuUnlikely(buf->failed() || jsonLength > jsonMax ||
 	m_queuedBytes > m_limits.maxQueueBytes ||
 	buf->length > m_limits.maxQueueBytes - m_queuedBytes)) {
@@ -740,7 +611,7 @@ public:
     }
     rx.consume([](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
       [this](ZuSpan<uint8_t> span) {
-	bool ok = m_sse.feed(span, [this](SSEEvent event) {
+	bool ok = m_sse.feed(span, [this](Zhttp::SSEEvent event) {
 	  if (impl()->receiveSSE(ZuMv(event), m_meta)) return;
 	  m_state = HTTPState::OverLimit;
 	  m_sse.close();
@@ -784,7 +655,7 @@ public:
 private:
   Input	m_input;
   Meta		m_meta;
-  SSEDecoder	m_sse;
+  Zhttp::SSEDecoder	m_sse;
   unsigned	m_status = 0;
   bool		m_streaming = false;
   int		m_state = HTTPState::Empty;
@@ -1095,7 +966,7 @@ public:
     if constexpr (ZuTypeIn<Key, Keys>{}) this->meta().template put<Key>(value);
   }
   using Base::header;
-  bool receiveSSE(SSEEvent event, const Meta &meta) {
+  bool receiveSSE(Zhttp::SSEEvent event, const Meta &meta) {
     return m_request->client->receiveSSE(m_request, ZuMv(event), meta);
   }
   template <typename Link> void corruptHTTPResponse(Link *link) {

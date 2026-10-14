@@ -4,9 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/zumd.hh>
-#include <zlib/zumd_jwt.hh>
-#include <zlib/ZumMgmt.hh>
+#include <zlib/zumd_scope.hh>
 
 #include <zlib/ZuUTF.hh>
 
@@ -60,107 +58,13 @@ ZtEnumImplNS(ClaimSource);
 ZtEnumImplNS(EligibilityMode);
 ZtEnumImplNS(ConsentPolicy);
 ZtEnumImplNS(RequestStatus);
+ZtEnumImplNS(ScopeFlag);
 
 ZtBitmap intersectActions(ZtBitmap actions, const ZtBitmap &limit)
 {
   actions &= limit;
   if (actions.length() > limit.length()) actions.length(limit.length());
   return actions;
-}
-
-static void addRoles(
-    ZtBitmap &actions, const IDVec &ids, ZuSpan<const Role> roles)
-{
-  for (auto id: ids)
-    for (auto &role: roles)
-      if (role.id == id) {
-	if (role.state == State::Active && !role.owner) actions |= role.actions;
-	break;
-      }
-}
-
-ZtBitmap effectiveActions(
-    unsigned actionCount, const IDVec &principalRoleIDs,
-    const IDVec &delegatedRoleIDs, ZuSpan<const Role> roles,
-    ZuSpan<const Action> actionRecords)
-{
-  if (!actionCount) return {};
-  ZtBitmap principal{actionCount};
-  ZtBitmap delegated{actionCount};
-  addRoles(principal, principalRoleIDs, roles);
-  addRoles(delegated, delegatedRoleIDs, roles);
-  principal = intersectActions(ZuMv(principal), delegated);
-
-  ZtBitmap enabled{actionCount};
-  for (auto &action: actionRecords)
-    if (action.state == State::Active && !action.owner &&
-	action.id < actionCount)
-      enabled.set(action.id);
-  principal = intersectActions(ZuMv(principal), enabled);
-  return principal;
-}
-
-static const Role *findRole(
-    AppID appID, RoleID id, ZuSpan<const Role> roles)
-{
-  for (auto &role: roles)
-    if (role.appID == appID && role.id == id && !role.tombstone)
-      return &role;
-  return nullptr;
-}
-
-static bool roleRefsValid(
-    AppID appID, const IDVec &ids, ZuSpan<const Role> roles)
-{
-  for (auto id: ids)
-    if (!findRole(appID, id, roles)) return false;
-  return true;
-}
-
-bool assignmentValid(
-    const App &app, const Assignment &assignment, ZuSpan<const Role> roles)
-{
-  return app.id && assignment.appID == app.id && assignment.userID &&
-    !assignment.owner && roleRefsValid(app.id, assignment.roleIDs, roles);
-}
-
-bool scopeValid(
-    const App &app, const Role &scope,
-    ZuSpan<const Role> roles)
-{
-  return app.id && scope.appID == app.id &&
-    !app.owner &&
-    !scope.owner && roleRefsValid(app.id, IDVec{scope.id}, roles);
-}
-
-ZtBitmap appEffectiveActions(
-    const App &app, const Assignment &assignment, const Role &scope,
-    ZuSpan<const Role> roles,
-    ZuSpan<const Action> actions)
-{
-  if (app.state != State::Active || app.owner ||
-      assignment.state != State::Active ||
-      scope.state != State::Active ||
-      !assignmentValid(app, assignment, roles) ||
-      !scopeValid(app, scope, roles)) return {};
-
-  ZtBitmap principal{app.nextActionID};
-  ZtBitmap delegated{app.nextActionID};
-  for (auto id: assignment.roleIDs) {
-    auto role = findRole(app.id, id, roles);
-    if (role->state == State::Active && !role->owner)
-      principal |= role->actions;
-  }
-  delegated |= scope.actions;
-  principal = intersectActions(ZuMv(principal), delegated);
-
-  ZtBitmap enabled{app.nextActionID};
-  for (auto &action: actions)
-    if (action.appID == app.id && action.id < app.nextActionID &&
-        action.state == State::Active && !action.owner && !action.tombstone)
-      enabled.set(action.id);
-  principal = intersectActions(ZuMv(principal), enabled);
-  return principal;
 }
 
 bool actionAlloc(App &app, ActionID &id)
@@ -172,186 +76,154 @@ bool actionAlloc(App &app, ActionID &id)
   return true;
 }
 
-static bool hasID(const IDVec &ids, uint64_t id)
+template <typename Fn>
+static void scopeTokens(ZuCSpan text, Fn fn)
 {
-  for (auto value: ids) if (value == id) return true;
-  return false;
-}
-
-static bool hasString(const StringVec &strings, ZuCSpan string)
-{
-  for (auto &value: strings) if (value == string) return true;
-  return false;
-}
-
-static bool scopeName(ZuCSpan scopes, ZuCSpan name)
-{
-  unsigned offset = 0;
-  unsigned n = scopes.length();
-  while (offset < n) {
-    while (offset < n && scopes[offset] == ' ') ++offset;
-    unsigned end = offset;
-    while (end < n && scopes[end] != ' ') ++end;
-    if (ZuCSpan{scopes.data() + offset, end - offset} == name) return true;
-    offset = end;
-  }
-  return false;
-}
-
-static void addScopeName(ScopeSelection &selection, ZuCSpan name)
-{
-  if (scopeName(selection.scope, name)) return;
-  if (selection.scope) selection.scope << ' ';
-  selection.scope << name;
-}
-
-static bool addIdentityScope(
-    const Client &client, ScopeSelection &selection, ZuCSpan name)
-{
-  if (name == "offline_access") {
-    if (client.state != State::Active || client.owner ||
-	!client.refreshAllowed ||
-	!(client.grants & ClientGrant::Refresh())) return false;
-  } else if (!hasString(client.identityScopes, name)) return false;
-  addScopeName(selection, name);
-  selection.identity = true;
-  return true;
-}
-
-static int addScope(
-    const Client &client, const ClientAccess &access,
-    ScopeSelection &selection, const Role &role)
-{
-  if (role.appID != access.appID || access.clientID != client.id)
-    return ScopeError::Unavailable;
-  if (!hasID(access.roleIDs, role.id))
-    return ScopeError::Unavailable;
-  if (!hasID(selection.roleIDs, role.id)) {
-    addScopeName(selection, role.name);
-    selection.roleIDs.push(role.id);
-  }
-  return ScopeError::OK;
-}
-
-static int selectScopes_(
-    const Client &client, const ClientAccess &access,
-    const IDVec *grantedRoleIDs,
-    ZuCSpan granted,
-    ZuCSpan requested,
-    ZuSpan<const Role> scopes,
-    ScopeSelection &selection)
-{
-  if (!requested) return ScopeError::Malformed;
-  ScopeSelection next;
-  unsigned length = requested.length();
-  unsigned offset = 0;
+  unsigned offset = 0, length = text.length();
   while (offset < length) {
-    while (offset < length && requested[offset] == ' ') ++offset;
+    while (offset < length && text[offset] == ' ') ++offset;
     if (offset == length) break;
     unsigned end = offset;
-    while (end < length && requested[end] != ' ') ++end;
-    ZuCSpan name{requested.data() + offset, end - offset};
-    if (grantedRoleIDs) {
-      if (granted) {
-        if (!scopeName(granted, name)) return ScopeError::Unavailable;
-      } else if (hasString(client.identityScopes, name)) {
-        return ScopeError::Unavailable;
-      }
-    }
-    if (addIdentityScope(client, next, name)) {
-      if (end == length) break;
-      offset = end + 1;
-      continue;
-    }
-    const Role *selected = nullptr;
-    for (auto &role: scopes) {
-      if (role.appID != access.appID || role.state != State::Active ||
-          role.owner || role.name != name ||
-	  !hasID(access.roleIDs, role.id) ||
-	  (grantedRoleIDs && !hasID(*grantedRoleIDs, role.id))) continue;
-      selected = &role;
-      break;
-    }
-    if (!selected) return ScopeError::Unavailable;
-    if (int error = addScope(client, access, next, *selected)) return error;
-    if (end == length) break;
-    offset = end + 1;
+    while (end < length && text[end] != ' ') ++end;
+    fn(ZuCSpan{text.data() + offset, end - offset});
+    offset = end;
   }
-  if (!next.scope) return ScopeError::Malformed;
-  selection = ZuMv(next);
-  return ScopeError::OK;
 }
 
-int selectScopes(
-    const Client &client, const ClientAccess &access, ZuCSpan requested,
-    ZuSpan<const Role> scopes, ScopeSelection &selection)
+void ScopeSelect::init(const Client &client, bool requestedPresent, ZuCSpan requested,
+    const IDVec *grantedIDs, const String *granted)
 {
-  return selectScopes_(client, access, nullptr, {}, requested,
-    scopes, selection);
+  m_tokens.null();
+  m_scopes.clean();
+  m_ids.clean();
+  m_name = {};
+  m_client = &client;
+  m_grantedText = granted && *granted;
+  m_hasGrant = grantedIDs;
+  for (auto &name: client.identityScopes)
+    scope_(name)->val() |= ScopeFlag::Identity();
+  if (grantedIDs)
+    for (auto id: *grantedIDs)
+      id_(id)->val() |= ScopeIDFlag::Granted();
+  if (granted)
+    scopeTokens(*granted, [this, requestedPresent](ZuCSpan name) {
+      auto scope = scope_(name);
+      scope->val() |= ScopeFlag::Granted();
+      if (!requestedPresent) request_(scope);
+    });
+  // An omitted request uses the ordered grant tokens from the same parse.
+  if (!requestedPresent) return;
+  scopeTokens(requested, [this](ZuCSpan name) {
+    request_(scope_(name));
+  });
 }
 
-int selectGrantedScopes(
-    const Client &client, const ClientAccess &access,
-    const IDVec &grantedRoleIDs,
-    bool requestedPresent, ZuCSpan requested,
-    ZuSpan<const Role> scopes, ScopeSelection &selection)
+ScopeNames::Node *ScopeSelect::scope_(ZuCSpan name)
 {
-  if (requestedPresent)
-    return selectScopes_(
-      client, access, &grantedRoleIDs, {}, requested, scopes, selection);
-  ScopeSelection next;
-  for (auto roleID: grantedRoleIDs) {
-    const Role *selected = nullptr;
-    for (auto &role: scopes) {
-      if (role.appID == access.appID && role.id == roleID &&
-          role.state == State::Active && !role.owner &&
-	  hasID(access.roleIDs, role.id)) {
-	selected = &role;
-	break;
-      }
+  if (auto scope = m_scopes.find(name)) return scope;
+  return m_scopes.add(String{name}, ScopeFlag::T{0});
+}
+
+void ScopeSelect::request_(ScopeNames::Node *scope)
+{
+  if (scope->val() & ScopeFlag::Requested()) return;
+  scope->val() |= ScopeFlag::Requested();
+  m_tokens.push(scope);
+}
+
+ScopeIDs::Node *ScopeSelect::id_(RoleID id)
+{
+  if (auto node = m_ids.find(id)) return node;
+  return m_ids.add(id, ScopeIDFlag::T{0});
+}
+
+void ScopeSelect::begin(const ClientAccess &access, bool restricted,
+    const IDVec *omittedIDs)
+{
+  m_name = {};
+  {
+    auto i = m_scopes.iter();
+    while (auto scope = i()) {
+      scope->val() &= ~ScopeFlag::Selected();
+      if (!scope->val()) i.del(scope);
     }
-    if (!selected) return ScopeError::Unavailable;
-    if (int error = addScope(client, access, next, *selected)) return error;
   }
-  if (!next.roleIDs) return ScopeError::Unavailable;
-  selection = ZuMv(next);
+  m_next = {};
+  {
+    auto i = m_ids.iter();
+    while (auto node = i()) {
+      node->val() &= ScopeIDFlag::Granted();
+      if (!node->val()) i.del(node);
+    }
+  }
+  m_access = &access;
+  m_restricted = restricted;
+  m_omittedIDs = omittedIDs;
+  m_offset = 0;
+  for (auto id: access.roleIDs)
+    id_(id)->val() |= ScopeIDFlag::Access();
+}
+
+void ScopeSelect::addName_(ScopeNames::Node *scope)
+{
+  if (scope->val() & ScopeFlag::Selected()) return;
+  if (m_next.scope) m_next.scope << ' ';
+  m_next.scope << scope->key();
+  scope->val() |= ScopeFlag::Selected();
+}
+
+int ScopeSelect::step()
+{
+  if (m_omittedIDs) {
+    unsigned n = m_omittedIDs->length();
+    while (m_offset < n) {
+      m_id = (*m_omittedIDs)[m_offset++];
+      if (selected(m_id)) continue;
+      m_name = {};
+      return Lookup;
+    }
+    return m_next.roleIDs ? ScopeError::OK : ScopeError::Unavailable;
+  }
+  unsigned n = m_tokens.length();
+  while (m_offset < n) {
+    auto scope = m_tokens[m_offset++];
+    m_name = scope->key();
+    bool identity = scope->val() & ScopeFlag::Identity();
+    if (m_restricted) {
+      if (m_grantedText) {
+	if (!(scope->val() & ScopeFlag::Granted())) return ScopeError::Unavailable;
+      } else if (identity) return ScopeError::Unavailable;
+    }
+    if (m_name == "offline_access") {
+      identity = m_client->state == State::Active && !m_client->owner &&
+	m_client->refreshAllowed && (m_client->grants & ClientGrant::Refresh());
+    }
+    if (!identity) return Lookup;
+    addName_(scope);
+    m_next.identity = true;
+  }
+  return m_next.scope ? ScopeError::OK : ScopeError::Malformed;
+}
+
+int ScopeSelect::role(const Role &role)
+{
+  auto node = m_ids.find(role.id);
+  if (role.appID != m_access->appID || m_access->clientID != m_client->id ||
+      role.state != State::Active || role.owner || role.tombstone ||
+      !node || !(node->val() & ScopeIDFlag::Access()) ||
+      (m_restricted && m_hasGrant && !(node->val() & ScopeIDFlag::Granted())))
+    return ScopeError::Unavailable;
+  if (!(node->val() & ScopeIDFlag::Selected())) {
+    addName_(scope_(role.name));
+    node->val() |= ScopeIDFlag::Selected();
+    m_next.roleIDs.push(role.id);
+  }
   return ScopeError::OK;
 }
 
-int selectGrantedScopes(
-    const Client &client, const ClientAccess &access,
-    const IDVec &grantedRoleIDs, ZuCSpan granted,
-    bool requestedPresent, ZuCSpan requested,
-    ZuSpan<const Role> scopes, ScopeSelection &selection)
+ScopeSelection ScopeSelect::take()
 {
-  return selectScopes_(client, access, &grantedRoleIDs, granted,
-    requestedPresent ? requested : granted, scopes, selection);
-}
-
-int interactiveAuthority(
-    const Grant &grant, const User &user, const Cred &cred,
-    const Client &client, bool requestedPresent, ZuCSpan requested,
-    unsigned actionCount, const ClientAccess &access,
-    ZuSpan<const Role> scopes,
-    ZuSpan<const Role> roles, ZuSpan<const Action> actionRecords,
-    ScopeSelection &selection, ZtBitmap &actions)
-{
-  if (!interactivePrincipal(grant, user, cred, client))
-    return AuthorityError::Invalid;
-
-  ScopeSelection next;
-  int error = selectGrantedScopes(client, access,
-    grant.requestedRoleIDs, grant.scope,
-    requestedPresent, requested, scopes, next);
-  if (error) return error;
-  if (access.appID != grant.appID) return ScopeError::Unavailable;
-
-  ZtBitmap nextActions = effectiveActions(actionCount,
-    grant.roleIDs, next.roleIDs, roles, actionRecords);
-  nextActions = intersectActions(ZuMv(nextActions), grant.actions);
-  selection = ZuMv(next);
-  actions = ZuMv(nextActions);
-  return ScopeError::OK;
+  return ZuMv(m_next);
 }
 
 bool interactivePrincipal(
@@ -378,26 +250,6 @@ bool clientPrincipal(const Client &client)
   return client.state == State::Active && !client.owner &&
     clientType(client.profile) == ClientType::Confidential &&
     (client.grants & ClientGrant::ClientCredentials());
-}
-
-int clientAuthority(
-    const Client &client, const ClientAccess &access, ZuCSpan requested,
-    unsigned actionCount, ZuSpan<const Role> scopes,
-    ZuSpan<const Role> roles,
-    ZuSpan<const Action> actionRecords, ScopeSelection &selection,
-    ZtBitmap &actions)
-{
-  if (!clientPrincipal(client)) return AuthorityError::Invalid;
-
-  ScopeSelection next;
-  int error = selectScopes(client, access, requested, scopes, next);
-  if (error) return error;
-  if (next.identity) return ScopeError::Unavailable;
-  ZtBitmap nextActions = effectiveActions(actionCount,
-    access.roleIDs, next.roleIDs, roles, actionRecords);
-  selection = ZuMv(next);
-  actions = ZuMv(nextActions);
-  return ScopeError::OK;
 }
 
 RefreshMatch::T refreshMatch(const Refresh &grant, ZuBSpan digest)

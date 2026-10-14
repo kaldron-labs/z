@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// typed server database and saga dispatch
+// typed server database and saga submission
 
 #ifndef zumd_db_HH
 #define zumd_db_HH
@@ -13,40 +13,69 @@
 #include <zlib/ZumLib.hh>
 #endif
 
-#include <zlib/zumd_sagas.hh>
-#include <zlib/zumd_role_delete.hh>
-#include <zlib/zumd_catalog.hh>
-#include <zlib/zumd_revoke.hh>
-#include <zlib/zumd_consent.hh>
-#include <zlib/zumd_rekey.hh>
+#include <zlib/Zdb.hh>
+#include <zlib/zumd_saga.hh>
 
 namespace Zum {
 
 ZuDerive(SagaFn, (ZmFn<void(bool), ZmFnHeapID<"Zum.SagaFn">>));
 
-ZdbSagaDerive(SagaCatalog,
-  Enrollment, CredentialAdd, RecoveryStart, RecoveryEnroll, CodeFamily,
-  AppEnrollment, ExternalProjection, AppActionAdd, AssignmentChange, RoleDelete,
-  CatalogPublish, AssignmentAdd, RoleEdit, ActionEdit,
-  AppChange, UserEdit, CredEdit, ProviderEdit, ClientEdit, KeyRetire,
-  ClientAccessState, AdminAccessState, RoleMapDelete, RoleMapPut, PolicyPut,
-  ClientAccessPut, AdminAccessPut, ProviderAdd, RoleAdd,
-  UserInvite, ClientAdd, KeyAdd, Revoke, GrantCleanup, SessionCleanup,
-  RefreshCleanup, AppCleanup, ConsentCode, KeyBinding, SecretRekey,
-  SSFDeliveryAdd, GrantCleanupV2, SessionCleanupV1, RefreshCleanupV1,
-  AppCleanupV1);
-struct MSaga;
-using MSagaBase = ZdbMSaga<SagaCatalog, MSaga>;
-struct MSaga : public MSagaBase { ZuDerive_(MSaga, MSagaBase) };
-ZuDerive(DB, (ZdbSagaDB<DBContext, SagaCatalog, SagaFn, MSaga>));
+struct IssuerTable;
+struct UserTable;
+struct CredTable;
+struct GrantTable;
+struct RefreshTable;
+struct SessionTable;
+struct ConsentTable;
+struct AppTable;
+struct AssignmentTable;
+struct ActionTable;
+struct RoleTable;
+struct ClientTable;
+struct ClientAccessTable;
+struct AdminAccessTable;
+struct AuthPolicyTable;
+struct ProviderTable;
+struct ExtIdentityTable;
+struct RoleMapTable;
+struct EvidenceTable;
+struct SignKeyTable;
+struct IdemRequestTable;
+struct SSFRxTable;
+struct SSFDeliveryTable;
 
-ZumExtern ZmRef<DBContext> registerSchema(DB *);
+struct DB : public ZdbSagaDB {
+  IssuerTable		*issuers = nullptr;
+  AppTable		*apps = nullptr;
+  UserTable		*users = nullptr;
+  CredTable		*creds = nullptr;
+  AssignmentTable	*assignments = nullptr;
+  ActionTable		*actions = nullptr;
+  RoleTable		*roles = nullptr;
+  ClientTable		*clients = nullptr;
+  ClientAccessTable	*clientAccess = nullptr;
+  AdminAccessTable	*adminAccess = nullptr;
+  ProviderTable		*providers = nullptr;
+  AuthPolicyTable	*authPolicies = nullptr;
+  ExtIdentityTable	*extIdentities = nullptr;
+  RoleMapTable		*roleMaps = nullptr;
+  EvidenceTable		*evidence = nullptr;
+  SessionTable		*sessions = nullptr;
+  ConsentTable		*consents = nullptr;
+  GrantTable		*grants = nullptr;
+  RefreshTable		*refresh = nullptr;
+  SignKeyTable		*signKeys = nullptr;
+  IdemRequestTable	*requests = nullptr;
+  SSFRxTable		*ssfRx = nullptr;
+  SSFDeliveryTable	*ssfDeliveries = nullptr;
+};
 
-// Keep replay and submission in one implementation unit so both paths share
-// the instantiated saga executor.
-ZumExtern void sagaInit(DB *, ZmRef<DBContext>);
+ZumExtern void registerSchema(DB *);
+
+ZumExtern Zdb_::SagaDefs sagaDefs();
+ZumExtern void sagaInit(DB *);
 ZumExtern bool sagaSubmit(
-  DB *, ZdbSagaID, ZmRef<MSaga>, SagaFn, SagaFn, ZuTime = {});
+  DB *, ZdbSagaID, SagaRef, SagaFn, SagaFn, ZuTime = {});
 
 } // namespace Zum
 

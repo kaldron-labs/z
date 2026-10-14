@@ -42,7 +42,7 @@ The usual owner sequence is:
    shard worker threads.
 2. Allocate the DB and call `init(ZdbCf{...}, &mx, handler, store)`.
 3. Register every application table with `initTable<T>("tableID")`.
-4. For a saga DB, populate its context and call `sagas(ZuMv(context))` once.
+4. For a saga DB, populate its derived DB members and call `sagas(sagaDefs)` once.
 5. Call `start()` and wait for application activation through `handler.upFn`.
 6. Serve requests while active. Stop admitting work when deactivated.
 7. Quiesce application producers and finish outstanding application callbacks;
@@ -79,11 +79,10 @@ after failover. `downFn` distinguishes failure from orderly deactivation.
 
 Graceful stop drains the framework's pending work, closes tables/stops the store,
 and drains resulting shard callbacks. It cannot finish a step whose application
-has retained its completion indefinitely. Keep the multiplex, DB, tables, and
-context alive through teardown. A stopped DB can be started again; after
+has retained its completion indefinitely. Keep the multiplex, DB, and tables alive through teardown. A stopped DB can be started again; after
 `final()`, initialize and register it again before reuse. For a saga DB, call
-`final()` through its typed `ZdbSagaDB<Context, SagaCatalog>` owner: that wrapper
-releases the configured context after base finalization.
+`final()` through its `ZdbSagaDB` owner: that class
+releases the saga definitions after base finalization.
 
 ### Configuration
 
@@ -273,57 +272,59 @@ reverse order. Sagas provide recovery and compensation across shards; they do
 not isolate intermediate effects from other requests or provide an atomic
 multi-row transaction.
 
-### Definition and context
+### Definition and database
 
 ```c++
-struct Context : public ZmPolymorph {
+struct DB : public ZdbSagaDB {
   ZdbTable<Account> *accounts = nullptr;
   ZdbTable<Transfer> *transfers = nullptr;
 };
 
-struct BalanceTransfer : public ZdbSagaBase<Context> {
-  using Base = ZdbSagaBase<Context>;
-  using Base::context;
-  using Base::saga;
+struct BalanceTransfer_ : public ZdbAnySaga<DB> {
+  using Base = ZdbAnySaga<DB>;
+  using Base::db;
   using Type = ZuStringT<"balanceTransfer">;
-  enum { NSteps = 4 };
-  // Serializable request fields and ZdbSagaStep definitions.
+  enum { NPhases = 4 };
+  // Serializable request fields and ZdbSagaPhase definitions.
+  // Implement type, nPhases, phaseDef, save, nSteps, stepDef and run.
 };
 
-struct SagaCatalog { using List = ZuTypeList<BalanceTransfer>; };
-using DB = ZdbSagaDB<Context, SagaCatalog>;
-using Saga = ZdbMSaga<SagaCatalog>;
+struct BalanceTransfer : BalanceTransfer_,
+    ZmHeap<"Zdb.Example.BalanceTransfer", BalanceTransfer_> {
+  using BalanceTransfer_::BalanceTransfer_;
+};
+
+Zdb_::SagaDef balanceTransferDef();
+ZmRef<ZdbAnySaga<DB>> balanceTransfer(ZuBSpan saved);
 ```
 
-Supply `Context` and the catalog type as DB template arguments; the catalog's
-`List` names the saga definitions. Every definition in `SagaCatalog::List` must
-derive from `ZdbSagaBase<Context>` and declare its `Base` alias. Definitions have
-unique stable `Type` strings, positive `NSteps`, and contiguous phase numbers
-starting at zero. Serialize the request payload with `ZiFB` from `ZfStruct` metadata; the base
-pointers are runtime data and must not be serialized. Aggregate construction
-includes an empty base, for example `BalanceTransfer{{}, ...}`.
+Supply the derived `DB` as the saga template argument. Each descriptor carries a unique
+type string, phase count, phase metadata callback and FlatBuffer decoder. The
+decoder verifies the supplied buffer and constructs a fresh saga directly with
+`ZiFB::handler<BalanceTransfer>(saved).alloc()`. Registration constructs no saga.
+Definitions have positive `NPhases` and contiguous phase numbers starting at
+zero. Serialize the request payload with `ZiFB` from `ZfStruct` metadata; runtime
+context is not serialized. See `example/zdbsaga.cc` for a complete owner.
 
-After table registration, populate a `ZmRef<Context>` and pass it to
-`db->sagas(ZuMv(context))`. The DB retains that reference until typed finalization.
-The same context instance serves all live and recovered sagas. Context need not
-be aliased inside each definition. The runner populates `context` and `saga` as
-raw pointers once, before that definition's first invocation. Do not replace
-them. Context may be null only if the application never dereferences it.
-Shared context does not make its mutable members safe for concurrent shard access.
+After table registration, populate the derived DB's members and call
+`db->sagas({balanceTransferDef()})`. Live and recovered sagas access that
+same database through their typed `db()` accessor. The saga stores only a raw
+owner pointer; registration does not retain a separate context reference.
+Keep shared mutable database state on its owning shard.
 
 ### Steps and operation callbacks
 
-`ZdbSagaStep(step, tableID, Insert|Update|Delete)` declares an operator template
-with `unsigned Step`, defaulted `bool Fwd = true`, and `typename Complete`.
+`ZdbSagaPhase(phase, tableID, Insert|Update|Delete)` declares an operator template
+with `unsigned Phase`, defaulted `bool Fwd = true`, and `typename Complete`.
 Its only argument is `Complete complete`; return `{}` for the macro's metadata
-return type. The runner calls `operator()<Step>()` for forward execution and
-`operator()<Step, false>()` for rollback. Select application behavior with
+return type. The runner calls `operator()<Phase>()` for forward execution and
+`operator()<Phase, false>()` for rollback. Select application behavior with
 `if constexpr (Fwd)`. The last declared phase is never reversed and can use
 `ZuAssert(Fwd)`.
 
 For a variable number of homogeneous row effects, use
-`ZdbSagaRepeatStep(phase, tableID, Insert|Update|Delete, countExpression)`.
-`NSteps` counts declared phases, not expanded effects. The count expression must
+`ZdbSagaRepeatPhase(phase, tableID, Insert|Update|Delete, countExpression)`.
+`NPhases` counts declared phases, not expanded effects. The count expression must
 be derived solely from fields in the immutable serialized saga capture-pack,
 normally the length of a captured array. Set those fields before submission and
 do not modify them during execution. The count must not depend on live database
@@ -337,12 +338,12 @@ effect with the wrong phase or payload element. `repeat() const` prevents direct
 mutation through that call but cannot enforce this semantic requirement; it is
 an invariant of the saga definition.
 
-Each invocation uses `saga->iteration()` to select its zero-based captured
+Each invocation uses `this->iteration()` to select its zero-based captured
 payload element and performs one normal saga table operation. Zero repeats omit
 that phase. The last phase must be non-repeated: it retains the single commit
 boundary.
 
-Every expanded effect has a distinct `saga->step()` journal ordinal and target UN.
+Every expanded effect has a distinct `this->step()` journal ordinal and target UN.
 Rollback visits each completed effect in reverse order, including each repetition,
 and reconstructs its iteration from the same payload. Execution yields through the
 existing continuations between effects; do not loop over writes inside a step.
@@ -353,29 +354,28 @@ application-specific fixed batch limit.
 The persisted type catalog includes each phase's `repeat` flag, but not the
 instance-specific count; replay derives that count again from the saved
 capture-pack. Changing a phase between fixed and repeated, or changing its
-count/element semantics, requires a new type version and migration of outstanding
-intents. Existing PostgreSQL internal catalog schemas require the added boolean
-field (false for existing fixed phases) before opening with this schema; source
-upgrades are not an offline migration.
+count/element semantics, requires a new type ID after outstanding intents are
+drained. Existing PostgreSQL internal catalog schemas require the added boolean
+field before opening with this schema.
 
 The following is the insert/compensating-delete pattern used in the example:
 
 ```c++
-ZdbSagaStep(0, transfer, Insert) {
-  context->transfers->run(transferShard(transferID),
+ZdbSagaPhase(0, transfer, Insert) {
+  db()->transfers->run(transferShard(transferID),
     [this, complete = ZuMv(complete)]() mutable {
       auto shard = transferShard(transferID);
       if constexpr (Fwd) {
         ZdbRowRef<Transfer> row =
-          new ZdbRow<Transfer>{context->transfers, shard};
-        saga->insert(context->transfers, ZuMv(row), ZuMv(complete),
+          new ZdbRow<Transfer>{db()->transfers, shard};
+        this->insert(db()->transfers, ZuMv(row), ZuMv(complete),
           [this](ZdbRow<Transfer> *row, auto &&complete) {
             new (row->ptr()) Transfer{
               transferID, fromID, toID, amount, TransferStatus::Pending};
             complete(bool(row->commit()));
           });
       } else {
-        saga->findDel<0>(context->transfers, shard, ZuFwdTuple(transferID),
+        this->findDel<0>(db()->transfers, shard, ZuFwdTuple(transferID),
           ZuMv(complete), [](ZdbRow<Transfer> *row, auto &&complete) {
             complete(bool(row->commit()));
           });
@@ -393,7 +393,7 @@ Outer asynchronous posts retain it with `[this, complete = ZuMv(complete)]`.
 Do not capture it by reference across a post; explicitly move it into any work
 that outlives the callback.
 
-Call `saga->skip(ZuMv(complete))` when a forward step is intentionally
+Call `this->skip(ZuMv(complete))` when a forward step is intentionally
 inapplicable. It writes no step intent and completes successfully. Recovery
 re-evaluates the step definition and must reach the same `skip` call; `skip`
 rejects recovery if that step has a persisted operation intent. Rollback uses
@@ -443,50 +443,49 @@ For example, a payment can use either an internal ledger path or an external
 settlement path while sharing reservation and finalization steps:
 
 ```c++
-struct Payment : public ZdbSagaBase<Context> {
-  using Base = ZdbSagaBase<Context>;
-  using Base::context;
-  using Base::saga;
+struct Payment : public ZdbAnySaga<DB> {
+  using Base = ZdbAnySaga<DB>;
+  using Base::db;
   using Type = ZuStringT<"payment">;
-  enum { NSteps = 5 };
+  enum { NPhases = 5 };
 
   Route::T route;                 // serialized; fixed before submission
   uint64_t paymentID;
 
-  ZdbSagaStep(0, reservation, Insert) {
+  ZdbSagaPhase(0, reservation, Insert) {
     // Common reservation and its compensation.
     reserve<Fwd>(ZuMv(complete));
     return {};
   }
 
-  ZdbSagaStep(1, ledger, Update) {
+  ZdbSagaPhase(1, ledger, Update) {
     if (route != Route::Internal) {
-      saga->skip(ZuMv(complete));
+      this->skip(ZuMv(complete));
       return {};
     }
     debitLedger<Fwd>(ZuMv(complete));
     return {};
   }
 
-  ZdbSagaStep(2, ledger, Update) {
+  ZdbSagaPhase(2, ledger, Update) {
     if (route != Route::Internal) {
-      saga->skip(ZuMv(complete));
+      this->skip(ZuMv(complete));
       return {};
     }
     creditLedger<Fwd>(ZuMv(complete));
     return {};
   }
 
-  ZdbSagaStep(3, settlement, Insert) {
+  ZdbSagaPhase(3, settlement, Insert) {
     if (route != Route::External) {
-      saga->skip(ZuMv(complete));
+      this->skip(ZuMv(complete));
       return {};
     }
     settleExternally<Fwd>(ZuMv(complete));
     return {};
   }
 
-  ZdbSagaStep(4, payment, Update) {
+  ZdbSagaPhase(4, payment, Update) {
     ZuAssert(Fwd);
     finalize(ZuMv(complete));      // branch convergence
     return {};
@@ -553,8 +552,8 @@ throughout.
 ### Submission and terminal outcome
 
 ```c++
-ZmRef<Saga> request = new Saga{};
-request->init(BalanceTransfer{{}, transferID, fromID, toID, amount});
+ZmRef<ZdbAnySaga<DB>> request =
+  new BalanceTransfer{transferID, fromID, toID, amount};
 ZuTime deadline = Zm::now(30); // absolute time, 30 seconds from now
 bool queued = db->saga(shard, sagaID, ZuMv(request),
   [](bool admitted) { /* admission result */ },

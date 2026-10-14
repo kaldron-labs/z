@@ -9,6 +9,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZfCf.hh>
+
+#include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZvMxParams.hh>
 #include <zlib/Zdb.hh>
 
@@ -19,7 +21,11 @@ namespace zdbtest {
 
 using PauseFn = ZmFn<void(bool), ZmFnHeapID<"Zdb.Saga.Repl.Pause">>;
 
-struct Context : public ZmPolymorph {
+struct ReplDB : public ZdbSagaDB {
+  ZmSemaphore	*up = nullptr;
+  unsigned	ups = 0;
+  unsigned	doneAtUp = 0;
+
   ZdbTable<Order>	*orders = nullptr;
   ZmSemaphore	*paused = nullptr;
   unsigned	runs = 0;
@@ -32,35 +38,35 @@ struct Context : public ZmPolymorph {
   PauseFn	pausedComplete;
 };
 
-struct LiveSaga : public ZdbSagaBase<Context> {
-  using Base = ZdbSagaBase<Context>;
-  using Base::context;
-  using Base::saga;
+template <typename Heap = ZuVoid>
+struct LiveSaga_ : public Heap, public ZdbSaga<LiveSaga_<Heap>, ReplDB> {
+  using Base = ZdbSaga<LiveSaga_<Heap>, ReplDB>;
+  using Base::db;
   using Type = ZuStringT<"replSaga">;
-  enum { NSteps = 2 };
+  enum { NPhases = 2 };
 
   uint64_t orderID;
 
-  ZdbSagaStep(0, o, Insert) {
-    ++context->runs;
-	context->orders->run(0,
+  ZdbSagaPhase(0, o, Insert) {
+    ++db()->runs;
+	db()->orders->run(0,
 	  [this, complete = ZuMv(complete)]() mutable {
 	if constexpr (Fwd) {
-	  ZdbRowRef<Order> order = new ZdbRow<Order>{context->orders, 0};
-	  saga->insert(context->orders, ZuMv(order), ZuMv(complete),
+	  ZdbRowRef<Order> order = new ZdbRow<Order>{db()->orders, 0};
+	  this->insert(db()->orders, ZuMv(order), ZuMv(complete),
 	  [this](ZdbRow<Order> *row, auto &&complete) mutable {
-	    ++context->inserts;
+	    ++db()->inserts;
 	    new (row->ptr()) Order{
 	      "IBM", orderID, "FIX0", "repl", 0, Side::Buy, {100}, {7}};
 	    complete(bool(row->commit()));
 	  });
 	} else {
-	  saga->findDel<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
+	  this->template findDel<0>(db()->orders, 0, ZuFwdTuple("IBM", orderID),
 	    ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
-	      if (context->pauseReverse) {
-		context->pausedComplete = PauseFn{
+	      if (db()->pauseReverse) {
+		db()->pausedComplete = PauseFn{
 		  [complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
-		context->paused->post();
+		db()->paused->post();
 		return;
 	      }
 	      complete(bool(row->commit()));
@@ -70,21 +76,21 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	return {};
   }
 
-  ZdbSagaStep(1, o, Update) {
+  ZdbSagaPhase(1, o, Update) {
 	ZuAssert(Fwd);
-	++context->runs;
-	context->orders->run(0,
+	++db()->runs;
+	db()->orders->run(0,
 	  [this, complete = ZuMv(complete)]() mutable {
-	saga->findUpd<0>(context->orders, 0, ZuFwdTuple("IBM", orderID),
+	this->template findUpd<0>(db()->orders, 0, ZuFwdTuple("IBM", orderID),
 	  ZuMv(complete), [this](ZdbRow<Order> *row, auto &&complete) mutable {
-	    ++context->updates;
-	    if (context->failUpdate) { complete(false); return; }
+	    ++db()->updates;
+	    if (db()->failUpdate) { complete(false); return; }
 	    ++row->data().qtys[0];
 	    bool ok = row->commit();
-	    if (context->paused) {
-	      context->pausedComplete = PauseFn{
+	    if (db()->paused) {
+	      db()->pausedComplete = PauseFn{
 		[complete = ZuMv(complete)](bool ok) mutable { complete(ok); }};
-	      context->paused->post();
+	      db()->paused->post();
 	      return;
 	    }
 	    complete(ok);
@@ -92,20 +98,21 @@ struct LiveSaga : public ZdbSagaBase<Context> {
 	});
 	return {};
   }
+
+  LiveSaga_() = default;
+  LiveSaga_(uint64_t orderID_) : orderID{orderID_} { }
+
 };
+using LiveSaga = LiveSaga_<ZmHeap<"Zdb.Repl.LiveSaga", LiveSaga_<>>>;
 ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
 ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
 
-ZdbSagaDerive(SagaCatalog, LiveSaga);
-ZdbSagaImpl(SagaCatalog, LiveSaga)
+ZuAssert((Zdb_::SagaDefValid<LiveSaga>{}));
 
-struct ReplDB : public ZdbSagaDB<Context, SagaCatalog> {
-  Context	*context = nullptr;
-  ZmSemaphore	*up = nullptr;
-  unsigned	ups = 0;
-  unsigned	doneAtUp = 0;
-};
+Zdb_::SagaDef liveSagaDef() { return LiveSaga::def(); }
+
+
 
 } // zdbtest
 
@@ -149,7 +156,8 @@ static void recovery(unsigned mode)
     "  3: {name: zdb, isolated: true},\n"
     "  4: {name: store, isolated: true}\n"
     "}, rxThread: rx, txThread: tx}\n").p<1>();
-  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheck(mx.start());
 
   ZmRef<zdbtest::ReplDB> leader = new zdbtest::ReplDB{};
@@ -164,29 +172,27 @@ static void recovery(unsigned mode)
       .upFn = [](Zdb *db_, ZdbHost *) {
 	auto db = static_cast<zdbtest::ReplDB *>(db_);
 	++db->ups;
-	db->doneAtUp = db->context->completed;
+	db->doneAtUp = db->completed;
 	db->up->post();
       }
     }, store);
-    ZmRef<zdbtest::Context> context = new zdbtest::Context{};
-    db->context = context;
-    db->sagas(ZuMv(context));
+    db->sagas({zdbtest::liveSagaDef()});
   };
   init(leader, firstStore, "0");
   init(follower, secondStore, "1");
   auto firstOrders = leader->initTable<zdbtest::Order>("o");
   auto secondOrders = follower->initTable<zdbtest::Order>("o");
-  leader->context->orders = firstOrders;
-  follower->context->orders = secondOrders;
+  leader->orders = firstOrders;
+  follower->orders = secondOrders;
   if (mode != Mode::Forward) {
-    leader->context->failUpdate = true;
-    leader->context->pauseReverse = true;
-    follower->context->failUpdate = mode == Mode::RetryFailure;
+    leader->failUpdate = true;
+    leader->pauseReverse = true;
+    follower->failUpdate = mode == Mode::RetryFailure;
   }
   ZmSemaphore firstUp, secondUp, paused, replicated, started;
   leader->up = &firstUp;
   follower->up = &secondUp;
-  leader->context->paused = &paused;
+  leader->paused = &paused;
   unsigned writes = 0; // committing-shard-owned; observed through replicated
   secondStore->writeFn([mode, &writes, &replicated](ZuCSpan id) {
     if (mode == Mode::Forward) {
@@ -209,19 +215,17 @@ static void recovery(unsigned mode)
   firstUp.wait();
   bool standby = ZmBlock<bool>{}([follower = follower.ptr()](auto wake) {
     follower->run([follower, wake = ZuMv(wake)]() mutable {
-      wake(!follower->active() && !follower->ups && !follower->context->runs);
+      wake(!follower->active() && !follower->ups && !follower->runs);
     });
   });
   ZuCheck(standby);
 
-  using M = ZdbMSaga<zdbtest::SagaCatalog>;
-  ZmRef<M> saga = new M{};
-  saga->init(zdbtest::LiveSaga{{}, 42});
+  ZmRef<ZdbAnySaga<zdbtest::ReplDB>> saga = new zdbtest::LiveSaga{42};
   bool admitted = ZmBlock<bool>{}([
       leader = leader.ptr(), saga = ZuMv(saga)](auto wake) mutable {
     leader->saga(0, 1, ZuMv(saga),
       [wake = ZuMv(wake)](bool ok) mutable { wake(ok); },
-      [context = leader->context](bool ok) {
+      [context = leader.ptr()](bool ok) {
 	if (ok) ++context->completed; else ++context->errors;
       });
   });
@@ -230,19 +234,19 @@ static void recovery(unsigned mode)
   replicated.wait();
   // Test coordination only: finish the observed follower store write.
   secondStore->sync();
-  ZuCheck(leader->context->inserts == 1 && leader->context->updates == 1);
+  ZuCheck(leader->inserts == 1 && leader->updates == 1);
   leader->run([leader = leader.ptr()]() {
     leader->fail();
-    leader->context->pausedComplete(false);
+    leader->pausedComplete(false);
   });
   ZuCheck(leader->stop());
   secondUp.wait();
   ZuCheck(follower->ups == 1 && !follower->doneAtUp);
-  ZuCheck(follower->context->runs ==
+  ZuCheck(follower->runs ==
     unsigned(mode == Mode::RetryFailure ? 3 : 2));
-  ZuCheck(!follower->context->inserts);
-  ZuCheck(follower->context->updates == unsigned(mode != Mode::Forward));
-  ZuCheck(!leader->context->errors && !follower->context->errors);
+  ZuCheck(!follower->inserts);
+  ZuCheck(follower->updates == unsigned(mode != Mode::Forward));
+  ZuCheck(!leader->errors && !follower->errors);
 
   bool once = ZmBlock<bool>{}([
       orders = secondOrders.ptr(), mode](auto wake) {

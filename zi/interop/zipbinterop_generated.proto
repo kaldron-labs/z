@@ -1,0 +1,54 @@
+syntax = "proto3";
+package demo;
+
+message GenItem {
+  uint32 value = 1;
+}
+
+message GenOther {
+  string text = 1;
+}
+
+message GenRow {
+  uint32 id = 1;
+  map<int32, GenItem> items = 2;
+  oneof choice {
+    GenItem first = 3;
+    GenOther second = 4;
+  }
+  repeated sint32 deltas = 5;
+  repeated bool flags = 6;
+  map<uint32, bytes> blobs = 7;
+}
+
+message GenMultiChoice {
+  oneof left {
+    GenItem a = 1;
+    GenOther b = 2;
+  }
+  oneof right {
+    GenOther c = 3;
+    GenItem d = 4;
+  }
+}
+
+message NumericRow {
+  int32 i32 = 1;
+  uint32 u32 = 2;
+  int64 i64 = 3;
+  uint64 u64 = 4;
+  sint32 s32 = 5;
+  sint64 s64 = 6;
+  fixed32 f32 = 7;
+  fixed64 f64 = 8;
+  sfixed32 sf32 = 9;
+  sfixed64 sf64 = 10;
+  float r32 = 11;
+  double r64 = 12;
+  repeated int32 i32s = 13;
+  repeated uint64 u64s = 14;
+  repeated sint64 s64s = 15;
+  repeated fixed32 f32s = 16;
+  repeated sfixed64 sf64s = 17;
+  repeated double r64s = 18;
+}

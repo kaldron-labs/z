@@ -7,6 +7,8 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_rekey.hh>
+#include <zlib/zumd_saga_key_binding.hh>
+#include <zlib/zumd_saga_secret_rekey.hh>
 #include <zlib/ZtlsSec.hh>
 
 namespace Zum {
@@ -71,9 +73,9 @@ ZuDerive(RekeyScan_, (RekeyScan__<Table, Apply,
 template <typename Heap = ZuVoid>
 class Rekey__ : public Heap, public ZmObject  {
 public:
-  Rekey__(DB *db, DBContext *context, Ztls::Random &rng, String issuer,
+  Rekey__(DB *db, Ztls::Random &rng, String issuer,
       Bytes oldKey, Bytes newKey, RekeyFn complete) :
-    m_db{db}, m_context{context}, m_rng{&rng}, m_issuer{ZuMv(issuer)},
+    m_db{db}, m_rng{&rng}, m_issuer{ZuMv(issuer)},
     m_oldKey{ZuMv(oldKey)}, m_newKey{ZuMv(newKey)},
     m_complete{ZuMv(complete)} { }
 
@@ -90,7 +92,7 @@ public:
     if (!m_oldCheck || !m_newCheck || m_oldCheck == m_newCheck) {
       finish_(false); return;
     }
-    auto table = m_context->issuers;
+    auto table = m_db->issuers;
     table->run(0, [self = ZmRef<Rekey__>{this}, table]() mutable {
       table->find<0>(0, ZuFwdTuple(self->m_issuer),
 	[self](ZdbRowRef<Issuer> row) mutable {
@@ -110,7 +112,7 @@ public:
 	    self->finish_(false); return;
 	  }
 	  if (value.pendingKeyCheck) { self->providers_(); return; }
-	  self->submit_(KeyBinding{
+	  self->submit_(KeyBindingArgs{
 	    .issuer = self->m_issuer, .beforeCheck = self->m_oldCheck,
 	    .afterCheck = self->m_oldCheck, .afterPending = self->m_newCheck},
 	    [self](bool ok) mutable {
@@ -129,8 +131,12 @@ private:
     if (!m_rng->random({reinterpret_cast<uint8_t *>(&id), sizeof(id)}) || !id) {
       complete(false); return;
     }
-    ZmRef<MSaga> saga = new MSaga{};
-    saga->init(ZuMv(def));
+    SagaRef saga = [&def]() {
+      if constexpr (ZuIsSame<Def, KeyBindingArgs>{})
+	return keyBinding(ZuMv(def));
+      else
+	return secretRekey(ZuMv(def));
+    }();
     m_next = ZuMv(complete);
     auto done = [self = ZmRef<Rekey__>{this}](bool ok) mutable {
       auto next = ZuMv(self->m_next);
@@ -155,16 +161,16 @@ private:
     scan->start();
   }
 
-  void providers_() { scan_(m_context->providers, &Rekey__::evidence_); }
-  void evidence_() { scan_(m_context->evidence, &Rekey__::signers_); }
-  void signers_() { scan_(m_context->signKeys, &Rekey__::receivers_); }
+  void providers_() { scan_(m_db->providers, &Rekey__::evidence_); }
+  void evidence_() { scan_(m_db->evidence, &Rekey__::signers_); }
+  void signers_() { scan_(m_db->signKeys, &Rekey__::receivers_); }
 
-  void receivers_() { scan_(m_context->ssfRx, &Rekey__::scanned_); }
+  void receivers_() { scan_(m_db->ssfRx, &Rekey__::scanned_); }
 
   void record_(const SSFRx &value, RekeyFn done)
   {
     if (value.owner) { done(false); return; }
-    change_(SecretRekey{.field = SecretRekey::SSFField,
+    change_(SecretRekeyArgs{.field = SecretRekeyArgs::SSFField,
       .keyID = value.receiverID, .before = value.callbackAuth},
       m_issuer, "zum.ssf_rx", value.receiverID, "callbackAuth", ZuMv(done));
   }
@@ -173,7 +179,7 @@ private:
     if (value.owner) { done(false); return; }
     String id;
     id << value.id;
-    change_(SecretRekey{.field = SecretRekey::ProviderField,
+    change_(SecretRekeyArgs{.field = SecretRekeyArgs::ProviderField,
       .providerID = value.id, .before = value.clientSecret},
       m_issuer, "provider", id, "clientSecret", ZuMv(done));
   }
@@ -182,19 +188,19 @@ private:
     if (value.owner) { done(false); return; }
     String id;
     id << value.appID << ':' << value.userID << ':' << value.providerID;
-    change_(SecretRekey{.field = SecretRekey::EvidenceField,
+    change_(SecretRekeyArgs{.field = SecretRekeyArgs::EvidenceField,
       .providerID = value.providerID, .appID = value.appID,
       .userID = value.userID, .before = value.protectedRefreshToken},
       m_issuer, "evidence", id, "protectedRefreshToken", ZuMv(done));
   }
   void record_(const SignKey &value, RekeyFn done)
   {
-    change_(SecretRekey{.field = SecretRekey::SignKeyField,
+    change_(SecretRekeyArgs{.field = SecretRekeyArgs::SignKeyField,
       .keyID = value.id, .before = value.privateMaterial},
       value.issuer, "zum.sign_key", value.id, "privateMaterial", ZuMv(done));
   }
 
-  void change_(SecretRekey change, ZuCSpan issuer, ZuCSpan table,
+  void change_(SecretRekeyArgs change, ZuCSpan issuer, ZuCSpan table,
       ZuCSpan id, ZuCSpan field, RekeyFn done)
   {
     if (!change.before) { done(true); return; }
@@ -217,7 +223,7 @@ private:
   {
     if (!m_verify) { m_verify = true; providers_(); return; }
     if (m_committed) { finish_(true); return; }
-    submit_(KeyBinding{
+    submit_(KeyBindingArgs{
       .issuer = m_issuer, .beforeCheck = m_oldCheck, .afterCheck = m_newCheck,
       .beforePending = m_newCheck},
       [self = ZmRef<Rekey__>{this}](bool ok) mutable { self->finish_(ok); });
@@ -229,7 +235,6 @@ private:
   }
 
   DB *m_db;
-  DBContext *m_context;
   Ztls::Random *m_rng;
   String m_issuer;
   Bytes m_oldKey;
@@ -244,10 +249,10 @@ private:
 ZuDerive(RekeyHeap, (ZmHeap<"Zum.zumd.rekey.Rekey", Rekey__<>>));
 ZuDerive(Rekey_, (Rekey__<RekeyHeap>));
 
-void serverRekey(DB *db, DBContext *context, Ztls::Random &rng, String issuer,
+void serverRekey(DB *db, Ztls::Random &rng, String issuer,
     Bytes oldKey, Bytes newKey, RekeyFn complete)
 {
-  ZmRef<Rekey_> rekey = new Rekey_{db, context, rng, ZuMv(issuer),
+  ZmRef<Rekey_> rekey = new Rekey_{db, rng, ZuMv(issuer),
     ZuMv(oldKey), ZuMv(newKey), ZuMv(complete)};
   rekey->start();
 }

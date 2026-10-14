@@ -8,6 +8,7 @@
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuDateTime.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmSingleton.hh>
@@ -19,6 +20,11 @@
 #include <zlib/ZfJSON.hh>
 
 #include <zlib/ZiLog.hh>
+
+struct ZiLogFacilityIDs {
+  using Keys = ZuStringTL<"daemon", "local0", "local1", "local2", "local3",
+    "local4", "local5", "local6", "local7">;
+};
 
 ZtEnumImplNS(ZiSinkType);
 
@@ -138,25 +144,19 @@ void ZiLog::init__(const char *program, const char *facility)
   m_program = program;
   m_facility = facility;
 #ifndef _WIN32
-  static const char * const names[] = {
-    "daemon",
-    "local0", "local1", "local2", "local3",
-    "local4", "local5", "local6", "local7", 0
-  };
   static const int values[] = {
     LOG_DAEMON,
     LOG_LOCAL0, LOG_LOCAL1, LOG_LOCAL2, LOG_LOCAL3,
     LOG_LOCAL4, LOG_LOCAL5, LOG_LOCAL6, LOG_LOCAL7
   };
-  const char *name;
-
-  if (facility)
-    for (unsigned i = 0; name = names[i]; i++) {
-      if (!strcmp(facility, name)) {
-	syslogger()->init(program, values[i]);
-	return;
-      }
+  static constexpr auto matcher = ZuMatcher<ZiLogFacilityIDs>();
+  if (facility) {
+    int i = matcher.exact(ZuCSpan{facility});
+    if (i >= 0) {
+      syslogger()->init(program, values[i]);
+      return;
     }
+  }
   syslogger()->init(program, LOG_USER);
 #else
   ZmTrap::winProgram(program);

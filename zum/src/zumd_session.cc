@@ -62,10 +62,10 @@ ZuDerive(SessionDoneCompleteHeap,
 ZuDerive(SessionDoneComplete_,
   (SessionDoneComplete__<SessionDoneCompleteHeap>));
 
-static void issue_(DBContext *context, Ztls::Random &rng,
+static void issue_(DB *db, Ztls::Random &rng,
     SessionConfig config, SessionFn complete)
 {
-  if (!context || !config.issuer || !config.subject || !config.userID ||
+  if (!db || !config.issuer || !config.subject || !config.userID ||
       config.authTime <= 0 || config.authTime > config.now || config.now <= 0 ||
       config.idleLifetime <= 0 || config.absoluteLifetime <= 0 ||
       config.idleLifetime > config.absoluteLifetime || !config.authVersion ||
@@ -81,10 +81,10 @@ static void issue_(DBContext *context, Ztls::Random &rng,
     return;
   }
   if (idle > absolute) idle = absolute;
-  auto users = context->users;
-  users->run(0, [context, users, rng = &rng, config = ZuMv(config),
+  auto users = db->users;
+  users->run(0, [db, users, rng = &rng, config = ZuMv(config),
       idle, absolute, complete = ZuMv(complete)]() mutable {
-    users->find<0>(0, ZuFwdTuple(config.userID), [context, rng,
+    users->find<0>(0, ZuFwdTuple(config.userID), [db, rng,
 	  config = ZuMv(config), idle, absolute,
 	  complete = ZuMv(complete)](ZdbRowRef<User> row) mutable {
       String subject;
@@ -111,7 +111,7 @@ static void issue_(DBContext *context, Ztls::Random &rng,
 	.idleDeadline = idle, .absoluteDeadline = absolute,
 	.state = State::Active, .authVersion = config.authVersion,
 	.version = 1, .created = config.now, .updated = config.now};
-      auto sessions = context->sessions;
+      auto sessions = db->sessions;
       sessions->run(0, [sessions, session = ZuMv(session),
 	  token = ZuMv(opaque.token), complete = ZuMv(complete)]() mutable {
 	ZdbRowRef<Session> next =
@@ -135,18 +135,18 @@ static void issue_(DBContext *context, Ztls::Random &rng,
   });
 }
 
-static void use_(DBContext *context, String token, String issuer,
+static void use_(DB *db, String token, String issuer,
     int64_t now, int64_t idleLifetime, SessionFn complete)
 {
   Bytes id, digest;
-  if (!context || !token || !issuer || now <= 0 || idleLifetime <= 0 ||
+  if (!db || !token || !issuer || now <= 0 || idleLifetime <= 0 ||
       idleLifetime > INT64_MAX - now ||
       !opaqueParse(token, id, digest)) {
     complete(SessionError::Invalid, Session{}, String{});
     return;
   }
   if (token.mutable_()) ZuClear(token);
-  auto sessions = context->sessions;
+  auto sessions = db->sessions;
   sessions->run(0, [sessions, digest = ZuMv(digest), issuer = ZuMv(issuer),
       now, idleLifetime, complete = ZuMv(complete)]() mutable {
     sessions->findUpd<0, ZuSeq<2>>(0, ZuFwdTuple(ZuMv(digest)), [issuer = ZuMv(issuer),
@@ -175,17 +175,17 @@ static void use_(DBContext *context, String token, String issuer,
   });
 }
 
-static void revoke_(DBContext *context, String token, String issuer, int64_t now,
+static void revoke_(DB *db, String token, String issuer, int64_t now,
     SessionDoneFn complete)
 {
   Bytes id, digest;
-  if (!context || !token || !issuer || now <= 0 ||
+  if (!db || !token || !issuer || now <= 0 ||
       !opaqueParse(token, id, digest)) {
     complete(SessionError::Invalid);
     return;
   }
   if (token.mutable_()) ZuClear(token);
-  auto sessions = context->sessions;
+  auto sessions = db->sessions;
   sessions->run(0, [sessions, digest = ZuMv(digest), issuer = ZuMv(issuer), now,
       complete = ZuMv(complete)]() mutable {
     sessions->findUpd<0>(0, ZuFwdTuple(ZuMv(digest)), [issuer = ZuMv(issuer), now,
@@ -211,15 +211,15 @@ static void revoke_(DBContext *context, String token, String issuer, int64_t now
   });
 }
 
-bool sessionIssue(Requests *requests, ZuTime deadline, DBContext *context,
+bool sessionIssue(Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, SessionConfig config, SessionFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<SessionComplete_> state = new SessionComplete_{ZuMv(complete)};
-  return requests->run(deadline, [state, context, &rng,
+  return requests->run(deadline, [state, db, &rng,
       config = ZuMv(config)](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    issue_(context, rng, ZuMv(config), [state](int error,
+    issue_(db, rng, ZuMv(config), [state](int error,
 	Session session, String token) mutable {
       state->complete(error, ZuMv(session), ZuMv(token));
     });
@@ -227,26 +227,26 @@ bool sessionIssue(Requests *requests, ZuTime deadline, DBContext *context,
 }
 
 bool sessionIssueGrant(Requests *requests, ZuTime deadline,
-    DBContext *context, Ztls::Random &rng, Bytes grantID, String issuer,
+    DB *db, Ztls::Random &rng, Bytes grantID, String issuer,
     int64_t now, int64_t idleLifetime, int64_t absoluteLifetime,
     SessionFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<SessionComplete_> state = new SessionComplete_{ZuMv(complete)};
-  return requests->run(deadline, [state, context, &rng,
+  return requests->run(deadline, [state, db, &rng,
       grantID = ZuMv(grantID), issuer = ZuMv(issuer), now,
       idleLifetime, absoluteLifetime](
       ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    if (!context || !grantID || !issuer) {
+    if (!db || !grantID || !issuer) {
       state->complete(SessionError::Invalid);
       return;
     }
-    auto grants = context->grants;
-    grants->run(0, [state, context, grants, &rng,
+    auto grants = db->grants;
+    grants->run(0, [state, db, grants, &rng,
 	grantID = ZuMv(grantID), issuer = ZuMv(issuer), now,
 	idleLifetime, absoluteLifetime]() mutable {
-      grants->find<0>(0, ZuFwdTuple(ZuMv(grantID)), [state, context, &rng,
+      grants->find<0>(0, ZuFwdTuple(ZuMv(grantID)), [state, db, &rng,
 	  issuer = ZuMv(issuer), now, idleLifetime, absoluteLifetime](
 	    ZdbRowRef<Grant> row) mutable {
 	if (!row || row->data().kind != GrantKind::Code ||
@@ -258,10 +258,10 @@ bool sessionIssueGrant(Requests *requests, ZuTime deadline,
 	  return;
 	}
 	Grant grant{row->data()};
-	auto users = context->users;
-	users->run(0, [state, context, users, &rng, grant = ZuMv(grant),
+	auto users = db->users;
+	users->run(0, [state, db, users, &rng, grant = ZuMv(grant),
 	    issuer = ZuMv(issuer), now, idleLifetime, absoluteLifetime]() mutable {
-	  users->find<0>(0, ZuFwdTuple(grant.userID), [state, context, &rng,
+	  users->find<0>(0, ZuFwdTuple(grant.userID), [state, db, &rng,
 	    grant = ZuMv(grant), issuer = ZuMv(issuer), now,
 	    idleLifetime, absoluteLifetime](
 	      ZdbRowRef<User> row) mutable {
@@ -273,7 +273,7 @@ bool sessionIssueGrant(Requests *requests, ZuTime deadline,
 	    subject.length(ZuBase64URL::enclen(row->data().handle.length()));
 	    subject.length(ZuBase64URL::encode(
 	      subject.span(), row->data().handle));
-	    issue_(context, rng, SessionConfig{
+	    issue_(db, rng, SessionConfig{
 	      .issuer = ZuMv(issuer), .subject = ZuMv(subject),
 	      .userID = grant.userID,
 	      .providerID = grant.authorityProviderID,
@@ -291,33 +291,33 @@ bool sessionIssueGrant(Requests *requests, ZuTime deadline,
   }, [state]() mutable { state->cancel(); });
 }
 
-bool sessionUse(Requests *requests, ZuTime deadline, DBContext *context,
+bool sessionUse(Requests *requests, ZuTime deadline, DB *db,
     String token, String issuer, int64_t now, int64_t idleLifetime,
     SessionFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<SessionComplete_> state = new SessionComplete_{ZuMv(complete)};
-  return requests->run(deadline, [state, context, token = ZuMv(token),
+  return requests->run(deadline, [state, db, token = ZuMv(token),
       issuer = ZuMv(issuer), now, idleLifetime](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    use_(context, ZuMv(token), ZuMv(issuer), now, idleLifetime,
+    use_(db, ZuMv(token), ZuMv(issuer), now, idleLifetime,
       [state](int error, Session session, String token) mutable {
         state->complete(error, ZuMv(session), ZuMv(token));
       });
   }, [state]() mutable { state->cancel(); });
 }
 
-bool sessionRevoke(Requests *requests, ZuTime deadline, DBContext *context,
+bool sessionRevoke(Requests *requests, ZuTime deadline, DB *db,
     String token, String issuer, int64_t now, SessionDoneFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<SessionDoneComplete_> state =
     new SessionDoneComplete_{ZuMv(complete)};
-  return requests->run(deadline, [state, context, token = ZuMv(token),
+  return requests->run(deadline, [state, db, token = ZuMv(token),
       issuer = ZuMv(issuer), now](
       ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    revoke_(context, ZuMv(token), ZuMv(issuer), now,
+    revoke_(db, ZuMv(token), ZuMv(issuer), now,
       [state](int error) mutable { state->complete(error); });
   }, [state]() mutable { state->cancel(); });
 }

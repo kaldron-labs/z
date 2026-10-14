@@ -157,7 +157,7 @@ public:
   Server() = default;
 
   bool init(
-    DB *, DBContext *, Requests *, ServerConfig,
+    DB *, Requests *, ServerConfig,
     ClockFn, PageFn, PolicyFn, AdmitFn, SignFn, OIDCHTTPFn = {},
     AuthRouteFn = {});
   // Cancel OIDC transactions; retain callbacks/configuration until the
@@ -217,7 +217,6 @@ private:
     AuthorizeResult, Bytes, String, String, uint32_t, ServerFn);
 
   DB		*m_db = nullptr;
-  DBContext	*m_context = nullptr;
   Requests	*m_requests = nullptr;
   ServerConfig	m_config;
   ClockFn	m_clock;

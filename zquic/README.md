@@ -63,9 +63,9 @@ server's stream response.
   parameter encoding.
 - `ZquicCrypto.hh` / `ZquicCrypto.cc`: picotls integration, Initial/Handshake/
   0-RTT/1-RTT key state, packet protection, TLS output, and early-data state.
-- `ZquicRecovery.hh` / `ZquicRecovery.cc`: ACK ranges, sent-packet tracking,
+- `ZquicRecovery.hh`: ACK ranges, sent-packet tracking,
   PTO/loss recovery, retransmit queues, RTT, congestion, and ECN validation.
-- `ZquicStream.hh` / `ZquicStream.cc`: stream objects, Rx reassembly, Tx
+- `ZquicStream.hh`: stream objects, Rx reassembly, Tx
   retention, stream-state transitions, RESET/STOP, and stream GC.
 - `ZquicLink.hh`: shared client/server connection runtime: stream tables,
   flow control, ACK generation, frame dispatch, control queues, path state,
@@ -76,9 +76,9 @@ server's stream response.
   gating, server packet I/O, and server close behavior.
 - `Zquic_.hh` and `ZquicSock.hh`: private UDP endpoint adapter, routing tables,
   socket mode planning, Tx queueing, and datagram ownership.
-- `ZquicPath.hh` / `ZquicPath.cc`: path validation, anti-amplification,
+- `ZquicPath.hh`: path validation, anti-amplification,
   ECN path state, and PMTUD/DPLPMTUD state.
-- `ZquicSched.hh` / `ZquicSched.cc`: stream scheduling and pacing helpers.
+- `ZquicSched.hh`: stream scheduling and pacing helpers.
 - `ZquicBuf.hh` and `ZquicPQueue.hh`: packet/stream/CRYPTO buffer allocation
   aliases and priority queues.  Buffer rules are in `zquic/GUIDELINES.md`.
 - `ZquicDiag.hh` / `ZquicDiag.cc`: diagnostic counters and stable formatter

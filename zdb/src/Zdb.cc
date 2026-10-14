@@ -48,6 +48,30 @@
 
 namespace Zdb_ {
 
+struct TableKeys {
+  using Keys = ZuStringTL<"shards", "threads">;
+};
+
+struct HostKeys {
+  using Keys = ZuStringTL<"priority", "ip", "port">;
+};
+
+struct DBKeys {
+  using Keys = ZuStringTL<"store", "tables", "hosts">;
+};
+
+template <typename Keys, unsigned N>
+static void cfLookup(const ZfCf::AnyNode *cf, unsigned (&lookup)[N])
+{
+  ZuAssert(N == Keys::Keys::N);
+  static constexpr auto matcher = ZuMatcher<Keys>();
+  const auto &fields = cf->data<ZfCf::AnyNode::Object>();
+  for (unsigned i = 0, n = fields.length(); i < n; ++i) {
+    int id = matcher.exact(fields[i].p<0>());
+    if (id >= 0) lookup[id] = i + 1;
+  }
+}
+
 ZfStructImpl(Heartbeat);
 ZfStructImpl(Heartbeat, FB);
 
@@ -55,13 +79,16 @@ TableCf::TableCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
   TableCf{id_}
 {
   ZfCf::handler<TableCf>(cf).update(*this);
-  for (auto key: {ZuCSpan{"shards"}, ZuCSpan{"threads"}})
-    if (cf->resolve(key))
-      throw ZeEXCEPT(Error, "Zdb", ([
-	id = ZeString{id_}, key = ZeString{key}
-      ](auto &s) {
-	s << "table \"" << id << "\" contains DB-wide \"" << key << '"';
-      }));
+  unsigned lookup[2]{};
+  cfLookup<TableKeys>(cf, lookup);
+  if (lookup[0] || lookup[1]) {
+    ZuCSpan key = lookup[0] ? ZuCSpan{"shards"} : ZuCSpan{"threads"};
+    throw ZeEXCEPT(Error, "Zdb", ([
+      id = ZeString{id_}, key = ZeString{key}
+    ](auto &s) {
+      s << "table \"" << id << "\" contains DB-wide \"" << key << '"';
+    }));
+  }
 }
 
 HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
@@ -73,11 +100,13 @@ HostCf::HostCf(ZuCSpan id_, const ZfCf::AnyNode *cf) :
       throw ZeEXCEPT(Error, "Zdb", ([id = id](auto &s) {
 	s << '"' << id << "\": non-standalone host requires ip and port";
       }));
-    if (!cf->resolve("priority"))
+    unsigned lookup[3]{};
+    cfLookup<HostKeys>(cf, lookup);
+    if (!lookup[0])
       throw ZfCf_EXCEPT(ZfCfError::required(cf, "priority"));
-    if (!cf->resolve("ip"))
+    if (!lookup[1])
       throw ZfCf_EXCEPT(ZfCfError::required(cf, "ip"));
-    if (!cf->resolve("port"))
+    if (!lookup[2])
       throw ZfCf_EXCEPT(ZfCfError::required(cf, "port"));
   }
 }
@@ -86,8 +115,11 @@ DBCf::DBCf(const ZfCf::AnyNode *cf)
 {
   ZfCf::handler<DBCf>(cf).update(*this);
   validate();
-  storeCf = cf->resolve("store");
-  auto tables = cf->resolve("tables");
+  unsigned lookup[3]{};
+  cfLookup<DBKeys>(cf, lookup);
+  const auto &fields = cf->data<ZfCf::AnyNode::Object>();
+  storeCf = lookup[0] ? fields[lookup[0] - 1].p<1>().ptr() : nullptr;
+  auto tables = lookup[1] ? fields[lookup[1] - 1].p<1>().ptr() : nullptr;
   if (!tables)
     throw ZfCf_EXCEPT(ZfCfError::required(cf, "tables"));
   if (!tables->has<ZfCf::AnyNode::Object>())
@@ -96,7 +128,7 @@ DBCf::DBCf(const ZfCf::AnyNode *cf)
     tableCfs.addNode(
       new TableCfs::Node{field.p<0>(), field.p<1>()});
 
-  auto hosts = cf->resolve("hosts");
+  auto hosts = lookup[2] ? fields[lookup[2] - 1].p<1>().ptr() : nullptr;
   if (!hosts)
     throw ZfCf_EXCEPT(ZfCfError::required(cf, "hosts"));
   if (!hosts->has<ZfCf::AnyNode::Object>())
@@ -263,38 +295,9 @@ ZmRef<AnyTable> DB::initTable_(
   return table;
 }
 
-void DB::sagas_(
-    SagaRecoveryFn catalogFn, SagaRecoveryFn scanFn, SagaRunFn runFn)
-{
-  if (!ZmEngine<DB>::lock(ZmEngineState::Stopped,
-	[
-	  this, catalogFn = ZuMv(catalogFn),
-	  scanFn = ZuMv(scanFn), runFn = ZuMv(runFn)
-	]() mutable {
-    if (state() != HostState::Initialized || m_sagaCatalogFn) return false;
-    m_sagaCatalogFn = ZuMv(catalogFn);
-    m_sagaScanFn = ZuMv(scanFn);
-    m_sagaRunFn = ZuMv(runFn);
-    m_sagaTable = new TableT<SagaData>{this, &m_sagaCf, true};
-    m_sagaStepTable = new TableT<SagaStep>{this, &m_sagaStepCf, true};
-    m_tables.add(m_sagaTable);
-    m_tables.add(m_sagaStepTable);
-    tableAdded_(m_sagaTable);
-    tableAdded_(m_sagaStepTable);
-    return true;
-  }))
-    throw ZeEXCEPT(Fatal, "Zdb", "Zdb::sagas called out of order");
-}
-
-void DB::sagaRun(ZmRef<Saga> saga)
+void DB::sagaRun(ZmRef<AnySaga_> saga)
 {
   ZmAssert(invoked());
-  if (ZuUnlikely(!saga || saga->epoch() != m_sagaEpoch ||
-	m_sagaState == SagaState::Inactive ||
-	(m_sagaState == SagaState::Active && !m_appActive))) return;
-  saga->rec(m_sagaState == SagaState::Rebuilding ?
-    sagaRec(saga, saga->step()) : nullptr);
-  ++m_sagaPending;
   m_sagaRunFn(ZuMv(saga));
 }
 
@@ -345,11 +348,11 @@ void DB::sagaDeactivate()
 }
 
 bool DB::sagaPrepare(
-    Saga *saga, AnyTable *table, Shard shard, SagaOp::T op,
+    AnySaga__ *saga, AnyTable *table, Shard shard, SagaOp::T op,
     bool effect, UN &un, bool &saved)
 {
   if (ZuUnlikely(!table || table->db() != this || shard >= nShards() ||
-      saga->step() >= saga->shards.length())) {
+      saga->step() >= saga->shards().length())) {
     saga->result_(OpResult::Invalid, shard);
     return false;
   }
@@ -373,7 +376,7 @@ bool DB::sagaPrepare(
 }
 
 void DB::sagaResult(
-    ZmRef<Saga> saga, uint64_t epoch, OpResult::T result, Shard shard)
+    ZmRef<AnySaga_> saga, uint64_t epoch, OpResult::T result, Shard shard)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(!saga)) return;
@@ -386,7 +389,7 @@ void DB::sagaResult(
     case OpResult::NotReady: {
       auto head = m_sagaQueue.headPtr();
       if (ZuUnlikely(m_sagaState != SagaState::Rebuilding ||
-	  !head || static_cast<Saga *>(head) != saga)) {
+	  !head || static_cast<AnySaga_ *>(head) != saga)) {
 	sagaFail(saga, epoch, ZeEXCEPT(Fatal, "Zdb", "invalid saga deferral"));
 	return;
       }
@@ -409,14 +412,14 @@ void DB::sagaResult(
 }
 
 void DB::sagaStepRecovered(
-    ZmRef<Saga> saga, uint64_t epoch, uint32_t step, Shard shard)
+    ZmRef<AnySaga_> saga, uint64_t epoch, uint32_t step, Shard shard)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(!saga || epoch != m_sagaEpoch || saga->epoch() != epoch)) {
     sagaRetire();
     return;
   }
-  if (ZuUnlikely(saga->step() != step || step >= saga->shards.length())) {
+  if (ZuUnlikely(saga->step() != step || step >= saga->shards().length())) {
     sagaRetire();
     sagaFail(ZuMv(saga), epoch,
 	ZeEXCEPT(Fatal, "Zdb", "invalid saga step completion"));
@@ -427,21 +430,21 @@ void DB::sagaStepRecovered(
       m_sagaUNHash->delNode(static_cast<SagaUNHash::Node *>(rec));
     m_sagaStepHash->delNode(rec);
   }
-  saga->shards[step] = shard;
+  saga->stepShard(step, shard);
   m_sagaBlocked = nullptr;
   saga->stepInc();
   sagaRetire();
   sagaRun(ZuMv(saga));
 }
 
-void DB::sagaEnd(Saga *saga)
+void DB::sagaEnd(AnySaga_ *saga)
 {
   bool rebuilding = m_sagaState == SagaState::Rebuilding;
   if (rebuilding) {
     ZmAssert(m_sagaHash);
     if (m_sagaBlocked == saga) m_sagaBlocked = nullptr;
     auto listNode = m_sagaQueue.headPtr();
-    ZmAssert(listNode && static_cast<Saga *>(listNode) == saga);
+    ZmAssert(listNode && static_cast<AnySaga_ *>(listNode) == saga);
     auto hashNode = static_cast<SagaHash::Node *>(listNode);
     m_sagaQueue.delNode(listNode);
     m_sagaHash->delNode(hashNode);
@@ -455,7 +458,7 @@ void DB::sagaEnd(Saga *saga)
     run([this]() { stop_0(); });
 }
 
-void DB::sagaFail(ZmRef<Saga> saga, uint64_t epoch, ZeException e)
+void DB::sagaFail(ZmRef<AnySaga_> saga, uint64_t epoch, ZeException e)
 {
   ZmAssert(invoked());
   if (ZuUnlikely(!saga || epoch != m_sagaEpoch ||
@@ -636,7 +639,7 @@ void DB::sagaActivate(Host *oldMaster)
   });
 }
 
-SagaRec *DB::sagaRec(Saga *saga, unsigned step)
+SagaRec *DB::sagaRec(AnySaga_ *saga, unsigned step)
 {
   ZmAssert(invoked());
   if (!m_sagaStepHash) return nullptr;
@@ -660,13 +663,13 @@ void DB::sagaReplay()
     sagaActivateDone();
     return;
   }
-  ZmRef<Saga> saga = static_cast<Saga *>(node);
+  ZmRef<AnySaga_> saga = static_cast<AnySaga_ *>(node);
   if (saga->fwd() && *saga->deadline() && saga->deadline() <= Zm::now()) {
-    unsigned step = saga->shards.length();
-    while (step && saga->shards[step - 1] == Shard(-1)) --step;
+    unsigned step = saga->shards().length();
+    while (step && saga->stepShard(step - 1) == Shard(-1)) --step;
     saga->fwd(false);
     if (!step) {
-      saga->step(saga->shards.length());
+      saga->step(saga->shards().length());
     } else {
       saga->step(--step);
 	auto rec = sagaRec(saga, step);
@@ -677,8 +680,8 @@ void DB::sagaReplay()
       }
 	bool applied = rec->un == nullUN() ||
 	  ZuCmp<UN>::cmp(rec->table->nextUN(rec->shard), rec->un) > 0;
-	if (applied && step + 1 == saga->shards.length()) {
-	  saga->step(saga->shards.length());
+	if (applied && step + 1 == saga->shards().length()) {
+	  saga->step(saga->shards().length());
 	  saga->fwd(true);
 	}
     }

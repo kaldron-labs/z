@@ -1171,8 +1171,80 @@ private:
   ZuUnion<void, IO> m_stdio;
 };
 
+namespace Server_ {
+template <typename Server, typename AppHeaderList>
+class HTTPReqParser : public HTTPParser<HTTPReqParser<Server, AppHeaderList>> {
+  using Base = HTTPParser<HTTPReqParser<Server, AppHeaderList>>;
+  using BaseKeys = ZuTypeSlice<2, 0, typename Base::Headers>;
+
+public:
+  using AppKeys = ZuTypeSlice<2, 0, AppHeaderList>;
+  using HeaderKeys = ZuTypeConcat<BaseKeys, AppKeys>;
+  using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;
+  using HdrCatalog = Zjrpc::HTTPHdrCatalog<Headers>;
+  ZuAssert(ZuTypeUnique<HeaderKeys>::N == HeaderKeys::N,
+    "Zmcp application header duplicates a protocol header");
+
+  void init(Server &server) { m_server = &server; }
+
+  ZuCSpan endpoint() const { return m_server->endpoint(); }
+  const Zjrpc::Limits &limits() const { return m_server->limits(); }
+  bool origin(ZuCSpan origin) const {
+    return m_server->origin(origin);
+  }
+
+  template <typename Key, typename Value>
+  void header(Zhttp::FieldSection::T section) {
+    if constexpr (ZuTypeIn<Key, AppKeys>{})
+	m_headers.template put<Key>(Value{}());
+    Base::template header<Key, Value>(section);
+  }
+
+  template <typename Key>
+  void header(
+	Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
+    if constexpr (ZuTypeIn<Key, AppKeys>{})
+	m_headers.template put<Key>(value);
+    Base::template header<Key>(section, value);
+  }
+
+  template <typename Link>
+  void receiveHTTP(
+	Link *link, ZmRef<ZiIOBuf> body, HTTPMeta meta) {
+    auto headers = ZuMv(m_headers);
+    m_headers = {};
+    m_server->receiveHTTP(
+	link, ZuMv(body), ZuMv(meta), ZuMv(headers));
+  }
+
+  template <typename Link>
+  void deleteHTTP(Link *link, const HTTPMeta &meta) {
+    m_server->deleteHTTP(link, meta);
+  }
+
+  template <typename Link>
+  void originHTTP(Link *link) { m_server->originHTTP(link); }
+
+  template <typename Link>
+  void corruptHTTP(Link *link) { m_server->corruptHTTP(link); }
+
+  void reset() {
+    Base::reset();
+    m_headers = {};
+    m_server = nullptr;
+  }
+
+private:
+  Server *m_server = nullptr;
+  Zjrpc::HTTPHeaders<AppHeaderList> m_headers;
+};
+} // namespace Server_
+
 template <typename Impl, typename Catalog>
 class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
+    public Zhttp::Server<HTTPServer<Impl, Catalog>,
+      Server_::HTTPReqParser<HTTPServer<Impl, Catalog>, Zjrpc::AppHeaders<Impl>>,
+      HTTPBuilderQ<Catalog>>,
     public Zjrpc::Dispatcher<HTTPServer<Impl, Catalog>, Impl, Catalog,
       Server_::HTTPDispatchContext<Zjrpc::HTTPHeaders<Zjrpc::AppHeaders<Impl>>, Catalog>,
       Server_::HTTPDispatchPolicy<Catalog>> {
@@ -1205,73 +1277,14 @@ public:
   using AppHeaderList = typename Base::AppHeaderList;
   using Headers = typename Base::Headers;
   using ResBuilderQ = HTTPBuilderQ<Catalog>;
-  using HTTP = Zhttp::Server<HTTPServer>;
+  using HTTP = Zhttp::Server<HTTPServer,
+    Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>, ResBuilderQ>;
+  using Parser = Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>;
+  using HTTP::init;
+  using HTTP::start;
+  using HTTP::stop;
+  using Base::impl;
 
-  class Parser : public HTTPParser<Parser> {
-    using Base = HTTPParser<Parser>;
-    using BaseKeys = ZuTypeSlice<2, 0, typename Base::Headers>;
-
-  public:
-    using AppKeys = ZuTypeSlice<2, 0, AppHeaderList>;
-    using HeaderKeys = ZuTypeConcat<BaseKeys, AppKeys>;
-    using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;
-    using HdrCatalog = Zjrpc::HTTPHdrCatalog<Headers>;
-    ZuAssert(ZuTypeUnique<HeaderKeys>::N == HeaderKeys::N,
-      "Zmcp application header duplicates a protocol header");
-
-    void init(HTTPServer &server) { m_server = &server; }
-
-    ZuCSpan endpoint() const { return m_server->endpoint(); }
-    const Zjrpc::Limits &limits() const { return m_server->limits(); }
-    bool origin(ZuCSpan origin) const {
-      return m_server->origin(origin);
-    }
-
-    template <typename Key, typename Value>
-    void header(Zhttp::FieldSection::T section) {
-      if constexpr (ZuTypeIn<Key, AppKeys>{})
-	m_headers.template put<Key>(Value{}());
-      Base::template header<Key, Value>(section);
-    }
-
-    template <typename Key>
-    void header(
-	Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
-      if constexpr (ZuTypeIn<Key, AppKeys>{})
-	m_headers.template put<Key>(value);
-      Base::template header<Key>(section, value);
-    }
-
-    template <typename Link>
-    void receiveHTTP(
-	Link *link, ZmRef<ZiIOBuf> body, HTTPMeta meta) {
-      auto headers = ZuMv(m_headers);
-      m_headers = {};
-      m_server->receiveHTTP(
-	link, ZuMv(body), ZuMv(meta), ZuMv(headers));
-    }
-
-    template <typename Link>
-    void deleteHTTP(Link *link, const HTTPMeta &meta) {
-      m_server->deleteHTTP(link, meta);
-    }
-
-    template <typename Link>
-    void originHTTP(Link *link) { m_server->originHTTP(link); }
-
-    template <typename Link>
-    void corruptHTTP(Link *link) { m_server->corruptHTTP(link); }
-
-    void reset() {
-      Base::reset();
-      m_headers = {};
-      m_server = nullptr;
-    }
-
-  private:
-    HTTPServer *m_server = nullptr;
-    Zjrpc::HTTPHeaders<AppHeaderList> m_headers;
-  };
   ZuCSpan endpoint() const { return m_endpoint; }
   bool origin(ZuCSpan origin_) const {
     if (!origin_) return m_absentOrigin;
@@ -1372,10 +1385,11 @@ public:
     }, m_txThread);
   }
 
-  ~HTTPServer() { this->final(); }
+  ~HTTPServer() { final(); }
 
   bool init(const Zhttp::HubConfig &hub, ServerConfig config, Impl *impl) {
-    if (this->m_mx || !impl || !hub.mx() || !config.endpoint())
+    if (m_mx) return true;
+    if (!impl || !hub.mx() || !config.endpoint())
       return false;
     unsigned owner = hub.txThread() ?
       hub.mx()->sid(hub.txThread()) : hub.mx()->txThread();
@@ -1386,7 +1400,13 @@ public:
     m_legacyLifetime = config.legacyLifetime();
     m_maxSessions = config.maxSessions();
     m_httpDone = false;
-    if (m_legacySessions && !m_rng.init()) return false;
+    if (m_legacySessions && !m_rng.init()) {
+      m_up = false;
+      m_impl = nullptr;
+      m_mx = nullptr;
+      m_endpoint.null();
+      return false;
+    }
     {
       uint64_t messageMax = uint64_t(m_limits.maxSSEEventBytes) +
 	Zjrpc::Default::SSEFrameOverhead;
@@ -1396,42 +1416,38 @@ public:
 	.retainedMessageMax(messageMax);
     }
     m_up = true;
-    if (m_http.init(hub, ZuMv(config), this)) {
+    if (HTTP::init(hub, ZuMv(config))) {
       return true;
     }
     m_up = false;
+    HTTP::final();
     m_impl = nullptr;
     m_mx = nullptr;
+    m_endpoint.null();
     return false;
   }
 
-  HTTP &http() { return m_http; }
-  const HTTP &http() const { return m_http; }
-
-  bool start() { return this->m_http.start(); }
-
   bool stop() {
-    if (this->m_httpDone) return true;
-    this->m_up = false;
-    bool ok = this->m_http.stop();
-    this->closeHTTP_();
-    this->m_httpDone = true;
+    if (m_httpDone) return true;
+    m_up = false;
+    bool ok = HTTP::stop();
+    closeHTTP_();
+    m_httpDone = true;
     return ok;
   }
 
   void final() {
-    if (!this->m_mx) return;
-    this->m_up = false;
-    if (!this->m_httpDone) {
-      (void)this->m_http.stop();
-      this->closeHTTP_();
-      this->m_httpDone = true;
+    m_up = false;
+    if (m_mx && !m_httpDone) {
+      (void)HTTP::stop();
+      closeHTTP_();
+      m_httpDone = true;
     }
-    this->m_http.final();
-    this->m_impl = nullptr;
-    this->m_mx = nullptr;
-    this->m_txThread = 0;
-    this->m_endpoint.null();
+    HTTP::final();
+    m_impl = nullptr;
+    m_mx = nullptr;
+    m_txThread = 0;
+    m_endpoint.null();
   }
 
 private:
@@ -1865,7 +1881,6 @@ private:
   bool			m_legacySessions = true;
   bool			m_httpDone = false;
   bool			m_ssePosted = false;
-  HTTP m_http;
 };
 
 template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>

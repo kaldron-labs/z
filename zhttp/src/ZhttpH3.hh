@@ -144,11 +144,6 @@ int rxFrame(Rx &rx, Frame &frame)
   return 1;
 }
 
-using SettingsKeySet = ZmHashKV<
-  uint64_t, bool,
-  ZmHashLock<ZmNoLock,
-    ZmHashHeapID<"Zhttp.H3.SettingsKeys">>>;
-
 // parse a QUIC variable-length integer from a contiguous span
 inline int var(ZuBSpan in, unsigned &o, uint64_t &v) {
   unsigned n = in.length();
@@ -304,8 +299,6 @@ private:
 	if (var(payload, o, key) < 0 ||
 	    var(payload, o, value) < 0)
 	  return false;
-	if (m_settingsKeys->find(key)) return false;
-	m_settingsKeys->add(key, true);
 	impl()->setting(key, value);
 	if (m_streamState == StreamState::Error) return false;
     }
@@ -541,7 +534,6 @@ public:
     m_settings = false;
     m_error = 0;
     m_maxPushID = -1;
-    m_settingsKeys->clean();
   }
 
   State::T h3State() const { return m_cxnState; }
@@ -580,7 +572,6 @@ private:
   uint64_t		m_error = 0;
   uint64_t		m_maxPushID = -1;
   bool		m_settings = false;
-  ZmRef<SettingsKeySet>	m_settingsKeys{new SettingsKeySet};
 };
 
 // HTTP/3 request/response stream parser
@@ -1345,14 +1336,14 @@ private:
     Bytes		&out;
     Compression::FieldSectionBuffer<Bytes> *section = nullptr;
     const QPackTxTable *tx = nullptr;
-    Params		params;
+    const Params	&params;
     uint64_t		base = 0;
     uint64_t		required = 0;
     bool		dynamic = false;
     bool		dynamicRef = false;
     bool		ok = true;
 
-    Build(Bytes &out_) : out{out_} { }
+    Build(Bytes &out_, const Params &params_) : out{out_}, params{params_} { }
 
     void field(ZuBSpan name, ZuBSpan value) {
 	if (!ok) return;
@@ -1543,11 +1534,10 @@ private:
     auto fields = ZtScratch(
       HdrScratch, HeaderHeadroom, Impl::HdrBufSize);
     Compression::FieldSectionBuffer<decltype(fields)> section{fields};
-    Build<decltype(fields)> build{fields};
+    Build<decltype(fields)> build{fields, impl()->h3Params()};
     build.section = &section;
     auto tx = impl()->qpackTx();
     build.tx = tx;
-    build.params = impl()->h3Params();
     if (build.tx && build.tx->capacity() &&
 	build.tx->sectionAdmissible(impl()->streamID())) {
       build.dynamic = true;

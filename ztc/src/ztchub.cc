@@ -158,9 +158,10 @@ struct Builder : public ZmObject, public Zrest::MResBuilder<Catalog> { };
 ZmListDerive(BuilderQ, Builder,
   ZmListNode<Builder, ZmListHeapID<"Ztc.Hub.SSFReply">>);
 
-struct App {
-  using Parser = SSF_::Parser;
-  using ResBuilderQ = SSF_::BuilderQ;
+struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ> {
+  using HTTP = Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
   Ztc::Hubd *hub = nullptr;
   Ztc::HubString browserPath;
   Ztc::HubString ssfPath;
@@ -901,7 +902,7 @@ public:
   Listener(Ztc::Hubd *hub_, Ztc::ListenerCf cf_, ZmSemaphore *done_) :
     m_hub{hub_}, m_cf{ZuMv(cf_)}, m_done{done_},
     m_app{m_hub, m_cf, m_done},
-    m_ssfApp{hub_, m_cf.browserPath, m_hub->config().ssfCallbackPath,
+    m_ssfApp{{}, hub_, m_cf.browserPath, m_hub->config().ssfCallbackPath,
 	m_cf.origins},
     m_server{&m_app, ZiIP{m_cf.bind}, m_cf.port} { }
 
@@ -922,9 +923,9 @@ public:
       .retainedBodyMax(m_hub->config().maxFrame)
       .tls(Zhttp::H2Config{}.policy(Zhttp::H2Policy::Disable)
         .certPath(m_cf.cert).keyPath(m_cf.key));
-    if (m_ssf.init(Zhttp::HubConfig{mx, "1", "2"}, ZuMv(ssfConfig),
-	&m_ssfApp))
+    if (m_ssfApp.init(Zhttp::HubConfig{mx, "1", "2"}, ZuMv(ssfConfig)))
       return true;
+    m_ssfApp.final();
     m_server.final();
     m_initialized = false;
     return false;
@@ -932,7 +933,7 @@ public:
   bool start() {
     if (!m_server.start()) return false;
     m_serverStarted = true;
-    if (m_ssf.start()) {
+    if (m_ssfApp.start()) {
       m_ssfStarted = true;
       return true;
     }
@@ -943,7 +944,7 @@ public:
   bool stop() {
     bool ok = true;
     if (m_ssfStarted) {
-      ok = m_ssf.stop();
+      ok = m_ssfApp.stop();
       m_ssfStarted = false;
     }
     if (m_serverStarted) {
@@ -954,7 +955,7 @@ public:
       m_serverStarted = false;
     }
     if (m_initialized) {
-      m_ssf.final();
+      m_ssfApp.final();
       m_server.final();
       m_initialized = false;
     }
@@ -963,7 +964,6 @@ public:
 
 private:
   using Server = Zws::Server<App, Zhttp::H1TLS>;
-  using SSFServer = Zhttp::Server<SSF_::App>;
 
   Ztc::Hubd			*m_hub;
   Ztc::ListenerCf		m_cf;
@@ -971,7 +971,6 @@ private:
   App				m_app;
   SSF_::App			m_ssfApp;
   Server			m_server;
-  SSFServer			m_ssf;
   bool				m_initialized = false;
   bool				m_serverStarted = false;
   bool				m_ssfStarted = false;

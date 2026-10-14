@@ -1762,7 +1762,13 @@ class Fixture:
         users, _ = self.request("GET", "/admin/users?name=http-admin&source=Local", token=token)
         assert len(users["items"]) == 1
         user_id = users["items"][0]["id"]
-        role = create(prefix + "/roles", {"name": "ping", "label": "Ping"})
+        role_body = {"name": "ping", "label": "Ping"}
+        role_headers = {"Idempotency-Key": secrets.token_hex(16)}
+        created_role, _ = self.request("POST", prefix + "/roles", role_body,
+                                       token=token, headers=role_headers, status=201)
+        role = created_role["item"]
+        self.request("POST", prefix + "/roles", role_body, token=token,
+                     headers={"Idempotency-Key": secrets.token_hex(16)}, status=409)
         self.request("PUT", prefix + "/roles/" + role["id"] + "/actions",
                      {"action_ids": [action_id]}, token=token, headers={"If-Match": role["etag"]})
         # Required wire fields and query keys use snake_case exclusively.
@@ -1781,6 +1787,10 @@ class Fixture:
             if restart:
                 self.stop()
                 self.start()
+            role_replay, _ = self.request("POST", prefix + "/roles", role_body,
+                                          token=token, headers=role_headers)
+            assert role_replay["status"] == "complete"
+            assert role_replay["result_ids"] == [role["id"]]
             replay, _ = self.request("POST", prefix + "/assignments", member_body,
                                      token=token, headers=member_headers)
             assert replay["status"] == "complete"

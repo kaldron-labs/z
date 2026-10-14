@@ -39,6 +39,7 @@
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpSSE.hh>
 
 namespace Zmcp {
 
@@ -474,6 +475,8 @@ struct ToolReplyDecode {
 
 namespace Client_ {
 
+ZmcpAPI int notification(ZuCSpan method);
+
 template <typename App,
   typename = decltype(ZuDeclVal<App * &>()->progress(ZuDeclVal<const Zjrpc::ID &>(),
     ZuDeclVal<double &>(), ZuDeclVal<double &>(), ZuDeclVal<ZuCSpan &>()), void())>
@@ -507,14 +510,19 @@ bool receive(
       envelope.kind != Zjrpc::MessageKind::Request)
     return pending.receive(envelope);
   try {
-    if (envelope.method() == "notifications/progress") {
-      auto params = Zjrpc::loadObject<ProgressParams>(Zjrpc::raw(envelope.params()));
-      progress(app, params.token, params.progress, params.total,
-	params.message, 0);
-    } else if (envelope.method() == "notifications/message") {
-      auto node = Zjrpc::raw(envelope.params());
-      auto params = Zjrpc::loadObject<RxLogParams>(node);
-      logging(app, params.level, Zjrpc::member(node, "data"), params.logger, 0);
+    switch (notification(envelope.method())) {
+      case 0: {
+	auto params = Zjrpc::loadObject<ProgressParams>(Zjrpc::raw(envelope.params()));
+	progress(app, params.token, params.progress, params.total,
+	  params.message, 0);
+	break;
+      }
+      case 1: {
+	auto node = Zjrpc::raw(envelope.params());
+	auto params = Zjrpc::loadObject<RxLogParams>(node);
+	logging(app, params.level, Zjrpc::member(node, "data"), params.logger, 0);
+	break;
+      }
     }
   } catch (...) {
     return false;
@@ -1415,7 +1423,7 @@ public:
 
   const Zjrpc::Limits &limits() const { return m_request->client->limits(); }
 
-  bool receiveSSE(Zjrpc::SSEEvent event, const HTTPResponseMeta &meta) {
+  bool receiveSSE(Zhttp::SSEEvent event, const HTTPResponseMeta &meta) {
     return m_request &&
       m_request->client->receiveSSE(m_request, ZuMv(event), meta);
   }
@@ -1771,7 +1779,7 @@ public:
   }
 
   bool receiveSSE(
-      ReqBase *request, Zjrpc::SSEEvent event,
+      ReqBase *request, Zhttp::SSEEvent event,
       const HTTPResponseMeta &meta) {
     if (!request) return false;
     session_(request, meta);

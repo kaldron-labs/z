@@ -91,8 +91,36 @@ private:
   bool m_failed = false;
 };
 
+namespace Server_ {
+template <typename Server, typename Headers>
+class HTTPParser : public HTTPRequestParser<HTTPParser<Server, Headers>, Headers> {
+  using Base = HTTPRequestParser<HTTPParser<Server, Headers>, Headers>;
+public:
+  void init(Server &server) { m_server = &server; }
+  ZuCSpan endpoint() const { return m_server->endpoint(); }
+  const Limits &limits() const { return m_server->limits(); }
+  template <typename Link>
+  void receiveHTTP(Link *link, ZmRef<ZiIOBuf> body, HTTPHeaders<Headers> headers) {
+    m_server->receiveHTTP(link, ZuMv(body), ZuMv(headers));
+  }
+  template <typename Link>
+  void corruptHTTP(Link *link) { if (link) link->disconnect(); }
+  void reset() { Base::reset(); m_server = nullptr; }
+private:
+  Server *m_server = nullptr;
+};
+
+template <typename Impl, typename Catalog>
+ZuDerive(HTTPResQ, (ZmList<HTTPResponseData<Impl, Catalog>,
+  ZmListNode<HTTPResponseData<Impl, Catalog>,
+    ZmListHeapID<"Zjrpc.HTTP.Response">>>));
+} // namespace Server_
+
 template <typename Impl, typename Catalog>
 class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
+    public Zhttp::Server<HTTPServer<Impl, Catalog>,
+      Server_::HTTPParser<HTTPServer<Impl, Catalog>, HTTPReqHeaders<Catalog, Impl>>,
+      Server_::HTTPResQ<Impl, Catalog>>,
     public Dispatcher<HTTPServer<Impl, Catalog>, Impl, Catalog,
       HTTPContext<HTTPReqHeaders<Catalog, Impl>>> {
   using Common = Server<HTTPServer, Impl, Catalog>;
@@ -102,32 +130,25 @@ class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
 public:
   using Headers = HTTPReqHeaders<Catalog, Impl>;
   using Context = HTTPContext<Headers>;
-  using ResBuilderQ = ZmList<HTTPResponseData<Impl, Catalog>,
-    ZmListNode<HTTPResponseData<Impl, Catalog>,
-      ZmListHeapID<"Zjrpc.HTTP.Response">>>;
+  using ResBuilderQ = Server_::HTTPResQ<Impl, Catalog>;
   using Response = typename ResBuilderQ::Node;
 
-  class Parser : public HTTPRequestParser<Parser, Headers> {
-    using Base = HTTPRequestParser<Parser, Headers>;
-  public:
-    void init(HTTPServer &server) { m_server = &server; }
-    ZuCSpan endpoint() const { return m_server->endpoint(); }
-    const Limits &limits() const { return m_server->limits(); }
-    template <typename Link>
-    void receiveHTTP(Link *link, ZmRef<ZiIOBuf> body, HTTPHeaders<Headers> headers) {
-      m_server->receiveHTTP(link, ZuMv(body), ZuMv(headers));
-    }
-    template <typename Link>
-    void corruptHTTP(Link *link) { if (link) link->disconnect(); }
-    void reset() { Base::reset(); m_server = nullptr; }
-  private:
-    HTTPServer *m_server = nullptr;
-  };
-  using HTTP = Zhttp::Server<HTTPServer>;
+  using HTTP = Zhttp::Server<HTTPServer,
+    Server_::HTTPParser<HTTPServer, Headers>, ResBuilderQ>;
+  using Parser = Server_::HTTPParser<HTTPServer, Headers>;
+  using HTTP::init;
+  using HTTP::start;
+  using HTTP::stop;
+  using HTTP::connected;
+  using HTTP::disconnected;
 
+protected:
+  using Common::impl;
+public:
   ~HTTPServer() { final(); }
   bool init(const Zhttp::HubConfig &hub, ServerConfig config, Impl *impl) {
-    if (m_mx || !hub.mx() || !config.endpoint() || !Common::init(impl, config.limits()))
+    if (m_mx) return true;
+    if (!hub.mx() || !config.endpoint() || !Common::init(impl, config.limits()))
       return false;
     m_mx = hub.mx();
     m_owner = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
@@ -136,30 +157,41 @@ public:
     uint64_t retained = uint64_t(this->limits().maxSSEEventBytes) + Default::SSEFrameOverhead;
     if (retained < this->limits().maxJSONBytes) retained = this->limits().maxJSONBytes;
     config.retainedBodyMax(this->limits().maxJSONBytes).retainedMessageMax(retained);
-    if (!m_http.init(hub, ZuMv(config), this)) { m_mx = nullptr; return false; }
+    if (!HTTP::init(hub, ZuMv(config))) {
+      HTTP::final();
+      m_mx = nullptr;
+      m_endpoint.null();
+      return false;
+    }
+    m_done = false;
     m_up = true;
     return true;
   }
-  bool start() { return m_http.start(); }
   bool stop() {
-    if (!m_mx || m_done) return true;
-    m_up = false;
-    bool ok = m_http.stop();
-    ZmBlock<>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable { drain_(ZuMv(wake)); }, m_owner);
+    return ZmBlock<bool>{}([this](auto wake) mutable {
+      this->stop(ZuMv(wake));
     });
-    m_done = true;
-    return ok;
+  }
+  template <typename Done>
+  void stop(Done &&done) {
+    if (!m_mx || m_done) { done(true); return; }
+    m_up = false;
+    HTTP::stop({
+      [this, done = ZuFwd<Done>(done)](bool ok) mutable {
+	m_mx->run([this, done = ZuMv(done), ok]() mutable {
+	  drain_([this, done = ZuMv(done), ok]() mutable {
+	    m_done = true;
+	    done(ok);
+	  });
+	}, m_owner);
+      }});
   }
   void final() {
-    if (!m_mx) return;
-    (void)stop();
-    m_http.final();
+    if (m_mx) (void)stop();
+    HTTP::final();
     m_mx = nullptr;
     m_endpoint.null();
   }
-  HTTP &http() { return m_http; }
-  const HTTP &http() const { return m_http; }
   ZuCSpan endpoint() const { return m_endpoint; }
   bool up() const { return m_up.load_(); }
   CompletionRoute completionRoute() const { return {m_mx, m_owner}; }
@@ -256,7 +288,6 @@ private:
   template <typename Link>
   using Route = Route_<Link, RouteHeap<Link>>;
 
-  HTTP m_http;
   ZiMultiplex *m_mx = nullptr;
   HTTPValue m_endpoint;
   unsigned m_owner = 0;

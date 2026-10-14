@@ -8,6 +8,8 @@
 
 #include <iostream>
 
+#include <zlib/ZuMatcher.hh>
+
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
@@ -80,23 +82,37 @@ static Ztc::AgentEnv environment()
 static Ztls::VaultConfig vaultConfig(const Ztc::AgentCf &cf,
     const Ztc::AgentEnv &env)
 {
+  struct StoreKeys {
+    using Keys = ZuStringTL<"keyring", "module", "file", "ephemeral">;
+  };
+  static constexpr auto matcher = ZuMatcher<StoreKeys>();
+  int store = matcher.exact(cf.vaultStore);
   Ztls::VaultConfig result;
   result.program = "ztcagent";
   result.account << env.issuerURL << '\n' << env.clientID;
   result.variant = Ztls::VaultVariant::Direct;
-  if (cf.vaultStore == "keyring")
-    result.store = Ztls::VaultStore::KeyRing;
-  else if (cf.vaultStore == "module" && cf.vaultModule) {
-    result.store = Ztls::VaultStore::Module;
-    result.module = cf.vaultModule;
-  } else if ((cf.vaultStore == "file" || cf.vaultStore == "ephemeral") &&
-      cf.vaultTestStore && ::getenv("ZTCAGENT_HOME") &&
-      *::getenv("ZTCAGENT_HOME"))
-    result.store = cf.vaultStore == "file" ?
-      Ztls::VaultStore::File : Ztls::VaultStore::Ephemeral;
-  else
-    throw ZeEXCEPT(Fatal, "ztcagent", "invalid Vault store configuration");
-  return result;
+  switch (store) {
+    case 0:
+      result.store = Ztls::VaultStore::KeyRing;
+      return result;
+    case 1:
+      if (cf.vaultModule) {
+        result.store = Ztls::VaultStore::Module;
+        result.module = cf.vaultModule;
+        return result;
+      }
+      break;
+    case 2:
+    case 3:
+      if (cf.vaultTestStore && ::getenv("ZTCAGENT_HOME") &&
+          *::getenv("ZTCAGENT_HOME")) {
+        result.store = store == 2 ?
+          Ztls::VaultStore::File : Ztls::VaultStore::Ephemeral;
+        return result;
+      }
+      break;
+  }
+  throw ZeEXCEPT(Fatal, "ztcagent", "invalid Vault store configuration");
 }
 
 template <typename Fn>

@@ -9,12 +9,18 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 zumd_objdir = $(top_builddir)/zum/src
+
+$(zumd_objdir)/zumd-%.$(OBJEXT):
+	$(MAKE) -C $(zumd_objdir) $(@F)
+include $(top_srcdir)/zum/src/zumd_saga_objects.mk
 zumd_test_objects = \
 	$(zumd_objdir)/zumd-zumd_core.$(OBJEXT) \
 	$(zumd_objdir)/zumd-zumd_oauth.$(OBJEXT) \
 	$(zumd_objdir)/zumd-zumd_oidc.$(OBJEXT) \
 	$(zumd_objdir)/zumd-zumd_request.$(OBJEXT) \
-	$(zumd_objdir)/zumd-zumd_sagas.$(OBJEXT) \
+	$(zumd_objdir)/zumd-zumd_key_validation.$(OBJEXT) \
+	$(zumd_objdir)/zumd-zumd_saga_admin_ops.$(OBJEXT) \
+	$(zumd_saga_objects) \
 	$(zumd_objdir)/zumd-zumd_schema.$(OBJEXT) \
 	$(zumd_objdir)/zumd-zumd_webauthn.$(OBJEXT)
 LDADD = $(zumd_test_objects) $(top_builddir)/zum/src/libZum.la \

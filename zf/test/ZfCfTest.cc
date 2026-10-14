@@ -335,37 +335,25 @@ static void ownership() {
   ZuCheck(value.nested.value == 9);
 }
 
-static void resolve() {
-  ZuTestScope(resolve);
+static void ancestry() {
+  ZuTestScope(ancestry);
   auto result = ZfCf::scan(
     "a: {b: [{value: zero}, {value: one}], empty: []}, text: leaf");
   ZuCheck(result.p<0>() >= 0);
   auto &root = result.p<1>();
-  auto a = root->resolve("a");
-  auto b = root->resolve("a.b");
-  auto element = root->resolve("a.b[0]");
-  auto value = root->resolve("a.b[0].value");
+  auto a = field(root, "a");
+  auto b = field(a, "b");
+  const auto &items = b->data<ZfCf::AnyNode::Array>();
+  auto element = items[0].ptr();
+  auto value = field(element, "value");
   ZuCheck(!root->parent);
   ZuCheck(a->parent == root.ptr());
   ZuCheck(b->parent == a);
   ZuCheck(element->parent == b);
   ZuCheck(value->parent == element);
-  ZuCheck(root->resolve("") == root.ptr());
-  ZuCheck(string(root->resolve("a.b[0].value")) == "zero");
-  ZuCheck(string(root->resolve("a.b[1].value")) == "one");
-  ZuCheck(root->resolve("a.b")->has<ZfCf::AnyNode::Array>());
-  ZuCheck(!root->resolve("a.missing"));
-  ZuCheck(!root->resolve("a.b[2]"));
-  ZuCheck(!root->resolve("a.b[-1]"));
-  ZuCheck(!root->resolve("a.b[0x0]"));
-  ZuCheck(!root->resolve("a.b[4294967296]"));
-  ZuCheck(!root->resolve("a.b[0]value"));
-  ZuCheck(!root->resolve("a.b[0].[0]"));
-  ZuCheck(!root->resolve("a.b."));
-  ZuCheck(!root->resolve("text.value"));
-  ZuCheck(!root->resolve("[0]"));
-  ZuCheck(!root->resolve("a[0]"));
-  ZuCheck(!root->resolve("a.empty[0]"));
+  ZuCheck(string(value) == "zero");
+  ZuCheck(string(field(items[1], "value")) == "one");
+  ZuCheck(items.length() == 2);
 }
 
 static void quoting() {
@@ -630,7 +618,6 @@ static void duplicates() {
   ZuTestScope(duplicates);
 
   auto direct = ZfCf::scan("value: 1, value: 2");
-  ZuCheck(string(direct.p<1>()->resolve("value")) == "2");
   auto value = ZfCf::handler<CfNested>(direct.p<1>()).ctor();
   ZuCheck(value.value == 2);
   const auto &directFields =
@@ -647,7 +634,6 @@ static void duplicates() {
     "value: 1,\n"
     "%inject()\n"
     "value: 3", pctFn);
-  ZuCheck(string(expanded.p<1>()->resolve("value")) == "3");
   value = ZfCf::handler<CfNested>(expanded.p<1>()).ctor();
   ZuCheck(value.value == 3);
   const auto &expandedFields =
@@ -1221,7 +1207,7 @@ int main(int argc, char **argv) {
   ZuTestMain();
 
   ZuTestCall(ownership);
-  ZuTestCall(resolve);
+  ZuTestCall(ancestry);
   ZuTestCall(quoting);
   ZuTestCall(expansion);
   ZuTestCall(classification);

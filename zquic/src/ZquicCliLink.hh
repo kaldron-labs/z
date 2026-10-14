@@ -112,7 +112,7 @@ public:
       });
       return;
     }
-    (void)Base::disconnect(false);
+    closeEndpointDrained_(false);
   }
   template <typename L>
   void disconnect(L &&l) {
@@ -131,6 +131,8 @@ public:
     closeCurrent_(true, false, ZuFwd<L>(l));
     Base::resetTLS_();
   }
+  void disconnected(bool) { }
+
   void abort() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC client abort before app initialization", return);
@@ -572,18 +574,25 @@ private:
       "QUIC endpoint close drain outside Rx thread", return);
     m_udpReady = 0;
     m_notifyEndpointDown = false;
-    if (notify) impl()->disconnected(peer);
     if (Base::linkClosedRx_()) Base::clearCallbacks_();
-    Base::disconnect(peer);
-    Endpoint::disconnect([
-      link = impl(), notify, l = ZuFwd<L>(l)
+    Base::disconnect_(peer, [
+      link = ZmRef(impl()), notify, peer, l = ZuFwd<L>(l)
     ]() mutable {
-      link->app()->txRun([
-	link, notify, l = ZuMv(l)
+      auto link_ = link.ptr();
+      link_->Endpoint::disconnect([
+	link = ZuMv(link), notify, peer, l = ZuMv(l)
       ]() mutable {
-	if (notify) link->endpointDown();
-	link = nullptr;
-	l();
+	link->app()->rxRun([
+	  link = ZuMv(link), notify, peer, l = ZuMv(l)
+	]() mutable {
+	  if (notify) link->disconnected(peer);
+	  auto app = link->app();
+	  app->txRun([link = ZuMv(link), notify, l = ZuMv(l)]() mutable {
+	    if (notify) link->endpointDown();
+	    link = nullptr;
+	    l();
+	  });
+	});
       });
     });
   }
@@ -1617,13 +1626,10 @@ private:
   }
   void endpointDownRx_(Endpoint *ep) {
     if (ep != this) return;
-    m_udpReady = 0;
-    bool notify = m_notifyEndpointDown;
-    m_notifyEndpointDown = true;
-    resetRuntimeState_();
-    if (notify) {
-      impl()->disconnected(true);
-    }
+    closeEndpointDrained_(m_notifyEndpointDown, true, CloseFn{});
+  }
+  void resetDisconnected_() {
+    closeEndpointDrained_(true, true, CloseFn{});
   }
 
   void connectFailed_0(bool transient) {

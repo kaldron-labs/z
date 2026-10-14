@@ -237,8 +237,11 @@ static const ZfYAML::AnyNode *field(
     const ZfYAML::AnyNode *node, ZuCSpan id)
 {
   if (!node || !node->has<ZfYAML::AnyNode::Object>()) return nullptr;
-  for (auto &field: node->data<ZfYAML::AnyNode::Object>())
-    if (field.p<0>() == id) return field.p<1>();
+  const auto &fields = node->data<ZfYAML::AnyNode::Object>();
+  for (unsigned i = fields.length(); i; ) {
+    const auto &entry = fields[--i];
+    if (entry.p<0>() == id) return entry.p<1>();
+  }
   return nullptr;
 }
 
@@ -317,8 +320,8 @@ static void block()
   ZuCheck(items->has<ZfYAML::AnyNode::Array>());
   ZuCheck(items->data<ZfYAML::AnyNode::Array>().length() == 2);
   ZuCheck(string(items->data<ZfYAML::AnyNode::Array>()[1]) == "two");
-  ZuCheck(string(root->resolve("nested.key")) == "value");
-  ZuCheck(root->resolve("nested.nil")->scalarType == ZfYAML::ScalarTC::Null);
+  ZuCheck(string(field(field(root, "nested"), "key")) == "value");
+  ZuCheck(field(field(root, "nested"), "nil")->scalarType == ZfYAML::ScalarTC::Null);
 }
 
 static void flow()
@@ -327,11 +330,11 @@ static void flow()
   auto result = ZfYAML::scan(
     "{a: [1, 2, 3,], quoted: 'yes', escaped: \"a\\nb\", empty:}");
   auto &root = result.p<1>();
-  ZuCheck(root->resolve("a[2]")->scalarType == ZfYAML::ScalarTC::Number);
-  ZuCheck(string(root->resolve("quoted")) == "yes");
-  ZuCheck(root->resolve("quoted")->scalarType == ZfYAML::ScalarTC::String);
-  ZuCheck(string(root->resolve("escaped")) == "a\nb");
-  ZuCheck(root->resolve("empty")->scalarType == ZfYAML::ScalarTC::Null);
+  ZuCheck(field(root, "a")->data<ZfYAML::AnyNode::Array>()[2].ptr()->scalarType == ZfYAML::ScalarTC::Number);
+  ZuCheck(string(field(root, "quoted")) == "yes");
+  ZuCheck(field(root, "quoted")->scalarType == ZfYAML::ScalarTC::String);
+  ZuCheck(string(field(root, "escaped")) == "a\nb");
+  ZuCheck(field(root, "empty")->scalarType == ZfYAML::ScalarTC::Null);
 }
 
 static void documents()
@@ -343,13 +346,45 @@ static void documents()
   ZuCheck(marker.p<1>()->scalarType == ZfYAML::ScalarTC::Null);
   ZuCheck(error("---\na: 1\n---\nb: 2\n").find("second document") >= 0);
   ZuCheck(error("%YAML 1.2\n---\na: 1\n").find("directive") >= 0);
-  ZuCheck(error("a: 1\na: 2\n").find("duplicate key") >= 0);
+  auto repeated = ZfYAML::scan("a: 1\na: 2\n").p<1>();
+  ZuCheck(string(field(repeated, "a")) == "2");
+  auto typed = ZfYAML::scan("value: 1\nvalue: 2\n").p<1>();
+  ZuCheck(loadError([&] {
+    ZfYAML::handler<YAMLNested>(typed).ctor();
+  }));
+  ZuCheck(loadError([] {
+    auto tree = ZfYAML::scan("{value: 1, 'value': 2}");
+    ZfYAML::handler<YAMLNested>(tree.p<1>()).ctor();
+  }));
+  auto unknown = ZfYAML::scan("other: 1\nother: 2\nvalue: 3\n");
+  ZuCheck(ZfYAML::handler<YAMLNested>(unknown.p<1>()).ctor().value == 3);
+  ZtString<> large;
+  for (unsigned i = 0; i < 40; ++i)
+    large << "key" << i << ": " << i << '\n';
+  large << "key0: 41\n";
+  ZuCheck(string(field(ZfYAML::scan(large).p<1>(), "key0")) == "41");
+  large.null();
+  large << '{';
+  for (unsigned i = 0; i < 40; ++i)
+    large << "key" << i << ": " << i << ", ";
+  large << "key0: 41}";
+  ZuCheck(string(field(ZfYAML::scan(large).p<1>(), "key0")) == "41");
+  large.null();
+  large << "root:\n";
+  for (unsigned i = 0; i < 40; ++i)
+    large << "  key" << i << ": " << i << '\n';
+  large << "  child:\n";
+  for (unsigned i = 0; i < 40; ++i)
+    large << "    key" << i << ": " << i << '\n';
+  ZuCheck(ZfYAML::scan(large).p<1>());
+  large << "  key0: 41\n";
+  ZuCheck(string(field(field(ZfYAML::scan(large).p<1>(), "root"), "key0")) == "41");
   ZuCheck(error("? [a, b]\n: value\n").find("complex key") >= 0);
   ZuCheck(error("<<: *base\n").find("merge key") >= 0);
   const char bom[] = "\xef\xbb\xbf---\r\na: one\rcomment: two\n...\r\n";
   auto mixed = ZfYAML::scan({bom, unsigned(sizeof(bom) - 1)});
-  ZuCheck(string(mixed.p<1>()->resolve("a")) == "one");
-  ZuCheck(string(mixed.p<1>()->resolve("comment")) == "two");
+  ZuCheck(string(field(mixed.p<1>(), "a")) == "one");
+  ZuCheck(string(field(mixed.p<1>(), "comment")) == "two");
   ZuCheck(error("a: [1,, 2]\n").find(
     "line 1, column 7 (offset 6)") >= 0);
 }
@@ -364,9 +399,9 @@ static void aliases()
   auto base = field(root, "base");
   auto copy = field(root, "copy");
   ZuCheck(base != copy);
-  ZuCheck(string(copy->resolve("name")) == "one");
+  ZuCheck(string(field(copy, "name")) == "one");
   ZuCheck(copy->parent == root.ptr());
-  ZuCheck(copy->resolve("values[0]")->parent == copy->resolve("values"));
+  ZuCheck(field(copy, "values")->data<ZfYAML::AnyNode::Array>()[0].ptr()->parent == field(copy, "values"));
   ZuCheck(error("value: *missing\n").find("unknown alias") >= 0);
   ZuCheck(error("value: &self [*self]\n").find("cyclic alias") >= 0);
   ZuCheck(error("base: &x one\ncopy: *x\n",
@@ -382,13 +417,13 @@ static void aliases()
     "mappingCopy: *map\n"
     "replace: &x two\n"
     "latest: *x\n").p<1>();
-  ZuCheck(kinds->resolve("scalarCopy")->scalarType == ZfYAML::ScalarTC::True);
-  ZuCheck(string(kinds->resolve("sequenceCopy[0]")) == "one");
-  ZuCheck(string(kinds->resolve("mappingCopy.child")) == "value");
-  ZuCheck(string(kinds->resolve("latest")) == "two");
-  ZuCheck(kinds->resolve("sequence") != kinds->resolve("sequenceCopy"));
-  ZuCheck(kinds->resolve("sequence[0]") !=
-    kinds->resolve("sequenceCopy[0]"));
+  ZuCheck(field(kinds, "scalarCopy")->scalarType == ZfYAML::ScalarTC::True);
+  ZuCheck(string(field(kinds, "sequenceCopy")->data<ZfYAML::AnyNode::Array>()[0].ptr()) == "one");
+  ZuCheck(string(field(field(kinds, "mappingCopy"), "child")) == "value");
+  ZuCheck(string(field(kinds, "latest")) == "two");
+  ZuCheck(field(kinds, "sequence") != field(kinds, "sequenceCopy"));
+  ZuCheck(field(kinds, "sequence")->data<ZfYAML::AnyNode::Array>()[0].ptr() !=
+    field(kinds, "sequenceCopy")->data<ZfYAML::AnyNode::Array>()[0].ptr());
   ZuCheck(error(
     "a: &a value\nb: &b [*a]\nc: *b\n",
     ZfYAML::Limits{100, 1, 100}).find("alias depth limit") >= 0);
@@ -399,19 +434,6 @@ static void aliases()
 static void transforms()
 {
   ZuTestScope(transforms);
-  auto resolved = ZfYAML::resolve(ZuMv(ZfYAML::scan(
-    "defs:\n"
-    "  A B: {type: object, properties: {a: {type: string}}}\n"
-    "  a/b: {mark: slash}\n"
-    "schema: {$ref: '#/defs/A%20B', description: local}\n"
-    "slash: {$ref: '#/defs/a~1b'}\n").p<1>()));
-  auto schema = field(resolved, "schema");
-  ZuCheck(!field(schema, "$ref"));
-  ZuCheck(string(field(schema, "type")) == "object");
-  ZuCheck(string(field(schema, "description")) == "local");
-  ZuCheck(string(resolved->resolve("slash.mark")) == "slash");
-  ZuCheck(error("x: 1\n").length() == 0);
-
   auto flat = ZfYAML::flatten(ZuMv(ZfYAML::scan(
     "type: object\n"
     "required: [a]\n"
@@ -422,8 +444,8 @@ static void transforms()
   auto required = field(flat, "required");
   ZuCheck(required->data<ZfYAML::AnyNode::Array>().length() == 3);
   ZuCheck(string(required->data<ZfYAML::AnyNode::Array>()[2]) == "c");
-  ZuCheck(string(flat->resolve("properties.a.type")) == "string");
-  ZuCheck(string(flat->resolve("properties.b.type")) == "number");
+  ZuCheck(string(field(field(field(flat, "properties"), "a"), "type")) == "string");
+  ZuCheck(string(field(field(field(flat, "properties"), "b"), "type")) == "number");
 
   auto nullRoot = ZfYAML::flatten(ZuMv(ZfYAML::scan("null\n").p<1>()));
   ZuCheck(nullRoot->has<ZfYAML::AnyNode::Object>());
@@ -456,13 +478,13 @@ static void collections()
     "emptyObject: {}\n"
     "omitted:\n");
   auto &root = result.p<1>();
-  ZuCheck(string(root->resolve("root[0].key")) == "value");
-  ZuCheck(string(root->resolve("root[0].other[1]")) == "two");
-  ZuCheck(string(root->resolve("root[1].key")) == "flow");
-  ZuCheck(string(root->resolve("indentless[1]")) == "b");
-  ZuCheck(root->resolve("emptyArray")->has<ZfYAML::AnyNode::Array>());
-  ZuCheck(root->resolve("emptyObject")->has<ZfYAML::AnyNode::Object>());
-  ZuCheck(root->resolve("omitted")->scalarType == ZfYAML::ScalarTC::Null);
+  ZuCheck(string(field(field(root, "root")->data<ZfYAML::AnyNode::Array>()[0].ptr(), "key")) == "value");
+  ZuCheck(string(field(field(root, "root")->data<ZfYAML::AnyNode::Array>()[0].ptr(), "other")->data<ZfYAML::AnyNode::Array>()[1].ptr()) == "two");
+  ZuCheck(string(field(field(root, "root")->data<ZfYAML::AnyNode::Array>()[1].ptr(), "key")) == "flow");
+  ZuCheck(string(field(root, "indentless")->data<ZfYAML::AnyNode::Array>()[1].ptr()) == "b");
+  ZuCheck(field(root, "emptyArray")->has<ZfYAML::AnyNode::Array>());
+  ZuCheck(field(root, "emptyObject")->has<ZfYAML::AnyNode::Object>());
+  ZuCheck(field(root, "omitted")->scalarType == ZfYAML::ScalarTC::Null);
 }
 
 static void scalars()
@@ -518,13 +540,13 @@ static void scalars()
     "url: http://example/#part\n"
     "colon: a:b\n"
     "comment: value # ignored\n").p<1>();
-  ZuCheck(string(root->resolve("single")) == "it's yes");
-  ZuCheck(root->resolve("single")->scalarType == ZfYAML::ScalarTC::String);
-  ZuCheck(string(root->resolve("double")) == "A\n\xe2\x82\xac\xf0\x9f\x98\x80");
-  ZuCheck(string(root->resolve("control")).length() == 8);
-  ZuCheck(string(root->resolve("url")) == "http://example/#part");
-  ZuCheck(string(root->resolve("colon")) == "a:b");
-  ZuCheck(string(root->resolve("comment")) == "value");
+  ZuCheck(string(field(root, "single")) == "it's yes");
+  ZuCheck(field(root, "single")->scalarType == ZfYAML::ScalarTC::String);
+  ZuCheck(string(field(root, "double")) == "A\n\xe2\x82\xac\xf0\x9f\x98\x80");
+  ZuCheck(string(field(root, "control")).length() == 8);
+  ZuCheck(string(field(root, "url")) == "http://example/#part");
+  ZuCheck(string(field(root, "colon")) == "a:b");
+  ZuCheck(string(field(root, "comment")) == "value");
   auto multiline = ZfYAML::scan(
     "plain: first\n"
     "  second\n"
@@ -534,21 +556,21 @@ static void scalars()
     "  second\n"
     "\n"
     "  third\"\n").p<1>();
-  ZuCheck(string(multiline->resolve("plain")) == "first second\nthird");
-  ZuCheck(string(multiline->resolve("quoted")) == "first second\nthird");
+  ZuCheck(string(field(multiline, "plain")) == "first second\nthird");
+  ZuCheck(string(field(multiline, "quoted")) == "first second\nthird");
 }
 
 static void invalid()
 {
   ZuTestScope(invalid);
   {
-    ZuTestRepeat(syntax, 12);
+    ZuTestRepeat(syntax, 11);
     for (auto input: {
         ZuCSpan{"\ta: 1\n"}, ZuCSpan{"a: [1,, 2]\n"},
         ZuCSpan{"a: {b 1}\n"}, ZuCSpan{"a: [1, 2\n"},
         ZuCSpan{"a: 'unterminated\n"}, ZuCSpan{"a: \"unterminated\n"},
         ZuCSpan{"a: \"\\q\"\n"}, ZuCSpan{"a: \"\\uD800\"\n"},
-        ZuCSpan{"a: 1\na: 2\n"}, ZuCSpan{"a: !tag value\n"},
+        ZuCSpan{"a: !tag value\n"},
         ZuCSpan{"a: &x &y value\n"}, ZuCSpan{"a: *forward\n"}}) {
       ZuCheck(error(input));
     }
@@ -727,31 +749,6 @@ static void handlers()
 static void transformEdges()
 {
   ZuTestScope(transformEdges);
-  auto root = ZfYAML::resolve(ZuMv(ZfYAML::scan(
-    "defs:\n"
-    "  Obj: {a: 1, b: 2}\n"
-    "  Scalar: text\n"
-    "  List: [{inside: yes}]\n"
-    "use: {$ref: '#/defs/Obj', b: override, c: 3}\n"
-    "indexed: {$ref: '#/defs/List/0'}\n"
-    "scalar: {$ref: '#/defs/Scalar'}\n"
-    "array: {$ref: '#/defs/List'}\n"
-    "external: {$ref: 'other.yaml#/Obj'}\n").p<1>()));
-  auto use = root->resolve("use");
-  const auto &fields = use->data<ZfYAML::AnyNode::Object>();
-  ZuCheck(fields.length() == 3);
-  ZuCheck(fields[0].p<0>() == "a" && fields[1].p<0>() == "b" &&
-    fields[2].p<0>() == "c");
-  ZuCheck(string(use->resolve("b")) == "override");
-  ZuCheck(string(root->resolve("indexed.inside")) == "yes");
-  ZuCheck(field(root->resolve("scalar"), "$ref"));
-  ZuCheck(field(root->resolve("array"), "$ref"));
-  ZuCheck(field(root->resolve("external"), "$ref"));
-  ZuCheck(loadError([] {
-    auto bad = ZfYAML::scan("defs: {x: {a: 1}}\nuse: {$ref: '#/defs/%GG'}\n");
-    ZfYAML::resolve(ZuMv(bad.p<1>()));
-  }));
-
   auto flat = ZfYAML::flatten(ZuMv(ZfYAML::scan(
     "value: old\n"
     "array: [1, 1.0, yes]\n"
@@ -759,21 +756,78 @@ static void transformEdges()
     "  - {value: {nested: true}, array: [1e0, no, yes]}\n"
     "oneOf: [{type: string, anyOf: [{x: 1}]}]\n"
     "anyOf: []\n").p<1>()));
-  ZuCheck(flat->resolve("value.nested")->scalarType == ZfYAML::ScalarTC::True);
-  auto array = flat->resolve("array");
+  ZuCheck(field(field(flat, "value"), "nested")->scalarType == ZfYAML::ScalarTC::True);
+  auto array = field(flat, "array");
   ZuCheck(array->data<ZfYAML::AnyNode::Array>().length() == 4);
   ZuCheck(array->data<ZfYAML::AnyNode::Array>()[3]->scalarType ==
     ZfYAML::ScalarTC::False);
   ZuCheck(field(flat, "oneOf"));
   ZuCheck(field(flat, "anyOf"));
-  ZuCheck(field(flat->resolve("oneOf[0]"), "anyOf"));
+  ZuCheck(field(field(flat, "oneOf")->data<ZfYAML::AnyNode::Array>()[0].ptr(), "anyOf"));
+
+  auto merged = ZfYAML::flatten(ZuMv(ZfYAML::scan(
+    "a: old\nb: old\nc: old\nd: old\ne: old\nf: old\ng: old\nh: old\n"
+    "nested: {a: old, b: old, c: old, d: old, e: old, f: old, "
+      "g: old, h: old}\n"
+    "allOf: [{a: new, b: new, c: new, d: new, e: new, f: new, "
+      "g: new, h: new, nested: {a: new, b: new, c: new, d: new, "
+      "e: new, f: new, g: new, h: new}, extra: added}]\n").p<1>()));
+  ZuCheck(string(field(merged, "a")) == "new");
+  ZuCheck(string(field(merged, "h")) == "new");
+  ZuCheck(string(field(field(merged, "nested"), "a")) == "new");
+  ZuCheck(string(field(field(merged, "nested"), "h")) == "new");
+  ZuCheck(string(field(merged, "extra")) == "added");
+  ZuCheck(!field(merged, "allOf"));
+
+  ZtString<> indexedMergeText;
+  for (unsigned i = 0; i < 64; ++i)
+    indexedMergeText << "key" << i << ": old\n";
+  indexedMergeText << "nested: {";
+  for (unsigned i = 0; i < 64; ++i) {
+    if (i) indexedMergeText << ", ";
+    indexedMergeText << "key" << i << ": old";
+  }
+  indexedMergeText << "}\nallOf: [{";
+  for (unsigned i = 0; i < 64; ++i) {
+    if (i) indexedMergeText << ", ";
+    indexedMergeText << "key" << i << ": new";
+  }
+  indexedMergeText << ", nested: {";
+  for (unsigned i = 0; i < 64; ++i) {
+    if (i) indexedMergeText << ", ";
+    indexedMergeText << "key" << i << ": new";
+  }
+  indexedMergeText << "}, extra: added}]\nkey63: final\n";
+  auto indexedMerge = ZfYAML::flatten(
+    ZuMv(ZfYAML::scan(indexedMergeText).p<1>()));
+  ZuCheck(string(field(indexedMerge, "key63")) == "final");
+  ZuCheck(string(field(field(indexedMerge, "nested"), "key63")) == "new");
+  ZuCheck(string(field(indexedMerge, "extra")) == "added");
+
+  ZtString<> scalarMergeText{"values: ["};
+  for (unsigned i = 0; i < 32; ++i) {
+    if (i) scalarMergeText << ", ";
+    scalarMergeText << "value" << i;
+  }
+  scalarMergeText << ", 1]\nallOf: [{values: [";
+  for (unsigned i = 16; i < 48; ++i) {
+    if (i != 16) scalarMergeText << ", ";
+    scalarMergeText << "value" << i;
+  }
+  scalarMergeText << ", 1.0]}]\n";
+  auto scalarMerge = ZfYAML::flatten(
+    ZuMv(ZfYAML::scan(scalarMergeText).p<1>()));
+  auto mergedValues = field(scalarMerge, "values");
+  ZuCheck(mergedValues->data<ZfYAML::AnyNode::Array>().length() == 49);
+  ZuCheck(string(field(scalarMerge, "values")->data<ZfYAML::AnyNode::Array>()[32].ptr()) == "1");
+  ZuCheck(string(field(scalarMerge, "values")->data<ZfYAML::AnyNode::Array>()[48].ptr()) == "value47");
 
   auto empty = ZfYAML::flatten(ZuMv(ZfYAML::scan("oneOf: []\n").p<1>()),
     true, false);
   ZuCheck(!field(empty, "oneOf"));
   auto arrayFlags = ZfYAML::flatten(
     ZuMv(ZfYAML::scan("[{oneOf: [{x: 1}]}]\n").p<1>()), true, true);
-  ZuCheck(field(arrayFlags->resolve("[0]"), "oneOf"));
+  ZuCheck(field(arrayFlags->data<ZfYAML::AnyNode::Array>()[0].ptr(), "oneOf"));
   ZuCheck(loadError([] {
     auto bad = ZfYAML::scan("object: {}\nallOf: [{object: []}]\n");
     ZfYAML::flatten(ZuMv(bad.p<1>()));
@@ -792,17 +846,16 @@ static void transformGolden()
     "      properties: {id: {type: string}}\n"
     "    Named:\n"
     "      allOf:\n"
-    "        - {$ref: '#/components/schemas/Base'}\n"
+    "        - {type: object, required: [id], properties: {id: {type: string}}}\n"
     "        - {required: [name], properties: {name: {type: string}}}\n"
     "request:\n"
     "  allOf:\n"
-    "    - {$ref: '#/components/schemas/Named', description: local}\n"
+    "    - {description: local, type: object, required: [id, name],\n"
+    "       properties: {id: {type: string}, name: {type: string}}}\n"
     "    - {required: [id, extra], properties: {extra: {type: number}}}\n"
     "  oneOf: [{type: string}, {type: number}]\n").p<1>();
   ZuCheck(loaded);
-  auto resolved = ZfYAML::resolve(ZuMv(loaded));
-  ZuCheck(resolved);
-  auto actual = ZfYAML::flatten(ZuMv(resolved));
+  auto actual = ZfYAML::flatten(ZuMv(loaded));
   ZuCheck(actual);
   auto expected = ZfYAML::scan(
     "components:\n"
@@ -845,14 +898,14 @@ static void blockScalars()
     "  x\n"
     "explicit: |2-\n"
     "  x\n").p<1>();
-  ZuCheck(string(root->resolve("literal")) == "one\ntwo\n");
-  ZuCheck(string(root->resolve("strip")) == "one\ntwo");
-  ZuCheck(string(root->resolve("fold")) == "one two\n");
-  ZuCheck(string(root->resolve("paragraph")) == "one\ntwo");
-  ZuCheck(string(root->resolve("keep")) == "one\n\n");
-  ZuCheck(string(root->resolve("both")) == "x\n");
-  ZuCheck(string(root->resolve("explicit")) == "x");
-  ZuCheck(root->resolve("fold")->scalarType == ZfYAML::ScalarTC::String);
+  ZuCheck(string(field(root, "literal")) == "one\ntwo\n");
+  ZuCheck(string(field(root, "strip")) == "one\ntwo");
+  ZuCheck(string(field(root, "fold")) == "one two\n");
+  ZuCheck(string(field(root, "paragraph")) == "one\ntwo");
+  ZuCheck(string(field(root, "keep")) == "one\n\n");
+  ZuCheck(string(field(root, "both")) == "x\n");
+  ZuCheck(string(field(root, "explicit")) == "x");
+  ZuCheck(field(root, "fold")->scalarType == ZfYAML::ScalarTC::String);
 }
 
 static void maps()

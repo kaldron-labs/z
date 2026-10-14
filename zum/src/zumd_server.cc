@@ -83,6 +83,31 @@ static ServerReply serverError()
 
 static bool decodeID(ZuCSpan, Bytes &);
 
+struct LoginFieldIDs { using Keys = ZuStringTL<"id", "login">; };
+struct ConsentFieldIDs { using Keys = ZuStringTL<"id", "decision">; };
+struct DecisionIDs { using Keys = ZuStringTL<"approve", "deny">; };
+struct ScopeIDs {
+  using Keys = ZuStringTL<"openid", "profile", "email", "offline_access",
+    "zum.admin">;
+};
+
+template <typename IDs, unsigned N>
+static bool formLookup(String &form, ZuCSpan (&lookup)[N])
+{
+  ZuAssert(N < 32);
+  static constexpr auto matcher = ZuMatcher<IDs>();
+  unsigned seen = 0;
+  bool valid = true;
+  bool decoded = formEach(form.span(), [&lookup, &seen, &valid](
+      ZuCSpan name, ZuCSpan value) {
+    int j = matcher.exact(name);
+    if (j < 0 || (seen & (1U << j))) { valid = false; return; }
+    lookup[j] = value;
+    seen |= 1U << j;
+  });
+  return decoded && valid && seen == (1U << N) - 1;
+}
+
 static bool logoutForm(String &form, String &csrf)
 {
   bool valid = true;
@@ -101,55 +126,20 @@ static bool logoutForm(String &form, String &csrf)
 
 static bool loginForm(String &form, Bytes &id, String &login)
 {
-  ZuCSpan encoded;
-  bool valid = true;
-  unsigned seen = 0;
-  valid = formEach(form.span(), [&valid, &seen, &encoded, &login](
-      ZuCSpan name, ZuCSpan value) {
-    unsigned bit = 0;
-    if (name == "id") {
-      bit = 1U;
-      encoded = value;
-    } else if (name == "login") {
-      bit = 2U;
-      login = value;
-    } else {
-      valid = false;
-      return;
-    }
-    if (seen & bit) valid = false;
-    seen |= bit;
-  }) && valid;
-  return valid && seen == 3U && login && login.length() <= 1024 &&
-    decodeID(encoded, id);
+  ZuCSpan lookup[2];
+  if (!formLookup<LoginFieldIDs>(form, lookup)) return false;
+  login = lookup[1];
+  return login && login.length() <= 1024 && decodeID(lookup[0], id);
 }
 
 static bool consentForm(String &form, Bytes &id, bool &approve)
 {
-  ZuCSpan encoded;
-  ZuCSpan decision;
-  bool valid = true;
-  unsigned seen = 0;
-  valid = formEach(form.span(), [&valid, &seen, &encoded, &decision](
-      ZuCSpan name, ZuCSpan value) {
-    unsigned bit = 0;
-    if (name == "id") {
-      bit = 1U;
-      encoded = value;
-    } else if (name == "decision") {
-      bit = 2U;
-      decision = value;
-    } else {
-      valid = false;
-      return;
-    }
-    if (seen & bit) valid = false;
-    seen |= bit;
-  }) && valid;
-  if (!valid || seen != 3U ||
-      (decision != "approve" && decision != "deny") ||
-      !decodeID(encoded, id)) return false;
-  approve = decision == "approve";
+  ZuCSpan lookup[2];
+  if (!formLookup<ConsentFieldIDs>(form, lookup)) return false;
+  static constexpr auto matcher = ZuMatcher<DecisionIDs>();
+  int decision = matcher.exact(lookup[1]);
+  if (decision < 0 || !decodeID(lookup[0], id)) return false;
+  approve = decision == 0;
   return true;
 }
 
@@ -291,14 +281,17 @@ static String consentPage(const ConsentView &grant, ZuCSpan client, ZuCSpan app)
       page << "<li><code>";
       htmlEsc(page, scope);
       page << "</code>";
-      if (scope == "openid") page << " &mdash; Verify your identity.";
-      else if (scope == "profile") page << " &mdash; Read your basic profile.";
-      else if (scope == "email") page << " &mdash; Read your email address.";
-      else if (scope == "offline_access")
-	page << " &mdash; Keep access when you are not signed in.";
-      else if (scope == "zum.admin")
-	page << " &mdash; Manage applications, users and access permissions.";
-      else page << " &mdash; Access this application role.";
+      static constexpr auto matcher = ZuMatcher<ScopeIDs>();
+      switch (matcher.exact(scope)) {
+	case 0: page << " &mdash; Verify your identity."; break;
+	case 1: page << " &mdash; Read your basic profile."; break;
+	case 2: page << " &mdash; Read your email address."; break;
+	case 3: page << " &mdash; Keep access when you are not signed in."; break;
+	case 4:
+	  page << " &mdash; Manage applications, users and access permissions.";
+	  break;
+	default: page << " &mdash; Access this application role.";
+      }
       page << "</li>";
     }
     scopes.offset(n < scopes.length() ? n + 1 : n);
@@ -311,13 +304,13 @@ static String consentPage(const ConsentView &grant, ZuCSpan client, ZuCSpan app)
 }
 
 static void consentReply(
-    DBContext *context, AppID appID, Bytes id, int64_t now,
+    DB *db, AppID appID, Bytes id, int64_t now,
     String setCookie, ServerFn complete)
 {
-  auto grants = context->grants;
-  grants->run(0, [context, grants, appID, id = ZuMv(id), now,
+  auto grants = db->grants;
+  grants->run(0, [db, grants, appID, id = ZuMv(id), now,
       setCookie = ZuMv(setCookie), complete = ZuMv(complete)]() mutable {
-    grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [context, appID, now,
+    grants->find<0>(0, ZuFwdTuple(ZuMv(id)), [db, appID, now,
 	setCookie = ZuMv(setCookie), complete = ZuMv(complete)](
 	ZdbRowRef<Grant> row) mutable {
       if (!row || row->data().appID != appID ||
@@ -330,12 +323,12 @@ static void consentReply(
       }
       auto &data = row->data();
       ConsentView grant{data.id, appID, data.clientID, data.scope};
-      auto clients = context->clients;
+      auto clients = db->clients;
       String clientID{grant.clientID};
-      clients->run(0, [context, clients, clientID = ZuMv(clientID),
+      clients->run(0, [db, clients, clientID = ZuMv(clientID),
 	  grant = ZuMv(grant), setCookie = ZuMv(setCookie),
 	  complete = ZuMv(complete)]() mutable {
-	clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [context,
+	clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [db,
 	    grant = ZuMv(grant), setCookie = ZuMv(setCookie),
 	    complete = ZuMv(complete)](ZdbRowRef<Client> row) mutable {
 	  if (!row || row->data().state != State::Active || row->data().owner) {
@@ -343,7 +336,7 @@ static void consentReply(
 	    return;
 	  }
 	  String client{row->data().label ? row->data().label : row->data().id};
-	  auto apps = context->apps;
+	  auto apps = db->apps;
 	  AppID appID = grant.appID;
 	  apps->run(0, [apps, appID, client = ZuMv(client),
 	      grant = ZuMv(grant), setCookie = ZuMv(setCookie),
@@ -368,11 +361,11 @@ static void consentReply(
 }
 
 bool Server::init(
-    DB *db, DBContext *context, Requests *requests, ServerConfig config,
+    DB *db, Requests *requests, ServerConfig config,
     ClockFn clock, PageFn page, PolicyFn policy, AdmitFn admit, SignFn sign,
     OIDCHTTPFn oidcHTTP, AuthRouteFn authRoute)
 {
-  if (m_db || !db || !context || !requests || !clock ||
+  if (m_db || !db || !requests || !clock ||
       !policy || !sign || !config.issuer ||
       !config.cookieName || !config.cookiePath || !config.requestTimeout ||
       config.ceremonyLifetime <= 0 || config.codeLifetime <= 0 ||
@@ -395,7 +388,6 @@ bool Server::init(
        (!config.oidcTimeout || !oidcHTTP || !authRoute)) ||
       !m_rng.init() || !m_cookieRng.init()) return false;
   m_db = db;
-  m_context = context;
   m_requests = requests;
   m_config = ZuMv(config);
   m_clock = ZuMv(clock);
@@ -405,7 +397,7 @@ bool Server::init(
   m_sign = ZuMv(sign);
   m_authRoute = ZuMv(authRoute);
   if (m_config.authMethod != AuthMethod::Passkey && !m_oidc.init(
-      requests->scheduler(), requests->sid(), context,
+      requests->scheduler(), requests->sid(), db,
       m_config.limits.oidc, m_config.limits.oidcPending,
       m_config.oidcTimeout, [this]() { return now_(); }, ZuMv(oidcHTTP))) {
     final();
@@ -430,7 +422,6 @@ void Server::final()
   m_clock = ClockFn{};
   m_config = {};
   m_requests = nullptr;
-  m_context = nullptr;
   m_db = nullptr;
 }
 
@@ -466,11 +457,11 @@ void Server::app_(AppID appID, AppServerFn complete)
   // transition prevents subsequent admissions; an operation already handed
   // its AppServer snapshot is allowed to finish.  No app/key/policy cache can
   // resurrect a disabled issuer.
-  if (!m_context || !appID || !complete) {
+  if (!m_db || !appID || !complete) {
     if (complete) complete(AppServer{});
     return;
   }
-  auto apps = m_context->apps;
+  auto apps = m_db->apps;
   apps->run(0, [this, apps, appID, complete = ZuMv(complete)]() mutable {
     apps->find<0>(0, ZuFwdTuple(appID), [this, appID,
         complete = ZuMv(complete)](ZdbRowRef<App> row) mutable {
@@ -492,7 +483,7 @@ void Server::app_(AppID appID, AppServerFn complete)
 
 void Server::policy_(AppServer app, AppServerFn complete)
 {
-  auto policies = m_context->authPolicies;
+  auto policies = m_db->authPolicies;
   policies->run(0, [policies, app = ZuMv(app),
       complete = ZuMv(complete)]() mutable {
     policies->find<0>(0, ZuFwdTuple(app.appID), [app = ZuMv(app),
@@ -607,7 +598,7 @@ void Server::authorize_(
     return;
   }
   Bytes sessionBinding{binding};
-  if (!authorizeRequest(m_requests, deadline_(), m_context, m_rng,
+  if (!authorizeRequest(m_requests, deadline_(), m_db, m_rng,
       ZuMv(query), ZuMv(binding), AuthorizeConfig{
         .issuer = app.issuer,
         .appID = app.appID,
@@ -654,7 +645,7 @@ void Server::sessionAuthorize_(AuthorizeResult result, Bytes binding,
   }
   int64_t now = now_();
   String issuer{result.issuer};
-  if (now <= 0 || !sessionUse(m_requests, deadline_(), m_context,
+  if (now <= 0 || !sessionUse(m_requests, deadline_(), m_db,
       ZuMv(sessionToken), ZuMv(issuer), now, sessionIdle,
       [this, result = ZuMv(result), binding = ZuMv(binding),
 	  setCookie = ZuMv(setCookie), none, now, done](int error,
@@ -676,7 +667,7 @@ void Server::sessionAuthorize_(AuthorizeResult result, Bytes binding,
 	  return;
 	}
 	Bytes consentID{result.ceremonyID};
-	if (!authorizeSessionFinish(m_requests, deadline_(), m_context, m_rng,
+	if (!authorizeSessionFinish(m_requests, deadline_(), m_db, m_rng,
 	    ZuMv(result.ceremonyID), ZuMv(binding), ZuMv(session),
 	    AuthorizeFinishConfig{.issuer = result.issuer,
 	      .appID = result.appID, .origin = result.issuer, .now = now,
@@ -692,7 +683,7 @@ void Server::sessionAuthorize_(AuthorizeResult result, Bytes binding,
 		return;
 	      }
 	      if (error == AuthorizeIssue::Consent) {
-		consentReply(m_context, result.appID, ZuMv(id),
+		consentReply(m_db, result.appID, ZuMv(id),
 		  now_(), ZuMv(setCookie),
 		  [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
 		return;
@@ -808,7 +799,7 @@ void Server::token(
     }
     int64_t now = now_();
     if (now <= 0 || app.tokenLifetime > uint64_t(INT64_MAX - now) ||
-	!tokenRequest(m_requests, deadline_(), m_db, m_context,
+	!tokenRequest(m_requests, deadline_(), m_db,
         m_rng, ZuMv(form), ZuMv(authorization), TokenConfig{
           .issuer = app.issuer,
           .appID = app.appID,
@@ -853,7 +844,7 @@ void Server::revoke(
       return;
     }
     int64_t now = now_();
-    if (now <= 0 || !revokeRequest(m_requests, deadline_(), m_context,
+    if (now <= 0 || !revokeRequest(m_requests, deadline_(), m_db,
         ZuMv(form), ZuMv(authorization), RevokeConfig{
           .issuer = app.issuer, .appID = app.appID,
           .jwtLimits = m_config.limits.jwt, .now = now,
@@ -939,7 +930,7 @@ void Server::login_(
   }
   int64_t now = now_();
   if (now <= 0) { done->finish(serverError()); return; }
-  auto grants = m_context->grants;
+  auto grants = m_db->grants;
   bool queued = m_requests->run(deadline_(), [this, grants, app = ZuMv(app),
       id = ZuMv(id), login = ZuMv(login), binding = ZuMv(binding), now, done](
       ZmRef<Request> request) mutable {
@@ -1016,7 +1007,7 @@ void Server::consent_(
   }
   int64_t now = now_();
   Bytes sessionGrant{id};
-  if (now <= 0 || !authorizeConsentFinish(m_requests, deadline_(), m_db, m_context,
+  if (now <= 0 || !authorizeConsentFinish(m_requests, deadline_(), m_db,
       m_rng, ZuMv(id), ZuMv(binding), approve,
       AuthorizeFinishConfig{.issuer = app.issuer, .appID = app.appID,
 	.origin = m_config.issuer, .now = now,
@@ -1086,7 +1077,7 @@ void Server::logout_(
     return;
   }
   int64_t now = now_();
-  if (now <= 0 || !sessionRevoke(m_requests, deadline_(), m_context,
+  if (now <= 0 || !sessionRevoke(m_requests, deadline_(), m_db,
       ZuMv(token), ZuMv(app.issuer), now, [this, done](int error) mutable {
         if (error != SessionError::OK) {
 	  done->finish(serverError());
@@ -1117,7 +1108,7 @@ void Server::ready(ServerFn complete)
         done->finish(ZuMv(reply));
       });
     }};
-    m_context->issuers->find<0>(0, ZuFwdTuple(m_config.issuer),
+    m_db->issuers->find<0>(0, ZuFwdTuple(m_config.issuer),
       [this, finish = ZuMv(finish)](ZdbRowRef<Issuer> issuer) mutable {
         int64_t now = now_();
         if (!issuer || issuer->data().bootstrapPhase != BootstrapPhase::Ready ||
@@ -1125,7 +1116,7 @@ void Server::ready(ServerFn complete)
           finish(serverError());
           return;
         }
-        signKeyLoad(m_context, m_config.issuer, now, now + m_config.accessLifetime,
+        signKeyLoad(m_db, m_config.issuer, now, now + m_config.accessLifetime,
           m_config.limits.jwks, [this, finish = ZuMv(finish)](SignKey key) mutable {
             if (!key.id || !m_sign || !m_requests->active()) {
               finish(serverError());
@@ -1156,7 +1147,7 @@ void Server::metadata(AppID appID, ServerFn complete)
   app_(appID, [this, complete = ZuMv(complete)](AppServer app) mutable {
     if (!app) { complete(serverError()); return; }
     unsigned limit = m_config.limits.metadataScopes;
-    auto roles = m_context->roles;
+    auto roles = m_db->roles;
     if (!roles || !limit || limit == UINT_MAX) {
       complete(serverError());
       return;
@@ -1192,7 +1183,7 @@ void Server::jwks(AppID appID, ServerFn complete)
     if (!app) { complete(serverError()); return; }
     ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
     int64_t now = now_();
-    if (now <= 0 || !jwksLoad(m_requests, deadline_(), m_context,
+    if (now <= 0 || !jwksLoad(m_requests, deadline_(), m_db,
         app.issuer, now, m_config.limits.jwks, [done](
             bool ok, String json) mutable {
           if (ok) done->finish(ServerReply{
@@ -1254,7 +1245,7 @@ void Server::userInfoVerify_(
       .type = ReplyType::BearerError});
     return;
   }
-  m_context->signKeys->find<0>(0, ZuFwdTuple(ZuMv(header.keyID)), [
+  m_db->signKeys->find<0>(0, ZuFwdTuple(ZuMv(header.keyID)), [
     this, app = ZuMv(app), done, now, authorization = ZuMv(authorization)
   ](ZdbRowRef<SignKey> row) mutable {
     Principal principal;
@@ -1267,7 +1258,7 @@ void Server::userInfoVerify_(
       return;
     }
     String clientID = principal.clientID;
-    m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [this,
+    m_db->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [this,
 	appID = app.appID, done, principal = ZuMv(principal)](
 	ZdbRowRef<Client> client) mutable {
       if (!client || client->data().appID != appID ||
@@ -1295,7 +1286,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
     return;
   }
   String clientID = principal.clientID;
-  m_context->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [
+  m_db->clients->find<0>(0, ZuFwdTuple(ZuMv(clientID)), [
     this, done, handle = ZuMv(handle), principal = ZuMv(principal)
   ](ZdbRowRef<Client> client) mutable {
     if (!client || client->data().state != State::Active ||
@@ -1305,7 +1296,7 @@ void Server::userInfo_(Principal principal, ServerFn complete)
         .type = ReplyType::BearerError});
       return;
     }
-    m_context->users->find<1>(0, ZuFwdTuple(ZuMv(handle)), [
+    m_db->users->find<1>(0, ZuFwdTuple(ZuMv(handle)), [
       done, principal = ZuMv(principal)
     ](ZdbRowRef<User> user) mutable {
       String json;
@@ -1394,7 +1385,7 @@ void Server::passkeyAdmitted_(
       config.now = now;
       config.expires = now + m_config.ceremonyLifetime;
       config.timeout = m_config.passkeyTimeout;
-      started = bootstrapBegin(m_requests, deadline_(), m_context, m_rng,
+      started = bootstrapBegin(m_requests, deadline_(), m_db, m_rng,
         ZuMv(start.capability), ZuMv(binding), ZuMv(config), ZuMv(done));
     } break;
     case PasskeyStartType::Bootstrap: {
@@ -1405,7 +1396,7 @@ void Server::passkeyAdmitted_(
       config.now = now;
       config.expires = now + m_config.ceremonyLifetime;
       config.timeout = m_config.passkeyTimeout;
-      started = bootstrapBegin(m_requests, deadline_(), m_context, m_rng,
+      started = bootstrapBegin(m_requests, deadline_(), m_db, m_rng,
         ZuMv(start.capability), ZuMv(binding), ZuMv(config), ZuMv(done));
     } break;
     case PasskeyStartType::AddCredential: {
@@ -1416,7 +1407,7 @@ void Server::passkeyAdmitted_(
       config.now = now;
       config.expires = now + m_config.ceremonyLifetime;
       config.timeout = m_config.passkeyTimeout;
-      started = credentialBegin(m_requests, deadline_(), m_context, m_rng,
+      started = credentialBegin(m_requests, deadline_(), m_db, m_rng,
         ZuMv(binding), ZuMv(config), ZuMv(done));
     } break;
     case PasskeyStartType::Recovery: {
@@ -1427,7 +1418,7 @@ void Server::passkeyAdmitted_(
       config.now = now;
       config.expires = now + m_config.ceremonyLifetime;
       config.timeout = m_config.passkeyTimeout;
-      started = recoveryBegin(m_requests, deadline_(), m_context, m_rng,
+      started = recoveryBegin(m_requests, deadline_(), m_db, m_rng,
         ZuMv(start.capability), ZuMv(binding), ZuMv(config), ZuMv(done));
     } break;
   }
@@ -1469,7 +1460,7 @@ void Server::finishGrant_(
     AppServer app, Bytes id, Bytes binding, String json, ServerFn complete)
 {
   ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
-  auto grants = m_context->grants;
+  auto grants = m_db->grants;
   grants->run(0, [this, grants, app = ZuMv(app), id = ZuMv(id), binding = ZuMv(binding),
       json = ZuMv(json), done]() mutable {
     grants->find<0>(0, ZuFwdTuple(id), [this, app = ZuMv(app), id = ZuMv(id),
@@ -1491,7 +1482,7 @@ void Server::finishGrant_(
         AssertionInput input;
         int error = parseAssertion({json.data(), json.length()},
           WebAuthnInputLimits{}, input);
-        if (error || !authorizeFinish(m_requests, deadline_(), m_context,
+        if (error || !authorizeFinish(m_requests, deadline_(), m_db,
             m_rng, ZuMv(id), ZuMv(binding), ZuMv(input),
             AuthorizeFinishConfig{
 	      .issuer = app.issuer, .appID = app.appID,
@@ -1513,7 +1504,7 @@ void Server::finishGrant_(
                   });
               }
               else if (error == AuthorizeIssue::Consent) {
-                consentReply(m_context, appID, ZuMv(id), now_(), {},
+                consentReply(m_db, appID, ZuMv(id), now_(), {},
                   [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
               }
               else {
@@ -1551,7 +1542,7 @@ void Server::finishGrant_(
             .setCookie = setCookie_({}, true), .type = ReplyType::OK});
           return;
         }
-        auto issuers = m_context->issuers;
+        auto issuers = m_db->issuers;
         issuers->run(0, [this, issuers, done]() mutable {
           String issuer = m_config.issuer;
           issuers->findUpd<0>(0, ZuFwdTuple(ZuMv(issuer)), [this, done](
@@ -1578,18 +1569,15 @@ void Server::finishGrant_(
       switch (purpose) {
         case GrantPurpose::Enrollment:
         case GrantPurpose::Bootstrap:
-          started = enrollmentFinish(m_requests, deadline_(), m_db,
-            m_context, ZuMv(id), ZuMv(binding), ZuMv(input),
+          started = enrollmentFinish(m_requests, deadline_(), m_db, ZuMv(id), ZuMv(binding), ZuMv(input),
             ZuMv(config), ZuMv(finish));
           break;
         case GrantPurpose::AddCredential:
-          started = credentialFinish(m_requests, deadline_(), m_db,
-            m_context, ZuMv(id), ZuMv(binding), ZuMv(input),
+          started = credentialFinish(m_requests, deadline_(), m_db, ZuMv(id), ZuMv(binding), ZuMv(input),
             ZuMv(config), ZuMv(finish));
           break;
         case GrantPurpose::Recovery:
-          started = recoveryFinish(m_requests, deadline_(), m_db,
-            m_context, ZuMv(id), ZuMv(binding), ZuMv(input),
+          started = recoveryFinish(m_requests, deadline_(), m_db, ZuMv(id), ZuMv(binding), ZuMv(input),
             ZuMv(config), ZuMv(finish));
           break;
         default:
@@ -1605,7 +1593,7 @@ void Server::sessionReply_(Bytes grantID, String location, String issuer,
     uint32_t sessionIdle, uint32_t sessionAbsolute, ServerFn complete)
 {
   int64_t now = now_();
-  if (now <= 0 || !sessionIssueGrant(m_requests, deadline_(), m_context,
+  if (now <= 0 || !sessionIssueGrant(m_requests, deadline_(), m_db,
       m_rng, ZuMv(grantID), ZuMv(issuer), now, sessionIdle,
       sessionAbsolute, [this, location = ZuMv(location), sessionAbsolute,
         complete = ZuMv(complete)](int error, Session, String token) mutable {
@@ -1650,7 +1638,7 @@ void Server::oidcCallback_(
     int64_t now = now_();
     Bytes sessionGrant{grantID};
     if (!ok || now <= 0 || !authorizeOIDCFinish(
-        m_requests, deadline_(), m_context, m_rng, ZuMv(grantID),
+        m_requests, deadline_(), m_db, m_rng, ZuMv(grantID),
         ZuMv(binding), ZuMv(user), ZuMv(roleIDs), ZuMv(evidence),
         authTime,
         AuthorizeFinishConfig{.issuer = app.issuer, .appID = app.appID,
@@ -1668,7 +1656,7 @@ void Server::oidcCallback_(
                 done->finish(ZuMv(reply));
               });
           else if (error == AuthorizeIssue::Consent)
-            consentReply(m_context, appID, ZuMv(id), now_(), {},
+            consentReply(m_db, appID, ZuMv(id), now_(), {},
               [done](ServerReply reply) mutable { done->finish(ZuMv(reply)); });
           else {
             auto reply = jsonReply(error);

@@ -234,7 +234,10 @@ struct TestClient::Link :
   Link(TestClient *app) : Base{app} { }
 
   void connected(Zquic::Connected) { ++connectedCount; }
-  void disconnected(bool) { ++disconnectedCount; }
+  void disconnected(bool) {
+    if (cxn()) ++earlyDisconnects;
+    ++disconnectedCount;
+  }
   void connectFailed(bool) { ++connectFailures; }
   void streamed(ZmRef<Stream>) { ++streamedCount; }
   void forceCloseTimeout() {
@@ -246,6 +249,7 @@ struct TestClient::Link :
 
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> earlyDisconnects = 0;
   ZmAtomic<unsigned> connectFailures = 0;
   ZmAtomic<unsigned> streamedCount = 0;
 };
@@ -641,8 +645,10 @@ void testEndpointOpen()
 	    return serverLink->disconnectedCount == 1;
 	  }), "runtime server drain expiry did not disconnect");
 	ZuCHECK(server.stop(), "runtime server stop failed");
+	ZuCHECK(!server.connected(), "server stop preceded endpoint drain");
 	waitDisconnect(server);
-	ZuCHECK(!clientLink->cxn() && clientLink->disconnectedCount == 1 &&
+	ZuCHECK(!clientLink->cxn() && !clientLink->earlyDisconnects &&
+	    clientLink->disconnectedCount == 1 &&
 	    !server.connected(),
 	  "runtime endpoints remained connected after close");
   waitDisconnect(server);

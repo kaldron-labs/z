@@ -16,7 +16,7 @@
 #include <zlib/Zdb.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/zumd.hh>
-#include <zlib/zumd_db_context.hh>
+#include <zlib/zumd_db.hh>
 #include <zlib/ZumJWTVerify.hh>
 
 namespace Zum {
@@ -32,7 +32,7 @@ ZumExtern bool signKeyVerify(const SignKey &, ZuCSpan token,
 ZuDerive(SignKeyFn, (ZmFn<void(SignKey),
   ZmFnHeapID<"Zum.SignKeyFn">>));
 ZumExtern void signKeyLoad(
-  DBContext *, String issuer, int64_t now, int64_t expires,
+  DB *, String issuer, int64_t now, int64_t expires,
   unsigned maxKeys, SignKeyFn);
 
 } // namespace Zum

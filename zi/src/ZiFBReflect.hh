@@ -547,6 +547,29 @@ using UnionAlt = Alt<A::name(), typename Value<typename A::T, ZfFieldTC::UDT>::N
 template <ZuString Name, typename ...A> struct UnionShape { };
 template <typename O, bool = IsUnion<O>{}>
 struct SchemaShape { using T = O; };
+// Synthetic entries share their format and wire types, independently of the
+// application's string/array heaps and container ownership. Named dependencies
+// are checked separately by the graph's normal collision diagnostics.
+template <unsigned Kind, typename ...T> struct MapWireShape { };
+template <ZuString Name> struct MapNamedShape { };
+template <typename V, unsigned Kind = V::Kind>
+struct MapValueShape {
+  using T = MapNamedShape<As<typename V::Native>::name()>;
+};
+template <typename V>
+struct MapValueShape<V, ValueKind::Scalar> { using T = typename V::WireType; };
+template <typename V>
+struct MapValueShape<V, ValueKind::String> { using T = ZiFB::String; };
+template <typename V>
+struct MapValueShape<V, ValueKind::Vector> {
+  using T = MapWireShape<ValueKind::Vector, typename MapValueShape<typename V::Elem>::T>;
+};
+template <typename Fmt, typename K, typename V>
+struct SchemaShape<MapEntry<Fmt, K, V>, false> {
+  using E = MapEntry<Fmt, K, V>;
+  using T = MapEntry<Fmt, typename MapValueShape<FieldWire<typename E::KF>>::T,
+    typename MapValueShape<FieldWire<typename E::VF>>::T>;
+};
 template <typename O>
 struct SchemaShape<O, true> {
   template <typename ...A> using Shape = UnionShape<As<O>::name(), A...>;
@@ -567,7 +590,7 @@ struct Graph {
   template <typename O> using Children_ = Children<O, Facet>;
   template <typename O> using Fields = typename As<O>::template Handler<O, Facet>::SchemaFields;
   using Unsorted = typename Reach<ZuTypeList<ZuUnder<Root>>, ZuTypeList<>, Children_>::T;
-  using Objects = ZuTypeSort<ObjectName, ZuTypeGrep<IsObject, Unsorted>>;
+  using Objects = ZuTypeSort<ObjectName, typename SchemaUniq<ZuTypeGrep<IsObject, Unsorted>>::T>;
   using Enums = ZuTypeSort<ObjectName, typename SchemaUniq<ZuTypeGrep<IsEnum, Unsorted>>::T>;
   static consteval bool namesUnique() {
     bool ok = true;
@@ -598,12 +621,12 @@ using FieldTable = Table<R::Field,
   R::ZfField(Field, name), R::ZfField(Field, type), R::ZfField(Field, id),
   R::ZfField(Field, offset), R::ZfField(Field, defaultInteger),
   R::ZfField(Field, defaultReal), R::ZfField(Field, deprecated),
-  R::ZfField(Field, required), R::ZfField(Field, optional), R::ZfField(Field, padding)>;
+  R::ZfField(Field, required), R::ZfField(Field, key), R::ZfField(Field, optional), R::ZfField(Field, padding)>;
 using AlignedFieldTable = Table<R::Field,
   R::ZfField(Field, name), R::ZfField(Field, type), R::ZfField(Field, id),
   R::ZfField(Field, offset), R::ZfField(Field, defaultInteger),
   R::ZfField(Field, defaultReal), R::ZfField(Field, deprecated),
-  R::ZfField(Field, required), R::ZfField(Field, optional), R::ZfField(Field, padding),
+  R::ZfField(Field, required), R::ZfField(Field, key), R::ZfField(Field, optional), R::ZfField(Field, padding),
   R::ZfField(Field, attributes)>;
 using ObjectTable = Table<R::Object,
   R::ZfField(Object, name), R::ZfField(Object, fields), R::ZfField(Object, isStruct),
@@ -652,7 +675,7 @@ consteval int baseType() {
 template <typename V, typename G>
 consteval int typeIndex() {
   if constexpr (V::Kind == ValueKind::Table || V::Kind == ValueKind::Inline)
-    return ZuTypeIndex<typename V::Native, typename G::Objects>{};
+    return ZuTypeIndex<Shape<typename V::Native>, ZuTypeMap<Shape, typename G::Objects>>{};
   else if constexpr (V::Kind == ValueKind::Union)
     return ZuTypeIndex<Shape<typename V::Native>, ZuTypeMap<Shape, typename G::Enums>>{};
   else if constexpr (V::Kind == ValueKind::Vector || V::Kind == ValueKind::Array)
@@ -740,6 +763,7 @@ struct FieldNode {
 	} else return 0.0;
       } else if constexpr (id == 6) return !ZuFieldActive<F>{};
       else if constexpr (id == 7) return !Tag && V::Required;
+      else if constexpr (id == 8) return !Tag && V::Key;
       else if constexpr (id == 9) return AttrAt - Header::Data - Header::template offset<H>();
       else if constexpr (id == 11)
 	return !Tag && !IsStruct && !V::Required && V::Kind != ValueKind::Scalar;
@@ -1179,6 +1203,7 @@ void object(S &stream) {
       stream << " (id: " << ZuBox<unsigned>{M::template id<F>()};
       if constexpr (!ZuFieldActive<F>{}) stream << ", deprecated";
       if constexpr (V::Required) stream << ", required";
+      if constexpr (V::Key) stream << ", key";
       if constexpr (V::ForcedAlign)
 	stream << ", force_align: " << ZuBox<unsigned>{V::ForcedAlign};
       stream << ')';

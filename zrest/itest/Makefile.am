@@ -21,9 +21,10 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
-noinst_PROGRAMS = zrestmatrix
+noinst_PROGRAMS = zrestmatrix zrestendpoint
 noinst_HEADERS = ZrestITestPorts.hh
 zrestmatrix_SOURCES = zrestmatrix.cc
+zrestendpoint_SOURCES = zrestendpoint.cc
 
 if HAVE_GO
 all-local: zrestprobe zrestua
@@ -41,4 +42,4 @@ EXTRA_DIST = README.md zrestprobe.go zrestua.go
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: all
-	prove -j1 zrestmatrix
+	prove -j1 zrestmatrix zrestendpoint

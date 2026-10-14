@@ -186,6 +186,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
     Zhttp::Transport::T, Zhttp::Version::T);
   void cancelled(const Zhttp::Result &);
   void completed(const Zhttp::Result &);
+  void retired();
 
   uint64_t key() const { return key_; }
   uint64_t length() const { return 1; }
@@ -294,6 +295,7 @@ struct App : public Zhttp::Client<App, Pool> {
   unsigned	fallbackEvents = 0;
   unsigned	cancelledEvents = 0;
   unsigned	completedEvents = 0;
+  unsigned	retiredEvents = 0;
   uint64_t	firstSelectedRequest = 0;
   uint64_t	firstSelectedAttempt = 0;
   uint64_t	failedRequest = 0;
@@ -400,6 +402,7 @@ void ReqBuilder_::completed(const Zhttp::Result &result) {
   resultCode = result.code;
   app->requestCompleted(result);
 }
+void ReqBuilder_::retired() { ++app->retiredEvents; }
 
 ZiMxParams mxParams()
 {
@@ -1673,6 +1676,44 @@ void waves()
   ZuCHECK(heapFinal == heapBaseline,
     "client final returns identified Zhttp heaps to baseline (before=",
     heapBaseline, ", after=", heapFinal, ')');
+  mx.stop();
+}
+
+void sealedAdmission()
+{
+  ZuTestScope(sealedAdmission);
+
+  ZiMultiplex mx{mxParams()};
+  ZuCHECK(mx.start(), "start sealed-admission multiplexer");
+  App app;
+  app.expected = 1;
+  auto config = Zhttp::Config()
+    .links(1).concurrency(1).linkMax(1)
+    .protocol(Zhttp::ProtoPolicy::DisableH3)
+    .tcp(true).tls(false).quic(false);
+  bool started = startApp(app, mx, 1, config);
+  ZuCHECK(started, "start sealed-admission pool");
+  if (started) {
+    ZuCHECK(app.seal(0), "seal pool");
+    ZmSemaphore txBarrier;
+    app.txRun(0, [&txBarrier]() { txBarrier.post(); });
+    ZuCHECK(txBarrier.timedwait(Zm::now(10)) == 0,
+      "observe sealed Tx state");
+    ZuCHECK(app.send(0, app.request()),
+      "coordinator accepts request before pool refusal");
+    ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
+      "refused request completes");
+    ZmSemaphore rxBarrier;
+    mx.run([&rxBarrier]() { rxBarrier.post(); }, mx.sid("3"));
+    ZuCHECK(rxBarrier.timedwait(Zm::now(10)) == 0,
+      "observe retirement callback");
+    ZuCHECK(app.results.length() == 1 &&
+	app.results[0].code == Zhttp::ResultCode::Cancelled &&
+	app.retiredEvents == 1,
+      "sealed refusal reports one completion and retirement");
+    app.stop();
+    app.final();
+  }
   mx.stop();
 }
 
@@ -3043,6 +3084,7 @@ int main(int argc, char **argv)
   ZuTestCall(pipelineCancellation, 2U);
   ZuTestCall(parallelism);
   ZuTestCall(waves);
+  ZuTestCall(sealedAdmission);
   ZuTestCall(stopQueuedLimited);
   ZuTestCall(stopActivePipeline);
   ZuTestCall(stopReusableIdle);

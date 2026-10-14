@@ -10,7 +10,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-noinst_HEADERS =  ZdbMockStore.hh ZdbTest.hh ZdbRepairTest.hh
+noinst_HEADERS =  ZdbMockStore.hh ZdbTest.hh ZdbRepairTest.hh ZdbRepairDefs.hh ZdbTestCf.hh
 LDADD = $(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zv/src/libZv.la \
@@ -19,10 +19,20 @@ LDADD = $(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_LTLIBRARIES = libZdbTest.la
-libZdbTest_la_SOURCES = ZdbTest.cc ZdbTest.hh ZdbMockStore.hh
-noinst_PROGRAMS = ZdbSagaTest ZdbTelTest ZtcDBTest ZdbFBTest
-ZdbSagaTest_SOURCES = ZdbSagaTest.cc
+libZdbTest_la_SOURCES = ZdbTestRepairSaga.cc ZdbTest.cc ZdbTest.hh ZdbMockStore.hh
+noinst_PROGRAMS = ZdbSagaTest ZdbSagaRepeatTest ZdbTelTest ZtcDBTest ZdbFBTest
+ZdbSagaTest_SOURCES = ZdbSagaTest.cc ZdbSagaTestDefs.hh \
+	ZdbTestSagaA.cc \
+	ZdbTestSagaB.cc \
+	ZdbTestRepeatSaga.cc \
+	ZdbTestLiveSaga.cc ZdbTestRepeatLiveSaga.cc \
+	ZdbTestShortSaga.cc \
+	ZdbTestChangedSaga.cc \
+	ZdbTestPayloadSaga.cc \
+	ZdbTestRequiredSaga.cc
 ZdbSagaTest_LDADD = libZdbTest.la $(LDADD)
+ZdbSagaRepeatTest_SOURCES = ZdbSagaRepeatTest.cc ZdbTestRepeatLiveSaga.cc
+ZdbSagaRepeatTest_LDADD = libZdbTest.la $(LDADD)
 ZdbTelTest_SOURCES = ZdbTelTest.cc
 ZdbTelTest_LDADD = libZdbTest.la $(LDADD)
 ZtcDBTest_SOURCES = ZtcDBTest.cc

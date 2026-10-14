@@ -15,6 +15,7 @@
 
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/zumd_scope.hh>
 #include <zlib/zumd_identity_db.hh>
 #include <zlib/zumd_app_db.hh>
 #include <zlib/zumd_oauth.hh>
@@ -34,7 +35,6 @@ namespace AuthorityScanLimit {
   };
 }
 
-ZuDerive(RoleVec, (ZtArray<Role, VecHeap>));
 ZuDerive(ActionVec, (ZtArray<Action, VecHeap>));
 
 struct AuthorityData {
@@ -44,8 +44,6 @@ struct AuthorityData {
   Cred		cred;
   Client	client;
   ClientAccess	access;
-  RoleVec	scopes;
-  RoleVec	roles;
   ActionVec	actionRecords;
   ScopeSelection selection;
   IDVec		principalRoleIDs;
@@ -56,34 +54,34 @@ struct AuthorityData {
 
 ZuDerive(AuthorityFn, (ZmFn<void(int, AuthorityData),
   ZmFnHeapID<"Zum.AuthorityFn">>));
-ZuDerive(ClientScopesFn,
-  (ZmFn<void(int, App, Client, ClientAccess, RoleVec),
-  ZmFnHeapID<"Zum.ClientScopesFn">>));
-ZumExtern void clientScopes(DBContext *, Client, ClientScopesFn);
+ZuDerive(ClientAccessLoadFn,
+  (ZmFn<void(int, App, Client, ClientAccess),
+  ZmFnHeapID<"Zum.ClientAccessLoadFn">>));
+ZumExtern void loadClientAccess(DB *, Client, ClientAccessLoadFn);
 
 ZumExtern void loadGrantAuth(
-  DBContext *, Grant, Client, bool requestedPresent, String requested,
+  DB *, Grant, Client, bool requestedPresent, String requested,
   int64_t now, AuthorityFn);
 ZumExtern void loadGrantAuth(
-  DBContext *, Refresh, Client, bool requestedPresent, String requested,
+  DB *, Refresh, Client, bool requestedPresent, String requested,
   int64_t now, AuthorityFn);
 ZumExtern void loadClientAuth(
-  DBContext *, String issuer, Client, bool requestedPresent,
+  DB *, String issuer, Client, bool requestedPresent,
   String requested, AuthorityFn);
 ZumExtern void loadUserAuth(
-  DBContext *, Grant, User, Cred, IDVec principalRoleIDs, AuthorityFn);
+  DB *, Grant, User, Cred, IDVec principalRoleIDs, AuthorityFn);
 
 
 template <typename Complete>
 void assertionVerify(
-    DBContext *context, Bytes ceremonyID, Bytes bindingDigest,
+    DB *db, Bytes ceremonyID, Bytes bindingDigest,
     AssertionInput input, String issuer, AppID appID,
     String origin, String rpID, int64_t now,
     Complete &&complete)
 {
-  auto grants = context->grants;
-  auto creds = context->creds;
-  auto users = context->users;
+  auto grants = db->grants;
+  auto creds = db->creds;
+  auto users = db->users;
   grants->run(0, [
     grants, creds, users, ceremonyID = ZuMv(ceremonyID),
     bindingDigest = ZuMv(bindingDigest), input = ZuMv(input),
@@ -215,9 +213,9 @@ void assertionVerify(
 
 template <typename Complete>
 void authorizationInsert(
-    DBContext *context, Grant grant, Complete &&complete)
+    DB *db, Grant grant, Complete &&complete)
 {
-  auto grants = context->grants;
+  auto grants = db->grants;
   grants->run(0, [
     grants, grant = ZuMv(grant), complete = ZuFwd<Complete>(complete)
   ]() mutable {
@@ -237,15 +235,15 @@ void authorizationInsert(
 
 template <typename Complete>
 void authorizationFinish(
-    DBContext *context, Ztls::Random &rng, Bytes id, Bytes bindingDigest,
+    DB *db, Ztls::Random &rng, Bytes id, Bytes bindingDigest,
     UserID userID, Bytes credentialID, IDVec roleIDs, ZtBitmap actions,
     uint64_t authVersion, uint64_t userVersion,
     int64_t authTime, int64_t codeExpires, Evidence evidence,
     Complete &&complete)
 {
-  auto apps = context->apps;
-  auto users = context->users;
-  auto grants = context->grants;
+  auto apps = db->apps;
+  auto users = db->users;
+  auto grants = db->grants;
   grants->run(0, [
     apps, users, grants, rng = &rng, id = ZuMv(id),
     bindingDigest = ZuMv(bindingDigest), userID,
@@ -332,15 +330,15 @@ void authorizationFinish(
 
 template <typename Complete>
 void refreshFinish(
-    DBContext *context, Ztls::Random &rng, Bytes familyID,
+    DB *db, Ztls::Random &rng, Bytes familyID,
     Bytes presentedDigest, String issuer, AppID appID, String scope, IDVec requestedRoleIDs,
     ZtBitmap actions, uint64_t authVersion, UserID userID,
     uint64_t userVersion, int64_t now,
     unsigned generationLimit, unsigned spentLimit, Complete &&complete)
 {
-  auto apps = context->apps;
-  auto users = context->users;
-  auto refresh = context->refresh;
+  auto apps = db->apps;
+  auto users = db->users;
+  auto refresh = db->refresh;
   apps->run(0, [
     apps, users, refresh, rng = &rng, familyID = ZuMv(familyID),
     presentedDigest = ZuMv(presentedDigest), issuer = ZuMv(issuer),
@@ -435,10 +433,10 @@ void refreshFinish(
 
 template <typename Complete>
 void codeConsume(
-    DBContext *context, Bytes id, Bytes digest, int64_t now,
+    DB *db, Bytes id, Bytes digest, int64_t now,
     Complete &&complete)
 {
-  auto grants = context->grants;
+  auto grants = db->grants;
   grants->run(0, [grants, id = ZuMv(id), digest = ZuMv(digest), now,
       complete = ZuFwd<Complete>(complete)]() mutable {
     grants->findUpd<0>(0, ZuFwdTuple(ZuMv(id)),
@@ -459,13 +457,13 @@ void codeConsume(
 
 template <typename Complete>
 void tokenRelease(
-    DBContext *context, String issuer, AppID appID, Bytes familyID,
+    DB *db, String issuer, AppID appID, Bytes familyID,
     uint64_t authVersion, int64_t now, TokenResponse response,
     Complete &&complete)
 {
-  auto apps = context->apps;
-  auto users = context->users;
-  auto refresh = context->refresh;
+  auto apps = db->apps;
+  auto users = db->users;
+  auto refresh = db->refresh;
   apps->run(0, [
     apps, users, refresh, issuer = ZuMv(issuer), familyID = ZuMv(familyID),
     appID, authVersion, now, response = ZuMv(response),

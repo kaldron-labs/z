@@ -80,7 +80,8 @@ whether it is present by calling `emit()` zero or one times.
 
 ```c++
 struct ReqBuilder_ : ZmObject, Zhttp::ReqBuilder {
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHeaders;
+  void init(struct App &);
   Zhttp::BodyPolicy::T bodyPolicy() const {
     return put ? Zhttp::BodyPolicy::OptionalFixed : Zhttp::BodyPolicy::None;
   }
@@ -192,7 +193,7 @@ no-op implementations for them.
 
 ```c++
 struct ResBuilder_ : ZmObject, Zhttp::ResBuilder {
-  using Headers = ResponseHeaders;
+  using HdrCatalog = ResponseHeaders;
   Zhttp::Method::T method() const;
   // bodyPolicy(), status(), headers, and body production
 };
@@ -200,8 +201,10 @@ using ResBuilderQ = ZmList<ResBuilder_,
   ZmListNode<ResBuilder_, ZmListHeapID<"App.ResBuilder">>>;
 using ResBuilder = ResBuilderQ::Node;
 
+struct App;
 struct Parser : Zhttp::Parser {
-  using Headers = RequestHeaders;
+  using HdrCatalog = RequestHeaders;
+  void init(App &);
   bool operation(Zhttp::Method::T, Zhttp::Target &);
   template <typename Key>
   void header(Zhttp::FieldSection::T, ZuBSpan);
@@ -216,18 +219,15 @@ struct Parser : Zhttp::Parser {
   void reset();
 };
 
-struct App {
-  using Parser = ::Parser;
-  using ResBuilderQ = ::ResBuilderQ;
-  Parser parser();
+struct App : Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
+  using HTTP = Zhttp::Server<App, ::Parser, ::ResBuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
   // listening(), listenFailed(), connected(), disconnected()
 };
 
-using Server = Zhttp::Server<App>;
-
 App app;
-Server server;
-server.init(
+app.init(
   Zhttp::HubConfig{&mx, "rx", "tx"},
   Zhttp::ServerConfig{}
     .port(port)
@@ -235,9 +235,8 @@ server.init(
     .tls(Zhttp::H2Config{}
       .certPath(cert).keyPath(key)
       .policy(Zhttp::H2Policy::Prefer))
-    .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)),
-  &app);
-server.start();
+    .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)));
+app.start();
 // Parser callbacks run synchronously on Rx and receive callback-scoped spans.
 // Link::send() accepts an owning response from any thread. Server queues it on
 // that link, then calls its Builder operations on Tx. Applications must submit

@@ -48,12 +48,12 @@
 #include <zlib/ZuPtr.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuHex.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuBase32.hh>
 #include <zlib/ZuBase64.hh>
 #include <zlib/ZuBase64URL.hh>
 
 #include <zlib/ZmRBTree.hh>
-#include <zlib/ZmLHash.hh>
 #include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
@@ -2005,132 +2005,224 @@ ZtEnumNS(ZfAPI, OptType, int8_t,
   Args,		// value...
   Option,	// -x value
   Flag);	// -x
-// expansion for an individual option
-// - i.e. fully-qualified field ID
-ZuDerive(Expansion,
-  (ZtString<ZtStringHeapID<"ZfCLI.Expansion", ZtStringSharded<true>>>));
 struct Option {
-  OptType::T	type;
-  Expansion	expansion;
+  OptType::T type = -1;
+  ZuCSpan expansion;
 };
-template <typename O, typename Facet>
-constexpr unsigned nOptions_() {
-  using AllFields = ZuActiveFields<O, Facet>;
-  using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
-  unsigned n = 0;
-  ZuUnroll::all<SaveFields>([&n]<typename Field>() {
-    using Props = typename Field::Props;
-    enum { TypeCode = Field::Type::Code };
-    constexpr int8_t Arg = ZuFieldProp::CLI::GetArg<Props>{};
-    constexpr int8_t Args = ZuFieldProp::CLI::GetArgs<Props>{};
-    constexpr int8_t Opt = ZuFieldProp::CLI::GetOpt<Props>{};
-    constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
-    if constexpr (
-	Field::Type::Code == ZfFieldTC::UDT &&
-	ZuIsSame<Format<typename Field::T, Facet>, AsObject>{})
-      n += nOptions_<typename Field::T, Facet>();
-    else if constexpr (Arg >= 0 || Args >= 0 || Opt >= 0 || Flag >= 0)
-      ++n;
-  });
-  return n;
+
+template <typename Field, ZuString Prefix>
+consteval auto longName()
+{
+  if constexpr (Prefix.length())
+    return Prefix + "."_z + ZuFieldProp::CLI::GetLong<Field>::V;
+  else
+    return ZuFieldProp::CLI::GetLong<Field>::V;
 }
-template <typename O, typename Facet>
-constexpr unsigned nOptions() {
-  return ZuIntrin::log2(nOptions_<O, Facet>());
+
+template <typename Field, ZuString Prefix>
+struct LongEntry {
+  using Key = ZuStringT<longName<Field, Prefix>()>;
+  static constexpr OptType::T Type =
+    Field::Type::Code == ZfFieldTC::Bool ||
+    ZuIsSame<ZuDecay<typename Field::T>, bool>{} ?
+      OptType::Flag : OptType::Option;
+};
+
+template <typename O, typename Facet, ZuString Prefix> struct LongEntries;
+
+template <typename Field, typename Facet, ZuString Prefix,
+  bool Nested = Field::Type::Code == ZfFieldTC::UDT &&
+    ZuIsSame<Format<typename Field::T, Facet>, AsObject>{}>
+struct LongFieldEntries;
+
+template <typename Field, typename Facet, ZuString Prefix>
+struct LongFieldEntries<Field, Facet, Prefix, true> {
+  using T = typename LongEntries<
+    typename Field::T, Facet, longName<Field, Prefix>()>::T;
+};
+
+template <typename Field, typename Facet, ZuString Prefix>
+struct LongFieldEntries<Field, Facet, Prefix, false> {
+  using Props = typename Field::Props;
+  using T = ZuIf<
+    ZuFieldProp::CLI::GetArg<Props>{}() >= 0 ||
+    ZuFieldProp::CLI::GetArgs<Props>{}() >= 0,
+    ZuTypeList<>, ZuTypeList<LongEntry<Field, Prefix>>>;
+};
+
+template <typename Lists> struct LongConcat;
+template <typename ...Lists>
+struct LongConcat<ZuTypeList<Lists...>> {
+  using T = ZuTypeConcat<Lists...>;
+};
+
+template <typename O, typename Facet, ZuString Prefix>
+struct LongEntries {
+  using Fields = ZuTypeGrep<ZfFieldFilter::Save, ZuActiveFields<O, Facet>>;
+  template <typename Field>
+  using Entry = typename LongFieldEntries<Field, Facet, Prefix>::T;
+  using T = typename LongConcat<ZuTypeMap<Entry, Fields>>::T;
+};
+
+template <typename Field, ZuString Prefix>
+struct OptEntry {
+  using Props = typename Field::Props;
+  static constexpr int Arg = ZuFieldProp::CLI::GetArg<Props>{};
+  static constexpr int Args = ZuFieldProp::CLI::GetArgs<Props>{};
+  static constexpr int Opt = ZuFieldProp::CLI::GetOpt<Props>{};
+  static constexpr int Flag = ZuFieldProp::CLI::GetFlag<Props>{};
+  static constexpr int Code = Arg >= 0 ? Arg : Args >= 0 ? Args : Opt >= 0 ? Opt : Flag;
+  static constexpr bool Short = Opt >= 0 || Flag >= 0;
+  static constexpr OptType::T Type = Arg >= 0 ? OptType::Arg :
+    Args >= 0 ? OptType::Args : Opt >= 0 ? OptType::Option : OptType::Flag;
+  static constexpr auto Expansion = longName<Field, Prefix>();
+  ZuAssert((Arg >= 0) + (Args >= 0) + (Opt >= 0) + (Flag >= 0) <= 1);
+};
+
+template <typename O, typename Facet, ZuString Prefix> struct OptEntries;
+
+template <typename Field, typename Facet, ZuString Prefix,
+  bool Nested = Field::Type::Code == ZfFieldTC::UDT &&
+    ZuIsSame<Format<typename Field::T, Facet>, AsObject>{}>
+struct OptFieldEntries;
+template <typename Field, typename Facet, ZuString Prefix>
+struct OptFieldEntries<Field, Facet, Prefix, true> {
+  using T = typename OptEntries<
+    typename Field::T, Facet, longName<Field, Prefix>()>::T;
+};
+template <typename Field, typename Facet, ZuString Prefix>
+struct OptFieldEntries<Field, Facet, Prefix, false> {
+  using Entry = OptEntry<Field, Prefix>;
+  using T = ZuIf<(Entry::Code >= 0), ZuTypeList<Entry>, ZuTypeList<>>;
+};
+template <typename O, typename Facet, ZuString Prefix>
+struct OptEntries {
+  using Fields = ZuTypeGrep<ZfFieldFilter::Save, ZuActiveFields<O, Facet>>;
+  template <typename Field>
+  using Entry = typename OptFieldEntries<Field, Facet, Prefix>::T;
+  using T = typename LongConcat<ZuTypeMap<Entry, Fields>>::T;
+};
+
+template <typename Entry> using ShortEntry = ZuBool<Entry::Short>;
+template <typename Entry> using ArgEntry = ZuBool<!Entry::Short>;
+template <typename Entry> using ArgKey = ZuInt<Entry::Code>;
+template <typename Entry>
+consteval auto shortKey()
+{
+  ZuString<2> key{};
+  key[0] = char(Entry::Code);
+  key[1] = 0;
+  return key;
 }
-template <typename O, typename Facet, typename Hash>
-void initOptions(Hash &hash, ZuCSpan prefix = {}) {
-  using AllFields = ZuActiveFields<O, Facet>;
-  using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
-  ZuUnroll::all<SaveFields>([&hash, &prefix]<typename Field>() {
-    using Props = typename Field::Props;
-    enum { TypeCode = Field::Type::Code };
-    constexpr int8_t Arg = ZuFieldProp::CLI::GetArg<Props>{};
-    constexpr int8_t Args = ZuFieldProp::CLI::GetArgs<Props>{};
-    constexpr int8_t Opt = ZuFieldProp::CLI::GetOpt<Props>{};
-    constexpr int8_t Flag = ZuFieldProp::CLI::GetFlag<Props>{};
-    unsigned n = prefix.length();
-    if (n) ++n;
-    ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
-    n += longOpt.length() + 1; // +1 for null terminator
-    auto expansion = ZmScratch(char, n, Expansion::VHeap);
-    if (prefix) expansion << prefix << '.';
-    expansion << longOpt;
-    if constexpr (
-	Field::Type::Code == ZfFieldTC::UDT &&
-	ZuIsSame<Format<typename Field::T, Facet>, AsObject>{})
-      initOptions<typename Field::T, Facet>(hash, expansion);
-    else if constexpr (Arg >= 0) {
-      ZuAssert(Args < 0 && Opt < 0 && Flag < 0);
-      hash.add(Arg, Option{OptType::Arg, expansion});
-    } else if constexpr (Args >= 0) {
-      ZuAssert(Arg < 0 && Opt < 0 && Flag < 0);
-      hash.add(Args, Option{OptType::Args, expansion});
-    } else if constexpr (Opt >= 0) {
-      ZuAssert(Arg < 0 && Args < 0 && Flag < 0);
-      hash.add(Opt, Option{OptType::Option, expansion});
-    } else if constexpr (Flag >= 0) {
-      ZuAssert(Arg < 0 && Args < 0 && Opt < 0);
-      hash.add(Flag, Option{OptType::Flag, expansion});
+template <typename Entry> using ShortKey = ZuStringT<shortKey<Entry>()>;
+
+template <typename O, typename Facet>
+struct Options {
+  // The old insertion order made the last declaration of a key effective.
+  using Entries = ZuTypeRev<typename OptEntries<O, Facet, "">::T>;
+  using Shorts = ZuTypeGrep<ShortEntry, Entries>;
+  using Args = ZuTypeGrep<ArgEntry, Entries>;
+  using ShortKeys = ZuTypeMap<ShortKey, Shorts>;
+  using ArgKeys = ZuTypeMap<ArgKey, Args>;
+  struct IDs { using Keys = ZuTypeUnique<ShortKeys>; };
+  static constexpr unsigned NArgs = [] {
+    unsigned n = 0;
+    ZuUnroll::all<Args>([&n]<typename Entry>() {
+      if (unsigned(Entry::Code + 1) > n) n = Entry::Code + 1;
+    });
+    return n;
+  }();
+
+  static Option shortOpt(char key) {
+    if constexpr (!Shorts::N) return {};
+    else {
+      static constexpr auto matcher = ZuMatcher<IDs>();
+      int index = matcher.exact(ZuCSpan{&key, 1});
+      if (index < 0) return {};
+      return ZuSwitch::dispatch<IDs::Keys::N>(unsigned(index), [](auto I) {
+	using Key = ZuType<I, typename IDs::Keys>;
+	using Entry = ZuType<ZuTypeIndex<Key, ShortKeys>{}, Shorts>;
+	return Option{Entry::Type, Entry::Expansion.cspan()};
+      }, Option{});
     }
-  });
-}
+  }
+  static Option argument(unsigned index) {
+    if constexpr (!NArgs) return {};
+    else return ZuSwitch::dispatch<NArgs>(index, [](auto I) {
+      using Key = ZuInt<I>;
+      if constexpr (ZuTypeIn<Key, ArgKeys>{}) {
+	using Entry = ZuType<ZuTypeIndex<Key, ArgKeys>{}, Args>;
+	return Option{Entry::Type, Entry::Expansion.cspan()};
+      } else return Option{};
+    }, Option{});
+  }
+};
+
+template <typename Entry> using LongKey = typename Entry::Key;
+
 template <typename O, typename Facet>
-using Options = ZmLHashKV<char, Option,
-  ZmLHashStatic<nOptions<O, Facet>(),
-    ZmLHashLocal<>>>;
+struct LongMatcher {
+  using Entries = typename LongEntries<O, Facet, "">::T;
+  using Keys = ZuTypeUnique<ZuTypeMap<LongKey, Entries>>;
+
+  static int exact(ZuCSpan key) {
+    if constexpr (!Keys::N) return -1;
+    else {
+      struct IDs { using Keys = LongMatcher::Keys; };
+      static constexpr auto matcher = ZuMatcher<IDs>();
+      return matcher.exact(key);
+    }
+  }
+};
+
 template <typename O, typename Facet = ZuFacet::CLI>
 struct Parser {
+  using LongEntries_ = typename LongEntries<O, Facet, "">::T;
+  using LongKeys_ = ZuTypeUnique<ZuTypeMap<LongKey, LongEntries_>>;
+  enum { LongWords_ = (LongKeys_::N + 63) / 64 };
+
   ZuPtr<AnyNode> root;		// root node
   unsigned argc = 0;		// number of positional arguments
 
 private:
-  Options<O, Facet> options;	// options (built from fields by initOptions())
   ZuCSpan key;			// current key (while reading)
   ZeString source;		// current option/argument diagnostic context
   bool opt = false;		// reading option key with single arg
   bool args = false;		// reading vector value of multiple args
   bool eoo = false;		// no more options following --
+  uint64_t longBits[LongWords_ ? LongWords_ : 1]{};
 
-  template <typename U>
-  static OptType::T longOptType_(ZuCSpan key_, ZuCSpan prefix = {}) {
-    OptType::T type = -1;
-    using AllFields = ZuActiveFields<U, Facet>;
-    using SaveFields = ZuTypeGrep<ZfFieldFilter::Save, AllFields>;
-    ZuUnroll::all<SaveFields>([&type, &key_, &prefix]<typename Field>() {
-      if (type >= 0) return;
-      using Props = typename Field::Props;
-      enum { TypeCode = Field::Type::Code };
-      constexpr int8_t Arg = ZuFieldProp::CLI::GetArg<Props>{};
-      constexpr int8_t Args = ZuFieldProp::CLI::GetArgs<Props>{};
-      if constexpr (Arg < 0 && Args < 0) {
-	ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
-	unsigned n = prefix.length();
-	if (n) ++n;
-	n += longOpt.length();
-	auto expansion = ZmScratch(char, n, Expansion::VHeap);
-	if (prefix) expansion << prefix << '.';
-	expansion << longOpt;
-	if constexpr (
-	    TypeCode == ZfFieldTC::UDT &&
-	    ZuIsSame<Format<typename Field::T, Facet>, AsObject>{}) {
-	  type = longOptType_<typename Field::T>(key_, expansion);
-	} else if (key_ == expansion) {
-	  if constexpr (TypeCode == ZfFieldTC::Bool ||
-	      ZuIsSame<ZuDecay<typename Field::T>, bool>{})
-	    type = OptType::Flag;
-	  else
-	    type = OptType::Option;
-	}
-      }
-    });
-    return type;
+  struct LongOpt_ { OptType::T type; int id; };
+
+  static LongOpt_ longOpt_(ZuCSpan key_) {
+    if constexpr (!LongKeys_::N) return {OptType::T(-1), -1};
+    else {
+      int j = LongMatcher<O, Facet>::exact(key_);
+      if (j < 0) return {OptType::T(-1), -1};
+      OptType::T type = -1;
+      ZuSwitch::dispatch<LongKeys_::N>(unsigned(j), [&type](auto I) {
+	using Key = ZuType<I, LongKeys_>;
+	using Entry = ZuType<ZuTypeIndex<Key,
+	  ZuTypeMap<LongKey, LongEntries_>>{}, LongEntries_>;
+	type = Entry::Type;
+      });
+      return {type, j};
+    }
+  }
+
+  void markLong_(int id) {
+    if (id >= 0) longBits[unsigned(id) >> 6] |= 1ULL << (id & 63);
   }
 
 public:
-  Parser() : root{newNode<AnyNode::Object>({})} {
-    initOptions<O, Facet>(options);
+  Parser() : root{newNode<AnyNode::Object>({})} { }
+
+  template <unsigned N = LongKeys_::N>
+  ZuIfT<(N <= 64), uint64_t> longOptions() const {
+    return longBits[0];
   }
+
+  static int longOptionID(ZuCSpan key_) { return longOpt_(key_).id; }
 
 private:
   void addNode(ZuCSpan key_, ZuSpan<char> val, ZuCSpan source_) {
@@ -2196,6 +2288,7 @@ public:
     opt = false;
     args = false;
     eoo = false;
+    for (auto &word: longBits) word = 0;
   }
 
   // scan a single argument; throws ZeException on invalid input
@@ -2217,17 +2310,20 @@ public:
 	if (p > 0) {
 	  // --x=val
 	  key = {&arg[0], uint64_t(p)};
-	  if (ZuUnlikely(longOptType_<O>(key) < 0)) {
+	  auto longOpt = longOpt_(key);
+	  if (ZuUnlikely(longOpt.type < 0)) {
 	    ZeString option{"--"};
 	    option << key;
 	    throw ZfCLI_EXCEPT(ZfCLIError::unrecognizedOption(option));
 	  }
+	  markLong_(longOpt.id);
 	  source << "option '--" << key << '\'';
 	  ++p;
 	  val = {&arg[p], uint64_t(n - p)};
 	} else {
 	  // --x
-	  switch (longOptType_<O>(arg)) {
+	  auto longOpt = longOpt_(arg);
+	  switch (longOpt.type) {
 	    default: {
 	      ZeString option{"--"};
 	      option << arg;
@@ -2235,11 +2331,13 @@ public:
 	    }
 	    case OptType::Option:
 	      key = arg;
+	      markLong_(longOpt.id);
 	      source << "option '--" << key << '\'';
 	      opt = true;
 	      return;
 	    case OptType::Flag:
 	      key = arg;
+	      markLong_(longOpt.id);
 	      source << "option '--" << key << '\'';
 	      static char true_[] = "true";
 	      val = {true_, 4};
@@ -2258,13 +2356,13 @@ public:
 	return;
       }
       for (unsigned i = 1; i < n; i++) {
-	auto option = options.find(arg[i]);
-	if (!option) {
+	auto option = Options<O, Facet>::shortOpt(arg[i]);
+	if (option.type < 0) {
 	  char option_[] = {'-', arg[i]};
 	  throw ZfCLI_EXCEPT(
 	    ZfCLIError::unrecognizedOption({option_, unsigned(2)}));
 	}
-	switch (option->template p<1>().type) {
+	switch (option.type) {
 	  default: {
 	    char option_[] = {'-', arg[i]};
 	    throw ZfCLI_EXCEPT(
@@ -2276,12 +2374,14 @@ public:
 	      option_ << '-' << arg[i];
 	      throw ZfCLI_EXCEPT(ZfCLIError::badOption(option_));
 	    }
-	    key = option->template p<1>().expansion;
+	    key = option.expansion;
+	    markLong_(longOpt_(key).id);
 	    source << "option '-" << arg[i] << '\'';
 	    opt = true;
 	    break;
 	  case OptType::Flag:
-	    key = option->template p<1>().expansion;
+	    key = option.expansion;
+	    markLong_(longOpt_(key).id);
 	    source << "option '-" << arg[i] << '\'';
 	    val = {};
 	    addNode(key, val, source);
@@ -2301,18 +2401,18 @@ public:
       return;
     }
     // plain positional arg
-    auto option = options.find(argc++);
-    if (!option) return;
+    auto option = Options<O, Facet>::argument(argc++);
+    if (option.type < 0) return;
     source << "argument " << ZuBoxed(argc - 1);
-    switch (option->template p<1>().type) {
+    switch (option.type) {
       default:
 	throw ZfCLI_EXCEPT(ZfCLIError::badKey(source));
       case OptType::Arg:
-	key = option->template p<1>().expansion;
+	key = option.expansion;
 	val = arg;
 	break;
       case OptType::Args:
-	key = option->template p<1>().expansion;
+	key = option.expansion;
 	val = arg;
 	args = true;
 	break;

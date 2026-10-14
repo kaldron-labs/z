@@ -128,17 +128,11 @@ static void ancestry()
   ZtString<> path;
   leafPtr->path(path);
   ZuCheck(path == "items[0]");
-  ZuCheck(root->resolve("items[0]") == leafPtr);
   path.null();
   dateTimePtr->path(path);
   ZuCheck(path == "items[1]");
-  ZuCheck(root->resolve("items[1]") == dateTimePtr);
   ZuCheck(dateTimePtr->parent == leafPtr->parent);
   ZuCheck(dateTimePtr->data == value);
-  ZuCheck(!root->resolve("items[2]"));
-  ZuCheck(!root->resolve("items[-1]"));
-  ZuCheck(!root->resolve("items[42949672960]"));
-  ZuCheck(!root->resolve("items.[0]"));
 
   auto moved = ZuMv(root->data[0].p<1>());
   auto movedRoot = ZfTree::newNode<AnyNode::Object>(nullptr);
@@ -147,7 +141,6 @@ static void ancestry()
   path.null();
   leafPtr->path(path);
   ZuCheck(path == "moved[0]");
-  ZuCheck(movedRoot->resolve("moved[0]") == leafPtr);
   ZuCheck(leafPtr->scalarType == ZfTree::ScalarTC::True);
 
   movedRoot->parent = nullptr;

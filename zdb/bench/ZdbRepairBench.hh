@@ -15,6 +15,8 @@
 
 #include <zlib/ZiModule.hh>
 
+#include "../../zdb/test/ZdbTestCf.hh"
+
 namespace RepairBench {
 
 static void check(bool ok)
@@ -181,10 +183,13 @@ static void store(unsigned count, unsigned rounds, unsigned width)
   using namespace Zdb_;
   using T = zdbtest::Order;
   auto config = RepairBench::config();
-  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   auto store = newStore();
-  check(store->init(config->resolve("zdb.store"), &mx, 1, {}).is<InitData>());
+  auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
+    configFields.zdb.p<const ZfCf::AnyNode *>()).ctor();
+  check(store->init(storeFields.store.p<const ZfCf::AnyNode *>(), &mx, 1, {}).is<InitData>());
   auto started = ZmBlock<StartResult>{}([store](auto done) { store->start(ZuMv(done)); });
   check(started.is<void>());
 #ifdef ZiFB_HH
@@ -308,29 +313,28 @@ static void store(unsigned count, unsigned rounds, unsigned width)
 
 static void sagas(unsigned count, unsigned rounds, unsigned width)
 {
-  using Context = zdbtest::LiveContext;
-  using Catalog = zdbtest::LiveSagas;
-  using M = ZdbMSaga<Catalog>;
+  using SagaDB = zdbtest::LiveDB;
+  using M = ZdbAnySaga<SagaDB>;
   auto config = RepairBench::config();
-  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   auto store = newStore();
-  ZmRef<ZdbSagaDB<Context, Catalog>> db = new ZdbSagaDB<Context, Catalog>{};
+  ZmRef<SagaDB> db = new SagaDB{};
   ZmSemaphore active, completed;
   active_ = &active;
-  db->init(ZdbCf{config->resolve("zdb")}, &mx, ZdbHandler{.upFn = up}, store);
+  db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{.upFn = up}, store);
   auto orders = db->initTable<zdbtest::Order>("o");
-  ZmRef<Context> context = new Context{};
+  ZmRef<SagaDB> context = db;
   context->orders = orders; context->done = &completed;
-  db->sagas(context);
+  db->sagas({zdbtest::liveSagaDef()});
   check(db->start()); active.wait();
   Samples samples((count + 1)*2);
-  using Payload = ZdbMSaga<zdbtest::PayloadCatalog>;
+  using Payload = ZdbAnySaga<zdbtest::PayloadDB>;
   Zdb_::SagaPayload data;
   data.length(width, false);
   for (unsigned i = 0; i < width; ++i) data[i] = uint8_t(i);
-  ZmRef<Payload> payload = new Payload{};
-  payload->init(zdbtest::PayloadSaga{{}, ZuMv(data)});
+  ZmRef<Payload> payload = zdbtest::payloadSaga(ZuMv(data));
   uint64_t id = 0;
   for (unsigned round = 0; round < rounds; ++round) {
     samples.length(0);
@@ -343,15 +347,14 @@ static void sagas(unsigned count, unsigned rounds, unsigned width)
       measure(samples, "codec.saga-save", [&payload]() -> uint64_t {
 	Zdb_::SagaPayload saved;
 #ifdef ZiFB_HH
-	check(Payload::save(payload, saved) == ZiFB::Error::OK);
+	check(payload->save(saved) == ZiFB::Error::OK);
 #else
-	Payload::save(payload, saved);
+	payload->save(saved);
 #endif
 	return saved.length();
       });
       measure(samples, "saga.insert-update-delete", [&db, &completed, &id]() -> uint64_t {
-	ZmRef<M> saga = new M{};
-	saga->init(zdbtest::LiveSaga{{}, 42});
+	ZmRef<M> saga = zdbtest::liveSaga(42);
 	ZmSemaphore submitted; bool accepted = false, success = false;
 	check(db->saga(0, ++id, ZuMv(saga), [&submitted, &accepted](bool ok) {
 	  accepted = ok; submitted.post();
@@ -382,7 +385,8 @@ static void schedHop(ZiMultiplex *mx, unsigned left, L &&l)
 static void scheduler(unsigned count, unsigned rounds)
 {
   auto config = RepairBench::config();
-  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   check(mx.start());
   Samples samples((count + 1)*3);
   for (unsigned round = 0; round < rounds; ++round) {

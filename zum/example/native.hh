@@ -56,6 +56,8 @@ namespace ZumNative {
 
 ZuDerive(String, ZtString<ZtStringHeapID<"Zum.Native.String">>);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Zum.Native.Bytes">>));
+ZuDerive(StringVec, (ZtArray<String,
+  ZtArrayHeapID<"Zum.Native.StringVec">>));
 
 struct TokenWire {
   ZumVaultClient::SecretText accessToken;
@@ -119,30 +121,37 @@ static bool loadConfig(ZuCSpan path, Config &config)
   return config.issuerURL && config.clientID;
 }
 
-ZuDerive(StringVec, (ZtArray<String,
-  ZtArrayHeapID<"Zum.Native.StringVec">>));
 struct MetadataWire {
-  String issuerURL;
+  String issuer;
   String authorizationEndpoint;
   String tokenEndpoint;
   String jwksURI;
+  String revocationEndpoint;
   StringVec responseTypesSupported;
   StringVec grantTypesSupported;
   StringVec codeChallengeMethods;
 };
 ZfStruct(, (MetadataWire, JSON),
-  (issuerURL,	(JSON::ID<"issuer">, JSON::Opt),		String),
+  (issuer,	(JSON::Opt),					String),
   (authorizationEndpoint,
     (JSON::ID<"authorization_endpoint">, JSON::Opt),		String),
   (tokenEndpoint,
     (JSON::ID<"token_endpoint">, JSON::Opt),			String),
   (jwksURI,		(JSON::ID<"jwks_uri">, JSON::Opt),	String),
+  (revocationEndpoint,
+    (JSON::ID<"revocation_endpoint">, JSON::Opt),		String),
   (responseTypesSupported,
-    (JSON::ID<"response_types_supported">, JSON::Opt),		StringVec),
+    (JSON::ID<"response_types_supported">, JSON::Opt),	StringVec),
   (grantTypesSupported,
-    (JSON::ID<"grant_types_supported">, JSON::Opt),		StringVec),
+    (JSON::ID<"grant_types_supported">, JSON::Opt),	StringVec),
   (codeChallengeMethods,
-    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt),	StringVec));
+    (JSON::ID<"code_challenge_methods_supported">, JSON::Opt), StringVec));
+
+static bool contains(const StringVec &values, ZuCSpan value)
+{
+  for (const auto &item: values) if (item == value) return true;
+  return false;
+}
 
 template <typename Fn>
 static bool formEach(ZuCSpan form, Fn &&fn)
@@ -507,10 +516,20 @@ ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
   ZmListNode<CallbackBuilder_, ZmListHeapID<"zum.CallbackBuilder">>);
 using CallbackBuilderNode = CallbackBuilderQ::Node;
 
-class CallbackApp {
+struct CallbackQuery {
+  String code;
+  String state;
+  String error;
+  unsigned seen = 0;
+};
+
+bool parseCallback(ZuCSpan query, CallbackQuery &result);
+
+class CallbackApp : public Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ> {
 public:
-  using Parser = CallbackParser;
-  using ResBuilderQ = CallbackBuilderQ;
+  using HTTP = Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
 
   template <typename Link>
   void callback(Link *link, const CallbackReq &request, bool ok)
@@ -522,26 +541,15 @@ public:
       query = span;
     } else ok = false;
     if (!query.mutable_()) query.length(query.length());
-    unsigned seen = 0;
-    bool duplicate = false;
-    String code_, state_, error_;
-    if (ok) ok = formEach({query.data(), query.length()}, [&seen, &duplicate,
-	&code_, &state_, &error_](
-          ZuCSpan name, ZuCSpan value) {
-        if (name == "code") {
-	  duplicate |= bool(seen & 1U); code_ = value; seen |= 1U; return;
-        }
-        if (name == "state") {
-	  duplicate |= bool(seen & 2U); state_ = value; seen |= 2U; return;
-        }
-        if (name == "error") {
-	  duplicate |= bool(seen & 4U); error_ = value; seen |= 4U; return;
-        }
-      });
-    ok = ok && !duplicate && !received && state_ == expectedState &&
-      ((seen == 3U && code_) || (seen == 6U && error_));
+    CallbackQuery parsed;
+    if (ok) ok = parseCallback({query.data(), query.length()}, parsed);
+    ok = ok && !received && parsed.state == expectedState &&
+      ((parsed.seen == 3U && parsed.code) ||
+        (parsed.seen == 6U && parsed.error));
     if (ok) {
-      code = ZuMv(code_); state = ZuMv(state_); error = ZuMv(error_);
+      code = ZuMv(parsed.code);
+      state = ZuMv(parsed.state);
+      error = ZuMv(parsed.error);
       received = true;
     }
     ZmRef<CallbackBody> object = new CallbackBody{};
@@ -634,32 +642,6 @@ static bool metadataURL(ZuCSpan issuerURL, bool loopbackTest,
   return true;
 }
 
-static bool contains(const StringVec &values, ZuCSpan value)
-{
-  for (const auto &item: values) if (item == value) return true;
-  return false;
-}
-
-static bool metadataJSON(String &json, ZuCSpan issuerURL, MetadataWire &metadata)
-{
-  if (json.length() > BodyMax) return false;
-  if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
-  if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
-      !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
-  auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
-  if (roots.length() != 1) return false;
-  auto handler = ZfJSON::handler<MetadataWire>(roots[0]);
-  if (!handler.valid) return false;
-  metadata = handler.ctor();
-  return metadata.issuerURL == issuerURL && metadata.authorizationEndpoint &&
-    metadata.tokenEndpoint && metadata.jwksURI &&
-    contains(metadata.responseTypesSupported, "code") &&
-    contains(metadata.grantTypesSupported, "authorization_code") &&
-    contains(metadata.grantTypesSupported, "refresh_token") &&
-    contains(metadata.codeChallengeMethods, "S256");
-}
-
 static void openBrowser(ZuCSpan url, bool noBrowser)
 {
   std::cout << "Open this URL in a browser:\n" << url << "\n\n" << std::flush;
@@ -703,12 +685,44 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   bool ok = clients.perform<MetadataBuilder>(discovery, discoveryURL) &&
     discovery.status == 200;
   MetadataWire metadata;
-  ok = ok && metadataJSON(discovery.body, config.issuerURL, metadata);
-  Zhttp::URL authorization, token, jwks;
+  if (ok) {
+    auto &json = discovery.body;
+    ok = json.length() <= BodyMax;
+    if (ok && !json.mutable_()) json.length(json.length());
+    auto parsed = ok ? ZfJSON::scan(json.span()) :
+      decltype(ZfJSON::scan(json.span())){};
+    ok = ok && parsed.p<0>() == int(json.length()) && parsed.p<1>() &&
+      parsed.p<1>()->has<ZfJSON::AnyNode::Array>();
+    if (ok) {
+      auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
+      ok = roots.length() == 1;
+      if (ok) {
+	if (!roots[0]->has<ZfJSON::AnyNode::Object>()) ok = false;
+	else {
+	  auto &fields = roots[0]->data<ZfJSON::AnyNode::Object>();
+	  for (unsigned i = 0; ok && i < fields.length(); ++i)
+	    for (unsigned j = i + 1; j < fields.length(); ++j)
+	      if (fields[i].p<0>() == fields[j].p<0>()) { ok = false; break; }
+	  if (ok) {
+	    auto handler = ZfJSON::handler<MetadataWire>(roots[0]);
+	    ok = handler.valid;
+	    if (ok) metadata = handler.ctor();
+	  }
+	}
+      }
+    }
+  }
+  ok = ok && metadata.issuer == config.issuerURL &&
+    contains(metadata.responseTypesSupported, "code") &&
+    contains(metadata.grantTypesSupported, "authorization_code") &&
+    contains(metadata.grantTypesSupported, "refresh_token") &&
+    contains(metadata.codeChallengeMethods, "S256");
+  Zhttp::URL authorization, token, jwks, revocation;
   ok = ok && endpointURL(metadata.authorizationEndpoint,
     config.loopbackTest, authorization) &&
     endpointURL(metadata.tokenEndpoint, config.loopbackTest, token) &&
-    endpointURL(metadata.jwksURI, config.loopbackTest, jwks);
+    endpointURL(metadata.jwksURI, config.loopbackTest, jwks) &&
+    endpointURL(metadata.revocationEndpoint, config.loopbackTest, revocation);
   ok = ok && clients.add(&mx, token.url(), config.caPath);
   if (!ok) {
     std::cerr << "OAuth: OAuth discovery failed\n";
@@ -772,17 +786,16 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
         ZuClear(callback.code);
     }};
     callback.expectedState = state;
-    Zhttp::Server<CallbackApp> callbackServer;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
       .retainedBodyMax(BodyMax).tcp();
-    bool callbackInited = callbackServer.init(
-      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig), &callback);
-    bool callbackUp = callbackInited && callbackServer.start();
+    bool callbackInited = callback.init(
+      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
+    bool callbackUp = callbackInited && callback.start();
     if (!callbackUp) {
       std::cerr << "OAuth: callback listener start failed\n";
-      if (callbackInited) (void)callbackServer.stop();
-      callbackServer.final(); clients.final();
+      if (callbackInited) (void)callback.stop();
+      callback.final(); clients.final();
       mx.stop(); ZiLog::stop(); return false;
     }
 
@@ -817,8 +830,8 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
       std::cerr << "OAuth: credential storage failed\n";
       ok = false;
     }
-    (void)callbackServer.stop();
-    callbackServer.final();
+    (void)callback.stop();
+    callback.final();
   }
 
   if (ok) ok = useToken(mx, clients, ZuCSpan{tokens.accessToken});

@@ -269,16 +269,26 @@ public:
     if (name[0] == ':')
       return pseudo_(name, value, ZuFwd<Header>(header));
     m_regular = true;
-    if (forbidden(name)) return false;
-    if (m_trailers && name == "content-length") return false;
-    if (name == "te" && value != "trailers") return false;
-    if (name == "content-length") {
-      uint64_t length;
-      if (!uint64(value, length))
-	return false;
-      if (m_contentLength && length != m_length) return false;
-      m_contentLength = true;
-      m_length = length;
+    enum { Other, Te, ContentLength } kind = Other;
+    switch (name.length()) {
+      case 2: if (name == "te") kind = Te; break;
+      case 14: if (name == "content-length") kind = ContentLength; break;
+    }
+    if (kind == Other && forbidden(name)) return false;
+    switch (kind) {
+      case Te:
+	if (value != "trailers") return false;
+	break;
+      case ContentLength: {
+	if (m_trailers) return false;
+	uint64_t length;
+	if (!uint64(value, length)) return false;
+	if (m_contentLength && length != m_length) return false;
+	m_contentLength = true;
+	m_length = length;
+	break;
+      }
+      default: break;
     }
     header(name, value);
     return true;

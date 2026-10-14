@@ -109,6 +109,7 @@ static void compare(const reflection::Schema &a, const reflection::Schema &b)
 	(ZuFP<double>::nan(f->default_real()) && ZuFP<double>::nan(g->default_real())));
       ZuCheckRT(f->deprecated() == g->deprecated());
       ZuCheckRT(f->required() == g->required());
+      ZuCheckRT(f->key() == g->key());
       ZuCheckRT(f->optional() == g->optional());
       ZuCheckRT(f->padding() == g->padding());
       ZuCheckRT(f->type()->base_type() == g->type()->base_type());

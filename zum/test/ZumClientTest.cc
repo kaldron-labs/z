@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtlsCOSE.hh>
@@ -100,6 +101,12 @@ static void cliArgs()
   ZuCheck(cliRequest(users, ZuArray{users}.length(), json));
   ZuCheck(json == "{\"name\":\"admin@localhost\",\"source\":\"Local\"}");
   ZuCheck(cliRequest(users, 3, json));
+  ZuCheck(json == "{}");
+  const char *duplicateSource[] = {"zum", "user", "list",
+    "--source", "Local", "--source", "External"};
+  ZuCheck(!cliRequest(duplicateSource, ZuArray{duplicateSource}.length(), json));
+  const char *shortHelp[] = {"zum", "issuer", "list", "-h"};
+  ZuCheck(cliRequest(shortHelp, ZuArray{shortHelp}.length(), json));
   ZuCheck(json == "{}");
   const char *userID[] = {"zum", "user", "list", "--id", "42"};
   ZuCheck(cliRequest(userID, ZuArray{userID}.length(), json));
@@ -198,11 +205,15 @@ static void serviceToken()
   Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t point[Ztls::COSE::ES256::PublicKeySize];
   ZuCheck(Ztls::Backend::pkey_ec_export_public(key.key, point));
+  auto x = encode({point + 1, Ztls::COSE::ES256::CoordinateSize});
+  auto y = encode({point + 1 + Ztls::COSE::ES256::CoordinateSize,
+    Ztls::COSE::ES256::CoordinateSize});
   Zum::String jwk{"{\"kid\":\"service-key\",\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\""};
-  jwk << encode({point + 1, Ztls::COSE::ES256::CoordinateSize}) <<
-    "\",\"y\":\"" << encode({point + 1 + Ztls::COSE::ES256::CoordinateSize,
-      Ztls::COSE::ES256::CoordinateSize}) << "\"}";
+  jwk << x << "\",\"y\":\"" << y << "\"}";
   Zum::String jwks{"{\"keys\":["};
+  for (unsigned i = 0; i < 7; ++i)
+    jwks << "{\"kid\":\"unused-" << i << "\",\"kty\":\"EC\","
+      "\"crv\":\"P-256\",\"x\":\"" << x << "\",\"y\":\"" << y << "\"},";
   jwks << jwk << "]}";
   int64_t now = Zm::now().sec();
   Zum::String claims{"{\"iss\":\"https://issuer/oauth2/7\",\"sub\":\"service\","
@@ -528,6 +539,358 @@ static void serviceToken()
   ZuCheck(scheduler.stop());
 }
 
+static Zum::String keyJWK(Ztls::PK::SK_EC &key, ZuCSpan id)
+{
+  uint8_t point[Ztls::COSE::ES256::PublicKeySize];
+  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(key.key, point));
+  return Zum::String{"{\"kid\":\""} << id <<
+    "\",\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"" <<
+    encode({point + 1, Ztls::COSE::ES256::CoordinateSize}) <<
+    "\",\"y\":\"" << encode({point + 1 + Ztls::COSE::ES256::CoordinateSize,
+      Ztls::COSE::ES256::CoordinateSize}) << "\"}";
+}
+
+static Zum::String keyJWT(Ztls::Random &rng, Ztls::PK::SK_EC &key,
+    ZuCSpan id, bool workload = false)
+{
+  int64_t now = Zm::now().sec();
+  Zum::String claims{"{\"iss\":\"https://issuer/oauth2/"};
+  claims << (workload ? 7 : 9) << "\",\"sub\":\"service\","
+    "\"client_id\":\"service\",\"aud\":\"" <<
+    (workload ? "https://issuer/admin" : "ping") <<
+    "\",\"zum_app_id\":\"" << (workload ? 7 : 9) <<
+    "\",\"scope\":\"zum.catalog\",\"jti\":\"test\",\"iat\":" << now <<
+    ",\"nbf\":" << now << ",\"exp\":" << now + 300 << '}';
+  Zum::String header{"{\"alg\":\"ES256\",\"typ\":\"at+jwt\",\"kid\":\""};
+  header << id << "\"}";
+  Zum::String token = encode(header);
+  token << '.' << encode(claims);
+  uint8_t digest[Ztls::MD<>::Size];
+  Ztls::MD<> md;
+  md.update(ZuBSpan{token});
+  md.finish(digest);
+  Zum::Bytes der;
+  auto signed_ = key.sign(rng, digest, [&der](ZuBSpan value) {
+    der = Zum::Bytes{value};
+  });
+  uint8_t raw[Ztls::COSE::ES256::SignatureSize];
+  ZuCheckRT(!signed_.template is<ZeException>() &&
+    Ztls::COSE::ES256::derToRaw(der, raw));
+  token << '.' << encode(raw);
+  return token;
+}
+
+static Zum::String keySET(Ztls::Random &rng, Ztls::PK::SK_EC &signer,
+    ZuCSpan id, ZuCSpan issuer)
+{
+  Zum::String token;
+  int64_t now = Zm::now().sec();
+  Zum::makeSSF({.id = id, .issuer = issuer}, "ping",
+    {.issuerURL = "https://issuer/oauth2/9", .familyID = "family"},
+    now + 120, now,
+    [&rng, &signer](const Zum::SignKey &, ZuBSpan digest,
+	Zum::SignatureFn complete) {
+      signer.sign(rng, digest, [complete = ZuMv(complete)](ZuBSpan der) mutable {
+	complete(Zum::Bytes{der});
+      });
+    }, [&token](Zum::String value) { token = ZuMv(value); });
+  return token;
+}
+
+static Zum::String keyJWKS(ZuCSpan entries)
+{
+  return Zum::String{"{\"keys\":["} << entries << "]}";
+}
+
+struct KeyURLs {
+  using Keys = ZuStringTL<
+    "https://issuer/.well-known/oauth-authorization-server/oauth2/9",
+    "https://issuer/.well-known/oauth-authorization-server/oauth2/7",
+    "https://issuer/.well-known/oauth-authorization-server/oauth2/8",
+    "https://issuer/oauth2/7/v1/token",
+    "https://issuer/oauth2/7/v1/keys",
+    "https://issuer/oauth2/9/v1/keys",
+    "https://issuer/oauth2/8/v1/keys",
+    "https://issuer/oauth2/9/v1/introspect",
+    "https://issuer/admin/apps/9/ssf",
+    "https://issuer/admin/apps/9/catalog",
+    "https://issuer/oauth2/9/v1/token">;
+};
+
+// Transport inputs change only between completed service operations.
+struct KeyClient {
+  Zum::Service service;
+  Zum::ServiceConfig config;
+  Zum::String management;
+  Zum::String resource;
+  Zum::String ssf;
+  Zum::String workload;
+  unsigned resourceLoads = 0;
+  unsigned managementLoads = 0;
+  unsigned ssfLoads = 0;
+  unsigned introspections = 0;
+  bool resourceAuth = false;
+
+  KeyClient(ZmScheduler &scheduler) : config{
+    .scheduler = &scheduler, .sid = 1,
+    .issuerURL = "https://issuer/oauth2/9",
+    .managementIssuerURL = "https://issuer/oauth2/7",
+    .managementURL = "https://issuer", .clientID = "service",
+    .clientSecret = Zum::Bytes{ZuBSpan{"secret"}}, .audience = "ping",
+    .jwksRefresh = 0, .keyMax = 64,
+    .introspectionURL = "https://issuer/oauth2/9/v1/introspect",
+    .introspectionClientID = "introspector",
+    .introspectionSecret = Zum::Bytes{ZuBSpan{"secret"}}} { }
+
+  int start() {
+    ZuCheckRT(service.init(config, [this](Zum::ServiceHTTPRequest request,
+	Zum::ServiceHTTPDoneFn complete) {
+      constexpr auto matcher = ZuMatcher<KeyURLs>();
+      switch (int url = matcher.exact(request.url)) {
+	case 0: case 1: case 2: {
+	  unsigned app = url == 0 ? 9 : url == 1 ? 7 : 8;
+	  complete(Zum::ServiceHTTPResponse{200, Zum::String{"{\"issuer\":\"https://issuer/oauth2/"} <<
+	    app << "\",\"token_endpoint\":\"https://issuer/oauth2/" << app <<
+	    "/v1/token\",\"jwks_uri\":\"https://issuer/oauth2/" << app <<
+	    "/v1/keys\"}"});
+	  return;
+	}
+	case 3:
+	  if (resourceAuth) { complete(Zum::ServiceHTTPResponse{401, "{}"}); return; }
+	  [[fallthrough]];
+	case 10:
+	  complete(Zum::ServiceHTTPResponse{200, Zum::String{"{\"access_token\":\""} << workload <<
+	    "\",\"expires_in\":300}"});
+	  return;
+	case 4: ++managementLoads; complete(Zum::ServiceHTTPResponse{200, management}); return;
+	case 5: ++resourceLoads; complete(Zum::ServiceHTTPResponse{200, resource}); return;
+	case 6: ++ssfLoads; complete(Zum::ServiceHTTPResponse{200, ssf}); return;
+	case 7:
+	  ++introspections;
+	  complete(Zum::ServiceHTTPResponse{200, "{\"active\":false}"});
+	  return;
+	case 8:
+	  complete(Zum::ServiceHTTPResponse{200, Zum::String{"{\"expires_in\":300,\"expires\":"} <<
+	    Zm::now().sec() + 300 << '}'});
+	  return;
+	case 9: complete(Zum::ServiceHTTPResponse{200, "{}"}); return;
+	default: complete(Zum::ServiceHTTPResponse{404, {}}); return;
+      }
+    }));
+    return ZmBlock<int>{}([this](auto wake) mutable {
+      service.start([wake = ZuMv(wake)](int error) mutable { wake(error); });
+    });
+  }
+
+  int verify(Zum::String token) {
+    return ZmBlock<int>{}([this, token = ZuMv(token)](auto wake) mutable {
+      service.verify(ZuMv(token), [wake = ZuMv(wake)](int error,
+	  Zum::ServicePrincipal principal) mutable {
+	if (error == Zum::ServiceError::OK)
+	  ZuCheckRT(principal.appID == 9 && principal.audience == "ping");
+	wake(error);
+      });
+    });
+  }
+
+  int receive(Zum::String token) {
+    return ZmBlock<int>{}([this, token = ZuMv(token)](auto wake) mutable {
+      service.receiveSET({.authorization = "Bearer callback",
+	.contentType = "application/secevent+jwt", .body = ZuMv(token)},
+	[wake = ZuMv(wake)](int error) mutable { wake(error); });
+    });
+  }
+
+  void stop() {
+    ZuCheckRT(ZmBlock<int>{}([this](auto wake) mutable {
+      service.stop([wake = ZuMv(wake)](int error) mutable { wake(error); });
+    }) == Zum::ServiceError::OK);
+    service.final();
+  }
+};
+
+static void serviceKeys()
+{
+  ZuTestScopeRT(serviceKeys);
+  Ztls::Random rng;
+  ZuCheckRT(rng.init());
+  Ztls::PK::SK_EC management{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::SK_EC a{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  Ztls::PK::SK_EC b{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+  auto managementJWK = keyJWK(management, "management");
+  auto workload = keyJWT(rng, management, "management", true);
+  ZmSchedParams params;
+  params.nThreads(1);
+  params.thread(1).isolated(true);
+  ZmScheduler scheduler{ZuMv(params)};
+  ZuCheckRT(scheduler.start());
+  // These are the former branch boundaries plus a larger configured set.
+  for (unsigned count: {1U, 2U, 3U, 7U, 8U, 33U}) {
+    KeyClient client{scheduler};
+    client.management = keyJWKS(managementJWK);
+    client.workload = workload;
+    Zum::String entries;
+    Zum::StringVec tokens;
+    for (unsigned i = 0; i < count; ++i) {
+      Ztls::PK::SK_EC key{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
+      auto id = Zum::String{"key-"} << i;
+      if (i) entries << ',';
+      entries << keyJWK(key, id);
+      tokens.push(keyJWT(rng, key, id));
+    }
+    client.resource = keyJWKS(entries);
+    ZuCheckRT(client.start() == Zum::ServiceError::OK);
+    for (unsigned repeat = 0; repeat < 3; ++repeat)
+      for (auto &token: tokens)
+	ZuCheckRT(client.verify(token) == Zum::ServiceError::OK);
+    ZuCheckRT(client.resourceLoads == 1 && !client.introspections);
+    auto loads = client.resourceLoads;
+    ZuCheckRT(client.verify(keyJWT(rng, a, "missing")) ==
+      Zum::ServiceError::Unauthorized);
+    ZuCheckRT(client.resourceLoads == loads + 1 && client.introspections == 1);
+    // The same key ID with different case is a miss.
+    ZuCheckRT(client.verify(keyJWT(rng, a, "KEY-0")) ==
+      Zum::ServiceError::Unauthorized);
+    loads = client.resourceLoads;
+    auto introspections = client.introspections;
+    ZuCheckRT(client.verify(keyJWT(rng, management, "key-0")) ==
+      Zum::ServiceError::Unauthorized);
+    ZuCheckRT(client.resourceLoads == loads &&
+      client.introspections == introspections);
+    client.stop();
+  }
+
+  KeyClient client{scheduler};
+  client.management = keyJWKS(managementJWK);
+  client.workload = workload;
+  auto oldJWK = keyJWK(a, "old");
+  auto keepA = keyJWK(a, "keep");
+  auto keepB = keyJWK(b, "keep");
+  auto newJWK = keyJWK(b, "new");
+  auto oldToken = keyJWT(rng, a, "old");
+  auto keepToken = keyJWT(rng, a, "keep");
+  auto newToken = keyJWT(rng, b, "new");
+  client.resource = keyJWKS(Zum::String{oldJWK} << ',' << keepA);
+  ZuCheckRT(client.start() == Zum::ServiceError::OK);
+
+  Zum::StringVec failures;
+  failures.push(keyJWKS(Zum::String{keepB} << ',' << newJWK << ',' << newJWK));
+  failures.push(Zum::String{"{\"keys\":["} << newJWK << ",}");
+  failures.push("{\"keys\":[]}");
+  failures.push(keyJWKS("{\"kid\":\"invalid\",\"kty\":\"EC\","
+    "\"crv\":\"P-256\",\"x\":\"bad\",\"y\":\"bad\"}"));
+  Zum::String overLimit;
+  for (unsigned i = 0; i <= client.config.keyMax; ++i) {
+    if (i) overLimit << ',';
+    overLimit << keyJWK(a, Zum::String{"over-"} << i);
+  }
+  failures.push(keyJWKS(overLimit));
+  for (auto &failure: failures) {
+    client.resource = failure;
+    ZuCheckRT(client.verify(newToken) == Zum::ServiceError::Unauthorized);
+    ZuCheckRT(client.verify(oldToken) == Zum::ServiceError::OK);
+    ZuCheckRT(client.verify(keepToken) == Zum::ServiceError::OK);
+  }
+  // Growth replaces the public key for keep and introduces new.
+  client.resource = keyJWKS(Zum::String{keepB} << ',' << newJWK << ',' <<
+    keyJWK(a, "extra"));
+  ZuCheckRT(client.verify(newToken) == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(keepToken) == Zum::ServiceError::Unauthorized);
+  ZuCheckRT(client.verify(keyJWT(rng, b, "keep")) == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(oldToken) == Zum::ServiceError::Unauthorized);
+  // Shrink and ensure all previous entries are gone.
+  client.resource = keyJWKS(keyJWK(a, "only"));
+  ZuCheckRT(client.verify(keyJWT(rng, a, "only")) == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(newToken) == Zum::ServiceError::Unauthorized);
+  ZuCheckRT(client.verify(keyJWT(rng, b, "keep")) == Zum::ServiceError::Unauthorized);
+  client.stop();
+
+  // Collision found with ZuCSpan::hash(), checked against the active framework.
+  constexpr auto left = "collision-1018"_z;
+  constexpr auto right = "collision-2000"_z;
+  ZuCheckRT(ZuCSpan{left}.hash() == ZuCSpan{right}.hash() && left != right);
+  client.resource = keyJWKS(Zum::String{keyJWK(a, left)} << ',' << keyJWK(b, right));
+  ZuCheckRT(client.start() == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(keyJWT(rng, a, left)) == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(keyJWT(rng, b, right)) == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(keyJWT(rng, a, right)) == Zum::ServiceError::Unauthorized);
+  client.resource = keyJWKS(Zum::String{keyJWK(a, left)} << ',' <<
+    keyJWK(b, right) << ',' << keyJWK(b, left));
+  ZuCheckRT(client.verify(newToken) == Zum::ServiceError::Unauthorized);
+  ZuCheckRT(client.verify(keyJWT(rng, a, left)) == Zum::ServiceError::OK);
+  ZuCheckRT(client.verify(keyJWT(rng, b, right)) == Zum::ServiceError::OK);
+  client.stop();
+
+  // Skipped records do not reserve IDs, regardless of their wire order.
+  Zum::String skipped{"{\"kid\":\"new\",\"kty\":\"RSA\",\"crv\":\"P-256\","
+    "\"x\":\"bad\",\"y\":\"bad\"}"};
+  Zum::String invalid{"{\"kid\":\"new\",\"kty\":\"EC\",\"crv\":\"P-256\","
+    "\"x\":\"bad\",\"y\":\"bad\"}"};
+  uint8_t zero[Ztls::COSE::ES256::CoordinateSize] = {};
+  auto coordinate = encode(zero);
+  auto badPoint = Zum::String{"{\"kid\":\"new\",\"kty\":\"EC\","
+    "\"crv\":\"P-256\",\"x\":\""} << coordinate <<
+    "\",\"y\":\"" << coordinate << "\"}";
+  for (bool reverse: {false, true}) {
+    client.resource = keyJWKS(reverse ?
+      Zum::String{newJWK} << ',' << skipped << ',' << invalid << ',' << badPoint :
+      Zum::String{skipped} << ',' << invalid << ',' << badPoint << ',' << newJWK);
+    ZuCheckRT(client.start() == Zum::ServiceError::OK);
+    ZuCheckRT(client.verify(newToken) == Zum::ServiceError::OK);
+    client.stop();
+  }
+
+  // Distinct issuer key material; exercise both SSF load and startup copy.
+  for (bool sharedIssuer: {false, true}) {
+    client.config.renewSkew = 600;
+    client.config.ssf = {.enabled = true, .receiverID = "service",
+      .deliveryURL = "https://service/ssf", .callbackAuth = "Bearer callback",
+      .transmitterIssuer = sharedIssuer ?
+	"https://issuer/oauth2/7" : "https://issuer/oauth2/8", .audience = "ping"};
+    client.resource = keyJWKS(newJWK);
+    client.management = keyJWKS(managementJWK);
+    client.workload = workload;
+    client.ssf = keyJWKS(keyJWK(a, "ssf"));
+    auto ssfLoads = client.ssfLoads;
+    ZuCheckRT(client.start() == Zum::ServiceError::OK);
+    ZuCheckRT(client.ssfLoads == ssfLoads + (sharedIssuer ? 0 : 1));
+    ZuCheckRT(client.verify(newToken) == Zum::ServiceError::OK);
+    // Renew management keys after SSF's snapshot has been installed.
+    client.management = keyJWKS(keyJWK(b, "management"));
+    client.workload = keyJWT(rng, b, "management", true);
+    ZuCheckRT(ZmBlock<int>{}([&client](auto wake) mutable {
+      client.service.publish({.revision = 1},
+	[wake = ZuMv(wake)](Zum::ServiceProtocolResult result) mutable {
+	  wake(result.error);
+	});
+    }) == Zum::ServiceError::OK);
+    auto id = sharedIssuer ? "management" : "ssf";
+    auto issuer = client.config.ssf.transmitterIssuer;
+    ZuCheckRT(client.receive(keySET(rng, sharedIssuer ? management : a,
+      id, issuer)) == Zum::ServiceError::OK);
+    ZuCheckRT(client.receive(keySET(rng, b, id, issuer)) ==
+      Zum::ServiceError::Unauthorized);
+    client.stop();
+  }
+  // Resource authentication fallback does not install management keys.
+  {
+    KeyClient fallback{scheduler};
+    fallback.resourceAuth = true;
+    fallback.workload = keyJWT(rng, b, "new");
+    fallback.resource = keyJWKS(newJWK);
+    fallback.config.ssf = {.enabled = true, .receiverID = "service",
+      .deliveryURL = "https://service/ssf", .callbackAuth = "Bearer callback",
+      .transmitterIssuer = "https://issuer/oauth2/7", .audience = "ping"};
+    ZuCheckRT(fallback.start() == Zum::ServiceError::OK);
+    ZuCheckRT(!fallback.managementLoads && !fallback.ssfLoads);
+    ZuCheckRT(fallback.verify(newToken) == Zum::ServiceError::OK);
+    ZuCheckRT(fallback.receive(keySET(rng, management, "management",
+      "https://issuer/oauth2/7")) == Zum::ServiceError::Unauthorized);
+    fallback.stop();
+  }
+  ZuCheckRT(scheduler.stop());
+}
+
 static void stopStarting()
 {
   ZuTestScope(stopStarting);
@@ -634,6 +997,7 @@ int main(int argc, char **argv)
   ZuTestCall(publicAPI);
   ZuTestCall(responseLifetime);
   ZuTestCall(serviceToken);
+  ZuTestCall(serviceKeys);
   ZuTestCall(stopStarting);
   ZuTestCall(ssfDelivery);
   return 0;

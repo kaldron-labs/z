@@ -53,10 +53,7 @@ static void bodies()
     ZuCheck(decoded.input.is<Text>());
   }
 
-  Attrs attrs;
-  attrs.add("service", "example");
-  attrs.add("account", "user");
-  attrs.add("key", "global/token");
+  Attrs attrs{"example", "user", "global/token"};
   SearchArg search{{&attrs}};
   wire.length(0);
   ZfDBUS::save(wire, search);
@@ -65,16 +62,14 @@ static void bodies()
   if (searchHandler) {
     SearchArg decoded;
     searchHandler.load(decoded);
-    ZuCheck(decoded.attributes.attrs->count_() == 3);
-    ZuCheck(decoded.attributes.attrs->findVal("key") == "global/token");
+    ZuCheck(decoded.attributes.owned.count_() == 3);
+    ZuCheck(decoded.attributes.owned.findVal("key") == "global/token");
   }
 
   uint8_t value[] = {0, 0xff, 1};
   CreateItemArg item;
-  item.properties.add("org.freedesktop.Secret.Item.Label",
-    Variant{Text{"token"}});
-  item.properties.add("org.freedesktop.Secret.Item.Attributes",
-    Variant{AttrsView{&attrs}});
+  item.properties.label = Text{"token"};
+  item.properties.attributes = AttrsView{&attrs};
   item.secret = Secret{Text{"/org/freedesktop/secrets/session/1"}, {}, value,
     Text{"application/octet-stream"}};
   item.replace = true;
@@ -86,9 +81,26 @@ static void bodies()
   if (itemHandler) {
     CreateItemArg decoded;
     itemHandler.load(decoded);
-    ZuCheck(decoded.properties.count_() == 2);
+    ZuCheck(decoded.properties.label.p<Text>() == "token");
+    ZuCheck(decoded.properties.attributes.is<AttrsView>());
     ZuCheck(decoded.secret.value == ZuBSpan{value});
     ZuCheck(decoded.replace);
+  }
+
+  SearchArg arbitrary;
+  arbitrary.attributes.add("vendor.attribute", "first");
+  arbitrary.attributes.add("vendor.attribute", "last");
+  wire.length(0);
+  ZfDBUS::save(wire, arbitrary);
+  auto arbitraryHandler = ZfDBUS::handler<SearchArg>({wire, "a{ss}"});
+  ZuCheck(bool(arbitraryHandler));
+  if (arbitraryHandler) {
+    SearchArg decoded;
+    arbitraryHandler.load(decoded);
+    ZuCheck(decoded.attributes.owned.count_() == 1);
+    ZuCheck(decoded.attributes.owned.findVal("vendor.attribute") == "last");
+    decoded.attributes.clean();
+    ZuCheck(!decoded.attributes.owned.count_());
   }
 }
 

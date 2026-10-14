@@ -65,13 +65,13 @@ struct MaintenanceResult {
 ZuDerive(MaintenanceFn,
   (ZmFn<void(MaintenanceResult), ZmFnHeapID<"Zum.MaintenanceFn">>));
 ZumExtern void daemonGrantCleanup(
-  DB *, DBContext *, Ztls::Random *, unsigned, MaintenanceFn);
+  DB *, Ztls::Random *, unsigned, MaintenanceFn);
 ZumExtern void daemonRefreshCleanup(
-  DB *, DBContext *, Ztls::Random *, unsigned, MaintenanceFn);
+  DB *, Ztls::Random *, unsigned, MaintenanceFn);
 ZumExtern void daemonSessionCleanup(
-  DB *, DBContext *, Ztls::Random *, unsigned, MaintenanceFn);
+  DB *, Ztls::Random *, unsigned, MaintenanceFn);
 ZumExtern void daemonAppCleanup(
-  DB *, DBContext *, Ztls::Random *, AppID, unsigned, MaintenanceFn);
+  DB *, Ztls::Random *, AppID, unsigned, MaintenanceFn);
 // Lower than interactive query admission to keep periodic work within one
 // scheduler turn and prevent cleanup payloads from competing with queries.
 namespace DaemonCleanupLimit { enum { Rows = 512 }; }
@@ -374,13 +374,18 @@ struct DaemonBuilder_ : public ZmObject, public DaemonBuilder { };
 ZmListDerive(DaemonBuilderQ, DaemonBuilder_,
   ZmListNode<DaemonBuilder_, ZmListHeapID<"zumd.Response">>);
 
-class Daemon : public HTTP<Daemon> {
+class Daemon : public HTTP<Daemon>,
+  public Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ> {
 public:
-  using Parser = DaemonParser;
-  using ResBuilderQ = DaemonBuilderQ;
+  using HTTPServer = Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ>;
+  using HTTPServer::init;
+  using HTTPServer::start;
+  using HTTPServer::stop;
+  using HTTPServer::connected;
+  using HTTPServer::disconnected;
 
   bool init(
-    DB *, DBContext *, Requests *, ZiMultiplex *, DaemonConfig);
+    DB *, Requests *, ZiMultiplex *, DaemonConfig);
   // Main thread, with request admission closed: prepare active-node signing
   // after bootstrap. init/start do not read an inactive replica's database.
   bool prepare(ServerBootstrapResult);
@@ -587,27 +592,25 @@ private:
 
   using Key = ZmRef<Ztls::PK::SK_EC>;
   using SSF = ZmRef<SSFTransmitter>;
-  using HTTPServer = Zhttp::Server<Daemon>;
   using CleanupRun = ZmRef<ZmPolymorph>;
 
   DB			*m_db = nullptr;
-  DBContext		*m_context = nullptr;
   Requests		*m_requests = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   DaemonConfig		m_config;
-  Server		m_provider;
+  Zum::Server		m_provider;
   Key			m_key;
   SSF			m_ssf;
   SignFn		m_sign;
   String		m_signKeyID;
   Ztls::Random		m_rng;
-  HTTPServer		m_http;
   ZmScheduler::Timer	m_cleanupTimer;
   CleanupRun		m_cleanupRun;
   bool			m_started = false;
   int			m_cleanupState = DaemonCleanupState::Idle;
   uint64_t		m_cleanupBackoff = 0;
   bool			m_httpInited = false;
+  bool			m_providerInited = false;
   bool			m_finalized = false;
   ZmSemaphore		m_cleanupStopped;
 };

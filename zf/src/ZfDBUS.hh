@@ -18,6 +18,9 @@
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuIntrin.hh>
+#include <zlib/ZuMatcher.hh>
+#include <zlib/ZuString.hh>
+#include <zlib/ZuSwitch.hh>
 #include <zlib/ZuUnroll.hh>
 #include <zlib/ZuFP.hh>
 #include <zlib/ZmAssert.hh>
@@ -138,6 +141,15 @@ struct SigConst {
     return *this;
   }
 };
+
+template <SigConst S>
+consteval auto sigString()
+{
+  ZuString<S.length + 1> s;
+  for (unsigned i = 0; i < S.length; ++i) s[i] = S.bytes[i];
+  s[S.length] = 0;
+  return s;
+}
 
 struct FieldViewHeap : public ZuStringT<"ZfDBUS.FieldView"> { };
 ZuDerive(FieldViewsScratch, (ZtArray<View,
@@ -1544,6 +1556,20 @@ struct AsVariant {
       signatureField<RawField<V>>(s);
       return s;
     }
+    template <typename V>
+    using Concrete = ZuBool<!ZuIsSame<V, void>{} && !IsAny<V>{}>;
+    using Alternatives = ZuTypeGrep<Concrete, Types>;
+    template <typename V>
+    using Key = ZuStringT<sigString<alternativeSignature<V>()>()>;
+    struct IDs { using Keys = ZuTypeMap<Key, Alternatives>; };
+
+    static int match(ZuCSpan signature) {
+      if constexpr (!Alternatives::N) return -1;
+      else {
+	static constexpr auto matcher = ZuMatcher<IDs>();
+	return matcher.exact(signature);
+      }
+    }
     template <typename S>
     static bool saveValue(S &s, State_ &context, const O &o) {
       SaveDepth_ nesting{context};
@@ -1578,22 +1604,19 @@ struct AsVariant {
       ZuBSpan signatureBytes;
       if (!textData(reader, Type::Signature, signatureBytes)) return false;
       ZuCSpan signature{signatureBytes};
-      bool found = false;
-      ZuUnroll::all<Types>([
-	&reader, &o, signature, &found
-      ]<typename V>() {
-	if (found) return;
-	if constexpr (!ZuIsSame<V, void>{} && !IsAny<V>{}) {
-	  static constexpr auto expected = alternativeSignature<V>();
-	  if (ZuCSpan{expected.bytes, expected.length} != signature) return;
-	  found = true;
-	  auto value = loadFieldValue<RawField<V>>(reader);
-	  if (!reader.result) return;
-	  constexpr unsigned I = ZuTypeIndex<V, Types>{};
-	  o.template p<I>(ZuMv(value));
-	}
-      });
-      if (found) return bool(reader.result);
+      int found = match(signature);
+      if (found >= 0) {
+	ZuSwitch::dispatch<Alternatives::N>(unsigned(found),
+	  [&reader, &o](auto I) {
+	    using Matched = ZuType<I, Alternatives>;
+	    constexpr unsigned J = ZuTypeIndex<Key<Matched>, typename IDs::Keys>{};
+	    using V = ZuType<J, Alternatives>;
+	    auto value = loadFieldValue<RawField<V>>(reader);
+	    if (!reader.result) return;
+	    o.template p<ZuTypeIndex<V, Types>{}>(ZuMv(value));
+	  });
+	return bool(reader.result);
+      }
       bool captured = false;
       ZuUnroll::all<Types>([&reader, &o, signature, &captured]<typename V>() {
 	if (captured) return;
@@ -1627,20 +1650,18 @@ struct AsVariant {
       if (!text(reader, Type::Signature, signatureBytes)) return false;
       ZuCSpan signature{signatureBytes};
       if (!validSignature(signature, true)) return reader.fail(Error::Syntax);
-      bool found = false;
-      ZuUnroll::all<Types>([
-	&reader, signature, &found
-      ]<typename V>() {
-	if (found) return;
-	if constexpr (!ZuIsSame<V, void>{} && !IsAny<V>{}) {
-	  static constexpr auto expected = alternativeSignature<V>();
-	  if (ZuCSpan{expected.bytes, expected.length} != signature) return;
-	  found = true;
-	  if (!skipField<RawField<V>>(reader) && reader.result)
-	    reader.fail(Error::Type);
-	}
-      });
-      if (found) return bool(reader.result);
+      int found = match(signature);
+      if (found >= 0) {
+	ZuSwitch::dispatch<Alternatives::N>(unsigned(found),
+	  [&reader](auto I) {
+	    using Matched = ZuType<I, Alternatives>;
+	    constexpr unsigned J = ZuTypeIndex<Key<Matched>, typename IDs::Keys>{};
+	    using V = ZuType<J, Alternatives>;
+	    if (!skipField<RawField<V>>(reader) && reader.result)
+	      reader.fail(Error::Type);
+	  });
+	return bool(reader.result);
+      }
       bool captured = false;
       ZuUnroll::all<Types>([&reader, signature, &captured]<typename V>() {
 	if (captured) return;

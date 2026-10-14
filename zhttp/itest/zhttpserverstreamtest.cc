@@ -134,18 +134,19 @@ struct State {
   }
 };
 
-struct App {
-  struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
-    struct EmitProbe {
-      template <typename Body>
-      Zhttp::WriteOutcome::T operator ()(Body &) const;
-    };
+struct App;
 
-    template <typename Emit>
-    struct Producer : public ZmPolymorph {
-      Producer(State *state_, Emit emit_) :
+struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
+  struct EmitProbe {
+    template <typename Body>
+    Zhttp::WriteOutcome::T operator ()(Body &) const;
+  };
+
+  template <typename Emit>
+  struct Producer : public ZmPolymorph {
+    Producer(State *state_, Emit emit_) :
 	state{state_}, emit{ZuMv(emit_)} { }
-      bool resume() {
+    bool resume() {
 	return emit([this](auto &body) {
 	  ++state->writerCalls;
 	  if (state->streamTurn == StreamTurn::Saturate) {
@@ -173,31 +174,31 @@ struct App {
 	    default: return Zhttp::WriteOutcome::End;
 	  }
 	});
-      }
-      State *state;
-      Emit emit;
-    };
+    }
+    State *state;
+    Emit emit;
+  };
 
-    using HdrCatalog = Zhttp::DefltHdrCatalog;
-    Zhttp::BodyPolicy::T bodyPolicy() const {
-      return state->streamTurn == StreamTurn::OptionalAbsent ?
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
+  Zhttp::BodyPolicy::T bodyPolicy() const {
+    return state->streamTurn == StreamTurn::OptionalAbsent ?
 	Zhttp::BodyPolicy::OptionalStream : Zhttp::BodyPolicy::Stream;
-    }
-    Zhttp::Method::T method() const { return Zhttp::Method::POST; }
-    unsigned status() const { state->responseCallback(); return 200; }
-    template <typename Key, typename L> void header(L &&) const {
-      state->responseCallback();
-    }
-    template <typename L> void header(L &&) const {
-      state->responseCallback();
-    }
-    bool disconnect() const { state->responseCallback(); return false; }
-    template <typename Emit>
-    void body(Emit &&emit) {
-      state->responseCallback();
-      using EmitResult = decltype(
+  }
+  Zhttp::Method::T method() const { return Zhttp::Method::POST; }
+  unsigned status() const { state->responseCallback(); return 200; }
+  template <typename Key, typename L> void header(L &&) const {
+    state->responseCallback();
+  }
+  template <typename L> void header(L &&) const {
+    state->responseCallback();
+  }
+  bool disconnect() const { state->responseCallback(); return false; }
+  template <typename Emit>
+  void body(Emit &&emit) {
+    state->responseCallback();
+    using EmitResult = decltype(
 	ZuDeclVal<Emit &>()(ZuDeclVal<EmitProbe>()));
-      if constexpr (ZuIsSame<EmitResult, bool>{}) {
+    if constexpr (ZuIsSame<EmitResult, bool>{}) {
 	  if (state->streamTurn == StreamTurn::OptionalAbsent) {
 	    state->producerStarted.post();
 	    return;
@@ -226,97 +227,102 @@ struct App {
 	    if (!first || !second || !third || late) state->fail();
 	  }
 	return;
-      }
-      emit([](auto &body) {
+    }
+    emit([](auto &body) {
 	body << 'x';
 	return Zhttp::WriteOutcome::End;
-      });
-    }
-    void close() {
-      state->responseCallback();
-      state->streamEmit = {};
-      ++state->producerClosedCount;
-      state->producerClosed.post();
-    }
+    });
+  }
+  void close() {
+    state->responseCallback();
+    state->streamEmit = {};
+    ++state->producerClosedCount;
+    state->producerClosed.post();
+  }
 
-    State *state = nullptr;
-  };
-  using ResBuilderQ = ZmList<ResBuilder_,
-    ZmListNode<ResBuilder_, ZmListHeapID<"Zhttp.Server.Idle.ResBuilder">>>;
-  using ResBuilder = ResBuilderQ::Node;
+  State *state = nullptr;
+};
+using ResBuilderQ = ZmList<ResBuilder_,
+  ZmListNode<ResBuilder_, ZmListHeapID<"Zhttp.Server.Idle.ResBuilder">>>;
+using ResBuilder = ResBuilderQ::Node;
 
-  struct Parser : public Zhttp::Parser {
-    using HdrCatalog = Zhttp::DefltHdrCatalog;
+struct Parser : public Zhttp::Parser {
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
 
-    void init(App &app) { state = app.state; }
+  void init(App &app);
 
-    bool operation(Zhttp::Method::T, Zhttp::Target &) {
-      if (state) {
+  bool operation(Zhttp::Method::T, Zhttp::Target &) {
+    if (state) {
 	state->rxCallback();
 	state->requestStarted.post();
-      }
-      return true;
     }
-    bool bodyInfo(Zhttp::BodyType::T, uint64_t) {
-      if (state) state->rxCallback();
-      return true;
-    }
-    template <typename Key>
-    void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) {
-      if (state) state->rxCallback();
-    }
-    template <typename Rx>
-    bool body(Rx &rx) {
-      if (state) state->rxCallback();
-      return Zhttp::bodyDrain(rx);
-    }
-    template <typename Link>
-    void complete(Link *link, bool ok) {
-      if (state) state->rxCallback();
-      if (ok) {
+    return true;
+  }
+  bool bodyInfo(Zhttp::BodyType::T, uint64_t) {
+    if (state) state->rxCallback();
+    return true;
+  }
+  template <typename Key>
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) {
+    if (state) state->rxCallback();
+  }
+  template <typename Rx>
+  bool body(Rx &rx) {
+    if (state) state->rxCallback();
+    return Zhttp::bodyDrain(rx);
+  }
+  template <typename Link>
+  void complete(Link *link, bool ok) {
+    if (state) state->rxCallback();
+    if (ok) {
 	ZmRef<ResBuilder> response = new ResBuilder{};
 	response->state = state;
 	link->send(ZuMv(response));
-      }
-      if (state->openRequest) {
+    }
+    if (state->openRequest) {
 	++state->completedCount;
 	state->completed.post();
-      }
-    }
-
-    void reset() { state = nullptr; }
-
-    State *state = nullptr;
-  };
-
-  App(State *state_) : state{state_} { }
-
-  void listening(int8_t transport, uint16_t port) {
-    if (transport != state->expectedTransport || port != state->port)
-      state->fail();
-    else
-      state->listening.post();
-  }
-  void listenFailed(int8_t, bool) { state->fail(); }
-  void connected(int8_t transport) {
-    if (transport != state->expectedTransport)
-      state->fail();
-    else
-      state->admitted.post();
-  }
-  void disconnected(int8_t transport) {
-    if (transport != state->expectedTransport)
-      state->fail();
-    else {
-      ++state->releaseCount;
-      state->released.post();
     }
   }
 
-  State	*state;
+  void reset() { state = nullptr; }
+
+  State *state = nullptr;
 };
 
-using Server = Zhttp::Server<App>;
+struct App : public Zhttp::Server<App, zhttpserverstreamtest_::Parser, ResBuilderQ> {
+  using HTTP = Zhttp::Server<App, zhttpserverstreamtest_::Parser, ResBuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
+
+  App(State *state_) : testState{state_} { }
+
+  void listening(int8_t transport, uint16_t port) {
+    if (transport != testState->expectedTransport || port != testState->port)
+      testState->fail();
+    else
+      testState->listening.post();
+  }
+  void listenFailed(int8_t, bool) { testState->fail(); }
+  void connected(int8_t transport) {
+    if (transport != testState->expectedTransport)
+      testState->fail();
+    else
+      testState->admitted.post();
+  }
+  void disconnected(int8_t transport) {
+    if (transport != testState->expectedTransport)
+      testState->fail();
+    else {
+      ++testState->releaseCount;
+      testState->released.post();
+    }
+  }
+
+  State	*testState;
+};
+
+inline void Parser::init(App &app) { state = app.testState; }
 
 template <typename Profile>
 struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
@@ -476,7 +482,6 @@ void activeStop()
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
   App app{&state};
-  Server server;
   auto serverConfig = Zhttp::ServerConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port)
     .maxRequests(1).retainedBytesMax(17);
@@ -494,9 +499,9 @@ void activeStop()
     serverConfig.quic(
       Zhttp::QUICConfig{}.certPath(cert).keyPath(key).maxIdleTimeout(10000));
   bool serverInited =
-    server.init(hub, ZuMv(serverConfig), &app);
+    app.init(hub, ZuMv(serverConfig));
   ZuCHECK(serverInited, "initialize server");
-  bool serverUp = serverInited && server.start();
+  bool serverUp = serverInited && app.start();
   ZuCHECK(serverUp, "start server");
   bool listening = serverUp &&
     state.listening.timedwait(Zm::now(10)) == 0;
@@ -541,18 +546,18 @@ void activeStop()
     state.admitted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(admitted, "server admits active link");
   if (admitted)
-    ZuCHECK(server.activeConnections() == 1,
+    ZuCHECK(app.activeConnections() == 1,
 	"server accounts for active link");
   bool requestStarted = admitted &&
     state.requestStarted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(requestStarted, "server admits partial request");
   if (requestStarted)
-    ZuCHECK(state.completeRequest || server.activeRequests() == 1,
+    ZuCHECK(state.completeRequest || app.activeRequests() == 1,
 	"server accounts for admitted request");
   bool producerStarted =
     state.producerStarted.timedwait(Zm::now(10)) == 0;
   ZuCHECK(producerStarted, "asynchronous body producer starts");
-  ZuCHECK(!server.retainedBytes(),
+  ZuCHECK(!app.retainedBytes(),
     "streaming response retains no transactional body bytes");
   if constexpr (StreamResult == StreamTurn::HighTurns) {
     HeapCounts open = streamHeapCounts();
@@ -636,11 +641,11 @@ void activeStop()
   }
   if constexpr ((StreamResult == StreamTurn::Abort ||
       StreamResult == StreamTurn::Saturate) && HTTP::Multiplexed)
-    ZuCHECK(server.activeConnections() == 1,
+    ZuCHECK(app.activeConnections() == 1,
       "stream-local termination preserves the multiplexed transport session");
 
   ZmAtomic<unsigned> stopReturned = 0;
-  if (serverInited) server.stop([
+  if (serverInited) app.stop([
     &state, &stopReturned
   ](bool ok) {
     if (!ok) state.errors = 1;
@@ -676,7 +681,7 @@ void activeStop()
   bool stopped = !serverInited || stoppedEarly;
   if (!stopped)
     stopped = state.stopped.timedwait(Zm::now(10)) == 0;
-  if (!stopped && serverInited) (void)server.stop();
+  if (!stopped && serverInited) (void)app.stop();
   ZuCHECK(stopped, "active server stop completes");
   ZuCHECK(state.stopCount.load_() == 1,
     "active server stop callback completes exactly once");
@@ -684,26 +689,26 @@ void activeStop()
     "active server admission releases before stop completion");
   ZuCHECK(state.completedCount.load_() == 1,
     "active server stop completes partial request exactly once");
-  ZuCHECK(server.activeRequests() == 0,
+  ZuCHECK(app.activeRequests() == 0,
 	"active server stop releases request admission");
-  ZuCHECK(!server.serverFaults() && !server.parseFailures() &&
-	!server.bodyFailures() &&
-	server.responseBuildFailures() ==
+  ZuCHECK(!app.serverFaults() && !app.parseFailures() &&
+	!app.bodyFailures() &&
+	app.responseBuildFailures() ==
 	  unsigned(StreamResult == StreamTurn::Failed ||
 	    StreamResult == StreamTurn::FailedInitial),
 	"stream outcome has the expected build-failure accounting");
-  ZuCHECK(server.transportFailures() ==
+  ZuCHECK(app.transportFailures() ==
       unsigned(StreamResult == StreamTurn::Saturate),
     "stream outcome has the expected transport-failure accounting");
   if (clientInited) (void)client.stop();
   ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
     "client stop completes active disconnect");
-  ZuCHECK(server.activeConnections() == 0,
+  ZuCHECK(app.activeConnections() == 0,
 	"active server stop drains admission");
 
   link = nullptr;
   if (clientInited) client.final();
-  if (serverInited) server.final();
+  if (serverInited) app.final();
   ZiResolver::stop();
   ZiResolver::final();
   mx.stop();

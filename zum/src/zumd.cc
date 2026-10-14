@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <zlib/ZuBase64.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZmAtomic.hh>
@@ -22,6 +23,7 @@
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiHeapTune.hh>
 
 #include <zlib/ZtlsVault.hh>
 
@@ -149,12 +151,20 @@ struct OIDCConfig {
 ZfStruct(, (OIDCConfig, Cf),
   (caPath, (Mutable),		String));
 
-static bool nodeZtcPublish(const ZfCf::AnyNode *root)
+static bool nodeZtcPublish(const ZfCf::AnyNode *node)
 {
-  auto node = root->resolve("ztcPublish");
   return node && ZfCf::loadValue<ZuFacet::Cf, ZfFieldFilter::Save,
     ZfFieldTC::Bool, ZuTypeList<>, bool>(node);
 }
+
+namespace ConfigField {
+  enum { Mx, Zdb, ZtcPublish, Ztc, Vault, SSF, OIDC, N };
+}
+struct ConfigNames {
+  using Keys = ZuStringTL<"mx", "zdb", "ztcPublish", "ztc", "vault",
+    "ssf", "oidc">;
+};
+ZuAssert(ConfigField::N == ConfigNames::Keys::N);
 
 struct VaultCf {
   Zum::String store;
@@ -167,7 +177,12 @@ ZfStruct(, (VaultCf, Cf),
 static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer,
     bool testStore)
 {
-  bool localStore = cf.store == "file" || cf.store == "ephemeral";
+  struct StoreKeys {
+    using Keys = ZuStringTL<"keyring", "module", "file", "ephemeral">;
+  };
+  static constexpr auto matcher = ZuMatcher<StoreKeys>();
+  int store = matcher.exact(cf.store);
+  bool localStore = store == 2 || store == 3;
   const char *testHome = ::getenv("ZUMD_HOME");
   if (localStore && (!testStore || !testHome || !*testHome))
     throw ZeEXCEPT(Fatal, "zumd",
@@ -176,18 +191,25 @@ static Ztls::VaultConfig vaultConfig(const VaultCf &cf, ZuCSpan issuer,
   result.program = "zumd";
   result.account = issuer;
   result.variant = Ztls::VaultVariant::Direct;
-  if (cf.store == "keyring")
-    result.store = Ztls::VaultStore::KeyRing;
-  else if (cf.store == "module" && cf.module) {
-    result.store = Ztls::VaultStore::Module;
-    result.module = cf.module;
-  } else if (cf.store == "file")
-    result.store = Ztls::VaultStore::File;
-  else if (cf.store == "ephemeral")
-    result.store = Ztls::VaultStore::Ephemeral;
-  else
-    throw ZeEXCEPT(Fatal, "zumd", "invalid Vault store configuration");
-  return result;
+  switch (store) {
+    case 0:
+      result.store = Ztls::VaultStore::KeyRing;
+      return result;
+    case 1:
+      if (cf.module) {
+        result.store = Ztls::VaultStore::Module;
+        result.module = cf.module;
+        return result;
+      }
+      break;
+    case 2:
+      result.store = Ztls::VaultStore::File;
+      return result;
+    case 3:
+      result.store = Ztls::VaultStore::Ephemeral;
+      return result;
+  }
+  throw ZeEXCEPT(Fatal, "zumd", "invalid Vault store configuration");
 }
 
 template <typename Fn>
@@ -314,6 +336,7 @@ int main(int argc, char **argv)
 {
   Options options;
   try {
+    ZiHeapTune::load();
     ZfCLI::load(options, argc, argv);
   } catch (const ZeException &e) {
     std::cerr << e << '\n';
@@ -369,18 +392,31 @@ int main(int argc, char **argv)
   try {
     Zum::String configSource;
     auto cf = config(options, configSource);
-    if (!cf || !cf->resolve("mx") || !cf->resolve("zdb"))
+    if (!cf || !cf->has<ZfCf::AnyNode::Object>())
+      throw ZeEXCEPT(Fatal, "zumd", "invalid node configuration");
+    const auto &fields = cf->data<ZfCf::AnyNode::Object>();
+    int lookup[ConfigField::N];
+    for (auto &slot: lookup) slot = -1;
+    constexpr auto matcher = ZuMatcher<ConfigNames>();
+    for (unsigned i = 0, n = fields.length(); i < n; ++i) {
+      int id = matcher.exact(fields[i].p<0>());
+      if (id >= 0) lookup[id] = i;
+    }
+    auto node = [&](unsigned id) -> const ZfCf::AnyNode * {
+      int i = lookup[id];
+      return i >= 0 ? fields[i].p<1>().ptr() : nullptr;
+    };
+    if (!node(ConfigField::Mx) || !node(ConfigField::Zdb))
       throw ZeEXCEPT(Fatal, "zumd", "invalid node configuration");
     const char *publishEnv = ::getenv("ZUMD_ZTC_PUBLISH");
-    bool ztcPublish = nodeZtcPublish(cf) || options.ztcPublish ||
+    bool ztcPublish = nodeZtcPublish(node(ConfigField::ZtcPublish)) ||
+      options.ztcPublish ||
       (publishEnv && !::strcmp(publishEnv, "1"));
     if (ztcPublish) {
       Ztc::AppCf publisherCf;
-      if (auto node = cf->resolve("ztc")) {
-        ZfCf::handler<Ztc::AppCf>(node).update(publisherCf);
-        if (!node->resolve("id")) publisherCf.id = "zumd";
-      } else
-        publisherCf.id = "zumd";
+      publisherCf.id = "zumd";
+      if (auto ztc = node(ConfigField::Ztc))
+	ZfCf::handler<Ztc::AppCf>(ztc).update(publisherCf);
       if (!publisher.init(publisherCf))
         throw ZeEXCEPT(Fatal, "zumd", "telemetry publisher initialization failed");
       if (!publisher.start())
@@ -391,8 +427,8 @@ int main(int argc, char **argv)
     if (options.vaultStore) {
       vaultOptions.store = options.vaultStore;
       vaultOptions.module = options.vaultModule;
-    } else if (auto node = cf->resolve("vault"))
-      ZfCf::handler<VaultCf>(node).update(vaultOptions);
+    } else if (auto vault = node(ConfigField::Vault))
+      ZfCf::handler<VaultCf>(vault).update(vaultOptions);
     else
       throw ZeEXCEPT(Fatal, "zumd", "Vault configuration missing");
     auto vaultCf = vaultConfig(vaultOptions, options.issuer,
@@ -411,12 +447,12 @@ int main(int argc, char **argv)
           "ZUM_DB_KEY must be a base64-encoded 256-bit key");
     }
     SSFCf ssfConfig;
-    if (auto node = cf->resolve("ssf"))
-      ZfCf::handler<SSFCf>(node).update(ssfConfig);
+    if (auto ssf = node(ConfigField::SSF))
+      ZfCf::handler<SSFCf>(ssf).update(ssfConfig);
     Zum::String ssfIssuer = options.ssfIssuer;
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
-    ZiMultiplex mx{ZvMxParams("mx", cf->resolve("mx"))};
+    ZiMultiplex mx{ZvMxParams("mx", node(ConfigField::Mx))};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
     db->bootstrapRequests = new Zum::Requests{};
@@ -425,9 +461,9 @@ int main(int argc, char **argv)
 	!db->bootstrapRequests->init(&mx, mx.sid("shard"),
           Zum::DaemonCapacity::BootstrapAdmission))
       throw ZeEXCEPT(Fatal, "zumd", "request initialization failed");
-    db->init(ZdbCf{cf->resolve("zdb")}, &mx,
+    db->init(ZdbCf{node(ConfigField::Zdb)}, &mx,
       ZdbHandler{.upFn = dbUp, .downFn = dbDown});
-    ZmRef<Zum::DBContext> context = Zum::registerSchema(db);
+    Zum::registerSchema(db);
     Zum::OIDCHTTP oidcHTTP;
     Zum::Daemon daemon;
     bool oidcHTTPInited = false, daemonInited = false;
@@ -440,7 +476,7 @@ int main(int argc, char **argv)
     };
     auto stop = [
       &stopped, &mxStarted, db, &daemon, &oidcHTTPInited, &oidcHTTP,
-      &stopDB, &mx, &context, &stopPublisher
+      &stopDB, &mx, &stopPublisher
     ]() {
       if (stopped) return;
       stopped = true;
@@ -458,7 +494,6 @@ int main(int argc, char **argv)
       daemon.final();
       if (mxStarted) mx.stop();
       db->final();
-      context = nullptr;
     };
     try {
       mxStarted = mx.start();
@@ -469,13 +504,13 @@ int main(int argc, char **argv)
         throw ZeEXCEPT(Fatal, "zumd", "random initialization failed");
       if (!options.once && !options.rekey) {
         OIDCConfig oidcConfig;
-        if (auto node = cf->resolve("oidc"))
-          ZfCf::handler<OIDCConfig>(node).update(oidcConfig);
+        if (auto oidc = node(ConfigField::OIDC))
+          ZfCf::handler<OIDCConfig>(oidc).update(oidcConfig);
         oidcHTTPInited = oidcHTTP.init(&mx, db->requests->sid(),
           options.oidcOrigins, oidcConfig.caPath);
         if (!oidcHTTPInited)
           throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP initialization failed");
-        daemonInited = daemon.init(db, context, db->requests, &mx,
+        daemonInited = daemon.init(db, db->requests, &mx,
             Zum::DaemonConfig{
               .addr = options.addr, .port = uint16_t(options.port),
               .issuer = options.issuer, .ssfIssuer = ZuMv(ssfIssuer),
@@ -518,9 +553,9 @@ int main(int argc, char **argv)
         if (!current) continue;
         if (options.rekey) {
           bool rotated = ZmBlock<bool>{}([
-            db, context, &rng, &options, &dbKey, &newDBKey
+            db, &rng, &options, &dbKey, &newDBKey
           ](auto wake) mutable {
-            Zum::serverRekey(db, context, rng, options.issuer, dbKey, newDBKey,
+            Zum::serverRekey(db, rng, options.issuer, dbKey, newDBKey,
               [wake = ZuMv(wake)](bool ok) mutable { wake(ok); });
           });
           current = ZmBlock<bool>{}([db, generation](auto wake) {
@@ -545,7 +580,7 @@ int main(int argc, char **argv)
         Zum::ServerBootstrapResult bootstrap;
         bool bootstrapOK = false;
         ZmSemaphore bootstrapDone;
-        Zum::serverBootstrap(db, db->bootstrapRequests, context, rng,
+        Zum::serverBootstrap(db, db->bootstrapRequests, rng,
           Zum::ServerBootstrapConfig{
             .issuer = options.issuer,
             .admin = options.admin,

@@ -277,3 +277,46 @@ covers payload64/928/944/4096 with11 alternating rounds. Direct output below the
 aligned emission limit avoids completed-span insertion and improves median round
 time about5–6%; oversized fallback adds one pooled-owner request and is slower
 than staged output. This is a native mechanism control, not a HEAD comparison.
+
+## Associative-container benchmark preparation
+
+`zifbmapbench` prepares native hash/tree map serialization, borrowed keyed
+lookup, owning load and update kernels. It builds an equivalent canonical
+sorted-vector fixture and checks both directions before measuring. Canonical
+timing comparisons are deferred. Run, for example:
+
+```sh
+./zi/interop/zifbmapbench 64 1000
+./zi/interop/zifbmapbench 4096 100
+```
+
+CSV reports elapsed time, emitted bytes, retained arena capacity, remaining
+arena scratch head, and the native offset-sort scratch size. Use multiple
+entry counts to expose arena growth and scratch fallback. The setup and
+preflight run outside timed kernels; the owning kernels include their normal
+node allocation and release. Allocation attribution needs a profiler run on
+the appropriate kernel before drawing performance conclusions. For a first
+whole-process memory trace, run `libtool exec valgrind --tool=massif
+--massif-out-file=/tmp/zifbmapbench.massif ./zi/interop/zifbmapbench 4096 1`.
+
+## ZiPB canonical interoperability
+
+`zipbinterop` links the canonical protobuf library only in this explicit
+interop target. It parses native-exported schemas with canonical tooling and
+checks typed native map/`oneof` bytes in both directions using dynamic
+protobuf messages. The canonical-to-native case also appends an unknown field
+and confirms that native loading drops it. `zprotoc` also generates a small
+map/`oneof` fixture compiled into this target; it exchanges bytes with canonical
+dynamic messages in both directions. Generated built-in value schemas now
+also compile into the target and exchange a `ValueRow` with canonical dynamic
+protobuf in both directions. The same program checks canonical correctness
+for the four `ZiPBBench` workload shapes without running comparative timings.
+Build and run only this ZiPB target with the configured Clang debug build:
+
+```sh
+make -C zi/interop -j4 zipbinterop
+./zi/interop/zipbinterop
+```
+
+The current program passes 19 TAP subtests. The remaining Phase 6 interop
+cases are pending.

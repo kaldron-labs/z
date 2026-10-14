@@ -102,6 +102,22 @@ static void inboundTest()
   ZuCheckRT(first.closes == 1 && duplicate.closes == 1);
   ZuCheckRT(inbound.begin(live, &first));
   ZuCheckRT(inbound.close(1));
+  ZuCheckRT(inbound.close(1));
+  inbound.init(histSize);
+  ZuCheckRT(inbound.histSize() == histSize);
+  for (unsigned n = 0; n < histSize; ++n) {
+    Zjrpc::ID used{int64_t{100 + n}};
+    ZuCheckRT(inbound.begin(used, &first));
+    inbound.finish(used, &first);
+  }
+  // Rejecting a duplicate refreshes recency, preserving cache eviction order.
+  Zjrpc::ID oldest{int64_t{100}}, next{int64_t{101}}, newest{int64_t{200}};
+  ZuCheckRT(!inbound.begin(oldest, &first));
+  ZuCheckRT(inbound.begin(newest, &first));
+  inbound.finish(newest, &first);
+  ZuCheckRT(!inbound.begin(oldest, &first));
+  ZuCheckRT(inbound.begin(next, &first));
+  ZuCheckRT(inbound.close(1));
 }
 
 template <typename Heap = ZuVoid>

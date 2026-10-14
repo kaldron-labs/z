@@ -17,10 +17,12 @@
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuTL.hh>
+#include <zlib/ZuTuple.hh>
 #include <zlib/ZuUTF.hh>
+#include <zlib/ZuUnion.hh>
 
-#include <zlib/ZmHash.hh>
 #include <zlib/ZmPlatform.hh>
+#include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtCase.hh>
@@ -38,7 +40,17 @@ template <typename T>
 struct Items : public ZtArray<T, ZtArrayHeapID<"zflatc.Items">> {
   ZuDerive_(Items, (ZtArray<T, ZtArrayHeapID<"zflatc.Items">>));
 };
-ZuDerive(Index, (ZmHashKV<Text, unsigned, ZmHashHeapID<"zflatc.Index">>));
+using Index = ZmRBTreeKV<Text, unsigned,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"zflatc.Index">>>;
+using AttrIndex = ZmRBTree<ZuCSpan,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"zflatc.AttrIndex">>>;
+using NameIndex = ZmRBTreeKV<ZuCSpan, unsigned,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"zflatc.NameIndex">>>;
+struct ObjectAttrIDs { using Keys = ZuStringTL<"force_align", "bit_flags">; };
+static constexpr auto objectAttrs = ZuMatcher<ObjectAttrIDs>();
+struct FieldAttrIDs { using Keys = ZuStringTL<
+  "id", "force_align", "required", "deprecated", "key">; };
+static constexpr auto fieldAttrs = ZuMatcher<FieldAttrIDs>();
 
 struct Loc { unsigned file, offset; };
 struct Failure { Loc loc; Text message; };
@@ -54,6 +66,21 @@ static bool alpha(char c)
 }
 static bool digit(char c) { return c >= '0' && c <= '9'; }
 static bool space(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r'; }
+
+static bool refHeader(ZuCSpan ref)
+{
+  switch (ref.length()) {
+    case 8:
+      if (ref[1] == 'u') return ref == "ZuObject";
+      if (ref[1] == 'm') return ref == "ZmObject";
+      return false;
+    case 11:
+      if (ref[1] == 'u') return ref == "ZuPolymorph";
+      if (ref[1] == 'm') return ref == "ZmPolymorph";
+      return false;
+    default: return false;
+  }
+}
 
 namespace Tok { enum { End = 256, Name, Number, String }; }
 struct Token { unsigned kind; ZuCSpan text; Loc loc; };
@@ -365,6 +392,7 @@ struct Field {
   bool explicitID = false;
   bool required = false;
   bool deprecated = false;
+  bool key = false;
 };
 struct EnumVal {
   ZuCSpan name;
@@ -389,6 +417,9 @@ struct Object {
   ZuCSpan native;
   unsigned size = 0, wireAlign = 1;
 };
+using EnumValueKey = ZuTuple<const Object *, ZuCSpan>;
+using EnumValueIndex = ZmRBTreeKV<EnumValueKey, unsigned,
+  ZmRBTreeUnique<true, ZmRBTreeHeapID<"zflatc.EnumValueIndex">>>;
 struct Include { Text name; Loc loc; unsigned file; };
 struct Source {
   Zi::Path path;
@@ -451,6 +482,7 @@ private:
   Items<Attr> attrs() {
     Items<Attr> out;
     if (!take('(')) return out;
+    AttrIndex index;
     do {
 	auto name = need(Tok::Name);
 	Attr attr{name.text, {}, name.loc};
@@ -460,8 +492,8 @@ private:
 	      m_token.kind != Tok::String) fail(m_token.loc, "expected attribute value");
 	  next();
 	}
-	for (unsigned i = 0, n = out.length(); i < n; ++i)
-	  if (out[i].name == attr.name) fail(attr.loc, "duplicate attribute");
+	if (index.find(attr.name)) fail(attr.loc, "duplicate attribute");
+	index.add(attr.name);
 	out.push(ZuMv(attr));
     } while (take(','));
     need(')');
@@ -593,10 +625,19 @@ public:
   }
   void resolve();
   Items<unsigned> order() const;
+  int enumValue(const Object &o, ZuCSpan name) const {
+    unsigned n = o.values.length();
+    if (!n) return -1;
+    if (n == 1) return o.values[0].name == name ? 0 : -1;
+    if (auto found = m_enumValues.find(
+	EnumValueKey{&o, name})) return found->val();
+    return -1;
+  }
 
 private:
   Index m_files;
   Index m_symbols;
+  EnumValueIndex m_enumValues;
 };
 
 void Parser::object(unsigned kind)
@@ -741,8 +782,7 @@ static Text defaultExpr(const Schema &schema, const Field &field)
     return out;
   }
   if (en) {
-    for (unsigned i = 0; i < en->values.length(); ++i) {
-      if (in != en->values[i].name) continue;
+    if (int i = schema.enumValue(*en, in); i >= 0) {
       Text out;
       out << ZuBox<uint64_t>{en->flags ? uint64_t(1) << i : i};
       return out;
@@ -857,6 +897,15 @@ Items<unsigned> Schema::order() const
 
 void Schema::resolve()
 {
+  m_enumValues.clean();
+  for (const auto &o : objects)
+    if (o.kind == Decl::Enum && o.values.length() > 1) {
+      auto &index = m_enumValues;
+      for (unsigned v = 0, n = o.values.length(); v < n; ++v) {
+	EnumValueKey key{&o, o.values[v].name};
+	if (!index.find(key)) index.add(ZuMv(key), v);
+      }
+    }
   for (unsigned i = 0; i < objects.length(); ++i)
     if (objects[i].kind == Decl::Enum)
       objects[i].code = scalarCode(objects[i].underlying);
@@ -865,13 +914,22 @@ void Schema::resolve()
     qualID(o.name, o.loc, true);
     for (unsigned a = 0, na = o.attrs.length(); a < na; ++a) {
       const auto &attr = o.attrs[a];
-      if (attr.name == "force_align" && o.kind == Decl::Struct) {
-	o.align = uintValue({Tok::Number, attr.value, attr.loc});
-	if (!o.align || (o.align & (o.align - 1)) || o.align > 32)
-	  fail(attr.loc, "invalid struct alignment");
-      } else if (attr.name == "bit_flags" && o.kind == Decl::Enum && !attr.value)
-	o.flags = true;
-      else fail(attr.loc, "attribute is outside Z emission scope");
+      switch (objectAttrs.exact(attr.name)) {
+	case 0:
+	  if (o.kind != Decl::Struct)
+	    fail(attr.loc, "attribute is outside Z emission scope");
+	  o.align = uintValue({Tok::Number, attr.value, attr.loc});
+	  if (!o.align || (o.align & (o.align - 1)) || o.align > 32)
+	    fail(attr.loc, "invalid struct alignment");
+	  break;
+	case 1:
+	  if (o.kind != Decl::Enum || attr.value)
+	    fail(attr.loc, "attribute is outside Z emission scope");
+	  o.flags = true;
+	  break;
+	default:
+	  fail(attr.loc, "attribute is outside Z emission scope");
+      }
     }
     if (o.kind == Decl::Enum) {
       o.code = scalarCode(o.underlying);
@@ -884,6 +942,7 @@ void Schema::resolve()
     }
     if (o.kind == Decl::Union && o.values.length() > UINT8_MAX)
       fail(o.loc, "union alternatives exceed discriminator range");
+    NameIndex names;
     for (unsigned v = 0, nv = o.values.length(); v < nv; ++v) {
       auto &val = o.values[v];
       if (o.kind == Decl::Enum) {
@@ -895,8 +954,13 @@ void Schema::resolve()
       }
       if (val.value != v + unsigned(o.kind == Decl::Union))
 	fail(val.loc, "enum/union values must match Z ordinals");
-      for (unsigned j = 0; j < v; ++j)
-	if (o.values[j].name == val.name) fail(val.loc, "duplicate enum/union name");
+      if (o.kind == Decl::Enum) {
+	if (o.values.length() > 1 && enumValue(o, val.name) != int(v))
+	  fail(val.loc, "duplicate enum/union name");
+      } else {
+	if (names.find(val.name)) fail(val.loc, "duplicate enum/union name");
+	names.add(val.name, v);
+      }
       if (o.kind == Decl::Union) {
 	if (val.name == "NONE") fail(val.loc, "reserved union alternative");
 	val.target = find(val.type, o.ns);
@@ -906,9 +970,12 @@ void Schema::resolve()
 	  fail(val.loc, "unsupported union payload");
       }
     }
-    unsigned next = 0;
+    unsigned next = 0, keys = 0;
     bool explicitIDs = false;
     bool implicitIDs = false;
+    names.clean();
+    for (unsigned f = 0, nf = o.fields.length(); f < nf; ++f)
+      if (!names.find(o.fields[f].name)) names.add(o.fields[f].name, f);
     for (unsigned f = 0, nf = o.fields.length(); f < nf; ++f) {
       auto &field = o.fields[f];
       auto &type = field.type;
@@ -919,29 +986,58 @@ void Schema::resolve()
       }
       bool isUnion = type.target >= 0 && objects[type.target].kind == Decl::Union;
       if (isUnion && type.vector) fail(type.loc, "union vectors are outside Z emission scope");
-      for (unsigned j = 0; j < f; ++j)
-	if (o.fields[j].cpp == field.cpp) fail(field.loc, "converted field-name collision");
+      if (names.find(field.name)->val() != f)
+	fail(field.loc, "converted field-name collision");
       if (isUnion) {
 	Text tag{field.name};
 	tag << "_type";
-	for (unsigned j = 0; j < nf; ++j)
-	  if (o.fields[j].name == tag) fail(field.loc, "union tag-name collision");
+	if (names.find(tag))
+	  fail(field.loc, "union tag-name collision");
       }
       for (unsigned a = 0, na = field.attrs.length(); a < na; ++a) {
 	const auto &attr = field.attrs[a];
-	if (attr.name == "id" && o.kind == Decl::Table) {
-	  auto id = uintValue({Tok::Number, attr.value, attr.loc});
-	  if (id > UINT16_MAX) fail(attr.loc, "field ID out of range");
-	  field.id = id;
-	  field.explicitID = true;
-	} else if (attr.name == "force_align") {
-	  auto align = uintValue({Tok::Number, attr.value, attr.loc});
-	  if (!align || (align & (align - 1)) || align > 32)
-	    fail(attr.loc, "invalid field alignment");
-	  field.align = align;
-	} else if (attr.name == "required" && !attr.value) field.required = true;
-	else if (attr.name == "deprecated" && !attr.value) field.deprecated = true;
-	else fail(attr.loc, "field attribute is outside Z emission scope");
+	switch (fieldAttrs.exact(attr.name)) {
+	  case 0: {
+	    if (o.kind != Decl::Table)
+	      fail(attr.loc, "field attribute is outside Z emission scope");
+	    auto id = uintValue({Tok::Number, attr.value, attr.loc});
+	    if (id > UINT16_MAX) fail(attr.loc, "field ID out of range");
+	    field.id = id;
+	    field.explicitID = true;
+	    break;
+	  }
+	  case 1: {
+	    auto align = uintValue({Tok::Number, attr.value, attr.loc});
+	    if (!align || (align & (align - 1)) || align > 32)
+	      fail(attr.loc, "invalid field alignment");
+	    field.align = align;
+	    break;
+	  }
+	  case 2:
+	    if (attr.value) fail(attr.loc, "field attribute is outside Z emission scope");
+	    field.required = true;
+	    break;
+	  case 3:
+	    if (attr.value) fail(attr.loc, "field attribute is outside Z emission scope");
+	    field.deprecated = true;
+	    break;
+	  case 4:
+	    if (attr.value) fail(attr.loc, "field attribute is outside Z emission scope");
+	    field.key = true;
+	    break;
+	  default:
+	    fail(attr.loc, "field attribute is outside Z emission scope");
+	}
+      }
+      if (field.key) {
+	int code = type.code;
+	if (type.target >= 0 && objects[type.target].kind == Decl::Enum)
+	  code = objects[type.target].code;
+	if (++keys > 1 || o.kind != Decl::Table || field.deprecated || type.vector ||
+	    (code != ZfFieldTC::String && code != ZfFieldTC::Bool &&
+	      code != ZfFieldTC::Float && !intBits(code)))
+	  fail(field.loc, "invalid table key");
+	if (code == ZfFieldTC::String) field.required = true;
       }
       explicitIDs |= field.explicitID;
       implicitIDs |= !field.explicitID;
@@ -1073,6 +1169,28 @@ static bool ownsBytes(const Schema &schema, const Object &o)
   return false;
 }
 
+// A keyed table is an associative entry only when its whole wire shape is
+// key/value. Other keyed tables retain every ordinary field.
+static bool mapEntry(const Schema &schema, const Object &o)
+{
+  ZuCSpan name{o.local};
+  if (o.kind != Decl::Table || o.builtin >= 0 || name.length() <= 5 ||
+      ZuCSpan{name.data() + name.length() - 5, 5} != "Entry" ||
+      o.fields.length() != 2) return false;
+  const auto &key = o.fields[0], &value = o.fields[1];
+  if (key.name != "key" || key.id != 0 || !key.key || key.deprecated ||
+      value.name != "value" || value.deprecated) return false;
+  bool isUnion = value.type.target >= 0 &&
+    schema.objects[value.type.target].kind == Decl::Union;
+  return value.id == 1 + unsigned(isUnion);
+}
+
+static bool mapVector(const Schema &schema, const Field &f)
+{
+  return f.type.vector && f.type.target >= 0 &&
+    mapEntry(schema, schema.objects[f.type.target]);
+}
+
 static int memberCode(const Schema &schema, const Field &field)
 {
   const auto &type = field.type;
@@ -1131,6 +1249,24 @@ public:
 	if (opts.ref) check(f.cpp, f.loc);
       }
     }
+    for (const auto &entry : schema.objects) {
+      if (!own(entry) || !mapEntry(schema, entry)) continue;
+      Text name{entry.name};
+      name.length(name.length() - 5);
+      if (int otherID = schema.find(name, {}); otherID >= 0) {
+	const auto &other = schema.objects[otherID];
+	if (other.kind != Decl::Table || other.fields.length() != 1 ||
+	    other.fields[0].name != "entries" || other.fields[0].id != 0 ||
+	    !other.fields[0].type.vector || other.fields[0].type.target < 0 ||
+	    &schema.objects[other.fields[0].type.target] != &entry)
+	  fail(other.loc, "map adapter name collides with a different table");
+      }
+      for (const auto &other : schema.objects)
+	for (const auto &field : other.fields)
+	  if (field.type.target >= 0 && &schema.objects[field.type.target] == &entry &&
+	      !field.type.vector)
+	    fail(field.loc, "map entry also used as a singular table");
+    }
   }
   Text header();
   Text source(ZuCSpan header);
@@ -1175,6 +1311,19 @@ private:
       return typeName(f);
     return elemType(f);
   }
+  Text mapType(const Object &o, const Field &f) const {
+    const auto &entry = m_schema.objects[f.type.target];
+    Text out;
+    if (m_opts.ref) out << "ZmRef<";
+    out << "::";
+    if (entry.ns) out << cppName(entry.ns) << "::";
+    out << "Zflatc_::" << entry.local << "::Map_<\"" << o.name << '.' << f.cpp << "\">";
+    if (m_opts.ref) out << '>';
+    return out;
+  }
+  Text mapFormat(const Object &o) const;
+  Text mapValue(const Field &f, ZuCSpan member) const;
+  void map(Text &out, const Object &o) const;
   Text containerType(const Object &o, const Field &f) const {
     Text out{"::"};
     Text name = typeName(f);
@@ -1242,6 +1391,10 @@ void Emit::containers(Text &out, const Object &o) const
 	  << "<\"" << heap << "\">;\n";
       continue;
     }
+    if (!mapEntry(m_schema, o) && mapVector(m_schema, f)) {
+      out << "  using " << name << " = " << mapType(o, f) << ";\n";
+      continue;
+    }
     Text elem;
     if (f.type.code == ZfFieldTC::String) {
       elem << 'E' << ZuBox<unsigned>{i} << '_';
@@ -1256,6 +1409,93 @@ void Emit::containers(Text &out, const Object &o) const
     out << "  ZuDerive(" << name << ", (ZtArray<" << elem
       << ", ZtArrayHeapID<\"" << heap << "\">>));\n";
   }
+}
+
+Text Emit::mapFormat(const Object &o) const
+{
+  Text name{o.name};
+  name.length(name.length() - 5);
+  Text out;
+  out << "ZiFB::AsMap<\"" << name << "\", ZfFieldTC::"
+    << ZfFieldTC::Map::v2s(memberCode(m_schema, o.fields[0]))
+    << ", ZfFieldTC::"
+    << ZfFieldTC::Map::v2s(memberCode(m_schema, o.fields[1]));
+  for (const auto &f : o.fields) {
+    out << ", ZuTypeList<";
+    bool comma = false;
+    auto prop = [&out, &comma](ZuCSpan text) {
+      if (comma) out << ", ";
+      out << "ZuFieldProp::" << text;
+      comma = true;
+    };
+    Text p;
+    if (auto deflt = defaultExpr(m_schema, f)) {
+      p << "Deflt<" << deflt << '>';
+      prop(p);
+    }
+    if (f.required) prop("Required");
+    if (f.type.target >= 0 && m_schema.objects[f.type.target].kind == Decl::Enum) {
+      const auto &en = m_schema.objects[f.type.target];
+      p.null(); p << (en.flags ? "Flags<" : "Enum<") << "::" << cppName(en.name)
+        << "::Map>";
+      prop(p);
+    }
+    if (f.align) {
+      p.null(); p << "FB::Align<" << ZuBox<unsigned>{f.align} << '>';
+      prop(p);
+    }
+    out << '>';
+  }
+  out << '>';
+  return out;
+}
+
+Text Emit::mapValue(const Field &f, ZuCSpan member) const
+{
+  Text out;
+  if (mapVector(m_schema, f)) {
+    const auto &target = m_schema.objects[f.type.target];
+    if (m_opts.ref) out << "ZmRef<";
+    out << "::";
+    if (target.ns) out << cppName(target.ns) << "::";
+    out << "Zflatc_::" << target.local << "::Map_<HeapID_ + \"." << member << "\"_z>";
+    if (m_opts.ref) out << '>';
+  } else if (f.type.vector) {
+    Text elem;
+    if (f.type.code == ZfFieldTC::String)
+      elem << "ZtString<ZtStringHeapID<HeapID_ + \"." << member << ".elem\"_z>>";
+    else elem = elemType(f);
+    out << "ZtArray<" << elem << ", ZtArrayHeapID<HeapID_ + \"." << member
+      << "\"_z>>";
+  } else if (f.type.code == ZfFieldTC::String)
+    out << "ZtString<ZtStringHeapID<HeapID_ + \"." << member << "\"_z>>";
+  else out = elemType(f);
+  return out;
+}
+
+void Emit::map(Text &out, const Object &o) const
+{
+  open(out, o);
+  out << "namespace Zflatc_::" << o.local << " {\n\n"
+    << "template <ZuString HeapID_>\nstruct Types_ {\n"
+    << "  using Key = " << mapValue(o.fields[0], "key") << ";\n"
+    << "  using Val = " << mapValue(o.fields[1], "value") << ";\n};\n\n"
+    << "template <ZuString HeapID_, typename Heap_ = ZuVoid>\n"
+    << "struct M_ : public Heap_";
+  if (m_opts.ref) out << ", public ::" << m_opts.ref;
+  out << ", public ZmRBTreeKV<typename Types_<HeapID_>::Key, "
+    << "typename Types_<HeapID_>::Val, ZmRBTreeHeapID<HeapID_>> {\n"
+    << "  using Key = typename Types_<HeapID_>::Key;\n"
+    << "  using Val = typename Types_<HeapID_>::Val;\n"
+    << "  ZuDerive_(M_, (ZmRBTreeKV<Key, Val, ZmRBTreeHeapID<HeapID_>>));\n"
+    << "};\n\n"
+    << "template <ZuString HeapID_>\n"
+    << "struct Map_ : public M_<HeapID_, ZmHeap<HeapID_ + \".Obj\"_z, "
+    << "M_<HeapID_>>> {\n"
+    << "  ZuDerive_(Map_, (M_<HeapID_, ZmHeap<HeapID_ + \".Obj\"_z, "
+    << "M_<HeapID_>>>));\n"
+    << "};\n\n} // Zflatc_::" << o.local << '\n';
+  close(out, o);
 }
 
 void Emit::metadata(Text &out, const Object &o) const
@@ -1289,6 +1529,7 @@ void Emit::metadata(Text &out, const Object &o) const
       prop(p);
     }
     if (f.required) prop("Required");
+    if (f.key) prop("FB::Key");
     if (f.type.target >= 0 && m_schema.objects[f.type.target].kind == Decl::Enum) {
       const auto &en = m_schema.objects[f.type.target];
       p.null(); p << (en.flags ? "Flags<" : "Enum<") << "::" << cppName(en.name) << "::Map>";
@@ -1414,10 +1655,15 @@ Text Emit::header()
   Text out;
   out << modeline << "// Generated by zflatc from " << ZiFile::leafname(m_schema.files[m_file].path)
     << ".\n\n";
-  Text guard;
-  guard << "Zflatc_" << ZiFile::leafname(m_opts.output);
-  for (unsigned i = 0; i < guard.length(); ++i)
-    if (!alpha(guard[i]) && !digit(guard[i])) guard[i] = '_';
+  // Encode the complete output path injectively: separate directories and
+  // punctuation must not collapse to the same header guard.
+  Text guard{"Zflatc_"};
+  auto hex = [](unsigned n) { return char(n < 10 ? '0' + n : 'A' + n - 10); };
+  for (auto c : m_opts.output) {
+    unsigned v = uint8_t(c);
+    if (c != '_' && (alpha(c) || digit(c))) guard << c;
+    else guard << '_' << hex(v >> 4) << hex(v & 15);
+  }
   guard << (m_opts.alt ? "_HPP" : "_HH");
   out << "#ifndef " << guard << "\n#define " << guard << "\n\n"
     << "#include <stdint.h>\n\n"
@@ -1426,11 +1672,15 @@ Text Emit::header()
     << "#include <zlib/ZuTime.hh>\n#include <zlib/ZuUnion.hh>\n\n"
     << "#include <zlib/ZmHeap.hh>\n";
   if (m_opts.ref) {
-    if (m_opts.ref == "ZuObject" || m_opts.ref == "ZuPolymorph" ||
-	m_opts.ref == "ZmObject" || m_opts.ref == "ZmPolymorph")
+    if (refHeader(m_opts.ref))
       out << "#include <zlib/" << m_opts.ref << ".hh>\n";
     out << "#include <zlib/ZmRef.hh>\n";
   }
+  for (const auto &o : m_schema.objects)
+    if (own(o) && mapEntry(m_schema, o)) {
+      out << "#include <zlib/ZmRBTree.hh>\n";
+      break;
+    }
   out << "\n#include <zlib/ZtArray.hh>\n#include <zlib/ZtBitmap.hh>\n#include <zlib/ZtEnum.hh>\n"
     << "#include <zlib/ZtString.hh>\n\n#include <zlib/ZiFB.hh>\n#include <zlib/ZiIP.hh>\n";
   const auto &file = m_schema.files[m_file];
@@ -1462,6 +1712,16 @@ Text Emit::header()
       out << o.local << ";\nZiFB::" << (o.kind == Decl::Table ? "AsTable" : "AsStruct")
 	<< "<\"" << o.name << "\"> ZiFB_Fmt(" << o.local << " *);\n";
     }
+    close(out, o);
+  }
+  for (const auto &o : m_schema.objects) {
+    if (!own(o) || !mapEntry(m_schema, o)) continue;
+    open(out, o);
+    out << "namespace Zflatc_::" << o.local << " {\n"
+      << "template <ZuString HeapID_> struct Map_;\n"
+      << "template <ZuString HeapID_> " << mapFormat(o)
+      << " ZiFB_Fmt(Map_<HeapID_> *);\n"
+      << "} // Zflatc_::" << o.local << '\n';
     close(out, o);
   }
   auto order = m_schema.order();
@@ -1503,7 +1763,14 @@ Text Emit::header()
   }
   for (unsigned i = 0; i < order.length(); ++i) {
     const auto &o = m_schema.objects[order[i]];
-    if (own(o) && o.kind == Decl::Table) object(out, o);
+    if (own(o) && mapEntry(m_schema, o)) object(out, o);
+  }
+  for (const auto &o : m_schema.objects) {
+    if (own(o) && mapEntry(m_schema, o)) map(out, o);
+  }
+  for (unsigned i = 0; i < order.length(); ++i) {
+    const auto &o = m_schema.objects[order[i]];
+    if (own(o) && o.kind == Decl::Table && !mapEntry(m_schema, o)) object(out, o);
   }
   out << "#endif // " << guard << '\n';
   return out;

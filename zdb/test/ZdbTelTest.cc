@@ -8,6 +8,8 @@
 
 #include <zlib/ZfCf.hh>
 
+#include "../../zdb/test/ZdbTestCf.hh"
+
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/ZiLog.hh>
@@ -123,6 +125,7 @@ void run()
 {
   ZuTestScope(run);
   auto config = cf();
+  auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
 
   {
     auto scan = ZfCf::scan("cacheMode: All, shards: 2");
@@ -172,12 +175,12 @@ void run()
     ZuCheck(!loaded.find("o", ZdbShard{0}));
   }
 
-  ZiMultiplex mx{ZvMxParams("mx", config->resolve("mx"))};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheck(mx.start());
 
   {
     Zdb empty;
-    auto emptyCf = ZdbCf{config->resolve("zdb")};
+    auto emptyCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     emptyCf.nShards = 1;
     emptyCf.threads.length(0);
     empty.init(ZuMv(emptyCf), &mx, {}, new zdbtest::Store{});
@@ -188,7 +191,7 @@ void run()
 
   {
     Zdb other;
-    auto otherCf = ZdbCf{config->resolve("zdb")};
+    auto otherCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     otherCf.nShards = 1;
     otherCf.threads.length(0);
     other.init(ZuMv(otherCf), &mx, {}, new zdbtest::Store{});
@@ -200,7 +203,7 @@ void run()
 
   {
     Zdb bad;
-    auto badCf = ZdbCf{config->resolve("zdb")};
+    auto badCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     badCf.thread = "missing";
     bool failed = false;
     try {
@@ -228,9 +231,10 @@ void run()
   active_ = &active;
 
   auto init = [
-    config = config.ptr(), db = db.ptr(), mx = &mx, store
+    dbNode = configFields.zdb.p<const ZfCf::AnyNode *>(),
+    db = db.ptr(), mx = &mx, store
   ]() mutable {
-    auto dbCf = ZdbCf{config->resolve("zdb")};
+    auto dbCf = ZdbCf{dbNode};
     dbCf.tableCf("p");
     db->init(ZuMv(dbCf), mx, ZdbHandler{
       .upFn = up
@@ -648,7 +652,7 @@ void run()
 
   {
     Zdb bad;
-    auto badCf = ZdbCf{config->resolve("zdb")};
+    auto badCf = ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()};
     badCf.nShards = 1;
     badCf.threads.length(0);
     bool failed = false;

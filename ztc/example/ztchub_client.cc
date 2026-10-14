@@ -19,6 +19,7 @@
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuICmp.hh>
+#include <zlib/ZuMatcher.hh>
 #include <zlib/ZuPercent.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -526,8 +527,15 @@ struct CallbackParser : public Zhttp::Parser {
   String	query;
 };
 
-class CallbackApp {
+struct CallbackKeys {
+  using Keys = ZuStringTL<"code", "state", "error">;
+};
+
+class CallbackApp : public Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ> {
 public:
+  using HTTP = Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ>;
+  using HTTP::connected;
+  using HTTP::disconnected;
   using Parser = CallbackParser;
   using ResBuilderQ = CallbackBuilderQ;
 
@@ -536,22 +544,24 @@ public:
   {
     String form{query};
     if (!form.mutable_()) form.length(form.length());
-    unsigned seen = 0;
+    uint8_t lookup[3]{};
     bool duplicate = false;
     String code_, state_, error_;
-    if (ok) ok = formEach({form.data(), form.length()}, [&seen, &duplicate,
-	&code_, &state_, &error_](
-          ZuCSpan name, ZuCSpan value) {
-        if (name == "code") {
-	  duplicate |= bool(seen & 1U); code_ = value; seen |= 1U; return;
-        }
-        if (name == "state") {
-	  duplicate |= bool(seen & 2U); state_ = value; seen |= 2U; return;
-        }
-        if (name == "error") {
-	  duplicate |= bool(seen & 4U); error_ = value; seen |= 4U; return;
+    static constexpr auto matcher = ZuMatcher<CallbackKeys>();
+    if (ok) ok = formEach({form.data(), form.length()},
+      [&](ZuCSpan name, ZuCSpan value) {
+        int id = matcher.exact(name);
+        if (id < 0) return;
+        duplicate |= bool(lookup[id]);
+        lookup[id] = 1;
+        switch (id) {
+          case 0: code_ = value; break;
+          case 1: state_ = value; break;
+          case 2: error_ = value; break;
         }
       });
+    unsigned seen = unsigned(lookup[0]) | (unsigned(lookup[1]) << 1) |
+      (unsigned(lookup[2]) << 2);
     ok = ok && !duplicate && !received && state_ == expectedState &&
       ((seen == 3U && code_) || (seen == 6U && error_));
     if (ok) {
@@ -654,6 +664,20 @@ static bool contains(const StringVec &values, ZuCSpan value)
   return false;
 }
 
+static bool grantTypesSupported(const StringVec &values)
+{
+  uint8_t lookup[2]{};
+  for (const auto &value: values) {
+    if (value.length() == 18) {
+      if (value == "authorization_code") lookup[0] = 1;
+    } else if (value.length() == 13) {
+      if (value == "refresh_token") lookup[1] = 1;
+    }
+    if (lookup[0] && lookup[1]) return true;
+  }
+  return false;
+}
+
 static bool metadataJSON(String &json, ZuCSpan issuerURL, MetadataWire &metadata)
 {
   if (json.length() > BodyMax) return false;
@@ -669,8 +693,7 @@ static bool metadataJSON(String &json, ZuCSpan issuerURL, MetadataWire &metadata
   return metadata.issuerURL == issuerURL && metadata.authorizationEndpoint &&
     metadata.tokenEndpoint && metadata.jwksURI &&
     contains(metadata.responseTypesSupported, "code") &&
-    contains(metadata.grantTypesSupported, "authorization_code") &&
-    contains(metadata.grantTypesSupported, "refresh_token") &&
+    grantTypesSupported(metadata.grantTypesSupported) &&
     contains(metadata.codeChallengeMethods, "S256");
 }
 
@@ -787,17 +810,16 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
         ZuClear(callback.code);
     }};
     callback.expectedState = state;
-    Zhttp::Server<CallbackApp> callbackServer;
     auto callbackConfig = Zhttp::ServerConfig().localIP(ZiIP("127.0.0.1"))
       .port(config.callbackPort).idleTimeout(ClientTimeout)
       .retainedBodyMax(BodyMax).tcp();
-    bool callbackInited = callbackServer.init(
-      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig), &callback);
-    bool callbackUp = callbackInited && callbackServer.start();
+    bool callbackInited = callback.init(
+      Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"}, ZuMv(callbackConfig));
+    bool callbackUp = callbackInited && callback.start();
     if (!callbackUp) {
       std::cerr << "OAuth: callback listener start failed\n";
-      if (callbackInited) (void)callbackServer.stop();
-      callbackServer.final(); clients.final();
+      if (callbackInited) (void)callback.stop();
+      callback.final(); clients.final();
       mx.stop(); ZiLog::stop(); return false;
     }
 
@@ -832,8 +854,8 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
       std::cerr << "OAuth: credential storage failed\n";
       ok = false;
     }
-    (void)callbackServer.stop();
-    callbackServer.final();
+    (void)callback.stop();
+    callback.final();
   }
 
   if (ok) ok = useToken(mx, clients, ZuCSpan{tokens.accessToken});

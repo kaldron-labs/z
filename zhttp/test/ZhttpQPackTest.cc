@@ -4,10 +4,10 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZuBox.hh>
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZtString.hh>
 #include <zlib/ZhttpQPack.hh>
-
-#include <stdio.h>
 
 using namespace ZuTestUtil;
 
@@ -86,10 +86,19 @@ void testQPackPolicy()
   ZuTestScope(testQPackPolicy);
 
   Zhttp::H3::Params params;
+  ZuCHECK(!params.indexAllowed("x-custom") &&
+      !params.neverIndex("x-custom") && params.neverIndex("authorization"),
+    "empty QPACK policy did not preserve built-in defaults");
+  auto emptyCopy = params;
+  emptyCopy.qpackIndex("x-copy").qpackNeverIndex("x-secret");
+  ZuCHECK(emptyCopy.indexAllowed("x-copy") &&
+      emptyCopy.neverIndex("x-secret") && !params.indexAllowed("x-copy") &&
+      !params.neverIndex("x-secret"),
+    "modifying an empty QPACK policy copy changed its source");
   params.qpackTxCapacity(256).qpackIndex("accept").qpackNeverIndex("cookie");
   for (unsigned i = 0; i < 40; ++i) {
-    char name[16];
-    snprintf(name, sizeof(name), "x-qpack-%u", i);
+    ZtString name;
+    name << "x-qpack-" << ZuBoxed(i);
     params.qpackIndex(name);
   }
   ZuCHECK(params.indexAllowed("accept"), "QPACK index allowlist mismatch");
@@ -98,6 +107,11 @@ void testQPackPolicy()
   ZuCHECK(!params.indexAllowed("cookie"), "QPACK never-index override failed");
   ZuCHECK(params.neverIndex("authorization"),
     "authorization should be never-index by default");
+  auto copy = params;
+  copy.qpackIndex("x-copy").qpackNeverIndex("accept");
+  ZuCHECK(copy.indexAllowed("x-copy") && !copy.indexAllowed("accept") &&
+      params.indexAllowed("accept") && !params.indexAllowed("x-copy"),
+    "QPACK configured policy copies did not detach independently");
 }
 
 void testQPackFieldSectionPrefix()

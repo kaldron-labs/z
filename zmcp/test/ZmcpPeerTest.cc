@@ -208,7 +208,7 @@ struct HTTPResponseHarness :
   }
 
   bool receiveSSE(
-      const Zjrpc::SSEEvent &event, const Zmcp::HTTPResponseMeta &meta) {
+      const Zhttp::SSEEvent &event, const Zmcp::HTTPResponseMeta &meta) {
     ++events;
     receivedBody.length_(0);
     receivedBody << event.data();
@@ -510,7 +510,7 @@ static void httpBatchTest_()
     }
   };
   if constexpr (Streaming) {
-    Zjrpc::SSEDecoder decoder{harness.limits().maxSSELineBytes,
+    Zhttp::SSEDecoder decoder{harness.limits().maxSSELineBytes,
       harness.limits().maxSSEEventBytes};
     ZuCheckRT(decoder.feed(output.data, [&process](const auto &event) {
       process(event.body->span());

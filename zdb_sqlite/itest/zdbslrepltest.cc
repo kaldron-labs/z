@@ -12,6 +12,8 @@
 #include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZfCf.hh>
+
+#include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZvMxParams.hh>
 
 #include <zlib/ZiLog.hh>
@@ -63,9 +65,10 @@ int main()
   leaderPath << base << ".leader";
   followerPath << base << ".follower";
   auto leaderCf = config(leaderPath, "0");
+  auto leaderCfFields = ZfCf::handler<zdbtest::ConfigFields>(leaderCf).ctor();
   auto followerCf = config(followerPath, "1");
 
-  ZiMultiplex mx{ZvMxParams("mx", leaderCf->resolve("mx"))};
+  ZiMultiplex mx{ZvMxParams("mx", leaderCfFields.mx.p<const ZfCf::AnyNode *>())};
   ZuCheck(mx.start());
 
   ZmSemaphore leaderUp;

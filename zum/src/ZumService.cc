@@ -14,6 +14,7 @@
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmLHash.hh>
 #include <zlib/ZmRBTree.hh>
 
 #include <zlib/ZfJSON.hh>
@@ -37,6 +38,15 @@ ZuDerive(ServiceReadyVec, (ZtArray<ServiceReadyFn,
 ZuDerive(ServiceDoneVec, (ZtArray<ServiceDoneFn,
   ZtArrayHeapID<"Zum.Service.DoneVec">>));
 
+static bool userAuthMethod(ZuCSpan method)
+{
+  switch (method.length()) {
+    case 7: return method == "passkey";
+    case 4: return method == "oidc";
+    default: return false;
+  }
+}
+
 template <typename Vec, typename Value>
 static void completeAll(Vec &pending, Value value)
 {
@@ -53,8 +63,24 @@ struct ServiceKey {
   String id;
   Bytes publicKey;
 };
-ZuDerive(ServiceKeyVec, (ZtArray<ServiceKey,
-  ZtArrayHeapID<"Zum.Service.KeyVec">>));
+static ZuCSpan serviceKeyID(const ServiceKey &key) { return key.id; }
+static const char *serviceKeysID() { return "Zum.Service.Keys"; }
+ZuDerive(ServiceKeysHash, (ZmLHash<ServiceKey,
+  ZmLHashKey<serviceKeyID, ZmLHashID<serviceKeysID, ZmLHashLocal<>>>>));
+template <typename Heap = ZuVoid>
+struct ServiceKeys_ : public Heap, public ServiceKeysHash {
+  using ServiceKeysHash::ServiceKeysHash;
+};
+ZuDerive(ServiceKeysHeap, (ZmHeap<"Zum.Service.Keys", ServiceKeys_<>>));
+ZuDerive(ServiceKeys, (ServiceKeys_<ServiceKeysHeap>));
+using ServiceKeySet = ZuPtr<ServiceKeys>;
+
+static ServiceKeySet serviceKeys(unsigned count)
+{
+  ZmHashParams params{count};
+  params.init(serviceKeysID());
+  return new ServiceKeys{params};
+}
 
 struct SETSeen {
   String id;
@@ -251,13 +277,13 @@ static bool discoveryResponse(String json, unsigned limit,
   return true;
 }
 
-static bool jwksResponse(
-    String json, unsigned limit, unsigned keyMax, ServiceKeyVec &keys)
+static ServiceKeySet jwksResponse(
+    String json, unsigned limit, unsigned keyMax)
 {
   JWKSResponse wire;
   if (!jsonLoad(json, limit, wire) || !wire.keys ||
-      wire.keys.length() > keyMax) return false;
-  ServiceKeyVec next;
+      wire.keys.length() > keyMax) return {};
+  auto next = serviceKeys(wire.keys.length());
   for (auto &item: wire.keys) {
     if (!item.kid || item.kty != "EC" || item.crv != "P-256" ||
         (item.use && item.use != "sig") ||
@@ -273,13 +299,11 @@ static bool jwksResponse(
           Ztls::COSE::ES256::CoordinateSize}, ZuBSpan{item.y}) !=
           Ztls::COSE::ES256::CoordinateSize ||
         !Ztls::COSE::ES256::validPK(key.publicKey)) continue;
-    for (auto &existing: next)
-      if (existing.id == key.id) return false;
-    next.push(ZuMv(key));
+    if (next->find(key.id)) return {};
+    next->add(ZuMv(key));
   }
-  if (!next) return false;
-  keys = ZuMv(next);
-  return true;
+  if (!next->count_()) return {};
+  return next;
 }
 
 static String endpoint(ZuCSpan issuerURL, ZuCSpan path)
@@ -415,8 +439,15 @@ struct ServiceState_ : public Heap, public ZmObject  {
           }
           if (self->config.ssf.enabled &&
               self->config.ssf.transmitterIssuer ==
-                self->config.managementIssuerURL)
-            self->ssfKeys = self->managementKeys;
+		self->config.managementIssuerURL) {
+	    ServiceKeySet next;
+	    if (self->managementKeys) {
+	      next = serviceKeys(self->managementKeys->count_());
+	      auto i = self->managementKeys->citer();
+	      while (auto key = i()) next->add(*key);
+	    }
+	    self->ssfKeys = ZuMv(next);
+	  }
           self->keys_(false, [self = ZuMv(self),
               complete = ZuMv(complete)](bool ok) mutable {
             if (self->state != Starting) {
@@ -620,14 +651,14 @@ struct ServiceState_ : public Heap, public ZmObject  {
     send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState_>{this},
         management, complete = ZuMv(complete)](
         ServiceHTTPResponse response) mutable {
-      ServiceKeyVec keys;
-      bool ok = response.status == 200 && jwksResponse(ZuMv(response.body),
-        self->config.responseMax, self->config.keyMax, keys);
+      auto keys = response.status == 200 ? jwksResponse(ZuMv(response.body),
+	self->config.responseMax, self->config.keyMax) : ServiceKeySet{};
+      bool ok = !!keys;
       if (ok) {
         if (management)
-          self->managementKeys = ZuMv(keys);
+	  self->managementKeys = ZuMv(keys);
         else {
-          self->keys = ZuMv(keys);
+	  self->keys = ZuMv(keys);
           self->keysLoaded = Zm::now().sec();
         }
       }
@@ -640,19 +671,18 @@ struct ServiceState_ : public Heap, public ZmObject  {
     send_(ServiceHTTPRequest{.url = ZuMv(ssfJWKSURL)},
       [self = ZmRef<ServiceState_>{this}, complete = ZuMv(complete)](
           ServiceHTTPResponse response) mutable {
-        ServiceKeyVec next;
-        bool ok = response.status == 200 && jwksResponse(
+	auto next = response.status == 200 ? jwksResponse(
           ZuMv(response.body), self->config.responseMax,
-          self->config.keyMax, next);
-        if (ok) self->ssfKeys = ZuMv(next);
+	  self->config.keyMax) : ServiceKeySet{};
+	bool ok = !!next;
+	if (ok) self->ssfKeys = ZuMv(next);
         complete(ok);
       });
   }
 
-  static const ServiceKey *key_(const ServiceKeyVec &keys, ZuCSpan id)
+  static const ServiceKey *key_(const ServiceKeySet &keys, ZuCSpan id)
   {
-    for (auto &key: keys) if (key.id == id) return &key;
-    return nullptr;
+    return keys ? keys->find(id) : nullptr;
   }
 
   bool verify_(ZuCSpan token, Principal &principal)
@@ -873,8 +903,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       }
       TokenID tokenID{.issuerURL = ZuMv(value.issuerURL), .jti = ZuMv(value.jti)};
       String authMethod;
-      if (value.amr.length() == 1 &&
-          (value.amr[0] == "passkey" || value.amr[0] == "oidc"))
+      if (value.amr.length() == 1 && userAuthMethod(value.amr[0]))
         authMethod = ZuMv(value.amr[0]);
       else if (!value.amr && value.grantType == "client_credentials")
         authMethod = "client_credentials";
@@ -1016,9 +1045,9 @@ struct ServiceState_ : public Heap, public ZmObject  {
 
   ServiceConfig config;
   ServiceHTTPFn http;
-  ServiceKeyVec keys;
-  ServiceKeyVec managementKeys;
-  ServiceKeyVec ssfKeys;
+  ServiceKeySet keys;
+  ServiceKeySet managementKeys;
+  ServiceKeySet ssfKeys;
   SETSeenHash seen;
   SETSeenExpiries seenExpiries;
   ServiceRefreshFn refreshFn;
