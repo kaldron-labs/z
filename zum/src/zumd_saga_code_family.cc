@@ -308,7 +308,7 @@ ZfStruct(, (CodeFamilySaga, FB),
   (beforeGrant,		(Ctor<24>),				UDT),
   (clientVersion,	(Ctor<25>),				UInt64),
   (assignmentVersion,	(Ctor<26>),				UInt64));
-ZiFB::AsTable<"Zum.fbs.CodeFamily"> ZiFB_Fmt(CodeFamilySaga *);
+Zfb::AsTable<"Zum.fbs.CodeFamily"> Zfb_Fmt(CodeFamilySaga *);
 
 ZuAssert((Zdb_::SagaDefValid<CodeFamilySaga>{}));
 

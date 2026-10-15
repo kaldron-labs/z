@@ -85,7 +85,7 @@ ZfStruct(, (ProviderAddSaga, FB),
   (values,	(Ctor<1>),	UDT),
   (updated,	(Ctor<2>),	Int64),
   (request,	(Ctor<3>),	UDT));
-ZiFB::AsTable<"Zum.fbs.ProviderAdd"> ZiFB_Fmt(ProviderAddSaga *);
+Zfb::AsTable<"Zum.fbs.ProviderAdd"> Zfb_Fmt(ProviderAddSaga *);
 
 template <typename Heap>
 Provider ProviderAddSaga_<Heap>::result() const

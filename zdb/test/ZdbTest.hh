@@ -14,7 +14,7 @@
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfJSON.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/Zdb.hh>
 
@@ -22,7 +22,7 @@
 namespace zdbtest {
 
 ZtEnumNS(, Side, int8_t, Buy, Sell);
-namespace Side { ZiFB::AsEnum<"zdbtest.fbs.Side"> ZiFB_Fmt(Map *); }
+namespace Side { Zfb::AsEnum<"zdbtest.fbs.Side"> Zfb_Fmt(Map *); }
 
 struct Order {
   ZuCArray<32>		symbol;
@@ -51,7 +51,7 @@ ZfStruct(, (Order, FB, JSON),
   (prices,	(Ctor<6>, Mutable),				Int32Vec),
   (qtys,	(Ctor<7>, Mutable),				Int32Vec),
   (flags,	(Ctor<8>, Mutable, Deflt<"4,8,16-42"_z>),	UDT));
-ZiFB::AsTable<"zdbtest.fbs.Order"> ZiFB_Fmt(Order *);
+Zfb::AsTable<"zdbtest.fbs.Order"> Zfb_Fmt(Order *);
 
 
 ZdbTableDerive(OrderTable, Order);

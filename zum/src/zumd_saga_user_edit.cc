@@ -135,7 +135,7 @@ ZfStruct(, (UserEditSaga, FB),
   (state,	(Ctor<6>, Enum<State::Map>),	Int8),
   (email,	(Ctor<7>),			String),
   (fields,	(Ctor<8>),			UInt8));
-ZiFB::AsTable<"Zum.fbs.UserEdit"> ZiFB_Fmt(UserEditSaga *);
+Zfb::AsTable<"Zum.fbs.UserEdit"> Zfb_Fmt(UserEditSaga *);
 
 template <typename Heap>
 unsigned UserEditSaga_<Heap>::userError(const User &item) const

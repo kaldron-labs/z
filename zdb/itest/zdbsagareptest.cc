@@ -106,7 +106,7 @@ struct LiveSaga_ : public Heap, public ZdbSaga<LiveSaga_<Heap>, ReplDB> {
 using LiveSaga = LiveSaga_<ZmHeap<"Zdb.Repl.LiveSaga", LiveSaga_<>>>;
 ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
+Zfb::AsTable<"zdbtest.fbs.LiveSaga"> Zfb_Fmt(LiveSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<LiveSaga>{}));
 

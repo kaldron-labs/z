@@ -907,7 +907,7 @@ static Frame requestFrame(ZuCSpan deviceID, uint64_t subID, bool subscribe)
 {
   Ztc::Builder builder{Frame{new FrameBuf}};
   auto nested = builder.startNested();
-  auto request = ZiFB::save(builder, Ztc::Request{
+  auto request = Zfb::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
     .group = uint8_t(Ztc::Group::App), .subscribe = subscribe});
   builder.finish(Ztc::saveMsg(

@@ -75,7 +75,7 @@ ZfStruct(, (KeyBindingSaga, FB),
   (afterCheck,		(Ctor<2>),	Bytes),
   (beforePending,	(Ctor<3>),	Bytes),
   (afterPending,		(Ctor<4>),	Bytes));
-ZiFB::AsTable<"Zum.fbs.KeyBinding"> ZiFB_Fmt(KeyBindingSaga *);
+Zfb::AsTable<"Zum.fbs.KeyBinding"> Zfb_Fmt(KeyBindingSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<KeyBindingSaga>{}));
 

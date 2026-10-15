@@ -119,7 +119,7 @@ ZfStruct(ZumAPI, (ActionEditSaga, FB),
   (updated,	(Ctor<3>),			Int64),
   (request,	(Ctor<4>),			UDT),
   (state,	(Ctor<5>, Enum<State::Map>),	Int8));
-ZiFB::AsTable<"Zum.fbs.ActionEdit"> ZiFB_Fmt(ActionEditSaga *);
+Zfb::AsTable<"Zum.fbs.ActionEdit"> Zfb_Fmt(ActionEditSaga *);
 
 template <typename Heap>
 unsigned ActionEditSaga_<Heap>::appError(const App &item) const

@@ -470,32 +470,32 @@ ZuDerive(VarBufScratch,
     ZtArraySharded<true>>>));
 
 template <typename T, unsigned Code>
-static auto vector(ZiFB::TableView fbo, R::FieldView field) {
-  using W = ZiFB::Value<ZuSpan<const T>, Code>;
-  return ZiFB::VectorValue<typename W::Elem>{fbo.object(field.get<R::ZfField(Field, id)>())};
+static auto vector(Zfb::TableView fbo, R::FieldView field) {
+  using W = Zfb::Value<ZuSpan<const T>, Code>;
+  return Zfb::VectorValue<typename W::Elem>{fbo.object(field.get<R::ZfField(Field, id)>())};
 }
 
 template <typename T, unsigned Code>
-static auto loadInline(ZiFB::TableView fbo, const XField &field) {
+static auto loadInline(Zfb::TableView fbo, const XField &field) {
   auto p = R::address(fbo, field.field.field);
   if (!p) return T(field.vfield->constant.template get<Code>(
     ZfVField::cget(ZfVFieldConstant::Deflt)));
-  return ZiFB::valueAt<ZiFB::Value<T, Code>>(p);
+  return Zfb::valueAt<Zfb::Value<T, Code>>(p);
 }
 
-static auto bitmapData(ZiFB::TableView fbo, R::FieldView field) {
-  using namespace ZiFB::Values;
-  return ZiFB::View<Bitmap>{fbo.object(field.get<R::ZfField(Field, id)>())}.
+static auto bitmapData(Zfb::TableView fbo, R::FieldView field) {
+  using namespace Zfb::Values;
+  return Zfb::View<Bitmap>{fbo.object(field.get<R::ZfField(Field, id)>())}.
     get<ZfField(Bitmap, data)>();
 }
 
-static ZiIP loadIP(ZiFB::TableView fbo, R::FieldView field) {
-  return ZiFB::IPMap::load(ZiFB::UnionView<ZiIP>{R::tag(fbo, field),
+static ZiIP loadIP(Zfb::TableView fbo, R::FieldView field) {
+  return Zfb::IPMap::load(Zfb::UnionView<ZiIP>{R::tag(fbo, field),
     fbo.object(field.get<R::ZfField(Field, id)>())});
 }
 
 static uint64_t encodedSize(
-  const XField &xfield, ZiFB::TableView fbo, unsigned limit)
+  const XField &xfield, Zfb::TableView fbo, unsigned limit)
 {
   auto field = xfield.field.field;
   switch (xfield.field.type) {
@@ -565,7 +565,7 @@ static Event paramSizeError()
 template <typename Fields>
 static unsigned planInput(
   unsigned lengthLimit, unsigned n,
-  const Fields &fields, ZiFB::TableView fbo, ZuSpan<VarPart> parts)
+  const Fields &fields, Zfb::TableView fbo, ZuSpan<VarPart> parts)
 {
   unsigned limit = lengthLimit < Zdb_::MaxBufSize ?
     lengthLimit : unsigned(Zdb_::MaxBufSize);
@@ -606,7 +606,7 @@ static void savePVec(uint8_t *ptr, const V &values, L &&save)
 }
 
 static void encodeField(
-  uint8_t *ptr, const XField &xfield, ZiFB::TableView fbo)
+  uint8_t *ptr, const XField &xfield, Zfb::TableView fbo)
 {
   auto field = xfield.field.field;
   switch (xfield.field.type) {
@@ -748,7 +748,7 @@ static void encodeField(
 template <typename Fields>
 static void bindInput(
   sqlite3 *cxn, sqlite3_stmt *stmt, unsigned first,
-  unsigned n, const Fields &fields, ZiFB::TableView fbo,
+  unsigned n, const Fields &fields, Zfb::TableView fbo,
   ZuSpan<const VarPart> parts, ZuSpan<uint8_t> data)
 {
   static const char emptyText = 0;
@@ -1660,8 +1660,8 @@ void StoreTbl::finalize_()
   finalize(m_stmts.mrd);
 }
 
-using Offset = ZiFB::Offset;
-using Builder = ZiFB::IOBuilder<ZiFB::Wire::MaxAlign>;
+using Offset = Zfb::Offset;
+using Builder = Zfb::IOBuilder<Zfb::Wire::MaxAlign>;
 
 struct SavedOffset {
   Offset	offset;
@@ -1696,7 +1696,7 @@ static SavedOffset savePVec(Builder &fbb, ZuBSpan data, unsigned align, L &&load
   auto offset = fbb.vector(n, sizeof(T), (align > sizeof(T) ? align : sizeof(T)),
     [data, n, &load](uint8_t *out) {
       for (unsigned i = 0; i < n; ++i)
-	ZiFB::write<T>(out + i * sizeof(T), T(load(data.data() + i * Width)));
+	Zfb::write<T>(out + i * sizeof(T), T(load(data.data() + i * Width)));
     });
   return {offset, 0, true};
 }
@@ -1705,13 +1705,13 @@ template <typename T, unsigned Code, typename L>
 static SavedOffset saveStructVec(
   Builder &fbb, ZuBSpan data, unsigned width, unsigned align, L &&load)
 {
-  using W = ZiFB::Value<T, Code>;
+  using W = Zfb::Value<T, Code>;
   unsigned n;
   if (!vecData(data, width, n)) return {};
   auto offset = fbb.vector(n, W::Size, (align > W::Align ? align : W::Align),
     [data, n, width, &load](uint8_t *out) {
       for (unsigned i = 0; i < n; ++i)
-	ZiFB::save(out + i * W::Size, W::toWire(load(data.data() + i * width)));
+	Zfb::save(out + i * W::Size, W::toWire(load(data.data() + i * width)));
     });
   return {offset, 0, true};
 }
@@ -1722,14 +1722,14 @@ static SavedOffset saveVarVec(Builder &fbb, ZuBSpan data, unsigned align) {
   // Each element needs a length word, even when empty. Bound scratch by
   // the external input before allocating, then parse each header once.
   if (!loadUnsigned(data, n) || n > data.length()/sizeof(uint32_t)) return {};
-  auto offsets = ZtScratch(ZiFB::Offsets, n, n);
+  auto offsets = ZtScratch(Zfb::Offsets, n, n);
   for (unsigned i = 0; i < n; ++i) {
     uint32_t length;
     if (!loadUnsigned(data, length) || length > data.length()) return {};
     ZuBSpan value{data.data(), length};
     data.offset(length);
     if constexpr (Bytes)
-      offsets[i] = ZiFB::save(fbb, ZiFB::Values::Bytes{value});
+      offsets[i] = Zfb::save(fbb, Zfb::Values::Bytes{value});
     else
       offsets[i] = fbb.string(value);
   }
@@ -1758,11 +1758,11 @@ static SavedOffset saveOffset(
       auto words = fbb.vector(n, sizeof(uint64_t), alignof(uint64_t),
 	[data, n](uint8_t *out) {
 	  for (unsigned i = 0; i < n; ++i)
-	    ZiFB::write<uint64_t>(out + i * sizeof(uint64_t),
+	    Zfb::write<uint64_t>(out + i * sizeof(uint64_t),
 	      loadUnsigned_<uint64_t>(data.data() + i * sizeof(uint64_t)));
 	});
       auto table = fbb.startTable();
-      ZiFB::As<ZiFB::Values::Bitmap>::template Handler<ZiFB::Values::Bitmap>::template fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, words);
+      Zfb::As<Zfb::Values::Bitmap>::template Handler<Zfb::Values::Bitmap>::template fieldOffset<Zfb::Values::ZfField(Bitmap, data)>(fbb, table, words);
       return {fbb.endTable(table), 0, true};
     }
     case Type::IP: {
@@ -1789,7 +1789,7 @@ static SavedOffset saveOffset(
         default:
           return {};
       }
-      auto saved = ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, ip);
+      auto saved = Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, ip);
       return {saved.offset, saved.tag, true};
     }
     case Type::StringVec: return saveVarVec<false>(fbb, data, align);
@@ -1847,17 +1847,17 @@ static bool hasOffset(unsigned type)
 
 template <unsigned Code, typename T>
 static void saveInline(
-  Builder &fbb, ZiFB::TableState &table, const FieldInfo &field, const T &value)
+  Builder &fbb, Zfb::TableState &table, const FieldInfo &field, const T &value)
 {
-  using W = ZiFB::Value<T, Code>;
+  using W = Zfb::Value<T, Code>;
   auto align = field.align;
   fbb.fieldInline(table, field.field.get<R::ZfField(Field, id)>(), W::Size,
     (align > W::Align ? align : W::Align),
-    [&value](uint8_t *out) { ZiFB::save(out, W::toWire(value)); });
+    [&value](uint8_t *out) { Zfb::save(out, W::toWire(value)); });
 }
 
 static bool saveValue(
-  Builder &fbb, ZiFB::TableState &table, sqlite3_stmt *stmt, unsigned col,
+  Builder &fbb, Zfb::TableState &table, sqlite3_stmt *stmt, unsigned col,
   const XField &xfield, const SavedOffset &saved)
 {
   auto field = xfield.field.field;
@@ -1981,7 +1981,7 @@ ZmRef<IOBuf> StoreTbl::row_(sqlite3_stmt *stmt)
       !loadU128(columnBlob(stmt, 2), sn))
     throw ZeEXCEPT(Fatal, "ZdbSL", "invalid stored row sequence metadata");
   VN vn = sqlite3_column_int64(stmt, 3);
-  constexpr unsigned msgAlign = ZiFB::BufferAlign<Msg::Root>::N;
+  constexpr unsigned msgAlign = Zfb::BufferAlign<Msg::Root>::N;
   Builder fbb{m_bufAllocFn(),
     m_xFields.bufAlign > msgAlign ? m_xFields.bufAlign : msgAlign};
   auto nested = fbb.startNested();
@@ -2018,7 +2018,7 @@ void StoreTbl::count_(KeyID keyID, ZmRef<IOBuf> buf, CountFn fn)
   Reset reset{stmt};
   try {
     unsigned n = m_keyGroup[keyID];
-    ZiFB::TableView fbo{ZiFB::root(buf->cspan())};
+    Zfb::TableView fbo{Zfb::root(buf->cspan())};
     auto parts = ZtScratch(VarPartsScratch, n, n);
     auto size = planInput(m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
@@ -2066,7 +2066,7 @@ void StoreTbl::select_(
   Reset reset{stmt};
   try {
     unsigned n = selectNext ? m_xKeyFields[keyID].length() : m_keyGroup[keyID];
-    ZiFB::TableView fbo{ZiFB::root(buf->cspan())};
+    Zfb::TableView fbo{Zfb::root(buf->cspan())};
     auto parts = ZtScratch(VarPartsScratch, n, n);
     auto size = planInput(m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
@@ -2108,7 +2108,7 @@ void StoreTbl::find_(KeyID keyID, ZmRef<IOBuf> buf, RowFn fn)
   Reset reset{stmt};
   try {
     unsigned n = m_xKeyFields[keyID].length();
-    ZiFB::TableView fbo{ZiFB::root(buf->cspan())};
+    Zfb::TableView fbo{Zfb::root(buf->cspan())};
     auto parts = ZtScratch(VarPartsScratch, n, n);
     auto size = planInput(m_store->lengthLimit(),
       n, m_xKeyFields[keyID], fbo, parts.span());
@@ -2201,7 +2201,7 @@ void StoreTbl::write_(ZmRef<IOBuf> buf, CommitFn fn)
   try {
     auto ok = [this, cxn, record, &inserted, &removed, shard, un, sn, vn]() {
       Txn txn{cxn, m_store->beginStmt(), m_store->commitStmt()};
-      ZiFB::TableView fbo{ZiFB::root(record.get<Msg::ZfField(Record, data)>())};
+      Zfb::TableView fbo{Zfb::root(record.get<Msg::ZfField(Record, data)>())};
       UNData unData;
       SNData snData;
       bool mrd = false;

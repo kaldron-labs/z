@@ -8,10 +8,6 @@
 
 implement `grpc.md`
 
-- reorg:
-  - `ZiFB` -> `Zfb` under `zfb`
-  - `ZiPB` -> `Zpb` under `zpb`
-
 - `Zsbe`: SBE (simple binary encoding)
 - `Zfix`: FIX
   - each `ZfStruct` is a message

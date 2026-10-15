@@ -87,7 +87,7 @@ static Frame request(ZuCSpan device, uint64_t sub, bool subscribe)
 {
   Ztc::Builder builder{Frame{new Buf}};
   auto nested = builder.startNested();
-  auto body = ZiFB::save(builder, Ztc::Request{
+  auto body = Zfb::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
     .group = uint8_t(Ztc::Group::App), .subscribe = subscribe});
   builder.finish(Ztc::saveMsg(builder, nested,
@@ -199,7 +199,7 @@ struct App {
       Ztc::Builder builder{Frame{new Buf}};
       auto nested = builder.startNested();
       auto id = builder.string(name);
-      auto value = ZiFB::save(builder, Ztc::AppTelemetry{
+      auto value = Zfb::save(builder, Ztc::AppTelemetry{
 	.version = ZuID{"load"}, .role = ZuID{"publisher"},
 	.startTime = ZuTime{ZuTime::Nano{start + int64_t(sent * 1000000000/pace())}},
 	.ztcver = ZuSemVer{publisher}});
@@ -279,7 +279,7 @@ struct App {
     auto envelope = Ztc::msgBody(msg);
     if (state.agent) {
       auto body = envelope.tag() == Ztc::Body::Request ?
-	envelope.get<Ztc::Body::Request>() : ZiFB::View<Ztc::Request>{};
+	envelope.get<Ztc::Body::Request>() : Zfb::View<Ztc::Request>{};
       if (!body ||
         !body.get<Ztc::ZfField(Request, seqNo)>()) { fail("agent request"); return -1; }
       if (!body.get<Ztc::ZfField(Request, subscribe)>()) return 1;
@@ -287,7 +287,7 @@ struct App {
       routes.push(Route{&link, body.get<Ztc::ZfField(Request, seqNo)>()});
       Ztc::Builder builder{Frame{new Buf}};
       auto nested = builder.startNested();
-      auto ack = ZiFB::save(builder,
+      auto ack = Zfb::save(builder,
 	Ztc::Ack{ZuID{"publisher"}, body.get<Ztc::ZfField(Request, seqNo)>(), 1000});
       builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Ack, ack));
       send(link, builder.buf());
@@ -325,7 +325,7 @@ struct App {
       }
     }
     auto body = envelope.tag() == Ztc::Body::Telemetry ?
-      envelope.get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+      envelope.get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
     if (!body) {
       std::cerr << "unexpected body type=" << int(envelope.tag())
 		<< " sub=" << sub << " index=" << state.index;

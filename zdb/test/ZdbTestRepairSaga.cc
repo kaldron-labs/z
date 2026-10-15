@@ -78,7 +78,7 @@ using RepairSaga = RepairSaga_<ZmHeap<"Zdb.Test.Repair", RepairSaga_<>>>;
 ZfStruct(, (RepairSaga, FB),
   (id,		(Ctor<0>),	UInt64),
   (fail,	(Ctor<1>),	Bool));
-ZiFB::AsTable<"repair.Saga"> ZiFB_Fmt(RepairSaga *);
+Zfb::AsTable<"repair.Saga"> Zfb_Fmt(RepairSaga *);
 ZuAssert((Zdb_::SagaDefValid<RepairSaga>{}));
 
 ZmRef<ZdbAnySaga<RepairDB>> repairDef(uint64_t id, bool fail) {

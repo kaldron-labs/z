@@ -144,7 +144,7 @@ ZfStruct(ZumAPI, (RoleEditSaga, FB),
   (kind,	(Ctor<6>),			Int8),
   (label,	(Ctor<7>),			String),
   (state,	(Ctor<8>, Enum<State::Map>),	Int8));
-ZiFB::AsTable<"Zum.fbs.RoleEdit"> ZiFB_Fmt(RoleEditSaga *);
+Zfb::AsTable<"Zum.fbs.RoleEdit"> Zfb_Fmt(RoleEditSaga *);
 
 template <typename Heap>
 unsigned RoleEditSaga_<Heap>::appError(const App &item) const

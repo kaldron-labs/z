@@ -25,15 +25,15 @@
 
 #include <zlib/ZiLog.hh>
 
-#include <zlib/ZiFB.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/Zfb.hh>
+#include <zlib/ZfbReflect.hh>
 
 #include <zlib/ZdbStore.hh>
 
 namespace ZdbMem {
 
 using namespace Zdb_;
-namespace R = ZiFB::Reflect;
+namespace R = Zfb::Reflect;
 
 // --- value union
 
@@ -225,12 +225,12 @@ struct XField {
   R::FieldView		field;
   unsigned			type;	// Value union discriminator
   unsigned			align = 1;	// resolved BFBS force_align
-  unsigned			bufAlign = ZiFB::Wire::Align;
+  unsigned			bufAlign = Zfb::Wire::Align;
   unsigned			index = UINT_MAX;	// key component's row Tuple index
   const ZfVField		*native = nullptr;
 };
 struct XFields : public ZtArray<XField, ZtArrayHeapID<"ZdbMem.XField">> {
-  unsigned bufAlign = ZiFB::Wire::Align;
+  unsigned bufAlign = Zfb::Wire::Align;
 
   ZuDerive_(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbMem.XField">>))
 };
@@ -242,7 +242,7 @@ inline XField xField(
   R::SchemaView schema)
 {
   // resolve flatbuffers reflection data for field
-  if (!fbField) return {{}, 0, 1, ZiFB::Wire::Align, UINT_MAX, field};
+  if (!fbField) return {{}, 0, 1, Zfb::Wire::Align, UINT_MAX, field};
   unsigned type = 0;
   auto ftype = field->type;
   unsigned code = ftype->code;
@@ -447,7 +447,7 @@ consteval unsigned valueCode() {
   return ZfFieldTC::UDT; // void is excluded by the callers
 }
 template <unsigned I>
-using WireValue = ZiFB::Value<typename Value::template Type<I>, valueCode<I>()>;
+using WireValue = Zfb::Value<typename Value::template Type<I>, valueCode<I>()>;
 
 // --- load value from a trusted flatbuffer
 
@@ -461,43 +461,43 @@ void loadAt(
     using W = WireValue<I>;
     if constexpr (I == Value::Index<double>{}) {
       if (R::type(field).get<R::ZfField(Type, baseType)>() == R::BaseType::Float) {
-	new (ptr) T((p ? ZiFB::read<float>(p) : R::deflt<float>(field)));
+	new (ptr) T((p ? Zfb::read<float>(p) : R::deflt<float>(field)));
 	return;
       }
     } else if constexpr (I == Value::Index<FloatVec>{}) {
       if (R::type(field).get<R::ZfField(Type, element)>() == R::BaseType::Float) {
-	auto vector = ZiFB::VectorValue<ZiFB::Scalar<float>>{p ? ZiFB::follow(p) : nullptr};
+	auto vector = Zfb::VectorValue<Zfb::Scalar<float>>{p ? Zfb::follow(p) : nullptr};
 	auto array = new (ptr) T(vector.length());
 	for (auto v: vector) array->push(v);
 	return;
       }
     }
-    if constexpr (W::Kind == ZiFB::ValueKind::Scalar) {
-      new (ptr) T((p ? ZiFB::read<typename W::WireType>(p) : R::deflt<typename W::WireType>(field)));
-    } else if constexpr (W::Kind == ZiFB::ValueKind::Union) {
-      new (ptr) T(W::fromWire(ZiFB::UnionView<typename W::Native>{
-	tag, p ? ZiFB::follow(p) : nullptr}));
+    if constexpr (W::Kind == Zfb::ValueKind::Scalar) {
+      new (ptr) T((p ? Zfb::read<typename W::WireType>(p) : R::deflt<typename W::WireType>(field)));
+    } else if constexpr (W::Kind == Zfb::ValueKind::Union) {
+      new (ptr) T(W::fromWire(Zfb::UnionView<typename W::Native>{
+	tag, p ? Zfb::follow(p) : nullptr}));
     } else {
-      if constexpr (W::Kind == ZiFB::ValueKind::Inline) {
+      if constexpr (W::Kind == Zfb::ValueKind::Inline) {
 	if (!p) {
 	  new (ptr) T(native->constant.template get<valueCode<I>()>(
 	    ZfVField::cget(ZfVFieldConstant::Deflt)));
 	  return;
 	}
-      } else if (p) p = ZiFB::follow(p);
+      } else if (p) p = Zfb::follow(p);
       if constexpr (isVec(I)) {
-	auto value = ZiFB::valueAt<W>(p);
+	auto value = Zfb::valueAt<W>(p);
 	auto array = new (ptr) T(value.length());
 	for (auto v: value) array->push(v);
       } else
-	new (ptr) T(ZiFB::valueAt<W>(p));
+	new (ptr) T(Zfb::valueAt<W>(p));
     }
   }
 }
 
 // --- save value using BFBS defaults, IDs and the shared native mappings
 
-using Offset = ZiFB::Offset;
+using Offset = Zfb::Offset;
 
 template <unsigned I, typename B, typename A>
 Offset saveOffset(B &fbb, const XField &field, const A &value) {
@@ -506,23 +506,23 @@ Offset saveOffset(B &fbb, const XField &field, const A &value) {
     auto align = field.align;
     if constexpr (I == Value::Index<FloatVec>{}) {
       if (R::type(field.field).get<R::ZfField(Type, element)>() == R::BaseType::Float)
-	return ZiFB::saveValue<ZiFB::Vector<ZiFB::Scalar<float>>,
+	return Zfb::saveValue<Zfb::Vector<Zfb::Scalar<float>>,
 	  ZuFacet::FB, ZfFieldFilter::All>(fbb, value.template p<I>(),
 	    align > sizeof(float) ? align : sizeof(float));
     }
-    if constexpr (W::Kind == ZiFB::ValueKind::Union)
-      return ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(
+    if constexpr (W::Kind == Zfb::ValueKind::Union)
+      return Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(
 	fbb, value.template p<I>()).offset;
-    else if constexpr (ZiFB::IsOffset<W>) {
-      return ZiFB::saveValue<W, ZuFacet::FB, ZfFieldFilter::All>(
-	fbb, value.template p<I>(), (align > ZiFB::valueAlign<W>() ? align : ZiFB::valueAlign<W>()));
+    else if constexpr (Zfb::IsOffset<W>) {
+      return Zfb::saveValue<W, ZuFacet::FB, ZfFieldFilter::All>(
+	fbb, value.template p<I>(), (align > Zfb::valueAlign<W>() ? align : Zfb::valueAlign<W>()));
     }
   }
   return 0;
 }
 
 template <unsigned I, typename B, typename A>
-void saveValue(B &fbb, ZiFB::TableState &table, Offset offset,
+void saveValue(B &fbb, Zfb::TableState &table, Offset offset,
     R::FieldView field, unsigned align, const A &value) {
   if constexpr (I) {
     using W = WireValue<I>;
@@ -532,21 +532,21 @@ void saveValue(B &fbb, ZiFB::TableState &table, Offset offset,
 	return;
       }
     }
-    if constexpr (W::Kind == ZiFB::ValueKind::Scalar)
+    if constexpr (W::Kind == Zfb::ValueKind::Scalar)
       R::saveScalar<typename W::WireType>(fbb, table, field, W::toWire(value.template p<I>()));
-    else if constexpr (W::Kind == ZiFB::ValueKind::Inline) {
+    else if constexpr (W::Kind == Zfb::ValueKind::Inline) {
       fbb.fieldInline(table, field.get<R::ZfField(Field, id)>(),
 	W::Size, (align > W::Align ? align : W::Align), [&value](uint8_t *p) {
-	  ZiFB::save(p, W::toWire(value.template p<I>()));
+	  Zfb::save(p, W::toWire(value.template p<I>()));
 	});
-    } else if constexpr (W::Kind == ZiFB::ValueKind::Union)
-      R::saveUnion(fbb, table, field, ZiFB::As<typename W::Native>::tag(value.template p<I>()), offset);
+    } else if constexpr (W::Kind == Zfb::ValueKind::Union)
+      R::saveUnion(fbb, table, field, Zfb::As<typename W::Native>::tag(value.template p<I>()), offset);
     else
       R::saveOffset(fbb, table, field, offset);
   }
 }
 
-inline void loadValue(Value &value, const XField &field, ZiFB::TableView table) {
+inline void loadValue(Value &value, const XField &field, Zfb::TableView table) {
   auto p = R::address(table, field.field);
   ZuSwitch::dispatch<Value::N>(field.type, [&value, &field, table, p](auto I) {
     unsigned tag = 0;
@@ -571,7 +571,7 @@ inline Tuple loadTuple_(
   unsigned nParams,
   const ZfVFieldArray &fields,
   const XFields &xFields,
-  ZiFB::TableView fbo,
+  Zfb::TableView fbo,
   Filter filter)
 {
   Tuple tuple(nParams); // not {}
@@ -587,18 +587,18 @@ Tuple loadTuple_(
   unsigned nParams,
   const ZfVFieldArray &fields,
   const XFields &xFields,
-  ZiFB::TableView fbo)
+  Zfb::TableView fbo)
 {
   return loadTuple_(nParams, fields, xFields, fbo,
     [](const ZfVField *) { return true; });
 }
 inline Tuple loadTuple(
-  const ZfVFieldArray &fields, const XFields &xFields, ZiFB::TableView fbo)
+  const ZfVFieldArray &fields, const XFields &xFields, Zfb::TableView fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo);
 }
 inline Tuple loadUpdTuple(
-  const ZfVFieldArray &fields, const XFields &xFields, ZiFB::TableView fbo)
+  const ZfVFieldArray &fields, const XFields &xFields, Zfb::TableView fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo,
     [](const ZfVField *field) -> bool {
@@ -606,7 +606,7 @@ inline Tuple loadUpdTuple(
     });
 }
 inline Tuple loadDelTuple(
-  const ZfVFieldArray &fields, const XFields &xFields, ZiFB::TableView fbo)
+  const ZfVFieldArray &fields, const XFields &xFields, Zfb::TableView fbo)
 {
   return loadTuple_(fields.length(), fields, xFields, fbo,
     [](const ZfVField *field) -> bool { return (field->keys & 1); });
@@ -617,7 +617,7 @@ template <bool Key = false, typename B>
 Offset saveTuple(B &fbb, const XFields &xFields, ZuSpan<const Value> tuple) {
   unsigned n = xFields.length();
   if constexpr (!Key) ZmAssert(tuple.length() == n);
-  auto offsets = ZtScratch(ZiFB::Offsets, n, n);
+  auto offsets = ZtScratch(Zfb::Offsets, n, n);
   for (unsigned i = 0; i < n; ++i) {
     const auto &value = tuple[Key ? xFields[i].index : i];
     offsets[i] = ZuSwitch::dispatch<Value::N>(value.type(),
@@ -809,7 +809,7 @@ private:
     auto sn = record.get<Msg::ZfField(Record, sn)>();
     auto vn = record.get<Msg::ZfField(Record, vn)>();
     auto data = record.get<Msg::ZfField(Record, data)>();
-    ZiFB::TableView fbo{ZiFB::root(data)};
+    Zfb::TableView fbo{Zfb::root(data)};
     Tuple tuple;
     if (!vn)
       tuple = loadTuple(m_fields, m_xFields, fbo);
@@ -823,8 +823,8 @@ private:
   // save a row to a buffer as a replication/recovery message
   template <bool Recovery>
   ZmRef<IOBuf> saveRow(const ZmRef<const MemRow> &row) {
-    constexpr unsigned msgAlign = ZiFB::BufferAlign<Msg::Root>::N;
-    ZiFB::IOBuilder<ZiFB::Wire::MaxAlign> fbb{
+    constexpr unsigned msgAlign = Zfb::BufferAlign<Msg::Root>::N;
+    Zfb::IOBuilder<Zfb::Wire::MaxAlign> fbb{
       m_bufAllocFn(), m_rowAlign > msgAlign ? m_rowAlign : msgAlign};
     auto nested = fbb.startNested();
     auto root = saveTuple(fbb, m_xFields, row->data);
@@ -843,7 +843,7 @@ public:
     };
     XFields fields{m_fields.length()};
     XKeyFields keys(m_keyFields.length()); // capacity, not an initializer list
-    unsigned align = ZiFB::Wire::Align;
+    unsigned align = Zfb::Wire::Align;
     for (unsigned i = 0, n = m_fields.length(); i < n; ++i)
       fields.push(bind(m_fields[i]));
     for (const auto &field : fields)
@@ -909,7 +909,7 @@ private:
   IndexUN		m_indexUN;
   Indices		m_indices;
   IOBufAllocFn		m_bufAllocFn;
-  unsigned		m_rowAlign = ZiFB::Wire::Align;
+  unsigned		m_rowAlign = Zfb::Wire::Align;
 
   bool			m_opened = false;
 

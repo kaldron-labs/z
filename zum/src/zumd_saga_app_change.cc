@@ -126,7 +126,7 @@ ZfStruct(, (AppChangeSaga, FB),
   (request,	(Ctor<4>),			UDT),
   (stateOnly,	(Ctor<5>),			Bool),
   (state,	(Ctor<6>, Enum<State::Map>),	Int8));
-ZiFB::AsTable<"Zum.fbs.AppChange"> ZiFB_Fmt(AppChangeSaga *);
+Zfb::AsTable<"Zum.fbs.AppChange"> Zfb_Fmt(AppChangeSaga *);
 
 template <typename Heap>
 unsigned AppChangeSaga_<Heap>::appError(const App &item) const

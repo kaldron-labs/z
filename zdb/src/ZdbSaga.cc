@@ -550,11 +550,11 @@ void SagaDB::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
   if (next) {
     using Key = ZuStructKeyT<SagaTypeStep, 0>;
     Key key{context->type, uint32_t(context->step - 1)};
-    fbb.finish(ZiFB::save(fbb, key));
+    fbb.finish(Zfb::save(fbb, key));
   } else {
     using GroupKey = typename SplitKey<SagaTypeStep, 0>::GroupKey;
     GroupKey key;
-    fbb.finish(ZiFB::save(fbb, key));
+    fbb.finish(Zfb::save(fbb, key));
   }
   auto keyBuf = fbb.buf();
   context->table->select(
@@ -571,7 +571,7 @@ void SagaDB::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
 	if (context->error) return;
 	auto data = ZuMv(result).p<TupleData>();
 	context->load(m_sagaDefs, *m_sagaDefHash,
-	  ZiFB::load<SagaTypeStep>(data.buf->cspan()));
+	  Zfb::load<SagaTypeStep>(data.buf->cspan()));
 	context->pageCount = data.count;
 	return;
       }
@@ -615,7 +615,7 @@ void SagaDB::sagaCatalogWrite(ZmRef<SagaCatalog> context)
   SN sn = allocSN();
   auto fbb = RowBuilder<SagaTypeStep>();
   auto nested = fbb.startNested();
-  auto root = ZiFB::save(fbb, row);
+  auto root = Zfb::save(fbb, row);
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, "saga_type", un, sn, 0, 0, data);
   fbb.finish(saveMsg(fbb, record, Msg::Tag::Replication));

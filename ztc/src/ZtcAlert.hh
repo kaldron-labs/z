@@ -19,9 +19,7 @@
 namespace Ztc {
 namespace Alert_ {
 
-namespace LoadResult {
-  enum { OK, Missing, Incomplete, Corrupt, IOError };
-}
+enum LoadResult { OK, Missing, Incomplete, Corrupt, IOError };
 
 inline bool validDate(uint32_t date)
 {

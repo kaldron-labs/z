@@ -207,7 +207,7 @@ PKG_CHECK_MODULES([FB_INTEROP], [flatbuffers >= 24], [], [
   FB_INTEROP_LIBS=
 ])
 
-# Canonical protobuf is used only by the explicit ZiPB interop target.
+# Canonical protobuf is used only by the explicit Zpb interop target.
 PKG_CHECK_MODULES([PB_INTEROP], [protobuf >= 25], [z_have_pb_interop=yes], [
   z_have_pb_interop=no
   PB_INTEROP_CFLAGS=
@@ -257,7 +257,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zv zdbus ztcp ztls zquic zhttp zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zpb zfb zv zdbus ztcp ztls zquic zhttp zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -277,7 +277,11 @@ AC_CONFIG_FILES([Makefile \
 	ze/Makefile ze/src/Makefile ze/test/Makefile \
 	zf/Makefile zf/src/Makefile zf/test/Makefile \
 	zi/Makefile zi/src/Makefile zi/test/Makefile zi/itest/Makefile \
-	zi/example/Makefile zi/interop/Makefile \
+	zi/example/Makefile \
+	zpb/Makefile zpb/src/Makefile zpb/test/Makefile zpb/itest/Makefile \
+	zpb/example/Makefile zpb/interop/Makefile \
+	zfb/Makefile zfb/src/Makefile zfb/test/Makefile zfb/itest/Makefile \
+	zfb/interop/Makefile \
 	zv/Makefile zv/src/Makefile zv/test/Makefile zv/interop/Makefile \
 	zdbus/Makefile zdbus/src/Makefile zdbus/test/Makefile \
 	zdbus/util/Makefile zdbus/itest/Makefile zdbus/example/Makefile \

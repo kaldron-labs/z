@@ -195,13 +195,13 @@ namespace Agent_ {
 
 static bool rewriteSeq(uint8_t *data, uint64_t seqNo)
 {
-  auto message = ZiFB::View<Msg>{ZiFB::follow(data)};
+  auto message = Zfb::View<Msg>{Zfb::follow(data)};
   auto body = msgBody(message);
   auto rewrite = [body, seqNo]<typename F>() {
-    auto value = ZiFB::View<typename F::O>{body.data()};
+    auto value = Zfb::View<typename F::O>{body.data()};
     auto field = value.template field<F>();
     if (!field) return false;
-    ZiFB::write<uint64_t>(const_cast<uint8_t *>(field), seqNo);
+    Zfb::write<uint64_t>(const_cast<uint8_t *>(field), seqNo);
     return true;
   };
   switch (body.tag()) {
@@ -220,7 +220,7 @@ static ZmRef<ZiIOBuf> requestFrame(const Request &request)
   Ztc::Builder builder{
     frameBuf(ZmRef<ZiIOBuf>{new Frame})};
   auto nested = builder.startNested();
-  auto value = ZiFB::save(builder, request);
+  auto value = Zfb::save(builder, request);
   builder.finish(saveMsg(builder, nested, Body::Request,
     value));
   return saveHdr(builder);
@@ -231,7 +231,7 @@ static ZmRef<ZiIOBuf> hubErrorFrame(
 {
   Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
   auto nested = builder.startNested();
-  auto error = ZiFB::save(builder, Error{
+  auto error = Zfb::save(builder, Error{
     ErrorMessage{message}, id ? id : ZuID{"ztcagent"}, seqNo, code});
   builder.finish(saveMsg(builder, nested, Body::Error,
     error));
@@ -313,7 +313,7 @@ static void shutdown(Agent::State *state, Pub_ *pub,
   Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
   auto nested = builder.startNested();
   auto id = builder.string(pub->id);
-  auto value = ZiFB::save(builder, Shutdown{});
+  auto value = Zfb::save(builder, Shutdown{});
   auto telemetry = saveTelemetry(builder, id, 0,
     TelemetryBody::Shutdown, value);
   builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry));
@@ -366,7 +366,7 @@ static void finishReq(Agent::State *state, Req *req)
     else {
       Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
       auto nested = builder.startNested();
-      auto eos = ZiFB::save(builder,
+      auto eos = Zfb::save(builder,
 	  EOS{ZuID{"ztcagent"}, req->request.seqNo});
       builder.finish(saveMsg(builder, nested, Body::EOS, eos));
       transmit(state, builder.buf(), req->cxnGen);
@@ -494,10 +494,10 @@ static void admitRequest(Agent::State *state,
     ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (state->routeGeneration != generation || !frame) return;
-  auto root = ZiFB::view<Msg>({frame->data(), frame->length});
+  auto root = Zfb::view<Msg>({frame->data(), frame->length});
   if (msgBody(root).tag() != Body::Request) return;
   auto value = msgBody(root).get<Body::Request>();
-  auto request = ZiFB::handler<Request>(value).ctor();
+  auto request = Zfb::handler<Request>(value).ctor();
   if (!request.subscribe) {
     if (auto req = state->reqs.findPtr(request.seqNo)) delReq(state, req);
     return;
@@ -534,7 +534,7 @@ static void routeTelemetry(Agent::State *state,
     ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
   if (state->routeGeneration != generation || !frame) return;
-  auto message = ZiFB::view<Msg>({frame->data(), frame->length});
+  auto message = Zfb::view<Msg>({frame->data(), frame->length});
   if (!message) return;
   auto body = msgBody(message);
   if (!body.data()) return;

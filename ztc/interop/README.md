@@ -30,7 +30,7 @@ The installed canonical 25.12.19 `FieldDef::Serialize` uses signed
 `StringToInt` for unsigned defaults and serializes `ulong` values above
 `INT64_MAX` as zero. For `ulong`, the comparison reads the canonical parser's
 constant before that lossy BFBS serialization; other integer defaults are
-compared directly in BFBS. ZiFB's emitted BFBS retains the correct bit pattern.
+compared directly in BFBS. Zfb's emitted BFBS retains the correct bit pattern.
 Both native BFBS roots pass canonical verification and deserialization.
 
 Native telemetry unit tests passed 7 binaries / 28 top-level tests. Agent
@@ -58,7 +58,7 @@ showed that merely dropping wake bytes on `EAGAIN` leaves polling callbacks
 without matching wakes. The Linux path now uses one nonblocking semaphore-mode
 `eventfd` to preserve one wake per queued polling callback. The focused
 131,072-callback regression passed, including shutdown. Final Valgrind checks
-of that test and `ZiFBTest` report zero errors and zero lost blocks. The
+of that test and `ZfbTest` report zero errors and zero lost blocks. The
 control-message test also found trailing uninitialized UDP TOS padding; the
 transmit control length now covers only initialized bytes. Full release
 workload verification remains pending.
@@ -73,7 +73,7 @@ history and establish no release regression or performance pass.
 
 After the release build, run `ztc/interop/ztcmsginterop --bench 100000 11`.
 This optional mode reuses the independent request/union/envelope oracle and
-`zi/interop/iobaseline.hh`, the frozen custom pooled IOBuilder. It compares
+`zfb/interop/iobaseline.hh`, the frozen custom pooled IOBuilder. It compares
 nested serialization and byte-preserving routing copies, each with fresh and
 reused pooled owners, alternating codec order across samples. It records
 encoded bytes, elapsed time and a varying subscription-ID checksum. Both
@@ -81,7 +81,7 @@ roots, all request fields and copied payload identity are checked before
 timing. Input construction is outside timing for both codecs. The canonical
 nested path follows the original `Zfb::nest` algorithm directly in the pooled
 arena. Debug execution is rejected. The mode has been built and its
-[initial release measurements](../../zi/interop/evidence/m2-release-initial/telemetry.csv)
+[initial release measurements](../../zfb/interop/evidence/m2-release-initial/telemetry.csv)
 are retained. Refresh these after the subsequent codec fixes and current
 dependent rebuild; performance acceptance remains open.
 
@@ -177,7 +177,7 @@ A follow-up removes the redundant publication/handoff read, retaining three.
 It does not replace the framework clock or use the rejected hardware clock.
 
 Raw reports, compiler/source/binary provenance, the CPU profile text and the
-clock microbenchmark are in `zi/interop/evidence/m2-e2e-latency/`. The reduced
+clock microbenchmark are in `zfb/interop/evidence/m2-e2e-latency/`. The reduced
 agent counts, new test-only timestamps and prior consumer binaries mean these
 are diagnostic results, not final full-workload migration acceptance.
 
@@ -273,7 +273,7 @@ available, so no cross-host result is claimed. HPET timing overhead identified
 above also remains present in every measurement.
 
 Raw logs, exact comparison commands, byte counts, source/binary hashes and the
-machine-readable summary are in `zi/interop/evidence/m2-loopback/`. Reproduce a
+machine-readable summary are in `zfb/interop/evidence/m2-loopback/`. Reproduce a
 direct case with:
 
 ```sh

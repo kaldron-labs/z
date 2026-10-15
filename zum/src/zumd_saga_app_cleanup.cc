@@ -102,7 +102,7 @@ ZfStruct(, (AppCleanupSaga, FB),
   (evidence,	(Ctor<1>),	UDT),
   (consents,	(Ctor<2>),	UDT),
   (updated,	(Ctor<3>),	Int64));
-ZiFB::AsTable<"Zum.fbs.AppCleanup"> ZiFB_Fmt(AppCleanupSaga *);
+Zfb::AsTable<"Zum.fbs.AppCleanup"> Zfb_Fmt(AppCleanupSaga *);
 
 
 

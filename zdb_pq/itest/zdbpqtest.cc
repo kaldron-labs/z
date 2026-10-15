@@ -84,12 +84,12 @@ ZmSemaphore done;
 
 struct DiagOne { int64_t a; };
 ZfStruct(, (DiagOne, FB), (a, (Ctor<0>, Keys<0>), Int64));
-ZiFB::AsTable<"test.DiagOne"> ZiFB_Fmt(DiagOne *);
+Zfb::AsTable<"test.DiagOne"> Zfb_Fmt(DiagOne *);
 struct DiagTwo { int64_t a; int64_t b; };
 ZfStruct(, (DiagTwo, FB),
   (a, (Ctor<0>, Keys<0>), Int64),
   (b, (Ctor<1>), Int64));
-ZiFB::AsTable<"test.DiagTwo"> ZiFB_Fmt(DiagTwo *);
+Zfb::AsTable<"test.DiagTwo"> Zfb_Fmt(DiagTwo *);
 
 template <typename T>
 static void mismatch(
@@ -111,8 +111,8 @@ static void mismatch(
   sql.null();
   sql << "CREATE TABLE public.\"" << id << "\" (" << columns << ')';
   if (!exec(sql)) return;
-  SchemaBuf bytes(ZiFB::SchemaOut::Schema<T>::Size);
-  ZiFB::saveSchema<T>(bytes);
+  SchemaBuf bytes(Zfb::SchemaOut::Schema<T>::Size);
+  Zfb::saveSchema<T>(bytes);
   auto schema = Schema::from<T>(bytes);
   auto result = ZmBlock<OpenResult>{}([id, schema](auto wake) {
     db->store()->open(false, IDString{id}, ZfVFields<T>(), ZfVKeyFields<T>(),

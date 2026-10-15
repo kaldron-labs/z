@@ -24,7 +24,7 @@
 
 #include <zlib/ZfStruct.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZtcTypes.hh>
 #include <zlib/ZtcRAGMap.hh>
@@ -32,7 +32,7 @@
 
 namespace Ztc {
 
-namespace RAG { ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *); }
+namespace RAG { Zfb::AsEnum<"Ztc.fbs.RAG"> Zfb_Fmt(Map *); }
 
 ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Instantiated,
@@ -41,7 +41,7 @@ ZtEnumNS(ZdbAPI, DBHostState, int8_t,
   Active,
   Inactive,
   Stopping);
-namespace DBHostState { ZiFB::AsEnum<"Ztc.fbs.DBHostState"> ZiFB_Fmt(Map *); }
+namespace DBHostState { Zfb::AsEnum<"Ztc.fbs.DBHostState"> Zfb_Fmt(Map *); }
 
 struct DBHostTelemetry {
   ZiIP		ip;
@@ -77,7 +77,7 @@ ZfStruct(ZdbAPI, (DBHostTelemetry, FB),
   (port,	(Ctor<4>),					UInt16),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
 
-ZiFB::AsTable<"Ztc.fbs.DBHostTelemetry"> ZiFB_Fmt(DBHostTelemetry *);
+Zfb::AsTable<"Ztc.fbs.DBHostTelemetry"> Zfb_Fmt(DBHostTelemetry *);
 
 struct DBHost {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

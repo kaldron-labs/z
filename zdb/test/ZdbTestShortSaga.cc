@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/Zdb.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 #include "ZdbSagaTestDefs.hh"
 
 namespace zdbtest {
@@ -25,7 +25,7 @@ using ShortSaga = ShortSaga_<ZmHeap<"Zdb.Test.ShortSaga", ShortSaga_<>>>;
 
 ZfStruct(, (ShortSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::AsTable<"zdbtest.fbs.ShortSaga"> ZiFB_Fmt(ShortSaga *);
+Zfb::AsTable<"zdbtest.fbs.ShortSaga"> Zfb_Fmt(ShortSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<ShortSaga>{}));
 

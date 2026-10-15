@@ -120,7 +120,7 @@ static void invalidRecovery(bool overflow)
   });
   ZuCheckRT(!admitted && !completed && !context->runs);
   Zdb_::SagaPayload data;
-  ZuCheckRT(invalid->save(data) == ZiFB::Error::OK);
+  ZuCheckRT(invalid->save(data) == Zfb::Error::OK);
   if (!overflow) data.length(0);
   auto table = ZmBlock<ZdbTable<Zdb_::SagaData> *>{}([db](auto wake) {
     db->run([db, wake = ZuMv(wake)]() mutable {

@@ -13,7 +13,7 @@
 #include <zlib/ZdfLib.hh>
 #endif
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/Zdb.hh>
 
@@ -41,7 +41,7 @@ ZfStruct(ZdfAPI, (SeriesFixed, FB),
   (epoch,	(Ctor<3>),			DateTime),
   (blkOffset,	(Ctor<4>, Mutable),		UInt64));
 
-ZiFB::AsTable<"Zdf.DB.fbs.SeriesFixed"> ZiFB_Fmt(SeriesFixed *);
+Zfb::AsTable<"Zdf.DB.fbs.SeriesFixed"> Zfb_Fmt(SeriesFixed *);
 
 struct SeriesFloat {
   SeriesID	id;		// 1-based
@@ -60,7 +60,7 @@ ZfStruct(ZdfAPI, (SeriesFloat, FB),
   (epoch,	(Ctor<3>),			DateTime),
   (blkOffset,	(Ctor<4>, Mutable),		UInt64));
 
-ZiFB::AsTable<"Zdf.DB.fbs.SeriesFloat"> ZiFB_Fmt(SeriesFloat *);
+Zfb::AsTable<"Zdf.DB.fbs.SeriesFloat"> Zfb_Fmt(SeriesFloat *);
 
 struct BlkFixed {
   BlkOffset	blkOffset;
@@ -81,7 +81,7 @@ ZfStruct(ZdfAPI, (BlkFixed, FB),
   (count,	(Ctor<4>, Mutable),		UInt16),
   (ndp,		(Ctor<5>, Mutable),		UInt8));
 
-ZiFB::AsTable<"Zdf.DB.fbs.BlkFixed"> ZiFB_Fmt(BlkFixed *);
+Zfb::AsTable<"Zdf.DB.fbs.BlkFixed"> Zfb_Fmt(BlkFixed *);
 
 struct BlkFloat {
   BlkOffset	blkOffset;
@@ -100,7 +100,7 @@ ZfStruct(ZdfAPI, (BlkFloat, FB),
   (last,	(Ctor<2>, Mutable),		Float),
   (count,	(Ctor<4>, Mutable),		UInt16));
 
-ZiFB::AsTable<"Zdf.DB.fbs.BlkFloat"> ZiFB_Fmt(BlkFloat *);
+Zfb::AsTable<"Zdf.DB.fbs.BlkFloat"> Zfb_Fmt(BlkFloat *);
 
 using BlkDataBuf = ZuArray<uint8_t, BlkSize>;
 
@@ -123,7 +123,7 @@ ZfStruct(ZdfAPI, (BlkData, FB),
   (blkOffset,	(Ctor<0>, Keys<0>, Descend<0>),			UInt64),
   (buf,		(Mutable),					Bytes));
 
-ZiFB::AsTable<"Zdf.DB.fbs.BlkData"> ZiFB_Fmt(BlkData *);
+Zfb::AsTable<"Zdf.DB.fbs.BlkData"> Zfb_Fmt(BlkData *);
 
 ZdbTableDerive(SeriesFixedTable, SeriesFixed);
 ZdbTableDerive(SeriesFloatTable, SeriesFloat);

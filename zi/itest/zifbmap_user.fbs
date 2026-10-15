@@ -1,5 +1,0 @@
-include "zifbmap_base.fbs";
-namespace map_import;
-
-table Holder { values:[ValuesEntry]; next:Holder; }
-root_type Holder;
