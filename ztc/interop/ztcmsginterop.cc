@@ -15,8 +15,8 @@
 #include <zlib/ZtcMsg.hh>
 
 #include "telemetry_generated.h"
-#include "../../zi/interop/iobaseline.hh"
-#include <zlib/ZiFBReflect.hh>
+#include "../../zfb/interop/iobaseline.hh"
+#include <zlib/ZfbReflect.hh>
 
 using namespace ZuTestUtil;
 using Text = ZtString<ZtStringHeapID<"ztcmsginterop.Text">>;
@@ -25,8 +25,8 @@ template <typename O>
 static void schema()
 {
   ZuTestScope(schema);
-  auto bytes = ZtScratch(Text, ZiFB::SchemaOut::Schema<O>::Size);
-  ZiFB::saveSchema<O>(bytes);
+  auto bytes = ZtScratch(Text, Zfb::SchemaOut::Schema<O>::Size);
+  Zfb::saveSchema<O>(bytes);
   ZuBSpan span{bytes};
   flatbuffers::Verifier verifier{span.data(), span.length()};
   bool valid = reflection::VerifySchemaBuffer(verifier);
@@ -37,7 +37,7 @@ static void schema()
   ZuCheck(loaded);
   if (!loaded) { log(imported.error_); return; }
   auto source = ZtScratch(Text, 0);
-  ZiFB::saveFBS<O>(source);
+  Zfb::saveFBS<O>(source);
   flatbuffers::Parser parsed;
   parsed.opts.lang_to_generate = flatbuffers::IDLOptions::kCpp;
   bool compiled = parsed.Parse(source.data());
@@ -92,7 +92,7 @@ static void request()
   request.group = Ztc::Group::Heap;
   request.interval = 7;
   request.subscribe = true;
-  auto payload = ZiFB::save(builder, request);
+  auto payload = Zfb::save(builder, request);
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Request,
     payload, 19, "device", 23));
   auto owner = builder.buf();
@@ -147,7 +147,7 @@ static void copy()
     Peer::TelemetryBody::Shutdown, shutdown.Union());
   peer.Finish(Peer::CreatePayload(peer, Peer::Body::Telemetry, telemetry.Union()));
   ZuBSpan original{peer.GetBufferPointer(), peer.GetSize()};
-  ZuCheck(ZiFB::verify<Ztc::Payload>(original));
+  ZuCheck(Zfb::verify<Ztc::Payload>(original));
   Ztc::Builder builder{new ZiIOBufAlloc<>};
   auto data = builder.copyRoot(original, Ztc::Builder::Align);
   builder.finish(Ztc::saveMsg(builder, data, 59, "routed", 61));
@@ -167,12 +167,12 @@ static void copy()
   auto seq = value.field<Ztc::ZfField(Telemetry, seqNo)>();
   ZuCheck(seq); // Explicitly present zero survives the routing copy.
   if (!seq) return;
-  ZiFB::write<uint64_t>(const_cast<uint8_t *>(seq), 67);
+  Zfb::write<uint64_t>(const_cast<uint8_t *>(seq), 67);
   auto canonical = flatbuffers::GetRoot<Peer::Payload>(bytes.data());
   ZuCheck(canonical->body_as_Telemetry()->seq_no() == 67);
   ZuCheck(canonical->body_as_Telemetry()->value_type() == Peer::TelemetryBody::Shutdown);
-  ZiFB::write<uint32_t>(const_cast<uint8_t *>(bytes.data()), UINT32_MAX);
-  ZuCheck(ZiFB::verify<Ztc::Msg>(owner->cspan()));
+  Zfb::write<uint32_t>(const_cast<uint8_t *>(bytes.data()), UINT32_MAX);
+  ZuCheck(Zfb::verify<Ztc::Msg>(owner->cspan()));
   ZuCheck(!Ztc::msg(owner->cspan())); // Ingress also verifies the nested root.
 }
 
@@ -238,7 +238,7 @@ struct Native {
       b.finish(Ztc::saveMsg(b, data, seq, "device", 23));
     } else {
       auto nested = b.startNested();
-      auto value = ZiFB::save(b, row);
+      auto value = Zfb::save(b, row);
       b.finish(Ztc::saveMsg(b, nested, Ztc::Body::Request,
 	value, seq, "device", 23));
     }

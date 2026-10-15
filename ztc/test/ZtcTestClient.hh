@@ -49,7 +49,7 @@ inline ZmRef<ZiIOBuf> request(
   data.alertDate = alertDate;
   data.group = uint8_t(group);
   data.subscribe = subscribe;
-  auto request_ = ZiFB::save(fbb, data);
+  auto request_ = Zfb::save(fbb, data);
   fbb.finish(Ztc::saveMsg(
     fbb, nested, Ztc::Body::Request, request_));
   return Ztc::saveHdr(fbb);

@@ -1,7 +1,7 @@
 METASOURCES = AUTO
 EXTRA_DIST = zumd_saga_objects.mk
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
-	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src \
+	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src -I$(top_srcdir)/zfb/src \
 	-I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zhttp/src -I$(top_srcdir)/zrest/src \
 	-I$(top_srcdir)/zdb/src \
@@ -51,7 +51,7 @@ libZum_la_SOURCES = ZumLib.cc ZumJWTVerify.cc ZumService.cc ZumMgmt.cc
 libZum_la_LIBADD = \
 	$(top_builddir)/zhttp/src/libZhttp.la \
 	$(top_builddir)/ztls/src/libZtls.la \
-	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
+	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ \
@@ -61,19 +61,27 @@ zum_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zv/src \
 zum_LDADD = libZum.la \
 	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \
+	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/ztls/src/libZtls.la \
-	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
+	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
-	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la
+	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
+	@PTLS_LIBS@ @Z_MT_LIBS@
 zum_SOURCES = zum.cc
 zumd_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zv/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/zquic/src \
 	-I$(top_srcdir)/ztc/src
 zumd_LDADD = $(top_builddir)/ztc/src/libZtcApp.la libZum.la \
 	$(top_builddir)/zrest/src/libZrest.la \
+	$(top_builddir)/zhttp/src/libZhttp.la \
+	$(top_builddir)/zquic/src/libZquic.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/ztls/src/libZtls.la \
-	$(top_builddir)/zv/src/libZv.la
+	$(top_builddir)/zv/src/libZv.la \
+	$(top_builddir)/zfb/src/libZfb.la $(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
+	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
+	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
+	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 zumd_SOURCES = zumd.cc zumd_bootstrap.cc zumd_daemon.cc \
 	zumd_daemon_admin.cc zumd_role_delete.cc \
 	zumd_core.cc zumd_admin.cc zumd_authorize.cc zumd_db.cc \

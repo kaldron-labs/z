@@ -20,7 +20,7 @@
 #include "../../zdb/test/ZdbTestCf.hh"
 #include <zlib/ZvMxParams.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZdbMemStore.hh>
 

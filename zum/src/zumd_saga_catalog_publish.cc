@@ -290,7 +290,7 @@ ZfStruct(, (CatalogPublishSaga, FB),
   (clients,		(Ctor<4>),	UDT),
   (clientAccess,	(Ctor<5>),	UDT),
   (request,		(Ctor<6>),	UDT));
-ZiFB::AsTable<"Zum.fbs.CatalogPublish"> ZiFB_Fmt(CatalogPublishSaga *);
+Zfb::AsTable<"Zum.fbs.CatalogPublish"> Zfb_Fmt(CatalogPublishSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<CatalogPublishSaga>{}));
 

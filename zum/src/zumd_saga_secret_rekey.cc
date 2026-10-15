@@ -107,7 +107,7 @@ ZfStruct(, (SecretRekeySaga, FB),
   (keyID,	(Ctor<4>),					String),
   (before,	(Ctor<5>),					Bytes),
   (after,	(Ctor<6>),					Bytes));
-ZiFB::AsTable<"Zum.fbs.SecretRekey"> ZiFB_Fmt(SecretRekeySaga *);
+Zfb::AsTable<"Zum.fbs.SecretRekey"> Zfb_Fmt(SecretRekeySaga *);
 
 ZuAssert((Zdb_::SagaDefValid<SecretRekeySaga>{}));
 

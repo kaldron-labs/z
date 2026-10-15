@@ -166,8 +166,8 @@ void run()
     Zdb_::DBState state{2};
     state.update("o", ZdbShard{1}, 42);
     Zdb_::Builder fbb{new ZiIOBufAlloc<>()};
-    auto bytes = fbb.finish(ZiFB::save(fbb, state));
-    auto fbo = ZiFB::view<Zdb_::Msg::DBState>(bytes);
+    auto bytes = fbb.finish(Zfb::save(fbb, state));
+    auto fbo = Zfb::view<Zdb_::Msg::DBState>(bytes);
     Zdb_::DBState loaded{fbo};
     auto found = loaded.find("o", ZdbShard{1});
     ZuCheck(found);

@@ -9,7 +9,7 @@
 
 #include <zlib/Zdb.hh>
 #include <zlib/ZmSemaphore.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 namespace zdbtest {
 
@@ -41,7 +41,7 @@ ZfStruct(, (RepairRow, FB),
   (ip,		(Ctor<5>, Mutable),		UDT),
   (wide,	(Ctor<6>, Mutable),		Float),
   (strings,	(Ctor<7>, Mutable),		StringVec));
-ZiFB::AsTable<"repair.Row"> ZiFB_Fmt(RepairRow *);
+Zfb::AsTable<"repair.Row"> Zfb_Fmt(RepairRow *);
 struct RepairDB : public ZdbSagaDB {
   ZdbTable<RepairRow> *rows = nullptr;
   ZmSemaphore *paused = nullptr;

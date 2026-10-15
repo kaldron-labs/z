@@ -89,7 +89,7 @@ ZfStruct(, (ClientAccessStateSaga, FB),
   (updated,	(Ctor<2>),			Int64),
   (request,	(Ctor<3>),			UDT),
   (state,	(Ctor<4>, Enum<State::Map>),	Int8));
-ZiFB::AsTable<"Zum.fbs.ClientAccessState"> ZiFB_Fmt(ClientAccessStateSaga *);
+Zfb::AsTable<"Zum.fbs.ClientAccessState"> Zfb_Fmt(ClientAccessStateSaga *);
 
 template <typename Heap>
 unsigned ClientAccessStateSaga_<Heap>::recordError(const ClientAccess &item) const

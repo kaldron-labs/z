@@ -75,7 +75,7 @@ and sanitizer errors remain fatal.
 for Fontconfig's XML pattern cache, without suppressing Z allocations or
 invalid memory accesses.
 
-The ZiFB migration's final Clang debug Memcheck run passed the mapped dashboard
+The Zfb migration's final Clang debug Memcheck run passed the mapped dashboard
 fixture, including 33 partial drains, 37 GTK events and queued-data teardown.
 The XML pattern cache suppressions include its separately reported indirect
 value/binding allocations. With those suppressions, Memcheck reported zero
@@ -85,7 +85,7 @@ The report retains 44,324 possibly lost bytes in 44 blocks: Rust/glycin
 allocations, Mesa ralloc/GLSL contexts, and three glibc dynamic TLS allocations.
 All 33 loss records were reviewed by allocation stack; none originates in a
 Z allocator. These are not suppressed or counted as proven leak-free.
-The [allocation-stack record](../../zi/interop/evidence/m2-dashboard-memory.txt)
+The [allocation-stack record](../../zfb/interop/evidence/m2-dashboard-memory.txt)
 attributes 40,228 bytes to Rust/glycin, 2,608 to Mesa, and 1,488 to glibc TLS.
 The run used `libtool exec valgrind --leak-check=full
 --show-leak-kinds=definite,indirect,possible

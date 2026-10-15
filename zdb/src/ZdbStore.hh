@@ -22,7 +22,7 @@
 #include <zlib/ZmPolymorph.hh>
 
 #include <zlib/ZfStruct.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 #include <zlib/ZePlatform.hh>
 
@@ -39,25 +39,25 @@ namespace Zdb_ {
 // Borrowed BFBS plus a compiled native-ID resolver. Backends populate their
 // existing XField records once; no second field-map container is retained.
 struct Schema {
-  ZiFB::Reflect::SchemaView view;
+  Zfb::Reflect::SchemaView view;
   unsigned (*fieldSlot)(ZuCSpan);
 
   template <typename O>
   static Schema from(ZuBSpan bytes) {
-    return {ZiFB::view<ZiFB::Reflect::Schema>(bytes), [](ZuCSpan name) -> unsigned {
+    return {Zfb::view<Zfb::Reflect::Schema>(bytes), [](ZuCSpan name) -> unsigned {
       using Fields = ZuActiveFields<O>;
-      using H = typename ZiFB::As<O>::template Handler<O>;
-      using Slots = typename ZiFB::SchemaOut::ObjectNode<ZuUnder<O>,
-	ZiFB::SchemaOut::Graph<O>>::Fields;
+      using H = typename Zfb::As<O>::template Handler<O>;
+      using Slots = typename Zfb::SchemaOut::ObjectNode<ZuUnder<O>,
+	Zfb::SchemaOut::Graph<O>>::Fields;
       static constexpr auto matcher = ZuMatcher<ZfFieldMatcher<O, ZuFacet::Core>>();
       return ZuSwitch::dispatch<Fields::N>(matcher.exact(name), [](auto I) -> unsigned {
 	using F = typename H::template Effective<ZuType<I, Fields>>;
-	return unsigned(ZuTypeIndex<ZiFB::SchemaOut::Slot<F>, Slots>{});
+	return unsigned(ZuTypeIndex<Zfb::SchemaOut::Slot<F>, Slots>{});
       }, UINT_MAX);
     }};
   }
   auto field(ZuCSpan name) const {
-    namespace R = ZiFB::Reflect;
+    namespace R = Zfb::Reflect;
     auto i = fieldSlot(name);
     return i != UINT_MAX ?
       R::rootObject(view).get<R::ZfField(Object, fields)>()[i] : R::FieldView{};

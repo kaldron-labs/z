@@ -78,7 +78,9 @@ namespace DaemonCleanupLimit { enum { Rows = 512 }; }
 namespace DaemonCleanupState { enum { Idle, Running, Stopping }; }
 
 template <typename Heap = ZuVoid>
-struct DaemonResponse_ : public Heap, public HTTPResponse_<> {
+struct DaemonResponse_ : public Heap, public HTTPResponse {
+  void *operator new(size_t size) { return Heap::operator new(size); }
+  void operator delete(void *ptr) noexcept { Heap::operator delete(ptr); }
   String	allow;
 };
 ZuDerive(DaemonResponseHeap,

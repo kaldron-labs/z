@@ -313,7 +313,7 @@ ZfStruct(, (EnrollmentSaga, FB),
   (precreated,		(Ctor<11>, Deflt<false>),	Bool),
   (beforeGrant,		(Ctor<12>),			UDT),
   (beforeUser,		(Ctor<13>),			UDT));
-ZiFB::AsTable<"Zum.fbs.Enrollment"> ZiFB_Fmt(EnrollmentSaga *);
+Zfb::AsTable<"Zum.fbs.Enrollment"> Zfb_Fmt(EnrollmentSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<EnrollmentSaga>{}));
 

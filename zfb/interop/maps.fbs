@@ -1,0 +1,15 @@
+// Independent canonical FlatBuffers fixture for Zfb associative containers.
+namespace maps;
+
+table IntMapEntry { key:int (key); value:int = -11; }
+table IntMap { entries:[IntMapEntry]; }
+table TextMapEntry { key:string (key); value:string; }
+table Item { value:int = 17; }
+table InnerMapEntry { key:uint (key); value:Item; }
+table OuterMapEntry { key:long (key); value:[InnerMapEntry]; }
+table Row {
+  ints:[IntMapEntry];
+  texts:[TextMapEntry];
+  nested:[OuterMapEntry];
+}
+root_type Row;

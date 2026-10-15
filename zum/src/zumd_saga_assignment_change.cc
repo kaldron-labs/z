@@ -225,7 +225,7 @@ ZfStruct(, (AssignmentChangeSaga, FB),
   (request,		(Ctor<13>),			UDT),
   (assignRoles,		(Ctor<14>),			Bool),
   (ifMatch,		(Ctor<15>),			String));
-ZiFB::AsTable<"Zum.fbs.AssignmentChange"> ZiFB_Fmt(AssignmentChangeSaga *);
+Zfb::AsTable<"Zum.fbs.AssignmentChange"> Zfb_Fmt(AssignmentChangeSaga *);
 
 template <typename Heap>
 bool AssignmentChangeSaga_<Heap>::appValid(const App &item, bool fwd) const

@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/Zdb.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 #include "ZdbSagaTestDefs.hh"
 
 namespace zdbtest {
@@ -45,7 +45,7 @@ using RepeatSaga = RepeatSaga_<ZmHeap<"Zdb.Test.RepeatSaga", RepeatSaga_<>>>;
 ZfStruct(, (RepeatSaga, FB),
   (first,	(Ctor<0>),	UInt64),
   (second,	(Ctor<1>),	UInt64));
-ZiFB::AsTable<"zdbtest.fbs.RepeatSaga"> ZiFB_Fmt(RepeatSaga *);
+Zfb::AsTable<"zdbtest.fbs.RepeatSaga"> Zfb_Fmt(RepeatSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RepeatSaga>{}));
 

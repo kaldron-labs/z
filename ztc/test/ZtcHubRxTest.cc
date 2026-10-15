@@ -135,7 +135,7 @@ static Ztc::HubFrame ack(unsigned seqNo)
 {
   Ztc::Builder builder{new ZtcHub_::HubBuf};
   auto nested = builder.startNested();
-  auto value = ZiFB::save(builder, Ztc::Ack{
+  auto value = Zfb::save(builder, Ztc::Ack{
     .id = "publisher", .seqNo = seqNo, .status = Ztc::AckStatus::OK});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Ack, value));
   return builder.buf();

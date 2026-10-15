@@ -66,7 +66,7 @@ public:
     session.requested = [this](ZuBSpan frame) {
       auto msg = Ztc::msg(frame);
       auto request = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Request ?
-	    Ztc::msgBody(msg).get<Ztc::Body::Request>() : ZiFB::View<Ztc::Request>{};
+	    Ztc::msgBody(msg).get<Ztc::Body::Request>() : Zfb::View<Ztc::Request>{};
       if (!request) { m_failed = true; return; }
       if (request.get<Ztc::ZfField(Request, alertDate)>() ||
 	  request.get<Ztc::ZfField(Request, alertSeqNo)>()) {
@@ -617,8 +617,8 @@ private:
       auto builderNested = builder.startNested();
       auto dev = device;
       auto id = builder.string("publisher");
-      auto value = shutdown ? ZiFB::save(builder, Ztc::Shutdown{}) :
-	ZiFB::save(builder, Ztc::AppTelemetry{
+      auto value = shutdown ? Zfb::save(builder, Ztc::Shutdown{}) :
+	Zfb::save(builder, Ztc::AppTelemetry{
 	  .version = "test", .startTime = ZuDateTime{2026, 10, 1, 12, 34,
             phase == 12 ? 57 : 56, 123456789},
 	  .ztcver = ZuSemVer{1234567},
@@ -636,7 +636,7 @@ private:
 	  auto frame = m_host.request_();
 	  auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
 	  auto req = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Request ?
-	    Ztc::msgBody(msg).get<Ztc::Body::Request>() : ZiFB::View<Ztc::Request>{};
+	    Ztc::msgBody(msg).get<Ztc::Body::Request>() : Zfb::View<Ztc::Request>{};
 	  if (!req || msg.get<Ztc::ZfField(Msg, deviceID)>() ||
 	    req.get<Ztc::ZfField(Request, id)>() ||
 	      req.get<Ztc::ZfField(Request, group)>() != Ztc::Group::App ||
@@ -653,7 +653,7 @@ private:
       case 2: {
 	Ztc::Builder builder{Frame{new FrameBuf}};
 	auto builderNested = builder.startNested();
-	auto eos = ZiFB::save(builder, Ztc::EOS{ZuID{"inventory"}, 0});
+	auto eos = Zfb::save(builder, Ztc::EOS{ZuID{"inventory"}, 0});
 	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::EOS,
 	  eos, 1));
 	deliver(builder.buf());
@@ -690,7 +690,7 @@ private:
 	  auto builderNested = builder.startNested();
 	  auto device = "test-a"_z;
 	  auto id = builder.string("publisher");
-	  auto value = ZiFB::save(builder, data);
+	  auto value = Zfb::save(builder, data);
 	  auto tel = Ztc::saveTelemetry(builder, id, 0,
 	    Ztc::TelemetryValue::Index<T>{},
 	    value);
@@ -719,7 +719,7 @@ private:
 	    Ztc::Builder ack{Frame{new FrameBuf}};
 	    auto ackNested = ack.startNested();
 	    auto device = "test-a"_z;
-	    auto body = ZiFB::save(ack, Ztc::Ack{
+	    auto body = Zfb::save(ack, Ztc::Ack{
 		ZuID{"publisher"}, 0, 1000, uint8_t(Ztc::AckStatus::Failed)});
 	    ack.finish(Ztc::saveMsg(ack, ackNested, Ztc::Body::Ack,
 		body, sub, device, 2));
@@ -732,7 +732,7 @@ private:
 	    auto id = late.string("publisher");
 	    auto hash = sample<Ztc::HashTelemetry>();
 	    hash.addr = 0x5678;
-	    auto value = ZiFB::save(late, hash);
+	    auto value = Zfb::save(late, hash);
 	    auto tel = Ztc::saveTelemetry(late, id, 0,
 		Ztc::TelemetryBody::HashTelemetry, value);
 	    late.finish(Ztc::saveMsg(late, lateNested, Ztc::Body::Telemetry,
@@ -776,7 +776,7 @@ private:
 	Ztc::Builder builder{Frame{new FrameBuf}};
 	auto builderNested = builder.startNested();
 	auto device = "test-a"_z;
-	auto eos = ZiFB::save(builder, Ztc::EOS{ZuID{"publisher"}, 123});
+	auto eos = Zfb::save(builder, Ztc::EOS{ZuID{"publisher"}, 123});
 	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::EOS,
 	  eos, 1, device, 2));
 	deliver(builder.buf());
@@ -785,7 +785,7 @@ private:
 	Ztc::Builder builder{Frame{new FrameBuf}};
 	auto builderNested = builder.startNested();
 	auto device = "test-a"_z;
-	auto error = ZiFB::save(builder, Ztc::Error{
+	auto error = Zfb::save(builder, Ztc::Error{
 	  Ztc::ErrorMessage{"agent disconnected"}, ZuID{"publisher"},
 	  0, int(Ztc::HubError::AgentGone)});
 	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::Error,
@@ -801,7 +801,7 @@ private:
 	auto id = builder.string("publisher");
 	auto heap = sample<Ztc::HeapTelemetry>();
 	heap.heapAllocs = 1379;
-	auto value = ZiFB::save(builder, heap);
+	auto value = Zfb::save(builder, heap);
 	auto tel = Ztc::saveTelemetry(builder, id, 0,
 	  Ztc::TelemetryBody::HeapTelemetry, value);
 	auto sub = m_host.subscription_("test-a", "publisher",

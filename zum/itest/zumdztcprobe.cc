@@ -35,7 +35,7 @@ static ZmRef<ZiIOBuf> request(ZuCSpan id, Ztc::Group::T group,
   value.interval = interval;
   value.group = uint8_t(group);
   value.subscribe = subscribe;
-  auto encoded = ZiFB::save(builder, value);
+  auto encoded = Zfb::save(builder, value);
   builder.finish(Ztc::saveMsg(
     builder, nested, Ztc::Body::Request, encoded));
   return Ztc::saveHdr(builder);

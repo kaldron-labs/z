@@ -108,7 +108,7 @@ ZfStruct(ZumAPI, (RoleMapDeleteSaga, FB),
   (ifMatch,	(Ctor<2>),	String),
   (updated,	(Ctor<3>),	Int64),
   (request,	(Ctor<4>),	UDT));
-ZiFB::AsTable<"Zum.fbs.RoleMapDelete"> ZiFB_Fmt(RoleMapDeleteSaga *);
+Zfb::AsTable<"Zum.fbs.RoleMapDelete"> Zfb_Fmt(RoleMapDeleteSaga *);
 
 template <typename Heap>
 unsigned RoleMapDeleteSaga_<Heap>::appError(const App &item) const

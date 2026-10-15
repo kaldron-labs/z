@@ -106,7 +106,7 @@ ZfStruct(, (AdminAccessPutSaga, FB),
   (ifNoneMatch,	(Ctor<4>),	String),
   (updated,	(Ctor<5>),	Int64),
   (request,	(Ctor<6>),	UDT));
-ZiFB::AsTable<"Zum.fbs.AdminAccessPut"> ZiFB_Fmt(AdminAccessPutSaga *);
+Zfb::AsTable<"Zum.fbs.AdminAccessPut"> Zfb_Fmt(AdminAccessPutSaga *);
 
 template <typename Heap>
 unsigned AdminAccessPutSaga_<Heap>::appError(const App &item) const

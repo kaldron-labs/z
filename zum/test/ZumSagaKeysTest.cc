@@ -16,7 +16,7 @@ ZfStruct(, (KeyBindingArgs, FB),
   (afterCheck,		(Ctor<2>),	Bytes),
   (beforePending,	(Ctor<3>),	Bytes),
   (afterPending,		(Ctor<4>),	Bytes));
-ZiFB::AsTable<"Zum.fbs.KeyBinding"> ZiFB_Fmt(KeyBindingArgs *);
+Zfb::AsTable<"Zum.fbs.KeyBinding"> Zfb_Fmt(KeyBindingArgs *);
 }
 
 static void keys()
@@ -33,8 +33,8 @@ static void keys()
     .afterPending = Zum::Bytes{ZuBSpan{"new-check"}}};
   auto saga = Zum::keyBinding(ZuMv(binding));
   Zdb_::SagaPayload payload;
-  ZuCheck(saga->save(payload) == ZiFB::Error::OK);
-  auto decoded = ZiFB::handler<Zum::KeyBindingArgs>(payload).ctor();
+  ZuCheck(saga->save(payload) == Zfb::Error::OK);
+  auto decoded = Zfb::handler<Zum::KeyBindingArgs>(payload).ctor();
   ZuCheck(decoded.issuer == "issuer" &&
     decoded.beforeCheck == ZuBSpan{"old-check"} &&
     decoded.afterCheck == decoded.beforeCheck && !decoded.beforePending &&

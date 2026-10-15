@@ -73,8 +73,8 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiRx.hh>
 #include <zlib/ZiTx.hh>
-#include <zlib/ZiFB.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/Zfb.hh>
+#include <zlib/ZfbReflect.hh>
 
 #include <zlib/ZfCf.hh>
 
@@ -132,7 +132,7 @@ namespace Zdb_ {
 
 // Erased row writers must support any schema's forced alignment. Actual
 // root padding still follows the fields emitted, not this storage bound.
-using Builder = ZiFB::IOBuilder<ZiFB::Wire::MaxAlign>;
+using Builder = Zfb::IOBuilder<Zfb::Wire::MaxAlign>;
 
 namespace HostState {
   using namespace Ztc::DBHostState;
@@ -222,7 +222,7 @@ struct DBState : public DBState_ {
 
   DBState(unsigned size) : DBState_{ZmHashParams{size}} { }
 
-  DBState(ZiFB::View<Msg::DBState> dbState) :
+  DBState(Zfb::View<Msg::DBState> dbState) :
     DBState_{ZmHashParams{dbState.get<Msg::ZfField(DBState, tableStates)>().length()}},
     sn{dbState.get<Msg::ZfField(DBState, sn)>()}
   {
@@ -288,13 +288,13 @@ struct DBState : public DBState_ {
 
 // The native hash uses the canonical message schema without materializing
 // an array of TableState objects. Loading merges into an existing peer state.
-struct DBStateFmt : public ZiFB::As<Msg::DBState> {
+struct DBStateFmt : public Zfb::As<Msg::DBState> {
   template <typename O, typename Facet = ZuFacet::FB>
-  class Handler : public ZiFB::As<Msg::DBState>::template Handler<Msg::DBState, Facet> {
-    using Base = ZiFB::As<Msg::DBState>::template Handler<Msg::DBState, Facet>;
+  class Handler : public Zfb::As<Msg::DBState>::template Handler<Msg::DBState, Facet> {
+    using Base = Zfb::As<Msg::DBState>::template Handler<Msg::DBState, Facet>;
   public:
-    explicit Handler(ZiFB::View<O, Facet> view) :
-      Base{{ZiFB::View<Msg::DBState, Facet>{view.data()}}} { }
+    explicit Handler(Zfb::View<O, Facet> view) :
+      Base{{Zfb::View<Msg::DBState, Facet>{view.data()}}} { }
 
     void load(DBState &o) const {
       auto dbState = this->view;
@@ -307,15 +307,15 @@ struct DBStateFmt : public ZiFB::As<Msg::DBState> {
     void update(DBState &o) const { load(o); }
 
     template <template <typename> class Filter = ZfFieldFilter::Save, typename B>
-    static ZiFB::Offset save(B &fbb, const DBState &o) {
-      ZiFB::Offset states = 0;
+    static Zfb::Offset save(B &fbb, const DBState &o) {
+      Zfb::Offset states = 0;
       if constexpr (Filter<Msg::ZfField(DBState, tableStates)>{}) {
 	unsigned n = o.count_();
-	auto offsets = ZtScratch(ZiFB::Offsets, n);
+	auto offsets = ZtScratch(Zfb::Offsets, n);
 	{
 	  auto i = o.citer();
 	  while (auto state = i())
-	    offsets.push(ZiFB::save(fbb, Msg::TableState{
+	    offsets.push(Zfb::save(fbb, Msg::TableState{
 	      state->template p<0>().template p<0>(), state->template p<1>(),
 	      state->template p<0>().template p<1>()}));
 	}
@@ -336,7 +336,7 @@ struct DBStateFmt : public ZiFB::As<Msg::DBState> {
     using Base::new_;
   };
 };
-DBStateFmt ZiFB_Fmt(DBState *);
+DBStateFmt Zfb_Fmt(DBState *);
 
 // Native send data retains the canonical heartbeat field IDs and wire name.
 struct Heartbeat {
@@ -349,7 +349,7 @@ ZfStruct(ZdbAPI, (Heartbeat, FB),
   (state,	(Deflt<0>),	UInt32),
   (nShards,	(Deflt<0>),	UInt32),
   (dbState,,			UDT));
-ZiFB::As<Msg::Heartbeat> ZiFB_Fmt(Heartbeat *);
+Zfb::As<Msg::Heartbeat> Zfb_Fmt(Heartbeat *);
 
 // --- generic row
 
@@ -673,9 +673,9 @@ protected:
   virtual ZmRef<AnyRow> rowLoad(IOBuf *, Shard) = 0;
 
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
-  virtual ZiFB::Offset rowSave(Builder &, const void *) const = 0;
-  virtual ZiFB::Offset rowSaveUpd(Builder &, const void *) const = 0;
-  virtual ZiFB::Offset rowSaveDel(Builder &, const void *) const = 0;
+  virtual Zfb::Offset rowSave(Builder &, const void *) const = 0;
+  virtual Zfb::Offset rowSaveUpd(Builder &, const void *) const = 0;
+  virtual Zfb::Offset rowSaveDel(Builder &, const void *) const = 0;
   virtual unsigned rowAlign() const = 0;
   // Validate nested row data at network ingress, before replication state changes.
   virtual bool rowVerify(Msg::RecordView) const = 0;
@@ -810,7 +810,7 @@ struct RepBuf_ : public ZmPolymorph {
   RepBuf_(ZmRef<IOBuf> buf_) : buf{ZuMv(buf_)} { buf->rep = this; }
 
   using T = T_;
-  using FB = ZiFB::View<T>;
+  using FB = Zfb::View<T>;
   FB fbo() const { return buf->fbo<T>(); }
   // trusted buffer (written locally), e.g. in buffer cache
   FB fbo_() const { return buf->fbo_<T>(); }
@@ -1011,9 +1011,9 @@ public:
 
   Table_(DB *db, TableCf *cf, bool internal) :
     AnyTable{db, cf, internal, Table_::allocBuf},
-    m_schema(ZiFB::SchemaOut::Schema<T>::Size)
+    m_schema(Zfb::SchemaOut::Schema<T>::Size)
   {
-    ZiFB::saveSchema<T>(m_schema);
+    Zfb::saveSchema<T>(m_schema);
     unsigned n = nShards_();
     ZuID cacheID = "Zdb.Cache."; cacheID << cf->id;
     ZuID bufCacheID = "Zdb.BufCache."; bufCacheID << cf->id;
@@ -1035,31 +1035,31 @@ private:
     auto data = record.get<Msg::ZfField(Record, data)>();
     ZiAssert(data, "Zdb",
       (id = this->id()), "missing record data in table " << id, return {});
-    auto fbo = ZiFB::view<T>(data);
+    auto fbo = Zfb::view<T>(data);
     ZiAssert(fbo, "Zdb",
       (id = this->id()), "bad record data in table " << id, return {});
     ZmRef<Row<T>> row = new Row<T>(impl(), shard);
-    ZiFB::handler(fbo).new_(row->ptr());
+    Zfb::handler(fbo).new_(row->ptr());
     row->init(
       record.get<Msg::ZfField(Record, shard)>(), record.get<Msg::ZfField(Record, un)>(),
       record.get<Msg::ZfField(Record, sn)>(), record.get<Msg::ZfField(Record, vn)>());
     return row;
   }
   // rowSave(fbb, ptr) - save row into flatbuffer, return offset
-  ZiFB::Offset rowSave(Builder &fbb, const void *ptr) const override {
-    return ZiFB::save(fbb, *static_cast<const T *>(ptr));
+  Zfb::Offset rowSave(Builder &fbb, const void *ptr) const override {
+    return Zfb::save(fbb, *static_cast<const T *>(ptr));
   }
   unsigned rowAlign() const override {
-    constexpr auto row = ZiFB::BufferAlign<T>::N;
-    constexpr auto msg = ZiFB::BufferAlign<Msg::Root>::N;
+    constexpr auto row = Zfb::BufferAlign<T>::N;
+    constexpr auto msg = Zfb::BufferAlign<Msg::Root>::N;
     return row > msg ? row : msg;
   }
-  ZiFB::Offset rowSaveUpd(Builder &fbb, const void *ptr) const override {
-    return ZiFB::save<ZuFacet::FB, ZfFieldFilter::Upd>(
+  Zfb::Offset rowSaveUpd(Builder &fbb, const void *ptr) const override {
+    return Zfb::save<ZuFacet::FB, ZfFieldFilter::Upd>(
       fbb, *static_cast<const T *>(ptr));
   }
-  ZiFB::Offset rowSaveDel(Builder &fbb, const void *ptr) const override {
-    return ZiFB::save<ZuFacet::FB, ZfFieldFilter::Del>(
+  Zfb::Offset rowSaveDel(Builder &fbb, const void *ptr) const override {
+    return Zfb::save<ZuFacet::FB, ZfFieldFilter::Del>(
       fbb, *static_cast<const T *>(ptr));
   }
   bool rowVerify(Msg::RecordView record) const override {
@@ -1083,10 +1083,10 @@ private:
 	if constexpr (KeyIDs::N > 1)
 	  m_cache[shard].template update<ZuTypeTail<1, KeyIDs>>(ZuMv(row),
 	    [fbo](const ZmRef<Row<T>> &row) {
-	      ZiFB::handler(fbo).update(row->data());
+	      Zfb::handler(fbo).update(row->data());
 	    });
 	else
-	  ZiFB::handler(fbo).update(row->data());
+	  Zfb::handler(fbo).update(row->data());
       }
     } else {
       m_cache[shard].template del<0>(ZuStructKey<0>(fbo));
@@ -1121,8 +1121,8 @@ private:
   }
   // rowPrintFB(stream, data) - print flatbuffer
   void rowPrintFB(ZuVStream &s, ZuBSpan data) const override {
-    if (!ZiFB::verify<T>(data)) return;
-    s << ZiFB::view<T>(data);
+    if (!Zfb::verify<T>(data)) return;
+    s << Zfb::view<T>(data);
   }
 
   // find buffer in buffer cache
@@ -2325,8 +2325,8 @@ inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
 
   auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
-  Builder fbb{allocBuf(), ZiFB::BufferAlign<GroupKey<KeyID>>::N};
-  fbb.finish(ZiFB::save(fbb, key));
+  Builder fbb{allocBuf(), Zfb::BufferAlign<GroupKey<KeyID>>::N};
+  fbb.finish(Zfb::save(fbb, key));
   auto keyBuf = fbb.buf();
   AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
 }
@@ -2346,8 +2346,8 @@ inline void Table_<Impl_>::select_(
 
   auto context = ZmRef(new Context{this, ZuFwd<L>(l)});
 
-  Builder fbb{allocBuf(), ZiFB::BufferAlign<SelectKey>::N};
-  fbb.finish(ZiFB::save(fbb, selectKey));
+  Builder fbb{allocBuf(), Zfb::BufferAlign<SelectKey>::N};
+  fbb.finish(Zfb::save(fbb, selectKey));
   auto keyBuf = fbb.buf();
 
   auto tupleFn = TupleFn{ZuMv(context),
@@ -2369,7 +2369,7 @@ inline void Table_<Impl_>::select_(
       }
       const auto &tupleData = result.p<TupleData>();
       typename Context::Result output;
-      ZiFB::handler<Tuple_>(tupleData.buf->cspan()).new_(output.template new_<Tuple_>());
+      Zfb::handler<Tuple_>(tupleData.buf->cspan()).new_(output.template new_<Tuple_>());
       context->fn(ZuMv(output), tupleData.count);
     }};
 
@@ -2405,8 +2405,8 @@ inline void Table_<Impl_>::retrieve(
   auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
-  Builder fbb{allocBuf(), ZiFB::BufferAlign<Key_>::N};
-  fbb.finish(ZiFB::save(fbb, context->key));
+  Builder fbb{allocBuf(), Zfb::BufferAlign<Key_>::N};
+  fbb.finish(Zfb::save(fbb, context->key));
   auto keyBuf = fbb.buf();
   AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));
 }

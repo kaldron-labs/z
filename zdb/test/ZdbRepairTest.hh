@@ -18,7 +18,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZvMxParams.hh>
 #include <zlib/Zdb.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 namespace zdbtest {
 
@@ -31,8 +31,8 @@ inline void repairBindings(Zdb_::Store *store)
   ZuTestScopeRT(repairBindings);
   using namespace Zdb_;
   using T = RepairRow;
-  SchemaBuf schema = SchemaBuf(ZiFB::SchemaOut::Schema<T>::Size);
-  ZiFB::saveSchema<T>(schema);
+  SchemaBuf schema = SchemaBuf(Zfb::SchemaOut::Schema<T>::Size);
+  Zfb::saveSchema<T>(schema);
   using KeyIDs = ZuStructKeyIDs<T>;
   ZuArray<ZfVFieldArray, KeyIDs::N> keys(KeyIDs::N, false);
   ZuUnroll::all<KeyIDs>([&keys](auto I) { keys[I] = SplitKey<T, I>::storeFields(); });
@@ -53,10 +53,10 @@ inline void repairBindings(Zdb_::Store *store)
     memset(&v4, 0x7f, sizeof(v4));
     row.ip = ZiIP{v4};
     auto write = [&table, &row]<template <typename> class Filter>(UN un, VN vn) {
-      Builder fbb{Table<T>::allocBuf(), ZiFB::BufferAlign<T>::N};
+      Builder fbb{Table<T>::allocBuf(), Zfb::BufferAlign<T>::N};
       auto nested = fbb.startNested();
       auto data = fbb.endNested(nested,
-	ZiFB::save<ZuFacet::FB, Filter>(fbb, row));
+	Zfb::save<ZuFacet::FB, Filter>(fbb, row));
       fbb.finish(saveMsg(fbb, saveRecord(fbb, "repair", un, SN{un}, vn, 0, data),
 	Msg::Tag::Replication));
       ZmRef<IOBuf> buf = saveHdr(fbb);
@@ -75,8 +75,8 @@ inline void repairBindings(Zdb_::Store *store)
       ZuCheckRT(result.template is<void>());
     };
     auto find = [&table, &row]<unsigned KeyID>() {
-      Builder key{Table<T>::allocBuf(), ZiFB::BufferAlign<T>::N};
-      key.finish(ZiFB::save(key, ZuStructKey<KeyID>(row)));
+      Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<T>::N};
+      key.finish(Zfb::save(key, ZuStructKey<KeyID>(row)));
       return ZmBlock<RowResult>{}([&table, buf = key.buf()](auto done) mutable {
 	table->find(KeyID, ZuMv(buf), ZuMv(done));
       });
@@ -86,9 +86,9 @@ inline void repairBindings(Zdb_::Store *store)
       if (!result.is<RowData>()) return;
       auto &buf = result.p<RowData>().buf;
       auto bytes = record_(msg_(buf->hdr())).get<Msg::ZfField(Record, data)>();
-      ZuCheckRT(ZiFB::verify<T>(bytes));
-      if (!ZiFB::verify<T>(bytes)) return;
-      auto loaded = ZiFB::load<T>(bytes);
+      ZuCheckRT(Zfb::verify<T>(bytes));
+      if (!Zfb::verify<T>(bytes)) return;
+      auto loaded = Zfb::load<T>(bytes);
       ZuCheckRT(loaded.id == row.id);
       ZuCheckRT(loaded.reals.length() == row.reals.length());
       for (unsigned i = 0, n = loaded.reals.length(); i < n; ++i) {
@@ -112,8 +112,8 @@ inline void repairBindings(Zdb_::Store *store)
     check(find.template operator()<2>());
     {
       using Group = typename SplitKey<T, 2>::GroupKey;
-      Builder key{Table<T>::allocBuf(), ZiFB::BufferAlign<Group>::N};
-      key.finish(ZiFB::save(key, Group{row.stamp}));
+      Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<Group>::N};
+      key.finish(Zfb::save(key, Group{row.stamp}));
       auto keyBuf = key.buf();
       auto counted = ZmBlock<CountResult>{}([&table, buf = keyBuf](auto done) mutable {
 	table->count(2, ZuMv(buf), ZuMv(done));
@@ -125,7 +125,7 @@ inline void repairBindings(Zdb_::Store *store)
 	  table->select(false, false, false, 2, ZuMv(buf), 1,
 	  [done = ZuMv(done), &row, &selected](TupleResult result) mutable {
 	    if (result.is<TupleData>()) {
-	      auto key = ZiFB::load<ZuStructKeyT<T, 2>>(result.p<TupleData>().buf->cspan());
+	      auto key = Zfb::load<ZuStructKeyT<T, 2>>(result.p<TupleData>().buf->cspan());
 	      if (key.p<0>() == row.id && key.p<1>() == row.stamp) ++selected;
 	    } else done();
 	  });
@@ -154,8 +154,8 @@ inline void repairBindings(Zdb_::Store *store)
     check(find.template operator()<0>());
 
     ZmBlock<>{}([&table](auto done) { table->close(ZuMv(done)); });
-    SchemaBuf replacement = SchemaBuf(ZiFB::SchemaOut::Schema<T>::Size);
-    ZiFB::saveSchema<T>(replacement);
+    SchemaBuf replacement = SchemaBuf(Zfb::SchemaOut::Schema<T>::Size);
+    Zfb::saveSchema<T>(replacement);
     schema = ZuMv(replacement);
     opened = open();
     ZuCheckRT(opened.is<OpenData>());
@@ -182,7 +182,7 @@ struct RepairLimit {
 ZfStruct(, (RepairLimit, FB),
   (id,		(Ctor<0>, Keys<0>),			UInt64),
   (vec,		(Ctor<1>, Mutable, Keys<1>, Group<1>),	Int8Vec));
-ZiFB::AsTable<"repair.Limit"> ZiFB_Fmt(RepairLimit *);
+Zfb::AsTable<"repair.Limit"> Zfb_Fmt(RepairLimit *);
 
 template <typename Result, typename Start>
 Result repairCall(unsigned &calls, Start &&start)
@@ -213,8 +213,8 @@ inline void repairSize(Zdb_::Store *store)
   ZuTestScopeRT(repairSize);
   using namespace Zdb_;
   using T = RepairLimit;
-  SchemaBuf schema(ZiFB::SchemaOut::Schema<T>::Size);
-  ZiFB::saveSchema<T>(schema);
+  SchemaBuf schema(Zfb::SchemaOut::Schema<T>::Size);
+  Zfb::saveSchema<T>(schema);
   using KeyIDs = ZuStructKeyIDs<T>;
   ZuArray<ZfVFieldArray, KeyIDs::N> keys(KeyIDs::N, false);
   ZuUnroll::all<KeyIDs>([&keys](auto I) { keys[I] = SplitKey<T, I>::storeFields(); });
@@ -226,16 +226,16 @@ inline void repairSize(Zdb_::Store *store)
   if (!opened.is<OpenData>()) return;
   auto table = opened.p<OpenData>().storeTbl;
   T row{1, {7}};
-  auto oversize = [](ZiFB::TableView data, unsigned id) {
-    auto length = ZiFB::follow(data.field(id));
-    ZiFB::write<uint32_t>(const_cast<uint8_t *>(length), MaxBufSize + 1);
+  auto oversize = [](Zfb::TableView data, unsigned id) {
+    auto length = Zfb::follow(data.field(id));
+    Zfb::write<uint32_t>(const_cast<uint8_t *>(length), MaxBufSize + 1);
   };
   using Key = ZuStructKeyT<T, 1>;
   using Field = ZuType<0, ZuFields<Key>>;
-  Builder key{Table<T>::allocBuf(), ZiFB::BufferAlign<Key>::N};
-  key.finish(ZiFB::save(key, ZuStructKey<1>(row)));
+  Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<Key>::N};
+  key.finish(Zfb::save(key, ZuStructKey<1>(row)));
   ZmRef<IOBuf> keyBuf = key.buf();
-  oversize(ZiFB::TableView{ZiFB::root(keyBuf->cspan())}, ZiFB::As<Key>::template Handler<Key>::id<Field>());
+  oversize(Zfb::TableView{Zfb::root(keyBuf->cspan())}, Zfb::As<Key>::template Handler<Key>::id<Field>());
   unsigned counts = 0, selects = 0, finds = 0, writes = 0;
   auto count = repairCall<CountResult>(counts, [table, keyBuf](auto done) {
     table->count(1, keyBuf, ZuMv(done));
@@ -250,16 +250,16 @@ inline void repairSize(Zdb_::Store *store)
   });
   ZuCheckRT(repairSizeError(find));
   for (VN vn = 0; vn <= 1; ++vn) {
-    Builder builder{Table<T>::allocBuf(), ZiFB::BufferAlign<T>::N};
+    Builder builder{Table<T>::allocBuf(), Zfb::BufferAlign<T>::N};
     auto nested = builder.startNested();
-    auto data = builder.endNested(nested, ZiFB::save(builder, row));
+    auto data = builder.endNested(nested, Zfb::save(builder, row));
     builder.finish(saveMsg(builder,
       saveRecord(builder, "repair_limit", UN(vn), SN{0}, vn, 0, data),
       Msg::Tag::Replication));
     ZmRef<IOBuf> buf = saveHdr(builder);
     auto record = record_(msg_(buf->hdr()));
-    oversize(ZiFB::TableView{ZiFB::root(record.get<Msg::ZfField(Record, data)>())},
-      ZiFB::As<T>::template Handler<T>::id<ZfField(RepairLimit, vec)>());
+    oversize(Zfb::TableView{Zfb::root(record.get<Msg::ZfField(Record, data)>())},
+      Zfb::As<T>::template Handler<T>::id<ZfField(RepairLimit, vec)>());
     auto result = repairCall<CommitResult>(writes, [table, buf](auto done) {
       table->write(buf, [done = ZuMv(done)](ZmRef<IOBuf>, CommitResult result) mutable {
 	done(ZuMv(result));

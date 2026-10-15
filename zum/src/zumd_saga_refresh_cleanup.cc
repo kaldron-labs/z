@@ -68,7 +68,7 @@ using RefreshCleanupSaga = RefreshCleanupSaga_<
 ZfStruct(, (RefreshCleanupSaga, FB),
   (refreshes,	(Ctor<0>),	UDT),
   (updated,	(Ctor<1>),	Int64));
-ZiFB::AsTable<"Zum.fbs.RefreshCleanup"> ZiFB_Fmt(RefreshCleanupSaga *);
+Zfb::AsTable<"Zum.fbs.RefreshCleanup"> Zfb_Fmt(RefreshCleanupSaga *);
 
 
 ZuAssert((Zdb_::SagaDefValid<RefreshCleanupSaga>{}));

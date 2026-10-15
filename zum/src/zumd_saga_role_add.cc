@@ -95,7 +95,7 @@ ZfStruct(ZumAPI, (RoleAddSaga, FB),
   (values,	(Ctor<2>),	UDT),
   (updated,	(Ctor<3>),	Int64),
   (request,	(Ctor<4>),	UDT));
-ZiFB::AsTable<"Zum.fbs.RoleAdd"> ZiFB_Fmt(RoleAddSaga *);
+Zfb::AsTable<"Zum.fbs.RoleAdd"> Zfb_Fmt(RoleAddSaga *);
 
 template <typename Heap>
 unsigned RoleAddSaga_<Heap>::appError(const App &item) const

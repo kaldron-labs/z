@@ -10,7 +10,7 @@
 #define zumd_saga_session_cleanup_data_HH
 
 #include <zlib/zumd.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 namespace Zum {
 
@@ -27,7 +27,7 @@ ZfStruct(ZumAPI, (SessionDelete, FB),
   (absoluteDeadline,	(Ctor<2>),	Int64),
   (version,		(Ctor<3>),	UInt64),
   (owner,		(Ctor<4>),	UInt128));
-ZiFB::AsTable<"Zum.fbs.SessionDelete"> ZiFB_Fmt(SessionDelete *);
+Zfb::AsTable<"Zum.fbs.SessionDelete"> Zfb_Fmt(SessionDelete *);
 ZuDerive(SessionDeleteVec, (ZtArray<SessionDelete,
   ZtArrayHeapID<"Zum.Maintenance.Session">>));
 template <typename Tuple> inline SessionDelete sessionDelete(const Tuple &item) {

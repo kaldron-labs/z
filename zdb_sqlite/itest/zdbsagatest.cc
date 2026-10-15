@@ -28,7 +28,7 @@
 
 #include "ZdbTest.hh"
 #include "ZdbRepairTest.hh"
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 using namespace ZuTestUtil;
 
@@ -141,7 +141,7 @@ ZuAssert(alignof(LiveSaga) == alignof(LiveSaga_<>));
 
 ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
+Zfb::AsTable<"zdbtest.fbs.LiveSaga"> Zfb_Fmt(LiveSaga *);
 
 template <typename Heap = ZuVoid>
 struct BatchSaga_ : public Heap, public ZdbSaga<BatchSaga_<Heap>, SagaDB> {
@@ -237,7 +237,7 @@ ZuAssert(alignof(BatchSaga) == alignof(BatchSaga_<>));
 ZfStruct(, (BatchSaga, FB),
   (ids,		(Ctor<0>),	UInt64Vec),
   (failAt,	(Ctor<1>),	UInt32));
-ZiFB::AsTable<"zdbtest.fbs.BatchSaga"> ZiFB_Fmt(BatchSaga *);
+Zfb::AsTable<"zdbtest.fbs.BatchSaga"> Zfb_Fmt(BatchSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<LiveSaga>{}));
 Zdb_::SagaDef liveSagaDef() {
@@ -620,7 +620,7 @@ static bool write(Zdb_::OpenData &state, ZuCSpan id, int vn, int qty)
   Order row{"NS", 1, "NS", "probe", 0, zdbtest::Side::Buy, {100}, {qty}};
   Builder fbb{Table<Order>::allocBuf()};
   auto nested = fbb.startNested();
-  auto data = fbb.endNested(nested, ZiFB::save(fbb, row));
+  auto data = fbb.endNested(nested, Zfb::save(fbb, row));
   fbb.finish(saveMsg(fbb, saveRecord(fbb, id, un, sn, vn, 0, data),
     Msg::Tag::Replication));
   bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveHdr(fbb)](auto wake) mutable {
@@ -639,7 +639,7 @@ static int read(Zdb_::StoreTbl *table)
   using zdbtest::Order;
   Table<Order>::Key<0> key{"NS", 1};
   Builder fbb{Table<Order>::allocBuf()};
-  fbb.finish(ZiFB::save(fbb, key));
+  fbb.finish(Zfb::save(fbb, key));
   return ZmBlock<int>{}([table, buf = fbb.buf()](auto wake) mutable {
     table->find(0, ZuMv(buf), [wake = ZuMv(wake)](RowResult result) mutable {
       if (result.is<void>()) { wake(-1); return; }
@@ -648,8 +648,8 @@ static int read(Zdb_::StoreTbl *table)
       auto rec = record(msg(buf->hdr()));
       if (!rec) { wake(-2); return; }
       auto bytes = rec.get<Msg::ZfField(Record, data)>();
-      if (!ZiFB::verify<Order>(bytes)) { wake(-2); return; }
-      auto row = ZiFB::load<Order>(bytes);
+      if (!Zfb::verify<Order>(bytes)) { wake(-2); return; }
+      auto row = Zfb::load<Order>(bytes);
       wake(row.qtys.length() == 1 ? row.qtys[0] : -2);
     });
   });
@@ -678,10 +678,10 @@ static void namespaces(bool maxID)
     ZuCheckRT(mx.stop());
     return;
   }
-  SchemaBuf appSchema = SchemaBuf(ZiFB::SchemaOut::Schema<zdbtest::Order>::Size);
-  SchemaBuf internalSchema = SchemaBuf(ZiFB::SchemaOut::Schema<zdbtest::Order>::Size);
-  ZiFB::saveSchema<zdbtest::Order>(appSchema);
-  ZiFB::saveSchema<zdbtest::Order>(internalSchema);
+  SchemaBuf appSchema = SchemaBuf(Zfb::SchemaOut::Schema<zdbtest::Order>::Size);
+  SchemaBuf internalSchema = SchemaBuf(Zfb::SchemaOut::Schema<zdbtest::Order>::Size);
+  Zfb::saveSchema<zdbtest::Order>(appSchema);
+  Zfb::saveSchema<zdbtest::Order>(internalSchema);
   auto app = open(db->store(), false, id, Schema::from<zdbtest::Order>(appSchema));
   auto internal = open(db->store(), true, id, Schema::from<zdbtest::Order>(internalSchema));
   bool opened = app.is<OpenData>() && internal.is<OpenData>();

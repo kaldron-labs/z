@@ -8,7 +8,7 @@
 #define zumd_saga_cleanup_data_HH
 
 #include <zlib/zumd.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 namespace Zum {
 
@@ -28,7 +28,7 @@ ZfStruct(ZumAPI, (GrantDelete, FB),
   (expires,	(Ctor<2>),			Int64),
   (state,	(Ctor<3>, Enum<State::Map>),	Int8),
   (owner,	(Ctor<4>),			UInt128));
-ZiFB::AsTable<"Zum.fbs.GrantDelete"> ZiFB_Fmt(GrantDelete *);
+Zfb::AsTable<"Zum.fbs.GrantDelete"> Zfb_Fmt(GrantDelete *);
 ZuDerive(GrantDeleteVec, (ZtArray<GrantDelete,
   ZtArrayHeapID<"Zum.Maintenance.Grant">>));
 inline GrantDelete grantDelete(const Grant &item) {
@@ -57,7 +57,7 @@ ZfStruct(ZumAPI, (RefreshDelete, FB),
   (state,	(Ctor<2>, Enum<State::Map>),	Int8),
   (version,	(Ctor<3>),			UInt64),
   (owner,	(Ctor<4>),			UInt128));
-ZiFB::AsTable<"Zum.fbs.RefreshDelete"> ZiFB_Fmt(RefreshDelete *);
+Zfb::AsTable<"Zum.fbs.RefreshDelete"> Zfb_Fmt(RefreshDelete *);
 ZuDerive(RefreshDeleteVec, (ZtArray<RefreshDelete,
   ZtArrayHeapID<"Zum.Maintenance.Refresh">>));
 template <typename Tuple> inline RefreshDelete refreshDelete(const Tuple &item) {
@@ -87,7 +87,7 @@ ZfStruct(ZumAPI, (EvidenceDelete, FB),
   (version,	(Ctor<4>),	UInt64),
   (updated,	(Ctor<5>),	Int64),
   (owner,	(Ctor<6>),	UInt128));
-ZiFB::AsTable<"Zum.fbs.EvidenceDelete"> ZiFB_Fmt(EvidenceDelete *);
+Zfb::AsTable<"Zum.fbs.EvidenceDelete"> Zfb_Fmt(EvidenceDelete *);
 ZuDerive(EvidenceDeleteVec, (ZtArray<EvidenceDelete,
   ZtArrayHeapID<"Zum.Maintenance.Evidence">>));
 template <typename Tuple> inline EvidenceDelete evidenceDelete(const Tuple &item) {
@@ -120,7 +120,7 @@ ZfStruct(ZumAPI, (ConsentDelete, FB),
   (version,	(Ctor<4>),			UInt64),
   (updated,	(Ctor<5>),			Int64),
   (owner,	(Ctor<6>),			UInt128));
-ZiFB::AsTable<"Zum.fbs.ConsentDelete"> ZiFB_Fmt(ConsentDelete *);
+Zfb::AsTable<"Zum.fbs.ConsentDelete"> Zfb_Fmt(ConsentDelete *);
 ZuDerive(ConsentDeleteVec, (ZtArray<ConsentDelete,
   ZtArrayHeapID<"Zum.Maintenance.Consent">>));
 

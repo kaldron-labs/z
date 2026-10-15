@@ -130,7 +130,7 @@ ZfStruct(, (RevokeSaga, FB),
   (grants,	(Ctor<2>),	BytesVec),
   (updated,	(Ctor<3>),	Int64),
   (request,	(Ctor<4>),	UDT));
-ZiFB::AsTable<"Zum.fbs.Revoke"> ZiFB_Fmt(RevokeSaga *);
+Zfb::AsTable<"Zum.fbs.Revoke"> Zfb_Fmt(RevokeSaga *);
 
 template <typename T> static bool revokeEligible(const T &item)
 {

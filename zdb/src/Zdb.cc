@@ -1650,9 +1650,9 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
     copy->owner = this;
     auto message = msg_(copy->hdr());
     constexpr unsigned tagID =
-      ZiFB::As<Msg::Root>::template Handler<Msg::Root>::id<Msg::ZfField(Root, body)>() - 1;
-    auto tag = ZiFB::TableView{message.data()}.field(tagID);
-    ZiFB::write<uint8_t>(const_cast<uint8_t *>(tag), Msg::Tag::Recovery);
+      Zfb::As<Msg::Root>::template Handler<Msg::Root>::id<Msg::ZfField(Root, body)>() - 1;
+    auto tag = Zfb::TableView{message.data()}.field(tagID);
+    Zfb::write<uint8_t>(const_cast<uint8_t *>(tag), Msg::Tag::Recovery);
     return copy;
   }
   // build from row cache (without falling through to reading from disk)
@@ -1664,7 +1664,7 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
 // send commit to replica
 void AnyTable::commitSend(Shard shard, UN un)
 {
-  ZiFB::IOBuilder<> fbb{allocBuf()};
+  Zfb::IOBuilder<> fbb{allocBuf()};
   auto commit = saveCommit(fbb, config().id, un, shard);
   fbb.finish(saveMsg(fbb, commit, Msg::Tag::Commit));
   m_db->replicate(saveHdr(fbb, this));
@@ -1813,7 +1813,7 @@ void DB::hbRcvd(Host *host, Msg::HeartbeatView hb)
 
   host->state(hb.get<Msg::ZfField(Heartbeat, state)>());
   auto dbState = hb.get<Msg::ZfField(Heartbeat, dbState)>();
-  ZiFB::handler(ZiFB::View<DBState>{dbState.data()}).load(host->dbState());
+  Zfb::handler(Zfb::View<DBState>{dbState.data()}).load(host->dbState());
 
   using namespace HostState;
 
@@ -1913,8 +1913,8 @@ void Cxn_::hbSend()
   ZmAssert(m_db->invoked());
 
   Host *self = m_db->self();
-  ZiFB::IOBuilder<> fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
-  auto heartbeat = ZiFB::save(fbb, Heartbeat{
+  Zfb::IOBuilder<> fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
+  auto heartbeat = Zfb::save(fbb, Heartbeat{
     self->id(), uint32_t(m_db->state()), m_db->nShards(), &self->dbState()});
   fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));
 

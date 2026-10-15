@@ -180,7 +180,7 @@ ZfStruct(, (ExternalProjectionSaga, FB),
   (name,	(Ctor<4>),	String),
   (handle,	(Ctor<5>),	Bytes),
   (created,	(Ctor<6>),	Int64));
-ZiFB::AsTable<"Zum.fbs.ExternalProjection"> ZiFB_Fmt(ExternalProjectionSaga *);
+Zfb::AsTable<"Zum.fbs.ExternalProjection"> Zfb_Fmt(ExternalProjectionSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<ExternalProjectionSaga>{}));
 

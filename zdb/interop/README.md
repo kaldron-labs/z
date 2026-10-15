@@ -1,7 +1,7 @@
-For the ZiFB adapter reorganization in `refactor.md`, retain the current build
-configuration. `ZIFB_BENCH_CURRENT=1` enables the unchanged benchmark workloads
+For the Zfb adapter reorganization in `refactor.md`, retain the current build
+configuration. `ZFB_BENCH_CURRENT=1` enables the unchanged benchmark workloads
 for matching before/after comparisons in the retained configuration. Compare native
-ZiFB against its frozen pre-refactor sources; historical release comparisons
+Zfb against its frozen pre-refactor sources; historical release comparisons
 below retain their original scope. All builds for this refactor use `-j4`.
 
 # Database message interoperability
@@ -157,7 +157,7 @@ previous owner destroyed for the final lifetime and memory-check gates.
 Database telemetry headers and the telemetry service's payload metadata now
 use ordinary `ZfStruct` declarations with native FlatBuffers table/enum tags.
 Their owning libraries contain the metadata definitions. Borrowed telemetry
-key assertions now target `ZiFB::View`; semantic-version transformation is a
+key assertions now target `Zfb::View`; semantic-version transformation is a
 native scalar mapping. Envelope/routing/dashboard and test migrations remain
 pending, and these declarations are not yet compiled in the consumer batch.
 
@@ -172,7 +172,7 @@ consumer batch has been rebuilt or accepted. M2 must cover nested extraction,
 corruption, byte-preserving forwarding, sequence mutation and alert replay.
 
 Dashboard production request/receive code and its GTK exercise module now use
-native nested envelopes, borrowed keys, and `ZiFB::handler` construction/update.
+native nested envelopes, borrowed keys, and `Zfb::handler` construction/update.
 Group parsing uses the existing Z enum lookup. Data-frame table declarations
 also use native metadata. These remain source-only changes queued for M2;
 the obsolete dashboard schema-existence test and schemas must be removed in
@@ -255,7 +255,7 @@ The entire obsolete zfb module, fbscodegen script and 132 ignored generated
 schema headers were removed. Current source/build-input searches find no
 production canonical includes/API, generated-schema include, zfb link/include,
 or schema-codegen rules. README, CODEBASE, AGENTS and GUIDELINES now describe
-ZiFB/ZiFB and metadata-generated in-memory schemas. Remaining legacy names in
+Zfb/Zfb and metadata-generated in-memory schemas. Remaining legacy names in
 arc/, Zum's chronological IMPLEMENTATION.md, and interop evidence are history.
 Generated Autotools outputs still await M2 regeneration; no compile/link or
 runtime claim follows from the source audit. Telemetry canonical fixtures and
@@ -282,7 +282,7 @@ in memory/PQ/SQLite writers. The focused source batch resumes at zdb; final
 consumer and runtime results remain pending.
 
 The rebuilt libZf ELF dependencies are retained in
-../../zi/interop/evidence/m2-core-deps.txt. Generated zf/src/.deps/*.Plo contains no
+../../zfb/interop/evidence/m2-core-deps.txt. Generated zf/src/.deps/*.Plo contains no
 canonical, zfb or Zi header dependency; zi/src/.deps/*.Plo contains no canonical
 or zfb dependency. This is current owning-library evidence, not a completed
 whole-consumer dependency gate.
@@ -315,7 +315,7 @@ constant through a non-constexpr function. Made that shared boxed-default path
 constexpr (including its local constant), preserving the same default and
 reference-return contract; added compile-time assertions for boxed integer,
 floating zero, and unsigned sentinel defaults in ZuBoxTest. This avoids a
-separate default implementation or ad hoc Deflt overrides in ZiFB/Zdf. The
+separate default implementation or ad hoc Deflt overrides in Zfb/Zdf. The
 owning/dependent source batch restarts in dependency order because ZuBox is a
 widely included framework header. No test or final acceptance pass is claimed.
 
@@ -342,7 +342,7 @@ ZuAxorTest's previously write-only assignment counters now assert that neither
 assignment occurs, addressing the warnings reported by its rebuild; that
 changed test must be rebuilt and rerun before final acceptance.
 
-Further M2 runtime results: ZiFBTest passed all four top-level groups;
+Further M2 runtime results: ZfbTest passed all four top-level groups;
 ZuBoxTest passed 192 checks; the complete Zu target passed 42 binaries / 973
 checks, including the assignment-counter assertion; the complete zdb unit
 target passed 3 binaries / 84 top-level tests. ZtcDBTest's migrated IP checks
@@ -393,7 +393,7 @@ Final memory checks completed so far use Valgrind 3.25.1 through `libtool exec`,
 No suppressions were used. All of these have zero reported errors and zero
 definite, indirect or possible leaks:
 
-- ZiFBBuilderTest, ZiFBSchemaTest, ZiFBViewTest, ZiFBTest.
+- ZfbBuilderTest, ZfbSchemaTest, ZfbViewTest, ZfbTest.
 - ZdbSagaTest and ZtcDBTest.
 - PostgreSQL zdbpqtest, zdbsagatest and zdbpqcontinuationtest.
 - SQLite zdbsltest, zdbsagatest and zdbslrepltest.
@@ -454,7 +454,7 @@ retains its original eight-byte downward arena policy. Encoded
 bytes and retained capacity are reported alongside elapsed time and checksum.
 Both outer and inner roots and the independent field expectations are checked
 before timing. Debug execution is rejected. The mode has been built and its
-[initial release measurements](../../zi/interop/evidence/m2-release-initial/replication.csv)
+[initial release measurements](../../zfb/interop/evidence/m2-release-initial/replication.csv)
 showed a regression, recorded in [plan.md](../../plan.md). Refresh it against
 the final rebuilt state after the subsequent codec fixes; performance
 acceptance remains open. The initial measurements used the former blanket
@@ -491,7 +491,7 @@ remain open.
 ## Direct record reads and owning-consumer control
 
 `./zdb/interop/zdbmsginterop --reads 1000000 7 32` (and payload4096)
-compares canonical generated accessors with `ZiFB` borrowed views over the
+compares canonical generated accessors with `Zfb` borrowed views over the
 same canonical-produced Record buffer. Both read the same metadata, payload
 length and final payload byte. A third mode constructs an owning C++ Record
 consumer, using the saga's retained `SagaPayload` type, before reading those

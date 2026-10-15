@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/Zdb.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 #include "ZdbSagaTestDefs.hh"
 
 namespace zdbtest {
@@ -34,7 +34,7 @@ using PayloadSaga = PayloadSaga_<ZmHeap<"Zdb.Test.PayloadSaga", PayloadSaga_<>>>
 
 ZfStruct(, (PayloadSaga, FB),
   (data, (Ctor<0>),	Bytes));
-ZiFB::AsTable<"zdbtest.fbs.PayloadSaga"> ZiFB_Fmt(PayloadSaga *);
+Zfb::AsTable<"zdbtest.fbs.PayloadSaga"> Zfb_Fmt(PayloadSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<PayloadSaga>{}));
 

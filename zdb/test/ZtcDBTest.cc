@@ -6,7 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZtcDB.hh>
 
@@ -15,10 +15,10 @@ using namespace ZuTestUtil;
 using Buffer = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Test.FB">>;
 
 template <typename T>
-ZiFB::View<T> save(Buffer &bytes, const T &data)
+Zfb::View<T> save(Buffer &bytes, const T &data)
 {
-  ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(bytes, data);
-  return ZiFB::verify<T>(bytes) ? ZiFB::view<T>(bytes) : ZiFB::View<T>{};
+  Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(bytes, data);
+  return Zfb::verify<T>(bytes) ? Zfb::view<T>(bytes) : Zfb::View<T>{};
 }
 
 void table()
@@ -47,7 +47,7 @@ void table()
   ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, cacheMode)>() == Ztc::DBCacheMode::All);
   ZuCheck(fbo.get<Ztc::ZfField(DBTableTelemetry, rag)>() == data.rag());
 
-  auto loaded = ZiFB::handler<Ztc::DBTableTelemetry>(fbo).ctor();
+  auto loaded = Zfb::handler<Ztc::DBTableTelemetry>(fbo).ctor();
   ZuCheck(loaded.dbID == data.dbID);
   ZuCheck(loaded.id == data.id);
   ZuCheck(loaded.count == data.count);
@@ -84,7 +84,7 @@ void host()
   ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, voted)>() == data.voted);
   ZuCheck(fbo.get<Ztc::ZfField(DBHostTelemetry, rag)>() == Ztc::RAG::Green);
 
-  auto loaded = ZiFB::handler<Ztc::DBHostTelemetry>(fbo).ctor();
+  auto loaded = Zfb::handler<Ztc::DBHostTelemetry>(fbo).ctor();
   ZuCheck(loaded.ip == data.ip);
   ZuCheck(loaded.dbID == data.dbID);
   ZuCheck(loaded.id == data.id);
@@ -145,7 +145,7 @@ void db()
   ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, replicating)>() == data.replicating);
   ZuCheck(fbo.get<Ztc::ZfField(DBTelemetry, rag)>() == Ztc::RAG::Amber);
 
-  auto loaded = ZiFB::handler<Ztc::DBTelemetry>(fbo).ctor();
+  auto loaded = Zfb::handler<Ztc::DBTelemetry>(fbo).ctor();
   ZuCheck(loaded.thread == data.thread);
   ZuCheck(loaded.threads.length() == 2);
   ZuCheck(loaded.nShards == data.nShards);

@@ -293,7 +293,7 @@ ZfStruct(, (AppEnrollmentSaga, FB),
   (catalogPublishOp,	(Ctor<8>),	UInt32),
   (operationQueryOp,	(Ctor<9>),	UInt32),
   (request,		(Ctor<10>),	UDT));
-ZiFB::AsTable<"Zum.fbs.AppEnrollment"> ZiFB_Fmt(AppEnrollmentSaga *);
+Zfb::AsTable<"Zum.fbs.AppEnrollment"> Zfb_Fmt(AppEnrollmentSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<AppEnrollmentSaga>{}));
 
