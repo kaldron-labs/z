@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Z HTTP/2 native TLS Links and application logical-link adapters
+// Z HTTP/2 native TLS Links and application link adapters
 
 #ifndef ZhttpH2Hub_HH
 #define ZhttpH2Hub_HH
@@ -75,13 +75,13 @@ const EmptyHPackPlans &hpackSeedPlans_(Link *, ...) {
   return plans;
 }
 
-template <typename Logical>
+template <typename AppLink>
 struct Stream {
   Stream() = default;
-  Stream(uint32_t id_, ZmRef<Logical> logical_, bool local_) :
-    logical{ZuMv(logical_)}, id{id_}, local{local_} { }
+  Stream(uint32_t id_, ZmRef<AppLink> appLink_, bool local_) :
+    appLink{ZuMv(appLink_)}, id{id_}, local{local_} { }
 
-  ZmRef<Logical> logical;
+  ZmRef<AppLink> appLink;
   ZiTxErrorFn	txErrorFn;
   uint64_t	deferred = 0;
   int64_t	rxWindow = H2::DefltWindow;
@@ -98,16 +98,16 @@ struct Stream {
   bool		local = false;
 };
 
-template <typename Logical>
-inline uint32_t Stream_IDAxor(const Stream<Logical> &stream)
+template <typename AppLink>
+inline uint32_t Stream_IDAxor(const Stream<AppLink> &stream)
 {
   return stream.id;
 }
 
-template <typename Logical>
-using StreamHash = ZmHash<Stream<Logical>,
-  ZmHashNode<Stream<Logical>,
-    ZmHashKey<Stream_IDAxor<Logical>,
+template <typename AppLink>
+using StreamHash = ZmHash<Stream<AppLink>,
+  ZmHashNode<Stream<AppLink>,
+    ZmHashKey<Stream_IDAxor<AppLink>,
       ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zhttp.H2">>>>>;
 
@@ -764,10 +764,10 @@ ZmHashDerive(TxWindowHash, typename TxWindowList::Node,
       ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zhttp.H2">>>>));
 
-template <typename Impl, typename Logical>
-class Wire : public H2::Connection<Wire<Impl, Logical>> {
+template <typename Impl, typename AppLink>
+class Wire : public H2::Connection<Wire<Impl, AppLink>> {
   using Base = H2::Connection<Wire>;
-  using Streams = StreamHash<Logical>;
+  using Streams = StreamHash<AppLink>;
 
 public:
   bool initWire(bool server, const H2Config &config) {
@@ -834,24 +834,24 @@ public:
   }
   bool localExtendedConnect() const { return m_config.extendedConnect(); }
 
-  Stream<Logical> *h2Stream(uint32_t id) const {
+  Stream<AppLink> *h2Stream(uint32_t id) const {
     ZiAssert(impl_()->app()->rxInvoked(), "Zhttp", (),
       "H2 stream lookup outside Rx thread", return nullptr);
     return m_streams ? m_streams->findPtr(id) : nullptr;
   }
-  Stream<Logical> *openLocalStream(ZmRef<Logical> logical) {
+  Stream<AppLink> *openLocalStream(ZmRef<AppLink> appLink) {
     if (!canOpenLocalStream()) return nullptr;
     uint32_t id = m_nextLocalStream;
-    auto stream_ = addStream_(id, ZuMv(logical), true);
+    auto stream_ = addStream_(id, ZuMv(appLink), true);
     if (!stream_) return nullptr;
     m_nextLocalStream += 2;
     ++m_localStreamCount;
     return stream_;
   }
-  Stream<Logical> *openPeerStream(
-    uint32_t id, ZmRef<Logical> logical) {
+  Stream<AppLink> *openPeerStream(
+    uint32_t id, ZmRef<AppLink> appLink) {
     if (!canOpenPeerStream(id)) return nullptr;
-    auto stream_ = addStream_(id, ZuMv(logical), false);
+    auto stream_ = addStream_(id, ZuMv(appLink), false);
     if (!stream_) return nullptr;
     m_lastPeerStream = id;
     ++m_peerStreamCount;
@@ -966,7 +966,7 @@ public:
   bool recentStreamClosed(uint32_t id) const {
     return m_recentStreamSet && m_recentStreamSet->find(id);
   }
-  void logicalTxErrorFn(uint32_t id, ZiTxErrorFn fn) {
+  void appTxErrorFn(uint32_t id, ZiTxErrorFn fn) {
     ZiAssert(impl_()->app()->rxInvoked(), "Zhttp", (),
       "H2 Tx error callback outside Rx thread", return);
     if (auto stream_ = h2Stream(id)) {
@@ -974,7 +974,7 @@ public:
       auto link = impl_();
       impl_()->app()->txRun([
 	link, id, fn = ZuMv(fn)]() mutable {
-	link->logicalTxErrorFnTx_(id, ZuMv(fn));
+	link->appTxErrorFnTx_(id, ZuMv(fn));
       });
     }
   }
@@ -1309,7 +1309,7 @@ public:
 	.type = EventType::Reset,
 	.error = error
       });
-      if (h2Stream(id)) impl_()->h2ResetLogical(id, error);
+      if (h2Stream(id)) impl_()->h2ResetAppLink(id, error);
     } else if (!impl_()->h2Closed(id))
       h2Error(Error::ProtocolError);
   }
@@ -1329,7 +1329,7 @@ public:
       }
       if (entry_->txWindowHint > int64_t(MaxWindow) - value) {
 	sendReset_(id, Error::FlowControlError);
-	impl_()->h2ResetLogical(id, Error::FlowControlError);
+	impl_()->h2ResetAppLink(id, Error::FlowControlError);
 	return;
       }
       entry_->txWindowHint += value;
@@ -1405,11 +1405,11 @@ public:
   }
 
 private:
-  Stream<Logical> *addStream_(
-    uint32_t id, ZmRef<Logical> logical, bool local) {
+  Stream<AppLink> *addStream_(
+    uint32_t id, ZmRef<AppLink> appLink, bool local) {
     if (!m_streams || m_streams->findPtr(id)) return nullptr;
     auto stream_ = m_streams->add(
-      Stream<Logical>{id, ZuMv(logical), local});
+      Stream<AppLink>{id, ZuMv(appLink), local});
     if (stream_) {
       stream_->rxWindow = m_config.initialWindowSize();
       stream_->txWindowHint = m_peerInitialWindow;
@@ -1428,7 +1428,7 @@ private:
     }
     m_recentStreamSet->add(id, true);
   }
-  Stream<Logical> *begin_(uint32_t id) {
+  Stream<AppLink> *begin_(uint32_t id) {
     auto entry_ = h2Stream(id);
     if (!entry_ && m_discardStream == id) return nullptr;
     if (!entry_) entry_ = impl_()->h2OpenPeer(id);
@@ -1454,9 +1454,9 @@ private:
   bool dispatch_(uint32_t id, Event event) {
     auto entry_ = h2Stream(id);
     if (!entry_) return false;
-    auto logical = entry_->logical;
+    auto appLink = entry_->appLink;
     EventRx rx{event};
-    if (logical->process_(rx) < 0 && h2Stream(id))
+    if (appLink->process_(rx) < 0 && h2Stream(id))
       impl_()->h2Cancel(id);
     retireDeferred_(id, event.consumed);
     if (event.type == EventType::Data && !event.transferred) {
@@ -1485,7 +1485,7 @@ private:
     if (entry_->flowError) {
       rx.advance(frameLength);
       retireConnection_(data.length);
-      impl_()->h2ResetLogical(data.id, Error::FlowControlError);
+      impl_()->h2ResetAppLink(data.id, Error::FlowControlError);
       return int(frameLength);
     }
     unsigned protocol = data.prefix + data.pad;
@@ -1600,7 +1600,7 @@ private:
     }
     return entry_;
   }
-  void logicalTxErrorFnTx_(uint32_t id, ZiTxErrorFn fn) {
+  void appTxErrorFnTx_(uint32_t id, ZiTxErrorFn fn) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 Tx error callback update outside Tx thread", return);
     if (auto entry_ = txWindow_(id)) entry_->txErrorFn = ZuMv(fn);
@@ -1954,7 +1954,7 @@ private:
 	link->h2Error(Error::FlowControlError);
       else {
 	link->sendReset_(id, Error::FlowControlError);
-	link->h2ResetLogical(id, Error::FlowControlError);
+	link->h2ResetAppLink(id, Error::FlowControlError);
       }
     });
   }
@@ -2034,7 +2034,7 @@ private:
 };
 
 template <typename Impl>
-class LogicalStream {
+class StreamOps {
 public:
   bool streamPeerCap() {
     auto tx = streamImpl_()->txStream();

@@ -16,7 +16,7 @@ using namespace ZuTestUtil;
 
 namespace {
 
-struct Logical : public ZmObject { };
+struct AppLink : public ZmObject { };
 
 void testQueueAdmission()
 {
@@ -35,14 +35,14 @@ void testStreamRegistry()
 {
   ZuTestScope(testStreamRegistry);
 
-  using Stream = Zhttp::H2_::Stream<Logical>;
-  using Streams = Zhttp::H2_::StreamHash<Logical>;
+  using Stream = Zhttp::H2_::Stream<AppLink>;
+  using Streams = Zhttp::H2_::StreamHash<AppLink>;
 
   ZmRef<Streams> streams = new Streams;
-  ZmRef<Logical> logical = new Logical;
-  auto stream = streams->add(Stream{1, logical, true});
+  ZmRef<AppLink> appLink = new AppLink;
+  auto stream = streams->add(Stream{1, appLink, true});
   ZuCHECK(stream && stream->id == 1 && stream->local &&
-      stream->logical.ptr() == logical.ptr() &&
+      stream->appLink.ptr() == appLink.ptr() &&
       stream->rxWindow == Zhttp::H2::DefltWindow &&
       stream->txWindowHint == Zhttp::H2::DefltWindow,
     "native Stream record owns the logical Link and flow-control shadows");

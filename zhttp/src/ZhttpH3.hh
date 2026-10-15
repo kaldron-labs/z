@@ -2100,7 +2100,7 @@ private:
 };
 
 template <typename Impl>
-class LogicalStream {
+class StreamOps {
 public:
   bool streamPeerCap() const {
     auto native = streamImpl_()->h3Native_();

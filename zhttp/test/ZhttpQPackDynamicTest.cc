@@ -207,7 +207,7 @@ ZhttpHdrCatalogImpl(ParserHeaders)
 
 struct ParserStream;
 
-struct LogicalLink {
+struct AppLink {
   struct Tx { bool flush() { return true; } };
 
   bool streamLocalCap() const { return true; }
@@ -354,9 +354,9 @@ struct ParserStream :
   RxStream			rx;
   Zhttp::H3::QPackRxTable	qpackRxTable;
   Zhttp::H3::Params		params;
-  Zhttp::StreamDispatch<LogicalLink, StreamConsumer> dispatch;
+  Zhttp::StreamDispatch<AppLink, StreamConsumer> dispatch;
   StreamConsumer		consumer;
-  LogicalLink			link;
+  AppLink			link;
   Zhttp::Method::T		method = -1;
   unsigned			callbackOrder = 0;
   unsigned			operationOrder = 0;

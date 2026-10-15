@@ -349,7 +349,7 @@ struct ConnectBuild :
 
 struct StreamResponse;
 
-struct StreamLink {
+struct AppLink {
   struct Tx { bool flush() { return true; } };
 
   bool streamLocalCap() const { return true; }
@@ -426,7 +426,7 @@ struct StreamResponse :
   void complete(Zhttp::H2::ParserState::T) { ++completions; }
 
   ZtString<>	data_;
-  Zhttp::StreamDispatch<StreamLink, StreamConsumer> dispatch;
+  Zhttp::StreamDispatch<AppLink, StreamConsumer> dispatch;
   StreamConsumer consumer;
   unsigned	status_ = 0;
   unsigned	established = 0;
@@ -436,7 +436,7 @@ struct StreamResponse :
   unsigned	starts = 0;
   bool		noCopy = true;
   bool		partial = false;
-  StreamLink	link;
+  AppLink	link;
 };
 
 template <typename Stream, typename Rx>
