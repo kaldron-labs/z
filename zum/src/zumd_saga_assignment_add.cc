@@ -128,7 +128,7 @@ ZfStruct(, (AssignmentAddSaga, FB),
   (userID,	(Ctor<1>),	UInt64),
   (created,	(Ctor<2>),	Int64),
   (request,	(Ctor<3>),	UDT));
-ZiFB::AsTable<"Zum.fbs.AssignmentAdd"> ZiFB_Fmt(AssignmentAddSaga *);
+Zfb::AsTable<"Zum.fbs.AssignmentAdd"> Zfb_Fmt(AssignmentAddSaga *);
 
 
 ZuAssert((Zdb_::SagaDefValid<AssignmentAddSaga>{}));

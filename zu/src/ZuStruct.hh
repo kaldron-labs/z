@@ -13,7 +13,7 @@
 // - compile-time reflection and access to individual fields
 // - ZfStruct extends ZuStruct for type-erased run-time introspection,
 //   type codes, printing/scanning, ...
-// - ZiFB serializes ZfStruct metadata as FlatBuffers
+// - Zfb serializes ZfStruct metadata as FlatBuffers
 // - Zdb provides relational data store
 //
 // each structure has 1 or more "facets"

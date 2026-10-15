@@ -1561,7 +1561,7 @@ static void roleRemoval(bool fail, bool empty, unsigned cut = UINT_MAX)
   if (cut == UINT_MAX) {
     Zum::SagaRef saga = Zum::roleDelete(change);
     Zdb_::SagaPayload payload;
-    ZuCheck(saga->save(payload) == ZiFB::Error::OK);
+    ZuCheck(saga->save(payload) == Zfb::Error::OK);
     auto data = internalTable<Zdb_::SagaData>(db, "saga");
     ZuCheck(insertRecord(data.ptr(), Zdb_::SagaData{
       .type = Zum::roleDeleteDef().type, .id = ZdbSagaID{app.id},

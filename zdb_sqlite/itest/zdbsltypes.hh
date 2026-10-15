@@ -128,7 +128,7 @@ ZfStruct(, (AllTypes, FB),
   (realVec,		(Ctor<39>, Mutable),				FloatVec),
   ((names, AliasFn, cstrings, cstrings), (Ctor<40>, Mutable),		CStringVec),
   (mappedTime,		(Ctor<41>, Mutable, Deflt<MappedTime{23}>),	Time));
-ZiFB::AsTable<"zdbsltest.fbs.AllTypes"> ZiFB_Fmt(AllTypes *);
+Zfb::AsTable<"zdbsltest.fbs.AllTypes"> Zfb_Fmt(AllTypes *);
 
 ZdbTableDerive(AllTypesTable, AllTypes);
 

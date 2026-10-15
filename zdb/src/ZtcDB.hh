@@ -27,7 +27,7 @@
 
 #include <zlib/ZfStruct.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZdbTypes.hh>
 
@@ -39,7 +39,7 @@
 
 namespace Ztc {
 
-namespace RAG { ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *); }
+namespace RAG { Zfb::AsEnum<"Ztc.fbs.RAG"> Zfb_Fmt(Map *); }
 
 using DBString = Zdb_::String;
 using DBThreads = Zdb_::Threads;
@@ -105,7 +105,7 @@ ZfStruct(ZdbAPI, (DBTelemetry, FB),
   (replicating,		(Ctor<18>, Mutable),				UInt8),
   ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),		Int8));
 
-ZiFB::AsTable<"Ztc.fbs.DBTelemetry"> ZiFB_Fmt(DBTelemetry *);
+Zfb::AsTable<"Ztc.fbs.DBTelemetry"> Zfb_Fmt(DBTelemetry *);
 
 struct ZdbAPI DB {
   using AllDBTablesFn = ZmFn<void(DBTable *), AllFnHeapID>;

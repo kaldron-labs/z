@@ -164,7 +164,7 @@ ZfStruct(, (UserInviteSaga, FB),
   (request,	(Ctor<4>),	UDT),
   (grant,	(Ctor<2>),	UDT),
   (external,	(Ctor<5>),	UDT));
-ZiFB::AsTable<"Zum.fbs.UserInvite"> ZiFB_Fmt(UserInviteSaga *);
+Zfb::AsTable<"Zum.fbs.UserInvite"> Zfb_Fmt(UserInviteSaga *);
 
 template <typename Heap>
 User UserInviteSaga_<Heap>::result() const

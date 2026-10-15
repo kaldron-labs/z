@@ -99,7 +99,7 @@ ZfStruct(, (KeyAddSaga, FB),
   (values,	(Ctor<1>),	UDT),
   (updated,	(Ctor<2>),	Int64),
   (request,	(Ctor<3>),	UDT));
-ZiFB::AsTable<"Zum.fbs.KeyAdd"> ZiFB_Fmt(KeyAddSaga *);
+Zfb::AsTable<"Zum.fbs.KeyAdd"> Zfb_Fmt(KeyAddSaga *);
 
 static bool publicKeyValid(const SignKey &key, ZuBSpan expected = {})
 {

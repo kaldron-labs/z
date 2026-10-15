@@ -3,7 +3,7 @@ METASOURCES = AUTO
 EXTRA_DIST = GUIDELINES.md z.config .lsan-suppressions \
 	scripts/qir-build-image scripts/qir-upload-image \
 	scripts/qir-run-local scripts/qir-collect-results scripts/qir-report
-SUBDIRS = zu zm zt ze zf zi zv zrl
+SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl
 if LINUX
 SUBDIRS += zdbus
 endif
@@ -25,7 +25,7 @@ SUBDIRS += zgtk
 endif
 # SUBDIRS += zdash
 
-DIST_SUBDIRS = zu zm zt ze zf zi zv zrl zdbus ztcp ztls zquic zhttp zws zrest zjrpc zmcp zdb ztc \
+DIST_SUBDIRS = zu zm zt ze zf zi zpb zfb zv zrl zdbus ztcp ztls zquic zhttp zws zrest zjrpc zmcp zdb ztc \
 	zdb_pq zdb_sqlite zdf zum zgtk # zdash
 
 .PHONY: test

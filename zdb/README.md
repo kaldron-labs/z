@@ -114,7 +114,7 @@ is `Normal`. Cache policy does not replace backing storage or change ownership.
 
 ## Tables, rows, and shard ownership
 
-Define a row with ordinary `ZfStruct` metadata and a `ZiFB::AsTable` / `ZiFB_Fmt` ADL declaration.
+Define a row with ordinary `ZfStruct` metadata and a `Zfb::AsTable` / `Zfb_Fmt` ADL declaration.
 Each table generates and owns its BFBS reflection buffer during construction;
 stores consume that span without schema files or external codegen.
 
@@ -301,9 +301,9 @@ ZmRef<ZdbAnySaga<DB>> balanceTransfer(ZuBSpan saved);
 Supply the derived `DB` as the saga template argument. Each descriptor carries a unique
 type string, phase count, phase metadata callback and FlatBuffer decoder. The
 decoder verifies the supplied buffer and constructs a fresh saga directly with
-`ZiFB::handler<BalanceTransfer>(saved).alloc()`. Registration constructs no saga.
+`Zfb::handler<BalanceTransfer>(saved).alloc()`. Registration constructs no saga.
 Definitions have positive `NPhases` and contiguous phase numbers starting at
-zero. Serialize the request payload with `ZiFB` from `ZfStruct` metadata; runtime
+zero. Serialize the request payload with `Zfb` from `ZfStruct` metadata; runtime
 context is not serialized. See `example/zdbsaga.cc` for a complete owner.
 
 After table registration, populate the derived DB's members and call

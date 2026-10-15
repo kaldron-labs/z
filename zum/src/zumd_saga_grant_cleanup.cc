@@ -86,7 +86,7 @@ ZfStruct(, (GrantCleanupSaga, FB),
   (grants,	(Ctor<0>),	UDT),
   (updated,	(Ctor<1>),	Int64),
   (request,	(Ctor<2>),	UDT));
-ZiFB::AsTable<"Zum.fbs.GrantCleanup"> ZiFB_Fmt(GrantCleanupSaga *);
+Zfb::AsTable<"Zum.fbs.GrantCleanup"> Zfb_Fmt(GrantCleanupSaga *);
 
 
 ZuAssert((Zdb_::SagaDefValid<GrantCleanupSaga>{}));

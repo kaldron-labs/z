@@ -105,7 +105,7 @@ ZfStruct(ZumAPI, (RoleMapPutSaga, FB),
   (ifNoneMatch,	(Ctor<4>),	String),
   (updated,	(Ctor<5>),	Int64),
   (request,	(Ctor<6>),	UDT));
-ZiFB::AsTable<"Zum.fbs.RoleMapPut"> ZiFB_Fmt(RoleMapPutSaga *);
+Zfb::AsTable<"Zum.fbs.RoleMapPut"> Zfb_Fmt(RoleMapPutSaga *);
 
 template <typename Heap>
 unsigned RoleMapPutSaga_<Heap>::appError(const App &item) const

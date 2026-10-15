@@ -214,7 +214,7 @@ ZfStruct(, (RecoveryStartSaga, FB),
   (oldState,		(Ctor<9>, Enum<State::Map>),	Int8),
   (oldUpdated,		(Ctor<10>),			Int64),
   (request,		(Ctor<11>),			UDT));
-ZiFB::AsTable<"Zum.fbs.RecoveryStart"> ZiFB_Fmt(RecoveryStartSaga *);
+Zfb::AsTable<"Zum.fbs.RecoveryStart"> Zfb_Fmt(RecoveryStartSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RecoveryStartSaga>{}));
 

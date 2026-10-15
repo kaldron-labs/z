@@ -10,14 +10,14 @@
 #include <zlib/ZmStackAvail.hh>
 #include <zlib/ZmThread.hh>
 #include <zlib/ZtScratch.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 #include <zlib/ZdbPQ.hh>
 
 using namespace ZuTestUtil;
 
 struct AlignedRow { ZuBSpan data; };
 ZfStruct(, (AlignedRow, FB), (data, (FB::Align<32>), Bytes));
-ZiFB::AsTable<"test.AlignedRow"> ZiFB_Fmt(AlignedRow *);
+Zfb::AsTable<"test.AlignedRow"> Zfb_Fmt(AlignedRow *);
 
 struct FloatRow {
   float real;
@@ -28,7 +28,7 @@ ZfStruct(, (FloatRow, FB),
   (real, (Ctor<0>, Deflt<1.5>), Float),
   (values, (Ctor<1>), FloatVec),
   (names, (Ctor<2>), CStringVec));
-ZiFB::AsTable<"test.FloatRow"> ZiFB_Fmt(FloatRow *);
+Zfb::AsTable<"test.FloatRow"> Zfb_Fmt(FloatRow *);
 
 struct BoundRow {
   ZuCSpan text;
@@ -38,14 +38,14 @@ struct BoundRow {
 };
 ZfStruct(, (BoundRow, FB),
   (text,, String), (bytes,, Bytes), (a,, Int8Vec), (b,, Int8Vec));
-ZiFB::AsTable<"test.BoundRow"> ZiFB_Fmt(BoundRow *);
+Zfb::AsTable<"test.BoundRow"> Zfb_Fmt(BoundRow *);
 
 static void paramPlanning()
 {
   ZuTestScope(paramPlanning);
-  namespace R = ZiFB::Reflect;
-  auto schemaBytes = ZtScratch(ZiFB::Buffer, 0);
-  ZiFB::saveSchema<BoundRow>(schemaBytes);
+  namespace R = Zfb::Reflect;
+  auto schemaBytes = ZtScratch(Zfb::Buffer, 0);
+  Zfb::saveSchema<BoundRow>(schemaBytes);
   auto schema = Zdb_::Schema::from<BoundRow>(schemaBytes);
   auto native = ZfVFields<BoundRow>();
   auto fields = ZtScratch(ZdbPQ::XFields, 4);
@@ -59,10 +59,10 @@ static void paramPlanning()
     ZdbPQ::Value::Index<ZdbPQ::Int8Vec>{}});
   const uint8_t byte[] = {1};
   BoundRow row{"x", byte, {1}, {1}};
-  ZiFB::IOBuilder<> input{new ZiIOBufAlloc<>};
-  input.finish(ZiFB::save(input, row));
+  Zfb::IOBuilder<> input{new ZiIOBufAlloc<>};
+  input.finish(Zfb::save(input, row));
   auto source = input.buf();
-  ZiFB::TableView table{ZiFB::root(source->cspan())};
+  Zfb::TableView table{Zfb::root(source->cspan())};
   auto parts = ZtScratch(ZdbPQ::VarBufParts, 2);
   auto plan = [&parts, &fields, table]() {
     parts.length(0);
@@ -71,8 +71,8 @@ static void paramPlanning()
   ZuCheck(plan() == 2 * ZdbPQ::vecSize(1, 1));
   // Synthetic wire length words exercise planning only, never verification or encoding.
   auto length = [&fields, table](unsigned i, unsigned n) {
-    auto p = const_cast<uint8_t *>(ZiFB::follow(R::address(table, fields[i].field)));
-    ZiFB::write<uint32_t>(p, n);
+    auto p = const_cast<uint8_t *>(Zfb::follow(R::address(table, fields[i].field)));
+    Zfb::write<uint32_t>(p, n);
   };
   enum { Limit = Zdb_::MaxBufSize };
   length(0, Limit + 1);
@@ -95,8 +95,8 @@ static void paramPlanning()
 static void floatWire()
 {
   ZuTestScope(floatWire);
-  auto schemaBytes = ZtScratch(ZiFB::Buffer, 0);
-  ZiFB::saveSchema<FloatRow>(schemaBytes);
+  auto schemaBytes = ZtScratch(Zfb::Buffer, 0);
+  Zfb::saveSchema<FloatRow>(schemaBytes);
   auto schema = Zdb_::Schema::from<FloatRow>(schemaBytes);
   auto native = ZfVFields<FloatRow>();
   auto fields = ZtScratch(ZdbPQ::XFields, 3);
@@ -112,10 +112,10 @@ static void floatWire()
   for (float real: {1.5f, -2.5f}) {
     FloatRow row{real, {-0.0f, 1.25f, -2.5f},
       {"", "short", "a CStringVec element longer than builtin string storage"}};
-    ZiFB::IOBuilder<> input{new ZiIOBufAlloc<>};
-    input.finish(ZiFB::save(input, row));
+    Zfb::IOBuilder<> input{new ZiIOBufAlloc<>};
+    input.finish(Zfb::save(input, row));
     auto source = input.buf();
-    ZiFB::TableView fbo{ZiFB::root(source->cspan())};
+    Zfb::TableView fbo{Zfb::root(source->cspan())};
     auto parts = ZtScratch(ZdbPQ::VarBufParts, 2);
     unsigned size = ZdbPQ::planTuple(parts, 3, fields, fields, fbo);
     ZuCHECK(size != UINT_MAX, "plan Float32 and CStringVec parameters");
@@ -131,9 +131,9 @@ static void floatWire()
     ZdbPQ::Builder output{new ZiIOBufAlloc<>};
     output.finish(ZdbPQ::saveTuple(output, fields, fields, 2, values));
     auto dest = output.buf();
-    ZuCHECK(dest && ZiFB::verify<FloatRow>(dest->cspan()), "Float32 result wire layout");
+    ZuCHECK(dest && Zfb::verify<FloatRow>(dest->cspan()), "Float32 result wire layout");
     if (!dest) continue;
-    auto view = ZiFB::view<FloatRow>(dest->cspan());
+    auto view = Zfb::view<FloatRow>(dest->cspan());
     ZuCHECK(view.get<ZfField(FloatRow, real)>() == real, "Float32 scalar round trip");
     auto reals = view.get<ZfField(FloatRow, values)>();
     ZuCHECK(reals.length() == 3 && reals[0] == 0 &&
@@ -148,9 +148,9 @@ static void floatWire()
 static void fieldAlignment()
 {
   ZuTestScope(fieldAlignment);
-  namespace R = ZiFB::Reflect;
-  auto bytes = ZtScratch(ZiFB::Buffer, 0);
-  ZiFB::saveSchema<AlignedRow>(bytes);
+  namespace R = Zfb::Reflect;
+  auto bytes = ZtScratch(Zfb::Buffer, 0);
+  Zfb::saveSchema<AlignedRow>(bytes);
   auto schema = Zdb_::Schema::from<AlignedRow>(bytes);
   auto field = schema.field("data");
   unsigned align = R::alignment(field);
@@ -164,9 +164,9 @@ static void fieldAlignment()
   ZdbPQ::Builder builder{new ZiIOBufAlloc<>};
   builder.finish(ZdbPQ::saveTuple(builder, fields, fields, 1, values));
   auto buf = builder.buf();
-  ZuCHECK(buf && ZiFB::verify<AlignedRow>(buf->cspan()), "aligned store output");
+  ZuCHECK(buf && Zfb::verify<AlignedRow>(buf->cspan()), "aligned store output");
   if (!buf) return;
-  auto result = ZiFB::view<AlignedRow>(buf->cspan()).get<ZfField(AlignedRow, data)>();
+  auto result = Zfb::view<AlignedRow>(buf->cspan()).get<ZfField(AlignedRow, data)>();
   ZuCHECK(result == data, "preserve bytes");
   ZuCHECK(!(uintptr_t(result.data()) & (align - 1)), "cached alignment reaches writer");
 }

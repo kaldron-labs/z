@@ -42,8 +42,8 @@
 
 #include <zlib/ZePlatform.hh>
 
-#include <zlib/ZiFB.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/Zfb.hh>
+#include <zlib/ZfbReflect.hh>
 
 #include <zlib/ZdbBuf.hh>
 #include <zlib/ZdbTypes.hh>
@@ -102,7 +102,7 @@ ZfStruct(ZdbAPI, (SagaData, FB),
   (data,	(Ctor<3>),		Bytes),
   (deadline,	(Ctor<4>),		Time));
 
-ZiFB::AsTable<"Zdb_.fbs.SagaData"> ZiFB_Fmt(SagaData *);
+Zfb::AsTable<"Zdb_.fbs.SagaData"> Zfb_Fmt(SagaData *);
 
 struct SagaStep {
   SagaType	type;
@@ -122,14 +122,14 @@ ZfStruct(ZdbAPI, (SagaStep, FB),
   (shard,	(Ctor<3>),		UInt8),
   (un,		(Ctor<4>),		UInt64));
 
-ZiFB::AsTable<"Zdb_.fbs.SagaStep"> ZiFB_Fmt(SagaStep *);
+Zfb::AsTable<"Zdb_.fbs.SagaStep"> Zfb_Fmt(SagaStep *);
 
 ZtEnumNS(ZdbAPI, SagaOp, int8_t,
   Invalid,
   Insert,
   Update,
   Delete);
-namespace SagaOp { ZiFB::AsEnum<"Zdb_.fbs.SagaOp"> ZiFB_Fmt(Map *); }
+namespace SagaOp { Zfb::AsEnum<"Zdb_.fbs.SagaOp"> Zfb_Fmt(Map *); }
 
 struct SagaTypeStep {
   SagaType	type;
@@ -146,7 +146,7 @@ ZfStruct(ZdbAPI, (SagaTypeStep, FB),
   (op,		(Ctor<3>, Enum<SagaOp::Map>),	Int8),
   (repeat,	(Ctor<4>),			Bool));
 
-ZiFB::AsTable<"Zdb_.fbs.SagaTypeStep"> ZiFB_Fmt(SagaTypeStep *);
+Zfb::AsTable<"Zdb_.fbs.SagaTypeStep"> Zfb_Fmt(SagaTypeStep *);
 
 ZuDerive(SagaRecoveryFn,
   (ZmFn<void(), ZmFnHeapID<"Zdb.Saga.RecoveryFn">>));
@@ -426,7 +426,7 @@ using SagaTypeSeen = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">>;
 struct SagaCatalog__ {
   StoreTbl	*table = nullptr;
   SagaTypeSeen	seen;
-  SchemaBuf	schema = SchemaBuf(ZiFB::SchemaOut::Schema<SagaTypeStep>::Size);
+  SchemaBuf	schema = SchemaBuf(Zfb::SchemaOut::Schema<SagaTypeStep>::Size);
   SagaType	type;
   ZeException	error;
   UN		nextUN = 0;
@@ -436,7 +436,7 @@ struct SagaCatalog__ {
   unsigned	writeType = 0;
   unsigned	writeStep = 0;
 
-  SagaCatalog__() { ZiFB::saveSchema<SagaTypeStep>(schema); }
+  SagaCatalog__() { Zfb::saveSchema<SagaTypeStep>(schema); }
 
   ZdbAPI void load(const SagaDefs &, const SagaDefHash_ &, SagaTypeStep);
   ZdbAPI void end(unsigned);
@@ -653,7 +653,7 @@ public:
   }
   int save(SagaPayload &data) const override {
     data.length(0);
-    return ZiFB::save(data, *static_cast<const Impl *>(this));
+    return Zfb::save(data, *static_cast<const Impl *>(this));
   }
   unsigned nSteps() const override {
     return SagaLayout<Impl>::size(*static_cast<const Impl *>(this));
@@ -677,9 +677,9 @@ public:
   }
 
   static ZmRef<AnySaga<DB>> load(ZuBSpan data) {
-    if (ZuUnlikely(!ZiFB::verify<Impl>(data)))
+    if (ZuUnlikely(!Zfb::verify<Impl>(data)))
       throw ZeEXCEPT(Fatal, "Zdb", "invalid saved saga");
-    return ZiFB::handler<Impl>(data).alloc();
+    return Zfb::handler<Impl>(data).alloc();
   }
   static SagaDef def() {
     ZuAssert((SagaDefValid<Impl>{}), "invalid saga definition");

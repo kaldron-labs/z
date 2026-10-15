@@ -228,7 +228,7 @@ ZfStruct(, (ConsentCodeSaga, FB),
   (beforeConsent,	(Ctor<2>),	UDT),
   (roleIDs,		(Ctor<3>),	UInt64Vec),
   (now,			(Ctor<4>),	Int64));
-ZiFB::AsTable<"Zum.fbs.ConsentCode"> ZiFB_Fmt(ConsentCodeSaga *);
+Zfb::AsTable<"Zum.fbs.ConsentCode"> Zfb_Fmt(ConsentCodeSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<ConsentCodeSaga>{}));
 

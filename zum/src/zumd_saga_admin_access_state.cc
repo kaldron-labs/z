@@ -88,7 +88,7 @@ ZfStruct(, (AdminAccessStateSaga, FB),
   (updated,	(Ctor<2>),			Int64),
   (request,	(Ctor<3>),			UDT),
   (state,	(Ctor<4>, Enum<State::Map>),	Int8));
-ZiFB::AsTable<"Zum.fbs.AdminAccessState"> ZiFB_Fmt(AdminAccessStateSaga *);
+Zfb::AsTable<"Zum.fbs.AdminAccessState"> Zfb_Fmt(AdminAccessStateSaga *);
 
 template <typename Heap>
 unsigned AdminAccessStateSaga_<Heap>::recordError(const AdminAccess &item) const

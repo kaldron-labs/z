@@ -278,7 +278,7 @@ ZfStruct(ZumAPI, (RoleDeleteSaga, FB),
   (maps,	(Ctor<5>),	BytesVec),
   (updated,	(Ctor<6>),	Int64),
   (request,	(Ctor<7>),	UDT));
-ZiFB::AsTable<"Zum.fbs.RoleDelete"> ZiFB_Fmt(RoleDeleteSaga *);
+Zfb::AsTable<"Zum.fbs.RoleDelete"> Zfb_Fmt(RoleDeleteSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RoleDeleteSaga>{}));
 

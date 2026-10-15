@@ -296,7 +296,7 @@ static Ztc::HubFrame errorFrame(uint64_t subID, ZuCSpan deviceID,
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto error = ZiFB::save(builder, Ztc::Error{
+  auto error = Zfb::save(builder, Ztc::Error{
     Ztc::ErrorMessage{message}, deviceID ? ZuID{deviceID} : ZuID{"inventory"},
     0, int(code)});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Error,
@@ -310,7 +310,7 @@ static Ztc::HubFrame unsubscribeFrame(const Ztc::RouteInfo &route)
   frame->skip = Ztc::Builder::Align;
   Ztc::Builder builder{ZuMv(frame)};
   auto nested = builder.startNested();
-  auto request = ZiFB::save(builder,
+  auto request = Zfb::save(builder,
     Ztc::Request{.seqNo = route.requestSeqNo});
   builder.finish(Ztc::saveMsg(builder, nested,
     Ztc::Body::Request, request));
@@ -430,7 +430,7 @@ struct App {
     // All hub routes and listeners share the multiplex Rx owner.
     auto &state = hold->state();
     if (state.closed) return;
-    auto msg = ZiFB::view<Ztc::Msg>({frame->data(), frame->length});
+    auto msg = Zfb::view<Ztc::Msg>({frame->data(), frame->length});
     auto type = Ztc::msgBody(msg).tag();
     bool telemetry = type == Ztc::Body::Telemetry;
     bool completion = type == Ztc::Body::EOS || type == Ztc::Body::Error;
@@ -740,7 +740,7 @@ struct App {
       }
       uint64_t agent = 0, generation = 0, seqNo = 0;
       Ztc::HubError::T error = Ztc::HubError::BadReq;
-      auto requestData = ZiFB::handler<Ztc::Request>(request).ctor();
+      auto requestData = Zfb::handler<Ztc::Request>(request).ctor();
       if (!hub->addSubscription(state.sessionID, subID,
 	  deviceID, requestData,
 	  agent, generation, seqNo, error)) {
@@ -755,7 +755,7 @@ struct App {
         "Ztc.Hub.Frame">}};
       auto nested = builder.startNested();
       requestData.seqNo = seqNo;
-      auto request_ = ZiFB::save(builder, requestData);
+      auto request_ = Zfb::save(builder, requestData);
       builder.finish(Ztc::saveMsg(builder, nested,
 	Ztc::Body::Request, request_));
       if (!hub->sendAgent(agent, generation, builder.buf())) {

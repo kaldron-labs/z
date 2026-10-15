@@ -75,12 +75,12 @@ static void records()
   role.actions.length(128);
   role.actions.set(7);
 
-  ZiFB::IOBuilder<ZiFB::BufferAlign<Zum::Role>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(ZiFB::save(fbb, role));
+  Zfb::IOBuilder<Zfb::BufferAlign<Zum::Role>::N> fbb{new ZiIOBufAlloc<>()};
+  fbb.finish(Zfb::save(fbb, role));
   auto buf = fbb.buf();
   ZuBSpan bytes{buf->data(), buf->length};
-  ZuCheck(ZiFB::verify<Zum::Role>(bytes));
-  auto loaded = ZiFB::load<Zum::Role>(bytes);
+  ZuCheck(Zfb::verify<Zum::Role>(bytes));
+  auto loaded = Zfb::load<Zum::Role>(bytes);
   ZuCheck(loaded.id == role.id);
   ZuCheck(loaded.name == role.name);
   ZuCheck(loaded.actions[7]);
@@ -90,10 +90,10 @@ static void records()
 template <typename T>
 static T roundTrip(const T &value)
 {
-  ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(ZiFB::save(fbb, value));
+  Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{new ZiIOBufAlloc<>()};
+  fbb.finish(Zfb::save(fbb, value));
   auto buf = fbb.buf();
-  return ZiFB::load<T>({buf->data(), buf->length});
+  return Zfb::load<T>({buf->data(), buf->length});
 }
 static void appRecords()
 {

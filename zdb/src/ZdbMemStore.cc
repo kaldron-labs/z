@@ -32,7 +32,7 @@ void StoreTbl::count(KeyID keyID, ZmRef<IOBuf> buf, CountFn countFn)
     unsigned nParams = m_keyGroup[keyID];
 
     auto key = loadTuple_(
-      nParams, keyFields, xKeyFields, ZiFB::TableView{ZiFB::root(buf->cspan())});
+      nParams, keyFields, xKeyFields, Zfb::TableView{Zfb::root(buf->cspan())});
 
     const auto &index = m_indices[keyID];
     auto row = index.find<ZmRBTreeGreater>(key);
@@ -63,7 +63,7 @@ void StoreTbl::select(
     unsigned nParams = selectNext ? keyFields.length() : keyGroup;
 
     auto key = loadTuple_(
-      nParams, keyFields, xKeyFields, ZiFB::TableView{ZiFB::root(buf->cspan())});
+      nParams, keyFields, xKeyFields, Zfb::TableView{Zfb::root(buf->cspan())});
 
     const auto &index = m_indices[keyID];
     auto row = inclusive ?
@@ -72,7 +72,7 @@ void StoreTbl::select(
     unsigned i = 0;
     while (i++ < limit && row && equals_(row->key(), key, keyGroup)) {
       unsigned align = selectRow ? m_rowAlign : xKeyFields.bufAlign;
-      ZiFB::IOBuilder<ZiFB::Wire::MaxAlign> fbb{m_bufAllocFn(), align};
+      Zfb::IOBuilder<Zfb::Wire::MaxAlign> fbb{m_bufAllocFn(), align};
       if (!selectRow) {
 	fbb.finish(saveTuple<true>(fbb, xKeyFields, row->val()->data));
       } else {
@@ -96,7 +96,7 @@ void StoreTbl::find(KeyID keyID, ZmRef<IOBuf> buf, RowFn rowFn)
     ZmAssert(keyID >= 0 && keyID < m_indices.length());
 
     auto key = loadTuple(
-      m_keyFields[keyID], m_xKeyFields[keyID], ZiFB::TableView{ZiFB::root(buf->cspan())});
+      m_keyFields[keyID], m_xKeyFields[keyID], Zfb::TableView{Zfb::root(buf->cspan())});
     ZmRef<const MemRow> row = m_indices[keyID].findVal(key);
     if (row) {
       RowData data{.buf = saveRow<false>(row)};

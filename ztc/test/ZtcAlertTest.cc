@@ -192,7 +192,7 @@ bool alertSubscribe(
   auto ackFrame = alertReadFrame(fd);
   auto ackMsg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto ack = ackMsg && Ztc::msgBody(ackMsg).tag() == Ztc::Body::Ack ?
-    Ztc::msgBody(ackMsg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+    Ztc::msgBody(ackMsg).get<Ztc::Body::Ack>() : Zfb::View<Ztc::Ack>{};
   if (!ack || ack.get<Ztc::ZfField(Ack, seqNo)>() != seqNo ||
       ack.get<Ztc::ZfField(Ack, status)>() != Ztc::AckStatus::OK) return false;
 
@@ -200,7 +200,7 @@ bool alertSubscribe(
   auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto done = doneMsg &&
       Ztc::msgBody(doneMsg).tag() == Ztc::Body::EOS ?
-    Ztc::msgBody(doneMsg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+    Ztc::msgBody(doneMsg).get<Ztc::Body::EOS>() : Zfb::View<Ztc::EOS>{};
   return done && done.get<Ztc::ZfField(EOS, seqNo)>() == seqNo;
 }
 
@@ -214,18 +214,18 @@ Ztc::AckStatus::T alertRequestStatus(
   auto ackFrame = alertReadFrame(fd);
   auto msg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto ack = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Ack ?
-    Ztc::msgBody(msg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+    Ztc::msgBody(msg).get<Ztc::Body::Ack>() : Zfb::View<Ztc::Ack>{};
   return ack && ack.get<Ztc::ZfField(Ack, seqNo)>() == seqNo ?
     ack.get<Ztc::ZfField(Ack, status)>() : Ztc::AckStatus::Failed;
 }
 
-ZiFB::View<Ztc::AlertTelemetry> alertReceive(
+Zfb::View<Ztc::AlertTelemetry> alertReceive(
     int fd, uint64_t seqNo, ZmRef<ZiIOBuf> &frame)
 {
   frame = alertReadFrame(fd);
   auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto telemetry = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
-    Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+    Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
   if (!telemetry || telemetry.get<Ztc::ZfField(Telemetry, seqNo)>() != seqNo ||
       telemetry.get<Ztc::ZfField(Telemetry, value)>().tag() !=
 	Ztc::TelemetryBody::AlertTelemetry) return {};
@@ -244,7 +244,7 @@ bool replayMany(int fd, uint64_t seqNo, const AlertKeys &keys)
   auto ackFrame = alertReadFrame(fd);
   auto ackMsg = ackFrame ? Ztc::msg(ackFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto ack = ackMsg && Ztc::msgBody(ackMsg).tag() == Ztc::Body::Ack ?
-    Ztc::msgBody(ackMsg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+    Ztc::msgBody(ackMsg).get<Ztc::Body::Ack>() : Zfb::View<Ztc::Ack>{};
   if (!ack || ack.get<Ztc::ZfField(Ack, seqNo)>() != seqNo ||
       ack.get<Ztc::ZfField(Ack, status)>() != Ztc::AckStatus::OK) return false;
 
@@ -259,7 +259,7 @@ bool replayMany(int fd, uint64_t seqNo, const AlertKeys &keys)
   auto doneMsg = doneFrame ? Ztc::msg(doneFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto done = doneMsg &&
       Ztc::msgBody(doneMsg).tag() == Ztc::Body::EOS ?
-    Ztc::msgBody(doneMsg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+    Ztc::msgBody(doneMsg).get<Ztc::Body::EOS>() : Zfb::View<Ztc::EOS>{};
   return done && done.get<Ztc::ZfField(EOS, seqNo)>() == seqNo;
 }
 
@@ -274,11 +274,11 @@ bool appDegraded(int fd, uint64_t seqNo)
   auto msg = telemetryFrame ?
     Ztc::msg(telemetryFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto telemetry = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
-    Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+    Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
   auto app = telemetry && telemetry.get<Ztc::ZfField(Telemetry, seqNo)>() == seqNo &&
       telemetry.get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::AppTelemetry ?
     telemetry.get<Ztc::ZfField(Telemetry, value)>()
-      .get<Ztc::TelemetryBody::AppTelemetry>() : ZiFB::View<Ztc::AppTelemetry>{};
+      .get<Ztc::TelemetryBody::AppTelemetry>() : Zfb::View<Ztc::AppTelemetry>{};
   return app && app.get<Ztc::ZfField(AppTelemetry, degraded)>();
 }
 
@@ -390,7 +390,7 @@ void liveAlerts()
     replayAck ? Ztc::msg(replayAck->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto ack = replayAckMsg &&
       Ztc::msgBody(replayAckMsg).tag() == Ztc::Body::Ack ?
-    Ztc::msgBody(replayAckMsg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+    Ztc::msgBody(replayAckMsg).get<Ztc::Body::Ack>() : Zfb::View<Ztc::Ack>{};
   ZuCheck(ack && ack.get<Ztc::ZfField(Ack, seqNo)>() == ReplaySeqNo &&
     ack.get<Ztc::ZfField(Ack, status)>() == Ztc::AckStatus::OK);
   ZmRef<ZiIOBuf> replayFrame;
@@ -402,7 +402,7 @@ void liveAlerts()
     replayDone ? Ztc::msg(replayDone->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto complete = replayDoneMsg &&
       Ztc::msgBody(replayDoneMsg).tag() == Ztc::Body::EOS ?
-    Ztc::msgBody(replayDoneMsg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+    Ztc::msgBody(replayDoneMsg).get<Ztc::Body::EOS>() : Zfb::View<Ztc::EOS>{};
   ZuCheck(complete && complete.get<Ztc::ZfField(EOS, seqNo)>() == ReplaySeqNo);
   ZtcTestClient::close(replayFD);
   ZuCheck(replay.stop());
@@ -543,7 +543,7 @@ void crossDateReplay()
 	  if (value.tag() == Ztc::TelemetryBody::AlertTelemetry) {
 	    auto alert = value.get<Ztc::TelemetryBody::AlertTelemetry>();
 	    if (auto slot = alert.field<Ztc::ZfField(AlertTelemetry, seqNo)>()) {
-	      ZiFB::write<uint64_t>(const_cast<uint8_t *>(slot), 1);
+	      Zfb::write<uint64_t>(const_cast<uint8_t *>(slot), 1);
 	      identityMutated =
 		data.pwrite(0, frame->data(), frame->length) == Zi::OK;
 	    }
