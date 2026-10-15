@@ -198,7 +198,7 @@ ZuAssert(sizeof(Contract) == 1);
 using TxBufAlloc =
   ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
 
-struct StreamLink {
+struct AppLink {
   ZuDerive(Wire, (ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">>));
 
   Wire		wire;
@@ -211,7 +211,7 @@ struct StreamLink {
   struct Tx : public ZiTxStream<Tx> {
     using Base = ZiTxStream<Tx>;
 
-    Tx(StreamLink &link_) : Base{64, 0, 0}, link{&link_} { }
+    Tx(AppLink &link_) : Base{64, 0, 0}, link{&link_} { }
     Tx(Tx &&) = default;
     Tx &operator =(Tx &&) = default;
 
@@ -229,7 +229,7 @@ struct StreamLink {
       return true;
     }
 
-    StreamLink	*link;
+    AppLink	*link;
   };
 
   bool streamLocalCap() const { return localCap; }
@@ -264,9 +264,9 @@ struct StreamConsumer {
   int		result = 1;
 };
 
-using LogicalStream = Zhttp::Stream<StreamLink>;
-using Dispatch = Zhttp::StreamDispatch<StreamLink, StreamConsumer>;
-ZuAssert(sizeof(LogicalStream) == sizeof(void *));
+using AppStream = Zhttp::Stream<AppLink>;
+using Dispatch = Zhttp::StreamDispatch<AppLink, StreamConsumer>;
+ZuAssert(sizeof(AppStream) == sizeof(void *));
 ZuAssert(sizeof(Dispatch) == sizeof(void *) * 2);
 
 struct TxLink {
@@ -1193,7 +1193,7 @@ void testStream()
 {
   ZuTestScope(testStream);
 
-  StreamLink link;
+  AppLink link;
   Zhttp::Stream stream{link};
   ZuCHECK(stream.localCap() && !stream.peerCap(),
     "logical-stream capabilities mismatch");

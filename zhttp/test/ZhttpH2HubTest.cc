@@ -39,7 +39,7 @@ struct State {
   uint16_t	port = 0;
 };
 
-struct FlowLogical : public ZmObject { };
+struct FlowAppLink : public ZmObject { };
 
 struct FlowApp {
   enum { Rx, Tx };
@@ -66,7 +66,7 @@ public:
   int shard = Rx;
 };
 
-struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
+struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   using BufAlloc = Zi::IOBufAlloc<
     Zhttp::Transport_::TxBufNode, 65544, 65544,
     ZuStringT<"Zhttp.H2.FlowTest">>;
@@ -115,7 +115,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowLogical> {
   void h2LocalEnd(uint32_t) { }
   void h2Cancel(uint32_t) { }
   bool h2Closed(uint32_t id) const { return streamClosed(id); }
-  void h2ResetLogical(uint32_t, Zhttp::H2::Error::T) { }
+  void h2ResetAppLink(uint32_t, Zhttp::H2::Error::T) { }
   void disconnect_(bool) { }
   void disconnectNative() {
     ++disconnects;
@@ -164,8 +164,8 @@ void runFlowCapacity()
   auto config = Zhttp::H2Config()
     .maxConcurrentStreams(2).maxQueuedFrames(16);
   ZuCHECK(wire.initWire(false, config), "initialize H2 flow harness");
-  ZmRef<FlowLogical> first = new FlowLogical;
-  ZmRef<FlowLogical> second = new FlowLogical;
+  ZmRef<FlowAppLink> first = new FlowAppLink;
+  ZmRef<FlowAppLink> second = new FlowAppLink;
   auto firstStream = wire.openLocalStream(first);
   auto secondStream = wire.openLocalStream(second);
   ZuCHECK(firstStream && secondStream,
@@ -234,8 +234,8 @@ void runAdmissionErrors()
     .maxConcurrentStreams(1).maxQueuedFrames(0);
   ZuCHECK(wire.initWire(false, config),
     "initialize strict-shard H2 admission harness");
-  ZmRef<FlowLogical> logical = new FlowLogical;
-  auto stream = wire.openLocalStream(logical);
+  ZmRef<FlowAppLink> appLink = new FlowAppLink;
+  auto stream = wire.openLocalStream(appLink);
   ZuCHECK(stream, "open strict-shard H2 stream");
   if (!stream) {
     wire.finalWire();
@@ -244,7 +244,7 @@ void runAdmissionErrors()
   uint32_t id = stream->id;
 
   unsigned handled = 0;
-  wire.logicalTxErrorFn(id, ZiTxErrorFn{
+  wire.appTxErrorFn(id, ZiTxErrorFn{
     [&app, &handled](ZeException &) {
       ZuCHECK(app.txInvoked(), "direct-Tx error callback runs on Tx shard");
       ++handled;
@@ -258,7 +258,7 @@ void runAdmissionErrors()
     "handled direct-Tx admission error does not disconnect");
 
   unsigned replaced = 0;
-  wire.logicalTxErrorFn(id, ZiTxErrorFn{
+  wire.appTxErrorFn(id, ZiTxErrorFn{
     [&app, &replaced](ZeException &) {
       ZuCHECK(app.txInvoked(), "replacement callback runs on Tx shard");
       ++replaced;
@@ -271,7 +271,7 @@ void runAdmissionErrors()
       wire.disconnectShard == FlowApp::Tx,
     "unhandled direct-Tx header rejection disconnects on Tx shard");
 
-  wire.logicalTxErrorFn(id, {});
+  wire.appTxErrorFn(id, {});
   app.runTx([&wire, id]() {
     ZuCHECK(!wire.sendFrame<false>(id, flowData(0)),
       "cleared callback leaves direct-Tx rejection unhandled");
@@ -280,7 +280,7 @@ void runAdmissionErrors()
     "callback clearing reaches the existing Tx window");
 
   unsigned rxHandled = 0;
-  wire.logicalTxErrorFn(id, ZiTxErrorFn{
+  wire.appTxErrorFn(id, ZiTxErrorFn{
     [&app, &rxHandled](ZeException &) {
       ZuCHECK(app.rxInvoked(), "Rx admission callback runs on Rx shard");
       ++rxHandled;
@@ -846,20 +846,20 @@ struct SharedServer : public Zhttp::TLS_::ServerHub<SharedServer> {
 };
 
 struct SharedH1Link :
-  public Zhttp::TLS_::ServerH1Logical<
+  public Zhttp::TLS_::ServerH1AppLink<
     SharedServer, SharedH1Link, SharedH1Session,
     Zhttp::TLS_::SrvLink<SharedServer>> {
-  using Base = Zhttp::TLS_::ServerH1Logical<
+  using Base = Zhttp::TLS_::ServerH1AppLink<
     SharedServer, SharedH1Link, SharedH1Session,
     Zhttp::TLS_::SrvLink<SharedServer>>;
   using Base::Base;
 };
 
 struct SharedH2Link :
-  public Zhttp::H2_::ServerLogical<
+  public Zhttp::H2_::ServerAppLink<
     SharedServer, SharedH2Link, ServerSession,
     Zhttp::TLS_::SrvLink<SharedServer>> {
-  using Base = Zhttp::H2_::ServerLogical<
+  using Base = Zhttp::H2_::ServerAppLink<
     SharedServer, SharedH2Link, ServerSession,
     Zhttp::TLS_::SrvLink<SharedServer>>;
   using Base::Base;
@@ -902,17 +902,17 @@ struct SharedClient :
 };
 
 struct SharedClientH1Link :
-  public Zhttp::TLS_::ClientH1Logical<
+  public Zhttp::TLS_::ClientH1AppLink<
     SharedClient, SharedClientH1Link, SharedClient::NativeLink> {
-  using Base = Zhttp::TLS_::ClientH1Logical<
+  using Base = Zhttp::TLS_::ClientH1AppLink<
     SharedClient, SharedClientH1Link, SharedClient::NativeLink>;
   using Base::Base;
 };
 
 struct SharedClientH2Link :
-  public Zhttp::H2_::ClientLogical<
+  public Zhttp::H2_::ClientAppLink<
     SharedClient, SharedClientH2Link, SharedClient::NativeLink> {
-  using Base = Zhttp::H2_::ClientLogical<
+  using Base = Zhttp::H2_::ClientAppLink<
     SharedClient, SharedClientH2Link, SharedClient::NativeLink>;
   using Base::Base;
 

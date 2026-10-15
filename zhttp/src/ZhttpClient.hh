@@ -51,20 +51,20 @@ struct ClientSessionTxState {
   enum { Idle, Active, Complete, Failed, Cancelled };
 };
 
-template <typename Logical, typename Heap = ZuVoid>
+template <typename AppLink, typename Heap = ZuVoid>
 struct ClientH2ClearState_ :
     Heap, ZmObject {
   using Active =
-    ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H2.ClearState">>;
+    ZtArray<ZmRef<AppLink>, ZtArrayHeapID<"Zhttp.H2.ClearState">>;
 
   Active	active;
 };
-template <typename Logical>
+template <typename AppLink>
 ZuDerive(ClientH2ClearStateHeap,
-  (ZmHeap<"Zhttp.H2.ClearState", ClientH2ClearState_<Logical>>));
-template <typename Logical>
+  (ZmHeap<"Zhttp.H2.ClearState", ClientH2ClearState_<AppLink>>));
+template <typename AppLink>
 using ClientH2ClearState =
-  ClientH2ClearState_<Logical, ClientH2ClearStateHeap<Logical>>;
+  ClientH2ClearState_<AppLink, ClientH2ClearStateHeap<AppLink>>;
 
 ZtEnumStruct(ZhttpAPI, ProtoPolicy, int8_t,
   ForceH3, PreferH3, DisableH3);
@@ -928,13 +928,13 @@ public:
 
 template <typename Link,
   typename = decltype(ZuDeclVal<const Link * &>()->id())>
-inline decltype(auto) ClientLogicalID_(const Link *link, int) {
+inline decltype(auto) ClientAppLinkID_(const Link *link, int) {
   return link->id();
 }
 
 template <typename Link,
   typename = decltype(ZuDeclVal<const Link * &>()->id)>
-inline decltype(auto) ClientLogicalID_(const Link *link, long) {
+inline decltype(auto) ClientAppLinkID_(const Link *link, long) {
   return link->id;
 }
 
@@ -1030,14 +1030,14 @@ public:
     return Base::init(ZuMv(params));
   }
 
-  template <typename Logical>
-  void connect(Logical *logical, Ztls::Host host, uint16_t port) {
-    ZmRef<Logical> logical_ = ZmRef(logical);
+  template <typename AppLink>
+  void connect(AppLink *appLink, Ztls::Host host, uint16_t port) {
+    ZmRef<AppLink> appLink_ = ZmRef(appLink);
     this->rxInvoke([
-      this, logical = ZuMv(logical_), host = ZuMv(host), port
+      this, appLink = ZuMv(appLink_), host = ZuMv(host), port
     ]() mutable {
-      logical->prepare_();
-      unsigned id = ClientLogicalID_(logical.ptr(), 0);
+      appLink->prepare_();
+      unsigned id = ClientAppLinkID_(appLink.ptr(), 0);
       ClientPoolKey key{host, port, id};
       auto poolEntry = m_pool->findPtr(key);
       ZmRef<Link> link;
@@ -1069,11 +1069,11 @@ public:
 	  poolEntry->owner = link;
 	else
 	  m_pool->add(ClientPoolEntry{ZuMv(key), link});
-	link->add(ZuMv(logical));
+	link->add(ZuMv(appLink));
 	link->connect(ZuMv(host), port);
 	return;
       }
-      link->add(ZuMv(logical));
+      link->add(ZuMv(appLink));
     });
   }
 
@@ -1193,14 +1193,14 @@ class CliLink :
   public Wire<CliLink<App, Heap>, typename App::Link> {
 public:
   using Hub = ClientHub<App>;
-  using Logical = typename App::Link;
+  using AppLink = typename App::Link;
   using Base = Ztls::CliLink<Hub, CliLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
-  using Wire_ = Wire<CliLink, Logical>;
+  using Wire_ = Wire<CliLink, AppLink>;
   using Base::up;
-  using Pending = ZtArray<ZmRef<Logical>,
+  using Pending = ZtArray<ZmRef<AppLink>,
     ZtArrayHeapID<"Zhttp.H2">>;
-  using Active = ZtArray<ZmRef<Logical>,
+  using Active = ZtArray<ZmRef<AppLink>,
     ZtArrayHeapID<"Zhttp.H2">>;
 
   CliLink(
@@ -1220,18 +1220,18 @@ public:
   unsigned id() const { return m_id; }
   unsigned hubSlot() const { return m_hubSlot; }
   void hubSlot(unsigned slot) { m_hubSlot = slot; }
-  void add(ZmRef<Logical> logical) {
+  void add(ZmRef<AppLink> appLink) {
     if (pendingCount_() >= m_pendingMax &&
 	(!m_ready || !Wire_::canOpenLocalStream())) {
-      logical->connectFailed_(false);
+      appLink->connectFailed_(false);
       return;
     }
-    logical->native(this);
+    appLink->native(this);
     if (!m_ready || pending_() || !Wire_::canOpenLocalStream()) {
-      m_pending.push(ZuMv(logical));
+      m_pending.push(ZuMv(appLink));
       return;
     }
-    openNow_(ZuMv(logical));
+    openNow_(ZuMv(appLink));
   }
   bool available() const {
     return isUp() && !m_draining &&
@@ -1261,8 +1261,8 @@ public:
     if (!isUp()) return;
     up(false);
     Wire_::stopWire();
-    auto clear = ZmRef<ClientH2ClearState<Logical>>{
-      new ClientH2ClearState<Logical>{}};
+    auto clear = ZmRef<ClientH2ClearState<AppLink>>{
+      new ClientH2ClearState<AppLink>{}};
     auto pending = ZuMv(m_pending);
     unsigned pendingHead = m_pendingHead;
     bool cancelled = m_stopping;
@@ -1270,7 +1270,7 @@ public:
     m_pendingHead = 0;
     Wire_::clearStreams(
       [clear](auto &entry) {
-	if (!entry.notified) clear->active.push(entry.logical);
+	if (!entry.notified) clear->active.push(entry.appLink);
       }, [
       link = ZmRef(this), clear = ZuMv(clear),
       pending = ZuMv(pending), pendingHead, cancelled, peer
@@ -1296,26 +1296,26 @@ public:
   auto txStream_() { return Base::txStream_(); }
   void disconnectNative() { Base::disconnect(); }
 
-  void openNow_(ZmRef<Logical> logical) {
-    auto entry = Wire_::openLocalStream(logical);
+  void openNow_(ZmRef<AppLink> appLink) {
+    auto entry = Wire_::openLocalStream(appLink);
     if (!entry) {
-      logical->connectFailed_(false);
-      logical->native({});
+      appLink->connectFailed_(false);
+      appLink->native({});
       return;
     }
-    logical->stream(entry->id);
-    logical->connected_(ProfileTraits<H2TLS>::apply({
+    appLink->stream(entry->id);
+    appLink->connected_(ProfileTraits<H2TLS>::apply({
       .alpn = "h2",
       .version = uint32_t(13),
       .transport = Transport::TLS,
       .secure = true
     }));
   }
-  auto logicalTx(uint32_t id, unsigned plan = unsigned(-1)) {
+  auto appTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return HeaderBlock<CliLink>{
       *this, Wire_::encoder(), id, Wire_::peerFrameSize(), plan};
   }
-  auto logicalTx_(uint32_t id, unsigned plan = unsigned(-1)) {
+  auto appTx_(uint32_t id, unsigned plan = unsigned(-1)) {
     ZmAssert(this->app()->txInvoked());
     return HeaderBlock<CliLink, false>{
       *this, Wire_::encoder(), id, Wire_::template peerFrameSize<false>(), plan};
@@ -1324,12 +1324,12 @@ public:
     const auto &user = *this->app()->user();
     return AppHPackSeedPlans<ZuDecay<decltype(user)>>::get(user);
   }
-  void close(Logical *logical, uint32_t id) {
+  void close(AppLink *appLink, uint32_t id) {
     this->app()->rxInvoke([
-      link = this, logical = ZmRef(logical), id
+      link = this, appLink = ZmRef(appLink), id
     ]() mutable {
       auto entry = link->h2Stream(id);
-      if (!entry || entry->logical.ptr() != logical.ptr()) return;
+      if (!entry || entry->appLink.ptr() != appLink.ptr()) return;
       link->rst_(id, Error::Cancel);
       link->notify_(id, false);
     });
@@ -1347,12 +1347,12 @@ public:
       if (entry->localEnd) closeLater_(id, true);
     }
   }
-  void h2ResetLogical(uint32_t id, Error::T) { notify_(id, true); }
+  void h2ResetAppLink(uint32_t id, Error::T) { notify_(id, true); }
   void h2Cancel(uint32_t id) {
     rst_(id, Error::Cancel);
     notify_(id, false);
   }
-  auto h2OpenPeer(uint32_t) -> Stream<Logical> * { return nullptr; }
+  auto h2OpenPeer(uint32_t) -> Stream<AppLink> * { return nullptr; }
   bool h2Closed(uint32_t id) const { return Wire_::streamClosed(id); }
   Error::T h2OpenError(uint32_t id) const {
     return h2Closed(id) ? Error::StreamClosed : Error::ProtocolError;
@@ -1398,20 +1398,20 @@ private:
       bool cancelled, bool peer) {
     unsigned n = 0, l = active.length(), m = pending.length();
     while (n < ClientWorkBatch && activei < l) {
-      auto logical = ZuMv(active[activei++]);
+      auto appLink = ZuMv(active[activei++]);
       ++n;
-      if (logical->result() == ResultCode::OK)
-	logical->result_(cancelled ?
+      if (appLink->result() == ResultCode::OK)
+	appLink->result_(cancelled ?
 	  ResultCode::Cancelled : ResultCode::Indeterminate);
-      logical->disconnected_(peer);
+      appLink->disconnected_(peer);
     }
     while (n < ClientWorkBatch && pendingi < m) {
-      auto logical = ZuMv(pending[pendingi++]);
+      auto appLink = ZuMv(pending[pendingi++]);
       ++n;
-      if (logical->result() == ResultCode::OK)
-	logical->result_(cancelled ?
+      if (appLink->result() == ResultCode::OK)
+	appLink->result_(cancelled ?
 	  ResultCode::Cancelled : ResultCode::Unprocessed);
-      logical->connectFailed_(false);
+      appLink->connectFailed_(false);
     }
     if (activei < l || pendingi < m) {
       this->app()->rxRun([
@@ -1430,10 +1430,10 @@ private:
     unsigned end = i + ClientWorkBatch;
     if (end > pending.length()) end = pending.length();
     while (i < end) {
-      auto logical = ZuMv(pending[i++]);
-      if (logical->result() == ResultCode::OK)
-	logical->result_(ResultCode::Unprocessed);
-      logical->connectFailed_(transient);
+      auto appLink = ZuMv(pending[i++]);
+      if (appLink->result() == ResultCode::OK)
+	appLink->result_(ResultCode::Unprocessed);
+      appLink->connectFailed_(transient);
     }
     if (i < pending.length()) {
       this->app()->rxRun([
@@ -1489,12 +1489,12 @@ private:
     unsigned n = pendingCount_();
     if (n > H2_::RequeueBatch) n = H2_::RequeueBatch;
     for (unsigned i = 0; i < n; ++i) {
-      auto logical = ZuMv(m_pending[m_pendingHead++]);
+      auto appLink = ZuMv(m_pending[m_pendingHead++]);
       if (m_stopping) {
-	logical->result_(ResultCode::Cancelled);
-	logical->connectFailed_(false);
+	appLink->result_(ResultCode::Cancelled);
+	appLink->connectFailed_(false);
       } else {
-	logical->connect(m_host, m_port);
+	appLink->connect(m_host, m_port);
       }
     }
     if (pending_()) {
@@ -1528,11 +1528,11 @@ private:
     auto entry = Wire_::h2Stream(id);
     if (!entry || entry->notified) return;
     entry->notified = true;
-    auto logical = entry->logical;
+    auto appLink = entry->appLink;
     Wire_::removeStream(id, [
-      link = this, logical = ZuMv(logical), peer
+      link = this, appLink = ZuMv(appLink), peer
     ]() mutable {
-      logical->disconnected_(peer);
+      appLink->disconnected_(peer);
       link->admit_();
     });
   }
@@ -1547,7 +1547,7 @@ private:
       uint32_t id = m_goawayNext;
       m_goawayNext = id >= 2 ? id - 2 : 0;
       if (auto entry = Wire_::h2Stream(id)) {
-	entry->logical->result_(ResultCode::Unprocessed);
+	entry->appLink->result_(ResultCode::Unprocessed);
 	notify_(id, true);
       }
     }
@@ -1582,11 +1582,11 @@ private:
 };
 
 template <typename App, typename Impl, typename NativeLink>
-class ClientLogical : public ZmObject, public LogicalStream<Impl> {
+class ClientAppLink : public ZmObject, public StreamOps<Impl> {
 public:
   enum { TLS = 1, Multiplexed = 1 };
 
-  ClientLogical(App *app) : m_app{app} {
+  ClientAppLink(App *app) : m_app{app} {
 #ifdef ZmObject_DEBUG
     this->ZmObject::debug();
 #endif
@@ -1610,15 +1610,15 @@ public:
     connect(endpoint.target, endpoint.port);
   }
   auto txStream(unsigned plan = unsigned(-1)) {
-    return m_native->logicalTx(m_streamID, plan);
+    return m_native->appTx(m_streamID, plan);
   }
   auto txStream_(unsigned plan = unsigned(-1)) {
-    return m_native->logicalTx_(m_streamID, plan);
+    return m_native->appTx_(m_streamID, plan);
   }
   void txErrorFn(ZiTxErrorFn fn) {
     m_txErrorFn = ZuMv(fn);
     if (m_native && m_streamID)
-      m_native->logicalTxErrorFn(m_streamID, m_txErrorFn);
+      m_native->appTxErrorFn(m_streamID, m_txErrorFn);
   }
   template <typename Parser, typename Rx>
   auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
@@ -1667,7 +1667,7 @@ public:
   void stream(uint32_t id) {
     m_streamID = id;
     if (m_native && m_streamID)
-      m_native->logicalTxErrorFn(m_streamID, m_txErrorFn);
+      m_native->appTxErrorFn(m_streamID, m_txErrorFn);
   }
   template <typename State> void responseHeadersParsed(State *) { }
   template <typename State> void responseBodyBytes(State *) { }
@@ -1687,9 +1687,9 @@ private:
 
 template <typename App, typename Impl>
 class ClientLink<App, Impl, H2TLS> :
-  public H2_::ClientLogical<App, Impl, H2_::CliLinkT<App>> {
+  public H2_::ClientAppLink<App, Impl, H2_::CliLinkT<App>> {
   using Base =
-    H2_::ClientLogical<App, Impl, H2_::CliLinkT<App>>;
+    H2_::ClientAppLink<App, Impl, H2_::CliLinkT<App>>;
 
 public:
   using Base::Base;
@@ -1713,25 +1713,25 @@ public:
 
 namespace TLS_ {
 
-template <typename App, typename H1Logical, typename H2Logical>
+template <typename App, typename H1AppLink, typename H2AppLink>
 class ClientHub;
 template <
-  typename App, typename H1Logical, typename H2Logical,
+  typename App, typename H1AppLink, typename H2AppLink,
   typename Heap = ZuVoid>
 class CliLink;
-template <typename App, typename H1Logical, typename H2Logical>
+template <typename App, typename H1AppLink, typename H2AppLink>
 ZuDerive(CliLinkHeap,
-  (ZmHeap<"Zhttp.TLS.Link", CliLink<App, H1Logical, H2Logical>>));
-template <typename App, typename H1Logical, typename H2Logical>
-using CliLinkT = CliLink<App, H1Logical, H2Logical,
-  CliLinkHeap<App, H1Logical, H2Logical>>;
+  (ZmHeap<"Zhttp.TLS.Link", CliLink<App, H1AppLink, H2AppLink>>));
+template <typename App, typename H1AppLink, typename H2AppLink>
+using CliLinkT = CliLink<App, H1AppLink, H2AppLink,
+  CliLinkHeap<App, H1AppLink, H2AppLink>>;
 
 template <typename App, typename Impl, typename NativeLink>
-class ClientH1Logical : public ZmObject {
+class ClientH1AppLink : public ZmObject {
 public:
   enum { TLS = 1, Multiplexed = 0 };
 
-  ClientH1Logical(App *app) : m_app{app} {
+  ClientH1AppLink(App *app) : m_app{app} {
 #ifdef ZmObject_DEBUG
     this->ZmObject::debug();
 #endif
@@ -1817,21 +1817,21 @@ private:
   int8_t	m_result = ResultCode::OK;
 };
 
-template <typename H1Logical, typename H2Logical>
+template <typename H1AppLink, typename H2AppLink>
 struct ClientChoice {
-  ZmRef<H1Logical>	h1;
-  ZmRef<H2Logical>	h2;
+  ZmRef<H1AppLink>	h1;
+  ZmRef<H2AppLink>	h2;
 };
 
-template <typename App, typename H1Logical_, typename H2Logical_>
+template <typename App, typename H1AppLink_, typename H2AppLink_>
 class ClientHub :
-  public Ztls::Client<ClientHub<App, H1Logical_, H2Logical_>> {
+  public Ztls::Client<ClientHub<App, H1AppLink_, H2AppLink_>> {
 public:
   using Base = Ztls::Client<ClientHub>;
-  using Link = CliLinkT<App, H1Logical_, H2Logical_>;
-  using H1Logical = H1Logical_;
-  using H2Logical = H2Logical_;
-  using Choice = ClientChoice<H1Logical, H2Logical>;
+  using Link = CliLinkT<App, H1AppLink_, H2AppLink_>;
+  using H1AppLink = H1AppLink_;
+  using H2AppLink = H2AppLink_;
+  using Choice = ClientChoice<H1AppLink, H2AppLink>;
   using Pending = ZtArray<Choice,
     ZtArrayHeapID<"Zhttp.H2">>;
   using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.H2">>;
@@ -1865,10 +1865,10 @@ public:
     return Base::init(TLS_::clientParams(hub, config));
   }
   void connect(
-    H1Logical *h1, H2Logical *h2, Ztls::Host host, uint16_t port,
+    H1AppLink *h1, H2AppLink *h2, Ztls::Host host, uint16_t port,
     unsigned id, ZiIP remote = {}) {
-    ZmRef<H1Logical> h1_ = ZmRef(h1);
-    ZmRef<H2Logical> h2_ = ZmRef(h2);
+    ZmRef<H1AppLink> h1_ = ZmRef(h1);
+    ZmRef<H2AppLink> h2_ = ZmRef(h2);
     this->rxInvoke([
       this, h1 = ZuMv(h1_), h2 = ZuMv(h2_),
       host = ZuMv(host), remote = ZuMv(remote), port, id
@@ -2085,28 +2085,28 @@ private:
 };
 
 template <
-  typename App, typename H1Logical_, typename H2Logical_, typename Heap>
+  typename App, typename H1AppLink_, typename H2AppLink_, typename Heap>
 class CliLink :
   public Heap,
   public Ztls::CliLink<
-    ClientHub<App, H1Logical_, H2Logical_>,
-    CliLink<App, H1Logical_, H2Logical_, Heap>,
+    ClientHub<App, H1AppLink_, H2AppLink_>,
+    CliLink<App, H1AppLink_, H2AppLink_, Heap>,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
   public H2_::Wire<
-    CliLink<App, H1Logical_, H2Logical_, Heap>, H2Logical_> {
+    CliLink<App, H1AppLink_, H2AppLink_, Heap>, H2AppLink_> {
 public:
-  using Hub = ClientHub<App, H1Logical_, H2Logical_>;
-  using H1Logical = H1Logical_;
-  using H2Logical = H2Logical_;
+  using Hub = ClientHub<App, H1AppLink_, H2AppLink_>;
+  using H1AppLink = H1AppLink_;
+  using H2AppLink = H2AppLink_;
   using Choice = typename Hub::Choice;
   using Base = Ztls::CliLink<Hub, CliLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
-  using Wire = H2_::Wire<CliLink, H2Logical>;
+  using Wire = H2_::Wire<CliLink, H2AppLink>;
   using Base::up;
   using Pending = typename Hub::Pending;
-  using H1Active = ZtArray<ZmRef<H1Logical>,
+  using H1Active = ZtArray<ZmRef<H1AppLink>,
     ZtArrayHeapID<"Zhttp.H1.TLS.Active">>;
-  using Active = ZtArray<ZmRef<H2Logical>,
+  using Active = ZtArray<ZmRef<H2AppLink>,
     ZtArrayHeapID<"Zhttp.H2">>;
 
   CliLink(
@@ -2211,8 +2211,8 @@ public:
     Wire::stopWire();
     auto h1 = ZuMv(m_h1);
     m_h1.init_();
-    auto clear = ZmRef<ClientH2ClearState<H2Logical>>{
-      new ClientH2ClearState<H2Logical>{}};
+    auto clear = ZmRef<ClientH2ClearState<H2AppLink>>{
+      new ClientH2ClearState<H2AppLink>{}};
     bool replacing = m_replacing;
     bool cancelled = m_stopping;
     auto pending = ZuMv(m_pending);
@@ -2221,7 +2221,7 @@ public:
     m_pendingHead = 0;
     Wire::clearStreams(
       [clear](auto &entry) {
-	if (!entry.notified) clear->active.push(entry.logical);
+	if (!entry.notified) clear->active.push(entry.appLink);
       }, [
       link = ZmRef(this), h1 = ZuMv(h1), clear = ZuMv(clear),
       pending = ZuMv(pending), pendingHead, replacing, cancelled, peer
@@ -2254,11 +2254,11 @@ public:
   }
   auto txStream() { return Base::txStream(); }
   auto txStream_() { return Base::txStream_(); }
-  auto logicalTx(uint32_t id, unsigned plan = unsigned(-1)) {
+  auto appTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return H2_::HeaderBlock<CliLink>{
       *this, this->encoder(), id, this->peerFrameSize(), plan};
   }
-  auto logicalTx_(uint32_t id, unsigned plan = unsigned(-1)) {
+  auto appTx_(uint32_t id, unsigned plan = unsigned(-1)) {
     ZmAssert(this->app()->txInvoked());
     return H2_::HeaderBlock<CliLink, false>{
       *this, this->encoder(), id, this->template peerFrameSize<false>(), plan};
@@ -2272,15 +2272,15 @@ public:
     Base::disconnect();
   }
   template <typename Done>
-  void releaseH1(H1Logical *logical, Done &&done) {
+  void releaseH1(H1AppLink *appLink, Done &&done) {
     this->app()->rxRun([
-      link = this, logical = ZmRef(logical),
+      link = this, appLink = ZmRef(appLink),
       done = ZuFwd<Done>(done)
     ]() mutable {
       bool released = false;
-      unsigned i = logical->nativeSlot();
+      unsigned i = appLink->nativeSlot();
       if (i < link->m_h1.length() &&
-	  link->m_h1[i].ptr() == logical.ptr()) {
+	  link->m_h1[i].ptr() == appLink.ptr()) {
 	unsigned last = link->m_h1.length() - 1;
 	link->m_h1[i]->released_();
 	if (i != last) {
@@ -2304,12 +2304,12 @@ public:
     });
   }
 
-  void close(H2Logical *logical, uint32_t id) {
+  void close(H2AppLink *appLink, uint32_t id) {
     this->app()->rxInvoke([
-      link = this, logical = ZmRef(logical), id
+      link = this, appLink = ZmRef(appLink), id
     ]() mutable {
       auto entry = link->h2Stream(id);
-      if (!entry || entry->logical.ptr() != logical.ptr()) return;
+      if (!entry || entry->appLink.ptr() != appLink.ptr()) return;
       link->rst_(id, H2::Error::Cancel);
       link->notify_(id, false);
     });
@@ -2327,14 +2327,14 @@ public:
       if (entry->localEnd) closeLater_(id, true);
     }
   }
-  void h2ResetLogical(uint32_t id, H2::Error::T) {
+  void h2ResetAppLink(uint32_t id, H2::Error::T) {
     notify_(id, true);
   }
   void h2Cancel(uint32_t id) {
     rst_(id, H2::Error::Cancel);
     notify_(id, false);
   }
-  auto h2OpenPeer(uint32_t) -> H2_::Stream<H2Logical> * {
+  auto h2OpenPeer(uint32_t) -> H2_::Stream<H2AppLink> * {
     return nullptr;
   }
   bool h2Closed(uint32_t id) const { return Wire::streamClosed(id); }
@@ -2397,20 +2397,20 @@ private:
     unsigned n = 0, l = h1.length(), m = active.length(),
       k = pending.length();
     while (n < ClientWorkBatch && h1i < l) {
-      auto logical = ZuMv(h1[h1i++]);
+      auto appLink = ZuMv(h1[h1i++]);
       ++n;
-      if (logical->result() == ResultCode::OK)
-	logical->result_(cancelled ?
+      if (appLink->result() == ResultCode::OK)
+	appLink->result_(cancelled ?
 	  ResultCode::Cancelled : ResultCode::Indeterminate);
-      logical->disconnected_(peer);
+      appLink->disconnected_(peer);
     }
     while (n < ClientWorkBatch && activei < m) {
-      auto logical = ZuMv(active[activei++]);
+      auto appLink = ZuMv(active[activei++]);
       ++n;
-      if (logical->result() == ResultCode::OK)
-	logical->result_(cancelled ?
+      if (appLink->result() == ResultCode::OK)
+	appLink->result_(cancelled ?
 	  ResultCode::Cancelled : ResultCode::Indeterminate);
-      logical->disconnected_(peer);
+      appLink->disconnected_(peer);
     }
     if (replacing)
       pendingi = k;
@@ -2474,16 +2474,16 @@ private:
 	m_h1.push(ZuMv(choice.h1));
 	break;
       case Version::H2: {
-	auto logical = ZuMv(choice.h2);
-	logical->native(this);
-	auto entry = Wire::openLocalStream(logical);
+	auto appLink = ZuMv(choice.h2);
+	appLink->native(this);
+	auto entry = Wire::openLocalStream(appLink);
 	if (!entry) {
-	  logical->connectFailed_(false);
-	  logical->native({});
+	  appLink->connectFailed_(false);
+	  appLink->native({});
 	  return;
 	}
-	logical->stream(entry->id);
-	logical->connected_(ProfileTraits<H2TLS>::apply({
+	appLink->stream(entry->id);
+	appLink->connected_(ProfileTraits<H2TLS>::apply({
 	  .alpn = "h2",
 	  .version = uint32_t(m_tlsVersion),
 	  .transport = Transport::TLS,
@@ -2595,11 +2595,11 @@ private:
     auto entry = Wire::h2Stream(id);
     if (!entry || entry->notified) return;
     entry->notified = true;
-    auto logical = entry->logical;
+    auto appLink = entry->appLink;
     Wire::removeStream(id, [
-      link = this, logical = ZuMv(logical), peer
+      link = this, appLink = ZuMv(appLink), peer
     ]() mutable {
-      logical->disconnected_(peer);
+      appLink->disconnected_(peer);
       link->admit_();
     });
   }
@@ -2614,7 +2614,7 @@ private:
       uint32_t id = m_goawayNext;
       m_goawayNext = id >= 2 ? id - 2 : 0;
       if (auto entry = Wire::h2Stream(id)) {
-	entry->logical->result_(ResultCode::Unprocessed);
+	entry->appLink->result_(ResultCode::Unprocessed);
 	notify_(id, true);
       }
     }
@@ -2662,14 +2662,14 @@ namespace H3_ {
 
 template <typename App>
 class ClientHub;
-template <typename App, typename Logical, typename Heap = ZuVoid>
+template <typename App, typename AppLink, typename Heap = ZuVoid>
 struct CliLink;
-template <typename App, typename Logical>
-ZuDerive(CliLinkHeap, (ZmHeap<"Zhttp.H3.Link", CliLink<App, Logical>>));
-template <typename App, typename Logical>
+template <typename App, typename AppLink>
+ZuDerive(CliLinkHeap, (ZmHeap<"Zhttp.H3.Link", CliLink<App, AppLink>>));
+template <typename App, typename AppLink>
 using CliLinkT =
-  CliLink<App, Logical, CliLinkHeap<App, Logical>>;
-template <typename App, typename Logical>
+  CliLink<App, AppLink, CliLinkHeap<App, AppLink>>;
+template <typename App, typename AppLink>
 struct ClientStream;
 struct CliLinkKey {
   Zquic::Host	host;
@@ -2829,18 +2829,18 @@ private:
     return false;
   }
 
-  template <typename Logical>
+  template <typename AppLink>
   void connect_(
-    Logical *logical_, Zquic::Host host, uint16_t port, ZiIP remote) {
-    using Link = CliLinkT<App, Logical>;
-    ZmRef<Logical> logical = ZmRef(logical_);
+    AppLink *appLink_, Zquic::Host host, uint16_t port, ZiIP remote) {
+    using Link = CliLinkT<App, AppLink>;
+    ZmRef<AppLink> appLink = ZmRef(appLink_);
     this->rxInvoke([
-      this, logical = ZuMv(logical), host = ZuMv(host),
+      this, appLink = ZuMv(appLink), host = ZuMv(host),
       remote = ZuMv(remote), port
     ]() mutable {
-      logical->prepare_();
+      appLink->prepare_();
       ZmRef<Link> link;
-      unsigned id = ClientLogicalID_(logical.ptr(), 0);
+      unsigned id = ClientAppLinkID_(appLink.ptr(), 0);
       CliLinkKey key{host, remote, port, id};
       if (auto entry = m_links->findPtr(key))
 	link = entry->owner.object<Link>();
@@ -2878,11 +2878,11 @@ private:
 	    static_cast<Link *>(ptr)->abort();
 	  }
 	});
-	link->add(ZuMv(logical));
+	link->add(ZuMv(appLink));
 	link->connect(ZuMv(host), port, ZuMv(remote));
 	return;
       }
-      link->add(ZuMv(logical));
+      link->add(ZuMv(appLink));
     });
   }
 
@@ -3029,14 +3029,14 @@ private:
   bool		m_stopPublishing = false;
 };
 
-template <typename App, typename Logical>
+template <typename App, typename AppLink>
 struct ClientStream :
   public Zquic::CliStream<
-    CliLinkT<App, Logical>, ClientStream<App, Logical>>,
-  public H3::CxnStream<ClientStream<App, Logical>,
-    H3::Cxn<CliLinkT<App, Logical>,
-      ZmRef<ClientStream<App, Logical>>>> {
-  using Link = CliLinkT<App, Logical>;
+    CliLinkT<App, AppLink>, ClientStream<App, AppLink>>,
+  public H3::CxnStream<ClientStream<App, AppLink>,
+    H3::Cxn<CliLinkT<App, AppLink>,
+      ZmRef<ClientStream<App, AppLink>>>> {
+  using Link = CliLinkT<App, AppLink>;
   using Base = Zquic::CliStream<Link, ClientStream>;
   using H3Cxn = H3::Cxn<Link, ZmRef<ClientStream>>;
   using CxnStream = H3::CxnStream<ClientStream, H3Cxn>;
@@ -3045,8 +3045,8 @@ struct ClientStream :
   int process(Zquic::RxStream &rx) {
     if (Zquic::StreamID::uni(uint64_t(this->id())))
       return CxnStream::process(*this);
-    if (!logical) return -1;
-    int rc = logical->process_(rx);
+    if (!appLink) return -1;
+    int rc = appLink->process_(rx);
     if (rc < 0) return 0; // parser has scheduled a stream-local reset
     if (this->rxComplete()) this->link()->remoteEnd(this);
     return rc;
@@ -3054,27 +3054,27 @@ struct ClientStream :
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
 
-  ZmRef<Logical>	logical;
+  ZmRef<AppLink>	appLink;
   uint32_t		slot = QueueSlot::Invalid;
   bool		localEnd = false;
   bool		remoteEnd = false;
   bool		closing = false;
 };
 
-template <typename App, typename Logical, typename Heap>
+template <typename App, typename AppLink, typename Heap>
 struct CliLink :
   public Heap,
-  public Zquic::CliLink<ClientHub<App>, CliLink<App, Logical, Heap>,
-    ClientStream<App, Logical>> {
+  public Zquic::CliLink<ClientHub<App>, CliLink<App, AppLink, Heap>,
+    ClientStream<App, AppLink>> {
   using Hub = ClientHub<App>;
-  using Stream = ClientStream<App, Logical>;
+  using Stream = ClientStream<App, AppLink>;
   using Base = Zquic::CliLink<Hub, CliLink, Stream>;
   using StreamRef = ZmRef<Stream>;
   using H3Cxn = H3::Cxn<CliLink, StreamRef>;
   using Pending =
-    ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H3.ClientPending">>;
+    ZtArray<ZmRef<AppLink>, ZtArrayHeapID<"Zhttp.H3.ClientPending">>;
   using Waiting =
-    ZtArray<ZmRef<Logical>, ZtArrayHeapID<"Zhttp.H3.ClientWaiting">>;
+    ZtArray<ZmRef<AppLink>, ZtArrayHeapID<"Zhttp.H3.ClientWaiting">>;
   using Streams =
     ZtArray<StreamRef, ZtArrayHeapID<"Zhttp.H3.ClientStreams">>;
   using Base::Base;
@@ -3132,18 +3132,18 @@ struct CliLink :
     capacityTx_();
   }
 
-  void add(ZmRef<Logical> logical) {
-    logical->native(ZmRef(this));
+  void add(ZmRef<AppLink> appLink) {
+    appLink->native(ZmRef(this));
     if (!ready || readyDraining) {
-      queue_(pending, pendingLive, QueueSlot::Pending, ZuMv(logical));
+      queue_(pending, pendingLive, QueueSlot::Pending, ZuMv(appLink));
       return;
     }
-    open(ZuMv(logical));
+    open(ZuMv(appLink));
   }
-  void open(ZmRef<Logical> logical) {
+  void open(ZmRef<AppLink> appLink) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical stream admission outside Rx thread", return);
-    queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(logical));
+    queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(appLink));
     this->app()->txRun([link = ZmRef(this)]() mutable {
       auto stream = link->stream(Zquic::StreamType::Duplex);
       link->capacityTx_();
@@ -3153,12 +3153,12 @@ struct CliLink :
       ]() mutable { link->streamed(ZuMv(stream)); });
     });
   }
-  void opened(ZmRef<Logical> logical, StreamRef stream) {
-    stream->logical = logical;
+  void opened(ZmRef<AppLink> appLink, StreamRef stream) {
+    stream->appLink = appLink;
     stream->slot = streams.length();
     streams.push(stream);
-    logical->stream(stream.ptr());
-    logical->connected_(ProfileTraits<H3QUIC>::apply({
+    appLink->stream(stream.ptr());
+    appLink->connected_(ProfileTraits<H3QUIC>::apply({
       .alpn = "h3",
       .version = Zquic::Version1,
       .transport = Transport::QUIC,
@@ -3240,8 +3240,8 @@ struct CliLink :
     while (teardownStream < end) {
       auto stream = ZuMv(streams[teardownStream++]);
       stream->slot = QueueSlot::Invalid;
-      auto logical = ZuMv(stream->logical);
-      if (logical) logical->disconnected_(closePeer);
+      auto appLink = ZuMv(stream->appLink);
+      if (appLink) appLink->disconnected_(closePeer);
     }
     if (teardownStream < streams.length()) {
       this->app()->rxRun([
@@ -3253,7 +3253,7 @@ struct CliLink :
   }
   void endpointDownPending_() {
     if (!clearQueueBatch_(pending, pendingHead, pendingLive,
-	[](Logical *logical) { logical->connectFailed_(false); })) {
+	[](AppLink *appLink) { appLink->connectFailed_(false); })) {
       this->app()->rxRun([
 	link = ZmRef(this)]() mutable { link->endpointDownPending_(); });
       return;
@@ -3262,7 +3262,7 @@ struct CliLink :
   }
   void endpointDownWaiting_() {
     if (!clearQueueBatch_(waiting, waitingHead, waitingLive,
-	[](Logical *logical) { logical->connectFailed_(false); })) {
+	[](AppLink *appLink) { appLink->connectFailed_(false); })) {
       this->app()->rxRun([
 	link = ZmRef(this)]() mutable { link->endpointDownWaiting_(); });
       return;
@@ -3285,14 +3285,14 @@ struct CliLink :
     this->app()->removeLink(this);
     connectFailedPending_();
   }
-  void close(Logical *logical, Stream *stream) {
+  void close(AppLink *appLink, Stream *stream) {
     auto link = this;
     this->app()->rxInvoke(link, [
       link,
-      logical = ZmRef(logical),
+      appLink = ZmRef(appLink),
       stream = ZmRef(stream)
     ]() mutable {
-      link->close_(ZuMv(logical), ZuMv(stream));
+      link->close_(ZuMv(appLink), ZuMv(stream));
       return link;
     });
   }
@@ -3308,7 +3308,7 @@ struct CliLink :
   void finish_(StreamRef stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical end outside Rx thread", return);
-    if (!stream || !stream->logical || stream->localEnd) return;
+    if (!stream || !stream->appLink || stream->localEnd) return;
     stream->localEnd = true;
     if (stream->remoteEnd) closeLater_(stream, false);
     this->send(ZuMv(stream), "", true);
@@ -3316,7 +3316,7 @@ struct CliLink :
   void remoteEnd(Stream *stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 remote logical end outside Rx thread", return);
-    if (!stream || !stream->logical || stream->remoteEnd) return;
+    if (!stream || !stream->appLink || stream->remoteEnd) return;
     stream->remoteEnd = true;
     if (stream->localEnd) closeLater_(stream, true);
   }
@@ -3338,20 +3338,20 @@ struct CliLink :
     migrationDone = true;
     return false;
   }
-  void close_(ZmRef<Logical> logical, StreamRef stream) {
+  void close_(ZmRef<AppLink> appLink, StreamRef stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
       "H3 logical close outside Rx thread", return);
     if (!stream) {
-      removeQueued_(logical.ptr());
-      logical->native({});
-      logical->disconnected_(false);
+      removeQueued_(appLink.ptr());
+      appLink->native({});
+      appLink->disconnected_(false);
       return;
     }
-    if (stream->logical.ptr() != logical.ptr()) return;
+    if (stream->appLink.ptr() != appLink.ptr()) return;
     (void)this->send(stream, "", true);
-    stream->logical = nullptr;
+    stream->appLink = nullptr;
     removeStream_(stream);
-    logical->disconnected_(false);
+    appLink->disconnected_(false);
   }
   void streamed(StreamRef stream) {
     ZiAssert(this->app()->rxInvoked(), "Zhttp", (),
@@ -3360,8 +3360,8 @@ struct CliLink :
 	Zquic::StreamID::server(uint64_t(stream->id())) ||
 	Zquic::StreamID::uni(uint64_t(stream->id())))
       return;
-    auto logical = shift_(waiting, waitingHead, waitingLive);
-    if (!logical) {
+    auto appLink = shift_(waiting, waitingHead, waitingLive);
+    if (!appLink) {
       if (waitingLive) {
 	this->app()->rxRun([
 	  link = ZmRef(this), stream = ZuMv(stream)
@@ -3371,7 +3371,7 @@ struct CliLink :
       (void)this->send(stream, "", true);
       return;
     }
-    opened(ZuMv(logical), ZuMv(stream));
+    opened(ZuMv(appLink), ZuMv(stream));
   }
   void streamResetReceived(StreamRef stream, uint64_t error, uint64_t) {
     if (!stream) return;
@@ -3426,9 +3426,9 @@ public:
   void h3ReadyBatch_() {
     unsigned n = 0;
     while (n++ < ClientWorkBatch) {
-      auto logical = shift_(pending, pendingHead, pendingLive);
-      if (!logical) break;
-      open(ZuMv(logical));
+      auto appLink = shift_(pending, pendingHead, pendingLive);
+      if (!appLink) break;
+      open(ZuMv(appLink));
     }
     if (pendingLive) {
       this->app()->rxRun([
@@ -3440,8 +3440,8 @@ public:
 
   void connectFailedPending_() {
     if (!clearQueueBatch_(pending, pendingHead, pendingLive,
-	[this](Logical *logical) {
-	  logical->connectFailed_(failTransient);
+	[this](AppLink *appLink) {
+	  appLink->connectFailed_(failTransient);
 	})) {
       this->app()->rxRun([
 	link = ZmRef(this)]() mutable { link->connectFailedPending_(); });
@@ -3451,8 +3451,8 @@ public:
   }
   void connectFailedWaiting_() {
     if (!clearQueueBatch_(waiting, waitingHead, waitingLive,
-	[this](Logical *logical) {
-	  logical->connectFailed_(failTransient);
+	[this](AppLink *appLink) {
+	  appLink->connectFailed_(failTransient);
 	})) {
       this->app()->rxRun([
 	link = ZmRef(this)]() mutable { link->connectFailedWaiting_(); });
@@ -3475,22 +3475,22 @@ public:
     this->app()->rxRun([
       link = ZmRef(this), stream = ZmRef(stream), peer
     ]() mutable {
-      if (!stream->logical) return;
-      auto logical = ZuMv(stream->logical);
+      if (!stream->appLink) return;
+      auto appLink = ZuMv(stream->appLink);
       link->removeStream_(stream);
-      logical->disconnected_(peer);
+      appLink->disconnected_(peer);
     });
   }
 
   template <typename List>
   static void queue_(List &list, unsigned &live, QueueSlot::Kind kind,
-      ZmRef<Logical> logical) {
-    logical->h3Queue(kind, list.length());
-    list.push(ZuMv(logical));
+      ZmRef<AppLink> appLink) {
+    appLink->h3Queue(kind, list.length());
+    list.push(ZuMv(appLink));
     ++live;
   }
   template <typename List>
-  static ZmRef<Logical> shift_(
+  static ZmRef<AppLink> shift_(
       List &list, unsigned &head, unsigned &live) {
     unsigned end = head + ClientWorkBatch;
     if (end > list.length()) end = list.length();
@@ -3501,10 +3501,10 @@ public:
       return {};
     }
     if (head == end) return {};
-    auto logical = ZuMv(list[head++]);
+    auto appLink = ZuMv(list[head++]);
     --live;
-    logical->h3QueueClear();
-    return logical;
+    appLink->h3QueueClear();
+    return appLink;
   }
   template <typename List, typename Fn>
   static bool clearQueueBatch_(
@@ -3512,31 +3512,31 @@ public:
     unsigned end = head + ClientWorkBatch;
     if (end > list.length()) end = list.length();
     while (head < end) {
-      auto logical = ZuMv(list[head++]);
-      if (!logical) continue;
-      logical->h3QueueClear();
+      auto appLink = ZuMv(list[head++]);
+      if (!appLink) continue;
+      appLink->h3QueueClear();
       --live;
-      fn(logical.ptr());
+      fn(appLink.ptr());
     }
     if (head < list.length()) return false;
     list.length(0);
     head = live = 0;
     return true;
   }
-  void removeQueued_(Logical *logical) {
-    auto kind = logical->h3QueueKind();
-    unsigned slot = logical->h3QueueSlot();
+  void removeQueued_(AppLink *appLink) {
+    auto kind = appLink->h3QueueKind();
+    unsigned slot = appLink->h3QueueSlot();
     switch (kind) {
       case QueueSlot::Pending:
-	ZmAssert(slot < pending.length() && pending[slot].ptr() == logical);
+	ZmAssert(slot < pending.length() && pending[slot].ptr() == appLink);
 	pending[slot] = nullptr;
-	logical->h3QueueClear();
+	appLink->h3QueueClear();
 	--pendingLive;
 	break;
       case QueueSlot::Waiting:
-	ZmAssert(slot < waiting.length() && waiting[slot].ptr() == logical);
+	ZmAssert(slot < waiting.length() && waiting[slot].ptr() == appLink);
 	waiting[slot] = nullptr;
-	logical->h3QueueClear();
+	appLink->h3QueueClear();
 	--waitingLive;
 	break;
       default:
@@ -3566,14 +3566,14 @@ public:
     migrationCompleteBatch_();
   }
   void migrationCompleteBatch_() {
-    Pending logical;
+    Pending appLinks;
     unsigned end = migrationStream + ClientWorkBatch;
     if (end > streams.length()) end = streams.length();
     while (migrationStream < end) {
       auto &stream = streams[migrationStream++];
-      if (stream->logical) logical.push(stream->logical);
+      if (stream->appLink) appLinks.push(stream->appLink);
     }
-    for (auto &entry: logical) entry->migrationComplete_();
+    for (auto &entry: appLinks) entry->migrationComplete_();
     if (migrationStream < streams.length()) {
       this->app()->rxRun([
 	link = ZmRef(this)]() mutable { link->migrationCompleteBatch_(); });
@@ -3629,7 +3629,7 @@ public:
 
 template <typename App, typename Impl>
 class ClientLink<App, Impl, H3QUIC> :
-  public ZmObject, public H3_::LogicalStream<Impl> {
+  public ZmObject, public H3_::StreamOps<Impl> {
   using Hub = H3_::ClientHub<App>;
   using NativeLink = H3_::CliLinkT<App, Impl>;
   using NativeStream = H3_::ClientStream<App, Impl>;
@@ -4049,7 +4049,7 @@ public:
       pool()->linkStopped(*this);
     }
 
-    // Stable for the logical link lifetime.
+    // Stable for the application link lifetime.
     unsigned	m_id = 0;
     unsigned	m_slot = 0;
     Session	m_session;
@@ -4965,7 +4965,7 @@ private:
     m_pool->linkStopped(*m_impl);
   }
 
-  // Stable for the logical TLS link lifetime.  Session internally partitions
+  // Stable for the application TLS link lifetime.  Session internally partitions
   // its Rx and Tx state with cache-line boundaries.
   Pool		*m_pool = nullptr;
   Impl		*m_impl = nullptr;
@@ -4992,7 +4992,7 @@ template <
   typename Pool, typename Owner, typename LiveReq,
   typename Request, typename ResParser, typename Profile>
 ZuDerive(TLSClientPoolLinkHeap,
-  (ZmHeap<"Zhttp.TLS.Logical",
+  (ZmHeap<"Zhttp.TLS.AppLink",
     TLSClientPoolLink<Pool, Owner, LiveReq, Request, ResParser, Profile>>));
 template <
   typename Pool, typename Owner, typename LiveReq,
@@ -5008,7 +5008,7 @@ template <
 class TLSClientPoolLink<
   Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap> :
   public Heap,
-  public TLS_::ClientH1Logical<
+  public TLS_::ClientH1AppLink<
     Pool, TLSClientPoolLink<
       Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap>,
     TLS_::CliLinkT<
@@ -5023,7 +5023,7 @@ class TLSClientPoolLink<
       Pool, Owner, LiveReq, Request, ResParser, H1TLS, Heap>,
     Owner, LiveReq, Request, ResParser, H1TLS> {
   using Impl = TLSClientPoolLink;
-  using Native = TLS_::ClientH1Logical<
+  using Native = TLS_::ClientH1AppLink<
     Pool, Impl,
     TLS_::CliLinkT<
       Pool, Impl,
@@ -5064,7 +5064,7 @@ template <
 class TLSClientPoolLink<
   Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap> :
   public Heap,
-  public H2_::ClientLogical<
+  public H2_::ClientAppLink<
     Pool, TLSClientPoolLink<
       Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap>,
     TLS_::CliLinkT<
@@ -5079,7 +5079,7 @@ class TLSClientPoolLink<
       Pool, Owner, LiveReq, Request, ResParser, H2TLS, Heap>,
     Owner, LiveReq, Request, ResParser, H2TLS> {
   using Impl = TLSClientPoolLink;
-  using Native = H2_::ClientLogical<
+  using Native = H2_::ClientAppLink<
     Pool, Impl,
     TLS_::CliLinkT<
       Pool,
