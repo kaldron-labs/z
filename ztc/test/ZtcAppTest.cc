@@ -50,7 +50,7 @@ static SnapshotResult ack(uint64_t seqNo)
   auto frame = ZtcTestClient::readFrame(1);
   auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto ack_ = msg && Ztc::msgBody(msg).tag() == Ztc::Body::Ack ?
-    Ztc::msgBody(msg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+    Ztc::msgBody(msg).get<Ztc::Body::Ack>() : Zfb::View<Ztc::Ack>{};
   if (!ack_ || ack_.get<Ztc::ZfField(Ack, seqNo)>() != seqNo ||
       ack_.get<Ztc::ZfField(Ack, id)>() != ZiProgram::name())
     return result;
@@ -69,7 +69,7 @@ static SnapshotResult receive(uint64_t seqNo)
     if (!msg) return result;
     if (Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry) {
       auto tel = Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
-      Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+      Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
       if (!tel || tel.get<Ztc::ZfField(Telemetry, seqNo)>() != seqNo ||
 	  tel.get<Ztc::ZfField(Telemetry, id)>() != ZiProgram::name())
 	return result;
@@ -77,7 +77,7 @@ static SnapshotResult receive(uint64_t seqNo)
 	auto app = tel.get<Ztc::ZfField(Telemetry, value)>().tag() ==
 	    Ztc::TelemetryBody::AppTelemetry ?
 	  tel.get<Ztc::ZfField(Telemetry, value)>().get<Ztc::TelemetryBody::AppTelemetry>() :
-	  ZiFB::View<Ztc::AppTelemetry>{};
+	  Zfb::View<Ztc::AppTelemetry>{};
 	if (!app) return result;
 	result.app = true;
 	result.rag = app.get<Ztc::ZfField(AppTelemetry, rag)>();
@@ -87,7 +87,7 @@ static SnapshotResult receive(uint64_t seqNo)
       continue;
     }
     auto eos = Ztc::msgBody(msg).tag() == Ztc::Body::EOS ?
-      Ztc::msgBody(msg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+      Ztc::msgBody(msg).get<Ztc::Body::EOS>() : Zfb::View<Ztc::EOS>{};
     result.valid = eos && eos.get<Ztc::ZfField(EOS, seqNo)>() == seqNo &&
       eos.get<Ztc::ZfField(EOS, id)>() == ZiProgram::name();
     return result;
@@ -260,7 +260,7 @@ static void appTest()
   auto errorMsg = errorFrame ?
     Ztc::msg(errorFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto error = errorMsg && Ztc::msgBody(errorMsg).tag() == Ztc::Body::Error ?
-    Ztc::msgBody(errorMsg).get<Ztc::Body::Error>() : ZiFB::View<Ztc::Error>{};
+    Ztc::msgBody(errorMsg).get<Ztc::Body::Error>() : Zfb::View<Ztc::Error>{};
   ZuCheck(error);
   ZuCheck(!error || error.get<Ztc::ZfField(Error, seqNo)>() == ZuCmp<uint64_t>::null(),
     ZuTestUtil::log("unexpected error sequence ",
@@ -287,11 +287,11 @@ static void appTest()
     if (!msg) break;
     if (Ztc::msgBody(msg).tag() != Ztc::Body::Telemetry) continue;
     auto tel = Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
-      Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+      Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
     auto data = tel.get<Ztc::ZfField(Telemetry, value)>().tag() ==
 	    Ztc::TelemetryBody::AppTelemetry ?
 	  tel.get<Ztc::ZfField(Telemetry, value)>().get<Ztc::TelemetryBody::AppTelemetry>() :
-	  ZiFB::View<Ztc::AppTelemetry>{};
+	  Zfb::View<Ztc::AppTelemetry>{};
     if (!data || data.get<Ztc::ZfField(AppTelemetry, rag)>() != Ztc::RAG::Red) continue;
     if (tel.get<Ztc::ZfField(Telemetry, seqNo)>() == SeqNo + 12) firstUpdated = true;
     if (tel.get<Ztc::ZfField(Telemetry, seqNo)>() == SeqNo + 13) secondUpdated = true;
@@ -305,7 +305,7 @@ static void appTest()
     auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
     if (!msg) break;
     auto value = Ztc::msgBody(msg).tag() == Ztc::Body::Ack ?
-      Ztc::msgBody(msg).get<Ztc::Body::Ack>() : ZiFB::View<Ztc::Ack>{};
+      Ztc::msgBody(msg).get<Ztc::Body::Ack>() : Zfb::View<Ztc::Ack>{};
     cancelled = value && value.get<Ztc::ZfField(Ack, seqNo)>() == SeqNo + 13 &&
 	value.get<Ztc::ZfField(Ack, status)>() == Ztc::AckStatus::OK;
   }
@@ -317,11 +317,11 @@ static void appTest()
     auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
     if (!msg) break;
     auto tel = Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry ?
-      Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+      Ztc::msgBody(msg).get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
     auto value = tel && tel.get<Ztc::ZfField(Telemetry, value)>().tag() ==
 	Ztc::TelemetryBody::AppTelemetry ?
       tel.get<Ztc::ZfField(Telemetry, value)>().get<Ztc::TelemetryBody::AppTelemetry>() :
-      ZiFB::View<Ztc::AppTelemetry>{};
+      Zfb::View<Ztc::AppTelemetry>{};
     survivorUpdated = value && tel.get<Ztc::ZfField(Telemetry, seqNo)>() == SeqNo + 12 &&
 	value.get<Ztc::ZfField(AppTelemetry, rag)>() == Ztc::RAG::Green;
   }
@@ -332,7 +332,7 @@ static void appTest()
     auto msg = frame ? Ztc::msg(frame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
     if (!msg) break;
     auto value = Ztc::msgBody(msg).tag() == Ztc::Body::EOS ?
-      Ztc::msgBody(msg).get<Ztc::Body::EOS>() : ZiFB::View<Ztc::EOS>{};
+      Ztc::msgBody(msg).get<Ztc::Body::EOS>() : Zfb::View<Ztc::EOS>{};
     survivorEOS = value && value.get<Ztc::ZfField(EOS, seqNo)>() == SeqNo + 12;
   }
   ZuCheck(survivorEOS);
@@ -355,7 +355,7 @@ static void appTest()
     Ztc::msg(shutdownFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
   auto shutdown = shutdownMsg &&
     Ztc::msgBody(shutdownMsg).tag() == Ztc::Body::Telemetry ?
-    Ztc::msgBody(shutdownMsg).get<Ztc::Body::Telemetry>() : ZiFB::View<Ztc::Telemetry>{};
+    Ztc::msgBody(shutdownMsg).get<Ztc::Body::Telemetry>() : Zfb::View<Ztc::Telemetry>{};
   ZuCheck(shutdown && !shutdown.get<Ztc::ZfField(Telemetry, seqNo)>() &&
     shutdown.get<Ztc::ZfField(Telemetry, value)>().tag() == Ztc::TelemetryBody::Shutdown &&
     shutdown.get<Ztc::ZfField(Telemetry, value)>().get<Ztc::TelemetryBody::Shutdown>());

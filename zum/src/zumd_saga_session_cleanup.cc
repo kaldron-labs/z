@@ -71,7 +71,7 @@ using SessionCleanupSaga = SessionCleanupSaga_<
 ZfStruct(, (SessionCleanupSaga, FB),
   (sessions,	(Ctor<0>),	UDT),
   (updated,	(Ctor<1>),	Int64));
-ZiFB::AsTable<"Zum.fbs.SessionCleanup"> ZiFB_Fmt(SessionCleanupSaga *);
+Zfb::AsTable<"Zum.fbs.SessionCleanup"> Zfb_Fmt(SessionCleanupSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<SessionCleanupSaga>{}));
 

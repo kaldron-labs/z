@@ -98,7 +98,7 @@ ZfStruct(, (ClientAddSaga, FB),
   (values,	(Ctor<2>),	UDT),
   (updated,	(Ctor<3>),	Int64),
   (request,	(Ctor<4>),	UDT));
-ZiFB::AsTable<"Zum.fbs.ClientAdd"> ZiFB_Fmt(ClientAddSaga *);
+Zfb::AsTable<"Zum.fbs.ClientAdd"> Zfb_Fmt(ClientAddSaga *);
 
 template <typename Heap>
 unsigned ClientAddSaga_<Heap>::appError(const App &item) const

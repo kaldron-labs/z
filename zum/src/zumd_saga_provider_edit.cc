@@ -94,7 +94,7 @@ ZfStruct(, (ProviderEditSaga, FB),
   (stateOnly,	(Ctor<6>),			Bool),
   (state,	(Ctor<7>, Enum<State::Map>),	Int8),
   (fields,	(Ctor<3>),			UInt8));
-ZiFB::AsTable<"Zum.fbs.ProviderEdit"> ZiFB_Fmt(ProviderEditSaga *);
+Zfb::AsTable<"Zum.fbs.ProviderEdit"> Zfb_Fmt(ProviderEditSaga *);
 
 template <typename Heap>
 void ProviderEditSaga_<Heap>::edit(Provider &item) const

@@ -218,7 +218,7 @@ ZfStruct(, (CredentialAddSaga, FB),
   (label,		(Ctor<10>),		String),
   (userVersion,		(Ctor<11>, Deflt<1>),	UInt64),
   (beforeGrant,		(Ctor<12>),		UDT));
-ZiFB::AsTable<"Zum.fbs.CredentialAdd"> ZiFB_Fmt(CredentialAddSaga *);
+Zfb::AsTable<"Zum.fbs.CredentialAdd"> Zfb_Fmt(CredentialAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<CredentialAddSaga>{}));
 

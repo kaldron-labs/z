@@ -154,7 +154,7 @@ diagnostic runs; those do not replace the declared workload gate.
 
 ### FlatBuffers boundary
 
-Payload serialization uses `ZiFB` from ordinary `ZfStruct` metadata.
+Payload serialization uses `Zfb` from ordinary `ZfStruct` metadata.
 `ZtcMsg.hh` composes the body into an independent nested `Payload` root,
 then writes its byte vector and routing metadata into `Msg`. Routing copies
 this span unchanged and replaces only the outer routing fields; it does not

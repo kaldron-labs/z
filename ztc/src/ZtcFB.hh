@@ -16,7 +16,7 @@
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuStruct.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZiMultiplex.hh>
 
@@ -40,20 +40,20 @@ namespace Ztc {
     static constexpr ZuSemVer load(uint32_t v) { return ZuSemVer{v}; }
   };
 }
-Ztc::SemVerMap ZiFBTransform(ZuSemVer *);
+Ztc::SemVerMap ZfbTransform(ZuSemVer *);
 inline ZuCSpan ZfVFieldTypeID(ZuSemVer *) { return "SemVer"; }
 
 namespace ZmThreadPriority {
-  ZiFB::AsEnum<"Ztc.fbs.ThreadPriority"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.ThreadPriority"> Zfb_Fmt(Map *);
 }
 namespace ZiCxnFlags {
-  ZiFB::AsEnum<"Ztc.fbs.CxnFlags"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.CxnFlags"> Zfb_Fmt(Map *);
 }
 
 namespace Ztc {
 
 namespace RAG {
-  ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.RAG"> Zfb_Fmt(Map *);
 }
 
 ZtEnumNS(ZtcAPI, EngineState, int8_t,
@@ -70,23 +70,23 @@ ZuAssert(CxnType::TCPIn == ZiCxnType::TCPIn);
 ZuAssert(CxnType::TCPOut == ZiCxnType::TCPOut);
 ZuAssert(CxnType::UDP == ZiCxnType::UDP);
 
-namespace EngineState { ZiFB::AsEnum<"Ztc.fbs.EngineState"> ZiFB_Fmt(Map *); }
-namespace CxnType { ZiFB::AsEnum<"Ztc.fbs.CxnType"> ZiFB_Fmt(Map *); }
+namespace EngineState { Zfb::AsEnum<"Ztc.fbs.EngineState"> Zfb_Fmt(Map *); }
+namespace CxnType { Zfb::AsEnum<"Ztc.fbs.CxnType"> Zfb_Fmt(Map *); }
 
 namespace LinkType {
-  ZiFB::AsEnum<"Ztc.fbs.LinkType"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.LinkType"> Zfb_Fmt(Map *);
 }
 namespace LinkState {
-  ZiFB::AsEnum<"Ztc.fbs.LinkState"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.LinkState"> Zfb_Fmt(Map *);
 }
 namespace PoolState {
-  ZiFB::AsEnum<"Ztc.fbs.PoolState"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.PoolState"> Zfb_Fmt(Map *);
 }
 
 ZtEnumNS(ZtcAPI, Group, uint8_t, Heap, Hash, Thread, Mx, Queue, Hub, DB, App, Alert);
-namespace Group { ZiFB::AsEnum<"Ztc.fbs.Group"> ZiFB_Fmt(Map *); }
+namespace Group { Zfb::AsEnum<"Ztc.fbs.Group"> Zfb_Fmt(Map *); }
 ZtEnumNS(ZtcAPI, AckStatus, int8_t, OK, Invalid, Unsupported, Failed);
-namespace AckStatus { ZiFB::AsEnum<"Ztc.fbs.AckStatus"> ZiFB_Fmt(Map *); }
+namespace AckStatus { Zfb::AsEnum<"Ztc.fbs.AckStatus"> Zfb_Fmt(Map *); }
 
 ZfStruct(ZtcAPI, (Request, FB),
   (seqNo,	(Ctor<2>),			UInt64),
@@ -97,26 +97,26 @@ ZfStruct(ZtcAPI, (Request, FB),
   (alertDate,	(Ctor<5>),			UInt32),
   (alertSeqNo,	(Ctor<3>),			UInt64),
   (id,		(Ctor<1>),			String));
-ZiFB::AsTable<"Ztc.fbs.Request"> ZiFB_Fmt(Request *);
+Zfb::AsTable<"Ztc.fbs.Request"> Zfb_Fmt(Request *);
 
 ZfStruct(ZtcAPI, (Ack, FB),
   (id,		(Ctor<0>),				String),
   (seqNo,	(Ctor<1>),				UInt64),
   (status,	(Ctor<3>, Enum<AckStatus::Map>),	UInt8),
   (interval,	(Ctor<2>),				UInt32));
-ZiFB::AsTable<"Ztc.fbs.Ack"> ZiFB_Fmt(Ack *);
+Zfb::AsTable<"Ztc.fbs.Ack"> Zfb_Fmt(Ack *);
 
 ZfStruct(ZtcAPI, (EOS, FB),
   (id,		(Ctor<0>),	String),
   (seqNo,	(Ctor<1>),	UInt64));
-ZiFB::AsTable<"Ztc.fbs.EOS"> ZiFB_Fmt(EOS *);
+Zfb::AsTable<"Ztc.fbs.EOS"> Zfb_Fmt(EOS *);
 
 ZfStruct(ZtcAPI, (Error, FB),
   (id,		(Ctor<1>),	String),
   (seqNo,	(Ctor<2>),	UInt64),
   (code,	(Ctor<3>),	Int32),
   (message,	(Ctor<0>),	String));
-ZiFB::AsTable<"Ztc.fbs.Error"> ZiFB_Fmt(Error *);
+Zfb::AsTable<"Ztc.fbs.Error"> Zfb_Fmt(Error *);
 
 // Compare ordered PK types; FB field adapters expose strings as spans.
 ZfStruct(ZtcAPI, (HeapTelemetry, FB),
@@ -138,10 +138,10 @@ ZfStruct(ZtcAPI, (HeapTelemetry, FB),
   (globalHeapMax,	(Ctor<10>, Mutable, Series),		UInt64),
   ((allocated, RdFn),	(Synthetic, Series),			UInt64),
   ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),	Int8));
-ZiFB::AsTable<"Ztc.fbs.HeapTelemetry"> ZiFB_Fmt(HeapTelemetry *);
+Zfb::AsTable<"Ztc.fbs.HeapTelemetry"> Zfb_Fmt(HeapTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<HeapTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<HeapTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Heap &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (HashTelemetry, FB),
@@ -158,10 +158,10 @@ ZfStruct(ZtcAPI, (HashTelemetry, FB),
   (effLoadFactor,	(Ctor<3>, Mutable, Series, NDP<2>),	Float),
   (resized,		(Ctor<7>),				UInt32),
   ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),	Int8));
-ZiFB::AsTable<"Ztc.fbs.HashTelemetry"> ZiFB_Fmt(HashTelemetry *);
+Zfb::AsTable<"Ztc.fbs.HashTelemetry"> Zfb_Fmt(HashTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<HashTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<HashTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Hash &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (ThreadTelemetry, FB),
@@ -179,10 +179,10 @@ ZfStruct(ZtcAPI, (ThreadTelemetry, FB),
   (main,	(Ctor<11>),					Bool),
   (detached,	(Ctor<12>),					Bool),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
-ZiFB::AsTable<"Ztc.fbs.ThreadTelemetry"> ZiFB_Fmt(ThreadTelemetry *);
+Zfb::AsTable<"Ztc.fbs.ThreadTelemetry"> Zfb_Fmt(ThreadTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<ThreadTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<ThreadTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Thread &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (CxnTelemetry, FB),
@@ -209,10 +209,10 @@ ZfStruct(ZtcAPI, (CxnTelemetry, FB),
   (flags,	(Ctor<20>, Flags<ZiCxnFlags::Map>),	UInt8),
   (type,	(Ctor<21>, Enum<CxnType::Map>),		Int8),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),	Int8));
-ZiFB::AsTable<"Ztc.fbs.CxnTelemetry"> ZiFB_Fmt(CxnTelemetry *);
+Zfb::AsTable<"Ztc.fbs.CxnTelemetry"> Zfb_Fmt(CxnTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<CxnTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<CxnTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Connection &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (MxTelemetry, FB),
@@ -231,15 +231,15 @@ ZfStruct(ZtcAPI, (MxTelemetry, FB),
   (priority,	(Ctor<12>),					UInt8),
   (nThreads,	(Ctor<13>),					UInt8),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
-ZiFB::AsTable<"Ztc.fbs.MxTelemetry"> ZiFB_Fmt(MxTelemetry *);
+Zfb::AsTable<"Ztc.fbs.MxTelemetry"> Zfb_Fmt(MxTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<MxTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<MxTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Mx &>().telKey())::Types>{}));
 
 namespace QueueType {
   ZtEnumMap(ZtcAPI, QueueType, Map, "Thread", "IPC", "Rx", "Tx");
-  ZiFB::AsEnum<"Ztc.fbs.QueueType"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"Ztc.fbs.QueueType"> Zfb_Fmt(Map *);
 }
 
 ZfStruct(ZtcAPI, (QueueTelemetry, FB),
@@ -254,10 +254,10 @@ ZfStruct(ZtcAPI, (QueueTelemetry, FB),
   (size,	(Ctor<7>),					UInt32),
   (full,	(Ctor<8>, Mutable, Series, Delta),		UInt32),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
-ZiFB::AsTable<"Ztc.fbs.QueueTelemetry"> ZiFB_Fmt(QueueTelemetry *);
+Zfb::AsTable<"Ztc.fbs.QueueTelemetry"> Zfb_Fmt(QueueTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<QueueTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<QueueTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Queue &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (HubTelemetry, FB),
@@ -275,10 +275,10 @@ ZfStruct(ZtcAPI, (HubTelemetry, FB),
   (txThread,	(Ctor<10>),					UInt8),
   (state,	(Ctor<12>, Mutable, Enum<EngineState::Map>),	Int8),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
-ZiFB::AsTable<"Ztc.fbs.HubTelemetry"> ZiFB_Fmt(HubTelemetry *);
+Zfb::AsTable<"Ztc.fbs.HubTelemetry"> Zfb_Fmt(HubTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<HubTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<HubTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Hub &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (LinkTelemetry, FB),
@@ -292,10 +292,10 @@ ZfStruct(ZtcAPI, (LinkTelemetry, FB),
   (type,	(Ctor<7>, Enum<LinkType::Map>),			Int8),
   (state,	(Ctor<8>, Mutable, Enum<LinkState::Map>),	Int8),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
-ZiFB::AsTable<"Ztc.fbs.LinkTelemetry"> ZiFB_Fmt(LinkTelemetry *);
+Zfb::AsTable<"Ztc.fbs.LinkTelemetry"> Zfb_Fmt(LinkTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<LinkTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<LinkTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Link &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (PoolTelemetry, FB),
@@ -311,10 +311,10 @@ ZfStruct(ZtcAPI, (PoolTelemetry, FB),
   (type,	(Ctor<9>, Enum<LinkType::Map>),			Int8),
   (state,	(Ctor<10>, Mutable, Enum<PoolState::Map>),	Int8),
   ((rag, RdFn),	(Synthetic, Series, Enum<RAG::Map>),		Int8));
-ZiFB::AsTable<"Ztc.fbs.PoolTelemetry"> ZiFB_Fmt(PoolTelemetry *);
+Zfb::AsTable<"Ztc.fbs.PoolTelemetry"> Zfb_Fmt(PoolTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<PoolTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<PoolTelemetry>>::Types,
   typename decltype(ZuDeclVal<const Pool &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (AppTelemetry, FB),
@@ -325,7 +325,7 @@ ZfStruct(ZtcAPI, (AppTelemetry, FB),
   (degraded,	(Ctor<5>, Mutable),				Bool),
   (rag,		(Ctor<6>, Mutable, Enum<RAG::Map>),		Int8),
   (ztcver,	(Ctor<3>),					UDT));
-ZiFB::AsTable<"Ztc.fbs.AppTelemetry"> ZiFB_Fmt(AppTelemetry *);
+Zfb::AsTable<"Ztc.fbs.AppTelemetry"> Zfb_Fmt(AppTelemetry *);
 
 ZfStruct(ZtcAPI, (AlertTelemetry, FB),
   (date,	(Ctor<4>, Keys<0>),	UInt32),
@@ -334,10 +334,10 @@ ZfStruct(ZtcAPI, (AlertTelemetry, FB),
   (tid,		(Ctor<3>),		UInt64),
   (severity,	(Ctor<5>),		Int8),
   (message,	(Ctor<0>),		String));
-ZiFB::AsTable<"Ztc.fbs.AlertTelemetry"> ZiFB_Fmt(AlertTelemetry *);
+Zfb::AsTable<"Ztc.fbs.AlertTelemetry"> Zfb_Fmt(AlertTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<ZiFB::View<AlertTelemetry>>::Types,
+  typename ZuStructKeyT<Zfb::View<AlertTelemetry>>::Types,
   typename decltype(ZuDeclVal<const AlertTelemetry &>().telKey())::Types>{}));
 
 } // Ztc

@@ -21,15 +21,15 @@
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZdbStore.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 namespace ZdbSL {
 
 using namespace Zdb_;
-namespace R = ZiFB::Reflect;
+namespace R = Zfb::Reflect;
 
 ZuDerive(SQLString, ZtString<ZtStringHeapID<"ZdbSL.SQLString">>);
 
@@ -53,11 +53,11 @@ struct XField {
   IDString		id;
   const ZfVField	*vfield = nullptr;
   FieldInfo		field;
-  unsigned		bufAlign = ZiFB::Wire::Align;
+  unsigned		bufAlign = Zfb::Wire::Align;
 };
 struct XFields : public ZtArray<XField, ZtArrayHeapID<"ZdbSL.XField">> {
   ZuDerive_(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbSL.XField">>))
-  unsigned bufAlign = ZiFB::Wire::Align;
+  unsigned bufAlign = Zfb::Wire::Align;
 };
 struct XFieldRef {
   const XField	*field = nullptr;
@@ -65,7 +65,7 @@ struct XFieldRef {
 };
 struct XFieldRefs : public ZtArray<XFieldRef, ZtArrayHeapID<"ZdbSL.XFieldRef">> {
   ZuDerive_(XFieldRefs, (ZtArray<XFieldRef, ZtArrayHeapID<"ZdbSL.XFieldRef">>))
-  unsigned bufAlign = ZiFB::Wire::Align;
+  unsigned bufAlign = Zfb::Wire::Align;
 };
 ZuDerive(XKeyFields,
   (ZtArray<XFieldRefs, ZtArrayHeapID<"ZdbSL.XKeyField">>));
@@ -110,7 +110,7 @@ public:
 
   // Closed store tables may outlive the previous BFBS owner.
   void schema(Schema schema) {
-    m_xFields.bufAlign = ZiFB::Wire::Align;
+    m_xFields.bufAlign = Zfb::Wire::Align;
     for (auto &field: m_xFields) {
       field.field.field = schema.field(field.vfield->id);
       field.field.align = R::alignment(field.field.field);
@@ -118,7 +118,7 @@ public:
       if (m_xFields.bufAlign < field.bufAlign) m_xFields.bufAlign = field.bufAlign;
     }
     for (auto &key: m_xKeyFields) {
-      key.bufAlign = ZiFB::Wire::Align;
+      key.bufAlign = Zfb::Wire::Align;
       for (const auto &field: key)
 	if (key.bufAlign < field.field->bufAlign) key.bufAlign = field.field->bufAlign;
     }

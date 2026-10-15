@@ -36,10 +36,10 @@
 
 #include <zlib/ZiIP.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZdbStore.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 namespace ZdbPQ {
 
@@ -47,7 +47,7 @@ class Store;
 class StoreTbl;
 
 using namespace Zdb_;
-namespace R = ZiFB::Reflect;
+namespace R = Zfb::Reflect;
 
 // SQL strings are only used during initialization
 // - all queries are prepared
@@ -98,7 +98,7 @@ struct XField {
   R::FieldView		field;		// flatbuffers reflection field
   unsigned			type;		// Value union discriminator
   unsigned			align = 1;	// resolved BFBS force_align
-  unsigned			bufAlign = ZiFB::Wire::Align;
+  unsigned			bufAlign = Zfb::Wire::Align;
 };
 ZuDerive(XFields, (ZtArray<XField, ZtArrayHeapID<"ZdbPQ.XField">>));
 
@@ -122,7 +122,7 @@ ZuDerive(XKeyFields,
 
 struct XKey {
   XKeyFields	fields;
-  unsigned	bufAlign = ZiFB::Wire::Align;
+  unsigned	bufAlign = Zfb::Wire::Align;
   uint16_t	group = 0;
   uint16_t	descending = 0;
   uint16_t	offsets = 0;
@@ -749,30 +749,30 @@ using VarBufPart = ZuTuple<unsigned, unsigned>;	// offset, length
 ZuDerive(VarBufParts, (ZtArray<VarBufPart, ZtArrayHeapID<"ZdbPQ.VarBufPart">>));
 
 template <typename T, unsigned Code>
-auto vector(ZiFB::TableView fbo, R::FieldView field) {
-  using W = ZiFB::Value<ZuSpan<const T>, Code>;
-  return ZiFB::VectorValue<typename W::Elem>{fbo.object(field.get<R::ZfField(Field, id)>())};
+auto vector(Zfb::TableView fbo, R::FieldView field) {
+  using W = Zfb::Value<ZuSpan<const T>, Code>;
+  return Zfb::VectorValue<typename W::Elem>{fbo.object(field.get<R::ZfField(Field, id)>())};
 }
 
 template <typename T, unsigned Code>
-auto loadInline(ZiFB::TableView fbo, R::FieldView field,
+auto loadInline(Zfb::TableView fbo, R::FieldView field,
   const ZfVField *native) {
   auto p = R::address(fbo, field);
   if (!p) return T(native->constant.template get<Code>(
     ZfVField::cget(ZfVFieldConstant::Deflt)));
-  return ZiFB::valueAt<ZiFB::Value<T, Code>>(p);
+  return Zfb::valueAt<Zfb::Value<T, Code>>(p);
 }
 
-inline auto bitmapData(ZiFB::TableView fbo, R::FieldView field) {
-  return ZiFB::View<ZiFB::Values::Bitmap>{
+inline auto bitmapData(Zfb::TableView fbo, R::FieldView field) {
+  return Zfb::View<Zfb::Values::Bitmap>{
     fbo.object(field.get<R::ZfField(Field, id)>())}.
-    get<ZiFB::Values::ZfField(Bitmap, data)>();
+    get<Zfb::Values::ZfField(Bitmap, data)>();
 }
 
 // varBufSize() calculates the size of a variable-sized type
 template <unsigned Type, typename = ZuIfT<(Type < Value::N)>>
 inline unsigned varBufSize(
-  R::FieldView field, ZiFB::TableView fbo)
+  R::FieldView field, Zfb::TableView fbo)
 {
   if constexpr (!isVar(Type)) { return 0; } else if constexpr (Type == Value::Index<Bitmap>{}) {
     unsigned n = bitmapData(fbo, field).length();
@@ -876,7 +876,7 @@ private:
 
 template <unsigned Type>
 inline void loadValue(
-  void *ptr, R::FieldView field, ZiFB::TableView fbo,
+  void *ptr, R::FieldView field, Zfb::TableView fbo,
   const ZfVField *native)
 {
   if constexpr (isVar(Type)) { } else if constexpr (Type == Value::Index<void>{}) { } else if constexpr (Type == Value::Index<String>{}) {
@@ -924,7 +924,7 @@ inline void loadValue(
     new (ptr) UInt128{loadInline<uint128_t, ZfFieldTC::UInt128>(fbo, field, native)};
   } else if constexpr (Type == Value::Index<IP>{}) {
     IP ip;
-    ip.ziIP(ZiFB::IPMap::load(ZiFB::UnionView<ZiIP>{R::tag(fbo, field),
+    ip.ziIP(Zfb::IPMap::load(Zfb::UnionView<ZiIP>{R::tag(fbo, field),
       fbo.object(field.get<R::ZfField(Field, id)>())}));
     new (ptr) IP{ip};
   }
@@ -933,7 +933,7 @@ inline void loadValue(
 template <unsigned Type, typename = ZuIfT<(Type < Value::N)>>
 inline void loadValue(
   void *ptr, ZuSpan<uint8_t> varBuf_, const VarBufPart &varBufPart, const OIDs &oids,
-    R::FieldView field, ZiFB::TableView fbo)
+    R::FieldView field, Zfb::TableView fbo)
 {
   if constexpr (!isVar(Type)) { } else if constexpr (Type == Value::Index<Bitmap>{}) {
     ZuSpan<uint8_t> varBuf(&varBuf_[varBufPart.p<0>()], varBufPart.p<1>());
@@ -1102,8 +1102,8 @@ inline void loadValue(
 
 // --- save value to flatbuffer (for passing to Zdb/app)
 
-using Offset = ZiFB::Offset;
-using Builder = ZiFB::IOBuilder<ZiFB::Wire::MaxAlign>;
+using Offset = Zfb::Offset;
+using Builder = Zfb::IOBuilder<Zfb::Wire::MaxAlign>;
 
 struct SavedOffset { Offset offset; uint8_t ipType; };
 struct Offsets {
@@ -1202,19 +1202,19 @@ template <> struct Native<DateTime> {
 template <typename P, typename T = typename Native<P>::T>
 Offset saveArray(Builder &fbb, unsigned align, ZuBSpan bytes) {
   using N = Native<P>;
-  using W = ZiFB::Value<T, N::Code>;
+  using W = Zfb::Value<T, N::Code>;
   int count = validateVecHdr(vecHdr(bytes));
-  if (count < 0) { fbb.fail(ZiFB::Error::Capacity); return 0; }
+  if (count < 0) { fbb.fail(Zfb::Error::Capacity); return 0; }
   return fbb.vector(count, W::Size, (align > W::Align ? align : W::Align),
     [&bytes, count](uint8_t *out) {
       for (int i = 0; i < count; ++i) {
 	auto value = vecElem(bytes, [](const uint8_t *p, unsigned) {
 	  return N::load(*reinterpret_cast<const P *>(p));
 	});
-	if constexpr (W::Kind == ZiFB::ValueKind::Scalar)
-	  ZiFB::write<typename W::WireType>(out + i * W::Size, value);
+	if constexpr (W::Kind == Zfb::ValueKind::Scalar)
+	  Zfb::write<typename W::WireType>(out + i * W::Size, value);
 	else
-	  ZiFB::save(out + i * W::Size, W::toWire(value));
+	  Zfb::save(out + i * W::Size, W::toWire(value));
       }
     });
 }
@@ -1235,26 +1235,26 @@ void saveOffset(Builder &fbb, Offsets &offsets,
     auto data = fbb.vector(n, sizeof(uint64_t), alignof(uint64_t),
       [words, n](uint8_t *out) {
 	for (unsigned i = 0; i < n; ++i)
-	  ZiFB::write<uint64_t>(out + i * sizeof(uint64_t), words[i + 1]);
+	  Zfb::write<uint64_t>(out + i * sizeof(uint64_t), words[i + 1]);
       });
     auto table = fbb.startTable();
-    ZiFB::As<ZiFB::Values::Bitmap>::template Handler<ZiFB::Values::Bitmap>::template fieldOffset<ZiFB::Values::ZfField(Bitmap, data)>(fbb, table, data);
+    Zfb::As<Zfb::Values::Bitmap>::template Handler<Zfb::Values::Bitmap>::template fieldOffset<Zfb::Values::ZfField(Bitmap, data)>(fbb, table, data);
     offsets.push(fbb.endTable(table));
   } else if constexpr (Type == Value::Index<IP>{}) {
-    auto saved = ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(
+    auto saved = Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(
       fbb, value.p<Type>().ziIP());
     offsets.push(saved.offset, saved.tag);
   } else if constexpr (Type == Value::Index<StringVec>{} || Type == Value::Index<BytesVec>{}) {
     auto bytes = value.p<Type>().v;
     int count = validateVecHdr(vecHdr(bytes));
-    if (count < 0) { fbb.fail(ZiFB::Error::Capacity); offsets.push(0); return; }
-    auto elements = ZtScratch(ZiFB::Offsets, count, count);
+    if (count < 0) { fbb.fail(Zfb::Error::Capacity); offsets.push(0); return; }
+    auto elements = ZtScratch(Zfb::Offsets, count, count);
     for (int i = 0; i < count; ++i) {
       auto data = vecElem(bytes, [](const uint8_t *p, unsigned n) { return ZuBSpan{p, n}; });
       if constexpr (Type == Value::Index<StringVec>{})
 	elements[i] = fbb.string(data);
       else
-	elements[i] = ZiFB::save(fbb, ZiFB::Values::Bytes{data});
+	elements[i] = Zfb::save(fbb, Zfb::Values::Bytes{data});
     }
     fbb.align(align, count * sizeof(Offset));
     offsets.push(fbb.offsets(elements));
@@ -1296,7 +1296,7 @@ void saveOffset(Builder &fbb, Offsets &offsets,
 }
 
 template <unsigned Type>
-void saveValue(Builder &fbb, ZiFB::TableState &table, const Offsets &offsets,
+void saveValue(Builder &fbb, Zfb::TableState &table, const Offsets &offsets,
     R::FieldView field, unsigned align, const Value &value) {
   if constexpr (!Type) { }
   else if constexpr (Type == Value::Index<String>{} || Type == Value::Index<Bytes>{} ||
@@ -1313,14 +1313,14 @@ void saveValue(Builder &fbb, ZiFB::TableState &table, const Offsets &offsets,
       R::saveScalar<double>(fbb, table, field, native);
   } else {
     using N = Native<typename Value::template Type<Type>>;
-    using W = ZiFB::Value<typename N::T, N::Code>;
+    using W = Zfb::Value<typename N::T, N::Code>;
     auto native = N::load(value.p<Type>());
-    if constexpr (W::Kind == ZiFB::ValueKind::Scalar)
+    if constexpr (W::Kind == Zfb::ValueKind::Scalar)
       R::saveScalar<typename W::WireType>(fbb, table, field, native);
     else {
       fbb.fieldInline(table, field.get<R::ZfField(Field, id)>(), W::Size,
 	(align > W::Align ? align : W::Align),
-	[&native](uint8_t *out) { ZiFB::save(out, W::toWire(native)); });
+	[&native](uint8_t *out) { Zfb::save(out, W::toWire(native)); });
     }
   }
 }
@@ -1380,7 +1380,7 @@ ZuAssert(ParamLayout::words(Zdb_::maxFields() + 4, true) <=
 template <typename Parts, typename Fields>
 unsigned planTuple(
   Parts &parts, unsigned nParams,
-  const XFields &xFields, const Fields &fields, ZiFB::TableView fbo)
+  const XFields &xFields, const Fields &fields, Zfb::TableView fbo)
 {
   unsigned total = 0;
   for (unsigned i = 0; i < nParams; ++i) {
@@ -1418,7 +1418,7 @@ void loadTuple(
   const OIDs &oids,
   unsigned nParams,
   const XFields &xFields, const Fields &fields,
-  ZiFB::TableView fbo)
+  Zfb::TableView fbo)
 {
   unsigned j = 0;
   for (unsigned i = 0; i < nParams; i++) {
@@ -1692,7 +1692,7 @@ public:
 
   // Closed store tables may outlive the previous BFBS owner.
   void schema(Schema schema) {
-    m_rowAlign = ZiFB::Wire::Align;
+    m_rowAlign = Zfb::Wire::Align;
     for (auto &field: m_xFields) {
       field.field = schema.field(field.vfield->id);
       field.align = R::alignment(field.field);
@@ -1700,7 +1700,7 @@ public:
       if (m_rowAlign < field.bufAlign) m_rowAlign = field.bufAlign;
     }
     for (auto &key: m_xKeys) {
-      key.bufAlign = ZiFB::Wire::Align;
+      key.bufAlign = Zfb::Wire::Align;
       for (const auto &field: key.fields)
 	if (key.bufAlign < m_xFields[field.field].bufAlign)
 	  key.bufAlign = m_xFields[field.field].bufAlign;
@@ -1847,7 +1847,7 @@ private:
   XFieldIxs		m_xUpdFields;
   XKeys			m_xKeys;
   uint16_t		m_xOffsets = 0;
-  unsigned		m_rowAlign = ZiFB::Wire::Align;
+  unsigned		m_rowAlign = Zfb::Wire::Align;
   FieldMap		m_fieldMap;
   IndexStates		m_indexStates;
   IndexMap		m_indexMap;

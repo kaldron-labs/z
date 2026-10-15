@@ -738,7 +738,7 @@ ZmRef<ZiIOBuf> telemetryFrame(
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
   auto value =
-    ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data);
+    Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(fbb, data);
   auto telemetry =
     saveTelemetry(fbb, id_, seqNo, type, value);
   fbb.finish(
@@ -751,7 +751,7 @@ ZmRef<ZiIOBuf> shutdownFrame(ZuCSpan id)
   Ztc::Builder fbb{frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
   auto nested = fbb.startNested();
   auto id_ = fbb.string(id);
-  auto value = ZiFB::save(fbb, Shutdown{});
+  auto value = Zfb::save(fbb, Shutdown{});
   auto telemetry = saveTelemetry(fbb, id_, 0,
     TelemetryBody::Shutdown, value);
   fbb.finish(saveMsg(fbb, nested, Body::Telemetry, telemetry));
@@ -767,7 +767,7 @@ ZmRef<ZiIOBuf> alertFrame(uint64_t seqNo, const ZiIOBuf *canonical)
   auto telemetry = msgBody(root).get<Body::Telemetry>();
   auto field = telemetry.field<ZfField(Telemetry, seqNo)>();
   if (ZuUnlikely(!field)) return {};
-  ZiFB::write<uint64_t>(const_cast<uint8_t *>(field), seqNo);
+  Zfb::write<uint64_t>(const_cast<uint8_t *>(field), seqNo);
   return frame;
 }
 
@@ -1226,7 +1226,7 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
     auto id = fbb.string(m_cf.id);
     auto message = fbb.string(event->message());
     auto table = fbb.startTable();
-    using H = ZiFB::As<AlertTelemetry>::template Handler<AlertTelemetry>;
+    using H = Zfb::As<AlertTelemetry>::template Handler<AlertTelemetry>;
     H::template fieldOffset<ZfField(AlertTelemetry, message)>(fbb, table, message);
     H::template field<ZfField(AlertTelemetry, time)>(fbb, table, event->time);
     H::template field<ZfField(AlertTelemetry, seqNo)>(fbb, table, alertSeqNo);
@@ -2382,7 +2382,7 @@ void App::sendAck_(
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto nested = fbb.startNested();
-  auto ack = ZiFB::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
+  auto ack = Zfb::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
   fbb.finish(saveMsg(fbb, nested, Body::Ack, ack));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
@@ -2392,7 +2392,7 @@ void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto nested = fbb.startNested();
-  auto error = ZiFB::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
+  auto error = Zfb::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
   fbb.finish(saveMsg(fbb, nested, Body::Error, error));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }
@@ -2402,7 +2402,7 @@ void App::sendEOS_(uint64_t seqNo)
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame})};
   auto nested = fbb.startNested();
-  auto eos = ZiFB::save(fbb, EOS{m_cf.id, seqNo});
+  auto eos = Zfb::save(fbb, EOS{m_cf.id, seqNo});
   fbb.finish(saveMsg(fbb, nested, Body::EOS, eos));
   publishRaw_(saveHdr(fbb), App_::Delivery::Control);
 }

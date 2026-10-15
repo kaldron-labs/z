@@ -106,7 +106,7 @@ contracts differ.
 ### Standard construction, load, and update contract
 
 `ZfStruct` adapters use the shared `ZfFieldFilter` rules, as implemented by
-`ZfJSON`, `ZfURI`, and `ZiFB`. Apply these rules to the active fields of the
+`ZfJSON`, `ZfURI`, and `Zfb`. Apply these rules to the active fields of the
 selected facet:
 
 | Operation | Field selection and action |

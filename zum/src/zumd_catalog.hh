@@ -26,7 +26,7 @@ struct CatalogEdit {
 ZfStruct(ZumAPI, (CatalogEdit, FB),
   (before,	(Ctor<0>),	Bytes),
   (after,	(Ctor<1>),	Bytes));
-ZiFB::AsTable<"Zum.fbs.CatalogEdit"> ZiFB_Fmt(CatalogEdit *);
+Zfb::AsTable<"Zum.fbs.CatalogEdit"> Zfb_Fmt(CatalogEdit *);
 
 struct CatalogRows {
   BytesVec added;
@@ -43,7 +43,7 @@ struct CatalogRows {
 ZfStruct(ZumAPI, (CatalogRows, FB),
   (added,	(Ctor<0>),	BytesVec),
   (changed,	(Ctor<1>),	BytesVec));
-ZiFB::AsTable<"Zum.fbs.CatalogRows"> ZiFB_Fmt(CatalogRows *);
+Zfb::AsTable<"Zum.fbs.CatalogRows"> Zfb_Fmt(CatalogRows *);
 
 
 } // namespace Zum

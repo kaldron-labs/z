@@ -114,7 +114,7 @@ static Frame requestFrame(const Subscription &sub, bool subscribe)
   auto filter = builder.string(sub.filter);
   auto publisher = sub.publisherID ? builder.string(sub.publisherID) : 0;
   auto table = builder.startTable();
-  using H = ZiFB::As<Ztc::Request>::template Handler<Ztc::Request>;
+  using H = Zfb::As<Ztc::Request>::template Handler<Ztc::Request>;
   H::template field<Ztc::ZfField(Request, seqNo)>(builder, table, uint64_t(0));
   H::template field<Ztc::ZfField(Request, group)>(builder, table, sub.group);
   H::template fieldOffset<Ztc::ZfField(Request, filter)>(builder, table, filter);
@@ -317,7 +317,7 @@ template <typename Data_> struct Item_ : public Item__<Data_> {
   void			*gtkRow_ = nullptr;
 
   Item_() = default;
-  Item_(ZiFB::View<Data> fbo) : value{ZiFB::handler<Data>(fbo).ctor()} { }
+  Item_(Zfb::View<Data> fbo) : value{Zfb::handler<Data>(fbo).ctor()} { }
 
   Item_(const Item_ &) = delete;
   Item_ &operator =(const Item_ &) = delete;
@@ -357,7 +357,7 @@ class ItemTree : public ItemTree_<T> {
 public:
   using Node = typename ItemTree_<T>::Node;
   void add(Node *node) { this->addNode(node); }
-  Node *lookup(ZiFB::View<T> fbo) const {
+  Node *lookup(Zfb::View<T> fbo) const {
     return this->findPtr(ZuStructKey(fbo));
   }
 };
@@ -370,7 +370,7 @@ public:
   using Node = SingletonItem<T>;
   ItemSingleton() = default;
   ~ItemSingleton() { if (m_node) delete m_node; }
-  Node *lookup(ZiFB::View<T>) const { return m_node; }
+  Node *lookup(Zfb::View<T>) const { return m_node; }
   Node *get() const { return m_node; }
   void add(Node *node) { if (m_node) delete m_node; m_node = node; }
 private:
@@ -1777,7 +1777,7 @@ private:
   }
 
   void processTel2_(ZuBSpan data) {
-    auto msg = ZiFB::view<Ztc::Msg>(data); // verified on Rx
+    auto msg = Zfb::view<Ztc::Msg>(data); // verified on Rx
     auto body = Ztc::msgBody(msg);
     auto device = msg.get<Ztc::ZfField(Msg, deviceID)>();
     auto generation = msg.get<Ztc::ZfField(Msg, agentGen)>();
@@ -1972,13 +1972,13 @@ private:
 	});
   }
   template <typename T>
-  void processTel3_(Source *src, ZiFB::View<T> fbo) {
+  void processTel3_(Source *src, Zfb::View<T> fbo) {
     if constexpr (!ZuIsSame<T, Ztc::AlertTelemetry>{}) {
       ZuTypeIndex<T, Telemetry::TypeList> I;
       auto &container = src->telemetry.p<I>();
       using Item = TelItem<T>;
       if (auto item = container.lookup(fbo)) {
-	ZiFB::handler<T>(fbo).update(item->value);
+	Zfb::handler<T>(fbo).update(item->value);
 	if constexpr (ZuIsSame<T, Ztc::AppTelemetry>{})
 	  item->generation_ = src->generation;
 	m_gtkModel->updated(GtkTree::row(item));
@@ -1991,7 +1991,7 @@ private:
       ZuTypeIndex<T, Telemetry::TypeList> i;
       auto &container = src->telemetry.p<i>();
       if (container.data.length() >= m_alertRows) container.data.splice(0, 1);
-      processAlert(new (container.data.push()) T{ZiFB::handler<T>(fbo).ctor()});
+      processAlert(new (container.data.push()) T{Zfb::handler<T>(fbo).ctor()});
     }
   }
 

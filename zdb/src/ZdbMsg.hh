@@ -21,7 +21,7 @@
 
 #include <zlib/ZmRef.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZdbTypes.hh>
 
@@ -36,13 +36,13 @@ ZfStruct(ZdbAPI, (TableState, FB),
   (table,,			String),
   (un,		(Deflt<0>),	UInt64),
   (shard,	(Deflt<0>),	UInt8));
-ZiFB::AsTable<"Zdb_.fbs.TableState"> ZiFB_Fmt(TableState *);
+Zfb::AsTable<"Zdb_.fbs.TableState"> Zfb_Fmt(TableState *);
 
 struct DBState { SN sn; ZuSpan<const TableState *> tableStates; };
 ZfStruct(ZdbAPI, (DBState, FB),
   (sn,,			UInt128),
   (tableStates,,	UDT));
-ZiFB::AsTable<"Zdb_.fbs.DBState"> ZiFB_Fmt(DBState *);
+Zfb::AsTable<"Zdb_.fbs.DBState"> Zfb_Fmt(DBState *);
 
 struct Heartbeat {
   ZuCSpan host;
@@ -54,7 +54,7 @@ ZfStruct(ZdbAPI, (Heartbeat, FB),
   (state,	(Deflt<0>),	UInt32),
   (nShards,	(Deflt<0>),	UInt32),
   (dbState,,			UDT));
-ZiFB::AsTable<"Zdb_.fbs.Heartbeat"> ZiFB_Fmt(Heartbeat *);
+Zfb::AsTable<"Zdb_.fbs.Heartbeat"> Zfb_Fmt(Heartbeat *);
 
 struct Record {
   ZuCSpan table;
@@ -71,52 +71,52 @@ ZfStruct(ZdbAPI, (Record, FB),
   (vn,		(Deflt<0>),	Int64),
   (shard,	(Deflt<0>),	UInt8),
   (data,,			Bytes));
-ZiFB::AsTable<"Zdb_.fbs.Record"> ZiFB_Fmt(Record *);
+Zfb::AsTable<"Zdb_.fbs.Record"> Zfb_Fmt(Record *);
 
 struct Commit { ZuCSpan table; UN un; Shard shard; };
 ZfStruct(ZdbAPI, (Commit, FB),
   (table,,			String),
   (un,		(Deflt<0>),	UInt64),
   (shard,	(Deflt<0>),	UInt8));
-ZiFB::AsTable<"Zdb_.fbs.Commit"> ZiFB_Fmt(Commit *);
+Zfb::AsTable<"Zdb_.fbs.Commit"> Zfb_Fmt(Commit *);
 
 // Positional tags preserve distinct replication/recovery alternatives with
 // the same payload type. The independent interop fixture checks these IDs.
 namespace Tag { enum { None, Heartbeat, Replication, Recovery, Commit }; }
 ZuDerive(Body, (ZuUnion<void, Heartbeat, Record, Record, Commit>));
-ZiFB::AsUnion<"Zdb_.fbs.Body",
-  ZiFB::Alt<"Heartbeat", Heartbeat>, ZiFB::Alt<"Replication", Record>,
-  ZiFB::Alt<"Recovery", Record>, ZiFB::Alt<"Commit", Commit>> ZiFB_Fmt(Body *);
+Zfb::AsUnion<"Zdb_.fbs.Body",
+  Zfb::Alt<"Heartbeat", Heartbeat>, Zfb::Alt<"Replication", Record>,
+  Zfb::Alt<"Recovery", Record>, Zfb::Alt<"Commit", Commit>> Zfb_Fmt(Body *);
 struct Root { Body body; };
 ZfStruct(ZdbAPI, (Root, FB), (body,, UDT));
-ZiFB::AsTable<"Zdb_.fbs.Msg"> ZiFB_Fmt(Root *);
+Zfb::AsTable<"Zdb_.fbs.Msg"> Zfb_Fmt(Root *);
 
-using View = ZiFB::View<Root>;
-using RecordView = ZiFB::View<Record>;
-using HeartbeatView = ZiFB::View<Heartbeat>;
-using CommitView = ZiFB::View<Commit>;
+using View = Zfb::View<Root>;
+using RecordView = Zfb::View<Record>;
+using HeartbeatView = Zfb::View<Heartbeat>;
+using CommitView = Zfb::View<Commit>;
 
 } // Msg
 
 // Compose a message around a payload already written into the same arena.
 template <typename B>
-ZiFB::Offset saveMsg(B &fbb, ZiFB::Offset payload, unsigned tag) {
-  using H = ZiFB::As<Msg::Root>::template Handler<Msg::Root>;
-  return ZiFB::As<Msg::Root>::template withOffsets<H::N>(
+Zfb::Offset saveMsg(B &fbb, Zfb::Offset payload, unsigned tag) {
+  using H = Zfb::As<Msg::Root>::template Handler<Msg::Root>;
+  return Zfb::As<Msg::Root>::template withOffsets<H::N>(
     [&fbb, payload, tag](auto &fields) {
       auto table = fbb.startTable(fields.data());
       H::template fieldUnion<Msg::ZfField(Root, body)>(fbb, table,
-	ZiFB::UnionOffset<Msg::Body>{payload, uint8_t(tag)});
+	Zfb::UnionOffset<Msg::Body>{payload, uint8_t(tag)});
       return fbb.endTable(table);
     });
 }
 
 // Keep the wide UN before the table offset to avoid commit-message padding.
 template <typename B>
-ZiFB::Offset saveCommit(B &fbb, ZuCSpan id, UN un, Shard shard) {
+Zfb::Offset saveCommit(B &fbb, ZuCSpan id, UN un, Shard shard) {
   auto name = fbb.string(id);
-  using H = ZiFB::As<Msg::Commit>::template Handler<Msg::Commit>;
-  return ZiFB::As<Msg::Commit>::template withOffsets<H::N>(
+  using H = Zfb::As<Msg::Commit>::template Handler<Msg::Commit>;
+  return Zfb::As<Msg::Commit>::template withOffsets<H::N>(
     [&fbb, name, un, shard](auto &fields) {
       auto table = fbb.startTable(fields.data());
       H::template field<Msg::ZfField(Commit, un)>(fbb, table, un);
@@ -129,11 +129,11 @@ ZiFB::Offset saveCommit(B &fbb, ZuCSpan id, UN un, Shard shard) {
 // The nested row has its own root and is already in the arena. Attach its
 // byte-vector offset directly; no intermediate buffer or payload copy.
 template <typename B>
-ZiFB::Offset saveRecord(B &fbb, ZuCSpan id, UN un, SN sn, VN vn,
-    Shard shard, ZiFB::Offset data) {
+Zfb::Offset saveRecord(B &fbb, ZuCSpan id, UN un, SN sn, VN vn,
+    Shard shard, Zfb::Offset data) {
   auto name = fbb.string(id);
-  using H = ZiFB::As<Msg::Record>::template Handler<Msg::Record>;
-  return ZiFB::As<Msg::Record>::template withOffsets<H::N>(
+  using H = Zfb::As<Msg::Record>::template Handler<Msg::Record>;
+  return Zfb::As<Msg::Record>::template withOffsets<H::N>(
     [&fbb, name, un, sn, vn, shard, data](auto &fields) {
       auto table = fbb.startTable(fields.data());
       H::template fieldOffset<Msg::ZfField(Record, table)>(fbb, table, name);
@@ -207,13 +207,13 @@ inline ZuBSpan msgData(const Hdr *hdr) {
 }
 
 inline Msg::View msg_(const Hdr *hdr) {
-  return ZiFB::view<Msg::Root>({hdr->data(), hdr->length});
+  return Zfb::view<Msg::Root>({hdr->data(), hdr->length});
 }
 inline Msg::View msg(const Hdr *hdr) {
   if (ZuUnlikely(!hdr)) return {};
   ZuBSpan bytes{hdr->data(), hdr->length};
-  if (ZuUnlikely(!ZiFB::verify<Msg::Root>(bytes))) return {};
-  return ZiFB::view<Msg::Root>(bytes);
+  if (ZuUnlikely(!Zfb::verify<Msg::Root>(bytes))) return {};
+  return Zfb::view<Msg::Root>(bytes);
 }
 // Trusted helpers assume the caller has established the message kind.
 inline Msg::HeartbeatView hb_(Msg::View msg) {
@@ -238,22 +238,22 @@ inline Msg::RecordView record(Msg::View msg) {
   }
 }
 template <typename T>
-inline ZiFB::View<T> data_(Msg::RecordView record) {
+inline Zfb::View<T> data_(Msg::RecordView record) {
   auto bytes = record.get<Msg::ZfField(Record, data)>();
-  return bytes ? ZiFB::view<T>(bytes) : ZiFB::View<T>{};
+  return bytes ? Zfb::view<T>(bytes) : Zfb::View<T>{};
 }
 template <typename T>
-inline ZiFB::View<T> data(Msg::RecordView record) {
+inline Zfb::View<T> data(Msg::RecordView record) {
   if (!record) return {};
   auto bytes = record.get<Msg::ZfField(Record, data)>();
   if (!bytes) return {};
   auto vn = record.get<Msg::ZfField(Record, vn)>();
   bool valid = vn < 0 ?
-    ZiFB::verify<T, ZuFacet::FB, ZfFieldFilter::Del>(bytes) :
-    vn > 0 ? ZiFB::verify<T, ZuFacet::FB, ZfFieldFilter::Upd>(bytes) :
-    ZiFB::verify<T>(bytes);
+    Zfb::verify<T, ZuFacet::FB, ZfFieldFilter::Del>(bytes) :
+    vn > 0 ? Zfb::verify<T, ZuFacet::FB, ZfFieldFilter::Upd>(bytes) :
+    Zfb::verify<T>(bytes);
   if (!valid) return {};
-  return ZiFB::view<T>(bytes);
+  return Zfb::view<T>(bytes);
 }
 inline Msg::CommitView commit_(Msg::View msg) {
   return Msg::CommitView{msg.get<Msg::ZfField(Root, body)>().data()};

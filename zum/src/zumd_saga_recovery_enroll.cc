@@ -285,7 +285,7 @@ ZfStruct(, (RecoveryEnrollSaga, FB),
   (label,		(Ctor<13>),	String),
   (beforeGrant,		(Ctor<14>),	UDT),
   (beforeUser,		(Ctor<15>),	UDT));
-ZiFB::AsTable<"Zum.fbs.RecoveryEnroll"> ZiFB_Fmt(RecoveryEnrollSaga *);
+Zfb::AsTable<"Zum.fbs.RecoveryEnroll"> Zfb_Fmt(RecoveryEnrollSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RecoveryEnrollSaga>{}));
 

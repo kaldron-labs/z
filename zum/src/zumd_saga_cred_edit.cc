@@ -131,7 +131,7 @@ ZfStruct(, (CredEditSaga, FB),
   (request,	(Ctor<4>),			UDT),
   (stateOnly,	(Ctor<5>),			Bool),
   (state,	(Ctor<6>, Enum<State::Map>),	Int8));
-ZiFB::AsTable<"Zum.fbs.CredEdit"> ZiFB_Fmt(CredEditSaga *);
+Zfb::AsTable<"Zum.fbs.CredEdit"> Zfb_Fmt(CredEditSaga *);
 
 template <typename Heap>
 unsigned CredEditSaga_<Heap>::credError(const Cred &item) const

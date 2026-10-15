@@ -2737,8 +2737,8 @@ template <typename Record, typename Key>
 static String adminCursorEncode(
     ZuBSpan secret, int operation, AppID appID, const Key &key)
 {
-  ZiFB::IOBuilder<ZiFB::BufferAlign<Key>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(ZiFB::save(fbb, key));
+  Zfb::IOBuilder<Zfb::BufferAlign<Key>::N> fbb{new ZiIOBufAlloc<>()};
+  fbb.finish(Zfb::save(fbb, key));
   unsigned dataLength = fbb.size();
   constexpr unsigned headerLength = 10;
   constexpr unsigned macLength = Ztls::HMAC<>::Size;
@@ -2792,11 +2792,11 @@ static bool adminCursorDecode(
   }
   using Record = typename Table::T;
   ZuBSpan bytes{raw.data() + headerLength, dataLength};
-  if (!ZiFB::verify<Record>(bytes)) {
+  if (!Zfb::verify<Record>(bytes)) {
     ZuClear(raw);
     return false;
   }
-  key = ZiFB::load<typename Table::template Key<KeyID>>(bytes);
+  key = Zfb::load<typename Table::template Key<KeyID>>(bytes);
   ZuClear(raw);
   return true;
 }

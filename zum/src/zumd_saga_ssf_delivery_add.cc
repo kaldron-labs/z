@@ -87,7 +87,7 @@ using SSFDeliveryAddSaga = SSFDeliveryAddSaga_<
 
 ZfStruct(, (SSFDeliveryAddSaga, FB),
   (delivery, (Ctor<0>),		UDT));
-ZiFB::AsTable<"Zum.fbs.SSFDeliveryAdd"> ZiFB_Fmt(SSFDeliveryAddSaga *);
+Zfb::AsTable<"Zum.fbs.SSFDeliveryAdd"> Zfb_Fmt(SSFDeliveryAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<SSFDeliveryAddSaga>{}));
 

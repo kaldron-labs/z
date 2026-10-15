@@ -206,7 +206,7 @@ ZfStruct(, (AppActionAddSaga, FB),
   (oldAuthVersion,	(Ctor<6>),	UInt64),
   (oldUpdated,		(Ctor<7>),	Int64),
   (request,		(Ctor<8>),	UDT));
-ZiFB::AsTable<"Zum.fbs.AppActionAdd"> ZiFB_Fmt(AppActionAddSaga *);
+Zfb::AsTable<"Zum.fbs.AppActionAdd"> Zfb_Fmt(AppActionAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<AppActionAddSaga>{}));
 

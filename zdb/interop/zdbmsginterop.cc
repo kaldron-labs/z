@@ -11,13 +11,13 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZmTime.hh>
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 #include <zlib/ZdbBuf.hh>
 #include <zlib/ZdbSaga.hh>
 
 #include "dbmsg_generated.h"
-#include "../../zi/interop/iobaseline.hh"
-#include <zlib/ZiFBReflect.hh>
+#include "../../zfb/interop/iobaseline.hh"
+#include <zlib/ZfbReflect.hh>
 
 using namespace ZuTestUtil;
 namespace M = Zdb_::Msg;
@@ -25,20 +25,20 @@ namespace C = Zdb_::fbs;
 
 struct Row { unsigned id; };
 ZfStruct(, (Row, FB), (id, (Deflt<0>), UInt32));
-ZiFB::AsTable<"test.Row"> ZiFB_Fmt(Row *);
-enum { RowAlign = ZiFB::BufferAlign<Row>::N > ZiFB::BufferAlign<M::Root>::N ?
-  ZiFB::BufferAlign<Row>::N : ZiFB::BufferAlign<M::Root>::N };
+Zfb::AsTable<"test.Row"> Zfb_Fmt(Row *);
+enum { RowAlign = Zfb::BufferAlign<Row>::N > Zfb::BufferAlign<M::Root>::N ?
+  Zfb::BufferAlign<Row>::N : Zfb::BufferAlign<M::Root>::N };
 ZuDerive(Text, (ZtString<ZtStringHeapID<"zdbmsginterop.Text">>));
 
 static void schema()
 {
   ZuTestScope(schema);
   auto bytes = ZtScratch(Text, 0);
-  ZiFB::saveSchema<M::Root>(bytes);
+  Zfb::saveSchema<M::Root>(bytes);
   ZuBSpan span{bytes};
   flatbuffers::Verifier verifier{span.data(), span.length()};
   ZuCheck(reflection::VerifySchemaBuffer(verifier));
-  ZuCheck(ZiFB::Reflect::verifySchema(span));
+  ZuCheck(Zfb::Reflect::verifySchema(span));
   auto root = reflection::GetSchema(span.data());
   ZuCheck(root->root_table()->name()->string_view() == "Zdb_.fbs.Msg");
   auto body = root->enums()->LookupByKey("Zdb_.fbs.Body");
@@ -50,7 +50,7 @@ static void schema()
   ZuCheck(recovery->name()->string_view() == "Recovery" && recovery->value() == 3);
   ZuCheck(repl->union_type()->index() == recovery->union_type()->index());
   auto source = ZtScratch(Text, 0);
-  ZiFB::saveFBS<M::Root>(source);
+  Zfb::saveFBS<M::Root>(source);
   flatbuffers::Parser parser;
   parser.opts.lang_to_generate = flatbuffers::IDLOptions::kCpp;
   bool parsed = parser.Parse(source.data());
@@ -62,12 +62,12 @@ static void records()
 {
   ZuTestScope(records);
   auto row = ZtScratch(Text, 0);
-  ZuCheck(ZiFB::save(row, Row{42}) == ZiFB::Error::OK);
+  ZuCheck(Zfb::save(row, Row{42}) == Zfb::Error::OK);
   // Match the erased database writer: a nested row and envelope share one
   // pooled downward arena, including storage for forced row alignment.
-  ZiFB::IOBuilder<ZiFB::Wire::MaxAlign> builder{new Zdb_::IOBufAlloc<>, RowAlign};
+  Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{new Zdb_::IOBufAlloc<>, RowAlign};
   auto nested = builder.startNested();
-  auto root = ZiFB::save(builder, Row{42});
+  auto root = Zfb::save(builder, Row{42});
   auto data = builder.endNested(nested, root);
   auto payload = Zdb_::saveRecord(builder, "rows", 7, 123, -3, 1, data);
   builder.finish(Zdb_::saveMsg(builder, payload, M::Tag::Replication));
@@ -95,8 +95,8 @@ static void records()
   auto rec = C::CreateRecord(peer, name, 11, &sn, -2, 3, peerData);
   peer.Finish(C::CreateMsg(peer, C::Body::Recovery, rec.Union()));
   ZuBSpan incoming{peer.GetBufferPointer(), peer.GetSize()};
-  ZuCheck(ZiFB::verify<M::Root>(incoming));
-  auto view = ZiFB::view<M::Root>(incoming);
+  ZuCheck(Zfb::verify<M::Root>(incoming));
+  auto view = Zfb::view<M::Root>(incoming);
   ZuCheck(Zdb_::recovery(view));
   auto r = Zdb_::record(view);
   ZuCheck(r.get<M::ZfField(Record, table)>() == "peer");
@@ -106,8 +106,8 @@ static void records()
 
   // The envelope verifies independently; ingress must also verify nested data.
   auto nestedData = const_cast<uint8_t *>(r.get<M::ZfField(Record, data)>().data());
-  ZiFB::write<ZiFB::Offset>(nestedData, 0);
-  ZuCheck(ZiFB::verify<M::Root>(incoming));
+  Zfb::write<Zfb::Offset>(nestedData, 0);
+  ZuCheck(Zfb::verify<M::Root>(incoming));
   ZuCheck(!Zdb_::data<Row>(r));
   hdr->length = UINT32_MAX;
   ZuCheck(Zdb_::loadHdr(buf.ptr()) == -1);
@@ -123,15 +123,15 @@ static void heartbeat()
   M::Root message;
   message.body.p<M::Tag::Heartbeat>(M::Heartbeat{"host", 3, 4, &state});
   auto bytes = ZtScratch(Text, 0);
-  ZuCheck(ZiFB::save(bytes, message) == ZiFB::Error::OK);
+  ZuCheck(Zfb::save(bytes, message) == Zfb::Error::OK);
   ZuBSpan span{bytes};
   flatbuffers::Verifier verifier{span.data(), span.length()};
   ZuCheck(C::VerifyMsgBuffer(verifier));
   auto hb = C::GetMsg(span.data())->body_as_Heartbeat();
   ZuCheck(hb && hb->host()->string_view() == "host" && hb->n_shards() == 4);
   ZuCheck(hb->db_state()->table_states()->Get(0)->un() == 8);
-  ZuCheck(ZiFB::verify<M::Root>(span));
-  auto view = ZiFB::view<M::Root>(span);
+  ZuCheck(Zfb::verify<M::Root>(span));
+  auto view = Zfb::view<M::Root>(span);
   ZuCheck(Zdb_::hb(view).get<M::ZfField(Heartbeat, state)>() == 3);
   ZuCheck(!Zdb_::record(view) && !Zdb_::commit(view));
 
@@ -140,8 +140,8 @@ static void heartbeat()
   auto body = C::CreateHeartbeat(peer, host, 2, 5);
   peer.Finish(C::CreateMsg(peer, C::Body::Heartbeat, body.Union()));
   ZuBSpan incoming{peer.GetBufferPointer(), peer.GetSize()};
-  ZuCheck(ZiFB::verify<M::Root>(incoming));
-  auto in = Zdb_::hb(ZiFB::view<M::Root>(incoming));
+  ZuCheck(Zfb::verify<M::Root>(incoming));
+  auto in = Zdb_::hb(Zfb::view<M::Root>(incoming));
   ZuCheck(in.get<M::ZfField(Heartbeat, host)>() == "peer");
   ZuCheck(in.get<M::ZfField(Heartbeat, nShards)>() == 5);
   ZuCheck(!in.get<M::ZfField(Heartbeat, dbState)>());
@@ -150,7 +150,7 @@ static void heartbeat()
 static void commit()
 {
   ZuTestScope(commit);
-  ZiFB::IOBuilder<> builder{new ZiIOBufAlloc<>};
+  Zfb::IOBuilder<> builder{new ZiIOBufAlloc<>};
   auto payload = Zdb_::saveCommit(builder, "rows", 17, 3);
   builder.finish(Zdb_::saveMsg(builder, payload, M::Tag::Commit));
   auto owner = builder.buf();
@@ -167,8 +167,8 @@ static void commit()
   ZuBSpan incoming{peer.GetBufferPointer(), peer.GetSize()};
   // Equal-length names and present scalar fields must not add native padding.
   ZuCheck(span.length() == incoming.length());
-  ZuCheck(ZiFB::verify<M::Root>(incoming));
-  auto view = ZiFB::view<M::Root>(incoming);
+  ZuCheck(Zfb::verify<M::Root>(incoming));
+  auto view = Zfb::view<M::Root>(incoming);
   auto in = Zdb_::commit(view);
   ZuCheck(in.get<M::ZfField(Commit, table)>() == "peer");
   ZuCheck(in.get<M::ZfField(Commit, un)>() == 19);
@@ -177,14 +177,14 @@ static void commit()
   peer.Clear();
   peer.Finish(C::CreateMsg(peer));
   incoming = {peer.GetBufferPointer(), peer.GetSize()};
-  ZuCheck(ZiFB::verify<M::Root>(incoming));
-  view = ZiFB::view<M::Root>(incoming);
+  ZuCheck(Zfb::verify<M::Root>(incoming));
+  view = Zfb::view<M::Root>(incoming);
   ZuCheck(!Zdb_::record(view) && !Zdb_::hb(view) && !Zdb_::commit(view));
 
-  ZiFB::IOBuilder<> empty{new ZiIOBufAlloc<>};
+  Zfb::IOBuilder<> empty{new ZiIOBufAlloc<>};
   empty.finish(Zdb_::saveMsg(empty, 0, M::Tag::None));
   auto emptyOwner = empty.buf();
-  ZuCheck(ZiFB::verify<M::Root>(emptyOwner->cspan()));
+  ZuCheck(Zfb::verify<M::Root>(emptyOwner->cspan()));
   flatbuffers::Verifier emptyVerifier{emptyOwner->data(), emptyOwner->length};
   ZuCheck(C::VerifyMsgBuffer(emptyVerifier));
   ZuCheck(C::GetMsg(emptyOwner->data())->body_type() == C::Body::NONE);
@@ -209,7 +209,7 @@ ZfStruct(, (ReadRecord, FB),
   (vn,		(Ctor<3>, Deflt<0>),	Int64),
   (shard,	(Ctor<4>, Deflt<0>),	UInt8),
   (data,	(Ctor<5>),		Bytes));
-ZiFB::AsTable<"bench.ReadRecord"> ZiFB_Fmt(ReadRecord *);
+Zfb::AsTable<"bench.ReadRecord"> Zfb_Fmt(ReadRecord *);
 
 static uint64_t allocations()
 {
@@ -244,7 +244,7 @@ static uint64_t read(const Zdb_::Hdr *hdr)
 	r.get<M::ZfField(Record, table)>().length() + data.length() +
 	data[data.length() - 1];
     } else {
-      auto row = ZiFB::handler(ZiFB::View<ReadRecord>{r.data()}).ctor();
+      auto row = Zfb::handler(Zfb::View<ReadRecord>{r.data()}).ctor();
       __asm__ __volatile__("" : : "g"(row.data.data()) : "memory");
       return row.un + uint64_t(row.sn) + uint64_t(row.vn) + row.shard +
 	row.table.length() + row.data.length() + row.data[row.data.length() - 1];
@@ -276,7 +276,7 @@ static void readSample(ZuCSpan name, const Zdb_::Hdr *hdr, unsigned count,
 static int reads(unsigned count, unsigned rounds, unsigned payload)
 {
   if (!count || !rounds || !payload || payload >= Zdb_::MaxBufSize) return 1;
-  auto data = ZtScratch(ZiFB::Buffer, payload, payload);
+  auto data = ZtScratch(Zfb::Buffer, payload, payload);
   for (unsigned i = 0; i < payload; ++i) data[i] = uint8_t(i);
   IOBuilder b{new Zdb_::IOBufAlloc<>};
   auto bytes = b.CreateVector(data.data(), data.length());
@@ -290,7 +290,7 @@ static int reads(unsigned count, unsigned rounds, unsigned payload)
   auto hdr = reinterpret_cast<const Zdb_::Hdr *>(owner->data());
   flatbuffers::Verifier verifier{hdr->data(), hdr->length};
   if (!C::VerifyMsgBuffer(verifier) ||
-      !ZiFB::verify<M::Root>({hdr->data(), hdr->length})) return 1;
+      !Zfb::verify<M::Root>({hdr->data(), hdr->length})) return 1;
   std::cout << "reader,payload,count,seconds,z_heap_allocs,materialized_bytes,checksum\n";
   for (unsigned r = 0; r < rounds; ++r) {
     if (r & 1) {
@@ -338,11 +338,11 @@ struct Canonical {
 };
 
 struct Native {
-  using Builder = ZiFB::IOBuilder<ZiFB::Wire::MaxAlign>;
+  using Builder = Zfb::IOBuilder<Zfb::Wire::MaxAlign>;
   static Builder make() { return Builder{new Zdb_::IOBufAlloc<>, RowAlign}; }
   static void save(Builder &b, uint64_t seq) {
     auto nested = b.startNested();
-    auto root = ZiFB::save(b, Row{42});
+    auto root = Zfb::save(b, Row{42});
     auto data = b.endNested(nested, root);
     auto record = Zdb_::saveRecord(b, "rows", seq, 123, -3, 1, data);
     b.finish(Zdb_::saveMsg(b, record, M::Tag::Replication));
@@ -374,7 +374,7 @@ static void measure(ZuCSpan name, unsigned count, bool fresh)
   ZuBSpan bytes{hdr->data(), hdr->length};
   flatbuffers::Verifier verifier{bytes.data(), bytes.length()};
   if (owner->length != bytes.length() + sizeof(Zdb_::Hdr) ||
-      !C::VerifyMsgBuffer(verifier) || !ZiFB::verify<M::Root>(bytes)) Zm::exit(1);
+      !C::VerifyMsgBuffer(verifier) || !Zfb::verify<M::Root>(bytes)) Zm::exit(1);
   auto msg = C::GetMsg(bytes.data());
   auto record = msg->body_as_Replication();
   if (!record || record->table()->string_view() != "rows" || record->un() != 1 ||
@@ -383,9 +383,9 @@ static void measure(ZuCSpan name, unsigned count, bool fresh)
   auto data = record->data();
   flatbuffers::Verifier inner{data->data(), data->size()};
   if (!inner.VerifyBuffer<C::BenchRow>(nullptr) ||
-      !ZiFB::verify<Row>({data->data(), data->size()}) ||
+      !Zfb::verify<Row>({data->data(), data->size()}) ||
       flatbuffers::GetRoot<C::BenchRow>(data->data())->id() != 42 ||
-      ZiFB::view<Row>({data->data(), data->size()}).get<ZfField(Row, id)>() != 42)
+      Zfb::view<Row>({data->data(), data->size()}).get<ZfField(Row, id)>() != 42)
     Zm::exit(1);
   owner->clear();
   builder.buf(owner);
@@ -493,8 +493,8 @@ protected:
   }
 };
 
-struct SagaStorage : ZiFB::IOStorage<ZiFB::Wire::MaxAlign> {
-  using Base = ZiFB::IOStorage<ZiFB::Wire::MaxAlign>;
+struct SagaStorage : Zfb::IOStorage<Zfb::Wire::MaxAlign> {
+  using Base = Zfb::IOStorage<Zfb::Wire::MaxAlign>;
   Growth growth;
 
   using Base::Base;
@@ -505,16 +505,16 @@ struct SagaStorage : ZiFB::IOStorage<ZiFB::Wire::MaxAlign> {
   }
 };
 
-class SagaNative : public SagaStorage, public ZiFB::Builder<SagaStorage> {
-  using Base = ZiFB::Builder<SagaStorage>;
+class SagaNative : public SagaStorage, public Zfb::Builder<SagaStorage> {
+  using Base = Zfb::Builder<SagaStorage>;
 public:
   explicit SagaNative(ZmRef<ZiIOBuf> owner) :
-    SagaStorage{ZuMv(owner), ZiFB::BufferAlign<Zdb_::SagaData>::N},
-    Base{*this, ZiFB::BufferAlign<Zdb_::SagaData>::N} { }
+    SagaStorage{ZuMv(owner), Zfb::BufferAlign<Zdb_::SagaData>::N},
+    Base{*this, Zfb::BufferAlign<Zdb_::SagaData>::N} { }
 
   void save(const Zdb_::SagaData &row, uint64_t seq) {
     auto nested = startNested();
-    auto data = endNested(nested, ZiFB::save(*this, row));
+    auto data = endNested(nested, Zfb::save(*this, row));
     auto record = Zdb_::saveRecord(*this, "saga", seq, 123, -3, 1, data);
     finish(Zdb_::saveMsg(*this, record, M::Tag::Replication));
     if (failed()) Zm::exit(1);
@@ -538,13 +538,13 @@ static void sagaBuffer(ZuCSpan name, const Zdb_::SagaData &row,
   b.save(row, 1);
   auto owner = b.buf();
   flatbuffers::Verifier v{owner->data(), owner->length};
-  if (!C::VerifyMsgBuffer(v) || !ZiFB::verify<M::Root>(owner->cspan())) Zm::exit(1);
+  if (!C::VerifyMsgBuffer(v) || !Zfb::verify<M::Root>(owner->cspan())) Zm::exit(1);
   auto record = C::GetMsg(owner->data())->body_as_Replication();
   auto data = record->data();
   flatbuffers::Verifier inner{data->data(), data->size()};
   auto value = flatbuffers::GetRoot<C::BenchSagaData>(data->data());
   if (!inner.VerifyBuffer<C::BenchSagaData>(nullptr) ||
-      !ZiFB::verify<Zdb_::SagaData>({data->data(), data->size()}) ||
+      !Zfb::verify<Zdb_::SagaData>({data->data(), data->size()}) ||
       value->type()->string_view() != "liveSaga" || value->id()->l() != 42 ||
       value->shard() != 0 || value->deadline()->sec() != 123 ||
       value->deadline()->nsec() != 456 || value->data()->size() != row.data.length() ||
@@ -603,8 +603,8 @@ int main(int argc, char **argv)
 {
   if (argc == 5 && !strcmp(argv[1], "--saga-buffers")) {
 #ifndef NDEBUG
-    if (!getenv("ZIFB_BENCH_CURRENT")) {
-      std::cerr << "Set ZIFB_BENCH_CURRENT for a current-configuration comparison\n";
+    if (!getenv("ZFB_BENCH_CURRENT")) {
+      std::cerr << "Set ZFB_BENCH_CURRENT for a current-configuration comparison\n";
       return 1;
     }
 #endif
@@ -613,8 +613,8 @@ int main(int argc, char **argv)
   }
   if (argc == 5 && !strcmp(argv[1], "--reads")) {
 #ifndef NDEBUG
-    if (!getenv("ZIFB_BENCH_CURRENT")) {
-      std::cerr << "Set ZIFB_BENCH_CURRENT for a current-configuration comparison\n";
+    if (!getenv("ZFB_BENCH_CURRENT")) {
+      std::cerr << "Set ZFB_BENCH_CURRENT for a current-configuration comparison\n";
       return 1;
     }
 #endif
@@ -623,8 +623,8 @@ int main(int argc, char **argv)
   }
   if (argc == 4 && !strcmp(argv[1], "--bench")) {
 #ifndef NDEBUG
-    if (!getenv("ZIFB_BENCH_CURRENT")) {
-      std::cerr << "Set ZIFB_BENCH_CURRENT for a current-configuration comparison\n";
+    if (!getenv("ZFB_BENCH_CURRENT")) {
+      std::cerr << "Set ZFB_BENCH_CURRENT for a current-configuration comparison\n";
       return 1;
     }
 #endif

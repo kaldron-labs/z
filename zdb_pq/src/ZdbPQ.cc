@@ -1030,7 +1030,7 @@ static XField xField(
       break;
   }
   return {id, field, fbField, type, R::alignment(fbField),
-    ZiFB::Wire::Align};
+    Zfb::Wire::Align};
 }
 
 StoreTbl::StoreTbl(
@@ -2305,7 +2305,7 @@ int StoreTbl::count_send(Work::Count &count)
 
   const auto &xKey = m_xKeys[count.keyID];
   auto nParams = xKey.group;
-  ZiFB::TableView fbo{ZiFB::root(count.buf->cspan())};
+  Zfb::TableView fbo{Zfb::root(count.buf->cspan())};
 
   IDAlloc();
   ParamAlloc(nParams);
@@ -2352,7 +2352,7 @@ int StoreTbl::select_send(Work::Select &select)
   const auto &xKey = m_xKeys[select.keyID];
   auto nParams =
     select.selectNext ? xKey.fields.length() : xKey.group;
-  ZiFB::TableView fbo{ZiFB::root(select.buf->cspan())};
+  Zfb::TableView fbo{Zfb::root(select.buf->cspan())};
 
   IDAlloc();
   nParams += 1; // +1 for limit
@@ -2458,7 +2458,7 @@ int StoreTbl::find_send(Work::Find &find)
 {
   const auto &xKeyFields = m_xKeys[find.keyID].fields;
   auto nParams = xKeyFields.length();
-  ZiFB::TableView fbo{ZiFB::root(find.buf->cspan())};
+  Zfb::TableView fbo{Zfb::root(find.buf->cspan())};
 
   IDAlloc();
   ParamAlloc(nParams);
@@ -2552,7 +2552,7 @@ inconsistent:
 template <bool Recovery>
 ZmRef<IOBuf> StoreTbl::find_save(ZuSpan<const Value> tuple)
 {
-  constexpr unsigned msgAlign = ZiFB::BufferAlign<Msg::Root>::N;
+  constexpr unsigned msgAlign = Zfb::BufferAlign<Msg::Root>::N;
   Builder fbb{m_bufAllocFn(), m_rowAlign > msgAlign ? m_rowAlign : msgAlign};
   auto nested = fbb.startNested();
   auto payload = tuple;
@@ -2663,7 +2663,7 @@ int StoreTbl::write_send(Work::Write &write)
     return m_store->sendPrepared<SendState::Sync>(id, params);
   }
 
-  ZiFB::TableView fbo{ZiFB::root(record.get<Msg::ZfField(Record, data)>())};
+  Zfb::TableView fbo{Zfb::root(record.get<Msg::ZfField(Record, data)>())};
   if (!record.get<Msg::ZfField(Record, vn)>()) { // insert
     auto nParams = m_xFields.length() + 4; // +4 for shard, un, sn, vn
     IDAlloc();

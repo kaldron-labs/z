@@ -20,7 +20,7 @@ static void roundTrip_(const Zdb_::SagaDef &def,
   ZuCheckRT(saga->type() == def.type);
   ZuCheckRT(saga->nPhases() == def.nPhases);
   Zdb_::SagaPayload payload;
-  ZuCheckRT(saga->save(payload) == ZiFB::Error::OK);
+  ZuCheckRT(saga->save(payload) == Zfb::Error::OK);
   auto loaded = def.load(payload);
   ZuCheckRT(bool(loaded));
   ZuCheckRT(loaded->type() == saga->type());
@@ -34,7 +34,7 @@ static void roundTrip_(const Zdb_::SagaDef &def,
     ZuCheckRT(table == loadedTable && op == loadedOp);
   }
   Zdb_::SagaPayload again;
-  ZuCheckRT(loaded->save(again) == ZiFB::Error::OK);
+  ZuCheckRT(loaded->save(again) == Zfb::Error::OK);
   ZuCheckRT((ZuBSpan{payload.data(), payload.length()} ==
     ZuBSpan{again.data(), again.length()}));
 }
@@ -45,8 +45,8 @@ static void distinct_(const Zdb_::SagaDef &def,
   ZuTestScope(distinct);
   ZuTestCall(roundTrip_, def, populated);
   Zdb_::SagaPayload first, second;
-  ZuCheck(populated->save(first) == ZiFB::Error::OK);
-  ZuCheck(empty->save(second) == ZiFB::Error::OK);
+  ZuCheck(populated->save(first) == Zfb::Error::OK);
+  ZuCheck(empty->save(second) == Zfb::Error::OK);
   ZuCheck((ZuBSpan{first.data(), first.length()} !=
     ZuBSpan{second.data(), second.length()}));
 }

@@ -19,7 +19,7 @@
 #include "ZdbMockStore.hh"
 #include "ZdbTest.hh"
 #include "ZdbRepairTest.hh"
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 
 #include "ZdbSagaTestDefs.hh"
 
@@ -77,9 +77,9 @@ template <typename T>
 static T roundTrip(const T &data)
 {
   auto fbb = ZdbRowBuilder<T>();
-  auto bytes = fbb.finish(ZiFB::save(fbb, data));
-  ZmAssert(ZiFB::verify<T>(bytes));
-  return ZiFB::load<T>(bytes);
+  auto bytes = fbb.finish(Zfb::save(fbb, data));
+  ZmAssert(Zfb::verify<T>(bytes));
+  return Zfb::load<T>(bytes);
 }
 
 static bool data(unsigned size)
@@ -171,12 +171,12 @@ static void dispatch()
   ZuCheck(saga->stepDef(2, table, op));
   ZuCheck(table == "payment" && op == ZdbSagaOp::Delete);
   Zdb_::SagaPayload data;
-  ZuCheck(saga->save(data) == ZiFB::Error::OK);
+  ZuCheck(saga->save(data) == Zfb::Error::OK);
   auto loaded = zdbtest::sagaADef().load(data);
   ZuCheck(loaded->type() == "sagaA" &&
     !static_cast<ZdbAnySaga<zdbtest::SagaDB> *>(loaded.ptr())->db());
   Zdb_::SagaPayload again;
-  ZuCheck(loaded->save(again) == ZiFB::Error::OK && data == again);
+  ZuCheck(loaded->save(again) == Zfb::Error::OK && data == again);
   Zdb_::SagaDefs sagas{zdbtest::sagaADef(), zdbtest::sagaBDef()};
   ZtArray<Zdb_::SagaTypeStep> catalog;
   for (unsigned i = 0; i < sagas.length(); ++i) {
@@ -325,7 +325,7 @@ static void repeatedLayout()
   auto saga = zdbtest::repeatSaga(3, 2);
   ZuCheck(saga->nPhases() == 4 && saga->nSteps() == 7);
   Zdb_::SagaPayload payload;
-  ZuCheck(saga->save(payload) == ZiFB::Error::OK);
+  ZuCheck(saga->save(payload) == Zfb::Error::OK);
   auto loaded = zdbtest::repeatSagaDef().load(payload);
   ZuCheck(loaded->nSteps() == 7);
   ZuCSpan table;
@@ -582,8 +582,8 @@ static void collisions()
   ZuCheck(init.is<InitData>());
   StoreTbl *table = nullptr;
   ZmSemaphore opened;
-  SchemaBuf schema = SchemaBuf(ZiFB::SchemaOut::Schema<Order>::Size);
-  ZiFB::saveSchema<Order>(schema);
+  SchemaBuf schema = SchemaBuf(Zfb::SchemaOut::Schema<Order>::Size);
+  Zfb::saveSchema<Order>(schema);
   store->open(false, "collisions", ZfVFields<Order>(), ZfVKeyFields<Order>(),
     Schema::from<Order>(schema), Table<Order>::allocBuf,
     [&table, &opened](OpenResult result) {
@@ -598,7 +598,7 @@ static void collisions()
       zdbtest::Side::Buy, {100}, {1}};
     Builder fbb{Table<Order>::allocBuf()};
     auto nested = fbb.startNested();
-    auto data = fbb.endNested(nested, ZiFB::save(fbb, row));
+    auto data = fbb.endNested(nested, Zfb::save(fbb, row));
     fbb.finish(saveMsg(fbb,
       saveRecord(fbb, "collisions", un, SN{un}, 0, 0, data),
       Msg::Tag::Replication));
@@ -619,14 +619,14 @@ static void collisions()
   ZmSemaphore selected;
   Builder fbb{Table<Order>::allocBuf()};
   using GroupKey = typename SplitKey<Order, 0>::GroupKey;
-  fbb.finish(ZiFB::save(fbb, GroupKey{}));
+  fbb.finish(Zfb::save(fbb, GroupKey{}));
   table->select(true, false, false, 0, fbb.buf(), 10,
     [&unchanged, &rows, &selected](TupleResult result) {
       if (result.is<TupleData>()) {
 	++rows;
 	auto &data = result.p<TupleData>();
 	ZuBSpan bytes{data.buf->data(), data.buf->length};
-	unchanged = ZiFB::verify<Order>(bytes) && ZiFB::load<Order>(bytes).seqNo == 7;
+	unchanged = Zfb::verify<Order>(bytes) && Zfb::load<Order>(bytes).seqNo == 7;
 	return;
       }
       selected.post();
@@ -638,8 +638,8 @@ static void collisions()
   table->close([&closed]() { closed.post(); });
   closed.wait();
   bool position = false;
-  SchemaBuf replacement = SchemaBuf(ZiFB::SchemaOut::Schema<Order>::Size);
-  ZiFB::saveSchema<Order>(replacement);
+  SchemaBuf replacement = SchemaBuf(Zfb::SchemaOut::Schema<Order>::Size);
+  Zfb::saveSchema<Order>(replacement);
   schema = ZuMv(replacement); // release the first open's metadata owner
   store->open(false, "collisions", ZfVFields<Order>(), ZfVKeyFields<Order>(),
     Schema::from<Order>(schema), Table<Order>::allocBuf,
@@ -683,14 +683,14 @@ static void valueOwnership(
   const typename F::O &row, ZuCSpan id, unsigned expected)
 {
   using O = typename F::O;
-  auto buf = ZtScratch(ZiFB::Buffer, 0);
-  ZiFB::ArrayStorage<ZiFB::BufferAlign<O>::N> storage{buf};
-  ZiFB::Builder<decltype(storage)> builder{storage};
+  auto buf = ZtScratch(Zfb::Buffer, 0);
+  Zfb::ArrayStorage<Zfb::BufferAlign<O>::N> storage{buf};
+  Zfb::Builder<decltype(storage)> builder{storage};
   auto bytes = builder.finish(
-    ZiFB::save<ZuFacet::FB, ZfFieldFilter::All>(builder, row));
+    Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(builder, row));
   ZuCheckRT(!builder.failed());
-  Zdb_::SchemaBuf schemaBuf = Zdb_::SchemaBuf(ZiFB::SchemaOut::Schema<O>::Size);
-  ZiFB::saveSchema<O>(schemaBuf);
+  Zdb_::SchemaBuf schemaBuf = Zdb_::SchemaBuf(Zfb::SchemaOut::Schema<O>::Size);
+  Zfb::saveSchema<O>(schemaBuf);
   auto schema = Zdb_::Schema::from<O>(schemaBuf);
   ZfVField native{F{}};
   auto field = ZdbMem::xField(schema.field(F::id()), &native, schema.view);
@@ -698,7 +698,7 @@ static void valueOwnership(
   auto before = heapCount(id);
   {
     ZdbMem::Value value;
-    ZdbMem::loadValue(value, field, ZiFB::TableView{ZiFB::root(bytes)});
+    ZdbMem::loadValue(value, field, Zfb::TableView{Zfb::root(bytes)});
     auto loaded = heapCount(id);
     ZuCheckRT(value.is<T>());
     ZuCheckRT(loaded.allocs - before.allocs == expected);
@@ -1175,7 +1175,7 @@ static void repeatedRecovery(uint64_t repeats)
   auto source = zdbtest::repeatLiveSaga();
   auto definition = zdbtest::repeatLiveSagaDef();
   Zdb_::SagaPayload original;
-  ZuCheckRT(source->save(original) == ZiFB::Error::OK);
+  ZuCheckRT(source->save(original) == Zfb::Error::OK);
   db->sagas({definition});
   // Pause after two repeated effects, or before terminal when repeats are zero.
   context->pauseStep = repeats ? 3 : 1;
@@ -1219,7 +1219,7 @@ static void repeatedRecovery(uint64_t repeats)
   ZuCheckRT(context->updates == repeats && context->deletes == 1);
   ZuCheckRT(!completed && !context->errors);
   Zdb_::SagaPayload after;
-  ZuCheckRT(source->save(after) == ZiFB::Error::OK && original == after);
+  ZuCheckRT(source->save(after) == Zfb::Error::OK && original == after);
   ZuCheckRT(!source->db());
   bool clean = ZmBlock<bool>{}([db, orders](auto wake) {
     db->run([db, orders, wake = ZuMv(wake)]() mutable {
@@ -1476,7 +1476,7 @@ static bool catalogWrite(const Zdb_::OpenData &data, unsigned mode)
   for (unsigned i = 0, n = partial ? 1 : 2; i < n; ++i) {
     Builder fbb{Table<SagaTypeStep>::allocBuf()};
     auto nested = fbb.startNested();
-    auto payload = fbb.endNested(nested, ZiFB::save(fbb, row));
+    auto payload = fbb.endNested(nested, Zfb::save(fbb, row));
     fbb.finish(saveMsg(fbb,
       saveRecord(fbb, "saga_type", data.un[0] + i + 1,
 	data.sn + i + 1, i ? 0 : -1, 0, payload), Msg::Tag::Replication));
@@ -1512,8 +1512,8 @@ static bool catalogStart(
   bool reconciled = false;
   if (started) {
     // Successful reconciliation must release the direct store handle.
-    SchemaBuf schema = SchemaBuf(ZiFB::SchemaOut::Schema<SagaTypeStep>::Size);
-    ZiFB::saveSchema<SagaTypeStep>(schema);
+    SchemaBuf schema = SchemaBuf(Zfb::SchemaOut::Schema<SagaTypeStep>::Size);
+    Zfb::saveSchema<SagaTypeStep>(schema);
     OpenResult result = ZmBlock<OpenResult>{}([store, &schema](auto wake) {
       store->open(true, "saga_type",
 	ZfVFields<SagaTypeStep>(), ZfVKeyFields<SagaTypeStep>(),
@@ -1852,7 +1852,7 @@ static void requiredAdmission()
   ZmRef<M> saga = zdbtest::requiredSaga(nullptr);
   Zdb_::SagaPayload saved;
   saved.length(3, false);
-  ZuCheck(saga->save(saved) == ZiFB::Error::Required);
+  ZuCheck(saga->save(saved) == Zfb::Error::Required);
   ZuCheck(!saved.length());
   unsigned completed = 0;
   bool admitted = ZmBlock<bool>{}([db = db.ptr(), saga, &completed](auto wake) mutable {
@@ -1897,7 +1897,7 @@ static void payloadAdmission(unsigned size)
   for (unsigned i = 0; i < size; ++i) data[i] = uint8_t(i);
   ZmRef<M> saga = zdbtest::payloadSaga(ZuMv(data));
   Zdb_::SagaPayload saved;
-  ZuCheckRT(saga->save(saved) == ZiFB::Error::OK);
+  ZuCheckRT(saga->save(saved) == Zfb::Error::OK);
   bool admitted = ZmBlock<bool>{}([
     db = db.ptr(), saga, context = context.ptr()
   ](auto wake) mutable {

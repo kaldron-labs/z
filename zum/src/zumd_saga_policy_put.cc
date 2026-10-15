@@ -106,7 +106,7 @@ ZfStruct(, (PolicyPutSaga, FB),
   (ifNoneMatch,	(Ctor<4>),	String),
   (updated,	(Ctor<5>),	Int64),
   (request,	(Ctor<6>),	UDT));
-ZiFB::AsTable<"Zum.fbs.PolicyPut"> ZiFB_Fmt(PolicyPutSaga *);
+Zfb::AsTable<"Zum.fbs.PolicyPut"> Zfb_Fmt(PolicyPutSaga *);
 
 template <typename Heap>
 unsigned PolicyPutSaga_<Heap>::appError(const App &item) const

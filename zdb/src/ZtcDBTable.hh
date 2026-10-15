@@ -23,7 +23,7 @@
 
 #include <zlib/ZfStruct.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZtcTypes.hh>
 #include <zlib/ZtcRAGMap.hh>
@@ -31,10 +31,10 @@
 
 namespace Ztc {
 
-namespace RAG { ZiFB::AsEnum<"Ztc.fbs.RAG"> ZiFB_Fmt(Map *); }
+namespace RAG { Zfb::AsEnum<"Ztc.fbs.RAG"> Zfb_Fmt(Map *); }
 
 ZtEnumNS(ZdbAPI, DBCacheMode, int8_t, Normal, All);
-namespace DBCacheMode { ZiFB::AsEnum<"Ztc.fbs.DBCacheMode"> ZiFB_Fmt(Map *); }
+namespace DBCacheMode { Zfb::AsEnum<"Ztc.fbs.DBCacheMode"> Zfb_Fmt(Map *); }
 
 using DBTableID =
   ZtString<ZtStringHeapID<"Ztc.DBTableID">>;
@@ -71,7 +71,7 @@ ZfStruct(ZdbAPI, (DBTableTelemetry, FB),
   (cacheEvictions,	(Ctor<5>, Mutable, Series, Delta),	UInt64),
   ((rag, RdFn),		(Synthetic, Series, Enum<RAG::Map>),	Int8));
 
-ZiFB::AsTable<"Ztc.fbs.DBTableTelemetry"> ZiFB_Fmt(DBTableTelemetry *);
+Zfb::AsTable<"Ztc.fbs.DBTableTelemetry"> Zfb_Fmt(DBTableTelemetry *);
 
 struct DBTable {
   ZuDerive(TelKey, (ZuTuple<ZuCSpan, ZuCSpan>));

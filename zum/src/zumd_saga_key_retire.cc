@@ -100,7 +100,7 @@ ZfStruct(, (KeyRetireSaga, FB),
   (retireAfter,	(Ctor<2>),	Int64),
   (updated,	(Ctor<3>),	Int64),
   (request,	(Ctor<4>),	UDT));
-ZiFB::AsTable<"Zum.fbs.KeyRetire"> ZiFB_Fmt(KeyRetireSaga *);
+Zfb::AsTable<"Zum.fbs.KeyRetire"> Zfb_Fmt(KeyRetireSaga *);
 
 template <typename Heap>
 unsigned KeyRetireSaga_<Heap>::recordError(const SignKey &item) const

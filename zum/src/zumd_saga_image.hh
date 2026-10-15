@@ -15,7 +15,7 @@
 
 #include <zlib/ZumTypes.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/ZiIOBuf.hh>
 
@@ -28,16 +28,16 @@ struct SagaImage {
   template <typename T>
   static Bytes save(const T &item)
   {
-    ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> fbb{new Buf{}};
-    fbb.finish(ZiFB::save(fbb, item));
+    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{new Buf{}};
+    fbb.finish(Zfb::save(fbb, item));
     return Bytes{fbb.span()};
   }
 
   template <typename T>
   static bool load(ZuBSpan bytes, T &item)
   {
-    if (!ZiFB::verify<T>(bytes)) return false;
-    item = ZiFB::load<T>(bytes);
+    if (!Zfb::verify<T>(bytes)) return false;
+    item = Zfb::load<T>(bytes);
     return true;
   }
 };

@@ -23,7 +23,7 @@
 
 #include <zlib/ZvMxParams.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 
 #include <zlib/Zdb.hh>
 #include <zlib/ZdbMemStore.hh>
@@ -52,13 +52,13 @@ ZfStruct(, (Account, FB),
   (id,		(Ctor<0>, Keys<0>),	UInt64),
   (balance,	(Ctor<1>, Mutable),	Int64));
 
-ZiFB::AsTable<"zdbsaga.fbs.Account"> ZiFB_Fmt(Account *);
+Zfb::AsTable<"zdbsaga.fbs.Account"> Zfb_Fmt(Account *);
 ZfStructImpl(Account);
 ZfStructImpl(Account, FB);
 
 ZtEnumNS(, TransferStatus, int8_t, Pending, Complete);
 namespace TransferStatus {
-  ZiFB::AsEnum<"zdbsaga.fbs.TransferStatus"> ZiFB_Fmt(Map *);
+  Zfb::AsEnum<"zdbsaga.fbs.TransferStatus"> Zfb_Fmt(Map *);
 }
 ZtEnumImplNS(TransferStatus);
 
@@ -81,7 +81,7 @@ ZfStruct(, (Transfer, FB),
   (amount,	(Ctor<3>),					Int64),
   (status,	(Ctor<4>, Enum<TransferStatus::Map>, Mutable),	Int8));
 
-ZiFB::AsTable<"zdbsaga.fbs.Transfer"> ZiFB_Fmt(Transfer *);
+Zfb::AsTable<"zdbsaga.fbs.Transfer"> Zfb_Fmt(Transfer *);
 ZfStructImpl(Transfer);
 ZfStructImpl(Transfer, FB);
 
@@ -202,7 +202,7 @@ ZfStruct(, (BalanceTransfer, FB),
   (toID,	(Ctor<2>),	UInt64),
   (amount,	(Ctor<3>),	Int64));
 
-ZiFB::AsTable<"zdbsaga.fbs.BalanceTransfer"> ZiFB_Fmt(BalanceTransfer *);
+Zfb::AsTable<"zdbsaga.fbs.BalanceTransfer"> Zfb_Fmt(BalanceTransfer *);
 ZfStructImpl(BalanceTransfer);
 ZfStructImpl(BalanceTransfer, FB);
 

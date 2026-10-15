@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/Zdb.hh>
-#include <zlib/ZiFBReflect.hh>
+#include <zlib/ZfbReflect.hh>
 #include "ZdbSagaTestDefs.hh"
 
 namespace zdbtest {
@@ -186,7 +186,7 @@ using LiveSaga = LiveSaga_<ZmHeap<"Zdb.Test.LiveSaga", LiveSaga_<>>>;
 
 ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
-ZiFB::AsTable<"zdbtest.fbs.LiveSaga"> ZiFB_Fmt(LiveSaga *);
+Zfb::AsTable<"zdbtest.fbs.LiveSaga"> Zfb_Fmt(LiveSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<LiveSaga>{}));
 

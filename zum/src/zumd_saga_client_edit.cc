@@ -102,7 +102,7 @@ ZfStruct(, (ClientEditSaga, FB),
   (state,		(Ctor<7>, Enum<State::Map>),	Int8),
   (fields,		(Ctor<3>),			UInt8),
   (overlapSeconds,	(Ctor<8>),			UInt32));
-ZiFB::AsTable<"Zum.fbs.ClientEdit"> ZiFB_Fmt(ClientEditSaga *);
+Zfb::AsTable<"Zum.fbs.ClientEdit"> Zfb_Fmt(ClientEditSaga *);
 
 template <typename Heap>
 void ClientEditSaga_<Heap>::edit(Client &item) const

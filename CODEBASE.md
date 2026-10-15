@@ -24,14 +24,14 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - Export and configuration macros plus module-wide toggles in `zm/src/ZmLib.hh:10`.
 - Engine, scheduler, and thread management in `zm/src/ZmEngine.hh:10`, `zm/src/ZmScheduler.hh:17`, and `zm/src/ZmThread.hh:14`.
 - Memory management, locking, and caching utilities in `zm/src/ZmHeap.hh:25`, `zm/src/ZmLock.hh:10`, and `zm/src/ZmCache.hh:10`.
-- Connections: used by Zi for multiplexing and I/O, by Zt and ZiFB for buffer allocation, and by higher-level modules such as Zdb and Zv (e.g., `zi/src/ZiMultiplex.hh:10`, `zdb/src/Zdb.hh:57`, `zv/src/ZvEngine.hh:10`).
+- Connections: used by Zi for multiplexing and I/O, by Zt and Zfb for buffer allocation, and by higher-level modules such as Zdb and Zv (e.g., `zi/src/ZiMultiplex.hh:10`, `zdb/src/Zdb.hh:57`, `zv/src/ZvEngine.hh:10`).
 
 ### Zi (system, I/O, network)
 - Platform I/O, networking, logging, and daemon helpers in `zi/src/ZiFile.hh:10`, `zi/src/ZiMultiplex.hh:10`, `zi/src/ZiLog.hh:10`, and `zi/src/ZiDaemon.hh:10`.
 - Multiplexing and I/O buffer abstractions in `zi/src/ZiMultiplex.hh:10` and `zi/src/ZiIOBuf.hh:22`.
 - Filesystem and path handling in `zi/src/ZiFile.hh:13` and directory/globbing support in `zi/src/ZiDir.hh:10` and `zi/src/ZiGlob.hh:13`.
 - Network-specific ring-buffer utilities in `zi/src/ZiRing.hh:22`.
-- Connections: provides ZiFB serialization, pooled buffers, and I/O primitives used by Zdb, Zhttp, Zrest, Zws, Zcmd, and Zv (for example, `zi/src/ZiFB.hh`, `zdb/src/Zdb.hh:57`, `zhttp/src/Zhttp.hh:14`). The codec, reflection, and pooled I/O builders all belong to Zi.
+- Connections: provides I/O primitives and pooled buffers used by Zfb, Zpb, and higher-level modules (for example, `zi/src/ZiIOBuf.hh` and `zdb/src/Zdb.hh`).
 
 ### Zt (text and data structures)
 - Core Zt module exports and text-oriented types in `zt/src/ZtLib.hh:10` and `zt/src/ZtString.hh:20`.
@@ -47,14 +47,19 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - JSON, URI, CLI, CSV, and ASN.1 parsing/formatting in `zf/src`.
 - Connections: Zf depends on Ze, Zt, Zm, and Zu; Zi and all higher layers depend on Zf.
 
-### ZiFB (FlatBuffers integration)
-- Native wire codec, views and verification in `zi/src/ZiFB.hh`;
-  reflection and schema emission in `zi/src/ZiFBReflect.hh`.
+### Zfb (FlatBuffers integration)
+- Native wire codec, views and verification in `zfb/src/Zfb.hh`;
+  reflection and schema emission in `zfb/src/ZfbReflect.hh`.
   Ordinary `ZfStruct` metadata defines schemas.
 - BFBS and textual FBS export use generic streams, with no production codegen
   or canonical library dependency. Database tables own their in-memory BFBS.
-- `zi/src/ZiFB.hh` provides pooled I/O builders and IP mapping.
+- `zfb/src/Zfb.hh` provides pooled I/O builders and IP mapping.
 - Used by database, telemetry, authentication and data-frame consumers.
+
+### Zpb (protobuf integration)
+- Native protobuf wire codec and reflection live in `zpb/src/Zpb.hh` and
+  `zpb/src/ZpbReflect.hh`; `zprotoc` generates C++ bindings.
+- Depends on Zi for I/O and Zf for field metadata.
 
 ### Ztls (crypto and TLS helpers)
 - Primary TLS and connection types in `ztls/src/Ztls.hh:10` with HMAC, PK, and RNG helpers in `ztls/src/ZtlsHMAC.hh:10`, `ztls/src/ZtlsPK.hh:18`, and `ztls/src/ZtlsRandom.hh:10`.
@@ -73,7 +78,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - The main database interface, clustered host model, and table/object machinery in `zdb/src/Zdb.hh:57` (including inline documentation of the DB state and workflow).
 - Backing store interface and in-memory store implementation in `zdb/src/ZdbStore.hh:10` and `zdb/src/ZdbMemStore.hh:10`.
 - Replication messages and buffer formats in `zdb/src/ZdbMsg.hh:10` and `zdb/src/ZdbBuf.hh:10`, with telemetry and type definitions in `zdb/src/ZdbTelemetry.hh:10` and `zdb/src/ZdbTypes.hh:10`.
-- Connections: Zdb uses Zm for concurrency/engine control, Zi for networking, ZiFB for serialization, and typed Zf configuration metadata.
+- Connections: Zdb uses Zm for concurrency/engine control, Zi for networking, Zfb for serialization, and typed Zf configuration metadata.
 
 ### Zdb_pq (PostgreSQL integration)
 - Postgres store interface and adapter types in `zdb_pq/src/ZdbPQ.hh:8` and `zdb_pq/src/ZdbPQLib.hh:10`.
@@ -106,7 +111,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 ### Ztc (telemetry and control)
 - Publisher, protocol, and shared-ring APIs live in `ztc/src/ZtcApp.hh`, `ztc/src/ZtcMsg.hh`, and `ztc/src/ZtcRing.hh`.
 - The private `ztcagent` implementation discovers publishers and forwards telemetry over an outbound mTLS hub connection.
-- Connections: sits above Zdb/ZiFB and uses Zws, Zhttp, and Ztls for the private agent executable.
+- Connections: sits above Zdb/Zfb and uses Zws, Zhttp, and Ztls for the private agent executable.
 
 ### Zgtk (GTK integration)
 - GTK application and model wrappers in `zgtk/src/ZGtkApp.hh:10` and `zgtk/src/ZGtkTreeModel.hh:10`.
@@ -115,7 +120,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 ### Zum (user database/IAM)
 - User DB types with RBAC semantics and FlatBuffers-backed structs in `zum/src/Zum.hh:12`.
 - Server logic in `zum/src/ZumServer.hh:10` and entry point in `zum/src/zum.cc:1`.
-- Connections: uses ZiFB for serialization and Ztls for crypto/HMAC primitives (e.g., `zum/src/Zum.hh:12`).
+- Connections: uses Zfb for serialization and Ztls for crypto/HMAC primitives (e.g., `zum/src/Zum.hh:12`).
 
 ### Tools and single-binary modules
 - `zproxy` defines a proxy application with connection and buffer types in `zproxy/src/zproxy.cc:39`.
@@ -649,8 +654,8 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 The codebase is layered around a utility core (Zu) that supplies type traits, small containers, formatting, and low-level helpers. Zm builds on Zu to provide allocation, synchronization, scheduling, and engine lifecycle support. Zi uses Zu/Zm to expose OS and network primitives (files, multiplexing, buffers, netlink, ring buffers). Zt builds data-structure and serialization facilities (string handling, JSON, regex, URI, time zones) on top of Zu/Zm.
 
 Higher-level subsystems build on these foundations:
-- ZiFB provides FlatBuffers serialization and pooled I/O buffer integration. Zdb and Zum use it for structured persistence and messaging.
-- Zdb implements a clustered in-memory DB/ORM with backing store integration, replication messaging, and host coordination, combining Zm (engine and concurrency), Zi (networking), Zt (struct metadata), and ZiFB (serialization).
+- Zfb provides FlatBuffers serialization and pooled I/O buffer integration. Zdb and Zum use it for structured persistence and messaging.
+- Zdb implements a clustered in-memory DB/ORM with backing store integration, replication messaging, and host coordination, combining Zm (engine and concurrency), Zi (networking), Zt (struct metadata), and Zfb (serialization).
 - Zdb_pq extends Zdb with a PostgreSQL backing store and SQL/C extensions for custom types and functions.
 - Zdf implements data frames and series readers/writers using Zt field metadata, Zm lifecycles, and Zu numeric/time types.
 - Zv provides a connectivity engine with links, queues, and configuration objects, tying into Zi multiplexing and Zm engine state.

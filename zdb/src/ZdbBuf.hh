@@ -17,7 +17,7 @@
 
 #include <zlib/ZmPolyHash.hh>
 
-#include <zlib/ZiFB.hh>
+#include <zlib/Zfb.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiTx.hh>
 
@@ -71,12 +71,12 @@ struct IOBuf_ : public ZiTxBuf {
   auto hdr() { return ptr<Hdr>(); }
 
   template <typename T>
-  ZiFB::View<T> fbo() const {
+  Zfb::View<T> fbo() const {
     return Zdb_::data<T>(Zdb_::record(msg(hdr())));
   }
   // trusted buffer (written locally or already verified at ingress)
   template <typename T>
-  ZiFB::View<T> fbo_() const {
+  Zfb::View<T> fbo_() const {
     return Zdb_::data_<T>(record_(msg_(hdr())));
   }
 
@@ -113,8 +113,8 @@ using IOBufAlloc =
   Zi::IOBufAlloc<IOBuf, ZdbBuf_Size<T>{}, MaxBufSize, ZdbBuf_HeapID<T>>;
 
 template <typename T>
-class RowBuilder : public ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N> {
-  using Base = ZiFB::IOBuilder<ZiFB::BufferAlign<T>::N>;
+class RowBuilder : public Zfb::IOBuilder<Zfb::BufferAlign<T>::N> {
+  using Base = Zfb::IOBuilder<Zfb::BufferAlign<T>::N>;
 public:
   RowBuilder() : Base{new IOBufAlloc<T>{}} { }
 };
