@@ -34,7 +34,7 @@ CLEANFILES += zflatcmap.hh zflatcmap.cc
 zfbmapimport_SOURCES = zfbmapimport.cc zfbmapconsumer.cc
 nodist_zfbmapimport_SOURCES = zfbmap_base.cc zfbmap_base.hh \
 	zfbmap_user.cc zfbmap_user.hh
-zfbmapimport-zfbmapimport.$(OBJEXT) zfbmapimport-zfbmapconsumer.$(OBJEXT): \
+zfbmapimport.$(OBJEXT) zfbmapconsumer.$(OBJEXT): \
 	zfbmap_base.hh zfbmap_user.hh
 zfbmap_base.hh zfbmap_base.cc &: $(srcdir)/zfbmap_base.fbs $(top_builddir)/zfb/src/zflatc$(EXEEXT)
 	$(AM_V_GEN)$(top_builddir)/zfb/src/zflatc $(srcdir)/zfbmap_base.fbs -o zfbmap_base
@@ -44,7 +44,7 @@ CLEANFILES += zfbmap_base.hh zfbmap_base.cc zfbmap_user.hh zfbmap_user.cc
 EXTRA_DIST += zfbmap_base.fbs zfbmap_user.fbs
 zfbmapref_SOURCES = zfbmapref.cc
 nodist_zfbmapref_SOURCES = zflatcmapref.cc zflatcmapref.hh
-zfbmapref-zfbmapref.$(OBJEXT): zflatcmapref.hh
+zfbmapref.$(OBJEXT): zflatcmapref.hh
 zflatcmapref.hh zflatcmapref.cc &: $(top_srcdir)/zfb/interop/maps.fbs $(top_builddir)/zfb/src/zflatc$(EXEEXT)
 	$(AM_V_GEN)$(top_builddir)/zfb/src/zflatc $(top_srcdir)/zfb/interop/maps.fbs -o zflatcmapref --ref ZmPolymorph
 CLEANFILES += zflatcmapref.hh zflatcmapref.cc
