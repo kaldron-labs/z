@@ -26,8 +26,9 @@ namespace VaultWindows_ {
 
 constexpr auto TargetPrefix = "ZtlsVault:"_z;
 
-template <typename Heap = ZuVoid>
-class KeyRing_ : public Heap, public VaultStore {
+class KeyRing_ : public ZmNHeap<KeyRing_>, public VaultStore {
+friend inline ZuStringT<"Ztls.Vault.KeyRing"> ZmNHeapID(KeyRing_ *);
+
 public:
   Ztls::VaultResult init(const Ztls::VaultConfig &cf) override {
     m_program = cf.program;
@@ -104,8 +105,7 @@ private:
   Ztls::VaultString m_account;
 };
 
-ZuDerive(KeyRingHeap, (ZmHeap<"Ztls.Vault.KeyRing", KeyRing_<>>));
-ZuDerive(KeyRing, KeyRing_<KeyRingHeap>);
+ZuDerive(KeyRing, KeyRing_);
 
 } // VaultWindows_
 

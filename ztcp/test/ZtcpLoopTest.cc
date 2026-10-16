@@ -191,7 +191,7 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
 
   void connected(Ztcp::Connected) {
     ZTCP_CHECK_RT(this->stream() == this, "client bidi stream is not link");
-    typename Link::StreamRef stream = this->stream();
+    Link::StreamRef stream = this->stream();
     ZTCP_CHECK_RT(stream, "client stream ref is null");
     auto tx = stream->txStream();
     (void)tx;
@@ -240,7 +240,7 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
 
   void connected(Ztcp::Connected) {
     ZTCP_CHECK_RT(this->stream() == this, "server bidi stream is not link");
-    typename Link::StreamRef stream = this->stream();
+    Link::StreamRef stream = this->stream();
     ZTCP_CHECK_RT(stream, "server stream ref is null");
     auto tx = stream->txStream();
     (void)tx;

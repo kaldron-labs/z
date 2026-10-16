@@ -51,7 +51,7 @@ struct GetHeader_ { using T = void; };
 template <typename Props>
 struct GetHeader_<Props, true> { using T = GetValue<Props, Header>; };
 template <typename Props>
-using GetHeader = typename GetHeader_<Props>::T;
+using GetHeader = GetHeader_<Props>::T;
 
 } // ZuFieldProp::MCP
 
@@ -194,11 +194,11 @@ struct Response : public Zjrpc::Response {
   enum { Status = 200 };
 };
 
-template <typename U> using GetToolID = typename U::ToolID;
-template <typename U> using GetOperationID = typename U::OperationID;
-template <typename U> using GetTitle = typename U::Title;
-template <typename U> using GetDescription = typename U::Description;
-template <typename U> using GetAnnotations = typename U::Annotations;
+template <typename U> using GetToolID = U::ToolID;
+template <typename U> using GetOperationID = U::OperationID;
+template <typename U> using GetTitle = U::Title;
+template <typename U> using GetDescription = U::Description;
+template <typename U> using GetAnnotations = U::Annotations;
 
 template <typename Annotations_, typename = void>
 struct AnnotationsIdempotent : public ZuFalse { };
@@ -402,7 +402,7 @@ struct ReplyUnion_ {
   using Replies = ZuTypeMap<ToolReplyT, Zjrpc::GetResponses<Req>>;
   using T = ZuTypeApply<ZuUnion, typename Replies::template Unshift<void>>;
 };
-template <typename Req> using ReplyUnion = typename ReplyUnion_<Req>::T;
+template <typename Req> using ReplyUnion = ReplyUnion_<Req>::T;
 
 struct StructuredReplyShape {
   int code = ZuCmp<int>::null();
@@ -419,7 +419,7 @@ struct StructuredReply :
   using Data = Zjrpc::ReplyData<Req>;
 
   template <typename Facet>
-  friend typename Base::template Fields<Facet>
+  friend Base::template Fields<Facet>
     ZuFields_(StructuredReply *, Facet *);
   friend StructuredReply ZuStructured_(StructuredReply *);
 
@@ -446,7 +446,7 @@ struct CallReply : public Zjrpc::StructModel<CallReply<Req>, CallReplyShape> {
   using Structured = StructuredReply<Req>;
 
   template <typename Facet>
-  friend typename Base::template Fields<Facet> ZuFields_(CallReply *, Facet *);
+  friend Base::template Fields<Facet> ZuFields_(CallReply *, Facet *);
   friend CallReply ZuStructured_(CallReply *);
 
   const Structured &structuredContent() const { return structuredContent_; }
@@ -507,7 +507,7 @@ inline ReplyUnion<Req> loadToolReply(const ZfJSON::AnyNode *node)
     if constexpr (ZuIsSame<void, typename Res::Body>{})
       out = Zjrpc::Reply<Res>{};
     else if (data) {
-	using Body = typename Res::Body;
+	using Body = Res::Body;
 	if constexpr (ZuIsBase<Body, ZmObject>{}) {
 	  ZmRef<Body> body = new Body();
 	  auto handler = ZfJSON::handler<Body>(data);
@@ -528,7 +528,7 @@ template <typename Req> struct ToolArgFmt;
 
 template <typename Req>
 struct ToolArg {
-  using Object = typename Req::Object;
+  using Object = Req::Object;
   enum { Ref = ZuIsBase<Object, ZmObject>{} };
   using Value = Zjrpc::ObjectValue<Object>;
 
@@ -555,9 +555,9 @@ template <typename Req>
 struct ToolArgFmt {
   template <typename Arg, typename Facet>
   struct Handler {
-    using Object = typename Arg::Object;
+    using Object = Arg::Object;
     using ObjectHandler =
-      typename ZfJSON::As<Object>::template Handler<Object, Facet>;
+      ZfJSON::As<Object>::template Handler<Object, Facet>;
 
     const ZfJSON::AnyNode *node;
     bool		valid = false;
@@ -607,7 +607,7 @@ struct ToolArgs_ {
   using Types = ZuTypeMap<ToolArgT, Reqs>;
   using T = ZuTypeApply<ZfJSON::Union, Types>;
 };
-template <typename Reqs> using ToolArgs = typename ToolArgs_<Reqs>::T;
+template <typename Reqs> using ToolArgs = ToolArgs_<Reqs>::T;
 
 using EmptyOpt = ZfJSON::Union<Zjrpc::EmptyObject>;
 using PeerInfoOpt = ZfJSON::Union<PeerInfo>;
@@ -733,11 +733,11 @@ struct ToolsCallParams :
     public Zjrpc::StructModel<ToolsCallParams<Reqs_>, ToolsCallShape> {
   using Base = Zjrpc::StructModel<ToolsCallParams<Reqs_>, ToolsCallShape>;
   using Requests = Reqs_;
-  using ToolIDs = typename Contract<Requests>::ToolIDs;
+  using ToolIDs = Contract<Requests>::ToolIDs;
   using Arguments = ToolArgs<Requests>;
 
   template <typename Facet>
-  friend typename Base::template Fields<Facet>
+  friend Base::template Fields<Facet>
     ZuFields_(ToolsCallParams *, Facet *);
   friend ToolsCallParams ZuStructured_(ToolsCallParams *);
 
@@ -871,7 +871,7 @@ struct EnumNames {
   unsigned length() const {
     if constexpr (ZuFieldProp::HasEnum<typename Desc::Props>{}) {
       using Map = ZuFieldProp::GetEnum<typename Desc::Props>;
-      using Names = typename Map::Names;
+      using Names = Map::Names;
       return Names::N;
     } else {
       return 0;
@@ -982,7 +982,7 @@ struct Scalar : public ZuStructShim<Scalar<Desc>, ScalarShape> {
   ScalarValue<Desc, 2> deflt() const { return {}; }
   ZuCSpan mcpHeader() const {
     using Header = ZuFieldProp::MCP::GetHeader<typename Desc::Props>;
-    using Props = typename Desc::Props;
+    using Props = Desc::Props;
     if constexpr (ZuIsSame<void, Header>{} ||
 	!IsParameterHeader<Desc::Code, Props>{})
       return {};
@@ -1006,8 +1006,8 @@ struct FieldDesc {
       !ZuTypeIn<ZuFieldProp::Required, typename Field::Props>{} &&
       Code != ZfFieldTC::UDT && !ZfFieldTC::IsVec<Code>{}
   };
-  using Props = typename Field::Props;
-  using T = typename Field::T;
+  using Props = Field::Props;
+  using T = Field::T;
   static decltype(auto) deflt() { return Field::deflt(); }
 };
 
@@ -1148,8 +1148,8 @@ struct SchemaFmt {
     template <template <typename> class Filter, typename S>
     static void save(S &s, const O &) {
       enum { Code = Desc::Code };
-      using Props = typename Desc::Props;
-      using T = typename Desc::T;
+      using Props = Desc::Props;
+      using T = Desc::T;
       if constexpr (ZfFieldTC::IsVec<Code>{}) {
 	using Elem = ZuDecay<decltype(ZuDeclVal<const T &>()[0])>;
 	using Item = ValueDesc<ZfFieldTC::Elem<Code>{}, Props, Elem>;
@@ -1468,10 +1468,12 @@ inline void emitToolsList(S &s, int era)
 
 namespace Token_ {
 
-template <typename Token, typename Heap = ZuVoid>
-class ProgressAction_ : public Heap, public ZmObject {
+template <typename Token>
+class ProgressAction : public ZmNHeap<ProgressAction<Token>>, public ZmObject {
+friend inline ZuStringT<"Zmcp.Progress"> ZmNHeapID(ProgressAction *);
+
 public:
-  ProgressAction_(
+  ProgressAction(
       Token *token_, double value_, double total_, ZuCSpan message_) :
     m_token{token_}, m_message{message_},
     m_value{value_}, m_total{total_} { }
@@ -1489,17 +1491,11 @@ private:
 };
 
 template <typename Token>
-ZuDerive(ProgressActionHeap,
-  (ZmHeap<"Zmcp.Progress", ProgressAction_<Token>>));
+class LogAction : public ZmNHeap<LogAction<Token>>, public ZmObject {
+friend inline ZuStringT<"Zmcp.Log"> ZmNHeapID(LogAction *);
 
-template <typename Token>
-ZuDerive(ProgressAction,
-  (ProgressAction_<Token, ProgressActionHeap<Token>>));
-
-template <typename Token, typename Heap = ZuVoid>
-class LogAction_ : public Heap, public ZmObject {
 public:
-  LogAction_(
+  LogAction(
       Token *token_, ZuCSpan level_, ZuCSpan data_, ZuCSpan logger_) :
     m_token{token_}, m_level{level_}, m_data{data_}, m_logger{logger_} { }
 
@@ -1515,20 +1511,16 @@ private:
   Zjrpc::ErrorString	m_logger;
 };
 
-template <typename Token>
-ZuDerive(LogActionHeap, (ZmHeap<"Zmcp.Log", LogAction_<Token>>));
-
-template <typename Token>
-ZuDerive(LogAction, (LogAction_<Token, LogActionHeap<Token>>));
-
 } // Token_
 
-template <typename Req, typename Owner, typename Heap = ZuVoid>
-class Completion_ : public Heap, public ZmObject,
-    public Zjrpc::CompletionCore<Completion_<Req, Owner, Heap>, Req, Owner> {
-  using Base = Zjrpc::CompletionCore<Completion_, Req, Owner>;
+template <typename Req, typename Owner>
+class Completion : public ZmNHeap<Completion<Req, Owner>>, public ZmObject,
+    public Zjrpc::CompletionCore<Completion<Req, Owner>, Req, Owner> {
+friend inline ZuStringT<"Zmcp.Completion"> ZmNHeapID(Completion *);
+
+  using Base = Zjrpc::CompletionCore<Completion, Req, Owner>;
 public:
-  Completion_(Owner *owner, Zjrpc::ID id, uint64_t generation,
+  Completion(Owner *owner, Zjrpc::ID id, uint64_t generation,
       Zjrpc::ID progressToken = {}, int logLevel = LogLevel::Disabled) :
     Base{owner, ZuMv(id), generation}, m_progressToken{ZuMv(progressToken)},
     m_logLevel{logLevel} { }
@@ -1539,7 +1531,7 @@ public:
       ZuCSpan message = {}) {
     if (!this->live() || m_progressToken.template is<void>()) return false;
     if (!this->route().invoked()) {
-      using Action = Token_::ProgressAction<Completion_>;
+      using Action = Token_::ProgressAction<Completion>;
       ZmRef<Action> action = new Action{this, value, total, message};
       this->route().run([action = ZuMv(action)]() mutable {
 	action->token()->progress(action->value(), action->total(), action->message());
@@ -1553,7 +1545,7 @@ public:
     if (!this->live() || m_logLevel == LogLevel::Disabled ||
 	logLevel(level) < m_logLevel) return false;
     if (!this->route().invoked()) {
-      using Action = Token_::LogAction<Completion_>;
+      using Action = Token_::LogAction<Completion>;
       ZmRef<Action> action = new Action{this, level, data, logger};
       this->route().run([action = ZuMv(action)]() mutable {
 	action->token()->log(action->level(), action->data(), action->logger());
@@ -1568,20 +1560,13 @@ private:
   int m_logLevel;
 };
 
-template <typename Req, typename Owner>
-ZuDerive(CompletionHeap, (ZmHeap<"Zmcp.Completion", Completion_<Req, Owner>>));
-
-template <typename Req, typename Owner>
-ZuDerive(Completion, (Completion_<Req, Owner,
-  CompletionHeap<Req, Owner>>));
-
 template <typename Impl>
 class CompletionSet : public Zjrpc::CompletionSet<
     CompletionSet<Impl>, Impl, Completion> {
 public:
   template <typename Req>
   bool progress(
-      Completion_<Req, CompletionSet, CompletionHeap<Req, CompletionSet>>
+      Completion<Req, CompletionSet>
 	*token,
       double progress_, double total, ZuCSpan message) {
     return this->impl()->progression(token, progress_, total, message);
@@ -1589,7 +1574,7 @@ public:
 
   template <typename Req>
   bool log(
-      Completion_<Req, CompletionSet, CompletionHeap<Req, CompletionSet>>
+      Completion<Req, CompletionSet>
 	*token,
       ZuCSpan level, ZuCSpan data, ZuCSpan logger) {
     return this->impl()->logging(token, level, data, logger);
@@ -1598,7 +1583,7 @@ public:
 protected:
   template <typename Req>
   bool progress_(
-      Completion_<Req, CompletionSet, CompletionHeap<Req, CompletionSet>>
+      Completion<Req, CompletionSet>
 	*token,
       double progress_, double total, ZuCSpan message) {
     try {
@@ -1612,7 +1597,7 @@ protected:
 
   template <typename Req>
   bool log_(
-      Completion_<Req, CompletionSet, CompletionHeap<Req, CompletionSet>>
+      Completion<Req, CompletionSet>
 	*token,
       ZuCSpan level, ZuCSpan data, ZuCSpan logger) {
     try {
@@ -2008,7 +1993,7 @@ private:
 	    params.arguments().template p<ToolArg<Req>>().object();
 	  auto complete = [&emit, &envelope, &completed, era](auto &&reply) {
 	    using Reply = ZuDecay<decltype(reply)>;
-	    using Res = typename Reply::Response;
+	    using Res = Reply::Response;
 	    ZuAssert((ZuTypeIn<Res, Zjrpc::GetResponses<Req>>{}));
 	    if (ZuUnlikely(completed)) return;
 	    completed = true;

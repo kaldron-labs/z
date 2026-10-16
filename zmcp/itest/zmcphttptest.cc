@@ -52,24 +52,20 @@ struct EchoStream : public Zmcp::Request {
 };
 using Catalog = ZuTypeList<Echo, EchoStream>;
 
-template <typename Heap = ZuVoid>
-struct TransportContext_ : public Heap, public ZuObject {
-  TransportContext_(uintptr_t id_) : id{id_} { }
+struct TransportContext : public ZmNHeap<TransportContext>, public ZuObject {
+friend inline ZuStringT<"ZmcpITest.Transport"> ZmNHeapID(TransportContext *);
+
+  TransportContext(uintptr_t id_) : id{id_} { }
   uintptr_t id;
 };
-ZuDerive(TransportContextHeap,
-  (ZmHeap<"ZmcpITest.Transport", TransportContext_<>>));
-ZuDerive(TransportContext, (TransportContext_<TransportContextHeap>));
 
-template <typename Heap = ZuVoid>
-struct SessionContext_ : public Heap, public ZuObject { };
-ZuDerive(SessionContextHeap, (ZmHeap<"ZmcpITest.Session", SessionContext_<>>));
-ZuDerive(SessionContext, (SessionContext_<SessionContextHeap>));
+struct SessionContext : public ZmNHeap<SessionContext>, public ZuObject {
+friend inline ZuStringT<"ZmcpITest.Session"> ZmNHeapID(SessionContext *);
+};
 
-template <typename Heap = ZuVoid>
-struct StreamContext_ : public Heap, public ZuObject { };
-ZuDerive(StreamContextHeap, (ZmHeap<"ZmcpITest.Stream", StreamContext_<>>));
-ZuDerive(StreamContext, (StreamContext_<StreamContextHeap>));
+struct StreamContext : public ZmNHeap<StreamContext>, public ZuObject {
+friend inline ZuStringT<"ZmcpITest.Stream"> ZmNHeapID(StreamContext *);
+};
 
 struct App {
   using Headers = ZhttpHeaders("authorization");
@@ -241,8 +237,9 @@ struct ClientApp {
   bool terminateOK = false;
 };
 
-template <typename Heap = ZuVoid>
-struct ClientCall_ : public Heap, public ZmObject {
+struct ClientCall : public ZmNHeap<ClientCall>, public ZmObject {
+friend inline ZuStringT<"ZmcpITest.ClientCall"> ZmNHeapID(ClientCall *);
+
   void started(const Zjrpc::ID &id_) {
     id = id_;
     started_.post();
@@ -272,8 +269,6 @@ struct ClientCall_ : public Heap, public ZmObject {
   unsigned controls = 0;
   unsigned failures = 0;
 };
-ZuDerive(ClientCallHeap, (ZmHeap<"ZmcpITest.ClientCall", ClientCall_<>>));
-ZuDerive(ClientCall, (ClientCall_<ClientCallHeap>));
 
 class RawHTTP;
 
@@ -518,7 +513,7 @@ struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
     if (rejectSession && meta.sessionID) {
       rejectSession = false;
       ZmRef<typename ResBuilderQ::Node> response =
-	new typename ResBuilderQ::Node{};
+	new ResBuilderQ::Node{};
       response->data().missing();
       link->send(ZuMv(response));
       return;
@@ -532,7 +527,7 @@ struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
     bool sent = false;
     auto emit = [this, link, &sent](auto message) {
       ZmRef<typename ResBuilderQ::Node> response =
-	new typename ResBuilderQ::Node{};
+	new ResBuilderQ::Node{};
       auto fixed = response->data().fixed(ZuMv(message));
       if (!sessionless) fixed->sessionID(SessionID);
       link->send(ZuMv(response));
@@ -558,7 +553,7 @@ struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
   template <typename Link>
   void accepted(Link *link) {
     ZmRef<typename ResBuilderQ::Node> response =
-      new typename ResBuilderQ::Node{};
+      new ResBuilderQ::Node{};
     auto fixed = response->data().accepted();
     if (!sessionless) fixed->sessionID(SessionID);
     link->send(ZuMv(response));

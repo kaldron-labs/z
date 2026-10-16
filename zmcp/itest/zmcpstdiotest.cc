@@ -120,19 +120,16 @@ struct Echo : public Zmcp::Request {
 };
 using EchoCatalog = ZuTypeList<Echo>;
 
-template <typename Heap = ZuVoid>
-struct PeerContext_ : public Heap, public ZuObject { };
-ZuDerive(PeerContextHeap, (ZmHeap<"ZmcpTest.PeerContext", PeerContext_<>>));
-ZuDerive(PeerContext, (PeerContext_<PeerContextHeap>));
+struct PeerContext : public ZmNHeap<PeerContext>, public ZuObject {
+friend inline ZuStringT<"ZmcpTest.PeerContext"> ZmNHeapID(PeerContext *);
+};
 
-template <typename Heap = ZuVoid>
-struct StreamContext_ : public Heap, public ZuObject {
-  StreamContext_(unsigned id_) : id{id_} { }
+struct StreamContext : public ZmNHeap<StreamContext>, public ZuObject {
+friend inline ZuStringT<"ZmcpTest.StreamContext"> ZmNHeapID(StreamContext *);
+
+  StreamContext(unsigned id_) : id{id_} { }
   unsigned id;
 };
-ZuDerive(StreamContextHeap,
-  (ZmHeap<"ZmcpTest.StreamContext", StreamContext_<>>));
-ZuDerive(StreamContext, (StreamContext_<StreamContextHeap>));
 
 struct ServerApp {
   ZuRef<PeerContext> open(Zmcp::SessionTag, bool stdio, ZuCSpan id) {
@@ -241,8 +238,9 @@ struct ClientApp {
   bool cancelOK = false;
 };
 
-template <typename Heap = ZuVoid>
-struct ClientCall_ : public Heap, public ZmObject {
+struct ClientCall : public ZmNHeap<ClientCall>, public ZmObject {
+friend inline ZuStringT<"ZmcpTest.ClientCall"> ZmNHeapID(ClientCall *);
+
   void started(const Zjrpc::ID &id_) {
     id = id_;
     started_.post();
@@ -272,9 +270,6 @@ struct ClientCall_ : public Heap, public ZmObject {
   unsigned controls = 0;
   unsigned failures = 0;
 };
-
-ZuDerive(ClientCallHeap, (ZmHeap<"ZmcpTest.ClientCall", ClientCall_<>>));
-ZuDerive(ClientCall, (ClientCall_<ClientCallHeap>));
 
 static ZiMxParams mxParams()
 {

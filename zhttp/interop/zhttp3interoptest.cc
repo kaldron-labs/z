@@ -245,7 +245,7 @@ struct RequestParser :
   public Zhttp::Parser,
   public RequestParserBase_<RequestParser<H3>, H3> {
   using Base = RequestParserBase_<RequestParser<H3>, H3>;
-  using State = typename Base::State;
+  using State = Base::State;
   using HdrCatalog = RequestHeaders;
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
@@ -264,7 +264,7 @@ struct RequestParser :
     return Zhttp::bodyEach(rx,
       [this](ZuSpan<uint8_t> body) { seen.body << body; });
   }
-  void complete(typename State::T state) {
+  void complete(State::T state) {
     if (state == State::Complete) seen.complete = 1;
     else if (state == State::Error) seen.errors = 1;
     else if constexpr (H3) {
@@ -306,7 +306,7 @@ struct ResponseParser :
   public Zhttp::Parser,
   public ResponseParserBase_<ResponseParser<H3>, H3> {
   using Base = ResponseParserBase_<ResponseParser<H3>, H3>;
-  using State = typename Base::State;
+  using State = Base::State;
   using HdrCatalog = ResponseHeaders;
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
@@ -320,7 +320,7 @@ struct ResponseParser :
     return Zhttp::bodyEach(rx,
       [this](ZuSpan<uint8_t> body) { seen.body << body; });
   }
-  void complete(typename State::T state) {
+  void complete(State::T state) {
     if (state == State::Complete) seen.complete = 1;
     else if (state == State::Error) seen.errors = 1;
     else if constexpr (H3) {
@@ -591,7 +591,7 @@ struct H3ServerLink :
     app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      typename H3Cxn::LocalStreams streams;
+      H3Cxn::LocalStreams streams;
       if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
       link->app()->rxInvoke([
 	link = ZuMv(link), streams = ZuMv(streams), ok
@@ -720,7 +720,7 @@ struct ClientState {
 template <bool H3, typename App, typename Parser, typename Stream>
 int processResponse(App *app, Parser &parser, Stream &stream)
 {
-  using State = typename Parser::State;
+  using State = Parser::State;
   auto s = parser.process(stream);
   if (s == State::Error) {
     app->state->errors = 1;
@@ -756,7 +756,7 @@ struct H1ClientLinkOps : public Base {
     auto state = this->app()->state;
     if (!state->response.complete) {
       auto s = parser.eof();
-      using State = typename ResponseParser<false>::State;
+      using State = ResponseParser<false>::State;
       if (s == State::Complete)
 	state->response = parser.seen;
       else
@@ -856,7 +856,7 @@ struct H3Client::Link :
     app()->txInvoke([link, txError = ZuMv(txError)]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      typename H3Cxn::LocalStreams streams;
+      H3Cxn::LocalStreams streams;
       ZmRef<Stream> request;
       if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
       if (ok && streams) request = link->stream(Zquic::StreamType::Duplex);

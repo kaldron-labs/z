@@ -42,7 +42,7 @@ struct GetType_ { using T = ZuConstant<uint8_t, Deflt>; };
 template <typename Props, uint8_t Deflt>
 struct GetType_<Props, Deflt, true> { using T = GetValue<Props, Type>; };
 template <typename Props, uint8_t Deflt>
-using GetType = typename GetType_<Props, Deflt>::T;
+using GetType = GetType_<Props, Deflt>::T;
 
 template <typename Props, bool = HasValue<Props, ElemType>{}>
 struct GetElemProps_ { using T = ZuTypeList<>; };
@@ -51,7 +51,7 @@ struct GetElemProps_<Props, true> {
   using T = ZuTypeList<Type<GetValue<Props, ElemType>{}>>;
 };
 template <typename Props>
-using GetElemProps = typename GetElemProps_<Props>::T;
+using GetElemProps = GetElemProps_<Props>::T;
 
 } // ZuFieldProp::DBUS
 
@@ -572,7 +572,7 @@ bool loadField(Reader &, typename Field::T &);
 template <typename Field>
 bool skipField(Reader &);
 template <typename Field>
-typename Field::T loadFieldValue(Reader &);
+Field::T loadFieldValue(Reader &);
 
 template <typename T_, unsigned Code_, typename Props_ = ZuTypeList<>>
 struct ValueField {
@@ -608,8 +608,8 @@ using As = decltype(ZfDBUS_Fmt(ZuDeclVal<O *>()));
 template <typename Field>
 constexpr unsigned fieldAlignment()
 {
-  using T = typename Field::T;
-  using Props = typename Field::Props;
+  using T = Field::T;
+  using Props = Field::Props;
   constexpr unsigned Code = Field::Type::Code;
   if constexpr (ZfFieldTC::IsVec<Code>{} || Code == ZfFieldTC::Bytes)
     return 4;
@@ -629,8 +629,8 @@ Signature signature();
 template <typename Field, typename S>
 constexpr void signatureField(S &s)
 {
-  using T = typename Field::T;
-  using Props = typename Field::Props;
+  using T = Field::T;
+  using Props = Field::Props;
   constexpr unsigned Code = Field::Type::Code;
   if constexpr (ZfFieldTC::IsVec<Code>{}) {
     s << 'a';
@@ -674,7 +674,7 @@ constexpr unsigned fieldSize()
 template <typename Field>
 constexpr bool rawField()
 {
-  using T = typename Field::T;
+  using T = Field::T;
   constexpr unsigned Code = Field::Type::Code;
   // The wire type is fixed by Code; these checks only select the native-order
   // bulk-copy optimization when the C++ representation has the same width.
@@ -869,8 +869,8 @@ bool skipArray(Reader &reader)
 template <typename S, typename Field>
 bool saveField(S &s, State_ &context, const typename Field::T &value)
 {
-  using T = typename Field::T;
-  using Props = typename Field::Props;
+  using T = Field::T;
+  using Props = Field::Props;
   constexpr unsigned Code = Field::Type::Code;
   if constexpr (ZfFieldTC::IsVec<Code>{}) {
     enum { ElemCode = ZfFieldTC::Elem<Code>{} };
@@ -934,8 +934,8 @@ bool saveField(S &s, State_ &context, const typename Field::T &value)
 template <typename Field>
 bool loadField(Reader &reader, typename Field::T &value)
 {
-  using T = typename Field::T;
-  using Props = typename Field::Props;
+  using T = Field::T;
+  using Props = Field::Props;
   constexpr unsigned Code = Field::Type::Code;
   if constexpr (ZfFieldTC::IsVec<Code>{}) {
     enum { ElemCode = ZfFieldTC::Elem<Code>{} };
@@ -989,8 +989,8 @@ bool loadField(Reader &reader, typename Field::T &value)
 template <typename Field>
 bool skipField(Reader &reader)
 {
-  using T = typename Field::T;
-  using Props = typename Field::Props;
+  using T = Field::T;
+  using Props = Field::Props;
   constexpr unsigned Code = Field::Type::Code;
   if constexpr (ZfFieldTC::IsVec<Code>{}) {
     enum { ElemCode = ZfFieldTC::Elem<Code>{} };
@@ -1036,9 +1036,9 @@ bool skipField(Reader &reader)
 }
 
 template <typename Field>
-typename Field::T loadFieldValue(Reader &reader)
+Field::T loadFieldValue(Reader &reader)
 {
-  using T = typename Field::T;
+  using T = Field::T;
   if constexpr (Field::Type::Code == ZfFieldTC::UDT)
     return As<T>::template Handler<T, ZuFacet::DBUS,
       typename Field::Props>::loadCtor(reader);
@@ -1134,7 +1134,7 @@ struct AsObject {
       return bool(reader.result);
     }
     template <typename Field>
-    static typename Field::T value(const FieldViewsScratch &fields) {
+    static Field::T value(const FieldViewsScratch &fields) {
       constexpr unsigned I = ZuTypeIndex<Field, WireFields>{};
       Reader reader{fields[I]};
       auto value = loadFieldValue<Field>(reader);
@@ -1361,8 +1361,8 @@ struct AsMap {
     using Base = Checked<Handler, O, Facet>;
     using Base::Base;
     using Base::load;
-    using Key = typename O::Key;
-    using Val = typename O::Val;
+    using Key = O::Key;
+    using Val = O::Val;
     using KeyField = ValueField<Key,
       KeyCode == MapCode::Infer ? rawCode<Key>() : KeyCode, KeyProps>;
     using ValField = ValueField<Val,
@@ -1544,7 +1544,7 @@ struct AsVariant {
     using Base = Checked<Handler, O, Facet>;
     using Base::Base;
     using Base::load;
-    using Types = typename O::Types;
+    using Types = O::Types;
 
     template <typename T, typename F, typename P>
     static constexpr void signature(auto &s) { s << 'v'; }
@@ -1576,7 +1576,7 @@ struct AsVariant {
       if (!nesting) return false;
       bool ok = false;
       o.cdispatch([&s, &context, &ok](auto I, const auto &value) {
-	using V = typename O::template Type<I>;
+	using V = O::template Type<I>;
 	if constexpr (IsAny<V>{}) {
 	  writeText(s, context, Type::Signature, ZuBSpan(value.signature));
 	  ok = saveAny(s, context, value);
@@ -1685,7 +1685,7 @@ template <typename O, typename Facet>
 inline Signature signature()
 {
   Signature s;
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   Handler::signatureTop(s);
   return s;
 }
@@ -1694,7 +1694,7 @@ template <typename O, typename Facet = ZuFacet::DBUS>
 consteval SigConst signatureConst()
 {
   SigConst s;
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   Handler::signatureTop(s);
   return s;
 }
@@ -1707,7 +1707,7 @@ inline Result measure(const O &o, Context context = {})
   if (context.order != Order::Little && context.order != Order::Big)
     return {unsigned(context.offset), Error::Syntax};
   State_ state{context};
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   auto signature = ZtScratch(SigScratch, Limit::Signature + 1);
   Handler::signatureTop(signature);
   if (!validSignature(signature))
@@ -1728,7 +1728,7 @@ inline S &saveMeasured(S &s, const O &o, Context context, Result measured)
 {
   ZmAssert_(measured && measured.offset >= context.offset);
   State_ state{context};
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   ZmAssert_(Handler::saveTop(s, state, o) &&
     state.offset == measured.offset);
   return s;
@@ -1746,7 +1746,7 @@ inline S &save(S &s, const O &o, Context context = {})
 template <typename O, typename Facet = ZuFacet::DBUS>
 auto handler(const View &view)
 {
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   return Handler{view};
 }
 

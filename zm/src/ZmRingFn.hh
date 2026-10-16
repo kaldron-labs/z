@@ -235,6 +235,6 @@ struct ZmRingFn_MapArgs {
 };
 
 template <typename ...Args>
-using ZmRingFn = typename ZmRingFn_MapArgs<ZuTypeList<Args...>>::T;
+using ZmRingFn = ZmRingFn_MapArgs<ZuTypeList<Args...>>::T;
 
 #endif /* ZmRingFn_HH */

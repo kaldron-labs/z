@@ -253,13 +253,13 @@ struct TOMLPtrTables { ZmRef<TOMLPtrArray> values; };
 ZfStruct(, (TOMLPtrTables, TOML),
   (values, (Mutable),		UDT));
 ZuAssert((ZuIsSame<
-  ZmHeapID<TOMLIntMap>, ZuStringT<"ZfTest.TOML.IntMap">>{}));
+  ZmNHeapID_<TOMLIntMap>, ZuStringT<"ZfTest.TOML.IntMap">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<TOMLPtrObj>, ZuStringT<"ZfTest.TOML.PtrObj">>{}));
+  ZmNHeapID_<TOMLPtrObj>, ZuStringT<"ZfTest.TOML.PtrObj">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<TOMLPtrText>, ZuStringT<"ZfTest.TOML.PtrText">>{}));
+  ZmNHeapID_<TOMLPtrText>, ZuStringT<"ZfTest.TOML.PtrText">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<TOMLPtrArray>, ZuStringT<"ZfTest.TOML.PtrArray">>{}));
+  ZmNHeapID_<TOMLPtrArray>, ZuStringT<"ZfTest.TOML.PtrArray">>{}));
 
 struct TOMLData {
   ZtString<> name;
@@ -396,8 +396,8 @@ ZfStructRender(, TOMLFacet, TOML,
 using TOMLFacetFields = ZuFields<TOMLFacet, ZuFacet::TOML>;
 using TOMLFacetField = ZuType<0, TOMLFacetFields>;
 using JSONFacetField = ZuType<0, ZuFields<TOMLFacet, ZuFacet::JSON>>;
-ZuAssert((!ZuIs_<typename TOMLFacetField::Props,
-  typename JSONFacetField::Props>{}));
+ZuAssert((!ZuIs_<TOMLFacetField::Props,
+  JSONFacetField::Props>{}));
 ZuAssert((ZuIs_<ZuFieldProp::TOML::GetID<TOMLFacetField>,
   ZuStringT<"toml.value">>{}));
 ZuAssert((ZuIs_<ZuFieldProp::TOML::GetIDs<TOMLFacetFields>,
@@ -2158,7 +2158,7 @@ static void unions()
     ZfTOML::save(saved, rootArray);
   }));
 
-  using MixedHandler = typename ZfTOML::As<TOMLMixedUnion>::
+  using MixedHandler = ZfTOML::As<TOMLMixedUnion>::
     template Handler<TOMLMixedUnion, ZuFacet::TOML>;
   ZuCheck(!MixedHandler::valid(nullptr));
 

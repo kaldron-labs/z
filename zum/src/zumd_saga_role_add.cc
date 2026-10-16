@@ -11,10 +11,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RoleAddSaga_ : public Heap,
-    public ZdbSaga<RoleAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RoleAddSaga_<Heap>, DB>;
+struct RoleAddSaga : public ZmNHeap<RoleAddSaga>,
+    public ZdbSaga<RoleAddSaga, DB> {
+friend inline ZuStringT<"Zum.RoleAddSaga"> ZmNHeapID(RoleAddSaga *);
+
+  using Base = ZdbSaga<RoleAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -74,20 +75,17 @@ struct RoleAddSaga_ : public Heap,
     return {};
   }
 
-  RoleAddSaga_() = default;
-  RoleAddSaga_(App app_, Role before_, Role values_, int64_t updated_,
+  RoleAddSaga() = default;
+  RoleAddSaga(App app_, Role before_, Role values_, int64_t updated_,
       IdemRequest request_, ZmRef<AdminEditResult<Role>> response_ = {}) :
     app{ZuMv(app_)}, before{ZuMv(before_)}, values{ZuMv(values_)},
     updated{updated_}, request{ZuMv(request_)}, response{ZuMv(response_)} {
     if (response) response->item = result();
   }
-  RoleAddSaga_(RoleAddArgs args) :
-    RoleAddSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), args.updated, ZuMv(args.request), ZuMv(args.result)} { }
-  ~RoleAddSaga_() override;
+  RoleAddSaga(RoleAddArgs args) :
+    RoleAddSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), args.updated, ZuMv(args.request), ZuMv(args.result)} { }
+  ~RoleAddSaga() override;
 };
-
-using RoleAddSaga = RoleAddSaga_<
-  ZmHeap<"Zum.RoleAddSaga", RoleAddSaga_<>>>;
 
 ZfStruct(ZumAPI, (RoleAddSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -97,22 +95,19 @@ ZfStruct(ZumAPI, (RoleAddSaga, FB),
   (request,	(Ctor<4>),	UDT));
 Zfb::AsTable<"Zum.fbs.RoleAdd"> Zfb_Fmt(RoleAddSaga *);
 
-template <typename Heap>
-unsigned RoleAddSaga_<Heap>::appError(const App &item) const
+unsigned RoleAddSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-Role RoleAddSaga_<Heap>::result() const
+Role RoleAddSaga::result() const
 {
   return Role{.appID = values.appID, .id = values.id, .name = values.name,
     .label = values.label, .state = State::Active, .origin = Origin::Custom,
     .version = 1, .created = updated, .updated = updated};
 }
 
-template <typename Heap>
-void RoleAddSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void RoleAddSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   setError(catalogAddError(*this));
   if (error) { complete(false); return; }
@@ -137,8 +132,7 @@ void RoleAddSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<RoleAddSaga>{}));
 
-template <typename Heap>
-RoleAddSaga_<Heap>::~RoleAddSaga_() = default;
+RoleAddSaga::~RoleAddSaga() = default;
 
 SagaRef roleAdd(ZuBSpan data) {
   return RoleAddSaga::load(data);

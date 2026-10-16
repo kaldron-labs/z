@@ -67,14 +67,13 @@ struct GetScalarFmt_<Props, true> {
   using T = GetValue<Props, ScalarFmt>;
 };
 template <typename Props>
-using GetScalarFmt = typename GetScalarFmt_<Props>::T;
+using GetScalarFmt = GetScalarFmt_<Props>::T;
 
 } // ZuFieldProp::YAML
 
 namespace ZfYAML {
 
 using ZfTree::AnyNode;
-using ZfTree::Node_;
 using ZfTree::Node;
 using ZfTree::NodeArray;
 using ZfTree::CNodeArray;
@@ -301,7 +300,7 @@ template <typename O, typename Facet>
 struct AsDeflt_<O, Facet, ZuTypeList<>> { using T = AsString; };
 struct AsDeflt {
   template <typename O, typename Facet>
-  using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
+  using Handler = AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
 } // ZfYAML
@@ -322,9 +321,9 @@ struct IsObjPtr__<U, true> {
 template <typename U, typename = As<U>>
 struct IsObjPtr_ { using T = ZuFalse; };
 template <typename U>
-struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+struct IsObjPtr_<U, AsDeflt> { using T = IsObjPtr__<U>::T; };
 template <typename U>
-using IsObjPtr = typename IsObjPtr_<U>::T;
+using IsObjPtr = IsObjPtr_<U>::T;
 
 template <typename T, bool = IsObjPtr<ZuDecay<T>>{}>
 struct ObjType_ { using T_ = ZuDecay<T>; };
@@ -333,7 +332,7 @@ struct ObjType_<T, true> {
   using T_ = ZuDecay<decltype(*(ZuDeclVal<const ZuDecay<T> &>()))>;
 };
 template <typename T>
-using ObjType = typename ObjType_<T>::T_;
+using ObjType = ObjType_<T>::T_;
 template <typename T>
 ZuInline decltype(auto) obj_(const T &v) {
   if constexpr (IsObjPtr<ZuDecay<T>>{}) return *v;
@@ -353,7 +352,7 @@ struct ZfAPI YAMLPolicy {
   template <typename Props>
   using GetTimeFmt = ZuFieldProp::YAML::GetTimeFmt<Props>;
   template <typename O, typename Facet>
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   template <typename O>
   using IsObjPtr = ZfYAML::IsObjPtr<O>;
 
@@ -382,7 +381,7 @@ struct ZfAPI YAMLPolicy {
 
   template <typename B>
   static ZuTuple<int, B> yamlIntEOV(ZuCSpan span, unsigned base) {
-    using T = typename B::T;
+    using T = B::T;
     unsigned i = 0, n = span.length();
     bool negative = false;
     if (span[i] == '+' || span[i] == '-') {
@@ -633,7 +632,7 @@ void saveUDT(S &s, const T &v, unsigned indent_)
   using O = ObjType<T>;
   if constexpr (IsObjPtr<ZuDecay<T>>{})
     if (ZuUnlikely(!v)) { s << " null"; return; }
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   const auto &o = obj_(v);
   if constexpr (Handler::Block) {
     s << '\n';
@@ -693,7 +692,7 @@ template <
 bool saveField(S &s, const O &o, unsigned indent_, bool first)
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   auto save = [&s, indent_, first](const auto &v) {
     if (!first) s << '\n';
     indent(s, indent_);
@@ -791,10 +790,10 @@ struct AsObject {
       ZuSwitch::dispatch<O::N - 2>(type - 2,
 	[&s, &o, indent_](auto I_) {
 	  static constexpr unsigned I = I_ + 2;
-	  using V = typename O::template Type<I>;
+	  using V = O::template Type<I>;
 	  const auto &v = o.template p<I>();
 	  if constexpr (!IsObjPtr<V>{}) {
-	    using Handler = typename As<V>::template Handler<V, Facet>;
+	    using Handler = As<V>::template Handler<V, Facet>;
 	    if constexpr (Handler::Block)
 	      Handler::template save_<Filter>(s, v, indent_);
 	    else {
@@ -803,7 +802,7 @@ struct AsObject {
 	    }
 	  } else {
 	    using U = ZuDecay<decltype(*v)>;
-	    using Handler = typename As<U>::template Handler<U, Facet>;
+	    using Handler = As<U>::template Handler<U, Facet>;
 	    if (ZuLikely(v)) {
 	      if constexpr (Handler::Block)
 		Handler::template save_<Filter>(s, *v, indent_);
@@ -921,7 +920,7 @@ struct AsString {
 	template Handler<O_>, O_> {
     using O = O_;
     using Fmt = decltype(ZfYAML_StringFmt(ZuDeclVal<O *>()));
-    using Handler_ = typename Fmt::template Handler<O>;
+    using Handler_ = Fmt::template Handler<O>;
     using Base = ZfTreeLoad::String<YAMLPolicy, Handler_, O>;
     using Base::Base;
 
@@ -936,7 +935,7 @@ struct AsJSON {
   template <typename O_, typename Facet>
   struct Handler : public ZfJSON::As<O_>::template Handler<O_, Facet> {
     using O = O_;
-    using Base = typename ZfJSON::As<O>::template Handler<O, Facet>;
+    using Base = ZfJSON::As<O>::template Handler<O, Facet>;
     using Base::Base;
 
     enum { Block = 0, Scalar = 0 };
@@ -950,7 +949,7 @@ struct AsJSON {
 
 template <typename O, typename Facet>
 inline auto handler_(const AnyNode *node) {
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   auto handler = Handler{node};
   bool valid;
   if constexpr (ZuIsSame<As<O>, AsJSON>{})

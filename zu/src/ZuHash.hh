@@ -407,7 +407,7 @@ template <typename T> struct ZuHash_<T, true> {
   template <typename S>
   static uint32_t hash(const S &s) {
     using Traits = ZuTraits<S>;
-    using Char = typename Traits::Elem;
+    using Char = Traits::Elem;
     return ZuStringHash<Char>::hash(Traits::data(s), Traits::length(s));
   }
 };

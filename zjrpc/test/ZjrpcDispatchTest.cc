@@ -142,7 +142,7 @@ private:
   Zjrpc::InboundCalls m_inbound;
   ZmList<ZmFn<void()>> m_turns;
   ZtArray<ZtString<>> m_output;
-  ZtArray<typename Base::Message> m_messages;
+  ZtArray<Base::Message> m_messages;
   unsigned m_sent = 0;
   bool m_up = true;
   bool m_failed = false;
@@ -328,15 +328,16 @@ static void borrowedTest()
   ZuCheck(!harness.failed());
 }
 
-template <typename Heap = ZuVoid>
-struct Aggregate_ : public Heap, public ZmObject {
+struct Aggregate : public ZmNHeap<Aggregate>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Test.Aggregate"> ZmNHeapID(Aggregate *);
+
   Harness *harness;
   Zjrpc::BatchReply reply;
   unsigned completions = 0;
   unsigned failures = 0;
   bool removed = false;
 
-  explicit Aggregate_(Harness *harness_) : harness{harness_} { }
+  explicit Aggregate(Harness *harness_) : harness{harness_} { }
   void process(Zjrpc::BatchReply reply_) {
     removed = !harness->pendingID(42) && !harness->pendingID(43);
     reply = ZuMv(reply_);
@@ -347,19 +348,17 @@ struct Aggregate_ : public Heap, public ZmObject {
     ++failures;
   }
 };
-using AggregateHeap = ZmHeap<"Zjrpc.Test.Aggregate", Aggregate_<>>;
-using Aggregate = Aggregate_<AggregateHeap>;
 
-template <typename Heap = ZuVoid>
-struct Payload_ : public Heap, public ZmObject {
+struct Payload : public ZmNHeap<Payload>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Test.Payload"> ZmNHeapID(Payload *);
+
   unsigned *destroyed;
   int value = 7;
 
-  explicit Payload_(unsigned *destroyed_) : destroyed{destroyed_} { }
-  ~Payload_() { ++*destroyed; }
+  explicit Payload(unsigned *destroyed_) : destroyed{destroyed_} { }
+  ~Payload() { ++*destroyed; }
 };
-using PayloadHeap = ZmHeap<"Zjrpc.Test.Payload", Payload_<>>;
-using Payload = Payload_<PayloadHeap>;
+
 ZfStruct(, (Payload, JSON), (value, (Required), Int32));
 struct OwnedEcho : public Zjrpc::Request {
   using Object = Payload;

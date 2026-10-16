@@ -82,10 +82,10 @@ struct Fields_<O, true> {
   using T = Fields_<O, false>::T::template Unshift<TimeField<O>>;
 };
 template <typename W>
-using Fields = typename Fields_<typename W::O, W::TimeIndex>::T;
+using Fields = Fields_<typename W::O, W::TimeIndex>::T;
 
 // map a field to its Decoder type
-template <typename Field, typename Props = typename Field::Props>
+template <typename Field, typename Props = Field::Props>
 using FieldDecoderFlags_ = ZuUnsigned<
   ((Field::Type::Code == ZfFieldTC::Float) ? 4 : 0) |
   (ZuTypeIn<ZuFieldProp::Delta2, Props>{} ? 2 : 0) |
@@ -101,18 +101,18 @@ struct FieldDecoder_<Field, 2U> { using T = DeltaDecoder<DeltaDecoder<>>; };
 template <typename Field>
 struct FieldDecoder_<Field, 4U> { using T = FloatDecoder; };
 template <typename Field>
-using FieldDecoder = typename FieldDecoder_<Field>::T;
+using FieldDecoder = FieldDecoder_<Field>::T;
 
 // map a field to corresponding Series / Reader
 template <typename Field, bool = Field::Type::Code == ZfFieldTC::Time>
 struct FieldSeries_ { using T = Series<FieldDecoder<Field>>; };
 template <typename Field>
 struct FieldSeries_<Field, true> { using T = TimeSeries; };
-template <typename Field> using FieldSeries = typename FieldSeries_<Field>::T;
+template <typename Field> using FieldSeries = FieldSeries_<Field>::T;
 template <typename Field> using FieldSeriesRef = ZmRef<FieldSeries<Field>>;
 template <typename Field> using FieldReader = Reader<FieldDecoder<Field>>;
 template <typename Field>
-using FieldRdrCtrl = typename FieldReader<Field>::Ctrl;
+using FieldRdrCtrl = FieldReader<Field>::Ctrl;
 
 // move-only ZmRef<Writer>-derived smart pointer,
 // with a RAII dtor that calls writer->stop()
@@ -164,7 +164,7 @@ template <typename O, bool TimeIndex> class DataFrame;
 
 template <
   typename Field,
-  typename Props = typename Field::Props,
+  typename Props = Field::Props,
   bool HasNDP = ZuFieldProp::HasNDP<Props>{}>
 struct GetNDP_ {
   using T = ZuFieldProp::GetNDP<Props>;
@@ -174,13 +174,15 @@ struct GetNDP_<Field, Props, false> {
   using T = ZuUnsigned<0>;
 };
 template <typename Field>
-using GetNDP = typename GetNDP_<Field>::T;
+using GetNDP = GetNDP_<Field>::T;
 
 // data frame writer
-template <typename W, typename Heap = ZuVoid>
-class DFWriter_ : public Heap, public ZmObject {
+template <typename W>
+class DFWriter : public ZmNHeap<DFWriter<W>>, public ZmObject {
+friend inline ZuStringT<"Zdb.DFWriter"> ZmNHeapID(DFWriter *);
+
 public:
-  using O = typename W::O;
+  using O = W::O;
   enum { TimeIndex = W::TimeIndex };
   using DataFrame = Zdf::DataFrame<O, TimeIndex>;
 
@@ -190,17 +192,17 @@ friend DataFrame;
   using Fields = Zdf::Fields<W>;
   using WrRefs = WrRefTuple<W>;
 
-  DFWriter_() = default;
-  DFWriter_(DataFrame *df, ErrorFn errorFn) :
+  DFWriter() = default;
+  DFWriter(DataFrame *df, ErrorFn errorFn) :
     m_df{df}, m_errorFn{ZuMv(errorFn)} { }
 
 public:
-  DFWriter_(DFWriter_ &&) = default;
-  DFWriter_ &operator =(DFWriter_ &&) = default;
-  ~DFWriter_() = default;
+  DFWriter(DFWriter &&) = default;
+  DFWriter &operator =(DFWriter &&) = default;
+  ~DFWriter() = default;
 
-  DFWriter_(const DFWriter_ &) = delete;
-  DFWriter_ &operator =(const DFWriter_ &) = delete;
+  DFWriter(const DFWriter &) = delete;
+  DFWriter &operator =(const DFWriter &) = delete;
 
   bool stopped() const { return m_stopped; }
   bool failed() const { return m_failed; }
@@ -269,10 +271,6 @@ private:
   bool		m_stopped = false;
   bool		m_failed = false;
 };
-template <typename W>
-ZuDerive(DFWriter_Heap, (ZmHeap<"Zdb.DFWriter", DFWriter_<W>>));
-template <typename W>
-ZuDerive(DFWriter, (DFWriter_<W, DFWriter_Heap<W>>));
 
 class Store;
 
@@ -352,15 +350,15 @@ public:
   template <typename Field>
   void seek(
     Offset offset,
-    typename FieldReader<Field>::Fn readFn, ErrorFn errorFn = {}) const
+    FieldReader<Field>::Fn readFn, ErrorFn errorFn = {}) const
   {
     using I = ZuTypeIndex<Field, Fields>;
     m_seriesRefs.template p<I{}>()->seek(offset, ZuMv(readFn), ZuMv(errorFn));
   }
   template <typename Field>
   void find(
-    typename FieldSeries<Field>::Value value,
-    typename FieldReader<Field>::Fn readFn, ErrorFn errorFn = {}) const
+    FieldSeries<Field>::Value value,
+    FieldReader<Field>::Fn readFn, ErrorFn errorFn = {}) const
   {
     using I = ZuTypeIndex<Field, Fields>;
     m_seriesRefs.template p<I{}>()->find(value, ZuMv(readFn), ZuMv(errorFn));

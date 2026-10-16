@@ -592,7 +592,7 @@ public:
 
   enum { Request = Request_ };
   using HdrCatalog = HdrCatalog_;
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
   using State = ParserState;
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -1292,7 +1292,7 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   using HdrCatalog = HdrCatalog_;
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
 
@@ -1491,8 +1491,8 @@ private:
   bool headers_(Build &build) {
     using List = HeaderList<Catalog>;
     ZuUnroll::all<List::N>([this, &build](auto I) {
-	using Key = typename List::template Key<I>;
-	using Value = typename List::template Value<I>;
+	using Key = List::template Key<I>;
+	using Value = List::template Value<I>;
 	if constexpr (Value::N) {
 	  using Fixed = HeaderValue<Value>;
 	  builderFixedHeader<Key, Fixed>(impl(), [&build]() {
@@ -1793,7 +1793,7 @@ struct Cxn {
 
   static LocalStreams openLocalStreams(
       Link &link, const ZiTxErrorFn &txError) {
-    using StreamType = typename Link::StreamType;
+    using StreamType = Link::StreamType;
     LocalStreams streams{
       link.stream(StreamType::Simplex),
       link.stream(StreamType::Simplex),

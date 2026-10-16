@@ -445,7 +445,7 @@ struct StreamClient : public Zhttp::ClientHub<StreamClient<Profile>, Profile> {
   struct Builder : public Zhttp::Builder,
       public Zhttp::MessageTraits<Profile>::template Request<Builder,
         Zhttp::DefltHdrCatalog, true, true> {
-    using Base = typename Zhttp::MessageTraits<Profile>::template Request<
+    using Base = Zhttp::MessageTraits<Profile>::template Request<
       Builder, Zhttp::DefltHdrCatalog, true, true>;
     using HdrCatalog = Zhttp::DefltHdrCatalog;
     using Base::body;
@@ -467,9 +467,9 @@ struct StreamClient : public Zhttp::ClientHub<StreamClient<Profile>, Profile> {
     struct Parser : public Zhttp::Parser,
         public Zhttp::MessageTraits<Profile>::template ResponseParser<
           Parser, Zhttp::DefltHdrCatalog> {
-      using Base = typename Zhttp::MessageTraits<Profile>::template
+      using Base = Zhttp::MessageTraits<Profile>::template
         ResponseParser<Parser, Zhttp::DefltHdrCatalog>;
-      using State = typename Base::State;
+      using State = Base::State;
       using HdrCatalog = Zhttp::DefltHdrCatalog;
       using Base::reset;
       StreamState *state = nullptr;
@@ -483,7 +483,7 @@ struct StreamClient : public Zhttp::ClientHub<StreamClient<Profile>, Profile> {
 	  state->body << value;
 	});
       }
-      void complete(typename State::T value) {
+      void complete(State::T value) {
 	state->complete = value == State::Complete;
 	state->report();
       }
@@ -530,10 +530,10 @@ struct StreamClient : public Zhttp::ClientHub<StreamClient<Profile>, Profile> {
 
 template <typename Profile>
 struct StreamProbe {
-  using Protocol = typename Zhttp::ProfileTraits<Profile>::Protocol;
+  using Protocol = Zhttp::ProfileTraits<Profile>::Protocol;
   StreamState state;
   StreamClient<Profile> client{&state};
-  using Link = typename StreamClient<Profile>::Link;
+  using Link = StreamClient<Profile>::Link;
   ZmRef<Link> link;
   bool inited = false;
 

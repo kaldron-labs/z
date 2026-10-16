@@ -57,12 +57,11 @@ ZmHashDerive(InboundHash, InboundEntry,
       ZmHashShadow<ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zjrpc.Inbound">>>>>));
 
-template <typename Heap = ZuVoid>
-struct InboundTable_ : public Heap, public InboundHash {
-  ZuDerive_(InboundTable_, InboundHash)
+struct InboundTable : public ZmNHeap<InboundTable>, public InboundHash {
+friend inline ZuStringT<"Zjrpc.Inbound.Table"> ZmNHeapID(InboundTable *);
+
+  ZuDerive_(InboundTable, InboundHash)
 };
-ZuDerive(InboundTableHeap, (ZmHeap<"Zjrpc.Inbound.Table", InboundTable_<>>));
-ZuDerive(InboundTable, (InboundTable_<InboundTableHeap>));
 
 // ZmCache shares nodes with its LRU and hash; intrusive ownership keeps an
 // evicted node alive until both memberships have released it.

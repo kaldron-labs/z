@@ -79,8 +79,9 @@ struct CliApp {
   void failed() { ++failures; }
 };
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject {
+struct Call : public ZmNHeap<Call>, public ZmObject {
+friend inline ZuStringT<"ZjrpcITest.Call"> ZmNHeapID(Call *);
+
   ZmSemaphore done;
   int value = 0;
   unsigned failures = 0;
@@ -88,11 +89,10 @@ struct Call_ : public Heap, public ZmObject {
   void failed() { ++failures; done.post(); }
   void failed(const Zjrpc::Error &) { failed(); }
 };
-using CallHeap = ZmHeap<"ZjrpcITest.Call", Call_<>>;
-using Call = Call_<CallHeap>;
 
-template <typename Heap = ZuVoid>
-struct BatchCall_ : public Heap, public ZmObject {
+struct BatchCall : public ZmNHeap<BatchCall>, public ZmObject {
+friend inline ZuStringT<"ZjrpcITest.BatchCall"> ZmNHeapID(BatchCall *);
+
   ZmSemaphore done;
   Zjrpc::BatchReply reply;
   unsigned completions = 0;
@@ -104,8 +104,6 @@ struct BatchCall_ : public Heap, public ZmObject {
   }
   void failed() { ++failures; done.post(); }
 };
-using BatchCallHeap = ZmHeap<"ZjrpcITest.BatchCall", BatchCall_<>>;
-using BatchCall = BatchCall_<BatchCallHeap>;
 
 static void testIO()
 {

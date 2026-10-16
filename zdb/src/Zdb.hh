@@ -118,7 +118,7 @@ ZuStringT<"Zdb.Row"> ZdbHeapID(...); // default
 template <typename U>
 struct Zdb_HeapID_ { using T = decltype(ZdbHeapID(ZuDeclVal<U *>())); };
 template <typename U>
-using Zdb_HeapID = typename Zdb_HeapID_<ZuDecay<U>>::T;
+using Zdb_HeapID = Zdb_HeapID_<ZuDecay<U>>::T;
 
 void ZdbEvictHook(...); // default
 template <typename U>
@@ -126,7 +126,7 @@ struct Zdb_EvictHook_ {
   using T = decltype(ZdbEvictHook(ZuDeclVal<U *>()));
 };
 template <typename U>
-using Zdb_EvictHook = typename Zdb_EvictHook_<ZuDecay<U>>::T;
+using Zdb_EvictHook = Zdb_EvictHook_<ZuDecay<U>>::T;
 
 namespace Zdb_ {
 
@@ -541,7 +541,7 @@ public:
     using Props = ZuTypeGrep<CtorFilter, typename Orig::Props>;
   };
   template <typename Field>
-  using Map = typename Field::template Adapt<Adapter>;
+  using Map = Field::template Adapt<Adapter>;
   // bind Fields
   template <typename Facet>
   using Fields = ZuTypeMap<Map, Zdb_::Fields<T, Facet>>;
@@ -833,7 +833,7 @@ struct RepBuf_ : public ZmPolymorph {
     template <typename U> static void set(O &, U &&);
   };
   template <typename Field>
-  using Map = typename Field::template Adapt<Adapter>;
+  using Map = Field::template Adapt<Adapter>;
   // bind Fields
   template <typename Facet>
   using Fields = ZuTypeMap<Map, Zdb_::Fields<FB, Facet>>;
@@ -884,12 +884,11 @@ struct Count__ {
 
   Fn	fn;
 };
-template <typename Heap = ZuVoid>
-struct Count_ : public Heap, public ZmPolymorph, public Count__ {
-  ZuDerive_(Count_, Count__)
+struct Count : public ZmNHeap<Count>, public ZmPolymorph, public Count__ {
+friend inline ZuStringT<"Zdb.Count"> ZmNHeapID(Count *);
+
+  ZuDerive_(Count, Count__)
 };
-ZuDerive(Count_Heap, (ZmHeap<"Zdb.Count", Count_<>>));
-ZuDerive(Count, (Count_<Count_Heap>));
 
 // backing data store select() context
 template <typename Tuple> struct Select__ {
@@ -899,14 +898,12 @@ template <typename Tuple> struct Select__ {
   AnyTable	*table;
   Fn	fn;
 };
-template <typename Tuple, typename Heap = ZuVoid>
-struct Select_ : public Heap, public ZmPolymorph, public Select__<Tuple> {
-  ZuDerive_(Select_, Select__<Tuple>)
+template <typename Tuple>
+struct Select : public ZmNHeap<Select<Tuple>>, public ZmPolymorph, public Select__<Tuple> {
+friend inline ZuStringT<"Zdb.Select"> ZmNHeapID(Select *);
+
+  ZuDerive_(Select, Select__<Tuple>)
 };
-template <typename Tuple>
-ZuDerive(Select_Heap, (ZmHeap<"Zdb.Select", Select_<Tuple>>));
-template <typename Tuple>
-ZuDerive(Select, (Select_<Tuple, Select_Heap<Tuple>>));
 
 // backing data store find() context
 struct Find : public ZmPolymorph {
@@ -924,10 +921,12 @@ template <typename T, typename Key> struct Find__ {
   Key		key;
   Fn		fn;
 };
-template <typename T, typename Key, typename Heap = ZuVoid>
-struct Find_ : public Heap, public Find, public Find__<T, Key> {
+template <typename T, typename Key>
+struct FindCtx : public ZmNHeap<FindCtx<T, Key>>, public Find, public Find__<T, Key> {
+friend inline ZuStringT<"Zdb.Find"> ZmNHeapID(FindCtx *);
+
   template <typename L>
-  Find_(AnyTable *table, Shard shard, Key key, L &&l) :
+  FindCtx(AnyTable *table, Shard shard, Key key, L &&l) :
     Find{table, shard}, Find__<T, Key>{ZuMv(key), ZuFwd<L>(l)} { }
 
   void found(ZmRef<AnyRow> row) override {
@@ -935,10 +934,6 @@ struct Find_ : public Heap, public Find, public Find__<T, Key> {
   }
   void printKey(ZuVStream &s) const override { s << this->key; }
 };
-template <typename T, typename Key>
-ZuDerive(Find_Heap, (ZmHeap<"Zdb.Find", Find_<T, Key>>));
-template <typename T, typename Key>
-ZuDerive(FindCtx, (Find_<T, Key, Find_Heap<T, Key>>));
 
 // split group keys into group part and grouped part
 template <typename O, unsigned KeyID>
@@ -1001,10 +996,10 @@ public:
 private:
   // - grouping key for a KeyID
   template <unsigned KeyID>
-  using GroupKey = typename SplitKey<T, KeyID>::GroupKey;
+  using GroupKey = SplitKey<T, KeyID>::GroupKey;
   // - grouped key for a KeyID
   template <unsigned KeyID>
-  using MemberKey = typename SplitKey<T, KeyID>::MemberKey;
+  using MemberKey = SplitKey<T, KeyID>::MemberKey;
 
 public:
   static ZmRef<IOBuf> allocBuf() { return new IOBufAlloc<T>{}; }
@@ -1504,7 +1499,7 @@ private:
     });
     try {
       m_cache[shard].template update<KeyIDs_>(row,
-	[&l](typename Cache<T>::Node *node) {
+	[&l](Cache<T>::Node *node) {
 	  l(static_cast<Row<T> *>(node));
 	});
     } catch (...) { abort(); throw; }
@@ -2540,7 +2535,7 @@ template <unsigned KeyID, typename KeyIDs_, typename Impl,
   typename Complete, typename L>
 inline void AnySaga__::findUpd(
     Impl *table, Shard shard,
-    typename Impl::template Key<KeyID> key,
+    Impl::template Key<KeyID> key,
     Complete &&complete, L &&l)
 {
   using Complete_ = ZuDecay<Complete>;
@@ -2562,7 +2557,7 @@ inline void AnySaga__::findUpd(
 template <unsigned KeyID, typename KeyIDs_, typename Impl, typename Call>
 inline void AnySaga__::findUpd_(
     Impl *table, Shard shard,
-    typename Impl::template Key<KeyID> key, Call call)
+    Impl::template Key<KeyID> key, Call call)
 {
   UN un = nullUN();
   bool saved = false;
@@ -2647,7 +2642,7 @@ inline void AnySaga__::del_(
 template <unsigned KeyID, typename Impl, typename Complete, typename L>
 inline void AnySaga__::findDel(
     Impl *table, Shard shard,
-    typename Impl::template Key<KeyID> key,
+    Impl::template Key<KeyID> key,
     Complete &&complete, L &&l)
 {
   using Complete_ = ZuDecay<Complete>;
@@ -2667,7 +2662,7 @@ inline void AnySaga__::findDel(
 template <unsigned KeyID, typename Impl, typename Call>
 inline void AnySaga__::findDel_(
     Impl *table, Shard shard,
-    typename Impl::template Key<KeyID> key, Call call)
+    Impl::template Key<KeyID> key, Call call)
 {
   UN un = nullUN();
   bool saved = false;

@@ -77,15 +77,11 @@ ZumExtern void daemonAppCleanup(
 namespace DaemonCleanupLimit { enum { Rows = 512 }; }
 namespace DaemonCleanupState { enum { Idle, Running, Stopping }; }
 
-template <typename Heap = ZuVoid>
-struct DaemonResponse_ : public Heap, public HTTPResponse {
-  void *operator new(size_t size) { return Heap::operator new(size); }
-  void operator delete(void *ptr) noexcept { Heap::operator delete(ptr); }
+struct DaemonResponse : public ZmNHeap<DaemonResponse>, public HTTPResponse_<false> {
+friend inline ZuStringT<"zumd.DaemonResponse"> ZmNHeapID(DaemonResponse *);
+
   String	allow;
 };
-ZuDerive(DaemonResponseHeap,
-  (ZmHeap<"zumd.DaemonResponse", DaemonResponse_<>>));
-ZuDerive(DaemonResponse, (DaemonResponse_<DaemonResponseHeap>));
 
 template <typename Impl, unsigned Status_>
 struct DaemonJSON : public Zrest::ResBuilder<Impl, DaemonResponse> {
@@ -211,16 +207,15 @@ struct OAuthMetadataReq : public Zrest::ReqParser<OAuthMetadataReq, HTTPData> {
   template <typename Link> void complete(Link *link, bool ok);
 };
 
-template <typename Heap = ZuVoid>
-struct AdminData_ : public Heap, public HTTPDataFields {
+struct AdminData : public ZmNHeap<AdminData>, public HTTPDataFields {
+friend inline ZuStringT<"zumd.AdminData"> ZmNHeapID(AdminData *);
+
   String target;
   String query;
   String body;
   String allow;
   int operation = -1;
 };
-ZuDerive(AdminDataHeap, (ZmHeap<"zumd.AdminData", AdminData_<>>));
-ZuDerive(AdminData, (AdminData_<AdminDataHeap>));
 
 struct AdminResult {
   String body;

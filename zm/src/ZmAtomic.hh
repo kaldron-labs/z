@@ -320,8 +320,8 @@ public:
   using Ops = ZmAtomicOps<T, sizeof(T)>;
 
 private:
-  using S = typename Ops::S;
-  using U = typename Ops::U;
+  using S = Ops::S;
+  using U = Ops::U;
 
 public:
   ZmAtomic() : m_val{0} { };
@@ -416,8 +416,8 @@ public:
   using Ops = ZmAtomicOps<uintptr_t, sizeof(T *)>;
 
 private:
-  using S = typename Ops::S;
-  using U = typename Ops::U;
+  using S = Ops::S;
+  using U = Ops::U;
 
 public:
   ZmAtomic() : m_val{0} { }

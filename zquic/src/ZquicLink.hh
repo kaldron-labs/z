@@ -374,14 +374,14 @@ protected:
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx publication outside Rx thread", return);
     if (!stream || stream->id() < 0 || m_streams->find(stream->id())) return;
-    m_streams->addNode(static_cast<typename Streams::Node *>(stream.ptr()));
+    m_streams->addNode(static_cast<Streams::Node *>(stream.ptr()));
   }
   void publishStreamTx_(StreamRef stream) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream Tx publication outside Tx thread", return);
     if (!stream || stream->id() < 0 || m_txStreams->findPtr(stream->id()))
       return;
-    m_txStreams->addNode(ZmRef<typename TxStreams::Node>{ZuMv(stream)});
+    m_txStreams->addNode(ZmRef<TxStreams::Node>{ZuMv(stream)});
   }
 
 public:
@@ -528,7 +528,7 @@ public:
     if (!stream || stream->id() < 0 || stream->txQueued()) return;
     stream->txQueued(true);
     m_streamQueue.pushNode(
-      static_cast<typename StreamQueue::Node *>(stream.ptr()));
+      static_cast<StreamQueue::Node *>(stream.ptr()));
   }
   void scheduleStreamWritable_(StreamRef stream) {
     if (!stream || stream->id() < 0) return;
@@ -9283,7 +9283,7 @@ private:
     return m_localLimit[type].limit() >= MaxStreamCount;
   }
   StreamRef newStream_(int64_t id) {
-    auto node = new typename Streams::Node{impl(), id};
+    auto node = new Streams::Node{impl(), id};
     StreamRef stream{node};
     stream->txQueueMax(impl()->txQueueMax());
     stream->txCredit(initialStreamTxCredit_(uint64_t(id)));

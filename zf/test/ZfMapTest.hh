@@ -13,8 +13,10 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 
-template <typename Base_, typename Heap = ZuVoid>
-struct ZfMapTest_ : public Heap, public Base_ {
+template <ZuString ID, typename Base_>
+struct ZfMapTest : public ZmNHeap<ZfMapTest<ID, Base_>>, public Base_ {
+friend inline ZuStringT<ID> ZmNHeapID(ZfMapTest *);
+
   using Base = Base_;
   using Base::Base;
   using Base::operator =;
@@ -60,11 +62,6 @@ struct ZfMapTest_ : public Heap, public Base_ {
   };
   CIter citer() const { return CIter{*this}; }
 };
-
-template <ZuString ID, typename Base_>
-ZuDerive(ZfMapTestHeap, (ZmHeap<ID, ZfMapTest_<Base_>>));
-template <ZuString ID, typename Base_>
-ZuDerive(ZfMapTest, (ZfMapTest_<Base_, ZfMapTestHeap<ID, Base_>>));
 
 template <typename Base_>
 struct ZfRefMapTest : public ZmObject, public Base_ {

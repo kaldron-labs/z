@@ -660,7 +660,6 @@ void ReqBuilder_::connected(const Zhttp::ConnectedInfo &info)
 
 struct Client;
 struct Pool;
-template <typename Heap> struct Pool_;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"zhttp.ReqBuilder">>>);
@@ -668,11 +667,12 @@ using ReqBuilder = ReqBuilderQ::Node;
 ZuAssert((ZuIsSame<ReqBuilderQ::HeapID, ZuStringT<"zhttp.ReqBuilder">>{}));
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-template <typename Heap = ZuVoid>
-struct Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<Client, TxQ, ResParser> {
+friend inline ZuStringT<"zhttp.Pool"> ZmNHeapID(Pool *);
+
   using Base = Zhttp::Pool<Client, TxQ, ResParser>;
 
-  Pool_(Client *client) : Base{client} { }
+  Pool(Client *client) : Base{client} { }
 
   ReqBuilderQ *txQueue() { return &m_requests; }
 
@@ -682,8 +682,6 @@ struct Pool_ : public Heap, public Zhttp::Pool<Client, TxQ, ResParser> {
 private:
   ReqBuilderQ	m_requests;
 };
-ZuDerive(PoolHeap, (ZmHeap<"zhttp.Pool", Pool_<>>));
-ZuDerive(Pool, (Pool_<PoolHeap>));
 
 struct Client : public Zhttp::Client<Client, Pool> {
   using Base = Zhttp::Client<Client, Pool>;
@@ -719,8 +717,7 @@ private:
   unsigned	m_generated = 0;
 };
 
-template <typename Heap>
-void Pool_<Heap>::archive_(ReqBuilder *request)
+void Pool::archive_(ReqBuilder *request)
 {
   client()->archive(request);
 }

@@ -42,11 +42,11 @@ ZuDerive(Text, (ZtString<ZtStringHeapID<"zprotoc.Text">>));
 ZuDerive(Input,
   (ZtString<ZtStringBuiltin<0, ZtStringHeapID<"zprotoc.Input">>>));
 ZuDerive(Inputs, (ZtArray<Input, ZtArrayHeapID<"zprotoc.Inputs">>));
-template <typename Heap = ZuVoid>
-struct SyntheticText_ : Heap, Input {
-  explicit SyntheticText_(ZuCSpan text) : Input{text} { }
+struct SyntheticText : ZmNHeap<SyntheticText>, Input {
+friend inline ZuStringT<"zprotoc.SyntheticText"> ZmNHeapID(SyntheticText *);
+  explicit SyntheticText(ZuCSpan text) : Input{text} { }
 };
-using SyntheticText = SyntheticText_<ZmHeap<"zprotoc.SyntheticText", SyntheticText_<>>>;
+
 using Synthetic = ZtArray<ZuPtr<SyntheticText>,
   ZtArrayHeapID<"zprotoc.Synthetic">>;
 ZuDerive(Output, (ZtArray<uint8_t, ZtArrayHeapID<"zprotoc.Output">>));
@@ -1560,7 +1560,8 @@ static Text header(const FileDesc &file, const Decls &decls,
       out << ",\n    ZtArrayHeapID<\"" << heap << "\">>));\n\n";
     }
     out << "namespace Zprotoc_::" << decl.cpp << " {\n\n"
-      "template <typename Heap = ZuVoid>\nstruct O_ : Heap {\n";
+      "struct O_ : ZmNHeap<O_> {\n"
+      "friend inline ZuStringT<\"" << protoName(decl) << "\"> ZmNHeapID(O_ *);\n\n";
     bool ownsChild = false;
     for (unsigned f = 0, n = message.fields.length(); f < n; ++f) {
       const auto &field = message.fields[f];
@@ -1633,11 +1634,10 @@ static Text header(const FileDesc &file, const Decls &decls,
       else out << "{}";
       out << ";\n";
     }
-    out << "};\nusing H_ = ZmHeap<\"" << protoName(decl) << "\", O_<>>;\n\n"
+    out << "};\n\n"
       "} // Zprotoc_::" << decl.cpp << "\n\nstruct ";
     if (api.length()) out << api << ' ';
-    out << decl.cpp << " :\n  Zprotoc_::" << decl.cpp << "::O_<Zprotoc_::"
-      << decl.cpp << "::H_> {\n";
+    out << decl.cpp << " :\n  Zprotoc_::" << decl.cpp << "::O_ {\n";
     if (ownsChild)
       out << "  " << decl.cpp << "();\n"
 	<< "  " << decl.cpp << '(' << decl.cpp << " &&) noexcept;\n"

@@ -1,0 +1,3 @@
+`zdb` (`zdb/README.md`) has a pluggable store back-end. Currently it bundles `ZdbMemStore`, an in-memory transient data store. `zdb_pq` implements a production-grade PostgreSQL store. In order to support the full taxonomy of vocabulary types needed by Z, `zdb_pq` requires use of 2 custom postgres extensions: `uint` for unsigned and 128bit integers, and `libz` for bitmap, decimal and nanosecond-precision time support.
+
+the goal of this work is to design and implement `zdb_sqlite` which will be a full-featured `sqlite3` back-end writing to the local filesystem. `Zdb` will perform replication because `sqlite3` does not have it built-in. `zdb_sqlite` will use `ZdbSL` as its prefix. `zdb_sqlite` should have roughly the same source code structure as `zdb_pq`.

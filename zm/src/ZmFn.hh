@@ -90,14 +90,19 @@
 #include <zlib/ZmHeap.hh>
 
 // heap-allocated reference-counted stateful lambda
-template <typename L, typename ArgList, typename Heap = ZuVoid> struct ZmLambda_;
-template <typename L, typename ...Args, typename Heap>
-struct ZmLambda_<L, ZuTypeList<Args...>, Heap> :
-  public Heap, public ZmPolymorph
+template <typename HeapID, bool Sharded, typename L, typename ArgList>
+struct ZmLambda;
+template <typename HeapID, bool Sharded, typename L, typename ...Args>
+struct ZmLambda<HeapID, Sharded, L, ZuTypeList<Args...>> :
+  public ZmNHeap<ZmLambda<HeapID, Sharded, L, ZuTypeList<Args...>>>,
+  public ZmPolymorph
 {
+friend inline HeapID ZmNHeapID(ZmLambda *);
+friend inline ZuBool<Sharded> ZmNHeapSharded(ZmLambda *);
+
   L lambda;
 
-  ZmLambda_(L l) : lambda{ZuMv(l)} { }
+  ZmLambda(L l) : lambda{ZuMv(l)} { }
 
   decltype(auto) invoke(Args... args) {
     return lambda(ZuFwd<Args>(args)...);
@@ -106,18 +111,12 @@ struct ZmLambda_<L, ZuTypeList<Args...>, Heap> :
     return lambda(ZuFwd<Args>(args)...);
   }
 
-  ZmLambda_() = delete;
-  ZmLambda_(const ZmLambda_ &) = delete;
-  ZmLambda_ &operator =(const ZmLambda_ &) = delete;
-  ZmLambda_(ZmLambda_ &&) = delete;
-  ZmLambda_ &operator =(ZmLambda_ &&) = delete;
+  ZmLambda() = delete;
+  ZmLambda(const ZmLambda &) = delete;
+  ZmLambda &operator =(const ZmLambda &) = delete;
+  ZmLambda(ZmLambda &&) = delete;
+  ZmLambda &operator =(ZmLambda &&) = delete;
 };
-template <typename HeapID, bool Sharded, typename L, typename ArgList>
-using ZmLambdaHeap =
-  ZmHeap_<HeapID, ZmLambda_<L, ArgList>, Sharded>;
-template <typename HeapID, bool Sharded, typename L, typename ArgList>
-ZuDerive(ZmLambda, (
-  ZmLambda_<L, ArgList, ZmLambdaHeap<HeapID, Sharded, L, ArgList>>));
 
 // stateful immutable lambda
 template <typename R_, typename ...Args_, typename NTP>

@@ -586,7 +586,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
     }
   };
 
-  using Cxn = typename Link::Cxn;
+  using Cxn = Link::Cxn;
   Cxn *accepted(const ZiCxnInfo &ci) {
     return new Cxn(new Link(this), ci);
   }
@@ -708,8 +708,8 @@ void run_in_process(
   ZTLS_CHECK_RT(listening, "listen timed out");
   if (!listening) { mx.stop(); return; }
 
-  ZmRef<typename BaseClient<TestState>::Link> link =
-    new typename BaseClient<TestState>::Link(&client);
+  ZmRef<BaseClient<TestState>::Link> link =
+    new BaseClient<TestState>::Link(&client);
   check_queues(*link);
   link->connect(connectIP, state.port);
 
@@ -1473,10 +1473,10 @@ void testTLS13ConcurrentRecords(TempDir &temp, LogCapture &capture)
   if (!wait_for(state.listening)) {
     ZTLS_CHECK_RT(false, "TLS stress listen timed out");
   } else {
-    ZtArray<ZmRef<typename BaseClient<TestState>::Link>> links;
+    ZtArray<ZmRef<BaseClient<TestState>::Link>> links;
     links.length(Clients);
     for (unsigned i = 0; i < Clients; ++i) {
-      links[i] = new typename BaseClient<TestState>::Link(&client);
+      links[i] = new BaseClient<TestState>::Link(&client);
       links[i]->connect("127.0.0.1", state.port);
     }
     ZTLS_CHECK_RT(wait_done(state), "TLS stress disconnect wait timed out");

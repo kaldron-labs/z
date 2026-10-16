@@ -10,10 +10,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ActionEditSaga_ : public Heap,
-    public ZdbSaga<ActionEditSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ActionEditSaga_<Heap>, DB>;
+struct ActionEditSaga : public ZmNHeap<ActionEditSaga>,
+    public ZdbSaga<ActionEditSaga, DB> {
+friend inline ZuStringT<"Zum.ActionEditSaga"> ZmNHeapID(ActionEditSaga *);
+
+  using Base = ZdbSaga<ActionEditSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -97,20 +98,17 @@ struct ActionEditSaga_ : public Heap,
     return {};
   }
 
-  ActionEditSaga_() = default;
-  ActionEditSaga_(App app_, Action before_, String ifMatch_, int64_t updated_,
+  ActionEditSaga() = default;
+  ActionEditSaga(App app_, Action before_, String ifMatch_, int64_t updated_,
       IdemRequest request_, State::T state_,
       ZmRef<AdminEditResult<Action>> response_ = {}) :
     app{ZuMv(app_)}, before{ZuMv(before_)}, ifMatch{ZuMv(ifMatch_)},
     updated{updated_}, request{ZuMv(request_)}, state{state_},
     response{ZuMv(response_)} { }
-  ActionEditSaga_(ActionEditArgs args) :
-    ActionEditSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.ifMatch), args.updated, ZuMv(args.request), args.state, ZuMv(args.result)} { }
-  ~ActionEditSaga_() override;
+  ActionEditSaga(ActionEditArgs args) :
+    ActionEditSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.ifMatch), args.updated, ZuMv(args.request), args.state, ZuMv(args.result)} { }
+  ~ActionEditSaga() override;
 };
-
-using ActionEditSaga = ActionEditSaga_<
-  ZmHeap<"Zum.ActionEditSaga", ActionEditSaga_<>>>;
 
 ZfStruct(ZumAPI, (ActionEditSaga, FB),
   (app,		(Ctor<0>),			UDT),
@@ -121,8 +119,7 @@ ZfStruct(ZumAPI, (ActionEditSaga, FB),
   (state,	(Ctor<5>, Enum<State::Map>),	Int8));
 Zfb::AsTable<"Zum.fbs.ActionEdit"> Zfb_Fmt(ActionEditSaga *);
 
-template <typename Heap>
-unsigned ActionEditSaga_<Heap>::appError(const App &item) const
+unsigned ActionEditSaga::appError(const App &item) const
 {
   if (state < 0 || state >= State::N) return 400;
   return !app.version || item.state != State::Active || item.owner || app.owner ||
@@ -131,8 +128,7 @@ unsigned ActionEditSaga_<Heap>::appError(const App &item) const
       (app.version == UINT64_MAX || app.authVersion == UINT64_MAX)) ? 409 : 0;
 }
 
-template <typename Heap>
-unsigned ActionEditSaga_<Heap>::actionError(const Action &item) const
+unsigned ActionEditSaga::actionError(const Action &item) const
 {
   String etag{"\"v"};
   etag << item.version << '"';
@@ -144,8 +140,7 @@ unsigned ActionEditSaga_<Heap>::actionError(const Action &item) const
 
 ZuAssert((Zdb_::SagaDefValid<ActionEditSaga>{}));
 
-template <typename Heap>
-ActionEditSaga_<Heap>::~ActionEditSaga_() = default;
+ActionEditSaga::~ActionEditSaga() = default;
 
 SagaRef actionEdit(ZuBSpan data) {
   return ActionEditSaga::load(data);

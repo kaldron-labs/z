@@ -20,41 +20,41 @@
 using namespace ZuTestUtil;
 
 ZuAssert((ZuIsSame<
-  typename Ztc::DBMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::DBMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::DB::AllDBHostsFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::DB::AllDBHostsFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::DB::AllDBTablesFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::DB::AllDBTablesFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::HubMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::HubMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::Hub::AllLinksFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::Hub::AllLinksFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::Hub::AllPoolsFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::Hub::AllPoolsFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::DBMgr::AddFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::DBMgr::AddFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::DBMgr::AddHostFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::DBMgr::AddHostFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::HubMgr::AddQueueFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::HubMgr::AddQueueFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::MxMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::MxMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::Mx::AllCxnsFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::Mx::AllCxnsFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::MxMgr::AddFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::MxMgr::AddFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 
 struct MockDBHost final : public Ztc::DBHost {
   Ztc::DBHost::TelKey telKey() const override { return {dbID, id}; }

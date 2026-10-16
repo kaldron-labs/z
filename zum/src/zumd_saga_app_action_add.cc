@@ -13,10 +13,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AppActionAddSaga_ : public Heap,
-    public ZdbSaga<AppActionAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AppActionAddSaga_<Heap>, DB>;
+struct AppActionAddSaga : public ZmNHeap<AppActionAddSaga>,
+    public ZdbSaga<AppActionAddSaga, DB> {
+friend inline ZuStringT<"Zum.AppActionAddSaga"> ZmNHeapID(AppActionAddSaga *);
+
+  using Base = ZdbSaga<AppActionAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -174,9 +175,8 @@ struct AppActionAddSaga_ : public Heap,
     return {};
   }
 
-
-  AppActionAddSaga_() = default;
-  AppActionAddSaga_(AppID appID_, ActionID actionID_, String name_, String label_, int64_t created_, uint64_t oldAppVersion_, uint64_t oldAuthVersion_, int64_t oldUpdated_, IdemRequest request_) :
+  AppActionAddSaga() = default;
+  AppActionAddSaga(AppID appID_, ActionID actionID_, String name_, String label_, int64_t created_, uint64_t oldAppVersion_, uint64_t oldAuthVersion_, int64_t oldUpdated_, IdemRequest request_) :
     appID{ZuMv(appID_)},
     actionID{ZuMv(actionID_)},
     name{ZuMv(name_)},
@@ -186,15 +186,11 @@ struct AppActionAddSaga_ : public Heap,
     oldAuthVersion{ZuMv(oldAuthVersion_)},
     oldUpdated{ZuMv(oldUpdated_)},
     request{ZuMv(request_)} { }
-  AppActionAddSaga_(AppActionAddArgs args) :
-    AppActionAddSaga_{ZuMv(args.appID), ZuMv(args.actionID), ZuMv(args.name), ZuMv(args.label), ZuMv(args.created), ZuMv(args.oldAppVersion), ZuMv(args.oldAuthVersion), ZuMv(args.oldUpdated), ZuMv(args.request)} {
+  AppActionAddSaga(AppActionAddArgs args) :
+    AppActionAddSaga{ZuMv(args.appID), ZuMv(args.actionID), ZuMv(args.name), ZuMv(args.label), ZuMv(args.created), ZuMv(args.oldAppVersion), ZuMv(args.oldAuthVersion), ZuMv(args.oldUpdated), ZuMv(args.request)} {
   }
-  ~AppActionAddSaga_() override;
+  ~AppActionAddSaga() override;
 };
-
-
-using AppActionAddSaga = AppActionAddSaga_<
-  ZmHeap<"Zum.AppActionAddSaga", AppActionAddSaga_<>>>;
 
 ZfStruct(, (AppActionAddSaga, FB),
   (appID,		(Ctor<0>),	UInt64),
@@ -210,8 +206,7 @@ Zfb::AsTable<"Zum.fbs.AppActionAdd"> Zfb_Fmt(AppActionAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<AppActionAddSaga>{}));
 
-template <typename Heap>
-AppActionAddSaga_<Heap>::~AppActionAddSaga_() = default;
+AppActionAddSaga::~AppActionAddSaga() = default;
 
 SagaRef appActionAdd(ZuBSpan data) {
   return AppActionAddSaga::load(data);

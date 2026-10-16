@@ -173,7 +173,7 @@ class ZmFn<R_(Args_...), NTP> : public ZmAnyFn {
 public:
   using R = R_;
   using Args = ZuTypeList<Args_...>;
-  using HeapID = typename NTP::HeapID;
+  using HeapID = NTP::HeapID;
   enum { Sharded = NTP::Sharded };
 
 private:

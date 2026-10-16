@@ -38,7 +38,7 @@ void recordPut(Def *def, Table *table, Complete complete)
       def->skip(ZuMv(complete)); return;
     }
     table->run(0, [def, table, complete = ZuMv(complete)]() mutable {
-      using Record = typename Table::T;
+      using Record = Table::T;
       ZuStructKeyT<Record, 0> key{ZuStructKey<0>(def->before)};
       if constexpr (Insert && Fwd) {
 	ZdbRowRef<Record> row = new ZdbRow<Record>{table, ZdbShard{0}};

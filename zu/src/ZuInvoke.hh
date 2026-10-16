@@ -30,7 +30,7 @@ struct ZuInvoke_MemberFn_<
 };
 template <auto Fn, typename O, typename ...Ts>
 using ZuInvoke_MemberFn =
-  typename ZuInvoke_MemberFn_<Fn, O, ZuTypeList<Ts...>>::T;
+  ZuInvoke_MemberFn_<Fn, O, ZuTypeList<Ts...>>::T;
 template <auto Fn, typename O, typename ...Ts>
 auto ZuInvoke(O *ptr, Ts &&... args) -> ZuInvoke_MemberFn<Fn, O, Ts...> {
   return (ptr->*Fn)(ZuFwd<Ts>(args)...);
@@ -46,7 +46,7 @@ struct ZuInvoke_BoundFn_<
 };
 template <auto Fn, typename O, typename ...Ts>
 using ZuInvoke_BoundFn =
-  typename ZuInvoke_BoundFn_<Fn, O, ZuTypeList<Ts...>>::T;
+  ZuInvoke_BoundFn_<Fn, O, ZuTypeList<Ts...>>::T;
 template <auto Fn, typename O, typename ...Ts>
 auto ZuInvoke(O *ptr, Ts &&... args) -> ZuInvoke_BoundFn<Fn, O, Ts...> {
   return Fn(ptr, ZuFwd<Ts>(args)...);
@@ -62,7 +62,7 @@ struct ZuInvoke_UnboundFn_<
 };
 template <auto Fn, typename O, typename ...Ts>
 using ZuInvoke_UnboundFn =
-  typename ZuInvoke_UnboundFn_<Fn, O, ZuTypeList<Ts...>>::T;
+  ZuInvoke_UnboundFn_<Fn, O, ZuTypeList<Ts...>>::T;
 template <auto Fn, typename O, typename ...Ts>
 auto ZuInvoke(O *, Ts &&... args) -> ZuInvoke_UnboundFn<Fn, O, Ts...> {
   return Fn(ZuFwd<Ts>(args)...);

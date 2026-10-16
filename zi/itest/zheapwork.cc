@@ -83,7 +83,7 @@ void variable(Ops &ops, unsigned n) {
 
 template <typename Heap>
 bool boundaries(unsigned minimum, unsigned classes) {
-  using ID = typename Heap::template Cache<0>::ID;
+  using ID = Heap::template Cache<0>::ID;
   struct Totals {
     unsigned arenas = 0;
     uint64_t allocs = 0, frees = 0;

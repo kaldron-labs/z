@@ -122,10 +122,9 @@ struct PendingData {
   bool			appCaptured = false;
 };
 
-template <typename Heap = ZuVoid>
-class Pending__ : public Heap, public PendingData { };
-ZuDerive(PendingHeap, (ZmHeap<"Ztc.App.Pending", Pending__<>>));
-ZuDerive(Pending_, (Pending__<PendingHeap>));
+class Pending_ : public ZmNHeap<Pending_>, public PendingData {
+friend inline ZuStringT<"Ztc.App.Pending"> ZmNHeapID(Pending_ *);
+};
 
 using PendingKey = uint64_t;
 using PendingIdx = ZmRBTreeKV<PendingKey, Pending_ *,
@@ -584,18 +583,18 @@ private:
   unsigned	m_accepted = 0;
 };
 
-template <typename Heap = ZuVoid>
-class Ingress__ : public Heap, public IngressData {
+class Ingress : public ZmNHeap<Ingress>, public IngressData {
+friend inline ZuStringT<"Ztc.App.Ingress"> ZmNHeapID(Ingress *);
+
 public:
   using IngressData::IngressData;
 };
-ZuDerive(IngressHeap, (ZmHeap<"Ztc.App.Ingress", Ingress__<>>));
-ZuDerive(Ingress, (Ingress__<IngressHeap>));
 
-template <typename Heap = ZuVoid>
-class AlertSink__ : public Heap, public ZiSink {
+class AlertSink : public ZmNHeap<AlertSink>, public ZiSink {
+friend inline ZuStringT<"Ztc.App.AlertSink"> ZmNHeapID(AlertSink *);
+
 public:
-  AlertSink__(ZmRef<Ingress> ingress) :
+  AlertSink(ZmRef<Ingress> ingress) :
     ZiSink{ZiSinkType::Lambda}, m_ingress{ZuMv(ingress)} { }
 
   void pre(ZeLogBuf &, const ZeEventInfo &) { }
@@ -607,8 +606,6 @@ public:
 private:
   ZmRef<Ingress>	m_ingress;
 };
-ZuDerive(AlertSinkHeap, (ZmHeap<"Ztc.App.AlertSink", AlertSink__<>>));
-ZuDerive(AlertSink, (AlertSink__<AlertSinkHeap>));
 
 struct StateData {
   StateData() {
@@ -642,10 +639,9 @@ struct StateData {
   bool			degraded = false;
 };
 
-template <typename Heap = ZuVoid>
-class State_ : public Heap, public StateData { };
-ZuDerive(StateHeap, (ZmHeap<"Ztc.App.State", State_<>>));
-ZuDerive(State, (State_<StateHeap>));
+class State : public ZmNHeap<State>, public StateData {
+friend inline ZuStringT<"Ztc.App.State"> ZmNHeapID(State *);
+};
 
 Subscription *earliest(State *state)
 {
@@ -707,7 +703,7 @@ void indexAdd(Index &index, Key &&key, Value *value)
     ZmAssert(prior == value);
     return;
   }
-  auto node = new typename Index::Node{
+  auto node = new Index::Node{
     ZuFwdTuple(ZuFwd<Key>(key), value)};
   index.addNode(node);
 }

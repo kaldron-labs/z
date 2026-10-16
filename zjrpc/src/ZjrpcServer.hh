@@ -131,7 +131,7 @@ public:
   using Headers = HTTPReqHeaders<Catalog, Impl>;
   using Context = HTTPContext<Headers>;
   using ResBuilderQ = Server_::HTTPResQ<Impl, Catalog>;
-  using Response = typename ResBuilderQ::Node;
+  using Response = ResBuilderQ::Node;
 
   using HTTP = Zhttp::Server<HTTPServer,
     Server_::HTTPParser<HTTPServer, Headers>, ResBuilderQ>;
@@ -240,23 +240,25 @@ private:
     continue_([this, done = ZuMv(done)]() mutable { drain_(ZuMv(done)); });
   }
 
-  template <typename Link, typename Heap = ZuVoid>
-  class Route_ : public Heap, public ZmObject, public Context {
+  template <typename Link>
+  class Route : public ZmNHeap<Route<Link>>, public ZmObject, public Context {
+  friend inline ZuStringT<"Zjrpc.HTTP.Route"> ZmNHeapID(Route *);
+
   public:
-    Route_(HTTPServer *server, Link *link, HTTPHeaders<Headers> headers) :
+    Route(HTTPServer *server, Link *link, HTTPHeaders<Headers> headers) :
       Context{ZuMv(headers), {}}, m_server{server}, m_link{link} { }
-    ~Route_() { if (m_hook) m_link->responseCancel({}); }
+    ~Route() { if (m_hook) m_link->responseCancel({}); }
     WorkControl &control() { return m_work; }
     void open_() {
       this->peer = httpPeer(m_server->impl(), this->headers, 0);
       m_hook = true;
-      m_link->responseCancel(Zhttp::StreamCancelFn{this, [](Route_ *self) {
+      m_link->responseCancel(Zhttp::StreamCancelFn{this, [](Route *self) {
 	self->m_hook = false;
 	self->m_link = nullptr;
 	if (!self->peer) self->m_work.close();
       }});
     }
-    bool send_(typename Dispatch::Message message, int policy) {
+    bool send_(Dispatch::Message message, int policy) {
       if (!m_link) return true;
       if (policy == RoutePolicy::Abort) { abort_(); return true; }
       ZmRef<Response> response = new Response{};
@@ -283,10 +285,6 @@ private:
     ZmRef<Link> m_link;
     bool m_hook = false;
   };
-  template <typename Link>
-  using RouteHeap = ZmHeap<"Zjrpc.HTTP.Route", Route_<Link>>;
-  template <typename Link>
-  using Route = Route_<Link, RouteHeap<Link>>;
 
   ZiMultiplex *m_mx = nullptr;
   HTTPValue m_endpoint;
@@ -377,7 +375,7 @@ public:
   using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
     Zws::ExtendedServerLink<WSServer, Profile>,
     Zws::H1ServerLink<WSServer, Profile>>;
-  using Config = typename WS::Config;
+  using Config = WS::Config;
 
   // The native Zws link owns its RPC state in place.
   using Connection = WSConnection<WSServer, Impl, Catalog, Link>;

@@ -10,10 +10,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct GrantCleanupSaga_ : public Heap,
-    public ZdbSaga<GrantCleanupSaga_<Heap>, DB> {
-  using Base = ZdbSaga<GrantCleanupSaga_<Heap>, DB>;
+struct GrantCleanupSaga : public ZmNHeap<GrantCleanupSaga>,
+    public ZdbSaga<GrantCleanupSaga, DB> {
+friend inline ZuStringT<"Zum.GrantCleanupSaga"> ZmNHeapID(GrantCleanupSaga *);
+
+  using Base = ZdbSaga<GrantCleanupSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -68,19 +69,16 @@ struct GrantCleanupSaga_ : public Heap,
     requestComplete(this, {}, updated, ZuMv(complete)); return {};
   }
 
-  GrantCleanupSaga_() = default;
-  GrantCleanupSaga_(GrantDeleteVec grants_, int64_t updated_,
+  GrantCleanupSaga() = default;
+  GrantCleanupSaga(GrantDeleteVec grants_, int64_t updated_,
       IdemRequest request_, ZmRef<RevokeResult> result_ = {}) :
     grants{ZuMv(grants_)}, updated{updated_}, request{ZuMv(request_)},
     result{ZuMv(result_)} { }
-  GrantCleanupSaga_(GrantCleanupArgs args) :
-    GrantCleanupSaga_{ZuMv(args.grants), args.updated, ZuMv(args.request),
+  GrantCleanupSaga(GrantCleanupArgs args) :
+    GrantCleanupSaga{ZuMv(args.grants), args.updated, ZuMv(args.request),
       ZuMv(args.result)} { }
-  ~GrantCleanupSaga_() override;
+  ~GrantCleanupSaga() override;
 };
-
-using GrantCleanupSaga = GrantCleanupSaga_<
-  ZmHeap<"Zum.GrantCleanupSaga", GrantCleanupSaga_<>>>;
 
 ZfStruct(, (GrantCleanupSaga, FB),
   (grants,	(Ctor<0>),	UDT),
@@ -91,8 +89,7 @@ Zfb::AsTable<"Zum.fbs.GrantCleanup"> Zfb_Fmt(GrantCleanupSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<GrantCleanupSaga>{}));
 
-template <typename Heap>
-GrantCleanupSaga_<Heap>::~GrantCleanupSaga_() = default;
+GrantCleanupSaga::~GrantCleanupSaga() = default;
 
 SagaRef grantCleanup(ZuBSpan data) {
   return GrantCleanupSaga::load(data);

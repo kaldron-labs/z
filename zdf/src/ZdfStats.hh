@@ -112,7 +112,7 @@ using StatsTreeHeapID = StatsTreeHeapID_<ZuStringT<HeapID>, NTP>;
 template <class NTP = StatsTree_Defaults>
 class StatsTree : public Stats {
 public:
-  using HeapID = typename NTP::HeapID;
+  using HeapID = NTP::HeapID;
   using Alloc = ZmAllocator_<std::pair<double, unsigned>, HeapID>;
 
 private:

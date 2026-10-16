@@ -72,7 +72,7 @@ struct GetType_<Props, Deflt, true> {
   using T = GetValue<Props, Type>;
 };
 template <typename Props, uint8_t Deflt>
-using GetType = typename GetType_<Props, Deflt>::T;
+using GetType = GetType_<Props, Deflt>::T;
 
 template <typename Props, bool = HasValue<Props, ElemType>{},
   bool = ZuTypeIn<Simple, Props>{}>
@@ -88,7 +88,7 @@ struct GetElemProps_<Props, true, true> {
   using T = ZuTypeList<Type<GetValue<Props, ElemType>{}>, Simple>;
 };
 template <typename Props>
-using GetElemProps = typename GetElemProps_<Props>::T;
+using GetElemProps = GetElemProps_<Props>::T;
 
 template <typename Props, bool = HasValue<Props, Optional>{}>
 struct GetOptional_ { using T = ZuFalse; };
@@ -97,14 +97,14 @@ struct GetOptional_<Props, true> {
   using T = GetValue<Props, Optional>;
 };
 template <typename Props>
-using GetOptional = typename GetOptional_<Props>::T;
+using GetOptional = GetOptional_<Props>::T;
 
 template <typename Props, bool = HasValue<Props, Tag>{}>
 struct GetTag_ { using T = ZuConstant<uint64_t, UINT64_MAX>; };
 template <typename Props>
 struct GetTag_<Props, true> { using T = GetValue<Props, Tag>; };
 template <typename Props>
-using GetTag = typename GetTag_<Props>::T;
+using GetTag = GetTag_<Props>::T;
 
 template <typename Props, bool = ZuTypeIn<Simple, Props>{}>
 struct IsSimple_ : public ZuFalse { };
@@ -123,7 +123,7 @@ struct GetID_<Field, true> {
   using T = GetValue<typename Field::Props, ID>;
 };
 template <typename Field>
-using GetID = typename GetID_<Field>::T;
+using GetID = GetID_<Field>::T;
 
 template <typename Props, bool = ZuTypeIn<IntID, Props>{}>
 struct IsIntID_ : public ZuFalse { };
@@ -778,7 +778,7 @@ inline void writeHead(S &s, unsigned major, uint64_t value)
 template <typename S, typename Field>
 inline void saveKey(S &s)
 {
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   auto id = ZuFieldProp::CBOR::GetID<Field>{}().cspan();
   if constexpr (ZuFieldProp::CBOR::IsIntID<Props>{}) {
     ZuAssert(validIntID<Field>());
@@ -838,7 +838,7 @@ template <typename Field>
 struct CBOROrder {
   static consteval KeyOrderValue value() {
     auto id = ZuFieldProp::CBOR::GetID<Field>{}().cspan();
-    using Props = typename Field::Props;
+    using Props = Field::Props;
     if constexpr (ZuFieldProp::CBOR::IsIntID<Props>{}) {
       constexpr IntIDValue idValue = intIDValue<Field>();
       uint64_t arg = idValue.arg;
@@ -875,14 +875,14 @@ struct AsObject {
       constexpr uint64_t Tag = ZuFieldProp::CBOR::GetTag<Props>{};
       unsigned n = 0;
       ZuUnroll::all<SaveFields>([&o, &n]<typename Field>() {
-	using FieldProps = typename Field::Props;
+	using FieldProps = Field::Props;
 	if constexpr (!ZuFieldProp::CBOR::GetOptional<FieldProps>{}) ++n;
 	else if (!ZuNull(Field::get(o))) ++n;
       });
       if constexpr (Tag != UINT64_MAX) writeHead(s, 6, Tag);
       writeHead(s, 5, n);
       ZuUnroll::all<SaveFields>([&s, &o]<typename Field>() {
-	using FieldProps = typename Field::Props;
+	using FieldProps = Field::Props;
 	enum { TypeCode = ZuFieldProp::CBOR::GetType<
 	  FieldProps, Field::Type::Code>{} };
 	if constexpr (!ZuFieldProp::CBOR::GetOptional<FieldProps>{}) {
@@ -902,7 +902,7 @@ struct AsObject {
       enum { I = ZuTypeIndex<Field, AllFields>{} };
       enum { TypeCode = ZuFieldProp::CBOR::GetType<
 	typename Field::Props, Field::Type::Code>{} };
-      using T = typename Field::T;
+      using T = Field::T;
       using R = decltype(
 	loadValue<Facet, TypeCode, typename Field::Props, T>(ZuBSpan{}));
       if (fields[I]) return loadValue<Facet, TypeCode, typename Field::Props, T>(fields[I]);
@@ -1205,7 +1205,7 @@ inline void saveValue(S &s, const T &v)
       TypeCode == ZfFieldTC::UInt64 || TypeCode == ZfFieldTC::UInt128) {
     saveInt(s, v);
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using Handler = typename As<T>::template Handler<T, Facet, Props>;
+    using Handler = As<T>::template Handler<T, Facet, Props>;
     Handler::save(s, v);
   }
 }
@@ -1213,7 +1213,7 @@ inline void saveValue(S &s, const T &v)
 template <typename Facet = ZuFacet::CBOR, typename S, typename O>
 inline S &save(S &s, const O &v)
 {
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   Handler::save(s, v);
   return s;
 }

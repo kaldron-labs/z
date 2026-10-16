@@ -232,16 +232,17 @@ String Daemon::enrollPage_(AppID appID)
   return page;
 }
 
-template <typename Heap = ZuVoid>
-class AuthRouteLoad__ : public Heap, public ZmObject  {
+class AuthRouteLoad_ : public ZmNHeap<AuthRouteLoad_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.daemon.AuthRouteLoad"> ZmNHeapID(AuthRouteLoad_ *);
+
 public:
-  AuthRouteLoad__(DB *db, Bytes dbKey, String authorizationBase,
+  AuthRouteLoad_(DB *db, Bytes dbKey, String authorizationBase,
       AppID appID, String login, AuthRouteDoneFn complete) :
     m_db{db}, m_dbKey{ZuMv(dbKey)},
     m_authorizationBase{ZuMv(authorizationBase)}, m_appID{appID},
     m_login{ZuMv(login)}, m_complete{ZuMv(complete)} { }
 
-  ~AuthRouteLoad__()
+  ~AuthRouteLoad_()
   {
     if (m_dbKey && m_dbKey.mutable_())
       ZuClear(m_dbKey);
@@ -254,7 +255,7 @@ public:
       return;
     }
     auto users = m_db->users;
-    users->run(0, [self = ZmRef<AuthRouteLoad__>{this}, users]() mutable {
+    users->run(0, [self = ZmRef<AuthRouteLoad_>{this}, users]() mutable {
       auto key = ZuMvTuple(UserSource::Local, self->m_login);
       users->find<2>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<User> user) mutable {
@@ -270,7 +271,7 @@ private:
   void policy_()
   {
     auto policies = m_db->authPolicies;
-    policies->run(0, [self = ZmRef<AuthRouteLoad__>{this}, policies]() mutable {
+    policies->run(0, [self = ZmRef<AuthRouteLoad_>{this}, policies]() mutable {
       auto key = ZuFwdTuple(self->m_appID);
       policies->find<0>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<AuthPolicy> row) mutable {
@@ -302,7 +303,7 @@ private:
   void provider_()
   {
     auto providers = m_db->providers;
-    providers->run(0, [self = ZmRef<AuthRouteLoad__>{this}, providers]() mutable {
+    providers->run(0, [self = ZmRef<AuthRouteLoad_>{this}, providers]() mutable {
       auto key = ZuFwdTuple(self->m_providerID);
       providers->find<0>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<Provider> row) mutable {
@@ -361,7 +362,7 @@ private:
     auto maps = m_db->roleMaps;
     maps->selectRows<0>(ZuFwdTuple(m_appID, m_providerID),
         AuthRouteLimit::Scan, [
-        self = ZmRef<AuthRouteLoad__>{this}](
+        self = ZmRef<AuthRouteLoad_>{this}](
           ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
         if (count > AuthRouteLimit::RoleMappings) {
@@ -392,7 +393,7 @@ private:
       return;
     }
     auto roles = m_db->roles;
-    roles->run(0, [self = ZmRef<AuthRouteLoad__>{this}, roles]() mutable {
+    roles->run(0, [self = ZmRef<AuthRouteLoad_>{this}, roles]() mutable {
       auto map = self->m_maps[self->m_mapIndex++];
       auto key = ZuFwdTuple(self->m_appID, map.roleID);
       roles->find<0>(0, ZuMv(key), [
@@ -431,9 +432,6 @@ private:
   bool			m_overflow = false;
   bool			m_done = false;
 };
-ZuDerive(AuthRouteLoad_Heap,
-  (ZmHeap<"Zum.zumd.daemon.AuthRouteLoad", AuthRouteLoad__<>>));
-ZuDerive(AuthRouteLoad_, (AuthRouteLoad__<AuthRouteLoad_Heap>));
 
 void Daemon::authRoute_(
     AppID appID, String login, AuthRouteDoneFn complete)

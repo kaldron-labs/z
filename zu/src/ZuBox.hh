@@ -345,7 +345,7 @@ struct ZuBox_MatchCharPtr_<Traits, R, false, true> :
     public ZuIfT_<ZuIsSame<ZuStrip<typename Traits::Elem>, char>{}, R> { };
 template <typename S, typename R = void>
 using ZuBox_MatchCharPtr =
-  typename ZuBox_MatchCharPtr_<ZuTraits<S>, R,
+  ZuBox_MatchCharPtr_<ZuTraits<S>, R,
     ZuTraits<S>::IsPointer,
     ZuTraits<S>::IsArray>::T;
 
@@ -381,7 +381,7 @@ template <typename> friend class ZuBoxVFmt;
 
 public:
   using T = ZuUnder<T_>;
-  using Cmp = typename NTP::template CmpT<T>;
+  using Cmp = NTP::template CmpT<T>;
   static constexpr auto NullString = NTP::NullString;
 
   static constexpr T null() { return Cmp::null(); }
@@ -705,7 +705,7 @@ struct ZuBox_<ZuBox__<U, NTP_>, ZuBox_Defaults> {
   using T = ZuBox__<U, NTP_>;
 };
 template <typename U, typename NTP = ZuBox_Defaults>
-using ZuBox = typename ZuBox_<U, NTP>::T;
+using ZuBox = ZuBox_<U, NTP>::T;
 
 #define ZuBox0(T) ZuBox<T, ZuBoxCmp<ZuCmp0>>
 #define ZuBox_1(T) ZuBox<T, ZuBoxCmp<ZuCmp_1>>

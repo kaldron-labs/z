@@ -99,12 +99,12 @@ class ClientParser :
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser<Link, Profile>, ClientHdrCatalog> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template ResponseParser<
+  using Base = Message::template ResponseParser<
     ClientParser, ClientHdrCatalog>;
 
 public:
   using HdrCatalog = ClientHdrCatalog;
-  using State = typename Base::State;
+  using State = Base::State;
   using Zhttp::Parser::header;
 
   void bind(Link &link, ZuBSpan protocol) {
@@ -163,19 +163,19 @@ public:
   }
   void streamPeerEnd_() { m_dispatch.peerEnd(); }
   void streamError_() { m_dispatch.error(); }
-  void complete(typename State::T state) { m_state = state; }
+  void complete(State::T state) { m_state = state; }
 
   bool established() const { return m_established; }
   bool invalid() const { return m_invalid; }
   ZuBSpan selected() const { return m_selected; }
-  typename State::T state() const { return m_state; }
+  State::T state() const { return m_state; }
 
 private:
   Zhttp::StreamDispatch<Link, Link>	m_dispatch;
   Link					*m_link = nullptr;
   HandshakeString			m_protocol;
   HandshakeString			m_selected;
-  typename State::T			m_state = State::Initial;
+  State::T			m_state = State::Initial;
   unsigned				m_status = 0;
   bool					m_protocolSeen = false;
   bool					m_established = false;
@@ -188,12 +188,12 @@ class ServerParser :
   public Zhttp::MessageTraits<Profile>::template RequestParser<
     ServerParser<Link, Profile>, ServerHdrCatalog> {
   using Message = Zhttp::MessageTraits<Profile>;
-  using Base = typename Message::template RequestParser<
+  using Base = Message::template RequestParser<
     ServerParser, ServerHdrCatalog>;
 
 public:
   using HdrCatalog = ServerHdrCatalog;
-  using State = typename Base::State;
+  using State = Base::State;
   using Zhttp::Parser::header;
 
   void bind(Link &link) {
@@ -283,11 +283,11 @@ public:
   }
   void streamPeerEnd_() { m_dispatch.peerEnd(); }
   void streamError_() { m_dispatch.error(); }
-  void complete(typename State::T state) { m_state = state; }
+  void complete(State::T state) { m_state = state; }
 
   bool established() const { return m_established; }
   bool invalid() const { return m_invalid; }
-  typename State::T state() const { return m_state; }
+  State::T state() const { return m_state; }
 
 private:
   Zhttp::StreamDispatch<Link, Link>	m_dispatch;
@@ -296,7 +296,7 @@ private:
   HandshakeString			m_host;
   HandshakeString			m_protocol;
   HandshakeString			m_protocols;
-  typename State::T			m_state = State::Initial;
+  State::T			m_state = State::Initial;
   Zhttp::Method::T			m_method = -1;
   bool					m_hostSeen = false;
   bool					m_versionSeen = false;

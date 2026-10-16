@@ -80,7 +80,6 @@ struct Resolver {
 
 struct ClientApp;
 struct Pool;
-template <typename Heap> struct Pool_;
 struct ReqBuilder_;
 struct ResParser;
 
@@ -159,11 +158,12 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-template <typename Heap = ZuVoid>
-struct Pool_ : public Heap, public Zhttp::Pool<ClientApp, TxQ, ResParser> {
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientApp, TxQ, ResParser> {
+friend inline ZuStringT<"Zhttp.Test.Fallback.Pool"> ZmNHeapID(Pool *);
+
   using Base = Zhttp::Pool<ClientApp, TxQ, ResParser>;
 
-  Pool_(ClientApp *client) : Base{client} { }
+  Pool(ClientApp *client) : Base{client} { }
 
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
@@ -172,8 +172,6 @@ struct Pool_ : public Heap, public Zhttp::Pool<ClientApp, TxQ, ResParser> {
 private:
   ReqBuilderQ	m_requests;
 };
-ZuDerive(PoolHeap, (ZmHeap<"Zhttp.Test.Fallback.Pool", Pool_<>>));
-ZuDerive(Pool, (Pool_<PoolHeap>));
 
 struct ClientApp : public Zhttp::Client<ClientApp, Pool> {
   using Base = Zhttp::Client<ClientApp, Pool>;

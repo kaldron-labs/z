@@ -100,17 +100,15 @@ struct CompletionRoute {
   void run(L &&l) const { scheduler->run(ZuFwd<L>(l), thread); }
 };
 
-template <typename Token, typename Res, typename Heap = ZuVoid>
-struct CompleteAction_ : public Heap, public ZmObject {
+template <typename Token, typename Res>
+struct CompleteAction : public ZmNHeap<CompleteAction<Token, Res>>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Complete"> ZmNHeapID(CompleteAction *);
+
   ZmRef<Token> token;
   Reply<Res> reply;
-  CompleteAction_(Token *token_, Reply<Res> reply_) :
+  CompleteAction(Token *token_, Reply<Res> reply_) :
     token{token_}, reply{ZuMv(reply_)} { }
 };
-template <typename Token, typename Res>
-using CompleteActionHeap = ZmHeap<"Zjrpc.Complete", CompleteAction_<Token, Res>>;
-template <typename Token, typename Res>
-using CompleteAction = CompleteAction_<Token, Res, CompleteActionHeap<Token, Res>>;
 
 // Self preserves the concrete token type at application callback boundaries.
 // Owner is a non-owning back-pointer; its slot invalidates tokens at teardown.
@@ -164,17 +162,15 @@ private:
   ZmAtomic<unsigned> m_cancelled = 0;
 };
 
-template <typename Req, typename Owner, typename Heap = ZuVoid>
-class Completion_ : public Heap, public ZmObject,
-    public CompletionCore<Completion_<Req, Owner, Heap>, Req, Owner> {
-  using Base = CompletionCore<Completion_, Req, Owner>;
+template <typename Req, typename Owner>
+class Completion : public ZmNHeap<Completion<Req, Owner>>, public ZmObject,
+    public CompletionCore<Completion<Req, Owner>, Req, Owner> {
+friend inline ZuStringT<"Zjrpc.Completion"> ZmNHeapID(Completion *);
+
+  using Base = CompletionCore<Completion, Req, Owner>;
 public:
   using Base::Base;
 };
-template <typename Req, typename Owner>
-using CompletionHeap = ZmHeap<"Zjrpc.Completion", Completion_<Req, Owner>>;
-template <typename Req, typename Owner>
-using Completion = Completion_<Req, Owner, CompletionHeap<Req, Owner>>;
 
 // The entry retains the token while callbacks run; taking it clears the slot
 // and invalidates the token before any application completion callback.

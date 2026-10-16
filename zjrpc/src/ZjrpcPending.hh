@@ -170,12 +170,11 @@ ZmHashDerive(PendingHash, PendingEntry,
 	ZmHashLock<ZmNoLock,
 	  ZmHashHeapID<"Zjrpc.Pending">>>>));
 
-template <typename Heap = ZuVoid>
-struct PendingTable_ : public Heap, public PendingHash {
-  ZuDerive_(PendingTable_, PendingHash)
+struct PendingTable : public ZmNHeap<PendingTable>, public PendingHash {
+friend inline ZuStringT<"Zjrpc.Pending.Table"> ZmNHeapID(PendingTable *);
+
+  ZuDerive_(PendingTable, PendingHash)
 };
-ZuDerive(PendingTableHeap, (ZmHeap<"Zjrpc.Pending.Table", PendingTable_<>>));
-ZuDerive(PendingTable, (PendingTable_<PendingTableHeap>));
 
 class PendingCalls {
 public:
@@ -299,7 +298,7 @@ private:
 template <typename Req>
 struct RequestMessage {
   using Request = Req;
-  using Headers = typename Req::Headers;
+  using Headers = Req::Headers;
   ID id;
   ObjectValue<typename Req::Object> object;
   template <typename S>
@@ -402,37 +401,31 @@ private:
   Items m_items;
 };
 
-template <typename Req, typename Call, typename Heap = ZuVoid>
-struct CallAction_ : public Heap, public ZmObject {
+template <typename Req, typename Call>
+struct CallAction : public ZmNHeap<CallAction<Req, Call>>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Call"> ZmNHeapID(CallAction *);
+
   ObjectValue<typename Req::Object> object;
   ZmRef<Call> call;
-  CallAction_(ObjectValue<typename Req::Object> object_, ZmRef<Call> call_) :
+  CallAction(ObjectValue<typename Req::Object> object_, ZmRef<Call> call_) :
     object{ZuMv(object_)}, call{ZuMv(call_)} { }
 };
-template <typename Req, typename Call>
-using CallActionHeap = ZmHeap<"Zjrpc.Call", CallAction_<Req, Call>>;
-template <typename Req, typename Call>
-using CallAction = CallAction_<Req, Call, CallActionHeap<Req, Call>>;
 
-template <typename Req, typename Heap = ZuVoid>
-struct NotifyAction_ : public Heap, public ZmObject {
+template <typename Req>
+struct NotifyAction : public ZmNHeap<NotifyAction<Req>>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Notify"> ZmNHeapID(NotifyAction *);
+
   ObjectValue<typename Req::Object> object;
-  explicit NotifyAction_(ObjectValue<typename Req::Object> object_) : object{ZuMv(object_)} { }
+  explicit NotifyAction(ObjectValue<typename Req::Object> object_) : object{ZuMv(object_)} { }
 };
-template <typename Req>
-using NotifyActionHeap = ZmHeap<"Zjrpc.Notify", NotifyAction_<Req>>;
-template <typename Req>
-using NotifyAction = NotifyAction_<Req, NotifyActionHeap<Req>>;
 
-template <typename B, typename Heap = ZuVoid>
-struct BatchAction_ : public Heap, public ZmObject {
+template <typename B>
+struct BatchAction : public ZmNHeap<BatchAction<B>>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Batch.Notify"> ZmNHeapID(BatchAction *);
+
   B batch;
-  explicit BatchAction_(B batch_) : batch{ZuMv(batch_)} { }
+  explicit BatchAction(B batch_) : batch{ZuMv(batch_)} { }
 };
-template <typename B>
-using BatchActionHeap = ZmHeap<"Zjrpc.Batch.Notify", BatchAction_<B>>;
-template <typename B>
-using BatchAction = BatchAction_<B, BatchActionHeap<B>>;
 
 template <typename Derived>
 class BatchCaller {
@@ -493,11 +486,13 @@ protected:
 private:
   auto derived() { return static_cast<Derived *>(this); }
 
-  template <typename B, typename Call, typename Heap = ZuVoid>
-  class BatchCall_ : public Heap, public ZmObject {
+  template <typename B, typename Call>
+  class BatchCall : public ZmNHeap<BatchCall<B, Call>>, public ZmObject {
+  friend inline ZuStringT<"Zjrpc.Batch.Call"> ZmNHeapID(BatchCall *);
+
     using IDs = ZtArray<ID, ZtArrayHeapID<"Zjrpc.Batch.IDs">>;
   public:
-    BatchCall_(BatchCaller *caller, B batch, ZmRef<Call> call) :
+    BatchCall(BatchCaller *caller, B batch, ZmRef<Call> call) :
       m_caller{caller}, m_items{ZuMv(batch)}, m_call{ZuMv(call)} { }
 
     void start() {
@@ -595,10 +590,6 @@ private:
     bool m_finishing = false;
     bool m_failed = false;
   };
-  template <typename B, typename Call>
-  using BatchCallHeap = ZmHeap<"Zjrpc.Batch.Call", BatchCall_<B, Call>>;
-  template <typename B, typename Call>
-  using BatchCall = BatchCall_<B, Call, BatchCallHeap<B, Call>>;
 
   template <typename B>
   bool notifyBatch_(B &batch) {

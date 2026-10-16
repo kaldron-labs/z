@@ -32,7 +32,7 @@ namespace ZfTreeLoad {
 
 template <typename Policy, typename Fields>
 struct FieldIDs {
-  using Keys = typename Policy::template GetIDs<Fields>;
+  using Keys = Policy::template GetIDs<Fields>;
 };
 
 // Policy supplies field-property selectors, scalar admission and boolean
@@ -160,8 +160,8 @@ struct Object {
   auto loadField() const
   {
     enum { TypeCode = Field::Type::Code };
-    using Props = typename Field::Props;
-    using T = typename Field::T;
+    using Props = Field::Props;
+    using T = Field::T;
     using R = decltype(loadValue<
       Policy, Facet, Filter, TypeCode, Props, T>(ZuDeclVal<AnyNode *>()));
     {
@@ -216,7 +216,7 @@ struct Object {
     else {
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(*this, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-	using Props = typename Field::Props;
+	using Props = Field::Props;
 	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 	    ZuFieldProp::HasDeflt<Props>{}() ||
 	    hasField<Field>())
@@ -234,7 +234,7 @@ struct Object {
     O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
       *this, ZuFwd<Args>(args)...);
     ZuUnroll::all<InitFields>([this, o]<typename Field>() {
-      using Props = typename Field::Props;
+      using Props = Field::Props;
       if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 	  ZuFieldProp::HasDeflt<Props>{}() ||
 	  hasField<Field>())
@@ -250,7 +250,7 @@ struct Object {
     ZuTypeApply<Ctor, CtorFields>::new_(o_, *this, ZuFwd<Args>(args)...);
     O &o = *static_cast<O *>(o_);
     ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
-      using Props = typename Field::Props;
+      using Props = Field::Props;
       if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 	  ZuFieldProp::HasDeflt<Props>{}() ||
 	  hasField<Field>())
@@ -262,7 +262,7 @@ struct Object {
   {
     checkRequired<ReqFields>();
     ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-      using Props = typename Field::Props;
+      using Props = Field::Props;
       if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 	  ZuFieldProp::HasDeflt<Props>{}() ||
 	  hasField<Field>())
@@ -274,7 +274,7 @@ struct Object {
   {
     checkRequired<UpdReqFields>();
     ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-      using Props = typename Field::Props;
+      using Props = Field::Props;
       if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
 	Field::set(o,
 	  this->template loadField<ZfFieldFilter::Upd, Field>());
@@ -361,7 +361,7 @@ struct Array {
     unsigned m = nodes.length();
     if (n > m) n = m;
     if constexpr (ElemCode == ZfFieldTC::UDT) {
-      using IsPtr = typename Policy::template IsObjPtr<Elem>;
+      using IsPtr = Policy::template IsObjPtr<Elem>;
       if constexpr (!IsPtr{}) {
 	for (unsigned i = 0; i < n; i++)
 	  Policy::template handler<Elem, Facet>(nodes[i]).update(o[i]);
@@ -391,8 +391,8 @@ template <
 struct Map {
   using O = O_;
   using AnyNode = ZfTree::AnyNode;
-  using Key = typename O::Key;
-  using Val = typename O::Val;
+  using Key = O::Key;
+  using Val = O::Val;
 
   const AnyNode	*node;
 
@@ -522,7 +522,7 @@ inline T loadValue_(const ZfTree::AnyNode *node)
       TypeCode == ZfFieldTC::UInt128) {
     auto span = scalar<Policy>(
       node, ScalarMask::String() | ScalarMask::Number(), "integer");
-    using Fmt = typename Policy::template GetNumberFmt<Props>;
+    using Fmt = Policy::template GetNumberFmt<Props>;
     using B = ZuIf<ZuIsBoxed<T>{}, T, ZuBox<ZfFieldTC::Type<TypeCode>>>;
     B v;
     if constexpr (ZuFieldProp::HasEnum<Props>{}) {
@@ -532,7 +532,7 @@ inline T loadValue_(const ZfTree::AnyNode *node)
       v = B{i};
     } else if constexpr (ZuFieldProp::HasFlags<Props>{}) {
       using Map = ZuFieldProp::GetFlags<Props>;
-      using Scan = typename Map::Scan;
+      using Scan = Map::Scan;
       auto r = Scan::eov(span, Fmt::Fmt::FlagsDelim());
       if (ZuUnlikely(r.template p<0>() < 0 ||
           unsigned(r.template p<0>()) != span.length()))
@@ -615,7 +615,7 @@ inline T loadValue_(const ZfTree::AnyNode *node)
       else
 	return v;
     }
-    using Fmt = typename Policy::template GetTimeFmt<Props>;
+    using Fmt = Policy::template GetTimeFmt<Props>;
     ZuCSpan span = scalar<Policy>(
       node, ScalarMask::String() | ScalarMask::Number(), "date/time");
     if constexpr (Fmt::Fmt == ZfJSON::Unix) {
@@ -667,7 +667,7 @@ inline T loadValue_(const ZfTree::AnyNode *node)
 	return v;
     }
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
-    using IsPtr = typename Policy::template IsObjPtr<T>;
+    using IsPtr = Policy::template IsObjPtr<T>;
     if constexpr (!IsPtr{}) {
       return Policy::template handler<T, Facet>(node).ctor();
     } else {

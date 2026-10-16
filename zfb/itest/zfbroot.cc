@@ -23,7 +23,7 @@ template <typename T> using Ptr = ZuPtr<T>;
 template <typename O, typename Map, typename Fill, typename Check>
 static bool roundTrip(Fill fill, Check check)
 {
-  using Wire = typename Map::T;
+  using Wire = Map::T;
   bool passed = true;
   O original;
   fill(original);

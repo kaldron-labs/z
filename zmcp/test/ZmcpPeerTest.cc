@@ -69,10 +69,9 @@ ZfStruct(, (HeaderReq, JSON),
   (text, (Ctor<0>, MCP::Header<"Text">),	String),
   (nested, (Ctor<1>),				UDT));
 
-template <typename Heap = ZuVoid>
-struct ThrowContext_ : public Heap, public ZmObject { };
-ZuDerive(ThrowContextHeap, (ZmHeap<"ZmcpTest.ThrowContext", ThrowContext_<>>));
-ZuDerive(ThrowContext, (ThrowContext_<ThrowContextHeap>));
+struct ThrowContext : public ZmNHeap<ThrowContext>, public ZmObject {
+friend inline ZuStringT<"ZmcpTest.ThrowContext"> ZmNHeapID(ThrowContext *);
+};
 
 struct ThrowContextApp {
   void close(Zmcp::TransportTag, ThrowContext *) {
@@ -239,8 +238,9 @@ struct HTTPResponseHarness :
   bool acceptSSE = true;
 };
 
-template <typename Heap = ZuVoid>
-struct PendingCall_ : public Heap, public ZmObject {
+struct PendingCall : public ZmNHeap<PendingCall>, public ZmObject {
+friend inline ZuStringT<"ZmcpTest.PendingCall"> ZmNHeapID(PendingCall *);
+
   void process(const Zjrpc::Reply<EchoOK> &reply) {
     value = reply.body.value;
     ++processed;
@@ -257,8 +257,6 @@ struct PendingCall_ : public Heap, public ZmObject {
   unsigned errors = 0;
   unsigned failures = 0;
 };
-ZuDerive(PendingCallHeap, (ZmHeap<"ZmcpTest.PendingCall", PendingCall_<>>));
-ZuDerive(PendingCall, (PendingCall_<PendingCallHeap>));
 
 struct ClientNotifyHarness {
   void progress(
@@ -357,7 +355,7 @@ struct HTTPResponderHarness : public Zjrpc::Dispatcher<HTTPResponderHarness<Cata
   using Dispatch = Zjrpc::Dispatcher<HTTPResponderHarness, HTTPResponderHarness,
     Catalog, Context, Zmcp::Server_::HTTPDispatchPolicy<Catalog>>;
   using Responder = Zmcp::HTTPResponder<Catalog, HTTPResponderHarness>;
-  using Builder = typename Responder::Builder;
+  using Builder = Responder::Builder;
 
   Zjrpc::Limits limitsValue;
   Headers headers;

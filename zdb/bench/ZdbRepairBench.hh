@@ -211,7 +211,7 @@ static void store(unsigned count, unsigned rounds, unsigned width)
   row.qtys.length(width, false);
   for (unsigned i = 0; i < width; ++i) row.prices[i] = i + 100, row.qtys[i] = i + 1;
   auto keyBuf = key(ZuStructKey<0>(row));
-  using Group = typename SplitKey<T, 0>::GroupKey;
+  using Group = SplitKey<T, 0>::GroupKey;
   auto groupBuf = key(Group{});
   Samples samples((count + 1)*11);
   UN un = 0;

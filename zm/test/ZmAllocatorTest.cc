@@ -24,15 +24,15 @@ using namespace ZuTestUtil;
 
 namespace {
 
-template <typename Heap = ZuVoid>
-struct FixedLazy_ : public Heap {
+struct FixedLazy : public ZmNHeap<FixedLazy> {
+friend inline ZuStringT<"ZmAllocatorTest.FixedLazy"> ZmNHeapID(FixedLazy *);
+
   uintptr_t value;
 };
-ZuDerive(FixedLazyHeap, (ZmHeap<"ZmAllocatorTest.FixedLazy", FixedLazy_<>>));
-ZuDerive(FixedLazy, (FixedLazy_<FixedLazyHeap>));
-ZuAssert(sizeof(FixedLazy) == sizeof(FixedLazy_<>));
-ZuAssert(alignof(FixedLazy) == alignof(FixedLazy_<>));
-ZuAssert((ZuIsSame<ZmHeapID<FixedLazy>,
+
+ZuAssert(sizeof(FixedLazy) == sizeof(uintptr_t));
+ZuAssert(alignof(FixedLazy) == alignof(uintptr_t));
+ZuAssert((ZuIsSame<ZmNHeapID_<FixedLazy>,
   ZuStringT<"ZmAllocatorTest.FixedLazy">>{}));
 using VHeapLazy =
   ZmVHeap<"ZmAllocatorTest.VHeapLazy", 16, 256, alignof(uintptr_t)>;

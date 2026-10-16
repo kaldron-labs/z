@@ -25,14 +25,14 @@ namespace RequestListState {
   enum { None, Active, Draining };
 }
 
-template <typename Heap = ZuVoid>
-class Requests_ : public Heap, public ZmObject {
+class Requests : public ZmNHeap<Requests>, public ZmObject {
+friend inline ZuStringT<"Zum.Requests"> ZmNHeapID(Requests *);
 
 public:
-  Requests_ &operator =(const Requests_ &) = delete;
+  Requests &operator =(const Requests &) = delete;
 
 private:
-  Requests_(const Requests_ &) = delete;
+  Requests(const Requests &) = delete;
 
 public:
   class RequestData : public ZmObject {
@@ -57,16 +57,16 @@ public:
     }
 
   private:
-  friend Requests_;
+  friend Requests;
 
-    RequestData(Requests_ *, Fn);
+    RequestData(Requests *, Fn);
 
     void start_(ZuTime);
     bool finish_();
     void cancel_();
     void timeout_();
 
-    Requests_		*m_requests = nullptr;
+    Requests		*m_requests = nullptr;
     ZmScheduler::Timer	m_timer;
     Fn			m_cancel;
     int8_t		m_list = RequestListState::None;
@@ -79,7 +79,7 @@ public:
 
   ZuDerive(Fn, (ZmFn<void(), ZmFnHeapID<"Zum.Requests.Fn">>));
 
-  Requests_() = default;
+  Requests() = default;
 
   bool init(ZmScheduler *, unsigned sid, unsigned limit);
   void activate();
@@ -97,7 +97,7 @@ public:
     }
     ZmRef<Node> request = new Node{this, ZuMv(cancel)};
     m_scheduler->run([
-      self = ZmRef<Requests_>{this}, request = ZuMv(request),
+      self = ZmRef<Requests>{this}, request = ZuMv(request),
       deadline, l = ZuFwd<L>(l)
     ]() mutable {
       if (self->admit_(request.ptr(), deadline)) l(ZuMv(request));
@@ -136,8 +136,6 @@ private:
   bool			m_closing = false;
 };
 
-ZuDerive(RequestsHeap, (ZmHeap<"Zum.Requests", Requests_<>>));
-ZuDerive(Requests, (Requests_<RequestsHeap>));
 using Request = Requests::Node;
 
 } // namespace Zum

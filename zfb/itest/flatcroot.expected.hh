@@ -50,8 +50,9 @@ namespace flatcdep {
 
 namespace Zflatc_::H0 {
 
-template <typename Heap_ = ZuVoid>
-struct O_ : public Heap_ {
+struct O_ : public ZmNHeap<O_> {
+friend inline ZuStringT<"flatcdep.H0"> ZmNHeapID(O_ *);
+
   ZuDerive(Children, (ZtArray<ZuPtr<::flatcdep::O0>, ZtArrayHeapID<"flatcdep.H0.children">>));
   ZuDerive(E6_, (ZtString<ZtStringHeapID<"flatcdep.H0.retiredNames">>));
   ZuDerive(RetiredNames, (ZtArray<E6_, ZtArrayHeapID<"flatcdep.H0.retiredNames">>));
@@ -63,12 +64,11 @@ struct O_ : public Heap_ {
   ::flatcdep::Axes axial;
   ZuPtr<::flatcdep::Retired> retired;
 };
-ZuDerive(H_, (ZmHeap<"flatcdep.H0", O_<>>));
 
 } // Zflatc_::H0
 
-struct H0 : public Zflatc_::H0::O_<Zflatc_::H0::H_> {
-  ZuDerive_(H0, (Zflatc_::H0::O_<Zflatc_::H0::H_>));
+struct H0 : public Zflatc_::H0::O_ {
+  ZuDerive_(H0, (Zflatc_::H0::O_));
 };
 
 } // flatcdep

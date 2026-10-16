@@ -237,8 +237,10 @@ using EndpointRebindFn =
 ZmQueueDerive(EndpointDiscFns, EndpointDiscFn,
   ZmQueueHeapID<"Zquic.Endpoint.DiscFns">);
 
-template <typename Endpoint_, typename Heap = ZuVoid>
-class EndpointCxn_ : public Heap, public ZiConnection {
+template <typename Endpoint_>
+class EndpointCxn_ : public ZmNHeap<EndpointCxn_<Endpoint_>>, public ZiConnection {
+friend inline ZuStringT<"Zquic.Endpoint.Cxn"> ZmNHeapID(EndpointCxn_ *);
+
 friend Endpoint_;
 
 public:
@@ -435,15 +437,12 @@ private:
   EcnMark::T		m_txECN = EcnMark::NotECT;
   TxQueue		m_txQueue;
 };
-template <typename Endpoint_>
-ZuDerive(EndpointCxnHeap_,
-  (ZmHeap<"Zquic.Endpoint.Cxn", EndpointCxn_<Endpoint_>>));
 
 template <typename Impl_>
 class Endpoint_ {
-  template <typename, typename> friend class EndpointCxn_;
+  template <typename> friend class EndpointCxn_;
 
-  using Cxn_ = EndpointCxn_<Endpoint_, EndpointCxnHeap_<Endpoint_>>;
+  using Cxn_ = EndpointCxn_<Endpoint_>;
 
 public:
   using Impl = Impl_;

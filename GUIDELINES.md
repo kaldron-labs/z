@@ -275,20 +275,19 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   array and convert each element to a span only at its use boundary.
 
 ### Storage and capacity
-- Red Flag: `operator new` overload outside `ZmHeap`, except for objects
+- Red Flag: `operator new` overload outside `ZmNHeap`, except for objects
   managed by `ZmSingleton` or `ZmSpecific`
   Problem: fixed-size allocations outside `ZmSingleton` and `ZmSpecific`
-  should be trackable with `ZmHeap`
-  Fix: replace other custom overloads with use of `ZmHeap`
-- Red Flag: a module-local object allocator/base class which hides `ZmHeap` or
+  should be trackable with `ZmNHeap`
+  Fix: replace other custom overloads with use of `ZmNHeap`
+- Red Flag: a module-local object allocator/base class which hides `ZmNHeap` or
   `ZmVHeap` behind inherited `operator new`.
   Problem: it erases the concrete allocation size and heap identity, permits a
   variable-size heap for fixed-size objects, and makes allocation audits miss
   dependents.
-  Fix: each fixed-size concrete type inherits its own `ZmHeap` specialization
-  (first base), using the established `Type_<Heap = ZuVoid>` pattern when its
-  final size is needed: define `using Type =
-  Type_<ZmHeap<"...", Type_<>>>` after the template. Do not declare
+  Fix: each fixed-size concrete type inherits its own `ZmNHeap` specialization
+  (first base), with the concrete type as its CRTP argument and a
+  `friend inline ZuStringT<"..."> ZmNHeapID(Type *);` declaration. Do not declare
   `operator new`/`operator delete` merely to forward to a heap, and do not
   introduce generic `Object`, `ObjectAlloc`, or equivalent allocation bases.
 - Red Flag: hard-coded capacities such as `16`.
@@ -321,17 +320,17 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 ### Heap allocation
 - Red Flag: buffer or queue-node management bypassing optimized Z heap paths.
   Problem: common data-path allocations miss pooling and telemetry.
-  Fix: use `ZmHeap`-optimized buffer and queue-node management.
+  Fix: use `ZmNHeap`-optimized buffer and queue-node management.
 - Amber Flag: heap allocation in hot paths or for scratch state.
   Problem: allocator latency and contention directly hurt tail latency and throughput.
   Fix: use stack scratch such as `ZtScratch` and pass it through callbacks; I/O buffers are the exception, see the I/O guidance below.
-- Red Flag: heap allocation without `ZmHeap`, `ZmVHeap`, or `ZmHeapID`,
+- Red Flag: heap allocation without `ZmNHeap`, `ZmVHeap`, or `ZmNHeapID`,
   except for objects managed by `ZmSingleton` or `ZmSpecific`.
   Problem: allocation behavior becomes opaque and loses Z heap telemetry/tuning.
-  Fix: use `ZmHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmHeapID`. Objects managed by `ZmSingleton` or `ZmSpecific` are exempt from heap identification.
+  Fix: use `ZmNHeap` for fixed-size allocations, `ZmVHeap` for variable-size allocations, and identify allocations with `ZmNHeapID`. Objects managed by `ZmSingleton` or `ZmSpecific` are exempt from heap identification.
 - Red Flag: a fixed-size object type allocated through `ZmVHeap`.
   Problem: a variable-size heap loses fixed-size allocation telemetry and tuning.
-  Fix: use a concrete `ZmHeap`; reserve `ZmVHeap` for allocations whose size
+  Fix: use a concrete `ZmNHeap`; reserve `ZmVHeap` for allocations whose size
   genuinely varies at run time.
 - Amber Flag: separate allocations for object, refcount, and container nodes.
   Problem: fragmented allocation adds memory overhead and pointer chasing.
@@ -526,7 +525,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - scratch strings/buffers:
     - `ZtScratch` (macro) - scratch on-stack `ZtArray`/`ZtString` with heap fallback
   - specific-purpose strings:
-    - `ZtString` and `ZtArray` can be tagged with a compile-time `ZmHeapID`
+    - `ZtString` and `ZtArray` can be tagged with a compile-time `ZmNHeapID`
     - certain types with specific heap IDs are re-used throughout the framework:
       - `ZeString`: `ZtString` with heap ID for error messages, logs and diagnostics
 
@@ -560,28 +559,21 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   unrecognized keys is a non-goal.
 
 ### Storage and lifetime
-- Use `ZmHeap` and `ZmVHeap` to adopt a recycling zero-overhead block allocator, with heap identification, telemetry and configurable tuning
-  - Use `ZmHeap` for fixed-size concrete types, except objects managed by
+- Use `ZmNHeap` and `ZmVHeap` to adopt a recycling zero-overhead block allocator, with heap identification, telemetry and configurable tuning
+  - Use `ZmNHeap` for fixed-size concrete types, except objects managed by
     `ZmSingleton` or `ZmSpecific`, which do not require heap identification
-    - Always declare the `ZmHeap` type as an alias before using it:
+    - Inherit the heap directly with the concrete type and tag its ID with ADL:
     ```
-    class X { ... };
+    class X : public ZmNHeap<X> {
+    friend inline ZuStringT<"X"> ZmNHeapID(X *);
+      ...
+    };
     ```
-    becomes:
-    ```
-    template <typename Heap = ZuVoid>
-    class X_ : public Heap { ... };
-    ZuDerive(X_Heap, (ZmHeap<"X", X_<>>));
-    ZuDerive(X, X_<X_Heap>);
-    ```
-    - Key properties of the pattern:
-      - `Heap = ZuVoid` is defaulted
-      - `X_<>` is abbreviated
-      - `X_Heap` is aliased
-      - `X` is `ZuDerive`d to ensure a new type ID and symbol compression
+    - Declare `friend inline ZuTrue ZmNHeapSharded(X *);` for sharded heaps.
+    - An omitted or empty ID disables recycling.
   - Use `ZmVHeap` for variable-sized dynamic allocations (strings, etc.)
 - Use `ZtScratch` for stack scratch with heap fallback; ensure the underlying array has appropriate heap identification.
-- Dependents of `ZmHeap`, `ZmVHeap`, `ZmScratch`, `ZtScratch`, and related
+- Dependents of `ZmNHeap`, `ZmVHeap`, `ZmScratch`, `ZtScratch`, and related
   heap or scratch allocators must not check allocation results for `nullptr`
   or use `if (!result)` failure branches. `ZmHeapFail` handles allocation
   failure; it is not a caller concern.
@@ -719,7 +711,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Z iterators are usually optionally mutable and can delete while iterating.
 - `del()`/`delNode()` usually returns a movable reference to the deleted node/value.
 - Stack container intrusions when one application node participates in multiple containers, example: `ZmCache` has nodes that participate in both an LRU `ZmList` and `ZmHash`.
-- Use `HeapID<"">` to disable inner-container `ZmHeap` allocation when the full node size is only available at the outermost container.
+- Use `HeapID<"">` to disable inner-container `ZmNHeap` allocation when the full node size is only available at the outermost container.
 
 ### Callbacks
 - Use `ZmFn` for type-erased lambdas.

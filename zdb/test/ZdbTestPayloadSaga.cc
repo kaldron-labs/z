@@ -10,9 +10,10 @@
 
 namespace zdbtest {
 
-template <typename Heap = ZuVoid>
-struct PayloadSaga_ : public Heap, public ZdbSaga<PayloadSaga_<Heap>, PayloadDB> {
-  using Base = ZdbSaga<PayloadSaga_<Heap>, PayloadDB>;
+struct PayloadSaga : public ZmNHeap<PayloadSaga>, public ZdbSaga<PayloadSaga, PayloadDB> {
+friend inline ZuStringT<"Zdb.Test.PayloadSaga"> ZmNHeapID(PayloadSaga *);
+
+  using Base = ZdbSaga<PayloadSaga, PayloadDB>;
   using Base::db;
   using Type = ZuStringT<"payloadSagaWithATypeNameThatExceedsBuiltinStringStorage">;
   enum { NPhases = 1 };
@@ -27,10 +28,8 @@ struct PayloadSaga_ : public Heap, public ZdbSaga<PayloadSaga_<Heap>, PayloadDB>
     return {};
   }
 
-  PayloadSaga_(Zdb_::SagaPayload data_) : data{ZuMv(data_)} { }
+  PayloadSaga(Zdb_::SagaPayload data_) : data{ZuMv(data_)} { }
 };
-
-using PayloadSaga = PayloadSaga_<ZmHeap<"Zdb.Test.PayloadSaga", PayloadSaga_<>>>;
 
 ZfStruct(, (PayloadSaga, FB),
   (data, (Ctor<0>),	Bytes));

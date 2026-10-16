@@ -280,18 +280,15 @@ struct DB : public ZdbSagaDB {
   ZdbTable<Transfer> *transfers = nullptr;
 };
 
-struct BalanceTransfer_ : public ZdbAnySaga<DB> {
+struct BalanceTransfer : public ZmNHeap<BalanceTransfer>, public ZdbAnySaga<DB> {
+  friend inline ZuStringT<"Zdb.Example.BalanceTransfer"> ZmNHeapID(BalanceTransfer *);
+
   using Base = ZdbAnySaga<DB>;
   using Base::db;
   using Type = ZuStringT<"balanceTransfer">;
   enum { NPhases = 4 };
   // Serializable request fields and ZdbSagaPhase definitions.
   // Implement type, nPhases, phaseDef, save, nSteps, stepDef and run.
-};
-
-struct BalanceTransfer : BalanceTransfer_,
-    ZmHeap<"Zdb.Example.BalanceTransfer", BalanceTransfer_> {
-  using BalanceTransfer_::BalanceTransfer_;
 };
 
 Zdb_::SagaDef balanceTransferDef();

@@ -157,17 +157,17 @@ class ZmQueue :
   public NTP::template OpsT<T_>
 {
 public:
-  using Impl = typename ZmQueue_Impl<T_, NTP, Impl_>::Type;
+  using Impl = ZmQueue_Impl<T_, NTP, Impl_>::Type;
 
 friend ZmQueue_Unlocked<Impl, T_>;
 
   using T = T_;
   static constexpr auto KeyAxor = NTP::KeyAxor;
   using Key = ZuRDecay<decltype(KeyAxor(ZuDeclVal<const T &>()))>;
-  using Ops = typename NTP::template OpsT<T>;
-  using Cmp = typename NTP::template CmpT<T>;
-  using KeyCmp = typename NTP::template KeyCmpT<T>;
-  using Lock = typename NTP::Lock;
+  using Ops = NTP::template OpsT<T>;
+  using Cmp = NTP::template CmpT<T>;
+  using KeyCmp = NTP::template KeyCmpT<T>;
+  using Lock = NTP::Lock;
   using HeapID = NTP::HeapID;
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };
@@ -458,7 +458,7 @@ friend Iter;
     using Iter_::m_ring;
     using Iter_::m_i;
   public:
-    Iter(typename Iter_::Ring &ring) : Iter_(ring, 0) { }
+    Iter(Iter_::Ring &ring) : Iter_(ring, 0) { }
     T *ptr() {
       unsigned o;
       do {
@@ -483,7 +483,7 @@ friend RIter;
     using Iter_::m_ring;
     using Iter_::m_i;
   public:
-    RIter(typename Iter_::Ring &ring) :
+    RIter(Iter_::Ring &ring) :
 	Iter_(ring, ring.m_length) { }
     T *ptr() {
       unsigned o;

@@ -13,11 +13,11 @@
 
 namespace Zum {
 
-struct AssignmentAddResult_ : public ZmObject {
+struct AssignmentAddResult : public ZmNHeap<AssignmentAddResult>, public ZmObject {
+friend inline ZuStringT<"Zum.AssignmentAddResult"> ZmNHeapID(AssignmentAddResult *);
+
   unsigned error = 503;
 };
-struct AssignmentAddResult : public AssignmentAddResult_,
-    public ZmHeap<"Zum.AssignmentAddResult", AssignmentAddResult_> { };
 
 struct AssignmentAddArgs {
   AppID appID = 0;

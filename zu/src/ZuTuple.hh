@@ -126,7 +126,7 @@ public:
   struct Elem_ {
     using T = ZuDeref<decltype(*elem_<J>(ZuDeclVal<const Tuple_ &>()))>;
   };
-  template <unsigned J> using Elem = typename Elem_<J>::T;
+  template <unsigned J> using Elem = Elem_<J>::T;
 
   template <unsigned J> using P = Elem<J>::T;
   template <unsigned J> using U = ZuDeref<P<J>>;
@@ -141,10 +141,10 @@ public:
   // binding of ZuTuple
   template <
     unsigned J, typename V,
-    typename R = typename V::template Elem<J>::T,
+    typename R = V::template Elem<J>::T,
     bool = ZuTraits<R>::IsReference>
   struct Bind {
-    using E = typename V::template Elem<J>;
+    using E = V::template Elem<J>;
     static constexpr const auto &p(const V &v) {
       return static_cast<const E &>(v).v;
     }
@@ -156,7 +156,7 @@ public:
     }
   };
   template <unsigned J, typename V, typename R> struct Bind<J, V, R, true> {
-    using E = typename V::template Elem<J>;
+    using E = V::template Elem<J>;
     static constexpr const auto &p(const V &v) {
       return static_cast<const E &>(v).v;
     }
@@ -254,7 +254,7 @@ public:
   template <typename V>
   struct IsCvtFirstElem_<V, 0> { using T = ZuFalse; };
   template <typename V>
-  using IsCvtFirstElem = typename IsCvtFirstElem_<V>::T;
+  using IsCvtFirstElem = IsCvtFirstElem_<V>::T;
   template <typename V, typename R = void>
   using CvtFirstElem = ZuIfT<IsCvtFirstElem<V>{}, R>;
 
@@ -268,7 +268,7 @@ public:
   template <typename V>
   struct IsCvtElem_<V, 0> { using T = ZuFalse; };
   template <typename V>
-  using IsCvtElem = typename IsCvtElem_<V>::T;
+  using IsCvtElem = IsCvtElem_<V>::T;
 
   template <typename V, typename R = void>
   using CvtElem = ZuIfT<IsCvtElem<V>{}, R>;
@@ -497,17 +497,17 @@ struct TupleBaseT_<ZuSeq<I...>, ZuTypeList<Ts...>> {
   using T = Tuple_<Elems, StoredElems>;
 };
 template <typename I, typename Ts>
-using TupleBaseT = typename TupleBaseT_<I, Ts>::T;
+using TupleBaseT = TupleBaseT_<I, Ts>::T;
 
 // main tuple class
 template <typename ...Ts>
 class Tuple : public TupleBaseT<ZuMkSeq<sizeof...(Ts)>, ZuTypeList<Ts...>> {
 public:
   using Base = TupleBaseT<ZuMkSeq<sizeof...(Ts)>, ZuTypeList<Ts...>>;
-  using Elems = typename Base::Elems;
+  using Elems = Base::Elems;
 
   template <typename V>
-  using IsConAnyTuple_ = typename Base::template IsConAnyTuple<V>;
+  using IsConAnyTuple_ = Base::template IsConAnyTuple<V>;
   template <typename V>
   struct IsConAnyTuple : public ZuBool<
     !ZuIsSame<ZuDecay<V>, Tuple>{} &&bool(IsConAnyTuple_<V>{})> { };
@@ -524,7 +524,7 @@ public:
   template <typename V, typename R = void>
   using CvtFirstElem = Base::template CvtFirstElem<V, R>;
 
-  using Types = typename Base::Types;
+  using Types = Base::Types;
   enum { N = Base::N };
 
   // need to explicitly default these for overload resolution
@@ -682,7 +682,7 @@ public integral_constant<size_t, sizeof...(Ts)> { };
 template <size_t, typename> struct tuple_element;
 template <size_t I, typename ...Ts>
 struct tuple_element<I, ZuTuple<Ts...>> {
-  using type = typename ZuTuple<Ts...>::template Type<I>;
+  using type = ZuTuple<Ts...>::template Type<I>;
 };
 
 } // std
@@ -694,7 +694,7 @@ namespace Zu_ {
 using size_t = std::size_t;
 namespace {
   template <size_t I, typename T>
-  using tuple_element_t = typename std::tuple_element<I, T>::type;
+  using tuple_element_t = std::tuple_element<I, T>::type;
 }
 template <size_t I, typename ...Ts>
 ZuInline constexpr tuple_element_t<I, Tuple<Ts...>> &

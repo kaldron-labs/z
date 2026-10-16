@@ -12,8 +12,8 @@
 
 #include <simple.hh>
 
-ZuAssert((ZuIsSame<ZmHeapID<demo::Row>, ZuStringT<"demo.Row">>{}));
-ZuAssert((ZuIsSame<ZmHeapID<demo::Extra>, ZuStringT<"demo.Extra">>{}));
+ZuAssert((ZuIsSame<ZmNHeapID_<demo::Row>, ZuStringT<"demo.Row">>{}));
+ZuAssert((ZuIsSame<ZmNHeapID_<demo::Extra>, ZuStringT<"demo.Extra">>{}));
 
 using namespace ZuTestUtil;
 

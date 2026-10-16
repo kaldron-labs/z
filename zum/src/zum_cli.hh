@@ -183,7 +183,7 @@ struct LongMatcher<ZumCLI::Options, ZuFacet::CLI> {
 
 namespace ZumCLI {
 
-using OptionKeys = typename ZfCLI::Parser<Options>::LongKeys_;
+using OptionKeys = ZfCLI::Parser<Options>::LongKeys_;
 ZuAssert(OptionKeys::N <= 64);
 
 consteval uint64_t optionMask(ZuCSpan names)

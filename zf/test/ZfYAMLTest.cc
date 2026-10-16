@@ -119,13 +119,13 @@ ZfStruct(, (YAMLPtrHolder, YAML),
   (text, (Mutable),		UDT));
 
 ZuAssert((ZuIsSame<
-  ZmHeapID<YAMLIntMap>, ZuStringT<"ZfTest.YAML.IntMap">>{}));
+  ZmNHeapID_<YAMLIntMap>, ZuStringT<"ZfTest.YAML.IntMap">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<YAMLPtrObj>, ZuStringT<"ZfTest.YAML.PtrObj">>{}));
+  ZmNHeapID_<YAMLPtrObj>, ZuStringT<"ZfTest.YAML.PtrObj">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<YAMLPtrText>, ZuStringT<"ZfTest.YAML.PtrText">>{}));
+  ZmNHeapID_<YAMLPtrText>, ZuStringT<"ZfTest.YAML.PtrText">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<YAMLPtrArray>, ZuStringT<"ZfTest.YAML.PtrArray">>{}));
+  ZmNHeapID_<YAMLPtrArray>, ZuStringT<"ZfTest.YAML.PtrArray">>{}));
 
 struct YAMLJSON {
   int value = 0;
@@ -1028,7 +1028,7 @@ static void unions()
   auto nullValue = ZfYAML::handler<YAMLUnionHolder>(nullTree.p<1>()).ctor();
   auto nullNode = nullValue.value.p<const ZfYAML::AnyNode *>();
   ZuCheck(nullNode && nullNode->scalarType == ZfYAML::ScalarTC::Null);
-  using UnionHandler = typename ZfYAML::As<decltype(nullValue.value)>::
+  using UnionHandler = ZfYAML::As<decltype(nullValue.value)>::
     template Handler<decltype(nullValue.value), ZuFacet::YAML>;
   ZuCheck(!UnionHandler::valid(nullptr));
 

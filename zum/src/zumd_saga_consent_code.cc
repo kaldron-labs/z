@@ -10,10 +10,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ConsentCodeSaga_ : public Heap,
-    public ZdbSaga<ConsentCodeSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ConsentCodeSaga_<Heap>, DB>;
+struct ConsentCodeSaga : public ZmNHeap<ConsentCodeSaga>,
+    public ZdbSaga<ConsentCodeSaga, DB> {
+friend inline ZuStringT<"Zum.ConsentCodeSaga"> ZmNHeapID(ConsentCodeSaga *);
+
+  using Base = ZdbSaga<ConsentCodeSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -208,19 +209,16 @@ struct ConsentCodeSaga_ : public Heap,
     return {};
   }
 
-  ConsentCodeSaga_() = default;
-  ConsentCodeSaga_(Grant beforeGrant_, Grant afterGrant_,
+  ConsentCodeSaga() = default;
+  ConsentCodeSaga(Grant beforeGrant_, Grant afterGrant_,
       Consent beforeConsent_, IDVec roleIDs_, int64_t now_) :
     beforeGrant{ZuMv(beforeGrant_)}, afterGrant{ZuMv(afterGrant_)},
     beforeConsent{ZuMv(beforeConsent_)}, roleIDs{ZuMv(roleIDs_)}, now{now_} { }
-  ConsentCodeSaga_(ConsentCodeArgs args) :
-    ConsentCodeSaga_{ZuMv(args.beforeGrant), ZuMv(args.afterGrant),
+  ConsentCodeSaga(ConsentCodeArgs args) :
+    ConsentCodeSaga{ZuMv(args.beforeGrant), ZuMv(args.afterGrant),
       ZuMv(args.beforeConsent), ZuMv(args.roleIDs), args.now} { }
-  ~ConsentCodeSaga_() override;
+  ~ConsentCodeSaga() override;
 };
-
-using ConsentCodeSaga = ConsentCodeSaga_<
-  ZmHeap<"Zum.ConsentCodeSaga", ConsentCodeSaga_<>>>;
 
 ZfStruct(, (ConsentCodeSaga, FB),
   (beforeGrant,		(Ctor<0>),	UDT),
@@ -232,8 +230,7 @@ Zfb::AsTable<"Zum.fbs.ConsentCode"> Zfb_Fmt(ConsentCodeSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<ConsentCodeSaga>{}));
 
-template <typename Heap>
-ConsentCodeSaga_<Heap>::~ConsentCodeSaga_() = default;
+ConsentCodeSaga::~ConsentCodeSaga() = default;
 
 SagaRef consentCode(ZuBSpan data) {
   return ConsentCodeSaga::load(data);

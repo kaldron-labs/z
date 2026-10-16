@@ -61,7 +61,7 @@ struct RequestBuilder :
     RequestHeaders,
     true, false> {
   using HdrCatalog = RequestHeaders;
-  using Base = typename Zhttp::MessageTraits<Profile>::template Request<
+  using Base = Zhttp::MessageTraits<Profile>::template Request<
     RequestBuilder, HdrCatalog, true, false>;
   using Base::body;
   template <typename L>
@@ -121,7 +121,7 @@ struct ResponseBuilder :
     ResponseBuilder<Profile>, ResponseHeaders,
     true, true> {
   using HdrCatalog = ResponseHeaders;
-  using Base = typename Zhttp::MessageTraits<Profile>::template Response<
+  using Base = Zhttp::MessageTraits<Profile>::template Response<
     ResponseBuilder, HdrCatalog, true, true>;
   using Base::body;
   unsigned status() { return 200; }
@@ -146,10 +146,10 @@ struct ClientParser :
   public Zhttp::Parser,
   public Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser<Profile>, TestHeaders> {
-  using Base = typename Zhttp::MessageTraits<Profile>::template ResponseParser<
+  using Base = Zhttp::MessageTraits<Profile>::template ResponseParser<
     ClientParser, TestHeaders>;
   using Base::reset;
-  using State = typename Base::State;
+  using State = Base::State;
   using HdrCatalog = TestHeaders;
 
   bool enable1xx() const { return true; }
@@ -177,7 +177,7 @@ struct ClientParser :
       body_ << value;
     });
   }
-  void complete(typename State::T value) {
+  void complete(State::T value) {
     ++shared->completions;
     complete_ = value;
   }
@@ -189,7 +189,7 @@ struct ClientParser :
   uint64_t	length = 0;
   unsigned	status_ = 0;
   unsigned	statusCalls = 0;
-  typename State::T complete_ = State::Initial;
+  State::T complete_ = State::Initial;
   ZhttpMessageHubTest_::State *shared = nullptr;
 };
 
@@ -275,10 +275,10 @@ struct ServerSession {
     public Zhttp::Parser,
     public Message::template RequestParser<Parser, Zhttp::DefltHdrCatalog> {
     using Base =
-      typename Message::template RequestParser<Parser,
+      Message::template RequestParser<Parser,
 	Zhttp::DefltHdrCatalog>;
     using Base::reset;
-    using State = typename Base::State;
+    using State = Base::State;
     using HdrCatalog = Zhttp::DefltHdrCatalog;
 
     bool operation(
@@ -303,13 +303,13 @@ struct ServerSession {
       return Zhttp::bodyEach(
         rx, [this](ZuSpan<uint8_t> span) { body_ << span; });
     }
-    void complete(typename State::T value) { complete_ = value; }
+    void complete(State::T value) { complete_ = value; }
     bool finReceived() const { return false; }
 
     ZtString<>		path;
     ZtString<>		body_;
     Zhttp::Method::T	method = -1;
-    typename State::T	complete_ = State::Initial;
+    State::T	complete_ = State::Initial;
     bool			fixed = false;
     bool			runtimeOne = false;
     bool			runtimeTwo = false;

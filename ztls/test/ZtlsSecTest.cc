@@ -101,7 +101,7 @@ static void verify()
 template <typename SK>
 static bool coseKey(Ztls::Random &rng, SK &sk)
 {
-  using PK = typename SK::PK;
+  using PK = SK::PK;
   ZtBArray encoded;
   auto saved = Ztls::COSE::save(encoded, &sk);
   if (saved.template is<ZeException>()) return false;

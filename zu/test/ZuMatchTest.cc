@@ -32,7 +32,7 @@ struct GetID_<Field, true> {
   using T = GetValue<typename Field::Props, ID>;
 };
 template <typename Field>
-using GetID = typename GetID_<Field>::T;
+using GetID = GetID_<Field>::T;
 
 // obtain a consteval typelist of field IDs suitable for use with ZuMatcher_<>
 template <typename> struct GetIDs_;
@@ -43,7 +43,7 @@ struct GetIDs_<ZuTypeList<Field...>> {
 template <typename O>
 struct GetIDs_ : public GetIDs_<ZuFields<O>> { };
 template <typename U>
-using GetIDs = typename GetIDs_<U>::T;
+using GetIDs = GetIDs_<U>::T;
 } // ZuFieldProp::JSON
 
 namespace Foo {

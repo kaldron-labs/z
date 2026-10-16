@@ -59,7 +59,6 @@ ZmRBTreeKVDerive(Defines_, DefKey, DefVal,
 struct Defines : public ZuObject, public Defines_ { };
 
 using ZfTree::AnyNode;
-using ZfTree::Node_;
 using ZfTree::Node;
 using ZfTree::NodeArray;
 using ZfTree::CNodeArray;
@@ -326,7 +325,7 @@ template <typename O, typename Facet>
 struct AsDeflt_<O, Facet, ZuTypeList<>> { using T = AsString; };
 struct AsDeflt {
   template <typename O, typename Facet>
-  using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
+  using Handler = AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
 } // ZfCf
@@ -347,9 +346,9 @@ struct IsObjPtr__<U, true> {
 template <typename U, typename = As<U>>
 struct IsObjPtr_ { using T = ZuFalse; };
 template <typename U>
-struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+struct IsObjPtr_<U, AsDeflt> { using T = IsObjPtr__<U>::T; };
 template <typename U>
-using IsObjPtr = typename IsObjPtr_<U>::T;
+using IsObjPtr = IsObjPtr_<U>::T;
 
 template <typename O, typename Facet>
 auto handler_(const AnyNode *);
@@ -364,7 +363,7 @@ struct CfPolicy {
   template <typename Props>
   using GetTimeFmt = ZuFieldProp::Cf::GetTimeFmt<Props>;
   template <typename O, typename Facet>
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   template <typename O>
   using IsObjPtr = ZfCf::IsObjPtr<O>;
 
@@ -471,7 +470,7 @@ struct AsObject {
       if (ZuUnlikely(type < 2)) { s << "null"; return; }
       ZuSwitch::dispatch<O::N - 2>(type - 2, [&s, &o](auto I_) {
 	static constexpr unsigned I = I_ + 2;
-	using V = typename O::template Type<I>;
+	using V = O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {
 	  As<V>::template Handler<V, Facet>::template save<Filter>(s, v);
@@ -554,7 +553,7 @@ template <
 bool saveField(S &s, const O &o, bool first)
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   auto save = [&s, first](const auto &v) {
     if (!first) s << ',';
     ZfJSON::quote(s, ZuFieldProp::Cf::GetID<Field>{}().cspan());
@@ -669,7 +668,7 @@ struct AsString {
 	template Handler<O_>, O_> {
     using O = O_;
     using Fmt = decltype(ZfCf_StringFmt(ZuDeclVal<O *>()));
-    using Handler_ = typename Fmt::template Handler<O>;
+    using Handler_ = Fmt::template Handler<O>;
     using Base = ZfTreeLoad::String<CfPolicy, Handler_, O>;
     using Base::Base;
 
@@ -680,7 +679,7 @@ struct AsString {
 
 template <typename O, typename Facet>
 inline auto handler_(const AnyNode *node) {
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   if (ZuUnlikely(!Handler::valid(node)))
     throw ZfCf_EXCEPT(badType(node, "UDT"));
   return Handler{node};

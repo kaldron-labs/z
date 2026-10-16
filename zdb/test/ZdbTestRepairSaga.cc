@@ -9,9 +9,10 @@
 namespace zdbtest {
 
 // Exercise native row commits through saga intent/effect and compensation.
-template <typename Heap = ZuVoid>
-struct RepairSaga_ : public Heap, public ZdbSaga<RepairSaga_<Heap>, RepairDB> {
-  using Base = ZdbSaga<RepairSaga_<Heap>, RepairDB>;
+struct RepairSaga : public ZmNHeap<RepairSaga>, public ZdbSaga<RepairSaga, RepairDB> {
+friend inline ZuStringT<"Zdb.Test.Repair"> ZmNHeapID(RepairSaga *);
+
+  using Base = ZdbSaga<RepairSaga, RepairDB>;
   using Base::db;
   using Type = ZuStringT<"repairSaga">;
   enum { NPhases = 3 };
@@ -70,10 +71,8 @@ struct RepairSaga_ : public Heap, public ZdbSaga<RepairSaga_<Heap>, RepairDB> {
     else this->skip(ZuMv(complete));
     return {};
   }
-  RepairSaga_(uint64_t id_, bool fail_) : id{id_}, fail{fail_} { }
+  RepairSaga(uint64_t id_, bool fail_) : id{id_}, fail{fail_} { }
 };
-
-using RepairSaga = RepairSaga_<ZmHeap<"Zdb.Test.Repair", RepairSaga_<>>>;
 
 ZfStruct(, (RepairSaga, FB),
   (id,		(Ctor<0>),	UInt64),

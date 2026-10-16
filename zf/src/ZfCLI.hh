@@ -336,7 +336,7 @@ struct GetID_<Field, true> {
   using T = GetValue<typename Field::Props, ID>;
 };
 template <typename Field>
-using GetID = typename GetID_<Field>::T;
+using GetID = GetID_<Field>::T;
 
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
 struct GetBytesFmt_ {
@@ -347,7 +347,7 @@ struct GetBytesFmt_<Props, true> {
   using T = GetValue<Props, BytesFmt>;
 };
 template <typename Props>
-using GetBytesFmt = typename GetBytesFmt_<Props>::T;
+using GetBytesFmt = GetBytesFmt_<Props>::T;
 
 template <typename Props, bool = HasType<Props, NumberFmt>{}>
 struct GetNumberFmt_ {
@@ -358,7 +358,7 @@ struct GetNumberFmt_<Props, true> {
   using T = GetType<Props, NumberFmt>;
 };
 template <typename Props>
-using GetNumberFmt = typename GetNumberFmt_<Props>::T;
+using GetNumberFmt = GetNumberFmt_<Props>::T;
 
 template <typename Props, bool = HasValue<Props, BoolFmt>{}>
 struct GetBoolFmt_ {
@@ -369,7 +369,7 @@ struct GetBoolFmt_<Props, true> {
   using T = GetValue<Props, BoolFmt>;
 };
 template <typename Props>
-using GetBoolFmt = typename GetBoolFmt_<Props>::T;
+using GetBoolFmt = GetBoolFmt_<Props>::T;
 
 template <typename Props, bool = HasType<Props, TimeFmt>{}>
 struct GetTimeFmt_ {
@@ -380,7 +380,7 @@ struct GetTimeFmt_<Props, true> {
   using T = GetType<Props, TimeFmt>;
 };
 template <typename Props>
-using GetTimeFmt = typename GetTimeFmt_<Props>::T;
+using GetTimeFmt = GetTimeFmt_<Props>::T;
 
 // field long option name (defaults to field ID)
 template <ZuString ID> struct Long { };
@@ -409,7 +409,7 @@ struct GetLong_<Field, true> {
   using T = GetValue<typename Field::Props, Long>;
 };
 template <typename Field>
-using GetLong = typename GetLong_<Field>::T;
+using GetLong = GetLong_<Field>::T;
 
 // GetParam - ZuConstant<int8_t>
 template <
@@ -425,10 +425,10 @@ template <
 struct GetParam<Prop, Props, true> {
   using T = GetValue<Props, Prop>;
 };
-template <typename Props> using GetOpt = typename GetParam<Opt, Props>::T;
-template <typename Props> using GetFlag = typename GetParam<Flag, Props>::T;
-template <typename Props> using GetArg = typename GetParam<Arg, Props>::T;
-template <typename Props> using GetArgs = typename GetParam<Args, Props>::T;
+template <typename Props> using GetOpt = GetParam<Opt, Props>::T;
+template <typename Props> using GetFlag = GetParam<Flag, Props>::T;
+template <typename Props> using GetArg = GetParam<Arg, Props>::T;
+template <typename Props> using GetArgs = GetParam<Args, Props>::T;
 
 } // ZuFieldProp::CLI
 
@@ -504,34 +504,30 @@ public:
   using Index = ZuTypeIndex<T, TL>;
 };
 
-template <typename Data, typename Heap = ZuVoid>
-class Node_ : public Heap, public AnyNode {
+template <typename Data>
+class Node : public ZmNHeap<Node<Data>>, public AnyNode {
+friend inline Node_HeapID ZmNHeapID(Node *);
 
 public:
-  Node_ &operator =(const Node_ &) = delete;
-  Node_ &operator =(Node_ &&) = delete;
+  Node &operator =(const Node &) = delete;
+  Node &operator =(Node &&) = delete;
 
 private:
-  Node_(const Node_ &) = delete;
-  Node_(Node_ &&) = delete;
+  Node(const Node &) = delete;
+  Node(Node &&) = delete;
 
 public:
   using AnyNode::TL;
 
   template <typename ...Args,
     decltype(Data(ZuDeclVal<Args &&>()...), int()) = 0>
-  Node_(ZuCSpan source_, Args &&...args) :
+  Node(ZuCSpan source_, Args &&...args) :
     AnyNode{ZuTypeIndex<Data, TL>{}(), source_},
     data(ZuFwd<Args>(args)...) { }
-  ~Node_() = default;
+  ~Node() = default;
 
   Data	data;
 };
-
-template <typename Data>
-using Node_Heap = ZmHeap_<Node_HeapID, Node_<Data>>;
-template <typename Data>
-ZuDerive(Node, (Node_<Data, Node_Heap<Data>>));
 
 template <typename Data>
 inline bool AnyNode::has() const {
@@ -635,7 +631,7 @@ bool asArray(ZuPtr<AnyNode> &node) {
   return true;
 }
 
-using NodeArray = typename AnyNode::Array;
+using NodeArray = AnyNode::Array;
 using CNodeArray = const NodeArray;
 
 ZfExtern ZuTuple<int, ZuCSpan> scanKey(ZuCSpan);
@@ -896,7 +892,7 @@ template <typename O, typename Facet>
 struct AsDeflt_<O, Facet, ZuTypeList<>> { using T = AsString; };
 struct AsDeflt {
   template <typename O, typename Facet>
-  using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
+  using Handler = AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
 } // ZfCLI
@@ -1062,7 +1058,7 @@ struct AsObject {
     void load(O &o) const {
       checkRequired<ReqFields>();
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
-	using Props = typename Field::Props;
+	using Props = Field::Props;
 	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
 	  Field::set(o, this->loadField<ZfFieldFilter::Load, Field>());
       });
@@ -1070,7 +1066,7 @@ struct AsObject {
     void update(O &o) const {
       checkRequired<UpdReqFields>();
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
-	using Props = typename Field::Props;
+	using Props = Field::Props;
 	if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || hasField<Field>())
 	  Field::set(o, this->loadField<ZfFieldFilter::Upd, Field>());
       });
@@ -1079,7 +1075,7 @@ struct AsObject {
   private:
     template <typename Field>
     static ZeString source(ZuCSpan prefix) {
-      using Props = typename Field::Props;
+      using Props = Field::Props;
       constexpr int8_t Arg = ZuFieldProp::CLI::GetArg<Props>{};
       constexpr int8_t Args = ZuFieldProp::CLI::GetArgs<Props>{};
       constexpr int8_t Opt = ZuFieldProp::CLI::GetOpt<Props>{};
@@ -1140,7 +1136,7 @@ struct AsArray {
       } else { // Delimited - no nesting is possible, use AsString
 	using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
 	using AsString_ = decltype(ZfCLI_StringFmt(ZuDeclVal<Elem *>()));
-	using Handler_ = typename AsString_::template Handler<Quote, Elem>;
+	using Handler_ = AsString_::template Handler<Quote, Elem>;
 	s.template out<Props>(prefix);
 	for (unsigned i = 0; i < n; i++) {
 	  if (i) s << char(Config::Delimiter);
@@ -1196,7 +1192,7 @@ struct AsArray {
       unsigned m = nodes.length();
       if (n > m) n = m;
       if constexpr (ElemCode == ZfFieldTC::UDT) {
-	using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
+	using ElemHandler = As<Elem>::template Handler<Elem, Facet>;
 	for (unsigned i = 0; i < n; i++)
 	  ElemHandler{nodes[i]}.update(o[i]);
       } else {
@@ -1223,14 +1219,14 @@ struct AsString {
     using O = O_;
 
     using AsString_ = decltype(ZfCLI_StringFmt(ZuDeclVal<O *>()));
-    using Handler_ = typename AsString_::template Handler<ShellQuote, O>;
+    using Handler_ = AsString_::template Handler<ShellQuote, O>;
 
     template <
       template <typename> class Filter, typename Quote,
       typename Props = ZuTypeList<>,
       typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
-      using Handler_ = typename AsString_::template Handler<Quote, O>;
+      using Handler_ = AsString_::template Handler<Quote, O>;
       s.template out<Props>(prefix);
       Handler_::save(s, o);
     }
@@ -1260,7 +1256,7 @@ struct AsJSON {
   template <typename O_, typename Facet>
   struct Handler {
     using O = O_;
-    using Handler_ = typename ZfJSON::As<O>::template Handler<O, Facet>;
+    using Handler_ = ZfJSON::As<O>::template Handler<O, Facet>;
 
     template <
       template <typename> class Filter, typename Quote,
@@ -1497,7 +1493,7 @@ inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
   if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
-      using Handler = typename As<T>::template Handler<T, Facet>;
+      using Handler = As<T>::template Handler<T, Facet>;
       Handler::template save<Filter, Quote, Props>(s, v, prefix);
     } else {
       // leaf type - output it
@@ -1537,8 +1533,8 @@ template <
   typename S, typename O>
 inline void saveField(S &s, const O &o, ZuCSpan prefix)
 {
-  using Type = typename Field::Type;
-  using Props = typename Field::Props;
+  using Type = Field::Type;
+  using Props = Field::Props;
 
   // append long option name to prefix (copy on stack)
   ZuCSpan longOpt = ZuFieldProp::CLI::GetLong<Field>{}().cspan();
@@ -1673,7 +1669,7 @@ inline T loadValue_(const AnyNode *node)
       v = B{i};
     } else if constexpr (ZuFieldProp::HasFlags<Props>{}) {
       using Map = ZuFieldProp::GetFlags<Props>;
-      using Scan = typename Map::Scan;
+      using Scan = Map::Scan;
       auto r = Scan::eov(span, Fmt::Fmt::FlagsDelim());
       if (ZuUnlikely(r.template p<0>() < 0 ||
           unsigned(r.template p<0>()) != span.length()))
@@ -1865,8 +1861,8 @@ template <template <typename> class Filter, typename Field>
 inline auto AsObject::Handler<O, Facet>::loadField() const
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
-  using T = typename Field::T;
+  using Props = Field::Props;
+  using T = Field::T;
   using R = decltype(
     loadValue<Facet, Filter, TypeCode, Props, T>(ZuDeclVal<AnyNode *>()));
   if (ZuLikely(node->has<AnyNode::Object>())) {
@@ -1913,15 +1909,15 @@ struct Arg0Filter {
   template <typename Field>
   using Filter = ZuBool<
     Filter_<Field>{}() &&
-    typename ZuFieldProp::CLI::GetArg<typename Field::Props>{}() == 0>;
+    ZuFieldProp::CLI::GetArg<typename Field::Props>{}() == 0>;
 };
 template <template <typename> class Filter_>
 struct OptFilter {
   template <typename Field>
   using Filter = ZuBool<
     Filter_<Field>{}() &&
-    (typename ZuFieldProp::CLI::GetArg<typename Field::Props>{}() < 0) &&
-    (typename ZuFieldProp::CLI::GetArgs<typename Field::Props>{}() < 0)>;
+    (ZuFieldProp::CLI::GetArg<typename Field::Props>{}() < 0) &&
+    (ZuFieldProp::CLI::GetArgs<typename Field::Props>{}() < 0)>;
 };
 
 template <template <typename> class Filter_>
@@ -1929,8 +1925,8 @@ struct ArgFilter {
   template <typename Field>
   using Filter = ZuBool<
     Filter_<Field>{}() && (
-      typename ZuFieldProp::CLI::GetArg<typename Field::Props>{}() > 0 ||
-      typename ZuFieldProp::CLI::GetArgs<typename Field::Props>{}() > 0)>;
+      ZuFieldProp::CLI::GetArg<typename Field::Props>{}() > 0 ||
+      ZuFieldProp::CLI::GetArgs<typename Field::Props>{}() > 0)>;
 };
 template <
   typename Facet, template <typename> class Filter,
@@ -2037,13 +2033,13 @@ struct LongFieldEntries;
 
 template <typename Field, typename Facet, ZuString Prefix>
 struct LongFieldEntries<Field, Facet, Prefix, true> {
-  using T = typename LongEntries<
+  using T = LongEntries<
     typename Field::T, Facet, longName<Field, Prefix>()>::T;
 };
 
 template <typename Field, typename Facet, ZuString Prefix>
 struct LongFieldEntries<Field, Facet, Prefix, false> {
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   using T = ZuIf<
     ZuFieldProp::CLI::GetArg<Props>{}() >= 0 ||
     ZuFieldProp::CLI::GetArgs<Props>{}() >= 0,
@@ -2060,13 +2056,13 @@ template <typename O, typename Facet, ZuString Prefix>
 struct LongEntries {
   using Fields = ZuTypeGrep<ZfFieldFilter::Save, ZuActiveFields<O, Facet>>;
   template <typename Field>
-  using Entry = typename LongFieldEntries<Field, Facet, Prefix>::T;
-  using T = typename LongConcat<ZuTypeMap<Entry, Fields>>::T;
+  using Entry = LongFieldEntries<Field, Facet, Prefix>::T;
+  using T = LongConcat<ZuTypeMap<Entry, Fields>>::T;
 };
 
 template <typename Field, ZuString Prefix>
 struct OptEntry {
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   static constexpr int Arg = ZuFieldProp::CLI::GetArg<Props>{};
   static constexpr int Args = ZuFieldProp::CLI::GetArgs<Props>{};
   static constexpr int Opt = ZuFieldProp::CLI::GetOpt<Props>{};
@@ -2087,7 +2083,7 @@ template <typename Field, typename Facet, ZuString Prefix,
 struct OptFieldEntries;
 template <typename Field, typename Facet, ZuString Prefix>
 struct OptFieldEntries<Field, Facet, Prefix, true> {
-  using T = typename OptEntries<
+  using T = OptEntries<
     typename Field::T, Facet, longName<Field, Prefix>()>::T;
 };
 template <typename Field, typename Facet, ZuString Prefix>
@@ -2099,8 +2095,8 @@ template <typename O, typename Facet, ZuString Prefix>
 struct OptEntries {
   using Fields = ZuTypeGrep<ZfFieldFilter::Save, ZuActiveFields<O, Facet>>;
   template <typename Field>
-  using Entry = typename OptFieldEntries<Field, Facet, Prefix>::T;
-  using T = typename LongConcat<ZuTypeMap<Entry, Fields>>::T;
+  using Entry = OptFieldEntries<Field, Facet, Prefix>::T;
+  using T = LongConcat<ZuTypeMap<Entry, Fields>>::T;
 };
 
 template <typename Entry> using ShortEntry = ZuBool<Entry::Short>;
@@ -2158,11 +2154,11 @@ struct Options {
   }
 };
 
-template <typename Entry> using LongKey = typename Entry::Key;
+template <typename Entry> using LongKey = Entry::Key;
 
 template <typename O, typename Facet>
 struct LongMatcher {
-  using Entries = typename LongEntries<O, Facet, "">::T;
+  using Entries = LongEntries<O, Facet, "">::T;
   using Keys = ZuTypeUnique<ZuTypeMap<LongKey, Entries>>;
 
   static int exact(ZuCSpan key) {
@@ -2177,7 +2173,7 @@ struct LongMatcher {
 
 template <typename O, typename Facet = ZuFacet::CLI>
 struct Parser {
-  using LongEntries_ = typename LongEntries<O, Facet, "">::T;
+  using LongEntries_ = LongEntries<O, Facet, "">::T;
   using LongKeys_ = ZuTypeUnique<ZuTypeMap<LongKey, LongEntries_>>;
   enum { LongWords_ = (LongKeys_::N + 63) / 64 };
 

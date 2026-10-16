@@ -62,8 +62,9 @@ ZmHashDerive(Entries, Entry_,
     ZmHashKey<Entry_::KeyAxor,
       ZmHashHeapID<"Ztls.Vault.Entry">>>));
 
-template <typename Heap = ZuVoid>
-class Ephemeral_ : public Heap, public Ztls_::VaultStore {
+class Ephemeral_ : public ZmNHeap<Ephemeral_>, public Ztls_::VaultStore {
+friend inline ZuStringT<"Ztls.Vault.Ephemeral"> ZmNHeapID(Ephemeral_ *);
+
 public:
   VaultResult init(const VaultConfig &) override { return {}; }
   void final() override { m_entries.clean(); }
@@ -88,8 +89,7 @@ private:
   Entries m_entries;
 };
 
-ZuDerive(EphemeralHeap, (ZmHeap<"Ztls.Vault.Ephemeral", Ephemeral_<>>));
-ZuDerive(Ephemeral, Ephemeral_<EphemeralHeap>);
+ZuDerive(Ephemeral, Ephemeral_);
 
 struct Values : ZmRBTreeKV<ZuCSpan, ZuBSpan,
     ZmRBTreeUnique<true, ZmRBTreeHeapID<"Ztls.Vault.FileEntry">>> {
@@ -183,8 +183,9 @@ VaultResult publish(const Zi::Path &dir, const Zi::Path &path,
   return {};
 }
 
-template <typename Heap = ZuVoid>
-class File_ : public Heap, public Ztls_::VaultStore {
+class File_ : public ZmNHeap<File_>, public Ztls_::VaultStore {
+friend inline ZuStringT<"Ztls.Vault.File"> ZmNHeapID(File_ *);
+
 public:
   File_(const Zi::Path &dir) : m_dir{dir} { }
 
@@ -309,13 +310,14 @@ private:
   Zi::Path m_path;
   VaultString m_account;
 };
-ZuDerive(FileHeap, (ZmHeap<"Ztls.Vault.File", File_<>>));
-ZuDerive(File, File_<FileHeap>);
+
+ZuDerive(File, File_);
 
 VaultResult ensureDir(const Zi::Path &);
 
-template <typename Heap = ZuVoid>
-class Auto_ : public Heap, public Ztls_::VaultStore {
+class Auto_ : public ZmNHeap<Auto_>, public Ztls_::VaultStore {
+friend inline ZuStringT<"Ztls.Vault.Auto"> ZmNHeapID(Auto_ *);
+
 public:
   Auto_(const Zi::Path &home, ZiPIDFile *pid) :
     m_home{home}, m_dir{ZiFile::append(home, "vault")}, m_pid{pid} { }
@@ -392,8 +394,8 @@ private:
   ZmRef<Ztls_::VaultStore> m_native;
   ZmRef<Ztls_::VaultStore> m_file;
 };
-ZuDerive(AutoHeap, (ZmHeap<"Ztls.Vault.Auto", Auto_<>>));
-ZuDerive(Auto, Auto_<AutoHeap>);
+
+ZuDerive(Auto, Auto_);
 
 // Versioned, length-delimited plaintext inside the authenticated age file.
 constexpr uint8_t SecretsMagic[] = {'Z', 'V', 'L', 'T', 1};
@@ -404,8 +406,9 @@ enum {
   RecordSize = sizeof(uint32_t) + sizeof(uint64_t)
 };
 
-template <typename Heap = ZuVoid>
-class Indirect_ : public Heap, public Ztls_::VaultStore {
+class Indirect_ : public ZmNHeap<Indirect_>, public Ztls_::VaultStore {
+friend inline ZuStringT<"Ztls.Vault.Indirect"> ZmNHeapID(Indirect_ *);
+
 public:
   Indirect_(ZmRef<Ztls_::VaultStore> store, const Zi::Path &dir) :
       m_store{ZuMv(store)}, m_dir{dir} { }
@@ -597,8 +600,8 @@ private:
   Zi::Path m_dir;
   Zi::Path m_path;
 };
-ZuDerive(IndirectHeap, (ZmHeap<"Ztls.Vault.Indirect", Indirect_<>>));
-ZuDerive(Indirect, Indirect_<IndirectHeap>);
+
+ZuDerive(Indirect, Indirect_);
 
 template <typename L>
 VaultResult withKey(Scope scope, ZuCSpan name, L &&l)
@@ -638,8 +641,9 @@ VaultResult ensureDir(const Zi::Path &path)
   return {};
 }
 
-template <typename Heap = ZuVoid>
-struct State_ : public Heap {
+struct State_ : public ZmNHeap<State_> {
+friend inline ZuStringT<"Ztls.Vault.State"> ZmNHeapID(State_ *);
+
   VaultConfig config;
   Zi::Path home;
   Zi::Path dir;
@@ -648,11 +652,9 @@ struct State_ : public Heap {
   ZmRef<Ztls_::VaultStore> store;
 };
 
-ZuDerive(StateHeap, (ZmHeap<"Ztls.Vault.State", State_<>>));
-
 } // Vault_
 
-struct Vault::State : Vault_::State_<Vault_::StateHeap> { };
+struct Vault::State : Vault_::State_ { };
 
 Vault::Vault() = default;
 Vault::~Vault() { final(); }

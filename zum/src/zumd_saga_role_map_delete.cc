@@ -12,10 +12,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RoleMapDeleteSaga_ : public Heap,
-    public ZdbSaga<RoleMapDeleteSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RoleMapDeleteSaga_<Heap>, DB>;
+struct RoleMapDeleteSaga : public ZmNHeap<RoleMapDeleteSaga>,
+    public ZdbSaga<RoleMapDeleteSaga, DB> {
+friend inline ZuStringT<"Zum.RoleMapDeleteSaga"> ZmNHeapID(RoleMapDeleteSaga *);
+
+  using Base = ZdbSaga<RoleMapDeleteSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -88,19 +89,16 @@ struct RoleMapDeleteSaga_ : public Heap,
     return {};
   }
 
-  RoleMapDeleteSaga_() = default;
-  RoleMapDeleteSaga_(App app_, RoleMap before_, String ifMatch_,
+  RoleMapDeleteSaga() = default;
+  RoleMapDeleteSaga(App app_, RoleMap before_, String ifMatch_,
       int64_t updated_, IdemRequest request_,
       ZmRef<AdminEditResult<RoleMap>> response_ = {}) :
     app{ZuMv(app_)}, before{ZuMv(before_)}, ifMatch{ZuMv(ifMatch_)},
     updated{updated_}, request{ZuMv(request_)}, response{ZuMv(response_)} { }
-  RoleMapDeleteSaga_(RoleMapDeleteArgs args) :
-    RoleMapDeleteSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.ifMatch), args.updated, ZuMv(args.request), ZuMv(args.result)} { }
-  ~RoleMapDeleteSaga_() override;
+  RoleMapDeleteSaga(RoleMapDeleteArgs args) :
+    RoleMapDeleteSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.ifMatch), args.updated, ZuMv(args.request), ZuMv(args.result)} { }
+  ~RoleMapDeleteSaga() override;
 };
-
-using RoleMapDeleteSaga = RoleMapDeleteSaga_<
-  ZmHeap<"Zum.RoleMapDeleteSaga", RoleMapDeleteSaga_<>>>;
 
 ZfStruct(ZumAPI, (RoleMapDeleteSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -110,14 +108,12 @@ ZfStruct(ZumAPI, (RoleMapDeleteSaga, FB),
   (request,	(Ctor<4>),	UDT));
 Zfb::AsTable<"Zum.fbs.RoleMapDelete"> Zfb_Fmt(RoleMapDeleteSaga *);
 
-template <typename Heap>
-unsigned RoleMapDeleteSaga_<Heap>::appError(const App &item) const
+unsigned RoleMapDeleteSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-unsigned RoleMapDeleteSaga_<Heap>::recordError(const RoleMap &item) const
+unsigned RoleMapDeleteSaga::recordError(const RoleMap &item) const
 {
   String etag{"\"v"};
   etag << item.version << '"';
@@ -127,8 +123,7 @@ unsigned RoleMapDeleteSaga_<Heap>::recordError(const RoleMap &item) const
 
 ZuAssert((Zdb_::SagaDefValid<RoleMapDeleteSaga>{}));
 
-template <typename Heap>
-RoleMapDeleteSaga_<Heap>::~RoleMapDeleteSaga_() = default;
+RoleMapDeleteSaga::~RoleMapDeleteSaga() = default;
 
 SagaRef roleMapDelete(ZuBSpan data) {
   return RoleMapDeleteSaga::load(data);

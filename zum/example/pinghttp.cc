@@ -33,23 +33,20 @@ enum {
   DestinationMax = 8
 };
 
-template <unsigned Status_, typename Heap = ZuVoid>
-struct ResponseData_ : public Heap, public ZmObject  {
+template <unsigned Status_>
+struct ResponseData : public ZmNHeap<ResponseData<Status_>>, public ZmObject  {
+friend inline ZuStringT<"Zum.PingHTTP.Response"> ZmNHeapID(ResponseData *);
+
   enum { Status = Status_ };
   String body;
-  ~ResponseData_() {
+  ~ResponseData() {
     if (body.mutable_()) ZuClear(body);
   }
-  ResponseData_ &operator =(ZuSpan<uint8_t> data) {
+  ResponseData &operator =(ZuSpan<uint8_t> data) {
     body = data;
     return *this;
   }
 };
-template <unsigned Status_>
-ZuDerive(ResponseDataHeap,
-  (ZmHeap<"Zum.PingHTTP.Response", ResponseData_<Status_>>));
-template <unsigned Status_>
-ZuDerive(ResponseData, (ResponseData_<Status_, ResponseDataHeap<Status_>>));
 
 template <unsigned Status_>
 struct Response : public Zrest::ResParser<Response<Status_>,
@@ -92,8 +89,9 @@ using Responses = ZuTypeList<Response<200>, Response<201>, Response<204>,
   Response<409>, Response<412>, Response<428>, Response<415>, Response<422>, Response<429>, Response<500>,
   Response<501>, Response<502>, Response<503>, Response<504>>;
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject  {
+struct Call : public ZmNHeap<Call>, public ZmObject  {
+friend inline ZuStringT<"Zum.pinghttp.Call"> ZmNHeapID(Call *);
+
   mutable String	contentType;
   mutable String	authorization;
   String ifMatch;
@@ -104,7 +102,7 @@ struct Call_ : public Heap, public ZmObject  {
   mutable ServiceHTTPDoneFn complete;
   mutable ZmAtomic<unsigned> done = 0;
 
-  ~Call_() {
+  ~Call() {
     if (authorization.mutable_())
       ZuClear(authorization);
     if (body.mutable_()) ZuClear(body);
@@ -129,8 +127,6 @@ struct Call_ : public Heap, public ZmObject  {
     finish(0, {});
   }
 };
-ZuDerive(CallHeap, (ZmHeap<"Zum.pinghttp.Call", Call_<>>));
-ZuDerive(Call, (Call_<CallHeap>));
 
 template <typename Impl, Zhttp::Method::T Method_, unsigned Body_>
 struct Request : public Zrest::ReqBuilder<Impl, Call> {
@@ -224,18 +220,19 @@ struct ReqBuilder_ : public ZmObject, public Zrest::MReqBuilder<Catalog> {
 struct ResParser : public Zrest::MResParser<Catalog, ReqBuilder_> { };
 
 class ClientBase;
-struct Pool;
+class Pool;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"Zum.PingHTTP.Request">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap = ZuVoid>
-class Pool_ : public Heap, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+friend inline ZuStringT<"Zum.PingHTTP.Pool"> ZmNHeapID(Pool *);
+
   using Base = Zhttp::Pool<ClientBase, TxQ, ResParser>;
 public:
-  Pool_(ClientBase *client) : Base{client} { }
+  Pool(ClientBase *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) {
@@ -244,9 +241,6 @@ public:
 private:
   ReqBuilderQ m_requests;
 };
-
-ZuDerive(PoolHeap, (ZmHeap<"Zum.PingHTTP.Pool", Pool_<>>));
-ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
 public:
@@ -323,15 +317,15 @@ private:
   bool m_secure = false;
 };
 
-template <typename Heap = ZuVoid>
-class Client_ : public Heap, public ClientBase { };
-ZuDerive(ClientHeap, (ZmHeap<"Zum.PingHTTP.Client", Client_<>>));
-ZuDerive(Client, (Client_<ClientHeap>));
+class Client : public ZmNHeap<Client>, public ClientBase {
+friend inline ZuStringT<"Zum.PingHTTP.Client"> ZmNHeapID(Client *);
+};
 
 } // namespace PingHTTP_
 
-template <typename Heap = ZuVoid>
-class PingHTTPState_ : public Heap, public ZmObject {
+class PingHTTPState : public ZmNHeap<PingHTTPState>, public ZmObject {
+friend inline ZuStringT<"Zum.PingHTTP.State"> ZmNHeapID(PingHTTPState *);
+
 public:
   bool add_(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
     if (!url.host || url.hasFragment ||
@@ -420,8 +414,6 @@ private:
   String m_caPath;
   bool m_resolverOwned = false;
 };
-ZuDerive(PingHTTPStateHeap, (ZmHeap<"Zum.PingHTTP.State", PingHTTPState_<>>));
-ZuDerive(PingHTTPState, (PingHTTPState_<PingHTTPStateHeap>));
 
 PingHTTP::PingHTTP() = default;
 PingHTTP::~PingHTTP() { final(); }

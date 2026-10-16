@@ -120,7 +120,7 @@ inline Text contract(ZuBSpan bytes)
 template <typename O, typename Facet = ZuFacet::FB>
 Text metadata()
 {
-  using H = typename Zfb::As<O>::template Handler<O, Facet>;
+  using H = Zfb::As<O>::template Handler<O, Facet>;
   Text out;
   out << "fields " << ZuBox<unsigned>{H::SchemaFields::N} << ' '
     << ZuBox<unsigned>{H::AllFields::N} << '\n';

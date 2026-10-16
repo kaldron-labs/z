@@ -141,7 +141,7 @@ struct Headers_<Impl, BodyPolicy::SSE> {
   using T = ZhttpHeaders(("content-type", "text/event-stream"));
 };
 template <typename Impl>
-using Headers = typename Headers_<Impl>::T;
+using Headers = Headers_<Impl>::T;
 
 ZuDerive(SignBufScratch, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf",
   ZtArraySharded<true>>>));
@@ -209,7 +209,7 @@ struct Response {
 template <typename Res>
 struct Reply {
   using Response = Res;
-  using Object = typename Res::Object;
+  using Object = Res::Object;
 
   Res codec;
 
@@ -236,7 +236,7 @@ template <typename Req>
 struct HdrBufSizeAxor_ { using T = ZuUnsigned<Req::HdrBufSize>; };
 template <unsigned I>
 struct HdrBufSizeAxor_<ZuUnsigned<I>> { using T = ZuUnsigned<I>; };
-template <typename U> using HdrBufSizeAxor = typename HdrBufSizeAxor_<U>::T;
+template <typename U> using HdrBufSizeAxor = HdrBufSizeAxor_<U>::T;
 template <typename ...Reqs> struct MaxHdrBufSize__;
 template <>
 struct MaxHdrBufSize__<> { using T = ZuUnsigned<0>; };
@@ -250,7 +250,7 @@ struct MaxHdrBufSize__<L, R> {
   using T = ZuUnsigned<M>;
 };
 template <typename ...Reqs>
-using MaxHdrBufSize_ = typename MaxHdrBufSize__<Reqs...>::T;
+using MaxHdrBufSize_ = MaxHdrBufSize__<Reqs...>::T;
 template <typename ...Reqs>
 using MaxHdrBufSize = ZuTypeReduce<MaxHdrBufSize_, Reqs...>;
 
@@ -258,11 +258,11 @@ template <typename U, typename = void>
 struct GetHdrs_ { using T = Zrest::Headers<U>; };
 template <typename U>
 struct GetHdrs_<U, decltype(sizeof(typename U::Headers), void())> {
-  using Declared = typename U::Headers;
+  using Declared = U::Headers;
   using T = ZuIf<ZuIsSame<Declared, DefltHdrs>{},
     Zrest::Headers<U>, Declared>;
 };
-template <typename U> using GetHdrs = typename GetHdrs_<U>::T;
+template <typename U> using GetHdrs = GetHdrs_<U>::T;
 template <typename Hdrs> using GetHdrKeys = ZuTypeSlice<2, 0, Hdrs>;
 template <typename Hdrs> using GetHdrValues = ZuTypeSlice<2, 1, Hdrs>;
 template <typename U> using GetTypeHdrKeys = GetHdrKeys<GetHdrs<U>>;
@@ -281,16 +281,16 @@ struct MergeHdrs_ {
   using T = Zhttp::MergeHeaders<Hdrs>;
 };
 template <typename List>
-using MergeHdrs = typename MergeHdrs_<List>::T;
+using MergeHdrs = MergeHdrs_<List>::T;
 
 template <typename Req, typename = void>
 struct GetResponses_ { using T = ZuTypeList<>; };
 template <typename Req>
 struct GetResponses_<Req, decltype(
   ZuDeclVal<typename Req::Responses *>(), void())> {
-  using T = typename Req::Responses;
+  using T = Req::Responses;
 };
-template <typename Req> using GetResponses = typename GetResponses_<Req>::T;
+template <typename Req> using GetResponses = GetResponses_<Req>::T;
 template <typename Reqs>
 using GetAllResponses = ZuTypeUnique<ZuTypeApply<
   ZuTypeConcat, ZuTypeMap<GetResponses, Reqs>>>;
@@ -309,7 +309,7 @@ struct MethodFilter {
 };
 
 template <typename Req>
-using ReqPath = typename Req::Path;
+using ReqPath = Req::Path;
 
 template <typename Req>
 using ExactReq = ZuBool<Req::Exact>;
@@ -373,7 +373,7 @@ int reqMatch(Zhttp::Method::T method, ZuBSpan path)
 	  }, -1);
       }
       using IDs = PrefixPathIDs<Reqs, MethodI>;
-      using PrefixReqs = typename IDs::PrefixReqs;
+      using PrefixReqs = IDs::PrefixReqs;
       if constexpr (!PrefixReqs::N) return -1;
       else {
 	static constexpr auto matcher = ZuMatcher<IDs>();
@@ -411,7 +411,7 @@ template <typename Req> struct GetResLookup_ {
   using T = Hash;
 };
 template <typename Req>
-using GetResLookup = typename GetResLookup_<Req>::T;
+using GetResLookup = GetResLookup_<Req>::T;
 
 template <typename Reqs>
 int resMatch(unsigned request, unsigned status)
@@ -443,11 +443,11 @@ struct ReqRoot {
 };
 
 template <typename Root>
-using GetRootParser = typename Root::Parser;
+using GetRootParser = Root::Parser;
 template <typename Roots>
 using GetRootParsers = ZuTypeMap<GetRootParser, Roots>;
 template <typename Parser>
-using GetParserHdrs = typename Parser::Headers;
+using GetParserHdrs = Parser::Headers;
 template <typename Parsers>
 struct MergeParserHdrs_ {
   using Hdrs = ZuTypeApply<ZuTypeConcat,
@@ -455,9 +455,9 @@ struct MergeParserHdrs_ {
   using T = Zhttp::MergeHeaders<Hdrs>;
 };
 template <typename Parsers>
-using MergeParserHdrs = typename MergeParserHdrs_<Parsers>::T;
+using MergeParserHdrs = MergeParserHdrs_<Parsers>::T;
 
-template <typename Root> using RootPath = typename Root::Path;
+template <typename Root> using RootPath = Root::Path;
 
 template <typename Roots>
 int rootMatch(ZuBSpan root)

@@ -14,16 +14,13 @@
 
 #include <zlib/ZmHeap.hh>
 
-template <typename Base_, typename Heap = ZuVoid>
-struct ZfHeapTest_ : public Heap, public Base_ {
+template <ZuString ID, typename Base_>
+struct ZfHeapTest : public ZmNHeap<ZfHeapTest<ID, Base_>>, public Base_ {
+friend inline ZuStringT<ID> ZmNHeapID(ZfHeapTest *);
+
   using Base = Base_;
   using Base::Base;
   using Base::operator =;
 };
-
-template <ZuString ID, typename Base_>
-ZuDerive(ZfHeapTestHeap, (ZmHeap<ID, ZfHeapTest_<Base_>>));
-template <ZuString ID, typename Base_>
-ZuDerive(ZfHeapTest, (ZfHeapTest_<Base_, ZfHeapTestHeap<ID, Base_>>));
 
 #endif /* ZfHeapTest_HH */

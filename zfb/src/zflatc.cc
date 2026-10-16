@@ -1330,10 +1330,7 @@ private:
     if (name != o.local) out << cppName(o.name);
     else {
       if (o.ns) out << cppName(o.ns) << "::";
-      out << "Zflatc_::" << o.local << "::O_<";
-      out << "::";
-      if (o.ns) out << cppName(o.ns) << "::";
-      out << "Zflatc_::" << o.local << "::H_>";
+      out << "Zflatc_::" << o.local << "::O_";
     }
     out << "::" << name;
     return out;
@@ -1480,20 +1477,15 @@ void Emit::map(Text &out, const Object &o) const
     << "template <ZuString HeapID_>\nstruct Types_ {\n"
     << "  using Key = " << mapValue(o.fields[0], "key") << ";\n"
     << "  using Val = " << mapValue(o.fields[1], "value") << ";\n};\n\n"
-    << "template <ZuString HeapID_, typename Heap_ = ZuVoid>\n"
-    << "struct M_ : public Heap_";
+    << "template <ZuString HeapID_>\n"
+    << "struct Map_ : public ZmNHeap<Map_<HeapID_>>";
   if (m_opts.ref) out << ", public ::" << m_opts.ref;
   out << ", public ZmRBTreeKV<typename Types_<HeapID_>::Key, "
     << "typename Types_<HeapID_>::Val, ZmRBTreeHeapID<HeapID_>> {\n"
-    << "  using Key = typename Types_<HeapID_>::Key;\n"
-    << "  using Val = typename Types_<HeapID_>::Val;\n"
-    << "  ZuDerive_(M_, (ZmRBTreeKV<Key, Val, ZmRBTreeHeapID<HeapID_>>));\n"
-    << "};\n\n"
-    << "template <ZuString HeapID_>\n"
-    << "struct Map_ : public M_<HeapID_, ZmHeap<HeapID_ + \".Obj\"_z, "
-    << "M_<HeapID_>>> {\n"
-    << "  ZuDerive_(Map_, (M_<HeapID_, ZmHeap<HeapID_ + \".Obj\"_z, "
-    << "M_<HeapID_>>>));\n"
+    << "  using Key = Types_<HeapID_>::Key;\n"
+    << "  using Val = Types_<HeapID_>::Val;\n"
+    << "friend inline ZuStringT<HeapID_ + \".Obj\"_z> ZmNHeapID(Map_ *);\n"
+    << "  ZuDerive_(Map_, (ZmRBTreeKV<Key, Val, ZmRBTreeHeapID<HeapID_>>));\n"
     << "};\n\n} // Zflatc_::" << o.local << '\n';
   close(out, o);
 }
@@ -1557,13 +1549,14 @@ void Emit::object(Text &out, const Object &o) const
   open(out, o);
   // Helpers are scoped by the public type, so separate schema files cannot
   // reuse an index-based helper name in their shared C++ namespace.
-  ZuCSpan base = "O_", heap = "H_";
+  ZuCSpan base = "O_";
   out << "namespace Zflatc_::" << o.local << " {\n\n"
-    << "template <typename Heap_ = ZuVoid>\nstruct ";
+    << "struct ";
   if (m_opts.api) out << m_opts.api << ' ';
-  out << base << " : public Heap_";
+  out << base << " : public ZmNHeap<" << base << ">";
   if (m_opts.ref) out << ", public ::" << m_opts.ref;
-  out << " {\n";
+  out << " {\nfriend inline ZuStringT<\"" << o.name
+    << "\"> ZmNHeapID(" << base << " *);\n\n";
   containers(out, o);
   for (unsigned i = 0; i < o.fields.length(); ++i) {
     const auto &f = o.fields[i];
@@ -1600,13 +1593,13 @@ void Emit::object(Text &out, const Object &o) const
       out << "    return *this;\n  }\n";
     }
   }
-  out << "};\nZuDerive(" << heap << ", (ZmHeap<\"" << o.name << "\", " << base << "<>>));\n"
+  out << "};\n"
     << "\n} // Zflatc_::" << o.local << "\n\nstruct ";
   if (m_opts.api) out << m_opts.api << ' ';
   Text impl;
   impl << "Zflatc_::" << o.local << "::";
-  out << o.local << " : public " << impl << base << '<' << impl << heap << "> {\n"
-    << "  ZuDerive_(" << o.local << ", (" << impl << base << '<' << impl << heap << ">));\n};\n";
+  out << o.local << " : public " << impl << base << " {\n"
+    << "  ZuDerive_(" << o.local << ", (" << impl << base << "));\n};\n";
   close(out, o);
   for (unsigned i = 0; i < o.fields.length(); ++i) {
     const auto &f = o.fields[i];
@@ -1633,13 +1626,14 @@ void Emit::root(Text &out, const Object &o) const
     base << "ZtArray<::uint8_t, ZtArrayHeapID<\"" << o.name << ".data\">>";
   else base = "ZtBitmap";
   out << "namespace Zflatc_::" << o.local << " {\n\n"
-    << "template <typename Heap_ = ZuVoid>\nstruct O_ : public " << base << ", public Heap_";
+    << "struct O_ : public ZmNHeap<O_>, public " << base;
   if (m_opts.ref) out << ", public ::" << m_opts.ref;
-  out << " {\n  ZuDerive_(O_, (" << base << "));\n};\n"
-    << "ZuDerive(H_, (ZmHeap<\"" << o.name << "\", O_<>>));\n\n"
+  out << " {\nfriend inline ZuStringT<\"" << o.name
+    << "\"> ZmNHeapID(O_ *);\n\n"
+    << "  ZuDerive_(O_, (" << base << "));\n};\n\n"
     << "} // Zflatc_::" << o.local << "\n\nstruct ";
   if (m_opts.api) out << m_opts.api << ' ';
-  Text impl; impl << "Zflatc_::" << o.local << "::O_<Zflatc_::" << o.local << "::H_>";
+  Text impl; impl << "Zflatc_::" << o.local << "::O_";
   out << o.local << " : public " << impl << " {\n  ZuDerive_(" << o.local
     << ", (" << impl << "));\n};\n"
     << "Zfb::AsMapped<Zfb::Values::";

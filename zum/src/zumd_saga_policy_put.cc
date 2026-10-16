@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct PolicyPutSaga_ : public Heap,
-    public ZdbSaga<PolicyPutSaga_<Heap>, DB> {
-  using Base = ZdbSaga<PolicyPutSaga_<Heap>, DB>;
+struct PolicyPutSaga : public ZmNHeap<PolicyPutSaga>,
+    public ZdbSaga<PolicyPutSaga, DB> {
+friend inline ZuStringT<"Zum.PolicyPutSaga"> ZmNHeapID(PolicyPutSaga *);
+
+  using Base = ZdbSaga<PolicyPutSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -75,8 +76,8 @@ struct PolicyPutSaga_ : public Heap,
     return {};
   }
 
-  PolicyPutSaga_() = default;
-  PolicyPutSaga_(App app_, AuthPolicy before_, AuthPolicy values_, String ifMatch_, String ifNoneMatch_, int64_t updated_, IdemRequest request_) :
+  PolicyPutSaga() = default;
+  PolicyPutSaga(App app_, AuthPolicy before_, AuthPolicy values_, String ifMatch_, String ifNoneMatch_, int64_t updated_, IdemRequest request_) :
     app{ZuMv(app_)},
     before{ZuMv(before_)},
     values{ZuMv(values_)},
@@ -84,19 +85,15 @@ struct PolicyPutSaga_ : public Heap,
     ifNoneMatch{ZuMv(ifNoneMatch_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  PolicyPutSaga_(PolicyPutArgs args) :
-    PolicyPutSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), ZuMv(args.updated), ZuMv(args.request)} {
+  PolicyPutSaga(PolicyPutArgs args) :
+    PolicyPutSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<AuthPolicy>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~PolicyPutSaga_() override;
+  ~PolicyPutSaga() override;
 };
-
-
-using PolicyPutSaga = PolicyPutSaga_<
-  ZmHeap<"Zum.PolicyPutSaga", PolicyPutSaga_<>>>;
 
 ZfStruct(, (PolicyPutSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -108,20 +105,17 @@ ZfStruct(, (PolicyPutSaga, FB),
   (request,	(Ctor<6>),	UDT));
 Zfb::AsTable<"Zum.fbs.PolicyPut"> Zfb_Fmt(PolicyPutSaga *);
 
-template <typename Heap>
-unsigned PolicyPutSaga_<Heap>::appError(const App &item) const
+unsigned PolicyPutSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-unsigned PolicyPutSaga_<Heap>::recordError(const AuthPolicy &item) const
+unsigned PolicyPutSaga::recordError(const AuthPolicy &item) const
 {
   return putError(*this, item);
 }
 
-template <typename Heap>
-AuthPolicy PolicyPutSaga_<Heap>::result() const
+AuthPolicy PolicyPutSaga::result() const
 {
   AuthPolicy item = values;
   item.version = before.version + 1;
@@ -131,8 +125,7 @@ AuthPolicy PolicyPutSaga_<Heap>::result() const
   return item;
 }
 
-template <typename Heap>
-void PolicyPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void PolicyPutSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.appID || values.appID != before.appID || values.appID != app.id ||
       !values.localFirst || values.eligibilityMode < 0 || values.eligibilityMode >= EligibilityMode::N ||
@@ -162,8 +155,7 @@ void PolicyPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<PolicyPutSaga>{}));
 
-template <typename Heap>
-PolicyPutSaga_<Heap>::~PolicyPutSaga_() = default;
+PolicyPutSaga::~PolicyPutSaga() = default;
 
 SagaRef policyPut(ZuBSpan data) {
   return PolicyPutSaga::load(data);

@@ -61,7 +61,7 @@ template <typename T_>
 struct ZmPolyCache_LRUList_Node : public
     ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T {
   ZuDerive_(ZmPolyCache_LRUList_Node,
-    (typename ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T))
+    (ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T))
 };
 template <typename T_>
 struct ZmPolyCache_LRUList : public
@@ -103,7 +103,7 @@ template <typename FindFn_, typename HeapID_>
 struct ZmPolyCache_FindFnList_Node : public ZmList_NodeT<
     FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>>::T {
   ZuDerive_(ZmPolyCache_FindFnList_Node,
-    (typename ZmList_NodeT<
+    (ZmList_NodeT<
       FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>>::T))
 };
 template <typename FindFn_, typename HeapID_>
@@ -126,22 +126,22 @@ template <typename T_, typename NTP = ZmPolyCache_Defaults>
 class ZmPolyCache {
 public:
   using T = T_;
-  using Lock = typename NTP::Lock;
+  using Lock = NTP::Lock;
   enum { Evict = NTP::Evict };
 
 private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
-  using LRU = typename ZmPolyCache_LRUT<T, Evict>::T;
+  using LRU = ZmPolyCache_LRUT<T, Evict>::T;
   using PolyHash = ZmPolyCache_Hash<NTP, LRU, T>;
 
 public:
   using HeapID = PolyHash::HeapID;
   enum { Sharded = PolyHash::Sharded };
 
-  using Node = typename PolyHash::Node;
-  using NodeRef = typename PolyHash::NodeRef;
-  using NodeMvRef = typename PolyHash::NodeMvRef;
+  using Node = PolyHash::Node;
+  using NodeRef = PolyHash::NodeRef;
+  using NodeMvRef = PolyHash::NodeMvRef;
 
 private:
   using FindFn = ZmPolyCache_FindFn<Node, HeapID, Sharded>;
@@ -157,7 +157,7 @@ private:
   using LoadHash = ZmPolyCache_LoadHash<KeyT<KeyID>, FindFnList, HeapID>;
   // hash table node type
   template <int KeyID>
-  using LoadHashNode = typename LoadHash<ZuUnsigned<KeyID>>::Node;
+  using LoadHashNode = LoadHash<ZuUnsigned<KeyID>>::Node;
   // type list of load hash tables
   using LoadHashTL = ZuTypeMap<LoadHash, KeyIDs>;
   // tuple of load hash tables

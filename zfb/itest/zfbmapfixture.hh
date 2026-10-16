@@ -17,11 +17,13 @@
 
 namespace MapFixture {
 
-template <typename Heap = ZuVoid>
-struct Ints_ : public Heap,
-  public ZmHashKV<int, int, ZmHashHeapID<"zfbmapfixture.Ints">> { };
-using IntsHeap = ZmHeap<"zfbmapfixture.Ints.Obj", Ints_<>>;
-ZuDerive(Ints, Ints_<IntsHeap>);
+struct Ints_ : public ZmNHeap<Ints_>,
+  public ZmHashKV<int, int, ZmHashHeapID<"zfbmapfixture.Ints">> {
+friend inline ZuStringT<"zfbmapfixture.Ints.Obj"> ZmNHeapID(Ints_ *);
+
+};
+
+ZuDerive(Ints, Ints_);
 Zfb::AsMap<"exchange.Ints", ZfFieldTC::Int32, ZfFieldTC::Int32>
   Zfb_Fmt(Ints *);
 
@@ -30,13 +32,14 @@ ZuDerive(Texts, (ZmRBTreeKV<ZtString<>, ZtString<>,
 Zfb::AsMap<"exchange.Texts", ZfFieldTC::String, ZfFieldTC::String>
   Zfb_Fmt(Texts *);
 
-template <typename Heap = ZuVoid>
-struct Child_ : public Heap {
+struct Child_ : public ZmNHeap<Child_> {
+friend inline ZuStringT<"zfbmapfixture.Child"> ZmNHeapID(Child_ *);
+
   int value;
   explicit Child_(int v = 0) : value{v} { }
 };
-using ChildHeap = ZmHeap<"zfbmapfixture.Child", Child_<>>;
-ZuDerive(Child, Child_<ChildHeap>);
+
+ZuDerive(Child, Child_);
 ZfStruct(, (Child, FB), (value, (Ctor<0>, Deflt<0>), Int32));
 Zfb::AsTable<"exchange.Child"> Zfb_Fmt(Child *);
 

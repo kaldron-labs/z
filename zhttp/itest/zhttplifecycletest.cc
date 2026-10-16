@@ -487,7 +487,7 @@ void runH1(
 
   ZmRef<typename Client::Link> link;
   if (listening) {
-    link = new typename Client::Link{&client};
+    link = new Client::Link{&client};
     state.trace.push(LifeEvt::CliConnect);
     link->connect("127.0.0.1", state.port);
     bool done = state.done.timedwait(Zm::now(10)) == 0;

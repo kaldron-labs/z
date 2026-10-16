@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct UserEditSaga_ : public Heap,
-    public ZdbSaga<UserEditSaga_<Heap>, DB> {
-  using Base = ZdbSaga<UserEditSaga_<Heap>, DB>;
+struct UserEditSaga : public ZmNHeap<UserEditSaga>,
+    public ZdbSaga<UserEditSaga, DB> {
+friend inline ZuStringT<"Zum.UserEditSaga"> ZmNHeapID(UserEditSaga *);
+
+  using Base = ZdbSaga<UserEditSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -101,8 +102,8 @@ struct UserEditSaga_ : public Heap,
     return {};
   }
 
-  UserEditSaga_() = default;
-  UserEditSaga_(User before_, String ifMatch_, String profile_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_, String email_, uint8_t fields_) :
+  UserEditSaga() = default;
+  UserEditSaga(User before_, String ifMatch_, String profile_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_, String email_, uint8_t fields_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     profile{ZuMv(profile_)},
@@ -112,18 +113,14 @@ struct UserEditSaga_ : public Heap,
     state{ZuMv(state_)},
     email{ZuMv(email_)},
     fields{ZuMv(fields_)} { }
-  UserEditSaga_(UserEditArgs args) :
-    UserEditSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.profile), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state), ZuMv(args.email), ZuMv(args.fields)} {
+  UserEditSaga(UserEditArgs args) :
+    UserEditSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.profile), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state), ZuMv(args.email), ZuMv(args.fields)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<User>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~UserEditSaga_() override;
+  ~UserEditSaga() override;
 };
-
-
-using UserEditSaga = UserEditSaga_<
-  ZmHeap<"Zum.UserEditSaga", UserEditSaga_<>>>;
 
 ZfStruct(, (UserEditSaga, FB),
   (before,	(Ctor<0>),			UDT),
@@ -137,8 +134,7 @@ ZfStruct(, (UserEditSaga, FB),
   (fields,	(Ctor<8>),			UInt8));
 Zfb::AsTable<"Zum.fbs.UserEdit"> Zfb_Fmt(UserEditSaga *);
 
-template <typename Heap>
-unsigned UserEditSaga_<Heap>::userError(const User &item) const
+unsigned UserEditSaga::userError(const User &item) const
 {
   if (stateOnly ? state < 0 || state >= State::N : !fields || (fields & ~3U))
     return 400;
@@ -156,8 +152,7 @@ unsigned UserEditSaga_<Heap>::userError(const User &item) const
 
 ZuAssert((Zdb_::SagaDefValid<UserEditSaga>{}));
 
-template <typename Heap>
-UserEditSaga_<Heap>::~UserEditSaga_() = default;
+UserEditSaga::~UserEditSaga() = default;
 
 SagaRef userEdit(ZuBSpan data) {
   return UserEditSaga::load(data);

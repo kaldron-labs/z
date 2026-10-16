@@ -28,8 +28,8 @@ template <typename Array_>
 class Elem {
 public:
   using Array = Array_;
-  using T = typename Array::T;
-  using R = typename Array::R;
+  using T = Array::T;
+  using R = Array::R;
   using U = ZuUnder<T>;
 
   Elem() = delete;
@@ -193,7 +193,7 @@ friend Elem;
 };
 
 template <typename Array>
-inline typename Array::R Elem<Array>::get() const noexcept(
+inline Array::R Elem<Array>::get() const noexcept(
   noexcept(ZuDeclVal<const typename Array::Impl &>().get(0)))
 {
   return array.impl()->get(i);
@@ -202,7 +202,7 @@ inline typename Array::R Elem<Array>::get() const noexcept(
 template <typename Array>
 template <typename _, typename>
 inline Elem<Array> &
-Elem<Array>::operator =(typename Array::T v) {
+Elem<Array>::operator =(Array::T v) {
   array.impl()->set(i, ZuMv(v));
   return *this;
 }

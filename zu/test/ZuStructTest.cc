@@ -30,7 +30,7 @@ namespace ZfJSON {
   };
 
   template <typename Field>
-  using Props = typename ZuFields_JSON<Field>::Props;
+  using Props = ZuFields_JSON<Field>::Props;
 }
 
 namespace ZuFieldProp {
@@ -69,7 +69,7 @@ namespace ZuFieldProp {
       using T = GetValue<typename Field::Props, ID>;
     };
     template <typename Field>
-    using GetID = typename GetID_<Field>::T;
+    using GetID = GetID_<Field>::T;
 
     // GetBytesFmt - ZuUnsigned
     template <typename Props, bool = HasValue<Props, BytesFmt>{}>
@@ -79,7 +79,7 @@ namespace ZuFieldProp {
       using T = GetValue<Props, BytesFmt>;
     };
     template <typename Props>
-    using GetBytesFmt = typename GetBytesFmt_<Props>::T;
+    using GetBytesFmt = GetBytesFmt_<Props>::T;
 
     // GetNumberFmt - ZuFmt
     template <typename Props, bool = HasType<Props, NumberFmt>{}>
@@ -87,7 +87,7 @@ namespace ZuFieldProp {
     template <typename Props>
     struct GetNumberFmt_<Props, true> { using T = GetType<Props, NumberFmt>; };
     template <typename Props>
-    using GetNumberFmt = typename GetNumberFmt_<Props>::T;
+    using GetNumberFmt = GetNumberFmt_<Props>::T;
 
     // GetTimeFmt - ZfJSON::TimeFmt::{Fmt,Scale,NDP}
     template <typename Props, bool = HasType<Props, TimeFmt>{}>
@@ -95,7 +95,7 @@ namespace ZuFieldProp {
     template <typename Props>
     struct GetTimeFmt_<Props, true> { using T = GetType<Props, TimeFmt>; };
     template <typename Props>
-    using GetTimeFmt = typename GetTimeFmt_<Props>::T;
+    using GetTimeFmt = GetTimeFmt_<Props>::T;
   }
 }
 

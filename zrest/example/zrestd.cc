@@ -155,53 +155,50 @@ ZfStruct(, (Options, CLI),
   (memDiag,    (CLI::Long<"mem-diag">),				UInt32),
   (help,       (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
-template <typename Heap = ZuVoid>
-struct Empty_ : public Heap, public ZmObject { };
-ZuDerive(EmptyHeap, (ZmHeap<"zrestd.Empty", Empty_<>>));
-ZuDerive(Empty, (Empty_<EmptyHeap>));
+struct Empty : public ZmNHeap<Empty>, public ZmObject {
+friend inline ZuStringT<"zrestd.Empty"> ZmNHeapID(Empty *);
+};
 
-template <typename Heap = ZuVoid>
-struct Text_ : public Heap, public ZmObject {
+struct Text : public ZmNHeap<Text>, public ZmObject {
+friend inline ZuStringT<"zrestd.Text"> ZmNHeapID(Text *);
+
   OAuthString value;
   OAuthString cookie;
-  template <typename S> friend S &operator <<(S &s, const Text_ &v) {
+  template <typename S> friend S &operator <<(S &s, const Text &v) {
     s << v.value;
     return s;
   }
 };
-ZuDerive(TextHeap, (ZmHeap<"zrestd.Text", Text_<>>));
-ZuDerive(Text, (Text_<TextHeap>));
 
-template <typename Heap = ZuVoid>
-struct Redirect_ : public Heap, public ZmObject {
+struct Redirect : public ZmNHeap<Redirect>, public ZmObject {
+friend inline ZuStringT<"zrestd.Redirect"> ZmNHeapID(Redirect *);
+
   OAuthString location;
   OAuthString cookie;
 };
-ZuDerive(RedirectHeap, (ZmHeap<"zrestd.Redirect", Redirect_<>>));
-ZuDerive(Redirect, (Redirect_<RedirectHeap>));
 
-template <typename Heap = ZuVoid>
-struct BearerFailure_ : public Heap, public ZmObject {
+struct BearerFailure : public ZmNHeap<BearerFailure>, public ZmObject {
+friend inline ZuStringT<"zrestd.BearerFailure"> ZmNHeapID(BearerFailure *);
+
   OAuthString challenge;
 };
-ZuDerive(BearerFailureHeap, (ZmHeap<"zrestd.BearerFailure", BearerFailure_<>>));
-ZuDerive(BearerFailure, (BearerFailure_<BearerFailureHeap>));
 
-template <typename Heap = ZuVoid>
-struct LoginForm_ : public Heap, public ZmObject {
+struct LoginForm : public ZmNHeap<LoginForm>, public ZmObject {
+friend inline ZuStringT<"zrestd.LoginForm"> ZmNHeapID(LoginForm *);
+
   OAuthString username;
   OAuthString password;
   OAuthString decision;
 };
-ZuDerive(LoginFormHeap, (ZmHeap<"zrestd.LoginForm", LoginForm_<>>));
-ZuDerive(LoginForm, (LoginForm_<LoginFormHeap>));
+
 ZfStruct(, (LoginForm, URI),
   (username, (Required),	String),
   (password, (Required),	String),
   (decision, (Required),	String));
 
-template <typename Heap = ZuVoid>
-struct TokenForm_ : public Heap, public ZmObject {
+struct TokenForm : public ZmNHeap<TokenForm>, public ZmObject {
+friend inline ZuStringT<"zrestd.TokenForm"> ZmNHeapID(TokenForm *);
+
   OAuthString grantType;
   OAuthString code;
   OAuthString redirectURI;
@@ -210,8 +207,7 @@ struct TokenForm_ : public Heap, public ZmObject {
   OAuthString scope;
   OAuthString clientID;
 };
-ZuDerive(TokenFormHeap, (ZmHeap<"zrestd.TokenForm", TokenForm_<>>));
-ZuDerive(TokenForm, (TokenForm_<TokenFormHeap>));
+
 ZfStruct(, (TokenForm, URI),
   (grantType, (URI::ID<"grant_type">, Required),		String),
   (code, (JSON::Opt),						String),
@@ -650,8 +646,9 @@ static void expireState(Map &map, Index &index, int64_t now)
   }
 }
 
-template <typename Heap = ZuVoid>
-struct Application_ : public Heap, public ZmObject {
+struct Application : public ZmNHeap<Application>, public ZmObject {
+friend inline ZuStringT<"zrestd.Application"> ZmNHeapID(Application *);
+
   ZmRef<Ztls::PK::SK_EC>	key;
   OAuthString		keyID;
   ZuBArray<Ztls::COSE::ES256::PublicKeySize> publicKey;
@@ -678,8 +675,6 @@ struct Application_ : public Heap, public ZmObject {
     expireState(access, accessExpiries, now);
   }
 };
-ZuDerive(ApplicationHeap, (ZmHeap<"zrestd.Application", Application_<>>));
-ZuDerive(Application, (Application_<ApplicationHeap>));
 
 // Requests retain applications after a registry lookup; the registry shares
 // that lifetime rather than owning an intrusive application node.
@@ -809,8 +804,7 @@ static bool cookieValue(ZuCSpan cookies, OAuthString &value)
   return false;
 }
 
-template <typename Heap>
-bool Application_<Heap>::init(Ztls::Random &rng)
+bool Application::init(Ztls::Random &rng)
 {
   try {
     key = new Ztls::PK::SK_EC{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};

@@ -48,6 +48,6 @@ template <typename U, typename W>
 struct ZuNorm_<U, W, 0, 1> { using T = W; };
 
 template <typename U>
-using ZuNorm = typename ZuNorm_<ZuDecay<U>>::T;
+using ZuNorm = ZuNorm_<ZuDecay<U>>::T;
 
 #endif /* ZuNorm_HH */

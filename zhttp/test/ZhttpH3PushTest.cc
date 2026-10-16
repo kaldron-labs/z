@@ -78,7 +78,7 @@ struct MsgInput :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<MsgInput<Request>, Request> {
   using Base = Zhttp::H3::Parser<MsgInput<Request>, Request>;
-  using State = typename Base::State;
+  using State = Base::State;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
 
   MsgInput() {

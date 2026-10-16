@@ -344,8 +344,8 @@ struct App {
   static uint64_t egressID(const Ready::Node &egress) {
     return egress.val().id;
   }
-  ZmHashDerive(Egresses, typename Ready::Node,
-    (ZmHashNode<typename Ready::Node,
+  ZmHashDerive(Egresses, Ready::Node,
+    (ZmHashNode<Ready::Node,
       ZmHashKey<egressID,
         ZmHashShadow<ZmHashLock<ZmNoLock>>>>));
 

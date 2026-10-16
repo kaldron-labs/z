@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ClientAccessStateSaga_ : public Heap,
-    public ZdbSaga<ClientAccessStateSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ClientAccessStateSaga_<Heap>, DB>;
+struct ClientAccessStateSaga : public ZmNHeap<ClientAccessStateSaga>,
+    public ZdbSaga<ClientAccessStateSaga, DB> {
+friend inline ZuStringT<"Zum.ClientAccessStateSaga"> ZmNHeapID(ClientAccessStateSaga *);
+
+  using Base = ZdbSaga<ClientAccessStateSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -63,25 +64,21 @@ struct ClientAccessStateSaga_ : public Heap,
     return {};
   }
 
-  ClientAccessStateSaga_() = default;
-  ClientAccessStateSaga_(ClientAccess before_, String ifMatch_, int64_t updated_, IdemRequest request_, State::T state_) :
+  ClientAccessStateSaga() = default;
+  ClientAccessStateSaga(ClientAccess before_, String ifMatch_, int64_t updated_, IdemRequest request_, State::T state_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)},
     state{ZuMv(state_)} { }
-  ClientAccessStateSaga_(ClientAccessStateArgs args) :
-    ClientAccessStateSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.state)} {
+  ClientAccessStateSaga(ClientAccessStateArgs args) :
+    ClientAccessStateSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.state)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<ClientAccess>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~ClientAccessStateSaga_() override;
+  ~ClientAccessStateSaga() override;
 };
-
-
-using ClientAccessStateSaga = ClientAccessStateSaga_<
-  ZmHeap<"Zum.ClientAccessStateSaga", ClientAccessStateSaga_<>>>;
 
 ZfStruct(, (ClientAccessStateSaga, FB),
   (before,	(Ctor<0>),			UDT),
@@ -91,16 +88,14 @@ ZfStruct(, (ClientAccessStateSaga, FB),
   (state,	(Ctor<4>, Enum<State::Map>),	Int8));
 Zfb::AsTable<"Zum.fbs.ClientAccessState"> Zfb_Fmt(ClientAccessStateSaga *);
 
-template <typename Heap>
-unsigned ClientAccessStateSaga_<Heap>::recordError(const ClientAccess &item) const
+unsigned ClientAccessStateSaga::recordError(const ClientAccess &item) const
 {
   return accessStateError(*this, item);
 }
 
 ZuAssert((Zdb_::SagaDefValid<ClientAccessStateSaga>{}));
 
-template <typename Heap>
-ClientAccessStateSaga_<Heap>::~ClientAccessStateSaga_() = default;
+ClientAccessStateSaga::~ClientAccessStateSaga() = default;
 
 SagaRef clientAccessState(ZuBSpan data) {
   return ClientAccessStateSaga::load(data);

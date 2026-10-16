@@ -43,8 +43,9 @@ struct Sink {
   Sink &operator <<(ZuBSpan) { return *this; }
   void flush() { }
 };
-template <typename Heap = ZuVoid>
-struct Link_ : public Heap, public ZmObject {
+struct Link_ : public ZmNHeap<Link_>, public ZmObject {
+friend inline ZuStringT<"Ztc.Test.HubLink"> ZmNHeapID(Link_ *);
+
   Server *server;
   ZtcHub_::App::LinkState input;
   unsigned closeCode = 0;
@@ -58,8 +59,8 @@ struct Link_ : public Heap, public ZmObject {
     fn(sink);
   }
 };
-ZuDerive(LinkHeap, (ZmHeap<"Ztc.Test.HubLink", Link_<>>));
-ZuDerive(Link, Link_<LinkHeap>);
+
+ZuDerive(Link, Link_);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Ztc.Test.HubBytes">>));
 struct Rx {
   ZuSpan<uint8_t> bytes;

@@ -155,7 +155,7 @@ namespace ZuFieldProp {
     unsigned N = Filtered::N>
   struct Value_ {
     enum { Exists = 1 };
-    using T = typename Value__<Prop, ZuType<N - 1, Filtered>>::T;
+    using T = Value__<Prop, ZuType<N - 1, Filtered>>::T;
   };
   template <
     typename Props,
@@ -167,7 +167,7 @@ namespace ZuFieldProp {
   template <typename Props, template <auto> class Prop>
   using HasValue = ZuBool<Value_<Props, Prop>::Exists>;
   template <typename Props, template <auto> class Prop>
-  using GetValue = typename Value_<Props, Prop>::T;
+  using GetValue = Value_<Props, Prop>::T;
 
   // extract a type property
   template <template <typename> class Prop>
@@ -185,7 +185,7 @@ namespace ZuFieldProp {
     unsigned N = Filtered::N>
   struct Type_ {
     enum { Exists = 1 };
-    using T = typename ZuType<N - 1, Filtered>::T;
+    using T = ZuType<N - 1, Filtered>::T;
   };
   template <
     typename Props,
@@ -197,7 +197,7 @@ namespace ZuFieldProp {
   template <typename Props, template <typename> class Prop>
   using HasType = ZuBool<Type_<Props, Prop>::Exists>;
   template <typename Props, template <typename> class Prop>
-  using GetType = typename Type_<Props, Prop>::T;
+  using GetType = Type_<Props, Prop>::T;
 
   // extract a sequence property
   template <template <unsigned ...> class Prop>
@@ -219,7 +219,7 @@ namespace ZuFieldProp {
     unsigned N = Filtered::N>
   struct Seq_ {
     enum { Exists = 1 };
-    using T = typename Seq__<Prop, ZuType<N - 1, Filtered>>::T;
+    using T = Seq__<Prop, ZuType<N - 1, Filtered>>::T;
   };
   template <
     typename Props,
@@ -232,7 +232,7 @@ namespace ZuFieldProp {
   template <typename Props, template <unsigned ...> class Prop>
   using HasSeq = ZuBool<Seq_<Props, Prop>::Exists>;
   template <typename Props, template <unsigned ...> class Prop>
-  using GetSeq = typename Seq_<Props, Prop>::T;
+  using GetSeq = Seq_<Props, Prop>::T;
 
   // constructor parameter index
   template <unsigned I> struct Ctor { };
@@ -487,7 +487,7 @@ struct ZuFieldIDs_<ZuTypeList<Field...>> {
 template <typename O>
 struct ZuFieldIDs_ : public ZuFieldIDs_<ZuActiveFields<O>> { };
 template <typename U>
-using ZuFieldIDs = typename ZuFieldIDs_<U>::T;
+using ZuFieldIDs = ZuFieldIDs_<U>::T;
 
 // obtain the base structured type from a possibly-derived type
 template <typename O>
@@ -495,7 +495,7 @@ using ZuStructured = decltype(ZuStructured_(ZuDeclVal<ZuDecay<O> *>()));
 
 // obtain the original structured field from a possibly-transformed field
 template <typename Field>
-using ZuOrigField = typename Field::Orig;
+using ZuOrigField = Field::Orig;
 
 // get field index within fields
 #define ZuFieldIndex(O, ID) (ZuTypeIndex<ZuField(O, ID), ZuActiveFields<O>>{})
@@ -544,7 +544,7 @@ struct ZuStructTuple_ : public Tuple {
     static void set(O &o, U &&v) { o.template p<I>(ZuFwd<U>(v)); }
   };
   template <typename Field>
-  using Map = typename Field::template Adapt<Adapter>;
+  using Map = Field::template Adapt<Adapter>;
   // render fields
   template <typename Facet>
   using Fields = ZuTypeMap<Map, ZuTypeGrep<Filter, ZuActiveFields<O, Facet>>>;
@@ -584,7 +584,7 @@ template <
   template <typename> class Filter,
   typename ...Fields>
 struct ZuStructTupleT_ {
-  using T = typename ZuStructTupleT__<
+  using T = ZuStructTupleT__<
     O,
     ZuTuple<ValueMap<decltype(Fields::get(ZuDeclVal<ObjectMap<O>>()))>...>,
     Filter>::T;
@@ -602,7 +602,7 @@ template <
   template <typename> class ObjectMap,
   template <typename> class ValueMap,
   template <typename> class Filter>
-using ZuStructTupleT = typename ZuStructTupleT_<
+using ZuStructTupleT = ZuStructTupleT_<
   ZuDecay<O>, ObjectMap, ValueMap, Filter, 
   ZuTypeGrep<Filter, ZuActiveFields<O>>>::T;
 
@@ -689,7 +689,7 @@ struct ZuStructKeyT_ {
   using T = ZuStructTupleT<O, ZuMkCRef, ZuDecay, Filter>;
 };
 template <typename O, int KeyID = 0>
-using ZuStructKeyT = typename ZuStructKeyT_<O, KeyID>::T;
+using ZuStructKeyT = ZuStructKeyT_<O, KeyID>::T;
 
 // all potential key IDs for a type, as a ZuSeq<>
 
@@ -704,7 +704,7 @@ template <typename ...Fields>
 struct ZuStructKeyIDs_<ZuTypeList<Fields...>> :
   public ZuStructKeyIDs_<Fields...> { };
 template <typename O>
-using ZuStructKeyIDs = typename ZuStructKeyIDs_<ZuActiveFields<O>>::T;
+using ZuStructKeyIDs = ZuStructKeyIDs_<ZuActiveFields<O>>::T;
 
 // all keys for a type, as a typelist
 
@@ -716,7 +716,7 @@ struct ZuStructKeys_ {
   using T = ZuTypeMap<KeyT, KeyIDs>;
 };
 template <typename O>
-using ZuStructKeys = typename ZuStructKeys_<O>::T;
+using ZuStructKeys = ZuStructKeys_<O>::T;
 
 // all keys for a type, as a ZuUnion<void, ...>
 
@@ -725,11 +725,11 @@ struct ZuStructKeyUnion_ {
   using KeyIDs = ZuSeqTL<ZuStructKeyIDs<O>>;
   template <typename KeyID>
   using KeyT = ZuStructKeyT<O, KeyID{}>;
-  using UnionTypes = typename ZuTypeMap<KeyT, KeyIDs>::template Unshift<void>;
+  using UnionTypes = ZuTypeMap<KeyT, KeyIDs>::template Unshift<void>;
   using T = ZuTypeApply<ZuUnion, UnionTypes>;
 };
 template <typename O>
-using ZuStructKeyUnion = typename ZuStructKeyUnion_<O>::T;
+using ZuStructKeyUnion = ZuStructKeyUnion_<O>::T;
 
 // CRTP mixin for a shim
 // - a shim is an alternate type that mimics the original type
@@ -749,7 +749,7 @@ struct ZuStructShim {
     template <typename U> static void set(Impl &, U &&) { }
   };
   template <typename Field>
-  using Map = typename Field::template Adapt<Adapter>;
+  using Map = Field::template Adapt<Adapter>;
   // render fields
   template <typename Facet>
   using Fields = ZuTypeMap<Map, ZuActiveFields<O, Facet>>;
@@ -774,7 +774,7 @@ struct ZuStructShim {
 // - ZuStructRender(Object, Facet[, (FieldID[, Property...])...])
 #define ZuField_RenderDecl__(O, ID, ...) \
   using Props_ = ZuField(O, ID)::Props; \
-  using Props = typename Props_::template Push<ZuField_Props_(__VA_ARGS__)>;
+  using Props = Props_::template Push<ZuField_Props_(__VA_ARGS__)>;
 #define ZuField_RenderDecl_(O, Facet, ID, ...) \
   struct ZuField(O##_##Facet, ID) : public ZuField(O, ID) { \
     __VA_OPT__(ZuField_RenderDecl__(O, ID, __VA_ARGS__)) \

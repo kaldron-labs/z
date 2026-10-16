@@ -62,15 +62,15 @@ private:
 public:
   using cmp_fn = Cmp_Fn;
   using allocator_type = _Alloc;
-  using size_type = typename allocator_type::size_type;
-  using key_type = typename base_type::key_type;
-  using key_const_reference = typename base_type::key_const_reference;
+  using size_type = allocator_type::size_type;
+  using key_type = base_type::key_type;
+  using key_const_reference = base_type::key_const_reference;
 
   using metadata_type = size_type;
   using node_const_iterator = Node_CItr;
   using node_iterator = Node_Itr;
-  using const_iterator = typename node_const_iterator::value_type;
-  using iterator = typename node_iterator::value_type;
+  using const_iterator = node_const_iterator::value_type;
+  using iterator = node_iterator::value_type;
 
   virtual ~stats_tree_node_update() { }
 
@@ -150,7 +150,7 @@ public:
   }
 
 private:
-  typedef typename detail::rebind_traits<_Alloc, metadata_type>::reference
+  typedef detail::rebind_traits<_Alloc, metadata_type>::reference
     metadata_reference;
 
 protected:

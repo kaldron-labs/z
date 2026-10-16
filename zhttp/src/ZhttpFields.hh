@@ -147,15 +147,15 @@ ZhttpAPI bool forbidden(ZuBSpan);
 ZhttpAPI int pseudo(ZuBSpan);
 
 template <typename HdrCatalog>
-struct NameIDs { using Keys = typename HeaderList<HdrCatalog>::Keys; };
+struct NameIDs { using Keys = HeaderList<HdrCatalog>::Keys; };
 template <typename HdrCatalog, unsigned I>
 struct ValueIDs {
-  using Keys = typename HeaderList<HdrCatalog>::template Value<I>;
+  using Keys = HeaderList<HdrCatalog>::template Value<I>;
 };
 
 template <typename HdrCatalog>
 int nameMatch(ZuBSpan key) {
-  using Keys = typename HeaderList<HdrCatalog>::Keys;
+  using Keys = HeaderList<HdrCatalog>::Keys;
   if constexpr (!Keys::N) return -1;
   else {
     static constexpr auto matcher = ZuMatcher<NameIDs<HdrCatalog>>();
@@ -169,7 +169,7 @@ int valueMatch(unsigned key, ZuBSpan value) {
   if constexpr (!List::N) return -1;
   else return ZuSwitch::dispatch<List::N>(key,
       [&value](auto I) -> int {
-    using Values = typename List::template Value<I>;
+    using Values = List::template Value<I>;
     if constexpr (!Values::N) return -1;
     else {
       static constexpr auto matcher = ZuMatcher<ValueIDs<HdrCatalog, I>>();
@@ -193,7 +193,7 @@ void dispatch(
   ZuBSpan key, ZuSpan<uint8_t> value,
   Header &&header, Static &&static_, Unknown &&unknown) {
   using List = HeaderList<Catalog>;
-  using Keys = typename List::Keys;
+  using Keys = List::Keys;
   if constexpr (Keys::N) {
     auto i = Catalog::nameMatch(key);
     if (i < 0) {
@@ -204,7 +204,7 @@ void dispatch(
       i, [&value, &header, &static_](auto i) {
 	static constexpr unsigned I = i;
 	using Key = ZuType<I, Keys>;
-	using KeyValues = typename List::template Value<I>;
+	using KeyValues = List::template Value<I>;
 	if constexpr (KeyValues::N) {
 	  auto j = Catalog::valueMatch(I, value);
 	  if (j >= 0) {

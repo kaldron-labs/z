@@ -270,7 +270,7 @@ template <typename CtrlMem_, typename Ctrl_, bool MR>
 class CtrlMgr_ {
 protected:
   using CtrlMem = CtrlMem_;
-  using Params = typename CtrlMem::Params;
+  using Params = CtrlMem::Params;
   using Ctrl = Ctrl_;
 
   CtrlMgr_() = default;
@@ -427,7 +427,7 @@ private:
 template <typename DataMem_> class DataMgr_ {
 protected:
   using DataMem = DataMem_;
-  using Params = typename DataMem::Params;
+  using Params = DataMem::Params;
 
   DataMgr_() = default;
   DataMgr_(const DataMgr_ &ring) : m_data{ring.m_data} { }
@@ -457,7 +457,7 @@ template <
 class DataMgr : public DataMgr_<DataMem_> {
 protected:
   using DataMem = DataMem_;
-  using Params = typename DataMem::Params;
+  using Params = DataMem::Params;
 
 private:
   using Base = DataMgr_<DataMem>;
@@ -590,7 +590,7 @@ class Ring :
     Ring<NTP, ParamData_, Blocker_, CtrlMgr_, DataMgr_, RingExt_>,
     NTP::MW, NTP::MR> {
 public:
-  using T = typename NTP::T;
+  using T = NTP::T;
   enum { MW = NTP::MW };
   enum { MR = NTP::MR };
 
@@ -601,7 +601,7 @@ protected:
   using DataMgr = DataMgr_;
   using RingExt = RingExt_<Ring, MW, MR>;
 friend RingExt;
-friend typename RingExt::Friend;
+friend RingExt::Friend;
 
 private:
   using AlignFn = ZmRing_::AlignFn<MW, MR>;
@@ -668,7 +668,7 @@ public:
 private:
   using AlignFn::align;
 
-  using Ctrl = typename CtrlMgr_::Ctrl;
+  using Ctrl = CtrlMgr_::Ctrl;
 private:
   using CtrlMgr::openCtrl;
   using CtrlMgr::closeCtrl;

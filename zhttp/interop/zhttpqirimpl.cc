@@ -544,7 +544,7 @@ struct H3ResponseParser :
   public Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders> {
   using Base = Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders>;
   using Base::reset;
-  using State = typename Base::State;
+  using State = Base::State;
   using HdrCatalog = H3RespHeaders;
 
   H3ResponseParser() : Base{H3RespBodyMax} { }
@@ -611,7 +611,7 @@ struct H3Client::Link :
     app()->txInvoke([link, txError = ZuMv(txError), requests]() mutable {
       auto limits = Zhttp::H3::Params{}.qpackLimits();
       bool ok = link->h3Tx.init(limits.txCapacity, limits.txSections);
-      typename H3Cxn::LocalStreams streams;
+      H3Cxn::LocalStreams streams;
       if (ok) streams = H3Cxn::openLocalStreams(*link, txError);
       ok = ok && bool(streams);
       link->app()->rxInvoke([

@@ -175,7 +175,7 @@ template <typename T_>
 struct ZuDefaultTraits_<T_, void> { using T = ZuBaseTraits<T_>; };
 template <typename T>
 using ZuDefaultTraits =
-  typename ZuDefaultTraits_<T, decltype(ZuTraitsType(ZuDeclVal<T *>()))>::T;
+  ZuDefaultTraits_<T, decltype(ZuTraitsType(ZuDeclVal<T *>()))>::T;
 
 template <typename T> struct ZuTraits : public ZuDefaultTraits<T> { };
 
@@ -564,7 +564,7 @@ using ZuMatchCharString =
 template <typename Wrapper, typename Under>
 struct ZuWrapTraits : public ZuTraits<Under> {
   enum { IsPrimitive = 0, IsPOD = 0 };
-  using Elem = typename ZuTraits<Under>::Elem;
+  using Elem = ZuTraits<Under>::Elem;
   template <typename U = Under,
     typename = ZuIfT<ZuTraits<U>::IsSpan &&
     !ZuIsConst<U>{} &&

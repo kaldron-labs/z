@@ -57,9 +57,10 @@ struct SagaDB : public ZdbSagaDB {
 };
 
 // Reuse the test intent schema; runtime context is deliberately not saved.
-template <typename Heap = ZuVoid>
-struct LiveSaga_ : public Heap, public ZdbSaga<LiveSaga_<Heap>, SagaDB> {
-  using Base = ZdbSaga<LiveSaga_<Heap>, SagaDB>;
+struct LiveSaga : public ZmNHeap<LiveSaga>, public ZdbSaga<LiveSaga, SagaDB> {
+friend inline ZuStringT<"Zdb.Store.LiveSaga"> ZmNHeapID(LiveSaga *);
+
+  using Base = ZdbSaga<LiveSaga, SagaDB>;
   using Base::db;
   using Type = ZuStringT<"pqSaga1">;
   enum { NPhases = 3 };
@@ -131,21 +132,19 @@ struct LiveSaga_ : public Heap, public ZdbSaga<LiveSaga_<Heap>, SagaDB> {
 	});
 	return {};
   }
-  LiveSaga_() = default;
-  LiveSaga_(uint64_t orderID_) : orderID{orderID_} { }
+  LiveSaga() = default;
+  LiveSaga(uint64_t orderID_) : orderID{orderID_} { }
 };
-using LiveSaga =
-  LiveSaga_<ZmHeap<"Zdb.Store.LiveSaga", LiveSaga_<>>>;
-ZuAssert(sizeof(LiveSaga) == sizeof(LiveSaga_<>));
-ZuAssert(alignof(LiveSaga) == alignof(LiveSaga_<>));
+
 
 ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
 Zfb::AsTable<"zdbtest.fbs.LiveSaga"> Zfb_Fmt(LiveSaga *);
 
-template <typename Heap = ZuVoid>
-struct BatchSaga_ : public Heap, public ZdbSaga<BatchSaga_<Heap>, SagaDB> {
-  using Base = ZdbSaga<BatchSaga_<Heap>, SagaDB>;
+struct BatchSaga : public ZmNHeap<BatchSaga>, public ZdbSaga<BatchSaga, SagaDB> {
+friend inline ZuStringT<"Zdb.Store.BatchSaga"> ZmNHeapID(BatchSaga *);
+
+  using Base = ZdbSaga<BatchSaga, SagaDB>;
   using Base::db;
   using Type = ZuStringT<"pqBatch1">;
   enum { NPhases = 3 };
@@ -226,14 +225,11 @@ struct BatchSaga_ : public Heap, public ZdbSaga<BatchSaga_<Heap>, SagaDB> {
     });
     return {};
   }
-  BatchSaga_() = default;
-  BatchSaga_(ZtArray<uint64_t> ids_, uint32_t failAt_) :
+  BatchSaga() = default;
+  BatchSaga(ZtArray<uint64_t> ids_, uint32_t failAt_) :
     ids{ZuMv(ids_)}, failAt{failAt_} { }
 };
-using BatchSaga =
-  BatchSaga_<ZmHeap<"Zdb.Store.BatchSaga", BatchSaga_<>>>;
-ZuAssert(sizeof(BatchSaga) == sizeof(BatchSaga_<>));
-ZuAssert(alignof(BatchSaga) == alignof(BatchSaga_<>));
+
 ZfStruct(, (BatchSaga, FB),
   (ids,		(Ctor<0>),	UInt64Vec),
   (failAt,	(Ctor<1>),	UInt32));

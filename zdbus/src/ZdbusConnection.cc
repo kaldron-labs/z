@@ -26,21 +26,20 @@ ZtEnumImplNS(CxnState);
 using FrameAlloc = ZiIOBufAlloc<ZiIOBuf_DefltSize,
   Wire::MaxMessageSize, "Zdbus.Frame">;
 
-template <typename Heap = ZuVoid>
-struct StopDispatch_ : Heap, ZuObject {
+struct StopDispatch : ZmNHeap<StopDispatch>, ZuObject {
+friend inline ZuStringT<"Zdbus.CxnStopDispatch"> ZmNHeapID(StopDispatch *);
+
   ZmScheduler	*sched;
   CxnStopQueue	waits;
   unsigned	sid;
   unsigned	budget;
 
-  StopDispatch_(ZmScheduler *sched_, unsigned sid_, unsigned budget_,
+  StopDispatch(ZmScheduler *sched_, unsigned sid_, unsigned budget_,
       CxnStopQueue waits_)
   : sched{sched_}, waits{ZuMv(waits_)}, sid{sid_}, budget{budget_} { }
 
   void run_();
 };
-ZuDerive(StopDispatchHeap, (ZmHeap<"Zdbus.CxnStopDispatch", StopDispatch_<>>));
-ZuDerive(StopDispatch, (StopDispatch_<StopDispatchHeap>));
 
 static void drainStops(CxnStopQueue &waits, unsigned budget)
 {
@@ -52,8 +51,7 @@ static void drainStops(CxnStopQueue &waits, unsigned budget)
   }
 }
 
-template <typename Heap>
-void StopDispatch_<Heap>::run_()
+void StopDispatch::run_()
 {
   drainStops(waits, budget);
   if (waits.count_()) {

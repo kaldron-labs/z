@@ -15,7 +15,7 @@
 
 void edgeCases();
 
-template <typename F, typename I = typename ZuFP<F>::I>
+template <typename F, typename I = ZuFP<F>::I>
 void decode(F d, ZuTuple<I, I> em)
 {
   ZuTestScope(decode);

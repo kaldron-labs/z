@@ -182,7 +182,7 @@ struct TestLink :
     return Base::flushCtlStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &) {
+      [](Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &) {
 	return false;
       });
   }
@@ -190,7 +190,7 @@ struct TestLink :
     return Base::flushCtlStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &) {
+      [](Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &) {
 	return true;
       });
   }
@@ -202,7 +202,7 @@ struct TestLink :
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [&refs, &kinds, &streamIDs, capacity](
-	  Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
+	  Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &r) {
 	refs = r.count();
 	for (unsigned i = 0; i < refs && i < capacity; ++i) {
 	  kinds[i] = r[i].kind;
@@ -218,7 +218,7 @@ struct TestLink :
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [&n, refs, capacity](
-	  Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &r) {
+	  Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
 	return true;
@@ -237,7 +237,7 @@ struct TestLink :
   }
   void recordSentPkt(
     Zquic::PktNumSpace::T level, uint64_t pn, unsigned bytes,
-    const typename Base::TxPktRefs &refs, bool ackEliciting,
+    const Base::TxPktRefs &refs, bool ackEliciting,
     Zquic::PktType::T packetType = Zquic::PktType::N) {
     Base::recordTxPkt_(
       level, pn, bytes, refs, ackEliciting, false, 0,
@@ -250,7 +250,7 @@ struct TestLink :
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [this, &n, refs, capacity](Zquic::PktBuild &build, ZiSockAddr,
-	  const typename Base::TxPktRefs &r) {
+	  const Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
 	recordSentPkt(
@@ -276,7 +276,7 @@ struct TestLink :
       [](Zquic::PktBuild &) { return true; },
       [this](
 	  Zquic::PktBuild &build, ZiSockAddr,
-	  const typename Base::TxPktRefs &refs) {
+	  const Base::TxPktRefs &refs) {
 	recordSentPkt(
 	  Zquic::PktNumSpace::AppData, sentPkts, build.bytes(), refs, true);
 	++sentPkts;
@@ -572,7 +572,7 @@ struct TestLink :
     bool ok = Base::flushEarlyStreams_(
       ZiSockAddr{},
       [this, &n, refs, capacity](Zquic::PktBuild &build, ZiSockAddr,
-	  const typename Base::TxPktRefs &r) {
+	  const Base::TxPktRefs &r) {
 	n = r.count();
 	for (unsigned i = 0; i < n && i < capacity; ++i) refs[i] = r[i];
 	recordSentPkt(
@@ -612,7 +612,7 @@ struct TestLink :
       [this, qlogSeen](
 	  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 		  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-		  typename Base::RxAckMeta &ack, auto *qlog) {
+		  Base::RxAckMeta &ack, auto *qlog) {
 	if (qlogSeen) *qlogSeen = qlog != nullptr;
 	return Base::consumeProtFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
@@ -632,7 +632,7 @@ struct TestLink :
 	      [this](
 		  Zquic::PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 		  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-		  typename Base::RxAckMeta &ack, auto *qlog, bool earlyData) {
+		  Base::RxAckMeta &ack, auto *qlog, bool earlyData) {
 		return Base::consumeProtFrames_(
 		  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
 		  [](size_t, ZuBSpan, ZiSockAddr) { return true; },

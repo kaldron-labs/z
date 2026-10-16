@@ -257,7 +257,7 @@ class ZmLHash__;
 // local, static
 template <typename Hash, typename NTP>
 class ZmLHash__<Hash, NTP, true, true> {
-  using Lock = typename NTP::Lock;
+  using Lock = NTP::Lock;
 
 public:
   static unsigned loadFactor_() { return 16; }
@@ -280,7 +280,7 @@ class ZmLHash__<Hash, NTP, false, true> :
 // local, dynamic
 template <typename Hash, typename NTP>
 class ZmLHash__<Hash, NTP, true, false> {
-  using Lock = typename NTP::Lock;
+  using Lock = NTP::Lock;
 
 public:
   unsigned loadFactor_() const { return m_loadFactor; }
@@ -337,9 +337,9 @@ class ZmLHash_ : public ZmLHash__<Hash, NTP> {
   static constexpr auto ValAxor = NTP::ValAxor;
   using Key = ZuRDecay<decltype(KeyAxor(ZuDeclVal<const T &>()))>;
   using Val = ZuRDecay<decltype(ValAxor(ZuDeclVal<const T &>()))>;
-  using Cmp = typename NTP::template CmpT<Key>;
-  using ValCmp = typename NTP::template ValCmpT<Val>;
-  using HashFn = typename NTP::template HashFnT<Key>;
+  using Cmp = NTP::template CmpT<Key>;
+  using ValCmp = NTP::template ValCmpT<Val>;
+  using HashFn = NTP::template HashFnT<Key>;
   using Node = ZmLHash_Node<T, KeyAxor, ValAxor>;
   using Ops = ZmLHash_Ops<Node>;
 
@@ -365,9 +365,9 @@ class ZmLHash_<Hash, T, NTP, 0> : public ZmLHash__<Hash, NTP> {
   static constexpr auto ValAxor = NTP::ValAxor;
   using Key = ZuRDecay<decltype(KeyAxor(ZuDeclVal<const T &>()))>;
   using Val = ZuRDecay<decltype(ValAxor(ZuDeclVal<const T &>()))>;
-  using Cmp = typename NTP::template CmpT<Key>;
-  using ValCmp = typename NTP::template ValCmpT<Val>;
-  using HashFn = typename NTP::template HashFnT<Key>;
+  using Cmp = NTP::template CmpT<Key>;
+  using ValCmp = NTP::template ValCmpT<Val>;
+  using HashFn = NTP::template HashFnT<Key>;
   using Node = ZmLHash_Node<T, KeyAxor, ValAxor>;
   using Ops = ZmLHash_Ops<Node>;
   enum { Local = NTP::Local };
@@ -426,7 +426,7 @@ template <typename, typename, typename, unsigned> friend class ZmLHash_;
 
 friend class ZmLHash__<typename ZmLHash_Impl<T_, NTP, Impl_>::Type, NTP>;
 
-  using Impl = typename ZmLHash_Impl<T_, NTP, Impl_>::Type;
+  using Impl = ZmLHash_Impl<T_, NTP, Impl_>::Type;
   using Base = ZmLHash_<Impl, T_, NTP, NTP::Static>;
 
 public:
@@ -437,10 +437,10 @@ public:
   using ValRet = decltype(ValAxor(ZuDeclVal<const T &>()));
   using Key = ZuRDecay<KeyRet>;
   using Val = ZuRDecay<ValRet>;
-  using Cmp = typename NTP::template CmpT<Key>;
-  using ValCmp = typename NTP::template ValCmpT<Val>;
-  using HashFn = typename NTP::template HashFnT<Key>;
-  using Lock = typename NTP::Lock;
+  using Cmp = NTP::template CmpT<Key>;
+  using ValCmp = NTP::template ValCmpT<Val>;
+  using HashFn = NTP::template HashFnT<Key>;
+  using Lock = NTP::Lock;
   static constexpr auto ID = NTP::ID;
   enum { Static = NTP::Static };
 

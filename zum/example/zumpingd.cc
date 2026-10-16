@@ -122,17 +122,16 @@ static Zum::ServiceManifest manifest()
   }, 1};
 }
 
-template <typename Heap = ZuVoid>
-struct RawData_ : public Heap, public ZmObject  {
+struct RawData : public ZmNHeap<RawData>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumpingd.RawData"> ZmNHeapID(RawData *);
+
   Zum::String data;
-  RawData_ &operator =(ZuSpan<uint8_t> value) { data = value; return *this; }
+  RawData &operator =(ZuSpan<uint8_t> value) { data = value; return *this; }
 };
-ZuDerive(RawDataHeap, (ZmHeap<"Zum.zumpingd.RawData", RawData_<>>));
-ZuDerive(RawData, (RawData_<RawDataHeap>));
-template <typename Heap = ZuVoid>
-struct Reply_ : public Heap, public ZmObject  { String body; String location; };
-ZuDerive(ReplyHeap, (ZmHeap<"Zum.zumpingd.Reply", Reply_<>>));
-ZuDerive(Reply, (Reply_<ReplyHeap>));
+
+struct Reply : public ZmNHeap<Reply>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumpingd.Reply"> ZmNHeapID(Reply *);
+ String body; String location; };
 
 template <unsigned Status_>
 struct Response : public Zrest::ResBuilder<Response<Status_>, Reply> {

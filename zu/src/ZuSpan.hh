@@ -67,10 +67,10 @@ template <auto, unsigned> struct RStringSeq_;
 template <auto S> struct RStringSeq_<S, 0> { using T = ZuSeq<>; };
 template <auto S> struct RStringSeq_<S, 1> { using T = ZuSeq<>; };
 template <auto S, unsigned N> struct RStringSeq_ {
-  using T = typename RStringSeq_<S, N - 1>::T::template Push<S[N - 1]>;
+  using T = RStringSeq_<S, N - 1>::T::template Push<S[N - 1]>;
 };
 template <auto S>
-using RStringSeq = typename RStringSeq_<S, S.length()>::T;
+using RStringSeq = RStringSeq_<S, S.length()>::T;
 
 } // Zu_::Span
 
@@ -135,7 +135,7 @@ public:
       bool(ZuIsConvertible<U, V>{})> { };
   template <
     typename U, typename V = T,
-    typename Elem = typename ZuTraits<U>::Elem>
+    typename Elem = ZuTraits<U>::Elem>
   struct IsStrLiteral : public ZuBool<
     bool(IsChar_<ZuStrip<Elem>>{}) &&
     bool(IsLiteralArray_<U, Elem>{})> { };
@@ -145,7 +145,7 @@ public:
 // from array of primitive types
   template <
     typename U, typename V = T,
-    typename Elem = typename ZuTraits<U>::Elem>
+    typename Elem = ZuTraits<U>::Elem>
   struct IsPrimitiveArray : public ZuBool<
     !IsStrLiteral<U>{} &&
     ZuTraits<U>::IsArray &&
@@ -168,7 +168,7 @@ public:
 // from equivalent ZuSpan
   template <
     typename U, typename V = T,
-    typename Elem = typename ZuTraits<U>::Elem>
+    typename Elem = ZuTraits<U>::Elem>
   struct IsZuSpan : public ZuBool<
     !IsStrLiteral<U>{} &&
     !IsPrimitiveArray<U>{} &&
@@ -182,7 +182,7 @@ public:
 // from other array
   template <
     typename U, typename V = T,
-    typename Elem = typename ZuTraits<U>::Elem>
+    typename Elem = ZuTraits<U>::Elem>
   struct IsOtherSpan : public ZuBool<
     !IsStrLiteral<U>{} &&
     !IsPrimitiveArray<U>{} &&

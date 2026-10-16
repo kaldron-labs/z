@@ -210,7 +210,7 @@ template <typename ...Key> struct MinMax<ZuTypeList<Key...>> {
 // compile-time automaton builder
 template <typename ID, unsigned N_, bool Switch>
 struct Automaton__ {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
   using MinMax_ = MinMax<Keys>;
   static constexpr unsigned N = N_;
   static constexpr unsigned Begin = MinMax_::min();
@@ -280,13 +280,13 @@ __attribute__((no_instrument_function))
 template <typename ID, bool Switch> struct Automaton_;
 template <typename ID>
 struct Automaton_<ID, true> {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
   static constexpr unsigned N = Total<Keys>::length() + 1;
   using T = Automaton__<ID, N, true>;
 };
 template <typename ID>
 struct Automaton_<ID, false> {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
 // - each automaton is built twice to minimize memory, once as a compile-time
 //   temporary using an upper bound on the number of nodes, then again with
 //   the minimum number of nodes actually needed for the specific keys
@@ -300,7 +300,7 @@ ZuDerive(Automaton, (Automaton_<ID, Switch>::T));
 
 template <typename ID, bool Switch, unsigned N = ID::Keys::N>
 struct Matcher {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
 
   ZuAssert(N == Keys::N);
   ZuAssert(N >= 2);
@@ -405,7 +405,7 @@ struct Matcher {
 
 template <typename ID, bool Switch>
 struct Matcher<ID, Switch, 0> {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
 
   ZuAssert(Keys::N == 0);
 
@@ -417,7 +417,7 @@ struct Matcher<ID, Switch, 0> {
 
 template <typename ID, bool Switch>
 struct Matcher<ID, Switch, 1> {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
   using Key = ZuType<0, Keys>;
 
   ZuAssert(Keys::N == 1);
@@ -445,7 +445,7 @@ struct Matcher<ID, Switch, 1> {
 // ZuMatcher<ID>(), where ID::Keys is a ZuTypeList
 template <typename ID, bool Switch = true>
 constexpr auto ZuMatcher() {
-  using Keys = typename ID::Keys;
+  using Keys = ID::Keys;
   ZuAssert(Keys::N < 256);
   return Zu_::AhoCorasick::Matcher<ID, Switch>{};
 }

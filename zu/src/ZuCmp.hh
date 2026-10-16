@@ -262,7 +262,7 @@ template <typename T> struct ZuCmp_NonPrimitive : public ZuCmp_NullFn<T> {
 // comparison of pointers (including smart pointers)
 
 template <typename T> struct ZuCmp_Pointer {
-  using P = typename ZuTraits<T>::Elem;
+  using P = ZuTraits<T>::Elem;
   ZuInline static constexpr int cmp(const P *l, const P *r) {
     return (l > r) - (l < r);
   }

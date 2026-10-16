@@ -9,10 +9,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct SessionCleanupSaga_ : public Heap,
-    public ZdbSaga<SessionCleanupSaga_<Heap>, DB> {
-  using Base = ZdbSaga<SessionCleanupSaga_<Heap>, DB>;
+struct SessionCleanupSaga : public ZmNHeap<SessionCleanupSaga>,
+    public ZdbSaga<SessionCleanupSaga, DB> {
+friend inline ZuStringT<"Zum.SessionCleanupSaga"> ZmNHeapID(SessionCleanupSaga *);
+
+  using Base = ZdbSaga<SessionCleanupSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -57,16 +58,13 @@ struct SessionCleanupSaga_ : public Heap,
   }
   ZdbSagaPhase(1, zum.session, Update) { complete(true); return {}; }
 
-  SessionCleanupSaga_() = default;
-  SessionCleanupSaga_(SessionDeleteVec sessions_, int64_t updated_) :
+  SessionCleanupSaga() = default;
+  SessionCleanupSaga(SessionDeleteVec sessions_, int64_t updated_) :
     sessions(ZuMv(sessions_)), updated{updated_} { }
-  SessionCleanupSaga_(SessionCleanupArgs args) :
-    SessionCleanupSaga_{ZuMv(args.sessions), args.updated} { }
-  ~SessionCleanupSaga_() override;
+  SessionCleanupSaga(SessionCleanupArgs args) :
+    SessionCleanupSaga{ZuMv(args.sessions), args.updated} { }
+  ~SessionCleanupSaga() override;
 };
-
-using SessionCleanupSaga = SessionCleanupSaga_<
-  ZmHeap<"Zum.SessionCleanupSaga", SessionCleanupSaga_<>>>;
 
 ZfStruct(, (SessionCleanupSaga, FB),
   (sessions,	(Ctor<0>),	UDT),
@@ -75,8 +73,7 @@ Zfb::AsTable<"Zum.fbs.SessionCleanup"> Zfb_Fmt(SessionCleanupSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<SessionCleanupSaga>{}));
 
-template <typename Heap>
-SessionCleanupSaga_<Heap>::~SessionCleanupSaga_() = default;
+SessionCleanupSaga::~SessionCleanupSaga() = default;
 
 SagaRef sessionCleanup(ZuBSpan data) {
   return SessionCleanupSaga::load(data);

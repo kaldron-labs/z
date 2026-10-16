@@ -49,12 +49,11 @@ using WireIndex = ZmLHashKV<WireKey, unsigned,
   ZmLHashID<wireIndexID, ZmLHashLocal<>>>;
 enum { WireIndexThreshold = 48 };
 
-template <typename Heap = ZuVoid>
-struct SchemaIndex_ : Heap {
+struct Schema::Index : ZmNHeap<Schema::Index> {
+friend inline ZuStringT<"Zpb.Reflect.Index"> ZmNHeapID(Index *);
+
   WireIndex fields;
 };
-struct Schema::Index :
-  SchemaIndex_<ZmHeap<"Zpb.Reflect.Index", SchemaIndex_<>>> { };
 
 Schema::Schema(ZuBSpan bytes, bool prepareFields) :
   m_bytes{bytes.data(), bytes.length()},

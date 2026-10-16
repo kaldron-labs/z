@@ -18,7 +18,7 @@ using flatcdep::O0;
 
 ZuAssert((O0::Heap::HeapID{}() == "flatcdep.O0.heap"_z));
 ZuAssert((O0::Base_::HeapID{}() == "flatcdep.O0.base"_z));
-using Name = typename ZuTraits<O0::E0>::Elem;
+using Name = ZuTraits<O0::E0>::Elem;
 ZuAssert((Name::HeapID{}() == "flatcdep.O0.e0"_z));
 
 int main(int argc, char **argv)

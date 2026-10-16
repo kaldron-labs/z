@@ -14,13 +14,14 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-class SessionComplete__ : public Heap, public ZmObject  {
+class SessionComplete_ : public ZmNHeap<SessionComplete_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.session.SessionComplete"> ZmNHeapID(SessionComplete_ *);
+
 public:
-  SessionComplete__(SessionFn complete) : m_complete{ZuMv(complete)} { }
+  SessionComplete_(SessionFn complete) : m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error, Session session = {}, String token = {}) {
-    m_request->complete([self = ZmRef<SessionComplete__>{this}, error,
+    m_request->complete([self = ZmRef<SessionComplete_>{this}, error,
 	  session = ZuMv(session), token = ZuMv(token)]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(error, ZuMv(session), ZuMv(token));
@@ -34,17 +35,15 @@ private:
   ZmRef<Request>	m_request;
   SessionFn	m_complete;
 };
-ZuDerive(SessionCompleteHeap,
-  (ZmHeap<"Zum.zumd.session.SessionComplete", SessionComplete__<>>));
-ZuDerive(SessionComplete_, (SessionComplete__<SessionCompleteHeap>));
 
-template <typename Heap = ZuVoid>
-class SessionDoneComplete__ : public Heap, public ZmObject  {
+class SessionDoneComplete_ : public ZmNHeap<SessionDoneComplete_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.session.SessionDoneComplete"> ZmNHeapID(SessionDoneComplete_ *);
+
 public:
-  SessionDoneComplete__(SessionDoneFn complete) : m_complete{ZuMv(complete)} { }
+  SessionDoneComplete_(SessionDoneFn complete) : m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error) {
-    m_request->complete([self = ZmRef<SessionDoneComplete__>{this}, error]() {
+    m_request->complete([self = ZmRef<SessionDoneComplete_>{this}, error]() {
       auto complete = ZuMv(self->m_complete);
       complete(error);
     });
@@ -57,10 +56,6 @@ private:
   ZmRef<Request>	m_request;
   SessionDoneFn	m_complete;
 };
-ZuDerive(SessionDoneCompleteHeap,
-  (ZmHeap<"Zum.zumd.session.SessionDoneComplete", SessionDoneComplete__<>>));
-ZuDerive(SessionDoneComplete_,
-  (SessionDoneComplete__<SessionDoneCompleteHeap>));
 
 static void issue_(DB *db, Ztls::Random &rng,
     SessionConfig config, SessionFn complete)

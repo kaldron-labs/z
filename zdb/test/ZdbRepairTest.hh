@@ -111,7 +111,7 @@ inline void repairBindings(Zdb_::Store *store)
     check(find.template operator()<1>());
     check(find.template operator()<2>());
     {
-      using Group = typename SplitKey<T, 2>::GroupKey;
+      using Group = SplitKey<T, 2>::GroupKey;
       Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<Group>::N};
       key.finish(Zfb::save(key, Group{row.stamp}));
       auto keyBuf = key.buf();
@@ -332,7 +332,7 @@ inline void repairSaga(
 	completed.wait();
 	ZuCheckRT(outcome == !fail);
       }
-      using Tuple = typename Zdb_::Table<RepairRow>::Tuple;
+      using Tuple = Zdb_::Table<RepairRow>::Tuple;
       auto found = ZmBlock<ZuTuple<unsigned, bool>>{}([
 	table = table.ptr()
       ](auto wake) mutable {

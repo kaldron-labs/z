@@ -353,7 +353,7 @@ struct GetPathIndex_<Props, true> {
   using T = GetValue<Props, PathIndex>;
 };
 template <typename Props>
-using GetPathIndex = typename GetPathIndex_<Props>::T;
+using GetPathIndex = GetPathIndex_<Props>::T;
 
 // GetID<Field> - ZuStringT
 // - gets the JSON-specific ID for the field
@@ -369,7 +369,7 @@ struct GetID_<Field, true> {
   using T = GetValue<typename Field::Props, ID>;
 };
 template <typename Field>
-using GetID = typename GetID_<Field>::T;
+using GetID = GetID_<Field>::T;
 
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
@@ -381,7 +381,7 @@ struct GetBytesFmt_<Props, true> {
   using T = GetValue<Props, BytesFmt>;
 };
 template <typename Props>
-using GetBytesFmt = typename GetBytesFmt_<Props>::T;
+using GetBytesFmt = GetBytesFmt_<Props>::T;
 
 // GetNumberFmt - ZuFmt
 template <typename Props, bool = HasType<Props, NumberFmt>{}>
@@ -393,7 +393,7 @@ struct GetNumberFmt_<Props, true> {
   using T = GetType<Props, NumberFmt>;
 };
 template <typename Props>
-using GetNumberFmt = typename GetNumberFmt_<Props>::T;
+using GetNumberFmt = GetNumberFmt_<Props>::T;
 
 // GetBoolFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BoolFmt>{}>
@@ -405,7 +405,7 @@ struct GetBoolFmt_<Props, true> {
   using T = GetValue<Props, BoolFmt>;
 };
 template <typename Props>
-using GetBoolFmt = typename GetBoolFmt_<Props>::T;
+using GetBoolFmt = GetBoolFmt_<Props>::T;
 
 // GetTimeFmt - {Fmt, Scale, NDP}
 template <typename Props, bool = HasType<Props, TimeFmt>{}>
@@ -413,7 +413,7 @@ struct GetTimeFmt_ { using T = ZfURI::TimeFmt<ZfURI::ISO, 0, 3>; };
 template <typename Props>
 struct GetTimeFmt_<Props, true> { using T = GetType<Props, TimeFmt>; };
 template <typename Props>
-using GetTimeFmt = typename GetTimeFmt_<Props>::T;
+using GetTimeFmt = GetTimeFmt_<Props>::T;
 
 } // ZuFieldProp::URI
 
@@ -496,35 +496,31 @@ public:
   using Index = ZuTypeIndex<T, TL>;
 };
 
-template <typename Data, typename Heap = ZuVoid>
-class Node_ : public Heap, public AnyNode {
+template <typename Data>
+class Node : public ZmNHeap<Node<Data>>, public AnyNode {
+friend inline Node_HeapID ZmNHeapID(Node *);
 
 public:
-  Node_ &operator =(const Node_ &) = delete;
-  Node_ &operator =(Node_ &&) = delete;
+  Node &operator =(const Node &) = delete;
+  Node &operator =(Node &&) = delete;
 
 private:
-  Node_(const Node_ &) = delete;
-  Node_(Node_ &&) = delete;
+  Node(const Node &) = delete;
+  Node(Node &&) = delete;
 
 public:
   using AnyNode::TL;
 
-  Node_() : AnyNode{ZuTypeIndex<Data, TL>{}()} { }
+  Node() : AnyNode{ZuTypeIndex<Data, TL>{}()} { }
   template <typename ...Args,
     decltype(Data(ZuDeclVal<Args &&>()...), int()) = 0>
-  Node_(Args &&...args) :
+  Node(Args &&...args) :
     AnyNode{ZuTypeIndex<Data, TL>{}()},
     data(ZuFwd<Args>(args)...) { }
-  ~Node_() = default;
+  ~Node() = default;
 
   Data	data;
 };
-
-template <typename Data>
-using Node_Heap = ZmHeap_<Node_HeapID, Node_<Data>>;
-template <typename Data>
-ZuDerive(Node, (Node_<Data, Node_Heap<Data>>));
 
 template <typename Data>
 inline bool AnyNode::has() const {
@@ -644,9 +640,9 @@ bool asArray(ZuPtr<AnyNode> &node) {
   return true;
 }
 
-using NodeArray = typename AnyNode::Array;
+using NodeArray = AnyNode::Array;
 using CNodeArray = const NodeArray;
-using NodeObject = typename AnyNode::Object;
+using NodeObject = AnyNode::Object;
 using CNodeObject = const NodeObject;
 
 // scan URI (path + query), or form body, and build parse tree
@@ -773,7 +769,7 @@ template <typename O, typename Facet>
 struct AsDeflt_<O, Facet, ZuTypeList<>> { using T = AsString; };
 struct AsDeflt {
   template <typename O, typename Facet>
-  using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
+  using Handler = AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
 } // ZfURI
@@ -813,9 +809,9 @@ struct IsObjPtr__<U, true> {
 template <typename U, typename = As<U>>
 struct IsObjPtr_ { using T = ZuFalse; };
 template <typename U>
-struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+struct IsObjPtr_<U, AsDeflt> { using T = IsObjPtr__<U>::T; };
 template <typename U>
-using IsObjPtr = typename IsObjPtr_<U>::T;
+using IsObjPtr = IsObjPtr_<U>::T;
 
 template <typename T, bool = IsObjPtr<ZuDecay<T>>{}>
 struct ObjType_ { using T_ = ZuDecay<T>; };
@@ -824,7 +820,7 @@ struct ObjType_<T, true> {
   using T_ = ZuDecay<decltype(*(ZuDeclVal<const ZuDecay<T> &>()))>;
 };
 template <typename T>
-using ObjType = typename ObjType_<T>::T_;
+using ObjType = ObjType_<T>::T_;
 template <typename T>
 ZuInline decltype(auto) obj_(const T &v) {
   if constexpr (IsObjPtr<ZuDecay<T>>{}) return *v;
@@ -937,7 +933,7 @@ struct AsObject {
 	  this->template loadField<ZfFieldFilter::Load, Field>(
 	    [&o]<typename V>(V &&v, bool deflt)
 	  {
-	    using Props = typename Field::Props;
+	    using Props = Field::Props;
 	    if ((!Incremental && (
 		  ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 		  ZuFieldProp::HasDeflt<Props>{}())) ||
@@ -958,7 +954,7 @@ struct AsObject {
 	this->template loadField<ZfFieldFilter::Load, Field>(
 	  [o]<typename V>(V &&v, bool deflt)
 	{
-	  using Props = typename Field::Props;
+	  using Props = Field::Props;
 	  if ((!Incremental && (
 		ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 		ZuFieldProp::HasDeflt<Props>{}())) ||
@@ -975,7 +971,7 @@ struct AsObject {
       O &o = *static_cast<O *>(o_);
       ZuUnroll::all<InitFields>([this, &o]<typename Field>() {
 	loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  using Props = typename Field::Props;
+	  using Props = Field::Props;
 	  if ((!Incremental && (
 		ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 		ZuFieldProp::HasDeflt<Props>{}())) ||
@@ -989,7 +985,7 @@ struct AsObject {
       ZmAssert_(valid);
       ZuUnroll::all<LoadFields>([this, &o]<typename Field>() {
 	this->loadField<ZfFieldFilter::Load, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  using Props = typename Field::Props;
+	  using Props = Field::Props;
 	  if ((!Incremental && (
 		ZuTypeIn<ZuFieldProp::Reset, Props>{}() ||
 		ZuFieldProp::HasDeflt<Props>{}())) ||
@@ -1002,7 +998,7 @@ struct AsObject {
       ZmAssert_(valid);
       ZuUnroll::all<UpdFields>([this, &o]<typename Field>() {
 	this->loadField<ZfFieldFilter::Upd, Field>([&o]<typename V>(V &&v, bool deflt) {
-	  using Props = typename Field::Props;
+	  using Props = Field::Props;
 	  if (ZuTypeIn<ZuFieldProp::Reset, Props>{}() || !deflt)
 	    Field::set(o, ZuFwd<V>(v));
 	});
@@ -1027,7 +1023,7 @@ struct AsObject {
       bool output = false;
       ZuSwitch::dispatch<O::N - 2>(type - 2, [&o, &l, &output](auto I_) {
 	static constexpr unsigned I = I_ + 2;
-	using V = typename O::template Type<I>;
+	using V = O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {
 	  l(v);
@@ -1045,7 +1041,7 @@ struct AsObject {
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
       dispatch_(o, [&s, prefix]<typename V>(const V &v) {
-	using MemberHandler = typename As<V>::template Handler<V, Facet>;
+	using MemberHandler = As<V>::template Handler<V, Facet>;
 	MemberHandler::template save<Filter, Quote>(s, v, prefix);
       });
     }
@@ -1127,7 +1123,7 @@ struct AsArray {
 	using Elem = ZuDecay<decltype(ZuDeclVal<const O &>()[0])>;
 	using U = ObjType<Elem>;
 	using AsString_ = decltype(ZfURI_StringFmt(ZuDeclVal<U *>()));
-	using Handler_ = typename AsString_::template Handler<Quote, U>;
+	using Handler_ = AsString_::template Handler<Quote, U>;
 	unsigned first = 0;
 	if constexpr (IsObjPtr<Elem>{}) {
 	  while (first < n && !o[first]) ++first;
@@ -1160,7 +1156,7 @@ struct AsArray {
       if (!node || !node->has<AnyNode::Array>()) return false;
       if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using U = ObjType<Elem>;
-	using ElemHandler = typename As<U>::template Handler<U, Facet>;
+	using ElemHandler = As<U>::template Handler<U, Facet>;
 	for (const auto &child: node->data<AnyNode::Array>())
 	  if (child && !ElemHandler{child}.valid) return false;
       }
@@ -1203,14 +1199,14 @@ struct AsArray {
       if (n > m) n = m;
       if constexpr (ElemCode == ZfFieldTC::UDT) {
 	if constexpr (!IsObjPtr<Elem>{}) {
-	  using ElemHandler = typename As<Elem>::template Handler<Elem, Facet>;
+	  using ElemHandler = As<Elem>::template Handler<Elem, Facet>;
 	  for (unsigned i = 0; i < n; i++) {
 	    auto handler = ElemHandler{nodes[i]};
 	    if (handler.valid) handler.update(o[i]);
 	  }
 	} else {
 	  using U = ZuDecay<decltype(*(ZuDeclVal<const Elem &>()))>;
-	  using ElemHandler = typename As<U>::template Handler<U, Facet>;
+	  using ElemHandler = As<U>::template Handler<U, Facet>;
 	  for (unsigned i = 0; i < n; i++) {
 	    auto &p = o[i];
 	    auto &child = nodes[i];
@@ -1238,11 +1234,11 @@ struct AsString {
     using O = O_;
 
     using AsString_ = decltype(ZfURI_StringFmt(ZuDeclVal<O *>()));
-    using Handler_ = typename AsString_::template Handler<URIQuote<>, O>;
+    using Handler_ = AsString_::template Handler<URIQuote<>, O>;
 
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
-      using Handler_ = typename AsString_::template Handler<Quote, O>;
+      using Handler_ = AsString_::template Handler<Quote, O>;
       s.delimit();
       s << prefix << '=';
       Handler_::save(s, o);
@@ -1275,7 +1271,7 @@ struct AsJSON {
   struct Handler {
     using O = O_;
 
-    using Handler_ = typename ZfJSON::As<O>::template Handler<O, Facet>;
+    using Handler_ = ZfJSON::As<O>::template Handler<O, Facet>;
 
     template <template <typename> class Filter, typename Quote, typename S>
     static void save(S &s, const O &o, ZuCSpan prefix) {
@@ -1522,12 +1518,12 @@ inline void saveValue(S &s, const T_ &v, ZuCSpan prefix)
     if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
       if constexpr (!IsObjPtr<T>{}) {
-	using Handler = typename As<T>::template Handler<T, Facet>;
+	using Handler = As<T>::template Handler<T, Facet>;
 	Handler::template save<Filter, Quote>(s, v, prefix);
       } else {
 	if (ZuUnlikely(!v)) return;
 	using U = ObjType<T>;
-	using Handler = typename As<U>::template Handler<U, Facet>;
+	using Handler = As<U>::template Handler<U, Facet>;
 	Handler::template save<Filter, Quote>(s, *v, prefix);
       }
     } else {
@@ -1592,8 +1588,8 @@ template <
   typename S, typename O>
 inline void saveField(S &s, const O &o, ZuCSpan prefix)
 {
-  using Type = typename Field::Type;
-  using Props = typename Field::Props;
+  using Type = Field::Type;
+  using Props = Field::Props;
   using Config = ZfURI::Config<Facet>;
 
   // append field ID to prefix (copy on stack)
@@ -1822,7 +1818,7 @@ bool loadPath_(O &o, ZuSpan<char> span, ZuSpan<char> *suffix)
   bool ok = true;
   ZuUnroll::all<Fields>([&o, &span, &ok]<typename Field>() {
     if (!ok) return;
-    using Props = typename Field::Props;
+    using Props = Field::Props;
     constexpr int index = ZuFieldProp::URI::GetPathIndex<Props>{}();
     constexpr int expected = ZuTypeIndex<Field, Fields>{};
     static_assert(index == expected,
@@ -1839,8 +1835,8 @@ bool loadPath_(O &o, ZuSpan<char> span, ZuSpan<char> *suffix)
       return;
     }
     ZuSpan<char> value{span.data(), unsigned(output)};
-    using Type = typename Field::Type;
-    using T = typename Field::T;
+    using Type = Field::Type;
+    using T = Field::T;
     if constexpr (Type::Code == ZfFieldTC::String) {
       Field::set(o, T(value));
     } else if constexpr (
@@ -1912,13 +1908,13 @@ inline auto loadValue(const AnyNode *node)
     if constexpr (TypeCode == ZfFieldTC::UDT) {
       // UDT type - recurse
       if constexpr (!IsObjPtr<T>{}) {
-	using Handler = typename As<T>::template Handler<T, Facet>;
+	using Handler = As<T>::template Handler<T, Facet>;
 	auto handler = Handler{node};
 	if (ZuUnlikely(!handler.valid)) return ZuCmp<T>::null();
 	return handler.ctor();
       } else {
 	using U = ObjType<T>;
-	using Handler = typename As<U>::template Handler<U, Facet>;
+	using Handler = As<U>::template Handler<U, Facet>;
 	auto handler = Handler{node};
 	if (ZuUnlikely(!handler.valid)) return T{};
 	return T{handler.alloc()};
@@ -1963,8 +1959,8 @@ template <template <typename> class Filter, typename Field, typename L>
 inline decltype(auto) AsObject::Handler<O, Facet>::loadField(L &&l) const
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
-  using T = typename Field::T;
+  using Props = Field::Props;
+  using T = Field::T;
   using R = decltype(
     loadValue<Facet, Filter, TypeCode, Props, T>(
 	ZuDeclVal<const AnyNode *>()));
@@ -2007,7 +2003,7 @@ inline S &savePath_(S &s, const O &o) {
   if constexpr (IsObjPtr<T>{}) {
     if (ZuLikely(o)) savePath_<Facet, Filter>(s, *o);
   } else if constexpr (IsUnion<T>{}) {
-    using Handler = typename As<T>::template Handler<T, Facet>;
+    using Handler = As<T>::template Handler<T, Facet>;
     Handler::dispatch_(o, [&s]<typename V>(const V &v) {
       savePath_<Facet, Filter>(s, v);
     });
@@ -2015,11 +2011,11 @@ inline S &savePath_(S &s, const O &o) {
     using PathFields_ = PathFields<ZuTypeGrep<Filter, ZuActiveFields<T, Facet>>>;
     if constexpr (PathFields_::N > 0) {
       ZuUnroll::all<PathFields_>([&s, &o]<typename Field>() {
-	using Type = typename Field::Type;
-	using Props = typename Field::Props;
+	using Type = Field::Type;
+	using Props = Field::Props;
 	if constexpr (Type::Code == ZfFieldTC::UDT) {
 	  // UDT type in the path - process as string
-	  using FieldT = typename Field::T;
+	  using FieldT = Field::T;
 	  using U = ObjType<FieldT>;
 	  const auto &v = Field::get(o);
 	  s << '/';
@@ -2029,7 +2025,7 @@ inline S &savePath_(S &s, const O &o) {
 	  if (!null) {
 	    using AsString = decltype(ZfURI_StringFmt(ZuDeclVal<U *>()));
 	    using StringHandler =
-	      typename AsString::template Handler<URIQuote<false>, U>;
+	      AsString::template Handler<URIQuote<false>, U>;
 	    StringHandler::save(s, obj_(v));
 	  }
 	} else {
@@ -2054,13 +2050,13 @@ inline S &save_(S &s_, const O &o) {
   if constexpr (IsObjPtr<T>{})
     if (ZuUnlikely(!o)) return s_;
   const auto &v = obj_(o);
-  using Handler = typename As<U>::template Handler<U, Facet>;
+  using Handler = As<U>::template Handler<U, Facet>;
   if constexpr (IsUnion<U>{}) {
     Handler::dispatch_(v, [&s_]<typename V>(const V &member) {
       savePath_<Facet, Filter_>(s_, member);
       using Filter = QueryFilter<Filter_>;
       OutQuery<S> s{s_, true, '?'};
-      using MemberHandler = typename As<V>::template Handler<V, Facet>;
+      using MemberHandler = As<V>::template Handler<V, Facet>;
       MemberHandler::template save<
 	Filter::template Filter, URIQuote<false>>(s, member, {});
     });
@@ -2082,12 +2078,12 @@ inline S &saveBody_(S &s_, const O &o) {
   if constexpr (IsObjPtr<T>{})
     if (ZuUnlikely(!o)) return s_;
   const auto &v = obj_(o);
-  using Handler = typename As<U>::template Handler<U, Facet>;
+  using Handler = As<U>::template Handler<U, Facet>;
   if constexpr (IsUnion<U>{}) {
     Handler::dispatch_(v, [&s_]<typename V>(const V &member) {
       using Filter = QueryFilter<Filter_>;
       OutQuery<S> s{s_};
-      using MemberHandler = typename As<V>::template Handler<V, Facet>;
+      using MemberHandler = As<V>::template Handler<V, Facet>;
       MemberHandler::template save<
 	Filter::template Filter, URIQuote<true>>(s, member, {});
     });

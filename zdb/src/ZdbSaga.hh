@@ -249,12 +249,12 @@ public:
   template <unsigned KeyID, typename KeyIDs_ = ZuSeq<>, typename Impl,
     typename Complete, typename L>
   void findUpd(Impl *, Shard,
-    typename Impl::template Key<KeyID>, Complete &&, L &&);
+    Impl::template Key<KeyID>, Complete &&, L &&);
   template <typename T, typename Impl, typename Complete, typename L>
   void del(Impl *, ZmRef<Row<T>>, Complete &&, L &&);
   template <unsigned KeyID, typename Impl, typename Complete, typename L>
   void findDel(
-    Impl *, Shard, typename Impl::template Key<KeyID>,
+    Impl *, Shard, Impl::template Key<KeyID>,
     Complete &&, L &&);
 
 protected:
@@ -271,11 +271,11 @@ private:
   template <typename KeyIDs_, typename T, typename Impl, typename Call>
   void update_(Impl *, Shard, ZmRef<Row<T>>, UN, bool, Call);
   template <unsigned KeyID, typename KeyIDs_, typename Impl, typename Call>
-  void findUpd_(Impl *, Shard, typename Impl::template Key<KeyID>, Call);
+  void findUpd_(Impl *, Shard, Impl::template Key<KeyID>, Call);
   template <typename T, typename Impl, typename Call>
   void del_(Impl *, Shard, ZmRef<Row<T>>, UN, bool, Call);
   template <unsigned KeyID, typename Impl, typename Call>
-  void findDel_(Impl *, Shard, typename Impl::template Key<KeyID>, Call);
+  void findDel_(Impl *, Shard, Impl::template Key<KeyID>, Call);
 
   SagaShards	m_shards; // indexed by expanded step
   DB		*m_db = nullptr;
@@ -362,13 +362,13 @@ ZuDerive(SagaDefs,
   (ZtArray<SagaDef, ZtArrayHeapID<"Zdb.SagaDefs">>));
 
 ZmLHashKVDerive(SagaDefHash_, ZuCSpan, unsigned, ZmLHashLocal<>);
-template <typename Heap = ZuVoid>
-struct SagaDefHashT : public Heap, public ZmPolymorph,
+struct SagaDefHashT : public ZmNHeap<SagaDefHashT>, public ZmPolymorph,
     public SagaDefHash_ {
+friend inline ZuStringT<"Zdb.Saga.Def.Hash"> ZmNHeapID(SagaDefHashT *);
+
   SagaDefHashT(unsigned n) : SagaDefHash_{ZmHashParams{n}} { }
 };
-using SagaDefHash = SagaDefHashT<
-  ZmHeap<"Zdb.Saga.Def.Hash", SagaDefHashT<>>>;
+using SagaDefHash = SagaDefHashT;
 
 template <typename KeyIDs, typename Impl, typename Call>
 struct SagaFindUpdate {
@@ -414,12 +414,11 @@ private:
   static void terminal_(DB *, ZmRef<AnySaga_>, SagaCompleteFn, bool);
 };
 
-template <typename Heap = ZuVoid>
-struct SagaHash_ : public Heap, public SagaHash {
-  ZuDerive_(SagaHash_, SagaHash)
+struct SagaHashObj : public ZmNHeap<SagaHashObj>, public SagaHash {
+friend inline ZuStringT<"Zdb.Saga.Hash"> ZmNHeapID(SagaHashObj *);
+
+  ZuDerive_(SagaHashObj, SagaHash)
 };
-ZuDerive(SagaHashHeap, (ZmHeap<"Zdb.Saga.Hash", SagaHash_<>>));
-ZuDerive(SagaHashObj, (SagaHash_<SagaHashHeap>));
 
 using SagaTypeSeen = ZtArray<uint8_t, ZtArrayHeapID<"Zdb.Saga.Type.Seen">>;
 
@@ -441,12 +440,11 @@ struct SagaCatalog__ {
   ZdbAPI void load(const SagaDefs &, const SagaDefHash_ &, SagaTypeStep);
   ZdbAPI void end(unsigned);
 };
-template <typename Heap = ZuVoid>
-struct SagaCatalog_ : public Heap, public ZmPolymorph, public SagaCatalog__ {
-  ZuDerive_(SagaCatalog_, SagaCatalog__)
+struct SagaCatalog : public ZmNHeap<SagaCatalog>, public ZmPolymorph, public SagaCatalog__ {
+friend inline ZuStringT<"Zdb.Saga.Type"> ZmNHeapID(SagaCatalog *);
+
+  ZuDerive_(SagaCatalog, SagaCatalog__)
 };
-ZuDerive(SagaCatalogHeap, (ZmHeap<"Zdb.Saga.Type", SagaCatalog_<>>));
-ZuDerive(SagaCatalog, (SagaCatalog_<SagaCatalogHeap>));
 
 using SagaStepKey = ZuTuple<ZuCSpan, SagaID, uint32_t>;
 using SagaUNKey = ZuTuple<AnyTable *, Shard, UN>;
@@ -482,19 +480,17 @@ ZmHashDerive(SagaStepHash, SagaUNHash::Node,
 
 ZuDerive(SagaRec, SagaStepHash::Node);
 
-template <typename Heap = ZuVoid>
-struct SagaStepHash_ : public Heap, public SagaStepHash {
-  ZuDerive_(SagaStepHash_, SagaStepHash)
-};
-ZuDerive(SagaStepHashHeap, (ZmHeap<"Zdb.Saga.StepHash", SagaStepHash_<>>));
-ZuDerive(SagaStepHashObj, (SagaStepHash_<SagaStepHashHeap>));
+struct SagaStepHashObj : public ZmNHeap<SagaStepHashObj>, public SagaStepHash {
+friend inline ZuStringT<"Zdb.Saga.StepHash"> ZmNHeapID(SagaStepHashObj *);
 
-template <typename Heap = ZuVoid>
-struct SagaUNHash_ : public Heap, public SagaUNHash {
-  ZuDerive_(SagaUNHash_, SagaUNHash)
+  ZuDerive_(SagaStepHashObj, SagaStepHash)
 };
-ZuDerive(SagaUNHashHeap, (ZmHeap<"Zdb.Saga.UNHash", SagaUNHash_<>>));
-ZuDerive(SagaUNHashObj, (SagaUNHash_<SagaUNHashHeap>));
+
+struct SagaUNHashObj : public ZmNHeap<SagaUNHashObj>, public SagaUNHash {
+friend inline ZuStringT<"Zdb.Saga.UNHash"> ZmNHeapID(SagaUNHashObj *);
+
+  ZuDerive_(SagaUNHashObj, SagaUNHash)
+};
 
 ZuDerive(SagaDataRows,
   (ZtArray<SagaData, ZtArrayHeapID<"Zdb.Saga.Scan.Data">>));
@@ -511,12 +507,11 @@ struct SagaScan__ {
   unsigned	pending = 0;
   uint32_t	step = 0;
 };
-template <typename Heap = ZuVoid>
-struct SagaScan_ : public Heap, public ZmPolymorph, public SagaScan__ {
-  ZuDerive_(SagaScan_, SagaScan__)
+struct SagaScan : public ZmNHeap<SagaScan>, public ZmPolymorph, public SagaScan__ {
+friend inline ZuStringT<"Zdb.Saga.Scan"> ZmNHeapID(SagaScan *);
+
+  ZuDerive_(SagaScan, SagaScan__)
 };
-ZuDerive(SagaScanHeap, (ZmHeap<"Zdb.Saga.Scan", SagaScan_<>>));
-ZuDerive(SagaScan, (SagaScan_<SagaScanHeap>));
 
 template <typename U>
 struct SagaPhases_ {
@@ -528,7 +523,7 @@ struct SagaPhases_ {
 };
 
 template <typename U>
-using SagaPhases = typename SagaPhases_<U>::T;
+using SagaPhases = SagaPhases_<U>::T;
 
 template <typename Phase>
 struct SagaPhaseValid : public ZuBool<

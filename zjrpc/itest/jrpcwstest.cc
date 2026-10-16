@@ -29,8 +29,9 @@ static bool wait(ZmSemaphore &semaphore)
   return semaphore.timedwait(Zm::now(10)) == 0;
 }
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject {
+struct Call : public ZmNHeap<Call>, public ZmObject {
+friend inline ZuStringT<"ZjrpcWSTest.Call"> ZmNHeapID(Call *);
+
   ZmSemaphore done;
   int value = 0;
   unsigned failures = 0;
@@ -38,11 +39,10 @@ struct Call_ : public Heap, public ZmObject {
   void failed() { ++failures; done.post(); }
   void failed(const Zjrpc::Error &) { failed(); }
 };
-using CallHeap = ZmHeap<"ZjrpcWSTest.Call", Call_<>>;
-using Call = Call_<CallHeap>;
 
-template <typename Heap = ZuVoid>
-struct Aggregate_ : public Heap, public ZmObject {
+struct Aggregate : public ZmNHeap<Aggregate>, public ZmObject {
+friend inline ZuStringT<"ZjrpcWSTest.Aggregate"> ZmNHeapID(Aggregate *);
+
   ZmSemaphore done;
   Zjrpc::BatchReply reply;
   unsigned completions = 0;
@@ -54,8 +54,6 @@ struct Aggregate_ : public Heap, public ZmObject {
   }
   void failed() { ++failures; done.post(); }
 };
-using AggregateHeap = ZmHeap<"ZjrpcWSTest.Aggregate", Aggregate_<>>;
-using Aggregate = Aggregate_<AggregateHeap>;
 
 struct App {
   ZmSemaphore notified;
@@ -79,7 +77,7 @@ struct App {
 template <typename Profile>
 struct SrvApp : public App {
   using Server = Zjrpc::WSServer<SrvApp, Catalog, Profile>;
-  using Link = typename Server::Link;
+  using Link = Server::Link;
   ZmSemaphore listening_;
   ZmSemaphore connected_;
   ZmRef<Link> link;

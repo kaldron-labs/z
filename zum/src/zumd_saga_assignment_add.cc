@@ -11,10 +11,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AssignmentAddSaga_ : public Heap,
-    public ZdbSaga<AssignmentAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AssignmentAddSaga_<Heap>, DB>;
+struct AssignmentAddSaga : public ZmNHeap<AssignmentAddSaga>,
+    public ZdbSaga<AssignmentAddSaga, DB> {
+friend inline ZuStringT<"Zum.AssignmentAddSaga"> ZmNHeapID(AssignmentAddSaga *);
+
+  using Base = ZdbSaga<AssignmentAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -109,19 +110,16 @@ struct AssignmentAddSaga_ : public Heap,
     return {};
   }
 
-  AssignmentAddSaga_() = default;
-  AssignmentAddSaga_(AppID appID_, UserID userID_, int64_t created_,
+  AssignmentAddSaga() = default;
+  AssignmentAddSaga(AppID appID_, UserID userID_, int64_t created_,
       IdemRequest request_, ZmRef<AssignmentAddResult> result_ = {}) :
     appID{appID_}, userID{userID_}, created{created_},
     request{ZuMv(request_)}, result{ZuMv(result_)} { }
-  AssignmentAddSaga_(AssignmentAddArgs args) :
-    AssignmentAddSaga_{args.appID, args.userID, args.created,
+  AssignmentAddSaga(AssignmentAddArgs args) :
+    AssignmentAddSaga{args.appID, args.userID, args.created,
       ZuMv(args.request), ZuMv(args.result)} { }
-  ~AssignmentAddSaga_() override;
+  ~AssignmentAddSaga() override;
 };
-
-using AssignmentAddSaga = AssignmentAddSaga_<
-  ZmHeap<"Zum.AssignmentAddSaga", AssignmentAddSaga_<>>>;
 
 ZfStruct(, (AssignmentAddSaga, FB),
   (appID,	(Ctor<0>),	UInt64),
@@ -133,8 +131,7 @@ Zfb::AsTable<"Zum.fbs.AssignmentAdd"> Zfb_Fmt(AssignmentAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<AssignmentAddSaga>{}));
 
-template <typename Heap>
-AssignmentAddSaga_<Heap>::~AssignmentAddSaga_() = default;
+AssignmentAddSaga::~AssignmentAddSaga() = default;
 
 SagaRef assignmentAdd(ZuBSpan data) {
   return AssignmentAddSaga::load(data);

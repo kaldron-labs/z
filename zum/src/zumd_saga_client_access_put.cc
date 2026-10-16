@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ClientAccessPutSaga_ : public Heap,
-    public ZdbSaga<ClientAccessPutSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ClientAccessPutSaga_<Heap>, DB>;
+struct ClientAccessPutSaga : public ZmNHeap<ClientAccessPutSaga>,
+    public ZdbSaga<ClientAccessPutSaga, DB> {
+friend inline ZuStringT<"Zum.ClientAccessPutSaga"> ZmNHeapID(ClientAccessPutSaga *);
+
+  using Base = ZdbSaga<ClientAccessPutSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -75,8 +76,8 @@ struct ClientAccessPutSaga_ : public Heap,
     return {};
   }
 
-  ClientAccessPutSaga_() = default;
-  ClientAccessPutSaga_(App app_, ClientAccess before_, ClientAccess values_, String ifMatch_, String ifNoneMatch_, int64_t updated_, IdemRequest request_) :
+  ClientAccessPutSaga() = default;
+  ClientAccessPutSaga(App app_, ClientAccess before_, ClientAccess values_, String ifMatch_, String ifNoneMatch_, int64_t updated_, IdemRequest request_) :
     app{ZuMv(app_)},
     before{ZuMv(before_)},
     values{ZuMv(values_)},
@@ -84,19 +85,15 @@ struct ClientAccessPutSaga_ : public Heap,
     ifNoneMatch{ZuMv(ifNoneMatch_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  ClientAccessPutSaga_(ClientAccessPutArgs args) :
-    ClientAccessPutSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), ZuMv(args.updated), ZuMv(args.request)} {
+  ClientAccessPutSaga(ClientAccessPutArgs args) :
+    ClientAccessPutSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<ClientAccess>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~ClientAccessPutSaga_() override;
+  ~ClientAccessPutSaga() override;
 };
-
-
-using ClientAccessPutSaga = ClientAccessPutSaga_<
-  ZmHeap<"Zum.ClientAccessPutSaga", ClientAccessPutSaga_<>>>;
 
 ZfStruct(, (ClientAccessPutSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -108,24 +105,20 @@ ZfStruct(, (ClientAccessPutSaga, FB),
   (request,	(Ctor<6>),	UDT));
 Zfb::AsTable<"Zum.fbs.ClientAccessPut"> Zfb_Fmt(ClientAccessPutSaga *);
 
-template <typename Heap>
-unsigned ClientAccessPutSaga_<Heap>::appError(const App &item) const
+unsigned ClientAccessPutSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-unsigned ClientAccessPutSaga_<Heap>::recordError(const ClientAccess &item) const
+unsigned ClientAccessPutSaga::recordError(const ClientAccess &item) const
 {
   if (auto code = putError(*this, item)) return code;
   return item.authVersion != before.authVersion || before.authVersion == UINT64_MAX ? 409 : 0;
 }
 
-template <typename Heap>
-ClientAccess ClientAccessPutSaga_<Heap>::result() const { return accessResult(*this); }
+ClientAccess ClientAccessPutSaga::result() const { return accessResult(*this); }
 
-template <typename Heap>
-void ClientAccessPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void ClientAccessPutSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.appID || values.appID != app.id || values.appID != before.appID ||
       !values.clientID || values.clientID != before.clientID ||
@@ -149,8 +142,7 @@ void ClientAccessPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<ClientAccessPutSaga>{}));
 
-template <typename Heap>
-ClientAccessPutSaga_<Heap>::~ClientAccessPutSaga_() = default;
+ClientAccessPutSaga::~ClientAccessPutSaga() = default;
 
 SagaRef clientAccessPut(ZuBSpan data) {
   return ClientAccessPutSaga::load(data);

@@ -38,9 +38,10 @@ struct ReplDB : public ZdbSagaDB {
   PauseFn	pausedComplete;
 };
 
-template <typename Heap = ZuVoid>
-struct LiveSaga_ : public Heap, public ZdbSaga<LiveSaga_<Heap>, ReplDB> {
-  using Base = ZdbSaga<LiveSaga_<Heap>, ReplDB>;
+struct LiveSaga : public ZmNHeap<LiveSaga>, public ZdbSaga<LiveSaga, ReplDB> {
+friend inline ZuStringT<"Zdb.Repl.LiveSaga"> ZmNHeapID(LiveSaga *);
+
+  using Base = ZdbSaga<LiveSaga, ReplDB>;
   using Base::db;
   using Type = ZuStringT<"replSaga">;
   enum { NPhases = 2 };
@@ -99,11 +100,11 @@ struct LiveSaga_ : public Heap, public ZdbSaga<LiveSaga_<Heap>, ReplDB> {
 	return {};
   }
 
-  LiveSaga_() = default;
-  LiveSaga_(uint64_t orderID_) : orderID{orderID_} { }
+  LiveSaga() = default;
+  LiveSaga(uint64_t orderID_) : orderID{orderID_} { }
 
 };
-using LiveSaga = LiveSaga_<ZmHeap<"Zdb.Repl.LiveSaga", LiveSaga_<>>>;
+
 ZfStruct(, (LiveSaga, FB),
   (orderID, (Ctor<0>),		UInt64));
 Zfb::AsTable<"zdbtest.fbs.LiveSaga"> Zfb_Fmt(LiveSaga *);
@@ -131,7 +132,7 @@ static bool empty(Zdb *db, ZuCSpan id)
       table->template selectRows<0>({}, 1, [
 	  wake = ZuMv(wake), empty = true
       ](auto result, unsigned) mutable {
-	using Tuple = typename ZdbTable<T>::Tuple;
+	using Tuple = ZdbTable<T>::Tuple;
 	if (result.template is<Tuple>())
 	  empty = false;
 	else

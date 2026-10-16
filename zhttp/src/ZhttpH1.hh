@@ -172,7 +172,7 @@ public:
 
   enum { Request = Request_ };
   using HdrCatalog = HdrCatalog_;
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
   static constexpr uint64_t MaxStartLine = MaxStartLine_;
   static constexpr uint64_t MaxHeaderSection = MaxHeaderSection_;
   using State = ParserState;
@@ -763,7 +763,7 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   using HdrCatalog = HdrCatalog_;
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Chunked = Chunked_ };
 
@@ -796,8 +796,8 @@ private:
     {
 	using List = HeaderList<Catalog>;
 	ZuUnroll::all<List::N>([this, &stream](auto I) {
-	  using Key = typename List::template Key<I>;
-	  using Value = typename List::template Value<I>;
+	  using Key = List::template Key<I>;
+	  using Value = List::template Value<I>;
 	  if constexpr (Value::N) {
 	    using Fixed = HeaderValue<Value>;
 	    builderFixedHeader<Key, Fixed>(impl(), [&stream]() {

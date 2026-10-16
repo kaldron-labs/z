@@ -173,7 +173,7 @@ template <typename CtrlMem_, typename Ctrl_, bool MW>
 class CtrlMgr_ : public ZmRing_::CtrlMgr_<CtrlMem_, Ctrl_, true> {
 protected:
   using CtrlMem = CtrlMem_;
-  using Params = typename CtrlMem::Params;
+  using Params = CtrlMem::Params;
   using Ctrl = Ctrl_;
 
 private:

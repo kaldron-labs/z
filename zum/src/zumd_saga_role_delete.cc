@@ -12,10 +12,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RoleDeleteSaga_ : public Heap,
-    public ZdbSaga<RoleDeleteSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RoleDeleteSaga_<Heap>, DB>;
+struct RoleDeleteSaga : public ZmNHeap<RoleDeleteSaga>,
+    public ZdbSaga<RoleDeleteSaga, DB> {
+friend inline ZuStringT<"Zum.RoleDeleteSaga"> ZmNHeapID(RoleDeleteSaga *);
+
+  using Base = ZdbSaga<RoleDeleteSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -57,7 +58,7 @@ struct RoleDeleteSaga_ : public Heap,
   template <bool Fwd, bool Release, typename Table, typename Complete>
   void refs(Table *table, const BytesVec &images, Complete complete)
   {
-    using T = typename Table::T;
+    using T = Table::T;
     // Decode on the destination shard; the immutable image remains saga-owned.
     auto image = &images[iteration()];
     table->run(0, [this, table, image, complete = ZuMv(complete)]() mutable {
@@ -251,23 +252,18 @@ struct RoleDeleteSaga_ : public Heap,
     return {};
   }
 
-
-
-  RoleDeleteSaga_() = default;
-  RoleDeleteSaga_(App app_, Role role_, BytesVec members_, BytesVec clients_,
+  RoleDeleteSaga() = default;
+  RoleDeleteSaga(App app_, Role role_, BytesVec members_, BytesVec clients_,
       BytesVec admins_, BytesVec maps_, int64_t updated_, IdemRequest request_) :
     app{ZuMv(app_)}, role{ZuMv(role_)}, members(ZuMv(members_)),
     clients(ZuMv(clients_)), admins(ZuMv(admins_)), maps(ZuMv(maps_)),
     updated{updated_}, request{ZuMv(request_)} { }
-  RoleDeleteSaga_(RoleDeleteArgs args) :
-    RoleDeleteSaga_{ZuMv(args.app), ZuMv(args.role), ZuMv(args.members),
+  RoleDeleteSaga(RoleDeleteArgs args) :
+    RoleDeleteSaga{ZuMv(args.app), ZuMv(args.role), ZuMv(args.members),
       ZuMv(args.clients), ZuMv(args.admins), ZuMv(args.maps), args.updated,
       ZuMv(args.request)} { }
-  ~RoleDeleteSaga_() override;
+  ~RoleDeleteSaga() override;
 };
-
-using RoleDeleteSaga = RoleDeleteSaga_<
-  ZmHeap<"Zum.RoleDeleteSaga", RoleDeleteSaga_<>>>;
 
 ZfStruct(ZumAPI, (RoleDeleteSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -282,8 +278,7 @@ Zfb::AsTable<"Zum.fbs.RoleDelete"> Zfb_Fmt(RoleDeleteSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RoleDeleteSaga>{}));
 
-template <typename Heap>
-RoleDeleteSaga_<Heap>::~RoleDeleteSaga_() = default;
+RoleDeleteSaga::~RoleDeleteSaga() = default;
 SagaRef roleDelete(ZuBSpan data) {
   return RoleDeleteSaga::load(data);
 }

@@ -109,7 +109,7 @@ struct Response {
   using Body = void;
 };
 
-template <typename U> using GetResponses = typename U::Responses;
+template <typename U> using GetResponses = U::Responses;
 ZuDerive(IDString, (ZtString<ZtStringHeapID<"Zjrpc.ID">>));
 ZuDerive(ErrorString, (ZtString<ZtStringHeapID<"Zjrpc.Error">>));
 
@@ -202,12 +202,12 @@ template <typename Object, bool = ZuIsBase<Object, ZmObject>{}>
 struct ObjectValue_ { using T = Object; };
 template <typename Object>
 struct ObjectValue_<Object, true> { using T = ZmRef<Object>; };
-template <typename Object> using ObjectValue = typename ObjectValue_<Object>::T;
+template <typename Object> using ObjectValue = ObjectValue_<Object>::T;
 
 template <typename Res, bool = ZuIsSame<void, typename Res::Body>{}>
 struct Reply_ {
   using Response = Res;
-  using Body = typename Res::Body;
+  using Body = Res::Body;
   using Value = ObjectValue<Body>;
 
   Value body;
@@ -234,7 +234,7 @@ consteval bool validName()
 }
 
 template <typename U>
-using ResponseBody = typename U::Body;
+using ResponseBody = U::Body;
 
 template <typename U>
 using NonVoid = ZuBool<!ZuIsSame<U, void>{}>;
@@ -281,14 +281,14 @@ inline O loadObject(const ZfJSON::AnyNode *node)
 template <typename O>
 struct ParamArray {
   using Metadata = ZfJSON::AsObject::Handler<O, ZuFacet::JSON>;
-  using Fields = typename Metadata::LoadFields;
+  using Fields = Metadata::LoadFields;
   const ZfJSON::AnyNode *node;
 
   template <typename Field>
   auto load() const {
     enum { I = ZuTypeIndex<Field, Fields>{} };
-    using Props = typename Field::Props;
-    using T = typename Field::T;
+    using Props = Field::Props;
+    using T = Field::T;
     enum { Code = Field::Type::Code };
     const auto &values = node->data<ZfJSON::AnyNode::Array>();
     using R = decltype(ZfJSON::loadValue<ZuFacet::JSON,
@@ -322,7 +322,7 @@ struct ParamArray {
 template <typename O, typename L>
 bool loadParams(const ZfJSON::AnyNode *node, L &&consume)
 {
-  using Handler = typename ZfJSON::As<O>::template Handler<O, ZuFacet::JSON>;
+  using Handler = ZfJSON::As<O>::template Handler<O, ZuFacet::JSON>;
   if constexpr (ZuIsSame<Handler, ZfJSON::AsObject::Handler<O, ZuFacet::JSON>>{}) {
     if (!node && !ZuFields<O, ZuFacet::JSON>::N) {
       consume(O{});
@@ -459,7 +459,7 @@ struct StructModel {
     static void set(O &o, U &&v) { Base::call(o, ZuFwd<U>(v)); }
   };
   template <typename Field>
-  using Map = typename Field::template Adapt<Adapter>;
+  using Map = Field::template Adapt<Adapter>;
   template <typename Facet>
   using Fields = ZuTypeMap<Map, ZuActiveFields<Shape, Facet>>;
 };
@@ -528,7 +528,7 @@ struct Envelope : public StructModel<Envelope, EnvelopeShape> {
   int		kind = MessageKind::Unusable;
 
   template <typename Facet>
-  friend typename Base::template Fields<Facet> ZuFields_(Envelope *, Facet *);
+  friend Base::template Fields<Facet> ZuFields_(Envelope *, Facet *);
   friend Envelope ZuStructured_(Envelope *);
 
   ZuCSpan jsonrpc() const { return jsonrpc_; }

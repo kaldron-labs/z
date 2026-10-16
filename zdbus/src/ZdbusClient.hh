@@ -45,17 +45,16 @@ ZmRBTreeDerive(SubTable, Sub_,
     ZmRBTreeUnique<true, ZmRBTreeHeapID<"Zdbus.Sub">>>>);
 using Sub = SubTable::Node;
 
-template <typename Heap = ZuVoid>
-struct SubDrop_ : Heap {
+struct SubDrop : ZmNHeap<SubDrop> {
+friend inline ZuStringT<"Zdbus.SubDrop"> ZmNHeapID(SubDrop *);
+
   SubKeyText	parts;
   uint64_t	id;
 
-  SubDrop_(ZuCSpan path_, ZuCSpan interface_, ZuCSpan member_,
+  SubDrop(ZuCSpan path_, ZuCSpan interface_, ZuCSpan member_,
       uint64_t id_)
   : parts{path_, interface_, member_}, id{id_} { }
 };
-ZuDerive(SubDropHeap, (ZmHeap<"Zdbus.SubDrop", SubDrop_<>>));
-ZuDerive(SubDrop, (SubDrop_<SubDropHeap>));
 
 struct Pending_ {
   CallFn			fn;

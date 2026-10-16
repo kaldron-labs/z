@@ -31,15 +31,15 @@ struct StaticEntry {
   using Value = Value_;
 };
 
-template <typename KV> using StaticKey = typename KV::Key;
-template <typename KV> using StaticValue = typename KV::Value;
+template <typename KV> using StaticKey = KV::Key;
+template <typename KV> using StaticValue = KV::Value;
 
 template <typename KV, bool = ZuIsSame<StaticValue<KV>, void>{}>
 struct StaticMatchValue_ { using T = StaticValue<KV>; };
 template <typename KV>
 struct StaticMatchValue_<KV, true> { using T = ZuStringT<"">; };
 template <typename KV>
-using StaticMatchValue = typename StaticMatchValue_<KV>::T;
+using StaticMatchValue = StaticMatchValue_<KV>::T;
 
 template <typename Tbl>
 struct StaticTable {
@@ -53,7 +53,7 @@ struct StaticTable {
     using T = ZuTypeGrep<Is, Tbl>;
   };
   template <typename Key>
-  using Entries = typename Entries_<Key>::T;
+  using Entries = Entries_<Key>::T;
   template <typename Key>
   using Values = ZuTypeMap<StaticMatchValue, Entries<Key>>;
 };

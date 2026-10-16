@@ -180,7 +180,7 @@ struct Value : public Value_ {
       I == Value_::Index<UInt32Vec>{} || I == Value_::Index<Int64Vec>{} ||
       I == Value_::Index<UInt64Vec>{} || I == Value_::Index<Int128Vec>{} ||
       I == Value_::Index<UInt128Vec>{} || I == Value_::Index<FloatVec>{}) {
-      using Elem = typename ZuTraits<Type<I>>::Elem;
+      using Elem = ZuTraits<Type<I>>::Elem;
       s << '[';
       bool first = true;
       p<I>().all([&s, &first](const Elem &v) {
@@ -190,7 +190,7 @@ struct Value : public Value_ {
       s << ']';
     } else if constexpr (I == Value_::Index<FixedVec>{} ||
       I == Value_::Index<DecimalVec>{} || I == Value_::Index<TimeVec>{}) {
-      using Elem = typename ZuTraits<Type<I>>::Elem;
+      using Elem = ZuTraits<Type<I>>::Elem;
       s << '[';
       bool first = true;
       p<I>().all([&s, &first](const Elem &v) {
@@ -457,7 +457,7 @@ void loadAt(
   const uint8_t *p, unsigned tag = 0)
 {
   if constexpr (I) {
-    using T = typename Value::template Type<I>;
+    using T = Value::template Type<I>;
     using W = WireValue<I>;
     if constexpr (I == Value::Index<double>{}) {
       if (R::type(field).get<R::ZfField(Type, baseType)>() == R::BaseType::Float) {
@@ -942,7 +942,7 @@ public:
   using StoreTbl = StoreTbl_;
 private:
   using StoreTbls = StoreTbls_<StoreTbl>;
-  using StoreTblNode = typename StoreTbls::Node;
+  using StoreTblNode = StoreTbls::Node;
 
 public:
   InitResult init(

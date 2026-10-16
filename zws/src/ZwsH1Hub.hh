@@ -167,13 +167,13 @@ template <typename App, typename Profile> class H1ServerLink;
 template <typename App, typename Profile>
 class H1Client :
   public Zhttp::ClientHub<H1Client<App, Profile>, Profile> {
-  using Traits = typename Zhttp::ProfileTraits<Profile>::Transport;
+  using Traits = Zhttp::ProfileTraits<Profile>::Transport;
   using Base = Zhttp::ClientHub<H1Client, Profile>;
 
 public:
   ZuAssert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = H1ClientLink<App, Profile>;
-  using Config = typename Traits::Config;
+  using Config = Traits::Config;
 
   H1Client(App *app) : m_app{app} { }
 
@@ -222,7 +222,7 @@ class H1ClientLink :
   using StateBase = AppLinkState<App>;
 
 public:
-  using Rx = typename CodecBase::Rx;
+  using Rx = CodecBase::Rx;
   using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;
@@ -368,14 +368,14 @@ template <typename App, typename Profile>
 class H1Server :
   public Zhttp::ProtocolServer<
     H1Server<App, Profile>, Profile, H1ServerLink<App, Profile>> {
-  using Traits = typename Zhttp::ProfileTraits<Profile>::Transport;
+  using Traits = Zhttp::ProfileTraits<Profile>::Transport;
   using Base = Zhttp::ProtocolServer<
     H1Server, Profile, H1ServerLink<App, Profile>>;
 
 public:
   ZuAssert(!Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = H1ServerLink<App, Profile>;
-  using Config = typename Traits::Config;
+  using Config = Traits::Config;
 
   H1Server(App *app, ZiIP localIP, unsigned localPort) :
     m_app{app}, m_localIP{ZuMv(localIP)}, m_localPort{localPort} { }
@@ -433,7 +433,7 @@ class H1ServerLink :
   using StateBase = AppLinkState<App>;
 
 public:
-  using Rx = typename CodecBase::Rx;
+  using Rx = CodecBase::Rx;
   using HTTPBase::up_;
   using HTTPBase::process;
   using CodecBase::txStream;

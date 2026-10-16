@@ -134,10 +134,11 @@ static bool seedClientSettings(
   return changed;
 }
 
-template <typename Heap = ZuVoid>
-class ServerBootstrap__ : public Heap, public ZmPolymorph  {
+class ServerBootstrap_ : public ZmNHeap<ServerBootstrap_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.bootstrap.ServerBootstrap"> ZmNHeapID(ServerBootstrap_ *);
+
 public:
-  ServerBootstrap__(
+  ServerBootstrap_(
       Requests *requests, DB *db, Ztls::Random &rng,
       ServerBootstrapConfig config, ServerBootstrapFn complete) :
     m_requests{requests}, m_db{db}, m_rng{&rng},
@@ -159,7 +160,7 @@ public:
     }
     auto issuers = m_db->issuers;
     String id = m_config.issuer;
-    issuers->run(0, [self = ZmRef<ServerBootstrap__>{this}, issuers,
+    issuers->run(0, [self = ZmRef<ServerBootstrap_>{this}, issuers,
 	id = ZuMv(id)]() mutable {
       issuers->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
 	  ZdbRowRef<Issuer> row) mutable { self->issuer_(ZuMv(row)); });
@@ -167,7 +168,7 @@ public:
   }
 
 private:
-  using Next = void (ServerBootstrap__::*)(bool);
+  using Next = void (ServerBootstrap_::*)(bool);
 
   bool seedOptions_()
   {
@@ -198,7 +199,7 @@ private:
   template <typename Table, typename T>
   void ensure_(Table *table, T data, Next next)
   {
-    table->run(0, [self = ZmRef<ServerBootstrap__>{this}, table,
+    table->run(0, [self = ZmRef<ServerBootstrap_>{this}, table,
 	data = ZuMv(data), next]() mutable {
       ZuStructKeyT<T, 0> key{ZuStructKey<0>(data)};
       table->template find<0>(0, ZuMv(key), [self = ZuMv(self), table,
@@ -256,7 +257,7 @@ private:
     }
     m_issuer = issuer;
     m_result.initialized = true;
-    ensure_(m_db->issuers, ZuMv(issuer), &ServerBootstrap__::issuerAdded_);
+    ensure_(m_db->issuers, ZuMv(issuer), &ServerBootstrap_::issuerAdded_);
   }
 
   void issuerAdded_(bool ok)
@@ -307,7 +308,7 @@ private:
   {
     auto clients = m_db->clients;
     String id = m_issuer.initialClientID;
-    clients->run(0, [self = ZmRef<ServerBootstrap__>{this}, clients,
+    clients->run(0, [self = ZmRef<ServerBootstrap_>{this}, clients,
 	id = ZuMv(id)]() mutable {
       clients->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
 	  ZdbRow<Client> *row) mutable {
@@ -343,7 +344,7 @@ private:
       .state = State::Active, .nextActionID = CoreAction::N,
       .authVersion = 1, .catalogRevision = 1,
       .created = now, .updated = now, .audience = ZuMv(audience)},
-      &ServerBootstrap__::seedActions_);
+      &ServerBootstrap_::seedActions_);
   }
 
   void seedActions_(bool ok)
@@ -362,7 +363,7 @@ private:
       .name = coreAction(id), .label = coreAction(id),
       .state = State::Active, .origin = Origin::Standard,
       .catalogRevision = 1, .created = now, .updated = now},
-      &ServerBootstrap__::seedActions_);
+      &ServerBootstrap_::seedActions_);
   }
 
   void seedSuperuser_()
@@ -376,7 +377,7 @@ private:
       .name = "zum.admin", .label = "Zum superuser",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
-      .created = now, .updated = now}, &ServerBootstrap__::seedPublisherRole_);
+      .created = now, .updated = now}, &ServerBootstrap_::seedPublisherRole_);
   }
 
   void seedPublisherRole_(bool ok)
@@ -391,7 +392,7 @@ private:
       .name = "zum.catalog", .label = "Zum catalog publisher",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
-      .created = now, .updated = now}, &ServerBootstrap__::seedClient_);
+      .created = now, .updated = now}, &ServerBootstrap_::seedClient_);
   }
 
   void seedClient_(bool ok)
@@ -407,7 +408,7 @@ private:
       .state = State::Active};
     seedClientSettings(m_config, client);
     ensure_(m_db->clients, ZuMv(client),
-      &ServerBootstrap__::seedClientAccess_);
+      &ServerBootstrap_::seedClientAccess_);
   }
 
   void seedClientAccess_(bool ok)
@@ -418,7 +419,7 @@ private:
       .clientID = m_issuer.initialClientID, .appID = m_issuer.coreAppID,
       .roleIDs = IDVec{CoreRole::Superuser, CoreRole::CatalogPublisher},
       .state = State::Active,
-      .created = now, .updated = now}, &ServerBootstrap__::seedUser_);
+      .created = now, .updated = now}, &ServerBootstrap_::seedUser_);
   }
 
   void seedUser_(bool ok)
@@ -429,7 +430,7 @@ private:
       .id = m_issuer.initialUserID, .source = UserSource::Local,
       .name = m_config.admin, .email = m_config.admin,
       .created = now, .updated = now, .state = State::Pending},
-      &ServerBootstrap__::seedAssignment_);
+      &ServerBootstrap_::seedAssignment_);
   }
 
   void seedAssignment_(bool ok)
@@ -439,7 +440,7 @@ private:
     ensure_(m_db->assignments, Assignment{
       .appID = m_issuer.coreAppID, .userID = m_issuer.initialUserID,
       .roleIDs = IDVec{CoreRole::Superuser}, .state = State::Active,
-      .created = now, .updated = now}, &ServerBootstrap__::seedPolicy_);
+      .created = now, .updated = now}, &ServerBootstrap_::seedPolicy_);
   }
 
   void seedPolicy_(bool ok)
@@ -452,7 +453,7 @@ private:
       .sessionAbsolute = 43200, .tokenLifetime = 300,
       .consentPolicy = ConsentPolicy::Preauthorized,
       .state = State::Active, .created = now, .updated = now},
-      &ServerBootstrap__::seedSigner_);
+      &ServerBootstrap_::seedSigner_);
   }
 
   void seedSigner_(bool ok)
@@ -464,7 +465,7 @@ private:
       return;
     }
     ensure_(m_db->signKeys, ZuMv(signer),
-      &ServerBootstrap__::seedCoreSigner_);
+      &ServerBootstrap_::seedCoreSigner_);
   }
 
   void seedCoreSigner_(bool ok)
@@ -481,21 +482,21 @@ private:
       return;
     }
     ensure_(m_db->signKeys, ZuMv(signer),
-      &ServerBootstrap__::seedComplete_);
+      &ServerBootstrap_::seedComplete_);
   }
 
   void seedComplete_(bool ok)
   {
     if (!ok) { finish_(false); return; }
     phase_(BootstrapPhase::Empty, BootstrapPhase::Core,
-      &ServerBootstrap__::core_);
+      &ServerBootstrap_::core_);
   }
 
   void phase_(BootstrapPhase::T from, BootstrapPhase::T to, Next next)
   {
     auto issuers = m_db->issuers;
     String id = m_config.issuer;
-    issuers->run(0, [self = ZmRef<ServerBootstrap__>{this}, issuers,
+    issuers->run(0, [self = ZmRef<ServerBootstrap_>{this}, issuers,
 	id = ZuMv(id), from, to, next]() mutable {
       issuers->findUpd<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self),
 	  from, to, next](ZdbRow<Issuer> *row) mutable {
@@ -534,7 +535,7 @@ private:
           .userName = m_config.admin, .label = "bootstrap passkey",
           .userID = m_issuer.initialUserID, .now = m_config.now,
           .expires = m_config.now + m_config.ttl},
-        [self = ZmRef<ServerBootstrap__>{this}](bool ok, String token) mutable {
+        [self = ZmRef<ServerBootstrap_>{this}](bool ok, String token) mutable {
           self->issued_(ok, ZuMv(token));
         })) finish_(false);
   }
@@ -547,7 +548,7 @@ private:
     if (!written) { finish_(false); return; }
     m_result.capabilityWritten = true;
     phase_(BootstrapPhase::Core, BootstrapPhase::AdminPending,
-      &ServerBootstrap__::pending_);
+      &ServerBootstrap_::pending_);
   }
 
   void pending_(bool ok)
@@ -560,7 +561,7 @@ private:
   {
     auto users = m_db->users;
     auto id = m_issuer.initialUserID;
-    users->run(0, [self = ZmRef<ServerBootstrap__>{this}, users, id]() mutable {
+    users->run(0, [self = ZmRef<ServerBootstrap_>{this}, users, id]() mutable {
       users->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
 	  ZdbRowRef<User> row) mutable { self->adminLoaded_(ZuMv(row)); });
     });
@@ -575,7 +576,7 @@ private:
         !row->data().owner) {
       if (m_issuer.bootstrapPhase == BootstrapPhase::AdminPending) {
 	phase_(BootstrapPhase::AdminPending, BootstrapPhase::Ready,
-	  &ServerBootstrap__::ready_);
+	  &ServerBootstrap_::ready_);
 	return;
       }
       if (m_config.reissue && !m_result.capabilityWritten) {
@@ -639,7 +640,7 @@ private:
       .label = "bootstrap passkey"
     };
     id = replacement.id;
-    grants->run(0, [self = ZmRef<ServerBootstrap__>{this}, grants,
+    grants->run(0, [self = ZmRef<ServerBootstrap_>{this}, grants,
         id = ZuMv(id), replacement = ZuMv(replacement),
         token = ZuMv(capability.token)]() mutable {
       grants->findUpd<0, ZuSeq<1>>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self),
@@ -698,9 +699,6 @@ private:
   ActionID		m_actionID = 0;
   bool			m_done = false;
 };
-ZuDerive(ServerBootstrap_Heap,
-  (ZmHeap<"Zum.zumd.bootstrap.ServerBootstrap", ServerBootstrap__<>>));
-ZuDerive(ServerBootstrap_, (ServerBootstrap__<ServerBootstrap_Heap>));
 
 void serverBootstrap(
     DB *db, Requests *requests, Ztls::Random &rng,

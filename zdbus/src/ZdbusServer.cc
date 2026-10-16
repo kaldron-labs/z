@@ -13,12 +13,11 @@
 
 namespace Zdbus_ {
 
-template <typename Heap = ZuVoid>
-struct ServerClient_ : Heap {
+struct ServerClient : ZmNHeap<ServerClient> {
+friend inline ZuStringT<"Zdbus.ServerClient"> ZmNHeapID(ServerClient *);
+
   Client cli;
 };
-ZuDerive(ServerClientHeap, (ZmHeap<"Zdbus.ServerClient", ServerClient_<>>));
-ZuDerive(ServerClient, (ServerClient_<ServerClientHeap>));
 
 struct NameArgs {
   ZuCSpan	name;

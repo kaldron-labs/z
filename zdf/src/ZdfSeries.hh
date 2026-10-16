@@ -107,7 +107,7 @@ class Reader : public ZmObject {
 public:
   using Decoder = Decoder_;
   using Series = Zdf::Series<Decoder>;
-  using PValue = typename Decoder::Value; // primitive value
+  using PValue = Decoder::Value; // primitive value
   enum { Fixed = ZuIsSame<PValue, int64_t>{} };
   using Value = ZuIf<Fixed, ZuFixed, double>;
 
@@ -243,7 +243,7 @@ ZmListDeriveT((Decoder), ReaderList, Reader<Decoder>,
   (ZmListNode<Reader<Decoder>, ZmListHeapID<"Zdf.Reader">>));
 
 template <typename Decoder>
-using RdrNode = typename ReaderList<Decoder>::Node;
+using RdrNode = ReaderList<Decoder>::Node;
 
 // utility function to cast Reader to RdrNode
 template <typename Decoder>
@@ -252,9 +252,8 @@ inline auto node(Reader<Decoder> *ptr) {
 }
 
 // Writer main class
-template <typename Decoder, typename Heap = ZuVoid,
-  typename PValue_ = typename Decoder::Value>
-class Writer__ : public Heap, public ZmObject {
+template <typename Decoder, typename PValue_ = Decoder::Value>
+class Writer__ : public ZmObject {
 public:
   using Encoder = Zdf::Encoder<Decoder>;
   using Series = Zdf::Series<Decoder>;
@@ -309,10 +308,13 @@ private:
   bool		m_failed = false;
   bool		m_stopping = false;
 };
-template <typename Decoder, typename Heap = ZuVoid,
-  typename PValue = typename Decoder::Value>
-class Writer_ : public Writer__<Decoder, Heap, PValue> {
-  using Base = Writer__<Decoder, Heap, PValue>;
+template <typename Decoder,
+  typename PValue = Decoder::Value>
+class Writer_ : public ZmNHeap<Writer_<Decoder, PValue>>,
+    public Writer__<Decoder, PValue> {
+friend inline ZuStringT<"Zdf.Writer"> ZmNHeapID(Writer_ *);
+
+  using Base = Writer__<Decoder, PValue>;
 
 protected:
   using Base::Base;
@@ -320,11 +322,14 @@ protected:
 public:
   virtual ~Writer_() = default;
 };
-template <typename Decoder, typename Heap>
-class Writer_<Decoder, Heap, int64_t> :
-  public Writer__<Decoder, Heap, int64_t>
+template <typename Decoder>
+class Writer_<Decoder, int64_t> :
+  public ZmNHeap<Writer_<Decoder, int64_t>>,
+  public Writer__<Decoder, int64_t>
 {
-  using Base = Writer__<Decoder, Heap, int64_t>;
+friend inline ZuStringT<"Zdf.Writer"> ZmNHeapID(Writer_ *);
+
+  using Base = Writer__<Decoder, int64_t>;
 
 public:
   using typename Base::Series;
@@ -348,9 +353,7 @@ private:
   NDP		m_ndp;
 };
 template <typename Decoder>
-ZuDerive(Writer_Heap, (ZmHeap<"Zdf.Writer", Writer_<Decoder>>));
-template <typename Decoder>
-ZuDerive(Writer, (Writer_<Decoder, Writer_Heap<Decoder>>));
+ZuDerive(Writer, (Writer_<Decoder>));
 
 class Store;
 // template <typename O, bool TimeIndex> class DataFrame;
@@ -393,11 +396,11 @@ public:
   using Decoder = Decoder_;
   using Encoder = Zdf::Encoder<Decoder>;
   using Reader = Zdf::Reader<Decoder>;
-  using ReadFn = typename Reader::Fn;
+  using ReadFn = Reader::Fn;
   using Writer = Zdf::Writer<Decoder>;
   using WriteFn = ZmFn<void(ZmRef<Writer>),
     ZmFnHeapID<"Zdf.Series.WriteFn">>;
-  using PValue = typename Decoder::Value;
+  using PValue = Decoder::Value;
   enum { Fixed = ZuIsSame<PValue, int64_t>{} };
   using Value = ZuIf<Fixed, ZuFixed, double>;
 
@@ -412,7 +415,7 @@ protected:
 private:
 friend Store;
 template <typename> friend class Zdf::Reader;
-template <typename, typename, typename> friend class Writer__;
+template <typename, typename> friend class Writer__;
 
 protected:
   Series(Store *store, ZdbRowRef<DBSeries> dbSeries) :
@@ -1642,8 +1645,8 @@ inline void Reader<Decoder>::Ctrl::purge()
 
 // Writer implementation
 
-template <typename Decoder, typename Heap, typename Value>
-inline bool Writer__<Decoder, Heap, Value>::write(Value value)
+template <typename Decoder, typename Value>
+inline bool Writer__<Decoder, Value>::write(Value value)
 {
   if (ZuUnlikely(m_failed)) return false;
 
@@ -1653,8 +1656,8 @@ inline bool Writer__<Decoder, Heap, Value>::write(Value value)
   return m_series->write(static_cast<Writer<Decoder> *>(this), value);
 }
 
-template <typename Decoder, typename Heap, typename Value>
-void Writer__<Decoder, Heap, Value>::stop(StopFn fn)
+template <typename Decoder, typename Value>
+void Writer__<Decoder, Value>::stop(StopFn fn)
 {
   if (ZuUnlikely(m_stopping)) { fn(); return; }
   m_stopping = true;
@@ -1667,8 +1670,8 @@ void Writer__<Decoder, Heap, Value>::stop(StopFn fn)
   }
 }
 
-template <typename Decoder, typename Heap, typename Value>
-bool Writer__<Decoder, Heap, Value>::savedBlk() {
+template <typename Decoder, typename Value>
+bool Writer__<Decoder, Value>::savedBlk() {
   if (ZuLikely(!m_stopping)) return false;
   auto fn = ZuMv(m_stopFn);
   fn();

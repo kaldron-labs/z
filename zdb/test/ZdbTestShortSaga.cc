@@ -10,18 +10,17 @@
 
 namespace zdbtest {
 
-template <typename Heap = ZuVoid>
-struct ShortSaga_ : public Heap, public ZdbSaga<ShortSaga_<Heap>, LiveDB> {
-  using Base = ZdbSaga<ShortSaga_<Heap>, LiveDB>;
+struct ShortSaga : public ZmNHeap<ShortSaga>, public ZdbSaga<ShortSaga, LiveDB> {
+friend inline ZuStringT<"Zdb.Test.ShortSaga"> ZmNHeapID(ShortSaga *);
+
+  using Base = ZdbSaga<ShortSaga, LiveDB>;
   using Type = ZuStringT<"liveSaga">;
   enum { NPhases = 1 };
   uint64_t orderID;
   ZdbSagaPhase(0, o, Insert) { return {}; }
 
-  ShortSaga_(uint64_t orderID_) : orderID{ZuMv(orderID_)} { }
+  ShortSaga(uint64_t orderID_) : orderID{ZuMv(orderID_)} { }
 };
-
-using ShortSaga = ShortSaga_<ZmHeap<"Zdb.Test.ShortSaga", ShortSaga_<>>>;
 
 ZfStruct(, (ShortSaga, FB),
   (orderID, (Ctor<0>),		UInt64));

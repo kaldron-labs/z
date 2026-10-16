@@ -102,23 +102,23 @@ Zfb::AsTable<"flatctest.Wide"> Zfb_Fmt(Wide *);
 struct Child;
 struct Peer;
 Zfb::AsTable<"flatctest.Peer"> Zfb_Fmt(Peer *);
-template <typename Heap = ZuVoid>
-struct Child_ : public Heap {
+struct Child : public ZmNHeap<Child> {
+friend inline ZuStringT<"zfbsave.Child"> ZmNHeapID(Child *);
+
   uint32_t value = 0;
   Text label;
   ZuPtr<Child> next;
   ZuPtr<Peer> peer;
 };
-ZuDerive(ChildHeap, (ZmHeap<"zfbsave.Child", Child_<>>));
-ZuDerive(Child, (Child_<ChildHeap>));
+
 ZfStruct(, (Child, FB), (value, (Deflt<0>), UInt32), (label,, String), (next,, UDT), (peer,, UDT));
 ZfStructRender(, Child, Wire, value, (label, FB::ID<"child_text">), next, peer);
 Zfb::AsTable<"flatctest.Child"> Zfb_Fmt(Child *);
 
-template <typename Heap = ZuVoid>
-struct Peer_ : public Heap { ZuPtr<Child> child; };
-ZuDerive(PeerHeap, (ZmHeap<"zfbsave.Peer", Peer_<>>));
-ZuDerive(Peer, (Peer_<PeerHeap>));
+struct Peer : public ZmNHeap<Peer> {
+friend inline ZuStringT<"zfbsave.Peer"> ZmNHeapID(Peer *);
+ ZuPtr<Child> child; };
+
 ZfStruct(, (Peer, FB), (child,, UDT));
 ZfStructRender(, Peer, Wire, child);
 
@@ -127,8 +127,9 @@ Zfb::AsUnion<"flatctest.Body", Zfb::Alt<"Child", ZuPtr<Child>>,
   Zfb::Alt<"Point", Point>, Zfb::Alt<"Wide", Zfb::Values::Int128>,
   Zfb::Alt<"Bytes", Blob>> Zfb_Fmt(Body *);
 
-template <typename Heap = ZuVoid>
-struct Row_ : public Heap {
+struct Row : public ZmNHeap<Row> {
+friend inline ZuStringT<"zfbsave.Row"> ZmNHeapID(Row *);
+
   bool enabled = true;
   int64_t minValue = INT64_MIN;
   uint64_t maxValue = UINT64_MAX;
@@ -149,8 +150,7 @@ struct Row_ : public Heap {
   uint32_t mode = Mode::Read() | Mode::Write();
   uint32_t spare = 105;
 };
-ZuDerive(RowHeap, (ZmHeap<"zfbsave.Row", Row_<>>));
-ZuDerive(Row, (Row_<RowHeap>));
+
 ZfStruct(, (Row, FB),
   (enabled, (Deflt<true>), Bool),
   (minValue, (Deflt<INT64_MIN>), Int64),

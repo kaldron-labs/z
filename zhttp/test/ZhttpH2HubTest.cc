@@ -870,7 +870,7 @@ struct SharedClient :
     SharedClient, SharedClientH1Link, SharedClientH2Link> {
   using Base = Zhttp::TLS_::ClientHub<
     SharedClient, SharedClientH1Link, SharedClientH2Link>;
-  using NativeLink = typename Base::Link;
+  using NativeLink = Base::Link;
   using H1Link = SharedClientH1Link;
   using H2Link = SharedClientH2Link;
   State *state = nullptr;

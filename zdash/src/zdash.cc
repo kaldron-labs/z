@@ -251,7 +251,7 @@ using TypeList = ZuTypeList<
   Ztc::AlertTelemetry, Ztc::PoolTelemetry>;
 
 template <typename Data>
-using KeyFields = typename ZuStructKeyT_<Data, 0>::Fields;
+using KeyFields = ZuStructKeyT_<Data, 0>::Fields;
 
 template <typename Data> struct Item__ {
   static constexpr auto Axor = ZuFieldAxor<Data>();
@@ -270,7 +270,7 @@ template <typename Data> struct Item__ {
       if constexpr (Field::Code == ZfFieldTC::String)
 	s << Field::get(data);
       else {
-	using Print = typename Field::Type::template Print<ZtFmt::Comma<>>;
+	using Print = Field::Type::template Print<ZtFmt::Comma<>>;
 	s << Print{Field::get(data)};
       }
     }
@@ -311,7 +311,7 @@ template <> struct Item__<Ztc::AppTelemetry> {
 template <typename Data_> struct Item_ : public Item__<Data_> {
   using Base = Item__<Data_>;
   using Data = Data_;
-  using TelKey = typename Base::TelKey;
+  using TelKey = Base::TelKey;
 
   Data			value;
   void			*gtkRow_ = nullptr;
@@ -335,17 +335,15 @@ template <typename Data_> struct Item_ : public Item__<Data_> {
   int rag() const { return Base::rag(value); }
 };
 
-template <typename T, typename Heap = ZuVoid>
-struct SingletonItem_ : public Heap, public Item_<T> {
+template <typename T>
+struct SingletonItem : public ZmNHeap<SingletonItem<T>>, public Item_<T> {
+friend inline ZuStringT<"ZDash.Singleton"> ZmNHeapID(SingletonItem *);
+
   using Item_<T>::Item_;
 };
-template <typename T>
-ZuDerive(SingletonItem_Heap, (ZmHeap<"ZDash.Singleton", SingletonItem_<T>>));
-template <typename T>
-ZuDerive(SingletonItem, (SingletonItem_<T, SingletonItem_Heap<T>>));
 
 template <typename T>
-static typename T::TelKey itemKey(const T &v) { return v.telKey(); }
+static T::TelKey itemKey(const T &v) { return v.telKey(); }
 ZmRBTreeDeriveT((T), ItemTree_, Item_<T>,
   (ZmRBTreeNode<Item_<T>,
     ZmRBTreeKey<ZDash::Telemetry::itemKey<Item_<T>>,
@@ -355,7 +353,7 @@ ZmRBTreeDeriveT((T), ItemTree_, Item_<T>,
 template <typename T>
 class ItemTree : public ItemTree_<T> {
 public:
-  using Node = typename ItemTree_<T>::Node;
+  using Node = ItemTree_<T>::Node;
   void add(Node *node) { this->addNode(node); }
   Node *lookup(Zfb::View<T> fbo) const {
     return this->findPtr(ZuStructKey(fbo));
@@ -400,12 +398,12 @@ template <> struct Container_<Ztc::AlertTelemetry> {
   using T = AlertArray;
 };
 template <typename U>
-using Container = typename Container_<U>::T;
+using Container = Container_<U>::T;
 
 using ContainerTL = ZuTypeMap<Container, TypeList>;
 using Containers = ZuTypeApply<ZuTuple, ContainerTL>;
 
-template <typename T> using Item = typename Container<T>::Node;
+template <typename T> using Item = Container<T>::Node;
 } // Telemetry
 
 namespace GtkTree {
@@ -423,7 +421,7 @@ struct Row {
   void init(Item *item_) { item = item_; init_(); }
   void init_() { item->gtkRow(impl()); }
 
-  using TelKey = typename Item::TelKey;
+  using TelKey = Item::TelKey;
   template <unsigned I> static const char *keyName() {
     return Item::template keyName<I>();
   }
@@ -437,56 +435,49 @@ struct Row {
 };
 
 template <unsigned Depth, typename Item> struct Leaf;
-template <unsigned Depth, typename Item, typename Heap = ZuVoid>
-struct Leaf_ : public Heap,
+template <unsigned Depth, typename Item>
+struct Leaf : public ZmNHeap<Leaf<Depth, Item>>,
     public Row<Leaf<Depth, Item>, Item>,
     public ZGtk::TreeHierarchy::Leaf<Leaf<Depth, Item>, Depth> {
-  Leaf_() = default;
-  Leaf_(Item *item) : Row<Leaf<Depth, Item>, Item>{item} { }
+friend inline ZuStringT<"ZDash.Leaf"> ZmNHeapID(Leaf *);
+
+  Leaf() = default;
+  Leaf(Item *item) : Row<Leaf<Depth, Item>, Item>{item} { }
   using Row<Leaf<Depth, Item>, Item>::cmp;
 };
-template <unsigned Depth, typename Item>
-ZuDerive(Leaf_Heap, (ZmHeap<"ZDash.Leaf", Leaf_<Depth, Item>>));
-template <unsigned Depth, typename Item>
-ZuDerive(Leaf, (Leaf_<Depth, Item, Leaf_Heap<Depth, Item>>));
 
 template <unsigned Depth, typename Item, typename Child> struct Parent;
-template <unsigned Depth, typename Item, typename Child,
-  typename Heap = ZuVoid>
-struct Parent_ : public Heap,
+template <unsigned Depth, typename Item, typename Child>
+struct Parent : public ZmNHeap<Parent<Depth, Item, Child>>,
     public Row<Parent<Depth, Item, Child>, Item>,
     public ZGtk::TreeHierarchy::Parent<
       Parent<Depth, Item, Child>, Depth, Child> {
-  Parent_() = default;
-  Parent_(Item *item) : Row<Parent<Depth, Item, Child>, Item>{item} { }
+friend inline ZuStringT<"ZDash.Parent"> ZmNHeapID(Parent *);
+
+  Parent() = default;
+  Parent(Item *item) : Row<Parent<Depth, Item, Child>, Item>{item} { }
   using Row<Parent<Depth, Item, Child>, Item>::cmp;
   using Base = ZGtk::TreeHierarchy::Parent<Parent<Depth, Item, Child>, Depth, Child>;
   using Base::add;
   using Base::del;
 };
-template <unsigned Depth, typename Item, typename Child>
-ZuDerive(Parent_Heap, (ZmHeap<"ZDash.Parent", Parent_<Depth, Item, Child>>));
-template <unsigned Depth, typename Item, typename Child>
-ZuDerive(Parent, (Parent_<Depth, Item, Child, Parent_Heap<Depth, Item, Child>>));
 
 template <unsigned Depth, typename Item, typename Tuple> struct Branch;
-template <unsigned Depth, typename Item, typename Tuple,
-  typename Heap = ZuVoid>
-struct Branch_ : public Heap,
+template <unsigned Depth, typename Item, typename Tuple>
+struct Branch : public ZmNHeap<Branch<Depth, Item, Tuple>>,
     public Row<Branch<Depth, Item, Tuple>, Item>,
     public ZGtk::TreeHierarchy::Branch<
       Branch<Depth, Item, Tuple>, Depth, Tuple> {
-  Branch_() = default;
-  Branch_(Item *item) : Row<Branch<Depth, Item, Tuple>, Item>{item} { }
+friend inline ZuStringT<"ZDash.Branch"> ZmNHeapID(Branch *);
+
+  Branch() = default;
+  Branch(Item *item) : Row<Branch<Depth, Item, Tuple>, Item>{item} { }
   using Row<Branch<Depth, Item, Tuple>, Item>::cmp;
   using Base = ZGtk::TreeHierarchy::Branch<Branch<Depth, Item, Tuple>, Depth, Tuple>;
   using Base::add;
   using Base::del;
 };
-template <unsigned Depth, typename Item, typename Tuple>
-ZuDerive(Branch_Heap, (ZmHeap<"ZDash.Branch", Branch_<Depth, Item, Tuple>>));
-template <unsigned Depth, typename Item, typename Tuple>
-ZuDerive(Branch, (Branch_<Depth, Item, Tuple, Branch_Heap<Depth, Item, Tuple>>));
+
 template <typename Impl>
 struct BranchChild {
   ZuDerive(TelKey, (ZuTuple<const char *>));
@@ -533,11 +524,11 @@ using DBTableParent = Parent<4, DBTables, DBTable>;
 
 // heaps
 struct HeapIDParent;
-template <typename Alloc = ZuVoid>
-struct HeapIDParent_ : public Alloc,
+struct HeapIDParent : public ZmNHeap<HeapIDParent>,
     public ZGtk::TreeHierarchy::Parent<HeapIDParent, 3, Heap> {
+friend inline ZuStringT<"ZDash.HeapID"> ZmNHeapID(HeapIDParent *);
   ZuID id;
-  HeapIDParent_(const ZuID &id_) : id{id_} { }
+  HeapIDParent(const ZuID &id_) : id{id_} { }
   using TelKey = ZuTuple<ZuCSpan>;
   TelKey telKey() const { return {id}; }
   template <unsigned I> static const char *keyName() {
@@ -549,10 +540,9 @@ struct HeapIDParent_ : public Alloc,
     if constexpr (!I) s << id;
   }
   int rag() const { return Ztc::RAG::Off; }
-  int cmp(const HeapIDParent_ &other) const { return id.cmp(other.id); }
+  int cmp(const HeapIDParent &other) const { return id.cmp(other.id); }
 };
-ZuDerive(HeapIDAlloc, (ZmHeap<"ZDash.HeapID", HeapIDParent_<>>));
-ZuDerive(HeapIDParent, (HeapIDParent_<HeapIDAlloc>));
+
 struct Heaps : public BranchChild<Heaps> {
   using Fields = ZuTypeTail<1, Telemetry::KeyFields<Ztc::HeapTelemetry>>;
   static auto telKey() { return TelKey{"heaps"}; }
@@ -1108,10 +1098,10 @@ public:
       if constexpr (Field::Code == ZfFieldTC::String || Field::Code == ZfFieldTC::CString)
 	m_value << Field::get(data);
       else if constexpr (Field::Code == ZfFieldTC::Bool) {
-	using Print = typename Field::Type::template Print<ZtFmt::Comma<>>;
+	using Print = Field::Type::template Print<ZtFmt::Comma<>>;
 	m_value << Print{bool(Field::get(data))};
       } else {
-	using Print = typename Field::Type::template Print<ZtFmt::Comma<>>;
+	using Print = Field::Type::template Print<ZtFmt::Comma<>>;
 	m_value << Print{Field::get(data)};
       }
       value->set_static_string(m_value);

@@ -88,8 +88,9 @@ inline bool jsonTail(ZuSpan<uint8_t> span, int offset) {
   return true;
 }
 
-template <typename Heap = ZuVoid>
-struct BorrowedData_ : public Heap, public ZmObject {
+struct BorrowedData : public ZmNHeap<BorrowedData>, public ZmObject {
+friend inline ZuStringT<"Zrest.Borrowed"> ZmNHeapID(BorrowedData *);
+
   ZuPtr<ZfJSON::AnyNode> json;
   ZuPtr<ZfURI::AnyNode> query;
   ZuPtr<ZfURI::AnyNode> body;
@@ -106,8 +107,6 @@ struct BorrowedData_ : public Heap, public ZmObject {
     return true;
   }
 };
-using BorrowedData = BorrowedData_<
-  ZmHeap<"Zrest.Borrowed", BorrowedData_<>>>;
 
 } // Zrest
 

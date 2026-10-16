@@ -60,11 +60,11 @@ ZfStruct(, (Explicit, FB),
   (tail,			(FB::FieldID<4>),	UInt32));
 Zfb::AsTable<"test.Explicit"> Zfb_Fmt(Explicit *);
 
-using MI = typename Zfb::As<Implicit>::template Handler<Implicit>;
-using ME = typename Zfb::As<Explicit>::template Handler<Explicit>;
-using MF = typename Zfb::As<Implicit>::template Handler<Implicit, ZuFacet::Wire>;
+using MI = Zfb::As<Implicit>::template Handler<Implicit>;
+using ME = Zfb::As<Explicit>::template Handler<Explicit>;
+using MF = Zfb::As<Implicit>::template Handler<Implicit, ZuFacet::Wire>;
 using Key = ZuStructKeyT<Implicit>;
-using MK = typename Zfb::As<Key>::template Handler<Key>;
+using MK = Zfb::As<Key>::template Handler<Key>;
 ZuAssert(MI::N == 5);
 ZuAssert(MI::SchemaFields::N == 4);
 ZuAssert(MI::AllFields::N == 3);
@@ -735,8 +735,9 @@ struct Point { int value = 0; };
 ZfStruct(, (Point, FB), (value, (Deflt<0>), Int32));
 Zfb::AsStruct<"test.Point"> Zfb_Fmt(Point *);
 
-template <typename Heap = ZuVoid>
-struct Row_ : public Heap {
+struct Row_ : public ZmNHeap<Row_> {
+friend inline ZuStringT<"ZfbTest.Load.Row"> ZmNHeapID(Row_ *);
+
   unsigned context, id;
   ZtString<ZtStringHeapID<"ZfbTest.Load.Name">> name;
   ZtArray<Elem, ZtArrayHeapID<"ZfbTest.Load.Elems">> elems;
@@ -747,8 +748,8 @@ struct Row_ : public Heap {
   Row_(unsigned context_, unsigned id_, ZuCSpan name_) :
     context{context_}, id{id_}, name{name_} { }
 };
-ZuDerive(RowHeap, (ZmHeap<"ZfbTest.Load.Row", Row_<>>));
-ZuDerive(Row, (Row_<RowHeap>));
+
+ZuDerive(Row, (Row_));
 ZfStruct(, (Row, FB),
   (id,				(Ctor<0>, Keys<0>, Deflt<0>),	UInt32),
   (name,			(Ctor<1>, Mutable),		String),
@@ -857,16 +858,16 @@ Zfb::AsUnion<"test.NestedBody", Zfb::Alt<"Value", Value>> Zfb_Fmt(Body *);
 
 static int live = 0;
 
-template <typename Heap = ZuVoid>
-struct Obj_ : public Heap, public ZmObject {
+struct Obj : public ZmNHeap<Obj>, public ZmObject {
+friend inline ZuStringT<"ZfbTest.Nested.Obj"> ZmNHeapID(Obj *);
+
   int selected = 0;
   int omitted = -7;
 
-  Obj_() { ++live; }
-  ~Obj_() { --live; }
+  Obj() { ++live; }
+  ~Obj() { --live; }
 };
-ZuDerive(ObjHeap, (ZmHeap<"ZfbTest.Nested.Obj", Obj_<>>));
-ZuDerive(Obj, (Obj_<ObjHeap>));
+
 ZfStruct(, (Obj, FB),
   (selected,, Int32),
   (omitted,, Int32));

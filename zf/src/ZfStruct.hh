@@ -222,7 +222,7 @@ template <> struct Type_<Fixed> { using T = ZuFixed; };
 template <> struct Type_<Decimal> { using T = ZuDecimal; };
 template <> struct Type_<Time> { using T = ZuTime; };
 template <> struct Type_<DateTime> { using T = ZuDateTime; };
-template <unsigned I> using Type = typename Type_<I>::T;
+template <unsigned I> using Type = Type_<I>::T;
 
 // map vector to element code
 template <unsigned> struct Elem;
@@ -341,7 +341,7 @@ namespace ZfVFieldProp {
   struct GetCtor_ { using T = GetValue<Props, Ctor>; };
   template <typename Props>
   struct GetCtor_<Props, false> { using T = ZuInt<-1>; };
-  template <typename Props> using GetCtor = typename GetCtor_<Props>::T;
+  template <typename Props> using GetCtor = GetCtor_<Props>::T;
 
   // default NDP to sentinel null for ZfVField
   template <typename Props, bool = HasValue<Props, NDP>{}>
@@ -350,7 +350,7 @@ namespace ZfVFieldProp {
   struct GetNDP_<Props, false> {
     using T = ZuConstant<int8_t, ZuCmp<int8_t>::null()>;
   };
-  template <typename Props> using GetNDP = typename GetNDP_<Props>::T;
+  template <typename Props> using GetNDP = GetNDP_<Props>::T;
 }
 
 // type properties are a subset of field properties
@@ -392,7 +392,7 @@ namespace ZfVFieldProp {
   template <auto I>
   struct Value_<Constant<I>> { using T = Constant<I>; }; // passthru
 
-  template <typename U> using Value = typename Value_<U>::T;
+  template <typename U> using Value = Value_<U>::T;
 
   namespace _ = ZuFieldProp;
 
@@ -429,7 +429,7 @@ namespace ZfVFieldProp {
   template <typename L, typename R> struct Or_<L, R> {
     using T = Constant<V(Value<L>{}) | V(Value<R>{})>;
   };
-  template <typename ...Props> using Or = typename Or_<Props...>::T;
+  template <typename ...Props> using Or = Or_<Props...>::T;
 
   template <typename ...Props>
   struct Value_<ZuTypeList<Props...>> {
@@ -1386,9 +1386,9 @@ template <typename Base_>
 struct ZfField_ : public Base_ {
   using Base = Base_;
   using Orig = Base;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   static constexpr ZfVFieldProp::T mprops() {
     return ZfVFieldProp::Value<Props>{};
   }
@@ -1446,9 +1446,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_CString : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_CString<Override<Base>>;
-  using O = typename Base::O;
+  using O = Base::O;
   using T = const char *;
-  using Props = typename Base::Props;
+  using Props = Base::Props;
   using Type =
     ZfFieldType_CString<char *, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
@@ -1476,7 +1476,7 @@ struct ZfField_CString : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_CString<Base, false> :
     public ZfField_CString<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.cstring = [](void *o_, unsigned, const char *s) {
       O &o = *static_cast<const O *>(o_);
@@ -1518,7 +1518,7 @@ ZfVFieldType *ZfFieldType_String<T, Props>::vtype() {
 template <typename Base, typename = void>
 struct ZfField_String_Get {
   static ZfVFieldGet getFn() {
-    using O = typename Base::O;
+    using O = Base::O;
     return {.get_ = {.string = [](const void *o) -> ZuCSpan {
       using T = decltype(Base::get(ZuDeclVal<const O &>()));
       using Char = decltype(ZuDeclVal<const T &>()[0]);
@@ -1533,7 +1533,7 @@ struct ZfField_String_Get {
 	return v;
       } else {
 	// field get returns a wide string - copy it and stash it
-	using String = ZtString<ZtStringHeapID_<ZmHeapID<T>>>;
+	using String = ZtString<ZtStringHeapID_<ZmNHeapID_<ZuDecay<T>>>>;
 	auto &v = ZmTLS<String, getFn>();
 	v = Base::get(*static_cast<const O *>(o));
 	return v;
@@ -1545,7 +1545,7 @@ template <typename Base>
 struct ZfField_String_Get<Base,
     decltype(&Base::get(ZuDeclVal<const typename Base::O &>()), void())> {
   static ZfVFieldGet getFn() {
-    using O = typename Base::O;
+    using O = Base::O;
     // field get() returns a crvalue
     return {.get_ = {.string = [](const void *o) -> ZuCSpan {
       return Base::get(*static_cast<const O *>(o));
@@ -1559,9 +1559,9 @@ struct ZfField_String :
     public ZfField_String_Get<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_String<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_String<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZfVFieldSet setFn() {
@@ -1583,7 +1583,7 @@ struct ZfField_String :
 template <typename Base>
 struct ZfField_String<Base, false> :
     public ZfField_String<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.string = [](void *o, ZuCSpan s) {
       Base::set(*static_cast<O *>(o), s);
@@ -1622,7 +1622,7 @@ ZfVFieldType *ZfFieldType_Bytes<T, Props>::vtype() {
 template <typename Base, typename = void>
 struct ZfField_Bytes_Get {
   static ZfVFieldGet getFn() {
-    using O = typename Base::O;
+    using O = Base::O;
     // field get() returns a temporary
     return {.get_ = {.bytes = [](const void *o) -> ZuBSpan {
       auto &v = ZmTLS<ZtBArray, getFn>();
@@ -1635,7 +1635,7 @@ template <typename Base>
 struct ZfField_Bytes_Get<Base,
     decltype(&Base::get(ZuDeclVal<const typename Base::O &>()), void())> {
   static ZfVFieldGet getFn() {
-    using O = typename Base::O;
+    using O = Base::O;
     // field get() returns a crvalue
     return {.get_ = {.bytes = [](const void *o) -> ZuBSpan {
       return Base::get(*static_cast<const O *>(o));
@@ -1648,9 +1648,9 @@ struct ZfField_Bytes :
     public ZfField_Bytes_Get<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Bytes<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_Bytes<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZfVFieldSet setFn() {
@@ -1672,7 +1672,7 @@ struct ZfField_Bytes :
 template <typename Base>
 struct ZfField_Bytes<Base, false> :
     public ZfField_Bytes<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.bytes = [](void *o, ZuBSpan v) {
       Base::set(*static_cast<O *>(o), v);
@@ -1717,9 +1717,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Bool : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Bool<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_Bool<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZfVFieldGet getFn() {
@@ -1748,7 +1748,7 @@ struct ZfField_Bool : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_Bool<Base, false> :
     public ZfField_Bool<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.bool_ = [](void *o, bool v) {
       Base::set(*static_cast<O *>(o), v);
@@ -1821,7 +1821,7 @@ struct ZfFieldScanInt {
       return validate({int(Map::v2s(i).length()), B{i}});
     } else if constexpr (ZuFieldProp::HasFlags<Props>{}) {
       using Map = ZuFieldProp::GetFlags<Props>;
-      using Scan = typename Map::Scan;
+      using Scan = Map::Scan;
       auto r = Scan::eov(s, Fmt::FlagsDelim());
       if (r.template p<0>() < 0) return {-1, B{}};
       return validate({r.template p<0>(), B{r.template p<1>().val()}});
@@ -1928,9 +1928,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}> \
 struct ZfField_##Code_ : public ZfField_<Base> { \
   template <template <typename> class Override> \
   using Adapt = ZfField_##Code_<Override<Base>>; \
-  using O = typename Base::O; \
-  using T = typename Base::T; \
-  using Props = typename Base::Props; \
+  using O = Base::O; \
+  using T = Base::T; \
+  using Props = Base::Props; \
   using Range = ZfFieldRange<T, Props, \
     ZfFieldType_##Code_##_Def<T>::minimum, \
     ZfFieldType_##Code_##_Def<T>::maximum>; \
@@ -1964,8 +1964,8 @@ struct ZfField_##Code_ : public ZfField_<Base> { \
 template <typename Base> \
 struct ZfField_##Code_<Base, false> : \
     public ZfField_##Code_<Base, true> { \
-  using O = typename Base::O; \
-  using T = typename Base::T; \
+  using O = Base::O; \
+  using T = Base::T; \
   static ZfVFieldSet setFn() { \
     return {.set_ = {.Type_= [](void *o, Type_##_t v) { \
       Base::set(*static_cast<O *>(o), v); \
@@ -2030,9 +2030,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Float : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Float<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Range = ZfFieldRange<T, Props,
     ZfField_Float_Def<T>::minimum, ZfField_Float_Def<T>::maximum>;
   using Type = ZfFieldType_Float<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
@@ -2065,8 +2065,8 @@ struct ZfField_Float : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_Float<Base, false> :
     public ZfField_Float<Base, true> {
-  using O = typename Base::O;
-  using T = typename Base::T;
+  using O = Base::O;
+  using T = Base::T;
   static ZfVFieldSet setFn() {
     return {.set_ = {.float_ = [](void *o, double v) {
       Base::set(*static_cast<O *>(o), v);
@@ -2119,9 +2119,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Fixed : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Fixed<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Range = ZfFieldRange<T, Props,
     ZfField_Fixed_Def::minimum, ZfField_Fixed_Def::maximum>;
   using Type = ZfFieldType_Fixed<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
@@ -2154,8 +2154,8 @@ struct ZfField_Fixed : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_Fixed<Base, false> :
     public ZfField_Fixed<Base, true> {
-  using O = typename Base::O;
-  using T = typename Base::T;
+  using O = Base::O;
+  using T = Base::T;
   static ZfVFieldSet setFn() {
     return {.set_ = {.fixed = [](void *o, ZuFixed v) {
       Base::set(*static_cast<O *>(o), ZuMv(v));
@@ -2212,9 +2212,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Decimal : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Decimal<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Range = ZfFieldRange<T, Props,
     ZfField_Decimal_Def::minimum, ZfField_Decimal_Def::maximum>;
   using Type = ZfFieldType_Decimal<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
@@ -2247,7 +2247,7 @@ struct ZfField_Decimal : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_Decimal<Base, false> :
     public ZfField_Decimal<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.decimal = [](void *o, ZuDecimal v) {
       Base::set(*static_cast<O *>(o), ZuMv(v));
@@ -2293,9 +2293,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_Time : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_Time<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_Time<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZfVFieldGet getFn() {
@@ -2322,7 +2322,7 @@ struct ZfField_Time : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_Time<Base, false> :
     public ZfField_Time<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.time = [](void *o, ZuTime v) {
       Base::set(*static_cast<O *>(o), ZuMv(v));
@@ -2367,9 +2367,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_DateTime : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DateTime<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_DateTime<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZfVFieldGet getFn() {
@@ -2396,7 +2396,7 @@ struct ZfField_DateTime : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_DateTime<Base, false> :
     public ZfField_DateTime<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     return {.set_ = {.dateTime = [](void *o, ZuDateTime v) {
       Base::set(*static_cast<O *>(o), ZuMv(v));
@@ -2512,8 +2512,8 @@ struct ZfField_UDT_Null<T, decltype(T{}, void())> {
 template <typename Base, typename = void>
 struct ZfField_UDT_Get {
   static ZfVFieldGet getFn() {
-    using O = typename Base::O;
-    using T = typename Base::T;
+    using O = Base::O;
+    using T = Base::T;
     // field get() returns a temporary
     return {.get_ = {.udt = [](const void *o) -> const void * {
       auto &v = ZmTLS<T, getFn>();
@@ -2526,7 +2526,7 @@ template <typename Base>
 struct ZfField_UDT_Get<Base,
     decltype(&Base::get(ZuDeclVal<const typename Base::O &>()), void())> {
   static ZfVFieldGet getFn() {
-    using O = typename Base::O;
+    using O = Base::O;
     // field get() returns a crvalue
     return {.get_ = {.udt = [](const void *o) -> const void * {
       return static_cast<const void *>(&Base::get(*static_cast<const O *>(o)));
@@ -2539,9 +2539,9 @@ struct ZfField_UDT :
     public ZfField_UDT_Get<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_UDT<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_UDT<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   enum { Code = Type::Code };
   static ZfVFieldSet setFn() {
@@ -2573,8 +2573,8 @@ struct ZfField_UDT :
 template <typename Base>
 struct ZfField_UDT<Base, false> :
     public ZfField_UDT<Base, true> {
-  using O = typename Base::O;
-  using T = typename Base::T;
+  using O = Base::O;
+  using T = Base::T;
   static ZfVFieldSet setFn() {
     return {.set_ = {.udt = [](void *o, const void *p) {
       Base::set(*static_cast<O *>(o), *static_cast<const T *>(p));
@@ -2625,10 +2625,10 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_CStringVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_CStringVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Elem = typename ZuTraits<T>::Elem;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Elem = ZuTraits<T>::Elem;
+  using Props = Base::Props;
   using Type = ZfFieldType_CStringVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using CStringVec = ZfStruct_::CStringVec;
   enum { Code = Type::Code };
@@ -2656,7 +2656,7 @@ struct ZfField_CStringVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_CStringVec<Base, false> :
     public ZfField_CStringVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.cstringVec = [](void *o, CStringVec v) {
@@ -2708,9 +2708,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_StringVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_StringVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_StringVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using StringVec = ZfStruct_::StringVec;
   enum { Code = Type::Code };
@@ -2739,7 +2739,7 @@ struct ZfField_StringVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_StringVec<Base, false> :
     public ZfField_StringVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.stringVec = [](void *o, StringVec v) {
@@ -2791,9 +2791,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_BytesVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_BytesVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_BytesVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using BytesVec = ZfStruct_::BytesVec;
   enum { Code = Type::Code };
@@ -2822,7 +2822,7 @@ struct ZfField_BytesVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_BytesVec<Base, false> :
     public ZfField_BytesVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.bytesVec = [](void *o, BytesVec v) {
@@ -2908,9 +2908,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}> \
 struct ZfField_##Code_##Vec : public ZfField_<Base> { \
   template <template <typename> class Override> \
   using Adapt = ZfField_##Code_##Vec<Override<Base>>; \
-  using O = typename Base::O; \
-  using T = typename Base::T; \
-  using Props = typename Base::Props; \
+  using O = Base::O; \
+  using T = Base::T; \
+  using Props = Base::Props; \
   using Type = \
     ZfFieldType_##Code_##Vec<T, ZuTypeGrep<ZfFieldType_Props, Props>>; \
   using Code_##Vec = ZfStruct_::Code_##Vec; \
@@ -2940,7 +2940,7 @@ struct ZfField_##Code_##Vec : public ZfField_<Base> { \
 template <typename Base> \
 struct ZfField_##Code_##Vec<Base, false> : \
     public ZfField_##Code_##Vec<Base, true> { \
-  using O = typename Base::O; \
+  using O = Base::O; \
   static ZfVFieldSet setFn() { \
     using namespace ZfStruct_; \
     return {.set_ = {.Type_##Vec = [](void *o, Code_##Vec v) { \
@@ -3008,9 +3008,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_FloatVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_FloatVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_FloatVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using FloatVec = ZfStruct_::FloatVec;
   enum { Code = Type::Code };
@@ -3039,7 +3039,7 @@ struct ZfField_FloatVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_FloatVec<Base, false> :
     public ZfField_FloatVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.floatVec = [](void *o, FloatVec v) {
@@ -3091,9 +3091,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_FixedVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_FixedVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_FixedVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using FixedVec = ZfStruct_::FixedVec;
   enum { Code = Type::Code };
@@ -3122,7 +3122,7 @@ struct ZfField_FixedVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_FixedVec<Base, false> :
     public ZfField_FixedVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.fixedVec = [](void *o, FixedVec v) {
@@ -3174,9 +3174,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_DecimalVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DecimalVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_DecimalVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using DecimalVec = ZfStruct_::DecimalVec;
   enum { Code = Type::Code };
@@ -3205,7 +3205,7 @@ struct ZfField_DecimalVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_DecimalVec<Base, false> :
     public ZfField_DecimalVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.decimalVec = [](void *o, DecimalVec v) {
@@ -3258,9 +3258,9 @@ template <typename Base, bool = !ZfFieldWritable<Base>{}>
 struct ZfField_TimeVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_TimeVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_TimeVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using TimeVec = ZfStruct_::TimeVec;
   enum { Code = Type::Code };
@@ -3289,7 +3289,7 @@ struct ZfField_TimeVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_TimeVec<Base, false> :
     public ZfField_TimeVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.timeVec = [](void *o, TimeVec v) {
@@ -3344,9 +3344,9 @@ template <
 struct ZfField_DateTimeVec : public ZfField_<Base> {
   template <template <typename> class Override>
   using Adapt = ZfField_DateTimeVec<Override<Base>>;
-  using O = typename Base::O;
-  using T = typename Base::T;
-  using Props = typename Base::Props;
+  using O = Base::O;
+  using T = Base::T;
+  using Props = Base::Props;
   using Type = ZfFieldType_DateTimeVec<T, ZuTypeGrep<ZfFieldType_Props, Props>>;
   using DateTimeVec = ZfStruct_::DateTimeVec;
   enum { Code = Type::Code };
@@ -3375,7 +3375,7 @@ struct ZfField_DateTimeVec : public ZfField_<Base> {
 template <typename Base>
 struct ZfField_DateTimeVec<Base, false> :
     public ZfField_DateTimeVec<Base, true> {
-  using O = typename Base::O;
+  using O = Base::O;
   static ZfVFieldSet setFn() {
     using namespace ZfStruct_;
     return {.set_ = {.dateTimeVec = [](void *o, DateTimeVec v) {
@@ -3446,7 +3446,7 @@ struct ZfFieldMatcher {
 // - ZfStructRender(API, Object, Facet[, (FieldID[, Property...])...])
 #define ZfField_RenderDecl__(O, ID, ...) \
   using Props_ = ZfField(O, ID)::Props; \
-  using Props = typename Props_::template Push<ZuField_Props_(__VA_ARGS__)>;
+  using Props = Props_::template Push<ZuField_Props_(__VA_ARGS__)>;
 #define ZfField_RenderDecl_(O, Facet, ID, ...) \
   struct ZfField(O##_##Facet, ID) : public ZfField(O, ID) { \
     __VA_OPT__(ZfField_RenderDecl__(O, ID, __VA_ARGS__)) \
@@ -3480,8 +3480,8 @@ struct ZfFieldMatcher {
 
 template <typename Field>
 struct ZfFieldPrint_ {
-  using O = typename Field::O;
-  using Print = typename Field::Type::template Print<ZtFmt::Default>;
+  using O = Field::O;
+  using Print = Field::Type::template Print<ZtFmt::Default>;
   const O &o;
   template <typename S>
   friend inline decltype(auto) operator <<(S &s, const ZfFieldPrint_ &print) {

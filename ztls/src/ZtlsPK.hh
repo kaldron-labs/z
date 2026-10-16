@@ -157,8 +157,10 @@ struct AnyPK : public AnyKey {
 };
 
 // RSA public key
-template <typename Heap = ZuVoid>
-struct PK_RSA_ : public Heap, public AnyPK {
+template <bool Enabled = true>
+struct PK_RSA_ : public ZmNHeap<PK_RSA_<Enabled>, Enabled>, public AnyPK {
+friend inline ZuStringT<"Ztls.PK_RSA"> ZmNHeapID(PK_RSA_ *);
+
   enum { Secret = 1 };
 
 protected:
@@ -195,33 +197,33 @@ public:
     return n;
   }
 };
-ZuDerive(PK_RSA_Heap, (ZmHeap<"Ztls.PK_RSA", PK_RSA_<>>));
-ZuDerive(PK_RSA, (PK_RSA_<PK_RSA_Heap>));
+using PK_RSA = PK_RSA_<>;
 
 // RSA private key
-template <typename Heap = ZuVoid>
-struct SK_RSA_ : public PK_RSA_<Heap> {
+struct SK_RSA : public ZmNHeap<SK_RSA>, public PK_RSA_<false> {
+friend inline ZuStringT<"Ztls.SK_RSA"> ZmNHeapID(SK_RSA *);
+
   enum { Secret = 1 };
   using PK = PK_RSA;
-  using PK_ = PK_RSA_<Heap>;
+  using PK_ = PK_RSA_<false>;
   using PK_::key;
 
   // generate key
-  SK_RSA_(Random &rng, unsigned bits) {
+  SK_RSA(Random &rng, unsigned bits) {
     (void)rng;
     if (!Backend::pkey_rsa_generate(key, bits))
       throw ZeEXCEPT(Error, "ZtlsPK", "RSA key generation failed");
   }
 
   // load key from PKCS#1 data
-  SK_RSA_(const Data::SK_PKCS1 &data) {
+  SK_RSA(const Data::SK_PKCS1 &data) {
     if (!Backend::pkey_rsa_import_private(
 	key, data.modulus, data.pubExp, data.prvExp,
 	data.prime1, data.prime2, data.exp1, data.exp2, data.coeff))
       throw ZeEXCEPT(Error, "ZtlsPK", "RSA private key import failed");
   }
 
-  SK_RSA_(ZuBSpan modulus, ZuBSpan pubExp, ZuBSpan prvExp,
+  SK_RSA(ZuBSpan modulus, ZuBSpan pubExp, ZuBSpan prvExp,
     ZuBSpan coeff, ZuBSpan prime1, ZuBSpan prime2) {
     if (!Backend::pkey_rsa_import_ssh_private(
         key, modulus, pubExp, prvExp, coeff, prime1, prime2))
@@ -323,12 +325,13 @@ struct SK_RSA_ : public PK_RSA_<Heap> {
     return {};
   }
 };
-ZuDerive(SK_RSA_Heap, (ZmHeap<"Ztls.SK_RSA", SK_RSA_<>>));
-ZuDerive(SK_RSA, (SK_RSA_<SK_RSA_Heap>));
+
 
 // EC public key
-template <typename Heap = ZuVoid>
-struct PK_EC_ : public Heap, public AnyPK {
+template <bool Enabled = true>
+struct PK_EC_ : public ZmNHeap<PK_EC_<Enabled>, Enabled>, public AnyPK {
+friend inline ZuStringT<"Ztls.PK_EC"> ZmNHeapID(PK_EC_ *);
+
   enum { Secret = 0 };
 
 protected:
@@ -356,26 +359,26 @@ public:
     return true;
   }
 };
-ZuDerive(PK_EC_Heap, (ZmHeap<"Ztls.PK_EC", PK_EC_<>>));
-ZuDerive(PK_EC, (PK_EC_<PK_EC_Heap>));
+using PK_EC = PK_EC_<>;
 
 // EC private key
-template <typename Heap = ZuVoid>
-struct SK_EC_ : public PK_EC_<Heap> {
+struct SK_EC : public ZmNHeap<SK_EC>, public PK_EC_<false> {
+friend inline ZuStringT<"Ztls.SK_EC"> ZmNHeapID(SK_EC *);
+
   enum { Secret = 1 };
   using PK = PK_EC;
-  using PK_ = PK_EC_<Heap>;
+  using PK_ = PK_EC_<false>;
   using PK_::key;
 
   // generate key
-  SK_EC_(Random &rng, ZuBSpan id_) {
+  SK_EC(Random &rng, ZuBSpan id_) {
     (void)rng;
     if (!Backend::pkey_ec_generate(key, id_))
       throw ZeEXCEPT(Error, "ZtlsPK", "EC key generation failed");
   }
 
   // load key from SEC1 / PKCS#8 data
-  SK_EC_(Random &rng, ZuBSpan id_, ZuBSpan key) {
+  SK_EC(Random &rng, ZuBSpan id_, ZuBSpan key) {
     (void)rng;
     if (!Backend::pkey_ec_import_private(this->key, id_, key))
       throw ZeEXCEPT(Error, "ZtlsPK", "EC private key import failed");
@@ -461,12 +464,13 @@ struct SK_EC_ : public PK_EC_<Heap> {
     return {};
   }
 };
-ZuDerive(SK_EC_Heap, (ZmHeap<"Ztls.SK_EC", SK_EC_<>>));
-ZuDerive(SK_EC, (SK_EC_<SK_EC_Heap>));
+
 
 // ED25519 public key
-template <typename Heap = ZuVoid>
-struct PK_ED25519_ : public Heap, public AnyPK {
+template <bool Enabled = true>
+struct PK_ED25519_ : public ZmNHeap<PK_ED25519_<Enabled>, Enabled>, public AnyPK {
+friend inline ZuStringT<"Ztls.PK_ED25519"> ZmNHeapID(PK_ED25519_ *);
+
   enum { Secret = 0 };
 
 protected:
@@ -519,26 +523,26 @@ public:
     return Backend::pkey_verify(this->key, MDType, data, signature);
   }
 };
-ZuDerive(PK_ED25519_Heap, (ZmHeap<"Ztls.PK_ED25519", PK_ED25519_<>>));
-ZuDerive(PK_ED25519, (PK_ED25519_<PK_ED25519_Heap>));
+using PK_ED25519 = PK_ED25519_<>;
 
 // ED25519 private key
-template <typename Heap = ZuVoid>
-struct SK_ED25519_ : public PK_ED25519_<Heap> {
+struct SK_ED25519 : public ZmNHeap<SK_ED25519>, public PK_ED25519_<false> {
+friend inline ZuStringT<"Ztls.SK_ED25519"> ZmNHeapID(SK_ED25519 *);
+
   enum { Secret = 1 };
   using PK = PK_ED25519;
-  using PK_ = PK_ED25519_<Heap>;
+  using PK_ = PK_ED25519_<false>;
   using PK_::key;
 
   // generate key
-  SK_ED25519_(Random &rng) {
+  SK_ED25519(Random &rng) {
     (void)rng;
     if (!Backend::pkey_ed25519_generate(key))
       throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 key generation failed");
   }
 
   // load key from PKCS#8 data
-  SK_ED25519_(ZuBSpan key) {
+  SK_ED25519(ZuBSpan key) {
     if (!Backend::pkey_ed25519_import_private(this->key, key))
       throw ZeEXCEPT(Error, "ZtlsPK", "ED25519 private key import failed");
   }
@@ -603,11 +607,12 @@ struct SK_ED25519_ : public PK_ED25519_<Heap> {
     return {};
   }
 };
-ZuDerive(SK_ED25519_Heap, (ZmHeap<"Ztls.SK_ED25519", SK_ED25519_<>>));
-ZuDerive(SK_ED25519, (SK_ED25519_<SK_ED25519_Heap>));
 
-template <typename Heap = ZuVoid>
-struct PK_X25519_ : public Heap, public AnyPK {
+
+template <bool Enabled = true>
+struct PK_X25519_ : public ZmNHeap<PK_X25519_<Enabled>, Enabled>, public AnyPK {
+friend inline ZuStringT<"Ztls.PK_X25519"> ZmNHeapID(PK_X25519_ *);
+
   enum { Secret = 0 };
 
 protected:
@@ -635,23 +640,23 @@ public:
     return {};
   }
 };
-ZuDerive(PK_X25519_Heap, (ZmHeap<"Ztls.PK_X25519", PK_X25519_<>>));
-ZuDerive(PK_X25519, (PK_X25519_<PK_X25519_Heap>));
+using PK_X25519 = PK_X25519_<>;
 
-template <typename Heap = ZuVoid>
-struct SK_X25519_ : public PK_X25519_<Heap> {
+struct SK_X25519 : public ZmNHeap<SK_X25519>, public PK_X25519_<false> {
+friend inline ZuStringT<"Ztls.SK_X25519"> ZmNHeapID(SK_X25519 *);
+
   enum { Secret = 1 };
   using PK = PK_X25519;
-  using PK_ = PK_X25519_<Heap>;
+  using PK_ = PK_X25519_<false>;
   using PK_::key;
 
-  SK_X25519_(Random &rng) {
+  SK_X25519(Random &rng) {
     (void)rng;
     if (!Backend::pkey_x25519_generate(key))
       throw ZeEXCEPT(Error, "ZtlsPK", "X25519 key generation failed");
   }
 
-  SK_X25519_(ZuBSpan seed) {
+  SK_X25519(ZuBSpan seed) {
     if (!Backend::pkey_x25519_import_private(key, seed))
       throw ZeEXCEPT(Error, "ZtlsPK", "X25519 private key import failed");
   }
@@ -697,8 +702,7 @@ struct SK_X25519_ : public PK_X25519_<Heap> {
     return {};
   }
 };
-ZuDerive(SK_X25519_Heap, (ZmHeap<"Ztls.SK_X25519", SK_X25519_<>>));
-ZuDerive(SK_X25519, (SK_X25519_<SK_X25519_Heap>));
+
 
 template <typename Impl>
 struct Load {

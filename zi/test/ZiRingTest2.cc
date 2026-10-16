@@ -446,7 +446,7 @@ template <> struct RingT<true, true> {
 
 template <bool MW, bool V>
 struct Test {
-  using Ring = typename ::RingT<MW, V>::T;
+  using Ring = ::RingT<MW, V>::T;
   using Msg = ZuIf<V, VMsg, ::Msg>;
   using App = ::App<Ring, Msg>;
   using Work = ::Work<Ring, Msg>;

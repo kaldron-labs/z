@@ -171,10 +171,11 @@ static bool jwksJSON_(StringVec &sources, String &json, bool strict)
   return true;
 }
 
-template <typename Heap = ZuVoid>
-class SignKeyLoad__ : public Heap, public ZmObject  {
+class SignKeyLoad_ : public ZmNHeap<SignKeyLoad_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.discovery.SignKeyLoad"> ZmNHeapID(SignKeyLoad_ *);
+
 public:
-  SignKeyLoad__(DB *db, String issuer, int64_t now,
+  SignKeyLoad_(DB *db, String issuer, int64_t now,
       int64_t expires, unsigned maxKeys, SignKeyFn complete) :
     m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now},
     m_expires{expires}, m_maxKeys{maxKeys}, m_complete{ZuMv(complete)} { }
@@ -188,7 +189,7 @@ public:
     }
     using Tuple = SignKeyTable::Tuple;
     m_db->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
-      self = ZmRef<SignKeyLoad__>{this}
+      self = ZmRef<SignKeyLoad_>{this}
     ](ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
 	if (count > self->m_maxKeys) {
@@ -246,9 +247,6 @@ private:
   int64_t m_start = 0;
   bool m_overflow = false;
 };
-ZuDerive(SignKeyLoadHeap,
-  (ZmHeap<"Zum.zumd.discovery.SignKeyLoad", SignKeyLoad__<>>));
-ZuDerive(SignKeyLoad_, (SignKeyLoad__<SignKeyLoadHeap>));
 
 void signKeyLoad(DB *db, String issuer, int64_t now,
     int64_t expires, unsigned maxKeys, SignKeyFn complete)
@@ -258,10 +256,11 @@ void signKeyLoad(DB *db, String issuer, int64_t now,
   load->start();
 }
 
-template <typename Heap = ZuVoid>
-class DiscoveryComplete__ : public Heap, public ZmObject  {
+class DiscoveryComplete_ : public ZmNHeap<DiscoveryComplete_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.discovery.DiscoveryComplete"> ZmNHeapID(DiscoveryComplete_ *);
+
 public:
-  DiscoveryComplete__(DiscoveryFn complete) :
+  DiscoveryComplete_(DiscoveryFn complete) :
     m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
@@ -269,7 +268,7 @@ public:
   void complete(bool ok, String value)
   {
     m_request->complete([
-      self = ZmRef<DiscoveryComplete__>{this}, ok, value = ZuMv(value)
+      self = ZmRef<DiscoveryComplete_>{this}, ok, value = ZuMv(value)
     ]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(ok, ZuMv(value));
@@ -286,10 +285,6 @@ private:
   ZmRef<Request>	m_request;
   DiscoveryFn	m_complete;
 };
-ZuDerive(DiscoveryCompleteHeap,
-  (ZmHeap<"Zum.zumd.discovery.DiscoveryComplete", DiscoveryComplete__<>>));
-ZuDerive(DiscoveryComplete_,
-  (DiscoveryComplete__<DiscoveryCompleteHeap>));
 
 static bool endpoints(ZuCSpan authorizationBase, ZuCSpan issuer,
     AppID appID, Metadata &metadata)
@@ -360,10 +355,11 @@ String jwksJSON(const StringVec &publicJwks)
   return json;
 }
 
-template <typename Heap = ZuVoid>
-class JWKSLoad__ : public Heap, public ZmPolymorph  {
+class JWKSLoad_ : public ZmNHeap<JWKSLoad_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.discovery.JWKSLoad"> ZmNHeapID(JWKSLoad_ *);
+
 public:
-  JWKSLoad__(
+  JWKSLoad_(
       DB *db, String issuer, int64_t now, unsigned maxKeys,
       DiscoveryFn complete) :
     m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now}, m_maxKeys{maxKeys},
@@ -378,7 +374,7 @@ public:
     using Table = SignKeyTable;
     using Tuple = Table::Tuple;
     m_db->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
-      self = ZmRef<JWKSLoad__>{this}
+      self = ZmRef<JWKSLoad_>{this}
     ](ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
 	if (count > self->m_maxKeys) {
@@ -419,8 +415,6 @@ private:
   bool		m_overflow = false;
   bool		m_done = false;
 };
-ZuDerive(JWKSLoadHeap, (ZmHeap<"Zum.zumd.discovery.JWKSLoad", JWKSLoad__<>>));
-ZuDerive(JWKSLoad_, (JWKSLoad__<JWKSLoadHeap>));
 
 bool jwksLoad(
     Requests *requests, ZuTime deadline, DB *db,

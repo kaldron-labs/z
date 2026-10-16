@@ -12,10 +12,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RoleMapPutSaga_ : public Heap,
-    public ZdbSaga<RoleMapPutSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RoleMapPutSaga_<Heap>, DB>;
+struct RoleMapPutSaga : public ZmNHeap<RoleMapPutSaga>,
+    public ZdbSaga<RoleMapPutSaga, DB> {
+friend inline ZuStringT<"Zum.RoleMapPutSaga"> ZmNHeapID(RoleMapPutSaga *);
+
+  using Base = ZdbSaga<RoleMapPutSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -80,8 +81,8 @@ struct RoleMapPutSaga_ : public Heap,
     return {};
   }
 
-  RoleMapPutSaga_() = default;
-  RoleMapPutSaga_(App app_, RoleMap before_, RoleID roleID_, String ifMatch_,
+  RoleMapPutSaga() = default;
+  RoleMapPutSaga(App app_, RoleMap before_, RoleID roleID_, String ifMatch_,
       String ifNoneMatch_, int64_t updated_, IdemRequest request_,
       ZmRef<AdminEditResult<RoleMap>> response_ = {}) :
     app{ZuMv(app_)}, before{ZuMv(before_)}, roleID{roleID_},
@@ -89,13 +90,10 @@ struct RoleMapPutSaga_ : public Heap,
     updated{updated_}, request{ZuMv(request_)}, response{ZuMv(response_)} {
     if (response) response->item = result();
   }
-  RoleMapPutSaga_(RoleMapPutArgs args) :
-    RoleMapPutSaga_{ZuMv(args.app), ZuMv(args.before), args.roleID, ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), args.updated, ZuMv(args.request), ZuMv(args.result)} { }
-  ~RoleMapPutSaga_() override;
+  RoleMapPutSaga(RoleMapPutArgs args) :
+    RoleMapPutSaga{ZuMv(args.app), ZuMv(args.before), args.roleID, ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), args.updated, ZuMv(args.request), ZuMv(args.result)} { }
+  ~RoleMapPutSaga() override;
 };
-
-using RoleMapPutSaga = RoleMapPutSaga_<
-  ZmHeap<"Zum.RoleMapPutSaga", RoleMapPutSaga_<>>>;
 
 ZfStruct(ZumAPI, (RoleMapPutSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -107,20 +105,17 @@ ZfStruct(ZumAPI, (RoleMapPutSaga, FB),
   (request,	(Ctor<6>),	UDT));
 Zfb::AsTable<"Zum.fbs.RoleMapPut"> Zfb_Fmt(RoleMapPutSaga *);
 
-template <typename Heap>
-unsigned RoleMapPutSaga_<Heap>::appError(const App &item) const
+unsigned RoleMapPutSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-unsigned RoleMapPutSaga_<Heap>::recordError(const RoleMap &item) const
+unsigned RoleMapPutSaga::recordError(const RoleMap &item) const
 {
   return putError(*this, item);
 }
 
-template <typename Heap>
-RoleMap RoleMapPutSaga_<Heap>::result() const
+RoleMap RoleMapPutSaga::result() const
 {
   return RoleMap{.appID = before.appID, .providerID = before.providerID,
     .value = before.value, .roleID = roleID, .state = State::Active,
@@ -128,8 +123,7 @@ RoleMap RoleMapPutSaga_<Heap>::result() const
     .updated = updated};
 }
 
-template <typename Heap>
-void RoleMapPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void RoleMapPutSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!before.appID || before.appID != app.id || !before.providerID || !before.value || !roleID) {
     setError(400); complete(false); return;
@@ -161,8 +155,7 @@ void RoleMapPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<RoleMapPutSaga>{}));
 
-template <typename Heap>
-RoleMapPutSaga_<Heap>::~RoleMapPutSaga_() = default;
+RoleMapPutSaga::~RoleMapPutSaga() = default;
 
 SagaRef roleMapPut(ZuBSpan data) {
   return RoleMapPutSaga::load(data);

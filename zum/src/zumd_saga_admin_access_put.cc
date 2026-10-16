@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AdminAccessPutSaga_ : public Heap,
-    public ZdbSaga<AdminAccessPutSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AdminAccessPutSaga_<Heap>, DB>;
+struct AdminAccessPutSaga : public ZmNHeap<AdminAccessPutSaga>,
+    public ZdbSaga<AdminAccessPutSaga, DB> {
+friend inline ZuStringT<"Zum.AdminAccessPutSaga"> ZmNHeapID(AdminAccessPutSaga *);
+
+  using Base = ZdbSaga<AdminAccessPutSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -75,8 +76,8 @@ struct AdminAccessPutSaga_ : public Heap,
     return {};
   }
 
-  AdminAccessPutSaga_() = default;
-  AdminAccessPutSaga_(App app_, AdminAccess before_, AdminAccess values_, String ifMatch_, String ifNoneMatch_, int64_t updated_, IdemRequest request_) :
+  AdminAccessPutSaga() = default;
+  AdminAccessPutSaga(App app_, AdminAccess before_, AdminAccess values_, String ifMatch_, String ifNoneMatch_, int64_t updated_, IdemRequest request_) :
     app{ZuMv(app_)},
     before{ZuMv(before_)},
     values{ZuMv(values_)},
@@ -84,19 +85,15 @@ struct AdminAccessPutSaga_ : public Heap,
     ifNoneMatch{ZuMv(ifNoneMatch_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  AdminAccessPutSaga_(AdminAccessPutArgs args) :
-    AdminAccessPutSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), ZuMv(args.updated), ZuMv(args.request)} {
+  AdminAccessPutSaga(AdminAccessPutArgs args) :
+    AdminAccessPutSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.ifMatch), ZuMv(args.ifNoneMatch), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<AdminAccess>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~AdminAccessPutSaga_() override;
+  ~AdminAccessPutSaga() override;
 };
-
-
-using AdminAccessPutSaga = AdminAccessPutSaga_<
-  ZmHeap<"Zum.AdminAccessPutSaga", AdminAccessPutSaga_<>>>;
 
 ZfStruct(, (AdminAccessPutSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -108,25 +105,19 @@ ZfStruct(, (AdminAccessPutSaga, FB),
   (request,	(Ctor<6>),	UDT));
 Zfb::AsTable<"Zum.fbs.AdminAccessPut"> Zfb_Fmt(AdminAccessPutSaga *);
 
-template <typename Heap>
-unsigned AdminAccessPutSaga_<Heap>::appError(const App &item) const
+unsigned AdminAccessPutSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-unsigned AdminAccessPutSaga_<Heap>::recordError(const AdminAccess &item) const
+unsigned AdminAccessPutSaga::recordError(const AdminAccess &item) const
 {
   return putError(*this, item);
 }
 
-template <typename Heap>
-AdminAccess AdminAccessPutSaga_<Heap>::result() const { return accessResult(*this); }
+AdminAccess AdminAccessPutSaga::result() const { return accessResult(*this); }
 
-
-
-template <typename Heap>
-void AdminAccessPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void AdminAccessPutSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.appID || values.appID != app.id || values.appID != before.appID ||
       !values.actorID || values.actorID != before.actorID || values.actorKind != before.actorKind ||
@@ -178,8 +169,7 @@ void AdminAccessPutSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<AdminAccessPutSaga>{}));
 
-template <typename Heap>
-AdminAccessPutSaga_<Heap>::~AdminAccessPutSaga_() = default;
+AdminAccessPutSaga::~AdminAccessPutSaga() = default;
 
 SagaRef adminAccessPut(ZuBSpan data) {
   return AdminAccessPutSaga::load(data);

@@ -28,7 +28,7 @@ ZmExtern ZuTime now();
 #endif
 
 template <typename T>
-inline typename ZuTime::MatchInt<T, ZuTime>::T
+inline ZuTime::MatchInt<T, ZuTime>::T
 now(T d) { ZuTime t = now(); return t += d; }
 inline ZuTime now(const ZuTime &d) { ZuTime t = now(); return t += d; }
 

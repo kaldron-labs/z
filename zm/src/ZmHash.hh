@@ -293,8 +293,8 @@ struct ZmHash_NodeT {
 private:
   static constexpr auto KeyAxor = NTP_::KeyAxor;
   static constexpr auto ValAxor = NTP_::ValAxor;
-  using NodeBase = typename NTP_::Node;
-  using HeapID = typename NTP_::HeapID;
+  using NodeBase = NTP_::Node;
+  using HeapID = NTP_::HeapID;
   enum { Sharded = NTP_::Sharded };
 
   struct Node;
@@ -327,7 +327,7 @@ struct ZmHash_IsStaticEquals<T, Cmp, decltype(
   void())> : public ZuTrue { };
 
 template <typename T_, typename NTP_ = ZmHash_Defaults,
-  typename Node_ = typename ZmHash_NodeT<T_, NTP_>::T,
+  typename Node_ = ZmHash_NodeT<T_, NTP_>::T,
   typename Impl_ = void>
 class ZmHash :
     public ZmAnyHash,
@@ -343,11 +343,11 @@ public:
   using ValRet = decltype(ValAxor(ZuDeclVal<const T &>()));
   using Key = ZuRDecay<KeyRet>;
   using Val = ZuRDecay<ValRet>;
-  using Cmp = typename NTP::template CmpT<Key>;
-  using ValCmp = typename NTP::template ValCmpT<Val>;
-  using HashFn = typename NTP::template HashFnT<Key>;
-  using Lock = typename NTP::Lock;
-  using NodeBase = typename NTP::Node;
+  using Cmp = NTP::template CmpT<Key>;
+  using ValCmp = NTP::template ValCmpT<Val>;
+  using HashFn = NTP::template HashFnT<Key>;
+  using Lock = NTP::Lock;
+  using NodeBase = NTP::Node;
   using ID = NTP::ID;
   enum { Shadow = NTP::Shadow };
   using HeapID = NTP::HeapID;
@@ -374,8 +374,8 @@ public:
   using LockMgr::cBits;
 
   using Node = Node_;
-  using NodeRef = typename NodeFn::template Ref<Node>;
-  using NodeMvRef = typename NodeFn::template MvRef<Node>;
+  using NodeRef = NodeFn::template Ref<Node>;
+  using NodeMvRef = NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
 
 private:
@@ -436,8 +436,8 @@ template <typename> friend class Iter_;
   protected:
     Hash			&hash;
     int				slot = -1;
-    typename Hash::Node		*node = nullptr;
-    typename Hash::Node		*prev = nullptr;
+    Hash::Node		*node = nullptr;
+    Hash::Node		*prev = nullptr;
 
     Iter_(Iter_ &&) = default;
     Iter_ &operator =(Iter_ &&) = default;

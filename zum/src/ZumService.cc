@@ -67,12 +67,12 @@ static ZuCSpan serviceKeyID(const ServiceKey &key) { return key.id; }
 static const char *serviceKeysID() { return "Zum.Service.Keys"; }
 ZuDerive(ServiceKeysHash, (ZmLHash<ServiceKey,
   ZmLHashKey<serviceKeyID, ZmLHashID<serviceKeysID, ZmLHashLocal<>>>>));
-template <typename Heap = ZuVoid>
-struct ServiceKeys_ : public Heap, public ServiceKeysHash {
+struct ServiceKeys : public ZmNHeap<ServiceKeys>, public ServiceKeysHash {
+friend inline ZuStringT<"Zum.Service.Keys"> ZmNHeapID(ServiceKeys *);
+
   using ServiceKeysHash::ServiceKeysHash;
 };
-ZuDerive(ServiceKeysHeap, (ZmHeap<"Zum.Service.Keys", ServiceKeys_<>>));
-ZuDerive(ServiceKeys, (ServiceKeys_<ServiceKeysHeap>));
+
 using ServiceKeySet = ZuPtr<ServiceKeys>;
 
 static ServiceKeySet serviceKeys(unsigned count)
@@ -381,16 +381,17 @@ static bool serviceIssuer(
   return true;
 }
 
-template <typename Heap = ZuVoid>
-struct ServiceState_ : public Heap, public ZmObject  {
+struct ServiceState : public ZmNHeap<ServiceState>, public ZmObject  {
+friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *);
+
   enum { Initial, Starting, Started, Stopping, Stopped };
 
-  ServiceState_(ServiceConfig config, ServiceHTTPFn http,
+  ServiceState(ServiceConfig config, ServiceHTTPFn http,
       AppID appID_, AppID managementAppID_) :
     config{ZuMv(config)}, http{ZuMv(http)}, appID{appID_},
     managementAppID{managementAppID_} { }
 
-  ~ServiceState_() { clear_(); }
+  ~ServiceState() { clear_(); }
 
   template <typename L> void post(L &&fn) {
     config.scheduler->run(ZuFwd<L>(fn), config.sid);
@@ -404,7 +405,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
     }
     ++inflight;
     request.timeout = config.requestTimeout;
-    http(ZuMv(request), [self = ZmRef<ServiceState_>{this},
+    http(ZuMv(request), [self = ZmRef<ServiceState>{this},
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       self->post([self = ZuMv(self), response = ZuMv(response),
           complete = ZuMv(complete)]() mutable {
@@ -420,7 +421,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
   {
     if (state != Initial) { complete(ServiceError::Invalid); return; }
     state = Starting;
-    discovery_([self = ZmRef<ServiceState_>{this},
+    discovery_([self = ZmRef<ServiceState>{this},
         complete = ZuMv(complete)](bool ok) mutable {
       if (self->state != Starting) { complete(ServiceError::Stopped); return; }
       if (!ok) { self->state = Initial; complete(ServiceError::Invalid); return; }
@@ -488,7 +489,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
   {
     state = Started;
     if (!config.ssf.enabled) { complete(ServiceError::OK); return; }
-    register_([self = ZmRef<ServiceState_>{this},
+    register_([self = ZmRef<ServiceState>{this},
         complete = ZuMv(complete)](bool ok) mutable {
       if (self->state != Started) { complete(ServiceError::Stopped); return; }
       if (!ok) self->state = Initial;
@@ -498,7 +499,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
 
   void register_(ServiceReadyFn complete)
   {
-    token_([self = ZmRef<ServiceState_>{this}, complete = ZuMv(complete)](
+    token_([self = ZmRef<ServiceState>{this}, complete = ZuMv(complete)](
         bool ok) mutable {
       if (!ok || self->state != Started) { complete(false); return; }
       String url = endpoint(self->config.managementURL, "/admin/apps/");
@@ -534,7 +535,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       ZmScheduler::Update, [this](auto &&arm) {
         return arm([this]() {
           registerArmed = false;
-          register_([self = ZmRef<ServiceState_>{this}](bool ok) mutable {
+          register_([self = ZmRef<ServiceState>{this}](bool ok) mutable {
             if (!ok) self->registerArm_(1);
           });
         });
@@ -553,7 +554,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       .url = ZuMv(url),
       .authorization = basicAuth(config.clientID, config.clientSecret),
       .contentType = "application/x-www-form-urlencoded",
-      .body = ZuMv(form)}, [self = ZmRef<ServiceState_>{this}, management,
+      .body = ZuMv(form)}, [self = ZmRef<ServiceState>{this}, management,
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token;
       uint64_t expires = 0;
@@ -584,7 +585,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       complete(false);
       return;
     }
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState_>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
         managementURL = ZuMv(managementURL),
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token, jwks;
@@ -605,7 +606,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
 
   void managementDiscovery_(String url, ServiceReadyFn complete)
   {
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState_>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token, jwks;
       bool ok = response.status == 200 && discoveryResponse(
@@ -633,7 +634,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       complete(false);
       return;
     }
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState_>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token, jwks;
       bool ok = response.status == 200 && discoveryResponse(
@@ -648,7 +649,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
   void keys_(bool management, ServiceReadyFn complete)
   {
     String url = management ? managementJWKSURL : jwksURL;
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState_>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
         management, complete = ZuMv(complete)](
         ServiceHTTPResponse response) mutable {
       auto keys = response.status == 200 ? jwksResponse(ZuMv(response.body),
@@ -669,7 +670,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
   void ssfKeys_(ServiceReadyFn complete)
   {
     send_(ServiceHTTPRequest{.url = ZuMv(ssfJWKSURL)},
-      [self = ZmRef<ServiceState_>{this}, complete = ZuMv(complete)](
+      [self = ZmRef<ServiceState>{this}, complete = ZuMv(complete)](
           ServiceHTTPResponse response) mutable {
 	auto next = response.status == 200 ? jwksResponse(
           ZuMv(response.body), self->config.responseMax,
@@ -813,7 +814,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       return;
     }
     keysRefreshing = true;
-    keys_(false, [self = ZmRef<ServiceState_>{this}](bool ok) mutable {
+    keys_(false, [self = ZmRef<ServiceState>{this}](bool ok) mutable {
       self->keysRefreshing = false;
       completeAll(self->keyWaiters, ok);
     });
@@ -858,7 +859,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
     tokenWaiters.push(ZuMv(complete));
     if (renewing) return;
     renewing = true;
-    authenticate_([self = ZmRef<ServiceState_>{this}](bool ok) mutable {
+    authenticate_([self = ZmRef<ServiceState>{this}](bool ok) mutable {
       if (!ok || self->state != Started) { self->renewed_(false); return; }
       self->keys_(true, [self = ZuMv(self)](bool ok) mutable {
         self->renewed_(ok && self->state == Started &&
@@ -882,7 +883,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       .authorization = basicAuth(config.introspectionClientID,
         config.introspectionSecret),
       .contentType = "application/x-www-form-urlencoded",
-      .body = ZuMv(form)}, [self = ZmRef<ServiceState_>{this},
+      .body = ZuMv(form)}, [self = ZmRef<ServiceState>{this},
         token = ZuMv(token), complete = ZuMv(complete)](
         ServiceHTTPResponse response) mutable {
       Introspection value;
@@ -943,7 +944,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
       complete(ServiceError::Unauthorized, ServicePrincipal{});
       return;
     }
-    refreshKeys_([self = ZmRef<ServiceState_>{this}, token = ZuMv(token),
+    refreshKeys_([self = ZmRef<ServiceState>{this}, token = ZuMv(token),
         complete = ZuMv(complete)](bool ok) mutable {
       Principal principal;
       if (self->state != Started) {
@@ -975,7 +976,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
 
   void publish_(ServiceManifest manifest, ServiceProtocolFn complete)
   {
-    token_([self = ZmRef<ServiceState_>{this}, manifest = ZuMv(manifest),
+    token_([self = ZmRef<ServiceState>{this}, manifest = ZuMv(manifest),
         complete = ZuMv(complete)](bool ok) mutable {
       if (!ok || !manifest.revision) {
         complete(ServiceProtocolResult{.error = ok ? ServiceError::Invalid :
@@ -1074,9 +1075,7 @@ struct ServiceState_ : public Heap, public ZmObject  {
   ZmScheduler::Timer expiryTimer;
   bool expiryArmed = false;
 };
-ZuDerive(ServiceStateHeap,
-  (ZmHeap<"Zum.ZumService.ServiceState", ServiceState_<>>));
-ZuDerive(ServiceState, (ServiceState_<ServiceStateHeap>));
+
 Service::Service() = default;
 Service::~Service() { final(); }
 

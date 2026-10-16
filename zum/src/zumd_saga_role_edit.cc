@@ -10,10 +10,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RoleEditSaga_ : public Heap,
-    public ZdbSaga<RoleEditSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RoleEditSaga_<Heap>, DB>;
+struct RoleEditSaga : public ZmNHeap<RoleEditSaga>,
+    public ZdbSaga<RoleEditSaga, DB> {
+friend inline ZuStringT<"Zum.RoleEditSaga"> ZmNHeapID(RoleEditSaga *);
+
+  using Base = ZdbSaga<RoleEditSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -117,8 +118,8 @@ struct RoleEditSaga_ : public Heap,
     return {};
   }
 
-  RoleEditSaga_() = default;
-  RoleEditSaga_(App app_, Role before_, ActionIDVec actionIDs_,
+  RoleEditSaga() = default;
+  RoleEditSaga(App app_, Role before_, ActionIDVec actionIDs_,
       String ifMatch_, int64_t updated_, IdemRequest request_, int8_t kind_,
       String label_, State::T state_,
       ZmRef<AdminEditResult<Role>> response_ = {}) :
@@ -126,13 +127,10 @@ struct RoleEditSaga_ : public Heap,
     ifMatch{ZuMv(ifMatch_)}, updated{updated_}, request{ZuMv(request_)},
     kind{kind_}, label{ZuMv(label_)}, state{state_},
     response{ZuMv(response_)} { }
-  RoleEditSaga_(RoleEditArgs args) :
-    RoleEditSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.actionIDs), ZuMv(args.ifMatch), args.updated, ZuMv(args.request), args.kind, ZuMv(args.label), args.state, ZuMv(args.result)} { }
-  ~RoleEditSaga_() override;
+  RoleEditSaga(RoleEditArgs args) :
+    RoleEditSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.actionIDs), ZuMv(args.ifMatch), args.updated, ZuMv(args.request), args.kind, ZuMv(args.label), args.state, ZuMv(args.result)} { }
+  ~RoleEditSaga() override;
 };
-
-using RoleEditSaga = RoleEditSaga_<
-  ZmHeap<"Zum.RoleEditSaga", RoleEditSaga_<>>>;
 
 ZfStruct(ZumAPI, (RoleEditSaga, FB),
   (app,		(Ctor<0>),			UDT),
@@ -146,8 +144,7 @@ ZfStruct(ZumAPI, (RoleEditSaga, FB),
   (state,	(Ctor<8>, Enum<State::Map>),	Int8));
 Zfb::AsTable<"Zum.fbs.RoleEdit"> Zfb_Fmt(RoleEditSaga *);
 
-template <typename Heap>
-unsigned RoleEditSaga_<Heap>::appError(const App &item) const
+unsigned RoleEditSaga::appError(const App &item) const
 {
   if (kind < Actions || kind > Status ||
       (kind == Status && (state < 0 || state >= State::N))) return 400;
@@ -158,8 +155,7 @@ unsigned RoleEditSaga_<Heap>::appError(const App &item) const
       (kind != Label && app.authVersion == UINT64_MAX))) ? 409 : 0;
 }
 
-template <typename Heap>
-unsigned RoleEditSaga_<Heap>::roleError(const Role &item) const
+unsigned RoleEditSaga::roleError(const Role &item) const
 {
   String etag{"\"v"};
   etag << item.version << '"';
@@ -169,8 +165,7 @@ unsigned RoleEditSaga_<Heap>::roleError(const Role &item) const
     (!unchanged() && before.version == UINT64_MAX) ? 409 : 0;
 }
 
-template <typename Heap>
-void RoleEditSaga_<Heap>::validate(unsigned offset, Zdb_::SagaCompleteFn complete)
+void RoleEditSaga::validate(unsigned offset, Zdb_::SagaCompleteFn complete)
 {
   if (kind != Actions) { complete(true); return; }
   if (!offset) {
@@ -197,8 +192,7 @@ void RoleEditSaga_<Heap>::validate(unsigned offset, Zdb_::SagaCompleteFn complet
 
 ZuAssert((Zdb_::SagaDefValid<RoleEditSaga>{}));
 
-template <typename Heap>
-RoleEditSaga_<Heap>::~RoleEditSaga_() = default;
+RoleEditSaga::~RoleEditSaga() = default;
 
 SagaRef roleEdit(ZuBSpan data) {
   return RoleEditSaga::load(data);

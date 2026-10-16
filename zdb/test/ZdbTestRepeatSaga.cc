@@ -23,10 +23,10 @@ ZuAssert((!Zdb_::SagaDefValid<EmptyPhases>{}));
 ZuAssert((!Zdb_::SagaDefValid<BadOp>{}));
 ZuAssert((!Zdb_::SagaDefValid<BadRepeat>{}));
 
+struct RepeatSaga : public ZmNHeap<RepeatSaga>, public ZdbSaga<RepeatSaga, SagaDB> {
+friend inline ZuStringT<"Zdb.Test.RepeatSaga"> ZmNHeapID(RepeatSaga *);
 
-template <typename Heap = ZuVoid>
-struct RepeatSaga_ : public Heap, public ZdbSaga<RepeatSaga_<Heap>, SagaDB> {
-  using Base = ZdbSaga<RepeatSaga_<Heap>, SagaDB>;
+  using Base = ZdbSaga<RepeatSaga, SagaDB>;
   using Type = ZuStringT<"repeatSaga">;
   enum { NPhases = 4 };
   uint64_t first;
@@ -37,10 +37,8 @@ struct RepeatSaga_ : public Heap, public ZdbSaga<RepeatSaga_<Heap>, SagaDB> {
   ZdbSagaRepeatPhase(2, payment, Delete, second) { return {}; }
   ZdbSagaPhase(3, payment, Update) { return {}; }
 
-  RepeatSaga_(uint64_t first_, uint64_t second_) : first{ZuMv(first_)}, second{ZuMv(second_)} { }
+  RepeatSaga(uint64_t first_, uint64_t second_) : first{ZuMv(first_)}, second{ZuMv(second_)} { }
 };
-
-using RepeatSaga = RepeatSaga_<ZmHeap<"Zdb.Test.RepeatSaga", RepeatSaga_<>>>;
 
 ZfStruct(, (RepeatSaga, FB),
   (first,	(Ctor<0>),	UInt64),

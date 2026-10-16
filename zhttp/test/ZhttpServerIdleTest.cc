@@ -230,7 +230,7 @@ struct App : public Zhttp::Server<App, ZhttpServerIdleTest_::Parser, ResBuilderQ
   State	*testState;
 };
 
-ZuAssert((ZuIsSame<typename App::ResponseHeaders, ZuTypeList<>>{}));
+ZuAssert((ZuIsSame<App::ResponseHeaders, ZuTypeList<>>{}));
 
 struct SeedHeaders {
   using List = ZhttpHeaders(("x-server-seed", "seed"));
@@ -246,7 +246,7 @@ struct SeedParser : Parser {
   template <typename Link> void complete(Link *, bool) { }
 };
 using SeedServer = Zhttp::Server<SeedApp, SeedParser, SeedQ>;
-ZuAssert((ZuIsSame<typename SeedServer::ResponseHeaders,
+ZuAssert((ZuIsSame<SeedServer::ResponseHeaders,
   ZuTypeList<SeedHeaders>>{}));
 
 struct SeedApp : SeedServer {
@@ -266,7 +266,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     public Zhttp::Builder,
     public Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false> {
-    using Base = typename Zhttp::MessageTraits<Profile>::template Request<
+    using Base = Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false>;
     using HdrCatalog = RequestHeaders;
     using Base::body;
@@ -419,7 +419,7 @@ void idle()
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
-  using ClientLink = typename Client<Zhttp::H3QUIC>::Link;
+  using ClientLink = Client<Zhttp::H3QUIC>::Link;
   ZmRef<ClientLink> link;
   if (clientUp) link = new ClientLink{&client};
 #ifdef ZmObject_DEBUG
@@ -475,7 +475,7 @@ void activeStop()
   State state;
   state.port = testPort();
   using HTTP = Zhttp::ProfileTraits<Profile>;
-  using Protocol = typename HTTP::Protocol;
+  using Protocol = HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
   state.completeRequest = Sync;
@@ -530,7 +530,7 @@ void activeStop()
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
-  using ClientLink = typename Client<Profile>::Link;
+  using ClientLink = Client<Profile>::Link;
   ZmRef<ClientLink> link;
   if (clientUp) link = new ClientLink{&client};
 #ifdef ZmObject_DEBUG

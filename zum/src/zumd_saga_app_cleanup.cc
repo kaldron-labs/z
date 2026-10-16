@@ -10,10 +10,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AppCleanupSaga_ : public Heap,
-    public ZdbSaga<AppCleanupSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AppCleanupSaga_<Heap>, DB>;
+struct AppCleanupSaga : public ZmNHeap<AppCleanupSaga>,
+    public ZdbSaga<AppCleanupSaga, DB> {
+friend inline ZuStringT<"Zum.AppCleanupSaga"> ZmNHeapID(AppCleanupSaga *);
+
+  using Base = ZdbSaga<AppCleanupSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -83,19 +84,16 @@ struct AppCleanupSaga_ : public Heap,
   }
   ZdbSagaPhase(2, zum.app, Update) { complete(true); return {}; }
 
-  AppCleanupSaga_() = default;
-  AppCleanupSaga_(AppID appID_, EvidenceDeleteVec evidence_,
+  AppCleanupSaga() = default;
+  AppCleanupSaga(AppID appID_, EvidenceDeleteVec evidence_,
       ConsentDeleteVec consents_, int64_t updated_) :
     appID{appID_}, evidence{ZuMv(evidence_)},
     consents{ZuMv(consents_)}, updated{updated_} { }
-  AppCleanupSaga_(AppCleanupArgs args) :
-    AppCleanupSaga_{args.appID, ZuMv(args.evidence),
+  AppCleanupSaga(AppCleanupArgs args) :
+    AppCleanupSaga{args.appID, ZuMv(args.evidence),
       ZuMv(args.consents), args.updated} { }
-  ~AppCleanupSaga_() override;
+  ~AppCleanupSaga() override;
 };
-
-using AppCleanupSaga = AppCleanupSaga_<
-  ZmHeap<"Zum.AppCleanupSaga", AppCleanupSaga_<>>>;
 
 ZfStruct(, (AppCleanupSaga, FB),
   (appID,	(Ctor<0>),	UInt64),
@@ -108,8 +106,7 @@ Zfb::AsTable<"Zum.fbs.AppCleanup"> Zfb_Fmt(AppCleanupSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<AppCleanupSaga>{}));
 
-template <typename Heap>
-AppCleanupSaga_<Heap>::~AppCleanupSaga_() = default;
+AppCleanupSaga::~AppCleanupSaga() = default;
 
 SagaRef appCleanup(ZuBSpan data) {
   return AppCleanupSaga::load(data);

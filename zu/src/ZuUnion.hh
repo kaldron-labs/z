@@ -266,14 +266,14 @@ namespace Union_ { // internal
     template <typename ...Ts> struct Reduce_<ZuTypeList<Ts...>> {
       using T = ZuBool<(...&&bool(Fn<Ts>{}))>;
     };
-    template <typename TL> using Reduce = typename Reduce_<TL>::T;
+    template <typename TL> using Reduce = Reduce_<TL>::T;
   };
 
   // evaluate precise index and result type of u.p<V>()
   template <typename U, typename V>
   struct Result {
     using U_ = ZuDecay<U>;
-    using I = typename U_::template Index<V>;
+    using I = U_::template Index<V>;
     using T = decltype(ZuDeclVal<U>().template p<I{}>());
   };
 
@@ -282,18 +282,18 @@ namespace Union_ { // internal
   struct Eval__ {
     using U_ = ZuDecay<U>;
     template <typename V> using Result_ = Result<U, V>;
-    template <typename V> using Index = typename Result_<V>::I;
-    template <typename V> using Type_ = typename Result_<V>::T;
+    template <typename V> using Index = Result_<V>::I;
+    template <typename V> using Type_ = Result_<V>::T;
     template <typename V>
     using Type = decltype(ZuDeclVal<L>()(Index<V>{}, ZuDeclVal<Type_<V>>()));
     using Types = ZuTypeMap<Type, ZuTypeGrep<NotVoid, typename U_::Types>>;
   };
-  template <typename U, typename L, typename Types = typename Eval__<U, L>::Types>
+  template <typename U, typename L, typename Types = Eval__<U, L>::Types>
   struct Eval_ { using T = ZuDecay<ZuType<0, Types>>; };
   template <typename U, typename L>
   struct Eval_<U, L, ZuTypeList<>> { using T = void; };
   template <typename U, typename L>
-  using Eval = typename Eval_<U, L>::T;
+  using Eval = Eval_<U, L>::T;
 
 } // Union_
 
@@ -329,7 +329,7 @@ public:
   }
 
   constexpr Union(const Union &u)
-    noexcept(typename Union_::And<Union_::NXCopy>::template Reduce<Types>{}) :
+    noexcept(Union_::And<Union_::NXCopy>::template Reduce<Types>{}) :
     m_type{u.m_type}
   {
     using namespace Union_;
@@ -341,7 +341,7 @@ public:
     });
   }
   constexpr Union &operator =(const Union &u)
-    noexcept(typename Union_::And<Union_::NXCopy>::template Reduce<Types>{})
+    noexcept(Union_::And<Union_::NXCopy>::template Reduce<Types>{})
   {
     if (this == &u) return *this;
     if (m_type != u.m_type) {
@@ -368,7 +368,7 @@ public:
   }
 
   constexpr Union(Union &&u)
-    noexcept(typename Union_::And<Union_::NXMove>::template Reduce<Types>{}) :
+    noexcept(Union_::And<Union_::NXMove>::template Reduce<Types>{}) :
     m_type{u.m_type} {
     using namespace Union_;
     ZuSwitch::dispatch<N>(m_type, [this, &u](auto I) {
@@ -379,7 +379,7 @@ public:
     });
   }
   constexpr Union &operator =(Union &&u)
-    noexcept(typename Union_::And<Union_::NXMove>::template Reduce<Types>{})
+    noexcept(Union_::And<Union_::NXMove>::template Reduce<Types>{})
   {
     if (m_type != u.m_type) {
       this->~Union();
@@ -412,7 +412,7 @@ public:
     typename Vs = ZuTypeList<Ts...>,
     ZuIfT<bool(ZuIs_<Union, ZuDecay<V>>{}) &&bool(typename Union_::And<
       Union_::Construct<V &&>::template Can>::template Reduce<Vs>{}), int> = 0,
-    bool NoExcept = typename Union_::And<
+    bool NoExcept = Union_::And<
       Union_::NXMove>::template Reduce<Vs>{}>
   constexpr Union(V &&u) noexcept(NoExcept) : m_type{u.m_type} {
     using namespace Union_;
@@ -428,7 +428,7 @@ public:
     typename Vs = ZuTypeList<Ts...>,
     ZuIfT<bool(ZuIs_<Union, ZuDecay<V>>{}) &&bool(typename Union_::And<
       Union_::Assign<V &&>::template Can>::template Reduce<Vs>{}), int> = 0,
-    bool NoExcept = typename Union_::And<
+    bool NoExcept = Union_::And<
       Union_::NXMove>::template Reduce<Vs>{}>
   constexpr Union &operator =(V &&u) noexcept(NoExcept) {
     if constexpr (ZuIsLRef<V &&>{}) if (this == &u) return *this;
@@ -721,7 +721,7 @@ public integral_constant<size_t, sizeof...(Ts)> { };
 template <size_t, typename> struct tuple_element;
 template <size_t I, typename ...Ts>
 struct tuple_element<I, ZuUnion<Ts...>> {
-  using type = typename ZuUnion<Ts...>::template Type<I>;
+  using type = ZuUnion<Ts...>::template Type<I>;
 };
 
 } // std
@@ -734,7 +734,7 @@ using size_t = std::size_t;
 using bad_variant_access = std::bad_variant_access;
 namespace {
   template <size_t I, typename T>
-  using tuple_element_t = typename std::tuple_element<I, T>::type;
+  using tuple_element_t = std::tuple_element<I, T>::type;
 }
 template <size_t I, typename ...Ts>
 constexpr tuple_element_t<I, Union<Ts...>> &

@@ -779,7 +779,7 @@ struct StaticPlanner {
 	  ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC) == Zi::OK) {
 	auto stat = index.fstat();
 	if (stat && !stat.isdir()) {
-	  auto indexPath = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+	  auto indexPath = ZmScratch(ZuTraits<Zi::Path>::Elem,
 	    unsigned(state->options.root.length() + clean.length() +
 	      state->options.index.length()) + 2, Zi::Path::VHeap);
 	  staticPath(indexPath, state->options, clean);
@@ -793,7 +793,7 @@ struct StaticPlanner {
       }
       if (state->options.noListing)
 	return error(resp, 403, "Forbidden", req.method);
-      auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+      auto path = ZmScratch(ZuTraits<Zi::Path>::Elem,
 	unsigned(state->options.root.length() + clean.length()) + 1,
 	Zi::Path::VHeap);
       staticPath(path, state->options, clean);
@@ -806,7 +806,7 @@ struct StaticPlanner {
     if (rc != Zi::OK) return notFound(resp, req.method);
     if (stat.isdir())
       return error(resp, 403, "Forbidden", req.method);
-    auto path = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+    auto path = ZmScratch(ZuTraits<Zi::Path>::Elem,
       unsigned(state->options.root.length() + clean.length()) + 1,
       Zi::Path::VHeap);
     staticPath(path, state->options, clean);
@@ -970,7 +970,7 @@ struct StaticPlanner {
 	continue;
       auto *entry = new (entries.push()) DirEntry();
       entry->name = name;
-      auto child = ZmScratch(typename ZuTraits<Zi::Path>::Elem,
+      auto child = ZmScratch(ZuTraits<Zi::Path>::Elem,
 	unsigned(path.length() + name.length()) + 2, Zi::Path::VHeap);
       child << path;
 #ifndef _WIN32

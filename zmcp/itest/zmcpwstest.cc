@@ -81,7 +81,7 @@ struct SrvApp {
 template <typename Profile>
 struct CliApp {
   using Client = Zmcp::WSClient<CliApp, Catalog, Profile>;
-  using Link = typename Client::Link;
+  using Link = Client::Link;
 
   ZmRef<Link> link;
   ZmSemaphore closed_;
@@ -107,8 +107,9 @@ struct CliApp {
   void logging(ZuCSpan, const ZfJSON::AnyNode *, ZuCSpan) { logging_.post(); }
 };
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject {
+struct Call : public ZmNHeap<Call>, public ZmObject {
+friend inline ZuStringT<"ZmcpWSTest.Call"> ZmNHeapID(Call *);
+
   ZmSemaphore started_;
   ZmSemaphore done;
   Zjrpc::ID id;
@@ -122,8 +123,6 @@ struct Call_ : public Heap, public ZmObject {
   void failed() { ++failures; done.post(); }
   void failed(const Zjrpc::Error &) { failed(); }
 };
-using CallHeap = ZmHeap<"ZmcpWSTest.Call", Call_<>>;
-using Call = Call_<CallHeap>;
 
 // No server/discover declaration: the generic dispatcher returns MethodNotFound,
 // exercising ClientPeer's real legacy fallback without a production mode flag.

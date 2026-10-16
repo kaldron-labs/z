@@ -44,9 +44,9 @@ ZuPrintCannot ZuPrintType(...);
 template <typename U>
 struct ZuPrintT_ { using T = U; };
 template <typename U>
-struct ZuPrintT_<U *> { using T = typename ZuPrintT_<ZuDecay<U>>::T *; };
+struct ZuPrintT_<U *> { using T = ZuPrintT_<ZuDecay<U>>::T *; };
 template <typename U>
-using ZuPrintT = typename ZuPrintT_<ZuDecay<U>>::T *;
+using ZuPrintT = ZuPrintT_<ZuDecay<U>>::T *;
 
 template <typename U>
 using ZuPrint = decltype(ZuPrintType(ZuDeclVal<ZuPrintT<U>>()));

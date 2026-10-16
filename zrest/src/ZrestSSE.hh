@@ -36,13 +36,13 @@ using SSEBuf = Zi::IOBufAlloc<SSEQueue::Node,
   ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
   ZuStringT<"Zrest.SSE.Buffer">>;
 
-template <typename Heap = ZuVoid> class SSEProducer_;
-using SSEProducer = SSEProducer_<
-  ZmHeap<"Zrest.SSE.Producer", SSEProducer_<>>>;
+class SSEProducer;
 
-template <typename Emit, typename Heap = ZuVoid>
-struct SSEDriver_ : public Heap, public ZmPolymorph {
-  SSEDriver_(SSEProducer *producer_, Emit emit_) :
+template <typename Emit>
+struct SSEDriver : public ZmNHeap<SSEDriver<Emit>>, public ZmPolymorph {
+friend inline ZuStringT<"Zrest.SSE.Driver"> ZmNHeapID(SSEDriver *);
+
+  SSEDriver(SSEProducer *producer_, Emit emit_) :
     producer{producer_}, emit{ZuMv(emit_)} { }
 
   bool resume();
@@ -51,18 +51,16 @@ struct SSEDriver_ : public Heap, public ZmPolymorph {
   SSEProducer *producer;
   Emit emit;
 };
-template <typename Emit>
-using SSEDriver = SSEDriver_<Emit,
-  ZmHeap<"Zrest.SSE.Driver", SSEDriver_<Emit>>>;
 
-template <typename Heap>
-class SSEProducer_ : public Heap, public ZmObject {
+class SSEProducer : public ZmNHeap<SSEProducer>, public ZmObject {
+friend inline ZuStringT<"Zrest.SSE.Producer"> ZmNHeapID(SSEProducer *);
+
 public:
-  SSEProducer_(ZmScheduler *scheduler, unsigned thread, Limits limits,
+  SSEProducer(ZmScheduler *scheduler, unsigned thread, Limits limits,
       ZmAtomic<unsigned> *posts = nullptr) :
     m_scheduler{scheduler}, m_thread{thread}, m_limits{limits},
     m_posts{posts} { }
-  ~SSEProducer_() { close_(); }
+  ~SSEProducer() { close_(); }
 
   bool emit(ZuCSpan body, ZuCSpan id = {}, int64_t retry = -1,
       bool terminal = false) {
@@ -283,8 +281,8 @@ private:
   ZmAtomic<unsigned> m_closePosted = 0;
 };
 
-template <typename Emit, typename Heap>
-bool SSEDriver_<Emit, Heap>::resume()
+template <typename Emit>
+bool SSEDriver<Emit>::resume()
 {
   auto producer_ = producer;
   if (!producer_) return false;

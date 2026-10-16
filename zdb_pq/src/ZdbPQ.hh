@@ -424,7 +424,7 @@ template <> struct Elem_<FixedVec> { using T = Fixed; };
 template <> struct Elem_<DecimalVec> { using T = Decimal; };
 template <> struct Elem_<TimeVec> { using T = Time; };
 template <> struct Elem_<DateTimeVec> { using T = DateTime; };
-template <typename U> using Elem = typename Elem_<U>::T;
+template <typename U> using Elem = Elem_<U>::T;
 
 using Value_ = ZuUnion<
   void,	// must be default zeroth type
@@ -1199,7 +1199,7 @@ template <> struct Native<DateTime> {
   static T load(const DateTime &v) { return ZuDateTime{ZuTime{v.sec, v.nsec}}; }
 };
 
-template <typename P, typename T = typename Native<P>::T>
+template <typename P, typename T = Native<P>::T>
 Offset saveArray(Builder &fbb, unsigned align, ZuBSpan bytes) {
   using N = Native<P>;
   using W = Zfb::Value<T, N::Code>;

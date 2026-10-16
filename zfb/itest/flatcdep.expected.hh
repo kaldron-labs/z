@@ -59,23 +59,23 @@ namespace flatcdep {
 
 namespace Zflatc_::Axes {
 
-template <typename Heap_ = ZuVoid>
-struct O_ : public Heap_ {
+struct O_ : public ZmNHeap<O_> {
+friend inline ZuStringT<"flatcdep.Axes"> ZmNHeapID(O_ *);
+
   ZuDerive(Axes, (ZtArray<::uint32_t, ZtArrayHeapID<"flatcdep.Axes.axes">>));
   Axes axes;
 };
-ZuDerive(H_, (ZmHeap<"flatcdep.Axes", O_<>>));
 
 } // Zflatc_::Axes
 
-struct Axes : public Zflatc_::Axes::O_<Zflatc_::Axes::H_> {
-  ZuDerive_(Axes, (Zflatc_::Axes::O_<Zflatc_::Axes::H_>));
+struct Axes : public Zflatc_::Axes::O_ {
+  ZuDerive_(Axes, (Zflatc_::Axes::O_));
 };
 
 } // flatcdep
 
 namespace Zfb {
-template <> struct ArrayCount<::flatcdep::Zflatc_::Axes::O_<::flatcdep::Zflatc_::Axes::H_>::Axes> : public ZuUnsigned<3> { };
+template <> struct ArrayCount<::flatcdep::Zflatc_::Axes::O_::Axes> : public ZuUnsigned<3> { };
 }
 
 namespace flatcdep {
@@ -89,18 +89,18 @@ namespace flatcdep {
 
 namespace Zflatc_::Point {
 
-template <typename Heap_ = ZuVoid>
-struct O_ : public Heap_ {
+struct O_ : public ZmNHeap<O_> {
+friend inline ZuStringT<"flatcdep.Point"> ZmNHeapID(O_ *);
+
   ZuDerive(Axes, (ZtArray<::uint16_t, ZtArrayHeapID<"flatcdep.Point.axes">>));
   ::int32_t x = 0ULL;
   Axes axes;
 };
-ZuDerive(H_, (ZmHeap<"flatcdep.Point", O_<>>));
 
 } // Zflatc_::Point
 
-struct Point : public Zflatc_::Point::O_<Zflatc_::Point::H_> {
-  ZuDerive_(Point, (Zflatc_::Point::O_<Zflatc_::Point::H_>));
+struct Point : public Zflatc_::Point::O_ {
+  ZuDerive_(Point, (Zflatc_::Point::O_));
 };
 
 } // flatcdep
@@ -121,17 +121,17 @@ namespace flatcdep {
 
 namespace Zflatc_::Retired {
 
-template <typename Heap_ = ZuVoid>
-struct O_ : public Heap_ {
+struct O_ : public ZmNHeap<O_> {
+friend inline ZuStringT<"flatcdep.Retired"> ZmNHeapID(O_ *);
+
   ZuDerive(E0_, (ZtString<ZtStringHeapID<"flatcdep.Retired.retired">>));
   ZuDerive(Retired, (ZtArray<E0_, ZtArrayHeapID<"flatcdep.Retired.retired">>));
 };
-ZuDerive(H_, (ZmHeap<"flatcdep.Retired", O_<>>));
 
 } // Zflatc_::Retired
 
-struct Retired : public Zflatc_::Retired::O_<Zflatc_::Retired::H_> {
-  ZuDerive_(Retired, (Zflatc_::Retired::O_<Zflatc_::Retired::H_>));
+struct Retired : public Zflatc_::Retired::O_ {
+  ZuDerive_(Retired, (Zflatc_::Retired::O_));
 };
 
 } // flatcdep
@@ -139,7 +139,7 @@ struct Retired : public Zflatc_::Retired::O_<Zflatc_::Retired::H_> {
 namespace flatcdep {
 
 ZfStruct(, (Retired, FB),
-  ((retired, Skip, ::flatcdep::Zflatc_::Retired::O_<::flatcdep::Zflatc_::Retired::H_>::Retired), (FB::FieldID<0>), StringVec));
+  ((retired, Skip, ::flatcdep::Zflatc_::Retired::O_::Retired), (FB::FieldID<0>), StringVec));
 
 } // flatcdep
 
@@ -147,8 +147,9 @@ namespace flatcdep {
 
 namespace Zflatc_::O0 {
 
-template <typename Heap_ = ZuVoid>
-struct O_ : public Heap_ {
+struct O_ : public ZmNHeap<O_> {
+friend inline ZuStringT<"flatcdep.O0"> ZmNHeapID(O_ *);
+
   ZuDerive(Heap, (ZtString<ZtStringHeapID<"flatcdep.O0.heap">>));
   ZuDerive(E2_, (ZtString<ZtStringHeapID<"flatcdep.O0.e0">>));
   ZuDerive(E0, (ZtArray<E2_, ZtArrayHeapID<"flatcdep.O0.e0">>));
@@ -158,12 +159,11 @@ struct O_ : public Heap_ {
   E0 e0;
   Base_ base;
 };
-ZuDerive(H_, (ZmHeap<"flatcdep.O0", O_<>>));
 
 } // Zflatc_::O0
 
-struct O0 : public Zflatc_::O0::O_<Zflatc_::O0::H_> {
-  ZuDerive_(O0, (Zflatc_::O0::O_<Zflatc_::O0::H_>));
+struct O0 : public Zflatc_::O0::O_ {
+  ZuDerive_(O0, (Zflatc_::O0::O_));
 };
 
 } // flatcdep

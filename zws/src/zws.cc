@@ -202,7 +202,7 @@ int run(const Options &options, const Zws::URI &uri)
     return 1;
   }
 
-  using Link = typename Zws::Client<App, Profile>::Link;
+  using Link = Zws::Client<App, Profile>::Link;
   ZmRef<Link> link = new Link{&client, uri, options.protocol};
   link->connect();
 

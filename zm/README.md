@@ -2,7 +2,7 @@
 
 ## Heap arena sizing
 
-`ZmHeap` uses `ZmHeapCacheT` to retain a thread-local pointer to a
+`ZmNHeap` uses `ZmHeapCacheT` to retain a thread-local pointer to a
 `ZmHeapCache` arena. The arena owns its atomic local counters and points
 to atomic fallback counters shared by all arenas of the same ID. The arena
 is selected using the calling thread's logical partition. Configuration is
@@ -67,6 +67,26 @@ sum over instantiated classes i:
 This reduces the number of cached blocks for larger classes; it does not
 divide capacity by thread or partition count.
 
+### Fixed-size object allocation
+
+Inherit `ZmNHeap` with the concrete type and declare its heap ID through ADL:
+
+```c++
+struct Item : public ZmNHeap<Item> {
+  friend inline ZuStringT<"App.Item"> ZmNHeapID(Item *);
+
+  uint64_t value;
+};
+```
+
+Declare `friend inline ZuTrue ZmNHeapSharded(Item *);` for partition-local
+allocation and freeing. The default is non-sharded. An omitted ID or an empty
+ID disables recycling and uses ordinary allocation. `ZmNHeapID_<Item>` and
+`ZmNHeapSharded_<Item>` expose the selected metadata.
+
+`ZmNHeap<T, false>` declares no allocation operators. Disable the base heap
+when a derived class supplies its own allocator; shadow nodes use this form.
+
 ### Capacity and fallback allocation
 
 When an arena is exhausted, allocations fall back to the ordinary heap.
@@ -75,7 +95,7 @@ heap usage.
 
 ### Freeing across partitions
 
-The `ZmHeap` base class routes `operator new` and `operator delete` through
+The `ZmNHeap` base class routes `operator new` and `operator delete` through
 the same cache specialization, including size, alignment, and sharding.
 The freeing thread resolves that specialization's arena for its own logical
 partition.
