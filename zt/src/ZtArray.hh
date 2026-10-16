@@ -121,8 +121,8 @@ class ZtArray :
 
 public:
   using T = T_;
-  using Cmp = typename NTP::template CmpT<T>;
-  using HeapID = typename NTP::HeapID;
+  using Cmp = NTP::template CmpT<T>;
+  using HeapID = NTP::HeapID;
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };
   enum { Sharded = NTP::Sharded };
@@ -463,7 +463,7 @@ private:
   };
   template <typename A_> struct Fwd_Array {
     using A = ZuDecay<A_>;
-    using Elem = typename ZuTraits<A>::Elem;
+    using Elem = ZuTraits<A>::Elem;
 
     static void ctor_(ZtArray *this_, const A &a_) {
       ZuSpan<const Elem> a(a_);

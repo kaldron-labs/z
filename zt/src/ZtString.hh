@@ -141,7 +141,7 @@ public:
   enum { BuiltinSize_ = NTP::Builtin / sizeof(Char) };
   enum { BuiltinSize =
     BuiltinSize_ < sizeof(uintptr_t) ? sizeof(uintptr_t) : BuiltinSize_ };
-  using HeapID = typename NTP::HeapID;
+  using HeapID = NTP::HeapID;
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };
   enum { Sharded = NTP::Sharded };

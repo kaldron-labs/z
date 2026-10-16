@@ -16,10 +16,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct CredentialAddSaga_ : public Heap,
-    public ZdbSaga<CredentialAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<CredentialAddSaga_<Heap>, DB>;
+struct CredentialAddSaga : public ZmNHeap<CredentialAddSaga>,
+    public ZdbSaga<CredentialAddSaga, DB> {
+friend inline ZuStringT<"Zum.CredentialAddSaga"> ZmNHeapID(CredentialAddSaga *);
+
+  using Base = ZdbSaga<CredentialAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -169,8 +170,8 @@ struct CredentialAddSaga_ : public Heap,
     grantDelete<Fwd>(this, ceremonyID, ZuMv(complete)); return {};
   }
 
-  CredentialAddSaga_() = default;
-  CredentialAddSaga_(
+  CredentialAddSaga() = default;
+  CredentialAddSaga(
       Bytes ceremonyID_, String issuer_,
       UserID userID_, Bytes userHandle_,
       Bytes credentialID_, Bytes publicKey_,
@@ -191,18 +192,15 @@ struct CredentialAddSaga_ : public Heap,
     label{ZuMv(label_)},
     userVersion{ZuMv(userVersion_)},
     beforeGrant{ZuMv(beforeGrant_)} { }
-  CredentialAddSaga_(CredentialAddArgs args) :
-    CredentialAddSaga_{
+  CredentialAddSaga(CredentialAddArgs args) :
+    CredentialAddSaga{
       ZuMv(args.ceremonyID), ZuMv(args.issuer), ZuMv(args.userID),
       ZuMv(args.userHandle), ZuMv(args.credentialID), ZuMv(args.publicKey),
       ZuMv(args.signCount), ZuMv(args.created), ZuMv(args.backupEligible),
       ZuMv(args.backedUp), ZuMv(args.label), ZuMv(args.userVersion),
       ZuMv(args.beforeGrant)} { }
-  ~CredentialAddSaga_() override;
+  ~CredentialAddSaga() override;
 };
-
-using CredentialAddSaga = CredentialAddSaga_<
-  ZmHeap<"Zum.CredentialAddSaga", CredentialAddSaga_<>>>;
 
 ZfStruct(, (CredentialAddSaga, FB),
   (ceremonyID,		(Ctor<0>),		Bytes),
@@ -222,8 +220,7 @@ Zfb::AsTable<"Zum.fbs.CredentialAdd"> Zfb_Fmt(CredentialAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<CredentialAddSaga>{}));
 
-template <typename Heap>
-CredentialAddSaga_<Heap>::~CredentialAddSaga_() = default;
+CredentialAddSaga::~CredentialAddSaga() = default;
 
 SagaRef credentialAdd(ZuBSpan data) {
   return CredentialAddSaga::load(data);

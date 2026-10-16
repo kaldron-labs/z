@@ -12,10 +12,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct SecretRekeySaga_ : public Heap,
-    public ZdbSaga<SecretRekeySaga_<Heap>, DB> {
-  using Base = ZdbSaga<SecretRekeySaga_<Heap>, DB>;
+struct SecretRekeySaga : public ZmNHeap<SecretRekeySaga>,
+    public ZdbSaga<SecretRekeySaga, DB> {
+friend inline ZuStringT<"Zum.SecretRekeySaga"> ZmNHeapID(SecretRekeySaga *);
+
+  using Base = ZdbSaga<SecretRekeySaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -85,19 +86,16 @@ struct SecretRekeySaga_ : public Heap,
     return {};
   }
 
-  SecretRekeySaga_() = default;
-  SecretRekeySaga_(unsigned field_, ProviderID providerID_, AppID appID_,
+  SecretRekeySaga() = default;
+  SecretRekeySaga(unsigned field_, ProviderID providerID_, AppID appID_,
       UserID userID_, String keyID_, Bytes before_, Bytes after_) :
     field{field_}, providerID{providerID_}, appID{appID_}, userID{userID_},
     keyID{ZuMv(keyID_)}, before{ZuMv(before_)}, after{ZuMv(after_)} { }
-  SecretRekeySaga_(SecretRekeyArgs args) :
-    SecretRekeySaga_{args.field, args.providerID, args.appID, args.userID,
+  SecretRekeySaga(SecretRekeyArgs args) :
+    SecretRekeySaga{args.field, args.providerID, args.appID, args.userID,
       ZuMv(args.keyID), ZuMv(args.before), ZuMv(args.after)} { }
-  ~SecretRekeySaga_() override;
+  ~SecretRekeySaga() override;
 };
-
-using SecretRekeySaga = SecretRekeySaga_<
-  ZmHeap<"Zum.SecretRekeySaga", SecretRekeySaga_<>>>;
 
 ZfStruct(, (SecretRekeySaga, FB),
   (field,	(Ctor<0>, Deflt<SecretRekeySaga::ProviderField>),	UInt32),
@@ -111,8 +109,7 @@ Zfb::AsTable<"Zum.fbs.SecretRekey"> Zfb_Fmt(SecretRekeySaga *);
 
 ZuAssert((Zdb_::SagaDefValid<SecretRekeySaga>{}));
 
-template <typename Heap>
-SecretRekeySaga_<Heap>::~SecretRekeySaga_() = default;
+SecretRekeySaga::~SecretRekeySaga() = default;
 
 SagaRef secretRekey(ZuBSpan data) {
   return SecretRekeySaga::load(data);

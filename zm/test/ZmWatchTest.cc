@@ -17,33 +17,32 @@
 using namespace ZuTestUtil;
 
 ZuAssert((ZuIsSame<
-  typename Ztc::HeapMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::HeapMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::HashMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::HashMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::ThreadMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::ThreadMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::QueueMgr::AllFn::HeapID,
-  typename Ztc::AllFnHeapID::HeapID>{}));
+  Ztc::QueueMgr::AllFn::HeapID,
+  Ztc::AllFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::HeapMgr::AddFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::HeapMgr::AddFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::HashMgr::DelFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::HashMgr::DelFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 ZuAssert((ZuIsSame<
-  typename Ztc::ThreadMgr::AddFn::HeapID,
-  typename Ztc::WatchFnHeapID::HeapID>{}));
+  Ztc::ThreadMgr::AddFn::HeapID,
+  Ztc::WatchFnHeapID::HeapID>{}));
 
-template <typename Heap = ZuVoid>
-struct WatchAlloc_ : public Heap {
+struct WatchAlloc : public ZmNHeap<WatchAlloc> {
+friend inline ZuStringT<"Ztc.Watch.TestHeap"> ZmNHeapID(WatchAlloc *);
+
   uintptr_t value;
 };
-ZuDerive(WatchAllocHeap, (ZmHeap<"Ztc.Watch.TestHeap", WatchAlloc_<>>));
-ZuDerive(WatchAlloc, (WatchAlloc_<WatchAllocHeap>));
 
 ZmHashKVDerive(WatchHash, unsigned, unsigned,
   (ZmHashHeapID<"Ztc.Watch.TestHash">));

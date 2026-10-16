@@ -7,7 +7,7 @@
 // byte swap utility class
 
 // Example:
-// using UInt32N = typename ZuBigEndian<ZuBox0(uint32_t)>;
+// using UInt32N = ZuBigEndian<ZuBox0(uint32_t)>;
 // #pragma pack(push, 1)
 // struct Hdr {
 //   ...
@@ -48,7 +48,7 @@ public:
   using U = ZuUnder<T>;
   ZuAssert(sizeof(T) == sizeof(U));
   ZuAssert(ZuTraits<U>::IsPrimitive && ZuTraits<U>::IsReal);
-  using I = typename ZuByteSwap_UInt<sizeof(T)>::T;
+  using I = ZuByteSwap_UInt<sizeof(T)>::T;
 
   constexpr ZuByteSwap__() noexcept { m_i = 0; }
   constexpr ZuByteSwap__(const ZuByteSwap__ &i) noexcept { m_i = i.m_i; }
@@ -202,7 +202,7 @@ private:
 
 template <typename U> struct ZuByteSwap_ { using T = ZuByteSwap__<U>; };
 template <typename U> struct ZuByteSwap_<ZuByteSwap__<U>> { using T = U; };
-template <typename U> using ZuByteSwap = typename ZuByteSwap_<U>::T;
+template <typename U> using ZuByteSwap = ZuByteSwap_<U>::T;
 
 #if Zu_BIGENDIAN
 template <typename T> using ZuBigEndian = T;

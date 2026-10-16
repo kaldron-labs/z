@@ -347,7 +347,7 @@ constexpr unsigned round(unsigned n, unsigned align) {
 template <typename O, typename ...F>
 struct Table {
   using Fields = ZuTypeList<F...>;
-  using M = typename As<O>::template Handler<O>;
+  using M = As<O>::template Handler<O>;
   static consteval unsigned alignment() {
     unsigned align = sizeof(SOffset);
     ZuUnroll::all<Fields>([&align]<typename G>() {
@@ -469,7 +469,7 @@ template <typename F>
 struct EnumMap<F, true> { using T = ZuFieldProp::GetFlags<typename F::Props>; };
 
 template <typename V, unsigned Kind_ = V::Kind>
-struct EnumScalar { using T = typename V::WireType; };
+struct EnumScalar { using T = V::WireType; };
 template <typename V>
 struct EnumScalar<V, ValueKind::Vector> : public EnumScalar<typename V::Elem> { };
 template <typename V>
@@ -481,9 +481,9 @@ struct FieldEnum { using Types = ZuTypeList<>; enum { Present = false }; };
 template <typename F>
 struct FieldEnum<F, true> {
   using V = FieldWire<F>;
-  using Map = typename EnumMap<F>::T;
-  using W = typename EnumScalar<V>::T;
-  using Names = typename Map::Names;
+  using Map = EnumMap<F>::T;
+  using W = EnumScalar<V>::T;
+  using Names = Map::Names;
   enum { Flags = ZuFieldProp::HasFlags<typename F::Props>{} };
   ZuAssert(!ZuTraits<W>::IsFloatingPoint);
   ZuAssert(!Flags || Names::N <= (sizeof(W)<<3) - unsigned(ZuTraits<W>::IsSigned));
@@ -557,7 +557,7 @@ struct MapValueShape {
   using T = MapNamedShape<As<typename V::Native>::name()>;
 };
 template <typename V>
-struct MapValueShape<V, ValueKind::Scalar> { using T = typename V::WireType; };
+struct MapValueShape<V, ValueKind::Scalar> { using T = V::WireType; };
 template <typename V>
 struct MapValueShape<V, ValueKind::String> { using T = Zfb::String; };
 template <typename V>
@@ -575,12 +575,12 @@ struct SchemaShape<O, true> {
   template <typename ...A> using Shape = UnionShape<As<O>::name(), A...>;
   using T = ZuTypeApply<Shape, ZuTypeMap<UnionAlt, typename As<O>::Types>>;
 };
-template <typename O> using Shape = typename SchemaShape<O>::T;
+template <typename O> using Shape = SchemaShape<O>::T;
 template <typename L> struct SchemaUniq;
 template <> struct SchemaUniq<ZuTypeList<>> { using T = ZuTypeList<>; };
 template <typename O, typename ...P>
 struct SchemaUniq<ZuTypeList<O, P...>> {
-  using Tail = typename SchemaUniq<ZuTypeList<P...>>::T;
+  using Tail = SchemaUniq<ZuTypeList<P...>>::T;
   using T = ZuIf<ZuTypeIn<Shape<O>, ZuTypeMap<Shape, Tail>>{},
     Tail, typename Tail::template Unshift<O>>;
 };
@@ -588,8 +588,8 @@ struct SchemaUniq<ZuTypeList<O, P...>> {
 template <typename Root, typename Facet = ZuFacet::FB>
 struct Graph {
   template <typename O> using Children_ = Children<O, Facet>;
-  template <typename O> using Fields = typename As<O>::template Handler<O, Facet>::SchemaFields;
-  using Unsorted = typename Reach<ZuTypeList<ZuUnder<Root>>, ZuTypeList<>, Children_>::T;
+  template <typename O> using Fields = As<O>::template Handler<O, Facet>::SchemaFields;
+  using Unsorted = Reach<ZuTypeList<ZuUnder<Root>>, ZuTypeList<>, Children_>::T;
   using Objects = ZuTypeSort<ObjectName, typename SchemaUniq<ZuTypeGrep<IsObject, Unsorted>>::T>;
   using Enums = ZuTypeSort<ObjectName, typename SchemaUniq<ZuTypeGrep<IsEnum, Unsorted>>::T>;
   static consteval bool namesUnique() {
@@ -650,7 +650,7 @@ template <typename V>
 consteval int baseType() {
   using namespace R::BaseType;
   if constexpr (V::Kind == ValueKind::Scalar) {
-    using T = typename V::WireType;
+    using T = V::WireType;
     if constexpr (ZuTraits<T>::IsFloatingPoint) {
       if constexpr (sizeof(T) == 4) return Float;
       else return Double;
@@ -710,7 +710,7 @@ using FlagsAttr = Attribute<"bit_flags", String<"0">>;
 
 template <typename O, typename Entry, typename G>
 struct FieldNode {
-  using F = typename Entry::Field;
+  using F = Entry::Field;
   enum { Tag = Entry::Tag, ID = As<O>::template Handler<O>::template id<F>() - Tag };
   using V = FieldWire<F>;
   enum { IsStruct = As<O>::Kind == Kind::Inline };
@@ -872,8 +872,8 @@ struct ObjectNode {
 
 template <typename U, bool = IsUnion<U>{}>
 struct EnumInfo {
-  using Names = typename U::Map::Names;
-  using W = typename U::WireType;
+  using Names = U::Map::Names;
+  using W = U::WireType;
   enum { N = Names::N, Base = baseType<Scalar<W>>(), Width = sizeof(W), Flags = U::Flags };
   template <unsigned I> static consteval auto name() { return ZuType<I, Names>{}(); }
   template <unsigned I> static consteval int64_t value() {
@@ -883,7 +883,7 @@ struct EnumInfo {
 };
 template <typename U>
 struct EnumInfo<U, true> {
-  using Alts = typename As<U>::Types;
+  using Alts = As<U>::Types;
   enum { N = Alts::N + 1, Base = R::BaseType::UType, Width = 1, Flags = false };
   template <unsigned I> static consteval int64_t value() { return I; }
   template <unsigned I>
@@ -981,8 +981,8 @@ template <typename T, typename Facet = ZuFacet::FB>
 struct Schema {
   using Root = ZuUnder<T>;
   using G = Graph<T, Facet>;
-  using Objects = typename G::Objects;
-  using Enums = typename G::Enums;
+  using Objects = G::Objects;
+  using Enums = G::Enums;
   enum { RootAt = 2 * sizeof(Offset), ObjectsAt = RootAt + RootTable::Size };
   enum { EnumsAt = ObjectsAt + sizeof(Offset) * (Objects::N + 1) };
   enum { VecEnd = EnumsAt + sizeof(Offset) * (Enums::N + 1) };
@@ -1085,7 +1085,7 @@ void type(S &stream) {
 
 template <typename F, typename S>
 void deflt(S &stream) {
-  using W = typename FieldWire<F>::WireType;
+  using W = FieldWire<F>::WireType;
   constexpr W value = defaultValue<F>();
   if constexpr (FieldWire<F>::Code_ == ZfFieldTC::Bool) {
     if constexpr (value) stream << "true";
@@ -1121,8 +1121,8 @@ struct InlineOne : public InlineOrder<Tail, Seen> { };
 template <typename O, typename Tail, typename Seen>
 struct InlineOne<O, Tail, Seen, false> {
   using Children = ZuTypeGrep<IsStruct, typename SchemaOut::Children<O>::T>;
-  using Before = typename InlineOrder<Children, Seen>::T;
-  using T = typename InlineOrder<Tail, typename Before::template Push<O>>::T;
+  using Before = InlineOrder<Children, Seen>::T;
+  using T = InlineOrder<Tail, typename Before::template Push<O>>::T;
 };
 template <typename O, typename ...Tail, typename Seen>
 struct InlineOrder<ZuTypeList<O, Tail...>, Seen> :
@@ -1139,7 +1139,7 @@ void union_(S &stream) {
   ZuAssert(split && split + 1 < Name.length());
   stream << "namespace " << ZuCSpan{Name.data(), split} << ";\nunion "
     << ZuCSpan{Name.data() + split + 1, Name.length() - split - 1} << " {\n";
-  using Alts = typename As<O>::Types;
+  using Alts = As<O>::Types;
   ZuUnroll::all<Alts>([&stream]<typename A>() {
     using V = Value<typename A::T, ZfFieldTC::UDT>;
     stream << "  " << A::name() << ':' << As<typename V::Native>::name()
@@ -1171,7 +1171,7 @@ void enum_(S &stream) {
 
 template <typename O, typename Facet, typename S>
 void object(S &stream) {
-  using M = typename As<O>::template Handler<O, Facet>;
+  using M = As<O>::template Handler<O, Facet>;
   static constexpr auto Name = As<O>::name();
   constexpr unsigned split = qualifier<Name>();
   ZuAssert(split && split + 1 < Name.length()); // explicit qualified names
@@ -1189,7 +1189,7 @@ void object(S &stream) {
     using V = FieldWire<F>;
     stream << "  " << ZuFieldProp::FB::name<F>() << ':';
     if constexpr (SchemaOut::FieldEnum<F>::Present) {
-      using E = typename SchemaOut::FieldEnum<F>::E;
+      using E = SchemaOut::FieldEnum<F>::E;
       if constexpr (V::Kind == ValueKind::Vector || V::Kind == ValueKind::Array)
 	stream << '[';
       stream << As<E>::name();
@@ -1221,7 +1221,7 @@ template <typename O, typename Facet = ZuFacet::FB, typename S>
 void saveFBS(S &stream) {
   ZuAssert(As<ZuUnder<O>>::Kind == Kind::Table);
   using G = SchemaOut::Graph<O, Facet>;
-  using Inlines = typename FBS::InlineOrder<
+  using Inlines = FBS::InlineOrder<
     ZuTypeGrep<IsStruct, typename G::Objects>>::T;
   using Tables = ZuTypeGrep<FBS::IsTable, typename G::Objects>;
   ZuUnroll::all<typename G::Enums>([&stream]<typename T>() {

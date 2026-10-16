@@ -150,8 +150,9 @@ ZfStruct(, (Options, CLI),
   (memDiag,    (CLI::Long<"mem-diag">),				UInt32),
   (help,       (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
-template <typename Heap = ZuVoid>
-struct Result_ : public Heap, public ZmObject {
+struct Result : public ZmNHeap<Result>, public ZmObject {
+friend inline ZuStringT<"zrest.Result"> ZmNHeapID(Result *);
+
   ZmSemaphore	done;
   OAuthSecret	body;
   OAuthString	contentType;
@@ -162,11 +163,10 @@ struct Result_ : public Heap, public ZmObject {
   unsigned	cacheControlCount = 0;
   unsigned	pragmaCount = 0;
 };
-ZuDerive(ResultHeap, (ZmHeap<"zrest.Result", Result_<>>));
-ZuDerive(Result, (Result_<ResultHeap>));
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject {
+struct Call : public ZmNHeap<Call>, public ZmObject {
+friend inline ZuStringT<"zrest.Call"> ZmNHeapID(Call *);
+
   ZmRef<Result>	result;
   OAuthString	target;
   OAuthSecret	body;
@@ -189,11 +189,10 @@ struct Call_ : public Heap, public ZmObject {
     result->done.post();
   }
 };
-ZuDerive(CallHeap, (ZmHeap<"zrest.Call", Call_<>>));
-ZuDerive(Call, (Call_<CallHeap>));
 
-template <typename Heap = ZuVoid>
-struct ResponseData_ : public Heap, public ZmObject {
+struct ResponseData : public ZmNHeap<ResponseData>, public ZmObject {
+friend inline ZuStringT<"zrest.ResponseData"> ZmNHeapID(ResponseData *);
+
   OAuthString data;
   OAuthString contentType;
   OAuthString cacheControl;
@@ -202,13 +201,11 @@ struct ResponseData_ : public Heap, public ZmObject {
   unsigned cacheControlCount = 0;
   unsigned pragmaCount = 0;
 
-  ResponseData_ &operator =(ZuSpan<uint8_t> data_) {
+  ResponseData &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
   }
 };
-ZuDerive(ResponseDataHeap, (ZmHeap<"zrest.ResponseData", ResponseData_<>>));
-ZuDerive(ResponseData, (ResponseData_<ResponseDataHeap>));
 
 template <typename Impl, unsigned Status_>
 struct ResponseParser : public Zrest::ResParser<Impl, ResponseData> {
@@ -337,18 +334,16 @@ static bool formEach(ZuCSpan form, Fn &&fn)
   return true;
 }
 
-template <typename Heap = ZuVoid>
-struct CallbackData_ : public Heap, public ZmObject {
-  OAuthString data;
-  CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
-};
-ZuDerive(CallbackDataHeap, (ZmHeap<"zrest.CallbackData", CallbackData_<>>));
-ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
+struct CallbackData : public ZmNHeap<CallbackData>, public ZmObject {
+friend inline ZuStringT<"zrest.CallbackData"> ZmNHeapID(CallbackData *);
 
-template <typename Heap = ZuVoid>
-struct CallbackBody_ : public Heap, public ZmObject { OAuthString data; };
-ZuDerive(CallbackBodyHeap, (ZmHeap<"zrest.CallbackBody", CallbackBody_<>>));
-ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
+  OAuthString data;
+  CallbackData &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
+};
+
+struct CallbackBody : public ZmNHeap<CallbackBody>, public ZmObject {
+friend inline ZuStringT<"zrest.CallbackBody"> ZmNHeapID(CallbackBody *);
+ OAuthString data; };
 
 template <typename Impl, unsigned Status_>
 struct CallbackResponse : public Zrest::ResBuilder<Impl, CallbackBody> {

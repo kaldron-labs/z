@@ -42,7 +42,7 @@ struct Msg_ : public ZuObject, public Msg_Data {
 
 ZmPQueueDerive(Queue, Msg_, ZmPQueueNode<ZuObject>);
 
-using XXX = decltype(ZuDeclVal<const typename Queue::Node &>().key());
+using XXX = decltype(ZuDeclVal<const Queue::Node &>().key());
 
 class App : public ZmPQTx<App, Queue> {
 public:

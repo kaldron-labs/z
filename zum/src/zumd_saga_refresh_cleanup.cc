@@ -9,10 +9,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RefreshCleanupSaga_ : public Heap,
-    public ZdbSaga<RefreshCleanupSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RefreshCleanupSaga_<Heap>, DB>;
+struct RefreshCleanupSaga : public ZmNHeap<RefreshCleanupSaga>,
+    public ZdbSaga<RefreshCleanupSaga, DB> {
+friend inline ZuStringT<"Zum.RefreshCleanupSaga"> ZmNHeapID(RefreshCleanupSaga *);
+
+  using Base = ZdbSaga<RefreshCleanupSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -54,16 +55,13 @@ struct RefreshCleanupSaga_ : public Heap,
   }
   ZdbSagaPhase(1, zum.refresh, Update) { complete(true); return {}; }
 
-  RefreshCleanupSaga_() = default;
-  RefreshCleanupSaga_(RefreshDeleteVec refreshes_, int64_t updated_) :
+  RefreshCleanupSaga() = default;
+  RefreshCleanupSaga(RefreshDeleteVec refreshes_, int64_t updated_) :
     refreshes{ZuMv(refreshes_)}, updated{updated_} { }
-  RefreshCleanupSaga_(RefreshCleanupArgs args) :
-    RefreshCleanupSaga_{ZuMv(args.refreshes), args.updated} { }
-  ~RefreshCleanupSaga_() override;
+  RefreshCleanupSaga(RefreshCleanupArgs args) :
+    RefreshCleanupSaga{ZuMv(args.refreshes), args.updated} { }
+  ~RefreshCleanupSaga() override;
 };
-
-using RefreshCleanupSaga = RefreshCleanupSaga_<
-  ZmHeap<"Zum.RefreshCleanupSaga", RefreshCleanupSaga_<>>>;
 
 ZfStruct(, (RefreshCleanupSaga, FB),
   (refreshes,	(Ctor<0>),	UDT),
@@ -73,8 +71,7 @@ Zfb::AsTable<"Zum.fbs.RefreshCleanup"> Zfb_Fmt(RefreshCleanupSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RefreshCleanupSaga>{}));
 
-template <typename Heap>
-RefreshCleanupSaga_<Heap>::~RefreshCleanupSaga_() = default;
+RefreshCleanupSaga::~RefreshCleanupSaga() = default;
 
 SagaRef refreshCleanup(ZuBSpan data) {
   return RefreshCleanupSaga::load(data);

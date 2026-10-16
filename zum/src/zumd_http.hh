@@ -54,15 +54,16 @@ inline void passkeyReply(ServerReply &reply)
   reply.type = ReplyType::OK;
 }
 
-template <typename Heap = ZuVoid>
-struct HTTPResponse_ : public Heap, public ZmObject  {
+template <bool Enabled = true>
+struct HTTPResponse_ : public ZmNHeap<HTTPResponse_<Enabled>, Enabled>,
+    public ZmObject {
+friend inline ZuStringT<"Zum.zumd.http.HTTPResponse"> ZmNHeapID(HTTPResponse_ *);
+
   String	body;
   String	location;
   String	setCookie;
 };
-ZuDerive(HTTPResponseHeap,
-  (ZmHeap<"Zum.zumd.http.HTTPResponse", HTTPResponse_<>>));
-ZuDerive(HTTPResponse, (HTTPResponse_<HTTPResponseHeap>));
+using HTTPResponse = HTTPResponse_<>;
 
 template <typename Impl, unsigned Status_>
 struct NoStoreJSON : public Zrest::ResBuilder<Impl, HTTPResponse> {
@@ -169,26 +170,24 @@ struct HTTPDataFields : public ZmObject {
   }
 };
 
-template <typename Heap = ZuVoid>
-struct HTTPData_ : public Heap, public HTTPDataFields {
-  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
+struct HTTPData : public ZmNHeap<HTTPData>, public HTTPDataFields {
+friend inline ZuStringT<"Zum.zumd.http.HTTPData"> ZmNHeapID(HTTPData *);
+
+  HTTPData &operator =(ZuSpan<uint8_t> data_) {
     HTTPDataFields::operator =(data_);
     return *this;
   }
 };
-ZuDerive(HTTPDataHeap, (ZmHeap<"Zum.zumd.http.HTTPData", HTTPData_<>>));
-ZuDerive(HTTPData, (HTTPData_<HTTPDataHeap>));
 
-template <typename Heap = ZuVoid>
-struct HTTPQuery_ : public Heap, public HTTPDataFields {
-  HTTPQuery_ &operator =(ZuSpan<uint8_t> data_) {
+struct HTTPQuery : public ZmNHeap<HTTPQuery>, public HTTPDataFields {
+friend inline ZuStringT<"Zum.zumd.http.HTTPQuery"> ZmNHeapID(HTTPQuery *);
+
+  HTTPQuery &operator =(ZuSpan<uint8_t> data_) {
     if (data_ && data_[0] == '?') data_.offset(1);
     data = data_;
     return *this;
   }
 };
-ZuDerive(HTTPQueryHeap, (ZmHeap<"Zum.zumd.http.HTTPQuery", HTTPQuery_<>>));
-ZuDerive(HTTPQuery, (HTTPQuery_<HTTPQueryHeap>));
 
 template <typename App> struct AuthorizeReq;
 template <typename App> struct TokenReq;
@@ -788,7 +787,7 @@ private:
   template <typename Response, typename Request, typename Link>
   void send_(ZmRef<Link> link, ZmRef<HTTPResponse> object)
   {
-    using ResBuilder = typename App::HTTPServer::ResBuilder;
+    using ResBuilder = App::HTTPServer::ResBuilder;
     ZmRef<ResBuilder> response = new ResBuilder{};
     response->template init<Response, Request>(object.ptr());
     link->send(ZuMv(response));

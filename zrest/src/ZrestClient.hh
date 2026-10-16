@@ -338,9 +338,9 @@ private:
 template <typename Catalog_>
 struct MReqBuilder : public Zhttp::ReqBuilder {
   using Catalog = Catalog_;
-  using Reqs = typename Catalog::List;
-  using HdrCatalog = typename Catalog::ReqHeaders;
-  using Headers = typename HdrCatalog::List;
+  using Reqs = Catalog::List;
+  using HdrCatalog = Catalog::ReqHeaders;
+  using Headers = HdrCatalog::List;
   static constexpr unsigned HdrBufSize = ZuTypeApply<MaxHdrBufSize, Reqs>{};
   using Union = GetUnion<Reqs>;
 
@@ -420,12 +420,12 @@ template <typename Catalog_, typename Builder_>
 struct MResParser : public Zhttp::Parser {
   using Catalog = Catalog_;
   using Builder = Builder_;
-  using Reqs = typename Catalog::List;
+  using Reqs = Catalog::List;
   using AllResponses = GetAllResponses<Reqs>;
   using SSEResponses = ZuTypeGrep<SSEResponse, AllResponses>;
   static constexpr bool HaveSSE = SSEResponses::N;
-  using HdrCatalog = typename Catalog::ResHeaders;
-  using Headers = typename HdrCatalog::List;
+  using HdrCatalog = Catalog::ResHeaders;
+  using Headers = HdrCatalog::List;
   using Union = GetUnion<AllResponses>;
   Union		u;
   Builder	*builder = nullptr;
@@ -651,7 +651,7 @@ struct HasFailureDetail<Call, decltype(
 template <typename App, typename Catalog>
 struct ClientReq : public ZmObject, public MReqBuilder<Catalog> {
   using Base = MReqBuilder<Catalog>;
-  using HdrCatalog = typename Base::HdrCatalog;
+  using HdrCatalog = Base::HdrCatalog;
   using Responses = GetAllResponses<typename Catalog::List>;
   using Result = GetUnion<Responses>;
 
@@ -814,33 +814,32 @@ template <typename App, typename Catalog>
 using ClientTxQ = ZmPQTx<ClientPool<App, Catalog>, ClientReqQ<App, Catalog>,
   ZmPQTxOrdered<false>>;
 
-template <typename App, typename Catalog, typename Heap = ZuVoid>
-struct ClientPool_ : public Heap,
+template <typename App, typename Catalog>
+struct ClientPool : public ZmNHeap<ClientPool<App, Catalog>>,
     public Zhttp::Pool<Client<App, Catalog>, ClientTxQ<App, Catalog>,
       MResParser<Catalog, ClientReq<App, Catalog>>> {
+friend inline ZuStringT<"Zrest.Client.Pool"> ZmNHeapID(ClientPool *);
+
   using Base = Zhttp::Pool<Client<App, Catalog>, ClientTxQ<App, Catalog>,
     MResParser<Catalog, ClientReq<App, Catalog>>>;
   using Queue = ClientReqQ<App, Catalog>;
-  using Request = typename Queue::Node;
+  using Request = Queue::Node;
 
-  ClientPool_(Client<App, Catalog> *client) : Base{client} { }
+  ClientPool(Client<App, Catalog> *client) : Base{client} { }
   Queue *txQueue() { return &m_requests; }
   void archive_(Request *) { }
-  ZmRef<Request> retrieve_(typename Queue::Key, typename Queue::Key) {
+  ZmRef<Request> retrieve_(Queue::Key, Queue::Key) {
     return {};
   }
 private:
   Queue m_requests;
 };
-template <typename App, typename Catalog>
-ZuDerive(ClientPool, (ClientPool_<App, Catalog,
-  ZmHeap<"Zrest.Client.Pool", ClientPool_<App, Catalog>>>));
 
 template <typename App, typename Catalog>
 class Client : public Zhttp::Client<Client<App, Catalog>,
     ClientPool<App, Catalog>> {
   using HTTP = Zhttp::Client<Client, ClientPool<App, Catalog>>;
-  using Request = typename ClientReqQ<App, Catalog>::Node;
+  using Request = ClientReqQ<App, Catalog>::Node;
 public:
   using HTTP::start;
   using HTTP::stop;

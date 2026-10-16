@@ -40,8 +40,12 @@
 namespace ZtcHubWireTest_ {
 
 struct Object { unsigned value = 0; };
-struct BaseObject : public ZmHeap<"ZDash.BaseHeap", Object>, public Object { };
-struct LateObject : public ZmHeap<"ZDash.LiveHeap", Object>, public Object { };
+struct BaseObject : public ZmNHeap<BaseObject>, public Object {
+friend inline ZuStringT<"ZDash.BaseHeap"> ZmNHeapID(BaseObject *);
+};
+struct LateObject : public ZmNHeap<LateObject>, public Object {
+friend inline ZuStringT<"ZDash.LiveHeap"> ZmNHeapID(LateObject *);
+};
 
 static ZmSemaphore *signalDone = nullptr;
 static void interrupted() { if (signalDone) signalDone->post(); }

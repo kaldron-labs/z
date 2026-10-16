@@ -15,10 +15,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AppEnrollmentSaga_ : public Heap,
-    public ZdbSaga<AppEnrollmentSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AppEnrollmentSaga_<Heap>, DB>;
+struct AppEnrollmentSaga : public ZmNHeap<AppEnrollmentSaga>,
+    public ZdbSaga<AppEnrollmentSaga, DB> {
+friend inline ZuStringT<"Zum.AppEnrollmentSaga"> ZmNHeapID(AppEnrollmentSaga *);
+
+  using Base = ZdbSaga<AppEnrollmentSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -252,9 +253,8 @@ struct AppEnrollmentSaga_ : public Heap,
     return {};
   }
 
-
-  AppEnrollmentSaga_() = default;
-  AppEnrollmentSaga_(AppID appID_, String appName_, String appLabel_,
+  AppEnrollmentSaga() = default;
+  AppEnrollmentSaga(AppID appID_, String appName_, String appLabel_,
       String audience_, SignKey signKey_, String clientID_, Bytes secretDigest_,
       int64_t created_, ActionID catalogPublishOp_, ActionID operationQueryOp_,
       IdemRequest request_) :
@@ -269,17 +269,14 @@ struct AppEnrollmentSaga_ : public Heap,
     catalogPublishOp{ZuMv(catalogPublishOp_)},
     operationQueryOp{ZuMv(operationQueryOp_)},
     request{ZuMv(request_)} { }
-  AppEnrollmentSaga_(AppEnrollmentArgs args) :
-    AppEnrollmentSaga_{ZuMv(args.appID), ZuMv(args.appName),
+  AppEnrollmentSaga(AppEnrollmentArgs args) :
+    AppEnrollmentSaga{ZuMv(args.appID), ZuMv(args.appName),
       ZuMv(args.appLabel), ZuMv(args.audience), ZuMv(args.signKey),
       ZuMv(args.clientID), ZuMv(args.secretDigest), ZuMv(args.created),
       ZuMv(args.catalogPublishOp), ZuMv(args.operationQueryOp),
       ZuMv(args.request)} { }
-  ~AppEnrollmentSaga_() override;
+  ~AppEnrollmentSaga() override;
 };
-
-using AppEnrollmentSaga = AppEnrollmentSaga_<
-  ZmHeap<"Zum.AppEnrollmentSaga", AppEnrollmentSaga_<>>>;
 
 ZfStruct(, (AppEnrollmentSaga, FB),
   (appID,		(Ctor<0>),	UInt64),
@@ -297,8 +294,7 @@ Zfb::AsTable<"Zum.fbs.AppEnrollment"> Zfb_Fmt(AppEnrollmentSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<AppEnrollmentSaga>{}));
 
-template <typename Heap>
-AppEnrollmentSaga_<Heap>::~AppEnrollmentSaga_() = default;
+AppEnrollmentSaga::~AppEnrollmentSaga() = default;
 
 SagaRef appEnrollment(ZuBSpan data) {
   return AppEnrollmentSaga::load(data);

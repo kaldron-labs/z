@@ -156,7 +156,7 @@ inline void parameterHeaders(const O &object, L &&l)
 {
   using Fields = ZuActiveFields<O, ZuFacet::JSON>;
   ZuUnroll::all<Fields>([&object, &l]<typename Field>() {
-    using Props = typename Field::Props;
+    using Props = Field::Props;
     using Header = ZuFieldProp::MCP::GetHeader<Props>;
     enum { Code = Field::Type::Code };
     if constexpr (!ZuIsSame<void, Header>{}) {
@@ -164,7 +164,7 @@ inline void parameterHeaders(const O &object, L &&l)
 	parameterHeader<Code, ZuFieldProp::JSON::GetOptional<Props>{}>(
 	  Header{}(), Field::get(object), l);
     } else if constexpr (Code == ZfFieldTC::UDT) {
-      using T = typename Field::T;
+      using T = Field::T;
       if constexpr (bool(ZuFields<T, ZuFacet::JSON>::N))
 	parameterHeaders(Field::get(object), l);
     }
@@ -806,24 +806,22 @@ namespace ClientControl {
   enum { Ping, SetLevel };
 }
 
-template <typename Call, typename Heap = ZuVoid>
-struct ControlAction_ : public Heap, public ZmObject {
+template <typename Call>
+struct ControlAction : public ZmNHeap<ControlAction<Call>>, public ZmObject {
+friend inline ZuStringT<"Zmcp.Client.Control"> ZmNHeapID(ControlAction *);
+
   Zjrpc::ErrorString	level;
   ZmRef<Call>	call;
   int		kind;
 
-  ControlAction_(int kind_, ZuCSpan level_, ZmRef<Call> call_) :
+  ControlAction(int kind_, ZuCSpan level_, ZmRef<Call> call_) :
     level{level_}, call{ZuMv(call_)}, kind{kind_} { }
 };
 
-template <typename Call>
-ZuDerive(ControlHeap, (ZmHeap<"Zmcp.Client.Control", ControlAction_<Call>>));
+template <typename Req, typename Call>
+struct PeerCallAction : public ZmNHeap<PeerCallAction<Req, Call>>, public ZmObject {
+friend inline ZuStringT<"Zmcp.Client.Call"> ZmNHeapID(PeerCallAction *);
 
-template <typename Call>
-ZuDerive(ControlAction, (ControlAction_<Call, ControlHeap<Call>>));
-
-template <typename Req, typename Call, typename Heap = ZuVoid>
-struct PeerCallAction_ : public Heap, public ZmObject {
   using Object = Zjrpc::ObjectValue<typename Req::Object>;
 
   Object		object;
@@ -831,30 +829,21 @@ struct PeerCallAction_ : public Heap, public ZmObject {
   Zjrpc::ID	progress;
   int		logLevel;
 
-  PeerCallAction_(
+  PeerCallAction(
       Object object_, ZmRef<Call> call_, Zjrpc::ID progress_, int logLevel_) :
     object{ZuMv(object_)}, call{ZuMv(call_)}, progress{ZuMv(progress_)},
     logLevel{logLevel_} { }
 
 };
 
-template <typename Req, typename Call>
-ZuDerive(PeerCallHeap,
-  (ZmHeap<"Zmcp.Client.Call", PeerCallAction_<Req, Call>>));
+struct CancelAction : public ZmNHeap<CancelAction>, public ZmObject {
+friend inline ZuStringT<"Zmcp.Client.Cancel"> ZmNHeapID(CancelAction *);
 
-template <typename Req, typename Call>
-ZuDerive(PeerCallAction,
-  (PeerCallAction_<Req, Call, PeerCallHeap<Req, Call>>));
-
-template <typename Heap = ZuVoid>
-struct CancelAction_ : public Heap, public ZmObject {
   Zjrpc::ID		id;
   Zjrpc::ErrorString	reason;
-  CancelAction_(Zjrpc::ID id_, ZuCSpan reason_) :
+  CancelAction(Zjrpc::ID id_, ZuCSpan reason_) :
     id{ZuMv(id_)}, reason{reason_} { }
 };
-ZuDerive(CancelActionHeap, (ZmHeap<"Zmcp.Client.Cancel", CancelAction_<>>));
-ZuDerive(CancelAction, (CancelAction_<CancelActionHeap>));
 
 template <typename Derived, typename Impl, typename Catalog>
 class Client : public Zjrpc::BatchCaller<Derived>,
@@ -1230,7 +1219,7 @@ public:
   const Zjrpc::ID *id() const {
     const Zjrpc::ID *out = nullptr;
     m_data.cdispatch([&out](auto I, const auto &message) {
-      using M = typename Data::template Type<I>;
+      using M = Data::template Type<I>;
       if constexpr (!ZuIsSame<M, InitializedMessage>{} &&
 	  !ZuIsSame<M, CancelledRequestMessage>{} &&
 	  !ZuIsSame<M, DeleteRequestMessage>{})
@@ -1242,7 +1231,7 @@ public:
   ZuCSpan method() const {
     ZuCSpan out;
     m_data.cdispatch([&out](auto I, const auto &message) {
-      using M = typename Data::template Type<I>;
+      using M = Data::template Type<I>;
       if constexpr (!ZuIsSame<M, Zjrpc::BatchWire>{}) out = message.method();
     });
     return out;
@@ -1251,7 +1240,7 @@ public:
   ZuCSpan name() const {
     ZuCSpan out;
     m_data.cdispatch([&out](auto I, const auto &message) {
-      using M = typename Data::template Type<I>;
+      using M = Data::template Type<I>;
       if constexpr (!ZuIsSame<M, Zjrpc::BatchWire>{}) out = message.name();
     });
     return out;
@@ -1263,7 +1252,7 @@ public:
     if (kind() == ReqType::Batch) return true;
     bool out = false;
     m_data.cdispatch([&out](auto I, const auto &message) {
-      using M = typename Data::template Type<I>;
+      using M = Data::template Type<I>;
       if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
 	out = message.streaming();
     });
@@ -1297,7 +1286,7 @@ public:
   template <typename L>
   void header(L &&l) const {
     m_data.cdispatch([&l](auto I, const auto &message) {
-      using M = typename Data::template Type<I>;
+      using M = Data::template Type<I>;
       if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
 	message.header(l);
     });
@@ -1326,12 +1315,11 @@ ZmHashDerive(ActiveHash, ActiveEntry,
     ZmHashKey<ActiveEntry_KeyAxor,
       ZmHashLock<ZmNoLock, ZmHashHeapID<"">>>>));
 
-template <typename Heap = ZuVoid>
-struct ActiveTable_ : public Heap, public ActiveHash {
-  ZuDerive_(ActiveTable_, ActiveHash)
+struct ActiveTable : public ZmNHeap<ActiveTable>, public ActiveHash {
+friend inline ZuStringT<"Zmcp.HTTP.ActiveTable"> ZmNHeapID(ActiveTable *);
+
+  ZuDerive_(ActiveTable, ActiveHash)
 };
-ZuDerive(ActiveTableHeap, (ZmHeap<"Zmcp.HTTP.ActiveTable", ActiveTable_<>>));
-ZuDerive(ActiveTable, (ActiveTable_<ActiveTableHeap>));
 
 template <typename Impl, typename Catalog>
 struct Request_ : public ActiveHash::Node,
@@ -1472,8 +1460,8 @@ private:
   Request *m_request = nullptr;
 };
 
-template <typename Impl, typename Catalog> struct Pool;
-template <typename Impl, typename Catalog, typename Heap> class Pool_;
+template <typename Impl, typename Catalog> class Pool;
+template <typename Impl, typename Catalog> class Pool;
 
 template <typename Impl, typename Catalog>
 using RequestQ = ZmPQueue<Request_<Impl, Catalog>,
@@ -1482,39 +1470,39 @@ using RequestQ = ZmPQueue<Request_<Impl, Catalog>,
       ZmPQueueHeapID<"Zmcp.HTTP.Request">>>>;
 
 template <typename Impl, typename Catalog>
-using Request = typename RequestQ<Impl, Catalog>::Node;
+using Request = RequestQ<Impl, Catalog>::Node;
 
 template <typename Impl, typename Catalog>
 using TxQ = ZmPQTx<Pool<Impl, Catalog>, RequestQ<Impl, Catalog>,
   ZmPQTxOrdered<false>>;
 
-template <typename Impl, typename Catalog, typename Heap = ZuVoid>
-class Pool_ : public Heap, public Zhttp::Pool<
+template <typename Impl, typename Catalog>
+class Pool : public ZmNHeap<Pool<Impl, Catalog>>, public Zhttp::Pool<
     Client<Impl, Catalog>, TxQ<Impl, Catalog>,
     ResponseParser<Impl, Catalog>> {
+friend inline ZuStringT<"Zmcp.HTTP.Pool"> ZmNHeapID(Pool *);
+
   using Base = Zhttp::Pool<
     Client<Impl, Catalog>, TxQ<Impl, Catalog>,
     ResponseParser<Impl, Catalog>>;
 
 public:
-  Pool_(Client<Impl, Catalog> *client) : Base{client} { }
+  Pool(Client<Impl, Catalog> *client) : Base{client} { }
 
   RequestQ<Impl, Catalog> *txQueue() { return &m_requests; }
   void archive_(Request<Impl, Catalog> *) { }
   ZmRef<Request<Impl, Catalog>> retrieve_(
-      typename RequestQ<Impl, Catalog>::Key,
-      typename RequestQ<Impl, Catalog>::Key) { return {}; }
+      RequestQ<Impl, Catalog>::Key,
+      RequestQ<Impl, Catalog>::Key) { return {}; }
 
 private:
   RequestQ<Impl, Catalog> m_requests;
 };
-template <typename Impl, typename Catalog>
-ZuDerive(PoolHeap, (ZmHeap<"Zmcp.HTTP.Pool", Pool_<Impl, Catalog>>));
-template <typename Impl, typename Catalog>
-ZuDerive(Pool, (Pool_<Impl, Catalog, PoolHeap<Impl, Catalog>>));
 
-template <typename Req, typename Call, typename Heap = ZuVoid>
-struct CallAction_ : public Heap, public ZmObject {
+template <typename Req, typename Call>
+struct CallAction : public ZmNHeap<CallAction<Req, Call>>, public ZmObject {
+friend inline ZuStringT<"Zmcp.HTTP.Call"> ZmNHeapID(CallAction *);
+
   using Object = Zjrpc::ObjectValue<typename Req::Object>;
 
   Object		object;
@@ -1522,18 +1510,11 @@ struct CallAction_ : public Heap, public ZmObject {
   Zjrpc::ID	progress;
   int		logLevel;
 
-  CallAction_(
+  CallAction(
       Object object_, ZmRef<Call> call_, Zjrpc::ID progress_, int logLevel_) :
     object{ZuMv(object_)}, call{ZuMv(call_)}, progress{ZuMv(progress_)},
     logLevel{logLevel_} { }
 };
-
-template <typename Req, typename Call>
-ZuDerive(CallHeap, (ZmHeap<"Zmcp.HTTP.Call", CallAction_<Req, Call>>));
-
-template <typename Req, typename Call>
-ZuDerive(CallAction, (CallAction_<Req, Call, CallHeap<Req, Call>>));
-
 
 template <typename Impl, typename Catalog>
 class Client : public Zhttp::Client<
@@ -2350,8 +2331,8 @@ class WSClient : public Client<WSClient<Impl, Catalog, Profile>, Impl, Catalog>,
 public:
   using LinkState = Zjrpc::WSClientState;
   using WS = Zws::Client<WSClient, Profile>;
-  using Link = typename WS::Link;
-  using Config = typename WS::Config;
+  using Link = WS::Link;
+  using Config = WS::Config;
 
   WSClient() : m_ws{this} { }
   ~WSClient() { final(); }

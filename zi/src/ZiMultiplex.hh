@@ -715,24 +715,12 @@ class ZiAPI ZiMultiplex :
 friend ZiConnection;
 
   class Listener_;
-#if !ZiMultiplex__AcceptHeap
-  class Accept_;
-#else
-  template <typename Heap = ZuVoid> class Accept_;
-#endif
-#if ZiMultiplex__ConnectHash
+  class Accept;
   class Connect_;
-#else
-  template <typename Heap = ZuVoid> class Connect_;
-#endif
 
   class Listener_ : public ZuObject {
   friend ZiMultiplex;
-#if !ZiMultiplex__AcceptHeap
-  friend Accept_;
-#else
-  template <typename> friend class Accept_;
-#endif
+  friend Accept;
 
     using Socket = Zi::Socket;
 
@@ -767,17 +755,19 @@ friend ZiConnection;
 
 #if ZiMultiplex__AcceptHeap
   // heap-allocated asynchronous accept, exclusively used by IOCP
-  template <typename> class Accept_;
-template <typename> friend class Accept_;
-  template <typename Heap> class Accept_ : public Heap {
+  class Accept;
+friend Accept;
+  class Accept : public ZmNHeap<Accept> {
+  friend inline ZuStringT<"ZiMultiplex.Accept"> ZmNHeapID(Accept *);
+
   friend ZiMultiplex;
 
-    Accept_(Listener *listener) :
+    Accept(Listener *listener) :
       m_listener(listener), m_info{
 	ZiCxnType::TCPIn, Zi::nullSocket(), listener->m_info.options}
     {
       m_overlapped.init(
-	Zi_Overlapped::Executed::Member<&Accept_::executed>::fn(this));
+	Zi_Overlapped::Executed::Member<&Accept::executed>::fn(this));
     }
 
     ZmRef<Listener> listener() const { return m_listener; }
@@ -797,19 +787,20 @@ template <typename> friend class Accept_;
     alignas(16)
     char		m_buf[(ZiSockAddr::MaxLen + 16) * 2];
   };
-  ZuDerive(Accept_Heap, (ZmHeap<"ZiMultiplex.Accept", Accept_<>>));
-  ZuDerive(Accept, (Accept_<Accept_Heap>)); 
+
 #endif
 
   // heap-allocated non-blocking / asynchronous connect
 #if ZiMultiplex__ConnectHash
   class Connect_ : public ZuObject
 #else
-  template <typename Heap> class Connect_;
-template <typename> friend class Connect_;
-  template <typename Heap> class Connect_ : public Heap, public ZuObject
+  class Connect_;
+friend Connect_;
+  class Connect_ : public ZmNHeap<Connect_>, public ZuObject
 #endif
   {
+  friend inline ZuStringT<"ZiMultiplex.Connect"> ZmNHeapID(Connect_ *);
+
   friend ZiMultiplex;
 
     using Socket = Zi::Socket;
@@ -862,8 +853,8 @@ template <typename> friend class Connect_;
 	ZmHashHeapID<"ZiMultiplex.Connect">>>));
   using Connect = ConnectHash::Node;
 #else
-  ZuDerive(ConnectHeap, (ZmHeap<"ZiMultiplex.Connect", Connect_<>>));
-  ZuDerive(Connect, (Connect_<ConnectHeap>));
+
+  ZuDerive(Connect, (Connect_));
 #endif
 
   // Connections are shared with protocol owners and cannot own this registry node.

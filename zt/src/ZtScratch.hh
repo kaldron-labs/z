@@ -37,9 +37,9 @@ struct ZtScratch_ :
   private ZmAlloc_<typename ZuTraits<Array>::Elem, typename Array::VHeap>,
   public Array
 {
-  using T = typename ZuTraits<Array>::Elem;
+  using T = ZuTraits<Array>::Elem;
 private:
-  using VHeap = typename Array::VHeap;
+  using VHeap = Array::VHeap;
   using VAlloc = ZmAlloc_<T, VHeap>;
 public:
   using Array::data;

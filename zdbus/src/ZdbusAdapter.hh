@@ -130,8 +130,8 @@ struct BuildAdapter : public Builder {
     unsigned seen = 0;
     bool ok = true;
     ZuUnroll::all<Headers>([this, &head, &seen, &ok]<typename Entry>() {
-      using Key = typename Entry::Key;
-      using Fixed = typename Entry::Fixed;
+      using Key = Entry::Key;
+      using Fixed = Entry::Fixed;
       ZuAssert((HeaderKeyOK<Key>{}));
       if constexpr (!ZuIsSame<Fixed, ZuVoid>{}) {
         if (!setHeader(head, Key::Code, Fixed{}(), seen)) ok = false;
@@ -164,7 +164,7 @@ struct BuildAdapter : public Builder {
     if (!headers(head)) return {{}, {}, BuildError::Header};
     const auto &body = impl()->bodyObject(object);
     using Body = ZuDecay<decltype(body)>;
-    using Facet = typename Impl::Body_DBUS_Facet;
+    using Facet = Impl::Body_DBUS_Facet;
     return message<Body, Facet>(head, body, limit);
   }
 };
@@ -197,7 +197,7 @@ struct ParseAdapter : public Parser {
     if (info.type != Kind) return {{}, {}, ParseError::Type};
     frame = ZuMv(frame_);
     ZuUnroll::all<Headers>([this, &info]<typename Entry>() {
-      using Key = typename Entry::Key;
+      using Key = Entry::Key;
       ZuCSpan value = headerValue(info.headers, Key::Code);
       if (!value.length()) return;
       if constexpr (HasParseHeader<Impl, Key>{})
@@ -212,7 +212,7 @@ struct ParseAdapter : public Parser {
       return {frame, {}, ParseError::Header};
     auto &body = impl()->bodyObject(object);
     using Body = ZuDecay<decltype(body)>;
-    using Facet = typename Impl::Body_DBUS_Facet;
+    using Facet = Impl::Body_DBUS_Facet;
     auto view = ZfDBUS::View{frame->cspan(info.bodyOffset),
       info.headers.signature, info.bodyOffset, info.order};
     auto handler = ZfDBUS::handler<Body, Facet>(view);

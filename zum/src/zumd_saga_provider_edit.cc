@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ProviderEditSaga_ : public Heap,
-    public ZdbSaga<ProviderEditSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ProviderEditSaga_<Heap>, DB>;
+struct ProviderEditSaga : public ZmNHeap<ProviderEditSaga>,
+    public ZdbSaga<ProviderEditSaga, DB> {
+friend inline ZuStringT<"Zum.ProviderEditSaga"> ZmNHeapID(ProviderEditSaga *);
+
+  using Base = ZdbSaga<ProviderEditSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -62,8 +63,8 @@ struct ProviderEditSaga_ : public Heap,
     return {};
   }
 
-  ProviderEditSaga_() = default;
-  ProviderEditSaga_(Provider before_, String ifMatch_, Provider values_, uint8_t fields_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_) :
+  ProviderEditSaga() = default;
+  ProviderEditSaga(Provider before_, String ifMatch_, Provider values_, uint8_t fields_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     values{ZuMv(values_)},
@@ -72,18 +73,14 @@ struct ProviderEditSaga_ : public Heap,
     request{ZuMv(request_)},
     stateOnly{ZuMv(stateOnly_)},
     state{ZuMv(state_)} { }
-  ProviderEditSaga_(ProviderEditArgs args) :
-    ProviderEditSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.values), ZuMv(args.fields), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state)} {
+  ProviderEditSaga(ProviderEditArgs args) :
+    ProviderEditSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.values), ZuMv(args.fields), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<Provider>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~ProviderEditSaga_() override;
+  ~ProviderEditSaga() override;
 };
-
-
-using ProviderEditSaga = ProviderEditSaga_<
-  ZmHeap<"Zum.ProviderEditSaga", ProviderEditSaga_<>>>;
 
 ZfStruct(, (ProviderEditSaga, FB),
   (before,	(Ctor<0>),			UDT),
@@ -96,8 +93,7 @@ ZfStruct(, (ProviderEditSaga, FB),
   (fields,	(Ctor<3>),			UInt8));
 Zfb::AsTable<"Zum.fbs.ProviderEdit"> Zfb_Fmt(ProviderEditSaga *);
 
-template <typename Heap>
-void ProviderEditSaga_<Heap>::edit(Provider &item) const
+void ProviderEditSaga::edit(Provider &item) const
 {
   if (fields & 1) item.issuer = values.issuer;
   if (fields & 2) item.clientID = values.clientID;
@@ -107,8 +103,7 @@ void ProviderEditSaga_<Heap>::edit(Provider &item) const
   if (fields & 32) item.claimSource = values.claimSource;
 }
 
-template <typename Heap>
-unsigned ProviderEditSaga_<Heap>::recordError(const Provider &item) const
+unsigned ProviderEditSaga::recordError(const Provider &item) const
 {
   if (stateOnly ? state < 0 || state >= State::N : !fields || (fields & ~63U))
     return 400;
@@ -129,8 +124,7 @@ unsigned ProviderEditSaga_<Heap>::recordError(const Provider &item) const
 
 ZuAssert((Zdb_::SagaDefValid<ProviderEditSaga>{}));
 
-template <typename Heap>
-ProviderEditSaga_<Heap>::~ProviderEditSaga_() = default;
+ProviderEditSaga::~ProviderEditSaga() = default;
 
 SagaRef providerEdit(ZuBSpan data) {
   return ProviderEditSaga::load(data);

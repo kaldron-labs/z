@@ -31,7 +31,7 @@ template <unsigned Size> struct ZuFPType_;
 template <> struct ZuFPType_<sizeof(float)> { using T = float; };
 template <> struct ZuFPType_<sizeof(double)> { using T = double; };
 template <> struct ZuFPType_<sizeof(long double)> { using T = long double; };
-template <unsigned Size> using ZuFPType = typename ZuFPType_<Size>::T;
+template <unsigned Size> using ZuFPType = ZuFPType_<Size>::T;
 
 template <typename T, unsigned Size = sizeof(T)> struct ZuFP;
 

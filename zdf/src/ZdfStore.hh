@@ -124,7 +124,7 @@ private:
     OpenSeriesFn<Series_> fn)
   {
     using Series = Series_;
-    using DBSeries = typename Series::DBSeries;
+    using DBSeries = Series::DBSeries;
     enum { Fixed = Series::Fixed };
 
     static auto seriesTbl = [](const Store *this_) {

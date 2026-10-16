@@ -20,7 +20,7 @@ template <typename Array, unsigned BuiltinSize_>
 class ZtBuiltin : public Array {
 public:
   static constexpr unsigned BuiltinSize = BuiltinSize_;
-  using T = typename Array::T;
+  using T = Array::T;
 
 private:
   template <typename ...Args> struct IsSelf : public ZuFalse { };

@@ -68,7 +68,7 @@ struct ZmCache_LRU_NTP : public ZmListNode<T_, ZmListShadow<>> {
 template <typename T_>
 struct ZmCache_LRU_Node : public ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T {
   ZuDerive_(ZmCache_LRU_Node,
-    (typename ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T))
+    (ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T))
 };
 template <typename T_>
 struct ZmCache_LRU : public ZmList<
@@ -109,7 +109,7 @@ template <typename FindFn_>
 struct ZmCache_FindFnList_Node : public
     ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T {
   ZuDerive_(ZmCache_FindFnList_Node,
-    (typename ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T))
+    (ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T))
 };
 template <typename FindFn_>
 struct ZmCache_FindFnList : public ZmList<
@@ -131,25 +131,25 @@ class ZmCache {
 public:
   using T = T_;
   using Impl = ZuIf<ZuIsSame<Impl_, void>{}, ZmCache, Impl_>;
-  using Lock = typename NTP::Lock;
+  using Lock = NTP::Lock;
   enum { Evict = NTP::Evict };
 
 private:
   using Guard = ZmGuard<Lock>;
   using ReadGuard = ZmReadGuard<Lock>;
-  using LRU = typename ZmCache_LRUT<T, Evict>::T;
+  using LRU = ZmCache_LRUT<T, Evict>::T;
   using Hash = ZmCache_Hash<typename LRU::Node, NTP, T, LRU>;
 
 public:
-  using Key = typename Hash::Key;
-  using Cmp = typename Hash::Cmp;
+  using Key = Hash::Key;
+  using Cmp = Hash::Cmp;
 
   using HeapID = Hash::HeapID;
   enum { Sharded = Hash::Sharded };
 
-  using Node = typename Hash::Node;
-  using NodeRef = typename Hash::NodeRef;
-  using NodeMvRef = typename Hash::NodeMvRef;
+  using Node = Hash::Node;
+  using NodeRef = Hash::NodeRef;
+  using NodeMvRef = Hash::NodeMvRef;
 
 private:
   using FindFn = ZmCache_FindFn<Node, HeapID, Sharded>;
@@ -273,7 +273,7 @@ public:
     bool pending = load;
     if (!pending)
       m_loadHash->addNode(
-	  load = new typename LoadHash::Node{key, FindFnList{}});
+	  load = new LoadHash::Node{key, FindFnList{}});
     load->val().push(FindFn{ZuMv(findFn)});
     guard.unlock();
     if (!pending)
@@ -299,7 +299,7 @@ public:
     bool pending = load;
     if (!pending)
       m_loadHash->addNode(
-	  load = new typename LoadHash::Node{key, FindFnList{}});
+	  load = new LoadHash::Node{key, FindFnList{}});
     load->val().push(FindFn{ZuMv(findFn)});
     guard.unlock();
     if (!pending)

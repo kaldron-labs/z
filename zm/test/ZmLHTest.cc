@@ -80,17 +80,17 @@ ZmLHashKVDerive(LHash, S, int, ZmLHashLock<ZmNoLock>);
 
 template <typename H>
 struct HashAdapter {
-  using T = typename H::NodeRef;
-  static const typename H::Key &key(const typename H::Node *n) {
+  using T = H::NodeRef;
+  static const H::Key &key(const H::Node *n) {
     return n->key();
   }
-  static const typename H::Val &val(const typename H::Node *n) {
+  static const H::Val &val(const H::Node *n) {
     return n->val();
   }
 };
 template <typename H>
 struct LHashAdapter {
-  using T = const typename H::T *;
+  using T = const H::T *;
   static decltype(auto) key(T ptr) { return H::KeyAxor(*ptr); }
   static decltype(auto) val(T ptr) { return H::ValAxor(*ptr); }
 };

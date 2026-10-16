@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AppChangeSaga_ : public Heap,
-    public ZdbSaga<AppChangeSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AppChangeSaga_<Heap>, DB>;
+struct AppChangeSaga : public ZmNHeap<AppChangeSaga>,
+    public ZdbSaga<AppChangeSaga, DB> {
+friend inline ZuStringT<"Zum.AppChangeSaga"> ZmNHeapID(AppChangeSaga *);
+
+  using Base = ZdbSaga<AppChangeSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -96,8 +97,8 @@ struct AppChangeSaga_ : public Heap,
     return {};
   }
 
-  AppChangeSaga_() = default;
-  AppChangeSaga_(App before_, String ifMatch_, String label_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_) :
+  AppChangeSaga() = default;
+  AppChangeSaga(App before_, String ifMatch_, String label_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     label{ZuMv(label_)},
@@ -105,18 +106,14 @@ struct AppChangeSaga_ : public Heap,
     request{ZuMv(request_)},
     stateOnly{ZuMv(stateOnly_)},
     state{ZuMv(state_)} { }
-  AppChangeSaga_(AppChangeArgs args) :
-    AppChangeSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.label), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state)} {
+  AppChangeSaga(AppChangeArgs args) :
+    AppChangeSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.label), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<App>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~AppChangeSaga_() override;
+  ~AppChangeSaga() override;
 };
-
-
-using AppChangeSaga = AppChangeSaga_<
-  ZmHeap<"Zum.AppChangeSaga", AppChangeSaga_<>>>;
 
 ZfStruct(, (AppChangeSaga, FB),
   (before,	(Ctor<0>),			UDT),
@@ -128,8 +125,7 @@ ZfStruct(, (AppChangeSaga, FB),
   (state,	(Ctor<6>, Enum<State::Map>),	Int8));
 Zfb::AsTable<"Zum.fbs.AppChange"> Zfb_Fmt(AppChangeSaga *);
 
-template <typename Heap>
-unsigned AppChangeSaga_<Heap>::appError(const App &item) const
+unsigned AppChangeSaga::appError(const App &item) const
 {
   if (stateOnly && (state < 0 || state >= State::N)) return 400;
   String etag{"\"v"};
@@ -144,8 +140,7 @@ unsigned AppChangeSaga_<Heap>::appError(const App &item) const
 
 ZuAssert((Zdb_::SagaDefValid<AppChangeSaga>{}));
 
-template <typename Heap>
-AppChangeSaga_<Heap>::~AppChangeSaga_() = default;
+AppChangeSaga::~AppChangeSaga() = default;
 
 SagaRef appChange(ZuBSpan data) {
   return AppChangeSaga::load(data);

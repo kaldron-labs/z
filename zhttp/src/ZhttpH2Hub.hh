@@ -758,8 +758,8 @@ inline uint32_t TxWindowEntry_IDAxor(const TxWindowEntry &entry)
 ZmListDerive(TxWindowList, TxWindowEntry,
   ZmListNode<TxWindowEntry, ZmListShadow<>>);
 
-ZmHashDerive(TxWindowHash, typename TxWindowList::Node,
-  (ZmHashNode<typename TxWindowList::Node,
+ZmHashDerive(TxWindowHash, TxWindowList::Node,
+  (ZmHashNode<TxWindowList::Node,
     ZmHashKey<TxWindowEntry_IDAxor,
       ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zhttp.H2">>>>));
@@ -884,7 +884,7 @@ public:
 	--m_localStreamCount;
       else
 	--m_peerStreamCount;
-      m_streams->delNode(static_cast<typename Streams::Node *>(stream_));
+      m_streams->delNode(static_cast<Streams::Node *>(stream_));
       recentStream_(id);
       retireConnection_(deferred);
     }

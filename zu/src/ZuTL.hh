@@ -23,7 +23,7 @@ template <typename ...Ts> struct ZuTypeList {
     using T = ZuTypeList<Ts_..., Ts...>;
   };
   template <typename ...Ts_>
-  using Unshift = typename Unshift_<Ts_...>::T;
+  using Unshift = Unshift_<Ts_...>::T;
 
   template <typename ...Ts_> struct Push_ {
     using T = ZuTypeList<Ts..., Ts_...>;
@@ -32,14 +32,14 @@ template <typename ...Ts> struct ZuTypeList {
     using T = ZuTypeList<Ts..., Ts_...>;
   };
   template <typename ...Ts_>
-  using Push = typename Push_<Ts_...>::T;
+  using Push = Push_<Ts_...>::T;
 };
 
 // typelist of repeated type
 template <unsigned N, typename List, typename E>
 struct ZuTypeRepeat__ {
   using T =
-    typename ZuTypeRepeat__<N - 1, typename List::template Push<E>, E>::T;
+    ZuTypeRepeat__<N - 1, typename List::template Push<E>, E>::T;
 };
 template <typename List, typename E>
 struct ZuTypeRepeat__<0, List, E> {
@@ -48,33 +48,33 @@ struct ZuTypeRepeat__<0, List, E> {
 template <unsigned N, typename E>
 struct ZuTypeRepeat_ : public ZuTypeRepeat__<N, ZuTypeList<>, E> { };
 template <unsigned N, typename E>
-using ZuTypeRepeat = typename ZuTypeRepeat_<N, E>::T;
+using ZuTypeRepeat = ZuTypeRepeat_<N, E>::T;
 
 // reverse typelist
 template <typename ...Ts> struct ZuTypeRev_;
 template <typename ...Ts> struct ZuTypeRev__;
 template <typename T0, typename ...Ts>
 struct ZuTypeRev__<T0, Ts...> {
-  using T = typename ZuTypeRev__<Ts...>::T::template Push<T0>;
+  using T = ZuTypeRev__<Ts...>::T::template Push<T0>;
 };
 template <typename T0>
 struct ZuTypeRev__<T0> { using T = ZuTypeList<T0>; };
 template <>
 struct ZuTypeRev__<> { using T = ZuTypeList<>; };
 template <typename ...Ts>
-struct ZuTypeRev_ { using T = typename ZuTypeRev__<Ts...>::T; };
+struct ZuTypeRev_ { using T = ZuTypeRev__<Ts...>::T; };
 template <typename ...Ts>
 struct ZuTypeRev_<ZuTypeList<Ts...>> {
-  using T = typename ZuTypeRev__<Ts...>::T;
+  using T = ZuTypeRev__<Ts...>::T;
 };
 template <typename ...Ts>
-using ZuTypeRev = typename ZuTypeRev_<Ts...>::T;
+using ZuTypeRev = ZuTypeRev_<Ts...>::T;
 
 // index -> type
 template <unsigned, typename ...> struct ZuType__;
 template <unsigned I, typename T0, typename ...Ts>
 struct ZuType__<I, T0, Ts...> {
-  using T = typename ZuType__<I - 1, Ts...>::T;
+  using T = ZuType__<I - 1, Ts...>::T;
 };
 template <typename T0, typename ...Ts>
 struct ZuType__<0, T0, Ts...> {
@@ -86,7 +86,7 @@ struct ZuType_ : public ZuType__<I, Ts...> { };
 template <unsigned I, typename ...Ts>
 struct ZuType_<I, ZuTypeList<Ts...>> : public ZuType__<I, Ts...> { };
 template <unsigned I, typename ...Ts>
-using ZuType = typename ZuType_<I, Ts...>::T;
+using ZuType = ZuType_<I, Ts...>::T;
 
 // type -> index (returns first match) (undefined if type is not in list)
 template <typename, typename ...> struct ZuTypeIndex_;
@@ -125,14 +125,14 @@ struct ZuTypeMap_<Map, T0> {
 template <template <typename> class Map, typename T0, typename ...Ts>
 struct ZuTypeMap_<Map, T0, Ts...> {
   using T =
-    typename ZuTypeList<Map<T0>>::template Push<
+    ZuTypeList<Map<T0>>::template Push<
       typename ZuTypeMap_<Map, Ts...>::T>;
 };
 template <template <typename> class Map, typename ...Ts>
 struct ZuTypeMap_<Map, ZuTypeList<Ts...>> :
   public ZuTypeMap_<Map, Ts...> { };
 template <template <typename> class Map, typename ...Ts>
-using ZuTypeMap = typename ZuTypeMap_<Map, Ts...>::T;
+using ZuTypeMap = ZuTypeMap_<Map, Ts...>::T;
 
 // typelist grep
 // - Filter<T>{} should be true to include T in resulting list
@@ -148,19 +148,19 @@ struct ZuTypeGrep_ {
 };
 template <template <typename> class Filter, typename T0>
 struct ZuTypeGrep_<Filter, T0> {
-  using T = typename ZuTypeGrep__<T0, Filter<T0>{}>::T;
+  using T = ZuTypeGrep__<T0, Filter<T0>{}>::T;
 };
 template <template <typename> class Filter, typename T0, typename ...Ts>
 struct ZuTypeGrep_<Filter, T0, Ts...> {
   using T =
-    typename ZuTypeGrep__<T0, Filter<T0>{}>::T::template Push<
+    ZuTypeGrep__<T0, Filter<T0>{}>::T::template Push<
       typename ZuTypeGrep_<Filter, Ts...>::T>;
 };
 template <template <typename> class Filter, typename ...Ts>
 struct ZuTypeGrep_<Filter, ZuTypeList<Ts...>> :
   public ZuTypeGrep_<Filter, Ts...> { };
 template <template <typename> class Filter, typename ...Ts>
-using ZuTypeGrep = typename ZuTypeGrep_<Filter, Ts...>::T;
+using ZuTypeGrep = ZuTypeGrep_<Filter, Ts...>::T;
 
 // test for inclusion in typelist
 // ZuTypeIn<T, List>{} evaluates to true if T is in List
@@ -202,13 +202,13 @@ template <template <typename...> class Reduce, typename ...Ts>
 struct ZuTypeReduce_<Reduce, ZuTypeList<Ts...>> :
     public ZuTypeReduce_<Reduce, Ts...> { };
 template <template <typename...> class Reduce, typename ...Ts>
-using ZuTypeReduce = typename ZuTypeReduce_<Reduce, Ts...>::T;
+using ZuTypeReduce = ZuTypeReduce_<Reduce, Ts...>::T;
 
 // split typelist left, 0..N-1
 template <unsigned N, typename ...Ts> struct ZuTypeHead__;
 template <unsigned N, typename T0, typename ...Ts>
 struct ZuTypeHead__<N, T0, Ts...> {
-  using T = typename ZuTypeHead__<N - 1, Ts...>::T::template Unshift<T0>;
+  using T = ZuTypeHead__<N - 1, Ts...>::T::template Unshift<T0>;
 };
 template <typename T0, typename ...Ts>
 struct ZuTypeHead__<0, T0, Ts...> {
@@ -225,13 +225,13 @@ template <unsigned N, typename ...Ts>
 struct ZuTypeHead_<N, ZuTypeList<Ts...>> :
     public ZuTypeHead__<N, Ts...> { };
 template <unsigned N, typename ...Ts>
-using ZuTypeHead = typename ZuTypeHead_<N, Ts...>::T;
+using ZuTypeHead = ZuTypeHead_<N, Ts...>::T;
 
 // split typelist right, N..
 template <unsigned N, typename ...Ts> struct ZuTypeTail__;
 template <unsigned N, typename T0, typename ...Ts>
 struct ZuTypeTail__<N, T0, Ts...> {
-  using T = typename ZuTypeTail__<N - 1, Ts...>::T;
+  using T = ZuTypeTail__<N - 1, Ts...>::T;
 };
 template <typename T0, typename ...Ts>
 struct ZuTypeTail__<0, T0, Ts...> {
@@ -248,7 +248,7 @@ template <unsigned N, typename ...Ts>
 struct ZuTypeTail_<N, ZuTypeList<Ts...>> :
     public ZuTypeTail__<N, Ts...> { };
 template <unsigned N, typename ...Ts>
-using ZuTypeTail = typename ZuTypeTail_<N, Ts...>::T;
+using ZuTypeTail = ZuTypeTail_<N, Ts...>::T;
 
 // compile-time merge-sort typelist using Index<T>{}
 template <template <typename> class Index, typename Left, typename Right>
@@ -262,7 +262,7 @@ template <
 struct ZuTypeMerge__<Index,
     ZuTypeList<LeftT0, LeftTs...>,
     ZuTypeList<RightT0, RightTs...>, false> {
-  using T = typename ZuTypeMerge_<Index,
+  using T = ZuTypeMerge_<Index,
     ZuTypeList<LeftTs...>,
     ZuTypeList<RightT0, RightTs...>>::T::template Unshift<LeftT0>;
 };
@@ -273,7 +273,7 @@ template <
 struct ZuTypeMerge__<Index,
     ZuTypeList<LeftT0, LeftTs...>,
     ZuTypeList<RightT0, RightTs...>, true> {
-  using T = typename ZuTypeMerge_<Index,
+  using T = ZuTypeMerge_<Index,
     ZuTypeList<LeftT0, LeftTs...>,
     ZuTypeList<RightTs...>>::T::template Unshift<RightT0>;
 };
@@ -301,7 +301,7 @@ struct ZuTypeMerge_<Index, ZuTypeList<>, ZuTypeList<>> {
   using T = ZuTypeList<>;
 };
 template <template <typename> class Index, typename Left, typename Right>
-using ZuTypeMerge = typename ZuTypeMerge_<Index, Left, Right>::T;
+using ZuTypeMerge = ZuTypeMerge_<Index, Left, Right>::T;
 template <template <typename> class Index, typename ...Ts>
 struct ZuTypeSort_ {
   enum { N = sizeof...(Ts) };
@@ -322,7 +322,7 @@ template <template <typename> class Index, typename ...Ts>
 struct ZuTypeSort_<Index, ZuTypeList<Ts...>> :
   public ZuTypeSort_<Index, Ts...> { };
 template <template <typename> class Index, typename ...Ts>
-using ZuTypeSort = typename ZuTypeSort_<Index, Ts...>::T;
+using ZuTypeSort = ZuTypeSort_<Index, Ts...>::T;
 
 // concatenate typelists
 template <typename ...> struct ZuTypeConcat_;
@@ -330,11 +330,11 @@ template <>
 struct ZuTypeConcat_<> { using T = ZuTypeList<>; };
 template <typename ...Ts, typename ...TLs>
 struct ZuTypeConcat_<ZuTypeList<Ts...>, TLs...> {
-  using T = typename ZuTypeList<Ts...>::template Push<
+  using T = ZuTypeList<Ts...>::template Push<
     typename ZuTypeConcat_<TLs...>::T>;
 };
 template <typename ...TLs>
-using ZuTypeConcat = typename ZuTypeConcat_<TLs...>::T;
+using ZuTypeConcat = ZuTypeConcat_<TLs...>::T;
 
 // remove duplicate types, retaining the first occurrence
 template <typename, typename ...> struct ZuTypeUnique__;
@@ -344,7 +344,7 @@ template <typename List, typename T0, typename ...Ts>
 struct ZuTypeUnique__<List, T0, Ts...> {
   using Next = ZuIf<
     ZuTypeIn<T0, List>{}, List, typename List::template Push<T0>>;
-  using T = typename ZuTypeUnique__<Next, Ts...>::T;
+  using T = ZuTypeUnique__<Next, Ts...>::T;
 };
 template <typename ...Ts>
 struct ZuTypeUnique_ : public ZuTypeUnique__<ZuTypeList<>, Ts...> { };
@@ -352,14 +352,14 @@ template <typename ...Ts>
 struct ZuTypeUnique_<ZuTypeList<Ts...>> :
   public ZuTypeUnique_<Ts...> { };
 template <typename ...Ts>
-using ZuTypeUnique = typename ZuTypeUnique_<Ts...>::T;
+using ZuTypeUnique = ZuTypeUnique_<Ts...>::T;
 
 // compile-time typelist slice
 template <
   unsigned Stride, unsigned Offset, typename Ts,
   bool = (Offset < Stride && Offset < Ts::N)>
 struct ZuTypeSlice__ {
-  using T = typename ZuTypeSlice__<
+  using T = ZuTypeSlice__<
     Stride, Offset, ZuTypeTail<Stride, Ts>>::T::
       template Unshift<ZuType<Offset, Ts>>;
 };
@@ -374,7 +374,7 @@ template <unsigned Stride, unsigned Offset, typename ...Ts>
 struct ZuTypeSlice_<Stride, Offset, ZuTypeList<Ts...>> :
   public ZuTypeSlice__<Stride, Offset, ZuTypeList<Ts...>> { };
 template <unsigned Stride, unsigned Offset, typename ...Ts>
-using ZuTypeSlice = typename ZuTypeSlice_<Stride, Offset, Ts...>::T;
+using ZuTypeSlice = ZuTypeSlice_<Stride, Offset, Ts...>::T;
 
 // apply typelist to template
 template <template <typename...> class Type, typename ...Ts>
@@ -384,7 +384,7 @@ struct ZuTypeApply_<Type, ZuTypeList<Ts...>> {
   using T = Type<Ts...>;
 };
 template <template <typename...> class Type, typename ...Ts>
-using ZuTypeApply = typename ZuTypeApply_<Type, Ts...>::T;
+using ZuTypeApply = ZuTypeApply_<Type, Ts...>::T;
 
 // type list convertibility
 template <typename Ts, typename Us> // true if Ts converts to Us

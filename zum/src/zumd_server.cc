@@ -143,10 +143,11 @@ static bool consentForm(String &form, Bytes &id, bool &approve)
   return true;
 }
 
-template <typename Heap = ZuVoid>
-class ReplyComplete__ : public Heap, public ZmObject  {
+class ReplyComplete_ : public ZmNHeap<ReplyComplete_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.server.ReplyComplete"> ZmNHeapID(ReplyComplete_ *);
+
 public:
-  ReplyComplete__(ServerFn complete) : m_complete{ZuMv(complete)} { }
+  ReplyComplete_(ServerFn complete) : m_complete{ZuMv(complete)} { }
 
   void finish(ServerReply reply)
   {
@@ -158,9 +159,6 @@ public:
 private:
   ServerFn	m_complete;
 };
-ZuDerive(ReplyCompleteHeap,
-  (ZmHeap<"Zum.zumd.server.ReplyComplete", ReplyComplete__<>>));
-ZuDerive(ReplyComplete_, (ReplyComplete__<ReplyCompleteHeap>));
 
 static String encodeID(ZuBSpan id)
 {
@@ -1090,13 +1088,12 @@ void Server::logout_(
       })) done->finish(serverError());
 }
 
-template <typename Heap = ZuVoid>
-struct ReadyKey__ : public Heap, public ZmObject  {
+struct ReadyKey_ : public ZmNHeap<ReadyKey_>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.server.ReadyKey"> ZmNHeapID(ReadyKey_ *);
+
   SignKey key;
   Bytes digest;
 };
-ZuDerive(ReadyKeyHeap, (ZmHeap<"Zum.zumd.server.ReadyKey", ReadyKey__<>>));
-ZuDerive(ReadyKey_, (ReadyKey__<ReadyKeyHeap>));
 
 void Server::ready(ServerFn complete)
 {

@@ -35,16 +35,13 @@ struct ZiFileTxBufSize : public NTP {
 
 namespace Zi {
 
-template <unsigned BufSize_, typename Heap = ZuVoid>
-struct FileTxBuf_ :
-    public Heap, public ZuObject, public ZuBArray<BufSize_> {
+template <unsigned BufSize_>
+struct FileTxBuf :
+    public ZmNHeap<FileTxBuf<BufSize_>>, public ZuObject, public ZuBArray<BufSize_> {
+friend inline ZuStringT<"ZiFile.TxBuf"> ZmNHeapID(FileTxBuf *);
+
   enum { BufSize = BufSize_ };
 };
-
-template <unsigned BufSize>
-ZuDerive(FileTxBufHeap, (ZmHeap<"ZiFile.TxBuf", FileTxBuf_<BufSize>>));
-template <unsigned BufSize>
-ZuDerive(FileTxBuf, (FileTxBuf_<BufSize, FileTxBufHeap<BufSize>>));
 
 template <typename NTP = ZiFileTxStream_Defaults>
 class FileTxStream {

@@ -39,19 +39,19 @@
 // sentinel return values from decode()
 template <typename FP, typename T, typename I>
 constexpr ZuTuple<I, I> ZuFP_<FP, T, I>::decodeNaN() {
-  using U = typename FP::U;
+  using U = FP::U;
   enum { IBits = sizeof(U)<<3 };
   return { U(1)<<(IBits - 1), 0 };
 }
 template <typename FP, typename T, typename I>
 constexpr ZuTuple<I, I> ZuFP_<FP, T, I>::decodePosInf() {
-  using U = typename FP::U;
+  using U = FP::U;
   enum { IBits = sizeof(U)<<3 };
   return { ~(U(1)<<(IBits - 1)), ~(U(1)<<(IBits - 1)) };
 }
 template <typename FP, typename T, typename I>
 constexpr ZuTuple<I, I> ZuFP_<FP, T, I>::decodeNegInf() {
-  using U = typename FP::U;
+  using U = FP::U;
   enum { IBits = sizeof(U)<<3 };
   return { ~(U(1)<<(IBits - 1)), U(1)<<(IBits - 1) };
 }
@@ -63,7 +63,7 @@ inline ZuTuple<I, I> ZuFP_<FP, T, I>::decode(T v_)
 {
   // there are 4 special cases, handled with sentinel values up front
   // - nan, -inf, +inf and zero
-  using U = typename FP::U;
+  using U = FP::U;
   if constexpr (sizeof(T) <= 8) {
     // IEEE754 version
     enum { FBits = sizeof(T)<<3 };
@@ -134,7 +134,7 @@ inline T ZuFP_<FP, T, I>::encode(I e, I m)
 {
   // there are 4 special cases, handled with sentinel values up front
   // - nan, -inf, +inf and zero
-  using U = typename FP::U;
+  using U = FP::U;
   enum { IBits = sizeof(U)<<3 };
   if constexpr (sizeof(T) <= 8) {
     // IEEE754 version

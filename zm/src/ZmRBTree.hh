@@ -204,8 +204,8 @@ private:
   static constexpr auto KeyAxor = NTP_::KeyAxor;
   static constexpr auto ValAxor = NTP_::ValAxor;
   enum { Unique = NTP_::Unique };
-  using NodeBase = typename NTP_::Node;
-  using HeapID = typename NTP_::HeapID;
+  using NodeBase = NTP_::Node;
+  using HeapID = NTP_::HeapID;
   enum { Sharded = NTP_::Sharded };
 
   struct Node;
@@ -250,8 +250,8 @@ template <typename, class, typename, typename> friend class ZmRBTree;
 public:
   using Tree = Tree_;
   enum { Direction = Direction_ };
-  using Node = typename Tree::Node;
-  using NodeRef = typename Tree::NodeRef;
+  using Node = Tree::Node;
+  using NodeRef = Tree::NodeRef;
 
 protected:
   ZmRBTreeIter_(const ZmRBTreeIter_ &) = delete;
@@ -294,10 +294,10 @@ class ZmRBTreeIter :
     public ZmRBTreeIter_<Tree_, Direction_> {
   using Tree = Tree_;
   enum { Direction = Direction_ };
-  using Guard = typename Tree::Guard;
-  using Node = typename Tree::Node;
-  using NodeRef = typename Tree::NodeRef;
-  using NodeMvRef = typename Tree::NodeMvRef;
+  using Guard = Tree::Guard;
+  using Node = Tree::Node;
+  using NodeRef = Tree::NodeRef;
+  using NodeMvRef = Tree::NodeMvRef;
 
 public:
   ZmRBTreeIter(const ZmRBTreeIter &) = delete;
@@ -324,7 +324,7 @@ class ZmRBTreeCIter :
     public ZmRBTreeIter_<Tree_, Direction_> {
   using Tree = Tree_;
   enum { Direction = Direction_ };
-  using ReadGuard = typename Tree::ReadGuard;
+  using ReadGuard = Tree::ReadGuard;
 
 public:
   ZmRBTreeCIter(const ZmRBTreeCIter &) = delete;
@@ -359,7 +359,7 @@ struct ZmRBTree_IsStaticEquals<T, Cmp, decltype(
 
 // red/black tree
 template <typename T_, class NTP = ZmRBTree_Defaults,
-  typename Node_ = typename ZmRBTree_NodeT<T_, NTP>::T,
+  typename Node_ = ZmRBTree_NodeT<T_, NTP>::T,
   typename Impl_ = void>
 class ZmRBTree : public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
   template <typename, int> friend class ZmRBTreeIter_;
@@ -375,11 +375,11 @@ public:
   using ValRet = decltype(ValAxor(ZuDeclVal<const T &>()));
   using Key = ZuRDecay<KeyRet>;
   using Val = ZuRDecay<ValRet>;
-  using Cmp = typename NTP::template CmpT<Key>;
-  using ValCmp = typename NTP::template ValCmpT<Val>;
+  using Cmp = NTP::template CmpT<Key>;
+  using ValCmp = NTP::template ValCmpT<Val>;
   enum { Unique = NTP::Unique };
-  using Lock = typename NTP::Lock;
-  using NodeBase = typename NTP::Node;
+  using Lock = NTP::Lock;
+  using NodeBase = NTP::Node;
   enum { Shadow = NTP::Shadow };
   using HeapID = NTP::HeapID;
   enum { Sharded = NTP::Sharded };
@@ -397,8 +397,8 @@ public:
   using CIter = ZmRBTreeCIter<Impl, Direction>;
 
   using Node = Node_;
-  using NodeRef = typename NodeFn::template Ref<Node>;
-  using NodeMvRef = typename NodeFn::template MvRef<Node>;
+  using NodeRef = NodeFn::template Ref<Node>;
+  using NodeMvRef = NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
 
 private:

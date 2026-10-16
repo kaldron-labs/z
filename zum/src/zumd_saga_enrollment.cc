@@ -16,10 +16,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct EnrollmentSaga_ : public Heap,
-    public ZdbSaga<EnrollmentSaga_<Heap>, DB> {
-  using Base = ZdbSaga<EnrollmentSaga_<Heap>, DB>;
+struct EnrollmentSaga : public ZmNHeap<EnrollmentSaga>,
+    public ZdbSaga<EnrollmentSaga, DB> {
+friend inline ZuStringT<"Zum.EnrollmentSaga"> ZmNHeapID(EnrollmentSaga *);
+
+  using Base = ZdbSaga<EnrollmentSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -262,8 +263,8 @@ struct EnrollmentSaga_ : public Heap,
     grantDelete<Fwd>(this, ceremonyID, ZuMv(complete)); return {};
   }
 
-  EnrollmentSaga_() = default;
-  EnrollmentSaga_(
+  EnrollmentSaga() = default;
+  EnrollmentSaga(
       Bytes ceremonyID_, UserID userID_,
       String name_, Bytes handle_,
       Bytes credentialID_, Bytes publicKey_,
@@ -285,18 +286,15 @@ struct EnrollmentSaga_ : public Heap,
     precreated{ZuMv(precreated_)},
     beforeGrant{ZuMv(beforeGrant_)},
     beforeUser{ZuMv(beforeUser_)} { }
-  EnrollmentSaga_(EnrollmentArgs args) :
-    EnrollmentSaga_{
+  EnrollmentSaga(EnrollmentArgs args) :
+    EnrollmentSaga{
       ZuMv(args.ceremonyID), ZuMv(args.userID), ZuMv(args.name),
       ZuMv(args.handle), ZuMv(args.credentialID), ZuMv(args.publicKey),
       ZuMv(args.signCount), ZuMv(args.created), ZuMv(args.backupEligible),
       ZuMv(args.backedUp), ZuMv(args.label), ZuMv(args.precreated),
       ZuMv(args.beforeGrant), ZuMv(args.beforeUser)} { }
-  ~EnrollmentSaga_() override;
+  ~EnrollmentSaga() override;
 };
-
-using EnrollmentSaga = EnrollmentSaga_<
-  ZmHeap<"Zum.EnrollmentSaga", EnrollmentSaga_<>>>;
 
 ZfStruct(, (EnrollmentSaga, FB),
   (ceremonyID,		(Ctor<0>),			Bytes),
@@ -317,8 +315,7 @@ Zfb::AsTable<"Zum.fbs.Enrollment"> Zfb_Fmt(EnrollmentSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<EnrollmentSaga>{}));
 
-template <typename Heap>
-EnrollmentSaga_<Heap>::~EnrollmentSaga_() = default;
+EnrollmentSaga::~EnrollmentSaga() = default;
 
 SagaRef enrollment(ZuBSpan data) {
   return EnrollmentSaga::load(data);

@@ -119,7 +119,6 @@ struct HoldingResolver {
 
 struct App;
 struct Pool;
-template <typename Heap> struct Pool_;
 struct ReqBuilder_;
 struct ResParser;
 
@@ -254,11 +253,12 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-template <typename Heap = ZuVoid>
-struct Pool_ : public Heap, public Zhttp::Pool<App, TxQ, ResParser> {
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<App, TxQ, ResParser> {
+friend inline ZuStringT<"Zhttp.Test.Pool"> ZmNHeapID(Pool *);
+
   using Base = Zhttp::Pool<App, TxQ, ResParser>;
 
-  Pool_(App *);
+  Pool(App *);
 
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *request);
@@ -267,8 +267,6 @@ struct Pool_ : public Heap, public Zhttp::Pool<App, TxQ, ResParser> {
 private:
   ReqBuilderQ	m_requests;
 };
-ZuDerive(PoolHeap, (ZmHeap<"Zhttp.Test.Pool", Pool_<>>));
-ZuDerive(Pool, (Pool_<PoolHeap>));
 
 ZuAssert((ZuIsSame<
   decltype(ZuDeclVal<const Pool &>().authority()), ZuBSpan>{}));
@@ -337,13 +335,11 @@ private:
   uint64_t	m_key = 0;
 };
 
-template <typename Heap>
-Pool_<Heap>::Pool_(App *app) : Base{app} {
+Pool::Pool(App *app) : Base{app} {
   app->poolImpl = static_cast<ZhttpClientCancelTest_::Pool *>(this);
 }
 
-template <typename Heap>
-void Pool_<Heap>::archive_(ReqBuilder *request) { client()->archived(request); }
+void Pool::archive_(ReqBuilder *request) { client()->archived(request); }
 
 void ReqBuilder_::selected(
     const Zhttp::Endpoint *,

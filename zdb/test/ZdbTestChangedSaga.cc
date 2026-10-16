@@ -10,9 +10,10 @@
 
 namespace zdbtest {
 
-template <typename Heap = ZuVoid>
-struct ChangedSaga_ : public Heap, public ZdbSaga<ChangedSaga_<Heap>, LiveDB> {
-  using Base = ZdbSaga<ChangedSaga_<Heap>, LiveDB>;
+struct ChangedSaga : public ZmNHeap<ChangedSaga>, public ZdbSaga<ChangedSaga, LiveDB> {
+friend inline ZuStringT<"Zdb.Test.ChangedSaga"> ZmNHeapID(ChangedSaga *);
+
+  using Base = ZdbSaga<ChangedSaga, LiveDB>;
   using Type = ZuStringT<"liveSaga">;
   enum { NPhases = 3 };
   uint64_t orderID;
@@ -20,10 +21,8 @@ struct ChangedSaga_ : public Heap, public ZdbSaga<ChangedSaga_<Heap>, LiveDB> {
   ZdbSagaPhase(1, o, Delete) { return {}; }
   ZdbSagaPhase(2, o, Delete) { return {}; }
 
-  ChangedSaga_(uint64_t orderID_) : orderID{ZuMv(orderID_)} { }
+  ChangedSaga(uint64_t orderID_) : orderID{ZuMv(orderID_)} { }
 };
-
-using ChangedSaga = ChangedSaga_<ZmHeap<"Zdb.Test.ChangedSaga", ChangedSaga_<>>>;
 
 ZfStruct(, (ChangedSaga, FB),
   (orderID, (Ctor<0>),		UInt64));

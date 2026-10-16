@@ -257,7 +257,7 @@ struct GetFmt_<Props, Deflt, true> {
   using T = ZuFieldProp::GetType<Props, Fmt_>;
 };
 template <typename Props, uint32_t Deflt = 0>
-using GetFmt = typename GetFmt_<Props, Deflt>::T;
+using GetFmt = GetFmt_<Props, Deflt>::T;
 
 // GetType - ZuConstant<uint8_t>
 // - used to encode scalars as strings instead of Integer or Real
@@ -276,7 +276,7 @@ struct GetType_<Props, Deflt, true> {
   using T = GetValue<Props, Type>;
 };
 template <typename Props, uint8_t Deflt>
-using GetType = typename GetType_<Props, Deflt>::T;
+using GetType = GetType_<Props, Deflt>::T;
 
 // GetElemProps
 // - derive element properties for an array
@@ -291,7 +291,7 @@ struct GetElemProps_<Props, true> {
   using T = ZuTypeList<Type<GetValue<Props, ElemType>{}>>;
 };
 template <typename Props>
-using GetElemProps = typename GetElemProps_<Props>::T;
+using GetElemProps = GetElemProps_<Props>::T;
 
 // GetOptional
 template <
@@ -305,7 +305,7 @@ struct GetOptional_<Props, true> {
   using T = GetValue<Props, Optional>;
 };
 template <typename Props>
-using GetOptional = typename GetOptional_<Props>::T;
+using GetOptional = GetOptional_<Props>::T;
 
 } // ZuFieldProp::ASN1
 
@@ -672,7 +672,7 @@ struct LoadContext {
     ZuUnroll::all<Fields>([
       this, &span, &n, &o, &nestID_, &nestEnd
     ]<typename Field>() {
-      using FieldProps = typename Field::Props;
+      using FieldProps = Field::Props;
       using FieldFmt = ZuFieldProp::ASN1::GetFmt<FieldProps>;
       enum { TypeCode = Field::Type::Code };
       using ASNType =
@@ -780,7 +780,7 @@ struct AsObject {
       outer.template begin<nestID(Fmt::Nesting)>();
       SaveContext inner{stash};
       ZuUnroll::all<SaveFields>([&stash, &inner, &o]<typename Field>() mutable {
-	using FieldProps = typename Field::Props;
+	using FieldProps = Field::Props;
 	using FieldFmt = ZuFieldProp::ASN1::GetFmt<FieldProps>;
 	enum { FieldNestID = nestID(FieldFmt::Nesting) };
 	if (!inner.begun) {
@@ -795,7 +795,7 @@ struct AsObject {
 	      FieldFmt::Tag, nestType(FieldFmt::Nesting), true>();
 	  else {
 	    using NextField = ZuType<Next, SaveFields>;
-	    using NextFieldProps = typename NextField::Props;
+	    using NextFieldProps = NextField::Props;
 	    using NextFieldFmt = ZuFieldProp::ASN1::GetFmt<NextFieldProps>;
 	    enum { NextFieldNestID = nestID(NextFieldFmt::Nesting) };
 	    if constexpr (FieldNestID != NextFieldNestID)
@@ -818,7 +818,7 @@ struct AsObject {
       ZuUnroll::all<SaveFields>([
 	&s, &o, &stash, &nestID_, &i
       ]<typename Field>() {
-	using FieldProps = typename Field::Props;
+	using FieldProps = Field::Props;
 	using FieldFmt = ZuFieldProp::ASN1::GetFmt<FieldProps>;
 	enum { FieldNestID = nestID(FieldFmt::Nesting) };
 	if (FieldNestID != nestID_ && (nestID_ = FieldNestID) >= 0) {
@@ -840,8 +840,8 @@ struct AsObject {
     template <typename Field>
     auto loadField() const {
       enum { TypeCode = Field::Type::Code };
-      using FieldProps = typename Field::Props;
-      using T = typename Field::T;
+      using FieldProps = Field::Props;
+      using T = Field::T;
       using R = decltype(
 	loadValue<Facet, TypeCode, FieldProps, T>(ZuSpan<char>()));
       enum { I = ZuTypeIndex<Field, SaveFields>{} };
@@ -1016,7 +1016,7 @@ struct AsArray {
       unsigned n = ZuTraits<O>::length(o);
       if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler =
-	  typename As<Elem>::template Handler<Elem, Facet, ElemProps>;
+	  As<Elem>::template Handler<Elem, Facet, ElemProps>;
 	for (unsigned i = 0; i < n; i++)
 	  ElemHandler::save1(stash, o[i]);
       } else {
@@ -1036,7 +1036,7 @@ struct AsArray {
       unsigned i = 1;
       if constexpr (ElemCode == ZfFieldTC::UDT) {
 	using ElemHandler =
-	  typename As<Elem>::template Handler<Elem, Facet, ElemProps>;
+	  As<Elem>::template Handler<Elem, Facet, ElemProps>;
 	for (unsigned j = 0; j < n; j++) {
 	  auto count = stash[i].count;
 	  ElemHandler::save2(s, o[j], {stash[i], count});
@@ -1355,7 +1355,7 @@ inline void saveValue1(Stash &stash, const T_ &v)
   using T = ZuDecay<T_>;
   if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     if constexpr (TypeCode == ZfFieldTC::UDT) {
-      using Handler = typename As<T>::template Handler<T, Facet, Props>;
+      using Handler = As<T>::template Handler<T, Facet, Props>;
       Handler::save1(stash, v);
     } else {
       saveValue1_<Facet, TypeCode, Props>(*stash.push(), v);
@@ -1398,7 +1398,7 @@ template <typename Facet, typename Field, typename Stash, typename O>
 inline void saveField1(Stash &stash, const O &o)
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   saveValue1<Facet, TypeCode, Props>(stash, Field::get(o));
 }
 
@@ -1698,7 +1698,7 @@ inline void saveValue2(S &s, const T_ &v, SaveSpan stash)
   using T = ZuDecay<T_>;
   if constexpr (!ZfFieldTC::IsVec<TypeCode>{}) {
     if constexpr (TypeCode == ZfFieldTC::UDT) {
-      using Handler = typename As<T>::template Handler<T, Facet, Props>;
+      using Handler = As<T>::template Handler<T, Facet, Props>;
       Handler::save2(s, v, stash);
     } else {
       saveValue2_<Facet, TypeCode, Props>(s, v, stash[0]);
@@ -1744,7 +1744,7 @@ template <
 inline void saveField2(S &s, const O &o, SaveSpan stash)
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   saveValue2<Facet, TypeCode, Props>(s, Field::get(o), stash);
 }
 
@@ -1951,7 +1951,7 @@ template <
 inline S &save(S &s, const O &v)
 {
   auto stash = ZtScratch(SaveScratch, Config<Facet>::StashSize);
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   Handler::save1(stash, v);
   Handler::save2(s, v, stash);
   return s;

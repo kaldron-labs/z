@@ -93,8 +93,8 @@ static void responseTest()
   ZuTestScope(response);
   ZuCheck(SchemaOK::Status == 200);
   ZuCheck(SchemaEmpty::Status == 204);
-  ZuCheck((ZuIsSame<typename SchemaOK::Body, SchemaBody>{}));
-  ZuCheck((ZuIsSame<void, typename SchemaEmpty::Body>{}));
+  ZuCheck((ZuIsSame<SchemaOK::Body, SchemaBody>{}));
+  ZuCheck((ZuIsSame<void, SchemaEmpty::Body>{}));
 }
 
 static void toolTest()

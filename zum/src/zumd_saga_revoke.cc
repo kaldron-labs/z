@@ -11,10 +11,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RevokeSaga_ : public Heap,
-    public ZdbSaga<RevokeSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RevokeSaga_<Heap>, DB>;
+struct RevokeSaga : public ZmNHeap<RevokeSaga>,
+    public ZdbSaga<RevokeSaga, DB> {
+friend inline ZuStringT<"Zum.RevokeSaga"> ZmNHeapID(RevokeSaga *);
+
+  using Base = ZdbSaga<RevokeSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -44,7 +45,7 @@ struct RevokeSaga_ : public Heap,
   template <bool Fwd, bool Release, typename Table, typename Complete>
   void change(Table *table, const BytesVec &images, Complete complete)
   {
-    using T = typename Table::T;
+    using T = Table::T;
     T before;
     if (!SagaImage::load(images[iteration()], before)) {
       setError(400); complete(false); return;
@@ -107,22 +108,19 @@ struct RevokeSaga_ : public Heap,
     requestComplete(this, {}, updated, ZuMv(complete)); return {};
   }
 
-  RevokeSaga_() = default;
-  RevokeSaga_(BytesVec sessions_, BytesVec consents_, BytesVec grants_,
+  RevokeSaga() = default;
+  RevokeSaga(BytesVec sessions_, BytesVec consents_, BytesVec grants_,
       int64_t updated_, IdemRequest request_,
       ZmRef<RevokeResult> result_ = {}) :
     sessions(ZuMv(sessions_)), consents(ZuMv(consents_)),
     grants(ZuMv(grants_)), updated{updated_}, request{ZuMv(request_)},
     result{ZuMv(result_)} { }
-  RevokeSaga_(RevokeArgs args) :
-    RevokeSaga_{ZuMv(args.sessions), ZuMv(args.consents),
+  RevokeSaga(RevokeArgs args) :
+    RevokeSaga{ZuMv(args.sessions), ZuMv(args.consents),
       ZuMv(args.grants), args.updated, ZuMv(args.request),
       ZuMv(args.result)} { }
-  ~RevokeSaga_() override;
+  ~RevokeSaga() override;
 };
-
-using RevokeSaga = RevokeSaga_<
-  ZmHeap<"Zum.RevokeSaga", RevokeSaga_<>>>;
 
 ZfStruct(, (RevokeSaga, FB),
   (sessions,	(Ctor<0>),	BytesVec),
@@ -156,8 +154,7 @@ unsigned RevokeArgs::count() const
 
 ZuAssert((Zdb_::SagaDefValid<RevokeSaga>{}));
 
-template <typename Heap>
-RevokeSaga_<Heap>::~RevokeSaga_() = default;
+RevokeSaga::~RevokeSaga() = default;
 
 SagaRef revoke(ZuBSpan data) {
   return RevokeSaga::load(data);

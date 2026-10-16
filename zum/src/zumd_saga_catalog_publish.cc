@@ -10,10 +10,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct CatalogPublishSaga_ : public Heap,
-    public ZdbSaga<CatalogPublishSaga_<Heap>, DB> {
-  using Base = ZdbSaga<CatalogPublishSaga_<Heap>, DB>;
+struct CatalogPublishSaga : public ZmNHeap<CatalogPublishSaga>,
+    public ZdbSaga<CatalogPublishSaga, DB> {
+friend inline ZuStringT<"Zum.CatalogPublishSaga"> ZmNHeapID(CatalogPublishSaga *);
+
+  using Base = ZdbSaga<CatalogPublishSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -50,7 +51,7 @@ struct CatalogPublishSaga_ : public Heap,
   template <bool Fwd, typename Table, typename Complete>
   void insertRows(Table *table, const BytesVec &images, Complete complete)
   {
-    using T = typename Table::T;
+    using T = Table::T;
     auto image = &images[iteration()];
     table->run(0, [this, table, image, complete = ZuMv(complete)]() mutable {
       T item;
@@ -99,7 +100,7 @@ struct CatalogPublishSaga_ : public Heap,
   template <bool Fwd, typename Table, typename Complete>
   void change(Table *table, const BytesVec &images, Complete complete)
   {
-    using T = typename Table::T;
+    using T = Table::T;
     auto image = &images[iteration()];
     table->run(0, [this, table, image, complete = ZuMv(complete)]() mutable {
       CatalogEdit edit;
@@ -132,7 +133,7 @@ struct CatalogPublishSaga_ : public Heap,
   template <bool Fwd, bool Added, typename Table, typename Complete>
   void release(Table *table, const BytesVec &images, Complete complete)
   {
-    using T = typename Table::T;
+    using T = Table::T;
     auto image = &images[iteration()];
     table->run(0, [this, table, image, complete = ZuMv(complete)]() mutable {
       T next;
@@ -265,22 +266,18 @@ struct CatalogPublishSaga_ : public Heap,
     return {};
   }
 
-
-  CatalogPublishSaga_() = default;
-  CatalogPublishSaga_(App before_, App after_, CatalogRows actions_,
+  CatalogPublishSaga() = default;
+  CatalogPublishSaga(App before_, App after_, CatalogRows actions_,
       CatalogRows roles_, CatalogRows clients_, CatalogRows clientAccess_,
       IdemRequest request_) : before{ZuMv(before_)}, after{ZuMv(after_)},
     actions{ZuMv(actions_)}, roles{ZuMv(roles_)}, clients{ZuMv(clients_)},
     clientAccess{ZuMv(clientAccess_)}, request{ZuMv(request_)} { }
-  CatalogPublishSaga_(CatalogPublishArgs args) :
-    CatalogPublishSaga_{ZuMv(args.before), ZuMv(args.after),
+  CatalogPublishSaga(CatalogPublishArgs args) :
+    CatalogPublishSaga{ZuMv(args.before), ZuMv(args.after),
       ZuMv(args.actions), ZuMv(args.roles), ZuMv(args.clients),
       ZuMv(args.clientAccess), ZuMv(args.request)} { }
-  ~CatalogPublishSaga_() override;
+  ~CatalogPublishSaga() override;
 };
-
-using CatalogPublishSaga = CatalogPublishSaga_<
-  ZmHeap<"Zum.CatalogPublishSaga", CatalogPublishSaga_<>>>;
 
 ZfStruct(, (CatalogPublishSaga, FB),
   (before,		(Ctor<0>),	UDT),
@@ -294,8 +291,7 @@ Zfb::AsTable<"Zum.fbs.CatalogPublish"> Zfb_Fmt(CatalogPublishSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<CatalogPublishSaga>{}));
 
-template <typename Heap>
-CatalogPublishSaga_<Heap>::~CatalogPublishSaga_() = default;
+CatalogPublishSaga::~CatalogPublishSaga() = default;
 
 SagaRef catalogPublish(ZuBSpan data) {
   return CatalogPublishSaga::load(data);

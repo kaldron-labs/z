@@ -15,10 +15,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct KeyAddSaga_ : public Heap,
-    public ZdbSaga<KeyAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<KeyAddSaga_<Heap>, DB>;
+struct KeyAddSaga : public ZmNHeap<KeyAddSaga>,
+    public ZdbSaga<KeyAddSaga, DB> {
+friend inline ZuStringT<"Zum.KeyAddSaga"> ZmNHeapID(KeyAddSaga *);
+
+  using Base = ZdbSaga<KeyAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -74,25 +75,21 @@ struct KeyAddSaga_ : public Heap,
     return {};
   }
 
-  KeyAddSaga_() = default;
-  KeyAddSaga_(SignKey before_, SignKey values_, int64_t updated_, IdemRequest request_) :
+  KeyAddSaga() = default;
+  KeyAddSaga(SignKey before_, SignKey values_, int64_t updated_, IdemRequest request_) :
     before{ZuMv(before_)},
     values{ZuMv(values_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  KeyAddSaga_(KeyAddArgs args) :
-    KeyAddSaga_{ZuMv(args.before), ZuMv(args.values), ZuMv(args.updated), ZuMv(args.request)} {
+  KeyAddSaga(KeyAddArgs args) :
+    KeyAddSaga{ZuMv(args.before), ZuMv(args.values), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<SignKey>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~KeyAddSaga_() override;
+  ~KeyAddSaga() override;
 };
-
-
-using KeyAddSaga = KeyAddSaga_<
-  ZmHeap<"Zum.KeyAddSaga", KeyAddSaga_<>>>;
 
 ZfStruct(, (KeyAddSaga, FB),
   (before,	(Ctor<0>),	UDT),
@@ -108,8 +105,7 @@ static bool publicKeyValid(const SignKey &key, ZuBSpan expected = {})
     (!expected || Ztls::ctEqual(point, expected));
 }
 
-template <typename Heap>
-unsigned KeyAddSaga_<Heap>::validate() const
+unsigned KeyAddSaga::validate() const
 {
   if (!values.id || values.id != before.id || !values.issuer || values.algorithm != "ES256" ||
       !values.publicJwk || bool(values.providerRef) == bool(values.privateMaterial) ||
@@ -118,8 +114,7 @@ unsigned KeyAddSaga_<Heap>::validate() const
   return before.version ? 409 : 0;
 }
 
-template <typename Heap>
-SignKey KeyAddSaga_<Heap>::result() const
+SignKey KeyAddSaga::result() const
 {
   SignKey item = values;
   item.state = State::Active;
@@ -130,8 +125,7 @@ SignKey KeyAddSaga_<Heap>::result() const
 
 ZuAssert((Zdb_::SagaDefValid<KeyAddSaga>{}));
 
-template <typename Heap>
-KeyAddSaga_<Heap>::~KeyAddSaga_() = default;
+KeyAddSaga::~KeyAddSaga() = default;
 
 SagaRef keyAdd(ZuBSpan data) {
   return KeyAddSaga::load(data);

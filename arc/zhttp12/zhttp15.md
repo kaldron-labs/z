@@ -1,0 +1,29 @@
+- original `Zhttp.hh` H1 parser (see `d2df7e7ffab4b0ae1ebb3bcfc46ba977f34b0714:zhttp/src/Zhttp.hh`) was carefully crafted to be:
+  - performant
+    - caller pass literal constants as compile-time template parameters to functions, not function arguments
+    - careful use of local variables to align with compiler's use of registers
+    - prefer 1-pass to 2-pass scans
+  - well-structured
+  - succinctly named (`eov`, `split`, etc.)
+  - well factored and re-used, no DRY violation
+  - clean, documented and aligned with Z parsing conventions
+    - see source code comments adjacent to each function
+  - this is model code:
+    - adopt this model as the required **style** and pattern for parsing H1/H2/H3
+    - apply the same principles and efficiency
+- acceptance criteria:
+  - H1 parsing should revert, almost verbatim, to the code in `d2df7e7ffab4b0ae1ebb3bcfc46ba977f34b0714`, except for:
+    - subsequent bug fixes
+    - necessary additional functionality (per subsequently introduced requirements)
+    - namespace or class wrapping (to align with newer codebase)
+    - source code file (to align with newer codebase)
+  - H2 and H3 parsing should resemble H1 parsing in terms of:
+    - succinct naming
+    - clean structure
+    - conforming comments (brief, succinct, useful to both callers and maintainers)
+    - efficiency
+      - local variable caching to align with compiler use of registers
+      - prefer 1-pass to 2-pass scans
+    - proper use of Z for integer parsing (if needed):
+      - decimal/hex: use `Zu_aton.hh` (`Zu_atou`, etc.)
+      - binary: use `ZuByteSwap.hh` (`ZuBigEndian`, etc.)

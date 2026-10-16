@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct KeyRetireSaga_ : public Heap,
-    public ZdbSaga<KeyRetireSaga_<Heap>, DB> {
-  using Base = ZdbSaga<KeyRetireSaga_<Heap>, DB>;
+struct KeyRetireSaga : public ZmNHeap<KeyRetireSaga>,
+    public ZdbSaga<KeyRetireSaga, DB> {
+friend inline ZuStringT<"Zum.KeyRetireSaga"> ZmNHeapID(KeyRetireSaga *);
+
+  using Base = ZdbSaga<KeyRetireSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -74,25 +75,21 @@ struct KeyRetireSaga_ : public Heap,
     return {};
   }
 
-  KeyRetireSaga_() = default;
-  KeyRetireSaga_(SignKey before_, String ifMatch_, int64_t retireAfter_, int64_t updated_, IdemRequest request_) :
+  KeyRetireSaga() = default;
+  KeyRetireSaga(SignKey before_, String ifMatch_, int64_t retireAfter_, int64_t updated_, IdemRequest request_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     retireAfter{ZuMv(retireAfter_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  KeyRetireSaga_(KeyRetireArgs args) :
-    KeyRetireSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.retireAfter), ZuMv(args.updated), ZuMv(args.request)} {
+  KeyRetireSaga(KeyRetireArgs args) :
+    KeyRetireSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.retireAfter), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<SignKey>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~KeyRetireSaga_() override;
+  ~KeyRetireSaga() override;
 };
-
-
-using KeyRetireSaga = KeyRetireSaga_<
-  ZmHeap<"Zum.KeyRetireSaga", KeyRetireSaga_<>>>;
 
 ZfStruct(, (KeyRetireSaga, FB),
   (before,	(Ctor<0>),	UDT),
@@ -102,8 +99,7 @@ ZfStruct(, (KeyRetireSaga, FB),
   (request,	(Ctor<4>),	UDT));
 Zfb::AsTable<"Zum.fbs.KeyRetire"> Zfb_Fmt(KeyRetireSaga *);
 
-template <typename Heap>
-unsigned KeyRetireSaga_<Heap>::recordError(const SignKey &item) const
+unsigned KeyRetireSaga::recordError(const SignKey &item) const
 {
   if (retireAfter <= updated) return 400;
   String etag{"\"v"};
@@ -115,8 +111,7 @@ unsigned KeyRetireSaga_<Heap>::recordError(const SignKey &item) const
 
 ZuAssert((Zdb_::SagaDefValid<KeyRetireSaga>{}));
 
-template <typename Heap>
-KeyRetireSaga_<Heap>::~KeyRetireSaga_() = default;
+KeyRetireSaga::~KeyRetireSaga() = default;
 
 SagaRef keyRetire(ZuBSpan data) {
   return KeyRetireSaga::load(data);

@@ -21,15 +21,16 @@ struct Echo : public Zjrpc::Request {
   using Responses = ZuTypeList<OK>;
 };
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject {
+struct Call : public ZmNHeap<Call>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Test.Call"> ZmNHeapID(Call *);
+
   Zjrpc::PendingCalls *pending;
   Zjrpc::ID id;
   int result = 0;
   unsigned failures = 0;
   bool removed = false;
 
-  Call_(Zjrpc::PendingCalls *pending_, Zjrpc::ID id_) :
+  Call(Zjrpc::PendingCalls *pending_, Zjrpc::ID id_) :
     pending{pending_}, id{ZuMv(id_)} { }
 
   void process(Zjrpc::Reply<OK> reply) {
@@ -39,8 +40,6 @@ struct Call_ : public Heap, public ZmObject {
   void failed() { removed = !pending->contains(id); ++failures; }
   void failed(const Zjrpc::Error &) { failed(); }
 };
-using CallHeap = ZmHeap<"Zjrpc.Test.Call", Call_<>>;
-using Call = Call_<CallHeap>;
 
 static void pendingTest()
 {
@@ -120,11 +119,12 @@ static void inboundTest()
   ZuCheckRT(inbound.close(1));
 }
 
-template <typename Heap = ZuVoid>
-class Token_ : public Heap, public ZmObject {
+class Token : public ZmNHeap<Token>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.Test.Token"> ZmNHeapID(Token *);
+
   friend struct Zjrpc::CompletionEntry;
 public:
-  Token_(Zjrpc::ID id_, uint64_t generation_) :
+  Token(Zjrpc::ID id_, uint64_t generation_) :
     m_id{ZuMv(id_)}, m_generation{generation_} { }
   const Zjrpc::ID &id() const { return m_id; }
   uint64_t generation() const { return m_generation; }
@@ -140,10 +140,6 @@ private:
   bool m_live = true;
   bool m_cancelled = false;
 };
-
-using TokenHeap = ZmHeap<"Zjrpc.Test.Token", Token_<>>;
-
-using Token = Token_<TokenHeap>;
 
 struct Slot : public Zjrpc::CompletionSlot {
   ZmRef<Token> make(Zjrpc::ID id) {
@@ -240,10 +236,9 @@ static void typedCompletionTest()
   ZuCheck(responder.completed == 1);
 }
 
-template <typename Heap = ZuVoid>
-struct DeferredResponder_ : public Heap, public Responder { };
-using DeferredRespHeap = ZmHeap<"Zjrpc.Test.Responder", DeferredResponder_<>>;
-using DeferredResponder = DeferredResponder_<DeferredRespHeap>;
+struct DeferredResponder : public ZmNHeap<DeferredResponder>, public Responder {
+friend inline ZuStringT<"Zjrpc.Test.Responder"> ZmNHeapID(DeferredResponder *);
+};
 
 static void deferredCloseTest()
 {

@@ -279,7 +279,7 @@ static void emission()
   auto nh = Emit{names, 0, opts}.header();
   ZuCheck(nh.find("namespace Zflatc_::O0") >= 0);
   ZuCheck(nh.find("ZuDerive(Base_, (ZtArray<::uint32_t") >= 0);
-  ZuCheck(nh.find("E0_") >= 0 && nh.find("Heap_ = ZuVoid") >= 0);
+  ZuCheck(nh.find("E0_") >= 0 && nh.find("ZmNHeap<O_>") >= 0);
   ZuCheck(names.objects[0].fields[3].cpp == "foo_1");
   ZuCheck(names.objects[0].fields[4].cpp == "ipV4Address");
   Schema counts;

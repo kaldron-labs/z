@@ -14,8 +14,9 @@
 
 namespace ZmcpITest {
 
-template <typename Heap = ZuVoid>
-struct BatchCall_ : public Heap, public ZmObject {
+struct BatchCall : public ZmNHeap<BatchCall>, public ZmObject {
+friend inline ZuStringT<"ZmcpITest.Batch"> ZmNHeapID(BatchCall *);
+
   ZmSemaphore done;
   Zjrpc::BatchReply reply;
   unsigned completions = 0;
@@ -36,8 +37,6 @@ struct BatchCall_ : public Heap, public ZmObject {
 	(a.id() == Zjrpc::ID{second} && b.id() == Zjrpc::ID{first}));
   }
 };
-using BatchCallHeap = ZmHeap<"ZmcpITest.Batch", BatchCall_<>>;
-using BatchCall = BatchCall_<BatchCallHeap>;
 
 } // ZmcpITest
 

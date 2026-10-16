@@ -44,9 +44,9 @@ template <typename U, typename = void>
 struct AppHeaders_ { using T = ZuTypeList<>; };
 template <typename U>
 struct AppHeaders_<U, decltype(sizeof(typename U::Headers), void())> {
-  using T = typename U::Headers;
+  using T = U::Headers;
 };
-template <typename U> using AppHeaders = typename AppHeaders_<U>::T;
+template <typename U> using AppHeaders = AppHeaders_<U>::T;
 
 struct HTTPHeader {
   ZuCSpan value;
@@ -234,10 +234,12 @@ namespace SSEState {
   enum { Open, TerminalQueued, Failed, Closed };
 }
 
-template <typename Owner, typename Emit, typename Heap = ZuVoid>
-class SSEProducer_ : public Heap, public ZmPolymorph {
+template <typename Owner, typename Emit>
+class SSEProducer : public ZmNHeap<SSEProducer<Owner, Emit>>, public ZmPolymorph {
+friend inline ZuStringT<"Zjrpc.SSE.Producer"> ZmNHeapID(SSEProducer *);
+
 public:
-  SSEProducer_(Owner *owner_, Emit emit_) :
+  SSEProducer(Owner *owner_, Emit emit_) :
     m_owner{owner_}, m_emit{ZuMv(emit_)} { }
 
   bool resume() {
@@ -251,14 +253,6 @@ private:
   Owner	*m_owner;
   Emit	m_emit;
 };
-
-template <typename Owner, typename Emit>
-ZuDerive(SSEProducerHeap,
-  (ZmHeap<"Zjrpc.SSE.Producer", SSEProducer_<Owner, Emit>>));
-
-template <typename Owner, typename Emit>
-ZuDerive(SSEProducer, (SSEProducer_<Owner, Emit,
-  SSEProducerHeap<Owner, Emit>>));
 
 class HTTPSSEBuilder : public Zhttp::ResBuilder {
 public:
@@ -664,21 +658,20 @@ private:
 
 // An optional application-owned identity spanning HTTP request streams. Creation
 // copies Server configuration; individual peers have no configuration setters.
-template <typename Heap = ZuVoid>
-class HTTPPeer_ : public Heap, public ZuObject {
+class HTTPPeer : public ZmNHeap<HTTPPeer>, public ZuObject {
+friend inline ZuStringT<"Zjrpc.HTTP.Peer"> ZmNHeapID(HTTPPeer *);
+
 public:
   template <typename Server>
-  static ZuRef<HTTPPeer_> create(const Server &server) {
-    return new HTTPPeer_{server.histSize()};
+  static ZuRef<HTTPPeer> create(const Server &server) {
+    return new HTTPPeer{server.histSize()};
   }
   InboundCalls *inbound() { return &m_inbound; }
   bool close(unsigned workBatch) { return m_inbound.close(workBatch); }
 private:
-  explicit HTTPPeer_(unsigned histSize) : m_inbound{histSize} { }
+  explicit HTTPPeer(unsigned histSize) : m_inbound{histSize} { }
   InboundCalls m_inbound;
 };
-using HTTPPeerHeap = ZmHeap<"Zjrpc.HTTP.Peer", HTTPPeer_<>>;
-using HTTPPeer = HTTPPeer_<HTTPPeerHeap>;
 
 template <typename Headers>
 struct HTTPContext {
@@ -996,7 +989,7 @@ private:
 };
 
 template <typename Impl, typename Catalog>
-struct HTTPPool;
+class HTTPPool;
 template <typename Impl, typename Catalog>
 using HTTPRequestQ = ZmPQueue<HTTPRequestData<Impl, Catalog>,
   ZmPQueueOverlap<false, ZmPQueueNode<HTTPRequestData<Impl, Catalog>,
@@ -1005,24 +998,24 @@ template <typename Impl, typename Catalog>
 using HTTPTxQ = ZmPQTx<HTTPPool<Impl, Catalog>, HTTPRequestQ<Impl, Catalog>,
   ZmPQTxOrdered<false>>;
 
-template <typename Impl, typename Catalog, typename Heap = ZuVoid>
-class HTTPPoolData : public Heap, public Zhttp::Pool<HTTPClient<Impl, Catalog>,
+template <typename Impl, typename Catalog>
+class HTTPPool : public ZmNHeap<HTTPPool<Impl, Catalog>>,
+    public Zhttp::Pool<HTTPClient<Impl, Catalog>,
     HTTPTxQ<Impl, Catalog>, HTTPReplyParser<Impl, Catalog>> {
+friend inline ZuStringT<"Zjrpc.HTTP.Pool"> ZmNHeapID(HTTPPool *);
+
   using Base = Zhttp::Pool<HTTPClient<Impl, Catalog>,
     HTTPTxQ<Impl, Catalog>, HTTPReplyParser<Impl, Catalog>>;
 public:
-  explicit HTTPPoolData(HTTPClient<Impl, Catalog> *client) : Base{client} { }
+  explicit HTTPPool(HTTPClient<Impl, Catalog> *client) : Base{client} { }
   HTTPRequestQ<Impl, Catalog> *txQueue() { return &m_requests; }
-  void archive_(typename HTTPRequestQ<Impl, Catalog>::Node *) { }
+  void archive_(HTTPRequestQ<Impl, Catalog>::Node *) { }
   ZmRef<typename HTTPRequestQ<Impl, Catalog>::Node> retrieve_(
-      typename HTTPRequestQ<Impl, Catalog>::Key,
-      typename HTTPRequestQ<Impl, Catalog>::Key) { return {}; }
+      HTTPRequestQ<Impl, Catalog>::Key,
+      HTTPRequestQ<Impl, Catalog>::Key) { return {}; }
 private:
   HTTPRequestQ<Impl, Catalog> m_requests;
 };
-template <typename Impl, typename Catalog>
-ZuDerive(HTTPPool, (HTTPPoolData<Impl, Catalog,
-  ZmHeap<"Zjrpc.HTTP.Pool", HTTPPoolData<Impl, Catalog>>>));
 
 } // Zjrpc
 

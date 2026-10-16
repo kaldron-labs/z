@@ -60,7 +60,7 @@ int main(int argc, char **argv)
     s << ZuDemangle<decltype(a)>{};
     log(s);
     ZuCHECK(ZuMatcher<ArrayIDs>().find(s).p<1>() == 0);
-    s = {}; s << ZuDemangle<typename ZuTraits<decltype(a)>::Elem>{};
+    s = {}; s << ZuDemangle<ZuTraits<decltype(a)>::Elem>{};
     log(s);
     ZuCHECK(ZuMatcher<ElemIDs>().find(s).p<1>() == 0);
   }

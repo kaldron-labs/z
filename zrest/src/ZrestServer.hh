@@ -377,7 +377,7 @@ struct MReqPathProjection {
 template <typename Catalog_, unsigned Skip_ = 0>
 struct MReqPolicy {
   using Catalog = Catalog_;
-  using Reqs = typename Catalog::List;
+  using Reqs = Catalog::List;
   using Union = GetUnion<Reqs>;
   enum { Skip = Skip_ };
 
@@ -409,7 +409,7 @@ struct MReqPolicy {
 	    [&parser, method, &target, path](auto J) -> bool {
 	  using Req = ZuType<J, MethodReqs>;
 	  if constexpr (Req::Exact) {
-	    using ReqPath = typename Req::Path;
+	    using ReqPath = Req::Path;
 	    constexpr unsigned n = ReqPath{}().length();
 	    if (path.length() != n &&
 		(Req::Query == QueryPolicy::None ||
@@ -443,13 +443,13 @@ template <typename Catalog_, typename Server_ = ZuVoid>
 struct MReqRootPolicy {
   using Catalog = Catalog_;
   using Server = Server_;
-  using Roots = typename Catalog::List;
+  using Roots = Catalog::List;
   using Parsers = GetRootParsers<Roots>;
   using Union = GetUnion<Parsers>;
   Server *server = nullptr;
 
   template <typename Alt>
-  using Hdrs = typename Alt::Headers;
+  using Hdrs = Alt::Headers;
 
   template <typename Parser>
   void init(Parser &, Server &server_) { server = &server_; }
@@ -469,7 +469,7 @@ struct MReqRootPolicy {
     return ZuSwitch::dispatch<Roots::N>(unsigned(i),
 	[&, method, suffix](auto I) -> bool {
       using Root = ZuType<I, Roots>;
-      using Child = typename Root::Parser;
+      using Child = Root::Parser;
       auto child = new (parser.u.template new_<I + 1, true>()) Child();
       if constexpr (ZuIsSame<Server, ZuVoid>{}) child->init();
       else child->init(*server);
@@ -495,9 +495,9 @@ template <typename Catalog_, typename Policy_ = MReqPolicy<Catalog_>>
 struct MReqParser : public Zhttp::Parser {
   using Catalog = Catalog_;
   using Policy = Policy_;
-  using HdrCatalog = typename Catalog::ReqHeaders;
-  using Headers = typename HdrCatalog::List;
-  using Union = typename Policy::Union;
+  using HdrCatalog = Catalog::ReqHeaders;
+  using Headers = HdrCatalog::List;
+  using Union = Policy::Union;
 
   Union		u;
   Policy		policy;
@@ -533,7 +533,7 @@ struct MReqParser : public Zhttp::Parser {
   template <typename Key, typename Value>
   void header(Zhttp::FieldSection::T section) {
     u.dispatch([this, section](auto I, auto &request) {
-      using ReqHdrs = typename Policy::template Hdrs<
+      using ReqHdrs = Policy::template Hdrs<
 	typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
       if constexpr (ZuTypeIn<Key, ReqHdrKeys>{}) {
@@ -567,7 +567,7 @@ struct MReqParser : public Zhttp::Parser {
   template <typename Key>
   void header(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     u.dispatch([this, section, &value](auto I, auto &request) {
-      using ReqHdrs = typename Policy::template Hdrs<
+      using ReqHdrs = Policy::template Hdrs<
 	typename Union::template Type<I>>;
       using ReqHdrKeys = GetHdrKeys<ReqHdrs>;
       ZuSpan<uint8_t> stable;
@@ -622,10 +622,10 @@ struct MReqParser : public Zhttp::Parser {
 template <typename Catalog_>
 struct MResBuilder : public Zhttp::ResBuilder {
   using Catalog = Catalog_;
-  using Reqs = typename Catalog::List;
+  using Reqs = Catalog::List;
   using AllResponses = GetAllResponses<Reqs>;
-  using HdrCatalog = typename Catalog::ResHeaders;
-  using Headers = typename HdrCatalog::List;
+  using HdrCatalog = Catalog::ResHeaders;
+  using Headers = HdrCatalog::List;
   static constexpr unsigned HdrBufSize =
     ZuTypeApply<MaxHdrBufSize, AllResponses>{};
   using Union = GetUnion<AllResponses>;
@@ -712,11 +712,13 @@ struct MResBuilder : public Zhttp::ResBuilder {
   }
 };
 
-template <typename Req, typename Owner, typename Heap = ZuVoid>
-class Completion_ : public Heap, public ZmObject {
+template <typename Req, typename Owner>
+class Completion : public ZmNHeap<Completion<Req, Owner>>, public ZmObject {
+friend inline ZuStringT<"Zrest.Completion"> ZmNHeapID(Completion *);
+
   friend Owner;
 public:
-  Completion_(Owner *owner, void *work,
+  Completion(Owner *owner, void *work,
       ZmScheduler *scheduler, unsigned thread) :
     m_owner{owner}, m_work{work},
     m_scheduler{scheduler}, m_thread{thread} { }
@@ -740,7 +742,7 @@ public:
     if (m_scheduler->invoked(m_thread))
       return complete_<Res>(ZuMv(reply));
     {
-      ZmRef<Completion_> self{this};
+      ZmRef<Completion> self{this};
       m_scheduler->run([self = ZuMv(self), reply = ZuMv(reply)]() mutable {
 	(void)self->template complete_<Res>(ZuMv(reply));
       }, m_thread);
@@ -770,10 +772,6 @@ private:
   ZmAtomic<unsigned> m_claim = 0;
   ZmAtomic<unsigned> m_cancelled = 0;
 };
-template <typename Req, typename Owner>
-using CompletionHeap = ZmHeap<"Zrest.Completion", Completion_<Req, Owner>>;
-template <typename Req, typename Owner>
-using Completion = Completion_<Req, Owner, CompletionHeap<Req, Owner>>;
 
 namespace Server_ {
 
@@ -853,7 +851,7 @@ using ResQ = ZmList<ResBuilder<Catalog>,
 
 template <typename Owner, typename Catalog, typename Response>
 struct Work : public ZmObject {
-  using Reqs = typename Catalog::List;
+  using Reqs = Catalog::List;
   using Union = GetUnion<Reqs>;
 
   Work(Owner *owner, ZmScheduler *scheduler, unsigned thread) :
@@ -872,7 +870,7 @@ struct Work : public ZmObject {
   template <typename App>
   void dispatch(App *app) {
     u.dispatch([this, app](auto I, auto &request) {
-      using Req = typename Union::template Type<I>;
+      using Req = Union::template Type<I>;
       using Token = Completion<Req, Owner>;
       ZmRef<Token> token = new Token{
 	m_owner.load_(), this, m_scheduler, m_thread};
@@ -909,7 +907,7 @@ struct Work : public ZmObject {
     releaseToken_();
     ZmRef<Response> response = new Response{};
     response->template init<Req>(ZuMv(reply), m_route.method(),
-      static_cast<typename Owner::WorkNode *>(this));
+      static_cast<Owner::WorkNode *>(this));
     m_route.send(ZuMv(response));
     return true;
   }
@@ -923,7 +921,7 @@ struct Work : public ZmObject {
       m_tokenInvalidate(m_token, true);
       try {
 	u.dispatch([this, app, reason](auto I, auto &) {
-	  using Req = typename Union::template Type<I>;
+	  using Req = Union::template Type<I>;
 	  using Token = Completion<Req, Owner>;
 	  cancelled_(app, static_cast<Req *>(nullptr),
 	    static_cast<Token *>(m_token), reason, 0);
@@ -941,7 +939,7 @@ struct Work : public ZmObject {
     if (m_scheduler->invoked(m_thread)) {
       if (auto owner = m_owner.load_()) owner->retired(this, result);
     } else {
-      using Node = typename Owner::WorkNode;
+      using Node = Owner::WorkNode;
       ZmRef<Node> self{static_cast<Node *>(this)};
       m_scheduler->run([self = ZuMv(self), result]() mutable {
 	if (auto owner = self->m_owner.load_())
@@ -1014,7 +1012,7 @@ template <typename Owner, typename Decoder, typename Catalog,
     typename Response>
 struct Parser : public Decoder {
   using Base = Decoder;
-  using HdrCatalog = typename Decoder::HdrCatalog;
+  using HdrCatalog = Decoder::HdrCatalog;
 
   void init(Owner &owner) {
     m_owner = &owner;
@@ -1089,7 +1087,7 @@ private:
   template <typename Node, typename L>
   static void visit_(Node &node, L &l) {
     node.u.dispatch([&l](auto I, auto &selected) {
-      using Selected = typename Node::Union::template Type<I>;
+      using Selected = Node::Union::template Type<I>;
       if constexpr (ZuTypeIn<Selected, typename Catalog::List>{})
 	l(selected);
       else visit_(selected, l);
@@ -1115,10 +1113,10 @@ class Server : public Zhttp::Server<Server<App, Catalog, Decoder>,
     typename ResQ::Node>;
   using HTTP = Zhttp::Server<Self, Parser, ResQ>;
 public:
-  using Response = typename ResQ::Node;
+  using Response = ResQ::Node;
   using WorkQ = Server_::WorkQ<Self, Catalog, Response>;
-  using Work = typename WorkQ::T;
-  using WorkNode = typename WorkQ::Node;
+  using Work = WorkQ::T;
+  using WorkNode = WorkQ::Node;
   using HTTP::start;
   using HTTP::stop;
   using HTTP::connected;

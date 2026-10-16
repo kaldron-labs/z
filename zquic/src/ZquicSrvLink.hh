@@ -305,8 +305,8 @@ public:
   }
 
 private:
-  using InitialKeyDir = typename Base::InitialKeyDir;
-  using CIDSel = typename Base::CIDSel;
+  using InitialKeyDir = Base::InitialKeyDir;
+  using CIDSel = Base::CIDSel;
 
   void acceptInitialInfo_(const InitialInfo &info) {
     m_initialInfo = info;
@@ -559,7 +559,7 @@ private:
       data, ZuMv(addr),
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const typename Base::TxPktRefs *refs) {
+	  const Base::TxPktRefs *refs) {
 	return sendStrictShortPkt_(build, ZuMv(addr_), refs);
       });
   }
@@ -588,7 +588,7 @@ private:
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
-	    const typename Base::TxPktRefs &refs) {
+	    const Base::TxPktRefs &refs) {
 	  return sendShortPkt_(
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	});
@@ -646,7 +646,7 @@ private:
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
-  bool sendFrameRefs_(const typename Base::TxPktRefs *recordRefs) {
+  bool sendFrameRefs_(const Base::TxPktRefs *recordRefs) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server frame gating outside Tx thread", return false);
     if (!recordRefs) return true;
@@ -677,7 +677,7 @@ private:
 
   bool sendInitialBuf_(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-    const typename Base::TxPktRefs *recordRefs) {
+    const Base::TxPktRefs *recordRefs) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Initial buffer send outside Tx thread", return false);
     if (!sendFrameRefs_(recordRefs)) return false;
@@ -700,7 +700,7 @@ private:
 
   bool sendShortBuf_(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-    const typename Base::TxPktRefs *recordRefs,
+    const Base::TxPktRefs *recordRefs,
     EcnMark::T ecn, unsigned pmtudSize = 0) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short buffer send outside Tx thread", return false);
@@ -715,7 +715,7 @@ private:
   }
   bool sendStrictShortBuf_(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
-    const typename Base::TxPktRefs *recordRefs, EcnMark::T ecn) {
+    const Base::TxPktRefs *recordRefs, EcnMark::T ecn) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server strict Short buffer send outside Tx thread", return false);
     if (!sendFrameRefs_(recordRefs)) return false;
@@ -846,7 +846,7 @@ private:
 
   bool sendShortPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const typename Base::TxPktRefs *recordRefs, bool ackEliciting,
+    const Base::TxPktRefs *recordRefs, bool ackEliciting,
     unsigned pmtudSize = 0) {
     return Base::sendProtShortPkt_(
       CIDSel::Peer, Base::txPNLength_(PktNumSpace::AppData),
@@ -862,7 +862,7 @@ private:
 
   bool sendShortPkt_(
     const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
-    ZuBSpan recordFrame, const typename Base::TxPktRefs *recordRefs,
+    ZuBSpan recordFrame, const Base::TxPktRefs *recordRefs,
     bool ackEliciting, unsigned pmtudSize = 0) {
     return Base::sendProtShortPkt_(
       dcid, Base::txPNLength_(PktNumSpace::AppData),
@@ -877,7 +877,7 @@ private:
   }
   bool sendStrictShortPkt_(
     PktBuild &payload, ZiSockAddr addr,
-    const typename Base::TxPktRefs *recordRefs) {
+    const Base::TxPktRefs *recordRefs) {
     return Base::sendProtShortPkt_(
       CIDSel::Peer, Base::txPNLength_(PktNumSpace::AppData),
       payload, ZuMv(addr), {}, recordRefs, true,
@@ -889,7 +889,7 @@ private:
   }
   bool sendStrictShortPkt_(
     const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
-    const typename Base::TxPktRefs *recordRefs) {
+    const Base::TxPktRefs *recordRefs) {
     return Base::sendProtShortPkt_(
       dcid, Base::txPNLength_(PktNumSpace::AppData),
       payload, ZuMv(addr), {}, recordRefs, true,
@@ -954,7 +954,7 @@ private:
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
-	    const typename Base::TxPktRefs &refs) {
+	    const Base::TxPktRefs &refs) {
 	  return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	}))
       return false;
@@ -1020,7 +1020,7 @@ private:
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const typename Base::TxPktRefs &refs) {
+	  const Base::TxPktRefs &refs) {
 	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
   }
@@ -1095,7 +1095,7 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog,
+	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog,
 	  bool earlyData) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, earlyData);
@@ -1110,7 +1110,7 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog) {
+	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
       },
@@ -1119,7 +1119,7 @@ private:
 
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
-    const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack,
+    const ZmRef<ZiIOBuf> &packetBuf, Base::RxAckMeta &ack,
     ZquicLog_::PktEvt *qlog, bool earlyData = false) {
     ZiSockAddr peer = addr;
     ZiSockAddr local = app()->local();

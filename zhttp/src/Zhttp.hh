@@ -145,7 +145,7 @@ struct Parser { // base class with defaulted types and member functions
   // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
   // value, or a non-empty list of values eligible for static dispatch.
   using HdrCatalog = DefltHdrCatalog;
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
 
   Parser() = default;
 
@@ -205,7 +205,7 @@ struct Builder {
   // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
   // value, or a singleton list containing the fixed value.
   using HdrCatalog = DefltHdrCatalog;
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
 
   // default header section scratch buffer size for H2/H3
   static constexpr unsigned HdrBufSize = 1<<10; // 1k scratch buffer
@@ -310,7 +310,7 @@ void builderFixedHeader(B *, L &&l, ...) { ZuFwd<L>(l)(); }
 #if 0
 struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers> {
   using Base = ProtocolParser<ParserAdapter, Headers>;
-  using State = typename Base::State;
+  using State = Base::State;
 
   // identical to app-facing Parser member functions (see above):
   // - enable1xx, operation, status, header, bodyInfo, bool body(Rx &)
@@ -495,7 +495,7 @@ template <> struct HttpTraits<Version::H3> {
 template <typename Profile, typename Traits>
 struct MessageTraits :
   public HttpTraits<Traits::HTTPVersion> {
-  using Transport = typename Traits::Transport;
+  using Transport = Traits::Transport;
   enum { Multiplexed = Traits::Multiplexed };
 };
 
@@ -535,8 +535,8 @@ using HeaderSeeds =
 
 template <typename List, unsigned I>
 consteval auto seedID() {
-  using Key = typename List::template Key<I>;
-  using Values = typename List::template Value<I>;
+  using Key = List::template Key<I>;
+  using Values = List::template Value<I>;
   if constexpr (Values::N) {
     using Value = HeaderValue<Values>;
     return Key{}() + "\x1f"_z + Value{}();
@@ -563,8 +563,8 @@ struct SeedSetIDs_<ZuTypeList<Catalogs...>> {
 template <typename Sets>
 class HeaderSeedCatalog {
   using IDs = SeedSetIDs_<Sets>;
-  using Names = typename IDs::Names;
-  using Pairs = typename IDs::Pairs;
+  using Names = IDs::Names;
+  using Pairs = IDs::Pairs;
 
 public:
   HeaderSeedCatalog() {
@@ -584,8 +584,8 @@ public:
     ZuAssert((ZuTypeIn<HdrCatalog, Sets>{}));
     using List = HeaderList<HdrCatalog>;
     ZuUnroll::all<List::N>([this, &params, capacity](auto I) {
-      using Key = typename List::template Key<I>;
-      using Value = typename List::template Value<I>;
+      using Key = List::template Key<I>;
+      using Value = List::template Value<I>;
       using Pair = ZuStringT<seedID<List, I>()>;
       constexpr int nameSlot = ZuTypeIndex<Key, Names>{};
       constexpr int pairSlot = ZuTypeIndex<Pair, Pairs>{};
@@ -672,12 +672,12 @@ public:
   void add(uint32_t capacity) {
     HPackSeedPlan plan;
     using List = HeaderList<HdrCatalog>;
-    using Pairs = typename SeedIDs<List>::Keys;
+    using Pairs = SeedIDs<List>::Keys;
     int lookup[List::N ? List::N : 1];
     for (unsigned i = 0; i < List::N; ++i) lookup[i] = -1;
     ZuUnroll::all<List::N>([&plan, &lookup, capacity](auto I) {
-      using Key = typename List::template Key<I>;
-      using Value = typename List::template Value<I>;
+      using Key = List::template Key<I>;
+      using Value = List::template Value<I>;
       if constexpr (Value::N) {
 	using Pair = ZuStringT<seedID<List, I>()>;
 	constexpr int j = ZuTypeIndex<Pair, Pairs>{};
@@ -781,7 +781,7 @@ struct ResponseHeaderSets { using T = ZuTypeList<>; };
 template <typename App>
 struct ResponseHeaderSets<App, decltype(
   sizeof(typename App::ResponseHeaders), void())> {
-  using T = typename App::ResponseHeaders;
+  using T = App::ResponseHeaders;
 };
 
 template <typename App, typename = void>
@@ -893,7 +893,7 @@ template <
   unsigned N = HeaderList<HdrCatalog>::N>
 class HeaderSpans {
   using List = HeaderList<HdrCatalog>;
-  using Keys = typename List::Keys;
+  using Keys = List::Keys;
 
   ZuAssert((ZuTypeUnique<Keys>::N == Keys::N),
     "mutable header spans require unique keys");
@@ -902,7 +902,7 @@ public:
   template <typename Key>
   void record(ZuSpan<uint8_t> span) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-    using Value = typename List::template Value<I>;
+    using Value = List::template Value<I>;
     ZuAssert((!Value::N),
       "only runtime-valued declared headers have mutable spans");
     m_slots[I] = span;
@@ -910,7 +910,7 @@ public:
   template <typename Key>
   void recordOffset(uint64_t offset, unsigned length) {
     constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-    using Value = typename List::template Value<I>;
+    using Value = List::template Value<I>;
     ZuAssert((!Value::N),
       "only runtime-valued declared headers have mutable spans");
     m_slots[I] = {reinterpret_cast<uint8_t *>(uintptr_t(offset + 1)), length};
@@ -926,7 +926,7 @@ public:
   void patch(App &app) {
     auto patch = [this]<typename Key, typename P>(P &&patcher) {
       constexpr unsigned I = ZuTypeIndex<Key, Keys>{};
-      using Value = typename List::template Value<I>;
+      using Value = List::template Value<I>;
       ZuAssert((!Value::N),
 	"bodyHdrs cannot mutate a fixed declared header value");
       ZuFwd<P>(patcher)(m_slots[I]);

@@ -288,18 +288,17 @@ static void sseOutputTest()
 }
 
 struct WSFixture : public Zjrpc::WSIO<WSFixture> {
-  template <typename Heap = ZuVoid>
-  struct Link_ : public Heap, public ZmObject {
+  struct Link : public ZmNHeap<Link>, public ZmObject {
+  friend inline ZuStringT<"Zjrpc.Test.WS"> ZmNHeapID(Link *);
+
     WSFixture *owner;
     Zjrpc::WSRx rx;
     unsigned closeCode = 0;
-    Link_(WSFixture *owner_) : owner{owner_} { }
+    Link(WSFixture *owner_) : owner{owner_} { }
     WSFixture *app() { return owner; }
-    Link_ &state() { return *this; }
+    Link &state() { return *this; }
     void close(unsigned code) { closeCode = code; }
   };
-  using LinkHeap = ZmHeap<"Zjrpc.Test.WS", Link_<>>;
-  using Link = Link_<LinkHeap>;
 
   Zjrpc::Limits bound;
   ZmRef<ZiIOBuf> received;

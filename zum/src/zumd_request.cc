@@ -9,38 +9,32 @@
 
 namespace Zum {
 
-template <typename Heap>
-Requests_<Heap>::RequestData::RequestData(Requests_ *requests, Fn cancel) :
+Requests::RequestData::RequestData(Requests *requests, Fn cancel) :
   m_requests{requests}, m_cancel{ZuMv(cancel)} { }
 
-template <typename Heap>
-void Requests_<Heap>::RequestData::start_(ZuTime deadline)
+void Requests::RequestData::start_(ZuTime deadline)
 {
   m_requests->start_(this, deadline);
 }
 
-template <typename Heap>
-bool Requests_<Heap>::RequestData::finish_()
+bool Requests::RequestData::finish_()
 {
   return m_requests->finish_(this);
 }
 
-template <typename Heap>
-void Requests_<Heap>::RequestData::cancel_()
+void Requests::RequestData::cancel_()
 {
   auto cancel = ZuMv(m_cancel);
   if (finish_() && cancel) cancel();
 }
 
-template <typename Heap>
-void Requests_<Heap>::RequestData::timeout_()
+void Requests::RequestData::timeout_()
 {
   ZmRef<Node> self{static_cast<Node *>(this)};
   cancel_();
 }
 
-template <typename Heap>
-bool Requests_<Heap>::init(ZmScheduler *scheduler, unsigned sid, unsigned limit)
+bool Requests::init(ZmScheduler *scheduler, unsigned sid, unsigned limit)
 {
   if (!scheduler || !sid || sid > scheduler->params().nThreads() || !limit)
     return false;
@@ -50,14 +44,12 @@ bool Requests_<Heap>::init(ZmScheduler *scheduler, unsigned sid, unsigned limit)
   return true;
 }
 
-template <typename Heap>
-void Requests_<Heap>::activate()
+void Requests::activate()
 {
   m_up = 1;
 }
 
-template <typename Heap>
-bool Requests_<Heap>::admit_(Node *request, ZuTime deadline)
+bool Requests::admit_(Node *request, ZuTime deadline)
 {
   if (!m_up || m_closing) {
     request->cancel_();
@@ -67,8 +59,7 @@ bool Requests_<Heap>::admit_(Node *request, ZuTime deadline)
   return true;
 }
 
-template <typename Heap>
-void Requests_<Heap>::start_(RequestData *request, ZuTime deadline)
+void Requests::start_(RequestData *request, ZuTime deadline)
 {
   Node *node = static_cast<Node *>(request);
   request->m_list = RequestListState::Active;
@@ -76,8 +67,7 @@ void Requests_<Heap>::start_(RequestData *request, ZuTime deadline)
   arm_(request, &request->m_timer, deadline);
 }
 
-template <typename Heap>
-void Requests_<Heap>::arm_(
+void Requests::arm_(
     RequestData *request, ZmScheduler::Timer *timer, ZuTime deadline)
 {
   m_scheduler->add(timer, deadline, ZmScheduler::Update,
@@ -85,25 +75,22 @@ void Requests_<Heap>::arm_(
     m_sid);
 }
 
-template <typename Heap>
-void Requests_<Heap>::del_(ZmScheduler::Timer *timer)
+void Requests::del_(ZmScheduler::Timer *timer)
 {
   m_scheduler->del(timer);
 }
 
-template <typename Heap>
-bool Requests_<Heap>::finish_(RequestData *request)
+bool Requests::finish_(RequestData *request)
 {
   if (request->m_done) return false;
   request->m_done = true;
   del_(&request->m_timer);
   remove_(request);
-  request->m_cancel = typename RequestData::Fn{};
+  request->m_cancel = RequestData::Fn{};
   return true;
 }
 
-template <typename Heap>
-void Requests_<Heap>::remove_(RequestData *request)
+void Requests::remove_(RequestData *request)
 {
   Node *node = static_cast<Node *>(request);
   switch (request->m_list) {
@@ -120,8 +107,7 @@ void Requests_<Heap>::remove_(RequestData *request)
   --m_count;
 }
 
-template <typename Heap>
-void Requests_<Heap>::deactivate(Fn complete)
+void Requests::deactivate(Fn complete)
 {
   m_up = 0;
   invoke_([self = ZmRef<Requests>{this}, complete = ZuMv(complete)]() mutable {
@@ -135,8 +121,7 @@ void Requests_<Heap>::deactivate(Fn complete)
   });
 }
 
-template <typename Heap>
-void Requests_<Heap>::deactivate_()
+void Requests::deactivate_()
 {
   while (auto request = m_requests.shift()) {
     Node *node = request.ptr();
@@ -149,15 +134,12 @@ void Requests_<Heap>::deactivate_()
   }, m_sid);
 }
 
-template <typename Heap>
-void Requests_<Heap>::deactivated_()
+void Requests::deactivated_()
 {
   m_draining.clean();
   m_closing = false;
   auto complete = ZuMv(m_deactivated);
   if (complete) complete();
 }
-
-template class Requests_<RequestsHeap>;
 
 } // namespace Zum

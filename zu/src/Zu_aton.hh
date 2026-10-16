@@ -295,7 +295,7 @@ template <class Fmt = ZuFmt::Default, int Skip =
   (Fmt::Justification_ == ZuFmt::Just::Right && Fmt::Pad_ != '0') ?
     Fmt::Pad_ : -1>
 struct Zu_nscan : public Zu_nscan_<Fmt> {
-  using Len = typename Zu_nscan_<Fmt>::Len;
+  using Len = Zu_nscan_<Fmt>::Len;
   static unsigned skip(const char *buf, unsigned n) {
     unsigned o = 0;
     while (ZuLikely(o < n && buf[o] == Skip)) ++o;

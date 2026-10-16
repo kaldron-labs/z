@@ -186,7 +186,7 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
   }
   ZTLS_CHECK_RT(asn == asn2, type, " SK ASN.1 DER match");
   {
-    using PK = typename T::PK;
+    using PK = T::PK;
     auto r = sk2->mkPK();
     if (r.template is<ZeException>()) {
       ZiLog::log(ZuMv(r.template p<ZeException>()));

@@ -273,9 +273,9 @@ static ZmRef<ZdbTable<T>> internalTable(Zum::DB *db, ZuCSpan name)
 }
 
 template <typename Table, typename Key>
-static typename Table::T record(Table *table, Key key)
+static Table::T record(Table *table, Key key)
 {
-  using T = typename Table::T;
+  using T = Table::T;
   return ZmBlock<T>{}([table, key = ZuMv(key)](auto wake) mutable {
     table->run(0, [table, key = ZuMv(key), wake = ZuMv(wake)]() mutable {
       table->template find<0>(0, ZuMv(key), [wake = ZuMv(wake)](
@@ -731,7 +731,7 @@ static void memberRecovery()
 template <typename Table>
 static bool replaceRecord(Table *table, typename Table::T item)
 {
-  using T = typename Table::T;
+  using T = Table::T;
   return ZmBlock<bool>{}([table, item = ZuMv(item)](auto wake) mutable {
     table->run(0, [table, item = ZuMv(item), wake = ZuMv(wake)]() mutable {
       ZuStructKeyT<T, 0> key{ZuStructKey<0>(item)};
@@ -1156,7 +1156,7 @@ static bool stageCatalogRow(Table *table, const Zum::CatalogRows &rows,
 	!Zum::SagaImage::load(edit.after, item)) return false;
   }
   if (release) {
-    using T = typename Table::T;
+    using T = Table::T;
     return ZmBlock<bool>{}([table, item = ZuMv(item), id](auto wake) mutable {
       table->run(0, [table, item = ZuMv(item), id,
 	  wake = ZuMv(wake)]() mutable {
@@ -1369,7 +1369,7 @@ template <typename Table>
 static bool stageRoleRef(Table *table, const Zum::Bytes &image,
     ZdbSagaID id, Zum::RoleID roleID, int64_t updated, bool release)
 {
-  using T = typename Table::T;
+  using T = Table::T;
   T item;
   if (!Zum::SagaImage::load(image, item)) return false;
   Zum::IDVec roles;

@@ -32,9 +32,9 @@ using Cache = ZmCache<ZmRef<Item>, CacheNTP>;
 using CacheNoEvict = ZmCache<ZmRef<Item>, ZmCacheEvict<false, CacheNTP>>;
 
 template <typename C>
-static typename C::Node *mkNode(unsigned id)
+static C::Node *mkNode(unsigned id)
 {
-  return new typename C::Node{ZmRef<Item>{new Item{id}}};
+  return new C::Node{ZmRef<Item>{new Item{id}}};
 }
 
 void testLoadMissAndStatsReset()

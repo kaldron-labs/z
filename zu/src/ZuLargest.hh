@@ -30,11 +30,11 @@ struct ZuLargest_<T0, Ts...> {
 };
 template <typename ...Ts>
 struct ZuLargest_<void, Ts...> {
-  using T = typename ZuLargest_<Ts...>::T;
+  using T = ZuLargest_<Ts...>::T;
 };
 template <typename ...Ts>
 struct ZuLargest_<ZuTypeList<Ts...>> : public ZuLargest_<Ts...> { };
 template <typename ...Ts>
-using ZuLargest = typename ZuLargest_<Ts...>::T;
+using ZuLargest = ZuLargest_<Ts...>::T;
 
 #endif /* ZuLargest_HH */

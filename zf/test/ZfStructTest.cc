@@ -173,11 +173,11 @@ ZfStructImpl(Foo, Bah);
 using IntField = ZfField(Foo, int_);
 using IntRangeField = ZfField(Foo, int_ranged);
 using FloatRangeField = ZfField(Foo, float_ranged);
-using IntRange = ZuFieldProp::GetRange<typename IntRangeField::Props>;
-using FloatRange = ZuFieldProp::GetRange<typename FloatRangeField::Props>;
+using IntRange = ZuFieldProp::GetRange<IntRangeField::Props>;
+using FloatRange = ZuFieldProp::GetRange<FloatRangeField::Props>;
 
-ZuAssert(!ZuFieldProp::HasRange<typename IntField::Props>{});
-ZuAssert(ZuFieldProp::HasRange<typename IntRangeField::Props>{});
+ZuAssert(!ZuFieldProp::HasRange<IntField::Props>{});
+ZuAssert(ZuFieldProp::HasRange<IntRangeField::Props>{});
 ZuAssert(IntRange::minimum() == 0);
 ZuAssert(IntRange::maximum() == 100);
 ZuAssert(FloatRange::minimum() == 0.0);
@@ -209,7 +209,7 @@ template <typename T>
 struct MinMax<T, decltype(T::minimum(), void())> {
   template <typename S>
   friend inline S &operator <<(S &s, const MinMax &m) {
-    using Print = typename T::Type::template Print<>;
+    using Print = T::Type::template Print<>;
     s << " minimum=" << Print{T::minimum()}
       << " maximum=" << Print{T::maximum()};
     return s;
@@ -368,9 +368,9 @@ ZfStruct(, (MapHolder, JSON),
 
 ZuAssert((ZuIsSame<IntHash::Key, MapKey>{}));
 ZuAssert((ZuIsSame<IntHash::Val, int>{}));
-ZuAssert(ZuTraits<typename IntHash::Key>::IsString);
+ZuAssert(ZuTraits<IntHash::Key>::IsString);
 ZuAssert((ZuIsSame<
-  ZmHeapID<IntHash>, ZuStringT<"ZfTest.JSON.IntHash">>{}));
+  ZmNHeapID_<IntHash>, ZuStringT<"ZfTest.JSON.IntHash">>{}));
 
 struct UnionA { int foo; };
 struct UnionB { int bar; };
@@ -817,7 +817,7 @@ int main(int argc, char **argv)
 
     using Field = ZfField(BoxFoo, value);
     ZtString<> printed;
-    printed << typename Field::Type::template Print<>{box.value};
+    printed << Field::Type::template Print<>{box.value};
     ZuCheck(!printed);
 
     ZtString<> json;

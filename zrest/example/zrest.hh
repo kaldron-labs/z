@@ -71,8 +71,9 @@ ZfStruct(, (OAuthMetadataPath, URI),
   (oauth2,    (URI::PathIndex<2>, Required),		String),
   (app,       (URI::PathIndex<3>, Required),		String));
 
-template <typename Heap = ZuVoid>
-struct OAuthAuthorizeReq_ : public Heap, public ZmObject {
+struct OAuthAuthorizeReq : public ZmNHeap<OAuthAuthorizeReq>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthAuthorizeReq"> ZmNHeapID(OAuthAuthorizeReq *);
+
   OAuthString responseType;
   OAuthString clientID;
   OAuthString redirectURI;
@@ -81,10 +82,7 @@ struct OAuthAuthorizeReq_ : public Heap, public ZmObject {
   OAuthString codeChallenge;
   OAuthString codeChallengeMethod;
 };
-ZuDerive(OAuthAuthorizeReqHeap,
-  (ZmHeap<"zrest.OAuthAuthorizeReq", OAuthAuthorizeReq_<>>));
-ZuDerive(OAuthAuthorizeReq,
-  (OAuthAuthorizeReq_<OAuthAuthorizeReqHeap>));
+
 ZfStruct(, (OAuthAuthorizeReq, URI),
   (responseType, (URI::ID<"response_type">, Required),		String),
   (clientID, (URI::ID<"client_id">, Required),			String),
@@ -95,17 +93,16 @@ ZfStruct(, (OAuthAuthorizeReq, URI),
   (codeChallengeMethod,
     (URI::ID<"code_challenge_method">, Required),		String));
 
-template <typename Heap = ZuVoid>
-struct OAuthCodeTokenReq_ : public Heap, public ZmObject {
+struct OAuthCodeTokenReq : public ZmNHeap<OAuthCodeTokenReq>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthCodeTokenReq"> ZmNHeapID(OAuthCodeTokenReq *);
+
   OAuthString grantType;
   OAuthString code;
   OAuthString redirectURI;
   OAuthString clientID;
   OAuthString codeVerifier;
 };
-ZuDerive(OAuthCodeTokenReqHeap,
-  (ZmHeap<"zrest.OAuthCodeTokenReq", OAuthCodeTokenReq_<>>));
-ZuDerive(OAuthCodeTokenReq, (OAuthCodeTokenReq_<OAuthCodeTokenReqHeap>));
+
 ZfStruct(, (OAuthCodeTokenReq, URI),
   (grantType, (URI::ID<"grant_type">, Required),		String),
   (code, (Required),						String),
@@ -113,32 +110,29 @@ ZfStruct(, (OAuthCodeTokenReq, URI),
   (clientID, (URI::ID<"client_id">, Required),			String),
   (codeVerifier, (URI::ID<"code_verifier">, Required),		String));
 
-template <typename Heap = ZuVoid>
-struct OAuthRefreshTokenReq_ : public Heap, public ZmObject {
+struct OAuthRefreshTokenReq : public ZmNHeap<OAuthRefreshTokenReq>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthRefreshTokenReq"> ZmNHeapID(OAuthRefreshTokenReq *);
+
   OAuthString grantType;
   OAuthString refreshToken;
   OAuthString scope;
   OAuthString clientID;
 };
-ZuDerive(OAuthRefreshTokenReqHeap,
-  (ZmHeap<"zrest.OAuthRefreshTokenReq", OAuthRefreshTokenReq_<>>));
-ZuDerive(OAuthRefreshTokenReq,
-  (OAuthRefreshTokenReq_<OAuthRefreshTokenReqHeap>));
+
 ZfStruct(, (OAuthRefreshTokenReq, URI),
   (grantType, (URI::ID<"grant_type">, Required),		String),
   (refreshToken, (URI::ID<"refresh_token">, Required),		String),
   (scope, (JSON::Opt),						String),
   (clientID, (URI::ID<"client_id">, Required),			String));
 
-template <typename Heap = ZuVoid>
-struct OAuthRevokeReq_ : public Heap, public ZmObject {
+struct OAuthRevokeReq : public ZmNHeap<OAuthRevokeReq>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthRevokeReq"> ZmNHeapID(OAuthRevokeReq *);
+
   OAuthString token;
   OAuthString tokenTypeHint;
   OAuthString clientID;
 };
-ZuDerive(OAuthRevokeReqHeap,
-  (ZmHeap<"zrest.OAuthRevokeReq", OAuthRevokeReq_<>>));
-ZuDerive(OAuthRevokeReq, (OAuthRevokeReq_<OAuthRevokeReqHeap>));
+
 ZfStruct(, (OAuthRevokeReq, URI),
   (token, (Required),						String),
   (tokenTypeHint, (URI::ID<"token_type_hint">, JSON::Opt),	String),
@@ -167,16 +161,16 @@ ZfStruct(, (OAuthAuthorizeErrorRes, URI),
   (state, (JSON::Opt),				String),
   (issuerURL, (URI::ID<"iss">, Required),	String));
 
-template <typename Heap = ZuVoid>
-struct OAuthTokenRes_ : public Heap, public ZmObject {
+struct OAuthTokenRes : public ZmNHeap<OAuthTokenRes>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthTokenRes"> ZmNHeapID(OAuthTokenRes *);
+
   OAuthSecret accessToken;
   OAuthString tokenType;
   uint64_t expiresIn = 0;
   OAuthSecret refreshToken;
   OAuthString scope;
 };
-ZuDerive(OAuthTokenResHeap, (ZmHeap<"zrest.OAuthTokenRes", OAuthTokenRes_<>>));
-ZuDerive(OAuthTokenRes, (OAuthTokenRes_<OAuthTokenResHeap>));
+
 ZfStruct(, (OAuthTokenRes, JSON),
   (accessToken, (JSON::ID<"access_token">, Required),		String),
   (tokenType, (JSON::ID<"token_type">, Required),		String),
@@ -184,20 +178,21 @@ ZfStruct(, (OAuthTokenRes, JSON),
   (refreshToken, (JSON::ID<"refresh_token">, JSON::Opt),	String),
   (scope, (Required),						String));
 
-template <typename Heap = ZuVoid>
-struct OAuthError_ : public Heap, public ZmObject {
+struct OAuthError : public ZmNHeap<OAuthError>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthError"> ZmNHeapID(OAuthError *);
+
   OAuthString error;
   OAuthString errorDescription;
 };
-ZuDerive(OAuthErrorHeap, (ZmHeap<"zrest.OAuthError", OAuthError_<>>));
-ZuDerive(OAuthError, (OAuthError_<OAuthErrorHeap>));
+
 ZfStruct(, (OAuthError, JSON),
   (error, (Required),					String),
   (errorDescription,
     (JSON::ID<"error_description">, JSON::Opt),		String));
 
-template <typename Heap = ZuVoid>
-struct OAuthMetadata_ : public Heap, public ZmObject {
+struct OAuthMetadata : public ZmNHeap<OAuthMetadata>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthMetadata"> ZmNHeapID(OAuthMetadata *);
+
   OAuthString issuerURL;
   OAuthString authorizationEndpoint;
   OAuthString tokenEndpoint;
@@ -210,8 +205,7 @@ struct OAuthMetadata_ : public Heap, public ZmObject {
   OAuthStringVec tokenAuthMethods;
   OAuthStringVec revokeAuthMethods;
 };
-ZuDerive(OAuthMetadataHeap, (ZmHeap<"zrest.OAuthMetadata", OAuthMetadata_<>>));
-ZuDerive(OAuthMetadata, (OAuthMetadata_<OAuthMetadataHeap>));
+
 ZfStruct(, (OAuthMetadata, JSON),
   (issuerURL, (JSON::ID<"issuer">, Required),					String),
   (authorizationEndpoint,
@@ -278,23 +272,21 @@ struct OAuthJWKVec : public OAuthJWKArray {
   ZuDerive_(OAuthJWKVec, OAuthJWKArray);
   friend ZfJSON::AsArray<ZfFieldTC::UDT> ZfJSON_Fmt(OAuthJWKVec *);
 };
-template <typename Heap = ZuVoid>
-struct OAuthJWKS_ : public Heap, public ZmObject { OAuthJWKVec keys; };
-ZuDerive(OAuthJWKSHeap, (ZmHeap<"zrest.OAuthJWKS", OAuthJWKS_<>>));
-ZuDerive(OAuthJWKS, (OAuthJWKS_<OAuthJWKSHeap>));
+struct OAuthJWKS : public ZmNHeap<OAuthJWKS>, public ZmObject {
+friend inline ZuStringT<"zrest.OAuthJWKS"> ZmNHeapID(OAuthJWKS *);
+ OAuthJWKVec keys; };
+
 ZfStruct(, (OAuthJWKS, JSON), (keys, (Required), UDT));
 
 using PingPath = ZuStringT<"/api/ping">;
 
-template <typename Heap = ZuVoid>
-struct Ping_ : public Heap, public ZmObject { bool ping = false; };
-ZuDerive(PingHeap, (ZmHeap<"zrest.Ping", Ping_<>>));
-ZuDerive(Ping, (Ping_<PingHeap>));
+struct Ping : public ZmNHeap<Ping>, public ZmObject {
+friend inline ZuStringT<"zrest.Ping"> ZmNHeapID(Ping *);
+ bool ping = false; };
 
-template <typename Heap = ZuVoid>
-struct Pong_ : public Heap, public ZmObject { bool pong = false; };
-ZuDerive(PongHeap, (ZmHeap<"zrest.Pong", Pong_<>>));
-ZuDerive(Pong, (Pong_<PongHeap>));
+struct Pong : public ZmNHeap<Pong>, public ZmObject {
+friend inline ZuStringT<"zrest.Pong"> ZmNHeapID(Pong *);
+ bool pong = false; };
 
 ZfStruct(, (Ping, URI), (ping, (Required), Bool));
 ZfStruct(, (Pong, JSON), (pong, (Required), Bool));

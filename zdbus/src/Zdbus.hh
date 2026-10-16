@@ -114,7 +114,7 @@ SignalFn typedSignal(Fn &&fn) {
 
 template <typename Schema>
 struct FixedRoute {
-  using Headers = typename Schema::HeaderCatalog;
+  using Headers = Schema::HeaderCatalog;
   using Path = FixedHeader<Header::Path, Headers>;
   using Interface = FixedHeader<Header::Interface, Headers>;
   using Member = FixedHeader<Header::Member, Headers>;

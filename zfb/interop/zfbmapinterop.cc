@@ -22,25 +22,28 @@ using namespace ZuTestUtil;
 
 namespace Native {
 
-template <typename Heap = ZuVoid>
-struct Ints_ : public Heap,
-  public ZmHashKV<int, int, ZmHashHeapID<"zfbmapinterop.Ints">> { };
-using IntsHeap = ZmHeap<"zfbmapinterop.Ints.Obj", Ints_<>>;
-ZuDerive(Ints, Ints_<IntsHeap>);
+struct Ints_ : public ZmNHeap<Ints_>,
+  public ZmHashKV<int, int, ZmHashHeapID<"zfbmapinterop.Ints">> {
+friend inline ZuStringT<"zfbmapinterop.Ints.Obj"> ZmNHeapID(Ints_ *);
+
+};
+
+ZuDerive(Ints, Ints_);
 Zfb::AsMap<"maps.IntMap", ZfFieldTC::Int32, ZfFieldTC::Int32,
   ZuTypeList<>, ZuTypeList<ZuFieldProp::Deflt<-11>>> Zfb_Fmt(Ints *);
 ZuDerive(Texts, (ZmRBTreeKV<ZtString<>, ZtString<>,
   ZmRBTreeHeapID<"zfbmapinterop.Texts">>));
 Zfb::AsMap<"maps.TextMap", ZfFieldTC::String, ZfFieldTC::String> Zfb_Fmt(Texts *);
 
-template <typename Heap = ZuVoid>
-struct Item_ : public Heap {
+struct Item_ : public ZmNHeap<Item_> {
+friend inline ZuStringT<"zfbmapinterop.Item"> ZmNHeapID(Item_ *);
+
   int value;
 
   explicit Item_(int value_ = 17) : value{value_} { }
 };
-using ItemHeap = ZmHeap<"zfbmapinterop.Item", Item_<>>;
-ZuDerive(Item, Item_<ItemHeap>);
+
+ZuDerive(Item, Item_);
 ZfStruct(, (Item, FB), (value, (Ctor<0>, Deflt<17>), Int32));
 Zfb::AsTable<"maps.Item"> Zfb_Fmt(Item *);
 ZuDerive(Inner, (ZmRBTreeKV<unsigned, ZuPtr<Item>,

@@ -186,10 +186,9 @@ struct StateData {
   bool			serviceStarted = false;
 };
 
-template <typename Heap = ZuVoid>
-struct State_ : public Heap, public ZmObject, public StateData { };
-ZuDerive(StateHeap, (ZmHeap<"Ztc.Hub.State", State_<>>));
-ZuDerive(State, (State_<StateHeap>));
+struct State : public ZmNHeap<State>, public ZmObject, public StateData {
+friend inline ZuStringT<"Ztc.Hub.State"> ZmNHeapID(State *);
+};
 
 struct HubDB : public Zdb {
   HubDB(State *state_) : state{state_} { }

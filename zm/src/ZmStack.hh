@@ -154,7 +154,7 @@ class ZmStack :
   public NTP::template OpsT<T_>
 {
 public:
-  using Impl = typename ZmStack_Impl<T_, NTP, Impl_>::Type;
+  using Impl = ZmStack_Impl<T_, NTP, Impl_>::Type;
 
 friend ZmStack_Unlocked<Impl, T_>;
 
@@ -164,11 +164,11 @@ friend ZmStack_Unlocked<Impl, T_>;
   using T = T_;
   static constexpr auto KeyAxor = NTP::KeyAxor;
   using Key = ZuRDecay<decltype(KeyAxor(ZuDeclVal<const T &>()))>;
-  using Ops = typename NTP::template OpsT<T>;
-  using Cmp = typename NTP::template CmpT<T>;
-  using KeyCmp = typename NTP::template KeyCmpT<T>;
-  using Lock = typename NTP::Lock;
-  using HeapID = typename NTP::HeapID;
+  using Ops = NTP::template OpsT<T>;
+  using Cmp = NTP::template CmpT<T>;
+  using KeyCmp = NTP::template KeyCmpT<T>;
+  using Lock = NTP::Lock;
+  using HeapID = NTP::HeapID;
   enum { HeapMin = NTP::HeapMin };
   enum { HeapMax = NTP::HeapMax };
   enum { Sharded = NTP::Sharded };

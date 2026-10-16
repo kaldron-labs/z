@@ -34,7 +34,7 @@ template <typename P> P mkpair() {
 
 template <typename P> P mvpair() {
   static int i = 42, j = 42;
-  P p(static_cast<typename P::template Type<0>>(i), static_cast<typename P::template Type<1>>(j));
+  P p(static_cast<P::template Type<0>>(i), static_cast<P::template Type<1>>(j));
   P q = ZuMv(p);
   return q;
 }

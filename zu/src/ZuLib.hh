@@ -202,7 +202,7 @@ struct ZuDeref_<const volatile T_ &> { using T = const volatile T_; };
 template <typename T_>
 struct ZuDeref_<T_ &&> { using T = T_; };
 template <typename T>
-using ZuDeref = typename ZuDeref_<T>::T;
+using ZuDeref = ZuDeref_<T>::T;
 
 // alternative to std::remove_cv (strip qualifiers)
 template <typename T_>
@@ -214,7 +214,7 @@ struct ZuStrip_<volatile T_> { using T = T_; };
 template <typename T_>
 struct ZuStrip_<const volatile T_> { using T = T_; };
 template <typename T>
-using ZuStrip = typename ZuStrip_<T>::T;
+using ZuStrip = ZuStrip_<T>::T;
 
 // alternative to std::decay
 template <typename T> using ZuDecay = ZuStrip<ZuDeref<T>>;
@@ -254,28 +254,28 @@ struct ZuConst_;
 template <typename U, typename R>
 struct ZuConst_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuConst = typename ZuConst_<U, R>::T;
+using ZuConst = ZuConst_<U, R>::T;
 
 template <typename U, typename R, bool = !ZuIsConst<U>{}>
 struct ZuMutable_;
 template <typename U, typename R>
 struct ZuMutable_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuMutable = typename ZuMutable_<U, R>::T;
+using ZuMutable = ZuMutable_<U, R>::T;
 
 template <typename U, typename R, bool = ZuIsVolatile<U>{}>
 struct ZuVolatile_;
 template <typename U, typename R>
 struct ZuVolatile_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuVolatile = typename ZuVolatile_<U, R>::T;
+using ZuVolatile = ZuVolatile_<U, R>::T;
 
 template <typename U, typename R, bool = !ZuIsVolatile<U>{}>
 struct ZuNonVolatile_;
 template <typename U, typename R>
 struct ZuNonVolatile_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuNonVolatile = typename ZuNonVolatile_<U, R>::T;
+using ZuNonVolatile = ZuNonVolatile_<U, R>::T;
 
 // ref checking
 template <typename U> struct ZuIsLRef : public ZuFalse { };
@@ -292,42 +292,42 @@ struct ZuLRef_;
 template <typename U, typename R>
 struct ZuLRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuLRef = typename ZuLRef_<U, R>::T;
+using ZuLRef = ZuLRef_<U, R>::T;
 
 template <typename U, typename R, bool = !ZuIsLRef<U>{}>
 struct ZuNotLRef_;
 template <typename U, typename R>
 struct ZuNotLRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuNotLRef = typename ZuNotLRef_<U, R>::T;
+using ZuNotLRef = ZuNotLRef_<U, R>::T;
 
 template <typename U, typename R, bool = ZuIsCRef<U>{}>
 struct ZuCRef_;
 template <typename U, typename R>
 struct ZuCRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuCRef = typename ZuCRef_<U, R>::T;
+using ZuCRef = ZuCRef_<U, R>::T;
 
 template <typename U, typename R, bool = !ZuIsCRef<U>{}>
 struct ZuNotCRef_;
 template <typename U, typename R>
 struct ZuNotCRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuNotCRef = typename ZuNotCRef_<U, R>::T;
+using ZuNotCRef = ZuNotCRef_<U, R>::T;
 
 template <typename U, typename R, bool = ZuIsRRef<U>{}>
 struct ZuRRef_;
 template <typename U, typename R>
 struct ZuRRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuRRef = typename ZuRRef_<U, R>::T;
+using ZuRRef = ZuRRef_<U, R>::T;
 
 template <typename U, typename R, bool = !ZuIsRRef<U>{}>
 struct ZuNotRRef_;
 template <typename U, typename R>
 struct ZuNotRRef_<U, R, true> { using T = R; };
 template <typename U, typename R = void>
-using ZuNotRRef = typename ZuNotRRef_<U, R>::T;
+using ZuNotRRef = ZuNotRRef_<U, R>::T;
 
 // shorthand constexpr alternative to std::forward
 template <typename T>
@@ -429,7 +429,7 @@ struct ZuIf_<T1, T2, true> { using T = T1; };
 template <typename T1, typename T2>
 struct ZuIf_<T1, T2, false> { using T = T2; };
 template <bool B, typename T1, typename T2>
-using ZuIf = typename ZuIf_<T1, T2, B>::T;
+using ZuIf = ZuIf_<T1, T2, B>::T;
 
 // alternative to std::enable_if
 // - compile-time SFINAE (substitution failure is not an error)
@@ -438,12 +438,12 @@ using ZuIf = typename ZuIf_<T1, T2, B>::T;
 template <bool, typename R = void> struct ZuIfT_ { };
 template <typename R> struct ZuIfT_<true, R> { using T = R; };
 template <bool B, typename R = void>
-using ZuIfT = typename ZuIfT_<B, R>::T;
+using ZuIfT = ZuIfT_<B, R>::T;
 
 // alternative to std::declval
 template <typename U> struct ZuDeclVal__ { using T = U; };
-template <typename T> auto ZuDeclVal_(int) -> typename ZuDeclVal__<T&&>::T;
-template <typename T> auto ZuDeclVal_(...) -> typename ZuDeclVal__<T>::T;
+template <typename T> auto ZuDeclVal_(int) -> ZuDeclVal__<T&&>::T;
+template <typename T> auto ZuDeclVal_(...) -> ZuDeclVal__<T>::T;
 template <typename U> decltype(ZuDeclVal_<U>(0)) ZuDeclVal() noexcept;
 
 template <typename Span,
@@ -478,10 +478,10 @@ ZuDefaultRDecayer ZuRDecayer(...);
 template <typename T_>
 struct ZuRDecay_ {
   using Decayer = decltype(ZuRDecayer(ZuDeclVal<T_ *>()));
-  using T = typename Decayer::template Decay<T_>::T;
+  using T = Decayer::template Decay<T_>::T;
 };
 template <typename T>
-using ZuRDecay = typename ZuRDecay_<ZuDecay<T>>::T;
+using ZuRDecay = ZuRDecay_<ZuDecay<T>>::T;
 
 // type list (see ZuTL.hh for implementaion)
 template <typename ...Ts> struct ZuTypeList;
@@ -726,14 +726,14 @@ struct ZuUnder_ {
 };
 template <typename U>
 struct ZuUnder_<U, ZuUnder_AsIs> {
-  using T = typename ZuUnder__<U>::T;
+  using T = ZuUnder__<U>::T;
 };
 template <typename T_, T_ V>
 struct ZuUnder_<ZuConstant<T_, V>> {
   using T = T_;
 };
 template <typename U>
-using ZuUnder = typename ZuUnder_<ZuDecay<U>>::T;
+using ZuUnder = ZuUnder_<ZuDecay<U>>::T;
 
 template <typename U>
 ZuInline auto ZuUnderlying(U &&v) noexcept { return ZuUnder<U>(ZuFwd<U>(v)); }

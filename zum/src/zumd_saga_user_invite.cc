@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct UserInviteSaga_ : public Heap,
-    public ZdbSaga<UserInviteSaga_<Heap>, DB> {
-  using Base = ZdbSaga<UserInviteSaga_<Heap>, DB>;
+struct UserInviteSaga : public ZmNHeap<UserInviteSaga>,
+    public ZdbSaga<UserInviteSaga, DB> {
+friend inline ZuStringT<"Zum.UserInviteSaga"> ZmNHeapID(UserInviteSaga *);
+
+  using Base = ZdbSaga<UserInviteSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -135,27 +136,23 @@ struct UserInviteSaga_ : public Heap,
     return {};
   }
 
-  UserInviteSaga_() = default;
-  UserInviteSaga_(User before_, User values_, Grant grant_, int64_t updated_, IdemRequest request_, User external_) :
+  UserInviteSaga() = default;
+  UserInviteSaga(User before_, User values_, Grant grant_, int64_t updated_, IdemRequest request_, User external_) :
     before{ZuMv(before_)},
     values{ZuMv(values_)},
     grant{ZuMv(grant_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)},
     external{ZuMv(external_)} { }
-  UserInviteSaga_(UserInviteArgs args) :
-    UserInviteSaga_{ZuMv(args.before), ZuMv(args.values), ZuMv(args.grant), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.external)} {
+  UserInviteSaga(UserInviteArgs args) :
+    UserInviteSaga{ZuMv(args.before), ZuMv(args.values), ZuMv(args.grant), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.external)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<User>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~UserInviteSaga_() override;
+  ~UserInviteSaga() override;
 };
-
-
-using UserInviteSaga = UserInviteSaga_<
-  ZmHeap<"Zum.UserInviteSaga", UserInviteSaga_<>>>;
 
 ZfStruct(, (UserInviteSaga, FB),
   (before,	(Ctor<0>),	UDT),
@@ -166,16 +163,14 @@ ZfStruct(, (UserInviteSaga, FB),
   (external,	(Ctor<5>),	UDT));
 Zfb::AsTable<"Zum.fbs.UserInvite"> Zfb_Fmt(UserInviteSaga *);
 
-template <typename Heap>
-User UserInviteSaga_<Heap>::result() const
+User UserInviteSaga::result() const
 {
   return User{.id = values.id, .source = UserSource::Local, .name = values.name,
     .profile = values.profile, .email = values.email, .created = updated,
     .updated = updated, .state = State::Pending, .version = 1};
 }
 
-template <typename Heap>
-void UserInviteSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void UserInviteSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.id || values.id == UINT64_MAX || values.id != before.id || !values.name ||
       !grant.id || !grant.digest || !grant.issuer || grant.userID != values.id ||
@@ -190,8 +185,7 @@ void UserInviteSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<UserInviteSaga>{}));
 
-template <typename Heap>
-UserInviteSaga_<Heap>::~UserInviteSaga_() = default;
+UserInviteSaga::~UserInviteSaga() = default;
 
 SagaRef userInvite(ZuBSpan data) {
   return UserInviteSaga::load(data);

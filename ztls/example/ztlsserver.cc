@@ -80,7 +80,7 @@ struct App : public Ztls::Server<App> {
     }
   };
 
-  using Cxn = typename Link::Cxn;
+  using Cxn = Link::Cxn;
   Cxn *accepted(const ZiCxnInfo &ci) {
     return new Cxn(new Link(this), ci);
   }

@@ -428,7 +428,7 @@ struct TestLink :
 	  }
 	  bool buildActiveMigrationChallenge(Zquic::Frame &frame) {
 	    Zquic::PktBuild build;
-	    typename Base::TxPktRefs refs;
+	    Base::TxPktRefs refs;
 	    Zquic::ControlFrame control;
 	    if (!Base::buildMigChal_(build, refs, control))
 	      return false;
@@ -522,7 +522,7 @@ struct TestLink :
     return Base::flushCtlStreams_(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
-      [](Zquic::PktBuild &, ZiSockAddr, const typename Base::TxPktRefs &) {
+      [](Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &) {
 	return true;
       });
   }

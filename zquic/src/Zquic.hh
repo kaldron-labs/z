@@ -1520,7 +1520,7 @@ private:
     if (this->state() != ZmEngineState::Running) return false;
     Link *ptr = link.ptr();
     if (m_links->findPtr(ptr)) return true;
-    m_links->addNode(ZmRef<typename LinkTable::Node>{ZuMv(link)});
+    m_links->addNode(ZmRef<LinkTable::Node>{ZuMv(link)});
     return true;
   }
 

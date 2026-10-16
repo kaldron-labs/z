@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AdminAccessStateSaga_ : public Heap,
-    public ZdbSaga<AdminAccessStateSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AdminAccessStateSaga_<Heap>, DB>;
+struct AdminAccessStateSaga : public ZmNHeap<AdminAccessStateSaga>,
+    public ZdbSaga<AdminAccessStateSaga, DB> {
+friend inline ZuStringT<"Zum.AdminAccessStateSaga"> ZmNHeapID(AdminAccessStateSaga *);
+
+  using Base = ZdbSaga<AdminAccessStateSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -62,25 +63,21 @@ struct AdminAccessStateSaga_ : public Heap,
     return {};
   }
 
-  AdminAccessStateSaga_() = default;
-  AdminAccessStateSaga_(AdminAccess before_, String ifMatch_, int64_t updated_, IdemRequest request_, State::T state_) :
+  AdminAccessStateSaga() = default;
+  AdminAccessStateSaga(AdminAccess before_, String ifMatch_, int64_t updated_, IdemRequest request_, State::T state_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)},
     state{ZuMv(state_)} { }
-  AdminAccessStateSaga_(AdminAccessStateArgs args) :
-    AdminAccessStateSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.state)} {
+  AdminAccessStateSaga(AdminAccessStateArgs args) :
+    AdminAccessStateSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.state)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<AdminAccess>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~AdminAccessStateSaga_() override;
+  ~AdminAccessStateSaga() override;
 };
-
-
-using AdminAccessStateSaga = AdminAccessStateSaga_<
-  ZmHeap<"Zum.AdminAccessStateSaga", AdminAccessStateSaga_<>>>;
 
 ZfStruct(, (AdminAccessStateSaga, FB),
   (before,	(Ctor<0>),			UDT),
@@ -90,16 +87,14 @@ ZfStruct(, (AdminAccessStateSaga, FB),
   (state,	(Ctor<4>, Enum<State::Map>),	Int8));
 Zfb::AsTable<"Zum.fbs.AdminAccessState"> Zfb_Fmt(AdminAccessStateSaga *);
 
-template <typename Heap>
-unsigned AdminAccessStateSaga_<Heap>::recordError(const AdminAccess &item) const
+unsigned AdminAccessStateSaga::recordError(const AdminAccess &item) const
 {
   return accessStateError(*this, item);
 }
 
 ZuAssert((Zdb_::SagaDefValid<AdminAccessStateSaga>{}));
 
-template <typename Heap>
-AdminAccessStateSaga_<Heap>::~AdminAccessStateSaga_() = default;
+AdminAccessStateSaga::~AdminAccessStateSaga() = default;
 
 SagaRef adminAccessState(ZuBSpan data) {
   return AdminAccessStateSaga::load(data);

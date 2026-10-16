@@ -450,8 +450,8 @@ public:
   }
 
 private:
-  using InitialKeyDir = typename Base::InitialKeyDir;
-  using CIDSel = typename Base::CIDSel;
+  using InitialKeyDir = Base::InitialKeyDir;
+  using CIDSel = Base::CIDSel;
 
   void closeCurrent_(bool notify) {
     closeCurrent_(notify, false, CloseFn{});
@@ -839,7 +839,7 @@ private:
 	addr,
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
-	    const typename Base::TxPktRefs &refs) {
+	    const Base::TxPktRefs &refs) {
 	  return sendZeroRTTPkt_(
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	}) || sent;
@@ -853,7 +853,7 @@ private:
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
-	    const typename Base::TxPktRefs &refs) {
+	    const Base::TxPktRefs &refs) {
 	  return sendShortPkt_(
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	});
@@ -911,7 +911,7 @@ private:
       data, ZuMv(addr),
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const typename Base::TxPktRefs *refs) {
+	  const Base::TxPktRefs *refs) {
 	return sendStrictShortPkt_(build, ZuMv(addr_), refs);
       });
   }
@@ -1212,7 +1212,7 @@ private:
 
   bool sendZeroRTTPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const typename Base::TxPktRefs *recordRefs, bool ackEliciting) {
+    const Base::TxPktRefs *recordRefs, bool ackEliciting) {
     if (!Endpoint::connected()) return false;
     return Base::sendProtZeroRTTPkt_(
       CIDSel::Peer, CIDSel::Local,
@@ -1250,7 +1250,7 @@ private:
 
   bool sendShortPkt_(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
-    const typename Base::TxPktRefs *recordRefs, bool ackEliciting,
+    const Base::TxPktRefs *recordRefs, bool ackEliciting,
     unsigned pmtudSize = 0) {
     if (!Endpoint::connected()) return false;
     return Base::sendProtShortPkt_(
@@ -1266,7 +1266,7 @@ private:
 
   bool sendShortPkt_(
     const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
-    ZuBSpan recordFrame, const typename Base::TxPktRefs *recordRefs,
+    ZuBSpan recordFrame, const Base::TxPktRefs *recordRefs,
     bool ackEliciting, unsigned pmtudSize = 0) {
     if (!Endpoint::connected()) return false;
     return Base::sendProtShortPkt_(
@@ -1281,7 +1281,7 @@ private:
   }
   bool sendStrictShortPkt_(
     PktBuild &payload, ZiSockAddr addr,
-    const typename Base::TxPktRefs *recordRefs) {
+    const Base::TxPktRefs *recordRefs) {
     if (!Endpoint::connected()) return false;
     return Base::sendProtShortPkt_(
       CIDSel::Peer, Base::txPNLength_(PktNumSpace::AppData),
@@ -1343,7 +1343,7 @@ private:
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
-	  const typename Base::TxPktRefs &refs) {
+	  const Base::TxPktRefs &refs) {
 	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
   }
@@ -1452,7 +1452,7 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog,
+	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog,
 	  bool earlyData) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog, earlyData);
@@ -1465,7 +1465,7 @@ private:
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
 	  ZiSockAddr addr, const ZmRef<ZiIOBuf> &packetBuf,
-	  typename Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog) {
+	  Base::RxAckMeta &ack, ZquicLog_::PktEvt *qlog) {
 	return consumeFrames_(
 	  level, pn, frames, ZuMv(addr), packetBuf, ack, qlog);
       });
@@ -1473,7 +1473,7 @@ private:
 
   bool consumeFrames_(
     PktNumSpace::T level, uint64_t pn, ZuBSpan frames, ZiSockAddr addr,
-    const ZmRef<ZiIOBuf> &packetBuf, typename Base::RxAckMeta &ack,
+    const ZmRef<ZiIOBuf> &packetBuf, Base::RxAckMeta &ack,
     ZquicLog_::PktEvt *qlog, bool earlyData = false) {
     ZiSockAddr peer = addr;
     ZiSockAddr local = Endpoint::local();

@@ -79,7 +79,7 @@ namespace Zu_ntoa {
   template <typename T_> struct Unsigned_<T_, 4> { using T = uint32_t; };
   template <typename T_> struct Unsigned_<T_, 8> { using T = uint64_t; };
   template <typename T_> struct Unsigned_<T_, 16> { using T = uint128_t; };
-  template <typename T> using Unsigned = typename Unsigned_<T>::T;
+  template <typename T> using Unsigned = Unsigned_<T>::T;
 
   template <typename T, typename R = void>
   using Is128Bit = ZuIfT<(sizeof(T) > 8) && ZuTraits<T>::IsIntegral, R>;
@@ -796,13 +796,13 @@ struct Zu_nprint {
   }
   template <typename T>
   static constexpr unsigned ulen(T /* v_ */) {
-    // typename Zu_ntoa::Unsigned<T> v = v_;
+    // Zu_ntoa::Unsigned<T> v = v_;
     // return MaxLen<0>::len(Log<T>::log(v));
     return MaxLen<0>::len(maxLog<T>());
   }
   template <typename T>
   static unsigned utoa(T v_, char *buf) {
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     return Print::print(v, Log<T>::log(v), buf);
   }
 
@@ -812,7 +812,7 @@ struct Zu_nprint {
   }
   template <typename T>
   static constexpr unsigned ilen(T /* v_ */) {
-    // typename Zu_ntoa::Unsigned<T> v = v_;
+    // Zu_ntoa::Unsigned<T> v = v_;
     // if (ZuUnlikely(v_ < 0)) v = ~v + 1;
     // return MaxLen<1>::len(Log<T>::log(v));
     return MaxLen<1>::len(maxLog<T>());
@@ -820,7 +820,7 @@ struct Zu_nprint {
   template <typename T>
   static unsigned itoa(T v_, char *buf) {
     unsigned n;
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(v_ < 0)) {
       v = ~v + 1;
       n = NPrint::print(v, Log<T>::log(v), buf);
@@ -865,7 +865,7 @@ struct Zu_nprint_frac : public Zu_nprint_frac_<NDP> {
   }
   template <typename T>
   static unsigned itoa(T v_, char *buf) {
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(v_ < 0)) v = ~v + 1;
     Zu_ntoa::Base10_print_frac(v, Width, NDP, Trim, buf);
     return NDP;
@@ -879,7 +879,7 @@ struct Zu_nprint_frac<Width, NDP, '\0'> : public Zu_nprint_frac_<NDP> {
   }
   template <typename T>
   static unsigned itoa(T v_, char *buf) {
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(v_ < 0)) v = ~v + 1;
     return Zu_ntoa::Base10_print_frac_truncate(v, Width, NDP, buf);
   }
@@ -893,7 +893,7 @@ struct Zu_nprint_frac<Width, NDP, '0'> : public Zu_nprint_frac_<NDP> {
   }
   template <typename T>
   static unsigned itoa(T v_, char *buf) {
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(v_ < 0)) v = ~v + 1;
     Zu_ntoa::Base10_print(v, NDP, buf);
     return NDP;
@@ -1044,7 +1044,7 @@ struct Zu_vprint {
   template <typename T>
   static unsigned itoa_hex(const ZuVFmt &fmt, T v_, char *buf) {
     bool m = v_ < 0;
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(m)) v = ~v + 1;
     unsigned n = Zu_ntoa::Log16<sizeof(T)>::log(v);
     unsigned a = unsigned(fmt.alt())<<1;
@@ -1093,7 +1093,7 @@ struct Zu_vprint {
     if (ZuUnlikely(fmt.justification() == ZuFmt::Just::Frac)) {
       unsigned w = fmt.width();
       unsigned n = fmt.ndp();
-      typename Zu_ntoa::Unsigned<T> v = v_;
+      Zu_ntoa::Unsigned<T> v = v_;
       if (ZuUnlikely(v_ < 0)) v = ~v + 1;
       char trim = fmt.trim();
       if (ZuLikely(!trim))
@@ -1106,7 +1106,7 @@ struct Zu_vprint {
       return n;
     }
     bool m = v_ < 0;
-    typename Zu_ntoa::Unsigned<T> v = v_;
+    Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(m)) v = ~v + 1;
     unsigned n = Zu_ntoa::Log10<sizeof(T)>::log(v);
     char comma = fmt.comma();

@@ -219,7 +219,7 @@ struct App :
     opcodes.push(opcode);
     return 1;
   }
-  int message(typename Base::Rx &rx) {
+  int message(Base::Rx &rx) {
     ++calls;
     ++inputs;
     if (reject) return -1;

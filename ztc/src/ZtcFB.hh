@@ -141,8 +141,8 @@ ZfStruct(ZtcAPI, (HeapTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.HeapTelemetry"> Zfb_Fmt(HeapTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<HeapTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Heap &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<HeapTelemetry>>::Types,
+  decltype(ZuDeclVal<const Heap &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (HashTelemetry, FB),
   (id,			(Ctor<0>, Keys<0>),			String),
@@ -161,8 +161,8 @@ ZfStruct(ZtcAPI, (HashTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.HashTelemetry"> Zfb_Fmt(HashTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<HashTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Hash &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<HashTelemetry>>::Types,
+  decltype(ZuDeclVal<const Hash &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (ThreadTelemetry, FB),
   (name,	(Ctor<0>),					String),
@@ -182,8 +182,8 @@ ZfStruct(ZtcAPI, (ThreadTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.ThreadTelemetry"> Zfb_Fmt(ThreadTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<ThreadTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Thread &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<ThreadTelemetry>>::Types,
+  decltype(ZuDeclVal<const Thread &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (CxnTelemetry, FB),
   (mxID,	(Ctor<0>, Keys<0>),			String),
@@ -212,8 +212,8 @@ ZfStruct(ZtcAPI, (CxnTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.CxnTelemetry"> Zfb_Fmt(CxnTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<CxnTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Connection &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<CxnTelemetry>>::Types,
+  decltype(ZuDeclVal<const Connection &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (MxTelemetry, FB),
   (id,		(Ctor<0>, Keys<0>),				String),
@@ -234,8 +234,8 @@ ZfStruct(ZtcAPI, (MxTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.MxTelemetry"> Zfb_Fmt(MxTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<MxTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Mx &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<MxTelemetry>>::Types,
+  decltype(ZuDeclVal<const Mx &>().telKey())::Types>{}));
 
 namespace QueueType {
   ZtEnumMap(ZtcAPI, QueueType, Map, "Thread", "IPC", "Rx", "Tx");
@@ -257,8 +257,8 @@ ZfStruct(ZtcAPI, (QueueTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.QueueTelemetry"> Zfb_Fmt(QueueTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<QueueTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Queue &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<QueueTelemetry>>::Types,
+  decltype(ZuDeclVal<const Queue &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (HubTelemetry, FB),
   (linkType,	(Ctor<11>, Keys<0>, Enum<LinkType::Map>),	Int8),
@@ -278,8 +278,8 @@ ZfStruct(ZtcAPI, (HubTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.HubTelemetry"> Zfb_Fmt(HubTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<HubTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Hub &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<HubTelemetry>>::Types,
+  decltype(ZuDeclVal<const Hub &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (LinkTelemetry, FB),
   (hubID,	(Ctor<0>, Keys<0>),				String),
@@ -295,8 +295,8 @@ ZfStruct(ZtcAPI, (LinkTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.LinkTelemetry"> Zfb_Fmt(LinkTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<LinkTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Link &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<LinkTelemetry>>::Types,
+  decltype(ZuDeclVal<const Link &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (PoolTelemetry, FB),
   (hubID,	(Ctor<0>, Keys<0>),				String),
@@ -314,8 +314,8 @@ ZfStruct(ZtcAPI, (PoolTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.PoolTelemetry"> Zfb_Fmt(PoolTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<PoolTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const Pool &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<PoolTelemetry>>::Types,
+  decltype(ZuDeclVal<const Pool &>().telKey())::Types>{}));
 
 ZfStruct(ZtcAPI, (AppTelemetry, FB),
   (version,	(Ctor<0>),					String),
@@ -337,8 +337,8 @@ ZfStruct(ZtcAPI, (AlertTelemetry, FB),
 Zfb::AsTable<"Ztc.fbs.AlertTelemetry"> Zfb_Fmt(AlertTelemetry *);
 
 ZuAssert((ZuIsSame<
-  typename ZuStructKeyT<Zfb::View<AlertTelemetry>>::Types,
-  typename decltype(ZuDeclVal<const AlertTelemetry &>().telKey())::Types>{}));
+  ZuStructKeyT<Zfb::View<AlertTelemetry>>::Types,
+  decltype(ZuDeclVal<const AlertTelemetry &>().telKey())::Types>{}));
 
 } // Ztc
 

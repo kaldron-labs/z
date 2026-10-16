@@ -99,10 +99,11 @@ struct DB : public ZdbSagaDB {
 static ZdbShard transferShard(uint64_t id) { return (id - 1) & 1; }
 static ZdbShard accountShard(uint64_t id) { return (id - 1) & 1; }
 
-template <typename Heap = ZuVoid>
-struct BalanceTransfer_ : public Heap,
-    public ZdbSaga<BalanceTransfer_<Heap>, DB> {
-  using Base = ZdbSaga<BalanceTransfer_<Heap>, DB>;
+struct BalanceTransfer : public ZmNHeap<BalanceTransfer>,
+    public ZdbSaga<BalanceTransfer, DB> {
+friend inline ZuStringT<"Zdb.Example.BalanceTransfer"> ZmNHeapID(BalanceTransfer *);
+
+  using Base = ZdbSaga<BalanceTransfer, DB>;
   using Base::db;
   using Type = ZuStringT<"balanceTransfer">;
   enum { NPhases = 4 };
@@ -185,14 +186,11 @@ struct BalanceTransfer_ : public Heap,
     return {};
   }
 
-  BalanceTransfer_() = default;
-  BalanceTransfer_(uint64_t transferID_, uint64_t fromID_,
+  BalanceTransfer() = default;
+  BalanceTransfer(uint64_t transferID_, uint64_t fromID_,
       uint64_t toID_, int64_t amount_) :
     transferID{transferID_}, fromID{fromID_}, toID{toID_}, amount{amount_} { }
 };
-
-using BalanceTransfer = BalanceTransfer_<
-  ZmHeap<"Zdb.Example.BalanceTransfer", BalanceTransfer_<>>>;
 
 ZuAssert((Zdb_::SagaDefValid<BalanceTransfer>{}));
 

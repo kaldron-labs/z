@@ -15,10 +15,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ClientAddSaga_ : public Heap,
-    public ZdbSaga<ClientAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ClientAddSaga_<Heap>, DB>;
+struct ClientAddSaga : public ZmNHeap<ClientAddSaga>,
+    public ZdbSaga<ClientAddSaga, DB> {
+friend inline ZuStringT<"Zum.ClientAddSaga"> ZmNHeapID(ClientAddSaga *);
+
+  using Base = ZdbSaga<ClientAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -71,26 +72,22 @@ struct ClientAddSaga_ : public Heap,
     return {};
   }
 
-  ClientAddSaga_() = default;
-  ClientAddSaga_(App app_, Client before_, Client values_, int64_t updated_, IdemRequest request_) :
+  ClientAddSaga() = default;
+  ClientAddSaga(App app_, Client before_, Client values_, int64_t updated_, IdemRequest request_) :
     app{ZuMv(app_)},
     before{ZuMv(before_)},
     values{ZuMv(values_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  ClientAddSaga_(ClientAddArgs args) :
-    ClientAddSaga_{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.updated), ZuMv(args.request)} {
+  ClientAddSaga(ClientAddArgs args) :
+    ClientAddSaga{ZuMv(args.app), ZuMv(args.before), ZuMv(args.values), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<Client>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~ClientAddSaga_() override;
+  ~ClientAddSaga() override;
 };
-
-
-using ClientAddSaga = ClientAddSaga_<
-  ZmHeap<"Zum.ClientAddSaga", ClientAddSaga_<>>>;
 
 ZfStruct(, (ClientAddSaga, FB),
   (app,		(Ctor<0>),	UDT),
@@ -100,14 +97,12 @@ ZfStruct(, (ClientAddSaga, FB),
   (request,	(Ctor<4>),	UDT));
 Zfb::AsTable<"Zum.fbs.ClientAdd"> Zfb_Fmt(ClientAddSaga *);
 
-template <typename Heap>
-unsigned ClientAddSaga_<Heap>::appError(const App &item) const
+unsigned ClientAddSaga::appError(const App &item) const
 {
   return appVersionError(app, item);
 }
 
-template <typename Heap>
-Client ClientAddSaga_<Heap>::result() const
+Client ClientAddSaga::result() const
 {
   Client item = values;
   item.state = State::Active;
@@ -117,8 +112,7 @@ Client ClientAddSaga_<Heap>::result() const
   return item;
 }
 
-template <typename Heap>
-void ClientAddSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void ClientAddSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.id || values.id != before.id || !values.appID ||
       values.appID != app.id || values.appID != before.appID ||
@@ -137,8 +131,7 @@ void ClientAddSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<ClientAddSaga>{}));
 
-template <typename Heap>
-ClientAddSaga_<Heap>::~ClientAddSaga_() = default;
+ClientAddSaga::~ClientAddSaga() = default;
 
 SagaRef clientAdd(ZuBSpan data) {
   return ClientAddSaga::load(data);

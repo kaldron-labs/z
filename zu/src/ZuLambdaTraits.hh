@@ -42,7 +42,7 @@ struct ArgList__<L, Fn> { using T = ZuTypeList<FnArgs...>; }; // const
 template <typename L, typename = void> struct ArgList_; // undefined
 template <typename L> struct ArgList_<L, decltype(&L::operator(), void())> :
     public ArgList__<L, &L::operator()> { };
-template <typename L> using ArgList = typename ArgList_<ZuDecay<L>>::T;
+template <typename L> using ArgList = ArgList_<ZuDecay<L>>::T;
 
 // deduce return type of lambda - Return<L, ArgList>
 template <typename L, typename ArgList_> struct Return_;
@@ -55,7 +55,7 @@ struct Return_<L, ZuTypeList<Args...>> {
   using T = decltype(ZuDeclVal<L &>()(ZuDeclVal<Args>()...));
 };
 template <typename L, typename ArgList_ = ArgList<L>>
-using Return = typename Return_<ZuDecay<L>, ArgList_>::T;
+using Return = Return_<ZuDecay<L>, ArgList_>::T;
 
 template <
   typename L, typename ArgList_ = ArgList<L>, typename = Return<L, ArgList_>>
@@ -154,7 +154,7 @@ template <
   typename L,
   typename ArgList_ = ArgList<L>,
   typename R = Return<L, ArgList_>>
-using InvokeFnT = typename InvokeFnT_<ZuDecay<L>, R, ArgList_>::T;
+using InvokeFnT = InvokeFnT_<ZuDecay<L>, R, ArgList_>::T;
 
 } // ZuLambdaTraits
 

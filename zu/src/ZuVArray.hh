@@ -26,9 +26,9 @@ template <typename Array_>
 class Elem {
 public:
   using Array = Array_;
-  using T = typename Array::T;
+  using T = Array::T;
   static constexpr bool Mutable = Array::Mutable;
-  using R = typename Array::R;
+  using R = Array::R;
   using U = ZuUnder<R>;
 
   Elem() = delete;
@@ -101,7 +101,7 @@ friend Elem;
       return (*static_cast<const Array_ *>(ptr))[i];
     }} { }
 
-  template <typename Array_, typename Elem_ = typename ZuTraits<Array_>::Elem>
+  template <typename Array_, typename Elem_ = ZuTraits<Array_>::Elem>
   Array(Array_ &array) noexcept :
     SetFn_{[](void *ptr, uint64_t i, T elem) {
       (*static_cast<Array_ *>(ptr))[i] = Elem_(ZuMv(elem));
@@ -216,14 +216,14 @@ private:
 };
 
 template <typename Array>
-inline typename Array::R Elem<Array>::get() const {
+inline Array::R Elem<Array>::get() const {
   return (*array.m_getFn)(array.m_ptr, i);
 }
 
 template <typename Array>
 template <bool Mutable_, typename>
 inline Elem<Array> &
-Elem<Array>::operator =(typename Array::T v) {
+Elem<Array>::operator =(Array::T v) {
   (*array.m_setFn)(array.m_ptr, i, ZuMv(v));
   return *this;
 }

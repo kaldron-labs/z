@@ -27,7 +27,7 @@ TESTPROGS = \
 	ZmQueueTest ZmRWLockTest ZmRingFnTest \
 	ZmStackTest ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
 TESTPROGS += ZmWatchTest
-TESTPROGS += ZmHeapTest
+TESTPROGS += ZmHeapTest ZmNHeapTest
 if MINGW
 bin_PROGRAMS = ZmBTTest
 noinst_PROGRAMS = ${TESTPROGS}
@@ -72,6 +72,7 @@ ZmPolyHashTest_SOURCES = ZmPolyHashTest.cc
 ZmPolyCacheTest_SOURCES = ZmPolyCacheTest.cc
 ZmRingTest3_SOURCES = ZmRingTest3.cc
 ZmWatchTest_SOURCES = ZmWatchTest.cc
+ZmNHeapTest_SOURCES = ZmNHeapTest.cc
 
 # Compile the framework into this executable so hooks never enter libZm.
 zm_srcdir = ../src

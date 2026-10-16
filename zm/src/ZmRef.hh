@@ -134,7 +134,7 @@ private:
   template <typename U, typename R>
   struct MatchOtherRef_<U, R, true> { using T = R; };
   template <typename U, typename R = void>
-  using MatchOtherRef = typename MatchOtherRef_<U, R>::T;
+  using MatchOtherRef = MatchOtherRef_<U, R>::T;
 
   // matches ZmRef<U> where U is either T or in the same type hierarchy as T
   template <typename V> struct IsRef_ :
@@ -146,7 +146,7 @@ private:
   template <typename U, typename R>
   struct MatchRef_<U, R, true> { using T = R; };
   template <typename U, typename R = void>
-  using MatchRef = typename MatchRef_<U, R>::T;
+  using MatchRef = MatchRef_<U, R>::T;
 
   // matches U * where U is either T or in the same type hierarchy as T
   template <typename U> struct IsPtr :
@@ -167,7 +167,7 @@ public:
   }
   template <typename R, MatchOtherRef<ZuDeref<R>, int> = 0>
   ZmRef(R &&r) noexcept : m_object{
-	static_cast<T *>(const_cast<typename ZuDeref<R>::T *>(r.m_object))} {
+	static_cast<T *>(const_cast<ZuDeref<R>::T *>(r.m_object))} {
     if constexpr (ZuIsLRef<R>{}) {
       if (T *o = m_object) ZmREF(o);
     } else {
@@ -191,7 +191,7 @@ public:
   template <typename R, typename = MatchRef<R>> void swap(R &r) noexcept {
     T *o = m_object;
     m_object = static_cast<T *>(r.m_object);
-    r.m_object = static_cast<typename R::T *>(o);
+    r.m_object = static_cast<R::T *>(o);
 #ifdef ZmObject_DEBUG
     if (o) ZmMVREF(o, this, &r);
     if (m_object) ZmMVREF(m_object, &r, this);

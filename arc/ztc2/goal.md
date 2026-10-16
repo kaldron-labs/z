@@ -1,0 +1,19 @@
+migrate `ZtcApp` from a TCP listener to `ZiRing`-based IPC:
+- `Ztc::AppCf::id` should default to `ZiProgram::name()` (but can be overridden)
+- telemetry publishers will read requests from a `ZiRing` named per `Ztc::AppCf::id`:
+  - `getenv("ZTC_DIR")` is the subdirectory
+    - `"ztcfoo"` would result in `/tmp/ztcfoo` on Linux
+    - if unset defaults to `"ztc"`, i.e. `/tmp/ztc` on Linux
+  - `ZiPIDFile` is used to create a PID file (e.g. `"/tmp/ztc/zfoo.pid"`)
+    - PID file presence is the "registry" of available telemetry sources
+    - this implies that `ZiRing::open` passing `"zfoo"` will work, since `zfoo` will have **previously** opened it prior to creating the `"zfoo.pid"` PID file
+    - each telemetry publisher will spawn a blocking thread to read from the publisher-specific request ring named per the program name
+    - collisions are not permitted and should cause early program exit (the PID file mechanism ensures unique liveness)
+    - the startup sequence is: open ring, create/update PID file; the ring is closed if the PID file creation fails due to a conflicting live program with the same name
+- all telemetry will be written to a single named MWMR `ZiRing`
+  - `getenv("ZTC_RING")` is the name, again it defaults to `"ztc"`
+  - the telemetry consumer opens it for reading; all the telemetry publishers will fan-in write to it in response to the requests they receive on the rings they register via the PID file directory
+  - telemetry consumers will glob the PID file directory, submit get and subscribe requests to the rings they find in there that they want to subscribe to; the rings will have names corresponding to the PID files ("xxx.pid" means the ring to open is "xxx")
+  - telemetry consumers send telemetry requests to the individual program via its dedicated ring
+  - telemetry publishers broadcast telemetry to the shared global telemetry ring
+- `ztc_telemetry.fbs` `Telemetry` header needs an `id:string`; this then needs to be removed from`AppTelemetry` (`AppTelemetry::id` becomes redundant); each publisher will prefix telemetry data sent to the shared ring with the `Telemetry` header, and consumers can identify which publisher sent each message by keying on the `id` field of the header

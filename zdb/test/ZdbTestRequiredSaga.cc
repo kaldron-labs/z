@@ -10,9 +10,10 @@
 
 namespace zdbtest {
 
-template <typename Heap = ZuVoid>
-struct RequiredSaga_ : public Heap, public ZdbSaga<RequiredSaga_<Heap>, PayloadDB> {
-  using Base = ZdbSaga<RequiredSaga_<Heap>, PayloadDB>;
+struct RequiredSaga : public ZmNHeap<RequiredSaga>, public ZdbSaga<RequiredSaga, PayloadDB> {
+friend inline ZuStringT<"Zdb.Test.RequiredSaga"> ZmNHeapID(RequiredSaga *);
+
+  using Base = ZdbSaga<RequiredSaga, PayloadDB>;
   using Base::db;
   using Type = ZuStringT<"requiredSaga">;
   enum { NPhases = 1 };
@@ -24,10 +25,8 @@ struct RequiredSaga_ : public Heap, public ZdbSaga<RequiredSaga_<Heap>, PayloadD
     return {};
   }
 
-  RequiredSaga_(ZuCSpan name_) : name{ZuMv(name_)} { }
+  RequiredSaga(ZuCSpan name_) : name{ZuMv(name_)} { }
 };
-
-using RequiredSaga = RequiredSaga_<ZmHeap<"Zdb.Test.RequiredSaga", RequiredSaga_<>>>;
 
 ZfStruct(, (RequiredSaga, FB), (name, (Ctor<0>, Required), String));
 Zfb::AsTable<"zdbtest.fbs.RequiredSaga"> Zfb_Fmt(RequiredSaga *);

@@ -20,8 +20,9 @@ namespace ZtlsVaultFixture_ {
 using Value = ZtBArray<ZtArraySecret<true,
   ZtArrayHeapID<"Ztls.Vault.FixtureValue">>>;
 
-template <typename Heap = ZuVoid>
-class Store_ : public Heap, public Ztls_::VaultStore {
+class Store_ : public ZmNHeap<Store_>, public Ztls_::VaultStore {
+friend inline ZuStringT<"Ztls.Vault.Fixture"> ZmNHeapID(Store_ *);
+
 public:
   Ztls::VaultResult init(const Ztls::VaultConfig &) override { return {}; }
   void final() override {
@@ -45,8 +46,7 @@ private:
   Value m_value;
 };
 
-ZuDerive(StoreHeap, (ZmHeap<"Ztls.Vault.Fixture", Store_<>>));
-ZuDerive(Store, Store_<StoreHeap>);
+ZuDerive(Store, Store_);
 
 } // ZtlsVaultFixture_
 

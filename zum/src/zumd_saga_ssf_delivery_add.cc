@@ -9,10 +9,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct SSFDeliveryAddSaga_ : public Heap,
-    public ZdbSaga<SSFDeliveryAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<SSFDeliveryAddSaga_<Heap>, DB>;
+struct SSFDeliveryAddSaga : public ZmNHeap<SSFDeliveryAddSaga>,
+    public ZdbSaga<SSFDeliveryAddSaga, DB> {
+friend inline ZuStringT<"Zum.SSFDeliveryAddSaga"> ZmNHeapID(SSFDeliveryAddSaga *);
+
+  using Base = ZdbSaga<SSFDeliveryAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -77,13 +78,10 @@ struct SSFDeliveryAddSaga_ : public Heap,
     return {};
   }
 
-  SSFDeliveryAddSaga_() = default;
-  SSFDeliveryAddSaga_(SSFDelivery delivery_) : delivery{ZuMv(delivery_)} { }
-  ~SSFDeliveryAddSaga_() override;
+  SSFDeliveryAddSaga() = default;
+  SSFDeliveryAddSaga(SSFDelivery delivery_) : delivery{ZuMv(delivery_)} { }
+  ~SSFDeliveryAddSaga() override;
 };
-
-using SSFDeliveryAddSaga = SSFDeliveryAddSaga_<
-  ZmHeap<"Zum.SSFDeliveryAddSaga", SSFDeliveryAddSaga_<>>>;
 
 ZfStruct(, (SSFDeliveryAddSaga, FB),
   (delivery, (Ctor<0>),		UDT));
@@ -91,8 +89,7 @@ Zfb::AsTable<"Zum.fbs.SSFDeliveryAdd"> Zfb_Fmt(SSFDeliveryAddSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<SSFDeliveryAddSaga>{}));
 
-template <typename Heap>
-SSFDeliveryAddSaga_<Heap>::~SSFDeliveryAddSaga_() = default;
+SSFDeliveryAddSaga::~SSFDeliveryAddSaga() = default;
 
 SagaRef ssfDeliveryAdd(ZuBSpan data) {
   return SSFDeliveryAddSaga::load(data);

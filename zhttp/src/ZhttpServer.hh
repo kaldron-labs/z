@@ -192,7 +192,7 @@ enum { StreamStopBatch = 64 };
 template <typename Impl, typename Parser_, typename Message_>
 struct ServerSession {
   using Parser = Parser_;
-  using State = typename Parser::State;
+  using State = Parser::State;
   using Message = Message_;
 
   Parser	parser;
@@ -232,10 +232,10 @@ template <typename App, typename Profile, typename AppLink>
 class ProtocolServer :
   public ProfileTraits<Profile>::Transport::template Server<App> {
   using HTTP = ProfileTraits<Profile>;
-  using Traits = typename HTTP::Transport;
+  using Traits = HTTP::Transport;
 
 public:
-  using Base = typename Traits::template Server<App>;
+  using Base = Traits::template Server<App>;
   using Base::init;
   using Base::start;
   enum {
@@ -246,7 +246,7 @@ public:
   auto impl() const { return static_cast<const App *>(this); }
   auto impl() { return static_cast<App *>(this); }
 
-  bool init(const HubConfig &hub, const typename Traits::Config &config) {
+  bool init(const HubConfig &hub, const Traits::Config &config) {
     return Base::init(Traits::serverParams(hub, config));
   }
   bool start() {
@@ -268,7 +268,7 @@ public:
 
   ZiConnection *accepted(const ZiCxnInfo &ci) {
     if (!impl()->admit(ci)) return nullptr;
-    return new typename AppLink::Cxn(
+    return new AppLink::Cxn(
       new AppLink{impl(), ci}, ci);
   }
 
@@ -331,7 +331,7 @@ public:
   void listenFailed(bool transient) { user()->listenFailed(transient); }
   ZiConnection *accepted(const ZiCxnInfo &ci) {
     if (!user()->admit(ci)) return nullptr;
-    return new typename Link::Cxn(
+    return new Link::Cxn(
       new Link{this, ci, m_config}, ci);
   }
   bool start() {
@@ -419,7 +419,7 @@ public:
   using Base = Ztls::SrvLink<Hub, SrvLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<SrvLink, AppLink>;
-  using Cxn = typename Base::Cxn;
+  using Cxn = Base::Cxn;
   using Active = ZtArray<ZmRef<AppLink>,
     ZtArrayHeapID<"Zhttp.H2">>;
 
@@ -619,8 +619,8 @@ public:
   // HPACK encoding is Tx-owned; construct headers with transmit_() on Tx.
   template <typename Builder>
   auto transmit_(Builder &) {
-    using HdrCatalog = typename Builder::HdrCatalog;
-    using Sets = typename ResponseHeaderSets<App>::T;
+    using HdrCatalog = Builder::HdrCatalog;
+    using Sets = ResponseHeaderSets<App>::T;
     if constexpr (HeaderPlan<HdrCatalog, Sets>::Valid)
       return txStream_(HeaderPlan<HdrCatalog, Sets>::Index);
     else
@@ -789,7 +789,7 @@ public:
   void listenFailed(bool transient) { user()->listenFailed(transient); }
   ZiConnection *accepted(const ZiCxnInfo &ci) {
     if (!user()->admit(ci)) return nullptr;
-    return new typename Link::Cxn(
+    return new Link::Cxn(
       new Link{this, ci, m_config}, ci);
   }
   bool start() {
@@ -882,12 +882,12 @@ class SrvLink :
   public H2_::Wire<SrvLink<App>, typename App::H2Link> {
 public:
   using Hub = ServerHub<App>;
-  using H1AppLink = typename App::H1Link;
-  using H2AppLink = typename App::H2Link;
+  using H1AppLink = App::H1Link;
+  using H2AppLink = App::H2Link;
   using Base = Ztls::SrvLink<Hub, SrvLink,
     Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<SrvLink, H2AppLink>;
-  using Cxn = typename Base::Cxn;
+  using Cxn = Base::Cxn;
   using Active = ZtArray<ZmRef<H2AppLink>,
     ZtArrayHeapID<"Zhttp.H2">>;
 
@@ -1815,10 +1815,10 @@ public:
   using Impl = Impl_;
   using ReqParser = ReqParser_;
   using ResQ = ResQ_;
-  using ReqHdrCatalog = typename ReqParser::HdrCatalog;
-  using ResBuilder = typename ResQ::Node;
-  using ResBuilder_ = typename ResQ::T;
-  using ResponseHeaders = typename ResponseHeaderSets<ResBuilder_>::T;
+  using ReqHdrCatalog = ReqParser::HdrCatalog;
+  using ResBuilder = ResQ::Node;
+  using ResBuilder_ = ResQ::T;
+  using ResponseHeaders = ResponseHeaderSets<ResBuilder_>::T;
   ZuAssert((ZuIs_<ReqParser, Zhttp::Parser>{}),
     "Zhttp::Server requires ReqParser to derive from Zhttp::Parser");
   ZuAssert((ZuIs_<ResBuilder, ResBuilder_>{}),
@@ -1856,10 +1856,10 @@ private:
   Server_::Stats &stats() { return m_stats; }
   const Server_::Stats &stats() const { return m_stats; }
   template <typename Driver>
-  typename StreamTaskQ::Node *streamTaskAdd_(ZuRef<Driver> driver) {
+  StreamTaskQ::Node *streamTaskAdd_(ZuRef<Driver> driver) {
     return m_streamTasks.push(StreamTask{ZuMv(driver)});
   }
-  void streamTaskDel_(typename StreamTaskQ::Node *task) {
+  void streamTaskDel_(StreamTaskQ::Node *task) {
     if (auto node = m_streamTasks.delNode(task)) node->release_();
   }
 
@@ -1867,9 +1867,9 @@ private:
   struct Parser :
     public MessageTraits<Profile>::template RequestParser<
       Parser<Profile>, ReqHdrCatalog> {
-    using Base = typename MessageTraits<Profile>::template RequestParser<
+    using Base = MessageTraits<Profile>::template RequestParser<
       Parser, ReqHdrCatalog>;
-    using State = typename Base::State;
+    using State = Base::State;
 
     template <typename AppParser>
     static auto bodyMax_(AppParser &parser, uint64_t max, int) ->
@@ -1924,7 +1924,7 @@ private:
     bool body(Rx &rx) {
       return parser_().body(rx);
     }
-    void complete(typename State::T state) {
+    void complete(State::T state) {
       notify(state == State::Complete);
     }
     void notify(bool ok) {
@@ -1951,8 +1951,8 @@ private:
 
   template <typename Profile, typename Builder>
   struct ResponseOps {
-    using HdrCatalog = typename Builder::HdrCatalog;
-    using Headers = typename HdrCatalog::List;
+    using HdrCatalog = Builder::HdrCatalog;
+    using Headers = HdrCatalog::List;
     using Spans = HeaderSpans<HdrCatalog>;
 
     Server		*server = nullptr;
@@ -2041,11 +2041,11 @@ private:
       ResponseTx<Profile, Builder, HasBody, Streaming>,
       typename Builder::HdrCatalog, HasBody, Streaming>,
     public ResponseOps<Profile, Builder> {
-    using Base = typename MessageTraits<Profile>::template Response<
+    using Base = MessageTraits<Profile>::template Response<
       ResponseTx, typename Builder::HdrCatalog, HasBody, Streaming>;
     using Ops = ResponseOps<Profile, Builder>;
-    using HdrCatalog = typename Builder::HdrCatalog;
-    using Headers = typename Builder::Headers;
+    using HdrCatalog = Builder::HdrCatalog;
+    using Headers = Builder::Headers;
     static constexpr unsigned HdrBufSize = Builder::HdrBufSize;
 
     ResponseTx(
@@ -2128,12 +2128,14 @@ private:
     return tx.fixed(response, BodyPolicy::optional(policy));
   }
 
-  template <typename Driver, typename Heap = ZuVoid>
-  struct BodyEmit_ : public Heap, public ZmObject {
-    BodyEmit_(Driver *driver_, int txThread_) :
+  template <typename Driver>
+  struct BodyEmit : public ZmNHeap<BodyEmit<Driver>>, public ZmObject {
+  friend inline ZuStringT<"Zhttp.Server.BodyEmit"> ZmNHeapID(BodyEmit *);
+
+    BodyEmit(Driver *driver_, int txThread_) :
       driver{driver_}, txThread{txThread_} { }
 
-    ~BodyEmit_() {
+    ~BodyEmit() {
       ZiAssert(!driver, "Zhttp", (),
 	"active stream emitter destroyed", return);
     }
@@ -2158,24 +2160,21 @@ private:
     const int	txThread;
   };
 
-  template <typename Driver>
-  ZuDerive(BodyEmitHeap, (ZmHeap<"Zhttp.Server.BodyEmit", BodyEmit_<Driver>>));
-  template <typename Driver>
-  ZuDerive(BodyEmit, (BodyEmit_<Driver, BodyEmitHeap<Driver>>));
-
   template <typename Profile, typename Link_> struct StreamBody;
 
-  template <typename Profile, typename Link_, typename Heap = ZuVoid>
-  struct StreamBody_ : public Heap, public ZuObject {
+  template <typename Profile, typename Link_>
+  struct StreamBody : public ZmNHeap<StreamBody<Profile, Link_>>, public ZuObject {
+  friend inline ZuStringT<"Zhttp.Server.StreamBody"> ZmNHeapID(StreamBody *);
+
     using Self = StreamBody<Profile, Link_>;
     using Emit = BodyEmit<Self>;
     using Tx = ResponseTx<Profile, ResBuilder_, true, true>;
 
-    StreamBody_(Server *server_, Link_ *link_, ResBuilder *appResponse_) :
+    StreamBody(Server *server_, Link_ *link_, ResBuilder *appResponse_) :
       server{server_}, link{link_}, appResponse{appResponse_},
       response{server_, appResponse_->data(), true} { }
 
-    ~StreamBody_() {
+    ~StreamBody() {
       ZiAssert(!emit && !task, "Zhttp", (),
 	"active response stream driver destroyed", return);
     }
@@ -2334,16 +2333,9 @@ private:
     ResBuilder			*appResponse;
     Tx				response;
     ZmRef<Emit>			emit;
-    typename StreamTaskQ::Node	*task = nullptr;
+    StreamTaskQ::Node	*task = nullptr;
     int8_t			state = StreamState::Initial;
   };
-
-  template <typename Profile, typename Link_>
-  ZuDerive(StreamBodyHeap,
-    (ZmHeap<"Zhttp.Server.StreamBody", StreamBody_<Profile, Link_>>));
-  template <typename Profile, typename Link_>
-  ZuDerive(StreamBody,
-    (StreamBody_<Profile, Link_, StreamBodyHeap<Profile, Link_>>));
 
   template <typename Profile, typename Link_>
   bool startResponse_(
@@ -2405,7 +2397,7 @@ private:
 
   private:
     friend Server;
-    template <typename P, typename L, typename H> friend struct StreamBody_;
+    template <typename P, typename L> friend struct StreamBody;
 
     void responseRoute_(uint64_t sequence, ZmRef<ResBuilder> response) {
       auto server = impl()->app()->server;
@@ -2648,7 +2640,7 @@ private:
       Hub<Profile>, Profile,
       typename Server::template Link<Profile>> {
     using HTTP = ProfileTraits<Profile>;
-    using Link_ = typename Server::template Link<Profile>;
+    using Link_ = Server::template Link<Profile>;
     using Link = Link_;
     Server *server = nullptr;
 
@@ -2709,7 +2701,7 @@ private:
   struct TLSHub : public TLS_::ServerHub<TLSHub> {
     using H1Link = TLSH1Link;
     using H2Link = TLSH2Link;
-    using ResponseHeaders = typename Server::ResponseHeaders;
+    using ResponseHeaders = Server::ResponseHeaders;
     Server *server = nullptr;
 
     TLSHub(Server *server_) : server{server_} { }

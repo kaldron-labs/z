@@ -552,7 +552,7 @@ void SagaDB::sagaCatalogScan(ZmRef<SagaCatalog> context, bool next)
     Key key{context->type, uint32_t(context->step - 1)};
     fbb.finish(Zfb::save(fbb, key));
   } else {
-    using GroupKey = typename SplitKey<SagaTypeStep, 0>::GroupKey;
+    using GroupKey = SplitKey<SagaTypeStep, 0>::GroupKey;
     GroupKey key;
     fbb.finish(Zfb::save(fbb, key));
   }
@@ -663,7 +663,7 @@ void SagaDB::sagaScanData(ZmRef<SagaScan> context, bool next)
   ZmAssert(invoked());
   ++m_sagaPending;
   context->pageCount = 0;
-  using Tuple = typename TableT<SagaData>::Tuple;
+  using Tuple = TableT<SagaData>::Tuple;
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
       ZuTupleCall(ZuMv(result).template p<Tuple>(), [context](auto &&...args) {
@@ -741,7 +741,7 @@ void SagaDB::sagaScanSteps(ZmRef<SagaScan> context, bool next)
   ZmAssert(invoked());
   ++m_sagaPending;
   context->pageCount = 0;
-  using Tuple = typename TableT<SagaStep>::Tuple;
+  using Tuple = TableT<SagaStep>::Tuple;
   auto receive = [this, context](ZuUnion<void, Tuple> result, unsigned count) mutable {
     if (result.template is<Tuple>()) {
       ZuTupleCall(ZuMv(result).template p<Tuple>(), [context](auto &&...args) {
@@ -818,7 +818,7 @@ void SagaDB::sagaLoadSteps(ZmRef<SagaScan> context)
     ++context->pending;
     ++m_sagaPending;
     auto shard = row.shard;
-    typename TableT<SagaStep>::template Key<0> stepKey{
+    TableT<SagaStep>::template Key<0> stepKey{
       row.type, row.id, row.step};
     m_sagaStepTable->run(shard, [
       this, context, shard, stepKey = ZuMv(stepKey)

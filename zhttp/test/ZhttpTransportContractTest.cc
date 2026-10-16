@@ -101,7 +101,7 @@ struct BodyBuilder :
   public Zhttp::Builder,
   public Message::template Request<
     BodyBuilder<Message>, Zhttp::DefltHdrCatalog, true, false> {
-  using Base = typename Message::template Request<
+  using Base = Message::template Request<
     BodyBuilder, Zhttp::DefltHdrCatalog, true, false>;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base::body;

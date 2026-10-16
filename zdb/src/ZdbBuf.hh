@@ -42,7 +42,7 @@ ZuUnsigned<Zdb_::DefltBufSize> ZdbBufSize(...); // default
 template <typename U>
 struct ZdbBuf_Size_ { using T = decltype(ZdbBufSize(ZuDeclVal<U *>())); };
 template <typename U>
-using ZdbBuf_Size = typename ZdbBuf_Size_<ZuDecay<U>>::T;
+using ZdbBuf_Size = ZdbBuf_Size_<ZuDecay<U>>::T;
 
 // type-specific buffer cache ID, e.g.
 // struct Foo {
@@ -53,7 +53,7 @@ ZuStringT<"Zdb.Buf"> ZdbBufHeapID(...); // default
 template <typename U>
 struct ZdbBuf_HeapID_ { using T = decltype(ZdbBufHeapID(ZuDeclVal<U *>())); };
 template <typename U>
-using ZdbBuf_HeapID = typename ZdbBuf_HeapID_<ZuDecay<U>>::T;
+using ZdbBuf_HeapID = ZdbBuf_HeapID_<ZuDecay<U>>::T;
 
 namespace Zdb_ {
 

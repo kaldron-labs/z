@@ -205,12 +205,11 @@ ZmHashDerive(TransportContextHash, TransportContextEntry,
       ZmHashLock<ZmNoLock,
 	ZmHashHeapID<"Zmcp.HTTP.Context">>>>));
 
-template <typename Heap = ZuVoid>
-struct ContextTable_ : public Heap, public TransportContextHash {
-  ZuDerive_(ContextTable_, TransportContextHash)
+struct ContextTable : public ZmNHeap<ContextTable>, public TransportContextHash {
+friend inline ZuStringT<"Zmcp.HTTP.ContextTable"> ZmNHeapID(ContextTable *);
+
+  ZuDerive_(ContextTable, TransportContextHash)
 };
-ZuDerive(ContextTableHeap, (ZmHeap<"Zmcp.HTTP.ContextTable", ContextTable_<>>));
-ZuDerive(ContextTable, (ContextTable_<ContextTableHeap>));
 
 template <typename Res>
 using ReplyMessage = ToolReplyMessage<Res>;
@@ -224,7 +223,7 @@ struct ResponseMessages {
     EmptyResultMessage, DiscoverMessage, InitializeMessage,
     ToolsListMessage<Reqs>, ErrorMessage, ToolErrorMessage,
     ProgressMessage, LogMessage>;
-  using T = typename Builtins::template Push<Replies>;
+  using T = Builtins::template Push<Replies>;
 };
 
 // The actual route carries its teardown-list node and concrete close callback.
@@ -353,14 +352,14 @@ using HTTPSessionHash_ = ZmHash<HTTPSessionData<Catalog>,
 template <typename Catalog>
 struct HTTPSessionHash : public HTTPSessionHash_<Catalog> { };
 
-template <typename Catalog, typename Heap = ZuVoid>
-struct SessionTable_ : public Heap, public HTTPSessionHash<Catalog> { };
 template <typename Catalog>
-ZuDerive(SessionTableHeap, (ZmHeap<"Zmcp.HTTP.SessionTable", SessionTable_<Catalog>>));
+struct SessionTable : public ZmNHeap<SessionTable<Catalog>>, public HTTPSessionHash<Catalog> {
+friend inline ZuStringT<"Zmcp.HTTP.SessionTable"> ZmNHeapID(SessionTable *);
+
+};
+
 template <typename Catalog>
-ZuDerive(SessionTable, (SessionTable_<Catalog, SessionTableHeap<Catalog>>));
-template <typename Catalog>
-using HTTPSession = typename HTTPSessionHash<Catalog>::Node;
+using HTTPSession = HTTPSessionHash<Catalog>::Node;
 
 using SessionEntropy =
   ZtArray<uint8_t, ZtArrayHeapID<"Zmcp.HTTP.SessionID">>;
@@ -533,7 +532,7 @@ public:
   using ContentType = ZuStringT<"content-type">;
   using ContentLength = ZuStringT<"content-length">;
   using Session = SessionID;
-  using Message = typename Server_::DispatchPolicy<Catalog>::Message;
+  using Message = Server_::DispatchPolicy<Catalog>::Message;
   using Zhttp::ResBuilder::header;
 
   template <typename M>
@@ -609,7 +608,7 @@ template <typename Catalog>
 class HTTPSSEBuilder : public Zjrpc::HTTPSSEBuilder {
   using Base = Zjrpc::HTTPSSEBuilder;
 public:
-  using Headers = ZuTypeConcat<typename Base::Headers, SessionHeader>;
+  using Headers = ZuTypeConcat<Base::Headers, SessionHeader>;
   using Session = SessionID;
   using Messages = ZuTypeConcat<typename Server_::ResponseMessages<Catalog>::T,
     ZuTypeList<Zjrpc::ErrorMessage, Zjrpc::BatchMessage>>;
@@ -788,7 +787,7 @@ class HTTPResponder {
 
 public:
   using BuilderQ = HTTPBuilderQ<Catalog>;
-  using Builder = typename BuilderQ::Node;
+  using Builder = BuilderQ::Node;
 
   HTTPResponder(Impl *impl_, Zjrpc::Limits limits_) :
     m_impl{impl_}, m_limits{limits_} { }
@@ -809,7 +808,7 @@ public:
     send_();
   }
 
-  void emit(typename Server_::DispatchPolicy<Catalog>::Message message) {
+  void emit(Server_::DispatchPolicy<Catalog>::Message message) {
     if (m_terminal) return;
     if (message.empty()) { finish(); return; }
     if (m_streaming) {
@@ -1255,16 +1254,7 @@ class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
   using Base::m_txThread;
   using Base::m_histSize;
   using Base::m_up;
-  template <typename Link, typename Heap> class Route_;
-
-  template <typename Link>
-  using RouteDefault = Route_<Link, ZuVoid>;
-
-  template <typename Link>
-  ZuDerive(RouteHeap, (ZmHeap<"Zmcp.HTTP.Route", RouteDefault<Link>>));
-
-  template <typename Link>
-  ZuDerive(Route, (Route_<Link, RouteHeap<Link>>));
+  template <typename Link> class Route;
 
   using Session = Server_::HTTPSession<Catalog>;
 
@@ -1274,8 +1264,8 @@ class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
   friend Base;
   friend Dispatch;
 public:
-  using AppHeaderList = typename Base::AppHeaderList;
-  using Headers = typename Base::Headers;
+  using AppHeaderList = Base::AppHeaderList;
+  using Headers = Base::Headers;
   using ResBuilderQ = HTTPBuilderQ<Catalog>;
   using HTTP = Zhttp::Server<HTTPServer,
     Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>, ResBuilderQ>;
@@ -1319,7 +1309,7 @@ public:
 	}
       }
       ZmRef<typename ResBuilderQ::Node> response =
-	new typename ResBuilderQ::Node{};
+	new ResBuilderQ::Node{};
       response->data().accepted();
       link->send(ZuMv(response));
     });
@@ -1329,7 +1319,7 @@ public:
   void originHTTP(Link *link) {
     if (!link) return;
     ZmRef<typename ResBuilderQ::Node> response =
-      new typename ResBuilderQ::Node{};
+      new ResBuilderQ::Node{};
     response->data().forbidden();
     link->send(ZuMv(response));
   }
@@ -1546,7 +1536,7 @@ private:
     });
   }
 
-  typename Server_::HTTPSessionHash<Catalog>::NodeMvRef takeSession_() {
+  Server_::HTTPSessionHash<Catalog>::NodeMvRef takeSession_() {
     auto i = m_sessions->iter();
     if (!i()) return decltype(i.del()){};
     return i.del();
@@ -1568,15 +1558,16 @@ private:
     m_mx->run(ZuFwd<L>(l), m_txThread);
     return true;
   }
-  template <typename Link, typename Heap = ZuVoid>
-  class Route_ : public Heap, public Server_::RouteQ::Node {
-    using Self = Route_<Link, Heap>;
+  template <typename Link>
+  class Route : public ZmNHeap<Route<Link>>, public Server_::RouteQ::Node {
+  friend inline ZuStringT<"Zmcp.HTTP.Route"> ZmNHeapID(Route *);
+    using Self = Route<Link>;
     using Base = Server_::RouteQ::Node;
     using Responder = HTTPResponder<Catalog, Self>;
     using RpcContext = Server_::HTTPDispatchContext<Headers, Catalog>;
 
   public:
-    Route_(HTTPServer *server, Link *link, ZmRef<ZiIOBuf> body,
+    Route(HTTPServer *server, Link *link, ZmRef<ZiIOBuf> body,
 	HTTPMeta meta, Headers headers) :
       Base{[](Server_::RouteBase *route) { static_cast<Self *>(route)->close_(); }},
       m_server{server}, m_link{link}, m_body{ZuMv(body)},
@@ -1640,7 +1631,7 @@ private:
 	  }, inbound_(), &m_rpcContext, &m_control)) failed();
     }
 
-    bool emit_(typename Server_::DispatchPolicy<Catalog>::Message message, int policy) {
+    bool emit_(Server_::DispatchPolicy<Catalog>::Message message, int policy) {
       if (m_closed) return true;
       if (policy == Zjrpc::RoutePolicy::Abort) { failed(); return true; }
       if (!m_link) { finish_(); return true; }
@@ -1853,7 +1844,7 @@ private:
 
   void fail_() { }
   bool receiveRpc_(ZmRef<ZiIOBuf> body, Zjrpc::Parsed parsed,
-      typename Dispatch::Emit emit, Zjrpc::InboundCalls *inbound,
+      Dispatch::Emit emit, Zjrpc::InboundCalls *inbound,
       RpcContext *context, Zjrpc::WorkControl *control) {
     return Dispatch::receive(ZuMv(body), ZuMv(parsed), ZuMv(emit), inbound, context, control);
   }
@@ -1975,7 +1966,7 @@ public:
   using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
     Zws::ExtendedServerLink<WSServer, Profile>,
     Zws::H1ServerLink<WSServer, Profile>>;
-  using Config = typename WS::Config;
+  using Config = WS::Config;
 
   using Connection = WSConnection<WSServer, Impl, Catalog, Link>;
   friend Connection;

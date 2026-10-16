@@ -86,7 +86,7 @@ struct GetID_<Field, true> {
   using T = GetValue<typename Field::Props, ID>;
 };
 template <typename Field>
-using GetID = typename GetID_<Field>::T;
+using GetID = GetID_<Field>::T;
 
 // obtain a consteval typelist of field IDs suitable for use with ZuMatcher_<>
 template <typename> struct GetIDs_;
@@ -97,7 +97,7 @@ struct GetIDs_<ZuTypeList<Field...>> {
 template <typename O>
 struct GetIDs_ : public GetIDs_<ZuActiveFields<O>> { };
 template <typename U>
-using GetIDs = typename GetIDs_<U>::T;
+using GetIDs = GetIDs_<U>::T;
 
 // GetBytesFmt - ZuConstant<uint8_t>
 template <typename Props, bool = HasValue<Props, BytesFmt>{}>
@@ -109,7 +109,7 @@ struct GetBytesFmt_<Props, true> {
   using T = GetValue<Props, BytesFmt>;
 };
 template <typename Props>
-using GetBytesFmt = typename GetBytesFmt_<Props>::T;
+using GetBytesFmt = GetBytesFmt_<Props>::T;
 
 } // ZuFieldProp::CSV
 
@@ -330,7 +330,7 @@ inline void saveValue_(S &s, const T_ &v_)
     s << v.fmt(fmt);
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     using Fmt = decltype(ZfCSV_StringFmt(ZuDeclVal<T *>()));
-    using Handler = typename Fmt::template Handler<T>;
+    using Handler = Fmt::template Handler<T>;
     Handler::save(s, v_);
   }
 }
@@ -359,7 +359,7 @@ template <typename Field, typename S, typename O>
 inline void saveField(S &s, const O &o)
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   saveValue<TypeCode, Props>(s, Field::get(o));
 }
 
@@ -535,7 +535,7 @@ inline T loadValue_(ZuSpan<char> span)
       return v;
   } else if constexpr (TypeCode == ZfFieldTC::UDT) {
     using Fmt = decltype(ZfCSV_StringFmt(ZuDeclVal<T *>()));
-    using Handler = typename Fmt::template Handler<T>;
+    using Handler = Fmt::template Handler<T>;
     return Handler::load(span);
   }
 }
@@ -867,8 +867,8 @@ struct Reader {
   template <typename Field>
   auto loadField() const {
     enum { TypeCode = Field::Type::Code };
-    using Props = typename Field::Props;
-    using T = typename Field::T;
+    using Props = Field::Props;
+    using T = Field::T;
     using R = decltype(loadValue<TypeCode, Props, T>(ZuDeclVal<Cell &>()));
     {
       enum { I = ZuTypeIndex<Field, SaveFields>{} };

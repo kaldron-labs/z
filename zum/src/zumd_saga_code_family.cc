@@ -16,10 +16,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct CodeFamilySaga_ : public Heap,
-    public ZdbSaga<CodeFamilySaga_<Heap>, DB> {
-  using Base = ZdbSaga<CodeFamilySaga_<Heap>, DB>;
+struct CodeFamilySaga : public ZmNHeap<CodeFamilySaga>,
+    public ZdbSaga<CodeFamilySaga, DB> {
+friend inline ZuStringT<"Zum.CodeFamilySaga"> ZmNHeapID(CodeFamilySaga *);
+
+  using Base = ZdbSaga<CodeFamilySaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -220,8 +221,8 @@ struct CodeFamilySaga_ : public Heap,
     grantDelete<Fwd>(this, codeID, ZuMv(complete)); return {};
   }
 
-  CodeFamilySaga_() = default;
-  CodeFamilySaga_(
+  CodeFamilySaga() = default;
+  CodeFamilySaga(
       Bytes codeID_, Bytes codeDigest_,
       Bytes familyID_, String issuer_,
       AppID appID_, UserID userID_,
@@ -263,8 +264,8 @@ struct CodeFamilySaga_ : public Heap,
     beforeGrant{ZuMv(beforeGrant_)},
     clientVersion{ZuMv(clientVersion_)},
     assignmentVersion{ZuMv(assignmentVersion_)} { }
-  CodeFamilySaga_(CodeFamilyArgs args) :
-    CodeFamilySaga_{
+  CodeFamilySaga(CodeFamilyArgs args) :
+    CodeFamilySaga{
       ZuMv(args.codeID), ZuMv(args.codeDigest), ZuMv(args.familyID),
       ZuMv(args.issuer), ZuMv(args.appID), ZuMv(args.userID),
       ZuMv(args.clientID), ZuMv(args.credentialID), ZuMv(args.audience),
@@ -274,11 +275,8 @@ struct CodeFamilySaga_ : public Heap,
       ZuMv(args.scope), ZuMv(args.nonce), ZuMv(args.authorityProviderID),
       ZuMv(args.policyVersion), ZuMv(args.evidenceVersion), ZuMv(args.authoritySource),
       ZuMv(args.beforeGrant), ZuMv(args.clientVersion), ZuMv(args.assignmentVersion)} { }
-  ~CodeFamilySaga_() override;
+  ~CodeFamilySaga() override;
 };
-
-using CodeFamilySaga = CodeFamilySaga_<
-  ZmHeap<"Zum.CodeFamilySaga", CodeFamilySaga_<>>>;
 
 ZfStruct(, (CodeFamilySaga, FB),
   (codeID,		(Ctor<0>),				Bytes),
@@ -312,8 +310,7 @@ Zfb::AsTable<"Zum.fbs.CodeFamily"> Zfb_Fmt(CodeFamilySaga *);
 
 ZuAssert((Zdb_::SagaDefValid<CodeFamilySaga>{}));
 
-template <typename Heap>
-CodeFamilySaga_<Heap>::~CodeFamilySaga_() = default;
+CodeFamilySaga::~CodeFamilySaga() = default;
 
 SagaRef codeFamily(ZuBSpan data) {
   return CodeFamilySaga::load(data);

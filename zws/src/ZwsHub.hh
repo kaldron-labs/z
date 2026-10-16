@@ -40,7 +40,7 @@ class ExtendedClient :
 public:
   ZuAssert(Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = ExtendedClientLink<App, Profile>;
-  using Config = typename ExtendedConfig<Profile>::T;
+  using Config = ExtendedConfig<Profile>::T;
 
   ExtendedClient(App *app) : m_app{app} { }
 
@@ -91,7 +91,7 @@ class ExtendedClientLink :
   using Parser = Extended::ClientParser<ExtendedClientLink, Profile>;
 
 public:
-  using Rx = typename CodecBase::Rx;
+  using Rx = CodecBase::Rx;
   using CodecBase::txStream;
   using CodecBase::txStream_;
   using HTTPBase::txStream_;
@@ -242,7 +242,7 @@ class ExtendedServer :
 public:
   ZuAssert(Zhttp::ProfileTraits<Profile>::Multiplexed);
   using Link = ExtendedServerLink<App, Profile>;
-  using Config = typename ExtendedConfig<Profile>::T;
+  using Config = ExtendedConfig<Profile>::T;
 
   ExtendedServer(App *app, ZiIP localIP, unsigned localPort) :
     m_app{app}, m_localIP{ZuMv(localIP)}, m_localPort{localPort} { }
@@ -304,7 +304,7 @@ class ExtendedServerLink :
   using Parser = Extended::ServerParser<ExtendedServerLink, Profile>;
 
 public:
-  using Rx = typename CodecBase::Rx;
+  using Rx = CodecBase::Rx;
   using CodecBase::txStream;
   using CodecBase::txStream_;
   using HTTPBase::txStream_;

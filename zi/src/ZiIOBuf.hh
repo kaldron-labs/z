@@ -340,8 +340,12 @@ public:
 // the Base parameter permits Ztls, Zdb, etc. to inject their own
 // buffer type into the hierarchy
 
-template <typename Base, unsigned Size_, unsigned MaxSize_, typename Heap = ZuVoid>
-struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
+template <
+  typename Base, unsigned Size_, unsigned MaxSize_, typename HeapID>
+struct alignas(ZiIOBuf_Align) IOBufAlloc__ :
+    public ZmNHeap<IOBufAlloc__<Base, Size_, MaxSize_, HeapID>>, public Base {
+friend inline HeapID ZmNHeapID(IOBufAlloc__ *);
+
   using Base::data;
 
   enum { Size = Size_ };
@@ -365,17 +369,13 @@ struct alignas(ZiIOBuf_Align) IOBufAlloc__ : public Heap, public Base {
   IOBufAlloc__ &operator =(IOBufAlloc__ &&) = delete;
 };
 
-template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
-using IOBuf_Heap = ZmHeap_<HeapID, IOBufAlloc__<Base, Size, MaxSize>>;
-
 template <
   typename Base,
   unsigned Size,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   typename HeapID = ZiIOBuf_HeapID>
 using IOBufAlloc_ =
-  IOBufAlloc__<Base, Size, MaxSize,
-    IOBuf_Heap<Base, Size, MaxSize, HeapID>>;
+  IOBufAlloc__<Base, Size, MaxSize, HeapID>;
 
 template <typename Base>
 constexpr unsigned BuiltinSize(unsigned Size) {

@@ -25,17 +25,15 @@
 
 namespace Zjrpc {
 
-template <typename Link, typename Heap = ZuVoid>
-struct WSOpen_ : public Heap, public ZmObject {
+template <typename Link>
+struct WSOpen : public ZmNHeap<WSOpen<Link>>, public ZmObject {
+friend inline ZuStringT<"Zjrpc.WS.Open"> ZmNHeapID(WSOpen *);
+
   ZmRef<Link> link;
   Zhttp::ConnectedInfo info;
-  WSOpen_(Link *link_, Zhttp::ConnectedInfo info_) :
+  WSOpen(Link *link_, Zhttp::ConnectedInfo info_) :
     link{link_}, info{ZuMv(info_)} { }
 };
-template <typename Link>
-using WSOpenHeap = ZmHeap<"Zjrpc.WS.Open", WSOpen_<Link>>;
-template <typename Link>
-using WSOpen = WSOpen_<Link, WSOpenHeap<Link>>;
 
 class WSConfig {
 public:

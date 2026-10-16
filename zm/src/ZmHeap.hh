@@ -16,10 +16,7 @@
 // - globally configured
 //   - supports profile-guided optimization of heap configuration
 
-// Note: classes using ZmHeap benefit from empty base optimization
-// - with MSVC, only the FIRST base class is optimized by default
-// - to ensure ZmHeap EBO with multiple inheritance, always
-//   place the ZmHeap first in the list of base classes
+// Place ZmNHeap first in the list of base classes for empty base optimization.
 
 #ifndef ZmHeap_HH
 #define ZmHeap_HH
@@ -74,8 +71,6 @@ retry:
 class ZmHeapMgr;
 class ZmHeapMgr_;
 class ZmHeapCache;
-template <typename ID, unsigned Size, unsigned Algnment, bool Sharded>
-class ZmHeapBase;
 template <
   typename ID,
   unsigned Size,
@@ -125,7 +120,6 @@ friend ZmHeapLookup;
 #ifdef ZmHeap_TEST
 friend ZmHeapTest;
 #endif
-template <typename, unsigned, unsigned, bool> friend class ZmHeapBase;
 template <typename, unsigned, unsigned, bool, unsigned>
 friend class ZmHeapCacheT;
 
@@ -362,60 +356,58 @@ struct ZmHeapAllocSize<Size_, false, 0, true> : // larger than cache line size
   public ZuConstant<uint64_t,
     ((Size_ + Zm::CacheLineSize - 1) & ~(Zm::CacheLineSize - 1))> { };
 
-template <typename ID_, unsigned Size_, unsigned Align_, bool Sharded_>
-class ZmHeapBase {
-public:
-  using ID = ID_;
-  enum { AllocSize = ZmHeapAllocSize<Size_>{} };
-  enum { Align = Align_ };
-  enum { Sharded = Sharded_ };
+using ZmNHeapDisable = ZuStringT<"">;
+inline ZmNHeapDisable ZmNHeapID(...);	// default - ZmNHeap disabled
+inline ZuFalse ZmNHeapSharded(...);	// default - not sharded
 
-private:
-  using Cache = ZmHeapCacheT<ID, AllocSize, Align, Sharded>;
+template <typename T>
+using ZmNHeapID_ = decltype(ZmNHeapID(ZuDeclVal<T *>()));
+template <typename T>
+using ZmNHeapSharded_ = decltype(ZmNHeapSharded(ZuDeclVal<T *>()));
 
-public:
-  void *operator new(size_t) { return Cache::alloc(); }
-  void *operator new(size_t, void *p) noexcept { return p; }
-  void operator delete(void *p) noexcept {
-    if (ZuUnlikely(!p)) return;
-    Cache::free(p);
-  }
+// ZmNHeap can be disabled at two levels:
+// - ZmNHeap<..., false> suppresses declaration of `new` and `delete`
+// - ADL lookup of ZmNHeapDisable ZmNHeapID(T *)
+//   declares `new` and `delete` that forward to the global defaults
+
+template <typename T, bool Enabled = true>
+struct ZmNHeap {
+  inline void *operator new(size_t);
+  inline void *operator new(size_t, void *);
+  inline void operator delete(void *) noexcept;
 };
 
-ZuFalse ZmHeap_Disabled_(...); // default
+template <typename T>
+struct ZmNHeap<T, false> { };
 
-template <typename ID>
-using ZmHeap_Disabled = decltype(ZmHeap_Disabled_(ZuDeclVal<ZuDecay<ID> *>()));
-
-ZuTrue ZmHeap_Disabled_(ZuStringT<""> *);
-
-template <
-  typename ID,
-  unsigned Size,
-  unsigned Align,
-  bool Sharded,
-  bool Disabled = ZmHeap_Disabled<ID>{}>
-struct ZmHeap__ { using T = ZmHeapBase<ID, Size, Align, Sharded>; };
-
-template <
-  typename ID,
-  unsigned Size,
-  unsigned Align,
-  bool Sharded>
-struct ZmHeap__<ID, Size, Align, Sharded, true> { using T = ZuVoid; };
-
-template <typename ID, typename T, bool Sharded = false>
-using ZmHeap_ = typename ZmHeap__<ID, sizeof(T), alignof(T), Sharded>::T;
-
-template <ZuString ID, typename T, bool Sharded = false>
-ZuDerive(ZmHeap, (ZmHeap_<ZuStringT<ID>, T, Sharded>));
+template <typename T, bool Enabled>
+ZuInline void *ZmNHeap<T, Enabled>::operator new(size_t size) {
+  using ID = ZmNHeapID_<T>;
+  if constexpr (!ZuIs_<ID, ZmNHeapDisable>{}) {
+    using Sharded = ZmNHeapSharded_<T>;
+    using Cache = ZmHeapCacheT<
+      ID, ZmHeapAllocSize<sizeof(T)>{}, alignof(T), Sharded{}>;
+    return Cache::alloc();
+  } else
+    return ::operator new(size);
+}
+template <typename T, bool Enabled>
+ZuInline void *ZmNHeap<T, Enabled>::operator new(size_t, void *p) {
+  return p;
+}
+template <typename T, bool Enabled>
+ZuInline void ZmNHeap<T, Enabled>::operator delete(void *p) noexcept {
+  if (ZuUnlikely(!p)) return;
+  using ID = ZmNHeapID_<T>;
+  if constexpr (!ZuIs_<ID, ZmNHeapDisable>{}) {
+    using Sharded = ZmNHeapSharded_<T>;
+    using Cache = ZmHeapCacheT<
+      ID, ZmHeapAllocSize<sizeof(T)>{}, alignof(T), Sharded{}>;
+    Cache::free(p);
+  } else
+    return ::operator delete(p);
+}
 
 #include <zlib/ZmFn.hh>
-
-template <ZuString ID, typename T, bool Sharded>
-auto ZmHeapID_(ZmHeap<ID, T, Sharded> *) -> ZuStringT<ID>;
-ZuStringT<""> ZmHeapID_(...);
-template <typename T>
-using ZmHeapID = decltype(ZmHeapID_(ZuDeclVal<ZuDecay<T> *>()));
 
 #endif /* ZmHeap_HH */

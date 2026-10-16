@@ -29,7 +29,7 @@ template <typename Lock> class ZmCondition_ {
   ZmCondition_() = delete;
 
 protected:
-  using Wait = typename Lock::Wait;
+  using Wait = Lock::Wait;
 
   ZmCondition_(Lock &lock) : m_lock{lock} { }
 
@@ -57,7 +57,7 @@ protected:
 
 template <typename Lock> class ZmCondition : public ZmCondition_<Lock> {
   using Base = ZmCondition_<Lock>;
-  using Wait = typename Base::Wait;
+  using Wait = Base::Wait;
   using Base::wait_;
   using Base::lock_;
   using Base::unlock_;

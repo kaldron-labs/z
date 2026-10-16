@@ -13,11 +13,11 @@
 
 namespace Zum {
 
-struct RevokeResult_ : public ZmObject {
+struct RevokeResult : public ZmNHeap<RevokeResult>, public ZmObject {
+friend inline ZuStringT<"Zum.RevokeResult"> ZmNHeapID(RevokeResult *);
+
   unsigned error = 0;
 };
-struct RevokeResult : public RevokeResult_,
-    public ZmHeap<"Zum.RevokeResult", RevokeResult_> { };
 
 } // namespace Zum
 

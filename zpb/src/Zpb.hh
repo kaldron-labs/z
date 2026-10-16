@@ -132,8 +132,8 @@ ZuDerive(CStringVecArg,
 template <typename T, bool = ZuTraits<T>::IsPointer>
 struct ObjectType_ { using T_ = T; };
 template <typename T>
-struct ObjectType_<T, true> { using T_ = typename ZuTraits<T>::Elem; };
-template <typename T> using ObjectType = typename ObjectType_<T>::T_;
+struct ObjectType_<T, true> { using T_ = ZuTraits<T>::Elem; };
+template <typename T> using ObjectType = ObjectType_<T>::T_;
 
 // Storage grows independently of the builder. Both policies keep the wire
 // suffix at the end of the allocation, so offsets remain end-relative.
@@ -614,7 +614,7 @@ namespace Zpb {
 template <typename O>
 using Transform = decltype(ZpbTransform(ZuDeclVal<ZuDecay<O> *>()));
 
-template <typename O, typename Map = Transform<O>, typename = typename Map::T>
+template <typename O, typename Map = Transform<O>, typename = Map::T>
 AsMapped<Map> Zpb_Fmt(O *);
 
 template <typename O>
@@ -622,7 +622,7 @@ using As = decltype(Zpb_Fmt(ZuDeclVal<ZuUnder<O> *>()));
 
 template <typename Map>
 struct AsMapped {
-  using Wire = typename Map::T;
+  using Wire = Map::T;
   static constexpr auto name() { return As<Wire>::name(); }
   enum { Repeated = false, Union = false };
   template <typename O, typename Facet = ZuFacet::PB> class Handler;
@@ -659,7 +659,7 @@ struct AsUnion<Name, Alts...>::Handler {
     if (!tag) return;
     ZuSwitch::dispatch<Types::N>(tag - 1, [&builder, &o](auto i) {
       using A = ZuType<i, Types>;
-      using T = typename A::T;
+      using T = A::T;
       unsigned before = builder.size();
       As<T>::template Handler<T, Facet>::save(builder, o.template p<i + 1>());
       if (builder.failed()) return;
@@ -670,8 +670,8 @@ struct AsUnion<Name, Alts...>::Handler {
 
   template <unsigned I>
   static void loadAlt(O &o, ZuBSpan raw) {
-    using T = typename Alt_<I>::T;
-    using H = typename As<T>::template Handler<T, Facet>;
+    using T = Alt_<I>::T;
+    using H = As<T>::template Handler<T, Facet>;
     if (o.type() != I) o.template p<I>(H{raw}.ctor());
     else H{raw}.merge(o.template p<I>());
   }
@@ -685,7 +685,7 @@ struct AsUnion<Name, Alts...>::Handler {
       if (index && tag != index) {
 	if (tag && !ZuSwitch::dispatch<Types::N>(tag - 1, [&](auto j) {
 	    using A = ZuType<j, Types>;
-	    using T = typename A::T;
+	    using T = A::T;
 	    return As<T>::template Handler<T, Facet>::template verifyParts<false>(
 	      parts + start, i - start, A::Field, depth - 1);
 	  })) return false;
@@ -696,7 +696,7 @@ struct AsUnion<Name, Alts...>::Handler {
     if (!tag) return true;
     return ZuSwitch::dispatch<Types::N>(tag - 1, [&](auto i) {
       using A = ZuType<i, Types>;
-      using T = typename A::T;
+      using T = A::T;
       return As<T>::template Handler<T, Facet>::template verifyParts<Required>(
 	parts + start, n - start, A::Field, depth - 1);
     });
@@ -757,12 +757,12 @@ template <ZuString Name, unsigned KC, unsigned VC, typename KP, typename VP>
 template <typename O, typename Facet>
 struct AsMap<Name, KC, VC, KP, VP>::Handler {
   using Fmt = AsMap<Name, KC, VC, KP, VP>;
-  using K = typename O::Key;
-  using V = typename O::Val;
+  using K = O::Key;
+  using V = O::Val;
   using Entry = MapEntry<Fmt, K, V>;
   using View = MapEntryView<Fmt, K, V>;
-  using EH = typename As<Entry>::template Handler<Entry, Facet>;
-  using VH = typename As<View>::template Handler<View, Facet>;
+  using EH = As<Entry>::template Handler<Entry, Facet>;
+  using VH = As<View>::template Handler<View, Facet>;
 
   static unsigned count(const O &o) { return o.count_(); }
 
@@ -807,9 +807,9 @@ struct AsMap<Name, KC, VC, KP, VP>::Handler {
 template <ZuString Name>
 template <typename O, typename Facet>
 struct AsArray<Name>::Handler {
-  using E = typename ZuTraits<O>::Elem;
+  using E = ZuTraits<O>::Elem;
   using T = ObjectType<E>;
-  using H = typename As<T>::template Handler<T, Facet>;
+  using H = As<T>::template Handler<T, Facet>;
 
   static unsigned count(const O &o) { return o.length(); }
 
@@ -869,7 +869,7 @@ class AsMessage<Name, Meta...>::Handler {
 
   template <typename F, unsigned = F::Code>
   struct CtorArg {
-    using T = typename F::T;
+    using T = F::T;
     static T initial() {
       if constexpr (F::Code == ZfFieldTC::UDT && !ZuTraits<T>::IsPointer &&
 	!ZuFieldProp::HasDeflt<typename F::Props>{}) {
@@ -900,7 +900,7 @@ class AsMessage<Name, Meta...>::Handler {
       }
       return result;
     }
-    static typename F::T pass(T &value) {
+    static F::T pass(T &value) {
       typename F::T result;
       unsigned n = value.length();
       result.size(n);
@@ -989,7 +989,7 @@ public:
   static consteval void eachNumber(L &&l) {
     if constexpr (UnionField<F>{}) {
       using T = ObjectType<typename F::T>;
-      using Alts = typename As<T>::Types;
+      using Alts = As<T>::Types;
       ZuUnroll::all<Alts>([&l]<typename A>() { l(A::Field); });
     } else l(number<F>());
   }
@@ -1138,8 +1138,8 @@ public:
 	if (seen[ZuTypeIndex<F, Fields>{}]) {
 	  if (!depth) return false;
 	  using Map = Mapping<F::Code>;
-	  using T = typename Map::T;
-	  using H = typename As<T>::template Handler<T, ZuFacet::PB>;
+	  using T = Map::T;
+	  using H = As<T>::template Handler<T, ZuFacet::PB>;
 	  return H::template verifyParts<Required>(nested.data(),
 	    nested.length(), number<F>(), depth - 1);
 	}
@@ -1182,8 +1182,8 @@ private:
   template <unsigned Code, typename V>
   static V mergeMapped(ZuBSpan raw, const V *current) {
     using Map = Mapping<Code>;
-    using T = typename Map::T;
-    using H = typename As<T>::template Handler<T, ZuFacet::PB>;
+    using T = Map::T;
+    using H = As<T>::template Handler<T, ZuFacet::PB>;
     if (!current) return Map::load(H{raw}.ctor());
     T wire = Map::save(*current);
     H{raw}.merge(wire);
@@ -1193,7 +1193,7 @@ private:
   template <unsigned Code, typename B, typename V>
   static void saveMapped(B &builder, const V &value, unsigned field) {
     using Map = Mapping<Code>;
-    using T = typename Map::T;
+    using T = Map::T;
     unsigned before = builder.size();
     As<T>::template Handler<T, ZuFacet::PB>::save(builder, Map::save(value));
     if (builder.failed()) return;
@@ -1223,9 +1223,9 @@ private:
 	  return readField<false, F>(bytes, pos, type,
 	    [&](const auto &value) {
 	    if constexpr (F::Code == ZfFieldTC::UDT) {
-	      using T = typename F::T;
+	      using T = F::T;
 	      using U = ObjectType<T>;
-	      using H = typename As<U>::template Handler<U, Facet>;
+	      using H = As<U>::template Handler<U, Facet>;
 	      if constexpr (As<U>::Union) {
 		H::template loadAlt<Alt{}>(state.template get<F>(), value);
 	      } else if constexpr (As<U>::Repeated) {
@@ -1328,7 +1328,7 @@ private:
 	    return;
 	  }
 	if constexpr (required) {
-	  using H = typename As<T>::template Handler<T, Facet>;
+	  using H = As<T>::template Handler<T, Facet>;
 	  if constexpr (ZuTraits<typename F::T>::IsPointer) {
 	    if (!H::count(*value)) { builder.fail(Error::Required); return; }
 	  } else if (!H::count(value)) { builder.fail(Error::Required); return; }
@@ -1492,8 +1492,8 @@ private:
     ZuBSpan raw;
     if (!Wire::readLength(bytes, pos, raw)) return false;
     using Map = Mapping<Code>;
-    using T = typename Map::T;
-    using H = typename As<T>::template Handler<T, ZuFacet::PB>;
+    using T = Map::T;
+    using H = As<T>::template Handler<T, ZuFacet::PB>;
     if constexpr (Validate) {
       if (!depth) return false;
       Part part{0, raw};
@@ -1513,7 +1513,7 @@ private:
 	uint64_t raw;
 	return Wire::readVarint(bytes, pos, raw) && apply(bool(raw));
       } else if constexpr (fixed<F>()) {
-	using T = typename F::T;
+	using T = F::T;
 	if (type != (sizeof(T) == 4 ? Wire::Fixed32 : Wire::Fixed64))
 	  return false;
 	return readFixed<T>(bytes, pos, apply);
@@ -1530,7 +1530,7 @@ private:
       if constexpr (code == ZfFieldTC::Bytes) return apply(raw);
       else return apply(ZuCSpan{reinterpret_cast<const char *>(raw.data()), raw.length()});
     } else if constexpr (code == ZfFieldTC::Float) {
-      using T = typename F::T;
+      using T = F::T;
       if (type != (sizeof(T) == 4 ? Wire::Fixed32 : Wire::Fixed64))
 	return false;
       return readFloat<T>(bytes, pos, apply);
@@ -1616,12 +1616,12 @@ private:
   };
   template <typename F>
   struct FieldCases<F, true> {
-    using Alts = typename As<ObjectType<typename F::T>>::Types;
+    using Alts = As<ObjectType<typename F::T>>::Types;
     template <typename A>
     using Case = FieldCase<F, A::Field, ZuTypeIndex<A, Alts>{} + 1>;
     using T = ZuTypeMap<Case, Alts>;
   };
-  template <typename F> using Cases = typename FieldCases<F>::T;
+  template <typename F> using Cases = FieldCases<F>::T;
   template <typename C> using CaseNumber = ZuUnsigned<C::Number>;
 
   template <template <typename> class Filter, typename Apply>
@@ -1675,9 +1675,9 @@ private:
 	  (void)seen;
 	  if constexpr (F::ReadOnly) return true;
 	  else if constexpr (F::Code == ZfFieldTC::UDT) {
-	    using T = typename F::T;
+	    using T = F::T;
 	    using U = ObjectType<T>;
-	    using H = typename As<U>::template Handler<U, Facet>;
+	    using H = As<U>::template Handler<U, Facet>;
 	    if constexpr (As<U>::Union) {
 	      H::template loadAlt<Alt{}>(F::get(o), value);
 	    } else if constexpr (As<U>::Repeated) {
@@ -1741,8 +1741,8 @@ private:
 template <typename Map>
 template <typename O, typename Facet>
 class AsMapped<Map>::Handler {
-  using Wire = typename Map::T;
-  using H = typename As<Wire>::template Handler<Wire, ZuFacet::PB>;
+  using Wire = Map::T;
+  using H = As<Wire>::template Handler<Wire, ZuFacet::PB>;
 public:
   explicit Handler(ZuBSpan bytes) : m_bytes{bytes} { }
 

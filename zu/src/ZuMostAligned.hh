@@ -29,11 +29,11 @@ struct ZuMostAligned_<T0, Ts...> {
 };
 template <typename ...Ts>
 struct ZuMostAligned_<void, Ts...> {
-  using T = typename ZuMostAligned_<Ts...>::T;
+  using T = ZuMostAligned_<Ts...>::T;
 };
 template <typename ...Ts>
 struct ZuMostAligned_<ZuTypeList<Ts...>> : public ZuMostAligned_<Ts...> { };
 template <typename ...Ts>
-using ZuMostAligned = typename ZuMostAligned_<Ts...>::T;
+using ZuMostAligned = ZuMostAligned_<Ts...>::T;
 
 #endif /* ZuMostAligned_HH */

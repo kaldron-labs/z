@@ -54,7 +54,7 @@ private:
   void (*m_close)(void *) = nullptr;
 };
 
-template <typename T> using GetMethod = typename T::Method;
+template <typename T> using GetMethod = T::Method;
 template <typename T> using GetBorrowed = ZuBool<T::Borrowed>;
 
 template <typename Catalog>
@@ -76,7 +76,7 @@ struct ErrorMessage {
 template <typename Res>
 struct ResultMessage {
   using Response = Res;
-  using Headers = typename Res::Headers;
+  using Headers = Res::Headers;
   ID id;
   Reply<Res> reply;
   template <typename S>
@@ -163,7 +163,7 @@ template <typename Owner, typename Impl, typename Catalog, typename Context = Zu
   typename Policy = DispatchPolicy<Catalog>>
 class Dispatcher {
 public:
-  using Message = typename Policy::Message;
+  using Message = Policy::Message;
   using Emit = ZmFn<bool(Message, int), ZmFnHeapID<"Zjrpc.Route">>;
 
   template <typename Completions, typename Emit, typename Tool>
@@ -189,7 +189,7 @@ public:
 	ZuSwitch::dispatch<Catalog::N>(index,
 	  [&envelope, &completions, &error, &tool](auto I) {
 	    using Req = ZuType<I, Catalog>;
-	    using O = typename Req::Object;
+	    using O = Req::Object;
 	    auto invoke = [&envelope, &completions, &error, &tool](const O &object) {
 	      using Token = decltype(completions.template make<Req>(envelope.id()));
 	      Token token;
@@ -289,19 +289,19 @@ private:
 
   class WorkData : public WorkBase, public InboundHash::Node,
       public Policy::template Completions<WorkData> {
-    using Base = typename Policy::template Completions<WorkData>;
-    template <typename Heap = ZuVoid>
-    struct BatchState_ : public Heap {
+    using Base = Policy::template Completions<WorkData>;
+    struct BatchState : public ZmNHeap<BatchState> {
+    friend inline ZuStringT<"Zjrpc.Batch.Work"> ZmNHeapID(BatchState *);
+
       WorkData *tail = nullptr;
       PendingHash::NodeMvRef response;
       ZmRef<ZiIOBuf> output;
       unsigned next = 0;
       unsigned left;
 
-      explicit BatchState_(unsigned n) : left{n} { }
+      explicit BatchState(unsigned n) : left{n} { }
     };
-    ZuDerive(BatchStateHeap, (ZmHeap<"Zjrpc.Batch.Work", BatchState_<>>));
-    ZuDerive(BatchState, (BatchState_<BatchStateHeap>));
+
   public:
     using OwnerType = Owner;
     Owner *owner() { return m_dispatcher->owner(); }
@@ -319,7 +319,7 @@ private:
 	Emit emit, InboundCalls *inbound, Context *context) :
       m_dispatcher{dispatcher}, m_body{ZuMv(body)}, m_parsed{ZuMv(parsed)},
       m_emit{ZuMv(emit)}, m_inbound{inbound}, m_context{context} {
-      if (batch()) m_batch = new BatchState{nodes().length()};
+      if (batch()) m_batch = new BatchState(nodes().length());
     }
     WorkData(WorkData *parent, Envelope envelope) :
       m_dispatcher{parent->m_dispatcher}, m_parent{parent},
@@ -577,7 +577,7 @@ private:
   };
   using WorkQ = ZmList<WorkData, ZmListNode<WorkData,
     ZmListHeapID<"Zjrpc.Work">>>;
-  using Work = typename WorkQ::Node;
+  using Work = WorkQ::Node;
 
   void addWork(ZmRef<Work> work) { m_works.pushNode(ZuMv(work)); }
   auto delWork(Work *work) {

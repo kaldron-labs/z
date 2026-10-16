@@ -42,10 +42,11 @@ void ScopeSelect::next_()
       ZuMv(consume));
 }
 
-template <typename Heap = ZuVoid>
-class ClientAccessLoad__ : public Heap, public ZmPolymorph  {
+class ClientAccessLoad_ : public ZmNHeap<ClientAccessLoad_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.db.ClientAccessLoad"> ZmNHeapID(ClientAccessLoad_ *);
+
 public:
-  ClientAccessLoad__(DB *db, Client client, ClientAccessLoadFn complete) :
+  ClientAccessLoad_(DB *db, Client client, ClientAccessLoadFn complete) :
     m_db{db}, m_client{ZuMv(client)}, m_complete{ZuMv(complete)} { }
 
   void start()
@@ -54,7 +55,7 @@ public:
       finish_(AuthorityError::Invalid); return;
     }
     auto apps = m_db->apps;
-    apps->run(0, [self = ZmRef<ClientAccessLoad__>{this}, apps]() {
+    apps->run(0, [self = ZmRef<ClientAccessLoad_>{this}, apps]() {
       apps->find<0>(0, ZuFwdTuple(self->m_client.appID), [self = ZuMv(self)](
           ZdbRowRef<App> row) mutable {
         if (!row || !row->data().audience ||
@@ -77,7 +78,7 @@ private:
   void access_()
   {
     auto access = m_db->clientAccess;
-    access->run(0, [self = ZmRef<ClientAccessLoad__>{this}, access]() {
+    access->run(0, [self = ZmRef<ClientAccessLoad_>{this}, access]() {
       access->find<0>(0, ZuFwdTuple(self->m_client.id, self->m_client.appID),
         [self = ZuMv(self)](ZdbRowRef<ClientAccess> row) mutable {
           if (!row) { self->finish_(0); return; }
@@ -95,9 +96,6 @@ private:
   ClientAccess m_access;
   ClientAccessLoadFn m_complete;
 };
-ZuDerive(ClientAccessLoadHeap,
-  (ZmHeap<"Zum.zumd.db.ClientAccessLoad", ClientAccessLoad__<>>));
-ZuDerive(ClientAccessLoad_, (ClientAccessLoad__<ClientAccessLoadHeap>));
 
 void loadClientAccess(DB *db, Client client, ClientAccessLoadFn complete)
 {
@@ -106,10 +104,11 @@ void loadClientAccess(DB *db, Client client, ClientAccessLoadFn complete)
   load->start();
 }
 
-template <typename Heap = ZuVoid>
-class AuthorityLoad__ : public Heap, public ZmPolymorph  {
+class AuthorityLoad_ : public ZmNHeap<AuthorityLoad_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.db.AuthorityLoad"> ZmNHeapID(AuthorityLoad_ *);
+
 public:
-  AuthorityLoad__(
+  AuthorityLoad_(
       DB *db, Grant grant, Client client, bool requestedPresent,
       String requested, int64_t now, AuthorityFn complete) :
     m_db{db}, m_requested{ZuMv(requested)},
@@ -121,7 +120,7 @@ public:
     m_data.principalRoleIDs = m_data.grant.roleIDs;
   }
 
-  AuthorityLoad__(
+  AuthorityLoad_(
       DB *db, Grant grant, User user, Cred cred,
       IDVec principalRoleIDs,
       AuthorityFn complete) :
@@ -137,7 +136,7 @@ public:
     m_data.principalRoleIDs = ZuMv(principalRoleIDs);
   }
 
-  AuthorityLoad__(
+  AuthorityLoad_(
       DB *db, String issuer, Client client,
       bool requestedPresent, String requested, AuthorityFn complete) :
     m_db{db}, m_requested{ZuMv(requested)},
@@ -156,7 +155,7 @@ public:
       delegatedPolicy_();
       return;
     }
-    m_db->apps->run(0, [self = ZmRef<AuthorityLoad__>{this}]() {
+    m_db->apps->run(0, [self = ZmRef<AuthorityLoad_>{this}]() {
       self->issuer_();
     });
   }
@@ -178,7 +177,7 @@ private:
       return;
     }
     auto policies = m_db->authPolicies;
-    policies->run(0, [self = ZmRef<AuthorityLoad__>{this}, policies]() {
+    policies->run(0, [self = ZmRef<AuthorityLoad_>{this}, policies]() {
       policies->find<0>(0, ZuFwdTuple(self->m_data.grant.appID), [
           self = ZuMv(self)](ZdbRowRef<AuthPolicy> row) mutable {
         if (!row || row->data().state != State::Active || row->data().owner ||
@@ -198,7 +197,7 @@ private:
   {
     auto providers = m_db->providers;
     providers->find<0>(0, ZuFwdTuple(m_data.grant.authorityProviderID), [
-        self = ZmRef<AuthorityLoad__>{this}](ZdbRowRef<Provider> row) mutable {
+        self = ZmRef<AuthorityLoad_>{this}](ZdbRowRef<Provider> row) mutable {
       if (!row || row->data().state != State::Active || row->data().owner) {
         self->finish_(AuthorityError::Invalid);
         return;
@@ -213,7 +212,7 @@ private:
     auto evidence = m_db->evidence;
     evidence->find<0>(0, ZuFwdTuple(m_data.grant.appID,
         m_data.grant.userID, m_data.grant.authorityProviderID), [
-        self = ZmRef<AuthorityLoad__>{this}](ZdbRowRef<Evidence> row) mutable {
+        self = ZmRef<AuthorityLoad_>{this}](ZdbRowRef<Evidence> row) mutable {
       if (!row || row->data().owner || !row->data().eligible ||
           row->data().deadline <= self->m_now ||
           row->data().policyVersion != self->m_data.grant.policyVersion ||
@@ -232,7 +231,7 @@ private:
   void delegatedRoles_()
   {
     auto mappings = m_db->roleMaps;
-    mappings->run(0, [self = ZmRef<AuthorityLoad__>{this}, mappings]() {
+    mappings->run(0, [self = ZmRef<AuthorityLoad_>{this}, mappings]() {
       using Tuple = RoleMapTable::Tuple;
       mappings->selectRows<0>(ZuFwdTuple(self->m_data.grant.appID,
           self->m_data.grant.authorityProviderID),
@@ -278,7 +277,7 @@ private:
       return;
     }
     m_db->apps->find<0>(0, ZuFwdTuple(appID), [
-      self = ZmRef<AuthorityLoad__>{this}
+      self = ZmRef<AuthorityLoad_>{this}
     ](ZdbRowRef<App> app) mutable {
       if (!app || app->data().state != State::Active || app->data().owner) {
 	self->finish_(AuthorityError::Invalid);
@@ -310,7 +309,7 @@ private:
     m_requested.null();
     auto access = m_db->clientAccess;
     String clientID = m_data.client.id;
-    access->run(0, [self = ZmRef<AuthorityLoad__>{this}, access,
+    access->run(0, [self = ZmRef<AuthorityLoad_>{this}, access,
 	clientID = ZuMv(clientID)]() mutable {
       using Tuple = ClientAccessTable::Tuple;
       access->selectRows<0>(ZuFwdTuple(ZuMv(clientID)),
@@ -346,7 +345,7 @@ private:
       if (m_candidate.state != State::Active || m_candidate.owner ||
 	  !m_candidate.appID || !m_candidate.roleIDs) continue;
       auto apps = m_db->apps;
-      apps->run(0, [self = ZmRef<AuthorityLoad__>{this}, apps]() mutable {
+      apps->run(0, [self = ZmRef<AuthorityLoad_>{this}, apps]() mutable {
 	apps->find<0>(0, ZuFwdTuple(self->m_candidate.appID), [
 	    self = ZuMv(self)](ZdbRowRef<App> app) mutable {
 	  if (!app || !app->data().audience ||
@@ -367,7 +366,7 @@ private:
   {
     m_select.run(m_db, m_candidate, true,
       m_requestedPresent ? nullptr : &m_candidate.roleIDs,
-      [self = ZmRef<AuthorityLoad__>{this}](int error) mutable {
+      [self = ZmRef<AuthorityLoad_>{this}](int error) mutable {
 	if (error) { self->accessNext_(); return; }
 	self->m_data.selection = self->m_select.take();
 	self->m_data.access = ZuMv(self->m_candidate);
@@ -391,7 +390,7 @@ private:
   {
     String id = m_data.grant.clientID;
     m_db->clients->find<0>(0, ZuFwdTuple(ZuMv(id)), [
-      self = ZmRef<AuthorityLoad__>{this}
+      self = ZmRef<AuthorityLoad_>{this}
     ](ZdbRowRef<Client> row) {
       if (!row || row->data().appID != self->m_data.grant.appID) {
         self->finish_(AuthorityError::Invalid);
@@ -405,7 +404,7 @@ private:
   void catalog_()
   {
     loadClientAccess(m_db, ZuMv(m_data.client),
-      [self = ZmRef<AuthorityLoad__>{this}](
+      [self = ZmRef<AuthorityLoad_>{this}](
 	  int error, App app, Client client, ClientAccess access) mutable {
 	if (error) { self->finish_(error); return; }
 	self->m_data.app = ZuMv(app);
@@ -420,7 +419,7 @@ private:
   {
     auto id = m_data.grant.userID;
     m_db->users->find<0>(0, ZuFwdTuple(id), [
-      self = ZmRef<AuthorityLoad__>{this}
+      self = ZmRef<AuthorityLoad_>{this}
     ](ZdbRowRef<User> row) {
       if (!row) { self->finish_(AuthorityError::Invalid); return; }
       self->m_data.user = row->data();
@@ -434,7 +433,7 @@ private:
   void assignment_()
   {
     auto assignments = m_db->assignments;
-    assignments->run(0, [self = ZmRef<AuthorityLoad__>{this}, assignments]() {
+    assignments->run(0, [self = ZmRef<AuthorityLoad_>{this}, assignments]() {
       assignments->find<0>(0, ZuFwdTuple(self->m_data.grant.appID,
 	  self->m_data.grant.userID), [self = ZuMv(self)](
 	    ZdbRowRef<Assignment> row) mutable {
@@ -458,7 +457,7 @@ private:
   {
     Bytes id = m_data.grant.credentialID;
     m_db->creds->find<0>(0, ZuFwdTuple(ZuMv(id)), [
-      self = ZmRef<AuthorityLoad__>{this}
+      self = ZmRef<AuthorityLoad_>{this}
     ](ZdbRowRef<Cred> row) {
       if (!row) { self->finish_(AuthorityError::Invalid); return; }
       self->m_data.cred = row->data();
@@ -477,7 +476,7 @@ private:
 	&m_data.grant.requestedRoleIDs, &m_data.grant.scope);
       m_requested.null();
       m_select.run(m_db, m_data.access, true, nullptr,
-	[self = ZmRef<AuthorityLoad__>{this}](int error) mutable {
+	[self = ZmRef<AuthorityLoad_>{this}](int error) mutable {
 	  if (!error && self->m_data.app.audience != self->m_data.grant.audience)
 	    error = ScopeError::Unavailable;
 	  if (error) { self->finish_(error); return; }
@@ -497,7 +496,7 @@ private:
     m_requested.null();
     m_select.run(m_db, m_data.access, true,
       m_requestedPresent ? nullptr : &m_data.access.roleIDs,
-      [self = ZmRef<AuthorityLoad__>{this}](int error) mutable {
+      [self = ZmRef<AuthorityLoad_>{this}](int error) mutable {
 	if (error) { self->finish_(error); return; }
 	self->m_data.selection = self->m_select.take();
 	self->selectionDone_();
@@ -522,7 +521,7 @@ private:
     auto id = m_roleIDs[m_index];
     AppID appID = m_data.app.id;
     m_db->roles->find<0>(0, ZuFwdTuple(appID, id), [
-      self = ZmRef<AuthorityLoad__>{this}
+      self = ZmRef<AuthorityLoad_>{this}
     ](ZdbRowRef<Role> row) {
       if (row && row->data().state == State::Active && !row->data().owner)
 	self->m_actionIDs |= row->data().actions;
@@ -549,7 +548,7 @@ private:
     auto id = ActionID(m_action);
     AppID appID = m_data.app.id;
     m_db->actions->find<0>(0, ZuFwdTuple(appID, id), [
-      self = ZmRef<AuthorityLoad__>{this}
+      self = ZmRef<AuthorityLoad_>{this}
     ](ZdbRowRef<Action> row) {
       if (row) {
 	if (row->data().state == State::Active && !row->data().owner)
@@ -565,7 +564,7 @@ private:
   {
     if (m_interactive && m_data.user.source == UserSource::External) {
       auto users = m_db->users;
-      users->run(0, [self = ZmRef<AuthorityLoad__>{this}, users]() mutable {
+      users->run(0, [self = ZmRef<AuthorityLoad_>{this}, users]() mutable {
         users->find<2>(0, ZuFwdTuple(UserSource::Local, self->m_data.user.name),
           [self = ZuMv(self)](ZdbRowRef<User> row) mutable {
             // Presence wins even for pending/suspended local accounts. Never
@@ -611,9 +610,6 @@ private:
   Evidence	m_evidence;
   AuthorityFn	m_complete;
 };
-ZuDerive(AuthorityLoadHeap,
-  (ZmHeap<"Zum.zumd.db.AuthorityLoad", AuthorityLoad__<>>));
-ZuDerive(AuthorityLoad_, (AuthorityLoad__<AuthorityLoadHeap>));
 
 void loadGrantAuth(
     DB *db, Grant grant, Client client, bool requestedPresent,

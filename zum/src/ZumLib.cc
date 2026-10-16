@@ -13,7 +13,7 @@ ZumExtern const char ZumLib[] = "@(#) Z User Management Library v" Z_VERNAME;
 
 int ZfCLI::LongMatcher<ZumCLI::Options, ZuFacet::CLI>::exact(ZuCSpan key)
 {
-  using Entries = typename
+  using Entries =
     ZfCLI::LongEntries<ZumCLI::Options, ZuFacet::CLI, "">::T;
   using KeyList = ZuTypeUnique<ZuTypeMap<ZfCLI::LongKey, Entries>>;
   struct IDs { using Keys = KeyList; };

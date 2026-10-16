@@ -10,9 +10,10 @@
 
 namespace zdbtest {
 
-template <typename Heap = ZuVoid>
-struct SagaB_ : public Heap, public ZdbSaga<SagaB_<Heap>, SagaDB> {
-  using Base = ZdbSaga<SagaB_<Heap>, SagaDB>;
+struct SagaB : public ZmNHeap<SagaB>, public ZdbSaga<SagaB, SagaDB> {
+friend inline ZuStringT<"Zdb.Test.SagaB"> ZmNHeapID(SagaB *);
+
+  using Base = ZdbSaga<SagaB, SagaDB>;
   using Base::db;
   using Type = ZuStringT<"sagaB">;
   enum { NPhases = 1 };
@@ -21,10 +22,8 @@ struct SagaB_ : public Heap, public ZdbSaga<SagaB_<Heap>, SagaDB> {
 
   ZdbSagaPhase(0, payment, Update) { return {}; }
 
-  SagaB_(uint32_t value_) : value{ZuMv(value_)} { }
+  SagaB(uint32_t value_) : value{ZuMv(value_)} { }
 };
-
-using SagaB = SagaB_<ZmHeap<"Zdb.Test.SagaB", SagaB_<>>>;
 
 ZfStruct(, (SagaB, FB),
   (value, (Ctor<0>),		UInt32));

@@ -41,7 +41,7 @@ private:
   template <typename U, typename R>
   struct MatchOtherPtr_<U, R, true> : public MatchOtherPtr__<U, R> { };
   template <typename U, typename R = void>
-  using MatchOtherPtr = typename MatchOtherPtr_<U, R>::T;
+  using MatchOtherPtr = MatchOtherPtr_<U, R>::T;
 
   // matches ZuPtr<U> where U is either T or in the same type hierarchy as T
   template <typename U> struct IsZuPtr__ : public ZuBool<
@@ -58,7 +58,7 @@ private:
   template <typename U, typename R>
   struct MatchZuPtr_<U, R, true> : public MatchZuPtr__<U, R> { };
   template <typename U, typename R = void>
-  using MatchZuPtr = typename MatchZuPtr_<U, R>::T;
+  using MatchZuPtr = MatchZuPtr_<U, R>::T;
 
   // matches U * where U is either T or in the same type hierarchy as T
   template <typename U> struct IsPtr :
@@ -73,7 +73,7 @@ public:
   }
   template <typename R, MatchOtherPtr<ZuDeref<R>, int> = 0>
   ZuPtr(R &&r) noexcept :
-    m_object{static_cast<T *>(const_cast<typename ZuDeref<R>::T *>(r.m_object))}
+    m_object{static_cast<T *>(const_cast<ZuDeref<R>::T *>(r.m_object))}
   {
     if constexpr (!ZuIsLRef<R>{}) r.m_object = nullptr;
   }
@@ -85,7 +85,7 @@ public:
   template <typename R, typename = MatchZuPtr<R>> void swap(R &r) noexcept {
     T *o = m_object;
     m_object = static_cast<T *>(r.m_object);
-    r.m_object = static_cast<typename R::T *>(o);
+    r.m_object = static_cast<R::T *>(o);
   }
 
   template <typename R, typename = MatchZuPtr<R>>

@@ -81,7 +81,7 @@ void testStaticTraits()
 
   using D = ZuDeduce<decltype(&freeFn)>;
   ZuAssert(!D::Member);
-  ZuAssert((ZuIsSame<typename D::R, int>{}));
+  ZuAssert((ZuIsSame<D::R, int>{}));
 }
 
 void testRuntimeSmokes()

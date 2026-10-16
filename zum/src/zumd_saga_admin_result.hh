@@ -12,14 +12,12 @@
 namespace Zum {
 
 template <typename Record>
-struct AdminEditResult_ : public ZmObject {
+struct AdminEditResult : public ZmNHeap<AdminEditResult<Record>>, public ZmObject {
+friend inline ZuStringT<"Zum.AdminEditResult"> ZmNHeapID(AdminEditResult *);
+
   unsigned error = 0;
   Record item;
 };
-
-template <typename Record>
-struct AdminEditResult : public AdminEditResult_<Record>,
-    public ZmHeap<"Zum.AdminEditResult", AdminEditResult_<Record>> { };
 
 } // namespace Zum
 

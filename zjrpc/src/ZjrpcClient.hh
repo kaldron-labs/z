@@ -100,7 +100,7 @@ class HTTPClient : public Client<HTTPClient<Impl, Catalog>, Impl, Catalog>,
   using Calls = Caller<HTTPClient, Catalog>;
   using HTTP = Zhttp::Client<HTTPClient, HTTPPool<Impl, Catalog>>;
   using RequestData = HTTPRequestData<Impl, Catalog>;
-  using Request = typename HTTPRequestQ<Impl, Catalog>::Node;
+  using Request = HTTPRequestQ<Impl, Catalog>::Node;
   using Meta = HTTPHeaders<HTTPResHeaders<Catalog, Impl>>;
   friend Calls;
   friend BatchCaller<HTTPClient>;
@@ -257,8 +257,8 @@ class WSClient : public Client<WSClient<Impl, Catalog, Profile>, Impl, Catalog>,
 public:
   using LinkState = WSClientState;
   using WS = Zws::Client<WSClient, Profile>;
-  using Link = typename WS::Link;
-  using Config = typename WS::Config;
+  using Link = WS::Link;
+  using Config = WS::Config;
 
   WSClient() : m_ws{this} { }
   ~WSClient() { final(); }

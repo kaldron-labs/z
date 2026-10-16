@@ -12,7 +12,7 @@
 
 using namespace Zpb::Reflect;
 
-ZuAssert((ZuIsSame<ZmHeapID<MsgDesc>, ZuStringT<"Zpb.Reflect.MsgDesc">>{}));
+ZuAssert((ZuIsSame<ZmNHeapID_<MsgDesc>, ZuStringT<"Zpb.Reflect.MsgDesc">>{}));
 
 struct NativeRow { uint32_t id = 0; };
 ZfStruct(, (NativeRow, PB), (id,, UInt32));

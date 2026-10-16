@@ -618,7 +618,7 @@ static void collisions()
   unsigned rows = 0;
   ZmSemaphore selected;
   Builder fbb{Table<Order>::allocBuf()};
-  using GroupKey = typename SplitKey<Order, 0>::GroupKey;
+  using GroupKey = SplitKey<Order, 0>::GroupKey;
   fbb.finish(Zfb::save(fbb, GroupKey{}));
   table->select(true, false, false, 0, fbb.buf(), 10,
     [&unchanged, &rows, &selected](TupleResult result) {
@@ -682,7 +682,7 @@ template <typename F, typename T>
 static void valueOwnership(
   const typename F::O &row, ZuCSpan id, unsigned expected)
 {
-  using O = typename F::O;
+  using O = F::O;
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<Zfb::BufferAlign<O>::N> storage{buf};
   Zfb::Builder<decltype(storage)> builder{storage};
@@ -2250,7 +2250,7 @@ static void recoveryPages(bool orphan)
       db->run([db, &removed, wake = ZuMv(wake)]() mutable {
 	auto table = static_cast<ZdbTable<Zdb_::SagaData> *>(db->table("saga").ptr());
 	table->run(0, [table, &removed, wake = ZuMv(wake)]() mutable {
-	  typename ZdbTable<Zdb_::SagaData>::template Key<0> key{
+	  ZdbTable<Zdb_::SagaData>::template Key<0> key{
 	    "liveSaga", N - 1};
 	  table->findDel<0>(0, key,
 	    [&removed, wake = ZuMv(wake)](ZdbRow<Zdb_::SagaData> *o) mutable {

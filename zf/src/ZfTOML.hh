@@ -94,7 +94,7 @@ struct GetScalarFmt_<Props, true> {
   using T = GetValue<Props, ScalarFmt>;
 };
 template <typename Props>
-using GetScalarFmt = typename GetScalarFmt_<Props>::T;
+using GetScalarFmt = GetScalarFmt_<Props>::T;
 
 struct Inline { };
 
@@ -103,7 +103,6 @@ struct Inline { };
 namespace ZfTOML {
 
 using ZfTree::AnyNode;
-using ZfTree::Node_;
 using ZfTree::Node;
 using ZfTree::NodeArray;
 using ZfTree::CNodeArray;
@@ -292,7 +291,7 @@ template <typename O, typename Facet>
 struct AsDeflt_<O, Facet, ZuTypeList<>> { using T = AsString; };
 struct AsDeflt {
   template <typename O, typename Facet>
-  using Handler = typename AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
+  using Handler = AsDeflt_<O, Facet>::T::template Handler<O, Facet>;
 };
 
 } // ZfTOML
@@ -313,9 +312,9 @@ struct IsObjPtr__<U, true> {
 template <typename U, typename = As<U>>
 struct IsObjPtr_ { using T = ZuFalse; };
 template <typename U>
-struct IsObjPtr_<U, AsDeflt> { using T = typename IsObjPtr__<U>::T; };
+struct IsObjPtr_<U, AsDeflt> { using T = IsObjPtr__<U>::T; };
 template <typename U>
-using IsObjPtr = typename IsObjPtr_<U>::T;
+using IsObjPtr = IsObjPtr_<U>::T;
 
 template <typename T, bool = IsObjPtr<ZuDecay<T>>{}>
 struct ObjType_ { using T_ = ZuDecay<T>; };
@@ -324,14 +323,14 @@ struct ObjType_<T, true> {
   using T_ = ZuDecay<decltype(*(ZuDeclVal<const ZuDecay<T> &>()))>;
 };
 template <typename T>
-using ObjType = typename ObjType_<T>::T_;
+using ObjType = ObjType_<T>::T_;
 template <typename T>
 ZuInline decltype(auto) obj_(const T &v) {
   if constexpr (IsObjPtr<ZuDecay<T>>{}) return *v;
   else return v;
 }
 template <typename T, typename Facet>
-using ObjHandler = typename As<ObjType<T>>::template Handler<ObjType<T>, Facet>;
+using ObjHandler = As<ObjType<T>>::template Handler<ObjType<T>, Facet>;
 
 template <typename O, typename Facet>
 auto handler_(const AnyNode *);
@@ -346,7 +345,7 @@ struct ZfAPI TOMLPolicy {
   template <typename Props>
   using GetTimeFmt = ZuFieldProp::TOML::GetTimeFmt<Props>;
   template <typename O, typename Facet>
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   template <typename O>
   using IsObjPtr = ZfTOML::IsObjPtr<O>;
 
@@ -366,7 +365,7 @@ struct ZfAPI TOMLPolicy {
 
   template <typename B>
   static ZuTuple<int, B> tomlIntEOV(ZuCSpan span) {
-    using T = typename B::T;
+    using T = B::T;
     unsigned i = 0, n = span.length(), base = 10;
     bool negative = false;
     if (!n) return {-1, B{}};
@@ -843,7 +842,7 @@ template <typename Field, typename O>
 bool fieldPresent(const O &o)
 {
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   if constexpr (!ZuFieldProp::TOML::GetOptional<Props>{}) {
     return true;
   } else if constexpr (TypeCode == ZfFieldTC::CString ||
@@ -973,7 +972,7 @@ bool saveField(
 {
   if (!fieldPresent<Field>(o)) return false;
   enum { TypeCode = Field::Type::Code };
-  using Props = typename Field::Props;
+  using Props = Field::Props;
   SaveCtx child{ctx.output, ctx.prefix,
     ctx.inline_ || ZuTypeIn<ZuFieldProp::TOML::Inline, Props>{}};
   return saveEntry<Facet, Filter, TypeCode, Props>(s,
@@ -1012,7 +1011,7 @@ template <
   typename S, typename O>
 void saveMap(S &s, const O &o, SaveCtx &ctx)
 {
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   if (ctx.inline_) {
     bool first = true;
     s << '{';
@@ -1082,7 +1081,7 @@ struct AsUnion {
 	  ZfTOMLError::badValue(nullptr, "resolved union", "unresolved"));
       ZuSwitch::dispatch<O::N - 2>(type - 2, [&o, &l](auto I_) {
 	static constexpr unsigned I = I_ + 2;
-	using V = typename O::template Type<I>;
+	using V = O::template Type<I>;
 	const auto &v = o.template p<I>();
 	if constexpr (!IsObjPtr<V>{}) {
 	  l(v);
@@ -1166,7 +1165,7 @@ struct AsMap {
     using O = O_;
     using Base =
       ZfTreeLoad::Map<TOMLPolicy, ValCode_, ValProps_, O, Facet>;
-    using Val = typename Base::Val;
+    using Val = Base::Val;
     using ValProps = ValProps_;
     using Base::Base;
 
@@ -1215,7 +1214,7 @@ struct AsString {
 	template Handler<O_>, O_> {
     using O = O_;
     using Fmt = decltype(ZfTOML_StringFmt(ZuDeclVal<O *>()));
-    using Handler_ = typename Fmt::template Handler<O>;
+    using Handler_ = Fmt::template Handler<O>;
     using Base = ZfTreeLoad::String<TOMLPolicy, Handler_, O>;
     using Base::Base;
 
@@ -1228,7 +1227,7 @@ struct AsString {
 
 template <typename O, typename Facet>
 inline auto handler_(const AnyNode *node) {
-  using Handler = typename As<O>::template Handler<O, Facet>;
+  using Handler = As<O>::template Handler<O, Facet>;
   if (ZuUnlikely(!Handler::valid(node)))
     throw ZfTOML_EXCEPT(badType(node, "UDT"));
   return Handler{node};

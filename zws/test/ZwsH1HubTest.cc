@@ -351,7 +351,7 @@ void run(const TempDir &temp)
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening);
-  using Link = typename Zws::Client<ClientApp, Profile>::Link;
+  using Link = Zws::Client<ClientApp, Profile>::Link;
   ZmRef<Link> link;
   if (listening) {
     Zws::URI uri;

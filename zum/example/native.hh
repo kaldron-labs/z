@@ -193,22 +193,20 @@ static String encode(ZuBSpan data)
   return s;
 }
 
-template <unsigned Status_, typename Heap = ZuVoid>
-struct HTTPData_ : public Heap, public ZmObject {
+template <unsigned Status_>
+struct HTTPData : public ZmNHeap<HTTPData<Status_>>, public ZmObject {
+friend inline ZuStringT<"Zum.Native.HTTPData"> ZmNHeapID(HTTPData *);
+
   enum { Status = Status_ };
   String data;
-  ~HTTPData_() {
+  ~HTTPData() {
     if (data.mutable_()) ZuClear(data);
   }
-  HTTPData_ &operator =(ZuSpan<uint8_t> data_) {
+  HTTPData &operator =(ZuSpan<uint8_t> data_) {
     data = data_;
     return *this;
   }
 };
-template <unsigned Status_>
-ZuDerive(HTTPDataHeap, (ZmHeap<"Zum.Native.HTTPData", HTTPData_<Status_>>));
-template <unsigned Status_>
-ZuDerive(HTTPData, (HTTPData_<Status_, HTTPDataHeap<Status_>>));
 
 struct Result {
   ZmSemaphore	done;
@@ -221,8 +219,9 @@ struct Result {
 
 class ClientBase;
 
-template <typename Heap = ZuVoid>
-struct Call_ : public Heap, public ZmObject {
+struct Call : public ZmNHeap<Call>, public ZmObject {
+friend inline ZuStringT<"Zum.Native.Call"> ZmNHeapID(Call *);
+
   ClientBase	*client = nullptr;
   Result	*result = nullptr;
   String	target;
@@ -230,7 +229,7 @@ struct Call_ : public Heap, public ZmObject {
   String	authorization;
   mutable ZmAtomic<unsigned> done = 0;
 
-  ~Call_() {
+  ~Call() {
     if (body.mutable_()) ZuClear(body);
     if (authorization.mutable_()) ZuClear(authorization);
   }
@@ -249,8 +248,6 @@ struct Call_ : public Heap, public ZmObject {
     finish(0);
   }
 };
-ZuDerive(CallHeap, (ZmHeap<"Zum.Native.Call", Call_<>>));
-ZuDerive(Call, (Call_<CallHeap>));
 
 using OKData = HTTPData<200>;
 using BadRequestData = HTTPData<400>;
@@ -336,27 +333,25 @@ struct ReqBuilder_ : public ZmObject,
 
 struct ResParser : public Zrest::MResParser<ClientCatalog, ReqBuilder_> { };
 
-struct Pool;
+class Pool;
 ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_,
     ZmPQueueHeapID<"zum.ReqBuilder">>>);
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-template <typename Heap = ZuVoid>
-class Pool_ : public Heap, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+friend inline ZuStringT<"zum.Pool"> ZmNHeapID(Pool *);
+
   using Base = Zhttp::Pool<ClientBase, TxQ, ResParser>;
 public:
-  Pool_(ClientBase *client) : Base{client} { }
+  Pool(ClientBase *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
   void archive_(ReqBuilder *) { }
   ZmRef<ReqBuilder> retrieve_(ReqBuilderQ::Key, ReqBuilderQ::Key) { return {}; }
 private:
   ReqBuilderQ m_requests;
 };
-
-ZuDerive(PoolHeap, (ZmHeap<"zum.Pool", Pool_<>>));
-ZuDerive(Pool, (Pool_<PoolHeap>));
 
 class ClientBase : public ZmObject, public Zhttp::Client<ClientBase, Pool> {
   using Base = Zhttp::Client<ClientBase, Pool>;
@@ -410,10 +405,9 @@ private:
   uint64_t m_id = 0;
 };
 
-template <typename Heap = ZuVoid>
-class Client_ : public Heap, public ClientBase { };
-ZuDerive(ClientHeap, (ZmHeap<"Zum.Native.Client", Client_<>>));
-ZuDerive(Client, (Client_<ClientHeap>));
+class Client : public ZmNHeap<Client>, public ClientBase {
+friend inline ZuStringT<"Zum.Native.Client"> ZmNHeapID(Client *);
+};
 
 class Clients {
 public:
@@ -459,22 +453,18 @@ private:
   ZtArray<ZmRef<Client>> m_clients;
 };
 
-template <typename Heap = ZuVoid>
-struct CallbackData_ : public Heap, public ZmObject {
-  ZuSpan<uint8_t> data;
-  CallbackData_ &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
-};
-ZuDerive(CallbackDataHeap,
-  (ZmHeap<"Zum.Native.CallbackData", CallbackData_<>>));
-ZuDerive(CallbackData, (CallbackData_<CallbackDataHeap>));
+struct CallbackData : public ZmNHeap<CallbackData>, public ZmObject {
+friend inline ZuStringT<"Zum.Native.CallbackData"> ZmNHeapID(CallbackData *);
 
-template <typename Heap = ZuVoid>
-struct CallbackBody_ : public Heap, public ZmObject {
+  ZuSpan<uint8_t> data;
+  CallbackData &operator =(ZuSpan<uint8_t> data_) { data = data_; return *this; }
+};
+
+struct CallbackBody : public ZmNHeap<CallbackBody>, public ZmObject {
+friend inline ZuStringT<"Zum.Native.CallbackBody"> ZmNHeapID(CallbackBody *);
+
   String data;
 };
-ZuDerive(CallbackBodyHeap,
-  (ZmHeap<"Zum.Native.CallbackBody", CallbackBody_<>>));
-ZuDerive(CallbackBody, (CallbackBody_<CallbackBodyHeap>));
 
 struct CallbackOK : public Zrest::ResBuilder<CallbackOK, CallbackBody> {
   enum { Body = Zrest::BodyPolicy::Raw };

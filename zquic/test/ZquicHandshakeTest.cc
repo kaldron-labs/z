@@ -98,17 +98,17 @@ ZmListDerive(TLSQueue, TLSMessage,
 using TLSBuf = Zi::IOBufAlloc<TLSQueue::Node, ZiIOBuf_DefltSize,
   TLSBufSize, ZuStringT<"Zquic.Test.TLSBuf">>;
 
-template <typename Heap = ZuVoid>
-struct TLSPeer_ : public Heap {
+struct TLSPeer : public ZmNHeap<TLSPeer> {
+friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
+
   Zquic::Crypto		*crypto;
   // picotls uses four TLS encryption epochs.
   ZuArray<Zquic::CryptoStream, 4> tx;
   ZuArray<Zquic::CryptoStream, 4> rx;
 
-  explicit TLSPeer_(Zquic::Crypto *crypto_) :
+  explicit TLSPeer(Zquic::Crypto *crypto_) :
     crypto{crypto_}, tx(4), rx(4) { }
 };
-using TLSPeer = TLSPeer_<ZmHeap<"Zquic.Test.TLSPeer", TLSPeer_<>>>;
 
 bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     size_t offsets[5])

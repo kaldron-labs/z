@@ -330,7 +330,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     public Zhttp::Builder,
     public Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false> {
-    using Base = typename Zhttp::MessageTraits<Profile>::template Request<
+    using Base = Zhttp::MessageTraits<Profile>::template Request<
       Builder, RequestHeaders, true, false>;
     using HdrCatalog = RequestHeaders;
     using Base::body;
@@ -360,9 +360,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
       public Zhttp::MessageTraits<Profile>::template ResponseParser<
 	Parser, Zhttp::DefltHdrCatalog> {
       using Base =
-	typename Zhttp::MessageTraits<Profile>::template ResponseParser<
+	Zhttp::MessageTraits<Profile>::template ResponseParser<
 	  Parser, Zhttp::DefltHdrCatalog>;
-      using State = typename Base::State;
+      using State = Base::State;
       using HdrCatalog = Zhttp::DefltHdrCatalog;
       using Base::reset;
 
@@ -376,7 +376,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 	  state->responseBody << value;
 	});
       }
-      void complete(typename State::T value) {
+      void complete(State::T value) {
 	if (state->expectResponse &&
 	    (value != State::Complete || status_ != 200))
 	  state->fail();
@@ -459,7 +459,7 @@ void activeStop()
   static unsigned nextPort = ZhttpITestPort::ServerStream;
   state.port = Zhttp::Test::loopbackPort(nextPort++);
   using HTTP = Zhttp::ProfileTraits<Profile>;
-  using Protocol = typename HTTP::Protocol;
+  using Protocol = HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
   state.streamTurn = StreamResult;
@@ -525,7 +525,7 @@ void activeStop()
   ZuCHECK(clientInited, "initialize client");
   bool clientUp = clientInited && client.start();
   ZuCHECK(clientUp, "start client");
-  using ClientLink = typename Client<Profile>::Link;
+  using ClientLink = Client<Profile>::Link;
   ZmRef<ClientLink> link;
   if (clientUp) link = new ClientLink{&client};
 #ifdef ZmObject_DEBUG

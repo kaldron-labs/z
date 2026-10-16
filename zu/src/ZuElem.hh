@@ -32,7 +32,7 @@ template <typename U> using ZuIsElem = ZuIsElem_<ZuDecay<U>>;
 
 template <typename U> struct ZuElemType_ { using T = U; };
 template <typename U> struct ZuElemType_<ZuElem<U>> { using T = U; };
-template <typename U> using ZuElemType = typename ZuElemType_<ZuDecay<U>>::T;
+template <typename U> using ZuElemType = ZuElemType_<ZuDecay<U>>::T;
 
 template <typename U>
 ZuInline constexpr decltype(auto) ZuElemVal(U &&u) {

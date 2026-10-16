@@ -185,7 +185,7 @@ static SharedOutcome mcpCall(ZuCSpan authorization)
 static void contractTest()
 {
   ZuTestScope(contract);
-  ZuCheck((ZuIsSame<typename AddOperation::Object, SharedReq>{}));
+  ZuCheck((ZuIsSame<AddOperation::Object, SharedReq>{}));
   ZuCheck(Catalog::N == 1);
   ZuCheck((ZuTypeIn<Authorization,
     Zrest::GetTypeHdrKeys<RESTAdd>>{}));

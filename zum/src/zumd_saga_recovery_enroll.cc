@@ -16,10 +16,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RecoveryEnrollSaga_ : public Heap,
-    public ZdbSaga<RecoveryEnrollSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RecoveryEnrollSaga_<Heap>, DB>;
+struct RecoveryEnrollSaga : public ZmNHeap<RecoveryEnrollSaga>,
+    public ZdbSaga<RecoveryEnrollSaga, DB> {
+friend inline ZuStringT<"Zum.RecoveryEnrollSaga"> ZmNHeapID(RecoveryEnrollSaga *);
+
+  using Base = ZdbSaga<RecoveryEnrollSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -228,8 +229,8 @@ struct RecoveryEnrollSaga_ : public Heap,
     grantDelete<Fwd>(this, ceremonyID, ZuMv(complete)); return {};
   }
 
-  RecoveryEnrollSaga_() = default;
-  RecoveryEnrollSaga_(
+  RecoveryEnrollSaga() = default;
+  RecoveryEnrollSaga(
       Bytes ceremonyID_, String issuer_,
       String actor_, UserID userID_,
       uint64_t userVersion_, Bytes oldHandle_,
@@ -254,19 +255,16 @@ struct RecoveryEnrollSaga_ : public Heap,
     label{ZuMv(label_)},
     beforeGrant{ZuMv(beforeGrant_)},
     beforeUser{ZuMv(beforeUser_)} { }
-  RecoveryEnrollSaga_(RecoveryEnrollArgs args) :
-    RecoveryEnrollSaga_{
+  RecoveryEnrollSaga(RecoveryEnrollArgs args) :
+    RecoveryEnrollSaga{
       ZuMv(args.ceremonyID), ZuMv(args.issuer), ZuMv(args.actor),
       ZuMv(args.userID), ZuMv(args.userVersion), ZuMv(args.oldHandle),
       ZuMv(args.newHandle), ZuMv(args.credentialID), ZuMv(args.publicKey),
       ZuMv(args.signCount), ZuMv(args.created), ZuMv(args.backupEligible),
       ZuMv(args.backedUp), ZuMv(args.label), ZuMv(args.beforeGrant),
       ZuMv(args.beforeUser)} { }
-  ~RecoveryEnrollSaga_() override;
+  ~RecoveryEnrollSaga() override;
 };
-
-using RecoveryEnrollSaga = RecoveryEnrollSaga_<
-  ZmHeap<"Zum.RecoveryEnrollSaga", RecoveryEnrollSaga_<>>>;
 
 ZfStruct(, (RecoveryEnrollSaga, FB),
   (ceremonyID,		(Ctor<0>),	Bytes),
@@ -289,8 +287,7 @@ Zfb::AsTable<"Zum.fbs.RecoveryEnroll"> Zfb_Fmt(RecoveryEnrollSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RecoveryEnrollSaga>{}));
 
-template <typename Heap>
-RecoveryEnrollSaga_<Heap>::~RecoveryEnrollSaga_() = default;
+RecoveryEnrollSaga::~RecoveryEnrollSaga() = default;
 
 SagaRef recoveryEnroll(ZuBSpan data) {
   return RecoveryEnrollSaga::load(data);

@@ -914,8 +914,10 @@ static SagaRef adminEdit(Edit &&change)
   else if constexpr (ZuIsSame<Edit, RoleMapPutArgs>{}) return roleMapPut(ZuMv(change));
 }
 
-template <typename Edit, typename Heap = ZuVoid>
-class AppEdit__ : public Heap, public ZmPolymorph  {
+template <typename Edit>
+class AppEdit_ : public ZmNHeap<AppEdit_<Edit>>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.AppEdit"> ZmNHeapID(AppEdit_ *);
+
 public:
   enum { AppFirst = ZuIsSame<Edit, RoleEditArgs>{} ||
     ZuIsSame<Edit, ActionEditArgs>{},
@@ -925,14 +927,14 @@ public:
   using ResultRef = decltype(ZuDeclVal<Edit>().result);
   using Result = ZuDecay<decltype(*ZuDeclVal<ResultRef>())>;
 
-  AppEdit__(DB *db, Ztls::Random *rng,
+  AppEdit_(DB *db, Ztls::Random *rng,
       Edit change, AdminDoneFn complete) :
     m_db{db}, m_rng{rng}, m_change{ZuMv(change)},
     m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    source_()->run(0, [self = ZmRef<AppEdit__>{this}]() mutable {
+    source_()->run(0, [self = ZmRef<AppEdit_>{this}]() mutable {
       ZuStructKeyT<Snapshot, 0> key{ZuStructKey<0>(self->snapshot_())};
       self->source_()->template find<0>(0, ZuMv(key),
 	[self = ZuMv(self)](ZdbRowRef<Snapshot> row) mutable {
@@ -956,7 +958,7 @@ private:
   {
     auto users = m_db->users;
     users->find<2>(0, ZuFwdTuple(UserSource::External, m_change.values.name),
-      [self = ZmRef<AppEdit__>{this}](ZdbRowRef<User> row) mutable {
+      [self = ZmRef<AppEdit_>{this}](ZdbRowRef<User> row) mutable {
         if (row) self->m_change.external = row->data();
         self->submit_();
       });
@@ -1000,7 +1002,7 @@ private:
   {
     m_change.app.id = m_change.before.appID;
     auto apps = m_db->apps;
-    apps->run(0, [self = ZmRef<AppEdit__>{this}, apps]() mutable {
+    apps->run(0, [self = ZmRef<AppEdit_>{this}, apps]() mutable {
       apps->find<0>(0, ZuFwdTuple(self->m_change.app.id),
 	[self = ZuMv(self)](ZdbRowRef<App> row) mutable {
 	  if (row) self->m_change.app = row->data();
@@ -1012,7 +1014,7 @@ private:
 
   void record_()
   {
-    table_()->run(0, [self = ZmRef<AppEdit__>{this}]() mutable {
+    table_()->run(0, [self = ZmRef<AppEdit_>{this}]() mutable {
       self->table_()->template find<0>(0,
 	ZuFwdTuple(self->m_change.app.id, self->m_change.before.id),
 	[self = ZuMv(self)](ZdbRowRef<ZuDecay<decltype(ZuDeclVal<Edit>().before)>> row) mutable {
@@ -1039,9 +1041,9 @@ private:
     m_change.result = m_result;
     m_saga = adminEdit(ZuMv(m_change));
     if (!sagaSubmit(m_db, id, m_saga,
-	[self = ZmRef<AppEdit__>{this}](bool ok) mutable {
+	[self = ZmRef<AppEdit_>{this}](bool ok) mutable {
 	  if (!ok) self->finish_(503);
-	}, [self = ZmRef<AppEdit__>{this}](bool ok) mutable {
+	}, [self = ZmRef<AppEdit_>{this}](bool ok) mutable {
 	  if (!self->m_complete) return;
 	  unsigned status = ok ? 200 :
 	    (self->m_result->error ? self->m_result->error : 503);
@@ -1097,16 +1099,12 @@ private:
   unsigned m_itemStatus = 200;
   String m_secretID;
 };
-template <typename Edit>
-ZuDerive(AppEdit_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.AppEdit", AppEdit__<Edit>>));
-template <typename Edit>
-ZuDerive(AppEdit_, (AppEdit__<Edit, AppEdit_Heap<Edit>>));
 
-template <typename Heap = ZuVoid>
-class AssignmentAdd__ : public Heap, public ZmPolymorph  {
+class AssignmentAdd_ : public ZmNHeap<AssignmentAdd_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.AssignmentAdd"> ZmNHeapID(AssignmentAdd_ *);
+
 public:
-  AssignmentAdd__(DB *db, Ztls::Random *rng, AssignmentAddArgs add,
+  AssignmentAdd_(DB *db, Ztls::Random *rng, AssignmentAddArgs add,
       AdminDoneFn complete) : m_db{db}, m_rng{rng},
     m_appID{add.appID}, m_userID{add.userID}, m_complete{ZuMv(complete)}
   {
@@ -1119,9 +1117,9 @@ public:
   {
     ZdbSagaID id;
     if (!randomID(*m_rng, id) || !sagaSubmit(m_db, id, m_saga,
-	[self = ZmRef<AssignmentAdd__>{this}](bool ok) mutable {
+	[self = ZmRef<AssignmentAdd_>{this}](bool ok) mutable {
 	  if (!ok) self->finish_(503);
-	}, [self = ZmRef<AssignmentAdd__>{this}](bool ok) mutable {
+	}, [self = ZmRef<AssignmentAdd_>{this}](bool ok) mutable {
 	  if (!self->m_complete) return;
 	  unsigned status = ok ? 201 :
 	    (self->m_result->error ? self->m_result->error : 503);
@@ -1158,12 +1156,10 @@ private:
   ZmRef<AssignmentAddResult> m_result;
   AdminDoneFn	m_complete;
 };
-ZuDerive(AssignmentAdd_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.AssignmentAdd", AssignmentAdd__<>>));
-ZuDerive(AssignmentAdd_, (AssignmentAdd__<AssignmentAdd_Heap>));
 
-template <typename Heap = ZuVoid>
-class BulkRevoke__ : public Heap, public ZmPolymorph  {
+class BulkRevoke_ : public ZmNHeap<BulkRevoke_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.BulkRevoke"> ZmNHeapID(BulkRevoke_ *);
+
 public:
   enum { Sessions, Consents, Grants, Cleanup };
 
@@ -1175,7 +1171,7 @@ public:
   ZuDerive(RefreshNoticeVec, (ZtArray<RefreshNotice,
     ZtArrayHeapID<"Zum.Admin.RefreshNotice">>));
 
-  BulkRevoke__(DB *db, Ztls::Random *rng, int kind, UserID userID,
+  BulkRevoke_(DB *db, Ztls::Random *rng, int kind, UserID userID,
       String clientID, AppID appID,
       uint32_t limit, IdemRequest request, AdminDoneFn complete,
       RefreshRevokeFn event = {}, MaintenanceFn maintenance = {}) :
@@ -1205,7 +1201,7 @@ public:
   void one(Bytes id)
   {
     auto table = m_db->grants;
-    table->run(0, [self = ZmRef<BulkRevoke__>{this}, table, id = ZuMv(id)]() mutable {
+    table->run(0, [self = ZmRef<BulkRevoke_>{this}, table, id = ZuMv(id)]() mutable {
       table->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
 	  ZdbRowRef<Grant> row) mutable {
 	if (!row) {
@@ -1255,13 +1251,13 @@ private:
   template <unsigned KeyID, typename Table, typename Images, typename Match,
       typename Image>
   void scan_(Table *table, Images *images,
-      typename Zdb_::SplitKey<typename Table::T, KeyID>::GroupKey group, Match match,
-      Image image, typename Table::template Key<KeyID> key = {}, bool next = false)
+      Zdb_::SplitKey<typename Table::T, KeyID>::GroupKey group, Match match,
+      Image image, Table::template Key<KeyID> key = {}, bool next = false)
   {
-    table->run(0, [self = ZmRef<BulkRevoke__>{this}, table, images,
+    table->run(0, [self = ZmRef<BulkRevoke_>{this}, table, images,
 	group = ZuMv(group), match = ZuMv(match), image = ZuMv(image),
 	key = ZuMv(key), next]() mutable {
-      using Tuple = typename Table::Tuple;
+      using Tuple = Table::Tuple;
       auto receive = [self, table, images, group, match = ZuMv(match),
 	  image = ZuMv(image), last = key, raw = unsigned{0}, stop = false](
 	    ZuUnion<void, Tuple> result, unsigned count) mutable {
@@ -1273,7 +1269,7 @@ private:
 	  int matched = match(tuple);
 	  if (matched < 0) { stop = true; return; }
 	  if (!matched) return;
-	  using Record = typename Table::T;
+	  using Record = Table::T;
 	  constexpr unsigned owner = ZuTypeIndex<ZuStringT<"owner">, ZuFieldIDs<Record>>{};
 	  constexpr unsigned state = ZuTypeIndex<ZuStringT<"state">, ZuFieldIDs<Record>>{};
 	  if (tuple.template p<owner>()) { ++self->m_skipped; return; }
@@ -1377,9 +1373,9 @@ private:
       m_saga = revoke(ZuMv(m_change));
     }
     if (!sagaSubmit(m_db, id, m_saga,
-	[self = ZmRef<BulkRevoke__>{this}](bool ok) mutable {
+	[self = ZmRef<BulkRevoke_>{this}](bool ok) mutable {
 	  if (!ok) self->failed_(503);
-	}, [self = ZmRef<BulkRevoke__>{this}](bool ok) mutable {
+	}, [self = ZmRef<BulkRevoke_>{this}](bool ok) mutable {
 	  if (self->m_done) return;
 	  if (ok) { self->success_(); return; }
       unsigned status = self->m_result && self->m_result->error ?
@@ -1413,9 +1409,6 @@ private:
   unsigned	m_skipped = 0;
   bool		m_done = false;
 };
-ZuDerive(BulkRevoke_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.BulkRevoke", BulkRevoke__<>>));
-ZuDerive(BulkRevoke_, (BulkRevoke__<BulkRevoke_Heap>));
 
 static String encode(ZuBSpan data)
 {
@@ -1458,11 +1451,11 @@ private:
   template <unsigned KeyID, typename Record, typename Table, typename Images,
       typename Match, typename Image>
   void scan_(Table *table, Images *images, Match match, Image image,
-      typename Table::template Key<KeyID> key = {}, bool next = false)
+      Table::template Key<KeyID> key = {}, bool next = false)
   {
     table->run(0, [self = ZmRef<ExpiredCleanup_>{this}, table, images,
         match = ZuMv(match), image = ZuMv(image), key = ZuMv(key), next]() mutable {
-      using Tuple = typename Table::Tuple;
+      using Tuple = Table::Tuple;
       auto receive = [self, table, images, match = ZuMv(match), image = ZuMv(image),
           last = key, raw = unsigned{0}](ZuUnion<void, Tuple> result,
           unsigned count) mutable {
@@ -1604,12 +1597,12 @@ private:
   template <unsigned KeyID, typename Table, typename Images, typename Match,
       typename Image>
   void scan_(Table *table, Images *images, Match match, Image image,
-      unsigned limit, typename Table::template Key<KeyID> key = {},
+      unsigned limit, Table::template Key<KeyID> key = {},
       bool next = false)
   {
     table->run(0, [self = ZmRef<AppCleanup_>{this}, table, images,
         match = ZuMv(match), image = ZuMv(image), limit, key = ZuMv(key), next]() mutable {
-      using Tuple = typename Table::Tuple;
+      using Tuple = Table::Tuple;
       auto receive = [self, table, images, match = ZuMv(match), image = ZuMv(image),
           last = key, limit, raw = unsigned{0}](ZuUnion<void, Tuple> result,
           unsigned count) mutable {
@@ -1618,7 +1611,7 @@ private:
           if (images->length() >= limit) return;
           auto tuple = ZuMv(result).template p<Tuple>();
           last = ZuStructKey<KeyID>(tuple);
-          using Record = typename Table::T;
+          using Record = Table::T;
           constexpr unsigned owner = ZuTypeIndex<ZuStringT<"owner">,
             ZuFieldIDs<Record>>{};
           if (tuple.template p<owner>()) { ++self->m_skipped; return; }
@@ -1718,10 +1711,12 @@ void daemonAppCleanup(DB *db, Ztls::Random *rng,
   cleanup->start();
 }
 
-template <typename Heap = ZuVoid>
-class AssignmentChange__ : public Heap, public ZmPolymorph  {
+class AssignmentChange_ : public ZmNHeap<AssignmentChange_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.AssignmentChangeArgs">
+  ZmNHeapID(AssignmentChange_ *);
+
 public:
-  AssignmentChange__(DB *db, Ztls::Random *rng,
+  AssignmentChange_(DB *db, Ztls::Random *rng,
       AppID appID, UserID userID, IDVec roles, State::T state,
       String ifMatch, IdemRequest request, AdminDoneFn complete) :
     m_db{db}, m_rng{rng}, m_appID{appID},
@@ -1756,7 +1751,7 @@ private:
   void app_()
   {
     auto apps = m_db->apps;
-    apps->run(0, [self = ZmRef<AssignmentChange__>{this}, apps]() mutable {
+    apps->run(0, [self = ZmRef<AssignmentChange_>{this}, apps]() mutable {
       apps->find<0>(0, ZuFwdTuple(self->m_appID), [self = ZuMv(self)](
 	  ZdbRowRef<App> row) mutable {
 	self->m_change.appID = self->m_appID;
@@ -1772,7 +1767,7 @@ private:
   void member_()
   {
     auto members = m_db->assignments;
-    members->run(0, [self = ZmRef<AssignmentChange__>{this}, members]() mutable {
+    members->run(0, [self = ZmRef<AssignmentChange_>{this}, members]() mutable {
       members->find<0>(0, ZuFwdTuple(self->m_appID, self->m_userID), [
 	  self = ZuMv(self)](ZdbRowRef<Assignment> row) mutable {
 	auto &change = self->m_change;
@@ -1802,10 +1797,10 @@ private:
     m_change.result = m_result;
     m_saga = assignmentChange(ZuMv(m_change));
     if (!sagaSubmit(m_db, id, m_saga,
-	SagaFn{ZmRef<AssignmentChange__>{this},
-	  ZmFnPtr<&AssignmentChange__::submitted_>{}},
-	SagaFn{ZmRef<AssignmentChange__>{this},
-	  ZmFnPtr<&AssignmentChange__::completed_>{}})) submitted_(false);
+	SagaFn{ZmRef<AssignmentChange_>{this},
+	  ZmFnPtr<&AssignmentChange_::submitted_>{}},
+	SagaFn{ZmRef<AssignmentChange_>{this},
+	  ZmFnPtr<&AssignmentChange_::completed_>{}})) submitted_(false);
   }
 
   void submitted_(bool ok)
@@ -1851,14 +1846,12 @@ private:
   uint64_t	m_resultVersion = 0;
   bool		m_done = false;
 };
-ZuDerive(AssignmentChange_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.AssignmentChangeArgs", AssignmentChange__<>>));
-ZuDerive(AssignmentChange_, (AssignmentChange__<AssignmentChange_Heap>));
 
-template <typename Heap = ZuVoid>
-class ActionAdd__ : public Heap, public ZmPolymorph  {
+class ActionAdd_ : public ZmNHeap<ActionAdd_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.ActionAdd"> ZmNHeapID(ActionAdd_ *);
+
 public:
-  ActionAdd__(DB *db, Ztls::Random *rng, AppID appID,
+  ActionAdd_(DB *db, Ztls::Random *rng, AppID appID,
       NameInput input, IdemRequest request, AdminDoneFn complete) :
     m_db{db},
     m_rng{rng}, m_appID{appID}, m_input{ZuMv(input)},
@@ -1876,7 +1869,7 @@ public:
       return;
     }
     auto apps = m_db->apps;
-    apps->run(0, [self = ZmRef<ActionAdd__>{this}, apps]() mutable {
+    apps->run(0, [self = ZmRef<ActionAdd_>{this}, apps]() mutable {
       apps->find<0>(0, ZuFwdTuple(self->m_appID), [self = ZuMv(self)](
           ZdbRowRef<App> row) mutable { self->app_(ZuMv(row)); });
     });
@@ -1915,8 +1908,8 @@ private:
       .oldUpdated = row ? row->data().updated : 0,
       .request = ZuMv(m_request)};
     if (!sagaSubmit(m_db, m_sagaID, appActionAdd(ZuMv(add)),
-	SagaFn{ZmRef<ActionAdd__>{this}, ZmFnPtr<&ActionAdd__::submitted_>{}},
-	SagaFn{ZmRef<ActionAdd__>{this}, ZmFnPtr<&ActionAdd__::completed_>{}}))
+	SagaFn{ZmRef<ActionAdd_>{this}, ZmFnPtr<&ActionAdd_::submitted_>{}},
+	SagaFn{ZmRef<ActionAdd_>{this}, ZmFnPtr<&ActionAdd_::completed_>{}}))
       submitted_(false);
   }
 
@@ -1941,14 +1934,12 @@ private:
   ZdbSagaID	m_sagaID = 0;
   bool		m_done = false;
 };
-ZuDerive(ActionAdd_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.ActionAdd", ActionAdd__<>>));
-ZuDerive(ActionAdd_, (ActionAdd__<ActionAdd_Heap>));
 
-template <typename Heap = ZuVoid>
-class AppEnroll__ : public Heap, public ZmPolymorph  {
+class AppEnroll_ : public ZmNHeap<AppEnroll_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.AppEnroll"> ZmNHeapID(AppEnroll_ *);
+
 public:
-  AppEnroll__(DB *db, Ztls::Random *rng, Bytes dbKey,
+  AppEnroll_(DB *db, Ztls::Random *rng, Bytes dbKey,
       Issuer issuer,
       AppInput input, IdemRequest request, AdminDoneFn complete) :
     m_db{db},
@@ -1998,9 +1989,9 @@ public:
       .operationQueryOp = MgmtOp::operationQuery,
       .request = ZuMv(m_request)};
     if (!sagaSubmit(m_db, sagaID, Zum::appEnrollment(ZuMv(enrollment)),
-        [self = ZmRef<AppEnroll__>{this}](bool ok) mutable {
+        [self = ZmRef<AppEnroll_>{this}](bool ok) mutable {
           if (!ok) self->finish_(503, "application enrollment failed");
-        }, [self = ZmRef<AppEnroll__>{this}](bool ok) mutable {
+        }, [self = ZmRef<AppEnroll_>{this}](bool ok) mutable {
           self->finish_(ok ? 201 : 503,
             ok ? ZuCSpan{} : ZuCSpan{"application enrollment failed"});
         })) finish_(503, "application enrollment unavailable");
@@ -2048,17 +2039,16 @@ private:
   Bytes		m_secretDigest;
   bool		m_done = false;
 };
-ZuDerive(AppEnroll_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.AppEnroll", AppEnroll__<>>));
-ZuDerive(AppEnroll_, (AppEnroll__<AppEnroll_Heap>));
 
-template <typename Table, typename Present, typename Heap = ZuVoid>
-class CatalogRetire__ : public Heap, public ZmObject  {
-  using T = typename Table::T;
-  using Tuple = typename Table::Tuple;
-  using Key = typename Table::template Key<0>;
+template <typename Table, typename Present>
+class CatalogRetire_ : public ZmNHeap<CatalogRetire_<Table, Present>>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.CatalogRetire"> ZmNHeapID(CatalogRetire_ *);
+
+  using T = Table::T;
+  using Tuple = Table::Tuple;
+  using Key = Table::template Key<0>;
 public:
-  CatalogRetire__(Table *table, AppID appID, uint64_t revision, int64_t updated,
+  CatalogRetire_(Table *table, AppID appID, uint64_t revision, int64_t updated,
       CatalogRows *rows, Present present, SagaFn complete) :
     m_table{table}, m_appID{appID}, m_revision{revision}, m_updated{updated},
     m_rows{rows}, m_present{ZuMv(present)}, m_complete{ZuMv(complete)},
@@ -2066,7 +2056,7 @@ public:
   void start(bool first = true)
   {
     m_count = 0;
-    m_table->run(0, [self = ZmRef<CatalogRetire__>{this}, first]() mutable {
+    m_table->run(0, [self = ZmRef<CatalogRetire_>{this}, first]() mutable {
       self->m_table->template nextRows<0>(self->m_key, first, PageSize,
 	[self = ZuMv(self)](ZuUnion<void, Tuple> result, unsigned count) mutable {
 	  self->receive_(ZuMv(result), count);
@@ -2114,18 +2104,12 @@ private:
   bool m_ok = true;
   bool m_end = false;
 };
-template <typename Table, typename Present>
-ZuDerive(CatalogRetire_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.CatalogRetire",
-    CatalogRetire__<Table, Present>>));
-template <typename Table, typename Present>
-ZuDerive(CatalogRetire_, (CatalogRetire__<Table, Present,
-  CatalogRetire_Heap<Table, Present>>));
 
-template <typename Heap = ZuVoid>
-class CatalogPublish__ : public Heap, public ZmPolymorph  {
+class CatalogPublish_ : public ZmNHeap<CatalogPublish_>, public ZmPolymorph  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.CatalogPublish"> ZmNHeapID(CatalogPublish_ *);
+
 public:
-  CatalogPublish__(DB *db, Ztls::Random *rng, AppID appID,
+  CatalogPublish_(DB *db, Ztls::Random *rng, AppID appID,
       CatalogInput input, String ifMatch, IdemRequest request, AdminDoneFn complete) :
     m_db{db}, m_rng{rng}, m_appID{appID}, m_input{ZuMv(input)},
     m_ifMatch{ZuMv(ifMatch)}, m_complete{ZuMv(complete)}
@@ -2145,7 +2129,7 @@ public:
       return;
     }
     auto apps = m_db->apps;
-    apps->run(0, [self = ZmRef<CatalogPublish__>{this}, apps]() mutable {
+    apps->run(0, [self = ZmRef<CatalogPublish_>{this}, apps]() mutable {
       apps->find<0>(0, ZuFwdTuple(self->m_appID), [self = ZuMv(self)](
 	  ZdbRowRef<App> row) mutable {
 	if (!row || row->data().state != State::Active || row->data().owner) {
@@ -2297,7 +2281,7 @@ private:
     unsigned index = m_offset++;
     auto table = m_db->actions;
     String name = m_input.catalog.actions[index].name;
-    table->run(0, [self = ZmRef<CatalogPublish__>{this}, table, index,
+    table->run(0, [self = ZmRef<CatalogPublish_>{this}, table, index,
 	name = ZuMv(name)]() mutable {
       table->find<1>(0, ZuFwdTuple(self->m_appID, ZuMv(name)), [
 	  self = ZuMv(self), index](ZdbRowRef<Action> row) mutable {
@@ -2362,7 +2346,7 @@ private:
     }
     auto table = m_db->roles;
     String name = m_input.catalog.roles[index].name;
-    table->run(0, [self = ZmRef<CatalogPublish__>{this}, table, index,
+    table->run(0, [self = ZmRef<CatalogPublish_>{this}, table, index,
 	name = ZuMv(name), actions = ZuMv(actions)]() mutable {
       table->find<1>(0, ZuFwdTuple(self->m_appID, ZuMv(name)), [
 	  self = ZuMv(self), index, actions = ZuMv(actions)](
@@ -2428,7 +2412,7 @@ private:
     }
     auto table = m_db->clients;
     String id = input.id;
-    table->run(0, [self = ZmRef<CatalogPublish__>{this}, table, index,
+    table->run(0, [self = ZmRef<CatalogPublish_>{this}, table, index,
 	 id = ZuMv(id), profile]() mutable {
       table->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self), index,
 		 profile](ZdbRowRef<Client> row) mutable {
@@ -2491,7 +2475,7 @@ private:
       roleIDs.push(m_roleIDs[role]);
     }
     auto table = m_db->clientAccess;
-    table->run(0, [self = ZmRef<CatalogPublish__>{this}, table, index,
+    table->run(0, [self = ZmRef<CatalogPublish_>{this}, table, index,
 	 roleIDs = ZuMv(roleIDs), clientID = String{clientID}]() mutable {
       table->find<0>(0, ZuFwdTuple(ZuMv(clientID), self->m_appID),
 	[self = ZuMv(self), index, roleIDs = ZuMv(roleIDs)](
@@ -2536,7 +2520,7 @@ private:
     ZmRef<CatalogRetire_<Table, Present>> retire =
       new CatalogRetire_<Table, Present>{table, m_appID, m_input.revision,
 	m_change.after.updated, &rows, ZuMv(present),
-	[self = ZmRef<CatalogPublish__>{this}](bool ok) mutable {
+	[self = ZmRef<CatalogPublish_>{this}](bool ok) mutable {
 	  if (!ok) { self->fail_(409, "conflict", "catalog retirement conflict"); return; }
 	  ++self->m_retire;
 	  self->retire_();
@@ -2584,9 +2568,9 @@ private:
     }
     SagaRef saga = catalogPublish(ZuMv(m_change));
     if (!sagaSubmit(m_db, id, ZuMv(saga),
-	[self = ZmRef<CatalogPublish__>{this}](bool ok) mutable {
+	[self = ZmRef<CatalogPublish_>{this}](bool ok) mutable {
 	  if (!ok) self->fail_(503, "unavailable", "catalog publication unavailable");
-	}, [self = ZmRef<CatalogPublish__>{this}](bool ok) mutable {
+	}, [self = ZmRef<CatalogPublish_>{this}](bool ok) mutable {
 	  if (ok) self->success_();
 	  else self->fail_(409, "conflict", "catalog publication conflict");
 	})) fail_(503, "unavailable", "catalog publication unavailable");
@@ -2612,9 +2596,6 @@ private:
   bool		m_done = false;
   bool		m_replay = false;
 };
-ZuDerive(CatalogPublish_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.CatalogPublish", CatalogPublish__<>>));
-ZuDerive(CatalogPublish_, (CatalogPublish__<CatalogPublish_Heap>));
 
 String Daemon::error_(ZuCSpan error, ZuCSpan message)
 {
@@ -2790,7 +2771,7 @@ static bool adminCursorDecode(
     ZuClear(raw);
     return false;
   }
-  using Record = typename Table::T;
+  using Record = Table::T;
   ZuBSpan bytes{raw.data() + headerLength, dataLength};
   if (!Zfb::verify<Record>(bytes)) {
     ZuClear(raw);
@@ -2802,14 +2783,16 @@ static bool adminCursorDecode(
 }
 
 template <typename Table, typename Match, typename Group,
-  unsigned KeyID, typename Heap = ZuVoid>
-class AdminQuery__ : public Heap, public ZmObject  {
-  using Tuple = typename Table::Tuple;
-  using Record = typename Table::T;
-  using Key = typename Table::template Key<KeyID>;
+  unsigned KeyID>
+class AdminQuery_ : public ZmNHeap<AdminQuery_<Table, Match, Group, KeyID>>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.daemon.admin.AdminQuery"> ZmNHeapID(AdminQuery_ *);
+
+  using Tuple = Table::Tuple;
+  using Record = Table::T;
+  using Key = Table::template Key<KeyID>;
 
 public:
-  AdminQuery__(Table *table, Match match, unsigned limit, String cursor,
+  AdminQuery_(Table *table, Match match, unsigned limit, String cursor,
       int operation, AppID appID, Bytes secret, AdminDoneFn complete,
       Group group = {}) :
     m_table{table}, m_match{ZuMv(match)}, m_limit{limit},
@@ -2817,7 +2800,7 @@ public:
     m_secret{ZuMv(secret)}, m_complete{ZuMv(complete)},
     m_group{ZuMv(group)} { }
 
-  ~AdminQuery__()
+  ~AdminQuery_()
   {
     if (m_secret.mutable_()) ZuClear(m_secret);
   }
@@ -2828,7 +2811,7 @@ public:
       finish_(adminErrorResult(503, "unavailable", "query unavailable"));
       return;
     }
-    m_table->run(0, [self = ZmRef<AdminQuery__>{this}]() mutable {
+    m_table->run(0, [self = ZmRef<AdminQuery_>{this}]() mutable {
       if (self->m_cursor) {
         Key key;
         if (!adminCursorDecode<Table, KeyID>(self->m_secret, self->m_operation,
@@ -2851,7 +2834,7 @@ private:
   void scanFirst_()
   {
     m_rawCount = 0;
-    auto receive = [self = ZmRef<AdminQuery__>{this}](
+    auto receive = [self = ZmRef<AdminQuery_>{this}](
         ZuUnion<void, Tuple> result, unsigned count) mutable {
       self->receive_(ZuMv(result), count);
     };
@@ -2865,7 +2848,7 @@ private:
   {
     m_rawCount = 0;
     m_table->template nextRows<KeyID>(m_scanKey, false, ScanSize,
-      [self = ZmRef<AdminQuery__>{this}](ZuUnion<void, Tuple> result,
+      [self = ZmRef<AdminQuery_>{this}](ZuUnion<void, Tuple> result,
           unsigned count) mutable { self->receive_(ZuMv(result), count); });
   }
 
@@ -2927,15 +2910,6 @@ private:
   bool		m_more = false;
   bool		m_done = false;
 };
-template <typename Table, typename Match, typename Group = ZuTuple<>,
-  unsigned KeyID = 0>
-ZuDerive(AdminQuery_Heap,
-  (ZmHeap<"Zum.zumd.daemon.admin.AdminQuery",
-    AdminQuery__<Table, Match, Group, KeyID>>));
-template <typename Table, typename Match, typename Group = ZuTuple<>,
-  unsigned KeyID = 0>
-ZuDerive(AdminQuery_, (AdminQuery__<Table, Match, Group, KeyID,
-  AdminQuery_Heap<Table, Match, Group, KeyID>>));
 
 template <unsigned KeyID = 0, typename Table, typename Match,
   typename Group = ZuTuple<>>
@@ -2964,7 +2938,7 @@ static void adminFind(Table *table, typename Table::template Key<KeyID> key,
 {
   table->run(0, [table, key = ZuMv(key),
       complete = ZuMv(complete)]() mutable {
-    using Record = typename Table::T;
+    using Record = Table::T;
     table->template find<KeyID>(0, ZuMv(key), [
         complete = ZuMv(complete)](ZdbRowRef<Record> row) mutable {
       AdminEncodedVec encoded;

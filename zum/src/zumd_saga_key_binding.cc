@@ -9,10 +9,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct KeyBindingSaga_ : public Heap,
-    public ZdbSaga<KeyBindingSaga_<Heap>, DB> {
-  using Base = ZdbSaga<KeyBindingSaga_<Heap>, DB>;
+struct KeyBindingSaga : public ZmNHeap<KeyBindingSaga>,
+    public ZdbSaga<KeyBindingSaga, DB> {
+friend inline ZuStringT<"Zum.KeyBindingSaga"> ZmNHeapID(KeyBindingSaga *);
+
+  using Base = ZdbSaga<KeyBindingSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -53,21 +54,18 @@ struct KeyBindingSaga_ : public Heap,
     return {};
   }
 
-  KeyBindingSaga_() = default;
-  KeyBindingSaga_(String issuer_, Bytes beforeCheck_, Bytes afterCheck_,
+  KeyBindingSaga() = default;
+  KeyBindingSaga(String issuer_, Bytes beforeCheck_, Bytes afterCheck_,
       Bytes beforePending_, Bytes afterPending_) :
     issuer{ZuMv(issuer_)}, beforeCheck{ZuMv(beforeCheck_)},
     afterCheck{ZuMv(afterCheck_)}, beforePending{ZuMv(beforePending_)},
     afterPending{ZuMv(afterPending_)} { }
-  KeyBindingSaga_(KeyBindingArgs args) :
-    KeyBindingSaga_{ZuMv(args.issuer), ZuMv(args.beforeCheck),
+  KeyBindingSaga(KeyBindingArgs args) :
+    KeyBindingSaga{ZuMv(args.issuer), ZuMv(args.beforeCheck),
       ZuMv(args.afterCheck), ZuMv(args.beforePending),
       ZuMv(args.afterPending)} { }
-  ~KeyBindingSaga_() override;
+  ~KeyBindingSaga() override;
 };
-
-using KeyBindingSaga = KeyBindingSaga_<
-  ZmHeap<"Zum.KeyBindingSaga", KeyBindingSaga_<>>>;
 
 ZfStruct(, (KeyBindingSaga, FB),
   (issuer,		(Ctor<0>),	String),
@@ -79,8 +77,7 @@ Zfb::AsTable<"Zum.fbs.KeyBinding"> Zfb_Fmt(KeyBindingSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<KeyBindingSaga>{}));
 
-template <typename Heap>
-KeyBindingSaga_<Heap>::~KeyBindingSaga_() = default;
+KeyBindingSaga::~KeyBindingSaga() = default;
 
 SagaRef keyBinding(ZuBSpan data) {
   return KeyBindingSaga::load(data);

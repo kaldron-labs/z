@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct AssignmentChangeSaga_ : public Heap,
-    public ZdbSaga<AssignmentChangeSaga_<Heap>, DB> {
-  using Base = ZdbSaga<AssignmentChangeSaga_<Heap>, DB>;
+struct AssignmentChangeSaga : public ZmNHeap<AssignmentChangeSaga>,
+    public ZdbSaga<AssignmentChangeSaga, DB> {
+friend inline ZuStringT<"Zum.AssignmentChangeSaga"> ZmNHeapID(AssignmentChangeSaga *);
+
+  using Base = ZdbSaga<AssignmentChangeSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -177,8 +178,8 @@ struct AssignmentChangeSaga_ : public Heap,
     return {};
   }
 
-  AssignmentChangeSaga_() = default;
-  AssignmentChangeSaga_(AppID appID_, UserID userID_, IDVec oldRoles_, IDVec newRoles_, State::T oldState_, State::T newState_, uint64_t version_, uint64_t authVersion_, int64_t oldUpdated_, int64_t updated_, uint64_t appVersion_, uint64_t appAuthVersion_, int64_t appUpdated_, IdemRequest request_, bool assignRoles_, String ifMatch_) :
+  AssignmentChangeSaga() = default;
+  AssignmentChangeSaga(AppID appID_, UserID userID_, IDVec oldRoles_, IDVec newRoles_, State::T oldState_, State::T newState_, uint64_t version_, uint64_t authVersion_, int64_t oldUpdated_, int64_t updated_, uint64_t appVersion_, uint64_t appAuthVersion_, int64_t appUpdated_, IdemRequest request_, bool assignRoles_, String ifMatch_) :
     appID{ZuMv(appID_)},
     userID{ZuMv(userID_)},
     oldRoles{ZuMv(oldRoles_)},
@@ -195,18 +196,14 @@ struct AssignmentChangeSaga_ : public Heap,
     request{ZuMv(request_)},
     assignRoles{ZuMv(assignRoles_)},
     ifMatch{ZuMv(ifMatch_)} { }
-  AssignmentChangeSaga_(AssignmentChangeArgs args) :
-    AssignmentChangeSaga_{ZuMv(args.appID), ZuMv(args.userID), ZuMv(args.oldRoles), ZuMv(args.newRoles), ZuMv(args.oldState), ZuMv(args.newState), ZuMv(args.version), ZuMv(args.authVersion), ZuMv(args.oldUpdated), ZuMv(args.updated), ZuMv(args.appVersion), ZuMv(args.appAuthVersion), ZuMv(args.appUpdated), ZuMv(args.request), ZuMv(args.assignRoles), ZuMv(args.ifMatch)} {
+  AssignmentChangeSaga(AssignmentChangeArgs args) :
+    AssignmentChangeSaga{ZuMv(args.appID), ZuMv(args.userID), ZuMv(args.oldRoles), ZuMv(args.newRoles), ZuMv(args.oldState), ZuMv(args.newState), ZuMv(args.version), ZuMv(args.authVersion), ZuMv(args.oldUpdated), ZuMv(args.updated), ZuMv(args.appVersion), ZuMv(args.appAuthVersion), ZuMv(args.appUpdated), ZuMv(args.request), ZuMv(args.assignRoles), ZuMv(args.ifMatch)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<Assignment>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~AssignmentChangeSaga_() override;
+  ~AssignmentChangeSaga() override;
 };
-
-
-using AssignmentChangeSaga = AssignmentChangeSaga_<
-  ZmHeap<"Zum.AssignmentChangeSaga", AssignmentChangeSaga_<>>>;
 
 ZfStruct(, (AssignmentChangeSaga, FB),
   (appID,		(Ctor<0>),			UInt64),
@@ -227,8 +224,7 @@ ZfStruct(, (AssignmentChangeSaga, FB),
   (ifMatch,		(Ctor<15>),			String));
 Zfb::AsTable<"Zum.fbs.AssignmentChange"> Zfb_Fmt(AssignmentChangeSaga *);
 
-template <typename Heap>
-bool AssignmentChangeSaga_<Heap>::appValid(const App &item, bool fwd) const
+bool AssignmentChangeSaga::appValid(const App &item, bool fwd) const
 {
   return item.state == State::Active && item.version == appVersion &&
     item.authVersion == appAuthVersion && item.updated == appUpdated &&
@@ -236,8 +232,7 @@ bool AssignmentChangeSaga_<Heap>::appValid(const App &item, bool fwd) const
     appVersion != UINT64_MAX && appAuthVersion != UINT64_MAX;
 }
 
-template <typename Heap>
-unsigned AssignmentChangeSaga_<Heap>::memberError(const Assignment &item, bool fwd) const
+unsigned AssignmentChangeSaga::memberError(const Assignment &item, bool fwd) const
 {
   if (fwd) {
     if (ifMatch) {
@@ -257,8 +252,7 @@ unsigned AssignmentChangeSaga_<Heap>::memberError(const Assignment &item, bool f
     item.roleIDs != (fwd ? oldRoles : newRoles) ? 409 : 0;
 }
 
-template <typename Heap>
-void AssignmentChangeSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void AssignmentChangeSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   db()->users->run(0, [this, complete = ZuMv(complete)]() mutable {
     db()->users->template find<0>(0, ZuFwdTuple(userID),
@@ -281,8 +275,7 @@ void AssignmentChangeSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
   });
 }
 
-template <typename Heap>
-void AssignmentChangeSaga_<Heap>::roles(unsigned offset, Zdb_::SagaCompleteFn complete)
+void AssignmentChangeSaga::roles(unsigned offset, Zdb_::SagaCompleteFn complete)
 {
   if (offset == newRoles.length()) { complete(true); return; }
   auto id = newRoles[offset];
@@ -304,8 +297,7 @@ void AssignmentChangeSaga_<Heap>::roles(unsigned offset, Zdb_::SagaCompleteFn co
 
 ZuAssert((Zdb_::SagaDefValid<AssignmentChangeSaga>{}));
 
-template <typename Heap>
-AssignmentChangeSaga_<Heap>::~AssignmentChangeSaga_() = default;
+AssignmentChangeSaga::~AssignmentChangeSaga() = default;
 
 SagaRef assignmentChange(ZuBSpan data) {
   return AssignmentChangeSaga::load(data);

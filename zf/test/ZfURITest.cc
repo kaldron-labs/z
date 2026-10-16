@@ -190,13 +190,13 @@ ZfStruct(, (URIUnionHolder, URI),
   (value, (Ctor<0>, Mutable),		UDT));
 
 ZuAssert((ZuIsSame<
-  ZmHeapID<URIPtrObj>, ZuStringT<"ZfTest.URI.PtrObj">>{}));
+  ZmNHeapID_<URIPtrObj>, ZuStringT<"ZfTest.URI.PtrObj">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<URIPtrText>, ZuStringT<"ZfTest.URI.PtrText">>{}));
+  ZmNHeapID_<URIPtrText>, ZuStringT<"ZfTest.URI.PtrText">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<URIPtrJSON>, ZuStringT<"ZfTest.URI.PtrJSON">>{}));
+  ZmNHeapID_<URIPtrJSON>, ZuStringT<"ZfTest.URI.PtrJSON">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<URIPtrArray>, ZuStringT<"ZfTest.URI.PtrArray">>{}));
+  ZmNHeapID_<URIPtrArray>, ZuStringT<"ZfTest.URI.PtrArray">>{}));
 
 struct URIFormatInt {
   unsigned value = 0;
@@ -859,7 +859,7 @@ void unions()
   ZfURI::save(saved, json);
   ZuCheck(saved.find("value=") >= 0);
 
-  using UnionHandler = typename ZfURI::As<decltype(json.value)>::
+  using UnionHandler = ZfURI::As<decltype(json.value)>::
     template Handler<decltype(json.value), ZuFacet::URI>;
   ZuCheck(!UnionHandler{nullptr}.valid);
 

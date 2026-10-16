@@ -14,34 +14,7 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
-
-template <typename Base, typename Heap, bool = ZuIs_<Base, Heap>{}>
-struct ZmNode__;
-template <typename Base_, typename Heap>
-struct ZmNode__<Base_, Heap, false> : public Heap, public Base_ {
-  // ZuDerive_() causes gcc to choke on ZmPolyHash
-  using Base_::Base_;
-  template <typename ...Args>
-  ZmNode__(Args &&...args) : Base_(ZuFwd<Args>(args)...) { }
-};
-template <typename Base_, typename Heap>
-struct ZmNode__<Base_, Heap, true> : public Base_ {
-  // ZuDerive_() causes gcc to choke on ZmPolyHash
-  using Base_::Base_;
-  template <typename ...Args>
-  ZmNode__(Args &&...args) : Base_(ZuFwd<Args>(args)...) { }
-};
-template <typename Base_>
-struct ZmNode__<Base_, ZuVoid, false> : public Base_ {
-  // ZuDerive_() causes gcc to choke on ZmPolyHash
-  using Base_::Base_;
-  template <typename ...Args>
-  ZmNode__(Args &&...args) : Base_(ZuFwd<Args>(args)...) { }
-};
-template <typename Heap>
-struct ZmNode__<ZuVoid, Heap, false> : public Heap { };
-template <>
-struct ZmNode__<ZuVoid, ZuVoid, true> { };
+#include <zlib/ZmHeap.hh>
 
 template <
   typename T,
@@ -49,7 +22,8 @@ template <
   auto ValAxor,
   typename Base,
   typename NodeExt,
-  typename Heap,
+  typename HeapID,
+  bool Sharded,
   bool = ZuIs_<T, Base>{}>
 class ZmNode_;
 
@@ -60,10 +34,17 @@ template <
   auto ValAxor_,
   typename Base_,
   typename NodeExt,
-  typename Heap>
-class ZmNode_<T_, KeyAxor_, ValAxor_, Base_, NodeExt, Heap, false> :
-    public ZmNode__<Base_, Heap>,
+  typename HeapID,
+  bool Sharded>
+class ZmNode_<T_, KeyAxor_, ValAxor_, Base_, NodeExt, HeapID, Sharded, false> :
+    public ZmNHeap<
+      ZmNode_<T_, KeyAxor_, ValAxor_, Base_, NodeExt, HeapID, Sharded>,
+      !ZuIs_<HeapID, ZmNHeapDisable>{}>,
+    public Base_,
     public NodeExt {
+friend inline HeapID ZmNHeapID(ZmNode_ *);
+friend inline ZuBool<Sharded> ZmNHeapSharded(ZmNode_ *);
+
 public:
   using T = T_;
   static constexpr auto KeyAxor = KeyAxor_;
@@ -108,12 +89,19 @@ template <
   auto ValAxor_,
   typename Base_,
   typename NodeExt,
-  typename Heap>
-class ZmNode_<T_, KeyAxor_, ValAxor_, Base_, NodeExt, Heap, true> :
-    public ZmNode__<ZuDecay<T_>, Heap>,
+  typename HeapID,
+  bool Sharded>
+class ZmNode_<T_, KeyAxor_, ValAxor_, Base_, NodeExt, HeapID, Sharded, true> :
+    public ZmNHeap<
+      ZmNode_<T_, KeyAxor_, ValAxor_, Base_, NodeExt, HeapID, Sharded>,
+      !ZuIs_<HeapID, ZmNHeapDisable>{}>,
+    public ZuDecay<T_>,
     public NodeExt {
+friend inline HeapID ZmNHeapID(ZmNode_ *);
+friend inline ZuBool<Sharded> ZmNHeapSharded(ZmNode_ *);
+
 public:
-  using Base = ZmNode__<ZuDecay<T_>, Heap>;
+  using Base = ZuDecay<T_>;
   // ZuDerive_() causes gcc to choke on ZmPolyHash
   using Base::Base;
   template <typename ...Args>
@@ -150,9 +138,6 @@ template <
   typename HeapID,
   bool Sharded>
 using ZmNode =
-  ZmNode_<T, KeyAxor, ValAxor, Base, NodeExt,
-    ZmHeap_<HeapID,
-      ZmNode_<T, KeyAxor, ValAxor, Base, NodeExt, ZuVoid>,
-      Sharded>>;
+  ZmNode_<T, KeyAxor, ValAxor, Base, NodeExt, HeapID, Sharded>;
 
 #endif /* ZmNode_HH */

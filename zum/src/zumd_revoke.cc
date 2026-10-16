@@ -38,8 +38,7 @@ static ZdbSagaID ssfSagaID(const SSFDelivery &delivery)
   return id ? id : ZdbSagaID{1};
 }
 
-template <typename Heap>
-bool SSFTransmitter_<Heap>::init(SSFTransmitterConfig config)
+bool SSFTransmitter::init(SSFTransmitterConfig config)
 {
   if (m_started || !config.db || !config.db || !config.requests || !config.issuer ||
       !config.secretIssuer || !config.dbKey || !config.rng || !config.key.id || !config.key.issuer || !config.sign || !config.http ||
@@ -50,8 +49,7 @@ bool SSFTransmitter_<Heap>::init(SSFTransmitterConfig config)
   return true;
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::start()
+void SSFTransmitter::start()
 {
   if (m_started || !m_config.db) return;
   m_started = true;
@@ -62,8 +60,7 @@ void SSFTransmitter_<Heap>::start()
   }, m_config.requests->sid());
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::add(AppID appID, String clientID,
+void SSFTransmitter::add(AppID appID, String clientID,
     SSFRegistration input, SSFRegisterFn complete)
 {
   if (!appID || !clientID || !input.receiverID ||
@@ -152,8 +149,7 @@ void SSFTransmitter_<Heap>::add(AppID appID, String clientID,
 
 // Read only the earliest lease. Wake at its deadline, rather than scanning
 // receivers periodically; the persisted expiry index also restores GC.
-template <typename Heap>
-void SSFTransmitter_<Heap>::gc_()
+void SSFTransmitter::gc_()
 {
   auto table = m_config.db->ssfRx;
   table->run(0, [self = ZmRef<SSFTransmitter>{this}, table]() mutable {
@@ -187,8 +183,7 @@ void SSFTransmitter_<Heap>::gc_()
   });
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::gcArm_(int64_t expires)
+void SSFTransmitter::gcArm_(int64_t expires)
 {
   auto scheduler = m_config.requests->scheduler();
   scheduler->run([self = ZmRef<SSFTransmitter>{this}, expires]() mutable {
@@ -205,8 +200,7 @@ void SSFTransmitter_<Heap>::gcArm_(int64_t expires)
 }
 
 // Error accounting belongs to the receiver, across all its notifications.
-template <typename Heap>
-void SSFTransmitter_<Heap>::result_(String id, uint64_t revision, int status)
+void SSFTransmitter::result_(String id, uint64_t revision, int status)
 {
   auto table = m_config.db->ssfRx;
   table->run(0, [self = ZmRef<SSFTransmitter>{this}, table,
@@ -232,8 +226,7 @@ void SSFTransmitter_<Heap>::result_(String id, uint64_t revision, int status)
   });
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::stop()
+void SSFTransmitter::stop()
 {
   if (!m_started) return;
   m_started = false;
@@ -248,8 +241,7 @@ void SSFTransmitter_<Heap>::stop()
   }
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::revoke(AppID appID, RefreshID refreshID, int64_t expires)
+void SSFTransmitter::revoke(AppID appID, RefreshID refreshID, int64_t expires)
 {
   if (!m_started || !appID || !refreshID.issuerURL || !refreshID.familyID ||
       expires <= 0)
@@ -261,14 +253,12 @@ void SSFTransmitter_<Heap>::revoke(AppID appID, RefreshID refreshID, int64_t exp
   }, m_config.requests->sid());
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::revoke_(AppID appID, RefreshID refreshID, int64_t expires)
+void SSFTransmitter::revoke_(AppID appID, RefreshID refreshID, int64_t expires)
 {
   receivers_(appID, ZuMv(refreshID), expires);
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::receivers_(AppID appID, RefreshID refreshID, int64_t expires)
+void SSFTransmitter::receivers_(AppID appID, RefreshID refreshID, int64_t expires)
 {
   auto table = m_config.db->ssfRx;
   table->run(0, [self = ZmRef<SSFTransmitter>{this}, table, appID,
@@ -295,8 +285,7 @@ void SSFTransmitter_<Heap>::receivers_(AppID appID, RefreshID refreshID, int64_t
   });
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::issue_(SSFRx receiver, RefreshID refreshID,
+void SSFTransmitter::issue_(SSFRx receiver, RefreshID refreshID,
     int64_t expires, int64_t now)
 {
   String authorization = authorization_(receiver);
@@ -330,8 +319,7 @@ void SSFTransmitter_<Heap>::issue_(SSFRx receiver, RefreshID refreshID,
   }
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::persist_(SSFRx receiver, SSFDelivery delivery,
+void SSFTransmitter::persist_(SSFRx receiver, SSFDelivery delivery,
     String authorization)
 {
   auto table = m_config.db->ssfDeliveries;
@@ -371,8 +359,7 @@ void SSFTransmitter_<Heap>::persist_(SSFRx receiver, SSFDelivery delivery,
       }}, ZuTime{double(deadline)})) return;
 }
 
-template <typename Heap>
-String SSFTransmitter_<Heap>::authorization_(const SSFRx &receiver)
+String SSFTransmitter::authorization_(const SSFRx &receiver)
 {
   Bytes plain;
   if (!serverSecretDecrypt(m_config.dbKey, m_config.secretIssuer,
@@ -383,8 +370,7 @@ String SSFTransmitter_<Heap>::authorization_(const SSFRx &receiver)
   return authorization;
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::deliver_(SSFRx receiver, SSFDelivery delivery,
+void SSFTransmitter::deliver_(SSFRx receiver, SSFDelivery delivery,
     String authorization)
 {
   // Recheck the live registration after signing/persistence. Removed or
@@ -417,8 +403,7 @@ void SSFTransmitter_<Heap>::deliver_(SSFRx receiver, SSFDelivery delivery,
   });
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::send_(SSFRx receiver, SSFDelivery delivery,
+void SSFTransmitter::send_(SSFRx receiver, SSFDelivery delivery,
     String authorization)
 {
   if (receiver.expires <= Zm::now().sec()) { gc_(); retry_(); return; }
@@ -465,14 +450,12 @@ void SSFTransmitter_<Heap>::send_(SSFRx receiver, SSFDelivery delivery,
     });
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::retry_()
+void SSFTransmitter::retry_()
 {
   retryPage_({}, true);
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
+void SSFTransmitter::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
 {
   if (!m_started || !m_config.db->ssfDeliveries) return;
   auto table = m_config.db->ssfDeliveries;
@@ -560,8 +543,7 @@ void SSFTransmitter_<Heap>::retryPage_(SSFDeliveryTable::Key<0> key, bool first)
   });
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::arm_(int64_t when)
+void SSFTransmitter::arm_(int64_t when)
 {
   if (!m_started || !when) return;
   auto scheduler = m_config.requests->scheduler();
@@ -570,8 +552,7 @@ void SSFTransmitter_<Heap>::arm_(int64_t when)
   }, m_config.requests->sid());
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::armOn_(int64_t when)
+void SSFTransmitter::armOn_(int64_t when)
 {
   if (!m_started || !when) return;
   auto scheduler = m_config.requests->scheduler();
@@ -586,9 +567,6 @@ void SSFTransmitter_<Heap>::armOn_(int64_t when)
     }, m_config.requests->sid());
 }
 
-template <typename Heap>
-void SSFTransmitter_<Heap>::clear_() { stop(); }
-
-template class SSFTransmitter_<SSFTransmitterHeap>;
+void SSFTransmitter::clear_() { stop(); }
 
 } // namespace Zum

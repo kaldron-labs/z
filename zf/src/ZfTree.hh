@@ -99,37 +99,32 @@ namespace ValueTC {
   };
 }
 
-template <typename Data, typename Heap = ZuVoid>
-class Node_ : public Heap, public AnyNode {
+template <typename Data>
+class Node : public ZmNHeap<Node<Data>>, public AnyNode {
+friend inline Node_HeapID ZmNHeapID(Node *);
 
 public:
-  Node_ &operator =(const Node_ &) = delete;
-  Node_ &operator =(Node_ &&) = delete;
+  Node &operator =(const Node &) = delete;
+  Node &operator =(Node &&) = delete;
 
 private:
-  Node_(const Node_ &) = delete;
-  Node_(Node_ &&) = delete;
+  Node(const Node &) = delete;
+  Node(Node &&) = delete;
 
 public:
   using AnyNode::TL;
 
   template <typename ...Args>
-  Node_(AnyNode *parent, Args &&...args) :
+  Node(AnyNode *parent, Args &&...args) :
     AnyNode{
       parent,
       ZuTypeIndex<Data, TL>{}(),
       bool(ZuIs_<Data, AnyNode::String>{}) ? ScalarTC::String : ScalarTC::None},
     data(ZuFwd<Args>(args)...) { }
-  ~Node_() = default;
+  ~Node() = default;
 
   Data	data;
 };
-
-template <typename Data>
-using Node_Heap = ZmHeap_<Node_HeapID, Node_<Data>>;
-
-template <typename Data>
-ZuDerive(Node, (Node_<Data, Node_Heap<Data>>));
 
 template <typename Data>
 inline bool AnyNode::has() const {
@@ -169,7 +164,7 @@ template <typename S> void AnyNode::path(S &s) const {
   }
 }
 
-using NodeArray = typename AnyNode::Array;
+using NodeArray = AnyNode::Array;
 using CNodeArray = const NodeArray;
 
 template <typename Data, typename ...Args>

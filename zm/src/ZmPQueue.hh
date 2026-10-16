@@ -228,10 +228,10 @@ struct ZmPQueue_NodeT {
 private:
   using Item = Item_;
   enum { Levels = NTP_::Levels };
-  using Fn = typename NTP_::template ZmPQueueFnT<Item>;
+  using Fn = NTP_::template ZmPQueueFnT<Item>;
   static constexpr auto KeyAxor = Fn::KeyAxor;
-  using NodeBase = typename NTP_::Node;
-  using HeapID = typename NTP_::HeapID;
+  using NodeBase = NTP_::Node;
+  using HeapID = NTP_::HeapID;
   enum { Sharded = NTP_::Sharded };
 
   struct Node;
@@ -315,25 +315,25 @@ namespace ZmPQResult {
 }
 
 template <typename Item_, class NTP = ZmPQueue_Defaults,
-  typename Node_ = typename ZmPQueue_NodeT<Item_, NTP>::T,
+  typename Node_ = ZmPQueue_NodeT<Item_, NTP>::T,
   typename Impl_ = void>
 class ZmPQueue :
   public ZmNodeFn<NTP::Shadow, typename NTP::Node>,
   public ZmPQueue_Stats<NTP::Stats> {
 public:
-  using Impl = typename ZmPQueue_Impl<Item_, NTP, Node_, Impl_>::Type;
+  using Impl = ZmPQueue_Impl<Item_, NTP, Node_, Impl_>::Type;
   using Item = Item_;
   enum { Bits = NTP::Bits };
   enum { Levels = NTP::Levels };
-  using Fn = typename NTP::template ZmPQueueFnT<Item>;
+  using Fn = NTP::template ZmPQueueFnT<Item>;
   static constexpr auto KeyAxor = Fn::KeyAxor;
-  using Key = typename Fn::Key;
+  using Key = Fn::Key;
   using Length = uint64_t;
   enum { Stats = NTP::Stats };
   enum { Overlap = NTP::Overlap };
   enum { Overwrite = NTP::Overwrite };
-  using Lock = typename NTP::Lock;
-  using NodeBase = typename NTP::Node;
+  using Lock = NTP::Lock;
+  using NodeBase = NTP::Node;
   enum { Shadow = NTP::Shadow };
   using HeapID = NTP::HeapID;
   enum { Sharded = NTP::Sharded };
@@ -350,8 +350,8 @@ private:
 
 public:
   using Node = Node_;
-  using NodeRef = typename NodeFn::template Ref<Node>;
-  using NodeMvRef = typename NodeFn::template MvRef<Node>;
+  using NodeRef = NodeFn::template Ref<Node>;
+  using NodeMvRef = NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
   using AddResult = ZuTuple<ZmPQResult::T, NodeRef>;
 
@@ -513,7 +513,7 @@ public:
 private:
   // add at tail
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T
+  ZmPQueue_::First<Level, Levels>::T
   addTail__(Node *node, unsigned addSeqNo) {
     Node *prev;
     node->Ext::next(0, nullptr);
@@ -526,7 +526,7 @@ private:
     addTail__<1>(node, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T
+  ZmPQueue_::Next<Level, Levels>::T
   addTail__(Node *node, unsigned addSeqNo) {
     node->Ext::next(Level, nullptr);
     if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits *Level)) - 1)))) {
@@ -544,22 +544,22 @@ private:
     addTailEnd_<Level + 1>(node, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T
+  ZmPQueue_::Next<Level, Levels>::T
   addTailEnd_(Node *node, unsigned addSeqNo) {
     node->Ext::next(Level, nullptr);
     node->Ext::prev(Level, nullptr);
     addTailEnd_<Level + 1>(node, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T
+  ZmPQueue_::Last<Level, Levels>::T
   addTail__(Node *, unsigned) { }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T
+  ZmPQueue_::Last<Level, Levels>::T
   addTailEnd_(Node *, unsigned) { }
 
   // add at head
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T
+  ZmPQueue_::First<Level, Levels>::T
   addHead__(Node *node, unsigned addSeqNo) {
     Node *next;
     node->Ext::prev(0, nullptr);
@@ -572,7 +572,7 @@ private:
     addHead__<1>(node, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T
+  ZmPQueue_::Next<Level, Levels>::T
   addHead__(Node *node, unsigned addSeqNo) {
     node->Ext::prev(Level, nullptr);
     if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits *Level)) - 1)))) {
@@ -590,22 +590,22 @@ private:
     addHeadEnd_<Level + 1>(node, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T
+  ZmPQueue_::Next<Level, Levels>::T
   addHeadEnd_(Node *node, unsigned addSeqNo) {
     node->Ext::prev(Level, nullptr);
     node->Ext::next(Level, nullptr);
     addHeadEnd_<Level + 1>(node, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T
+  ZmPQueue_::Last<Level, Levels>::T
   addHead__(Node *, unsigned) { }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T
+  ZmPQueue_::Last<Level, Levels>::T
   addHeadEnd_(Node *, unsigned) { }
 
   // add at key position, following find
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T addAt_(
+  ZmPQueue_::First<Level, Levels>::T addAt_(
       Node *node, Node **next_, unsigned addSeqNo) {
     Node *next = next_[0];
     Node *prev = next ? next->Ext::prev(0) : m_tail[0];
@@ -622,7 +622,7 @@ private:
     addAt_<1>(node, next_, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T addAt_(
+  ZmPQueue_::Next<Level, Levels>::T addAt_(
       Node *node, Node **next_, unsigned addSeqNo) {
     if (ZuUnlikely(!(addSeqNo & ((1U<<(Bits *Level)) - 1)))) {
       Node *next = next_[Level];
@@ -645,17 +645,17 @@ private:
     }
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T addAtEnd_(
+  ZmPQueue_::Next<Level, Levels>::T addAtEnd_(
       Node *node, Node **next_, unsigned addSeqNo) {
     node->Ext::prev(Level, nullptr);
     node->Ext::next(Level, nullptr);
     addAtEnd_<Level + 1>(node, next_, addSeqNo);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T addAt_(
+  ZmPQueue_::Last<Level, Levels>::T addAt_(
       Node *, Node **, unsigned) { }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T addAtEnd_(
+  ZmPQueue_::Last<Level, Levels>::T addAtEnd_(
       Node *, Node **, unsigned) { }
 
   // delete head
@@ -668,18 +668,18 @@ private:
       next->Ext::prev(Level, nullptr);
   }
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T delHead_() {
+  ZmPQueue_::First<Level, Levels>::T delHead_() {
     delHead_<1>();
     delHead__<0>();
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T delHead_() {
+  ZmPQueue_::Next<Level, Levels>::T delHead_() {
     if (m_head[Level] != m_head[0]) return;
     delHead_<Level + 1>();
     delHead__<Level>();
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T delHead_() { }
+  ZmPQueue_::Last<Level, Levels>::T delHead_() { }
 
   // delete result from find
   template <int Level>
@@ -697,18 +697,18 @@ private:
     return next;
   }
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T del_(Node **next) {
+  ZmPQueue_::First<Level, Levels>::T del_(Node **next) {
     del_<1>(next);
     next[0] = del__<Level>(next[0]);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T del_(Node **next) {
+  ZmPQueue_::Next<Level, Levels>::T del_(Node **next) {
     if (next[Level] != next[0]) return;
     del_<Level + 1>(next);
     next[Level] = del__<Level>(next[Level]);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T del_(Node **) { }
+  ZmPQueue_::Last<Level, Levels>::T del_(Node **) { }
 
   // find
   bool findDir_(Key key) const {
@@ -724,13 +724,13 @@ private:
 	Fn{next->Node::data()}.key() - key;
   }
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T findFwd_(
+  ZmPQueue_::First<Level, Levels>::T findFwd_(
       Key key, Node **next) const {
     next[Levels - 1] = m_head[Levels - 1];
     findFwd__<Level>(key, next);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T findFwd_(
+  ZmPQueue_::Next<Level, Levels>::T findFwd_(
       Key key, Node **next) const {
     Node *node;
     if (!(node = next[Levels - Level]) ||
@@ -741,17 +741,17 @@ private:
     findFwd__<Level>(key, next);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T findFwd_(
+  ZmPQueue_::Last<Level, Levels>::T findFwd_(
       Key , Node **) const { }
 
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T findRev_(
+  ZmPQueue_::First<Level, Levels>::T findRev_(
       Key key, Node **next) const {
     next[Levels - 1] = m_tail[Levels - 1];
     findRev__<Level>(key, next);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T findRev_(
+  ZmPQueue_::Next<Level, Levels>::T findRev_(
       Key key, Node **next) const {
     Node *node;
     if (!(node = next[Levels - Level]))
@@ -761,11 +761,11 @@ private:
     findRev__<Level>(key, next);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T findRev_(
+  ZmPQueue_::Last<Level, Levels>::T findRev_(
       Key , Node **) const { }
 
   template <int Level>
-  typename ZmPQueue_::NotLast<Level, Levels>::T findFwd__(
+  ZmPQueue_::NotLast<Level, Levels>::T findFwd__(
       Key key, Node **next) const {
     Node *node = next[Levels - Level - 1];
     if (node) {
@@ -790,7 +790,7 @@ private:
       findRev_<Level + 1>(key, next);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T findFwd__(
+  ZmPQueue_::Last<Level, Levels>::T findFwd__(
       Key key, Node **next) const {
     Node *node = next[0];
     if (node) {
@@ -802,7 +802,7 @@ private:
     }
   }
   template <int Level>
-  typename ZmPQueue_::NotLast<Level, Levels>::T findRev__(
+  ZmPQueue_::NotLast<Level, Levels>::T findRev__(
       Key key, Node **next) const {
     Node *node = next[Levels - Level - 1];
     if (node) {
@@ -827,7 +827,7 @@ private:
       findRev_<Level + 1>(key, next);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T findRev__(
+  ZmPQueue_::Last<Level, Levels>::T findRev__(
       Key key, Node **next) const {
     Node *node = next[0];
     if (node) {
@@ -841,13 +841,13 @@ private:
   }
 
   template <int Level>
-  typename ZmPQueue_::NotLast<Level, Levels>::T found_(
+  ZmPQueue_::NotLast<Level, Levels>::T found_(
       Node *node, Node **next) const {
     next[Levels - Level - 1] = node;
     found_<Level + 1>(node, next);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T found_(
+  ZmPQueue_::Last<Level, Levels>::T found_(
       Node *, Node **) const { }
 
   void find_(Key key, Node **next) const {
@@ -1666,17 +1666,17 @@ private:
   }
 
   template <int Level>
-  typename ZmPQueue_::First<Level, Levels>::T delNode_(Node *node) {
+  ZmPQueue_::First<Level, Levels>::T delNode_(Node *node) {
     delNode_<Level + 1>(node);
     if (linked_(Level, node)) del__<Level>(node);
   }
   template <int Level>
-  typename ZmPQueue_::Next<Level, Levels>::T delNode_(Node *node) {
+  ZmPQueue_::Next<Level, Levels>::T delNode_(Node *node) {
     delNode_<Level + 1>(node);
     if (linked_(Level, node)) del__<Level>(node);
   }
   template <int Level>
-  typename ZmPQueue_::Last<Level, Levels>::T delNode_(Node *) { }
+  ZmPQueue_::Last<Level, Levels>::T delNode_(Node *) { }
 
   template <typename I>
   NodeMvRef iterDel(I &iter) {
@@ -1861,8 +1861,8 @@ private:
 using Queue = ZmPQueue<...>;
 
 struct Impl : public ZmPQRx<Impl, Queue> {
-  using Msg = typename Queue::Node;
-  using Span = typename Queue::Span;
+  using Msg = Queue::Node;
+  using Span = Queue::Span;
 
   // access queue
   Queue *rxQueue() const;
@@ -1962,11 +1962,11 @@ public:
     unsigned v;
   };
 
-  using Msg = typename Queue::Node;
-  using Key = typename Queue::Key;
-  using Span = typename Queue::Span;
+  using Msg = Queue::Node;
+  using Key = Queue::Key;
+  using Span = Queue::Span;
 
-  using Lock = typename NTP::Lock;
+  using Lock = NTP::Lock;
   enum { GapPolicy = NTP::GapPolicy };
 
   using Guard = ZmGuard<Lock>;
@@ -2112,8 +2112,8 @@ private:
 using Queue = ZmPQueue<...>;
 
 struct Impl : public ZmPQTx<Impl, Queue> {
-  using Msg = typename Queue::Node;
-  using Span = typename Queue::Span;
+  using Msg = Queue::Node;
+  using Span = Queue::Span;
 
   // access queue
   Queue *txQueue() const;
@@ -2218,14 +2218,14 @@ public:
 
 public:
   using Impl_ = Impl;
-  using Msg = typename Queue::Node;
-  using Fn = typename Queue::Fn;
-  using Key = typename Queue::Key;
-  using Length = typename Queue::Length;
-  using Span = typename Queue::Span;
+  using Msg = Queue::Node;
+  using Fn = Queue::Fn;
+  using Key = Queue::Key;
+  using Length = Queue::Length;
+  using Span = Queue::Span;
 
   enum { Ordered = NTP::Ordered };
-  using Lock = typename NTP::Lock;
+  using Lock = NTP::Lock;
 
   template <unsigned> struct VoidKey { VoidKey(int) { } };
   using AckdKey = ZuIf<Ordered, Key, VoidKey<0>>;

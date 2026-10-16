@@ -170,7 +170,7 @@ using PeerHeaders = ZuTypeList<
   Zdbus_::HeaderEntry<Zdbus_::Header::Destination,
     ZuStringT<"org.example.ZdbusPeer">>>;
 template <typename Member>
-using PeerMethod = typename PeerHeaders::template Push<
+using PeerMethod = PeerHeaders::template Push<
   Zdbus_::HeaderEntry<Zdbus_::Header::Member, Member>>;
 struct TextRes : ZdbusResParser<TextRes, TextBody> { };
 using RejectedHeaders = ZuTypeList<

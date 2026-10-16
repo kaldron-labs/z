@@ -389,7 +389,7 @@ public:
       }
     }
 
-    using NodeRef_ = typename Queue::NodeRef;
+    using NodeRef_ = Queue::NodeRef;
     NodeRef_ srcSplit;
     NodeRef_ dstSplit;
     bool copyPayload = false;

@@ -311,7 +311,7 @@ void write(typename Codec::Builder &b, const O &row, const Schemas<O> &schema)
     using W = Zfb::FieldWire<F>;
     constexpr unsigned I = ZuTypeIndex<F, Fields>{};
     if constexpr (W::Kind == Zfb::ValueKind::Scalar) {
-      using T = typename W::WireType;
+      using T = W::WireType;
       auto value = W::toWire(F::get(row));
       if constexpr (Native) R::saveScalar<T>(b, table, schema.fields[I].native, value);
       else {

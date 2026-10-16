@@ -15,10 +15,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct RecoveryStartSaga_ : public Heap,
-    public ZdbSaga<RecoveryStartSaga_<Heap>, DB> {
-  using Base = ZdbSaga<RecoveryStartSaga_<Heap>, DB>;
+struct RecoveryStartSaga : public ZmNHeap<RecoveryStartSaga>,
+    public ZdbSaga<RecoveryStartSaga, DB> {
+friend inline ZuStringT<"Zum.RecoveryStartSaga"> ZmNHeapID(RecoveryStartSaga *);
+
+  using Base = ZdbSaga<RecoveryStartSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -169,8 +170,8 @@ struct RecoveryStartSaga_ : public Heap,
     return {};
   }
 
-  RecoveryStartSaga_() = default;
-  RecoveryStartSaga_(
+  RecoveryStartSaga() = default;
+  RecoveryStartSaga(
       Bytes capabilityID_, Bytes digest_,
       String issuer_, UserID userID_,
       uint64_t userVersion_, int64_t created_,
@@ -189,17 +190,14 @@ struct RecoveryStartSaga_ : public Heap,
     oldState{ZuMv(oldState_)},
     oldUpdated{ZuMv(oldUpdated_)},
     request{ZuMv(request_)} { }
-  RecoveryStartSaga_(RecoveryStartArgs args) :
-    RecoveryStartSaga_{
+  RecoveryStartSaga(RecoveryStartArgs args) :
+    RecoveryStartSaga{
       ZuMv(args.capabilityID), ZuMv(args.digest), ZuMv(args.issuer),
       ZuMv(args.userID), ZuMv(args.userVersion), ZuMv(args.created),
       ZuMv(args.expires), ZuMv(args.actor), ZuMv(args.version),
       ZuMv(args.oldState), ZuMv(args.oldUpdated), ZuMv(args.request)} { }
-  ~RecoveryStartSaga_() override;
+  ~RecoveryStartSaga() override;
 };
-
-using RecoveryStartSaga = RecoveryStartSaga_<
-  ZmHeap<"Zum.RecoveryStartSaga", RecoveryStartSaga_<>>>;
 
 ZfStruct(, (RecoveryStartSaga, FB),
   (capabilityID,	(Ctor<0>),			Bytes),
@@ -218,8 +216,7 @@ Zfb::AsTable<"Zum.fbs.RecoveryStart"> Zfb_Fmt(RecoveryStartSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<RecoveryStartSaga>{}));
 
-template <typename Heap>
-RecoveryStartSaga_<Heap>::~RecoveryStartSaga_() = default;
+RecoveryStartSaga::~RecoveryStartSaga() = default;
 
 SagaRef recoveryStart(ZuBSpan data) {
   return RecoveryStartSaga::load(data);
@@ -232,8 +229,7 @@ SagaRef recoveryStart(RecoveryStartArgs args) {
   return new RecoveryStartSaga{ZuMv(args)};
 }
 
-template <typename Heap>
-void RecoveryStartSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void RecoveryStartSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!issuer || !actor || !userID || !capabilityID || !digest || created <= 0 ||
       expires <= created || !version || version == UINT64_MAX || !userVersion) {

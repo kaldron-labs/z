@@ -40,7 +40,7 @@ template <typename T> using Ptr = ZuPtr<T>;
 ZuAssert((ZuIsSame<decltype(Row::child), Ptr<Child>>{}));
 ZuAssert((ZuIsSame<decltype(Child::peer), Ptr<flatctest::Peer>>{}));
 ZuAssert((ZuIsSame<decltype(flatctest::Peer::child), Ptr<Child>>{}));
-ZuAssert((ZuIsSame<typename ZuTraits<decltype(Row::children)>::Elem, Ptr<Child>>{}));
+ZuAssert((ZuIsSame<ZuTraits<decltype(Row::children)>::Elem, Ptr<Child>>{}));
 ZuAssert((ZuIsSame<decltype(Row::minValue), int64_t>{}));
 ZuAssert((ZuIsSame<decltype(flatctest::Scalars::i8), int8_t>{}));
 ZuAssert((ZuIsSame<decltype(flatctest::Scalars::u64), uint64_t>{}));
@@ -53,10 +53,10 @@ ZuAssert((ZuIsSame<decltype(flatctest::Wide::time), ZuTime>{}));
 ZuAssert((ZuIsSame<decltype(flatctest::Wide::date), ZuDateTime>{}));
 ZuAssert((Row::DisplayName::HeapID{}() == "flatctest.Row.displayName"_z));
 ZuAssert((Row::Names::HeapID{}() == "flatctest.Row.names"_z));
-using Name = typename ZuTraits<Row::Names>::Elem;
+using Name = ZuTraits<Row::Names>::Elem;
 ZuAssert((Name::HeapID{}() == "flatctest.Row.names"_z));
 ZuAssert((Row::Bytes::HeapID{}() == "flatctest.Row.bytes"_z));
-using Part = typename ZuTraits<flatctest::Wide::Parts>::Elem;
+using Part = ZuTraits<flatctest::Wide::Parts>::Elem;
 ZuAssert((Part::HeapID{}() == "flatctest.Wide.parts"_z));
 using Body = decltype(Row::body);
 using OtherBody = decltype(Row::otherBody);
@@ -68,7 +68,7 @@ ZuAssert((ZuIsSame<decltype(flatctest::Wide::bitmap), ZtBitmap>{}));
 ZuAssert((ZuIsSame<decltype(flatctest::Wide::ip4), ZiIP>{}));
 ZuAssert((ZuIsSame<decltype(flatctest::Wide::ip6), ZiIP>{}));
 #define FlatcType(T, C, M, V) \
-  ZuAssert((ZuIsSame<typename ZuTraits<decltype(flatctest::Wide::M)>::Elem, T>{})); \
+  ZuAssert((ZuIsSame<ZuTraits<decltype(flatctest::Wide::M)>::Elem, T>{})); \
   ZuAssert((ZuIsBase<decltype(flatctest::Wide::M), \
     ZtArray<T, ZtArrayHeapID<"flatctest.Wide." #M>>>{})); \
   ZuAssert((decltype(flatctest::Wide::M)::HeapID{}() == ZuString{"flatctest.Wide." #M}));

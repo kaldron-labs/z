@@ -1,10 +1,6 @@
 # TODO
 
-- fix indentation, e.g. `Zrest.hh:435`
-
-`grpc.md`: update to align with revised `zhttp`, `zrest`, `zjrpc`
-- `zrest`, `zjrpc` now have consistent APIs with consistent capabilities
-- `zhttp` is client/server symmetric CRTP
+`grpc.md`: update to align with migrated `Zpb` in `zpb`
 
 implement `grpc.md`
 

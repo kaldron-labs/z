@@ -260,10 +260,10 @@ private:
 };
 
 template <typename OutChar, typename InChar> struct ZuUTF {
-  using OutUTF = typename ZuUTF_<sizeof(OutChar)>::T;
-  using OutElem = typename OutUTF::Elem;
-  using InUTF = typename ZuUTF_<sizeof(InChar)>::T;
-  using InElem = typename InUTF::Elem;
+  using OutUTF = ZuUTF_<sizeof(OutChar)>::T;
+  using OutElem = OutUTF::Elem;
+  using InUTF = ZuUTF_<sizeof(InChar)>::T;
+  using InElem = InUTF::Elem;
 
   using Span = ZuUTFSpan;
 

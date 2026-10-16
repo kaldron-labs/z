@@ -33,17 +33,17 @@ void out(const Ts &...values) {
 
 static bool detailVerbose = false;
 
-template <typename Heap = ZuVoid> struct S_ : public Heap {
-  S_(int i) : m_i(i) { }
-  ~S_() { m_i = -1; }
+struct S : public ZmNHeap<S> {
+friend inline ZuStringT<"S"> ZmNHeapID(S *);
+
+  S(int i) : m_i(i) { }
+  ~S() { m_i = -1; }
   void doit() {
     if (detailVerbose) out("hello world ", m_i);
     if (m_i < 0) abort();
   }
   int m_i;
 };
-ZuDerive(SHeap, (ZmHeap<"S", S_<>>));
-ZuDerive(S, (S_<SHeap>));
 
 using VectorHeap = ZmVHeap<"S_vector",
   sizeof(S) * ZmAllocator_DefltMin, sizeof(S) * ZmAllocator_DefltMax,
@@ -82,7 +82,7 @@ void usage_()
 
 int main(int argc, char **argv)
 {
-  ZuAssert((ZuIsSame<ZuStringT<"S">, ZmHeapID<S>>{}));
+  ZuAssert((ZuIsSame<ZuStringT<"S">, ZmNHeapID_<S>>{}));
   if (argc < 4 || argc > 5) usage_();
   {
     out("ZmGrow sizes:");

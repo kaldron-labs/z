@@ -537,7 +537,7 @@ void runUpgrade(const TempDir &temp)
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "Upgrade listen timed out");
-  using Link = typename UpgradeClient<Profile>::Link;
+  using Link = UpgradeClient<Profile>::Link;
   ZmRef<Link> link;
   if (listening) {
     link = new Link{&client};
@@ -626,7 +626,7 @@ void run(
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "H1 listen timed out");
-  using Link = typename Client<Profile>::Link;
+  using Link = Client<Profile>::Link;
   using Links =
     ZtArray<ZmRef<Link>, ZtArrayHeapID<"Zhttp.Test.HubLinks">>;
   Links links_;
@@ -739,7 +739,7 @@ void runServerStop(const TempDir &temp)
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
   ZuCHECK(listening, "active-stop listen timed out");
-  using Link = typename Client<Profile>::Link;
+  using Link = Client<Profile>::Link;
   ZmRef<Link> link;
   bool active = false;
   if (listening) {

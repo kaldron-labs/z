@@ -712,8 +712,10 @@ ZuStructReflect(ChildMapRow, ZuFacet::NestedPB, ZuFacet::PB);
 
 struct IntMapHash_ :
   ZmHashKV<int32_t, int32_t, ZmHashHeapID<"ZpbTest.IntMapHash.Node">> { };
-using IntMapHashHeap = ZmHeap<"ZpbTest.IntMapHash.Obj", IntMapHash_>;
-struct IntMapHash : IntMapHashHeap, IntMapHash_ { };
+struct IntMapHash : ZmNHeap<IntMapHash>, IntMapHash_ {
+friend inline ZuStringT<"ZpbTest.IntMapHash.Obj"> ZmNHeapID(IntMapHash *);
+
+};
 Zpb::AsMap<"test.IntMap", ZfFieldTC::Int32, ZfFieldTC::Int32>
   Zpb_Fmt(IntMapHash *);
 struct HashMapRow { ZmRef<IntMapHash> entries; };

@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct CredEditSaga_ : public Heap,
-    public ZdbSaga<CredEditSaga_<Heap>, DB> {
-  using Base = ZdbSaga<CredEditSaga_<Heap>, DB>;
+struct CredEditSaga : public ZmNHeap<CredEditSaga>,
+    public ZdbSaga<CredEditSaga, DB> {
+friend inline ZuStringT<"Zum.CredEditSaga"> ZmNHeapID(CredEditSaga *);
+
+  using Base = ZdbSaga<CredEditSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -101,8 +102,8 @@ struct CredEditSaga_ : public Heap,
     return {};
   }
 
-  CredEditSaga_() = default;
-  CredEditSaga_(Cred before_, String ifMatch_, String label_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_) :
+  CredEditSaga() = default;
+  CredEditSaga(Cred before_, String ifMatch_, String label_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     label{ZuMv(label_)},
@@ -110,18 +111,14 @@ struct CredEditSaga_ : public Heap,
     request{ZuMv(request_)},
     stateOnly{ZuMv(stateOnly_)},
     state{ZuMv(state_)} { }
-  CredEditSaga_(CredEditArgs args) :
-    CredEditSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.label), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state)} {
+  CredEditSaga(CredEditArgs args) :
+    CredEditSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.label), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state)} {
     response = ZuMv(args.result);
   }
   ZmRef<AdminEditResult<Cred>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~CredEditSaga_() override;
+  ~CredEditSaga() override;
 };
-
-
-using CredEditSaga = CredEditSaga_<
-  ZmHeap<"Zum.CredEditSaga", CredEditSaga_<>>>;
 
 ZfStruct(, (CredEditSaga, FB),
   (before,	(Ctor<0>),			UDT),
@@ -133,8 +130,7 @@ ZfStruct(, (CredEditSaga, FB),
   (state,	(Ctor<6>, Enum<State::Map>),	Int8));
 Zfb::AsTable<"Zum.fbs.CredEdit"> Zfb_Fmt(CredEditSaga *);
 
-template <typename Heap>
-unsigned CredEditSaga_<Heap>::credError(const Cred &item) const
+unsigned CredEditSaga::credError(const Cred &item) const
 {
   if (stateOnly && (state < 0 || state >= State::N)) return 400;
   String etag{"\"v"};
@@ -148,8 +144,7 @@ unsigned CredEditSaga_<Heap>::credError(const Cred &item) const
 
 ZuAssert((Zdb_::SagaDefValid<CredEditSaga>{}));
 
-template <typename Heap>
-CredEditSaga_<Heap>::~CredEditSaga_() = default;
+CredEditSaga::~CredEditSaga() = default;
 
 SagaRef credEdit(ZuBSpan data) {
   return CredEditSaga::load(data);

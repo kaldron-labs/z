@@ -26,7 +26,7 @@ template <typename Window_>
 class Elem {
 public:
   using Window = Window_;
-  using T = typename Window::T;
+  using T = Window::T;
   using U = ZuUnder<T>;
 
   Elem() = delete;
@@ -152,7 +152,7 @@ private:
 };
 
 template <typename Window>
-inline const typename Elem<Window>::T &Elem<Window>::get() const noexcept {
+inline const Elem<Window>::T &Elem<Window>::get() const noexcept {
   if (auto ptr = m_window.ptr(m_i)) return *ptr;
   return ZuNullRef<T>();
 }

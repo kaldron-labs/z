@@ -294,7 +294,7 @@ static void object()
   using DataField = ZfField_Object_CBOR_data;
   enum { KtyI = ZuTypeIndex<KtyField, Fields>{} };
   enum { DataI = ZuTypeIndex<DataField, Fields>{} };
-  ZuCheck(bool(ZuFieldProp::CBOR::IsIntID<typename KtyField::Props>{}));
+  ZuCheck(bool(ZuFieldProp::CBOR::IsIntID<KtyField::Props>{}));
   auto fields = ZtScratch(ZfCBOR::FieldSpansScratch, Fields::N, Fields::N);
   ZfCBOR::LoadContext<ZuTypeList<>, Fields> context(encoded);
   ZuCheck(context.index(fields));

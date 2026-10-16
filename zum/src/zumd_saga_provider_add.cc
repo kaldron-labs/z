@@ -14,10 +14,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ProviderAddSaga_ : public Heap,
-    public ZdbSaga<ProviderAddSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ProviderAddSaga_<Heap>, DB>;
+struct ProviderAddSaga : public ZmNHeap<ProviderAddSaga>,
+    public ZdbSaga<ProviderAddSaga, DB> {
+friend inline ZuStringT<"Zum.ProviderAddSaga"> ZmNHeapID(ProviderAddSaga *);
+
+  using Base = ZdbSaga<ProviderAddSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -60,25 +61,21 @@ struct ProviderAddSaga_ : public Heap,
     return {};
   }
 
-  ProviderAddSaga_() = default;
-  ProviderAddSaga_(Provider before_, Provider values_, int64_t updated_, IdemRequest request_) :
+  ProviderAddSaga() = default;
+  ProviderAddSaga(Provider before_, Provider values_, int64_t updated_, IdemRequest request_) :
     before{ZuMv(before_)},
     values{ZuMv(values_)},
     updated{ZuMv(updated_)},
     request{ZuMv(request_)} { }
-  ProviderAddSaga_(ProviderAddArgs args) :
-    ProviderAddSaga_{ZuMv(args.before), ZuMv(args.values), ZuMv(args.updated), ZuMv(args.request)} {
+  ProviderAddSaga(ProviderAddArgs args) :
+    ProviderAddSaga{ZuMv(args.before), ZuMv(args.values), ZuMv(args.updated), ZuMv(args.request)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<Provider>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~ProviderAddSaga_() override;
+  ~ProviderAddSaga() override;
 };
-
-
-using ProviderAddSaga = ProviderAddSaga_<
-  ZmHeap<"Zum.ProviderAddSaga", ProviderAddSaga_<>>>;
 
 ZfStruct(, (ProviderAddSaga, FB),
   (before,	(Ctor<0>),	UDT),
@@ -87,8 +84,7 @@ ZfStruct(, (ProviderAddSaga, FB),
   (request,	(Ctor<3>),	UDT));
 Zfb::AsTable<"Zum.fbs.ProviderAdd"> Zfb_Fmt(ProviderAddSaga *);
 
-template <typename Heap>
-Provider ProviderAddSaga_<Heap>::result() const
+Provider ProviderAddSaga::result() const
 {
   Provider item = values;
   item.state = State::Active;
@@ -98,8 +94,7 @@ Provider ProviderAddSaga_<Heap>::result() const
   return item;
 }
 
-template <typename Heap>
-void ProviderAddSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
+void ProviderAddSaga::validate(Zdb_::SagaCompleteFn complete)
 {
   if (!values.id || values.id == UINT64_MAX || values.id != before.id ||
       !values.name || !values.issuer || !values.clientID || !values.roleClaim ||
@@ -112,8 +107,7 @@ void ProviderAddSaga_<Heap>::validate(Zdb_::SagaCompleteFn complete)
 
 ZuAssert((Zdb_::SagaDefValid<ProviderAddSaga>{}));
 
-template <typename Heap>
-ProviderAddSaga_<Heap>::~ProviderAddSaga_() = default;
+ProviderAddSaga::~ProviderAddSaga() = default;
 
 SagaRef providerAdd(ZuBSpan data) {
   return ProviderAddSaga::load(data);

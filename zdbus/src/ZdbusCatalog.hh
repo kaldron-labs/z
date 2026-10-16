@@ -25,20 +25,20 @@ struct GetResponses_ { using T = NoHeaders; };
 template <typename Req>
 struct GetResponses_<Req, decltype(
   ZuDeclVal<typename Req::Responses *>(), void())> {
-  using T = typename Req::Responses;
+  using T = Req::Responses;
 };
 template <typename Req>
-using GetResponses = typename GetResponses_<Req>::T;
+using GetResponses = GetResponses_<Req>::T;
 
 template <typename Req, typename = void>
 struct GetErrors_ { using T = NoHeaders; };
 template <typename Req>
 struct GetErrors_<Req, decltype(
   ZuDeclVal<typename Req::Errors *>(), void())> {
-  using T = typename Req::Errors;
+  using T = Req::Errors;
 };
 template <typename Req>
-using GetErrors = typename GetErrors_<Req>::T;
+using GetErrors = GetErrors_<Req>::T;
 
 template <typename Key, typename Headers>
 struct FixedHeader_;
@@ -51,7 +51,7 @@ struct FixedHeader_<Key, ZuTypeList<Entry, Tail...>> {
     typename FixedHeader_<Key, ZuTypeList<Tail...>>::T>;
 };
 template <typename Key, typename Headers>
-using FixedHeader = typename FixedHeader_<Key, Headers>::T;
+using FixedHeader = FixedHeader_<Key, Headers>::T;
 
 template <typename Key, typename Headers>
 struct HeaderCount_;
@@ -73,7 +73,7 @@ template <typename Schema>
 struct Parsed {
   ZmRef<ZiIOBuf>	frame;
   FrameInfo		info;
-  typename Schema::ObjectT object;
+  Schema::ObjectT object;
 };
 
 struct RemoteError {
@@ -120,7 +120,7 @@ struct ErrorKey_ {
   ZuAssert((!ZuIsSame<T, ZuVoid>{}));
 };
 template <typename Schema>
-using ErrorKey = typename ErrorKey_<Schema>::T;
+using ErrorKey = ErrorKey_<Schema>::T;
 
 template <typename Errors>
 struct ErrorIDs { using Keys = ZuTypeMap<ErrorKey, Errors>; };
@@ -129,7 +129,7 @@ template <typename Schema>
 ZuCSpan bodySignature()
 {
   using Body = BodyObject<Schema>;
-  using Facet = typename Schema::Body_DBUS_Facet;
+  using Facet = Schema::Body_DBUS_Facet;
   static constexpr auto sig = ZfDBUS::signatureConst<Body, Facet>();
   return {sig.bytes, sig.length};
 }

@@ -15,10 +15,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ExternalProjectionSaga_ : public Heap,
-    public ZdbSaga<ExternalProjectionSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ExternalProjectionSaga_<Heap>, DB>;
+struct ExternalProjectionSaga : public ZmNHeap<ExternalProjectionSaga>,
+    public ZdbSaga<ExternalProjectionSaga, DB> {
+friend inline ZuStringT<"Zum.ExternalProjectionSaga"> ZmNHeapID(ExternalProjectionSaga *);
+
+  using Base = ZdbSaga<ExternalProjectionSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -148,8 +149,8 @@ struct ExternalProjectionSaga_ : public Heap,
     return {};
   }
 
-  ExternalProjectionSaga_() = default;
-  ExternalProjectionSaga_(
+  ExternalProjectionSaga() = default;
+  ExternalProjectionSaga(
       ProviderID providerID_, String issuer_,
       String subject_, UserID userID_,
       String name_, Bytes handle_,
@@ -161,16 +162,13 @@ struct ExternalProjectionSaga_ : public Heap,
     name{ZuMv(name_)},
     handle{ZuMv(handle_)},
     created{ZuMv(created_)} { }
-  ExternalProjectionSaga_(ExternalProjectionArgs args) :
-    ExternalProjectionSaga_{
+  ExternalProjectionSaga(ExternalProjectionArgs args) :
+    ExternalProjectionSaga{
       ZuMv(args.providerID), ZuMv(args.issuer), ZuMv(args.subject),
       ZuMv(args.userID), ZuMv(args.name), ZuMv(args.handle),
       ZuMv(args.created)} { }
-  ~ExternalProjectionSaga_() override;
+  ~ExternalProjectionSaga() override;
 };
-
-using ExternalProjectionSaga = ExternalProjectionSaga_<
-  ZmHeap<"Zum.ExternalProjectionSaga", ExternalProjectionSaga_<>>>;
 
 ZfStruct(, (ExternalProjectionSaga, FB),
   (providerID,	(Ctor<0>),	UInt64),
@@ -184,8 +182,7 @@ Zfb::AsTable<"Zum.fbs.ExternalProjection"> Zfb_Fmt(ExternalProjectionSaga *);
 
 ZuAssert((Zdb_::SagaDefValid<ExternalProjectionSaga>{}));
 
-template <typename Heap>
-ExternalProjectionSaga_<Heap>::~ExternalProjectionSaga_() = default;
+ExternalProjectionSaga::~ExternalProjectionSaga() = default;
 
 SagaRef externalProjection(ZuBSpan data) {
   return ExternalProjectionSaga::load(data);

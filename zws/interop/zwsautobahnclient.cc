@@ -76,7 +76,7 @@ struct App {
   };
 
   using Hub = Zws::Client<App, Profile>;
-  using Link = typename Hub::Link;
+  using Link = Hub::Link;
 
   enum Phase { Count, Cases, Update, Done };
 

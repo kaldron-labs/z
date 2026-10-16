@@ -350,7 +350,7 @@ int run(const Options &options, const TempDir &temp)
   }
 
   if (state.listening.timedwait(Zm::now(10))) state.failed = true;
-  using Link = typename Zws::Client<ClientApp, Profile>::Link;
+  using Link = Zws::Client<ClientApp, Profile>::Link;
   ZmRef<Link> link;
   if (!state.failed) {
     Zws::URI uri;

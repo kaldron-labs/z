@@ -202,12 +202,14 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   using ProducerClose = ZmFn<void(),
     ZmFnHeapID<"zhttpd.FileProducerClose">>;
 
-  template <typename Emit, typename Heap = ZuVoid>
-  struct FileProducer_ : public Heap, public ZmPolymorph {
-    using Self = FileProducer_;
+  template <typename Emit>
+  struct FileProducer : public ZmNHeap<FileProducer<Emit>>, public ZmPolymorph {
+  friend inline ZuStringT<"zhttpd.FileProducer"> ZmNHeapID(FileProducer *);
+
+    using Self = FileProducer;
     using Emitter = ZuUnion<void, Emit>;
 
-    FileProducer_(
+    FileProducer(
       State *state_, Emit emit_, const ZiFile &handle_,
       uint64_t offset_, uint64_t length_) :
       state{state_}, emitter{ZuMv(emit_)}, offset{offset_}, length{length_} {
@@ -273,12 +275,6 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     uint64_t	offset;
     uint64_t	length;
   };
-
-  template <typename Emit>
-  ZuDerive(FileProducerHeap,
-    (ZmHeap<"zhttpd.FileProducer", FileProducer_<Emit>>));
-  template <typename Emit>
-  ZuDerive(FileProducer, (FileProducer_<Emit, FileProducerHeap<Emit>>));
 
   Zhttp::BodyPolicy::T bodyPolicy() const {
     if (!plan.sendBody) return Zhttp::BodyPolicy::None;
@@ -567,7 +563,7 @@ struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
 private:
   void work_() {
     for (;;) {
-      typename WorkQ::NodeMvRef work;
+      WorkQ::NodeMvRef work;
       {
 	ZmGuard<ZmLock> guard(m_workLock);
 	work = m_work.shift();

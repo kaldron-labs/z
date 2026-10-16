@@ -327,7 +327,7 @@ public:
   using CxnRef = CxnRef_;
   using Rx = ZiRx<Impl, RxBufAlloc>;
   using Tx = ZiTx<Impl>;
-  using ImplRef = typename Cxn::LinkRef;
+  using ImplRef = Cxn::LinkRef;
   using Stream = Impl;
   using StreamRef = Impl *;
 
@@ -2359,7 +2359,7 @@ private:
 template <typename App>
 bool Client<App>::init(ClientParams params)
 {
-  using Link = typename App::Link;
+  using Link = App::Link;
 
   if (bool(params.certPath()) != bool(params.keyPath())) {
     auto errorFn = params.errorFn() ? params.errorFn() : defaultErrorFn();
@@ -2630,7 +2630,7 @@ private:
 template <typename App>
 bool Server<App>::init(ServerParams params)
 {
-  using Link = typename App::Link;
+  using Link = App::Link;
 
   m_stopDrained = false;
 

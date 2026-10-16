@@ -145,19 +145,21 @@ ZuDerive(ReservedNames,
   (ZtArray<ZuCSpan, ZtArrayHeapID<"Zpb.Reflect.ReservedNames">>));
 AsArray<"google.protobuf.ReservedNames"> Zpb_Fmt(ReservedNames *);
 
-template <typename Heap = ZuVoid>
-struct MsgOpts_ : Heap {
+struct MsgOpts : ZmNHeap<MsgOpts> {
+friend inline ZuStringT<"Zpb.Reflect.MsgOpts"> ZmNHeapID(MsgOpts *);
+
   bool mapEntry = false;
 
-  explicit MsgOpts_(bool entry = false) : mapEntry{entry} { }
+  explicit MsgOpts(bool entry = false) : mapEntry{entry} { }
 };
-using MsgOpts = MsgOpts_<ZmHeap<"Zpb.Reflect.MsgOpts", MsgOpts_<>>>;
+
 ZfStruct(ZpbAPI, (MsgOpts, PB),
   (mapEntry,	(PB::FieldID<7>),	Bool));
 AsMessage<"google.protobuf.MessageOptions"> Zpb_Fmt(MsgOpts *);
 
-template <typename Heap = ZuVoid>
-struct MsgDesc_ : Heap {
+struct MsgDesc : ZmNHeap<MsgDesc> {
+friend inline ZuStringT<"Zpb.Reflect.MsgDesc"> ZmNHeapID(MsgDesc *);
+
   ZuCSpan		name;
   Fields		fields;
   NestedMessages	nested;
@@ -168,7 +170,7 @@ struct MsgDesc_ : Heap {
   ReservedNames		reservedNames;
   bool			complete = false;
 };
-ZuDerive(MsgDesc, (MsgDesc_<ZmHeap<"Zpb.Reflect.MsgDesc", MsgDesc_<>>>));
+
 ZfStruct(ZpbAPI, (MsgDesc, PB),
   (name,		(PB::FieldID<1>),	String),
   (fields,	(PB::FieldID<2>),		UDT),
@@ -185,11 +187,12 @@ AsArray<"google.protobuf.Descriptors"> Zpb_Fmt(Messages *);
 
 ZuDerive(Dependencies,
   (ZtArray<ZuCSpan, ZtArrayHeapID<"Zpb.Reflect.Dependencies">>));
-template <typename Heap = ZuVoid>
-struct RetainedText_ : Heap,
+struct RetainedText : ZmNHeap<RetainedText>,
   ZtString<ZtStringHeapID<"Zpb.Reflect.RetainedText">> {
+friend inline ZuStringT<"Zpb.Reflect.RetainedText"> ZmNHeapID(RetainedText *);
+
 };
-using RetainedText = RetainedText_<ZmHeap<"Zpb.Reflect.RetainedText", RetainedText_<>>>;
+
 ZuDerive(RetainedTexts,
   (ZtArray<ZuPtr<RetainedText>, ZtArrayHeapID<"Zpb.Reflect.RetainedTexts">>));
 
@@ -366,16 +369,16 @@ struct IsMap<Fmt, decltype(Fmt::KC, Fmt::VC, void())> : ZuTrue { };
 template <typename T, typename = void> struct WireObject { using Type = T; };
 template <typename T>
 struct WireObject<T, decltype(sizeof(typename As<T>::Wire), void())> {
-  using Type = typename As<T>::Wire;
+  using Type = As<T>::Wire;
 };
-template <typename T> using WireType = typename WireObject<T>::Type;
+template <typename T> using WireType = WireObject<T>::Type;
 
 template <typename A, typename = void> struct Reserves {
   using Types = ZuTypeList<>;
 };
 template <typename A>
 struct Reserves<A, decltype(sizeof(typename A::Reserved), void())> {
-  using Types = typename A::Reserved;
+  using Types = A::Reserved;
 };
 
 template <typename F, unsigned = F::Code>
@@ -391,7 +394,7 @@ template <typename Selected> struct Effective {
     using Matches = ZuTypeGrep<Match, Selected>;
     using T = ZuType<0, typename Matches::template Push<F>>;
   };
-  template <typename F> using Apply = typename Find<F>::T;
+  template <typename F> using Apply = Find<F>::T;
 };
 
 inline ZuCSpan shortName(ZuCSpan name, ZuCSpan package) {
@@ -738,8 +741,8 @@ bool message(const DescSet &set, FileDesc &file) {
 	name = {path.data() + i, path.length() - i};
 	break;
       }
-    using H = typename As<T>::template Handler<T, Facet>;
-    using Next = typename Seen::template Push<T>;
+    using H = As<T>::template Handler<T, Facet>;
+    using Next = Seen::template Push<T>;
     using Complete = ZuFields<ZuStructured<T>>;
     using Selected = ZuFields<T, Facet>;
     using SchemaFields = ZuTypeMap<Effective<Selected>::template Apply,
@@ -770,7 +773,7 @@ bool message(const DescSet &set, FileDesc &file) {
 	  desc.oneofs.push(OneofDesc{FieldName<F>::value.cspan()});
 	  ZuUnroll::all<typename As<U>::Types>([&]<typename A>() {
 	    if (!ok) return;
-	    using V = typename A::T;
+	    using V = A::T;
 	    FieldDesc alt;
 	    alt.name = AltName<A>::value.cspan();
 	    alt.number = A::Field;
@@ -818,7 +821,7 @@ bool message(const DescSet &set, FileDesc &file) {
 		value.typeName = Name<V>::qualified.cspan();
 		if (ok) ok = message<V, Facet, Next>(set, file);
 	      } else if constexpr (MappedCode<Fmt::VC>{}) {
-		using V = typename Mapping<Fmt::VC>::T;
+		using V = Mapping<Fmt::VC>::T;
 		value.type = Type::Message;
 		value.typeName = Name<V>::qualified.cspan();
 		if (ok) ok = message<V, Facet, Next>(set, file);
@@ -851,7 +854,7 @@ bool message(const DescSet &set, FileDesc &file) {
 	  field.label = 3;
 	  constexpr unsigned elem = ZfFieldTC::Elem<code>{};
 	  if constexpr (MappedCode<elem>{}) {
-	    using V = typename Mapping<elem>::T;
+	    using V = Mapping<elem>::T;
 	    field.type = Type::Message;
 	    field.typeName = Name<V>::qualified.cspan();
 	    ok = message<V, Facet, Next>(set, file);
@@ -861,7 +864,7 @@ bool message(const DescSet &set, FileDesc &file) {
 	      set, file, field);
 	  }
 	} else if constexpr (MappedCode<code>{}) {
-	  using V = typename Mapping<code>::T;
+	  using V = Mapping<code>::T;
 	  field.type = Type::Message;
 	  field.typeName = Name<V>::qualified.cspan();
 	  ok = message<V, Facet, Next>(set, file);

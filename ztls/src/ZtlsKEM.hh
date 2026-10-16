@@ -32,8 +32,10 @@ enum {
   MLKEM768SecretSize = 32
 };
 
-template <typename Heap = ZuVoid>
-struct PK_MLKEM768_ : public Heap, public AnyPK {
+template <bool Enabled = true>
+struct PK_MLKEM768_ : public ZmNHeap<PK_MLKEM768_<Enabled>, Enabled>, public AnyPK {
+friend inline ZuStringT<"Ztls.PK_MLKEM768"> ZmNHeapID(PK_MLKEM768_ *);
+
   enum { Secret = 0 };
 
 protected:
@@ -73,23 +75,23 @@ public:
     return {};
   }
 };
-ZuDerive(PK_MLKEM768_Heap, (ZmHeap<"Ztls.PK_MLKEM768", PK_MLKEM768_<>>));
-ZuDerive(PK_MLKEM768, (PK_MLKEM768_<PK_MLKEM768_Heap>));
+using PK_MLKEM768 = PK_MLKEM768_<>;
 
-template <typename Heap = ZuVoid>
-struct SK_MLKEM768_ : public PK_MLKEM768_<Heap> {
+struct SK_MLKEM768 : public ZmNHeap<SK_MLKEM768>, public PK_MLKEM768_<false> {
+friend inline ZuStringT<"Ztls.SK_MLKEM768"> ZmNHeapID(SK_MLKEM768 *);
+
   enum { Secret = 1 };
   using PK = PK_MLKEM768;
-  using PK_ = PK_MLKEM768_<Heap>;
+  using PK_ = PK_MLKEM768_<false>;
   using PK_::key;
 
-  SK_MLKEM768_(Random &rng) {
+  SK_MLKEM768(Random &rng) {
     (void)rng;
     if (!Backend::pkey_mlkem768_generate(key))
       throw ZeEXCEPT(Error, "ZtlsKEM", "ML-KEM-768 key generation failed");
   }
 
-  SK_MLKEM768_(ZuBSpan bytes) {
+  SK_MLKEM768(ZuBSpan bytes) {
     bool ok = bytes.length() == MLKEM768SeedSize ?
       Backend::pkey_mlkem768_import_seed(key, bytes) :
       Backend::pkey_mlkem768_import_private(key, bytes);
@@ -148,8 +150,7 @@ struct SK_MLKEM768_ : public PK_MLKEM768_<Heap> {
     return {};
   }
 };
-ZuDerive(SK_MLKEM768_Heap, (ZmHeap<"Ztls.SK_MLKEM768", SK_MLKEM768_<>>));
-ZuDerive(SK_MLKEM768, (SK_MLKEM768_<SK_MLKEM768_Heap>));
+
 
 enum {
   HybridSeedSize = X25519KeySize,
@@ -168,8 +169,10 @@ inline bool hybridCombine_(
   return Backend::sha3_256(input, secret);
 }
 
-template <typename Heap = ZuVoid>
-struct PK_MLKEM768_X25519_ : public Heap, public AnyPK {
+template <bool Enabled = true>
+struct PK_MLKEM768_X25519_ : public ZmNHeap<PK_MLKEM768_X25519_<Enabled>, Enabled>, public AnyPK {
+friend inline ZuStringT<"Ztls.PK_MLKEM768_X25519"> ZmNHeapID(PK_MLKEM768_X25519_ *);
+
   enum { Secret = 0 };
 
   uint8_t xPublic[X25519KeySize];
@@ -228,22 +231,20 @@ public:
     }
   }
 };
-ZuDerive(PK_MLKEM768_X25519_Heap,
-  (ZmHeap<"Ztls.PK_MLKEM768_X25519", PK_MLKEM768_X25519_<>>));
-ZuDerive(PK_MLKEM768_X25519,
-  (PK_MLKEM768_X25519_<PK_MLKEM768_X25519_Heap>));
+using PK_MLKEM768_X25519 = PK_MLKEM768_X25519_<>;
 
-template <typename Heap = ZuVoid>
-struct SK_MLKEM768_X25519_ : public PK_MLKEM768_X25519_<Heap> {
+struct SK_MLKEM768_X25519 : public ZmNHeap<SK_MLKEM768_X25519>, public PK_MLKEM768_X25519_<false> {
+friend inline ZuStringT<"Ztls.SK_MLKEM768_X25519"> ZmNHeapID(SK_MLKEM768_X25519 *);
+
   enum { Secret = 1 };
   using PK = PK_MLKEM768_X25519;
-  using PK_ = PK_MLKEM768_X25519_<Heap>;
+  using PK_ = PK_MLKEM768_X25519_<false>;
   using PK_::key;
   using PK_::xPublic;
 
   Backend::PKey *xKey = nullptr;
 
-  SK_MLKEM768_X25519_(ZuBSpan seed) {
+  SK_MLKEM768_X25519(ZuBSpan seed) {
     if (seed.length() != HybridSeedSize)
       throw ZeEXCEPT(Error, "ZtlsKEM", "invalid hybrid identity seed");
     uint8_t expanded[HybridExpandedSize];
@@ -261,7 +262,7 @@ struct SK_MLKEM768_X25519_ : public PK_MLKEM768_X25519_<Heap> {
     release.cancel();
   }
 
-  ~SK_MLKEM768_X25519_() { Backend::pkey_free(xKey); }
+  ~SK_MLKEM768_X25519() { Backend::pkey_free(xKey); }
 
   ZuUnion<void, ZeException> decapsulate(
     ZuBSpan ciphertext, ZuSpan<uint8_t> secret) const {
@@ -287,10 +288,7 @@ struct SK_MLKEM768_X25519_ : public PK_MLKEM768_X25519_<Heap> {
     return {};
   }
 };
-ZuDerive(SK_MLKEM768_X25519_Heap,
-  (ZmHeap<"Ztls.SK_MLKEM768_X25519", SK_MLKEM768_X25519_<>>));
-ZuDerive(SK_MLKEM768_X25519,
-  (SK_MLKEM768_X25519_<SK_MLKEM768_X25519_Heap>));
+
 
 } // Ztls::PK
 

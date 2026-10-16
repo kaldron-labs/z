@@ -88,8 +88,8 @@ ZmListDerive(LegList, Leg, ZmListNode<Leg, ZmListShadow<>>);
 inline uint64_t Leg_SeqAxor(const LegList::Node &leg) {
   return leg.val().seqNo;
 }
-ZmHashDerive(LegHash, typename LegList::Node,
-  (ZmHashNode<typename LegList::Node,
+ZmHashDerive(LegHash, LegList::Node,
+  (ZmHashNode<LegList::Node,
     ZmHashKey<Leg_SeqAxor,
       ZmHashLock<ZmNoLock,
         ZmHashHeapID<"Ztc.Agent.PubLeg">>>>));
@@ -178,16 +178,16 @@ struct StateData {
   bool	started = false;
 };
 
-template <typename Heap = ZuVoid>
-struct State_ : public Heap, public ZmObject, public StateData {
+struct State_ : public ZmNHeap<State_>, public ZmObject, public StateData {
+friend inline ZuStringT<"Ztc.Agent.State"> ZmNHeapID(State_ *);
+
   using StateData::StateData;
 };
-ZuDerive(StateHeap, (ZmHeap<"Ztc.Agent.State", State_<>>));
 
 } // Agent_
 
-struct Agent::State final : public Agent_::State_<Agent_::StateHeap> {
-  using Base = Agent_::State_<Agent_::StateHeap>;
+struct Agent::State final : public Agent_::State_ {
+  using Base = Agent_::State_;
   using Base::Base;
 };
 

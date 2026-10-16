@@ -115,8 +115,8 @@ struct ZmList_NodeT {
 private:
   static constexpr auto KeyAxor = NTP_::KeyAxor;
   static constexpr auto ValAxor = NTP_::ValAxor;
-  using NodeBase = typename NTP_::Node;
-  using HeapID = typename NTP_::HeapID;
+  using NodeBase = NTP_::Node;
+  using HeapID = NTP_::HeapID;
   enum { Sharded = NTP_::Sharded };
 
   struct Node;
@@ -134,7 +134,7 @@ public:
 };
 
 template <typename T_, class NTP = ZmList_Defaults,
-  typename Node_ = typename ZmList_NodeT<T_, NTP>::T,
+  typename Node_ = ZmList_NodeT<T_, NTP>::T,
   typename Impl_ = void>
 class ZmList : public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
 public:
@@ -146,12 +146,12 @@ public:
   using ValRet = decltype(ValAxor(ZuDeclVal<const T &>()));
   using Key = ZuRDecay<KeyRet>;
   using Val = ZuRDecay<ValRet>;
-  using Cmp = typename NTP::template CmpT<T>;
-  using ValCmp = typename NTP::template ValCmpT<Val>;
-  using Lock = typename NTP::Lock;
-  using NodeBase = typename NTP::Node;
+  using Cmp = NTP::template CmpT<T>;
+  using ValCmp = NTP::template ValCmpT<Val>;
+  using Lock = NTP::Lock;
+  using NodeBase = NTP::Node;
   enum { Shadow = NTP::Shadow };
-  using HeapID = typename NTP::HeapID;
+  using HeapID = NTP::HeapID;
   enum { Sharded = NTP::Sharded };
 
 private:
@@ -166,8 +166,8 @@ template <typename> friend class Iter_;
 
 public:
   using Node = Node_;
-  using NodeRef = typename NodeFn::template Ref<Node>;
-  using NodeMvRef = typename NodeFn::template MvRef<Node>;
+  using NodeRef = NodeFn::template Ref<Node>;
+  using NodeMvRef = NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
 
 private:

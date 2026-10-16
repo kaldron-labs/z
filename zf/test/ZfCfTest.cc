@@ -127,13 +127,13 @@ ZfStruct(, (CfPtrHolder, Cf),
 ZuAssert((ZuIsSame<CfIntMap::Key, CfMapKey>{}));
 ZuAssert((ZuIsSame<CfIntMap::Val, int>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<CfIntMap>, ZuStringT<"ZfTest.Cf.IntMap">>{}));
+  ZmNHeapID_<CfIntMap>, ZuStringT<"ZfTest.Cf.IntMap">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<CfPtrObj>, ZuStringT<"ZfTest.Cf.PtrObj">>{}));
+  ZmNHeapID_<CfPtrObj>, ZuStringT<"ZfTest.Cf.PtrObj">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<CfPtrText>, ZuStringT<"ZfTest.Cf.PtrText">>{}));
+  ZmNHeapID_<CfPtrText>, ZuStringT<"ZfTest.Cf.PtrText">>{}));
 ZuAssert((ZuIsSame<
-  ZmHeapID<CfPtrArray>, ZuStringT<"ZfTest.Cf.PtrArray">>{}));
+  ZmNHeapID_<CfPtrArray>, ZuStringT<"ZfTest.Cf.PtrArray">>{}));
 
 struct CfText {
   CfText() = default;
@@ -1123,7 +1123,7 @@ static void unions()
   auto nullValue = ZfCf::handler<CfUnionHolder>(nullTree.p<1>()).ctor();
   ZuCheck((nullValue.value.is<const ZfCf::AnyNode *>()));
   ZuCheck(nullValue.value.p<const ZfCf::AnyNode *>() != nullptr);
-  using UnionHandler = typename ZfCf::As<decltype(nullValue.value)>::
+  using UnionHandler = ZfCf::As<decltype(nullValue.value)>::
     template Handler<decltype(nullValue.value), ZuFacet::Cf>;
   ZuCheck(!UnionHandler::valid(nullptr));
 

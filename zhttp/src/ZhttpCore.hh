@@ -149,7 +149,7 @@ ZuInline bool streaming(T v) {
 
 template <typename HdrCatalog>
 struct HeaderList {
-  using Headers = typename HdrCatalog::List;
+  using Headers = HdrCatalog::List;
   ZuAssert(!(Headers::N & 1), "header list must contain key/value pairs");
   enum { N = Headers::N >> 1 };
   template <unsigned I> using Key = ZuType<I << 1, Headers>;
@@ -164,28 +164,28 @@ template <typename K>
 struct HeaderValues_<K> { using T = ZuTypeList<>; };
 template <typename K, typename K0, typename V0, typename ...Ts>
 struct HeaderValues_<K, K0, V0, Ts...> {
-  using Tail = typename HeaderValues_<K, Ts...>::T;
+  using Tail = HeaderValues_<K, Ts...>::T;
   using T = ZuTypeUnique<ZuIf<ZuIsSame<K, K0>{},
     typename V0::template Push<Tail>, Tail>>;
 };
 template <typename K, typename ...Ts>
 struct HeaderValues_<K, ZuTypeList<Ts...>> : public HeaderValues_<K, Ts...> { };
 template <typename K, typename List>
-using HeaderValues = typename HeaderValues_<K, List>::T;
+using HeaderValues = HeaderValues_<K, List>::T;
 
 template <typename Hdrs, typename ...Keys> struct MergeHeaders_;
 template <typename Hdrs>
 struct MergeHeaders_<Hdrs> { using T = ZuTypeList<>; };
 template <typename Hdrs, typename K0, typename ...Keys>
 struct MergeHeaders_<Hdrs, K0, Keys...> {
-  using T = typename ZuTypeList<K0, HeaderValues<K0, Hdrs>>::template Push<
+  using T = ZuTypeList<K0, HeaderValues<K0, Hdrs>>::template Push<
     typename MergeHeaders_<Hdrs, Keys...>::T>;
 };
 template <typename Hdrs, typename ...Keys>
 struct MergeHeaders_<Hdrs, ZuTypeList<Keys...>> :
   public MergeHeaders_<Hdrs, Keys...> { };
 template <typename Headers>
-using MergeHeaders = typename MergeHeaders_<Headers,
+using MergeHeaders = MergeHeaders_<Headers,
   ZuTypeUnique<ZuTypeSlice<2, 0, Headers>>>::T;
 
 template <typename Values>
@@ -195,7 +195,7 @@ struct HeaderValue_ {
   using T = ZuType<0, Values>;
 };
 template <typename Values>
-using HeaderValue = typename HeaderValue_<Values>::T;
+using HeaderValue = HeaderValue_<Values>::T;
 
 ZhttpAPI unsigned requestErrorStatus(RequestErrorCode::T);
 

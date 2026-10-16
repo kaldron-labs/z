@@ -23,11 +23,13 @@
 
 namespace MapBench {
 
-template <typename Heap = ZuVoid>
-struct Hash_ : public Heap,
-  public ZmHashKV<int, int, ZmHashHeapID<"zfbmapbench.Hash">> { };
-using HashHeap = ZmHeap<"zfbmapbench.Hash.Obj", Hash_<>>;
-ZuDerive(Hash, Hash_<HashHeap>);
+struct Hash_ : public ZmNHeap<Hash_>,
+  public ZmHashKV<int, int, ZmHashHeapID<"zfbmapbench.Hash">> {
+friend inline ZuStringT<"zfbmapbench.Hash.Obj"> ZmNHeapID(Hash_ *);
+
+};
+
+ZuDerive(Hash, Hash_);
 ZuDerive(Tree, (ZmRBTreeKV<int, int, ZmRBTreeHeapID<"zfbmapbench.Tree">>));
 using Fmt = Zfb::AsMap<"maps.IntMap", ZfFieldTC::Int32, ZfFieldTC::Int32,
   ZuTypeList<>, ZuTypeList<ZuFieldProp::Deflt<-11>>>;
@@ -99,7 +101,7 @@ static void lookup(ZuBSpan bytes, unsigned n, unsigned rounds)
   auto start = Zm::now();
   for (unsigned r = 0; r < rounds; ++r)
     for (unsigned i = 0; i < n; ++i)
-      sum += entries.find(int(i)).template get<typename decltype(entries)::Entry::VF>();
+      sum += entries.find(int(i)).template get<decltype(entries)::Entry::VF>();
   auto elapsed = Zm::now() - start;
   std::cout << "lookup," << n << ',' << rounds << ',' << elapsed.as_decimal()
     << ',' << bytes.length() << ",0,0,0," << sum << '\n';

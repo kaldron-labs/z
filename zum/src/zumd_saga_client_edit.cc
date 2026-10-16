@@ -15,10 +15,11 @@
 
 namespace Zum {
 
-template <typename Heap = ZuVoid>
-struct ClientEditSaga_ : public Heap,
-    public ZdbSaga<ClientEditSaga_<Heap>, DB> {
-  using Base = ZdbSaga<ClientEditSaga_<Heap>, DB>;
+struct ClientEditSaga : public ZmNHeap<ClientEditSaga>,
+    public ZdbSaga<ClientEditSaga, DB> {
+friend inline ZuStringT<"Zum.ClientEditSaga"> ZmNHeapID(ClientEditSaga *);
+
+  using Base = ZdbSaga<ClientEditSaga, DB>;
   using Base::db;
   using Base::id;
   using Base::iteration;
@@ -67,8 +68,8 @@ struct ClientEditSaga_ : public Heap,
     return {};
   }
 
-  ClientEditSaga_() = default;
-  ClientEditSaga_(Client before_, String ifMatch_, Client values_, uint8_t fields_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_, uint32_t overlapSeconds_) :
+  ClientEditSaga() = default;
+  ClientEditSaga(Client before_, String ifMatch_, Client values_, uint8_t fields_, int64_t updated_, IdemRequest request_, bool stateOnly_, State::T state_, uint32_t overlapSeconds_) :
     before{ZuMv(before_)},
     ifMatch{ZuMv(ifMatch_)},
     values{ZuMv(values_)},
@@ -78,19 +79,15 @@ struct ClientEditSaga_ : public Heap,
     stateOnly{ZuMv(stateOnly_)},
     state{ZuMv(state_)},
     overlapSeconds{ZuMv(overlapSeconds_)} { }
-  ClientEditSaga_(ClientEditArgs args) :
-    ClientEditSaga_{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.values), ZuMv(args.fields), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state), ZuMv(args.overlapSeconds)} {
+  ClientEditSaga(ClientEditArgs args) :
+    ClientEditSaga{ZuMv(args.before), ZuMv(args.ifMatch), ZuMv(args.values), ZuMv(args.fields), ZuMv(args.updated), ZuMv(args.request), ZuMv(args.stateOnly), ZuMv(args.state), ZuMv(args.overlapSeconds)} {
     response = ZuMv(args.result);
     if (response) response->item = result();
   }
   ZmRef<AdminEditResult<Client>> response;
   void setError(unsigned value) { error = value; if (response) response->error = value; }
-  ~ClientEditSaga_() override;
+  ~ClientEditSaga() override;
 };
-
-
-using ClientEditSaga = ClientEditSaga_<
-  ZmHeap<"Zum.ClientEditSaga", ClientEditSaga_<>>>;
 
 ZfStruct(, (ClientEditSaga, FB),
   (before,		(Ctor<0>),			UDT),
@@ -104,8 +101,7 @@ ZfStruct(, (ClientEditSaga, FB),
   (overlapSeconds,	(Ctor<8>),			UInt32));
 Zfb::AsTable<"Zum.fbs.ClientEdit"> Zfb_Fmt(ClientEditSaga *);
 
-template <typename Heap>
-void ClientEditSaga_<Heap>::edit(Client &item) const
+void ClientEditSaga::edit(Client &item) const
 {
   if (fields == Secret) {
     if (overlapSeconds) {
@@ -125,8 +121,7 @@ void ClientEditSaga_<Heap>::edit(Client &item) const
   if (fields & 8) item.identityScopes = values.identityScopes;
 }
 
-template <typename Heap>
-unsigned ClientEditSaga_<Heap>::recordError(const Client &item) const
+unsigned ClientEditSaga::recordError(const Client &item) const
 {
   if (stateOnly ? state < 0 || state >= State::N :
       !fields || (fields != Secret && (fields & ~15U)))
@@ -149,8 +144,7 @@ unsigned ClientEditSaga_<Heap>::recordError(const Client &item) const
   return 0;
 }
 
-template <typename Heap>
-Client ClientEditSaga_<Heap>::result() const
+Client ClientEditSaga::result() const
 {
   Client item = before;
   if (!unchanged()) {
@@ -165,8 +159,7 @@ Client ClientEditSaga_<Heap>::result() const
 
 ZuAssert((Zdb_::SagaDefValid<ClientEditSaga>{}));
 
-template <typename Heap>
-ClientEditSaga_<Heap>::~ClientEditSaga_() = default;
+ClientEditSaga::~ClientEditSaga() = default;
 
 SagaRef clientEdit(ZuBSpan data) {
   return ClientEditSaga::load(data);

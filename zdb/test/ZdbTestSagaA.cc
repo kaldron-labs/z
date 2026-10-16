@@ -10,9 +10,10 @@
 
 namespace zdbtest {
 
-template <typename Heap = ZuVoid>
-struct SagaA_ : public Heap, public ZdbSaga<SagaA_<Heap>, SagaDB> {
-  using Base = ZdbSaga<SagaA_<Heap>, SagaDB>;
+struct SagaA : public ZmNHeap<SagaA>, public ZdbSaga<SagaA, SagaDB> {
+friend inline ZuStringT<"Zdb.Test.SagaA"> ZmNHeapID(SagaA *);
+
+  using Base = ZdbSaga<SagaA, SagaDB>;
   using Base::db;
   using Type = ZuStringT<"sagaA">;
   enum { NPhases = 3 };
@@ -26,11 +27,9 @@ struct SagaA_ : public Heap, public ZdbSaga<SagaA_<Heap>, SagaDB> {
   ZdbSagaPhase(1, order, Update) { return {}; }
   ZdbSagaPhase(2, payment, Delete) { return {}; }
 
-  SagaA_(uint64_t value_) : value{ZuMv(value_)} { }
-  ~SagaA_() override;
+  SagaA(uint64_t value_) : value{ZuMv(value_)} { }
+  ~SagaA() override;
 };
-
-using SagaA = SagaA_<ZmHeap<"Zdb.Test.SagaA", SagaA_<>>>;
 
 ZfStruct(, (SagaA, FB),
   (value, (Ctor<0>),		UInt64));
@@ -39,8 +38,7 @@ Zfb::AsTable<"zdbtest.fbs.SagaA"> Zfb_Fmt(SagaA *);
 ZuAssert((Zdb_::SagaDefValid<SagaA>{}));
 
 static ZmAtomic<unsigned> destroyed = 0;
-template <typename Heap>
-SagaA_<Heap>::~SagaA_() { ++destroyed; }
+SagaA::~SagaA() { ++destroyed; }
 unsigned sagaADestroyed() { return destroyed.load_(); }
 
 ZmRef<ZdbAnySaga<SagaDB>> sagaA(uint64_t value_) {

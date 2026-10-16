@@ -19,17 +19,17 @@ ZuStructFacet(MapWire);
 
 namespace MapTest {
 
-template <typename K, typename V, ZuString ID, typename Heap = ZuVoid>
-struct Hash_ : public Heap, public ZmHashKV<K, V, ZmHashHeapID<ID>> { };
 template <typename K, typename V, ZuString ID>
-using HashHeap = ZmHeap<ID + ".Obj"_z, Hash_<K, V, ID>>;
-ZuDerive(Hash, (Hash_<int, int, "ZfbMapTest.Hash",
-  HashHeap<int, int, "ZfbMapTest.Hash">>));
+struct Hash_ : public ZmNHeap<Hash_<K, V, ID>>, public ZmHashKV<K, V, ZmHashHeapID<ID>> {
+friend inline ZuStringT<ID + ".Obj"_z> ZmNHeapID(Hash_ *);
+
+};
+
+ZuDerive(Hash, (Hash_<int, int, "ZfbMapTest.Hash">));
 ZuDerive(Tree, (ZmRBTreeKV<int, int, ZmRBTreeHeapID<"ZfbMapTest.Tree">>));
 Zfb::AsMap<"test.IntMap", ZfFieldTC::Int32, ZfFieldTC::Int32> Zfb_Fmt(Hash *);
 Zfb::AsMap<"test.IntMap", ZfFieldTC::Int32, ZfFieldTC::Int32> Zfb_Fmt(Tree *);
-ZuDerive(Strings, (Hash_<ZtString<>, ZtString<>, "ZfbMapTest.Text",
-  HashHeap<ZtString<>, ZtString<>, "ZfbMapTest.Text">>));
+ZuDerive(Strings, (Hash_<ZtString<>, ZtString<>, "ZfbMapTest.Text">));
 Zfb::AsMap<"test.TextMap", ZfFieldTC::String, ZfFieldTC::String> Zfb_Fmt(Strings *);
 using AltText = ZtString<ZtStringHeapID<"ZfbMapTest.AltText">>;
 ZuDerive(AltStrings, (ZmRBTreeKV<AltText, AltText,
@@ -44,23 +44,23 @@ ZfStruct(, (Row, FB), (map, (Mutable), UDT), (tree, (Mutable), UDT));
 Zfb::AsTable<"test.MapRow"> Zfb_Fmt(Row *);
 
 static int alive = 0;
-template <typename Heap = ZuVoid>
-struct Item_ : public Heap {
+struct Item_ : public ZmNHeap<Item_> {
+friend inline ZuStringT<"ZfbMapTest.Item"> ZmNHeapID(Item_ *);
+
   int value;
   int omitted = -7;
 
   explicit Item_(int v = 0) : value{v} { ++alive; }
   ~Item_() { --alive; }
 };
-using ItemHeap = ZmHeap<"ZfbMapTest.Item", Item_<>>;
-ZuDerive(Item, Item_<ItemHeap>);
+
+ZuDerive(Item, Item_);
 ZfStruct(, (Item, FB),
   (value, (Ctor<0>, Deflt<0>), Int32),
   (omitted,, Int32));
 ZfStructRender(, Item, MapWire, value);
 Zfb::AsTable<"test.MapItem"> Zfb_Fmt(Item *);
-ZuDerive(Raw, (Hash_<int, Item *, "ZfbMapTest.Raw",
-  HashHeap<int, Item *, "ZfbMapTest.Raw">>));
+ZuDerive(Raw, (Hash_<int, Item *, "ZfbMapTest.Raw">));
 Zfb::AsMap<"test.RawMap", ZfFieldTC::Int32, ZfFieldTC::UDT> Zfb_Fmt(Raw *);
 ZuDerive(Owned, (ZmRBTreeKV<int, ZuPtr<Item>, ZmRBTreeHeapID<"ZfbMapTest.Owned">>));
 Zfb::AsMap<"test.OwnedMap", ZfFieldTC::Int32, ZfFieldTC::UDT> Zfb_Fmt(Owned *);
@@ -127,8 +127,8 @@ static void roundTrip()
   auto entries = Zfb::handler<Hash>(bytes).entries();
   ZuCheck(entries.length() == 3);
   ZuCheck(entries.key(0) == -3 && entries.key(1) == 0 && entries.key(2) == 7);
-  using E = typename decltype(entries)::Entry;
-  ZuCheck(entries.find(7).template get<typename E::VF>() == 70);
+  using E = decltype(entries)::Entry;
+  ZuCheck(entries.find(7).template get<E::VF>() == 70);
   ZuCheck(!entries.find(8));
   auto tree = Zfb::load<Tree>(bytes);
   ZuCheck(tree.count_() == 3 && tree.findVal(-3) == 30);
@@ -176,8 +176,8 @@ static void duplicates()
   Zfb::Buffer buf;
   Zfb::ArrayStorage<> storage{buf};
   Zfb::Builder<Zfb::ArrayStorage<>> builder{storage};
-  using E = typename Zfb::As<Hash>::template Entry<int, int>;
-  using EH = typename Zfb::As<E>::template Handler<E>;
+  using E = Zfb::As<Hash>::template Entry<int, int>;
+  using EH = Zfb::As<E>::template Handler<E>;
   // An explicit unsorted wire fixture with a repeated key. Verification is
   // structural only, and both native containers must keep the last value.
   ZuArray<Zfb::Offset, 3> offsets(3, false);

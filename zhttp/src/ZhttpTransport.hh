@@ -715,7 +715,7 @@ template <
   typename = ZuIfT<IsProfile<Profile_>{}>>
 struct ProfileTraits {
   using Profile = Profile_;
-  using Protocol = typename Profile::Protocol;
+  using Protocol = Profile::Protocol;
   using Transport = Transport_::Traits<Protocol>;
 
   enum {
@@ -728,7 +728,7 @@ struct ProfileTraits {
     connected.multiplexed = Multiplexed;
     return connected;
   }
-  static ConnectedInfo connected(typename Transport::Connected info) {
+  static ConnectedInfo connected(Transport::Connected info) {
     return apply(Transport::connected(ZuMv(info)));
   }
 };
@@ -1008,8 +1008,8 @@ template <typename App, typename Impl, typename Profile>
 class ClientLink :
   public ProfileTraits<Profile>::Transport::template ClientLink<App, Impl> {
   using HTTP = ProfileTraits<Profile>;
-  using Traits = typename HTTP::Transport;
-  using Base = typename Traits::template ClientLink<App, Impl>;
+  using Traits = HTTP::Transport;
+  using Base = Traits::template ClientLink<App, Impl>;
   using StreamBinding =
     H1::StreamBinding<Impl, Impl>;
 
@@ -1032,7 +1032,7 @@ public:
   void connectEndpoint(const Endpoint &endpoint) {
     connect(endpoint.target, endpoint.port);
   }
-  void connected(typename Traits::Connected info) {
+  void connected(Traits::Connected info) {
     if (m_cancelled) {
       Traits::disconnect(*this);
       return;
@@ -1060,7 +1060,7 @@ public:
     m_cancelled = true;
     Traits::disconnect(*this);
   }
-  int process(typename Traits::RxStream &rx) {
+  int process(Traits::RxStream &rx) {
     if (m_stream.stream()) return m_stream.process(rx);
     if (m_stream.terminal()) return 0;
     int rc = this->app()->process(*impl(), rx);
@@ -1159,8 +1159,8 @@ template <
 class ServerLink :
   public ProfileTraits<Profile>::Transport::template ServerLink<App, Impl> {
   using HTTP = ProfileTraits<Profile>;
-  using Traits = typename HTTP::Transport;
-  using Base = typename Traits::template ServerLink<App, Impl>;
+  using Traits = HTTP::Transport;
+  using Base = Traits::template ServerLink<App, Impl>;
   using StreamBinding =
     H1::StreamBinding<Impl, Impl>;
 
@@ -1185,7 +1185,7 @@ public:
   }
   Session &rxState() { return m_session; }
 
-  void connected(typename Traits::Connected info) {
+  void connected(Traits::Connected info) {
     m_session.connected(*impl());
     this->app()->connected(*impl(), HTTP::connected(ZuMv(info)));
     touch();
@@ -1209,7 +1209,7 @@ public:
     }
     this->app()->linkDrained_();
   }
-  int process(typename Traits::RxStream &rx) {
+  int process(Traits::RxStream &rx) {
     if (m_stream.stream()) return m_stream.process(rx);
     if (m_stream.terminal()) return 0;
     int rc = m_session.process(*impl(), rx);
