@@ -1,6 +1,6 @@
 # Zhttp erasure implementation plan
 
-Implement [zhttp_erasure.md](zhttp_erasure.md) as one breaking refactor. This
+Implement [goal.md](goal.md) as one breaking refactor. This
 plan prescribes work; it does not report completed implementation or measurements.
 The four sections below settle the design, build policy, implementation slices,
 and final consistency review. Follow [GUIDELINES.md](GUIDELINES.md), subject to
@@ -16,8 +16,9 @@ these explicit user constraints:
   first correlate responses to pending requests, then dispatch in that context.
 - Call the forbidden/pseudo classification helpers only during catalog
   configuration, as specified below, never per request.
-- Keep the current build configuration and artifacts. Batch changes; rebuild and
-  test only at the designated major milestones. Defer dependent rebuilding to
+- Use Clang debug as the default build configuration, established before slice A
+  as specified in section 2, then retain that configuration and artifacts. Batch
+  changes; rebuild and test only at the designated major milestones. Defer dependent rebuilding to
   the final slice. Other compilers, platforms, debug/release flags and sanitizer
   configurations are outside scope. Use Valgrind only for corruption debugging
   when needed and the final leak/corruption gate.
@@ -386,16 +387,25 @@ data last. See [Core language](GUIDELINES.md#core-language),
 
 ## 2. Build and measurement policy
 
-Retain the current configured compiler, platform, flags, dependency versions,
-link/debug settings and build directory. Do not run clean/distclean, switch
-compilers, create a second build configuration, toggle sanitizers/LTO/optimization,
-or rebuild dependencies merely for reassurance. Regenerate changed build metadata
-only as necessary with the existing configuration; reuse unaffected artifacts.
+The default build is Clang debug, configured from the repository root with
+`./z.config -L -d <prefix>`, retaining the existing install prefix, platform,
+dependency versions and applicable feature options. Use the wrapper's debug flags
+and link/debug settings without manual optimization, LTO or sanitizer overrides.
+Before slice A, if the existing build differs, reconfigure the same build directory,
+then run top-level `make clean` followed by `make -j4` once to establish consistent
+Clang debug artifacts. If it already matches, reuse the current artifacts.
+
+After that setup, retain the configured compiler, flags and build directory.
+Do not run clean/distclean, switch compilers, create a second build configuration,
+toggle sanitizers/LTO/optimization, or rebuild dependencies merely for reassurance.
+Regenerate changed build metadata only as necessary with the established
+configuration; reuse unaffected artifacts.
 This narrows the broader matrix in the original design and guideline acceptance
 advice. Apply [Build configuration](GUIDELINES.md#build-configuration) ordering
-without changing configuration.
+without changing the established Clang debug configuration.
 
-There are only three planned build/test milestones: slices B, C and D below.
+After initial configuration setup, there are only three planned build/test
+milestones: slices B, C and D below.
 Accumulate source, fixture and build-file edits into the large batches specified
 there. Between milestones use source/dependency/ownership review, not repeated
 builds or test runs. At B/C, incrementally build `zhttp/src` with `make -j4`, then
@@ -533,7 +543,7 @@ boundary with a staged install/header consumer using the current artifacts.
 
 Now run the final incremental top-level build, required suites, compile/runtime
 comparisons and targeted Valgrind gate under section 2. No alternate toolchain,
-platform, sanitizer configuration or clean rebuild is part of acceptance.
+platform, sanitizer configuration or further clean rebuild is part of acceptance.
 
 **Interim acceptance before the final review:** all active callers use the new
 API, all required evidence below is recorded, and old scaffolding/paths are gone.
@@ -562,7 +572,7 @@ sleeps/polling as proof of completion. See [Tests](GUIDELINES.md#tests),
 | Integration, D | Existing `zhttpmatrix`, application/server tests, H1 Upgrade and H2/H3 Extended CONNECT (buffered input, pseudo fields, peer capability, open success directions and ordinary failure), JSON-RPC/REST/MCP and other affected dependent suites; configured external interop only |
 | Performance/memory, D | Compile time/RSS/object/debug size and runtime latency/tail/throughput/allocation/copy/connection/stream memory comparisons; targeted Valgrind leak/corruption coverage of retained producers, cancellation, stream/channel lifetime and shutdown |
 
-Inspect objects/dependencies under the **current flags**; do not introduce `-O0`,
+Inspect objects/dependencies under the **established Clang debug flags**; do not add `-O0`,
 LTO changes or another build solely for symbol inspection. Supplement symbol
 inspection with source/registration and include-graph review so optimization or
 linker stripping cannot conceal an application-specialized native path. Compare
@@ -611,9 +621,10 @@ rather than appending an exception that leaves two competing instructions.
   affected source directories; names and file layout meet the linked guidelines.
 - [ ] Server explicit activation and client selection-derived defaults are
   distinguished; no automatic listener matrix or unnecessary configuration API remains.
-- [ ] Builds stayed incremental in the current configuration, occurred at major
-  milestones, and downstream compilation was deferred until D; Valgrind usage
-  was targeted. No clean/alternate-configuration requirement remains.
+- [ ] Clang debug was established before slice A; subsequent builds stayed
+  incremental in that configuration, occurred at major milestones, and downstream
+  compilation was deferred until D; Valgrind usage
+  was targeted. No further clean/alternate-configuration requirement remains.
 - [ ] Every consumer and installed-header fixture uses the final API; deleted
   paths have no compatibility fallback or surviving temporary scaffolding.
 - [ ] Required functional, structural, memory and comparable performance evidence
