@@ -17,6 +17,7 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmNoLock.hh>
+#include <zlib/ZmPlatform.hh>
 
 #include <zlib/ZtArray.hh>
 
@@ -446,7 +447,7 @@ public:
     ZmRef<Action> action = new Action{this, ZuMv(batch), ZuMv(call)};
     if (derived()->invoked()) { action->start(); return true; }
     if ((m_ingress += n) > derived()->limits().maxPending) { m_ingress -= n; return false; }
-    bool posted = derived()->ownerRun([this, n, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, n, action = ZuMv(action)]() mutable {
       m_ingress -= n;
       action->start();
     });
@@ -462,7 +463,7 @@ public:
     if (derived()->invoked()) return notifyBatch_(batch);
     if ((m_ingress += n) > derived()->limits().maxPending) { m_ingress -= n; return false; }
     ZmRef<BatchAction<B>> action = new BatchAction<B>{ZuMv(batch)};
-    bool posted = derived()->ownerRun([this, n, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, n, action = ZuMv(action)]() mutable {
       m_ingress -= n;
       if (derived()->up() && !notifyBatch_(action->batch)) derived()->fail_();
     });
@@ -472,6 +473,21 @@ public:
 
 
 protected:
+  template <typename L>
+  bool sendRun(L &&l) {
+    if (derived()->invoked()) return derived()->ownerRun(ZuFwd<L>(l));
+    if (++m_sendPosts > derived()->limits().maxQueue) {
+      --m_sendPosts;
+      return false;
+    }
+    bool posted = derived()->ownerRun([this, l = ZuFwd<L>(l)]() mutable {
+      --m_sendPosts;
+      l();
+    });
+    if (!posted) --m_sendPosts;
+    return posted;
+  }
+
   PendingCalls &pendingCalls() { return m_pending; }
   ZmAtomic<unsigned> &ingress() { return m_ingress; }
   bool fail(const ID &id) { return m_pending.fail(id); }
@@ -612,8 +628,11 @@ private:
   }
 
 private:
+  // Outgoing call state; send admission is shared with posting threads.
+  alignas(Zm::CacheLineSize)
   PendingCalls m_pending;
   ZmAtomic<unsigned> m_ingress = 0;
+  ZmAtomic<unsigned> m_sendPosts = 0;
 };
 
 template <typename Derived, typename Catalog>
@@ -630,7 +649,7 @@ public:
     if (++m_ingress > derived()->limits().maxPending) { --m_ingress; return false; }
     using Action = CallAction<Req, Call>;
     ZmRef<Action> action = new Action{ZuMv(object), ZuMv(call)};
-    bool posted = derived()->ownerRun([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --m_ingress;
       call_<Req>(ZuMv(action->object), ZuMv(action->call));
     });
@@ -646,7 +665,7 @@ public:
     if (++m_ingress > derived()->limits().maxPending) { --m_ingress; return false; }
     using Action = NotifyAction<Req>;
     ZmRef<Action> action = new Action{ZuMv(object)};
-    bool posted = derived()->ownerRun([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --m_ingress;
       if (derived()->up() && !derived()->send(RequestMessage<Req>{{}, ZuMv(action->object)}))
 	derived()->fail_();

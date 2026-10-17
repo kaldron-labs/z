@@ -816,16 +816,15 @@ public:
   using Zhttp::ResBuilder::header;
 
   ~HTTPResponseData() { close(); }
-  bool init(Impl *impl, Message message, int policy, const Limits &limits) {
+  void init(Impl *impl, Message message, int policy, const Limits &limits) {
     m_impl = impl;
-    if (message.empty()) return true;
+    if (message.empty()) return;
     if (policy == BodyPolicy::SSE) {
-      auto builder = new (m_builder.template new_<SSE>()) SSE{limits, ZuMv(message)};
-      return builder->emit(MessageView<Message>{builder->message});
+      new (m_builder.template new_<SSE>()) SSE{limits, ZuMv(message)};
+      return;
     }
     new (m_builder.template new_<Fixed>()) Fixed{
       .message = ZuMv(message), .maxBodyBytes = limits.maxJSONBytes};
-    return true;
   }
   unsigned status() const { return 200; }
   Zhttp::Method::T method() const { return Zhttp::Method::POST; }
@@ -876,9 +875,13 @@ public:
   template <typename L> void header(L &&) const { }
   template <typename Emit>
   void body(Emit &&emit) {
-    if (auto sse = m_builder.template ptr<SSE>())
+    if (auto sse = m_builder.template ptr<SSE>()) {
+      if (!sse->emit(MessageView<Message>{sse->message})) {
+	emit([](auto &) { return Zhttp::WriteOutcome::Abort; });
+	return;
+      }
       sse->body(ZuFwd<Emit>(emit));
-    else if (auto fixed = m_builder.template ptr<Fixed>())
+    } else if (auto fixed = m_builder.template ptr<Fixed>())
       fixed->body(ZuFwd<Emit>(emit));
   }
   template <typename L>

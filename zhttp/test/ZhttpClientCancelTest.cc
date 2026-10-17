@@ -191,6 +191,7 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 
   uint64_t key() const { return key_; }
   uint64_t length() const { return 1; }
+  bool replayable() const { ++replayReads; return replayable_; }
   bool idempotent(Zhttp::Method::T method_) const {
     return idempotent_ || Zhttp::idempotentMethod(method_);
   }
@@ -202,9 +203,11 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
   unsigned		bodyLength = 0;
   unsigned		completions = 0;
   mutable unsigned	inits = 0;
+  mutable unsigned	replayReads = 0;
   Zhttp::ResultCode::T resultCode = Zhttp::ResultCode::OK;
   Zhttp::Method::T	method = Zhttp::Method::GET;
   bool			idempotent_ = false;
+  bool			replayable_ = true;
 };
 
 int listenerAt(uint16_t);
@@ -255,11 +258,12 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<App, TxQ, ResParser,
-  Zhttp::Profiles<Zhttp::H1TCP>> {
+using TestProfiles = Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS, Zhttp::H2TLS>;
+
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<App, TxQ, ResParser, TestProfiles> {
 friend inline ZuStringT<"Zhttp.Test.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<App, TxQ, ResParser, Zhttp::Profiles<Zhttp::H1TCP>>;
+  using Base = Zhttp::Pool<App, TxQ, ResParser, TestProfiles>;
 
   Pool(App *);
 
@@ -466,6 +470,13 @@ void attemptState()
     Zhttp::CatalogData<ReqHeaders>::configure());
   attempt.events = Zhttp::AttemptEvent{}.SelectionObserved() |
     Zhttp::AttemptEvent{}.FailureObserved();
+
+  ZuCHECK(attempt.request->replayAllowed && request->replayReads == 1,
+    "request binding snapshots the default replay policy");
+  request->replayable_ = false;
+  Zhttp::bindRequest(request.ptr(), Zhttp::CatalogData<ReqHeaders>::configure());
+  ZuCHECK(attempt.request->replayAllowed && request->replayReads == 1,
+    "rebinding preserves the submitted replay policy");
 
   ZuCHECK(attempt.request->ctx == request.ptr(),
     "live request retains the intrusive request");
@@ -2093,13 +2104,13 @@ void retry()
   mx.stop();
 }
 
-void redirectUnsafe()
+void redirectUnsafe(bool noReplay = false)
 {
   ZuTestScope(redirectUnsafe);
 
   uint16_t port;
   int fd = listener(port);
-  ZuCHECK(fd >= 0 && port, "create non-idempotent redirect listener");
+  ZuCHECK(fd >= 0 && port, "create unsafe redirect listener");
   if (fd < 0) return;
   ZmAtomic<unsigned> serverOK = 0;
   ServerSockets sockets{fd};
@@ -2108,7 +2119,7 @@ void redirectUnsafe()
   }};
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start non-idempotent redirect multiplexer");
+  ZuCHECK(mx.start(), "start unsafe redirect multiplexer");
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -2116,32 +2127,38 @@ void redirectUnsafe()
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
   ZuCHECK(startApp(app, mx, port, config),
-    "initialize/start non-idempotent redirect agent");
+    "initialize/start unsafe redirect agent");
 
   auto request = app.request();
   request->method = Zhttp::Method::POST;
+  request->idempotent_ = noReplay;
+  request->replayable_ = !noReplay;
   request->target = "/start";
   app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
-    "non-idempotent redirect completes without replay");
+    "unsafe redirect completes without replay");
   app.stop();
   sockets.stop();
   server.join();
 
   ZuCHECK(serverOK.load_(),
-    "non-idempotent redirect server receives one request");
+    "unsafe redirect server receives one request");
   ZuCHECK(app.results.length() == 1 &&
       app.results[0].code == Zhttp::ResultCode::ReplayUnsafe &&
-      app.results[0].redirects == 0,
-    "non-idempotent redirect is not replayed");
+      app.results[0].redirects == 0 && app.results[0].status == 302,
+    "unsafe redirect is not replayed");
   ZuCHECK(app.selectedEvents == 1 && !app.redirectedEvents &&
       app.completedEvents == 1,
-    "non-idempotent redirect has one terminal attempt");
+    "unsafe redirect has one terminal attempt");
+
+  ZuCHECK(request->replayReads == 1, "replay policy is sampled once at submission");
 
   app.final();
   mx.stop();
 }
+
+void redirectNoReplay() { redirectUnsafe(true); }
 
 void redirect()
 {
@@ -2252,7 +2269,7 @@ void crossOriginRedirect()
   mx.stop();
 }
 
-void retryLimit()
+void retryLimit(bool noReplay = false, bool tls = false)
 {
   ZuTestScope(retryLimit);
 
@@ -2270,11 +2287,22 @@ void retryLimit()
     .concurrency(1).maxRetries(2)
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(true).quic(false);
-  ZuCHECK(startApp(app, mx, port, config),
-    "initialize/start retry-limit agent");
+  bool started;
+  if (tls) {
+    config.tcp(false).tls(true).secure(true).maxRetries(0);
+    started = app.init(
+      Zhttp::HubConfig{&mx, "3", "4"}, 1, config,
+      Zhttp::TCPConfig{}, Zhttp::H2Config{}, Zhttp::QUICConfig{});
+    started = started && app.pool(
+      0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port}) && app.start();
+  } else {
+    started = startApp(app, mx, port, config);
+  }
+  ZuCHECK(started, "initialize/start retry-limit agent");
 
   auto request = app.request();
   request->target = "/";
+  request->replayable_ = !noReplay;
   app.send(0, request);
   app.seal(0);
   ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
@@ -2282,18 +2310,29 @@ void retryLimit()
   app.stop();
 
   ZuCHECK(app.results.length() == 1 &&
-      app.results[0].code == Zhttp::ResultCode::Failed &&
-      app.results[0].retries == 2,
+      app.results[0].code == (noReplay ?
+	Zhttp::ResultCode::ReplayUnsafe : Zhttp::ResultCode::Failed) &&
+      app.results[0].retries == (noReplay ? 0 : 2),
     "retry budget produces one failed result");
-  ZuCHECK(app.selectedEvents == 3 &&
-      app.attemptFailedEvents == 3 &&
-      app.retriedEvents == 2 &&
+  ZuCHECK(app.selectedEvents == (tls ? 0 : noReplay ? 1 : 3) &&
+      app.attemptFailedEvents == (noReplay ? 1 : 3) &&
+      app.retriedEvents == (noReplay ? 0 : 2) &&
       app.completedEvents == 1,
     "retry budget bounds attempts");
+
+  ZuCHECK(request->replayReads == 1, "retry attempts retain the submitted replay policy");
+
+  if (tls)
+    ZuCHECK(app.results.length() == 1 &&
+	app.results[0].transport == Zhttp::Transport::TLS,
+      "unprocessed TLS refusal preserves its transport");
 
   app.final();
   mx.stop();
 }
+
+void retryNoReplay() { retryLimit(true); }
+void tlsNoReplay() { retryLimit(true, true); }
 
 void configuration()
 {
@@ -2306,7 +2345,7 @@ void configuration()
     .links(2).concurrency(4).linkMax(2).secure(false)
     .requestTimeout(17).maxRetries(3).maxRedirects(5)
     .maxOrigins(41).maxAltSvc(7)
-    .retainedBodyMax(700).retainedMessageMax(900)
+    .bodyMax(1700).retainedBodyMax(700).retainedMessageMax(900)
     .discoveryLimits({3, 4, 5, 6})
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .h2Policy(Zhttp::H2Policy::Disable)
@@ -2349,7 +2388,7 @@ void configuration()
   auto overrides = Zhttp::Config()
     .links(1).concurrency(2).linkMax(1).requestTimeout(0)
     .maxRetries(1).maxRedirects(2).maxOrigins(19).maxAltSvc(3)
-    .retainedBodyMax(70).retainedMessageMax(90)
+    .bodyMax(170).retainedBodyMax(70).retainedMessageMax(90)
     .discoveryLimits({8, 9, 10, 11})
     .protocol(Zhttp::ProtoPolicy::PreferH3)
     .h2Policy(Zhttp::H2Policy::Prefer)
@@ -2367,7 +2406,8 @@ void configuration()
   ZuCHECK(config0 && config0->links() == 2 &&
       config0->concurrency() == 4 && config0->linkMax() == 2 &&
       config0->requestTimeout() == 17 && config0->maxRetries() == 3 &&
-      config0->maxRedirects() == 5 && config0->retainedBodyMax() == 700 &&
+      config0->maxRedirects() == 5 && config0->bodyMax() == 1700 &&
+      config0->retainedBodyMax() == 700 &&
       config0->retainedMessageMax() == 900 &&
       config0->maxOrigins() == 41 && config0->maxAltSvc() == 7 &&
       config0->discoveryLimits().maxRecords == 3 &&
@@ -2383,7 +2423,8 @@ void configuration()
   ZuCHECK(config1 && config1->links() == 1 &&
       config1->concurrency() == 2 && config1->linkMax() == 1 &&
       config1->requestTimeout() == 0 && config1->maxRetries() == 1 &&
-      config1->maxRedirects() == 2 && config1->retainedBodyMax() == 70 &&
+      config1->maxRedirects() == 2 && config1->bodyMax() == 170 &&
+      config1->retainedBodyMax() == 70 &&
       config1->retainedMessageMax() == 90 &&
       config1->maxOrigins() == 19 && config1->maxAltSvc() == 3 &&
       config1->discoveryLimits().maxRecords == 8 &&
@@ -2394,7 +2435,7 @@ void configuration()
       config1->h2Policy() == Zhttp::H2Policy::Prefer &&
       !config1->blindH3() && !config1->altSvcCrossHost() &&
       !config1->secure() && config1->tcp() &&
-      !config1->tls() && !config1->quic(),
+      config1->tls() && !config1->quic(),
     "pool overrides are isolated and explicit zero remains a value");
   ZuCHECK(app.limited(0, 1, true) && app.limited(0, 1, false) &&
       !app.limited(0, 2, true) && !app.limited(2, 0, true),
@@ -2818,9 +2859,9 @@ void poolRedirectOverride()
   mx.stop();
 }
 
-void poolRetainedBodyOverride()
+void poolBodyMaxOverride()
 {
-  ZuTestScope(poolRetainedBodyOverride);
+  ZuTestScope(poolBodyMaxOverride);
 
   uint16_t defaultPort, overridePort;
   int defaultFD = listener(defaultPort);
@@ -2847,7 +2888,7 @@ void poolRetainedBodyOverride()
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "start retained-body override multiplexer");
   auto defaults = Zhttp::Config()
-    .links(1).concurrency(1).linkMax(1).retainedBodyMax(4)
+    .links(1).concurrency(1).linkMax(1).bodyMax(4).retainedBodyMax(2)
     .secure(false).protocol(Zhttp::ProtoPolicy::DisableH3)
     .tcp(true).tls(false).quic(false);
   App app;
@@ -2859,7 +2900,7 @@ void poolRetainedBodyOverride()
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, defaultPort});
   inited = inited && app.pool(
     1, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, overridePort},
-    Zhttp::Config{}.retainedBodyMax(5));
+    Zhttp::Config{}.bodyMax(5));
   ZuCHECK(inited && app.start(),
     "start pools with isolated retained response limits");
 
@@ -2886,7 +2927,7 @@ void poolRetainedBodyOverride()
   ZuCHECK(defaulted && !defaulted->ok() &&
       overridden && overridden->ok() &&
       overridden->responseBodyReceived == 5,
-    "the retained-body override changes behavior only in its pool");
+    "the cumulative body override changes behavior with smaller retained capacity");
 
   app.final();
   mx.stop();
@@ -3114,7 +3155,7 @@ int main(int argc, char **argv)
   ZuTestCall(poolTimeoutOverride);
   ZuTestCall(poolRetryOverride);
   ZuTestCall(poolRedirectOverride);
-  ZuTestCall(poolRetainedBodyOverride);
+  ZuTestCall(poolBodyMaxOverride);
   ZuTestCall(poolRetainedMessageOverride);
   ZuTestCall(poolLinkMaxOverride);
   ZuTestCall(pipeline);
@@ -3139,8 +3180,11 @@ int main(int argc, char **argv)
   ZuTestCall(retry);
   ZuTestCall(redirect);
   ZuTestCall(redirectUnsafe);
+  ZuTestCall(redirectNoReplay);
   ZuTestCall(crossOriginRedirect);
   ZuTestCall(retryLimit);
+  ZuTestCall(retryNoReplay);
+  ZuTestCall(tlsNoReplay);
   ZuTestCall(resolverLifecycle);
 #endif
   ZiLog::stop();

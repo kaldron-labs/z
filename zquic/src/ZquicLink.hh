@@ -9103,7 +9103,7 @@ private:
       m_rxDataRetired + window;
     if (maximum <= m_rxDataCredit.limit()) return;
     m_rxDataCredit.extend(maximum);
-    queueFlowUpdate_(
+    postFlowUpdate_(
       FlowUpdate{FrameType::MaxData, 0, maximum, Zquic::StreamType::Duplex});
   }
   void maybeExtendMaxStreamData_(const StreamRef &stream) {
@@ -9115,7 +9115,7 @@ private:
       stream->rxRetired() + window;
     if (maximum <= stream->rxCreditLimit()) return;
     stream->extendRxCredit(maximum);
-    queueFlowUpdate_(FlowUpdate{
+    postFlowUpdate_(FlowUpdate{
       FrameType::MaxStreamData, uint64_t(stream->id()), maximum,
       Zquic::StreamType::Duplex});
   }

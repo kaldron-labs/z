@@ -1199,12 +1199,12 @@ void testParams()
     .maxEndpoints = 7, .maxAliasDepth = 2};
   auto client = Zhttp::Config{}
     .requestTimeout(13).maxAltSvc(11)
-    .retainedBodyMax(17).retainedMessageMax(23)
+    .bodyMax(47).retainedBodyMax(17).retainedMessageMax(23)
     .discoveryLimits(limits).altSvcCrossHost(true)
     .h2Policy(Zhttp::H2Policy::Disable);
   ZuCHECK(client.requestTimeout() == 13 &&
       client.maxAltSvc() == 11 && client.altSvcCrossHost() &&
-      client.retainedBodyMax() == 17 &&
+      client.bodyMax() == 47 && client.retainedBodyMax() == 17 &&
       client.retainedMessageMax() == 23 &&
       client.h2Policy() == Zhttp::H2Policy::Disable &&
       client.discoveryLimits().maxRecords == 3 &&
@@ -1220,8 +1220,8 @@ void testParams()
       .tlsConfig().policy() == Zhttp::H2Policy::Force,
     "server H2 policy mapping mismatch");
   auto server = Zhttp::ServerConfig{}
-    .retainedBodyMax(29).retainedMessageMax(31);
-  ZuCHECK(server.retainedBodyMax() == 29 &&
+    .bodyMax(53).retainedBodyMax(29).retainedMessageMax(31);
+  ZuCHECK(server.bodyMax() == 53 && server.retainedBodyMax() == 29 &&
       server.retainedMessageMax() == 31,
     "server retained-message bounds mapping mismatch");
 }
@@ -1308,11 +1308,18 @@ void testBodyRx()
       body.consumed() == 5 && gathered == "abcde",
     "completed application frame was not consumed across appends");
 
+  ZuCHECK(body.push(buf("123456789"), [&gathered](auto &rx) {
+      Zhttp::bodyEach(rx, [&gathered](ZuSpan<uint8_t> span) { gathered << span; });
+    }) && !body.rx() && body.received() == 14 && body.consumed() == 14 &&
+      gathered == "abcde123456789",
+    "consumed capacity is reused across oversized body appends");
+
+  ZuCHECK(body.push(buf("12345"), [](auto &) { }), "fill retained body capacity");
   unsigned rejectedCalls = 0;
   ZuCHECK(!body.push(buf("x"), [&rejectedCalls](auto &) {
       ++rejectedCalls;
-    }) && !rejectedCalls && !body.rx(),
-    "body maximum did not reject before queue mutation");
+    }) && !rejectedCalls && body.rx().length() == 5,
+    "full retained body queue rejects without a repeated consumer prompt");
 
   body.reset(10);
   ZuCHECK(body.push(buf("xyz"), [&calls](auto &) { ++calls; }) &&

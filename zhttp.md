@@ -51,7 +51,8 @@ Extend `BodyEmitter` with `template <typename B> bool trailers(B &fields)`.
 `header(l)` overloads, and the sensitivity policy below. Deriving from `Builder`
 supplies defaults. It supplies fields only; do not invoke operation, status,
 body or `bodyHdrs` callbacks. Reuse catalog matching and fixed/name/literal field
-forms. Mutable declared values are rendered at submission, without patch spans.
+forms. Render runtime declared values using the ordinary name/value form at
+submission; do not request mutable offsets or retain patch spans.
 Repeated dynamic fields remain repeated provider calls.
 
 This is synchronous and Tx-only, exactly like `emit(write)`. Keep that existing
@@ -73,6 +74,12 @@ bool ok = emit([&payload](Zhttp::Writer &out) {
 });
 if (ok) ok = emit.trailers(fields);
 ```
+
+The existing body call's boolean reports that the producer handled the turn;
+it does not certify successful production or even writer invocation when initial
+header construction fails. A build/write/flush failure invalidates that producer,
+so a subsequent trailer call returns false. Preserve that behavior; `trailers`
+has its own terminal-admission result as specified below.
 
 `fields` and its values need live only through `trailers`. `true` means the
 terminal section was admitted, not transmitted. Invalidated, already-ended or
@@ -98,7 +105,14 @@ Use pooled `ZiIOBuf` storage for rendered fields, storing offsets/lengths and
 field metadata, never printable contexts or caller pointers. Use framework
 arrays for variable field counts bounded by existing header/queue limits.
 Render each printable once. Do not add fixed capacities or a separate general
-command queue.
+command queue. Keep the command and rendered storage alive until emission or
+cancellation drains it, without borrowing the application's emitter or field
+provider. Retain the actual response record through the existing queue ownership
+until its single completion notification; closing its producer does not retire
+that response. Invalidating producer admission must not remove an accepted
+terminal command or release an embedded command's containing allocation.
+Queue ownership retains
+the command storage; native link back-pointers remain invalidatable and raw.
 
 Accepted trailing fields close producer admission. Emit them after the entire
 accepted DATA prefix, including data stalled on stream flow control. Later body
@@ -148,9 +162,11 @@ body or delayed FIN. Keep the existing immediate `reset()` contract.
 
 Use a side-effect-safe base default and direct typed dispatch, rather than a
 new detector hierarchy. Do not add a parallel terminal-event API or a duplicate
-`peerEnd` notification. H3 FIN may arrive after HEADERS; tests must cover that ordering. Reuse existing
-completion/result reporting for reset, connection failure and unprocessed
-attempts, extending only information needed for RPC error mapping.
+`peerEnd` notification. H3 FIN may arrive after HEADERS; tests must cover that
+ordering. When the hook is unnecessary, acquire the early response route through
+the existing channel-aware `bodyInfo` callback. Reuse existing completion/result
+reporting for reset, connection failure and unprocessed attempts, extending only
+information needed for RPC error mapping.
 
 ### Multi-turn client production
 
@@ -161,22 +177,31 @@ A zero-byte open turn must not end the request; `End` half-closes the request
 while response reception continues. Keep the existing single-turn path usable.
 
 Implement this in `ClientSession`'s streaming branch; retain `MessageTx` for
-fixed and single-turn fixed-body work. Bind the same public `BodyEmitter` to a
-client producer record instead of the current stack-borrowed emitter. Allocate
-that producer from a concrete identified `ZmNHeap`. Reuse the server's
+fixed-body work. Streaming policies use the retained producer path whether the
+first writer returns `End` or `Stream`; a single-turn `End` remains valid. Bind
+the same public `BodyEmitter` to a client producer record instead of the current
+stack-borrowed emitter. Allocate that producer from a concrete identified
+`ZmNHeap`. Reuse the server's
 `StreamState` transition helpers for initial/open/writing/terminal transitions;
 factor only helpers genuinely common to both roles. The native request driver
 stays behind an invalidatable raw back-pointer under the existing owner drain.
 
 Add `void close() { }` to `ReqBuilder`, matching `ResBuilder::close`, and bind it
 through `RequestOps`/`RequestRecord`. Invalidate retained emitters before calling
-close once on Tx, outside any active writer. Application close drops its retained
-emitter; queued copies reject later turns without dereferencing the driver.
+close once per producer/attempt on Tx, outside any active writer or initial
+`body(emit)` callback. Application close drops its retained emitter; queued copies
+reject later turns without dereferencing the driver. This hook is distinct from
+the submitted request's once-only `completed` and final `retired` callbacks.
 Request `End` seals only request output; keep the response parser and request
 record alive until existing completion and Rx/Tx retirement finish. Reject
-Content-Length for multi-turn production. A multi-turn request declares
-`replayable() == false`; reject incompatible admission rather than attempting
-to reproduce a live producer on replay.
+Content-Length for streaming production, as on the server.
+
+Applications intending multiple turns override `replayable()` to false before
+submission. The first `Stream` result is the point where this intent becomes
+observable to the producer: if the snapshotted replay policy is true, fail and
+invalidate the producer through the existing asynchronous request result. Do
+not promise admission-time rejection based on a writer result that has not yet
+occurred. A single-turn `End` may retain its ordinary replay policy.
 
 ### Early replies, cancellation and retirement
 
@@ -194,8 +219,11 @@ On H3, stop the request receive direction without resetting the response send
 direction; see [RFC 9114 section 4.1](https://www.rfc-editor.org/rfc/rfc9114.html#section-4.1).
 Implement request disposal in the existing native response-finish path: post a
 fixed request/attempt identity to Rx, stop parser body delivery, and consume or
-discard queued request bytes through existing receive-credit accounting. Post
-producer invalidation to Tx on client final response. Keep the completed response
+discard queued request bytes through existing receive-credit accounting. Order
+native request-stop signaling as described above, after the terminal response
+output. On the client, normal response completion on Rx, rather than receipt of
+final-initial headers, posts producer invalidation to Tx. A response failure also
+invalidates the producer through the failure path. Keep the completed response
 result distinct from subsequent local send cancellation. Use internal owner-only
 helpers ending in `_`; early completion needs no new public directional-stop
 family. A server retains its existing `Route` from accepted initial headers
@@ -214,8 +242,11 @@ Current H1/H2/H3 parsers and `BodyRx` apply a cumulative bound derived from
 `bodyMax() const` / `bodyMax(uint64_t)` to `Config` and `ServerConfig`, following
 `retainedBodyMax`'s fluent return types, client overlay bit and pool inheritance.
 Use the existing default cumulative ceiling for `bodyMax`; retain the current
-retention default. `retainedBodyMax` bounds queued decoded body bytes, while
-`retainedMessageMax` keeps its existing output retention role. Document these
+retention default. On receive, `retainedBodyMax` bounds queued decoded body
+bytes. Preserve its existing fixed-output entity bound as well: fixed output
+remains capped by the minimum of `retainedBodyMax`, `retainedMessageMax` and
+`FixedBodyMax`. `retainedMessageMax` keeps its existing output retention role;
+`bodyMax` is a receive lifetime bound, not a new output limit. Document these
 meanings in the README and update all affected callers directly.
 
 Pass both bounds through parser/session bindings. Protocol parsers enforce total
@@ -264,15 +295,21 @@ Carry its boolean through `FieldOutput` and the owned trailer field record into
 HPACK/QPACK. Combine it with existing transport sensitive-name defaults; false
 does not disable those defaults. A true field uses a never-index representation
 even when its value matches a static or seeded entry. Do not mutate shared encoder
-policy from a callback. Keep existing shared catalog seeds: per-provider sensitive
-values never select an indexed field representation or insert a dynamic value.
-No new sensitive-name catalog type or connection configuration is needed.
+policy from a callback. Keep existing shared catalog seeds, which contain
+public fixed declarations. Sensitive application values must be supplied at
+runtime, with empty catalog value lists or dynamic fields; do not put secrets
+in fixed seed declarations. `neverIndex` controls each emitted field, not prior
+catalog seeding. A sensitive field uses neither an indexed field representation
+nor dynamic value insertion, including when a public seeded entry happens to
+match. No new sensitive-name catalog type or connection configuration is needed.
 
 ### Replay and transport results
 
 Add `bool replayable() const { return true; }` to `ReqBuilder` and bind it through
-`RequestOps`/`RequestRecord`. Snapshot it in the existing immutable request intent
-before the first attempt. Zgrpc overrides it to false and sets `maxRetries(0)` /
+`RequestOps`/`RequestRecord`. Snapshot it into the logical request's fixed
+metadata at submission, before the first attempt, and preserve it across wire
+resets. Pass that immutable value to Tx; do not read mutable Rx-owned `LiveReq`
+state from the producer. Zgrpc overrides it to false and sets `maxRetries(0)` /
 `maxRedirects(0)`. Keep `idempotent(method)` separate: it cannot override false.
 
 Guard all recreation of an admitted HTTP attempt, including TLS `Unprocessed`,
@@ -287,8 +324,10 @@ If native error information required by gRPC mapping is missing, append an error
 domain using `ZtEnumNS` and a numeric native code to the existing result record,
 with neutral defaults, and propagate them from the owning transport failure.
 Do not introduce another completion callback or comprehensive event record.
-GOAWAY excludes only unprocessed attempts at its native boundary; existing
-accepted streams continue. Preserve one terminal decision and native diagnostics
+GOAWAY classifies attempts beyond the peer's native acceptance boundary as
+unprocessed: H2's last-stream boundary is inclusive; H3's request boundary is
+exclusive. Streams within that boundary may continue; the connection takes no
+new assignments. Preserve one terminal decision and native diagnostics
 through later cancellation and drain.
 
 ## Implementation rules and locations
@@ -340,13 +379,22 @@ without shims or forwarders.
    verify request half-close, concurrent response reception, early final response
    and late producer rejection. Test long-lived bounded-memory operation.
 
+The supporting contracts are implemented with the first adapter paths that need
+them, before those paths are declared supported: replay suppression and custom
+metadata sensitivity apply to unary too; client multi-turn lifetime work waits
+for step 3. Buffer adoption and receive bounds must pass for each claimed path.
+
 Use focused TAP tests for changed contracts in `zhttp/test` and endpoint coverage
 in `zhttp/itest`. Exercise installed public headers on both transports. Cover
 fragmented fields and DATA, delayed H3 FIN, stalled DATA before trailers, queue
-refusal, reset and stop with outstanding producers. Use deterministic scheduler
-barriers. Run affected existing HTTP and dependent regression tests; additional
-independent HTTP qualification infrastructure is not a prerequisite to starting
-the RPC adapter. Zgrpc's independent gRPC peer tests establish interoperability
+refusal, reset and stop with outstanding producers. Specifically test terminal
+command drain after builder close, trailer rejection after a failed body turn,
+single-turn replayable requests versus invalid replayable `Stream` results,
+no-replay unprocessed/redirect/fallback paths, sensitive seeded-name matches,
+independent cumulative/retained input bounds, fixed-output limit preservation,
+and detached-buffer splitting. Use deterministic scheduler barriers. Run affected
+existing HTTP and dependent regression tests; additional independent HTTP
+qualification infrastructure is not a prerequisite to starting the RPC adapter. Zgrpc's independent gRPC peer tests establish interoperability
 in both roles on H2 and H3, as required by grpc.md.
 
 For implementation changes, build with top-level `make -j4`, build each affected

@@ -557,6 +557,47 @@ void testWarmPlanDuplicates()
     "HPACK seed plan keeps distinct values, deduplicates pairs, and skips sensitive names");
 }
 
+void testSensitiveWarmPlan()
+{
+  ZuTestScope(testSensitiveWarmPlan);
+  Zhttp::HPackSeedCatalog catalog;
+  struct Headers {
+    using List = ZhttpHeaders(("x-secret", "public-seed"), ("x-public", "value"));
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<Headers>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<Headers>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<Headers>(name); }
+  };
+  catalog.add(Zhttp::CatalogData<Headers>::configure(), 512);
+  Zhttp::H2::HPackEncoder encoder;
+  Zhttp::H2::HPackDecoder decoder;
+  bool bootstrap = false;
+  ZuCHECK(encoder.init(512) && encoder.peerCapacity(512) &&
+      encoder.bind(catalog.plans()) && decoder.init(512, 4096) &&
+      encoder.beginBlock(0, bootstrap), "initialize sensitive warm plan");
+  Bytes first;
+  encoder.emitFixed(first, {"x-secret", "public-seed"}, bootstrap, true);
+  encoder.emitFixed(first, {"x-public", "value"}, bootstrap);
+  encoder.commitBlock();
+  Fields fields;
+  ZuCHECK(first && (first[0] & 0xf0) == 0x10 &&
+      decode(decoder, first, fields) && fields.length() == 2 &&
+      encoder.table().count() == 1 && decoder.table().count() == 1,
+    "sensitive fixed field stays never-indexed through warm publication");
+  Bytes next;
+  encoder.emitFixed(next, {"x-public", "value"}, false);
+  encoder.emitFixed(next, {"x-public", "value"}, false, true);
+  encoder.emitRuntime(next, {":method", "GET"}, true);
+  ZuCHECK(next[0] == 0xbe && (next[1] & 0xf0) == 0x10 &&
+      decode(decoder, next, fields) && fields.length() == 3 &&
+      field(fields, 0, "x-public", "value") &&
+      field(fields, 1, "x-public", "value") &&
+      field(fields, 2, ":method", "GET") &&
+      decoder.table().count() == 1,
+    "sensitivity overrides frozen and static value matches without table divergence");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -575,4 +616,5 @@ int main(int argc, char **argv)
   ZuTestCall(testWarmPlan);
   ZuTestCall(testWarmPlans);
   ZuTestCall(testWarmPlanDuplicates);
+  ZuTestCall(testSensitiveWarmPlan);
 }

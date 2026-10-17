@@ -15,6 +15,7 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmScheduler.hh>
 
 #include <zlib/Zjrpc.hh>
@@ -94,6 +95,7 @@ struct CompletionEntry {
 struct CompletionRoute {
   ZmScheduler *scheduler = nullptr;
   unsigned thread = 0;
+  unsigned maxQueue = Default::MaxQueue;
 
   bool invoked() const { return !scheduler || scheduler->invoked(thread); }
   template <typename L>
@@ -117,49 +119,67 @@ class CompletionCore {
   friend struct CompletionEntry;
 public:
   CompletionCore(Owner *owner, ID id, uint64_t generation) :
-    m_route{owner->completionRoute()}, m_owner{owner},
-    m_id{ZuMv(id)}, m_generation{generation} { }
+    m_route{owner->completionRoute()}, m_id{ZuMv(id)},
+    m_generation{generation}, m_owner{owner} { }
 
   const ID &id() const { return m_id; }
   uint64_t generation() const { return m_generation; }
-  bool live() const { return m_owner.load_(); }
+  bool live() const { return m_owner.load_() && !m_claim.load_(); }
   bool cancelled() const { return m_cancelled.load_(); }
 
   template <typename Res>
   bool complete(Reply<Res> reply) {
     ZuAssert((ZuTypeIn<Res, GetResponses<Req>>{}));
-    if (!live()) return false;
+    if (!m_owner.load_() || m_claim.cmpXch(1, 0)) return false;
     if (!m_route.invoked()) {
       using Action = CompleteAction<Self, Res>;
       ZmRef<Action> action = new Action{static_cast<Self *>(this), ZuMv(reply)};
       m_route.run([action = ZuMv(action)]() mutable {
-	action->token->complete(ZuMv(action->reply));
+	action->token->template complete_<Res>(ZuMv(action->reply));
       });
       return true;
     }
+    return complete_<Res>(ZuMv(reply));
+  }
+
+protected:
+  bool sendPost_() {
+    if (++m_sendPosts <= m_route.maxQueue) return true;
+    --m_sendPosts;
+    return false;
+  }
+  void sendPosted_() { --m_sendPosts; }
+
+  Owner *owner() const { return m_owner.load_(); }
+  const CompletionRoute &route() const { return m_route; }
+
+private:
+  template <typename Res>
+  bool complete_(Reply<Res> reply) {
     auto owner = m_owner.load_();
     return owner && owner->template complete<Req, Res>(
       static_cast<Self *>(this), ZuMv(reply));
   }
 
-protected:
-  Owner *owner() const { return m_owner.load_(); }
-  const CompletionRoute &route() const { return m_route; }
-
-private:
   void invalidate_() { m_owner = nullptr; }
   void cancel_(ZuCSpan reason) {
     auto owner = m_owner.load_();
     if (m_cancelled.load_() || !owner) return;
     m_cancelled = true;
+    m_owner = nullptr;
     owner->template cancelled<Req>(static_cast<Self *>(this), reason);
   }
 
   CompletionRoute m_route;
-  ZmAtomic<Owner *> m_owner;
   ID m_id;
   uint64_t m_generation;
+
+  // Completion/send state; admission is shared with posting threads.
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<Owner *> m_owner;
+  ZmAtomic<unsigned> m_claim = 0;
   ZmAtomic<unsigned> m_cancelled = 0;
+  ZmAtomic<unsigned> m_sendPosts = 0;
 };
 
 template <typename Req, typename Owner>
@@ -174,6 +194,7 @@ public:
 
 // The entry retains the token while callbacks run; taking it clears the slot
 // and invalidates the token before any application completion callback.
+// Cancellation also clears the slot before the token notifies its application.
 class CompletionSlot {
 public:
   ~CompletionSlot() { drain(); }
@@ -183,10 +204,14 @@ public:
 
   bool cancel(const ID &id, ZuCSpan reason = {}) {
     if (!m_entry.object || *m_entry.id != id) return false;
-    m_entry.cancel(reason);
+    cancelAll(reason);
     return true;
   }
-  void cancelAll(ZuCSpan reason = {}) { m_entry.cancel(reason); }
+  void cancelAll(ZuCSpan reason = {}) {
+    CompletionEntry entry{ZuMv(m_entry)};
+    entry.cancel(reason);
+    entry.invalidate();
+  }
 
   bool fail(const ID &id) {
     if (!m_entry.object || *m_entry.id != id) return false;

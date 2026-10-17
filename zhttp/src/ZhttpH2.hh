@@ -563,8 +563,10 @@ template <
   bool Request_ = false>
 class Parser {
 public:
-  Parser(uint64_t bodyMax = DefltMaxBody) :
-    m_bodyMax{bodyMax}, m_bodyRx{bodyMax} { }
+  Parser(uint64_t bodyMax = DefltMaxBody,
+      uint64_t retainedBodyMax = DefltMaxBody) :
+    m_bodyMax{bodyMax}, m_retainedBodyMax{retainedBodyMax},
+    m_bodyRx{retainedBodyMax} { }
 
   auto impl() { return static_cast<Impl *>(this); }
 
@@ -572,7 +574,7 @@ public:
   using State = ParserState;
 
   void reset() {
-    m_bodyRx.reset(m_bodyMax);
+    m_bodyRx.reset(m_retainedBodyMax);
     m_fields = {};
     m_state = State::Initial;
     m_contentLength = -1;
@@ -588,9 +590,18 @@ public:
     m_bodyMax = bodyMax_;
     reset();
   }
+  void reset(uint64_t bodyMax_, uint64_t retainedBodyMax_) {
+    m_bodyMax = bodyMax_;
+    m_retainedBodyMax = retainedBodyMax_;
+    reset();
+  }
   uint64_t bodyMax() const { return m_bodyMax; }
   void bodyMax(uint64_t value) {
     m_bodyMax = value;
+  }
+  uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
+  void retainedBodyMax(uint64_t value) {
+    m_retainedBodyMax = value;
     m_bodyRx.reset(value);
   }
 
@@ -687,6 +698,7 @@ public:
     uint64_t length = frameLength - headLen - tailLen;
     if (!dataLength(length, endStream)) return false;
     uint64_t remaining = frameLength;
+    uint64_t wireBefore = wire.length();
     bool accepted = true;
     int64_t n = m_bodyRx.splice(
       wire, length,
@@ -702,7 +714,9 @@ public:
 	  impl()->streamRx_(rx);
 	else
 	  accepted = impl()->body(rx);
+	return accepted;
       });
+    transferred = wireBefore - wire.length() == frameLength;
     if (ZuUnlikely(!accepted))
       return fail_(RequestErrorCode::BodyRejected,
 	RequestErrorScope::Request, Request);
@@ -840,6 +854,7 @@ private:
 
   Fields::Semantics<Request> m_fields;
   uint64_t		m_bodyMax;
+  uint64_t		m_retainedBodyMax;
   BodyRx		m_bodyRx;
   State::T		m_state = State::Initial;
   Method::T		m_requestMethod = -1;
@@ -929,6 +944,17 @@ protected:
   }
 
 public:
+  template <typename Stream, typename Fields>
+  bool trailers(Stream &stream, const Fields &fields) {
+    auto block = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
+    typename Stream::HeaderSection section{block};
+    stream.beginHeaders(section, true);
+    auto output = Native_::compressedFields<Stream,
+      ZuStringT<"Zhttp.H2.Final.Name">>(stream);
+    fields.fields(output);
+    return stream.endHeaders(true) && stream.flush();
+  }
+
   template <typename Stream>
   auto body(Stream &stream) {
     return stream.body();

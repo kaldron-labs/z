@@ -688,15 +688,15 @@ void testRuntimeBodyLimit()
       parser.error().code == Zhttp::RequestErrorCode::ContentTooLarge,
     "runtime body limit did not reject an oversized request");
 
-  parser.reset(5);
+  parser.reset(5, 2);
   RxStream accepted;
   accepted.push(mkBuf(request));
   ZuCHECK(parser.bodyMax() == 5 &&
       parser.process(accepted) == Zhttp::H1::ParserState::Complete &&
       parser.bodyInfoCalls == 1 &&
       parser.bodyType == Zhttp::BodyType::Fixed && parser.bodyLength == 5 &&
-      parser.bodyData == "abcde",
-    "runtime body limit did not admit an exact-size request");
+      parser.bodyData == "abcde" && parser.bodyCalls == 3,
+    "runtime body limit admits an exact-size request through bounded fragments");
 }
 
 void testEmptySelectedHeaderValues()

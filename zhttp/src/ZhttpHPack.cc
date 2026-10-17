@@ -536,6 +536,7 @@ void HPackEncoder::final()
   m_pendingMin = 0;
   m_pendingFinal = 0;
   m_plans.length(0);
+  m_suppressed.length(0);
   m_plan = nullptr;
   m_seedCapacity = 0;
   m_seedState = HPackSeedState::Cold;
@@ -554,10 +555,10 @@ bool HPackEncoder::peerCapacity(uint32_t capacity)
   return true;
 }
 
-HPackPlan HPackEncoder::plan(Field field) const
+HPackPlan HPackEncoder::plan(Field field, bool never) const
 {
   HPackPlan plan_{.field = field};
-  bool never = neverIndexed(field.name);
+  never |= neverIndexed(field.name);
   if (!never) {
     int index = HPack::staticIndex(field.name, field.value);
     if (index > 0) {
@@ -651,6 +652,7 @@ bool HPackEncoder::beginBlock(unsigned plan, bool &bootstrap)
   bootstrap = false;
   switch (m_seedState) {
     case HPackSeedState::Warm:
+      m_suppressed.length(0);
       m_plan = plan < m_plans.length() ? &m_plans[plan] : nullptr;
       m_seedState = HPackSeedState::Reserved;
       bootstrap = true;
@@ -668,7 +670,21 @@ bool HPackEncoder::beginBlock(unsigned plan, bool &bootstrap)
 void HPackEncoder::commitBlock()
 {
   if (m_seedState == HPackSeedState::Reserved) {
-    if (m_plan) m_table = ZuMv(m_plan->table);
+    if (m_plan) {
+      if (!m_suppressed.length()) m_table = ZuMv(m_plan->table);
+      else {
+	m_table.capacity(m_plan->table.capacity());
+	for (unsigned i = 0; i < m_plan->selected; ++i) {
+	  bool suppressed = false;
+	  for (auto id : m_suppressed)
+	    if (id == i) { suppressed = true; break; }
+	  if (suppressed) continue;
+	  auto seed = m_plan->seed(i);
+	  (void)m_table.insert({seed.name, seed.value});
+	}
+      }
+    }
+    m_suppressed.length(0);
     m_seedState = HPackSeedState::Frozen;
   }
 }

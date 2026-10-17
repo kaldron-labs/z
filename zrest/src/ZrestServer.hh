@@ -103,9 +103,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
       return type != Zhttp::BodyType::Fixed || !length;
     else {
       if (!inputMax) return false;
-      uint64_t max = inputMax;
-      if constexpr (Impl::BodyLimit)
-	if (!max || Impl::BodyLimit < max) max = Impl::BodyLimit;
+      uint64_t max = Impl::BodyLimit ? Impl::BodyLimit : inputMax;
       if (streamed) {
 	if constexpr (Impl::Body == BodyPolicy::URI) return false;
 	else return input.begin(length, max);
@@ -1066,9 +1064,10 @@ struct Parser : public Decoder {
 	m_context.authority = ZuMv(normalized);
       }
     }
-    m_context.decoded = ok && this->finishBody() &&
+    m_context.decoded = ok && this->headersValid && this->finishBody() &&
       (m_targetScheme < 0 || m_targetScheme == m_context.scheme) &&
       authorityOK;
+    if (!m_context.decoded) { link->disconnect(); return; }
     auto accept = [this, link](auto &request) {
       m_owner->admit(ZuMv(request), ZuMv(m_context),
 	Zhttp::Route<Response>{link, m_method});

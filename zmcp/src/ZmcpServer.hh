@@ -33,6 +33,7 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
@@ -230,12 +231,16 @@ struct ResponseMessages {
 // ZmList supplies the node destructor; no separate route entry is allocated.
 struct RouteBase : public ZmObject {
   using CloseFn = void (*)(RouteBase *);
+  using DisconnectFn = bool (*)(RouteBase *, Zhttp::Session);
 
   CloseFn closeFn;
+  DisconnectFn disconnectFn;
   bool linked = false;
 
-  explicit RouteBase(CloseFn fn) : closeFn{fn} { }
+  RouteBase(CloseFn close, DisconnectFn disconnect) :
+    closeFn{close}, disconnectFn{disconnect} { }
   void close() { closeFn(this); }
+  bool disconnected(Zhttp::Session session) { return disconnectFn(this, session); }
 };
 using RouteQ = ZmList<RouteBase,
   ZmListNode<RouteBase, ZmListHeapID<"">>>;
@@ -772,6 +777,17 @@ private:
   ClosedFn	m_closedFn = nullptr;
 };
 
+namespace Server_ {
+template <typename Catalog>
+struct HTTPEmitAction : public ZmNHeap<HTTPEmitAction<Catalog>>, public ZmObject {
+friend inline ZuStringT<"Zmcp.HTTP.Emit"> ZmNHeapID(HTTPEmitAction *);
+
+  DispatchPolicy<Catalog>::Message message;
+  explicit HTTPEmitAction(DispatchPolicy<Catalog>::Message message_) :
+    message{ZuMv(message_)} { }
+};
+} // Server_
+
 template <typename Catalog>
 using HTTPBuilderQ = Zhttp::ResponseQ<HTTPBuilder<Catalog>,
   ZuStringT<"Zmcp.HTTP.Builder">>;
@@ -932,7 +948,7 @@ protected:
     if (!mx || !owner || !impl || !Zjrpc::valid(limits)) return false;
     m_impl = impl;
     m_mx = mx;
-    m_txThread = owner;
+    m_ownerThread = owner;
     m_limits = limits;
     m_histSize = histSize;
     m_up = true;
@@ -950,14 +966,16 @@ protected:
 public:
   Impl *impl() const { return m_impl; }
   ZiMultiplex *mx() const { return m_mx; }
-  unsigned ownerThread() const { return m_txThread; }
-  Zjrpc::CompletionRoute completionRoute() const { return {m_mx, m_txThread}; }
+  unsigned ownerThread() const { return m_ownerThread; }
+  Zjrpc::CompletionRoute completionRoute() const {
+    return {m_mx, m_ownerThread, m_limits.maxQueue};
+  }
   bool up() const { return m_up.load_(); }
-  bool invoked() const { return m_mx && m_mx->invoked(m_txThread); }
+  bool invoked() const { return m_mx && m_mx->invoked(m_ownerThread); }
   Peer<Catalog> &peer() { return derived()->m_peer; }
   bool response(const Zjrpc::Envelope &) { return true; }
   template <typename L>
-  void continue_(L &&l) { m_mx->run(ZuFwd<L>(l), m_txThread); }
+  void continue_(L &&l) { m_mx->run(ZuFwd<L>(l), m_ownerThread); }
 
   const Zjrpc::Limits &limits() const { return m_limits; }
   unsigned histSize() const { return m_histSize; }
@@ -966,10 +984,10 @@ public:
   template <typename L>
   bool ownerRun(L &&l) {
     if (!m_mx || !m_up.load_()) return false;
-    if (m_mx->invoked(m_txThread))
+    if (m_mx->invoked(m_ownerThread))
       l();
     else
-      m_mx->run(ZuFwd<L>(l), m_txThread);
+      m_mx->run(ZuFwd<L>(l), m_ownerThread);
     return true;
   }
 
@@ -1000,7 +1018,7 @@ private:
   Impl			*m_impl = nullptr;
   ZiMultiplex		*m_mx = nullptr;
   Zjrpc::Limits		m_limits;
-  unsigned		m_txThread = 0;
+  unsigned		m_ownerThread = 0;
   unsigned		m_histSize = Zjrpc::Default::HistSize;
 
   ZmAtomic<unsigned>	m_up = 0;
@@ -1014,7 +1032,7 @@ class IOServer : public Server<IOServer<Impl, Catalog>, Impl, Catalog>,
   using Base::m_impl;
   using Base::m_mx;
   using Base::m_limits;
-  using Base::m_txThread;
+  using Base::m_ownerThread;
   using Base::m_histSize;
   using Base::m_up;
   using Base::initPeer_;
@@ -1033,7 +1051,7 @@ public:
     if (m_mx || !impl || !mx || !mx->txThread()) return false;
     if (!initPeer_(mx, mx->txThread(), config.limits(), impl, m_histSize)) return false;
     new (m_stdio.template new_<IO>()) IO{
-      this, m_mx, m_txThread, ZuMv(config)};
+      this, m_mx, m_ownerThread, ZuMv(config)};
     m_stdioStarted = false;
     m_stdioClosing = false;
     m_stdioDone = false;
@@ -1061,7 +1079,7 @@ public:
 	  m_stdioDone = true;
 	}
 	wake(ok);
-      }, m_txThread);
+      }, m_ownerThread);
     });
   }
 
@@ -1084,7 +1102,7 @@ public:
     m_peer.close();
     m_impl = nullptr;
     m_mx = nullptr;
-    m_txThread = 0;
+    m_ownerThread = 0;
   }
 
 private:
@@ -1100,12 +1118,12 @@ private:
 	  m_stdio.template p<IO>().stop_();
 	else
 	  stdioDone_(false);
-      }, m_txThread);
+      }, m_ownerThread);
     });
   }
 
   void failStdio_() {
-    ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
+    ZiAssert(m_mx && m_mx->invoked(m_ownerThread), "Zmcp", (),
 	"stdio failure outside owner shard", return);
     if (m_stdioDone.load_() || m_stdioClosing) return;
     m_stdioFailure = true;
@@ -1115,7 +1133,7 @@ private:
   }
 
   void stdioDone_(bool failed) {
-    ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
+    ZiAssert(m_mx && m_mx->invoked(m_ownerThread), "Zmcp", (),
 	"stdio completion outside owner shard", return);
     if (m_stdioDone.load_()) return;
     m_stdioFailure |= failed;
@@ -1245,7 +1263,7 @@ class HTTPServer : public Server<HTTPServer<Impl, Catalog, Selection>, Impl, Cat
   using Base::m_impl;
   using Base::m_mx;
   using Base::m_limits;
-  using Base::m_txThread;
+  using Base::m_ownerThread;
   using Base::m_histSize;
   using Base::m_up;
   template <typename Link> class Route;
@@ -1352,7 +1370,7 @@ public:
 
   void connected(Zhttp::Session session) {
     if (!m_mx || !session) return;
-    m_mx->run([this, session]() {
+    this->ownerRun([this, session]() {
       if (m_transportContexts->findPtr(session.id)) return;
       try {
 	m_transportContexts->add(Server_::TransportContextEntry{
@@ -1360,14 +1378,13 @@ public:
 	    m_impl, TransportTag{}, 0, session)});
       } catch (...) {
       }
-    }, m_txThread);
+    });
   }
 
   void disconnected(Zhttp::Session session) {
     if (!m_mx || !session) return;
-    m_mx->run([this, session]() {
-      (void)m_transportContexts->del(session.id);
-    }, m_txThread);
+    if (this->invoked()) disconnected_(session);
+    else m_mx->run([this, session]() { disconnected_(session); }, m_ownerThread);
   }
 
   ~HTTPServer() { final(); }
@@ -1376,8 +1393,8 @@ public:
     if (m_mx) return true;
     if (!impl || !hub.mx() || !config.endpoint())
       return false;
-    unsigned owner = hub.txThread() ?
-      hub.mx()->sid(hub.txThread()) : hub.mx()->txThread();
+    unsigned owner = hub.rxThread() ?
+      hub.mx()->sid(hub.rxThread()) : hub.mx()->rxThread();
     if (!Base::init(hub.mx(), owner, config.limits(), impl, config.histSize())) return false;
     m_endpoint = config.endpoint();
     m_absentOrigin = config.absentOrigin();
@@ -1397,7 +1414,8 @@ public:
 	Zjrpc::Default::SSEFrameOverhead;
       if (messageMax < m_limits.maxJSONBytes)
 	messageMax = m_limits.maxJSONBytes;
-      config.retainedBodyMax(m_limits.maxJSONBytes)
+      config.bodyMax(m_limits.maxJSONBytes)
+	.retainedBodyMax(m_limits.maxJSONBytes)
 	.retainedMessageMax(messageMax);
     }
     m_up = true;
@@ -1431,11 +1449,24 @@ public:
     HTTP::final();
     m_impl = nullptr;
     m_mx = nullptr;
-    m_txThread = 0;
+    m_ownerThread = 0;
     m_endpoint.null();
   }
 
 private:
+  void disconnected_(Zhttp::Session session) {
+    unsigned visited = 0;
+    auto i = m_routes.iter();
+    while (auto route = i()) {
+      if (!route->disconnected(session)) continue;
+      if (++visited >= m_limits.workBatch) {
+	this->continue_([this, session]() { disconnected_(session); });
+	return;
+      }
+    }
+    (void)m_transportContexts->del(session.id);
+  }
+
   Session *session_(ZuCSpan id) {
     return m_sessions->findPtr(id);
   }
@@ -1461,7 +1492,7 @@ private:
 	  return arm([this, session]() {
 	    expireSession_(session);
 	  });
-	}, m_txThread);
+	}, m_ownerThread);
     return ptr;
   }
 
@@ -1481,7 +1512,7 @@ private:
       m_mx->run([
 	this, session = ZuMv(session), done = ZuMv(done)]() mutable {
 	closeSession_(ZuMv(session), ZuMv(done));
-      }, m_txThread);
+      }, m_ownerThread);
       return;
     }
     if (session->close(m_limits.workBatch)) {
@@ -1491,7 +1522,7 @@ private:
     m_mx->run([
       this, session = ZuMv(session), done = ZuMv(done)]() mutable {
       closeSession_(ZuMv(session), ZuMv(done));
-    }, m_txThread);
+    }, m_ownerThread);
   }
 
   void closeHTTP_() {
@@ -1501,13 +1532,17 @@ private:
 	closeRpc_([this, wake = ZuMv(wake)]() mutable {
 	  closeSessions_([this, wake = ZuMv(wake)]() mutable {
 	    closeRoutes_([this, wake = ZuMv(wake)]() mutable {
-	      closeSSE_([this, wake = ZuMv(wake)]() mutable {
-		closeTransportContexts_(ZuMv(wake));
+	      HTTP::txRun([this, wake = ZuMv(wake)]() mutable {
+		closeSSE_([this, wake = ZuMv(wake)]() mutable {
+		  HTTP::rxRun([this, wake = ZuMv(wake)]() mutable {
+		    closeTransportContexts_(ZuMv(wake));
+		  });
+		});
 	      });
 	    });
 	  });
 	});
-      }, m_txThread);
+      }, m_ownerThread);
     });
   }
 
@@ -1516,7 +1551,7 @@ private:
     if (visited >= m_limits.workBatch) {
       m_mx->run([this, done = ZuMv(done)]() mutable {
 	closeSessions_(ZuMv(done));
-      }, m_txThread);
+      }, m_ownerThread);
       return;
     }
     auto node = takeSession_();
@@ -1538,7 +1573,7 @@ private:
   }
   unsigned maxJSONBytes_() const { return m_limits.maxJSONBytes; }
   bool legacySessions_() const { return m_legacySessions; }
-  bool assertTx_() const {
+  bool assertRx_() const {
     ZiAssert(this->invoked(), "Zmcp", (),
       "operation outside owner shard", return false);
     return true;
@@ -1550,7 +1585,7 @@ private:
   template <typename L>
   bool postSSE_(L &&l) {
     if (!m_mx || !m_up.load_()) return false;
-    m_mx->run(ZuFwd<L>(l), m_txThread);
+    HTTP::txRun(ZuFwd<L>(l));
     return true;
   }
   template <typename Link>
@@ -1564,12 +1599,17 @@ private:
   public:
     Route(HTTPServer *server, Link *link, ZmRef<ZiIOBuf> body,
 	HTTPMeta meta, Headers headers) :
-      Base{[](Server_::RouteBase *route) { static_cast<Self *>(route)->close_(); }},
+      Base{[](Server_::RouteBase *route) { static_cast<Self *>(route)->close_(); },
+	[](Server_::RouteBase *route, Zhttp::Session session) {
+	  return static_cast<Self *>(route)->disconnected_(session);
+	}},
       m_server{server}, m_route{link, Zhttp::Method::POST}, m_body{ZuMv(body)},
       m_meta{ZuMv(meta)}, m_headers{ZuMv(headers)},
-      m_responder{this, server->limits()}, m_peer{server->limits()} { }
+      m_peer{server->limits()}, m_txRoute{link, Zhttp::Method::POST},
+      m_responder{this, server->limits()} { }
 
     void run_() {
+      if (!m_server->assertRx_()) return;
       try { run__(); }
       catch (...) { failed(); }
     }
@@ -1587,7 +1627,10 @@ private:
 	if (m_meta.sessionID) {
 	  m_session = m_server->session_(m_meta.sessionID);
 	  if (!m_session) {
-	    m_responder.missing();
+	    startTx_();
+	    m_server->HTTP::txRun([self = ZmRef(this)]() {
+	      if (!self->m_txClosed) self->m_responder.missing();
+	    });
 	    return;
 	  }
 	} else if (parsed.envelope.kind == Zjrpc::MessageKind::Request &&
@@ -1600,7 +1643,7 @@ private:
 	}
 	if (m_session) {
 	  peer = &m_session->peer;
-	  m_responder.sessionID(m_session->id);
+	  m_outSessionID = m_session->id;
 	}
       } else if (m_meta.version == LegacyVersion{}()) {
 	m_peer.statelessLegacy();
@@ -1611,37 +1654,58 @@ private:
 	Context{m_server->transportContext_(m_route.session()),
 	  m_session ? m_session->context.ptr() : nullptr},
 	&m_headers, peer, this, [](void *route, int policy) {
-	  static_cast<Self *>(route)->m_responder.prepare(policy);
+	  static_cast<Self *>(route)->prepare_(policy);
 	}, [](void *route) { return bool(static_cast<Self *>(route)->m_route); }};
       m_streamContext = Server_::openContext(
 	m_server->impl(), StreamTag{}, 0, m_rpcContext.context);
       m_rpcContext.context = Context{m_rpcContext.context.transport(),
 	m_rpcContext.context.session(), m_streamContext.ptr()};
-      m_route.channel()->responseCancel(Zhttp::StreamCancelFn{this, [](Self *self) {
-	self->responseCancelled_();
-      }});
+      startTx_();
       if (!m_server->receiveRpc_(ZuMv(m_body), ZuMv(parsed),
 	  [self = ZmRef(this)](auto message, int policy) {
 	    return self->emit_(ZuMv(message), policy);
 	  }, inbound_(), &m_rpcContext, &m_control)) failed();
     }
 
+    void startTx_() {
+      m_server->HTTP::txRun([self = ZmRef(this)]() {
+	if (self->m_txClosed) return;
+	self->m_responder.sessionID(self->m_outSessionID);
+	self->m_txRoute.channel()->responseCancel(Zhttp::StreamCancelFn{
+	  self, [](Self *route) { route->responseCancelled_(); }});
+      });
+    }
+    void prepare_(int policy) {
+      m_server->HTTP::txRun([self = ZmRef(this), policy]() {
+	if (!self->m_txClosed) self->m_responder.prepare(policy);
+      });
+    }
     bool emit_(Server_::DispatchPolicy<Catalog>::Message message, int policy) {
       if (m_closed) return true;
       if (policy == Zjrpc::RoutePolicy::Abort) { failed(); return true; }
       if (!m_route) { finish_(); return true; }
-      m_responder.emit(ZuMv(message));
-      if (m_responder.terminal() && !m_responder.sent()) finish_();
+      if (++m_sendPosts > m_server->limits().maxQueue) {
+	--m_sendPosts;
+	failed();
+	return false;
+      }
+      using Action = Server_::HTTPEmitAction<Catalog>;
+      ZmRef<Action> action = new Action{ZuMv(message)};
+      m_server->HTTP::txRun([self = ZmRef(this), action = ZuMv(action)]() mutable {
+	--self->m_sendPosts;
+	if (!self->m_txClosed) self->m_responder.emit(ZuMv(action->message));
+      });
       return true;
     }
 
   public:
+    // Responder and HTTP producer callbacks run on Tx.
     void send(ZmRef<typename Responder::Builder> builder) {
-      if (m_route) m_route.send(ZuMv(builder));
+      if (m_txRoute) m_txRoute.send(ZuMv(builder));
     }
     bool postSSE_() {
       return m_server->postSSE_([work = ZmRef(this)]() mutable {
-	if (!work->live_()) return;
+	if (work->m_txClosed) return;
 	auto builder = ZmRef(work->m_responder.builder());
 	if (!builder) return;
 	auto stream = builder->data().streamPtr();
@@ -1652,68 +1716,99 @@ private:
       m_server->discardSSE_(ZuMv(queue));
       return true;
     }
-    void failed() { close_(); }
+    void failed() {
+      if (m_server->invoked()) close_();
+      else m_server->HTTP::rxRun([self = ZmRef(this)]() { self->close_(); });
+    }
+    void responseCancelled_() {
+      if (m_txClosed) return;
+      ZmRef<Self> self{this};
+      m_txClosed = true;
+      m_txRoute.reset();
+      m_responder.close();
+      notifyClosed_(true);
+    }
+    void responseClosed_() {
+      if (m_txClosed) return;
+      ZmRef<Self> self{this};
+      m_txClosed = true;
+      m_responder.closed();
+      if (m_txRoute) m_txRoute.channel()->responseCancel({});
+      m_txRoute.reset();
+      notifyClosed_(false);
+    }
 
+    // Session, work and route lifecycle run on Rx.
     void streamClosed_() {
       if (m_closed || !m_route) return;
       ZmRef<Self> self{this};
       auto route = ZuMv(m_route);
-      route.channel()->responseCancel({});
-      m_responder.close();
       closeStream_();
-      route.close();
       if (!inbound_() || (m_session && m_session->closing)) m_control.close();
-    }
-    void responseCancelled_() {
-      if (!m_server->assertTx_() || m_closed || !m_route) return;
-      ZmRef<Self> self{this};
-      m_route.reset();
-      m_responder.close();
-      closeStream_();
-      if (!inbound_()) { m_control.close(); finish_(); }
-    }
-    void responseClosed_() {
-      if (!m_server->assertTx_() || m_closed) return;
-      ZmRef<Self> self{this};
-      m_responder.closed();
-      closeStream_();
-      if (m_route) m_route.channel()->responseCancel({});
-      m_route.reset();
-      if (!inbound_()) m_control.close();
-      finish_();
+      stopTx_();
+      route.close();
     }
     void close_() {
       if (m_closed) return;
       ZmRef<Self> self{this};
       m_closed = true;
       m_control.close();
-      m_responder.close();
       closeStream_();
       if (m_route) {
-	m_route.channel()->responseCancel({});
 	m_route.close();
 	m_route.reset();
       }
+      stopTx_();
       finish_();
     }
 
   private:
+    bool disconnected_(Zhttp::Session session) {
+      if (!m_route || m_route.session().id != session.id) return false;
+      streamClosed_();
+      return true;
+    }
+
+    void stopTx_() {
+      m_server->HTTP::txRun([self = ZmRef(this)]() {
+	if (!self->m_txClosed) {
+	  self->m_txClosed = true;
+	  if (self->m_txRoute) self->m_txRoute.channel()->responseCancel({});
+	  self->m_responder.close();
+	  self->m_txRoute.reset();
+	}
+	self->notifyClosed_(true);
+      });
+    }
+    void notifyClosed_(bool cancelled) {
+      m_server->HTTP::rxRun([self = ZmRef(this), cancelled]() {
+	self->m_txDone = true;
+	if (self->m_closed || self->m_finish) { self->finish_(); return; }
+	self->m_route.reset();
+	self->closeStream_();
+	if (!cancelled || !self->inbound_() ||
+	    (self->m_session && self->m_session->closing)) {
+	  self->m_control.close();
+	  self->finish_();
+	}
+      });
+    }
     void closeStream_() {
       // Later batch members can still run for a stable HTTP peer after detach.
-      // Do not pass them pointers to contexts already closed with the route.
       m_rpcContext.context = Context{
 	m_route ? m_rpcContext.context.transport() : nullptr,
 	m_rpcContext.context.session()};
       m_streamContext.close();
     }
-    bool live_() const {
-      return this->linked;
-    }
     void finish_() {
       if (!this->linked) return;
+      m_finish = true;
+      if (!m_txDone) return;
       ZmRef<Self> self{this};
       if (m_session) m_session->stream.clear(this);
       closeStream_();
+      m_session = nullptr;
+      m_rpcPeer = nullptr;
       m_server->remove_(this);
     }
     Zjrpc::InboundCalls *inbound_() {
@@ -1722,19 +1817,29 @@ private:
     }
 
     HTTPServer *m_server;
+    // Set before the initial Tx handoff, then immutable.
+    Zjrpc::HTTPValue m_outSessionID;
+
+    alignas(Zm::CacheLineSize)
     Zhttp::Route<typename ResBuilderQ::Node> m_route;
     ZmRef<ZiIOBuf> m_body;
     HTTPMeta m_meta;
     Headers m_headers;
-    Responder m_responder;
     Peer<Catalog> m_peer;
     RpcContext m_rpcContext;
     Server_::ContextRef m_streamContext;
     Zjrpc::WorkControl m_control;
-    // Aggregate dispatch and detached output can outlive session membership.
     ZuRef<Session> m_session;
     ZuRef<Zjrpc::HTTPPeer> m_rpcPeer;
     bool m_closed = false;
+    bool m_txDone = false;
+    bool m_finish = false;
+
+    alignas(Zm::CacheLineSize)
+    Zhttp::Route<typename ResBuilderQ::Node> m_txRoute;
+    Responder m_responder;
+    ZmAtomic<unsigned> m_sendPosts = 0;
+    bool m_txClosed = false;
   };
 
   template <typename RouteT>
@@ -1752,8 +1857,8 @@ private:
   }
 
   void discardSSE_(Zjrpc::SSEQueue queue) {
-    ZiAssert(m_mx && m_mx->invoked(m_txThread), "Zmcp", (),
-	"SSE discard outside owner shard", return);
+    ZiAssert(m_mx && m_mx->invoked(HTTP::txThread()), "Zmcp", (),
+	"SSE discard outside Tx", return);
     if (!queue.count_()) return;
     m_sseGarbage += ZuMv(queue);
     postSSEDrain_();
@@ -1762,7 +1867,7 @@ private:
   void postSSEDrain_() {
     if (m_ssePosted || !m_mx) return;
     m_ssePosted = true;
-    m_mx->run([this]() { drainSSE_(); }, m_txThread);
+    HTTP::txRun([this]() { drainSSE_(); });
   }
 
   void drainSSE_() {
@@ -1811,7 +1916,7 @@ private:
     }
     m_mx->run([this, done = ZuMv(done)]() mutable {
       closeTransportContexts_(ZuMv(done));
-    }, m_txThread);
+    }, m_ownerThread);
   }
 
   Server_::TransportContextHash::NodeMvRef takeTransportContext_() {
@@ -1834,7 +1939,7 @@ private:
     }
     m_mx->run([
       this, done = ZuMv(done)]() mutable { closeRoutes_(ZuMv(done));
-    }, m_txThread);
+    }, m_ownerThread);
   }
 
   void fail_() { }
@@ -1852,13 +1957,12 @@ private:
     done();
   }
 
+  alignas(Zm::CacheLineSize)
   Server_::RouteQ m_routes;
   using ContextTable = Server_::ContextTable;
   using SessionTable = Server_::SessionTable<Catalog>;
   ZmRef<ContextTable> m_transportContexts = new ContextTable{};
   ZmRef<SessionTable> m_sessions = new SessionTable{};
-  Zjrpc::SSEQueue	m_sseGarbage;
-  Zjrpc::SSECloseFn	m_sseCloseFn;
   Ztls::Random		m_rng;
   Zjrpc::HTTPValue		m_endpoint;
   unsigned		m_maxSessions = Default::MaxSessions;
@@ -1866,6 +1970,9 @@ private:
   bool			m_absentOrigin = false;
   bool			m_legacySessions = true;
   bool			m_httpDone = false;
+  alignas(Zm::CacheLineSize)
+  Zjrpc::SSEQueue	m_sseGarbage;
+  Zjrpc::SSECloseFn	m_sseCloseFn;
   bool			m_ssePosted = false;
 };
 
@@ -1950,7 +2057,7 @@ class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
   using Common::m_impl;
   using Common::m_mx;
   using Common::m_limits;
-  using Common::m_txThread;
+  using Common::m_ownerThread;
   using Common::m_up;
   using IO = Zjrpc::WSIO<WSServer>;
   friend Common;
@@ -1970,7 +2077,7 @@ public:
       return false;
     m_impl = impl;
     m_mx = hub.mx();
-    m_txThread = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
+    m_ownerThread = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_limits = config.limits();
     auto transport = new (m_ws.template new_<WS>()) WS{this, ZuMv(address), port};
     if (!transport->init(hub, ZuMv(profile), config.binding())) {
@@ -2007,7 +2114,7 @@ public:
     m_ws.null();
     m_impl = nullptr;
     m_mx = nullptr;
-    m_txThread = 0;
+    m_ownerThread = 0;
   }
   WS &ws() { return m_ws.template p<WS>(); }
   const WS &ws() const { return m_ws.template p<WS>(); }

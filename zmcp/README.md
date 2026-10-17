@@ -12,6 +12,10 @@ MCP-specific protocol work is limited to the compile-time tools catalog,
 pre-modern session awareness, and JSON-RPC wrappers; it does not define a
 parallel request/response, reflection, JSON, or HTTP framework.
 
+Malformed protocol input, including failed tool-argument decoding, terminates the
+affected stream/session without generating an error response. Well-formed
+unknown methods/tools and application failures retain their ordinary responses.
+
 ## Supported protocol
 
 The server and client support:
@@ -141,6 +145,18 @@ handle `cancelled(Req *, Completion *, ZuCSpan reason)`.  It must preserve
 response order for a stream when it retains completion handles; `zmcp` does not
 reorder application completions.  Handles are invalidated during disconnect
 and shutdown and do not retain their stream/session owner.
+Cancellation also invalidates the handle before notifying the application;
+completion, progress and logging through that handle then return false.
+Completion uses the shared JSON-RPC one-shot claim: duplicate completions are
+refused before posting. Progress/log records accepted before the completion
+command retain their owner-queue order; later submissions are refused.
+
+HTTP request dispatch, peer/session/stream contexts, cancellation and completion
+selection belong to Rx. Owned output commands go to Tx, which owns the HTTP
+responder, serialization and SSE queues. Pending output commands and serialized
+queues have independent `maxQueue` bounds. A route remains registered until its
+Tx producer closes and Rx receives the drain acknowledgement. Output fields and
+body providers run on Tx.
 
 `Context` contains borrowed transport-session, legacy MCP-session and request-
 stream application pointers.  Its pointers are valid only during the handler
@@ -201,6 +217,11 @@ All wire buffers are pooled and moved by reference.  Queue counts/bytes,
 message size, SSE event size, pending calls, sessions and work per scheduler
 turn are bounded by `Zjrpc::Limits`.  Raising `maxJSONBytes` also raises the
 worst-case latency of one indivisible JSON turn, including `tools/list`.
+`maxQueue` separately bounds pending posted outbound commands per client and
+pending progress/log posts per token. Atomic admission returns false
+without posting when full and is released when the callback starts, including
+when invalidation discards the operation. Owner-shard sends bypass post admission;
+serialized output count/byte limits remain separate.
 
 ## Security and failure behavior
 

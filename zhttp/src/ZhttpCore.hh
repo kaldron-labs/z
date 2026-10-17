@@ -515,11 +515,11 @@ struct FieldOffset {
 struct FieldOutput {
   void *ctx;
   FieldOffset (*put)(void *, FieldForm::T, int,
-    const FieldClass *, PrintView, PrintView);
+    const FieldClass *, PrintView, PrintView, bool);
 
   FieldOffset field(FieldForm::T form, int id, const FieldClass *classification,
-      PrintView key, PrintView value) {
-    return put(ctx, form, id, classification, key, value);
+      PrintView key, PrintView value, bool neverIndex = false) {
+    return put(ctx, form, id, classification, key, value, neverIndex);
   }
 };
 
@@ -555,11 +555,14 @@ struct BodyWrite {
 // instead borrow an adapter-local record for their synchronous callback.
 struct BodyEmitRecord : MessageRecord {
   bool (*emit)(void *, BodyWrite);
+  bool (*trailers)(void *, const CatalogView &, FieldProvider &) = nullptr;
 };
 
 class BodyEmitter {
 public:
   BodyEmitter(BodyEmitRecord *emit) : m_emit{emit} { }
+
+  template <typename B> bool trailers(B &fields);
 
   template <typename Write>
   bool operator ()(Write &&write) {
@@ -667,6 +670,7 @@ struct ChannelOps {
   const ZiIP &(*remoteIP)(const void *);
   uint16_t (*remotePort)(const void *);
   // Tx-owned response cancellation; same hook and drain as retained producers.
+  // Registering on an inactive channel invokes the callback immediately.
   void (*responseCancel)(void *, StreamCancelFn);
   // Rx-owned HTTP/1 handshake metadata from the current wire parser.
   bool (*http10)(const void *);

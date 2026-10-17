@@ -32,6 +32,7 @@ using CallHdr = ZuStringT<"x-call">;
 using ResultHdr = ZuStringT<"x-result">;
 
 struct SrvApp {
+  ZiMultiplex *mx = nullptr;
   ZmSemaphore listening_;
   ZmSemaphore arrived;
   ZmSemaphore notified;
@@ -45,9 +46,13 @@ struct SrvApp {
   void listenFailed(int, bool) { ++failures; listening_.post(); }
   void connected(int) { }
   void disconnected(int) { }
-  ZuRef<Zjrpc::HTTPPeer> peer(const auto &) { return context; }
+  ZuRef<Zjrpc::HTTPPeer> peer(const auto &) {
+    ZuCheck(mx->invoked(mx->rxThread()));
+    return context;
+  }
   template <typename Req, typename Token>
   void request(Req *, const Value &value, const auto &http, Token token) {
+    ZuCheck(mx->invoked(mx->rxThread()));
     auto field = http.headers.template get<CallHdr>();
     if (field.count == 1 && field.value == "call") ++enriched;
     if (!token) { notified.post(); return; }
@@ -61,6 +66,7 @@ struct SrvApp {
   }
   template <typename Res, typename Key, typename L>
   void responseHeader(const Zjrpc::Reply<Res> &, L &&l) {
+    ZuCheck(mx->invoked(mx->txThread()));
     if constexpr (ZuIsSame<Key, ResultHdr>{}) l("result");
   }
 };
@@ -119,6 +125,7 @@ static void testHTTP()
   }).rxThread(1).txThread(2)};
   ZuCheck(mx.start(), (return));
   SrvApp srv;
+  srv.mx = &mx;
   CliApp cli;
   Zjrpc::HTTPServer<SrvApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
     Zhttp::H2TLS>> server;

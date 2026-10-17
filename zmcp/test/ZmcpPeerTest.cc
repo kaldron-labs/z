@@ -11,6 +11,8 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZtcHeap.hh>
+#include <zlib/ZmScheduler.hh>
+#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZmcpClient.hh>
 #include <zlib/ZmcpServer.hh>
@@ -293,6 +295,8 @@ struct CompletionHarness : public Zmcp::CompletionSet<CompletionHarness> {
   using Base = Zmcp::CompletionSet<CompletionHarness>;
   using Base::Base;
 
+  Zjrpc::CompletionRoute completionRoute_() const { return executor; }
+
   template <typename Req, typename Token>
   void made(Req *, Token *) { }
 
@@ -320,6 +324,7 @@ struct CompletionHarness : public Zmcp::CompletionSet<CompletionHarness> {
 
   template <typename Req, typename Token>
   void cancelled(Req *, Token *token, ZuCSpan reason_) {
+    ZuCheck(!token->live() && !count());
     if (token->cancelled()) ++cancellations;
     reason = reason_;
   }
@@ -339,6 +344,7 @@ struct CompletionHarness : public Zmcp::CompletionSet<CompletionHarness> {
     return true;
   }
 
+  Zjrpc::CompletionRoute executor;
   ZtString<> out;
   ZtString<> reason;
   int era = Zmcp::Era::Modern;
@@ -625,6 +631,17 @@ private:
   bool m_failed = false;
 };
 
+static void channelMalformedTest()
+{
+  ZuTestScope(channelMalformed);
+  ChannelHarness harness;
+  ZuCheck(harness.receive(
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\","
+    "\"params\":{\"name\":\"echo\",\"arguments\":[]}}"));
+  harness.turns();
+  ZuCheck(harness.failed() && !harness.output().length() && !harness.calls());
+}
+
 static void channelBatchTest()
 {
   ZuTestScope(channelBatch);
@@ -637,7 +654,7 @@ static void channelBatchTest()
       "\"params\":{\"requestId\":31,\"reason\":\"stop\"}}]"));
   ZuCheck(harness.calls() == 1 && !harness.output().length());
   harness.turns();
-  ZuCheck(harness.cancellations() == 1 && !harness.output().length());
+  ZuCheck(harness.cancellations() == 1 && harness.output().length() == 1);
   harness.complete();
   ZuCheck(harness.output().length() == 1 && !harness.failed());
   if (harness.output().length() == 1) {
@@ -646,10 +663,9 @@ static void channelBatchTest()
     ZuCheck(parsed.batch());
     if (parsed.batch()) {
       const auto &nodes = parsed.value()->template data<ZfJSON::AnyNode::Array>();
-      ZuCheck(nodes.length() == 2);
-      if (nodes.length() == 2) {
+      ZuCheck(nodes.length() == 1);
+      if (nodes.length() == 1) {
 	ZuCheck(Zjrpc::decode(nodes[0].ptr()).id() == Zjrpc::ID{int64_t{32}});
-	ZuCheck(Zjrpc::decode(nodes[1].ptr()).id() == Zjrpc::ID{int64_t{31}});
       }
     }
   }
@@ -733,6 +749,13 @@ static void peerTest()
   ZuCheck(out ==
     "{\"jsonrpc\":\"2.0\",\"id\":4,\"error\":{\"code\":-32601,"
     "\"message\":\"Method not found\"}}");
+
+  out.length_(0);
+  char malformed[] =
+    "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\","
+    "\"params\":{\"name\":\"echo\",\"arguments\":[]}}";
+  ZuCheck(!peer.receive(malformed, out, tool));
+  ZuCheck(!out);
 
   out.length_(0);
   char appError[] =
@@ -1041,16 +1064,12 @@ static void completionTest()
   ZuCheck(retained->cancelled());
   ZuCheck(completions.cancellations == 1);
   ZuCheck(completions.reason == "superseded");
-  ZuCheck(retained->complete(Zjrpc::Reply<EchoOK>{EchoResult{4}}));
+  ZuCheck(!retained->complete(Zjrpc::Reply<EchoOK>{EchoResult{4}}));
+  ZuCheck(!retained->progress(1, 1, "late"));
+  ZuCheck(!retained->log("info", "late", "echo"));
   ZuCheck(!retained->live());
   ZuCheck(!completions.count());
-  ZuCheck(completions.out ==
-    "{\"jsonrpc\":\"2.0\",\"id\":17,\"result\":{"
-    "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{"
-      "\"name\":\"zmcp\",\"version\":\"" Z_VERNAME "\"}},"
-    "\"resultType\":\"complete\",\"content\":[],"
-    "\"structuredContent\":{\"code\":200,\"data\":{\"value\":4}},"
-    "\"isError\":false}}");
+  ZuCheck(!completions.out);
   ZuCheck(!retained->complete(Zjrpc::Reply<EchoOK>{EchoResult{5}}));
 
   Zmcp::Peer<EchoCatalog> legacyPeer;
@@ -1128,6 +1147,37 @@ static void completionTest()
   ZuCheck(completions.state() == Zjrpc::CompletionState::Closed);
   ZuCheck(!retained->complete(Zjrpc::Reply<EchoOK>{EchoResult{5}}));
   ZuCheck(!completions.out);
+}
+
+static void completionPostsTest()
+{
+  ZuTestScope(completionPosts);
+  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
+    .thread(1, [](auto &thread) { thread.isolated(1); })};
+  CompletionHarness completions;
+  completions.executor = {&scheduler, 1, 2};
+  auto token = completions.make<Echo>(Zjrpc::ID{int64_t{1}},
+    Zjrpc::ID{int64_t{2}}, Zmcp::LogLevel::Info);
+  ZuCheck(token->progress(.5, 1, "half"));
+  ZuCheck(token->log("info", "working", "echo"));
+  for (unsigned i = 0; i < 8; ++i) {
+    ZuCheck(!token->progress(.75, 1));
+    ZuCheck(!token->log("info", "refused"));
+  }
+  ZuCheck(token->complete(Zjrpc::Reply<EchoOK>{EchoResult{4}}));
+  ZuCheck(!token->live());
+  ZuCheck(!token->complete(Zjrpc::Reply<EchoOK>{EchoResult{5}}));
+  ZuCheck(!completions.out);
+  ZmSemaphore drained;
+  scheduler.run([&drained]() { drained.post(); }, 1);
+  ZuCheck(scheduler.start(), (return));
+  drained.wait();
+  ZuCheck(completions.out.find("notifications/progress") >= 0);
+  ZuCheck(completions.out.find("notifications/message") >= 0);
+  ZuCheck(completions.out.find("\"value\":4") >= 0);
+  ZuCheck(!token->live());
+  ZuCheck(!token->progress(1, 1) && !token->log("info", "late"));
+  ZuCheck(scheduler.stop());
 }
 
 static void httpTest()
@@ -1627,7 +1677,9 @@ int main(int argc, char **argv)
   ZuTestCall(pendingTest);
   ZuTestCall(residueTest);
   ZuTestCall(completionTest);
+  ZuTestCall(completionPostsTest);
   ZuTestCall(channelBatchTest);
+  ZuTestCall(channelMalformedTest);
   ZuTestCall(httpTest);
   ZuTestCall(httpBatchTest);
   ZuTestCall(httpDetachedTest);

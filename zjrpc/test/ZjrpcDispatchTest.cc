@@ -35,9 +35,11 @@ struct App {
   unsigned notifications = 0;
   unsigned cancellations = 0;
   bool completedOnCancel = true;
+  bool cancelOK = true;
   template <typename Req, typename Token>
   void cancelled(Req *, Token *token, ZuCSpan) {
     ++cancellations;
+    cancelOK &= token->cancelled() && !token->live();
     if (onCancel) onCancel();
     if constexpr (ZuIsSame<Req, Echo>{})
       completedOnCancel = token->complete(Zjrpc::Reply<OK>{Value{8}});
@@ -86,6 +88,7 @@ public:
   bool invoked() const { return true; }
   void fail_() { m_failed = true; }
   bool failed() const { return m_failed; }
+  bool aborted() const { return m_aborted; }
   template <typename L> bool ownerRun(L &&l) { l(); return true; }
   template <typename L> void continue_(L &&l) { m_turns.push(ZuFwd<L>(l)); }
   using Calls::response;
@@ -97,7 +100,8 @@ public:
       Zjrpc::WorkControl *control = nullptr, bool peer = true) {
     ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{};
     *body << input;
-    return Base::receive(ZuMv(body), [this, retain](auto message, int) {
+    return Base::receive(ZuMv(body), [this, retain](auto message, int policy) {
+      if (policy == Zjrpc::RoutePolicy::Abort) { m_aborted = true; return true; }
       if (retain) { m_messages.push(ZuMv(message)); return true; }
       if (!message.empty()) {
 	ZtString<> output;
@@ -146,6 +150,7 @@ private:
   unsigned m_sent = 0;
   bool m_up = true;
   bool m_failed = false;
+  bool m_aborted = false;
 };
 
 static void routeCloseTest()
@@ -167,7 +172,7 @@ static void routeCloseTest()
   ZuCheck(harness.app().requests == 5);
   control.close();
   ZuCheck(harness.app().cancellations == 2);
-  ZuCheck(!harness.app().completedOnCancel);
+  ZuCheck(!harness.app().completedOnCancel && harness.app().cancelOK);
   while (harness.turn()) { }
   ZuCheck(harness.app().requests == 5);
   ZuCheck(harness.app().cancellations == 4);
@@ -210,7 +215,8 @@ static void batchTest()
   Harness harness;
   ZuCheck(harness.receive(
     "[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"echo\",\"params\":[7]},"
-    "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":[9]},42,"
+    "{\"jsonrpc\":\"2.0\",\"method\":\"echo\",\"params\":[9]},"
+    "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"missing\"},"
     "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"missing\"},"
     "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"echo\",\"params\":[8]}]"));
   ZuCheck(harness.app().requests == 1 && harness.app().notifications == 1);
@@ -231,7 +237,7 @@ static void batchTest()
   auto missing = Zjrpc::decode(entries[2].ptr());
   auto deferred = Zjrpc::decode(entries[3].ptr());
   ZuCheck(first.kind == Zjrpc::MessageKind::Result && first.id() == Zjrpc::ID{int64_t{1}});
-  ZuCheck(invalid.kind == Zjrpc::MessageKind::Error && invalid.id().is<Zjrpc::Null>());
+  ZuCheck(invalid.kind == Zjrpc::MessageKind::Error && invalid.id() == Zjrpc::ID{int64_t{4}});
   ZuCheck(missing.kind == Zjrpc::MessageKind::Error && missing.id() == Zjrpc::ID{int64_t{2}});
   ZuCheck(deferred.kind == Zjrpc::MessageKind::Result && deferred.id() == Zjrpc::ID{int64_t{3}});
   ZuCheck(!harness.app().deferred());
@@ -264,10 +270,31 @@ static void emptyTest()
   ZuCheck(notifications.app().notifications == 2 && !notifications.output().length());
   Harness empty;
   ZuCheck(empty.receive("[]"));
-  ZuCheck(empty.output().length() == 1);
-  auto &output = empty.output()[0];
-  auto parsed = Zjrpc::parse(output.span(), output.length());
-  ZuCheck(!parsed.batch() && parsed.envelope.kind == Zjrpc::MessageKind::Error);
+  ZuCheck(empty.aborted() && !empty.output().length());
+}
+
+static void malformedTest()
+{
+  ZuTestScope(malformed);
+  Harness syntax;
+  ZuCheck(syntax.receive("{"));
+  ZuCheck(syntax.aborted() && !syntax.output().length());
+  Harness envelope;
+  ZuCheck(envelope.receive("42"));
+  ZuCheck(envelope.aborted() && !envelope.output().length());
+  Harness params;
+  ZuCheck(params.receive(
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"echo\","
+    "\"params\":{\"value\":7,\"value\":8}}"));
+  ZuCheck(params.aborted() && !params.output().length() && !params.app().requests);
+  Harness batch;
+  ZuCheck(batch.receive(
+    "[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"echo\",\"params\":[8]},42,"
+    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"echo\",\"params\":[7]}]"));
+  while (batch.turn()) { }
+  ZuCheck(batch.aborted() && !batch.output().length());
+  ZuCheck(batch.app().requests == 1 && batch.app().cancellations == 1);
+  ZuCheck(!batch.liveCount() && !batch.app().deferred());
 }
 
 static void closeTest()
@@ -281,7 +308,7 @@ static void closeTest()
   harness.close();
   ZuCheck(harness.app().requests == 1);
   ZuCheck(harness.app().cancellations == 1);
-  ZuCheck(!harness.app().completedOnCancel);
+  ZuCheck(!harness.app().completedOnCancel && harness.app().cancelOK);
   ZuCheck(!harness.app().deferred());
   ZuCheck(!harness.output().length() && !harness.failed());
 }
@@ -297,7 +324,8 @@ static void peerCloseTest()
   ZuCheck(harness.app().requests == 2);
   ZuCheck(harness.closePeer());
   ZuCheck(harness.app().cancellations == 2);
-  ZuCheck(!harness.app().completedOnCancel && !harness.app().deferred());
+  ZuCheck(!harness.app().completedOnCancel && !harness.app().deferred() &&
+    harness.app().cancelOK);
   ZuCheck(harness.turn());
   ZuCheck(harness.app().requests == 2 && !harness.output().length());
   // A closed peer's history is drained; reopening its ownership scope is fresh.
@@ -459,6 +487,7 @@ int main(int argc, char **argv)
   ZuTestCall(abortHistoryTest);
   ZuTestCall(duplicateTest);
   ZuTestCall(emptyTest);
+  ZuTestCall(malformedTest);
   ZuTestCall(closeTest);
   ZuTestCall(peerCloseTest);
   ZuTestCall(borrowedTest);

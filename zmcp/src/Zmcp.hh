@@ -1531,31 +1531,44 @@ public:
       ZuCSpan message = {}) {
     if (!this->live() || m_progressToken.template is<void>()) return false;
     if (!this->route().invoked()) {
+      if (!this->sendPost_()) return false;
       using Action = Token_::ProgressAction<Completion>;
       ZmRef<Action> action = new Action{this, value, total, message};
       this->route().run([action = ZuMv(action)]() mutable {
-	action->token()->progress(action->value(), action->total(), action->message());
+	action->token()->sendPosted_();
+	action->token()->progress_(action->value(), action->total(), action->message());
       });
       return true;
     }
-    return this->owner()->template progress<Req>(this, value, total, message);
+    return progress_(value, total, message);
   }
 
   bool log(ZuCSpan level, ZuCSpan data, ZuCSpan logger = {}) {
     if (!this->live() || m_logLevel == LogLevel::Disabled ||
 	logLevel(level) < m_logLevel) return false;
     if (!this->route().invoked()) {
+      if (!this->sendPost_()) return false;
       using Action = Token_::LogAction<Completion>;
       ZmRef<Action> action = new Action{this, level, data, logger};
       this->route().run([action = ZuMv(action)]() mutable {
-	action->token()->log(action->level(), action->data(), action->logger());
+	action->token()->sendPosted_();
+	action->token()->log_(action->level(), action->data(), action->logger());
       });
       return true;
     }
-    return this->owner()->template log<Req>(this, level, data, logger);
+    return log_(level, data, logger);
   }
 
 private:
+  bool progress_(double value, double total, ZuCSpan message) {
+    auto owner = this->owner();
+    return owner && owner->template progress<Req>(this, value, total, message);
+  }
+  bool log_(ZuCSpan level, ZuCSpan data, ZuCSpan logger) {
+    auto owner = this->owner();
+    return owner && owner->template log<Req>(this, level, data, logger);
+  }
+
   Zjrpc::ID m_progressToken;
   int m_logLevel;
 };
@@ -1837,9 +1850,9 @@ public:
   bool dispatch(const Zjrpc::Envelope &envelope, Emit &&emit, Tool &&tool) {
     if (m_legacyState == LegacyState::Closed) return false;
     auto call = [this, &emit, &tool](const Zjrpc::Envelope &envelope) {
-      call_(emit, envelope, tool);
+      return call_(emit, envelope, tool);
     };
-    auto cancel = [](const Zjrpc::Envelope &) { };
+    auto cancel = [](const CancelledParams &) { };
     return route_(envelope, emit, tool, call, cancel);
   }
 
@@ -1861,10 +1874,9 @@ public:
     if (m_legacyState == LegacyState::Closed) return false;
     auto call = [this, &completions, &emit, &tool](
 	const Zjrpc::Envelope &envelope) {
-      callAsync_(completions, emit, envelope, tool);
+      return callAsync_(completions, emit, envelope, tool);
     };
-    auto cancel = [&completions](const Zjrpc::Envelope &envelope) {
-      auto params = Zjrpc::loadObject<CancelledParams>(Zjrpc::raw(envelope.params()));
+    auto cancel = [&completions](const CancelledParams &params) {
       if (!params.requestID.template is<void>())
 	(void)completions.cancel(params.requestID, params.reason);
     };
@@ -1880,11 +1892,15 @@ private:
 	envelope.id().template is<Zjrpc::Null>()) return false;
     if (envelope.kind != Zjrpc::MessageKind::Request &&
 	envelope.kind != Zjrpc::MessageKind::Notification)
-      return true;
+      return envelope.kind != Zjrpc::MessageKind::Unusable;
     int method = serverMethod(envelope.method());
     switch (method) {
       case 0: discover_(emit, envelope.id()); break;
-      case 1: initialize_(emit, envelope.id()); break;
+      case 1:
+	if (!ZfJSON::handler<InitializeParams>(Zjrpc::raw(envelope.params())).valid)
+	  return false;
+	initialize_(emit, envelope.id());
+	break;
       case 2:
 	if (m_era == Era::Legacy &&
 	    m_legacyState == LegacyState::Initializing)
@@ -1902,19 +1918,26 @@ private:
 	break;
       case 5:
 	if (usable_() && envelope.kind == Zjrpc::MessageKind::Request)
-	  call(envelope);
+	  return call(envelope);
 	else
 	  unsupported_(emit, envelope);
 	break;
-      case 6:
-	cancel(envelope);
+      case 6: {
+	auto handler = ZfJSON::handler<CancelledParams>(Zjrpc::raw(envelope.params()));
+	if (!handler.valid) return false;
+	auto params = handler.ctor();
+	if (params.requestID.template is<void>()) return false;
+	cancel(params);
 	break;
+      }
       case 7:
       case 8:
 	break;
       case 9:
 	if (m_era == Era::Legacy && envelope.kind == Zjrpc::MessageKind::Request) {
-	  auto params = Zjrpc::loadObject<SetLevelParams>(Zjrpc::raw(envelope.params()));
+	  auto handler = ZfJSON::handler<SetLevelParams>(Zjrpc::raw(envelope.params()));
+	  if (!handler.valid) return false;
+	  auto params = handler.ctor();
 	  if (params.level) m_logLevel = Zmcp::logLevel(params.level);
 	  emptyResult_(emit, envelope.id());
 	} else
@@ -1960,28 +1983,23 @@ private:
   }
 
   template <typename Emit, typename Tool>
-  void call_(Emit &emit, const Zjrpc::Envelope &envelope, Tool &tool) const {
+  bool call_(Emit &emit, const Zjrpc::Envelope &envelope, Tool &tool) const {
     if constexpr (!Reqs::N) {
+      if (!ZfJSON::handler<ToolsCallShape>(Zjrpc::raw(envelope.params())).valid)
+	return false;
       emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
-      return;
+      return true;
     } else {
       using Params = ToolsCallParams<Reqs>;
       auto handler = ZfJSON::handler<Params>(Zjrpc::raw(envelope.params()));
-      if (!handler.valid) {
-	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
-	return;
-      }
+      if (!handler.valid) return false;
       auto params = handler.ctor();
       int index = params.match();
       if (index < 0) {
 	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
-	return;
+	return true;
       }
-      if (params.narrow() < 0) {
-	emit(ToolErrorMessage{
-	  envelope.id(), ErrorCode::Internal, responseEra_()});
-	return;
-      }
+      if (params.narrow() < 0) return false;
       int era = responseEra_();
       bool completed = false;
       try {
@@ -2006,44 +2024,40 @@ private:
 	if (!completed)
 	  emit(ToolErrorMessage{
 	    envelope.id(), error.code, responseEra_()});
-	return;
+	return true;
       } catch (...) {
 	if (!completed)
 	  emit(ToolErrorMessage{
 	    envelope.id(), ErrorCode::Internal, responseEra_()});
-	return;
+	return true;
       }
       if (!completed)
 	emit(ToolErrorMessage{
 	  envelope.id(), ErrorCode::Internal, responseEra_()});
     }
+    return true;
   }
 
   template <typename Completions, typename Emit, typename Tool>
-  void callAsync_(
+  bool callAsync_(
       Completions &completions, Emit &emit,
       const Zjrpc::Envelope &envelope, Tool &tool) {
     if constexpr (!Reqs::N) {
+      if (!ZfJSON::handler<ToolsCallShape>(Zjrpc::raw(envelope.params())).valid)
+	return false;
       emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
-      return;
+      return true;
     } else {
       using Params = ToolsCallParams<Reqs>;
       auto handler = ZfJSON::handler<Params>(Zjrpc::raw(envelope.params()));
-      if (!handler.valid) {
-	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
-	return;
-      }
+      if (!handler.valid) return false;
       auto params = handler.ctor();
       int index = params.match();
       if (index < 0) {
 	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
-	return;
+	return true;
       }
-      if (params.narrow() < 0) {
-	emit(ToolErrorMessage{
-	  envelope.id(), ErrorCode::Internal, responseEra_()});
-	return;
-      }
+      if (params.narrow() < 0) return false;
       int logLevel_ = m_era == Era::Legacy ? m_logLevel : params.logLevel;
       int era = responseEra_();
       try {
@@ -2072,6 +2086,7 @@ private:
 	  envelope.id(), ErrorCode::Internal, responseEra_()});
       }
     }
+    return true;
   }
 
   int responseEra_() const {

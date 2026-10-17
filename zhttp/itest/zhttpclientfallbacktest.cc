@@ -116,10 +116,12 @@ struct ReqBuilder_ : public ZmObject, public Zhttp::ReqBuilder {
 
   uint64_t key() const { return key_; }
   uint64_t length() const { return 1; }
+  bool replayable() const { return replayable_; }
 
   ClientApp		*app = nullptr;
   Zhttp::URLString	target{"/"};
   uint64_t		key_ = 0;
+  bool			replayable_ = true;
 };
 
 struct ResParser : public Zhttp::Parser {
@@ -466,6 +468,46 @@ void fallback()
 
   if (agentInited) agent.stop();
   if (agentInited) agent.final();
+
+  Resolver noReplayResolver;
+  ClientApp noReplayClient;
+  bool noReplayInited = noReplayClient.init(
+    hub, 1, agentConfig, Zhttp::TCPConfig{},
+    Zhttp::H2Config{}.caPath(cert),
+    Zhttp::QUICConfig{}.caPath(untrustedCert).maxIdleTimeout(500));
+  noReplayInited = noReplayInited && noReplayClient.pool(
+    0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
+  noReplayClient.discoveryResolver(&noReplayResolver.ops);
+  ZuCHECK(noReplayInited, "initialize no-replay prefer-mode agent");
+  bool noReplayUp = noReplayInited && noReplayClient.start();
+  ZuCHECK(noReplayUp, "start no-replay prefer-mode agent");
+  if (noReplayUp) {
+    auto request = noReplayClient.request();
+    request->target = "/ok";
+    request->replayable_ = false;
+    noReplayClient.send(0, request);
+    noReplayClient.seal(0);
+    bool queried = noReplayResolver.queried.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(queried, "no-replay request permits initial HTTPS discovery");
+    if (queried) {
+      noReplayResolver.noRecord();
+      bool completed = noReplayClient.done.timedwait(Zm::now(10)) == 0;
+      ZuCHECK(completed, "no-replay H3 failure completes");
+      if (completed) {
+	ZuCHECK(noReplayClient.result.code == Zhttp::ResultCode::ReplayUnsafe &&
+	    noReplayClient.result.transport == Zhttp::Transport::QUIC &&
+	    noReplayClient.result.attempt == noReplayClient.failedAttempt,
+	  "fallback refusal preserves the failed H3 attempt identity");
+	ZuCHECK(noReplayClient.selectedEvents == 1 &&
+	    noReplayClient.attemptFailedEvents == 1 &&
+	    !noReplayClient.fallbackEvents &&
+	    noReplayClient.completedEvents == 1 && !noReplayClient.bodyBytes,
+	  "no-replay GET has one terminal attempt without TLS fallback");
+      }
+    }
+  }
+  if (noReplayInited) noReplayClient.stop();
+  if (noReplayInited) noReplayClient.final();
 
   Resolver cacheResolver;
   ClientApp cachedClient;

@@ -70,8 +70,8 @@ Subsidiary allocations within those blocks are:
 | `zhttp/test` | `ZhttpMessageH2Test` | 20425 |
 | `zhttp/test` | `ZhttpMessageH3Test` | 20426 |
 | `zhttp/test` | `ZhttpServerIdleTest` | 20427-20436 |
-| `zhttp/test` | `ZhttpClientCancelTest` | 20437-20445 |
-| `zhttp/test` | `ZhttpClientPoolTest` | 20446-20479 |
+| `zhttp/test` | `ZhttpClientCancelTest` | 20437-20448 |
+| `zhttp/test` | `ZhttpClientPoolTest` | 20449-20482 |
 | `zhttp/itest` | `zhttpmatrix` | 20500 |
 | `zhttp/itest` | `zhttpapptest` | 20510-20516 |
 | `zhttp/itest` | `zhttpmultirequesttest` | 20520 |

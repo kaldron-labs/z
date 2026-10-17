@@ -95,6 +95,7 @@ struct RequestOps {
   bool contentLength;
   BodyPolicy::T (*bodyPolicy)(const void *);
   bool (*idempotent)(const void *, Method::T);
+  bool (*replayable)(const void *);
   void (*operation)(void *, OperationSink);
   void (*protocol)(void *, PrintSink);
   void (*body)(void *, BodyEmitter);
@@ -120,7 +121,10 @@ struct RequestRecord : MessageRecord {
   const RequestOps *requestOps = nullptr;
   const CatalogView *catalog = nullptr;
   unsigned hdrBufSize = 0;
+  // Immutable after first binding, shared with Tx without reading live Rx state.
+  bool replayAllowed = true;
 
+  bool replayable() const { return replayAllowed; }
   BodyPolicy::T bodyPolicy() const { return requestOps->bodyPolicy(ctx); }
   bool idempotent(Method::T method) const { return requestOps->idempotent(ctx, method); }
   void operation(OperationSink sink) { requestOps->operation(ctx, sink); }
@@ -178,9 +182,9 @@ using RequestRef = RecordRef<RequestRecord>;
 // ahead of, and publicly derives from, the application data type.
 // Each node represents one logical request and is never reset or repurposed.
 // Retry and redirect attempts may call its Builder callbacks again; every
-// Builder must reproduce the same message each time.  idempotent() controls
-// attempts made after the peer might have applied the request; an attempt
-// known not to have been applied can be repeated independently.
+// Builder must reproduce the same message each time. replayable() is sampled
+// at submission and gates all subsequent attempts, including unprocessed ones.
+// idempotent() additionally controls attempts the peer might have applied.
 struct ReqBuilder : public Builder {
   RequestRecord record;
 
@@ -190,6 +194,8 @@ struct ReqBuilder : public Builder {
   // A priority-queue item represents one discrete request.  key() remains an
   // application requirement because it supplies the monotonic queue identity.
   uint64_t length() const { return 1; }
+
+  bool replayable() const { return true; }
 
   bool idempotent(Method::T method) const {
     return idempotentMethod(method);
@@ -311,6 +317,9 @@ struct RequestFields {
   FieldContext &context;
   HeaderSpans<HdrCatalog> spans;
 
+  static constexpr unsigned HdrBufSize = B::HdrBufSize;
+  bool neverIndex(ZuBSpan name) const { return builder->neverIndex(name); }
+
   template <typename Key, typename Value, typename L>
   void header(L &&l) {
     if constexpr (Key{}() == "content-length")
@@ -346,6 +355,9 @@ RequestRecord &bindRequest(Node *request, const CatalogView &catalog) {
       },
       .idempotent = [](const void *ctx, Method::T method) -> bool {
 	return static_cast<const Node *>(ctx)->data().idempotent(method);
+      },
+      .replayable = [](const void *ctx) -> bool {
+	return static_cast<const Node *>(ctx)->data().replayable();
       },
       .operation = [](void *ctx, OperationSink sink) {
 	static_cast<Node *>(ctx)->data().operation(
@@ -435,6 +447,7 @@ RequestRecord &bindRequest(Node *request, const CatalogView &catalog) {
   }();
   auto &record = request->data().record;
   record.bind(request);
+  if (!record.requestOps) record.replayAllowed = ops.replayable(request);
   record.requestOps = &ops;
   record.catalog = &catalog;
   record.hdrBufSize = B::HdrBufSize;

@@ -175,6 +175,8 @@ struct Request {
   // Signed bodies are bracketed by prefixBody() and signBody(); the span
   // passed to signBody() excludes the prefix.
   enum { SignBody = 0 };
+  // Nonzero overrides the inherited REST input limit, raising or lowering it.
+  // Independently configured HTTP transport limits still apply.
   static constexpr uint64_t BodyLimit = 0;
 
   static constexpr unsigned SignQueryBufSize = 1<<10;

@@ -78,6 +78,13 @@ fixed values for static dispatch, while a Builder fixed-value list is a
 singleton. For each Builder fixed pair, `header<Key, Value>(emit)` controls
 whether it is present by calling `emit()` zero or one times.
 
+`Builder::neverIndex(name)` defaults to `false` and is evaluated once for each
+emitted field. Override it for runtime metadata that must use HPACK/QPACK
+never-index representations, including matches to static or public seeded
+values. Existing sensitive-name defaults still apply. Put sensitive values in
+runtime declared or dynamic fields; fixed catalog values are public compression
+seeds. H1 evaluates the same policy while emitting ordinary text fields.
+
 ```c++
 struct ReqBuilder_ : ZmObject, Zhttp::ReqBuilder {
   using HdrCatalog = RequestHeaders;
@@ -284,15 +291,29 @@ entity limit is additionally capped at `UINT_MAX`. `BodyPolicy::Stream` and
 chunked transfer encoding and H2/H3 map them to DATA and their native final
 boundary.
 
-Receive parsers take their body limit at run time from the effective client,
-pool, or server configuration; response/request parser types do not define a
-compile-time `BodyMax`. After the final header section,
+Receive parsers take independent limits at run time from the effective client,
+pool, or server configuration. `bodyMax()` bounds cumulative decoded bytes and
+Content-Length for one message (default `UINT_MAX`); `retainedBodyMax()` bounds
+currently queued decoded bytes. Consumed or discarded bytes release retained
+capacity, and a DATA payload larger than that capacity is delivered in bounded
+fragments. A consumer that fills the queue without consuming causes a bounded
+receive failure. `retainedMessageMax()` retains its output-only role, and
+`bodyMax()` does not change fixed-output limits. The
+response/request parser types do not define a compile-time `BodyMax`. After
+the final header section,
 `bodyInfo(type, length)` reports `None`, `Streamed`, or `Fixed` framing
 (`Fixed, 0` is a valid empty body). It returns `true` to accept that body type
 and length, or `false` to reject the message with the same consequences as
 `body()` returning `false`. Every selected or run-time `header` callback
 receives its `Zhttp::FieldSection::T`, including informational and trailer
-fields.
+fields. Field callbacks precede validation of the complete section, so a field
+alone does not establish HTTP acceptance. `bodyInfo` follows accepted final
+initial fields and can receive the borrowed channel to acquire a server `Route`
+before request DATA completes. Trailing fields follow body prompts, and normal
+`complete(channel, true)` establishes acceptance and receive end, including
+HEADERS followed by delayed H3 FIN. Copy selected metadata during its borrowed
+field callback and publish terminal status only at normal completion. Failure
+completes once with `false`; completion is followed immediately by parser reset.
 
 Every writer is invoked synchronously with a queue-backed Tx stream and returns
 `WriteOutcome::End`, `Stream`, `Abort`, or `Failed`. The library never retains
@@ -309,12 +330,35 @@ Builder to destroy its retained emitter. A later call through another queued
 copy returns `false` without invoking its writer. `disconnect() const` is the
 separate query for closing a connection after a successful response.
 
+After a streaming response turn returns `Stream`, H2 and H3 producers can call
+`emit.trailers(fields)` on Tx, outside a writer. The field provider follows
+`Builder`'s catalog, header overloads and `neverIndex` policy; only its fields
+are used. Values are rendered synchronously into bounded pooled storage and
+need live only through the call. Mutable-header offsets and patch hooks are
+not used for trailers. Pseudo-fields and Content-Length are rejected.
+
+A `true` trailer result admits the terminal section behind all accepted DATA,
+including data waiting for flow-control credit. It seals producer admission;
+`close()` runs once outside an active body callback, while the existing response
+queue retains the response until its completion notification. Compression runs
+when the DATA prefix is eligible: H2 sends HEADERS with END_STREAM; H3 sends
+HEADERS followed by FIN. H1, fixed-body and invalidated emitters return `false`
+without calling the provider. A rendering or queue failure terminates the
+producer through its existing result path. The result means admission, not
+transport delivery. A trailers-only response uses the ordinary no-body path.
+
 Client request writers remain single-turn and accept only `End` as success.
 Every client Builder must reproduce the same message when a retry or redirect
 traverses it again. Multi-turn streaming request bodies are unsupported.
+`ReqBuilder::replayable()` defaults to `true`. Override it to `false` before
+submission to prohibit every subsequent HTTP attempt, including unprocessed
+attempts, redirects, retries and transport fallback. The policy is sampled once
+at submission and survives wire resets; refusal reports `ReplayUnsafe` with the
+original status and attempt identity. Initial transport discovery remains allowed.
 `ReqBuilder::idempotent(method)` defaults to the standard HTTP method
 semantics.  Override it when application semantics make a normally
-non-idempotent method, such as `POST`, idempotent.  Zhttp may repeat any
+non-idempotent method, such as `POST`, idempotent. It cannot override
+`replayable() == false`. For replayable requests, Zhttp may repeat any
 attempt known not to have been applied; after possible application it repeats
 only an idempotent request.  Redirects which repeat the method and body use the
 same rule.
@@ -541,7 +585,12 @@ zhttp -3 force -c cert.pem --quic-migration=active \
 The repeatable H2 interoperability gate runs the in-tree client/server pair,
 curl against `zhttpd`, and `zhttp` against Caddy.  When `h2spec`, `nghttp`, or
 `nghttpd` are already installed, it also runs those roles; absent optional
-tools are reported as TAP skips and are never downloaded:
+tools are reported as TAP skips and are never downloaded. Use a TLS 1.3-enabled
+`h2spec` build. The upstream v2.6.0 Linux binary uses Go 1.12, where TLS 1.3
+requires `GODEBUG=tls13=1`; rebuilding with current Go also enables negotiation.
+See the [Go 1.12 TLS notes](https://go.dev/doc/go1.12#tls_1_3).
+
+Run the gate with:
 
 ```sh
 cd zhttp/interop

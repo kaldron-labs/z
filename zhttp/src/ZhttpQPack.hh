@@ -474,9 +474,11 @@ struct ZhttpAPI QPack {
   static bool validateFieldSectionPrefix(
     const FieldSectionPrefix &, uint64_t);
   template <typename Bytes>
-  static int encodeFieldLine(Bytes &out, Header h, const Params &params) {
+  static int encodeFieldLine(
+    Bytes &out, Header h, const Params &params, bool never = false) {
+    never |= params.neverIndex(h.name);
     int staticIndex = QPack::staticIndex(h.name, h.value);
-    if (staticIndex >= 0)
+    if (!never && staticIndex >= 0)
       return Compression::putPref(
 	out, 0xc0, 6, unsigned(staticIndex)) < 0 ?
 	-1 : int(out.length());
@@ -484,14 +486,14 @@ struct ZhttpAPI QPack {
     uint64_t nameIndex = 0;
     if (staticNameIndex(h.name, nameIndex)) {
       uint8_t prefix =
-	uint8_t(0x50 | (params.neverIndex(h.name) ? 0x20 : 0));
+	uint8_t(0x50 | (never ? 0x20 : 0));
       return Compression::putPref(out, prefix, 4, nameIndex) < 0 ||
 	Compression::putString(out, 0x00, 7, h.value) < 0 ?
 	-1 : int(out.length());
     }
 
     return Compression::putString(
-      out, uint8_t(0x20 | (params.neverIndex(h.name) ? 0x10 : 0)),
+      out, uint8_t(0x20 | (never ? 0x10 : 0)),
       3, h.name) < 0 ||
       Compression::putString(out, 0x00, 7, h.value) < 0 ?
       -1 : int(out.length());

@@ -72,6 +72,7 @@ struct App {
   using Headers = ZhttpHeaders("authorization");
   using Authorization = ZuStringT<"authorization">;
 
+  ZiMultiplex *mx = nullptr;
   ZmSemaphore listening_;
   ZmSemaphore cancelled_;
   ZmSemaphore called_;
@@ -125,6 +126,7 @@ struct App {
   void tool(
       Req *, const EchoReq &request, const auto &headers,
       const Zmcp::Context &context, Completion completion) {
+    ZuCheck(mx->invoked(mx->rxThread()));
     auto authorization = headers.template get<Authorization>();
     if (authorization.count == 1 && authorization.value == "Bearer test")
       ++authorizedCalls;
@@ -167,7 +169,9 @@ struct App {
   }
 
   template <typename Req, typename Completion>
-  void cancelled(Req *, Completion *, ZuCSpan) {
+  void cancelled(Req *, Completion *token, ZuCSpan) {
+    ZuCheck(mx->invoked(mx->rxThread()));
+    ZuCheck(token->cancelled() && !token->live());
     ++cancellations;
     cancelled_.post();
   }
@@ -569,11 +573,10 @@ struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
 
 };
 
-// Cancellation callbacks run before their owning dispatcher finishes retiring
-// the token. Check late completion only after that owner turn has returned.
+// Drain Rx work after cancellation before inspecting dispatcher-owned state.
 static void ownerTurn(ZiMultiplex &mx)
 {
-  ZmBlock<>{}([&mx](auto wake) { mx.run(ZuMv(wake), mx.txThread()); });
+  ZmBlock<>{}([&mx](auto wake) { mx.run(ZuMv(wake), mx.rxThread()); });
 }
 
 static void httpTest()
@@ -593,6 +596,7 @@ static void httpTest()
   ZuCheck(mx.start());
 
   App app;
+  app.mx = &mx;
   Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> server;
   Zhttp::HubConfig hub{&mx, "1", "2"};
   auto serverConfig = [port](bool invalid) {
@@ -999,6 +1003,7 @@ static void httpTest()
     Zquic::Test::loopbackPort(ZmcpITestPort::Stateless);
   ZuCheck(statelessPort);
   App statelessApp;
+  statelessApp.mx = &mx;
   Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> statelessServer;
   Zmcp::ServerConfig statelessConfig;
   statelessConfig.localIP(ZiIP{"127.0.0.1"}).port(statelessPort).tcp();
@@ -1114,6 +1119,7 @@ static void secureTest()
     bool h3 = transport == Secure::H3;
     bool multiplexed = transport != Secure::H1;
     App app;
+    app.mx = &mx;
     Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> server;
     Zmcp::ServerConfig config;
     config.localIP(ZiIP{"127.0.0.1"}).port(port);

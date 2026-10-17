@@ -120,7 +120,8 @@ public:
     m_mx = hub.mx();
     m_owner = hub.rxThread() ? m_mx->sid(hub.rxThread()) : m_mx->rxThread();
     m_endpoint = config.endpoint();
-    config.retainedBodyMax(this->limits().maxJSONBytes)
+    config.bodyMax(this->limits().maxJSONBytes)
+      .retainedBodyMax(this->limits().maxJSONBytes)
       .retainedMessageMax(this->limits().maxSSEEventBytes);
     if (!HTTP::init(hub, 1, config, tcp, h2, quic) || !HTTP::pool(0, ZuMv(destination))) {
       HTTP::final();
@@ -166,7 +167,9 @@ public:
     m_endpoint.null();
   }
   bool up() const { return m_up.load_(); }
-  CompletionRoute completionRoute() const { return {m_mx, m_owner}; }
+  CompletionRoute completionRoute() const {
+    return {m_mx, m_owner, this->limits().maxQueue};
+  }
   bool invoked() const { return m_mx && m_mx->invoked(m_owner); }
   template <typename L>
   bool ownerRun(L &&l) {
@@ -313,7 +316,9 @@ public:
   const WS &ws() const { return m_ws; }
   bool up() const { return m_up.load_() && !m_stopping.load_(); }
   bool wsAccept() const { return !m_stopping.load_(); }
-  CompletionRoute completionRoute() const { return {m_mx, m_owner}; }
+  CompletionRoute completionRoute() const {
+    return {m_mx, m_owner, this->limits().maxQueue};
+  }
   bool invoked() const { return m_mx && m_mx->invoked(m_owner); }
   template <typename L>
   bool ownerRun(L &&l) {

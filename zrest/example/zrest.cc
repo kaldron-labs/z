@@ -283,9 +283,9 @@ ZrestCatalogImpl(Catalog)
 
 struct ClientApp { };
 class Client : public Zrest::Client<ClientApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP,
-  Zhttp::H1TLS, Zhttp::H2TLS>> {
+  Zhttp::H1TLS, Zhttp::H2TLS, Zhttp::H3QUIC>> {
   using Base = Zrest::Client<ClientApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
-    Zhttp::H2TLS>>;
+    Zhttp::H2TLS, Zhttp::H3QUIC>>;
 public:
   template <typename Builder>
   ZmRef<Result> submit(unsigned pool, OAuthString target,
@@ -765,7 +765,7 @@ int main(int argc, char **argv)
   config.links(options.links)
     .concurrency(options.concurrency).linkMax(options.linkMax)
     .requestTimeout(options.timeout).maxRedirects(MaxRedirects)
-    .maxRetries(options.retries).retainedBodyMax(RespBodyMax)
+    .maxRetries(options.retries).bodyMax(RespBodyMax).retainedBodyMax(RespBodyMax)
     .protocol(policy).h2Policy(h2Policy)
     .blindH3(policy == Zhttp::ProtoPolicy::ForceH3)
     .secure(secure).tcp(true)
@@ -842,7 +842,8 @@ int main(int argc, char **argv)
     unsigned port = callbackPort();
     Zrest::ServerConfig callbackConfig;
     callbackConfig.localIP(ZiIP("127.0.0.1")).port(port)
-      .idleTimeout(options.callbackTimeout).retainedBodyMax(OAuthURLMax).tcp();
+      .idleTimeout(options.callbackTimeout).bodyMax(OAuthURLMax)
+      .retainedBodyMax(OAuthURLMax).tcp();
     callbackConfig.limits(limits);
     callbackInited = port && callbackServer.init(
       Zhttp::HubConfig{&mx, "cb-rx", "cb-tx"},

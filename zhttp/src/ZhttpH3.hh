@@ -585,8 +585,10 @@ public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
   using ErrorFn = void (*)(void *, uint64_t);
 
-  Parser(uint64_t bodyMax = DefltMaxBody) :
-    m_bodyMax{bodyMax}, m_bodyRx{bodyMax} { }
+  Parser(uint64_t bodyMax = DefltMaxBody,
+      uint64_t retainedBodyMax = DefltMaxBody) :
+    m_bodyMax{bodyMax}, m_retainedBodyMax{retainedBodyMax},
+    m_bodyRx{retainedBodyMax} { }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -856,6 +858,7 @@ private:
     if (ZuUnlikely(m_deferred > UINT64_MAX - frame.length))
       return fail_(ExcessiveLoad);
     uint64_t remaining = frame.total;
+    uint64_t wireBefore = rx.length();
     bool accepted = true;
     int64_t n = m_bodyRx.splice(
       rx, frame.length,
@@ -871,18 +874,21 @@ private:
 	  impl()->streamRx_(body);
 	else
 	  accepted = impl()->body(body);
+	return accepted;
       });
-    if (ZuUnlikely(n <= 0)) return fail_(InternalError);
+    if (ZuUnlikely(n <= 0 && wireBefore - rx.length() != frame.total))
+      return fail_(InternalError);
     m_deferred += frame.length;
     uint64_t consumed = m_bodyRx.consumed() - before;
     ZmAssert(consumed <= m_deferred);
     if (ZuUnlikely(consumed > m_deferred)) return fail_(InternalError);
     m_deferred -= consumed;
     if (!retire_(stream, frame.header + consumed)) return false;
-    if (m_state != State::Stream) m_bodyLen += frame.length;
     if (ZuUnlikely(!accepted))
       return fail_(RequestCancelled, RequestErrorCode::BodyRejected,
 	RequestErrorScope::Request, Request);
+    if (ZuUnlikely(n <= 0)) return fail_(InternalError);
+    if (m_state != State::Stream) m_bodyLen += frame.length;
     return true;
   }
 
@@ -1002,7 +1008,7 @@ public:
   const RequestError &error() const { return m_error; }
 
   void reset() {
-    m_bodyRx.reset(m_bodyMax);
+    m_bodyRx.reset(m_retainedBodyMax);
     m_state = State::Initial;
     m_contentLen = -1;
     m_bodyLen = 0;
@@ -1022,9 +1028,18 @@ public:
     m_bodyMax = bodyMax_;
     reset();
   }
+  void reset(uint64_t bodyMax_, uint64_t retainedBodyMax_) {
+    m_bodyMax = bodyMax_;
+    m_retainedBodyMax = retainedBodyMax_;
+    reset();
+  }
   uint64_t bodyMax() const { return m_bodyMax; }
   void bodyMax(uint64_t value) {
     m_bodyMax = value;
+  }
+  uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
+  void retainedBodyMax(uint64_t value) {
+    m_retainedBodyMax = value;
     m_bodyRx.reset(value);
   }
 
@@ -1043,6 +1058,7 @@ public:
 private:
   // Rx thread exclusive
   uint64_t		m_bodyMax;
+  uint64_t		m_retainedBodyMax;
   int64_t		m_contentLen = -1;
   uint64_t		m_bodyLen = 0;
   uint64_t		m_deferred = 0;
@@ -1294,14 +1310,15 @@ private:
 
     Build(Bytes &out_, const Params &params_) : out{out_}, params{params_} { }
 
-    void field(ZuBSpan name, ZuBSpan value) {
+    void field(ZuBSpan name, ZuBSpan value, bool never = false) {
+      never |= params.neverIndex(name);
       if (!ok) return;
       int index = QPack::staticIndex(name, value);
-      if (index >= 0) {
+      if (!never && index >= 0) {
 	ok = putPref(out, 0xc0, 6, unsigned(index)) >= 0;
 	return;
       }
-      if (tx && dynamic)
+      if (!never && tx && dynamic)
 	if (auto e = tx->find(name, value))
 	  if (e->abs < base && e->abs + 1 <= tx->knownReceivedCount()) {
 	    ok = qpackEncodeDynamicIndexed(out, base - e->abs - 1) >= 0;
@@ -1314,12 +1331,11 @@ private:
       if (tx && dynamic && !indexed)
 	if (auto e = tx->findName(name, base)) {
 	  ok = qpackEncodeDynamicName(
-	    out, base - e->abs - 1, value, params.neverIndex(name)) >= 0;
+	    out, base - e->abs - 1, value, never) >= 0;
 	  if (required < e->abs + 1) required = e->abs + 1;
 	  dynamicRef = true;
 	  return;
 	}
-      bool never = params.neverIndex(name);
       if (indexed)
 	ok = putPref(out, uint8_t(0x50 | (never ? 0x20 : 0)), 4, nameIndex) >= 0 &&
 	  putString(out, 0, 7, value) >= 0;
@@ -1327,22 +1343,22 @@ private:
 	ok = putString(out, uint8_t(0x20 | (never ? 0x10 : 0)), 3, name) >= 0 &&
 	  putString(out, 0, 7, value) >= 0;
     }
-    void fieldFixed(ZuBSpan name, ZuBSpan value) {
-      field(name, value);
+    void fieldFixed(ZuBSpan name, ZuBSpan value, bool never = false) {
+      field(name, value, never);
     }
-    void fieldName(ZuBSpan name, ZuBSpan value) {
-      if (!name_(name) || putString(out, 0, 7, value) < 0) ok = false;
+    void fieldName(ZuBSpan name, ZuBSpan value, bool never = false) {
+      if (!name_(name, never) || putString(out, 0, 7, value) < 0) ok = false;
     }
-    void fieldLiteral(ZuBSpan name, ZuBSpan value) {
+    void fieldLiteral(ZuBSpan name, ZuBSpan value, bool never = false) {
       if (!ok) return;
-      bool never = params.neverIndex(name);
+      never |= params.neverIndex(name);
       if (putString(out, uint8_t(0x20 | (never ? 0x10 : 0)),
             3, name) < 0 || putString(out, 0, 7, value) < 0)
 	ok = false;
     }
     template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
     void
-    fieldFixed(ZuBSpan name, const P &value) {
+    fieldFixed(ZuBSpan name, const P &value, bool never = false) {
       if (!ok) return;
       auto rendered = ZtScratch(HdrScratch, 256);
       Compression::PrintBytes bytes{rendered};
@@ -1351,11 +1367,11 @@ private:
 	ok = false;
 	return;
       }
-      field(name, rendered);
+      field(name, rendered, never);
     }
     template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
     void
-    fieldName(ZuBSpan name, const P &value) {
+    fieldName(ZuBSpan name, const P &value, bool never = false) {
       if (!ok) return;
       auto rendered = ZtScratch(HdrScratch, 256);
       Compression::PrintBytes bytes{rendered};
@@ -1364,11 +1380,11 @@ private:
 	ok = false;
 	return;
       }
-      fieldName(name, rendered);
+      fieldName(name, rendered, never);
     }
     template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
     void
-    fieldLiteral(ZuBSpan name, const P &value) {
+    fieldLiteral(ZuBSpan name, const P &value, bool never = false) {
       if (!ok) return;
       auto rendered = ZtScratch(HdrScratch, 256);
       Compression::PrintBytes bytes{rendered};
@@ -1377,17 +1393,17 @@ private:
 	ok = false;
 	return;
       }
-      fieldLiteral(name, rendered);
+      fieldLiteral(name, rendered, never);
     }
     template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
     void
-    field(ZuBSpan name, const P &value) {
-	(void)fieldMutable(name, value);
+    field(ZuBSpan name, const P &value, bool never = false) {
+	(void)fieldMutable(name, value, never);
     }
     template <typename P>
-    ValueSpan fieldMutable(ZuBSpan name, const P &value) {
+    ValueSpan fieldMutable(ZuBSpan name, const P &value, bool never = false) {
       if (!ok) return {};
-      if (!name_(name)) return {};
+      if (!name_(name, never)) return {};
       ValueSpan span;
       if (!section || section->putPrint(
 	    0, 7, value, span.offset, span.length) < 0) {
@@ -1398,9 +1414,9 @@ private:
     }
 
   private:
-    bool name_(ZuBSpan name) {
+    bool name_(ZuBSpan name, bool never) {
       if (!ok) return false;
-      bool never = params.neverIndex(name);
+      never |= params.neverIndex(name);
       uint64_t nameIndex = 0;
       if (QPack::staticNameIndex(name, nameIndex)) {
 	ok = putPref(out, uint8_t(0x50 | (never ? 0x20 : 0)),
@@ -1454,7 +1470,7 @@ private:
     build.field(":method", Method::name(method));
   }
 
-  template <typename Stream, typename Encode>
+  template <bool Patch = true, typename Stream, typename Encode>
   void writeHeaders_(Stream &stream, Encode &&encode) {
     impl()->qpackFailure(QPackBuildFailure::None);
     auto fields = ZtScratch(
@@ -1474,7 +1490,7 @@ private:
       ZiLOG(Error, "Zhttp", "failed to emit H3 headers");
       return;
     }
-    if constexpr (HasBody && !Streaming) {
+    if constexpr (Patch && HasBody && !Streaming) {
       headerBase_(fields.data(), 0);
       patch_(0);
     }
@@ -1578,6 +1594,17 @@ protected:
 
   // body
 public:
+  template <typename Stream, typename Fields>
+  bool trailers(Stream &stream, const Fields &fields) {
+    writeHeaders_<false>(stream, [&fields](auto &build) {
+      auto output = Native_::compressedFields<ZuDecay<decltype(build)>,
+	ZuStringT<"Zhttp.H3.Final.Name">>(build);
+      fields.fields(output);
+      return build.ok;
+    });
+    return impl()->qpackFailure() == QPackBuildFailure::None;
+  }
+
   template <typename Stream>
   auto body(Stream &stream) {
     return dataStream(stream);

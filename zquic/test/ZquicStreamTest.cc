@@ -37,11 +37,16 @@ static void closeQLog_(ZquicLogger::Trace &trace)
 struct App : public Zquic::Hub<App> {
   using Base = Zquic::Hub<App>;
 
-  App(unsigned maxUDP = Zquic::MinUDPPayload) : m_mx{mxParams_()} {
+  App(unsigned maxUDP = Zquic::MinUDPPayload, uint64_t rxWindow = 0) :
+    m_mx{mxParams_()} {
     bool ok = m_mx.start();
     ZiAssert(ok, "Zquic", (), "stream test multiplexer start failed", return);
-    if (ok)
-      ok = Base::init(Zquic::HubParams(&m_mx, "3", "4").maxUDP(maxUDP));
+    if (ok) {
+      auto params = Zquic::HubParams(&m_mx, "3", "4");
+      params.maxUDP(maxUDP);
+      if (rxWindow) params.maxData(rxWindow).maxStreamData(rxWindow);
+      ok = Base::init(params);
+    }
     ZiAssert(ok, "Zquic", (), "stream test app init failed", return);
   }
   ~App() {
@@ -1041,6 +1046,21 @@ void testRxRetirement()
       !stream->retireRx(2) && stream->retireRx(1) &&
       stream->rxRetired() == 3 && stalled->rxDataRetired() == 3,
     "explicit QUIC receive retirement was not exact");
+
+  {
+    App small{Zquic::MinUDPPayload, 8};
+    auto credit = testLink(&small, true);
+    credit->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);
+    packet = streamPkt_(0, 0, "abcdef", false, frame, used);
+    ZuCHECK(packet && credit->receiveFrame(frame, packet) == 0,
+      "small-window receive retirement setup failed");
+    auto receiver = credit->findStream(0);
+    unsigned queued = credit->txFlushQueued;
+    ZuCHECK(receiver && receiver->retireRx(6) &&
+	credit->rxDataCreditLimit() == 14 && receiver->rxCreditLimit() == 14 &&
+	credit->txFlushQueued == queued + 2,
+      "retired bytes schedule connection and stream credit flushes without application writes");
+  }
 
   ZmRef<TestLink> reset = testLink(&app, true);
   reset->setLocalStreamLimit(Zquic::StreamType::Duplex, 1);

@@ -74,7 +74,10 @@ struct SrvApp {
     }
     token->complete(Zjrpc::Reply<EchoOK>{value});
   }
-  void cancelled(auto *, auto *, ZuCSpan) { cancelled_.post(); }
+  void cancelled(auto *, auto *token, ZuCSpan) {
+    ZuCheck(token->cancelled() && !token->live());
+    cancelled_.post();
+  }
   void disconnected(auto &, bool) { closed_.post(); }
 };
 
@@ -277,7 +280,6 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
     ZuCheck(client.cancel(call->id, "stop"));
     ZuCheck(wait(srv.cancelled_));
     if (arrived) { auto complete = ZuMv(srv.deferred); complete(); }
-    ZuCheck(wait(call->done) && call->value == 42 && !call->failures);
     Zmcp::Batch<Catalog> interrupted;
     ZuCheck(interrupted.template request<Echo>(int64_t{2001}, Value{43}));
     ZuCheck(interrupted.template request<Echo>(int64_t{2002}, Value{45}));
@@ -290,6 +292,7 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
     ZuCheck(client.template call<Echo>(Value{42}, abandoned));
     ZuCheck(wait(srv.arrived));
     ZuCheck(client.stop());
+    ZuCheck(wait(call->done) && call->failures == 1 && !call->value);
     ZuCheck(wait(abandoned->done) && abandoned->failures == 1);
     ZuCheck(wait(pendingBatch->done) && pendingBatch->failures == 1 &&
       !pendingBatch->completions);

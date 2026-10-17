@@ -258,6 +258,7 @@ struct RejectingRequest :
 struct CapturedField {
   ZtString<> name;
   ZtString<> value;
+  bool never = false;
 };
 using CapturedFields =
   ZtArray<CapturedField,
@@ -281,9 +282,9 @@ struct CaptureStream {
     beginEndStream = end;
   }
   template <typename V>
-  void field(ZuBSpan name, V &&value) {
+  void field(ZuBSpan name, V &&value, bool never = false) {
     auto field_ = new (fields.push()) CapturedField{
-      .name = ZtString<>{name}
+      .name = ZtString<>{name}, .never = never
     };
     field_->value << ZuFwd<V>(value);
   }
@@ -294,14 +295,14 @@ struct CaptureStream {
     };
     field_->value << value1 << separator << value2;
   }
-  template <typename V> void fieldFixed(ZuBSpan name, V &&value) {
-    field(name, ZuFwd<V>(value));
+  template <typename V> void fieldFixed(ZuBSpan name, V &&value, bool never = false) {
+    field(name, ZuFwd<V>(value), never);
   }
-  template <typename V> void fieldName(ZuBSpan name, V &&value) {
-    field(name, ZuFwd<V>(value));
+  template <typename V> void fieldName(ZuBSpan name, V &&value, bool never = false) {
+    field(name, ZuFwd<V>(value), never);
   }
-  template <typename V> void fieldLiteral(ZuBSpan name, V &&value) {
-    field(name, ZuFwd<V>(value));
+  template <typename V> void fieldLiteral(ZuBSpan name, V &&value, bool never = false) {
+    field(name, ZuFwd<V>(value), never);
   }
   void endHeaders(bool end) {
     ++endHeadersCalls;
@@ -604,6 +605,37 @@ void testRequest()
     "prospective H2 DATA length was not rejected before transfer");
 }
 
+void testReceiveLimits()
+{
+  ZuTestScope(testReceiveLimits);
+
+  Parsed parser;
+  parser.reset(7, 2);
+  ZuCHECK(parser.beginHeaders() &&
+      parser.field(":method", "POST") &&
+      parser.field(":scheme", "https") &&
+      parser.field(":authority", "example.com") &&
+      parser.field(":path", "/submit") &&
+      parser.field("content-length", "7") && parser.endHeaders(false),
+    "H2 Content-Length uses the cumulative limit rather than retained capacity");
+  ZuCHECK(data(parser, "abcde") && data(parser, "fg", true) &&
+      parser.body_ == "abcdefg" && parser.completeCalls == 1 &&
+      parser.completeState == Zhttp::H2::ParserState::Complete,
+    "H2 oversized DATA fragments reuse consumed capacity across frames");
+
+  Parsed limited;
+  limited.reset(3, 2);
+  ZuCHECK(limited.beginHeaders() &&
+      limited.field(":method", "POST") &&
+      limited.field(":scheme", "https") &&
+      limited.field(":authority", "example.com") &&
+      limited.field(":path", "/submit") && limited.endHeaders(false) &&
+      data(limited, "abc") && !data(limited, "d", true) &&
+      limited.body_ == "abc" && limited.completeCalls == 1 &&
+      limited.error().code == Zhttp::RequestErrorCode::ContentTooLarge,
+    "H2 cumulative DATA limit remains independent of consumer progress");
+}
+
 void testBodyRejection()
 {
   ZuTestScope(testBodyRejection);
@@ -650,6 +682,31 @@ void testBodyRejection()
   ZuCHECK(!data(rejected, "later") && rejected.bodies == 1 &&
       rejected.completions == 1,
     "H2 body rejection produced duplicate callbacks");
+
+  for (unsigned retained = 2; retained <= 3; ++retained) {
+    RejectingRequest checked;
+    checked.reset(3, retained);
+    ZuCHECK(checked.beginHeaders() &&
+	checked.field(":method", "POST") &&
+	checked.field(":scheme", "https") &&
+	checked.field(":authority", "example.com") &&
+	checked.field(":path", "/") && checked.endHeaders(false),
+      "H2 rejected-frame transfer setup");
+    enum { Head = Zhttp::H2::FrameHeaderSize, Payload = 3 };
+    ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::WireBufAlloc{};
+    buf->length = Head + Payload + 2;
+    auto io = static_cast<ZiIOBuf *>(buf.ptr());
+    memset(io->data(), 0, Head);
+    memcpy(io->data() + Head, "abcok", Payload + 2);
+    ZiRxStream<ZiRxQueue> wire;
+    wire.push(ZuMv(buf));
+    bool transferred = false;
+    ZuCHECK(!checked.data(wire, Head + Payload, Head, 0, true, transferred) &&
+	transferred && wire.length() == 2 && wire.span() == "ok" &&
+	checked.consumed() == Payload && checked.bodies == 1 &&
+	checked.completions == 1,
+      "H2 body rejection transfers exactly one DATA frame and all its credit");
+  }
 
   Parsed sibling;
   sibling.reset();
@@ -774,6 +831,144 @@ void testConnect()
       parser.method == Zhttp::Method::CONNECT &&
       parser.completeCalls == 1,
     "ordinary CONNECT syntax");
+}
+
+using SensitiveHdrList = ZhttpHeaders(
+  ("x-fixed", "public"), "x-mutable");
+ZhttpHdrCatalogDerive(SensitiveHdrs, SensitiveHdrList);
+ZhttpHdrCatalogImpl(SensitiveHdrs)
+
+struct CountedPrint {
+  unsigned *count;
+  ZuBSpan value;
+  template <typename S> void print(S &s) const { ++*count; s << value; }
+  friend ZuPrintFn ZuPrintType(CountedPrint *);
+};
+
+struct SensitiveFields : public Zhttp::Builder {
+  using HdrCatalog = SensitiveHdrs;
+  bool neverIndex(ZuBSpan name) const {
+    ++policies;
+    return name != "x-repeat";
+  }
+  template <typename Key, typename Value, typename L>
+  void header(L &&l) { ++fixed; l(); }
+  template <typename Key, typename L>
+  void header(L &&l) { ++named; l(CountedPrint{&values, "value"}); }
+  template <typename L>
+  void header(L &&l) {
+    l(CountedPrint{&names, "x-dynamic"}, CountedPrint{&values, "secret"});
+    l("x-repeat", CountedPrint{&values, "one"});
+    l("x-repeat", CountedPrint{&values, "two"});
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  mutable unsigned policies = 0;
+  unsigned fixed = 0, named = 0, names = 0, values = 0;
+};
+
+void testSensitivity()
+{
+  ZuTestScope(testSensitivity);
+  SensitiveFields builder;
+  Zhttp::BuilderFields<SensitiveFields> adapter{
+    &builder, &Zhttp::CatalogData<SensitiveHdrs>::configure()};
+  CaptureStream stream;
+  auto output = Zhttp::Native_::compressedFields<CaptureStream,
+    ZuStringT<"Zhttp.H2MessageTest.Name">>(stream);
+  adapter.fields(output);
+  ZuCHECK(builder.fixed == 1 && builder.named == 2 &&
+      builder.names == 1 && builder.values == 5 && builder.policies == 6,
+    "field forms evaluate policy once and print runtime values once");
+  ZuCHECK(stream.fields.length() == 6 &&
+      stream.fields[0].never && stream.fields[1].never &&
+      stream.fields[2].never && stream.fields[3].never &&
+      !stream.fields[4].never && !stream.fields[5].never &&
+      stream.fields[3].name == "x-dynamic" &&
+      stream.fields[4].value == "one" && stream.fields[5].value == "two",
+    "fixed, declared, mutable and repeated dynamic fields retain individual policy");
+}
+
+struct FinalProvider : public Zhttp::Builder {
+  void headerBase(uint8_t *) = delete;
+  void patch() = delete;
+  template <typename Key> void headerOffset(uint64_t, unsigned) = delete;
+  template <typename L> void header(L &&l) {
+    ++calls;
+    l(name, CountedPrint{&prints, value});
+  }
+  ZtString<> name = "x-done", value = "owned";
+  unsigned calls = 0, prints = 0;
+};
+
+void testFinalFields()
+{
+  ZuTestScope(testFinalFields);
+  using namespace Zhttp;
+  const auto &catalog = CatalogData<SensitiveHdrs>::configure();
+  SensitiveFields builder;
+  BuilderFields<SensitiveFields, false> adapter{&builder, &catalog};
+  auto provider = adapter.provider();
+  Native_::FinalFields owned;
+  ZuCHECK(owned.render(1024, catalog, provider) &&
+      builder.fixed == 1 && builder.named == 2 &&
+      builder.names == 1 && builder.values == 5 && builder.policies == 6,
+    "final fields render all forms and each printable and policy once");
+  CaptureStream stream;
+  auto output = Native_::compressedFields<CaptureStream,
+    ZuStringT<"Zhttp.H2MessageTest.Final">>(stream);
+  owned.fields(output);
+  owned.fields(output);
+  ZuCHECK(stream.fields.length() == 12 && builder.values == 5 &&
+      stream.fields[3].name == "x-dynamic" &&
+      stream.fields[3].value == "secret" && stream.fields[3].never &&
+      stream.fields[4].value == "one" && !stream.fields[4].never &&
+      stream.fields[5].value == "two",
+    "owned fields replay without application callbacks or lost repetitions");
+
+  FinalProvider dynamic;
+  const auto &empty = CatalogData<DefltHdrCatalog>::configure();
+  BuilderFields<FinalProvider, false> dynamicAdapter{&dynamic, &empty};
+  auto dynamicProvider = dynamicAdapter.provider();
+  ZuCHECK(owned.render(43, empty, dynamicProvider),
+    "final fields admit exact name plus value plus per-field overhead limit");
+  dynamic.name = "reused";
+  dynamic.value = "changed";
+  CaptureStream copied;
+  auto copiedOutput = Native_::compressedFields<CaptureStream,
+    ZuStringT<"Zhttp.H2MessageTest.Final">>(copied);
+  owned.fields(copiedOutput);
+  ZuCHECK(copied.fields.length() == 1 &&
+      copied.fields[0].name == "x-done" &&
+      copied.fields[0].value == "owned" && dynamic.prints == 1,
+    "queued final fields own names and values after provider storage changes");
+  dynamic.name = "x-done";
+  dynamic.value = "owned";
+  ZuCHECK(!owned.render(42, empty, dynamicProvider),
+    "final fields reject header list overflow");
+  dynamic.name = ":status";
+  ZuCHECK(!owned.render(1024, empty, dynamicProvider),
+    "final fields reject pseudo-fields");
+  dynamic.name = ":unknown";
+  ZuCHECK(!owned.render(1024, empty, dynamicProvider),
+    "final fields reject unknown pseudo-fields");
+  dynamic.name = "content-length";
+  dynamic.value = "1";
+  ZuCHECK(!owned.render(1024, empty, dynamicProvider),
+    "final fields reject content-length");
+  dynamic.name = "connection";
+  dynamic.value = "close";
+  ZuCHECK(!owned.render(1024, empty, dynamicProvider),
+    "final fields reject forbidden connection fields");
+
+  struct Unsupported : public ZmObject {
+    BodyEmitRecord record;
+  };
+  ZmRef<Unsupported> unsupported = new Unsupported{};
+  unsupported->record.bind(unsupported.ptr());
+  BodyEmitter emit{&unsupported->record};
+  unsigned calls = dynamic.calls;
+  ZuCHECK(!emit.trailers(dynamic) && dynamic.calls == calls,
+    "unsupported emitters reject trailers before provider callbacks");
 }
 
 void testBuilder()
@@ -917,11 +1112,14 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testRequest);
+  ZuTestCall(testReceiveLimits);
   ZuTestCall(testBodyRejection);
   ZuTestCall(testResponses);
   ZuTestCall(testRequestErrors);
   ZuTestCall(testConnect);
   ZuTestCall(testBuilder);
+  ZuTestCall(testSensitivity);
+  ZuTestCall(testFinalFields);
   ZuTestCall(testExtendedConnect);
   ZuTestCall(testMessageTrait);
 }

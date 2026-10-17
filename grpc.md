@@ -1,6 +1,8 @@
 # Zgrpc: native gRPC over Zhttp with Zpb
 
-Status: proposed design, based on the current working tree. No library code is
+Status: proposed Zgrpc design, assuming [zhttp.md](zhttp.md) has been fully
+implemented and verified as a precursor on H2 and H3. This is a planning
+assumption, not a claim about the current working tree. No Zgrpc library code is
 implemented by this document. API examples below describe the proposed surface.
 
 Build `zgrpc` as a traditional Z shared library, `libZgrpc`, with installed
@@ -21,13 +23,14 @@ Zrest and Zjrpc: bounded admission, deferred completion, typed replies,
 backpressure, body reception, and full endpoint lifecycle.
 Repository engineering conventions still govern implementation. Zmcp and Zpb
 inform the design but do not independently justify additional library features.
-The following observations describe existing code, rather than proposed APIs.
+The following observations describe the reference libraries; the Zhttp baseline
+also includes all completed precursor contracts in [zhttp.md](zhttp.md).
 
 | Source | Existing facility | Zgrpc treatment |
 | --- | --- | --- |
 | [Zrest.hh](zrest/src/Zrest.hh) | Request/response policies, merged header catalogs, compile-time request lists, exact/prefix routing, status-selected response types | Method descriptors and merged metadata catalogs; exact service/method dispatch; one response message type and separate terminal status |
-| [ZrestClient.hh](zrest/src/ZrestClient.hh), [ZrestServer.hh](zrest/src/ZrestServer.hh) | `Client<App, Catalog>` and `Server<App, Catalog, Decoder>` compose directly with Zhttp's client/server CRTP endpoints; `call` admits bounded work, `Completion` defers replies, and SSE supports incremental events | Complete Zgrpc endpoints compose directly with Zhttp's symmetric CRTP endpoints; preserve the shared admission/completion/queue/lifecycle pattern while supporting four gRPC cardinalities |
-| [ZjrpcClient.hh](zjrpc/src/ZjrpcClient.hh), [ZjrpcServer.hh](zjrpc/src/ZjrpcServer.hh) | `HTTPClient<Impl, Catalog>` and `HTTPServer<Impl, Catalog>` are Zhttp CRTP implementations with bounded pending calls, deferred completion, fixed JSON and SSE responses | Use the same endpoint and configuration vocabulary; select protobuf decoding after method lookup and retain borrowed message storage explicitly |
+| [ZrestClient.hh](zrest/src/ZrestClient.hh), [ZrestServer.hh](zrest/src/ZrestServer.hh) | `Client<App, Catalog, Selection>` and `Server<App, Catalog, Decoder, Selection>` compose directly with Zhttp's client/server CRTP endpoints; `call` admits bounded work, `Completion` defers replies, and SSE supports incremental events | Complete Zgrpc endpoints compose directly with Zhttp's symmetric CRTP endpoints; preserve the shared admission/completion/queue/lifecycle pattern while supporting four gRPC cardinalities |
+| [ZjrpcClient.hh](zjrpc/src/ZjrpcClient.hh), [ZjrpcServer.hh](zjrpc/src/ZjrpcServer.hh) | `HTTPClient<Impl, Catalog, Selection>` and `HTTPServer<Impl, Catalog, Selection>` are Zhttp CRTP implementations with bounded pending calls, deferred completion, fixed JSON and SSE responses | Use the same endpoint and configuration vocabulary; select protobuf decoding after method lookup and retain borrowed message storage explicitly |
 | [Zjrpc.hh](zjrpc/src/Zjrpc.hh) | Descriptor-selected decoding, typed `Reply`, borrowed input policy and positive `Limits` | Typed gRPC result/status, selected decoder and positive limits |
 | [Zmcp.hh](zmcp/src/Zmcp.hh) | Contract assertions, schema generation from field metadata, typed deferred completion and borrowed context | Reference for typed dispatch; MCP schema/discovery facilities are not carried into this design |
 | [Zpb.hh](zpb/src/Zpb.hh) | Backward builders, pooled `IOBuilder`, facets, `verify`, handlers, nested values, maps and unions | Encode directly into pooled buffers; verify each external message before materialization |
@@ -87,8 +90,9 @@ application objects + ZfStruct PB facets + method catalog
                          Zi
 ```
 
-`Zhttp::Client<Impl, Pool>` and `Zhttp::Server<Impl, ReqParser, ResQ>` are the
-application-facing CRTP coordinators. Each derived endpoint supplies its own
+`Zhttp::Client<Impl, Pool>` and
+`Zhttp::Server<Impl, ReqParser, ResQ, Selection>` are the application-facing
+CRTP coordinators. Each derived endpoint supplies its own
 HTTP parser, builder and queue types; server `init(hub, config)` has no
 application-pointer argument. Zgrpc follows the Zrest/Zjrpc composition pattern:
 the Zgrpc endpoint is the HTTP `Impl`, while its separate application object is
@@ -107,36 +111,105 @@ own protobuf payload encoding, verification and field semantics. Its optional
 size-prefixed format follows the protobuf delimited-message convention;
 gRPC uses its own five-byte envelope around an unprefixed Zpb payload.
 
-### Required Zhttp work
+### Completed Zhttp precursor and adapter contract
 
-Zhttp already supports incremental body reception, section-tagged receive
-fields, streaming transmission and retained multi-turn server producers with
-close/invalidation. Client application writers remain single-turn. Reuse those
-facilities; [zhttp.md](zhttp.md) specifies the focused additions and checks.
+All required deltas and supporting contracts in [zhttp.md](zhttp.md) are assumed
+available through installed public headers on both H2 and H3. Zgrpc consumes
+that surface; transport implementation and qualification are not Zgrpc delivery
+steps. The precursor owns HTTP producer lifetime, section acceptance, early
+request disposal, receive accounting, buffer adoption, sensitivity and replay
+suppression. No shared producer rewrite, new terminal-event subsystem or native
+H2/H3 access is required.
 
-The principal unary transport addition is outbound response trailers: queue
-final fields after all accepted DATA and finish with that section. Verify
-trailers-only errors through the existing no-body response path. Existing
-receive field and completion callbacks should carry metadata and terminal
-status; add a section-completion notification only if the adapter demonstrates
-that the current sequence lacks a required boundary. Reuse existing transport
-results, extending only missing facts needed for status mapping.
+**Response production.** Use retained `BodyEmitter` with `BodyPolicy::Stream`.
+Commit initial fields through an ordinary body turn returning
+`WriteOutcome::Stream`, even when it writes zero bytes. Submit subsequent turns
+on Tx, then call `bool BodyEmitter::trailers(B &fields)` outside an active writer.
+The structural field provider follows `Builder`'s catalog and header overloads;
+only fields and sensitivity are evaluated. Values are rendered synchronously
+into owned queued storage; Zhttp retains no provider or borrowed value after
+the call.
 
-Server-streaming reuses the existing retained response emitter. Client-streaming
-and duplex additionally require multi-turn ordinary request production and
-request half-close, following the server producer's established lifetime rules.
-Verify early final replies, request disposal and producer shutdown through
-existing routing and drain paths; repair gaps without discarding a completed
-response status. No shared producer rewrite or general terminal-event subsystem
-is a prerequisite.
+A true trailer result means terminal admission, not transmission. It seals
+producer admission and orders the final section after all accepted DATA,
+including flow-control-stalled bytes. Later body or trailer submissions fail.
+A body turn's boolean alone does not certify successful writing: check the
+writer's sticky `failed()` and checked `flush()` result. Failed production
+invalidates the emitter; trailers then fail through the existing result path.
+Producer close cannot discard an accepted terminal command or retire its
+response before completion. Use the no-body response path for trailers-only
+errors, placing status in the terminating initial section without manufactured
+DATA or a second field section. H1 and fixed-body emitters reject trailers.
 
-Validate the existing ownership, pooled-buffer adoption, limits, sensitivity and
-no-replay paths alongside adapter development. Preserve the performance and
-policy requirements below, adding transport APIs only where existing facilities
-cannot meet them. A gRPC call remains an ordinary POST, without Extended CONNECT.
-Keep H2/H3 implementation headers private and qualify the required behavior on
-both transports. Propagate necessary API changes through affected dependents
-without compatibility forwarders.
+**Request production.** Ordinary client streaming retains the same `BodyEmitter`
+across turns. Return `Stream` to keep request output open and `End` to half-close
+it while responses continue. A zero-byte `Stream` turn remains open; a single-turn
+`End` also uses this path. Do not set Content-Length for streaming production.
+Implement `ReqBuilder::close()` to drop the adapter's retained emitter. Zhttp
+invalidates emitter copies before invoking close once per producer/attempt on
+Tx, outside active body callbacks. Queued copies reject later work safely.
+Close is distinct from request `completed` and `retired`; request end does not
+retire the response parser or request record. Server producers retain their
+corresponding existing close/invalidation discipline. gRPC requests end normally,
+without request trailers or Extended CONNECT.
+
+**Receive ordering and early replies.** Consume `Parser::header(FieldSection, ...)`
+for informational, final-initial and trailing fields, preserving informational
+suppression; retain selected metadata
+before borrowed field storage expires. Use the precursor's accepted-section
+boundary: `headersDone(Channel *, FieldSection::T)` if the completed implementation
+needed that hook, otherwise the existing channel-aware `bodyInfo` for accepted
+initial fields. Acquire the server's `Route` there so duplex dispatch and early
+rejection do not wait for request completion. A field callback alone does not
+establish section acceptance. Normal `complete(channel, true)` establishes receive
+end, including trailers-only replies and H3 FIN delayed after HEADERS. Respect
+the parser's immediate reset contract. Do not publish terminal RPC success before
+normal HTTP completion and RPC validation.
+
+Early final responses use Zhttp's native response-finish disposal path. It stops
+request body delivery, discards unread bytes with receive-credit accounting,
+and orders H2 request-stop signaling after complete response output; H3 stops
+request reception independently of response transmission. Normal client response
+completion on Rx posts producer invalidation to Tx; response failure uses its
+failure path. Final-initial headers alone do not stop request production.
+A completed response survives subsequent local request-send cancellation.
+Slots and owners remain until Rx and Tx drain. Zgrpc adds no public directional
+stop API and uses existing exchange cancellation for whole-call aborts.
+
+**Bounds and buffers.** Set the effective HTTP receive `bodyMax(uint64_t(-1))`
+for RPC streams and enforce protobuf-message limits in Zgrpc. Keep
+`retainedBodyMax` finite: it bounds queued decoded input, independently of total
+stream bytes. Zhttp fragments DATA into available retained capacity and accounts
+consumption through its existing receive path. `retainedMessageMax` retains its
+output role; fixed output remains bounded by the existing minimum of fixed and
+retained limits. Consume fragments incrementally rather than retaining an entire
+RPC body. Retain extracted storage only while queue reuse cannot overwrite it;
+fragmented messages assemble directly into one consumer-owned pooled buffer.
+Deferred decode must own bytes and call state before HTTP completion resets the
+parser, with its terminal marker ordered behind extracted data.
+
+Use `Writer::allocBuf(headRoom)`, `headRoom()`, `tailRoom()`, `maxSize()` and
+`operator <<(ZmRef<ZiIOBuf>)` for Zpb output. The completed adoption/splitting path
+preserves detached buffer skip/length and framing space without a whole-payload
+staging copy. Zhttp retains receive-credit and transport-buffer ownership; Zgrpc
+adds no allocator, parser pause or public credit API.
+
+**Metadata and replay policy.** Override `Builder::neverIndex(ZuBSpan name) const`
+for sensitive metadata in initial and trailing providers. A true policy forces
+never-index representation even for a matching seeded value and prevents dynamic
+value insertion; false preserves transport sensitive-name defaults. Supply secrets
+at runtime, never in fixed catalog seeds. Use catalog matching for policy names.
+
+Every Zgrpc request overrides `ReqBuilder::replayable() const` to false before
+submission and configures `maxRetries(0)` / `maxRedirects(0)`. Zhttp snapshots
+that policy before the first attempt and gates all attempt recreation, including
+TLS unprocessed results, redirects, retries and H3/H2 transitions. Refusal uses
+`ResultCode::ReplayUnsafe` with existing diagnostics. Initial discovery and
+selection remain allowed. An idempotent flag cannot override false; multi-turn
+production with a true replay policy fails asynchronously on its first `Stream`.
+Use existing `Result`, `ResponseResult` and attempt callbacks, including the
+precursor's native error details where needed. GOAWAY preserves the native
+acceptance boundary and one terminal result through cancellation and drain.
 
 ## Public contracts and catalogs
 
@@ -203,10 +276,24 @@ typed dispatch and codecs; non-template framing, metadata utilities and
 lifecycle mechanics live in `.cc` files. Catalog adapters hold only active
 method state, using `ZuUnion` where appropriate.
 
+Zgrpc defines its transport selection internally:
+
+```cpp
+using Selection = Zhttp::Profiles<Zhttp::H2TLS, Zhttp::H3QUIC>;
+```
+
+This uses Zhttp's existing API. The selection excludes H1 from client pools and
+server listeners; runtime configuration controls preference between H2 and H3
+and retains H3 discovery. The public Zgrpc endpoint templates remain
+`Client<App, Catalog>` and `Server<App, Catalog>`.
+
 The complete `Client<App, Catalog>` and `Server<App, Catalog>` endpoints derive
 from `Zhttp::Client<Client<App, Catalog>, Pool<App, Catalog>>` and
 `Zhttp::Server<Server<App, Catalog>, Parser<Server<App, Catalog>, Catalog>,
-ResQ<Catalog>>`, respectively. Define complete pool, parser and queue utility
+ResQ<Catalog>, Selection>`, respectively. The internal `Pool<App, Catalog>`
+passes the same selection to `Zhttp::Pool<Client, TxQ, ResParser, Selection>`,
+with its client endpoint, transmit queue and catalog-wide response parser as
+the first three arguments. Define complete pool, parser and queue utility
 types before their endpoint; avoid eager nested-type lookup on an incomplete
 CRTP `Impl`. The endpoint fulfills HTTP callbacks and stores a non-owning
 `App *` for gRPC dispatch. Its `init` passes only the hub and HTTP configuration
@@ -221,7 +308,13 @@ endpoint lifecycle, including draining admitted work before `stop(done)`.
 `Client::call<Method>(pool, request, call)` handles unary calls. It returns
 `bool` admission, as in Zrest/Zjrpc: `false` causes no callback; `true` commits
 the endpoint to exactly one `process(Result<Response>)` or `failed(Failure)`
-after retirement. A no-argument `failed()` is supported as in Zrest. Pool
+at logical RPC completion, before call retirement and without waiting for
+transport retirement, following REST's completion timing. Successful completion requires normal HTTP receive completion
+and all RPC validation, including any owned deferred receive work. Local deadline
+expiry reports failure on Rx without waiting for transport retirement; resources
+drain asynchronously. Retirement performs cleanup and drain accounting without
+delaying or repeating the application callback.
+A no-argument `failed()` is supported as in Zrest. Pool
 selection and the request object are explicit. `open<Method>(pool, observer)`
 returns an owning `ClientCall<Method>` reference on admission or null on
 refusal; that call permits `send`, `end` and `cancel`. The return value is the
@@ -242,21 +335,50 @@ work. Retaining it does not retain the context or its borrowed pointers.
 
 | Call operation | Contract |
 | --- | --- |
-| `send(message)` | Submit one typed output through the existing queued-send model; submission is not delivery |
+| `send(message)` | Return `bool` admission: off Tx, bound pending send posts before submitting an owning command; on Tx, return `send_`'s result; admission is not delivery |
 | `send_(message)` | Tx-only submission with immediate success/failure, following Zjrpc queue rejection |
-| `end()` | Client request half-close, ordered after accepted messages; responses remain receivable |
-| `finish(status, trailers)` | Server terminal result, ordered after accepted responses |
-| `complete(Reply<Response>)` | Unary server completion token operation; submits the typed response, status and trailers once |
-| `reply(response, status)` | Unary server convenience: one response followed by finish; non-OK may omit the response |
+| `end()` | Admit one request-end command, ordered after preceding sends; responses remain receivable |
+| `finish(status, trailers)` | Atomically admit one terminal command; submit trailers on Tx after preceding sends, then mark response production finished |
+| `complete(Reply<Response>)` | Unary server completion token operation; atomically claim terminal admission before posting the response, status and trailers |
+| `reply(response, status)` | Unary convenience using the same one-shot claim as `complete`/`finish`; one response followed by finish; non-OK may omit the response |
 | `cancel()` | Request cancellation; idempotent after termination |
 
-Off-shard methods submit owning command handles. They do not return a pretend
-synchronous queue result from `rxInvoke` or `txInvoke`. Asynchronous send failures
+Off-shard methods submit owning command handles. An off-shard `send` returns
+false on local ingress refusal without posting or scheduling a failure callback;
+true means the send command was admitted for Tx processing. It does not report
+the eventual serialized-queue result from `txRun`. Asynchronous send failures
 reach the owning call's failure path, as in the existing adapters. Concurrent
 producers have destination-queue order; callers needing a specific order must
-serialize submissions. `end` and `finish` prevent subsequent sends.
+serialize submissions. `end` and `finish` close production when their commands
+run on Tx; sends processed after that boundary fail. An off-shard send admitted
+behind either command can therefore fail asynchronously.
+
+Follow the shared REST/JSON-RPC/MCP atomic one-shot completion admission for
+`complete` and `reply`. Their owner action runs on Rx to validate the token and
+select the reply, then transfers owned response data to a Tx command for
+serialization and terminal output.
+They share the response direction's terminal admission claim with `finish`, so
+only one terminal command can be pending or accepted. Duplicate attempts fail
+before allocating or posting another command. The claim only reserves that
+command; it does not invalidate the call, claim an Rx terminal result or mark
+Tx production finished. Preceding sends remain eligible to execute. The terminal
+command performs its Tx work without claiming admission again. Apply the same
+one-shot rule separately to the client's request `end` command. Release a claim
+if command construction or posting fails before submission; once submitted,
+processing or failure consumes it. Colocate these shared atomic admission fields
+with the token's aligned Tx-related member group, like the pending-send counter.
 
 `Message<T>` exposes a typed object plus optional retained payload storage.
+Follow `Zjrpc::ObjectValue`: store ordinary objects by value and `ZmObject`
+types by `ZmRef<T>`. `Message<T>` carries that value and optional backing;
+`call`, `send` and `reply` accept it by value, with construction from the
+corresponding object value for ordinary submissions. `Reply<T>` carries the
+same message representation. Move it into the owning command before posting,
+then retain it through Tx serialization. This transfers the supplied value or
+reference, without deep-copying borrowed fields. Retained backing keeps nested
+views alive; application-owned external views must outlive serialization, as
+in Zrest/Zjrpc. A refused submission creates no asynchronous ownership obligation,
+but need not restore a value already moved into its by-value argument.
 The callback may move the message into deferred work. A borrowed object detached
 from its message remains valid only while the backing storage lives. Owning
 object types can release encoded storage immediately after decode. Retention
@@ -276,6 +398,18 @@ response only after final status and cardinality checks. Streaming observers
 receive messages as they arrive and then one `finished(Status)`; already delivered
 messages are not retracted by a later error.
 
+Follow the existing deferred-work model: the endpoint retains the active work
+and its token. Dropping the application's last call reference does not finish
+the RPC or synthesize an error; it remains active until explicit completion,
+cancellation, deadline or transport teardown. Catch application exceptions at
+dispatch boundaries, following Zjrpc/Zmcp's internal-error response pattern:
+finish with INTERNAL while a valid terminal section can still be produced;
+otherwise use the call failure path. Contain exceptions from terminal and
+cancellation callbacks. Cancellation invalidates the call and notifies the
+application once; application workers own their cleanup and retained data.
+Terminal notification and endpoint drain do not wait for arbitrary worker
+cleanup. Late token operations fail safely.
+
 ### State and cardinality
 
 Track Rx and Tx directional states separately. Rx progresses through headers,
@@ -294,11 +428,21 @@ A non-OK terminal result may omit the unary response. Extra messages in a
 non-streaming direction are protocol errors. A server may reject or finish a
 stream before request half-close; arrange bounded request disposal and transport
 closure without overwriting an already accepted terminal status. The client
-stops its producer when it receives a terminal response.
+stops its producer through Zhttp on normal terminal response completion or
+response failure, rather than on final-initial headers alone.
 
-Rx arbitrates racing terminal events once. A server finish first claims the
-terminal decision on Rx, then posts its ordered Tx finish command; a later reset
-may prevent transmission but cannot cause a second application completion.
+Rx arbitrates racing terminal events and application notification once. Server
+`finish` posts directly to Tx without first claiming the Rx terminal decision.
+On Tx, preceding sends run first; the finish command submits terminal trailers
+through the retained emitter, then marks response production finished after
+terminal admission succeeds. Zhttp orders those trailers after accepted DATA,
+including flow-control-stalled output. Later sends fail and repeated finishes
+cannot submit another terminal section. Trailer refusal follows the existing
+failure path. `reply` submits its response and finish in one Tx command, in that
+order, finishing only if response submission succeeds. Tx reports the accepted
+finish or failure to Rx for terminal arbitration and notification. Cancellation,
+deadline or transport failure can prevent output, but cannot cause a second
+application completion; Rx notification does not reorder the Tx commands.
 After local client timeout, late responses are discarded. Stream slots remain
 until Tx drain and queued events are accounted for; removal is event-driven.
 
@@ -319,12 +463,19 @@ and its [HTTP/3 mapping](https://github.com/grpc/proposal/blob/master/G2-http3-p
 Use the same Zgrpc envelope and metadata handling, with the Zpb payload codec,
 for both transports.
 
+Invalid base64 in binary metadata is a protocol error, including an invalid
+value within a comma-joined field. Fail the call and terminate its HTTP stream
+through the existing failure path; do not discard the entry and continue.
+Successfully decoded binary metadata remains opaque.
+
 The baseline advertises only identity support. It never passes compressed bytes
-to Zpb: reject unsupported request compression with UNIMPLEMENTED and expose an
-unsupported response encoding as a local call failure. A future codec must bound
+to Zpb: unsupported request compression yields UNIMPLEMENTED as the local
+diagnostic status and terminates the stream; unsupported response encoding also
+fails the call and terminates the stream. A future codec must bound
 both encoded and expanded sizes before dispatch. Treat conflicting protocol
-metadata, invalid status syntax and unsupported content types as explicit parser
-outcomes. Duplicate application metadata remains valid. Test these independently
+metadata, invalid status syntax and unsupported content types as protocol errors
+that fail the call and terminate the stream. Duplicate application metadata
+remains valid. Test these independently
 from HTTP field syntax, which remains Zhttp's responsibility.
 
 `Zgrpc::FrameRx` retains a five-byte prefix accumulator, length, received offset
@@ -393,6 +544,10 @@ already holding protobuf bytes. They still enforce framing, size and cardinality
 Outbound locally trusted bytes need no redundant verification; externally
 supplied raw bytes must be verified at their ingress boundary or explicitly
 handled as opaque forwarding data. Raw mode does not select another wire codec.
+Raw receive adapters expose framed opaque payloads, like Zrest's raw body mode;
+they do not promise protobuf verification or materialization. Applications
+requiring typed validation use the verified typed receive path or explicitly
+verify at their ingress boundary.
 
 ## Metadata, authentication and status
 
@@ -402,7 +557,13 @@ collection preserves repeated keys and exposes unknown application fields.
 Initial metadata and trailers have distinct storage and callbacks. Reserved
 protocol fields cannot be overridden through the application metadata builder.
 Copy or retain field storage before a parser callback ends. Sensitive metadata
-uses Zhttp's never-index facilities and is excluded from default diagnostics.
+uses the initial/trailing provider's `neverIndex` policy described above and is
+excluded from default diagnostics.
+
+If descriptor metadata defaults and per-call metadata supply the same name in
+the same field section, emit both values as separate fields. Do not check for
+name collisions at compile time or runtime, deduplicate, or apply override
+precedence. Applications are responsible for the metadata they supply.
 
 Authentication and authorization are application policy. Applications use the
 ordinary metadata and dispatch hooks; Zgrpc adds no authorization pipeline,
@@ -416,6 +577,10 @@ protobuf message. Applications define signatures in declared protobuf fields or
 custom metadata. Streaming message authentication needs an explicit application
 schema; one initial signature cannot authenticate later unknown messages.
 Do not assume protobuf serialization is a canonical signing representation.
+The hook observes the exact uncompressed payload before the five-byte envelope;
+the baseline supports identity only. Signature fields, self-exclusion rules and
+any verification/re-encoding scheme belong to the application. Core hooks do
+not insert or rewrite an embedded signature.
 
 `Status` contains a standard numeric code, message and optional owned/retained
 binary details. `Code` preserves standard values 0–16, from OK to
@@ -433,6 +598,23 @@ absent, map HTTP 400 → INTERNAL, 401 → UNAUTHENTICATED, 403 → PERMISSION_D
 Do not apply this fallback when a usable gRPC status exists.
 [HTTP-to-gRPC status mapping](https://grpc.github.io/grpc/core/md_doc_http-grpc-status-mapping.html)
 
+Protocol errors fail the call and terminate the affected HTTP stream through
+Zhttp's existing failure/reset path. This includes invalid content type or
+encoding, malformed binary metadata, malformed or duplicate `grpc-status`,
+unknown status codes, missing terminal status, truncated trailers, malformed
+protobuf/framing, cardinality violations and response decoding failure. Do not
+attempt recovery trailers or continue dispatching messages after detection.
+If HTTP reception has already ended, record failure and stop remaining local
+production; no reset of an already retired stream is required. Preserve the
+original diagnostics and the documented status mappings, including HTTP fallback
+for missing `grpc-status`. Apply the existing terminal arbiter so a later event
+cannot replace an application-visible result or notify twice. Stream termination
+does not require closing the shared H2/H3 connection. This policy also applies
+to Zrest, Zjrpc and Zmcp: detected malformed protocol input terminates its
+stream/session without generating an application error response. Intact,
+well-formed input with an unrecognized method, tool or application value retains
+the protocol's ordinary error response; recognition is separate from integrity.
+
 Keep binary status details opaque; no rich-error type registry is required.
 
 ## Shards, calls, limits and shutdown
@@ -442,6 +624,13 @@ Keep binary status details opaque; no rich-error type registry is required.
 | Rx | Method selection, parser, received metadata, message counts, application callbacks, deadline timer, terminal decision and live-call registry |
 | Tx | Serializer, outgoing metadata, producer state, message queue and local half-close/trailer state |
 | Zhttp | Physical connections, HTTP stream transport state and flow control on their existing owning shards |
+
+Follow REST, JSON-RPC HTTP and MCP HTTP ownership: request dispatch, application
+handlers, cancellation callbacks and unary completion selection run on Rx.
+Tx owns response serialization, output fields, producers and terminal output.
+Do not move handlers onto Tx to simplify response production. Output field/body
+providers run on Tx and must not access Rx-owned application state. Transport
+cancellation hooks are installed/removed on Tx and post RPC notification to Rx.
 
 Public operations immediately dispatch to trailing-underscore implementations;
 assert shard ownership there. Each directional state has private encapsulated
@@ -453,19 +642,67 @@ identified `ZtArray`/`ZtString` storage. Do not wrap Rx or Tx state in locks.
 
 Model call invalidation after `ZjrpcCompletion.hh`, without inheriting its IDs or
 reply model. `ClientCall<Method>` and `ServerCall<Method>` contain immutable
-scheduler routing, call identity and generation, and an atomically invalidatable
-raw owner pointer. Off-shard operations only inspect call liveness and post owning actions. Only the designated owner
-shard dereferences the owner, after checking generation and liveness again.
+scheduler routing, call identity and generation. Each Rx/Tx destination has its
+own atomically invalidatable raw owner pointer; sends, end and streaming finish
+go directly to Tx, while unary complete/reply, cancellation and application
+callbacks go to Rx. A selected unary reply transfers owning output to Tx.
+Off-shard code
+only tests liveness and posts token-retaining actions. Only the destination
+shard loads and dereferences its owner after checking generation and liveness
+again. Invalidate each route on its owning shard before releasing that owner;
+queued actions that observe invalidation discard their payloads. Use the
+framework atomic operations as in the reference completion tokens; atomic
+liveness is an admission hint, while owner-shard serialization and teardown
+ordering protect dereferences.
 An application-held call object may outlive its active RPC, but cannot keep a
 link alive. The application must keep the scheduler alive until callers stop using call objects;
-shutdown drains all posted actions before owner destruction.
+shutdown stops ingress, invalidates routes and drains admitted owner work before
+owner destruction. A submission racing stop is either refused or admitted and
+then processed/discarded on its destination. An externally retained invalid
+token does not delay `stop(done)` or retain an endpoint. The application must
+quiesce worker submissions before destroying the scheduler.
 
 `Limits` uses the shared positive `maxPending`, `maxQueue`, `maxQueueBytes` and
 `workBatch` names. `maxPending` bounds client ingress/registered calls and
 admitted server work separately; queue count and bytes bound serialized
-outgoing messages, including off-shard ingress. A call admitted to ingress may
+outgoing messages on Tx. `maxQueue` also separately bounds each call's pending
+off-shard send posts by count; `maxQueueBytes` applies after serialization, not
+to unencoded command objects. A call admitted to ingress may
 later fail registration, as in Zrest. Per-message bytes have their own gRPC
-limit. HTTP retained-body and transport-output limits remain separate.
+limit. Configure HTTP `bodyMax(uint64_t(-1))` for long-lived RPC streams;
+HTTP queued-input retention and transport-output limits remain finite and
+separate from that cumulative bound and the gRPC message limit.
+
+Use the existing defaults: `maxPending = 4096`, `maxQueue = 1024`,
+`maxQueueBytes = 64U << 20` and `workBatch = 64`. The protobuf counterpart to
+Zjrpc's `maxJSONBytes` is `maxMessageBytes = 16U << 20`, applied to each payload
+before allocation/encoding. Endpoint configuration snapshots these positive
+limits at initialization; invalid zero limits reject initialization. Following
+Zrest's `BodyLimit` convention, `Method::MessageLimit` defaults to zero to inherit
+the endpoint message limit; a nonzero value overrides it for that method's
+request and response payloads. There is no per-call limit overlay. HTTP limits
+remain independent and must also permit the selected message size.
+
+Implement send-post admission in Zgrpc's `send`, only when dispatch to Tx is
+needed. Each call token holds a `ZmAtomic<unsigned>` pending-send counter and
+an immutable `maxQueue` snapshot. Colocate the counter with the token's other
+Tx-related member data, beginning that group with `alignas(Zm::CacheLineSize)`
+and separating it from Rx-owned data, per GUIDELINES.md's sharded member layout
+rules. The counter alone is shared atomic admission accounting; it does not
+change ownership of the surrounding Tx state. Increment before allocating/posting
+the owning command. If the incremented count exceeds `maxQueue`, decrement it
+immediately and return false. Otherwise post the command and return true. Use `<= maxQueue`
+for acceptance so the configured maximum is usable in full.
+
+The posted lambda retains the call token, decrements its counter as its first
+action, then checks owner/generation/liveness and invokes `send_` if still live.
+It decrements even when invalidation causes the send to be discarded. Shutdown
+drains accepted posts before destroying owners; the retained token keeps the
+counter alive. Calls already on Tx invoke `send_` directly without changing the
+pending-post count. Tx continues to enforce its serialized message-count and
+byte limits independently. This atomic counter is admission accounting, not
+permission to access Tx-owned state off shard; it adds no locks, byte
+reservations or producer-credit API.
 
 Retain only the existing controls applicable to RPC messages:
 
@@ -473,6 +710,7 @@ Retain only the existing controls applicable to RPC messages:
 | --- | --- |
 | Message bytes | `Zrest::Request::BodyLimit`, `Zjrpc::Limits::maxJSONBytes` |
 | Pending calls, including off-shard call ingress | `Zjrpc::Limits::maxPending` and `ZjrpcPending.hh` |
+| Pending off-shard send posts per call | Atomic count in Zgrpc `send`, using `Limits::maxQueue`; decrement when the posted lambda starts |
 | Queued output messages and bytes | `Zrest::Limits::maxQueue` / `maxQueueBytes` for SSE and corresponding `Zjrpc::Limits` controls |
 | Work per scheduler turn | `Zjrpc::Limits::workBatch` |
 
@@ -488,19 +726,51 @@ message is larger than a stream window. Queue refusal is a failure under the
 existing send contract; this design adds no blocked/writable/resume API or rate
 limiter. Application-held decoded messages follow ordinary buffer ownership,
 without a separate budget handle or release-accounting callback.
+Follow the Zrest SSE/Zjrpc failure model for admitted output: encoding failure,
+serialized-queue refusal or writer failure fails the call and aborts its HTTP
+stream through the existing failure path. Previously sent messages cannot be
+retracted; do not attempt a replacement success or recovery trailer section.
+Local pending-post refusal still returns false without failing the call. Preserve
+the original failure diagnostics and notify the application at most once.
 
-Deadlines use one monotonic absolute expiry on the initiating side, starting at
-call submission, so pool wait counts. Encode remaining time at send; when
-propagating a call, subtract elapsed time. A server installs its own expiry
-from the received duration. No timeout is the default unless configured.
-Expiry cancels work through the terminal arbiter and notifies the application to stop outstanding work.
-[gRPC deadlines](https://grpc.io/docs/guides/deadlines/)
+Align deadline semantics with grpc-go, using ZmScheduler timers and the existing
+Rx/Tx ownership model. Keep one monotonic absolute expiry on the initiating
+side, starting at call submission, so pool wait counts. Compute the remaining
+duration when constructing request headers; if it is nonpositive, fail locally
+with DEADLINE_EXCEEDED without submitting the request. Propagation uses the
+remaining duration, never a fresh copy of the original timeout. No timeout is
+the default unless configured.
+
+Follow grpc-go's `EncodeDuration`: choose the finest unit in `n`, `u`, `m`, `S`,
+`M`, `H` whose upward-rounded value fits eight digits (at most 99,999,999).
+Use quotient/remainder arithmetic to avoid overflow. The standalone conversion
+of a nonpositive duration is `0n`; an already expired client call takes the local
+failure path above. Match Go's signed 64-bit nanosecond duration range, clamping
+larger durations to `INT64_MAX` nanoseconds, including overflow when decoding an
+incoming hours value. Rounding the wire duration never extends the client's
+own absolute expiry.
+[grpc-go duration encoding](https://github.com/grpc/grpc-go/blob/master/internal/grpcutil/encode_duration.go),
+[timeout decoding](https://github.com/grpc/grpc-go/blob/master/internal/transport/http_util.go).
+
+On the server, install the deadline on Rx when initial request headers are
+accepted, before application dispatch and without waiting for request DATA or
+half-close. The expiry is that local monotonic time plus the decoded duration;
+an incoming zero timeout is immediately expired. Malformed timeout syntax is
+a protocol error under Q013. At expiry, the Rx terminal arbiter records
+DEADLINE_EXCEEDED if still active, invalidates call operations and notifies the
+application to stop work. Cancel the stream through Zhttp, posting Tx cleanup;
+notification does not wait for Tx drain, wire reset transmission or application
+worker cleanup. Keep owners and stream resources until their existing drains
+finish, and suppress duplicate terminal notification. Apply these semantics to
+both H2 and H3.
+[grpc-go server deadline installation and cancellation](https://github.com/grpc/grpc-go/blob/master/internal/transport/http2_server.go),
+[client context completion](https://github.com/grpc/grpc-go/blob/master/stream.go).
 
 Each active timed call embeds a `ZmScheduler::Timer`. Cancel it before destroying
 the call, then drain late callbacks on its owning shard. Cancellation cannot
 undo application side effects. Transparent retries are disabled initially,
-including Zhttp's ordinary replay behavior. Reconnecting a pool serves new
-calls only. A future retry policy must distinguish provably unprocessed attempts
+using `replayable() == false`, `maxRetries(0)` and `maxRedirects(0)` under the
+completed Zhttp replay gate. Reconnecting a pool serves new calls only. A future retry policy must distinguish provably unprocessed attempts
 from possibly executed calls and require explicit replayable message ownership;
 an idempotent flag alone cannot replay an arbitrary streaming producer.
 
@@ -550,16 +820,21 @@ programs use lowercase names; library and unit-test basenames use `Zgrpc`.
 
 Delivery sequence:
 
-1. Add and test Zhttp outbound response trailers on H2 and H3. Verify existing
-   trailers-only and receive-completion paths, adding only missing notification.
-   These focused changes enable the unary adapter on both transports.
-2. Implement catalogs, framing, metadata, unary adapters, status and verification.
-   Interoperate in both client/server directions over H2 and H3 before adding
-   convenience APIs.
-3. Add deferred calls, cancellation, deadlines and full shutdown race coverage;
-   enable server-streaming.
-4. Complete multi-turn client production, client-streaming and duplex; verify
-   existing queue-limit behavior and transport flow control under stalled peers.
+The completed Zhttp precursor is the entry condition for this sequence; its
+transport tests have already qualified the contracts above. Each Zgrpc milestone
+still verifies its own use of those contracts on both H2 and H3.
+The first supported release requires all three milestones and all four RPC
+kinds on H2 and H3; the unary milestone is an intermediate development gate.
+
+1. Implement catalogs, framing, metadata, unary adapters, status and protobuf
+   verification against the completed transport surface. Interoperate in both
+   client/server directions over H2 and H3 before adding convenience APIs.
+2. Add deferred calls, cancellation, deadlines and full shutdown race coverage;
+   enable server-streaming using the retained response emitter and trailers.
+3. Add client-streaming and duplex using the available multi-turn request emitter
+   and half-close. Verify RPC queue limits, early final status preservation and
+   flow control under stalled peers. No additional client transport phase is
+   required.
 
 ### Verification and acceptance
 
@@ -578,6 +853,17 @@ and `ZmBlock`/`ZmSemaphore` for deterministic coordination. Exercise messages
 larger than the stream receive window and one transport-stalled stream beside an active
 stream, on both H2 and H3. Cover transport selection with H1 excluded, H3
 discovery, GOAWAY, and directional cancellation after an early final response.
+Verify adapter configuration and use of the precursor contracts: no replay on
+unprocessed/redirect/transport-transition paths, never-index runtime metadata in
+both field sections, total stream bytes exceeding finite input retention, and
+retained emitter close with queued sends or terminal trailers. HTTP contract
+regressions remain in Zhttp; these tests establish Zgrpc's integration with them.
+
+Hold Tx at a scheduler barrier while concurrent workers submit sends. Verify
+that at most `maxQueue` posts per call are admitted, refused sends post nothing,
+and processing or invalidation decrements every admitted post exactly once.
+After releasing the barrier, verify that further sends can be admitted and
+that serialized output limits still apply independently.
 
 Interop tests in `zgrpc/interop` use an independent canonical gRPC peer in both
 directions over both H2 and H3 with the same `.proto`: unary/streaming, trailers-only errors, empty
@@ -607,30 +893,47 @@ Entries retired by scope reduction retain their IDs and a short decision record.
 
 ### Q001 — Public Zhttp stream boundary
 
-Which existing public builder/link abstraction should expose trailing fields,
-multi-turn request production and terminal events? The design names
-operations but does not specify their exact types or integration with both
-high-level CRTP client/server endpoints and lower-level typed links. The
-client/server CRTP signatures and existing server streaming are settled.
-Define the trailer extension for unary first; extend client production for
-client-streaming and duplex. Reuse existing results and add terminal information
-only where missing. Verify equivalent H2/H3 behavior and update affected H1
-dependents when a common signature changes.
+**Resolved — completed precursor contract.** Use the public `BodyEmitter`:
+Tx-only `trailers(B &fields)` terminates streamed responses, retained client
+production uses `WriteOutcome::Stream` / `End`, and `ReqBuilder::close()` releases
+application emitter state after invalidation. Existing result/completion and
+retirement callbacks remain authoritative. Both CRTP endpoints and typed adapters
+use the installed surface. See “Completed Zhttp precursor and adapter contract.”
 
 ### Q002 — Initial headers, trailers and completion ordering
 
-What exact callback sequence distinguishes informational headers, ordinary
-initial headers, trailers-only responses and final trailers? Define where a
-header section becomes accepted, when metadata becomes observable, and how a
-terminal status competes with an adjacent reset or transport-completion event.
-Start with the existing section-tagged field and HTTP completion callbacks;
-add a section-completion hook only if that sequence lacks a required boundary.
+**Resolved — transport boundary delegated to the completed precursor.**
+Section-tagged fields precede their accepted-section boundary; normal
+`complete(channel, true)` establishes receive end, including delayed H3 FIN.
+Use `headersDone` only if supplied by the completed precursor; otherwise use
+channel-aware `bodyInfo` for the accepted initial section. Retain borrowed
+metadata before callback return and publish usable terminal status only after
+normal completion and RPC checks. No parallel terminal callback is required.
+Application completion precedes RPC call retirement. Deferred receive work owns
+its data across HTTP cleanup; the RPC call cannot retire until that work and
+its terminal callback finish. Transport retirement does not gate notification;
+retirement only releases resources after the necessary drains and never repeats
+notification.
+RPC error precedence remains in Q013. See “Completed Zhttp precursor and adapter
+contract” and “State and cardinality.”
 
 ### Q003 — Off-shard admission and bounded command submission
 
-**Resolved — scope reduced.** Follow Zjrpc's existing pending-call ingress limit
-and queued-output rejection patterns. No new producer-credit or mailbox
-reservation subsystem is required. See “Shards, calls, limits and shutdown.”
+**Resolved — atomic send-post admission.** Zgrpc `send` increments a per-call
+atomic counter before posting to Tx, rolls it back and returns false above
+`maxQueue`, and otherwise returns true after posting. The lambda retains the
+call token and decrements first, including when invalidation discards the send.
+On-Tx sends bypass this counter. Serialized output remains separately bounded
+by `maxQueue` and `maxQueueBytes`; unencoded posts have a count bound only.
+Keep the existing pending-call ingress limit. No producer-credit or mailbox
+reservation subsystem is required. See “Calls and application dispatch” and
+“Shards, calls, limits and shutdown.”
+
+Terminal submissions use REST's one-shot atomic claim instead of the send-post
+counter: `complete`, `reply` and `finish` share one response-terminal claim;
+request `end` has a separate claim. Repeated terminal commands cannot accumulate
+while Tx is stalled. Claims do not invalidate preceding sends or replace Tx's
+production state.
 
 ### Q004 — Admission callback and readiness routes
 
@@ -640,18 +943,29 @@ queued-send and call-failure model. See “Calls and application dispatch.”
 
 ### Q005 — Ordering finish against pending sends
 
-How does an Rx-arbitrated server finish establish an ordering boundary against
-messages already posted to Tx? Define which sends precede final status, which
-late sends fail, and how `reply` orders its message and finish under the existing
-queued-send contract.
+**Resolved — one-shot admission and Tx queue order.** Atomically claim terminal
+command admission before allocating/posting, following REST completion. Post
+`finish` directly to Tx behind preceding sends. Its command submits terminal
+trailers, then marks response production finished after terminal admission
+succeeds; subsequent sends fail. Zhttp keeps
+trailers behind accepted DATA. `reply` submits its response followed by finish
+within one Tx command, using the same claim as `complete` and `finish`.
+Duplicate terminal submissions fail before posting. The admission claim changes
+neither call liveness nor Tx's finished state. No prior Rx terminal claim may
+invalidate preceding sends. Rx separately arbitrates cancellation, deadlines,
+failures and terminal notification once. See “Calls and application dispatch” and “State and
+cardinality.”
 
 ### Q006 — Early server completion and unread requests
 
-What concrete Zhttp sequence sends a terminal response while stopping an
-unfinished request producer? Decide how much request data may be discarded,
-when receive credit is returned, and when a stream reset is allowed without
-preventing the peer from observing final status. Cover application rejection
-and a server finishing a duplex call while the client is still sending.
+**Resolved — completed precursor contract.** The native response-finish path
+stops request delivery and disposes unread bytes with receive-credit accounting.
+H2 request-stop signaling follows terminal response output; H3 stops request
+reception independently. Client normal response completion or failure invalidates
+its producer on Tx, preserving a completed response through local send
+cancellation. Existing drains retain slots until both owners finish. Zgrpc
+retains the early server route and adds no directional-stop API. See “Completed
+Zhttp precursor and adapter contract” and “State and cardinality.”
 
 ### Q007 — Retained messages and aggregate memory accounting
 
@@ -668,66 +982,86 @@ window. See “Zpb integration and memory traffic.”
 
 ### Q009 — Call invalidation and owner destruction
 
-Does each call object route all actions through Rx, or are there separate invalidatable
-routes for Rx and Tx? Give the precise ordering and memory-order guarantees
-between liveness checks, posting, invalidation and the final drain. Specify the
-application's scheduler-lifetime obligation and what happens when a worker
-submits concurrently with endpoint stop. An atomic raw pointer alone does not
-establish that a queued action may safely dereference an owner.
+**Resolved — shared HTTP ownership and completion-token teardown model.**
+As in REST/JSON-RPC/MCP HTTP, dispatch handlers and unary completion selection
+on Rx, then transfer owned response data to Tx for serialization/output.
+Streaming send/finish commands target Tx directly. Capture
+immutable routes and owning token/action handles; dereference raw owners only
+on their destination shard after rechecking invalidation and generation. Keep
+separate Rx/Tx routes, invalidate them on their owners, and drain owner work
+before destruction. Stop races yield refusal or safe processing/discard.
+Applications quiesce token calls before scheduler destruction; retained tokens
+do not retain endpoints. See “Shards, calls, limits and shutdown.”
 
 ### Q010 — Outgoing object and borrowed-field ownership
 
-What types do `call`, `send` and `reply` actually accept: values, intrusive
-references, `Message<T>`, or a constrained combination? Define how an outgoing
-object with borrowed nested fields keeps its backing storage alive until Tx
-serialization, and whether submission transfers ownership before or after
-encoding. The receive-side retention flags do not answer this outbound question.
+**Resolved — Zjrpc object values and explicit backing retention.** `Message<T>`
+stores a value or `ZmRef<T>` according to the existing `ObjectValue` convention,
+plus optional retained backing. Submission moves it into the owning command
+before posting and retains it through serialization. External borrowed fields
+remain the application's lifetime obligation; no implicit deep copy is added.
+See “Calls and application dispatch.”
 
 ### Q011 — Handler abandonment, exceptions and cancellation
 
-What happens when a server handler drops its last `ServerCall` reference without
-finishing, throws, or remains active after cancellation? Decide whether call
-abandonment produces INTERNAL, leaves the call open until its deadline, or is a
-contract violation. Define exception boundaries and the lifetime of application
-stream state, including whether terminal notification waits for worker cleanup.
+**Resolved — existing deferred completion behavior.** Endpoint work retains its
+token; dropping an application reference does not finish the call. Dispatch
+exceptions follow Zjrpc/Zmcp's internal-error pattern where a response remains
+possible, otherwise fail the call. Contain callback exceptions. Cancellation
+invalidates the token and notifies once without waiting for application worker
+cleanup. See “Calls and application dispatch.”
 
 ### Q012 — Metadata storage and duplicate policy
 
 How are selected typed fields and repeated dynamic metadata represented without
-duplicate ownership or repeated name lookup? Define merge precedence for
-descriptor defaults and per-call metadata; cardinality rules for
-reserved fields; handling of malformed binary values; and whether unknown
-application fields are retained by default or only on request.
+duplicate ownership or repeated name lookup? Define cardinality rules for
+reserved fields and whether unknown application fields are retained by default
+or only on request. Malformed binary metadata follows the protocol-error stream
+termination policy in Q013. Cross-source
+name collisions between descriptor defaults and per-call metadata are settled:
+emit both fields without collision checks or override precedence.
+See “Metadata, authentication and status.”
 
 ### Q013 — Exact error and terminal-status policy
 
-The mapping table is suggested rather than exhaustive. Specify local outcomes
-for invalid content type, unsupported response encoding, malformed or duplicate
-`grpc-status`, unknown numeric codes, truncated trailers and response decode
-failure. Define which errors permit a gRPC reply, which require stream reset,
-and how diagnostics preserve the original cause without a later event replacing
-the application-visible result.
+**Resolved — terminate the stream on protocol error.** Invalid content type or
+encoding, malformed binary metadata, malformed/duplicate/unknown or missing
+terminal status, truncated trailers and protobuf/framing/cardinality/decode
+failures fail the call and terminate its stream through the existing Zhttp
+failure/reset path. Do not discard malformed metadata and continue, attempt
+recovery trailers, generate application error responses or close unrelated
+streams. Intact unknown methods/tools and application validation failures retain
+ordinary error responses in Zrest, Zjrpc and Zmcp. Preserve the original diagnostics,
+the documented status mappings and one application-visible terminal result.
+See “Wire profile” and “Metadata, authentication and status.”
 
 ### Q014 — Limits, defaults and precedence
 
-Which defaults and precedence should the retained message, pending-call and
-queue limits use? Follow the equivalent Zrest/Zjrpc settings and document any
-necessary differences for protobuf messages; do not add new budget categories.
+**Resolved — existing limit defaults and descriptor override convention.** Use
+4096 pending calls, 1024 queue entries/posts, 64 MiB serialized queue bytes,
+64 work items per turn and 16 MiB per protobuf message. Snapshot positive
+endpoint limits at initialization; a nonzero method `MessageLimit` overrides
+the endpoint message limit, following Zrest `BodyLimit`. HTTP limits remain
+independent. See “Shards, calls, limits and shutdown.”
 
 ### Q015 — Deadline installation and completion
 
-When exactly is the server deadline installed during request receipt? Define
-rounding and saturation when encoding remaining time and expired calls before
-transmission. Specify whether timeout completion waits for Tx drain or reports
-immediately while resources retire asynchronously.
+**Resolved — align with grpc-go.** Install the server deadline at accepted
+initial headers before dispatch. Encode remaining client time using upward
+rounding and the finest unit that fits eight digits, with Go's signed 64-bit
+nanosecond duration saturation. Expired clients fail before request submission.
+Expiry notifies on Rx and cancels the stream without waiting for Tx/resource
+drain or application cleanup. See “Shards, calls, limits and shutdown” for the
+grpc-go source references and exact conversion rules.
 
 ### Q016 — Transmit buffer adoption and partial failure
 
-Can the current public Zhttp Tx layer adopt the detached backward-built Zpb
-buffer without copying its payload, including its resulting `skip` and required
-head/tail room? Identify the required adapter and the behavior when a buffer
-spans multiple DATA frames. Define recovery when serialization fails or transport
-admission stops after earlier messages have already been transmitted.
+**Resolved — existing output failure path.** Buffer adoption uses the completed
+precursor. Encoding failure, serialized-queue refusal and writer failure fail
+the call and abort its stream, following Zrest SSE/Zjrpc; there is no rollback
+of prior output or recovery trailer attempt. Pending-post refusal alone returns
+false without failing the call. Preserve original diagnostics and notify once.
+See “Zpb integration and memory traffic” and “Shards, calls, limits and shutdown.”
 
 ### Q017 — Zpb verification cost and materialization bounds
 
@@ -744,15 +1078,17 @@ See “Protobuf schemas.”
 
 ### Q019 — Raw forwarding and signature boundaries
 
-Does raw receive mode guarantee protobuf verification, or explicitly promise
-only framed opaque bytes? Separate those contracts in the API. For signing,
-define whether hooks observe compressed or uncompressed bytes and how a
-signature stored inside a protobuf message avoids signing itself. Decide which
-parts belong in core hooks and which remain application-owned adapters.
+**Resolved — raw-body and application signing precedent.** Raw receive exposes
+framed opaque payloads without typed verification; typed reception verifies
+before materialization. Signing hooks observe exact uncompressed payload bytes
+before the envelope. Embedded signatures and self-exclusion rules remain
+application-owned. See “Zpb integration and memory traffic” and “Metadata,
+authentication and status.”
 
 ### Q020 — Delivery gates and interoperability coverage
 
-Which delivery milestone is considered the first supported Zgrpc release:
-unary interoperability or all four RPC kinds? Select independent peers and the
-test matrix for both H2 and H3, including TLS, long-running streams and
-cancellation races. H3 support remains part of the baseline.
+**Resolved — complete baseline release.** All three milestones, all four RPC
+kinds and independent-peer qualification on H2 and H3 are required. Unary is an
+intermediate gate. Use the canonical peers described in “Verification and
+acceptance,” including grpc-dotnet for H3, with the checked-in schema and the
+specified streaming, deadline, cancellation and concurrency matrix.

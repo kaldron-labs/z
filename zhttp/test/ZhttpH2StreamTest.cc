@@ -44,9 +44,8 @@ void testStreamRegistry()
   auto stream = streams->add(Stream{1, appLink, true});
   ZuCHECK(stream && stream->id == 1 && stream->local &&
       stream->appLink.ptr() == appLink.ptr() &&
-      stream->rxWindow == Zhttp::H2::DefltWindow &&
-      stream->txWindowHint == Zhttp::H2::DefltWindow,
-    "native Stream record owns the logical Link and flow-control shadows");
+      stream->rxWindow == Zhttp::H2::DefltWindow,
+    "native Stream record owns the logical Link and receive flow-control window");
   ZuCHECK(streams->findPtr(1) == stream,
     "native Stream is indexed by its Link-local ID");
   streams->delNode(static_cast<Streams::Node *>(stream));

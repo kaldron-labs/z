@@ -17,7 +17,7 @@ namespace ZhttpITestPort {
     LifecycleEnd = 20532,
     ClientFallback = 20540,
     ServerStream = 20550,
-    ServerStreamEnd = 20569
+    ServerStreamEnd = 20582
   };
 }
 

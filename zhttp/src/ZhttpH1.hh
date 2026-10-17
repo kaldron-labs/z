@@ -166,8 +166,10 @@ template <
   uint64_t MaxHeaderSection_ = DefltMaxHeaderSection>
 class Parser {
 public:
-  Parser(uint64_t bodyMax = DefltMaxBody) :
-    m_bodyMax{bodyMax}, m_bodyRx{bodyMax} { }
+  Parser(uint64_t bodyMax = DefltMaxBody,
+      uint64_t retainedBodyMax = DefltMaxBody) :
+    m_bodyMax{bodyMax}, m_retainedBodyMax{retainedBodyMax},
+    m_bodyRx{retainedBodyMax} { }
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
@@ -422,7 +424,7 @@ public:
 		}
 		return remaining;
 	      }, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 0,
-	      [this, &accepted](auto &rx) { accepted = impl()->body(rx); });
+	      [this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
 	    if (ZuUnlikely(!accepted))
 	      fail_(RequestErrorCode::BodyRejected,
 		RequestErrorScope::Connection, Request);
@@ -482,7 +484,7 @@ public:
 		if (last != '\r' || prev != '\n') return -1;
 		return n;
 	      }, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 2,
-	      [this, &accepted](auto &rx) { accepted = impl()->body(rx); });
+	      [this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
 	    if (ZuUnlikely(!accepted))
 	      fail_(RequestErrorCode::BodyRejected,
 		RequestErrorScope::Connection, Request);
@@ -539,6 +541,10 @@ public:
   uint64_t bodyMax() const { return m_bodyMax; }
   void bodyMax(uint64_t value) {
     m_bodyMax = value;
+  }
+  uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
+  void retainedBodyMax(uint64_t value) {
+    m_retainedBodyMax = value;
     m_bodyRx.reset(value);
   }
 
@@ -558,7 +564,7 @@ public:
 
   // reset for next message
   void reset() {
-    m_bodyRx.reset(m_bodyMax);
+    m_bodyRx.reset(m_retainedBodyMax);
     m_state = State::Initial;
     m_chunked = false;
     m_eofBody = false;
@@ -577,6 +583,11 @@ public:
   }
   void reset(uint64_t bodyMax_) {
     m_bodyMax = bodyMax_;
+    reset();
+  }
+  void reset(uint64_t bodyMax_, uint64_t retainedBodyMax_) {
+    m_bodyMax = bodyMax_;
+    m_retainedBodyMax = retainedBodyMax_;
     reset();
   }
 
@@ -598,7 +609,7 @@ private:
 	  }
 	  return remaining;
 	}, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 0,
-	[this, &accepted](auto &rx) { accepted = impl()->body(rx); });
+	[this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
       if (ZuUnlikely(!accepted))
 	fail_(RequestErrorCode::BodyRejected,
 	  RequestErrorScope::Connection, Request);
@@ -640,6 +651,7 @@ private:
   void		*m_eofStream = nullptr;
   State::T	(*m_eofFn)(Parser *, void *) = nullptr;
   uint64_t	m_bodyMax;
+  uint64_t	m_retainedBodyMax;
   uint64_t	m_contentLength = uint64_t(-1);
   uint64_t	m_chunkLength = uint64_t(-1);
   uint64_t	m_headerBytes = 0;
