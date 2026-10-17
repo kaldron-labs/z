@@ -303,9 +303,10 @@ struct TestLink :
     new (ack.ranges.push()) Zquic::AckRange{pn, 0};
     Base::processAckFrameTx_(ack);
   }
-  void ackOnly(uint64_t pn) {
+  void ackOnly(
+    uint64_t pn, Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
     Base::AckSnapshot ack;
-    ack.level = Zquic::PktNumSpace::AppData;
+    ack.level = level;
     new (ack.ranges.push()) Zquic::AckRange{pn, pn};
     Base::processAckFrameTx_(ack);
   }
@@ -321,9 +322,11 @@ struct TestLink :
 	  void forcePTOProbeQLog(Zquic::PktNumSpace::T level, unsigned probes) {
 	    Base::notePTOProbe_(level, probes);
 	  }
-	  bool sendCryptoBytes(ZuBSpan data) {
-	    size_t offsets[5] = {0, 0, 0, 0, data.length()};
-	    return Base::sendCryptoFlights_(
+  bool sendCryptoBytes(
+    ZuBSpan data, Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
+    size_t offsets[5] = {0, 0, 0, 0, data.length()};
+    if (level == Zquic::PktNumSpace::Handshake) offsets[3] = data.length();
+    return Base::sendCryptoFlights_(
       data.data(), data.length(),
       offsets, 900, ZiSockAddr{},
       [this](
@@ -335,6 +338,35 @@ struct TestLink :
 	return true;
       });
   }
+  bool installHandshake(const Zquic::TrafficSecret &secret) {
+    return Base::txInstallSecret_(Zquic::PktNumSpace::Handshake, secret);
+  }
+  bool nextCryptoPTO(
+    Zquic::PktNumSpace::T &level, Zquic::SentFrameRef &ref) {
+    return Base::nextCryptoPTO_(level, ref);
+  }
+  bool sendRetxCrypto(
+    Zquic::PktNumSpace::T level, Zquic::SentFrameRef &ref,
+    unsigned &bytes, uint64_t &pn, bool reject = false) {
+    Zquic::PktBuild build;
+    if (!Base::buildRetxCrypto_(level, build, ref)) return false;
+    Base::TxPktRefs refs;
+    refs.add(ref);
+    pn = sentPkts++;
+    Base::setTxPN_(level, pn);
+    auto alloc = []() { return new Zquic::PktTxBufAlloc<>{nullptr}; };
+    auto send = [this, &bytes, reject](auto buf, ZiSockAddr addr) {
+      bytes = buf->length;
+      if (reject) return false;
+      return Base::sendPathPkt_(
+	ZuMv(buf), ZuMv(addr),
+	[](ZmRef<ZiIOBuf>, ZiSockAddr, Zquic::EcnMark::T) { return true; });
+    };
+    return Base::sendProtHandshakePkt_(
+      Base::CIDSel::Peer, Base::CIDSel::Local, Base::txPNLength_(level),
+      build, ZiSockAddr{}, {}, &refs, true, alloc, send);
+  }
+
   void sendCryptoRef(
     uint64_t pn, Zquic::PktNumSpace::T level,
     uint64_t offset, uint64_t length) {
@@ -346,7 +378,7 @@ struct TestLink :
       Zquic::PktNumSpace::AppData, pn, 100, ref, true);
   }
   bool rebuildCrypto(
-    Zquic::PktNumSpace::T level, const Zquic::SentFrameRef &ref,
+    Zquic::PktNumSpace::T level, Zquic::SentFrameRef ref,
     Zquic::Frame &frame, uint8_t *b, unsigned size) {
     Zquic::PktBuild build;
     if (!Base::buildRetxCrypto_(level, build, ref)) return false;
@@ -472,10 +504,10 @@ struct TestLink :
   }
 #endif
   bool receiveMarked(
-    uint64_t pn, Zquic::EcnMark::T ecn, bool ackEliciting = true) {
-    if (Base::rxPktSeen_(Zquic::PktNumSpace::AppData, pn)) return false;
-    Base::noteAck_(
-      Zquic::PktNumSpace::AppData, pn, ackEliciting, ZiSockAddr{}, false, ecn);
+    uint64_t pn, Zquic::EcnMark::T ecn, bool ackEliciting = true,
+    Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
+    if (Base::rxPktSeen_(level, pn)) return false;
+    Base::noteAck_(level, pn, ackEliciting, ZiSockAddr{}, false, ecn);
     return true;
   }
   bool writePendingAck(Zquic::PktBuild &build) {
@@ -1623,6 +1655,58 @@ void testCryptoRetransmitClipsUnackd()
   ZuCHECK(!link->nextRetransmitRef(level, ref),
     "crypto retransmit clipping left extra work");
   link->teardown();
+}
+
+void testCryptoRetxBudget()
+{
+  ZuTestScope(testCryptoRetxBudget);
+
+  App app;
+  Zquic::TrafficSecret secret;
+  ZuCHECK(trafficSecret_(secret, 0x42), "crypto retransmit secret failed");
+  using Data = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Test.CryptoRetx">>;
+  Data data;
+  data.length(Zquic::MinUDPPayload<<1);
+  memset(data.data(), 0x42, data.length());
+  for (bool ack : {false, true}) {
+    auto space = Zquic::PktNumSpace::Handshake;
+    ZmRef<TestLink> link = testLink(&app);
+    ZuCHECK(link->installHandshake(secret),
+      "crypto retransmit key setup failed");
+    link->initServerPath();
+    link->validatePath();
+    ZuCHECK(link->sendCryptoBytes(data, space), "crypto flight setup failed");
+    if (ack) link->receiveMarked(1, Zquic::EcnMark::NotECT, true, space);
+
+    Zquic::PktNumSpace::T level;
+    Zquic::SentFrameRef ref;
+    unsigned bytes = 0;
+    uint64_t pn = 0;
+    // A rejected retransmission must preserve data from the original flight.
+    ZuCHECK(link->nextCryptoPTO(level, ref), "missing crypto PTO range");
+    ref.length = 32;
+    ZuCHECK(!link->sendRetxCrypto(level, ref, bytes, pn, true),
+      "crypto retransmit rejection did not fail");
+    uint64_t offset = 0;
+    unsigned packets = 0;
+    while (offset < data.length()) {
+      bool pending = link->nextCryptoPTO(level, ref);
+      ZuCHECK(pending && level == space && ref.offset == offset,
+	"crypto retransmit lost an unacknowledged prefix");
+      if (!pending || ref.offset != offset) break;
+      bool sent = link->sendRetxCrypto(level, ref, bytes, pn);
+      ZuCHECK(sent && bytes <= link->activePathMaxUDP(),
+	"crypto retransmit exceeded path budget");
+      if (!sent) break;
+      offset += ref.length;
+      ++packets;
+      link->ackOnly(pn, level);
+    }
+    ZuCHECK(offset == data.length() && packets > 1 &&
+	!link->nextCryptoPTO(level, ref),
+      "crypto retransmit did not deliver and ACK the complete flight");
+    link->teardown();
+  }
 }
 
 void testPktNumLength()
@@ -3592,6 +3676,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStreamRetransmitClipsUnackd);
   ZuTestCall(testStreamRetxClipsUnackdFin);
   ZuTestCall(testCryptoRetransmitClipsUnackd);
+  ZuTestCall(testCryptoRetxBudget);
   ZuTestCall(testPktNumLength);
   ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(testCongestionBudgetGatesSends);

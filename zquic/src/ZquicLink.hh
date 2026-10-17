@@ -1369,30 +1369,6 @@ protected:
     for (unsigned i = 0, n = refs.count(); i < n; ++i)
       (void)recordTxUnackd_(level, refs[i], refs.stream(i));
   }
-  void discardTxUnackd_(
-    PktNumSpace::T level, const SentFrameRef &ref, Stream *stream = nullptr) {
-    switch (ref.kind) {
-      case SentFrameKind::Stream: {
-	if (ref.streamID > uint64_t(INT64_MAX)) return;
-	if (stream) {
-	  (void)stream->discardTxUnackd(ref.offset, ref.length, ref.fin);
-	  return;
-	}
-	if (StreamRef stream_ = findTxStream_(int64_t(ref.streamID)))
-	  (void)stream_->discardTxUnackd(ref.offset, ref.length, ref.fin);
-	break;
-      }
-      case SentFrameKind::Crypto:
-	(void)m_txCryptoUnackd[level].clear(ref.offset, ref.length);
-	break;
-      default:
-	break;
-    }
-  }
-  void discardTxUnackd_(PktNumSpace::T level, const TxPktRefs &refs) {
-    for (unsigned i = 0, n = refs.count(); i < n; ++i)
-      discardTxUnackd_(level, refs[i], refs.stream(i));
-  }
   bool requeueStreamRef_(
     PktNumSpace::T level, const SentFrameRef &ref,
     Stream *stream = nullptr, bool consumeCredit = false) {
@@ -1412,17 +1388,6 @@ protected:
 	requeueStreamRef_(level, ref, refs.stream(i), consumeCredit);
     }
     if (queued && queueTx) impl()->queueRetransmit_();
-  }
-  void discardTxUnackd_(
-    PktNumSpace::T level, ZuBSpan frame, const TxPktRefs *refs) {
-    if (refs) {
-      discardTxUnackd_(level, *refs);
-      return;
-    }
-    SentFrameRef ref;
-    bool ackEliciting = false;
-    if (sentFrameRef(frame, ref, ackEliciting))
-      discardTxUnackd_(level, ref);
   }
   bool txAckEliciting_(ZuBSpan frame, const TxPktRefs *refs, bool fallback) {
     if (fallback) return true;
@@ -1577,16 +1542,10 @@ protected:
       tail.offset = end;
       tail.length = oldEnd - end;
     }
+    if (first < ref.offset) first = ref.offset;
+    if (end > oldEnd) end = oldEnd;
     ref.offset = first;
     ref.length = end - first;
-    unsigned maxLen = cryptoRetxMax_(level);
-    if (!maxLen) return false;
-    if (ref.length > maxLen) {
-      tail = ref;
-      tail.offset = ref.offset + maxLen;
-      tail.length = oldEnd - tail.offset;
-      ref.length = maxLen;
-    }
     return true;
   }
   unsigned cryptoRetxMax_(PktNumSpace::T level) const {
@@ -6508,18 +6467,37 @@ nextSpace:
   }
 
   bool buildRetxCrypto_(
-    PktNumSpace::T level, PktBuild &build, const SentFrameRef &ref) {
+    PktNumSpace::T level, PktBuild &build, SentFrameRef &ref) {
     if (ref.kind != SentFrameKind::Crypto || m_txSpaceDiscarded[level])
-      return false;
-    ZuBSpan payload;
-    if (!m_txCrypto[level].txPayload(ref.offset, ref.length, payload))
       return false;
     build.reset();
     if (!appendPendingAck_(level, build)) return false;
-    int n = FrameCodec::writeCryptoPrefix(
-      build.scratch(), build.scratchAvail(), ref.offset, payload.length());
-    if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
-    return build.add(payload);
+    unsigned maxLen = cryptoRetxMax_(level);
+    if (build.bytes() >= maxLen) return false;
+    maxLen -= build.bytes();
+    unsigned length = ref.length > maxLen ? maxLen : unsigned(ref.length);
+    for (;;) {
+      int n = FrameCodec::writeCryptoPrefix(
+	build.scratch(), build.scratchAvail(), ref.offset, length);
+      if (n <= 0 || unsigned(n) >= maxLen) return false;
+      unsigned avail = maxLen - unsigned(n);
+      if (length > avail) {
+	length = avail;
+	continue;
+      }
+      ZuBSpan payload;
+      if (!m_txCrypto[level].txPayload(ref.offset, length, payload) ||
+	  !build.commitScratch(unsigned(n)) || !build.add(payload))
+	return false;
+      if (ref.length > length) {
+	SentFrameRef tail = ref;
+	tail.offset += length;
+	tail.length -= length;
+	(void)requeueRetransmit_(level, tail);
+	ref.length = length;
+      }
+      return true;
+    }
   }
 
   bool rxPktSeen_(PktNumSpace::T level, uint64_t pn) const {
@@ -7493,10 +7471,9 @@ nextSpace:
   }
 
   void discardProtPktTx_(
-    PktNumSpace::T level, uint64_t pn, unsigned bytes, bool ackEliciting,
-    ZuBSpan recordFrame, const TxPktRefs *recordRefs) {
+    PktNumSpace::T level, uint64_t pn, unsigned bytes, bool ackEliciting) {
     m_txPkts[level].discard(pn);
-    discardTxUnackd_(level, recordFrame, recordRefs);
+    // A failed send retires only this packet; its data still needs an ACK.
     if (ackEliciting) {
       m_congestion.release(bytes);
       updateCongestionDiag_();
@@ -7776,8 +7753,7 @@ nextSpace:
       return false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
       discardProtPktTx_(
-	PktNumSpace::Initial, pn, unsigned(n), pktAckEliciting,
-	recordFrame, recordRefs);
+	PktNumSpace::Initial, pn, unsigned(n), pktAckEliciting);
       return false;
     }
     if (payload.ack(PktNumSpace::Initial)) ackSentTx_(PktNumSpace::Initial);
@@ -7862,8 +7838,7 @@ nextSpace:
       return false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
       discardProtPktTx_(
-	PktNumSpace::Handshake, pn, unsigned(n), pktAckEliciting,
-	recordFrame, recordRefs);
+	PktNumSpace::Handshake, pn, unsigned(n), pktAckEliciting);
       return false;
     }
     if (payload.ack(PktNumSpace::Handshake))
@@ -7949,8 +7924,7 @@ nextSpace:
       return false;
 	    if (!sendPkt(ZuMv(buf), ZuMv(addr))) {
 	      discardProtPktTx_(
-		PktNumSpace::AppData, pn, unsigned(n), pktAckEliciting,
-		recordFrame, recordRefs);
+		PktNumSpace::AppData, pn, unsigned(n), pktAckEliciting);
 	      return false;
 	    }
     if (m_txEarlyData.state == LinkEarlyState::None)
@@ -8052,8 +8026,7 @@ nextSpace:
       return false;
     if (!sendPkt(ZuMv(buf), ZuMv(addr), ecn)) {
       discardProtPktTx_(
-	PktNumSpace::AppData, pn, unsigned(n), pktAckEliciting,
-	recordFrame, recordRefs);
+	PktNumSpace::AppData, pn, unsigned(n), pktAckEliciting);
       return false;
     }
     if (payload.ack(PktNumSpace::AppData)) ackSentTx_(PktNumSpace::AppData);
