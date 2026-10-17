@@ -341,7 +341,8 @@ Never enable `Zpb_SizePrefixed<>` for an RPC facet: it produces a varint length
 prefix, not a gRPC frame. Check `Zpb::Config<Facet>::SizePrefixed`
 at compile time for both request and response facets.
 
-On Tx, allocate a tuned `ZiIOBuf` with transport headroom in `skip` and construct
+On Tx, allocate a tuned `ZiIOBuf` through `Zhttp::Writer::allocBuf(headRoom)`
+with transport headroom in `skip` and construct
 `Zpb::IOBuilder{buf, maxSize, tailRoom}`. Its `maxSize` bounds the total allocation,
 including `skip` and transport tailroom; its writable capacity excludes both.
 Allow five additional writable bytes for the gRPC envelope. Encode once using
@@ -357,7 +358,8 @@ ceiling. Check the encoded payload against its own limit before prepending the
 envelope. Perform arithmetic in a wider type before narrowing. `buf()` moves
 the completed buffer out and adjusts `skip` and `length` to its encoded suffix;
 the builder's byte span borrows that buffer. Queue the resulting buffer by
-reference; Zhttp divides it into DATA frames. There is no sizing serialization pass,
+reference through `Writer::operator <<(ZmRef<ZiIOBuf>)`; Zhttp divides it into
+DATA frames. There is no sizing serialization pass,
 intermediate string, or separate send path bypassing the transport queue.
 The generic `Zpb::save(stream, object)` overload is therefore not the RPC Tx path.
 Builder growth may move the encoded suffix; account for that cost.

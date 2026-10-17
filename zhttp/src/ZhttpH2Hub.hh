@@ -560,7 +560,7 @@ public:
   unsigned tailRoom() const {
     return m_native.template txTailRoom<AppThread>();
   }
-  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+  ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     if (failed()) return nullptr;
     auto buf = m_native.template txAllocBuf<AppThread>(headRoom);
     if (!buf || buf->failed()) { fail_(); return nullptr; }

@@ -342,7 +342,7 @@ public:
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     if (ZuUnlikely(m_lower.failed())) return nullptr;
-    return m_lower.allocBuf_(headRoom);
+    return m_lower.allocBuf(headRoom);
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
     if (!m_budget.add(buf->length)) {
