@@ -1533,6 +1533,7 @@ int main(int argc, char **argv)
   ZiTestResidue::init("ZquicRuntimeTest");
   ZuTestMain();
   ZuTestCall(testEndpointOpen);
+  ZuTestCall(testHandshakeCryptoLoss);
   ZuTestCall(testSrvMultiCxn);
   ZuTestCall(testRetryAddrValidate);
   ZuTestCall(testRejectedTokenQLog);
