@@ -1130,7 +1130,7 @@ static void testRow()
   Zpb::ArrayStorage framedStorage{framedOutput};
   Zpb::Builder framedBuilder{framedStorage};
   auto framed = Zpb::save<ZuFacet::PrefixedPB>(framedBuilder, input);
-  const uint8_t prefix[] = {sizeof(expected), 0, 0, 0};
+  const uint8_t prefix[] = {sizeof(expected)};
   ZuCheck(framed.length() == sizeof(prefix) + sizeof(expected));
   ZuCheck(!memcmp(framed.data(), prefix, sizeof(prefix)));
   ZuCheck((Zpb::verify<Row, ZuFacet::PrefixedPB>(framed)));

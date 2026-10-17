@@ -12,6 +12,7 @@ GRTAGS
 GTAGS
 gtags.files
 Makefile
+!zpb/interop/go/Makefile
 Makefile.in
 aclocal.m4
 config.*
@@ -101,6 +102,7 @@ old/**
 /zfb/itest/zflatccustom.hh
 /zfb/itest/zflatccustom.cc
 /zpb/example/zpb-gen/
+/zpb/interop/zpb-gen/
 /zpb/itest/zprotoc-out/
 
 # Generated output from the former zi build layout.

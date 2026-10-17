@@ -1,5 +1,32 @@
 # Zpb integration tests
 
+## Go interoperability
+
+`zpbgotest` launches the independent [Go protobuf peer](../interop/README.md#go-interoperability)
+from `zpb/interop/go`. It exports native `ZfStruct` schemas as descriptors,
+sends native wire payloads, and verifies and loads independently constructed Go
+replies. The fixture checks uint64, ZigZag, floating-point, strings, binary
+bytes, packed signed integers and bools, nested messages, maps, message-valued
+`oneof` switches, and unknown fields in both directions.
+
+Both raw protobuf and varint-delimited I/O are covered. A delimited sequence
+contains an empty message and payload sizes 127, 128, 16383 and 16384, crossing
+the one/two/three-byte prefix boundaries. The Go peer rejects truncated
+prefixes, truncated payloads, overflowing varints and messages above its
+configured size limit. Process execution has a timeout; `ZiTestResidue` retains
+failed fixtures and peer diagnostics under the usual test log directory.
+
+When Go is configured, the normal `all` target builds the peer and driver,
+and `make test` runs the driver alongside the generator integration tests:
+
+```sh
+make -C zpb/src -j4
+make -C zpb/itest -j4
+make -C zpb/itest test
+```
+
+The process/file helpers in `ZpbTestUtil.hh` are shared with `zprotoctest`.
+
 ## zprotoc integration
 
 `zprotocconsumer` compiles the generated `zprotoc_simple.proto` message in a

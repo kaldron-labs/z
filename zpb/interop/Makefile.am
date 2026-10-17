@@ -65,7 +65,23 @@ zpbinterop_LDADD = $(top_builddir)/zpb/src/libZpb.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ @PB_INTEROP_LIBS@
 EXTRA_DIST = README.md zpb.md zpbinterop_generated.proto zpbinterop.valgrind.supp
-.PHONY: test
+EXTRA_DIST += go/Makefile go/main.go go/go.mod go/go.sum
+
+if HAVE_GO
+all-local:
+	$(MAKE) -C $(srcdir)/go GO="$(GO)" EXEEXT="$(EXEEXT)" all
+
+clean-local:
+	$(MAKE) -C $(srcdir)/go GO="$(GO)" EXEEXT="$(EXEEXT)" clean
+
+test: test-go
+test-go: export ZI_LOGDIR = $(abs_top_builddir)/logs
+test-go:
+	$(MAKE) -C $(top_builddir)/zpb/itest $(AM_MAKEFLAGS) zpbgotest
+	prove $(top_builddir)/zpb/itest/zpbgotest
+endif
+
+.PHONY: test test-go
 if HAVE_PB_INTEROP
 test: zpbinterop
 	prove zpbinterop

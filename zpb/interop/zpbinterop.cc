@@ -15,6 +15,7 @@
 #include <google/protobuf/io/tokenizer.h>
 #include <google/protobuf/io/zero_copy_stream_impl_lite.h>
 #include <google/protobuf/message_lite.h>
+#include <google/protobuf/util/delimited_message_util.h>
 #include <google/protobuf/util/message_differencer.h>
 
 #include <iostream>
@@ -35,6 +36,63 @@ using namespace ZuTestUtil;
 using namespace Zpb::Reflect;
 
 ZuDerive(Output, (ZtArray<uint8_t, ZtArrayHeapID<"zpbinterop.Output">>));
+
+ZuStructFacet(PrefixedPB);
+ZpbConfig(PrefixedPB, Zpb_SizePrefixed<>);
+
+struct DelimitedRow { ZuCSpan name; };
+ZfStruct(, (DelimitedRow, PB), (name,, String));
+Zpb::AsMessage<"google.protobuf.FileDescriptorProto">
+  Zpb_Fmt(DelimitedRow *);
+ZuStructReflect(DelimitedRow, ZuFacet::PrefixedPB, ZuFacet::PB);
+
+static void testDelimited()
+{
+  ZuTestScope(testDelimited);
+  // Field 1 matches FileDescriptorProto::name. Exercise empty messages and
+  // both sides of the first two varint-length boundaries.
+  const unsigned lengths[] = {0, 125, 126, 16380, 16381};
+  google::protobuf::DynamicMessageFactory factory;
+  auto desc = google::protobuf::FileDescriptorProto::descriptor();
+  auto name = desc->FindFieldByNumber(1);
+  for (auto length : lengths) {
+    ProtoText text;
+    text.length(length);
+    if (length) memset(text.data(), 'x', length);
+    DelimitedRow native{length ? ZuCSpan{text} : ZuCSpan{}};
+    Output output;
+    Zpb::ArrayStorage storage{output};
+    Zpb::Builder builder{storage};
+    auto frame = Zpb::save<ZuFacet::PrefixedPB>(builder, native);
+    ZuCheck(!builder.failed());
+    if (!length) ZuCheck(frame.length() == 1 && !frame[0]);
+
+    auto canonical = factory.GetPrototype(desc)->New();
+    auto reflection = canonical->GetReflection();
+    google::protobuf::io::ArrayInputStream input{frame.data(), int(frame.length())};
+    bool eof = false;
+    ZuCheck(google::protobuf::util::ParseDelimitedFromZeroCopyStream(
+      canonical, &input, &eof) && !eof);
+    auto loaded = reflection->GetString(*canonical, name);
+    ZuCheck(loaded.size() == length &&
+      (!length || !memcmp(loaded.data(), text.data(), length)));
+
+    canonical->Clear();
+    if (length) reflection->SetString(canonical, name,
+      std::string{text.data(), length});
+    std::string encoded;
+    {
+      google::protobuf::io::StringOutputStream stream{&encoded};
+      ZuCheck(google::protobuf::util::SerializeDelimitedToZeroCopyStream(
+	*canonical, &stream));
+    }
+    ZuBSpan bytes{encoded.data(), unsigned(encoded.size())};
+    ZuCheck(bytes == frame);
+    ZuCheck((Zpb::verify<DelimitedRow, ZuFacet::PrefixedPB>(bytes)));
+    ZuCheck((Zpb::load<DelimitedRow, ZuFacet::PrefixedPB>(bytes).name == text));
+    delete canonical;
+  }
+}
 
 struct NativeItem { uint32_t id = 0; };
 ZfStruct(, (NativeItem, PB), (id,, UInt32));
@@ -1437,7 +1495,7 @@ static void testIPMapping()
     Zpb::ArrayStorage storage{output};
     Zpb::Builder builder{storage};
     auto wire = Zpb::save(builder, ip);
-    if (builder.failed() || Zpb::verify<ZiIP>(wire) ||
+    if (builder.failed() || !Zpb::verify<ZiIP>(wire) ||
       !verify(schema, *reflected, wire)) return false;
     auto canonical = factory.GetPrototype(type)->New();
     bool ok = canonical->ParseFromArray(wire.data(), wire.length()) &&
@@ -2251,7 +2309,7 @@ static void testTemporalMappings()
       Zpb::ArrayStorage storage{output};
       Zpb::Builder builder{storage};
       auto wire = Zpb::save(builder, time);
-      if (builder.failed() || Zpb::verify<ZuTime>(wire) ||
+      if (builder.failed() || !Zpb::verify<ZuTime>(wire) ||
 	!verify(schema, reflected, wire)) return false;
       google::protobuf::DynamicMessageFactory factory;
       auto canonical = factory.GetPrototype(&type)->New();
@@ -2390,7 +2448,7 @@ static void testBitmapMappings()
       Zpb::ArrayStorage storage{output};
       Zpb::Builder builder{storage};
       auto wire = Zpb::save(builder, native);
-      if (builder.failed() || Zpb::verify<ZmBitmap>(wire) ||
+      if (builder.failed() || !Zpb::verify<ZmBitmap>(wire) ||
 	!verify(schema, reflected, wire)) return false;
       google::protobuf::DynamicMessageFactory factory;
       auto canonical = factory.GetPrototype(&type)->New();
@@ -3380,6 +3438,7 @@ int main(int argc, char **argv)
     return ok ? 0 : 1;
   }
   ZuTestMain();
+  ZuTestCall(testDelimited);
   ZuTestCall(testInterop);
   ZuTestCall(testNativeExport);
   ZuTestCall(testFacetInterop);

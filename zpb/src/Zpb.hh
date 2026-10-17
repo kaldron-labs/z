@@ -117,6 +117,7 @@ ZpbAPI bool readTag(ZuBSpan bytes, unsigned &pos, uint32_t &field, T &type);
 ZpbAPI bool readLength(ZuBSpan bytes, unsigned &pos, ZuBSpan &value);
 ZpbAPI bool skip(ZuBSpan bytes, unsigned &pos, uint32_t field, T type,
   unsigned maxDepth = UINT_MAX);
+// One complete delimited message: unsigned varint length followed by payload.
 ZpbAPI bool unframe(ZuBSpan frame, ZuBSpan &payload);
 
 } // Wire
@@ -1784,7 +1785,7 @@ template <typename Facet = ZuFacet::PB,
 ZuBSpan save(B &builder, const O &o) {
   As<O>::template Handler<O, Facet>::template save<Filter>(builder, o);
   if constexpr (Config<Facet>::SizePrefixed)
-    if (!builder.failed()) builder.fixed32(builder.size());
+    if (!builder.failed()) builder.varint(builder.size());
   return builder.failed() ? ZuBSpan{} : builder.bytes();
 }
 
