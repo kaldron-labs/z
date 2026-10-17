@@ -32,6 +32,8 @@ Zpb::AsMessage<"test.UpdateRow"> Zpb_Fmt(UpdateRow *);
 ZuStructFacet(PrefixedPB);
 ZpbConfig(PrefixedPB, Zpb_SizePrefixed<>);
 ZuStructReflect(UpdateRow, ZuFacet::PrefixedPB, ZuFacet::PB);
+ZuStructReflect(Payload, ZuFacet::PrefixedPB, ZuFacet::PB);
+ZuStructReflect(Envelope, ZuFacet::PrefixedPB, ZuFacet::PB);
 
 static void pooled()
 {
@@ -94,6 +96,61 @@ static void limits()
   ZuCheck(buf && buf->length == framed.length() && buf->data() == framed.data());
 }
 
+static void delimited()
+{
+  ZuTestScope(delimited);
+  // Payload lengths straddle the one/two/three-byte varint boundaries.
+  const struct {
+    unsigned length;
+    unsigned size;
+    ZuBSpan prefix;
+  } cases[] = {
+    {0, 0, {"\x00", 1}},
+    {125, 127, {"\x7f", 1}},
+    {126, 128, {"\x80\x01", 2}},
+    {16380, 16383, {"\xff\x7f", 2}},
+    {16381, 16384, {"\x80\x80\x01", 3}}
+  };
+  for (const auto &test : cases) {
+    Output data;
+    data.length(test.length);
+    if (test.length) memset(data.data(), 0x5a, test.length);
+    Payload object{data};
+    unsigned size = test.size + test.prefix.length();
+    Output output;
+    Zpb::ArrayStorage storage{output};
+    Zpb::Builder builder{storage, size};
+    auto frame = Zpb::save<ZuFacet::PrefixedPB>(builder, object);
+    ZuCheck(!builder.failed() && frame.length() == size);
+    ZuCheck(!memcmp(frame.data(), test.prefix.data(), test.prefix.length()));
+    ZuBSpan payload;
+    ZuCheck(Zpb::Wire::unframe(frame, payload) && payload.length() == test.size);
+    ZuCheck((Zpb::verify<Payload, ZuFacet::PrefixedPB>(frame)));
+    ZuCheck((Zpb::load<Payload, ZuFacet::PrefixedPB>(frame).bytes == data));
+    ZuCheck((!Zpb::verify<Payload, ZuFacet::PrefixedPB>(
+      {frame.data(), frame.length() - 1})));
+
+    Output shortOutput;
+    Zpb::ArrayStorage shortStorage{shortOutput};
+    Zpb::Builder shortBuilder{shortStorage, size - 1};
+    auto shortFrame = Zpb::save<ZuFacet::PrefixedPB>(shortBuilder, object);
+    ZuCheck(!shortFrame.length() && shortBuilder.error() == Zpb::Error::Limit);
+  }
+  const ZuBSpan invalid[] = {
+    {"", 0},                         // missing prefix
+    {"\x80", 1},                     // truncated prefix
+    {"\x01", 1},                     // missing payload
+    {"\x00\x00", 2},                 // trailing bytes
+    {"\x80\x80\x80\x80\x10", 5},     // length exceeds uint32_t
+    {"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02", 10}
+  };
+  for (auto frame : invalid) {
+    ZuBSpan payload;
+    ZuCheck(!Zpb::Wire::unframe(frame, payload));
+    ZuCheck((!Zpb::verify<Payload, ZuFacet::PrefixedPB>(frame)));
+  }
+}
+
 struct SpanStream {
   Output output;
   SpanStream &operator <<(ZuBSpan bytes) {
@@ -154,7 +211,7 @@ static void streams()
   Zpb::Builder updateBuilder{updateStorage};
   auto updateWire = Zpb::save<ZuFacet::PrefixedPB, ZfFieldFilter::Upd>(
     updateBuilder, update);
-  const uint8_t updateBytes[] = {0x02, 0, 0, 0, 0x18, 42};
+  const uint8_t updateBytes[] = {0x02, 0x18, 42};
   ZuCheck(!updateBuilder.failed() && updateWire.length() == sizeof(updateBytes) &&
     !memcmp(updateWire.data(), updateBytes, sizeof(updateBytes)));
   SpanStream updateStream;
@@ -200,5 +257,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(pooled);
   ZuTestCall(limits);
+  ZuTestCall(delimited);
   ZuTestCall(streams);
 }

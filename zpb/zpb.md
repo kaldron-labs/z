@@ -29,9 +29,17 @@ renumbering its fields; builder, generic stream, and Tx stream overloads use
 the same selection.
 
 The raw root is an unprefixed protobuf message. `Zpb_SizePrefixed<>` adds an
-outer four-byte little-endian length equal to the raw message byte count, so
-the total frame is four bytes longer than its encoded length. The framed
+outer unsigned varint length equal to the raw message byte count, following
+the protobuf delimited-message convention. The prefix excludes its own bytes;
+an empty message has a single zero byte as its frame. The framed
 facet uses the same choice for save, verify, handler, and load.
+Input must contain exactly one complete frame, with no trailing bytes.
+`ZpbIOTest::delimited` covers prefix-width boundaries, malformed frames and
+output limits; `zpbinterop::testDelimited` exchanges framed messages in both
+directions with canonical C++ protobuf's delimited-message helpers.
+`zpb/itest/zpbgotest` also exchanges raw messages and delimited sequences with
+the canonical Go `proto` and `protodelim` packages through the peer in
+`zpb/interop/go`.
 `Zpb_SizePrefixed_` accepts a config tail such as
 `Zpb::Config<ZuFacet::Base>`; a derived facet can inherit or override the
 framing choice. `ZuStructReflect` separately selects its field metadata.
@@ -52,7 +60,7 @@ protobuf language subset and its exclusions.
 
 `Builder(storage, limit)` bounds the complete output byte count. Reaching the
 limit exactly succeeds; exceeding it sets a sticky `Error::Limit` and `save`
-returns an empty span. Size-prefixed output counts its four-byte prefix.
+returns an empty span. Size-prefixed output counts its variable-length prefix.
 Other output errors, including a missing `Required` pointer, are sticky too.
 `save` returns an empty span even if earlier fields have already been written;
 `IOBuilder::buf()` does not detach a buffer after failure. Callers must check
@@ -482,5 +490,6 @@ Reference specifications: [protobuf encoding](https://protobuf.dev/programming-g
 [proto2](https://protobuf.dev/programming-guides/proto2/),
 [proto3](https://protobuf.dev/programming-guides/proto3/), and
 [field presence](https://protobuf.dev/programming-guides/field_presence/).
-The canonical tool reports `libprotoc 36.1` on this host; the focused
-`zpbinterop` executable passes 26 TAP subtests with that runtime.
+The `zpbinterop` executable contains 27 TAP subtests, including canonical
+delimited-message interchange. Go interoperability runs separately through
+`zpbgotest` when Go is configured.

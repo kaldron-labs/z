@@ -16,11 +16,25 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 tap_drivers = zprotoctest zprotocproto2
 noinst_PROGRAMS = $(tap_drivers)
 EXTRA_DIST = README.md
+noinst_HEADERS = ZpbTestUtil.hh
 CLEANFILES =
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 test: $(noinst_PROGRAMS)
 	prove -j1 $(tap_drivers)
+
+if HAVE_GO
+tap_drivers += zpbgotest
+zpbgotest_SOURCES = zpbgotest.cc
+zpbgotest_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DZPB_GO_PEER='"$(abs_top_srcdir)/zpb/interop/go/zpbpeer$(EXEEXT)"'
+go_peer = $(top_srcdir)/zpb/interop/go/zpbpeer$(EXEEXT)
+zpbgotest_DEPENDENCIES = $(filter-out -%,$(LDADD)) $(go_peer)
+$(go_peer): $(top_srcdir)/zpb/interop/go/main.go \
+	$(top_srcdir)/zpb/interop/go/go.mod $(top_srcdir)/zpb/interop/go/go.sum \
+	$(top_srcdir)/zpb/interop/go/Makefile
+	$(MAKE) -C $(top_srcdir)/zpb/interop/go GO="$(GO)" EXEEXT="$(EXEEXT)" all
+endif
 
 noinst_PROGRAMS += zprotocconsumer zprotocimport
 tap_drivers += zprotocvalues

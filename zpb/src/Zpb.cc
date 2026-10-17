@@ -6,8 +6,6 @@
 
 #include <limits.h>
 
-#include <zlib/ZuByteSwap.hh>
-
 #include <zlib/Zpb.hh>
 
 namespace Zpb::Wire {
@@ -128,11 +126,11 @@ bool skip(ZuBSpan bytes, unsigned &pos, uint32_t field, T type,
 
 bool unframe(ZuBSpan frame, ZuBSpan &payload)
 {
-  if (frame.length() < sizeof(uint32_t)) return false;
-  ZuLittleEndian<uint32_t> size;
-  memcpy(&size, frame.data(), sizeof(size));
-  if (uint32_t(size) != frame.length() - sizeof(size)) return false;
-  payload = {frame.data() + sizeof(size), uint32_t(size)};
+  unsigned pos = 0;
+  uint64_t size;
+  if (!readVarint(frame, pos, size) || size != frame.length() - pos)
+    return false;
+  payload = {frame.data() + pos, unsigned(size)};
   return true;
 }
 
