@@ -140,7 +140,7 @@ ZuDerive(OIDCFinishFn,
 ZuDerive(OIDCClockFn,
   (ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>));
 
-struct OIDCState;
+class OIDCState;
 
 class ZumAPI OIDC {
   OIDC(const OIDC &) = delete;
@@ -162,7 +162,7 @@ private:
   ZmRef<OIDCState>	m_state;
 };
 
-struct OIDCHTTPState;
+class OIDCHTTPState;
 
 class OIDCHTTP {
 public:

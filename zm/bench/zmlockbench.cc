@@ -9,7 +9,7 @@
 
 #ifndef _WIN32
 #include <pthread.h>
-#include <ck_spinlock.h>
+#include <spinlock/ticket.h>
 #endif
 
 #include <zlib/ZuTime.hh>

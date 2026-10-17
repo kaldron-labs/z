@@ -134,6 +134,7 @@ public:
   uint64_t responseBuildFailures() const;
   uint64_t transportFailures() const;
   unsigned hubCount() const;
+  void printQUICDiag();
   const CatalogView &responseCatalog() const { return *m_resCatalog; }
 
 protected:

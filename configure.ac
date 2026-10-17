@@ -118,6 +118,9 @@ case $build_os in
     ;;
 esac
 
+# ZmDemangle's inline implementation requires these in consumer links too.
+Z_MT_LIBS="$Z_MT_LIBS -lbfd -liberty"
+
 AC_MSG_RESULT([${Z_MT_LIBS}])
 
 # compilers

@@ -80,5 +80,5 @@ include $(top_srcdir)/zm/src/Makefile.inc
 ZmHeapTest_SOURCES = ZmHeapTest.cc ZmHeapTest.hh $(zm_common_sources)
 ZmHeapTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(srcdir) -DZM_EXPORTS -DZmHeap_TEST
 ZmHeapTest_LDADD = $(top_builddir)/zu/src/libZu.la \
-	@Z_MT_LIBS@ -lbfd -liberty @Z_LIBS@
+	@Z_MT_LIBS@ @Z_LIBS@
 EXTRA_DIST = README.md

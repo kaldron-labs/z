@@ -21,7 +21,7 @@ using ZmSpinLock = ZmPLock;
 #endif
 
 #ifndef _WIN32
-#include <ck_spinlock.h>
+#include <spinlock/fas.h>
 
 class ZmSpinLock {
 public:

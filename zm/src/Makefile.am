@@ -28,4 +28,4 @@ lib_LTLIBRARIES = libZm.la
 zm_srcdir = .
 include $(top_srcdir)/zm/src/Makefile.inc
 libZm_la_SOURCES = ZmHeap.cc $(zm_common_sources)
-libZm_la_LIBADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ -lbfd -liberty @Z_LIBS@
+libZm_la_LIBADD = $(top_builddir)/zu/src/libZu.la @Z_MT_LIBS@ @Z_LIBS@

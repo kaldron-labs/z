@@ -826,7 +826,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     ZmRef<Zum::DB> context, Ztls::Random &rng, OIDCSetup &state)
 {
   ZuTestScope(prepareOIDC);
-  Zum::ActionID readAction = 0, writeAction = 1;
+  Zum::ActionID readAction = 0;
   Zum::Client browser;
   browser.id = "browser";
   browser.appID = 9;
