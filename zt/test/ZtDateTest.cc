@@ -138,15 +138,22 @@ void testStrftimeAndTZ()
   );
 
 #ifdef _WIN32
-  static const char *ukTZ = "GMT";
+  const char *ukTZ = "GMT";
 #else
-  static const char *ukTZ = "GB";
+  const char *ukTZ = "GB";
 #endif
   ZuDateTime winter{ZuDateTime::YYYYMMDD{20070107}, ZuDateTime::HHMMSS{0}};
   ZuDateTime summer{ZuDateTime::YYYYMMDD{20070707}, ZuDateTime::HHMMSS{0}};
   ZuDateTimeFmt::CSV fmt;
   auto winterOff = Zt::tzOffset(winter, ukTZ);
   auto summerOff = Zt::tzOffset(summer, ukTZ);
+#ifndef _WIN32
+  if (winterOff != 0 || summerOff != 3600) {
+    ukTZ = "Europe/London";
+    winterOff = Zt::tzOffset(winter, ukTZ);
+    summerOff = Zt::tzOffset(summer, ukTZ);
+  }
+#endif
   fmt.tzOffset(winterOff);
   ZtString<> winterUK; winterUK << winter.fmt(fmt);
   fmt.tzOffset(summerOff);
