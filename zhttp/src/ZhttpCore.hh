@@ -285,7 +285,7 @@ public:
   unsigned maxSize() const { return m_ops->maxSize(m_ctx); }
   unsigned headRoom() const { return m_ops->headRoom(m_ctx); }
   unsigned tailRoom() const { return m_ops->tailRoom(m_ctx); }
-  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+  ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     return m_ops->alloc(m_ctx, headRoom);
   }
   bool reserve(unsigned length) {
