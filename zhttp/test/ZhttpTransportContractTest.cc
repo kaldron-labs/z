@@ -15,13 +15,129 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZiResolver.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpTransport.hh>
+#include "../src/ZhttpServerImpl.hh"
+#include "../src/ZhttpH2Hub.hh"
+#include "ZhttpTestUtil.hh"
 
+#include <zlib/ZuTestUtil.hh>
+using namespace ZuTestUtil;
+namespace ZhttpContractTCP_ {
+
+struct Tx : ZiTxStream<Tx> {
+  Tx() : ZiTxStream<Tx>{128, 0, 0} { }
+  ZmRef<ZiIOBuf> allocBuf_(unsigned) {
+    ZmRef<ZiIOBuf> buffer = new Zhttp::BodyBufAlloc;
+    return buffer;
+  }
+  bool sendBuf_(ZmRef<ZiIOBuf> buffer, bool) {
+    if (reject) return false;
+    wire << buffer->cspan();
+    return true;
+  }
+  ZtString<> wire;
+  bool reject = false;
+};
+const Zhttp::WriterOps &writerOps() {
+  static constexpr Zhttp::WriterOps ops{
+    [](void *p, ZuBSpan v) { *static_cast<Tx *>(p) << v; },
+    [](void *p, const Zhttp::BufferPrint &v) { *static_cast<Tx *>(p) << v; },
+    [](void *p, ZmRef<ZiIOBuf> v) { *static_cast<Tx *>(p) << ZuMv(v); },
+    [](void *p) { return static_cast<Tx *>(p)->flush(); },
+    [](const void *p) { return static_cast<const Tx *>(p)->failed(); },
+    [](const void *) -> uint64_t { return 0; },
+    [](const void *p) { return static_cast<const Tx *>(p)->maxSize(); },
+    [](const void *p) { return static_cast<const Tx *>(p)->headRoom(); },
+    [](const void *p) { return static_cast<const Tx *>(p)->tailRoom(); },
+    [](void *p, unsigned head) { return static_cast<Tx *>(p)->allocBuf(head); },
+    [](void *p, unsigned n) { return static_cast<Tx *>(p)->reserve(n); },
+    [](void *p, unsigned n) { static_cast<Tx *>(p)->commit(n); }};
+  return ops;
+}
+void writer() {
+  ZuTestScope(writer);
+  Tx tx;
+  {
+    Zhttp::Writer out{&tx, writerOps()};
+    ZuCHECK(out.reserve(3), "reserve a direct pooled output span");
+    memcpy(out.span().data(), "abc", 3);
+    out.commit(3);
+    out << ZuCSpan{"def"};
+    ZuCHECK(out.flush() && tx.wire == "abcdef", "span commits preserve append order");
+    tx.reject = true;
+    out << 'x';
+    ZuCHECK(!out.flush() && out.failed(), "flush propagates sticky transport failure");
+    out << "ignored";
+    ZuCHECK(!out.flush() && tx.wire == "abcdef", "failed writer emits no later bytes");
+  }
+  Tx prefix;
+  {
+    Zhttp::Writer out{&prefix, writerOps()};
+    out << "prefix";
+    ZuCHECK(!out.reserve(129) && out.failed(), "contiguous admission retains existing bound");
+  }
+  ZuCHECK(prefix.wire == "prefix", "destructor preserves the accepted prefix");
+}
+
+struct Offset { uint64_t padding = 1; };
+struct Response : Offset, ZmObject, Zhttp::ResBuilder {
+  ~Response() { ++*destroyed; }
+  unsigned *destroyed = nullptr;
+};
+using Responses = Zhttp::ResponseQ<Response, ZuStringT<"Zhttp.Test.ContractRes">>;
+void intrusive() {
+  ZuTestScope(intrusive);
+  unsigned destroyed = 0;
+  ZmRef<Responses::Node> node = new Responses::Node;
+  node->destroyed = &destroyed;
+  auto actual = node.ptr();
+  auto record = Zhttp::bindResponse(ZuMv(node),
+    Zhttp::CatalogData<Zhttp::DefltHdrCatalog>::configure());
+  ZuCHECK(record->ctx == actual, "erased response retains the actual allocation address");
+  {
+    auto copy = record;
+    record.reset();
+    ZuCHECK(!destroyed && copy->ctx == actual, "intrusive copies pin adjusted nodes");
+  }
+  ZuCHECK(destroyed == 1, "last erased reference destroys the actual node once");
+}
+
+struct Context { unsigned starts = 0, complete = 0; };
+struct Parser : Zhttp::Parser {
+  Parser() { ++constructs; }
+  ~Parser() { ++destroys; }
+  void init(Context &value) { context = &value; ++value.starts; }
+  void complete(Zhttp::Channel *, bool) { ++context->complete; }
+  void reset() { context = nullptr; }
+  Context *context = nullptr;
+  static inline unsigned constructs = 0, destroys = 0;
+};
+void parser() {
+  ZuTestScope(parser);
+  Context first, second;
+  auto binding = Zhttp::TypedParser<Parser, Context>::create(
+    Zhttp::CatalogData<Zhttp::DefltHdrCatalog>::configure());
+  binding.init(&first, 1024);
+  binding.complete(nullptr, true);
+  binding.reset();
+  binding.init(&second, 1024);
+  binding.complete(nullptr, true);
+  binding.reset();
+  ZuCHECK(Parser::constructs == 1 && !Parser::destroys,
+    "message completion reuses the actual parser owner");
+  ZuCHECK(first.starts == 1 && first.complete == 1 &&
+    second.starts == 1 && second.complete == 1, "callbacks use the current message context");
+  binding.destroy();
+  ZuCHECK(Parser::destroys == 1, "owner shutdown destroys the parser once");
+}
+}
 using namespace ZuTestUtil;
 
 namespace ZhttpTransportContractTest_ {
@@ -100,9 +216,19 @@ template <typename Message>
 struct BodyBuilder :
   public Zhttp::Builder,
   public Message::template Request<
-    BodyBuilder<Message>, Zhttp::DefltHdrCatalog, true, false> {
+    BodyBuilder<Message>, true, false> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using Base = Message::template Request<
-    BodyBuilder, Zhttp::DefltHdrCatalog, true, false>;
+    BodyBuilder, true, false>;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base::body;
   uint64_t contentLength() const { return 1; }
@@ -167,7 +293,7 @@ template <typename Profile, typename = void>
 struct HasProfileTraits : public ZuFalse { };
 template <typename Profile>
 struct HasProfileTraits<Profile,
-  decltype(sizeof(Zhttp::ProfileTraits<Profile>), void())> : public ZuTrue { };
+  decltype(sizeof(Zhttp::NativeTraits<Profile>), void())> : public ZuTrue { };
 
 using Invalid =
   Zhttp::Profile<Zhttp::QUIC, Zhttp::Version::H1>;
@@ -466,9 +592,16 @@ ZhttpHdrCatalogImpl(FixedHeaders)
 struct TxBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Request<
-    TxBuilder, TxHeaders, true, true> {
+    TxBuilder, true, true> {  bool streamResponse() const { return false; }
+
   using HdrCatalog = TxHeaders;
-  using Base = Zhttp::H1::Request<TxBuilder, HdrCatalog, true, true>;
+  void fields(Zhttp::FieldOutput &out) {
+    Zhttp::BuilderFields<TxBuilder> adapter{
+      this, &Zhttp::CatalogData<HdrCatalog>::configure()};
+    adapter.fields(out);
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  using Base = Zhttp::H1::Request<TxBuilder, true, true>;
   using Base::body;
   template <typename L>
   void operation(L &&l) {
@@ -488,18 +621,31 @@ struct TxBuilder :
 
 struct ResponseTxBuilder :
   public Zhttp::Builder,
-  public Zhttp::H1::Response<ResponseTxBuilder> {
-  using HdrCatalog = Zhttp::DefltHdrCatalog;
+  public Zhttp::H1::Response<ResponseTxBuilder> {  bool streamResponse() const { return false; }
 
+  using HdrCatalog = Zhttp::DefltHdrCatalog;
+  void fields(Zhttp::FieldOutput &out) {
+    Zhttp::BuilderFields<ResponseTxBuilder> adapter{
+      this, &Zhttp::CatalogData<HdrCatalog>::configure()};
+    adapter.fields(out);
+  }
+
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
   unsigned status() const { return 204; }
 };
 
 struct FixedTxBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Request<
-    FixedTxBuilder, FixedHeaders, true, false> {
+    FixedTxBuilder, true, false> {  bool streamResponse() const { return false; }
+
   using HdrCatalog = FixedHeaders;
-  using Base = Zhttp::H1::Request<FixedTxBuilder, HdrCatalog, true, false>;
+  void fields(Zhttp::FieldOutput &out) {
+    Zhttp::BuilderFields<FixedTxBuilder> adapter{
+      this, &Zhttp::CatalogData<HdrCatalog>::configure()};
+    adapter.fields(out);
+  }
+  using Base = Zhttp::H1::Request<FixedTxBuilder, true, false>;
   using Spans = Zhttp::HeaderSpans<FixedHeaders>;
   using Base::body;
 
@@ -569,9 +715,9 @@ struct HasReset<T, decltype(ZuDeclVal<T &>().reset(), void())> :
   public ZuTrue { };
 
 using ReqFacade = Zhttp::H1::Request<
-  TxBuilder, TxHeaders, true, true>;
+  TxBuilder, true, true>;
 using RespFacade = Zhttp::H1::Response<
-  TxBuilder, TxHeaders, true, true>;
+  TxBuilder, true, true>;
 ZuAssert(HasBegin<ReqFacade>{});
 ZuAssert(HasBegin<RespFacade>{});
 ZuAssert(HasReset<Zhttp::Parser>{});
@@ -1084,13 +1230,13 @@ void testMetadata()
 {
   ZuTestScope(testMetadata);
 
-  auto tcp = Zhttp::ProfileTraits<Zhttp::H1TCP>::connected(
+  auto tcp = Zhttp::NativeTraits<Zhttp::H1TCP>::connected(
     Ztcp::Connected{});
-  auto tls = Zhttp::ProfileTraits<Zhttp::H1TLS>::connected(
+  auto tls = Zhttp::NativeTraits<Zhttp::H1TLS>::connected(
     Ztls::Connected{"http/1.1", 0x304});
-  auto h2 = Zhttp::ProfileTraits<Zhttp::H2TLS>::connected(
+  auto h2 = Zhttp::NativeTraits<Zhttp::H2TLS>::connected(
     Ztls::Connected{"h2", 0x304});
-  auto quic = Zhttp::ProfileTraits<Zhttp::H3QUIC>::connected(
+  auto quic = Zhttp::NativeTraits<Zhttp::H3QUIC>::connected(
     Zquic::Connected{"h3", 1});
   ZuCHECK(tcp.transport == Zhttp::Transport::TCP &&
       !tcp.secure && tcp.httpVersion == Zhttp::Version::H1,
@@ -1253,6 +1399,121 @@ void testStream()
     "logical-stream terminals were not dispatched explicitly");
 }
 
+struct SubsetRequest : ZmObject, Zhttp::ReqBuilder {
+  uint64_t key() const { return 0; }
+};
+struct SubsetResponse : ZmObject, Zhttp::ResBuilder { };
+using SubsetResQ = Zhttp::ResponseQ<SubsetResponse,
+  ZuStringT<"Zhttp.Test.SubsetRes">>;
+using SubsetReqQ = ZmPQueue<SubsetRequest, ZmPQueueOverlap<false,
+  ZmPQueueNode<SubsetRequest, ZmPQueueHeapID<"Zhttp.Test.SubsetReq">>>>;
+
+template <typename S> struct SubsetClient;
+template <typename S> struct SubsetPool;
+template <typename S>
+using SubsetTxQ = ZmPQTx<SubsetPool<S>, SubsetReqQ, ZmPQTxOrdered<false>>;
+
+template <typename S>
+struct SubsetPool : ZmNHeap<SubsetPool<S>>,
+  Zhttp::Pool<SubsetClient<S>, SubsetTxQ<S>, Zhttp::Parser, S> {
+  friend inline ZuStringT<"Zhttp.Test.SubsetPool"> ZmNHeapID(SubsetPool *);
+  using Base = Zhttp::Pool<SubsetClient<S>, SubsetTxQ<S>, Zhttp::Parser, S>;
+  SubsetPool(SubsetClient<S> *app) : Base{app} { }
+  SubsetReqQ *txQueue() { return &requests; }
+  void archive_(SubsetReqQ::Node *) { }
+  ZmRef<SubsetReqQ::Node> retrieve_(uint64_t, uint64_t) { return {}; }
+  SubsetReqQ requests;
+};
+template <typename S>
+struct SubsetClient : Zhttp::Client<SubsetClient<S>, SubsetPool<S>> {
+  unsigned hubs() const { return this->pool_(0)->hubCount(); }
+};
+template <typename S>
+struct SubsetServer : Zhttp::Server<SubsetServer<S>, Zhttp::Parser, SubsetResQ, S> {
+  using Base = Zhttp::Server<SubsetServer<S>, Zhttp::Parser, SubsetResQ, S>;
+  using Base::connected;
+  using Base::disconnected;
+  void connected(int8_t) { }
+  void disconnected(int8_t) { }
+  void listening(int8_t, unsigned) { }
+  void listenFailed(int8_t, bool) { }
+};
+
+template <typename S>
+void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
+{
+  ZuTestScope(subset);
+  constexpr bool tcp = bool(typename S::template Has<Zhttp::H1TCP>{});
+  constexpr bool h1 = bool(typename S::template Has<Zhttp::H1TLS>{});
+  constexpr bool h2 = bool(typename S::template Has<Zhttp::H2TLS>{});
+  constexpr bool h3 = bool(typename S::template Has<Zhttp::H3QUIC>{});
+  constexpr bool secure = h1 || h2 || h3;
+  Zhttp::HubConfig hub{&mx};
+  SubsetServer<S> server;
+  ZuCHECK(!server.init(hub, Zhttp::ServerConfig{}.port(ZhttpTestPort::Profiles)) &&
+    !server.hubCount(), "selection does not activate a listener");
+  server.final();
+  auto serverConfig = Zhttp::ServerConfig{}.localIP(ZiIP{"127.0.0.1"})
+    .port(ZhttpTestPort::Profiles);
+  if constexpr (tcp) serverConfig.tcp();
+  if constexpr (h1 || h2) serverConfig.tls(Zhttp::H2Config{}
+    .certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan()));
+  if constexpr (h3) serverConfig.quic(Zhttp::QUICConfig{}
+    .certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan()));
+  bool serverOK = server.init(hub, ZuMv(serverConfig));
+  ZuCHECK(serverOK && server.hubCount() == unsigned(tcp) + unsigned(h1 || h2) + unsigned(h3),
+    "each selected family registers once, including shared TLS");
+  server.final();
+
+  SubsetClient<S> client;
+  bool initialized = client.init(hub, 1, {}, {},
+    Zhttp::H2Config{}.caPath(cert.certPath.cspan()),
+    Zhttp::QUICConfig{}.caPath(cert.certPath.cspan()));
+  bool pooled = initialized && client.pool(0,
+    Zhttp::Destination{"127.0.0.1", ZhttpTestPort::Profiles});
+  ZuCHECK(pooled, "selected client defaults produce a legal candidate");
+  const auto *config = client.config(0);
+  ZuCHECK(config && config->secure() == secure && config->tcp() == tcp &&
+    config->tls() == (h1 || h2) && config->quic() == h3,
+    "merged defaults respect the immutable capability ceiling");
+  if (pooled)
+    ZuCHECK(client.hubs() == (secure ? unsigned(h1 || h2) + unsigned(h3) : 1),
+      "only runtime-enabled selected families allocate backends");
+  client.final();
+}
+
+void subsets()
+{
+  ZuTestScope(subsets);
+  using A = Zhttp::H1TCP;
+  using B = Zhttp::H1TLS;
+  using C = Zhttp::H2TLS;
+  using D = Zhttp::H3QUIC;
+  using Sets = ZuTypeList<
+    Zhttp::Profiles<A>, Zhttp::Profiles<B>, Zhttp::Profiles<C>, Zhttp::Profiles<D>,
+    Zhttp::Profiles<A, B>, Zhttp::Profiles<A, C>, Zhttp::Profiles<A, D>,
+    Zhttp::Profiles<B, C>, Zhttp::Profiles<B, D>, Zhttp::Profiles<C, D>,
+    Zhttp::Profiles<A, B, C>, Zhttp::Profiles<A, B, D>,
+    Zhttp::Profiles<A, C, D>, Zhttp::Profiles<B, C, D>, Zhttp::AllProfiles>;
+  Zhttp::Test::TempDir cert;
+  bool certOK = cert.init();
+  ZuCHECK(certOK, "create subset fixture credentials");
+  if (!certOK) return;
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(4); })
+    .rxThread(1).txThread(2)};
+  bool started = mx.start();
+  ZuCHECK(started, "start subset fixture multiplexer");
+  if (!started) return;
+  ZiResolver::start();
+  ZuUnroll::all<Sets>([&mx, &cert]<typename S>() { subset<S>(mx, cert); });
+  using Repeated = Zhttp::Profiles<B, B, C, C>;
+  ZuAssert(Repeated::N == 2);
+  subset<Repeated>(mx, cert);
+  ZiResolver::stop();
+  ZiResolver::final();
+  mx.stop();
+}
+
 } // namespace ZhttpTransportContractTest_
 
 int main(int argc, char **argv)
@@ -1260,7 +1521,11 @@ int main(int argc, char **argv)
   using namespace ZhttpTransportContractTest_;
 
   parse(argc, argv);
+  ZiTestResidue::init("ZhttpTransportContractTest");
   ZuTestMain();
+  ZuTestCall(ZhttpContractTCP_::writer);
+  ZuTestCall(ZhttpContractTCP_::intrusive);
+  ZuTestCall(ZhttpContractTCP_::parser);
   ZuTestCall(testTraits);
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
@@ -1273,5 +1538,6 @@ int main(int argc, char **argv)
   ZuTestCall(testCommitFailures);
   ZuTestCall(testBodyRx);
   ZuTestCall(testStream);
+  ZuTestCall(subsets);
   return 0;
 }

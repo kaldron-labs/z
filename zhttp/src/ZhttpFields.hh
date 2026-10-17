@@ -18,9 +18,11 @@
 #include <zlib/ZuSwitch.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuTraits.hh>
+#include <zlib/ZuUnroll.hh>
 #include <zlib/Zu_aton.hh>
 
 #include <zlib/ZmAssert.hh>
+#include <zlib/ZmSingleton.hh>
 
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtArray.hh>
@@ -37,90 +39,11 @@ struct ZhttpAPI DefltHdrCatalog {
   using List = ZuTypeList<>;
   static int nameMatch(ZuBSpan);
   static int valueMatch(unsigned, ZuBSpan);
+  static int fieldMatch(ZuBSpan);
 };
 
 ZtEnumNS(ZhttpAPI, FieldSection, int8_t, Informational, Final, Trailers);
 namespace FieldSection { enum { Invalid = -1 }; }
-
-class BodyRx {
-public:
-  using Queue = ZiRxQueue;
-  using Stream = ZiRxStream<Queue>;
-  using BufAlloc = Zi::IOBufAlloc<
-    Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zhttp.Body.Rx">>;
-  using WireBufAlloc = Zi::IOBufAlloc<
-    Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zhttp.Wire.Rx.Split">>;
-
-  BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
-
-  void reset() {
-    m_rx.clean();
-    m_received = m_consumed = 0;
-  }
-  void reset(uint64_t max) { m_max = max; reset(); }
-  uint64_t discard() {
-    uint64_t n = m_rx.length();
-    m_rx.clean();
-    m_consumed += n;
-    return n;
-  }
-
-  Stream &rx() { return m_rx; }
-  const Stream &rx() const { return m_rx; }
-  uint64_t received() const { return m_received; }
-  uint64_t consumed() const { return m_consumed; }
-  uint64_t max() const { return m_max; }
-
-  template <typename NodeRef, typename L>
-  bool push(NodeRef &&node, L &&l) {
-    unsigned n = node->length;
-    if (ZuUnlikely(uint64_t(n) > m_max - m_received)) return false;
-    if (!n) return true;
-    m_received += n;
-    m_rx.push(ZuFwd<NodeRef>(node));
-    prompt(ZuFwd<L>(l));
-    return true;
-  }
-
-  template <typename SrcQueue, typename Frame,
-    typename SrcAlloc, typename DstAlloc, typename L,
-    typename Transform = Zi::RxPass>
-  int64_t splice(
-    ZiRxStream<SrcQueue> &src, uint64_t length, Frame &&frame,
-    SrcAlloc &&srcAlloc, DstAlloc &&dstAlloc,
-    uint64_t headLen, uint64_t tailLen, L &&l,
-    Transform &&transform = {})
-  {
-    if (ZuUnlikely(length > m_max - m_received)) return -1;
-    int64_t n = src.splice(
-      m_rx, ZuFwd<Frame>(frame),
-      ZuFwd<SrcAlloc>(srcAlloc), ZuFwd<DstAlloc>(dstAlloc),
-      headLen, tailLen, ZuFwd<Transform>(transform));
-    if (n <= 0) return n;
-    m_received += length;
-    if (length) prompt(ZuFwd<L>(l));
-    return n;
-  }
-
-  template <typename L>
-  uint64_t prompt(L &&l) {
-    uint64_t before = m_rx.length();
-    ZuFwd<L>(l)(m_rx);
-    uint64_t after = m_rx.length();
-    ZmAssert(after <= before);
-    uint64_t n = before - after;
-    m_consumed += n;
-    return n;
-  }
-
-private:
-  Stream	m_rx;
-  uint64_t	m_max;
-  uint64_t	m_received = 0;
-  uint64_t	m_consumed = 0;
-};
 
 template <typename Rx, typename L>
 bool bodyEach(Rx &rx, L &&l) {
@@ -145,6 +68,45 @@ using String = ZtBArray<ZtArrayHeapID<"Zhttp.Fields.String">>;
 
 ZhttpAPI bool forbidden(ZuBSpan);
 ZhttpAPI int pseudo(ZuBSpan);
+ZhttpAPI FieldClass classify(ZuBSpan);
+
+struct FieldNames {
+  using Pseudo = ZuStringTL<
+    ":method", ":path", ":scheme", ":authority", ":protocol">;
+  using Forbidden = ZuStringTL<
+    "connection", "proxy-connection", "keep-alive", "transfer-encoding", "upgrade">;
+  using Keys = ZuTypeConcat<Pseudo, Forbidden>;
+};
+
+template <typename Name, typename Names> struct HasFieldName;
+template <typename Name, typename ...N>
+struct HasFieldName<Name, ZuTypeList<N...>> :
+  ZuBool<((Name{}() == N{}()) || ... || false)> { };
+
+template <typename Catalog, typename Names = FieldNames::Keys> struct WireNames;
+template <typename Catalog, typename ...N>
+struct WireNames<Catalog, ZuTypeList<N...>> {
+  using Configured = typename HeaderList<Catalog>::Keys;
+  using Extra = ZuTypeConcat<ZuIf<HasFieldName<N, Configured>{},
+    ZuTypeList<>, ZuTypeList<N>>...>;
+  using Keys = ZuTypeConcat<Configured, Extra>;
+};
+
+template <typename Catalog>
+int fieldMatch(ZuBSpan name) {
+  static constexpr auto matcher = ZuMatcher<WireNames<Catalog>>();
+  return matcher.exact(name);
+}
+
+template <typename ...N>
+ZuSpan<const int8_t> wireExtraMap(ZuTypeList<N...>) {
+  if constexpr (sizeof...(N)) {
+    static constexpr int8_t map[]{int8_t(ZuTypeIndex<N, FieldNames::Keys>{})...};
+    return map;
+  } else return {};
+}
+
+ZhttpAPI FieldClass wireClass(unsigned);
 
 template <typename HdrCatalog>
 struct NameIDs { using Keys = HeaderList<HdrCatalog>::Keys; };
@@ -221,214 +183,182 @@ void dispatch(
     unknown(key, value);
 }
 
-inline bool nameOK(ZuBSpan name) {
-  if (!name) return false;
-  unsigned offset = name[0] == ':';
-  if (offset == name.length()) return false;
-  for (unsigned i = offset, n = name.length(); i < n; ++i) {
-    int c = name[i];
-    if (c >= 'A' && c <= 'Z') return false;
-    if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) continue;
-    switch (c) {
-      case '!': case '#': case '$': case '%': case '&': case '\'':
-      case '*': case '+': case '-': case '.': case '^': case '_':
-      case '`': case '|': case '~':
-	break;
-      default:
-	return false;
-    }
-  }
-  return true;
-}
+} // namespace Fields
 
-inline bool uint64(ZuBSpan value, uint64_t &result) {
-  if (!value) return false;
-  uint64_t n = 0;
-  for (unsigned i = 0, l = value.length(); i < l; ++i) {
-    unsigned digit = unsigned(value[i] - '0');
-    if (digit > 9 || n > (uint64_t(-1) - digit) / 10) return false;
-    n = n * 10 + digit;
-  }
-  result = n;
-  return true;
-}
+template <typename> struct FieldNameTypes;
+template <typename ...Name>
+struct FieldNameTypes<ZuTypeList<Name...>> {
+  using T = ZuTypeList<ZuStringT<Name{}()>...>;
+};
 
-template <bool Request_>
-class Semantics {
+template <typename List, typename Seq = ZuMkSeq<List::N>>
+struct CatalogValueCount;
+template <typename List, unsigned ...I>
+struct CatalogValueCount<List, ZuSeq<I...>> {
+  enum { N = (List::template Value<I>::N + ... + 0) };
+};
+
+// Configuration-owned, immutable after publication. Duplicate declarations
+// borrow the same classification entry; names/values borrow static ZuStringT
+// storage. Protocol seeds and dispatch share this view across all sessions.
+template <typename Catalog>
+class CatalogData {
+  using List = HeaderList<Catalog>;
+  using Names = ZuTypeUnique<typename FieldNameTypes<typename List::Keys>::T>;
+  using Classes = ZtArray<FieldClass, ZtArrayHeapID<"Zhttp.Catalog.Class">>;
+  using Values = ZtArray<ZuBSpan, ZtArrayHeapID<"Zhttp.Catalog.Value">>;
+  using Fields = ZtArray<FieldMeta, ZtArrayHeapID<"Zhttp.Catalog.Field">>;
+
 public:
-  enum { Request = Request_ };
+  CatalogData() :
+    m_classes{classes_()}, m_values{values_()},
+    m_fields{fields_(m_classes, m_values)},
+    m_view{m_fields, Catalog::nameMatch, Catalog::valueMatch, Catalog::fieldMatch,
+      Zhttp::Fields::wireExtraMap(typename Zhttp::Fields::WireNames<Catalog>::Extra{})} { }
 
-  void trailers(bool value) { m_trailers = value; }
-  void requestMethod(Method::T value) { m_requestMethod = value; }
-  void extendedConnect(bool value) { m_extendedConnect = value; }
-  bool bodyAllowed() const { return !m_noBody; }
-
-  template <typename Header>
-  bool field(ZuBSpan name, ZuSpan<uint8_t> value, Header &&header) {
-    if (!nameOK(name)) return false;
-    if (name[0] == ':')
-      return pseudo_(name, value, ZuFwd<Header>(header));
-    m_regular = true;
-    enum { Other, Te, ContentLength } kind = Other;
-    switch (name.length()) {
-      case 2: if (name == "te") kind = Te; break;
-      case 14: if (name == "content-length") kind = ContentLength; break;
-    }
-    if (kind == Other && forbidden(name)) return false;
-    switch (kind) {
-      case Te:
-	if (value != "trailers") return false;
-	break;
-      case ContentLength: {
-	if (m_trailers) return false;
-	uint64_t length;
-	if (!uint64(value, length)) return false;
-	if (m_contentLength && length != m_length) return false;
-	m_contentLength = true;
-	m_length = length;
-	break;
-      }
-      default: break;
-    }
-    header(name, value);
-    return true;
-  }
-
-  template <typename Operation, typename Status, typename Header>
-  bool start(Operation &&operation, Status &&status, Header &&header) {
-    if (m_trailers || m_started) return true;
-    if (!valid_()) return false;
-    if constexpr (Request) {
-      Target target;
-      auto e = Target::fromPseudo(
-	target, m_method, m_scheme,
-	m_authority.span(), m_path.span(), m_protocol.span());
-      if (!e.ok()) return false;
-      m_started = true;
-      operation(m_method, target);
-      header("host", m_authority.span());
-    } else {
-      m_started = true;
-      status(m_status);
-      m_noBody =
-	m_requestMethod == Method::HEAD ||
-	m_status < 200 || m_status == 204 || m_status == 304;
-    }
-    return true;
-  }
-
-  template <typename Operation, typename Status, typename Header>
-  FieldSection::T finish(
-      Operation &&operation, Status &&status, Header &&header) {
-    if (m_trailers)
-      return m_seen ? FieldSection::Invalid : FieldSection::Trailers;
-    if (!valid_() ||
-	!start(ZuFwd<Operation>(operation), ZuFwd<Status>(status),
-	  ZuFwd<Header>(header)))
-      return FieldSection::Invalid;
-    if constexpr (Request)
-      return FieldSection::Final;
-    else
-      return m_status < 200 ? FieldSection::Informational : FieldSection::Final;
-  }
-
-  FieldSection::T section() const {
-    if (m_trailers) return FieldSection::Trailers;
-    if constexpr (Request) return FieldSection::Final;
-    return m_status < 200 ? FieldSection::Informational : FieldSection::Final;
+  // Called during endpoint/catalog configuration before processing messages.
+  static const CatalogView &configure() {
+    return ZmSingleton<CatalogData>::instance()->m_view;
   }
 
 private:
-  enum : uint8_t {
-    MethodSeen = 1U<<0,
-    PathSeen = 1U<<1,
-    SchemeSeen = 1U<<2,
-    AuthoritySeen = 1U<<3,
-    ProtocolSeen = 1U<<4,
-    StatusSeen = 1U<<0
-  };
-
-  bool valid_() const {
-    if constexpr (Request) {
-      if (!(m_seen & MethodSeen)) return false;
-      if (m_method == Method::CONNECT) {
-	if (!(m_seen & AuthoritySeen)) return false;
-	if (m_seen & ProtocolSeen)
-	  return m_extendedConnect &&
-	    (m_seen & SchemeSeen) && (m_seen & PathSeen) &&
-	    !m_contentLength;
-	return !(m_seen & (SchemeSeen | PathSeen));
-      }
-      return (m_seen & (SchemeSeen | PathSeen)) ==
-	(SchemeSeen | PathSeen) && !(m_seen & ProtocolSeen);
-    } else
-      return m_seen == StatusSeen;
+  static Classes classes_() {
+    Classes data;
+    data.size(Names::N);
+    ZuUnroll::all<Names>([&data]<typename Name>() {
+      auto name = ZuBSpan{Name{}()};
+      bool forbidden = Zhttp::Fields::forbidden(name);
+      int pseudo = Zhttp::Fields::pseudo(name);
+      constexpr int policy =
+	Name{}() == "alt-svc" ? FieldClass::AltSvc :
+	Name{}() == "connection" ? FieldClass::Connection :
+	Name{}() == "location" ? FieldClass::Location : FieldClass::None;
+      new (data.push()) FieldClass{int8_t(pseudo), forbidden, int8_t(policy)};
+    });
+    return data;
   }
 
-  template <typename Header>
-  bool pseudo_(ZuBSpan name, ZuBSpan value, Header &&header) {
-    if (m_trailers || m_regular) return false;
-    if constexpr (Request) {
-      int i = pseudo(name);
-      if (i < 0) return false;
-      uint8_t bit = uint8_t(1U << unsigned(i));
-      if (m_seen & bit) return false;
-      m_seen |= bit;
-      switch (i) {
-	case 0:
-	  m_method = Method::lookup(value);
-	  return m_method >= 0;
-	case 1:
-	  if (!value) return false;
-	  m_path = value;
-	  return true;
-	case 2:
-	  m_scheme = Scheme::parse(value);
-	  return m_scheme >= 0;
-	case 3:
-	  if (!value) return false;
-	  m_authority = value;
-	  return true;
-	case 4:
-	  if (!value) return false;
-	  m_protocol = value;
-	  return true;
-      }
-      return false;
-    } else {
-      if (name != ":status" || m_seen) return false;
-      if (value.length() != 3) return false;
-      unsigned status = 0;
-      for (unsigned i = 0; i < 3; ++i) {
-	int c = value[i];
-	if (c < '0' || c > '9') return false;
-	status = status * 10 + unsigned(c - '0');
-      }
-      if (status < 100) return false;
-      m_seen = StatusSeen;
-      m_status = status;
-      return true;
-    }
+  static Values values_() {
+    Values data;
+    data.size(CatalogValueCount<List>::N);
+    ZuUnroll::all<List::N>([&data](auto I) {
+      using V = typename List::template Value<I>;
+      ZuUnroll::all<V>([&data]<typename Value>() {
+	data.push(ZuBSpan{Value{}()});
+      });
+    });
+    return data;
   }
 
-  String	m_path;
-  String	m_authority;
-  String	m_protocol;
-  uint64_t	m_length = 0;
-  unsigned	m_status = 0;
-  Method::T	m_method = -1;
-  Method::T	m_requestMethod = -1;
-  Scheme::T	m_scheme = -1;
-  uint8_t	m_seen = 0;
-  bool		m_regular = false;
-  bool		m_trailers = false;
-  bool		m_contentLength = false;
-  bool		m_noBody = false;
-  bool		m_extendedConnect = false;
-  bool		m_started = false;
+  static Fields fields_(const Classes &classes, const Values &values) {
+    Fields data;
+    data.size(List::N);
+    unsigned offset = 0;
+    ZuUnroll::all<List::N>([&data, &classes, &values, &offset](auto I) {
+      using Name = typename List::template Key<I>;
+      using V = typename List::template Value<I>;
+      constexpr unsigned nameID = ZuTypeIndex<ZuStringT<Name{}()>, Names>{};
+      ZuSpan<const ZuBSpan> declared;
+      if constexpr (V::N) declared = {values.data() + offset, V::N};
+      new (data.push()) FieldMeta{
+	ZuBSpan{Name{}()}, declared, &classes[nameID]};
+      offset += V::N;
+    });
+    return data;
+  }
+
+  const Classes	m_classes;
+  const Values	m_values;
+  const Fields	m_fields;
+  const CatalogView m_view;
 };
 
-} // namespace Fields
+
+class Channel;
+
+// Rx-owned. The typed session/operation owns ctx and its actual parser object.
+// Completion does not destroy that storage; its owner destroys it after drain.
+struct ParserOps {
+  void (*init)(void *, void *);
+  void (*bodyMax)(void *, uint64_t);
+  void (*destroy)(void *);
+  bool (*enable1xx)(const void *);
+  bool (*operation)(void *, Method::T, Target &);
+  void (*status)(void *, unsigned);
+  void (*header)(void *, FieldSection::T, int, int,
+    ZuBSpan, ZuSpan<uint8_t>);
+  bool (*bodyInfo)(void *, Channel *, BodyType::T, uint64_t);
+  bool (*body)(void *, Input &);
+  void (*complete)(void *, Channel *, bool);
+  void (*reset)(void *);
+  void (*connectedInfo)(void *, void *, Channel *, const ConnectedInfo &);
+  void (*disconnected)(void *, Channel *, bool);
+};
+
+struct ParserBinding {
+  void *ctx;
+  const ParserOps *ops;
+  const CatalogView *catalog;
+  Channel *channel = nullptr;
+
+  void init(void *context, uint64_t max) {
+    ops->init(ctx, context);
+    ops->bodyMax(ctx, max);
+  }
+  void destroy() { ops->destroy(ctx); }
+  void connectedInfo(void *owner, const ConnectedInfo &info) {
+    if (ops->connectedInfo) ops->connectedInfo(ctx, owner, channel, info);
+  }
+  void disconnected(bool peer) {
+    if (ops->disconnected) ops->disconnected(ctx, channel, peer);
+  }
+  bool enable1xx() const { return ops->enable1xx(ctx); }
+  bool operation(Method::T method, Target &target) {
+    return ops->operation(ctx, method, target);
+  }
+  void status(unsigned value) { ops->status(ctx, value); }
+  void header(FieldSection::T section, int key,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = key < 0 ? -1 : catalog->valueMatch(key, value);
+    ops->header(ctx, section, key, fixed, name, value);
+  }
+  bool bodyInfo(BodyType::T type, uint64_t length) {
+    return ops->bodyInfo(ctx, channel, type, length);
+  }
+  bool body(Input &input) { return ops->body(ctx, input); }
+  void complete(Channel *channel, bool ok) { ops->complete(ctx, channel, ok); }
+  void reset() { ops->reset(ctx); }
+};
+
+// Small compiled dispatch adapter. The concrete wire machine supplies IDs from
+// the catalog matcher; no second lookup or response-context search occurs here.
+template <typename Parser>
+void parserHeader(Parser &parser, FieldSection::T section,
+    int key, int fixed, ZuBSpan name, ZuSpan<uint8_t> value) {
+  using List = HeaderList<typename Parser::HdrCatalog>;
+  if constexpr (List::N) {
+    if (key >= 0) {
+      ZuSwitch::dispatch<List::N>(key,
+	[&parser, section, fixed, value](auto I) {
+	  using Key = typename List::template Key<I>;
+	  using Values = typename List::template Value<I>;
+	  if constexpr (Values::N) {
+	    if (fixed >= 0) {
+	      ZuSwitch::dispatch<Values::N>(fixed, [&parser, section](auto J) {
+		parser.template header<Key, ZuType<J, Values>>(section);
+	      });
+	      return;
+	    }
+	  }
+	  parser.template header<Key>(section, value);
+	});
+      return;
+    }
+  }
+  if constexpr (Fields::HasRuntime<Parser>{})
+    parser.header(section, name, value);
+}
+
 
 } // namespace Zhttp
 
@@ -437,6 +367,7 @@ private:
     using List = Headers; \
     static int nameMatch(ZuBSpan); \
     static int valueMatch(unsigned, ZuBSpan); \
+    static int fieldMatch(ZuBSpan); \
   }
 #define ZhttpHdrCatalogImpl(Name) \
   int Name::nameMatch(ZuBSpan key) { \
@@ -444,6 +375,9 @@ private:
   } \
   int Name::valueMatch(unsigned key, ZuBSpan value) { \
     return Zhttp::Fields::valueMatch<Name>(key, value); \
+  } \
+  int Name::fieldMatch(ZuBSpan key) { \
+    return Zhttp::Fields::fieldMatch<Name>(key); \
   }
 
 #endif /* ZhttpFields_HH */

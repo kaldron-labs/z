@@ -155,11 +155,12 @@ struct Parser : public Zrest::MReqParser<Catalog> {
   }
 };
 struct Builder : public ZmObject, public Zrest::MResBuilder<Catalog> { };
-ZmListDerive(BuilderQ, Builder,
-  ZmListNode<Builder, ZmListHeapID<"Ztc.Hub.SSFReply">>);
+using BuilderQ = Zhttp::ResponseQ<Builder, ZuStringT<"Ztc.Hub.SSFReply">>;
 
-struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ> {
-  using HTTP = Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ>;
+struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ,
+  Zhttp::Profiles<Zhttp::H1TLS>> {
+  using HTTP = Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ, Zhttp::Profiles<Zhttp::H1TLS>>;
+  using Route = Zhttp::Route<BuilderQ::Node>;
   using HTTP::connected;
   using HTTP::disconnected;
   Ztc::Hubd *hub = nullptr;
@@ -177,8 +178,8 @@ struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ> {
   void connected(int8_t) { }
   void disconnected(int8_t) { }
 
-  template <typename Req, typename Link>
-  static void reply(ZmRef<Link> link, unsigned status) {
+  template <typename Req>
+  static void reply(Route link, unsigned status) {
     ZmRef<Reply> object = new Reply{};
     ZmRef<BuilderQ::Node> response = new BuilderQ::Node{};
     switch (status) {
@@ -189,11 +190,11 @@ struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ> {
       default: response->template init<Response<503>, Req>(object.ptr()); break;
 #undef ZTC_SSF_RESPONSE
     }
-    link->send(ZuMv(response));
+    link.send(ZuMv(response));
   }
 
-  template <typename Req, typename Link>
-  static void sessionReply(ZmRef<Link> link, unsigned status,
+  template <typename Req>
+  static void sessionReply(Route link, unsigned status,
       Ztc::HubString cookie = {}) {
     auto object = ZmRef<SessionReply>{new SessionReply};
     object->cookie = ZuMv(cookie);
@@ -206,17 +207,17 @@ struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ> {
       default: response->template init<Response<503>, Req>(object.ptr()); break;
 #undef ZTC_SESSION_RESPONSE
     }
-    link->send(ZuMv(response));
+    link.send(ZuMv(response));
   }
 
   template <typename Req, typename Link>
   void request(Link *link, const Req &request, bool ok) {
-    if (!ok) return reply<Req>(ZmRef<Link>{link}, 400);
+    if (!ok) return reply<Req>(Route{link, Req::Method}, 400);
     hub->receiveSET(Zum::ServiceSETRequest{
       .authorization = request.authorization,
       .contentType = request.contentType,
       .body = ZuMv(request.object->data)},
-      [hold = ZmRef<Link>{link}](int error) mutable {
+      [hold = Route{link, Req::Method}](int error) mutable {
         unsigned status = error == Zum::ServiceError::OK ? 202 :
           error == Zum::ServiceError::Unauthorized ? 401 :
           error == Zum::ServiceError::Unavailable ? 503 : 400;
@@ -226,21 +227,21 @@ struct App : public Zhttp::Server<App, SSF_::Parser, SSF_::BuilderQ> {
 
   template <typename Link>
   void session(Link *link, const SSF_::Session &request, bool ok) {
-    if (!ok) return sessionReply<SSF_::Session>(ZmRef<Link>{link}, 400);
+    if (!ok) return sessionReply<SSF_::Session>(Route{link, SSF_::Session::Method}, 400);
     if (!bearer(request.authorization))
-      return sessionReply<SSF_::Session>(ZmRef<Link>{link}, 401);
+      return sessionReply<SSF_::Session>(Route{link, SSF_::Session::Method}, 401);
     bool originOK = false;
     for (auto &origin: origins)
       if (request.origin == origin) { originOK = true; break; }
     if (!originOK)
-      return sessionReply<SSF_::Session>(ZmRef<Link>{link}, 401);
+      return sessionReply<SSF_::Session>(Route{link, SSF_::Session::Method}, 401);
     Ztc::HubString token;
     token << ZuCSpan{request.authorization}.offset(7);
-    auto hold = ZmRef<Link>{link};
+    auto hold = Route{link, SSF_::Session::Method};
     hub->verify(ZuMv(token), [this, hold = ZuMv(hold)](
         int error, Zum::ServicePrincipal principal) mutable {
-      auto server = hold->app();
-      server->rxRun([this, hold = ZuMv(hold), error,
+      auto channel = hold.channel();
+      channel->rxRun([this, hold = ZuMv(hold), error,
           principal = ZuMv(principal)]() mutable {
         if (error != Zum::ServiceError::OK) {
           sessionReply<SSF_::Session>(ZuMv(hold), 401);

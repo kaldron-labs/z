@@ -11,6 +11,7 @@
 #include <zlib/ZmObject.hh>
 
 #include <zlib/ZhttpH2Hub.hh>
+#include "../src/ZhttpServerImpl.hh"
 
 using namespace ZuTestUtil;
 

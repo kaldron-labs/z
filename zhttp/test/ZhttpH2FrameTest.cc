@@ -12,6 +12,7 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZhttpH2.hh>
+#include "../src/ZhttpServerImpl.hh"
 #include <zlib/ZhttpHPack.hh>
 
 using namespace ZuTestUtil;

@@ -16,6 +16,7 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpCore.hh>
+#include "ZhttpFieldImpl.hh"
 
 namespace Zhttp {
 

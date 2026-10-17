@@ -20,7 +20,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
-#include <zlib/Zhttp.hh>
+#include "../src/ZhttpWire.hh"
 #include <zlib/ZtString.hh>
 
 #include "ZhttpTestUtil.hh"
@@ -85,9 +85,19 @@ ZhttpHdrCatalogDerive(RequestBuilderHeaders, RequestBuilderHeaderList);
 ZhttpHdrCatalogImpl(RequestBuilderHeaders)
 struct RequestRx :
   public Zhttp::Parser,
-  public Zhttp::H1::Parser<RequestRx, true, RequestHeaders> {
-  using Base = Zhttp::H1::Parser<RequestRx, true, RequestHeaders>;
+  public Zhttp::H1::Parser<RequestRx, true> {
+  using Base = Zhttp::H1::Parser<RequestRx, true>;
   using HdrCatalog = RequestHeaders;
+
+  const Zhttp::CatalogView &catalog() const {
+    return Zhttp::CatalogData<HdrCatalog>::configure();
+  }
+  using Zhttp::Parser::header;
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id,
+      id < 0 ? -1 : catalog().valueMatch(id, value), name, value);
+  }
 
   RequestRx() : Base{FallbackMaxBody} { }
 
@@ -115,10 +125,20 @@ struct RequestRx :
 
 struct ResponseRx :
   public Zhttp::Parser,
-  public Zhttp::H1::Parser<ResponseRx, false, Zhttp::DefltHdrCatalog> {
+  public Zhttp::H1::Parser<ResponseRx, false> {
   using Base =
-    Zhttp::H1::Parser<ResponseRx, false, Zhttp::DefltHdrCatalog>;
+    Zhttp::H1::Parser<ResponseRx, false>;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
+
+  const Zhttp::CatalogView &catalog() const {
+    return Zhttp::CatalogData<HdrCatalog>::configure();
+  }
+  using Zhttp::Parser::header;
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id,
+      id < 0 ? -1 : catalog().valueMatch(id, value), name, value);
+  }
 
   ResponseRx() : Base{FallbackMaxBody} { }
 
@@ -143,12 +163,21 @@ struct ResponseRx :
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H1::Response<
-    ResponseBuilder, ResponseHeaders, true> {
+    ResponseBuilder, true> {
   using Base =
     Zhttp::H1::Response<
-      ResponseBuilder, ResponseHeaders, true>;
+      ResponseBuilder, true>;
   using HdrCatalog = ResponseHeaders;
   using Zhttp::Builder::header;
+  void fields(Zhttp::FieldOutput &out) {
+    Zhttp::BuilderFields<ResponseBuilder> adapter{this,
+      &Zhttp::CatalogData<HdrCatalog>::configure()};
+    adapter.fields(out);
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
+
 
   ResponseBuilder(uint64_t contentLength_) : contentLength_{contentLength_} { }
 
@@ -163,11 +192,20 @@ struct ResponseBuilder :
 
 struct RequestBuilder :
   public Zhttp::Builder,
-  public Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders> {
+  public Zhttp::H1::Request<RequestBuilder> {
   using Base =
-    Zhttp::H1::Request<RequestBuilder, RequestBuilderHeaders>;
+    Zhttp::H1::Request<RequestBuilder>;
   using HdrCatalog = RequestBuilderHeaders;
   using Zhttp::Builder::header;
+  void fields(Zhttp::FieldOutput &out) {
+    Zhttp::BuilderFields<RequestBuilder> adapter{this,
+      &Zhttp::CatalogData<HdrCatalog>::configure()};
+    adapter.fields(out);
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
+
 
   template <typename L>
   void operation(L &&l) {

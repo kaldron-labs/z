@@ -24,7 +24,8 @@ namespace ZhttpTestPort {
     ClientCancel = 20437,
     ClientCancelEnd = 20445,
     ClientPool = 20446,
-    ClientPoolEnd = 20479
+    ClientPoolEnd = 20479,
+    Profiles = 20480
   };
 }
 

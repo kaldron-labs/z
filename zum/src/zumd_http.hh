@@ -16,6 +16,7 @@
 
 #include <zlib/ZfJSON.hh>
 
+#include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestServer.hh>
 
 #include <zlib/zumd_server.hh>
@@ -548,7 +549,7 @@ public:
   void authorize(Link *link, const AuthorizeReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<AuthorizeReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<AuthorizeReq<App>>(route_<AuthorizeReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -556,7 +557,7 @@ public:
     String query = request.object->data;
     String cookie{request.cookie};
     m_server->authorize(request.object->appID, ZuMv(query), ZuMv(cookie),
-      [this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      [this, hold = route_<AuthorizeReq<App>>(link)](ServerReply reply) mutable {
       respond_<AuthorizeReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -565,7 +566,7 @@ public:
   void token(Link *link, const TokenReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<TokenReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<TokenReq<App>>(route_<TokenReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -573,7 +574,7 @@ public:
     String form{request.object->data};
     String authorization{request.authorization};
     m_server->token(request.object->appID, ZuMv(form), ZuMv(authorization), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<TokenReq<App>>(link)
     ](ServerReply reply) mutable {
       respond_<TokenReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -583,7 +584,7 @@ public:
   void revoke(Link *link, const RevokeReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<RevokeReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<RevokeReq<App>>(route_<RevokeReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -591,7 +592,7 @@ public:
     String form{request.object->data};
     String authorization{request.authorization};
     m_server->revoke(request.object->appID, ZuMv(form), ZuMv(authorization), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<RevokeReq<App>>(link)
     ](ServerReply reply) mutable {
       respond_<RevokeReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -601,13 +602,13 @@ public:
   void login(Link *link, const LoginReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<LoginReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<LoginReq<App>>(route_<LoginReq<App>>(link), ServerReply{
         .body = httpJSON(HTTPEmpty{}), .type = ReplyType::ServerError});
       return;
     }
     String cookie{request.cookie};
-    m_server->login(request.object->appID, ZuMv(cookie), [this, hold = ZmRef<Link>{link}](
-	ServerReply reply) mutable {
+    m_server->login(request.object->appID, ZuMv(cookie),
+      [this, hold = route_<LoginReq<App>>(link)](ServerReply reply) mutable {
       respond_<LoginReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -616,7 +617,7 @@ public:
   void login(Link *link, const LoginPostReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<LoginPostReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<LoginPostReq<App>>(route_<LoginPostReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -624,7 +625,7 @@ public:
     String form{request.object->data};
     String cookie{request.cookie};
     m_server->login(request.object->appID, ZuMv(form), ZuMv(cookie), [
-      this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      this, hold = route_<LoginPostReq<App>>(link)](ServerReply reply) mutable {
       respond_<LoginPostReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -633,7 +634,7 @@ public:
   void logout(Link *link, const LogoutReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<LogoutReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<LogoutReq<App>>(route_<LogoutReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -641,7 +642,7 @@ public:
     String form{request.object->data};
     String cookie{request.cookie};
     m_server->logout(request.object->appID, ZuMv(form), ZuMv(cookie), [
-      this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      this, hold = route_<LogoutReq<App>>(link)](ServerReply reply) mutable {
       respond_<LogoutReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -650,7 +651,7 @@ public:
   void consent(Link *link, const ConsentReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<ConsentReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<ConsentReq<App>>(route_<ConsentReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -658,7 +659,7 @@ public:
     String form{request.object->data};
     String cookie{request.cookie};
     m_server->consent(request.object->appID, ZuMv(form), ZuMv(cookie), [
-      this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+      this, hold = route_<ConsentReq<App>>(link)](ServerReply reply) mutable {
       respond_<ConsentReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
@@ -668,14 +669,14 @@ public:
       Link *link, const PasskeyBeginReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<PasskeyBeginReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<PasskeyBeginReq<App>>(route_<PasskeyBeginReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
     }
     String json{request.object->data};
     m_server->passkeyBegin(request.object->appID, ZuMv(json), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<PasskeyBeginReq<App>>(link)
     ](ServerReply reply) mutable {
       respond_<PasskeyBeginReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -686,7 +687,7 @@ public:
       Link *link, const PasskeyFinishReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<PasskeyFinishReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<PasskeyFinishReq<App>>(route_<PasskeyFinishReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -695,7 +696,7 @@ public:
     String query{request.query.data};
     String cookie{request.cookie};
     m_server->passkeyFinish(request.object->appID, ZuMv(query), ZuMv(cookie), ZuMv(json), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<PasskeyFinishReq<App>>(link)
     ](ServerReply reply) mutable {
       passkeyReply(reply);
       respond_<PasskeyFinishReq<App>>(ZuMv(hold), ZuMv(reply));
@@ -706,11 +707,11 @@ public:
   void metadata(Link *link, const MetadataReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<MetadataReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<MetadataReq<App>>(route_<MetadataReq<App>>(link), ServerReply{
         .body = httpJSON(HTTPEmpty{}), .type = ReplyType::ServerError});
       return;
     }
-    m_server->metadata(request.object->appID, [this, hold = ZmRef<Link>{link}](
+    m_server->metadata(request.object->appID, [this, hold = route_<MetadataReq<App>>(link)](
         ServerReply reply) mutable {
       respond_<MetadataReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -720,11 +721,11 @@ public:
   void jwks(Link *link, const JWKSReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<JWKSReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<JWKSReq<App>>(route_<JWKSReq<App>>(link), ServerReply{
         .body = httpJSON(HTTPEmpty{}), .type = ReplyType::ServerError});
       return;
     }
-    m_server->jwks(request.object->appID, [this, hold = ZmRef<Link>{link}](
+    m_server->jwks(request.object->appID, [this, hold = route_<JWKSReq<App>>(link)](
         ServerReply reply) mutable {
       respond_<JWKSReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -734,14 +735,14 @@ public:
   void userInfo(Link *link, const UserInfoReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<UserInfoReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<UserInfoReq<App>>(route_<UserInfoReq<App>>(link), ServerReply{
         .body = httpJSON(HTTPError{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }
     String authorization{request.authorization};
     m_server->userInfo(request.object->appID, ZuMv(authorization), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<UserInfoReq<App>>(link)
     ](ServerReply reply) mutable {
       respond_<UserInfoReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -751,14 +752,14 @@ public:
   void userInfo(Link *link, const UserInfoPostReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<UserInfoPostReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<UserInfoPostReq<App>>(route_<UserInfoPostReq<App>>(link), ServerReply{
         .body = httpJSON(HTTPError{"invalid_token"}),
         .type = ReplyType::BearerError});
       return;
     }
     String authorization{request.authorization};
     m_server->userInfo(request.object->appID, ZuMv(authorization), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<UserInfoPostReq<App>>(link)
     ](ServerReply reply) mutable {
       respond_<UserInfoPostReq<App>>(ZuMv(hold), ZuMv(reply));
     });
@@ -769,7 +770,7 @@ public:
       Link *link, const OIDCCallbackReq<App> &request, bool ok)
   {
     if (!ok) {
-      respond_<OIDCCallbackReq<App>>(ZmRef<Link>{link}, ServerReply{
+      respond_<OIDCCallbackReq<App>>(route_<OIDCCallbackReq<App>>(link), ServerReply{
         .body = oauthErrorJSON(OAuthError::InvalidRequest),
         .type = ReplyType::OAuthError});
       return;
@@ -777,24 +778,29 @@ public:
     String query{request.object->data};
     String cookie{request.cookie};
     m_server->oidcCallback(request.object->appID, ZuMv(query), ZuMv(cookie), [
-      this, hold = ZmRef<Link>{link}
+      this, hold = route_<OIDCCallbackReq<App>>(link)
     ](ServerReply reply) mutable {
       respond_<OIDCCallbackReq<App>>(ZuMv(hold), ZuMv(reply));
     });
   }
 
 private:
-  template <typename Response, typename Request, typename Link>
-  void send_(ZmRef<Link> link, ZmRef<HTTPResponse> object)
+  template <typename Request>
+  auto route_(Zhttp::Channel *channel) {
+    using Node = typename App::HTTPServer::ResBuilder;
+    return Zhttp::Route<Node>{channel, Request::Method};
+  }
+  template <typename Response, typename Request, typename Dest>
+  void send_(Dest link, ZmRef<HTTPResponse> object)
   {
     using ResBuilder = App::HTTPServer::ResBuilder;
     ZmRef<ResBuilder> response = new ResBuilder{};
     response->template init<Response, Request>(object.ptr());
-    link->send(ZuMv(response));
+    link.send(ZuMv(response));
   }
 
-  template <typename Request, typename Link>
-  void respond_(ZmRef<Link> link, ServerReply reply)
+  template <typename Request, typename Dest>
+  void respond_(Dest link, ServerReply reply)
   {
     ZmRef<HTTPResponse> object = new HTTPResponse{};
     object->body = ZuMv(reply.body);

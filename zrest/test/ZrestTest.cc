@@ -158,7 +158,7 @@ using EndpointRequests = ZuTypeList<EndpointReq>;
 ZrestCatalogDerive(EndpointCatalog, EndpointRequests);
 ZrestCatalogImpl(EndpointCatalog)
 struct EndpointApp;
-using EndpointClient = Zrest::Client<EndpointApp, EndpointCatalog>;
+using EndpointClient = Zrest::Client<EndpointApp, EndpointCatalog, Zhttp::Profiles<Zhttp::H1TCP>>;
 struct EndpointApp { };
 
 struct ServerRes : public Zrest::ResBuilder<ServerRes, TestObject> {
@@ -174,7 +174,8 @@ ZrestCatalogDerive(ServerCatalog, ServerRequests);
 ZrestCatalogImpl(ServerCatalog)
 struct ServerApp;
 using ServerDecoder = Zrest::MReqParser<ServerCatalog>;
-using ServerEndpoint = Zrest::Server<ServerApp, ServerCatalog, ServerDecoder>;
+using ServerEndpoint = Zrest::Server<ServerApp, ServerCatalog, ServerDecoder,
+  Zhttp::Profiles<Zhttp::H1TCP>>;
 struct ServerApp {
   void listening(int8_t, uint16_t) { }
   void listenFailed(int8_t, bool) { }
@@ -228,7 +229,7 @@ static void endpointHandoffTest()
   ZuTestScope(endpointHandoff);
   ZmRef<EndpointCall> call = new EndpointCall{};
   ZmRef<SignedObject> object = new SignedObject{};
-  Zrest::ClientReq<EndpointApp, EndpointCatalog> request;
+  Zrest::ClientReq<EndpointApp, EndpointCatalog, Zhttp::Profiles<Zhttp::H1TCP>> request;
   request.init<EndpointReq>(object, call);
   EndpointRes response;
   response.init();
@@ -240,7 +241,7 @@ static void endpointHandoffTest()
   ZuCheck(call->processed == 1 && !call->failures);
   ZuCheck(call->value == "accepted");
 
-  Zrest::ClientReq<EndpointApp, EndpointCatalog> refused;
+  Zrest::ClientReq<EndpointApp, EndpointCatalog, Zhttp::Profiles<Zhttp::H1TCP>> refused;
   refused.init<EndpointReq>(object, call);
   refused.failure.code = Zrest::Failure::Code::Limit;
   refused.deliver();
@@ -611,7 +612,7 @@ static void borrowedFieldsTest()
 static void sseReceiveTest()
 {
   ZuTestScope(sseReceive);
-  using Request = Zrest::ClientReq<SSEApp, SSECatalog>;
+  using Request = Zrest::ClientReq<SSEApp, SSECatalog, Zhttp::Profiles<Zhttp::H1TCP>>;
   ZmRef<SSECall> call = new SSECall{};
   Request request;
   request.init<SSEReqBuilder>(ZmRef<TestObject>{new TestObject{}}, call);
@@ -982,7 +983,7 @@ using ResponseRootParser = Zrest::MReqParser<ResponseRootCatalog,
   Zrest::MReqRootPolicy<ResponseRootCatalog>>;
 struct ResponseRootApp;
 using ResponseRootServer = Zrest::Server<ResponseRootApp, ServerCatalog,
-  ResponseRootParser>;
+  ResponseRootParser, Zhttp::Profiles<Zhttp::H1TCP>>;
 struct ResponseRootApp {
   void listening(int8_t, uint16_t) { }
   void listenFailed(int8_t, bool) { }

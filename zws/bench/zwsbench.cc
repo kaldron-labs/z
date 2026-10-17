@@ -11,6 +11,7 @@
 #include <iostream>
 
 #include <zlib/ZfCLI.hh>
+#include <zlib/ZmBlock.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -253,10 +254,12 @@ private:
       return;
     }
     auto send = [this](auto &link_) {
-      link_.txStream([this](auto &tx) {
+      auto write = [this](auto &tx) {
 	tx << state->payload;
 	tx.flush();
-      }, state->opcode);
+      };
+      if (state->txOwner) link_.txStream_(write, state->opcode);
+      else link_.txStream(write, state->opcode);
     };
     if (!state->txOwner) {
       send(link);
@@ -339,7 +342,8 @@ int run(const Options &options, const TempDir &temp)
   }
   Zhttp::HubConfig hub{&mx, "3", "4"};
   bool serverInit = server.init(hub, serverConfig);
-  bool clientInit = client.init(hub, clientConfig);
+  bool clientInit = client.init(hub, clientConfig,
+    Zhttp::Destination{"127.0.0.1", uint16_t(state.port)});
   bool serverStart = serverInit && server.start();
   bool clientStart = clientInit && client.start();
   if (!serverStart || !clientStart) {
@@ -382,6 +386,13 @@ int run(const Options &options, const TempDir &temp)
   stopped.wait();
   stopped.wait();
   link = nullptr;
+  ZmBlock<>{}([&mx](auto wake) {
+    mx.run([&mx, wake = ZuMv(wake)]() mutable {
+      mx.run([&mx, wake = ZuMv(wake)]() mutable {
+	mx.run(ZuMv(wake), mx.sid("3"));
+      }, mx.sid("4"));
+    }, mx.sid("3"));
+  });
   client.final();
   server.final();
   mx.stop();

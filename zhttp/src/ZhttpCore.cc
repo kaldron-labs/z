@@ -11,6 +11,8 @@ namespace Zhttp {
 ZtEnumImplNS(Method);
 ZtEnumImplStruct(BodyType);
 ZtEnumImplStruct(WriteOutcome);
+ZtEnumImplNS(FieldForm);
+ZtEnumImplStruct(ResponseCode);
 ZtEnumImplStruct(Version);
 ZtEnumImplStruct(RequestErrorCode);
 ZtEnumImplStruct(RequestErrorScope);

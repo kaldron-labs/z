@@ -120,8 +120,10 @@ static void testHTTP()
   ZuCheck(mx.start(), (return));
   SrvApp srv;
   CliApp cli;
-  Zjrpc::HTTPServer<SrvApp, Catalog> server;
-  Zjrpc::HTTPClient<CliApp, Catalog> client;
+  Zjrpc::HTTPServer<SrvApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
+    Zhttp::H2TLS>> server;
+  Zjrpc::HTTPClient<CliApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
+    Zhttp::H2TLS>> client;
   Zhttp::HubConfig hub{&mx, "1", "2"};
   auto serverConfig = [](bool invalid) {
     Zjrpc::ServerConfig config;
@@ -216,7 +218,8 @@ static void testHTTP()
     }
   }
   server.final();
-  Zjrpc::HTTPServer<SrvApp, Catalog> partial;
+  Zjrpc::HTTPServer<SrvApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
+    Zhttp::H2TLS>> partial;
   ZuCheck(!partial.init(hub, serverConfig(true), &srv));
   partial.final();
   mx.stop();
@@ -231,3 +234,5 @@ int main(int argc, char **argv)
   ZuTestCall(testHTTP);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

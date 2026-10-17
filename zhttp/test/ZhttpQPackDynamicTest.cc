@@ -14,6 +14,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
+#include "../src/ZhttpServerImpl.hh"
 
 using namespace ZuTestUtil;
 
@@ -140,8 +141,18 @@ struct CaptureEncoder {
 
 struct BuilderState :
   public Zhttp::Builder,
-  public Zhttp::H3::Request<BuilderState, BuilderHeaders> {
-  using Base = Zhttp::H3::Request<BuilderState, BuilderHeaders>;
+  public Zhttp::H3::Request<BuilderState> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
+  using Base = Zhttp::H3::Request<BuilderState>;
   using HdrCatalog = BuilderHeaders;
 
   const Zhttp::H3::Params &h3Params() const { return params; }
@@ -230,8 +241,17 @@ struct StreamConsumer {
 
 struct ParserStream :
   public Zhttp::Parser,
-  public Zhttp::H3::Parser<ParserStream, true, ParserHeaders> {
-  using Base = Zhttp::H3::Parser<ParserStream, true, ParserHeaders>;
+  public Zhttp::H3::Parser<ParserStream, true> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
+  using Base = Zhttp::H3::Parser<ParserStream, true>;
   using HdrCatalog = ParserHeaders;
 
   ParserStream() : Base{1024}, consumer{this} {
@@ -402,9 +422,18 @@ struct ParserStream :
 
 struct ResponseParserStream :
   public Zhttp::Parser,
-  public Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders> {
+  public Zhttp::H3::Parser<ResponseParserStream, false> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base =
-    Zhttp::H3::Parser<ResponseParserStream, false, ParserHeaders>;
+    Zhttp::H3::Parser<ResponseParserStream, false>;
   using HdrCatalog = ParserHeaders;
 
   ResponseParserStream() : Base{1024} { }
@@ -1944,9 +1973,9 @@ void testInitializationSeeds()
 {
   ZuTestScope(testInitializationSeeds);
 
-  Zhttp::HeaderSeedCatalog<ZuTypeList<SeedHeaders>> catalog;
+  Zhttp::HeaderSeedCatalog catalog;
   Zhttp::H3::Params params;
-  catalog.add<SeedHeaders>(params, 512);
+  catalog.add(Zhttp::CatalogData<SeedHeaders>::configure(), params, 512);
   const auto &seeds = catalog.entries();
   ZuCHECK(seeds.length() == 2 &&
       seeds[0].name == "x-fixed" && seeds[0].value == "fixed" &&
@@ -2030,22 +2059,40 @@ void testSeedCatalogLookup()
   struct First {
     using List = ZhttpHeaders(
       "x-switch", ("x-shared", "one"), ("x-before", "one"));
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<First>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<First>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<First>(name); }
+
   };
   struct Second {
     using List = ZhttpHeaders(
       ("x-switch", "fixed"), ("x-shared", "one"),
       ("x-shared", "two"), "x-later");
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<Second>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<Second>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<Second>(name); }
+
   };
   struct Third {
     using List = ZhttpHeaders(
       ("x-before", "one"), "x-later", ("x-switch", "fixed"),
       ("x-before", "two"));
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<Third>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<Third>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<Third>(name); }
+
   };
-  Zhttp::HeaderSeedCatalog<ZuTypeList<First, Second, Third>> catalog;
+  Zhttp::HeaderSeedCatalog catalog;
   Zhttp::H3::Params params;
-  catalog.add<First>(params, 512);
-  catalog.add<Second>(params, 512);
-  catalog.add<Third>(params, 512);
+  catalog.add(Zhttp::CatalogData<First>::configure(), params, 512);
+  catalog.add(Zhttp::CatalogData<Second>::configure(), params, 512);
+  catalog.add(Zhttp::CatalogData<Third>::configure(), params, 512);
   const auto &seeds = catalog.entries();
   ZuCHECK(seeds.length() == 6 &&
       seeds[0].name == "x-shared" && seeds[0].value == "one" &&

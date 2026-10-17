@@ -1249,7 +1249,8 @@ public:
     ws.pongTimeout = 60;
     Zhttp::H2Config tls;
     if (caPath) tls.caPath(caPath);
-    if (!m_client.init(Zhttp::HubConfig{mx, "rx", "tx"}, tls, ws))
+    if (!m_client.init(Zhttp::HubConfig{mx, "rx", "tx"}, tls,
+	Zhttp::Destination{m_uri.host, m_uri.port, m_uri.ipv6Literal}, ws))
       return false;
     m_clientInited = true;
     if (!m_client.start()) return false;

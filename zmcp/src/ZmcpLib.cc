@@ -45,3 +45,5 @@ ZmcpAPI int notification(ZuCSpan method)
 } // Client_
 
 } // Zmcp
+
+ZjrpcHTTPCatalogImpl()

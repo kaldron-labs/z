@@ -14,6 +14,8 @@
 #include <zlib/ZumLib.hh>
 #endif
 
+#include <zlib/ZuTraits.hh>
+
 #include <zlib/ZmList.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -365,13 +367,14 @@ struct DaemonParser : public Zrest::MReqParser<DaemonRootCatalog,
 
 using DaemonBuilder = Zrest::MResBuilder<DaemonCatalog>;
 struct DaemonBuilder_ : public ZmObject, public DaemonBuilder { };
-ZmListDerive(DaemonBuilderQ, DaemonBuilder_,
-  ZmListNode<DaemonBuilder_, ZmListHeapID<"zumd.Response">>);
+using DaemonBuilderQ = Zhttp::ResponseQ<DaemonBuilder_, ZuStringT<"zumd.Response">>;
 
 class Daemon : public HTTP<Daemon>,
-  public Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ> {
+  public Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ, Zhttp::Profiles<Zhttp::H1TCP>> {
 public:
-  using HTTPServer = Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ>;
+  using HTTPServer = Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ,
+    Zhttp::Profiles<Zhttp::H1TCP>>;
+  using Route = Zhttp::Route<DaemonBuilderQ::Node>;
   using HTTPServer::init;
   using HTTPServer::start;
   using HTTPServer::stop;
@@ -402,12 +405,12 @@ public:
         link, httpJSON(HTTPStatus{"unavailable"}));
       return;
     }
-    m_provider.ready([this, hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+    m_provider.ready([this, hold = Route{link, ReadyReq::Method}](ServerReply reply) mutable {
       if (m_requests->active() && reply.type == ReplyType::OK)
-        send_<HealthOK, ReadyReq>(hold.ptr(), ZuMv(reply.body));
+        send_<HealthOK, ReadyReq>(hold, ZuMv(reply.body));
       else
         send_<HealthUnavailable, ReadyReq>(
-          hold.ptr(), httpJSON(HTTPStatus{"not-ready"}));
+          hold, httpJSON(HTTPStatus{"not-ready"}));
     });
   }
 
@@ -443,12 +446,12 @@ public:
       return;
     }
     m_provider.metadata(request.object->appID, [this,
-        hold = ZmRef<Link>{link}](ServerReply reply) mutable {
+        hold = Route{link, OAuthMetadataReq::Method}](ServerReply reply) mutable {
       if (reply.type == ReplyType::Discovery)
-        send_<DiscoveryOK, OAuthMetadataReq>(hold.ptr(), ZuMv(reply.body));
+        send_<DiscoveryOK, OAuthMetadataReq>(hold, ZuMv(reply.body));
       else
         send_<ServerError, OAuthMetadataReq>(
-          hold.ptr(), httpJSON(HTTPEmpty{}));
+          hold, httpJSON(HTTPEmpty{}));
     });
   }
 
@@ -487,11 +490,11 @@ public:
     String ifMatch = request.ifMatch;
     String ifNoneMatch = request.ifNoneMatch;
     String idempotence = request.idempotence;
-    AdminDoneFn reply{[this, correlationID, hold = ZmRef<Link>{link}](
+    AdminDoneFn reply{[this, correlationID, hold = Route{link, Request::Method}](
         AdminResult result) mutable {
       if (result.status >= 400)
 	result.body = correlate_(ZuMv(result.body), correlationID);
-      adminSend_<Request>(hold.ptr(), ZuMv(result));
+      adminSend_<Request>(hold, ZuMv(result));
     }};
     auto cancel = [reply]() mutable {
       reply(AdminResult{error_("unavailable", "request unavailable"), 503});
@@ -520,8 +523,8 @@ public:
   void disconnected(int) { }
 
 private:
-  template <typename Request, typename Link>
-  void adminSend_(Link *link, AdminResult result)
+  template <typename Request, typename Dest>
+  void adminSend_(const Dest &link, AdminResult result)
   {
     if (!m_requests->active()) {
       send_<HealthUnavailable, Request>(link, correlate_(
@@ -546,15 +549,20 @@ private:
     }
   }
 
-  template <typename Response, typename Request, typename Link>
-  void send_(Link *link, String body, String allow = {})
+  template <typename Response, typename Request, typename Dest>
+  void send_(const Dest &link, String body, String allow = {})
   {
-    ZmRef<DaemonResponse> object = new DaemonResponse{};
+    using Object = typename Response::Object;
+    ZmRef<Object> object = new Object{};
     object->body = ZuMv(body);
-    object->allow = ZuMv(allow);
+    if constexpr (ZuIsSame<Object, DaemonResponse>{})
+      object->allow = ZuMv(allow);
     ZmRef<DaemonBuilderQ::Node> response = new DaemonBuilderQ::Node{};
     response->template init<Response, Request>(object.ptr());
-    link->send(ZuMv(response));
+    if constexpr (ZuIsSame<Dest, Zhttp::Channel *>{})
+      link->routeSend(link->requestSequence(),
+	Zhttp::bindResponse(ZuMv(response), link->responseCatalog()));
+    else link.send(ZuMv(response));
   }
 
   static String page_(AppID, Bytes, String);

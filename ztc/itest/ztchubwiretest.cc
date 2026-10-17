@@ -239,15 +239,6 @@ struct App {
     if (agent)
       std::cout << "agent ready\n" << std::flush;
     if (!agent) {
-#ifdef __linux__
-      if (options->stallMS) {
-        // Keep the overflow case at the socket boundary.  A delayed Rx
-        // callback alone still lets the kernel absorb several megabytes.
-        int receiveBuffer = 4096;
-        (void)::setsockopt(link.cxn()->info().socket, SOL_SOCKET, SO_RCVBUF,
-          &receiveBuffer, sizeof(receiveBuffer));
-      }
-#endif
       ZuCSpan deviceID{options->deviceID};
       if (options->inventory) deviceID = {};
       sendFrame(link, subscribe(deviceID, options->oneShot ? 0 : 1000,
@@ -580,7 +571,13 @@ int main(int argc, char **argv)
   signalDone = &done;
   ZmTrap::sigintFn(interrupted);
   ZmTrap::trap();
-  ZiMultiplex mx{mxParams()};
+  auto params = mxParams();
+#ifdef __linux__
+  // Keep the overflow case at the socket boundary. A delayed Rx callback
+  // alone still lets the kernel absorb several megabytes.
+  if (options.mode == "front" && options.stallMS) params.rxBufSize(4096);
+#endif
+  ZiMultiplex mx{ZuMv(params)};
   if (!mx.start()) return 1;
   App app{&options, &done, {}, {}, authorization,
     options.mode == "agent"};
@@ -594,7 +591,8 @@ int main(int argc, char **argv)
   ws.pongTimeout = 60;
   Zhttp::H2Config tls;
   if (options.caPath) tls.caPath(options.caPath);
-  if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls, ws) ||
+  if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
+      Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws) ||
       !client.start()) {
     client.final();
     mx.stop();

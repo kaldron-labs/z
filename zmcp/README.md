@@ -157,13 +157,13 @@ authorization remain application-owned.  A client emits declared headers via
 ## Transport configuration
 
 The common `Zmcp::Server` and `Zmcp::Client` templates are CRTP bases. Instantiate
-`Zmcp::HTTPServer<Impl, Requests>` or `Zmcp::IOServer<Impl, Requests>` for
+`Zmcp::HTTPServer<Impl, Requests, Profiles>` or `Zmcp::IOServer<Impl, Requests>` for
 streaming HTTP or stdio respectively. Their transport-specific initialization is:
 
 - HTTP server: `init(Zhttp::HubConfig, Zmcp::ServerConfig, Impl *)`;
 - stdio server: `init(ZiMultiplex *, Zjrpc::StdioConfig, Impl *)`.
 
-The concrete client types are `Zmcp::HTTPClient<Impl, Requests>` and
+The concrete client types are `Zmcp::HTTPClient<Impl, Requests, Profiles>` and
 `Zmcp::IOClient<Impl, Requests>`. HTTP configuration inherits the
 normal `zhttp` TCP/TLS/H2/QUIC, timeout and pooling controls.  `endpoint()`
 defaults to `/mcp`; `legacySessions(true)` is the default.  A nonzero
@@ -246,3 +246,11 @@ make -C zmcp/interop test
 The interoperability suite pins `github.com/mark3labs/mcp-go`
 v1.0.0-beta.1 and exercises both peer directions, both transports and both
 supported revisions with structured-only results.
+
+HTTP endpoints require an explicit `Zhttp::Profiles<...>` selection. Their pool
+uses that same selection. WebSocket wrappers select exactly their `Profile`
+and bind concrete HTTP channels. WebSocket client initialization takes the
+origin `Zhttp::Destination` before startup; `connect(uri)` supplies the target
+and handshake fields. Define composed HTTP catalog matchers once in each owning
+application translation unit with `ZjrpcHTTPCatalogImpl()`, alongside any
+`ZhttpHdrCatalogImpl` definitions.

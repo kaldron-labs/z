@@ -93,19 +93,20 @@ private:
   bool m_failed = false;
 };
 
-template <typename Impl, typename Catalog>
-class HTTPClient : public Client<HTTPClient<Impl, Catalog>, Impl, Catalog>,
-    public Zhttp::Client<HTTPClient<Impl, Catalog>, HTTPPool<Impl, Catalog>> {
+template <typename Impl, typename Catalog, typename Selection>
+class HTTPClient : public Client<HTTPClient<Impl, Catalog, Selection>, Impl, Catalog>,
+    public Zhttp::Client<HTTPClient<Impl, Catalog, Selection>, HTTPPool<Impl, Catalog,
+      Selection>> {
   using Common = Client<HTTPClient, Impl, Catalog>;
   using Calls = Caller<HTTPClient, Catalog>;
-  using HTTP = Zhttp::Client<HTTPClient, HTTPPool<Impl, Catalog>>;
-  using RequestData = HTTPRequestData<Impl, Catalog>;
-  using Request = HTTPRequestQ<Impl, Catalog>::Node;
+  using HTTP = Zhttp::Client<HTTPClient, HTTPPool<Impl, Catalog, Selection>>;
+  using RequestData = HTTPRequestData<Impl, Catalog, Selection>;
+  using Request = HTTPRequestQ<Impl, Catalog, Selection>::Node;
   using Meta = HTTPHeaders<HTTPResHeaders<Catalog, Impl>>;
   friend Calls;
   friend BatchCaller<HTTPClient>;
   friend Dispatcher<HTTPClient, Impl, Catalog>;
-  friend struct HTTPRequestData<Impl, Catalog>;
+  friend struct HTTPRequestData<Impl, Catalog, Selection>;
 public:
   using HTTP::start;
   using HTTP::stop;
@@ -262,11 +263,14 @@ public:
 
   WSClient() : m_ws{this} { }
   ~WSClient() { final(); }
-  bool init(const Zhttp::HubConfig &hub, Config profile, WSConfig config, Impl *impl) {
+  bool init(const Zhttp::HubConfig &hub, Config profile, Zhttp::Destination destination,
+    WSConfig config, Impl *impl) {
     if (m_mx || !hub.mx() || !Common::init(impl, config.limits())) return false;
     m_mx = hub.mx();
     m_owner = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
-    if (!m_ws.init(hub, ZuMv(profile), config.binding())) { m_mx = nullptr; return false; }
+    if (!m_ws.init(hub, ZuMv(profile), ZuMv(destination), config.binding())) {
+      m_mx = nullptr; return false;
+    }
     m_inbound.init(Default::HistSize);
     return true;
   }
@@ -279,10 +283,7 @@ public:
   bool connect(const Zws::URI &uri, Args &&...args) {
     if (!m_started || m_link || m_stopping.load_()) return false;
     m_link = new Link{&m_ws, uri, ZuFwd<Args>(args)...};
-    if constexpr (Zhttp::ProfileTraits<Profile>::Multiplexed)
-      m_link->connect(uri.host, uri.port);
-    else
-      m_link->connect();
+    m_link->connect();
     return true;
   }
   bool stop() {

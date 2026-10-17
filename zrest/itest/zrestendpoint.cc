@@ -179,7 +179,7 @@ ZrestCatalogImpl(ClientCatalog)
 
 struct App;
 using Decoder = Zrest::MReqParser<ServerCatalog>;
-using Server = Zrest::Server<App, ServerCatalog, Decoder>;
+using Server = Zrest::Server<App, ServerCatalog, Decoder, Zhttp::AllProfiles>;
 
 struct App {
   using Token = Zrest::Completion<ServerRequest, Server>;
@@ -273,7 +273,7 @@ struct App {
 };
 
 struct ClientApp { };
-using Client = Zrest::Client<ClientApp, ClientCatalog>;
+using Client = Zrest::Client<ClientApp, ClientCatalog, Zhttp::AllProfiles>;
 struct Call : public ZmObject {
   ZmSemaphore done;
   ZmAtomic<unsigned> processed = 0;
@@ -440,67 +440,20 @@ struct StreamState {
   }
 };
 
-template <typename Profile>
-struct StreamClient : public Zhttp::ClientHub<StreamClient<Profile>, Profile> {
-  struct Builder : public Zhttp::Builder,
-      public Zhttp::MessageTraits<Profile>::template Request<Builder,
-        Zhttp::DefltHdrCatalog, true, true> {
-    using Base = Zhttp::MessageTraits<Profile>::template Request<
-      Builder, Zhttp::DefltHdrCatalog, true, true>;
-    using HdrCatalog = Zhttp::DefltHdrCatalog;
-    using Base::body;
-    bool json = false;
-
-    template <typename L> void operation(L &&l) const {
-      l(Zhttp::Method::POST, [this](auto &&emit) {
-	emit([this](auto &tx) { tx << (json ? "/json" : "/raw"); });
-      });
-    }
-    template <typename L> void host(L &&l) const { l("localhost"); }
-    template <typename Key, typename L> void header(L &&) const { }
-    template <typename L> void header(L &&) const { }
-  };
-
-  struct Link : public Zhttp::ClientLink<StreamClient, Link, Profile> {
-    using Base = Zhttp::ClientLink<StreamClient, Link, Profile>;
-    using Base::Base;
-    struct Parser : public Zhttp::Parser,
-        public Zhttp::MessageTraits<Profile>::template ResponseParser<
-          Parser, Zhttp::DefltHdrCatalog> {
-      using Base = Zhttp::MessageTraits<Profile>::template
-        ResponseParser<Parser, Zhttp::DefltHdrCatalog>;
-      using State = Base::State;
-      using HdrCatalog = Zhttp::DefltHdrCatalog;
-      using Base::reset;
-      StreamState *state = nullptr;
-
-      void status(unsigned value) { state->status = value; }
-      bool bodyInfo(Zhttp::BodyType::T, uint64_t) { return true; }
-      template <typename Key>
-      void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
-      template <typename Rx> bool body(Rx &rx) {
-	return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> value) {
-	  state->body << value;
-	});
-      }
-      void complete(State::T value) {
-	state->complete = value == State::Complete;
-	state->report();
-      }
-      bool finReceived() const { return false; }
-    } parser;
-    unsigned id = 0;
-  };
-
-  explicit StreamClient(StreamState *state_) : state{state_} { }
-  void connected(Link &link, const Zhttp::ConnectedInfo &) {
-    this->txRun([link = &link, json = state->json]() {
-      Builder builder;
-      builder.json = json;
-      auto tx = link->transmit_(builder);
-      builder.begin(tx);
-      auto body = builder.body(tx);
-      if (json) {
+template <typename Profile> struct StreamClient;
+template <typename Profile> struct StreamPool;
+struct StreamRequest : public ZmObject, public Zhttp::ReqBuilder {
+  StreamState *state = nullptr;
+  uint64_t key() const { return 0; }
+  Zhttp::BodyPolicy::T bodyPolicy() const { return Zhttp::BodyPolicy::Stream; }
+  template <typename L> void operation(L &&l) const {
+    l(Zhttp::Method::POST, [this](auto &&emit) {
+      emit([this](auto &tx) { tx << (state->json ? "/json" : "/raw"); });
+    });
+  }
+  template <typename Emit> void body(Emit &&emit) const {
+    emit([this](auto &body) {
+      if (state->json) {
 	body << "{\"value\":\"json ";
 	body.flush();
 	body << "payload\"}";
@@ -509,63 +462,73 @@ struct StreamClient : public Zhttp::ClientHub<StreamClient<Profile>, Profile> {
 	body.flush();
 	body << "payload";
       }
-      body.flush();
-      builder.finish(tx);
-      link->finish();
+      return body.flush() ? Zhttp::WriteOutcome::End : Zhttp::WriteOutcome::Abort;
     });
   }
-  void disconnected(Link &, bool) {
-    state->report();
-  }
-  void connectFailed(Link &, bool) {
-    state->report();
-  }
-  template <typename Rx> int process(Link &link, Rx &rx) {
-    auto result = link.receive(link.parser, rx);
-    if (result == Link::Parser::State::Error) return -1;
-    return result == Link::Parser::State::Complete;
-  }
-  StreamState *state;
+  void connectFailed(bool) { state->report(); }
+  void disconnected(bool) { state->report(); }
 };
+struct StreamParser : public Zhttp::Parser {
+  StreamState *state = nullptr;
+  void init(StreamRequest &request) { state = request.state; }
+  void status(unsigned value) { state->status = value; }
+  template <typename Rx> bool body(Rx &rx) {
+    return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> value) { state->body << value; });
+  }
+  void complete(Zhttp::Channel *, bool ok) {
+    state->complete = ok;
+    state->report();
+  }
+};
+using StreamQ = ZmPQueue<StreamRequest, ZmPQueueOverlap<false,
+  ZmPQueueNode<StreamRequest, ZmPQueueHeapID<"Zrest.Test.StreamReq">>>>;
+template <typename Profile>
+using StreamTxQ = ZmPQTx<StreamPool<Profile>, StreamQ, ZmPQTxOrdered<false>>;
+template <typename Profile>
+struct StreamPool : public ZmNHeap<StreamPool<Profile>>,
+  public Zhttp::Pool<StreamClient<Profile>, StreamTxQ<Profile>, StreamParser,
+    Zhttp::Profiles<Profile>> {
+  using Base = Zhttp::Pool<StreamClient<Profile>, StreamTxQ<Profile>, StreamParser,
+    Zhttp::Profiles<Profile>>;
+  friend inline ZuStringT<"Zrest.Test.StreamPool"> ZmNHeapID(StreamPool *);
+  StreamPool(StreamClient<Profile> *app) : Base{app} { }
+  StreamQ *txQueue() { return &queue; }
+  void archive_(StreamQ::Node *) { }
+  ZmRef<StreamQ::Node> retrieve_(uint64_t, uint64_t) { return {}; }
+  StreamQ queue;
+};
+template <typename Profile>
+struct StreamClient : public Zhttp::Client<StreamClient<Profile>, StreamPool<Profile>> { };
 
 template <typename Profile>
 struct StreamProbe {
   using Protocol = Zhttp::ProfileTraits<Profile>::Protocol;
   StreamState state;
-  StreamClient<Profile> client{&state};
-  using Link = StreamClient<Profile>::Link;
-  ZmRef<Link> link;
+  StreamClient<Profile> client;
+  ZmRef<StreamQ::Node> request;
   bool inited = false;
 
-  bool run(const Zhttp::HubConfig &hub, uint16_t port, ZuCSpan cert,
-      bool json)
-  {
+  bool run(const Zhttp::HubConfig &hub, uint16_t port, ZuCSpan cert, bool json) {
     state.json = json;
-    if constexpr (ZuIsSame<Protocol, Zhttp::TCP>{})
-      inited = client.init(hub, Zhttp::TCPConfig{});
-    else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
-      inited = client.init(hub, Zhttp::H2Config{}
-	.caPath(cert).policy(Zhttp::H2Policy::Force));
-    else
-      inited = client.init(hub, Zhttp::QUICConfig{}
-	.caPath(cert).maxIdleTimeout(10000));
-    bool up = inited && client.start();
+    Zhttp::H2Config tls;
+    Zhttp::QUICConfig quic;
+    if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
+      tls.caPath(cert).policy(Zhttp::H2Policy::Force);
+    if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{})
+      quic.caPath(cert).maxIdleTimeout(10000);
+    inited = client.init(hub, 1, {}, {}, tls, quic);
+    bool up = inited && client.pool(0, Zhttp::Destination{"localhost", port}) && client.start();
     if (up) {
-      link = new Link{&client};
-      link->parser.state = &state;
-      link->connect("localhost", port);
+      request = new StreamQ::Node{};
+      request->state = &state;
+      client.send(0, request);
     }
-    bool done = link && state.done.timedwait(Zm::now(10)) == 0;
+    bool done = request && state.done.timedwait(Zm::now(10)) == 0;
     return done && state.complete && state.status == 200 &&
-      (json ? state.body.find("\"json payload\"") >= 0 :
-	state.body == "raw payload");
+      (json ? state.body.find("\"json payload\"") >= 0 : state.body == "raw payload");
   }
-
   void final() {
-    if (inited) {
-      (void)client.stop();
-      client.final();
-    }
+    if (inited) { client.stop(); client.final(); }
   }
 };
 
@@ -656,8 +619,8 @@ struct StreamResParser : public Zhttp::Parser {
 };
 
 struct StreamResServer : public Zhttp::Server<StreamResServer,
-    StreamResParser, StreamResQ> {
-  using Base = Zhttp::Server<StreamResServer, StreamResParser, StreamResQ>;
+    StreamResParser, StreamResQ, Zhttp::AllProfiles> {
+  using Base = Zhttp::Server<StreamResServer, StreamResParser, StreamResQ, Zhttp::AllProfiles>;
   using Base::connected;
   using Base::disconnected;
   ZmSemaphore listeningSem;

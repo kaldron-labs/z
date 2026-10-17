@@ -474,10 +474,12 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<Client, TxQ, ResParser> {
+class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<Client, TxQ, ResParser,
+  Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS, Zhttp::H2TLS>> {
 friend inline ZuStringT<"zum.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
+  using Base = Zhttp::Pool<Client, TxQ, ResParser, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
+    Zhttp::H2TLS>>;
 public:
   Pool(Client *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }
@@ -614,17 +616,18 @@ struct CallbackParser : public Zrest::MReqParser<CallbackCatalog> {
 
 using CallbackBuilder = Zrest::MResBuilder<CallbackCatalog>;
 struct CallbackBuilder_ : public ZmObject, public CallbackBuilder { };
-ZmListDerive(CallbackBuilderQ, CallbackBuilder_,
-  ZmListNode<CallbackBuilder_, ZmListHeapID<"zum.CallbackBuilder">>);
+using CallbackBuilderQ = Zhttp::ResponseQ<CallbackBuilder_, ZuStringT<"zum.CallbackBuilder">>;
 using CallbackBuilderNode = CallbackBuilderQ::Node;
 
 struct CallbackKeys {
   using Keys = ZuStringTL<"code", "state", "error">;
 };
 
-class CallbackApp : public Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ> {
+class CallbackApp : public Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ,
+  Zhttp::Profiles<Zhttp::H1TCP>> {
 public:
-  using HTTP = Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ>;
+  using HTTP = Zhttp::Server<CallbackApp, CallbackParser, CallbackBuilderQ,
+    Zhttp::Profiles<Zhttp::H1TCP>>;
   using HTTP::connected;
   using HTTP::disconnected;
 

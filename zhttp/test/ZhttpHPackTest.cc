@@ -11,6 +11,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zhttp.hh>
+#include "../src/ZhttpServerImpl.hh"
 
 using namespace ZuTestUtil;
 
@@ -430,9 +431,15 @@ void testWarmPlan()
 
   struct Headers {
     using List = ZhttpHeaders(("x-fixed", "fixed"), "x-runtime");
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<Headers>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<Headers>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<Headers>(name); }
+
   };
   Zhttp::HPackSeedCatalog catalog;
-  catalog.add<Headers>(512);
+  catalog.add(Zhttp::CatalogData<Headers>::configure(), 512);
   ZuCHECK(catalog.entries().length() == 1 &&
       catalog.entries()[0].name == "x-fixed" &&
       catalog.entries()[0].value == "fixed" &&
@@ -481,11 +488,23 @@ void testWarmPlans()
 {
   ZuTestScope(testWarmPlans);
 
-  struct First { using List = ZhttpHeaders(("x-first", "one")); };
-  struct Second { using List = ZhttpHeaders(("x-second", "two")); };
+  struct First { using List = ZhttpHeaders(("x-first", "one"));
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<First>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<First>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<First>(name); }
+ };
+  struct Second { using List = ZhttpHeaders(("x-second", "two"));
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<Second>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<Second>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<Second>(name); }
+ };
   Zhttp::HPackSeedCatalog catalog;
-  catalog.add<First>(512);
-  catalog.add<Second>(512);
+  catalog.add(Zhttp::CatalogData<First>::configure(), 512);
+  catalog.add(Zhttp::CatalogData<Second>::configure(), 512);
   ZuCHECK(catalog.plans().length() == 2 &&
       catalog.plans()[0].entries.length() == 1 &&
       catalog.plans()[1].entries.length() == 1,
@@ -522,9 +541,15 @@ void testWarmPlanDuplicates()
       ("x-duplicate", "one"), ("x-duplicate", "one"),
       ("x-duplicate", "two"), ("authorization", "secret"),
       ("cookie", "a=b"), ("set-cookie", "a=b"));
+    static int nameMatch(ZuBSpan name) { return Zhttp::Fields::nameMatch<Headers>(name); }
+    static int valueMatch(unsigned id, ZuBSpan value) {
+      return Zhttp::Fields::valueMatch<Headers>(id, value);
+    }
+    static int fieldMatch(ZuBSpan name) { return Zhttp::Fields::fieldMatch<Headers>(name); }
+
   };
   Zhttp::HPackSeedCatalog catalog;
-  catalog.add<Headers>(512);
+  catalog.add(Zhttp::CatalogData<Headers>::configure(), 512);
   const auto &entries = catalog.entries();
   ZuCHECK(entries.length() == 2 &&
       entries[0].name == "x-duplicate" && entries[0].value == "one" &&

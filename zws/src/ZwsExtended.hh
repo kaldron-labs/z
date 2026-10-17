@@ -29,10 +29,7 @@ using ServerHeaders = ZhttpHeaders(
 ZhttpHdrCatalogDerive(ZwsAPI ServerHdrCatalog, ServerHeaders);
 
 template <typename Profile>
-class Request :
-  public Zhttp::Builder,
-  public Zhttp::MessageTraits<Profile>::template Request<
-    Request<Profile>, ServerHdrCatalog, false, false> {
+class Request : public Zhttp::Builder {
 public:
   using HdrCatalog = ServerHdrCatalog;
   using Zhttp::Builder::header;
@@ -54,8 +51,9 @@ public:
   void header(L &&l) {
     if constexpr (Key{}() == "sec-websocket-version")
       l("13");
-    else if constexpr (Key{}() == "sec-websocket-protocol")
-      l(m_protocol);
+    else if constexpr (Key{}() == "sec-websocket-protocol") {
+      if (m_protocol) l(m_protocol);
+    }
   }
 private:
   const URI		*m_uri;
@@ -63,10 +61,7 @@ private:
 };
 
 template <typename Profile>
-class Response :
-  public Zhttp::Builder,
-  public Zhttp::MessageTraits<Profile>::template Response<
-    Response<Profile>, ClientHdrCatalog, false, false> {
+class Response : public Zhttp::Builder {
 public:
   using HdrCatalog = ClientHdrCatalog;
   using Zhttp::Builder::header;
@@ -77,61 +72,37 @@ public:
   bool streamResponse() const { return true; }
   template <typename Key, typename L>
   void header(L &&l) {
-    if constexpr (Key{}() == "sec-websocket-protocol") l(m_protocol);
+    if constexpr (Key{}() == "sec-websocket-protocol") {
+      if (m_protocol) l(m_protocol);
+    }
   }
 private:
   HandshakeString	m_protocol;
 };
 
 template <typename Profile>
-class ErrorResponse :
-  public Zhttp::Builder,
-  public Zhttp::MessageTraits<Profile>::template Response<
-    ErrorResponse<Profile>, Zhttp::DefltHdrCatalog, false, false> {
+class ErrorResponse : public Zhttp::Builder {
 public:
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   unsigned status() const { return 400; }
 };
 
-template <typename Link, typename Profile>
-class ClientParser :
-  public Zhttp::Parser,
-  public Zhttp::MessageTraits<Profile>::template ResponseParser<
-    ClientParser<Link, Profile>, ClientHdrCatalog> {
-  using Message = Zhttp::MessageTraits<Profile>;
-  using Base = Message::template ResponseParser<
-    ClientParser, ClientHdrCatalog>;
-
+class ClientParser : public Zhttp::Parser {
 public:
   using HdrCatalog = ClientHdrCatalog;
-  using State = Base::State;
   using Zhttp::Parser::header;
 
-  void bind(Link &link, ZuBSpan protocol) {
-    Base::reset();
-    m_link = &link;
+  void expected(ZuBSpan protocol) {
     m_protocol = protocol;
     m_selected.length(0);
-    m_state = State::Initial;
     m_status = 0;
     m_protocolSeen = false;
-    m_established = false;
+    m_valid = false;
     m_invalid = false;
-    m_dispatch.init(link, link);
-    Base::requestMethod(Zhttp::Method::CONNECT);
   }
-  void disable_() { m_dispatch.disable_(); }
-  void final_() {
-    m_dispatch.disable_();
-    m_dispatch.final_();
-    m_link = nullptr;
-  }
-
-  bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) { m_status = value; }
   template <typename Key>
-  void header(
-      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
+  void header(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "sec-websocket-protocol") {
       if (m_protocolSeen) m_invalid = true;
@@ -141,98 +112,52 @@ public:
       m_invalid = true;
     }
   }
-  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
-    if (m_invalid || type != Zhttp::BodyType::Streamed ||
-	m_status < 200 || m_status >= 300 ||
-	((!m_protocol && m_protocolSeen) ||
-	 (m_protocol && (!m_protocolSeen ||
-	  !subprotocol(m_protocol, m_selected))))) {
-      m_invalid = true;
-      return true;
-    }
-    Base::stream();
-    m_established = true;
-    m_link->established_();
+  bool bodyInfo(Zhttp::Channel *, Zhttp::BodyType::T type, uint64_t) {
+    m_valid = !m_invalid && type == Zhttp::BodyType::Streamed &&
+      m_status >= 200 && m_status < 300 &&
+      ((!m_protocol && !m_protocolSeen) ||
+       (m_protocol && m_protocolSeen && subprotocol(m_protocol, m_selected)));
     return true;
   }
-  template <typename Rx>
-  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
-  template <typename Rx>
-  void streamRx_(Rx &rx) {
-    (void)m_dispatch.process(rx);
-  }
-  void streamPeerEnd_() { m_dispatch.peerEnd(); }
-  void streamError_() { m_dispatch.error(); }
-  void complete(State::T state) { m_state = state; }
-
-  bool established() const { return m_established; }
-  bool invalid() const { return m_invalid; }
+  bool valid() const { return m_valid; }
   ZuBSpan selected() const { return m_selected; }
-  State::T state() const { return m_state; }
 
 private:
-  Zhttp::StreamDispatch<Link, Link>	m_dispatch;
-  Link					*m_link = nullptr;
-  HandshakeString			m_protocol;
-  HandshakeString			m_selected;
-  State::T			m_state = State::Initial;
-  unsigned				m_status = 0;
-  bool					m_protocolSeen = false;
-  bool					m_established = false;
-  bool					m_invalid = false;
+  HandshakeString m_protocol;
+  HandshakeString m_selected;
+  unsigned m_status = 0;
+  bool m_protocolSeen = false;
+  bool m_valid = false;
+  bool m_invalid = false;
 };
 
-template <typename Link, typename Profile>
-class ServerParser :
-  public Zhttp::Parser,
-  public Zhttp::MessageTraits<Profile>::template RequestParser<
-    ServerParser<Link, Profile>, ServerHdrCatalog> {
-  using Message = Zhttp::MessageTraits<Profile>;
-  using Base = Message::template RequestParser<
-    ServerParser, ServerHdrCatalog>;
-
+class ServerParser : public Zhttp::Parser {
 public:
   using HdrCatalog = ServerHdrCatalog;
-  using State = Base::State;
   using Zhttp::Parser::header;
 
-  void bind(Link &link) {
-    Base::reset();
-    m_link = &link;
+  void reset() {
     m_target.length(0);
     m_host.length(0);
     m_protocol.length(0);
     m_protocols.length(0);
-    m_state = State::Initial;
     m_method = -1;
     m_hostSeen = false;
     m_versionSeen = false;
     m_protocolSeen = false;
     m_version13 = false;
-    m_established = false;
+    m_valid = false;
     m_invalid = false;
-    m_dispatch.init(link, link);
-    Base::extendedConnect(Zhttp::Stream{link}.localCap());
   }
-  void disable_() { m_dispatch.disable_(); }
-  void final_() {
-    m_dispatch.disable_();
-    m_dispatch.final_();
-    m_link = nullptr;
-  }
-
-  bool operation(
-    Zhttp::Method::T method, Zhttp::Target &target) {
+  bool operation(Zhttp::Method::T method, Zhttp::Target &target) {
     m_method = method;
     m_target.length(0);
     m_target << target.path;
     m_protocol = target.protocol;
     return true;
   }
-  void status(unsigned) { }
   template <typename Key>
-  void header(
-      Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
+  void header(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
     if (section != Zhttp::FieldSection::Final) return;
     if constexpr (Key{}() == "host") {
       if (m_hostSeen) m_invalid = true;
@@ -248,62 +173,29 @@ public:
       m_protocols = value;
     }
   }
-  bool bodyInfo(Zhttp::BodyType::T type, uint64_t) {
-    if (m_invalid || type != Zhttp::BodyType::Streamed ||
-	m_method != Zhttp::Method::CONNECT || m_protocol != "websocket" ||
-	!m_target || !m_hostSeen || !m_host ||
-	!m_versionSeen || !m_version13) {
-      m_invalid = true;
-      m_link->reject_();
-      return true;
-    }
-    HandshakeString selected;
-    if (!m_link->accept_(
-	  m_host, m_target, m_protocols, selected)) {
-      m_invalid = true;
-      m_link->reject_();
-      return true;
-    }
-    if (selected && !subprotocol(m_protocols, selected)) {
-      m_invalid = true;
-      m_link->reject_();
-      return true;
-    }
-    m_link->respond_(selected);
-    Base::stream();
-    m_established = true;
-    m_link->established_();
+  bool bodyInfo(Zhttp::Channel *, Zhttp::BodyType::T type, uint64_t) {
+    m_valid = !m_invalid && type == Zhttp::BodyType::Streamed &&
+      m_method == Zhttp::Method::CONNECT && m_protocol == "websocket" &&
+      m_target && m_hostSeen && m_host && m_versionSeen && m_version13;
     return true;
   }
-  template <typename Rx>
-  bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
-  template <typename Rx>
-  void streamRx_(Rx &rx) {
-    (void)m_dispatch.process(rx);
-  }
-  void streamPeerEnd_() { m_dispatch.peerEnd(); }
-  void streamError_() { m_dispatch.error(); }
-  void complete(State::T state) { m_state = state; }
-
-  bool established() const { return m_established; }
-  bool invalid() const { return m_invalid; }
-  State::T state() const { return m_state; }
+  bool valid() const { return m_valid; }
+  ZuBSpan host() const { return m_host; }
+  ZuBSpan target() const { return m_target; }
+  ZuBSpan protocols() const { return m_protocols; }
 
 private:
-  Zhttp::StreamDispatch<Link, Link>	m_dispatch;
-  Link					*m_link = nullptr;
-  HandshakeString			m_target;
-  HandshakeString			m_host;
-  HandshakeString			m_protocol;
-  HandshakeString			m_protocols;
-  State::T			m_state = State::Initial;
-  Zhttp::Method::T			m_method = -1;
-  bool					m_hostSeen = false;
-  bool					m_versionSeen = false;
-  bool					m_protocolSeen = false;
-  bool					m_version13 = false;
-  bool					m_established = false;
-  bool					m_invalid = false;
+  HandshakeString m_target;
+  HandshakeString m_host;
+  HandshakeString m_protocol;
+  HandshakeString m_protocols;
+  Zhttp::Method::T m_method = -1;
+  bool m_hostSeen = false;
+  bool m_versionSeen = false;
+  bool m_protocolSeen = false;
+  bool m_version13 = false;
+  bool m_valid = false;
+  bool m_invalid = false;
 };
 
 } // namespace Extended

@@ -24,6 +24,8 @@
 
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpFields.hh>
+#include "ZhttpFieldImpl.hh"
+#include "ZhttpNative.hh"
 #include <zlib/ZhttpQPack.hh>
 #include <zlib/ZhttpTransport.hh>
 
@@ -577,8 +579,7 @@ private:
 // HTTP/3 request/response stream parser
 template <
   typename Impl,
-  bool Request_ = false,
-  typename HdrCatalog_ = DefltHdrCatalog>
+  bool Request_ = false>
 class Parser {
 public:
   using QPackWriteFn = bool (*)(void *, ZuBSpan);
@@ -591,8 +592,6 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
-  using HdrCatalog = HdrCatalog_;
-  using Headers = HdrCatalog::List;
   using State = ParserState;
 
   void requestMethod(Method::T method) { m_requestMethod = method; }
@@ -674,10 +673,10 @@ private:
 	    header_(fields.section(), key, value);
 	}))
       return false;
-    return fields.field(name, value,
-      [this, &fields](ZuBSpan key, ZuSpan<uint8_t> value) {
+    return fields.field(impl()->catalog(), name, value,
+      [this, &fields](int id, ZuBSpan key, ZuSpan<uint8_t> value) {
 	if (m_state != State::Error)
-	  header_(fields.section(), key, value);
+	  header_(fields.section(), id, key, value);
       }) && m_state != State::Error;
   }
 
@@ -696,9 +695,7 @@ private:
 	return false;
   }
 
-  template <typename Key>
-  void header_(Zhttp::FieldSection::T section, ZuSpan<uint8_t> value) {
-    if constexpr (Key{}() == "content-length") {
+  void contentLength_(ZuSpan<uint8_t> value) {
 	uint64_t contentLength = 0;
       if (!Fields::uint64(value, contentLength)) {
 	  error_();
@@ -710,40 +707,15 @@ private:
 	} else {
 	  m_contentLen = contentLength;
 	}
-    } else if (m_deliverHeaders) {
-	impl()->template header<Key>(section, value);
-    }
   }
 
-  void runtimeHeader_(
-      Zhttp::FieldSection::T section,
-      ZuBSpan key, ZuSpan<uint8_t> value) {
-    if constexpr (Fields::HasRuntime<Impl>{}) {
-      if (!m_deliverHeaders) return;
-	impl()->header(section, key, value);
-    }
+  void header_(FieldSection::T section, ZuBSpan key, ZuSpan<uint8_t> value) {
+    header_(section, impl()->catalog().nameMatch(key), key, value);
   }
-
-  void header_(
-      Zhttp::FieldSection::T section,
+  void header_(FieldSection::T section, int id,
       ZuBSpan key, ZuSpan<uint8_t> value) {
-    if (key == "content-length") {
-      this->template header_<ZuStringT<"content-length">>(section, value);
-      return;
-    }
-    Fields::dispatch<HdrCatalog>(
-      key, value,
-      [this, section](auto key, ZuSpan<uint8_t> value) {
-	this->template header_<ZuDecay<decltype(key)>>(section, value);
-      },
-      [this, section](auto key, auto value) {
-	if (m_deliverHeaders)
-	  impl()->template header<
-	    ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section);
-      },
-      [this, section](ZuBSpan key, ZuSpan<uint8_t> value) {
-	runtimeHeader_(section, key, value);
-      });
+    if (key == "content-length") { contentLength_(value); return; }
+    if (m_deliverHeaders) impl()->header(section, id, key, value);
   }
 
   Zhttp::FieldSection::T parseFields_(
@@ -1170,27 +1142,6 @@ inline int writeFrameHeader(Stream &stream, uint64_t type, uint64_t length) {
 }
 
 template <typename Bytes>
-inline int qpackEncodeFieldLine(Bytes &out, Header h, const Params &params) {
-  int staticIndex = QPack::staticIndex(h.name, h.value);
-  if (staticIndex >= 0)
-    return putPref(out, 0xc0, 6, unsigned(staticIndex)) < 0 ?
-	-1 : int(out.length());
-
-  uint64_t nameIndex = 0;
-  if (QPack::staticNameIndex(h.name, nameIndex)) {
-    uint8_t prefix = uint8_t(
-	0x50 | (params.neverIndex(h.name) ? 0x20 : 0));
-    return putPref(out, prefix, 4, nameIndex) < 0 ||
-	putString(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
-  }
-
-  return putString(
-    out, uint8_t(0x20 | (params.neverIndex(h.name) ? 0x10 : 0)),
-    3, h.name) < 0 ||
-    putString(out, 0x00, 7, h.value) < 0 ? -1 : int(out.length());
-}
-
-template <typename Bytes>
 inline int qpackEncodeDynamicIndexed(Bytes &out, uint64_t relativeIndex) {
   return putPref(out, 0x80, 6, relativeIndex) < 0 ?
     -1 : int(out.length());
@@ -1277,7 +1228,6 @@ auto dataStream(Lower &lower, uint64_t length) {
 // HTTP/3 message builder
 template <
   typename Impl,
-  typename HdrCatalog_ = DefltHdrCatalog,
   bool HasBody_ = false,		// has a body
   bool Streaming_ = false>
 class Builder_ {
@@ -1291,10 +1241,9 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  using HdrCatalog = HdrCatalog_;
-  using Headers = HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
+  bool channelRequest() const { return m_channelRequest; }
 
   void h3(
     QPackTxTable *tx, void *encoder, QPackWriteFn encoderWrite,
@@ -1346,30 +1295,37 @@ private:
     Build(Bytes &out_, const Params &params_) : out{out_}, params{params_} { }
 
     void field(ZuBSpan name, ZuBSpan value) {
-	if (!ok) return;
-	Header h{name, value};
-	if (QPack::staticIndex(name, value) >= 0) {
-	  ok = qpackEncodeFieldLine(out, h, params) >= 0;
-	  return;
-	}
-	if (tx && dynamic)
-	  if (auto e = tx->find(name, value))
-	    if (e->abs < base && e->abs + 1 <= tx->knownReceivedCount()) {
-	      ok = qpackEncodeDynamicIndexed(out, base - e->abs - 1) >= 0;
-	      if (required < e->abs + 1) required = e->abs + 1;
-	      dynamicRef = true;
-	      return;
-	    }
-	uint64_t staticName = 0;
-	if (tx && dynamic && !QPack::staticNameIndex(name, staticName))
-	  if (auto e = tx->findName(name, base)) {
-	    ok = qpackEncodeDynamicName(
-	      out, base - e->abs - 1, value, params.neverIndex(name)) >= 0;
+      if (!ok) return;
+      int index = QPack::staticIndex(name, value);
+      if (index >= 0) {
+	ok = putPref(out, 0xc0, 6, unsigned(index)) >= 0;
+	return;
+      }
+      if (tx && dynamic)
+	if (auto e = tx->find(name, value))
+	  if (e->abs < base && e->abs + 1 <= tx->knownReceivedCount()) {
+	    ok = qpackEncodeDynamicIndexed(out, base - e->abs - 1) >= 0;
 	    if (required < e->abs + 1) required = e->abs + 1;
 	    dynamicRef = true;
 	    return;
+	  }
+      uint64_t nameIndex = 0;
+      bool indexed = QPack::staticNameIndex(name, nameIndex);
+      if (tx && dynamic && !indexed)
+	if (auto e = tx->findName(name, base)) {
+	  ok = qpackEncodeDynamicName(
+	    out, base - e->abs - 1, value, params.neverIndex(name)) >= 0;
+	  if (required < e->abs + 1) required = e->abs + 1;
+	  dynamicRef = true;
+	  return;
 	}
-	ok = qpackEncodeFieldLine(out, h, params) >= 0;
+      bool never = params.neverIndex(name);
+      if (indexed)
+	ok = putPref(out, uint8_t(0x50 | (never ? 0x20 : 0)), 4, nameIndex) >= 0 &&
+	  putString(out, 0, 7, value) >= 0;
+      else
+	ok = putString(out, uint8_t(0x20 | (never ? 0x10 : 0)), 3, name) >= 0 &&
+	  putString(out, 0, 7, value) >= 0;
     }
     void fieldFixed(ZuBSpan name, ZuBSpan value) {
       field(name, value);
@@ -1465,14 +1421,6 @@ private:
     }
   };
 
-  template <typename Key, typename I = Impl,
-    typename = decltype(ZuDeclVal<I &>().template headerOffset<Key>(ZuDeclVal<uint64_t &>(), ZuDeclVal<unsigned &>()), void())>
-  void headerOffset_(uint64_t offset, unsigned length, int) {
-    impl()->template headerOffset<Key>(offset, length);
-  }
-  template <typename Key>
-  void headerOffset_(uint64_t, unsigned, ...) { }
-
   template <typename I = Impl,
     typename = decltype(ZuDeclVal<I &>().headerBase(ZuDeclVal<uint8_t * &>()), void())>
   void headerBase_(uint8_t *base, int) {
@@ -1487,33 +1435,11 @@ private:
   }
   void patch_(...) { }
 
-  template <typename Catalog, typename Build>
+  template <typename Build>
   bool headers_(Build &build) {
-    using List = HeaderList<Catalog>;
-    ZuUnroll::all<List::N>([this, &build](auto I) {
-	using Key = List::template Key<I>;
-	using Value = List::template Value<I>;
-	if constexpr (Value::N) {
-	  using Fixed = HeaderValue<Value>;
-	  builderFixedHeader<Key, Fixed>(impl(), [&build]() {
-	    build.fieldFixed(Key{}(), Fixed{}());
-	  }, 0);
-	  impl()->template header<Key>([&build]<typename V>(V &&v) {
-	    build.fieldName(Key{}(), ZuFwd<V>(v));
-	  });
-	} else {
-	  auto self = this;
-	  impl()->template header<Key>([self, &build]<typename V>(V &&v) {
-	    auto span = build.fieldMutable(Key{}(), ZuFwd<V>(v));
-	    self->template headerOffset_<Key>(span.offset, span.length, 0);
-	  });
-	}
-    });
-    impl()->header([&build]<typename K, typename V>(K &&k, V &&v) {
-	ZtBArray<ZtArrayHeapID<"Zhttp.H3.HeaderName">> name;
-	name << ZuFwd<K>(k);
-	if (name) build.fieldLiteral(name, ZuFwd<V>(v));
-    });
+    auto fields = Native_::compressedFields<Build,
+      ZuStringT<"Zhttp.H3.HeaderName">>(build);
+    impl()->fields(fields);
     return build.ok;
   }
 
@@ -1606,11 +1532,13 @@ protected:
     writeHeaders_(stream, [this, &valid](auto &build) {
 	impl()->operation([this, &build, &valid](
 	    Method::T method, auto &&emit) {
-	  ZuBSpan protocol;
+	  auto protocol = ZtScratch(HdrScratch, Impl::HdrBufSize);
 	  if (method == Method::CONNECT)
 	    impl()->protocol([&protocol]<typename P>(P &&value) {
-	      protocol = ZuFwd<P>(value);
+	      protocol.length(0);
+	      protocol << ZuFwd<P>(value);
 	    });
+	  m_channelRequest = bool(protocol);
 	  if (protocol && !m_peerExtendedConnect) {
 	    valid = false;
 	    return;
@@ -1629,7 +1557,7 @@ protected:
 	  build.field(":authority", ZuFwd<Host>(host));
 	});
 	contentLength_(build);
-	headers_<HdrCatalog>(build);
+	headers_(build);
 	return build.ok;
     });
     return valid && m_qpackFailure == QPackBuildFailure::None;
@@ -1643,7 +1571,7 @@ protected:
 	ZuBArray<StatusSize> buf;
 	build.field(":status", statusSpan_(status, buf));
 	contentLength_(build);
-	headers_<HdrCatalog>(build);
+	headers_(build);
 	return build.ok;
     });
   }
@@ -1704,15 +1632,15 @@ private:
   uint64_t		m_streamID = 0;
   const Params		*m_params = nullptr;
   bool			m_peerExtendedConnect = false;
+  bool m_channelRequest = false;
 };
 
 template <
   typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Request : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
-  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
+class Request : public Builder_<Impl, HasBody, Streaming> {
+  using Base = Builder_<Impl, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1721,11 +1649,10 @@ public:
 
 template <
   typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Response : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
-  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
+class Response : public Builder_<Impl, HasBody, Streaming> {
+  using Base = Builder_<Impl, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -2102,6 +2029,9 @@ private:
 template <typename Impl>
 class StreamOps {
 public:
+  // H3 capability remains the connection's existing SETTINGS policy.
+  bool streamEnable(bool = true) { return true; }
+  bool streamAccept() { return true; }
   bool streamPeerCap() const {
     auto native = streamImpl_()->h3Native_();
     return native && native->h3PeerCap();

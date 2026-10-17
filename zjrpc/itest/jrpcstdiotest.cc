@@ -189,3 +189,5 @@ int main(int argc, char **argv)
   ZuTestCall(testIO);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

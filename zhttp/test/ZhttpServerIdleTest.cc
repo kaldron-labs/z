@@ -7,6 +7,11 @@
 // Zhttp Server HTTP/3 idle-expiry test
 
 #include <zlib/ZuTestUtil.hh>
+#ifndef _WIN32
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
@@ -16,12 +21,18 @@
 
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
+// Raw protocol peers keep the server-only idle and partial-message workloads.
+#include "../src/ZhttpWire.hh"
+#include "../src/ZhttpServerImpl.hh"
+#include "../src/ZhttpClientImpl.hh"
 
 #include "ZhttpTestUtil.hh"
 
 using namespace ZuTestUtil;
 
 namespace ZhttpServerIdleTest_ {
+
+using Selection = Zhttp::AllProfiles;
 
 using RequestHeaderList = ZhttpHeaders("content-length");
 ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
@@ -139,8 +150,8 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
   State *state = nullptr;
 };
-using ResBuilderQ = ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"Zhttp.Server.Idle.ResBuilder">>>;
+using ResBuilderQ = Zhttp::ResponseQ<ResBuilder_,
+  ZuStringT<"Zhttp.Server.Idle.ResBuilder">>;
 using ResBuilder = ResBuilderQ::Node;
 
 struct Parser : public Zhttp::Parser {
@@ -188,8 +199,8 @@ struct Parser : public Zhttp::Parser {
   State *state = nullptr;
 };
 
-struct App : public Zhttp::Server<App, ZhttpServerIdleTest_::Parser, ResBuilderQ> {
-  using HTTP = Zhttp::Server<App, ZhttpServerIdleTest_::Parser, ResBuilderQ>;
+struct App : public Zhttp::Server<App, ZhttpServerIdleTest_::Parser, ResBuilderQ, Selection> {
+  using HTTP = Zhttp::Server<App, ZhttpServerIdleTest_::Parser, ResBuilderQ, Selection>;
   using HTTP::connected;
   using HTTP::disconnected;
 
@@ -232,20 +243,20 @@ struct App : public Zhttp::Server<App, ZhttpServerIdleTest_::Parser, ResBuilderQ
 
 ZuAssert((ZuIsSame<App::ResponseHeaders, ZuTypeList<>>{}));
 
-struct SeedHeaders {
-  using List = ZhttpHeaders(("x-server-seed", "seed"));
-};
+using SeedHeaderList = ZhttpHeaders(("x-server-seed", "seed"));
+ZhttpHdrCatalogDerive(SeedHeaders, SeedHeaderList);
+ZhttpHdrCatalogImpl(SeedHeaders)
 struct SeedBuilder : ResBuilder_ {
   using ResponseHeaders = ZuTypeList<SeedHeaders>;
 };
-using SeedQ = ZmList<SeedBuilder,
-  ZmListNode<SeedBuilder, ZmListHeapID<"Zhttp.Server.SeedBuilder">>>;
+using SeedQ = Zhttp::ResponseQ<SeedBuilder,
+  ZuStringT<"Zhttp.Server.SeedBuilder">>;
 struct SeedApp;
 struct SeedParser : Parser {
   void init(SeedApp &) { state = nullptr; }
   template <typename Link> void complete(Link *, bool) { }
 };
-using SeedServer = Zhttp::Server<SeedApp, SeedParser, SeedQ>;
+using SeedServer = Zhttp::Server<SeedApp, SeedParser, SeedQ, Selection>;
 ZuAssert((ZuIsSame<SeedServer::ResponseHeaders,
   ZuTypeList<SeedHeaders>>{}));
 
@@ -265,11 +276,19 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   struct Builder :
     public Zhttp::Builder,
     public Zhttp::MessageTraits<Profile>::template Request<
-      Builder, RequestHeaders, true, false> {
+      Builder, true, false> {  bool streamResponse() const { return false; }
+
     using Base = Zhttp::MessageTraits<Profile>::template Request<
-      Builder, RequestHeaders, true, false>;
+      Builder, true, false>;
     using HdrCatalog = RequestHeaders;
     using Base::body;
+    void fields(Zhttp::FieldOutput &out) {
+      Zhttp::BuilderFields<Builder> adapter{
+	this, &Zhttp::CatalogData<HdrCatalog>::configure()};
+      adapter.fields(out);
+    }
+    template <typename Key> void headerOffset(uint64_t, unsigned) { }
+
 
     template <typename L>
     void operation(L &&l) const {
@@ -292,7 +311,19 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     using Base::Base;
 
     unsigned id = 0;
-  };
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
+};
 
   Client(State *state_) : state{state_} { }
 
@@ -324,6 +355,7 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 
   State	*state;
 };
+
 
 ZiMxParams mxParams()
 {
@@ -474,7 +506,7 @@ void activeStop()
 
   State state;
   state.port = testPort();
-  using HTTP = Zhttp::ProfileTraits<Profile>;
+  using HTTP = Zhttp::NativeTraits<Profile>;
   using Protocol = HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;
@@ -644,6 +676,7 @@ void activeStop()
   ZuCHECK(!state.errors.load_(), "active server stop has no error");
 }
 
+
 void retryInit()
 {
   ZuTestScope(retryInit);
@@ -726,6 +759,13 @@ void seedSets()
   if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
   SeedApp app;
+  Zhttp::HPackSeedCatalog hpack;
+  Zhttp::HeaderSeedCatalog qpack;
+  const auto &metadata = Zhttp::CatalogData<SeedHeaders>::configure();
+  auto seed = [&hpack, &qpack, &metadata](unsigned capacity) {
+    hpack.add(metadata, capacity);
+    qpack.add(metadata, Zhttp::H3::Params{}, capacity);
+  };
   unsigned port = testPort();
   constexpr unsigned SeedQPackCapacity =
     sizeof("x-server-seed") - 1 + sizeof("seed") - 1 + 32;
@@ -737,33 +777,40 @@ void seedSets()
         .qpackTxCapacity(SeedQPackCapacity));
     return result;
   };
+  seed(SeedQPackCapacity);
   bool initialized = app.init(hub, config());
   ZuCHECK(initialized, "explicit response seed server initializes");
   if (initialized) {
-    ZuCHECK(app.hpackSeedPlans().length() == 1,
+    ZuCHECK(hpack.plans().length() == 1,
       "builder header catalog supplies one seed plan");
-    ZuCHECK(app.qpackSeeds().length() == 1,
+    ZuCHECK(qpack.entries().length() == 1,
       "builder header catalog supplies one QPACK seed set");
-    ZuCHECK(app.init(hub, config()), "seed initialization is idempotent");
-    ZuCHECK(app.hpackSeedPlans().length() == 1,
+    ZuCHECK(app.init(hub, config()) && app.hubCount() == 2,
+      "seed endpoint initialization registers TLS and QUIC once");
+    ZuCHECK(hpack.plans().length() == 1,
       "repeated init does not duplicate the seed plan");
-    ZuCHECK(app.qpackSeeds().length() == 1,
+    ZuCHECK(qpack.entries().length() == 1,
       "repeated init does not duplicate QPACK seeds");
   }
   app.final();
-  ZuCHECK(!app.hpackSeedPlans().length(), "final releases seed plans");
-  ZuCHECK(!app.qpackSeeds().length(), "final releases QPACK seeds");
+  ZuCHECK(!app.hubCount(), "final releases endpoint registrations");
+  hpack.final();
+  qpack.final();
+  ZuCHECK(!hpack.plans().length(), "final releases seed plans");
+  ZuCHECK(!qpack.entries().length(), "final releases QPACK seeds");
+  seed(SeedQPackCapacity);
   bool reused = app.init(hub, config());
-  ZuCHECK(reused, "seed server initializes after final");
+  ZuCHECK(reused && app.hubCount() == 2, "seed server initializes after final");
   if (reused)
-    ZuCHECK(app.hpackSeedPlans().length() == 1,
+    ZuCHECK(hpack.plans().length() == 1,
       "new lifecycle rebuilds one seed plan");
   if (reused)
-    ZuCHECK(app.qpackSeeds().length() == 1,
+    ZuCHECK(qpack.entries().length() == 1,
       "new lifecycle rebuilds one QPACK seed set");
   app.final();
   mx.stop();
 }
+
 
 } // namespace ZhttpServerIdleTest_
 

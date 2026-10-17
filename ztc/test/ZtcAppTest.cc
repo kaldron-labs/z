@@ -7,6 +7,7 @@
 #include <stdlib.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmBlock.hh>
 
 #include <zlib/ZtString.hh>
 
@@ -178,8 +179,12 @@ static void appTest()
   ZuCheck(app.start());
   ZuCheck(app.start());
 
-  ZtcTestClient::Ring absent{ZiRingParams{telName, 0}};
-  ZuCheck(absent.open(ZtcTestClient::Ring::Write) != Zu::OK);
+  // Startup publishes AppTelemetry on the worker before request traffic.
+  ZmBlock<>{}([&app](auto wake) {
+    app.rag([wake = ZuMv(wake)](Ztc::RAG::T) mutable { wake(); });
+  });
+  ZtcTestClient::Ring startup{ZiRingParams{telName, 0}};
+  ZuCheck(startup.open(ZtcTestClient::Ring::Write) == Zu::OK);
 
   Zi::Path pidName;
   pidName << pidDir << '/' << cf.id << ".pid";

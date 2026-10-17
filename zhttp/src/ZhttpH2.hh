@@ -23,6 +23,8 @@
 
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpFields.hh>
+#include "ZhttpFieldImpl.hh"
+#include "ZhttpNative.hh"
 
 namespace Zhttp {
 
@@ -558,8 +560,7 @@ ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
 
 template <
   typename Impl,
-  bool Request_ = false,
-  typename HdrCatalog_ = DefltHdrCatalog>
+  bool Request_ = false>
 class Parser {
 public:
   Parser(uint64_t bodyMax = DefltMaxBody) :
@@ -568,8 +569,6 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
-  using HdrCatalog = HdrCatalog_;
-  using Headers = HdrCatalog::List;
   using State = ParserState;
 
   void reset() {
@@ -619,9 +618,9 @@ public:
   bool field(ZuBSpan name, ZuSpan<uint8_t> value) {
     if (!m_headers) return fail_();
     if (name && name[0] != ':' && !start_()) return fail_();
-    if (!m_fields.field(name, value,
-      [this](ZuBSpan key, ZuSpan<uint8_t> value_) {
-	this->header_(key, value_);
+    if (!m_fields.field(impl()->catalog(), name, value,
+      [this](int id, ZuBSpan key, ZuSpan<uint8_t> value_) {
+	this->header_(id, key, value_);
       }) || m_state == State::Error)
       return fail_();
     return true;
@@ -778,6 +777,10 @@ private:
   }
 
   void header_(ZuBSpan key, ZuSpan<uint8_t> value) {
+    header_(impl()->catalog().nameMatch(key), key, value);
+  }
+
+  void header_(int id, ZuBSpan key, ZuSpan<uint8_t> value) {
     if (key == "content-length") {
       uint64_t length = 0;
       if (!Fields::uint64(value, length)) {
@@ -793,28 +796,10 @@ private:
       return;
     }
     if (!m_deliverHeaders) return;
-    Fields::dispatch<HdrCatalog>(
-      key, value,
-      [this](auto key_, ZuSpan<uint8_t> value_) {
-	impl()->template header<ZuDecay<decltype(key_)>>(
-	  m_fields.section(), value_);
-      },
-      [this](auto key_, auto value_) {
-	impl()->template header<
-	  ZuDecay<decltype(key_)>, ZuDecay<decltype(value_)>>(
-	    m_fields.section());
-      },
-      [this](ZuBSpan key_, ZuSpan<uint8_t> value_) {
-	runtimeHeader_(key_, value_);
-      });
+    impl()->header(m_fields.section(), id, key, value);
   }
 
-  void runtimeHeader_(ZuBSpan key, ZuSpan<uint8_t> value) {
-    if constexpr (Fields::HasRuntime<Impl>{}) {
-      if (!m_deliverHeaders) return;
-      impl()->header(m_fields.section(), key, value);
-    }
-  }
+
 
   void status_(unsigned value) {
     if constexpr (!Request)
@@ -871,17 +856,15 @@ private:
 
 template <
   typename Impl,
-  typename HdrCatalog_ = DefltHdrCatalog,
   bool HasBody_ = false,
   bool Streaming_ = false>
 class Builder_ {
 public:
   auto impl() { return static_cast<Impl *>(this); }
 
-  using HdrCatalog = HdrCatalog_;
-  using Headers = HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Streaming = Streaming_ };
+  bool channelRequest() const { return m_channelRequest; }
 
 protected:
   template <typename Stream>
@@ -890,17 +873,18 @@ protected:
     typename Stream::HeaderSection section{block};
     bool sent = false;
     bool endStream = false;
-    bool streamMode = false;
+    m_channelRequest = false;
     impl()->operation(
-      [this, &stream, &section, &sent, &endStream, &streamMode]
+      [this, &stream, &section, &sent, &endStream]
       (Method::T method, auto &&emit) {
-      ZuBSpan protocol;
+      auto protocol = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
       if (method == Method::CONNECT)
 	impl()->protocol([&protocol]<typename P>(P &&value) {
-	  protocol = ZuFwd<P>(value);
+	  protocol.length(0);
+	  protocol << ZuFwd<P>(value);
 	});
       if (protocol && !stream.extendedConnect()) return;
-      streamMode = bool(protocol);
+      m_channelRequest = bool(protocol);
       endStream = !HasBody && !protocol;
       stream.beginHeaders(section, endStream);
       Builder_::field_(stream, ":method", Method::name(method));
@@ -918,10 +902,7 @@ protected:
     impl()->host([&stream]<typename Host>(Host &&host) {
       Builder_::field_(stream, ":authority", ZuFwd<Host>(host));
     });
-    if (streamMode)
-      headers_<HdrCatalog, false>(stream);
-    else
-      headers_(stream);
+    headers_(stream);
     patch_(stream);
     stream.endHeaders(endStream);
     return true;
@@ -942,10 +923,7 @@ protected:
     status[1] = uint8_t('0' + ((value / 10) % 10));
     status[2] = uint8_t('0' + (value % 10));
     field_(stream, ":status", status.span());
-    if (streamMode)
-      headers_<HdrCatalog, false>(stream);
-    else
-      headers_(stream);
+    headers_(stream);
     patch_(stream);
     stream.endHeaders(endStream);
   }
@@ -975,61 +953,10 @@ public:
   bool streamResponse() { return false; }
 
 private:
-  template <typename Key, typename I = Impl,
-    typename = decltype(ZuDeclVal<I * &>()->template headerOffset<Key>(ZuDeclVal<uint64_t &>(), ZuDeclVal<unsigned &>()), void())>
-  static void headerOffset_(I *impl, uint64_t offset, unsigned length, int) {
-    impl->template headerOffset<Key>(offset, length);
-  }
-  template <typename Key>
-  static void headerOffset_(Impl *, uint64_t, unsigned, ...) { }
-
   template <typename Stream, typename V>
   static void field_(Stream &stream, ZuBSpan name, V &&value) {
     stream.field(name, ZuFwd<V>(value));
   }
-  template <typename Stream, typename V,
-    typename = decltype(ZuDeclVal<Stream &>().fieldName(ZuDeclVal<ZuBSpan &>(),
-      ZuFwd<V>(ZuDeclVal<V &>())), void())>
-  static void nameField_(Stream &stream, ZuBSpan name, V &&value, int) {
-    stream.fieldName(name, ZuFwd<V>(value));
-  }
-  template <typename Stream, typename V>
-  static void nameField_(Stream &stream, ZuBSpan name, V &&value, ...) {
-    stream.field(name, ZuFwd<V>(value));
-  }
-  template <typename Stream, typename V,
-    typename = decltype(ZuDeclVal<Stream &>().fieldLiteral(ZuDeclVal<ZuBSpan &>(),
-      ZuFwd<V>(ZuDeclVal<V &>())), void())>
-  static void literalField_(Stream &stream, ZuBSpan name, V &&value, int) {
-    stream.fieldLiteral(name, ZuFwd<V>(value));
-  }
-  template <typename Stream, typename V>
-  static void literalField_(Stream &stream, ZuBSpan name, V &&value, ...) {
-    stream.field(name, ZuFwd<V>(value));
-  }
-  template <typename Stream, typename V,
-    typename = decltype(ZuDeclVal<Stream &>().fieldFixed(ZuDeclVal<ZuBSpan &>(),
-      ZuFwd<V>(ZuDeclVal<V &>())), void())>
-  static void fixedField_(Stream &stream, ZuBSpan name, V &&value, int) {
-    stream.fieldFixed(name, ZuFwd<V>(value));
-  }
-  template <typename Stream, typename V>
-  static void fixedField_(Stream &stream, ZuBSpan name, V &&value, ...) {
-    stream.field(name, ZuFwd<V>(value));
-  }
-
-  template <typename Key, typename Stream, typename V,
-    typename = decltype(ZuDeclVal<Stream &>().fieldMutable(Key{}(),
-      ZuFwd<V>(ZuDeclVal<V &>())), void())>
-  static void mutableField_(Impl *impl, Stream &stream, V &&value, int) {
-    auto span = stream.fieldMutable(Key{}(), ZuFwd<V>(value));
-    headerOffset_<Key>(impl, span.offset, span.length, 0);
-  }
-  template <typename Key, typename Stream, typename V>
-  static void mutableField_(Impl *, Stream &stream, V &&value, ...) {
-    stream.field(Key{}(), ZuFwd<V>(value));
-  }
-
   template <typename Stream, typename I = Impl,
     typename = decltype(ZuDeclVal<Stream &>().headerBase(),
       ZuDeclVal<I &>().headerBase(ZuDeclVal<Stream &>().headerBase()), void())>
@@ -1052,50 +979,23 @@ private:
     }
   }
 
-  template <
-    typename Catalog = HdrCatalog, bool IncludeContentLength = true,
-    typename Stream>
+  template <typename Stream>
   void headers_(Stream &stream) {
-    using List = HeaderList<Catalog>;
-    ZuUnroll::all<List::N>([this, &stream](auto I) {
-      using Key = List::template Key<I>;
-      using Value = List::template Value<I>;
-      if constexpr (Value::N) {
-	using Fixed = HeaderValue<Value>;
-	builderFixedHeader<Key, Fixed>(impl(), [&stream]() {
-	  fixedField_(stream, Key{}(), Fixed{}(), 0);
-	}, 0);
-	impl()->template header<Key>([&stream]<typename V>(V &&v) {
-	  nameField_(stream, Key{}(), ZuFwd<V>(v), 0);
-	});
-      } else {
-	auto impl = this->impl();
-	impl->template header<Key>([impl, &stream]<typename V>(V &&v) {
-	  mutableField_<Key>(impl, stream, ZuFwd<V>(v), 0);
-	});
-      }
-    });
-    runtimeHeaders_(stream);
+    auto fields = Native_::compressedFields<Stream,
+      ZuStringT<"Zhttp.H2.HeaderName">>(stream);
+    impl()->fields(fields);
   }
 
-  template <typename Stream>
-  void runtimeHeaders_(Stream &stream) {
-    auto fn = [&stream]<typename K, typename V>(K &&k, V &&v) {
-      ZtBArray<ZtArrayHeapID<"Zhttp.H2.HeaderName">> name;
-      name << ZuFwd<K>(k);
-      if (name) literalField_(stream, name, ZuFwd<V>(v), 0);
-    };
-    impl()->header(ZuMv(fn));
-  }
+  bool m_channelRequest = false;
+
 };
 
 template <
   typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Request : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
-  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
+class Request : public Builder_<Impl, HasBody, Streaming> {
+  using Base = Builder_<Impl, HasBody, Streaming>;
 
 public:
   template <typename Stream>
@@ -1104,11 +1004,10 @@ public:
 
 template <
   typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Streaming = false>
-class Response : public Builder_<Impl, HdrCatalog, HasBody, Streaming> {
-  using Base = Builder_<Impl, HdrCatalog, HasBody, Streaming>;
+class Response : public Builder_<Impl, HasBody, Streaming> {
+  using Base = Builder_<Impl, HasBody, Streaming>;
 
 public:
   template <typename Stream>

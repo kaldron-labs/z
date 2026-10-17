@@ -1,7 +1,7 @@
 METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
-	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
+	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zfb/src -I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zv/src -I$(top_srcdir)/ztc/src -I$(top_srcdir)/zdb/src \
 	-I$(top_srcdir)/zum/src \
 	-I$(top_srcdir)/zrest/src -I$(top_srcdir)/ztcp/src \
@@ -12,6 +12,7 @@ AM_LDFLAGS = @Z_LDFLAGS@
 noinst_PROGRAMS = zdashoauthtest
 zdashoauthtest_SOURCES = zdashoauthtest.cc
 zdashoauthtest_LDADD = $(top_builddir)/ztc/src/libZtc.la \
+	$(top_builddir)/zfb/src/libZfb.la \
 	$(top_builddir)/zrest/src/libZrest.la \
 	$(top_builddir)/zws/src/libZws.la \
 	$(top_builddir)/zhttp/src/libZhttp.la \

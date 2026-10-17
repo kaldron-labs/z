@@ -111,17 +111,16 @@ private:
 };
 
 template <typename Impl, typename Catalog>
-ZuDerive(HTTPResQ, (ZmList<HTTPResponseData<Impl, Catalog>,
-  ZmListNode<HTTPResponseData<Impl, Catalog>,
-    ZmListHeapID<"Zjrpc.HTTP.Response">>>));
+using HTTPResQ = Zhttp::ResponseQ<HTTPResponseData<Impl, Catalog>,
+  ZuStringT<"Zjrpc.HTTP.Response">>;
 } // namespace Server_
 
-template <typename Impl, typename Catalog>
-class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
-    public Zhttp::Server<HTTPServer<Impl, Catalog>,
-      Server_::HTTPParser<HTTPServer<Impl, Catalog>, HTTPReqHeaders<Catalog, Impl>>,
-      Server_::HTTPResQ<Impl, Catalog>>,
-    public Dispatcher<HTTPServer<Impl, Catalog>, Impl, Catalog,
+template <typename Impl, typename Catalog, typename Selection>
+class HTTPServer : public Server<HTTPServer<Impl, Catalog, Selection>, Impl, Catalog>,
+    public Zhttp::Server<HTTPServer<Impl, Catalog, Selection>,
+      Server_::HTTPParser<HTTPServer<Impl, Catalog, Selection>, HTTPReqHeaders<Catalog, Impl>>,
+      Server_::HTTPResQ<Impl, Catalog>, Selection>,
+    public Dispatcher<HTTPServer<Impl, Catalog, Selection>, Impl, Catalog,
       HTTPContext<HTTPReqHeaders<Catalog, Impl>>> {
   using Common = Server<HTTPServer, Impl, Catalog>;
   using Dispatch = Dispatcher<HTTPServer, Impl, Catalog,
@@ -134,7 +133,7 @@ public:
   using Response = ResBuilderQ::Node;
 
   using HTTP = Zhttp::Server<HTTPServer,
-    Server_::HTTPParser<HTTPServer, Headers>, ResBuilderQ>;
+    Server_::HTTPParser<HTTPServer, Headers>, ResBuilderQ, Selection>;
   using Parser = Server_::HTTPParser<HTTPServer, Headers>;
   using HTTP::init;
   using HTTP::start;
@@ -246,43 +245,43 @@ private:
 
   public:
     Route(HTTPServer *server, Link *link, HTTPHeaders<Headers> headers) :
-      Context{ZuMv(headers), {}}, m_server{server}, m_link{link} { }
-    ~Route() { if (m_hook) m_link->responseCancel({}); }
+      Context{ZuMv(headers), {}}, m_server{server}, m_route{link, Zhttp::Method::POST} { }
+    ~Route() { if (m_hook) m_route.channel()->responseCancel({}); }
     WorkControl &control() { return m_work; }
     void open_() {
       this->peer = httpPeer(m_server->impl(), this->headers, 0);
       m_hook = true;
-      m_link->responseCancel(Zhttp::StreamCancelFn{this, [](Route *self) {
+      m_route.channel()->responseCancel(Zhttp::StreamCancelFn{this, [](Route *self) {
 	self->m_hook = false;
-	self->m_link = nullptr;
+	self->m_route.reset();
 	if (!self->peer) self->m_work.close();
       }});
     }
     bool send_(Dispatch::Message message, int policy) {
-      if (!m_link) return true;
+      if (!m_route) return true;
       if (policy == RoutePolicy::Abort) { abort_(); return true; }
       ZmRef<Response> response = new Response{};
       if (!response->data().init(m_server->impl(), ZuMv(message), policy, m_server->limits())) {
 	abort_();
 	return true;
       }
-      m_link->responseCancel({});
+      m_route.channel()->responseCancel({});
       m_hook = false;
-      m_link->send(ZuMv(response));
-      m_link = nullptr;
+      m_route.send(ZuMv(response));
+      m_route.reset();
       return true;
     }
     void abort_() {
-      if (!m_link) return;
-      if (m_hook) m_link->responseCancel({});
+      if (!m_route) return;
+      if (m_hook) m_route.channel()->responseCancel({});
       m_hook = false;
-      m_link->disconnect();
-      m_link = nullptr;
+      m_route.close();
+      m_route.reset();
     }
   private:
     HTTPServer *m_server;
     WorkControl m_work;
-    ZmRef<Link> m_link;
+    Zhttp::Route<Response> m_route;
     bool m_hook = false;
   };
 
@@ -352,8 +351,7 @@ class WSConnection : public Dispatcher<
 template <typename Impl, typename Catalog, typename Profile>
 struct WSServerLinkState {
   using App = WSServer<Impl, Catalog, Profile>;
-  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
-    Zws::ExtendedServerLink<App, Profile>, Zws::H1ServerLink<App, Profile>>;
+  using Link = Zws::ServerLink<App, Profile>;
   WSRx rx;
   // Retain RPC state until the link dies: off-shard callers may still inspect
   // its atomic up and ingress state after disconnect.
@@ -372,9 +370,7 @@ class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
   friend IO;
 public:
   using WS = Zws::Server<WSServer, Profile>;
-  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
-    Zws::ExtendedServerLink<WSServer, Profile>,
-    Zws::H1ServerLink<WSServer, Profile>>;
+  using Link = Zws::ServerLink<WSServer, Profile>;
   using Config = WS::Config;
 
   // The native Zws link owns its RPC state in place.

@@ -20,7 +20,7 @@
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/Zhttp.hh>
+#include "../src/ZhttpWire.hh"
 
 #include "zhttpd.hh"
 
@@ -273,11 +273,20 @@ struct H3ReqOps {
 template <typename H3Cxn_>
 struct H3Request :
   public Zhttp::Builder,
-  public Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>,
+  public Zhttp::H3::Request<H3Request<H3Cxn_>>,
   public H3ReqOps {
-  using Base = Zhttp::H3Request<H3Request<H3Cxn_>, H3ReqHeaders>;
+  using Base = Zhttp::H3::Request<H3Request<H3Cxn_>>;
   using H3Cxn = H3Cxn_;
   using HdrCatalog = H3ReqHeaders;
+
+  void fields(Zhttp::FieldOutput &output) {
+    Zhttp::BuilderFields<H3Request> fields{this,
+      &Zhttp::CatalogData<HdrCatalog>::configure()};
+    fields.fields(output);
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
 
   H3Request(const Request &request_, H3Cxn &h3_, uint64_t streamID_) :
     H3ReqOps{request_}, h3{&h3_}, streamID_{streamID_} { }
@@ -541,11 +550,25 @@ struct H3Client : public Zquic::Client<H3Client> {
 
 struct H3ResponseParser :
   public Zhttp::Parser,
-  public Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders> {
-  using Base = Zhttp::H3ResponseParser<H3ResponseParser, H3RespHeaders>;
+  public Zhttp::H3::Parser<H3ResponseParser, false> {
+  using Base = Zhttp::H3::Parser<H3ResponseParser, false>;
   using Base::reset;
   using State = Base::State;
   using HdrCatalog = H3RespHeaders;
+
+  const Zhttp::CatalogView &catalog() const {
+    return Zhttp::CatalogData<HdrCatalog>::configure();
+  }
+  using Zhttp::Parser::header;
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id,
+      id < 0 ? -1 : catalog().valueMatch(id, value), name, value);
+  }
+  void header(Zhttp::FieldSection::T section, int id, int fixed, ZuBSpan name,
+    ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
 
   H3ResponseParser() : Base{H3RespBodyMax} { }
 

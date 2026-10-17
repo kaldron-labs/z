@@ -224,7 +224,8 @@ int run(const Options &options, const Zws::URI &base)
   if constexpr (ZuIsSame<Profile, Zhttp::H1TLS>{})
     config.caPath(options.ca);
   bool initialized =
-    client.init(Zhttp::HubConfig{&mx, "3", "4"}, config);
+    client.init(Zhttp::HubConfig{&mx, "3", "4"}, config,
+      Zhttp::Destination{base.host, base.port, base.ipv6Literal});
   bool started = initialized && client.start();
   if (!started) {
     if (initialized) client.final();

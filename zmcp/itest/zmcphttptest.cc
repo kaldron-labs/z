@@ -10,6 +10,7 @@
 #include <zlib/ZuRef.hh>
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHeap.hh>
@@ -481,9 +482,9 @@ private:
 
 
 struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
-    Zmcp::HTTPBuilderQ<Catalog>> {
+    Zmcp::HTTPBuilderQ<Catalog>, Zhttp::AllProfiles> {
   using HTTP = Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
-    Zmcp::HTTPBuilderQ<Catalog>>;
+    Zmcp::HTTPBuilderQ<Catalog>, Zhttp::AllProfiles>;
   using HTTP::connected;
   using HTTP::disconnected;
   using ResBuilderQ = Zmcp::HTTPBuilderQ<Catalog>;
@@ -568,6 +569,13 @@ struct LegacyApp : public Zhttp::Server<LegacyApp, LegacyParser<LegacyApp>,
 
 };
 
+// Cancellation callbacks run before their owning dispatcher finishes retiring
+// the token. Check late completion only after that owner turn has returned.
+static void ownerTurn(ZiMultiplex &mx)
+{
+  ZmBlock<>{}([&mx](auto wake) { mx.run(ZuMv(wake), mx.txThread()); });
+}
+
 static void httpTest()
 {
   ZuTestScope(http);
@@ -585,7 +593,7 @@ static void httpTest()
   ZuCheck(mx.start());
 
   App app;
-  Zmcp::HTTPServer<App, Catalog> server;
+  Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> server;
   Zhttp::HubConfig hub{&mx, "1", "2"};
   auto serverConfig = [port](bool invalid) {
     Zmcp::ServerConfig config;
@@ -722,6 +730,7 @@ static void httpTest()
   ZuCheck(rawHTTP(mx, port, request, response));
   ZuCheck(response.find("HTTP/1.1 202") >= 0);
   app.cancelled_.wait();
+  ownerTurn(mx);
   ZuCheck(app.cancellations == 1);
   ZuCheck(bool(app.complete_));
   ZuCheck(app.complete_ && !app.complete_());
@@ -738,6 +747,7 @@ static void httpTest()
   RawHTTP call53{mx, port, request};
   app.called_.wait();
   app.sessionClosed_.wait();
+  ownerTurn(mx);
   ZuCheck(app.complete_ && !app.complete_());
   response.length_(0);
   ZuCheck(call53.wait(response, true));
@@ -753,7 +763,7 @@ static void httpTest()
   ZuCheck(!app.failures);
 
   ClientApp clientApp;
-  Zmcp::HTTPClient<ClientApp, Catalog> client;
+  Zmcp::HTTPClient<ClientApp, Catalog, Zhttp::AllProfiles> client;
   Zmcp::ClientConfig clientConfig;
   Zjrpc::Limits clientLimits;
   clientLimits.workBatch = 1;
@@ -843,6 +853,7 @@ static void httpTest()
   app.called_.wait();
   timeoutCall->done.wait();
   app.cancelled_.wait();
+  ownerTurn(mx);
   ZuCheck(timeoutCall->failures == 1 && app.cancellations == 2);
   ZuCheck(bool(app.complete_) && !app.complete_());
 
@@ -853,6 +864,7 @@ static void httpTest()
   ZuCheck(client.cancel(cancelCall->id, "no longer needed"));
   clientApp.cancelled_.wait();
   app.cancelled_.wait();
+  ownerTurn(mx);
   cancelCall->done.wait();
   ZuCheck(clientApp.cancelOK && cancelCall->failures == 1);
   ZuCheck(app.cancellations == 3);
@@ -878,7 +890,7 @@ static void httpTest()
   if (legacyStarted) legacyApp.listening_.wait();
 
   ClientApp legacyClientApp;
-  Zmcp::HTTPClient<ClientApp, Catalog> legacyClient;
+  Zmcp::HTTPClient<ClientApp, Catalog, Zhttp::AllProfiles> legacyClient;
   Zmcp::ClientConfig legacyClientConfig;
   legacyClientConfig.endpoint("/mcp");
   legacyClientConfig.secure(false).tcp(true).tls(false).quic(false)
@@ -952,7 +964,7 @@ static void httpTest()
   unsigned legacyConnections = legacyApp.connections;
   legacyApp.sessionless = true;
   ClientApp sessionlessApp;
-  Zmcp::HTTPClient<ClientApp, Catalog> sessionlessClient;
+  Zmcp::HTTPClient<ClientApp, Catalog, Zhttp::AllProfiles> sessionlessClient;
   Zmcp::ClientConfig sessionlessConfig;
   sessionlessConfig.endpoint("/mcp").legacySessions(false);
   sessionlessConfig.secure(false).tcp(true).tls(false).quic(false)
@@ -987,7 +999,7 @@ static void httpTest()
     Zquic::Test::loopbackPort(ZmcpITestPort::Stateless);
   ZuCheck(statelessPort);
   App statelessApp;
-  Zmcp::HTTPServer<App, Catalog> statelessServer;
+  Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> statelessServer;
   Zmcp::ServerConfig statelessConfig;
   statelessConfig.localIP(ZiIP{"127.0.0.1"}).port(statelessPort).tcp();
   statelessConfig.absentOrigin(true).legacySessions(false);
@@ -1060,7 +1072,7 @@ static void httpTest()
     }
   }
   server.final();
-  Zmcp::HTTPServer<App, Catalog> partial;
+  Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> partial;
   ZuCheck(!partial.init(hub, serverConfig(true), &app));
   partial.final();
   mx.stop();
@@ -1102,7 +1114,7 @@ static void secureTest()
     bool h3 = transport == Secure::H3;
     bool multiplexed = transport != Secure::H1;
     App app;
-    Zmcp::HTTPServer<App, Catalog> server;
+    Zmcp::HTTPServer<App, Catalog, Zhttp::AllProfiles> server;
     Zmcp::ServerConfig config;
     config.localIP(ZiIP{"127.0.0.1"}).port(port);
     config.absentOrigin(true);
@@ -1120,7 +1132,7 @@ static void secureTest()
     if (started) app.listening_.wait();
 
     ClientApp clientApp;
-    Zmcp::HTTPClient<ClientApp, Catalog> client;
+    Zmcp::HTTPClient<ClientApp, Catalog, Zhttp::AllProfiles> client;
     Zmcp::ClientConfig clientConfig;
     clientConfig.endpoint("/mcp");
     clientConfig.secure(true).tcp(false).tls(!h3).quic(h3)
@@ -1194,6 +1206,7 @@ static void secureTest()
     if (cancelled) {
       clientApp.cancelled_.wait();
       app.cancelled_.wait();
+      ownerTurn(mx);
       cancelCall->done.wait();
     }
     ZuCheckRT(clientApp.cancelOK && cancelCall->failures == 1);
@@ -1221,3 +1234,5 @@ int main(int argc, char **argv)
   ZuTestCall(httpTest);
   ZuTestCall(secureTest);
 }
+
+ZjrpcHTTPCatalogImpl()

@@ -742,15 +742,10 @@ public:
 
   template <typename Emit>
   void body(Emit &&emit) {
-    using Result = decltype(
-      ZuDeclVal<Emit &>()(Zjrpc::WriteProbe{}));
-    if constexpr (ZuIsSame<Result, bool>{}) {
-      if (auto stream_ = streamPtr())
-	stream_->body(ZuFwd<Emit>(emit));
-    } else {
-      if (auto fixed_ = fixedPtr())
-	fixed_->body(ZuFwd<Emit>(emit));
-    }
+    if (auto stream_ = streamPtr())
+      stream_->body(ZuFwd<Emit>(emit));
+    else if (auto fixed_ = fixedPtr())
+      fixed_->body(ZuFwd<Emit>(emit));
   }
 
   template <typename L>
@@ -778,9 +773,8 @@ private:
 };
 
 template <typename Catalog>
-using HTTPBuilderQ = ZmList<HTTPBuilder<Catalog>,
-  ZmListNode<HTTPBuilder<Catalog>,
-    ZmListHeapID<"Zmcp.HTTP.Builder">>>;
+using HTTPBuilderQ = Zhttp::ResponseQ<HTTPBuilder<Catalog>,
+  ZuStringT<"Zmcp.HTTP.Builder">>;
 
 template <typename Catalog, typename Impl>
 class HTTPResponder {
@@ -1239,12 +1233,12 @@ private:
 };
 } // namespace Server_
 
-template <typename Impl, typename Catalog>
-class HTTPServer : public Server<HTTPServer<Impl, Catalog>, Impl, Catalog>,
-    public Zhttp::Server<HTTPServer<Impl, Catalog>,
-      Server_::HTTPReqParser<HTTPServer<Impl, Catalog>, Zjrpc::AppHeaders<Impl>>,
-      HTTPBuilderQ<Catalog>>,
-    public Zjrpc::Dispatcher<HTTPServer<Impl, Catalog>, Impl, Catalog,
+template <typename Impl, typename Catalog, typename Selection>
+class HTTPServer : public Server<HTTPServer<Impl, Catalog, Selection>, Impl, Catalog>,
+    public Zhttp::Server<HTTPServer<Impl, Catalog, Selection>,
+      Server_::HTTPReqParser<HTTPServer<Impl, Catalog, Selection>, Zjrpc::AppHeaders<Impl>>,
+      HTTPBuilderQ<Catalog>, Selection>,
+    public Zjrpc::Dispatcher<HTTPServer<Impl, Catalog, Selection>, Impl, Catalog,
       Server_::HTTPDispatchContext<Zjrpc::HTTPHeaders<Zjrpc::AppHeaders<Impl>>, Catalog>,
       Server_::HTTPDispatchPolicy<Catalog>> {
   using Base = Server<HTTPServer, Impl, Catalog>;
@@ -1268,7 +1262,7 @@ public:
   using Headers = Base::Headers;
   using ResBuilderQ = HTTPBuilderQ<Catalog>;
   using HTTP = Zhttp::Server<HTTPServer,
-    Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>, ResBuilderQ>;
+    Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>, ResBuilderQ, Selection>;
   using Parser = Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>;
   using HTTP::init;
   using HTTP::start;
@@ -1299,7 +1293,8 @@ public:
   void deleteHTTP(Link *link, const HTTPMeta &meta) {
     if (!link) return;
     Zjrpc::HTTPValue sessionID = meta.sessionID;
-    this->ownerRun([this, link = ZmRef(link),
+    this->ownerRun([this, route = Zhttp::Route<typename ResBuilderQ::Node>{link,
+      Zhttp::Method::DELETE},
 	sessionID = ZuMv(sessionID)]() mutable {
       if (sessionID) {
 	auto node = m_sessions->del(sessionID);
@@ -1311,7 +1306,7 @@ public:
       ZmRef<typename ResBuilderQ::Node> response =
 	new ResBuilderQ::Node{};
       response->data().accepted();
-      link->send(ZuMv(response));
+      route.send(ZuMv(response));
     });
   }
 
@@ -1321,13 +1316,13 @@ public:
     ZmRef<typename ResBuilderQ::Node> response =
       new ResBuilderQ::Node{};
     response->data().forbidden();
-    link->send(ZuMv(response));
+    Zhttp::Route<typename ResBuilderQ::Node>{link, Zhttp::Method::POST}.send(ZuMv(response));
   }
 
   template <typename Link>
   void corruptHTTP(Link *link) {
     if (!link) return;
-    this->ownerRun([link = ZmRef(link)]() mutable { link->disconnect(); });
+    this->ownerRun([link = Zhttp::ChannelRef{link}]() mutable { link->disconnect(); });
   }
 
   bool expireSession(ZuCSpan id) {
@@ -1570,7 +1565,7 @@ private:
     Route(HTTPServer *server, Link *link, ZmRef<ZiIOBuf> body,
 	HTTPMeta meta, Headers headers) :
       Base{[](Server_::RouteBase *route) { static_cast<Self *>(route)->close_(); }},
-      m_server{server}, m_link{link}, m_body{ZuMv(body)},
+      m_server{server}, m_route{link, Zhttp::Method::POST}, m_body{ZuMv(body)},
       m_meta{ZuMv(meta)}, m_headers{ZuMv(headers)},
       m_responder{this, server->limits()}, m_peer{server->limits()} { }
 
@@ -1582,7 +1577,7 @@ private:
   private:
     void run__() {
       if (!m_server->register_(ZmRef(this))) {
-	m_link->disconnect();
+	m_route.close();
 	return;
       }
       auto parsed = Zjrpc::parse(ZuSpan<char>{m_body->span()}, m_server->maxJSONBytes_());
@@ -1613,16 +1608,16 @@ private:
       if (!m_session) m_rpcPeer = m_server->httpPeer_(m_headers);
       if (m_session) m_session->stream.replace(ZmRef(this));
       m_rpcContext = RpcContext{
-	Context{m_server->transportContext_(m_link->session()),
+	Context{m_server->transportContext_(m_route.session()),
 	  m_session ? m_session->context.ptr() : nullptr},
 	&m_headers, peer, this, [](void *route, int policy) {
 	  static_cast<Self *>(route)->m_responder.prepare(policy);
-	}, [](void *route) { return bool(static_cast<Self *>(route)->m_link); }};
+	}, [](void *route) { return bool(static_cast<Self *>(route)->m_route); }};
       m_streamContext = Server_::openContext(
 	m_server->impl(), StreamTag{}, 0, m_rpcContext.context);
       m_rpcContext.context = Context{m_rpcContext.context.transport(),
 	m_rpcContext.context.session(), m_streamContext.ptr()};
-      m_link->responseCancel(Zhttp::StreamCancelFn{this, [](Self *self) {
+      m_route.channel()->responseCancel(Zhttp::StreamCancelFn{this, [](Self *self) {
 	self->responseCancelled_();
       }});
       if (!m_server->receiveRpc_(ZuMv(m_body), ZuMv(parsed),
@@ -1634,7 +1629,7 @@ private:
     bool emit_(Server_::DispatchPolicy<Catalog>::Message message, int policy) {
       if (m_closed) return true;
       if (policy == Zjrpc::RoutePolicy::Abort) { failed(); return true; }
-      if (!m_link) { finish_(); return true; }
+      if (!m_route) { finish_(); return true; }
       m_responder.emit(ZuMv(message));
       if (m_responder.terminal() && !m_responder.sent()) finish_();
       return true;
@@ -1642,7 +1637,7 @@ private:
 
   public:
     void send(ZmRef<typename Responder::Builder> builder) {
-      if (m_link) m_link->send(ZuMv(builder));
+      if (m_route) m_route.send(ZuMv(builder));
     }
     bool postSSE_() {
       return m_server->postSSE_([work = ZmRef(this)]() mutable {
@@ -1660,19 +1655,19 @@ private:
     void failed() { close_(); }
 
     void streamClosed_() {
-      if (m_closed || !m_link) return;
+      if (m_closed || !m_route) return;
       ZmRef<Self> self{this};
-      auto link = ZuMv(m_link);
-      link->responseCancel({});
+      auto route = ZuMv(m_route);
+      route.channel()->responseCancel({});
       m_responder.close();
       closeStream_();
-      link->disconnect();
+      route.close();
       if (!inbound_() || (m_session && m_session->closing)) m_control.close();
     }
     void responseCancelled_() {
-      if (!m_server->assertTx_() || m_closed || !m_link) return;
+      if (!m_server->assertTx_() || m_closed || !m_route) return;
       ZmRef<Self> self{this};
-      m_link = nullptr;
+      m_route.reset();
       m_responder.close();
       closeStream_();
       if (!inbound_()) { m_control.close(); finish_(); }
@@ -1682,8 +1677,8 @@ private:
       ZmRef<Self> self{this};
       m_responder.closed();
       closeStream_();
-      if (m_link) m_link->responseCancel({});
-      m_link = nullptr;
+      if (m_route) m_route.channel()->responseCancel({});
+      m_route.reset();
       if (!inbound_()) m_control.close();
       finish_();
     }
@@ -1694,10 +1689,10 @@ private:
       m_control.close();
       m_responder.close();
       closeStream_();
-      if (m_link) {
-	m_link->responseCancel({});
-	m_link->disconnect();
-	m_link = nullptr;
+      if (m_route) {
+	m_route.channel()->responseCancel({});
+	m_route.close();
+	m_route.reset();
       }
       finish_();
     }
@@ -1707,7 +1702,7 @@ private:
       // Later batch members can still run for a stable HTTP peer after detach.
       // Do not pass them pointers to contexts already closed with the route.
       m_rpcContext.context = Context{
-	m_link ? m_rpcContext.context.transport() : nullptr,
+	m_route ? m_rpcContext.context.transport() : nullptr,
 	m_rpcContext.context.session()};
       m_streamContext.close();
     }
@@ -1727,7 +1722,7 @@ private:
     }
 
     HTTPServer *m_server;
-    ZmRef<Link> m_link;
+    Zhttp::Route<typename ResBuilderQ::Node> m_route;
     ZmRef<ZiIOBuf> m_body;
     HTTPMeta m_meta;
     Headers m_headers;
@@ -1939,8 +1934,7 @@ class WSConnection : public Server<
 template <typename Impl, typename Catalog, typename Profile>
 struct WSServerLinkState {
   using App = WSServer<Impl, Catalog, Profile>;
-  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
-    Zws::ExtendedServerLink<App, Profile>, Zws::H1ServerLink<App, Profile>>;
+  using Link = Zws::ServerLink<App, Profile>;
   Zjrpc::WSRx rx;
   ZuUnion<void, WSConnection<App, Impl, Catalog, Link>> rpc;
 };
@@ -1963,9 +1957,7 @@ class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
   friend IO;
 public:
   using WS = Zws::Server<WSServer, Profile>;
-  using Link = ZuIf<Zhttp::ProfileTraits<Profile>::Multiplexed,
-    Zws::ExtendedServerLink<WSServer, Profile>,
-    Zws::H1ServerLink<WSServer, Profile>>;
+  using Link = Zws::ServerLink<WSServer, Profile>;
   using Config = WS::Config;
 
   using Connection = WSConnection<WSServer, Impl, Catalog, Link>;

@@ -11,7 +11,7 @@ AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiProgram.hh ZiRing.hh ZiDaemon.hh ZiPIDFile.hh \
-	ZiIOBuf.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
+	ZiIOBuf.hh ZiIOContext.hh ZiRx.hh ZiTx.hh ZiLog.hh ZiAssert.hh ZiCSV.hh \
 	ZiTxStream.hh ZiFileTxStream.hh ZiRxStream.hh ZiEventLoop.hh \
 	ZiResolver.hh ZiHeapTune.hh ZiHashTune.hh \
 	ZtcHub.hh ZtcLink.hh ZtcMx.hh ZtcPool.hh

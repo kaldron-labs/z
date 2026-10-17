@@ -57,7 +57,7 @@ inline ZmRef<ZiIOBuf> request(
 
 class Client {
 public:
-  enum { TelSize = 1U<<22, ReadAttempts = 5 };
+  enum { TelSize = Ztc::AppCf::DefltTelRingSize, ReadAttempts = 5 };
 
   bool connect(ZuCSpan id = ZiProgram::name())
   {

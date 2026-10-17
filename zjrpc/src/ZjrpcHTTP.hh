@@ -103,13 +103,26 @@ Zhttp::WriteOutcome::T writeHTTP(Out &stream, uint64_t max,
 template <typename Headers_>
 struct HTTPHdrCatalog {
   using List = Headers_;
-  static int nameMatch(ZuBSpan key) {
-    return Zhttp::Fields::nameMatch<HTTPHdrCatalog>(key);
-  }
-  static int valueMatch(unsigned key, ZuBSpan value) {
-    return Zhttp::Fields::valueMatch<HTTPHdrCatalog>(key, value);
-  }
+  static int nameMatch(ZuBSpan);
+  static int valueMatch(unsigned, ZuBSpan);
+  static int fieldMatch(ZuBSpan);
 };
+
+// Emit composed catalog matchers in the consumer's owning translation unit,
+// alongside ZhttpHdrCatalogImpl declarations for its concrete catalogs.
+#define ZjrpcHTTPCatalogImpl() \
+  template <typename H> \
+  int Zjrpc::HTTPHdrCatalog<H>::nameMatch(ZuBSpan key) { \
+    return Zhttp::Fields::nameMatch<HTTPHdrCatalog>(key); \
+  } \
+  template <typename H> \
+  int Zjrpc::HTTPHdrCatalog<H>::valueMatch(unsigned key, ZuBSpan value) { \
+    return Zhttp::Fields::valueMatch<HTTPHdrCatalog>(key, value); \
+  } \
+  template <typename H> \
+  int Zjrpc::HTTPHdrCatalog<H>::fieldMatch(ZuBSpan key) { \
+    return Zhttp::Fields::fieldMatch<HTTPHdrCatalog>(key); \
+  }
 
 template <typename Message>
 struct HTTPRequestBuilder : public Zhttp::ReqBuilder {
@@ -209,12 +222,6 @@ using SSEBuf = Zi::IOBufAlloc<SSEQueue::Node, ZiIOBuf_DefltSize,
 using ResumeFn = ZmFn<bool(), ZmFnHeapID<"Zjrpc.SSE.Resume">>;
 using SSECloseFn = ZmFn<void(), ZmFnHeapID<"Zjrpc.SSE.Close">>;
 
-struct WriteProbe {
-  template <typename Out>
-  Zhttp::WriteOutcome::T operator ()(Out &) const {
-    return Zhttp::WriteOutcome::End;
-  }
-};
 
 struct SSEProducerRef {
   void *ptr = nullptr;
@@ -869,12 +876,10 @@ public:
   template <typename L> void header(L &&) const { }
   template <typename Emit>
   void body(Emit &&emit) {
-    using Result = decltype(emit(WriteProbe{}));
-    if constexpr (ZuIsSame<Result, bool>{}) {
-      if (auto sse = m_builder.template ptr<SSE>()) sse->body(ZuFwd<Emit>(emit));
-    } else {
-      if (auto fixed = m_builder.template ptr<Fixed>()) fixed->body(ZuFwd<Emit>(emit));
-    }
+    if (auto sse = m_builder.template ptr<SSE>())
+      sse->body(ZuFwd<Emit>(emit));
+    else if (auto fixed = m_builder.template ptr<Fixed>())
+      fixed->body(ZuFwd<Emit>(emit));
   }
   template <typename L>
   void bodyHdrs(L &&l) const {
@@ -889,9 +894,9 @@ private:
   Builder m_builder;
 };
 
-template <typename Impl, typename Catalog> class HTTPClient;
+template <typename Impl, typename Catalog, typename Selection> class HTTPClient;
 
-template <typename Impl, typename Catalog>
+template <typename Impl, typename Catalog, typename Selection>
 struct HTTPRequestData : public ZmObject, public HTTPRequestBuilder<ClientMessage<Catalog>> {
   using Base = HTTPRequestBuilder<ClientMessage<Catalog>>;
   using Extra = HTTPReqHeaders<Catalog, Impl>;
@@ -903,7 +908,7 @@ struct HTTPRequestData : public ZmObject, public HTTPRequestBuilder<ClientMessag
   using HdrCatalog = HTTPHdrCatalog<Headers>;
   ZuAssert(AllKeys::N == ZuTypeUnique<AllKeys>::N);
 
-  HTTPClient<Impl, Catalog> *client = nullptr;
+  HTTPClient<Impl, Catalog, Selection> *client = nullptr;
   bool responseOK = false;
 
   using Base::header;
@@ -934,14 +939,14 @@ struct HTTPRequestData : public ZmObject, public HTTPRequestBuilder<ClientMessag
   void completed(const Zhttp::Result &result) { client->completed(this, result); }
 };
 
-template <typename Impl, typename Catalog>
-class HTTPReplyParser : public HTTPResponseParser<HTTPReplyParser<Impl, Catalog>,
+template <typename Impl, typename Catalog, typename Selection>
+class HTTPReplyParser : public HTTPResponseParser<HTTPReplyParser<Impl, Catalog, Selection>,
     HTTPHeaders<HTTPResHeaders<Catalog, Impl>>, HTTPResHeaders<Catalog, Impl>> {
   using Extra = HTTPResHeaders<Catalog, Impl>;
   using Keys = ZuTypeSlice<2, 0, Extra>;
   using Meta = HTTPHeaders<Extra>;
   using Base = HTTPResponseParser<HTTPReplyParser, Meta, Extra>;
-  using Request = HTTPRequestData<Impl, Catalog>;
+  using Request = HTTPRequestData<Impl, Catalog, Selection>;
 public:
   void init(Request &request) { m_request = &request; }
   const Limits &limits() const { return m_request->client->limits(); }
@@ -988,33 +993,33 @@ private:
   Request *m_request = nullptr;
 };
 
-template <typename Impl, typename Catalog>
+template <typename Impl, typename Catalog, typename Selection>
 class HTTPPool;
-template <typename Impl, typename Catalog>
-using HTTPRequestQ = ZmPQueue<HTTPRequestData<Impl, Catalog>,
-  ZmPQueueOverlap<false, ZmPQueueNode<HTTPRequestData<Impl, Catalog>,
+template <typename Impl, typename Catalog, typename Selection>
+using HTTPRequestQ = ZmPQueue<HTTPRequestData<Impl, Catalog, Selection>,
+  ZmPQueueOverlap<false, ZmPQueueNode<HTTPRequestData<Impl, Catalog, Selection>,
     ZmPQueueHeapID<"Zjrpc.HTTP.Request">>>>;
-template <typename Impl, typename Catalog>
-using HTTPTxQ = ZmPQTx<HTTPPool<Impl, Catalog>, HTTPRequestQ<Impl, Catalog>,
+template <typename Impl, typename Catalog, typename Selection>
+using HTTPTxQ = ZmPQTx<HTTPPool<Impl, Catalog, Selection>, HTTPRequestQ<Impl, Catalog, Selection>,
   ZmPQTxOrdered<false>>;
 
-template <typename Impl, typename Catalog>
-class HTTPPool : public ZmNHeap<HTTPPool<Impl, Catalog>>,
-    public Zhttp::Pool<HTTPClient<Impl, Catalog>,
-    HTTPTxQ<Impl, Catalog>, HTTPReplyParser<Impl, Catalog>> {
+template <typename Impl, typename Catalog, typename Selection>
+class HTTPPool : public ZmNHeap<HTTPPool<Impl, Catalog, Selection>>,
+    public Zhttp::Pool<HTTPClient<Impl, Catalog, Selection>,
+    HTTPTxQ<Impl, Catalog, Selection>, HTTPReplyParser<Impl, Catalog, Selection>, Selection> {
 friend inline ZuStringT<"Zjrpc.HTTP.Pool"> ZmNHeapID(HTTPPool *);
 
-  using Base = Zhttp::Pool<HTTPClient<Impl, Catalog>,
-    HTTPTxQ<Impl, Catalog>, HTTPReplyParser<Impl, Catalog>>;
+  using Base = Zhttp::Pool<HTTPClient<Impl, Catalog, Selection>,
+    HTTPTxQ<Impl, Catalog, Selection>, HTTPReplyParser<Impl, Catalog, Selection>, Selection>;
 public:
-  explicit HTTPPool(HTTPClient<Impl, Catalog> *client) : Base{client} { }
-  HTTPRequestQ<Impl, Catalog> *txQueue() { return &m_requests; }
-  void archive_(HTTPRequestQ<Impl, Catalog>::Node *) { }
-  ZmRef<typename HTTPRequestQ<Impl, Catalog>::Node> retrieve_(
-      HTTPRequestQ<Impl, Catalog>::Key,
-      HTTPRequestQ<Impl, Catalog>::Key) { return {}; }
+  explicit HTTPPool(HTTPClient<Impl, Catalog, Selection> *client) : Base{client} { }
+  HTTPRequestQ<Impl, Catalog, Selection> *txQueue() { return &m_requests; }
+  void archive_(HTTPRequestQ<Impl, Catalog, Selection>::Node *) { }
+  ZmRef<typename HTTPRequestQ<Impl, Catalog, Selection>::Node> retrieve_(
+      HTTPRequestQ<Impl, Catalog, Selection>::Key,
+      HTTPRequestQ<Impl, Catalog, Selection>::Key) { return {}; }
 private:
-  HTTPRequestQ<Impl, Catalog> m_requests;
+  HTTPRequestQ<Impl, Catalog, Selection> m_requests;
 };
 
 } // Zjrpc

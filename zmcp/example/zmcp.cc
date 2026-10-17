@@ -178,12 +178,13 @@ int main(int argc, char **argv)
 	ZuBox<unsigned>{options.port}.length() + ZuStringT<"ws://:/mcp">{}().length());
     text << "ws://" << options.host << ':' << options.port << "/mcp";
     if (Zws::URI::parse(uri, text).ok() && client.init(
-	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{}, Zjrpc::WSConfig{}, &app) &&
+	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{},
+	Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, Zjrpc::WSConfig{}, &app) &&
 	client.start() && client.connect(uri, "mcp"))
       ok = run(client, options, app);
     client.final();
   } else {
-    Zmcp::HTTPClient<App, ExampleCatalog> client;
+    Zmcp::HTTPClient<App, ExampleCatalog, Zhttp::Profiles<Zhttp::H1TCP>> client;
     Zmcp::ClientConfig config;
     config.secure(false);
     if (client.init(
@@ -197,3 +198,5 @@ int main(int argc, char **argv)
   ZiLog::stop();
   return ok ? 0 : 1;
 }
+
+ZjrpcHTTPCatalogImpl()

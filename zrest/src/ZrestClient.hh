@@ -638,8 +638,8 @@ struct MResParser : public Zhttp::Parser {
   }
 };
 
-template <typename App, typename Catalog> class Client;
-template <typename App, typename Catalog> struct ClientPool;
+template <typename App, typename Catalog, typename Selection> class Client;
+template <typename App, typename Catalog, typename Selection> struct ClientPool;
 
 template <typename Call, typename = void>
 struct HasFailureDetail : public ZuFalse { };
@@ -648,14 +648,14 @@ struct HasFailureDetail<Call, decltype(
   ZuDeclVal<Call &>().failed(ZuDeclVal<const Failure &>()), void())> :
   public ZuTrue { };
 
-template <typename App, typename Catalog>
+template <typename App, typename Catalog, typename Selection>
 struct ClientReq : public ZmObject, public MReqBuilder<Catalog> {
   using Base = MReqBuilder<Catalog>;
   using HdrCatalog = Base::HdrCatalog;
   using Responses = GetAllResponses<typename Catalog::List>;
   using Result = GetUnion<Responses>;
 
-  Client<App, Catalog> *client = nullptr;
+  Client<App, Catalog, Selection> *client = nullptr;
   uint64_t id = 0;
   Result selected;
   Zhttp::Result httpResult;
@@ -806,26 +806,26 @@ struct ClientReq : public ZmObject, public MReqBuilder<Catalog> {
   }
 };
 
-template <typename App, typename Catalog>
-using ClientReqQ = ZmPQueue<ClientReq<App, Catalog>,
-  ZmPQueueOverlap<false, ZmPQueueNode<ClientReq<App, Catalog>,
+template <typename App, typename Catalog, typename Selection>
+using ClientReqQ = ZmPQueue<ClientReq<App, Catalog, Selection>,
+  ZmPQueueOverlap<false, ZmPQueueNode<ClientReq<App, Catalog, Selection>,
     ZmPQueueHeapID<"Zrest.Client.Request">>>>;
-template <typename App, typename Catalog>
-using ClientTxQ = ZmPQTx<ClientPool<App, Catalog>, ClientReqQ<App, Catalog>,
+template <typename App, typename Catalog, typename Selection>
+using ClientTxQ = ZmPQTx<ClientPool<App, Catalog, Selection>, ClientReqQ<App, Catalog, Selection>,
   ZmPQTxOrdered<false>>;
 
-template <typename App, typename Catalog>
-struct ClientPool : public ZmNHeap<ClientPool<App, Catalog>>,
-    public Zhttp::Pool<Client<App, Catalog>, ClientTxQ<App, Catalog>,
-      MResParser<Catalog, ClientReq<App, Catalog>>> {
+template <typename App, typename Catalog, typename Selection>
+struct ClientPool : public ZmNHeap<ClientPool<App, Catalog, Selection>>,
+    public Zhttp::Pool<Client<App, Catalog, Selection>, ClientTxQ<App, Catalog, Selection>,
+      MResParser<Catalog, ClientReq<App, Catalog, Selection>>, Selection> {
 friend inline ZuStringT<"Zrest.Client.Pool"> ZmNHeapID(ClientPool *);
 
-  using Base = Zhttp::Pool<Client<App, Catalog>, ClientTxQ<App, Catalog>,
-    MResParser<Catalog, ClientReq<App, Catalog>>>;
-  using Queue = ClientReqQ<App, Catalog>;
+  using Base = Zhttp::Pool<Client<App, Catalog, Selection>, ClientTxQ<App, Catalog, Selection>,
+    MResParser<Catalog, ClientReq<App, Catalog, Selection>>, Selection>;
+  using Queue = ClientReqQ<App, Catalog, Selection>;
   using Request = Queue::Node;
 
-  ClientPool(Client<App, Catalog> *client) : Base{client} { }
+  ClientPool(Client<App, Catalog, Selection> *client) : Base{client} { }
   Queue *txQueue() { return &m_requests; }
   void archive_(Request *) { }
   ZmRef<Request> retrieve_(Queue::Key, Queue::Key) {
@@ -835,11 +835,11 @@ private:
   Queue m_requests;
 };
 
-template <typename App, typename Catalog>
-class Client : public Zhttp::Client<Client<App, Catalog>,
-    ClientPool<App, Catalog>> {
-  using HTTP = Zhttp::Client<Client, ClientPool<App, Catalog>>;
-  using Request = ClientReqQ<App, Catalog>::Node;
+template <typename App, typename Catalog, typename Selection>
+class Client : public Zhttp::Client<Client<App, Catalog, Selection>,
+    ClientPool<App, Catalog, Selection>> {
+  using HTTP = Zhttp::Client<Client, ClientPool<App, Catalog, Selection>>;
+  using Request = ClientReqQ<App, Catalog, Selection>::Node;
 public:
   using HTTP::start;
   using HTTP::stop;
@@ -894,7 +894,7 @@ public:
     return true;
   }
 
-  void retired(ClientReq<App, Catalog> *request) {
+  void retired(ClientReq<App, Catalog, Selection> *request) {
     --m_pending;
     request->client = nullptr;
     request->deliver();

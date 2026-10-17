@@ -203,18 +203,18 @@ struct Parser : public Zrest::MReqParser<Catalog> {
   App *app = nullptr;
 };
 struct Builder : public ZmObject, public Zrest::MResBuilder<Catalog> { };
-ZmListDerive(BuilderQ, Builder,
-  ZmListNode<Builder, ZmListHeapID<"zumpingd.Reply">>);
+using BuilderQ = Zhttp::ResponseQ<Builder, ZuStringT<"zumpingd.Reply">>;
 
-class App : public Zhttp::Server<App, ::Parser, BuilderQ> {
+class App : public Zhttp::Server<App, ::Parser, BuilderQ, Zhttp::Profiles<Zhttp::H1TCP>> {
 public:
-  using HTTP = Zhttp::Server<App, ::Parser, BuilderQ>;
+  using HTTP = Zhttp::Server<App, ::Parser, BuilderQ, Zhttp::Profiles<Zhttp::H1TCP>>;
+  using Route = Zhttp::Route<BuilderQ::Node>;
   using HTTP::connected;
   using HTTP::disconnected;
   Zum::Service service;
 
-  template <typename Req, typename Link>
-  static void reply(ZmRef<Link> link, unsigned status, String body, String location = {}) {
+  template <typename Req>
+  static void reply(Route link, unsigned status, String body, String location = {}) {
     ZmRef<Reply> object = new Reply{ };
     object->body = ZuMv(body);
     object->location = ZuMv(location);
@@ -230,24 +230,24 @@ public:
       default: response->template init<Response<503>, Req>(object.ptr()); break;
 #undef PING_RESPONSE
     }
-    link->send(ZuMv(response));
+    link.send(ZuMv(response));
   }
 
   template <typename Req, typename Link>
   void request(Link *link, const Req &request, bool ok) {
-    if (!ok) return reply<Req>(ZmRef<Link>{link}, 400,
+    if (!ok) return reply<Req>(Route{link, Req::Method}, 400,
       json({.error = "invalid_request"}));
     if constexpr (ZuIsSame<Req, NotFoundGet>{} ||
 	ZuIsSame<Req, NotFoundPost>{}) {
-      reply<Req>(ZmRef<Link>{link}, 404, json({.error = "not_found"}));
+      reply<Req>(Route{link, Req::Method}, 404, json({.error = "not_found"}));
     } else if constexpr (ZuIsSame<Req, Health>{}) {
-      reply<Req>(ZmRef<Link>{link}, 200, json({.status = "ready"}));
+      reply<Req>(Route{link, Req::Method}, 200, json({.status = "ready"}));
     } else if constexpr (ZuIsSame<Req, SSF>{}) {
       service.receiveSET(Zum::ServiceSETRequest{
         .authorization = request.authorization,
         .contentType = request.contentType,
         .body = ZuMv(request.object->data)},
-        [hold = ZmRef<Link>{link}](int error) mutable {
+        [hold = Route{link, Req::Method}](int error) mutable {
           unsigned status;
           switch (error) {
             case Zum::ServiceError::OK: status = 202; break;
@@ -260,9 +260,9 @@ public:
     } else {
       ZuCSpan bearer{request.authorization};
       if (bearer.length() <= 7 || bearer.prefix("Bearer ") != 7)
-        return reply<Req>(ZmRef<Link>{link}, 401,
+        return reply<Req>(Route{link, Req::Method}, 401,
           json({.error = "invalid_token"}));
-      service.verify(bearer.offset(7), [hold = ZmRef<Link>{link}](
+      service.verify(bearer.offset(7), [hold = Route{link, Req::Method}](
           int error, Zum::ServicePrincipal principal) mutable {
         if (error != Zum::ServiceError::OK)
           return reply<Req>(ZuMv(hold), error == Zum::ServiceError::Unavailable ? 503 : 401,

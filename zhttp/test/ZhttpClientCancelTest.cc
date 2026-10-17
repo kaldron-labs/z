@@ -25,6 +25,8 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpDiscovery.hh>
+#include "../src/ZhttpClientImpl.hh"
 
 #include "ZhttpTestPorts.hh"
 
@@ -253,10 +255,11 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<App, TxQ, ResParser> {
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<App, TxQ, ResParser,
+  Zhttp::Profiles<Zhttp::H1TCP>> {
 friend inline ZuStringT<"Zhttp.Test.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<App, TxQ, ResParser>;
+  using Base = Zhttp::Pool<App, TxQ, ResParser, Zhttp::Profiles<Zhttp::H1TCP>>;
 
   Pool(App *);
 
@@ -269,7 +272,7 @@ private:
 };
 
 ZuAssert((ZuIsSame<
-  decltype(ZuDeclVal<const Pool &>().authority()), ZuBSpan>{}));
+  decltype(ZuDeclVal<const Pool &>().destination()), const Zhttp::Destination &>{}));
 
 struct App : public Zhttp::Client<App, Pool> {
   using Base = Zhttp::Client<App, Pool>;
@@ -431,10 +434,17 @@ void attemptState()
   ZuTestScope(attemptState);
 
   struct Link {
+    Zhttp::Channel &channel() { return view; }
+    static const Zhttp::ChannelOps &ops() {
+      static constexpr Zhttp::ChannelOps table{
+	.streamAccept = [](void *) { return true; }};
+      return table;
+    }
+    Zhttp::Channel view{ops()};
     void ref() const { }
     bool deref() const { return false; }
-    void responseHeadersParsed(Pool::LiveReq *) { ++headers; }
-    void responseBodyBytes(Pool::LiveReq *) { ++bodyUpdates; }
+    void responseHeadersParsed(Zhttp::PoolImpl::LiveReq *) { ++headers; }
+    void responseBodyBytes(Zhttp::PoolImpl::LiveReq *) { ++bodyUpdates; }
     void complete(bool ok_) { completed = true; ok = ok_; }
 
     unsigned	headers = 0;
@@ -448,14 +458,16 @@ void attemptState()
   };
 
   App app;
-  Pool pool{&app};
-  Pool::LiveReq attempt;
+  Pool facade{&app};
+  Zhttp::PoolImpl pool{&app, &facade};
+  Zhttp::PoolImpl::LiveReq attempt;
   ZmRef<ReqBuilder> request = new ReqBuilder;
-  attempt.request = request;
+  attempt.request = &Zhttp::bindRequest(request.ptr(),
+    Zhttp::CatalogData<ReqHeaders>::configure());
   attempt.events = Zhttp::AttemptEvent{}.SelectionObserved() |
     Zhttp::AttemptEvent{}.FailureObserved();
 
-  ZuCHECK(attempt.request == request,
+  ZuCHECK(attempt.request->ctx == request.ptr(),
     "live request retains the intrusive request");
   ZuCHECK(attempt.phase == Zhttp::AttemptPhase::Idle &&
       attempt.failure.kind == Zhttp::FailureKind::None &&
@@ -473,27 +485,59 @@ void attemptState()
     "attempt state enums expose stable names");
 
   Link link;
-  ResParser parser;
+  Zhttp::BoundResParser parser;
+  parser.construct(facade);
+  using ParserOwner = Zhttp::TypedParser<ResParser, ReqBuilder>;
+  parser.binding.destroy();
+  parser.binding = ParserOwner::create(Zhttp::CatalogData<ResHeaders>::configure());
+  auto &typedParser = static_cast<ParserOwner *>(parser.binding.ctx)->parser;
+  unsigned oldFrames = 0;
+  ZuCHECK(link.channel().streamAccept({
+    &oldFrames,
+    [](void *ctx, Zhttp::Channel *, Zhttp::Input &) {
+      ++*static_cast<unsigned *>(ctx);
+      return 1;
+    },
+    [](void *ctx, Zhttp::Channel *) { ++*static_cast<unsigned *>(ctx); },
+    [](void *ctx, Zhttp::Channel *) { ++*static_cast<unsigned *>(ctx); }}),
+    "prior operation accepts its frame consumer");
+  parser.init(*attempt.request, &link.channel());
+  Zhttp::Input empty;
+  ZuCHECK(!link.channel().frameMode() && !link.channel().frameInput(empty),
+    "new HTTP binding retires the prior operation's frame consumer");
+  link.channel().frameEnd();
+  link.channel().frameError();
+  ZuCHECK(!oldFrames, "rebound channel cannot call a retired frame consumer");
+
   pool.poolSend(link, attempt, Zhttp::Version::H1);
   ZuCHECK(attempt.phase == Zhttp::AttemptPhase::Sending,
     "request transmission enters sending phase");
   pool.status(link, attempt, parser, 200, false);
   ZuCHECK(attempt.phase == Zhttp::AttemptPhase::ReceivingHeaders &&
-      attempt.protocol.status == 200 && parser.status_ == 200,
+      attempt.protocol.status == 200 && typedParser.status_ == 200,
     "response status enters receiving-headers phase");
   pool.complete<ParserState>(
     link, attempt, parser, ParserState::Complete);
   ZuCHECK(attempt.phase == Zhttp::AttemptPhase::Closing &&
       link.headers == 1 && link.completed && link.ok &&
-      !parser.status_ && !parser.completed && !parser.ok,
+      !typedParser.status_ && !typedParser.completed && !typedParser.ok,
     "response completion enters closing phase and resets the parser");
 
-  MockBodyRx body;
-  Pool::LiveReq rejected;
-  rejected.request = request;
+  ZmRef<ZiRxQueue::Node> buffer = new Zhttp::BodyBufAlloc{};
+  static_cast<ZiIOBuf *>(buffer.ptr())->data()[0] = 'a';
+  static_cast<ZiIOBuf *>(buffer.ptr())->data()[1] = 'b';
+  static_cast<ZiIOBuf *>(buffer.ptr())->data()[2] = 'c';
+  buffer->length = 3;
+  Zhttp::Input body;
+  body.push(ZuMv(buffer));
+  Zhttp::PoolImpl::LiveReq rejected;
+  rejected.request = attempt.request;
   rejected.phase = Zhttp::AttemptPhase::ReceivingBody;
-  ResParser rejectingParser;
-  rejectingParser.rejectBody = true;
+  Zhttp::BoundResParser rejectingParser;
+  rejectingParser.binding = ParserOwner::create(
+    Zhttp::CatalogData<ResHeaders>::configure());
+  auto &typedReject = static_cast<ParserOwner *>(rejectingParser.binding.ctx)->parser;
+  typedReject.rejectBody = true;
   Link rejectingLink;
   ZuCHECK(!pool.body(rejectingLink, rejected, rejectingParser, body) &&
       rejected.failure.kind == Zhttp::FailureKind::Body &&
@@ -506,13 +550,13 @@ void attemptState()
   ZuCHECK(rejected.failure.kind == Zhttp::FailureKind::Body &&
       rejected.responseBody.reset == 3 &&
       rejected.responseBody.discarded == 3 &&
-      !rejected.responseBody.pending && !rejectingParser.completed &&
-      !rejectingParser.ok && !rejectingParser.rejectBody &&
+      !rejected.responseBody.pending && !typedReject.completed &&
+      !typedReject.ok && !typedReject.rejectBody &&
       rejectingLink.completed && !rejectingLink.ok,
     "body rejection preserves accounting and resets the parser");
 
-  Pool::LiveReq failed;
-  failed.request = request;
+  Zhttp::PoolImpl::LiveReq failed;
+  failed.request = attempt.request;
   Zhttp::BodyCommit commit{
     .produced = 9, .committed = 7, .reset = 2, .discarded = 2,
     .headers = true, .final = false};
@@ -2310,7 +2354,7 @@ void configuration()
     .protocol(Zhttp::ProtoPolicy::PreferH3)
     .h2Policy(Zhttp::H2Policy::Prefer)
     .blindH3(false).altSvcCrossHost(false)
-    .secure(true).tcp(true).tls(true).quic(true);
+    .secure(false).tcp(true).tls(true).quic(true);
   ZuCHECK(app.pool(
       1, Zhttp::Destination{ZuBSpan{"localhost"}, 2}, overrides),
     "configure pool slot 1 with common-type overrides");
@@ -2349,8 +2393,8 @@ void configuration()
       config1->protocol() == Zhttp::ProtoPolicy::PreferH3 &&
       config1->h2Policy() == Zhttp::H2Policy::Prefer &&
       !config1->blindH3() && !config1->altSvcCrossHost() &&
-      config1->secure() && config1->tcp() &&
-      config1->tls() && config1->quic(),
+      !config1->secure() && config1->tcp() &&
+      !config1->tls() && !config1->quic(),
     "pool overrides are isolated and explicit zero remains a value");
   ZuCHECK(app.limited(0, 1, true) && app.limited(0, 1, false) &&
       !app.limited(0, 2, true) && !app.limited(2, 0, true),

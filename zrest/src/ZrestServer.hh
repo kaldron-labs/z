@@ -845,9 +845,8 @@ private:
 };
 
 template <typename Catalog>
-using ResQ = ZmList<ResBuilder<Catalog>,
-  ZmListNode<ResBuilder<Catalog>,
-    ZmListHeapID<"Zrest.Server.Response">>>;
+using ResQ = Zhttp::ResponseQ<ResBuilder<Catalog>,
+  ZuStringT<"Zrest.Server.Response">>;
 
 template <typename Owner, typename Catalog, typename Response>
 struct Work : public ZmObject {
@@ -1052,7 +1051,7 @@ struct Parser : public Decoder {
   template <typename Link>
   void complete(Link *link, bool ok) {
     if (!this->u.type()) { if (link) link->disconnect(); return; }
-    m_context.scheme = Link::TLS ?
+    m_context.scheme = link->session().transport != Zhttp::Transport::TCP ?
       Zhttp::Scheme::https : Zhttp::Scheme::http;
     bool authorityOK = false;
     if (m_context.authority) {
@@ -1102,16 +1101,16 @@ private:
 
 } // Server_
 
-template <typename App, typename Catalog, typename Decoder>
-class Server : public Zhttp::Server<Server<App, Catalog, Decoder>,
-    Server_::Parser<Server<App, Catalog, Decoder>, Decoder, Catalog,
+template <typename App, typename Catalog, typename Decoder, typename Selection>
+class Server : public Zhttp::Server<Server<App, Catalog, Decoder, Selection>,
+    Server_::Parser<Server<App, Catalog, Decoder, Selection>, Decoder, Catalog,
       typename Server_::ResQ<Catalog>::Node>,
-    Server_::ResQ<Catalog>> {
-  using Self = Server<App, Catalog, Decoder>;
+    Server_::ResQ<Catalog>, Selection> {
+  using Self = Server<App, Catalog, Decoder, Selection>;
   using ResQ = Server_::ResQ<Catalog>;
   using Parser = Server_::Parser<Self, Decoder, Catalog,
     typename ResQ::Node>;
-  using HTTP = Zhttp::Server<Self, Parser, ResQ>;
+  using HTTP = Zhttp::Server<Self, Parser, ResQ, Selection>;
 public:
   using Response = ResQ::Node;
   using WorkQ = Server_::WorkQ<Self, Catalog, Response>;

@@ -15,6 +15,7 @@
 #include <zlib/ZiIP.hh>
 
 #include <zlib/ZhttpCore.hh>
+#include "ZhttpFieldImpl.hh"
 
 namespace Zhttp {
 

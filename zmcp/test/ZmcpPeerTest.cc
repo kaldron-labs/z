@@ -488,7 +488,7 @@ static void httpBatchTest_()
     if (result == Zhttp::WriteOutcome::End) harness.builder->data().close();
     return true;
   });
-  else harness.builder->data().body([&output](auto write) { (void)write(output); });
+  else harness.builder->data().body([&output](auto write) { (void)write(output); return true; });
   unsigned replies = 0, notifications = 0;
   auto process = [&replies, &notifications](ZuSpan<char> json) {
     auto parsed = Zjrpc::parse(json, json.length());
@@ -543,20 +543,13 @@ struct HTTPServerImpl {
   template <typename Req, typename Completion>
   void cancelled(Req *, Completion *, ZuCSpan) { }
 };
-using HTTPServerContract = Zmcp::HTTPServer<HTTPServerImpl, EchoCatalog>;
+using HTTPServerContract = Zmcp::HTTPServer<HTTPServerImpl, EchoCatalog,
+  Zhttp::Profiles<Zhttp::H1TCP>>;
 ZuAssert(sizeof(HTTPServerContract) > 0);
-
-struct HTTPServerLink : public ZmObject {
-  Zhttp::Session session() const { return {1, Zhttp::Transport::TCP}; }
-  template <typename Builder>
-  void send(ZmRef<Builder>) { }
-  void responseCancel(Zhttp::StreamCancelFn) { }
-  void disconnect() { }
-};
 
 static bool compileHTTPServer(
     HTTPServerContract &server, ZiMultiplex &mx, HTTPServerImpl &impl,
-    HTTPServerLink *link, ZmRef<ZiIOBuf> body, const Zmcp::HTTPMeta &meta) {
+    Zhttp::Channel *link, ZmRef<ZiIOBuf> body, const Zmcp::HTTPMeta &meta) {
   Zmcp::ServerConfig config;
   config.port(1).tcp();
   bool ok = server.init(Zhttp::HubConfig{&mx, "1", "2"},
@@ -1357,7 +1350,7 @@ static void httpTest()
   ZuCheck(fixedNode->data().bodyPolicy() == Zhttp::BodyPolicy::Fixed);
   HTTPBodyOut nodeOut;
   fixedNode->data().body(
-    [&nodeOut](auto write) { (void)write(nodeOut); });
+    [&nodeOut](auto write) { (void)write(nodeOut); return true; });
   ZuCheck(nodeOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":24,\"result\":{"
     "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{"
@@ -1401,6 +1394,7 @@ static void httpTest()
   fixedHarness.builder->data().body(
     [&fixedResponderOut](auto write) {
       (void)write(fixedResponderOut);
+      return true;
     });
   ZuCheck(fixedResponderOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":26,\"result\":{"
@@ -1640,3 +1634,5 @@ int main(int argc, char **argv)
   ZuTestCall(batchDeclarationTest);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

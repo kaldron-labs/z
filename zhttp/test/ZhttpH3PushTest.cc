@@ -9,6 +9,7 @@
 #include <zlib/ZmList.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
+#include "../src/ZhttpServerImpl.hh"
 
 using namespace ZuTestUtil;
 
@@ -77,6 +78,15 @@ template <bool Request>
 struct MsgInput :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<MsgInput<Request>, Request> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H3::Parser<MsgInput<Request>, Request>;
   using State = Base::State;
   using HdrCatalog = Zhttp::DefltHdrCatalog;

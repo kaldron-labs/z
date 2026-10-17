@@ -13,6 +13,8 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include "../src/ZhttpServerImpl.hh"
+#include "../src/ZhttpClientImpl.hh"
 #include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
@@ -300,6 +302,16 @@ void runAdmissionErrors()
 struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Request<RequestBuilder> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
@@ -313,8 +325,17 @@ struct RequestBuilder :
 
 struct StreamRequestBuilder :
   public Zhttp::Builder,
-  public Zhttp::H2::Request<StreamRequestBuilder,
-    Zhttp::DefltHdrCatalog, true> {
+  public Zhttp::H2::Request<StreamRequestBuilder, true> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
@@ -331,9 +352,19 @@ struct StreamRequestBuilder :
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Response<
-    ResponseBuilder, ResponseHeaders, true> {
+    ResponseBuilder, true> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = ResponseHeaders;
-  using Base = Zhttp::H2::Response<ResponseBuilder, HdrCatalog, true>;
+  using Base = Zhttp::H2::Response<ResponseBuilder, true>;
   using Base::body;
   unsigned status() { return 200; }
   template <typename Key, typename L>
@@ -346,6 +377,15 @@ struct ResponseBuilder :
 struct StreamResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H2::Response<StreamResponseBuilder> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base = Zhttp::H2::Response<StreamResponseBuilder>;
   using Base::body;
@@ -367,6 +407,15 @@ struct ClientStream {
 struct ClientParser :
   public Zhttp::Parser,
   public Zhttp::H2::Parser<ClientParser, false> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   ClientParser() : consumer{this} { }
 
@@ -467,6 +516,17 @@ struct ClientLink :
   unsigned	disconnects = 0;
   bool		streamSent = false;
   bool		holdOpen = false;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
 };
 
 void Client::disconnected(Link &link, bool)
@@ -561,6 +621,15 @@ struct ServerStream {
 struct ServerParser :
   public Zhttp::Parser,
   public Zhttp::H2::Parser<ServerParser, true> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   ServerParser() : consumer{this} { }
 
@@ -724,6 +793,17 @@ struct ServerLink :
   using Base = Zhttp::ServerLink<
     Server, ServerLink, Zhttp::H2TLS, ServerSession>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(this->rxState(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(this->rxState(), ZuMv(stream), 0);
+  }
 };
 
 struct H1Client;
@@ -749,6 +829,18 @@ struct H1ClientLink :
   using Base =
     Zhttp::ClientLink<H1Client, H1ClientLink, Zhttp::H1TLS>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
 };
 
 struct MismatchClient;
@@ -781,6 +873,17 @@ struct MismatchLink :
   using Base::Base;
 
   unsigned id = 0;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
 };
 
 void MismatchClient::connectFailed(Link &link, bool)
@@ -853,6 +956,17 @@ struct SharedH1Link :
     SharedServer, SharedH1Link, SharedH1Session,
     Zhttp::TLS_::SrvLink<SharedServer>>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(this->rxState(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(this->rxState(), ZuMv(stream), 0);
+  }
 };
 
 struct SharedH2Link :
@@ -864,6 +978,14 @@ struct SharedH2Link :
     Zhttp::TLS_::SrvLink<SharedServer>>;
   using Base::Base;
 };
+
+template <typename H1, typename H2>
+auto sharedChoice(ZmRef<H1> h1, ZmRef<H2> h2)
+{
+  return [h1 = ZuMv(h1), h2 = ZuMv(h2)](int8_t) mutable {
+    return Zhttp::TLS_::ClientChoice<H1, H2>{ZuMv(h1), ZuMv(h2)};
+  };
+}
 
 struct SharedClient :
   public Zhttp::TLS_::ClientHub<
@@ -907,6 +1029,17 @@ struct SharedClientH1Link :
   using Base = Zhttp::TLS_::ClientH1AppLink<
     SharedClient, SharedClientH1Link, SharedClient::NativeLink>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
 };
 
 struct SharedClientH2Link :
@@ -1215,7 +1348,7 @@ void runSharedTLS()
     new SharedClientH2Link{&h1Client};
   if (listening)
     h2Client.connect(
-      h2H1, h2H2, Ztls::Host{"127.0.0.1"}, state.port, 0);
+      sharedChoice(h2H1, h2H2), Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool firstH2 =
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(firstH2 && !state.errors,
@@ -1228,7 +1361,7 @@ void runSharedTLS()
   ZuCHECK(drained, "client observed server GOAWAY drain");
   if (drained)
     h2Client.connect(
-      h2H1_2, h2H2_2, Ztls::Host{"127.0.0.1"}, state.port, 0);
+      sharedChoice(h2H1_2, h2H2_2), Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool secondH2 =
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(secondH2 && !state.errors && state.admissions == 2,
@@ -1237,7 +1370,7 @@ void runSharedTLS()
     "post-GOAWAY replacement waits for the prior connection to close");
   if (secondH2)
     h2Client.connect(
-      h2H1_3, h2H2_3, Ztls::Host{"127.0.0.1"}, state.port, 0);
+      sharedChoice(h2H1_3, h2H2_3), Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool thirdH2 =
     state.response.timedwait(Zm::now(10)) == 0;
   ZuCHECK(thirdH2 && !state.errors && state.admissions == 3,
@@ -1246,10 +1379,10 @@ void runSharedTLS()
     "stream-ID replacement preserves one live connection per link");
   if (thirdH2)
     h1Client.connect(
-      h1H1, h1H2, Ztls::Host{"127.0.0.1"}, state.port, 0);
+      sharedChoice(h1H1, h1H2), Ztls::Host{"127.0.0.1"}, state.port, 0);
   if (thirdH2)
     h1Client.connect(
-      h1H1_2, h1H2_2, Ztls::Host{"127.0.0.1"}, state.port, 0);
+      sharedChoice(h1H1_2, h1H2_2), Ztls::Host{"127.0.0.1"}, state.port, 0);
   bool h1Responses =
     state.response.timedwait(Zm::now(10)) == 0 &&
     state.response.timedwait(Zm::now(10)) == 0;

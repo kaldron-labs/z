@@ -39,7 +39,7 @@ struct AgentEnv {
 
 class Agent {
 public:
-  struct Link;
+  using Link = Zws::ClientLink<Agent, Zhttp::H1TLS>;
 
   Agent() = default;
   ~Agent();
@@ -71,15 +71,6 @@ public:
 
 private:
   State *m_state = nullptr;
-};
-
-struct Agent::Link :
-    public Zws::Client<Agent, Zhttp::H1TLS>::Link {
-  using Base = Zws::Client<Agent, Zhttp::H1TLS>::Link;
-  Link(Zws::Client<Agent, Zhttp::H1TLS> *client,
-      const Zws::URI &uri, ZuBSpan authorization) :
-    Base{client, uri, Protocol, authorization} { }
-  ~Link() { clearAuthorization(); }
 };
 
 } // Ztc
