@@ -101,48 +101,42 @@ flow-control windows, ALPN, pooling, GOAWAY, and reset transport. `Zgrpc` owns
 RPC cardinality, gRPC message envelopes, status, deadlines and application dispatch.
 Zgrpc must use Zhttp's public, protocol-neutral API rather than directly including
 its H2/H3 implementation headers or implementing another HTTP stack.
-Zhttp exposes normalized transport events, retaining native error details
-for diagnostics; Zgrpc maps their semantics to RPC status. `Zpb` continues to
+Use Zhttp's existing transport results and callbacks, retaining native error
+details needed for diagnostics and RPC status mapping. `Zpb` continues to
 own protobuf payload encoding, verification and field semantics. Its optional
 size-prefixed format follows the protobuf delimited-message convention;
 gRPC uses its own five-byte envelope around an unprefixed Zpb payload.
 
 ### Required Zhttp work
 
-[zhttp/README.md](zhttp/README.md) documents receive trailers, server multi-turn
-body writers, and single-turn client writers. Both application-facing endpoints
-are already CRTP; their symmetry does not yet extend to ordinary-message body
-production and trailers. Application builders emit only initial headers.
-Therefore even a successful unary gRPC response requires transport work.
+Zhttp already supports incremental body reception, section-tagged receive
+fields, streaming transmission and retained multi-turn server producers with
+close/invalidation. Client application writers remain single-turn. Reuse those
+facilities; [zhttp.md](zhttp.md) specifies the focused additions and checks.
 
-Add a protocol-neutral ordinary-message stream surface in `zhttp`:
+The principal unary transport addition is outbound response trailers: queue
+final fields after all accepted DATA and finish with that section. Verify
+trailers-only errors through the existing no-body response path. Existing
+receive field and completion callbacks should carry metadata and terminal
+status; add a section-completion notification only if the adapter demonstrates
+that the current sequence lacks a required boundary. Reuse existing transport
+results, extending only missing facts needed for status mapping.
 
-| Capability | Required contract |
-| --- | --- |
-| Outbound trailing fields | Queue a final field section after all accepted DATA; finish with that section, without an earlier body end |
-| Trailers-only response | Allow the initial response section to be terminal with no body |
-| Client multi-turn production | Extend ordinary request producers with multiple production turns and half-close, using the server writer's close/invalidation discipline on the client CRTP path |
-| Header-section completion | Expose section kind and end-of-stream at a public boundary so status processing does not infer them from individual fields |
-| Terminal events | Report peer half-close, reset, GOAWAY disposition and connection failure once, with stream/attempt identity |
+Server-streaming reuses the existing retained response emitter. Client-streaming
+and duplex additionally require multi-turn ordinary request production and
+request half-close, following the server producer's established lifetime rules.
+Verify early final replies, request disposal and producer shutdown through
+existing routing and drain paths; repair gaps without discarding a completed
+response status. No shared producer rewrite or general terminal-event subsystem
+is a prerequisite.
 
-Use proposed `trailers(emit)`, `end()` and `reset()` operations on ordinary
-message producers on both client and server CRTP endpoints, with trailers and
-data sharing one ordered Tx queue. Final names should fit the existing builder
-surface. An emitter returning `Stream` keeps the body open; gRPC completion
-emits trailers instead of the current unconditional `End` path. Extend both
-client and server lifecycles so receiving
-a final response while a request producer remains open safely closes that
-producer. Expose equivalent field-section and stream-end semantics for H2 and
-H3 without leaking frame types. Zhttp maps directional cancellation to H2 stream
-reset or QUIC reset/stop-sending as appropriate, and normalizes GOAWAY admission
-semantics. In particular, stopping an unfinished request after a final response
-must not reset the completed response direction and discard its status.
-
-Do not use Extended CONNECT: a gRPC call remains an ordinary POST. Other HTTP
-users should receive these capabilities through the common message contract.
-Propagate any necessary API changes through dependents; do not add compatibility
-forwarders. Test these additions on both H2 and H3 in `zhttp` before building
-Zgrpc on them; common APIs must not hide an H2-only implementation.
+Validate the existing ownership, pooled-buffer adoption, limits, sensitivity and
+no-replay paths alongside adapter development. Preserve the performance and
+policy requirements below, adding transport APIs only where existing facilities
+cannot meet them. A gRPC call remains an ordinary POST, without Extended CONNECT.
+Keep H2/H3 implementation headers private and qualify the required behavior on
+both transports. Propagate necessary API changes through affected dependents
+without compatibility forwarders.
 
 ## Public contracts and catalogs
 
@@ -554,9 +548,9 @@ programs use lowercase names; library and unit-test basenames use `Zgrpc`.
 
 Delivery sequence:
 
-1. Add and test Zhttp outbound trailers, header completion, producer lifetime
-   and stream terminal events on H2 and H3. This gates unary interoperability
-   on both transports.
+1. Add and test Zhttp outbound response trailers on H2 and H3. Verify existing
+   trailers-only and receive-completion paths, adding only missing notification.
+   These focused changes enable the unary adapter on both transports.
 2. Implement catalogs, framing, metadata, unary adapters, status and verification.
    Interoperate in both client/server directions over H2 and H3 before adding
    convenience APIs.
@@ -615,10 +609,11 @@ Which existing public builder/link abstraction should expose trailing fields,
 multi-turn request production and terminal events? The design names
 operations but does not specify their exact types or integration with both
 high-level CRTP client/server endpoints and lower-level typed links. The
-client/server CRTP signatures are settled; this question concerns the new
-ordinary-message stream contract. Settle that boundary before
-implementing the Zgrpc adapters, including equivalent H2/H3 behavior and the
-effect on H1 dependents that do not support the full RPC stream contract.
+client/server CRTP signatures and existing server streaming are settled.
+Define the trailer extension for unary first; extend client production for
+client-streaming and duplex. Reuse existing results and add terminal information
+only where missing. Verify equivalent H2/H3 behavior and update affected H1
+dependents when a common signature changes.
 
 ### Q002 — Initial headers, trailers and completion ordering
 
@@ -626,7 +621,8 @@ What exact callback sequence distinguishes informational headers, ordinary
 initial headers, trailers-only responses and final trailers? Define where a
 header section becomes accepted, when metadata becomes observable, and how a
 terminal status competes with an adjacent reset or transport-completion event.
-The proposed section-completion hook needs a precise event contract.
+Start with the existing section-tagged field and HTTP completion callbacks;
+add a section-completion hook only if that sequence lacks a required boundary.
 
 ### Q003 — Off-shard admission and bounded command submission
 

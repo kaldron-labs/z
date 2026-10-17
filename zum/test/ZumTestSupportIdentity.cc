@@ -1121,7 +1121,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     "https://example.com", "example.com", registrationInput));
   Zum::Bytes enrollmentID = enrollmentBegin.ceremonyID;
   ZuCheck(ZmBlock<int>{}([
-    &db, &context, &enrollmentBegin, &registrationInput
+    &db, &enrollmentBegin, &registrationInput
   ](auto wake) mutable {
     Zum::enrollmentFinish(db->requests, Zm::now() + ZuTime{10},
       db, ZuMv(enrollmentBegin.ceremonyID),
@@ -1371,7 +1371,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     registrationInput));
   Zum::Bytes addID = addBegin.ceremonyID;
   ZuCheck(ZmBlock<int>{}([
-    &db, &context, &addBegin, &registrationInput
+    &db, &addBegin, &registrationInput
   ](auto wake) mutable {
     Zum::credentialFinish(db->requests, Zm::now() + ZuTime{10},
       db, ZuMv(addBegin.ceremonyID),

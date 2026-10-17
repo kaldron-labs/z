@@ -60,6 +60,7 @@ tags
 /zdb_pq/ext/libz--*.sql
 !scripts/**
 !zhttp/interop/testdata/**
+zhttp/itest/zhttpmatrix.zhttpmatrix*
 zhttp/interop/qir-root/
 zhttp/interop/qir-results/
 arc/**

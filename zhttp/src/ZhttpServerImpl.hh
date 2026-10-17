@@ -2719,9 +2719,7 @@ public:
     return m_hpackSeeds.plans();
   }
 
-#ifdef Zquic_DEBUG
   void printQUICDiag() { m_quic.printDiag(); }
-#endif
 
 private:
   template <typename Link_>

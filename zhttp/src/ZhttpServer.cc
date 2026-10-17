@@ -46,6 +46,8 @@ uint64_t ServerCore::responseBuildFailures() const { return m_impl->responseBuil
 uint64_t ServerCore::transportFailures() const { return m_impl->transportFailures(); }
 unsigned ServerCore::hubCount() const { return m_impl->hubCount(); }
 
+void ServerCore::printQUICDiag() { m_impl->printQUICDiag(); }
+
 bool ServerCore::backends(const HubConfig &hub) {
   for (const auto &profile: profiles())
     if (!profile.server(*this, hub, profile.versions)) return false;

@@ -38,6 +38,9 @@ bool QUICBackend::server(ServerCore &owner, const HubConfig &hub, unsigned)
   if (!native) {
     native = new Hub{&server};
     server.quicBackend().own(native);
+#ifdef Zquic_DEBUG
+    server.quicBackend().print = [](void *ctx) { static_cast<Hub *>(ctx)->printDiag(); };
+#endif
   }
   if (server.hubs().init(*native, hub, quic)) return true;
   native->final();
