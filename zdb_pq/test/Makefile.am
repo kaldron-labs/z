@@ -4,7 +4,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/ztls/src \
 	-I$(top_srcdir)/zv/src \
 	-I$(top_srcdir)/zdb/src -I$(top_srcdir)/zdb_pq/src \
-	@Z_CPPFLAGS@
+	@PQ_CFLAGS@ @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 LDADD = $(top_builddir)/zdb_pq/src/libZdbPQ.la \

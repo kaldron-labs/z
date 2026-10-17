@@ -147,7 +147,7 @@ int main(int argc, char **argv)
     return run(server, server.init(Zhttp::HubConfig{&mx}, ZiIP{"127.0.0.1"},
 	options.port, Zhttp::TCPConfig{}, Zjrpc::WSConfig{}, &app), mx);
   } else {
-    Zjrpc::HTTPServer<App, ExampleCatalog> server;
+    Zjrpc::HTTPServer<App, ExampleCatalog, Zhttp::Profiles<Zhttp::H1TCP>> server;
     Zjrpc::ServerConfig config;
     config.endpoint("/rpc").http([&options](auto &http) {
       http.localIP(ZiIP{"127.0.0.1"}).port(options.port).tcp();
@@ -156,3 +156,5 @@ int main(int argc, char **argv)
       Zhttp::HubConfig{&mx}, ZuMv(config), &app), mx);
   }
 }
+
+ZjrpcHTTPCatalogImpl()

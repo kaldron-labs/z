@@ -563,7 +563,8 @@ ZrestCatalogDerive(Catalog, Requests);
 ZrestCatalogImpl(Catalog)
 using Decoder = Zrest::MReqParser<RootCatalog,
   Zrest::MReqRootPolicy<RootCatalog>>;
-using RESTServer = Zrest::Server<App, Catalog, Decoder>;
+using RESTServer = Zrest::Server<App, Catalog, Decoder, Zhttp::Profiles<Zhttp::H1TCP,
+  Zhttp::H1TLS, Zhttp::H2TLS>>;
 
 struct BrowserTxn {
   OAuthString issuerURL;

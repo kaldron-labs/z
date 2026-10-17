@@ -350,3 +350,5 @@ int main(int argc, char **argv)
   ZuTestCall(wsInputTest);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

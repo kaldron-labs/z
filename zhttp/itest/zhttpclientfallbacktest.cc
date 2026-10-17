@@ -27,6 +27,7 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpDiscovery.hh>
 
 #include "ZhttpTestUtil.hh"
 #include "ZhttpITestPorts.hh"
@@ -158,10 +159,11 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientApp, TxQ, ResParser> {
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientApp, TxQ, ResParser,
+  Zhttp::AllProfiles> {
 friend inline ZuStringT<"Zhttp.Test.Fallback.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<ClientApp, TxQ, ResParser>;
+  using Base = Zhttp::Pool<ClientApp, TxQ, ResParser, Zhttp::AllProfiles>;
 
   Pool(ClientApp *client) : Base{client} { }
 

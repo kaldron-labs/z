@@ -1,8 +1,9 @@
 # Zrest endpoints
 
-`Zrest::Client<App, Catalog>` and `Zrest::Server<App, Catalog, Decoder>`
+`Zrest::Client<App, Catalog, Profiles>` and `Zrest::Server<App, Catalog, Decoder, Profiles>`
 compose the existing REST request and response codecs with Zhttp pools and
-server routes. `MReqBuilder`, `MResParser`, `MReqParser` and `MResBuilder` remain
+server routes. Pass an explicit `Zhttp::Profiles<...>` selection through each
+endpoint; the client pool carries that same selection. `MReqBuilder`, `MResParser`, `MReqParser` and `MResBuilder` remain
 available for direct catalog use.
 
 ## Calls and replies

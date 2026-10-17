@@ -36,7 +36,7 @@ fallback, or protocol lifecycle mechanism.
 | --- | --- | --- |
 | CLI parsing | `usage`, `loadOptions` | Validate and document command-line choices. |
 | Protocol-specific configuration | `parseDrop`, `migrationMode`, `quicHeartbeat`, `mxParams`, `ReqBodyMax`, `ReqHeaders`, `FixedRespHeaders`, `Server` | Convert CLI values into multiplex, TCP, TLS, QUIC, and public server configuration. |
-| Workload-specific request/response handling | `ResBuilder_`, `ResBuilderQ`, `ResBuilder`, `Parser`, `App` | Copy callback-scoped request data, preserve request order through the application WorkQ, plan responses, and submit intrusive response Builders with `Link::send()`. |
+| Workload-specific request/response handling | `ResBuilder_`, `ResBuilderQ`, `ResBuilder`, `Parser`, `App` | Copy callback-scoped request data, preserve request order through the application WorkQ, plan responses, and submit intrusive response Builders with `Route::send()`. |
 | Reporting | `printMemDiag` | Format memory, hash, and heap diagnostics. |
 | Workload selection | `prepareProcess` | Apply the selected foreground/daemon process policy. |
 | CLI parsing | `main` | Make trap registration, logging, workload state, public `Zhttp::Server`, wait policy, teardown, and process exit status explicit. |
@@ -76,3 +76,9 @@ hub/runtime coordinators in this closure.
 It also derives executable sources from `Makefile.am` and quoted local-header
 edges from the reviewed files, rejecting any unreviewed addition to the
 program-only closure.
+
+Both HTTP utilities intentionally select `Zhttp::AllProfiles`. Their public
+headers contain typed catalog, parser, builder and queue adapters. Private wire,
+compression, transport and request coordination implementations belong to
+libZhttp. Async response work retains `Route<ResBuilder>` with the request
+sequence; it does not retain a typed native link.

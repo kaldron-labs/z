@@ -20,6 +20,8 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include "../src/ZhttpServerImpl.hh"
+#include "../src/ZhttpClientImpl.hh"
 #include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
@@ -185,6 +187,18 @@ struct ServerLink :
   using Base = Zhttp::ServerLink<
     Server<Profile>, ServerLink<Profile>, Profile, ServerSession>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(this->rxState(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
 };
 
 template <typename Profile>
@@ -197,7 +211,19 @@ struct Client :
 
     unsigned responses = 0;
     unsigned id = 0;
-  };
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
+};
 
   State	*state = nullptr;
 
@@ -232,7 +258,19 @@ struct FailClient :
     public Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS> {
     using Base = Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS>;
     using Base::Base;
-  };
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
+};
 
   State	*state = nullptr;
 
@@ -273,6 +311,15 @@ struct UpgradeState {
 struct UpgradeReq :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<UpgradeReq, true> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H1::Parser<UpgradeReq, true>;
   using State = Zhttp::H1::ParserState;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
@@ -300,6 +347,15 @@ struct UpgradeReq :
 struct UpgradeResp :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<UpgradeResp, false> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H1::Parser<UpgradeResp, false>;
   using State = Zhttp::H1::ParserState;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
@@ -406,6 +462,18 @@ struct UpgradeSrvLink :
     UpgradeServer<Profile>, UpgradeSrvLink<Profile>,
     Profile, UpgradeSession>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(this->rxState(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
 };
 
 template <typename Profile>
@@ -418,7 +486,19 @@ struct UpgradeClient :
 
     UpgradeResp	parser;
     unsigned	id = 0;
-  };
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
+};
 
   UpgradeState	*state = nullptr;
   unsigned	offset = 0;

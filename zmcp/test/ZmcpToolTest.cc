@@ -202,3 +202,5 @@ int main(int argc, char **argv)
   ZuTestCall(discriminatorTest);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

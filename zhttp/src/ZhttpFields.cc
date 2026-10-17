@@ -14,32 +14,37 @@ namespace Zhttp {
 
 int DefltHdrCatalog::nameMatch(ZuBSpan) { return -1; }
 int DefltHdrCatalog::valueMatch(unsigned, ZuBSpan) { return -1; }
+int DefltHdrCatalog::fieldMatch(ZuBSpan name) {
+  return Fields::fieldMatch<DefltHdrCatalog>(name);
+}
 
 ZtEnumImplNS(FieldSection);
 
 namespace Fields {
 
-struct ForbiddenIDs {
-  using Keys = ZuStringTL<
-    "connection", "proxy-connection", "keep-alive",
-    "transfer-encoding", "upgrade">;
-};
-struct PseudoIDs {
-  using Keys = ZuStringTL<
-    ":method", ":path", ":scheme", ":authority", ":protocol">;
-};
-
-bool forbidden(ZuBSpan name)
+FieldClass wireClass(unsigned id)
 {
-  static constexpr auto matcher = ZuMatcher<ForbiddenIDs>();
-  return matcher.exact(name) >= 0;
+  constexpr unsigned N = FieldNames::Pseudo::N;
+  return {int8_t(id < N ? int(id) : -1), id >= N, FieldClass::None};
 }
 
-int pseudo(ZuBSpan name)
+FieldClass classify(ZuBSpan name)
 {
-  static constexpr auto matcher = ZuMatcher<PseudoIDs>();
-  return matcher.exact(name);
+  int id = DefltHdrCatalog::fieldMatch(name);
+  return id < 0 ? FieldClass{-1, false, FieldClass::None} : wireClass(unsigned(id));
 }
+
+bool forbidden(ZuBSpan name) { return classify(name).forbidden; }
+int pseudo(ZuBSpan name) { return classify(name).pseudo; }
+
 
 } // namespace Fields
+FieldName CatalogView::match(ZuBSpan name) const
+{
+  int id = fieldMatch(name);
+  if (id < 0) return {-1, {-1, false, FieldClass::None}};
+  if (unsigned(id) < fields.length()) return {id, *fields[id].classification};
+  return {-1, Fields::wireClass(unsigned(extra[unsigned(id) - fields.length()]))};
+}
+
 } // namespace Zhttp

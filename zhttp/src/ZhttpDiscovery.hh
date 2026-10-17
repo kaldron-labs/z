@@ -32,6 +32,7 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpCore.hh>
+#include <zlib/ZhttpConfig.hh>
 #include <zlib/ZhttpURL.hh>
 
 namespace Zhttp {
@@ -39,12 +40,7 @@ namespace Zhttp {
 ZtEnumStruct(ZhttpAPI, EndpointSource, int8_t,
   Origin, HTTPS, IPv4Hint, IPv6Hint, AltSvc);
 
-struct DiscoveryLimits {
-  unsigned	maxRecords = 16;
-  unsigned	maxHints = 16;
-  unsigned	maxEndpoints = 32;
-  unsigned	maxAliasDepth = 8;
-};
+
 
 struct DiscoveryCode {
   enum {

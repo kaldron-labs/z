@@ -203,3 +203,5 @@ int main(int argc, char **argv)
   ZuTestCall(advancedTest);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

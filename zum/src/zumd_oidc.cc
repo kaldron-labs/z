@@ -20,6 +20,7 @@
 #include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZfJSON.hh>
+#include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZfURI.hh>
 
 #include <zlib/ZmAtomic.hh>
@@ -1353,10 +1354,12 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<OIDCClient, TxQ, ResParser> {
+class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<OIDCClient, TxQ, ResParser,
+  Zhttp::Profiles<Zhttp::H1TLS, Zhttp::H2TLS>> {
 friend inline ZuStringT<"Zum.OIDC.HTTP.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<OIDCClient, TxQ, ResParser>;
+  using Base = Zhttp::Pool<OIDCClient, TxQ, ResParser, Zhttp::Profiles<Zhttp::H1TLS,
+    Zhttp::H2TLS>>;
 public:
   Pool(OIDCClient *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }

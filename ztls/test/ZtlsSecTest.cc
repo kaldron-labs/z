@@ -10,6 +10,8 @@
 
 #include <zlib/ZtlsSec.hh>
 #include <zlib/ZtlsCOSE.hh>
+#include <zlib/ZuHex.hh>
+#include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZtlsMD.hh>
 #include <zlib/ZtlsPK.hh>
 #include <zlib/ZtlsRandom.hh>
@@ -17,6 +19,33 @@
 #include <zlib/ZtArray.hh>
 
 using namespace ZuTestUtil;
+
+static void hmac()
+{
+  ZuTestScope(hmac);
+  // RFC 4231, test case 2, including reuse of the keyed context.
+  Ztls::HMAC<> mac;
+  mac.start(ZuBSpan{"Jefe"});
+  uint8_t digest[Ztls::HMAC<>::Size];
+  char hex[Ztls::HMAC<>::Size * 2];
+  auto matches = [&digest, &hex]() {
+    ZuHex::encode<false>(hex, digest);
+    return ZuCSpan{hex, sizeof(hex)} ==
+      "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843";
+  };
+  mac.update(ZuBSpan{"what do ya want for nothing?"});
+  mac.finish(digest);
+  ZuCheck(matches());
+  mac.update(ZuBSpan{"what do ya want "});
+  mac.update(ZuBSpan{"for nothing?"});
+  mac.finish(digest);
+  ZuCheck(matches());
+  mac.update(ZuBSpan{"discard"});
+  mac.reset();
+  mac.update(ZuBSpan{"what do ya want for nothing?"});
+  mac.finish(digest);
+  ZuCheck(matches());
+}
 
 static void publicKey()
 {
@@ -175,6 +204,7 @@ int main()
   ZuCheck(Ztls::ctEqual(raw, round));
   der[derLen] = 0;
   ZuCheck(!Ztls::COSE::ES256::derToRaw({der, derLen + 1}, round));
+  ZuTestCall(hmac);
   ZuTestCall(publicKey);
   ZuTestCall(verify);
   ZuTestCall(coseKeys);

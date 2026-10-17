@@ -42,7 +42,8 @@ public:
   ZuInline void finish(ZuSpan<uint8_t> output) {
     ZmAssert(output.length() >= Size);
     ZmAssert(m_ctx);
-    m_ctx->final(m_ctx, &output[0], PTLS_HASH_FINAL_MODE_SNAPSHOT);
+    // zpicotls HMAC supports RESET and FREE, but not hash snapshots.
+    m_ctx->final(m_ctx, &output[0], PTLS_HASH_FINAL_MODE_RESET);
   }
 
   ZuInline void reset() {

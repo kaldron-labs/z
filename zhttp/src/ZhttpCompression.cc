@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZhttpCompression.hh>
+#include "ZhttpWire.hh"
 
 #include <zlib/ZuArray.hh>
 
@@ -278,3 +279,80 @@ int64_t Huffman::decode(ZuSpan<uint8_t> out, ZuBSpan bytes)
 }
 
 }} // namespace Zhttp::Compression
+
+namespace Zhttp {
+
+void HeaderSeedCatalog::add(
+  const CatalogView &catalog, const H3::Params &params, uint32_t capacity)
+{
+  for (const auto &field: catalog.fields) {
+    ZuBSpan name = field.name;
+    if (!name || name[0] == ':' || field.classification->forbidden ||
+	params.neverIndex(name)) continue;
+    bool exact = bool(field.values);
+    ZuBSpan value = exact ? field.values[0] : ZuBSpan{};
+    uint64_t index = 0;
+    if (exact ? H3::QPack::staticIndex(name, value) >= 0 :
+	H3::QPack::staticNameIndex(name, index)) continue;
+    bool duplicate = false;
+    unsigned nameOnly = m_entries.length();
+    for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
+      const auto &entry = m_entries[i];
+      if (entry.name != name) continue;
+      if (!exact || (entry.exact && entry.value == value)) {
+	duplicate = true;
+	break;
+      }
+      if (!entry.exact) nameOnly = i;
+    }
+    if (duplicate) continue;
+    if (nameOnly < m_entries.length()) m_entries.splice(nameOnly, 1);
+    uint64_t size = uint64_t(name.length()) + value.length() + 32;
+    if (size > capacity) continue;
+    new (m_entries.push()) HeaderSeed{
+      H3::QPackTxString{name}, H3::QPackTxString{value}, uint32_t(size), exact};
+  }
+}
+
+struct SeedSensitive {
+  using Keys = ZuStringTL<"authorization", "cookie", "set-cookie">;
+};
+
+void HPackSeedCatalog::add(const CatalogView &catalog, uint32_t capacity)
+{
+  static constexpr auto sensitive = ZuMatcher<SeedSensitive>();
+  HPackSeedPlan plan;
+  for (const auto &field: catalog.fields) {
+    if (!field.values) continue;
+    ZuBSpan name = field.name, value = field.values[0];
+    if (!name || name[0] == ':' || field.classification->forbidden ||
+	H2::HPack::staticIndex(name, value) > 0 || sensitive.exact(name) >= 0)
+      continue;
+    bool duplicate = false;
+    for (const auto &entry: plan.entries)
+      if (entry.name == name && entry.value == value) { duplicate = true; break; }
+    if (duplicate) continue;
+    uint64_t size = uint64_t(name.length()) + value.length() + 32;
+    if (size > capacity) continue;
+    HPackSeed seed;
+    seed.name = name;
+    seed.value = value;
+    seed.size = uint32_t(size);
+    int nameIndex = H2::HPack::staticNameIndex(seed.name);
+    if (Compression::putPref(seed.incremental, 0x40, 6,
+	  nameIndex > 0 ? unsigned(nameIndex) : 0) < 0 ||
+	(nameIndex <= 0 && Compression::putString(
+	  seed.incremental, 0, 7, seed.name) < 0) ||
+	Compression::putString(seed.incremental, 0, 7, seed.value) < 0 ||
+	Compression::putPref(seed.fallback, 0, 4,
+	  nameIndex > 0 ? unsigned(nameIndex) : 0) < 0 ||
+	(nameIndex <= 0 && Compression::putString(
+	  seed.fallback, 0, 7, seed.name) < 0) ||
+	Compression::putString(seed.fallback, 0, 7, seed.value) < 0)
+      continue;
+    new (plan.entries.push()) HPackSeed{ZuMv(seed)};
+  }
+  new (m_plans.push()) HPackSeedPlan{ZuMv(plan)};
+}
+
+} // namespace Zhttp

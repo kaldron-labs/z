@@ -56,7 +56,8 @@ CLEANFILES += zprotoc-out/zprotoc_values.hh zprotoc-out/zprotoc_values.cc \
 EXTRA_DIST += zprotoc_values.proto zprotoc_values_row.proto \
 	zprotoc_address.proto
 zprotoctest_SOURCES = zprotoctest.cc
-zprotoctest_DEPENDENCIES = $(LDADD) zprotocconsumer$(EXEEXT) zprotocimport$(EXEEXT)
+zprotoctest_DEPENDENCIES = $(filter-out -%,$(LDADD)) \
+	zprotocconsumer$(EXEEXT) zprotocimport$(EXEEXT)
 zprotocconsumer_SOURCES = zprotocconsumer.cc
 nodist_zprotocconsumer_SOURCES = zprotoc-out/simple.cc zprotoc-out/simple.hh
 zprotocconsumer_CPPFLAGS = $(AM_CPPFLAGS) -I$(builddir)/zprotoc-out

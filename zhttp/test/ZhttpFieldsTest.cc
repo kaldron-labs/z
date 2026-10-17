@@ -9,10 +9,11 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zhttp.hh>
+#include "../src/ZhttpFieldImpl.hh"
 
 using namespace ZuTestUtil;
 
-namespace {
+namespace ZhttpFieldsTest_ {
 
 void testFieldSection()
 {
@@ -48,7 +49,9 @@ struct H3Fields {
   static bool field(
     Semantics &semantics, ZuBSpan name, ZuBSpan value, Header &&header) {
     ZtBArray<ZtArrayHeapID<"ZhttpFieldsTest.Value">> storage{value};
-    return semantics.field(name, storage.span(), ZuFwd<Header>(header));
+    return semantics.field(
+      Zhttp::CatalogData<Zhttp::DefltHdrCatalog>::configure(), name, storage.span(),
+      [&header](int, ZuBSpan key, ZuSpan<uint8_t> value) { header(key, value); });
   }
 };
 
@@ -57,7 +60,9 @@ struct H2SyntheticFields {
   static bool field(
     Semantics &semantics, ZuBSpan name, ZuBSpan value, Header &&header) {
     ZtBArray<ZtArrayHeapID<"ZhttpFieldsTest.Value">> storage{value};
-    return semantics.field(name, storage.span(), ZuFwd<Header>(header));
+    return semantics.field(
+      Zhttp::CatalogData<Zhttp::DefltHdrCatalog>::configure(), name, storage.span(),
+      [&header](int, ZuBSpan key, ZuSpan<uint8_t> value) { header(key, value); });
   }
 };
 
@@ -195,10 +200,11 @@ void testSource(ZuCSpan name)
   ZuCHECK(responses<Source>(), "response semantics");
 }
 
-} // namespace
+} // namespace ZhttpFieldsTest_
 
 int main(int argc, char **argv)
 {
+  using namespace ZhttpFieldsTest_;
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testFieldSection);

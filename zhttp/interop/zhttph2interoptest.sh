@@ -98,14 +98,12 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   --no-server-id >"$work/zhttpd.out" 2>"$work/zhttpd.err" &
 server_pid=$!
 ready=0
-for n in 1 2 3 4 5 6 7 8 9 10; do
-  if curl --http2 --cacert "$work/cert.pem" --fail --silent \
-      --show-error --connect-timeout 1 --max-time 2 \
-      "https://localhost:$port/index.html" >"$work/ready.body" 2>/dev/null; then
-    ready=1
-    break
-  fi
-done
+if curl --http2 --cacert "$work/cert.pem" --fail --silent \
+    --show-error --connect-timeout 1 --max-time 2 \
+    --retry 5 --retry-connrefused --retry-max-time 10 \
+    "https://localhost:$port/index.html" >"$work/ready.body" 2>"$work/ready.err"; then
+  ready=1
+fi
 
 if ! command -v h2spec >/dev/null; then
   echo 'ok 5 - h2spec against Zhttp server # SKIP h2spec is not installed'
@@ -140,15 +138,13 @@ else
     >"$work/nghttpd.out" 2>"$work/nghttpd.err" &
   nghttpd_pid=$!
   ready=0
-  for n in 1 2 3 4 5 6 7 8 9 10; do
-    if curl --http2 --cacert "$work/cert.pem" --fail --silent \
-	--show-error --connect-timeout 1 --max-time 2 \
-	"https://localhost:$nghttpd_port/index.html" \
-	>"$work/nghttpd-ready.body" 2>/dev/null; then
-      ready=1
-      break
-    fi
-  done
+  if curl --http2 --cacert "$work/cert.pem" --fail --silent \
+      --show-error --connect-timeout 1 --max-time 2 \
+      --retry 5 --retry-connrefused --retry-max-time 10 \
+      "https://localhost:$nghttpd_port/index.html" \
+      >"$work/nghttpd-ready.body" 2>"$work/nghttpd-ready.err"; then
+    ready=1
+  fi
   if test "$ready" -eq 1 &&
       "$zhttp" --http3=disable --http2=force -c "$work/cert.pem" \
 	-o "$work/zhttp-nghttpd.body" \

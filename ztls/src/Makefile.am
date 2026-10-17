@@ -32,5 +32,5 @@ libZtls_la_LIBADD = $(top_builddir)/zi/src/libZi.la \
 	$(ZTLS_DBUS_LIB) \
 	@PTLS_LIBS@ @OPENSSL_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 bin_PROGRAMS = ztotp
-ztotp_LDADD = libZtls.la $(libZtls_la_LDADD)
+ztotp_LDADD = libZtls.la $(libZtls_la_LIBADD)
 ztotp_SOURCES = ztotp.cc

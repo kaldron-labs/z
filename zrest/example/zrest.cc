@@ -282,8 +282,10 @@ ZrestCatalogDerive(Catalog, Requests);
 ZrestCatalogImpl(Catalog)
 
 struct ClientApp { };
-class Client : public Zrest::Client<ClientApp, Catalog> {
-  using Base = Zrest::Client<ClientApp, Catalog>;
+class Client : public Zrest::Client<ClientApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP,
+  Zhttp::H1TLS, Zhttp::H2TLS>> {
+  using Base = Zrest::Client<ClientApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
+    Zhttp::H2TLS>>;
 public:
   template <typename Builder>
   ZmRef<Result> submit(unsigned pool, OAuthString target,
@@ -371,7 +373,7 @@ ZrestCatalogDerive(CallbackCatalog, CallbackRequests);
 ZrestCatalogImpl(CallbackCatalog)
 using CallbackDecoder = Zrest::MReqParser<CallbackCatalog>;
 using CallbackServer = Zrest::Server<CallbackApp, CallbackCatalog,
-  CallbackDecoder>;
+  CallbackDecoder, Zhttp::Profiles<Zhttp::H1TCP>>;
 
 class CallbackApp {
 public:

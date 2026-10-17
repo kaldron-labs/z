@@ -119,3 +119,11 @@ Omit `--ws` on both commands for HTTP. These sample programs use loopback
 TCP; the endpoint templates and integration sources also cover the secure and
 extended CONNECT profiles. Build the examples at the final implementation
 milestone, after their libraries, using the existing configuration and artifacts.
+
+HTTP endpoints require an explicit `Zhttp::Profiles<...>` selection. Their pool
+uses that same selection. WebSocket wrappers select exactly their `Profile`
+and bind concrete HTTP channels. WebSocket client initialization takes the
+origin `Zhttp::Destination` before startup; `connect(uri)` supplies the target
+and handshake fields. Define composed HTTP catalog matchers once in each owning
+application translation unit with `ZjrpcHTTPCatalogImpl()`, alongside any
+`ZhttpHdrCatalogImpl` definitions.

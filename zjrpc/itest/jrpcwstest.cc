@@ -141,7 +141,8 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
   Zhttp::HubConfig hub{&mx, "1", "2"};
   bool initialized = server.init(hub, ZiIP{"127.0.0.1"}, port,
     profileConfig<Profile, true>(temp), Zjrpc::WSConfig{}, &srv) &&
-    client.init(hub, profileConfig<Profile, false>(temp), Zjrpc::WSConfig{}, &cli);
+    client.init(hub, profileConfig<Profile, false>(temp),
+      Zhttp::Destination{"127.0.0.1", uint16_t(port)}, Zjrpc::WSConfig{}, &cli);
   ZuCheck(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
   bool started = server.start();
@@ -211,3 +212,5 @@ int main(int argc, char **argv)
   }
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()

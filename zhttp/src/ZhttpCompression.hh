@@ -136,6 +136,15 @@ public:
     return *this << ZuBoxed(v);
   }
 
+  template <typename B = Bytes, typename = ZuIfT<HasBuffer<B>{}>>
+  ZuSpan<uint8_t> reserve(unsigned length) {
+    if (!m_ok) return {};
+    uint64_t offset = m_out.length();
+    return {m_out.ensure(offset + length) + offset, length};
+  }
+  template <typename B = Bytes, typename = ZuIfT<HasBuffer<B>{}>>
+  void commit(unsigned length) { m_out.length(m_out.length() + length); }
+
   bool ok() const { return m_ok; }
 
 private:

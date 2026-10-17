@@ -22,7 +22,7 @@
 #include <zlib/ZmScheduler.hh>
 
 #include <zlib/ZhttpFields.hh>
-#include <zlib/ZhttpTransport.hh>
+#include <zlib/Zhttp.hh>
 
 #include <zlib/ZwsProtocol.hh>
 #include <zlib/ZwsTx.hh>
@@ -32,7 +32,7 @@ namespace Zws {
 template <typename Impl, typename Link, bool Server, typename Random>
 class Codec {
 public:
-  using Stream = Zhttp::Stream<Link>;
+  using Stream = Zhttp::Channel;
   using Rx = ZiRxStream<ZiRxQueue>;
   using BufAlloc = Zi::IOBufAlloc<
     ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
@@ -48,7 +48,7 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   template <typename HttpRx>
-  int process(Stream stream, HttpRx &httpRx) {
+  int process(Stream &stream, HttpRx &httpRx) {
     if (m_terminal || !m_link) return 0;
     m_stream = &stream;
     bool progressed = false;
@@ -93,7 +93,7 @@ public:
       (progressed ? 1 : 0) : -1;
   }
 
-  void peerEnd(Stream stream) {
+  void peerEnd(Stream &stream) {
     if (m_terminal || !m_link) return;
     m_stream = &stream;
     if (!m_peerClosed) {
@@ -103,7 +103,7 @@ public:
     m_stream = nullptr;
   }
 
-  void streamError(Stream stream) {
+  void streamError(Stream &stream) {
     if (m_terminal || !m_link) return;
     m_stream = &stream;
     fail_(Failure::AbnormalClose);
@@ -117,7 +117,7 @@ public:
     Link *link = m_link;
     if (!link) return;
     bool valid = true;
-    Stream{*link}.txStream([
+    link->channel().streamTx([
       this, opcode, &valid, l = ZuFwd<L>(l)](auto &lower) mutable {
 	auto tx = txLayer<!Server>(lower, opcode, m_random);
 	l(tx);
@@ -136,7 +136,7 @@ public:
     Link *link = m_link;
     if (!link) return;
     bool valid = true;
-    Zhttp::Stream{*link}.txStream_([
+    link->channel().streamTx_([
       this, opcode, &valid, l = ZuFwd<L>(l)](auto &lower) mutable {
 	auto tx = txLayer<!Server>(lower, opcode, m_random);
 	l(tx);
@@ -287,7 +287,7 @@ public:
 
 private:
   static ZmRef<ZiRxQueue::Node> allocHttp_() {
-    return new Zhttp::BodyRx::BufAlloc{};
+    return new Zhttp::BodyBufAlloc{};
   }
 
   static ZmRef<ZiRxQueue::Node> allocMessage_() {
@@ -507,7 +507,7 @@ private:
 	return fail_(Failure::Transmit), false;
     }
     m_txEnabled = 0;
-    m_stream->end();
+    m_stream->streamTxEnd();
     m_terminal = true;
     return true;
   }
@@ -516,7 +516,7 @@ private:
     if (!m_link) return false;
     bool valid = true;
     auto send = [this, opcode, payload, &valid](auto &stream) {
-      stream.txStream([this, opcode, payload, &valid](auto &lower) {
+      stream.streamTx([this, opcode, payload, &valid](auto &lower) {
 	auto tx = txLayer<!Server>(lower, opcode, m_random);
 	tx << payload;
 	valid = tx.flush() && tx.valid();
@@ -525,8 +525,7 @@ private:
     if (m_stream)
       send(*m_stream);
     else {
-      Stream stream{*m_link};
-      send(stream);
+      send(m_link->channel());
     }
     return valid;
   }
@@ -569,7 +568,7 @@ private:
     uint8_t payload[] = {uint8_t(code>>8), uint8_t(code)};
     m_closeSent = true;
     if (!sendControl_(Opcode::Close, payload)) return;
-    m_stream->end();
+    m_stream->streamTxEnd();
     m_errorEnded = true;
   }
 
@@ -634,7 +633,7 @@ private:
     fail_(Failure::Timeout);
     stopTimers_();
     notifyError_();
-    Stream{*m_link}.reset();
+    m_link->channel().streamTxReset();
   }
 
   void transmitFailed_() {
@@ -643,7 +642,7 @@ private:
     if (m_stream) return;
     stopTimers_();
     notifyError_();
-    Stream{*m_link}.reset();
+    m_link->channel().streamTxReset();
   }
 
   Link			*m_link;

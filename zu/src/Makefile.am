@@ -3,7 +3,7 @@ AM_CPPFLAGS = -DZU_EXPORTS @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = \
-	ZuLib.hh \
+	ZuLib.hh ZuIntrin.hh ZuTL.hh ZuSeq.hh ZuString.hh ZuDeduce.hh ZuFixed.hh \
 	ZuArrayFn.hh ZuSpan.hh ZuArray.hh ZuAssert.hh ZuBox.hh \
 	ZuBitmap.hh ZuBitfield.hh ZuByteSwap.hh ZuCmp.hh ZuICmp.hh \
 	ZuFnName.hh ZuFmt.hh ZuFP.hh ZuFP_.hh ZuHash.hh ZuID.hh \

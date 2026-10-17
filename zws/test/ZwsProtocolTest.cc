@@ -14,6 +14,7 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/Zws.hh>
+#include "../../zhttp/src/ZhttpWire.hh"
 
 using namespace ZuTestUtil;
 
@@ -129,7 +130,12 @@ struct FakeHub {
   FakeMx mx_;
 };
 
+const Zhttp::ChannelOps &channelOps();
+
 struct Link {
+  Link() : m_channel{channelOps()} { m_channel.ctx = this; }
+  Zhttp::Channel &channel() { return m_channel; }
+  Zhttp::Channel m_channel;
   bool local = true;
   bool peer = true;
   bool ended = false;
@@ -155,6 +161,24 @@ struct Link {
     ++resetCalls;
   }
 };
+
+// Concrete-channel fixture over the existing pooled wire sink.
+const Zhttp::ChannelOps &channelOps() {
+  static const Zhttp::ChannelOps ops{
+    .streamLocalCap = [](void *ctx) { return static_cast<Link *>(ctx)->local; },
+    .streamPeerCap = [](void *ctx) { return static_cast<Link *>(ctx)->peer; },
+    .streamEnd = [](void *ctx) { static_cast<Link *>(ctx)->streamTxEnd(); },
+    .streamReset = [](void *ctx) { static_cast<Link *>(ctx)->streamTxReset(); },
+    .http10 = [](const void *) { return false; },
+    .bodyFramed = [](const void *) { return false; },
+    .streamWrite = [](void *ctx, Zhttp::PrintView print) {
+      auto &tx = static_cast<Link *>(ctx)->tx;
+      Zhttp::Writer out{&tx, Zhttp::Native_::writerOps<WireTx>()};
+      print.write(out);
+      return out.flush();
+    }};
+  return ops;
+}
 
 using OuterRx = ZiRxStream<ZiRxQueue>;
 using OuterBufAlloc = Zi::IOBufAlloc<
@@ -266,13 +290,13 @@ struct App :
       wireData = span.data();
       rx.push(ZuMv(buf));
     }
-    return this->process(Zhttp::Stream{link}, rx);
+    return this->process(link.channel(), rx);
   }
   void peerEnd() {
-    Base::peerEnd(Zhttp::Stream{link});
+    Base::peerEnd(link.channel());
   }
   void streamError() {
-    Base::streamError(Zhttp::Stream{link});
+    Base::streamError(link.channel());
   }
 
   Link			&link;
@@ -364,13 +388,73 @@ void handshake()
   ZuCHECK(!Zws::subprotocol("json, sbe", "json/sbe"));
 }
 
+// Wire adapters are unit-fixture implementation details. The public handshake
+// validators contain no native parser or transport types.
+template <typename Validator, bool Request>
+class H1Parser : public Validator,
+  public Zhttp::H1::Parser<H1Parser<Validator, Request>, Request> {
+  using Wire = Zhttp::H1::Parser<H1Parser, Request>;
+public:
+  using State = Wire::State;
+  using HdrCatalog = Validator::HdrCatalog;
+  using Validator::header;
+  template <typename ...Args>
+  H1Parser(Args &&...args) : Validator{ZuFwd<Args>(args)...}, m_channel{ops()} {
+    m_channel.ctx = this;
+  }
+  const Zhttp::CatalogView &catalog() const {
+    return Zhttp::CatalogData<HdrCatalog>::configure();
+  }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(static_cast<Validator &>(*this), section, id,
+      id < 0 ? -1 : catalog().valueMatch(id, value), name, value);
+  }
+  bool bodyInfo(Zhttp::BodyType::T type, uint64_t length) {
+    return Validator::bodyInfo(&m_channel, type, length);
+  }
+  void complete(typename State::T) { }
+private:
+  static const Zhttp::ChannelOps &ops() {
+    static const Zhttp::ChannelOps table{
+      .http10 = [](const void *ctx) {
+	return static_cast<const H1Parser *>(ctx)->Wire::http10();
+      },
+      .bodyFramed =
+	[](const void *ctx) { return static_cast<const H1Parser *>(ctx)->Wire::bodyFramed(); }};
+    return table;
+  }
+  Zhttp::Channel m_channel;
+};
+using ClientParser = H1Parser<Zws::H1::ClientParser, false>;
+using ServerParser = H1Parser<Zws::H1::ServerParser, true>;
+
+template <typename Builder, bool Request>
+class H1Builder : public Builder,
+  public ZuIf<Request, Zhttp::H1::Request<H1Builder<Builder, Request>, false, false>,
+    Zhttp::H1::Response<H1Builder<Builder, Request>, false, false>> {
+public:
+  template <typename ...Args> H1Builder(Args &&...args) : Builder{ZuFwd<Args>(args)...} { }
+  template <typename L> void host(L &&l) {
+    if constexpr (Request) Builder::host(ZuFwd<L>(l));
+  }
+  void fields(Zhttp::FieldOutput &output) {
+    Zhttp::BuilderFields<H1Builder> fields{this,
+      &Zhttp::CatalogData<typename Builder::HdrCatalog>::configure()};
+    fields.fields(output);
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
+};
+
 bool clientHandshake(
     ZuCSpan input, ZuCSpan key, ZuCSpan protocol = {})
 {
   H1Rx rx;
   push(rx, input);
-  Zws::H1::ClientParser parser{key, protocol};
-  return parser.process(rx) == Zws::H1::ClientParser::State::Complete &&
+  ClientParser parser{key, protocol};
+  return parser.process(rx) == ClientParser::State::Complete &&
     parser.valid();
 }
 
@@ -378,8 +462,8 @@ bool serverHandshake(ZuCSpan input)
 {
   H1Rx rx;
   push(rx, input);
-  Zws::H1::ServerParser parser;
-  return parser.process(rx) == Zws::H1::ServerParser::State::Complete &&
+  ServerParser parser;
+  return parser.process(rx) == ServerParser::State::Complete &&
     parser.valid();
 }
 
@@ -393,7 +477,7 @@ void h1()
   ZuCSpan key = "dGhlIHNhbXBsZSBub25jZQ==";
 
   WireTx requestWire{2048};
-  Zws::H1::Request request{uri, key, "chat"};
+  H1Builder<Zws::H1::Request, true> request{uri, key, "chat"};
   ZuCHECK(request.begin(requestWire));
   requestWire.flush();
   ZuCHECK(requestWire.bufs.length() == 1);
@@ -412,9 +496,9 @@ void h1()
   second.offset(split);
   push(requestRx, first);
   push(requestRx, second);
-  Zws::H1::ServerParser requestParser;
+  ServerParser requestParser;
   auto state = requestParser.process(requestRx);
-  ZuCHECK(state == Zws::H1::ServerParser::State::Complete);
+  ZuCHECK(state == ServerParser::State::Complete);
   ZuCHECK(requestParser.valid());
   ZuCHECK(requestParser.host() == "example.com:8443");
   ZuCHECK(requestParser.target() == "/feed?x=1");
@@ -423,17 +507,34 @@ void h1()
   Zws::HandshakeString accept;
   ZuCHECK(Zws::accept(accept, requestParser.key()));
   WireTx responseWire{2048};
-  Zws::H1::Response response{accept, "chat"};
+  H1Builder<Zws::H1::Response, false> response{accept, "chat"};
   response.begin(responseWire);
   responseWire.flush();
 
   H1Rx responseRx;
   push(responseRx, responseWire.bufs[0]->cspan());
-  Zws::H1::ClientParser responseParser{key, "chat"};
+  ClientParser responseParser{key, "chat"};
   state = responseParser.process(responseRx);
-  ZuCHECK(state == Zws::H1::ClientParser::State::Complete);
+  ZuCHECK(state == ClientParser::State::Complete);
   ZuCHECK(responseParser.valid());
   ZuCHECK(responseParser.selected() == "chat");
+
+  {
+    WireTx requestOut{2048};
+    H1Builder<Zws::H1::Request, true> optionalRequest{uri, key};
+    ZuCHECK(optionalRequest.begin(requestOut));
+    requestOut.flush();
+    auto requestBytes = requestOut.bufs[0]->cspan();
+    ZuCHECK(requestBytes.find("sec-websocket-protocol:") < 0);
+    ZuCHECK(serverHandshake(requestBytes));
+    WireTx responseOut{2048};
+    H1Builder<Zws::H1::Response, false> optionalResponse{accept};
+    optionalResponse.begin(responseOut);
+    responseOut.flush();
+    auto responseBytes = responseOut.bufs[0]->cspan();
+    ZuCHECK(responseBytes.find("sec-websocket-protocol:") < 0);
+    ZuCHECK(clientHandshake(responseBytes, key));
+  }
 
   {
     H1Rx rx;
@@ -441,18 +542,18 @@ void h1()
       "HTTP/1.1 101 Switching Protocols\r\n"
       "Upgrade: websocket\r\nConnection: Upgrade\r\n"
       "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n");
-    Zws::H1::ClientParser parser{key};
+    ClientParser parser{key};
     ZuCHECK(
-      parser.process(rx) == Zws::H1::ClientParser::State::Headers);
+      parser.process(rx) == ClientParser::State::Headers);
     ZuCHECK(parser.progressed(),
       "incomplete H1 parser reports consumed input");
     ZuCHECK(
-      parser.process(rx) == Zws::H1::ClientParser::State::Headers);
+      parser.process(rx) == ClientParser::State::Headers);
     ZuCHECK(!parser.progressed(),
       "stalled H1 parser does not report progress");
     push(rx, "\r\n");
     ZuCHECK(
-      parser.process(rx) == Zws::H1::ClientParser::State::Complete);
+      parser.process(rx) == ClientParser::State::Complete);
     ZuCHECK(parser.progressed());
   }
 
@@ -462,8 +563,8 @@ void h1()
     coalesced << responseWire.bufs[0]->cspan() << wsFrame;
     H1Rx rx;
     push(rx, coalesced);
-    Zws::H1::ClientParser parser{key, "chat"};
-    ZuCHECK(parser.process(rx) == Zws::H1::ClientParser::State::Complete);
+    ClientParser parser{key, "chat"};
+    ZuCHECK(parser.process(rx) == ClientParser::State::Complete);
     ZuCHECK(parser.valid());
     ZuCHECK(rx.span() == wsFrame,
       "opening parser preserves coalesced WebSocket bytes");
@@ -477,8 +578,8 @@ void h1()
     coalesced << responseWire.bufs[0]->cspan() << ZuBSpan{wsFrame};
     H1Rx rx;
     push(rx, coalesced);
-    Zws::H1::ClientParser parser{key, "chat"};
-    ZuCHECK(parser.process(rx) == Zws::H1::ClientParser::State::Complete);
+    ClientParser parser{key, "chat"};
+    ZuCHECK(parser.process(rx) == ClientParser::State::Complete);
     ZuCHECK(parser.valid());
     ZuCHECK(rx.span() == ZuBSpan{wsFrame},
       "opening parser does not fold upgraded binary input");
@@ -489,8 +590,8 @@ void h1()
     "HTTP/1.1 101 Switching Protocols\r\n"
     "Upgrade: websocket\r\nConnection: Upgrade\r\n"
     "Sec-WebSocket-Accept: bad\r\n\r\n");
-  Zws::H1::ClientParser bad{key};
-  ZuCHECK(bad.process(badRx) == Zws::H1::ClientParser::State::Complete);
+  ClientParser bad{key};
+  ZuCHECK(bad.process(badRx) == ClientParser::State::Complete);
   ZuCHECK(!bad.valid());
 
   static constexpr const char *invalidClient[] = {

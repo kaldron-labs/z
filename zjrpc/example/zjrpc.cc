@@ -161,12 +161,13 @@ int main(int argc, char **argv)
 	ZuBox<unsigned>{options.port}.length() + ZuStringT<"ws://:/rpc">{}().length());
     text << "ws://" << options.host << ':' << options.port << "/rpc";
     if (Zws::URI::parse(uri, text).ok() && client.init(
-	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{}, Zjrpc::WSConfig{}, &app) &&
+	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{},
+	Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, Zjrpc::WSConfig{}, &app) &&
 	client.start() && client.connect(uri, "jrpc"))
       ok = run(client, options, app);
     client.final();
   } else {
-    Zjrpc::HTTPClient<App, ExampleCatalog> client;
+    Zjrpc::HTTPClient<App, ExampleCatalog, Zhttp::Profiles<Zhttp::H1TCP>> client;
     Zjrpc::ClientConfig config;
     config.endpoint("/rpc").http([](auto &http) { http.secure(false); });
     if (client.init(
@@ -180,3 +181,5 @@ int main(int argc, char **argv)
   ZiLog::stop();
   return ok ? 0 : 1;
 }
+
+ZjrpcHTTPCatalogImpl()

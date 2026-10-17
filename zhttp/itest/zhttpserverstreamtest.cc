@@ -18,6 +18,8 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include "../src/ZhttpServerImpl.hh"
+#include "../src/ZhttpClientImpl.hh"
 #include <zlib/ZhttpServer.hh>
 
 #include "ZhttpTestUtil.hh"
@@ -151,7 +153,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 	  ++state->writerCalls;
 	  if (state->streamTurn == StreamTurn::Saturate) {
 	    for (unsigned i = 0;
-		i < SaturationBytes && body.valid(); ++i)
+		i < SaturationBytes && !body.failed(); ++i)
 	      body << 'x';
 	  } else if (state->streamTurn != StreamTurn::ZeroSequence &&
 	      state->streamTurn != StreamTurn::FailedInitial) {
@@ -242,8 +244,8 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
   State *state = nullptr;
 };
-using ResBuilderQ = ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"Zhttp.Server.Idle.ResBuilder">>>;
+using ResBuilderQ = Zhttp::ResponseQ<ResBuilder_,
+  ZuStringT<"Zhttp.Server.Idle.ResBuilder">>;
 using ResBuilder = ResBuilderQ::Node;
 
 struct Parser : public Zhttp::Parser {
@@ -290,8 +292,10 @@ struct Parser : public Zhttp::Parser {
   State *state = nullptr;
 };
 
-struct App : public Zhttp::Server<App, zhttpserverstreamtest_::Parser, ResBuilderQ> {
-  using HTTP = Zhttp::Server<App, zhttpserverstreamtest_::Parser, ResBuilderQ>;
+struct App : public Zhttp::Server<App, zhttpserverstreamtest_::Parser, ResBuilderQ,
+  Zhttp::AllProfiles> {
+  using HTTP = Zhttp::Server<App, zhttpserverstreamtest_::Parser, ResBuilderQ,
+    Zhttp::AllProfiles>;
   using HTTP::connected;
   using HTTP::disconnected;
 
@@ -329,9 +333,19 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   struct Builder :
     public Zhttp::Builder,
     public Zhttp::MessageTraits<Profile>::template Request<
-      Builder, RequestHeaders, true, false> {
+      Builder, true, false> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
     using Base = Zhttp::MessageTraits<Profile>::template Request<
-      Builder, RequestHeaders, true, false>;
+      Builder, true, false>;
     using HdrCatalog = RequestHeaders;
     using Base::body;
 
@@ -355,13 +369,36 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
 
+    // This wire peer deliberately leaves a Content-Length request partial;
+    // keep that workload below the complete-request role facade.
+    template <typename Stream, typename Rx>
+    int process(Stream stream, Rx &rx) {
+      return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+    }
+    template <typename Stream> void peerEnd(Stream stream) {
+      Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+    }
+    template <typename Stream> void error(Stream stream) {
+      Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+    }
+    template <typename Rx> int process(Rx &rx) { return Base::process(rx); }
+
     struct Parser :
       public Zhttp::Parser,
       public Zhttp::MessageTraits<Profile>::template ResponseParser<
-	Parser, Zhttp::DefltHdrCatalog> {
+	Parser> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
       using Base =
 	Zhttp::MessageTraits<Profile>::template ResponseParser<
-	  Parser, Zhttp::DefltHdrCatalog>;
+	  Parser>;
       using State = Base::State;
       using HdrCatalog = Zhttp::DefltHdrCatalog;
       using Base::reset;
@@ -458,7 +495,7 @@ void activeStop()
   State state;
   static unsigned nextPort = ZhttpITestPort::ServerStream;
   state.port = Zhttp::Test::loopbackPort(nextPort++);
-  using HTTP = Zhttp::ProfileTraits<Profile>;
+  using HTTP = Zhttp::NativeTraits<Profile>;
   using Protocol = HTTP::Protocol;
   state.expectedTransport = HTTP::Transport::ID;
   state.openRequest = true;

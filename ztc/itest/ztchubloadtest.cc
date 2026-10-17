@@ -488,7 +488,10 @@ static bool run(const char *path)
   ws.handshakeTimeout = 60;
   ws.closeTimeout = 5;
   auto tls = Zhttp::H2Config{}.caPath(cf.ca);
-  if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls, ws) || !client.start()) {
+  if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
+      Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws,
+      Zhttp::Config{}.links(cf.devices.length() + cf.clients)
+	.concurrency(cf.devices.length() + cf.clients)) || !client.start()) {
     client.final();
     mx.stop();
     return false;

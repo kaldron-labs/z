@@ -12,6 +12,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/Zhttp.hh>
+#include "../src/ZhttpServerImpl.hh"
 #include <zlib/ZtString.hh>
 
 using namespace ZuTestUtil;
@@ -45,8 +46,17 @@ ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
 ZhttpHdrCatalogImpl(ResponseHeaders)
 struct ResponseParser :
   public Zhttp::Parser,
-  public Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders> {
-  using Base = Zhttp::H1::Parser<ResponseParser, false, ResponseHeaders>;
+  public Zhttp::H1::Parser<ResponseParser, false> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
+  using Base = Zhttp::H1::Parser<ResponseParser, false>;
   using Base::reset;
   using HdrCatalog = ResponseHeaders;
 
@@ -151,8 +161,17 @@ ZhttpHdrCatalogDerive(RequestHeaders, RequestHeaderList);
 ZhttpHdrCatalogImpl(RequestHeaders)
 struct RequestParser :
   public Zhttp::Parser,
-  public Zhttp::H1::Parser<RequestParser, true, RequestHeaders> {
-  using Base = Zhttp::H1::Parser<RequestParser, true, RequestHeaders>;
+  public Zhttp::H1::Parser<RequestParser, true> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
+  using Base = Zhttp::H1::Parser<RequestParser, true>;
   using Base::reset;
   using HdrCatalog = RequestHeaders;
 
@@ -210,9 +229,18 @@ struct RequestParser :
 struct LimitedRequestParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<
-    LimitedRequestParser, true, Zhttp::DefltHdrCatalog, 16, 32> {
+    LimitedRequestParser, true, 16, 32> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H1::Parser<
-    LimitedRequestParser, true, Zhttp::DefltHdrCatalog, 16, 32>;
+    LimitedRequestParser, true, 16, 32>;
   using Base::reset;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   void complete(Zhttp::H1::ParserState::T) { ++completeCalls; }
@@ -223,6 +251,15 @@ template <bool Request>
 struct RejectingParser :
   public Zhttp::Parser,
   public Zhttp::H1::Parser<RejectingParser<Request>, Request> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H1::Parser<RejectingParser<Request>, Request>;
   using Base::reset;
   using HdrCatalog = Zhttp::DefltHdrCatalog;

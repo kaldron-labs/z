@@ -9,6 +9,7 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/Zhttp.hh>
+#include "../src/ZhttpServerImpl.hh"
 
 using namespace ZuTestUtil;
 
@@ -53,8 +54,17 @@ bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
 
 struct Parsed :
   public Zhttp::Parser,
-  public SyntheticParser<Zhttp::H2::Parser<Parsed, true, TestHeaders>> {
-  using Base = SyntheticParser<Zhttp::H2::Parser<Parsed, true, TestHeaders>>;
+  public SyntheticParser<Zhttp::H2::Parser<Parsed, true>> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
+  using Base = SyntheticParser<Zhttp::H2::Parser<Parsed, true>>;
   using Base::reset;
   using HdrCatalog = TestHeaders;
 
@@ -138,8 +148,17 @@ struct Parsed :
 
 struct Response :
   public Zhttp::Parser,
-  public SyntheticParser<Zhttp::H2::Parser<Response, false, TestHeaders>> {
-  using Base = SyntheticParser<Zhttp::H2::Parser<Response, false, TestHeaders>>;
+  public SyntheticParser<Zhttp::H2::Parser<Response, false>> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
+  using Base = SyntheticParser<Zhttp::H2::Parser<Response, false>>;
   using Base::reset;
   using HdrCatalog = TestHeaders;
 
@@ -200,9 +219,18 @@ struct Response :
 struct RejectingRequest :
   public Zhttp::Parser,
   public SyntheticParser<
-    Zhttp::H2::Parser<RejectingRequest, true, Zhttp::DefltHdrCatalog>> {
+    Zhttp::H2::Parser<RejectingRequest, true>> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = SyntheticParser<
-    Zhttp::H2::Parser<RejectingRequest, true, Zhttp::DefltHdrCatalog>>;
+    Zhttp::H2::Parser<RejectingRequest, true>>;
   using Base::reset;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
 
@@ -266,6 +294,15 @@ struct CaptureStream {
     };
     field_->value << value1 << separator << value2;
   }
+  template <typename V> void fieldFixed(ZuBSpan name, V &&value) {
+    field(name, ZuFwd<V>(value));
+  }
+  template <typename V> void fieldName(ZuBSpan name, V &&value) {
+    field(name, ZuFwd<V>(value));
+  }
+  template <typename V> void fieldLiteral(ZuBSpan name, V &&value) {
+    field(name, ZuFwd<V>(value));
+  }
   void endHeaders(bool end) {
     ++endHeadersCalls;
     endStream = end;
@@ -314,9 +351,19 @@ struct BuildOps : public Zhttp::Builder {
 
 struct RequestBuild :
   public Zhttp::H2::Request<
-    RequestBuild, BuildHeaders,
+    RequestBuild,
     true>,
   public BuildOps {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = BuildHeaders;
   using BuildOps::header;
   using BuildOps::host;
@@ -325,9 +372,19 @@ struct RequestBuild :
 
 struct ResponseBuild :
   public Zhttp::H2::Response<
-    ResponseBuild, BuildHeaders,
+    ResponseBuild,
     true>,
   public BuildOps {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = BuildHeaders;
   using BuildOps::header;
   using BuildOps::status;
@@ -336,6 +393,16 @@ struct ResponseBuild :
 struct ConnectBuild :
   public Zhttp::Builder,
   public Zhttp::H2::Request<ConnectBuild> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
@@ -373,9 +440,18 @@ struct StreamConsumer {
 struct StreamResponse :
   public Zhttp::Parser,
   public SyntheticParser<
-    Zhttp::H2::Parser<StreamResponse, false, Zhttp::DefltHdrCatalog>> {
+    Zhttp::H2::Parser<StreamResponse, false>> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = SyntheticParser<
-    Zhttp::H2::Parser<StreamResponse, false, Zhttp::DefltHdrCatalog>>;
+    Zhttp::H2::Parser<StreamResponse, false>>;
   using Base::reset;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
 

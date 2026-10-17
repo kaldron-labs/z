@@ -5,6 +5,8 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include "ZhttpHubFixture.hh"
+#include "../src/ZhttpServerImpl.hh"
+#include "../src/ZhttpClientImpl.hh"
 
 namespace ZhttpH3HubTest_ {
 
@@ -51,6 +53,16 @@ struct StreamState {
 struct RequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Request<RequestBuilder> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
@@ -65,6 +77,16 @@ struct RequestBuilder :
 struct StreamRequestBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Request<StreamRequestBuilder> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   template <typename L>
   void operation(L &&l) {
@@ -81,9 +103,19 @@ struct StreamRequestBuilder :
 struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Response<
-    ResponseBuilder, ResponseHeaders, true> {
+    ResponseBuilder, true> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = ResponseHeaders;
-  using Base = Zhttp::H3::Response<ResponseBuilder, HdrCatalog, true>;
+  using Base = Zhttp::H3::Response<ResponseBuilder, true>;
   using Base::body;
   unsigned status() const { return 200; }
   template <typename Key, typename L>
@@ -96,6 +128,16 @@ struct ResponseBuilder :
 struct StreamResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Response<StreamResponseBuilder> {
+  void fields(Zhttp::FieldOutput &out) {
+    using B = ZuDecay<decltype(*this)>;
+    Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
+    adapter.fields(out);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  bool streamResponse() const { return false; }
+
   using HdrCatalog = Zhttp::DefltHdrCatalog;
   using Base = Zhttp::H3::Response<StreamResponseBuilder>;
   using Base::body;
@@ -116,6 +158,15 @@ struct ClientStream {
 struct ClientParser :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<ClientParser, false> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H3::Parser<ClientParser, false>;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
 
@@ -220,6 +271,17 @@ struct StreamClientLink :
   unsigned	id = 0;
   int8_t	mode = Mode::REST;
   bool		sent = false;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(*this->app(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(*this->app(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(*this->app(), ZuMv(stream), 0);
+  }
 };
 
 void StreamClient::disconnected(Link &link, bool)
@@ -336,6 +398,15 @@ struct ServerStream {
 struct ServerParser :
   public Zhttp::Parser,
   public Zhttp::H3::Parser<ServerParser, true> {
+  const Zhttp::CatalogView &catalog() const { return *fieldCatalog; }
+  void header(Zhttp::FieldSection::T section, int id,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    int fixed = id < 0 ? -1 : fieldCatalog->valueMatch(id, value);
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  const Zhttp::CatalogView *fieldCatalog =
+    &Zhttp::CatalogData<HdrCatalog>::configure();
+
   using Base = Zhttp::H3::Parser<ServerParser, true>;
   using HdrCatalog = Zhttp::DefltHdrCatalog;
 
@@ -496,6 +567,17 @@ struct StreamServerLink :
     StreamServer, StreamServerLink, Zhttp::H3QUIC,
     StreamServerSession>;
   using Base::Base;
+
+  template <typename Stream, typename Rx>
+  int process(Stream stream, Rx &rx) {
+    return Zhttp::Link_::process(this->rxState(), ZuMv(stream), rx, 0);
+  }
+  template <typename Stream> void peerEnd(Stream stream) {
+    Zhttp::Link_::peerEnd(this->rxState(), ZuMv(stream), 0);
+  }
+  template <typename Stream> void error(Stream stream) {
+    Zhttp::Link_::error(this->rxState(), ZuMv(stream), 0);
+  }
 };
 
 void runStream(const Zhttp::Test::TempDir &temp)

@@ -29,6 +29,7 @@
 
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpTransport.hh>
+#include "ZhttpNative.hh"
 #include <zlib/ZhttpH2.hh>
 #include <zlib/ZhttpHPack.hh>
 
@@ -2036,6 +2037,9 @@ private:
 template <typename Impl>
 class StreamOps {
 public:
+  // H2 capability remains the connection's existing SETTINGS policy.
+  bool streamEnable(bool = true) { return true; }
+  bool streamAccept() { return true; }
   bool streamPeerCap() {
     auto tx = streamImpl_()->txStream();
     return tx.extendedConnect();

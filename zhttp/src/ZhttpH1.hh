@@ -34,6 +34,7 @@
 
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpFields.hh>
+#include "ZhttpFieldImpl.hh"
 
 namespace Zhttp {
 
@@ -41,6 +42,8 @@ namespace H1 {
 
 ZuDerive(HeaderScratch, (ZtBArray<ZtArrayHeapID<"Zhttp.H1.Headers",
   ZtArraySharded<true>>>));
+
+ZhttpAPI FieldOutput headerOutput(HeaderScratch &);
 
 inline ZmRef<ZiRxQueue::Node> allocRxBuf()
 {
@@ -159,7 +162,6 @@ inline int64_t parseLine(
 template <
   typename Impl,
   bool Request_ = false,
-  typename HdrCatalog_ = DefltHdrCatalog,
   uint64_t MaxStartLine_ = DefltMaxStartLine,
   uint64_t MaxHeaderSection_ = DefltMaxHeaderSection>
 class Parser {
@@ -171,8 +173,6 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   enum { Request = Request_ };
-  using HdrCatalog = HdrCatalog_;
-  using Headers = HdrCatalog::List;
   static constexpr uint64_t MaxStartLine = MaxStartLine_;
   static constexpr uint64_t MaxHeaderSection = MaxHeaderSection_;
   using State = ParserState;
@@ -220,19 +220,11 @@ private:
 	} else {
 	  m_contentLength = contentLength;
 	}
-    } else if (deliverHeaders_())
-	impl()->template header<Key>(section_(), value);
+    }
   }
 
   static bool headerKey_(ZuBSpan key, ZuCSpan name) {
     return key == name;
-  }
-
-  void runtimeHeader_(ZuBSpan key, ZuSpan<uint8_t> value) {
-    if constexpr (Fields::HasRuntime<Impl>{}) {
-      if (!deliverHeaders_()) return;
-	impl()->header(section_(), key, value);
-    }
   }
 
   // process header key/value
@@ -246,18 +238,8 @@ private:
       return;
     }
     if (!deliverHeaders_()) return;
-    Fields::dispatch<HdrCatalog>(
-      key, value,
-      [this](auto key, ZuSpan<uint8_t> value) {
-	impl()->template header<ZuDecay<decltype(key)>>(section_(), value);
-      },
-      [this](auto key, auto value) {
-	impl()->template header<
-	  ZuDecay<decltype(key)>, ZuDecay<decltype(value)>>(section_());
-      },
-	[this](ZuBSpan key, ZuSpan<uint8_t> value) {
-	runtimeHeader_(key, value);
-      });
+    int id = impl()->catalog().nameMatch(key);
+    impl()->header(section_(), id, key, value);
   }
 
   // parse request operation line
@@ -752,7 +734,6 @@ auto chunkedStream(Lower &lower) {
 // HTTP/1 message builder
 template <
   typename Impl,
-  typename HdrCatalog_ = DefltHdrCatalog,
   bool HasBody_ = false,		// has a body
   bool Chunked_ = false>		// body is chunked
 class Builder_ {
@@ -762,20 +743,10 @@ public:
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  using HdrCatalog = HdrCatalog_;
-  using Headers = HdrCatalog::List;
   enum { HasBody = HasBody_ };
   enum { Chunked = Chunked_ };
 
 private:
-  template <typename Key, typename I = Impl,
-    typename = decltype(ZuDeclVal<I &>().template headerOffset<Key>(ZuDeclVal<uint64_t &>(), ZuDeclVal<unsigned &>()), void())>
-  void headerOffset_(uint64_t offset, unsigned length, int) {
-    impl()->template headerOffset<Key>(offset, length);
-  }
-  template <typename Key>
-  void headerOffset_(uint64_t, unsigned, ...) { }
-
   template <typename I = Impl,
     typename = decltype(ZuDeclVal<I &>().headerBase(ZuDeclVal<uint8_t * &>()), void())>
   void headerBase_(uint8_t *base, int) {
@@ -790,51 +761,13 @@ private:
   }
   void patch_(...) { }
 
-  template <typename Catalog = HdrCatalog, typename Stream>
-  void headers_(Stream &stream) {
-    // header key/values
-    {
-	using List = HeaderList<Catalog>;
-	ZuUnroll::all<List::N>([this, &stream](auto I) {
-	  using Key = List::template Key<I>;
-	  using Value = List::template Value<I>;
-	  if constexpr (Value::N) {
-	    using Fixed = HeaderValue<Value>;
-	    builderFixedHeader<Key, Fixed>(impl(), [&stream]() {
-	      stream << Key{}() << ": " << Fixed{}() << "\r\n";
-	    }, 0);
-	    impl()->template header<Key>([&stream]<typename V>(V &&value) {
-	      stream << Key{}() << ": " << ZuFwd<V>(value) << "\r\n";
-	    });
-	  } else {
-	    if constexpr (HasBody && !Chunked)
-	      impl()->template header<Key>([this, &stream]<typename V>(V &&value) {
-		stream << Key{}() << ": ";
-		auto offset = stream.length();
-		stream << ZuFwd<V>(value);
-		this->template headerOffset_<Key>(
-		  offset, unsigned(stream.length() - offset), 0);
-		stream << "\r\n";
-	      });
-	    else
-	      impl()->template header<Key>([&stream]<typename V>(V &&value) {
-		stream << Key{}() << ": " << ZuFwd<V>(value) << "\r\n";
-	      });
-	  }
-	});
-    }
-    if constexpr (ZuIsSame<Catalog, HdrCatalog>{})
-      impl()->header([&stream]<typename Key, typename Value>(
-	    Key &&key, Value &&value) {
-	  stream << ZuFwd<Key>(key) << ": " << ZuFwd<Value>(value) << "\r\n";
-      });
-  }
   template <typename Stream>
   void headers(Stream &stream) {
     auto block = ZtScratch(HeaderScratch, HeaderScratchBuiltin);
     if constexpr (HasBody && Chunked)
       block << "transfer-encoding: chunked\r\n";
-    headers_<HdrCatalog>(block);
+    auto fields = headerOutput(block);
+    impl()->fields(fields);
     if constexpr (HasBody && !Chunked) {
       headerBase_(block.data(), 0);
       patch_(0);
@@ -901,11 +834,10 @@ public:
 
 template <
   typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Chunked = false>
-class Request : public Builder_<Impl, HdrCatalog, HasBody, Chunked> {
-  using Base = Builder_<Impl, HdrCatalog, HasBody, Chunked>;
+class Request : public Builder_<Impl, HasBody, Chunked> {
+  using Base = Builder_<Impl, HasBody, Chunked>;
 
 public:
   template <typename Stream>
@@ -914,11 +846,10 @@ public:
 
 template <
   typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
   bool HasBody = false,
   bool Chunked = false>
-class Response : public Builder_<Impl, HdrCatalog, HasBody, Chunked> {
-  using Base = Builder_<Impl, HdrCatalog, HasBody, Chunked>;
+class Response : public Builder_<Impl, HasBody, Chunked> {
+  using Base = Builder_<Impl, HasBody, Chunked>;
 
 public:
   template <typename Stream>

@@ -667,10 +667,11 @@ using ReqBuilder = ReqBuilderQ::Node;
 ZuAssert((ZuIsSame<ReqBuilderQ::HeapID, ZuStringT<"zhttp.ReqBuilder">>{}));
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
 
-struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<Client, TxQ, ResParser> {
+struct Pool : public ZmNHeap<Pool>, public Zhttp::Pool<Client, TxQ, ResParser,
+  Zhttp::AllProfiles> {
 friend inline ZuStringT<"zhttp.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<Client, TxQ, ResParser>;
+  using Base = Zhttp::Pool<Client, TxQ, ResParser, Zhttp::AllProfiles>;
 
   Pool(Client *client) : Base{client} { }
 

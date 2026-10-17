@@ -144,8 +144,10 @@ using ReqBuilderQ = ZmPQueue<ReqBuilder_,
   ZmPQueueOverlap<false, ZmPQueueNode<ReqBuilder_>>>;
 using ReqBuilder = ReqBuilderQ::Node;
 using TxQ = ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>;
-struct Pool : Zhttp::Pool<App, TxQ, ResParser> {
-  using Base = Zhttp::Pool<App, TxQ, ResParser>;
+struct Pool : ZmNHeap<Pool>,
+  Zhttp::Pool<App, TxQ, ResParser, Zhttp::AllProfiles> {
+  friend inline ZuStringT<"App.Pool"> ZmNHeapID(Pool *);
+  using Base = Zhttp::Pool<App, TxQ, ResParser, Zhttp::AllProfiles>;
   Pool(App *app) : Base{app} { }
   ReqBuilderQ *txQueue() { return &requests; }
   void archive_(ReqBuilder *) { }
@@ -197,8 +199,7 @@ struct ResBuilder_ : ZmObject, Zhttp::ResBuilder {
   Zhttp::Method::T method() const;
   // bodyPolicy(), status(), headers, and body production
 };
-using ResBuilderQ = ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"App.ResBuilder">>>;
+using ResBuilderQ = Zhttp::ResponseQ<ResBuilder_, ZuStringT<"App.ResBuilder">>;
 using ResBuilder = ResBuilderQ::Node;
 
 struct App;
@@ -219,8 +220,8 @@ struct Parser : Zhttp::Parser {
   void reset();
 };
 
-struct App : Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
-  using HTTP = Zhttp::Server<App, ::Parser, ::ResBuilderQ>;
+struct App : Zhttp::Server<App, ::Parser, ::ResBuilderQ, Zhttp::AllProfiles> {
+  using HTTP = Zhttp::Server<App, ::Parser, ::ResBuilderQ, Zhttp::AllProfiles>;
   using HTTP::connected;
   using HTTP::disconnected;
   // listening(), listenFailed(), connected(), disconnected()
@@ -238,31 +239,30 @@ app.init(
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)));
 app.start();
 // Parser callbacks run synchronously on Rx and receive callback-scoped spans.
-// Link::send() accepts an owning response from any thread. Server queues it on
+// Channel::send() accepts an owning response from any thread. Server queues it on
 // that link, then calls its Builder operations on Tx. Applications must submit
-// H1 responses in request order.
+// asynchronous H1 responses through Route, which preserves request order.
 // disconnected(transport) observes admission release on the owning Rx shard.
 server.stop([](bool) { /* shutdown continuation */ });
 // The main thread waits for that continuation before final().
 server.final();
 ```
 
-Responses are application-owned structural Builders held in an intrusive
-`ZmList`. The final `ResBuilder` is `ResBuilderQ::Node` and publicly derives
+Responses are application-owned structural Builders in `ResponseQ`; the core
+queues their embedded intrusive links. The final `ResBuilder` is `ResBuilderQ::Node` and publicly derives
 the application `ResBuilder_`; each node represents one response. The
 application Parser copies only the request data it needs while the callback
 spans are valid, and may dispatch synchronously or asynchronously. The server
 performs neither copy nor dispatch:
 
 ```c++
-template <typename Link>
-void Parser::complete(Link *link, bool ok) {
+void Parser::complete(Zhttp::Channel *channel, bool ok) {
   if (!ok) return;
-  auto link_ = ZmMkRef(link);
-  app->dispatch([link = ZuMv(link_), request = ZuMv(request)]() mutable {
+  Zhttp::Route<ResBuilder> route{channel, request.method};
+  app->dispatch([route = ZuMv(route), request = ZuMv(request)]() mutable {
     ZmRef<ResBuilder> response = new ResBuilder{};
     response->plan(request);
-    link->send(ZuMv(response));
+    route.send(ZuMv(response));
   });
 }
 ```
@@ -398,93 +398,53 @@ passed separately to `process()`, explicit callbacks report peer end/reset,
 and Tx is callback-scoped:
 
 ```c++
-Zhttp::Stream stream{link};
-if (stream.peerCap()) {
-  stream.txStream([](auto &tx) {
+// channel is borrowed; retain ChannelRef explicitly for asynchronous use.
+if (channel->streamPeerCap()) {
+  channel->streamTx([](Zhttp::Writer &tx) {
     tx << bytes;
-    tx.flush();                  // application message/latency boundary
+    return tx.flush();
   });
-  stream.end();                  // ordered after the flushed bytes
+  channel->streamTxEnd();
 }
 
-int process(auto stream, auto &rx) {
-  while (rx) {
-    int64_t n = rx.consume(frame, consume);
-    if (n < 0) return -1;
-    if (!n) break;               // incomplete application frame stays queued
-  }
-  return 1;
-}
-
-void peerEnd(auto stream) { peerEnded(); }
-void error(auto stream) { stream.reset(); }
+// The framing state owns these synchronous callbacks through shutdown.
+Zhttp::FrameSink frames{
+  &state,
+  [](void *ctx, Zhttp::Channel *channel, Zhttp::Input &rx) {
+    return static_cast<FrameState *>(ctx)->process(*channel, rx);
+  },
+  [](void *ctx, Zhttp::Channel *channel) {
+    static_cast<FrameState *>(ctx)->peerEnd(*channel);
+  },
+  [](void *ctx, Zhttp::Channel *channel) {
+    static_cast<FrameState *>(ctx)->error(*channel);
+  }};
+channel->streamAccept(frames);
 ```
 
-The Rx queue reference and native pooled Tx layer are valid only for their
+The Rx queue reference and pooled writer are valid only for their
 respective callback durations; unread Rx nodes remain owned by the logical
 stream between prompts. A negative `process()` result resets only the affected
 logical stream. The logical-stream contract contains no WebSocket fields,
 framing, masking, close codes, or subprotocol policy; those belong in a
 dependent protocol library.
 
-The lower-level typed client/server application flow is likewise
-protocol-independent:
+Public endpoints require an explicit `Profiles<...>` selection. The pool owns
+its client's selection; `Client<App, Pool>` adds no second selection. Use
+`AllProfiles` for tools that deliberately support every profile. Repeated tags
+are deduplicated. H1TLS and H2TLS share one TLS backend when selected together.
+Only selected transport accessors are available. A server still activates each
+family explicitly through `ServerConfig::tcp`, `tls`, or `quic`. Client defaults
+are derived from the selection after configuration overlays.
 
-```c++
-template <typename Profile>
-struct Client : Zhttp::ClientHub<Client<Profile>, Profile> {
-  struct Request :
-    Zhttp::MessageTraits<Profile>::template Request<
-      Request, ZuTypeList<>, ZuTypeList<>, false, false> {
-    template <typename L>
-    void operation(L &&l) {
-      l(Zhttp::Method::GET, [](auto &&emit) {
-	emit([](auto &tx) { tx << '/'; });
-      });
-    }
-    template <typename L>
-    void host(L &&l) { l("127.0.0.1"); }
-  };
-
-  struct Link :
-    Zhttp::ClientLink<Client, Link, Profile> {
-    using Base = Zhttp::ClientLink<Client, Link, Profile>;
-    using Base::Base;
-  };
-
-  void connected(Link &link, Zhttp::ConnectedInfo) {
-    Request request;
-    auto tx = link.transmit(request);
-    request.begin(tx);
-    request.finish(tx);
-    link.finish();
-  }
-  template <typename Rx>
-  int process(Link &link, Rx &rx) {
-    // link.receive(parser, rx), then process the response
-  }
-};
-```
-
-Servers use the corresponding `Zhttp::Server`, `Zhttp::ServerLink`, and
-`Zhttp::ServerSession` templates. Profiles such as `H1TCP`, `H1TLS`, `H2TLS`,
-and `H3QUIC` instantiate the same connection/message contract; only
-initialization configuration differs. The high-level `Client` and `Server`
-normally own these hubs:
-
-```c++
-hubs.init(tcp, hub, Zhttp::TCPConfig{});
-hubs.init(tls, hub, Zhttp::H2Config{}
-  .certPath(cert).keyPath(key)
-  .policy(Zhttp::H2Policy::Prefer));
-hubs.init(h3, hub, Zhttp::QUICConfig{}
-  .certPath(cert).keyPath(key));
-hubs.start();
-// process connections and messages
-hubs.stop([](bool) { /* shutdown continuation */ });
-// The main thread waits for the continuation before finalization.
-hubs.final();
-```
+Parsers and builders use the typed callback interfaces above. Wire parsers,
+compression tables, native hubs and links are private library implementation.
+A borrowed `Channel *` identifies the actual connection or logical stream;
+retain a `ChannelRef` explicitly when asynchronous work needs it. `Route<Builder>`
+retains that channel together with its request sequence for ordered responses.
+Frame protocols accept a `FrameSink` through `channel->streamAccept(sink)` and
+write directly through the pooled `Writer` supplied by `streamTx` or `streamTx_`.
+`streamTx_` is Tx-owned; stream end and reset preserve that shard's ordering.
 
 `Hubs`, client pools, and `Client` require a completed stop before `final()`
 (initialization failures that never started are also safe to finalize).

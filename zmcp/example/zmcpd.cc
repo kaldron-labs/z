@@ -171,7 +171,7 @@ int main(int argc, char **argv)
     return run(server, server.init(Zhttp::HubConfig{&mx}, ZiIP{"127.0.0.1"},
 	options.port, Zhttp::TCPConfig{}, Zjrpc::WSConfig{}, &app), mx);
   } else {
-    Zmcp::HTTPServer<App, ExampleCatalog> server;
+    Zmcp::HTTPServer<App, ExampleCatalog, Zhttp::Profiles<Zhttp::H1TCP>> server;
     Zmcp::ServerConfig config;
     config.localIP(ZiIP{"127.0.0.1"}).port(options.port).tcp();
     config.absentOrigin(true);
@@ -179,3 +179,5 @@ int main(int argc, char **argv)
       Zhttp::HubConfig{&mx}, ZuMv(config), &app), mx);
   }
 }
+
+ZjrpcHTTPCatalogImpl()

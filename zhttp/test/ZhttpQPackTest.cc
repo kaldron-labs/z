@@ -8,6 +8,7 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZhttpQPack.hh>
+#include "../src/ZhttpServerImpl.hh"
 
 using namespace ZuTestUtil;
 

@@ -192,7 +192,8 @@ int run(const Options &options, const Zws::URI &uri)
   wsConfig.pongTimeout = options.pongTimeout;
 
   bool initialized =
-    client.init(Zhttp::HubConfig{&mx, "3", "4"}, config, wsConfig);
+    client.init(Zhttp::HubConfig{&mx, "3", "4"}, config, Zhttp::Destination{uri.host, uri.port,
+      uri.ipv6Literal}, wsConfig);
   bool started = initialized && client.start();
   if (!started) {
     std::cerr << "client initialization/start failed\n";

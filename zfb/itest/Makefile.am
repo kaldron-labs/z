@@ -139,7 +139,8 @@ CLEANFILES += zflatczmpoly.hpp zflatczmpoly.cpp
 zflatctest_SOURCES = zflatctest.cc zflatcfixture.hh
 zflatctest_CPPFLAGS = $(AM_CPPFLAGS) -DZFLATC_FIXTURES=\"$(abs_srcdir)\"
 zflatctest_LDFLAGS = @Z_LDFLAGS@
-zflatctest_DEPENDENCIES = $(LDADD) zfbsave$(EXEEXT) zfbcheck$(EXEEXT) \
+zflatctest_DEPENDENCIES = $(filter-out -%,$(LDADD)) \
+	zfbsave$(EXEEXT) zfbcheck$(EXEEXT) \
 	zfbcheck_alt$(EXEEXT) zfbcheck_zuobject$(EXEEXT) \
 	zfbcheck_zupolymorph$(EXEEXT) zfbcheck_zmobject$(EXEEXT) \
 	zfbcheck_zmpolymorph$(EXEEXT)

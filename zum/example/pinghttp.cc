@@ -19,6 +19,7 @@
 #include <zlib/ZiResolver.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpDiscovery.hh>
 #include <zlib/ZhttpURL.hh>
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZtlsMD.hh>
@@ -227,10 +228,12 @@ ZmPQueueDerive(ReqBuilderQ, ReqBuilder_,
 using ReqBuilder = ReqBuilderQ::Node;
 ZuDerive(TxQ, (ZmPQTx<Pool, ReqBuilderQ, ZmPQTxOrdered<false>>));
 
-class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientBase, TxQ, ResParser> {
+class Pool : public ZmNHeap<Pool>, public Zhttp::Pool<ClientBase, TxQ, ResParser,
+  Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS, Zhttp::H2TLS>> {
 friend inline ZuStringT<"Zum.PingHTTP.Pool"> ZmNHeapID(Pool *);
 
-  using Base = Zhttp::Pool<ClientBase, TxQ, ResParser>;
+  using Base = Zhttp::Pool<ClientBase, TxQ, ResParser, Zhttp::Profiles<Zhttp::H1TCP,
+    Zhttp::H1TLS, Zhttp::H2TLS>>;
 public:
   Pool(ClientBase *client) : Base{client} { }
   ReqBuilderQ *txQueue() { return &m_requests; }

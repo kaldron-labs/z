@@ -15,34 +15,21 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
-#include <string.h>
-
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuFmt.hh>
-#include <zlib/ZuSeq.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuStream.hh>
-#include <zlib/ZuString.hh>
-#include <zlib/ZuSwitch.hh>
-#include <zlib/ZuTL.hh>
+#include <zlib/ZuTraits.hh>
 #include <zlib/ZuTuple.hh>
-#include <zlib/ZuUnion.hh>
-#include <zlib/ZuUnroll.hh>
-
-#include <zlib/ZtArray.hh>
-#include <zlib/ZtScratch.hh>
-#include <zlib/ZtString.hh>
-
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZiAssert.hh>
-#include <zlib/ZiLog.hh>
-#include <zlib/ZiTxStream.hh>
-
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZhttpCore.hh>
+#include <zlib/ZhttpFields.hh>
+#include <zlib/ZhttpProfiles.hh>
+#include <zlib/ZhttpConfig.hh>
 #include <zlib/ZhttpURL.hh>
-#include <zlib/ZhttpH1.hh>
-#include <zlib/ZhttpH2.hh>
-#include <zlib/ZhttpHPack.hh>
-#include <zlib/ZhttpH3.hh>
 #include <zlib/ZhttpTransport.hh>
 
 namespace Zhttp {
@@ -80,49 +67,14 @@ inline void contentLengthSet(L &&l, uint64_t length)
     });
 }
 
-// HTTP hub/link application contract
+// Endpoint lifecycle is init -> start -> stop(done) -> final. The stop
+// continuation follows the existing Rx/Tx drains and final permitted callbacks.
+// Application callbacks receive borrowed channels; Route retains the actual
+// owning node for asynchronous server response work. Native transport, wire and
+// compression machinery remains private to the library.
 //
-// Hubs:
-//   init(params) -> start() -> process links -> stop(done) -> final()
-// done is called only after ingress is disabled and Rx/Tx work and links have
-// drained. final() is only valid from done (or after the main-thread blocking
-// stop() wrapper returns); no caller may infer completion from a posted stop.
-//
-// Client links:
-//   connect() -> connected() -> txStream()/process() -> disconnected()
-//
-// Server links:
-//   connected() -> txStream()/process(initial message) -> disconnected()
-//
-// H2/H3 header encoding owns connection compression state on Tx. Post the
-// builder work to Tx, then use transmit_(builder). Application txStream()
-// remains available for body/transport output without header encoding.
-//
-// The process callback is installed by CRTP composition before connected()
-// returns and before received application bytes are dispatched. TCP and TLS
-// links represent transport connections. An HTTP/3 application link
-// represents a duplex request stream; the physical QUIC connection, H3
-// control streams, and QPACK state remain library-owned.
-//
-// Thread ownership:
-//   init/final		caller/control thread
-//   start/stop		ZmEngine control path
-//   connected/process	Rx thread
-//   request/response Tx	Tx thread
-//   disconnected	Rx thread, exactly once per application link
-//
-// Protocol-specific concrete link and Rx/Tx stream types may differ, but they
-// must provide the same compile-time operations so one application template
-// implements the connection and message processing body for all protocols.
-//
-// Completion rules:
-// - an H1 close-delimited response completes at EOF, before disconnected();
-// - an H1 keep-alive link may process multiple messages before disconnected();
-// - a TLS handshake failure reports connectFailed(), never connected();
-// - an H3 application link becomes connected only after connection control
-//   streams are ready and the corresponding request stream exists;
-// - peer close/reset during a response completes or fails that application
-//   link exactly once, followed by one disconnected() callback.
+// Rx owns request/response parsing and stream input. Tx owns builders, producers
+// and queues. Initialization and finalization remain on the control thread.
 
 // Parser and Builder are application base classes with side-effect-safe
 // defaults. Applications can derive from them and override only the types and
@@ -192,7 +144,7 @@ struct Parser { // base class with defaulted types and member functions
   // Last callback for the message, called exactly once.  This includes
   // rejection by operation(), bodyInfo(), or body().  A validation or framing
   // failure may short-circuit the successful ordering above and report false.
-  // Link is a borrowed concrete-link pointer valid for the callback.  An
+  // The channel is borrowed for the duration of the callback. An
   // application that retains it for asynchronous work must explicitly acquire
   // ownership.
   template <typename Link>
@@ -202,6 +154,7 @@ struct Parser { // base class with defaulted types and member functions
 };
 
 struct Builder {
+  bool streamResponse() const { return false; }
   // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
   // value, or a singleton list containing the fixed value.
   using HdrCatalog = DefltHdrCatalog;
@@ -299,206 +252,6 @@ void builderFixedHeader(B *builder, L &&l, int) {
 template <typename Key, typename Value, typename B, typename L>
 void builderFixedHeader(B *, L &&l, ...) { ZuFwd<L>(l)(); }
 
-// Low-level protocol Parser CRTP contract for the H1/H2/H3 aliases below.
-// The role facades wrap plain application Parser sinks in these
-// adapters; application sinks do not derive from them. The protocol invokes
-// only the callbacks applicable to the selected request/response role and
-// version. Inherited defaults are side-effect-safe. All callbacks are
-// synchronous and Rx-shard-affine. Target and received spans are borrowed for
-// the duration of the callback. `ProtocolParser` in the API sketch denotes
-// the selected alias below.
-#if 0
-struct ParserAdapter : public ProtocolParser<ParserAdapter, Headers> {
-  using Base = ProtocolParser<ParserAdapter, Headers>;
-  using State = Base::State;
-
-  // identical to app-facing Parser member functions (see above):
-  // - enable1xx, operation, status, header, bodyInfo, bool body(Rx &)
-  // complete takes the protocol parser state rather than a success boolean;
-  // it is called once per parsed message
-  void complete(State::T);
-
-  // H3 stream/QPACK integration
-  bool rxComplete() const;		// defaults to finReceived()
-  bool finReceived() const;
-  const H3::Params &h3Params() const;
-  uint64_t streamID() const;
-  bool qpackDecoderWrite(ZuBSpan);
-  H3::QPackRxTable *qpackRx();
-  bool qpackTxInsn(H3::QPackInsn::T, uint64_t);
-  bool qpackTxMaxCapacity(uint64_t);
-  bool qpackTxBlocked(uint64_t);
-};
-#endif
-
-// For an H1 response framed by connection close (neither Content-Length nor
-// transfer-encoding: chunked), pass all received bytes to process(), then call
-// eof() from the connection-close path.
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog>
-using H1RequestParser = H1::Parser<Impl, true, HdrCatalog>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog>
-using H1ResponseParser = H1::Parser<Impl, false, HdrCatalog>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog>
-using H2RequestParser = H2::Parser<Impl, true, HdrCatalog>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog>
-using H2ResponseParser = H2::Parser<Impl, false, HdrCatalog>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog>
-using H3RequestParser = H3::Parser<Impl, true, HdrCatalog>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog>
-using H3ResponseParser = H3::Parser<Impl, false, HdrCatalog>;
-
-// Low-level protocol Builder CRTP adapters used internally by the role
-// facades. Application Builders do not derive from these aliases. The
-// adapters provide protocol framing and invoke the application through
-// inversion-of-control lambdas.  Builders emit initial headers only.
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
-  bool HasBody = false, bool Chunked = false>
-using H1Request =
-  H1::Request<Impl, HdrCatalog, HasBody, Chunked>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
-  bool HasBody = false, bool Chunked = false>
-using H1Response =
-  H1::Response<Impl, HdrCatalog, HasBody, Chunked>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
-  bool HasBody = false>
-using H2Request =
-  H2::Request<Impl, HdrCatalog, HasBody, false>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
-  bool HasBody = false>
-using H2Response =
-  H2::Response<Impl, HdrCatalog, HasBody, false>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
-  bool HasBody = false>
-using H3Request =
-  H3::Request<Impl, HdrCatalog, HasBody, false>;
-
-template <
-  typename Impl,
-  typename HdrCatalog = DefltHdrCatalog,
-  bool HasBody = false>
-using H3Response =
-  H3::Response<Impl, HdrCatalog, HasBody, false>;
-
-// Application message callback contract
-//
-// Header callbacks precede the first body callback.  Body callbacks receive a
-// populated queue-backed ZiRxStream-compatible object on the owning Rx shard.
-// Each callback is a synchronous prompt to consume complete application
-// frames.  An incomplete trailing frame remains queued for the next prompt;
-// the application must not retain the stream reference outside the callback.
-//
-// Body completion follows successful HTTP framing.  The protocol issues the
-// last data prompt before the separate terminal result, then discards any
-// unread decoded bytes.  No message callback is made after that result.
-//
-// Application Tx producers receive a concrete ZiTxStream-compatible body
-// stream on the owning Tx shard.  The producer writes entity bytes only;
-// libZhttp owns framing and final end-of-stream mapping.
-
-template <
-  typename Profile,
-  typename Traits = Zhttp::ProfileTraits<Profile>>
-struct MessageTraits;
-
-template <int> struct HttpTraits;
-
-template <> struct HttpTraits<Version::H1> {
-  enum {
-    ID = Version::H1,
-    OneMessagePerLink = false,
-    CloseDelimited = true
-  };
-
-  template <typename Impl, typename HdrCatalog>
-  using RequestParser = H1::Parser<Impl, true, HdrCatalog>;
-  template <typename Impl, typename HdrCatalog>
-  using ResponseParser = H1::Parser<Impl, false, HdrCatalog>;
-  template <typename Impl, typename HdrCatalog, bool HasBody, bool Chunked>
-  using Request =
-    H1::Request<Impl, HdrCatalog, HasBody, Chunked>;
-  template <typename Impl, typename HdrCatalog, bool HasBody, bool Chunked>
-  using Response =
-    H1::Response<Impl, HdrCatalog, HasBody, Chunked>;
-};
-
-template <> struct HttpTraits<Version::H2> {
-  enum {
-    ID = Version::H2,
-    OneMessagePerLink = true,
-    CloseDelimited = false
-  };
-
-  template <typename Impl, typename HdrCatalog>
-  using RequestParser = H2::Parser<Impl, true, HdrCatalog>;
-  template <typename Impl, typename HdrCatalog>
-  using ResponseParser = H2::Parser<Impl, false, HdrCatalog>;
-  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
-  using Request =
-    H2::Request<Impl, HdrCatalog, HasBody, Streaming>;
-  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
-  using Response =
-    H2::Response<Impl, HdrCatalog, HasBody, Streaming>;
-};
-
-template <> struct HttpTraits<Version::H3> {
-  enum {
-    ID = Version::H3,
-    OneMessagePerLink = true,
-    CloseDelimited = false
-  };
-
-  template <typename Impl, typename HdrCatalog>
-  using RequestParser = H3::Parser<Impl, true, HdrCatalog>;
-  template <typename Impl, typename HdrCatalog>
-  using ResponseParser = H3::Parser<Impl, false, HdrCatalog>;
-  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
-  using Request =
-    H3::Request<Impl, HdrCatalog, HasBody, Streaming>;
-  template <typename Impl, typename HdrCatalog, bool HasBody, bool Streaming>
-  using Response =
-    H3::Response<Impl, HdrCatalog, HasBody, Streaming>;
-};
-
-template <typename Profile, typename Traits>
-struct MessageTraits :
-  public HttpTraits<Traits::HTTPVersion> {
-  using Transport = Traits::Transport;
-  enum { Multiplexed = Traits::Multiplexed };
-};
-
 template <typename U, typename Emit, typename = void>
 struct HasBuilderBody : public ZuFalse { };
 template <typename U, typename Emit>
@@ -518,263 +271,6 @@ template <typename U, typename L>
 struct HasBuilderBodyHdrs<U, L, decltype(
   ZuDeclVal<U &>().bodyHdrs(ZuDeclVal<L>()), void())> : public ZuTrue { };
 
-template <typename Write, typename Stream>
-WriteOutcome::T invokeBodyWriter(Write &&write, Stream &stream) {
-  return ZuFwd<Write>(write)(stream);
-}
-
-struct HeaderSeed {
-  H3::QPackTxString	name;
-  H3::QPackTxString	value;
-  uint32_t		size = 0;
-  bool			exact = false;
-};
-
-using HeaderSeeds =
-  ZtArray<HeaderSeed, ZtArrayHeapID<"Zhttp.HeaderSeeds">>;
-
-template <typename List, unsigned I>
-consteval auto seedID() {
-  using Key = List::template Key<I>;
-  using Values = List::template Value<I>;
-  if constexpr (Values::N) {
-    using Value = HeaderValue<Values>;
-    return Key{}() + "\x1f"_z + Value{}();
-  } else return Key{}() + "\x1e"_z;
-}
-
-template <typename List, typename Seq> struct SeedIDs_;
-template <typename List, unsigned ...I>
-struct SeedIDs_<List, ZuSeq<I...>> {
-  using Keys = ZuTypeList<ZuStringT<seedID<List, I>()>...>;
-};
-template <typename List>
-using SeedIDs = SeedIDs_<List, ZuMkSeq<List::N>>;
-
-template <typename Sets> struct SeedSetIDs_;
-template <typename ...Catalogs>
-struct SeedSetIDs_<ZuTypeList<Catalogs...>> {
-  using Names = ZuTypeConcat<typename HeaderList<Catalogs>::Keys...>;
-  using Pairs = ZuTypeConcat<typename SeedIDs<HeaderList<Catalogs>>::Keys...>;
-};
-
-// Initialization-owned immutable source for connection-local HPACK/QPACK
-// bootstrap state.  Application Builder instances are never consulted.
-template <typename Sets>
-class HeaderSeedCatalog {
-  using IDs = SeedSetIDs_<Sets>;
-  using Names = IDs::Names;
-  using Pairs = IDs::Pairs;
-
-public:
-  HeaderSeedCatalog() {
-    for (unsigned i = 0; i < Names::N; ++i) m_nameLookup[i] = -1;
-    for (unsigned i = 0; i < Pairs::N; ++i) m_pairLookup[i] = -1;
-  }
-
-  void clear() {
-    m_entries.length(0);
-    for (unsigned i = 0; i < Names::N; ++i) m_nameLookup[i] = -1;
-    for (unsigned i = 0; i < Pairs::N; ++i) m_pairLookup[i] = -1;
-  }
-  void final() { m_entries.init(); }
-
-  template <typename HdrCatalog>
-  void add(const H3::Params &params, uint32_t capacity) {
-    ZuAssert((ZuTypeIn<HdrCatalog, Sets>{}));
-    using List = HeaderList<HdrCatalog>;
-    ZuUnroll::all<List::N>([this, &params, capacity](auto I) {
-      using Key = List::template Key<I>;
-      using Value = List::template Value<I>;
-      using Pair = ZuStringT<seedID<List, I>()>;
-      constexpr int nameSlot = ZuTypeIndex<Key, Names>{};
-      constexpr int pairSlot = ZuTypeIndex<Pair, Pairs>{};
-      H3::QPackTxString name;
-      name << Key{}();
-      if (!name || name[0] == ':' || Fields::forbidden(name) ||
-	  params.neverIndex(name))
-	return;
-      if constexpr (!Value::N) {
-	uint64_t index = 0;
-	if (H3::QPack::staticNameIndex(name, index) ||
-	    m_nameLookup[nameSlot] >= 0) return;
-	int pos = add_(ZuMv(name), {}, false, capacity);
-	if (pos >= 0) m_nameLookup[nameSlot] = pos;
-      } else {
-	H3::QPackTxString value;
-	value << HeaderValue<Value>{}();
-	if (H3::QPack::staticIndex(name, value) >= 0 ||
-	    m_pairLookup[pairSlot] >= 0)
-	  return;
-	removeNameOnly_(nameSlot);
-	int pos = add_(ZuMv(name), ZuMv(value), true, capacity);
-	if (pos >= 0)
-	  m_nameLookup[nameSlot] = m_pairLookup[pairSlot] = pos;
-      }
-    });
-  }
-
-  const HeaderSeeds &entries() const { return m_entries; }
-  bool operator !() const { return !m_entries; }
-  ZuOpBool
-
-private:
-  static void shift_(int *lookup, unsigned n, int pos) {
-    for (unsigned i = 0; i < n; ++i)
-      if (lookup[i] == pos) lookup[i] = -1;
-      else if (lookup[i] > pos) --lookup[i];
-  }
-  void removeNameOnly_(unsigned nameSlot) {
-    int pos = m_nameLookup[nameSlot];
-    if (pos < 0 || m_entries[pos].exact) return;
-    m_entries.splice(pos, 1);
-    shift_(m_nameLookup, Names::N, pos);
-    shift_(m_pairLookup, Pairs::N, pos);
-  }
-  int add_(H3::QPackTxString name, H3::QPackTxString value,
-      bool exact, uint32_t capacity) {
-    uint64_t size = uint64_t(name.length()) + value.length() + 32;
-    if (size > capacity) return -1;
-    new (m_entries.push()) HeaderSeed{
-      ZuMv(name), ZuMv(value), uint32_t(size), exact};
-    return m_entries.length() - 1;
-  }
-
-  HeaderSeeds	m_entries;
-  int		m_nameLookup[Names::N ? Names::N : 1];
-  int		m_pairLookup[Pairs::N ? Pairs::N : 1];
-};
-
-struct HPackSeed {
-  H3::QPackTxString	name;
-  H3::QPackTxString	value;
-  H2::HPackBytes	incremental;
-  H2::HPackBytes	fallback;
-  uint32_t		size = 0;
-};
-
-using HPackSeeds =
-  ZtArray<HPackSeed, ZtArrayHeapID<"Zhttp.HPackSeeds">>;
-
-struct HPackSeedPlan {
-  HPackSeeds	entries;
-};
-
-using HPackSeedPlans =
-  ZtArray<HPackSeedPlan, ZtArrayHeapID<"Zhttp.HPackSeedPlans">>;
-
-class HPackSeedCatalog {
-public:
-  void clear() { m_plans.length(0); }
-  void final() { m_plans.init(); }
-
-  template <typename HdrCatalog>
-  void add(uint32_t capacity) {
-    HPackSeedPlan plan;
-    using List = HeaderList<HdrCatalog>;
-    using Pairs = SeedIDs<List>::Keys;
-    int lookup[List::N ? List::N : 1];
-    for (unsigned i = 0; i < List::N; ++i) lookup[i] = -1;
-    ZuUnroll::all<List::N>([&plan, &lookup, capacity](auto I) {
-      using Key = List::template Key<I>;
-      using Value = List::template Value<I>;
-      if constexpr (Value::N) {
-	using Pair = ZuStringT<seedID<List, I>()>;
-	constexpr int j = ZuTypeIndex<Pair, Pairs>{};
-	H3::QPackTxString name;
-	H3::QPackTxString value;
-	name << Key{}();
-	value << HeaderValue<Value>{}();
-	if (!name || name[0] == ':' || Fields::forbidden(name) ||
-	    H2::HPack::staticIndex(name, value) > 0 ||
-	    ZuTypeIn<Key, ZuStringTL<
-	      "authorization", "cookie", "set-cookie">>{} || lookup[j] >= 0)
-	  return;
-	uint64_t size = uint64_t(name.length()) + value.length() + 32;
-	if (size > capacity) return;
-	HPackSeed seed;
-	seed.name = ZuMv(name);
-	seed.value = ZuMv(value);
-	seed.size = uint32_t(size);
-	int nameIndex = H2::HPack::staticNameIndex(seed.name);
-	if (Compression::putPref(seed.incremental, 0x40, 6,
-	      nameIndex > 0 ? unsigned(nameIndex) : 0) < 0 ||
-	    (nameIndex <= 0 && Compression::putString(
-	      seed.incremental, 0, 7, seed.name) < 0) ||
-	    Compression::putString(
-	      seed.incremental, 0, 7, seed.value) < 0 ||
-	    Compression::putPref(seed.fallback, 0, 4,
-	      nameIndex > 0 ? unsigned(nameIndex) : 0) < 0 ||
-	    (nameIndex <= 0 && Compression::putString(
-	      seed.fallback, 0, 7, seed.name) < 0) ||
-	    Compression::putString(seed.fallback, 0, 7, seed.value) < 0)
-	  return;
-	new (plan.entries.push()) HPackSeed{ZuMv(seed)};
-	lookup[j] = plan.entries.length() - 1;
-      }
-    });
-    new (m_plans.push()) HPackSeedPlan{ZuMv(plan)};
-  }
-
-  const HPackSeedPlans &plans() const { return m_plans; }
-  const HPackSeeds &entries() const {
-    static const HPackSeeds empty;
-    return m_plans ? m_plans[0].entries : empty;
-  }
-
-private:
-  HPackSeedPlans	m_plans;
-};
-
-ZtEnumStruct(ZhttpAPI, QPackSeedState, uint8_t,
-  Unseeded, Seeded, Disabled);
-
-ZtEnumStruct(ZhttpAPI, QPackSeedResult, int8_t,
-  Failed, Disabled, Seeded);
-
-template <typename Write>
-QPackSeedResult::T installQPackSeeds(
-    H3::QPackTxTable &tx, const HeaderSeeds &seeds, Write &&write) {
-  uint32_t capacity = tx.effectiveCapacity();
-  if (!capacity || !seeds) {
-    tx.freeze();
-    return QPackSeedResult::Disabled;
-  }
-  uint64_t used = 0;
-  unsigned count = 0, n = seeds.length();
-  while (count < n) {
-    if (seeds[count].size > capacity - used) break;
-    used += seeds[count++].size;
-  }
-  if (!count) {
-    tx.freeze();
-    return QPackSeedResult::Disabled;
-  }
-  H3::HdrBytes bytes;
-  H3::HdrBytes insn;
-  if (H3::QPack::encodeSetCapacity(insn, capacity) < 0)
-    return QPackSeedResult::Failed;
-  Compression::putBytes(bytes, insn);
-  for (unsigned i = 0; i < count; ++i) {
-    insn.length(0);
-    uint64_t nameIndex = 0;
-    int n = H3::QPack::staticNameIndex(seeds[i].name, nameIndex) ?
-      H3::QPack::encodeInsertWithNameRef(
-	insn, nameIndex, false, seeds[i].value) :
-      H3::QPack::encodeInsertLiteral(
-	insn, {seeds[i].name, seeds[i].value});
-    if (n < 0) return QPackSeedResult::Failed;
-    Compression::putBytes(bytes, insn);
-  }
-  if (!ZuFwd<Write>(write)(bytes)) return QPackSeedResult::Failed;
-  if (!tx.setCapacity(capacity)) return QPackSeedResult::Failed;
-  tx.capacitySent = true;
-  for (unsigned i = 0; i < count; ++i)
-    if (!tx.insertView({seeds[i].name, seeds[i].value}))
-      return QPackSeedResult::Failed;
-  tx.freeze();
-  return QPackSeedResult::Seeded;
-}
 
 template <typename App, typename = void>
 struct ResponseHeaderSets { using T = ZuTypeList<>; };
@@ -784,108 +280,22 @@ struct ResponseHeaderSets<App, decltype(
   using T = App::ResponseHeaders;
 };
 
-template <typename App, typename = void>
-struct AppHeaderSeeds {
-  static const HeaderSeeds &get(const App &) {
-    static const HeaderSeeds seeds;
-    return seeds;
-  }
+template <typename HdrCatalog, typename Sets,
+  bool = bool(ZuTypeIn<HdrCatalog, Sets>{})>
+struct HeaderPlan_ {
+  enum { Valid = 0, Index = unsigned(-1) };
 };
-template <typename App>
-struct AppHeaderSeeds<App, decltype(
-  ZuDeclVal<const App &>().qpackSeeds(), void())> {
-  static const HeaderSeeds &get(const App &app) { return app.qpackSeeds(); }
+template <typename HdrCatalog, typename Sets>
+struct HeaderPlan_<HdrCatalog, Sets, true> {
+  enum { Valid = 1, Index = ZuTypeIndex<HdrCatalog, Sets>{} };
 };
-
-template <typename App, typename = void>
-struct AppHPackSeedPlans {
-  static const HPackSeedPlans &get(const App &) {
-    static const HPackSeedPlans plans;
-    return plans;
-  }
+template <typename HdrCatalog, typename Sets, bool = bool(Sets::N)>
+struct HeaderPlan {
+  enum { Valid = 0, Index = unsigned(-1) };
 };
-template <typename App>
-struct AppHPackSeedPlans<App, decltype(
-  ZuDeclVal<const App &>().hpackSeedPlans(), void())> {
-  static const HPackSeedPlans &get(const App &app) {
-    return app.hpackSeedPlans();
-  }
-};
-
-struct RetainedBudget {
-  bool add(uint64_t n) {
-    if (n > max - size) {
-      valid = false;
-      return false;
-    }
-    size += n;
-    return true;
-  }
-
-  uint64_t	max = uint64_t(-1);
-  uint64_t	size = 0;
-  bool		valid = true;
-};
-
-struct RetainedEntry {
-  RetainedEntry() = default;
-  RetainedEntry(ZmRef<ZiIOBuf> buf_, bool final_) :
-    buf{ZuMv(buf_)}, final{final_} { }
-
-  ZmRef<ZiIOBuf>	buf;
-  bool		final;
-};
-
-template <typename Lower>
-class RetainedTx : public ZiTxStream<RetainedTx<Lower>> {
-  using Base = ZiTxStream<RetainedTx<Lower>>;
-  using Entries =
-    ZtArray<RetainedEntry, ZtArrayHeapID<"Zhttp.RetainedTx.Entries">>;
-
-public:
-  RetainedTx(Lower &lower_, RetainedBudget &budget_) :
-    Base{lower_.maxSize(), lower_.headRoom(), lower_.tailRoom()},
-    m_lower{lower_}, m_budget{budget_} { }
-
-  ~RetainedTx() { this->flush(); }
-
-  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    if (ZuUnlikely(m_lower.failed())) return nullptr;
-    return m_lower.allocBuf_(headRoom);
-  }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    if (!m_budget.add(buf->length)) {
-      m_valid = false;
-      return false;
-    }
-    new (m_entries.push()) RetainedEntry{ZuMv(buf), final};
-    return true;
-  }
-
-  bool seal() { return this->flush() && valid(); }
-  bool valid() const {
-    return !this->failed() && m_valid && m_budget.valid;
-  }
-  bool commit() {
-    if (!seal()) { m_entries.length(0); return false; }
-    for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
-      m_lower << ZuMv(m_entries[i].buf);
-      if (m_entries[i].final) m_lower << Zi::Flush{};
-      if (m_lower.failed()) {
-	this->fail();
-	m_entries.length(0);
-	return false;
-      }
-    }
-    m_entries.length(0);
-    return true;
-  }
-
-private:
-  Lower		&m_lower;
-  RetainedBudget &m_budget;
-  Entries	m_entries;
-  bool		m_valid = true;
+template <typename HdrCatalog, typename Sets>
+struct HeaderPlan<HdrCatalog, Sets, true> :
+    public HeaderPlan_<HdrCatalog, Sets> {
 };
 
 template <
@@ -894,6 +304,12 @@ template <
 class HeaderSpans {
   using List = HeaderList<HdrCatalog>;
   using Keys = List::Keys;
+  template <typename Key>
+  struct Mutable : public ZuBool<!List::template Value<
+    ZuTypeIndex<Key, Keys>{}>::N> { };
+  using MutableKeys = ZuTypeGrep<Mutable, Keys>;
+  template <typename> using Span = ZuSpan<uint8_t>;
+  using Slots = ZuTypeApply<ZuTuple, ZuTypeMap<Span, MutableKeys>>;
 
   ZuAssert((ZuTypeUnique<Keys>::N == Keys::N),
     "mutable header spans require unique keys");
@@ -905,7 +321,7 @@ public:
     using Value = List::template Value<I>;
     ZuAssert((!Value::N),
       "only runtime-valued declared headers have mutable spans");
-    m_slots[I] = span;
+    m_slots.template p<ZuTypeIndex<Key, MutableKeys>{}>() = span;
   }
   template <typename Key>
   void recordOffset(uint64_t offset, unsigned length) {
@@ -913,13 +329,15 @@ public:
     using Value = List::template Value<I>;
     ZuAssert((!Value::N),
       "only runtime-valued declared headers have mutable spans");
-    m_slots[I] = {reinterpret_cast<uint8_t *>(uintptr_t(offset + 1)), length};
+    m_slots.template p<ZuTypeIndex<Key, MutableKeys>{}>() =
+      {reinterpret_cast<uint8_t *>(uintptr_t(offset + 1)), length};
   }
   void resolve(uint8_t *base) {
-    for (unsigned i = 0; i < N; ++i) {
-      auto encoded = uintptr_t(m_slots[i].data());
-      if (encoded) m_slots[i] = {base + encoded - 1, m_slots[i].length()};
-    }
+    ZuUnroll::all<MutableKeys::N>([this, base](auto i) {
+      auto &span = m_slots.template p<i>();
+      auto encoded = uintptr_t(span.data());
+      if (encoded) span = {base + encoded - 1, span.length()};
+    });
   }
 
   template <typename App>
@@ -929,14 +347,14 @@ public:
       using Value = List::template Value<I>;
       ZuAssert((!Value::N),
 	"bodyHdrs cannot mutate a fixed declared header value");
-      ZuFwd<P>(patcher)(m_slots[I]);
+      ZuFwd<P>(patcher)(m_slots.template p<ZuTypeIndex<Key, MutableKeys>{}>());
     };
     if constexpr (HasBuilderBodyHdrs<App, decltype(patch)>{})
       app.bodyHdrs(ZuMv(patch));
   }
 
 private:
-  ZuSpan<uint8_t>	m_slots[N]{};
+  Slots m_slots{};
 };
 
 template <typename HdrCatalog>
@@ -957,178 +375,273 @@ public:
   void patch(App &) { }
 };
 
-// Shared compile-time outbound message mechanics.  Ops keeps request/response
-// accounting, failure, empty-body, and budget policy in the owning component.
-template <typename Message, typename Ops>
-class MessageTx {
-public:
-  MessageTx(Ops &ops) : m_ops{&ops} { }
+// Builder is the existing typed request/response Ops adapter, including existing
+// content-length suppression and Alt-Svc injection; those rules stay there.
+template <typename Builder>
+struct BuilderFields {
+  using Catalog = typename Builder::HdrCatalog;
+  using List = HeaderList<Catalog>;
 
-  template <typename Builder>
-  bool streaming(Builder &builder, bool optional) {
-    auto &link = m_ops->link();
-    auto tx = link.transmit_(builder);
-    bool emitted = false;
-    bool duplicate = false;
-    WriteOutcome::T outcome = WriteOutcome::Failed;
-    bool headersOK = false;
-    uint64_t produced = 0;
-    if (optional) {
-      builder.emitBody([
-	this, &builder, &tx, &emitted, &duplicate, &outcome,
-	&headersOK, &produced](auto &&write) {
-	if (emitted) { duplicate = true; return; }
-	emitted = true;
-	if (!(headersOK = begin_(builder, tx))) return;
-	m_ops->headers();
-	auto body = builder.body(tx);
-	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-	bool ok = body.flush();
-	produced = body.produced();
-	m_ops->template produced<true>(produced);
-	if (!ok || !body.valid()) outcome = WriteOutcome::Failed;
-	if (outcome == WriteOutcome::End) builder.finish(tx);
-      });
-      if (!emitted) return m_ops->empty(builder.appBuilder());
-    } else {
-      if (!(headersOK = begin_(builder, tx)))
-	return m_ops->template fail<true>();
-      m_ops->headers();
-      builder.emitBody([
-	this, &builder, &tx, &emitted, &duplicate, &outcome, &produced](
-	    auto &&write) {
-	if (emitted) { duplicate = true; return; }
-	emitted = true;
-	auto body = builder.body(tx);
-	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-	bool ok = body.flush();
-	produced = body.produced();
-	m_ops->template produced<true>(produced);
-	if (!ok || !body.valid()) outcome = WriteOutcome::Failed;
-      });
-      if (emitted && outcome == WriteOutcome::End) builder.finish(tx);
-    }
-    if (!validCardinality_(optional, emitted, duplicate) ||
-	!writerEnded_(outcome) ||
-	!headersOK || !tx.flush())
-      return m_ops->template fail<true>();
-    if (!m_ops->complete(produced)) return false;
-    link.finish();
-    return true;
-  }
+  Builder *builder;
+  const CatalogView *catalog;
 
-  template <typename Builder>
-  bool fixed(Builder &builder, bool optional) {
-    auto &link = m_ops->link();
-    auto native = link.transmit_(builder);
-    if constexpr (Message::ID == Version::H2)
-      return fixedH2_(builder, native, optional);
-    else {
-      RetainedBudget budget{.max = m_ops->retainedMax()};
-      RetainedTx headerTx{native, budget};
-      RetainedTx bodyTx{native, budget};
-      auto body = builder.body(bodyTx, m_ops->fixedBodyMax());
-      bool emitted = false;
-      bool duplicate = false;
-      WriteOutcome::T outcome = WriteOutcome::Failed;
-      builder.emitBody([
-	&body, &emitted, &duplicate, &outcome](auto &&write) {
-	if (emitted) { duplicate = true; return; }
-	emitted = true;
-	outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
-      });
-      bool bodyOK = body.flush();
-      if (emitted) {
-	builder.produced = body.produced();
-	m_ops->template produced<false>(builder.produced);
+  void fields(FieldOutput &out) {
+    ZuUnroll::all<List::N>([this, &out](auto I) {
+      static constexpr unsigned ID = I;
+      using Key = typename List::template Key<I>;
+      using Values = typename List::template Value<I>;
+      const auto &meta = catalog->fields[I];
+      if constexpr (Values::N) {
+	using Fixed = HeaderValue<Values>;
+	builderFixedHeader<Key, Fixed>(builder, [&out, &meta]() {
+	  const auto &value = Fixed{}();
+	  out.field(FieldForm::Fixed, ID, meta.classification,
+	    PrintView::borrow(meta.name), PrintView::borrow(value));
+	}, 0);
+	builder->template header<Key>([&out, &meta]<typename V>(V &&value) {
+	  out.field(FieldForm::Name, ID, meta.classification,
+	    PrintView::borrow(meta.name), PrintView::borrow(value));
+	});
+      } else {
+	builder->template header<Key>([this, &out, &meta]<typename V>(V &&value) {
+	  auto span = out.field(FieldForm::Mutable, ID, meta.classification,
+	    PrintView::borrow(meta.name), PrintView::borrow(value));
+	  builder->template headerOffset<Key>(span.offset, span.length);
+	});
       }
-      if (!validCardinality_(optional, emitted, duplicate) ||
-	  (emitted && (!bodyOK || !writerEnded_(outcome) || !body.valid())))
-	return m_ops->template fail<false>();
-      if (!emitted) return m_ops->empty(builder.appBuilder());
-      if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
-      m_ops->headers();
-      builder.finish(bodyTx);
-      if (!headerTx.seal() || !bodyTx.seal())
-	return m_ops->template fail<false>();
-      if (!headerTx.commit() || !bodyTx.commit())
-	return m_ops->template fail<false>();
-      if (!m_ops->complete(builder.produced)) return false;
-      link.finish();
-      return true;
-    }
-  }
-
-private:
-  static bool validCardinality_(
-      bool optional, bool emitted, bool duplicate) {
-    ZiAssert(optional || emitted, "Zhttp", (),
-      "required body emitted no writer", return false);
-    ZiAssert(!duplicate, "Zhttp", (),
-      "body emitted more than one writer", return false);
-    return (optional || emitted) && !duplicate;
-  }
-
-  static bool writerEnded_(WriteOutcome::T outcome) {
-    switch (outcome) {
-      case WriteOutcome::End: return true;
-      case WriteOutcome::Failed: return false;
-      case WriteOutcome::Stream:
-      case WriteOutcome::Abort:
-	ZiAssert(false, "Zhttp", (),
-	  "streaming outcome returned from a single-turn writer", return false);
-	return false;
-      default:
-	ZiAssert(false, "Zhttp", (), "invalid body writer outcome", return false);
-	return false;
-    }
-  }
-
-  template <typename Builder, typename Tx>
-  static bool begin_(Builder &builder, Tx &tx) {
-    using R = decltype(builder.begin(tx));
-    if constexpr (ZuIsSame<R, void>{})
-      builder.begin(tx);
-    else if (!builder.begin(tx))
-      return false;
-    return tx.flush();
-  }
-
-  template <typename Builder, typename Tx>
-  bool fixedH2_(Builder &builder, Tx &tx, bool optional) {
-    tx.defer(m_ops->retainedMax());
-    auto body = builder.body(tx, m_ops->fixedBodyMax());
-    bool emitted = false;
-    bool duplicate = false;
-    WriteOutcome::T outcome = WriteOutcome::Failed;
-    builder.emitBody([
-      &body, &emitted, &duplicate, &outcome](auto &&write) {
-      if (emitted) { duplicate = true; return; }
-      emitted = true;
-      outcome = invokeBodyWriter(ZuFwd<decltype(write)>(write), body);
     });
-    bool bodyOK = body.flush();
-    if (emitted) {
-      builder.produced = body.produced();
-      m_ops->template produced<false>(builder.produced);
-    }
-    if (!validCardinality_(optional, emitted, duplicate) ||
-	(emitted && (!bodyOK || !writerEnded_(outcome) || !body.valid())))
-      return m_ops->template fail<false>();
-    if (!emitted) return m_ops->empty(builder.appBuilder());
-    if (!begin_(builder, tx))
-      return m_ops->template fail<false>();
-    m_ops->headers();
-    builder.finish(tx);
-    if (!tx.valid()) return m_ops->template fail<false>();
-    if (!tx.commit()) return m_ops->template fail<false>();
-    if (!m_ops->complete(builder.produced)) return false;
-    m_ops->link().finish();
-    return true;
+    builder->header([&out]<typename K, typename V>(K &&key, V &&value) {
+      out.field(FieldForm::Literal, -1, nullptr,
+	PrintView::borrow(key), PrintView::borrow(value));
+    });
   }
-
-  Ops	*m_ops;
+  FieldProvider provider() {
+    return {this,
+      [](void *ctx, FieldOutput &out) {
+	static_cast<BuilderFields *>(ctx)->fields(out);
+      },
+      [](void *ctx, uint8_t *base) {
+	static_cast<BuilderFields *>(ctx)->builder->headerBase(base);
+      },
+      [](void *ctx) { static_cast<BuilderFields *>(ctx)->builder->patch(); }};
+  }
 };
+
+
+template <typename P>
+auto parserBodyMax(P &parser, uint64_t max, int) ->
+    decltype(parser.bodyMax(max), void()) {
+  parser.bodyMax(max);
+}
+template <typename P>
+void parserBodyMax(P &, uint64_t, long) { }
+
+template <typename P>
+auto parserBodyInfo(P &parser, Channel *channel, BodyType::T type,
+    uint64_t length, int) -> decltype(parser.bodyInfo(channel, type, length)) {
+  return parser.bodyInfo(channel, type, length);
+}
+template <typename P>
+bool parserBodyInfo(P &parser, Channel *, BodyType::T type, uint64_t length, long) {
+  return parser.bodyInfo(type, length);
+}
+
+template <typename P, typename Context, typename = void>
+struct HasParserOwner : ZuFalse { };
+template <typename P, typename Context>
+struct HasParserOwner<P, Context, decltype(ZuDeclVal<P &>().initOwner(
+    ZuDeclVal<Context &>()), void())> : ZuTrue { };
+
+template <typename P, typename Context, typename = void>
+struct HasParserInfo : ZuFalse { };
+template <typename P, typename Context>
+struct HasParserInfo<P, Context, decltype(ZuDeclVal<P &>().connectedInfo(
+    ZuDeclVal<Context &>(), ZuDeclVal<Channel *>(),
+    ZuDeclVal<const ConnectedInfo &>()), void())> : ZuTrue { };
+template <typename P, typename = void>
+struct HasParserDown : ZuFalse { };
+template <typename P>
+struct HasParserDown<P, decltype(ZuDeclVal<P &>().disconnected(ZuDeclVal<Channel *>(), false),
+  void())> : ZuTrue { };
+
+// The actual typed parser object belongs to this session/operation storage.
+// The native owner creates it once and destroys it only after its shard drains.
+template <typename P, typename Context, auto ContextAxor = ZuDefaultAxor()>
+struct TypedParser : public ZmNHeap<TypedParser<P, Context, ContextAxor>> {
+  P parser;
+
+  friend inline ZuStringT<"Zhttp.Parser"> ZmNHeapID(TypedParser *);
+
+  static ParserBinding create(const CatalogView &catalog) {
+    static constexpr ParserOps ops = []() {
+      ParserOps table{
+      [](void *ctx, void *context) {
+	static_cast<TypedParser *>(ctx)->parser.init(
+	  ContextAxor(*static_cast<Context *>(context)));
+      },
+      [](void *ctx, uint64_t max) {
+	parserBodyMax(static_cast<TypedParser *>(ctx)->parser, max, 0);
+      },
+      [](void *ctx) { delete static_cast<TypedParser *>(ctx); },
+      [](const void *ctx) -> bool {
+	return static_cast<const TypedParser *>(ctx)->parser.enable1xx();
+      },
+      [](void *ctx, Method::T method, Target &target) -> bool {
+	return static_cast<TypedParser *>(ctx)->parser.operation(method, target);
+      },
+      [](void *ctx, unsigned status) {
+	static_cast<TypedParser *>(ctx)->parser.status(status);
+      },
+      [](void *ctx, FieldSection::T section, int key, int fixed,
+	  ZuBSpan name, ZuSpan<uint8_t> value) {
+	parserHeader(static_cast<TypedParser *>(ctx)->parser,
+	  section, key, fixed, name, value);
+      },
+      [](void *ctx, Channel *channel, BodyType::T type, uint64_t length) -> bool {
+	return parserBodyInfo(static_cast<TypedParser *>(ctx)->parser,
+	  channel, type, length, 0);
+      },
+      [](void *ctx, Input &input) -> bool {
+	return static_cast<TypedParser *>(ctx)->parser.body(input);
+      },
+      [](void *ctx, Channel *channel, bool ok) {
+	static_cast<TypedParser *>(ctx)->parser.complete(channel, ok);
+      },
+      [](void *ctx) { static_cast<TypedParser *>(ctx)->parser.reset(); }};
+      if constexpr (HasParserInfo<P, Context>{}) table.connectedInfo =
+	[](void *ctx, void *owner, Channel *channel, const ConnectedInfo &info) {
+	  static_cast<TypedParser *>(ctx)->parser.connectedInfo(
+	    ContextAxor(*static_cast<Context *>(owner)), channel, info);
+	};
+      if constexpr (HasParserDown<P>{}) table.disconnected =
+	[](void *ctx, Channel *channel, bool peer) {
+	  static_cast<TypedParser *>(ctx)->parser.disconnected(channel, peer);
+	};
+      return table;
+    }();
+    return {new TypedParser{}, &ops, &catalog};
+  }
+  static ParserBinding create(const CatalogView &catalog, Context &owner) {
+    auto binding = create(catalog);
+    if constexpr (HasParserOwner<P, Context>{})
+      static_cast<TypedParser *>(binding.ctx)->parser.initOwner(ContextAxor(owner));
+    return binding;
+  }
+};
+
+template <typename B>
+struct ResponseFields {
+  using HdrCatalog = typename B::HdrCatalog;
+  using Spans = HeaderSpans<HdrCatalog>;
+
+  B *builder;
+  FieldContext &context;
+  Spans spans;
+
+  template <typename Key, typename Value, typename L>
+  void header(L &&l) {
+    if constexpr (Key{}() == "content-length") {
+      if (context.rejectContentLength) {
+	builderFixedHeader<Key, Value>(builder, [this]() { reject_(); }, 0);
+	return;
+      }
+    }
+    builderFixedHeader<Key, Value>(builder, ZuFwd<L>(l), 0);
+  }
+  template <typename Key, typename L>
+  void header(L &&l) {
+    if constexpr (Key{}() == "content-length") {
+      if (context.rejectContentLength) {
+	if constexpr (HasBuilderHeader<B, Key, L &&>{})
+	  builder->template header<Key>([this](auto &&) { reject_(); });
+	return;
+      }
+    }
+    if constexpr (HasBuilderHeader<B, Key, L &&>{})
+      builder->template header<Key>(ZuFwd<L>(l));
+  }
+  template <typename L>
+  void header(L &&l) {
+    builder->header([this, &l]<typename K, typename V>(K &&key, V &&value) {
+      if (context.rejectContentLength && ZuBSpan{key} == "content-length") {
+	reject_();
+	return;
+      }
+      l(ZuFwd<K>(key), ZuFwd<V>(value));
+    });
+    if (context.altSvc) l("alt-svc", context.altSvc);
+  }
+  template <typename Key>
+  void headerOffset(uint64_t offset, unsigned length) {
+    spans.template recordOffset<Key>(offset, length);
+  }
+  void headerBase(uint8_t *base) { spans.resolve(base); }
+  void patch() { spans.patch(*builder); }
+  void reject_() {
+    context.invalidHeader = true;
+    context.reject(context.rejectCtx);
+  }
+};
+
+// A route transfers the actual outer node reference, with pointer adjustment
+// performed before erasure. No embedded record is ever used as an allocation.
+template <typename Node>
+ResponseRef bindResponse(ZmRef<Node> response, const CatalogView &catalog) {
+  using B = ZuDecay<decltype(response->data())>;
+  static constexpr ResponseOps ops{
+    [](const void *ctx) -> unsigned { return static_cast<const Node *>(ctx)->data().status(); },
+    [](const void *ctx) -> Method::T { return static_cast<const Node *>(ctx)->data().method(); },
+    [](const void *ctx) -> BodyPolicy::T {
+      return static_cast<const Node *>(ctx)->data().bodyPolicy();
+    },
+    [](const void *ctx) -> bool {
+      return static_cast<const Node *>(ctx)->data().streamResponse();
+    },
+    [](const void *ctx) -> bool { return static_cast<const Node *>(ctx)->data().disconnect(); },
+    [](void *ctx, BodyEmitter emit) {
+      auto &builder = static_cast<Node *>(ctx)->data();
+      if constexpr (HasBuilderBody<B, BodyEmitter &>{}) builder.body(emit);
+    },
+    [](void *ctx) { static_cast<Node *>(ctx)->data().close(); },
+    [](void *ctx, const ResponseResult &result) {
+      static_cast<Node *>(ctx)->data().completed(result);
+    },
+    [](void *ctx, FieldContext &context, void *encoder,
+	void (*put)(void *, FieldProvider &)) {
+      auto &builder = static_cast<Node *>(ctx)->data();
+      ResponseFields<B> fields{&builder, context};
+      BuilderFields<ResponseFields<B>> adapter{&fields, builder.record.catalog};
+      auto provider = adapter.provider();
+      put(encoder, provider);
+    }};
+  auto &builder = response->data();
+  auto &record = builder.record;
+  record.bind(response.ptr());
+  record.responseOps = &ops;
+  record.catalog = &catalog;
+  record.hdrBufSize = B::HdrBufSize;
+  record.hdrPlan = HeaderPlan<typename B::HdrCatalog,
+    typename ResponseHeaderSets<B>::T>::Index;
+  return ResponseRef::take(&record, ZuMv(response));
+}
+
+template <typename Node>
+void Channel::send(ZmRef<Node> response) {
+  if (!response) return;
+  send(bindResponse(ZuMv(response), responseCatalog()));
+}
+
+template <typename L>
+void Channel::rxRun(L &&l) { mx()->run(ZuFwd<L>(l), rxThread()); }
+
+template <typename L>
+void Channel::txRun(L &&l) { mx()->run(ZuFwd<L>(l), txThread()); }
+
+template <typename Write>
+bool Channel::streamTx(Write &&write) {
+  auto printer = Builder_::writer(write);
+  return m_channelOps->streamWrite(ctx, PrintView::borrow(printer));
+}
 
 } // namespace Zhttp
 

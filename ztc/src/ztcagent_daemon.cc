@@ -258,7 +258,7 @@ static void transmit(
 {
   if (!frame || !generation) return;
   state->client.rxRun([state, frame = ZuMv(frame), generation]() mutable {
-    ZmAssert(state->client.rxInvoked());
+    ZmAssert(state->client.mx()->invoked(state->client.rxThread()));
     auto link = state->link;
     if (state->currentGeneration.load_() != generation || !link)
       return;
@@ -822,7 +822,7 @@ static void connectToken(Agent::State *state)
   }
   AgentSecret authorization{"Bearer "};
   authorization << state->token;
-  state->link = new Agent::Link{&state->client, state->uri,
+  state->link = new Agent::Link{&state->client, state->uri, Protocol,
     ZuBSpan{authorization}};
   ZuClear(authorization);
   ZuClear(state->token);
@@ -966,7 +966,8 @@ bool Agent::start()
   Zhttp::H2Config tls;
   if (m_state->env.caPath) tls.caPath(m_state->env.caPath);
   if (!m_state->client.init(
-      Zhttp::HubConfig{m_state->mx, "1", "2"}, tls, ws) ||
+      Zhttp::HubConfig{m_state->mx, "1", "2"}, tls,
+      Zhttp::Destination{m_state->uri.host, m_state->uri.port, m_state->uri.ipv6Literal}, ws) ||
       !m_state->client.start()) {
     m_state->mx->stop();
     return false;

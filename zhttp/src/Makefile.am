@@ -11,9 +11,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
 pkginclude_HEADERS = ZhttpLib.hh ZhttpCore.hh ZhttpURL.hh ZhttpFields.hh \
-	ZhttpCompression.hh ZhttpHPack.hh ZhttpQPack.hh \
-	ZhttpH1.hh ZhttpH2.hh ZhttpH2Hub.hh ZhttpH3.hh \
-	ZhttpTransport.hh ZhttpDiscovery.hh Zhttp.hh \
+	ZhttpTransport.hh ZhttpProfiles.hh ZhttpConfig.hh ZhttpDiscovery.hh Zhttp.hh \
 	ZhttpClient.hh ZhttpServer.hh ZhttpSSE.hh
 lib_LTLIBRARIES = libZhttp.la
 libZhttp_la_CPPFLAGS = $(AM_CPPFLAGS) -DZHTTP_EXPORTS 
@@ -21,7 +19,7 @@ libZhttp_la_SOURCES = ZhttpLib.cc ZhttpCore.cc ZhttpURL.cc \
 	ZhttpAltSvc.cc ZhttpDiscovery.cc ZhttpTransport.cc \
 	ZhttpCompression.cc ZhttpFields.cc \
 	ZhttpH1.cc ZhttpH2.cc ZhttpH3.cc ZhttpHPack.cc ZhttpQPack.cc \
-	ZhttpClient.cc ZhttpSSE.cc
+	ZhttpClient.cc ZhttpServer.cc ZhttpTCP.cc ZhttpTLS.cc ZhttpQUIC.cc ZhttpSSE.cc
 libZhttp_la_LIBADD = \
 	$(top_builddir)/ztcp/src/libZtcp.la \
 	$(top_builddir)/ztls/src/libZtls.la \
@@ -32,3 +30,8 @@ libZhttp_la_LIBADD = \
 	$(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+
+noinst_HEADERS = ZhttpCompression.hh ZhttpHPack.hh ZhttpQPack.hh \
+	ZhttpH1.hh ZhttpH2.hh ZhttpH2Hub.hh ZhttpH3.hh \
+	ZhttpNative.hh ZhttpWire.hh ZhttpFieldImpl.hh \
+	ZhttpClientImpl.hh ZhttpServerImpl.hh ZhttpTLSImpl.hh

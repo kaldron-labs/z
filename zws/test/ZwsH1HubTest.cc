@@ -8,6 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 
@@ -15,6 +16,7 @@
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/Zws.hh>
+#include <zlib/Ztcp.hh>
 
 #include "ZhttpTestUtil.hh"
 #include "ZwsTestPorts.hh"
@@ -35,6 +37,7 @@ enum { TestPort = ZwsTestPort::H1Hub };
 #endif
 
 struct State {
+  Zws::URI uri;
   ZmSemaphore		listening;
   ZmSemaphore		done;
   ZmAtomic<unsigned>	connected = 0;
@@ -193,10 +196,8 @@ struct ClientApp {
     if (state->cliMessages.load_() != 1 ||
 	state->reconnects.xchAdd(1))
       return;
-    if constexpr (Link::Multiplexed)
-      link.connect("127.0.0.1", state->port);
-    else
-      link.connect();
+    ZmRef<Link> next = new Link{link.app(), state->uri, "chat"};
+    next->connect();
   }
   template <typename Link>
   void closed(Link &, uint16_t, ZuBSpan) { ++state->closes; }
@@ -328,7 +329,8 @@ void run(const TempDir &temp)
   bool serverInit =
     server.init(hub, ProfileConfig<Profile>::server(temp));
   bool clientInit =
-    client.init(hub, ProfileConfig<Profile>::client(temp));
+    client.init(hub, ProfileConfig<Profile>::client(temp),
+      Zhttp::Destination{"127.0.0.1", uint16_t(state.port)});
   ZuCHECK(serverInit && clientInit);
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
@@ -361,10 +363,8 @@ void run(const TempDir &temp)
       "://127.0.0.1:" << state.port << "/stream";
     ZuCHECK(Zws::URI::parse(uri, text).ok());
     link = new Link{&client, uri, "chat"};
-    if constexpr (Zhttp::ProfileTraits<Profile>::Multiplexed)
-      link->connect(uri.host, uri.port);
-    else
-      link->connect();
+    state.uri = uri;
+    link->connect();
     ZuCHECK(state.done.timedwait(Zm::now(10)) == 0);
   }
 
@@ -382,6 +382,9 @@ void run(const TempDir &temp)
       ZuCHECK(!rejectState.failed,
 	"rejected H1 opening handshake did not drain its 400 response");
       reject = nullptr;
+      ZmBlock<>{}([&rejectClient](auto wake) {
+	rejectClient.rxRun(ZuMv(wake));
+      });
       rejectClient.final();
     }
   }
@@ -440,7 +443,9 @@ void runConcurrentWSS(const TempDir &temp)
   Client client{&clientApp};
   Zhttp::HubConfig hub{&mx, "3", "4"};
   ZuCHECK(server.init(hub, ProfileConfig<Zhttp::H1TLS>::server(temp)));
-  ZuCHECK(client.init(hub, ProfileConfig<Zhttp::H1TLS>::client(temp)));
+  ZuCHECK(client.init(hub, ProfileConfig<Zhttp::H1TLS>::client(temp),
+    Zhttp::Destination{"127.0.0.1", uint16_t(state.port)}, {},
+    Zhttp::Config{}.links(Clients).concurrency(Clients)));
   ZuCHECK(server.start() && client.start());
   ZuCHECK(state.listening.timedwait(Zm::now(10)) == 0);
   Zws::URI uri;

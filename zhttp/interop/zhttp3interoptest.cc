@@ -12,7 +12,7 @@
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/Zquic.hh>
-#include <zlib/Zhttp.hh>
+#include "../src/ZhttpWire.hh"
 
 #include "ZhttpTestUtil.hh"
 #include "ZhttpInteropPorts.hh"
@@ -120,14 +120,14 @@ struct ResponseBody {
 
 template <typename Impl>
 struct H1ResponseBuilder_ :
-  public Zhttp::H1Response<Impl, ResponseHeaders, true> {
-  using Base = Zhttp::H1Response<Impl, ResponseHeaders, true>;
+  public Zhttp::H1::Response<Impl, true> {
+  using Base = Zhttp::H1::Response<Impl, true>;
 };
 
 template <typename Impl>
 struct H3ResponseBuilder_ :
-  public Zhttp::H3Response<Impl, ResponseHeaders, true> {
-  using Base = Zhttp::H3Response<Impl, ResponseHeaders, true>;
+  public Zhttp::H3::Response<Impl, true> {
+  using Base = Zhttp::H3::Response<Impl, true>;
 };
 
 template <template <typename> typename Builder_>
@@ -138,6 +138,15 @@ struct ResponseBuilder :
   using HdrCatalog = ResponseHeaders;
   using Base::body;
   using Zhttp::Builder::header;
+
+  void fields(Zhttp::FieldOutput &output) {
+    Zhttp::BuilderFields<ResponseBuilder> fields{this,
+      &Zhttp::CatalogData<HdrCatalog>::configure()};
+    fields.fields(output);
+  }
+  template <typename Key> void headerOffset(uint64_t, unsigned) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
 
   ResponseBuilder(ZuCSpan body_) : content{body_} { }
 
@@ -229,14 +238,14 @@ template <typename Impl, bool H3>
 struct RequestParserBase_;
 template <typename Impl>
 struct RequestParserBase_<Impl, false> :
-  public Zhttp::H1RequestParser<Impl, RequestHeaders> {
-  using Base = Zhttp::H1RequestParser<Impl, RequestHeaders>;
+  public Zhttp::H1::Parser<Impl, true> {
+  using Base = Zhttp::H1::Parser<Impl, true>;
   RequestParserBase_() : Base{1<<20} { }
 };
 template <typename Impl>
 struct RequestParserBase_<Impl, true> :
-  public Zhttp::H3RequestParser<Impl, RequestHeaders> {
-  using Base = Zhttp::H3RequestParser<Impl, RequestHeaders>;
+  public Zhttp::H3::Parser<Impl, true> {
+  using Base = Zhttp::H3::Parser<Impl, true>;
   RequestParserBase_() : Base{1<<20} { }
 };
 
@@ -247,6 +256,19 @@ struct RequestParser :
   using Base = RequestParserBase_<RequestParser<H3>, H3>;
   using State = Base::State;
   using HdrCatalog = RequestHeaders;
+  const Zhttp::CatalogView &catalog() const {
+    return Zhttp::CatalogData<HdrCatalog>::configure();
+  }
+  using Zhttp::Parser::header;
+  void header(Zhttp::FieldSection::T section, int id, int fixed,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  void header(Zhttp::FieldSection::T section, int id, ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id,
+      id < 0 ? -1 : catalog().valueMatch(id, value), name, value);
+  }
+
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
   bool qpackDecoderWrite(ZuBSpan span) const {
@@ -290,14 +312,14 @@ template <typename Impl, bool H3>
 struct ResponseParserBase_;
 template <typename Impl>
 struct ResponseParserBase_<Impl, false> :
-  public Zhttp::H1ResponseParser<Impl, ResponseHeaders> {
-  using Base = Zhttp::H1ResponseParser<Impl, ResponseHeaders>;
+  public Zhttp::H1::Parser<Impl, false> {
+  using Base = Zhttp::H1::Parser<Impl, false>;
   ResponseParserBase_() : Base{4<<20} { }
 };
 template <typename Impl>
 struct ResponseParserBase_<Impl, true> :
-  public Zhttp::H3ResponseParser<Impl, ResponseHeaders> {
-  using Base = Zhttp::H3ResponseParser<Impl, ResponseHeaders>;
+  public Zhttp::H3::Parser<Impl, false> {
+  using Base = Zhttp::H3::Parser<Impl, false>;
   ResponseParserBase_() : Base{4<<20} { }
 };
 
@@ -308,6 +330,19 @@ struct ResponseParser :
   using Base = ResponseParserBase_<ResponseParser<H3>, H3>;
   using State = Base::State;
   using HdrCatalog = ResponseHeaders;
+  const Zhttp::CatalogView &catalog() const {
+    return Zhttp::CatalogData<HdrCatalog>::configure();
+  }
+  using Zhttp::Parser::header;
+  void header(Zhttp::FieldSection::T section, int id, int fixed,
+      ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id, fixed, name, value);
+  }
+  void header(Zhttp::FieldSection::T section, int id, ZuBSpan name, ZuSpan<uint8_t> value) {
+    Zhttp::parserHeader(*this, section, id,
+      id < 0 ? -1 : catalog().valueMatch(id, value), name, value);
+  }
+
 
   Zhttp::H3::QPackRxTable *qpackRx() const { return qpackRx_; }
   bool qpackDecoderWrite(ZuBSpan span) const {
@@ -337,10 +372,18 @@ struct ResponseParser :
 
 template <typename Impl>
 struct RequestBuilder_ :
-  public Zhttp::H1Request<Impl, Zhttp::DefltHdrCatalog, false> { };
+  public Zhttp::H1::Request<Impl, false> {
+  void fields(Zhttp::FieldOutput &) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
+};
 template <typename Impl>
 struct RequestBuilderH3_ :
-  public Zhttp::H3Request<Impl, Zhttp::DefltHdrCatalog, false> { };
+  public Zhttp::H3::Request<Impl, false> {
+  void fields(Zhttp::FieldOutput &) { }
+  void headerBase(uint8_t *) { }
+  void patch() { }
+};
 
 template <template <typename> typename Builder_>
 struct RequestBuilder :

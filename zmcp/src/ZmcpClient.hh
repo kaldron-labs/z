@@ -1296,7 +1296,7 @@ private:
   Data	m_data;
 };
 
-template <typename Impl, typename Catalog> class Client;
+template <typename Impl, typename Catalog, typename Selection> class Client;
 
 // The serial queue owns the same request allocation later used by RequestQ.
 // Its inner node has no allocator; two links avoid a separate wrapper/ref node
@@ -1321,7 +1321,7 @@ friend inline ZuStringT<"Zmcp.HTTP.ActiveTable"> ZmNHeapID(ActiveTable *);
   ZuDerive_(ActiveTable, ActiveHash)
 };
 
-template <typename Impl, typename Catalog>
+template <typename Impl, typename Catalog, typename Selection>
 struct Request_ : public ActiveHash::Node,
     public HTTPRequestBuilder<Message<Catalog>> {
   using Base = HTTPRequestBuilder<Message<Catalog>>;
@@ -1333,7 +1333,7 @@ struct Request_ : public ActiveHash::Node,
 
   using Headers = ZuTypeConcat<typename Base::Headers, AppHeaderList>;
   using HdrCatalog = Zjrpc::HTTPHdrCatalog<Headers>;
-  Client<Impl, Catalog>	*client = nullptr;
+  Client<Impl, Catalog, Selection>	*client = nullptr;
   bool			responseOK = false;
   bool			responseSeen = false;
   bool			serial = false;
@@ -1344,7 +1344,7 @@ struct Request_ : public ActiveHash::Node,
 
   template <typename M>
   void init(
-      Client<Impl, Catalog> *client_, M message_, uint64_t sequence_,
+      Client<Impl, Catalog, Selection> *client_, M message_, uint64_t sequence_,
       ZuCSpan endpoint_, ZuCSpan sessionID_, int era_, bool serial_) {
     client = client_;
     Base::message.init(ZuMv(message_));
@@ -1397,11 +1397,11 @@ struct Request_ : public ActiveHash::Node,
   }
 };
 
-template <typename Impl, typename Catalog>
+template <typename Impl, typename Catalog, typename Selection>
 class ResponseParser :
-    public HTTPResponseParser<ResponseParser<Impl, Catalog>> {
+    public HTTPResponseParser<ResponseParser<Impl, Catalog, Selection>> {
   using Base = HTTPResponseParser<ResponseParser>;
-  using Request = Request_<Impl, Catalog>;
+  using Request = Request_<Impl, Catalog, Selection>;
 
 public:
   void init(Request &request) {
@@ -1460,43 +1460,43 @@ private:
   Request *m_request = nullptr;
 };
 
-template <typename Impl, typename Catalog> class Pool;
-template <typename Impl, typename Catalog> class Pool;
+template <typename Impl, typename Catalog, typename Selection> class Pool;
+template <typename Impl, typename Catalog, typename Selection> class Pool;
 
-template <typename Impl, typename Catalog>
-using RequestQ = ZmPQueue<Request_<Impl, Catalog>,
+template <typename Impl, typename Catalog, typename Selection>
+using RequestQ = ZmPQueue<Request_<Impl, Catalog, Selection>,
   ZmPQueueOverlap<false,
-    ZmPQueueNode<Request_<Impl, Catalog>,
+    ZmPQueueNode<Request_<Impl, Catalog, Selection>,
       ZmPQueueHeapID<"Zmcp.HTTP.Request">>>>;
 
-template <typename Impl, typename Catalog>
-using Request = RequestQ<Impl, Catalog>::Node;
+template <typename Impl, typename Catalog, typename Selection>
+using Request = RequestQ<Impl, Catalog, Selection>::Node;
 
-template <typename Impl, typename Catalog>
-using TxQ = ZmPQTx<Pool<Impl, Catalog>, RequestQ<Impl, Catalog>,
+template <typename Impl, typename Catalog, typename Selection>
+using TxQ = ZmPQTx<Pool<Impl, Catalog, Selection>, RequestQ<Impl, Catalog, Selection>,
   ZmPQTxOrdered<false>>;
 
-template <typename Impl, typename Catalog>
-class Pool : public ZmNHeap<Pool<Impl, Catalog>>, public Zhttp::Pool<
-    Client<Impl, Catalog>, TxQ<Impl, Catalog>,
-    ResponseParser<Impl, Catalog>> {
+template <typename Impl, typename Catalog, typename Selection>
+class Pool : public ZmNHeap<Pool<Impl, Catalog, Selection>>, public Zhttp::Pool<
+    Client<Impl, Catalog, Selection>, TxQ<Impl, Catalog, Selection>,
+    ResponseParser<Impl, Catalog, Selection>, Selection> {
 friend inline ZuStringT<"Zmcp.HTTP.Pool"> ZmNHeapID(Pool *);
 
   using Base = Zhttp::Pool<
-    Client<Impl, Catalog>, TxQ<Impl, Catalog>,
-    ResponseParser<Impl, Catalog>>;
+    Client<Impl, Catalog, Selection>, TxQ<Impl, Catalog, Selection>,
+    ResponseParser<Impl, Catalog, Selection>, Selection>;
 
 public:
-  Pool(Client<Impl, Catalog> *client) : Base{client} { }
+  Pool(Client<Impl, Catalog, Selection> *client) : Base{client} { }
 
-  RequestQ<Impl, Catalog> *txQueue() { return &m_requests; }
-  void archive_(Request<Impl, Catalog> *) { }
-  ZmRef<Request<Impl, Catalog>> retrieve_(
-      RequestQ<Impl, Catalog>::Key,
-      RequestQ<Impl, Catalog>::Key) { return {}; }
+  RequestQ<Impl, Catalog, Selection> *txQueue() { return &m_requests; }
+  void archive_(Request<Impl, Catalog, Selection> *) { }
+  ZmRef<Request<Impl, Catalog, Selection>> retrieve_(
+      RequestQ<Impl, Catalog, Selection>::Key,
+      RequestQ<Impl, Catalog, Selection>::Key) { return {}; }
 
 private:
-  RequestQ<Impl, Catalog> m_requests;
+  RequestQ<Impl, Catalog, Selection> m_requests;
 };
 
 template <typename Req, typename Call>
@@ -1516,11 +1516,11 @@ friend inline ZuStringT<"Zmcp.HTTP.Call"> ZmNHeapID(CallAction *);
     logLevel{logLevel_} { }
 };
 
-template <typename Impl, typename Catalog>
+template <typename Impl, typename Catalog, typename Selection>
 class Client : public Zhttp::Client<
-    Client<Impl, Catalog>, Pool<Impl, Catalog>>,
-    public Zmcp::Client<Client<Impl, Catalog>, Impl, Catalog> {
-  using Base = Zhttp::Client<Client, Pool<Impl, Catalog>>;
+    Client<Impl, Catalog, Selection>, Pool<Impl, Catalog, Selection>>,
+    public Zmcp::Client<Client<Impl, Catalog, Selection>, Impl, Catalog> {
+  using Base = Zhttp::Client<Client, Pool<Impl, Catalog, Selection>>;
   using Common = Zmcp::Client<Client, Impl, Catalog>;
   friend Zjrpc::BatchCaller<Client>;
   friend Zjrpc::Dispatcher<Client, Impl, ZuTypeList<>, ZuVoid, Client_::ReceivePolicy>;
@@ -1535,8 +1535,8 @@ class Client : public Zhttp::Client<
   using Common::m_done;
   using Common::ingress;
   using Common::app_;
-  using Req = Request<Impl, Catalog>;
-  using ReqBase = Request_<Impl, Catalog>;
+  using Req = Request<Impl, Catalog, Selection>;
+  using ReqBase = Request_<Impl, Catalog, Selection>;
 
 public:
   using Common::send;
@@ -2163,8 +2163,8 @@ private:
 
 } // HTTPClient_
 
-template <typename Impl, typename Catalog>
-using HTTPClient = HTTPClient_::Client<Impl, Catalog>;
+template <typename Impl, typename Catalog, typename Selection>
+using HTTPClient = HTTPClient_::Client<Impl, Catalog, Selection>;
 
 template <typename Impl, typename Catalog>
 class IOClient : public Zmcp::Client<IOClient<Impl, Catalog>, Impl, Catalog> {
@@ -2336,13 +2336,14 @@ public:
 
   WSClient() : m_ws{this} { }
   ~WSClient() { final(); }
-  bool init(const Zhttp::HubConfig &hub, Config profile, Zjrpc::WSConfig config, Impl *impl) {
+  bool init(const Zhttp::HubConfig &hub, Config profile, Zhttp::Destination destination,
+    Zjrpc::WSConfig config, Impl *impl) {
     if (m_mx || !hub.mx() || !impl || !Zjrpc::valid(config.limits())) return false;
     if (!Common::initPeer_(config.limits())) return false;
     m_impl = impl;
     m_mx = hub.mx();
     m_ownerThread = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
-    if (!m_ws.init(hub, ZuMv(profile), config.binding())) {
+    if (!m_ws.init(hub, ZuMv(profile), ZuMv(destination), config.binding())) {
       m_impl = nullptr;
       m_mx = nullptr;
       return false;
@@ -2358,10 +2359,7 @@ public:
   bool connect(const Zws::URI &uri, Args &&...args) {
     if (!m_started || m_link || m_stopping.load_()) return false;
     m_link = new Link{&m_ws, uri, ZuFwd<Args>(args)...};
-    if constexpr (Zhttp::ProfileTraits<Profile>::Multiplexed)
-      m_link->connect(uri.host, uri.port);
-    else
-      m_link->connect();
+    m_link->connect();
     return true;
   }
   bool stop() {

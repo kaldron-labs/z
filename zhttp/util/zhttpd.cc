@@ -354,7 +354,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
     emit([this](auto &body) {
       switch (mode) {
 	case Mode::JSON:
-	  ZfJSON::save(body, record);
+	  ZfJSON::save(body, putRecord);
 	  break;
 	case Mode::Fixed:
 	case Mode::Generated:
@@ -380,7 +380,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   }
 
   ResponsePlan		plan;
-  ZhttpPut::Record	record;
+  ZhttpPut::Record	putRecord;
   State			*state = nullptr;
   Zhttp::Method::T	method_ = -1;
   unsigned		contentLength = 0;
@@ -388,18 +388,11 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   ProducerClose		producerClose;
 };
 
-using ResBuilderQ = ZmList<ResBuilder_,
-  ZmListNode<ResBuilder_, ZmListHeapID<"zhttpd.ResBuilder">>>;
+using ResBuilderQ = Zhttp::ResponseQ<ResBuilder_,
+  ZuStringT<"zhttpd.ResBuilder">>;
 using ResBuilder = ResBuilderQ::Node;
-ZuAssert((ZuIsSame<ResBuilderQ::HeapID, ZuStringT<"zhttpd.ResBuilder">>{}));
 
 struct App;
-
-template <typename T, typename = void>
-struct HasHttp10 : public ZuFalse { };
-template <typename T>
-struct HasHttp10<T, decltype(ZuDeclVal<const T &>().http10(), void())> :
-  public ZuTrue { };
 
 struct Parser : public Zhttp::Parser {
   using HdrCatalog = ReqHeaders;
@@ -448,8 +441,7 @@ struct Parser : public Zhttp::Parser {
 	});
     }
 
-  template <typename Link>
-  void complete(Link *link, bool ok);
+  void complete(Zhttp::Channel *link, bool ok);
 
   void reset() {
     app = nullptr;
@@ -460,8 +452,8 @@ struct Parser : public Zhttp::Parser {
   RequestData	request;
 };
 
-struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
-  using HTTP = Zhttp::Server<App, ::Parser, ::ResBuilderQ>;
+struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ, Zhttp::AllProfiles> {
+  using HTTP = Zhttp::Server<App, ::Parser, ::ResBuilderQ, Zhttp::AllProfiles>;
   using HTTP::connected;
   using HTTP::disconnected;
   using WorkFn = ZmFn<void(), ZmFnHeapID<"zhttpd.WorkFn">>;
@@ -491,8 +483,7 @@ struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
       state->mx->run([this]() { work_(); }, state->fileThread);
   }
 
-  template <typename LinkRef>
-  void respond(LinkRef link, RequestData request) {
+  void respond(Zhttp::Route<ResBuilder> route, RequestData request) {
     ++state->requests;
     ZmRef<ResBuilder> response = new ResBuilder{};
     response->state = state;
@@ -509,7 +500,7 @@ struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
 	response->plan.contentType = "application/json";
 	response->plan.sendBody = true;
 	response->plan.generated = true;
-	response->record = ZuMv(record);
+	response->putRecord = ZuMv(record);
 	response->mode = ResBuilder::Mode::JSON;
       }
     } else {
@@ -525,7 +516,7 @@ struct App : public Zhttp::Server<App, ::Parser, ::ResBuilderQ> {
 	response->mode = ResBuilder::Mode::Fixed;
     }
     state->log.write(request, request, response->plan, request.remoteIP);
-    link->send(ZuMv(response));
+    route.send(ZuMv(response));
     completed_();
   }
 
@@ -591,8 +582,7 @@ private:
   bool		m_working = false;
 };
 
-template <typename Link>
-void Parser::complete(Link *link, bool ok)
+void Parser::complete(Zhttp::Channel *link, bool ok)
 {
   if (!ok) {
     ZiLOG(Error, "zhttpd", ([target = ZuMv(request.target)](auto &s) {
@@ -602,15 +592,13 @@ void Parser::complete(Link *link, bool ok)
     return;
   }
   request.remoteIP = link->remoteIP();
-  request.secure = Link::TLS;
-  using ServerParser = ZuDecay<decltype(link->rxState().parser)>;
-  if constexpr (HasHttp10<ServerParser>{})
-    request.http10 = link->rxState().parser.http10();
-  auto link_ = ZmRef(link);
+  request.secure = link->session().transport != Zhttp::Transport::TCP;
+  request.http10 = link->http10();
+  Zhttp::Route<ResBuilder> route{link, request.method};
   auto request_ = ZuMv(request);
   app->enqueue(App::WorkFn{
-    [app = app, link = ZuMv(link_), request = ZuMv(request_)]() mutable {
-      app->respond(ZuMv(link), ZuMv(request));
+    [app = app, route = ZuMv(route), request = ZuMv(request_)]() mutable {
+      app->respond(ZuMv(route), ZuMv(request));
     }});
 }
 

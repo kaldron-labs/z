@@ -130,7 +130,35 @@ private:
     return allocBuf();
   }
 
+private:
+  ZuSpan<uint8_t> reserve_(unsigned length_) {
+    if (ZuUnlikely(length_ > m_maxSize - (m_headRoom + m_tailRoom))) {
+      m_failed = true; // retain any preceding output for final flush
+      return {};
+    }
+    if (!length_ || ZuUnlikely(!ensureBuf())) return {};
+    unsigned bufLen = m_buf->length;
+    unsigned total = bufLen + m_headRoom + m_tailRoom;
+    ZmAssert(total <= m_maxSize);
+    if (length_ > m_maxSize - total) {
+      if (ZuUnlikely(!nextBuf())) return {};
+      bufLen = 0;
+    }
+    auto ptr = m_buf->ensure(bufLen + length_);
+    if (ZuUnlikely(!ptr)) { fail(); return {}; }
+    return {ptr + bufLen, length_};
+  }
+
 public:
+  ZuSpan<uint8_t> reserve(unsigned length) {
+    if (ZuUnlikely(m_failed)) return {};
+    return reserve_(length);
+  }
+  void commit(unsigned length) {
+    if (ZuUnlikely(m_failed)) return;
+    if (length) m_buf->length += length;
+  }
+
   // Detached allocation for codecs constructing directly in output storage.
   ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     if (ZuUnlikely(m_failed)) return nullptr;
@@ -175,22 +203,9 @@ private:
   void append(const P &p) {
     if (ZuUnlikely(m_failed)) return;
     unsigned length_ = ZuPrint<P>::length(p);
-    if (ZuUnlikely(length_ > m_maxSize - (m_headRoom + m_tailRoom))) {
-      m_failed = true; // retain any preceding output for final flush
-      return;
-    }
-    if (!length_ || ZuUnlikely(!ensureBuf())) return;
-    unsigned bufLen = m_buf->length;
-    unsigned total = bufLen + m_headRoom + m_tailRoom;
-    ZmAssert(total <= m_maxSize);
-    if (length_ > m_maxSize - total) {
-      if (ZuUnlikely(!nextBuf())) return;
-      bufLen = 0;
-    }
-    auto ptr = m_buf->ensure(bufLen + length_);
-    if (ZuUnlikely(!ptr)) { fail(); return; }
-    m_buf->length = bufLen + ZuPrint<P>::print(
-	reinterpret_cast<char *>(ptr + bufLen), length_, p);
+    auto span = reserve_(length_);
+    if (!span) return;
+    m_buf->length += ZuPrint<P>::print(reinterpret_cast<char *>(span.data()), length_, p);
   }
 
   void append(ZmRef<ZiIOBuf> buf) {

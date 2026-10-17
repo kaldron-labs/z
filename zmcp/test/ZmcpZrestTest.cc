@@ -143,6 +143,7 @@ static SharedOutcome restCall(ZuCSpan authorization)
     Zhttp::FieldSection::Final, header.span());
   uint8_t json[] = "{\"lhs\":20,\"rhs\":22}";
   constexpr unsigned jsonLength = sizeof(json) - 1;
+  request.bodyMax(jsonLength);
   if (!request.bodyInfo(Zhttp::BodyType::Fixed, jsonLength)) return {};
   BodyRx rx{{json, jsonLength}};
   if (!request.body(rx)) return {};
@@ -208,3 +209,5 @@ int main(int argc, char **argv)
   ZuTestCall(contractTest);
   return 0;
 }
+
+ZjrpcHTTPCatalogImpl()
