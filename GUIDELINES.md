@@ -106,14 +106,14 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
   - requires a linker and debugger with zstd-compressed ELF debug-section support
   - retains full debug information; existing input objects can be reused
 - this is a hierarchy of Makefiles that **intentionally** do not automatically rebuild dependencies in other directories
-  - use a top-level `make -j4` to ensure all dependencies are rebuilt/refreshed
+  - use a top-level `make -j8` to ensure all dependencies are rebuilt/refreshed
 - add external dependencies in `configure.ac`
   - use `PKG_CHECK_MODULES` if the dependency is in pkg-config, falling back to dependency-specific `m4` if not
-- always recompile with `make -j4`
-  - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`util`/`itest`/`example`/`bench`/`interop`, e.g. `make -C zquic/src -j4`
-  - always build default target `all` before `make test`, e.g. `make -C zquic/test -j4 && make -C zquic/test test`
-  - after build type has changed (release, debug, asan, etc.) do a top-level `make clean && make -j4` to rebuild
-  - release-build verification must be configured through `z.config`; after configuring the release build, run top-level `make clean` and then top-level `make -j4` so all dependent Z libraries and tests are rebuilt consistently
+- always recompile with `make -j8`
+  - if not rebuilding everything, if library code has changed in a layer under development, always rebuild `src` before dependent `test`/`util`/`itest`/`example`/`bench`/`interop`, e.g. `make -C zquic/src -j8`
+  - always build default target `all` before `make test`, e.g. `make -C zquic/test -j8 && make -C zquic/test test`
+  - after build type has changed (release, debug, asan, etc.) do a top-level `make clean && make -j8` to rebuild
+  - release-build verification must be configured through `z.config`; after configuring the release build, run top-level `make clean` and then top-level `make -j8` so all dependent Z libraries and tests are rebuilt consistently
   - do not verify a release build by manually compiling selected modules or by rebuilding only dependent subdirectories; that can mix stale objects, stale generated dependency files, or libraries built under a different build type
 - no warnings in build
   - they should be suppressed in the code if false-positive
