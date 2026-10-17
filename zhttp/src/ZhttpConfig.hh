@@ -405,7 +405,8 @@ public:
       Secure = 1U<<15,
       TCP = 1U<<16,
       TLS = 1U<<17,
-      QUIC = 1U<<18
+      QUIC = 1U<<18,
+      BodyMax = 1U<<19
     };
   };
 
@@ -418,6 +419,7 @@ public:
   unsigned maxRetries() const { return m_maxRetries; }
   unsigned maxOrigins() const { return m_maxOrigins; }
   unsigned maxAltSvc() const { return m_maxAltSvc; }
+  uint64_t bodyMax() const { return m_bodyMax; }
   uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
   uint64_t retainedMessageMax() const { return m_retainedMessageMax; }
   const DiscoveryLimits &discoveryLimits() const {
@@ -487,6 +489,11 @@ public:
     m_set |= Field::MaxAltSvc;
     return *this;
   }
+  Config &bodyMax(uint64_t v) {
+    m_bodyMax = v;
+    m_set |= Field::BodyMax;
+    return *this;
+  }
   Config &retainedBodyMax(uint64_t v) {
     m_retainedBodyMax = v;
     m_set |= Field::RetainedBodyMax;
@@ -549,6 +556,7 @@ public:
     Zhttp_Config_Overlay(Field::MaxRetries, m_maxRetries);
     Zhttp_Config_Overlay(Field::MaxOrigins, m_maxOrigins);
     Zhttp_Config_Overlay(Field::MaxAltSvc, m_maxAltSvc);
+    Zhttp_Config_Overlay(Field::BodyMax, m_bodyMax);
     Zhttp_Config_Overlay(Field::RetainedBodyMax, m_retainedBodyMax);
     Zhttp_Config_Overlay(Field::RetainedMessageMax, m_retainedMessageMax);
     Zhttp_Config_Overlay(Field::DiscoveryLimits, m_discoveryLimits);
@@ -594,6 +602,7 @@ private:
   unsigned	m_maxRetries = 0;
   unsigned	m_maxOrigins = 256;
   unsigned	m_maxAltSvc = 8;
+  uint64_t	m_bodyMax = uint32_t(-1);
   uint64_t	m_retainedBodyMax = uint32_t(-1);
   uint64_t	m_retainedMessageMax = uint32_t(-1);
   DiscoveryLimits m_discoveryLimits;
@@ -619,6 +628,7 @@ public:
   unsigned maxConnections() const { return m_maxConnections; }
   unsigned maxRequests() const { return m_maxRequests; }
   unsigned altSvcMaxAge() const { return m_altSvcMaxAge; }
+  uint64_t bodyMax() const { return m_bodyMax; }
   uint64_t retainedBodyMax() const { return m_retainedBodyMax; }
   uint64_t retainedMessageMax() const { return m_retainedMessageMax; }
   uint64_t retainedBytesMax() const { return m_retainedBytesMax; }
@@ -653,6 +663,10 @@ public:
   }
   ServerConfig &altSvcMaxAge(unsigned v) {
     m_altSvcMaxAge = v;
+    return *this;
+  }
+  ServerConfig &bodyMax(uint64_t v) {
+    m_bodyMax = v;
     return *this;
   }
   ServerConfig &retainedBodyMax(uint64_t v) {
@@ -692,6 +706,7 @@ private:
   unsigned	m_maxConnections = 0;
   unsigned	m_maxRequests = uint32_t(-1);
   unsigned	m_altSvcMaxAge = 86400;
+  uint64_t	m_bodyMax = uint32_t(-1);
   uint64_t	m_retainedBodyMax = uint32_t(-1);
   uint64_t	m_retainedMessageMax = uint32_t(-1);
   uint64_t	m_retainedBytesMax = uint64_t(-1);

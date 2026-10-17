@@ -168,12 +168,18 @@ public:
   template <typename NodeRef, typename L>
   bool push(NodeRef &&node, L &&l) {
     unsigned n = node->length;
-    if (ZuUnlikely(uint64_t(n) > m_max - m_received)) return false;
     if (!n) return true;
-    m_received += n;
-    m_rx.push(ZuFwd<NodeRef>(node));
-    prompt(ZuFwd<L>(l));
-    return true;
+    if (ZuLikely(uint64_t(n) <= m_max - m_rx.length())) {
+      m_received += n;
+      m_rx.push(ZuFwd<NodeRef>(node));
+      prompt(ZuFwd<L>(l));
+      return true;
+    }
+    Stream src;
+    src.push(ZuFwd<NodeRef>(node));
+    return splice(src, n, [n](ZuBSpan) { return int64_t(n); },
+      []() { return new WireBufAlloc{}; }, []() { return new BufAlloc{}; },
+      0, 0, ZuFwd<L>(l)) > 0;
   }
 
   template <typename SrcQueue, typename Frame,
@@ -185,15 +191,59 @@ public:
     uint64_t headLen, uint64_t tailLen, L &&l,
     Transform &&transform = {})
   {
-    if (ZuUnlikely(length > m_max - m_received)) return -1;
-    int64_t n = src.splice(
-      m_rx, ZuFwd<Frame>(frame),
-      ZuFwd<SrcAlloc>(srcAlloc), ZuFwd<DstAlloc>(dstAlloc),
-      headLen, tailLen, ZuFwd<Transform>(transform));
-    if (n <= 0) return n;
-    m_received += length;
-    if (length) prompt(ZuFwd<L>(l));
-    return n;
+    auto deliver = [this, &l]() {
+      bool accepted = true;
+      prompt([&l, &accepted](auto &rx) {
+	if constexpr (ZuIsSame<decltype(l(rx)), bool>{}) accepted = l(rx);
+	else l(rx);
+      });
+      return accepted;
+    };
+    if (ZuLikely(length <= m_max - m_rx.length())) {
+      int64_t n = src.splice(
+	m_rx, ZuFwd<Frame>(frame),
+	ZuFwd<SrcAlloc>(srcAlloc), ZuFwd<DstAlloc>(dstAlloc),
+	headLen, tailLen, ZuFwd<Transform>(transform));
+      if (n <= 0) return n;
+      m_received += length;
+      if (length && !deliver()) return -1;
+      return n;
+    }
+
+    // Validate the complete frame before consuming its framing. Retain only
+    // the payload prefix which fits, prompting consumption between fragments.
+    Zi::RxFramePos pos;
+    int64_t framed = src.scan(ZuFwd<Frame>(frame), pos);
+    if (framed <= 0) return framed;
+    if (ZuUnlikely(headLen > pos.total || tailLen > pos.total - headLen ||
+	length != pos.total - headLen - tailLen)) return -1;
+    src.advance(headLen);
+    uint64_t remaining = length;
+    auto discard = [this, &src, &remaining, tailLen]() {
+      src.advance(remaining + tailLen);
+      m_received += remaining;
+      m_consumed += remaining;
+      return int64_t(-1);
+    };
+    while (remaining) {
+      uint64_t n = m_max - m_rx.length();
+      if (!n) return discard();
+      if (n > remaining) n = remaining;
+      int64_t moved = src.splice(m_rx,
+	[rest = n](ZuBSpan span) mutable -> int64_t {
+	  if (rest > span.length()) {
+	    rest -= span.length();
+	    return 0;
+	  }
+	  return rest;
+	}, srcAlloc, dstAlloc, 0, 0, transform);
+      if (ZuUnlikely(moved <= 0)) return discard();
+      m_received += n;
+      remaining -= n;
+      if (!deliver()) return discard();
+    }
+    src.advance(tailLen);
+    return framed;
   }
 
   template <typename L>

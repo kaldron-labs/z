@@ -947,6 +947,47 @@ private:
 
 namespace Native_ {
 
+// Embedded in a Tx-owned producer. The native queue retains the containing
+// allocation through this record; callbacks invalidate raw link back-pointers.
+struct FinalCmd : MessageRecord {
+  void (*emit)(void *);
+  void (*cancel)(void *);
+};
+
+// Tx-owned immutable final fields. Providers and printables are borrowed only
+// while render() runs; encoders see owned spans when the DATA prefix drains.
+class ZhttpAPI FinalFields {
+public:
+  bool render(unsigned, const CatalogView &, FieldProvider &);
+  void fields(FieldOutput &) const;
+
+private:
+  struct Field {
+    unsigned name, nameLen, value, valueLen;
+    int id;
+    FieldClass classification;
+    FieldForm::T form;
+    bool never;
+  };
+  using Storage = ZtArray<Field, ZtArrayHeapID<"Zhttp.Final.Fields">>;
+  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Final.Bytes">>;
+
+  static const WriterOps &writerOps_();
+  ZuSpan<uint8_t> reserve_(unsigned);
+  void commit_(unsigned);
+  void append_(ZuBSpan);
+  void field_(const CatalogView &, FieldForm::T, int, const FieldClass *,
+    PrintView, PrintView, bool);
+
+  Storage m_fields;
+  ZmRef<ZiIOBuf> m_bytes;
+  unsigned m_limit = 0;
+  unsigned m_cost = 0;
+  unsigned m_reserved = 0;
+  bool m_failed = false;
+};
+
 template <typename Emit>
 struct BorrowedEmit {
   BodyEmitRecord record;
@@ -1223,14 +1264,14 @@ void print(PrintView value, L &&l) {
 namespace Native_ {
 
 template <typename Stream, typename Value>
-auto mutableField(Stream &stream, ZuBSpan name, const Value &value, int) ->
-    decltype(stream.fieldMutable(name, value), FieldOffset()) {
-  auto span = stream.fieldMutable(name, value);
+auto mutableField(Stream &stream, ZuBSpan name, const Value &value, bool never, int) ->
+    decltype(stream.fieldMutable(name, value, never), FieldOffset()) {
+  auto span = stream.fieldMutable(name, value, never);
   return {span.offset, span.length};
 }
 template <typename Stream, typename Value>
-FieldOffset mutableField(Stream &stream, ZuBSpan name, const Value &value, long) {
-  stream.field(name, value);
+FieldOffset mutableField(Stream &stream, ZuBSpan name, const Value &value, bool never, long) {
+  stream.field(name, value, never);
   return {};
 }
 
@@ -1239,18 +1280,18 @@ FieldOutput compressedFields(Stream &stream)
 {
   return {&stream,
     [](void *ctx, FieldForm::T form, int, const FieldClass *,
-	PrintView key, PrintView value) -> FieldOffset {
+	PrintView key, PrintView value, bool never) -> FieldOffset {
       auto &stream = *static_cast<Stream *>(ctx);
-      auto emit = [&stream, form, value](ZuBSpan name) -> FieldOffset {
+      auto emit = [&stream, form, value, never](ZuBSpan name) -> FieldOffset {
 	// The old undeclared-header provider omitted empty names.
 	if (form == FieldForm::Literal && !name) return {};
 	FieldOffset span;
-	print(value, [&stream, form, name, &span](const auto &value_) {
+	print(value, [&stream, form, name, never, &span](const auto &value_) {
 	  switch (form) {
-	    case FieldForm::Fixed: stream.fieldFixed(name, value_); break;
-	    case FieldForm::Name: stream.fieldName(name, value_); break;
-	    case FieldForm::Literal: stream.fieldLiteral(name, value_); break;
-	    case FieldForm::Mutable: span = mutableField(stream, name, value_, 0); break;
+	    case FieldForm::Fixed: stream.fieldFixed(name, value_, never); break;
+	    case FieldForm::Name: stream.fieldName(name, value_, never); break;
+	    case FieldForm::Literal: stream.fieldLiteral(name, value_, never); break;
+	    case FieldForm::Mutable: span = mutableField(stream, name, value_, never, 0); break;
 	  }
 	});
 	return span;

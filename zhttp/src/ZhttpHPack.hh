@@ -419,25 +419,31 @@ public:
   void commitUpdates();
 
   template <typename Bytes>
-  int emitFixed(Bytes &out, Field field, bool bootstrap) const {
+  int emitFixed(Bytes &out, Field field, bool bootstrap, bool never = false) {
+    never |= neverIndexed(field.name);
     if (bootstrap && m_plan)
       if (auto entry = m_plan->lookup.find(field)) {
+	if (never) {
+	  if (entry->abs < m_plan->selected)
+	    m_suppressed.push(unsigned(entry->abs));
+	  return emitLookup_(out, field, true);
+	}
 	auto seed = m_plan->seed(unsigned(entry->abs));
 	Compression::putBytes(
 	  out, entry->abs < m_plan->selected ?
 	    seed.incremental : seed.fallback);
 	return int(out.length());
       }
-    return emitLookup_(out, field);
+    return emitLookup_(out, field, never);
   }
   template <typename Bytes>
-  int emitRuntime(Bytes &out, Field field) const {
-    return emitLookup_(out, field);
+  int emitRuntime(Bytes &out, Field field, bool never = false) const {
+    return emitLookup_(out, field, never);
   }
   void neverIndex(ZuBSpan);
   bool neverIndexed(ZuBSpan) const;
   uint64_t nameIndex(ZuBSpan) const;
-  HPackPlan plan(Field) const;
+  HPackPlan plan(Field, bool never = false) const;
   HPackUpdates updates() const;
   void commit(const HPackPlan &);
   void commit(const HPackUpdates &);
@@ -476,8 +482,8 @@ public:
   }
 
   template <typename Bytes>
-  int field(Bytes &out, Field field) {
-    auto plan_ = plan({field.name, field.value});
+  int field(Bytes &out, Field field, bool never = false) {
+    auto plan_ = plan({field.name, field.value}, never);
     if (emit(out, plan_) < 0) return -1;
     commit(plan_);
     return int(out.length());
@@ -501,8 +507,8 @@ private:
     ZtArray<BoundPlan, ZtArrayHeapID<"Zhttp.H2.HPack.BoundPlans">>;
 
   template <typename Bytes>
-  int emitLookup_(Bytes &out, Field field) const {
-    bool never = neverIndexed(field.name);
+  int emitLookup_(Bytes &out, Field field, bool never) const {
+    never |= neverIndexed(field.name);
     if (!never) {
       int index = HPack::staticIndex(field.name, field.value);
       if (index > 0)
@@ -543,6 +549,8 @@ private:
   uint32_t	m_signalledCapacity = 4096;
   uint32_t	m_pendingMin = 0;
   uint32_t	m_pendingFinal = 0;
+  ZtArray<unsigned, ZtArrayHeapID<"Zhttp.H2.HPack.Suppressed">>
+		m_suppressed;
   BoundPlans	m_plans;
   BoundPlan	*m_plan = nullptr;
   uint32_t	m_seedCapacity = 0;

@@ -23,11 +23,17 @@ Arbitrary error data and explicit raw forwarding retain generic JSON traversal.
 completion callbacks. Applications can supply a compile-time result decoder.
 `ZjrpcCompletion.hh` supplies typed completion tokens and one direct slot per
 ordinary work item. MCP extends the shared token with progress/logging policy.
+Completion atomically claims the token before allocating or posting a reply.
+Only one completion is admitted; duplicate attempts return false immediately.
+The accepted owner action checks invalidation without claiming a second time.
 Completion and MCP progress/logging calls from other threads retain only the
 token and action payload while posting to the captured scheduler/thread. Work
 back-pointers are read on that owner thread, after checking invalidation. Keep
 the scheduler alive until application token calls have returned; after peer
 closure, retained tokens reject further calls without accessing their work.
+Cancellation removes the completion slot and invalidates its token before the
+application cancellation callback. Late completion is rejected, and cancelled
+work retires without waiting for an application reply.
 `ZjrpcInbound.hh` owns a peer's live lookup and recent-ID LRU. Live entries
 never evict. History stores only IDs, with no reply replay. The server chooses
 history capacity for all its peers; `ZmHashParams` rounds it up to a power of
@@ -36,7 +42,11 @@ two, minimum eight (default 1024).
 `ZjrpcDispatch.hh` shares typed inbound dispatch and work lifetime across
 bindings. Inbound batches admit member work under the existing budget,
 dispatch bounded turns, and collect one response array in completion order.
-Notifications contribute no response; an empty batch produces an error.
+Notifications contribute no response. Malformed JSON, envelopes, empty batches
+and failed parameter decoding abort the affected stream/session without an
+error reply. A malformed batch stops further dispatch and cancels pending member
+work. Well-formed unknown methods and application errors retain ordinary error
+responses.
 `Caller` in `ZjrpcPending.hh` shares outbound calls and notifications.
 `Batch<Catalog>` builds a batch from typed requests with caller-chosen IDs and
 notifications. Pass it to `callBatch(batch, aggregate)`; the aggregate's
@@ -45,6 +55,17 @@ and its pending members are removed. `BatchReply` owns that response's original
 buffer/tree and can be retained. Member errors remain in the response array;
 transport failure, missing replies or ID collisions fail the aggregate once.
 `notifyBatch(batch)` sends an all-notification batch without pending calls.
+`Limits::maxQueue` bounds pending posted outbound commands per caller.
+Atomic admission returns false without posting
+when full; the callback releases admission before processing or discarding the
+operation. Owner-shard sends bypass this count. Serialized output limits remain
+separate, and `maxQueueBytes` does not bound unencoded command objects.
+Unary completion has its independent one-shot bound, rather than a queue count.
+
+HTTP server request dispatch, peer selection, cancellation and deferred
+completion run on Rx. Response builders transfer owned messages to Tx for
+serialization and output; response-header providers run on Tx. Transport
+cancellation hooks are registered/removed on Tx and notify RPC work on Rx.
 The same pending hash owns ordinary calls and batch members; there is no batch
 wire ID or second correlation index. HTTP keeps one actual member ID solely
 for route failure/header association. Batch HTTP headers come from application

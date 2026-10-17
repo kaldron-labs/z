@@ -175,6 +175,7 @@ struct BuilderState :
 	});
       });
   }
+  bool neverIndex(ZuBSpan) const { ++policyCalls; return sensitive; }
   template <typename L> void host(L &&l) const { l("example.com"); }
   template <typename L>
   void protocol(L &&l) const {
@@ -206,6 +207,8 @@ struct BuilderState :
   bool			runtimeHeader = false;
   bool			runtimeHeader2 = false;
   bool			customTarget = false;
+  bool			sensitive = false;
+  mutable unsigned	policyCalls = 0;
   unsigned		keyedCalls = 0;
   unsigned		runtimeProviderCalls = 0;
   ZuBSpan		runtimeName = "server";
@@ -1026,6 +1029,50 @@ static bool pushSplit(
       return false;
   }
   return true;
+}
+
+void testReceiveLimits()
+{
+  ZuTestScope(testReceiveLimits);
+
+  ParserStream parser;
+  parser.Base::reset(7, 2);
+  auto headers = messageHeaders(7);
+  parser.push(headers);
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body,
+    "H3 Content-Length uses the cumulative limit rather than retained capacity");
+  Zhttp::H3::HdrBytes data;
+  putFrame(data, 0x00, ZuBSpan{"abcdefg"});
+  parser.push(data);
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body &&
+      parser.bodyData == "abcdefg" && parser.bodyCalls == 4 &&
+      parser.retired == headers.length() + data.length() && !parser.completeCalls,
+    "H3 DATA fragments reuse retained capacity and return native receive credit");
+  parser.fin = true;
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete &&
+      parser.completeCalls == 1,
+    "H3 bounded reception waits for delayed FIN before completing");
+
+  ParserStream limited;
+  limited.Base::reset(6, 2);
+  limited.push(headers);
+  ZuCHECK(limited.process(limited) == Zhttp::H3::ParserState::Error &&
+      !limited.bodyCalls && limited.completeCalls == 1 &&
+      limited.error().code == Zhttp::RequestErrorCode::ContentTooLarge,
+    "H3 rejects Content-Length above the cumulative limit");
+
+  ParserStream rejected;
+  rejected.Base::reset(7, 2);
+  rejected.rejectBody = true;
+  rejected.push(headers);
+  ZuCHECK(rejected.process(rejected) == Zhttp::H3::ParserState::Body,
+    "H3 fragmented rejection headers accepted");
+  rejected.push(data);
+  ZuCHECK(rejected.process(rejected) == Zhttp::H3::ParserState::Error &&
+      rejected.bodyCalls == 1 && rejected.completeCalls == 1 &&
+      rejected.retired == headers.length() + data.length() &&
+      rejected.error().code == Zhttp::RequestErrorCode::BodyRejected,
+    "H3 rejects one fragment without further application prompts");
 }
 
 void testParserBodyStream()
@@ -2406,6 +2453,39 @@ void testBuilderRuntimeHeaders()
     "runtime header did not remain literal on the hot path");
 }
 
+void testBuilderSensitivity()
+{
+  ZuTestScope(testBuilderSensitivity);
+  BuilderState builder;
+  builder.runtimeHeader = true;
+  builder.runtimeName = "server";
+  builder.runtimeValue = ""; // exact static-table match must remain sensitive
+  builder.sensitive = true;
+  CaptureTxStream stream;
+  builder.begin(stream);
+  ZuSpan<uint8_t> payload;
+  ZuCHECK(headersPayload(stream.bytes, payload),
+    "sensitive builder emitted a HEADERS section");
+  unsigned sensitive = 0;
+  bool flagsOK = true;
+  int n = Zhttp::H3::QPack::decodeFieldSection(payload, nullptr,
+    [&sensitive, &flagsOK](Zhttp::H3::DecodedHeader h,
+	Zhttp::H3::QPackFieldFlags flags) {
+      if (h.name == "accept" || h.name == "server") {
+	++sensitive;
+	flagsOK &= flags.neverIndex;
+      }
+    });
+  ZuCHECK(n == int(payload.length()) && flagsOK && sensitive == 2 &&
+      builder.policyCalls == 2 && builder.keyedCalls == 1 &&
+      builder.runtimeProviderCalls == 1 && !builder.tx.insertCount(),
+    "declared and dynamic values remain never-indexed through QPACK static matches");
+  Zhttp::H3::HdrBytes field;
+  Zhttp::H3::QPack::encodeFieldLine(field, {":method", "GET"}, {}, true);
+  ZuCHECK(field && !(field[0] & 0x80) && (field[0] & 0x20),
+    "QPACK per-field sensitivity overrides an indexed static value");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -2419,6 +2499,7 @@ int main(int argc, char **argv)
   ZuTestCall(testFieldRepresentationGoldens);
   ZuTestCall(testParserFieldCallbacks);
   ZuTestCall(testParserBodyStream);
+  ZuTestCall(testReceiveLimits);
   ZuTestCall(testParserHuffmanRuntimeHeader);
   ZuTestCall(testParserInvalidFields);
   ZuTestCall(testParserStrictContentLength);
@@ -2441,5 +2522,6 @@ int main(int argc, char **argv)
   ZuTestCall(testBuilderCardinality);
   ZuTestCall(testBuilderExtendedConnect);
   ZuTestCall(testBuilderRuntimeHeaders);
+  ZuTestCall(testBuilderSensitivity);
   ZiLog::stop();
 }

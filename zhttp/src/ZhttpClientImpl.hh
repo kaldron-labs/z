@@ -291,13 +291,14 @@ public:
       m_operationOK = m_app->poolOperation(
 	*request, m_requestMethod, m_target);
     m_response.init(*m_requestApp, &m_link->channel());
-    bodyMax_(m_response, m_app->retainedBodyMax(), 0);
+    bodyMax_(m_response, m_app->bodyMax(), 0);
+    m_response.retainedBodyMax(m_app->retainedBodyMax());
     m_responseActive = true;
     static_cast<ParserSink_ &>(m_parser) = {
       m_app, m_link, request, &m_response, &m_responseActive};
   }
   void reset() {
-    m_parser.reset(m_app->retainedBodyMax());
+    m_parser.reset(m_app->bodyMax(), m_app->retainedBodyMax());
     if constexpr (Message::ID != Version::H1) {
       if (!m_request || !m_operationOK) return;
       m_parser.requestMethod(m_requestMethod);
@@ -5165,6 +5166,7 @@ struct BoundResParser : public Zhttp::Parser {
     binding.ops->init(binding.ctx, request.ctx);
   }
   void bodyMax(uint64_t max) { binding.ops->bodyMax(binding.ctx, max); }
+  void retainedBodyMax(uint64_t max) { binding.ops->retainedBodyMax(binding.ctx, max); }
   const CatalogView &catalog() const { return *binding.catalog; }
   bool enable1xx() const { return binding.enable1xx(); }
   void status(unsigned value) { binding.status(value); }
@@ -5322,6 +5324,7 @@ public:
     unsigned		admissionScanned = 0;
     AttemptPhase::T	phase = AttemptPhase::Idle;
     Transport::T	poolTransport = -1;
+    bool		replayable = true;
     bool		routePending = false;
     bool		routeTransition = false;
   };
@@ -5397,6 +5400,7 @@ public:
   HeaderSeedCatalog &qpackCatalog() { return m_qpackSeeds; }
   HPackSeedCatalog &hpackCatalog() { return m_hpackSeeds; }
 
+  uint64_t bodyMax() const { return m_config.bodyMax(); }
   uint64_t retainedBodyMax() const { return m_config.retainedBodyMax(); }
   uint64_t retainedMessageMax() const {
     return m_config.retainedMessageMax();
@@ -5769,7 +5773,7 @@ public:
       return;
     }
     if (attempt.routeTransition) {
-      if (!retrySafe_(attempt)) {
+      if (!replayAllowed_(attempt) || !retrySafe_(attempt)) {
 	finish_(link, attempt, ResultCode::ReplayUnsafe, false);
 	return;
       }
@@ -5791,6 +5795,10 @@ public:
     }
     if (ok && redirectStatus_(attempt.protocol.status) &&
 	attempt.route.redirectState != RedirectState::None) {
+      if (!replayAllowed_(attempt)) {
+	finish_(link, attempt, ResultCode::ReplayUnsafe, reuse);
+	return;
+      }
       if (attempt.redirects >= m_config.maxRedirects()) {
 	finish_(link, attempt, ResultCode::RedirectLimit, reuse);
 	return;
@@ -5841,7 +5849,7 @@ public:
 	    finish_(link, attempt, ResultCode::Indeterminate, false);
 	    return;
 	  case ResultCode::Unprocessed:
-	    if (responseStarted_(attempt)) {
+	    if (!replayAllowed_(attempt) || responseStarted_(attempt)) {
 	      finish_(link, attempt, ResultCode::ReplayUnsafe, false);
 	      return;
 	    }
@@ -5859,7 +5867,7 @@ public:
     if (!ok && attempt.protocol.transport == Transport::QUIC &&
 	m_config.protocol() == ProtoPolicy::PreferH3 && m_config.tls()) {
       if (!responseStarted_(attempt)) {
-	if (!retrySafe_(attempt)) {
+	if (!replayAllowed_(attempt) || !retrySafe_(attempt)) {
 	  finish_(link, attempt, ResultCode::ReplayUnsafe, false);
 	  return;
 	}
@@ -6181,6 +6189,7 @@ private:
 
   void prepare_(LiveReq &attempt, ReqBuilder *request) {
     attempt.request = request;
+    attempt.replayable = request->replayable();
     attempt.route.url = m_origin;
     attempt.redirects = 0;
     attempt.retries = 0;
@@ -6192,7 +6201,12 @@ private:
     armTimer_(attempt);
   }
 
+  static bool replayAllowed_(const LiveReq &attempt) {
+    return attempt.replayable;
+  }
+
   void nextAttempt_(LiveReq &attempt, bool generation) {
+    ZmAssert(replayAllowed_(attempt));
     attempt.identity.attempt = ++m_attemptID;
     if (generation) {
       attempt.retries = 0;
@@ -6340,7 +6354,11 @@ private:
 	  other.protocol.transport != Transport::QUIC ||
 	  other.phase == AttemptPhase::Closing)
 	continue;
-      if (!responseStarted_(other)) {
+      if (!replayAllowed_(other)) {
+	other.terminal = ResultCode::ReplayUnsafe;
+	if (!m_quic.cancel(static_cast<LiveReq *>(&other)))
+	  completeAttempt_(other, other.terminal);
+      } else if (!responseStarted_(other)) {
 	other.routeTransition = true;
 	if (!m_quic.cancel(static_cast<LiveReq *>(&other))) {
 	  uint64_t prior = other.identity.attempt;
@@ -6787,6 +6805,10 @@ private:
 	attempt.retries >= m_config.maxRetries())
       return false;
 
+    if (!replayAllowed_(attempt)) {
+      finish_(link, attempt, ResultCode::ReplayUnsafe, false);
+      return true;
+    }
     uint64_t previous = attempt.identity.attempt;
     ++attempt.retries;
     if (attempt.protocol.transport == Transport::QUIC &&

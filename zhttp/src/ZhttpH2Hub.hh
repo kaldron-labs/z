@@ -86,7 +86,6 @@ struct Stream {
   ZiTxErrorFn	txErrorFn;
   uint64_t	deferred = 0;
   int64_t	rxWindow = H2::DefltWindow;
-  int64_t	txWindowHint = H2::DefltWindow;
   uint32_t	id = 0;
   bool		begin = false;
   bool		finalHeaders = false;
@@ -95,7 +94,7 @@ struct Stream {
   bool		remoteEnd = false;
   bool		notified = false;
   bool		closing = false;
-  bool		flowError = false;
+  H2::Error::T	rxError = H2::Error::NoError;
   bool		local = false;
 };
 
@@ -239,6 +238,9 @@ struct EventRx {
 	break;
     }
     event.consumed = parser.consumed() - before;
+    if (parser.state() == Parser::State::Error)
+      event.error = parser.error().code == RequestErrorCode::Malformed ?
+	Error::ProtocolError : Error::Cancel;
     return parser.state();
   }
 
@@ -450,52 +452,52 @@ public:
     m_endStream = endStream;
   }
   void plan(unsigned plan) { m_plan = plan; }
-  void field(ZuBSpan name, ZuBSpan value) {
-    field_({name, value});
+  void field(ZuBSpan name, ZuBSpan value, bool never = false) {
+    field_({name, value}, never);
   }
-  void fieldName(ZuBSpan name, ZuBSpan value) {
-    fieldName_(name, value);
+  void fieldName(ZuBSpan name, ZuBSpan value, bool never = false) {
+    fieldName_(name, value, never);
   }
-  void fieldLiteral(ZuBSpan name, ZuBSpan value) {
-    fieldLiteral_(name, value);
+  void fieldLiteral(ZuBSpan name, ZuBSpan value, bool never = false) {
+    fieldLiteral_(name, value, never);
   }
-  void fieldFixed(ZuBSpan name, ZuBSpan value) {
+  void fieldFixed(ZuBSpan name, ZuBSpan value, bool never = false) {
     if (!m_valid ||
-	m_encoder.emitFixed(*m_block, {name, value}, m_reserved) < 0)
+	m_encoder.emitFixed(*m_block, {name, value}, m_reserved, never) < 0)
       m_valid = false;
   }
   template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
   void
-  fieldFixed(ZuBSpan name, const P &value) {
+  fieldFixed(ZuBSpan name, const P &value, bool never = false) {
     if (!m_valid) return;
     auto rendered = ZtScratch(HPackScratch, 256);
     Compression::PrintBytes out{rendered};
     out << value;
     if (!out.ok() ||
 	m_encoder.emitFixed(
-	  *m_block, {name, rendered}, m_reserved) < 0)
+	  *m_block, {name, rendered}, m_reserved, never) < 0)
       m_valid = false;
   }
   template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
   void
-  field(ZuBSpan name, const P &value) {
-    fieldPrint_(name, value);
+  field(ZuBSpan name, const P &value, bool never = false) {
+    fieldPrint_(name, value, never);
   }
   template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
   void
-  fieldName(ZuBSpan name, const P &value) {
-    fieldNamePrint_(name, value);
+  fieldName(ZuBSpan name, const P &value, bool never = false) {
+    fieldNamePrint_(name, value, never);
   }
   template <typename P, typename = ZuIfT<!Compression::IsPrintString<P>{}>>
   void
-  fieldLiteral(ZuBSpan name, const P &value) {
-    fieldLiteralPrint_(name, value);
+  fieldLiteral(ZuBSpan name, const P &value, bool never = false) {
+    fieldLiteralPrint_(name, value, never);
   }
   template <typename P>
-  ValueSpan fieldMutable(ZuBSpan name, const P &value) {
+  ValueSpan fieldMutable(ZuBSpan name, const P &value, bool never = false) {
     if (!m_valid) return {};
     uint64_t nameIndex = m_encoder.nameIndex(name);
-    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    uint8_t prefix = (never || m_encoder.neverIndexed(name)) ? 0x10 : 0;
     if (Compression::putPref(*m_block, prefix, 4, nameIndex) < 0 ||
 	(!nameIndex && Compression::putString(*m_block, 0, 7, name) < 0)) {
       m_valid = false;
@@ -643,21 +645,21 @@ private:
   }
 
   template <typename P>
-  void fieldPrint_(ZuBSpan name, const P &value) {
+  void fieldPrint_(ZuBSpan name, const P &value, bool never) {
     if (!m_valid) return;
     auto rendered = ZtScratch(HPackScratch, 256);
     Compression::PrintBytes out{rendered};
     out << value;
     if (!out.ok() || m_encoder.emitRuntime(
-	*m_block, {name, rendered}) < 0)
+	*m_block, {name, rendered}, never) < 0)
       m_valid = false;
   }
 
   template <typename P>
-  void fieldNamePrint_(ZuBSpan name, const P &value) {
+  void fieldNamePrint_(ZuBSpan name, const P &value, bool never) {
     if (!m_valid) return;
     uint64_t nameIndex = m_encoder.nameIndex(name);
-    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    uint8_t prefix = (never || m_encoder.neverIndexed(name)) ? 0x10 : 0;
     uint64_t offset;
     unsigned length;
     if (Compression::putPref(*m_block, prefix, 4, nameIndex) < 0 ||
@@ -668,39 +670,39 @@ private:
   }
 
   template <typename P>
-  void fieldLiteralPrint_(ZuBSpan name, const P &value) {
+  void fieldLiteralPrint_(ZuBSpan name, const P &value, bool never) {
     if (!m_valid) return;
     uint64_t offset;
     unsigned length;
-    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    uint8_t prefix = (never || m_encoder.neverIndexed(name)) ? 0x10 : 0;
     if (Compression::putPref(*m_block, prefix, 4, 0) < 0 ||
 	Compression::putString(*m_block, 0, 7, name) < 0 ||
 	m_section->putPrint(0, 7, value, offset, length) < 0)
       m_valid = false;
   }
 
-  void fieldName_(ZuBSpan name, ZuBSpan value) {
+  void fieldName_(ZuBSpan name, ZuBSpan value, bool never) {
     if (!m_valid) return;
     uint64_t nameIndex = m_encoder.nameIndex(name);
-    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    uint8_t prefix = (never || m_encoder.neverIndexed(name)) ? 0x10 : 0;
     if (Compression::putPref(*m_block, prefix, 4, nameIndex) < 0 ||
 	(!nameIndex && Compression::putString(*m_block, 0, 7, name) < 0) ||
 	Compression::putString(*m_block, 0, 7, value) < 0)
       m_valid = false;
   }
 
-  void fieldLiteral_(ZuBSpan name, ZuBSpan value) {
+  void fieldLiteral_(ZuBSpan name, ZuBSpan value, bool never) {
     if (!m_valid) return;
-    uint8_t prefix = m_encoder.neverIndexed(name) ? 0x10 : 0;
+    uint8_t prefix = (never || m_encoder.neverIndexed(name)) ? 0x10 : 0;
     if (Compression::putPref(*m_block, prefix, 4, 0) < 0 ||
 	Compression::putString(*m_block, 0, 7, name) < 0 ||
 	Compression::putString(*m_block, 0, 7, value) < 0)
       m_valid = false;
   }
 
-  void field_(Field field) {
+  void field_(Field field, bool never) {
     if (!m_valid) return;
-    if (m_encoder.emitRuntime(*m_block, field) < 0)
+    if (m_encoder.emitRuntime(*m_block, field, never) < 0)
       m_valid = false;
   }
 
@@ -743,6 +745,7 @@ struct TxWindowEntry {
     id{id_}, window{window_} { }
 
   ZiTxQueue	frames;
+  RecordRef<Native_::FinalCmd> final;
   ZiTxErrorFn	txErrorFn;
   uint32_t	id = 0;
   int64_t	window = DefltWindow;
@@ -810,7 +813,6 @@ public:
     m_lastProcessedPeerStream = 0;
     m_localStreamCount = 0;
     m_peerStreamCount = 0;
-    m_peerInitialWindow = DefltWindow;
     m_txWindows = nullptr;
   }
   void stopWire() {
@@ -860,11 +862,11 @@ public:
   }
   bool canOpenPeerStream(uint32_t id) const {
     bool odd = id & 1U;
-    return m_server && id && odd == m_server && id > m_lastPeerStream &&
+    return !m_stopping && m_server && id && odd == m_server && id > m_lastPeerStream &&
       m_peerStreamCount < m_peerStreamMax;
   }
   bool canOpenLocalStream() const {
-    return !m_server && m_localStreamCount < m_localStreamMax &&
+    return !m_stopping && !m_server && m_localStreamCount < m_localStreamMax &&
       m_nextLocalStream <= m_localStreamIDMax;
   }
   bool localStreamsExhausted() const {
@@ -885,25 +887,36 @@ public:
 	--m_localStreamCount;
       else
 	--m_peerStreamCount;
+      bool ended = stream_->localEnd && stream_->remoteEnd;
       m_streams->delNode(static_cast<Streams::Node *>(stream_));
-      recentStream_(id);
+      recentStream_(id, ended);
       retireConnection_(deferred);
     }
     auto link = impl_();
-    impl_()->app()->txRun([
-	link, id, done = ZuFwd<Done>(done)]() mutable {
-      link->removeFramesTx_(id);
-      link->app()->rxRun(
-	[done = ZuMv(done)]() mutable { done(); });
+    // The removed Rx registry entry closes ingress. Drain Rx before Tx,
+    // including work posted by callbacks already running on either shard.
+    impl_()->app()->rxRun([
+      link, id, done = ZuFwd<Done>(done)]() mutable {
+      link->app()->txRun([link, id, done = ZuMv(done)]() mutable {
+	link->removeFramesTx_(id);
+	link->app()->txRun([link, done = ZuMv(done)]() mutable {
+	  link->app()->rxRun([done = ZuMv(done)]() mutable { done(); });
+	});
+      });
     });
   }
   template <typename Done>
   void clearStreams(Done &&done) {
-    clearStreams_([](auto &) { }, ZuFwd<Done>(done), 0);
+    clearStreams([](auto &) { }, ZuFwd<Done>(done));
   }
   template <typename L, typename Done>
   void clearStreams(L &&l, Done &&done) {
-    clearStreams_(ZuFwd<L>(l), ZuFwd<Done>(done), 0);
+    stopWire();
+    impl_()->app()->rxRun([
+      link = impl_(), l = ZuFwd<L>(l), done = ZuFwd<Done>(done)
+    ]() mutable {
+      link->clearStreams_(ZuMv(l), ZuMv(done), 0);
+    });
   }
 private:
   template <typename L, typename Done>
@@ -936,8 +949,11 @@ private:
     impl_()->app()->txRun([
 	link, done = ZuFwd<Done>(done)]() mutable {
       link->clearFramesTx_();
-      link->app()->rxRun(
-	[done = ZuMv(done)]() mutable { done(); });
+      // A frame-drain callback can have posted its next Tx turn behind us.
+      // Drain that turn before acknowledging owner teardown on Rx.
+      link->app()->txRun([link, done = ZuMv(done)]() mutable {
+	link->app()->rxRun([done = ZuMv(done)]() mutable { done(); });
+      });
     });
   }
 public:
@@ -982,20 +998,8 @@ public:
   template <bool AppThread = true>
   unsigned dataMaxSize(uint32_t id) {
     uint32_t length = peerFrameSize<AppThread>();
-    int64_t connection, stream;
-    if constexpr (AppThread) {
-      connection = m_txWindowHint;
-      auto entry_ = h2Stream(id);
-      stream = entry_ ? entry_->txWindowHint : 1;
-    } else {
-      connection = m_txWindow;
-      auto entry_ = m_txWindows->findPtr(id);
-      stream = entry_ ? entry_->window : m_txInitialWindow;
-    }
-    if (connection < 1) connection = 1;
-    if (stream < 1) stream = 1;
-    if (length > connection) length = uint32_t(connection);
-    if (length > stream) length = uint32_t(stream);
+    // DATA may be queued while credit is exhausted. Keep pooled buffer
+    // geometry independent of credit; Tx splits frames when they become ready.
     unsigned overhead = impl_()->template txHeadRoom<AppThread>() +
       impl_()->template txTailRoom<AppThread>() + FrameHeaderSize;
     unsigned maxSize = overhead + length;
@@ -1050,6 +1054,19 @@ public:
     });
     return true;
   }
+  bool queueFinal_(uint32_t id, RecordRef<Native_::FinalCmd> command) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 final section queue outside Tx thread", return false);
+    auto entry_ = txWindow_(id);
+    if (!entry_ || entry_->localEndQueued || !command) return false;
+    if (!m_frameAdmission.push())
+      return streamTxErrorTx_(id, "H2 transmit queue limit exceeded");
+    entry_->localEndQueued = true;
+    entry_->final = ZuMv(command);
+    if (entry_->scheduled == TxSchedule::None) scheduleFrameTx_(entry_);
+    startFrameDrain_();
+    return true;
+  }
   template <bool AppThread = true>
   bool endHeaders(uint32_t id) {
     if constexpr (!AppThread) return endTx_(id);
@@ -1087,6 +1104,7 @@ public:
   }
 
   int process(Ztls::RxStream &rx) {
+    if (m_stopping) return 0;
     if (m_rxPreface) {
       unsigned length = PrefaceParser::value().length();
       if (rx.length() < length) return 0;
@@ -1273,9 +1291,14 @@ public:
 	h2Error(Error::ProtocolError);
       return true;
     }
-    if (entry_->flowError) return true;
+    if (entry_->rxError) return true;
+    if (entry_->remoteEnd) {
+      entry_->rxError = Error::StreamClosed;
+      sendReset_(id, entry_->rxError);
+      return true;
+    }
     if (length > entry_->rxWindow) {
-      entry_->flowError = true;
+      entry_->rxError = Error::FlowControlError;
       sendReset_(id, Error::FlowControlError);
       return true;
     }
@@ -1284,7 +1307,8 @@ public:
   }
   void h2Data(uint32_t, ZuBSpan) { }
   void h2DataLength(uint32_t id, uint32_t length, bool endStream) {
-    if (!h2Stream(id)) return;
+    auto entry_ = h2Stream(id);
+    if (!entry_ || entry_->rxError) return;
     (void)dispatch_(id, Event{
       .type = EventType::DataLength,
       .frameLength = length,
@@ -1315,25 +1339,13 @@ public:
       h2Error(Error::ProtocolError);
   }
   void h2WindowUpdate(uint32_t id, uint32_t value) {
-    if (!id) {
-      if (m_txWindowHint > int64_t(MaxWindow) - value) {
-	h2Error(Error::FlowControlError);
-	return;
-      }
-      m_txWindowHint += value;
-    } else {
+    if (id) {
       auto entry_ = h2Stream(id);
       if (!entry_) {
 	if (!impl_()->h2Closed(id))
 	  h2Error(Error::ProtocolError);
 	return;
       }
-      if (entry_->txWindowHint > int64_t(MaxWindow) - value) {
-	sendReset_(id, Error::FlowControlError);
-	impl_()->h2ResetAppLink(id, Error::FlowControlError);
-	return;
-      }
-      entry_->txWindowHint += value;
     }
     auto link = impl_();
     impl_()->app()->txRun([
@@ -1347,10 +1359,11 @@ public:
     impl_()->h2Goaway_(last, error);
   }
   void h2Error(Error::T error) {
-    if (m_errorSent) return;
+    if (m_errorSent || m_stopping) return;
     m_errorSent = true;
+    stopWire();
     sendGoaway_(error);
-    impl_()->disconnect_(false);
+    impl_()->disconnect_();
   }
   void graceful() {
     if (m_errorSent) return;
@@ -1360,18 +1373,6 @@ public:
 
   bool peerInitialWindow(uint32_t value) {
     if (value > MaxWindow) return false;
-    int64_t delta = int64_t(value) - m_peerInitialWindow;
-    {
-      bool valid = true;
-      allStreams([delta, &valid](auto &entry_) {
-	int64_t window = entry_.txWindowHint + delta;
-	if (window > MaxWindow || window < -int64_t(MaxWindow))
-	  valid = false;
-      });
-      if (!valid) return false;
-    }
-    allStreams([delta](auto &entry_) { entry_.txWindowHint += delta; });
-    m_peerInitialWindow = value;
     auto link = impl_();
     impl_()->app()->txRun([
       link, value]() mutable {
@@ -1413,11 +1414,13 @@ private:
       Stream<AppLink>{id, ZuMv(appLink), local});
     if (stream_) {
       stream_->rxWindow = m_config.initialWindowSize();
-      stream_->txWindowHint = m_peerInitialWindow;
+      impl_()->app()->txRun([link = impl_(), id]() {
+	link->openStreamTx_(id);
+      });
     }
     return stream_;
   }
-  void recentStream_(uint32_t id) {
+  void recentStream_(uint32_t id, bool ended = false) {
     if (!m_recentStreamSet || m_recentStreamSet->find(id)) return;
     if (m_recentStreams.length() < RecentStreamMax) {
       m_recentStreams.push(id);
@@ -1427,11 +1430,31 @@ private:
       if (++m_recentStreamHead == m_recentStreams.length())
 	m_recentStreamHead = 0;
     }
-    m_recentStreamSet->add(id, true);
+    m_recentStreamSet->add(id, ended);
   }
   Stream<AppLink> *begin_(uint32_t id) {
     auto entry_ = h2Stream(id);
     if (!entry_ && m_discardStream == id) return nullptr;
+    if (!entry_ && m_recentStreamSet)
+      if (auto closed = m_recentStreamSet->find(id); closed && closed->val()) {
+	h2Error(Error::StreamClosed);
+	return nullptr;
+      }
+    if (entry_ && entry_->remoteEnd) {
+      if (entry_->localEnd) {
+	h2Error(Error::StreamClosed);
+	return nullptr;
+      }
+      sendReset_(id, Error::StreamClosed);
+      impl_()->h2ResetAppLink(id, Error::StreamClosed);
+      entry_ = nullptr;
+      m_discardStream = id;
+      if (!m_decoding) {
+	m_decoder.reset();
+	m_decoding = true;
+      }
+      return nullptr;
+    }
     if (!entry_) entry_ = impl_()->h2OpenPeer(id);
     if (!entry_) {
       auto error = impl_()->h2OpenError(id);
@@ -1457,8 +1480,11 @@ private:
     if (!entry_) return false;
     auto appLink = entry_->appLink;
     EventRx rx{event};
-    if (appLink->process_(rx) < 0 && h2Stream(id))
-      impl_()->h2Cancel(id);
+    if (appLink->process_(rx) < 0 && h2Stream(id)) {
+      auto error = event.error ? event.error : Error::Cancel;
+      sendReset_(id, error);
+      impl_()->h2ResetAppLink(id, error);
+    }
     retireDeferred_(id, event.consumed);
     if (event.type == EventType::Data && !event.transferred) {
       event.wire->advance(event.frameLength);
@@ -1483,10 +1509,10 @@ private:
       if (!impl_()->h2Closed(data.id)) h2Error(Error::ProtocolError);
       return int(frameLength);
     }
-    if (entry_->flowError) {
+    if (entry_->rxError) {
       rx.advance(frameLength);
       retireConnection_(data.length);
-      impl_()->h2ResetAppLink(data.id, Error::FlowControlError);
+      impl_()->h2ResetAppLink(data.id, entry_->rxError);
       return int(frameLength);
     }
     unsigned protocol = data.prefix + data.pad;
@@ -1527,7 +1553,7 @@ private:
     if (!length) return;
     retireConnection_(length);
     auto entry_ = h2Stream(id);
-    if (!entry_ || entry_->flowError) return;
+    if (!entry_ || entry_->rxError) return;
     ZmAssert(entry_->rxWindow <= int64_t(MaxWindow) - int64_t(length));
     entry_->rxWindow += int64_t(length);
     sendWindowUpdate_(id, uint32_t(length));
@@ -1593,13 +1619,14 @@ private:
   TxWindowHash::Node *txWindow_(uint32_t id) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 Tx window lookup outside Tx thread", return nullptr);
-    auto entry_ = m_txWindows->findPtr(id);
-    if (!entry_) {
-      entry_ = new TxWindowHash::Node{
-	TxWindowEntry{id, m_txInitialWindow}};
-      m_txWindows->addNode(entry_);
-    }
-    return entry_;
+    return m_txWindows ? m_txWindows->findPtr(id) : nullptr;
+  }
+  void openStreamTx_(uint32_t id) {
+    ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
+      "H2 Tx stream creation outside Tx thread", return);
+    ZmAssert(m_txWindows && !m_txWindows->findPtr(id));
+    m_txWindows->addNode(new TxWindowHash::Node{
+      TxWindowEntry{id, m_txInitialWindow}});
   }
   void appTxErrorFnTx_(uint32_t id, ZiTxErrorFn fn) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
@@ -1721,16 +1748,22 @@ private:
     ZmAssert(entry_->scheduled == TxSchedule::None);
     auto buf = entry_->frames.headPtr();
     if (!buf) {
-      if (!entry_->endMarker) return;
+      if (!entry_->endMarker && !entry_->final) return;
     } else {
       uint32_t length = frameLengthTx_(buf);
-      if (length > m_txWindow) {
+      if (static_cast<ZiIOBuf *>(buf)->data()[3] == FrameType::Data && !length &&
+	  entry_->window < 0) {
+	entry_->scheduled = TxSchedule::Stream;
+	m_streamFrames.pushNode(entry_);
+	return;
+      }
+      if (length && m_txWindow <= 0) {
 	entry_->scheduled = TxSchedule::Connection;
 	m_connectionFrames.pushNode(entry_);
 	impl_()->h2CapacityTx_(true);
 	return;
       }
-      if (length > entry_->window) {
+      if (length && entry_->window <= 0) {
 	entry_->scheduled = TxSchedule::Stream;
 	m_streamFrames.pushNode(entry_);
 	return;
@@ -1758,6 +1791,10 @@ private:
     if (entry_->endMarker) {
       entry_->endMarker = false;
       ++n;
+    }
+    if (auto command = ZuMv(entry_->final)) {
+      ++n;
+      command->cancel(command->ctx);
     }
     return n;
   }
@@ -1899,9 +1936,61 @@ private:
 	entry_->scheduled = TxSchedule::None;
       }
       ++inspected;
+      // Compression state changes only when the accepted DATA prefix has
+      // drained. The embedded command owns its producer through this call.
+      if (!entry_->frames.headPtr() && entry_->final) {
+	auto command = ZuMv(entry_->final);
+	m_frameAdmission.pop();
+	entry_->localEndQueued = false;
+	command->emit(command->ctx);
+	continue;
+      }
       uint32_t id = entry_->id;
       bool endStream;
-      if (auto pending = entry_->frames.shift()) {
+      bool partial = false;
+      ZmRef<ZiIOBuf> pending;
+      if (auto node = entry_->frames.headPtr()) {
+	auto head = static_cast<ZiIOBuf *>(node);
+	uint32_t length = frameLengthTx_(head);
+	int64_t available = m_txWindow < entry_->window ?
+	  m_txWindow : entry_->window;
+	// Another ready stream can consume connection credit before this
+	// entry reaches the head of the ready queue.
+	if ((length && available <= 0) ||
+	    (!length && head->data()[3] == FrameType::Data &&
+	      entry_->window < 0)) {
+	  scheduleFrameTx_(entry_);
+	  continue;
+	}
+	if (length && available < length) {
+	  ZmAssert(available > 0);
+	  unsigned prefix = unsigned(available);
+	  pending = impl_()->template txAllocBuf<false>(
+	    impl_()->template txHeadRoom<false>());
+	  if (!pending || !pending->append(head->data(), 9 + prefix)) {
+	    txError_(id);
+	    return;
+	  }
+	  auto frame = pending->data();
+	  frame[0] = uint8_t(prefix>>16);
+	  frame[1] = uint8_t(prefix>>8);
+	  frame[2] = uint8_t(prefix);
+	  frame[4] &= ~Flag::EndStream;
+	  uint8_t flags = head->data()[4];
+	  head->advance(prefix);
+	  memcpy(head->data(), frame, 9);
+	  length -= prefix;
+	  frame = head->data();
+	  frame[0] = uint8_t(length>>16);
+	  frame[1] = uint8_t(length>>8);
+	  frame[2] = uint8_t(length);
+	  // END_STREAM belongs to the suffix.
+	  frame[4] = flags;
+	  partial = true;
+	} else
+	  pending = entry_->frames.shift();
+      }
+      if (pending) {
 	auto frame = static_cast<ZiIOBuf *>(pending.ptr())->data();
 	uint32_t length = frameLengthTx_(pending);
 	if (length) {
@@ -1919,7 +2008,7 @@ private:
 	auto tx = impl_()->txStream_();
 	tx << ZuMv(pending) << Zi::Flush{};
 	if (tx.failed()) {
-	  m_frameAdmission.pop();
+	  if (!partial) m_frameAdmission.pop();
 	  // A failed header/continuation send leaves peer compression state
 	  // uncertain. Stop the connection rather than continue draining it.
 	  impl_()->app()->rxRun([link = impl_()]() {
@@ -1932,7 +2021,7 @@ private:
 	entry_->endMarker = false;
 	endStream = true;
       }
-      m_frameAdmission.pop();
+      if (!partial) m_frameAdmission.pop();
       scheduleFrameTx_(entry_);
       if (endStream)
 	impl_()->app()->rxRun([
@@ -1999,7 +2088,6 @@ private:
   HPackDecoder		m_decoder;
   RxDataFrame		m_rxData;
   uint32_t		m_lastProcessedPeerStream = 0;
-  uint32_t		m_peerInitialWindow = DefltWindow;
   ClosedStreams		m_recentStreams;
   ZmRef<ClosedStreamSet> m_recentStreamSet;
   uint32_t		m_nextLocalStream = 1;
@@ -2012,7 +2100,6 @@ private:
   unsigned		m_recentStreamHead = 0;
   uint32_t		m_discardStream = 0;
   int64_t		m_rxWindow = DefltWindow;
-  int64_t		m_txWindowHint = DefltWindow;
   bool			m_decoding = false;
   bool			m_errorSent = false;
   bool			m_stopping = false;

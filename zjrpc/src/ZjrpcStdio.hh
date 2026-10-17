@@ -683,7 +683,9 @@ public:
     return true;
   }
 
-  CompletionRoute completionRoute() const { return {m_mx, m_owner}; }
+  CompletionRoute completionRoute() const {
+    return {m_mx, m_owner, static_cast<const Derived *>(this)->limits().maxQueue};
+  }
   bool invoked() const { return m_mx && m_mx->invoked(m_owner); }
   bool up() const { return m_up.load_(); }
   void stdioClosed() { m_up = false; derived()->ioClosed(false); }

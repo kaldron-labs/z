@@ -45,7 +45,7 @@ FieldOutput headerOutput(HeaderScratch &block)
       out.length(out.length() + length);
     }};
   return {&block, [](void *ctx, FieldForm::T, int,
-      const FieldClass *, PrintView key, PrintView value) {
+      const FieldClass *, PrintView key, PrintView value, bool) {
     auto &block = *static_cast<HeaderScratch *>(ctx);
     Writer out{ctx, ops};
     key.write(out);

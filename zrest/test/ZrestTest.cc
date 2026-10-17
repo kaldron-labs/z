@@ -235,17 +235,26 @@ static void endpointHandoffTest()
   response.init();
   response.object->value = "accepted";
   request.process(static_cast<void *>(nullptr), ZuMv(response));
-  request.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
   ZuCheck(!call->processed && !call->failures);
-  request.deliver();
+  request.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
   ZuCheck(call->processed == 1 && !call->failures);
   ZuCheck(call->value == "accepted");
+  request.retired();
+  request.deliver();
+  ZuCheck(call->processed == 1 && !call->failures);
 
   Zrest::ClientReq<EndpointApp, EndpointCatalog, Zhttp::Profiles<Zhttp::H1TCP>> refused;
   refused.init<EndpointReq>(object, call);
   refused.failure.code = Zrest::Failure::Code::Limit;
   refused.deliver();
   ZuCheck(call->processed == 1 && call->failures == 1);
+
+  Zrest::ClientReq<EndpointApp, EndpointCatalog, Zhttp::Profiles<Zhttp::H1TCP>> timedOut;
+  timedOut.init<EndpointReq>(object, call);
+  timedOut.completed(Zhttp::Result{.code = Zhttp::ResultCode::TimedOut});
+  ZuCheck(call->processed == 1 && call->failures == 2);
+  timedOut.retired();
+  ZuCheck(call->processed == 1 && call->failures == 2);
 }
 
 struct FragmentRx {
@@ -413,6 +422,9 @@ static void zeroBodyTest()
   limited.bodyMax(8);
   ZuCheck(limited.bodyInfo(Zhttp::BodyType::Fixed, 4));
   ZuCheck(!limited.bodyInfo(Zhttp::BodyType::Fixed, 5));
+  limited.bodyMax(2);
+  ZuCheck(limited.bodyInfo(Zhttp::BodyType::Fixed, 4));
+  ZuCheck(!limited.bodyInfo(Zhttp::BodyType::Fixed, 5));
 }
 
 static void streamedBodyTest()
@@ -429,7 +441,7 @@ static void streamedBodyTest()
 
   LimitedReqParser request;
   request.init();
-  request.bodyMax(8);
+  request.bodyMax(2);
   ZuCheck(request.bodyInfo(Zhttp::BodyType::Streamed, 0));
   TestString ab{"ab"}, cd{"cd"};
   auto a = fragment(ab), b = fragment(cd);
@@ -642,9 +654,10 @@ static void sseReceiveTest()
     !call->id);
   ZuCheck(!call->completed && !call->failures);
   parser.complete(static_cast<void *>(nullptr), true);
-  request.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
   ZuCheck(!call->completed);
-  request.deliver();
+  request.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
+  ZuCheck(call->completed == 1 && !call->failures);
+  request.retired();
   ZuCheck(call->completed == 1 && !call->failures);
 
   ZmRef<SSECall> fixedCall = new SSECall{};
@@ -666,7 +679,8 @@ static void sseReceiveTest()
     !fixedCall->completed);
   fixedParser.complete(static_cast<void *>(nullptr), true);
   fixed.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
-  fixed.deliver();
+  ZuCheck(fixedCall->completed == 1 && !fixedCall->failures);
+  fixed.retired();
   ZuCheck(fixedCall->completed == 1 && !fixedCall->failures);
 
   ZmRef<SSECall> partialCall = new SSECall{};
@@ -686,7 +700,8 @@ static void sseReceiveTest()
   ZuCheck(partialParser.body(c));
   partialParser.complete(static_cast<void *>(nullptr), true);
   partial.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
-  partial.deliver();
+  ZuCheck(!partialCall->completed && partialCall->failures == 1);
+  partial.retired();
   ZuCheck(!partialCall->completed && partialCall->failures == 1);
 
   ZmRef<SSECall> rejectedCall = new SSECall{};
@@ -707,7 +722,8 @@ static void sseReceiveTest()
   ZuCheck(!rejectedParser.body(d));
   rejectedParser.complete(static_cast<void *>(nullptr), false);
   rejected.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
-  rejected.deliver();
+  ZuCheck(rejectedCall->failures == 1);
+  rejected.retired();
   ZuCheck(rejectedCall->received == 1 &&
     !rejectedCall->completed && rejectedCall->failures == 1);
 
@@ -753,7 +769,8 @@ static void sseReceiveTest()
   ZuCheck(!totalParser.body(totalB));
   totalParser.complete(static_cast<void *>(nullptr), false);
   total.completed(Zhttp::Result{.code = Zhttp::ResultCode::OK});
-  total.deliver();
+  ZuCheck(totalCall->failures == 1);
+  total.retired();
   ZuCheck(!totalCall->completed && totalCall->failures == 1);
 }
 
@@ -837,6 +854,40 @@ static void completionClaimTest()
   }, 1);
   ZuCheck(lateDone.timedwait(Zm::now(10)) == 0 &&
     late.load_() == 0 && owner.count.load_() == 1);
+  ZuCheck(scheduler.stop());
+}
+
+static void sseSendPostsTest()
+{
+  ZuTestScope(sseSendPosts);
+  ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
+    .thread(1, [](auto &thread) { thread.isolated(1); })};
+  Zrest::Limits limits;
+  limits.maxQueue = 2;
+  ZmRef<Zrest::SSEProducer> producer =
+    new Zrest::SSEProducer{&scheduler, 1, limits};
+  ZuCheck(producer->emit("one"));
+  ZuCheck(producer->emit("two"));
+  for (unsigned i = 0; i < 8; ++i)
+    ZuCheck(!producer->emit("refused"));
+  ZuCheck(producer->queued() == 2 && !producer->failed());
+  BodySink sink;
+  ZmSemaphore drained;
+  scheduler.run([producer, &sink, &drained]() {
+    producer->start([&sink](auto write) { write(sink); return true; });
+    drained.post();
+  }, 1);
+  ZuCheck(scheduler.start(), (return));
+  drained.wait();
+  ZuCheck(!producer->queued() && !producer->failed());
+  ZuCheck(sink.data == "data: one\n\ndata: two\n\n");
+  ZuCheck(producer->emit("three"));
+  scheduler.run([producer, &drained]() {
+    producer->close();
+    drained.post();
+  }, 1);
+  drained.wait();
+  ZuCheck(!producer->queued() && !producer->emit("closed"));
   ZuCheck(scheduler.stop());
 }
 
@@ -1107,6 +1158,7 @@ int main(int argc, char **argv)
   ZuTestCall(endpointHandoffTest);
   ZuTestCall(dispatchBoundaryTest);
   ZuTestCall(completionClaimTest);
+  ZuTestCall(sseSendPostsTest);
   ZuTestCall(exactPathTest);
   ZuTestCall(skipPathTest);
   ZuTestCall(rootPathTest);

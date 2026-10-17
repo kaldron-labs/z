@@ -133,19 +133,17 @@ struct DispatchPolicy {
   template <typename Work> static bool cancelOnClose(const Work &) { return true; }
   template <typename Work, typename Req, typename Token>
   static void made(Work &, Req *, Token *) { }
-  static bool valid(const Envelope &) { return true; }
+  static bool valid(const Envelope &envelope) {
+    return envelope.kind != MessageKind::Unusable;
+  }
   template <typename Emit>
-  static bool invalid(Emit &emit, const Parsed &parsed) {
-    return emit(ErrorMessage{Null{},
-	parsed.consumed < 0 ? ErrorCode::Parse : ErrorCode::InvalidRequest,
-	"Invalid request"}, BodyPolicy::Fixed);
+  static bool invalid(Emit &emit, const Parsed &) {
+    return emit(Message{}, RoutePolicy::Abort);
   }
   template <typename Dispatch, typename Work, typename Emit, typename Tool>
   static bool dispatch(Dispatch &dispatcher, const Envelope &envelope,
       Work &work, Emit &emit, Tool &tool) {
-    if (!dispatcher.dispatch(envelope, work, emit, tool))
-      emit(ErrorMessage{Null{}, ErrorCode::InvalidRequest, "Invalid request"});
-    return true;
+    return dispatcher.dispatch(envelope, work, emit, tool);
   }
   template <typename Work, typename Req, typename Object, typename Token>
   static void invoke(Work &work, Req *req, const Object &object, Token token) {
@@ -185,9 +183,10 @@ public:
 	error(ErrorCode::MethodNotFound, "Method not found");
 	return true;
       }
+      bool decoded = true;
       try {
 	ZuSwitch::dispatch<Catalog::N>(index,
-	  [&envelope, &completions, &error, &tool](auto I) {
+	  [&envelope, &completions, &error, &tool, &decoded](auto I) {
 	    using Req = ZuType<I, Catalog>;
 	    using O = Req::Object;
 	    auto invoke = [&envelope, &completions, &error, &tool](const O &object) {
@@ -199,8 +198,7 @@ public:
 	      }
 	      tool(static_cast<Req *>(nullptr), object, ZuMv(token));
 	    };
-	    if (!loadParams<O>(raw(envelope.params()), invoke))
-	      error(ErrorCode::InvalidParams, "Invalid params");
+	    decoded = loadParams<O>(raw(envelope.params()), invoke);
 	  });
       } catch (const Error &failure) {
 	(void)completions.fail(envelope.id());
@@ -210,7 +208,7 @@ public:
 	(void)completions.fail(envelope.id());
 	error(ErrorCode::Internal, "Internal error");
       }
-      return true;
+      return decoded;
     }
   }
 
@@ -340,24 +338,31 @@ private:
     }
 
     void run() {
+      m_dispatching = true;
       const auto &envelope = m_parsed.envelope;
-      if (!Policy::valid(envelope)) { fail_(); finish(); return; }
+      if (!Policy::valid(envelope)) {
+	fail_();
+	m_dispatching = false;
+	finish();
+	return;
+      }
       if (envelope.kind == MessageKind::Result || envelope.kind == MessageKind::Error) {
 	if (!m_dispatcher->response_(envelope, m_parent ? &m_parent->m_batch->response : nullptr))
 	  fail_();
+	m_dispatching = false;
 	finish();
 	return;
       }
       if (envelope.kind == MessageKind::Request && m_inbound) {
 	if (!m_inbound->begin(envelope.id(), this)) {
 	  emit(ErrorMessage{envelope.id(), ErrorCode::InvalidRequest, "Duplicate request ID"});
+	  m_dispatching = false;
 	  finish();
 	  return;
 	}
       }
-      m_dispatching = true;
       try { Policy::begin(*this); }
-      catch (...) { m_dispatching = false; fail_(); finish(); return; }
+      catch (...) { fail_(); m_dispatching = false; finish(); return; }
       auto reply = [this](auto &&message) {
 	this->emit(ZuFwd<decltype(message)>(message));
       };
@@ -377,7 +382,9 @@ private:
       if (m_closed) return;
       unsigned n = nodes().length();
       if (!n) {
-	emit(ErrorMessage{Null{}, ErrorCode::InvalidRequest, "Empty batch"});
+	m_dispatching = true;
+	fail_();
+	m_dispatching = false;
 	finish();
 	return;
       }
@@ -390,6 +397,10 @@ private:
 	ZmRef<Work> member = new Work{this, ZuMv(envelope)};
 	m_dispatcher->addWork(member);
 	member->run();
+	if (m_terminal) {
+	  if (m_batch->left) closeGroup_();
+	  return;
+	}
       }
       if (m_batch->next < n) {
 	auto self = ZmRef{static_cast<Work *>(this)};
@@ -432,6 +443,7 @@ private:
       auto self = ZmRef{static_cast<Work *>(this)};
       if (!CompletionSlot::cancel(id, reason)) return false;
       if (!Policy::deliverable(*this)) close_(reason);
+      else if (!m_closed && !m_dispatching && !this->count()) finish();
       return true;
     }
     bool cancelPeer(const ID &id, ZuCSpan reason) {
@@ -514,6 +526,8 @@ private:
     }
     void fail_() {
       if (m_parent) { m_parent->fail_(); return; }
+      if (m_aborted) return;
+      m_aborted = true;
       m_terminal = true;
       if (!m_emit(Message{}, RoutePolicy::Abort)) m_dispatcher->owner()->fail_();
     }
@@ -573,6 +587,7 @@ private:
     bool m_dispatching = false;
     bool m_borrowed = false;
     bool m_terminal = false;
+    bool m_aborted = false;
     bool m_closed = false;
   };
   using WorkQ = ZmList<WorkData, ZmListNode<WorkData,

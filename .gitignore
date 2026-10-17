@@ -145,3 +145,4 @@ old/**
 /zi/example/zipb-gen/
 /zi/interop/zipb-gen/
 /zi/itest/zprotoc-out/
+zhttp/itest/zhttpserverstreamtest.ZhttpServerStop-*/

@@ -564,7 +564,7 @@ ZrestCatalogImpl(Catalog)
 using Decoder = Zrest::MReqParser<RootCatalog,
   Zrest::MReqRootPolicy<RootCatalog>>;
 using RESTServer = Zrest::Server<App, Catalog, Decoder, Zhttp::Profiles<Zhttp::H1TCP,
-  Zhttp::H1TLS, Zhttp::H2TLS>>;
+  Zhttp::H1TLS, Zhttp::H2TLS, Zhttp::H3QUIC>>;
 
 struct BrowserTxn {
   OAuthString issuerURL;
@@ -1771,7 +1771,7 @@ int main(int argc, char **argv)
   Zrest::ServerConfig config;
   config.localIP(ZiIP(options.addr)).port(options.port)
     .idleTimeout(options.timeout).maxConnections(options.maxconn)
-    .retainedBodyMax(ReqBodyMax);
+    .bodyMax(ReqBodyMax).retainedBodyMax(ReqBodyMax);
   Zrest::Limits limits;
   limits.maxPending = options.maxPending;
   config.limits(limits);

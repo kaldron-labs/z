@@ -22,10 +22,10 @@ namespace ZhttpTestPort {
     ServerIdle = 20427,
     ServerIdleEnd = 20436,
     ClientCancel = 20437,
-    ClientCancelEnd = 20445,
-    ClientPool = 20446,
-    ClientPoolEnd = 20479,
-    Profiles = 20480
+    ClientCancelEnd = 20448,
+    ClientPool = 20449,
+    ClientPoolEnd = 20482,
+    Profiles = 20483
   };
 }
 

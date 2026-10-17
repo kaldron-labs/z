@@ -882,7 +882,7 @@ public:
       --ingress();
       return false;
     }
-    bool posted = ownerRun([this]() {
+    bool posted = this->sendRun([this]() {
       --ingress();
       if (const auto *catalog = m_peer.toolCatalog()) {
 	app_([this, catalog]() { tools_(m_impl, catalog, 0); });
@@ -917,7 +917,7 @@ public:
     }
     ZmRef<CancelAction> action =
       new CancelAction{ZuMv(id), reason};
-    bool posted = ownerRun([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --ingress();
       bool ok = pendingCalls().contains(action->id) &&
 	static_cast<Derived *>(this)->send_(CancelledRequestMessage{
@@ -965,7 +965,7 @@ public:
     using Action = PeerCallAction<Req, Call>;
     ZmRef<Action> action = new Action{
       ZuMv(object), ZuMv(call), ZuMv(progress), logLevel};
-    bool posted = ownerRun([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --ingress();
       call_<Req>(ZuMv(action->object),
 	ZuMv(action->progress), action->logLevel, ZuMv(action->call));
@@ -1032,7 +1032,7 @@ private:
     }
     ZmRef<ControlAction<Call>> action =
       new ControlAction<Call>{kind, level, ZuMv(call)};
-    bool posted = ownerRun([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --ingress();
       controlTx_(action->kind, action->level, ZuMv(action->call));
     });
@@ -1561,7 +1561,8 @@ public:
     if (!Common::initPeer_(m_limits)) goto invalid;
     {
       Zhttp::Config http = config;
-      http.retainedBodyMax(m_limits.maxJSONBytes)
+      http.bodyMax(m_limits.maxJSONBytes)
+	.retainedBodyMax(m_limits.maxJSONBytes)
 	.retainedMessageMax(m_limits.maxSSEEventBytes);
       if (!Base::init(hub, 1, http, tcp, h2, quic) ||
 	  !Base::pool(0, ZuMv(destination)))
@@ -1633,7 +1634,7 @@ public:
       --ingress();
       return false;
     }
-    ownerRun_([this]() {
+    bool posted = this->sendRun([this]() {
       --ingress();
       if (const auto *catalog = m_peer.toolCatalog()) {
 	app_([this, catalog]() { tools_(m_impl, catalog, 0); });
@@ -1646,7 +1647,8 @@ public:
       if ((id.is<void>() && !m_peer.toolCatalog()) || !sent)
 	app_([this]() { toolsFailed_(m_impl, 0); });
     });
-    return true;
+    if (!posted) --ingress();
+    return posted;
   }
 
   bool discardCatalog() {
@@ -1678,11 +1680,12 @@ public:
       --ingress();
       return false;
     }
-    ownerRun_([this]() {
+    bool posted = this->sendRun([this]() {
       --ingress();
       terminate_();
     });
-    return true;
+    if (!posted) { --ingress(); m_terminating = 0; }
+    return posted;
   }
 
   template <typename R, typename Call>
@@ -1719,12 +1722,13 @@ public:
     using Action = CallAction<R, Call>;
     ZmRef<Action> action = new Action{
       ZuMv(object), ZuMv(call), ZuMv(progress), logLevel};
-    ownerRun_([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --ingress();
       call_<R>(ZuMv(action->object), ZuMv(action->progress), action->logLevel,
 	ZuMv(action->call));
     });
-    return true;
+    if (!posted) --ingress();
+    return posted;
   }
 
   bool cancel(Zjrpc::ID id, ZuCSpan reason = {}) {
@@ -1735,14 +1739,15 @@ public:
       return false;
     }
     ZmRef<CancelAction> action = new CancelAction{ZuMv(id), reason};
-    ownerRun_([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --ingress();
       bool ok = cancel_(action->id, action->reason);
       app_([this, action, ok]() {
 	cancelled_(m_impl, action->id, ok, 0);
       });
     });
-    return true;
+    if (!posted) --ingress();
+    return posted;
   }
 
   bool receive(
@@ -1872,11 +1877,12 @@ private:
     }
     ZmRef<ControlAction<Call>> action =
       new ControlAction<Call>{kind, level, ZuMv(call)};
-    ownerRun_([this, action = ZuMv(action)]() mutable {
+    bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
       --ingress();
       controlTx_(action->kind, action->level, ZuMv(action->call));
     });
-    return true;
+    if (!posted) --ingress();
+    return posted;
   }
 
   template <typename L>

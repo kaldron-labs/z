@@ -757,6 +757,7 @@ struct ClientReq : public ZmObject, public MReqBuilder<Catalog> {
   void completed(const Zhttp::Result &result) {
     httpResult = result;
     completed_ = true;
+    deliver();
   }
   void retired() {
     if (client) client->retired(this);
@@ -897,7 +898,6 @@ public:
   void retired(ClientReq<App, Catalog, Selection> *request) {
     --m_pending;
     request->client = nullptr;
-    request->deliver();
   }
 
   bool stop() {

@@ -684,7 +684,7 @@ struct StreamResFixture {
 
     Zrest::ClientConfig clientConfig;
     clientConfig.links(1).concurrency(2).linkMax(2)
-      .retainedBodyMax(4096)
+      .bodyMax(4096).retainedBodyMax(4096)
       .protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 :
 	Zhttp::ProtoPolicy::DisableH3)
       .h2Policy(Zhttp::H2Policy::Force).blindH3(h3)
@@ -787,7 +787,7 @@ void multiplexed(bool h3)
   Server server;
   Zrest::ServerConfig serverConfig;
   serverConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
-    .retainedBodyMax(4096);
+    .bodyMax(4096).retainedBodyMax(4096);
   if (h3)
     serverConfig.quic(Zhttp::QUICConfig{}
       .certPath(cert).keyPath(key).maxIdleTimeout(10000));
@@ -808,7 +808,7 @@ void multiplexed(bool h3)
   Zrest::Limits limits;
   limits.maxPending = 2;
   clientConfig.links(1).concurrency(2).linkMax(2)
-    .retainedBodyMax(4096)
+    .bodyMax(4096).retainedBodyMax(4096)
     .protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 :
       Zhttp::ProtoPolicy::DisableH3)
     .h2Policy(Zhttp::H2Policy::Force).blindH3(h3)
@@ -1027,7 +1027,7 @@ void call()
   Server server;
   Zrest::ServerConfig serverConfig;
   serverConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
-    .retainedBodyMax(4096).tcp();
+    .bodyMax(4096).retainedBodyMax(4096).tcp();
   bool serverInited = server.init(hub, ZuMv(serverConfig), &app);
   ZuCheck(serverInited);
   bool serverUp = serverInited && server.start();
@@ -1051,7 +1051,7 @@ void call()
   Zrest::Limits clientLimits;
   clientLimits.maxPending = 2;
   clientConfig.links(1).concurrency(2).linkMax(2)
-    .retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
+    .bodyMax(4096).retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(false).tcp(true).tls(false).quic(false);
   clientConfig.limits(clientLimits);
   bool clientInited = listening &&
@@ -1262,6 +1262,9 @@ void call()
   ZmRef<Zrest::SSEProducer> bounded = new Zrest::SSEProducer{
     &mx, mx.sid("tx"), queueLimits};
   ZuCheck(bounded->emit("first"));
+  ZmSemaphore queueEnqueued;
+  mx.run([&queueEnqueued]() { queueEnqueued.post(); }, mx.sid("tx"));
+  ZuCheck(queueEnqueued.timedwait(Zm::now(10)) == 0);
   ZuCheck(!bounded->emit("second") && bounded->failed());
   ZmSemaphore queueDrained;
   mx.run([&queueDrained]() { queueDrained.post(); }, mx.sid("tx"));
@@ -1332,7 +1335,7 @@ void call()
   app.redirectNext = 0;
   Zrest::ServerConfig reuseServerConfig;
   reuseServerConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
-    .retainedBodyMax(4096).tcp();
+    .bodyMax(4096).retainedBodyMax(4096).tcp();
   bool serverReused = server.init(hub, ZuMv(reuseServerConfig), &app);
   ZuCheck(serverReused);
   bool serverRestarted = serverReused && server.start() &&
@@ -1340,7 +1343,7 @@ void call()
   ZuCheck(serverRestarted);
   Zrest::ClientConfig reuseClientConfig;
   reuseClientConfig.links(1).concurrency(2).linkMax(2)
-    .retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
+    .bodyMax(4096).retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(false).tcp(true).tls(false).quic(false);
   reuseClientConfig.limits(clientLimits);
   bool clientReused = serverRestarted &&

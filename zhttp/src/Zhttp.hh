@@ -23,6 +23,8 @@
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtScratch.hh>
 #include <zlib/ZiAssert.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZhttpCore.hh>
@@ -154,6 +156,7 @@ struct Parser { // base class with defaulted types and member functions
 };
 
 struct Builder {
+  bool neverIndex(ZuBSpan) const { return false; }
   bool streamResponse() const { return false; }
   // Alternating Key, Values pairs. Values is ZuTypeList<> for a run-time
   // value, or a singleton list containing the fixed value.
@@ -377,7 +380,9 @@ public:
 
 // Builder is the existing typed request/response Ops adapter, including existing
 // content-length suppression and Alt-Svc injection; those rules stay there.
-template <typename Builder>
+using FieldNameBuf = ZtBArray<ZtArrayHeapID<"Zhttp.Field.Name">>;
+
+template <typename Builder, bool Mutable = true>
 struct BuilderFields {
   using Catalog = typename Builder::HdrCatalog;
   using List = HeaderList<Catalog>;
@@ -393,26 +398,44 @@ struct BuilderFields {
       const auto &meta = catalog->fields[I];
       if constexpr (Values::N) {
 	using Fixed = HeaderValue<Values>;
-	builderFixedHeader<Key, Fixed>(builder, [&out, &meta]() {
+	builderFixedHeader<Key, Fixed>(builder, [this, &out, &meta]() {
 	  const auto &value = Fixed{}();
 	  out.field(FieldForm::Fixed, ID, meta.classification,
-	    PrintView::borrow(meta.name), PrintView::borrow(value));
+	    PrintView::borrow(meta.name), PrintView::borrow(value),
+	    builder->neverIndex(meta.name));
 	}, 0);
-	builder->template header<Key>([&out, &meta]<typename V>(V &&value) {
+	builder->template header<Key>([this, &out, &meta]<typename V>(V &&value) {
 	  out.field(FieldForm::Name, ID, meta.classification,
-	    PrintView::borrow(meta.name), PrintView::borrow(value));
+	    PrintView::borrow(meta.name), PrintView::borrow(value),
+	    builder->neverIndex(meta.name));
 	});
       } else {
 	builder->template header<Key>([this, &out, &meta]<typename V>(V &&value) {
-	  auto span = out.field(FieldForm::Mutable, ID, meta.classification,
-	    PrintView::borrow(meta.name), PrintView::borrow(value));
-	  builder->template headerOffset<Key>(span.offset, span.length);
+	  if constexpr (Mutable) {
+	    auto span = out.field(FieldForm::Mutable, ID, meta.classification,
+	      PrintView::borrow(meta.name), PrintView::borrow(value),
+	      builder->neverIndex(meta.name));
+	    builder->template headerOffset<Key>(span.offset, span.length);
+	  } else
+	    out.field(FieldForm::Name, ID, meta.classification,
+	      PrintView::borrow(meta.name), PrintView::borrow(value),
+	      builder->neverIndex(meta.name));
 	});
       }
     });
-    builder->header([&out]<typename K, typename V>(K &&key, V &&value) {
-      out.field(FieldForm::Literal, -1, nullptr,
-	PrintView::borrow(key), PrintView::borrow(value));
+    builder->header([this, &out]<typename K, typename V>(K &&key, V &&value) {
+      auto emit = [this, &out, &value](ZuBSpan name) {
+	out.field(FieldForm::Literal, -1, nullptr,
+	  PrintView::borrow(name), PrintView::borrow(value),
+	  builder->neverIndex(name));
+      };
+      auto name = PrintView::borrow(key);
+      if (name.isSpan()) emit(name.span);
+      else {
+	auto rendered = ZtScratch(FieldNameBuf, Builder::HdrBufSize);
+	rendered << key;
+	emit(rendered);
+      }
     });
   }
   FieldProvider provider() {
@@ -421,12 +444,26 @@ struct BuilderFields {
 	static_cast<BuilderFields *>(ctx)->fields(out);
       },
       [](void *ctx, uint8_t *base) {
-	static_cast<BuilderFields *>(ctx)->builder->headerBase(base);
+	if constexpr (Mutable)
+	  static_cast<BuilderFields *>(ctx)->builder->headerBase(base);
       },
-      [](void *ctx) { static_cast<BuilderFields *>(ctx)->builder->patch(); }};
+      [](void *ctx) {
+	if constexpr (Mutable)
+	  static_cast<BuilderFields *>(ctx)->builder->patch();
+      }};
   }
 };
 
+
+template <typename B>
+bool BodyEmitter::trailers(B &fields)
+{
+  if (!m_emit || !m_emit->trailers) return false;
+  const auto &catalog = CatalogData<typename B::HdrCatalog>::configure();
+  BuilderFields<B, false> adapter{&fields, &catalog};
+  auto provider = adapter.provider();
+  return m_emit->trailers(m_emit->ctx, catalog, provider);
+}
 
 template <typename P>
 auto parserBodyMax(P &parser, uint64_t max, int) ->
@@ -435,6 +472,14 @@ auto parserBodyMax(P &parser, uint64_t max, int) ->
 }
 template <typename P>
 void parserBodyMax(P &, uint64_t, long) { }
+
+template <typename P>
+auto parserRetainedBodyMax(P &parser, uint64_t max, int) ->
+    decltype(parser.retainedBodyMax(max), void()) {
+  parser.retainedBodyMax(max);
+}
+template <typename P>
+void parserRetainedBodyMax(P &, uint64_t, long) { }
 
 template <typename P>
 auto parserBodyInfo(P &parser, Channel *channel, BodyType::T type,
@@ -481,6 +526,9 @@ struct TypedParser : public ZmNHeap<TypedParser<P, Context, ContextAxor>> {
       },
       [](void *ctx, uint64_t max) {
 	parserBodyMax(static_cast<TypedParser *>(ctx)->parser, max, 0);
+      },
+      [](void *ctx, uint64_t max) {
+	parserRetainedBodyMax(static_cast<TypedParser *>(ctx)->parser, max, 0);
       },
       [](void *ctx) { delete static_cast<TypedParser *>(ctx); },
       [](const void *ctx) -> bool {
@@ -537,6 +585,9 @@ struct ResponseFields {
   B *builder;
   FieldContext &context;
   Spans spans;
+
+  static constexpr unsigned HdrBufSize = B::HdrBufSize;
+  bool neverIndex(ZuBSpan name) const { return builder->neverIndex(name); }
 
   template <typename Key, typename Value, typename L>
   void header(L &&l) {

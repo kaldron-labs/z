@@ -29,6 +29,7 @@ friend inline ZuStringT<"Zjrpc.Test.Call"> ZmNHeapID(Call *);
   int result = 0;
   unsigned failures = 0;
   bool removed = false;
+  bool cancelOK = true;
 
   Call(Zjrpc::PendingCalls *pending_, Zjrpc::ID id_) :
     pending{pending_}, id{ZuMv(id_)} { }
@@ -163,8 +164,8 @@ static void completionTest()
   ZuCheck(token && token->live());
   ZuCheck(!slot.make(Zjrpc::ID{int64_t{10}}));
   ZuCheck(slot.cancel(id));
-  ZuCheck(token->cancelled() && token->live());
-  ZuCheck(slot.complete(token));
+  ZuCheck(token->cancelled() && !token->live());
+  ZuCheck(!slot.count() && !slot.cancel(id));
   ZuCheck(!slot.complete(token));
   auto next = slot.make(id);
   ZuCheck(bool(next));
@@ -179,7 +180,7 @@ static void completionTest()
   auto owned = retained.make(stringID);
   owned = nullptr;
   ZuCheck(retained.cancel(stringID));
-  ZuCheck(retained.fail(stringID));
+  ZuCheck(!retained.fail(stringID));
   ZuCheck(!retained.count());
 }
 
@@ -210,6 +211,8 @@ struct Responder : public Zjrpc::CompletionSet<Responder, Responder> {
   }
   template <typename Req, typename T>
   void cancelled(Req *, T *token, ZuCSpan) {
+    cancelOK &= !token->live() && !count();
+    cancelOK &= !token->complete(Zjrpc::Reply<OK>{Body{8}});
     if (token->cancelled()) ++cancellations;
   }
 };
@@ -221,24 +224,89 @@ static void typedCompletionTest()
   auto token = responder.make<Echo>(Zjrpc::ID{int64_t{1}});
   ZuCheck(token && token->live());
   ZuCheck(responder.cancel(token->id()));
-  ZuCheck(responder.cancel(token->id()));
-  ZuCheck(responder.cancellations == 1);
-  ZuCheck(token->cancelled() && token->live());
-  ZuCheck(token->complete(Zjrpc::Reply<OK>{Body{7}}));
-  ZuCheck(!token->live());
-  ZuCheck(responder.removed && responder.completed == 1 && responder.value == 7);
+  ZuCheck(!responder.cancel(token->id()));
+  ZuCheck(responder.cancellations == 1 && responder.cancelOK);
+  ZuCheck(token->cancelled() && !token->live() && !responder.count());
+  ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{7}}));
+  ZuCheck(!responder.completed);
   ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{9}}));
   auto next = responder.make<Echo>(Zjrpc::ID{int64_t{2}});
+  ZuCheck(bool(next));
+  ZuCheck(next->complete(Zjrpc::Reply<OK>{Body{7}}));
+  ZuCheck(responder.removed && responder.completed == 1 && responder.value == 7);
+  next = responder.make<Echo>(Zjrpc::ID{int64_t{3}});
   ZuCheck(bool(next));
   ZuCheck(responder.close(1));
   ZuCheck(!next->live());
   ZuCheck(!next->complete(Zjrpc::Reply<OK>{Body{10}}));
-  ZuCheck(responder.completed == 1);
+  ZuCheck(responder.completed == 1 && responder.cancelOK);
 }
 
 struct DeferredResponder : public ZmNHeap<DeferredResponder>, public Responder {
 friend inline ZuStringT<"Zjrpc.Test.Responder"> ZmNHeapID(DeferredResponder *);
 };
+
+struct SendHarness : public Zjrpc::Caller<SendHarness, ZuTypeList<Echo>> {
+  Zjrpc::Limits config;
+  ZmList<ZmFn<void()>> posts;
+  unsigned sent = 0;
+  bool owner = false;
+  bool accept = true;
+  bool live = true;
+  bool failed = false;
+
+  SendHarness() { config.maxQueue = 2; }
+  const Zjrpc::Limits &limits() const { return config; }
+  bool invoked() const { return owner; }
+  bool up() const { return live; }
+  template <typename L> bool ownerRun(L &&l) {
+    if (!accept) return false;
+    if (owner) l();
+    else posts.push(ZuFwd<L>(l));
+    return true;
+  }
+  template <typename M> bool send(const M &) { ++sent; return true; }
+  void fail_() { failed = true; }
+  bool turn() {
+    auto post = posts.shift();
+    if (!post) return false;
+    owner = true;
+    post->data()();
+    owner = false;
+    return true;
+  }
+};
+
+static void sendPostsTest()
+{
+  ZuTestScope(sendPosts);
+  SendHarness sender;
+  ZuCheck(sender.notify<Echo>(Body{1}));
+  ZuCheck(sender.notify<Echo>(Body{2}));
+  for (unsigned i = 0; i < 8; ++i)
+    ZuCheck(!sender.notify<Echo>(Body{3}));
+  ZuCheck(!sender.sent && sender.posts.count_() == 2);
+  sender.owner = true;
+  ZuCheck(sender.notify<Echo>(Body{4}));
+  sender.owner = false;
+  ZuCheck(sender.sent == 1 && sender.posts.count_() == 2);
+  ZuCheck(sender.turn());
+  ZuCheck(sender.notify<Echo>(Body{5}));
+  while (sender.turn()) { }
+  ZuCheck(sender.sent == 4 && !sender.failed);
+  sender.accept = false;
+  ZuCheck(!sender.notify<Echo>(Body{6}));
+  sender.accept = true;
+  ZuCheck(sender.notify<Echo>(Body{7}));
+  ZuCheck(sender.notify<Echo>(Body{8}));
+  sender.live = false;
+  while (sender.turn()) { }
+  sender.live = true;
+  ZuCheck(sender.notify<Echo>(Body{9}));
+  ZuCheck(sender.notify<Echo>(Body{10}));
+  while (sender.turn()) { }
+  ZuCheck(sender.sent == 6 && !sender.failed);
+}
 
 static void deferredCloseTest()
 {
@@ -246,7 +314,7 @@ static void deferredCloseTest()
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
     .thread(1, [](auto &thread) { thread.isolated(1); })};
   auto responder = new DeferredResponder{};
-  responder->route = {&scheduler, 1};
+  responder->route = {&scheduler, 1, 2};
   auto token = responder->make<Echo>(Zjrpc::ID{int64_t{1}});
   // Queue before starting the worker so close/destruction precedes the already
   // accepted completion deterministically, without blocking a scheduler thread.
@@ -255,6 +323,10 @@ static void deferredCloseTest()
     delete responder;
   }, 1);
   ZuCheck(token->complete(Zjrpc::Reply<OK>{Body{7}}));
+  ZuCheck(!token->live());
+  ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{8}}));
+  for (unsigned i = 0; i < 8; ++i)
+    ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{9}}));
   ZmSemaphore drained;
   scheduler.run([&drained]() { drained.post(); }, 1);
   ZuCheck(scheduler.start(), (return));
@@ -272,6 +344,7 @@ int main(int argc, char **argv)
   ZuTestCall(inboundTest);
   ZuTestCall(completionTest);
   ZuTestCall(typedCompletionTest);
+  ZuTestCall(sendPostsTest);
   ZuTestCall(deferredCloseTest);
   return 0;
 }

@@ -153,7 +153,7 @@ struct ServerApp {
     ++calls;
     if (async) {
       complete = [completion = ZuMv(completion), request]() mutable {
-	completion->complete(Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
+	return completion->complete(Zjrpc::Reply<EchoOK>{EchoResult{request.value}});
       };
       return;
     }
@@ -161,7 +161,8 @@ struct ServerApp {
   }
 
   template <typename Req, typename Completion>
-  void cancelled(Req *, Completion *, ZuCSpan) {
+  void cancelled(Req *, Completion *token, ZuCSpan) {
+    ZuCheck(token->cancelled() && !token->live());
     ++cancellations;
     cancelled_.post();
   }
@@ -180,7 +181,7 @@ struct ServerApp {
   unsigned streamCloses = 0;
   unsigned contextCalls = 0;
   bool async = false;
-  ZmFn<void()> complete;
+  ZmFn<bool()> complete;
   ZmSemaphore cancelled_;
 };
 
@@ -532,10 +533,14 @@ static void testServer()
     "cancellation write failed: ", inputWrite.error());
   app.cancelled_.wait();
   ZuCheck(app.cancellations == 1);
-  app.complete();
+  ZuCheck(!app.complete());
+  ZuCSpan ping{
+    "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"ping\"}\n"};
+  ZuCHECK(inputWrite.write(ping.data(), ping.length()) == Zi::OK,
+    "ping write failed: ", inputWrite.error());
   response = readLine(outputRead);
-  ZuCheck(response.find("\"id\":3") >= 0);
-  ZuCheck(response.find("\"value\":8") >= 0);
+  ZuCheck(response.find("\"id\":4") >= 0);
+  ZuCheck(response.find("\"id\":3") < 0);
 
   inputWrite.close();
   ZuCheck(server.stop());

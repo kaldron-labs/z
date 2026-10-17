@@ -13,6 +13,10 @@
 #include <zlib/ZjrpcLib.hh>
 #endif
 
+#include <zlib/ZmPlatform.hh>
+
+#include <zlib/ZiAssert.hh>
+
 #include <zlib/ZjrpcDispatch.hh>
 #include <zlib/ZjrpcStdio.hh>
 #include <zlib/ZjrpcPending.hh>
@@ -150,12 +154,13 @@ public:
     if (!hub.mx() || !config.endpoint() || !Common::init(impl, config.limits()))
       return false;
     m_mx = hub.mx();
-    m_owner = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
+    m_owner = hub.rxThread() ? m_mx->sid(hub.rxThread()) : m_mx->rxThread();
     m_endpoint = config.endpoint();
     this->histSize(config.histSize());
     uint64_t retained = uint64_t(this->limits().maxSSEEventBytes) + Default::SSEFrameOverhead;
     if (retained < this->limits().maxJSONBytes) retained = this->limits().maxJSONBytes;
-    config.retainedBodyMax(this->limits().maxJSONBytes).retainedMessageMax(retained);
+    config.bodyMax(this->limits().maxJSONBytes)
+      .retainedBodyMax(this->limits().maxJSONBytes).retainedMessageMax(retained);
     if (!HTTP::init(hub, ZuMv(config))) {
       HTTP::final();
       m_mx = nullptr;
@@ -193,7 +198,9 @@ public:
   }
   ZuCSpan endpoint() const { return m_endpoint; }
   bool up() const { return m_up.load_(); }
-  CompletionRoute completionRoute() const { return {m_mx, m_owner}; }
+  CompletionRoute completionRoute() const {
+    return {m_mx, m_owner, this->limits().maxQueue};
+  }
   bool invoked() const { return m_mx && m_mx->invoked(m_owner); }
   template <typename L>
   bool ownerRun(L &&l) {
@@ -246,40 +253,55 @@ private:
   public:
     Route(HTTPServer *server, Link *link, HTTPHeaders<Headers> headers) :
       Context{ZuMv(headers), {}}, m_server{server}, m_route{link, Zhttp::Method::POST} { }
-    ~Route() { if (m_hook) m_route.channel()->responseCancel({}); }
     WorkControl &control() { return m_work; }
     void open_() {
+      ZiAssert(m_server->invoked(), "Zjrpc", (), "HTTP route outside Rx", return);
       this->peer = httpPeer(m_server->impl(), this->headers, 0);
       m_hook = true;
-      m_route.channel()->responseCancel(Zhttp::StreamCancelFn{this, [](Route *self) {
-	self->m_hook = false;
-	self->m_route.reset();
-	if (!self->peer) self->m_work.close();
-      }});
+      Zhttp::ChannelRef channel{m_route.channel()};
+      channel->txRun([channel = ZuMv(channel), self = ZmRef{this}]() mutable {
+	channel->responseCancel(Zhttp::StreamCancelFn::fn(ZuMv(self), [](Route *self_) {
+	  self_->m_server->HTTP::rxRun([self = ZmRef{self_}]() { self->cancelled_(); });
+	}));
+      });
     }
     bool send_(Dispatch::Message message, int policy) {
+      ZiAssert(m_server->invoked(), "Zjrpc", (), "HTTP reply outside Rx", return false);
       if (!m_route) return true;
       if (policy == RoutePolicy::Abort) { abort_(); return true; }
       ZmRef<Response> response = new Response{};
-      if (!response->data().init(m_server->impl(), ZuMv(message), policy, m_server->limits())) {
-	abort_();
-	return true;
-      }
-      m_route.channel()->responseCancel({});
-      m_hook = false;
+      response->data().init(m_server->impl(), ZuMv(message), policy, m_server->limits());
+      clearHook_();
       m_route.send(ZuMv(response));
       m_route.reset();
       return true;
     }
     void abort_() {
+      ZiAssert(m_server->invoked(), "Zjrpc", (), "HTTP abort outside Rx", return);
       if (!m_route) return;
-      if (m_hook) m_route.channel()->responseCancel({});
-      m_hook = false;
+      clearHook_();
       m_route.close();
       m_route.reset();
     }
   private:
+    void clearHook_() {
+      if (!m_hook) return;
+      m_hook = false;
+      Zhttp::ChannelRef channel{m_route.channel()};
+      channel->txRun([channel = ZuMv(channel)]() mutable {
+	channel->responseCancel({});
+      });
+    }
+    void cancelled_() {
+      ZiAssert(m_server->invoked(), "Zjrpc", (), "HTTP cancellation outside Rx", return);
+      if (!m_hook) return;
+      m_hook = false;
+      m_route.reset();
+      if (!this->peer) m_work.close();
+    }
+
     HTTPServer *m_server;
+    alignas(Zm::CacheLineSize)
     WorkControl m_work;
     Zhttp::Route<Response> m_route;
     bool m_hook = false;
@@ -419,7 +441,9 @@ public:
   WS &ws() { return m_ws.template p<WS>(); }
   const WS &ws() const { return m_ws.template p<WS>(); }
   bool wsAccept() const { return !m_stopping.load_(); }
-  CompletionRoute completionRoute() const { return {m_mx, m_owner}; }
+  CompletionRoute completionRoute() const {
+    return {m_mx, m_owner, this->limits().maxQueue};
+  }
   bool invoked() const { return m_mx && m_mx->invoked(m_owner); }
 
   template <typename Req, typename Call>

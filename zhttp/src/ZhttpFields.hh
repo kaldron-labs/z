@@ -281,6 +281,7 @@ class Channel;
 struct ParserOps {
   void (*init)(void *, void *);
   void (*bodyMax)(void *, uint64_t);
+  void (*retainedBodyMax)(void *, uint64_t);
   void (*destroy)(void *);
   bool (*enable1xx)(const void *);
   bool (*operation)(void *, Method::T, Target &);

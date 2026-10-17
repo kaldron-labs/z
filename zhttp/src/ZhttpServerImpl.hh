@@ -41,8 +41,8 @@ namespace Zhttp {
 
 struct StreamState {
   enum {
-    Initial, InitialWriting, InitialOpen, InitialTerminal,
-    Writing, Open, Terminal
+    Initial, InitialWriting, InitialOpen, InitialFinal, InitialTerminal,
+    Writing, Open, Final, Terminal
   };
 };
 
@@ -93,6 +93,8 @@ inline bool streamEnter(int8_t &state, bool &beginHeaders)
     case StreamState::Writing:
       ZiAssert(false, "Zhttp", (), "reentrant stream emission", return false);
       return false;
+    case StreamState::InitialFinal:
+    case StreamState::Final:
     case StreamState::InitialTerminal:
     case StreamState::Terminal:
       return false;
@@ -476,7 +478,7 @@ public:
   }
   bool h2Closed(uint32_t id) const { return Wire_::streamClosed(id); }
   Error::T h2OpenError(uint32_t id) {
-    if (h2Closed(id)) return Error::StreamClosed;
+    if (Wire_::recentStreamClosed(id)) return Error::StreamClosed;
     if (Wire_::peerStreamIdle(id)) {
       Wire_::refusePeerStream(id);
       return Error::RefusedStream;
@@ -603,6 +605,9 @@ public:
   // HPACK encoding is Tx-owned; construct headers with transmit_() on Tx.
   template <typename Builder>
   auto transmit_(Builder &builder) { return txStream_(builder.hdrPlan()); }
+  bool queueFinal_(RecordRef<Native_::FinalCmd> command) {
+    return m_native && m_native->queueFinal_(m_streamID, ZuMv(command));
+  }
   bool active() const { return m_native && m_streamID; }
   void finish() { }
   void disconnect() {
@@ -1031,7 +1036,7 @@ public:
   }
   bool h2Closed(uint32_t id) const { return Wire::streamClosed(id); }
   H2::Error::T h2OpenError(uint32_t id) {
-    if (h2Closed(id)) return H2::Error::StreamClosed;
+    if (Wire::recentStreamClosed(id)) return H2::Error::StreamClosed;
     if (Wire::peerStreamIdle(id)) {
       Wire::refusePeerStream(id);
       return H2::Error::RefusedStream;
@@ -1256,6 +1261,44 @@ struct ServerStream :
   }
   H3Cxn &h3Cxn() const { return this->link()->h3; }
   void quicReset(uint64_t error) { Base::reset(error); }
+  bool queueFinal_(RecordRef<Native_::FinalCmd> command) {
+    ZmAssert(this->txInvoked_());
+    if (!command || finalQueued || this->txCompleted() || this->resetSent() ||
+	this->txQueueCount() >= this->txQueueMax()) return false;
+    finalQueued = true;
+    final = ZuMv(command);
+    if (!this->txBufferedBytes()) postFinal_();
+    return true;
+  }
+  using Base::commitTxRange;
+  bool commitTxRange(Zquic::TxRange &range,
+      const Zquic::TxRange &selected, uint32_t length) {
+    if (!Base::commitTxRange(range, selected, length)) return false;
+    if (final && !this->txBufferedBytes()) postFinal_();
+    return true;
+  }
+  void cancelFinal_() {
+    ZmAssert(this->txInvoked_());
+    if (auto command = ZuMv(final)) command->cancel(command->ctx);
+  }
+  void txComplete_(bool ok) {
+    if (!ok) cancelFinal_();
+  }
+  void postFinal_() {
+    if (finalPosted) return;
+    finalPosted = true;
+    // One queued stream handle owns the pending command slot through its Tx
+    // continuation. Producer callbacks keep raw, invalidatable native links.
+    this->link()->app()->txRun([stream = ZmRef(this)]() mutable {
+      auto command = ZuMv(stream->final);
+      if (!command) return;
+      if (stream->txCompleted() || stream->resetSent())
+	command->cancel(command->ctx);
+      else
+	command->emit(command->ctx);
+    });
+  }
+
 
 public:
 
@@ -1264,6 +1307,11 @@ public:
   bool		localEnd = false;
   bool		remoteEnd = false;
   bool		closing = false;
+
+  // Tx thread exclusive
+  RecordRef<Native_::FinalCmd> final;
+  bool finalQueued = false;
+  bool finalPosted = false;
 
 };
 
@@ -1554,6 +1602,9 @@ public:
       &m_native->h3.params);
     return m_stream->txStream_();
   }
+  bool queueFinal_(RecordRef<Native_::FinalCmd> command) {
+    return m_stream && m_stream->queueFinal_(ZuMv(command));
+  }
   bool active() const { return m_native && m_stream; }
   void finish() {
     if (m_native && m_stream) m_native->finish(m_stream);
@@ -1584,6 +1635,7 @@ public:
 
 private:
   void disconnectedTx_() {
+    if (m_stream) m_stream->cancelFinal_();
     m_native = nullptr;
     m_stream = nullptr;
   }
@@ -1681,6 +1733,7 @@ struct BoundReqParser : public Zhttp::Parser {
     binding.ops->init(binding.ctx, owner.context());
   }
   void bodyMax(uint64_t max) { binding.ops->bodyMax(binding.ctx, max); }
+  void retainedBodyMax(uint64_t max) { binding.ops->retainedBodyMax(binding.ctx, max); }
   const CatalogView &catalog() const { return *binding.catalog; }
   bool operation(Method::T method, Target &target) {
     return binding.operation(method, target);
@@ -1778,7 +1831,8 @@ private:
     void bind(ServerImpl *server_, Link_ *link_) {
       server = server_;
       link = link_;
-      Base::bodyMax(server->config().retainedBodyMax());
+      Base::bodyMax(server->config().bodyMax());
+      Base::retainedBodyMax(server->config().retainedBodyMax());
       if constexpr (Profile::HTTPVersion == Version::H2)
 	Base::extendedConnect(server->config().tlsConfig().extendedConnect());
       appParser.construct(*server->owner(), &link->channel());
@@ -1791,7 +1845,8 @@ private:
 
     void begin() {
       appParser.init(*server->impl(), &link->channel());
-      bodyMax_(appParser, server->config().retainedBodyMax(), 0);
+      bodyMax_(appParser, server->config().bodyMax(), 0);
+      appParser.retainedBodyMax(server->config().retainedBodyMax());
       active = true;
       notified = false;
     }
@@ -2002,6 +2057,13 @@ private:
       record.emit = [](void *ctx, BodyWrite write) {
 	return static_cast<BodyEmit *>(ctx)->emit_(write);
       };
+      record.trailers = [](void *ctx,
+	  const CatalogView &catalog, FieldProvider &provider) {
+	auto self = static_cast<BodyEmit *>(ctx);
+	if (!Server_::streamTxThread(self->txThread) || !self->driver)
+	  return false;
+	return self->driver->trailers_(catalog, provider);
+      };
     }
 
     ~BodyEmit() {
@@ -2042,7 +2104,11 @@ private:
 
     StreamBody(ServerImpl *server_, Link_ *link_, ResBuilder *appResponse_) :
       server{server_}, link{link_}, appResponse{appResponse_},
-      response{server_, appResponse_->data(), true} { }
+      response{server_, appResponse_->data(), true} {
+      final.bind(this);
+      final.emit = [](void *ctx) { static_cast<Self *>(ctx)->final_(); };
+      final.cancel = [](void *ctx) { static_cast<Self *>(ctx)->stop_(); };
+    }
 
     ~StreamBody() {
       ZiAssert(!emit && !task, "Zhttp", (),
@@ -2074,6 +2140,10 @@ private:
 	  return handled;
 	case StreamState::InitialOpen:
 	  state = StreamState::Open;
+	  return handled;
+	case StreamState::InitialFinal:
+	  state = StreamState::Final;
+	  appResponse->data().close();
 	  return handled;
 	case StreamState::InitialTerminal:
 	  appResponse->data().close();
@@ -2125,10 +2195,60 @@ private:
       }
     }
 
+    bool trailers_(const CatalogView &catalog, FieldProvider &provider) {
+      if constexpr (Profile::HTTPVersion == Version::H1) return false;
+      else {
+	ZuRef<Self> self{static_cast<Self *>(this)};
+	if (state != StreamState::InitialOpen && state != StreamState::Open)
+	  return false;
+	unsigned limit;
+	if constexpr (Profile::HTTPVersion == Version::H2)
+	  limit = server->config().tlsConfig().maxHeaderListSize();
+	else
+	  limit = H3::Params{}.maxHeaderListSize();
+	if (!finalFields.render(limit, catalog, provider)) {
+	  failed_(server->stats().responseBuildFailures);
+	  return false;
+	}
+	closeProducer_(true);
+	if (state != StreamState::InitialFinal && state != StreamState::Final)
+	  return false;
+	if (link->queueFinal_(&final)) return true;
+	failed_(server->stats().transportFailures);
+	return false;
+      }
+    }
+
+    void final_() {
+      if constexpr (Profile::HTTPVersion != Version::H1) {
+	ZuRef<Self> self{static_cast<Self *>(this)};
+	if (state != StreamState::InitialFinal && state != StreamState::Final)
+	  return;
+	closeProducer_();
+	auto tx = [this]() {
+	  if constexpr (Profile::HTTPVersion == Version::H2)
+	    return link->txStream_();
+	  else
+	    return link->transmit_(response);
+	}();
+	bool ok = response.trailers(tx, finalFields);
+	finishTask_();
+	if (ok) {
+	  link->finish();
+	  link->responseDone_(appResponse, true);
+	} else {
+	  ++server->stats().transportFailures;
+	  link->responseAbort_(appResponse);
+	}
+      }
+    }
+
     void stop_() {
       ZuRef<Self> self{static_cast<Self *>(this)};
       if (!closeProducer_()) return;
       if (task) finishTask_();
+      link = nullptr;
+      if (state == StreamState::Terminal) appResponse = nullptr;
     }
 
     void stopTask_() {
@@ -2158,19 +2278,29 @@ private:
       link->responseAbort_(appResponse);
     }
 
-    bool closeProducer_() {
+    bool closeProducer_(bool terminal = false) {
       bool deferClose;
       switch (state) {
 	case StreamState::Initial:
 	case StreamState::InitialWriting:
 	case StreamState::InitialOpen:
-	  state = StreamState::InitialTerminal;
+	  state = terminal ? StreamState::InitialFinal : StreamState::InitialTerminal;
 	  deferClose = true;
 	  break;
 	case StreamState::Writing:
 	case StreamState::Open:
-	  state = StreamState::Terminal;
+	  state = terminal ? StreamState::Final : StreamState::Terminal;
 	  deferClose = false;
+	  break;
+	case StreamState::InitialFinal:
+	  if (terminal) return false;
+	  state = StreamState::InitialTerminal;
+	  deferClose = true;
+	  break;
+	case StreamState::Final:
+	  if (terminal) return false;
+	  state = StreamState::Terminal;
+	  deferClose = true; // close() ran when the terminal command was admitted
 	  break;
 	case StreamState::InitialTerminal:
 	case StreamState::Terminal:
@@ -2181,9 +2311,9 @@ private:
 	  deferClose = false;
 	  break;
       }
-      emit->close_(static_cast<Self *>(this));
+      if (emit) emit->close_(static_cast<Self *>(this));
       emit = nullptr;
-      link->responseCancel_({});
+      if (!terminal) link->responseCancel_({});
       if (!deferClose) appResponse->data().close();
       return true;
     }
@@ -2200,6 +2330,8 @@ private:
     ResBuilder			*appResponse;
     Tx				response;
     ZmRef<Emit>			emit;
+    Native_::FinalCmd		final;
+    Native_::FinalFields		finalFields;
     StreamTaskQ::Node	*task = nullptr;
     int8_t			state = StreamState::Initial;
   };
@@ -2259,6 +2391,10 @@ private:
     void responseCancel(StreamCancelFn fn) {
       auto server = impl()->app()->server;
       server->assertTx_();
+      if (fn && !impl()->active()) {
+	fn();
+	return;
+      }
       responseCancel_(ZuMv(fn));
     }
 

@@ -18,6 +18,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmObject.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSpinLock.hh>
@@ -69,11 +70,16 @@ public:
 	!lineLengths_(body, id, retry)) return fail_();
     uint64_t framed = frameBytes_(body, id, retry);
     if (framed > UINT_MAX) return fail_();
+    if (++m_sendPosts > m_limits.maxQueue) {
+      --m_sendPosts;
+      return false;
+    }
     {
       ZmGuard guard{m_admit};
-      if (!m_open || m_terminal) return false;
+      if (!m_open || m_terminal) { --m_sendPosts; return false; }
       if (m_queued >= m_limits.maxQueue ||
 	  framed > m_limits.maxQueueBytes - m_bytes) {
+	--m_sendPosts;
 	failLocked_();
 	return false;
       }
@@ -86,6 +92,7 @@ public:
       ZmGuard guard{m_admit};
       --m_queued;
       m_bytes -= framed;
+      --m_sendPosts;
       failLocked_();
       return false;
     }
@@ -95,10 +102,12 @@ public:
       if (!m_open || m_terminal) {
 	--m_queued;
 	m_bytes -= framed;
+	--m_sendPosts;
 	return false;
       }
       if (terminal) m_terminal = true;
       schedule_([this, record = ZuMv(record)]() mutable {
+	--m_sendPosts;
 	enqueue_(ZuMv(record));
       });
     }
@@ -268,7 +277,10 @@ private:
   Limits m_limits;
   ZmAtomic<unsigned> *m_posts = nullptr;
   ZmSpinLock m_admit;
+  // Tx queue/producer state; send admission is shared with posting threads.
+  alignas(Zm::CacheLineSize)
   SSEQueue m_queue; // Tx owner
+  ZmAtomic<unsigned> m_sendPosts = 0;
   ResumeFn m_resume; // Tx owner
   void *m_driver = nullptr;
   void (*m_invalidate)(void *) = nullptr;
