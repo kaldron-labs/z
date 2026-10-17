@@ -101,7 +101,7 @@ Subsidiary allocations within those blocks are:
     - mitigation of C++ name-mangling bloat with heavily templated code
     - intentional design preference for small focused namespaces
     - `Zxx` namespaces exist where useful in context
-      (`ZuFmt`, `Ztel`, `Ztls`, ...)
+      (`ZuFmt`, `Ztc`, `Ztls`, ...)
     - `Zxx_` namespaces are used for internals
       (`ZtWindow_`, `Zdb_`, ...)
 
@@ -113,7 +113,7 @@ Subsidiary allocations within those blocks are:
     ```
     - this is needed in 3 cases:
         - the Base has no constructor (it's a pure data structure)
-        - the Base is a template typename (i.e. case 1 could apply)
+        - the Base is a template typename (i.e. the above could apply)
         - Derived needs to be constructible/convertible from an instance of Base
 
 3. Why so much use of run() / invoke()?
@@ -148,6 +148,8 @@ Subsidiary allocations within those blocks are:
 
 ## DLLs / shared objects
 
+This is not a complete list.
+
 - Zu	- "Universal" - foundation (meta-programming, traits, etc.)
 - Zm	- Multithreading - threads, locks, scheduler, concurrent containers
 - Zt	- Vocabulary Types - dates/times, arrays, strings, formatting, etc.
@@ -157,6 +159,7 @@ Subsidiary allocations within those blocks are:
 - Zv	- Service Frameworks - I/O framework, option parsing, config files
 - Zdb	- Database - in-memory DB, using Zi for HA clustering/replication
 - ZdbSL - persistent SQLite backing store for Zdb
+- ZdbPQ - persistent Postgres backing store for Zdb
 
 ## building libbfd shared object (Linux)
 
