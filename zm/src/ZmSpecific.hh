@@ -129,7 +129,12 @@ struct ZmSpecific_Allocator {
 	  &key, [](void *o) { delete static_cast<O *>(o); }))
       ZmSpecific_allocFail();
   }
-  ~ZmSpecific_Allocator() { pthread_key_delete(key); }
+  ~ZmSpecific_Allocator() {
+    // Deleting a POSIX key does not destroy its current thread's value.
+    // ZmSpecific_ has already retired the object; release its TLS record too.
+    if (O *o = get()) { set(nullptr); delete o; }
+    pthread_key_delete(key);
+  }
 
   bool set(const O *o) const {
     return pthread_setspecific(key, static_cast<const void *>(o));

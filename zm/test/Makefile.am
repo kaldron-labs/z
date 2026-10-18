@@ -27,11 +27,13 @@ TESTPROGS = \
 	ZmQueueTest ZmRWLockTest ZmRingFnTest \
 	ZmStackTest ZmTimeTest ZmAssertTest ZmPolyHashTest ZmPolyCacheTest
 TESTPROGS += ZmWatchTest
+TESTPROGS += ZmThreadExitTest
 TESTPROGS += ZmHeapTest ZmNHeapTest
 if MINGW
 bin_PROGRAMS = ZmBTTest
 noinst_PROGRAMS = ${TESTPROGS}
 else
+TESTPROGS += ZmSpecificTest
 noinst_PROGRAMS = ${TESTPROGS} ZmBTTest
 endif
 .PHONY: test
@@ -41,6 +43,8 @@ test: $(noinst_PROGRAMS)
 ZmBTTest_SOURCES = ZmBTTest.cc
 ZmBTTest_LDADD = libZmBTTest.la ${LDADD}
 ZmFnTest_SOURCES = ZmFnTest.cc
+ZmThreadExitTest_SOURCES = ZmThreadExitTest.cc
+ZmSpecificTest_SOURCES = ZmSpecificTest.cc
 ZmCacheTest_SOURCES = ZmCacheTest.cc
 ZmCodecTest_SOURCES = ZmCodecTest.cc
 ZmConditionTest_SOURCES = ZmConditionTest.cc

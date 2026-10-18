@@ -7,8 +7,8 @@ These regressions ensure empty scratch storage does not leave the cache locked.
 Build the library before the test programs:
 
 ```sh
-make -C zm/src -j4
-make -C zm/test -j4
+make -C zm/src -j8
+make -C zm/test -j8
 make -C zm/test test
 ```
 
@@ -34,3 +34,18 @@ loaded alongside `libZm` in the test process.
 
 Use `./libtool exec` to run test binaries under debugging or memory-checking
 tools. Windows/msys2-mingw uses the same test sources and cases.
+
+`ZmThreadExitTest` leaves a worker to library-level singleton cleanup, after
+application globals have retired. It verifies startup through TAP; run it with
+`./libtool exec valgrind --leak-check=full ./zm/test/ZmThreadExitTest` to verify
+that the thread's exit destructors release their TLS records before key cleanup.
+
+`ZmSpecificTest` checks POSIX TLS-record destruction when a key retires on its
+current thread and when a worker exits before key retirement. It verifies each
+record is destroyed once, including a key used by both threads. This test runs
+on POSIX platforms only.
+
+`ZmPolyHashTest` verifies both owner-named derive nodes and direct
+`ZmPolyHash` nodes across all four indexes, including secondary-index removal.
+The node resolver aliases the native node instead of adding another layer of
+inherited constructor overloads, avoiding GCC's recursive overload expansion.
