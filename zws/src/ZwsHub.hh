@@ -304,6 +304,7 @@ public:
   using HdrCatalog = Request::HdrCatalog;
   using Zhttp::ReqBuilder::header;
   using Zhttp::ReqBuilder::protocol;
+  using State::close;
   using State::protocol;
   ClientLink(Hub *hub, const URI &uri, ZuBSpan protocol = {},
       ZuBSpan authorization = {}, ZuBSpan cookie = {}, ZuBSpan origin = {}) :
