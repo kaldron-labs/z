@@ -14,7 +14,9 @@
 
 using namespace ZuTestUtil;
 
-static ZtAPI int macroEcho(int v)
+ZtExtern int macroDecl(int);
+
+static int macroEcho(int v)
 {
   return v;
 }
@@ -38,6 +40,7 @@ void testLibMacrosCompile()
 {
   ZuTestScope(testLibMacrosCompile);
 
+  ZuCheck((ZuIsSame<decltype(&macroDecl), int (*)(int)>{}));
   ZuCheck(macroEcho(7) == 7);
 }
 

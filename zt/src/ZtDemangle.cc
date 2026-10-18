@@ -29,6 +29,12 @@ static void quote(S &s, ZuBox<uint8_t> c) {
     s << char(c);
 }
 
+// GCC loses the dynamically sized scratch destination bounds through append.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 static void transform(void *, ZuSpan<char> &output)
 {
   // ZuString compile-time strings
@@ -105,6 +111,11 @@ static void transform(void *, ZuSpan<char> &output)
       }
     });
 }
+
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 
 ZtExtern void ZtDemangle::init()
 {
