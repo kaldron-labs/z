@@ -8,6 +8,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <iostream>
 #include <signal.h>
 #include <sys/prctl.h>
 #include <sys/wait.h>
@@ -16,19 +17,6 @@
 #include <zlib/ZdbusAddress.hh>
 
 #include "ZdbusTestTool.hh"
-
-static bool writeAll(int fd, ZuCSpan text)
-{
-  unsigned offset = 0;
-  unsigned length = text.length();
-  while (offset < length) {
-    int n = int(::write(fd, text.data() + offset, length - offset));
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) return false;
-    offset += unsigned(n);
-  }
-  return true;
-}
 
 int main()
 {
@@ -57,8 +45,10 @@ int main()
   ::close(output[0]);
   ZdbusAddress addr;
   if (ready) ready = ZdbusAddress::parse(addr, line);
-  if (ready) ready = writeAll(STDOUT_FILENO, line) &&
-    writeAll(STDOUT_FILENO, "\n");
+  if (ready) {
+    std::cout.write(line.data(), line.length()) << '\n' << std::flush;
+    ready = bool(std::cout);
+  }
   if (ready) {
     char c;
     while (::read(STDIN_FILENO, &c, 1) < 0 && errno == EINTR) { }

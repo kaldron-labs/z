@@ -6,9 +6,8 @@
 
 // libdbus-1 reference service, caller, and signal subscriber.
 
-#include <errno.h>
+#include <iostream>
 #include <string.h>
-#include <unistd.h>
 
 #include <dbus/dbus.h>
 
@@ -24,18 +23,11 @@ constexpr const char *ErrorName = "org.example.ZdbusPeer.Rejected";
 enum { ReplyTimeoutMs = 5000, MessageBudget = 64 };
 struct ModeIDs { using Keys = ZuStringTL<"service", "caller", "subscriber">; };
 
-static bool writeAll(const char *text, unsigned length)
+static bool ready()
 {
-  for (unsigned offset = 0; offset < length;) {
-    int n = int(::write(STDOUT_FILENO, text + offset, length - offset));
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) return false;
-    offset += unsigned(n);
-  }
-  return true;
+  std::cout << "READY\n" << std::flush;
+  return bool(std::cout);
 }
-
-static bool ready() { return writeAll("READY\n", 6); }
 
 static DBusConnection *connect(const char *address)
 {

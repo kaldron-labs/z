@@ -120,6 +120,7 @@ private:
   void txStop_(CxnStopFn);
   void txStopped_();
   void txDrain_();
+  void txDrained_();
   void rxClearSubs_();
   void rxSubscribe_(ZuPtr<Sub>, SubDoneFn);
   void rxUnsubscribe_(ZuPtr<SubDrop>, CxnSendFn);

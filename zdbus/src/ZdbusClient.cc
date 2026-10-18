@@ -372,6 +372,8 @@ void Client::txSendDone_(uint32_t serial, bool ok)
 
 void Client::txTimeout_(uint32_t serial)
 {
+  if (m_phase == ClientPhase::Stopping ||
+      m_phase == ClientPhase::Terminated) return;
   txCancel_(serial, ClientError::Timeout);
 }
 
@@ -462,6 +464,14 @@ void Client::txDrain_()
     m_sched->run([this] { txDrain_(); }, m_txSid);
     return;
   }
+  // A timer dispatched before del() may still be queued behind this drain.
+  m_sched->run([this] { txDrained_(); }, m_txSid);
+}
+
+void Client::txDrained_()
+{
+  ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
+    "timer drain completion off Tx", return);
   m_phase = ClientPhase::Terminated;
   CxnStopQueue waits{ZuMv(m_stopWaits)};
   dispatchStops(m_sched, m_txSid, m_params.cxn.msgs, ZuMv(waits));
