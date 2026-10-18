@@ -157,15 +157,13 @@ private:
   using MatchString = ZuIfT<IsString<U>{}, R>;
 
   // from string literal with same char
-  template <
-    typename U,
-    typename V = ZuStrip<Char>,
-    unsigned N = sizeof(U) / sizeof(V)>
-  struct IsStrLiteral : public ZuBool<
-    bool(ZuIsSame<U, V [N]>{}) ||
-    bool(ZuIsSame<U, V (&)[N]>{}) ||
-    bool(ZuIsSame<U, const V [N]>{}) ||
-    bool(ZuIsSame<U, const V (&)[N]>{})> { };
+  template <typename U, typename V = ZuStrip<Char>>
+  struct IsStrLiteral : public ZuFalse { };
+  template <typename U, typename V, unsigned N>
+  struct IsStrLiteral<U[N], V> : public ZuBool<
+    bool(ZuIsSame<U, V>{}) || bool(ZuIsSame<U, const V>{})> { };
+  template <typename U, typename V, unsigned N>
+  struct IsStrLiteral<U (&)[N], V> : public IsStrLiteral<U[N], V> { };
   template <typename U, typename R = void>
   using MatchStrLiteral = ZuIfT<IsStrLiteral<U>{}, R>;
 
