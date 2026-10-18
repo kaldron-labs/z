@@ -12,6 +12,7 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmAtomic.hh>
 
@@ -47,6 +48,16 @@ ZmListDerive(ZList, ZmRef<Z>, ZmListCmp<ZCmp>);
 ZmHashKVDerive(ZHash, int, ZmRef<Z>, (ZmHash_Defaults));
 
 ZmListDerive(ZList2, ZuCArray<20>, ZmListNode<ZuCArray<20>>);
+
+using ShadowList = ZmList<unsigned, ZmListShadow<>>;
+
+struct ShadowNode : ZmNHeap<ShadowNode>, ShadowList::Node {
+  unsigned *destroyed;
+
+friend inline ZuStringT<"ZmTest.ShadowNode"> ZmNHeapID(ShadowNode *);
+  ShadowNode(unsigned *destroyed_) : ShadowList::Node{0}, destroyed{destroyed_} { }
+  ~ShadowNode() { ++*destroyed; }
+};
 
 using ZListDefault = ZmList<ZmRef<Z>, ZList_NTP>;
 using ZListExplicit = ZmList<ZmRef<Z>, ZList_NTP, ZList_Node, ZList>;
@@ -88,6 +99,27 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  {
+    unsigned destroyed = 0;
+    {
+      ShadowList list;
+      auto first = new ShadowNode{&destroyed};
+      auto second = new ShadowNode{&destroyed};
+      list.pushNode(first);
+      list.pushNode(second);
+      delete first;
+      delete second;
+      // The owner has retired its nodes. Reset must not read their storage.
+      list.clean();
+      ZuCHECK(list.empty_() && !list.count_() && destroyed == 2,
+	"shadow clean resets bookkeeping after node retirement");
+      auto third = new ShadowNode{&destroyed};
+      list.pushNode(third);
+      delete third;
+      // Destruction has the same borrowing contract as explicit clean.
+    }
+    ZuCHECK(destroyed == 3, "shadow destruction does not revisit retired nodes");
+  }
   ZmRef<X> x = new X;
 
   {
