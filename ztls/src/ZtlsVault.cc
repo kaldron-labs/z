@@ -413,6 +413,11 @@ public:
   Indirect_(ZmRef<Ztls_::VaultStore> store, const Zi::Path &dir) :
       m_store{ZuMv(store)}, m_dir{dir} { }
 
+// GCC loses the dynamic path storage bounds through the builtin flag.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
   VaultResult init(const VaultConfig &cf) override {
     MD<SHA256> hash;
     hash.update(cf.account);
@@ -425,6 +430,10 @@ public:
       Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
     return m_store->init(cf);
   }
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
+
   void final() override { m_store->final(); m_path.null(); }
 
   VaultResult load(ZuCSpan key, VaultLoadFn fn) override {

@@ -30,6 +30,27 @@ using namespace ZuTestUtil;
 
 namespace VaultInterop_ {
 
+// GCC loses the dynamic path storage bounds through the builtin flag.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+static Zi::Path agePath(const Zi::Path &dir, ZuCSpan account)
+{
+  Ztls::MD<Ztls::SHA256> hash;
+  hash.update(account);
+  uint8_t digest[Ztls::MD<Ztls::SHA256>::Size];
+  hash.finish(digest);
+  char hex[ZuHex::enclen(sizeof(digest))];
+  ZuHex::encode(hex, digest);
+  ZuClear(digest, sizeof(digest));
+  return ZiFile::append(dir,
+    Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
+}
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
+
 static void native()
 {
   ZuTestScopeRT(native);
@@ -115,7 +136,7 @@ static void native()
   ::close(unlock[0]);
   ::close(daemonOut[1]);
   ZuGuard closeDaemonOut{[&daemonOut]() { ::close(daemonOut[0]); }};
-  ::write(unlock[1], "\n", 1);
+  ZuCheckRT(::write(unlock[1], "\n", 1) == 1);
   ::close(unlock[1]);
   ZuCheckRT(daemon > 0);
   ZuGuard stopDaemon{[daemon]() {
@@ -161,16 +182,9 @@ static void native()
   ZuCheckRT(!indirect.save(scope, "private", second).is<ZeException>());
   indirect.close();
   indirect.final();
-  Ztls::MD<Ztls::SHA256> hash;
-  hash.update(cf.account);
-  uint8_t digest[Ztls::MD<Ztls::SHA256>::Size];
-  hash.finish(digest);
-  char ageName[ZuHex::enclen(sizeof(digest))];
-  ZuHex::encode(ageName, digest);
-  ZuClear(digest, sizeof(digest));
-  Zi::Path age = ZiFile::append(
-    ZiFile::append(ZiFile::append(home, ".ztls-vault-interop-test"),
-      "vault"), Zi::Path{} << ZuCSpan{ageName, sizeof(ageName)} << ".age");
+  Zi::Path age = agePath(
+    ZiFile::append(ZiFile::append(home, ".ztls-vault-interop-test"), "vault"),
+    cf.account);
   ZuCheckRT(ZiStat{age}.exists());
 
   cf.store = Ztls::VaultStore::Auto;
