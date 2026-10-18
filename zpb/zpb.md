@@ -51,12 +51,22 @@ headroom and tailroom; generic streams receive bytes and Tx streams flush
 pooled buffers directly or split oversized messages. Call `verify` before
 `load` or `handler` for untrusted input: it checks wire structure, native narrowing, required fields, and nesting depth.
 It does not validate application value domains or reject native null sentinels.
-`load` and `handler` are trusted materialization paths; they
-still parse the wire but do not repeat value-domain checks or provide a
-recoverable partial-load error result. Unknown fields, including
-nested groups, are skipped without retention; group end tags must match their
-opening field numbers. The support matrix below defines the implemented
-protobuf language subset and its exclusions.
+`load` and `handler` are trusted materialization paths. They do not repeat
+value-domain checks or return a partial-load error result. Wire parsing failures
+stop the current scan without throwing or aborting. Constructor arguments not
+read use their field defaults; existing objects retain changes made before
+failure, and missing-pointer `Reset` processing is skipped after an incomplete
+scan. An invalid size prefix supplies an empty payload to the handler.
+
+`verify` is the nonthrowing input-validity result: callers must check it before
+materializing untrusted input. `Zgrpc` checks it before every typed construction;
+a false result rejects the message and terminates the affected RPC stream.
+Required-field, native narrowing, and nesting-limit checks remain in this
+verification pass. Materialization fallbacks do not make corrupt input valid.
+
+Unknown fields, including nested groups, are skipped without retention; group
+end tags must match their opening field numbers. The support matrix below
+defines the implemented protobuf language subset and its exclusions.
 
 `Builder(storage, limit)` bounds the complete output byte count. Reaching the
 limit exactly succeeds; exceeding it sets a sticky `Error::Limit` and `save`
