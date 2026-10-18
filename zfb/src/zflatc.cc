@@ -1090,15 +1090,12 @@ void Schema::resolve()
     unsigned natural = 1, forced = o.align;
     for (const auto &f : o.fields) {
       unsigned width, align;
-      int code = f.type.code;
-      if (f.type.target >= 0) {
+      if (f.type.target >= 0 && objects[f.type.target].kind == Decl::Struct) {
 	const auto &target = objects[f.type.target];
-	if (target.kind == Decl::Struct) {
-	  width = target.size;
-	  align = target.wireAlign;
-	} else code = target.code;
-      }
-      if (code >= 0) {
+	width = target.size;
+	align = target.wireAlign;
+      } else {
+	int code = f.type.target >= 0 ? objects[f.type.target].code : f.type.code;
 	width = code == ZfFieldTC::Bool ? 1 : code == ZfFieldTC::Float ?
 	  (f.type.name == "float" ? 4 : 8) : intBits(code) / 8;
 	align = width;

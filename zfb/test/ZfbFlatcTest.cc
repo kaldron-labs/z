@@ -335,16 +335,26 @@ static bool write(const Zi::Path &path, ZuCSpan data)
     file.write(data.data(), data.length()) == Zi::OK && file.close() == Zi::OK;
 }
 
+// GCC loses the dynamic string allocation bounds through its builtin flag.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 static Text read(const Zi::Path &path)
 {
   ZiFile file;
   if (file.open(path, ZiFile::ReadOnly | ZiFile::GC) != Zi::OK) return {};
   auto n = file.fstat().size();
+  if (n < 0) return {};
   Text data;
   data.length(n);
   if (n && file.read(data.data(), n) != n) return {};
   return data;
 }
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 
 static void rollback()
 {
