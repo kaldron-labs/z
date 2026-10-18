@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -25,7 +26,7 @@ static void fail(sqlite3 *db, const char *op)
 {
   Text text;
   text << op << ": " << sqlite3_errmsg(db) << '\n';
-  write(STDERR_FILENO, text.data(), text.length());
+  std::cerr.write(text.data(), text.length()) << std::flush;
   _exit(1);
 }
 
@@ -71,7 +72,7 @@ static void plan(sqlite3 *db, const char *id, const char *sql)
     text << reinterpret_cast<const char *>(sqlite3_column_text(stmt, 3));
   }
   text << '\n';
-  write(STDOUT_FILENO, text.data(), text.length());
+  std::cout.write(text.data(), text.length());
   sqlite3_finalize(stmt);
 }
 
@@ -95,7 +96,7 @@ static void seek(sqlite3 *db, const char *id, const char *sql, unsigned nBind)
   Text text;
   text << id << " p50_ns=" << samples[NMeasure / 2]
     << " p99_ns=" << samples[NMeasure * 99 / 100] << '\n';
-  write(STDOUT_FILENO, text.data(), text.length());
+  std::cout.write(text.data(), text.length());
   sqlite3_finalize(stmt);
   plan(db, id, sql);
 }
@@ -118,7 +119,7 @@ static void operation(sqlite3 *db, const char *id, sqlite3_stmt *stmt)
   Text text;
   text << id << " p50_ns=" << samples[NMeasure / 2]
     << " p99_ns=" << samples[NMeasure * 99 / 100] << '\n';
-  write(STDOUT_FILENO, text.data(), text.length());
+  std::cout.write(text.data(), text.length());
 }
 
 int main()
@@ -230,7 +231,7 @@ int main()
   qsort(tx.data(), tx.length(), sizeof(tx[0]), cmpSample);
   Text text;
   text << "txn p50_ns=" << tx[512] << " p99_ns=" << tx[1013] << '\n';
-  write(STDOUT_FILENO, text.data(), text.length());
+  std::cout.write(text.data(), text.length());
   sqlite3_finalize(begin);
   sqlite3_finalize(commit);
 
@@ -245,7 +246,7 @@ int main()
   text.null();
   text << "reopen_us=" << reopen << " sqlite_allocs=" << allocations
     << " sqlite_bytes=" << bytes << '\n';
-  write(STDOUT_FILENO, text.data(), text.length());
+  std::cout.write(text.data(), text.length());
   sqlite3_close(db);
   unlink(path);
   return 0;
