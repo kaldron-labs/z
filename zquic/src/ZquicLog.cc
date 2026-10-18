@@ -994,15 +994,12 @@ ZquicLogger::ZquicLogger()
 
 ZquicLogger::~ZquicLogger()
 {
-  if (!m_ring.closed()) {
-    if (m_thread) {
-      m_ring.eof(true);
-      // protect against blocking on self-destruction, do NOT use ZmSelf()
-      // - ZmSelf() depends on TLS and should not be called during exit
-      if (m_thread.tid() != Zm::getTID()) m_thread.join();
-    }
-    m_ring.close();
+  // Do not use ZmSelf(): TLS may already be in teardown.
+  if (m_thread && m_thread.tid() != Zm::getTID()) {
+    Engine::stop();
+    m_thread.join();
   }
+  if (!m_ring.closed()) m_ring.close();
 }
 
 ZquicLogger *ZquicLogger::instance()
@@ -1040,33 +1037,49 @@ bool ZquicLogger::init_(
 
 void ZquicLogger::start_()
 {
-  Guard guard(m_lock);
-  if (!m_configured) return;
-  if (m_thread) return;
-  m_ring.init(ZmRingParams{m_params.ringSize()});
-  if (m_ring.open(Ring::Read | Ring::Write) != Zu::OK) {
-    ++m_writerFailures;
-    return;
-  }
-  m_thread = ZmThread{[this]() { work_(); },
-    ZmThreadParams().name("zquic-qlog").priority(ZmThreadPriority::Low)};
-}
-
-void ZquicLogger::stop_(bool idleOnly)
-{
-  ZmThread thread;
+  bool ok = false;
   {
     Guard guard(m_lock);
-    if (idleOnly && m_configured) return;
-    thread = ZuMv(m_thread);
-    m_thread = {};
+    if (m_configured) {
+      m_ring.init(ZmRingParams{m_params.ringSize()});
+      ok = m_ring.open(Ring::Read | Ring::Write) == Zu::OK;
+      if (!ok) ++m_writerFailures;
+    }
   }
-  if (!thread) return;
-  while (m_queueCount.load_()) Zm::yield();
+  started(ok);
+  if (ok) {
+    work_();
+    Engine::stopped();
+  }
+}
+
+void ZquicLogger::wake()
+{
+  Guard guard(m_lock);
   m_ring.eof(true);
-  thread.join();		// wait for ring buffer to drain
-  m_ring.close();
-  m_activeTrace = nullptr;
+}
+
+void ZquicLogger::stop_()
+{
+  {
+    Guard guard(m_lock);
+    m_ring.close();
+    m_activeTrace = nullptr;
+  }
+  Engine::stopped(true);
+}
+
+void ZquicLogger::stopIdle_(CtrlFn fn)
+{
+  {
+    Guard guard(m_lock);
+    if (m_configured) {
+      guard.unlock();
+      fn(true);
+      return;
+    }
+  }
+  Engine::stop(ZuMv(fn));
 }
 
 void ZquicLogger::final_(Trace &trace)
@@ -1495,6 +1508,7 @@ void ZquicLogger::cxnStateUpd_(Trace &trace,
 
 void ZquicLogger::work_()
 {
+  bool draining = false;
   for (;;) {
     if (ZuLikely(!m_queueCount.load_())) goto shift;
     if (Fn fn = m_queue.shift()) {
@@ -1504,11 +1518,17 @@ void ZquicLogger::work_()
 	m_queue.unshift(ZuMv(fn));
     }
 shift:
+    if (draining && !m_queueCount.load_()) m_ring.eof(true);
     if (void *ptr = m_ring.shift()) {
       m_activeTrace = nullptr;
       m_ring.shift2(Fn::invoke(ptr, this));
     } else {
-      if (m_ring.readStatus() == Zu::EndOfFile) break;
+      if (m_ring.readStatus() == Zu::EndOfFile) {
+	if (!m_queueCount.load_()) break;
+	// Reopen admission only for the writer's overflow drain.
+	draining = true;
+	m_ring.eof(false);
+      }
     }
   }
   m_activeTrace = nullptr;

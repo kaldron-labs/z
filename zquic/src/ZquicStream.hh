@@ -263,7 +263,7 @@ public:
       case FrameType::StreamDataBlocked:
 	return !txCreditAvailable() && frame.value == txCreditLimit();
       case FrameType::ResetStream:
-	return resetSent() && !resetAckd() && frame.value == txBytes();
+	return resetSent() && !resetAckd() && frame.value == m_txCredit.used();
       case FrameType::StopSending:
 	return stopSent() && !stopAckd() && !resetReceived() && !rxComplete();
       default:
@@ -446,7 +446,7 @@ public:
     return found;
   }
   bool ackReset(uint64_t appError, uint64_t finalSize) {
-    if (!m_resetSent || m_txBytes != finalSize) return false;
+    if (!m_resetSent || m_txCredit.used() != finalSize) return false;
     m_resetAckd = true;
     return true;
   }
@@ -513,11 +513,22 @@ public:
     if (m_resetSent) return;
     m_resetSent = true;
     setTxError_(StreamError::Reset, appError);
+    // Queued application bytes may exceed peer credit. Final size covers only
+    // the extent committed to STREAM frames, including any lost packets.
+    auto finalSize = m_txCredit.used();
+    // Packet recovery retains its own references. A reset forbids further
+    // STREAM retransmission and releases all stream-owned queued ranges now.
+    unsigned queued = m_txQueue.count_();
+    m_txQueue.clean();
+    m_txQueueCount -= queued; // Pending off-shard admissions still retire once.
+    m_txBufferedBytes = 0;
+    m_txUnackd.clean();
+    m_dataBlockedCtl = {};
     if (m_link && id() >= 0)
-      m_link->localResetStream_(uint64_t(id()), appError, m_txBytes);
+      m_link->localResetStream_(uint64_t(id()), appError, finalSize);
     if (m_link && id() >= 0)
       m_link->streamResetSent_(
-	uint64_t(id()), appError, m_txBytes);
+	uint64_t(id()), appError, finalSize);
     if (!m_txCompleted) {
       m_txCompleted = true;
       impl()->txComplete_(false);

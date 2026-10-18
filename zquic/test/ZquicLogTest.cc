@@ -1856,6 +1856,81 @@ void testQLogTypedCloseEvents()
 #endif
 }
 
+void testQLogRestartDrain()
+{
+  ZuTestScope(testQLogRestartDrain);
+#ifdef Zquic_DEBUG
+  Zi::Path path = testPath_("ZquicLogRestart.sqlog");
+  ZquicLogParams params;
+  params.enabled(true).path(path).ringSize(1<<15);
+  ZquicLogger::Trace first, next;
+  ZuCheck(ZquicLogger::init(first, params, Zquic::Vantage::Client));
+  ZquicLogger::start();
+  ZmSemaphore held, release, stopped, restarted;
+  ZquicLogger::close(first, [&held, &release]() { held.post(); release.wait(); });
+  ZuCheck(held.timedwait(Zm::now(10)) == 0);
+  ZmAtomic<unsigned> completions = 0;
+  ZquicLogger::stopIdle([&stopped, &completions](bool ok) {
+    if (ok) ++completions;
+    stopped.post();
+  });
+  ZuCheck(!ZquicLogger::enabled());
+  ZuCheck(ZquicLogger::init(next, params, Zquic::Vantage::Server));
+  ZquicLogger::start([&restarted, &completions](bool ok) {
+    if (ok) ++completions;
+    restarted.post();
+  });
+  // Both requests returned while the old writer is still held.
+  ZuCheck(completions == 0);
+  ZuCheck(!ZquicLogger::enabled());
+  release.post();
+  ZuCheck(stopped.timedwait(Zm::now(10)) == 0);
+  ZuCheck(restarted.timedwait(Zm::now(10)) == 0);
+  ZuCheck(completions == 2);
+  ZuCheck(ZquicLogger::enabled());
+  closeQLog_(next);
+  ZuCheck(ZquicLogger::stop());
+  ZuCheck(ZquicLogger::stop());
+  ZquicLogger::final(first);
+  ZquicLogger::final(next);
+  ZuCheck(!ZquicLogger::enabled());
+#endif
+}
+
+void testQLogStopDrain()
+{
+  ZuTestScope(testQLogStopDrain);
+#ifdef Zquic_DEBUG
+  ZquicLogParams params;
+  params.enabled(true).path(testPath_("ZquicLogDrain.sqlog")).ringSize(4096);
+  ZquicLogger::Trace trace;
+  ZuCheck(ZquicLogger::init(trace, params, Zquic::Vantage::Client));
+  ZuCheck(ZquicLogger::start());
+  ZuCheck(ZquicLogger::start());
+  ZmSemaphore held, release, stopped;
+  ZmAtomic<unsigned> written = 0;
+  ZmAtomic<unsigned> done = 0;
+  ZquicLogger::log(trace, [&held, &release](auto &, ZuTime) {
+    held.post();
+    release.wait();
+  });
+  ZuCheck(held.timedwait(Zm::now(10)) == 0);
+  for (unsigned i = 0; i < 10000; ++i)
+    ZquicLogger::log(trace, [&written](auto &, ZuTime) { ++written; });
+  ZuCheck(ZquicLogger::diag().ringBackPressure > 0);
+  ZquicLogger::stop([&done, &stopped](bool ok) {
+    done = ok;
+    stopped.post();
+  });
+  ZuCheck(!done);
+  release.post();
+  ZuCheck(stopped.timedwait(Zm::now(10)) == 0);
+  ZuCheck(done);
+  ZuCheck(written == 10000);
+  ZquicLogger::final(trace);
+#endif
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -1864,6 +1939,8 @@ int main(int argc, char **argv)
   g_residue = ZiTestResidue::dir("qlog");
 #endif
   ZuTestMain();
+  ZuTestCall(testQLogRestartDrain);
+  ZuTestCall(testQLogStopDrain);
   ZuTestCall(testQLogFileOutput);
   ZuTestCall(testQLogBackPressure);
   ZuTestCall(testQLogAppTrace);

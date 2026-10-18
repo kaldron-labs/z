@@ -895,6 +895,7 @@ void testAddressTokenCodec()
   Zquic::TokenBytes bad;
   bad.length(token.length());
   memcpy(bad.data(), token.data(), token.length());
+  ZuCheck(bad.length(), (return));
   bad[bad.length() - 1] ^= 1;
   ZuCHECK(Zquic::AddressToken::validate(
       info, bad, secret, addr, 1001, 60, false) ==

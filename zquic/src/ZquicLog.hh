@@ -14,6 +14,7 @@
 #include <zlib/ZuArray.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmPLock.hh>
 #include <zlib/ZmQueue.hh>
@@ -661,7 +662,9 @@ private:
   ZiFile	m_file;
 };
 
-class ZquicAPI ZquicLogger {
+class ZquicAPI ZquicLogger : private ZmEngine<ZquicLogger> {
+friend ZmEngine<ZquicLogger>;
+  using Engine = ZmEngine<ZquicLogger>;
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
   ZuDerive(Ring, (ZmRing<ZmRingMW<true>>));
@@ -688,6 +691,8 @@ class ZquicAPI ZquicLogger {
   };
 
 public:
+  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+
   struct Trace {
     bool		configured = false;
     bool		sinkOpened = false;
@@ -709,9 +714,17 @@ public:
     Trace &trace, const ZquicLogParams &params, Zquic::Vantage::T vantage) {
     return instance()->init_(trace, params, vantage);
   }
-  static void start() { instance()->start_(); }
-  static void stop() { instance()->stop_(false); }
-  static void stopIdle() { instance()->stop_(true); }
+  static bool start() { return instance()->Engine::start(); }
+  static void start(CtrlFn fn) {
+    instance()->Engine::start(ZuMv(fn));
+  }
+  static bool stop() { return instance()->Engine::stop(); }
+  static void stop(CtrlFn fn) {
+    instance()->Engine::stop(ZuMv(fn));
+  }
+  static void stopIdle(CtrlFn fn) {
+    instance()->stopIdle_(ZuMv(fn));
+  }
   template <typename L>
   static void close(Trace &trace, L &&l) {
     instance()->close_(trace, ZuFwd<L>(l));
@@ -950,13 +963,28 @@ public:
 private:
   ZquicLogger();
 
-  bool enabled_() const {
-    Guard guard(m_lock);
-    return m_thread;
-  }
+  bool enabled_() const { return state() == ZmEngineState::Running; }
   bool init_(Trace &, const ZquicLogParams &, Zquic::Vantage::T);
   void start_();
-  void stop_(bool);
+  void stop_();
+  void stopIdle_(CtrlFn);
+  void wake();
+  template <typename L>
+  bool spawn(L &&l) {
+    Guard guard(m_lock);
+    // A completion callback may start the successor before this thread exits.
+    auto previous = ZuMv(m_thread);
+    m_thread = ZmThread{
+      [l = ZuFwd<L>(l), previous]() mutable {
+	l();
+	if (previous) previous.join();
+      }, ZmThreadParams().name("zquic-qlog").priority(ZmThreadPriority::Low)};
+    if (!m_thread) {
+      m_thread = ZuMv(previous);
+      return false;
+    }
+    return true;
+  }
   template <typename L>
   void close_(Trace &trace, L &&l) {
     if (!trace.configured) { l(); return; }
@@ -1098,15 +1126,19 @@ private:
 #else /* Zquic_DEBUG */
 
 struct ZquicLogger {
+  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+
   struct Trace { };
   static constexpr bool enabled() { return false; }
   static bool init(
     Trace &, const ZquicLogParams &, Zquic::Vantage::T) {
     return true;
   }
-  static void start() { }
-  static void stop() { }
-  static void stopIdle() { }
+  static bool start() { return true; }
+  static void start(CtrlFn fn) { fn(true); }
+  static bool stop() { return true; }
+  static void stop(CtrlFn fn) { fn(true); }
+  static void stopIdle(CtrlFn fn) { fn(true); }
   template <typename L>
   static void close(Trace &, L &&l) { l(); }
   static void final(Trace &) { }

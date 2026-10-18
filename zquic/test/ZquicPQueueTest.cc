@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZtArray.hh>
 #include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
@@ -44,7 +45,7 @@ void testCryptoRxClipping()
       data.key() == 12 && data.skip == 3 && data.length == 1,
     "CRYPTO tail clipping mismatch");
 
-  ZtString<> payload;
+  ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Test.CryptoPayload">> payload;
   payload.length(Zquic::BufSize * 2);
   memset(payload.data(), 'x', payload.length());
   data.clear();

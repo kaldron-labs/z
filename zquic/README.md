@@ -84,7 +84,10 @@ server's stream response.
 - `ZquicDiag.hh` / `ZquicDiag.cc`: diagnostic counters and stable formatter
   helpers.
 - `ZquicLog.hh` / `ZquicLog.cc`: qlog JSON-SEQ writer, event model, ring,
-  file aging, and diagnostics.  qlog instrumentation rules are in
+  file aging, and diagnostics. The writer uses `ZmEngine` for asynchronous
+  start/stop and restart-after-drain; synchronous start/stop are for main-thread
+  callers. Trace initialization precedes start, and finalization follows drain.
+  qlog instrumentation rules are in
   `zquic/GUIDELINES.md`.
 
 ## Feature Landmarks
@@ -119,10 +122,16 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
 - `ZquicHandshakeTest` and `ZquicRuntimeTest`: TLS handshake and loopback
   runtime behavior.
 - `ZquicStreamTest`: stream delivery, retransmission, control queues, PMTUD,
-  ECN, 0-RTT, qlog, and key-update state.
+  ECN, 0-RTT, qlog, and key-update state. Reset cases cover unsent and
+  flow-stalled output: final size, control retransmission and ACK matching use
+  the transmitted extent, and reset releases queued data and recovery ranges.
 - `ZquicRecoveryTest`, `ZquicFlowTest`, `ZquicCIDTest`, `ZquicSockTest`,
   `ZquicTimerTest`, `ZquicLogTest`, and `ZquicPQueueTest`: focused subsystem
-  coverage.
+  coverage. The logger regression holds its old writer during shutdown and
+  requires a concurrent restart to wait for ring drain before reopening it.
+  All 175 QUIC groups pass both native debug and ASan/LSan validation. The
+  logger's 12 groups also pass full Valgrind checking with zero errors and
+  zero definitely, indirectly or possibly lost bytes.
 - Migration behavior is covered across `ZquicAPITest`, `ZquicSockTest`,
   `ZquicLogTest`, and runtime loopback tests: public migration params and
   callbacks, endpoint rebinding, CID policy, passive/active validation,
