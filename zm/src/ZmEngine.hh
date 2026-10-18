@@ -128,7 +128,11 @@ inline void ZmEngine<Impl>::start(CtrlFn startFn)
   {
     Guard guard(m_lock);
 
-    if (m_state == Running) { startFn(true); return; } // idempotent
+    if (m_state == Running) { // idempotent
+      guard.unlock();
+      startFn(true);
+      return;
+    }
 
     if (startFn) m_startFn.push(ZuMv(startFn));
 
@@ -207,7 +211,11 @@ inline void ZmEngine<Impl>::stop(CtrlFn stopFn)
   {
     Guard guard(m_lock);
 
-    if (m_state == Stopped) { stopFn(true); return; } // idempotent
+    if (m_state == Stopped) { // idempotent
+      guard.unlock();
+      stopFn(true);
+      return;
+    }
 
     if (stopFn) m_stopFn.push(ZuMv(stopFn));
 
