@@ -156,8 +156,9 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
     ZiFile file;
     if (file.open(ZtString<>{} << type << ".der", ZiFile::Write) == Zi::OK) {
       file.write(&asn[0], asn.length());
-      system(ZtString<>{}
-	<< "openssl pkey -inform DER -in " << type << ".der -text -noout");
+      ZTLS_CHECK_RT(!system(ZtString<>{}
+	<< "openssl pkey -inform DER -in " << type << ".der -text -noout"),
+	type, " openssl SK inspection failed");
     }
   }
   ZmRef<AnyKey> sk2_;
@@ -203,9 +204,10 @@ void checkKey(Ztls::Random &rng, ZuCSpan type)
       if (file.open(
 	  ZtString<>{} << type << "_public.der", ZiFile::Write) == Zi::OK) {
 	file.write(&asn3[0], asn3.length());
-	system(ZtString<>{}
+	ZTLS_CHECK_RT(!system(ZtString<>{}
 	  << "openssl pkey -pubin -inform DER -in "
-	  << type << "_public.der -text -noout");
+	  << type << "_public.der -text -noout"),
+	  type, " openssl PK inspection failed");
       }
     }
 

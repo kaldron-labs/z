@@ -1765,7 +1765,6 @@ protected:
     m_errorFn = ZuMv(params.errorFn());
     if (!m_errorFn) m_errorFn = defaultErrorFn();
     if (!validate_(params)) return false;
-    m_stopping = false;
     m_mx = params.mx();
     m_rxThread = thread_(params.rxThread(), m_mx->rxThread());
     m_txThread = thread_(params.txThread(), m_mx->txThread());
@@ -1884,7 +1883,6 @@ private:
 public:
   void final() {
     bool ok = HubCtl::lock(ZmEngineState::Stopped, [this]() {
-      m_stopping = true;
       if (m_registered) {
 	Ztc::HubMgr::del(this);
 	m_registered = false;
@@ -1930,7 +1928,7 @@ private:
     Ztc::Hub::linkAdded_(link);
   }
   void linkDeleted_(Ztc::Link *link, LinkState::T state) {
-    if (m_stopping || m_links.del(link)) {
+    if (m_links.del(link)) {
       switch (state) {
 	case LinkState::Down: Ztc::Hub::linkDownDec_(); break;
 	case LinkState::Up: Ztc::Hub::linkUpDec_(); break;
@@ -1939,9 +1937,6 @@ private:
       Ztc::Hub::linkDeleted_(link);
     }
   }
-protected:
-  void stopping_() { m_stopping = true; }
-
 public:
   void linkState_(
       LinkState::T oldState, LinkState::T newState) {
@@ -1970,18 +1965,24 @@ protected:
     }
     return n;
   }
+  template <typename Link>
   unsigned downLinks_() {
-    ZtArray<Ztc::Link *> links;
-    unsigned n = 0;
+    using DrainLinks = ZtArray<ZmRef<Link>,
+      ZtArrayHeapID<"Ztls.Hub.Drain">>;
+    unsigned capacity = m_links.count_();
+    auto links = ZtScratch(DrainLinks, capacity);
     {
       auto i = m_links.citer();
-      while (Ztc::Link *link = i.key()) {
-	links.push(link);
-	++n;
+      while (Ztc::Link *base = i.key()) {
+	auto link = static_cast<Link *>(base);
+	// Final deref may have started a destructor waiting on this iterator.
+	link->template withRef<Link>([&links](ZmRef<Link> ref) {
+	  links.push(ZuMv(ref));
+	});
       }
     }
-    for (auto link: links) link->down();
-    return n;
+    for (auto &link: links) link->down();
+    return links.length();
   }
   unsigned allPools_(Ztc::Hub::AllPoolsFn) const { return 0; }
 
@@ -2284,7 +2285,6 @@ private:
   unsigned			m_rxThread = 0;
   unsigned			m_txThread = 0;
   unsigned			m_asyncThread = 0;
-  bool				m_stopping = false;
   bool				m_registered = false;
 
   // shared
@@ -2601,8 +2601,7 @@ protected:
       "TLS server stop drain outside Rx thread", return);
     // Link lifetime can extend beyond disconnect completion. Count accepted
     // connections until their completion, not retained telemetry links.
-    this->stopping_();
-    this->downLinks_();
+    this->template downLinks_<typename App::Link>();
     this->rxRun([this]() { stop_2(); });
   }
 

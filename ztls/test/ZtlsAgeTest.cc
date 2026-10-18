@@ -415,7 +415,7 @@ static bool sshLine(ZuCSpan type, ZuBSpan blob)
   decoded.length(blob.length());
   auto result = ZtlsAge::decodeSSHRecipient(line, decoded);
   if (result.template is<ZeException>()) return false;
-  auto recipient = ZuMv(result).template p<ZtlsAge::Recipient>();
+  const auto &recipient = result.template p<ZtlsAge::Recipient>();
   ZuBSpan parsed = type == "ssh-rsa"_z ?
     recipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
     recipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;
@@ -574,7 +574,7 @@ static void sshReference()
     ZuCheckRT(!decoded.template is<ZeException>());
     if (decoded.template is<ZeException>()) return;
     bool rsa = vector.name[0] == 'r';
-    auto recipient = ZuMv(decoded).template p<ZtlsAge::Recipient>();
+    const auto &recipient = decoded.template p<ZtlsAge::Recipient>();
     ZuBSpan expected = rsa ?
       recipient.template p<ZtlsAge::SshRSARecipient>().publicKey :
       recipient.template p<ZtlsAge::SshED25519Recipient>().publicKey;

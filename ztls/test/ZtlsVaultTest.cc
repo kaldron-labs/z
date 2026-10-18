@@ -53,6 +53,11 @@ static const ZfJSON::AnyNode *member(const ZfJSON::AnyNode *node,
   return nullptr;
 }
 
+// GCC loses the dynamic path storage bounds through the builtin flag.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
 static Zi::Path agePath(const Zi::Path &dir, ZuCSpan account)
 {
   Ztls::MD<Ztls::SHA256> hash;
@@ -65,6 +70,10 @@ static Zi::Path agePath(const Zi::Path &dir, ZuCSpan account)
   return ZiFile::append(dir,
     Zi::Path{} << ZuCSpan{hex, sizeof(hex)} << ".age");
 }
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 
 static void ephemeral()
 {
@@ -138,10 +147,10 @@ static void relativeHome()
   Zi::Path cwd = ZiFile::cwd();
 #ifdef _WIN32
   ZuCheckRT(!_wchdir(ZiFile::dirname(home).data()));
-  ZuGuard restore{[&cwd]() { _wchdir(cwd.data()); }};
+  ZuGuard restore{[&cwd]() { ZuCheckRT(!_wchdir(cwd.data())); }};
 #else
   ZuCheckRT(!::chdir(ZiFile::dirname(home).data()));
-  ZuGuard restore{[&cwd]() { ::chdir(cwd.data()); }};
+  ZuGuard restore{[&cwd]() { ZuCheckRT(!::chdir(cwd.data())); }};
 #endif
   Zt::setenv("ZTLSVAULTRELATIVETEST_HOME", leaf);
 
