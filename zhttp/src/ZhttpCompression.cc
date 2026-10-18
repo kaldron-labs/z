@@ -118,10 +118,10 @@ static ZuInline unsigned huffmanEntrySymbol_(uint16_t v)
 // decode path to one dependent lookup; the two suffix tables cover only the
 // RFC codes beginning 0xfffe and 0xffff.
 struct HuffmanDecode_ {
-  static constexpr unsigned PrimaryBits = 16;
-  static constexpr unsigned FFFEBits = 5;
-  static constexpr unsigned FFFFBits = 14;
-  static constexpr unsigned PrimaryHalf = 1U << (PrimaryBits - 1);
+  enum { PrimaryBits = 16 };
+  enum { FFFEBits = 5 };
+  enum { FFFFBits = 14 };
+  enum { PrimaryHalf = 1U << (PrimaryBits - 1) };
 
   ZuArray<uint16_t, PrimaryHalf> primaryLo;
   ZuArray<uint16_t, PrimaryHalf> primaryHi;

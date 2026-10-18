@@ -19,14 +19,15 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuTime.hh>
 
-#include <zlib/ZtArray.hh>
-#include <zlib/ZtEnum.hh>
-
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
+
+#include <zlib/ZtArray.hh>
+#include <zlib/ZtEnum.hh>
 
 #include <zlib/ZiIP.hh>
 #include <zlib/ZiResolver.hh>
@@ -123,7 +124,8 @@ struct DiscoveryResolver {
 
 // One asynchronous HTTPS/SVCB lookup, alias traversal, and address resolution.
 // Cancellation completes once with Cancelled and suppresses resolver callbacks.
-class ZhttpAPI DiscoveryRequest : public ZmObject {
+class ZhttpAPI DiscoveryRequest : public ZmNHeap<DiscoveryRequest>, public ZmObject {
+friend inline ZuStringT<"Zhttp.Discovery.Request"> ZmNHeapID(DiscoveryRequest *);
 public:
   DiscoveryRequest(
     Origin, ZuCSpan host, uint16_t port, bool blindFallback,
@@ -155,8 +157,8 @@ private:
   URLString		m_target;
   SvcRecords		m_records;
   Endpoints		m_endpoints;
-  ZtArray<Alias,
-    ZtArrayHeapID<"Zhttp.Discovery.Alias">> m_aliases;
+  using Aliases = ZtArray<Alias, ZtArrayHeapID<"Zhttp.Discovery.Alias">>;
+  Aliases		m_aliases;
   DiscoveryFn		m_fn;
   ZmRef<ZiResolver_::Query> m_resolver;
   const DiscoveryResolver *m_resolverOps = nullptr;
@@ -301,6 +303,9 @@ using AltSvcTable = ZmHashKV<
   Origin, AltSvcEntry, ZmHashHeapID<"Zhttp.AltSvc.Cache">>;
 using AltSvcTableRef = ZmRef<AltSvcTable>;
 
+// Lookup rejects expired values; maxOrigins bounds resident origins. Lookup,
+// replacement, invalidation and cache destruction reclaim their storage.
+// Expiry during complete inactivity schedules no reclamation work.
 class AltSvcCache {
 public:
   explicit AltSvcCache(unsigned maxOrigins) :

@@ -205,7 +205,21 @@ void ZiLog::stop_()
     m_thread = {};
   }
   if (!thread) return;
-  while (m_queueCount.load_()) Zm::yield();
+  ZmSemaphore drained;
+  if (m_queueCount.load_()) {
+    // The overflow FIFO transfers this sentinel after every earlier entry.
+    // Keep its semaphore alive through the worker join after it executes.
+    auto complete = [&drained](ZiLog *) { drained.post(); };
+    Fn fn{complete};
+    m_queue.push(ZuMv(fn));
+    ++m_queueCount;
+    // An empty ring may have put the worker to sleep while the queue grew.
+    // A full ring already has work that wakes it; no retry is necessary.
+    auto noop = [](ZiLog *) { };
+    Fn wake{noop};
+    tryPush_(wake);
+    drained.wait();
+  }
   m_ring.eof(true);
   thread.join();		// wait for ring buffer to drain
   m_ring.close();

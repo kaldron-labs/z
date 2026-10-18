@@ -15,6 +15,7 @@
 
 #include <zlib/ZuDerive.hh>
 
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmRef.hh>
 
@@ -140,6 +141,8 @@ ZuDerive(OIDCFinishFn,
 ZuDerive(OIDCClockFn,
   (ZmFn<int64_t(), ZmFnHeapID<"Zum.OIDCClockFn">>));
 
+using OIDCCtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+
 class OIDCState;
 
 class ZumAPI OIDC {
@@ -150,9 +153,17 @@ public:
   OIDC();
   ~OIDC();
 
+  // Init retains configuration while Stopped. Start opens login admission;
+  // stop cancels pending login state and drains HTTP/DB work on the owner.
+  // Keep borrowed dependencies alive through stop; final never initiates it.
   bool init(
     ZmScheduler *, unsigned sid, DB *, OIDCLimits,
     unsigned pendingLimit, uint64_t timeout, OIDCClockFn, OIDCHTTPFn);
+  bool start();
+  void start(OIDCCtrlFn);
+  bool stop();
+  void stop(OIDCCtrlFn);
+  int state() const;
   void final();
 
   bool begin(Bytes grantID, OIDCConfig, OIDCBeginFn);
@@ -176,11 +187,16 @@ public:
   OIDCHTTP(const OIDCHTTP &) = delete;
   OIDCHTTP &operator =(const OIDCHTTP &) = delete;
 
-  // Own mutable transport state on a non-I/O scheduler shard. The caller drains
-  // users of fn() before final(), which runs on the main thread with mx alive.
-  // Empty caPath uses native system trust; otherwise use a CA file/directory.
+  // Own mutable transport state on a non-I/O scheduler shard. Init retains
+  // configuration; start/stop cover the resolver, clients and posted callbacks.
+  // Complete stop before final. Empty caPath uses native system trust.
   bool init(ZiMultiplex *, unsigned sid, unsigned origins = DefaultOrigins,
       ZuCSpan caPath = {});
+  bool start();
+  void start(OIDCCtrlFn);
+  bool stop();
+  void stop(OIDCCtrlFn);
+  int state() const;
   OIDCHTTPFn fn() const;
   void final();
 

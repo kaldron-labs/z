@@ -10,7 +10,8 @@
 
 #include <string.h>
 
-#include <zlib/ZuICmp.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZiIP.hh>
 
@@ -57,8 +58,9 @@ URLParseError port(
   if (!s) return error(URLParseCode::InvalidPort, offset);
   unsigned n = 0;
   for (unsigned i = 0, l = s.length(); i < l; ++i) {
-    if (!digit(s[i])) return error(URLParseCode::InvalidPort, offset + i);
-    n = n * 10 + unsigned(s[i] - '0');
+    unsigned c = s[i];
+    if (!digit(c)) return error(URLParseCode::InvalidPort, offset + i);
+    n = n * 10 + (c - '0');
     if (n > 65535) return error(URLParseCode::InvalidPort, offset + i);
   }
   if (!n && !allowZeroPort)
@@ -76,7 +78,7 @@ bool regName(ZuBSpan s)
 	c == ')' || c == '*' || c == '+' || c == ',' || c == ';' ||
 	c == '=')
       continue;
-    if (c == '%' && i + 2 < s.length() && hex(s[i + 1]) && hex(s[i + 2])) {
+    if (c == '%' && i + 2 < n && hex(s[i + 1]) && hex(s[i + 2])) {
       i += 2;
       continue;
     }
@@ -93,10 +95,12 @@ URLParseError authority(
   parsed.raw = in;
   parsed.port = defltPort;
   if (!in) return error(URLParseCode::MissingHost, offset);
-  for (unsigned i = 0, n = in.length(); i < n; ++i)
-    if (ctl(in[i]) || in[i] == '@')
-      return error(in[i] == '@' ? URLParseCode::InvalidAuthority :
+  for (unsigned i = 0, n = in.length(); i < n; ++i) {
+    unsigned c = in[i];
+    if (ctl(c) || c == '@')
+      return error(c == '@' ? URLParseCode::InvalidAuthority :
 	URLParseCode::InvalidCharacter, offset + i);
+  }
 
   ZuBSpan portText;
   unsigned portOffset = 0;
@@ -282,9 +286,22 @@ URLParseError parseAuthority(
 
 Scheme::T Scheme::parse(ZuBSpan s)
 {
-  if (ZuICmp<ZuBSpan>::equals(s, "http")) return Scheme::http;
-  if (ZuICmp<ZuBSpan>::equals(s, "https")) return Scheme::https;
-  return -1;
+  struct SchemeIDs {
+    using Keys = ZuStringTL<"http", "https">;
+    enum { MaxLen = 5 }; // "https"
+  };
+  if (s.length() > SchemeIDs::MaxLen) return -1;
+  ZuBArray<SchemeIDs::MaxLen> lower;
+  for (unsigned i = 0, n = s.length(); i < n; ++i) {
+    uint8_t c = s[i];
+    lower[i] = c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+  }
+  static constexpr auto matcher = ZuMatcher<SchemeIDs>();
+  switch (matcher.exact(ZuBSpan{lower.data(), s.length()})) {
+    case 0: return Scheme::http;
+    case 1: return Scheme::https;
+    default: return -1;
+  }
 }
 
 bool OriginView::equals(const OriginView &o) const

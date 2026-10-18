@@ -1,9 +1,9 @@
 # Zgrpc: native gRPC over Zhttp with Zpb
 
-Status: proposed Zgrpc design, assuming [zhttp.md](zhttp.md) has been fully
-implemented and verified as a precursor on H2 and H3. This is a planning
-assumption, not a claim about the current working tree. No Zgrpc library code is
-implemented by this document. API examples below describe the proposed surface.
+Status: implementation and acceptance specification. The `zgrpc` source,
+native tests and independent-peer fixtures are in the working tree. The
+requirements below remain the completion criteria; this document alone does
+not certify their current status.
 
 Build `zgrpc` as a traditional Z shared library, `libZgrpc`, with installed
 `<zlib/Zgrpc*.hh>` headers and the `Zgrpc` namespace. It supplies typed RPC
@@ -734,8 +734,9 @@ Local pending-post refusal still returns false without failing the call. Preserv
 the original failure diagnostics and notify the application at most once.
 
 Align deadline semantics with grpc-go, using ZmScheduler timers and the existing
-Rx/Tx ownership model. Keep one monotonic absolute expiry on the initiating
-side, starting at call submission, so pool wait counts. Compute the remaining
+Rx/Tx ownership model. Keep one absolute expiry on the initiating side,
+calculated from `Zm::now()` plus the timeout interval at call submission, so pool
+wait counts. Compute the remaining
 duration when constructing request headers; if it is nonpositive, fail locally
 with DEADLINE_EXCEEDED without submitting the request. Propagation uses the
 remaining duration, never a fresh copy of the original timeout. No timeout is
@@ -754,7 +755,7 @@ own absolute expiry.
 
 On the server, install the deadline on Rx when initial request headers are
 accepted, before application dispatch and without waiting for request DATA or
-half-close. The expiry is that local monotonic time plus the decoded duration;
+half-close. The expiry is the current `Zm::now()` time plus the decoded duration;
 an incoming zero timeout is immediately expired. Malformed timeout syntax is
 a protocol error under Q013. At expiry, the Rx terminal arbiter records
 DEADLINE_EXCEEDED if still active, invalidates call operations and notifies the
@@ -870,14 +871,22 @@ directions over both H2 and H3 with the same `.proto`: unary/streaming, trailers
 messages, deadlines, cancellation, binary metadata and concurrent calls. Initially
 use a small checked-in schema fixture. Test uncompressed messages and rejection
 of unsupported compression.
+Include a checked-in Go client/server peer using canonical grpc-go and generated
+protobuf bindings. Keep its module files and schema under `zgrpc/interop`; build
+and run it through explicit interop targets, without adding canonical runtime
+dependencies to the native production build. Peer self-tests qualify the fixture
+only; native endpoints must pass both client/server roles against it.
 Choose peers with actual support for each transport, such as grpc-dotnet for
-H3; an H2-only peer cannot qualify the H3 path. The H3 mapping records
+H3; an H2-only peer cannot qualify the H3 path. Canonical grpc-go currently
+provides the H2 peer; its lack of H3 support does not remove the H3 gate. The H3 mapping records
 [grpc-dotnet implementation](https://github.com/grpc/proposal/blob/master/G2-http3-protocol.md).
 
-Build with top-level `make -j4`, then relevant module `make test` targets after
-their `all` targets. Verify gcc/clang on supported Linux/MinGW configurations,
-clang ASan/LSan and Valgrind; run instrumented source-tree programs through
-`libtool exec`. Document exact toolchains and any untested platform. Acceptance
+Build with top-level `make -j8`, then relevant module `make test` targets after
+their `all` targets. Verify with Clang debug. Run Valgrind at the end of the
+implementation, or earlier only to investigate memory corruption; run
+instrumented source-tree programs through `libtool exec`. GCC, ASan, LSan,
+MinGW and ARM qualification are outside this delivery scope. Document the
+exact toolchain and any untested platform. Acceptance
 requires bounded long-running memory, deterministic teardown, no duplicate
 terminal callbacks, and actual independent-peer interoperability.
 
@@ -1013,14 +1022,27 @@ cleanup. See “Calls and application dispatch.”
 
 ### Q012 — Metadata storage and duplicate policy
 
-How are selected typed fields and repeated dynamic metadata represented without
-duplicate ownership or repeated name lookup? Define cardinality rules for
-reserved fields and whether unknown application fields are retained by default
-or only on request. Malformed binary metadata follows the protocol-error stream
-termination policy in Q013. Cross-source
-name collisions between descriptor defaults and per-call metadata are settled:
-emit both fields without collision checks or override precedence.
-See “Metadata, authentication and status.”
+**Resolved — one owned arena per field section.** `Metadata` stores field
+records with offsets into owned byte storage. Selected names retain their
+compile-time literal and catalog index; dynamic names are copied once per
+incoming field. Comma-split binary values share that field's name storage.
+Selected callbacks dispatch their known control ID directly; dynamic names use
+one protocol-catalog lookup. Unknown application fields are retained by default.
+There is no separate typed-value copy or duplicate-name ownership for selected
+fields. Initial metadata and trailers remain distinct collections. The effective
+HTTP field-section limit bounds each collection, with RFC field overhead also
+bounding empty entries.
+
+`content-type`, `te`, `grpc-timeout`, `grpc-encoding`, `grpc-status`,
+`grpc-message` and `grpc-status-details-bin` are singletons. Repeated
+`grpc-accept-encoding` advertisements are permitted; identity remains the only
+selected encoding. HTTP retains its own Content-Length rules. Status, message
+and details must belong to one terminating section. Unknown `grpc-` controls
+are reserved for extensions and are not exposed as application metadata.
+Malformed binary metadata follows Q013. Descriptor defaults and per-call
+metadata with the same name both emit, without collision checks or override
+precedence. Sensitive-name policy is evaluated for both fixed seeds and runtime
+fields. See “Metadata, authentication and status.”
 
 ### Q013 — Exact error and terminal-status policy
 

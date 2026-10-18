@@ -153,7 +153,7 @@ struct Options {
   HdrString		quicRxDrop;
   HdrString		quicTxDrop;
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   uint32_t		quicDiag = 0;
 #endif
   uint32_t		memDiag = 0;
@@ -205,7 +205,7 @@ ZfStruct(, (Options, CLI),
   (quicRxDrop,      (CLI::Long<"quic-rx-drop">),				String),
   (quicTxDrop,      (CLI::Long<"quic-tx-drop">),				String),
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   (quicDiag,        (CLI::Long<"quic-diag">),					UInt32),
 #endif
   (memDiag,         (CLI::Long<"mem-diag">),					UInt32),
@@ -1164,7 +1164,7 @@ public:
   void stopMultiplex();
   void final();
   unsigned errors() const;
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   void printQUICDiag();
 #endif
 

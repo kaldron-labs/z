@@ -47,7 +47,7 @@ static void reflection()
 
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder, schema), "BFBS");
   ZuCheck(!builder.failed() && Zfb::verify<R::Schema>(bytes, "BFBS"));
   auto view = Zfb::view<R::Schema>(bytes);
@@ -80,7 +80,7 @@ static void run()
   ZuTestScope(facet);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder, Row{"row", {31, 37}}));
   ZuCheck(!builder.failed() && Zfb::verify<Row>(bytes));
   auto row = Zfb::handler<Row>(bytes).ctor();
@@ -250,7 +250,7 @@ static void reflected()
   auto bytes = R::field(root, ZuCSpan{"bytes"});
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<32> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage, 32};
+  Zfb::Builder builder{storage, 32};
   auto payload = builder.vector(3, 1, R::alignment(bytes),
     [](uint8_t *p) { memcpy(p, "a\0b", 3); });
   auto table = builder.startTable();

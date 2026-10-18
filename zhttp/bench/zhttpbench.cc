@@ -191,8 +191,9 @@ int run(const Zhttp::Test::TempDir &cert, unsigned count, unsigned jobs, unsigne
   unsigned port = Zhttp::Test::loopbackPort(38300);
   auto cfg = Zhttp::ServerConfig{}.localIP(ZiIP{"127.0.0.1"}).port(port);
   if (tcp) cfg.tcp();
-  if (selected & 6) cfg.tls(Zhttp::H2Config{}.certPath(cert.certPath.cspan())
-    .keyPath(cert.keyPath.cspan()).policy(h2 ?
+  if (selected & 6) cfg.tls(Zhttp::H2Config{}.tls([&cert](auto &tls) {
+    tls.certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan());
+  }).policy(h2 ?
       Zhttp::H2Policy::Prefer : Zhttp::H2Policy::Disable));
   if (h3) cfg.quic(Zhttp::QUICConfig{}.certPath(cert.certPath.cspan())
     .keyPath(cert.keyPath.cspan()));
@@ -201,7 +202,9 @@ int run(const Zhttp::Test::TempDir &cert, unsigned count, unsigned jobs, unsigne
     .h2Policy(h2 ? Zhttp::H2Policy::Prefer : Zhttp::H2Policy::Disable)
     .protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
   bool initialized = server.init(hub, ZuMv(cfg)) && client.init(hub, 1, policy, {},
-    Zhttp::H2Config{}.caPath(cert.certPath.cspan()),
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert.certPath.cspan());
+    }),
     Zhttp::QUICConfig{}.caPath(cert.certPath.cspan()));
   if (!initialized || !client.pool(0, Zhttp::Destination{"127.0.0.1", uint16_t(port)}) ||
       !server.start() || !client.start()) return 1;
@@ -288,7 +291,7 @@ int main(int argc, char **argv)
   ZiLog::level(Ze::Error);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
-  ZiResolver::start();
+  ZiResolver::startSync();
   ZiTestResidue::init("zhttpbench");
   Zhttp::Test::TempDir cert;
   int result = 1;
@@ -298,7 +301,7 @@ int main(int argc, char **argv)
     ZhttpBench_Run(6); ZhttpBench_Run(12); ZhttpBench_Run(15);
 #undef ZhttpBench_Run
   }
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiLog::stop();
   return result;
 }

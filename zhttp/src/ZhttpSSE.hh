@@ -9,7 +9,9 @@
 #ifndef ZhttpSSE_HH
 #define ZhttpSSE_HH
 
+#ifndef ZhttpLib_HH
 #include <zlib/ZhttpLib.hh>
+#endif
 
 #include <stdint.h>
 
@@ -190,7 +192,7 @@ inline bool saveSSE(S &s, ZuCSpan id, int64_t retry, ZuCSpan body)
 {
   if (!saveSSEHead(s, id, retry)) return false;
   unsigned begin = 0;
-  for (unsigned i = 0; i < body.length(); ++i) {
+  for (unsigned i = 0, n = body.length(); i < n; ++i) {
     if (body[i] != '\n') continue;
     s << "data: " << ZuCSpan{body}.offset(begin).trunc(i - begin) << '\n';
     begin = i + 1;

@@ -38,6 +38,25 @@ def free_port():
         return listener.getsockname()[1]
 
 
+def wait_standby(process, db_port, app_ports):
+    # Runtime/replication startup is independent of application activation.
+    deadline = time.monotonic() + 30
+    while True:
+        assert process.poll() is None, "standby exited before replication startup"
+        try:
+            with socket.create_connection(("127.0.0.1", db_port), timeout=1):
+                break
+        except ConnectionRefusedError:
+            assert time.monotonic() < deadline, "standby replication did not start"
+            time.sleep(0.05)
+    for port in app_ports:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                raise AssertionError("standby application listener accepted a connection")
+        except ConnectionRefusedError:
+            pass
+
+
 def check_load_limits(counts):
     """Reject a scale run that cannot fit the host's descriptor/port limits."""
     required = counts["agents"] + counts["clients"] + 64
@@ -482,7 +501,9 @@ def main():
                 hub_command(root, standby_config, directory), env=standby_env,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
             hubs.append(standby)
-            wait_line(standby, "ztchub ready")
+            wait_standby(standby, standby_db_port,
+                         (standby_port, standby_port + 1,
+                          standby_ssf_port, standby_ssf_port + 1))
 
         prefix = "/admin/apps/" + str(app_id)
         roles = fixture.request("GET", prefix + "/roles?limit=1000",
@@ -910,6 +931,7 @@ def main():
                 pass
         if cluster:
             hub = hubs[1]
+            wait_line(hub, "ztchub ready")
             front_port = standby_port
             second_port = standby_port + 1
             wss1 = "wss://127.0.0.1:" + str(front_port) + "/ztc"

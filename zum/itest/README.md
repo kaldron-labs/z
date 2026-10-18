@@ -15,7 +15,9 @@ reaches a WSS front end through the hub.
 `zumdztccluster.py` starts a persistent standby publisher, promotes it after
 its leader exits, joins a deliberately ahead peer to deactivate it, and
 promotes it again after that peer exits. It checks the same publisher PID
-registration and App/DB request path throughout. The ahead peer is made from a
+registration and App/Mx/DB request path throughout, with HTTP unavailable on
+standby and closed after demotion. Final re-promotion must rebind its listener
+and serve readiness. The ahead peer is made from a
 disposable SQLite snapshot followed by a real isolated IAM write; Zdb ranks
 database state before active status and host priority.
 
@@ -126,12 +128,10 @@ This is Zdb stop/start recovery, not a process-kill or replicated failover test.
 `zumclustertest` starts two real daemons with separate fresh SQLite stores,
 one shared encryption key and issuer, and native Zdb host/priority configuration.
 Supply `ZDB_MODULE`, `ZDB_CONNECT` and `ZUM_CLUSTER_PEER_CONNECT`.
-Both nodes must expose liveness; neither is ready before admin enrollment.
-The standby must reject all 60 active administrative routes with 503. The source-tree
-fixture extracts method/path declarations from ZumMgmt.cc and verifies its
-catalog count, avoiding a second manually maintained endpoint list. Requests
-have no credentials and use minimal bodies: this tests inactive admission,
-not authenticated authorization or mutation validation on a standby.
+Both processes start the multiplexer and Zdb runtime. Only the active node binds
+its HTTP listener; the standby's replication listener proves independent runtime
+startup, and its application HTTP port must refuse connections. The active
+listener exposes liveness but is not ready before initial-admin enrollment.
 Both must shut down on
 SIGTERM. The expanded scenario enrolls the initial administrator through the
 production WebAuthn flow, then stops the leader normally and awaits Zdb
@@ -149,6 +149,9 @@ idle-slot eviction. A listening socket holds a TLS handshake pending while a
 second origin tests saturation, followed by cancellation/drain on shutdown.
 Immediate shutdown after submission checks startup callback ownership. Completion
 uses framework continuations and main-thread waits, not timing-based sleeps.
+The source now uses explicit adapter start/stop and also covers restart with a
+retained send function, plus an owner barrier before the startup-drain case.
+These lifecycle additions remain unbuilt and unrun.
 These tests do not establish TLS certificate validation or OIDC interoperability.
 
 `zumfederationtest` invokes `zumfederation.py` and requires a separate fresh
@@ -206,9 +209,9 @@ SQLite file selected by `ZDB_CONNECT` and the configured store module. For
 a focused run, use `prove -v -j1 zumhttptest` here.
 After draining/stopping the daemon, the fixture changes only the disposable
 store's issuer version marker, checks explicit unsupported-schema refusal with
-no active admission or added users/apps, and restores the marker. A passive
-health listener may start before validation. This tests rejection without
-modifying the unsupported store.
+no listener activation or added users/apps, and restores the marker. Runtime
+startup does not open a passive health listener before validation. This tests
+rejection without modifying the unsupported store.
 It launches the source-tree wrapper, waits for the listener startup event,
 using standalone defaults on its first start and `--config zumd.cf` on subsequent
 starts. That fixture keeps the store unchanged but changes numeric thread order,

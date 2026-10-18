@@ -29,7 +29,8 @@ ZfStruct(, (RoleDeleteError, JSON),
 // The scan is bounded per store request and posts the next page. Before-images
 // are revalidated by the saga's ordinary shard-owned mutation continuations.
 template <typename Table>
-class RoleScan_ : public ZmNHeap<RoleScan_<Table>>, public ZmObject  {
+class RoleScan_ : public ZmNHeap<RoleScan_<Table>>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.role.delete.RoleScan"> ZmNHeapID(RoleScan_ *);
 
   using T = Table::T;
@@ -38,9 +39,9 @@ friend inline ZuStringT<"Zum.zumd.role.delete.RoleScan"> ZmNHeapID(RoleScan_ *);
   using Key = Table::template Key<KeyID>;
 
 public:
-  RoleScan_(Table *table, AppID appID, RoleID roleID,
+  RoleScan_(ZmRef<ZmPolymorph> work, Table *table, AppID appID, RoleID roleID,
       BytesVec *images, SagaFn complete) :
-    m_table{table}, m_appID{appID}, m_roleID{roleID},
+    RequestHold{ZuMv(work)}, m_table{table}, m_appID{appID}, m_roleID{roleID},
     m_images{images}, m_complete{ZuMv(complete)} { }
 
   void start()
@@ -108,14 +109,15 @@ private:
   bool		m_ok = true;
 };
 
-class RoleDelete_ : public ZmNHeap<RoleDelete_>, public ZmObject  {
+class RoleDelete_ : public ZmNHeap<RoleDelete_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.role.delete.RoleDelete"> ZmNHeapID(RoleDelete_ *);
 
 public:
-  RoleDelete_(DB *db, Ztls::Random *rng,
+  RoleDelete_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
       AppID appID, RoleID roleID, String ifMatch, IdemRequest request,
       AdminDoneFn complete) :
-    m_db{db}, m_rng{rng}, m_appID{appID}, m_roleID{roleID},
+    RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng}, m_appID{appID}, m_roleID{roleID},
     m_ifMatch{ZuMv(ifMatch)}, m_complete{ZuMv(complete)}
     { m_change.request = ZuMv(request); }
 
@@ -166,7 +168,7 @@ private:
   void scan_(Table *table, BytesVec &images)
   {
     ZmRef<RoleScan_<Table>> scan = new RoleScan_<Table>{
-      table, m_appID, m_roleID, &images,
+      work(), table, m_appID, m_roleID, &images,
       [self = ZmRef<RoleDelete_>{this}](bool ok) mutable {
 	if (!ok) { self->finish_(409, "conflict"); return; }
 	++self->m_phase;
@@ -249,11 +251,11 @@ private:
   unsigned	m_phase = 0;
 };
 
-void Daemon::roleDelete_(AppID appID, RoleID roleID,
+void Daemon::roleDelete_(const Work &work, AppID appID, RoleID roleID,
     String ifMatch, IdemRequest request, AdminDoneFn complete)
 {
   ZmRef<RoleDelete_> remove = new RoleDelete_{
-    m_db, &m_rng, appID, roleID, ZuMv(ifMatch),
+    work, m_db, &m_rng, appID, roleID, ZuMv(ifMatch),
     ZuMv(request), ZuMv(complete)};
   remove->start();
 }

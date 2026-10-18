@@ -26,7 +26,7 @@ void cursor()
   ZuTestScope(cursor);
   auto key = origin();
   ZuBSpan field =
-    "h2=\":443\", h3=\"Example.COM:8443\"; ma=60; persist=1";
+    "h2=\":443\", h3=\"Example.COM:8443\"; MA=60; Persist=1";
   Zhttp::AltSvcCursor cursor{field, key.view(), 4};
   Zhttp::AltSvcValue value;
   ZuCHECK(cursor.next(value) && value.protocolID == "h2" &&
@@ -51,6 +51,20 @@ void cursor()
     "alternative bound");
   Zhttp::AltSvcCursor clear{ZuBSpan{"clear"}, key.view(), 1};
   ZuCHECK(clear.clear() && !clear.next(value) && clear.error().ok(), "clear");
+  Zhttp::AltSvcCursor maxAge{
+    ZuBSpan{"h3=\":443\"; ma=0000000000004294967295"}, key.view(), 1};
+  ZuCHECK(maxAge.next(value) && value.maxAge == UINT32_MAX,
+    "decimal maximum permits leading zeros");
+  Zhttp::AltSvcCursor overflow{
+    ZuBSpan{"h3=\":443\"; ma=4294967296"}, key.view(), 1};
+  ZuCHECK(!overflow.next(value) &&
+      overflow.error().code == Zhttp::AltSvcParseCode::InvalidSyntax,
+    "decimal value above the uint32 range is rejected");
+  Zhttp::AltSvcCursor wrap{
+    ZuBSpan{"h3=\":443\"; ma=18446744073709551616"}, key.view(), 1};
+  ZuCHECK(!wrap.next(value) &&
+      wrap.error().code == Zhttp::AltSvcParseCode::InvalidSyntax,
+    "decimal input cannot wrap the scanner accumulator");
 }
 
 void printing()
@@ -110,16 +124,33 @@ void cache()
   ZuCHECK(!cache.update(
       a, ZuBSpan{"h3=\":444\", bad"}, 2, ZuTime{100}) &&
       cache.count() == 1, "malformed update is transactional");
-  ZuCHECK(!cache.update(
+  ZuCHECK(cache.update(
       b, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{100}) &&
-      cache.count() == 1, "origin bound rejection");
+      cache.count() == 1, "bounded admission evicts an origin");
   values = 0;
   ZuCHECK(!cache.get(a, [&values](const Zhttp::AltSvcValue &) {
       ++values;
+    }, ZuTime{109}) && !values, "evicted origin is absent");
+  ZuCHECK(!cache.get(b, [&values](const Zhttp::AltSvcValue &) {
+      ++values;
     }, ZuTime{110}) && !values && !cache.count(), "expiry releases capacity");
-  ZuCHECK(cache.update(b, ZuBSpan{"h3=\":443\""}, 2, ZuTime{110}) &&
-      cache.update(b, ZuBSpan{"clear"}, 2, ZuTime{110}) && !cache.count(),
+  ZuCHECK(cache.update(a, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{110}) &&
+      cache.update(b, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
+      cache.count() == 1, "cold expiry cannot block admission");
+  ZuCHECK(cache.update(b, ZuBSpan{"clear"}, 2, ZuTime{120}) && !cache.count(),
     "validated clear removes origin");
+  for (unsigned i = 0; i < 4; ++i) {
+    const auto &key = i & 1 ? a : b;
+    const auto &old = i & 1 ? b : a;
+    ZuCHECK(cache.update(key, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
+        cache.count() == 1 && cache.hasH3(key, ZuTime{120}) &&
+        !cache.hasH3(old, ZuTime{120}), "repeated admission stays bounded");
+  }
+  cache.del(a);
+  ZuCHECK(!cache.count(), "explicit retirement releases cached values");
+  Zhttp::AltSvcCache disabled{0};
+  ZuCHECK(!disabled.update(a, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
+      !disabled.count(), "zero origin limit rejects admission");
 }
 
 } // namespace ZhttpAltSvcTest_

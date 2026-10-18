@@ -481,7 +481,10 @@ public:
       return;
     }
     o->ref(); // increment reference count
-    auto m = [l = ZuFwd<L>(l)]() mutable { l()->deref(); }; // invoke and deref
+    auto m = [l = ZuFwd<L>(l)]() mutable {
+      auto o = l();
+      if (o->deref()) delete o;
+    };
     Fn fn{m};
     run_(thread, fn);
   }
@@ -604,7 +607,7 @@ private:
   Thread			**m_workers;
 
   mutable SpawnLock		m_spawnLock;
-    unsigned			  m_runThreads = 0;
+    ZmAtomic<unsigned>		  m_runThreads = 0;
 
   ThreadFn			m_threadInitFn;
   ThreadFn			m_threadFinalFn;

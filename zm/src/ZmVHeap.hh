@@ -66,9 +66,11 @@ public:
       MaxBits_ > (MinBits + 17) ? (MinBits + 17) : MaxBits_;
   static constexpr unsigned NCaches = MaxBits - MinBits;
 
-  static constexpr unsigned cacheI(unsigned size) {
-    unsigned i = (sizeof(size)<<3) - ZuIntrin::clz(size - 1);
-    return i < MinBits ? 0 : i - MinBits;
+  static constexpr unsigned cacheI(size_t size) {
+    // Sized allocations have no prefix to enforce the aligned block stride.
+    if (size < Align) size = Align;
+    if (size <= Min) return 0;
+    return (sizeof(size)<<3) - ZuIntrin::clz(size - 1) - MinBits;
   }
   static constexpr unsigned blockSize(unsigned i) {
     return (uint64_t(1)<<(i + MinBits));
@@ -78,37 +80,52 @@ public:
   using Cache = ZmHeapCacheT<
     ID, ZmHeapAllocSize<blockSize(I)>{}, Align, Sharded, I>;
 
+  // Known-size callers need no in-band size-class prefix. The matching free
+  // takes the original payload size, including the old size after a resize.
+  static void *alloc(size_t size) {
+    if (ZuUnlikely(!size)) return nullptr;
+    return alloc_(size, cacheI(size));
+  }
+  static void free(const void *ptr, size_t size) {
+    if (ZuUnlikely(!ptr)) return;
+    free_(ptr, cacheI(size));
+  }
+
   static void *valloc(size_t size) {
     if (ZuUnlikely(!size)) return nullptr;
     size += Align;
-    uint8_t i = cacheI(size);
+    unsigned i = cacheI(size);
+    auto ptr = static_cast<uint8_t *>(alloc_(size, i));
+    *ptr = i;
+    return ptr + Align;
+  }
+  static void vfree(const void *ptr_) {
+    if (ZuUnlikely(!ptr_)) return;
+    auto ptr = reinterpret_cast<const uint8_t *>(ptr_) - Align;
+    free_(ptr, *ptr);
+  }
+
+private:
+  static void *alloc_(size_t size, unsigned i) {
     if (!NCaches || ZuUnlikely(i >= NCaches)) { // jumbo
-      uint8_t *ptr;
+      void *ptr;
   retry:
-      if (ZuLikely(ptr = static_cast<uint8_t *>(Zm::alignedAlloc<Align>(size)))) {
-	*ptr = i;
-	return ptr + Align;
-      }
+      if (ZuLikely(ptr = Zm::alignedAlloc<Align>(size))) return ptr;
       if (ZmHeapFail()) goto retry;
       ZuUnreachable();
     } else if constexpr (NCaches) {
       return ZuSwitch::dispatch<NCaches>(i, [](auto I) -> void * {
-	auto ptr = static_cast<uint8_t *>(Cache<I>::alloc());
-	*ptr = I;
-	return ptr + Align;
+	return Cache<I>::alloc();
       });
     }
   }
-  static void vfree(const void *ptr_) {
-    if (ZuUnlikely(!ptr_)) return;
-    auto ptr = (reinterpret_cast<const uint8_t *>(ptr_) - Align);
-    auto i = *ptr;
+  static void free_(const void *ptr, unsigned i) {
     if (!NCaches || ZuUnlikely(i >= NCaches)) {
       Zm::alignedFree(ptr);
       return;
     } else if constexpr (NCaches) {
       ZuSwitch::dispatch<NCaches>(i, [ptr](auto I) {
-	Cache<I>::free(const_cast<uint8_t *>(ptr));
+	Cache<I>::free(const_cast<void *>(ptr));
       });
     }
   }

@@ -13,11 +13,96 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <limits.h>
 #include <string.h>
+
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
+
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpFields.hh>
 
 namespace Zhttp {
+
+namespace Native_ {
+
+template <typename Out,
+  typename = decltype(ZuDeclVal<const Out &>().ok())>
+bool printFailed(const Out &out, int) { return !out.ok(); }
+template <typename Out>
+bool printFailed(const Out &, long) { return false; }
+
+template <typename Out,
+  typename = decltype(ZuDeclVal<Out &>().reserve(unsigned{}))>
+decltype(auto) printReserve(Out &out, unsigned length, int) {
+  return out.reserve(length);
+}
+template <typename Out,
+  typename = decltype(ZuDeclVal<Out &>().ensure(unsigned{}))>
+ZuSpan<uint8_t> printReserve(Out &out, unsigned length, long) {
+  auto offset = out.length();
+  return {out.ensure(offset + length) + offset, length};
+}
+template <typename Out,
+  typename = decltype(ZuDeclVal<Out &>().commit(unsigned{}))>
+void printCommit(Out &out, unsigned length, int) {
+  out.commit(length);
+}
+template <typename Out,
+  typename = decltype(ZuDeclVal<Out &>().length(unsigned{}))>
+void printCommit(Out &out, unsigned length, long) {
+  out.length(out.length() + length);
+}
+
+// Strings and formatting sinks share byte/buffer ownership. Their completion,
+// production count, and reserve/commit contracts differ at compile time.
+template <typename Out, bool String>
+const WriterOps &bufferWriterOps()
+{
+  static constexpr WriterOps ops{
+    [](void *ctx, ZuBSpan span) { *static_cast<Out *>(ctx) << span; },
+    [](void *ctx, const BufferPrint &value) { *static_cast<Out *>(ctx) << value; },
+    [](void *ctx, ZmRef<ZiIOBuf> buf) {
+      *static_cast<Out *>(ctx) << ZuBSpan{buf->data(), buf->length};
+    },
+    [](void *ctx) {
+      if constexpr (String) return true;
+      else return !printFailed(*static_cast<Out *>(ctx), 0);
+    },
+    [](const void *ctx) {
+      if constexpr (String) return false;
+      else return printFailed(*static_cast<const Out *>(ctx), 0);
+    },
+    [](const void *ctx) -> uint64_t {
+      if constexpr (String) return static_cast<const Out *>(ctx)->length();
+      else return 0;
+    },
+    [](const void *) { return unsigned(UINT_MAX); },
+    [](const void *) { return 0U; },
+    [](const void *) { return 0U; },
+    [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
+      using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
+	ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Header.Print">>;
+      auto buf = ZmRef<ZiIOBuf>{new Alloc{}};
+      buf->skip = head;
+      return buf;
+    },
+    [](void *ctx, unsigned length) -> ZuSpan<uint8_t> {
+      auto &out = *static_cast<Out *>(ctx);
+      if constexpr (String) {
+	auto offset = out.length();
+	return {out.ensure(offset + length) + offset, length};
+      } else return printReserve(out, length, 0);
+    },
+    [](void *ctx, unsigned length) {
+      auto &out = *static_cast<Out *>(ctx);
+      if constexpr (String) out.length(out.length() + length);
+      else printCommit(out, length, 0);
+    }};
+  return ops;
+}
+
+} // namespace Native_
 
 // hard-coded linear white space (ASCII/UTF8)
 ZuInline constexpr bool islws(uint8_t c) {
@@ -291,7 +376,7 @@ inline bool uint64(ZuBSpan value, uint64_t &result) {
   uint64_t n = 0;
   for (unsigned i = 0, l = value.length(); i < l; ++i) {
     unsigned digit = unsigned(value[i] - '0');
-    if (digit > 9 || n > (uint64_t(-1) - digit) / 10) return false;
+    if (digit > 9 || n > (uint64_t(-1) - digit)/10) return false;
     n = n * 10 + digit;
   }
   result = n;
@@ -392,7 +477,7 @@ public:
   }
 
 private:
-  enum : uint8_t {
+  enum : int8_t {
     MethodSeen = 1U<<0,
     PathSeen = 1U<<1,
     SchemeSeen = 1U<<2,

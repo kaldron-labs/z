@@ -583,6 +583,10 @@ void attemptState()
   ZuCHECK(!pool.poolReusable(failed),
     "HTTP/1.0 defaults to a non-persistent connection");
   failed.protocol.persistence = Zhttp::Persistence::KeepAlive;
+  ZuCHECK(!pool.poolReusable(failed),
+    "keep-alive cannot reuse an unfinished request connection");
+  failed.requestBody = {
+    .produced = 9, .committed = 9, .headers = true, .final = true};
   ZuCHECK(pool.poolReusable(failed),
     "HTTP/1.0 keep-alive is represented by one persistence state");
   failed.protocol.closeDelimited = true;
@@ -3093,13 +3097,27 @@ void resolverLifecycle()
     ZuCHECK(inited, "start resolver-owning agent");
     ZuCHECK(ZiResolver::instance()->running(),
       "client starts its owned resolver");
-    if (inited) app.stop();
-    if (inited) app.final();
+    if (inited) {
+      app.seal(0);
+      ZuCHECK(app.idleDone.timedwait(Zm::now(10)) == 0,
+	"initial client cycle seals an empty queue");
+      app.stop();
+      bool restarted = app.start();
+      ZuCHECK(restarted && ZiResolver::instance()->state() == ZmEngineState::Running,
+	"client restarts its configured pools and owned resolver without init");
+      if (restarted) {
+	app.seal(0);
+	ZuCHECK(app.idleDone.timedwait(Zm::now(10)) == 0,
+	  "restart resets client and pool sealing/idle state");
+	app.stop();
+      }
+      app.final();
+    }
     ZuCHECK(!ZiResolver::instance()->initialized(),
       "agent finalizes its resolver");
   }
 
-  ZiResolver::start();
+  ZiResolver::startSync();
   ZuCHECK(ZiResolver::instance()->running(), "start external resolver");
   {
     App app;
@@ -3123,7 +3141,7 @@ void resolverLifecycle()
     ZuCHECK(ZiResolver::instance()->running(),
       "agent preserves externally owned resolver");
   }
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
   mx.stop();
 }

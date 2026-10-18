@@ -13,6 +13,7 @@
 #include <zlib/ZjrpcLib.hh>
 #endif
 
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 
 #include <zlib/ZjrpcDispatch.hh>
@@ -38,9 +39,10 @@ protected:
     m_limits = limits;
     return true;
   }
-  bool close() {
+  template <typename L>
+  bool close(L &&ready) {
     bool done = Dispatch::close();
-    return Calls::closeCalls() && done;
+    return Calls::closeCalls(ZuFwd<L>(ready)) && done;
   }
 private:
   Impl *m_impl = nullptr;
@@ -65,6 +67,11 @@ public:
     return true;
   }
 
+  void ioStarting() {
+    m_failed = false;
+    ZmAssert_((Caller<IOClient, Catalog>::init(this->limits().maxPending)));
+    m_inbound.init(Default::HistSize);
+  }
   void ioReady() { this->impl()->ready(); }
   bool stdioFrame(ZmRef<ZiIOBuf> body) {
     return Common::receive(ZuMv(body), [this](auto message, int policy) {
@@ -80,7 +87,11 @@ private:
   using IO::continue_;
 
   void drain_() {
-    if (!Common::close()) { this->continue_([this]() { drain_(); }); return; }
+    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+    if (!Common::close(ready)) {
+      if (!Common::callsWaiting()) this->continue_([this]() { drain_(); });
+      return;
+    }
     (void)m_inbound.close(0);
     try {
       if (m_failed) this->impl()->failed();
@@ -95,8 +106,14 @@ private:
 
 template <typename Impl, typename Catalog, typename Selection>
 class HTTPClient : public Client<HTTPClient<Impl, Catalog, Selection>, Impl, Catalog>,
+    private ZmEngine<HTTPClient<Impl, Catalog, Selection>>,
     public Zhttp::Client<HTTPClient<Impl, Catalog, Selection>, HTTPPool<Impl, Catalog,
       Selection>> {
+  using Engine = ZmEngine<HTTPClient>;
+  friend Engine;
+  using Engine::spawn;
+  using Engine::wake;
+  using Engine::stateChanged;
   using Common = Client<HTTPClient, Impl, Catalog>;
   using Calls = Caller<HTTPClient, Catalog>;
   using HTTP = Zhttp::Client<HTTPClient, HTTPPool<Impl, Catalog, Selection>>;
@@ -108,8 +125,10 @@ class HTTPClient : public Client<HTTPClient<Impl, Catalog, Selection>, Impl, Cat
   friend Dispatcher<HTTPClient, Impl, Catalog>;
   friend struct HTTPRequestData<Impl, Catalog, Selection>;
 public:
-  using HTTP::start;
-  using HTTP::stop;
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
 
   ~HTTPClient() { final(); }
   bool init(const Zhttp::HubConfig &hub, Zhttp::Destination destination,
@@ -128,40 +147,12 @@ public:
       m_mx = nullptr;
       return false;
     }
+    m_failure = false;
     return true;
-  }
-  bool start() {
-    if (!m_mx || m_started || !HTTP::start()) return false;
-    m_started = true;
-    m_up = true;
-    return ownerRun([this]() {
-      try { this->impl()->ready(); } catch (...) { fail_(); }
-    });
-  }
-  bool stop() {
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      this->stop(ZuMv(wake));
-    });
-  }
-  template <typename Done>
-  void stop(Done &&done) {
-    if (!m_mx) { done(true); return; }
-    m_up = false;
-    bool started = m_started;
-    m_started = false;
-    auto drain = [this, done = ZuFwd<Done>(done)](bool ok) mutable {
-      m_mx->run([this, done = ZuMv(done), ok]() mutable {
-	drain_([this, done = ZuMv(done), ok]() mutable {
-	  done(ok && !m_failure);
-	});
-      }, m_owner);
-    };
-    if (started) HTTP::stop(ZuMv(drain));
-    else drain(true);
   }
   void final() {
     if (!m_mx) return;
-    (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
     HTTP::final();
     m_mx = nullptr;
     m_endpoint.null();
@@ -224,18 +215,51 @@ private:
   void headerNotify(const ID &id, const Meta &meta, int) { this->impl()->headers(id, meta); }
   void headerNotify(const ID &, const Meta &, long) { }
   template <typename L> void continue_(L &&l) { m_mx->run(ZuFwd<L>(l), m_owner); }
-  template <typename Done>
-  void drain_(Done done) {
-    if (Common::close()) { done(); return; }
-    continue_([this, done = ZuMv(done)]() mutable { drain_(ZuMv(done)); });
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    HTTP::start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      continue_([this]() {
+	ZmAssert_(Calls::init(this->limits().maxPending));
+	m_failure = false;
+	m_up = true;
+	try { this->impl()->ready(); } catch (...) { fail_(); }
+	if (m_failure) { stopHTTP_(); return; }
+	Engine::started(true);
+      });
+    });
+  }
+  void stop_() { continue_([this]() { m_up = false; stopHTTP_(); }); }
+  void stopHTTP_() {
+    HTTP::stop([this](bool ok) {
+      continue_([this, ok]() { m_stopOK = ok; drain_(); });
+    });
+  }
+  void drain_() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+    if (!Common::close(ready)) {
+      if (!Common::callsWaiting()) continue_([this]() { drain_(); });
+      return;
+    }
+    bool ok = m_stopOK;
+    HTTP::txRun([this, ok]() {
+      HTTP::rxRun([this, ok]() {
+	if (m_failure) {
+	  try { this->impl()->failed(); } catch (...) { }
+	}
+	switch (Engine::state()) {
+	  case ZmEngineState::Starting:
+	  case ZmEngineState::StopPending: Engine::started(false); return;
+	  default: Engine::stopped(ok); return;
+	}
+      });
+    });
   }
   void fail_() {
     if (m_failure) return;
     m_failure = true;
     m_up = false;
-    drain_([this]() {
-      try { this->impl()->failed(); } catch (...) { }
-    });
+    if (Engine::state() == ZmEngineState::Running) Engine::stop({});
   }
 
   ZiMultiplex *m_mx = nullptr;
@@ -243,22 +267,30 @@ private:
   unsigned m_owner = 0;
   uint64_t m_next = 1;
   ZmAtomic<unsigned> m_up = 0;
-  bool m_started = false;
   bool m_failure = false;
+  bool m_stopOK = true;
 };
 
-// One endpoint owns one WebSocket connection. A new connection uses a new
-// endpoint, so reconnecting cannot revive old pending calls or historic IDs.
+// One run owns one WebSocket connection. Restart opens fresh RPC state and
+// cannot revive pending calls or historic IDs from the preceding run.
 template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
 class WSClient : public Client<WSClient<Impl, Catalog, Profile>, Impl, Catalog>,
-    public WSIO<WSClient<Impl, Catalog, Profile>> {
+    public WSIO<WSClient<Impl, Catalog, Profile>>,
+    private ZmEngine<WSClient<Impl, Catalog, Profile>> {
+  using Engine = ZmEngine<WSClient>;
+  friend Engine;
   using Common = Client<WSClient, Impl, Catalog>;
+  using Calls = Caller<WSClient, Catalog>;
   using IO = WSIO<WSClient>;
   friend IO;
   friend Caller<WSClient, Catalog>;
   friend BatchCaller<WSClient>;
   friend Dispatcher<WSClient, Impl, Catalog>;
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using LinkState = WSClientState;
   using WS = Zws::Client<WSClient, Profile>;
   using Link = WS::Link;
@@ -275,47 +307,35 @@ public:
       m_mx = nullptr; return false;
     }
     m_inbound.init(Default::HistSize);
-    return true;
-  }
-  bool start() {
-    if (!m_mx || m_started || m_stopping.load_() || !m_ws.start()) return false;
-    m_started = true;
+    m_failed = m_closed = m_down = false;
     return true;
   }
   template <typename ...Args>
   bool connect(const Zws::URI &uri, Args &&...args) {
-    if (!m_started || m_link || m_stopping.load_()) return false;
-    m_link = new Link{&m_ws, uri, ZuFwd<Args>(args)...};
-    m_link->connect();
+    if (Engine::state() != ZmEngineState::Running ||
+	m_connect.cmpXch(WSConnectState::Posted, WSConnectState::Idle) != WSConnectState::Idle)
+      return false;
+    try {
+      ZmRef<Link> link = new Link{&m_ws, uri, ZuFwd<Args>(args)...};
+      continue_([this, link = ZuMv(link)]() mutable { connectPosted_(ZuMv(link)); });
+    } catch (...) {
+      continue_([this]() { connectPosted_({}); });
+      throw;
+    }
     return true;
-  }
-  bool stop() {
-    if (!m_mx) return true;
-    m_stopping = true;
-    m_up = false;
-    ZmBlock<>{}([this](auto wake) mutable {
-      continue_([this, wake = ZuMv(wake)]() mutable {
-	m_stop = ZuMv(wake);
-	if (m_link && !m_down)
-	  m_ws.rxRun([this]() { IO::stopWS_(*m_link); });
-	else close_([this]() { stopped_(); });
-      });
-    });
-    bool ok = !m_started || m_ws.stop();
-    m_started = false;
-    return ok && !m_failed;
   }
   void final() {
     if (!m_mx) return;
-    (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_closing && !m_waitConnect);
     m_link = nullptr;
     m_ws.final();
     m_mx = nullptr;
   }
   WS &ws() { return m_ws; }
   const WS &ws() const { return m_ws; }
-  bool up() const { return m_up.load_() && !m_stopping.load_(); }
-  bool wsAccept() const { return !m_stopping.load_(); }
+  bool up() const { return m_up.load_() && wsAccept(); }
+  bool wsAccept() const { return Engine::state() == ZmEngineState::Running; }
   CompletionRoute completionRoute() const {
     return {m_mx, m_owner, this->limits().maxQueue};
   }
@@ -330,11 +350,11 @@ public:
 
   void connected(Link &link, Zhttp::ConnectedInfo info) {
     link.state().rx.open();
-    if (m_stopping.load_()) { link.close(Zws::CloseCode::GoingAway); return; }
-    m_up = true;
+    if (!wsAccept()) { link.close(Zws::CloseCode::GoingAway); return; }
     ZmRef<WSOpen<Link>> action = new WSOpen<Link>{&link, ZuMv(info)};
     continue_([this, action = ZuMv(action)]() mutable {
-      if (!up()) return;
+      if (!wsAccept()) return;
+      m_up = true;
       try {
 	Zws::H1_::connected(*this->impl(), *action->link, ZuMv(action->info), 0);
 	this->impl()->ready();
@@ -343,29 +363,30 @@ public:
   }
   void connectFailed(Link &link, bool) {
     link.state().rx.close();
-    m_up = false;
     continue_([this]() {
+      m_up = false;
       m_down = true;
       m_failed = true;
-      close_([this]() { stopped_(); });
+      close_();
     });
   }
   void disconnected(Link &link, bool) {
     link.state().rx.close();
-    m_up = false;
     continue_([this]() {
+      m_up = false;
       m_down = true;
-      close_([this]() { stopped_(); });
+      close_();
     });
   }
   void closed(Link &link, uint16_t code, ZuBSpan reason) {
-    m_up = false;
     IO::template control_<true>(link, code, reason);
   }
   void error(Link &link, Zws::Failure::T failure) {
-    m_up = false;
-    continue_([this, link = ZmRef{&link}, failure]() mutable {
-      m_failed = true;
+    // Transport shutdown can end the wire before the close handshake finishes.
+    bool cancelled = failure == Zws::Failure::AbnormalClose && Engine::stopping();
+    continue_([this, link = ZmRef{&link}, failure, cancelled]() mutable {
+      m_up = false;
+      if (!cancelled) m_failed = true;
       try { Zws::H1_::error(*this->impl(), *link, failure, 0); } catch (...) { }
     });
   }
@@ -379,14 +400,70 @@ public:
   }
 
 private:
+  void wsClosed_() { m_up = false; }
   template <typename M>
   bool send(const M &message) { return up() && m_link && IO::sendWS_(*m_link, message); }
   template <typename L> void continue_(L &&l) { m_ws.txRun(ZuFwd<L>(l)); }
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    m_ws.start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      continue_([this]() {
+	ZmAssert_(!m_link && !m_closing && !m_waitConnect);
+	ZmAssert_(Calls::init(this->limits().maxPending));
+	m_inbound.init(Default::HistSize);
+	m_failed = m_closed = m_down = false;
+	m_transportStopped = false;
+	m_connect = WSConnectState::Idle;
+	Engine::started(true);
+      });
+    });
+  }
+  void stop_() {
+    int previous;
+    do {
+      previous = m_connect.load_();
+    } while (m_connect.cmpXch(previous == WSConnectState::Posted ?
+	WSConnectState::StopPosted : WSConnectState::Stopped, previous) != previous);
+    continue_([this]() { stopLink_(); });
+  }
+  void connectPosted_(ZmRef<Link> link) {
+    int state = m_connect.cmpXch(link ? WSConnectState::Assigned : WSConnectState::Idle,
+      WSConnectState::Posted);
+    if (state == WSConnectState::Posted) {
+      if (!link) return;
+      m_link = link;
+      m_ws.rxRun([link = ZuMv(link)]() mutable { link->connect(); });
+      return;
+    }
+    ZmAssert_(state == WSConnectState::StopPosted);
+    m_connect = WSConnectState::Stopped;
+    if (m_waitConnect) { m_waitConnect = false; stopLink_(); }
+  }
+  void stopLink_() {
+    m_up = false;
+    if (m_connect.load_() == WSConnectState::StopPosted) {
+      m_waitConnect = true;
+      return;
+    }
+    if (m_link && !m_down)
+      m_ws.rxRun([this, link = m_link]() { IO::stopWS_(*link); });
+    m_ws.stop([this](bool ok) {
+      continue_([this, ok]() {
+	m_stopOK = ok;
+	m_transportStopped = true;
+	close_();
+      });
+    });
+  }
   void stopped_() {
-    if (!m_stop) return;
-    auto done = ZuMv(m_stop);
-    m_ws.rxRun([this, done = ZuMv(done)]() mutable {
-      continue_([done = ZuMv(done)]() mutable { done(); });
+    if (!m_transportStopped || !m_closed || m_closing) return;
+    m_transportStopped = false;
+    m_ws.rxRun([this]() {
+      continue_([this]() {
+	m_link = nullptr;
+	Engine::stopped(m_stopOK);
+      });
     });
   }
   void fail_() {
@@ -394,33 +471,40 @@ private:
     m_up = false;
     if (m_link) m_link->close(Zws::CloseCode::Internal);
   }
-  template <typename Done>
-  void close_(Done done) {
+  void close_() {
     m_up = false;
-    if (!Common::close()) {
-      continue_([this, done = ZuMv(done)]() mutable { close_(ZuMv(done)); });
+    if (m_closed) { stopped_(); return; }
+    if (m_closing) return;
+    m_closing = true;
+    drain_();
+  }
+  void drain_() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+    if (!Common::close(ready)) {
+      if (!Common::callsWaiting()) continue_([this]() { drain_(); });
       return;
     }
     (void)m_inbound.close(0);
-    if (!m_closed) {
-      m_closed = true;
-      try {
-	if (m_failed) this->impl()->failed();
-	else this->impl()->closed();
-      } catch (...) { }
-    }
-    done();
+    m_closing = false;
+    m_closed = true;
+    try {
+      if (m_failed) this->impl()->failed();
+      else this->impl()->closed();
+    } catch (...) { }
+    stopped_();
   }
 
   WS m_ws;
   ZmRef<Link> m_link;
-  ZmFn<void()> m_stop;
   InboundCalls m_inbound;
   ZiMultiplex *m_mx = nullptr;
   unsigned m_owner = 0;
   ZmAtomic<unsigned> m_up = 0;
-  ZmAtomic<unsigned> m_stopping = 0;
-  bool m_started = false;
+  ZmAtomic<int> m_connect = WSConnectState::Stopped;
+  bool m_closing = false;
+  bool m_transportStopped = false;
+  bool m_stopOK = true;
+  bool m_waitConnect = false;
   bool m_failed = false;
   bool m_closed = false;
   bool m_down = false;

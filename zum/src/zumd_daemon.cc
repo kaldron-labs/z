@@ -31,17 +31,18 @@ static MaintenanceResult maintenanceAdd(
   return lhs;
 }
 
-class MaintenanceRun_ : public ZmPolymorph {
+class MaintenanceRun_ : public ZmNHeap<MaintenanceRun_>, public ZmPolymorph {
+friend inline ZuStringT<"Zum.Daemon.Maintenance"> ZmNHeapID(MaintenanceRun_ *);
 public:
-  MaintenanceRun_(DB *db, Ztls::Random *rng,
+  MaintenanceRun_(ZmFn<> retire, DB *db, Ztls::Random *rng,
       ZmScheduler *scheduler, unsigned sid, MaintenanceFn complete) :
-    m_db{db}, m_rng{rng}, m_scheduler{scheduler},
+    m_retire{ZuMv(retire)}, m_db{db}, m_rng{rng}, m_scheduler{scheduler},
     m_sid{sid}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
     ZmAssert(m_scheduler->invoked(m_sid));
-    daemonGrantCleanup(m_db, m_rng, DaemonCleanupLimit::Rows,
+    daemonGrantCleanup(ZmRef<ZmPolymorph>{this}, m_db, m_rng, DaemonCleanupLimit::Rows,
       [self = ZmRef<MaintenanceRun_>{this}](MaintenanceResult result) mutable {
 	self->post_([self = ZuMv(self), result = ZuMv(result)]() mutable {
 	  self->grant_(ZuMv(result));
@@ -66,7 +67,7 @@ private:
   {
     ZmAssert(m_scheduler->invoked(m_sid));
     if (m_stopping) { finish_(ZuMv(grant)); return; }
-    daemonRefreshCleanup(m_db, m_rng, DaemonCleanupLimit::Rows,
+    daemonRefreshCleanup(ZmRef<ZmPolymorph>{this}, m_db, m_rng, DaemonCleanupLimit::Rows,
       [self = ZmRef<MaintenanceRun_>{this}, grant = ZuMv(grant)](
 	  MaintenanceResult refresh) mutable {
 	self->post_([self = ZuMv(self), grant = ZuMv(grant),
@@ -81,7 +82,7 @@ private:
     ZmAssert(m_scheduler->invoked(m_sid));
     auto result = maintenanceAdd(ZuMv(grant), ZuMv(refresh));
     if (m_stopping) { finish_(ZuMv(result)); return; }
-    daemonSessionCleanup(m_db, m_rng, DaemonCleanupLimit::Rows,
+    daemonSessionCleanup(ZmRef<ZmPolymorph>{this}, m_db, m_rng, DaemonCleanupLimit::Rows,
       [self = ZmRef<MaintenanceRun_>{this}, result = ZuMv(result)](
 	  MaintenanceResult session) mutable {
 	self->post_([self = ZuMv(self), result = ZuMv(result),
@@ -100,6 +101,9 @@ private:
     complete(ZuMv(result));
   }
 
+  // Child helpers retain this allocation. Return its admission only after
+  // all callback/data members have been destroyed.
+  ZuGuard<ZmFn<>> m_retire;
   DB		*m_db = nullptr;
   Ztls::Random	*m_rng = nullptr;
   ZmScheduler	*m_scheduler = nullptr;
@@ -232,13 +236,13 @@ String Daemon::enrollPage_(AppID appID)
   return page;
 }
 
-class AuthRouteLoad_ : public ZmNHeap<AuthRouteLoad_>, public ZmObject  {
+class AuthRouteLoad_ : public ZmNHeap<AuthRouteLoad_>, public ZmObject {
 friend inline ZuStringT<"Zum.zumd.daemon.AuthRouteLoad"> ZmNHeapID(AuthRouteLoad_ *);
 
 public:
-  AuthRouteLoad_(DB *db, Bytes dbKey, String authorizationBase,
+  AuthRouteLoad_(ZmFn<> retire, DB *db, Bytes dbKey, String authorizationBase,
       AppID appID, String login, AuthRouteDoneFn complete) :
-    m_db{db}, m_dbKey{ZuMv(dbKey)},
+    m_retire{ZuMv(retire)}, m_db{db}, m_dbKey{ZuMv(dbKey)},
     m_authorizationBase{ZuMv(authorizationBase)}, m_appID{appID},
     m_login{ZuMv(login)}, m_complete{ZuMv(complete)} { }
 
@@ -419,6 +423,8 @@ private:
       ZuMv(m_config) : OIDCConfig{}, .type = type});
   }
 
+  // Every DB/selector stage owns this allocation through its terminal callback.
+  ZuGuard<ZmFn<>> m_retire;
   DB		*m_db = nullptr;
   Bytes			m_dbKey;
   String		m_authorizationBase;
@@ -436,7 +442,9 @@ private:
 void Daemon::authRoute_(
     AppID appID, String login, AuthRouteDoneFn complete)
 {
+  if (!admit_()) { complete(AuthRoute{.type = AuthRouteType::Error}); return; }
   ZmRef<AuthRouteLoad_> load = new AuthRouteLoad_{
+    ZmFn<>{this, ZmFnPtr<&Daemon::workDone_>{}},
     m_db, m_config.dbKey, m_config.issuer, appID,
     ZuMv(login), ZuMv(complete)};
   load->start();
@@ -449,7 +457,7 @@ bool Daemon::loadKey_()
   SignKey key = ZmBlock<SignKey>{}([this, now, &config](auto wake) mutable {
     m_db->signKeys->run(0, [this, now, expires = now + config.accessLifetime,
       maxKeys = config.limits.jwks, wake = ZuMv(wake)]() mutable {
-      signKeyLoad(m_db, m_config.issuer, now, expires, maxKeys, [
+      signKeyLoad({}, m_db, m_config.issuer, now, expires, maxKeys, [
         wake = ZuMv(wake)](SignKey key) mutable { wake(ZuMv(key)); });
     });
   });
@@ -479,6 +487,7 @@ bool Daemon::init(
     DB *db, Requests *requests, ZiMultiplex *mx,
     DaemonConfig config)
 {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   if (m_httpInited) return true;
   Zhttp::URL parsed{config.issuer};
   auto authorizationBase = parsed.url();
@@ -496,7 +505,6 @@ bool Daemon::init(
   m_requests = requests;
   m_mx = mx;
   m_config = ZuMv(config);
-  m_finalized = false;
   ServerConfig provider{
     .issuer = m_config.issuer, .rpID = m_config.rpID,
     .rpName = m_config.rpName, .requestTimeout = m_config.requestTimeout,
@@ -594,12 +602,15 @@ bool Daemon::init(
 
 bool Daemon::prepare(ServerBootstrapResult bootstrap)
 {
-  if (!loadKey_()) return false;
-  m_config.bootstrap = ZuMv(bootstrap);
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  ZmAssert_(!m_requests->active());
   if (m_ssf) {
-    m_ssf->stop();
+    ZmAssert_(m_ssf->state() == ZmEngineState::Stopped);
+    m_ssf->final();
     m_ssf = nullptr;
   }
+  if (!loadKey_()) return false;
+  m_config.bootstrap = ZuMv(bootstrap);
   if (m_config.oidcHTTP) {
     if (!m_config.ssfIssuer) m_config.ssfIssuer = m_config.issuer;
     m_ssf = new SSFTransmitter{};
@@ -611,7 +622,7 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
           .issuer = m_config.ssfIssuer},
         .keyLoad = SSFKeyFn{[this](String issuer, SignKeyFn complete) mutable {
           int64_t now = Zm::now().sec();
-          signKeyLoad(m_db, ZuMv(issuer), now,
+          signKeyLoad({}, m_db, ZuMv(issuer), now,
               now + m_config.requestTimeout, 1,
               ZuMv(complete));
         }},
@@ -622,61 +633,156 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
       m_ssf = nullptr;
       return false;
     }
-    if (m_httpInited) m_ssf->start();
   }
   return true;
 }
 
-bool Daemon::start()
-{
-  if (m_finalized) return false;
-  if (!m_httpInited || !HTTPServer::start()) return false;
-  auto scheduler = m_requests->scheduler();
-  unsigned sid = m_requests->sid();
-  if (scheduler->invoked(sid)) cleanupStart_();
-  else {
-    ZmSemaphore complete;
-    scheduler->invoke([this, &complete]() {
-      cleanupStart_();
-      complete.post();
-    }, sid);
-    complete.wait();
-  }
-  if (m_ssf) m_ssf->start();
+DaemonWork::~DaemonWork() { owner->workDone_(); }
+Daemon::~Daemon() { final(); }
+
+bool Daemon::admit_() {
+  if (Engine::state() != ZmEngineState::Running) return false;
+  uint64_t count;
+  do {
+    count = m_credit.load_();
+    if (count & DaemonCredit::Closed) return false;
+  } while (m_credit.cmpXch(count + 1, count) != count);
   return true;
 }
 
-void Daemon::stop()
-{
-  if (m_finalized) return;
-  bool wait = false;
-  if (m_requests && m_requests->scheduler()) {
-    auto scheduler = m_requests->scheduler();
-    unsigned sid = m_requests->sid();
-    if (scheduler->invoked(sid)) {
-      wait = cleanupStop_();
-      ZmAssert(!wait);
-    } else {
-      ZmSemaphore complete;
-      scheduler->invoke([this, &wait, &complete]() {
-        wait = cleanupStop_();
-        complete.post();
-      }, sid);
-      complete.wait();
-    }
+Daemon::Work Daemon::work_() {
+  if (!admit_()) return {};
+  return new DaemonWork{this};
+}
+
+void Daemon::workDone_() {
+  // While admission is open, return directly and never touch the owner after
+  // the successful CAS. A concurrent stop either observes that return, or
+  // closes first and keeps this credit alive through the owner handoff.
+  uint64_t count = m_credit.load_();
+  while (!(count & DaemonCredit::Closed)) {
+    auto prior = m_credit.cmpXch(count - 1, count);
+    if (prior == count) return;
+    count = prior;
   }
-  if (wait) m_cleanupStopped.wait();
-  if (m_ssf) m_ssf->stop();
-  if (m_requests) m_requests->deactivate();
-  m_provider.stop();
-  if (m_httpInited) (void)HTTPServer::stop();
+  post_([this]() {
+    --m_credit;
+    postDrain_();
+  });
+}
+
+void Daemon::start_() {
+  if (!m_httpInited) { Engine::started(false); return; }
+  m_provider.start([this](bool ok) {
+    if (!ok) { Engine::started(false); return; }
+    if (!m_ssf) { startHTTP_(); return; }
+    // Revocation consumers precede the listener that can admit producers.
+    m_ssf->start([this](bool ok) {
+      if (ok) { startHTTP_(); return; }
+      m_provider.stop([this](bool) {
+        Engine::started(false);
+      });
+    });
+  });
+}
+
+void Daemon::startHTTP_() {
+  HTTPServer::start([this](bool ok) {
+    if (ok) { post_([this]() { startRuntime_(); }); return; }
+    auto stoppedSSF = [this](bool) {
+      m_provider.stop([this](bool) {
+        Engine::started(false);
+      });
+    };
+    if (m_ssf) m_ssf->stop(ZuMv(stoppedSSF));
+    else stoppedSSF(true);
+  });
+}
+
+void Daemon::startRuntime_() {
+  ZmAssert_(m_credit.load_() == DaemonCredit::Closed);
+  ZmAssert_(!m_children && !m_cleanupRun && !m_draining && !m_drainPosted);
+  m_credit = 0;
+  cleanupStart_();
+  Engine::started(true);
+}
+
+void Daemon::stop_() {
+  m_credit |= DaemonCredit::Closed;
+  HTTPServer::stopAccepting();
+  post_([this]() { stopOwner_(); });
+}
+
+void Daemon::stopOwner_() {
+  m_stopOK = true;
+  m_children = 2;
+  m_draining = true;
+  cleanupStop_();
+  stopRequests_();
+  m_provider.stop([this](bool ok) {
+    post_([this, ok]() {
+      m_stopOK &= ok;
+      childDown_();
+    });
+  });
+}
+
+void Daemon::stopRequests_() {
+  m_requests->deactivate([this](bool ok) {
+    post_([this, ok]() {
+      // An opposite activation can supersede a queued stop. Such a callback
+      // is not a completed admission drain; join the newly requested stop.
+      if (m_requests->state() != ZmEngineState::Stopped) {
+        stopRequests_();
+        return;
+      }
+      m_stopOK &= ok;
+      childDown_();
+    });
+  });
+}
+
+void Daemon::childDown_() {
+  --m_children;
+  postDrain_();
+}
+
+void Daemon::postDrain_() {
+  if (!m_draining || m_children || m_cleanupRun || m_drainPosted ||
+      (m_credit.load_() & DaemonCredit::Count)) return;
+  m_drainPosted = true;
+  post_([this]() {
+    // Provider/admin producers and their DB helpers have drained before their
+    // revocation consumer. Accepted side effects can still reach the outbox.
+    if (m_ssf) {
+      m_ssf->stop([this](bool ok) {
+        post_([this, ok]() {
+          m_stopOK &= ok;
+          stopHTTP_();
+        });
+      });
+    } else stopHTTP_();
+  });
+}
+
+void Daemon::stopHTTP_() {
+  HTTPServer::rxRun([this]() {
+    HTTPServer::txRun([this]() {
+      HTTPServer::stop([this](bool ok) {
+        post_([this, ok]() {
+          m_stopOK &= ok;
+          m_drainPosted = false;
+          m_draining = false;
+          Engine::stopped(m_stopOK);
+        });
+      });
+    });
+  });
 }
 
 void Daemon::cleanupStart_()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
-  if (m_started) return;
-  m_started = true;
   m_cleanupState = DaemonCleanupState::Idle;
   m_cleanupBackoff = m_config.cleanupInterval;
   if (!m_config.cleanupInterval) return;
@@ -687,26 +793,26 @@ void Daemon::cleanupStart_()
     m_requests->sid());
 }
 
-bool Daemon::cleanupStop_()
+void Daemon::cleanupStop_()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
-  m_started = false;
   if (m_mx) m_mx->del(&m_cleanupTimer);
-  if (m_cleanupState != DaemonCleanupState::Running) return false;
+  if (m_cleanupState != DaemonCleanupState::Running) return;
   m_cleanupState = DaemonCleanupState::Stopping;
   ZmAssert(m_cleanupRun);
   maintenanceStop_(m_cleanupRun.ptr());
-  return true;
 }
 
 void Daemon::cleanup_()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
-  if (!m_started || m_cleanupState != DaemonCleanupState::Idle ||
+  if (Engine::state() != ZmEngineState::Running || m_cleanupState != DaemonCleanupState::Idle ||
       !m_db) return;
+  if (!admit_()) return;
   m_cleanupState = DaemonCleanupState::Running;
   ZiLOG(Debug, "zumd", "maintenance cleanup started");
-  ZmRef<MaintenanceRun_> run = new MaintenanceRun_{m_db, &m_rng,
+  ZmRef<MaintenanceRun_> run = new MaintenanceRun_{
+    ZmFn<>{this, ZmFnPtr<&Daemon::workDone_>{}}, m_db, &m_rng,
     m_requests->scheduler(), m_requests->sid(),
     [this](MaintenanceResult result) mutable { cleanupDone_(ZuMv(result)); }};
   m_cleanupRun = run;
@@ -723,7 +829,8 @@ void Daemon::cleanupDone_(MaintenanceResult result)
   else if (m_cleanupBackoff < uint64_t(m_config.cleanupInterval) * 16)
     m_cleanupBackoff = m_cleanupBackoff ? m_cleanupBackoff * 2 :
       m_config.cleanupInterval;
-  bool reschedule = !stopping && m_started && m_config.cleanupInterval;
+  bool reschedule = !stopping && Engine::state() == ZmEngineState::Running &&
+    m_config.cleanupInterval;
   if (reschedule) ++result.rescheduled;
   if (result.ok) ZiLOG(Debug, "zumd", ([result](auto &s) {
       s << "maintenance cleanup completed selected=" << result.selected
@@ -738,7 +845,7 @@ void Daemon::cleanupDone_(MaintenanceResult result)
         << " rescheduled=" << result.rescheduled;
     }));
   if (stopping) {
-    m_cleanupStopped.post();
+    postDrain_();
     return;
   }
   if (!reschedule) return;
@@ -751,19 +858,24 @@ void Daemon::cleanupDone_(MaintenanceResult result)
 
 void Daemon::final()
 {
-  if (m_finalized) return;
-  stop();
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  ZmAssert_(!(m_credit.load_() & DaemonCredit::Count));
+  ZmAssert_(!m_children && !m_cleanupRun && !m_draining && !m_drainPosted);
   HTTPServer::final();
   m_httpInited = false;
   m_provider.final();
   m_providerInited = false;
+  if (m_ssf) m_ssf->final();
   m_ssf = nullptr;
   m_sign = SignFn{};
   m_key = nullptr;
   m_signKeyID.null();
   if (m_config.dbKey && m_config.dbKey.mutable_())
     ZuClear(m_config.dbKey);
-  m_finalized = true;
+  m_config = {};
+  m_db = nullptr;
+  m_requests = nullptr;
+  m_mx = nullptr;
 }
 
 void Daemon::listening(int transport, unsigned port)

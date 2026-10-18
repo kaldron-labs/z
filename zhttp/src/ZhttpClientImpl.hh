@@ -14,13 +14,16 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuICmp.hh>
 #include <zlib/ZuObjectTraits.hh>
 
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmContext.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZmObject.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
@@ -39,11 +42,12 @@
 #include <zlib/ZhttpH2Hub.hh>
 #include <zlib/ZhttpH3.hh>
 #include "ZhttpNative.hh"
+#include "ZhttpStreamState.hh"
 
 namespace Zhttp {
 
-enum : unsigned {
-  // Measured scheduler-turn bound: amortizes cross-shard publication without
+enum {
+  // Scheduler-turn work bound: amortizes cross-shard publication without
   // allowing large client pools or sparse queues to monopolize an I/O shard.
   ClientWorkBatch = 64
 };
@@ -83,9 +87,9 @@ public:
   using Message = MessageTraits<Profile>;
 
 private:
-  template <typename Parser>
-  static auto bodyMax_(Parser &parser, uint64_t max, int) ->
-      decltype(parser.bodyMax(max), void()) {
+  template <typename Parser,
+    typename = decltype(ZuDeclVal<Parser &>().bodyMax(uint64_t{}))>
+  static void bodyMax_(Parser &parser, uint64_t max, int) {
     parser.bodyMax(max);
   }
   template <typename Parser>
@@ -141,7 +145,7 @@ private:
     public Message::template Request<Builder_<HasBody, Streaming>, HasBody, Streaming>,
     public ReqOps {
     using Base = Message::template Request<Builder_, HasBody, Streaming>;
-    static constexpr unsigned HdrBufSize = Zhttp::Builder::HdrBufSize;
+    enum { HdrBufSize = Zhttp::Builder::HdrBufSize };
 
     Builder_(Request &app, ZuBSpan authority, bool rejectContentLength,
 	Method::T method, ZuBSpan target) : ReqOps{app, authority, method, target} {
@@ -281,7 +285,7 @@ public:
 	emit(PrintSink{self, [](void *ctx, PrintView value) {
 	  auto self = static_cast<ClientSession *>(ctx);
 	  Writer out{&self->m_target,
-	    Native_::stringWriterOps<ZuDecay<decltype(self->m_target)>>()};
+	    Native_::bufferWriterOps<ZuDecay<decltype(self->m_target)>, true>()};
 	  value.write(out);
 	}});
 	self->m_operationOK = true;
@@ -316,11 +320,13 @@ public:
 
   // Tx-owned synchronous request construction.
   void beginTx() {
+    closeProducer_();
     m_commit = {};
     m_txState = ClientSessionTxState::Active;
   }
 
   void cancelTx() {
+    closeProducer_();
     if (m_txState != ClientSessionTxState::Active) return;
     m_commit.reset = m_commit.committed;
     m_txState = ClientSessionTxState::Cancelled;
@@ -382,12 +388,126 @@ private:
     }
   };
 
+  struct Producer : ZmNHeap<Producer>, ZmObject {
+  friend inline ZuStringT<"Zhttp.Client.Producer"> ZmNHeapID(Producer *);
+    const int txThread;
+    BodyEmitRecord record;
+    ClientSession *driver;
+    Builder_<true, true> builder;
+    int8_t state = StreamState::Initial;
+
+    Producer(
+      ClientSession *owner, int thread, Request &request,
+      ZuBSpan authority, Method::T method, ZuBSpan target)
+    :
+      txThread{thread}, driver{owner},
+      builder{request, authority, true, method, target}
+    {
+      record.bind(this);
+      record.emit = [](void *ctx, BodyWrite write) {
+	auto self = static_cast<Producer *>(ctx);
+	if (!Stream_::streamTxThread(self->txThread) || !self->driver) return false;
+	ZmRef<Producer> pin{self};
+	return self->driver->streamTurn_(self, write);
+      };
+    }
+    ~Producer() {
+      ZiAssert(!driver, "Zhttp", (), "active request producer destroyed", return);
+    }
+  };
+
+  void closeProducer_() {
+    auto producer = m_producer;
+    if (!producer || !producer->driver) return;
+    producer->driver = nullptr; // invalidate every emitter before application close
+    bool initial = producer->state <= StreamState::InitialTerminal;
+    producer->state = initial ? StreamState::InitialTerminal : StreamState::Terminal;
+    if (!initial) {
+      producer->builder.appBuilder().close();
+      m_producer = nullptr;
+    }
+  }
+
+  bool streamTurn_(Producer *producer, BodyWrite write) {
+    bool beginHeaders;
+    if (!Stream_::streamEnter(producer->state, beginHeaders)) return false;
+    auto &builder = producer->builder;
+    auto tx = m_link->transmit_(builder);
+    if (beginHeaders) {
+      if (!builder.begin(tx)) {
+	closeProducer_();
+	(void)failStreamedTx_();
+	return true;
+      }
+      m_commit.headers = true;
+    }
+    auto body = builder.body(tx);
+    WriteOutcome::T outcome;
+    try { outcome = invokeBodyWriter(write, body); }
+    catch (...) { outcome = WriteOutcome::Failed; }
+    bool flushed = body.flush();
+    bool txFlushed = tx.flush();
+    uint64_t produced = body.produced();
+    if (produced > UINT64_MAX - m_commit.produced) outcome = WriteOutcome::Failed;
+    else {
+      m_commit.produced += produced;
+      m_commit.committed = m_commit.produced;
+    }
+    if (!flushed || !txFlushed || !body.valid()) outcome = WriteOutcome::Failed;
+    switch (outcome) {
+      case WriteOutcome::End:
+	closeProducer_();
+	builder.finish(tx);
+	if (!tx.flush()) {
+	  (void)failStreamedTx_();
+	  return true;
+	}
+	m_commit.final = true;
+	m_txState = ClientSessionTxState::Complete;
+	m_link->finish();
+	return true;
+      case WriteOutcome::Stream:
+	if (!m_requestApp->replayable()) {
+	  producer->state = producer->state == StreamState::InitialWriting ?
+	    StreamState::InitialOpen : StreamState::Open;
+	  return true;
+	}
+	// Intent is observable now; retained production must not be replayed.
+	[[fallthrough]];
+      default:
+	closeProducer_();
+	(void)failStreamedTx_();
+	return true;
+    }
+  }
+
   bool sendStreaming_(Request &app, bool optional) {
-    Builder_<true, true> builder{
-      app, m_app->authority(), true,
-      m_requestMethod, m_target};
-    TxOps ops{this};
-    return MessageTx<Message, TxOps>{ops}.streaming(builder, optional);
+    ZmRef<Producer> producer = new Producer{
+      this, int(m_app->txThread()), *m_requestApp,
+      m_app->authority(), m_requestMethod, m_target};
+    m_producer = producer;
+    try { app.body(BodyEmitter{&producer->record}); }
+    catch (...) { closeProducer_(); (void)failStreamedTx_(); }
+    switch (producer->state) {
+      case StreamState::InitialOpen:
+	producer->state = StreamState::Open;
+	return true;
+      case StreamState::Initial:
+	closeProducer_();
+	producer->state = StreamState::Terminal;
+	app.close();
+	m_producer = nullptr;
+	if (Stream_::streamBodyAbsent(optional)) return sendEmpty_(app);
+	return failStreamedTx_();
+      case StreamState::InitialTerminal:
+	producer->state = StreamState::Terminal;
+	app.close();
+	m_producer = nullptr;
+	return m_txState == ClientSessionTxState::Complete;
+      default:
+	closeProducer_();
+	return false;
+    }
   }
 
   bool sendEmpty_(Request &app) {
@@ -462,8 +582,10 @@ private:
     m_commit.discarded = m_commit.produced > m_commit.committed ?
       m_commit.produced - m_commit.committed : 0;
     m_commit.reset = m_commit.committed;
-    m_link->disconnect();
     m_txState = ClientSessionTxState::Failed;
+    m_app->mx()->run([link = ZmRef(m_link)]() mutable {
+      link->disconnect();
+    }, m_app->rxThread());
     return false;
   }
 
@@ -481,7 +603,8 @@ private:
   Link		*m_link = nullptr;
   LiveReq	*m_request = nullptr;
   Request	*m_requestApp = nullptr;
-  ZtString<ZtStringHeapID<"Zhttp.Target">> m_target;
+  using TargetString = ZtString<ZtStringHeapID<"Zhttp.Target">>;
+  TargetString	m_target;
   Method::T	m_requestMethod = Method::GET;
   bool		m_operationOK = false;
   bool		m_responseActive = false;
@@ -493,6 +616,7 @@ private:
 
   // Tx thread exclusive.
   alignas(Zm::CacheLineSize)
+  ZmRef<Producer> m_producer;
   BodyCommit	m_commit;
   int8_t	m_txState = ClientSessionTxState::Idle;
 };
@@ -812,6 +936,7 @@ public:
       Base{app}, m_host{ZuMv(host_)}, m_port{port_}, m_id{id_}
   {
     Wire_::initWire(false, config);
+    Base::txErrorFn(ZiTxErrorFn{ZmFnPtr<&H2_::nativeTxError>{}});
     m_pendingMax = config.maxPending();
   }
   ~CliLink() {
@@ -871,10 +996,10 @@ public:
     bool cancelled = m_stopping;
     m_pending.length(0);
     m_pendingHead = 0;
-    Wire_::clearStreams(
-      [clear](auto &entry) {
-	if (!entry.notified) clear->active.push(entry.appLink);
-      }, [
+    auto collect = [clear](auto &entry) {
+      if (!entry.notified) clear->active.push(entry.appLink);
+    };
+    Wire_::clearStreams(ZuMv(collect), [
       link = ZmRef(this), clear = ZuMv(clear),
       pending = ZuMv(pending), pendingHead, cancelled, peer
     ]() mutable {
@@ -895,8 +1020,8 @@ public:
     connectFailedBatch_(ZuMv(pending), pendingHead, transient);
   }
   int process(Ztls::RxStream &rx) { return Wire_::process(rx); }
-  auto txStream() { return Base::txStream(); }
-  auto txStream_() { return Base::txStream_(); }
+  using Base::txStream;
+  using Base::txStream_;
   void disconnectNative() { Base::disconnect(); }
 
   void openNow_(ZmRef<AppLink> appLink) {
@@ -933,7 +1058,7 @@ public:
     ]() mutable {
       auto entry = link->h2Stream(id);
       if (!entry || entry->appLink.ptr() != appLink.ptr()) return;
-      link->rst_(id, Error::Cancel);
+      if (!link->Wire_::resetStream(id, Error::Cancel)) return;
       link->notify_(id, false);
     });
   }
@@ -950,9 +1075,13 @@ public:
       if (entry->localEnd) closeLater_(id, true);
     }
   }
-  void h2ResetAppLink(uint32_t id, Error::T) { notify_(id, true); }
+  void h2ResetAppLink(uint32_t id, Error::T error) {
+    if (auto entry = Wire_::h2Stream(id))
+      entry->appLink->nativeError_(ErrorDomain::H2Reset, error);
+    notify_(id, true);
+  }
   void h2Cancel(uint32_t id) {
-    rst_(id, Error::Cancel);
+    if (!Wire_::resetStream(id, Error::Cancel)) return;
     notify_(id, false);
   }
   auto h2OpenPeer(uint32_t) -> Stream<AppLink> * { return nullptr; }
@@ -960,7 +1089,8 @@ public:
   Error::T h2OpenError(uint32_t id) const {
     return h2Closed(id) ? Error::StreamClosed : Error::ProtocolError;
   }
-  void h2Goaway_(uint32_t last, Error::T) {
+  void h2Goaway_(uint32_t last, Error::T error) {
+    m_goawayError = error;
     m_draining = true;
     if (!m_goawayPosted) {
       m_goawayNext = Wire_::nextLocalStreamID();
@@ -1063,6 +1193,11 @@ private:
       m_admitPosted = false;
       return;
     }
+    if (m_draining) {
+      m_admitPosted = false;
+      requeue_();
+      return;
+    }
     unsigned n = 0;
     while (n++ < ClientWorkBatch && pending_() &&
 	Wire_::canOpenLocalStream())
@@ -1083,7 +1218,14 @@ private:
     }
   }
   void requeue_() {
-    if (!pending_() || m_requeuePosted) return;
+    if (m_requeuePosted || m_goawayPosted) return;
+    if (!pending_()) {
+      if (m_draining && !Wire_::streamCount()) {
+	m_requeuePosted = true;
+	Base::disconnect();
+      }
+      return;
+    }
     m_requeuePosted = true;
     this->app()->rxRun([
       link = this]() { link->requeueNow_(); });
@@ -1107,6 +1249,7 @@ private:
       m_pending.length(0);
       m_pendingHead = 0;
       m_requeuePosted = false;
+      if (m_draining && !Wire_::streamCount()) Base::disconnect();
     }
   }
   void closeLater_(uint32_t id, bool peer) {
@@ -1117,15 +1260,6 @@ private:
       link = this, id, peer]() {
       link->notify_(id, peer);
     });
-  }
-  void rst_(uint32_t id, Error::T error) {
-    auto tx = Base::txStream();
-    StreamBytes<decltype(tx)> sink{tx};
-    putHeader(sink, {
-      .length = 4, .streamID = id, .type = FrameType::RSTStream
-    });
-    putUInt32(sink, error);
-    tx.flush();
   }
   void notify_(uint32_t id, bool peer) {
     auto entry = Wire_::h2Stream(id);
@@ -1150,6 +1284,7 @@ private:
       uint32_t id = m_goawayNext;
       m_goawayNext = id >= 2 ? id - 2 : 0;
       if (auto entry = Wire_::h2Stream(id)) {
+	entry->appLink->nativeError_(ErrorDomain::H2Goaway, m_goawayError);
 	entry->appLink->result_(ResultCode::Unprocessed);
 	notify_(id, true);
       }
@@ -1160,6 +1295,7 @@ private:
       return;
     }
     m_goawayPosted = false;
+    requeue_();
   }
 
   // Stable for the native TLS connection lifetime.
@@ -1175,6 +1311,7 @@ private:
   unsigned	m_hubSlot = NullSlot;
   uint32_t	m_goawayNext = 0;
   uint32_t	m_goawayLast = 0;
+  uint32_t	m_goawayError = 0;
   bool		m_ready = false;
   bool		m_down = false;
   bool		m_draining = false;
@@ -1264,6 +1401,7 @@ public:
     m_streamID = 0;
     m_app->connectFailed(*impl(), transient);
   }
+  void nativeError_(ErrorDomain::T, uint64_t) { }
   int8_t result() const { return m_result; }
   void result_(int8_t result) { m_result = result; }
   template <typename Rx>
@@ -1342,24 +1480,41 @@ public:
   Zhttp::Session channelSession() const { return {uintptr_t(m_native), Transport::TLS}; }
   uint64_t channelStreamID() const { return 0; }
   auto impl() { return static_cast<Impl *>(this); }
-  bool streamEnable(bool enabled = true) { return m_stream.enable(enabled); }
-  bool streamAccept() { return m_stream.accept(*impl(), *impl()); }
+  // Negotiation and borrowed application-thread writers are Rx-affine.
+  bool streamEnable(bool enabled = true) {
+    ZmAssert(m_app->rxInvoked());
+    if (!m_stream.enable(enabled)) return false;
+    m_app->txRun([link = ZmRef(impl()), enabled]() {
+      link->streamEnableTx_(enabled);
+    });
+    return true;
+  }
+  bool streamAccept() {
+    ZmAssert(m_app->rxInvoked());
+    return m_stream.accept(*impl(), *impl());
+  }
   bool streamLocalCap() const { return m_stream.localCap(); }
   bool streamPeerCap() const { return m_stream.peerCap(); }
   template <typename L>
   void streamTx_(L &&write) {
-    if (!m_stream.tx()) return;
-    auto tx = m_native->txStream_();
+    ZmAssert(m_app->txInvoked());
+    if (!m_streamTx || !m_txNative) return;
+    auto tx = m_txNative->txStream_();
     ZuFwd<L>(write)(tx);
   }
   template <typename L>
   void streamTx(L &&write) {
-    if (!m_stream.tx()) return;
+    ZmAssert(m_app->rxInvoked());
+    if (!m_stream.tx() || !m_native) return;
     auto tx = m_native->txStream();
     ZuFwd<L>(write)(tx);
   }
-  void streamTxEnd() { if (m_stream.end()) m_native->streamTxEnd(); }
-  void streamTxReset() { if (m_stream.reset()) disconnect(); }
+  void streamTxEnd() {
+    m_app->rxInvoke([link = ZmRef(impl())]() { link->streamEndRx_(); });
+  }
+  void streamTxReset() {
+    m_app->rxInvoke([link = ZmRef(impl())]() { link->streamResetRx_(); });
+  }
   template <typename Stream>
   int process(Stream, Input &input) { return impl()->channel().frameInput(input); }
   template <typename Stream>
@@ -1372,7 +1527,10 @@ public:
   template <typename Builder>
   auto transmit(Builder &) { return txStream(); }
   template <typename Builder>
-  auto transmit_(Builder &) { return m_native->txStream_(); }
+  auto transmit_(Builder &) {
+    ZmAssert(m_app->txInvoked() && m_txNative);
+    return m_txNative->txStream_();
+  }
   void finish() { }
   template <typename Done>
   void complete(Done &&done) {
@@ -1381,8 +1539,13 @@ public:
     else
       done();
   }
-  bool active() const { return m_native; }
+  // Tx uses its published handle; quiescent observers use the Rx snapshot.
+  bool active() const {
+    if (m_app->txInvoked()) return m_txNative;
+    return m_native;
+  }
   void prepare_() {
+    m_stream.reopen();
     m_nativeSlot = NullSlot;
     m_connected = false;
     m_failed = false;
@@ -1390,8 +1553,7 @@ public:
     m_result = ResultCode::OK;
   }
   void disconnect() {
-    m_cancelled = true;
-    if (m_native) m_native->disconnectNative();
+    m_app->rxInvoke([link = ZmRef(impl())]() { link->disconnectRx_(); });
   }
   void connected_(ConnectedInfo info) {
     if (m_cancelled) {
@@ -1403,7 +1565,7 @@ public:
   }
   void disconnected_(bool peer) {
     m_stream.disconnected(peer);
-    m_native = nullptr;
+    native(nullptr);
     m_nativeSlot = NullSlot;
     if (m_connected)
       m_app->disconnected(*impl(), peer);
@@ -1411,14 +1573,14 @@ public:
       connectFailed_(false);
   }
   void released_() {
-    m_native = nullptr;
+    native(nullptr);
     m_nativeSlot = NullSlot;
     m_connected = false;
   }
   void connectFailed_(bool transient) {
     if (m_failed) return;
     m_failed = true;
-    m_native = nullptr;
+    native(nullptr);
     m_nativeSlot = NullSlot;
     m_app->connectFailed(*impl(), transient);
   }
@@ -1433,7 +1595,15 @@ public:
     return streamRC ? streamRC : rc;
   }
   void native(NativeLink *native) {
+    ZmAssert(m_app->rxInvoked());
+    // The captured physical link keeps the old Tx handle valid until this
+    // ordered publication retires it, including release/disconnect callbacks.
+    auto hold = ZmRef(m_native ? m_native : native);
     m_native = native;
+    m_app->txRun([
+      link = ZmRef(impl()), native, hold = ZuMv(hold)]() {
+      link->streamNativeTx_(native);
+    });
   }
   unsigned nativeSlot() const { return m_nativeSlot; }
   void nativeSlot(unsigned slot) { m_nativeSlot = slot; }
@@ -1441,14 +1611,57 @@ public:
   template <typename State> void responseBodyBytes(State *) { }
 
 private:
+  void disconnectRx_() {
+    ZmAssert(m_app->rxInvoked());
+    m_cancelled = true;
+    if (m_native) m_native->disconnectNative();
+  }
+  void streamNativeTx_(NativeLink *native) {
+    ZmAssert(m_app->txInvoked());
+    m_txNative = native;
+    if (!native) m_streamTx = false;
+  }
+  void streamEnableTx_(bool enabled) {
+    ZmAssert(m_app->txInvoked());
+    m_streamTx = enabled;
+  }
+  void streamEndRx_() {
+    ZmAssert(m_app->rxInvoked());
+    if (!m_stream.end() || !m_native) return;
+    m_app->txRun([
+      link = ZmRef(impl()), native = ZmRef(m_native)]() {
+      link->streamEndTx_();
+    });
+  }
+  void streamEndTx_() {
+    ZmAssert(m_app->txInvoked());
+    m_streamTx = false;
+    if (m_txNative) m_txNative->streamTxEnd();
+  }
+  void streamResetRx_() {
+    ZmAssert(m_app->rxInvoked());
+    if (!m_stream.reset() || !m_native) return;
+    m_app->txRun([
+      link = ZmRef(impl()), native = ZmRef(m_native)]() mutable {
+      link->streamEnableTx_(false);
+      link->app()->rxRun([link, native = ZuMv(native)]() {
+	link->disconnect();
+      });
+    });
+  }
   App		*m_app = nullptr;
+  alignas(Zm::CacheLineSize)
   NativeLink	*m_native = nullptr;
-  H1::StreamBinding<Impl, Impl> m_stream;
+  using StreamBinding = H1::StreamBinding<Impl, Impl>;
+  StreamBinding m_stream;
   unsigned	m_nativeSlot = NullSlot;
   bool		m_connected = false;
   bool		m_failed = false;
   bool		m_cancelled = false;
   int8_t	m_result = ResultCode::OK;
+  alignas(Zm::CacheLineSize)
+  NativeLink	*m_txNative = nullptr;
+  bool		m_streamTx = false;
 };
 
 template <typename H1AppLink, typename H2AppLink>
@@ -1764,7 +1977,8 @@ public:
     Wire::initWire(false, config);
     Base::txErrorFn(ZiTxErrorFn{
       [this, generation](ZeException &e) {
-	return this->app()->txError(m_id, generation, e);
+	this->app()->txError(m_id, generation, e);
+	return false;
       }});
   }
   ~CliLink() {
@@ -1866,10 +2080,10 @@ public:
     unsigned pendingHead = m_pendingHead;
     m_pending.length(0);
     m_pendingHead = 0;
-    Wire::clearStreams(
-      [clear](auto &entry) {
-	if (!entry.notified) clear->active.push(entry.appLink);
-      }, [
+    auto collect = [clear](auto &entry) {
+      if (!entry.notified) clear->active.push(entry.appLink);
+    };
+    Wire::clearStreams(ZuMv(collect), [
       link = ZmRef(this), h1 = ZuMv(h1), clear = ZuMv(clear),
       pending = ZuMv(pending), pendingHead, replacing, cancelled, peer
     ]() mutable {
@@ -1899,8 +2113,8 @@ public:
       default: return -1;
     }
   }
-  auto txStream() { return Base::txStream(); }
-  auto txStream_() { return Base::txStream_(); }
+  using Base::txStream;
+  using Base::txStream_;
   auto appTx(uint32_t id, unsigned plan = unsigned(-1)) {
     return H2_::HeaderBlock<CliLink>{
       *this, this->encoder(), id, this->peerFrameSize(), plan};
@@ -1915,9 +2129,8 @@ public:
     return AppHPackSeedPlans<ZuDecay<decltype(user)>>::get(user);
   }
   void streamTxEnd() {
-    this->app()->txRun([link = ZmRef(this)]() mutable {
-      if (link->txQueue.count_()) { link->m_streamEnd = true; return; }
-      link->streamTxClose_();
+    this->app()->txInvoke([link = ZmRef(this)]() {
+      link->streamTxEnd_();
     });
   }
   void sent(ZmRef<ZiTxBuf> buffer, bool ok) {
@@ -1927,10 +2140,14 @@ public:
     streamTxClose_();
   }
 private:
+  void streamTxEnd_() {
+    ZmAssert(this->app()->txInvoked());
+    if (this->txQueue.count_()) { m_streamEnd = true; return; }
+    streamTxClose_();
+  }
   void streamTxClose_() {
     this->app()->rxRun([link = ZmRef(this)]() mutable { link->disconnectNative(); });
   }
-  bool m_streamEnd = false; // Tx-owned
 public:
   void disconnectNative() {
     m_draining = true;
@@ -1975,7 +2192,7 @@ public:
     ]() mutable {
       auto entry = link->h2Stream(id);
       if (!entry || entry->appLink.ptr() != appLink.ptr()) return;
-      link->rst_(id, H2::Error::Cancel);
+      if (!link->Wire::resetStream(id, H2::Error::Cancel)) return;
       link->notify_(id, false);
     });
   }
@@ -1992,11 +2209,13 @@ public:
       if (entry->localEnd) closeLater_(id, true);
     }
   }
-  void h2ResetAppLink(uint32_t id, H2::Error::T) {
+  void h2ResetAppLink(uint32_t id, H2::Error::T error) {
+    if (auto entry = Wire::h2Stream(id))
+      entry->appLink->nativeError_(ErrorDomain::H2Reset, error);
     notify_(id, true);
   }
   void h2Cancel(uint32_t id) {
-    rst_(id, H2::Error::Cancel);
+    if (!Wire::resetStream(id, H2::Error::Cancel)) return;
     notify_(id, false);
   }
   auto h2OpenPeer(uint32_t) -> H2_::Stream<H2AppLink> * {
@@ -2007,7 +2226,8 @@ public:
     return h2Closed(id) ?
       H2::Error::StreamClosed : H2::Error::ProtocolError;
   }
-  void h2Goaway_(uint32_t last, H2::Error::T) {
+  void h2Goaway_(uint32_t last, H2::Error::T error) {
+    m_goawayError = error;
     m_draining = true;
     if (!m_goawayPosted) {
       m_goawayNext = Wire::nextLocalStreamID();
@@ -2018,6 +2238,7 @@ public:
     } else if (last < m_goawayLast)
       m_goawayLast = last;
     requeue_();
+    capacity_();
     this->app()->user()->goaway(last);
   }
   void h2PeerSetting(uint16_t key, uint32_t value) {
@@ -2168,6 +2389,12 @@ private:
       m_admitPosted = false;
       return;
     }
+    if (m_draining) {
+      m_admitPosted = false;
+      requeue_();
+      capacity_();
+      return;
+    }
     unsigned n = 0;
     switch (m_version) {
       case Version::H1:
@@ -2205,7 +2432,10 @@ private:
     this->app()->capacity(m_id, m_generation, saturated());
   }
   void requeue_() {
-    if (!pending_() || m_requeuePosted) return;
+    if (m_requeuePosted || m_goawayPosted) return;
+    if (m_version == Version::H2) {
+      if (!m_draining || Wire::streamCount()) return;
+    } else if (!pending_()) return;
     m_requeuePosted = true;
     m_replacing = true;
     m_draining = true;
@@ -2247,15 +2477,6 @@ private:
       link->notify_(id, peer);
     });
   }
-  void rst_(uint32_t id, H2::Error::T error) {
-    auto tx = Base::txStream();
-    H2_::StreamBytes<decltype(tx)> sink{tx};
-    H2::putHeader(sink, {
-      .length = 4, .streamID = id, .type = H2::FrameType::RSTStream
-    });
-    H2::putUInt32(sink, error);
-    tx.flush();
-  }
   void notify_(uint32_t id, bool peer) {
     auto entry = Wire::h2Stream(id);
     if (!entry || entry->notified) return;
@@ -2279,6 +2500,7 @@ private:
       uint32_t id = m_goawayNext;
       m_goawayNext = id >= 2 ? id - 2 : 0;
       if (auto entry = Wire::h2Stream(id)) {
+	entry->appLink->nativeError_(ErrorDomain::H2Goaway, m_goawayError);
 	entry->appLink->result_(ResultCode::Unprocessed);
 	notify_(id, true);
       }
@@ -2289,6 +2511,7 @@ private:
       return;
     }
     m_goawayPosted = false;
+    requeue_();
   }
 
   // Stable for the native TLS connection lifetime.
@@ -2308,6 +2531,7 @@ private:
   unsigned		m_hubSlot = NullSlot;
   uint32_t		m_goawayNext = 0;
   uint32_t		m_goawayLast = 0;
+  uint32_t		m_goawayError = 0;
   int			m_tlsVersion = 0;
   int8_t		m_version = -1;
   bool			m_ready = false;
@@ -2319,6 +2543,10 @@ private:
   bool			m_replacing = false;
   bool			m_admitPosted = false;
   bool			m_goawayPosted = false;
+  // Tx thread exclusive.
+  alignas(Zm::CacheLineSize)
+  bool m_streamEnd = false;
+
 };
 
 } // namespace TLS_
@@ -2353,16 +2581,13 @@ struct CliLinkKey {
 
 struct CliLinkEntry {
   using CloseFn = void (*)(void *);
-  using DownFn = bool (*)(void *);
   using PrintDiagFn = void (*)(void *);
 
   CliLinkKey		key;
   uint64_t		generation = 0;
   ZmContext		owner;
   CloseFn		close = nullptr;
-  DownFn		down = nullptr;
   PrintDiagFn		printDiag = nullptr;
-  bool			stopping = false;
 };
 
 struct CliLinkClose {
@@ -2503,6 +2728,10 @@ private:
       remote = ZuMv(remote), port
     ]() mutable {
       appLink->prepare_();
+      if (m_stopping || !this->running()) {
+	appLink->connectFailed_(false);
+	return;
+      }
       ZmRef<Link> link;
       unsigned id = ClientAppLinkID_(appLink.ptr(), 0);
       CliLinkKey key{host, remote, port, id};
@@ -2519,10 +2748,11 @@ private:
 	  .close = [](void *ptr) {
 		    // Hub shutdown must not wait behind an in-flight migration;
 		    // abort guarantees endpointDown() and deterministic draining.
-		    static_cast<Link *>(ptr)->abort();
-	  },
-	  .down = [](void *ptr) {
-	    return static_cast<Link *>(ptr)->down;
+		    // Retire before abort so subsequent batches never rescan
+		    // entries waiting for their asynchronous endpoint drainage.
+		    auto link = static_cast<Link *>(ptr);
+		    link->app()->removeLink(link);
+		    link->abort();
 	  },
 	  .printDiag = [](void *ptr) {
 #ifdef Zquic_DEBUG
@@ -2601,6 +2831,9 @@ public:
     CliLinkKey key{link->host, link->remote, link->port, link->id};
     auto entry = m_links->del(key);
     ZmAssert(entry && entry->owner.object<Link>() == link);
+    // Both the stop scan and independent failures retire each active link
+    // exactly once. Its existing retired owner spans all Rx/Tx drainage.
+    if (m_stopping) ++m_stopPending;
     auto generation = m_generations->del(link->generation);
     ZmAssert(generation &&
 	generation->owner.template object<Link>() == link);
@@ -2626,7 +2859,8 @@ private:
     m_stopFns.push(ZuMv(done));
     if (m_stopping) return;
     m_stopping = true;
-    m_stopPending = 0;
+    // Retired links still own their Rx/Tx/QPACK drain continuations.
+    m_stopPending = m_retired.length();
     m_stopScanning = true;
     stopLinksBatch_();
   }
@@ -2643,10 +2877,6 @@ private:
 	  exhausted = true;
 	  break;
 	}
-	if (entry->stopping ||
-	    entry->down(entry->owner.object<void>())) continue;
-	entry->stopping = true;
-	++m_stopPending;
 	close.push(CliLinkClose{entry->owner, entry->close});
       }
     }
@@ -2800,6 +3030,11 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
 
   void add(ZmRef<AppLink> appLink) {
     appLink->native(ZmRef(this));
+    if (draining) {
+      queue_(pending, pendingLive, QueueSlot::Pending, ZuMv(appLink));
+      drainGoaway_();
+      return;
+    }
     if (!ready || readyDraining) {
       queue_(pending, pendingLive, QueueSlot::Pending, ZuMv(appLink));
       return;
@@ -2811,6 +3046,7 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
       "H3 logical stream admission outside Rx thread", return);
     queue_(waiting, waitingLive, QueueSlot::Waiting, ZuMv(appLink));
     this->app()->txRun([link = ZmRef(this)]() mutable {
+      if (link->drainingTx) return;
       auto stream = link->stream(Zquic::StreamType::Duplex);
       link->capacityTx_();
       if (!stream) return;
@@ -2830,6 +3066,64 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
       .transport = Transport::QUIC,
       .secure = true
     }));
+  }
+
+  void h3Goaway(uint64_t boundary) {
+    if (down || finalizing) return;
+    draining = true;
+    this->app()->capacity(id, generation, true);
+    goawayID = boundary;
+    if (goawayPosted) { goawayStream = 0; return; }
+    goawayPosted = true;
+    goawayStream = 0;
+    // Fence already-posted stream opens before refusing unpublished streams.
+    this->app()->txRun([link = ZmRef(this)]() mutable {
+      link->drainingTx = true;
+      link->app()->rxRun([link = ZuMv(link)]() mutable { link->goawayBatch_(); });
+    });
+  }
+  void goawayBatch_() {
+    if (down || finalizing) { goawayPosted = false; return; }
+    unsigned end = goawayStream + ClientWorkBatch;
+    if (end > streams.length()) end = streams.length();
+    while (goawayStream < end) {
+      auto stream = streams[goawayStream++];
+      if (uint64_t(stream->id()) < goawayID || !stream->appLink || stream->closing) continue;
+      stream->appLink->nativeError_(ErrorDomain::H3Goaway, 0);
+      stream->appLink->result_(ResultCode::Unprocessed);
+      h3StreamError(ZuMv(stream), H3::RequestCancelled);
+    }
+    if (goawayStream < streams.length()) {
+      this->app()->rxRun([link = ZmRef(this)]() mutable { link->goawayBatch_(); });
+      return;
+    }
+    if (!clearQueueBatch_(waiting, waitingHead, waitingLive, [](AppLink *appLink) {
+	appLink->result_(ResultCode::Unprocessed);
+	appLink->connectFailed_(false);
+      })) {
+      this->app()->rxRun([link = ZmRef(this)]() mutable { link->goawayBatch_(); });
+      return;
+    }
+    goawayPosted = false;
+    drainGoaway_();
+  }
+  void drainGoaway_() {
+    if (!draining || goawayPosted || streams.length() || waitingLive ||
+	down || finalizing) return;
+    // Keep one indexed native connection until its accepted streams drain.
+    if (indexed) this->app()->removeLink(this);
+    unsigned n = 0;
+    while (n++ < ClientWorkBatch) {
+      auto appLink = shift_(pending, pendingHead, pendingLive);
+      if (!appLink) break;
+      this->app()->connect(appLink.ptr(), host, port, remote);
+    }
+    if (pendingLive) {
+      this->app()->rxRun([link = ZmRef(this)]() mutable { link->drainGoaway_(); });
+      return;
+    }
+    down = true;
+    Base::disconnect();
   }
 
   void connected(Zquic::Connected info) {
@@ -3014,7 +3308,14 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
       return;
     }
     if (stream->appLink.ptr() != appLink.ptr()) return;
-    (void)this->send(stream, "", true);
+    bool stopRx = !stream->remoteEnd;
+    bool resetTx = !stream->localEnd;
+    if (stopRx || resetTx)
+      this->app()->txRun([stream, stopRx, resetTx]() mutable {
+	if (stopRx) stream->stop(H3::RequestCancelled);
+	if (resetTx && !stream->txCompleted())
+	  stream->quicReset(H3::RequestCancelled);
+      });
     stream->appLink = nullptr;
     removeStream_(stream);
     appLink->disconnected_(false);
@@ -3037,10 +3338,22 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
       (void)this->send(stream, "", true);
       return;
     }
+    if (draining) {
+      appLink->result_(ResultCode::Unprocessed);
+      appLink->connectFailed_(false);
+      this->app()->txRun([stream = ZuMv(stream)]() mutable {
+	stream->stop(H3::RequestCancelled);
+	stream->quicReset(H3::RequestCancelled);
+      });
+      drainGoaway_();
+      return;
+    }
     opened(ZuMv(appLink), ZuMv(stream));
   }
   void streamResetReceived(StreamRef stream, uint64_t error, uint64_t) {
     if (!stream) return;
+    if (stream->appLink)
+      stream->appLink->nativeError_(ErrorDomain::H3Reset, error);
     (void)stream->process(stream->rxStream());
     closeLater_(stream, true);
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
@@ -3049,12 +3362,16 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
   }
   void streamStopSendingReceived(StreamRef stream, uint64_t error) {
     if (!stream) return;
+    if (stream->appLink)
+      stream->appLink->nativeError_(ErrorDomain::H3Stop, error);
     (void)stream->process(stream->rxStream());
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
       stream->quicReset(error);
     });
   }
   void h3StreamError(StreamRef stream, uint64_t error) {
+    if (stream && stream->appLink)
+      stream->appLink->nativeError_(ErrorDomain::H3Error, error);
     closeLater_(stream, false);
     this->app()->txRun([stream = ZuMv(stream), error]() mutable {
       stream->stop(error);
@@ -3090,6 +3407,7 @@ friend inline ZuStringT<"Zhttp.H3.Link"> ZmNHeapID(CliLink *);
 
 public:
   void h3ReadyBatch_() {
+    if (draining) { drainGoaway_(); return; }
     unsigned n = 0;
     while (n++ < ClientWorkBatch) {
       auto appLink = shift_(pending, pendingHead, pendingLive);
@@ -3128,7 +3446,7 @@ public:
   }
 
   void capacityTx_() {
-    bool saturated = dataBlockedTx || streamsBlockedTx;
+    bool saturated = drainingTx || dataBlockedTx || streamsBlockedTx;
     this->app()->rxRun([
       link = ZmRef(this), saturated]() mutable {
       link->app()->capacity(link->id, link->generation, saturated);
@@ -3141,10 +3459,19 @@ public:
     this->app()->rxRun([
       link = ZmRef(this), stream = ZmRef(stream), peer
     ]() mutable {
-      if (!stream->appLink) return;
-      auto appLink = ZuMv(stream->appLink);
-      link->removeStream_(stream);
-      appLink->disconnected_(peer);
+      // Keep native handles through already-accepted Tx turns. Parser
+      // completion queues producer invalidation before this Tx fence.
+      auto app = link->app();
+      app->txRun([link = ZuMv(link), stream = ZuMv(stream), peer]() mutable {
+	link->app()->rxRun([
+	  link = ZuMv(link), stream = ZuMv(stream), peer
+	]() mutable {
+	  if (!stream->appLink) return;
+	  auto appLink = ZuMv(stream->appLink);
+	  link->removeStream_(stream);
+	  appLink->disconnected_(peer);
+	});
+      });
     });
   }
 
@@ -3213,6 +3540,7 @@ public:
     unsigned slot = stream->slot;
     ZmAssert(slot < streams.length() && streams[slot].ptr() == stream);
     if (migrationNotifying && slot < migrationStream) --migrationStream;
+    if (goawayPosted && slot < goawayStream) --goawayStream;
     unsigned last = streams.length() - 1;
     if (slot != last) {
       streams[slot] = ZuMv(streams[last]);
@@ -3220,6 +3548,7 @@ public:
     }
     streams.length(last);
     stream->slot = QueueSlot::Invalid;
+    drainGoaway_();
   }
 
   void migrationComplete_() {
@@ -3269,7 +3598,11 @@ public:
   unsigned		waitingLive = 0;
   unsigned		teardownStream = 0;
   unsigned		migrationStream = 0;
+  unsigned		goawayStream = 0;
+  uint64_t		goawayID = 0;
   unsigned		retiredSlot = QueueSlot::Invalid;
+  bool			draining = false;
+  bool			goawayPosted = false;
   bool			ready = false;
   bool			readyDraining = false;
   bool			down = false;
@@ -3287,6 +3620,7 @@ public:
   H3::QPackTxTable	h3Tx;
   bool			h3PeerCapTx = false;
   QPackSeedState::T	h3SeedStateTx = QPackSeedState::Unseeded;
+  bool			drainingTx = false;
   bool			dataBlockedTx = false;
   bool			streamsBlockedTx = false;
 };
@@ -3327,6 +3661,7 @@ public:
       impl(), Zquic::Host{ZuFwd<Host>(host)}, port, ZuMv(remote));
   }
   void prepare_() {
+    m_result = ResultCode::OK;
     m_connected = false;
     m_failed = false;
     m_cancelled = false;
@@ -3393,6 +3728,9 @@ public:
     m_native->close(impl(), m_stream);
   }
 
+  void nativeError_(ErrorDomain::T, uint64_t) { }
+  int8_t result() const { return m_result; }
+  void result_(int8_t value) { m_result = value; }
   void connected_(ConnectedInfo info) {
     if (m_cancelled) {
       disconnect();
@@ -3474,6 +3812,7 @@ private:
   ZiTxErrorFn		m_txErrorFn;
   uint32_t		m_queueSlot = QueueSlot::Invalid;
   QueueSlot::Kind	m_queueKind = QueueSlot::None;
+  int8_t		m_result = ResultCode::OK;
   bool			m_connected = false;
   bool			m_failed = false;
   bool			m_cancelled = false;
@@ -3555,10 +3894,14 @@ public:
     bool channelBodyFramed() const { return m_session.bodyFramed(); }
     uint64_t channelSequence() const { return m_generation; }
     LiveReq *request() const { return m_request; }
+    void nativeError_(ErrorDomain::T domain, uint64_t code) {
+      if (m_request && !(m_complete && m_success))
+	m_request->nativeError(domain, code);
+    }
     bool stopped() const { return m_stopped; }
     const ConnectedInfo &info() const { return m_info; }
     int8_t result() const {
-      if constexpr (ZuIsSame<Profile, H2TLS>{}) return Base::result();
+      if constexpr (Message::ID != Version::H1) return Base::result();
       else return ResultCode::OK;
     }
     unsigned id() const { return m_id; }
@@ -3888,6 +4231,11 @@ public:
 	}
 	m_links.length(n);
       });
+  }
+
+  void start_() {
+    m_stopping = false;
+    Base::start_();
   }
 
   // TCP/TLS ZmEngine hook.  The native engine retains stop(done);
@@ -4254,6 +4602,8 @@ public:
     void close() {
       if (m_closing) return;
       m_closing = true;
+      pool()->owner()->capacity_(
+	NativeTraits<Profile>::Transport::ID, m_id, m_generation, true);
       closeBatch_(m_head, m_generation);
     }
     void retire(Operation &operation, bool reuse) {
@@ -4335,7 +4685,7 @@ public:
 	  pool()->owner()->poolConnectFailed(*op, op->request(), value);
 	else {
 	  pool()->owner()->poolDisconnected(*op, op->request(), value);
-	  if (first) {
+	  if (first && op->sent()) {
 	    pool()->owner()->poolCloseDelimited(*op->request());
 	    op->session().eof();
 	  }
@@ -4389,6 +4739,8 @@ public:
       m_stopped = true;
       pool()->linkStopped_();
       pool()->owner()->poolStopped(*this);
+      pool()->owner()->capacity_(
+	NativeTraits<Profile>::Transport::ID, m_id, m_generation, false);
     }
 
     // Stable after pool initialization.
@@ -4461,6 +4813,11 @@ public:
   ZuInline int process(Link &link, Rx &rx) { return link.processHTTP(rx); }
   void txFailed(unsigned id, unsigned generation) {
     if (id < m_links.length()) m_links[id]->txFailed(generation);
+  }
+
+  void start_() {
+    m_stopping = false;
+    Base::start_();
   }
 
   void stop_() {
@@ -4558,6 +4915,9 @@ public:
     bool channelBodyFramed() const { return m_session.bodyFramed(); }
   uint64_t channelSequence() const { return m_generation; }
   LiveReq *request() const { return m_request; }
+  void nativeError_(ErrorDomain::T domain, uint64_t code) {
+    if (m_request && m_complete != 1) m_request->nativeError(domain, code);
+  }
   bool stopped() const { return m_stopped; }
   unsigned slot() const { return m_slot; }
   void slot(unsigned slot_) { m_slot = slot_; }
@@ -4765,6 +5125,7 @@ public:
     Native{pool}, Link{pool, this, slot, id} { }
 
   using Link::assign;
+  using Link::nativeError_;
   using Link::close;
   using Link::onConnected;
   using Link::onConnectFailed;
@@ -4778,7 +5139,7 @@ public:
   using Link::stableID;
   using Link::stopped;
 
-  void complete(bool ok) { Link::complete(ok); }
+  using Link::complete;
   template <typename Done>
   void release(Done &&done) {
     Native::complete(ZuFwd<Done>(done));
@@ -4826,6 +5187,7 @@ public:
     Native{pool}, Link{pool, this, slot, id} { }
 
   using Link::assign;
+  using Link::nativeError_;
   using Link::close;
   using Link::onConnected;
   using Link::onConnectFailed;
@@ -4838,7 +5200,7 @@ public:
   using Link::stableID;
   using Link::stopped;
 
-  void complete(bool ok) { Link::complete(ok); }
+  using Link::complete;
 };
 
 template <
@@ -5014,10 +5376,22 @@ public:
     });
   }
 
+  using Base::start;
+  template <typename Done>
+  void start(Done &&done) {
+    Base::start([this, done = Hubs::DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
+      this->rxRun([this, done = ZuMv(done), ok]() mutable {
+	if (ok) m_stopping = false;
+	done(ok);
+      });
+    });
+  }
   template <typename Done>
   void stop(Done &&done) {
-    m_stopping = true;
-    Base::stop(ZuFwd<Done>(done));
+    this->rxRun([this, done = Hubs::DoneFn{ZuFwd<Done>(done)}]() mutable {
+      m_stopping = true;
+      Base::stop([done = ZuMv(done)](bool ok) mutable { done(ok); });
+    });
   }
   void final() {
     ZmAssert(!m_pairs);
@@ -5116,11 +5490,12 @@ struct ClientAttemptFailureState {
 struct ClientDiscoveryPost : public ZmNHeap<ClientDiscoveryPost>, public ZmObject {
 friend inline ZuStringT<"Zhttp.Client.Discovery"> ZmNHeapID(ClientDiscoveryPost *);
 
+  Endpoints		endpoints;
+  DiscoveryError	error;
+
   ClientDiscoveryPost(DiscoveryError error_, Endpoints endpoints_) :
     endpoints{ZuMv(endpoints_)}, error{error_} { }
 
-  Endpoints		endpoints;
-  DiscoveryError	error;
 };
 
 using ClientDiscoveryPostRef = ZmRef<ClientDiscoveryPost>;
@@ -5185,13 +5560,18 @@ struct BoundResParser : public Zhttp::Parser {
   void reset() { binding.reset(); }
 };
 
-class PoolImpl : public ZmNHeap<PoolImpl> {
+class PoolImpl : public ZmNHeap<PoolImpl>, public ZmEngine<PoolImpl> {
+  friend ZmEngine<PoolImpl>;
   friend inline ZuStringT<"Zhttp.Pool"> ZmNHeapID(PoolImpl *);
   friend class PoolCore;
   friend struct TCPBackend;
   friend struct TLSBackend;
   friend struct QUICBackend;
+  using Engine = ZmEngine<PoolImpl>;
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
   using Client = ClientCore;
 
   using ReqBuilder = RequestRecord;
@@ -5302,6 +5682,8 @@ private:
 public:
 
   struct LiveReq {
+    ErrorDomain::T	errorDomain = ErrorDomain::None;
+    uint64_t		errorCode = 0;
     // Valid while non-null; the Tx queue owns the request.
     ReqBuilder		*request = nullptr;
     PoolLink		*link = nullptr;
@@ -5327,6 +5709,12 @@ public:
     bool		replayable = true;
     bool		routePending = false;
     bool		routeTransition = false;
+
+    void nativeError(ErrorDomain::T domain, uint64_t code) {
+      if (terminal >= 0 || errorDomain != ErrorDomain::None) return;
+      errorDomain = domain;
+      errorCode = code;
+    }
   };
 
   using TCPPool = ClientPool<
@@ -5382,12 +5770,16 @@ public:
     ZtArray<unsigned, ZtArrayHeapID<"Zhttp.Client.Free">>;
   using Pending =
     ZtArray<unsigned, ZtArrayHeapID<"Zhttp.Pool.Pending">>;
-  using StopFns =
-    ZtArray<Hubs::DoneFn, ZtArrayHeapID<"Zhttp.Pool.StopFns">>;
 
 public:
   PoolImpl(Client *client, PoolCore *owner) :
     m_client{client}, m_altSvc{1}, m_owner{owner} { }
+
+  ~PoolImpl() {
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_rxDrain && !m_txDrain && !m_discoveries && !m_rxPending &&
+      !m_active && !m_txActive);
+  }
 
   PoolCore *owner() const { return m_owner; }
   ZiMultiplex *mx() const { return m_mx; }
@@ -5458,18 +5850,30 @@ public:
     return true;
   }
 
-  bool start() {
-    return ZmBlock<bool>{}([this](auto wake) { this->start(ZuMv(wake)); });
-  }
-  template <typename Done>
-  void start(Done &&done) {
-    m_hubs.start([this, done = Hubs::DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
-      txRun_([this, done = ZuMv(done), ok]() mutable {
-	if (ok) m_owner->queueOps().start(m_owner->ctx);
-	done(ok);
+private:
+  void start_() {
+    if (!m_mx || !m_hubs.count()) { Engine::started(false); return; }
+    m_hubs.start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      rxRun_([this]() {
+	assertRx_();
+	ZmAssert_(!m_active && !m_rxDrain && !m_discoveries && !m_rxPending);
+	m_rxStopping = false;
+	m_routeEndpoints = nullptr;
+	m_capacityTransport = -1;
+	txRun_([this]() {
+	  assertTx_();
+	  ZmAssert_(!m_txActive && !m_txDrain);
+	  m_txIngressStopped = false;
+	  m_sealed = m_idle = false;
+	  m_owner->queueOps().start(m_owner->ctx);
+	  Engine::started(true);
+	});
       });
     });
   }
+
+public:
 
   void send(RequestRef request) {
     txRun_([this, request = ZuMv(request)]() mutable {
@@ -5553,45 +5957,38 @@ public:
     m_resolverOps = resolver;
   }
 
-  void stop() {
-    (void)ZmBlock<bool>{}(
-      [this](auto wake) { stop(Hubs::DoneFn{ZuMv(wake)}); });
-  }
-  template <typename Done>
-  void stop(Done &&done) {
-    Hubs::DoneFn done_{ZuFwd<Done>(done)};
-    if (!m_mx) {
-      m_hubs.stop(ZuMv(done_));
-      return;
-    }
-    rxRun_([this, done = ZuMv(done_)]() mutable {
-      stopIngress_(Hubs::DoneFn{
-	[this, done = ZuMv(done)](bool) mutable {
-	  // Cross one Rx queue boundary after timer cancellation so any callback
-	  // already dequeued on this shard observes its invalidated generation
-	  // before native and Tx teardown can release request slots.
-	  rxRun_([this, done = ZuMv(done)]() mutable {
-	    m_hubs.stop(Hubs::DoneFn{
-	      [this, done = ZuMv(done)](bool ok) mutable {
-		txRun_([this, done = ZuMv(done), ok]() mutable {
-		  stopTx_(Hubs::DoneFn{
-		    [this, done = ZuMv(done), ok](bool txOK) mutable {
-		      rxRun_([done = ZuMv(done), ok, txOK]() mutable {
-			done(ok &&txOK);
-		      });
-		    }});
+private:
+  void stop_() {
+    rxRun_([this]() {
+      stopIngress_(Hubs::DoneFn{[this](bool ok) {
+	ZmAssert_(ok);
+	// Retire a timer/discovery callback already dequeued on Rx before
+	// stopping transports or releasing slots used by its generation check.
+	rxRun_([this]() {
+	  m_hubs.stop([this](bool ok) {
+	    txRun_([this, ok]() {
+	      stopTx_(Hubs::DoneFn{[this, hubsOK = ok](bool ok) {
+		ZmAssert_(ok); // local queue retirement always completes successfully
+		rxRun_([this, ok = hubsOK]() {
+		  ZmAssert_(!m_active && !m_pending && !m_routePending &&
+		    !m_transitionPending && !m_routeDiscovery && !m_dispatchPosted);
+		  Engine::stopped(ok);
 		});
 	      }});
+	    });
 	  });
-	}});
+	});
+      }});
     });
   }
 
+public:
+
   void final() {
     // The owner has awaited stop(), or this pool was never started.
-    ZmAssert(m_hubs.state() == ZmEngineState::Stopped);
-    ZmAssert(!m_rxStopping || (m_rxStopped && m_txStopped));
-    ZmAssert(!m_owner->queueOps().activeCount(m_owner->ctx));
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(m_hubs.state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_owner->queueOps().activeCount(m_owner->ctx));
     m_hubs.final();
 #ifdef ZDEBUG
     for (auto &request: m_liveReqs)
@@ -5600,7 +5997,7 @@ public:
 #endif
     ZmAssert(!m_pending && !m_routePending && !m_transitionPending &&
 	!m_dispatchPosted);
-    ZmAssert(!m_stopIngressFns && !m_stopTxFns);
+    ZmAssert_(!m_rxDrain && !m_txDrain && !m_discoveries && !m_rxPending);
     ZmAssert(!m_routeDiscovery);
     m_liveReqs.length(0);
     m_links.length(0);
@@ -5756,7 +6153,8 @@ public:
     attempt.protocol.closeDelimited = true;
   }
   bool poolReusable(const LiveReq &attempt) const {
-    return attempt.protocol.persistence != Persistence::Close &&
+    return attempt.requestBody.final &&
+      attempt.protocol.persistence != Persistence::Close &&
       !attempt.protocol.closeDelimited &&
       (!attempt.protocol.http10 ||
 	attempt.protocol.persistence == Persistence::KeepAlive) &&
@@ -5839,7 +6237,7 @@ public:
       finish_(link, attempt, ResultCode::Failed, false);
       return;
     }
-    if constexpr (ZuIsSame<typename Link::Protocol, TLS>{})
+    if constexpr (!ZuIsSame<typename Link::Protocol, TCP>{})
       if (!ok) {
 	switch (link.result()) {
 	  case ResultCode::Cancelled:
@@ -5857,7 +6255,10 @@ public:
 	      uint64_t previous = attempt.identity.attempt;
 	      nextAttempt_(attempt, false);
 	      retried_(attempt, previous);
-	      startTLS_(attempt);
+	      if constexpr (ZuIsSame<typename Link::Protocol, QUIC>{})
+		startQUIC_(attempt, attempt.route.endpoints ?
+		  &attempt.route.endpoints->endpoints()[attempt.route.endpointIndex] : nullptr);
+	      else startTLS_(attempt);
 	      link.retire();
 	    }
 	    return;
@@ -6055,7 +6456,12 @@ private:
     assertTx_();
     rxRun_([this, request = ZuMv(request)]() mutable {
       complete_(*request, ResultCode::Cancelled);
-      txRun_([this]() { idleTx_(); });
+      txRun_([this, request = ZuMv(request)]() mutable {
+	idleTx_();
+	// Queue ownership and the final Tx housekeeping precede retirement.
+	if (request->requestOps->retired)
+	  rxRun_([request = ZuMv(request)]() mutable { request->retired(); });
+      });
     });
   }
 
@@ -6227,6 +6633,8 @@ private:
     attempt.responseBody = {};
     attempt.protocol = {};
     attempt.failure = {};
+    attempt.errorDomain = ErrorDomain::None;
+    attempt.errorCode = 0;
     attempt.events = 0;
     attempt.terminal = -1;
     attempt.poolSlot = NullSlot;
@@ -6539,6 +6947,7 @@ private:
     ZmAssert(m_routeState == RouteState::Resolving);
     ZmAssert(!m_routeDiscovery);
     uint64_t generation = ++m_routeDiscoveryGeneration;
+    ++m_discoveries;
     auto discovery = resolveH3(
       ZuMv(endpoint), m_config.discoveryLimits(), DiscoveryFn{[
       this, state, generation](
@@ -6549,16 +6958,18 @@ private:
 	post->ZmObject::debug();
 #endif
 	rxRun_([this, state, generation, post = ZuMv(post)]() mutable {
-	  if (generation != m_routeDiscoveryGeneration ||
-	      m_routeState != RouteState::Resolving) return;
-	  m_routeDiscovery = nullptr;
-	  if (post->error.ok() && post->endpoints) {
-	    m_routeEndpoints = new ClientRoute{
-	      generation, ZuMv(post->endpoints)};
-	    m_routeState = state;
-	  } else
-	    m_routeState = RouteState::Failed;
-	  routeReady_();
+	  if (generation == m_routeDiscoveryGeneration &&
+	      m_routeState == RouteState::Resolving) {
+	    m_routeDiscovery = nullptr;
+	    if (post->error.ok() && post->endpoints) {
+	      m_routeEndpoints = new ClientRoute{
+		generation, ZuMv(post->endpoints)};
+	      m_routeState = state;
+	    } else
+	      m_routeState = RouteState::Failed;
+	    routeReady_();
+	  }
+	  discoveryDone_();
 	});
       }}, m_resolverOps);
     if (generation == m_routeDiscoveryGeneration &&
@@ -6619,6 +7030,7 @@ private:
     waitRoute_(attempt);
     ZmAssert(!m_routeDiscovery);
     uint64_t generation = ++m_routeDiscoveryGeneration;
+    ++m_discoveries;
     auto discovery = discoverH3(
       Origin{url.origin()}, url.host, url.port,
       m_config.blindH3(), m_config.discoveryLimits(), DiscoveryFn{[
@@ -6629,27 +7041,29 @@ private:
 	post->ZmObject::debug();
 #endif
 	rxRun_([this, generation, post = ZuMv(post)]() mutable {
-	  if (generation != m_routeDiscoveryGeneration ||
-	      m_routeState != RouteState::Resolving) return;
-	  m_routeDiscovery = nullptr;
-	  if (post->error.ok() && post->endpoints) {
-	    m_routeEndpoints = new ClientRoute{
-	      generation, ZuMv(post->endpoints)};
-	    m_routeState = RouteState::H3;
-	    routeReady_();
-	    return;
+	  if (generation == m_routeDiscoveryGeneration &&
+	      m_routeState == RouteState::Resolving) {
+	    m_routeDiscovery = nullptr;
+	    if (post->error.ok() && post->endpoints) {
+	      m_routeEndpoints = new ClientRoute{
+		generation, ZuMv(post->endpoints)};
+	      m_routeState = RouteState::H3;
+	      routeReady_();
+	    } else {
+	      URLView url = m_origin.url();
+	      resolveRouteStart_(RouteState::TLS, Endpoint{
+		.origin = Origin{url.origin()},
+		.target = m_dest.host,
+		.tlsName = m_dest.host,
+		.port = m_dest.port,
+		.source = EndpointSource::Origin,
+		.httpVersion = Version::T(
+		  m_config.h2Policy() == H2Policy::Disable ?
+		    Version::H1 : Version::H2)
+	      });
+	    }
 	  }
-	  URLView url = m_origin.url();
-	  resolveRouteStart_(RouteState::TLS, Endpoint{
-	    .origin = Origin{url.origin()},
-	    .target = m_dest.host,
-	    .tlsName = m_dest.host,
-	    .port = m_dest.port,
-	    .source = EndpointSource::Origin,
-	    .httpVersion = Version::T(
-	      m_config.h2Policy() == H2Policy::Disable ?
-		Version::H1 : Version::H2)
-	  });
+	  discoveryDone_();
 	});
       }}, m_resolverOps);
     if (generation == m_routeDiscoveryGeneration &&
@@ -6889,7 +7303,9 @@ private:
       .retries = uint16_t(attempt.retries),
       .code = code,
       .transport = attempt.protocol.transport,
-      .httpVersion = attempt.protocol.httpVersion
+      .httpVersion = attempt.protocol.httpVersion,
+      .errorDomain = attempt.errorDomain,
+      .errorCode = attempt.errorCode
     };
   }
 
@@ -6926,12 +7342,11 @@ private:
 
   void stopIngress_(Hubs::DoneFn done) {
     assertRx_();
-    if (m_rxStopped) {
-      done(true);
-      return;
-    }
-    m_stopIngressFns.push(ZuMv(done));
-    if (m_rxStopping) return;
+    ZmAssert_(!m_rxDrain);
+    m_rxDrain = ZuMv(done);
+    // The scan owns one completion credit; every discovery callback already
+    // admitted owns another until its final Rx post has returned to this pool.
+    m_rxPending = m_discoveries + 1;
     m_rxStopping = true;
     m_pending.length(0);
     m_pendingHead = 0;
@@ -6981,13 +7396,23 @@ private:
       rxRun_([this, i]() { stopIngressBatch_(i); });
       return;
     }
-    m_rxStopped = true;
-    auto fns = ZuMv(m_stopIngressFns);
-    m_stopIngressFns.init_();
-    for (auto &fn: fns) {
-      fn(true);
-      fn = {};
-    }
+    rxDrainStep_();
+  }
+
+  void discoveryDone_() {
+    assertRx_();
+    ZmAssert_(m_discoveries);
+    --m_discoveries;
+    if (m_rxStopping) rxDrainStep_();
+  }
+
+  void rxDrainStep_() {
+    assertRx_();
+    ZmAssert_(m_rxPending);
+    if (--m_rxPending) return;
+    auto done = ZuMv(m_rxDrain);
+    m_rxDrain = {};
+    done(true);
   }
 
   void terminal_(ReqBuilder *request) {
@@ -7013,13 +7438,8 @@ private:
 
   void stopTx_(Hubs::DoneFn done) {
     assertTx_();
-    if (m_txStopped) {
-      done(true);
-      return;
-    }
-    m_stopTxFns.push(ZuMv(done));
-    if (m_txStopping) return;
-    m_txStopping = true;
+    ZmAssert_(!m_txDrain);
+    m_txDrain = ZuMv(done);
     m_owner->queueOps().stop(m_owner->ctx);
     ZmAssert(!m_txActive);
     stopTxBatch_();
@@ -7032,19 +7452,16 @@ private:
 	auto pool = static_cast<PoolImpl *>(ctx);
 	pool->rxRun_([pool, request = ZuMv(request)]() mutable {
 	  pool->complete_(*request, ResultCode::Cancelled);
+	  if (request->requestOps->retired) request->retired();
 	});
       });
     if (m_owner->queueOps().count(m_owner->ctx)) {
       txRun_([this]() { stopTxBatch_(); });
       return;
     }
-    m_txStopped = true;
-    auto fns = ZuMv(m_stopTxFns);
-    m_stopTxFns.init_();
-    for (auto &fn: fns) {
-      fn(true);
-      fn = {};
-    }
+    auto done = ZuMv(m_txDrain);
+    m_txDrain = {};
+    done(true);
   }
 
   void idleTx_() {
@@ -7100,9 +7517,10 @@ private:
   uint64_t	m_requestID = 0;
   int8_t	m_routeState = RouteState::Unresolved;
   int8_t	m_capacityTransport = -1;
-  StopFns	m_stopIngressFns;
+  Hubs::DoneFn	m_rxDrain;
+  unsigned	m_discoveries = 0;
+  unsigned	m_rxPending = 0;
   bool		m_rxStopping = false;
-  bool		m_rxStopped = false;
   bool		m_routeTransition = false;
   bool		m_routeTransitionScanning = false;
   bool		m_routeTransitionReadyPosted = false;
@@ -7110,13 +7528,11 @@ private:
 
   // Tx thread exclusive.
   alignas(Zm::CacheLineSize)
-  StopFns	m_stopTxFns;
+  Hubs::DoneFn	m_txDrain;
   unsigned	m_txActive = 0;
   bool		m_sealed = false;
   bool		m_idle = false;
-  bool		m_txIngressStopped = false;
-  bool		m_txStopping = false;
-  bool		m_txStopped = false;
+  bool		m_txIngressStopped = true;
   PoolCore *m_owner;
 
 };

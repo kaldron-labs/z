@@ -65,7 +65,7 @@ const WriterOps &FinalFields::writerOps_()
       auto span = self.reserve_(value.size);
       if (!self.m_failed)
 	self.commit_(value.put(value.ctx,
-	  reinterpret_cast<char *>(span.data()), span.length()));
+	  ZuSpan<char>{span}.data(), span.length()));
     },
     [](void *ctx, ZmRef<ZiIOBuf> buf) {
       static_cast<FinalFields *>(ctx)->append_(buf->cspan());
@@ -113,6 +113,11 @@ void FinalFields::commit_(unsigned length)
   m_cost += length;
 }
 
+// The span refers to retained m_bytes storage, not its own local object.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdangling-pointer"
+#endif
 void FinalFields::append_(ZuBSpan value)
 {
   auto span = reserve_(value.length());
@@ -120,6 +125,9 @@ void FinalFields::append_(ZuBSpan value)
   if (value) memcpy(span.data(), value.data(), value.length());
   commit_(value.length());
 }
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 
 void FinalFields::field_(const CatalogView &catalog, FieldForm::T form,
     int id, const FieldClass *classification,

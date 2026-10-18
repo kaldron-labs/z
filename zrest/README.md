@@ -23,9 +23,10 @@ HTTP submission reports failure directly without waiting for transport events.
 
 The server application implements `request(Req *, const Req &,
 const RequestContext &, ZmRef<Completion<Req, Server>>)`. The first argument
-selects the request overload. Malformed transport, headers or body decoding
-terminate the affected stream before application dispatch, without an error
-response. `context.ok()` confirms validation of an admitted request. Application
+selects the request overload. Transport failures terminate the affected stream
+without a response. Completed HTTP requests with invalid headers, authority,
+scheme or body decoding receive a 400 response and disconnect before application
+dispatch. `context.ok()` confirms validation of an admitted request. Application
 validation failures in intact requests can use declared error responses.
 A completion token exposes `live()`, `cancelled()` and
 `complete(Reply<Res>)`. A response type must be declared in
@@ -69,6 +70,17 @@ there is no automatic replay or reconnection.
 
 ## Bounds and lifecycle
 
+Client and Server use a parent `ZmEngine` covering REST work and their child
+HTTP transport. `start()`/`stop()` are main-thread synchronous operations;
+`start(done)`/`stop(done)` deliver boolean results after the same complete
+boundary. Repeated operations and opposite requests during a transition use
+the engine's canonical callback handling. Completed stop permits start again
+with the retained configuration, without another init. Failed startup rolls
+back the HTTP child before exposing Stopped. Server stop includes session
+cancellation continuations and SSE producer posts; client stop includes
+admission posts and request retirement. The child transport's state alone is
+not the REST endpoint's lifecycle result.
+
 `ClientConfig` and `ServerConfig` wrap Zhttp configuration and each carry
 `Limits`. `maxPending` separately bounds client calls awaiting Rx handoff
 and registered calls, so up to twice that count can be accepted during a
@@ -85,10 +97,17 @@ At most `maxPending` live server work records can own producers. Zhttp's
 configured retained-body and transport-output limits remain separate.
 
 `stop()` drains the full REST endpoint and Zhttp transport; `stop(done)`
-reports the same result after owner-shard retirement. `final()` releases the
-endpoint after stop, including a partially initialized endpoint. Application
-objects and the scheduler remain alive through callbacks and outstanding
-external token operations.
+reports the same result after owner-shard retirement. After a successful start,
+the application must complete `stop()` or receive its stop callback before
+calling `final()`. Shutdown attempts every cleanup step and leaves the endpoint
+Stopped even if its boolean result reports a cleanup failure. A later start
+performs fresh startup; shutdown never restarts stopped resources. An endpoint
+that was never started or whose start failed can be finalized directly, including
+after partial initialization. `final()` releases the endpoint without
+starting shutdown or waiting; parameterless lifecycle calls may block. The stop
+callback can finalize the endpoint or notify its owning thread.
+Application objects and the scheduler remain alive through callbacks and
+outstanding external token operations.
 
 The focused loopback test is `zrest/itest/zrestendpoint`; the OAuth transport
 and interoperability matrix is described in [itest/README.md](itest/README.md).

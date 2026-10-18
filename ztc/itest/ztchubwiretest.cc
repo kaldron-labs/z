@@ -15,6 +15,8 @@
 
 #include <iostream>
 
+#include <zlib/ZuLib.hh>
+
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmThread.hh>
@@ -507,12 +509,18 @@ int main(int argc, char **argv)
     ZtcControlled::Sources sources{options.controlled};
     Ztc::App app;
     if (!app.init(cf) || !app.start()) return 1;
+    ZuGuard stopPublisher{[&app]() { (void)app.stop(); app.final(); }};
     if (options.controlled)
       ZmHeapMgr::init("ZDash.BaseHeap", ZmSelf()->partition(), 0,
 	ZmHeapConfig{.cacheSize = 1});
     BaseObject *base = options.controlled ? new BaseObject : nullptr;
     BaseObject *extra = nullptr;
     LateObject *late = nullptr;
+    ZuGuard objects{[&late, &extra, &base]() {
+      delete late;
+      delete extra;
+      delete base;
+    }};
     std::cout << "publisher ready\n" << std::flush;
     if (options.controlled) {
       int c;
@@ -528,11 +536,6 @@ int main(int argc, char **argv)
 	std::cout << "publisher changed\n" << std::flush;
       }
     } else done.wait();
-    delete late;
-    delete extra;
-    delete base;
-    app.stop();
-    app.final();
     signalDone = nullptr;
     return 0;
   }
@@ -589,7 +592,7 @@ int main(int argc, char **argv)
   ws.closeTimeout = 5;
   ws.pingInterval = 30;
   ws.pongTimeout = 60;
-  Zhttp::H2Config tls;
+  Zhttp::TLSConfig tls;
   if (options.caPath) tls.caPath(options.caPath);
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
       Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws) ||

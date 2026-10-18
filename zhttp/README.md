@@ -16,8 +16,8 @@ logical streams:
   prefix integers, static indexed fields, static-name references, and
   literal-name field lines;
 - DATA frames carry streaming bodies without hidden full-body buffering;
-- receive-side trailers are decoded as regular-field HEADERS; application
-  Builders emit only the initial field section and do not support trailers;
+- receive-side trailers are decoded as regular-field HEADERS; streaming response
+  producers emit final fields through `BodyEmitter::trailers`;
 - cancellation maps to QUIC reset and stop-sending behavior;
 - GOAWAY is emitted and parsed as HTTP/3 graceful-shutdown state distinct from
   QUIC transport close.
@@ -177,7 +177,9 @@ client.init(
     .retainedBodyMax(uint32_t(-1))
     .retainedMessageMax(uint32_t(-1)),
   Zhttp::TCPConfig{},
-  Zhttp::H2Config{}.caPath(ca),
+  Zhttp::H2Config{}.tls([&ca](auto &tls) {
+    tls.caPath(ca);
+  }),
   Zhttp::QUICConfig{}.caPath(ca));
 client.pool(
   0, Zhttp::Destination{"www.example.com", 443});
@@ -240,8 +242,9 @@ app.init(
   Zhttp::ServerConfig{}
     .port(port)
     .tcp(Zhttp::TCPConfig{})
-    .tls(Zhttp::H2Config{}
-      .certPath(cert).keyPath(key)
+    .tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
+      tls.certPath(cert).keyPath(key);
+    })
       .policy(Zhttp::H2Policy::Prefer))
     .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)));
 app.start();
@@ -296,9 +299,13 @@ pool, or server configuration. `bodyMax()` bounds cumulative decoded bytes and
 Content-Length for one message (default `UINT_MAX`); `retainedBodyMax()` bounds
 currently queued decoded bytes. Consumed or discarded bytes release retained
 capacity, and a DATA payload larger than that capacity is delivered in bounded
-fragments. A consumer that fills the queue without consuming causes a bounded
-receive failure. `retainedMessageMax()` retains its output-only role, and
-`bodyMax()` does not change fixed-output limits. The
+fragments. H3 delivers available DATA prefixes and returns consumed-byte credit
+before the rest of the frame arrives, including frames larger than the QUIC
+receive window. H1 likewise delivers available fixed-length, chunked and
+EOF-delimited body prefixes; chunk terminators and EOF still govern framing
+acceptance and completion. A consumer that fills the queue without consuming
+causes a bounded receive failure. `retainedMessageMax()` retains its output-only
+role, and `bodyMax()` does not change fixed-output limits. The
 response/request parser types do not define a compile-time `BodyMax`. After
 the final header section,
 `bodyInfo(type, length)` reports `None`, `Streamed`, or `Fixed` framing
@@ -315,6 +322,11 @@ HEADERS followed by delayed H3 FIN. Copy selected metadata during its borrowed
 field callback and publish terminal status only at normal completion. Failure
 completes once with `false`; completion is followed immediately by parser reset.
 
+H3 also retires partial HEADERS and QPACK instruction bytes while assembling
+their bounded payloads in pooled storage. SETTINGS pairs and unknown extension
+payloads drain incrementally. Field-section and instruction limits remain
+independent of the native QUIC receive window.
+
 Every writer is invoked synchronously with a queue-backed Tx stream and returns
 `WriteOutcome::End`, `Stream`, `Abort`, or `Failed`. The library never retains
 the writer. A server producer returning `Stream` may retain the `emit` callable
@@ -329,6 +341,13 @@ the logical stream. A streaming Builder must not emit `content-length`.
 Builder to destroy its retained emitter. A later call through another queued
 copy returns `false` without invoking its writer. `disconnect() const` is the
 separate query for closing a connection after a successful response.
+
+An ordinary early response preserves its complete output before disposing an
+unfinished request. H2 follows terminal response output with RST_STREAM(NO_ERROR).
+H3 stops request reception with H3_NO_ERROR after the response FIN is acknowledged;
+it does not reset response output. Discarded input returns receive credit and
+receives no further body prompts. H1 clients close an unfinished request's
+connection before assigning another request to it.
 
 After a streaming response turn returns `Stream`, H2 and H3 producers can call
 `emit.trailers(fields)` on Tx, outside a writer. The field provider follows
@@ -347,9 +366,23 @@ without calling the provider. A rendering or queue failure terminates the
 producer through its existing result path. The result means admission, not
 transport delivery. A trailers-only response uses the ordinary no-body path.
 
-Client request writers remain single-turn and accept only `End` as success.
+Client streaming request producers can retain `BodyEmitter` across turns.
+Return `Stream` to keep output open and `End` to half-close the request while
+response reception continues. Override `replayable()` to false for multi-turn
+production; a first `Stream` result with replay enabled fails the request.
+`ReqBuilder::close()` runs once on Tx after emitter invalidation, outside the
+initial body callback and active writer, and drops retained application emitters.
 Every client Builder must reproduce the same message when a retry or redirect
-traverses it again. Multi-turn streaming request bodies are unsupported.
+traverses it again. Fixed-body requests retain their single-turn writer contract.
+`zhttp/itest/zhttpclientstreamtest` exercises native H2/H3 retained production,
+H1 request half-close, replay rejection, early replies, failure, stop and bounded
+producer allocation over many turns. Channel cancellation is ordered through Tx
+producer invalidation before native teardown; a held-Tx regression verifies
+queued writes on H1/H2/H3. It also probes retained emitter copies
+after request retirement and client finalization. Peer-abort cases hold client
+Tx while an independent peer resets H2/H3: accepted writers drain before native
+handles are released. Build the module's `all` target before running
+`make -C zhttp/itest test`.
 `ReqBuilder::replayable()` defaults to `true`. Override it to `false` before
 submission to prohibit every subsequent HTTP attempt, including unprocessed
 attempts, redirects, retries and transport fallback. The policy is sampled once
@@ -362,6 +395,15 @@ non-idempotent method, such as `POST`, idempotent. It cannot override
 attempt known not to have been applied; after possible application it repeats
 only an idempotent request.  Redirects which repeat the method and body use the
 same rule.
+
+`Result::errorDomain` and `errorCode` retain the first native stream diagnostic
+for the completed attempt. The neutral defaults are `ErrorDomain::None` and
+zero. H2 reset and GOAWAY codes remain distinct; H3 distinguishes received
+RESET_STREAM, STOP_SENDING, local stream errors and GOAWAY. H3 GOAWAY has no
+error code, so its code is zero. These diagnostics survive subsequent local
+cancellation and Tx drain, and reset when a new wire attempt starts. A reset
+after successful response completion cannot replace that response's result.
+HTTP/1 has no equivalent stream-reset code and keeps the neutral defaults.
 
 ```c++
 template <typename Emit>
@@ -490,18 +532,37 @@ Frame protocols accept a `FrameSink` through `channel->streamAccept(sink)` and
 write directly through the pooled `Writer` supplied by `streamTx` or `streamTx_`.
 `streamTx_` is Tx-owned; stream end and reset preserve that shard's ordering.
 
-`Hubs`, client pools, and `Client` require a completed stop before `final()`
+`Hubs`, client pools, `Client`, and `Server` require a completed stop before `final()`
 (initialization failures that never started are also safe to finalize).
 Finalization does not initiate another shutdown or wait for Rx/Tx. A service
 owner can post finalization to its owning shard after the asynchronous stop
 continuation; synchronous `stop()` remains a main-thread convenience. Clients
-that own the process-wide resolver must still finalize that resolver on the
-main thread; worker-owned clients use an externally managed resolver.
-Client and pool `start(done)` use the same native `Hubs` controller as shutdown;
-concurrent startup requests and stop-during-start follow its engine semantics.
-`Hubs::add` registers an already initialized, externally owned component without
-reinitializing it. Client pools use this to preserve pool configuration failure
-isolation while sharing the native lifecycle controller.
+that own the process-wide resolver include its shutdown in stop completion;
+its stopped resources can then be finalized without joining a control thread.
+Worker-owned clients may use an externally managed resolver.
+
+Client and pool engines cover the complete component lifecycle. A client's
+startup includes its owned resolver and every configured pool; a failed pool
+startup completes dependency rollback before reporting failure. A pool starts
+its transports, publishes Rx state, and opens Tx queue admission before start
+completion. Stop closes admission, cancels timers and discovery, waits for all
+outstanding discovery posts, stops native transports, drains Tx queues and Rx
+completion callbacks, and only then reports stopped. Repeated operations and
+pending opposite operations use `ZmEngine` semantics. Restart after a completed
+stop retains configuration and resets sealing and idle/admission state.
+
+Native `Hubs` aggregates remain child controllers for their distinct transport
+or pool collections. `Hubs::add` registers an already initialized, externally
+owned component without reinitializing it, preserving pool configuration
+failure isolation. The parent engine's completion is the application's complete
+lifecycle boundary. Query/protocol failures do not make successful shutdown fail.
+
+Configure H2's TLS base through `h2.tls()` or inline with
+`H2Config{}.tls([](auto &tls) { tls.caPath("ca.pem"); }).policy(policy)`.
+The lambda overload preserves the outer H2 type. TLS getters and setters are
+available through `tls()`; H2Config does not expose an implicit TLSConfig
+conversion or narrowing TLS setters. Use TLSConfig directly for an H1-only
+TLS interface. TLSConfig and QUICConfig retain their own setters.
 
 QUIC configuration defaults include H3 ALPN, control streams, QPACK, flow
 control, and passive migration.  Applications override only the policy they
@@ -593,15 +654,17 @@ See the [Go 1.12 TLS notes](https://go.dev/doc/go1.12#tls_1_3).
 Run the gate with:
 
 ```sh
-cd zhttp/interop
-./zhttph2interoptest.sh
+ZHTTP_MATRIX=./zhttp/itest/zhttpmatrix \
+ZHTTP_CLIENT=./zhttp/util/zhttp \
+ZHTTP_SERVER=./zhttp/util/zhttpd \
+sh ./zhttp/interop/zhttph2interoptest.sh
 ```
 
-Set `ZHTTP_H2_ARTIFACTS` to an existing artifact directory,
-`ZHTTP_H2_KEEP_ARTIFACTS=1` to retain successful runs, and
+Set `ZHTTP_H2_ARTIFACTS` to the failure-residue directory and
 `ZHTTP_H2_PORT`/`ZHTTP_H2_NGHTTPD_PORT` when the default loopback ports are
-occupied.  Every retained run includes tool versions plus separate client,
-server, and conformance output.
+occupied. Successful runs clean up their temporary files; the residue helper
+retains recent failed runs with tool versions and separate client, server and
+conformance output.
 
 Static-server options include directory indexes and listings, MIME overrides,
 single-file mode, hidden-dotfile rejection, Basic auth, host redirects,
@@ -616,3 +679,23 @@ First-release exclusions match the transport scope: no server push, no
 WebTransport, no DATAGRAM, no 0-RTT, no QUIC v2, no multipath, and no active
 ECN behavior.  QUIC path migration is single-active-path migration, not
 multipath.
+
+Qualification on 2026-10-18 used Linux 7.0.0-1006-aws, x86_64, Clang 21.1.8,
+GNU C++2b and debug builds. The full tree passes `make -j4`. Normal and
+ASan/LSan builds pass the HTTP unit suite (26 binaries, 253 groups), HTTP endpoint
+suite (8 binaries, 87 groups), HTTP interoperability tools and affected core,
+WebSocket, RPC, REST, JSON-RPC and MCP regressions. The sanitizer build uses
+`-O1`, address instrumentation and leak detection; no memory suppressions were
+added. GCC, ARM, Windows/MinGW and release builds remain untested.
+
+Independent Go 1.26.8 H2/H3 peers and grpc-dotnet 10.0.12 H3 peers pass in both
+roles, including applications compiled against staged installed public headers
+on H2 and H3. The .NET SDK is 10.0.112 and MsQuic is 2.6.3. All seven H2 tool
+roles pass; h2spec 2.6.0 reports 146 passed, zero skipped and zero failed.
+Focused Valgrind 3.26.0 runs cover the 27 HTTP client-stream groups, 31 RPC client
+groups and four server-only deadline groups, with zero errors and zero
+definitely, indirectly or possibly lost bytes.
+
+One initial interoperability-matrix run failed without case diagnostics. Its
+82-case direct and harness reruns, the complete normal endpoint-suite rerun and
+the final sanitizer endpoint suite passed; the initial cause is unconfirmed.

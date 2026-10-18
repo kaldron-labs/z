@@ -11,6 +11,9 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmSpecific.hh>
@@ -235,6 +238,46 @@ static void controlLifetime(bool restart, bool implicitStop = false)
   ZuCheckRT(!early);
 }
 
+struct InvokeProbe : ZmNHeap<InvokeProbe>, ZmPolymorph {
+friend inline ZuStringT<"ZmSchedTest.InvokeProbe"> ZmNHeapID(InvokeProbe *);
+  ZmSemaphore &done;
+  unsigned &destroyed;
+
+  InvokeProbe(ZmSemaphore &done, unsigned &destroyed) :
+      done{done}, destroyed{destroyed} {
+#ifdef ZmObject_DEBUG
+    debug();
+#endif
+  }
+  ~InvokeProbe() { ++destroyed; done.post(); }
+};
+
+// The queued invoke credit must delete the object when it is the last owner.
+static void invokeLastRef()
+{
+  ZuTestScope(invokeLastRef);
+  ZmScheduler s;
+  bool started = s.start();
+  ZuCheck(started);
+  if (!started) return;
+  ZmSemaphore done;
+  unsigned calls = 0, destroyed = 0;
+  ZmRef<InvokeProbe> owner = new InvokeProbe{done, destroyed};
+  auto *probe = owner.ptr();
+  s.invoke(probe, [owner = ZuMv(owner), &calls]() mutable {
+    auto *probe = owner.ptr();
+    ++calls;
+    owner = nullptr;
+    return probe;
+  }, 1);
+  bool deleted = !done.timedwait(Zm::now() + ZuTime{5});
+  ZuCheck(s.stop());
+  ZuCheck(deleted);
+  ZuCheck(calls == 1 && destroyed == 1);
+  // Keep the failing implementation's zero-count object out of leak reports.
+  if (!destroyed) delete probe;
+}
+
 static void selfStop()
 {
   ZuTestScope(selfStop);
@@ -292,6 +335,7 @@ int main(int argc, char **argv)
   ZuTestCall(controlLifetime, true);
   ZuTestCall(controlLifetime, false, true);
   ZuTestCall(selfStop);
+  ZuTestCall(invokeLastRef);
 
   signal(SIGSEGV, segv);
 

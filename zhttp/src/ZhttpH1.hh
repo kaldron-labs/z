@@ -64,7 +64,8 @@ ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Headers,	// reading headers
   Body,		// reading body data (not chunked)
   ChunkHdr,	// chunk header (hex length + CRLF)
-  Chunk,	// reading chunk data + trailing CRLF
+  Chunk,	// reading chunk data
+  ChunkEnd,	// trailing chunk CRLF
   Trailers,	// trailers after final chunk
   Complete,	// message completely read
   Error);	// invalid message
@@ -404,35 +405,26 @@ public:
 	      m_eofFn = [](Parser *parser, void *stream_) {
 		return parser->eof_(*static_cast<Stream *>(stream_));
 	      };
-	      if (ZuUnlikely(stream.length() > m_bodyMax)) {
+	      uint64_t length = stream.length();
+	      if (ZuUnlikely(m_contentLength > m_bodyMax ||
+		  length > m_bodyMax - m_contentLength)) {
 		fail_(RequestErrorCode::ContentTooLarge,
 		  RequestErrorScope::Connection, Request);
 		ZiLOG(Error, "Zhttp", "oversized body");
+	      } else if (length) {
+		consumed = body_(stream, length);
+		if (consumed > 0) m_contentLength += length;
 	      }
 	      break;
 	    }
 	    uint64_t length = uint64_t(m_contentLength);
-	    if (stream.length() < length) break;
-	    uint64_t remaining = length;
-	    bool accepted = true;
-	    consumed = m_bodyRx.splice(
-	      stream, length,
-	      [&remaining](ZuBSpan span) -> int64_t {
-		if (remaining > span.length()) {
-		  remaining -= span.length();
-		  return 0;
-		}
-		return remaining;
-	      }, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 0,
-	      [this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
-	    if (ZuUnlikely(!accepted))
-	      fail_(RequestErrorCode::BodyRejected,
-		RequestErrorScope::Connection, Request);
-	    else if (consumed > 0) {
-	      m_contentLength = 0;
-	      m_state = State::Complete;
-	    } else if (consumed < 0)
-	      fail_();
+	    if (length > stream.length()) length = stream.length();
+	    if (!length) break;
+	    consumed = body_(stream, length);
+	    if (consumed > 0 && m_state != State::Error) {
+	      m_contentLength -= length;
+	      if (!m_contentLength) m_state = State::Complete;
+	    }
 	    } break;
 	  case State::ChunkHdr: { // parse chunk header
 	    consumed = parseLine(
@@ -452,50 +444,40 @@ public:
 		  m_state = State::Trailers;
 		  return;
 		}
-		if (m_chunkLength > m_bodyMax) {
+		if (m_contentLength > m_bodyMax ||
+		    m_chunkLength > m_bodyMax - m_contentLength) {
 		  error(RequestErrorCode::ContentTooLarge);
 		  return;
 		}
-		if ((m_contentLength += m_chunkLength) > m_bodyMax) {
-		  error(RequestErrorCode::ContentTooLarge);
-		  return;
-		}
+		m_contentLength += m_chunkLength;
 		m_state = State::Chunk;
 	      }, MaxHeaderSection);
 	    if (consumed == -2)
 	      fail_(RequestErrorCode::Malformed,
 		RequestErrorScope::Connection, Request);
 	  } break;
-	  case State::Chunk: { // parse chunk data + trailing CRLF
+	  case State::Chunk: { // parse available chunk data
 	    uint64_t length = uint64_t(m_chunkLength);
-	    uint64_t frameLen = length + 2;
-	    if (stream.length() < frameLen) break;
-	    bool accepted = true;
-	    consumed = m_bodyRx.splice(
-	      stream, length,
-	      [remaining = frameLen, prev = uint8_t{0}](
-		  ZuBSpan span) mutable -> int64_t {
-		unsigned n = remaining < span.length() ?
-		  unsigned(remaining) : span.length();
-		uint8_t last = n > 1 ? span[n - 2] : prev;
-		prev = span[n - 1];
-		remaining -= n;
-		if (remaining) return 0;
-		if (last != '\r' || prev != '\n') return -1;
-		return n;
-	      }, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 2,
-	      [this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
-	    if (ZuUnlikely(!accepted))
-	      fail_(RequestErrorCode::BodyRejected,
-		RequestErrorScope::Connection, Request);
-	    else if (consumed > 0) {
-	      m_chunkLength = 0;
-	      m_state = State::ChunkHdr;
-	    } else if (consumed < 0) {
+	    if (length > stream.length()) length = stream.length();
+	    if (!length) break;
+	    consumed = body_(stream, length);
+	    if (consumed > 0 && m_state != State::Error) {
+	      m_chunkLength -= length;
+	      if (!m_chunkLength) m_state = State::ChunkEnd;
+	    }
+	  } break;
+	  case State::ChunkEnd: {
+	    ZuBArray<2> crlf;
+	    if (stream.copy(0, crlf.span()) < 2) break;
+	    if (crlf[0] != '\r' || crlf[1] != '\n') {
 	      fail_(RequestErrorCode::Malformed,
 		RequestErrorScope::Connection, Request);
 	      ZiLOG(Error, "Zhttp", "invalid chunk trailer");
+	      break;
 	    }
+	    stream.advance(2);
+	    consumed = 2;
+	    m_state = State::ChunkHdr;
 	  } break;
 	  case State::Trailers: { // parse trailers
 	    uint64_t remaining = m_headerBytes < MaxHeaderSection ?
@@ -593,16 +575,11 @@ public:
 
 private:
   template <typename Stream>
-  State::T eof_(Stream &stream) {
-    uint64_t length = stream.length();
-    if (ZuUnlikely(length > m_bodyMax)) {
-	  fail_(RequestErrorCode::ContentTooLarge);
-    } else if (length) {
-      uint64_t remaining = length;
-      bool accepted = true;
-      int64_t n = m_bodyRx.splice(
+  int64_t body_(Stream &stream, uint64_t length) {
+    bool accepted = true;
+    int64_t n = m_bodyRx.splice(
 	stream, length,
-	[&remaining](ZuBSpan span) -> int64_t {
+	[remaining = length](ZuBSpan span) mutable -> int64_t {
 	  if (remaining > span.length()) {
 	    remaining -= span.length();
 	    return 0;
@@ -610,20 +587,29 @@ private:
 	  return remaining;
 	}, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 0,
 	[this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
-      if (ZuUnlikely(!accepted))
-	fail_(RequestErrorCode::BodyRejected,
-	  RequestErrorScope::Connection, Request);
-      else if (n > 0)
-	m_state = State::Complete;
-      else
-	fail_();
-    } else
-      m_state = State::Complete;
+    if (ZuUnlikely(!accepted))
+      fail_(RequestErrorCode::BodyRejected,
+	RequestErrorScope::Connection, Request);
+    else if (ZuUnlikely(n <= 0))
+      fail_();
+    return n;
+  }
+
+  template <typename Stream>
+  State::T eof_(Stream &stream) {
+    uint64_t length = stream.length();
+    if (ZuUnlikely(m_contentLength > m_bodyMax ||
+	length > m_bodyMax - m_contentLength))
+      fail_(RequestErrorCode::ContentTooLarge);
+    else if (length)
+      (void)body_(stream, length);
+    if (m_state != State::Error) m_state = State::Complete;
     m_eofStream = nullptr;
     m_eofFn = nullptr;
     m_bodyRx.discard();
-    impl()->complete(m_state);
-    return m_state;
+    State::T state = m_state;
+    impl()->complete(state);
+    return state;
   }
 
   bool interimResponse_() const {
@@ -705,7 +691,8 @@ auto bodyStream(Lower &lower, uint64_t contentLength) {
 
 // HTTP 1.1 chunked body Tx streaming
 template <typename Lower>
-struct ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
+class ChunkedStream : public ZiTxLayer<ChunkedStream<Lower>, Lower> {
+public:
   enum { HdrSize = 10 };	// 8 bytes of hex length + CRLF
   enum { TrlrSize = 2 };	// CRLF
 

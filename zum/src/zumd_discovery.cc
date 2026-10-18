@@ -171,13 +171,14 @@ static bool jwksJSON_(StringVec &sources, String &json, bool strict)
   return true;
 }
 
-class SignKeyLoad_ : public ZmNHeap<SignKeyLoad_>, public ZmObject  {
+class SignKeyLoad_ : public ZmNHeap<SignKeyLoad_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.discovery.SignKeyLoad"> ZmNHeapID(SignKeyLoad_ *);
 
 public:
-  SignKeyLoad_(DB *db, String issuer, int64_t now,
+  SignKeyLoad_(ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now,
       int64_t expires, unsigned maxKeys, SignKeyFn complete) :
-    m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now},
+    RequestHold{ZuMv(work)}, m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now},
     m_expires{expires}, m_maxKeys{maxKeys}, m_complete{ZuMv(complete)} { }
 
   void start()
@@ -248,20 +249,22 @@ private:
   bool m_overflow = false;
 };
 
-void signKeyLoad(DB *db, String issuer, int64_t now,
+void signKeyLoad(
+    ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now,
     int64_t expires, unsigned maxKeys, SignKeyFn complete)
 {
   ZmRef<SignKeyLoad_> load = new SignKeyLoad_{
-    db, ZuMv(issuer), now, expires, maxKeys, ZuMv(complete)};
+    work, db, ZuMv(issuer), now, expires, maxKeys, ZuMv(complete)};
   load->start();
 }
 
-class DiscoveryComplete_ : public ZmNHeap<DiscoveryComplete_>, public ZmObject  {
+class DiscoveryComplete_ : public ZmNHeap<DiscoveryComplete_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.discovery.DiscoveryComplete"> ZmNHeapID(DiscoveryComplete_ *);
 
 public:
-  DiscoveryComplete_(DiscoveryFn complete) :
-    m_complete{ZuMv(complete)} { }
+  DiscoveryComplete_(ZmRef<ZmPolymorph> work, DiscoveryFn complete) :
+    RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
 
@@ -355,14 +358,14 @@ String jwksJSON(const StringVec &publicJwks)
   return json;
 }
 
-class JWKSLoad_ : public ZmNHeap<JWKSLoad_>, public ZmPolymorph  {
+class JWKSLoad_ : public ZmNHeap<JWKSLoad_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.discovery.JWKSLoad"> ZmNHeapID(JWKSLoad_ *);
 
 public:
-  JWKSLoad_(
-      DB *db, String issuer, int64_t now, unsigned maxKeys,
+  JWKSLoad_(ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now, unsigned maxKeys,
       DiscoveryFn complete) :
-    m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now}, m_maxKeys{maxKeys},
+    RequestHold{ZuMv(work)}, m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now}, m_maxKeys{maxKeys},
     m_complete{ZuMv(complete)} { }
 
   void start()
@@ -417,18 +420,18 @@ private:
 };
 
 bool jwksLoad(
-    Requests *requests, ZuTime deadline, DB *db,
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline, DB *db,
     ZuCSpan issuer, int64_t now, unsigned maxKeys, DiscoveryFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<DiscoveryComplete_> state =
-    new DiscoveryComplete_{ZuMv(complete)};
+    new DiscoveryComplete_{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, issuer = String{issuer},
       now, maxKeys](
       ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
     ZmRef<JWKSLoad_> load = new JWKSLoad_{
-      db, ZuMv(issuer), now, maxKeys, [state](
+      state->work(), db, ZuMv(issuer), now, maxKeys, [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
     }};

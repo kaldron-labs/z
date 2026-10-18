@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZuObjectTraits.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmNoLock.hh>
 #include <zlib/ZmObject.hh>
@@ -28,6 +29,9 @@ struct DiscoveryResolver;
 ZtEnumStruct(ZhttpAPI, ResultCode, int8_t,
   OK, Failed, Cancelled, TimedOut, RedirectLimit, InvalidRedirect,
   ReplayUnsafe, Unprocessed, Indeterminate);
+
+ZtEnumNS(ZhttpAPI, ErrorDomain, int8_t,
+  None, H2Reset, H2Goaway, H3Reset, H3Stop, H3Goaway, H3Error);
 
 struct Result {
   uint64_t	request = 0;
@@ -48,6 +52,9 @@ struct Result {
   ResultCode::T	code = ResultCode::OK;
   Transport::T	transport = Transport::TCP;
   Version::T	httpVersion = Version::H1;
+
+  ErrorDomain::T errorDomain = ErrorDomain::None;
+  uint64_t	errorCode = 0;
 
   bool ok() const { return code == ResultCode::OK; }
 };
@@ -99,6 +106,7 @@ struct RequestOps {
   void (*operation)(void *, OperationSink);
   void (*protocol)(void *, PrintSink);
   void (*body)(void *, BodyEmitter);
+  void (*close)(void *);
   void (*encode)(void *, FieldContext &, void *, void (*)(void *, FieldProvider &));
   void (*connected)(void *, Channel *, const ConnectedInfo &);
   void (*disconnected)(void *, bool);
@@ -131,6 +139,7 @@ struct RequestRecord : MessageRecord {
   void protocol(PrintSink sink) { requestOps->protocol(ctx, sink); }
   void host(PrintSink sink) { requestOps->host(ctx, sink); }
   void body(BodyEmitter emit) { requestOps->body(ctx, ZuMv(emit)); }
+  void close() { requestOps->close(ctx); }
   void encode(FieldContext &fields, void *encoder,
       void (*put)(void *, FieldProvider &)) {
     requestOps->encode(ctx, fields, encoder, put);
@@ -195,6 +204,7 @@ struct ReqBuilder : public Builder {
   // application requirement because it supplies the monotonic queue identity.
   uint64_t length() const { return 1; }
 
+  void close() { }
   bool replayable() const { return true; }
 
   bool idempotent(Method::T method) const {
@@ -231,9 +241,10 @@ struct ReqBuilder : public Builder {
   // void completed(const Result &);
 };
 
-template <typename B>
-auto requestConnected(B &builder, Channel *channel, const ConnectedInfo &info, int)
-    -> decltype(builder.connected(channel, info), void()) {
+template <typename B,
+  typename = decltype(ZuDeclVal<B &>().connected(
+    ZuDeclVal<Channel *>(), ZuDeclVal<const ConnectedInfo &>()))>
+void requestConnected(B &builder, Channel *channel, const ConnectedInfo &info, int) {
   builder.connected(channel, info);
 }
 template <typename B>
@@ -317,7 +328,7 @@ struct RequestFields {
   FieldContext &context;
   HeaderSpans<HdrCatalog> spans;
 
-  static constexpr unsigned HdrBufSize = B::HdrBufSize;
+  enum { HdrBufSize = B::HdrBufSize };
   bool neverIndex(ZuBSpan name) const { return builder->neverIndex(name); }
 
   template <typename Key, typename Value, typename L>
@@ -382,6 +393,7 @@ RequestRecord &bindRequest(Node *request, const CatalogView &catalog) {
 	auto &builder = static_cast<Node *>(ctx)->data();
 	if constexpr (HasBuilderBody<B, BodyEmitter &>{}) builder.body(emit);
       },
+      .close = [](void *ctx) { static_cast<Node *>(ctx)->data().close(); },
       .encode = [](void *ctx, FieldContext &context, void *encoder,
 	  void (*put)(void *, FieldProvider &)) {
 	auto &builder = static_cast<Node *>(ctx)->data();
@@ -558,12 +570,19 @@ struct ClientAppOps {
   void (*idle)(void *);
 };
 
-class ZhttpAPI ClientCore {
+class ZhttpAPI ClientCore : private ZmEngine<ClientCore> {
+  friend ZmEngine<ClientCore>;
   friend class PoolImpl;
   friend class PoolCore;
 
+  using Engine = ZmEngine<ClientCore>;
+
 public:
-  using DoneFn = Hubs::DoneFn;
+  using DoneFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
 
   ClientCore(const ClientCore &) = delete;
   ClientCore &operator =(const ClientCore &) = delete;
@@ -572,10 +591,6 @@ public:
   bool init(const HubConfig &, unsigned, const Config & = {},
     const TCPConfig & = {}, const H2Config & = {}, const QUICConfig & = {});
   bool pool(unsigned, Destination, const Config & = {});
-  bool start();
-  void start(DoneFn);
-  void stop();
-  void stop(DoneFn);
   void final();
   bool seal(unsigned);
   bool limited(unsigned, unsigned, bool);
@@ -602,6 +617,10 @@ protected:
   bool running() const;
 
 private:
+  void start_();
+  void startBatch_(unsigned);
+  void startPools_();
+  void stop_();
   void *context() const { return m_app; }
   void poolIdle_(unsigned);
   void poolResult_(bool);

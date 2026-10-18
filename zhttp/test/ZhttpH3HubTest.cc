@@ -10,7 +10,7 @@
 
 namespace ZhttpH3HubTest_ {
 
-using ResponseHeaderList = ZhttpHeaders("content-length");
+using ResponseHeaderList = ZhttpHeaders("content-length", "x-test");
 ZhttpHdrCatalogDerive(ResponseHeaders, ResponseHeaderList);
 ZhttpHdrCatalogImpl(ResponseHeaders)
 
@@ -48,6 +48,7 @@ struct StreamState {
   ZmAtomic<unsigned>	malformedErrors = 0;
   ZmAtomic<unsigned>	releases = 0;
   uint16_t		port = 0;
+  bool			large = false;
 };
 
 struct RequestBuilder :
@@ -104,6 +105,8 @@ struct ResponseBuilder :
   public Zhttp::Builder,
   public Zhttp::H3::Response<
     ResponseBuilder, true> {
+  bool large = false;
+
   void fields(Zhttp::FieldOutput &out) {
     using B = ZuDecay<decltype(*this)>;
     Zhttp::BuilderFields<B> adapter{this, fieldCatalog};
@@ -120,7 +123,13 @@ struct ResponseBuilder :
   unsigned status() const { return 200; }
   template <typename Key, typename L>
   void header(L &&l) const {
-    if constexpr (Key{}() == "content-length") l("4");
+    if constexpr (Key{}() == "content-length") l(large ? "1024" : "4");
+    if constexpr (Key{}() == "x-test") {
+      if (!large) return;
+      ZtString<> value;
+      for (unsigned i = 0; i < 1024; ++i) value << 'a';
+      l(value);
+    }
   }
   template <typename L> void header(L &&) const { }
 };
@@ -168,7 +177,7 @@ struct ClientParser :
     &Zhttp::CatalogData<HdrCatalog>::configure();
 
   using Base = Zhttp::H3::Parser<ClientParser, false>;
-  using HdrCatalog = Zhttp::DefltHdrCatalog;
+  using HdrCatalog = ResponseHeaders;
 
   ClientParser() : consumer{this} { }
 
@@ -180,7 +189,12 @@ struct ClientParser :
   bool operation(Zhttp::Method::T, Zhttp::Target &) { return true; }
   void status(unsigned value) { status_ = value; }
   template <typename Key>
-  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t>) { }
+  void header(Zhttp::FieldSection::T, ZuSpan<uint8_t> value) {
+    if constexpr (Key{}() == "x-test") {
+      metaLength = value.length();
+      for (auto c: value) if (c != 'a') metaLength = 0;
+    }
+  }
   bool bodyInfo(Zhttp::BodyType::T type, uint64_t length_) {
     if (type == Zhttp::BodyType::Fixed) length = length_;
     if (streamExpected && status_ >= 200 && status_ < 300 &&
@@ -223,6 +237,7 @@ struct ClientParser :
   Zhttp::StreamDispatch<StreamClientLink, ClientStream> dispatch;
   ClientStream			consumer;
   uint64_t			length = 0;
+  unsigned			metaLength = 0;
   unsigned			status_ = 0;
   unsigned			streamEstablished = 0;
   unsigned			streamStarts = 0;
@@ -370,8 +385,13 @@ int StreamClient::process(
     case Zhttp::H3::ParserState::Complete:
       if (link.mode != StreamClientLink::Mode::REST ||
 	  link.parser.status_ != 200 ||
-	  link.parser.length != 4 || link.parser.body_ != "pong")
+	  link.parser.metaLength != (state->large ? 1024U : 0U) ||
+	  link.parser.length != (state->large ? 1024U : 4U) ||
+	  link.parser.body_.length() != link.parser.length)
 	++state->errors;
+      for (unsigned i = 0, n = link.parser.body_.length(); i < n; ++i)
+	if (link.parser.body_[i] != ZuCSpan{"pong"}[i % 4])
+	  ++state->errors;
       state->response.post();
       link.disconnect();
       return 0;
@@ -515,11 +535,23 @@ struct StreamServerSession {
 	  ++link.app()->state->errors;
 	link.app()->txRun([link = &link]() {
 	  ResponseBuilder builder;
+	  builder.large = link->app()->state->large;
 	  auto tx = link->transmit_(builder);
 	  builder.begin(tx);
-	  auto body = builder.body(tx);
-	  body << ZuCSpan{"pong"};
-	  body.flush();
+	  if (builder.large) {
+	    // Deliberately bypass the local DATA writer's frame splitting:
+	    // one peer frame must cross several native QUIC credit windows.
+	    Zhttp::H3::HdrBytes header;
+	    Zhttp::H3::putVar(header, 0x00);
+	    Zhttp::H3::putVar(header, 1024);
+	    tx << ZuBSpan{header};
+	    for (unsigned i = 0; i < 256; ++i) tx << ZuCSpan{"pong"};
+	    if (!tx.flush()) ++link->app()->state->errors;
+	  } else {
+	    auto body = builder.body(tx);
+	    body << ZuCSpan{"pong"};
+	    body.flush();
+	  }
 	  link->finish();
 	});
 	return 0;
@@ -580,11 +612,12 @@ struct StreamServerLink :
   }
 };
 
-void runStream(const Zhttp::Test::TempDir &temp)
+void runStream(const Zhttp::Test::TempDir &temp, bool large = false)
 {
   ZuTestScope(runStream);
 
   StreamState state;
+  state.large = large;
   state.port = ZhttpH1HubTest_::testPort();
   ZuCHECK(state.port, "H3 stream port allocation failed");
   if (!state.port) return;
@@ -600,6 +633,7 @@ void runStream(const Zhttp::Test::TempDir &temp)
     .extendedConnect(true);
   auto clientConfig = Zhttp::QUICConfig{}
     .caPath(temp.certPath.cspan()).extendedConnect(true);
+  if (large) clientConfig.maxStreamData(128);
   StreamServer server{&state};
   StreamClient client{&state};
   bool initialized =
@@ -705,6 +739,7 @@ int main(int argc, char **argv)
     ZuTestCall(run<Zhttp::H3QUIC>, temp, 1U, 2U, true);
     ZuTestCall(runServerStop<Zhttp::H3QUIC>, temp);
     ZuTestCall(ZhttpH3HubTest_::runStream, temp);
+    ZuTestCall(ZhttpH3HubTest_::runStream, temp, true);
   }
 
   ZiLog::stop();

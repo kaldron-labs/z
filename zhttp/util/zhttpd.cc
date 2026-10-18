@@ -90,7 +90,7 @@ void usage(int code = 1)
     "  --quic-rx-drop=N%          randomly drop N% of received QUIC UDP packets\n"
     "  --quic-tx-drop=N%          randomly drop N% of transmitted QUIC UDP packets\n"
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     "  --quic-diag=N              print HTTP/3 QUIC counters every N seconds\n"
 #endif
     "  --mem-diag=N               print memory counters every N seconds\n"
@@ -699,8 +699,9 @@ bool Zhttpd::Application::initServer()
       case Http2Mode::disable: policy = Zhttp::H2Policy::Disable; break;
       default: policy = Zhttp::H2Policy::Prefer; break;
     }
-    config.tls(Zhttp::H2Config{}
-      .certPath(options.cert).keyPath(options.key).policy(policy));
+    config.tls(Zhttp::H2Config{}.tls([&options](auto &tls) {
+      tls.certPath(options.cert).keyPath(options.key);
+    }).policy(policy));
   }
   if (options.http3) {
     double rxDrop = 0, txDrop = 0;
@@ -777,7 +778,7 @@ unsigned Zhttpd::Application::errors() const
   return m_impl ? unsigned(m_impl->state.errors.load_()) : 1;
 }
 
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
 void Zhttpd::Application::printQUICDiag()
 {
   if (m_impl && m_impl->serverInited) m_impl->app.printQUICDiag();
@@ -806,7 +807,7 @@ int main(int argc, char **argv)
 
   ZiLog::init("zhttpd", options.syslog ? "daemon" : "user");
   ZiLog::level(options.debug ? Ze::Debug :
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
       options.quicDiag ? Ze::Info :
 #endif
       options.memDiag ? Ze::Debug : Ze::Info);
@@ -876,11 +877,12 @@ int main(int argc, char **argv)
       case Http2Mode::disable: policy = Zhttp::H2Policy::Disable; break;
       default: policy = Zhttp::H2Policy::Prefer; break;
     }
-    serverConfig.tls(Zhttp::H2Config{}
-      .certPath(state.options.cert).keyPath(state.options.key)
+    serverConfig.tls(Zhttp::H2Config{}.tls([&state](auto &tls) {
+      tls.certPath(state.options.cert).keyPath(state.options.key);
+    })
       .policy(policy));
   }
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   bool h3Enabled = false;
 #endif
   if (state.options.http3) {
@@ -898,7 +900,7 @@ int main(int argc, char **argv)
 	    .migrationCloseOnFailure(
 	      state.options.quicMigrationCloseOnFailure)
 	    .rxDrop(rxDrop).txDrop(txDrop));
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     h3Enabled = true;
 #endif
   }
@@ -923,13 +925,13 @@ int main(int argc, char **argv)
     return 1;
   }
   unsigned memElapsed = 0;
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   unsigned quicElapsed = 0;
 #endif
   for (;;) {
     unsigned step = state.options.memDiag ?
       state.options.memDiag - memElapsed : 0;
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     if (h3Enabled && state.options.quicDiag) {
       unsigned left = state.options.quicDiag - quicElapsed;
       if (!step || left < step) step = left;
@@ -945,7 +947,7 @@ int main(int argc, char **argv)
       memElapsed = 0;
       printMemDiag();
     }
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     if (h3Enabled && state.options.quicDiag &&
 	(quicElapsed += step) >= state.options.quicDiag) {
       quicElapsed = 0;

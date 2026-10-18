@@ -15,6 +15,8 @@
 
 #include <zlib/zumd_oauth.hh>
 #include <zlib/zumd_webauthn.hh>
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/zumd_request.hh>
 
 namespace Zum {
@@ -74,23 +76,23 @@ ZuDerive(AuthorizeCodeFn, (ZmFn<void(int, String),
   ZmFnHeapID<"Zum.AuthorizeCodeFn">>));
 
 ZumExtern bool authorizeRequest(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String query, Bytes bindingDigest, AuthorizeConfig, AuthorizeFn);
 ZumExtern bool authorizeFinish(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, AssertionInput,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 ZumExtern bool authorizeOIDCFinish(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, User, IDVec roleIDs,
   Evidence, int64_t authTime, AuthorizeFinishConfig, PolicyFn,
   AuthorizeCodeFn);
 ZumExtern bool authorizeSessionFinish(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, Session,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 ZumExtern bool authorizeConsentFinish(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes ceremonyID, Bytes bindingDigest, bool approve,
   AuthorizeFinishConfig, PolicyFn, AuthorizeCodeFn);
 

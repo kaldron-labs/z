@@ -79,7 +79,7 @@ struct Options {
   ZuCSpan	quicRxDrop;
   ZuCSpan	quicTxDrop;
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   uint32_t	quicDiag = 0;
 #endif
   uint32_t	memDiag = 0;
@@ -133,7 +133,7 @@ ZfStruct(, (Options, CLI),
   (quicRxDrop, (CLI::Long<"quic-rx-drop">),					String),
   (quicTxDrop, (CLI::Long<"quic-tx-drop">),					String),
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   (quicDiag,   (CLI::Long<"quic-diag">),				UInt32),
 #endif
   (memDiag,    (CLI::Long<"mem-diag">),					UInt32),
@@ -193,7 +193,7 @@ void usage(int code = 1)
     "  --quic-rx-drop=N%   randomly drop N% of received QUIC UDP packets\n"
     "  --quic-tx-drop=N%   randomly drop N% of transmitted QUIC UDP packets\n"
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     "  --quic-diag=N       print HTTP/3 QUIC counters every N seconds\n"
 #endif
     "  --mem-diag=N        print memory counters every N seconds\n"
@@ -799,7 +799,7 @@ int main(int argc, char **argv)
 #ifdef ZiMultiplex_DEBUG
     options.debug ? Ze::Debug :
 #endif
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     options.quicDiag ? Ze::Info :
 #endif
     options.memDiag ? Ze::Debug :
@@ -872,7 +872,9 @@ int main(int argc, char **argv)
   bool appInited = app.init(
     Zhttp::HubConfig{&mx, "3", "4"}, 1, clientConfig,
     Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy), quic);
+    Zhttp::H2Config{}.tls([&options](auto &tls) {
+      tls.caPath(options.ca);
+    }).policy(h2Policy), quic);
   bool poolInited = appInited && app.pool(
     0, Zhttp::Destination{url.host, url.port, url.ipv6Literal});
   app.txErrorFn(ZiTxErrorFn{[](ZeException &e) {
@@ -894,7 +896,7 @@ int main(int argc, char **argv)
 
   unsigned elapsed = 0;
   unsigned memElapsed = 0;
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
   unsigned quicElapsed = 0;
 #endif
   bool timedOut = false;
@@ -904,7 +906,7 @@ int main(int argc, char **argv)
       unsigned left = options.memDiag - memElapsed;
       if (!step || left < step) step = left;
     }
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     if (options.quicDiag) {
       unsigned left = options.quicDiag - quicElapsed;
       if (!step || left < step) step = left;
@@ -920,7 +922,7 @@ int main(int argc, char **argv)
       memElapsed = 0;
       printMemDiag();
     }
-#ifdef Zquic_DEBUG
+#if defined(ZDEBUG) || defined(Zquic_DEBUG)
     if (options.quicDiag && (quicElapsed += step) >= options.quicDiag) {
       quicElapsed = 0;
       app.printQUICDiag();

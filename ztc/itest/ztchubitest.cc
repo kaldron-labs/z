@@ -59,8 +59,8 @@ static void lifecycle()
   auto manifest = hub.manifest();
   ZuCheck(manifest.revision == 1 && manifest.catalog.actions.length() == 2 &&
     manifest.catalog.roles.length() == 2);
-  ZuCheck(hub.start() && hub.state() == Ztc::HubdState::Up);
-  ZuCheck(hub.stop() && hub.state() == Ztc::HubdState::Down);
+  ZuCheck(hub.start() && hub.readiness() == Ztc::HubdState::Up);
+  ZuCheck(hub.stop() && hub.readiness() == Ztc::HubdState::Down);
 }
 
 static void authorization()
@@ -95,7 +95,7 @@ static void productionInit()
   Ztc::Hubd hub;
   ZuCheck(hub.init(ZuMv(cf), &mx, ZuMv(http), Zum::Bytes{"secret"},
     "Bearer callback"));
-  ZuCheck(hub.state() == Ztc::HubdState::Starting);
+  ZuCheck(hub.state() == ZmEngineState::Stopped);
   hub.final();
   ZuCheck(mx.stop());
 }

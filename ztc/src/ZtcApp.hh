@@ -20,7 +20,9 @@
 #include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmTime.hh>
@@ -152,10 +154,14 @@ ZfStruct(ZtcAPI, (AppCf, Cf),
   (timerThread,	(Mutable, (Range<1U, 1024U>)),				UInt32),
   (workerThread,	(Mutable, (Range<1U, 1024U>)),			UInt32));
 
-class ZtcAPI App {
+namespace AppCredit { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+
+class ZtcAPI App : private ZmEngine<App> {
+  using Engine = ZmEngine<App>;
+  friend Engine;
 public:
   using CtrlFn =
-    ZmFn<void(bool), ZmFnHeapID<"Ztc.App.CtrlFn">>;
+    ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
   using RagFn =
     ZmFn<void(RAG::T), ZmFnHeapID<"Ztc.App.RagFn">>;
 
@@ -169,10 +175,13 @@ friend App_::IngressData;
   App &operator =(const App &) = delete;
 
   bool init(const AppCf &);
-  void start(CtrlFn);
-  bool start();
-  void stop(CtrlFn);
-  bool stop();
+  // Callback forms are asynchronous. Use blocking forms on the main thread;
+  // use callbacks on owned workers. Complete stop before final.
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::running;
+  using Engine::stopping;
   void final();
 
   const AppCf &config() const { return m_cf; }
@@ -181,23 +190,17 @@ friend App_::IngressData;
   ZmRef<ZiSink> alertSink() const;
 
 private:
-  using CtrlLock = ZmPLock;
-  using CtrlGuard = ZmGuard<CtrlLock>;
-
   template <typename Key, typename Value, ZuString HeapID>
   using Index = ZmRBTreeKV<Key, Value *,
     ZmRBTreeUnique<true,
       ZmRBTreeLock<ZmNoLock,
 	ZmRBTreeHeapID<HeapID>>>>;
 
-  using CxnKey =
-    ZuTuple<ZuID, ZiIP, uint16_t, ZiIP, uint16_t>;
   using QueueKey = ZuTuple<ZuID, ZuID, QueueType::T>;
   using HubKey = ZuTuple<LinkType::T, ZuID>;
   using ChildKey = ZuTuple<ZuID, ZuID>;
 
   using MxIdx = Index<ZuID, Ztc::Mx, "Ztc.App.MxIdx">;
-  using CxnIdx = Index<CxnKey, Ztc::Connection, "Ztc.App.CxnIdx">;
   using MxQueueIdx =
     Index<QueueKey, Ztc::Mx, "Ztc.App.MxQueueIdx">;
   using HubIdx = Index<HubKey, Ztc::Hub, "Ztc.App.HubIdx">;
@@ -219,7 +222,19 @@ private:
 
   void reqRun_();
   void request_(ZmRef<ZiIOBuf>);
-  void startDone_(bool);
+  void constructScheduler_();
+  void start_();
+  void startRuntime_();
+  void startReady_(bool);
+  void stop_();
+  void stopWorker_(bool);
+  void clearBatch_(bool);
+  void postDrain_(bool);
+  void closeRuntime_(bool, bool);
+  void reqDone_(bool);
+  bool admit_() const;
+  void postedDone_();
+  bool active_() const { return Engine::state() == ZmEngineState::Running; }
   void timerFired_(uint64_t, ZuTime);
   void rag_(RAG::T);
   void alert_(ZmRef<App_::AlertEvent>);
@@ -239,7 +254,7 @@ private:
   void finishReplay_(App_::Subscription_ *);
   void failReplay_(App_::Subscription_ *, ZuCSpan);
   void armTimer_();
-  void clearSubscriptions_();
+  bool clearSubscriptions_(unsigned = UINT_MAX);
   bool publishRaw_(ZmRef<ZiIOBuf>, int);
   bool publish_(ZmRef<ZiIOBuf>);
   bool publishApp_(uint64_t);
@@ -249,14 +264,12 @@ private:
   void sendEOS_(uint64_t);
 
   void warmIndices_();
-  void clearIndices_();
+  bool clearIndices_(unsigned = UINT_MAX);
   void watch_();
   void unwatch_();
 
   void mxAdded_(Ztc::Mx *);
   void mxDeleted_(Ztc::Mx *);
-  void cxnAdded_(Ztc::Connection *);
-  void cxnDeleted_(Ztc::Connection *);
   void mxQueueAdded_(Ztc::Queue *);
   void mxQueueDeleted_(Ztc::Queue *);
   void hubAdded_(Ztc::Hub *);
@@ -278,7 +291,6 @@ private:
   AppCf				m_cf;
   App_::State			*m_state = nullptr;
   MxIdx				m_mxIdx;
-  CxnIdx			m_cxnIdx;
   MxQueueIdx			m_mxQueueIdx;
   HubIdx			m_hubIdx;
   LinkIdx			m_linkIdx;
@@ -291,12 +303,9 @@ private:
   mutable ZuUnion<void, ZmScheduler>	m_scheduler;
   ZuDateTime		m_startTime;
   ZmAtomic<unsigned>		m_rag = RAG::Off;
-  CtrlLock			m_ctrlLock;
-  CtrlFn			m_startFn;
-  bool				m_startPending = false;
-  bool				m_initialized = false;
   bool				m_watching = false;
-  ZmAtomic<unsigned>		m_running = 0;
+  alignas(Zm::CacheLineSize)
+  mutable ZmAtomic<uint64_t> m_credit = AppCredit::Closed;
 };
 
 } // Ztc

@@ -17,8 +17,14 @@
 #include <zlib/zumd_discovery.hh>
 #include <zlib/zumd_oidc.hh>
 #include <zlib/zumd_passkey.hh>
+#include <zlib/zumd_request.hh>
 #include <zlib/zumd_session.hh>
 #include <zlib/zumd_token.hh>
+
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
+#include <zlib/ZmPlatform.hh>
+#include <zlib/ZmRef.hh>
 
 #include <zlib/ZtlsRandom.hh>
 
@@ -149,20 +155,32 @@ ZuDerive(AuthRouteDoneFn, (ZmFn<void(AuthRoute),
 ZuDerive(AuthRouteFn, (ZmFn<void(AppID, String, AuthRouteDoneFn),
   ZmFnHeapID<"Zum.AuthRouteFn">>));
 
-class ZumAPI Server {
+struct ServerWork;
+namespace ServerCredit { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+
+class ZumAPI Server : private ZmEngine<Server> {
+  using Engine = ZmEngine<Server>;
+  using Work = ZmRef<ServerWork>;
+  friend Engine;
+  friend ServerWork;
   Server(const Server &) = delete;
   Server &operator =(const Server &) = delete;
 
 public:
   Server() = default;
+  ~Server();
+
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
 
   bool init(
     DB *, Requests *, ServerConfig,
     ClockFn, PageFn, PolicyFn, AdmitFn, SignFn, OIDCHTTPFn = {},
     AuthRouteFn = {});
-  // Cancel OIDC transactions; retain callbacks/configuration until the
-  // owner has drained HTTP and Zdb, then call final().
-  void stop();
+  // Stop seals public admission, stops OIDC and drains provider callbacks.
+  // Keep DB/Requests/adapters alive through stop. Final releases stopped state.
   void final();
 
   unsigned authMethod() const { return m_config.authMethod; }
@@ -185,18 +203,28 @@ public:
   void oidcCallback(AppID, String query, String cookie, ServerFn);
 
 private:
-  void app_(AppID, AppServerFn);
-  void policy_(AppServer, AppServerFn);
-  void authorize_(AppServer, String, String, ServerFn);
-  void login_(AppServer, String, ServerFn);
-  void login_(AppServer, String, String, ServerFn);
-  void consent_(AppServer, String, String, ServerFn);
-  void logout_(AppServer, String, String, ServerFn);
-  void userInfo_(AppServer, String, ServerFn);
-  void userInfoVerify_(AppServer, String, ServerFn);
-  void passkeyBegin_(AppServer, String, ServerFn);
-  void passkeyFinish_(AppServer, String, String, String, ServerFn);
-  void oidcCallback_(AppServer, String, String, ServerFn);
+  Work work_();
+  void workDone_();
+  void start_();
+  void startOwner_();
+  void stop_();
+  void postDrain_();
+  template <typename L> void post_(L &&l) {
+    m_requests->scheduler()->run(ZuFwd<L>(l), m_requests->sid());
+  }
+
+  void app_(const Work &, AppID, AppServerFn);
+  void policy_(const Work &, AppServer, AppServerFn);
+  void authorize_(const Work &, AppServer, String, String, ServerFn);
+  void login_(const Work &, AppServer, String, ServerFn);
+  void login_(const Work &, AppServer, String, String, ServerFn);
+  void consent_(const Work &, AppServer, String, String, ServerFn);
+  void logout_(const Work &, AppServer, String, String, ServerFn);
+  void userInfo_(const Work &, AppServer, String, ServerFn);
+  void userInfoVerify_(const Work &, AppServer, String, ServerFn);
+  void passkeyBegin_(const Work &, AppServer, String, ServerFn);
+  void passkeyFinish_(const Work &, AppServer, String, String, String, ServerFn);
+  void oidcCallback_(const Work &, AppServer, String, String, ServerFn);
   int64_t now_() const;
   ZuTime deadline_() const;
   bool cookie_(String &, Bytes &);
@@ -205,16 +233,15 @@ private:
   bool binding_(String &, Bytes &) const;
   bool binding_(String &, String &, Bytes &) const;
   String csrf_(ZuBSpan) const;
-  void passkeyAdmitted_(
-    AppServer, PasskeyStart, PasskeyAdmission, Bytes,
+  void passkeyAdmitted_(const Work &, AppServer, PasskeyStart, PasskeyAdmission, Bytes,
     String setCookie, ServerFn);
-  void finishGrant_(AppServer, Bytes, Bytes, String, ServerFn);
-  void sessionReply_(Bytes, String, String, uint32_t, uint32_t, ServerFn);
-  void userInfo_(String, ServerFn);
-  void userInfo_(Principal, ServerFn);
-  void authorizeReply_(int, AuthorizeResult, String, ServerFn);
+  void finishGrant_(const Work &, AppServer, Bytes, Bytes, String, ServerFn);
+  void sessionReply_(const Work &, Bytes, String, String, uint32_t, uint32_t, ServerFn);
+  void userInfo_(const Work &, String, ServerFn);
+  void userInfo_(const Work &, Principal, ServerFn);
+  void authorizeReply_(const Work &, int, AuthorizeResult, String, ServerFn);
   void sessionAuthorize_(
-    AuthorizeResult, Bytes, String, String, uint32_t, ServerFn);
+    const Work &, AuthorizeResult, Bytes, String, String, uint32_t, ServerFn);
 
   DB		*m_db = nullptr;
   Requests	*m_requests = nullptr;
@@ -225,9 +252,15 @@ private:
   AdmitFn	m_admit;
   SignFn	m_sign;
   Ztls::Random	m_rng;
-  Ztls::Random	m_cookieRng;
   OIDC		m_oidc;
   AuthRouteFn	m_authRoute;
+
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t> m_credit = ServerCredit::Closed;
+  alignas(Zm::CacheLineSize)
+  bool m_stopOK = true;
+  bool m_draining = false;
+  bool m_drainPosted = false;
 };
 
 } // namespace Zum

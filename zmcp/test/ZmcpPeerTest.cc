@@ -324,7 +324,7 @@ struct CompletionHarness : public Zmcp::CompletionSet<CompletionHarness> {
 
   template <typename Req, typename Token>
   void cancelled(Req *, Token *token, ZuCSpan reason_) {
-    ZuCheck(!token->live() && !count());
+    cancelOK &= !token->live() && !count();
     if (token->cancelled()) ++cancellations;
     reason = reason_;
   }
@@ -349,6 +349,7 @@ struct CompletionHarness : public Zmcp::CompletionSet<CompletionHarness> {
   ZtString<> reason;
   int era = Zmcp::Era::Modern;
   unsigned cancellations = 0;
+  bool cancelOK = true;
 };
 
 template <typename Catalog>
@@ -1062,7 +1063,7 @@ static void completionTest()
     "\"params\":{\"requestId\":17,\"reason\":\"superseded\"}}";
   ZuCheck(peer.dispatchAsync(cancel, completions, emit, tool));
   ZuCheck(retained->cancelled());
-  ZuCheck(completions.cancellations == 1);
+  ZuCheck(completions.cancellations == 1 && completions.cancelOK);
   ZuCheck(completions.reason == "superseded");
   ZuCheck(!retained->complete(Zjrpc::Reply<EchoOK>{EchoResult{4}}));
   ZuCheck(!retained->progress(1, 1, "late"));

@@ -558,7 +558,9 @@ static bool initClient(Client &client, ZiMultiplex &mx,
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(secure).tcp(true).tls(secure).quic(false);
   if (!client.init(Zhttp::HubConfig{&mx, "rx", "tx"}, 1,
-      config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.caPath(caPath),
+      config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+        tls.caPath(caPath);
+      }),
       Zhttp::QUICConfig{})) return false;
   if (client.pool(0, Zhttp::Destination{url.origin()}) && client.start())
     return true;

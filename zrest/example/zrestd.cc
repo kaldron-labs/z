@@ -1783,8 +1783,9 @@ int main(int argc, char **argv)
       case Http2Mode::disable: policy = Zhttp::H2Policy::Disable; break;
       default: policy = Zhttp::H2Policy::Prefer; break;
     }
-    config.tls(Zhttp::H2Config{}.certPath(options.cert)
-      .keyPath(options.key).policy(policy));
+    config.tls(Zhttp::H2Config{}.tls([&options](auto &tls) {
+      tls.certPath(options.cert).keyPath(options.key);
+    }).policy(policy));
   }
 #ifdef Zquic_DEBUG
   bool h3Enabled = false;

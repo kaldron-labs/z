@@ -26,8 +26,7 @@
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmAtomic.hh>
-#include <zlib/ZmBlock.hh>
-#include <zlib/ZmFn.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
@@ -853,7 +852,8 @@ class Client : public Zjrpc::BatchCaller<Derived>,
   using Dispatch = Zjrpc::Dispatcher<Derived, Impl, ZuTypeList<>, ZuVoid, Client_::ReceivePolicy>;
 protected:
   using Calls::pendingCalls;
-  using Calls::ingress;
+  using Calls::admitCalls;
+  using Calls::releaseCalls;
 public:
   Impl *impl() const { return m_impl; }
   bool notification(const Zjrpc::Envelope &envelope) {
@@ -878,12 +878,9 @@ public:
 
   bool tools() {
     if (!m_mx || !m_up.load_()) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     bool posted = this->sendRun([this]() {
-      --ingress();
+      releaseCalls();
       if (const auto *catalog = m_peer.toolCatalog()) {
 	app_([this, catalog]() { tools_(m_impl, catalog, 0); });
 	return;
@@ -895,7 +892,7 @@ public:
       if ((id.is<void>() && !m_peer.toolCatalog()) || !sent)
 	app_([this]() { toolsFailed_(m_impl, 0); });
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -911,14 +908,11 @@ public:
 
   bool cancel(Zjrpc::ID id, ZuCSpan reason = {}) {
     if (!m_mx || !m_up.load_() || id.is<void>()) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     ZmRef<CancelAction> action =
       new CancelAction{ZuMv(id), reason};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --ingress();
+      releaseCalls();
       bool ok = pendingCalls().contains(action->id) &&
 	static_cast<Derived *>(this)->send_(CancelledRequestMessage{
 	  action->id, action->reason, m_peer.era()});
@@ -926,7 +920,7 @@ public:
 	cancelled_(m_impl, action->id, ok, 0);
       });
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -958,19 +952,16 @@ public:
       Zjrpc::ID progress, int logLevel,
       ZmRef<Call> call) {
     if (!m_mx || !m_up.load_() || !call) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     using Action = PeerCallAction<Req, Call>;
     ZmRef<Action> action = new Action{
       ZuMv(object), ZuMv(call), ZuMv(progress), logLevel};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --ingress();
+      releaseCalls();
       call_<Req>(ZuMv(action->object),
 	ZuMv(action->progress), action->logLevel, ZuMv(action->call));
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -984,15 +975,12 @@ public:
 
   bool discardCatalog() {
     if (!m_mx || !m_up.load_()) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     bool posted = ownerRun([this]() {
-      --ingress();
+      releaseCalls();
       m_peer.discardCatalog();
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -1026,17 +1014,14 @@ private:
   template <typename Call>
   bool control_(int kind, ZuCSpan level, ZmRef<Call> call) {
     if (!m_mx || !m_up.load_() || !call) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     ZmRef<ControlAction<Call>> action =
       new ControlAction<Call>{kind, level, ZuMv(call)};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --ingress();
+      releaseCalls();
       controlTx_(action->kind, action->level, ZuMv(action->call));
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -1168,16 +1153,15 @@ protected:
   bool initPeer_(Zjrpc::Limits limits) {
     m_limits = limits;
     m_peer = ClientPeer<Catalog>{limits};
-    return pendingCalls().init(limits.maxPending);
+    return Calls::init(limits.maxPending);
   }
 
-  bool closePeer_() {
+  template <typename L>
+  bool closePeer_(L &&ready) {
     m_up = false;
     m_peer.close();
-    if (ingress().load_()) return false;
     bool done = closeInput_();
-    done = pendingCalls().close(m_limits.workBatch) && done;
-    return done && !ingress().load_();
+    return Calls::closeCalls(ZuFwd<L>(ready)) && done;
   }
 
 private:
@@ -1187,7 +1171,6 @@ private:
   Zjrpc::Limits		m_limits;
   unsigned		m_ownerThread = 0;
   ZmAtomic<unsigned>	m_up = 0;
-  ZmAtomic<unsigned>	m_done = 0;
 };
 
 namespace HTTPClient_ {
@@ -1519,7 +1502,13 @@ friend inline ZuStringT<"Zmcp.HTTP.Call"> ZmNHeapID(CallAction *);
 template <typename Impl, typename Catalog, typename Selection>
 class Client : public Zhttp::Client<
     Client<Impl, Catalog, Selection>, Pool<Impl, Catalog, Selection>>,
-    public Zmcp::Client<Client<Impl, Catalog, Selection>, Impl, Catalog> {
+    public Zmcp::Client<Client<Impl, Catalog, Selection>, Impl, Catalog>,
+    private ZmEngine<Client<Impl, Catalog, Selection>> {
+  using Engine = ZmEngine<Client>;
+  friend Engine;
+  using Engine::spawn;
+  using Engine::wake;
+  using Engine::stateChanged;
   using Base = Zhttp::Client<Client, Pool<Impl, Catalog, Selection>>;
   using Common = Zmcp::Client<Client, Impl, Catalog>;
   friend Zjrpc::BatchCaller<Client>;
@@ -1532,13 +1521,17 @@ class Client : public Zhttp::Client<
   using Common::m_limits;
   using Common::m_ownerThread;
   using Common::m_up;
-  using Common::m_done;
-  using Common::ingress;
+  using Common::admitCalls;
+  using Common::releaseCalls;
   using Common::app_;
   using Req = Request<Impl, Catalog, Selection>;
   using ReqBase = Request_<Impl, Catalog, Selection>;
 
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using Common::send;
   Client() = default;
   ~Client() { final(); }
@@ -1568,6 +1561,8 @@ public:
 	  !Base::pool(0, ZuMv(destination)))
 	goto invalidBase;
     }
+    m_up = false;
+    m_failure = false;
     return true;
 
   invalidBase:
@@ -1580,39 +1575,9 @@ public:
     return false;
   }
 
-  bool start() {
-    if (!m_mx || m_started || m_done.load_() || !Base::start()) return false;
-    m_started = true;
-    m_up = true;
-    ownerRun_([this]() {
-      bool sent = false;
-      bool ok = m_peer.probe([self = this, &sent](auto message) {
-	sent = self->send_(ZuMv(message));
-      });
-      if (!ok || !sent) fail_();
-    });
-    return true;
-  }
-
-  bool stop() {
-    if (!m_mx) return false;
-    if (m_done.load_()) return !m_failure;
-    m_up = false;
-    if (m_started) Base::stop();
-    m_started = false;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      ownerRun_([this, wake = ZuMv(wake)]() mutable {
-	m_peer.close();
-	m_current = 0;
-	m_stopFn = ZuMv(wake);
-	stopBatch_();
-      });
-    });
-  }
-
   void final() {
     if (!m_mx) return;
-    (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
     Base::final();
     m_impl = nullptr;
     m_mx = nullptr;
@@ -1630,12 +1595,9 @@ public:
 
   bool tools() {
     if (!m_mx || !m_up.load_() || m_terminating.load_()) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     bool posted = this->sendRun([this]() {
-      --ingress();
+      releaseCalls();
       if (const auto *catalog = m_peer.toolCatalog()) {
 	app_([this, catalog]() { tools_(m_impl, catalog, 0); });
 	return;
@@ -1647,18 +1609,15 @@ public:
       if ((id.is<void>() && !m_peer.toolCatalog()) || !sent)
 	app_([this]() { toolsFailed_(m_impl, 0); });
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
   bool discardCatalog() {
     if (!m_mx || !m_up.load_() || m_terminating.load_()) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     ownerRun_([this]() {
-      --ingress();
+      releaseCalls();
       m_peer.discardCatalog();
     });
     return true;
@@ -1676,15 +1635,12 @@ public:
 
   bool terminate() {
     if (!m_mx || !m_up.load_() || m_terminating.cmpXch(1, 0)) return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     bool posted = this->sendRun([this]() {
-      --ingress();
+      releaseCalls();
       terminate_();
     });
-    if (!posted) { --ingress(); m_terminating = 0; }
+    if (!posted) { releaseCalls(); m_terminating = 0; }
     return posted;
   }
 
@@ -1715,38 +1671,32 @@ public:
       ZmRef<Call> call) {
     if (!m_mx || !m_up.load_() || m_terminating.load_() || !call)
       return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     using Action = CallAction<R, Call>;
     ZmRef<Action> action = new Action{
       ZuMv(object), ZuMv(call), ZuMv(progress), logLevel};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --ingress();
+      releaseCalls();
       call_<R>(ZuMv(action->object), ZuMv(action->progress), action->logLevel,
 	ZuMv(action->call));
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
   bool cancel(Zjrpc::ID id, ZuCSpan reason = {}) {
     if (!m_mx || !m_up.load_() || m_terminating.load_() || id.is<void>())
       return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     ZmRef<CancelAction> action = new CancelAction{ZuMv(id), reason};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --ingress();
+      releaseCalls();
       bool ok = cancel_(action->id, action->reason);
       app_([this, action, ok]() {
 	cancelled_(m_impl, action->id, ok, 0);
       });
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -1871,17 +1821,14 @@ private:
   bool control_(int kind, ZuCSpan level, ZmRef<Call> call) {
     if (!m_mx || !m_up.load_() || m_terminating.load_() || !call)
       return false;
-    if (++ingress() > m_limits.maxPending) {
-      --ingress();
-      return false;
-    }
+    if (!admitCalls()) return false;
     ZmRef<ControlAction<Call>> action =
       new ControlAction<Call>{kind, level, ZuMv(call)};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --ingress();
+      releaseCalls();
       controlTx_(action->kind, action->level, ZuMv(action->call));
     });
-    if (!posted) --ingress();
+    if (!posted) releaseCalls();
     return posted;
   }
 
@@ -2074,7 +2021,7 @@ private:
   static void terminated_(App *, bool, long) { }
 
   void fail_() {
-    if (m_failure || m_done.load_()) return;
+    if (m_failure) return;
     m_failure = true;
     m_up = false;
     m_peer.close();
@@ -2107,6 +2054,46 @@ private:
     m_mx->run([this]() { sendNext_(); }, m_ownerThread);
   }
 
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    Base::start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      ownerRun_([this]() {
+	ZmAssert_(!m_active->count_() && !m_serial.count_());
+	ZmAssert_(Common::initPeer_(m_limits));
+	m_failure = m_ready = m_drainingSerial = false;
+	m_terminating = 0;
+	m_stopPhase = 0;
+	m_current = 0;
+	m_sessionID.null();
+	m_up = true;
+	bool sent = false;
+	bool probed = m_peer.probe([this, &sent](auto message) {
+	  sent = this->send_(ZuMv(message));
+	});
+	if (!probed || !sent) fail_();
+	if (m_failure) { stopHTTP_(); return; }
+	Engine::started(true);
+      });
+    });
+  }
+
+  void stop_() {
+    ownerRun_([this]() { m_up = false; stopHTTP_(); });
+  }
+
+  void stopHTTP_() {
+    m_up = false;
+    m_peer.close();
+    Base::stop([this](bool ok) {
+      ownerRun_([this, ok]() {
+	m_current = 0;
+	m_stopOK = ok;
+	stopBatch_();
+      });
+    });
+  }
+
   void stopBatch_() {
     unsigned visited = 0;
     switch (m_stopPhase) {
@@ -2125,23 +2112,34 @@ private:
 	if (!m_serial.count_()) m_stopPhase = 2;
 	break;
       case 2:
-	if (!ingress().load_() && Common::closeInput_() &&
-	    pendingCalls().close(m_limits.workBatch) && !ingress().load_()) m_stopPhase = 3;
+	{
+	  typename Common::ReadyFn ready{this, [](auto self) { self->stopBatch_(); }};
+	  if (Common::closePeer_(ready)) m_stopPhase = 3;
+	  else if (Common::callsWaiting()) return;
+	}
 	break;
     }
     if (m_stopPhase < 3) {
       m_mx->run([this]() { stopBatch_(); }, m_ownerThread);
       return;
     }
-    m_done = true;
     try {
       if (m_failure) m_impl->failed();
       else m_impl->closed();
     } catch (...) {
     }
-    auto stopFn = ZuMv(m_stopFn);
-    m_stopFn = {};
-    if (stopFn) stopFn(!m_failure);
+    bool ok = m_stopOK;
+    Base::txRun([this, ok]() {
+      Base::rxRun([this, ok]() {
+	switch (Engine::state()) {
+	  case ZmEngineState::Starting:
+	  case ZmEngineState::StopPending:
+	    Engine::started(false);
+	    return;
+	}
+	Engine::stopped(ok);
+      });
+    });
   }
 
   ActiveHash::NodeMvRef takeActive_() {
@@ -2152,17 +2150,16 @@ private:
 
   ZmRef<ActiveTable>	m_active = new ActiveTable{};
   SerialQ m_serial;
-  ZmFn<void(bool)>	m_stopFn;
   Zjrpc::HTTPValue		m_endpoint;
   Zjrpc::HTTPValue		m_sessionID;
   uint64_t		m_sequence = 1;
   uint64_t		m_current = 0;
   int			m_stopPhase = 0;
   bool			m_legacySessions = true;
-  bool			m_started = false;
   bool			m_drainingSerial = false;
   bool			m_ready = false;
   bool			m_failure = false;
+  bool			m_stopOK = true;
 
   ZmAtomic<unsigned>	m_terminating = 0;
 };
@@ -2173,152 +2170,101 @@ template <typename Impl, typename Catalog, typename Selection>
 using HTTPClient = HTTPClient_::Client<Impl, Catalog, Selection>;
 
 template <typename Impl, typename Catalog>
-class IOClient : public Zmcp::Client<IOClient<Impl, Catalog>, Impl, Catalog> {
+class IOClient : public Zmcp::Client<IOClient<Impl, Catalog>, Impl, Catalog>,
+    public Zjrpc::IOEndpoint<IOClient<Impl, Catalog>> {
   using Common = Zmcp::Client<IOClient, Impl, Catalog>;
+  using IO = Zjrpc::IOEndpoint<IOClient>;
   friend Zjrpc::BatchCaller<IOClient>;
   friend Zjrpc::Dispatcher<IOClient, Impl, ZuTypeList<>, ZuVoid, Client_::ReceivePolicy>;
   friend Common;
-  using IO = Zjrpc::IOLink<IOClient>;
   using Common::m_impl;
   using Common::m_mx;
-  using Common::pendingCalls;
   using Common::m_peer;
   using Common::m_limits;
   using Common::m_ownerThread;
   using Common::m_up;
-  using Common::m_done;
-  using Common::ingress;
-  using Common::app_;
 public:
-  IOClient() = default;
+  using Common::send;
+  using Common::up;
+  using Common::invoked;
+  using Common::ownerRun;
+  using Common::continue_;
+
   ~IOClient() { final(); }
 
   bool init(ZiMultiplex *mx, Zjrpc::StdioConfig config, Impl *impl) {
-    if (m_mx || !mx || !impl || !mx->txThread()) return false;
+    if (m_mx || !impl || !IO::init(mx, config)) return false;
     m_impl = impl;
     m_mx = mx;
     m_ownerThread = mx->txThread();
     m_limits = config.limits();
-    if (!m_limits.maxPending || !m_limits.workBatch) goto invalid;
-    if (!Common::initPeer_(m_limits)) goto invalid;
-    new (m_stdio.template new_<IO>()) IO{
-      this, m_mx, m_ownerThread, ZuMv(config)};
-    m_up = true;
+    m_up = false;
     return true;
-
-  invalid:
-    m_impl = nullptr;
-    m_mx = nullptr;
-    m_ownerThread = 0;
-    return false;
-  }
-
-  bool start() {
-    if (!m_mx || !m_stdio.template ptr<IO>() || !m_up.load_() || m_started || m_done.load_())
-      return false;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	bool started = m_stdio.template p<IO>().start_();
-	bool ok = started;
-	m_started = started;
-	if (started) {
-	  bool sent = false;
-	  ok = m_peer.probe([this, &sent](const auto &message) {
-	    sent = m_stdio.template p<IO>().send_(message);
-	  }) && sent;
-	}
-	if (!ok) {
-	  m_failure = true;
-	  m_up = false;
-	  if (started) m_stdio.template p<IO>().stop_();
-	  else done_(true);
-	}
-	wake(ok);
-      }, m_ownerThread);
-    });
-  }
-
-  bool stop() {
-    if (!m_mx) return false;
-    if (m_done.load_()) return !m_failure;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	if (m_done.load_()) {
-	  wake(!m_failure);
-	  return;
-	}
-	m_stopFn = ZuMv(wake);
-	m_up = false;
-	if (m_started) m_stdio.template p<IO>().stop_();
-	else done_(false);
-      }, m_ownerThread);
-    });
   }
 
   void final() {
-    if (!m_mx) return;
-    (void)stop();
-    m_stdio.null();
+    IO::final();
     m_impl = nullptr;
     m_mx = nullptr;
     m_ownerThread = 0;
   }
 
-  bool stdioFrame(ZmRef<ZiIOBuf> body) { return Common::receive(ZuMv(body)); }
-  void stdioClosed() { done_(false); }
-  void stdioFailed() { done_(true); }
-
-private:
-  using Common::invoked;
-  template <typename M>
-  bool send_(const M &message) { return m_stdio.template p<IO>().send_(message); }
-
-  void fail_() {
-    ZiAssert(this->invoked(), "Zmcp", (),
-	"stdio client failure outside owner shard", return);
-    if (m_done.load_() || m_failure) return;
-    m_failure = true;
-    m_up = false;
-    m_peer.close();
-    m_stdio.template p<IO>().stop_();
+  void ioStarting() {
+    m_failure = false;
+    ZmAssert_(Common::initPeer_(m_limits));
   }
-
-  void done_(bool failed) {
-    ZiAssert(this->invoked(), "Zmcp", (),
-	"stdio client completion outside owner shard", return);
-    if (m_done.load_()) return;
+  void ioReady() {
+    m_up = true;
+    bool sent = false;
+    bool probed = m_peer.probe([this, &sent](const auto &message) {
+      sent = IO::send(message);
+    });
+    if (!probed || !sent) fail_();
+  }
+  bool stdioFrame(ZmRef<ZiIOBuf> body) { return Common::receive(ZuMv(body)); }
+  void ioClosed(bool failed) {
     m_failure |= failed;
     m_up = false;
     m_peer.close();
     drain_();
   }
 
+private:
+  template <typename M>
+  bool send_(const M &message) { return IO::send(message); }
+
+  void fail_() {
+    ZiAssert(invoked(), "Zmcp", (),
+	"stdio client failure outside owner shard", return);
+    m_failure = true;
+    m_up = false;
+    m_peer.close();
+    IO::fail_();
+  }
+
   void drain_() {
-    if (!Common::closePeer_()) {
-      m_mx->run([this]() { drain_(); }, m_ownerThread);
+    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+    if (!Common::closePeer_(ready)) {
+      if (!Common::callsWaiting()) this->continue_([this]() { drain_(); });
       return;
     }
-    m_done = true;
     try {
       if (m_failure) m_impl->failed();
       else m_impl->closed();
     } catch (...) {
     }
-    auto stopFn = ZuMv(m_stopFn);
-    m_stopFn = {};
-    if (stopFn) stopFn(!m_failure);
+    this->ioDone();
   }
 
-  ZuUnion<void, IO> m_stdio;
-  ZmFn<void(bool)>	m_stopFn;
-  bool			m_started = false;
   bool			m_failure = false;
-
 };
 
 template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
 class WSClient : public Client<WSClient<Impl, Catalog, Profile>, Impl, Catalog>,
-    public Zjrpc::WSIO<WSClient<Impl, Catalog, Profile>> {
+    public Zjrpc::WSIO<WSClient<Impl, Catalog, Profile>>,
+    private ZmEngine<WSClient<Impl, Catalog, Profile>> {
+  using Engine = ZmEngine<WSClient>;
+  friend Engine;
   using Common = Client<WSClient, Impl, Catalog>;
   friend Zjrpc::BatchCaller<WSClient>;
   friend Zjrpc::Dispatcher<WSClient, Impl, ZuTypeList<>, ZuVoid, Client_::ReceivePolicy>;
@@ -2332,9 +2278,12 @@ class WSClient : public Client<WSClient<Impl, Catalog, Profile>, Impl, Catalog>,
   using Common::m_limits;
   using Common::m_ownerThread;
   using Common::m_up;
-  using Common::m_done;
   using Common::invoked;
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using LinkState = Zjrpc::WSClientState;
   using WS = Zws::Client<WSClient, Profile>;
   using Link = WS::Link;
@@ -2354,39 +2303,29 @@ public:
       m_mx = nullptr;
       return false;
     }
-    return true;
-  }
-  bool start() {
-    if (!m_mx || m_started || m_stopping.load_() || !m_ws.start()) return false;
-    m_started = true;
+    m_up = false;
+    m_failure = m_down = m_closed = false;
     return true;
   }
   template <typename ...Args>
   bool connect(const Zws::URI &uri, Args &&...args) {
-    if (!m_started || m_link || m_stopping.load_()) return false;
-    m_link = new Link{&m_ws, uri, ZuFwd<Args>(args)...};
-    m_link->connect();
+    if (Engine::state() != ZmEngineState::Running ||
+	m_connect.cmpXch(Zjrpc::WSConnectState::Posted,
+	  Zjrpc::WSConnectState::Idle) != Zjrpc::WSConnectState::Idle)
+      return false;
+    try {
+      ZmRef<Link> link = new Link{&m_ws, uri, ZuFwd<Args>(args)...};
+      continue_([this, link = ZuMv(link)]() mutable { connectPosted_(ZuMv(link)); });
+    } catch (...) {
+      continue_([this]() { connectPosted_({}); });
+      throw;
+    }
     return true;
-  }
-  bool stop() {
-    if (!m_mx) return true;
-    m_stopping = true;
-    m_up = false;
-    ZmBlock<>{}([this](auto wake) mutable {
-      m_ws.txRun([this, wake = ZuMv(wake)]() mutable {
-	m_stop = ZuMv(wake);
-	if (m_link && !m_down)
-	  m_ws.rxRun([this]() { IO::stopWS_(*m_link); });
-	else close_([this]() { stopped_(); });
-      });
-    });
-    bool ok = !m_started || m_ws.stop();
-    m_started = false;
-    return ok && !m_failure;
   }
   void final() {
     if (!m_mx) return;
-    (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_closing && !m_waitConnect);
     m_link = nullptr;
     m_ws.final();
     m_impl = nullptr;
@@ -2396,15 +2335,15 @@ public:
   WS &ws() { return m_ws; }
   const WS &ws() const { return m_ws; }
   using Common::limits;
-  bool wsAccept() const { return !m_stopping.load_(); }
+  bool wsAccept() const { return Engine::state() == ZmEngineState::Running; }
 
   void connected(Link &link, Zhttp::ConnectedInfo info) {
     link.state().rx.open();
     if (!wsAccept()) { link.close(Zws::CloseCode::GoingAway); return; }
-    m_up = true;
     ZmRef<Zjrpc::WSOpen<Link>> action = new Zjrpc::WSOpen<Link>{&link, ZuMv(info)};
     m_ws.txRun([this, action = ZuMv(action)]() mutable {
-      if (!m_up.load_() || !wsAccept()) return;
+      if (!wsAccept()) return;
+      m_up = true;
       try {
 	Zws::H1_::connected(*m_impl, *action->link, ZuMv(action->info), 0);
 	bool sent = false;
@@ -2415,29 +2354,30 @@ public:
   }
   void connectFailed(Link &link, bool) {
     link.state().rx.close();
-    m_up = false;
     m_ws.txRun([this]() {
+      m_up = false;
       m_down = true;
       m_failure = true;
-      close_([this]() { stopped_(); });
+      close_();
     });
   }
   void disconnected(Link &link, bool) {
     link.state().rx.close();
-    m_up = false;
     m_ws.txRun([this]() {
+      m_up = false;
       m_down = true;
-      close_([this]() { stopped_(); });
+      close_();
     });
   }
   void closed(Link &link, uint16_t code, ZuBSpan reason) {
-    m_up = false;
     IO::template control_<true>(link, code, reason);
   }
   void error(Link &link, Zws::Failure::T failure) {
-    m_up = false;
-    m_ws.txRun([this, link = ZmRef{&link}, failure]() mutable {
-      m_failure = true;
+    // Transport shutdown can end the wire before the close handshake finishes.
+    bool cancelled = failure == Zws::Failure::AbnormalClose && Engine::stopping();
+    m_ws.txRun([this, link = ZmRef{&link}, failure, cancelled]() mutable {
+      m_up = false;
+      if (!cancelled) m_failure = true;
       try { Zws::H1_::error(*m_impl, *link, failure, 0); } catch (...) { }
     });
   }
@@ -2446,11 +2386,69 @@ public:
   }
 
 private:
+  void wsClosed_() { m_up = false; }
+  template <typename L> void continue_(L &&l) { m_ws.txRun(ZuFwd<L>(l)); }
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    m_ws.start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      continue_([this]() {
+	ZmAssert_(!m_link && !m_closing && !m_waitConnect);
+	ZmAssert_(Common::initPeer_(m_limits));
+	m_failure = m_closed = m_down = false;
+	m_transportStopped = false;
+	m_connect = Zjrpc::WSConnectState::Idle;
+	Engine::started(true);
+      });
+    });
+  }
+  void stop_() {
+    int previous;
+    do {
+      previous = m_connect.load_();
+    } while (m_connect.cmpXch(previous == Zjrpc::WSConnectState::Posted ?
+	Zjrpc::WSConnectState::StopPosted : Zjrpc::WSConnectState::Stopped,
+	previous) != previous);
+    continue_([this]() { stopLink_(); });
+  }
+  void connectPosted_(ZmRef<Link> link) {
+    int state = m_connect.cmpXch(link ?
+      Zjrpc::WSConnectState::Assigned : Zjrpc::WSConnectState::Idle,
+      Zjrpc::WSConnectState::Posted);
+    if (state == Zjrpc::WSConnectState::Posted) {
+      if (!link) return;
+      m_link = link;
+      m_ws.rxRun([link = ZuMv(link)]() mutable { link->connect(); });
+      return;
+    }
+    ZmAssert_(state == Zjrpc::WSConnectState::StopPosted);
+    m_connect = Zjrpc::WSConnectState::Stopped;
+    if (m_waitConnect) { m_waitConnect = false; stopLink_(); }
+  }
+  void stopLink_() {
+    m_up = false;
+    if (m_connect.load_() == Zjrpc::WSConnectState::StopPosted) {
+      m_waitConnect = true;
+      return;
+    }
+    if (m_link && !m_down)
+      m_ws.rxRun([this, link = m_link]() { IO::stopWS_(*link); });
+    m_ws.stop([this](bool ok) {
+      continue_([this, ok]() {
+	m_stopOK = ok;
+	m_transportStopped = true;
+	close_();
+      });
+    });
+  }
   void stopped_() {
-    if (!m_stop) return;
-    auto done = ZuMv(m_stop);
-    m_ws.rxRun([this, done = ZuMv(done)]() mutable {
-      m_ws.txRun([done = ZuMv(done)]() mutable { done(); });
+    if (!m_transportStopped || !m_closed || m_closing) return;
+    m_transportStopped = false;
+    m_ws.rxRun([this]() {
+      continue_([this]() {
+	m_link = nullptr;
+	Engine::stopped(m_stopOK);
+      });
     });
   }
   template <typename M>
@@ -2464,27 +2462,36 @@ private:
     m_peer.close();
     if (m_link) m_link->close(Zws::CloseCode::Internal);
   }
-  template <typename Done>
-  void close_(Done done) {
-    if (!Common::closePeer_()) {
-      m_ws.txRun([this, done = ZuMv(done)]() mutable { close_(ZuMv(done)); });
+  void close_() {
+    m_up = false;
+    if (m_closed) { stopped_(); return; }
+    if (m_closing) return;
+    m_closing = true;
+    drain_();
+  }
+  void drain_() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+    if (!Common::closePeer_(ready)) {
+      if (!Common::callsWaiting()) continue_([this]() { drain_(); });
       return;
     }
-    if (!m_done.load_()) {
-      m_done = true;
-      try {
-	if (m_failure) m_impl->failed();
-	else m_impl->closed();
-      } catch (...) { }
-    }
-    done();
+    m_closing = false;
+    m_closed = true;
+    try {
+      if (m_failure) m_impl->failed();
+      else m_impl->closed();
+    } catch (...) { }
+    stopped_();
   }
 
   WS m_ws;
   ZmRef<Link> m_link;
-  ZmFn<void()> m_stop;
-  ZmAtomic<unsigned> m_stopping = 0;
-  bool m_started = false;
+  ZmAtomic<int> m_connect = Zjrpc::WSConnectState::Stopped;
+  bool m_closing = false;
+  bool m_closed = false;
+  bool m_transportStopped = false;
+  bool m_stopOK = true;
+  bool m_waitConnect = false;
   bool m_failure = false;
   bool m_down = false;
 };

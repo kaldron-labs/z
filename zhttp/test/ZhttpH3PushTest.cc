@@ -63,9 +63,12 @@ struct CxnInput : public Zhttp::H3::CxnParser<CxnInput> {
     if (!errors) error = code;
     ++errors;
   }
+  void goaway(uint64_t id) { boundary = id; ++goaways; }
   void push(ZuBSpan bytes) { rx.push(rxBuf(bytes)); }
 
   RxStream	rx;
+  uint64_t	boundary = 0;
+  unsigned	goaways = 0;
   uint64_t	error = 0;
   uint64_t	retired = 0;
   unsigned	reschedules = 0;
@@ -186,6 +189,40 @@ struct CloseLink {
 } // namespace ZhttpH3PushTest_
 
 using namespace ZhttpH3PushTest_;
+
+static void testGoaway()
+{
+  ZuTestScope(testGoaway);
+  Zhttp::H3::HdrBytes id;
+  Zhttp::H3::putVar(id, 1);
+  ZuTestCall(checkCxnError, false, 0x07, id, Zhttp::H3::IDError);
+  for (unsigned i = 0; i < 2; ++i) {
+    bool server = i;
+    CxnInput input;
+    input.server = server;
+    id.length(0);
+    Zhttp::H3::putVar(id, server ? 3 : 4);
+    auto bytes = controlFrame(0x07, id);
+    input.push(bytes);
+    input.process(input);
+    ZuCheck(!input.errors && input.goaways == 1 && input.boundary == (server ? 3 : 4));
+    id.length(0);
+    Zhttp::H3::putVar(id, 0);
+    bytes.length(0);
+    frame(bytes, 0x07, id);
+    frame(bytes, 0x07, id); // an unchanged boundary is permitted
+    input.push(bytes);
+    input.process(input);
+    ZuCheck(!input.errors && input.goaways == 3 && !input.boundary);
+    id.length(0);
+    Zhttp::H3::putVar(id, 4);
+    bytes.length(0);
+    frame(bytes, 0x07, id);
+    input.push(bytes);
+    ZuCheck(input.process(input) == Zhttp::H3::CxnState::Error &&
+      input.error == Zhttp::H3::IDError && input.errors == 1 && input.goaways == 3);
+  }
+}
 
 static void testControlFrames()
 {
@@ -370,6 +407,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testControlFrames);
+  ZuTestCall(testGoaway);
   ZuTestCall(testPushStreams);
   ZuTestCall(testRequestFrames);
   ZuTestCall(testApplicationClose);

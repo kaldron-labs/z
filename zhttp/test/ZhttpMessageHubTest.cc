@@ -438,13 +438,15 @@ void run(const Zhttp::Test::TempDir &cert, bool channel = false)
   auto serverConfig = Zhttp::ServerConfig{}.localIP(ZiIP{"127.0.0.1"}).port(state.port);
   Zhttp::H2Config tls;
   Zhttp::QUICConfig quic;
-  tls.caPath(cert.certPath.cspan()).extendedConnect(channel);
+  tls.tls([&cert](auto &p) { p.caPath(cert.certPath.cspan()); })
+    .extendedConnect(channel);
   quic.caPath(cert.certPath.cspan()).extendedConnect(channel);
   if constexpr (ZuIsSame<typename Profile::Protocol, Zhttp::TCP>{})
     serverConfig.tcp();
   else if constexpr (ZuIsSame<typename Profile::Protocol, Zhttp::TLS>{})
-    serverConfig.tls(Zhttp::H2Config{}.certPath(cert.certPath.cspan())
-      .keyPath(cert.keyPath.cspan()).extendedConnect(channel).policy(Profile::Multiplexed ?
+    serverConfig.tls(Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan());
+    }).extendedConnect(channel).policy(Profile::Multiplexed ?
 	(typename Profile::Selection::template Has<Zhttp::H1TLS>{} ?
 	  Zhttp::H2Policy::Prefer : Zhttp::H2Policy::Force) :
 	Zhttp::H2Policy::Disable));
@@ -524,7 +526,7 @@ int main(int argc, char **argv)
   ZuTestCall(catalogs);
   Zhttp::Test::TempDir cert;
   if (!cert.init()) return 1;
-  ZiResolver::start();
+  ZiResolver::startSync();
 #if defined(ZHTTP_TEST_H1TCP)
   ZuTestCall((run<Case<Zhttp::H1TCP>>), cert);
   ZuTestCall((run<Case<Zhttp::H1TCP>>), cert, true);
@@ -553,6 +555,6 @@ int main(int argc, char **argv)
 #else
 #error HTTP profile test is not selected
 #endif
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
 }

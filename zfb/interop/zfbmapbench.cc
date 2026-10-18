@@ -77,7 +77,7 @@ static void save(const char *name, const O &object, unsigned n, unsigned rounds)
 {
   Zfb::Buffer storage;
   Zfb::ArrayStorage<> arena{storage};
-  Zfb::Builder<decltype(arena)> builder{arena};
+  Zfb::Builder builder{arena};
   unsigned bytes = 0, capacity = 0, scratch = 0;
   auto start = Zm::now();
   for (unsigned i = 0; i < rounds; ++i) {

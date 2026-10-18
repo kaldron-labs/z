@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmFn.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmNoLock.hh>
@@ -189,7 +190,8 @@ public:
   bool contains(const ID &id) { return bool(m_hash->findPtr(id)); }
 
   bool init(unsigned maxPending) {
-    if (!maxPending || m_state != Open || m_hash->count_()) return false;
+    if (!maxPending || m_state == Closing || m_hash->count_()) return false;
+    m_state = Open;
     m_maxPending = maxPending;
     return true;
   }
@@ -428,10 +430,15 @@ friend inline ZuStringT<"Zjrpc.Batch.Notify"> ZmNHeapID(BatchAction *);
   explicit BatchAction(B batch_) : batch{ZuMv(batch_)} { }
 };
 
+// Derived::continue_ must enqueue an owner turn, even on the owner thread.
+// Credit release precedes the admitted body's execution; its ready notification
+// must run after that body returns, rather than invoke completion inline.
 template <typename Derived>
 class BatchCaller {
   template <typename, typename> friend class Caller;
 public:
+  using ReadyFn = ZmFn<void(), ZmFnHeapID<"Zjrpc.Calls.Ready">>;
+
   template <typename B> bool prepareBatch(B &) { return true; }
 
   bool response(const Envelope &envelope, PendingHash::NodeMvRef *batch = nullptr) {
@@ -446,12 +453,12 @@ public:
     using Action = BatchCall<B, Call>;
     ZmRef<Action> action = new Action{this, ZuMv(batch), ZuMv(call)};
     if (derived()->invoked()) { action->start(); return true; }
-    if ((m_ingress += n) > derived()->limits().maxPending) { m_ingress -= n; return false; }
+    if (!admitCalls(n)) return false;
     bool posted = this->sendRun([this, n, action = ZuMv(action)]() mutable {
-      m_ingress -= n;
+      releaseCalls(n);
       action->start();
     });
-    if (!posted) m_ingress -= n;
+    if (!posted) releaseCalls(n);
     return posted;
   }
 
@@ -461,13 +468,13 @@ public:
     if (!derived()->up() || !n || batch.calls() ||
 	n >= derived()->limits().maxPending) return false;
     if (derived()->invoked()) return notifyBatch_(batch);
-    if ((m_ingress += n) > derived()->limits().maxPending) { m_ingress -= n; return false; }
+    if (!admitCalls(n)) return false;
     ZmRef<BatchAction<B>> action = new BatchAction<B>{ZuMv(batch)};
     bool posted = this->sendRun([this, n, action = ZuMv(action)]() mutable {
-      m_ingress -= n;
+      releaseCalls(n);
       if (derived()->up() && !notifyBatch_(action->batch)) derived()->fail_();
     });
-    if (!posted) m_ingress -= n;
+    if (!posted) releaseCalls(n);
     return posted;
   }
 
@@ -489,17 +496,68 @@ protected:
   }
 
   PendingCalls &pendingCalls() { return m_pending; }
-  ZmAtomic<unsigned> &ingress() { return m_ingress; }
+  bool admitCalls(unsigned n = 1) {
+    uint64_t ingress = m_ingress.load_();
+    for (;;) {
+      if ((ingress & Closed) || !derived()->up() ||
+	  (ingress & CountMask) + n > derived()->limits().maxPending) return false;
+      uint64_t prev = m_ingress.cmpXch(ingress + n, ingress);
+      if (prev == ingress) return true;
+      ingress = prev;
+    }
+  }
+  void releaseCalls(unsigned n = 1) {
+    uint64_t ingress = m_ingress -= n;
+    if ((ingress & Waiting) && !(ingress & CountMask)) notifyCalls_(ingress);
+  }
+  bool callsWaiting() const { return bool(m_callsReady); }
   bool fail(const ID &id) { return m_pending.fail(id); }
   bool pending(const ID &id) { return m_pending.contains(id); }
-  bool init(unsigned maxPending) { return m_pending.init(maxPending); }
-  bool closeCalls() {
-    if (m_ingress.load_()) return false;
+  bool init(unsigned maxPending) {
+    ZmAssert_(!(m_ingress.load_() & CountMask) && !m_sendPosts.load_() && !m_callsReady);
+    m_ingress = 0;
+    return m_pending.init(maxPending);
+  }
+  template <typename L>
+  bool closeCalls(L &&ready) {
+    // Seal admission before observing credits, including callers which have
+    // acquired admission but have not yet posted their owner work.
+    m_ingress |= Closed;
+    // The claimed final credit may still be publishing its owner post.
+    // Its registered callback remains a prerequisite until that post runs.
+    if (m_callsReady) return false;
+    if (m_ingress.load_() & CountMask) {
+      waitCalls_(ZuFwd<L>(ready));
+      return false;
+    }
     bool done = m_pending.close(derived()->limits().workBatch);
-    return done && !m_ingress.load_();
+    if (m_ingress.load_() & CountMask) {
+      waitCalls_(ZuFwd<L>(ready));
+      return false;
+    }
+    ZmAssert_(!m_sendPosts.load_());
+    return done;
   }
 
 private:
+  static constexpr uint64_t Closed = uint64_t(1)<<63;
+  static constexpr uint64_t Waiting = uint64_t(1)<<62;
+  static constexpr uint64_t CountMask = ~(Closed | Waiting);
+
+  template <typename L>
+  void waitCalls_(L &&ready) {
+    m_callsReady = ZuFwd<L>(ready);
+    uint64_t ingress = m_ingress |= Waiting;
+    if (!(ingress & CountMask)) notifyCalls_(ingress);
+  }
+  void notifyCalls_(uint64_t ingress) {
+    if (m_ingress.cmpXch(ingress & ~Waiting, ingress) != ingress) return;
+    derived()->continue_([this]() {
+      auto ready = ZuMv(m_callsReady);
+      m_callsReady = {};
+      ready();
+    });
+  }
   auto derived() { return static_cast<Derived *>(this); }
 
   template <typename B, typename Call>
@@ -622,7 +680,7 @@ private:
   void batchRun(L &&l) {
     ++m_ingress;
     derived()->continue_([this, l = ZuFwd<L>(l)]() mutable {
-      --m_ingress;
+      this->releaseCalls();
       l();
     });
   }
@@ -631,7 +689,8 @@ private:
   // Outgoing call state; send admission is shared with posting threads.
   alignas(Zm::CacheLineSize)
   PendingCalls m_pending;
-  ZmAtomic<unsigned> m_ingress = 0;
+  ZmAtomic<uint64_t> m_ingress = 0;
+  ReadyFn m_callsReady;
   ZmAtomic<unsigned> m_sendPosts = 0;
 };
 
@@ -639,21 +698,22 @@ template <typename Derived, typename Catalog>
 class Caller : public BatchCaller<Derived> {
   using Base = BatchCaller<Derived>;
   using Base::m_pending;
-  using Base::m_ingress;
+  using Base::admitCalls;
+  using Base::releaseCalls;
 public:
   template <typename Req, typename Call>
   bool call(ObjectValue<typename Req::Object> object, ZmRef<Call> call) {
     ZuAssert((ZuTypeIn<Req, Catalog>{}));
     if (!derived()->up() || !call) return false;
     if (derived()->invoked()) { call_<Req>(ZuMv(object), ZuMv(call)); return true; }
-    if (++m_ingress > derived()->limits().maxPending) { --m_ingress; return false; }
+    if (!this->admitCalls()) return false;
     using Action = CallAction<Req, Call>;
     ZmRef<Action> action = new Action{ZuMv(object), ZuMv(call)};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --m_ingress;
+      this->releaseCalls();
       call_<Req>(ZuMv(action->object), ZuMv(action->call));
     });
-    if (!posted) --m_ingress;
+    if (!posted) this->releaseCalls();
     return posted;
   }
 
@@ -662,15 +722,15 @@ public:
     ZuAssert((ZuTypeIn<Req, Catalog>{}));
     if (!derived()->up()) return false;
     if (derived()->invoked()) return derived()->send(RequestMessage<Req>{{}, ZuMv(object)});
-    if (++m_ingress > derived()->limits().maxPending) { --m_ingress; return false; }
+    if (!this->admitCalls()) return false;
     using Action = NotifyAction<Req>;
     ZmRef<Action> action = new Action{ZuMv(object)};
     bool posted = this->sendRun([this, action = ZuMv(action)]() mutable {
-      --m_ingress;
+      this->releaseCalls();
       if (derived()->up() && !derived()->send(RequestMessage<Req>{{}, ZuMv(action->object)}))
 	derived()->fail_();
     });
-    if (!posted) --m_ingress;
+    if (!posted) this->releaseCalls();
     return posted;
   }
 

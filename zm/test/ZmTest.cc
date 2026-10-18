@@ -55,7 +55,7 @@ struct ShadowNode : ZmNHeap<ShadowNode>, ShadowList::Node {
   unsigned *destroyed;
 
 friend inline ZuStringT<"ZmTest.ShadowNode"> ZmNHeapID(ShadowNode *);
-  ShadowNode(unsigned *destroyed_) : ShadowList::Node{0}, destroyed{destroyed_} { }
+  ShadowNode(unsigned *destroyed_) : ShadowList::Node{0U}, destroyed{destroyed_} { }
   ~ShadowNode() { ++*destroyed; }
 };
 
@@ -182,6 +182,16 @@ int main(int argc, char **argv)
   {
     ZmRef<Y> y = new Y;
     { ZmRef<Y> y2 = new Y; }
+
+    {
+      const ZmRef<Y> &source = y;
+      ZmRef<X> copy{source};
+      ZuCHECK(source && copy.ptr() == source.ptr(),
+	"const derived reference copies into base without consuming source");
+      ZmRef<X> copiedRvalue{ZuMv(source)};
+      ZuCHECK(source && copiedRvalue.ptr() == source.ptr(),
+	"const derived rvalue copies into base without consuming source");
+    }
 
     ZmRef<Y> yPtr = y;
     ZmRef<X> xPtr = (ZmRef<X>)y;

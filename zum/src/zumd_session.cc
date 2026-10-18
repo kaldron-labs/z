@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmPolymorph.hh>
 #include <zlib/ZuDerive.hh>
 #include <zlib/zumd_session.hh>
 #include <zlib/zumd_identity_db.hh>
@@ -14,11 +15,13 @@
 
 namespace Zum {
 
-class SessionComplete_ : public ZmNHeap<SessionComplete_>, public ZmObject  {
+class SessionComplete_ : public ZmNHeap<SessionComplete_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.session.SessionComplete"> ZmNHeapID(SessionComplete_ *);
 
 public:
-  SessionComplete_(SessionFn complete) : m_complete{ZuMv(complete)} { }
+  SessionComplete_(ZmRef<ZmPolymorph> work, SessionFn complete) :
+    RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error, Session session = {}, String token = {}) {
     m_request->complete([self = ZmRef<SessionComplete_>{this}, error,
@@ -36,11 +39,13 @@ private:
   SessionFn	m_complete;
 };
 
-class SessionDoneComplete_ : public ZmNHeap<SessionDoneComplete_>, public ZmObject  {
+class SessionDoneComplete_ : public ZmNHeap<SessionDoneComplete_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.session.SessionDoneComplete"> ZmNHeapID(SessionDoneComplete_ *);
 
 public:
-  SessionDoneComplete_(SessionDoneFn complete) : m_complete{ZuMv(complete)} { }
+  SessionDoneComplete_(ZmRef<ZmPolymorph> work, SessionDoneFn complete) :
+    RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error) {
     m_request->complete([self = ZmRef<SessionDoneComplete_>{this}, error]() {
@@ -206,11 +211,12 @@ static void revoke_(DB *db, String token, String issuer, int64_t now,
   });
 }
 
-bool sessionIssue(Requests *requests, ZuTime deadline, DB *db,
+bool sessionIssue(
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, SessionConfig config, SessionFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionComplete_> state = new SessionComplete_{ZuMv(complete)};
+  ZmRef<SessionComplete_> state = new SessionComplete_{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, &rng,
       config = ZuMv(config)](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
@@ -221,13 +227,14 @@ bool sessionIssue(Requests *requests, ZuTime deadline, DB *db,
   }, [state]() mutable { state->cancel(); });
 }
 
-bool sessionIssueGrant(Requests *requests, ZuTime deadline,
+bool sessionIssueGrant(
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline,
     DB *db, Ztls::Random &rng, Bytes grantID, String issuer,
     int64_t now, int64_t idleLifetime, int64_t absoluteLifetime,
     SessionFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionComplete_> state = new SessionComplete_{ZuMv(complete)};
+  ZmRef<SessionComplete_> state = new SessionComplete_{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, &rng,
       grantID = ZuMv(grantID), issuer = ZuMv(issuer), now,
       idleLifetime, absoluteLifetime](
@@ -286,12 +293,13 @@ bool sessionIssueGrant(Requests *requests, ZuTime deadline,
   }, [state]() mutable { state->cancel(); });
 }
 
-bool sessionUse(Requests *requests, ZuTime deadline, DB *db,
+bool sessionUse(
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline, DB *db,
     String token, String issuer, int64_t now, int64_t idleLifetime,
     SessionFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionComplete_> state = new SessionComplete_{ZuMv(complete)};
+  ZmRef<SessionComplete_> state = new SessionComplete_{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, token = ZuMv(token),
       issuer = ZuMv(issuer), now, idleLifetime](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
@@ -302,12 +310,13 @@ bool sessionUse(Requests *requests, ZuTime deadline, DB *db,
   }, [state]() mutable { state->cancel(); });
 }
 
-bool sessionRevoke(Requests *requests, ZuTime deadline, DB *db,
+bool sessionRevoke(
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline, DB *db,
     String token, String issuer, int64_t now, SessionDoneFn complete)
 {
   if (!requests || !complete) return false;
   ZmRef<SessionDoneComplete_> state =
-    new SessionDoneComplete_{ZuMv(complete)};
+    new SessionDoneComplete_{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, token = ZuMv(token),
       issuer = ZuMv(issuer), now](
       ZmRef<Request> request) mutable {

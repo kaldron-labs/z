@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZjrpcClient.hh>
 #include <zlib/ZjrpcServer.hh>
@@ -40,19 +41,19 @@ struct SrvApp {
   ZuRef<Zjrpc::HTTPPeer> context;
   unsigned calls = 0;
   unsigned enriched = 0;
-  unsigned failures = 0;
+  ZmAtomic<unsigned> failures = 0;
 
   void listening(int, unsigned) { listening_.post(); }
   void listenFailed(int, bool) { ++failures; listening_.post(); }
   void connected(int) { }
   void disconnected(int) { }
   ZuRef<Zjrpc::HTTPPeer> peer(const auto &) {
-    ZuCheck(mx->invoked(mx->rxThread()));
+    if (!mx->invoked(mx->rxThread())) ++failures;
     return context;
   }
   template <typename Req, typename Token>
   void request(Req *, const Value &value, const auto &http, Token token) {
-    ZuCheck(mx->invoked(mx->rxThread()));
+    if (!mx->invoked(mx->rxThread())) ++failures;
     auto field = http.headers.template get<CallHdr>();
     if (field.count == 1 && field.value == "call") ++enriched;
     if (!token) { notified.post(); return; }
@@ -66,7 +67,7 @@ struct SrvApp {
   }
   template <typename Res, typename Key, typename L>
   void responseHeader(const Zjrpc::Reply<Res> &, L &&l) {
-    ZuCheck(mx->invoked(mx->txThread()));
+    if (!mx->invoked(mx->txThread())) ++failures;
     if constexpr (ZuIsSame<Key, ResultHdr>{}) l("result");
   }
 };
@@ -117,13 +118,13 @@ friend inline ZuStringT<"ZjrpcITest.BatchCall"> ZmNHeapID(BatchCall *);
 
 static void testHTTP()
 {
-  ZuTestScope(testHTTP);
+  ZuTestScopeRT(testHTTP);
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   SrvApp srv;
   srv.mx = &mx;
   CliApp cli;
@@ -137,19 +138,20 @@ static void testHTTP()
     config.endpoint("/rpc").http([invalid](auto &http) {
       http.localIP(ZiIP{"127.0.0.1"}).port(21100).tcp();
       if (invalid)
-	http.tls(Zhttp::H2Config{}
-	  .certPath("/nonexistent/jrpc-retry-cert.pem")
-	  .keyPath("/nonexistent/jrpc-retry-key.pem"));
+	http.tls(Zhttp::H2Config{}.tls([](auto &tls) {
+	  tls.certPath("/nonexistent/jrpc-retry-cert.pem")
+	    .keyPath("/nonexistent/jrpc-retry-key.pem");
+	}));
     });
     return config;
   };
-  ZuCheck(!server.init(hub, serverConfig(true), &srv));
+  ZuCheckRT(!server.init(hub, serverConfig(true), &srv));
   bool initialized = server.init(hub, serverConfig(false), &srv);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   if (!initialized) { mx.stop(); return; }
   srv.context = Zjrpc::HTTPPeer::create(server);
   bool started = server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   if (!started) { server.final(); mx.stop(); return; }
   ZmSemaphore httpStarted;
   bool httpStartOK = false;
@@ -158,7 +160,7 @@ static void testHTTP()
     httpStarted.post();
   });
   httpStarted.wait();
-  ZuCheck(httpStartOK);
+  ZuCheckRT(httpStartOK);
   srv.listening_.wait();
   Zjrpc::ClientConfig clientConfig;
   clientConfig.endpoint("/rpc").http([](auto &http) {
@@ -168,29 +170,29 @@ static void testHTTP()
   });
   bool clientReady = !srv.failures && client.init(hub,
     Zhttp::Destination{"127.0.0.1", 21100}, ZuMv(clientConfig), &cli) && client.start();
-  ZuCheck(clientReady);
+  ZuCheckRT(clientReady);
   if (clientReady) {
     cli.ready_.wait();
     ZmRef<Call> fixed = new Call{};
-    ZuCheck(client.call<Echo>(Value{42}, fixed));
+    ZuCheckRT(client.call<Echo>(Value{42}, fixed));
     srv.arrived.wait();
     auto complete = ZuMv(srv.deferred);
     complete();
     fixed->done.wait();
-    ZuCheck(fixed->value == 42 && !fixed->failures);
+    ZuCheckRT(fixed->value == 42 && !fixed->failures);
     ZmRef<Call> stream = new Call{};
-    ZuCheck(client.call<Stream>(Value{73}, stream));
+    ZuCheckRT(client.call<Stream>(Value{73}, stream));
     stream->done.wait();
-    ZuCheck(stream->value == 73 && !stream->failures);
+    ZuCheckRT(stream->value == 73 && !stream->failures);
     Zjrpc::Batch<Catalog> batch;
-    ZuCheck(batch.request<Echo>(Zjrpc::ID{int64_t{2001}}, Value{12}));
-    ZuCheck(batch.request<Stream>(Zjrpc::ID{int64_t{2002}}, Value{13}));
+    ZuCheckRT(batch.request<Echo>(Zjrpc::ID{int64_t{2001}}, Value{12}));
+    ZuCheckRT(batch.request<Stream>(Zjrpc::ID{int64_t{2002}}, Value{13}));
     ZmRef<BatchCall> aggregate = new BatchCall{};
-    ZuCheck(client.callBatch(ZuMv(batch), aggregate));
+    ZuCheckRT(client.callBatch(ZuMv(batch), aggregate));
     aggregate->done.wait();
-    ZuCheck(aggregate->completions == 1 && !aggregate->failures);
-    ZuCheck(aggregate->reply.entries().length() == 2);
-    ZuCheck(client.notify<Echo>(Value{1}));
+    ZuCheckRT(aggregate->completions == 1 && !aggregate->failures);
+    ZuCheckRT(aggregate->reply.entries().length() == 2);
+    ZuCheckRT(client.notify<Echo>(Value{1}));
     srv.notified.wait();
     ZmSemaphore clientStopped;
     bool clientStopOK = false;
@@ -199,7 +201,7 @@ static void testHTTP()
       clientStopped.post();
     });
     clientStopped.wait();
-    ZuCheck(clientStopOK && !client.up());
+    ZuCheckRT(clientStopOK && !client.up());
   }
   client.final();
   ZmSemaphore httpStopped;
@@ -209,29 +211,34 @@ static void testHTTP()
     httpStopped.post();
   });
   httpStopped.wait();
-  ZuCheck(httpStopOK && server.state() == ZmEngineState::Stopped && server.up());
-  ZuCheck(server.stop());
-  ZuCheck(!server.up());
+  ZuCheckRT(httpStopOK && server.state() == ZmEngineState::Running && server.up());
+  ZuCheckRT(server.stop());
+  ZuCheckRT(!server.up() && server.state() == ZmEngineState::Stopped);
+  bool serverRestarted = server.start();
+  ZuCheckRT(serverRestarted);
+  if (serverRestarted)
+    ZuCheckRT(!srv.listening_.timedwait(Zm::now() + ZuTime{5}));
+  ZuCheckRT(server.stop());
   srv.context = nullptr;
   server.final();
   bool reused = server.init(hub, serverConfig(false), &srv);
-  ZuCheck(reused);
+  ZuCheckRT(reused);
   if (reused) {
     bool restarted = server.start();
-    ZuCheck(restarted);
+    ZuCheckRT(restarted);
     if (restarted) {
       srv.listening_.wait();
-      ZuCheck(server.stop());
+      ZuCheckRT(server.stop());
     }
   }
   server.final();
   Zjrpc::HTTPServer<SrvApp, Catalog, Zhttp::Profiles<Zhttp::H1TCP, Zhttp::H1TLS,
     Zhttp::H2TLS>> partial;
-  ZuCheck(!partial.init(hub, serverConfig(true), &srv));
+  ZuCheckRT(!partial.init(hub, serverConfig(true), &srv));
   partial.final();
   mx.stop();
-  ZuCheck(srv.calls == 4 && srv.enriched == 3 && !srv.failures);
-  ZuCheck(cli.enriched == 2 && !cli.failures);
+  ZuCheckRT(srv.calls == 4 && srv.enriched == 3 && !srv.failures);
+  ZuCheckRT(cli.enriched == 2 && !cli.failures);
 }
 
 int main(int argc, char **argv)

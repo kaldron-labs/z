@@ -47,6 +47,32 @@ setting applies to every newly established connection. RPC work is drained on
 disconnect before the channel context closes; no pending calls revive on a
 new connection. Release application-retained native links after `stop()` and
 before `final()`, while their hub still exists.
+Stdio, HTTP and WebSocket endpoints allow `final()` directly after an
+initialization that was never started. After start, complete `stop()` before
+`final()`; finalization asserts stopped state and never initiates shutdown.
+Stop attempts every shutdown step and completes in Stopped even if its
+boolean result reports a cleanup failure. A later start performs fresh startup;
+stopped resources are never restarted to undo shutdown. Earlier request or
+protocol failures remain with their existing application callbacks.
+
+Each endpoint uses one parent `ZmEngine` for its complete operation. Stdio
+facades share `Zjrpc::IOEndpoint`; HTTP and WebSocket transports keep their
+independent child controllers. Synchronous `start()`/`stop()` belong on the
+main thread; `start(done)`/`stop(done)` deliver boolean lifecycle results.
+Repeated operations and an opposite operation requested during a transition
+use the canonical engine queues. A failed start finishes rollback before its
+false completion. Startup prepares the transport and submits the initial
+client discovery where applicable; `ready(era)` remains the separate MCP
+handshake completion. WebSocket clients call `connect` after startup.
+
+A completed stop drains MCP peers, RPC/batch work, HTTP sessions and request
+contexts, SSE output, and their owner-shard continuations. Retained
+configuration supports another start without init. Each new stdio or
+WebSocket run gets fresh peer/handshake state; HTTP clients discard their
+previous session ID. Stdio stop closes runtime duplicates, while the
+application retains the configured original handles through finalization.
+Natural EOF or protocol failure still requires explicit stop before final or
+restart.
 
 Stdio, HTTP and WebSocket server dispatch use the shared JSON-RPC work and batch
 implementation. MCP supplies compile-time payload/completion policy, including
@@ -188,8 +214,10 @@ defaults to `/mcp`; `legacySessions(true)` is the default.  A nonzero
 deployment: no MCP session ID or session context is created, and each request
 uses the canonical protocol-version routing hint.
 
-`StdioConfig` owns its input and output handles.  Server defaults are process
-stdin/stdout; callers retaining an original handle must pass a duplicate.  Set
+`StdioConfig` borrows its input and output handles. Server defaults borrow
+process stdin/stdout. Each run owns duplicates; callers keep their originals
+valid until finalization and close them explicitly. This also permits worker
+reconstruction after a completed stop without reusing closed runtime handles. Set
 `rxThread()` and `txThread()` to two distinct named isolated scheduler slots,
 also distinct from the multiplex network Rx/Tx slots.  Those workers perform
 portable blocking `ZiFile` reads/writes, so Windows console, pipe and file

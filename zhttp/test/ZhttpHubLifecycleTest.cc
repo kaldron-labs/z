@@ -251,6 +251,77 @@ void testNestedAsync()
   ZuCHECK(a.inits == 1 && a.finals == 1);
 }
 
+void testStopFailure()
+{
+  ZuTestScope(testStopFailure);
+  Events events;
+  Zhttp::Hubs hubs;
+  Fake<1> a{.events = &events, .stopOK = false};
+  Fake<2> b{.events = &events, .deferStop = true};
+  ZuCHECK(hubs.init(a) && hubs.init(b));
+  ZuCHECK(hubs.start());
+  unsigned failed = 0;
+  hubs.stop([&failed](bool ok) { failed += !ok; });
+  hubs.stop([&failed](bool ok) { failed += !ok; });
+  ZuCHECK(!failed && !a.stops && b.stops == 1);
+  auto done = ZuMv(b.stopDone);
+  done(false);
+  ZuCHECK(failed == 2 && hubs.state() == ZmEngineState::Stopped);
+  ZuCHECK(a.stops == 1 && b.stops == 1);
+  ZuCHECK(hubs.stop());
+  ZuCHECK(a.stops == 1 && b.stops == 1);
+  a.stopOK = true;
+  b.deferStop = false;
+  ZuCHECK(hubs.start() && hubs.stop());
+  ZuCHECK(a.starts == 2 && b.starts == 2 && a.stops == 2 && b.stops == 2);
+  hubs.final();
+  ZuCHECK(a.finals == 1 && b.finals == 1);
+}
+
+void testFailedStopRestart()
+{
+  ZuTestScope(testFailedStopRestart);
+  Events events;
+  Zhttp::Hubs hubs;
+  Fake<1> a{.events = &events, .stopOK = false};
+  Fake<2> b{.events = &events, .deferStop = true};
+  ZuCHECK(hubs.init(a) && hubs.init(b) && hubs.start());
+  unsigned completed = 0;
+  hubs.stop([&hubs, &a, &b, &completed](bool ok) {
+    ZuCHECK(!ok && hubs.state() == ZmEngineState::Starting);
+    ZuCHECK(a.stops == 1 && b.stops == 1 && a.starts == 1 && b.starts == 1);
+    ++completed;
+  });
+  hubs.start([&completed](bool ok) {
+    ZuCHECK(ok);
+    ++completed;
+  });
+  auto done = ZuMv(b.stopDone);
+  done(false);
+  ZuCHECK(completed == 2 && hubs.state() == ZmEngineState::Running);
+  ZuCHECK(a.starts == 2 && b.starts == 2 && a.stops == 1 && b.stops == 1);
+  a.stopOK = true;
+  b.deferStop = false;
+  ZuCHECK(hubs.stop());
+  hubs.final();
+}
+
+void testFailedRollback()
+{
+  ZuTestScope(testFailedRollback);
+  Events events;
+  Zhttp::Hubs hubs;
+  Fake<1> a{.events = &events, .stopOK = false};
+  Fake<2> b{.events = &events, .stopOK = false};
+  Fake<3> c{.events = &events, .startOK = false};
+  ZuCHECK(hubs.init(a) && hubs.init(b) && hubs.init(c));
+  ZuCHECK(!hubs.start() && hubs.state() == ZmEngineState::Stopped);
+  ZuCHECK(a.stops == 1 && b.stops == 1 && !c.stops);
+  ZuCHECK(a.starts == 1 && b.starts == 1 && c.starts == 1);
+  hubs.final();
+  ZuCHECK(a.finals == 1 && b.finals == 1 && c.finals == 1);
+}
+
 } // namespace ZhttpHubLifecycleTest_
 
 int main(int argc, char **argv)
@@ -270,5 +341,8 @@ int main(int argc, char **argv)
   ZuTestCall(testStopDuringStart);
   ZuTestCall(testAsyncStopDuringStart);
   ZuTestCall(testNestedAsync);
+  ZuTestCall(testStopFailure);
+  ZuTestCall(testFailedStopRestart);
+  ZuTestCall(testFailedRollback);
   return 0;
 }

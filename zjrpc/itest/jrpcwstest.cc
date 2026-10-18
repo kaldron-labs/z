@@ -118,8 +118,13 @@ static auto profileConfig(const Zquic::Test::TempDir &temp)
     using Config = ZuIf<ZuIsSame<Profile, Zhttp::H1TLS>{}, Zhttp::TLSConfig,
       ZuIf<ZuIsSame<Profile, Zhttp::H2TLS>{}, Zhttp::H2Config, Zhttp::QUICConfig>>;
     Config config;
-    if constexpr (Server) config.certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
-    else config.caPath(temp.certPath.cspan());
+    auto configure = [&temp](auto &tls) {
+      if constexpr (Server)
+	tls.certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
+      else tls.caPath(temp.certPath.cspan());
+    };
+    if constexpr (ZuIsSame<Profile, Zhttp::H2TLS>{}) config.tls(configure);
+    else configure(config);
     return config;
   }
 }
@@ -127,13 +132,13 @@ static auto profileConfig(const Zquic::Test::TempDir &temp)
 template <typename Profile>
 static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
 {
-  ZuTestScope(testWS);
+  ZuTestScopeRT(testWS);
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   SrvApp<Profile> srv;
   CliApp cli;
   typename SrvApp<Profile>::Server server;
@@ -143,57 +148,79 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
     profileConfig<Profile, true>(temp), Zjrpc::WSConfig{}, &srv) &&
     client.init(hub, profileConfig<Profile, false>(temp),
       Zhttp::Destination{"127.0.0.1", uint16_t(port)}, Zjrpc::WSConfig{}, &cli);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
   bool started = server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && wait(srv.listening_) && !srv.failures;
-  ZuCheck(listening);
+  ZuCheckRT(listening);
   Zws::URI uri;
   ZtString<> text;
   text << (ZuIsSame<Profile, Zhttp::H1TCP>{} ? "ws" : "wss")
     << "://127.0.0.1:" << port << "/rpc";
-  bool ready = listening && Zws::URI::parse(uri, text).ok() && client.start() &&
-    client.connect(uri, "jrpc") && wait(cli.ready_) && !cli.failures && wait(srv.connected_);
-  ZuCheck(ready);
+  bool clientStarted = listening && Zws::URI::parse(uri, text).ok() && client.start();
+  bool ready = clientStarted && client.connect(uri, "jrpc") &&
+    wait(cli.ready_) && !cli.failures && wait(srv.connected_);
+  ZuCheckRT(ready);
   if (ready) {
     ZmRef<Call> outbound = new Call{};
-    ZuCheck(client.template call<Echo>(Value{42}, outbound));
+    ZuCheckRT(client.template call<Echo>(Value{42}, outbound));
     bool arrived = wait(srv.arrived);
-    ZuCheck(arrived);
+    ZuCheckRT(arrived);
     if (arrived) { auto complete = ZuMv(srv.deferred); complete(); }
-    ZuCheck(wait(outbound->done));
-    ZuCheck(outbound->value == 42 && !outbound->failures);
+    ZuCheckRT(wait(outbound->done));
+    ZuCheckRT(outbound->value == 42 && !outbound->failures);
     ZmRef<Call> reverse = new Call{};
-    ZuCheck(server.template call<Echo>(*srv.link, Value{73}, reverse));
-    ZuCheck(wait(reverse->done));
-    ZuCheck(reverse->value == 73 && !reverse->failures);
+    ZuCheckRT(server.template call<Echo>(*srv.link, Value{73}, reverse));
+    ZuCheckRT(wait(reverse->done));
+    ZuCheckRT(reverse->value == 73 && !reverse->failures);
     Zjrpc::Batch<Catalog> batch;
-    ZuCheck(batch.request<Echo>(Zjrpc::ID{int64_t{1001}}, Value{1}));
-    ZuCheck(batch.request<Echo>(Zjrpc::ID{int64_t{1002}}, Value{2}));
+    ZuCheckRT(batch.request<Echo>(Zjrpc::ID{int64_t{1001}}, Value{1}));
+    ZuCheckRT(batch.request<Echo>(Zjrpc::ID{int64_t{1002}}, Value{2}));
     ZmRef<Aggregate> aggregate = new Aggregate{};
-    ZuCheck(client.callBatch(ZuMv(batch), aggregate));
-    ZuCheck(wait(aggregate->done));
-    ZuCheck(aggregate->completions == 1 && !aggregate->failures);
-    ZuCheck(aggregate->reply.entries().length() == 2);
-    ZuCheck(client.template notify<Echo>(Value{3}));
-    ZuCheck(wait(srv.notified));
-    ZuCheck(server.template notify<Echo>(*srv.link, Value{4}));
-    ZuCheck(wait(cli.notified));
+    ZuCheckRT(client.callBatch(ZuMv(batch), aggregate));
+    ZuCheckRT(wait(aggregate->done));
+    ZuCheckRT(aggregate->completions == 1 && !aggregate->failures);
+    ZuCheckRT(aggregate->reply.entries().length() == 2);
+    ZuCheckRT(client.template notify<Echo>(Value{3}));
+    ZuCheckRT(wait(srv.notified));
+    ZuCheckRT(server.template notify<Echo>(*srv.link, Value{4}));
+    ZuCheckRT(wait(cli.notified));
     ZmRef<Call> abandoned = new Call{};
-    ZuCheck(client.template call<Echo>(Value{42}, abandoned));
-    ZuCheck(wait(srv.arrived));
-    ZuCheck(client.stop());
-    ZuCheck(wait(abandoned->done));
-    ZuCheck(abandoned->failures == 1);
+    ZuCheckRT(client.template call<Echo>(Value{42}, abandoned));
+    ZuCheckRT(wait(srv.arrived));
+    ZuCheckRT(client.stop());
+    ZuCheckRT(wait(abandoned->done));
+    ZuCheckRT(abandoned->failures == 1);
   }
-  client.final();
-  ZuCheck(server.stop());
+  if (clientStarted && !ready) ZuCheckRT(client.stop());
+  ZuCheckRT(server.stop());
   srv.deferred = {};
   srv.link = nullptr;
+  if (ready) {
+    bool serverRestarted = server.start();
+    bool listeningAgain = serverRestarted && wait(srv.listening_);
+    ZuCheckRT(listeningAgain);
+    bool clientRestarted = listeningAgain && client.start();
+    bool readyAgain = clientRestarted && client.connect(uri, "jrpc") &&
+      wait(cli.ready_) && wait(srv.connected_);
+    ZuCheckRT(readyAgain);
+    if (readyAgain) {
+      ZmRef<Call> fresh = new Call{};
+      bool sent = client.template call<Echo>(Value{19}, fresh);
+      bool completed = sent && wait(fresh->done);
+      ZuCheckRT(completed);
+      if (completed) ZuCheckRT(fresh->value == 19 && !fresh->failures);
+    }
+    if (clientRestarted) ZuCheckRT(client.stop());
+    ZuCheckRT(client.stop());
+    ZuCheckRT(server.stop());
+    srv.link = nullptr;
+  }
+  client.final();
   server.final();
   mx.stop();
-  ZuCheck(!srv.failures && !cli.failures);
+  ZuCheckRT(!srv.failures && !cli.failures);
 }
 
 int main(int argc, char **argv)

@@ -17,6 +17,9 @@
 #include <zlib/ZumURI.hh>
 #include <zlib/zumd_request.hh>
 
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
+
 namespace Zum {
 
 struct DB;
@@ -36,7 +39,7 @@ ZumExtern String jwksJSON(const StringVec &publicJwks);
 ZuDerive(DiscoveryFn, (ZmFn<void(bool, String),
   ZmFnHeapID<"Zum.DiscoveryFn">>));
 ZumExtern bool jwksLoad(
-  Requests *, ZuTime deadline, DB *, ZuCSpan issuer, int64_t now,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, ZuCSpan issuer, int64_t now,
   unsigned maxKeys, DiscoveryFn);
 
 } // namespace Zum

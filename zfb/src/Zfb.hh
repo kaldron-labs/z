@@ -952,6 +952,9 @@ private:
   unsigned m_cache = 0;
 };
 
+template <typename Storage>
+Builder(Storage &, unsigned = Wire::Align) -> Builder<Storage>;
+
 } // Zfb
 
 // --- field save/load

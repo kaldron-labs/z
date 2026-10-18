@@ -19,9 +19,12 @@
 #include <zlib/ZuBitStream.hh>
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuPrint.hh>
+#include <zlib/ZuSpan.hh>
 #include <zlib/ZuString.hh>
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuTraits.hh>
+
+#include <zlib/ZtScratch.hh>
 
 namespace Zhttp {
 
@@ -114,7 +117,7 @@ public:
       if constexpr (HasBuffer<Bytes>{}) {
 	uint64_t offset = m_out.length();
 	auto ptr = m_out.ensure(offset + n);
-	if (n) n = ZuPrint<U>::print(reinterpret_cast<char *>(ptr + offset), n, v);
+	if (n) n = ZuPrint<U>::print(ZuSpan<char>{ptr + offset, n}.data(), n, v);
 	m_out.length(offset + n);
       } else {
 	auto data = static_cast<char *>(ZuAlloca(n, 1));
@@ -152,13 +155,40 @@ private:
   bool	m_ok = true;
 };
 
+// Small rendered field values start on the stack; larger values use the
+// caller's identified scratch heap. This is a storage trade-off, not a limit.
+enum { PrintScratchBuiltin = 256 };
+
+template <typename Scratch, typename P, typename Emit>
+bool renderPrint(const P &value, Emit emit) {
+  auto rendered = ZtScratch(Scratch, PrintScratchBuiltin);
+  PrintBytes bytes{rendered};
+  bytes << value;
+  return bytes.ok() && emit(ZuBSpan{rendered});
+}
+
 template <typename Bytes>
 int putPref(Bytes &, uint8_t, unsigned, uint64_t);
+
+struct Prefix {
+  // One prefix byte followed by at most ceil(64/7) continuation bytes.
+  enum { MaxLength = 1 + (sizeof(uint64_t) * CHAR_BIT + 6)/7 };
+  uint8_t data[MaxLength];
+  unsigned length = 0;
+
+  void push(uint8_t c) { data[length++] = c; }
+};
+
+struct ValueSpan {
+  uint64_t offset = 0;
+  unsigned length = 0;
+};
 
 template <typename Bytes>
 class FieldSectionBuffer {
 public:
-  enum { PrefixReserve = 16 };
+  // Leave room for both the longest prefix and the gap's link/length record.
+  enum { PrefixReserve = Prefix::MaxLength + sizeof(uint32_t) + sizeof(uint8_t) };
 
   FieldSectionBuffer(Bytes &bytes) : m_bytes{bytes} { }
 
@@ -169,29 +199,18 @@ public:
   int putPrint(
       uint8_t prefix, unsigned bits, const P &value,
       uint64_t &offset, unsigned &length) {
+    uint64_t start_ = m_bytes.length();
+    if (start_ > UINT32_MAX - PrefixReserve) return -1;
     if constexpr (ZuPrint<P>::Buffer) {
-      uint64_t start_ = m_bytes.length();
-      if (start_ > UINT32_MAX - PrefixReserve) return -1;
       unsigned size = ZuPrint<P>::length(value);
       m_bytes.length(start_ + PrefixReserve);
       offset = m_bytes.length();
       auto ptr = m_bytes.ensure(offset + size);
       length = size ? ZuPrint<P>::print(
-	reinterpret_cast<char *>(ptr + offset), size, value) : 0;
+	ZuSpan<char>{ptr + offset, size}.data(), size, value) : 0;
       if (length > size) return -1;
       m_bytes.length(offset + length);
-
-      Prefix encoded;
-      if (Compression::putPref(encoded, prefix, bits, length) < 0)
-	return -1;
-      unsigned gap = PrefixReserve - encoded.length;
-      memcpy(m_bytes.data() + start_ + gap,
-	encoded.data, encoded.length);
-      record_(uint32_t(start_), uint8_t(gap));
-      return 0;
     } else {
-      uint64_t start_ = m_bytes.length();
-      if (start_ > UINT32_MAX - PrefixReserve) return -1;
       m_bytes.length(start_ + PrefixReserve);
       offset = m_bytes.length();
       PrintBytes<Bytes> out{m_bytes};
@@ -199,16 +218,13 @@ public:
       uint64_t length_ = m_bytes.length() - offset;
       if (!out.ok() || length_ > UINT_MAX) return -1;
       length = unsigned(length_);
-
-      Prefix encoded;
-      if (Compression::putPref(encoded, prefix, bits, length) < 0)
-	return -1;
-      unsigned gap = PrefixReserve - encoded.length;
-      memcpy(m_bytes.data() + start_ + gap,
-	encoded.data, encoded.length);
-      record_(uint32_t(start_), uint8_t(gap));
-      return 0;
     }
+    Prefix encoded;
+    if (Compression::putPref(encoded, prefix, bits, length) < 0) return -1;
+    unsigned gap = PrefixReserve - encoded.length;
+    memcpy(m_bytes.data() + start_ + gap, encoded.data, encoded.length);
+    record_(uint32_t(start_), uint8_t(gap));
+    return 0;
   }
 
   uint64_t length(uint64_t start = 0) const {
@@ -235,13 +251,6 @@ public:
   }
 
 private:
-  struct Prefix {
-    void push(uint8_t c) { data[length++] = c; }
-
-    uint8_t	data[11];
-    unsigned	length = 0;
-  };
-
   void record_(uint32_t offset, uint8_t length) {
     uint32_t link = offset + 1;
     uint32_t end = 0;
@@ -262,6 +271,8 @@ private:
 };
 
 struct NameView {
+  ZuBSpan name;
+
   NameView() = default;
   NameView(ZuBSpan name_) : name{name_} { }
 
@@ -269,7 +280,6 @@ struct NameView {
   int cmp(const NameView &v) const { return name.cmp(v.name); }
   uint32_t hash() const { return name.hash(); }
 
-  ZuBSpan	name;
 };
 
 inline bool operator ==(const NameView &l, const NameView &r) {
@@ -290,14 +300,15 @@ namespace Huffman {
   ZhttpAPI uint64_t encode(ZuSpan<uint8_t>, ZuBSpan);
 
   ZuInline constexpr uint64_t declen(uint64_t slen) {
-    return ((slen / 5U)<<3) + (((slen % 5U)<<3)/5U);
+    return ((slen/5U)<<3) + (((slen % 5U)<<3)/5U);
   }
   ZhttpAPI int64_t decode(ZuSpan<uint8_t>, ZuBSpan);
 
 } // namespace Huffman
 
 // incremental HPACK/QPACK prefix integer parser
-struct PrefInt {
+class PrefInt {
+public:
   template <unsigned Bits>
   int start(uint8_t first, uint64_t &value) {
     ZuAssert(Bits && Bits <= 8);
@@ -443,8 +454,7 @@ public:
     uint64_t remaining = m_length - m_bytes.length();
     unsigned available = in.length() - offset;
     if (remaining < available) available = unsigned(remaining);
-    for (unsigned i = 0; i < available; ++i)
-      m_bytes.push(in[offset + i]);
+    if (available) putBytes(m_bytes, in.offset(offset).trunc(available));
     offset += available;
     if (m_bytes.length() == m_length) {
       m_complete = true;

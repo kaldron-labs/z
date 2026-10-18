@@ -75,3 +75,10 @@ login through `zumd`, pong before and after refresh rotation, and repeat login
 after service restart. It also covers role removal between code issuance and
 redemption and unavailable-server behavior. Real-browser acceptance remains a
 separate deployment test.
+
+`PingHTTP` has a complete engine covering its native clients, accepted calls and
+owned resolver. Stop attempts all clients and the resolver even if one reports
+an error. Its completion always leaves Stopped; the result reports whether all
+shutdown steps succeeded. Complete stop before final, keeping the borrowed
+multiplexer running until that completion. A borrowed resolver remains under
+its external owner's control.

@@ -278,6 +278,8 @@ struct Call : public ZmObject {
   ZmSemaphore done;
   ZmAtomic<unsigned> processed = 0;
   ZmAtomic<unsigned> failures = 0;
+  ZmAtomic<int> failureCode = -1;
+  ZmAtomic<int> httpCode = -1;
   ZmAtomic<unsigned> unavailable = 0;
   ZmAtomic<unsigned> *order = nullptr;
   ZmAtomic<unsigned> ordinal = 0;
@@ -295,12 +297,19 @@ struct Call : public ZmObject {
     done.post();
   }
   void failed() { ++failures; done.post(); }
+  void failed(const Zrest::Failure &failure) {
+    failureCode = int(failure.code);
+    httpCode = int(failure.http.code);
+    failed();
+  }
 };
 struct EventCall : public ZmObject {
   ZmSemaphore done;
   ZmAtomic<unsigned> events = 0;
   ZmAtomic<unsigned> completed = 0;
   ZmAtomic<unsigned> failures = 0;
+  ZmAtomic<int> failureCode = -1;
+  ZmAtomic<int> httpCode = -1;
   ZmAtomic<unsigned> invalid = 0;
   bool receiveSSE(Zhttp::SSEEvent event,
       Zrest::SSEMeta<ClientSSE> meta) {
@@ -318,6 +327,11 @@ struct EventCall : public ZmObject {
     done.post();
   }
   void failed() { ++failures; done.post(); }
+  void failed(const Zrest::Failure &failure) {
+    failureCode = int(failure.code);
+    httpCode = int(failure.http.code);
+    failed();
+  }
 };
 struct PartialEventCall : public ZmObject {
   ZmSemaphore done;
@@ -513,7 +527,7 @@ struct StreamProbe {
     Zhttp::H2Config tls;
     Zhttp::QUICConfig quic;
     if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
-      tls.caPath(cert).policy(Zhttp::H2Policy::Force);
+      tls.tls([cert](auto &p) { p.caPath(cert); }).policy(Zhttp::H2Policy::Force);
     if constexpr (ZuIsSame<Protocol, Zhttp::QUIC>{})
       quic.caPath(cert).maxIdleTimeout(10000);
     inited = client.init(hub, 1, {}, {}, tls, quic);
@@ -675,7 +689,9 @@ struct StreamResFixture {
       serverConfig.quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)
 	.maxIdleTimeout(10000));
     else
-      serverConfig.tls(Zhttp::H2Config{}.certPath(cert).keyPath(key)
+      serverConfig.tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
+        tls.certPath(cert).keyPath(key);
+      })
 	.policy(Zhttp::H2Policy::Force));
     serverInited = server.init(hub, ZuMv(serverConfig));
     if (!serverInited || !server.start() ||
@@ -694,7 +710,9 @@ struct StreamResFixture {
     else
       clientInited = client.init(hub, 1, ZuMv(clientConfig), &clientApp,
 	Zhttp::TCPConfig{},
-	Zhttp::H2Config{}.caPath(cert).policy(Zhttp::H2Policy::Force),
+	Zhttp::H2Config{}.tls([&cert](auto &tls) {
+	  tls.caPath(cert);
+	}).policy(Zhttp::H2Policy::Force),
 	Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
     if (!clientInited || !client.pool(0,
 	Zhttp::Destination{h1 ? "127.0.0.1" : "localhost", port, false}) ||
@@ -716,8 +734,10 @@ struct StreamResFixture {
       server.partialWritten.timedwait(Zm::now(10)) == 0;
     result.partialReceived = result.partialWritten &&
       partial->received.timedwait(Zm::now(10)) == 0;
-    if (result.partialReceived) clientStopped = client.stop();
-    if (clientStopped) serverStopped = server.stop();
+    if (result.partialReceived) {
+      clientStopped = client.stop();
+      serverStopped = server.stop();
+    }
     result.partialStopped = clientStopped && serverStopped;
     result.partialFinished = result.partialReceived &&
       partial->done.timedwait(Zm::now(10)) == 0;
@@ -758,6 +778,146 @@ ZiMxParams mxParams()
   }).rxThread(1).txThread(2);
 }
 
+// HTTP result delivery precedes Tx acknowledgement and Rx request retirement.
+// End those continuations before the next phase reuses the admission budget.
+void retire(ZiMultiplex &mx)
+{
+  ZmSemaphore done;
+  mx.run([&mx, &done]() {
+    mx.run([&mx, &done]() {
+      mx.run([&done]() { done.post(); }, mx.rxThread());
+    }, mx.txThread());
+  }, mx.rxThread());
+  done.wait();
+}
+
+// Hold the actual response record at the native boundary so retirement can be
+// ordered independently of the REST work and transport stop prerequisites.
+class CancelChannel : public ZmNHeap<CancelChannel>, public ZmObject,
+    public Zhttp::Channel {
+friend inline ZuStringT<"Zrest.Test.CancelChannel"> ZmNHeapID(CancelChannel *);
+
+  static const Zhttp::ChannelOps &channelOps() {
+    static const Zhttp::ChannelOps ops{
+      .mx = [](const void *ctx) { return static_cast<const CancelChannel *>(ctx)->m_mx; },
+      .rxThread = [](const void *ctx) {
+	return static_cast<const CancelChannel *>(ctx)->m_mx->rxThread();
+      },
+      .txThread = [](const void *ctx) {
+	return static_cast<const CancelChannel *>(ctx)->m_mx->txThread();
+      },
+      .disconnect = [](void *ctx) {
+	auto channel = static_cast<CancelChannel *>(ctx);
+	channel->m_server->disconnected(channel->session());
+      },
+      .send = [](void *ctx, uint64_t, bool, Zhttp::ResponseRef response) {
+	static_cast<CancelChannel *>(ctx)->m_response = ZuMv(response);
+      },
+      .responseCatalog = [](const void *ctx) -> const Zhttp::CatalogView & {
+	return static_cast<const CancelChannel *>(ctx)->m_server->responseCatalog();
+      },
+      .sequence = [](const void *) { return uint64_t(1); },
+      .session = [](const void *ctx) {
+	return Zhttp::Session{uintptr_t(ctx), Zhttp::Transport::TCP};
+      }};
+    return ops;
+  }
+
+public:
+  CancelChannel(ZiMultiplex *mx, Server *server) :
+    Zhttp::Channel{channelOps()}, m_mx{mx}, m_server{server} { bind(this); }
+
+  void complete() {
+    auto response = ZuMv(m_response);
+    if (response) response->data().completed({Zhttp::ResponseCode::Discarded});
+  }
+
+private:
+  ZiMultiplex *m_mx;
+  Server *m_server;
+  Zhttp::ResponseRef m_response;
+};
+
+void cancelDrain()
+{
+  ZuTestScope(cancelDrain);
+  ZiMultiplex mx{mxParams()};
+  bool mxUp = mx.start();
+  ZuCheck(mxUp);
+  if (!mxUp) return;
+  App app;
+  Server server;
+  Zrest::ServerConfig config;
+  Zrest::Limits limits;
+  limits.workBatch = 1;
+  config.localIP(ZiIP{"127.0.0.1"})
+    .port(Zhttp::Test::loopbackPort(20820)).tcp();
+  config.limits(limits);
+  bool inited = server.init({&mx, "rx", "tx"}, ZuMv(config), &app);
+  bool started = inited && server.start();
+  ZuCheck(started);
+  if (started) {
+    ZmRef<CancelChannel> first = new CancelChannel{&mx, &server};
+    ZmRef<CancelChannel> second = new CancelChannel{&mx, &server};
+    ZmRef<CancelChannel> tail = new CancelChannel{&mx, &server};
+    ZmSemaphore scanned, release, ownerDone, httpDone, stopDone;
+    ZmAtomic<unsigned> completions = 0;
+    ZmAtomic<unsigned> failures = 0;
+    mx.run([&server, &app, first, second, tail, &scanned, &release]() {
+      auto admit = [&server](CancelChannel *channel) {
+	ServerRequest request;
+	request.object = new RequestObject{};
+	Zrest::RequestContext context;
+	context.target = "/ping";
+	context.decoded = true;
+	server.admit(ZuMv(request), ZuMv(context),
+	  Zhttp::Route<Server::Response>{channel, Zhttp::Method::POST});
+      };
+      app.deferNext = 1;
+      admit(first);
+      admit(second);
+      admit(tail);
+      // The first scan has registered its cursor and queued its next turn.
+      // A second disconnect queues behind it; its last admitted Work retires.
+      server.disconnected(first->session());
+      server.disconnected(second->session());
+      tail->complete();
+      scanned.post();
+      release.wait();
+    }, mx.rxThread());
+    scanned.wait();
+    auto done = [&completions, &failures, &stopDone](bool ok) {
+      if (!ok) ++failures;
+      if (++completions == 2) stopDone.post();
+    };
+    server.stop(done);
+    server.stop(done);
+    using Parser = Zrest::Server_::Parser<Server, Decoder,
+      ServerCatalog, Server::Response>;
+    using Hub = Zhttp::Server<Server, Parser,
+      Zrest::Server_::ResQ<ServerCatalog>, Zhttp::AllProfiles>;
+    static_cast<Hub &>(server).stop([&httpDone, &failures](bool ok) {
+      if (!ok) ++failures;
+      httpDone.post();
+    });
+    release.post();
+    httpDone.wait();
+    mx.run([&ownerDone]() { ownerDone.post(); }, mx.rxThread());
+    ownerDone.wait();
+    ZuCheck(!completions.load_());
+    mx.run([second]() { second->complete(); }, mx.rxThread());
+    stopDone.wait();
+    ZuCheck(completions.load_() == 2 && !failures.load_() &&
+      server.state() == ZmEngineState::Stopped && !app.invalid.load_());
+    ZuCheck(app.deferred && app.deferred->cancelled());
+    app.deferred = nullptr;
+    ZuCheck(server.start());
+    ZuCheck(server.stop());
+  }
+  if (inited) { ZuCheck(server.stop()); server.final(); }
+  ZuCheck(mx.stop());
+}
+
 void multiplexed(bool h3)
 {
   ZuTestScope(multiplexed);
@@ -792,8 +952,9 @@ void multiplexed(bool h3)
     serverConfig.quic(Zhttp::QUICConfig{}
       .certPath(cert).keyPath(key).maxIdleTimeout(10000));
   else
-    serverConfig.tls(Zhttp::H2Config{}
-      .certPath(cert).keyPath(key).policy(Zhttp::H2Policy::Force));
+    serverConfig.tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
+      tls.certPath(cert).keyPath(key);
+    }).policy(Zhttp::H2Policy::Force));
   bool serverInited = server.init(hub, ZuMv(serverConfig), &app);
   ZuCheck(serverInited);
   bool serverUp = serverInited && server.start();
@@ -816,7 +977,9 @@ void multiplexed(bool h3)
   clientConfig.limits(limits);
   bool clientInited = listening && client.init(hub, 1,
     ZuMv(clientConfig), &clientApp, Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(cert).policy(Zhttp::H2Policy::Force),
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert);
+    }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(10000));
   ZuCheck(clientInited);
   bool pooled = clientInited && client.pool(0,
@@ -874,6 +1037,8 @@ void multiplexed(bool h3)
     second->unavailable.load_() == 1 && !second->failures.load_());
   ZuCheck(!first->processed.load_() && !first->failures.load_());
 
+  if (secondFinished) retire(mx);
+
   app.redirectNext = 1;
   ZmRef<Call> redirected = new Call{};
   bool redirectedAccepted = secondFinished && client.call<ClientRequest>(0,
@@ -881,9 +1046,16 @@ void multiplexed(bool h3)
   ZuCheck(redirectedAccepted);
   bool redirectedFinished = redirectedAccepted &&
     redirected->done.timedwait(Zm::now(10)) == 0;
+  if (!redirectedFinished || redirected->processed.load_() != 1 ||
+      redirected->failures.load_() || app.received.load_() != 4)
+    fprintf(stderr, "redirect: h3=%u finished=%u processed=%u failures=%u received=%u invalid=%u failure=%d http=%d\n",
+      unsigned(h3), unsigned(redirectedFinished), redirected->processed.load_(),
+      redirected->failures.load_(), app.received.load_(), app.invalid.load_(),
+      redirected->failureCode.load_(), redirected->httpCode.load_());
   ZuCheck(redirectedFinished && redirected->processed.load_() == 1 &&
     !redirected->failures.load_() && app.received.load_() == 4);
   ZuCheck(!first->processed.load_() && !first->failures.load_());
+  if (redirectedFinished) retire(mx);
 
   ZmRef<EventCall> events = new EventCall{};
   bool eventAccepted = redirectedFinished && client.call<ClientEvents>(0,
@@ -891,6 +1063,13 @@ void multiplexed(bool h3)
   ZuCheck(eventAccepted);
   bool eventFinished = eventAccepted &&
     events->done.timedwait(Zm::now(10)) == 0;
+  if (!eventFinished || events->events.load_() != 2 ||
+      events->completed.load_() != 1 || events->failures.load_() ||
+      events->invalid.load_())
+    fprintf(stderr, "events: h3=%u finished=%u events=%u completed=%u failures=%u invalid=%u failure=%d http=%d\n",
+      unsigned(h3), unsigned(eventFinished), events->events.load_(),
+      events->completed.load_(), events->failures.load_(), events->invalid.load_(),
+      events->failureCode.load_(), events->httpCode.load_());
   ZuCheck(eventFinished && events->events.load_() == 2 &&
     events->completed.load_() == 1 && !events->failures.load_() &&
     !events->invalid.load_());
@@ -1004,16 +1183,16 @@ void retryLimit()
 
 void call()
 {
-  ZuTestScope(call);
+  ZuTestScopeRT(call);
   StreamProbe<Zhttp::H1TCP> streamRaw, streamJSON;
   StreamResFixture responseStream;
   ZiMultiplex mx{mxParams()};
   bool mxUp = mx.start();
-  ZuCheck(mxUp);
+  ZuCheckRT(mxUp);
   if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "rx", "tx"};
   uint16_t port = uint16_t(Zhttp::Test::loopbackPort(20800));
-  ZuCheck(port);
+  ZuCheckRT(port);
 
   App app;
   Zrest::Limits invalidLimits;
@@ -1022,19 +1201,22 @@ void call()
   Zrest::ServerConfig invalidServerConfig;
   invalidServerConfig.localIP(ZiIP{"127.0.0.1"}).port(port).tcp();
   invalidServerConfig.limits(invalidLimits);
-  ZuCheck(!invalidServer.init(hub, ZuMv(invalidServerConfig), &app));
+  ZuCheckRT(!invalidServer.init(hub, ZuMv(invalidServerConfig), &app));
   invalidServer.final();
   Server server;
   Zrest::ServerConfig serverConfig;
   serverConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
     .bodyMax(4096).retainedBodyMax(4096).tcp();
+  Zrest::Limits serverLimits;
+  serverLimits.workBatch = 1;
+  serverConfig.limits(serverLimits);
   bool serverInited = server.init(hub, ZuMv(serverConfig), &app);
-  ZuCheck(serverInited);
+  ZuCheckRT(serverInited);
   bool serverUp = serverInited && server.start();
-  ZuCheck(serverUp);
+  ZuCheckRT(serverUp);
   bool listening = serverUp &&
     app.listeningSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && app.port == port);
+  ZuCheckRT(listening && app.port == port);
 
   ClientApp clientApp;
   Client invalidClient;
@@ -1043,7 +1225,7 @@ void call()
     .protocol(Zhttp::ProtoPolicy::DisableH3)
     .secure(false).tcp(true).tls(false).quic(false);
   invalidClientConfig.limits(invalidLimits);
-  ZuCheck(!invalidClient.init(hub, 1, ZuMv(invalidClientConfig),
+  ZuCheckRT(!invalidClient.init(hub, 1, ZuMv(invalidClientConfig),
     &clientApp));
   invalidClient.final();
   Client client;
@@ -1056,42 +1238,42 @@ void call()
   clientConfig.limits(clientLimits);
   bool clientInited = listening &&
     client.init(hub, 1, ZuMv(clientConfig), &clientApp);
-  ZuCheck(clientInited);
+  ZuCheckRT(clientInited);
   bool pooled = clientInited && client.pool(0,
     Zhttp::Destination{"127.0.0.1", port, false});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   bool clientUp = pooled && client.start();
-  ZuCheck(clientUp);
+  ZuCheckRT(clientUp);
   if (clientUp) {
     auto bodyResult = bodyRoundTrips(client);
-    ZuCheck(bodyResult.rawAccepted);
-    ZuCheck(bodyResult.rawOK);
-    ZuCheck(bodyResult.jsonAccepted);
-    ZuCheck(bodyResult.jsonOK);
-    ZuCheck(streamRaw.run(hub, port, {}, false));
-    ZuCheck(streamJSON.run(hub, port, {}, true));
+    ZuCheckRT(bodyResult.rawAccepted);
+    ZuCheckRT(bodyResult.rawOK);
+    ZuCheckRT(bodyResult.jsonAccepted);
+    ZuCheckRT(bodyResult.jsonOK);
+    ZuCheckRT(streamRaw.run(hub, port, {}, false));
+    ZuCheckRT(streamJSON.run(hub, port, {}, true));
   }
   if (clientUp) {
     auto responseResult = responseStream.run(hub,
       uint16_t(Zhttp::Test::loopbackPort(20830)), {}, {}, false, true);
-    ZuCheck(responseResult.body.rawAccepted && responseResult.body.rawOK);
-    ZuCheck(responseResult.body.jsonAccepted && responseResult.body.jsonOK);
-    ZuCheck(responseResult.eventsAccepted && responseResult.eventsOK);
-    ZuCheck(responseResult.partialWritten && responseResult.partialReceived &&
+    ZuCheckRT(responseResult.body.rawAccepted && responseResult.body.rawOK);
+    ZuCheckRT(responseResult.body.jsonAccepted && responseResult.body.jsonOK);
+    ZuCheckRT(responseResult.eventsAccepted && responseResult.eventsOK);
+    ZuCheckRT(responseResult.partialWritten && responseResult.partialReceived &&
       responseResult.partialStopped &&
       responseResult.partialFinished);
-    ZuCheck(responseResult.partialEvents == 1 &&
+    ZuCheckRT(responseResult.partialEvents == 1 &&
       !responseResult.partialInvalid &&
       !responseResult.partialProcessed &&
       responseResult.partialFailures == 1);
-    ZuCheck(responseResult.partialAccepted && responseResult.partialOK);
+    ZuCheckRT(responseResult.partialAccepted && responseResult.partialOK);
   }
 
   auto auditBefore = audit(mx);
   ZmRef<Call> result = new Call{};
   bool accepted = clientUp && client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, result);
-  ZuCheck(accepted);
+  ZuCheckRT(accepted);
   bool finished = accepted &&
     result->done.timedwait(Zm::now(10)) == 0;
   if (!finished || result->processed.load_() != 1 ||
@@ -1101,19 +1283,19 @@ void call()
       (unsigned long long)server.responseBuildFailures(),
       (unsigned long long)server.transportFailures(),
       result->processed.load_(), result->failures.load_());
-  ZuCheck(finished);
-  ZuCheck(result->processed.load_() == 1 &&
+  ZuCheckRT(finished);
+  ZuCheckRT(result->processed.load_() == 1 &&
     !result->failures.load_());
-  ZuCheck(app.received.load_() == 1 && !app.invalid.load_());
+  ZuCheckRT(app.received.load_() == 1 && !app.invalid.load_());
   auto auditAfter = audit(mx);
   if (finished) {
-    ZuCheck(auditAfter.request == auditBefore.request + 1 &&
+    ZuCheckRT(auditAfter.request == auditBefore.request + 1 &&
       auditAfter.work == auditBefore.work + 1 &&
       auditAfter.completion == auditBefore.completion + 1 &&
       auditAfter.response == auditBefore.response + 1);
-    ZuCheck(auditAfter.input == auditBefore.input &&
+    ZuCheckRT(auditAfter.input == auditBefore.input &&
       auditAfter.sse == auditBefore.sse);
-    ZuCheck(auditAfter.rxPosts > auditBefore.rxPosts &&
+    ZuCheckRT(auditAfter.rxPosts > auditBefore.rxPosts &&
       auditAfter.txPosts > auditBefore.txPosts);
     ZuTestUtil::log("zrest ping: Rx posts=",
       auditAfter.rxPosts - auditBefore.rxPosts,
@@ -1129,20 +1311,20 @@ void call()
   ZmRef<Call> deferred = new Call{};
   bool deferredAccepted = client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, deferred);
-  ZuCheck(deferredAccepted);
+  ZuCheckRT(deferredAccepted);
   bool admitted = deferredAccepted &&
     app.deferredSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(admitted && app.deferred && app.deferred->live());
+  ZuCheckRT(admitted && app.deferred && app.deferred->live());
   if (admitted) {
-    ZuCheck(app.deferred->complete(Zrest::Reply<ServerResponse>{
+    ZuCheckRT(app.deferred->complete(Zrest::Reply<ServerResponse>{
       ZmRef<ResponseObject>{new ResponseObject{}}}));
-    ZuCheck(!app.deferred->complete(Zrest::Reply<ServerResponse>{
+    ZuCheckRT(!app.deferred->complete(Zrest::Reply<ServerResponse>{
       ZmRef<ResponseObject>{new ResponseObject{}}}));
   }
   bool deferredFinished = admitted &&
     deferred->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(deferredFinished);
-  ZuCheck(deferred->processed.load_() == 1 &&
+  ZuCheckRT(deferredFinished);
+  ZuCheckRT(deferred->processed.load_() == 1 &&
     !deferred->failures.load_());
   ZmAtomic<int> lateAccepted = -1;
   ZmSemaphore lateDone;
@@ -1152,23 +1334,24 @@ void call()
       ZmRef<ResponseObject>{new ResponseObject{}}});
     lateDone.post();
   }, mx.sid("tx"));
-  ZuCheck(lateDone.timedwait(Zm::now(10)) == 0 &&
+  ZuCheckRT(lateDone.timedwait(Zm::now(10)) == 0 &&
     lateAccepted.load_() == 0 && deferred->processed.load_() == 1 &&
     !deferred->failures.load_());
-  ZuCheck(app.received.load_() == 2 && !app.invalid.load_());
+  ZuCheckRT(app.received.load_() == 2 && !app.invalid.load_());
   app.deferred = nullptr;
 
   app.redirectNext = 1;
   ZmRef<Call> redirected = new Call{};
   bool redirectedAccepted = client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, redirected);
-  ZuCheck(redirectedAccepted);
+  ZuCheckRT(redirectedAccepted);
   bool redirectedFinished = redirectedAccepted &&
     redirected->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(redirectedFinished);
-  ZuCheck(redirected->processed.load_() == 1 &&
+  ZuCheckRT(redirectedFinished);
+  ZuCheckRT(redirected->processed.load_() == 1 &&
     !redirected->failures.load_());
-  ZuCheck(app.received.load_() == 4 && !app.invalid.load_());
+  ZuCheckRT(app.received.load_() == 4 && !app.invalid.load_());
+  if (redirectedFinished) retire(mx);
 
   unsigned reverseEnd = app.received.load_() + 2;
   app.observeAt = reverseEnd;
@@ -1181,48 +1364,50 @@ void call()
     ZmRef<RequestObject>{new RequestObject{}}, first);
   bool secondAccepted = client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, second);
-  ZuCheck(firstAccepted && secondAccepted);
+  ZuCheckRT(firstAccepted && secondAccepted);
   bool firstDeferred = firstAccepted &&
     app.deferredSem.timedwait(Zm::now(10)) == 0;
   bool secondObserved = secondAccepted &&
     app.observedSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(firstDeferred && secondObserved);
-  ZuCheck(!first->processed.load_() && !first->failures.load_() &&
+  ZuCheckRT(firstDeferred && secondObserved);
+  ZuCheckRT(!first->processed.load_() && !first->failures.load_() &&
     !second->processed.load_() && !second->failures.load_());
   ZmRef<Call> refused = new Call{};
   bool transferred = client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, refused);
-  ZuCheck(transferred);
+  ZuCheckRT(transferred);
   bool limited = transferred &&
     refused->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(limited && !refused->processed.load_() &&
+  ZuCheckRT(limited && !refused->processed.load_() &&
     refused->failures.load_() == 1);
   if (firstDeferred)
-    ZuCheck(app.deferred->complete(Zrest::Reply<ServerResponse>{
+    ZuCheckRT(app.deferred->complete(Zrest::Reply<ServerResponse>{
       ZmRef<ResponseObject>{new ResponseObject{}}}));
   bool firstFinished = firstDeferred &&
     first->done.timedwait(Zm::now(10)) == 0;
   bool secondFinished = secondObserved &&
     second->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(firstFinished && secondFinished);
-  ZuCheck(first->processed.load_() == 1 &&
+  ZuCheckRT(firstFinished && secondFinished);
+  ZuCheckRT(first->processed.load_() == 1 &&
     second->processed.load_() == 1 &&
     !first->unavailable.load_() && second->unavailable.load_() == 1 &&
     first->ordinal.load_() == 1 && second->ordinal.load_() == 2);
-  ZuCheck(app.received.load_() == reverseEnd && !app.invalid.load_());
+  ZuCheckRT(app.received.load_() == reverseEnd && !app.invalid.load_());
   app.deferred = nullptr;
+  if (firstFinished && secondFinished) retire(mx);
 
   ZmRef<EventCall> events = new EventCall{};
   bool eventAccepted = client.call<ClientEvents>(0,
     ZmRef<RequestObject>{new RequestObject{}}, events);
-  ZuCheck(eventAccepted);
+  ZuCheckRT(eventAccepted);
   bool eventFinished = eventAccepted &&
     events->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(eventFinished);
-  ZuCheck(events->events.load_() == 2 &&
+  ZuCheckRT(eventFinished);
+  ZuCheckRT(events->events.load_() == 2 &&
     events->completed.load_() == 1 &&
     !events->failures.load_() && !events->invalid.load_() &&
     !app.invalid.load_());
+  if (eventFinished) retire(mx);
 
   ZmSemaphore entered, release;
   mx.run([&entered, &release]() {
@@ -1230,7 +1415,7 @@ void call()
     release.wait();
   }, mx.sid("rx"));
   bool ingressBlocked = entered.timedwait(Zm::now(10)) == 0;
-  ZuCheck(ingressBlocked);
+  ZuCheckRT(ingressBlocked);
   ZmRef<Call> queued1 = new Call{}, queued2 = new Call{};
   ZmRef<Call> ingressRefused = new Call{};
   bool queuedFirst = client.call<ClientRequest>(0,
@@ -1239,46 +1424,48 @@ void call()
     ZmRef<RequestObject>{new RequestObject{}}, queued2);
   bool rejectedIngress = !client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, ingressRefused);
-  ZuCheck(queuedFirst && queuedSecond && rejectedIngress);
-  ZuCheck(!ingressRefused->processed.load_() &&
+  ZuCheckRT(queuedFirst && queuedSecond && rejectedIngress);
+  ZuCheckRT(!ingressRefused->processed.load_() &&
     !ingressRefused->failures.load_());
   release.post();
   bool queuedFinished = queuedFirst && queuedSecond &&
     queued1->done.timedwait(Zm::now(10)) == 0 &&
     queued2->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(queuedFinished && queued1->processed.load_() == 1 &&
+  ZuCheckRT(queuedFinished && queued1->processed.load_() == 1 &&
     queued2->processed.load_() == 1 && !queued1->failures.load_() &&
     !queued2->failures.load_());
+  if (queuedFinished) retire(mx);
   ZmRef<Call> recovered = new Call{};
   bool recoveredAccepted = client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, recovered);
   bool recoveredFinished = recoveredAccepted &&
     recovered->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(recoveredFinished && recovered->processed.load_() == 1 &&
+  ZuCheckRT(recoveredFinished && recovered->processed.load_() == 1 &&
     !recovered->failures.load_());
+  if (recoveredFinished) retire(mx);
 
   Zrest::Limits queueLimits;
   queueLimits.maxQueue = 1;
   ZmRef<Zrest::SSEProducer> bounded = new Zrest::SSEProducer{
     &mx, mx.sid("tx"), queueLimits};
-  ZuCheck(bounded->emit("first"));
+  ZuCheckRT(bounded->emit("first"));
   ZmSemaphore queueEnqueued;
   mx.run([&queueEnqueued]() { queueEnqueued.post(); }, mx.sid("tx"));
-  ZuCheck(queueEnqueued.timedwait(Zm::now(10)) == 0);
-  ZuCheck(!bounded->emit("second") && bounded->failed());
+  ZuCheckRT(queueEnqueued.timedwait(Zm::now(10)) == 0);
+  ZuCheckRT(!bounded->emit("second") && bounded->failed());
   ZmSemaphore queueDrained;
   mx.run([&queueDrained]() { queueDrained.post(); }, mx.sid("tx"));
-  ZuCheck(queueDrained.timedwait(Zm::now(10)) == 0 &&
+  ZuCheckRT(queueDrained.timedwait(Zm::now(10)) == 0 &&
     !bounded->queued() && !bounded->queuedBytes());
   bounded = nullptr;
 
   queueLimits.maxQueueBytes = 8;
   ZmRef<Zrest::SSEProducer> byteBounded = new Zrest::SSEProducer{
     &mx, mx.sid("tx"), queueLimits};
-  ZuCheck(!byteBounded->emit("a") && byteBounded->failed());
+  ZuCheckRT(!byteBounded->emit("a") && byteBounded->failed());
   ZmSemaphore byteDrained;
   mx.run([&byteDrained]() { byteDrained.post(); }, mx.sid("tx"));
-  ZuCheck(byteDrained.timedwait(Zm::now(10)) == 0 &&
+  ZuCheckRT(byteDrained.timedwait(Zm::now(10)) == 0 &&
     !byteBounded->queued() && !byteBounded->queuedBytes());
   byteBounded = nullptr;
 
@@ -1289,58 +1476,98 @@ void call()
   ZmRef<Call> stopped = new Call{};
   bool stoppedAccepted = client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, stopped);
-  ZuCheck(stoppedAccepted);
+  ZuCheckRT(stoppedAccepted);
   bool stopDeferred = stoppedAccepted &&
     app.deferredSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(stopDeferred && app.deferred && app.deferred->live());
+  ZuCheckRT(stopDeferred && app.deferred && app.deferred->live());
   ZmRef<Call> behind = new Call{};
   bool behindAccepted = stopDeferred && client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, behind);
-  ZuCheck(behindAccepted);
+  ZuCheckRT(behindAccepted);
   bool behindQueued = behindAccepted &&
     app.observedSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(behindQueued &&
+  ZuCheckRT(behindQueued &&
     app.responseAccepted.load_() == responseBeforeStop + 1 &&
     !stopped->processed.load_() &&
     !behind->processed.load_() && !behind->failures.load_());
-  if (serverInited) ZuCheck(server.stop());
+  if (serverInited) {
+    ZmSemaphore held, release, ownerDone, stopDone;
+    ZmAtomic<unsigned> completions = 0;
+    ZmAtomic<unsigned> failures = 0;
+    mx.run([&held, &release]() { held.post(); release.wait(); }, mx.sid("tx"));
+    held.wait();
+    auto done = [&completions, &failures, &stopDone](bool ok) {
+      if (!ok) ++failures;
+      if (++completions == 2) stopDone.post();
+    };
+    server.stop(done);
+    server.stop(done);
+    mx.run([&ownerDone]() { ownerDone.post(); }, mx.sid("rx"));
+    ownerDone.wait();
+    ZuCheckRT(!completions.load_());
+    release.post();
+    stopDone.wait();
+    ZuCheckRT(completions.load_() == 2 && !failures.load_() &&
+      server.state() == ZmEngineState::Stopped);
+  }
   if (stopDeferred) {
-    ZuCheck(!app.deferred->live() && app.deferred->cancelled());
-    ZuCheck(!app.deferred->complete(Zrest::Reply<ServerResponse>{
+    ZuCheckRT(!app.deferred->live() && app.deferred->cancelled());
+    ZuCheckRT(!app.deferred->complete(Zrest::Reply<ServerResponse>{
       ZmRef<ResponseObject>{new ResponseObject{}}}));
   }
   bool stoppedFinished = stoppedAccepted &&
     stopped->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(stoppedFinished);
-  ZuCheck(!stopped->processed.load_() &&
+  ZuCheckRT(stoppedFinished);
+  ZuCheckRT(!stopped->processed.load_() &&
     stopped->failures.load_() == 1);
   bool behindFinished = behindQueued &&
     behind->done.timedwait(Zm::now(10)) == 0;
-  ZuCheck(behindFinished && !behind->processed.load_() &&
+  ZuCheckRT(behindFinished && !behind->processed.load_() &&
     behind->failures.load_() == 1);
   app.deferred = nullptr;
 
-  if (clientInited) ZuCheck(client.stop());
+  if (clientInited) ZuCheckRT(client.stop());
   ZmRef<Call> refusedAfterStop = new Call{};
-  ZuCheck(!client.call<ClientRequest>(0,
+  ZuCheckRT(!client.call<ClientRequest>(0,
     ZmRef<RequestObject>{new RequestObject{}}, refusedAfterStop) &&
     !refusedAfterStop->processed.load_() &&
     !refusedAfterStop->failures.load_());
-  if (clientInited) client.final();
-  if (serverInited) server.final();
-
   app.errorAt = 0;
   app.observeAt = 0;
   app.deferNext = 0;
   app.redirectNext = 0;
+  bool retainedServer = serverInited && server.start();
+  bool retainedListening = retainedServer &&
+    app.listeningSem.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(retainedListening);
+  bool retainedClient = clientInited && retainedListening && client.start();
+  ZuCheckRT(retainedClient);
+  if (retainedClient) {
+    ZuCheckRT(client.start());
+    ZmRef<Call> fresh = new Call{};
+    bool accepted = client.call<ClientRequest>(0,
+      ZmRef<RequestObject>{new RequestObject{}}, fresh);
+    bool completed = accepted && fresh->done.timedwait(Zm::now(10)) == 0;
+    ZuCheckRT(completed && fresh->processed.load_() == 1 && !fresh->failures.load_());
+  }
+  if (clientInited) {
+    ZuCheckRT(client.stop());
+    ZuCheckRT(client.stop());
+    client.final();
+  }
+  if (serverInited) {
+    ZuCheckRT(server.stop());
+    ZuCheckRT(server.stop());
+    server.final();
+  }
   Zrest::ServerConfig reuseServerConfig;
   reuseServerConfig.localIP(ZiIP{"127.0.0.1"}).port(port)
     .bodyMax(4096).retainedBodyMax(4096).tcp();
   bool serverReused = server.init(hub, ZuMv(reuseServerConfig), &app);
-  ZuCheck(serverReused);
+  ZuCheckRT(serverReused);
   bool serverRestarted = serverReused && server.start() &&
     app.listeningSem.timedwait(Zm::now(10)) == 0;
-  ZuCheck(serverRestarted);
+  ZuCheckRT(serverRestarted);
   Zrest::ClientConfig reuseClientConfig;
   reuseClientConfig.links(1).concurrency(2).linkMax(2)
     .bodyMax(4096).retainedBodyMax(4096).protocol(Zhttp::ProtoPolicy::DisableH3)
@@ -1348,27 +1575,27 @@ void call()
   reuseClientConfig.limits(clientLimits);
   bool clientReused = serverRestarted &&
     client.init(hub, 1, ZuMv(reuseClientConfig), &clientApp);
-  ZuCheck(clientReused);
+  ZuCheckRT(clientReused);
   bool clientRestarted = clientReused && client.pool(0,
     Zhttp::Destination{"127.0.0.1", port, false}) && client.start();
-  ZuCheck(clientRestarted);
+  ZuCheckRT(clientRestarted);
   if (clientRestarted) {
     ZmRef<Call> reused = new Call{};
     bool reuseAccepted = client.call<ClientRequest>(0,
       ZmRef<RequestObject>{new RequestObject{}}, reused);
-    ZuCheck(reuseAccepted);
+    ZuCheckRT(reuseAccepted);
     bool reuseFinished = reuseAccepted &&
       reused->done.timedwait(Zm::now(10)) == 0;
-    ZuCheck(reuseFinished && reused->processed.load_() == 1 &&
+    ZuCheckRT(reuseFinished && reused->processed.load_() == 1 &&
       !reused->failures.load_());
   }
-  if (clientReused) { ZuCheck(client.stop()); client.final(); }
-  if (serverReused) { ZuCheck(server.stop()); server.final(); }
+  if (clientReused) { ZuCheckRT(client.stop()); client.final(); }
+  if (serverReused) { ZuCheckRT(server.stop()); server.final(); }
 
   streamRaw.final();
   streamJSON.final();
   responseStream.final();
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
   mx.stop();
 }
@@ -1384,5 +1611,6 @@ int main(int argc, char **argv)
   ZuTestCall(ZrestEndpointTest_::h3);
   ZuTestCall(ZrestEndpointTest_::retryLimit);
   ZuTestCall(ZrestEndpointTest_::call);
+  ZuTestCall(ZrestEndpointTest_::cancelDrain);
   return 0;
 }

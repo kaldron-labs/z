@@ -1247,7 +1247,7 @@ public:
     ws.closeTimeout = 5;
     ws.pingInterval = 30;
     ws.pongTimeout = 60;
-    Zhttp::H2Config tls;
+    Zhttp::TLSConfig tls;
     if (caPath) tls.caPath(caPath);
     if (!m_client.init(Zhttp::HubConfig{mx, "rx", "tx"}, tls,
 	Zhttp::Destination{m_uri.host, m_uri.port, m_uri.ipv6Literal}, ws))

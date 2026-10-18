@@ -386,7 +386,7 @@ static Authorized beginAuthorization(
   return ZmBlock<Authorized>{}([
     requests, context, &rng, query = ZuMv(query), config = ZuMv(config)
   ](auto wake) mutable {
-    if (!Zum::authorizeRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeRequest({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(query),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(config), [
 	wake
@@ -426,7 +426,7 @@ static FinishedAuthorization finishAuthorization(
     Zum::Bytes consentBinding{ZuBSpan{"browser binding"}};
     auto consentConfig = config;
     auto consentPolicy = policy;
-    if (!Zum::authorizeFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(input), ZuMv(config),
       ZuMv(policy), [requests, db, &rng, wake = ZuMv(wake),
@@ -441,7 +441,7 @@ static FinishedAuthorization finishAuthorization(
 	    wake(FinishedAuthorization{error, ZuMv(location)});
 	  };
 	  auto fallback = consentComplete;
-	  if (!Zum::authorizeConsentFinish(requests, Zm::now() + ZuTime{10},
+	  if (!Zum::authorizeConsentFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(consentID), ZuMv(consentBinding), true,
 	      ZuMv(consentConfig), ZuMv(consentPolicy), ZuMv(consentComplete)))
 	    fallback(Zum::OAuthError::TemporarilyUnavailable, {});
@@ -476,7 +476,7 @@ static FinishedAuthorization finishOIDCAuthorization(
     authTime,
     config = ZuMv(config), policy = ZuMv(policy)
   ](auto wake) mutable {
-    if (!Zum::authorizeOIDCFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeOIDCFinish({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"oidc binding"}}, ZuMv(user), ZuMv(roleIDs),
       ZuMv(evidence), authTime, ZuMv(config), ZuMv(policy), [wake](
@@ -525,7 +525,7 @@ static IssuedToken issueTokenRequest(
     authorization = ZuMv(authorization), config = ZuMv(config),
     sign = ZuMv(sign)
   ](auto wake) mutable {
-    if (!Zum::tokenRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::tokenRequest({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(form), ZuMv(authorization),
       ZuMv(config), ZuMv(sign), [wake](
 	  int error, Zum::TokenResponse response) mutable {
@@ -875,7 +875,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   auto persistedJWKS = ZmBlock<Zum::String>{}([
     &db, &context
   ](auto wake) mutable {
-    Zum::jwksLoad(db->requests, Zm::now() + ZuTime{10},
+    Zum::jwksLoad({}, db->requests, Zm::now() + ZuTime{10},
       context, "issuer", 100, 4, [wake = ZuMv(wake)](
 	bool ok, Zum::String json) mutable {
       wake(ok ? ZuMv(json) : Zum::String{});
@@ -1048,7 +1048,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(ZmBlock<bool>{}([
     &db, &context, &rng, &bootstrapConfig, &bootstrap
   ](auto wake) mutable {
-    Zum::bootstrapIssue(db->requests, Zm::now() + ZuTime{10},
+    Zum::bootstrapIssue({}, db->requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(bootstrapConfig), [
 	&bootstrap, wake = ZuMv(wake)
     ](bool ok, Zum::String capability) mutable {
@@ -1061,7 +1061,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(!ZmBlock<bool>{}([
     &db, &context, &rng, &duplicateBootstrap
   ](auto wake) mutable {
-    Zum::bootstrapIssue(db->requests, Zm::now() + ZuTime{10},
+    Zum::bootstrapIssue({}, db->requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(duplicateBootstrap), [
 	wake = ZuMv(wake)
     ](bool ok, Zum::String) mutable { wake(ok); });
@@ -1088,7 +1088,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &bootstrap, &enrollmentConfig, &enrollmentBegin
   ](auto wake) mutable {
-    Zum::bootstrapBegin(db->requests, Zm::now() + ZuTime{10},
+    Zum::bootstrapBegin({}, db->requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(bootstrap),
       Zum::Bytes{ZuBSpan{"enrollment binding"}}, ZuMv(enrollmentConfig), [
 	&enrollmentBegin, wake = ZuMv(wake)
@@ -1105,7 +1105,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &replayCapability, &replayConfig
   ](auto wake) mutable {
-    Zum::bootstrapBegin(db->requests, Zm::now() + ZuTime{10},
+    Zum::bootstrapBegin({}, db->requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(replayCapability),
       Zum::Bytes{ZuBSpan{"enrollment binding"}}, ZuMv(replayConfig), [
 	wake = ZuMv(wake)
@@ -1123,7 +1123,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(ZmBlock<int>{}([
     &db, &enrollmentBegin, &registrationInput
   ](auto wake) mutable {
-    Zum::enrollmentFinish(db->requests, Zm::now() + ZuTime{10},
+    Zum::enrollmentFinish({}, db->requests, Zm::now() + ZuTime{10},
       db, ZuMv(enrollmentBegin.ceremonyID),
       Zum::Bytes{ZuBSpan{"enrollment binding"}}, ZuMv(registrationInput),
       Zum::EnrollmentFinishConfig{
@@ -1152,7 +1152,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   Zum::String sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &sessionUser,
       &providerSession, &sessionToken](auto wake) mutable {
-    Zum::sessionIssue(db->requests, Zm::now() + ZuTime{10}, context, rng,
+    Zum::sessionIssue({}, db->requests, Zm::now() + ZuTime{10}, context, rng,
       Zum::SessionConfig{.issuer = "issuer/oauth2/9",
 	.subject = Zum::auditID(sessionUser.handle), .userID = 42,
 	.authTime = 123, .now = 130, .idleLifetime = 10,
@@ -1171,7 +1171,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   Zum::String reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession,
       &providerSession](auto wake) mutable {
-    Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 135, 10,
       [&providerSession, wake = ZuMv(wake)](int error,
 	  Zum::Session session, Zum::String) mutable {
@@ -1207,7 +1207,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(sessionOwner(12023).digest == providerSession.digest);
   reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
-    Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 136, 10,
       [wake = ZuMv(wake)](int error, Zum::Session, Zum::String) mutable {
 	wake(error);
@@ -1215,7 +1215,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   }) == Zum::SessionError::Expired);
   reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
-    Zum::sessionRevoke(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::sessionRevoke({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 136,
       [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::SessionError::Storage);
@@ -1227,13 +1227,13 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     reservedSession.updated == providerSession.updated);
   Zum::String revokedSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &revokedSession](auto wake) mutable {
-    Zum::sessionRevoke(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::sessionRevoke({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(revokedSession), Zum::String{"issuer/oauth2/9"}, 136,
       [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::SessionError::OK);
   reusableSession = sessionToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
-    Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 137, 10,
       [wake = ZuMv(wake)](int error, Zum::Session, Zum::String) mutable {
 	wake(error);
@@ -1318,7 +1318,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   Zum::EnrollmentBeginResult invitedBegin;
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &invitation,
       &invitedBegin](auto wake) mutable {
-    Zum::bootstrapBegin(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::bootstrapBegin({}, db->requests, Zm::now() + ZuTime{10}, context,
       rng, ZuMv(invitation), Zum::Bytes{ZuBSpan{"invited binding"}},
       Zum::EnrollmentBeginConfig{.issuer = "issuer", .rpID = "example.com",
 	.rpName = "Example", .now = 124, .expires = 200,
@@ -1339,7 +1339,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &addBegin
   ](auto wake) mutable {
-    Zum::credentialBegin(db->requests, Zm::now() + ZuTime{10},
+    Zum::credentialBegin({}, db->requests, Zm::now() + ZuTime{10},
       context, rng,
       Zum::Bytes{ZuBSpan{"credential binding"}},
       Zum::CredentialBeginConfig{
@@ -1373,7 +1373,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   ZuCheck(ZmBlock<int>{}([
     &db, &addBegin, &registrationInput
   ](auto wake) mutable {
-    Zum::credentialFinish(db->requests, Zm::now() + ZuTime{10},
+    Zum::credentialFinish({}, db->requests, Zm::now() + ZuTime{10},
       db, ZuMv(addBegin.ceremonyID),
       Zum::Bytes{ZuBSpan{"credential binding"}},
       ZuMv(registrationInput), Zum::EnrollmentFinishConfig{

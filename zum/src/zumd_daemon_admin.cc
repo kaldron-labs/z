@@ -915,7 +915,8 @@ static SagaRef adminEdit(Edit &&change)
 }
 
 template <typename Edit>
-class AppEdit_ : public ZmNHeap<AppEdit_<Edit>>, public ZmPolymorph  {
+class AppEdit_ : public ZmNHeap<AppEdit_<Edit>>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.AppEdit"> ZmNHeapID(AppEdit_ *);
 
 public:
@@ -927,8 +928,9 @@ public:
   using ResultRef = decltype(ZuDeclVal<Edit>().result);
   using Result = ZuDecay<decltype(*ZuDeclVal<ResultRef>())>;
 
-  AppEdit_(DB *db, Ztls::Random *rng,
+  AppEdit_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
       Edit change, AdminDoneFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db}, m_rng{rng}, m_change{ZuMv(change)},
     m_complete{ZuMv(complete)} { }
 
@@ -1100,12 +1102,14 @@ private:
   String m_secretID;
 };
 
-class AssignmentAdd_ : public ZmNHeap<AssignmentAdd_>, public ZmPolymorph  {
+class AssignmentAdd_ : public ZmNHeap<AssignmentAdd_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.AssignmentAdd"> ZmNHeapID(AssignmentAdd_ *);
 
 public:
-  AssignmentAdd_(DB *db, Ztls::Random *rng, AssignmentAddArgs add,
-      AdminDoneFn complete) : m_db{db}, m_rng{rng},
+  AssignmentAdd_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, AssignmentAddArgs add,
+      AdminDoneFn complete) :
+    RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng},
     m_appID{add.appID}, m_userID{add.userID}, m_complete{ZuMv(complete)}
   {
     m_result = new AssignmentAddResult{};
@@ -1157,7 +1161,8 @@ private:
   AdminDoneFn	m_complete;
 };
 
-class BulkRevoke_ : public ZmNHeap<BulkRevoke_>, public ZmPolymorph  {
+class BulkRevoke_ : public ZmNHeap<BulkRevoke_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.BulkRevoke"> ZmNHeapID(BulkRevoke_ *);
 
 public:
@@ -1171,10 +1176,11 @@ public:
   ZuDerive(RefreshNoticeVec, (ZtArray<RefreshNotice,
     ZtArrayHeapID<"Zum.Admin.RefreshNotice">>));
 
-  BulkRevoke_(DB *db, Ztls::Random *rng, int kind, UserID userID,
+  BulkRevoke_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, int kind, UserID userID,
       String clientID, AppID appID,
       uint32_t limit, IdemRequest request, AdminDoneFn complete,
       RefreshRevokeFn event = {}, MaintenanceFn maintenance = {}) :
+    RequestHold{ZuMv(work)},
     m_db{db}, m_rng{rng},
     m_kind{kind}, m_userID{userID}, m_clientID{ZuMv(clientID)},
     m_appID{appID}, m_limit{limit},
@@ -1418,24 +1424,28 @@ static String encode(ZuBSpan data)
   return value;
 }
 
-void daemonGrantCleanup(DB *db, Ztls::Random *rng,
+void daemonGrantCleanup(
+    ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
     unsigned limit, MaintenanceFn complete)
 {
   if (!db || !rng || !limit || limit > DaemonCleanupLimit::Rows) {
     complete(MaintenanceResult{.failed = 1}); return;
   }
-  ZmRef<BulkRevoke_> cleanup = new BulkRevoke_{db, rng,
+  ZmRef<BulkRevoke_> cleanup = new BulkRevoke_{work, db, rng,
     BulkRevoke_::Cleanup, 0, {}, 0, limit, IdemRequest{},
     [](AdminResult) {}, {}, ZuMv(complete)};
   cleanup->start();
 }
 
-class ExpiredCleanup_ : public ZmPolymorph {
+class ExpiredCleanup_ : public ZmNHeap<ExpiredCleanup_>, public ZmPolymorph,
+    public RequestHold {
+friend inline ZuStringT<"Zum.Daemon.ExpiredCleanup"> ZmNHeapID(ExpiredCleanup_ *);
 public:
   enum { Refreshes, Sessions };
 
-  ExpiredCleanup_(DB *db, Ztls::Random *rng,
+  ExpiredCleanup_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
       int kind, unsigned limit, MaintenanceFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db}, m_rng{rng}, m_kind{kind}, m_limit{limit},
     m_complete{ZuMv(complete)} { }
 
@@ -1562,26 +1572,31 @@ private:
   unsigned m_skipped = 0;
 };
 
-void daemonRefreshCleanup(DB *db, Ztls::Random *rng,
+void daemonRefreshCleanup(
+    ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
     unsigned limit, MaintenanceFn complete)
 {
-  ZmRef<ExpiredCleanup_> cleanup = new ExpiredCleanup_{db, rng,
+  ZmRef<ExpiredCleanup_> cleanup = new ExpiredCleanup_{work, db, rng,
     ExpiredCleanup_::Refreshes, limit, ZuMv(complete)};
   cleanup->start();
 }
 
-void daemonSessionCleanup(DB *db, Ztls::Random *rng,
+void daemonSessionCleanup(
+    ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
     unsigned limit, MaintenanceFn complete)
 {
-  ZmRef<ExpiredCleanup_> cleanup = new ExpiredCleanup_{db, rng,
+  ZmRef<ExpiredCleanup_> cleanup = new ExpiredCleanup_{work, db, rng,
     ExpiredCleanup_::Sessions, limit, ZuMv(complete)};
   cleanup->start();
 }
 
-class AppCleanup_ : public ZmPolymorph {
+class AppCleanup_ : public ZmNHeap<AppCleanup_>, public ZmPolymorph,
+    public RequestHold {
+friend inline ZuStringT<"Zum.Daemon.AppCleanup"> ZmNHeapID(AppCleanup_ *);
 public:
-  AppCleanup_(DB *db, Ztls::Random *rng, AppID appID,
+  AppCleanup_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, AppID appID,
       unsigned limit, MaintenanceFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db}, m_rng{rng}, m_appID{appID}, m_limit{limit},
     m_complete{ZuMv(complete)} { }
 
@@ -1703,22 +1718,25 @@ private:
   unsigned m_skipped = 0;
 };
 
-void daemonAppCleanup(DB *db, Ztls::Random *rng,
+void daemonAppCleanup(
+    ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
     AppID appID, unsigned limit, MaintenanceFn complete)
 {
-  ZmRef<AppCleanup_> cleanup = new AppCleanup_{db, rng, appID,
+  ZmRef<AppCleanup_> cleanup = new AppCleanup_{work, db, rng, appID,
     limit, ZuMv(complete)};
   cleanup->start();
 }
 
-class AssignmentChange_ : public ZmNHeap<AssignmentChange_>, public ZmPolymorph  {
+class AssignmentChange_ : public ZmNHeap<AssignmentChange_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.AssignmentChangeArgs">
   ZmNHeapID(AssignmentChange_ *);
 
 public:
-  AssignmentChange_(DB *db, Ztls::Random *rng,
+  AssignmentChange_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
       AppID appID, UserID userID, IDVec roles, State::T state,
       String ifMatch, IdemRequest request, AdminDoneFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db}, m_rng{rng}, m_appID{appID},
     m_userID{userID}, m_roles{ZuMv(roles)}, m_state{state},
     m_complete{ZuMv(complete)}
@@ -1847,12 +1865,14 @@ private:
   bool		m_done = false;
 };
 
-class ActionAdd_ : public ZmNHeap<ActionAdd_>, public ZmPolymorph  {
+class ActionAdd_ : public ZmNHeap<ActionAdd_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.ActionAdd"> ZmNHeapID(ActionAdd_ *);
 
 public:
-  ActionAdd_(DB *db, Ztls::Random *rng, AppID appID,
+  ActionAdd_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, AppID appID,
       NameInput input, IdemRequest request, AdminDoneFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db},
     m_rng{rng}, m_appID{appID}, m_input{ZuMv(input)},
     m_request{ZuMv(request)},
@@ -1935,13 +1955,15 @@ private:
   bool		m_done = false;
 };
 
-class AppEnroll_ : public ZmNHeap<AppEnroll_>, public ZmPolymorph  {
+class AppEnroll_ : public ZmNHeap<AppEnroll_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.AppEnroll"> ZmNHeapID(AppEnroll_ *);
 
 public:
-  AppEnroll_(DB *db, Ztls::Random *rng, Bytes dbKey,
+  AppEnroll_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, Bytes dbKey,
       Issuer issuer,
       AppInput input, IdemRequest request, AdminDoneFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db},
     m_rng{rng}, m_dbKey{ZuMv(dbKey)}, m_issuer{ZuMv(issuer)}, m_input{ZuMv(input)},
     m_request{ZuMv(request)},
@@ -2041,15 +2063,19 @@ private:
 };
 
 template <typename Table, typename Present>
-class CatalogRetire_ : public ZmNHeap<CatalogRetire_<Table, Present>>, public ZmObject  {
+class CatalogRetire_ : public ZmNHeap<CatalogRetire_<Table, Present>>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.CatalogRetire"> ZmNHeapID(CatalogRetire_ *);
 
   using T = Table::T;
   using Tuple = Table::Tuple;
   using Key = Table::template Key<0>;
 public:
-  CatalogRetire_(Table *table, AppID appID, uint64_t revision, int64_t updated,
+  CatalogRetire_(
+      ZmRef<ZmPolymorph> work,
+      Table *table, AppID appID, uint64_t revision, int64_t updated,
       CatalogRows *rows, Present present, SagaFn complete) :
+    RequestHold{ZuMv(work)},
     m_table{table}, m_appID{appID}, m_revision{revision}, m_updated{updated},
     m_rows{rows}, m_present{ZuMv(present)}, m_complete{ZuMv(complete)},
     m_key{ZuFwdTuple(appID, 0)} { }
@@ -2105,12 +2131,14 @@ private:
   bool m_end = false;
 };
 
-class CatalogPublish_ : public ZmNHeap<CatalogPublish_>, public ZmPolymorph  {
+class CatalogPublish_ : public ZmNHeap<CatalogPublish_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.CatalogPublish"> ZmNHeapID(CatalogPublish_ *);
 
 public:
-  CatalogPublish_(DB *db, Ztls::Random *rng, AppID appID,
+  CatalogPublish_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, AppID appID,
       CatalogInput input, String ifMatch, IdemRequest request, AdminDoneFn complete) :
+    RequestHold{ZuMv(work)},
     m_db{db}, m_rng{rng}, m_appID{appID}, m_input{ZuMv(input)},
     m_ifMatch{ZuMv(ifMatch)}, m_complete{ZuMv(complete)}
     { m_change.request = ZuMv(request); }
@@ -2518,7 +2546,7 @@ private:
   void retire_(Table *table, CatalogRows &rows, Present present)
   {
     ZmRef<CatalogRetire_<Table, Present>> retire =
-      new CatalogRetire_<Table, Present>{table, m_appID, m_input.revision,
+      new CatalogRetire_<Table, Present>{work(), table, m_appID, m_input.revision,
 	m_change.after.updated, &rows, ZuMv(present),
 	[self = ZmRef<CatalogPublish_>{this}](bool ok) mutable {
 	  if (!ok) { self->fail_(409, "conflict", "catalog retirement conflict"); return; }
@@ -2629,7 +2657,8 @@ String Daemon::correlate_(String json, ZuCSpan id)
   return adminJSON(ZuMv(error));
 }
 
-void Daemon::adminAudit_(int op, String actor, AppID appID,
+void Daemon::adminAudit_(
+    const Work &, int op, String actor, AppID appID,
     String target, String correlationID, AdminResult result,
     AdminDoneFn complete)
 {
@@ -2784,7 +2813,8 @@ static bool adminCursorDecode(
 
 template <typename Table, typename Match, typename Group,
   unsigned KeyID>
-class AdminQuery_ : public ZmNHeap<AdminQuery_<Table, Match, Group, KeyID>>, public ZmObject  {
+class AdminQuery_ : public ZmNHeap<AdminQuery_<Table, Match, Group, KeyID>>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.daemon.admin.AdminQuery"> ZmNHeapID(AdminQuery_ *);
 
   using Tuple = Table::Tuple;
@@ -2792,9 +2822,10 @@ friend inline ZuStringT<"Zum.zumd.daemon.admin.AdminQuery"> ZmNHeapID(AdminQuery
   using Key = Table::template Key<KeyID>;
 
 public:
-  AdminQuery_(Table *table, Match match, unsigned limit, String cursor,
+  AdminQuery_(ZmRef<ZmPolymorph> work, Table *table, Match match, unsigned limit, String cursor,
       int operation, AppID appID, Bytes secret, AdminDoneFn complete,
       Group group = {}) :
+    RequestHold{ZuMv(work)},
     m_table{table}, m_match{ZuMv(match)}, m_limit{limit},
     m_cursor{ZuMv(cursor)}, m_operation{operation}, m_appID{appID},
     m_secret{ZuMv(secret)}, m_complete{ZuMv(complete)},
@@ -2913,33 +2944,36 @@ private:
 
 template <unsigned KeyID = 0, typename Table, typename Match,
   typename Group = ZuTuple<>>
-static void adminQueryIf(Table *table, Match match, unsigned limit,
+static void adminQueryIf(const ZmRef<ZmPolymorph> &work,
+    Table *table, Match match, unsigned limit,
     String cursor, int operation, AppID appID, Bytes secret,
     AdminDoneFn complete, Group group = {})
 {
   using Query = AdminQuery_<Table, Match, Group, KeyID>;
   ZmRef<Query> query = new Query{
-    table, ZuMv(match), limit, ZuMv(cursor), operation, appID, ZuMv(secret),
+    work, table, ZuMv(match), limit, ZuMv(cursor), operation, appID, ZuMv(secret),
     ZuMv(complete), ZuMv(group)};
   query->start();
 }
 
 template <unsigned KeyID = 0, typename Table>
-static void adminQuery(Table *table, unsigned limit, String cursor,
+static void adminQuery(const ZmRef<ZmPolymorph> &work,
+    Table *table, unsigned limit, String cursor,
     int operation, Bytes secret, AdminDoneFn complete)
 {
-  adminQueryIf<KeyID>(table, [](const auto &) { return true; }, limit,
+  adminQueryIf<KeyID>(work, table, [](const auto &) { return true; }, limit,
     ZuMv(cursor), operation, 0, ZuMv(secret), ZuMv(complete));
 }
 
 template <unsigned KeyID, typename Table>
-static void adminFind(Table *table, typename Table::template Key<KeyID> key,
+static void adminFind(const ZmRef<ZmPolymorph> &work,
+    Table *table, typename Table::template Key<KeyID> key,
     AdminDoneFn complete)
 {
-  table->run(0, [table, key = ZuMv(key),
+  table->run(0, [scope = work, table, key = ZuMv(key),
       complete = ZuMv(complete)]() mutable {
     using Record = Table::T;
-    table->template find<KeyID>(0, ZuMv(key), [
+    table->template find<KeyID>(0, ZuMv(key), [scope = ZuMv(scope),
         complete = ZuMv(complete)](ZdbRowRef<Record> row) mutable {
       AdminEncodedVec encoded;
       if (row) {
@@ -2961,11 +2995,11 @@ static void adminFind(Table *table, typename Table::template Key<KeyID> key,
 }
 
 template <unsigned Field, typename Table>
-static void adminQueryApp(
+static void adminQueryApp(const ZmRef<ZmPolymorph> &work,
     Table *table, AppID appID, unsigned limit, String cursor,
     int operation, Bytes secret, AdminDoneFn complete)
 {
-  adminQueryIf(table, [appID](const auto &tuple) {
+  adminQueryIf(work, table, [appID](const auto &tuple) {
     return tuple.template p<Field>() == appID;
   }, limit, ZuMv(cursor), operation, appID, ZuMv(secret), ZuMv(complete));
 }
@@ -3076,7 +3110,8 @@ static bool pathBytes(
   return true;
 }
 
-void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
+void Daemon::adminCall_(
+    const Work &work, int op, Principal principal, AdminPermit permit,
     String target, String query, String body,
     String ifMatch, String ifNoneMatch, String idempotence,
     IdemRequest request, AdminDoneFn complete)
@@ -3111,11 +3146,13 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
   switch (op) {
     case MgmtOp::issuerQuery: {
       auto issuers = m_db->issuers;
-      issuers->run(0, [this, issuers,
+      issuers->run(0, [credit = work, this, issuers,
           complete = ZuMv(complete)]() mutable {
+        auto work = ZuMv(credit);
 	String issuer = m_config.issuer;
-	issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [
+	issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [credit = work,
 	    complete = ZuMv(complete)](ZdbRowRef<Issuer> row) mutable {
+          auto work = ZuMv(credit);
 	  if (!row) {
 	    complete(AdminResult{
 	      error_("not_found", "issuer not found"), 404});
@@ -3140,7 +3177,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	}
 	ActorKind::T kind = principal.authMethod ?
 	  ActorKind::User : ActorKind::Client;
-	adminFind<0>(m_db->requests, ZuFwdTuple(kind,
+	adminFind<0>(work, m_db->requests, ZuFwdTuple(kind,
 	  principal.subject, ActionID(operation),
 	  ZuMv(queryInput.idempotence)), ZuMv(complete));
 	return;
@@ -3167,23 +3204,23 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       if (queryInput.id) {
 	uint64_t id;
 	if (!adminUInt(queryInput.id, id) || !id) break;
-	adminFind<0>(m_db->apps, ZuFwdTuple(AppID{id}),
+	adminFind<0>(work, m_db->apps, ZuFwdTuple(AppID{id}),
 	  ZuMv(complete));
 	return;
       }
       if (queryInput.name) {
-	adminFind<1>(m_db->apps, ZuFwdTuple(ZuMv(queryInput.name)),
+	adminFind<1>(work, m_db->apps, ZuFwdTuple(ZuMv(queryInput.name)),
 	  ZuMv(complete));
 	return;
       }
-      adminQuery(m_db->apps, queryInput.limit,
+      adminQuery(work, m_db->apps, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::userQuery:
       if (queryInput.id) {
 	uint64_t id;
 	if (!adminUInt(queryInput.id, id) || !id) break;
-	adminFind<0>(m_db->users, ZuFwdTuple(UserID{id}),
+	adminFind<0>(work, m_db->users, ZuFwdTuple(UserID{id}),
 	  ZuMv(complete));
 	return;
       }
@@ -3191,11 +3228,11 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	UserSource::T source = queryInput.source ?
 	  UserSource::lookup(queryInput.source) : UserSource::Local;
 	if (source < 0 || source >= UserSource::N) break;
-	adminFind<2>(m_db->users,
+	adminFind<2>(work, m_db->users,
 	  ZuFwdTuple(source, ZuMv(queryInput.name)), ZuMv(complete));
 	return;
       }
-      adminQuery(m_db->users, queryInput.limit,
+      adminQuery(work, m_db->users, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::credentialQuery:
@@ -3203,19 +3240,19 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	Bytes id;
 	id.length(ZuBase64URL::declen(queryInput.id.length()), false);
 	if (!id || ZuBase64URL::decode(id, ZuBSpan{queryInput.id}) != id.length()) break;
-	adminFind<0>(m_db->creds, ZuFwdTuple(ZuMv(id)), ZuMv(complete));
+	adminFind<0>(work, m_db->creds, ZuFwdTuple(ZuMv(id)), ZuMv(complete));
 	return;
       }
       if (queryInput.userID) {
 	uint64_t id;
 	if (!adminUInt(queryInput.userID, id) || !id) break;
-	adminQueryIf<1>(m_db->creds,
+	adminQueryIf<1>(work, m_db->creds,
 	  [id](const auto &row) { return row.template p<1>() == id; },
 	  queryInput.limit, ZuMv(queryInput.cursor), op, id,
 	  Bytes{m_config.dbKey}, ZuMv(complete), ZuFwdTuple(UserID{id}));
 	return;
       }
-      adminQuery(m_db->creds, queryInput.limit,
+      adminQuery(work, m_db->creds, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::assignmentQuery:
@@ -3239,11 +3276,11 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 		error_("invalid_request", "invalid userID filter"), 400});
 	      return;
 	    }
-	    adminFind<0>(m_db->assignments,
+	    adminFind<0>(work, m_db->assignments,
 	      ZuFwdTuple(appID, UserID{id}), ZuMv(complete));
 	    return;
 	  }
-	  adminQueryApp<0>(m_db->assignments, appID, queryInput.limit,
+	  adminQueryApp<0>(work, m_db->assignments, appID, queryInput.limit,
 	    ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	    ZuMv(complete)); return;
 	case MgmtOp::actionQuery:
@@ -3254,16 +3291,16 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 		error_("invalid_request", "invalid action id filter"), 400});
 	      return;
 	    }
-	    adminFind<0>(m_db->actions,
+	    adminFind<0>(work, m_db->actions,
 	      ZuFwdTuple(appID, ActionID(id)), ZuMv(complete));
 	    return;
 	  }
 	  if (queryInput.name) {
-	    adminFind<1>(m_db->actions,
+	    adminFind<1>(work, m_db->actions,
 	      ZuFwdTuple(appID, ZuMv(queryInput.name)), ZuMv(complete));
 	    return;
 	  }
-	  adminQueryApp<0>(m_db->actions, appID, queryInput.limit,
+	  adminQueryApp<0>(work, m_db->actions, appID, queryInput.limit,
 	    ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	    ZuMv(complete)); return;
 	case MgmtOp::roleQuery:
@@ -3274,33 +3311,33 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 		error_("invalid_request", "invalid role id filter"), 400});
 	      return;
 	    }
-	    adminFind<0>(m_db->roles,
+	    adminFind<0>(work, m_db->roles,
 	      ZuFwdTuple(appID, RoleID{id}), ZuMv(complete));
 	    return;
 	  }
 	  if (queryInput.name) {
-	    adminFind<1>(m_db->roles,
+	    adminFind<1>(work, m_db->roles,
 	      ZuFwdTuple(appID, ZuMv(queryInput.name)), ZuMv(complete));
 	    return;
 	  }
-	  adminQueryApp<0>(m_db->roles, appID, queryInput.limit,
+	  adminQueryApp<0>(work, m_db->roles, appID, queryInput.limit,
 	    ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	    ZuMv(complete)); return;
 	case MgmtOp::clientAccessQuery:
 	  if (queryInput.clientID) {
-	    adminFind<0>(m_db->clientAccess,
+	    adminFind<0>(work, m_db->clientAccess,
 	      ZuFwdTuple(ZuMv(queryInput.clientID), appID), ZuMv(complete));
 	    return;
 	  }
-	  adminQueryIf<1>(m_db->clientAccess, [](const auto &) { return true; },
+	  adminQueryIf<1>(work, m_db->clientAccess, [](const auto &) { return true; },
 	    queryInput.limit, ZuMv(queryInput.cursor), op, appID,
 	    Bytes{m_config.dbKey}, ZuMv(complete), ZuTuple<AppID>{appID}); return;
 	case MgmtOp::adminAccessQuery:
-	  adminQueryApp<2>(m_db->adminAccess, appID, queryInput.limit,
+	  adminQueryApp<2>(work, m_db->adminAccess, appID, queryInput.limit,
 	    ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	    ZuMv(complete)); return;
 	default:
-	  adminQueryIf<1>(m_db->roleMaps, [](const auto &) { return true; },
+	  adminQueryIf<1>(work, m_db->roleMaps, [](const auto &) { return true; },
 	    queryInput.limit, ZuMv(queryInput.cursor), op, appID,
 	    Bytes{m_config.dbKey}, ZuMv(complete), ZuTuple<AppID>{appID}); return;
       }
@@ -3309,62 +3346,62 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       if (queryInput.id || queryInput.clientID) {
 	String id = queryInput.id ? ZuMv(queryInput.id) :
 	  ZuMv(queryInput.clientID);
-	adminFind<0>(m_db->clients, ZuFwdTuple(ZuMv(id)),
+	adminFind<0>(work, m_db->clients, ZuFwdTuple(ZuMv(id)),
 	  ZuMv(complete));
 	return;
       }
-      adminQuery(m_db->clients, queryInput.limit,
+      adminQuery(work, m_db->clients, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::providerQuery:
       if (queryInput.id) {
 	uint64_t id;
 	if (!adminUInt(queryInput.id, id) || !id) break;
-	adminFind<0>(m_db->providers, ZuFwdTuple(ProviderID{id}),
+	adminFind<0>(work, m_db->providers, ZuFwdTuple(ProviderID{id}),
 	  ZuMv(complete));
 	return;
       }
       if (queryInput.name) {
-	adminFind<1>(m_db->providers, ZuFwdTuple(ZuMv(queryInput.name)),
+	adminFind<1>(work, m_db->providers, ZuFwdTuple(ZuMv(queryInput.name)),
 	  ZuMv(complete));
 	return;
       }
-      adminQuery(m_db->providers, queryInput.limit,
+      adminQuery(work, m_db->providers, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::authPolicyQuery:
       if (queryInput.appID) {
 	uint64_t id;
 	if (!adminUInt(queryInput.appID, id) || !id) break;
-	adminFind<0>(m_db->authPolicies, ZuFwdTuple(AppID{id}),
+	adminFind<0>(work, m_db->authPolicies, ZuFwdTuple(AppID{id}),
 	  ZuMv(complete));
 	return;
       }
-      adminQuery(m_db->authPolicies, queryInput.limit,
+      adminQuery(work, m_db->authPolicies, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::identityQuery:
-      adminQuery(m_db->extIdentities, queryInput.limit,
+      adminQuery(work, m_db->extIdentities, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::evidenceQuery:
-      adminQuery<1>(m_db->evidence, queryInput.limit,
+      adminQuery<1>(work, m_db->evidence, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::sessionQuery:
-      adminQuery(m_db->sessions, queryInput.limit,
+      adminQuery(work, m_db->sessions, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::consentQuery:
-      adminQuery(m_db->consents, queryInput.limit,
+      adminQuery(work, m_db->consents, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::grantQuery:
-      adminQuery(m_db->grants, queryInput.limit,
+      adminQuery(work, m_db->grants, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::signKeyQuery:
-      adminQuery(m_db->signKeys, queryInput.limit,
+      adminQuery(work, m_db->signKeys, queryInput.limit,
 	ZuMv(queryInput.cursor), op, Bytes{m_config.dbKey},
 	ZuMv(complete)); return;
     case MgmtOp::appUpdate: {
@@ -3377,7 +3414,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<AppChangeArgs>> change = new AppEdit_<AppChangeArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<AppChangeArgs>> change = new AppEdit_<AppChangeArgs>{work, m_db, &m_rng,
 	AppChangeArgs{.before = App{.id = id}, .ifMatch = ZuMv(ifMatch),
 	  .label = ZuMv(label), .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
@@ -3394,7 +3431,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<UserEditArgs>> change = new AppEdit_<UserEditArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<UserEditArgs>> change = new AppEdit_<UserEditArgs>{work, m_db, &m_rng,
 	UserEditArgs{.before = User{.id = id}, .ifMatch = ZuMv(ifMatch),
 	  .profile = ZuMv(profile), .request = ZuMv(request),
 	  .email = ZuMv(email), .fields = uint8_t(seen)}, ZuMv(complete)};
@@ -3411,7 +3448,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<CredEditArgs>> change = new AppEdit_<CredEditArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<CredEditArgs>> change = new AppEdit_<CredEditArgs>{work, m_db, &m_rng,
 	CredEditArgs{.before = Cred{.id = ZuMv(id)}, .ifMatch = ZuMv(ifMatch),
 	  .label = ZuMv(label), .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
@@ -3431,7 +3468,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<RoleEditArgs>> change = new AppEdit_<RoleEditArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<RoleEditArgs>> change = new AppEdit_<RoleEditArgs>{work, m_db, &m_rng,
 	RoleEditArgs{.app = App{.id = appID}, .before = Role{.appID = appID, .id = id},
 	  .ifMatch = ZuMv(ifMatch), .request = ZuMv(request),
 	  .kind = RoleEditArgs::Label, .label = ZuMv(label)}, ZuMv(complete)};
@@ -3448,18 +3485,20 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	return;
       }
       auto issuers = m_db->issuers;
-      issuers->run(0, [this, issuers, input = ZuMv(input),
+      issuers->run(0, [credit = work, this, issuers, input = ZuMv(input),
 	  request = ZuMv(request), complete = ZuMv(complete)]() mutable {
+        auto work = ZuMv(credit);
 	String issuer = m_config.issuer;
-	issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [this,
+	issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [credit = work, this,
 	    input = ZuMv(input), request = ZuMv(request), complete = ZuMv(complete)](
 	      ZdbRowRef<Issuer> issuer) mutable {
+          auto work = ZuMv(credit);
 	  if (!issuer) {
 	    complete(AdminResult{
 	      error_("unavailable", "issuer is unavailable"), 503});
 	    return;
 	  }
-	  ZmRef<AppEnroll_> enroll = new AppEnroll_{m_db, &m_rng,
+	  ZmRef<AppEnroll_> enroll = new AppEnroll_{work, m_db, &m_rng,
 	    Bytes{m_config.dbKey}, issuer->data(), ZuMv(input), ZuMv(request),
 	    ZuMv(complete)};
 	  enroll->start();
@@ -3496,13 +3535,16 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	.purpose = GrantPurpose::Enrollment, .state = State::Active,
 	.issuer = ZuMv(issuer), .digest = ZuMv(capability.digest),
 	.userName = input.name, .label = "Zum passkey", .actor = "precreated"};
-      ZmRef<AppEdit_<UserInviteArgs>> invite = new AppEdit_<UserInviteArgs>{
-	m_db, &m_rng, UserInviteArgs{.before = User{.id = id},
+      ZmRef<AppEdit_<UserInviteArgs>> invite =
+        new AppEdit_<UserInviteArgs>{
+          work, m_db, &m_rng,
+          UserInviteArgs{.before = User{.id = id},
 	  .values = User{.id = id, .name = ZuMv(input.name),
 	    .profile = ZuMv(input.profile), .email = ZuMv(input.email)},
 	  .grant = ZuMv(grant), .request = ZuMv(request)},
-	[issuer = m_config.issuer, token = ZuMv(capability.token),
+	[credit = work, issuer = m_config.issuer, token = ZuMv(capability.token),
 	    complete = ZuMv(complete)](AdminResult result) mutable {
+          auto work = ZuMv(credit);
 	  if (result.status == 201) {
 	    auto length = issuer.length();
 	    if (length && issuer[length - 1] == '/') issuer.length(length - 1);
@@ -3533,11 +3575,13 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       }
       auto users = m_db->users;
       String actor = principal.subject;
-      users->run(0, [this, users, userID, actor = ZuMv(actor),
+      users->run(0, [credit = work, this, users, userID, actor = ZuMv(actor),
 	  ifMatch = ZuMv(ifMatch), request = ZuMv(request), complete = ZuMv(complete)]() mutable {
-	users->find<0>(0, ZuFwdTuple(userID), [this, userID,
+        auto work = ZuMv(credit);
+	users->find<0>(0, ZuFwdTuple(userID), [credit = work, this, userID,
 	    actor = ZuMv(actor), ifMatch = ZuMv(ifMatch),
 	    request = ZuMv(request), complete = ZuMv(complete)](ZdbRowRef<User> user) mutable {
+          auto work = ZuMv(credit);
 	  if (!user) {
 	    complete(adminErrorResult(404, "not_found", "user not found"));
 	    return;
@@ -3554,13 +3598,14 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	      error_("unavailable", "issuer is unavailable"), 503});
 	    return;
 	  }
-	  bool started = recoveryIssue(m_requests, Zm::now() + ZuTime{10},
+	  bool started = recoveryIssue(work, m_requests, Zm::now() + ZuTime{10},
 	    m_db, m_rng, RecoveryIssueConfig{
 	      .issuer = ZuMv(issuer), .actor = ZuMv(actor),
 	      .userID = userID, .now = now, .expires = now + 3600,
 	      .version = user->data().version, .request = ZuMv(request)},
-	    [this, userID, complete](
+	    [credit = work, this, userID, complete](
 		bool ok, String capability) mutable {
+              auto work = ZuMv(credit);
 	      if (!ok) {
 		complete(AdminResult{
 		  error_("conflict", "user cannot be recovered"), 409});
@@ -3590,8 +3635,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  error_("invalid_request", "invalid role creation"), 400});
 	return;
       }
-      ZmRef<AppEdit_<RoleAddArgs>> change = new AppEdit_<RoleAddArgs>{
-	m_db, &m_rng, RoleAddArgs{
+      ZmRef<AppEdit_<RoleAddArgs>> change =
+        new AppEdit_<RoleAddArgs>{
+          work, m_db, &m_rng,
+          RoleAddArgs{
 	  .before = Role{.appID = appID, .id = id},
 	  .values = Role{.appID = appID, .id = id,
 	    .name = ZuMv(input.name), .label = ZuMv(input.label)},
@@ -3608,7 +3655,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  error_("invalid_request", "invalid action creation"), 400});
 	return;
       }
-      ZmRef<ActionAdd_> add = new ActionAdd_{m_db, &m_rng,
+      ZmRef<ActionAdd_> add = new ActionAdd_{work, m_db, &m_rng,
 	appID, ZuMv(input), ZuMv(request), ZuMv(complete)};
       add->start();
       return;
@@ -3626,8 +3673,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       int64_t now = Zm::now().sec();
       AssignmentAddArgs assignment{.appID = appID, .userID = input.userID,
 	.created = now, .request = ZuMv(request)};
-      ZmRef<AssignmentAdd_> add = new AssignmentAdd_{
-	m_db, &m_rng, ZuMv(assignment), ZuMv(complete)};
+      ZmRef<AssignmentAdd_> add =
+        new AssignmentAdd_{
+          work, m_db, &m_rng,
+          ZuMv(assignment), ZuMv(complete)};
       add->start();
       return;
     }
@@ -3655,8 +3704,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  error_("forbidden", "role assignment exceeds delegation"), 403});
 	return;
       }
-      ZmRef<AssignmentChange_> change = new AssignmentChange_{
-	m_db, &m_rng, appID, userID, ZuMv(roleIDs), State::N,
+      ZmRef<AssignmentChange_> change =
+        new AssignmentChange_{
+          work, m_db, &m_rng,
+          appID, userID, ZuMv(roleIDs), State::N,
 	ZuMv(ifMatch), ZuMv(request), ZuMv(complete)};
       change->start();
       return;
@@ -3679,7 +3730,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  error_("precondition_required", "If-Match is required"), 428});
 	return;
       }
-      ZmRef<AppEdit_<RoleEditArgs>> change = new AppEdit_<RoleEditArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<RoleEditArgs>> change = new AppEdit_<RoleEditArgs>{work, m_db, &m_rng,
 	RoleEditArgs{.app = App{.id = appID}, .before = Role{.appID = appID, .id = roleID},
 	  .actionIDs = ZuMv(input.actionIDs), .ifMatch = ZuMv(ifMatch),
 	  .request = ZuMv(request)}, ZuMv(complete)};
@@ -3718,12 +3769,17 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  error_("unavailable", "secret generation failed"), 503});
 	return;
       }
-      ZmRef<AppEdit_<ClientEditArgs>> change = new AppEdit_<ClientEditArgs>{
-	m_db, &m_rng, ClientEditArgs{
+      ZmRef<AppEdit_<ClientEditArgs>> change =
+        new AppEdit_<ClientEditArgs>{
+          work, m_db, &m_rng,
+          ClientEditArgs{
 	  .before = Client{.id = ZuMv(clientID)}, .ifMatch = ZuMv(ifMatch),
 	  .values = Client{.secretDigest = ZuMv(digest)}, .fields = ClientEditArgs::Secret,
 	  .request = ZuMv(request), .overlapSeconds = input.overlapSeconds},
-	[secret = ZuMv(secret), complete = ZuMv(complete)](AdminResult result) mutable {
+	[
+	  credit = work, secret = ZuMv(secret), complete = ZuMv(complete)](
+	      AdminResult result) mutable {
+          auto work = ZuMv(credit);
 	  if (result.status == 200) {
 	    if (!adminAddItemString(result, "client_secret", secret))
 	      result = adminErrorResult(503, "unavailable", "response encoding failed");
@@ -3781,11 +3837,16 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	.identityScopes = ZuMv(input.identityScopes), .state = State::Active,
 	.version = 1};
       ZuClear(random);
-      ZmRef<AppEdit_<ClientAddArgs>> add = new AppEdit_<ClientAddArgs>{
-	m_db, &m_rng, ClientAddArgs{
+      ZmRef<AppEdit_<ClientAddArgs>> add =
+        new AppEdit_<ClientAddArgs>{
+          work, m_db, &m_rng,
+          ClientAddArgs{
 	  .before = Client{.id = client.id, .appID = client.appID},
 	  .values = ZuMv(client), .request = ZuMv(request)},
-	[secret = ZuMv(secret), complete = ZuMv(complete)](AdminResult result) mutable {
+	[
+	  credit = work, secret = ZuMv(secret), complete = ZuMv(complete)](
+	      AdminResult result) mutable {
+          auto work = ZuMv(credit);
 	  if (result.status == 201 && secret) {
 	    if (!adminAddItemString(result, "client_secret", secret))
 	      result = adminErrorResult(503, "unavailable", "response encoding failed");
@@ -3810,7 +3871,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<ClientEditArgs>> change = new AppEdit_<ClientEditArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<ClientEditArgs>> change = new AppEdit_<ClientEditArgs>{work, m_db, &m_rng,
 	ClientEditArgs{.before = Client{.id = ZuMv(id)}, .ifMatch = ZuMv(ifMatch),
 	  .values = Client{.label = ZuMv(input.label), .redirects = ZuMv(input.redirectURIs),
 	    .grants = input.grants, .identityScopes = ZuMv(input.identityScopes)},
@@ -3836,8 +3897,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  "client roles exceed delegation"));
 	return;
       }
-      ZmRef<AppEdit_<ClientAccessPutArgs>> change = new AppEdit_<ClientAccessPutArgs>{
-	m_db, &m_rng, ClientAccessPutArgs{
+      ZmRef<AppEdit_<ClientAccessPutArgs>> change =
+        new AppEdit_<ClientAccessPutArgs>{
+          work, m_db, &m_rng,
+          ClientAccessPutArgs{
 	  .before = ClientAccess{.clientID = clientID, .appID = appID},
 	  .values = ClientAccess{.clientID = ZuMv(clientID), .appID = appID,
 	    .roleIDs = ZuMv(input.roleIDs)}, .ifMatch = ZuMv(ifMatch),
@@ -3861,8 +3924,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	  return;
 	}
-	ZmRef<AppEdit_<ClientAccessStateArgs>> change = new AppEdit_<ClientAccessStateArgs>{
-	  m_db, &m_rng, ClientAccessStateArgs{
+	ZmRef<AppEdit_<ClientAccessStateArgs>> change =
+	  new AppEdit_<ClientAccessStateArgs>{
+	    work, m_db, &m_rng,
+	    ClientAccessStateArgs{
 	    .before = ClientAccess{.clientID = ZuMv(clientID), .appID = appID},
 	    .ifMatch = ZuMv(ifMatch), .request = ZuMv(request), .state = state}, ZuMv(complete)};
 	change->start();
@@ -3897,8 +3962,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  "invalid administrative access replacement"));
 	return;
       }
-      ZmRef<AppEdit_<AdminAccessPutArgs>> change = new AppEdit_<AdminAccessPutArgs>{
-	m_db, &m_rng, AdminAccessPutArgs{
+      ZmRef<AppEdit_<AdminAccessPutArgs>> change =
+        new AppEdit_<AdminAccessPutArgs>{
+          work, m_db, &m_rng,
+          AdminAccessPutArgs{
 	  .before = AdminAccess{.actorKind = kind, .actorID = actorID, .appID = appID},
 	  .values = AdminAccess{.actorKind = kind, .actorID = ZuMv(actorID), .appID = appID,
 	    .operationIDs = ZuMv(input.operationIDs), .roleIDs = ZuMv(input.roleIDs)},
@@ -3940,8 +4007,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<AdminAccessStateArgs>> change = new AppEdit_<AdminAccessStateArgs>{
-	m_db, &m_rng, AdminAccessStateArgs{
+      ZmRef<AppEdit_<AdminAccessStateArgs>> change =
+        new AppEdit_<AdminAccessStateArgs>{
+          work, m_db, &m_rng,
+          AdminAccessStateArgs{
 	  .before = AdminAccess{.actorKind = kind, .actorID = ZuMv(actorID), .appID = appID},
 	  .ifMatch = ZuMv(ifMatch), .request = ZuMv(request), .state = state}, ZuMv(complete)};
       change->start();
@@ -3979,8 +4048,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       }
       if (input.clientSecret)
 	ZuClear(input.clientSecret);
-      ZmRef<AppEdit_<ProviderAddArgs>> change = new AppEdit_<ProviderAddArgs>{
-	m_db, &m_rng, ProviderAddArgs{
+      ZmRef<AppEdit_<ProviderAddArgs>> change =
+        new AppEdit_<ProviderAddArgs>{
+          work, m_db, &m_rng,
+          ProviderAddArgs{
 	  .before = Provider{.id = id},
 	  .values = Provider{.id = id, .name = ZuMv(input.name),
 	    .issuer = ZuMv(input.issuer), .clientID = ZuMv(input.clientID),
@@ -4033,7 +4104,9 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<ProviderEditArgs>> change = new AppEdit_<ProviderEditArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<ProviderEditArgs>> change =
+        new AppEdit_<ProviderEditArgs>{
+          work, m_db, &m_rng,
 	ProviderEditArgs{.before = Provider{.id = id}, .ifMatch = ZuMv(ifMatch),
 	  .values = Provider{.issuer = ZuMv(input.issuer), .clientID = ZuMv(input.clientID),
 	    .clientSecret = ZuMv(protectedSecret), .scopes = ZuMv(input.scopes),
@@ -4059,8 +4132,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	.sessionAbsolute = input.sessionAbsolute,
 	.tokenLifetime = input.tokenLifetime, .consentPolicy = consent,
 	.state = state};
-      ZmRef<AppEdit_<PolicyPutArgs>> change = new AppEdit_<PolicyPutArgs>{
-	m_db, &m_rng, PolicyPutArgs{
+      ZmRef<AppEdit_<PolicyPutArgs>> change =
+        new AppEdit_<PolicyPutArgs>{
+          work, m_db, &m_rng,
+          PolicyPutArgs{
 	  .before = AuthPolicy{.appID = appID}, .values = ZuMv(policy),
 	  .ifMatch = ZuMv(ifMatch), .ifNoneMatch = ZuMv(ifNoneMatch),
 	  .request = ZuMv(request)}, ZuMv(complete)};
@@ -4096,8 +4171,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  "role mapping exceeds delegation"));
 	return;
       }
-      ZmRef<AppEdit_<RoleMapPutArgs>> change = new AppEdit_<RoleMapPutArgs>{
-	m_db, &m_rng, RoleMapPutArgs{
+      ZmRef<AppEdit_<RoleMapPutArgs>> change =
+        new AppEdit_<RoleMapPutArgs>{
+          work, m_db, &m_rng,
+          RoleMapPutArgs{
 	  .before = RoleMap{.appID = appID, .providerID = providerID,
 	    .value = String{ZuCSpan{decoded}}}, .roleID = input.roleID,
 	  .ifMatch = ZuMv(ifMatch), .ifNoneMatch = ZuMv(ifNoneMatch),
@@ -4129,8 +4206,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  ZuBase64URL::decode(decoded, ZuBSpan{encoded}) != decoded.length() ||
 	  !decoded) break;
       String value{decoded};
-      ZmRef<AppEdit_<RoleMapDeleteArgs>> change = new AppEdit_<RoleMapDeleteArgs>{
-	m_db, &m_rng, RoleMapDeleteArgs{
+      ZmRef<AppEdit_<RoleMapDeleteArgs>> change =
+        new AppEdit_<RoleMapDeleteArgs>{
+          work, m_db, &m_rng,
+          RoleMapDeleteArgs{
 	  .before = RoleMap{.appID = appID, .providerID = providerID, .value = ZuMv(value)},
 	  .ifMatch = ZuMv(ifMatch), .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
@@ -4143,14 +4222,14 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
       prefix << appID << "/roles/";
       uint64_t roleID;
       if (!pathUInt(target, prefix, {}, roleID)) break;
-      roleDelete_(appID, RoleID{roleID}, ZuMv(ifMatch),
+      roleDelete_(work, appID, RoleID{roleID}, ZuMv(ifMatch),
         ZuMv(request), ZuMv(complete));
       return;
     }
     case MgmtOp::sessionRevoke: {
       SessionSelector input;
       if (!adminBody(body, input)) break;
-      ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, &m_rng,
+      ZmRef<BulkRevoke_> revoke = new BulkRevoke_{work, m_db, &m_rng,
 	BulkRevoke_::Sessions, input.userID, {}, 0, input.limit,
 	ZuMv(request), ZuMv(complete)};
       revoke->start();
@@ -4159,7 +4238,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
     case MgmtOp::consentRevoke: {
       ConsentSelector input;
       if (!adminBody(body, input)) break;
-      ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, &m_rng,
+      ZmRef<BulkRevoke_> revoke = new BulkRevoke_{work, m_db, &m_rng,
 	BulkRevoke_::Consents, input.userID, ZuMv(input.clientID),
 	input.appID, input.limit, ZuMv(request), ZuMv(complete)};
       revoke->start();
@@ -4175,13 +4254,13 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	id.length(ZuBase64URL::declen(input.id.length()), false);
 	if (ZuBase64URL::decode(id, ZuBSpan{input.id}) != id.length() || !id ||
 	    input.userID || input.appID) break;
-	ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, &m_rng,
+	ZmRef<BulkRevoke_> revoke = new BulkRevoke_{work, m_db, &m_rng,
 	  BulkRevoke_::Grants, 0, {}, 0, 1, ZuMv(request), ZuMv(complete),
 	  m_config.refreshRevoke};
 	revoke->one(ZuMv(id));
 	return;
       }
-      ZmRef<BulkRevoke_> revoke = new BulkRevoke_{m_db, &m_rng,
+      ZmRef<BulkRevoke_> revoke = new BulkRevoke_{work, m_db, &m_rng,
 	BulkRevoke_::Grants, input.userID, {}, input.appID,
 	input.limit, ZuMv(request), ZuMv(complete), m_config.refreshRevoke};
       revoke->start();
@@ -4190,7 +4269,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
     case MgmtOp::grantCleanup: {
       CleanupInput input;
       if (!adminBody(body, input) || input.before) break;
-      ZmRef<BulkRevoke_> cleanup = new BulkRevoke_{m_db, &m_rng,
+      ZmRef<BulkRevoke_> cleanup = new BulkRevoke_{work, m_db, &m_rng,
 	BulkRevoke_::Cleanup, 0, {}, 0, input.limit, ZuMv(request), ZuMv(complete)};
       cleanup->start();
       return;
@@ -4227,18 +4306,19 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	.notBefore = input.notBefore, .state = State::Active,
 	.version = 1, .created = now, .updated = now};
       auto apps = m_db->apps;
-      apps->run(0, [this, apps, appID = input.appID, key = ZuMv(key),
+      apps->run(0, [credit = work, this, apps, appID = input.appID, key = ZuMv(key),
 	  request = ZuMv(request), complete = ZuMv(complete)]() mutable {
-	apps->find<0>(0, ZuFwdTuple(appID), [this, key = ZuMv(key),
+        auto work = ZuMv(credit);
+	apps->find<0>(0, ZuFwdTuple(appID), [credit = work, this, key = ZuMv(key),
 	    request = ZuMv(request), complete = ZuMv(complete)](
 	      ZdbRowRef<App> app) mutable {
+          auto work = ZuMv(credit);
 	  if (!app || app->data().state != State::Active || app->data().owner) {
 	    complete(adminErrorResult(404, "not_found",
 	      "application not found"));
 	    return;
 	  }
-	  ZmRef<AppEdit_<KeyAddArgs>> add = new AppEdit_<KeyAddArgs>{
-	    m_db, &m_rng,
+	  ZmRef<AppEdit_<KeyAddArgs>> add = new AppEdit_<KeyAddArgs>{work, m_db, &m_rng,
 	    KeyAddArgs{.before = SignKey{.id = key.id}, .values = ZuMv(key),
 	      .request = ZuMv(request)}, ZuMv(complete)};
 	  add->start();
@@ -4255,7 +4335,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	return;
       }
-      ZmRef<AppEdit_<KeyRetireArgs>> change = new AppEdit_<KeyRetireArgs>{m_db, &m_rng,
+      ZmRef<AppEdit_<KeyRetireArgs>> change = new AppEdit_<KeyRetireArgs>{work, m_db, &m_rng,
 	KeyRetireArgs{.before = SignKey{.id = ZuMv(id)}, .ifMatch = ZuMv(ifMatch),
 	  .retireAfter = input.retireAfter, .request = ZuMv(request)}, ZuMv(complete)};
       change->start();
@@ -4276,7 +4356,8 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
         return;
       }
       m_ssf->add(appID, ZuMv(principal.clientID), ZuMv(input),
-        [complete = ZuMv(complete)](unsigned status, SSFLease lease) mutable {
+        [credit = work, complete = ZuMv(complete)](unsigned status, SSFLease lease) mutable {
+          auto work = ZuMv(credit);
           if (status != 200) {
             complete(adminErrorResult(status,
               status == 400 ? "invalid_request" :
@@ -4300,7 +4381,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  "catalog publisher does not own the application"));
 	return;
       }
-      ZmRef<CatalogPublish_> publish = new CatalogPublish_{m_db, &m_rng,
+      ZmRef<CatalogPublish_> publish = new CatalogPublish_{work, m_db, &m_rng,
 	appID, ZuMv(input), ZuMv(ifMatch), ZuMv(request), ZuMv(complete)};
       publish->start();
       return;
@@ -4319,20 +4400,22 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	}
 	AdminDoneFn appComplete = ZuMv(complete);
 	if (state == State::Revoked) {
-	  complete = AdminDoneFn{[this, id, appComplete = ZuMv(appComplete)](
+	  complete = AdminDoneFn{[credit = work, this, id, appComplete = ZuMv(appComplete)](
 	      AdminResult result) mutable {
+            auto work = ZuMv(credit);
 	    if (result.status != 200) { appComplete(ZuMv(result)); return; }
-	    daemonAppCleanup(m_db, &m_rng, id,
+	    daemonAppCleanup(work, m_db, &m_rng, id,
       DaemonCleanupLimit::Rows,
-      [appComplete = ZuMv(appComplete), result = ZuMv(result)](
+      [credit = work, appComplete = ZuMv(appComplete), result = ZuMv(result)](
           MaintenanceResult cleanup) mutable {
+        auto work = ZuMv(credit);
         if (cleanup.ok) appComplete(ZuMv(result));
 	        else appComplete(adminErrorResult(503, "unavailable",
           "application cleanup failed"));
       });
 	  }};
 	} else complete = ZuMv(appComplete);
-	ZmRef<AppEdit_<AppChangeArgs>> change = new AppEdit_<AppChangeArgs>{m_db, &m_rng,
+	ZmRef<AppEdit_<AppChangeArgs>> change = new AppEdit_<AppChangeArgs>{work, m_db, &m_rng,
 	  AppChangeArgs{.before = App{.id = id}, .ifMatch = ZuMv(ifMatch),
 	    .request = ZuMv(request), .stateOnly = true, .state = state}, ZuMv(complete)};
 	change->start();
@@ -4352,7 +4435,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	  return;
 	}
-	ZmRef<AppEdit_<UserEditArgs>> change = new AppEdit_<UserEditArgs>{m_db, &m_rng,
+	ZmRef<AppEdit_<UserEditArgs>> change = new AppEdit_<UserEditArgs>{work, m_db, &m_rng,
 	  UserEditArgs{.before = User{.id = id}, .ifMatch = ZuMv(ifMatch),
 	    .request = ZuMv(request), .stateOnly = true, .state = state}, ZuMv(complete)};
 	change->start();
@@ -4372,7 +4455,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	  return;
 	}
-	ZmRef<AppEdit_<CredEditArgs>> change = new AppEdit_<CredEditArgs>{m_db, &m_rng,
+	ZmRef<AppEdit_<CredEditArgs>> change = new AppEdit_<CredEditArgs>{work, m_db, &m_rng,
 	  CredEditArgs{.before = Cred{.id = ZuMv(id)}, .ifMatch = ZuMv(ifMatch),
 	    .request = ZuMv(request), .stateOnly = true, .state = state}, ZuMv(complete)};
 	change->start();
@@ -4406,8 +4489,10 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	      "If-Match is required"));
 	    return;
 	  }
-	  ZmRef<AssignmentChange_> change = new AssignmentChange_{
-	    m_db, &m_rng, appID, id, {}, state,
+	  ZmRef<AssignmentChange_> change =
+	    new AssignmentChange_{
+	      work, m_db, &m_rng,
+	      appID, id, {}, state,
 	    ZuMv(ifMatch), ZuMv(request), ZuMv(complete)};
 	  change->start();
 	  return;
@@ -4423,7 +4508,9 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	    return;
 	  }
-	  ZmRef<AppEdit_<ActionEditArgs>> change = new AppEdit_<ActionEditArgs>{m_db, &m_rng,
+	  ZmRef<AppEdit_<ActionEditArgs>> change =
+	    new AppEdit_<ActionEditArgs>{
+	      work, m_db, &m_rng,
 	    ActionEditArgs{.app = App{.id = appID},
 	      .before = Action{.appID = appID, .id = ActionID(id)},
 	      .ifMatch = ZuMv(ifMatch), .request = ZuMv(request), .state = state},
@@ -4441,7 +4528,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	    complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	    return;
 	  }
-	  ZmRef<AppEdit_<RoleEditArgs>> change = new AppEdit_<RoleEditArgs>{m_db, &m_rng,
+	  ZmRef<AppEdit_<RoleEditArgs>> change = new AppEdit_<RoleEditArgs>{work, m_db, &m_rng,
 	    RoleEditArgs{.app = App{.id = appID}, .before = Role{.appID = appID, .id = id},
 	      .ifMatch = ZuMv(ifMatch), .request = ZuMv(request),
 	      .kind = RoleEditArgs::Status, .state = state}, ZuMv(complete)};
@@ -4463,7 +4550,7 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	  return;
 	}
-	ZmRef<AppEdit_<ClientEditArgs>> change = new AppEdit_<ClientEditArgs>{m_db, &m_rng,
+	ZmRef<AppEdit_<ClientEditArgs>> change = new AppEdit_<ClientEditArgs>{work, m_db, &m_rng,
 	  ClientEditArgs{.before = Client{.id = ZuMv(id)}, .ifMatch = ZuMv(ifMatch),
 	    .request = ZuMv(request), .stateOnly = true, .state = state}, ZuMv(complete)};
 	change->start();
@@ -4483,7 +4570,9 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
 	  complete(adminErrorResult(428, "precondition_required", "If-Match is required"));
 	  return;
 	}
-	ZmRef<AppEdit_<ProviderEditArgs>> change = new AppEdit_<ProviderEditArgs>{m_db, &m_rng,
+	ZmRef<AppEdit_<ProviderEditArgs>> change =
+	  new AppEdit_<ProviderEditArgs>{
+	    work, m_db, &m_rng,
 	  ProviderEditArgs{.before = Provider{.id = id}, .ifMatch = ZuMv(ifMatch),
 	    .request = ZuMv(request), .stateOnly = true, .state = state}, ZuMv(complete)};
 	change->start();
@@ -4498,7 +4587,8 @@ void Daemon::adminCall_(int op, Principal principal, AdminPermit permit,
     error_("invalid_request", "invalid operation input"), 400});
 }
 
-void Daemon::adminAuth_(String authorization, AdminAuthFn complete)
+void Daemon::adminAuth_(
+    const Work &work, String authorization, AdminAuthFn complete)
 {
   static constexpr auto prefix = "Bearer "_z;
   if (authorization.length() <= prefix.length() ||
@@ -4513,10 +4603,11 @@ void Daemon::adminAuth_(String authorization, AdminAuthFn complete)
     complete(false, Principal{});
     return;
   }
-  m_db->signKeys->find<0>(0, ZuFwdTuple(ZuMv(header.keyID)), [
+  m_db->signKeys->find<0>(0, ZuFwdTuple(ZuMv(header.keyID)), [credit = work,
     this, now, authorization = ZuMv(authorization),
     complete = ZuMv(complete)
   ](ZdbRowRef<SignKey> row) mutable {
+    auto work = ZuMv(credit);
     Principal principal;
     bool valid = row && signKeyVerify(row->data(), authorization,
       row->data().issuer, {}, now, JWTLimits{}, principal);
@@ -4530,9 +4621,10 @@ void Daemon::adminAuth_(String authorization, AdminAuthFn complete)
       return;
     }
     AppID appID = principal.appID;
-    m_db->apps->find<0>(0, ZuFwdTuple(appID), [
+    m_db->apps->find<0>(0, ZuFwdTuple(appID), [credit = work,
       principal = ZuMv(principal), complete = ZuMv(complete)
     ](ZdbRowRef<App> app) mutable {
+      auto work = ZuMv(credit);
       bool active = app && app->data().state == State::Active &&
 	!app->data().owner && principal.audience == app->data().audience;
       complete(active, active ? ZuMv(principal) : Principal{});
@@ -4540,32 +4632,36 @@ void Daemon::adminAuth_(String authorization, AdminAuthFn complete)
   });
 }
 
-void Daemon::adminRequest_(int op, String authorization, String target,
+void Daemon::adminRequest_(
+    const Work &work, int op, String authorization, String target,
     String query, String body, String ifMatch, String ifNoneMatch,
     String idempotence, String correlationID, AdminDoneFn complete)
 {
   auto issuers = m_db->issuers;
-  issuers->run(0, [this, issuers, op, authorization = ZuMv(authorization),
+  issuers->run(0, [credit = work, this, issuers, op, authorization = ZuMv(authorization),
       target = ZuMv(target), query = ZuMv(query), body = ZuMv(body),
       ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
       idempotence = ZuMv(idempotence), correlationID = ZuMv(correlationID),
       complete = ZuMv(complete)]() mutable {
-    issuers->find<0>(0, ZuFwdTuple(m_config.issuer), [this, op,
+    auto work = ZuMv(credit);
+    issuers->find<0>(0, ZuFwdTuple(m_config.issuer), [credit = work, this, op,
         authorization = ZuMv(authorization), target = ZuMv(target),
         query = ZuMv(query), body = ZuMv(body), ifMatch = ZuMv(ifMatch),
         ifNoneMatch = ZuMv(ifNoneMatch), idempotence = ZuMv(idempotence),
         correlationID = ZuMv(correlationID), complete = ZuMv(complete)](
           ZdbRowRef<Issuer> row) mutable {
+      auto work = ZuMv(credit);
       if (!m_requests->active() || !row ||
           row->data().bootstrapPhase != BootstrapPhase::Ready) {
 	complete(AdminResult{error_("unavailable", "server is not ready"), 503});
 	return;
       }
-      adminAuth_(ZuMv(authorization), [this, op, target = ZuMv(target),
+      adminAuth_(work, ZuMv(authorization), [credit = work, this, op, target = ZuMv(target),
           query = ZuMv(query), body = ZuMv(body), ifMatch = ZuMv(ifMatch),
           ifNoneMatch = ZuMv(ifNoneMatch), idempotence = ZuMv(idempotence),
           correlationID = ZuMv(correlationID), complete = ZuMv(complete)](
             bool authenticated, Principal principal) mutable {
+        auto work = ZuMv(credit);
 	if (!authenticated) {
 	  complete(AdminResult{error_("invalid_token", "invalid bearer token"), 401});
 	  return;
@@ -4590,13 +4686,14 @@ void Daemon::adminRequest_(int op, String authorization, String target,
 	bool interactive = bool(principal.authMethod);
 	AppID targetApp = 0;
 	bool appScoped = adminTargetApp(target, targetApp);
-	adminAccess_(op == MgmtOp::ssfRegister ? MgmtOp::catalogPublish : op,
+	adminAccess_(work, op == MgmtOp::ssfRegister ? MgmtOp::catalogPublish : op,
 	  ZuMv(subject), interactive, targetApp, appScoped,
-	  [this, op, principal = ZuMv(principal), target = ZuMv(target),
+	  [credit = work, this, op, principal = ZuMv(principal), target = ZuMv(target),
 	    query = ZuMv(query), body = ZuMv(body), ifMatch = ZuMv(ifMatch),
 	    ifNoneMatch = ZuMv(ifNoneMatch), idempotence = ZuMv(idempotence),
 	    correlationID = ZuMv(correlationID), complete = ZuMv(complete)](
 	      AdminPermit permit) mutable {
+            auto work = ZuMv(credit);
 	    if (!permit.allowed) {
 	      complete(AdminResult{error_("forbidden", "operation is not permitted"), 403});
 	      return;
@@ -4611,22 +4708,25 @@ void Daemon::adminRequest_(int op, String authorization, String target,
 	    Bytes requestDigest;
 	    if (requestKey)
 	      requestDigest = idemDigest_(op, target, body, ifMatch, ifNoneMatch);
-	    idemBegin_(op, actorKind, ZuMv(actorID), ZuMv(requestDigest), ZuMv(requestKey),
-	      [this, op, principal = ZuMv(principal), permit = ZuMv(permit),
+	    idemBegin_(work, op, actorKind, ZuMv(actorID), ZuMv(requestDigest), ZuMv(requestKey),
+	      [credit = work, this, op, principal = ZuMv(principal), permit = ZuMv(permit),
 	        target = ZuMv(target), query = ZuMv(query), body = ZuMv(body),
 	        ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
 	        idempotence = ZuMv(idempotence), correlationID = ZuMv(correlationID),
 	        complete = ZuMv(complete)](IdemBegin idem) mutable {
+                auto work = ZuMv(credit);
 		if (!idem.execute) { complete(ZuMv(idem.result)); return; }
 		String auditActor = principal.subject;
 		AppID auditAppID = permit.targetApp;
 		String auditTarget = target;
-		adminCall_(op, ZuMv(principal), ZuMv(permit), ZuMv(target), ZuMv(query),
+		adminCall_(work, op, ZuMv(principal), ZuMv(permit), ZuMv(target), ZuMv(query),
 		  ZuMv(body), ZuMv(ifMatch), ZuMv(ifNoneMatch), ZuMv(idempotence),
-		  ZuMv(idem.request), [this, op, auditActor = ZuMv(auditActor), auditAppID,
+		  ZuMv(idem.request), [
+		    credit = work, this, op, auditActor = ZuMv(auditActor), auditAppID,
 		    auditTarget = ZuMv(auditTarget), correlationID = ZuMv(correlationID),
 		    complete = ZuMv(complete)](AdminResult result) mutable {
-		    adminAudit_(op, ZuMv(auditActor), auditAppID, ZuMv(auditTarget),
+                    auto work = ZuMv(credit);
+		    adminAudit_(work, op, ZuMv(auditActor), auditAppID, ZuMv(auditTarget),
 		      ZuMv(correlationID), ZuMv(result), ZuMv(complete));
 		  });
 	      });
@@ -4648,14 +4748,14 @@ static bool decodeSubject(ZuCSpan subject, Bytes &handle)
 }
 
 static void adminDelegation(
-    DB *db, ActorKind::T actorKind, String actorID,
+    const ZmRef<ZmPolymorph> &work, DB *db, ActorKind::T actorKind, String actorID,
     AppID appID, int op, AdminAccessFn complete)
 {
   auto access = db->adminAccess;
-  access->run(0, [access, actorKind, actorID = ZuMv(actorID), appID, op,
+  access->run(0, [scope = work, access, actorKind, actorID = ZuMv(actorID), appID, op,
       complete = ZuMv(complete)]() mutable {
     access->find<0>(0,
-      ZuFwdTuple(actorKind, ZuMv(actorID), appID), [op, appID,
+      ZuFwdTuple(actorKind, ZuMv(actorID), appID), [scope = ZuMv(scope), op, appID,
         complete = ZuMv(complete)](ZdbRowRef<AdminAccess> row) mutable {
       if (!row || row->data().owner || row->data().state != State::Active) {
 	complete(AdminPermit{.targetApp = appID});
@@ -4673,17 +4773,17 @@ static void adminDelegation(
 }
 
 static void adminDelegation(
-    DB *db, String actorID, int op, AdminAccessFn complete)
+    const ZmRef<ZmPolymorph> &work, DB *db, String actorID, int op, AdminAccessFn complete)
 {
   enum { UniqueLimit = 2 };
   using Table = AdminAccessTable;
   using Tuple = Table::Tuple;
   auto access = db->adminAccess;
-  access->run(0, [access, actorID = ZuMv(actorID), op,
+  access->run(0, [scope = work, access, actorID = ZuMv(actorID), op,
       complete = ZuMv(complete)]() mutable {
     access->selectRows<1>(
       ZuFwdTuple(ActorKind::Client, ZuMv(actorID)), UniqueLimit, [
-        op, complete = ZuMv(complete), permit = AdminPermit{},
+        scope = ZuMv(scope), op, complete = ZuMv(complete), permit = AdminPermit{},
         ambiguous = false](ZuUnion<void, Tuple> result,
           unsigned count) mutable {
       if (result.template is<Tuple>()) {
@@ -4711,29 +4811,31 @@ static void adminDelegation(
 }
 
 void Daemon::adminAccess_(
-    int op, String subject, bool interactive, AppID targetApp, bool appScoped,
+    const Work &work, int op, String subject, bool interactive, AppID targetApp, bool appScoped,
     AdminAccessFn complete)
 {
   static constexpr RoleID superuserRoleID = CoreRole::Superuser;
   if (!interactive) {
     auto clients = m_db->clients;
     String clientID = ZuMv(subject);
-    clients->run(0, [this, clients, clientID = ZuMv(clientID),
+    clients->run(0, [credit = work, this, clients, clientID = ZuMv(clientID),
         targetApp, appScoped, op, complete = ZuMv(complete)]() mutable {
+      auto work = ZuMv(credit);
       String lookup = clientID;
-      clients->find<0>(0, ZuFwdTuple(ZuMv(lookup)), [this,
+      clients->find<0>(0, ZuFwdTuple(ZuMv(lookup)), [credit = work, this,
           clientID = ZuMv(clientID), targetApp, appScoped, op,
           complete = ZuMv(complete)](ZdbRowRef<Client> row) mutable {
+        auto work = ZuMv(credit);
 	if (!row || row->data().owner || row->data().state != State::Active) {
 	  complete(AdminPermit{});
 	  return;
 	}
 	if (!appScoped && op == MgmtOp::operationQuery) {
-	  adminDelegation(m_db, ZuMv(clientID), op, ZuMv(complete));
+	  adminDelegation(work, m_db, ZuMv(clientID), op, ZuMv(complete));
 	  return;
 	}
 	if (!appScoped) { complete(AdminPermit{}); return; }
-	adminDelegation(m_db, ActorKind::Client, ZuMv(clientID),
+	adminDelegation(work, m_db, ActorKind::Client, ZuMv(clientID),
 	  targetApp, op, ZuMv(complete));
       });
     });
@@ -4746,11 +4848,13 @@ void Daemon::adminAccess_(
     return;
   }
   auto users = m_db->users;
-  users->run(0, [this, users, handle = ZuMv(handle), targetApp,
+  users->run(0, [credit = work, this, users, handle = ZuMv(handle), targetApp,
       appScoped, op, complete = ZuMv(complete)]() mutable {
-    users->find<1>(0, ZuFwdTuple(ZuMv(handle)), [this, targetApp,
+    auto work = ZuMv(credit);
+    users->find<1>(0, ZuFwdTuple(ZuMv(handle)), [credit = work, this, targetApp,
         appScoped, op, complete = ZuMv(complete)](
           ZdbRowRef<User> user) mutable {
+      auto work = ZuMv(credit);
       if (!user || user->data().owner ||
           user->data().source != UserSource::Local ||
           user->data().state != State::Active) {
@@ -4759,21 +4863,25 @@ void Daemon::adminAccess_(
       }
       UserID userID = user->data().id;
       auto issuers = m_db->issuers;
-      issuers->run(0, [this, issuers, userID, targetApp, appScoped, op,
+      issuers->run(0, [credit = work, this, issuers, userID, targetApp, appScoped, op,
           complete = ZuMv(complete)]() mutable {
+        auto work = ZuMv(credit);
 	String issuer = m_config.issuer;
-	issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [this, userID,
+	issuers->find<0>(0, ZuFwdTuple(ZuMv(issuer)), [credit = work, this, userID,
 	    targetApp, appScoped, op, complete = ZuMv(complete)](
 	      ZdbRowRef<Issuer> issuer) mutable {
+          auto work = ZuMv(credit);
 	  if (!issuer) { complete(AdminPermit{}); return; }
 	  AppID coreApp = issuer->data().coreAppID;
 	  auto assignments = m_db->assignments;
-	  assignments->run(0, [this, assignments, userID, coreApp,
+	  assignments->run(0, [credit = work, this, assignments, userID, coreApp,
 	      targetApp, appScoped, op, complete = ZuMv(complete)]() mutable {
-	    assignments->find<0>(0, ZuFwdTuple(coreApp, userID), [this,
+            auto work = ZuMv(credit);
+	    assignments->find<0>(0, ZuFwdTuple(coreApp, userID), [credit = work, this,
 	        userID, coreApp, targetApp, appScoped, op,
 	        complete = ZuMv(complete)](
 	          ZdbRowRef<Assignment> assignment) mutable {
+              auto work = ZuMv(credit);
 	      bool assigned = false;
 	      if (assignment && !assignment->data().owner &&
 	          assignment->data().state == State::Active)
@@ -4783,15 +4891,17 @@ void Daemon::adminAccess_(
 	        if (!appScoped) { complete(AdminPermit{}); return; }
 	        String actorID;
 	        actorID << userID;
-	        adminDelegation(m_db, ActorKind::User, ZuMv(actorID),
+	        adminDelegation(work, m_db, ActorKind::User, ZuMv(actorID),
 	          targetApp, op, ZuMv(complete));
 	        return;
 	      }
 	      auto roles = m_db->roles;
-	      roles->run(0, [roles, coreApp,
+	      roles->run(0, [credit = work, roles, coreApp,
 	          complete = ZuMv(complete)]() mutable {
-	        roles->find<0>(0, ZuFwdTuple(coreApp, superuserRoleID), [coreApp,
+                auto work = ZuMv(credit);
+	        roles->find<0>(0, ZuFwdTuple(coreApp, superuserRoleID), [credit = work, coreApp,
 	            complete = ZuMv(complete)](ZdbRowRef<Role> role) mutable {
+                  auto work = ZuMv(credit);
 	          bool allowed = role && !role->data().owner &&
 	            role->data().state == State::Active &&
 	            !role->data().tombstone;
@@ -4822,7 +4932,8 @@ Bytes Daemon::idemDigest_(int op,
   return digest;
 }
 
-void Daemon::idemBegin_(int op, ActorKind::T actorKind, String actorID,
+void Daemon::idemBegin_(
+    const Work &work, int op, ActorKind::T actorKind, String actorID,
     Bytes digest, String idemKey, IdemBeginFn complete)
 {
   auto route = managementRoute(op);
@@ -4831,16 +4942,18 @@ void Daemon::idemBegin_(int op, ActorKind::T actorKind, String actorID,
     return;
   }
   auto requests = m_db->requests;
-  requests->run(0, [requests, actorKind, actorID = ZuMv(actorID), op,
+  requests->run(0, [credit = work, requests, actorKind, actorID = ZuMv(actorID), op,
       idemKey = ZuMv(idemKey), digest = ZuMv(digest),
       complete = ZuMv(complete)]() mutable {
+    auto work = ZuMv(credit);
     String lookupActor = actorID;
     String lookupKey = idemKey;
     requests->find<0>(0, ZuFwdTuple(actorKind, ZuMv(lookupActor),
-      ActionID(op), ZuMv(lookupKey)), [actorKind,
+      ActionID(op), ZuMv(lookupKey)), [credit = work, actorKind,
         actorID = ZuMv(actorID), op, idemKey = ZuMv(idemKey),
         digest = ZuMv(digest), complete = ZuMv(complete)](
           ZdbRowRef<IdemRequest> row) mutable {
+      auto work = ZuMv(credit);
       if (row) {
 	if (!Ztls::ctEqual(row->data().requestDigest, digest)) {
 	  complete(IdemBegin{.result = adminErrorResult(409, "conflict",

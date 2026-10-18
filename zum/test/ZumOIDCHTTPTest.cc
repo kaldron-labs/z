@@ -15,6 +15,7 @@
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiLog.hh>
+#include <zlib/ZiResolver.hh>
 
 #include "../src/zumd_oidc.hh"
 
@@ -32,39 +33,102 @@ static ZiMxParams mxParams()
     .rxThread(1).txThread(2);
 }
 
+static void initFinal()
+{
+  ZuTestScopeRT(initFinal);
+  ZiMultiplex mx{mxParams()}; // its workers are deliberately never started
+  Zum::OIDCHTTP http;
+  ZuCheckRT(http.init(&mx, 3));
+  ZuCheckRT(http.state() == ZmEngineState::Stopped);
+  auto send = http.fn();
+  http.final();
+  bool rejected = false;
+  send(Zum::OIDCHTTPRequest{.url = "https://example.com"},
+    [&rejected](unsigned status, Zum::String body) {
+      rejected = !status && !body;
+    });
+  ZuCheckRT(rejected);
+  ZuCheckRT(http.stop());
+  http.final();
+}
+
+static void borrowedResolver()
+{
+  ZuTestScopeRT(borrowedResolver);
+  ZiMultiplex mx{mxParams()};
+  ZuCheckRT(mx.start());
+  ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
+  Zum::OIDCHTTP http;
+  ZuCheckRT(http.init(&mx, 3));
+  // An externally owned resolver must already be running. Its failure to meet
+  // that startup dependency leaves no owner job or child client to drain.
+  ZuCheckRT(!http.start());
+  ZuCheckRT(http.state() == ZmEngineState::Stopped);
+  http.final();
+  ZuCheckRT(ZiResolver::instance()->initialized() &&
+    ZiResolver::instance()->state() == ZmEngineState::Stopped);
+  ZiResolver::final();
+  ZuCheckRT(mx.stop());
+}
+
 static void oidcHTTP()
 {
-  ZuTestScope(oidcHTTP);
+  ZuTestScopeRT(oidcHTTP);
   ZiMultiplex mx{mxParams()};
-  ZuCheck(mx.start());
+  ZuCheckRT(mx.start());
   Zum::OIDCHTTP http;
-  ZuCheck(!http.init(&mx, 0));
-  ZuCheck(!http.init(&mx, 1));
-  ZuCheck(!http.init(&mx, 2));
-  ZuCheck(!http.init(&mx, 4));
-  ZuCheck(!http.init(&mx, 3, 0));
-  ZuCheck(http.init(&mx, 3));
+  ZuCheckRT(!http.init(&mx, 0));
+  ZuCheckRT(!http.init(&mx, 1));
+  ZuCheckRT(!http.init(&mx, 2));
+  ZuCheckRT(!http.init(&mx, 4));
+  ZuCheckRT(!http.init(&mx, 3, 0));
+  ZuCheckRT(http.init(&mx, 3));
+  ZuCheckRT(http.start());
   auto send = http.fn();
 
   for (ZuCSpan url: {"", "http://example.com", "https://",
       "https://example.com/#fragment"}) {
-    ZuCheck(ZmBlock<bool>{}([&send, &mx, url](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([&send, &mx, url](auto wake) mutable {
       send(Zum::OIDCHTTPRequest{.url = url},
 	[&mx, wake = ZuMv(wake)](unsigned status, Zum::String body) mutable {
 	  wake(!status && !body && mx.invoked(3));
 	});
     }));
   }
-  // final() posts behind this request and must drain its callback before
-  // returning; the callback's stack references remain valid until then.
+  // stop() includes this accepted request and must drain its callback before
+  // completing; the callback's stack references remain valid until then.
   bool drained = false;
   send(Zum::OIDCHTTPRequest{.url = "http://example.com"},
     [&mx, &drained](unsigned status, Zum::String body) {
       drained = !status && !body && mx.invoked(3);
     });
-  http.final();
-  ZuCheck(drained);
-  ZuCheck(mx.stop());
+  ZuCheckRT(http.stop());
+  ZuCheckRT(drained);
+  ZuCheckRT(http.stop());
+  ZuCheckRT(http.start());
+  ZuCheckRT(http.start());
+  ZuCheckRT(ZmBlock<bool>{}([&send, &mx](auto wake) mutable {
+    send(Zum::OIDCHTTPRequest{.url = "http://example.com"},
+      [&mx, wake = ZuMv(wake)](unsigned status, Zum::String body) mutable {
+	wake(!status && !body && mx.invoked(3));
+      });
+  }));
+  ZmSemaphore finalized;
+  bool stoppedOK = false;
+  http.stop([&http, &stoppedOK, &finalized](bool ok) {
+    stoppedOK = ok;
+    http.final();
+    finalized.post();
+  });
+  finalized.wait();
+  ZuCheckRT(stoppedOK && http.state() == ZmEngineState::Stopped);
+  bool rejected = false;
+  send(Zum::OIDCHTTPRequest{.url = "https://example.com"},
+    [&rejected](unsigned status, Zum::String body) {
+      rejected = !status && !body;
+    });
+  ZuCheckRT(rejected); // the retained function owns only quiescent closed state
+  ZuCheckRT(mx.stop());
 }
 
 static void publicOIDC()
@@ -77,6 +141,7 @@ static void publicOIDC()
   if (auto path = Zt::getpath("ZUM_OIDC_TEST_CA")) caPath = path;
   ZuCheck(http.init(&mx, 3, Zum::OIDCHTTP::DefaultOrigins,
       caPath));
+  ZuCheck(http.start());
   auto send = http.fn();
   ZmSemaphore done;
   Zum::String body;
@@ -92,6 +157,7 @@ static void publicOIDC()
   ZuCheck(!done.timedwait(Zm::now() + ZuTime{30}));
   ZuCheck(status == (url ? 200U : 0U));
   ZuCheck(bool(body) == bool(url));
+  ZuCheck(http.stop());
   http.final();
   ZuCheck(mx.stop());
 }
@@ -104,6 +170,8 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
+  ZuTestCall(initFinal);
+  ZuTestCall(borrowedResolver);
   ZuTestCall(oidcHTTP);
   ZuTestCall(publicOIDC);
   ZiLog::stop();

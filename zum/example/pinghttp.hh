@@ -7,6 +7,7 @@
 #ifndef PingHTTP_HH
 #define PingHTTP_HH
 
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZumService.hh>
 
 class ZiMultiplex;
@@ -14,7 +15,7 @@ class ZiMultiplex;
 namespace Zum {
 class PingHTTPState;
 
-// The example owns this transport through Service::stop(), then finalizes it.
+// Start before its consumers; stop after those consumers, then finalize.
 class PingHTTP {
   PingHTTP(const PingHTTP &) = delete;
   PingHTTP &operator =(const PingHTTP &) = delete;
@@ -23,6 +24,12 @@ public:
   ~PingHTTP();
   bool init(ZiMultiplex *, ZuCSpan issuer, ZuCSpan managementIssuer,
     ZuCSpan management, ZuCSpan caPath = {});
+  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+  bool start();
+  void start(CtrlFn);
+  bool stop();
+  void stop(CtrlFn);
+  int state() const;
   ServiceHTTPFn fn() const;
   void final();
 private:

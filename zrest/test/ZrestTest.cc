@@ -881,11 +881,15 @@ static void sseSendPostsTest()
   drained.wait();
   ZuCheck(!producer->queued() && !producer->failed());
   ZuCheck(sink.data == "data: one\n\ndata: two\n\n");
+  ZmSemaphore held, release;
+  scheduler.run([&held, &release]() { held.post(); release.wait(); }, 1);
+  held.wait();
   ZuCheck(producer->emit("three"));
-  scheduler.run([producer, &drained]() {
-    producer->close();
-    drained.post();
-  }, 1);
+  producer->close();
+  producer->close();
+  ZuCheck(!producer->emit("closed"));
+  scheduler.run([&drained]() { drained.post(); }, 1);
+  release.post();
   drained.wait();
   ZuCheck(!producer->queued() && !producer->emit("closed"));
   ZuCheck(scheduler.stop());

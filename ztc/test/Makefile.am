@@ -25,7 +25,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_HEADERS = ZtcTestClient.hh
 noinst_PROGRAMS = ZtcMgrTest ZtcSchemaTest \
-	ZtcFilterTest ZtcAppTest ZtcAlertTest ZtcAgentTest ZtcHubTest ZtcHubRxTest
+	ZtcFilterTest ZtcAppTest ZtcAlertTest ZtcAgentTest ZtcHubTest ZtcHubRxTest ZtcHubRoleTest
 EXTRA_DIST = README.md
 
 .PHONY: test
@@ -61,3 +61,7 @@ ZtcHubRxTest_CPPFLAGS = $(ZtcAgentTest_CPPFLAGS)
 ZtcHubRxTest_SOURCES = ZtcHubRxTest.cc ../src/ztchub_daemon.cc \
 	../../zum/example/pinghttp.cc
 ZtcHubRxTest_LDADD = $(ZtcAgentTest_LDADD)
+
+ZtcHubRoleTest_CPPFLAGS = $(ZtcHubTest_CPPFLAGS)
+ZtcHubRoleTest_SOURCES = ZtcHubRoleTest.cc
+ZtcHubRoleTest_LDADD = $(ZtcHubTest_LDADD)

@@ -36,7 +36,7 @@
 
 namespace Zhttp {
 
-constexpr unsigned NullSlot = ZuCmp<unsigned>::null();
+enum : int64_t { NullSlot = ZuCmp<unsigned>::null() };
 
 using ContentLengthPlaceholder =
   ZuStringT<"0000000000">;
@@ -164,10 +164,10 @@ struct Builder {
   using Headers = HdrCatalog::List;
 
   // default header section scratch buffer size for H2/H3
-  static constexpr unsigned HdrBufSize = 1<<10; // 1k scratch buffer
+  enum { HdrBufSize = 1<<10 }; // 1k scratch buffer
 
-  // Builders provide only the initial field section; outbound trailers are
-  // unsupported.  A Builder instance represents exactly one message.
+  // A message Builder supplies initial fields. BodyEmitter::trailers reuses
+  // its field-provider interface for a final section.
 
   // May be non-constexpr for a type-erased Builder. The value is fixed for
   // the lifetime of this single-message Builder.
@@ -391,11 +391,10 @@ struct BuilderFields {
   const CatalogView *catalog;
 
   void fields(FieldOutput &out) {
-    ZuUnroll::all<List::N>([this, &out](auto I) {
-      static constexpr unsigned ID = I;
-      using Key = typename List::template Key<I>;
-      using Values = typename List::template Value<I>;
-      const auto &meta = catalog->fields[I];
+    ZuUnroll::all<List::N>([this, &out]<unsigned ID>(ZuUnsigned<ID>) {
+      using Key = typename List::template Key<ID>;
+      using Values = typename List::template Value<ID>;
+      const auto &meta = catalog->fields[ID];
       if constexpr (Values::N) {
 	using Fixed = HeaderValue<Values>;
 	builderFixedHeader<Key, Fixed>(builder, [this, &out, &meta]() {
@@ -465,25 +464,27 @@ bool BodyEmitter::trailers(B &fields)
   return m_emit->trailers(m_emit->ctx, catalog, provider);
 }
 
-template <typename P>
-auto parserBodyMax(P &parser, uint64_t max, int) ->
-    decltype(parser.bodyMax(max), void()) {
+template <typename P,
+  typename = decltype(ZuDeclVal<P &>().bodyMax(uint64_t{}))>
+void parserBodyMax(P &parser, uint64_t max, int) {
   parser.bodyMax(max);
 }
 template <typename P>
 void parserBodyMax(P &, uint64_t, long) { }
 
-template <typename P>
-auto parserRetainedBodyMax(P &parser, uint64_t max, int) ->
-    decltype(parser.retainedBodyMax(max), void()) {
+template <typename P,
+  typename = decltype(ZuDeclVal<P &>().retainedBodyMax(uint64_t{}))>
+void parserRetainedBodyMax(P &parser, uint64_t max, int) {
   parser.retainedBodyMax(max);
 }
 template <typename P>
 void parserRetainedBodyMax(P &, uint64_t, long) { }
 
-template <typename P>
-auto parserBodyInfo(P &parser, Channel *channel, BodyType::T type,
-    uint64_t length, int) -> decltype(parser.bodyInfo(channel, type, length)) {
+template <typename P,
+  typename = decltype(ZuDeclVal<P &>().bodyInfo(
+    ZuDeclVal<Channel *>(), ZuDeclVal<BodyType::T>(), uint64_t{}))>
+decltype(auto) parserBodyInfo(P &parser, Channel *channel, BodyType::T type,
+    uint64_t length, int) {
   return parser.bodyInfo(channel, type, length);
 }
 template <typename P>
@@ -586,7 +587,7 @@ struct ResponseFields {
   FieldContext &context;
   Spans spans;
 
-  static constexpr unsigned HdrBufSize = B::HdrBufSize;
+  enum { HdrBufSize = B::HdrBufSize };
   bool neverIndex(ZuBSpan name) const { return builder->neverIndex(name); }
 
   template <typename Key, typename Value, typename L>

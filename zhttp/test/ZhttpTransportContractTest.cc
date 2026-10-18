@@ -538,7 +538,7 @@ struct H2Native {
   bool sendHeaders(
     uint32_t, Zhttp::H2_::HeaderFrames frames, bool) {
     ++headers;
-    headerFrames += frames.length();
+    headerFrames += frames.count_();
     return headerOK;
   }
   template <bool>
@@ -1114,12 +1114,25 @@ void testParams()
       tlsSrv.alpn()[0] == "http/1.1",
     "TLS server defaults mismatch");
 
-  auto force = Zhttp::H2Config().policy(Zhttp::H2Policy::Force);
+  auto force = Zhttp::H2Config{}.tls([](auto &tls) {
+    tls.caPath("h2-ca.pem").certPath("h2-cert.pem").keyPath("h2-key.pem")
+      .mTLS(true).cacheTimeout(23);
+  }).policy(Zhttp::H2Policy::Force).maxPending(17);
+  ZuAssert((ZuIsSame<decltype(force), Zhttp::H2Config>{}));
+  ZuAssert((!ZuIsConvertible<Zhttp::H2Config *, Zhttp::TLSConfig *>{}));
+  const auto &forceTLS = force.tls();
+  ZuCHECK(forceTLS.caPath() == "h2-ca.pem" &&
+      forceTLS.certPath() == "h2-cert.pem" && forceTLS.keyPath() == "h2-key.pem" &&
+      forceTLS.mTLS() && forceTLS.cacheTimeout() == 23 && force.maxPending() == 17,
+    "nested TLS configuration preserves the H2 fluent type and settings");
   auto prefer = Zhttp::H2Config().policy(Zhttp::H2Policy::Prefer);
   auto disable = Zhttp::H2Config().policy(Zhttp::H2Policy::Disable);
   auto forceCli = Zhttp::TLS_::clientParams(hub, force);
   auto preferSrv = Zhttp::TLS_::serverParams(hub, prefer);
   auto disableCli = Zhttp::TLS_::clientParams(hub, disable);
+  ZuCHECK(forceCli.caPath() == "h2-ca.pem" && forceCli.certPath() == "h2-cert.pem" &&
+      forceCli.keyPath() == "h2-key.pem",
+    "nested TLS trust and identity reach the native client parameters");
   ZuCHECK(forceCli.alpn().length() == 1 &&
       forceCli.alpn()[0] == "h2",
     "force-H2 ALPN mismatch");
@@ -1264,8 +1277,11 @@ void testMetadata()
     "configuration enum names mismatch");
   ZuCHECK(
     Zhttp::migrationMode("disabled") == Zhttp::Migration::Disabled &&
+    Zhttp::migrationMode("DISABLE") == Zhttp::Migration::Disabled &&
     Zhttp::migrationMode("passive") == Zhttp::Migration::Passive &&
-    Zhttp::migrationMode("active") == Zhttp::Migration::Active,
+    Zhttp::migrationMode("active") == Zhttp::Migration::Active &&
+    Zhttp::migrationMode("unknown", Zhttp::Migration::Passive) ==
+      Zhttp::Migration::Passive,
     "migration configuration vocabulary mismatch");
 }
 
@@ -1463,8 +1479,9 @@ void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
   auto serverConfig = Zhttp::ServerConfig{}.localIP(ZiIP{"127.0.0.1"})
     .port(ZhttpTestPort::Profiles);
   if constexpr (tcp) serverConfig.tcp();
-  if constexpr (h1 || h2) serverConfig.tls(Zhttp::H2Config{}
-    .certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan()));
+  if constexpr (h1 || h2) serverConfig.tls(Zhttp::H2Config{}.tls([&cert](auto &tls) {
+    tls.certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan());
+  }));
   if constexpr (h3) serverConfig.quic(Zhttp::QUICConfig{}
     .certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan()));
   bool serverOK = server.init(hub, ZuMv(serverConfig));
@@ -1474,7 +1491,9 @@ void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
 
   SubsetClient<S> client;
   bool initialized = client.init(hub, 1, {}, {},
-    Zhttp::H2Config{}.caPath(cert.certPath.cspan()),
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert.certPath.cspan());
+    }),
     Zhttp::QUICConfig{}.caPath(cert.certPath.cspan()));
   bool pooled = initialized && client.pool(0,
     Zhttp::Destination{"127.0.0.1", ZhttpTestPort::Profiles});
@@ -1511,12 +1530,12 @@ void subsets()
   bool started = mx.start();
   ZuCHECK(started, "start subset fixture multiplexer");
   if (!started) return;
-  ZiResolver::start();
+  ZiResolver::startSync();
   ZuUnroll::all<Sets>([&mx, &cert]<typename S>() { subset<S>(mx, cert); });
   using Repeated = Zhttp::Profiles<B, B, C, C>;
   ZuAssert(Repeated::N == 2);
   subset<Repeated>(mx, cert);
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
   mx.stop();
 }

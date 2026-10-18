@@ -5,6 +5,33 @@ a deployment-owned image. It uses a Zum service identity and sends an OAuth
 access token only in the WSS upgrade `Authorization` header. Runtime
 credentials and transport state remain in memory.
 
+`ztchub` starts its multiplexer in main independently of the database role.
+Zdb activation starts the configured WebSocket and SSF protocol hubs; Zdb
+deactivation stops them. A standby process keeps its runtime running without
+opening those listeners. `Hubd::state()` reports engine lifecycle and
+`readiness()` reports database activation separately. The `ztchub ready` message
+is emitted after listener activation completes. Hubd shutdown joins outstanding
+listener transitions before releasing service and routing state; final requires
+completed stop. Listener configuration is retained across role changes.
+A down transition first joins listener shutdown, then retires old routing and
+browser-session state in bounded owner turns. An up arriving during retirement
+waits until that state is gone before starting listeners for the new role.
+
+Stop is best effort for these controllers: every shutdown step is attempted.
+Completion leaves the engine Stopped even if its boolean result reports an
+error; final can then release drained resources. A later start recreates runtime
+resources from retained configuration.
+
+`Ztc::Agent` uses `ZmEngine` for its complete runtime. `init` retains stopped
+configuration without starting threads. Startup establishes its multiplex,
+HTTP/WebSocket clients, telemetry reader and initial publisher inventory;
+OAuth authorization and the WSS connection continue asynchronously afterward.
+Complete `stop` before `final`. Stop closes provisioning ingress, retires the
+telemetry producer, cancels timers, joins transport/request work and drains
+routing before retiring the multiplex. `final` does not initiate shutdown or
+wait. Restart recreates runtime resources from retained configuration. Blocking
+lifecycle forms belong on the main thread; callback forms are asynchronous.
+
 At startup the agent attaches the shared telemetry ring. `Ztc::App` publishers
 can create the ring before the agent starts. Their `telRingSize` setting
 defaults to 2 MiB and supplies its initial capacity; existing rings retain
@@ -19,6 +46,21 @@ The scheduler accepts `nThreads`, `stackSize`, `priority`, `partition`,
 `quantum`, `queueSize`, `ll`, `spin`, and `timeout`; it has no Rx/Tx, socket,
 epoll, or receive/send-buffer configuration. Publisher IDs must remain unique
 within a shared `ZTC_DIR` registry.
+
+Publisher lifecycle uses `ZmEngine`. `init` retains configuration while stopped;
+it creates no scheduler threads. `start` completes after scheduler startup, ring
+attachment, PID ownership, and telemetry registration. It does not promise an
+agent connection. The scheduler owns one additional isolated native request-loop
+slot beyond configured `nThreads`; timer and worker slot numbers stay unchanged.
+This replaces the former separate request thread.
+
+Complete `stop` before `final`. Stop closes alert/RAG admission, cancels timers,
+removes watches, drains accepted posts and subscriptions, emits shutdown telemetry,
+and retires the scheduler. Restart constructs fresh runtime scheduler resources
+from retained configuration. Callback lifecycle forms are asynchronous; blocking
+forms belong on the main thread. `final` releases stopped configuration without
+initiating or waiting for shutdown. Never-started and rolled-back publishers can
+be finalized directly. Retained alert sinks reject input after admission closes.
 
 Configuration tuning is loaded from `ztcagent.conf` (or `--config`). Runtime
 identity is supplied separately through the environment:

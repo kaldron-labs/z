@@ -101,8 +101,7 @@ static ZuPtr<const ZfCf::AnyNode> dbConfig()
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto test = static_cast<TestDB *>(db);
-  test->requests->activate();
-  test->active.post();
+  test->requests->activate([test](bool) { test->active.post(); });
 }
 
 static void dbDown(Zdb *db, bool)
@@ -423,7 +422,7 @@ static Authorized beginAuthorization(
   return ZmBlock<Authorized>{}([
     requests, context, &rng, query = ZuMv(query), config = ZuMv(config)
   ](auto wake) mutable {
-    if (!Zum::authorizeRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeRequest({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(query),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(config), [
 	wake
@@ -463,7 +462,7 @@ static FinishedAuthorization finishAuthorization(
     Zum::Bytes consentBinding{ZuBSpan{"browser binding"}};
     auto consentConfig = config;
     auto consentPolicy = policy;
-    if (!Zum::authorizeFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(input), ZuMv(config),
       ZuMv(policy), [requests, db, &rng, wake = ZuMv(wake),
@@ -478,7 +477,7 @@ static FinishedAuthorization finishAuthorization(
 	    wake(FinishedAuthorization{error, ZuMv(location)});
 	  };
 	  auto fallback = consentComplete;
-	  if (!Zum::authorizeConsentFinish(requests, Zm::now() + ZuTime{10},
+	  if (!Zum::authorizeConsentFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(consentID), ZuMv(consentBinding), true,
 	      ZuMv(consentConfig), ZuMv(consentPolicy), ZuMv(consentComplete)))
 	    fallback(Zum::OAuthError::TemporarilyUnavailable, {});
@@ -513,7 +512,7 @@ static FinishedAuthorization finishOIDCAuthorization(
     authTime,
     config = ZuMv(config), policy = ZuMv(policy)
   ](auto wake) mutable {
-    if (!Zum::authorizeOIDCFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeOIDCFinish({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"oidc binding"}}, ZuMv(user), ZuMv(roleIDs),
       ZuMv(evidence), authTime, ZuMv(config), ZuMv(policy), [wake](
@@ -562,7 +561,7 @@ static IssuedToken issueTokenRequest(
     authorization = ZuMv(authorization), config = ZuMv(config),
     sign = ZuMv(sign)
   ](auto wake) mutable {
-    if (!Zum::tokenRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::tokenRequest({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(form), ZuMv(authorization),
       ZuMv(config), ZuMv(sign), [wake](
 	  int error, Zum::TokenResponse response) mutable {
@@ -932,9 +931,9 @@ static void runtimeRecovery()
     .version = recoveryVersion + 1, .oldState = beforeRecovery.state,
     .oldUpdated = beforeRecovery.updated}), ZdbSagaID{9007}));
   ZuCheck(ZmBlock<bool>{}([
-    &db, &context, &rng, recoveryVersion
+    &db, &rng, recoveryVersion
   ](auto wake) mutable {
-    Zum::recoveryIssue(db->requests, Zm::now() + ZuTime{10},
+    Zum::recoveryIssue({}, db->requests, Zm::now() + ZuTime{10},
       db, rng, Zum::RecoveryIssueConfig{
         .issuer = "issuer", .actor = "administrator", .userID = 42,
         .now = 350, .expires = 410, .version = recoveryVersion + 1},
@@ -945,9 +944,9 @@ static void runtimeRecovery()
   ZuCheck(loadUser(context, 42).version == recoveryVersion &&
     loadUser(context, 42).state == Zum::State::Active);
   ZuCheck(ZmBlock<bool>{}([
-    &db, &context, &rng, &recoveryCapability, recoveryVersion
+    &db, &rng, &recoveryCapability, recoveryVersion
   ](auto wake) mutable {
-    Zum::recoveryIssue(db->requests, Zm::now() + ZuTime{10},
+    Zum::recoveryIssue({}, db->requests, Zm::now() + ZuTime{10},
       db, rng, Zum::RecoveryIssueConfig{
       .issuer = "issuer",
       .actor = "administrator",
@@ -987,7 +986,7 @@ static void runtimeRecovery()
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &recoveryCapability, &recoveryBegin
   ](auto wake) mutable {
-    Zum::recoveryBegin(db->requests, Zm::now() + ZuTime{10},
+    Zum::recoveryBegin({}, db->requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(recoveryCapability),
       Zum::Bytes{ZuBSpan{"recovery binding"}}, Zum::RecoveryBeginConfig{
 	.issuer = "issuer",
@@ -1044,9 +1043,9 @@ static void runtimeRecovery()
     recoveryGrant.challenge, "https://example.com", "example.com",
     registrationInput));
   ZuCheck(ZmBlock<int>{}([
-    &db, &context, &recoveryBegin, &registrationInput
+    &db, &recoveryBegin, &registrationInput
   ](auto wake) mutable {
-    Zum::recoveryFinish(db->requests, Zm::now() + ZuTime{10},
+    Zum::recoveryFinish({}, db->requests, Zm::now() + ZuTime{10},
       db, ZuMv(recoveryBegin.ceremonyID),
       Zum::Bytes{ZuBSpan{"recovery binding"}}, ZuMv(registrationInput),
       Zum::EnrollmentFinishConfig{
@@ -1109,7 +1108,7 @@ static void runtimeRecovery()
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &rng, &browserEnrollment, &browserEnrollmentBegin
   ](auto wake) mutable {
-    Zum::enrollmentBegin(db->requests, Zm::now() + ZuTime{10},
+    Zum::enrollmentBegin({}, db->requests, Zm::now() + ZuTime{10},
       context, rng,
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(browserEnrollment), [
 	&browserEnrollmentBegin, wake = ZuMv(wake)
@@ -1129,9 +1128,9 @@ static void runtimeRecovery()
     browserEnrollmentGrant.challenge, "https://example.com", "example.com",
     registrationInput));
   ZuCheck(ZmBlock<int>{}([
-    &db, &context, &browserEnrollmentBegin, &registrationInput
+    &db, &browserEnrollmentBegin, &registrationInput
   ](auto wake) mutable {
-    Zum::enrollmentFinish(db->requests, Zm::now() + ZuTime{10}, db,
+    Zum::enrollmentFinish({}, db->requests, Zm::now() + ZuTime{10}, db,
       ZuMv(browserEnrollmentBegin.ceremonyID),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(registrationInput),
       Zum::EnrollmentFinishConfig{
@@ -1182,7 +1181,7 @@ static void runtimeRecovery()
 
 
   ZmSemaphore requestsDown;
-  db->requests->deactivate([&requestsDown]() { requestsDown.post(); });
+  db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};

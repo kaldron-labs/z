@@ -110,20 +110,20 @@ template <typename Client>
 static bool run(Client &client, const Options &options, App &app)
 {
   app.ready_.wait();
-  if (app.failed_) return false;
+  if (app.failed_) { (void)client.stop(); return false; }
   ZmRef<Call> call = new Call{};
   bool sent = options.stream ?
     client.template call<AddStream>(
       AddRequest{options.lhs, options.rhs}, call) :
     client.template call<Add>(AddRequest{options.lhs, options.rhs}, call);
-  if (!sent) return false;
+  if (!sent) { (void)client.stop(); return false; }
   call->done.wait();
   if (!call->failed_)
     ZiLOG(Info, "zjrpc", ([value = call->value](auto &s) {
       s << "result=" << value;
     }));
-  bool ok = !call->failed_ && client.stop();
-  return ok;
+  bool stopped = client.stop();
+  return !call->failed_ && stopped;
 }
 
 int main(int argc, char **argv)
@@ -160,11 +160,13 @@ int main(int argc, char **argv)
     auto text = ZtScratch(TextScratch, options.host.length() +
 	ZuBox<unsigned>{options.port}.length() + ZuStringT<"ws://:/rpc">{}().length());
     text << "ws://" << options.host << ':' << options.port << "/rpc";
-    if (Zws::URI::parse(uri, text).ok() && client.init(
+    bool started = Zws::URI::parse(uri, text).ok() && client.init(
 	Zhttp::HubConfig{&mx}, Zhttp::TCPConfig{},
 	Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, Zjrpc::WSConfig{}, &app) &&
-	client.start() && client.connect(uri, "jrpc"))
+	client.start();
+    if (started && client.connect(uri, "jrpc"))
       ok = run(client, options, app);
+    else if (started) (void)client.stop();
     client.final();
   } else {
     Zjrpc::HTTPClient<App, ExampleCatalog, Zhttp::Profiles<Zhttp::H1TCP>> client;

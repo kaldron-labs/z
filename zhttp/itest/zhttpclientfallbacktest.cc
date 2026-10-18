@@ -416,7 +416,9 @@ void fallback()
     .tcp(true).tls(true).quic(true);
   bool agentInited = agent.init(
     hub, 1, agentConfig, Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(cert),
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert);
+    }),
     Zhttp::QUICConfig{}.caPath(untrustedCert).maxIdleTimeout(500));
   agentInited = agentInited && agent.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
@@ -473,7 +475,9 @@ void fallback()
   ClientApp noReplayClient;
   bool noReplayInited = noReplayClient.init(
     hub, 1, agentConfig, Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(cert),
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert);
+    }),
     Zhttp::QUICConfig{}.caPath(untrustedCert).maxIdleTimeout(500));
   noReplayInited = noReplayInited && noReplayClient.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
@@ -517,7 +521,9 @@ void fallback()
     .tcp(true).tls(true).quic(true);
   bool cacheInited = cachedClient.init(
     hub, 1, cacheConfig, Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(cert),
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert);
+    }),
     Zhttp::QUICConfig{}.caPath(cert).maxIdleTimeout(500));
   cacheInited = cacheInited && cachedClient.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port});
@@ -605,7 +611,9 @@ void fallback()
     .tcp(true).tls(false).quic(true);
   bool disabledInited = disabledClient.init(
     hub, 1, disabledDefaults, Zhttp::TCPConfig{},
-    Zhttp::H2Config{}.caPath(cert), Zhttp::QUICConfig{});
+    Zhttp::H2Config{}.tls([&cert](auto &tls) {
+      tls.caPath(cert);
+    }), Zhttp::QUICConfig{});
   disabledInited = disabledInited && disabledClient.pool(
     0, Zhttp::Destination{ZuBSpan{"127.0.0.1"}, port},
     Zhttp::Config{}

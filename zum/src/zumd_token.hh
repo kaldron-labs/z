@@ -15,6 +15,8 @@
 
 #include <zlib/zumd_oauth.hh>
 #include <zlib/zumd_jwt.hh>
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/zumd_request.hh>
 
 namespace Zum {
@@ -62,10 +64,10 @@ struct RevokeConfig {
 };
 
 ZumExtern bool tokenRequest(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String form, String authorization, TokenConfig, SignFn, TokenFn);
 ZumExtern bool revokeRequest(
-  Requests *, ZuTime deadline, DB *, String form,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, String form,
   String authorization, RevokeConfig, RevokeFn);
 
 } // namespace Zum

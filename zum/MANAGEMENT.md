@@ -66,16 +66,15 @@ UserInvite definition and physical schema are covered by the SQLite staged
 recovery suite. Prior schemas and saga definitions are unsupported; backward
 compatibility and data migration are non-goals.
 
-Listener availability is separate from database authority. Passive nodes expose
-`/health/live`; `/health/ready` and database-dependent operations return 503
-until their respective activation/readiness requirements are met. Zdb activation
-starts bootstrap and signing preparation before administrative admission opens.
-Deactivation closes admission; it does not require closing the health listener.
-The `zumd: listening` startup event therefore does not indicate IAM readiness.
-`zumd: active` indicates completed active-node preparation, but a new store still
-requires initial-admin enrollment before `/health/ready` succeeds. Invalid key
-or schema checks may fail after passive listening starts; they must never open
-active admission. See the implementation ledger for runtime verification status.
+Multiplexer and Zdb startup are independent of database role activation. Zdb's
+`up` callback starts network listeners after bootstrap and signing preparation;
+`down` stops them and drains admitted work. A standby process keeps its runtime
+and native telemetry available without an HTTP listener or HTTP health routes.
+The active listener exposes `/health/live`, while `/health/ready` returns 503
+until initial-admin enrollment completes on a new store. `zumd: listening` means
+the active listener was bound; `zumd: active` means active-node preparation and
+admission startup completed. Invalid-key or schema failure must not activate
+listeners. See the implementation ledger for runtime verification status.
 
 Administrative paths have the `/admin` prefix. GET carries filters in the query string
 and no body. Mutations carry JSON; DELETE has no body. Known paths called with

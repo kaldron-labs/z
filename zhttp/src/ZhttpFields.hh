@@ -164,7 +164,7 @@ void dispatch(
     }
     ZuSwitch::dispatch<Keys::N>(
       i, [&value, &header, &static_](auto i) {
-	static constexpr unsigned I = i;
+	enum { I = i };
 	using Key = ZuType<I, Keys>;
 	using KeyValues = List::template Value<I>;
 	if constexpr (KeyValues::N) {
@@ -340,12 +340,12 @@ void parserHeader(Parser &parser, FieldSection::T section,
   if constexpr (List::N) {
     if (key >= 0) {
       ZuSwitch::dispatch<List::N>(key,
-	[&parser, section, fixed, value](auto I) {
-	  using Key = typename List::template Key<I>;
-	  using Values = typename List::template Value<I>;
+	[&parser, section, fixed, value]<unsigned ID>(ZuUnsigned<ID>) {
+	  using Key = typename List::template Key<ID>;
+	  using Values = typename List::template Value<ID>;
 	  if constexpr (Values::N) {
 	    if (fixed >= 0) {
-	      ZuSwitch::dispatch<Values::N>(fixed, [&parser, section](auto J) {
+	      ZuSwitch::dispatch<Values::N>(fixed, [&parser, section]<unsigned J>(ZuUnsigned<J>) {
 		parser.template header<Key, ZuType<J, Values>>(section);
 	      });
 	      return;

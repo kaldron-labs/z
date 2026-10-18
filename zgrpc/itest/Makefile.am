@@ -1,0 +1,33 @@
+METASOURCES = AUTO
+AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
+	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src \
+	-I$(top_srcdir)/zf/src -I$(top_srcdir)/zi/src \
+	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src \
+	-I$(top_srcdir)/zquic/src -I$(top_srcdir)/zhttp/src \
+	-I$(top_srcdir)/zpb/src -I$(top_srcdir)/zgrpc/src \
+	-I$(top_srcdir)/zi/test -I$(top_srcdir)/zquic/test -I$(top_srcdir)/zhttp/test \
+	@Z_CPPFLAGS@
+AM_CXXFLAGS = @Z_CXXFLAGS@
+AM_LDFLAGS = @Z_LDFLAGS@
+LDADD = $(top_builddir)/zi/test/libZiTest.la \
+	$(top_builddir)/zgrpc/src/libZgrpc.la \
+	$(top_builddir)/zpb/src/libZpb.la \
+	$(top_builddir)/zhttp/src/libZhttp.la $(top_builddir)/zquic/src/libZquic.la \
+	$(top_builddir)/ztls/src/libZtls.la $(top_builddir)/ztcp/src/libZtcp.la \
+	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
+	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
+	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
+	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+noinst_PROGRAMS = zgrpcpipetest zgrpcwiretest zgrpcclienttest zgrpcservertest zgrpcdeadlinetest zgrpcflowtest
+zgrpcflowtest_SOURCES = zgrpcflowtest.cc
+zgrpcdeadlinetest_SOURCES = zgrpcdeadlinetest.cc
+zgrpcservertest_SOURCES = zgrpcservertest.cc
+zgrpcclienttest_SOURCES = zgrpcclienttest.cc
+noinst_HEADERS = ZgrpcWire.hh
+zgrpcwiretest_SOURCES = zgrpcwiretest.cc
+zgrpcpipetest_SOURCES = zgrpcpipetest.cc
+EXTRA_DIST = README.md
+
+.PHONY: test
+test: $(noinst_PROGRAMS)
+	prove $(noinst_PROGRAMS)

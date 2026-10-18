@@ -25,6 +25,16 @@ using Catalog = ZuTypeList<Echo>;
 struct Pipe {
   Zi::Handle read = Zi::nullHandle();
   Zi::Handle write = Zi::nullHandle();
+  ~Pipe() {
+    if (!Zi::nullHandle(read)) {
+      ZiFile file;
+      (void)file.init(read, ZiFile::ReadOnly | ZiFile::GC);
+    }
+    if (!Zi::nullHandle(write)) {
+      ZiFile file;
+      (void)file.init(write, ZiFile::WriteOnly | ZiFile::GC);
+    }
+  }
   bool open() {
 #ifndef _WIN32
     int handles[2];
@@ -105,13 +115,9 @@ friend inline ZuStringT<"ZjrpcITest.BatchCall"> ZmNHeapID(BatchCall *);
   void failed() { ++failures; done.post(); }
 };
 
-static void testIO()
+static ZiMxParams mxParams()
 {
-  ZuTestScope(testIO);
-  Pipe requests, replies;
-  ZuCheck(requests.open(), (return));
-  ZuCheck(replies.open(), (return));
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
+  return ZiMxParams{}.scheduler([](auto &scheduler) {
     scheduler.nThreads(6)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); })
@@ -119,67 +125,117 @@ static void testIO()
       .thread(4, [](auto &thread) { thread.isolated(1).name("srvTx"); })
       .thread(5, [](auto &thread) { thread.isolated(1).name("cliRx"); })
       .thread(6, [](auto &thread) { thread.isolated(1).name("cliTx"); });
-  }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
+  }).rxThread(1).txThread(2);
+}
+
+static void testIO()
+{
+  ZuTestScopeRT(testIO);
+  Pipe requests, replies;
+  ZuCheckRT(requests.open(), (return));
+  ZuCheckRT(replies.open(), (return));
+  ZiMultiplex mx{mxParams()};
+  ZuCheckRT(mx.start(), (return));
   SrvApp srv;
   CliApp cli;
   Zjrpc::IOServer<SrvApp, Catalog> server;
   Zjrpc::IOClient<CliApp, Catalog> client;
-  ZuCheck(server.init(&mx, Zjrpc::StdioConfig{}
+  ZuCheckRT(server.init(&mx, Zjrpc::StdioConfig{}
     .input(requests.read).output(replies.write)
     .rxThread("srvRx").txThread("srvTx"), &srv));
-  ZuCheck(client.init(&mx, Zjrpc::StdioConfig{}
+  ZuCheckRT(client.init(&mx, Zjrpc::StdioConfig{}
     .input(replies.read).output(requests.write)
     .rxThread("cliRx").txThread("cliTx"), &cli));
-  ZuCheck(server.start());
-  ZuCheck(client.start());
+  ZuCheckRT(server.start());
+  ZuCheckRT(client.start());
   ZmRef<Call> call = new Call{};
-  ZuCheck(client.call<Echo>(Value{42}, call));
+  ZuCheckRT(client.call<Echo>(Value{42}, call));
   srv.arrived.wait();
   auto complete = ZuMv(srv.deferred);
   complete(); // Complete from outside the endpoint's owner shard.
   call->done.wait();
-  ZuCheck(call->value == 42 && !call->failures && srv.calls == 1);
+  ZuCheckRT(call->value == 42 && !call->failures && srv.calls == 1);
   ZmRef<Call> reverse = new Call{};
-  ZuCheck(server.call<Echo>(Value{71}, reverse));
+  ZuCheckRT(server.call<Echo>(Value{71}, reverse));
   reverse->done.wait();
-  ZuCheck(reverse->value == 71 && !reverse->failures && cli.calls == 1);
+  ZuCheckRT(reverse->value == 71 && !reverse->failures && cli.calls == 1);
   Zjrpc::Batch<Catalog> batch;
-  ZuCheck(batch.request<Echo>(Zjrpc::ID{int64_t{2001}}, Value{42}));
+  ZuCheckRT(batch.request<Echo>(Zjrpc::ID{int64_t{2001}}, Value{42}));
   batch.notify<Echo>(Value{0});
-  ZuCheck(batch.request<Echo>(Zjrpc::ID{int64_t{2002}}, Value{11}));
+  ZuCheckRT(batch.request<Echo>(Zjrpc::ID{int64_t{2002}}, Value{11}));
   ZmRef<BatchCall> aggregate = new BatchCall{};
-  ZuCheck(client.callBatch(ZuMv(batch), aggregate));
+  ZuCheckRT(client.callBatch(ZuMv(batch), aggregate));
   srv.arrived.wait();
   auto batchComplete = ZuMv(srv.deferred);
   batchComplete();
   aggregate->done.wait();
   srv.notified.wait();
-  ZuCheck(aggregate->completions == 1 && !aggregate->failures);
+  ZuCheckRT(aggregate->completions == 1 && !aggregate->failures);
   const auto &entries = aggregate->reply.entries();
-  ZuCheck(entries.length() == 2);
+  ZuCheckRT(entries.length() == 2);
   if (entries.length() == 2) {
     auto first = Zjrpc::decode(entries[0].ptr());
     auto last = Zjrpc::decode(entries[1].ptr());
-    ZuCheck(first.id() == Zjrpc::ID{int64_t{2002}} && last.id() == Zjrpc::ID{int64_t{2001}});
+    ZuCheckRT(first.id() == Zjrpc::ID{int64_t{2002}} && last.id() == Zjrpc::ID{int64_t{2001}});
   }
   Zjrpc::Batch<Catalog> notifications;
   notifications.notify<Echo>(Value{0});
   notifications.notify<Echo>(Value{1});
-  ZuCheck(client.notifyBatch(ZuMv(notifications)));
+  ZuCheckRT(client.notifyBatch(ZuMv(notifications)));
   srv.notified.wait();
   srv.notified.wait();
-  ZuCheck(server.notify<Echo>(Value{1}));
+  ZuCheckRT(server.notify<Echo>(Value{1}));
   cli.notified.wait();
-  ZuCheck(client.notify<Echo>(Value{2}));
+  ZuCheckRT(client.notify<Echo>(Value{2}));
   srv.notified.wait();
-  ZuCheck(client.stop());
-  ZuCheck(server.stop());
+  ZuCheckRT(client.stop());
+  ZuCheckRT(server.stop());
+  ZiFile retained;
+  ZuCheckRT(retained.init(requests.write, ZiFile::WriteOnly) == Zi::OK);
+  bool serverRestarted = server.start();
+  bool clientRestarted = client.start();
+  ZuCheckRT(serverRestarted && clientRestarted);
+  if (serverRestarted && clientRestarted) {
+    ZuCheckRT(client.start()); // canonical idempotence does not rerun ready()
+    ZmRef<Call> restarted = new Call{};
+    bool sent = client.call<Echo>(Value{17}, restarted);
+    ZuCheckRT(sent);
+    bool completed = sent && !restarted->done.timedwait(Zm::now() + ZuTime{5});
+    ZuCheckRT(completed);
+    if (completed) ZuCheckRT(restarted->value == 17 && !restarted->failures);
+  }
+  ZmSemaphore stopped;
+  bool stopOK = false;
+  client.stop([&stopped, &stopOK](bool ok) { stopOK = ok; stopped.post(); });
+  stopped.wait();
+  ZuCheckRT(stopOK && client.state() == ZmEngineState::Stopped);
+  ZuCheckRT(client.stop());
+  ZuCheckRT(server.stop());
+  ZuCheckRT(server.stop());
   client.final();
   server.final();
   mx.stop();
-  ZuCheck(!srv.failures && !cli.failures);
-  ZuCheck(srv.closes == 1 && cli.closes == 1);
+  ZuCheckRT(!srv.failures && !cli.failures);
+  ZuCheckRT(srv.closes == 2 && cli.closes == 2);
+}
+
+static void testInitAndFailure()
+{
+  ZuTestScopeRT(testInitAndFailure);
+  ZiMultiplex mx{mxParams()};
+  ZuCheckRT(mx.start(), (return));
+  CliApp app;
+  Zjrpc::IOClient<CliApp, Catalog> client;
+  auto config = Zjrpc::StdioConfig{}.input(Zi::nullHandle())
+    .rxThread("cliRx").txThread("cliTx");
+  ZuCheckRT(client.init(&mx, config, &app));
+  client.final(); // no runtime was constructed
+  ZuCheckRT(client.init(&mx, config, &app));
+  ZuCheckRT(!client.start());
+  ZuCheckRT(client.state() == ZmEngineState::Stopped && !client.up());
+  ZuCheckRT(app.failures == 1);
+  client.final(); // startup rollback already released its duplicated output
+  mx.stop();
 }
 
 int main(int argc, char **argv)
@@ -187,6 +243,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testIO);
+  ZuTestCall(testInitAndFailure);
   return 0;
 }
 

@@ -25,6 +25,7 @@
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmRBTree.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZiIP.hh>
@@ -80,9 +81,11 @@ Writer<Write> writer(Write &write) { return {write}; }
 
 } // namespace Builder_
 
-constexpr unsigned DefltMaxBody = (1<<20);	// 1M default
-constexpr unsigned DefltMaxStartLine = (1<<13);	// 8K
-constexpr unsigned DefltMaxHeaderSection = (1<<16);	// 64K
+enum {
+  DefltMaxBody = 1<<20,		// 1M default
+  DefltMaxStartLine = 1<<13,	// 8K
+  DefltMaxHeaderSection = 1<<16	// 64K
+};
 
 using BodyBufAlloc = Zi::IOBufAlloc<ZiRxQueue::Node,
   ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Body.Rx">>;
@@ -600,7 +603,10 @@ struct ResponseOps {
   void (*encode)(void *, FieldContext &, void *, void (*)(void *, FieldProvider &));
 };
 
-struct ResponseRecord : MessageRecord, ZmList_NodeExt<ResponseRecord> {
+// Ready responses use list links; ordered H1 replies use separate tree links.
+// The three tree words avoid an unbounded sorted-list scan without a wrapper.
+struct ResponseRecord : MessageRecord, ZmList_NodeExt<ResponseRecord>,
+    ZmRBTree_NodeExt<ResponseRecord, true> {
   using Ext = ZmList_NodeExt<ResponseRecord>;
 
   const ResponseOps *responseOps = nullptr;
@@ -611,6 +617,7 @@ struct ResponseRecord : MessageRecord, ZmList_NodeExt<ResponseRecord> {
 
   ResponseRecord &data() { return *this; }
   const ResponseRecord &data() const { return *this; }
+  uint64_t key() const { return sequence; }
   uint64_t routeSequence() const { return sequence; }
   void routeSequence(uint64_t value) { sequence = value; }
   unsigned status() const { return responseOps->status(ctx); }
@@ -711,6 +718,9 @@ public:
   void send(ResponseRef response) {
     m_channelOps->send(ctx, 0, false, ZuMv(response));
   }
+  // H1 negotiation and streamTx() are synchronous Rx operations;
+  // streamTx_() is the synchronous Tx operation. Printers are borrowed only
+  // for the duration of the call. End/reset may be requested on either shard.
   bool streamEnable(bool enabled = true) {
     return m_channelOps->streamEnable(ctx, enabled);
   }

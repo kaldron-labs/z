@@ -9,6 +9,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmScratch.hh>
+#include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZiLog.hh>
@@ -184,6 +185,33 @@ void testLambdaSinkReceivesEvents()
 
 } // namespace
 
+static void testOverflowStop()
+{
+  ZuTestScope(testOverflowStop);
+  ZmSemaphore entered, release;
+  unsigned calls = 0;
+  configure(ZiLog::lambdaSink([&calls, &entered, &release](
+      ZeLogBuf &, const ZeEventInfo &) {
+    if (++calls == 1) {
+      // Model a blocking sink on the dedicated logger, not a scheduler shard.
+      entered.post();
+      release.wait();
+    }
+  }));
+  enum { RingBytes = 4096, Count = RingBytes/sizeof(uintptr_t) + 1 };
+  ZiLog::ringBufSize(RingBytes);
+  ZiLog::start();
+  ZiLOG(Info, "ZiLogOverflow", "enter sink");
+  entered.wait();
+  // Even the invocation pointers exceed the ring while its reader is held.
+  for (unsigned i = 0; i < Count; ++i)
+    ZiLOG(Info, "ZiLogOverflow", "queued event");
+  release.post();
+  ZiLog::stop();
+  ZuCheck(calls == Count + 1);
+  ZiLog::ringBufSize(1U<<20);
+}
+
 int main(int argc, char **argv)
 {
   ZiTestResidue::init("ZiLogTest");
@@ -196,6 +224,7 @@ int main(int argc, char **argv)
   ZuTestCall(testFileSinkWritesAndAges);
   ZuTestCall(testCsvSinkWritesAndParses);
   ZuTestCall(testLambdaSinkReceivesEvents);
+  ZuTestCall(testOverflowStop);
   ZiLog::stop();
   return 0;
 }

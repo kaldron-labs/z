@@ -10,6 +10,9 @@
 #define ztcagent_daemon_HH
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZtlsVault.hh>
 
@@ -37,7 +40,13 @@ struct AgentEnv {
   AgentString ring{"ztc"};
 };
 
-class Agent {
+namespace AgentCredit {
+  enum : uint64_t { Closed = uint64_t{1} << 62, Count = Closed - 1 };
+}
+
+class Agent : private ZmEngine<Agent> {
+friend ZmEngine<Agent>;
+  using Engine = ZmEngine<Agent>;
 public:
   using Link = Zws::ClientLink<Agent, Zhttp::H1TLS>;
 
@@ -47,8 +56,13 @@ public:
   Agent &operator =(const Agent &) = delete;
 
   bool init(const AgentCf &, AgentEnv);
-  bool start();
-  bool stop();
+  // Callback forms are asynchronous; blocking forms belong on the main thread.
+  // Complete stop before final; startup does not promise OAuth/WSS readiness.
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::running;
+  using Engine::stopping;
   void final();
   void provisioned(bool);
   ZuBSpan clientSecret() const;
@@ -70,6 +84,22 @@ public:
   struct State;
 
 private:
+  void start_();
+  void startHTTP_();
+  void startWS_();
+  void startScan_();
+  void scanBatch_();
+  void startReady_();
+  void stop_();
+  void stopRx_(bool);
+  void telDone_();
+  void drain_(bool);
+  void clearBatch_(bool);
+  void closeRuntime_(bool);
+
+private:
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t> m_credit = AgentCredit::Closed;
   State *m_state = nullptr;
 };
 

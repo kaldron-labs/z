@@ -29,7 +29,6 @@ friend inline ZuStringT<"Zjrpc.Test.Call"> ZmNHeapID(Call *);
   int result = 0;
   unsigned failures = 0;
   bool removed = false;
-  bool cancelOK = true;
 
   Call(Zjrpc::PendingCalls *pending_, Zjrpc::ID id_) :
     pending{pending_}, id{ZuMv(id_)} { }
@@ -62,6 +61,11 @@ static void pendingTest()
   ZuCheck(pending.close(1));
   ZuCheck(call->removed && call->failures == 1);
   ZuCheck(!pending.add<Echo>(id, call));
+  ZuCheck(pending.init(1));
+  ZuCheck(pending.add<Echo>(id, call));
+  ZuCheck(pending.receive(parsed.envelope));
+  ZuCheck(call->result == 7 && !pending.count());
+  ZuCheck(pending.close(1));
 }
 
 struct Work : public Zjrpc::InboundHash::Node {
@@ -194,6 +198,7 @@ struct Responder : public Zjrpc::CompletionSet<Responder, Responder> {
   unsigned cancellations = 0;
   int value = 0;
   bool removed = false;
+  bool cancelOK = true;
 
   Zjrpc::CompletionRoute completionRoute_() const { return route; }
 
@@ -266,6 +271,12 @@ struct SendHarness : public Zjrpc::Caller<SendHarness, ZuTypeList<Echo>> {
     return true;
   }
   template <typename M> bool send(const M &) { ++sent; return true; }
+  template <typename L> void continue_(L &&l) { posts.push(ZuFwd<L>(l)); }
+  bool hold() { return Zjrpc::BatchCaller<SendHarness>::admitCalls(); }
+  void release() { Zjrpc::BatchCaller<SendHarness>::releaseCalls(); }
+  template <typename L> bool close(L &&l) { return this->closeCalls(ZuFwd<L>(l)); }
+  bool waiting() const { return this->callsWaiting(); }
+  bool reopen() { return this->init(config.maxPending); }
   void fail_() { failed = true; }
   bool turn() {
     auto post = posts.shift();
@@ -306,6 +317,28 @@ static void sendPostsTest()
   ZuCheck(sender.notify<Echo>(Body{10}));
   while (sender.turn()) { }
   ZuCheck(sender.sent == 6 && !sender.failed);
+
+  // An admitted caller has not yet posted its work when close registers.
+  // Its final credit must notify once, with no readiness-only queued turns.
+  ZuCheck(sender.hold());
+  unsigned ready = 0;
+  ZuCheck(!sender.close([&ready]() { ++ready; }));
+  ZuCheck(sender.waiting() && !sender.posts.count_());
+  ZuCheck(!sender.hold());
+  sender.release();
+  ZuCheck(sender.posts.count_() == 1 && !ready);
+  ZuCheck(!sender.close([&ready]() { ready += 100; }));
+  ZuCheck(sender.waiting() && sender.posts.count_() == 1);
+  ZuCheck(sender.turn());
+  ZuCheck(ready == 1 && !sender.waiting() && !sender.posts.count_());
+  ZuCheck(sender.close([&ready]() { ++ready; }));
+  ZuCheck(ready == 1);
+
+  // A credit returned before registration needs no notification at all.
+  ZuCheck(sender.reopen() && sender.hold());
+  sender.release();
+  ZuCheck(sender.close([&ready]() { ++ready; }));
+  ZuCheck(ready == 1 && !sender.posts.count_());
 }
 
 static void deferredCloseTest()

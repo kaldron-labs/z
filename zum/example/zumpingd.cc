@@ -334,7 +334,7 @@ int main(int argc, char **argv)
   App app;
   bool ok = transport.init(&mx, config.zum.issuerURL,
     config.zum.managementIssuerURL, config.zum.managementURL,
-    config.caPath);
+    config.caPath) && transport.start();
   Zum::String ssfURL = config.ssfDeliveryURL;
   if (!ssfURL) ssfURL << "http://127.0.0.1:" << config.port << "/ssf";
   bool initialized = ok && app.service.init(Zum::ServiceConfig{
@@ -360,9 +360,11 @@ int main(int argc, char **argv)
       std::cout << "zumpingd refresh family revoked\n" << std::flush;
     });
     ZmSemaphore ready;
-    app.service.start([&ready, &ok](int error) {
-      ok = error == Zum::ServiceError::OK; ready.post();
-	if (!ok) std::cerr << "zumpingd: service start failed error=" << error << '\n';
+    app.service.start([&ready, &ok, &app](bool started) {
+      ok = started;
+      if (!ok) std::cerr << "zumpingd: service start failed error=" <<
+        app.service.startError() << '\n';
+      ready.post();
     });
     ready.wait();
     if (ok) {
@@ -392,10 +394,11 @@ int main(int argc, char **argv)
   if (listener) { (void)app.stop(); app.final(); }
   if (initialized) {
     ZmSemaphore drained;
-    app.service.stop([&drained](int) { drained.post(); });
+    app.service.stop([&drained](bool) { drained.post(); });
     drained.wait();
     app.service.final();
   }
+  (void)transport.stop();
   transport.final();
   mx.stop();
   ZiLog::stop();

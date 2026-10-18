@@ -444,7 +444,7 @@ private:
     }
     static R mvInvoke(uintptr_t &o, Args_... args) {
       o = disown(o);
-      return (*Fn)(ZmRef<O>::acquire(ptr<O>(o)), ZuFwd<Args_>(args)...);
+      return (*Fn)(ZmRef<O>::acquire(ptr<O>(o), &o), ZuFwd<Args_>(args)...);
     }
   };
 
@@ -584,7 +584,7 @@ private:
     static R invoke(uintptr_t &o, Args_... args) {
       o = disown(o);
       return reinterpret_cast<const L *>(0)->operator ()(
-	    ZmRef<O>::acquire(ptr<O>(o)), ZuFwd<Args_>(args)...);
+	    ZmRef<O>::acquire(ptr<O>(o), &o), ZuFwd<Args_>(args)...);
     }
     static ZmFn fn(ZmRef<O> o, L) {
       return ZmFn{ZmFn::Pass{}, &LambdaMvRefInvoker::invoke, ZuMv(o)};

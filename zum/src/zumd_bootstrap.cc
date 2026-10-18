@@ -529,7 +529,7 @@ private:
       finish_(false);
       return;
     }
-    if (!bootstrapIssue(m_requests, Zm::now() + ZuTime{15}, m_db, *m_rng,
+    if (!bootstrapIssue({}, m_requests, Zm::now() + ZuTime{15}, m_db, *m_rng,
         BootstrapConfig{.issuer = ZuMv(issuer),
           .appID = m_issuer.coreAppID,
           .userName = m_config.admin, .label = "bootstrap passkey",

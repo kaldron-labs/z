@@ -10,7 +10,8 @@
 namespace Zum {
 
 Requests::RequestData::RequestData(Requests *requests, Fn cancel) :
-  m_requests{requests}, m_cancel{ZuMv(cancel)} { }
+  m_requests{requests}, m_scheduler{requests->scheduler()},
+  m_sid{requests->sid()}, m_cancel{ZuMv(cancel)} { }
 
 void Requests::RequestData::start_(ZuTime deadline)
 {
@@ -30,13 +31,15 @@ void Requests::RequestData::cancel_()
 
 void Requests::RequestData::timeout_()
 {
+  if (m_done.load_()) return;
   ZmRef<Node> self{static_cast<Node *>(this)};
   cancel_();
 }
 
 bool Requests::init(ZmScheduler *scheduler, unsigned sid, unsigned limit)
 {
-  if (!scheduler || !sid || sid > scheduler->params().nThreads() || !limit)
+  if (Engine::state() != ZmEngineState::Stopped ||
+      !scheduler || !sid || sid > scheduler->params().nThreads() || !limit)
     return false;
   m_scheduler = scheduler;
   m_sid = sid;
@@ -44,14 +47,14 @@ bool Requests::init(ZmScheduler *scheduler, unsigned sid, unsigned limit)
   return true;
 }
 
-void Requests::activate()
+void Requests::activate(CtrlFn complete)
 {
-  m_up = 1;
+  Engine::start(ZuMv(complete));
 }
 
 bool Requests::admit_(Node *request, ZuTime deadline)
 {
-  if (!m_up || m_closing) {
+  if (!active()) {
     request->cancel_();
     return false;
   }
@@ -94,52 +97,93 @@ void Requests::remove_(RequestData *request)
 {
   Node *node = static_cast<Node *>(request);
   switch (request->m_list) {
-  case RequestListState::Active:
-    m_requests.delNode(node);
-    break;
-  case RequestListState::Draining:
-    m_draining.delNode(node);
-    break;
-  case RequestListState::None:
-    break;
+    case RequestListState::Active: {
+      auto held = m_requests.delNode(node);
+      m_retiring.pushNode(ZuMv(held));
+      break;
+    }
+    case RequestListState::None:
+      m_retiring.pushNode(node);
+      break;
+    default:
+      ZmAssert_(false);
   }
-  request->m_list = RequestListState::None;
-  --m_count;
+  request->m_list = RequestListState::Retiring;
+  postRetire_();
 }
 
-void Requests::deactivate(Fn complete)
+void Requests::postRetire_()
 {
-  m_up = 0;
-  invoke_([self = ZmRef<Requests>{this}, complete = ZuMv(complete)]() mutable {
-    if (self->m_closing) {
-      if (complete) complete();
-      return;
-    }
-    self->m_closing = true;
-    self->m_deactivated = ZuMv(complete);
-    self->deactivate_();
-  });
+  if (m_retirePosted) return;
+  m_retirePosted = true;
+  // del() precedes this owner continuation. Any timeout that was already
+  // enqueued can still inspect the retained node, whose done flag is set.
+  m_scheduler->run([this]() { retire_(); }, m_sid);
+}
+
+void Requests::retire_()
+{
+  m_retirePosted = false;
+  unsigned left = RequestWork::Batch;
+  while (left--) {
+    auto request = m_retiring.shift();
+    if (!request) break;
+    request->m_list = RequestListState::None;
+    request = nullptr;
+    --m_credit; // retirement storage is part of the admission bound
+  }
+  if (!m_retiring.empty_()) postRetire_();
+  else if (m_draining) deactivated_();
+}
+
+void Requests::start_()
+{
+  if (!m_scheduler) { Engine::started(false); return; }
+  m_scheduler->run([this]() {
+    ZmAssert_(m_credit.load_() == RequestCredit::Closed);
+    ZmAssert_(m_requests.empty_() && m_retiring.empty_() && !m_retirePosted && !m_draining);
+    m_credit = 0;
+    Engine::started(true);
+  }, m_sid);
+}
+
+void Requests::stop_()
+{
+  m_credit |= RequestCredit::Closed;
+  m_scheduler->run([this]() { deactivate_(); }, m_sid);
+}
+
+void Requests::deactivate(CtrlFn complete)
+{
+  Engine::stop(ZuMv(complete));
 }
 
 void Requests::deactivate_()
 {
-  while (auto request = m_requests.shift()) {
-    Node *node = request.ptr();
-    node->m_list = RequestListState::Draining;
-    m_draining.pushNode(ZuMv(request));
-    node->cancel_();
+  unsigned left = RequestWork::Batch;
+  while (left--) {
+    auto request = m_requests.headNode();
+    if (!request) break;
+    request->cancel_();
   }
-  m_scheduler->run([self = ZmRef<Requests>{this}]() {
-    self->deactivated_();
+  if (!m_requests.empty_()) {
+    m_scheduler->run([this]() { deactivate_(); }, m_sid);
+    return;
+  }
+  // One ordered barrier covers cancellation and already-enqueued timers.
+  // Later reserved admissions notify through their actual retirement.
+  m_scheduler->run([this]() {
+    m_draining = true;
+    deactivated_();
   }, m_sid);
 }
 
 void Requests::deactivated_()
 {
-  m_draining.clean();
-  m_closing = false;
-  auto complete = ZuMv(m_deactivated);
-  if (complete) complete();
+  if ((m_credit.load_() & RequestCredit::Count) ||
+      !m_retiring.empty_() || m_retirePosted) return;
+  m_draining = false;
+  Engine::stopped(true);
 }
 
 } // namespace Zum

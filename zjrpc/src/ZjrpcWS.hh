@@ -104,6 +104,13 @@ private:
 
 struct WSClientState { WSRx rx; };
 
+// Cross-thread connection publication, independent of endpoint lifecycle.
+// StopPosted retains the posting credit until its owner-shard handoff arrives.
+namespace WSConnectState {
+  enum { Idle, Posted, Assigned, Stopped, StopPosted };
+}
+
+
 // Zws performs all framing, masking, fragmentation, control and close handling.
 // The callbacks assemble one mutable JSON message, then hand it to its owner.
 template <typename Endpoint>
@@ -136,6 +143,8 @@ public:
   void pong(Link &link, ZuBSpan payload) { control_<false>(link, 0, payload); }
 
 protected:
+  void wsClosed_() { }
+
   // Rx owner: established peers close through Zws's handshake and timer.
   // A connection still opening has no WebSocket channel to close yet.
   template <typename Link>
@@ -150,9 +159,10 @@ protected:
     link.app()->txRun([this, link = ZmRef{&link}, body = ZuMv(body), code]() mutable {
       (void)code;
       try {
-	if constexpr (Closed)
+	if constexpr (Closed) {
+	  endpoint()->wsClosed_();
 	  Zws::H1_::closed(*endpoint()->impl(), *link, code, ZuBSpan{*body}, 0);
-	else
+	} else
 	  Zws::H1_::pong(*endpoint()->impl(), *link, ZuBSpan{*body}, 0);
       } catch (...) { link->close(Zws::CloseCode::Internal); }
     });

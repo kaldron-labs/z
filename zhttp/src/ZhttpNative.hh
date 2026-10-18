@@ -37,6 +37,8 @@
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpProfiles.hh>
 #include <zlib/ZhttpConfig.hh>
+#include "ZhttpCompression.hh"
+#include "ZhttpFieldImpl.hh"
 
 namespace Zhttp {
 
@@ -507,17 +509,20 @@ private:
 
 namespace H1 {
 
+struct StreamState {
+  ZtEnumValues(int8_t, HTTP, Stream, Terminal);
+};
+struct StreamTerm {
+  enum { None, End, Reset };
+};
+
 // Rx-owned Upgrade state and application dispatch.  Transport teardown has
 // already drained Rx and Tx when the generic link calls disconnected().
 template <typename Link, typename Consumer>
 class StreamBinding {
 public:
-  struct State {
-    ZtEnumValues(int8_t, HTTP, Stream, Terminal);
-  };
-  struct Term {
-    enum { None, End, Reset };
-  };
+  using State = StreamState;
+  using Term = StreamTerm;
 
   bool enable(bool enabled) {
     if (m_state != State::HTTP) return false;
@@ -562,8 +567,7 @@ public:
   }
 
   void disconnected(bool peer) {
-    if (!m_peerCap) return;
-    if (m_state == State::Stream) {
+    if (m_peerCap && m_state == State::Stream) {
       if (peer)
 	m_dispatch.peerEnd();
       else
@@ -640,6 +644,9 @@ public:
   template <typename ...Args>
   void connect(Args &&...args) {
     m_stream.reopen();
+    this->app()->txRun([link = ZmRef(impl())]() {
+      link->streamClosedTx_();
+    });
     m_connected = false;
     m_failed = false;
     m_cancelled = false;
@@ -662,6 +669,9 @@ public:
       m_connected = false;
       m_failed = true;
       m_stream.disconnected(peer);
+      this->app()->txRun([link = ZmRef(impl())]() {
+	link->streamClosedTx_();
+      });
       this->app()->disconnected(*impl(), peer);
     } else if (!m_failed) {
       m_failed = true;
@@ -674,8 +684,7 @@ public:
     this->app()->connectFailed(*impl(), transient);
   }
   void disconnect() {
-    m_cancelled = true;
-    Traits::disconnect(*this);
+    this->app()->rxInvoke([link = ZmRef(impl())]() { link->disconnectRx_(); });
   }
   ZuInline int process(Traits::RxStream &rx) {
     if (m_stream.stream()) return m_stream.process(rx);
@@ -685,28 +694,38 @@ public:
     int streamRC = m_stream.process(rx);
     return streamRC ? streamRC : rc;
   }
+  // Negotiation and borrowed application-thread writers are Rx-affine.
   bool streamEnable(bool enabled = true) {
-    return m_stream.enable(enabled);
+    ZmAssert(this->app()->rxInvoked());
+    if (!m_stream.enable(enabled)) return false;
+    this->app()->txRun([link = ZmRef(impl()), enabled]() {
+      link->streamEnableTx_(enabled);
+    });
+    return true;
   }
-  bool streamAccept() { return m_stream.accept(*impl(), *impl()); }
+  bool streamAccept() {
+    ZmAssert(this->app()->rxInvoked());
+    return m_stream.accept(*impl(), *impl());
+  }
   bool streamLocalCap() const { return m_stream.localCap(); }
   bool streamPeerCap() const { return m_stream.peerCap(); }
   template <typename L>
   void streamTx(L &&l) {
+    ZmAssert(this->app()->rxInvoked());
     if (!m_stream.tx()) return;
     auto tx = this->txStream();
     ZuFwd<L>(l)(tx);
   }
   template <typename L>
   void streamTx_(L &&l) {
-    if (!m_stream.tx()) return;
+    ZmAssert(this->app()->txInvoked());
+    if (!m_streamTx) return;
     auto tx = this->txStream_();
     ZuFwd<L>(l)(tx);
   }
   void streamTxEnd() {
-    if (!m_stream.end()) return;
-    this->app()->txRun([link = ZmRef(impl())]() mutable {
-      link->streamTxEnd_();
+    this->app()->rxInvoke([link = ZmRef(impl())]() {
+      link->streamEndRx_();
     });
   }
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
@@ -716,7 +735,9 @@ public:
     streamTxClose_();
   }
   void streamTxReset() {
-    if (m_stream.reset()) this->disconnect();
+    this->app()->rxInvoke([link = ZmRef(impl())]() {
+      link->streamResetRx_();
+    });
   }
   template <typename Stream, typename Rx>
   int process(Stream stream, Rx &rx) {
@@ -750,7 +771,37 @@ public:
   void responseBodyBytes(State *) { }
 
 private:
+  void disconnectRx_() {
+    ZmAssert(this->app()->rxInvoked());
+    m_cancelled = true;
+    Traits::disconnect(*this);
+  }
+  void streamClosedTx_() {
+    ZmAssert(this->app()->txInvoked());
+    m_streamTx = m_streamEnd = false;
+  }
+  void streamEnableTx_(bool enabled) {
+    ZmAssert(this->app()->txInvoked());
+    m_streamTx = enabled;
+  }
+  void streamEndRx_() {
+    ZmAssert(this->app()->rxInvoked());
+    if (!m_stream.end()) return;
+    this->app()->txRun([link = ZmRef(impl())]() {
+      link->streamTxEnd_();
+    });
+  }
+  void streamResetRx_() {
+    ZmAssert(this->app()->rxInvoked());
+    if (!m_stream.reset()) return;
+    this->app()->txRun([link = ZmRef(impl())]() {
+      link->streamEnableTx_(false);
+      link->app()->rxRun([link]() { link->disconnect(); });
+    });
+  }
   void streamTxEnd_() {
+    ZmAssert(this->app()->txInvoked());
+    m_streamTx = false;
     if (this->txQueue.count_()) {
       m_streamEnd = true;
       return;
@@ -764,12 +815,17 @@ private:
     });
   }
 
+  alignas(Zm::CacheLineSize)
   StreamBinding	m_stream;
   bool		m_connected = false;
   bool		m_failed = false;
   bool		m_cancelled = false;
+  alignas(Zm::CacheLineSize)
+  bool		m_streamTx = false;	// Tx-owned
   bool		m_streamEnd = false;	// Tx-owned
 };
+
+using ServerDrainFn = ZmFn<void(), ZmFnHeapID<"Zhttp.ServerDrain">>;
 
 template <
   typename App, typename Impl, typename Profile, typename Session>
@@ -823,16 +879,21 @@ public:
     this->app()->disconnected(*impl(), peer);
     // Response cleanup is Tx-owned. Release its final native reference on Rx
     // before reporting completion to the hub's stop/registry machinery.
-    this->app()->txRun([link = ZmRef(impl())]() mutable {
-      auto app = link->app();
-      app->rxRun([link = ZuMv(link)]() mutable {
-	link->releaseDisconnected_();
+    impl()->appDrained(ServerDrainFn::mvFn(ZmRef(impl()), [](ZmRef<Impl> link) {
+      link->app()->txRun([link = ZuMv(link)]() mutable {
+	link->streamClosedTx_();
 	auto app = link->app();
-	link = nullptr;
-	app->linkDrained_();
+	app->rxRun([link = ZuMv(link)]() mutable {
+	  link->releaseDisconnected_();
+	  auto app = link->app();
+	  link = nullptr;
+	  app->linkDrained_();
+	});
       });
-    });
+    }));
   }
+  // Applications with deferred teardown complete this hook back on Rx.
+  void appDrained(ServerDrainFn done) { done(); }
   ZuInline int process(Traits::RxStream &rx) {
     if (m_stream.stream()) return m_stream.process(rx);
     if (m_stream.terminal()) return 0;
@@ -844,28 +905,38 @@ public:
     if (rc >= 0) touch();
     return rc;
   }
+  // Negotiation and borrowed application-thread writers are Rx-affine.
   bool streamEnable(bool enabled = true) {
-    return m_stream.enable(enabled);
+    ZmAssert(this->app()->rxInvoked());
+    if (!m_stream.enable(enabled)) return false;
+    this->app()->txRun([link = impl(), enabled]() {
+      link->streamEnableTx_(enabled);
+    });
+    return true;
   }
-  bool streamAccept() { return m_stream.accept(*impl(), *impl()); }
+  bool streamAccept() {
+    ZmAssert(this->app()->rxInvoked());
+    return m_stream.accept(*impl(), *impl());
+  }
   bool streamLocalCap() const { return m_stream.localCap(); }
   bool streamPeerCap() const { return m_stream.peerCap(); }
   template <typename L>
   void streamTx(L &&l) {
+    ZmAssert(this->app()->rxInvoked());
     if (!m_stream.tx()) return;
     auto tx = this->txStream();
     ZuFwd<L>(l)(tx);
   }
   template <typename L>
   void streamTx_(L &&l) {
-    if (!m_stream.tx()) return;
+    ZmAssert(this->app()->txInvoked());
+    if (!m_streamTx) return;
     auto tx = this->txStream_();
     ZuFwd<L>(l)(tx);
   }
   void streamTxEnd() {
-    if (!m_stream.end()) return;
-    this->app()->txRun([link = ZmRef(impl())]() mutable {
-      link->streamTxEnd_();
+    this->app()->rxInvoke([link = ZmRef(impl())]() {
+      link->streamEndRx_();
     });
   }
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
@@ -875,7 +946,9 @@ public:
     streamTxClose_();
   }
   void streamTxReset() {
-    if (m_stream.reset()) this->disconnect();
+    this->app()->rxInvoke([link = ZmRef(impl())]() {
+      link->streamResetRx_();
+    });
   }
   template <typename Stream, typename Rx>
   int process(Stream stream, Rx &rx) {
@@ -915,13 +988,38 @@ public:
   }
 
 private:
+  void streamClosedTx_() {
+    ZmAssert(this->app()->txInvoked());
+    m_streamTx = m_streamEnd = false;
+  }
   void releaseDisconnected_() {
     if (m_counted) {
       m_counted = false;
       this->app()->release();
     }
   }
+  void streamEnableTx_(bool enabled) {
+    ZmAssert(this->app()->txInvoked());
+    m_streamTx = enabled;
+  }
+  void streamEndRx_() {
+    ZmAssert(this->app()->rxInvoked());
+    if (!m_stream.end()) return;
+    this->app()->txRun([link = impl()]() {
+      link->streamTxEnd_();
+    });
+  }
+  void streamResetRx_() {
+    ZmAssert(this->app()->rxInvoked());
+    if (!m_stream.reset()) return;
+    this->app()->txRun([link = impl()]() {
+      link->streamEnableTx_(false);
+      link->app()->rxRun([link]() { link->disconnect(); });
+    });
+  }
   void streamTxEnd_() {
+    ZmAssert(this->app()->txInvoked());
+    m_streamTx = false;
     if (this->txQueue.count_()) {
       m_streamEnd = true;
       return;
@@ -930,18 +1028,21 @@ private:
   }
   void streamTxClose_() {
     auto app = this->app();
-    app->rxRun([link = ZmRef(impl())]() mutable {
+    app->rxRun([link = impl()]() {
       Traits::disconnect(*link);
     });
   }
 
+  ZiIP			m_remoteIP;
+  uint16_t		m_remotePort = 0;
+  alignas(Zm::CacheLineSize)
   Session		m_session;
   ZmScheduler::Timer	m_idleTimer;
   StreamBinding		m_stream;
-  ZiIP			m_remoteIP;
-  uint16_t		m_remotePort = 0;
   bool			m_counted = true;
   bool			m_disconnected = false;
+  alignas(Zm::CacheLineSize)
+  bool			m_streamTx = false;	// Tx-owned
   bool			m_streamEnd = false;	// Tx-owned
 };
 
@@ -1013,15 +1114,17 @@ struct BorrowedEmit {
 
 namespace Native_ {
 
-template <typename Stream>
-auto produced(const Stream &stream, int) -> decltype(stream.produced()) {
+template <typename Stream,
+  typename = decltype(ZuDeclVal<const Stream &>().produced())>
+decltype(auto) produced(const Stream &stream, int) {
   return stream.produced();
 }
 template <typename Stream>
 uint64_t produced(const Stream &, long) { return 0; }
 
-template <typename Stream>
-auto failed(const Stream &stream, int) -> decltype(stream.valid(), bool()) {
+template <typename Stream,
+  typename = decltype(ZuDeclVal<const Stream &>().valid())>
+bool failed(const Stream &stream, int) {
   return !stream.valid();
 }
 template <typename Stream>
@@ -1065,8 +1168,9 @@ WriteOutcome::T invokeBodyWriter(BodyWrite write, Stream &stream)
 
 namespace Native_ {
 
-template <typename Link>
-auto streamID(const Link &link, int) -> decltype(link.streamID()) {
+template <typename Link,
+  typename = decltype(ZuDeclVal<const Link &>().streamID())>
+decltype(auto) streamID(const Link &link, int) {
   return link.streamID();
 }
 template <typename Link>
@@ -1151,103 +1255,12 @@ Channel serverChannel(Link *link)
 
 namespace Native_ {
 
-template <typename String>
-const WriterOps &stringWriterOps()
-{
-  static constexpr WriterOps ops{
-    [](void *ctx, ZuBSpan span) { *static_cast<String *>(ctx) << span; },
-    [](void *ctx, const BufferPrint &value) { *static_cast<String *>(ctx) << value; },
-    [](void *ctx, ZmRef<ZiIOBuf> buf) {
-      *static_cast<String *>(ctx) << ZuBSpan{buf->data(), buf->length};
-    },
-    [](void *) { return true; },
-    [](const void *) { return false; },
-    [](const void *ctx) -> uint64_t { return static_cast<const String *>(ctx)->length(); },
-    [](const void *) { return unsigned(UINT_MAX); },
-    [](const void *) { return 0U; },
-    [](const void *) { return 0U; },
-    [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
-      using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
-	ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Header.Print">>;
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{}};
-      buf->skip = head;
-      return buf;
-    },
-    [](void *ctx, unsigned length) -> ZuSpan<uint8_t> {
-      auto &out = *static_cast<String *>(ctx);
-      auto offset = out.length();
-      return {out.ensure(offset + length) + offset, length};
-    },
-    [](void *ctx, unsigned length) {
-      auto &out = *static_cast<String *>(ctx);
-      out.length(out.length() + length);
-    }};
-  return ops;
-}
-
-} // namespace Native_
-
-namespace Native_ {
-
-template <typename Out>
-auto printFailed(const Out &out, int) -> decltype(out.ok(), bool()) { return !out.ok(); }
-template <typename Out>
-bool printFailed(const Out &, long) { return false; }
-
-template <typename Out>
-auto printReserve(Out &out, unsigned length, int) -> decltype(out.reserve(length)) {
-  return out.reserve(length);
-}
-template <typename Out>
-auto printReserve(Out &out, unsigned length, long) ->
-    decltype(out.ensure(length), ZuSpan<uint8_t>()) {
-  auto offset = out.length();
-  return {out.ensure(offset + length) + offset, length};
-}
-template <typename Out>
-auto printCommit(Out &out, unsigned length, int) -> decltype(out.commit(length), void()) {
-  out.commit(length);
-}
-template <typename Out>
-auto printCommit(Out &out, unsigned length, long) -> decltype(out.length(length), void()) {
-  out.length(out.length() + length);
-}
-
-template <typename Out>
-const WriterOps &printWriterOps()
-{
-  static constexpr WriterOps ops{
-    [](void *ctx, ZuBSpan span) { *static_cast<Out *>(ctx) << span; },
-    [](void *ctx, const BufferPrint &value) { *static_cast<Out *>(ctx) << value; },
-    [](void *ctx, ZmRef<ZiIOBuf> buf) {
-      *static_cast<Out *>(ctx) << ZuBSpan{buf->data(), buf->length};
-    },
-    [](void *ctx) { return !printFailed(*static_cast<Out *>(ctx), 0); },
-    [](const void *ctx) { return printFailed(*static_cast<const Out *>(ctx), 0); },
-    [](const void *) -> uint64_t { return 0; },
-    [](const void *) { return unsigned(UINT_MAX); },
-    [](const void *) { return 0U; },
-    [](const void *) { return 0U; },
-    [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
-      using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
-	ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Header.Print">>;
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{}};
-      buf->skip = head;
-      return buf;
-    },
-    [](void *ctx, unsigned length) -> ZuSpan<uint8_t> {
-      return printReserve(*static_cast<Out *>(ctx), length, 0);
-    },
-    [](void *ctx, unsigned length) { printCommit(*static_cast<Out *>(ctx), length, 0); }};
-  return ops;
-}
-
 struct Print {
   PrintView value;
 
   template <typename Out>
   void print(Out &out) const {
-    Writer writer{&out, printWriterOps<Out>()};
+    Writer writer{&out, bufferWriterOps<Out, false>()};
     value.write(writer);
   }
   friend ZuPrintFn ZuPrintType(Print *);
@@ -1263,9 +1276,10 @@ void print(PrintView value, L &&l) {
 
 namespace Native_ {
 
-template <typename Stream, typename Value>
-auto mutableField(Stream &stream, ZuBSpan name, const Value &value, bool never, int) ->
-    decltype(stream.fieldMutable(name, value, never), FieldOffset()) {
+template <typename Stream, typename Value,
+  typename = decltype(ZuDeclVal<Stream &>().fieldMutable(
+    ZuDeclVal<ZuBSpan>(), ZuDeclVal<const Value &>(), bool{}))>
+FieldOffset mutableField(Stream &stream, ZuBSpan name, const Value &value, bool never, int) {
   auto span = stream.fieldMutable(name, value, never);
   return {span.offset, span.length};
 }
@@ -1297,8 +1311,9 @@ FieldOutput compressedFields(Stream &stream)
 	return span;
       };
       if (key.isSpan()) return emit(key.span);
-      ZtBArray<ZtArrayHeapID<HeapID{}()>> name;
-      Writer out{&name, stringWriterOps<decltype(name)>()};
+      using Name = ZtBArray<ZtArrayHeapID<HeapID{}()>>;
+      auto name = ZtScratch(Name, Compression::PrintScratchBuiltin);
+      Writer out{&name, bufferWriterOps<decltype(name), true>()};
       key.write(out);
       return emit(name);
     }};
@@ -1322,7 +1337,11 @@ struct Backend {
   template <typename Native>
   void own(Native *native) {
     ctx = allocation = native;
+    // Native is the concrete allocation type; no deletion through a base.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdelete-non-virtual-dtor"
     destroy = [](void *ptr) { delete static_cast<Native *>(ptr); };
+#pragma GCC diagnostic pop
   }
   void printDiag() { if (print) print(ctx); }
 };
@@ -1343,7 +1362,8 @@ const ChannelOps &clientChannelOps()
     .disconnect = [](void *ctx) {
       auto link = ZmRef{static_cast<Link *>(ctx)};
       auto pool = link->pool();
-      pool->mx()->invoke([link = ZuMv(link)]() mutable { link->disconnect(); }, pool->rxThread());
+      // Close invalidates the retained producer on Tx before native teardown.
+      pool->mx()->invoke([link = ZuMv(link)]() mutable { link->close(); }, pool->rxThread());
     },
     .send = nullptr,
     .responseCatalog = nullptr,

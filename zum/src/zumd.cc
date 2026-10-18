@@ -302,6 +302,7 @@ static ZuPtr<const ZfCf::AnyNode> config(
 struct DB : public Zum::DB {
   ZmRef<Zum::Requests>	requests;
   ZmRef<Zum::Requests>	bootstrapRequests;
+  Zum::Daemon		*daemon = nullptr; // fixed before DB startup; outlives DB stop
   // Zdb-thread owned; used only to reject stale preparation completion.
   uint64_t		generation = 0;
   bool			failed = false;
@@ -320,7 +321,36 @@ static void dbUp(Zdb *db, ZdbHost *)
 {
   auto server = static_cast<DB *>(db);
   ++server->generation;
+  // Main performs this activation's blocking bootstrap/preparation, then
+  // dbReady resumes on this DB thread and checks the same generation.
   done.post();
+}
+
+static void dbReady(DB *db, uint64_t generation,
+    ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">> complete)
+{
+  ZmAssert_(db->invoked());
+  if (stopping || !db->active() || db->generation != generation) {
+    complete(false);
+    return;
+  }
+  db->daemon->start(ZuMv(complete));
+}
+
+// DB-owned role checks bracket the asynchronous admission-owner transition.
+static void dbActivate(DB *db, Zum::Requests *requests, uint64_t generation,
+    Zum::Requests::CtrlFn complete)
+{
+  ZmAssert_(db->invoked());
+  if (stopping || !db->active() || db->generation != generation) {
+    complete(false);
+    return;
+  }
+  requests->activate([db, generation, complete = ZuMv(complete)](bool ok) mutable {
+    db->run([db, generation, ok, complete = ZuMv(complete)]() mutable {
+      complete(ok && !stopping && db->active() && db->generation == generation);
+    });
+  });
 }
 
 static void dbDown(Zdb *db, bool failed)
@@ -328,6 +358,13 @@ static void dbDown(Zdb *db, bool failed)
   auto server = static_cast<DB *>(db);
   server->requests->deactivate();
   server->bootstrapRequests->deactivate();
+  server->daemon->stop([](bool ok) {
+    if (!ok) {
+      ZiLOG(Error, "zumd", "daemon stop after database deactivation failed");
+      stopping = 1;
+    }
+    done.post();
+  });
   server->failed |= failed;
   done.post();
 }
@@ -461,11 +498,12 @@ int main(int argc, char **argv)
 	!db->bootstrapRequests->init(&mx, mx.sid("shard"),
           Zum::DaemonCapacity::BootstrapAdmission))
       throw ZeEXCEPT(Fatal, "zumd", "request initialization failed");
+    Zum::Daemon daemon;
+    db->daemon = &daemon;
     db->init(ZdbCf{node(ConfigField::Zdb)}, &mx,
       ZdbHandler{.upFn = dbUp, .downFn = dbDown});
     Zum::registerSchema(db);
     Zum::OIDCHTTP oidcHTTP;
-    Zum::Daemon daemon;
     bool oidcHTTPInited = false, daemonInited = false;
     bool mxStarted = false, dbStarted = false, stopped = false;
     bool storeStopped = true;
@@ -482,13 +520,16 @@ int main(int argc, char **argv)
       stopped = true;
       if (mxStarted) {
         ZmSemaphore requestsDown;
-        db->requests->deactivate([&requestsDown]() { requestsDown.post(); });
+        db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
         requestsDown.wait();
-        db->bootstrapRequests->deactivate([&requestsDown]() { requestsDown.post(); });
+        db->bootstrapRequests->deactivate([&requestsDown](bool) { requestsDown.post(); });
         requestsDown.wait();
       }
       daemon.stop();
-      if (oidcHTTPInited) oidcHTTP.final();
+      if (oidcHTTPInited) {
+        (void)oidcHTTP.stop();
+        oidcHTTP.final();
+      }
       stopPublisher();
       stopDB();
       daemon.final();
@@ -510,6 +551,8 @@ int main(int argc, char **argv)
           options.oidcOrigins, oidcConfig.caPath);
         if (!oidcHTTPInited)
           throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP initialization failed");
+        if (!oidcHTTP.start())
+          throw ZeEXCEPT(Fatal, "zumd", "OIDC HTTP startup failed");
         daemonInited = daemon.init(db, db->requests, &mx,
             Zum::DaemonConfig{
               .addr = options.addr, .port = uint16_t(options.port),
@@ -521,8 +564,8 @@ int main(int argc, char **argv)
               .ssfLeaseMax = ssfConfig.leaseMax,
               .ssfErrorMax = ssfConfig.errorMax,
               .cleanupInterval = options.cleanupInterval});
-        if (!daemonInited || !daemon.start())
-          throw ZeEXCEPT(Fatal, "zumd", "HTTP server start failed");
+        if (!daemonInited)
+          throw ZeEXCEPT(Fatal, "zumd", "HTTP server initialization failed");
       }
       uint64_t prepared = 0;
       bool reissue = options.bootstrapReissue;
@@ -539,15 +582,13 @@ int main(int argc, char **argv)
         auto generation = activation.p<1>();
         if (!generation || generation == prepared) continue;
         ZmSemaphore drained;
-        db->requests->deactivate([&drained]() { drained.post(); });
+        db->requests->deactivate([&drained](bool) { drained.post(); });
         drained.wait();
-        db->bootstrapRequests->deactivate([&drained]() { drained.post(); });
+        db->bootstrapRequests->deactivate([&drained](bool) { drained.post(); });
         drained.wait();
         bool current = ZmBlock<bool>{}([db, generation](auto wake) {
           db->run([db, generation, wake = ZuMv(wake)]() mutable {
-            bool current = !stopping && db->active() && db->generation == generation;
-            if (current) db->bootstrapRequests->activate();
-            wake(current);
+            dbActivate(db, db->bootstrapRequests.ptr(), generation, ZuMv(wake));
           });
         });
         if (!current) continue;
@@ -605,7 +646,16 @@ int main(int argc, char **argv)
           });
         });
         if (!current) continue;
-        bool ready = bootstrapOK && (!daemonInited || daemon.prepare(ZuMv(bootstrap)));
+        bool ready = bootstrapOK;
+        if (ready && daemonInited) {
+          ready = daemon.stop();
+          if (ready) ready = daemon.prepare(ZuMv(bootstrap));
+          if (ready) ready = ZmBlock<bool>{}([db, generation](auto wake) {
+            db->run([db, generation, wake = ZuMv(wake)]() mutable {
+              dbReady(db, generation, ZuMv(wake));
+            });
+          });
+        }
         current = ZmBlock<bool>{}([db, generation](auto wake) {
           db->run([db, generation, wake = ZuMv(wake)]() mutable {
             wake(!stopping && db->active() && db->generation == generation);
@@ -624,9 +674,7 @@ int main(int argc, char **argv)
         }
         current = ZmBlock<bool>{}([db, generation](auto wake) {
           db->run([db, generation, wake = ZuMv(wake)]() mutable {
-            bool current = !stopping && db->active() && db->generation == generation;
-            if (current) db->requests->activate();
-            wake(current);
+            dbActivate(db, db->requests.ptr(), generation, ZuMv(wake));
           });
         });
         if (!current) continue;

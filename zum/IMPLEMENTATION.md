@@ -3622,3 +3622,20 @@ historical command notes below do not supersede it.
   `issuerURL`. The HTTP fixture, restart expectations, ping example config, and
   documentation are aligned with this split and the `zum.catalog` scope.
   Per instruction, these latest C++ changes have not yet been rebuilt.
+
+
+## Listener activation contract override — 2026-10-18
+
+The current user requirement supersedes historical passive-HTTP/standby503
+claims in this ledger. Main starts the multiplexer and Zdb runtime independently
+of cluster role. Zdb `up` controls network listener startup after preparation;
+`down` stops listeners. Standby process/runtime liveness is observed through
+native replication and telemetry, with its HTTP port refusing connections.
+Health HTTP routes exist only on an active listener. A new active store can
+still return 503 from `/health/ready` until administrator enrollment completes.
+
+The cluster fixture sources now check active-only listeners, independent passive
+runtime/publisher liveness, graceful promotion, and listener closure on demotion.
+The publisher cluster fixture also checks same-process re-promotion/rebinding.
+These source corrections have passed syntax/whitespace review only; the older
+cluster results do not establish runtime acceptance of this corrected contract.

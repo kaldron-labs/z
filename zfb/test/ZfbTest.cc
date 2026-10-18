@@ -384,7 +384,7 @@ static void tables()
   ZuTestScope(tables);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto first = row(builder, 42, "first");
   auto second = row(builder, 43, "other");
   ZuCheck(Zfb::TableView{builder.at(first)}.vtable() ==
@@ -409,7 +409,7 @@ static void nesting()
   ZuTestScope(nesting);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto first = row(builder, 42, "outside");
   auto nested = builder.startNested();
   auto inside = row(builder, 43, "inside");
@@ -426,7 +426,7 @@ static void nesting()
 
   auto copyBuf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> copyStorage{copyBuf};
-  Zfb::Builder<decltype(copyStorage)> copy{copyStorage};
+  Zfb::Builder copy{copyStorage};
   auto payload = copy.copyRoot(span, 8);
   auto envelope = copy.startTable();
   copy.fieldOffset(envelope, 0, payload);
@@ -442,7 +442,7 @@ static void growth()
     4 * sizeof(Zfb::VOffset);
   auto buf = ZtScratch(Zfb::Buffer, Initial);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto first = row(builder, 1, "first");
   unsigned before = builder.capacity();
   auto payload = ZtScratch(Zfb::Buffer, before<<2, before<<2);
@@ -460,7 +460,7 @@ static void alignment()
   ZuTestScope(alignment);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<32> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage, 32};
+  Zfb::Builder builder{storage, 32};
   auto vector = builder.vector(2, sizeof(uint64_t), 32, [](uint8_t *p) {
     Zfb::write<uint64_t>(p, 42);
     Zfb::write<uint64_t>(p + sizeof(uint64_t), 43);
@@ -529,7 +529,7 @@ static void payload()
   Row row{UINT64_MAX, "row", {7, -42}, values};
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<32> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage, 32};
+  Zfb::Builder builder{storage, 32};
   auto bytes = builder.finish(Zfb::save(builder, row));
   ZuCheckRT(!builder.failed() && Zfb::verify<Row>(bytes));
   auto view = Zfb::view<Row>(bytes);
@@ -549,7 +549,7 @@ static void payload()
     ZuAssert(Zfb::BufferAlign<Row>::N == 32);
     auto keyBuf = ZtScratch(Zfb::Buffer, 0);
     Zfb::ArrayStorage<Zfb::BufferAlign<decltype(key)>::N> keyStorage{keyBuf};
-    Zfb::Builder<decltype(keyStorage)> keyBuilder{keyStorage};
+    Zfb::Builder keyBuilder{keyStorage};
     auto keyBytes = keyBuilder.finish(Zfb::save(keyBuilder, key));
     ZuCheckRT(!keyBuilder.failed() && Zfb::verify<Row>(keyBytes));
     auto keyView = Zfb::view<Row>(keyBytes);
@@ -603,7 +603,7 @@ static void scalars()
   const double doubles[] = {-1.25, 0.0, 2.5};
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder, Scalars{narrow, floats, doubles}));
   ZuCheck(!builder.failed() && Zfb::verify<Scalars>(bytes));
   auto view = Zfb::view<Scalars>(bytes);
@@ -622,7 +622,7 @@ static void keyProjection()
   auto key = ZuStructKey(row);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder, key));
   ZuCheck(!builder.failed() && Zfb::verify<Row>(bytes));
   auto view = Zfb::view<Row>(bytes);
@@ -656,7 +656,7 @@ static void bitmaps()
   row.bytes = blobs;
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto output = builder.finish(Zfb::save<ZuFacet::FB, ZfFieldFilter::Del>(builder, row));
   ZuCheck(!builder.failed() && Zfb::verify<Bitmaps>(output));
   auto view = Zfb::view<Bitmaps>(output);
@@ -699,7 +699,7 @@ static void run()
     values, bytes, {0x10203}};
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto output = builder.finish(Zfb::save(builder, row));
   ZuCheck(!builder.failed() && Zfb::verify<Row>(output));
   auto view = Zfb::view<Row>(output);
@@ -777,7 +777,7 @@ static void boolean()
   ZuTestScope(boolean);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   for (bool active : {false, true}) {
     builder.clear();
     auto bytes = builder.finish(Zfb::save(builder, BoolCtor{active}));
@@ -805,7 +805,7 @@ static void run()
   source.unchanged = 17;
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder, source));
   ZuCheck(!builder.failed() && Zfb::verify<Row>(bytes));
   auto h = Zfb::handler<Row>(bytes);
@@ -972,7 +972,7 @@ static void run()
     source.points.values.push(Point{43, 29});
     auto buf = ZtScratch(Zfb::Buffer, 0);
     Zfb::ArrayStorage<> storage{buf};
-    Zfb::Builder<decltype(storage)> builder{storage};
+    Zfb::Builder builder{storage};
     auto bytes = builder.finish(Zfb::save(builder, source));
     ZuCheck(!builder.failed() && Zfb::verify<PtrRow>(bytes));
 
@@ -1017,7 +1017,7 @@ static void run()
   ZuTestScope(union);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   Message message{17, {}};
   message.body.p<2>(Record{42});
   auto output = builder.finish(Zfb::save(builder, message));

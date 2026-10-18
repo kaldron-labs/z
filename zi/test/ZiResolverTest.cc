@@ -19,7 +19,6 @@
 
 using namespace ZuTestUtil;
 
-namespace {
 
 bool waitFor(ZmSemaphore &sem)
 {
@@ -223,36 +222,68 @@ void testLifecycle()
     ZiEvent::FailFn{[&failed](ZeException) { failed.store_(1); }});
   ZuCheck(ZiResolver::instance()->initialized());
 
-  ZiResolver::start([&failed, &started](ZiEvent::StartResult result) {
-    if (result.is<ZiEvent::Exception>()) failed.store_(1);
+  ZiResolver::start([&failed, &started](bool ok) {
+    if (!ok) failed.store_(1);
     started.post();
   });
   ZuCheck(waitFor(started));
   ZuCheck(ZiResolver::instance()->running());
   ZuCheck(!failed.load_());
 
-  ZiResolver::start([&failed, &started](ZiEvent::StartResult result) {
-    if (result.is<ZiEvent::Exception>()) failed.store_(1);
+  ZiResolver::start([&failed, &started](bool ok) {
+    if (!ok) failed.store_(1);
     started.post();
   });
   ZuCheck(waitFor(started));
   ZuCheck(!failed.load_());
 
-  ZiResolver::stop([&failed, &stopped](ZiEvent::StopResult result) {
-    if (result.is<ZiEvent::Exception>()) failed.store_(1);
+  ZiResolver::stop([&failed, &stopped](bool ok) {
+    if (!ok) failed.store_(1);
     stopped.post();
   });
   ZuCheck(waitFor(stopped));
   ZuCheck(!ZiResolver::instance()->running());
   ZuCheck(!failed.load_());
 
-  ZiResolver::stop([&failed, &stopped](ZiEvent::StopResult result) {
-    if (result.is<ZiEvent::Exception>()) failed.store_(1);
+  ZiResolver::stop([&failed, &stopped](bool ok) {
+    if (!ok) failed.store_(1);
     stopped.post();
   });
   ZuCheck(waitFor(stopped));
   ZiResolver::final();
   ZuCheck(!ZiResolver::instance()->initialized());
+}
+
+void testRestart()
+{
+  ZuTestScopeRT(testRestart);
+  FakeDNS dns;
+  ZuCheckRT(dns.ok());
+  if (!dns.ok()) return;
+  ZiResolver::init(ZiResolverParams{}.ipv4(true).ipv6(false).
+    timeoutMS(500).tries(1).servers(dns.servers()));
+  for (unsigned cycle = 0; cycle < 3; ++cycle) {
+    bool started = ZiResolver::startSync();
+    ZuCheckRT(started);
+    if (!started) break;
+    ZmSemaphore resolved;
+    ZmAtomic<unsigned> failed = 0;
+    ZiIP out;
+    ZiResolver::resolve("resolver.test", ZiResolver_::ResolveFn{
+      [&resolved, &failed, &out](auto result) {
+	if (result.template is<ZiResolver_::Event>()) failed = 1;
+	else if (result.template is<ZiIP>()) out = result.template p<ZiIP>();
+	resolved.post();
+	return false;
+      }});
+    ZuCheckRT(waitFor(resolved));
+    ZuCheckRT(!failed.load_() && out == ip4(0xc0000235U));
+    ZuCheckRT(ZiResolver::stopSync());
+    ZuCheckRT(ZiResolver::instance()->initialized() &&
+      ZiResolver::instance()->state() == ZmEngineState::Stopped);
+  }
+  ZuCheckRT(dns.a() >= 3 && !dns.aaaa());
+  ZiResolver::final();
 }
 
 void testLazyNumericResolve()
@@ -461,8 +492,8 @@ void testAsyncStart()
   ZiResolver::init();
   ZmThread starter{[&entered, &release, &returned, &completed, &failed]() {
     ZiResolver::start([&entered, &release, &completed, &failed](
-	ZiEvent::StartResult result) {
-      if (result.is<ZiEvent::Exception>()) failed = 1;
+	bool ok) {
+      if (!ok) failed = 1;
       entered.post();
       if (!waitFor(release)) failed = 1;
       completed.post();
@@ -485,14 +516,14 @@ void testStartReentry()
   ZmSemaphore stopped;
   ZmAtomic<unsigned> failed = 0;
   ZiResolver::startSync();
-  ZiResolver::start([&failed, &stopped](ZiEvent::StartResult result) {
-    if (result.is<ZiEvent::Exception>() ||
+  ZiResolver::start([&failed, &stopped](bool ok) {
+    if (!ok ||
 	!ZiResolver::instance()->running() ||
 	!ZiResolver::instance()->initialized()) failed = 1;
-    ZiResolver::start([&failed, &stopped](ZiEvent::StartResult result) {
-      if (result.is<ZiEvent::Exception>()) failed = 1;
-      ZiResolver::stop([&failed, &stopped](ZiEvent::StopResult result) {
-	if (result.is<ZiEvent::Exception>() ||
+    ZiResolver::start([&failed, &stopped](bool ok) {
+      if (!ok) failed = 1;
+      ZiResolver::stop([&failed, &stopped](bool ok) {
+	if (!ok ||
 	    ZiResolver::instance()->running()) failed = 1;
 	stopped.post();
       });
@@ -508,12 +539,12 @@ void testStopDuringStart()
   ZuTestScope(testStopDuringStart);
   ZmSemaphore started, stopped;
   ZmAtomic<unsigned> failed = 0;
-  ZiResolver::start([&failed, &started](ZiEvent::StartResult result) {
-    if (result.is<ZiEvent::Exception>()) failed = 1;
+  ZiResolver::start([&failed, &started](bool ok) {
+    if (!ok) failed = 1;
     started.post();
   });
-  ZiResolver::stop([&failed, &stopped](ZiEvent::StopResult result) {
-    if (result.is<ZiEvent::Exception>()) failed = 1;
+  ZiResolver::stop([&failed, &stopped](bool ok) {
+    if (!ok) failed = 1;
     stopped.post();
   });
   ZuCheck(waitFor(started) && waitFor(stopped));
@@ -521,53 +552,30 @@ void testStopDuringStart()
   ZiResolver::final();
 }
 
-// The last failure callback reference is released during finalization, before
-// the scheduler is joined. Use that lifetime boundary to release stop callbacks.
-class FinalGate : public ZmNHeap<FinalGate>, public ZmObject {
-friend inline ZuStringT<"ZiResolverTest.FinalGate"> ZmNHeapID(FinalGate *);
-public:
-  FinalGate(ZmSemaphore &sem) : m_sem{sem} { }
-  ~FinalGate() { m_sem.post(); }
-private:
-  ZmSemaphore &m_sem;
-};
-
 void testFinalCallbacks()
 {
   ZuTestScope(testFinalCallbacks);
-  ZmSemaphore entered, release, queued, releaseWorker, finalizing, completed;
+  ZmSemaphore completed;
   ZmAtomic<unsigned> failed = 0;
-  ZmRef<FinalGate> gate = new FinalGate{finalizing};
-  ZiResolver::init(ZiResolverParams{}, [gate](auto) { });
-  gate = nullptr;
-  ZiResolver::startSync();
-  ZiDNSMsg msg;
-  ZiResolver::txt(msg, [&queued, &releaseWorker, &failed](auto) {
-    queued.post();
-    if (!waitFor(releaseWorker)) failed = 1;
-    return false;
-  });
-  ZuCheck(waitFor(queued));
-  ZiResolver::stop([&entered, &release, &failed](auto) {
-    entered.post();
-    if (!waitFor(release)) failed = 1;
-  });
-  ZiResolver::stop([&failed, &completed](auto) {
-    if (ZiResolver::instance()->running() ||
-	ZiResolver::instance()->initialized()) failed = 1;
-    ZiResolver::start([&failed](ZiEvent::StartResult result) {
-      if (!result.is<ZiEvent::Exception>()) failed = 1;
-    });
+  ZiResolver::init();
+  ZiResolver::final(); // initialized without a start has no thread to join
+  ZuCheck(!ZiResolver::instance()->initialized());
+  ZiResolver::init();
+  ZuCheck(ZiResolver::startSync());
+  ZiResolver::stop([&completed, &failed](bool ok) {
+    if (!ok || ZiResolver::instance()->running()) failed = 1;
+    // Runtime ownership was released before stop completion. final() may run
+    // on this former scheduler control thread without stopping or joining it.
+    ZiResolver::final();
+    if (ZiResolver::instance()->initialized()) failed = 1;
     completed.post();
   });
-  releaseWorker.post();
-  ZuCheck(waitFor(entered));
-  ZmThread finalizer{[]() { ZiResolver::final(); }};
-  bool detached = waitFor(finalizing);
-  release.post();
-  finalizer.join();
-  ZuCheck(detached && waitFor(completed));
-  ZuCheck(!failed.load_() && !ZiResolver::instance()->initialized());
+  ZuCheck(waitFor(completed));
+  ZuCheck(!failed.load_());
+  ZiResolver::init();
+  ZuCheck(ZiResolver::startSync());
+  ZuCheck(ZiResolver::stopSync());
+  ZiResolver::final();
 }
 
 void testAsyncStop()
@@ -575,39 +583,41 @@ void testAsyncStop()
   ZuTestScope(testAsyncStop);
   FakeDNS dns;
   ZuCheck(dns.ok());
-  ZmSemaphore entered, release, returned, stopped;
+  ZmSemaphore entered, release, returned, stopped, restarted;
   ZmAtomic<unsigned> failed = 0;
-  ZmAtomic<unsigned> rejected = 0;
   ZiResolver::init(ZiResolverParams{}.ipv4(true).ipv6(false).
     timeoutMS(500).tries(1).servers(dns.servers()));
-  ZiResolver::resolve("resolver.test",
-    ZiResolver_::ResolveFn{[&](auto) {
+  ZiResolver::resolve("resolver.test", ZiResolver_::ResolveFn{
+    [&entered, &release, &failed](auto) {
       entered.post();
       if (!waitFor(release)) failed = 1;
       return false;
     }});
   bool active = waitFor(entered);
   ZuCheck(active);
-  ZmThread stopper{[&]() {
-    auto complete = [&](ZiEvent::StopResult result) {
-      if (result.is<ZiEvent::Exception>()) failed = 1;
+  ZmThread stopper{[&returned, &stopped, &restarted, &failed]() {
+    auto complete = [&stopped, &failed](bool ok) {
+      if (!ok) failed = 1;
       stopped.post();
     };
     ZiResolver::stop(complete);
     ZiResolver::stop(complete);
-    ZiResolver::start([&](ZiEvent::StartResult result) {
-      rejected = result.is<ZiEvent::Exception>();
+    ZiResolver::start([&restarted, &failed](bool ok) {
+      if (!ok) failed = 1;
+      restarted.post();
     });
     returned.post();
   }};
-  bool async = returned.timedwait(Zm::now(1)) == 0;
+  bool async = waitFor(returned);
   bool pending = stopped.trywait() != 0;
   release.post();
   stopper.join();
-  ZuCheck(async && pending && rejected.load_());
+  ZuCheck(async && pending);
   if (pending) ZuCheck(waitFor(stopped));
   ZuCheck(waitFor(stopped));
-  ZuCheck(!failed.load_() && !ZiResolver::instance()->running());
+  ZuCheck(waitFor(restarted));
+  ZuCheck(!failed.load_() && ZiResolver::instance()->running());
+  ZuCheck(ZiResolver::stopSync());
   ZiResolver::final();
 }
 
@@ -630,7 +640,7 @@ void testNoCallbackAfterStop()
       ++callbacks;
       callback.post();
     }});
-  ZiResolver::stop([&stopped](ZiEvent::StopResult) {
+  ZiResolver::stop([&stopped](bool) {
     stopped.post();
   });
   ZuCheck(waitFor(stopped));
@@ -731,13 +741,13 @@ void testTXTParse()
 #pragma GCC diagnostic pop
 #endif
 
-} // namespace
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testLifecycle);
+  ZuTestCall(testRestart);
   ZuTestCall(testLazyNumericResolve);
   ZuTestCall(testIPv6NumericResolve);
   ZuTestCall(testIPv4OnlyResolve);

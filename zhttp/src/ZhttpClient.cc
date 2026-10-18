@@ -10,6 +10,7 @@ namespace Zhttp {
 
 ZtEnumImplStruct(ProtoPolicy);
 ZtEnumImplStruct(ResultCode);
+ZtEnumImplNS(ErrorDomain);
 ZtEnumImplStruct(AttemptPhase);
 ZtEnumImplStruct(FailureKind);
 ZtEnumImplStruct(RedirectState);
@@ -110,15 +111,18 @@ void PoolCore::cancelQueued_(RequestRef request) { m_impl->cancelQueued_(ZuMv(re
 void PoolCore::cancelActive_(unsigned slot, const void *key) { m_impl->cancelActive_(slot, key); }
 ClientCore::ClientCore(void *app, const ClientAppOps &ops) :
   m_app{app}, m_ops{&ops} { }
-ClientCore::~ClientCore() = default;
-bool ClientCore::running() const { return m_ctl.running(); }
+ClientCore::~ClientCore() {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  ZmAssert_(!m_active);
+}
+bool ClientCore::running() const { return Engine::state() == ZmEngineState::Running; }
 
 bool ClientCore::init(
   const HubConfig &hub, unsigned poolCount,
   const Config &config, const TCPConfig &tcp,
   const H2Config &h2, const QUICConfig &quic)
 {
-  if (m_inited || !hub.mx() || !poolCount)
+  if (Engine::state() != ZmEngineState::Stopped || m_inited || !hub.mx() || !poolCount)
     return false;
   m_hub = hub;
   m_config = config;
@@ -152,7 +156,7 @@ bool ClientCore::pool(
   unsigned slot, Destination destination,
   const Config &config)
 {
-  if (!m_inited || m_ctl.state() != ZmEngineState::Stopped || slot >= m_pools.length() ||
+  if (!m_inited || Engine::state() != ZmEngineState::Stopped || slot >= m_pools.length() ||
 	m_pools[slot] || !destination.valid())
     return false;
   Config effective = m_config.overlay(config);
@@ -172,21 +176,52 @@ bool ClientCore::pool(
   return true;
 }
 
-bool ClientCore::start() {
-  return ZmBlock<bool>{}([this](auto wake) { this->start(ZuMv(wake)); });
+void ClientCore::start_() {
+  if (!m_inited) { Engine::started(false); return; }
+  txRun([this]() { startBatch_(0); });
 }
-void ClientCore::start(DoneFn done) {
-  DoneFn done_{ZuMv(done)};
-  if (!m_inited) { done_(false); return; }
-  for (unsigned i = 0, n = m_pools.length(); i < n; ++i)
-    if (!m_pools[i]) { done_(false); return; }
-  if (m_resolverOwned) ZiResolver::start();
-  if (!ZiResolver::instance()->running()) { done_(false); return; }
-  m_ctl.start(ZuMv(done_));
+
+void ClientCore::startBatch_(unsigned i) {
+  ZiAssert(mx()->invoked(txThread()), "Zhttp", (), "client start off Tx", return);
+  unsigned end = i + ClientWorkBatch;
+  if (end > m_pools.length()) end = m_pools.length();
+  while (i < end) {
+    if (!m_pools[i]) { Engine::started(false); return; }
+    m_idle[i++] = 0;
+  }
+  if (i < m_pools.length()) {
+    txRun([this, i]() { startBatch_(i); });
+    return;
+  }
+  m_idleCount = 0;
+  if (m_resolverOwned) {
+    ZiResolver::start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      startPools_();
+    });
+    return;
+  }
+  if (ZiResolver::instance()->state() != ZmEngineState::Running) {
+    Engine::started(false);
+    return;
+  }
+  startPools_();
+}
+
+void ClientCore::startPools_() {
+  m_ctl.start([this](bool ok) {
+    if (ok || !m_resolverOwned) { Engine::started(ok); return; }
+    // The pool aggregate has completed its own rollback. Release only the
+    // resolver owned by this client before exposing the failed start.
+    ZiResolver::stop([this](bool ok) {
+      ZmAssert_(ok); // resolver shutdown has no expected failure result
+      Engine::started(false);
+    });
+  });
 }
 
 bool ClientCore::seal(unsigned slot) {
-  if (!m_ctl.running()) return false;
+  if (!running()) return false;
   auto pool = pool_(slot);
   if (!pool) return false;
   pool->seal();
@@ -204,20 +239,22 @@ void ClientCore::discoveryResolver(const DiscoveryResolver *resolver) {
   for (auto &pool: m_pools) if (pool) pool->discoveryResolver(resolver);
 }
 
-void ClientCore::stop() {
-  (void)ZmBlock<bool>{}(
-    [this](auto wake) { stop(DoneFn{ZuMv(wake)}); });
-}
-void ClientCore::stop(DoneFn done) {
-  m_ctl.stop(ZuMv(done));
+void ClientCore::stop_() {
+  m_ctl.stop([this](bool ok) {
+    if (!m_resolverOwned) { Engine::stopped(ok); return; }
+    ZiResolver::stop([this, poolsOK = ok](bool ok) {
+      Engine::stopped(poolsOK && ok);
+    });
+  });
 }
 
 void ClientCore::final() {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  ZmAssert_(!m_active);
   m_ctl.final();
   m_pools.init();
   m_idle.init();
   if (m_resolverOwned) {
-    ZiResolver::stop();
     ZiResolver::final();
     m_resolverOwned = false;
   }

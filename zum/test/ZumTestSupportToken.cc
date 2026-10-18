@@ -387,7 +387,7 @@ static Authorized beginAuthorization(
   return ZmBlock<Authorized>{}([
     requests, context, &rng, query = ZuMv(query), config = ZuMv(config)
   ](auto wake) mutable {
-    if (!Zum::authorizeRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeRequest({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(query),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(config), [
 	wake
@@ -427,7 +427,7 @@ static FinishedAuthorization finishAuthorization(
     Zum::Bytes consentBinding{ZuBSpan{"browser binding"}};
     auto consentConfig = config;
     auto consentPolicy = policy;
-    if (!Zum::authorizeFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(input), ZuMv(config),
       ZuMv(policy), [requests, db, &rng, wake = ZuMv(wake),
@@ -442,7 +442,7 @@ static FinishedAuthorization finishAuthorization(
 	    wake(FinishedAuthorization{error, ZuMv(location)});
 	  };
 	  auto fallback = consentComplete;
-	  if (!Zum::authorizeConsentFinish(requests, Zm::now() + ZuTime{10},
+	  if (!Zum::authorizeConsentFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(consentID), ZuMv(consentBinding), true,
 	      ZuMv(consentConfig), ZuMv(consentPolicy), ZuMv(consentComplete)))
 	    fallback(Zum::OAuthError::TemporarilyUnavailable, {});
@@ -477,7 +477,7 @@ static FinishedAuthorization finishOIDCAuthorization(
     authTime,
     config = ZuMv(config), policy = ZuMv(policy)
   ](auto wake) mutable {
-    if (!Zum::authorizeOIDCFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeOIDCFinish({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"oidc binding"}}, ZuMv(user), ZuMv(roleIDs),
       ZuMv(evidence), authTime, ZuMv(config), ZuMv(policy), [wake](
@@ -526,7 +526,7 @@ static IssuedToken issueTokenRequest(
     authorization = ZuMv(authorization), config = ZuMv(config),
     sign = ZuMv(sign)
   ](auto wake) mutable {
-    if (!Zum::tokenRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::tokenRequest({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(form), ZuMv(authorization),
       ZuMv(config), ZuMv(sign), [wake](
 	  int error, Zum::TokenResponse response) mutable {

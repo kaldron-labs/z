@@ -1,0 +1,18 @@
+syntax = "proto3";
+package zgrpc.interop;
+option go_package = "zgrpc-interop/pb";
+
+message Packet {
+  uint64 seq = 1;
+  bytes payload = 2;
+  uint32 count = 3;
+  uint32 code = 4;
+  bool wait_cancel = 5;
+}
+
+service Matrix {
+  rpc Unary(Packet) returns (Packet);
+  rpc ServerStream(Packet) returns (stream Packet);
+  rpc ClientStream(stream Packet) returns (Packet);
+  rpc Duplex(stream Packet) returns (stream Packet);
+}

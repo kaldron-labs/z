@@ -100,7 +100,7 @@ case $build_os in
     Z_LDFLAGS="-Wl,--enable-auto-import"
     Z_SO_LDFLAGS="-no-undefined"
     Z_LIBS="-lm"
-    Z_MT_LIBS="$CK_LIBS $HWLOC_LIBS -latomic"
+    Z_MT_LIBS="$CK_LIBS $HWLOC_LIBS -latomic -lmincore"
     Z_ZT_LIBS="$PCRE_LIBS -liconv"
     Z_IO_LIBS="-lws2_32 -lwsock32 -ldnsapi -ladvapi32"
     Z_TERM_LIBS=""
@@ -260,7 +260,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zpb zfb zv zdbus ztcp ztls zquic zhttp zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zpb zfb zv zdbus ztcp ztls zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -296,6 +296,8 @@ AC_CONFIG_FILES([Makefile \
 	zquic/example/Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
 	zhttp/util/Makefile zhttp/itest/Makefile zhttp/interop/Makefile zhttp/bench/Makefile \
+	zgrpc/Makefile zgrpc/src/Makefile zgrpc/src/Zgrpc.pc zgrpc/test/Makefile \
+	zgrpc/itest/Makefile zgrpc/interop/Makefile \
 	zrest/Makefile zrest/src/Makefile zrest/test/Makefile \
 	zrest/itest/Makefile zrest/example/Makefile zrest/interop/Makefile \
 	zjrpc/Makefile zjrpc/src/Makefile zjrpc/test/Makefile zjrpc/itest/Makefile \

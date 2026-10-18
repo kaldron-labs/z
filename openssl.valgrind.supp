@@ -1,0 +1,16 @@
+# Opt-in exception for the reviewed OpenSSL 3.5.5 / Memcheck 3.26.0 pair.
+# libcrypto build ID: 96e3095eff34eb22a2bcd9edb0e8b230c5dea19c.
+# gcm_ghash_avx copies inherited vector registers, then XORs each copy with
+# its unchanged original to produce zero. Memcheck loses that correlation;
+# defined GHASH inputs become undefined Xi bits and reach tag verification.
+# The reported conditional is ELF 0x470ecc, through EVP_DecryptFinal_ex.
+# See findings.md for standalone defined-input and vgdb validity-bit evidence.
+# Revalidate before using this rule with another dependency/tool version.
+# This does not suppress memory accesses, allocation errors, or leak records.
+{
+   openssl-3.5.5-ghash-avx-copy-xor
+   Memcheck:Cond
+   obj:*/libcrypto.so.3
+   obj:*/libcrypto.so.3
+   fun:EVP_DecryptFinal_ex
+}

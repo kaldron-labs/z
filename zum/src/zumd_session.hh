@@ -14,6 +14,8 @@
 #endif
 
 #include <zlib/zumd.hh>
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/zumd_request.hh>
 
 #include <zlib/ZtlsRandom.hh>
@@ -42,16 +44,16 @@ ZuDerive(SessionDoneFn, (ZmFn<void(int),
   ZmFnHeapID<"Zum.SessionDoneFn">>));
 
 ZumExtern bool sessionIssue(
-  Requests *, ZuTime, DB *, Ztls::Random &, SessionConfig, SessionFn);
+  ZmRef<ZmPolymorph>, Requests *, ZuTime, DB *, Ztls::Random &, SessionConfig, SessionFn);
 ZumExtern bool sessionIssueGrant(
-  Requests *, ZuTime, DB *, Ztls::Random &, Bytes grantID,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime, DB *, Ztls::Random &, Bytes grantID,
   String issuer, int64_t now, int64_t idleLifetime, int64_t absoluteLifetime,
   SessionFn);
 ZumExtern bool sessionUse(
-  Requests *, ZuTime, DB *, String token, String issuer,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime, DB *, String token, String issuer,
   int64_t now, int64_t idleLifetime, SessionFn);
 ZumExtern bool sessionRevoke(
-  Requests *, ZuTime, DB *, String token, String issuer,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime, DB *, String token, String issuer,
   int64_t now, SessionDoneFn);
 
 } // namespace Zum

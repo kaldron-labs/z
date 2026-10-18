@@ -73,8 +73,7 @@ static ZuPtr<const ZfCf::AnyNode> config()
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto *test = static_cast<TestDB *>(db);
-  test->requests->activate();
-  test->active.post();
+  test->requests->activate([test](bool) { test->active.post(); });
 }
 
 static void dbDown(Zdb *db, bool)
@@ -101,7 +100,7 @@ static ZmRef<TestDB> startDB(
 static bool stopDB(ZmRef<TestDB> &db, ZmRef<Zum::DB> &context)
 {
   ZmSemaphore drained;
-  db->requests->deactivate([&drained]() { drained.post(); });
+  db->requests->deactivate([&drained](bool) { drained.post(); });
   drained.wait();
   // stop() waits for store queue/pipeline completion and shard callback drain.
   // Only after it returns may final() release tables and a new DB be opened.

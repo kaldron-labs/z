@@ -43,8 +43,7 @@ static ZuPtr<const ZfCf::AnyNode> dbConfig()
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto test = static_cast<TestDB *>(db);
-  test->requests->activate();
-  test->active.post();
+  test->requests->activate([test](bool) { test->active.post(); });
 }
 
 static void dbDown(Zdb *db, bool)
@@ -84,7 +83,7 @@ static void runtimeIdentity()
   ZmRef<Ztls::PK::SK_EC> passkey;
   prepareIdentity(db, context, rng, passkeyHandle, passkey);
   ZmSemaphore requestsDown;
-  db->requests->deactivate([&requestsDown]() { requestsDown.post(); });
+  db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};

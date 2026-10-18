@@ -624,6 +624,9 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Use `ZmRing` and `ZiRing` for inter-thread and inter-process communication.
 
 ### Timers
+- Schedule every timer event with an absolute time, never a relative interval.
+- Calculate an absolute deadline by adding the interval to the current time on
+  the timer's clock, then pass that deadline to the scheduler.
 - `ZmScheduler::Timer` is used for timers
   - each `Timer` instance should be used for a separate individual timer/timeout
   - `Timer`s are intended to be contained by value as data members in owning structs/classes
