@@ -157,7 +157,8 @@ struct Codec {
 	  continue;
 	}
 	if (ZuUnlikely(c == '%')) {
-	  if (ZuUnlikely(++i > n - 2)) goto bad;
+	  if (ZuUnlikely(n - i < 3)) goto bad;
+	  ++i;
 	  auto h = hex(src[i++]);
 	  auto l = hex(src[i++]);
 	  if (ZuUnlikely(h < 0 || l < 0)) goto bad;

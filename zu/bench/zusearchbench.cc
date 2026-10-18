@@ -39,7 +39,7 @@ struct OutOfBounds { };
 
 void search_except(uint64_t *array, int n, uint64_t target, unsigned l)
 {
-  unsigned r;
+  unsigned r = 0;
   for (unsigned i = 0; i < l; i++) {
     // std::cout << "target=" << target << '\n';
     // std::cout << "n=" << n << '\n';

@@ -558,6 +558,11 @@ using ZuNotConvertible = ZuIfT<!ZuIsConvertible<From, To>{}, R>;
 // - the following are intentional non-goals:
 //   - distinguishing throw from nothrow
 //   - distinguishing move- from copy-constructible
+// This unevaluated constructibility probe intentionally accepts cast syntax.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wcast-user-defined"
+#endif
 template <typename From, typename To, typename = void>
 struct ZuIsConstructible_NonComposite : public ZuFalse { };
 template <typename From, typename To>
@@ -566,6 +571,9 @@ struct ZuIsConstructible_NonComposite<From, To,
 template <typename ...Args, typename To>
 struct ZuIsConstructible_NonComposite<ZuTypeList<Args...>, To,
   decltype(To(ZuDeclVal<Args...>()), void())> : public ZuTrue { };
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 template <typename From, typename To, typename = void>
 struct ZuIsConstructible_Composite : public ZuFalse { };
 template <typename From, typename To>
