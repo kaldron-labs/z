@@ -816,14 +816,19 @@ protected:
   }
 
   void clean_() {
-    if (!m_count) return;
+    // Shadow lists own no references and do not clear individual node links.
+    // Their owner may already have released the nodes before resetting the
+    // list, so neither clean nor destruction may traverse those pointers.
+    if constexpr (!Shadow) {
+      if (!m_count) return;
 
-    Node *node = m_head, *prevNode;
+      Node *node = m_head, *prevNode;
 
-    while (prevNode = node) {
-      node = next(prevNode);
-      nodeDeref(prevNode);
-      nodeDelete(prevNode);
+      while (prevNode = node) {
+	node = next(prevNode);
+	nodeDeref(prevNode);
+	nodeDelete(prevNode);
+      }
     }
   }
 
