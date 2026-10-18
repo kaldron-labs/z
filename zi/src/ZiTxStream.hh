@@ -210,6 +210,17 @@ private:
 
   void append(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(m_failed)) return;
+    if (ZuUnlikely(!buf || buf->failed())) { fail(); return; }
+    uint64_t reserve = uint64_t(m_headRoom) + m_tailRoom;
+    if (ZuUnlikely(reserve >= m_maxSize)) { fail(); return; }
+    // A codec may detach a jumbo buffer or leave different framing geometry.
+    // Copy directly into final frame buffers only when adoption cannot fit;
+    // never send an oversized protocol frame or overwrite missing headroom.
+    if (buf->length > m_maxSize - reserve || buf->skip < m_headRoom ||
+	buf->avail() < m_tailRoom) {
+      append(buf->data(), buf->length);
+      return;
+    }
     if (ZuUnlikely(m_buf && !sendBuf(ZuMv(m_buf), false))) return;
     m_buf = ZuMv(buf);
   }

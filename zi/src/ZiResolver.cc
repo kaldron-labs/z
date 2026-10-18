@@ -250,18 +250,18 @@ Main::Main()
 
 Main::~Main()
 {
-  if (m_sched && m_sched->running()) {
+  if (m_sched && m_state != Stopped) {
     if (m_sched->invoked(SID)) {
       stop__({});
     } else {
       ZmSemaphore sem;
       // protect against blocking on self-destruction, do NOT use ZmSelf()
       // - ZmSelf() depends on TLS and should not be called during exit
-      stop__([&sem](ZiEvent::StopResult) { sem.post(); });
+      stop_([&sem](ZiEvent::StopResult) { sem.post(); });
       sem.wait();
     }
   }
-  final__();
+  delete final__();
 }
 
 Main *Main::instance()
@@ -294,6 +294,20 @@ void Main::start(ZiEvent::StartFn fn)
 void Main::stop(ZiEvent::StopFn fn)
 {
   instance()->stop_(ZuMv(fn));
+}
+
+ZiEvent::StartResult Main::startSync()
+{
+  return ZmBlock<ZiEvent::StartResult>{}([](auto wake) {
+    start(ZuMv(wake));
+  });
+}
+
+ZiEvent::StopResult Main::stopSync()
+{
+  return ZmBlock<ZiEvent::StopResult>{}([](auto wake) {
+    stop(ZuMv(wake));
+  });
 }
 
 void Main::final()
@@ -330,7 +344,7 @@ void Main::cancel(ZmRef<Query> handle)
 bool Main::running() const
 {
   Guard guard(m_lock);
-  return m_sched && m_sched->running();
+  return m_state == Running;
 }
 
 bool Main::initialized() const
@@ -356,11 +370,10 @@ bool Main::queryCancelled_(const Query *query) const
 
 void Main::txt_(const DNSMsg &dns, TxtFn fn)
 {
-  start({});
   ZmRef<ZiResolver_TXT> query = new ZiResolver_TXT;
   query->buf = dns.buf;
   query->fn = ZuMv(fn);
-  m_loop.invoke([query = ZuMv(query)]() mutable {
+  invoke_([query]() mutable {
     enum { HdrLen = 12 };
 
     auto &fn = query->fn;
@@ -413,7 +426,7 @@ void Main::txt_(const DNSMsg &dns, TxtFn fn)
 
     if (!emitted) { fail(EAI_NONAME); return; }
     fn(TXTResult{});
-  });
+  }, [query]() { query->fn(TXTResult{aresError(ARES_ECANCELLED)}); });
 }
 
 void Main::cancel_(ZmRef<Query> handle)
@@ -429,7 +442,12 @@ void Main::init_()
 void Main::init_(Params params, ZiEvent::FailFn failFn)
 {
   Guard guard(m_lock);
+  init__(ZuMv(params), ZuMv(failFn));
+}
 
+void Main::init__(Params params, ZiEvent::FailFn failFn)
+{
+  ZmAssert(m_state != Finalizing);
   if (m_sched) return;
   if (!params.ipv4() && !params.ipv6())
     throw ZeEXCEPT(Fatal, "ZiResolver", "IPv4 and IPv6 cannot both be disabled");
@@ -473,66 +491,115 @@ void Main::init_(Params params, ZiEvent::FailFn failFn)
 
 void Main::start_(ZiEvent::StartFn fn)
 {
-  {
-    Guard guard(m_lock);
-    if (m_sched) goto initialized;
-  }
-  init_(Params{}, defltFailFn());
-
-initialized:
-  {
-    Guard guard(m_lock);
-    if (m_sched->running()) {
+  Guard guard(m_lock);
+  switch (m_state) {
+    case StopPending:
+    case Stopping:
+    case Finalizing:
+      guard.unlock();
+      if (fn) fn(ZiEvent::StartResult{
+	ZeEXCEPT(Fatal, "ZiResolver", "resolver is stopping or finalizing")});
+      return;
+    case Running:
+      guard.unlock();
       if (fn) fn(ZiEvent::StartResult{});
       return;
-    }
-    if (!m_sched->start()) {
-      if (fn) fn(ZiEvent::StartResult{
+    case Starting:
+      if (fn) m_startFns.push(ZuMv(fn));
+      return;
+  }
+  if (!m_sched) init__(Params{}, defltFailFn());
+  if (fn) m_startFns.push(ZuMv(fn));
+  m_state = Starting;
+  auto sched = m_sched;
+  guard.unlock();
+  static_cast<ZmEngine<ZmScheduler> *>(sched)->start([this, sched](bool ok) {
+    if (!ok) {
+      started_(ZiEvent::StartResult{
 	ZeEXCEPT(Fatal, "ZiResolver", "scheduler start failed")});
       return;
     }
-  }
-
-  if (m_sched->invoked(SID)) {
-    m_loop.start(ZuMv(fn));
-    return;
-  }
-  auto result = ZmBlock<ZiEvent::StartResult>{}([this](auto wake) {
-    m_loop.start([wake = ZuMv(wake)](ZiEvent::StartResult result) mutable {
-      wake(ZuMv(result));
+    m_loop.start([this, sched](ZiEvent::StartResult result) mutable {
+      if (!result.is<ZiEvent::Exception>()) {
+	started_(ZuMv(result));
+	return;
+      }
+      // A failed loop has already closed its handles. Drain the scheduler
+      // before publishing failure or servicing a pending stop.
+      static_cast<ZmEngine<ZmScheduler> *>(sched)->stop(
+	[this, result = ZuMv(result)](bool) mutable {
+	  started_(ZuMv(result));
+	});
     });
   });
-  if (fn) fn(ZuMv(result));
+}
+
+void Main::started_(ZiEvent::StartResult result)
+{
+  Guard guard(m_lock);
+  bool stop = m_state == StopPending;
+  auto fns = ZuMv(m_startFns);
+  m_startFns.init_();
+  m_state = stop ? Stopping :
+    (result.is<ZiEvent::Exception>() ? Stopped : Running);
+  guard.unlock();
+  if (stop) {
+    if (result.is<ZiEvent::Exception>())
+      stopped_(ZiEvent::StopResult{});
+    else
+      stop__([this](ZiEvent::StopResult result) {
+	stopped_(ZuMv(result));
+      });
+  }
+  for (auto &fn: fns) {
+    fn(result);
+    fn = {};
+  }
 }
 
 void Main::stop_(ZiEvent::StopFn fn)
 {
-  bool invoked;
-  ZiEvent::StopResult result;
-  {
-    Guard guard(m_lock);
-    if (!m_sched || !m_sched->running()) {
+  Guard guard(m_lock);
+  switch (m_state) {
+    case Stopped:
+    case Finalizing:
+      guard.unlock();
       if (fn) fn(ZiEvent::StopResult{});
       return;
-    }
-    invoked = m_sched->invoked(SID);
-    if (invoked) {
-      stop__(ZuMv(fn));
+    case Starting:
+      m_state = StopPending;
+      if (fn) m_stopFns.push(ZuMv(fn));
       return;
-    }
-    result = ZmBlock<ZiEvent::StopResult>{}([this](auto wake) {
-      stop__([wake = ZuMv(wake)](ZiEvent::StopResult result) mutable {
-	wake(ZuMv(result));
-      });
-    });
+    case StopPending:
+    case Stopping:
+      if (fn) m_stopFns.push(ZuMv(fn));
+      return;
   }
-  if (fn) fn(ZuMv(result));
+  if (fn) m_stopFns.push(ZuMv(fn));
+  m_state = Stopping;
+  guard.unlock();
+  stop__([this](ZiEvent::StopResult result) {
+    stopped_(ZuMv(result));
+  });
+}
+
+void Main::stopped_(ZiEvent::StopResult result)
+{
+  Guard guard(m_lock);
+  auto fns = ZuMv(m_stopFns);
+  m_stopFns.init_();
+  m_state = Stopped;
+  guard.unlock();
+  for (auto &fn: fns) {
+    fn(result);
+    fn = {};
+  }
 }
 
 void Main::stop__(ZiEvent::StopFn fn)
 {
-  m_sched->del(&m_timer);
   m_loop.invoke([this, sched = m_sched, fn = ZuMv(fn)]() mutable {
+    sched->del(&m_timer);
     if (m_channel) ares_cancel(m_channel);
     m_loop.stop([sched, fn = ZuMv(fn)](
       ZiEvent::StopResult result) mutable {
@@ -546,14 +613,21 @@ void Main::stop__(ZiEvent::StopFn fn)
 
 void Main::final_()
 {
-  stop_({});
-  {
-    Guard guard(m_lock);
-    final__();
-  }
+  Guard guard(m_lock);
+  ZmAssert(m_state == Stopped);
+  ZmAssert(!m_startFns && !m_stopFns);
+  ZmAssert(!m_sched || m_sched->state() == ZmEngineState::Stopped);
+  m_state = Finalizing;
+  auto sched = final__();
+  guard.unlock();
+  // Stop callbacks execute on the scheduler control thread. Its destructor
+  // joins that thread, so callbacks must be free to acquire m_lock.
+  delete sched;
+  Guard done(m_lock);
+  m_state = Stopped;
 }
 
-void Main::final__()
+ZmScheduler *Main::final__()
 {
   bool cleanupAres = m_channel;
   if (m_channel) {
@@ -562,17 +636,15 @@ void Main::final__()
   }
   if (cleanupAres) ares_library_cleanup();
   m_loop.final();
-  if (m_sched) {
-    delete m_sched;
-    m_sched = nullptr;
-  }
+  auto sched = m_sched;
+  m_sched = nullptr;
   m_params = Params{};
   m_failFn = ZiEvent::FailFn{};
+  return sched;
 }
 
 ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
 {
-  start({});
 #ifndef _WIN32
   ZuCSpan text{host};
 #else
@@ -580,10 +652,24 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
   ZuCSpan text{name};
 #endif
   ZiIP ip;
-  if (ZiIP::parse(ip, text) &&
-      ((m_params.ipv4() && ip.v4()) || (m_params.ipv6() && ip.v6()))) {
-    if (fn(ResolveResult{ip})) fn(ResolveResult{});
-    return {};
+  if (ZiIP::parse(ip, text)) {
+    Guard guard(m_lock);
+    switch (m_state) {
+      case StopPending:
+      case Stopping:
+      case Finalizing:
+	guard.unlock();
+	fn(ResolveResult{aresError(ARES_ECANCELLED)});
+	return {};
+    }
+    if (!m_sched) init__(Params{}, defltFailFn());
+    bool enabled = (m_params.ipv4() && ip.v4()) ||
+      (m_params.ipv6() && ip.v6());
+    guard.unlock();
+    if (enabled) {
+      if (fn(ResolveResult{ip})) fn(ResolveResult{});
+      return {};
+    }
   }
   ZmRef<Query> query = new Query;
 #ifndef _WIN32
@@ -592,7 +678,7 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
   query->name = ZuMv(name);
 #endif
   query->resolveFn = ZuMv(fn);
-  m_loop.invoke([this, query]() mutable {
+  invoke_([this, query]() mutable {
     if (query->cancelled()) return;
     if (!m_channel || m_loop.stopping()) {
       if (!query->cancelled())
@@ -619,13 +705,15 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
 #pragma GCC diagnostic pop
 #endif
     armTimer_();
+  }, [query]() {
+    if (!query->cancelled())
+      query->resolveFn(ResolveResult{aresError(ARES_ECANCELLED)});
   });
   return query;
 }
 
 ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
 {
-  start({});
   ZiSockAddr addr(ip, 0);
   if (!addr) {
     fn(NameResult{aresError(ARES_ENOTFOUND)});
@@ -634,7 +722,7 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
   ZmRef<Query> query = new Query;
   query->addr = addr;
   query->nameFn = ZuMv(fn);
-  m_loop.invoke([this, query]() mutable {
+  invoke_([this, query]() mutable {
     if (query->cancelled()) return;
     if (!m_channel || m_loop.stopping()) {
       if (!query->cancelled())
@@ -646,6 +734,9 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
       m_channel, query->addr.sa(), query->addr.len(), 0,
       ZiResolver_NameCB, query);
     armTimer_();
+  }, [query]() {
+    if (!query->cancelled())
+      query->nameFn(NameResult{aresError(ARES_ECANCELLED)});
   });
   return query;
 }
@@ -653,14 +744,13 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
 ZmRef<Query> Main::query_(
   Host host, uint16_t type, uint16_t class_, QueryFn fn)
 {
-  start({});
   ZmRef<Query> query = new Query;
   query->host = ZuMv(host);
   query->name = hostName(query->host);
   query->type = type;
   query->class_ = class_;
   query->queryFn = ZuMv(fn);
-  m_loop.invoke([this, query]() mutable {
+  invoke_([this, query]() mutable {
     if (query->cancelled()) return;
     if (!m_channel || m_loop.stopping()) {
       if (!query->cancelled())
@@ -679,6 +769,9 @@ ZmRef<Query> Main::query_(
 #pragma GCC diagnostic pop
 #endif
     armTimer_();
+  }, [query]() {
+    if (!query->cancelled())
+      query->queryFn(QueryResult{aresError(ARES_ECANCELLED)});
   });
   return query;
 }

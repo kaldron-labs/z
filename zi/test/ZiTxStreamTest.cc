@@ -123,6 +123,51 @@ void testSplitAndFlush()
   ZuCheck(h.sent[2].final);
 }
 
+void testAdoptedBuffers()
+{
+  ZuTestScope(testAdoptedBuffers);
+  StreamHarness direct;
+  TestTxStream same{direct, 12, 2, 1};
+  ZmRef<ZiIOBuf> small = new StreamAlloc{};
+  small->skip = 3;
+  small->append(ZuBSpan{"small"});
+  same << small;
+  ZuCheck(same.flush() && direct.sent.length() == 1);
+  ZuCheck(direct.sent[0].buf.ptr() == small.ptr() && direct.sent[0].skip == 3);
+  ZuCheck(!direct.allocCount);
+
+  StreamHarness split;
+  TestTxStream frames{split, 12, 2, 1};
+  ZmRef<ZiIOBuf> large = new StreamAlloc{};
+  large->skip = 7;
+  large->append(ZuBSpan{"abcdefghijklmnopqrst"});
+  frames << large;
+  ZuCheck(frames.flush() && split.sent.length() == 3);
+  ZtString<> joined;
+  for (const auto &sent : split.sent) {
+    ZuCheck(sent.length <= 9 && sent.skip >= 2 && sent.buf->avail() >= 1);
+    joined << sent.buf->cspan();
+  }
+  ZuCheck(joined == "abcdefghijklmnopqrst" && large->skip == 7 && large->length == 20);
+
+  StreamHarness geometry;
+  TestTxStream adjusted{geometry, 12, 2, 1};
+  ZmRef<ZiIOBuf> noRoom = new StreamAlloc{};
+  noRoom->append(ZuBSpan{"space"});
+  noRoom->size = noRoom->length; // readable storage has no head or tail space
+  adjusted << noRoom;
+  ZuCheck(adjusted.flush() && geometry.sent.length() == 1);
+  ZuCheck(geometry.sent[0].buf.ptr() != noRoom.ptr() && geometry.sent[0].skip == 2);
+  ZuCheck(geometry.sent[0].buf->cspan() == "space");
+
+  StreamHarness refused;
+  refused.rejectAt = 2;
+  TestTxStream rejected{refused, 12, 2, 1};
+  rejected << large;
+  ZuCheck(rejected.failed() && !rejected.flush() && refused.sent.length() == 1);
+  ZuCheck(refused.sent[0].buf->cspan() == "abcdefghi");
+}
+
 void testPrimitiveAppendAccounting()
 {
   ZuTestScope(testPrimitiveAppendAccounting);
@@ -443,6 +488,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSplitAndFlush);
+  ZuTestCall(testAdoptedBuffers);
   ZuTestCall(testPrimitiveAppendAccounting);
   ZuTestCall(testRealPrimitiveFormatting);
   ZuTestCall(testFlushElidesEmptyBuffer);
