@@ -798,8 +798,17 @@ void Hubd::stop(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">> complete)
 void Hubd::stop_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">> complete)
 {
   if (!complete) return;
-  if (!m_state || m_state->state == HubdState::Down) {
+  if (!m_state) {
     complete(Zum::ServiceError::OK);
+    return;
+  }
+  if (m_state->state == HubdState::Down) {
+    auto state = ZmRef<Hubd_::State>{m_state};
+    auto drained = [state = ZuMv(state), complete = ZuMv(complete)]() mutable {
+      complete(Zum::ServiceError::OK);
+    };
+    if (m_state->multiplex) m_state->multiplex->rxRun(ZuMv(drained));
+    else drained();
     return;
   }
   auto state = ZmRef<Hubd_::State>{m_state};
@@ -814,37 +823,42 @@ void Hubd::stop_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">> complete)
   state->sessions.clean();
   state->tokenIdx.clean();
   Hubd_::clearBrowsers(*state);
-  if (!state->serviceReady) {
-    state->state = HubdState::Down;
-    complete(Zum::ServiceError::OK);
-    return;
-  }
-  if (!state->serviceStarted) {
-    state->service.final();
-    state->serviceReady = false;
-    state->state = HubdState::Down;
-    complete(Zum::ServiceError::OK);
-    return;
-  }
-  bool dbRunning = state->db && state->db->running();
-  auto stopService = [state, complete = ZuMv(complete)](
-      bool dbOK) mutable {
-    state->service.stop([state = ZuMv(state), complete = ZuMv(complete),
-        dbOK](int error) mutable {
+  // Complete shutdown after queued browser expiry callbacks drain on Rx.
+  auto drained = [state = ZuMv(state), complete = ZuMv(complete)]() mutable {
+    if (!state->serviceReady) {
+      state->state = HubdState::Down;
+      complete(Zum::ServiceError::OK);
+      return;
+    }
+    if (!state->serviceStarted) {
       state->service.final();
-      state->serviceStarted = false;
       state->serviceReady = false;
       state->state = HubdState::Down;
-      complete(!dbOK ? Zum::ServiceError::Unavailable :
-        error == Zum::ServiceError::OK ? Zum::ServiceError::OK : error);
-    });
+      complete(Zum::ServiceError::OK);
+      return;
+    }
+    bool dbRunning = state->db && state->db->running();
+    auto stopService = [state, complete = ZuMv(complete)](
+        bool dbOK) mutable {
+      state->service.stop([state = ZuMv(state), complete = ZuMv(complete),
+          dbOK](int error) mutable {
+        state->service.final();
+        state->serviceStarted = false;
+        state->serviceReady = false;
+        state->state = HubdState::Down;
+        complete(!dbOK ? Zum::ServiceError::Unavailable :
+          error == Zum::ServiceError::OK ? Zum::ServiceError::OK : error);
+      });
+    };
+    if (dbRunning)
+      state->db->stop([stopService = ZuMv(stopService)](bool ok) mutable {
+        stopService(ok);
+      });
+    else
+      stopService(true);
   };
-  if (dbRunning)
-    state->db->stop([stopService = ZuMv(stopService)](bool ok) mutable {
-      stopService(ok);
-    });
-  else
-    stopService(true);
+  if (m_state->multiplex) m_state->multiplex->rxRun(ZuMv(drained));
+  else drained();
 }
 
 void Hubd::final()
@@ -999,9 +1013,9 @@ bool Hubd::createBrowserSession(
   session->cookie = cookie;
   if (m_state->multiplex) m_state->multiplex->add(&session->expiry,
     ZuTime{principal.expires}, ZmScheduler::Update,
-    [state = m_state.ptr(), session](auto &&arm) mutable {
-      return arm([state, session]() mutable {
-        state->browserSessions.del(session->cookie);
+    [state = m_state.ptr(), cookie = HubString{session->cookie}](auto &&arm) mutable {
+      return arm([state, cookie = ZuMv(cookie)]() mutable {
+        state->browserSessions.del(cookie);
       });
     }, m_state->multiplex->rxThread());
   m_state->browserSessions.addNode(ZuMv(session));
