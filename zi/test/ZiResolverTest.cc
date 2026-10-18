@@ -7,6 +7,9 @@
 #include <zlib/ZuTestUtil.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmObject.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmThread.hh>
 
