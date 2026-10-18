@@ -191,6 +191,7 @@ public:
   // External callers only: never wait from a resolver callback.
   static ZiEvent::StartResult startSync();
   static ZiEvent::StopResult stopSync();
+  // Call after stop completion; may join outstanding control-thread callbacks.
   static void final();
 
   static ZmRef<Query> resolve(Host, ResolveFn);
@@ -219,20 +220,19 @@ private:
   void final_();
   ZmScheduler *final__();
 
-  template <typename L, typename Fail>
-  void invoke_(L &&l, Fail &&fail) {
+  template <typename L>
+  void invoke_(L &&l) {
     {
       Guard guard(m_lock);
       if (m_state == Running) {
 	guard.unlock();
-	m_loop.invoke(ZuFwd<L>(l));
+	m_loop.invoke([l = ZuFwd<L>(l)]() mutable { l(true); });
 	return;
       }
     }
-    start_([this, l = ZuFwd<L>(l), fail = ZuFwd<Fail>(fail)](
-	ZiEvent::StartResult result) mutable {
-      if (result.is<ZiEvent::Exception>()) { fail(); return; }
-      m_loop.invoke(ZuMv(l));
+    start_([this, l = ZuFwd<L>(l)](ZiEvent::StartResult result) mutable {
+      if (result.is<ZiEvent::Exception>()) { l(false); return; }
+      m_loop.invoke([l = ZuMv(l)]() mutable { l(true); });
     });
   }
 

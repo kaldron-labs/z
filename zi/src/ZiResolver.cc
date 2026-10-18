@@ -373,7 +373,8 @@ void Main::txt_(const DNSMsg &dns, TxtFn fn)
   ZmRef<ZiResolver_TXT> query = new ZiResolver_TXT;
   query->buf = dns.buf;
   query->fn = ZuMv(fn);
-  invoke_([query]() mutable {
+  invoke_([query = ZuMv(query)](bool ready) mutable {
+    if (!ready) { query->fn(TXTResult{aresError(ARES_ECANCELLED)}); return; }
     enum { HdrLen = 12 };
 
     auto &fn = query->fn;
@@ -426,7 +427,7 @@ void Main::txt_(const DNSMsg &dns, TxtFn fn)
 
     if (!emitted) { fail(EAI_NONAME); return; }
     fn(TXTResult{});
-  }, [query]() { query->fn(TXTResult{aresError(ARES_ECANCELLED)}); });
+  });
 }
 
 void Main::cancel_(ZmRef<Query> handle)
@@ -678,9 +679,9 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
   query->name = ZuMv(name);
 #endif
   query->resolveFn = ZuMv(fn);
-  invoke_([this, query]() mutable {
+  invoke_([this, query](bool ready) mutable {
     if (query->cancelled()) return;
-    if (!m_channel || m_loop.stopping()) {
+    if (!ready || !m_channel || m_loop.stopping()) {
       if (!query->cancelled())
 	query->resolveFn(ResolveResult{aresError(ARES_ECANCELLED)});
       return;
@@ -705,9 +706,6 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
 #pragma GCC diagnostic pop
 #endif
     armTimer_();
-  }, [query]() {
-    if (!query->cancelled())
-      query->resolveFn(ResolveResult{aresError(ARES_ECANCELLED)});
   });
   return query;
 }
@@ -722,9 +720,9 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
   ZmRef<Query> query = new Query;
   query->addr = addr;
   query->nameFn = ZuMv(fn);
-  invoke_([this, query]() mutable {
+  invoke_([this, query](bool ready) mutable {
     if (query->cancelled()) return;
-    if (!m_channel || m_loop.stopping()) {
+    if (!ready || !m_channel || m_loop.stopping()) {
       if (!query->cancelled())
 	query->nameFn(NameResult{aresError(ARES_ECANCELLED)});
       return;
@@ -734,9 +732,6 @@ ZmRef<Query> Main::name_(ZiIP ip, NameFn fn)
       m_channel, query->addr.sa(), query->addr.len(), 0,
       ZiResolver_NameCB, query);
     armTimer_();
-  }, [query]() {
-    if (!query->cancelled())
-      query->nameFn(NameResult{aresError(ARES_ECANCELLED)});
   });
   return query;
 }
@@ -750,9 +745,9 @@ ZmRef<Query> Main::query_(
   query->type = type;
   query->class_ = class_;
   query->queryFn = ZuMv(fn);
-  invoke_([this, query]() mutable {
+  invoke_([this, query](bool ready) mutable {
     if (query->cancelled()) return;
-    if (!m_channel || m_loop.stopping()) {
+    if (!ready || !m_channel || m_loop.stopping()) {
       if (!query->cancelled())
 	query->queryFn(QueryResult{aresError(ARES_ECANCELLED)});
       return;
@@ -769,9 +764,6 @@ ZmRef<Query> Main::query_(
 #pragma GCC diagnostic pop
 #endif
     armTimer_();
-  }, [query]() {
-    if (!query->cancelled())
-      query->queryFn(QueryResult{aresError(ARES_ECANCELLED)});
   });
   return query;
 }
