@@ -44,8 +44,18 @@ int ZiDaemon::init(
 	s << "getpwnam(\"" << name << "\") failed";
       }));
     } else {
-      setregid(p->pw_gid, p->pw_gid);
-      setreuid(p->pw_uid, p->pw_uid);
+      if (setregid(p->pw_gid, p->pw_gid) < 0) {
+	ZiLOG(Error, "ZiDaemon", ([e = ZeLastError](auto &s) {
+	  s << "setregid() failed: " << e.message();
+	}));
+	return Error;
+      }
+      if (setreuid(p->pw_uid, p->pw_uid) < 0) {
+	ZiLOG(Error, "ZiDaemon", ([e = ZeLastError](auto &s) {
+	  s << "setreuid() failed: " << e.message();
+	}));
+	return Error;
+      }
     }
   }
 

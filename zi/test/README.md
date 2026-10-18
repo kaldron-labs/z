@@ -1,5 +1,13 @@
 # Zi unit tests
 
+`ZiResolverTest` covers resolver lifecycle and DNS fixtures. Startup and stop
+cases hold callbacks open and verify that continuation-based lifecycle calls
+return before those callbacks drain. It also covers reentrant start callbacks,
+stop during startup, and finalization while queued stop callbacks inspect the
+resolver. A callback reference released by finalization synchronizes the latter
+case without sleeps. External test teardown uses explicit `startSync()` and
+`stopSync()` waits.
+
 `ZpbTest` covers protobuf wire primitives, downward builder storage, facets,
 explicit verification, nested value messages, repeated numeric and text/byte
 values, owned scalar/vector C-string loading, and nested pointer values.

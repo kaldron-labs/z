@@ -185,8 +185,12 @@ public:
   static void init();
   static void init(Params);
   static void init(Params, ZiEvent::FailFn);
-  static void start(ZiEvent::StartFn = {});
-  static void stop(ZiEvent::StopFn = {});
+  // Completion callbacks may run inline; neither operation waits for completion.
+  static void start(ZiEvent::StartFn);
+  static void stop(ZiEvent::StopFn);
+  // External callers only: never wait from a resolver callback.
+  static ZiEvent::StartResult startSync();
+  static ZiEvent::StopResult stopSync();
   static void final();
 
   static ZmRef<Query> resolve(Host, ResolveFn);
@@ -202,14 +206,35 @@ private:
   enum {
     SID = 1
   };
+  enum { Stopped, Starting, Running, StopPending, Stopping, Finalizing };
 
   void init_();
   void init_(Params, ZiEvent::FailFn);
+  void init__(Params, ZiEvent::FailFn);
   void start_(ZiEvent::StartFn);
+  void started_(ZiEvent::StartResult);
   void stop_(ZiEvent::StopFn);
   void stop__(ZiEvent::StopFn);
+  void stopped_(ZiEvent::StopResult);
   void final_();
-  void final__();
+  ZmScheduler *final__();
+
+  template <typename L, typename Fail>
+  void invoke_(L &&l, Fail &&fail) {
+    {
+      Guard guard(m_lock);
+      if (m_state == Running) {
+	guard.unlock();
+	m_loop.invoke(ZuFwd<L>(l));
+	return;
+      }
+    }
+    start_([this, l = ZuFwd<L>(l), fail = ZuFwd<Fail>(fail)](
+	ZiEvent::StartResult result) mutable {
+      if (result.is<ZiEvent::Exception>()) { fail(); return; }
+      m_loop.invoke(ZuMv(l));
+    });
+  }
 
   ZmRef<Query> resolve_(Host, ResolveFn);
   ZmRef<Query> name_(ZiIP, NameFn);
@@ -236,9 +261,16 @@ private:
   Params		m_params;
   ZiEvent::FailFn	m_failFn;
 
+  using StartFns = ZtArray<ZiEvent::StartFn,
+    ZtArrayHeapID<"ZiResolver.Start">>;
+  using StopFns = ZtArray<ZiEvent::StopFn,
+    ZtArrayHeapID<"ZiResolver.Stop">>;
   // lifecycle - guarded by m_lock
   mutable Lock		m_lock;
     ZmScheduler		  *m_sched = nullptr;
+    StartFns		  m_startFns;
+    StopFns		  m_stopFns;
+    int8_t		  m_state = Stopped;
 
   // shared lifecycle object; c-ares activity is on SID
   ZiEventLoop		m_loop;

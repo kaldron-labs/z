@@ -163,6 +163,12 @@ struct FailingDelegate {
   friend ZuPrintFn ZuPrintType(FailingDelegate *);
 };
 
+// The deliberate UINT_MAX append is rejected before reading the short source.
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
 void testOutputFailure()
 {
   ZuTestScope(testOutputFailure);
@@ -201,6 +207,11 @@ void testOutputFailure()
   *buf << "ok";
   ZuCheck(!buf->failed() && buf->cspan() == "ok");
 }
+
+
+#if defined(__GNUC__) && !defined(__clang__) && __GNUC__ >= 15
+#pragma GCC diagnostic pop
+#endif
 
 int main(int argc, char **argv)
 {
