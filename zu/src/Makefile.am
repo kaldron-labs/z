@@ -6,7 +6,7 @@ pkginclude_HEADERS = \
 	ZuLib.hh ZuIntrin.hh ZuTL.hh ZuSeq.hh ZuString.hh ZuDeduce.hh ZuFixed.hh \
 	ZuArrayFn.hh ZuSpan.hh ZuArray.hh ZuAssert.hh ZuBox.hh \
 	ZuBitmap.hh ZuBitfield.hh ZuByteSwap.hh ZuCmp.hh ZuICmp.hh \
-	ZuFnName.hh ZuFmt.hh ZuFP.hh ZuFP_.hh ZuHash.hh ZuID.hh \
+	ZuFnName.hh ZuFmt.hh ZuFP.hh ZuFP_.hh ZuHash.hh ZuID.hh ZuInvoke.hh \
 	ZuInt.hh ZuLargest.hh ZuDemangle.hh ZuTime.hh ZuDateTime.hh \
 	ZuLambdaTraits.hh ZuReserved.hh ZuSemVer.hh \
 	ZuObjectTraits.hh ZuObject.hh ZuPolymorph.hh ZuPP.hh \
