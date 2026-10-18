@@ -274,7 +274,8 @@ namespace ZuFieldProp {
   template <typename Map> struct Flags { using T = Map; };	// flags
 
   template <auto Def> struct Deflt {
-    static constexpr decltype(auto) deflt() { return (Def); }
+    static constexpr auto value = Def;
+    static constexpr const auto &deflt() { return value; }
   };
 
   template <auto Min, auto Max> struct Range {

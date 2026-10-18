@@ -2164,8 +2164,7 @@ struct LongMatcher {
   static int exact(ZuCSpan key) {
     if constexpr (!Keys::N) return -1;
     else {
-      struct IDs { using Keys = LongMatcher::Keys; };
-      static constexpr auto matcher = ZuMatcher<IDs>();
+      static constexpr auto matcher = ZuMatcher<LongMatcher>();
       return matcher.exact(key);
     }
   }
