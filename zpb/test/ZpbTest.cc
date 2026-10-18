@@ -2823,6 +2823,49 @@ static void testBoolVec()
     !memcmp(wire.data(), expected, sizeof(expected)));
 }
 
+static void testLoadErrors()
+{
+  ZuTestScope(testLoadErrors);
+  const uint8_t truncated[] = {0x08, 0x80};
+  const uint8_t wrongWire[] = {0x0a, 0x00};
+  const uint8_t badPrefix[] = {0x80};
+  const uint8_t badNested[] = {0x0a, 0x02, 0x08, 0x80};
+  ZuCheck(!Zpb::verify<CtorRow>(truncated));
+  ZuCheck(!Zpb::verify<CtorRow>(wrongWire));
+  ZuCheck((!Zpb::verify<Row, ZuFacet::PrefixedPB>(badPrefix)));
+  ZuCheck(!Zpb::verify<Parent>(badNested));
+
+  auto ctor = Zpb::load<CtorRow>(truncated);
+  ZuCheck(ctor.id == ZuCmp<int32_t>::null() && !ctor.name.length());
+  auto wrong = Zpb::load<CtorRow>(wrongWire);
+  ZuCheck(wrong.id == ZuCmp<int32_t>::null() && !wrong.name.length());
+  auto framed = Zpb::load<Row, ZuFacet::PrefixedPB>(badPrefix);
+  ZuCheck(!framed.id &&
+    !framed.name.length() && !framed.enabled);
+  auto nested = Zpb::load<Parent>(badNested);
+  ZuCheck(!nested.child.a && !nested.child.b);
+
+  Row row{7, "unchanged", true};
+  auto handler = Zpb::handler<Row>(truncated);
+  handler.load(row);
+  ZuCheck(row.id == 7 && row.name == "unchanged" && row.enabled);
+  handler.update(row);
+  ZuCheck(row.id == 7 && row.name == "unchanged" && row.enabled);
+  handler.merge(row);
+  ZuCheck(row.id == 7 && row.name == "unchanged" && row.enabled);
+
+  const uint8_t partial[] = {0x08, 0x2a, 0x12, 0x80};
+  ZuCheck(!Zpb::verify<Row>(partial));
+  Zpb::handler<Row>(partial).load(row);
+  ZuCheck(row.id == 42 && row.name == "unchanged" && row.enabled);
+
+  ResetPtrParent reset;
+  reset.child = new PtrChild;
+  auto child = reset.child;
+  Zpb::handler<ResetPtrParent>(truncated).load(reset);
+  ZuCheck(reset.child == child);
+}
+
 int main(int argc, char **argv)
 {
   ZuTestMain();
@@ -2858,4 +2901,5 @@ int main(int argc, char **argv)
   ZuTestCall(testFixedWire);
   ZuTestCall(testNarrowTypes);
   ZuTestCall(testBoolVec);
+  ZuTestCall(testLoadErrors);
 }

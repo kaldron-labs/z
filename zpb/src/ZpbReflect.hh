@@ -679,11 +679,13 @@ bool defaultValue(FileDesc &file, FieldDesc &field)
       dst << (Default::deflt() ? "true" : "false");
     else if constexpr (code == ZfFieldTC::CString ||
       code == ZfFieldTC::String) {
-      ZuCSpan value{Default::deflt()};
+      const auto &backing = Default::deflt();
+      ZuCSpan value{backing};
       if (!value.data()) return false;
       dst << value;
     } else if constexpr (code == ZfFieldTC::Bytes) {
-      ZuBSpan value{Default::deflt()};
+      const auto &backing = Default::deflt();
+      ZuBSpan value{backing};
       if (!value.data()) return false;
       ProtoText quoted;
       emitQuoted(quoted, value);

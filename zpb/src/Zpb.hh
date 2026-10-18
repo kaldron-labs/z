@@ -705,7 +705,7 @@ struct AsUnion<Name, Alts...>::Handler {
 };
 
 template <typename O_, typename T_, unsigned Code_, ZuString ID,
-  typename Props_, auto Get>
+  typename Props_, bool Key>
 struct MapField {
   using O = O_;
   using T = T_;
@@ -714,10 +714,12 @@ struct MapField {
   enum { Code = Code_, ReadOnly = false };
   template <template <typename> class Override> using Adapt = Override<Orig>;
   static constexpr auto id() { return ID; }
-  static decltype(auto) get(const O &o) { return Get(o); }
-  static decltype(auto) get(O &o) { return Get(o); }
+  template <typename Obj> static decltype(auto) get(Obj &o) {
+    if constexpr (Key) return (o.key);
+    else return (o.val);
+  }
   template <typename V> static void set(O &o, V &&value) {
-    Get(o) = ZuFwd<V>(value);
+    get(o) = ZuFwd<V>(value);
   }
   static T deflt() { return T{}; }
 };
@@ -728,10 +730,10 @@ struct MapEntry {
   V val{};
   using KF = MapField<MapEntry, K, Fmt::KC, "key",
     typename Fmt::KP::template Push<ZuFieldProp::PB::FieldID<1>>,
-    [](auto &o) -> decltype(auto) { return (o.key); }>;
+    true>;
   using VF = MapField<MapEntry, V, Fmt::VC, "value",
     typename Fmt::VP::template Push<ZuFieldProp::PB::FieldID<2>>,
-    [](auto &o) -> decltype(auto) { return (o.val); }>;
+    false>;
   friend MapEntry ZuStructured_(MapEntry *);
   template <typename Facet>
   friend ZuTypeList<KF, VF> ZuFields_(MapEntry *, Facet *);
@@ -744,10 +746,10 @@ struct MapEntryView {
   const V &val;
   using KF = MapField<MapEntryView, K, Fmt::KC, "key",
     typename Fmt::KP::template Push<ZuFieldProp::PB::FieldID<1>>,
-    [](auto &o) -> decltype(auto) { return (o.key); }>;
+    true>;
   using VF = MapField<MapEntryView, V, Fmt::VC, "value",
     typename Fmt::VP::template Push<ZuFieldProp::PB::FieldID<2>>,
-    [](auto &o) -> decltype(auto) { return (o.val); }>;
+    false>;
   friend MapEntryView ZuStructured_(MapEntryView *);
   template <typename Facet>
   friend ZuTypeList<KF, VF> ZuFields_(MapEntryView *, Facet *);
@@ -1208,7 +1210,7 @@ private:
       constexpr unsigned seenSize = Fields::N ? Fields::N : 1;
       auto seen = ZtScratch(Seen, seenSize, seenSize);
       if constexpr (Fields::N) memset(seen.data(), 0, Fields::N);
-      bool ok = scan<ZfFieldFilter::Ctor>(m_bytes,
+      scan<ZfFieldFilter::Ctor>(m_bytes,
 	[&]<typename F>(auto alt, ZuBSpan bytes, unsigned &pos,
 	  Wire::T type) {
 	  if constexpr (MappedCode<F::Code>{}) {
@@ -1251,7 +1253,6 @@ private:
 	    return true;
 	  });
 	});
-      ZmAssert_(ok);
     }
     return state;
   }
@@ -1723,7 +1724,7 @@ private:
 	  return true;
 	});
       });
-    ZmAssert_(ok);
+    if (!ok) return;
     using Active = ZuTypeGrep<Filter, Fields>;
     ZuUnroll::all<Active>([&]<typename F>() {
       if constexpr (ZfFieldWritable<F>{} && PointerField<F>{} &&
@@ -1833,7 +1834,7 @@ template <typename O, typename Facet = ZuFacet::PB>
 auto handler(ZuBSpan bytes) {
   if constexpr (Config<Facet>::SizePrefixed) {
     ZuBSpan payload;
-    ZmAssert_(Wire::unframe(bytes, payload));
+    if (!Wire::unframe(bytes, payload)) payload = {};
     bytes = payload;
   }
   return typename As<O>::template Handler<O, Facet>{bytes};
