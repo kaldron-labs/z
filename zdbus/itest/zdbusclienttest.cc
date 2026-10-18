@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <iostream>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -625,8 +626,7 @@ static void client()
 int main(int argc, char **argv)
 {
   if (!ZdbusTestTool::available("dbus-daemon")) {
-    constexpr char skip[] = "1..0 # SKIP dbus-daemon unavailable\n";
-    ::write(STDOUT_FILENO, skip, sizeof(skip) - 1);
+    std::cout << "1..0 # SKIP dbus-daemon unavailable\n";
     return 0;
   }
   parse(argc, argv);
