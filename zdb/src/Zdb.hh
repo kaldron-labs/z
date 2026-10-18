@@ -2255,8 +2255,6 @@ private:
   int			m_nPeers = 0;	// # up to date peers
 					// # votes received (Electing)
 					// # pending disconnects (Stopping)
-  ZuTime		m_hbSendTime;
-
   bool			m_standalone = false;
 
   ZmScheduler::Timer	m_listenTimer;
