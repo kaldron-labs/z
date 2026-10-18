@@ -748,7 +748,7 @@ void DB::start_2()
     return;
   }
 
-  mx()->add(&m_hbSendTimer, m_hbSendTime = Zm::now(), ZmScheduler::Update,
+  mx()->add(&m_hbSendTimer, Zm::now(), ZmScheduler::Update,
       [this](auto &&arm) { return arm([this]() { hbSend(); }); },
       sid());
   mx()->add(&m_electTimer, Zm::now(int(m_cf.electionTimeout)),
@@ -1882,7 +1882,7 @@ void DB::hbSend()
 
   hbSend_();
 
-  mx()->add(&m_hbSendTimer, m_hbSendTime += (time_t)m_cf.heartbeatFreq,
+  mx()->add(&m_hbSendTimer, Zm::now(int(m_cf.heartbeatFreq)),
     ZmScheduler::Defer,
     [this](auto &&arm) { return arm([this]() { hbSend(); }); },
     sid());
