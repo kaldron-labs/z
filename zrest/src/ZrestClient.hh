@@ -13,7 +13,7 @@
 #include <zlib/ZrestInput.hh>
 
 #include <zlib/ZmAtomic.hh>
-#include <zlib/ZmBlock.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmPQueue.hh>
 
@@ -838,12 +838,20 @@ private:
 
 template <typename App, typename Catalog, typename Selection>
 class Client : public Zhttp::Client<Client<App, Catalog, Selection>,
-    ClientPool<App, Catalog, Selection>> {
+    ClientPool<App, Catalog, Selection>>,
+    private ZmEngine<Client<App, Catalog, Selection>> {
+  using Engine = ZmEngine<Client>;
+  friend Engine;
+  using Engine::spawn;
+  using Engine::wake;
+  using Engine::stateChanged;
   using HTTP = Zhttp::Client<Client, ClientPool<App, Catalog, Selection>>;
   using Request = ClientReqQ<App, Catalog, Selection>::Node;
 public:
-  using HTTP::start;
-  using HTTP::stop;
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using HTTP::pool;
 
   ~Client() { final(); }
@@ -858,20 +866,6 @@ public:
     m_app = app;
     m_limits = config.limits();
     return true;
-  }
-
-  bool start() {
-    if (!m_mx || m_up || !HTTP::start()) return false;
-    m_up = 1;
-    return true;
-  }
-  template <typename Done>
-  void start(Done &&done) {
-    if (!m_mx || m_up) { done(false); return; }
-    HTTP::start([this, done = ZuFwd<Done>(done)](bool ok) mutable {
-      if (ok) m_up = 1;
-      done(ok);
-    });
   }
 
   template <typename Req, typename Call>
@@ -900,24 +894,10 @@ public:
     request->client = nullptr;
   }
 
-  bool stop() {
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      this->stop(ZuMv(wake));
-    });
-  }
-  template <typename Done>
-  void stop(Done &&done) {
-    if (!m_mx) { done(true); return; }
-    m_up = 0;
-    HTTP::stop([this, done = ZuFwd<Done>(done)](bool ok) mutable {
-      m_mx->run([this, done = ZuMv(done), ok]() mutable {
-	drain_([done = ZuMv(done), ok]() mutable { done(ok); });
-      }, m_owner);
-    });
-  }
   void final() {
     if (!m_mx) return;
-    (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_ingress.load_() && !m_pending.load_());
     HTTP::final();
     m_mx = nullptr;
     m_app = nullptr;
@@ -926,12 +906,35 @@ public:
   const Limits &limits() const { return m_limits; }
 
 private:
-  template <typename Done>
-  void drain_(Done done) {
-    if (!m_ingress.load_() && !m_pending.load_()) { done(); return; }
-    m_mx->run([this, done = ZuMv(done)]() mutable {
-      drain_(ZuMv(done));
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    HTTP::start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      m_mx->run([this]() {
+	ZmAssert_(!m_ingress.load_() && !m_pending.load_());
+	m_up = true;
+	Engine::started(true);
+      }, m_owner);
+    });
+  }
+
+  void stop_() {
+    m_mx->run([this]() {
+      m_up = false;
+      HTTP::stop([this](bool ok) {
+	m_mx->run([this, ok]() { drain_(ok); }, m_owner);
+      });
     }, m_owner);
+  }
+
+  void drain_(bool ok) {
+    if (m_ingress.load_() || m_pending.load_()) {
+      m_mx->run([this, ok]() { drain_(ok); }, m_owner);
+      return;
+    }
+    HTTP::txRun([this, ok]() {
+      HTTP::rxRun([this, ok]() { Engine::stopped(ok); });
+    });
   }
 
   void admit_(unsigned pool, ZmRef<Request> request, bool ingress) {

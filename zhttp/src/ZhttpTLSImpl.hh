@@ -72,6 +72,7 @@ struct ServerImpl::TLSH1Link :
       this->rxState().parser.bind(this->app()->server, this);
     }
     using Responses<H1TLS, TLSH1Link>::send;
+    using Responses<H1TLS, TLSH1Link>::appDrained;
     Channel &channel() { return m_channel; }
   private:
     Channel m_channel = Native_::serverChannel(static_cast<TLSH1Link *>(this));

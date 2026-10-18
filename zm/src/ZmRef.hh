@@ -115,6 +115,7 @@ struct ZmRef__ {
 template <typename T_> class ZmRef {
 template <typename> friend class ZmRef;
   friend T_ ZmRefType(ZmRef *);
+  friend T_ ZmRefType(const ZmRef *);
 
 public:
   using T = T_;
@@ -123,6 +124,11 @@ private:
   struct Acquire { T *o; };
 
   ZmRef(Acquire acquire) noexcept : m_object{acquire.o} { }
+  ZmRef(Acquire acquire, const void *prev) noexcept : m_object{acquire.o} {
+#ifdef ZmObject_DEBUG
+    if (T *o = m_object) ZmMVREF(o, prev, this);
+#endif
+  }
 
   // matches ZmRef<U> where U is not T, but is in the same type hierarchy as T
   template <typename V> struct IsOtherRef_ :
@@ -168,7 +174,7 @@ public:
   template <typename R, MatchOtherRef<ZuDeref<R>, int> = 0>
   ZmRef(R &&r) noexcept : m_object{
 	static_cast<T *>(const_cast<ZuDeref<R>::T *>(r.m_object))} {
-    if constexpr (ZuIsLRef<R>{}) {
+    if constexpr (ZuIsLRef<R>{} || ZuIsConst<ZuDeref<R>>{}) {
       if (T *o = m_object) ZmREF(o);
     } else {
 #ifdef ZmObject_DEBUG
@@ -236,6 +242,10 @@ public:
   static ZmRef acquire(T *o) {
     return ZmRef{Acquire{o}};
   }
+  // Adopt an existing count and transfer its tracked referrer, without ref/deref.
+  static ZmRef acquire(T *o, const void *prev) {
+    return ZmRef{Acquire{o}, prev};
+  }
   template <typename O = T, typename = MatchRef<ZmRef<O>>>
   O * release() && {
     T *o = m_object;
@@ -248,13 +258,13 @@ public:
   ZmRef<const T> constRef() const & { return {constPtr()}; }
   ZmRef<const T> constRef() && {
     return ZmRef<const T>::acquire(
-      const_cast<const T *>(ZuMv(*this).release()));
+      const_cast<const T *>(ZuMv(*this).release()), this);
   }
   ZuStrip<T> *mutablePtr() const { return const_cast<ZuStrip<T> *>(m_object); }
   ZmRef<ZuStrip<T>> mutableRef() const & { return {mutablePtr()}; }
   ZmRef<ZuStrip<T>> mutableRef() && {
     return ZmRef<ZuStrip<T>>::acquire(
-      const_cast<ZuStrip<T> *>(ZuMv(*this).release()));
+      const_cast<ZuStrip<T> *>(ZuMv(*this).release()), this);
   }
 
   bool operator !() const { return !m_object; }

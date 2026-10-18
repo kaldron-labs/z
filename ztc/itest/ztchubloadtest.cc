@@ -487,7 +487,8 @@ static bool run(const char *path)
   ws.maxQueuedInput = 1U << 20;
   ws.handshakeTimeout = 60;
   ws.closeTimeout = 5;
-  auto tls = Zhttp::H2Config{}.caPath(cf.ca);
+  Zhttp::TLSConfig tls;
+  tls.caPath(cf.ca);
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
       Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws,
       Zhttp::Config{}.links(cf.devices.length() + cf.clients)

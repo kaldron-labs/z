@@ -29,7 +29,7 @@ static bool roundTrip(Fill fill, Check check)
   fill(original);
   Zfb::Buffer buf;
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto source = Map::save(original);
   auto bytes = builder.finish(Zfb::save(builder, source));
   bool valid = Zfb::verify<O, ZuFacet::FB>(bytes);
@@ -44,7 +44,7 @@ static bool roundTrip(Fill fill, Check check)
   ZuCheckRT(check(*copy) && check(value), passed = false);
   Zfb::Buffer reverse;
   Zfb::ArrayStorage<> reverseStorage{reverse};
-  Zfb::Builder<decltype(reverseStorage)> writer{reverseStorage};
+  Zfb::Builder writer{reverseStorage};
   bytes = writer.finish(Zfb::save<ZuFacet::FB>(writer, *copy));
   valid = Zfb::verify<Wire>(bytes);
   ZuCheckRT(valid, passed = false);

@@ -69,7 +69,7 @@ template <typename Hub>
 struct HasStopAccepting<Hub,
   decltype(ZuDeclVal<Hub &>().stopAccepting(), void())> : public ZuTrue { };
 
-using DoneFn = ZmFn<void(bool), ZmFnHeapID<"Zhttp.Hubs.Done">>;
+using DoneFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
 
 struct Entry {
   using StartFn = void (*)(void *, DoneFn);
@@ -87,6 +87,8 @@ struct Entry {
 
 } // namespace Hubs_
 
+// Stop visits every registered hub and accumulates failures. Completion leaves
+// the aggregate Stopped; a subsequent start starts every hub afresh.
 class ZhttpAPI Hubs : public ZmEngine<Hubs> {
 public:
   using Engine = ZmEngine<Hubs>;
@@ -99,19 +101,6 @@ public:
   using Engine::stop;
   using Engine::stopping;
   unsigned count() const { return m_entries.length(); }
-
-  template <typename Done>
-  void start(Done &&done) {
-    Engine::start([done = DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
-      done(ok);
-    });
-  }
-  template <typename Done>
-  void stop(Done &&done) {
-    Engine::stop([done = DoneFn{ZuFwd<Done>(done)}](bool ok) mutable {
-      done(ok);
-    });
-  }
 
   template <typename Hub, typename ...Args>
   bool init(Hub &hub, Args &&...args) {

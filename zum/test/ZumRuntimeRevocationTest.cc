@@ -55,8 +55,7 @@ static ZuPtr<const ZfCf::AnyNode> dbConfig()
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto test = static_cast<TestDB *>(db);
-  test->requests->activate();
-  test->active.post();
+  test->requests->activate([test](bool) { test->active.post(); });
 }
 
 static void dbDown(Zdb *db, bool)
@@ -172,6 +171,94 @@ static bool logged(Args &&...args)
   });
 }
 
+
+// The durable row and real DB callbacks keep the delivery chain meaningful;
+// only the remote HTTP peer is held by this fixture.
+static void transmitterLifecycle(TestDB *db, Ztls::Random &rng)
+{
+  ZuTestScopeRT(transmitterLifecycle);
+  auto scheduler = db->requests->scheduler();
+  auto sid = db->requests->sid();
+  Zum::Bytes key{ZuBSpan{"0123456789abcdef0123456789abcdef"}};
+  Zum::Bytes auth;
+  ZuCheckRT(Zum::serverSecretEncrypt(rng, key, "issuer", "zum.ssf_rx",
+    "receiver-held", "callbackAuth", ZuBSpan{"Bearer callback"}, auth));
+  int64_t now = Zm::now().sec();
+  ZuCheckRT(insertRecord(db->ssfRx, Zum::SSFRx{
+    .expires = now + 300, .appID = 9, .receiverID = "receiver-held",
+    .audience = "ping", .deliveryURL = "https://receiver/ssf",
+    .callbackAuth = ZuMv(auth), .revision = 17, .updated = now}));
+  ZuCheckRT(insertRecord(db->ssfDeliveries, Zum::SSFDelivery{
+    .eventID = "event-held", .receiverID = "receiver-held",
+    .familyIssuer = "issuer/oauth2/9", .familyID = "family-held",
+    .familyExpires = now + 300, .set = Zum::Bytes{ZuBSpan{"held-set"}},
+    .nextDelivery = now, .receiverRevision = 17}));
+
+  Zum::OIDCHTTPDoneFn pending;
+  ZmSemaphore submitted, stopped, barrier;
+  ZmAtomic<unsigned> completions = 0;
+  Zum::SSFTransmitterConfig config{
+    .db = db, .requests = db->requests.ptr(), .issuer = "issuer",
+    .secretIssuer = "issuer", .dbKey = key, .rng = &rng,
+    .key = Zum::SignKey{.id = "key", .issuer = "issuer"},
+    .sign = Zum::SignFn{[](const Zum::SignKey &, ZuBSpan,
+	Zum::SignatureFn complete) { complete(Zum::Bytes{}); }},
+    .http = Zum::OIDCHTTPFn{[&pending, &submitted](
+	Zum::OIDCHTTPRequest request, Zum::OIDCHTTPDoneFn complete) {
+      ZuCheckRT(request.authorization == "Bearer callback" && request.body == "held-set");
+      pending = ZuMv(complete);
+      submitted.post();
+    }}};
+  ZmRef<Zum::SSFTransmitter> transmitter = new Zum::SSFTransmitter{};
+  ZuCheckRT(transmitter->init(config));
+  transmitter->final(); // no loop or DB query was submitted by init
+  ZuCheckRT(transmitter->init(ZuMv(config)));
+  bool started = transmitter->start();
+  ZuCheckRT(started);
+  bool held = started && !submitted.timedwait(Zm::now(10));
+  ZuCheckRT(held && pending);
+  transmitter->stop([&completions, &stopped](bool ok) {
+    ZuCheckRT(ok);
+    ++completions;
+    stopped.post();
+  });
+  transmitter->stop([&completions, &stopped](bool ok) {
+    ZuCheckRT(ok);
+    ++completions;
+    stopped.post();
+  });
+  scheduler->run([&barrier]() { barrier.post(); }, sid);
+  barrier.wait();
+  if (pending) {
+    ZuCheckRT(!completions.load_());
+    // Keep the fired completion object: its invocation, rather than its
+    // destruction by the HTTP adapter, must release the active work credit.
+    pending(202, Zum::String{});
+  }
+  stopped.wait();
+  stopped.wait();
+  ZuCheckRT(completions == 2 && transmitter->state() == ZmEngineState::Stopped);
+  bool retired = ZmBlock<bool>{}([db](auto wake) mutable {
+    auto table = db->ssfDeliveries;
+    table->run(0, [table, wake = ZuMv(wake)]() mutable {
+      table->find<0>(0, ZuFwdTuple(Zum::String{"event-held"},
+	  Zum::String{"receiver-held"}),
+	[wake = ZuMv(wake)](ZdbRowRef<Zum::SSFDelivery> row) mutable {
+	  wake(!row);
+	});
+    });
+  });
+  ZuCheckRT(retired);
+  if (retired) {
+    ZuCheckRT(transmitter->start());
+    ZuCheckRT(transmitter->start());
+    ZuCheckRT(transmitter->stop());
+    ZuCheckRT(transmitter->stop());
+  }
+  transmitter->final();
+  transmitter = nullptr;
+  pending = {}; // a consumed external callback no longer accesses its owner
+}
 
 static void runtimeRevocation()
 {
@@ -292,7 +379,7 @@ static void runtimeRevocation()
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &revokeForm
   ](auto wake) mutable {
-    Zum::revokeRequest(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::revokeRequest({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(revokeForm), {}, Zum::RevokeConfig{
 	.issuer = "issuer", .appID = 9, .now = 452
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
@@ -310,13 +397,14 @@ static void runtimeRevocation()
   ZuCheck(ZmBlock<int>{}([
     &db, &context, &unknownForm
   ](auto wake) mutable {
-    Zum::revokeRequest(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::revokeRequest({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(unknownForm), {}, Zum::RevokeConfig{
 	.issuer = "issuer", .appID = 9, .now = 453
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::RevokeIssue::OK);
+  ZuTestCall(transmitterLifecycle, db.ptr(), rng);
   ZmSemaphore requestsDown;
-  db->requests->deactivate([&requestsDown]() { requestsDown.post(); });
+  db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};

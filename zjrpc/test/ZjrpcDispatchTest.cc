@@ -130,17 +130,18 @@ public:
   ZtArray<ZtString<>> &output() { return m_output; }
   void close() {
     m_up = false;
-    for (;;) {
-      bool done = Base::close();
-      done = Calls::closeCalls() && done;
-      if (done) break;
-      (void)turn();
-    }
+    close_();
     while (turn()) { }
     (void)m_inbound.close(0);
   }
 
 private:
+  void close_() {
+    bool done = Base::close();
+    typename Calls::ReadyFn ready{this, [](auto self) { self->close_(); }};
+    done = Calls::closeCalls(ready) && done;
+    if (!done && !Calls::callsWaiting()) continue_([this]() { close_(); });
+  }
   App m_app;
   Zjrpc::Limits m_limits;
   Zjrpc::InboundCalls m_inbound;

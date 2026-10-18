@@ -8,7 +8,9 @@
 
 #include <zlib/ZhttpDiscovery.hh>
 
-#include <zlib/ZuICmp.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZhttpCore.hh>
 #include "ZhttpFieldImpl.hh"
@@ -33,15 +35,14 @@ bool tokenChar(unsigned c)
     c == '.' || c == '^' || c == '_' || c == '`' || c == '|' || c == '~';
 }
 
-bool uint32(ZuBSpan s, uint32_t &v)
+bool uint32(ZuCSpan s, uint32_t &v)
 {
   if (!s) return false;
-  uint64_t n = 0;
-  for (unsigned i = 0, l = s.length(); i < l; ++i) {
-    if (!digit(s[i])) return false;
-    n = n * 10 + unsigned(s[i] - '0');
-    if (n > UINT32_MAX) return false;
-  }
+  while (s.length() > 1 && s[0] == '0') s.offset(1);
+  enum { MaxDigits = 10 }; // UINT32_MAX is 4294967295 in decimal.
+  if (s.length() > MaxDigits) return false;
+  uint64_t n;
+  if (ZuBoxed(n).scan(s) != int(s.length()) || n > UINT32_MAX) return false;
   v = uint32_t(n);
   return true;
 }
@@ -86,11 +87,13 @@ AltSvcCursor::AltSvcCursor(
 
 void AltSvcCursor::init_()
 {
-  while (m_input && (m_input[0] == ' ' || m_input[0] == '\t'))
+  while (m_input && islws(m_input[0]))
     m_input.offset(1);
-  while (m_input && (m_input[m_input.length() - 1] == ' ' ||
-      m_input[m_input.length() - 1] == '\t'))
-    m_input.trunc(m_input.length() - 1);
+  while (m_input) {
+    unsigned n = m_input.length();
+    if (!islws(m_input[n - 1])) break;
+    m_input.trunc(n - 1);
+  }
   if (m_input == "clear") {
     m_clear = true;
     m_done = true;
@@ -108,7 +111,7 @@ bool AltSvcCursor::next(AltSvcValue &out)
   unsigned l = m_input.length();
   if (m_more) {
     while (m_offset < l &&
-	(m_input[m_offset] == ' ' || m_input[m_offset] == '\t')) ++m_offset;
+	islws(m_input[m_offset])) ++m_offset;
     if (m_offset >= l) {
       m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
       return false;
@@ -138,8 +141,10 @@ bool AltSvcCursor::next(AltSvcValue &out)
     return false;
   }
   unsigned authStart = m_offset;
-  while (m_offset < l && m_input[m_offset] != '"') {
-    if (m_input[m_offset] == '\\') {
+  while (m_offset < l) {
+    unsigned c = m_input[m_offset];
+    if (c == '"') break;
+    if (c == '\\') {
       m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, m_offset);
       return false;
     }
@@ -188,7 +193,7 @@ bool AltSvcCursor::next(AltSvcValue &out)
 
   for (;;) {
     while (m_offset < l &&
-	(m_input[m_offset] == ' ' || m_input[m_offset] == '\t')) ++m_offset;
+	islws(m_input[m_offset])) ++m_offset;
     if (m_offset >= l || m_input[m_offset] == ',') break;
     if (m_input[m_offset++] != ';') {
       m_error = AltSvc_::error(
@@ -196,7 +201,7 @@ bool AltSvcCursor::next(AltSvcValue &out)
       return false;
     }
     while (m_offset < l &&
-	(m_input[m_offset] == ' ' || m_input[m_offset] == '\t')) ++m_offset;
+	islws(m_input[m_offset])) ++m_offset;
     unsigned keyStart = m_offset;
     while (m_offset < l && tokenChar(m_input[m_offset]))
       ++m_offset;
@@ -217,17 +222,36 @@ bool AltSvcCursor::next(AltSvcValue &out)
       }
       param = {m_input.data() + valueStart, m_offset - valueStart};
     }
-    if (ZuICmp<ZuBSpan>::equals(key, "ma")) {
-      if (!uint32(param, value.maxAge)) {
-	m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, keyStart);
-	return false;
+    struct ParamIDs {
+      using Keys = ZuStringTL<"ma", "persist">;
+      enum { MaxLen = 7 }; // "persist"
+    };
+    int paramID = -1;
+    if (key.length() <= ParamIDs::MaxLen) {
+      ZuBArray<ParamIDs::MaxLen> lower;
+      for (unsigned i = 0, n = key.length(); i < n; ++i) {
+	uint8_t c = key[i];
+	lower[i] = c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
       }
-    } else if (ZuICmp<ZuBSpan>::equals(key, "persist")) {
-      if (param == "1") value.persist = true;
-      else if (param != "0") {
-	m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, keyStart);
-	return false;
-      }
+      static constexpr auto matcher = ZuMatcher<ParamIDs>();
+      paramID = matcher.exact(ZuBSpan{lower.data(), key.length()});
+    }
+    switch (paramID) {
+      case 0:
+	if (!uint32(param, value.maxAge)) {
+	  m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, keyStart);
+	  return false;
+	}
+	break;
+      case 1:
+	if (param == "1") value.persist = true;
+	else if (param != "0") {
+	  m_error = AltSvc_::error(AltSvcParseCode::InvalidSyntax, keyStart);
+	  return false;
+	}
+	break;
+      default:
+	break;
     }
   }
   ++m_count;
@@ -282,7 +306,6 @@ bool AltSvcCache::update_(
   }
   auto existing = m_entries->find(origin);
   bool exists = !!existing;
-  if (!exists && m_entries->count_() >= m_maxOrigins) return false;
 
   AltSvcEntry entry;
   AltSvcCursor snapshot{field, origin.view(), maxAlternatives};
@@ -295,8 +318,18 @@ bool AltSvcCache::update_(
   }
   if (!snapshot.error().ok()) return false;
   if (entry.values) {
-    m_entries->add(origin, ZuMv(entry));
+    if (!exists && m_entries->count_() >= m_maxOrigins) {
+      if (!m_maxOrigins) return false;
+      // Evict the first occupied hash slot; admission does not scan origins.
+      {
+	auto i = m_entries->iter();
+	auto victim = i();
+	ZmAssert_(victim);
+	i.del();
+      }
+    }
     if (existing) m_entries->delNode(existing);
+    m_entries->add(origin, ZuMv(entry));
   } else if (existing)
     m_entries->delNode(existing);
   return true;

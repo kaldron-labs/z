@@ -685,7 +685,7 @@ static void valueOwnership(
   using O = F::O;
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<Zfb::BufferAlign<O>::N> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(
     Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(builder, row));
   ZuCheckRT(!builder.failed());

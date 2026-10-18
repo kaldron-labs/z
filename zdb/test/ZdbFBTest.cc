@@ -43,7 +43,7 @@ static void heartbeat()
   state.add("orders", 1, 11);
   Zfb::Buffer buf;
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto body = Zfb::save(builder, Heartbeat{"self", 3, 2, &state});
   auto bytes = builder.finish(saveMsg(builder, body, Msg::Tag::Heartbeat));
   bool valid = !builder.failed() && Zfb::verify<Msg::Root>(bytes);
@@ -97,7 +97,7 @@ static void heartbeatPrint()
   Msg::DBState state{23, rows};
   Zfb::Buffer buf;
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder,
     Msg::Heartbeat{"self", HostState::Active, 2, &state}));
   ZtString text;
@@ -121,7 +121,7 @@ static void empty()
   state.sn = 19;
   Zfb::Buffer buf;
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto bytes = builder.finish(Zfb::save(builder, state));
   bool valid = !builder.failed() && Zfb::verify<Msg::DBState>(bytes);
   ZuCheck(valid);

@@ -154,7 +154,7 @@ int main(int argc, char **argv)
     Zfb::Buffer buf;
     constexpr unsigned Align = Zfb::BufferAlign<Row>::N;
     Zfb::ArrayStorage<Align> storage{buf};
-    Zfb::Builder<decltype(storage)> builder{storage, Align};
+    Zfb::Builder builder{storage, Align};
     auto bytes = builder.finish(H::save<ZfFieldFilter::All>(builder, *row));
     ZuCheck((Zfb::verify<Row, ZuFacet::FB>(bytes)), passed = false);
     ZuCheck(FlatcFixture::write(argv[2], bytes), passed = false);

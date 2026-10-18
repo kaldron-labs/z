@@ -10,10 +10,13 @@
 
 #include <iostream>
 
+#include <zlib/ZuLib.hh>
 #include <zlib/ZuTuple.hh>
 #include <zlib/ZtcFB.hh>
 #include <zlib/ZtcMsg.hh>
-#include <zlib/ZmBlock.hh>
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmQueue.hh>
@@ -25,6 +28,7 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZhttpServer.hh>
+#include <zlib/ZhttpTransport.hh>
 #include <zlib/ZrestServer.hh>
 #include <zlib/Zws.hh>
 #include <zlib/ZumVaultService.hh>
@@ -898,7 +902,8 @@ struct App {
   }
 };
 
-class Listener : public ZmObject {
+class Listener : public ZmNHeap<Listener>, public ZmObject, public Zhttp::Hubs {
+friend inline ZuStringT<"Ztc.Hub.Listener"> ZmNHeapID(Listener *);
 public:
   Listener(Ztc::Hubd *hub_, Ztc::ListenerCf cf_, ZmSemaphore *done_) :
     m_hub{hub_}, m_cf{ZuMv(cf_)}, m_done{done_},
@@ -915,53 +920,28 @@ public:
     ws.closeTimeout = m_hub->config().closeTimeout;
     ws.pingInterval = m_hub->config().pingInterval;
     ws.pongTimeout = m_hub->config().idleTimeout;
-    auto config = Zhttp::H2Config{}.certPath(m_cf.cert).keyPath(m_cf.key);
-    if (!m_server.init(Zhttp::HubConfig{mx, "1", "2"}, config, ws)) return false;
-    m_initialized = true;
+    auto config = Zhttp::TLSConfig{}.certPath(m_cf.cert).keyPath(m_cf.key);
+    if (!Zhttp::Hubs::init(m_server, Zhttp::HubConfig{mx, "1", "2"}, config, ws)) {
+      m_server.final();
+      return false;
+    }
     auto ssfConfig = Zhttp::ServerConfig{}.localIP(ZiIP{m_cf.bind})
       .port(m_cf.ssfPort ? m_cf.ssfPort : uint16_t(m_cf.port + 1))
       .idleTimeout(m_hub->config().idleTimeout)
       .retainedBodyMax(m_hub->config().maxFrame)
-      .tls(Zhttp::H2Config{}.policy(Zhttp::H2Policy::Disable)
-        .certPath(m_cf.cert).keyPath(m_cf.key));
-    if (m_ssfApp.init(Zhttp::HubConfig{mx, "1", "2"}, ZuMv(ssfConfig)))
+      .tls(Zhttp::H2Config{}.policy(Zhttp::H2Policy::Disable).tls([this](auto &tls) {
+        tls.certPath(m_cf.cert).keyPath(m_cf.key);
+      }));
+    if (Zhttp::Hubs::init(m_ssfApp, Zhttp::HubConfig{mx, "1", "2"}, ZuMv(ssfConfig)))
       return true;
     m_ssfApp.final();
-    m_server.final();
-    m_initialized = false;
     return false;
   }
-  bool start() {
-    if (!m_server.start()) return false;
-    m_serverStarted = true;
-    if (m_ssfApp.start()) {
-      m_ssfStarted = true;
-      return true;
-    }
-    stop();
-    return false;
+  ~Listener() {
+    ZmAssert_(state() == ZmEngineState::Stopped);
+    final();
   }
   bool failed() const { return m_app.failed; }
-  bool stop() {
-    bool ok = true;
-    if (m_ssfStarted) {
-      ok = m_ssfApp.stop();
-      m_ssfStarted = false;
-    }
-    if (m_serverStarted) {
-      m_server.stopAccepting();
-      ok = ZmBlock<bool>{}([this](auto wake) {
-	m_server.stop([wake = ZuMv(wake)](bool value) mutable { wake(value); });
-      }) && ok;
-      m_serverStarted = false;
-    }
-    if (m_initialized) {
-      m_ssfApp.final();
-      m_server.final();
-      m_initialized = false;
-    }
-    return ok;
-  }
 
 private:
   using Server = Zws::Server<App, Zhttp::H1TLS>;
@@ -972,9 +952,6 @@ private:
   App				m_app;
   SSF_::App			m_ssfApp;
   Server			m_server;
-  bool				m_initialized = false;
-  bool				m_serverStarted = false;
-  bool				m_ssfStarted = false;
 };
 
 } // namespace ZtcHub_
@@ -1046,12 +1023,13 @@ int main(int argc, char **argv)
     Ztc::Hubd hub;
     Zum::PingHTTP transport;
     if (!transport.init(&mx, cf.issuerURL, cf.managementIssuer,
-        cf.managementURL, cf.caPath) ||
+        cf.managementURL, cf.caPath) || !transport.start() ||
         !hub.init(ZuMv(cf), &mx, transport.fn(),
           Zum::Bytes{ZuCSpan{credential.clientSecret}},
 	  credential.callbackAuth)) {
       std::cerr << "ztchub initialization/startup failed\n";
       hub.final();
+      (void)transport.stop();
       transport.final();
       mx.stop();
       return 1;
@@ -1060,63 +1038,81 @@ int main(int argc, char **argv)
       ZiLOG(Info, "Ztc.Hub", "refresh family revocation received");
       std::cout << "refresh family revocation received\n" << std::flush;
     });
-    bool ready = false;
-    ZmSemaphore started;
-    hub.start([&ready, &started](int error) { ready = error == Zum::ServiceError::OK;
-      if (!ready) std::cerr << "ztchub startup error=" << error << '\n';
-      started.post(); });
-    started.wait();
-    if (!ready) {
-      std::cerr << "ztchub Zum service startup/publication failed\n";
-      hub.final();
-      transport.final();
-      mx.stop();
-      return 1;
-    }
-    if (provision && ZumVaultService::save(credential)
-        .is<ZeException>()) {
-      std::cerr << "ztchub credential storage failed\n";
-      hub.stop();
-      hub.final();
-      transport.final();
-      mx.stop();
-      return 1;
-    }
-    bool failed = false;
+    // Configure all listeners while stopped. Zdb up/down, rather than
+    // process-runtime startup, controls this independent aggregate.
+    Zhttp::Hubs listeners;
     ZtArray<ZmRef<ZtcHub_::Listener>,
-      ZtArrayHeapID<"Ztc.Hub.Listeners">> listeners;
+      ZtArrayHeapID<"Ztc.Hub.Listeners">> listenerObjs;
+    ZmAtomic<unsigned> listenerFailed = 0;
+    bool finished = false;
+    auto finish = [
+      &hub, &listeners, &listenerObjs, &listenerFailed, &transport, &mx, &finished
+    ]() {
+      if (finished) return true;
+      bool ok = hub.stop();
+      for (auto &listener: listenerObjs)
+        if (listener->failed()) listenerFailed = 1;
+      listeners.final();
+      listenerObjs.null();
+      hub.final();
+      ok = transport.stop() && ok;
+      transport.final();
+      ok = mx.stop() && ok;
+      finished = true;
+      return ok;
+    };
+    ZuGuard cleanup{[&finish]() { (void)finish(); }};
     for (auto &listenerCf: hub.config().listeners) {
       ZmRef<ZtcHub_::Listener> listener =
         new ZtcHub_::Listener{&hub, listenerCf, &done};
-      if (!listener->init(&mx) || !listener->start()) {
-        listener->stop();
-        failed = true;
-        break;
+      if (!listener->init(&mx)) {
+        std::cerr << "ztchub listener initialization failed\n";
+        (void)finish();
+        return 1;
       }
-      listeners.push(ZuMv(listener));
+      bool added = listeners.add(*listener);
+      ZmAssert_(added);
+      listenerObjs.push(ZuMv(listener));
     }
-    if (failed) {
-      for (auto &listener: listeners) listener->stop();
-      hub.stop();
-      hub.final();
-      transport.final();
-      mx.stop();
+    hub.activateFn([&listeners, &listenerFailed](bool active, Ztc::HubCtrlFn complete) {
+      auto completed = [active, &listenerFailed, complete = ZuMv(complete)](bool ok) mutable {
+        if (!ok) {
+          listenerFailed = 1;
+          std::cerr << "ztchub listener " << (active ? "activation" : "deactivation") <<
+            " failed\n";
+          done.post();
+        } else if (active) {
+          std::cout << "ztchub ready\n" << std::flush;
+        }
+        complete(ok);
+      };
+      if (active) listeners.start(ZuMv(completed));
+      else listeners.stop(ZuMv(completed));
+    });
+    bool ready = false;
+    ZmSemaphore started;
+    hub.start([&hub, &ready, &started](bool ok) {
+      ready = ok;
+      if (!ready) std::cerr << "ztchub startup error=" << hub.startError() << '\n';
+      started.post();
+    });
+    started.wait();
+    if (!ready) {
+      std::cerr << "ztchub Zum service startup/publication failed\n";
+      (void)finish();
       return 1;
     }
-    std::cout << "ztchub ready\n" << std::flush;
+    if (provision && ZumVaultService::save(credential).is<ZeException>()) {
+      std::cerr << "ztchub credential storage failed\n";
+      (void)finish();
+      return 1;
+    }
     ZmTrap::sigintFn(trapped);
     ZmTrap::trap();
     done.wait();
     ZmTrap::sigintFn(nullptr);
-    for (auto &listener: listeners) {
-      listener->stop();
-      if (listener->failed()) failed = true;
-    }
-    bool ok = hub.stop();
-    hub.final();
-    transport.final();
-    mx.stop();
-    return ok && !failed ? 0 : 1;
+    bool ok = finish();
+    return ok && !listenerFailed.load_() ? 0 : 1;
   } catch (const ZeException &e) {
     std::cerr << e << '\n';
     return 1;

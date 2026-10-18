@@ -61,8 +61,7 @@ static ZuPtr<const ZfCf::AnyNode> dbConfig()
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto test = static_cast<TestDB *>(db);
-  test->requests->activate();
-  test->active.post();
+  test->requests->activate([test](bool) { test->active.post(); });
 }
 
 static void dbDown(Zdb *db, bool)
@@ -735,7 +734,7 @@ static void runtimeManagement()
     stillExternal.version == externalUser.version &&
     stillExternal.authVersion == externalUser.authVersion && !stillExternal.owner);
   Zum::User pendingUser{.id = 9911, .name = "pending-no-handle",
-    .state = Zum::State::Suspended, .version = 1, .authVersion = 1};
+    .state = Zum::State::Suspended, .authVersion = 1, .version = 1};
   ZuCheck(insertRecord(context->users, pendingUser));
   Zum::UserEditArgs activation{.before = pendingUser, .ifMatch = "\"v1\"",
     .updated = 116, .stateOnly = true, .state = Zum::State::Active};
@@ -796,7 +795,7 @@ static void runtimeManagement()
   }
 
   ZmSemaphore requestsDown;
-  db->requests->deactivate([&requestsDown]() { requestsDown.post(); });
+  db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};

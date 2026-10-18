@@ -25,8 +25,12 @@
 #include <zlib/zumd_request.hh>
 #include <zlib/zumd_ssf_db.hh>
 #include <zlib/ZuBase64URL.hh>
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmObject.hh>
+#include <zlib/ZmPlatform.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/ZtlsCOSE.hh>
 #include <zlib/ZtlsMD.hh>
 
@@ -170,41 +174,63 @@ struct SSFTransmitterConfig {
   uint32_t		retryMax = 60;
 };
 
-class SSFTransmitter : public ZmNHeap<SSFTransmitter>, public ZmObject  {
+struct SSFWork;
+namespace SSFCredit { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+
+class SSFTransmitter : public ZmNHeap<SSFTransmitter>, public ZmObject,
+    private ZmEngine<SSFTransmitter> {
+  using Engine = ZmEngine<SSFTransmitter>;
+  friend Engine;
+  friend SSFWork;
 friend inline ZuStringT<"Zum.zumd.revoke.SSFTransmitter"> ZmNHeapID(SSFTransmitter *);
 
 public:
-  ~SSFTransmitter() { clear_(); }
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
+
+  ~SSFTransmitter() { final(); }
   bool init(SSFTransmitterConfig);
-  void start();
-  void stop();
+  void final();
   void revoke(AppID, RefreshID, int64_t);
   void add(AppID, String, SSFRegistration, SSFRegisterFn);
 
 private:
-  void revoke_(AppID, RefreshID, int64_t);
-  void gc_();
-  void gcArm_(int64_t);
-  void result_(String, uint64_t, int);
-  void receivers_(AppID, RefreshID, int64_t);
-  void issue_(SSFRx, RefreshID, int64_t, int64_t);
-  void persist_(SSFRx, SSFDelivery, String);
-  void deliver_(SSFRx, SSFDelivery, String);
-  void send_(SSFRx, SSFDelivery, String);
+  using Work = ZmRef<SSFWork>;
+  bool active_() const;
+  bool admit_();
+  ZmRef<SSFWork> work_();
+  void workDone_();
+  void start_();
+  void stop_();
+  void postDrain_();
+  void revoke_(const Work &, AppID, RefreshID, int64_t);
+  void gc_(const Work &);
+  void gcArm_(const Work &, int64_t);
+  void result_(const Work &, String, uint64_t, int);
+  void receivers_(const Work &, AppID, RefreshID, int64_t);
+  void issue_(const Work &, SSFRx, RefreshID, int64_t, int64_t);
+  void persist_(const Work &, SSFRx, SSFDelivery, String);
+  void deliver_(const Work &, SSFRx, SSFDelivery, String);
+  void send_(const Work &, SSFRx, SSFDelivery, String);
   String authorization_(const SSFRx &);
-  void retry_();
-  void retryPage_(SSFDeliveryTable::Key<0>, bool);
-  void arm_(int64_t);
-  void armOn_(int64_t);
-  void clear_();
+  void retry_(const Work &);
+  void retryPage_(const Work &, SSFDeliveryTable::Key<0>, bool);
+  void arm_(const Work &, int64_t);
+  void armOn_(const Work &, int64_t);
 
   SSFTransmitterConfig	m_config;
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t>	m_credit = SSFCredit::Closed;
+  alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_timer;
   ZmScheduler::Timer	m_gcTimer;
+  bool			m_drainPosted = false;
+  bool			m_draining = false;
   bool			m_gcArmed = false;
   bool			m_armed = false;
   int64_t		m_nextDelivery = 0;
-  bool			m_started = false;
 };
 
 // Send one already-signed SET. Durable callers retain the SSFDelivery row and

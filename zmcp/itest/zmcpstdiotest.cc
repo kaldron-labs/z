@@ -62,6 +62,16 @@ struct Pipe {
   Zi::Handle read = Zi::nullHandle();
   Zi::Handle write = Zi::nullHandle();
 
+  ~Pipe() {
+    if (!Zi::nullHandle(read)) {
+      ZiFile file;
+      (void)file.init(read, ZiFile::ReadOnly | ZiFile::GC);
+    }
+    if (!Zi::nullHandle(write)) {
+      ZiFile file;
+      (void)file.init(write, ZiFile::WriteOnly | ZiFile::GC);
+    }
+  }
   bool open() {
 #ifndef _WIN32
     int handles[2];
@@ -162,7 +172,7 @@ struct ServerApp {
 
   template <typename Req, typename Completion>
   void cancelled(Req *, Completion *token, ZuCSpan) {
-    ZuCheck(token->cancelled() && !token->live());
+    cancelOK &= token->cancelled() && !token->live();
     ++cancellations;
     cancelled_.post();
   }
@@ -175,6 +185,7 @@ struct ServerApp {
 
   unsigned calls = 0;
   unsigned cancellations = 0;
+  bool cancelOK = true;
   unsigned peerOpens = 0;
   unsigned peerCloses = 0;
   unsigned streamOpens = 0;
@@ -296,8 +307,10 @@ static void testPipe()
   ZiFile outputRead;
   ZuCHECK(inputWrite.init(input.write, ZiFile::WriteOnly | ZiFile::GC) == Zi::OK,
     "input writer initialization failed");
+  input.write = Zi::nullHandle(); // transferred to inputWrite
   ZuCHECK(outputRead.init(output.read, ZiFile::ReadOnly | ZiFile::GC) == Zi::OK,
     "output reader initialization failed");
+  output.read = Zi::nullHandle(); // transferred to outputRead
 
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "multiplexer start failed");
@@ -401,8 +414,10 @@ static void testFailure()
   ZiFile outputRead;
   ZuCHECK(inputWrite.init(input.write, ZiFile::WriteOnly | ZiFile::GC) == Zi::OK,
     "input writer initialization failed");
+  input.write = Zi::nullHandle(); // transferred to inputWrite
   ZuCHECK(outputRead.init(output.read, ZiFile::ReadOnly | ZiFile::GC) == Zi::OK,
     "output reader initialization failed");
+  output.read = Zi::nullHandle(); // transferred to outputRead
 
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "multiplexer start failed");
@@ -475,7 +490,7 @@ static ZtString<> readLine(ZiFile &file)
 
 static void testServer()
 {
-  ZuTestScope(testServer);
+  ZuTestScopeRT(testServer);
 
   Pipe input;
   Pipe output;
@@ -485,8 +500,10 @@ static void testServer()
   ZiFile outputRead;
   ZuCHECK(inputWrite.init(input.write, ZiFile::WriteOnly | ZiFile::GC) == Zi::OK,
     "input writer initialization failed");
+  input.write = Zi::nullHandle(); // transferred to inputWrite
   ZuCHECK(outputRead.init(output.read, ZiFile::ReadOnly | ZiFile::GC) == Zi::OK,
     "output reader initialization failed");
+  output.read = Zi::nullHandle(); // transferred to outputRead
 
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "multiplexer start failed");
@@ -498,8 +515,8 @@ static void testServer()
     .txThread("stdioTx")
     .input(input.read)
     .output(output.write);
-  ZuCheck(server.init(&mx, ZuMv(config), &app));
-  ZuCheck(server.start());
+  ZuCheckRT(server.init(&mx, ZuMv(config), &app));
+  ZuCheckRT(server.start());
 
   ZuCSpan discover{
     "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\","
@@ -507,8 +524,8 @@ static void testServer()
   ZuCHECK(inputWrite.write(discover.data(), discover.length()) == Zi::OK,
     "discover write failed: ", inputWrite.error());
   auto response = readLine(outputRead);
-  ZuCheck(response.find("\"id\":1") >= 0);
-  ZuCheck(response.find("\"supportedVersions\"") >= 0);
+  ZuCheckRT(response.find("\"id\":1") >= 0);
+  ZuCheckRT(response.find("\"supportedVersions\"") >= 0);
 
   ZuCSpan call{
     "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
@@ -516,9 +533,9 @@ static void testServer()
   ZuCHECK(inputWrite.write(call.data(), call.length()) == Zi::OK,
     "tool write failed: ", inputWrite.error());
   response = readLine(outputRead);
-  ZuCheck(response.find("\"id\":2") >= 0);
-  ZuCheck(response.find("\"value\":7") >= 0);
-  ZuCheck(app.calls == 1);
+  ZuCheckRT(response.find("\"id\":2") >= 0);
+  ZuCheckRT(response.find("\"value\":7") >= 0);
+  ZuCheckRT(app.calls == 1);
 
   app.async = true;
   ZuCSpan asyncCall{
@@ -532,30 +549,44 @@ static void testServer()
   ZuCHECK(inputWrite.write(cancel.data(), cancel.length()) == Zi::OK,
     "cancellation write failed: ", inputWrite.error());
   app.cancelled_.wait();
-  ZuCheck(app.cancellations == 1);
-  ZuCheck(!app.complete());
+  ZuCheckRT(app.cancelOK);
+  ZuCheckRT(app.cancellations == 1 && app.cancelOK);
+  ZuCheckRT(!app.complete());
   ZuCSpan ping{
     "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"ping\"}\n"};
   ZuCHECK(inputWrite.write(ping.data(), ping.length()) == Zi::OK,
     "ping write failed: ", inputWrite.error());
   response = readLine(outputRead);
-  ZuCheck(response.find("\"id\":4") >= 0);
-  ZuCheck(response.find("\"id\":3") < 0);
+  ZuCheckRT(response.find("\"id\":4") >= 0);
+  ZuCheckRT(response.find("\"id\":3") < 0);
 
+  ZuCheckRT(server.stop());
+  bool restarted = server.start();
+  ZuCheckRT(restarted);
+  if (restarted) {
+    ZuCheckRT(server.start());
+    // Reusing a prior request ID must not hit the previous run's history.
+    ZuCHECK(inputWrite.write(ping.data(), ping.length()) == Zi::OK,
+      "restart ping write failed: ", inputWrite.error());
+    response = readLine(outputRead);
+    ZuCheckRT(response.find("\"id\":4") >= 0);
+  }
+  ZuCheckRT(server.stop());
+  ZuCheckRT(server.stop());
   inputWrite.close();
-  ZuCheck(server.stop());
-  ZuCheck(app.peerOpens == 1);
-  ZuCheck(app.peerCloses == 1);
-  ZuCheck(app.streamOpens >= 4);
-  ZuCheck(app.streamCloses == app.streamOpens);
-  ZuCheck(app.contextCalls == 2);
+  ZuCheckRT(app.peerOpens == 2);
+  ZuCheckRT(app.peerCloses == 2);
+  ZuCheckRT(app.streamOpens >= 4);
+  ZuCheckRT(app.streamCloses == app.streamOpens);
+  ZuCheckRT(app.contextCalls == 2);
   outputRead.close();
-  ZuCheck(mx.stop());
+  server.final();
+  ZuCheckRT(mx.stop());
 }
 
 static void testClient()
 {
-  ZuTestScope(testClient);
+  ZuTestScopeRT(testClient);
 
   Pipe requests;
   Pipe responses;
@@ -566,9 +597,11 @@ static void testClient()
   ZuCHECK(requestRead.init(
       requests.read, ZiFile::ReadOnly | ZiFile::GC) == Zi::OK,
     "request reader initialization failed");
+  requests.read = Zi::nullHandle(); // transferred to requestRead
   ZuCHECK(responseWrite.init(
       responses.write, ZiFile::WriteOnly | ZiFile::GC) == Zi::OK,
     "response writer initialization failed");
+  responses.write = Zi::nullHandle(); // transferred to responseWrite
 
   ZiMultiplex mx{mxParams()};
   ZuCHECK(mx.start(), "multiplexer start failed");
@@ -583,41 +616,41 @@ static void testClient()
   Zjrpc::Limits limits;
   limits.workBatch = 1;
   config.limits(limits);
-  ZuCheck(client.init(&mx, ZuMv(config), &app));
-  ZuCheck(client.start());
+  ZuCheckRT(client.init(&mx, ZuMv(config), &app));
+  ZuCheckRT(client.start());
 
   auto request = readLine(requestRead);
-  ZuCheck(request.find("\"method\":\"server/discover\"") >= 0);
+  ZuCheckRT(request.find("\"method\":\"server/discover\"") >= 0);
   ZuCSpan discover{
     "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{"
     "\"supportedVersions\":[\"2026-07-28\"]}}\n"};
   ZuCHECK(responseWrite.write(discover.data(), discover.length()) == Zi::OK,
     "discovery response write failed: ", responseWrite.error());
   app.ready_.wait();
-  ZuCheck(app.era == Zmcp::Era::Modern);
+  ZuCheckRT(app.era == Zmcp::Era::Modern);
 
   ZmRef<ClientCall> ping = new ClientCall{};
-  ZuCheck(client.ping(ping));
+  ZuCheckRT(client.ping(ping));
   request = readLine(requestRead);
-  ZuCheck(request.find("\"id\":2") >= 0);
-  ZuCheck(request.find("\"method\":\"ping\"") >= 0);
+  ZuCheckRT(request.find("\"id\":2") >= 0);
+  ZuCheckRT(request.find("\"method\":\"ping\"") >= 0);
   ZuCSpan pong{
     "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{}}\n"};
   ZuCHECK(responseWrite.write(pong.data(), pong.length()) == Zi::OK,
     "ping response write failed: ", responseWrite.error());
   ping->done.wait();
-  ZuCheck(ping->controls == 1 && !ping->failures);
+  ZuCheckRT(ping->controls == 1 && !ping->failures);
 
   ZmRef<ClientCall> setLevel = new ClientCall{};
-  ZuCheck(client.setLevel("debug", setLevel));
+  ZuCheckRT(client.setLevel("debug", setLevel));
   setLevel->done.wait();
-  ZuCheck(!setLevel->controls && setLevel->failures == 1);
+  ZuCheckRT(!setLevel->controls && setLevel->failures == 1);
 
   ZmRef<ClientCall> call = new ClientCall{};
-  ZuCheck(client.template call<Echo>(EchoReq{11}, call));
+  ZuCheckRT(client.template call<Echo>(EchoReq{11}, call));
   request = readLine(requestRead);
-  ZuCheck(request.find("\"method\":\"tools/call\"") >= 0);
-  ZuCheck(request.find("\"value\":11") >= 0);
+  ZuCheckRT(request.find("\"method\":\"tools/call\"") >= 0);
+  ZuCheckRT(request.find("\"value\":11") >= 0);
   ZuCSpan result{
     "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"content\":[],"
     "\"structuredContent\":{\"code\":200,\"data\":{\"value\":11}},"
@@ -625,34 +658,34 @@ static void testClient()
   ZuCHECK(responseWrite.write(result.data(), result.length()) == Zi::OK,
     "tool response write failed: ", responseWrite.error());
   call->done.wait();
-  ZuCheck(call->value == 11);
-  ZuCheck(!call->failures);
+  ZuCheckRT(call->value == 11);
+  ZuCheckRT(!call->failures);
 
   Zmcp::Batch<EchoCatalog> batch;
-  ZuCheck(batch.request<Echo>(int64_t{1001}, EchoReq{21}));
-  ZuCheck(batch.request<Echo>(int64_t{1002}, EchoReq{22}));
+  ZuCheckRT(batch.request<Echo>(int64_t{1001}, EchoReq{21}));
+  ZuCheckRT(batch.request<Echo>(int64_t{1002}, EchoReq{22}));
   ZmRef<ZmcpITest::BatchCall> aggregate = new ZmcpITest::BatchCall{};
-  ZuCheck(client.callBatch(ZuMv(batch), aggregate));
+  ZuCheckRT(client.callBatch(ZuMv(batch), aggregate));
   request = readLine(requestRead);
   auto batchRequest = Zjrpc::parse(request.span(), request.length());
-  ZuCheck(batchRequest.batch());
+  ZuCheckRT(batchRequest.batch());
   ZuCSpan batchResponse{
     "[{\"jsonrpc\":\"2.0\",\"id\":1002,\"result\":{}},"
     "{\"jsonrpc\":\"2.0\",\"id\":1001,\"result\":{}}]\n"};
   ZuCHECK(responseWrite.write(batchResponse.data(), batchResponse.length()) == Zi::OK,
     "batch response write failed: ", responseWrite.error());
   aggregate->done.wait();
-  ZuCheck(aggregate->completions == 1 && !aggregate->failures);
-  ZuCheck(aggregate->ids(1001, 1002));
+  ZuCheckRT(aggregate->completions == 1 && !aggregate->failures);
+  ZuCheckRT(aggregate->ids(1001, 1002));
 
   ZmRef<ClientCall> reported = new ClientCall{};
-  ZuCheck(client.callProgressLog<Echo>(
+  ZuCheckRT(client.callProgressLog<Echo>(
     EchoReq{12}, Zjrpc::IDString{"progress-12"},
     Zmcp::LogLevel::Info, reported));
   request = readLine(requestRead);
-  ZuCheck(request.find("\"id\":4") >= 0);
-  ZuCheck(request.find("\"progressToken\":\"progress-12\"") >= 0);
-  ZuCheck(request.find(
+  ZuCheckRT(request.find("\"id\":4") >= 0);
+  ZuCheckRT(request.find("\"progressToken\":\"progress-12\"") >= 0);
+  ZuCheckRT(request.find(
     "\"io.modelcontextprotocol/logLevel\":\"info\"") >= 0);
   ZuCSpan progress{
     "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\","
@@ -676,25 +709,26 @@ static void testClient()
   app.progressed_.wait();
   app.logged_.wait();
   reported->done.wait();
-  ZuCheck(app.token.is<Zjrpc::IDString>() &&
+  ZuCheckRT(app.token.is<Zjrpc::IDString>() &&
     app.token.p<Zjrpc::IDString>() == Zjrpc::IDString{"progress-12"} &&
     app.value == .5 && app.total == 1 && app.message == "half");
-  ZuCheck(app.level == "info" && app.logger == "echo" &&
+  ZuCheckRT(app.level == "info" && app.logger == "echo" &&
     app.data == "working");
-  ZuCheck(!reported->failures && reported->value == 12);
+  ZuCheckRT(!reported->failures && reported->value == 12);
 
   ZmRef<ClientCall> cancelled = new ClientCall{};
-  ZuCheck(client.call<Echo>(EchoReq{13}, cancelled));
+  ZuCheckRT(client.call<Echo>(EchoReq{13}, cancelled));
   request = readLine(requestRead);
   cancelled->started_.wait();
-  ZuCheck(request.find("\"id\":5") >= 0 &&
+  ZuCheckRT(request.find("\"id\":5") >= 0 &&
     request.find("\"value\":13") >= 0);
-  ZuCheck(client.cancel(cancelled->id, "superseded"));
+  ZuCheckRT(client.cancel(cancelled->id, "superseded"));
   request = readLine(requestRead);
-  ZuCheck(request.find("\"method\":\"notifications/cancelled\"") >= 0);
-  ZuCheck(request.find("\"requestId\":5") >= 0);
+  ZuCheckRT(request.find("\"method\":\"notifications/cancelled\"") >= 0);
+  ZuCheckRT(request.find("\"requestId\":5") >= 0);
   app.cancelled_.wait();
-  ZuCheck(app.cancelOK && app.cancelledID == cancelled->id);
+  ZuCheckRT(app.cancelOK);
+  ZuCheckRT(app.cancelOK && app.cancelledID == cancelled->id);
   ZuCSpan cancelledResult{
     "{\"jsonrpc\":\"2.0\",\"id\":5,\"result\":{\"content\":[],"
     "\"structuredContent\":{\"code\":200,\"data\":{\"value\":13}},"
@@ -703,15 +737,31 @@ static void testClient()
       cancelledResult.data(), cancelledResult.length()) == Zi::OK,
     "cancelled response write failed: ", responseWrite.error());
   cancelled->done.wait();
-  ZuCheck(!cancelled->failures && cancelled->value == 13);
+  ZuCheckRT(!cancelled->failures && cancelled->value == 13);
 
-  responseWrite.close();
+  ZuCheckRT(client.stop());
   app.closed_.wait();
-  ZuCheck(app.closes == 1);
-  ZuCheck(!app.failures);
+  bool restarted = client.start();
+  ZuCheckRT(restarted);
+  if (restarted) {
+    ZuCheckRT(client.start());
+    request = readLine(requestRead);
+    ZuCheckRT(request.find("\"method\":\"server/discover\"") >= 0);
+    ZuCheckRT(request.find("\"id\":1") >= 0);
+    ZuCHECK(responseWrite.write(discover.data(), discover.length()) == Zi::OK,
+      "restart discovery write failed: ", responseWrite.error());
+    ZuCheckRT(!app.ready_.timedwait(Zm::now() + ZuTime{5}));
+    ZuCheckRT(app.era == Zmcp::Era::Modern);
+  }
+  responseWrite.close();
+  if (restarted) app.closed_.wait();
+  ZuCheckRT(app.closes == 2);
+  ZuCheckRT(!app.failures);
   requestRead.close();
-  ZuCheck(client.stop());
-  ZuCheck(mx.stop());
+  ZuCheckRT(client.stop());
+  ZuCheckRT(client.stop());
+  client.final();
+  ZuCheckRT(mx.stop());
 }
 
 int main(int argc, char **argv)

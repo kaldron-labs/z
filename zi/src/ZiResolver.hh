@@ -17,7 +17,11 @@
 
 #include <zlib/ZuUnion.hh>
 
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
+#include <zlib/ZmGuard.hh>
+#include <zlib/ZmPLock.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmList.hh>
@@ -164,16 +168,22 @@ ZmListDerive(QueryList, Query_,
     ZmListHeapID<"ZiResolver.Query">>);
 using Query = QueryList::Node;
 
-class ZiAPI Main {
+class ZiAPI Main : private ZmEngine<Main> {
+friend ZmEngine<Main>;
 friend void ZiResolver_AQueryCB(void *, int, int, struct hostent *);
 friend void ZiResolver_AAAAQueryCB(void *, int, int, struct hostent *);
 friend void ZiResolver_NameCB(void *, int, int, char *, char *);
 friend void ZiResolver_QueryCB(void *, int, int, unsigned char *, int);
 
+  using Engine = ZmEngine<Main>;
   using Lock = ZmPLock;
   using Guard = ZmGuard<Lock>;
 
 public:
+  using CtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+  using Engine::running;
+  using Engine::stopping;
+  using Engine::state;
   Main();
   ~Main();
 
@@ -185,13 +195,13 @@ public:
   static void init();
   static void init(Params);
   static void init(Params, ZiEvent::FailFn);
-  // Completion callbacks may run inline; neither operation waits for completion.
-  static void start(ZiEvent::StartFn);
-  static void stop(ZiEvent::StopFn);
-  // External callers only: never wait from a resolver callback.
-  static ZiEvent::StartResult startSync();
-  static ZiEvent::StopResult stopSync();
-  // Call after stop completion; may join outstanding control-thread callbacks.
+  // Completion may run inline. Diagnostics go to the configured FailFn.
+  static void start(CtrlFn);
+  static void stop(CtrlFn);
+  // Main-thread waits only; never block from a resolver callback.
+  static bool startSync();
+  static bool stopSync();
+  // Stop must have completed. Releases quiescent resources without waiting.
   static void final();
 
   static ZmRef<Query> resolve(Host, ResolveFn);
@@ -200,39 +210,48 @@ public:
   static void txt(const DNSMsg &, TxtFn);
   static void cancel(ZmRef<Query>);
 
-  bool running() const;
   bool initialized() const;
 
 private:
   enum {
     SID = 1
   };
-  enum { Stopped, Starting, Running, StopPending, Stopping, Finalizing };
-
   void init_();
   void init_(Params, ZiEvent::FailFn);
   void init__(Params, ZiEvent::FailFn);
-  void start_(ZiEvent::StartFn);
-  void started_(ZiEvent::StartResult);
-  void stop_(ZiEvent::StopFn);
-  void stop__(ZiEvent::StopFn);
-  void stopped_(ZiEvent::StopResult);
+  const Params &params_() const { return m_params.p<Params>(); }
+  void openChannel_();
+  void closeChannel_();
+  void start_();
+  void startFailed_(ZeException);
+  void stop_();
+  void stopRx_();
+  void closeSched_();
   void final_();
-  ZmScheduler *final__();
 
   template <typename L>
   void invoke_(L &&l) {
-    {
-      Guard guard(m_lock);
-      if (m_state == Running) {
+    Guard guard(m_lock);
+    switch (Engine::state()) {
+      case ZmEngineState::Running:
+	if (m_accepting) {
+	  // Queue under the admission lock so stop cannot retire the scheduler
+	  // between admission and publication. run() never executes inline.
+	  m_loop.run([this, l = ZuFwd<L>(l)]() mutable { l(m_up); });
+	  return;
+	}
+	[[fallthrough]];
+      case ZmEngineState::Stopping:
+      case ZmEngineState::StartPending:
+      case ZmEngineState::StopPending:
 	guard.unlock();
-	m_loop.invoke([l = ZuFwd<L>(l)]() mutable { l(true); });
+	l(false);
 	return;
-      }
     }
-    start_([this, l = ZuFwd<L>(l)](ZiEvent::StartResult result) mutable {
-      if (result.is<ZiEvent::Exception>()) { l(false); return; }
-      m_loop.invoke([l = ZuMv(l)]() mutable { l(true); });
+    guard.unlock();
+    Engine::start([this, l = ZuFwd<L>(l)](bool ok) mutable {
+      if (!ok) { l(false); return; }
+      invoke_(ZuMv(l));
     });
   }
 
@@ -258,25 +277,23 @@ private:
 
 private:
   // initialized before start, immutable until final
-  Params		m_params;
+  using Config = ZuUnion<void, Params>;
+  Config		m_params;
   ZiEvent::FailFn	m_failFn;
 
-  using StartFns = ZtArray<ZiEvent::StartFn,
-    ZtArrayHeapID<"ZiResolver.Start">>;
-  using StopFns = ZtArray<ZiEvent::StopFn,
-    ZtArrayHeapID<"ZiResolver.Stop">>;
-  // lifecycle - guarded by m_lock
+  // Cross-thread admission and scheduler publication; independent of the
+  // engine's serialized lifecycle. SID owns all c-ares and event-loop work.
   mutable Lock		m_lock;
     ZmScheduler		  *m_sched = nullptr;
-    StartFns		  m_startFns;
-    StopFns		  m_stopFns;
-    int8_t		  m_state = Stopped;
+    bool		  m_accepting = false;
 
   // shared lifecycle object; c-ares activity is on SID
+  alignas(Zm::CacheLineSize)
   ZiEventLoop		m_loop;
 
   // c-ares/SID exclusive after start
   ares_channel_t	*m_channel = nullptr;
+  bool			m_up = false;
   QueryList		m_queries;
   ZmScheduler::Timer	m_timer;
 };

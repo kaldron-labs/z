@@ -20,6 +20,7 @@
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmFn.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmGuard.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
@@ -200,8 +201,14 @@ public:
     m_rxThread{mx_ ? mx_->sid(config.rxThread()) : 0},
     m_txThread{mx_ ? mx_->sid(config.txThread()) : 0}
   {
-    m_input.init(config.input(), ZiFile::ReadOnly | ZiFile::GC);
-    m_output.init(config.output(), ZiFile::WriteOnly | ZiFile::GC);
+    // Configuration borrows the caller's handles. This run owns duplicates;
+    // stopping it cannot consume the handles needed by a later restart.
+    if (config.input() == config.output()) return;
+    ZiFile input, output;
+    if (input.init(config.input(), ZiFile::ReadOnly) == Zi::OK)
+      (void)m_input.dup(input);
+    if (output.init(config.output(), ZiFile::WriteOnly) == Zi::OK)
+      (void)m_output.dup(output);
   }
 
   ~IOLink() {
@@ -629,48 +636,26 @@ private:
   bool			m_txDrained = false;
 };
 
-// Shared IO endpoint lifecycle. Protocol state drains after the workers exit;
-// ioDone() then releases a synchronous stop waiter on the owner shard.
+// One engine covers the shared worker transport and protocol drainage.
 template <typename Derived>
-class IOEndpoint {
+class IOEndpoint : private ZmEngine<IOEndpoint<Derived>> {
+  using Engine = ZmEngine<IOEndpoint<Derived>>;
   using IO = IOLink<Derived>;
+  friend Engine;
 public:
-  bool start() {
-    if (!m_mx || !m_up.load_() || m_started || m_done.load_()) return false;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	m_started = m_io.template p<IO>().start_();
-	bool ok = m_started;
-	if (ok) {
-	  try { derived()->ioReady(); } catch (...) { fail_(); ok = false; }
-	} else {
-	  m_failure = true;
-	  m_up = false;
-	  derived()->ioClosed(true);
-	}
-	wake(ok);
-      }, m_owner);
-    });
-  }
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
 
-  bool stop() {
-    if (!m_mx) return false;
-    if (m_done.load_()) return !m_failure;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	if (m_done.load_()) { wake(!m_failure); return; }
-	m_stop = ZuMv(wake);
-	m_up = false;
-	if (m_started) m_io.template p<IO>().stop_();
-	else derived()->ioClosed(false);
-      }, m_owner);
-    });
+  ~IOEndpoint() {
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(m_io.template is<void>());
   }
 
   void final() {
-    if (!m_mx) return;
-    (void)stop();
-    m_io.null();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(m_io.template is<void>());
     m_mx = nullptr;
     m_owner = 0;
   }
@@ -696,12 +681,12 @@ protected:
     if (m_mx || !mx || !mx->txThread() || !valid(config.limits())) return false;
     m_mx = mx;
     m_owner = mx->txThread();
-    new (m_io.template new_<IO>()) IO{derived(), mx, m_owner, ZuMv(config)};
-    m_up = true;
-    m_done = false;
-    m_started = m_failure = false;
+    m_config = ZuMv(config);
     return true;
   }
+
+  // Safe base default for endpoints with no per-run protocol state.
+  void ioStarting() { }
 
   template <typename M>
   bool send(const M &message) {
@@ -709,7 +694,7 @@ protected:
   }
 
   void fail_() {
-    if (m_done.load_() || m_failure) return;
+    if (m_failure || !m_io.template ptr<IO>()) return;
     m_failure = true;
     m_up = false;
     m_io.template p<IO>().stop_();
@@ -719,22 +704,66 @@ protected:
   void continue_(L &&l) { m_mx->run(ZuFwd<L>(l), m_owner); }
 
   void ioDone() {
-    m_done = true;
-    auto stop = ZuMv(m_stop);
-    m_stop = {};
-    if (stop) stop(!m_failure);
+    // The terminal IOLink callback must return before its in-place runtime
+    // is destroyed. Protocol drain and its earlier owner posts precede this.
+    continue_([this]() {
+      m_io.null();
+      switch (Engine::state()) {
+	case ZmEngineState::Starting:
+	case ZmEngineState::StopPending:
+	  Engine::started(false);
+	  return;
+	case ZmEngineState::Stopping:
+	case ZmEngineState::StartPending:
+	  Engine::stopped(true);
+	  return;
+      }
+      // Natural EOF/protocol failure ends this run. The application still
+      // completes explicit stop before final or another start.
+    });
   }
 
 private:
   auto derived() { return static_cast<Derived *>(this); }
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    continue_([this]() {
+      ZmAssert_(m_io.template is<void>());
+      m_failure = false;
+      derived()->ioStarting();
+      auto io = new (m_io.template new_<IO>()) IO{derived(), m_mx, m_owner, m_config};
+      if (!io->start_()) {
+	m_failure = true;
+	m_up = false;
+	derived()->ioClosed(true);
+	return;
+      }
+      m_up = true;
+      try { derived()->ioReady(); }
+      catch (...) { fail_(); return; }
+      if (m_failure) return; // ioReady may reject the initial protocol output
+      Engine::started(true);
+    });
+  }
 
+  void stop_() {
+    continue_([this]() {
+      m_up = false;
+      if (auto io = m_io.template ptr<IO>()) {
+	// A closed transport may still be draining RPC state. ioDone owns
+	// completion in that case; do not create another cancellation chain.
+	if (io->state() != StdioState::Closed) io->stop_();
+	return;
+      }
+      Engine::stopped(true);
+    });
+  }
+
+  StdioConfig m_config;
   ZuUnion<void, IO> m_io;
   ZiMultiplex *m_mx = nullptr;
-  ZmFn<void(bool)> m_stop;
   unsigned m_owner = 0;
   ZmAtomic<unsigned> m_up = 0;
-  ZmAtomic<unsigned> m_done = 0;
-  bool m_started = false;
   bool m_failure = false;
 };
 

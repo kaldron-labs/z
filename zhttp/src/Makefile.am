@@ -33,5 +33,5 @@ libZhttp_la_LIBADD = \
 
 noinst_HEADERS = ZhttpCompression.hh ZhttpHPack.hh ZhttpQPack.hh \
 	ZhttpH1.hh ZhttpH2.hh ZhttpH2Hub.hh ZhttpH3.hh \
-	ZhttpNative.hh ZhttpWire.hh ZhttpFieldImpl.hh \
+	ZhttpNative.hh ZhttpWire.hh ZhttpFieldImpl.hh ZhttpStreamState.hh \
 	ZhttpClientImpl.hh ZhttpServerImpl.hh ZhttpTLSImpl.hh

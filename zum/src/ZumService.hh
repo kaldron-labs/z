@@ -14,7 +14,9 @@
 #endif
 
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuPtr.hh>
 
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfJSON.hh>
@@ -113,8 +115,6 @@ struct ServicePrincipal {
   String authMethod;
 };
 
-ZuDerive(ServiceDoneFn, (ZmFn<void(int),
-  ZmFnHeapID<"Zum.Service.Done">>));
 ZuDerive(ServiceProtocolFn, (ZmFn<void(ServiceProtocolResult),
   ZmFnHeapID<"Zum.Service.Protocol">>));
 ZuDerive(ServiceVerifyFn, (ZmFn<void(int, ServicePrincipal),
@@ -126,25 +126,35 @@ ZuDerive(ServiceSETDoneFn, (ZmFn<void(int),
 
 struct ServiceState;
 
-class ZumAPI Service {
+class ZumAPI Service : private ZmEngine<Service> {
+  using Engine = ZmEngine<Service>;
+  friend Engine;
+  friend ServiceState;
   Service(const Service &) = delete;
   Service &operator =(const Service &) = delete;
 
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
+
   Service();
   ~Service();
 
   bool init(ServiceConfig, ServiceHTTPFn);
-  void start(ServiceDoneFn);
+  int startError() const;
   void verify(String accessToken, ServiceVerifyFn);
   void setRefreshRevocationFn(ServiceRefreshFn);
   void receiveSET(ServiceSETRequest, ServiceSETDoneFn);
   void publish(ServiceManifest, ServiceProtocolFn);
-  void stop(ServiceDoneFn);
   void final();
 
 private:
-  ZmRef<ServiceState> m_state;
+  void start_();
+  void stop_();
+
+  ZuPtr<ServiceState> m_state;
 };
 
 } // namespace Zum

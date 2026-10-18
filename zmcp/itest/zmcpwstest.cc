@@ -75,7 +75,7 @@ struct SrvApp {
     token->complete(Zjrpc::Reply<EchoOK>{value});
   }
   void cancelled(auto *, auto *token, ZuCSpan) {
-    ZuCheck(token->cancelled() && !token->live());
+    if (!token->cancelled() || token->live()) ++failures;
     cancelled_.post();
   }
   void disconnected(auto &, bool) { closed_.post(); }
@@ -211,8 +211,13 @@ static auto profileConfig(const Zquic::Test::TempDir &temp)
     using Config = ZuIf<ZuIsSame<Profile, Zhttp::H1TLS>{}, Zhttp::TLSConfig,
       ZuIf<ZuIsSame<Profile, Zhttp::H2TLS>{}, Zhttp::H2Config, Zhttp::QUICConfig>>;
     Config config;
-    if constexpr (Server) config.certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
-    else config.caPath(temp.certPath.cspan());
+    auto configure = [&temp](auto &tls) {
+      if constexpr (Server)
+	tls.certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
+      else tls.caPath(temp.certPath.cspan());
+    };
+    if constexpr (ZuIsSame<Profile, Zhttp::H2TLS>{}) config.tls(configure);
+    else configure(config);
     return config;
   }
 }
@@ -220,13 +225,13 @@ static auto profileConfig(const Zquic::Test::TempDir &temp)
 template <typename Profile>
 static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
 {
-  ZuTestScope(testWS);
+  ZuTestScopeRT(testWS);
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });
   }).rxThread(1).txThread(2)};
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   SrvApp srv;
   CliApp<Profile> cli;
   Zmcp::WSServer<SrvApp, Catalog, Profile> server;
@@ -236,75 +241,96 @@ static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
     profileConfig<Profile, true>(temp), Zjrpc::WSConfig{}, &srv) &&
     client.init(hub, profileConfig<Profile, false>(temp),
       Zhttp::Destination{"127.0.0.1", uint16_t(port)}, Zjrpc::WSConfig{}, &cli);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   if (!initialized) { client.final(); server.final(); mx.stop(); return; }
   bool started = server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && wait(srv.listening_) && !srv.failures;
-  ZuCheck(listening);
+  ZuCheckRT(listening);
   Zws::URI uri;
   ZtString<> text;
   text << (ZuIsSame<Profile, Zhttp::H1TCP>{} ? "ws" : "wss")
     << "://127.0.0.1:" << port << "/mcp";
-  bool ready = listening && Zws::URI::parse(uri, text).ok() && client.start() &&
-    client.connect(uri, "mcp") && wait(cli.ready_) && !cli.failures;
-  ZuCheck(ready);
+  bool clientStarted = listening && Zws::URI::parse(uri, text).ok() && client.start();
+  bool ready = clientStarted && client.connect(uri, "mcp") &&
+    wait(cli.ready_) && !cli.failures;
+  ZuCheckRT(ready);
   if (ready) {
-    ZuCheck(cli.era == Zmcp::Era::Modern);
-    ZuCheck(client.tools());
-    ZuCheck(wait(cli.tools_) && cli.catalogs == 1);
+    ZuCheckRT(cli.era == Zmcp::Era::Modern);
+    ZuCheckRT(client.tools());
+    ZuCheckRT(wait(cli.tools_) && cli.catalogs == 1);
     ZmRef<Call> ping = new Call{};
-    ZuCheck(client.ping(ping));
-    ZuCheck(wait(ping->done) && ping->controls == 1 && !ping->failures);
+    ZuCheckRT(client.ping(ping));
+    ZuCheckRT(wait(ping->done) && ping->controls == 1 && !ping->failures);
     Zmcp::Batch<Catalog> batch;
-    ZuCheck(batch.template request<Echo>(int64_t{1001}, Value{11}));
-    ZuCheck(batch.template request<Echo>(int64_t{1002}, Value{12}));
+    ZuCheckRT(batch.template request<Echo>(int64_t{1001}, Value{11}));
+    ZuCheckRT(batch.template request<Echo>(int64_t{1002}, Value{12}));
     ZmRef<ZmcpITest::BatchCall> aggregate = new ZmcpITest::BatchCall{};
-    ZuCheck(client.callBatch(ZuMv(batch), aggregate));
-    ZuCheck(wait(aggregate->done) && aggregate->completions == 1 && !aggregate->failures);
-    ZuCheck(aggregate->ids(1001, 1002));
+    ZuCheckRT(client.callBatch(ZuMv(batch), aggregate));
+    ZuCheckRT(wait(aggregate->done) && aggregate->completions == 1 && !aggregate->failures);
+    ZuCheckRT(aggregate->ids(1001, 1002));
     // MCP ignores tools/call notifications; the shared batch path must not
     // manufacture responses or leave pending calls behind for these members.
     Zmcp::Batch<Catalog> notifications;
     notifications.template notify<Echo>(Value{11});
     notifications.template notify<Echo>(Value{12});
-    ZuCheck(client.notifyBatch(ZuMv(notifications)));
+    ZuCheckRT(client.notifyBatch(ZuMv(notifications)));
     ZmRef<Call> call = new Call{};
     Zjrpc::ID progress{int64_t{123}};
-    ZuCheck(client.template callProgressLog<Echo>(
+    ZuCheckRT(client.template callProgressLog<Echo>(
       Value{42}, progress, Zmcp::LogLevel::Info, call));
     bool arrived = wait(srv.arrived);
-    ZuCheck(arrived && wait(call->started_));
-    ZuCheck(wait(cli.progress_) && cli.progressID == progress);
-    ZuCheck(wait(cli.logging_));
-    ZuCheck(client.cancel(call->id, "stop"));
-    ZuCheck(wait(srv.cancelled_));
+    ZuCheckRT(arrived && wait(call->started_));
+    ZuCheckRT(wait(cli.progress_) && cli.progressID == progress);
+    ZuCheckRT(wait(cli.logging_));
+    ZuCheckRT(client.cancel(call->id, "stop"));
+    ZuCheckRT(wait(srv.cancelled_));
     if (arrived) { auto complete = ZuMv(srv.deferred); complete(); }
     Zmcp::Batch<Catalog> interrupted;
-    ZuCheck(interrupted.template request<Echo>(int64_t{2001}, Value{43}));
-    ZuCheck(interrupted.template request<Echo>(int64_t{2002}, Value{45}));
+    ZuCheckRT(interrupted.template request<Echo>(int64_t{2001}, Value{43}));
+    ZuCheckRT(interrupted.template request<Echo>(int64_t{2002}, Value{45}));
     ZmRef<ZmcpITest::BatchCall> pendingBatch = new ZmcpITest::BatchCall{};
-    ZuCheck(client.callBatch(ZuMv(interrupted), pendingBatch));
-    ZuCheck(wait(srv.arrived));
-    ZuCheck(client.cancel(Zjrpc::ID{int64_t{2001}}, "batch stop"));
-    ZuCheck(wait(srv.cancelled_));
+    ZuCheckRT(client.callBatch(ZuMv(interrupted), pendingBatch));
+    ZuCheckRT(wait(srv.arrived));
+    ZuCheckRT(client.cancel(Zjrpc::ID{int64_t{2001}}, "batch stop"));
+    ZuCheckRT(wait(srv.cancelled_));
     ZmRef<Call> abandoned = new Call{};
-    ZuCheck(client.template call<Echo>(Value{42}, abandoned));
-    ZuCheck(wait(srv.arrived));
-    ZuCheck(client.stop());
-    ZuCheck(wait(call->done) && call->failures == 1 && !call->value);
-    ZuCheck(wait(abandoned->done) && abandoned->failures == 1);
-    ZuCheck(wait(pendingBatch->done) && pendingBatch->failures == 1 &&
+    ZuCheckRT(client.template call<Echo>(Value{42}, abandoned));
+    ZuCheckRT(wait(srv.arrived));
+    ZuCheckRT(client.stop());
+    ZuCheckRT(wait(call->done) && call->failures == 1 && !call->value);
+    ZuCheckRT(wait(abandoned->done) && abandoned->failures == 1);
+    ZuCheckRT(wait(pendingBatch->done) && pendingBatch->failures == 1 &&
       !pendingBatch->completions);
   }
+  if (clientStarted && !ready) ZuCheckRT(client.stop());
   cli.link = nullptr;
-  client.final();
-  ZuCheck(server.stop());
-  server.final();
+  ZuCheckRT(server.stop());
   srv.deferred = {};
   srv.deferredBatch = {};
+  if (ready) {
+    bool serverRestarted = server.start();
+    bool listeningAgain = serverRestarted && wait(srv.listening_);
+    ZuCheckRT(listeningAgain);
+    bool clientRestarted = listeningAgain && client.start();
+    bool readyAgain = clientRestarted && client.connect(uri, "mcp") &&
+      wait(cli.ready_) && !cli.failures;
+    ZuCheckRT(readyAgain && cli.era == Zmcp::Era::Modern);
+    if (readyAgain) {
+      ZmRef<Call> fresh = new Call{};
+      bool sent = client.template call<Echo>(Value{19}, fresh);
+      bool completed = sent && wait(fresh->done);
+      ZuCheckRT(completed && fresh->value == 19 && !fresh->failures);
+    }
+    if (clientRestarted) ZuCheckRT(client.stop());
+    ZuCheckRT(client.stop());
+    cli.link = nullptr;
+    ZuCheckRT(server.stop());
+  }
+  client.final();
+  server.final();
   mx.stop();
-  ZuCheck(!srv.failures && !cli.failures);
+  ZuCheckRT(!srv.failures && !cli.failures);
 }
 
 template <typename Profile>
@@ -424,7 +450,7 @@ static void testBadWS(const Zquic::Test::TempDir &temp, unsigned port, int kind)
   }
   // Rejected input may close normally or report a native protocol failure.
   bool stopped = client.stop();
-  ZuCheck(stopped == !cli.failures);
+  ZuCheck(stopped);
   cli.link = nullptr;
   client.final();
   ZuCheck(server.stop());

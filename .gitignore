@@ -13,6 +13,7 @@ GTAGS
 gtags.files
 Makefile
 !zpb/interop/go/Makefile
+!zgrpc/interop/go/Makefile
 Makefile.in
 aclocal.m4
 config.*
@@ -146,3 +147,5 @@ old/**
 /zi/interop/zipb-gen/
 /zi/itest/zprotoc-out/
 zhttp/itest/zhttpserverstreamtest.ZhttpServerStop-*/
+
+/zgrpc/src/Zgrpc.pc

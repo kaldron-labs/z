@@ -257,7 +257,7 @@ static bool export_(ZuCSpan stem)
   Zfb::Buffer buf;
   constexpr unsigned Align = Zfb::BufferAlign<flatctest::Row>::N;
   Zfb::ArrayStorage<Align> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage, Align};
+  Zfb::Builder builder{storage, Align};
   using H = Zfb::As<flatctest::Row>::Handler<flatctest::Row, Facet>;
   auto bytes = builder.finish(H::template save<ZfFieldFilter::All>(builder, row));
   if (!Zfb::verify<flatctest::Row, Facet>(bytes) || !contract) return false;

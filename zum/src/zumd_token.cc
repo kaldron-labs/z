@@ -14,21 +14,22 @@
 #include <zlib/zumd_admin.hh>
 
 
+#include <zlib/ZmPolymorph.hh>
 #include <zlib/ZtlsRandom.hh>
 
 namespace Zum {
 
 static void clientToken(
-  DB *, Ztls::Random &, String issuer, Client, bool requestedPresent,
-  String requested, SignKey, int64_t now, int64_t expires,
+  const ZmRef<ZmPolymorph> &, DB *, Ztls::Random &, String issuer, Client,
+  bool requestedPresent, String requested, SignKey, int64_t now, int64_t expires,
   JWTLimits, SignFn, TokenFn);
 static void refreshToken(
-  DB *, Ztls::Random &, Refresh, Bytes presentedDigest,
+  const ZmRef<ZmPolymorph> &, DB *, Ztls::Random &, Refresh, Bytes presentedDigest,
   Client, bool requestedPresent, String requested, SignKey,
   int64_t now, int64_t expires, unsigned generationLimit,
   unsigned spentLimit, JWTLimits, RefreshRevokeFn, SignFn, TokenFn);
 static void codeToken(
-  DB *, Ztls::Random &, Grant, Bytes codeDigest,
+  const ZmRef<ZmPolymorph> &, DB *, Ztls::Random &, Grant, Bytes codeDigest,
   Client, bool requestedPresent, String requested, SignKey,
   int64_t now, int64_t accessExpires, int64_t refreshExpires,
   JWTLimits, SignFn, TokenFn);
@@ -46,11 +47,13 @@ public:
   TokenResponse	response;
 };
 
-class TokenComplete_ : public ZmNHeap<TokenComplete_>, public ZmObject  {
+class TokenComplete_ : public ZmNHeap<TokenComplete_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.TokenComplete"> ZmNHeapID(TokenComplete_ *);
 
 public:
-  TokenComplete_(TokenFn complete) : m_complete{ZuMv(complete)} { }
+  TokenComplete_(ZmRef<ZmPolymorph> work, TokenFn complete) :
+    RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
 
@@ -76,16 +79,16 @@ private:
   TokenFn	m_complete;
 };
 
-class ClientToken_ : public ZmNHeap<ClientToken_>, public ZmPolymorph  {
+class ClientToken_ : public ZmNHeap<ClientToken_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.ClientToken"> ZmNHeapID(ClientToken_ *);
 
 public:
-  ClientToken_(
-      DB *db, Ztls::Random *rng, String issuer, Client client,
+  ClientToken_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, String issuer, Client client,
       bool requestedPresent, String requested, SignKey key,
       int64_t now, int64_t expires, JWTLimits limits,
       SignFn sign, TokenFn complete) :
-    m_db{db}, m_rng{rng}, m_issuer{ZuMv(issuer)},
+    RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng}, m_issuer{ZuMv(issuer)},
     m_client{ZuMv(client)}, m_requested{ZuMv(requested)},
     m_requestedPresent{requestedPresent}, m_key{ZuMv(key)},
     m_now{now}, m_expires{expires}, m_limits{limits}, m_sign{ZuMv(sign)},
@@ -142,8 +145,10 @@ private:
     m_scope = ZuMv(data.selection.scope);
     auto sign = ZuMv(m_sign);
     sign(m_key, m_prepared.digest, [
-      self = ZmRef<ClientToken_>{this}
+      held = ZmRef<ClientToken_>{this}
     ](Bytes signature) mutable {
+      auto self = ZuMv(held);
+      if (!self) return;
       self->signed_(ZuMv(signature));
     });
   }
@@ -189,17 +194,17 @@ private:
   bool		m_done = false;
 };
 
-class RefreshToken_ : public ZmNHeap<RefreshToken_>, public ZmPolymorph  {
+class RefreshToken_ : public ZmNHeap<RefreshToken_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.RefreshToken"> ZmNHeapID(RefreshToken_ *);
 
 public:
-  RefreshToken_(
-      DB *db, Ztls::Random *rng, Refresh family,
+  RefreshToken_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, Refresh family,
       Bytes presentedDigest, Client client, bool requestedPresent,
       String requested, SignKey key, int64_t now, int64_t expires,
       unsigned generationLimit, unsigned spentLimit, JWTLimits limits,
       RefreshRevokeFn event, SignFn sign, TokenFn complete) :
-    m_db{db}, m_rng{rng}, m_family{ZuMv(family)},
+    RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng}, m_family{ZuMv(family)},
     m_presentedDigest{ZuMv(presentedDigest)}, m_client{ZuMv(client)},
     m_requested{ZuMv(requested)}, m_requestedPresent{requestedPresent},
     m_key{ZuMv(key)}, m_now{now}, m_expires{expires},
@@ -330,8 +335,12 @@ private:
     }
     m_response.scope = ZuMv(data.selection.scope);
     m_sign(m_key, m_prepared.digest, [
-      self = ZmRef<RefreshToken_>{this}
-    ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
+      held = ZmRef<RefreshToken_>{this}
+    ](Bytes signature) mutable {
+      auto self = ZuMv(held);
+      if (!self) return;
+      self->signed_(ZuMv(signature));
+    });
   }
 
   void signed_(Bytes signature)
@@ -346,8 +355,12 @@ private:
     m_response.expiresIn = uint64_t(m_expires - m_now);
     if (m_hasID) {
       m_sign(m_key, m_idPrepared.digest, [
-        self = ZmRef<RefreshToken_>{this}
-      ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
+        held = ZmRef<RefreshToken_>{this}
+      ](Bytes signature) mutable {
+	auto self = ZuMv(held);
+	if (!self) return;
+	self->idSigned_(ZuMv(signature));
+      });
       return;
     }
     rotate_();
@@ -434,17 +447,17 @@ private:
   bool		m_done = false;
 };
 
-class CodeToken_ : public ZmNHeap<CodeToken_>, public ZmPolymorph  {
+class CodeToken_ : public ZmNHeap<CodeToken_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.CodeToken"> ZmNHeapID(CodeToken_ *);
 
 public:
-  CodeToken_(
-      DB *db, Ztls::Random *rng, Grant code,
+  CodeToken_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng, Grant code,
       Bytes codeDigest, Client client, bool requestedPresent,
       String requested, SignKey key, int64_t now, int64_t accessExpires,
       int64_t refreshExpires, JWTLimits limits, SignFn sign,
       TokenFn complete) :
-    m_db{db}, m_rng{rng}, m_code{ZuMv(code)},
+    RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng}, m_code{ZuMv(code)},
     m_codeDigest{ZuMv(codeDigest)}, m_client{ZuMv(client)},
     m_requested{ZuMv(requested)}, m_requestedPresent{requestedPresent},
     m_key{ZuMv(key)}, m_now{now}, m_accessExpires{accessExpires},
@@ -529,8 +542,12 @@ private:
     }
     m_response.scope = ZuMv(data.selection.scope);
     m_sign(m_key, m_prepared.digest, [
-      self = ZmRef<CodeToken_>{this}
-    ](Bytes signature) mutable { self->signed_(ZuMv(signature)); });
+      held = ZmRef<CodeToken_>{this}
+    ](Bytes signature) mutable {
+      auto self = ZuMv(held);
+      if (!self) return;
+      self->signed_(ZuMv(signature));
+    });
   }
 
   void signed_(Bytes signature)
@@ -545,8 +562,12 @@ private:
     m_response.expiresIn = uint64_t(m_accessExpires - m_now);
     if (m_hasID) {
       m_sign(m_key, m_idPrepared.digest, [
-        self = ZmRef<CodeToken_>{this}
-      ](Bytes signature) mutable { self->idSigned_(ZuMv(signature)); });
+        held = ZmRef<CodeToken_>{this}
+      ](Bytes signature) mutable {
+	auto self = ZuMv(held);
+	if (!self) return;
+	self->idSigned_(ZuMv(signature));
+      });
       return;
     }
     tokens_();
@@ -651,15 +672,15 @@ private:
   bool		m_done = false;
 };
 
-class TokenRequest_ : public ZmNHeap<TokenRequest_>, public ZmPolymorph  {
+class TokenRequest_ : public ZmNHeap<TokenRequest_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.TokenRequest"> ZmNHeapID(TokenRequest_ *);
 
 public:
-  TokenRequest_(
-      DB *db, Ztls::Random *rng,
+  TokenRequest_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
       String form, String authorization, TokenConfig config,
       SignFn sign, TokenFn complete) :
-    m_db{db}, m_rng{rng}, m_form{ZuMv(form)},
+    RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng}, m_form{ZuMv(form)},
     m_authorization{ZuMv(authorization)}, m_config{ZuMv(config)},
     m_sign{ZuMv(sign)}, m_complete{ZuMv(complete)} { }
 
@@ -818,7 +839,7 @@ private:
 
   void loadKey_()
   {
-    signKeyLoad(m_db, m_config.issuer, m_config.now,
+    signKeyLoad(work(), m_db, m_config.issuer, m_config.now,
       m_config.accessExpires, m_config.maxKeys, [
       self = ZmRef<TokenRequest_>{this}
     ](SignKey key) mutable { self->key_(ZuMv(key)); });
@@ -833,18 +854,18 @@ private:
     clear_();
     auto complete = ZuMv(m_complete);
     if (m_grant == TokenGrant::ClientCredentials) {
-      clientToken(m_db, *m_rng, ZuMv(m_config.issuer),
+      clientToken(work(), m_db, *m_rng, ZuMv(m_config.issuer),
 	ZuMv(m_client), m_requestedPresent, ZuMv(m_requested), ZuMv(key),
 	m_config.now, m_config.accessExpires, m_config.jwtLimits,
 	ZuMv(m_sign), ZuMv(complete));
     } else if (m_grant == TokenGrant::AuthorizationCode) {
-      codeToken(m_db, *m_rng, ZuMv(m_grantRecord),
+      codeToken(work(), m_db, *m_rng, ZuMv(m_grantRecord),
 	ZuMv(m_digest), ZuMv(m_client), m_requestedPresent,
 	ZuMv(m_requested), ZuMv(key), m_config.now,
 	m_config.accessExpires, m_config.refreshExpires, m_config.jwtLimits,
 	ZuMv(m_sign), ZuMv(complete));
     } else {
-      refreshToken(m_db, *m_rng, ZuMv(m_refreshRecord),
+      refreshToken(work(), m_db, *m_rng, ZuMv(m_refreshRecord),
 	ZuMv(m_digest), ZuMv(m_client), m_requestedPresent,
 	ZuMv(m_requested), ZuMv(key), m_config.now, m_config.accessExpires,
 	m_config.generationLimit, m_config.spentLimit, m_config.jwtLimits,
@@ -874,25 +895,25 @@ private:
 };
 
 static void clientToken(
-    DB *db, Ztls::Random &rng, String issuer, Client client,
+    const ZmRef<ZmPolymorph> &work, DB *db, Ztls::Random &rng, String issuer, Client client,
     bool requestedPresent, String requested, SignKey key,
     int64_t now, int64_t expires, JWTLimits limits,
     SignFn sign, TokenFn complete)
 {
-  ZmRef<ClientToken_> request = new ClientToken_{db, &rng,
+  ZmRef<ClientToken_> request = new ClientToken_{work, db, &rng,
     ZuMv(issuer), ZuMv(client), requestedPresent, ZuMv(requested),
     ZuMv(key), now, expires, limits, ZuMv(sign), ZuMv(complete)};
   request->start();
 }
 
 static void refreshToken(
-    DB *db, Ztls::Random &rng, Refresh family,
+    const ZmRef<ZmPolymorph> &work, DB *db, Ztls::Random &rng, Refresh family,
     Bytes presentedDigest, Client client, bool requestedPresent,
     String requested, SignKey key, int64_t now, int64_t expires,
     unsigned generationLimit, unsigned spentLimit, JWTLimits limits,
     RefreshRevokeFn event, SignFn sign, TokenFn complete)
 {
-  ZmRef<RefreshToken_> request = new RefreshToken_{db, &rng,
+  ZmRef<RefreshToken_> request = new RefreshToken_{work, db, &rng,
     ZuMv(family), ZuMv(presentedDigest), ZuMv(client), requestedPresent,
     ZuMv(requested), ZuMv(key), now, expires, generationLimit, spentLimit,
     limits, ZuMv(event), ZuMv(sign), ZuMv(complete)};
@@ -900,13 +921,13 @@ static void refreshToken(
 }
 
 static void codeToken(
-    DB *db, Ztls::Random &rng, Grant code,
+    const ZmRef<ZmPolymorph> &work, DB *db, Ztls::Random &rng, Grant code,
     Bytes codeDigest, Client client, bool requestedPresent,
     String requested, SignKey key, int64_t now, int64_t accessExpires,
     int64_t refreshExpires, JWTLimits limits, SignFn sign,
     TokenFn complete)
 {
-  ZmRef<CodeToken_> request = new CodeToken_{db, &rng,
+  ZmRef<CodeToken_> request = new CodeToken_{work, db, &rng,
     ZuMv(code), ZuMv(codeDigest), ZuMv(client), requestedPresent,
     ZuMv(requested), ZuMv(key), now, accessExpires, refreshExpires,
     limits, ZuMv(sign), ZuMv(complete)};
@@ -914,13 +935,13 @@ static void codeToken(
 }
 
 bool tokenRequest(
-    Requests *requests, ZuTime deadline, DB *db,
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline, DB *db,
     Ztls::Random &rng, String form, String authorization,
     TokenConfig config, SignFn sign, TokenFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<TokenComplete_> state = new TokenComplete_{ZuMv(complete)};
-  ZmRef<TokenRequest_> token = new TokenRequest_{db, &rng,
+  ZmRef<TokenComplete_> state = new TokenComplete_{work, ZuMv(complete)};
+  ZmRef<TokenRequest_> token = new TokenRequest_{work, db, &rng,
     ZuMv(form), ZuMv(authorization), ZuMv(config), ZuMv(sign),
     [state](int error, TokenResponse response) mutable {
       state->complete(error, ZuMv(response));
@@ -933,11 +954,13 @@ bool tokenRequest(
   }, [state]() mutable { state->cancel(); });
 }
 
-class RevokeComplete_ : public ZmNHeap<RevokeComplete_>, public ZmObject  {
+class RevokeComplete_ : public ZmNHeap<RevokeComplete_>, public ZmObject,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.RevokeComplete"> ZmNHeapID(RevokeComplete_ *);
 
 public:
-  RevokeComplete_(RevokeFn complete) : m_complete{ZuMv(complete)} { }
+  RevokeComplete_(ZmRef<ZmPolymorph> work, RevokeFn complete) :
+    RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
 
@@ -962,14 +985,14 @@ private:
   RevokeFn	m_complete;
 };
 
-class RevokeRequest_ : public ZmNHeap<RevokeRequest_>, public ZmPolymorph  {
+class RevokeRequest_ : public ZmNHeap<RevokeRequest_>, public ZmPolymorph,
+    public RequestHold {
 friend inline ZuStringT<"Zum.zumd.token.RevokeRequest"> ZmNHeapID(RevokeRequest_ *);
 
 public:
-  RevokeRequest_(
-      DB *db, String form, String authorization,
+  RevokeRequest_(ZmRef<ZmPolymorph> work, DB *db, String form, String authorization,
       RevokeConfig config, RevokeFn complete) :
-    m_db{db}, m_form{ZuMv(form)},
+    RequestHold{ZuMv(work)}, m_db{db}, m_form{ZuMv(form)},
     m_authorization{ZuMv(authorization)}, m_config{ZuMv(config)},
     m_complete{ZuMv(complete)} { }
 
@@ -1130,13 +1153,13 @@ private:
 };
 
 bool revokeRequest(
-    Requests *requests, ZuTime deadline, DB *db,
+    ZmRef<ZmPolymorph> work, Requests *requests, ZuTime deadline, DB *db,
     String form, String authorization, RevokeConfig config,
     RevokeFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<RevokeComplete_> state = new RevokeComplete_{ZuMv(complete)};
-  ZmRef<RevokeRequest_> revoke = new RevokeRequest_{db, ZuMv(form),
+  ZmRef<RevokeComplete_> state = new RevokeComplete_{work, ZuMv(complete)};
+  ZmRef<RevokeRequest_> revoke = new RevokeRequest_{work, db, ZuMv(form),
     ZuMv(authorization), ZuMv(config), [state](int error) mutable {
       state->complete(error);
     }};

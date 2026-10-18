@@ -28,7 +28,9 @@
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmObject.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmPQueue.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmScheduler.hh>
@@ -383,8 +385,9 @@ friend inline ZuStringT<"Zum.zumd.oidc.OIDCUserLoad"> ZmNHeapID(OIDCUserLoad_ *)
 public:
   OIDCUserLoad_(DB *db, String subject,
       const OIDCConfig &config, StringVec roleValues,
-      StringVec eligibilityValues, int64_t now, OIDCUserFn complete) :
-    m_db{db}, m_subject{ZuMv(subject)}, m_appID{config.appID},
+      StringVec eligibilityValues, int64_t now, OIDCUserFn complete,
+      ZmRef<ZmPolymorph> work) :
+    m_work{ZuMv(work)}, m_db{db}, m_subject{ZuMv(subject)}, m_appID{config.appID},
     m_providerID{config.providerID}, m_issuer{config.issuer},
     m_roleValues(ZuMv(roleValues)),
     m_eligibilityValues(ZuMv(eligibilityValues)),
@@ -536,6 +539,9 @@ private:
       ok ? ZuMv(m_roles) : IDVec{}, ok ? ZuMv(m_evidence) : Evidence{});
   }
 
+  // The last member destroyed retains the whole DB helper graph, including
+  // saga callbacks that can outlive an early application failure result.
+  ZmRef<ZmPolymorph>	m_work;
   DB		*m_db = nullptr;
   String		m_subject;
   AppID			m_appID = 0;
@@ -564,7 +570,7 @@ void oidcLoadUser(
     int64_t now, OIDCUserFn complete)
 {
   ZmRef<OIDCUserLoad_> load = new OIDCUserLoad_{db, ZuMv(subject),
-    config, ZuMv(roleValues), ZuMv(eligibilityValues), now, ZuMv(complete)};
+    config, ZuMv(roleValues), ZuMv(eligibilityValues), now, ZuMv(complete), {}};
   load->start();
 }
 
@@ -594,8 +600,12 @@ static const String &oidcReqID(const OIDCReqData &request)
   return request.stateID;
 }
 
-ZmHashDerive(OIDCReqHash, OIDCReqData,
-  (ZmHashNode<OIDCReqData,
+// The hash owns each request. Shadow links give cancellation a bounded
+// traversal without retaining an iterator across application callbacks.
+ZmListDerive(OIDCReqList, OIDCReqData,
+  ZmListNode<OIDCReqData, ZmListShadow<>>);
+ZmHashDerive(OIDCReqHash, OIDCReqList::Node,
+  (ZmHashNode<OIDCReqList::Node,
     ZmHashKey<oidcReqID,
       ZmHashLock<ZmNoLock, ZmHashHeapID<"Zum.OIDC.Pending">>>>));
 using OIDCReq = OIDCReqHash::Node;
@@ -729,10 +739,72 @@ static bool discoveryResponse(
   return oidcConfigValid(config);
 }
 
-class OIDCState : public ZmNHeap<OIDCState>, public ZmObject  {
+namespace OIDCCredit { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+namespace OIDCWorkLimit { enum { Batch = 64 }; }
+
+// One credit covers an accepted call and every HTTP/DB descendant. Foreign
+// callbacks consume their capture when called; retaining a fired callback must
+// not retain the owner. Variable data crosses shards in this handle.
+struct OIDCWorkReturn {
+  OIDCState *owner;
+  ~OIDCWorkReturn();
+};
+
+struct OIDCBeginWork : public ZmNHeap<OIDCBeginWork>, public ZmPolymorph, OIDCWorkReturn {
+friend inline ZuStringT<"Zum.OIDC.Begin"> ZmNHeapID(OIDCBeginWork *);
+
+  Bytes grantID;
+  OIDCConfig config;
+  OIDCBeginFn begin;
+  String body;
+  unsigned status = 0;
+
+  explicit OIDCBeginWork(OIDCState *owner_) : OIDCWorkReturn{owner_} { }
+  ~OIDCBeginWork() {
+    if (config.clientSecret.mutable_()) ZuClear(config.clientSecret);
+    config.clientSecret.null();
+  }
+};
+
+struct OIDCFinishWork : public ZmNHeap<OIDCFinishWork>, public ZmPolymorph, OIDCWorkReturn {
+friend inline ZuStringT<"Zum.OIDC.Finish"> ZmNHeapID(OIDCFinishWork *);
+
+  OIDCFinishFn finish;
+  AppID appID = 0;
+  String query;
+  ZmRef<OIDCReq> request;
+  String body;
+  String subject;
+  User user;
+  IDVec roleIDs;
+  Evidence evidence;
+  int64_t authTime = 0;
+  int64_t now = 0;
+  unsigned status = 0;
+  bool ok = false;
+
+  explicit OIDCFinishWork(OIDCState *owner_) : OIDCWorkReturn{owner_} { }
+};
+
+class OIDCState : public ZmNHeap<OIDCState>, public ZmObject,
+    private ZmEngine<OIDCState> {
 friend inline ZuStringT<"Zum.zumd.oidc.OIDCState"> ZmNHeapID(OIDCState *);
 
+  using Engine = ZmEngine<OIDCState>;
+  using BeginWork = ZmRef<OIDCBeginWork>;
+  using FinishWork = ZmRef<OIDCFinishWork>;
+  friend Engine;
+  friend OIDCWorkReturn;
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+
+  ~OIDCState() {
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_scheduler);
+  }
+
   bool init(
       ZmScheduler *scheduler, unsigned sid, DB *db,
       OIDCLimits limits, unsigned pendingLimit,
@@ -751,50 +823,45 @@ public:
     m_timeout = timeout;
     m_clock = ZuMv(clock);
     m_http = ZuMv(http);
-    m_up = 1;
     return true;
   }
 
-  void final()
-  {
-    m_up = 0;
-    invoke_([self = ZmRef<OIDCState>{this}]() mutable {
-      {
-	auto i = self->m_pending.iter();
-	while (auto request = i()) {
-		  self->m_scheduler->del(&request->timer);
-		  auto complete = ZuMv(request->complete);
-		  request->state = nullptr;
-		  self->clearRequest_(*request);
-		  i.del();
-		  if (complete)
-		    complete(false, Bytes{}, User{}, IDVec{}, Evidence{}, 0);
-		}
-      }
-      self->m_http = OIDCHTTPFn{};
-      self->m_clock = OIDCClockFn{};
-    });
+  void final() {
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!(m_credit.load_() & OIDCCredit::Count));
+    ZmAssert_(!m_pending.count_() && m_pendingAll.empty_() && !m_discovering);
+    ZmAssert_(!m_draining && !m_drainPosted);
+    m_http = {};
+    m_clock = {};
+    m_db = nullptr;
+    m_scheduler = nullptr;
   }
 
-  bool begin(Bytes grantID, OIDCConfig config, OIDCBeginFn complete)
-  {
-    if (!m_up || !grantID || !oidcConfigValid(config) || !complete) {
+  bool begin(Bytes grantID, OIDCConfig config, OIDCBeginFn complete) {
+    if (!grantID || !oidcConfigValid(config) || !complete || !admit_()) {
       clearSecret_(config);
       return false;
     }
-    invoke_([self = ZmRef<OIDCState>{this}, grantID = ZuMv(grantID),
-        config = ZuMv(config), complete = ZuMv(complete)]() mutable {
-      self->beginSelect_(ZuMv(grantID), ZuMv(config), ZuMv(complete));
+    BeginWork work = new OIDCBeginWork{this};
+    work->grantID = ZuMv(grantID);
+    work->config = ZuMv(config);
+    work->begin = ZuMv(complete);
+    invoke_([work = ZuMv(work)]() mutable {
+      auto self = work->owner;
+      self->beginSelect_(ZuMv(work));
     });
     return true;
   }
 
-  bool finish(AppID appID, String query, OIDCFinishFn complete)
-  {
-    if (!m_up || !appID || !query || !complete) return false;
-    invoke_([self = ZmRef<OIDCState>{this}, appID, query = ZuMv(query),
-        complete = ZuMv(complete)]() mutable {
-      self->finish_(appID, ZuMv(query), ZuMv(complete));
+  bool finish(AppID appID, String query, OIDCFinishFn complete) {
+    if (!appID || !query || !complete || !admit_()) return false;
+    FinishWork work = new OIDCFinishWork{this};
+    work->appID = appID;
+    work->query = ZuMv(query);
+    work->finish = ZuMv(complete);
+    invoke_([work = ZuMv(work)]() mutable {
+      auto self = work->owner;
+      self->finish_(ZuMv(work));
     });
     return true;
   }
@@ -806,6 +873,81 @@ private:
     m_scheduler->run(ZuFwd<L>(l), m_sid);
   }
 
+  bool active_() const { return Engine::state() == ZmEngineState::Running; }
+
+  bool admit_() {
+    if (!active_()) return false;
+    uint64_t count;
+    do {
+      count = m_credit.load_();
+      if (count & OIDCCredit::Closed) return false;
+    } while (m_credit.cmpXch(count + 1, count) != count);
+    return true;
+  }
+
+  void start_() {
+    if (!m_scheduler) { Engine::started(false); return; }
+    invoke_([this]() {
+      ZmAssert_(m_credit.load_() == OIDCCredit::Closed);
+      ZmAssert_(!m_pending.count_() && m_pendingAll.empty_() && !m_discovering);
+      ZmAssert_(!m_draining && !m_drainPosted);
+      m_credit = 0;
+      Engine::started(true);
+    });
+  }
+
+  void stop_() {
+    m_credit |= OIDCCredit::Closed;
+    invoke_([this]() { cancel_(); });
+  }
+
+  void cancel_() {
+    for (unsigned n = 0; n < OIDCWorkLimit::Batch; ++n) {
+      ZmRef<OIDCReq> request = static_cast<OIDCReq *>(m_pendingAll.headPtr());
+      if (!request) {
+        m_draining = true;
+        postDrain_();
+        return;
+      }
+      complete_(ZuMv(request), false, {}, {}, {}, {}, 0);
+    }
+    invoke_([this]() { cancel_(); });
+  }
+
+  void workDone_() {
+    invoke_([this]() {
+      --m_credit;
+      postDrain_();
+    });
+  }
+
+  void postDrain_() {
+    if (!m_draining || m_drainPosted || (m_credit.load_() & OIDCCredit::Count)) return;
+    m_drainPosted = true;
+    // Retire cancelled timer callbacks on their own scheduler shard before
+    // exposing Stopped. A work destructor also reaches this owner barrier.
+    invoke_([this]() {
+      m_drainPosted = false;
+      ZmAssert_(!m_pending.count_() && m_pendingAll.empty_() && !m_discovering);
+      m_draining = false;
+      Engine::stopped(true);
+    });
+  }
+
+  template <auto Method, typename Work>
+  void send_(Work work, OIDCHTTPRequest request) {
+    m_http(ZuMv(request), [credit = ZuMv(work)](unsigned status, String body) mutable {
+      auto work = ZuMv(credit);
+      auto self = work->owner;
+      work->status = status;
+      work->body = ZuMv(body);
+      self->invoke_([work = ZuMv(work)]() mutable {
+        auto self = work->owner;
+        (self->*Method)(ZuMv(work));
+      });
+    });
+  }
+
   static void clearSecret_(OIDCConfig &config)
   {
     if (config.clientSecret.mutable_())
@@ -813,16 +955,15 @@ private:
     config.clientSecret.null();
   }
 
-  void beginSelect_(
-      Bytes grantID, OIDCConfig config, OIDCBeginFn complete)
-  {
-    if (!m_up || m_pending.count_() + m_discovering >= m_pendingLimit) {
+  void beginSelect_(BeginWork work) {
+    auto &config = work->config;
+    if (!active_() || m_pending.count_() + m_discovering >= m_pendingLimit) {
       clearSecret_(config);
-      complete(false, String{});
+      work->begin(false, String{});
       return;
     }
     if (config.authorizeEndpoint) {
-      begin_(ZuMv(grantID), ZuMv(config), ZuMv(complete));
+      begin_(ZuMv(work->grantID), ZuMv(config), ZuMv(work->begin));
       return;
     }
     ++m_discovering;
@@ -830,36 +971,23 @@ private:
     String url{config.issuer};
     if (url[url.length() - 1] == '/') url.length(url.length() - 1);
     url << "/.well-known/openid-configuration";
-    auto send = m_http;
-    send(OIDCHTTPRequest{.url = ZuMv(url)}, [
-      self = ZmRef<OIDCState>{this}, grantID = ZuMv(grantID),
-      config = ZuMv(config), complete = ZuMv(complete)
-    ](unsigned status, String body) mutable {
-      self->invoke_([self, grantID = ZuMv(grantID),
-          config = ZuMv(config), complete = ZuMv(complete), status,
-          body = ZuMv(body)]() mutable {
-        self->discovered_(ZuMv(grantID), ZuMv(config),
-          ZuMv(complete), status, ZuMv(body));
-      });
-    });
+    send_<&OIDCState::discovered_>(ZuMv(work), OIDCHTTPRequest{.url = ZuMv(url)});
   }
 
-  void discovered_(Bytes grantID, OIDCConfig config, OIDCBeginFn complete,
-      unsigned status, String body)
-  {
-    if (m_discovering) --m_discovering;
-    if (!m_up || status != 200 ||
-        !discoveryResponse(body, m_limits, config)) {
-      clearSecret_(config);
-      complete(false, String{});
+  void discovered_(BeginWork work) {
+    --m_discovering;
+    if (!active_() || work->status != 200 ||
+        !discoveryResponse(work->body, m_limits, work->config)) {
+      clearSecret_(work->config);
+      work->begin(false, String{});
       return;
     }
-    begin_(ZuMv(grantID), ZuMv(config), ZuMv(complete));
+    begin_(ZuMv(work->grantID), ZuMv(work->config), ZuMv(work->begin));
   }
 
   void begin_(Bytes grantID, OIDCConfig config, OIDCBeginFn complete)
   {
-    if (!m_up || m_pending.count_() >= m_pendingLimit) {
+    if (!active_() || m_pending.count_() >= m_pendingLimit) {
       clearSecret_(config);
       complete(false, String{});
       return;
@@ -882,7 +1010,7 @@ private:
     challenge.length(ZuBase64URL::enclen(digest.length()));
     challenge.length(ZuBase64URL::encode(challenge.span(), digest));
     if (!challenge || m_pending.find(request->stateID)) {
-      clearSecret_(config);
+      clearRequest_(*request);
       complete(false, String{});
       return;
     }
@@ -916,6 +1044,7 @@ private:
       formField(location, first, "max_age", age);
     }
     m_pending.addNode(request);
+    m_pendingAll.pushNode(request.ptr());
     m_scheduler->add(&request->timer, Zm::now() + ZuTime{double(m_timeout)},
       ZmScheduler::Update, [this, request](auto &&arm) {
         return arm([this, request]() mutable {
@@ -925,9 +1054,12 @@ private:
     complete(true, ZuMv(location));
   }
 
-  void finish_(AppID appID, String query, OIDCFinishFn complete)
+  void finish_(FinishWork work)
   {
-    if (!m_up || query.length() > m_limits.callback) {
+    auto appID = work->appID;
+    auto query = ZuMv(work->query);
+    auto complete = ZuMv(work->finish);
+    if (!active_() || query.length() > m_limits.callback) {
       complete(false, Bytes{}, User{}, IDVec{}, Evidence{}, 0);
       return;
     }
@@ -994,19 +1126,15 @@ private:
         formField(http.body, first, "client_id", request->config.clientID);
         break;
     }
-    auto send = m_http;
-    send(ZuMv(http), [self = ZmRef<OIDCState>{this}, request](
-        unsigned status, String body) mutable {
-      self->invoke_([self, request, status, body = ZuMv(body)]() mutable {
-        self->token_(request, status, ZuMv(body));
-      });
-    });
+    work->request = ZuMv(request);
+    send_<&OIDCState::token_>(ZuMv(work), ZuMv(http));
   }
 
-  void token_(ZmRef<OIDCReq> request, unsigned status, String body)
+  void token_(FinishWork work)
   {
-    if (!active_(request) || status != 200 ||
-        !tokenResponse(body, m_limits,
+    auto request = work->request;
+    if (!active_(request) || work->status != 200 ||
+        !tokenResponse(work->body, m_limits,
           request->config.claimSource == ClaimSource::UserInfo,
           request->idToken, request->accessToken)) {
       fail_(request);
@@ -1021,29 +1149,25 @@ private:
     request->keyID = ZuMv(header.keyID);
     // Re-fetch the bounded issuer key set for each SSO exchange. No key
     // survives provider removal merely because an earlier login used it.
-    auto send = m_http;
-    send(OIDCHTTPRequest{.url = request->config.jwksEndpoint},
-      [self = ZmRef<OIDCState>{this}, request](
-          unsigned status, String body) mutable {
-        self->invoke_([self, request, status, body = ZuMv(body)]() mutable {
-          self->keys_(request, status, ZuMv(body));
-        });
-      });
+    OIDCHTTPRequest http{.url = request->config.jwksEndpoint};
+    send_<&OIDCState::keys_>(ZuMv(work), ZuMv(http));
   }
 
-  void keys_(ZmRef<OIDCReq> request, unsigned status, String body)
+  void keys_(FinishWork work)
   {
+    auto request = work->request;
     Bytes publicKey;
-    if (!active_(request) || status != 200 ||
-        !jwksResponse(body, m_limits, request->keyID, publicKey)) {
+    if (!active_(request) || work->status != 200 ||
+        !jwksResponse(work->body, m_limits, request->keyID, publicKey)) {
       fail_(request);
       return;
     }
-    verify_(request, publicKey);
+    verify_(ZuMv(work), publicKey);
   }
 
-  void verify_(ZmRef<OIDCReq> request, ZuBSpan publicKey)
+  void verify_(FinishWork work, ZuBSpan publicKey)
   {
+    auto request = work->request;
     OIDCClaims claims;
     int64_t now = m_clock ? m_clock() : 0;
     if (!active_(request) || !oidcVerifyIDToken(request->idToken, publicKey,
@@ -1060,64 +1184,66 @@ private:
       if (request->accessToken.mutable_())
         ZuClear(request->accessToken);
       request->accessToken.null();
-      auto subject = claims.subject;
-      auto send = m_http;
-      send(ZuMv(http), [self = ZmRef<OIDCState>{this}, request,
-          subject = ZuMv(subject), authTime, now](
-          unsigned status, String body) mutable {
-        self->invoke_([self, request, subject = ZuMv(subject), authTime, now,
-            status, body = ZuMv(body)]() mutable {
-          self->userinfo_(request, ZuMv(subject), authTime, now,
-            status, ZuMv(body));
-        });
-      });
+      work->subject = ZuMv(claims.subject);
+      work->authTime = authTime;
+      work->now = now;
+      send_<&OIDCState::userinfo_>(ZuMv(work), ZuMv(http));
       return;
     }
-    load_(request, ZuMv(claims.subject), ZuMv(claims.roleValues),
+    load_(ZuMv(work), ZuMv(claims.subject), ZuMv(claims.roleValues),
       ZuMv(claims.eligibilityValues), authTime, now);
   }
 
-  void userinfo_(ZmRef<OIDCReq> request, String subject,
-      int64_t authTime, int64_t now, unsigned status, String body)
-  {
+  void userinfo_(FinishWork work) {
+    auto request = work->request;
     StringVec roleValues, eligibilityValues;
-    if (!active_(request) || status != 200 ||
-        !userinfoResponse(body, m_limits, request->config, subject,
+    if (!active_(request) || work->status != 200 ||
+        !userinfoResponse(work->body, m_limits, request->config, work->subject,
           roleValues, eligibilityValues)) {
       fail_(request);
       return;
     }
-    load_(request, ZuMv(subject), ZuMv(roleValues),
+    auto subject = ZuMv(work->subject);
+    auto authTime = work->authTime, now = work->now;
+    load_(ZuMv(work), ZuMv(subject), ZuMv(roleValues),
       ZuMv(eligibilityValues), authTime, now);
   }
 
-  void load_(ZmRef<OIDCReq> request, String subject, StringVec roleValues,
-      StringVec eligibilityValues, int64_t authTime, int64_t now)
-  {
-    oidcLoadUser(m_db, ZuMv(subject), request->config,
+  void load_(FinishWork work, String subject, StringVec roleValues,
+      StringVec eligibilityValues, int64_t authTime, int64_t now) {
+    work->authTime = authTime;
+    auto &config = work->request->config;
+    auto credit = work;
+    ZmRef<OIDCUserLoad_> load = new OIDCUserLoad_{m_db, ZuMv(subject), config,
       ZuMv(roleValues), ZuMv(eligibilityValues), now,
-      [self = ZmRef<OIDCState>{this}, request, authTime](
-          bool ok, User user, IDVec roleIDs, Evidence evidence) mutable {
-        self->invoke_([self, request, ok, user = ZuMv(user),
-            roleIDs = ZuMv(roleIDs), evidence = ZuMv(evidence),
-            authTime]() mutable {
-          if (!ok || !self->active_(request)) { self->fail_(request); return; }
+      [credit = ZuMv(work)](bool ok, User user, IDVec roleIDs, Evidence evidence) mutable {
+        auto work = ZuMv(credit);
+        auto self = work->owner;
+        work->ok = ok;
+        work->user = ZuMv(user);
+        work->roleIDs = ZuMv(roleIDs);
+        work->evidence = ZuMv(evidence);
+        self->invoke_([work = ZuMv(work)]() mutable {
+          auto self = work->owner;
+          auto request = work->request;
+          if (!work->ok || !self->active_(request)) { self->fail_(request); return; }
           auto grantID = request->grantID;
-          self->complete_(request, true, ZuMv(grantID), ZuMv(user),
-            ZuMv(roleIDs), ZuMv(evidence), authTime);
+          self->complete_(request, true, ZuMv(grantID), ZuMv(work->user),
+            ZuMv(work->roleIDs), ZuMv(work->evidence), work->authTime);
         });
-      });
+      }, ZuMv(credit)};
+    load->start();
   }
 
   bool active_(const ZmRef<OIDCReq> &request)
   {
-    return m_up && request && request->state == this &&
+    return active_() && request && request->state == this &&
       m_pending.find(request->stateID) == request;
   }
 
   void fail_(ZmRef<OIDCReq> request)
   {
-    if (!active_(request)) return;
+    if (!request || request->state != this) return;
     complete_(request, false, {}, {}, {}, {}, 0);
   }
 
@@ -1141,6 +1267,7 @@ private:
       IDVec roleIDs, Evidence evidence, int64_t authTime)
   {
     m_scheduler->del(&request->timer);
+    m_pendingAll.delNode(request.ptr());
     m_pending.del(request->stateID);
     request->state = nullptr;
     clearRequest_(*request);
@@ -1160,9 +1287,21 @@ private:
   OIDCClockFn	m_clock;
   Ztls::Random	m_rng;
   OIDCReqHash	m_pending;
+  OIDCReqList	m_pendingAll;
   unsigned	m_discovering = 0;
-  ZmAtomic<uint32_t> m_up = 0;
+  bool m_draining = false;
+  bool m_drainPosted = false;
+
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t> m_credit = OIDCCredit::Closed;
 };
+
+OIDCWorkReturn::~OIDCWorkReturn() {
+  // Base destruction follows every payload/callback member destructor. Its
+  // owner post can therefore safely release the last graph credit on any
+  // shard, even if that post runs before this destructor itself returns.
+  owner->workDone_();
+}
 
 OIDC::OIDC() = default;
 OIDC::~OIDC() { final(); }
@@ -1178,6 +1317,20 @@ bool OIDC::init(
       pendingLimit, timeout, ZuMv(clock), ZuMv(http))) return false;
   m_state = ZuMv(state);
   return true;
+}
+
+bool OIDC::start() { return m_state && m_state->start(); }
+void OIDC::start(OIDCCtrlFn complete) {
+  if (!m_state) { complete(false); return; }
+  m_state->start(ZuMv(complete));
+}
+bool OIDC::stop() { return !m_state || m_state->stop(); }
+void OIDC::stop(OIDCCtrlFn complete) {
+  if (!m_state) { complete(true); return; }
+  m_state->stop(ZuMv(complete));
+}
+int OIDC::state() const {
+  return m_state ? m_state->state() : ZmEngineState::Stopped;
 }
 
 void OIDC::final()
@@ -1371,9 +1524,9 @@ private:
   ReqBuilderQ m_requests;
 };
 
-class Client_ : public ZmNHeap<Client_>, public ZmObject,
+class OIDCClient : public ZmNHeap<OIDCClient>, public ZmObject,
     public Zhttp::Client<OIDCClient, Pool> {
-friend inline ZuStringT<"Zum.zumd.oidc.Client"> ZmNHeapID(Client_ *);
+friend inline ZuStringT<"Zum.zumd.oidc.Client"> ZmNHeapID(OIDCClient *);
 
 public:
   using Base = Zhttp::Client<OIDCClient, Pool>;
@@ -1388,7 +1541,9 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(true).tcp(true).tls(true).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.caPath(caPath),
+        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+          tls.caPath(caPath);
+        }),
         Zhttp::QUICConfig{})) return false;
     Base::txErrorFn(ZiTxErrorFn{[](ZeException &e) {
       ZiLOG(Error, "zumd", ([e](auto &s) {
@@ -1440,11 +1595,6 @@ private:
   bool		m_ipv6Literal = false;
 };
 
-class OIDCClient : public Client_ {
-public:
-  using Client_::Client_;
-};
-
 struct Entry {
   ZmRef<OIDCClient> client;
   unsigned pending = 0;
@@ -1455,12 +1605,44 @@ ZuDerive(Clients,
 
 } // namespace OIDCHTTP_
 
-class OIDCHTTPState : public ZmNHeap<OIDCHTTPState>, public ZmObject  {
-friend inline ZuStringT<"Zum.zumd.oidc.OIDCHTTPState"> ZmNHeapID(OIDCHTTPState *);
+// Credits include requests between admission, origin eviction, native startup,
+// native response and the final owner callback. Closed admission and credits
+// share a word so a reserved-but-not-yet-posted request cannot escape stop.
+namespace OIDCHTTPCredit { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+// A turn releases/stops at most this many origin clients, independently of
+// the configured origin capacity.
+namespace OIDCHTTPWork { enum { Batch = 64 }; }
 
+struct OIDCHTTPAction : public ZmNHeap<OIDCHTTPAction>, public ZmObject {
+friend inline ZuStringT<"Zum.OIDC.HTTP.Action"> ZmNHeapID(OIDCHTTPAction *);
+
+  OIDCHTTPRequest request;
+  OIDCHTTPDoneFn complete;
+  String body;
+  unsigned status = 0;
+
+  OIDCHTTPAction(OIDCHTTPRequest request_, OIDCHTTPDoneFn complete_) :
+    request{ZuMv(request_)}, complete{ZuMv(complete_)} { }
+};
+
+class OIDCHTTPState : public ZmNHeap<OIDCHTTPState>, public ZmObject,
+    private ZmEngine<OIDCHTTPState> {
+friend inline ZuStringT<"Zum.zumd.oidc.OIDCHTTPState"> ZmNHeapID(OIDCHTTPState *);
+  using Engine = ZmEngine<OIDCHTTPState>;
+  using Action = ZmRef<OIDCHTTPAction>;
+  friend Engine;
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+
+  ~OIDCHTTPState() {
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_mx && !m_clients.length());
+  }
+
   bool init(ZiMultiplex *mx, unsigned sid, unsigned origins, ZuCSpan caPath) {
-    if (!mx || m_up || !sid || !origins || sid > mx->params().nThreads() ||
+    if (!mx || m_mx || !sid || !origins || sid > mx->params().nThreads() ||
         sid == mx->rxThread() || sid == mx->txThread()) return false;
     m_mx = mx;
     m_sid = sid;
@@ -1469,156 +1651,241 @@ public:
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)
       ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
-    ZiResolver::start();
-    m_up = true;
     return true;
   }
 
   void send(OIDCHTTPRequest request, OIDCHTTPDoneFn complete) {
-    m_mx->run([this, request = ZuMv(request),
-        complete = ZuMv(complete)]() mutable {
-      send_(ZuMv(request), ZuMv(complete));
-    }, m_sid);
+    if (!complete) return;
+    if (Engine::state() != ZmEngineState::Running || !admit_()) {
+      complete(0, String{});
+      return;
+    }
+    Action action = new OIDCHTTPAction{ZuMv(request), ZuMv(complete)};
+    post_([this, action = ZuMv(action)]() mutable { send_(ZuMv(action)); });
   }
 
   void final() {
-    if (!m_mx) return;
-    ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	m_up = false;
-	m_stopDone = ZuMv(wake);
-	m_stopping = m_clients.length();
-	if (!m_stopping) { stopped_(); return; }
-	for (auto &entry: m_clients) {
-	  if (entry.retiring) continue;
-	  if (!entry.client) { stopOne_(); continue; }
-	  entry.client->stop([this](bool) {
-	    m_mx->run([this]() {
-	      stopOne_();
-	    }, m_sid);
-	  });
-	}
-      }, m_sid);
-    });
-    for (auto &entry: m_clients) if (entry.client) entry.client->final();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!(m_credit.load_() & OIDCHTTPCredit::Count));
+    ZmAssert_(!m_clients.length() && !m_children && !m_draining && !m_drainPosted);
     m_clients.init();
     if (m_resolverOwned) {
-      ZiResolver::stop();
       ZiResolver::final();
       m_resolverOwned = false;
     }
+    m_caPath.null();
     m_mx = nullptr;
   }
 
 private:
-  void send_(OIDCHTTPRequest request, OIDCHTTPDoneFn complete) {
-    if (!m_up || !complete || !request.url) {
-      if (complete) complete(0, String{});
+  template <typename L>
+  void post_(L &&l) { m_mx->run(ZuFwd<L>(l), m_sid); }
+
+  bool active_() const { return Engine::state() == ZmEngineState::Running; }
+
+  bool admit_() {
+    uint64_t count;
+    do {
+      count = m_credit.load_();
+      if (count & OIDCHTTPCredit::Closed) return false;
+    } while (m_credit.cmpXch(count + 1, count) != count);
+    return true;
+  }
+
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    if (m_resolverOwned) {
+      ZiResolver::start([this](bool ok) {
+        if (!ok) { Engine::started(false); return; }
+        post_([this]() { startOwner_(); });
+      });
       return;
     }
-    Zhttp::URL parsed{request.url};
+    if (ZiResolver::instance()->state() != ZmEngineState::Running) {
+      Engine::started(false);
+      return;
+    }
+    post_([this]() { startOwner_(); });
+  }
+
+  void startOwner_() {
+    ZmAssert_(m_credit.load_() == OIDCHTTPCredit::Closed);
+    ZmAssert_(!m_clients.length() && !m_children && !m_draining && !m_drainPosted);
+    m_credit = 0;
+    Engine::started(true);
+  }
+
+  void stop_() {
+    m_credit |= OIDCHTTPCredit::Closed;
+    post_([this]() {
+      m_stopOK = true;
+      m_children = m_clients.length();
+      m_release = 0;
+      m_draining = true;
+      stopBatch_(0);
+    });
+  }
+
+  void stopBatch_(unsigned offset) {
+    unsigned end = offset + OIDCHTTPWork::Batch;
+    unsigned count = m_clients.length();
+    if (end > count) end = count;
+    while (offset < end) {
+      auto &entry = m_clients[offset++];
+      if (!entry.client) { stopOne_(); continue; }
+      // A retirement already in progress joins the same native engine stop.
+      // Its request keeps its own admission credit until its owner callback.
+      entry.client->stop([this](bool ok) {
+        post_([this, ok]() {
+          m_stopOK &= ok;
+          stopOne_();
+        });
+      });
+    }
+    if (end < count) {
+      post_([this, end]() { stopBatch_(end); });
+      return;
+    }
+    postDrain_();
+  }
+
+  void stopOne_() {
+    --m_children;
+    postDrain_();
+  }
+
+  void finish_(Action action, unsigned status = 0, String body = {}) {
+    auto complete = ZuMv(action->complete);
+    complete(status, ZuMv(body));
+    complete = {};
+    action = nullptr;
+    --m_credit;
+    postDrain_();
+  }
+
+  void postDrain_() {
+    if (!m_draining || m_drainPosted || m_children ||
+        (m_credit.load_() & OIDCHTTPCredit::Count)) return;
+    m_drainPosted = true;
+    post_([this]() { drain_(); });
+  }
+
+  void drain_() {
+    m_drainPosted = false;
+    unsigned end = m_release + OIDCHTTPWork::Batch;
+    unsigned count = m_clients.length();
+    if (end > count) end = count;
+    while (m_release < end) {
+      auto &entry = m_clients[m_release++];
+      ZmAssert_(!entry.pending && !entry.retiring);
+      if (entry.client) entry.client->final();
+      entry.client = nullptr;
+    }
+    if (end < count) { postDrain_(); return; }
+    m_clients.length(0);
+    m_release = 0;
+    m_draining = false;
+    if (m_resolverOwned) {
+      ZiResolver::stop([this](bool ok) {
+        post_([this, ok]() { Engine::stopped(m_stopOK && ok); });
+      });
+      return;
+    }
+    Engine::stopped(m_stopOK);
+  }
+
+  void send_(Action action) {
+    if (!active_() || !action->request.url) { finish_(ZuMv(action)); return; }
+    Zhttp::URL parsed{action->request.url};
     auto url = parsed.url();
     if (!parsed.ok() || url.scheme != Zhttp::Scheme::https || !url.host ||
-        url.hasFragment) {
-      complete(0, String{});
-      return;
-    }
+        url.hasFragment) { finish_(ZuMv(action)); return; }
     unsigned count = m_clients.length(), idle = count;
     for (unsigned i = 0; i < count; ++i) {
       const auto &entry = m_clients[i];
       if (entry.retiring) continue;
       if (entry.client && entry.client->origin(url)) {
-	dispatch_(i, ZuMv(request), ZuMv(complete), url);
-	return;
+        dispatch_(i, ZuMv(action), url);
+        return;
       }
       if (!entry.pending && idle == count) idle = i;
     }
     if (count < m_origins) {
       m_clients.push(OIDCHTTP_::Entry{});
-      dispatch_(count, ZuMv(request), ZuMv(complete), url);
+      dispatch_(count, ZuMv(action), url);
       return;
     }
-    if (idle == count) { complete(503, String{}); return; }
+    if (idle == count) { finish_(ZuMv(action), 503); return; }
     auto &entry = m_clients[idle];
-    if (!entry.client) {
-      dispatch_(idle, ZuMv(request), ZuMv(complete), url);
-      return;
-    }
+    if (!entry.client) { dispatch_(idle, ZuMv(action), url); return; }
     entry.retiring = true;
-    entry.client->stop([this, idle, request = ZuMv(request),
-        complete = ZuMv(complete)](bool ok) mutable {
-      m_mx->run([this, idle, ok, request = ZuMv(request),
-          complete = ZuMv(complete)]() mutable {
-	auto &entry = m_clients[idle];
-	entry.retiring = false;
-	if (!m_up) {
-	  complete(0, String{});
-	  stopOne_();
-	  return;
-	}
-	// The native stop continuation has drained Rx/Tx; finalization does not wait.
-	entry.client->final();
-	entry.client = nullptr;
-	if (!ok) { complete(0, String{}); return; }
-	Zhttp::URL parsed{request.url};
-	dispatch_(idle, ZuMv(request), ZuMv(complete), parsed.url());
-      }, m_sid);
+    entry.client->stop([this, idle, action = ZuMv(action)](bool ok) mutable {
+      post_([this, idle, ok, action = ZuMv(action)]() mutable {
+        auto &entry = m_clients[idle];
+        entry.retiring = false;
+        if (!active_()) { finish_(ZuMv(action)); return; }
+        entry.client->final();
+        entry.client = nullptr;
+        if (!ok) { finish_(ZuMv(action)); return; }
+        Zhttp::URL parsed{action->request.url};
+        dispatch_(idle, ZuMv(action), parsed.url());
+      });
     });
   }
 
-  void dispatch_(unsigned slot, OIDCHTTPRequest request,
-      OIDCHTTPDoneFn complete, const Zhttp::URLView &url) {
+  void dispatch_(unsigned slot, Action action, const Zhttp::URLView &url) {
     auto &entry = m_clients[slot];
     if (!entry.client) {
       ZmRef<OIDCHTTP_::OIDCClient> candidate = new OIDCHTTP_::OIDCClient{};
       if (!candidate->init(m_mx, url, m_caPath)) {
         candidate->final();
-        complete(0, String{});
+        finish_(ZuMv(action));
         return;
       }
       entry.client = ZuMv(candidate);
     }
     ++entry.pending;
-    entry.client->start([this, slot, request = ZuMv(request),
-        complete = ZuMv(complete)](bool ok) mutable {
-      m_mx->run([this, slot, ok, request = ZuMv(request),
-          complete = ZuMv(complete)]() mutable {
-	if (!ok || !m_up) {
-	  --m_clients[slot].pending;
-	  complete(0, String{});
-	  return;
-	}
-	Zhttp::URL parsed{request.url};
-	m_clients[slot].client->send(ZuMv(request), [this, slot,
-	    complete = ZuMv(complete)](unsigned status, String body) mutable {
-	  m_mx->run([this, slot, status, body = ZuMv(body),
-	      complete = ZuMv(complete)]() mutable {
-	    --m_clients[slot].pending;
-	    complete(status, ZuMv(body));
-	  }, m_sid);
-	}, parsed.url());
-      }, m_sid);
+    entry.client->start([this, slot, action = ZuMv(action)](bool ok) mutable {
+      post_([this, slot, ok, action = ZuMv(action)]() mutable {
+        if (!ok || !active_()) {
+          --m_clients[slot].pending;
+          finish_(ZuMv(action));
+          return;
+        }
+        Zhttp::URL parsed{action->request.url};
+        auto request = ZuMv(action->request);
+        m_clients[slot].client->send(ZuMv(request),
+          [this, slot, action = ZuMv(action)](unsigned status, String body) mutable {
+            // Exclusive handoff: only this response producer writes these
+            // fields until the action reaches its owner continuation.
+            action->status = status;
+            action->body = ZuMv(body);
+            post_([this, slot, action = ZuMv(action)]() mutable {
+              --m_clients[slot].pending;
+              unsigned status = action->status;
+              auto body = ZuMv(action->body);
+              finish_(ZuMv(action), status, ZuMv(body));
+            });
+          }, parsed.url());
+      });
     });
   }
 
-  void stopOne_() {
-    if (!--m_stopping) stopped_();
-  }
+  ZiMultiplex *m_mx = nullptr;
+  String m_caPath;
+  unsigned m_sid = 0;
+  unsigned m_origins = 0;
+  bool m_resolverOwned = false;
 
-  void stopped_() {
-    auto complete = ZuMv(m_stopDone);
-    complete(true);
-  }
-
-  ZiMultiplex		*m_mx = nullptr;
-  OIDCHTTP_::Clients	m_clients;
-  String		m_caPath;
-  ZmFn<void(bool)>	m_stopDone;
-  unsigned		m_sid = 0;
-  unsigned		m_origins = 0;
-  unsigned		m_stopping = 0;
-  bool			m_resolverOwned = false;
-  bool			m_up = false;
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t> m_credit = OIDCHTTPCredit::Closed;
+  alignas(Zm::CacheLineSize)
+  OIDCHTTP_::Clients m_clients;
+  unsigned m_children = 0;
+  unsigned m_release = 0;
+  bool m_stopOK = true;
+  bool m_draining = false;
+  bool m_drainPosted = false;
 };
 
 OIDCHTTP::OIDCHTTP() = default;
@@ -1632,6 +1899,33 @@ bool OIDCHTTP::init(ZiMultiplex *mx, unsigned sid, unsigned origins,
   if (!state->init(mx, sid, origins, caPath)) return false;
   m_state = ZuMv(state);
   return true;
+}
+
+bool OIDCHTTP::start()
+{
+  return m_state && m_state->start();
+}
+
+void OIDCHTTP::start(OIDCCtrlFn complete)
+{
+  if (!m_state) { complete(false); return; }
+  m_state->start(ZuMv(complete));
+}
+
+bool OIDCHTTP::stop()
+{
+  return !m_state || m_state->stop();
+}
+
+void OIDCHTTP::stop(OIDCCtrlFn complete)
+{
+  if (!m_state) { complete(true); return; }
+  m_state->stop(ZuMv(complete));
+}
+
+int OIDCHTTP::state() const
+{
+  return m_state ? m_state->state() : ZmEngineState::Stopped;
 }
 
 OIDCHTTPFn OIDCHTTP::fn() const

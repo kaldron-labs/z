@@ -374,7 +374,9 @@ public:
       .protocol(Zhttp::ProtoPolicy::DisableH3)
       .secure(secure).tcp(true).tls(secure).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.caPath(caPath),
+        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+          tls.caPath(caPath);
+        }),
         Zhttp::QUICConfig{})) return false;
     if (Base::pool(0, Zhttp::Destination{url.origin()}) && Base::start())
       return true;
@@ -1057,7 +1059,7 @@ static int session(const ZtcHubClient_::Options &options, ZuCSpan token)
   ws.closeTimeout = 5;
   ws.pingInterval = 30;
   ws.pongTimeout = 60;
-  Zhttp::H2Config tls;
+  Zhttp::TLSConfig tls;
   if (options.caPath) tls.caPath(options.caPath);
   app.frame = requestFrame(options.deviceID, app.subID, true);
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,

@@ -273,12 +273,15 @@ template <> struct ProfileConfig<Zhttp::H1TLS> {
 #ifdef ZWS_H2_TEST
 template <> struct ProfileConfig<Zhttp::H2TLS> {
   static auto client(const TempDir &temp) {
-    return Zhttp::H2Config{}.caPath(temp.certPath.cspan())
+    return Zhttp::H2Config{}.tls([&temp](auto &tls) {
+      tls.caPath(temp.certPath.cspan());
+    })
       .maxConcurrentStreams(4).initialWindowSize(256);
   }
   static auto server(const TempDir &temp) {
-    return Zhttp::H2Config{}
-      .certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan())
+    return Zhttp::H2Config{}.tls([&temp](auto &tls) {
+      tls.certPath(temp.certPath.cspan()).keyPath(temp.keyPath.cspan());
+    })
       .maxConcurrentStreams(4).initialWindowSize(256);
   }
 };

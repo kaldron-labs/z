@@ -15,10 +15,13 @@
 
 #include <zlib/ZhttpServer.hh>
 
+#include <zlib/ZuUnion.hh>
+
 #include <zlib/ZmAtomic.hh>
-#include <zlib/ZmBlock.hh>
-#include <zlib/ZmFn.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZmList.hh>
+#include <zlib/ZmQueue.hh>
 #include <zlib/ZmScheduler.hh>
 
 #include <zlib/ZtArray.hh>
@@ -847,26 +850,27 @@ using ResQ = Zhttp::ResponseQ<ResBuilder<Catalog>,
   ZuStringT<"Zrest.Server.Response">>;
 
 template <typename Owner, typename Catalog, typename Response>
-struct Work : public ZmObject {
+class Work : public ZmObject {
+public:
   using Reqs = Catalog::List;
   using Union = GetUnion<Reqs>;
 
-  Work(Owner *owner, ZmScheduler *scheduler, unsigned thread) :
-    m_owner{owner}, m_scheduler{scheduler}, m_thread{thread} { }
+  Work(Owner *owner, ZmScheduler *scheduler, unsigned thread, uint64_t seq) :
+    m_owner{owner}, m_scheduler{scheduler}, m_thread{thread}, m_seq{seq} { }
   ~Work() { releaseToken_(); }
 
   template <typename Req>
   void init(Req &&request, RequestContext context,
       Zhttp::Route<Response> route) {
     ZuAssert((ZuTypeIn<ZuDecay<Req>, Reqs>{}));
-    new (u.template new_<ZuDecay<Req>, true>()) ZuDecay<Req>{ZuMv(request)};
+    new (m_u.template new_<ZuDecay<Req>, true>()) ZuDecay<Req>{ZuMv(request)};
     m_context = ZuMv(context);
     m_route = ZuMv(route);
   }
 
   template <typename App>
   void dispatch(App *app) {
-    u.dispatch([this, app](auto I, auto &request) {
+    m_u.dispatch([this, app](auto I, auto &request) {
       using Req = Union::template Type<I>;
       using Token = Completion<Req, Owner>;
       ZmRef<Token> token = new Token{
@@ -893,7 +897,7 @@ struct Work : public ZmObject {
   bool complete(Completion<Req, Owner> *token, Reply<Res> reply) {
     ZuAssert((ZuTypeIn<Res, GetResponses<Req>>{}));
     if (m_selected || !m_route || m_token != token ||
-	!u.template is<Req>()) return false;
+	!m_u.template is<Req>()) return false;
     if constexpr (Res::Body == BodyPolicy::SSE) {
       if (!m_producer ||
 	  reply.codec.producer.ptr() != m_producer.ptr()) return false;
@@ -917,7 +921,7 @@ struct Work : public ZmObject {
     if (m_token) {
       m_tokenInvalidate(m_token, true);
       try {
-	u.dispatch([this, app, reason](auto I, auto &) {
+	m_u.dispatch([this, app, reason](auto I, auto &) {
 	  using Req = Union::template Type<I>;
 	  using Token = Completion<Req, Owner>;
 	  cancelled_(app, static_cast<Req *>(nullptr),
@@ -959,15 +963,15 @@ struct Work : public ZmObject {
   bool terminal() const { return m_terminal; }
   bool cancelled() const { return m_cancelled; }
   ZmRef<SSEProducer> producer(ZmScheduler *scheduler, unsigned thread,
-      Limits limits, ZmAtomic<unsigned> *posts) {
+      Limits limits) {
     if (m_selected || m_cancelled) return {};
     if (!m_producer)
-      m_producer = new SSEProducer{scheduler, thread, limits, posts};
+      m_producer = new SSEProducer{scheduler, thread, limits};
     return m_producer;
   }
+  uint64_t seq() const { return m_seq; }
   Zhttp::Session session() const { return m_route.session(); }
   const RequestContext &context() const { return m_context; }
-  Union u;
 
 private:
   template <typename App, typename Req, typename Token>
@@ -986,9 +990,11 @@ private:
     m_tokenRelease(ptr, this);
   }
 
+  Union m_u;
   ZmAtomic<Owner *> m_owner;
   ZmScheduler *m_scheduler = nullptr;
   unsigned m_thread = 0;
+  uint64_t m_seq;
   RequestContext m_context;
   Zhttp::Route<Response> m_route;
   ZmRef<SSEProducer> m_producer;
@@ -1004,6 +1010,20 @@ template <typename Owner, typename Catalog, typename Response>
 using WorkQ = ZmList<Work<Owner, Catalog, Response>,
   ZmListNode<Work<Owner, Catalog, Response>,
     ZmListHeapID<"Zrest.Server.Work">>>;
+
+struct CancelSession {
+  Zhttp::Session session;
+  uint64_t seq;
+
+  explicit operator bool() const { return bool(session); }
+};
+
+struct BadRequest : public ZmObject, public Zhttp::ResBuilder {
+  unsigned status() const { return 400; }
+  bool disconnect() const { return true; }
+};
+using RejectQ = Zhttp::ResponseQ<BadRequest,
+  ZuStringT<"Zrest.Server.Reject">>;
 
 template <typename Owner, typename Decoder, typename Catalog,
     typename Response>
@@ -1067,7 +1087,14 @@ struct Parser : public Decoder {
     m_context.decoded = ok && this->headersValid && this->finishBody() &&
       (m_targetScheme < 0 || m_targetScheme == m_context.scheme) &&
       authorityOK;
-    if (!m_context.decoded) { link->disconnect(); return; }
+    if (!m_context.decoded) {
+      if (ok) {
+	Zhttp::Route<RejectQ::Node> route{link, m_method};
+	route.send(ZmRef<RejectQ::Node>{new RejectQ::Node{}});
+      } else
+	link->disconnect();
+      return;
+    }
     auto accept = [this, link](auto &request) {
       m_owner->admit(ZuMv(request), ZuMv(m_context),
 	Zhttp::Route<Response>{link, m_method});
@@ -1104,7 +1131,10 @@ template <typename App, typename Catalog, typename Decoder, typename Selection>
 class Server : public Zhttp::Server<Server<App, Catalog, Decoder, Selection>,
     Server_::Parser<Server<App, Catalog, Decoder, Selection>, Decoder, Catalog,
       typename Server_::ResQ<Catalog>::Node>,
-    Server_::ResQ<Catalog>, Selection> {
+    Server_::ResQ<Catalog>, Selection>,
+    private ZmEngine<Server<App, Catalog, Decoder, Selection>> {
+  using Engine = ZmEngine<Server>;
+  friend Engine;
   using Self = Server<App, Catalog, Decoder, Selection>;
   using ResQ = Server_::ResQ<Catalog>;
   using Parser = Server_::Parser<Self, Decoder, Catalog,
@@ -1115,8 +1145,10 @@ public:
   using WorkQ = Server_::WorkQ<Self, Catalog, Response>;
   using Work = WorkQ::T;
   using WorkNode = WorkQ::Node;
-  using HTTP::start;
-  using HTTP::stop;
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using HTTP::connected;
   using HTTP::disconnected;
 
@@ -1134,26 +1166,7 @@ public:
     m_tx = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
     m_app = app;
     m_up = 0;
-    m_stopping = false;
-    m_done = false;
-    m_stopOK = true;
-    m_ssePosts = 0;
-    m_stopFns.clear();
     return true;
-  }
-
-  bool start() {
-    if (!m_mx || m_up || !HTTP::start()) return false;
-    m_up = 1;
-    return true;
-  }
-  template <typename Done>
-  void start(Done &&done) {
-    if (!m_mx || m_up) { done(false); return; }
-    HTTP::start([this, done = ZuFwd<Done>(done)](bool ok) mutable {
-      if (ok) m_up = 1;
-      done(ok);
-    });
   }
 
   template <typename Req>
@@ -1163,7 +1176,7 @@ public:
       route.close();
       return;
     }
-    ZmRef<WorkNode> work = new WorkNode{this, m_mx, m_owner};
+    ZmRef<WorkNode> work = new WorkNode{this, m_mx, m_owner, ++m_workSeq};
     work->init(ZuMv(request), ZuMv(context), ZuMv(route));
     m_work.pushNode(work);
     try { work->dispatch(m_app); }
@@ -1187,42 +1200,31 @@ public:
   ZmRef<SSEProducer> producer(Completion<Req, Self> *token) {
     if (!token || !token->m_work || !m_up) return {};
     auto work = static_cast<Work *>(token->m_work);
-    return work->producer(m_mx, m_tx, m_limits, &m_ssePosts);
+    return work->producer(m_mx, m_tx, m_limits);
   }
 
   void retired(Work *work, const Zhttp::ResponseResult &) {
     if (!work) return;
     bool terminal = work->terminal();
     auto node = static_cast<WorkNode *>(work);
+    // The list owns the cursor until this sole removal funnel advances it.
+    // Advance before detach/application callbacks can retire another node.
+    if (m_cancelCursor == node)
+      m_cancelCursor = node->Ext::next;
     node->detach();
     (void)m_work.delNode(node);
     if constexpr (Server_::HasResponseComplete<App>{})
       if (terminal && m_app) m_app->responseComplete();
+    stopped_();
   }
 
-  bool stop() {
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      this->stop(ZuMv(wake));
-    });
-  }
-  template <typename Done>
-  void stop(Done &&done) {
-    if (!m_mx) { done(true); return; }
-    if (m_done) { done(m_stopOK); return; }
-    m_up = 0;
-    StopFn stopFn{ZuFwd<Done>(done)};
-    m_mx->run([this, stopFn = ZuMv(stopFn)]() mutable {
-      if (m_done) { stopFn(m_stopOK); return; }
-      m_stopFns.push(ZuMv(stopFn));
-      if (m_stopping) return;
-      m_stopping = true;
-      cancelAll_();
-    }, m_owner);
-  }
   void final() {
     if (!m_mx) return;
-    if (!m_done) (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(m_work.empty_() && !m_cancelling && !m_cancelCursor &&
+      !m_cancelSessions.count_() && m_stopResult.is<void>());
     HTTP::final();
+    m_cancelSessions = {};
     m_mx = nullptr;
     m_app = nullptr;
   }
@@ -1257,7 +1259,13 @@ public:
   }
   void disconnected(Zhttp::Session session) {
     post_([this, session]() {
-      cancelSession_(session);
+      if (m_up.load_()) {
+	m_cancelSessions.push(Server_::CancelSession{session, m_workSeq});
+	if (!m_cancelling) {
+	  m_cancelling = true;
+	  cancelBatch_();
+	}
+      }
       if constexpr (Server_::HasDisconnected<App, Zhttp::Session>{})
 	if (m_app) m_app->disconnected(session);
     });
@@ -1271,73 +1279,104 @@ private:
     else m_mx->run(ZuFwd<L>(l), m_owner);
   }
 
-  template <typename Match>
-  bool cancelBatch_(Match &&match, ZuCSpan reason) {
-    ZtArray<ZmRef<WorkNode>,
-      ZtArrayHeapID<"Zrest.Server.WorkSnap">> work;
-    {
-      auto iter = m_work.iter();
-      while (auto node = iter()) {
-	if (node->cancelled() || !match(node)) continue;
-	work.push(ZmRef<WorkNode>{node});
-	if (work.length() >= m_limits.workBatch) break;
-      }
-    }
-    for (auto &node : work)
-      if (node->cancel(m_app, reason))
-	retired(node.ptr(), {Zhttp::ResponseCode::Discarded});
-    return bool(work.length());
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    HTTP::start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      post_([this]() {
+	ZmAssert_(m_work.empty_() && !m_cancelling && !m_cancelCursor &&
+	  !m_cancelSessions.count_() && m_stopResult.is<void>());
+	m_workSeq = 0;
+	m_up = true;
+	Engine::started(true);
+      });
+    });
+  }
+
+  void stop_() {
+    post_([this]() { m_up = false; cancelAll_(); });
   }
 
   void cancelAll_() {
-    if (cancelBatch_([](WorkNode *) { return true; },
-	ZuCSpan{"stopped"})) {
-      m_mx->run([this]() { cancelAll_(); }, m_owner);
-      return;
-    }
-    HTTP::stop([this](bool ok) {
-      m_mx->run([this, ok]() {
-	m_stopOK = ok;
-	drain_();
-      }, m_owner);
-    });
+    // Stop supersedes all session scans; closed admission prevents new work.
+    m_cancelSession = {};
+    m_cancelCursor = m_work.headPtr();
+    if (m_cancelling) return;
+    m_cancelling = true;
+    cancelBatch_();
   }
-  void cancelSession_(Zhttp::Session session) {
-    if (cancelBatch_([session](WorkNode *work) {
-	return work->session() == session;
-      }, ZuCSpan{"route"}))
-      m_mx->run([this, session]() { cancelSession_(session); }, m_owner);
-  }
-  void drain_() {
-    if (m_work.empty_() && !m_ssePosts.load_()) {
-      m_done = true;
-      bool ok = m_stopOK;
-      auto stopFns = ZuMv(m_stopFns);
-      for (auto &done : stopFns) {
-	try { done(ok); } catch (...) { }
-	// ZtArray relocates ZmFn without destroying its elements.
-	done = {};
+  void cancelBatch_() {
+    unsigned visited = 0;
+    for (;;) {
+      if (m_cancelCursor) {
+	if (visited == m_limits.workBatch) break;
+	auto node = m_cancelCursor;
+	++visited;
+	// Owner admission order fences queued disconnects from later sessions.
+	if (m_up.load_() && node->seq() > m_cancelSeq) {
+	  m_cancelCursor = nullptr;
+	  continue;
+	}
+	m_cancelCursor = node->Ext::next;
+	if (node->cancelled() ||
+	    (m_up.load_() && node->session() != m_cancelSession)) continue;
+	ZmRef<WorkNode> work{node};
+	if (work->cancel(m_app,
+	    !m_up.load_() ? ZuCSpan{"stopped"} : ZuCSpan{"route"}))
+	  retired(work.ptr(), {Zhttp::ResponseCode::Discarded});
+	continue;
+      }
+      m_cancelSession = {};
+      if (m_cancelSessions.count_()) {
+	if (visited == m_limits.workBatch) break;
+	auto event = m_cancelSessions.shift();
+	++visited;
+	if (m_up.load_()) {
+	  m_cancelSession = event.session;
+	  m_cancelSeq = event.seq;
+	  m_cancelCursor = m_work.headPtr();
+	}
+	continue;
+      }
+      m_cancelling = false;
+      if (!m_up.load_()) {
+	HTTP::stop([this](bool ok) {
+	  post_([this, ok]() { m_stopResult = ok; stopped_(); });
+	});
       }
       return;
     }
-    m_mx->run([this]() {
-      drain_();
-    }, m_owner);
+    // A cursor entry or a queued event remains; this turn exhausted actual
+    // inspected work. No readiness-only continuation is posted.
+    m_mx->run([this]() { cancelBatch_(); }, m_owner);
+  }
+  void stopped_() {
+    if (m_stopResult.is<void>() || !m_work.empty_() || m_cancelling) return;
+    bool ok = m_stopResult.p<bool>();
+    m_stopResult.null();
+    // Producer admission is closed before HTTP stop. Its accepted Tx posts
+    // and response-retirement callbacks precede these final barriers.
+    HTTP::txRun([this, ok]() {
+      HTTP::rxRun([this, ok]() { Engine::stopped(ok); });
+    });
   }
 
-  using StopFn = ZmFn<void(bool), ZmFnHeapID<"Zrest.Server.Stop">>;
   ZiMultiplex *m_mx = nullptr;
   App *m_app = nullptr;
   Limits m_limits;
   WorkQ m_work;
-  ZtArray<StopFn> m_stopFns;
+  using Sessions = ZmQueue<Server_::CancelSession,
+    ZmQueueHeapID<"Zrest.Cancel.Session">>;
+  Sessions m_cancelSessions;
+  WorkNode *m_cancelCursor = nullptr;
+  uint64_t m_workSeq = 0;
+  uint64_t m_cancelSeq = 0;
+  Zhttp::Session m_cancelSession;
+  bool m_cancelling = false;
   unsigned m_owner = 0;
   unsigned m_tx = 0;
   ZmAtomic<unsigned> m_up = 0;
-  ZmAtomic<unsigned> m_ssePosts = 0;
-  bool m_stopping = false;
-  ZmAtomic<unsigned> m_done = 0;
-  bool m_stopOK = true;
+  ZuUnion<void, bool> m_stopResult;
 };
 
 } // Zrest

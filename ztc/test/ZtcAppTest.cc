@@ -15,6 +15,7 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiPIDFile.hh>
 
 #include <zlib/ZtcApp.hh>
 #include <zlib/ZfCf.hh>
@@ -109,6 +110,29 @@ static SnapshotResult snapshot(
   return body;
 }
 
+static void initFinal()
+{
+  ZuTestScopeRT(initFinal);
+  Ztc::App app;
+  ZuCheckRT(!app.start());
+  ZuCheckRT(app.state() == ZmEngineState::Stopped);
+  app.final();
+  Ztc::AppCf cf;
+  cf.id = "cold-publisher";
+  ZuCheckRT(app.init(cf));
+  ZuCheckRT(app.state() == ZmEngineState::Stopped);
+  auto sink = app.alertSink();
+  ZuCheckRT(bool(sink));
+  app.final(); // no scheduler/control/request thread was ever created
+  sink = nullptr;
+  app.rag(Ztc::RAG::Red);
+  bool immediate = false;
+  app.rag([&immediate](Ztc::RAG::T value) { immediate = value == Ztc::RAG::Red; });
+  ZuCheckRT(immediate);
+  ZuCheckRT(app.init(cf));
+  app.final();
+}
+
 static void appTest()
 {
   ZuTestScope(appTest);
@@ -176,6 +200,19 @@ static void appTest()
   cf.maxInterval = 1000;
   cf.maxSubs = 2;
   ZuCheck(app.init(cf));
+  Zi::Path pidName;
+  pidName << pidDir << '/' << cf.id << ".pid";
+  Zi::Path pidPath = ZiFile::append(ZiFile::tmpDir(), pidName);
+  {
+    ZiPIDFile owner;
+    ZuCheck(owner.init(ZiFile::tmpDir(), pidName) == ZiPIDFile::OK);
+    ZuCheck(!app.start());
+    ZuCheck(app.state() == ZmEngineState::Stopped);
+    app.final(); // PID admission failure has retired every runtime child
+    ZuCheck(ZiStat{pidPath}.exists()); // failed contender cannot unlink owner
+  }
+  ZuCheck(!ZiStat{pidPath}.exists());
+  ZuCheck(app.init(cf));
   ZuCheck(app.start());
   ZuCheck(app.start());
 
@@ -186,9 +223,6 @@ static void appTest()
   ZtcTestClient::Ring startup{ZiRingParams{telName, 0}};
   ZuCheck(startup.open(ZtcTestClient::Ring::Write) == Zu::OK);
 
-  Zi::Path pidName;
-  pidName << pidDir << '/' << cf.id << ".pid";
-  Zi::Path pidPath = ZiFile::append(ZiFile::tmpDir(), pidName);
   ZuCheck(ZiStat{pidPath}.exists());
   ZuCheck(ZtcTestClient::client().connect(cf.id));
 
@@ -355,6 +389,8 @@ static void appTest()
   ZuCheck(reset && ZtcTestClient::writeAll(1, reset->cspan()));
 
   ZuCheck(app.stop());
+  ZuCheck(app.state() == ZmEngineState::Stopped);
+  ZuCheck(app.stop());
   auto shutdownFrame = ZtcTestClient::readFrame(1, false);
   auto shutdownMsg = shutdownFrame ?
     Ztc::msg(shutdownFrame->ptr<Ztc::Hdr>()) : Ztc::MsgView{};
@@ -368,24 +404,38 @@ static void appTest()
   Zt::setenv("ZTC_RING", ZiTestResidue::uniqueName("ignored"));
   Zt::setenv("ZTC_DIR", ZiTestResidue::uniqueName("ignored"));
   ZuCheck(app.start());
+  ZuCheck(app.start());
+  ZuCheck(app.state() == ZmEngineState::Running);
   ZuCheck(ZiStat{pidPath}.exists());
   ZuCheck(ZtcTestClient::client().connect(cf.id));
   auto restarted = snapshot(SeqNo + 15, Ztc::Group::App, "*");
   ZuCheck(restarted.valid && restarted.app);
-  ZuCheck(app.stop());
-  app.final();
+  bool stopped = ZmBlock<bool>{}([&app](auto wake) mutable {
+    app.stop([&app, wake = ZuMv(wake)](bool ok) mutable {
+      if (ok) app.final(); // scheduler has retired before this callback
+      wake(ok);
+    });
+  });
+  ZuCheck(stopped && app.state() == ZmEngineState::Stopped);
+  if (!stopped) {
+    ZuCheck(app.stop());
+    app.final();
+  }
   ZuCheck(mx.stop());
   ZuCheck(!ZiStat{pidPath}.exists());
 }
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
   ZiTestResidue::init("ZtcAppTest");
   ZiLog::init("ZtcAppTest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
+  ZuTestCall(initFinal);
   ZuTestCall(appTest);
   ZtcTestClient::final();
   ZiLog::stop();
+  return 0;
 }

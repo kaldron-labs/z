@@ -39,9 +39,9 @@ struct TLSBackend {
   static bool server(ServerCore &, const HubConfig &, unsigned);
   static bool pool(PoolCore &, const PoolInit &, unsigned);
 
-  template <typename Native>
+  template <typename Native, typename ProfileConfig>
   static bool server_(ServerImpl &server, Backend &context,
-      const HubConfig &hub, const H2Config &config) {
+      const HubConfig &hub, const ProfileConfig &config) {
     auto native = static_cast<Native *>(context.ctx);
     if (!native) { native = new Native{&server}; context.own(native); }
     server.tlsBackend().ctx = native;
@@ -49,8 +49,9 @@ struct TLSBackend {
     native->final();
     return false;
   }
-  template <typename Native, bool H1 = false>
-  static bool pool_(PoolImpl &pool, Backend &context, const PoolInit &config, H2Config tls) {
+  template <typename Native, bool H1 = false, typename ProfileConfig>
+  static bool pool_(PoolImpl &pool, Backend &context,
+      const PoolInit &config, ProfileConfig tls) {
     auto native = static_cast<Native *>(context.ctx);
     if (!native) {
       native = new Native{&pool};
@@ -88,7 +89,7 @@ bool TLSBackend::server(ServerCore &owner, const HubConfig &hub, unsigned versio
   if (!state) { state = new TLSState; server.tlsBackend().own(state); }
   if (tls.policy() == H2Policy::Disable) {
     if (!TLS_::valid(tls)) { server.hubs().final(); return false; }
-    return server_<ServerImpl::Hub<H1TLS>>(server, state->h1, hub, tls);
+    return server_<ServerImpl::Hub<H1TLS>>(server, state->h1, hub, tls.tls());
   }
   owner.seeds(&server, [](void *ctx, const CatalogView &catalog) {
     auto &server = *static_cast<ServerImpl *>(ctx);
@@ -109,7 +110,7 @@ bool TLSBackend::pool(PoolCore &owner, const PoolInit &config, unsigned versions
   auto state = static_cast<TLSState *>(pool.tlsBackend().allocation);
   if (!state) { state = new TLSState; pool.tlsBackend().own(state); }
   if (tls.policy() == H2Policy::Disable)
-    return pool_<TLSPool<H1TLS>, true>(pool, state->h1, config, ZuMv(tls));
+    return pool_<TLSPool<H1TLS>, true>(pool, state->h1, config, ZuMv(tls.tls()));
   pool.hpackCatalog().add(owner.requestCatalog(), tls.hpackTxCapacity());
   if (tls.policy() == H2Policy::Force)
     return pool_<TLSBothPool>(pool, state->h2, config, ZuMv(tls));

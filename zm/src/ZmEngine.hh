@@ -49,8 +49,8 @@ struct Impl : public ZmEngine<Impl> {
 
 template <typename Impl>
 class ZmEngine {
-  auto impl() const { return static_cast<const Impl *>(this); }
-  auto impl() { return static_cast<Impl *>(this); }
+  auto engineImpl_() const { return static_cast<const Impl *>(this); }
+  auto engineImpl_() { return static_cast<Impl *>(this); }
 
 private:
   using Lock = ZmPRWLock;
@@ -74,8 +74,14 @@ public:
     return ZuFwd<L>(l)();
   }
 
+  // Callbacks run unlocked. A queued opposite operation is already reflected
+  // in state() before callbacks run; only Stopped permits final/destruction.
+  // A superseded opposite request completes when the current operation
+  // settles, with whether its requested state was attained.
   void start(CtrlFn);	// async
   // Retains stopFn until the implementation completes via stopped(ok).
+  // Stop is best effort: completion leaves Stopped even when ok is false.
+  // Only a separately queued start advances to Starting and invokes start_.
   void stop(CtrlFn);
 
   bool start();		// sync
@@ -101,7 +107,9 @@ public:
     return false;
   }
 
-  bool stopped();		// returns true if engine has stopped
+  // Control-thread poll used by wake(); do not poll concurrently from a
+  // second control thread. Completion callbacks may reenter start/stop.
+  bool stopped();
 
 protected:
   void started(bool ok);
@@ -143,24 +151,24 @@ inline void ZmEngine<Impl>::start(CtrlFn startFn)
       case Stopping:
 	m_state = StartPending;
 	guard.unlock();
-	impl()->stateChanged();
+	engineImpl_()->stateChanged();
 	return;
       case StopPending:
 	m_state = Starting;
 	guard.unlock();
-	impl()->stateChanged();
+	engineImpl_()->stateChanged();
 	return;
       default:
 	return; // Starting || Running || StartPending
     }
   }
 
-  ok = impl()->spawn([this]() { impl()->start_(); });
-
-  if (ok)
-    impl()->stateChanged();
-  else
-    started(false);
+  // The hook may complete inline and its callback may release the owner.
+  // Publish Starting before invoking it; successful spawn needs no owner
+  // access after returning from that callback.
+  engineImpl_()->stateChanged();
+  ok = engineImpl_()->spawn([this]() { engineImpl_()->start_(); });
+  if (!ok) started(false);
 }
 template <typename Impl>
 inline bool ZmEngine<Impl>::start()
@@ -172,35 +180,41 @@ inline void ZmEngine<Impl>::started(bool ok)
 {
   using namespace ZmEngineState;
   Guard guard(m_lock);
-  bool stop = false, stopped = false;
+  bool stop = false;
   auto startFn = ZuMv(m_startFn);
   m_startFn.clean();
-  if (!ok) {
-    switch (m_state) {
-      case Starting:
+  CtrlFnRing stopFn;
+  switch (m_state.load_()) {
+    case Starting:
+      m_state = ok ? Running : Stopped;
+      // A newer start can cancel StopPending. Its stop waiters still need
+      // the result of that cancellation once startup has actually settled.
+      stopFn = ZuMv(m_stopFn);
+      m_stopFn.clean();
+      break;
+    case StopPending:
+      if (ok) {
+	// Reserve the queued operation before callbacks can reenter. It still
+	// needs the owner, so this completion must not expose Running/Stopped.
+	m_state = Stopping;
+	stop = true;
+      } else {
+	// Failed startup has already rolled back. Complete both queues from
+	// local storage; a terminal callback can release the owner.
 	m_state = Stopped;
-	break;
-      case StopPending:
-	stopped = true;		// call stopped(true)
-	m_state = Stopping;	// stopped(true) will transition to Stopped
-	break;
-    }
-  } else {
-    switch (m_state) {
-      case Starting:
-	m_state = Running;
-	break;
-      case StopPending:
-	stop = true;		// call stop()
-	m_state = Running;	// stop() will transition to Stopping
-	break;
-    }
+	stopFn = ZuMv(m_stopFn);
+	m_stopFn.clean();
+      }
+      break;
   }
   guard.unlock();
-  impl()->stateChanged();
+  engineImpl_()->stateChanged();
   while (auto fn = startFn.shift()) fn(ok);
-  if (stop) this->stop({});
-  else if (stopped) this->stopped(true);
+  if (stop) {
+    engineImpl_()->wake();
+    return;
+  }
+  while (auto fn = stopFn.shift()) fn(!ok);
 }
 
 template <typename Impl>
@@ -226,21 +240,21 @@ inline void ZmEngine<Impl>::stop(CtrlFn stopFn)
       case Starting:
 	m_state = StopPending;
 	guard.unlock();
-	impl()->stateChanged();
+	engineImpl_()->stateChanged();
 	return;
       case StartPending:
 	m_state = Stopping;
 	guard.unlock();
-	impl()->stateChanged();
+	engineImpl_()->stateChanged();
 	return;
       default:
 	return; // Stopping || Stopped || StopPending
     }
   }
 
-  impl()->stateChanged();
+  engineImpl_()->stateChanged();
 
-  impl()->wake();
+  engineImpl_()->wake();
 }
 template <typename Impl>
 inline bool ZmEngine<Impl>::stop()
@@ -254,7 +268,7 @@ inline bool ZmEngine<Impl>::stopped()
   switch (m_state) {
     case Stopping:
     case StartPending:
-      impl()->stop_();
+      engineImpl_()->stop_();
       return true;
   }
   return false;
@@ -264,35 +278,33 @@ inline void ZmEngine<Impl>::stopped(bool ok)
 {
   using namespace ZmEngineState;
   Guard guard(m_lock);
-  bool start = false, started = false;
+  bool start = false;
   auto stopFn = ZuMv(m_stopFn);
   m_stopFn.clean();
-  if (!ok) {
-    switch (m_state) {
-      case Stopping:
-	m_state = Running;
-	break;
-      case StartPending:
-	started = true;		// call started()
-	m_state = Starting;	// started() will transition to Running
-	break;
-    }
-  } else {
-    switch (m_state) {
-      case Stopping:
-	m_state = Stopped;
-	break;
-      case StartPending:
-	start = true;		// call start()
-	m_state = Stopped;	// start() will transition to Starting
-	break;
-    }
+  CtrlFnRing startFn;
+  switch (m_state.load_()) {
+    case Stopping:
+      m_state = Stopped;
+      // A newer stop can cancel StartPending without losing its waiters.
+      startFn = ZuMv(m_startFn);
+      m_startFn.clean();
+      break;
+    case StartPending:
+      // Stop always leaves resources stopped, including on failure. A queued
+      // start needs a fresh hook; callbacks cannot finalize its owner yet.
+      m_state = Starting;
+      start = true;
+      break;
   }
   guard.unlock();
-  impl()->stateChanged();
+  engineImpl_()->stateChanged();
   while (auto fn = stopFn.shift()) fn(ok);
-  if (start) this->start({});
-  else if (started) this->started(true);
+  if (start) {
+    // As in start(), successful spawn may complete inline and release us.
+    if (!engineImpl_()->spawn([this]() { engineImpl_()->start_(); })) started(false);
+    return;
+  }
+  while (auto fn = startFn.shift()) fn(false);
 }
 
 #endif /* ZmEngine_HH */

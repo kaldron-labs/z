@@ -55,6 +55,19 @@ def wait_probe(name, env, group, process, timeout=10):
             time.sleep(0.05)
 
 
+def wait_closed(process, port, timeout=10):
+    deadline = time.monotonic() + timeout
+    while True:
+        assert process.poll() is None, "passive node exited during listener shutdown"
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                pass
+        except ConnectionRefusedError:
+            return
+        assert time.monotonic() < deadline, "passive HTTP listener remained open"
+        time.sleep(0.05)
+
+
 def main():
     residue = Residue("zumdztccluster")
     directory = residue.directory
@@ -128,8 +141,7 @@ def main():
         start(0)
         start(1)
         seen = events(processes[:2], lambda lines:
-            all(b"zumd: listening" in item for item in lines) and
-            any(b"zumd: active" in item for item in lines))
+            any({b"zumd: listening", b"zumd: active"} <= item for item in lines))
         leaders = [index for index, lines in enumerate(seen)
                    if b"zumd: active" in lines]
         assert len(leaders) == 1, "cluster must elect one active node"
@@ -137,11 +149,14 @@ def main():
         follower = 1 - leader
         assert leader == 0, "higher-priority node was not elected"
         registration = regdir / (ids[follower] + ".pid")
+        # The publisher and multiplexer run on the passive process even though
+        # its application listener has never been activated.
+        wait_probe(ids[follower], environments[follower], "app", processes[follower])
+        probe(ids[follower], environments[follower], "mx")
+        wait_probe(ids[follower], environments[follower], "db-passive", processes[follower])
+        wait_closed(processes[follower], ports[follower])
         assert registration.exists(), "passive publisher not registered"
         original_pid = registration.read_bytes()
-        probe(ids[follower], environments[follower], "app")
-        probe(ids[follower], environments[follower], "mx")
-        probe(ids[follower], environments[follower], "db-passive")
 
         fixture = Fixture(directory)
         fixture.port = ports[leader]
@@ -178,13 +193,17 @@ def main():
         wait_line(processes[2], b"zumd: active")
         wait_probe(ids[follower], environments[follower],
                    "db-passive", processes[follower])
+        wait_closed(processes[follower], ports[follower])
         probe(ids[follower], environments[follower], "app")
+        probe(ids[follower], environments[follower], "mx")
         assert registration.read_bytes() == original_pid
 
         stop(2)
         wait_line(processes[follower], b"zumd: active")
         probe(ids[follower], environments[follower], "db-active")
         assert registration.read_bytes() == original_pid
+        fixture.port = ports[follower]
+        fixture.request("GET", "/health/ready")
         stop(follower)
         assert not registration.exists(), "publisher registration retained"
         passed = True

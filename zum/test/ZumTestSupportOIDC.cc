@@ -387,7 +387,7 @@ static Authorized beginAuthorization(
   return ZmBlock<Authorized>{}([
     requests, context, &rng, query = ZuMv(query), config = ZuMv(config)
   ](auto wake) mutable {
-    if (!Zum::authorizeRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeRequest({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(query),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(config), [
 	wake
@@ -427,7 +427,7 @@ static FinishedAuthorization finishAuthorization(
     Zum::Bytes consentBinding{ZuBSpan{"browser binding"}};
     auto consentConfig = config;
     auto consentPolicy = policy;
-    if (!Zum::authorizeFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"browser binding"}}, ZuMv(input), ZuMv(config),
       ZuMv(policy), [requests, db, &rng, wake = ZuMv(wake),
@@ -442,7 +442,7 @@ static FinishedAuthorization finishAuthorization(
 	    wake(FinishedAuthorization{error, ZuMv(location)});
 	  };
 	  auto fallback = consentComplete;
-	  if (!Zum::authorizeConsentFinish(requests, Zm::now() + ZuTime{10},
+	  if (!Zum::authorizeConsentFinish({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(consentID), ZuMv(consentBinding), true,
 	      ZuMv(consentConfig), ZuMv(consentPolicy), ZuMv(consentComplete)))
 	    fallback(Zum::OAuthError::TemporarilyUnavailable, {});
@@ -477,7 +477,7 @@ static FinishedAuthorization finishOIDCAuthorization(
     authTime,
     config = ZuMv(config), policy = ZuMv(policy)
   ](auto wake) mutable {
-    if (!Zum::authorizeOIDCFinish(requests, Zm::now() + ZuTime{10},
+    if (!Zum::authorizeOIDCFinish({}, requests, Zm::now() + ZuTime{10},
       context, rng, ZuMv(ceremonyID),
       Zum::Bytes{ZuBSpan{"oidc binding"}}, ZuMv(user), ZuMv(roleIDs),
       ZuMv(evidence), authTime, ZuMv(config), ZuMv(policy), [wake](
@@ -526,7 +526,7 @@ static IssuedToken issueTokenRequest(
     authorization = ZuMv(authorization), config = ZuMv(config),
     sign = ZuMv(sign)
   ](auto wake) mutable {
-    if (!Zum::tokenRequest(requests, Zm::now() + ZuTime{10},
+    if (!Zum::tokenRequest({}, requests, Zm::now() + ZuTime{10},
       db, rng, ZuMv(form), ZuMv(authorization),
       ZuMv(config), ZuMv(sign), [wake](
 	  int error, Zum::TokenResponse response) mutable {
@@ -966,13 +966,22 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   ZuCheck(storeAuthorization(context, ZuMv(oidcCeremony)));
   Zum::OIDC oidc;
   ZuCheck(oidc.init(db->requests->scheduler(), db->requests->sid(), context,
+    Zum::OIDCLimits{}, 4, 30, []() { return int64_t{200}; },
+    [](Zum::OIDCHTTPRequest, Zum::OIDCHTTPDoneFn done) { done(0, Zum::String{}); }));
+  ZuCheck(oidc.state() == ZmEngineState::Stopped);
+  oidc.final(); // no scheduler dispatch is needed for never-started final
+  bool holdDiscovery = false;
+  Zum::OIDCHTTPDoneFn heldDiscovery;
+  ZuCheck(oidc.init(db->requests->scheduler(), db->requests->sid(), context,
     Zum::OIDCLimits{}, 4, 30, []() { return int64_t{200}; }, [
       &upstreamToken, &upstreamJWKS, &upstreamDiscovery,
-      &discoveryReqs, &tokenReqs, &jwksReqs, &userinfoReqs
+      &discoveryReqs, &tokenReqs, &jwksReqs, &userinfoReqs,
+      &holdDiscovery, &heldDiscovery
     ](Zum::OIDCHTTPRequest request, Zum::OIDCHTTPDoneFn done) mutable {
       if (request.url == "https://upstream.example/oauth2/default/"
           ".well-known/openid-configuration") {
         ++discoveryReqs;
+        if (holdDiscovery) { heldDiscovery = ZuMv(done); return; }
         done(200, upstreamDiscovery);
       } else if (request.url == "https://upstream.example/token") {
         ++tokenReqs;
@@ -996,6 +1005,8 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
         done(500, Zum::String{});
       }
     }));
+  ZuCheck(oidc.start());
+  ZuCheck(oidc.start());
   Zum::String oidcLocation;
   ZuCheck(ZmBlock<bool>{}([
       &oidc, &oidcLocation, &discoveredConfig](auto wake) mutable {
@@ -1325,10 +1336,32 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   }));
   auto oidcScheduler = db->requests->scheduler();
   unsigned oidcSID = db->requests->sid();
-  oidc.final();
-  ZmSemaphore oidcDown;
-  oidcScheduler->run([&oidcDown]() { oidcDown.post(); }, oidcSID);
+  ZuCheck(oidc.stop());
+  ZuCheck(oidc.stop());
+  ZuCheck(oidc.start()); // retained transport/configuration, fresh admission
+  holdDiscovery = true;
+  bool discoveryFailed = false, stopped = false;
+  ZuCheck(oidc.begin(Zum::Bytes{ZuBSpan{"held-discovery"}}, discoveredConfig,
+    [&discoveryFailed](bool ok, Zum::String) { discoveryFailed = !ok; }));
+  ZmSemaphore oidcBarrier, oidcDown;
+  oidcScheduler->run([&oidcBarrier]() { oidcBarrier.post(); }, oidcSID);
+  oidcBarrier.wait();
+  ZuCheck(bool(heldDiscovery));
+  oidc.stop([&oidc, &stopped, &oidcDown](bool ok) {
+    ZuCheck(ok);
+    stopped = true;
+    oidc.final(); // supported completion-driven final on the owner shard
+    oidcDown.post();
+  });
+  oidcScheduler->run([&oidcBarrier]() { oidcBarrier.post(); }, oidcSID);
+  oidcBarrier.wait();
+  ZuCheck(!stopped && !discoveryFailed);
+  // Consuming the work capture lets stop complete even while the transport
+  // deliberately retains this already-fired completion object.
+  if (heldDiscovery) heldDiscovery(503, Zum::String{});
   oidcDown.wait();
+  ZuCheck(stopped && discoveryFailed && oidc.state() == ZmEngineState::Stopped);
+  heldDiscovery = {};
 
   ZuCheck(insertRecord(context->signKeys, Zum::SignKey{
     .id = "app-token-key",
@@ -1344,7 +1377,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   Zum::String ssoToken;
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &ssoUser,
       &ssoToken](auto wake) mutable {
-    Zum::sessionIssue(db->requests, Zm::now() + ZuTime{10}, context, rng,
+    Zum::sessionIssue({}, db->requests, Zm::now() + ZuTime{10}, context, rng,
       Zum::SessionConfig{.issuer = "issuer/oauth2/9",
 	.subject = Zum::auditID(ssoUser.handle), .userID = 42,
 	.authTime = 190, .now = 200, .idleLifetime = 1800,
@@ -1357,22 +1390,30 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   }) == Zum::SessionError::OK && ssoToken);
   int64_t serverNow = 210;
   Zum::Server providerServer;
-  ZuCheck(providerServer.init(db, db->requests,
-    Zum::ServerConfig{.issuer = "issuer", .rpID = "example.com",
-      .rpName = "Example",
-      .authMethod = Zum::AuthMethod::Passkey},
-    [&serverNow]() { return serverNow; },
-    [](Zum::AppID, Zum::Bytes id, Zum::String) { return base64URL(id); },
-    [](const Zum::User &, const Zum::Client &,
+  auto initProvider = [&db, &serverNow](Zum::Server &server) {
+    return server.init(db, db->requests,
+      Zum::ServerConfig{.issuer = "issuer", .rpID = "example.com",
+	.rpName = "Example",
+	.authMethod = Zum::AuthMethod::Passkey},
+      [&serverNow]() { return serverNow; },
+      [](Zum::AppID, Zum::Bytes id, Zum::String) { return base64URL(id); },
+      [](const Zum::User &, const Zum::Client &,
 	const Zum::ScopeSelection &, const ZtBitmap &allowed,
 	Zum::PolicyDoneFn complete) { complete(true, ZtBitmap{allowed}); },
-    [](Zum::PasskeyStart, Zum::AdmitDoneFn complete) {
-      complete(Zum::PasskeyAdmission{});
-    }, [](const Zum::SignKey &, ZuBSpan, Zum::SignatureFn complete) {
-      complete(Zum::Bytes{});
-    }));
+      [](Zum::PasskeyStart, Zum::AdmitDoneFn complete) {
+	complete(Zum::PasskeyAdmission{});
+      }, [](const Zum::SignKey &, ZuBSpan, Zum::SignatureFn complete) {
+	complete(Zum::Bytes{});
+      });
+  };
+  ZuCheck(initProvider(providerServer));
+  ZuCheck(providerServer.state() == ZmEngineState::Stopped);
+  providerServer.final();
+  ZuCheck(initProvider(providerServer));
+  ZuCheck(providerServer.start());
+  ZuCheck(providerServer.start());
   ZuCheck(ZmBlock<bool>{}([&db](auto wake) mutable {
-    db->requests->deactivate([wake = ZuMv(wake)]() mutable { wake(true); });
+    db->requests->deactivate(ZuMv(wake));
   }));
   auto inactiveInfo = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
     providerServer.userInfo(9, "Bearer invalid",
@@ -1385,7 +1426,9 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     });
   });
   ZuCheck(inactiveReady.type == Zum::ReplyType::ServerError);
-  db->requests->activate();
+  ZuCheck(ZmBlock<bool>{}([db](auto wake) {
+    db->requests->activate(ZuMv(wake));
+  }));
   auto invalidInfo = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
     providerServer.userInfo(9, "Bearer invalid",
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
@@ -1464,7 +1507,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   Zum::String upstreamSession;
   ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &oidcUser,
       &upstreamSession](auto wake) mutable {
-    Zum::sessionIssue(db->requests, Zm::now() + ZuTime{10}, context, rng,
+    Zum::sessionIssue({}, db->requests, Zm::now() + ZuTime{10}, context, rng,
       Zum::SessionConfig{.issuer = "issuer/oauth2/9",
 	.subject = Zum::auditID(oidcUser.handle), .userID = oidcUser.id,
 	.providerID = 8, .authTime = 190, .now = 200,
@@ -1570,12 +1613,21 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     goodLogout.body.find<"Signed out of Zum">() > 0 &&
     goodLogout.setCookie.find<"Max-Age=0">() > 0);
   ZuCheck(ZmBlock<int>{}([&db, &context, &ssoToken](auto wake) mutable {
-    Zum::sessionUse(db->requests, Zm::now() + ZuTime{10}, context,
+    Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       Zum::String{ssoToken}, "issuer", 211, 1800,
       [wake = ZuMv(wake)](int error, Zum::Session,
 	  Zum::String) mutable { wake(error); });
   }) == Zum::SessionError::Expired);
-  providerServer.final();
+  ZuCheck(providerServer.stop());
+  ZuCheck(providerServer.stop());
+  ZuCheck(providerServer.start());
+  ZmSemaphore providerDown;
+  providerServer.stop([&providerServer, &providerDown](bool ok) {
+    ZuCheck(ok);
+    providerServer.final();
+    providerDown.post();
+  });
+  providerDown.wait();
   state.browser = ZuMv(browser);
   state.appRoles = ZuMv(appRoles);
   state.code = ZuMv(oidcCode);

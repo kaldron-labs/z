@@ -15,6 +15,8 @@
 
 #include <zlib/zumd.hh>
 #include <zlib/zumd_webauthn.hh>
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
 #include <zlib/zumd_request.hh>
 
 namespace Zum {
@@ -100,35 +102,35 @@ using BootstrapFn = CapabilityFn;
 using RecoveryIssueFn = CapabilityFn;
 
 ZumExtern bool bootstrapIssue(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   BootstrapConfig, BootstrapFn);
 ZumExtern bool recoveryIssue(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   RecoveryIssueConfig, RecoveryIssueFn);
 ZumExtern bool recoveryBegin(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String capability, Bytes bindingDigest, RecoveryBeginConfig,
   EnrollmentBeginFn);
 ZumExtern bool recoveryFinish(
-  Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
   Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
   EnrollmentFinishFn);
 ZumExtern bool enrollmentBegin(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes bindingDigest, EnrollmentBeginConfig, EnrollmentBeginFn);
 ZumExtern bool bootstrapBegin(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   String capability, Bytes bindingDigest, EnrollmentBeginConfig,
   EnrollmentBeginFn);
 ZumExtern bool enrollmentFinish(
-  Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
   Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
   EnrollmentFinishFn);
 ZumExtern bool credentialBegin(
-  Requests *, ZuTime deadline, DB *, Ztls::Random &,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Ztls::Random &,
   Bytes bindingDigest, CredentialBeginConfig, EnrollmentBeginFn);
 ZumExtern bool credentialFinish(
-  Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
+  ZmRef<ZmPolymorph>, Requests *, ZuTime deadline, DB *, Bytes ceremonyID,
   Bytes bindingDigest, RegistrationInput, EnrollmentFinishConfig,
   EnrollmentFinishFn);
 

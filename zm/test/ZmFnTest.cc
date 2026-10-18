@@ -8,6 +8,9 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmContext.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmTime.hh>
@@ -141,10 +144,73 @@ extern "C" {
 };
 #endif
 
+#ifdef ZmObject_DEBUG
+struct RefProbe : ZmNHeap<RefProbe>, ZmPolymorph {
+friend inline ZuStringT<"ZmFnTest.RefProbe"> ZmNHeapID(RefProbe *);
+  RefProbe() { debug(); }
+};
+
+static bool validReferrer(const ZmRef<RefProbe> &owner)
+{
+  struct Referrers {
+    const void *expected;
+    unsigned count = 0;
+    bool matches = true;
+  } refs{&owner};
+  owner->dump(&refs, [](void *ctx, const void *referrer, const ZmBackTrace *) {
+    auto refs = static_cast<Referrers *>(ctx);
+    ++refs->count;
+    refs->matches &= referrer == refs->expected;
+  });
+  return owner->refCount() == 1 && refs.count == 1 && refs.matches;
+}
+
+static void testAdoptDebug()
+{
+  ZuTestScope(testAdoptDebug);
+  ZmRef<RefProbe> owner = new RefProbe;
+  {
+    ZmRef<RefProbe> ref{owner};
+    auto adopted = ZuMv(ref).constRef();
+    ZuCheck(!ref && owner->refCount() == 2);
+    adopted = nullptr;
+    ZuCheck(validReferrer(owner));
+  }
+  {
+    ZmRef<const RefProbe> ref{owner};
+    auto adopted = ZuMv(ref).mutableRef();
+    ZuCheck(!ref && owner->refCount() == 2);
+    adopted = nullptr;
+    ZuCheck(validReferrer(owner));
+  }
+  {
+    ZmContext context{owner};
+    ZmContext moved{ZuMv(context)};
+    auto adopted = moved.mvObject<RefProbe>();
+    ZuCheck(owner->refCount() == 2);
+    adopted = nullptr;
+    ZuCheck(validReferrer(owner));
+  }
+  {
+    auto fn = ZmFn<bool()>::mvFn(ZmRef{owner}, [](ZmRef<RefProbe> adopted) {
+      return adopted->refCount() == 2;
+    });
+    ZmFn<bool()> moved{ZuMv(fn)};
+    ZuCheck(moved());
+    ZuCheck(validReferrer(owner));
+    moved = {};
+    ZuCheck(validReferrer(owner));
+  }
+}
+#endif
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+#ifdef ZmObject_DEBUG
+  ZuTestCall(testAdoptDebug);
+#endif
   {
     //ZmRef<ZmFn<> > fa = ZmFn<>::fn(A(42));
     //ZmRef<ZmFn<> > fb = ZmFn<>::fn(B(43));

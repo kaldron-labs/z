@@ -14,6 +14,8 @@
 
 #include <zlib/ZuDerive.hh>
 
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmScheduler.hh>
 
@@ -36,14 +38,16 @@ namespace Ztc {
 namespace Hubd_ { struct State; }
 
 namespace HubdState {
-  enum T : int8_t { Down, Starting, Publishing, Listening, Up,
-    Stopping, Draining };
+  enum T : int8_t { Down, Up };
 }
 
 ZuDerive(HubString, (ZtString<ZtStringHeapID<"Ztc.Hub.String">>));
 ZuDerive(HubStrings, (ZtArray<HubString, ZtArrayHeapID<"Ztc.Hub.Strings">>));
 using HubFrame = ZmRef<ZiIOBuf>;
 using HubSendFn = ZmFn<void(HubFrame), ZmFnHeapID<"Ztc.Hub.Send">>;
+using HubCtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
+using HubActivateFn = ZmFn<void(bool, HubCtrlFn),
+  ZmFnHeapID<"Ztc.Hub.Activate">>;
 
 struct RouteInfo {
   uint64_t frontEndID = 0;
@@ -148,7 +152,10 @@ ZfStruct(, (HubdCf, Cf),
   (fanoutSLOMS,	(Mutable, (Range<1U, 86400000U>)),				UInt32),
   (schedulerTurnWork,	(Mutable, (Range<1U, INT_MAX>)),			UInt32));
 
-class Hubd {
+class Hubd : private ZmEngine<Hubd> {
+friend ZmEngine<Hubd>;
+friend Hubd_::State;
+  using Engine = ZmEngine<Hubd>;
 public:
   Hubd();
   ~Hubd();
@@ -159,13 +166,18 @@ public:
   bool init(HubdCf);
   bool init(HubdCf, ZiMultiplex *, Zum::ServiceHTTPFn,
     Zum::Bytes clientSecret, ZuCSpan callbackAuth);
-  bool start();
-  void start(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Start">>);
-  bool stop();
-  void stop(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">>);
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::running;
+  using Engine::stopping;
   void final();
 
-  HubdState::T state() const;
+  HubdState::T readiness() const;
+  int startError() const;
+  // Configure before start. DB role callbacks control the listener aggregate;
+  // its lifetime extends through Hubd stop and final.
+  void activateFn(HubActivateFn);
   const HubdCf &config() const;
   Zum::ServiceManifest manifest() const;
 
@@ -211,9 +223,22 @@ public:
     HubRouteFn);
 
 private:
-  void start_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Start">>);
-  void stop_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">>);
-	ZmRef<Hubd_::State> m_state;
+  void start_();
+  void startRx_();
+  void startDB_();
+  void stop_();
+  void stopRx_(bool);
+  void stopService_(bool);
+  void drain_();
+  void clearBatch_();
+  ZiMultiplex *mx_() const;
+  template <typename L> void post_(L &&fn) {
+    if (auto mx = mx_()) mx->rxRun(ZuFwd<L>(fn));
+    else ZuFwd<L>(fn)();
+  }
+
+private:
+  ZmRef<Hubd_::State> m_state;
 };
 
 } // Ztc

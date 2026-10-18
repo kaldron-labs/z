@@ -12,6 +12,7 @@
 #include <zlib/ZuUTF.hh>
 
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZmSingleton.hh>
@@ -129,6 +130,12 @@ friend inline ZuStringT<"ZiResolver.TXT"> ZmNHeapID(ZiResolver_TXT *);
 
   DNSBuf		buf;
   TxtFn		fn;
+};
+
+class ZiResolver_Sched : public ZmNHeap<ZiResolver_Sched>, public ZmScheduler {
+friend inline ZuStringT<"ZiResolver.Sched"> ZmNHeapID(ZiResolver_Sched *);
+public:
+  using ZmScheduler::ZmScheduler;
 };
 
 static ZiEvent::FailFn defltFailFn()
@@ -250,18 +257,8 @@ Main::Main()
 
 Main::~Main()
 {
-  if (m_sched && m_state != Stopped) {
-    if (m_sched->invoked(SID)) {
-      stop__({});
-    } else {
-      ZmSemaphore sem;
-      // protect against blocking on self-destruction, do NOT use ZmSelf()
-      // - ZmSelf() depends on TLS and should not be called during exit
-      stop_([&sem](ZiEvent::StopResult) { sem.post(); });
-      sem.wait();
-    }
-  }
-  delete final__();
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  final_();
 }
 
 Main *Main::instance()
@@ -286,26 +283,26 @@ void Main::init(Params params, ZiEvent::FailFn failFn)
   instance()->init_(ZuMv(params), ZuMv(failFn));
 }
 
-void Main::start(ZiEvent::StartFn fn)
+void Main::start(CtrlFn fn)
 {
-  instance()->start_(ZuMv(fn));
+  instance()->Engine::start(ZuMv(fn));
 }
 
-void Main::stop(ZiEvent::StopFn fn)
+void Main::stop(CtrlFn fn)
 {
-  instance()->stop_(ZuMv(fn));
+  instance()->Engine::stop(ZuMv(fn));
 }
 
-ZiEvent::StartResult Main::startSync()
+bool Main::startSync()
 {
-  return ZmBlock<ZiEvent::StartResult>{}([](auto wake) {
+  return ZmBlock<bool>{}([](auto wake) {
     start(ZuMv(wake));
   });
 }
 
-ZiEvent::StopResult Main::stopSync()
+bool Main::stopSync()
 {
-  return ZmBlock<ZiEvent::StopResult>{}([](auto wake) {
+  return ZmBlock<bool>{}([](auto wake) {
     stop(ZuMv(wake));
   });
 }
@@ -341,16 +338,10 @@ void Main::cancel(ZmRef<Query> handle)
   instance()->cancel_(ZuMv(handle));
 }
 
-bool Main::running() const
-{
-  Guard guard(m_lock);
-  return m_state == Running;
-}
-
 bool Main::initialized() const
 {
   Guard guard(m_lock);
-  return m_sched;
+  return m_params.is<Params>();
 }
 
 void Main::addQuery_(ZmRef<Query> query)
@@ -443,13 +434,13 @@ void Main::init_()
 void Main::init_(Params params, ZiEvent::FailFn failFn)
 {
   Guard guard(m_lock);
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   init__(ZuMv(params), ZuMv(failFn));
 }
 
 void Main::init__(Params params, ZiEvent::FailFn failFn)
 {
-  ZmAssert(m_state != Finalizing);
-  if (m_sched) return;
+  if (m_params.is<Params>()) return;
   if (!params.ipv4() && !params.ipv6())
     throw ZeEXCEPT(Fatal, "ZiResolver", "IPv4 and IPv6 cannot both be disabled");
 
@@ -457,6 +448,13 @@ void Main::init__(Params params, ZiEvent::FailFn failFn)
 
   m_params = ZuMv(params);
   m_failFn = ZuMv(failFn);
+  openChannel_();
+  m_sched = new ZiResolver_Sched{params_().scheduler()};
+  m_loop.init(m_sched, SID, m_failFn);
+}
+
+void Main::openChannel_()
+{
   if (ares_library_init(ARES_LIB_INIT_ALL) != ARES_SUCCESS)
     throw ZeEXCEPT(Fatal, "ZiResolver", "ares_library_init() failed");
   ares_options options;
@@ -466,182 +464,151 @@ void Main::init__(Params params, ZiEvent::FailFn failFn)
   options.sock_state_cb_data = this;
   options.lookups = const_cast<char *>("fb");
   optmask |= ARES_OPT_LOOKUPS;
-  if (m_params.timeoutMS()) {
-    options.timeout = m_params.timeoutMS();
+  if (params_().timeoutMS()) {
+    options.timeout = params_().timeoutMS();
     optmask |= ARES_OPT_TIMEOUTMS;
   }
-  if (m_params.tries()) {
-    options.tries = m_params.tries();
+  if (params_().tries()) {
+    options.tries = params_().tries();
     optmask |= ARES_OPT_TRIES;
   }
   if (ares_init_options(&m_channel, &options, optmask) != ARES_SUCCESS) {
     ares_library_cleanup();
     throw ZeEXCEPT(Fatal, "ZiResolver", "ares_init_options() failed");
   }
-  if (m_params.servers() &&
-      ares_set_servers_ports_csv(m_channel, m_params.servers().ndata()) !=
+  if (params_().servers() &&
+      ares_set_servers_ports_csv(m_channel, params_().servers().ndata()) !=
       ARES_SUCCESS) {
     ares_destroy(m_channel);
     m_channel = nullptr;
     ares_library_cleanup();
     throw ZeEXCEPT(Fatal, "ZiResolver", "ares_set_servers_ports_csv() failed");
   }
-  m_sched = new ZmScheduler{m_params.scheduler()};
-  m_loop.init(m_sched, SID, m_failFn);
 }
 
-void Main::start_(ZiEvent::StartFn fn)
+void Main::closeChannel_()
 {
-  Guard guard(m_lock);
-  switch (m_state) {
-    case StopPending:
-    case Stopping:
-    case Finalizing:
-      guard.unlock();
-      if (fn) fn(ZiEvent::StartResult{
-	ZeEXCEPT(Fatal, "ZiResolver", "resolver is stopping or finalizing")});
-      return;
-    case Running:
-      guard.unlock();
-      if (fn) fn(ZiEvent::StartResult{});
-      return;
-    case Starting:
-      if (fn) m_startFns.push(ZuMv(fn));
-      return;
+  if (!m_channel) return;
+  ares_destroy(m_channel);
+  m_channel = nullptr;
+  ares_library_cleanup();
+}
+
+void Main::start_()
+{
+  ZmScheduler *sched;
+  try {
+    Guard guard(m_lock);
+    if (!m_params.is<Params>()) init__(Params{}, defltFailFn());
+    if (!m_channel) openChannel_();
+    if (!m_sched) {
+      m_sched = new ZiResolver_Sched{params_().scheduler()};
+      m_loop.init(m_sched, SID, m_failFn);
+    }
+    sched = m_sched;
+  } catch (ZeException &e) {
+    startFailed_(ZuMv(e));
+    return;
+  } catch (Zu::IOResult) {
+    startFailed_(ZeEXCEPT(Fatal, "ZiResolver", "scheduler initialization failed"));
+    return;
   }
-  if (!m_sched) init__(Params{}, defltFailFn());
-  if (fn) m_startFns.push(ZuMv(fn));
-  m_state = Starting;
-  auto sched = m_sched;
-  guard.unlock();
-  static_cast<ZmEngine<ZmScheduler> *>(sched)->start([this, sched](bool ok) {
+  sched->ZmEngine<ZmScheduler>::start([this](bool ok) {
     if (!ok) {
-      started_(ZiEvent::StartResult{
-	ZeEXCEPT(Fatal, "ZiResolver", "scheduler start failed")});
+      closeSched_();
+      startFailed_(ZeEXCEPT(Fatal, "ZiResolver", "scheduler start failed"));
       return;
     }
-    m_loop.start([this, sched](ZiEvent::StartResult result) mutable {
+    m_loop.start([this](ZiEvent::StartResult result) mutable {
       if (!result.is<ZiEvent::Exception>()) {
-	started_(ZuMv(result));
+	// Loop startup completes on SID; publish admission before completion.
+	m_up = true;
+	{
+	  Guard guard(m_lock);
+	  m_accepting = true;
+	}
+	Engine::started(true);
 	return;
       }
-      // A failed loop has already closed its handles. Drain the scheduler
-      // before publishing failure or servicing a pending stop.
-      static_cast<ZmEngine<ZmScheduler> *>(sched)->stop(
-	[this, result = ZuMv(result)](bool) mutable {
-	  started_(ZuMv(result));
+      // Loop failure has closed its handles. Retire the scheduler on its
+      // control thread before publishing the parent's failed startup.
+      m_sched->ZmEngine<ZmScheduler>::stop(
+	[this, result = ZuMv(result)](bool ok) mutable {
+	  ZmAssert_(ok);
+	  closeSched_();
+	  startFailed_(ZuMv(result).p<ZiEvent::Exception>());
 	});
     });
   });
 }
 
-void Main::started_(ZiEvent::StartResult result)
+void Main::startFailed_(ZeException e)
 {
-  Guard guard(m_lock);
-  bool stop = m_state == StopPending;
-  auto fns = ZuMv(m_startFns);
-  m_startFns.init_();
-  m_state = stop ? Stopping :
-    (result.is<ZiEvent::Exception>() ? Stopped : Running);
-  guard.unlock();
-  if (stop) {
-    if (result.is<ZiEvent::Exception>())
-      stopped_(ZiEvent::StopResult{});
-    else
-      stop__([this](ZiEvent::StopResult result) {
-	stopped_(ZuMv(result));
-      });
-  }
-  for (auto &fn: fns) {
-    fn(result);
-    fn = {};
-  }
+  if (m_failFn) m_failFn(ZuMv(e));
+  Engine::started(false);
 }
 
-void Main::stop_(ZiEvent::StopFn fn)
+void Main::stop_()
 {
   Guard guard(m_lock);
-  switch (m_state) {
-    case Stopped:
-    case Finalizing:
-      guard.unlock();
-      if (fn) fn(ZiEvent::StopResult{});
-      return;
-    case Starting:
-      m_state = StopPending;
-      if (fn) m_stopFns.push(ZuMv(fn));
-      return;
-    case StopPending:
-    case Stopping:
-      if (fn) m_stopFns.push(ZuMv(fn));
-      return;
-  }
-  if (fn) m_stopFns.push(ZuMv(fn));
-  m_state = Stopping;
-  guard.unlock();
-  stop__([this](ZiEvent::StopResult result) {
-    stopped_(ZuMv(result));
+  m_accepting = false;
+  // Ingress is now closed. Retire every earlier query and timer post on SID.
+  m_loop.run([this]() { stopRx_(); });
+}
+
+void Main::stopRx_()
+{
+  ZiAssert(m_loop.invoked(), "ZiResolver", (), "stop off resolver shard", return);
+  m_up = false;
+  m_sched->del(&m_timer);
+  // c-ares completes all channel requests synchronously on this dedicated SID.
+  // Those callbacks unlink their queries before the loop's drain continuation.
+  ares_cancel(m_channel);
+  ZmAssert_(m_queries.empty_());
+  closeChannel_();
+  m_loop.stop([this](ZiEvent::StopResult) {
+    m_sched->ZmEngine<ZmScheduler>::stop([this](bool ok) {
+      ZmAssert_(ok); // concrete ZmScheduler::stop__() always succeeds
+      closeSched_();
+      Engine::stopped(true);
+    });
   });
 }
 
-void Main::stopped_(ZiEvent::StopResult result)
+void Main::closeSched_()
 {
-  Guard guard(m_lock);
-  auto fns = ZuMv(m_stopFns);
-  m_stopFns.init_();
-  m_state = Stopped;
-  guard.unlock();
-  for (auto &fn: fns) {
-    fn(result);
-    fn = {};
+  ZmScheduler *sched;
+  {
+    Guard guard(m_lock);
+    ZmAssert_(!m_accepting && !m_up && m_queries.empty_());
+    sched = m_sched;
+    m_sched = nullptr;
+    closeChannel_();
+    m_loop.final();
   }
-}
-
-void Main::stop__(ZiEvent::StopFn fn)
-{
-  m_loop.invoke([this, sched = m_sched, fn = ZuMv(fn)]() mutable {
-    sched->del(&m_timer);
-    if (m_channel) ares_cancel(m_channel);
-    m_loop.stop([sched, fn = ZuMv(fn)](
-      ZiEvent::StopResult result) mutable {
-      static_cast<ZmEngine<ZmScheduler> *>(sched)->stop(
-	[result = ZuMv(result), fn = ZuMv(fn)](bool) mutable {
-	  if (fn) fn(ZuMv(result));
-	});
-      });
-  });
+  // Called on this scheduler's control thread after its workers have joined
+  // (or failed startup). Its destructor detaches that last control handle.
+  // Each restart constructs a fresh scheduler, so there is no predecessor
+  // control-thread chain to join after parent completion.
+  delete sched;
 }
 
 void Main::final_()
 {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   Guard guard(m_lock);
-  ZmAssert(m_state == Stopped);
-  ZmAssert(!m_startFns && !m_stopFns);
-  ZmAssert(!m_sched || m_sched->state() == ZmEngineState::Stopped);
-  m_state = Finalizing;
-  auto sched = final__();
-  guard.unlock();
-  // Stop callbacks execute on the scheduler control thread. Its destructor
-  // joins that thread, so callbacks must be free to acquire m_lock.
-  delete sched;
-  Guard done(m_lock);
-  m_state = Stopped;
-}
-
-ZmScheduler *Main::final__()
-{
-  bool cleanupAres = m_channel;
-  if (m_channel) {
-    ares_destroy(m_channel);
-    m_channel = nullptr;
-  }
-  if (cleanupAres) ares_library_cleanup();
+  ZmAssert_(!m_accepting && !m_up && m_queries.empty_());
+  ZmAssert_(!m_sched || m_sched->state() == ZmEngineState::Stopped);
+  closeChannel_();
   m_loop.final();
+  // A surviving scheduler was initialized but never started: it has no
+  // control/worker thread handles. Running schedulers retire inside stop.
   auto sched = m_sched;
   m_sched = nullptr;
-  m_params = Params{};
-  m_failFn = ZiEvent::FailFn{};
-  return sched;
+  m_params.null();
+  m_failFn = {};
+  guard.unlock();
+  delete sched;
 }
 
 ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
@@ -655,17 +622,17 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
   ZiIP ip;
   if (ZiIP::parse(ip, text)) {
     Guard guard(m_lock);
-    switch (m_state) {
-      case StopPending:
-      case Stopping:
-      case Finalizing:
+    switch (Engine::state()) {
+      case ZmEngineState::StopPending:
+      case ZmEngineState::Stopping:
+      case ZmEngineState::StartPending:
 	guard.unlock();
 	fn(ResolveResult{aresError(ARES_ECANCELLED)});
 	return {};
     }
-    if (!m_sched) init__(Params{}, defltFailFn());
-    bool enabled = (m_params.ipv4() && ip.v4()) ||
-      (m_params.ipv6() && ip.v6());
+    if (!m_params.is<Params>()) init__(Params{}, defltFailFn());
+    bool enabled = (params_().ipv4() && ip.v4()) ||
+      (params_().ipv6() && ip.v6());
     guard.unlock();
     if (enabled) {
       if (fn(ResolveResult{ip})) fn(ResolveResult{});
@@ -688,17 +655,17 @@ ZmRef<Query> Main::resolve_(Host host, ResolveFn fn)
     }
     addQuery_(query);
     query->pending = 0;
-    if (m_params.ipv4()) ++query->pending;
-    if (m_params.ipv6()) ++query->pending;
+    if (params_().ipv4()) ++query->pending;
+    if (params_().ipv6()) ++query->pending;
 #ifdef __GNUC__
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #endif
-    if (m_params.ipv4())
+    if (params_().ipv4())
       ares_gethostbyname(
 	m_channel, query->name.ndata(), AF_INET,
 	ZiResolver_AQueryCB, query);
-    if (m_params.ipv6())
+    if (params_().ipv6())
       ares_gethostbyname(
 	m_channel, query->name.ndata(), AF_INET6,
 	ZiResolver_AAAAQueryCB, query);
@@ -779,7 +746,7 @@ void Main::socketState_(
 {
   Zi::Socket s = ziSocket(socket);
   m_loop.delSocket(s);
-  if (m_loop.stopping()) return;
+  if (!m_up || m_loop.stopping()) return;
   if (!readable && !writable) {
     armTimer_();
     return;
@@ -797,7 +764,7 @@ void Main::socketState_(
 
 void Main::process_(ares_socket_t readFD, ares_socket_t writeFD)
 {
-  if (m_channel && !m_loop.stopping()) {
+  if (m_up && m_channel && !m_loop.stopping()) {
     ares_process_fd(m_channel, readFD, writeFD);
     armTimer_();
   }
@@ -805,7 +772,7 @@ void Main::process_(ares_socket_t readFD, ares_socket_t writeFD)
 
 void Main::armTimer_()
 {
-  if (!m_sched || !m_channel || m_loop.stopping()) return;
+  if (!m_up || !m_sched || !m_channel || m_loop.stopping()) return;
 
   timeval tv;
   timeval *timeout = ares_timeout(m_channel, nullptr, &tv);

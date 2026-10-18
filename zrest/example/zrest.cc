@@ -774,7 +774,9 @@ int main(int argc, char **argv)
   Zrest::Limits limits;
   limits.maxPending = options.maxPending;
   config.limits(limits);
-  auto h2 = Zhttp::H2Config{}.caPath(options.ca).policy(h2Policy);
+  auto h2 = Zhttp::H2Config{}.tls([&options](auto &tls) {
+    tls.caPath(options.ca);
+  }).policy(h2Policy);
   auto quic = Zhttp::QUICConfig{}.caPath(options.ca)
     .keyLogPath(options.keyLog).heartbeat(options.quicHeartbeat ?
       ZuTime{options.quicHeartbeat} : ZuTime{});

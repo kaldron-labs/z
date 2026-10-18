@@ -16,6 +16,7 @@
 #include <zlib/ZuPtr.hh>
 
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLHash.hh>
 #include <zlib/ZmRef.hh>
 
@@ -85,7 +86,7 @@ using HPackTbl = ZhttpHPackTbl(
   ("transfer-encoding", ""), ("user-agent", ""), ("vary", ""),
   ("via", ""), ("www-authenticate", ""));
 
-ZtEnumStruct(ZhttpAPI, HPackFailure, uint8_t,
+ZtEnumStruct(ZhttpAPI, HPackFailure, int8_t,
   None, Truncated, Integer, String, Index, Capacity, HeaderList);
 
 using HPackString =
@@ -108,9 +109,8 @@ using HPackNameSet = ZmHashKV<
   ZmHashLock<ZmNoLock,
     ZmHashHeapID<"Zhttp.H2.HPack.NeverIndex">>>;
 
-enum class HPackSeedState : uint8_t {
-  Cold, Warm, Reserved, Frozen, Disabled
-};
+ZtEnumStruct(ZhttpAPI, HPackSeedState, int8_t,
+  Cold, Warm, Reserved, Frozen, Disabled);
 
 struct HPackWarmEntry {
   ZuBSpan	name;
@@ -173,9 +173,20 @@ struct HPackTxNameEntry {
 using HPackTxEntries =
   ZtArray<HPackTxEntry, ZtArrayHeapID<"Zhttp.H2.HPack.TxEntries">>;
 using HPackTxExact = ZmLHash<HPackTxExactEntry,
-  ZmLHashKey<HPackTxExactEntry::KeyAxor, ZmLHashLocal<>>>;
+  ZmLHashKey<HPackTxExactEntry::KeyAxor,
+    ZmLHashLocal<>>>;
 using HPackTxNames = ZmLHash<HPackTxNameEntry,
-  ZmLHashKey<HPackTxNameEntry::KeyAxor, ZmLHashLocal<>>>;
+  ZmLHashKey<HPackTxNameEntry::KeyAxor,
+    ZmLHashLocal<>>>;
+
+struct HPackTxExactHash : ZmNHeap<HPackTxExactHash>, HPackTxExact {
+friend inline ZuStringT<"Zhttp.HPack.Exact"> ZmNHeapID(HPackTxExactHash *);
+  using HPackTxExact::HPackTxExact;
+};
+struct HPackTxNameHash : ZmNHeap<HPackTxNameHash>, HPackTxNames {
+friend inline ZuStringT<"Zhttp.HPack.Names"> ZmNHeapID(HPackTxNameHash *);
+  using HPackTxNames::HPackTxNames;
+};
 
 class ZhttpAPI HPackTxTable {
 public:
@@ -208,8 +219,8 @@ private:
   void rebuild_();
 
   HPackTxEntries	m_entries;
-  ZuPtr<HPackTxExact> m_exact;
-  ZuPtr<HPackTxNames> m_names;
+  ZuPtr<HPackTxExactHash> m_exact;
+  ZuPtr<HPackTxNameHash> m_names;
   unsigned	m_head = 0;
   uint64_t	m_insertCount = 0;
   uint32_t	m_capacity = 0;
@@ -224,7 +235,7 @@ public:
   static int staticNameIndex(ZuBSpan);
 };
 
-ZtEnumStruct(ZhttpAPI, HPackRep, uint8_t,
+ZtEnumStruct(ZhttpAPI, HPackRep, int8_t,
   Indexed, Incremental, NonIndexed, NeverIndexed);
 
 struct HPackPlan {
@@ -405,6 +416,7 @@ public:
 	if (!bound->table.insert({seed.name, seed.value})) return false;
 	++bound->selected;
       }
+      m_suppressed.ensure(bound->selected);
     }
     m_plan = nullptr;
     m_seedState = HPackSeedState::Warm;
@@ -414,7 +426,7 @@ public:
   void commitBlock();
   void rollbackBlock();
   bool reserved() const { return m_seedState == HPackSeedState::Reserved; }
-  HPackSeedState seedState() const { return m_seedState; }
+  HPackSeedState::T seedState() const { return m_seedState; }
   const HPackBytes &updateBytes() const { return m_updateBytes; }
   void commitUpdates();
 
@@ -424,8 +436,11 @@ public:
     if (bootstrap && m_plan)
       if (auto entry = m_plan->lookup.find(field)) {
 	if (never) {
-	  if (entry->abs < m_plan->selected)
-	    m_suppressed.push(unsigned(entry->abs));
+	  if (entry->abs < m_plan->selected &&
+	      !m_suppressed[unsigned(entry->abs)]) {
+	    m_suppressed[unsigned(entry->abs)] = 1;
+	    ++m_suppressedCount;
+	  }
 	  return emitLookup_(out, field, true);
 	}
 	auto seed = m_plan->seed(unsigned(entry->abs));
@@ -549,12 +564,14 @@ private:
   uint32_t	m_signalledCapacity = 4096;
   uint32_t	m_pendingMin = 0;
   uint32_t	m_pendingFinal = 0;
-  ZtArray<unsigned, ZtArrayHeapID<"Zhttp.H2.HPack.Suppressed">>
-		m_suppressed;
+  using Suppressed =
+    ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.H2.HPack.Suppressed">>;
+  Suppressed	m_suppressed;
+  unsigned	m_suppressedCount = 0;
   BoundPlans	m_plans;
   BoundPlan	*m_plan = nullptr;
   uint32_t	m_seedCapacity = 0;
-  HPackSeedState m_seedState = HPackSeedState::Cold;
+  HPackSeedState::T m_seedState = HPackSeedState::Cold;
   bool		m_pending = false;
 };
 

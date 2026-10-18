@@ -440,7 +440,7 @@ public:
       profile.extendedConnect(true);
       quic = ZuMv(profile);
     } else if constexpr (ZuIsSame<Profile, Zhttp::H1TLS>{}) {
-      static_cast<Zhttp::TLSConfig &>(tls) = ZuMv(profile);
+      tls.tls() = ZuMv(profile);
     } else {
       profile.extendedConnect(true);
       tls = ZuMv(profile);
@@ -574,7 +574,7 @@ public:
       config.quic(ZuMv(profile));
     } else if constexpr (ZuIsSame<Profile, Zhttp::H1TLS>{}) {
       Zhttp::H2Config tls;
-      static_cast<Zhttp::TLSConfig &>(tls) = ZuMv(profile);
+      tls.tls() = ZuMv(profile);
       config.tls(ZuMv(tls));
     } else {
       profile.extendedConnect(true);

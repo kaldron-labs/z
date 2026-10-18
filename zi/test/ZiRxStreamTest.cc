@@ -577,8 +577,8 @@ void testGeometry()
 
   RxBase base{64, 1, 2};
   ZiRxLayer<RxBase> one{base, 3, 4};
-  ZiRxLayer<decltype(one)> two{one, 5, 6};
-  ZiRxLayer<decltype(two)> three{two, 7, 8};
+  ZiRxLayer two{one, 5, 6};
+  ZiRxLayer three{two, 7, 8};
 
   ZuCheck(three.maxSize() == 64);
   ZuCheck(three.headRoom() == 16);

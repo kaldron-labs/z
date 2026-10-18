@@ -89,6 +89,32 @@ the native link's constructor arguments, such as the optional subprotocol.
 The server's `connected(link, info)` callback publishes the established native
 link. Retain a `ZmRef` to use it outside that callback; release retained native
 links after `stop()` and before `final()`, while their hub still exists.
+All stdio, HTTP and WebSocket endpoints allow `final()` directly after an
+initialization that was never started. After start, complete `stop()` before
+`final()`; finalization asserts stopped state and never initiates shutdown.
+Stop attempts every shutdown step and completes in Stopped even if its
+boolean result reports a cleanup failure. A later start performs fresh startup;
+stopped resources are never restarted to undo shutdown. Earlier request or
+protocol failures remain with their existing application callbacks.
+Each endpoint has one complete-component `ZmEngine` boundary. Shared stdio
+facades use the engine in `IOEndpoint`; HTTP and WebSocket endpoints include
+transport and RPC drains in their own engines. `start(fn)` and `stop(fn)` have
+boolean completion, support repeated calls and pending opposite operations,
+and their synchronous overloads are main-thread conveniences. Final never
+blocks. A completed stop permits a new start without another init;
+pending calls, completion posts and inbound history from the old run are
+retired before new admission opens. WebSocket start promises transport startup;
+connection and RPC readiness retain their separate callbacks.
+
+`StdioConfig::input()` and `output()` borrow the configured handles. The caller
+keeps them valid through endpoint finalization and closes them when no longer
+needed. Defaults borrow process stdin/stdout. Each run duplicates those handles
+with `ZiFile::dup`, owns the duplicates, and closes/drains them during stop.
+Restart reconstructs worker state from configuration. Closing a caller-owned
+pipe writer still produces EOF normally; endpoint stop does not close an
+application's original handle. Invalid/closed configuration handles cause
+startup failure after rollback, rather than reuse of a closed runtime handle.
+
 Server `call`, `notify`,
 `callBatch` and `notifyBatch` take that established link as their first argument;
 handlers receive the native link before their completion token. RPC state is

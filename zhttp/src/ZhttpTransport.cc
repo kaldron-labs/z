@@ -4,7 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZuICmp.hh>
+#include <zlib/ZuArray.hh>
+#include <zlib/ZuMatcher.hh>
 
 #include <zlib/ZhttpTransport.hh>
 
@@ -16,12 +17,24 @@ ZtEnumImplStruct(H2Policy);
 
 Migration::T migrationMode(ZuCSpan s, Migration::T deflt)
 {
-  if (ZuICmp<ZuCSpan>::equals(s, "disabled") ||
-      ZuICmp<ZuCSpan>::equals(s, "disable"))
-    return Migration::Disabled;
-  if (ZuICmp<ZuCSpan>::equals(s, "passive")) return Migration::Passive;
-  if (ZuICmp<ZuCSpan>::equals(s, "active")) return Migration::Active;
-  return deflt;
+  struct MigrationIDs {
+    using Keys = ZuStringTL<"disabled", "disable", "passive", "active">;
+    enum { MaxLen = 8 }; // "disabled"
+  };
+  if (s.length() > MigrationIDs::MaxLen) return deflt;
+  ZuBArray<MigrationIDs::MaxLen> lower;
+  for (unsigned i = 0, n = s.length(); i < n; ++i) {
+    uint8_t c = s[i];
+    lower[i] = c >= 'A' && c <= 'Z' ? c + ('a' - 'A') : c;
+  }
+  static constexpr auto matcher = ZuMatcher<MigrationIDs>();
+  switch (matcher.exact(ZuBSpan{lower.data(), s.length()})) {
+    case 0:
+    case 1: return Migration::Disabled;
+    case 2: return Migration::Passive;
+    case 3: return Migration::Active;
+    default: return deflt;
+  }
 }
 
 void ProfileCore::profiles(unsigned n)
@@ -118,7 +131,9 @@ void Hubs::stopNext_()
 {
   while (m_next) {
     auto &entry = m_entries[--m_next];
-    if (!entry.started) continue;
+    // Best-effort shutdown attempts every initialized hub, including when a
+    // preceding hub reported failure. Startup rollback visits started hubs.
+    if (m_rollback && !entry.started) continue;
     entry.stop(entry.ptr,
 	DoneFn{this, [](Hubs *hubs, bool ok) {
 	  hubs->stopped_(ok);
@@ -135,6 +150,7 @@ void Hubs::stopNext_()
 void Hubs::stopped_(bool ok)
 {
   if (!ok) m_stopOK = false;
+  // A completed stop retires this activation even when cleanup reports failure.
   m_entries[m_next].started = false;
   stopNext_();
 }

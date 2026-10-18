@@ -74,7 +74,7 @@ friend inline ZuStringT<"Zum.CatalogPublishSaga"> ZmNHeapID(CatalogPublishSaga *
 	  auto roleID = item.id;
 	  auto key = ZuStructKeyT<Role, 1>{ZuStructKey<1>(item)};
 	  table->template find<1>(0, ZuMv(key),
-	    [this, roleID, item = ZuMv(item), apply = ZuMv(apply)](
+	    [roleID, item = ZuMv(item), apply = ZuMv(apply)](
 		ZdbRowRef<Role> row) mutable {
 	      // A later release can have cleared the owner before this
 	      // insertion is replayed.  Let the saga's intended UN decide

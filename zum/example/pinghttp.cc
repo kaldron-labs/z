@@ -90,35 +90,30 @@ using Responses = ZuTypeList<Response<200>, Response<201>, Response<204>,
   Response<409>, Response<412>, Response<428>, Response<415>, Response<422>, Response<429>, Response<500>,
   Response<501>, Response<502>, Response<503>, Response<504>>;
 
-struct Call : public ZmNHeap<Call>, public ZmObject  {
+struct CallReturn {
+  PingHTTPState *state;
+  ~CallReturn();
+};
+
+struct Call : public ZmNHeap<Call>, public ZmObject, public CallReturn {
 friend inline ZuStringT<"Zum.pinghttp.Call"> ZmNHeapID(Call *);
 
-  mutable String	contentType;
-  mutable String	authorization;
-  String ifMatch;
-  String idempotence;
+  mutable ServiceHTTPRequest request;
+  mutable ServiceHTTPResponse response;
   mutable String	target;
-  mutable String	body;
-  ServiceManifest	manifest;
   mutable ServiceHTTPDoneFn complete;
   mutable ZmAtomic<unsigned> done = 0;
 
   ~Call() {
-    if (authorization.mutable_())
-      ZuClear(authorization);
-    if (body.mutable_()) ZuClear(body);
+    if (request.authorization.mutable_()) ZuClear(request.authorization);
+    if (request.body.mutable_()) ZuClear(request.body);
+    if (response.body.mutable_()) ZuClear(response.body);
   }
 
-  void finish(unsigned status, String value) const {
-    if (done.cmpXch(1, 0)) return;
-    if (authorization.mutable_())
-      ZuClear(authorization);
-    authorization.null();
-    if (body.mutable_()) ZuClear(body);
-    body.null();
-    auto fn = ZuMv(complete);
-    if (fn) fn(ServiceHTTPResponse{status, ZuMv(value)});
-  }
+  Call(PingHTTPState *state_, ServiceHTTPRequest request_, ServiceHTTPDoneFn fn) :
+    CallReturn{state_}, request{ZuMv(request_)}, complete{ZuMv(fn)} { }
+
+  void finish(unsigned status, String value) const;
 
   template <typename Link, typename Value>
   void process(Link *, const Value *value) const {
@@ -141,14 +136,14 @@ struct Request : public Zrest::ReqBuilder<Impl, Call> {
   using Responses = PingHTTP_::Responses;
 
   const String &queryObject(const Call *call) const { return call->target; }
-  const String &bodyObject(const Call *call) const { return call->body; }
+  const String &bodyObject(const Call *call) const { return call->request.body; }
   template <typename Key, typename L> void header(L &&l) const {
     if constexpr (Key{}() == "content-type")
-      l(this->object->contentType);
+      l(this->object->request.contentType);
     else if constexpr (Key{}() == "authorization")
-      l(this->object->authorization);
-    else if constexpr (Key{}() == "if-match") l(this->object->ifMatch);
-    else if constexpr (Key{}() == "idempotency-key") l(this->object->idempotence);
+      l(this->object->request.authorization);
+    else if constexpr (Key{}() == "if-match") l(this->object->request.ifMatch);
+    else if constexpr (Key{}() == "idempotency-key") l(this->object->request.idempotence);
     else Base::template header<Key>(ZuFwd<L>(l));
   }
 };
@@ -163,7 +158,7 @@ struct PUT : public Request<PUT, Zhttp::Method::PUT,
   static constexpr unsigned SignBodyBufSize = ResponseMax;
 
   const CatalogData &bodyObject(const Call *call) const {
-    return call->manifest.catalog;
+    return call->request.manifest.catalog;
   }
   template <typename S>
   void prefixBody(S &s, const Call *) const {
@@ -185,7 +180,7 @@ struct PUT : public Request<PUT, Zhttp::Method::PUT,
     ZfJSON::saveValue<
 	ZuFacet::JSON, ZfFieldFilter::Save, ZfFieldTC::UInt64,
 	ZuTypeList<ZuFieldProp::JSON::String<>>>(
-	  buf, call->manifest.revision);
+	  buf, call->request.manifest.revision);
     buf << '}';
   }
 };
@@ -261,7 +256,9 @@ public:
       .secure(url.scheme == Zhttp::Scheme::https).tcp(true)
       .tls(url.scheme == Zhttp::Scheme::https).quic(false);
     if (!Base::init(Zhttp::HubConfig{mx, "rx", "tx"}, 1,
-        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.caPath(caPath),
+        config, Zhttp::TCPConfig{}, Zhttp::H2Config{}.tls([&caPath](auto &tls) {
+          tls.caPath(caPath);
+        }),
         Zhttp::QUICConfig{})) return false;
     Base::txErrorFn(ZiTxErrorFn{[](ZeException &e) {
       ZiLOG(Error, "zumd", ([e](auto &s) {
@@ -269,7 +266,7 @@ public:
       }));
       return false;
     }});
-    return Base::pool(0, Zhttp::Destination{url.origin()}) && Base::start();
+    return Base::pool(0, Zhttp::Destination{url.origin()});
   }
 
   bool origin(const Zhttp::URLView &url) const {
@@ -277,16 +274,7 @@ public:
       url.port == m_port && url.ipv6Literal == m_ipv6Literal;
   }
 
-  void send(ServiceHTTPRequest request, ServiceHTTPDoneFn complete,
-      const Zhttp::URLView &url) {
-    ZmRef<Call> call = new Call{};
-    call->contentType = ZuMv(request.contentType);
-    call->authorization = ZuMv(request.authorization);
-    call->body = ZuMv(request.body);
-    call->manifest = ZuMv(request.manifest);
-    call->ifMatch = ZuMv(request.ifMatch);
-    call->idempotence = ZuMv(request.idempotence);
-    call->complete = ZuMv(complete);
+  void send(ZmRef<Call> call, const Zhttp::URLView &url) {
     if (url.path) {
       auto path = url.path;
       if (path[0] == '/') path.offset(1);
@@ -295,7 +283,7 @@ public:
     if (url.hasQuery) call->target << '?' << url.query;
     ZmRef<ReqBuilder> builder = new ReqBuilder{};
     builder->id = ++m_id;
-    switch (request.method) {
+    switch (call->request.method) {
       case ServiceMethod::GET:
         builder->template init<GET>(call.ptr());
         break;
@@ -326,28 +314,26 @@ friend inline ZuStringT<"Zum.PingHTTP.Client"> ZmNHeapID(Client *);
 
 } // namespace PingHTTP_
 
-class PingHTTPState : public ZmNHeap<PingHTTPState>, public ZmObject {
+namespace PingHTTPCredit {
+  enum : uint64_t { Closed = uint64_t{1} << 62, Count = Closed - 1 };
+}
+
+class PingHTTPState : public ZmNHeap<PingHTTPState>, public ZmObject,
+    private ZmEngine<PingHTTPState> {
 friend inline ZuStringT<"Zum.PingHTTP.State"> ZmNHeapID(PingHTTPState *);
+friend ZmEngine<PingHTTPState>;
+
+  using Engine = ZmEngine<PingHTTPState>;
+  using Call = PingHTTP_::Call;
+  using Work = ZmRef<Call>;
 
 public:
-  bool add_(ZiMultiplex *mx, const Zhttp::URLView &url, ZuCSpan caPath) {
-    if (!url.host || url.hasFragment ||
-        (url.scheme != Zhttp::Scheme::https &&
-          !(url.scheme == Zhttp::Scheme::http &&
-            (url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1"))))
-      return false;
-    for (auto &client: m_clients)
-      if (client->origin(url)) return true;
-    if (m_clients.length() >= PingHTTP_::DestinationMax) return false;
-    ZmRef<PingHTTP_::Client> client = new PingHTTP_::Client{};
-    if (!client->init(mx, url, caPath)) return false;
-    m_clients.push(ZuMv(client));
-    return true;
-  }
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
 
-  bool add_(ZiMultiplex *mx, ZuCSpan origin, ZuCSpan caPath) {
-    Zhttp::URL parsed{origin};
-    return parsed.ok() && add_(mx, parsed.url(), caPath);
+  template <typename L> void post(L &&fn) {
+    m_mx->run(ZuFwd<L>(fn), m_mx->rxThread());
   }
 
   bool init(ZiMultiplex *mx, ZuCSpan issuer, ZuCSpan managementIssuer,
@@ -357,9 +343,7 @@ public:
     m_resolverOwned = !ZiResolver::instance()->initialized();
     if (m_resolverOwned)
       ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
-    ZiResolver::start();
-    if (!add_(mx, issuer, caPath) || !add_(mx, managementIssuer, caPath) ||
-	!add_(mx, management, caPath)) {
+    if (!add_(issuer) || !add_(managementIssuer) || !add_(management)) {
       final();
       return false;
     }
@@ -367,56 +351,202 @@ public:
   }
 
   void send(ServiceHTTPRequest request, ServiceHTTPDoneFn complete) {
-    Zhttp::URL parsed{request.url};
-    auto url = parsed.url();
-    if (!parsed.ok() || url.hasFragment) {
-      complete(ServiceHTTPResponse{});
-      return;
-    }
-    ZmRef<PingHTTP_::Client> client;
-    for (auto &candidate: m_clients)
-      if (candidate->origin(url)) { client = candidate; break; }
-    if (!client) {
-      if (!add_(m_mx, url, m_caPath)) {
-	complete(ServiceHTTPResponse{});
-	return;
+    uint64_t count;
+    do {
+      count = m_credit.load_();
+      if (count & PingHTTPCredit::Closed) {
+        complete(ServiceHTTPResponse{});
+        return;
       }
-      for (auto &candidate: m_clients)
-	if (candidate->origin(url)) { client = candidate; break; }
-      if (!client) { complete(ServiceHTTPResponse{}); return; }
-    }
-    client->txRun(0, [client, request = ZuMv(request),
-        complete = ZuMv(complete)]() mutable {
-      Zhttp::URL parsed{request.url};
-      auto url = parsed.url();
-      if (!parsed.ok() || url.hasFragment || !client->origin(url)) {
-	complete(ServiceHTTPResponse{});
-	return;
-      }
-      client->send(ZuMv(request), ZuMv(complete), url);
-    });
+    } while (m_credit.cmpXch(count + 1, count) != count);
+    Work call = new Call{this, ZuMv(request), ZuMv(complete)};
+    post([this, call = ZuMv(call)]() mutable { send_(ZuMv(call)); });
+  }
+
+  void retire() {
+    post([this]() { --m_credit; drain_(); });
   }
 
   void final() {
-    for (auto &client: m_clients) {
-      client->stop();
-      client->final();
-    }
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!(m_credit.load_() & PingHTTPCredit::Count));
+    ZmAssert_(!m_children && !m_draining);
+    for (auto &client: m_clients) client->final();
     m_clients.null();
     if (m_resolverOwned) {
-      ZiResolver::stop();
       ZiResolver::final();
       m_resolverOwned = false;
     }
     m_caPath.null();
     m_mx = nullptr;
   }
+
 private:
-  ZtArray<ZmRef<PingHTTP_::Client>> m_clients;
+  bool add_(const Zhttp::URLView &url) {
+    if (!url.host || url.hasFragment ||
+        (url.scheme != Zhttp::Scheme::https &&
+          !(url.scheme == Zhttp::Scheme::http &&
+            (url.host == "localhost" || url.host == "127.0.0.1" || url.host == "::1"))))
+      return false;
+    for (auto &client: m_clients)
+      if (client->origin(url)) return true;
+    if (m_clients.length() >= PingHTTP_::DestinationMax) return false;
+    ZmRef<PingHTTP_::Client> client = new PingHTTP_::Client{};
+    if (!client->init(m_mx, url, m_caPath)) {
+      client->final();
+      return false;
+    }
+    m_clients.push(ZuMv(client));
+    return true;
+  }
+
+  bool add_(ZuCSpan origin) {
+    Zhttp::URL parsed{origin};
+    return parsed.ok() && add_(parsed.url());
+  }
+
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    if (m_resolverOwned) {
+      ZiResolver::start([this](bool ok) {
+        if (!ok) { Engine::started(false); return; }
+        post([this]() { startClient_(0); });
+      });
+      return;
+    }
+    if (ZiResolver::instance()->state() != ZmEngineState::Running) {
+      Engine::started(false);
+      return;
+    }
+    post([this]() { startClient_(0); });
+  }
+
+  void startClient_(unsigned offset) {
+    if (offset == m_clients.length()) {
+      m_credit = 0;
+      Engine::started(true);
+      return;
+    }
+    m_clients[offset]->start([this, offset](bool ok) {
+      post([this, offset, ok]() {
+        if (!ok) { stopClients_(true); return; }
+        startClient_(offset + 1);
+      });
+    });
+  }
+
+  void stop_() {
+    m_credit |= PingHTTPCredit::Closed;
+    post([this]() { stopClients_(false); });
+  }
+
+  void stopClients_(bool failed) {
+    m_stopOK = true;
+    m_draining = true;
+    m_children = m_clients.length();
+    // At most DestinationMax (eight) children, including a possible dynamic
+    // destination whose start is in progress. Join each child's engine.
+    for (auto &client: m_clients) {
+      client->stop([this, failed](bool ok) {
+        post([this, failed, ok]() {
+          m_stopOK &= ok;
+          --m_children;
+          drain_(failed);
+        });
+      });
+    }
+    drain_(failed);
+  }
+
+  void drain_(bool failed = false) {
+    if (!m_draining || m_children ||
+        (m_credit.load_() & PingHTTPCredit::Count)) return;
+    m_draining = false;
+    if (m_resolverOwned) {
+      ZiResolver::stop([this, failed](bool ok) {
+        post([this, failed, ok]() {
+          m_stopOK &= ok;
+          finish_(failed);
+        });
+      });
+      return;
+    }
+    finish_(failed);
+  }
+
+  void finish_(bool failed) {
+    if (failed) Engine::started(false);
+    else Engine::stopped(m_stopOK);
+  }
+
+  void send_(Work call) {
+    if (m_credit.load_() & PingHTTPCredit::Closed) { call->finish(0, {}); return; }
+    Zhttp::URL parsed{call->request.url};
+    auto url = parsed.url();
+    if (!parsed.ok() || url.hasFragment || !add_(url)) {
+      call->finish(0, {});
+      return;
+    }
+    PingHTTP_::Client *client = nullptr;
+    for (auto &candidate: m_clients)
+      if (candidate->origin(url)) { client = candidate; break; }
+    ZmAssert_(client);
+    if (client->state() == ZmEngineState::Running) {
+      sendReady_(client, ZuMv(call));
+      return;
+    }
+    client->start([this, client, call = ZuMv(call)](bool ok) mutable {
+      auto work = ZuMv(call);
+      if (!work) return;
+      post([this, client, work = ZuMv(work), ok]() mutable {
+        if (!ok) { work->finish(0, {}); return; }
+        sendReady_(client, ZuMv(work));
+      });
+    });
+  }
+
+  void sendReady_(PingHTTP_::Client *client, Work work) {
+    if (m_credit.load_() & PingHTTPCredit::Closed) {
+      work->finish(0, {});
+      return;
+    }
+    client->txRun(0, [client, work = ZuMv(work)]() mutable {
+      Zhttp::URL parsed{work->request.url};
+      client->send(ZuMv(work), parsed.url());
+    });
+  }
+
+private:
+  ZtArray<ZmRef<PingHTTP_::Client>,
+    ZtArrayHeapID<"Zum.PingHTTP.Clients">> m_clients;
   ZiMultiplex *m_mx = nullptr;
   String m_caPath;
   bool m_resolverOwned = false;
+  unsigned m_children = 0;
+  bool m_stopOK = true;
+  bool m_draining = false;
+  ZmAtomic<uint64_t> m_credit = PingHTTPCredit::Closed;
 };
+
+PingHTTP_::CallReturn::~CallReturn()
+{
+  state->retire();
+}
+
+void PingHTTP_::Call::finish(unsigned status, String value) const
+{
+  if (done.cmpXch(1, 0)) return;
+  if (request.authorization.mutable_()) ZuClear(request.authorization);
+  request.authorization.null();
+  if (request.body.mutable_()) ZuClear(request.body);
+  request.body.null();
+  response = ServiceHTTPResponse{status, ZuMv(value)};
+  ZmRef<Call> call = const_cast<Call *>(this);
+  state->post([call = ZuMv(call)]() mutable {
+    auto complete = ZuMv(call->complete);
+    if (complete) complete(ZuMv(call->response));
+  });
+}
 
 PingHTTP::PingHTTP() = default;
 PingHTTP::~PingHTTP() { final(); }
@@ -430,6 +560,23 @@ bool PingHTTP::init(ZiMultiplex *mx, ZuCSpan issuer,
     return false;
   m_state = ZuMv(state);
   return true;
+}
+
+bool PingHTTP::start() { return m_state && m_state->start(); }
+void PingHTTP::start(CtrlFn fn)
+{
+  if (!m_state) { fn(false); return; }
+  m_state->start(ZuMv(fn));
+}
+bool PingHTTP::stop() { return !m_state || m_state->stop(); }
+void PingHTTP::stop(CtrlFn fn)
+{
+  if (!m_state) { fn(true); return; }
+  m_state->stop(ZuMv(fn));
+}
+int PingHTTP::state() const
+{
+  return m_state ? m_state->state() : ZmEngineState::Stopped;
 }
 
 ServiceHTTPFn PingHTTP::fn() const

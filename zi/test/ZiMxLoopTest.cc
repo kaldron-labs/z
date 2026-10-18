@@ -7,9 +7,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef linux
+#include <errno.h>
+#include <signal.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
 #include "ZiTestPorts.hh"
@@ -692,6 +702,51 @@ void testMxWatch()
   ZuCheck(state.rootDels == 1);
 }
 
+#ifdef linux
+void testNativeStartFailure()
+{
+  ZuTestScopeRT(testNativeStartFailure);
+  // Keep descriptor limits and failure-time cleanup isolated from the harness.
+  pid_t child = ::fork();
+  ZuCheckRT(child >= 0);
+  if (child < 0) return;
+  if (!child) {
+    ::alarm(20);
+    // Error reporting must already own its ring: the injection targets native
+    // multiplexer setup, not lazy logger initialization under descriptor limits.
+    ZiLog::init("ZiMxLoopTest");
+    ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+    ZiLog::start();
+    {
+      ZmAtomic<unsigned> retired = 0;
+      ZiMultiplex mx;
+      mx.threadFinal([&retired]() { ++retired; });
+      struct rlimit saved;
+      if (::getrlimit(RLIMIT_NOFILE, &saved)) _exit(1);
+      struct rlimit limited = saved;
+      limited.rlim_cur = 0;
+      if (::setrlimit(RLIMIT_NOFILE, &limited)) _exit(2);
+      bool started = mx.start();
+      if (::setrlimit(RLIMIT_NOFILE, &saved)) _exit(3);
+      if (started || mx.state() != ZmEngineState::Stopped) _exit(4);
+      // Failure is reported only after every worker has exited. In particular,
+      // destructor cleanup must not be what retires this failed start's workers.
+      unsigned n = mx.params().nThreads();
+      if (retired.load_() != n) _exit(5);
+      if (!mx.start() || !mx.stop()) _exit(6);
+      if (retired.load_() != n + n) _exit(7);
+    }
+    ZiLog::stop();
+    _exit(0);
+  }
+  int status = 0;
+  pid_t result;
+  do { result = ::waitpid(child, &status, 0); } while (result < 0 && errno == EINTR);
+  ZuCheckRT(result == child);
+  ZuCheckRT(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+}
+#endif
+
 void testWakeBurst()
 {
   ZuTestScope(testWakeBurst);
@@ -718,6 +773,9 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+#ifdef linux
+  ZuTestCall(testNativeStartFailure);
+#endif
   ZuTestCall(testMulticastOptions);
   ZuTestCall(testTcpLoopbackIPv4);
   ZuTestCall(testTcpLoopbackIPv6);

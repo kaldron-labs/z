@@ -14,6 +14,7 @@
 namespace Zhttp { namespace H2 {
 
 ZtEnumImplStruct(HPackFailure);
+ZtEnumImplStruct(HPackSeedState);
 ZtEnumImplStruct(HPackRep);
 
 using HPackStatic_ = StaticTable<HPackTbl>;
@@ -27,15 +28,15 @@ struct NeverIndexIDs {
   using Keys = ZuStringTL<"authorization", "cookie", "set-cookie">;
 };
 
-static int hpackStaticName_(ZuBSpan value)
+static int staticName_(ZuBSpan value)
 {
   static constexpr auto matcher = ZuMatcher<HPackNameIDs>();
   return matcher.exact(value);
 }
 
-static int hpackStaticNameIndex_(ZuBSpan value)
+static int staticNameIndex_(ZuBSpan value)
 {
-  int i = hpackStaticName_(value);
+  int i = staticName_(value);
   if (i < 0) return -1;
   int index = -1;
   ZuSwitch::dispatch<HPackStatic_::Names::N>(
@@ -46,9 +47,9 @@ static int hpackStaticNameIndex_(ZuBSpan value)
   return index;
 }
 
-static int hpackStaticIndex_(ZuBSpan name, ZuBSpan value)
+static int staticIndex_(ZuBSpan name, ZuBSpan value)
 {
-  int i = hpackStaticName_(name);
+  int i = staticName_(name);
   if (i < 0) return -1;
   int index = -1;
   ZuSwitch::dispatch<HPackStatic_::Names::N>(
@@ -146,8 +147,8 @@ bool HPackTxTable::init(uint32_t capacity)
   uint32_t n = capacity>>5;
   if (n) {
     m_entries.ensure(n);
-    m_exact = new HPackTxExact{ZmHashParams{n}};
-    m_names = new HPackTxNames{ZmHashParams{n}};
+    m_exact = new HPackTxExactHash{ZmHashParams{n}};
+    m_names = new HPackTxNameHash{ZmHashParams{n}};
   }
   m_capacity = capacity < 4096 ? capacity : 4096;
   return m_entries.size() >= n &&
@@ -260,6 +261,9 @@ bool HPackTxTable::dropOldest_()
   if (name && name->abs == entry.abs)
     m_names->del(Compression::NameView{entry.name});
   ++m_head;
+  // Batch at least 64 evictions; half-dead order bounds survivor moves by
+  // evictions + 1. Hash rebuild still scans allocated slots. This minimum is
+  // an unmeasured policy heuristic. Dead strings remain owned until compaction.
   if (m_head == m_entries.length()) {
     m_entries.length(0);
     m_head = 0;
@@ -317,13 +321,13 @@ bool HPack::staticField(uint64_t index, Field &field)
 
 int HPack::staticIndex(ZuBSpan name, ZuBSpan value)
 {
-  int index = hpackStaticIndex_(name, value);
+  int index = staticIndex_(name, value);
   return index < 0 ? -1 : index + 1;
 }
 
 int HPack::staticNameIndex(ZuBSpan name)
 {
-  int index = hpackStaticNameIndex_(name);
+  int index = staticNameIndex_(name);
   return index < 0 ? -1 : index + 1;
 }
 
@@ -537,6 +541,7 @@ void HPackEncoder::final()
   m_pendingFinal = 0;
   m_plans.length(0);
   m_suppressed.length(0);
+  m_suppressedCount = 0;
   m_plan = nullptr;
   m_seedCapacity = 0;
   m_seedState = HPackSeedState::Cold;
@@ -653,7 +658,13 @@ bool HPackEncoder::beginBlock(unsigned plan, bool &bootstrap)
   switch (m_seedState) {
     case HPackSeedState::Warm:
       m_suppressed.length(0);
+      m_suppressedCount = 0;
       m_plan = plan < m_plans.length() ? &m_plans[plan] : nullptr;
+      if (m_plan) {
+	unsigned n = m_plan->selected;
+	m_suppressed.length(n);
+	for (unsigned i = 0; i < n; ++i) m_suppressed[i] = 0;
+      }
       m_seedState = HPackSeedState::Reserved;
       bootstrap = true;
       return true;
@@ -671,20 +682,18 @@ void HPackEncoder::commitBlock()
 {
   if (m_seedState == HPackSeedState::Reserved) {
     if (m_plan) {
-      if (!m_suppressed.length()) m_table = ZuMv(m_plan->table);
+      if (!m_suppressedCount) m_table = ZuMv(m_plan->table);
       else {
 	m_table.capacity(m_plan->table.capacity());
 	for (unsigned i = 0; i < m_plan->selected; ++i) {
-	  bool suppressed = false;
-	  for (auto id : m_suppressed)
-	    if (id == i) { suppressed = true; break; }
-	  if (suppressed) continue;
+	  if (m_suppressed[i]) continue;
 	  auto seed = m_plan->seed(i);
 	  (void)m_table.insert({seed.name, seed.value});
 	}
       }
     }
     m_suppressed.length(0);
+    m_suppressedCount = 0;
     m_seedState = HPackSeedState::Frozen;
   }
 }
@@ -731,8 +740,10 @@ void HPackEncoder::detachNeverIndex_()
 {
   if (m_neverIndex->refCount() <= 1) return;
   ZmRef<HPackNameSet> copy{new HPackNameSet};
-  auto i = m_neverIndex->iter();
-  while (auto entry = i()) copy->add(entry->key(), true);
+  {
+    auto i = m_neverIndex->iter();
+    while (auto entry = i()) copy->add(entry->key(), true);
+  }
   m_neverIndex = ZuMv(copy);
 }
 

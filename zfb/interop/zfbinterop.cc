@@ -216,7 +216,7 @@ static void unions()
 
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<32> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage, 32};
+  Zfb::Builder builder{storage, 32};
   Message message;
   message.seq = 17;
   message.body.p<2>(Record{42});
@@ -487,7 +487,7 @@ static void nested()
   auto record = schema->objects()->LookupByKey("test.Record");
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   auto outside = Zfb::save(builder, Record{7});
   auto state = builder.startNested();
   auto inner = builder.startTable();
@@ -504,7 +504,7 @@ static void nested()
   saved << ZuCSpan{extracted};
   auto copyBuf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> copyStorage{copyBuf};
-  Zfb::Builder<decltype(copyStorage)> copy{copyStorage};
+  Zfb::Builder copy{copyStorage};
   auto copiedBody = copy.copyRoot(extracted, 8);
   auto copiedEnvelope = copy.startTable();
   copy.fieldOffset(copiedEnvelope, 0, copiedBody);
@@ -662,7 +662,7 @@ int main(int argc, char **argv)
   child.parent = &parent;
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<32> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage, 32};
+  Zfb::Builder builder{storage, 32};
   auto output = builder.finish(Zfb::save(builder, row));
   ZuCheck(!builder.failed());
   auto statesView = Zfb::view<Root>(output).get<ZfField(Root, states)>();

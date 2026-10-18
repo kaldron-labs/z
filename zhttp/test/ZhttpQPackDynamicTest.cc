@@ -1075,6 +1075,90 @@ void testReceiveLimits()
     "H3 rejects one fragment without further application prompts");
 }
 
+void testPartialData()
+{
+  ZuTestScope(testPartialData);
+
+  ParserStream parser;
+  parser.Base::reset(7, 2);
+  auto headers = messageHeaders(7);
+  parser.push(headers);
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Body,
+    "partial DATA headers accepted");
+  Zhttp::H3::HdrBytes data;
+  putFrame(data, 0x00, ZuBSpan{"abcdefg"});
+  // Simulate a receive window smaller than one DATA frame. Each prefix
+  // must return credit before the peer can supply the next one.
+  unsigned offset = 0;
+  bool credited = true;
+  while (offset < data.length()) {
+    unsigned length = data.length() - offset;
+    if (length > 3) length = 3;
+    Zhttp::H3::HdrBytes prefix;
+    for (unsigned i = 0; i < length; ++i)
+      prefix.push(data[offset + i]);
+    parser.push(prefix);
+    offset += length;
+    credited &= parser.process(parser) == Zhttp::H3::ParserState::Body &&
+	parser.retired == headers.length() + offset && !parser.rx;
+  }
+  ZuCHECK(credited,
+    "each available DATA prefix is delivered and credited independently");
+  ZuCHECK(parser.bodyData == "abcdefg" && !parser.completeCalls,
+    "partial DATA preserves payload and waits for receive end");
+  Zhttp::H3::Header trailers[] = {{"x-test", "finished"}};
+  Zhttp::H3::HdrBytes final;
+  putHeadersFrame(final, ZuSpan<Zhttp::H3::Header>{trailers, 1});
+  parser.push(final);
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Trailers &&
+      parser.xTest == "finished",
+    "the next frame starts after the complete DATA payload");
+  parser.fin = true;
+  ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete &&
+      parser.completeCalls == 1,
+    "delayed FIN completes partial DATA and trailers once");
+
+  ParserStream truncated;
+  truncated.Base::reset(7, 2);
+  truncated.h3(
+    &truncated.qpackRxTable, nullptr, nullptr, &truncated.streamError,
+    [](void *ptr, uint64_t error) {
+      *static_cast<uint64_t *>(ptr) = error;
+    }, 1, &truncated.params);
+  truncated.push(headers);
+  truncated.process(truncated);
+  Zhttp::H3::HdrBytes prefix;
+  for (unsigned i = 0; i < 3; ++i) prefix.push(data[i]);
+  truncated.push(prefix);
+  ZuCHECK(truncated.process(truncated) == Zhttp::H3::ParserState::Body &&
+      truncated.bodyData == "a",
+    "a partial DATA frame exposes its available payload");
+  truncated.fin = true;
+  ZuCHECK(truncated.process(truncated) == Zhttp::H3::ParserState::Error &&
+      truncated.completeCalls == 1 &&
+      truncated.streamError == Zhttp::H3::FrameError,
+    "FIN inside a DATA frame fails even when the native queue is empty");
+  truncated.Base::reset(7, 2);
+  truncated.push(headers);
+  truncated.push(data);
+  ZuCHECK(truncated.process(truncated) == Zhttp::H3::ParserState::Complete &&
+      truncated.completeCalls == 2 && truncated.bodyData == "aabcdefg",
+    "parser reset clears an unfinished DATA frame");
+
+  ParserStream oversized;
+  oversized.Base::reset(7, 2);
+  oversized.push(headers);
+  oversized.process(oversized);
+  Zhttp::H3::HdrBytes announced;
+  Zhttp::H3::putVar(announced, 0x00);
+  Zhttp::H3::putVar(announced, 8);
+  oversized.push(announced);
+  ZuCHECK(oversized.process(oversized) == Zhttp::H3::ParserState::Error &&
+      !oversized.bodyCalls && oversized.completeCalls == 1 &&
+      oversized.error().code == Zhttp::RequestErrorCode::ContentTooLarge,
+    "the full announced DATA size is checked before delivering a prefix");
+}
+
 void testParserBodyStream()
 {
   ZuTestScope(testParserBodyStream);
@@ -1176,8 +1260,8 @@ void testParserBodyStream()
     putFrame(data, 0x00, ZuBSpan{"abc"});
     appendBytes(bytes, data);
     ZuCHECK(pushSplit(parser, bytes) &&
-	parser.bodyData == "abc" && parser.bodyCalls == 1,
-	"byte-split H3 DATA was exposed only after the frame completed");
+	parser.bodyData == "abc" && parser.bodyCalls == 3,
+	"byte-split H3 DATA is delivered as payload becomes available");
     parser.fin = true;
     ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete,
       "byte-split H3 message did not complete on FIN");
@@ -1328,6 +1412,188 @@ static void putLiteralField(
     appendHuffmanString(payload, 0x80, 7, value);
   else
     appendString(payload, 0x00, 7, value);
+}
+
+struct EncoderStream : Zhttp::H3::CxnParser<EncoderStream> {
+  RxStream rx;
+  Zhttp::H3::QPackRxTable table;
+  uint64_t retired = 0;
+  unsigned reschedules = 0;
+
+  RxStream &rxStream() { return rx; }
+  bool retireRx(uint64_t length) { retired += length; return true; }
+  void rescheduleDequeue() { ++reschedules; }
+  bool resetReceived() const { return false; }
+  bool finReceived() const { return false; }
+  Zhttp::H3::QPackRxTable *qpackRx() { return &table; }
+};
+
+void testCxnQPackCredit()
+{
+  ZuTestScope(testCxnQPackCredit);
+  EncoderStream stream;
+  ZuCHECK(stream.table.init(4096), "initialize receive table");
+  ZtString<> value;
+  for (unsigned i = 0; i < 1024; ++i) value << 'a';
+  Zhttp::H3::HdrBytes wire, insn;
+  Zhttp::H3::putVar(wire, 0x02);
+  Zhttp::H3::QPack::encodeSetCapacity(insn, 4096);
+  appendSpan(wire, insn);
+  Zhttp::H3::QPack::encodeInsertLiteral(insn, {"x-test", value});
+  appendSpan(wire, insn);
+  unsigned offset = 0;
+  while (offset < wire.length()) {
+    unsigned length = wire.length() - offset;
+    if (length > 64) length = 64;
+    stream.rx.push(rxBuf({wire.data() + offset, length}));
+    offset += length;
+    stream.process(stream);
+    if (stream.retired != offset || stream.rx) break;
+  }
+  Zhttp::H3::Header field;
+  ZuCHECK(offset == wire.length() && stream.retired == offset &&
+      !stream.rx && stream.table.insertCount() == 1 &&
+      stream.table.lookupAbs(0, field) && field.name == "x-test" &&
+      field.value == value,
+    "QPACK insertion larger than receive credit assembles incrementally");
+
+  Zhttp::H3::QPack::encodeInsertLiteral(insn, {"x-test", "last"});
+  wire.length(0);
+  for (unsigned i = 0; i < 101; ++i) appendSpan(wire, insn);
+  uint64_t before = stream.retired;
+  stream.rx.push(rxBuf({wire.data(), 1}));
+  stream.process(stream);
+  stream.rx.push(rxBuf({wire.data() + 1, wire.length() - 1}));
+  stream.process(stream);
+  bool pending = bool(stream.rx);
+  unsigned turns = 0;
+  while (turns < stream.reschedules && turns < wire.length()) {
+    ++turns;
+    stream.process(stream);
+  }
+  ZuCHECK(pending && stream.reschedules && stream.table.insertCount() == 102 &&
+      stream.retired == before + wire.length() && !stream.rx,
+    "bounded QPACK turns leave following instructions queued for rescheduling");
+}
+
+void testCxnControlCredit()
+{
+  ZuTestScope(testCxnControlCredit);
+  for (unsigned mode = 0; mode < 2; ++mode) {
+    bool settings = !mode;
+    CxnStream stream;
+    Zhttp::H3::HdrBytes payload;
+    for (unsigned i = 0; i < 400; ++i) putSetting(payload, 0x21 + i, i);
+    Zhttp::H3::HdrBytes wire;
+    Zhttp::H3::putVar(wire, 0x00);
+    if (!settings) putFrame(wire, 0x04, ZuBSpan{});
+    putFrame(wire, settings ? 0x04 : 0x21, ZuBSpan{payload});
+    unsigned offset = 0;
+    while (offset < wire.length()) {
+      unsigned credit = 64 - unsigned(offset - stream.retired);
+      if (!credit) break;
+      unsigned length = wire.length() - offset;
+      if (length > credit) length = credit;
+      stream.rx.push(rxBuf({wire.data() + offset, length}));
+      offset += length;
+      if (stream.process(stream) == Zhttp::H3::CxnState::Error) break;
+    }
+    ZuCHECK(offset == wire.length() && stream.retired == offset &&
+	!stream.rx && stream.settings == (settings ? 400U : 0U) &&
+	stream.h3State() == Zhttp::H3::CxnState::PeerSettingsReceived,
+      "SETTINGS pairs and unknown control payloads cross receive windows");
+  }
+  for (unsigned mode = 0; mode < 2; ++mode) {
+    CxnStream stream;
+    Zhttp::H3::HdrBytes wire, payload;
+    Zhttp::H3::putVar(wire, 0x00);
+    if (mode) putFrame(wire, 0x04, ZuBSpan{});
+    if (mode) Zhttp::H3::putVar(payload, uint64_t(1)<<30);
+    else putSetting(payload, 0x21, uint64_t(1)<<30);
+    putFrame(wire, mode ? 0x07 : 0x04, ZuBSpan{payload});
+    unsigned offset = 0;
+    while (offset < wire.length()) {
+      unsigned credit = 8 - unsigned(offset - stream.retired);
+      if (!credit) break;
+      unsigned length = wire.length() - offset;
+      if (length > credit) length = credit;
+      stream.rx.push(rxBuf({wire.data() + offset, length}));
+      offset += length;
+      if (stream.process(stream) == Zhttp::H3::CxnState::Error) break;
+    }
+    ZuCHECK(offset == wire.length() && stream.retired == offset &&
+	!stream.rx && stream.settings == (mode ? 0U : 1U) &&
+	stream.h3State() == (mode ? Zhttp::H3::CxnState::Goaway :
+	  Zhttp::H3::CxnState::PeerSettingsReceived),
+      "control integers larger than the receive window retire by prefix");
+  }
+}
+
+void testParserMetaCredit()
+{
+  ZuTestScope(testParserMetaCredit);
+  ZtString<> value;
+  for (unsigned i = 0; i < 1024; ++i) value << 'a';
+  Zhttp::H3::HdrBytes payload;
+  payload.push(0);
+  payload.push(0);
+  putRequestPseudos(payload);
+  putLiteralField(payload, "x-test", value);
+  Zhttp::H3::HdrBytes headers;
+  putFrame(headers, 0x01, ZuBSpan{payload});
+  {
+    ParserStream parser;
+    parser.params.maxHeaderListSize(4096);
+    unsigned offset = 0;
+    // Model a peer that cannot send another receive window until all
+    // previously delivered framing and compressed field bytes retire.
+    while (offset < headers.length()) {
+      unsigned length = headers.length() - offset;
+      if (length > 64) length = 64;
+      parser.rx.push(rxBuf({headers.data() + offset, length}));
+      offset += length;
+      parser.process(parser);
+      if (parser.retired != offset || parser.rx) break;
+      if (offset < headers.length() && parser.xTestCalls) break;
+    }
+    ZuCHECK(offset == headers.length() && parser.retired == offset &&
+	!parser.rx && parser.xTestCalls == 1 && parser.xTestLen == value.length(),
+      "fragmented HEADERS retire credit before the complete section arrives");
+    parser.fin = true;
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete,
+      "incremental field assembly preserves delayed FIN completion");
+  }
+  {
+    ParserStream parser;
+    parser.rx.push(rxBuf({headers.data(), 64}));
+    parser.process(parser);
+    parser.fin = true;
+    ZuCHECK(parser.retired == 64 && !parser.xTestCalls &&
+	parser.process(parser) == Zhttp::H3::ParserState::Error,
+      "FIN inside a partially retained field section fails without delivery");
+  }
+  {
+    ParserStream parser;
+    Zhttp::H3::HdrBytes extension;
+    putFrame(extension, 0x21, ZuBSpan{value});
+    unsigned offset = 0;
+    while (offset < extension.length()) {
+      unsigned length = extension.length() - offset;
+      if (length > 64) length = 64;
+      parser.rx.push(rxBuf({extension.data() + offset, length}));
+      offset += length;
+      parser.process(parser);
+      if (parser.retired != offset || parser.rx) break;
+    }
+    ZuCHECK(offset == extension.length() && parser.retired == offset &&
+	!parser.rx && !parser.xTestCalls,
+      "unknown request frames drain incrementally without retaining payloads");
+    parser.push(headers);
+    parser.fin = true;
+    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Complete &&
+	parser.xTestCalls == 1,
+      "discarded extension payload cannot consume the following field section");
+  }
 }
 
 void testParserHeaderScratchAndLimits()
@@ -2500,10 +2766,14 @@ int main(int argc, char **argv)
   ZuTestCall(testParserFieldCallbacks);
   ZuTestCall(testParserBodyStream);
   ZuTestCall(testReceiveLimits);
+  ZuTestCall(testPartialData);
   ZuTestCall(testParserHuffmanRuntimeHeader);
   ZuTestCall(testParserInvalidFields);
   ZuTestCall(testParserStrictContentLength);
   ZuTestCall(testParserHeaderScratchAndLimits);
+  ZuTestCall(testParserMetaCredit);
+  ZuTestCall(testCxnControlCredit);
+  ZuTestCall(testCxnQPackCredit);
   ZuTestCall(testExtendedConnectRx);
   ZuTestCall(testFieldDecodeAllocationDiscipline);
   ZuTestCall(testSettingsKeyBoundary);

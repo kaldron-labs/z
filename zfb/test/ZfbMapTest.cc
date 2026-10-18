@@ -380,7 +380,7 @@ static void growth()
   ZuTestScope(growth);
   Zfb::Buffer buf;
   Zfb::ArrayStorage<> storage{buf};
-  Zfb::Builder<decltype(storage)> builder{storage};
+  Zfb::Builder builder{storage};
   Tree first;
   first.add(1, 10);
   auto saved = Zfb::save(builder, first);

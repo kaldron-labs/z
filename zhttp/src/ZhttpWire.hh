@@ -225,7 +225,7 @@ private:
   HPackSeedPlans	m_plans;
 };
 
-ZtEnumStruct(ZhttpAPI, QPackSeedState, uint8_t,
+ZtEnumStruct(ZhttpAPI, QPackSeedState, int8_t,
   Unseeded, Seeded, Disabled);
 
 ZtEnumStruct(ZhttpAPI, QPackSeedResult, int8_t,
@@ -304,6 +304,10 @@ struct AppHPackSeedPlans<App, decltype(
 };
 
 struct RetainedBudget {
+  uint64_t	max = uint64_t(-1);
+  uint64_t	size = 0;
+  bool		valid = true;
+
   bool add(uint64_t n) {
     if (n > max - size) {
       valid = false;
@@ -313,18 +317,16 @@ struct RetainedBudget {
     return true;
   }
 
-  uint64_t	max = uint64_t(-1);
-  uint64_t	size = 0;
-  bool		valid = true;
 };
 
 struct RetainedEntry {
+  ZmRef<ZiIOBuf>	buf;
+  bool		final;
+
   RetainedEntry() = default;
   RetainedEntry(ZmRef<ZiIOBuf> buf_, bool final_) :
     buf{ZuMv(buf_)}, final{final_} { }
 
-  ZmRef<ZiIOBuf>	buf;
-  bool		final;
 };
 
 template <typename Lower>

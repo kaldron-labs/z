@@ -16,8 +16,13 @@
 
 #include <zlib/ZuTraits.hh>
 
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmEngine.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
-#include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmPlatform.hh>
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
 
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestServer.hh>
@@ -30,6 +35,7 @@
 #include <zlib/zumd_request.hh>
 
 #include <zlib/ZtlsPK.hh>
+#include <zlib/ZtlsRandom.hh>
 
 #include "zumd_bootstrap.hh"
 #include "zumd_revoke.hh"
@@ -67,13 +73,13 @@ struct MaintenanceResult {
 ZuDerive(MaintenanceFn,
   (ZmFn<void(MaintenanceResult), ZmFnHeapID<"Zum.MaintenanceFn">>));
 ZumExtern void daemonGrantCleanup(
-  DB *, Ztls::Random *, unsigned, MaintenanceFn);
+  ZmRef<ZmPolymorph>, DB *, Ztls::Random *, unsigned, MaintenanceFn);
 ZumExtern void daemonRefreshCleanup(
-  DB *, Ztls::Random *, unsigned, MaintenanceFn);
+  ZmRef<ZmPolymorph>, DB *, Ztls::Random *, unsigned, MaintenanceFn);
 ZumExtern void daemonSessionCleanup(
-  DB *, Ztls::Random *, unsigned, MaintenanceFn);
+  ZmRef<ZmPolymorph>, DB *, Ztls::Random *, unsigned, MaintenanceFn);
 ZumExtern void daemonAppCleanup(
-  DB *, Ztls::Random *, AppID, unsigned, MaintenanceFn);
+  ZmRef<ZmPolymorph>, DB *, Ztls::Random *, AppID, unsigned, MaintenanceFn);
 // Lower than interactive query admission to keep periodic work within one
 // scheduler turn and prevent cleanup payloads from competing with queries.
 namespace DaemonCleanupLimit { enum { Rows = 512 }; }
@@ -369,25 +375,41 @@ using DaemonBuilder = Zrest::MResBuilder<DaemonCatalog>;
 struct DaemonBuilder_ : public ZmObject, public DaemonBuilder { };
 using DaemonBuilderQ = Zhttp::ResponseQ<DaemonBuilder_, ZuStringT<"zumd.Response">>;
 
+class Daemon;
+namespace DaemonCredit { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+
+struct DaemonWork : ZmNHeap<DaemonWork>, ZmPolymorph {
+friend inline ZuStringT<"Zum.Daemon.Work"> ZmNHeapID(DaemonWork *);
+  Daemon *owner;
+  explicit DaemonWork(Daemon *owner_) : owner{owner_} { }
+  ~DaemonWork();
+};
+
 class Daemon : public HTTP<Daemon>,
-  public Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ, Zhttp::Profiles<Zhttp::H1TCP>> {
+  public Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ, Zhttp::Profiles<Zhttp::H1TCP>>,
+  private ZmEngine<Daemon> {
+  using Engine = ZmEngine<Daemon>;
+  using Work = ZmRef<DaemonWork>;
+  friend Engine;
+  friend DaemonWork;
 public:
+  ~Daemon();
   using HTTPServer = Zhttp::Server<Daemon, DaemonParser, DaemonBuilderQ,
     Zhttp::Profiles<Zhttp::H1TCP>>;
   using Route = Zhttp::Route<DaemonBuilderQ::Node>;
-  using HTTPServer::init;
-  using HTTPServer::start;
-  using HTTPServer::stop;
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::running;
+  using Engine::stopping;
   using HTTPServer::connected;
   using HTTPServer::disconnected;
 
   bool init(
     DB *, Requests *, ZiMultiplex *, DaemonConfig);
-  // Main thread, with request admission closed: prepare active-node signing
-  // after bootstrap. init/start do not read an inactive replica's database.
+  // Main thread, Stopped and request admission closed: prepare active-node
+  // signing after bootstrap. Start does not read an inactive replica's DB.
   bool prepare(ServerBootstrapResult);
-  bool start();
-  void stop();
   void final();
 
   template <typename Link>
@@ -458,6 +480,11 @@ public:
   template <typename Link, typename Request>
   void admin(Link *link, const Request &request, bool ok)
   {
+    if (Engine::state() != ZmEngineState::Running) {
+      send_<HealthUnavailable, Request>(link,
+        error_("unavailable", "server is stopping"));
+      return;
+    }
     String correlationID = correlation_();
     if (!m_requests->active()) {
       send_<HealthUnavailable, Request>(link, correlate_(
@@ -483,6 +510,12 @@ public:
 	    correlationID));
       return;
     }
+    auto work = work_();
+    if (!work) {
+      send_<HealthUnavailable, Request>(link, correlate_(
+        error_("unavailable", "server is stopping"), correlationID));
+      return;
+    }
     String authorization = request.authorization;
     String target = request.object->target;
     String query = request.object->query;
@@ -490,27 +523,35 @@ public:
     String ifMatch = request.ifMatch;
     String ifNoneMatch = request.ifNoneMatch;
     String idempotence = request.idempotence;
-    AdminDoneFn reply{[this, correlationID, hold = Route{link, Request::Method}](
+    AdminDoneFn reply{[credit = work, this, correlationID, hold = Route{link, Request::Method}](
         AdminResult result) mutable {
+      auto work = ZuMv(credit);
       if (result.status >= 400)
 	result.body = correlate_(ZuMv(result.body), correlationID);
-      adminSend_<Request>(hold, ZuMv(result));
+      adminSend_<Request>(hold, ZuMv(result), correlationID);
     }};
-    auto cancel = [reply]() mutable {
+    auto cancel = [credit = work, reply]() mutable {
+      auto work = ZuMv(credit);
       reply(AdminResult{error_("unavailable", "request unavailable"), 503});
     };
     if (!m_requests->run(Zm::now() + ZuTime{double(m_config.requestTimeout)},
-        [this, op, authorization = ZuMv(authorization),
+        [credit = work, this, op, authorization = ZuMv(authorization),
           target = ZuMv(target), query = ZuMv(query), body = ZuMv(body),
           ifMatch = ZuMv(ifMatch), ifNoneMatch = ZuMv(ifNoneMatch),
           idempotence = ZuMv(idempotence),
           correlationID = ZuMv(correlationID), reply](
             ZmRef<Zum::Request> pending) mutable {
-      adminRequest_(op, ZuMv(authorization), ZuMv(target), ZuMv(query),
+      auto work = ZuMv(credit);
+      adminRequest_(work, op, ZuMv(authorization), ZuMv(target), ZuMv(query),
         ZuMv(body), ZuMv(ifMatch), ZuMv(ifNoneMatch),
         ZuMv(idempotence), ZuMv(correlationID),
-        [pending = ZuMv(pending), reply = ZuMv(reply)](AdminResult result) mutable {
-          pending->complete([reply = ZuMv(reply), result = ZuMv(result)]() mutable {
+        [
+          credit = work, pending = ZuMv(pending), reply = ZuMv(reply)](
+              AdminResult result) mutable {
+          auto work = ZuMv(credit);
+          pending->complete([
+            credit = work, reply = ZuMv(reply), result = ZuMv(result)]() mutable {
+            auto work = ZuMv(credit);
             reply(ZuMv(result));
           });
         });
@@ -523,12 +564,32 @@ public:
   void disconnected(int) { }
 
 private:
+  using Engine::spawn;
+  using Engine::wake;
+  using Engine::stateChanged;
+
+  bool admit_();
+  Work work_();
+  void workDone_();
+  void start_();
+  void startHTTP_();
+  void startRuntime_();
+  void stop_();
+  void stopOwner_();
+  void stopHTTP_();
+  void stopRequests_();
+  void childDown_();
+  void postDrain_();
+  template <typename L> void post_(L &&l) {
+    m_requests->scheduler()->run(ZuFwd<L>(l), m_requests->sid());
+  }
+
   template <typename Request, typename Dest>
-  void adminSend_(const Dest &link, AdminResult result)
+  void adminSend_(const Dest &link, AdminResult result, ZuCSpan correlationID)
   {
     if (!m_requests->active()) {
       send_<HealthUnavailable, Request>(link, correlate_(
-        error_("unavailable", "server is inactive"), correlation_()));
+        error_("unavailable", "server is inactive"), correlationID));
       return;
     }
     switch (result.status) {
@@ -573,23 +634,23 @@ private:
   static String correlate_(String, ZuCSpan);
   static String issuerJSON_(const Issuer &);
   static String operationsJSON_(unsigned, unsigned, ZuBSpan);
-  void adminAuth_(String, AdminAuthFn);
-  void adminRequest_(int, String, String, String, String,
+  void adminAuth_(const Work &, String, AdminAuthFn);
+  void adminRequest_(const Work &, int, String, String, String, String,
     String, String, String, String, AdminDoneFn);
   static bool adminTargetApp(ZuCSpan, AppID &);
-  void adminAccess_(int, String, bool, AppID, bool, AdminAccessFn);
+  void adminAccess_(const Work &, int, String, bool, AppID, bool, AdminAccessFn);
   static Bytes idemDigest_(int, ZuCSpan, ZuCSpan, ZuCSpan, ZuCSpan);
-  void idemBegin_(int, ActorKind::T, String, Bytes, String, IdemBeginFn);
-  void adminAudit_(int, String, AppID, String, String,
+  void idemBegin_(const Work &, int, ActorKind::T, String, Bytes, String, IdemBeginFn);
+  void adminAudit_(const Work &, int, String, AppID, String, String,
     AdminResult, AdminDoneFn);
-  void adminCall_(int, Principal, AdminPermit, String, String, String,
+  void adminCall_(const Work &, int, Principal, AdminPermit, String, String, String,
     String, String, String, IdemRequest, AdminDoneFn);
-  void roleDelete_(AppID, RoleID, String, IdemRequest, AdminDoneFn);
+  void roleDelete_(const Work &, AppID, RoleID, String, IdemRequest, AdminDoneFn);
   void authRoute_(AppID, String, AuthRouteDoneFn);
   bool loadKey_();
   void cleanup_();
   void cleanupStart_();
-  bool cleanupStop_();
+  void cleanupStop_();
   void cleanupDone_(MaintenanceResult);
 
   using Key = ZmRef<Ztls::PK::SK_EC>;
@@ -608,13 +669,17 @@ private:
   Ztls::Random		m_rng;
   ZmScheduler::Timer	m_cleanupTimer;
   CleanupRun		m_cleanupRun;
-  bool			m_started = false;
   int			m_cleanupState = DaemonCleanupState::Idle;
   uint64_t		m_cleanupBackoff = 0;
   bool			m_httpInited = false;
   bool			m_providerInited = false;
-  bool			m_finalized = false;
-  ZmSemaphore		m_cleanupStopped;
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t> m_credit = DaemonCredit::Closed;
+  alignas(Zm::CacheLineSize)
+  unsigned m_children = 0;
+  bool m_stopOK = true;
+  bool m_draining = false;
+  bool m_drainPosted = false;
 };
 
 template <typename Link>

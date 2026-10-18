@@ -46,7 +46,7 @@ int main(int argc, char **argv)
     Zfb::Buffer buf;
     constexpr unsigned Align = Zfb::BufferAlign<H0>::N;
     Zfb::ArrayStorage<Align> storage{buf};
-    Zfb::Builder<decltype(storage)> builder{storage, Align};
+    Zfb::Builder builder{storage, Align};
     auto bytes = builder.finish(H::save<ZfFieldFilter::All>(builder, row));
     bool valid = Zfb::verify<H0, ZuFacet::FB>(bytes);
     ZuCheck(valid, passed = false);
@@ -59,7 +59,7 @@ int main(int argc, char **argv)
     root.push(7); root.push(9);
     Zfb::Buffer rootBuf;
     Zfb::ArrayStorage<> rootStorage{rootBuf};
-    Zfb::Builder<decltype(rootStorage)> rootBuilder{rootStorage};
+    Zfb::Builder rootBuilder{rootStorage};
     auto rootBytes = rootBuilder.finish(Zfb::save<ZuFacet::FB>(rootBuilder, root));
     bool rootOK = Zfb::verify<Zf::Bytes, ZuFacet::FB>(rootBytes);
     ZuCheck(rootOK, passed = false);

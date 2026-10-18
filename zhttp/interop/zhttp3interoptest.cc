@@ -1428,7 +1428,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCurlZhttpHttpsH1Server);
   ZuTestCall(testCurlZhttpHttpsH3Server);
   ZuTestCall(testZhttpClientCaddyHttpsH3);
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
   ZiLog::stop();
 }

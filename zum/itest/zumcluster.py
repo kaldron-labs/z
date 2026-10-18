@@ -4,7 +4,6 @@ import base64
 import http.client
 from http.cookies import SimpleCookie
 import os
-import re
 from pathlib import Path
 import secrets
 import selectors
@@ -19,6 +18,26 @@ from zumhttp import Authenticator, Fixture
 from zi_test_residue import Residue
 
 
+def wait_replication(process, port):
+    deadline = time.monotonic() + 30
+    while True:
+        assert process.poll() is None, "standby exited before replication startup"
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=1):
+                return
+        except ConnectionRefusedError:
+            assert time.monotonic() < deadline, "replication listener did not start"
+            time.sleep(0.05)
+
+
+def require_closed(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            raise AssertionError("standby HTTP listener accepted a connection")
+    except ConnectionRefusedError:
+        pass
+
+
 def exercise(directory):
     module = os.environ["ZDB_MODULE"]
     connections = [os.environ["ZDB_CONNECT"], os.environ["ZUM_CLUSTER_PEER_CONNECT"]]
@@ -30,12 +49,6 @@ def exercise(directory):
     key = base64.b64encode(secrets.token_bytes(32)).decode()
     issuer = "http://localhost:" + str(ports[0])
     server = Path(__file__).resolve().parent.parent / "src" / "zumd"
-    # Source-tree fixture: enumerate the authoritative route declarations rather
-    # than maintain a second endpoint list. No authenticated catalog is available
-    # before initial-admin enrollment in this activation scenario.
-    catalog = server.with_name("ZumMgmt.cc").read_text()
-    routes = re.findall(r'ZUM_ROUTE\(\s*(\w+),\s*(\w+),\s*"([^"]+)"\s*\)', catalog)
-    assert len(routes) == 61 and len({name for name, _, _ in routes}) == len(routes)
     base = Path(__file__).with_name("zumd.cf").read_text()
     processes, logs = [], []
     for listener in reservations:
@@ -66,10 +79,10 @@ def exercise(directory):
         with selectors.DefaultSelector() as selector:
             for index, process in enumerate(processes):
                 selector.register(process.stdout, selectors.EVENT_READ, index)
-            while len(listening) != len(processes) or not active:
+            while not active or not active <= listening:
                 remaining = deadline - time.monotonic()
                 events = selector.select(max(0, remaining))
-                assert remaining > 0 and events, "both active and standby must expose HTTP health"
+                assert remaining > 0 and events, "active node did not start its HTTP listener"
                 for event, _ in events:
                     index = event.data
                     data = os.read(event.fileobj.fileno(), 4096)
@@ -82,32 +95,25 @@ def exercise(directory):
                     if b"zumd: active" in lines:
                         active.add(index)
         assert len(active) == 1, "only the activated node may finish preparation"
-        for index, port in enumerate(ports[:2]):
-            connection = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-            connection.request("GET", "/health/live")
-            response = connection.getresponse()
-            assert response.status == 200
-            response.read()
-            connection.request("GET", "/health/ready")
-            response = connection.getresponse()
-            # No administrator has enrolled, and a standby is never ready.
-            assert response.status == 503
-            response.read()
-            if index not in active:
-                for name, method, path in routes:
-                    path = path.replace("{actor_kind}", "user").replace("{value_key}", "eA")
-                    path = re.sub(r"\{[^}]+\}", "1", path)
-                    body = None if method in ("GET", "DELETE") else "{}"
-                    connection.request(method, path, body=body,
-                                       headers={"Content-Type": "application/json"})
-                    response = connection.getresponse()
-                    assert response.status == 503, "standby admitted " + name
-                    response.read()
-                print("# standby administrative HTTP503 coverage: " + str(len(routes)), flush=True)
-            connection.close()
-
         leader = next(iter(active))
         follower = 1 - leader
+        assert listening == active, "only the active node may bind HTTP"
+        # Multiplexer/DB runtime starts on both processes. A standby's native
+        # replication listener, rather than an application HTTP health route,
+        # establishes that it has started independently of role activation.
+        wait_replication(processes[follower], ports[2 + follower])
+        require_closed(ports[follower])
+        assert processes[follower].poll() is None
+        connection = http.client.HTTPConnection("127.0.0.1", ports[leader], timeout=10)
+        connection.request("GET", "/health/live")
+        response = connection.getresponse()
+        assert response.status == 200
+        response.read()
+        connection.request("GET", "/health/ready")
+        response = connection.getresponse()
+        assert response.status == 503  # active, but initial admin is not enrolled
+        response.read()
+        connection.close()
 
         # Use the production WebAuthn driver against the active node.  The
         # issuer remains on the leader's stable public address when requests
@@ -143,7 +149,7 @@ def exercise(directory):
         processes[leader].communicate(timeout=30)
         assert processes[leader].returncode == 0, "active node did not stop cleanly"
         # Observe Zdb's activation; do not direct election or infer a durability
-        # guarantee from a timed pause. The surviving listener stays available.
+        # guarantee from a timed pause. Activation starts the survivor's listener.
         deadline = time.monotonic() + 30
         with selectors.DefaultSelector() as selector:
             selector.register(processes[follower].stdout, selectors.EVENT_READ)

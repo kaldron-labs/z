@@ -66,7 +66,7 @@ noinst_PROGRAMS = ZumRecordsTest ZumMgmtTest ZumHTTPTest ZumOAuthTest \
 	ZumRuntimeRecoveryTest ZumRuntimeKeysTest \
 	ZumRuntimeManagementTest ZumRuntimeRoleTest ZumRuntimeConsentTest \
 	ZumRuntimeRevocationTest \
-	ZumOIDCHTTPTest ZumClientTest ZumSecretTest ZumScopeTest
+	ZumOIDCHTTPTest ZumClientTest ZumSecretTest ZumScopeTest ZumDaemonTest
 ZumSecretTest_SOURCES = ZumSecretTest.cc
 ZumSecretTest_LDADD = $(zumd_objdir)/zumd-zumd_secret.$(OBJEXT) $(zum_test_libs)
 ZumRecordsTest_SOURCES = ZumRecordsTest.cc
@@ -92,6 +92,12 @@ ZumRuntimeManagementTest_SOURCES = ZumRuntimeManagementTest.cc
 ZumRuntimeRoleTest_SOURCES = ZumRuntimeRoleTest.cc
 ZumRuntimeConsentTest_SOURCES = ZumRuntimeConsentTest.cc
 ZumRuntimeRevocationTest_SOURCES = ZumRuntimeRevocationTest.cc
+ZumRuntimeRevocationTest_LDADD = $(LDADD) $(zumd_objdir)/zumd-zumd_revoke.$(OBJEXT)
+ZumDaemonTest_SOURCES = ZumDaemonTest.cc
+ZumDaemonTest_LDADD = $(zumd_objdir)/zumd-zumd_daemon.$(OBJEXT) \
+	$(zumd_objdir)/zumd-zumd_daemon_admin.$(OBJEXT) \
+	$(zumd_objdir)/zumd-zumd_role_delete.$(OBJEXT) \
+	$(zumd_objdir)/zumd-zumd_revoke.$(OBJEXT) $(LDADD)
 ZumOIDCHTTPTest_SOURCES = ZumOIDCHTTPTest.cc
 ZumOIDCHTTPTest_LDADD = $(zumd_oidc_objects) $(zum_test_libs)
 ZumClientTest_SOURCES = ZumClientTest.cc

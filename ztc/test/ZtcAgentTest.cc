@@ -5,13 +5,78 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmBlock.hh>
 #include <zlib/ZfCf.hh>
+#include <zlib/ZiLog.hh>
+#include <zlib/ZiFile.hh>
+#include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiResolver.hh>
 
 #include <zlib/ztcagent_daemon.hh>
+
+#include "../../zum/example/pinghttp.hh"
+#include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
 
 namespace ZtcAgentTest_ {
+
+static void httpLifecycle()
+{
+  ZuTestScopeRT(httpLifecycle);
+  ZiMxParams params;
+  params.scheduler([](auto &scheduler) {
+    scheduler.nThreads(2)
+      .thread(1, [](auto &thread) { thread.name("rx"); thread.isolated(true); })
+      .thread(2, [](auto &thread) { thread.name("tx"); thread.isolated(true); });
+  }).rxThread(1).txThread(2);
+  ZiMultiplex mx{ZuMv(params)};
+  auto init = [&mx](Zum::PingHTTP &http) {
+    return http.init(&mx, "https://zum.example/oauth2/7",
+      "https://zum.example/oauth2/7", "https://zum.example/manage");
+  };
+  Zum::PingHTTP http;
+  ZuCheckRT(!http.start());
+  ZuCheckRT(http.stop());
+  http.final();
+  // The borrowed multiplexer runs independently of this HTTP controller.
+  ZuCheckRT(mx.start());
+  ZuCheckRT(init(http));
+  ZuCheckRT(http.state() == ZmEngineState::Stopped);
+  auto retained = http.fn();
+  http.final(); // neither the HTTP controller nor resolver has started
+  bool rejected = false;
+  retained(Zum::ServiceHTTPRequest{}, [&rejected](Zum::ServiceHTTPResponse response) {
+    rejected = response.status == 0;
+  });
+  ZuCheckRT(rejected);
+  retained = {};
+
+  ZiResolver::init();
+  ZuCheckRT(init(http));
+  ZuCheckRT(!http.start()); // borrowed resolver is stopped
+  ZuCheckRT(http.state() == ZmEngineState::Stopped);
+  http.final();
+  ZuCheckRT(ZiResolver::instance()->initialized());
+  ZiResolver::final();
+
+  ZuCheckRT(init(http));
+  ZuCheckRT(http.start());
+  ZuCheckRT(http.start());
+  ZuCheckRT(http.state() == ZmEngineState::Running);
+  ZuCheckRT(http.stop());
+  ZuCheckRT(http.stop());
+  ZuCheckRT(http.state() == ZmEngineState::Stopped);
+  ZuCheckRT(http.start());
+  bool stopped = ZmBlock<bool>{}([&http](auto wake) {
+    http.stop([&http, wake = ZuMv(wake)](bool ok) mutable {
+      if (ok) http.final();
+      wake(ok);
+    });
+  });
+  ZuCheckRT(stopped);
+  ZuCheckRT(mx.stop());
+}
 
 static Ztc::AgentCf config()
 {
@@ -33,6 +98,55 @@ static Ztc::AgentEnv env()
     .clientSecret = "client-secret",
     .ring = "ztc-agent-test"
   };
+}
+
+static void agentLifecycle()
+{
+  ZuTestScopeRT(agentLifecycle);
+  auto cf = config();
+  Ztc::Agent agent;
+  ZuCheckRT(!agent.start());
+  ZuCheckRT(agent.stop());
+  agent.final();
+  agent.provisioned(true); // closed admission does not require runtime resources
+  ZuCheckRT(agent.init(cf, env()));
+  ZuCheckRT(agent.state() == ZmEngineState::Stopped);
+  agent.final();
+
+  ZiResolver::init();
+  ZuCheckRT(agent.init(cf, env()));
+  ZuCheckRT(!agent.start()); // HTTP startup cannot use a stopped borrowed resolver
+  ZuCheckRT(agent.state() == ZmEngineState::Stopped);
+  ZuCheckRT(!agent.start()); // rollback permits another attempt without init
+  ZuCheckRT(agent.stop());
+  agent.final();
+  ZuCheckRT(ZiResolver::instance()->initialized());
+  ZiResolver::final();
+
+  auto runtime = env();
+  cf.loopbackTest = true;
+  runtime.issuerURL = "http://127.0.0.1:1/oauth2/7";
+  runtime.wssURL = "wss://127.0.0.1:1/ztc";
+  runtime.ring = ZiTestResidue::uniqueName("agent-telemetry");
+  runtime.pidDir = ZiFile::leafname(ZiTestResidue::tmpDir("agent-registry"));
+  Ztc::Ring writer{ZiRingParams{runtime.ring, cf.telSize}};
+  ZuCheckRT(writer.open(Ztc::Ring::Write) == Zi::OK);
+  ZuCheckRT(agent.init(cf, ZuMv(runtime)));
+  ZuCheckRT(agent.start());
+  ZuCheckRT(agent.start());
+  ZuCheckRT(agent.state() == ZmEngineState::Running);
+  agent.provisioned(false);
+  ZuCheckRT(agent.stop());
+  ZuCheckRT(agent.stop());
+  ZuCheckRT(agent.state() == ZmEngineState::Stopped);
+  ZuCheckRT(agent.start());
+  bool stopped = ZmBlock<bool>{}([&agent](auto wake) {
+    agent.stop([&agent, wake = ZuMv(wake)](bool ok) mutable {
+      if (ok) agent.final();
+      wake(ok);
+    });
+  });
+  ZuCheckRT(stopped);
 }
 
 static void configValidation()
@@ -81,8 +195,17 @@ static void configValidation()
 
 } // ZtcAgentTest_
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
+  ZiTestResidue::init("ZtcAgentTest");
+  ZiLog::init("ZtcAgentTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZuTestMain();
+  ZuTestCall(ZtcAgentTest_::httpLifecycle);
   ZuTestCall(ZtcAgentTest_::configValidation);
+  ZuTestCall(ZtcAgentTest_::agentLifecycle);
+  ZiLog::stop();
+  return 0;
 }

@@ -496,7 +496,9 @@ void runH1(
   }
 
   server.stopListening();
-  ZuCHECK(client.stop() && server.stop(), "hub stop failed");
+  bool clientStopped = client.stop();
+  bool serverStopped = server.stop();
+  ZuCHECK(clientStopped && serverStopped, "hub stop failed");
   state.trace.push(LifeEvt::Stop);
   link = nullptr;
   client.final();
@@ -605,7 +607,9 @@ void testQUIC(const TempDir &temp)
       "QUIC client close timed out");
   }
 
-  ZuCHECK(client.stop() && server.stop(), "QUIC hub stop failed");
+  bool clientStopped = client.stop();
+  bool serverStopped = server.stop();
+  ZuCHECK(clientStopped && serverStopped, "QUIC hub stop failed");
   state.trace.push(LifeEvt::Stop);
   link = nullptr;
   server.link = nullptr;

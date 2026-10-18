@@ -28,8 +28,7 @@
 #include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmAtomic.hh>
-#include <zlib/ZmBlock.hh>
-#include <zlib/ZmFn.hh>
+#include <zlib/ZmEngine.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
@@ -1027,15 +1026,16 @@ private:
 template <typename Impl, typename Catalog>
 class IOServer : public Server<IOServer<Impl, Catalog>, Impl, Catalog>,
     public Zjrpc::Dispatcher<IOServer<Impl, Catalog>, Impl, Catalog,
-      Context, Server_::DispatchPolicy<Catalog>> {
+      Context, Server_::DispatchPolicy<Catalog>>,
+    public Zjrpc::IOEndpoint<IOServer<Impl, Catalog>> {
   using Base = Server<IOServer, Impl, Catalog>;
+  using IO = Zjrpc::IOEndpoint<IOServer>;
   using Base::m_impl;
   using Base::m_mx;
   using Base::m_limits;
   using Base::m_ownerThread;
   using Base::m_histSize;
   using Base::m_up;
-  using Base::initPeer_;
   using Base::closePeer_;
   using Base::closed_;
   using Base::failed_;
@@ -1043,48 +1043,46 @@ class IOServer : public Server<IOServer<Impl, Catalog>, Impl, Catalog>,
     Context, Server_::DispatchPolicy<Catalog>>;
   friend Dispatch;
   friend Base;
-  using IO = Zjrpc::IOLink<IOServer>;
 public:
-  ~IOServer() { this->final(); }
+  using Base::up;
+  using Base::invoked;
+  using Base::ownerRun;
+  using Base::continue_;
+  using Base::completionRoute;
+
+  ~IOServer() { final(); }
 
   bool init(ZiMultiplex *mx, Zjrpc::StdioConfig config, Impl *impl) {
-    if (m_mx || !impl || !mx || !mx->txThread()) return false;
-    if (!initPeer_(mx, mx->txThread(), config.limits(), impl, m_histSize)) return false;
-    new (m_stdio.template new_<IO>()) IO{
-      this, m_mx, m_ownerThread, ZuMv(config)};
-    m_stdioStarted = false;
-    m_stdioClosing = false;
-    m_stdioDone = false;
-    m_stdioFailure = false;
+    if (m_mx || !impl || !IO::init(mx, config)) return false;
+    ZmAssert_(Base::init(mx, mx->txThread(), config.limits(), impl, m_histSize));
+    m_up = false;
     return true;
   }
 
-  bool start() {
-    if (!m_stdio.template ptr<IO>() || !m_up.load_() ||
-	m_stdioStarted || m_stdioDone.load_()) return false;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	bool ok = false;
-	try {
-	  m_context = Server_::openContext(
-	    m_impl, SessionTag{}, 0, true, ZuCSpan{});
-	  m_rpcContext = Context{nullptr, m_context.ptr()};
-	  ok = m_stdio.template p<IO>().start_();
-	} catch (...) {
-	}
-	m_stdioStarted = ok;
-	if (!ok) {
-	  m_context.close();
-	  m_up = false;
-	  m_stdioDone = true;
-	}
-	wake(ok);
-      }, m_ownerThread);
+  void ioStarting() {
+    m_failure = false;
+    m_peer = Peer<Catalog>{m_limits};
+    m_pending.init(m_histSize);
+  }
+  void ioReady() {
+    m_context = Server_::openContext(
+      m_impl, SessionTag{}, 0, true, ZuCSpan{});
+    m_rpcContext = Context{nullptr, m_context.ptr()};
+    m_up = true;
+  }
+  void ioClosed(bool failed) {
+    m_failure |= failed;
+    m_up = false;
+    closePeer_([this]() {
+      m_rpcContext = {};
+      try {
+	if (m_failure) failed_(m_impl, 0);
+	else closed_(m_impl, 0);
+      } catch (...) {
+      }
+      this->ioDone();
     });
   }
-
-  void stdioClosed() { stdioDone_(false); }
-  void stdioFailed() { stdioDone_(true); }
 
   bool stdioFrame(ZmRef<ZiIOBuf> body) {
     return Dispatch::receive(ZuMv(body), [this](auto message, int policy) {
@@ -1093,73 +1091,23 @@ public:
     }, &m_pending, &m_rpcContext);
   }
 
-  bool stop() { return this->stopStdio_(); }
-
   void final() {
-    if (!m_mx) return;
-    (void)this->stopStdio_();
-    m_stdio.null();
-    m_peer.close();
+    IO::final();
     m_impl = nullptr;
     m_mx = nullptr;
     m_ownerThread = 0;
   }
 
 private:
-  bool stopStdio_() {
-    if (!m_mx) return false;
-    if (m_stdioDone.load_()) return !m_stdioFailure;
-    return ZmBlock<bool>{}([this](auto wake) mutable {
-      m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	m_stdioStopFn = ZuMv(wake);
-	m_up = false;
-	m_stdioClosing = true;
-	if (m_stdioStarted)
-	  m_stdio.template p<IO>().stop_();
-	else
-	  stdioDone_(false);
-      }, m_ownerThread);
-    });
-  }
-
-  void failStdio_() {
-    ZiAssert(m_mx && m_mx->invoked(m_ownerThread), "Zmcp", (),
-	"stdio failure outside owner shard", return);
-    if (m_stdioDone.load_() || m_stdioClosing) return;
-    m_stdioFailure = true;
-    m_stdioClosing = true;
-    m_up = false;
-    m_stdio.template p<IO>().stop_();
-  }
-
-  void stdioDone_(bool failed) {
-    ZiAssert(m_mx && m_mx->invoked(m_ownerThread), "Zmcp", (),
-	"stdio completion outside owner shard", return);
-    if (m_stdioDone.load_()) return;
-    m_stdioFailure |= failed;
-    m_stdioClosing = true;
-    m_up = false;
-    m_peer.close();
-    closePeer_([this]() mutable {
-      m_stdioDone = true;
-      try {
-	if (m_stdioFailure)
-	  failed_(m_impl, 0);
-	else
-	  closed_(m_impl, 0);
-      } catch (...) {
-      }
-      auto stopFn = ZuMv(m_stdioStopFn);
-      m_stdioStopFn = {};
-      if (stopFn) stopFn(!m_stdioFailure);
-    });
-  }
-
   template <typename M>
   bool send_(const M &message) {
-    return m_up.load_() && m_stdio.template p<IO>().send_(message);
+    return m_up.load_() && IO::send(message);
   }
-  void fail_() { this->failStdio_(); }
+  void fail_() {
+    m_failure = true;
+    m_up = false;
+    IO::fail_();
+  }
 
   template <typename Done>
   void closeRpc_(Done done) {
@@ -1170,16 +1118,11 @@ private:
     done();
   }
 
-  Context m_rpcContext;
+  Context		m_rpcContext;
   Zjrpc::InboundCalls	m_pending;
   Peer<Catalog>	m_peer;
   Server_::ContextRef	m_context;
-  ZmFn<void(bool)>	m_stdioStopFn;
-  bool			m_stdioStarted = false;
-  bool			m_stdioClosing = false;
-  bool			m_stdioFailure = false;
-  ZmAtomic<unsigned>	m_stdioDone = 0;
-  ZuUnion<void, IO> m_stdio;
+  bool			m_failure = false;
 };
 
 namespace Server_ {
@@ -1258,7 +1201,10 @@ class HTTPServer : public Server<HTTPServer<Impl, Catalog, Selection>, Impl, Cat
       HTTPBuilderQ<Catalog>, Selection>,
     public Zjrpc::Dispatcher<HTTPServer<Impl, Catalog, Selection>, Impl, Catalog,
       Server_::HTTPDispatchContext<Zjrpc::HTTPHeaders<Zjrpc::AppHeaders<Impl>>, Catalog>,
-      Server_::HTTPDispatchPolicy<Catalog>> {
+      Server_::HTTPDispatchPolicy<Catalog>>,
+    private ZmEngine<HTTPServer<Impl, Catalog, Selection>> {
+  using Engine = ZmEngine<HTTPServer>;
+  friend Engine;
   using Base = Server<HTTPServer, Impl, Catalog>;
   using Base::m_impl;
   using Base::m_mx;
@@ -1282,9 +1228,10 @@ public:
   using HTTP = Zhttp::Server<HTTPServer,
     Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>, ResBuilderQ, Selection>;
   using Parser = Server_::HTTPReqParser<HTTPServer, Zjrpc::AppHeaders<Impl>>;
-  using HTTP::init;
-  using HTTP::start;
-  using HTTP::stop;
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using Base::impl;
 
   ZuCSpan endpoint() const { return m_endpoint; }
@@ -1383,8 +1330,8 @@ public:
 
   void disconnected(Zhttp::Session session) {
     if (!m_mx || !session) return;
-    if (this->invoked()) disconnected_(session);
-    else m_mx->run([this, session]() { disconnected_(session); }, m_ownerThread);
+    if (this->invoked()) disconnect_(session);
+    else m_mx->run([this, session]() { disconnect_(session); }, m_ownerThread);
   }
 
   ~HTTPServer() { final(); }
@@ -1401,7 +1348,6 @@ public:
     m_legacySessions = config.legacySessions();
     m_legacyLifetime = config.legacyLifetime();
     m_maxSessions = config.maxSessions();
-    m_httpDone = false;
     if (m_legacySessions && !m_rng.init()) {
       m_up = false;
       m_impl = nullptr;
@@ -1418,7 +1364,7 @@ public:
 	.retainedBodyMax(m_limits.maxJSONBytes)
 	.retainedMessageMax(messageMax);
     }
-    m_up = true;
+    m_up = false;
     if (HTTP::init(hub, ZuMv(config))) {
       return true;
     }
@@ -1430,22 +1376,12 @@ public:
     return false;
   }
 
-  bool stop() {
-    if (m_httpDone) return true;
-    m_up = false;
-    bool ok = HTTP::stop();
-    closeHTTP_();
-    m_httpDone = true;
-    return ok;
-  }
-
   void final() {
-    m_up = false;
-    if (m_mx && !m_httpDone) {
-      (void)HTTP::stop();
-      closeHTTP_();
-      m_httpDone = true;
-    }
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_disconnections && !m_closingSessions);
+    ZmAssert_(!m_routes.count_() && !m_sessions->count_());
+    ZmAssert_(!m_transportContexts->count_());
+    ZmAssert_(!m_sseGarbage.count_() && !m_ssePosted && !m_sseCloseFn);
     HTTP::final();
     m_impl = nullptr;
     m_mx = nullptr;
@@ -1454,6 +1390,10 @@ public:
   }
 
 private:
+  void disconnect_(Zhttp::Session session) {
+    ++m_disconnections;
+    disconnected_(session);
+  }
   void disconnected_(Zhttp::Session session) {
     unsigned visited = 0;
     auto i = m_routes.iter();
@@ -1465,6 +1405,7 @@ private:
       }
     }
     (void)m_transportContexts->del(session.id);
+    --m_disconnections;
   }
 
   Session *session_(ZuCSpan id) {
@@ -1507,6 +1448,7 @@ private:
   template <typename Done>
   void closeSession_(ZuRef<Session> session, Done done) {
     if (!session->closing) {
+      ++m_closingSessions;
       m_mx->del(&session->timer);
       (void)session->close(m_limits.workBatch);
       m_mx->run([
@@ -1516,6 +1458,7 @@ private:
       return;
     }
     if (session->close(m_limits.workBatch)) {
+      --m_closingSessions;
       done();
       return;
     }
@@ -1525,24 +1468,36 @@ private:
     }, m_ownerThread);
   }
 
-  void closeHTTP_() {
-    if (!m_mx) return;
-    ZmBlock<>{}([this](auto wake) mutable {
-	m_mx->run([this, wake = ZuMv(wake)]() mutable {
-	closeRpc_([this, wake = ZuMv(wake)]() mutable {
-	  closeSessions_([this, wake = ZuMv(wake)]() mutable {
-	    closeRoutes_([this, wake = ZuMv(wake)]() mutable {
-	      HTTP::txRun([this, wake = ZuMv(wake)]() mutable {
-		closeSSE_([this, wake = ZuMv(wake)]() mutable {
-		  HTTP::rxRun([this, wake = ZuMv(wake)]() mutable {
-		    closeTransportContexts_(ZuMv(wake));
-		  });
-		});
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    HTTP::start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      this->continue_([this]() { m_up = true; Engine::started(true); });
+    });
+  }
+
+  void stop_() {
+    this->continue_([this]() {
+      m_up = false;
+      HTTP::stop([this](bool ok) {
+	this->continue_([this, ok]() { closeHTTP_(ok); });
+      });
+    });
+  }
+
+  void closeHTTP_(bool ok) {
+    closeRpc_([this, ok]() {
+      closeSessions_([this, ok]() {
+	closeRoutes_([this, ok]() {
+	  HTTP::txRun([this, ok]() {
+	    closeSSE_([this, ok]() {
+	      HTTP::rxRun([this, ok]() {
+		closeTransportContexts_([this, ok]() { Engine::stopped(ok); });
 	      });
 	    });
 	  });
 	});
-      }, m_ownerThread);
+      });
     });
   }
 
@@ -1556,6 +1511,12 @@ private:
     }
     auto node = takeSession_();
     if (!node) {
+      if (m_closingSessions) {
+	this->continue_([this, done = ZuMv(done)]() mutable {
+	  closeSessions_(ZuMv(done));
+	});
+	return;
+      }
       done();
       return;
     }
@@ -1672,7 +1633,7 @@ private:
 	if (self->m_txClosed) return;
 	self->m_responder.sessionID(self->m_outSessionID);
 	self->m_txRoute.channel()->responseCancel(Zhttp::StreamCancelFn{
-	  self, [](Self *route) { route->responseCancelled_(); }});
+	  [self]() { self->responseCancelled_(); }});
       });
     }
     void prepare_(int policy) {
@@ -1905,6 +1866,12 @@ private:
 
   template <typename Done>
   void closeTransportContexts_(Done done) {
+    if (m_disconnections) {
+      this->continue_([this, done = ZuMv(done)]() mutable {
+	closeTransportContexts_(ZuMv(done));
+      });
+      return;
+    }
     unsigned visited = 0;
     while (visited < m_limits.workBatch) {
       auto entry = takeTransportContext_();
@@ -1969,7 +1936,8 @@ private:
   unsigned		m_legacyLifetime = 0;
   bool			m_absentOrigin = false;
   bool			m_legacySessions = true;
-  bool			m_httpDone = false;
+  unsigned		m_closingSessions = 0;
+  unsigned		m_disconnections = 0;
   alignas(Zm::CacheLineSize)
   Zjrpc::SSEQueue	m_sseGarbage;
   Zjrpc::SSECloseFn	m_sseCloseFn;
@@ -2052,7 +2020,10 @@ auto appLinkState(WSServer<Impl, Catalog, Profile> *) ->
 
 template <typename Impl, typename Catalog, typename Profile = Zhttp::H1TCP>
 class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
-    public Zjrpc::WSIO<WSServer<Impl, Catalog, Profile>> {
+    public Zjrpc::WSIO<WSServer<Impl, Catalog, Profile>>,
+    private ZmEngine<WSServer<Impl, Catalog, Profile>> {
+  using Engine = ZmEngine<WSServer>;
+  friend Engine;
   using Common = Server<WSServer, Impl, Catalog>;
   using Common::m_impl;
   using Common::m_mx;
@@ -2063,6 +2034,10 @@ class WSServer : public Server<WSServer<Impl, Catalog, Profile>, Impl, Catalog>,
   friend Common;
   friend IO;
 public:
+  using Engine::start;
+  using Engine::stop;
+  using Engine::state;
+  using Engine::stopping;
   using WS = Zws::Server<WSServer, Profile>;
   using Link = Zws::ServerLink<WSServer, Profile>;
   using Config = WS::Config;
@@ -2086,30 +2061,14 @@ public:
       m_mx = nullptr;
       return false;
     }
-    m_up = true;
-    return true;
-  }
-  bool start() {
-    if (!m_mx || m_started || !wsAccept() || !ws().start()) return false;
-    m_started = true;
-    return true;
-  }
-  bool stop() {
-    if (!m_mx) return true;
     m_up = false;
-    bool ok = !m_started || ws().stop();
-    m_started = false;
-    ZmBlock<>{}([this](auto wake) mutable {
-      ws().txRun([this, wake = ZuMv(wake)]() mutable {
-	m_stop = ZuMv(wake);
-	stopped_();
-      });
-    });
-    return ok;
+    m_closing = 0;
+    return true;
   }
   void final() {
     if (!m_mx) return;
-    (void)stop();
+    ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+    ZmAssert_(!m_closing);
     ws().final();
     m_ws.null();
     m_impl = nullptr;
@@ -2118,7 +2077,7 @@ public:
   }
   WS &ws() { return m_ws.template p<WS>(); }
   const WS &ws() const { return m_ws.template p<WS>(); }
-  bool wsAccept() const { return m_up.load_(); }
+  bool wsAccept() const { return Engine::state() == ZmEngineState::Running; }
 
   bool accept(Link &link, ZuBSpan host, ZuBSpan target, ZuBSpan offered,
       Zws::HandshakeString &selected) {
@@ -2179,18 +2138,43 @@ private:
     try { Zws::H1_::disconnected(*m_impl, *link, peer, 0); } catch (...) { }
     stopped_();
   }
+  void start_() {
+    if (!m_mx) { Engine::started(false); return; }
+    ws().start([this](bool ok) {
+      if (!ok) { Engine::started(false); return; }
+      ws().txRun([this]() {
+	ZmAssert_(!m_closing);
+	m_transportStopped = false;
+	m_up = true;
+	Engine::started(true);
+      });
+    });
+  }
+  void stop_() {
+    ws().txRun([this]() { stopWS_(); });
+  }
+  void stopWS_() {
+    m_up = false;
+    ws().stop([this](bool ok) {
+      ws().txRun([this, ok]() {
+	m_stopOK = ok;
+	m_transportStopped = true;
+	stopped_();
+      });
+    });
+  }
   void stopped_() {
-    if (m_closing || !m_stop) return;
-    auto done = ZuMv(m_stop);
-    ws().rxRun([this, done = ZuMv(done)]() mutable {
-      ws().txRun([done = ZuMv(done)]() mutable { done(); });
+    if (m_closing || !m_transportStopped) return;
+    m_transportStopped = false;
+    ws().rxRun([this]() {
+      ws().txRun([this]() { Engine::stopped(m_stopOK); });
     });
   }
 
   ZuUnion<void, WS> m_ws;
-  ZmFn<void()> m_stop;
   unsigned m_closing = 0;
-  bool m_started = false;
+  bool m_transportStopped = false;
+  bool m_stopOK = true;
 };
 
 } // Zmcp

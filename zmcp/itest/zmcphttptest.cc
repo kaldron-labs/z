@@ -126,7 +126,7 @@ struct App {
   void tool(
       Req *, const EchoReq &request, const auto &headers,
       const Zmcp::Context &context, Completion completion) {
-    ZuCheck(mx->invoked(mx->rxThread()));
+    if (!mx->invoked(mx->rxThread())) ++failures;
     auto authorization = headers.template get<Authorization>();
     if (authorization.count == 1 && authorization.value == "Bearer test")
       ++authorizedCalls;
@@ -170,8 +170,8 @@ struct App {
 
   template <typename Req, typename Completion>
   void cancelled(Req *, Completion *token, ZuCSpan) {
-    ZuCheck(mx->invoked(mx->rxThread()));
-    ZuCheck(token->cancelled() && !token->live());
+    if (!mx->invoked(mx->rxThread())) ++failures;
+    if (!token->cancelled() || token->live()) ++failures;
     ++cancellations;
     cancelled_.post();
   }
@@ -603,9 +603,9 @@ static void httpTest()
     Zmcp::ServerConfig config;
     config.localIP(ZiIP{"127.0.0.1"}).port(port).tcp();
     if (invalid)
-      config.tls(Zhttp::H2Config{}
-	.certPath("/nonexistent/mcp-retry-cert.pem")
-	.keyPath("/nonexistent/mcp-retry-key.pem"));
+      config.tls(Zhttp::H2Config{}.tls([](auto &tls) {
+        tls.certPath("/nonexistent/mcp-retry-cert.pem").keyPath("/nonexistent/mcp-retry-key.pem");
+      }));
     config.absentOrigin(true).legacyLifetime(1);
     return config;
   };
@@ -1053,7 +1053,7 @@ static void httpTest()
       httpStopped.post();
     });
     httpStopped.wait();
-    ZuCheck(httpStopOK && server.state() == ZmEngineState::Stopped &&
+    ZuCheck(httpStopOK && server.state() == ZmEngineState::Running &&
       server.up());
     ZuCheck(server.stop());
     ZuCheck(!server.up());
@@ -1125,7 +1125,9 @@ static void secureTest()
     config.localIP(ZiIP{"127.0.0.1"}).port(port);
     config.absentOrigin(true);
     if (!h3)
-      config.tls(Zhttp::H2Config{}.certPath(cert).keyPath(key).policy(
+      config.tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
+        tls.certPath(cert).keyPath(key);
+      }).policy(
 	multiplexed ? Zhttp::H2Policy::Force : Zhttp::H2Policy::Disable));
     else
       config.quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)
@@ -1149,7 +1151,7 @@ static void secureTest()
 	Zhttp::H2Policy::Force : Zhttp::H2Policy::Disable)
       .links(1).concurrency(4).linkMax(multiplexed ? 4 : 1);
     Zhttp::H2Config h2;
-    h2.caPath(cert).policy(multiplexed ?
+    h2.tls([&cert](auto &p) { p.caPath(cert); }).policy(multiplexed ?
       Zhttp::H2Policy::Force : Zhttp::H2Policy::Disable);
     Zhttp::QUICConfig quic;
     quic.caPath(cert).maxIdleTimeout(10000);

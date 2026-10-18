@@ -57,10 +57,8 @@ class SSEProducer : public ZmNHeap<SSEProducer>, public ZmObject {
 friend inline ZuStringT<"Zrest.SSE.Producer"> ZmNHeapID(SSEProducer *);
 
 public:
-  SSEProducer(ZmScheduler *scheduler, unsigned thread, Limits limits,
-      ZmAtomic<unsigned> *posts = nullptr) :
-    m_scheduler{scheduler}, m_thread{thread}, m_limits{limits},
-    m_posts{posts} { }
+  SSEProducer(ZmScheduler *scheduler, unsigned thread, Limits limits) :
+    m_scheduler{scheduler}, m_thread{thread}, m_limits{limits} { }
   ~SSEProducer() { close_(); }
 
   bool emit(ZuCSpan body, ZuCSpan id = {}, int64_t retry = -1,
@@ -138,14 +136,16 @@ public:
     {
       ZmGuard guard{m_admit};
       m_open = 0;
+      if (m_closePosted) return;
+      m_closePosted = true;
+      // Publish the final Tx post before another caller observes close.
+      // Admission and all off-Tx scheduling share this lock.
+      if (m_scheduler && !m_scheduler->invoked(m_thread)) {
+	schedule_([this]() { close_(); });
+	return;
+      }
     }
-    if (m_scheduler && !m_scheduler->invoked(m_thread)) {
-      if (m_closePosted.xch(1)) return;
-      schedule_([this]() { close_(); });
-    } else {
-      m_closePosted = 1;
-      close_();
-    }
+    close_();
   }
 
   template <typename Out>
@@ -210,12 +210,9 @@ private:
 
   template <typename L>
   void schedule_(L &&l) {
-    if (m_posts) ++*m_posts;
     ZmRef<SSEProducer> self{this};
-    auto posts = m_posts;
-    m_scheduler->run([self = ZuMv(self), l = ZuFwd<L>(l), posts]() mutable {
+    m_scheduler->run([self = ZuMv(self), l = ZuFwd<L>(l)]() mutable {
       try { l(); } catch (...) { }
-      if (posts) --*posts;
     }, m_thread);
   }
 
@@ -275,7 +272,6 @@ private:
   ZmScheduler *m_scheduler = nullptr;
   unsigned m_thread = 0;
   Limits m_limits;
-  ZmAtomic<unsigned> *m_posts = nullptr;
   ZmSpinLock m_admit;
   // Tx queue/producer state; send admission is shared with posting threads.
   alignas(Zm::CacheLineSize)
@@ -290,7 +286,7 @@ private:
   ZmAtomic<unsigned> m_queued = 0; // admission lock
   ZmAtomic<uint64_t> m_bytes = 0; // admission lock
   bool m_posted = false; // Tx owner
-  ZmAtomic<unsigned> m_closePosted = 0;
+  bool m_closePosted = false; // protected by m_admit
 };
 
 template <typename Emit>

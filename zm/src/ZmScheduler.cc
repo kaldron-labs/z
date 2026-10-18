@@ -128,8 +128,14 @@ bool ZmScheduler::start__()
       int sid = ++m_runThreads;
       if (m_threads[sid - 1].thread.run(
 	  [this]() { work(); },
-	  m_params.thread(sid), sid) < 0)
+	  m_params.thread(sid), sid) < 0) {
+	--m_runThreads;
+	spawnGuard.unlock();
+	// Earlier workers belong to this failed start attempt. Drain them before
+	// started(false) allows its owner to finalize the stopped scheduler.
+	ZmScheduler::stop__();
 	return false;
+      }
     }
   }
   return true;

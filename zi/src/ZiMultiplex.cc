@@ -2704,6 +2704,7 @@ bool ZiMultiplex::start__()
     WSADATA wd;
     DWORD errNo = WSAStartup(MAKEWORD(2, 2), &wd);
     if (errNo) {
+      ZmScheduler::stop__();
       Error("WSAStartup", Zi::IOError, ZeError(errNo));
       return false;
     }
@@ -2714,6 +2715,7 @@ bool ZiMultiplex::start__()
   if (!m_completionPort) {
     ZeError e(GetLastError());
     WSACleanup();
+    ZmScheduler::stop__();
     Error("CreateIoCompletionPort", Zi::IOError, e);
     return false;
   }
@@ -2728,13 +2730,16 @@ bool ZiMultiplex::start__()
     pthread_sigmask(SIG_BLOCK, &s, 0);
   }
   if ((m_epollFD = epoll_create(m_epollMaxFDs)) < 0) {
-    Error("epoll_create", Zi::IOError, ZeLastError);
+    ZeError e{errno};
+    ZmScheduler::stop__();
+    Error("epoll_create", Zi::IOError, e);
     return false;
   }
   // Preserve one wake per queued rx() callback without a pipe's byte limit.
   if ((m_wakeFD = eventfd(0, EFD_NONBLOCK | EFD_SEMAPHORE)) < 0) {
     ZeError e{errno};
     ::close(m_epollFD); m_epollFD = -1;
+    ZmScheduler::stop__();
     Error("eventfd", Zi::IOError, e);
     return false;
   }
@@ -2747,6 +2752,7 @@ bool ZiMultiplex::start__()
       ZeError e{errno};
       ::close(m_epollFD); m_epollFD = -1;
       ::close(m_wakeFD); m_wakeFD = -1;
+      ZmScheduler::stop__();
       Error("epoll_ctl(EPOLL_CTL_ADD)", Zi::IOError, e);
       return false;
     }

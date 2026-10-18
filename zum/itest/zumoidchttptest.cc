@@ -8,6 +8,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiPlatform.hh>
@@ -59,13 +60,14 @@ static ZiMxParams params()
 
 static void eviction()
 {
-  ZuTestScope(eviction);
+  ZuTestScopeRT(eviction);
   Endpoint a, b;
-  ZuCheck(a.open() && b.open());
+  ZuCheckRT(a.open() && b.open());
   ZiMultiplex mx{params()};
-  ZuCheck(mx.start());
+  ZuCheckRT(mx.start());
   Zum::OIDCHTTP http;
-  ZuCheck(http.init(&mx, 3, 1));
+  ZuCheckRT(http.init(&mx, 3, 1));
+  ZuCheckRT(http.start());
   auto send = http.fn();
   // Bound but non-listening sockets reserve the ports and refuse connections.
   // Alternating two origins forces reuse of the sole idle origin slot.
@@ -79,9 +81,21 @@ static void eviction()
 	});
     });
   }
-  ZuCheck(sent);
+  ZuCheckRT(sent);
+  ZuCheckRT(http.stop());
+  bool restarted = http.start();
+  ZuCheckRT(restarted);
+  if (restarted) {
+    ZuCheckRT(ZmBlock<bool>{}([&send, &mx, &a](auto wake) mutable {
+      send(Zum::OIDCHTTPRequest{.url = a.url()},
+	[&mx, wake = ZuMv(wake)](unsigned status, Zum::String body) mutable {
+	  wake(!status && !body && mx.invoked(3));
+	});
+    }));
+  }
+  ZuCheckRT(http.stop());
   http.final();
-  ZuCheck(mx.stop());
+  ZuCheckRT(mx.stop());
 }
 
 static void saturation()
@@ -93,6 +107,7 @@ static void saturation()
   ZuCheck(mx.start());
   Zum::OIDCHTTP http;
   ZuCheck(http.init(&mx, 3, 1));
+  ZuCheck(http.start());
   auto send = http.fn();
   unsigned completed = 0;
   bool cancelled = false;
@@ -107,6 +122,7 @@ static void saturation()
 	wake(status == 503 && !body && mx.invoked(3));
       });
   }));
+  ZuCheck(http.stop());
   http.final();
   ZuCheck(completed == 1 && cancelled);
   ZuCheck(mx.stop());
@@ -121,6 +137,7 @@ static void startupDrain()
   ZuCheck(mx.start());
   Zum::OIDCHTTP http;
   ZuCheck(http.init(&mx, 3, 1));
+  ZuCheck(http.start());
   auto send = http.fn();
   unsigned completed = 0;
   bool cancelled = false;
@@ -129,6 +146,10 @@ static void startupDrain()
       ++completed;
       cancelled = !status && !body && mx.invoked(3);
     });
+  ZmSemaphore admitted;
+  mx.run([&admitted]() { admitted.post(); }, 3);
+  admitted.wait();
+  ZuCheck(http.stop());
   http.final();
   ZuCheck(completed == 1 && cancelled);
   ZuCheck(mx.stop());

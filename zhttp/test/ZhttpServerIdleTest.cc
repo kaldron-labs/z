@@ -484,7 +484,7 @@ void idle()
   ZuCHECK(serverStopped, "stop server after idle expiry");
   if (clientInited) client.final();
   if (serverInited) app.final();
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
   mx.stop();
   ZuCHECK(!state.errors.load_(), "idle expiry has no transport error");
@@ -530,7 +530,9 @@ void activeStop()
     serverConfig.tcp();
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
     serverConfig.tls(
-      Zhttp::H2Config{}.certPath(cert).keyPath(key)
+      Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
+        tls.certPath(cert).keyPath(key);
+      })
 	.policy(Zhttp::H2Policy::Prefer));
   else
     serverConfig.quic(
@@ -551,7 +553,9 @@ void activeStop()
   else if constexpr (ZuIsSame<Protocol, Zhttp::TLS>{})
     if constexpr (HTTP::Multiplexed)
       clientInited = listening && client.init(
-	hub, Zhttp::H2Config{}.caPath(cert)
+	hub, Zhttp::H2Config{}.tls([&cert](auto &tls) {
+	  tls.caPath(cert);
+	})
 	  .policy(Zhttp::H2Policy::Force));
     else
       clientInited =
@@ -670,7 +674,7 @@ void activeStop()
   overflowLink = nullptr;
   if (clientInited) client.final();
   if (serverInited) app.final();
-  ZiResolver::stop();
+  ZiResolver::stopSync();
   ZiResolver::final();
   mx.stop();
   ZuCHECK(!state.errors.load_(), "active server stop has no error");
@@ -697,8 +701,10 @@ void retryInit()
     "consolidated application exposes engine state");
   auto invalid = Zhttp::ServerConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port).tcp()
-    .tls(Zhttp::H2Config{}.certPath("/nonexistent/zhttp-retry-cert.pem")
-      .keyPath("/nonexistent/zhttp-retry-key.pem"));
+    .tls(Zhttp::H2Config{}.tls([](auto &tls) {
+      tls.certPath("/nonexistent/zhttp-retry-cert.pem")
+        .keyPath("/nonexistent/zhttp-retry-key.pem");
+    }));
   ZuCHECK(!app.init(hub, ZuMv(invalid)),
     "initialization fails after the TCP hub is acquired");
   ZuCHECK(!app.hubCount(), "failed initialization releases registered hubs");
@@ -732,8 +738,10 @@ void retryInit()
   App partial{&state};
   auto invalidAgain = Zhttp::ServerConfig()
     .localIP(ZiIP{"127.0.0.1"}).port(state.port).tcp()
-    .tls(Zhttp::H2Config{}.certPath("/nonexistent/zhttp-retry-cert.pem")
-      .keyPath("/nonexistent/zhttp-retry-key.pem"));
+    .tls(Zhttp::H2Config{}.tls([](auto &tls) {
+      tls.certPath("/nonexistent/zhttp-retry-cert.pem")
+        .keyPath("/nonexistent/zhttp-retry-key.pem");
+    }));
   ZuCHECK(!partial.init(hub, ZuMv(invalidAgain)),
     "second initialization fails after acquiring TCP");
   partial.final();
@@ -772,7 +780,9 @@ void seedSets()
   auto config = [&]() {
     Zhttp::ServerConfig result;
     result.localIP(ZiIP{"127.0.0.1"}).port(port)
-      .tls(Zhttp::H2Config{}.certPath(cert).keyPath(key))
+      .tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
+        tls.certPath(cert).keyPath(key);
+      }))
       .quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key)
         .qpackTxCapacity(SeedQPackCapacity));
     return result;

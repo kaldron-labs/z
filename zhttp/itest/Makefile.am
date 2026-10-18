@@ -25,15 +25,16 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zhttpmatrix zhttpapptest zhttpmultirequesttest \
 	zhttpdtest zhttplifecycletest zhttpclientfallbacktest \
-	zhttpserverstreamtest
+	zhttpserverstreamtest zhttpclientstreamtest
 noinst_HEADERS = ZhttpITestPorts.hh
 zhttpmatrix_SOURCES = zhttpmatrix.cc
 zhttpapptest_SOURCES = zhttpapptest.cc
 zhttpmultirequesttest_SOURCES = zhttpmultirequesttest.cc
-zhttpdtest_SOURCES = zhttpdtest.cc
+zhttpdtest_SOURCES = zhttpdtest.cc zhttpdtestopts.cc
 zhttplifecycletest_SOURCES = zhttplifecycletest.cc
 zhttpclientfallbacktest_SOURCES = zhttpclientfallbacktest.cc
 zhttpserverstreamtest_SOURCES = zhttpserverstreamtest.cc
+zhttpclientstreamtest_SOURCES = zhttpclientstreamtest.cc
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

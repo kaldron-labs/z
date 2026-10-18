@@ -197,50 +197,58 @@ static void jsonContract()
 }
 static void requests()
 {
-  ZuTestScope(requests);
+  ZuTestScopeRT(requests);
   ZmSchedParams params;
   params.nThreads(1);
   params.thread(1).isolated(true);
   ZmScheduler scheduler{ZuMv(params)};
-  ZuCheck(scheduler.start());
+  ZuCheckRT(scheduler.start());
 
   ZmRef<Zum::Requests> requests = new Zum::Requests{};
-  ZuCheck(requests->init(&scheduler, 1, 1));
-  requests->activate();
+  ZuCheckRT(requests->init(&scheduler, 1, 1));
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->activate(ZuMv(wake));
+  }));
 
   ZmRef<Zum::Request> pending;
   ZmSemaphore started;
-  ZmSemaphore finished;
+  ZmSemaphore finished, retired;
   ZmAtomic<unsigned> completed = 0;
-  ZuCheck(requests->run(Zm::now() + ZuTime{60}, [
+  ZuCheckRT(requests->run(Zm::now() + ZuTime{60}, [
     &pending, &started
   ](ZmRef<Zum::Request> request) mutable {
     pending = ZuMv(request);
     started.post();
   }, [&completed]() { ++completed; }));
   started.wait();
-  ZuCheck(requests->count() == 1);
-  ZuCheck(!requests->run(Zm::now() + ZuTime{60}, [](
+  ZuCheckRT(requests->count() == 1);
+  ZuCheckRT(!requests->run(Zm::now() + ZuTime{60}, [](
       ZmRef<Zum::Request>) { }, [&completed]() { ++completed; }));
-  pending->complete([&completed, &finished]() {
+  pending->complete([&requests, &completed, &finished]() {
+    // The slot still owns a cancelled deadline until its retirement turn.
+    ZuCheckRT(!requests->run(Zm::now(60), [](ZmRef<Zum::Request>) { }, []() { }));
     ++completed;
     finished.post();
   });
   finished.wait();
-  ZuCheck(completed == 1);
+  scheduler.run([&retired]() { retired.post(); }, 1);
+  retired.wait();
+  ZuCheckRT(completed == 1);
 
   ZmSemaphore timedOut;
-  ZuCheck(requests->run(Zm::now() + ZuTime{0.01}, [](
+  ZuCheckRT(requests->run(Zm::now() + ZuTime{0.01}, [](
       ZmRef<Zum::Request>) { }, [&completed, &timedOut]() {
     ++completed;
     timedOut.post();
   }));
   timedOut.wait();
-  ZuCheck(completed == 2 && !requests->count());
+  scheduler.run([&retired]() { retired.post(); }, 1);
+  retired.wait();
+  ZuCheckRT(completed == 2 && !requests->count());
 
   ZmRef<Zum::Request> late;
   started.reset();
-  ZuCheck(requests->run(Zm::now() + ZuTime{60}, [
+  ZuCheckRT(requests->run(Zm::now() + ZuTime{60}, [
     &late, &started
   ](ZmRef<Zum::Request> request) mutable {
     late = ZuMv(request);
@@ -248,21 +256,119 @@ static void requests()
   }, [&completed]() { ++completed; }));
   started.wait();
   ZmSemaphore deactivated;
-  requests->deactivate([&deactivated]() { deactivated.post(); });
+  requests->deactivate([&deactivated](bool) { deactivated.post(); });
   deactivated.wait();
-  ZuCheck(!requests->active() && !requests->count() && completed == 3);
+  ZuCheckRT(!requests->active() && !requests->count() && completed == 3);
   late->complete([&completed]() { ++completed; });
   ZmSemaphore drained;
   scheduler.run([&drained]() { drained.post(); }, 1);
   drained.wait();
-  ZuCheck(completed == 3);
-  ZuCheck(!requests->run(Zm::now() + ZuTime{60}, [](
+  ZuCheckRT(completed == 3);
+  ZuCheckRT(!requests->run(Zm::now() + ZuTime{60}, [](
       ZmRef<Zum::Request>) { }, [&completed]() { ++completed; }));
 
+  // Deactivation requested from cancellation must wait for that callback
+  // and the same retirement barrier as the first caller.
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->activate(ZuMv(wake));
+  }));
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->activate(ZuMv(wake));
+  }));
+  bool cancelling = false;
+  ZmSemaphore callbacks;
+  started.reset();
+  bool admitted = requests->run(Zm::now() + ZuTime{60},
+    [&started](ZmRef<Zum::Request>) { started.post(); },
+    [&requests, &cancelling, &callbacks]() {
+      cancelling = true;
+      requests->deactivate([&cancelling, &callbacks](bool) {
+	ZuCheckRT(!cancelling);
+	callbacks.post();
+      });
+      cancelling = false;
+    });
+  ZuCheckRT(admitted);
+  started.wait();
+  requests->deactivate([&cancelling, &callbacks](bool) {
+    ZuCheckRT(!cancelling);
+    callbacks.post();
+  });
+  callbacks.wait();
+  callbacks.wait();
+  ZuCheckRT(!requests->active() && !requests->count());
+
+  // Activation during cancellation is a pending opposite operation.
+  ZmSemaphore activated;
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->activate(ZuMv(wake));
+  }));
+  started.reset();
+  ZuCheckRT(requests->run(Zm::now() + ZuTime{60},
+    [&started](ZmRef<Zum::Request>) { started.post(); },
+    [&requests, &activated]() {
+      requests->activate([&activated](bool) { activated.post(); });
+    }));
+  started.wait();
+  requests->deactivate([&deactivated](bool) { deactivated.post(); });
+  deactivated.wait();
+  activated.wait();
+  ZuCheckRT(requests->active());
+  requests->deactivate([&deactivated](bool) { deactivated.post(); });
+  deactivated.wait();
+
+  // Latest-intent cancellation of a queued opposite operation is distinct
+  // from completing an actual stop with a diagnostic failure. All calls here
+  // precede the startup owner continuation without blocking that owner.
+  bool superseded = false;
+  scheduler.run([requests, &superseded, &callbacks]() {
+    requests->activate();
+    requests->deactivate([&superseded, &callbacks](bool ok) {
+      superseded = !ok;
+      callbacks.post();
+    });
+    requests->activate();
+  }, 1);
+  callbacks.wait();
+  ZuCheckRT(superseded && requests->state() == ZmEngineState::Running);
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->deactivate(ZuMv(wake));
+  }));
+
+  requests = {};
+  // A cancelled completion token may outlive its admission controller.
+  late->complete([&completed]() { ++completed; });
+  pending->complete([&completed]() { ++completed; });
+  ZuCheckRT(completed == 3);
   late = {};
   pending = {};
-  requests = {};
-  ZuCheck(scheduler.stop());
+
+  // Reserve enough admissions in one owner turn to leave a second retirement
+  // batch behind the initial stop barrier. Its completion must notify stop;
+  // no repeated readiness check may be needed while those credits remain.
+  constexpr unsigned batchCount = Zum::RequestWork::Batch + 1;
+  requests = new Zum::Requests{};
+  ZuCheckRT(requests->init(&scheduler, 1, batchCount));
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->activate(ZuMv(wake));
+  }));
+  unsigned cancelled = 0;
+  bool batchOK = false;
+  scheduler.run([&requests, &cancelled, &batchOK, &deactivated]() {
+    for (unsigned i = 0; i < batchCount; ++i) {
+      bool accepted = requests->run(Zm::now(60),
+        [](ZmRef<Zum::Request>) { }, [&cancelled]() { ++cancelled; });
+      ZuCheckRT(accepted);
+    }
+    requests->deactivate([&requests, &cancelled, &batchOK, &deactivated](bool ok) {
+      batchOK = ok && cancelled == batchCount && !requests->count();
+      requests = {}; // callback-driven destruction after the actual last batch
+      deactivated.post();
+    });
+  }, 1);
+  deactivated.wait();
+  ZuCheckRT(batchOK && !requests);
+  ZuCheckRT(scheduler.stop());
 }
 
 int main(int argc, char **argv)

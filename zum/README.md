@@ -195,6 +195,12 @@ The service owns its protocol state on the configured scheduler shard. The
 application supplies `ServiceHTTPFn`, an asynchronous HTTP adapter; `libZum`
 does not impose a particular HTTP client. `zumpingd`'s private
 [`PingHTTP`](example/pinghttp.hh) adapter is the reference implementation.
+Initialize and start this adapter before starting its service consumers. After
+stopping those consumers, stop the adapter before calling its `final`. Its
+engine covers resolver startup, destination clients and accepted request
+lifetimes; `init` leaves it stopped and `final` performs no shutdown wait.
+The adapter supports restart and retains configuration after stop. A resolver
+owned by the application must already be running when adapter startup begins.
 
 A typical setup is:
 
@@ -212,8 +218,9 @@ service.init(Zum::ServiceConfig{
   .audience = "https://orders.example/api"
 }, httpAdapter);
 
-service.start([](int error) {
-  // ServiceError::OK means discovery, authentication and key loading worked.
+service.start([&service](bool ok) {
+  // Success includes discovery, authentication, key loading and optional SSF registration.
+  // On failure, service.startError() supplies the separate startup diagnostic.
 });
 
 service.verify(accessToken, [](int error, Zum::ServicePrincipal principal) {
@@ -225,9 +232,35 @@ Services normally call `publish()` after `start()` and before opening their
 resource listener. `publish()` sends the catalog to the application-scoped
 management endpoint; it does not assign users or roles. Call `stop()`, wait
 for its completion callback, and then call `final()` during teardown. The
-service keeps tokens and configured secret material in memory and clears them
-when stopped. See [`zumpingd.cc`](example/zumpingd.cc) for the complete
-startup, request, SET callback and shutdown sequence.
+service clears runtime tokens and key/dedup state when stopped, retaining
+configuration secrets for restart. Final clears those configuration secrets.
+See [`zumpingd.cc`](example/zumpingd.cc) for the complete startup, request, SET callback and shutdown sequence.
+
+Service uses a parent `ZmEngine` for the complete operation. Parameterless
+`start()` and `stop()` are synchronous main-thread calls; callback overloads
+report booleans and use canonical idempotence and pending opposite operations.
+A completed stop permits start with the retained configuration, without init.
+Stop is best effort: errors do not skip remaining cleanup. Completion leaves
+the engine Stopped even when its boolean reports failure. Daemon, provider and
+HTTP-adapter controllers aggregate dependency errors through their complete
+drain boundary; they do not restart stopped resources to undo shutdown.
+Startup failure rolls back owned work before its false completion; a failed
+start or an initialization that never started can be finalized directly.
+Final asserts Stopped and drained owner work, and never starts shutdown.
+
+Stop seals admission, cancels both timers, waits for HTTP callbacks and queued
+application input to return, and drains runtime containers in bounded owner
+turns. The HTTP adapter must invoke each completion exactly once. It and the
+scheduler remain valid through completed stop. Application operations accepted
+while Running complete on the configured owner; calls rejected outside Running
+complete immediately with ServiceError::Stopped. Stop/final must not race an
+external call that has not returned. A stop callback can finalize the service
+when no opposite lifecycle operation is pending.
+
+`setRefreshRevocationFn` can configure a quiescent Stopped service directly;
+serialize this configuration with start/final. During Running it posts the
+callback replacement to the owner and its post is covered by stop. The hook
+is retained across restart.
 
 `zumpingd` publishes one `ping` action and role; the runtime `ping` scope is
 derived from that role. It verifies the bearer token on `GET /ping`, and returns
@@ -277,6 +310,82 @@ Setting an application to `Revoked` is permanent logical deletion: the app is
 made inactive first, then bounded saga batches remove its evidence and consent
 rows. `Disabled` remains reversible and does not delete those records.
 
+### OIDC component lifecycle
+
+OIDC and its OIDCHTTP adapter each own a complete engine. Init retains
+configuration while Stopped. Start opens protocol or transport admission;
+OIDC start does not promise discovery or authentication readiness. Complete
+stop before final; final releases quiescent configuration without dispatching
+shutdown or waiting. Completed stop permits restart without init.
+
+OIDC stop cancels pending login timers/state in bounded owner turns and waits
+for accepted calls, discovery, token/JWKS/UserInfo responses, DB helpers and
+application callbacks. A transport must invoke each supplied completion once.
+Stop waits for outstanding external responses; keep the HTTP adapter, database
+and scheduler running until that drain completes. Callback invocation consumes
+its work handle, so retaining an already-fired HTTP completion does not delay
+shutdown. Cancelled pending state cannot be revived by a late response.
+
+OIDCHTTP start starts its owned resolver. An externally owned resolver must
+already be Running and remains externally controlled. Stop drains accepted
+requests and origin clients, releases native runtime clients in bounded turns,
+and stops its owned resolver. Origin storage capacity and configuration survive
+stop; clients are reconstructed lazily on restart. A retained fn() handle owns
+the adapter state and rejects sends after final without scheduler access.
+
+The embedded Server provider also exposes canonical start/stop/state. Start
+covers its OIDC child and opens public admission, independently of Requests
+activation or authentication readiness. Final requires Stopped. The daemon
+starts the provider before its HTTP listener and rolls it back if listener
+startup fails. Provider callback graphs carry an admission credit. DB helpers retain that
+same credit through destruction, including work surviving application
+cancellation. Daemon now has asynchronous engine hooks for its provider, HTTP,
+SSF, Requests and maintenance dependencies; final requires Stopped and never
+initiates shutdown. Signing prepare runs on the main thread with the daemon
+Stopped and request admission closed, followed by restart. Administrative admission and its callback/DB/saga graphs now retain a parent
+credit through actual helper destruction. Stop drains producers before stopping
+the SSF consumer, preserving accepted revocation side effects. Rx correlation
+entropy uses the existing stateless backend RNG wrapper. Full shard/capture/budget audits and executable
+lifecycle validation remain in progress; this batch has not been built or run.
+
+### Request admission and SSF lifecycle
+
+`Requests::activate` and `deactivate` accept canonical boolean completion
+callbacks. Activation opens admission on its configured owner thread; callers
+requiring readiness wait for that callback. Deactivation reports a superseded
+queued stop as false, separately from a completed stop. The daemon joins an
+actual Stopped admission state before accepting that dependency as drained.
+Production Zdb activation serializes preparation after deactivation and checks
+the active-role generation before and after asynchronous admission startup.
+
+
+The server's Requests controller uses a canonical engine for its admission,
+deadline and cancellation resources. Database activation remains a separate
+role decision that calls activate/deactivate. Activation opens admission on the
+owner continuation; activation during a drain is queued until that drain
+completes. Multiple deactivate callbacks share the completed boundary.
+
+The admission limit and count include deadline records awaiting their owner
+retirement barrier. A logically completed request can therefore briefly retain
+its slot; run returns false while that bound is full. Cancellation and node
+retirement use bounded owner turns. Keep Requests alive until deactivation
+completes. A retained cancelled completion token can outlive that controller;
+its done check suppresses owner access. Keep the scheduler valid through any
+external completion call that has not returned.
+
+SSFTransmitter is a separate child engine. Start launches its deadline/retry
+work and opens notification/registration admission; it does not promise that
+the durable outbox has finished replaying. Stop seals new inputs, cancels both
+timers, and drains DB, signing and HTTP callbacks and their continuations.
+Callbacks consume their graph credit when invoked, so an adapter can retain
+a fired completion without delaying shutdown. Selector callbacks finish at
+their explicit terminal result. Adapters must complete each request once.
+
+Completed stop permits transmitter restart with retained configuration. Final
+only releases quiescent configuration; it never starts shutdown. The owning
+daemon drains a transmitter before replacing its signing configuration. DB,
+Requests, scheduler and adapter resources remain valid through child stop.
+
 SSF sends refresh-family revocations to clients that register a callback.
 There are no statically configured receivers. A service authenticates with its
 workload bearer token and calls `POST /admin/apps/{app_id}/ssf` using its existing
@@ -316,11 +425,13 @@ Renewing an unchanged callback preserves the counter. Removed or replaced
 registrations invalidate queued delivery attempts. Notification retries are
 bounded by refresh-family expiry and use exponential backoff.
 
-The daemon separates listener availability from database readiness:
-`/health/live` can remain available while a passive or recovering node returns
-503 for database-dependent operations. The `zumd: active` event means database
-activation and signing preparation completed; a new store still requires the
-initial administrator enrollment before `/health/ready` is ready.
+The daemon starts its multiplexer and Zdb runtime independently of cluster
+activation. Zdb's `up` callback starts the network listener after bootstrap and
+signing preparation; `down` stops it. A standby keeps its runtime and native
+telemetry available but has no HTTP listener, including health routes.
+`zumd: active` means activation and preparation completed. An active node exposes
+`/health/live`; a new store still needs initial-admin enrollment before
+`/health/ready` succeeds, returning 503 until then.
 
 ### OIDC client roles
 

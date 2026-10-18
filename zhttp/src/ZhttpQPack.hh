@@ -18,12 +18,13 @@
 
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmHash.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtScratch.hh>
-#include <zlib/ZmScratch.hh>
 
 #include <zlib/ZiAssert.hh>
 
@@ -58,15 +59,15 @@ struct QPackFieldFlags {
   bool	neverIndex = false;
 };
 
-ZtEnumStruct(ZhttpAPI, QPackBuildFailure, uint8_t,
+ZtEnumStruct(ZhttpAPI, QPackBuildFailure, int8_t,
   None, PrefixEncode, HeadersFrameHeaderWrite, HeadersPayloadEmit);
 
 struct QPackDecodedInsn {
-  QPackInsn::T	type = QPackInsn::SetCapacity;
   uint64_t		value = 0;
   Header		header;
   HdrBytes		nameStorage;
   HdrBytes		valueStorage;
+  QPackInsn::T	type = QPackInsn::SetCapacity;
   bool			nameRefDynamic = false;
 };
 
@@ -100,64 +101,64 @@ public:
   Params() = default;
 
   Params &&maxHeaderListSize(unsigned v) {
-    maxHeaderListSize_ = v;
+    m_maxHeaderListSize = v;
     return ZuMv(*this);
   }
   Params &&qpackRxCapacity(unsigned v) {
-    qpackRxCapacity_ = v;
+    m_qpackRxCapacity = v;
     return ZuMv(*this);
   }
   Params &&qpackTxCapacity(unsigned v) {
-    qpackTxCapacity_ = v;
+    m_qpackTxCapacity = v;
     return ZuMv(*this);
   }
   Params &&qpackRxBlocked(unsigned v) {
-    qpackRxBlocked_ = v;
+    m_qpackRxBlocked = v;
     return ZuMv(*this);
   }
   Params &&qpackTxSections(unsigned v) {
-    qpackTxSections_ = v;
+    m_qpackTxSections = v;
     return ZuMv(*this);
   }
   Params &&qpackLimits(QPackLimits v) {
-    qpackRxCapacity_ = v.rxCapacity;
-    qpackTxCapacity_ = v.txCapacity;
-    qpackRxBlocked_ = v.rxBlocked;
-    qpackTxSections_ = v.txSections;
+    m_qpackRxCapacity = v.rxCapacity;
+    m_qpackTxCapacity = v.txCapacity;
+    m_qpackRxBlocked = v.rxBlocked;
+    m_qpackTxSections = v.txSections;
     return ZuMv(*this);
   }
   Params &&qpackIndex(ZuBSpan name) {
     name = headerName_(name);
-    if (!index_ || !index_->find(name)) {
-      detach_(index_);
-      index_->add(HeaderName{name}, true);
+    if (!m_index || !m_index->find(name)) {
+      detach_(m_index);
+      m_index->add(HeaderName{name}, true);
     }
     return ZuMv(*this);
   }
   Params &&qpackNeverIndex(ZuBSpan name) {
     name = headerName_(name);
-    if (!neverIndex_ || !neverIndex_->find(name)) {
-      detach_(neverIndex_);
-      neverIndex_->add(HeaderName{name}, true);
+    if (!m_neverIndex || !m_neverIndex->find(name)) {
+      detach_(m_neverIndex);
+      m_neverIndex->add(HeaderName{name}, true);
     }
     return ZuMv(*this);
   }
 
   bool indexAllowed(ZuBSpan name) const {
-    return index_ && index_->find(name) &&
-      (!neverIndex_ || !neverIndex_->find(name));
+    return m_index && m_index->find(name) &&
+      (!m_neverIndex || !m_neverIndex->find(name));
   }
   ZhttpAPI bool neverIndex(ZuBSpan name) const;
 
-  unsigned maxHeaderListSize() const { return maxHeaderListSize_; }
-  unsigned qpackRxCapacity() const { return qpackRxCapacity_; }
-  unsigned qpackTxCapacity() const { return qpackTxCapacity_; }
-  unsigned qpackRxBlocked() const { return qpackRxBlocked_; }
-  unsigned qpackTxSections() const { return qpackTxSections_; }
+  unsigned maxHeaderListSize() const { return m_maxHeaderListSize; }
+  unsigned qpackRxCapacity() const { return m_qpackRxCapacity; }
+  unsigned qpackTxCapacity() const { return m_qpackTxCapacity; }
+  unsigned qpackRxBlocked() const { return m_qpackRxBlocked; }
+  unsigned qpackTxSections() const { return m_qpackTxSections; }
   QPackLimits qpackLimits() const {
     return {
-      qpackRxCapacity_, qpackTxCapacity_,
-      qpackRxBlocked_, qpackTxSections_
+      m_qpackRxCapacity, m_qpackTxCapacity,
+      m_qpackRxBlocked, m_qpackTxSections
     };
   }
 
@@ -182,13 +183,13 @@ private:
     return name;
   }
 
-  ZmRef<QPackNameSet>	index_;
-  ZmRef<QPackNameSet>	neverIndex_;
-  unsigned		maxHeaderListSize_ = 1<<16;
-  unsigned		qpackRxCapacity_ = 0;
-  unsigned		qpackTxCapacity_ = 0;
-  unsigned		qpackRxBlocked_ = 0;
-  unsigned		qpackTxSections_ = 0;
+  ZmRef<QPackNameSet>	m_index;
+  ZmRef<QPackNameSet>	m_neverIndex;
+  unsigned		m_maxHeaderListSize = 1<<16;
+  unsigned		m_qpackRxCapacity = 0;
+  unsigned		m_qpackTxCapacity = 0;
+  unsigned		m_qpackRxBlocked = 0;
+  unsigned		m_qpackTxSections = 0;
 };
 
 using QPackRxString =
@@ -295,9 +296,14 @@ struct QPackTxNameEntry {
 };
 
 using QPackTxNames = ZmLHash<QPackTxNameEntry,
-  ZmLHashKey<QPackTxNameEntry::KeyAxor, ZmLHashLocal<>>>;
+  ZmLHashKey<QPackTxNameEntry::KeyAxor,
+    ZmLHashLocal<>>>;
 
 struct QPackTxOrderEntry : public QPackTxEntry {
+  QPackTxString nameStorage;
+  QPackTxString valueStorage;
+  bool		owns = false;
+
   QPackTxOrderEntry() = default;
   QPackTxOrderEntry(const QPackTxOrderEntry &) = delete;
   QPackTxOrderEntry &operator =(const QPackTxOrderEntry &) = delete;
@@ -326,7 +332,6 @@ struct QPackTxOrderEntry : public QPackTxEntry {
     owns = false;
   }
 
-private:
   void move_(QPackTxOrderEntry &&entry) {
     abs = entry.abs;
     prevName = entry.prevName;
@@ -343,9 +348,6 @@ private:
     }
   }
 
-  QPackTxString nameStorage;
-  QPackTxString valueStorage;
-  bool		owns = false;
 };
 
 using QPackTxOrder =
@@ -364,11 +366,24 @@ using QPackTxSections =
     ZmLHashKey<QPackTxSection::StreamAxor,
       ZmLHashLocal<>>>;
 
+struct QPackTxExactHash : ZmNHeap<QPackTxExactHash>, QPackTxHash {
+friend inline ZuStringT<"Zhttp.QPack.Exact"> ZmNHeapID(QPackTxExactHash *);
+  using QPackTxHash::QPackTxHash;
+};
+struct QPackTxNameHash : ZmNHeap<QPackTxNameHash>, QPackTxNames {
+friend inline ZuStringT<"Zhttp.QPack.Names"> ZmNHeapID(QPackTxNameHash *);
+  using QPackTxNames::QPackTxNames;
+};
+struct QPackTxSectionHash : ZmNHeap<QPackTxSectionHash>, QPackTxSections {
+friend inline ZuStringT<"Zhttp.QPack.Sections"> ZmNHeapID(QPackTxSectionHash *);
+  using QPackTxSections::QPackTxSections;
+};
+
 struct ZhttpAPI QPackTxTable {
-  ZuPtr<QPackTxHash>	exact;
-  ZuPtr<QPackTxNames>	names;
+  ZuPtr<QPackTxExactHash>	exact;
+  ZuPtr<QPackTxNameHash>	names;
   QPackTxOrder		order;
-  ZuPtr<QPackTxSections> sections;
+  ZuPtr<QPackTxSectionHash> sections;
   uint32_t		orderHead_ = 0;
   uint64_t		insertCount_ = 0;
   uint64_t		knownReceivedCount_ = 0;
@@ -661,7 +676,8 @@ struct ZhttpAPI QPack {
 	  flags.dynamicRef = true;
 	}
 	bool emitted = false;
-	if (decodeString<7, 0x80>(in, o, [&](ZuSpan<uint8_t> value) {
+	if (decodeString<7, 0x80>(in, o, [&emitted, &emit, name, flags](
+	    ZuSpan<uint8_t> value) {
 	      emitted = emit(name, value, flags);
 	    }) < 0 || !emitted)
 	  return -1;
@@ -674,16 +690,18 @@ struct ZhttpAPI QPack {
 	flags.dynamicRef = true;
 	flags.postBase = true;
 	bool emitted = false;
-	if (decodeString<7, 0x80>(in, o, [&](ZuSpan<uint8_t> value) {
+	if (decodeString<7, 0x80>(in, o, [
+	    &emitted, &emit, &indexed, flags](ZuSpan<uint8_t> value) {
 	      emitted = emit(indexed.name, value, flags);
 	    }) < 0 || !emitted)
 	  return -1;
       } else if ((first & 0xe0) == 0x20) {
 	flags.neverIndex = first & 0x10;
 	bool emitted = false;
-	if (decodeString<3, 0x08>(in, o, [&](ZuSpan<uint8_t> name) {
+	if (decodeString<3, 0x08>(in, o, [
+	    &in, &o, &emitted, &emit, flags](ZuSpan<uint8_t> name) {
 	      if (decodeString<7, 0x80>(
-		    in, o, [&](ZuSpan<uint8_t> value) {
+		    in, o, [&emitted, &emit, name, flags](ZuSpan<uint8_t> value) {
 		      emitted = emit(name, value, flags);
 		    }) < 0)
 		emitted = false;
@@ -763,7 +781,7 @@ private:
 
   HdrBytes	bytes;
   unsigned	offset = 0;
-  static constexpr unsigned MaxBuffered = 1<<16;
+  enum { MaxBuffered = 1<<16 };
 };
 
 template <typename L>

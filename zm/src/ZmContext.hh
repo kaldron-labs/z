@@ -105,7 +105,7 @@ public:
   template <typename O> ZmRef<O> mvObject() {
     if (ZuUnlikely(!owned(m_object))) return ZmRef<O>{object<O>()};
     m_object = disown(m_object);
-    return ZmRef<O>::acquire(object<O>());
+    return ZmRef<O>::acquire(object<O>(), this);
   }
   template <typename O> void object(O *o) {
     if (ZuUnlikely(owned(m_object))) ZmDEREF(ptr(m_object));

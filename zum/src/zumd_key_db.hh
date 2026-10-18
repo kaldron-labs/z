@@ -19,6 +19,9 @@
 #include <zlib/zumd_db.hh>
 #include <zlib/ZumJWTVerify.hh>
 
+#include <zlib/ZmPolymorph.hh>
+#include <zlib/ZmRef.hh>
+
 namespace Zum {
 
 ZdbTableDerive(SignKeyTable, SignKey);
@@ -32,7 +35,7 @@ ZumExtern bool signKeyVerify(const SignKey &, ZuCSpan token,
 ZuDerive(SignKeyFn, (ZmFn<void(SignKey),
   ZmFnHeapID<"Zum.SignKeyFn">>));
 ZumExtern void signKeyLoad(
-  DB *, String issuer, int64_t now, int64_t expires,
+  ZmRef<ZmPolymorph>, DB *, String issuer, int64_t now, int64_t expires,
   unsigned maxKeys, SignKeyFn);
 
 } // namespace Zum

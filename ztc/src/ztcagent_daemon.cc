@@ -22,7 +22,6 @@
 #include <zlib/ZmObject.hh>
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmScheduler.hh>
-#include <zlib/ZmSemaphore.hh>
 
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
@@ -133,6 +132,11 @@ ZmHashDerive(Reqs, Req,
 using Frame = ZiIOBufAlloc<1024, AgentCf::MaxFrame,
   "Ztc.Agent.Frame">;
 
+struct Mx final : public ZmNHeap<Mx>, public ZiMultiplex {
+friend inline ZuStringT<"Ztc.Agent.Mx"> ZmNHeapID(Mx *);
+  using ZiMultiplex::ZiMultiplex;
+};
+
 struct StateData {
   StateData(Agent *agent_, const AgentCf &cf_, AgentEnv env_) :
     agent{agent_}, cf{cf_}, env{ZuMv(env_)}, client{agent_} { }
@@ -144,7 +148,7 @@ struct StateData {
   Agent	*agent;
   AgentCf	cf;
   AgentEnv	env;
-  ZiMultiplex	*mx = nullptr;
+  Mx		*mx = nullptr;
   Zws::URI	uri;
   Zws::Client<Agent, Zhttp::H1TLS>	client;
   Zum::PingHTTP	http;
@@ -157,14 +161,12 @@ struct StateData {
   bool tokenPending = false;
   bool awaitingProvision = false;
   ZmRef<Agent::Link>	link;
-  ZmSemaphore	*linkDone = nullptr; // Rx-owned; points to stop()'s stack
-  Ring	telRing;
-  ZmThread	telThread;
+  alignas(Zm::CacheLineSize) Ring telRing;
   ZmAtomic<unsigned>	stop = 0;
   ZmAtomic<uint64_t>	currentGeneration = 0;
   ZmAtomic<unsigned>	pendingTelFrames = 0;
   ZmAtomic<uint64_t>	pendingTelBytes = 0;
-  uint64_t	nextGeneration = 1;
+  alignas(Zm::CacheLineSize) uint64_t nextGeneration = 1;
   uint64_t	routeGeneration = 0;
   uint64_t	nextAppSeqNo = 1;
   ZuID	pubGCID;
@@ -175,20 +177,19 @@ struct StateData {
   Pubs	pubs;
   PubIdx	pubIdx;
   Reqs	reqs;
-  bool	started = false;
-};
-
-struct State_ : public ZmNHeap<State_>, public ZmObject, public StateData {
-friend inline ZuStringT<"Ztc.Agent.State"> ZmNHeapID(State_ *);
-
-  using StateData::StateData;
+  ZiDir		scanDir;
+  bool		telExited = true;
+  bool		stopOK = true;
+  bool		childrenDrained = false;
+  bool		drainPosted = false;
 };
 
 } // Agent_
 
-struct Agent::State final : public Agent_::State_ {
-  using Base = Agent_::State_;
-  using Base::Base;
+struct Agent::State final : public ZmNHeap<State>, public ZmObject,
+    public Agent_::StateData {
+friend inline ZuStringT<"Ztc.Agent.State"> ZmNHeapID(State *);
+  using Agent_::StateData::StateData;
 };
 
 namespace Agent_ {
@@ -256,9 +257,10 @@ static bool writeRequest(
 static void transmit(
     Agent::State *state, ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
-  if (!frame || !generation) return;
+  if (!frame || !generation || state->stop.load_()) return;
   state->client.rxRun([state, frame = ZuMv(frame), generation]() mutable {
     ZmAssert(state->client.mx()->invoked(state->client.rxThread()));
+    if (state->stop.load_()) return;
     auto link = state->link;
     if (state->currentGeneration.load_() != generation || !link)
       return;
@@ -378,8 +380,8 @@ static void finishReq(Agent::State *state, Req *req)
 static void delPub(Agent::State *state, Pub_ *pub)
 {
   while (pub->legs.count_()) {
-    auto i = pub->legs.iter();
-    auto node = i();
+    LegHash::Node *node = nullptr;
+    { auto i = pub->legs.iter(); node = i(); }
     if (!node) break;
     auto leg = &node->val();
     auto req = leg->req;
@@ -421,27 +423,6 @@ static bool addPub(Agent::State *state, ZuID id)
   return requestApp(state, &pub->val());
 }
 
-static bool scanPubs(Agent::State *state)
-{
-  ZiDir dir;
-  if (dir.open(ZiFile::append(ZiFile::tmpDir(), state->env.pidDir)) !=
-      Zi::OK) return true;
-  Zi::Path name;
-  for (;;) {
-    int result = dir.read(name);
-    if (result == Zi::EndOfFile) break;
-    if (result != Zi::OK) return false;
-    unsigned length = name.length();
-    if (name == "." || name == ".." || length <= 4 ||
-        name.rfind(".pid") != int64_t(length - 4)) continue;
-    ZuCSpan stem{name.data(), length - 4};
-    if (stem.length() > ZuIDSize) continue;
-    ZuID id{stem};
-    if (id != stem) continue;
-    (void)addPub(state, ZuMv(id));
-  }
-  return true;
-}
 
 static void drainReq(Agent::State *, uint64_t, uint64_t);
 
@@ -458,7 +439,7 @@ static bool addLeg(Agent::State *state, Req *req, Pub_ *pub)
 static void drainReq(Agent::State *state,
     uint64_t hubSeqNo, uint64_t generation)
 {
-  if (state->routeGeneration != generation) return;
+  if (state->stop.load_() || state->routeGeneration != generation) return;
   auto req = state->reqs.findPtr(hubSeqNo);
   if (!req || req->cxnGen != generation) return;
   unsigned n = 0;
@@ -493,7 +474,7 @@ static void drainReq(Agent::State *state,
 static void admitRequest(Agent::State *state,
     ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
-  if (state->routeGeneration != generation || !frame) return;
+  if (state->stop.load_() || state->routeGeneration != generation || !frame) return;
   auto root = Zfb::view<Msg>({frame->data(), frame->length});
   if (msgBody(root).tag() != Body::Request) return;
   auto value = msgBody(root).get<Body::Request>();
@@ -533,7 +514,7 @@ static void admitRequest(Agent::State *state,
 static void routeTelemetry(Agent::State *state,
     ZmRef<ZiIOBuf> frame, uint64_t generation)
 {
-  if (state->routeGeneration != generation || !frame) return;
+  if (state->stop.load_() || state->routeGeneration != generation || !frame) return;
   auto message = Zfb::view<Msg>({frame->data(), frame->length});
   if (!message) return;
   auto body = msgBody(message);
@@ -701,6 +682,7 @@ static void telemetry(Agent::State *state)
 
 static void pubGC(Agent::State *state)
 {
+  if (state->stop.load_()) return;
   unsigned n = 0;
   while (n++ < state->cf.pubGCBatch && state->pubs.count_()) {
     auto next = state->pubGCID ?
@@ -728,8 +710,8 @@ static void fence(Agent::State *state, uint64_t generation)
   if (generation && state->routeGeneration != generation) return;
   state->routeGeneration = 0;
   while (state->reqs.count_()) {
-    auto i = state->reqs.iter();
-    auto node = i();
+    Reqs::Node *node = nullptr;
+    { auto i = state->reqs.iter(); node = i(); }
     if (!node) break;
     delReq(state, &node->val());
   }
@@ -789,7 +771,7 @@ static Zum::String basicAuth(ZuCSpan clientID, ZuBSpan secret)
 
 static void retry(Agent::State *state)
 {
-  if (!state->started || state->stop.load_()) return;
+  if (state->stop.load_()) return;
   auto delay = state->reconnectDelay;
   auto next = unsigned(double(delay) * state->cf.reconnBackoff);
   if (next <= delay || next > state->cf.reconnMax) next = state->cf.reconnMax;
@@ -804,10 +786,7 @@ static void linkDown(Agent::State *state)
 {
   state->link = nullptr;
   retry(state);
-  if (auto done = state->linkDone) {
-    state->linkDone = nullptr;
-    done->post();
-  }
+
 }
 
 static void connectToken(Agent::State *state)
@@ -881,23 +860,20 @@ static void metadataResult(Agent::State *state, uint64_t generation,
     .contentType = "application/x-www-form-urlencoded",
     .body = "grant_type=client_credentials&scope=Agent"},
     [state, generation](Zum::ServiceHTTPResponse response) mutable {
-      state->mx->run([state, generation, response = ZuMv(response)]() mutable {
-        tokenResult(state, generation, ZuMv(response));
-      }, 1);
+      // The owned PingHTTP adapter completes on this multiplex's Rx owner.
+      tokenResult(state, generation, ZuMv(response));
     });
 }
 
 static void requestToken(Agent::State *state)
 {
-  if (state->stop.load_() || !state->started || state->tokenPending ||
+  if (state->stop.load_() || state->tokenPending ||
       state->awaitingProvision || state->link) return;
   state->tokenPending = true;
   auto generation = ++state->authGeneration;
   state->httpFn(Zum::ServiceHTTPRequest{.url = state->metadataURL},
     [state, generation](Zum::ServiceHTTPResponse response) mutable {
-      state->mx->run([state, generation, response = ZuMv(response)]() mutable {
-        metadataResult(state, generation, ZuMv(response));
-      }, 1);
+      metadataResult(state, generation, ZuMv(response));
     });
 }
 
@@ -907,6 +883,7 @@ Agent::~Agent() { final(); }
 
 bool Agent::init(const AgentCf &cf, AgentEnv env)
 {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   if (m_state || !env.issuerURL || !env.clientID || !env.deviceID ||
       !env.wssURL || !env.clientSecret ||
       (env.provision && !env.onProvision) || !cf.reconnMin ||
@@ -938,24 +915,55 @@ bool Agent::init(const AgentCf &cf, AgentEnv env)
     delete state;
     return false;
   }
-  try {
-    state->mx = new ZiMultiplex{
-      ZiMxParams{}.scheduler([](auto &s) {
-        s.nThreads(2)
-          .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
-          .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); });
-      }).rxThread(1).txThread(2)};
-  } catch (...) {
-    delete state;
-    return false;
-  }
   m_state = state;
   return true;
 }
 
-bool Agent::start()
+void Agent::start_()
 {
-  if (!m_state || m_state->started || !m_state->mx->start()) return false;
+  if (!m_state) { Engine::started(false); return; }
+  ZmAssert_(!m_state->mx && m_credit.load_() == AgentCredit::Closed);
+  try {
+    m_state->mx = new Agent_::Mx{
+      ZiMxParams{}.scheduler([](auto &scheduler) {
+        scheduler.nThreads(3)
+          .thread(1, [](auto &thread) { thread.name("rx"); thread.isolated(true); })
+          .thread(2, [](auto &thread) { thread.name("tx"); thread.isolated(true); })
+          .thread(3, [](auto &thread) { thread.name("ztcTel"); thread.isolated(true); });
+      }).rxThread(1).txThread(2)};
+  } catch (...) {
+    Engine::started(false);
+    return;
+  }
+  m_state->mx->ZmEngine<ZmScheduler>::start([this](bool ok) {
+    if (!ok) {
+      delete m_state->mx;
+      m_state->mx = nullptr;
+      Engine::started(false);
+      return;
+    }
+    m_state->mx->rxRun([this]() { startHTTP_(); });
+  });
+}
+
+void Agent::startHTTP_()
+{
+  if (!m_state->http.init(m_state->mx, m_state->env.issuerURL,
+      m_state->env.issuerURL, m_state->env.issuerURL, m_state->env.caPath)) {
+    stopRx_(true);
+    return;
+  }
+  m_state->http.start([this](bool ok) {
+    m_state->mx->rxRun([this, ok]() {
+      if (!ok) { stopRx_(true); return; }
+      m_state->httpFn = m_state->http.fn();
+      startWS_();
+    });
+  });
+}
+
+void Agent::startWS_()
+{
   Zws::Config ws;
   ws.maxMessage = m_state->cf.maxFrame;
   ws.maxQueuedInput = m_state->cf.reqBytes;
@@ -963,110 +971,210 @@ bool Agent::start()
   ws.closeTimeout = m_state->cf.closeTimeout;
   ws.pingInterval = m_state->cf.pingInterval;
   ws.pongTimeout = m_state->cf.idleTimeout;
-  Zhttp::H2Config tls;
+  Zhttp::TLSConfig tls;
   if (m_state->env.caPath) tls.caPath(m_state->env.caPath);
   if (!m_state->client.init(
-      Zhttp::HubConfig{m_state->mx, "1", "2"}, tls,
-      Zhttp::Destination{m_state->uri.host, m_state->uri.port, m_state->uri.ipv6Literal}, ws) ||
-      !m_state->client.start()) {
-    m_state->mx->stop();
-    return false;
+      Zhttp::HubConfig{m_state->mx, "1", "2"}, ZuMv(tls),
+      Zhttp::Destination{m_state->uri.host, m_state->uri.port, m_state->uri.ipv6Literal}, ws)) {
+    stopRx_(true);
+    return;
   }
-  if (!m_state->http.init(m_state->mx, m_state->env.issuerURL,
-        m_state->env.issuerURL, m_state->env.issuerURL,
-        m_state->env.caPath)) {
-    m_state->client.final();
-    m_state->mx->stop();
-    return false;
-  }
-  m_state->httpFn = m_state->http.fn();
+  m_state->client.start([this](bool ok) {
+    m_state->mx->rxRun([this, ok]() {
+      if (!ok) { stopRx_(true); return; }
+      startScan_();
+    });
+  });
+}
+
+void Agent::startScan_()
+{
   m_state->telRing.init(ZiRingParams{m_state->env.ring, m_state->cf.telSize}
     .ll(m_state->cf.telLL).spin(m_state->cf.telSpin)
     .timeout(m_state->cf.telTimeout));
   if (m_state->telRing.open(Ring::Read) != Zu::OK ||
       m_state->telRing.attach() != Zu::OK) {
-    m_state->telRing.close();
-    m_state->http.final();
-    m_state->client.final();
-    m_state->mx->stop();
-    return false;
+    stopRx_(true);
+    return;
   }
+  // Routing initialization precedes the telemetry producer and public ingress.
   m_state->stop = 0;
   m_state->reconnectDelay = m_state->cf.reconnMin;
-  if (m_state->telThread.run([state = m_state]() {
-      Agent_::telemetry(state);
-    }, ZmThreadParams{}.name("ztcTel")) < 0) {
-    m_state->telRing.detach();
-    m_state->telRing.close();
-    m_state->http.final();
-    m_state->client.final();
-    m_state->mx->stop();
-    return false;
+  if (m_state->scanDir.open(
+      ZiFile::append(ZiFile::tmpDir(), m_state->env.pidDir)) != Zi::OK) {
+    startReady_(); // A missing publisher registry is an empty inventory.
+    return;
   }
-  ZmSemaphore scanDone;
-  bool scanOK = false;
-  m_state->mx->run([state = m_state, &scanDone, &scanOK]() {
-    scanOK = Agent_::scanPubs(state);
-    scanDone.post();
-  }, 1);
-  scanDone.wait();
-  if (!scanOK) {
-    m_state->stop = 1;
-    m_state->telThread.join();
-    m_state->telRing.detach();
-    m_state->telRing.close();
-    m_state->http.final();
-    m_state->client.final();
-    m_state->mx->stop();
-    return false;
-  }
-  m_state->mx->run([state = m_state]() { Agent_::pubGC(state); }, 1);
-  m_state->started = true;
-  m_state->mx->run([state = m_state]() {
-    Agent_::requestToken(state);
-  }, 1);
-  return true;
+  scanBatch_();
 }
 
-bool Agent::stop()
+void Agent::scanBatch_()
 {
-  if (!m_state || !m_state->started) return true;
+  unsigned budget = m_state->cf.fanoutBatch;
+  while (budget--) {
+    Zi::Path name;
+    int result = m_state->scanDir.read(name);
+    if (result == Zi::EndOfFile) {
+      m_state->scanDir.close();
+      startReady_();
+      return;
+    }
+    if (result != Zi::OK) { stopRx_(true); return; }
+    unsigned length = name.length();
+    if (name == "." || name == ".." || length <= 4 ||
+        name.rfind(".pid") != int64_t(length - 4)) continue;
+    ZuCSpan stem{name.data(), length - 4};
+    if (stem.length() > ZuIDSize) continue;
+    ZuID id{stem};
+    if (id != stem) continue;
+    (void)Agent_::addPub(m_state, ZuMv(id));
+  }
+  m_state->mx->rxRun([this]() { scanBatch_(); });
+}
+
+void Agent::startReady_()
+{
+  m_state->telExited = false;
+  m_state->mx->run([this]() {
+    Agent_::telemetry(m_state);
+    m_state->mx->rxRun([this]() { telDone_(); });
+  }, 3);
+  m_credit = 0;
+  Agent_::pubGC(m_state);
+  m_state->mx->rxRun([state = m_state]() { Agent_::requestToken(state); });
+  Engine::started(true);
+}
+
+void Agent::stop_()
+{
+  m_credit |= AgentCredit::Closed;
   m_state->stop = 1;
+  m_state->mx->rxRun([this]() { stopRx_(false); });
+}
+
+void Agent::stopRx_(bool failed)
+{
+  m_state->stop = 1;
+  m_state->stopOK = true;
   m_state->mx->del(&m_state->reconnectTimer);
   m_state->mx->del(&m_state->pubGCTimer);
-  ZmSemaphore linkDone;
-  m_state->client.rxRun([state = m_state, &linkDone]() {
-    if (!state->link) { linkDone.post(); return; }
-    state->linkDone = &linkDone;
-    state->link->disconnect();
-  });
-  if (m_state->telThread.tid()) m_state->telThread.join();
-  ZmSemaphore routeDone;
-  m_state->mx->run([state = m_state, &routeDone]() {
-    Agent_::fence(state, 0);
-    while (state->pubs.count_()) {
-      auto i = state->pubs.iter();
-      auto node = i();
-      if (!node) break;
-      Agent_::delPub(state, &node->val());
+  m_state->scanDir.close();
+  m_state->routeGeneration = 0;
+  m_state->currentGeneration = 0;
+  if (!m_state->telExited) {
+    Ring wake{ZiRingParams{m_state->env.ring, 0}};
+    if (wake.open(Ring::Write) == Zu::OK) {
+      if (void *ptr = wake.tryPush(sizeof(Hdr))) {
+	static_cast<Hdr *>(ptr)->length = 0;
+	wake.push2(ptr, sizeof(Hdr));
+      }
     }
-    routeDone.post();
-  }, 1);
-  routeDone.wait();
-  // The WebSocket disconnect callback follows the TLS Rx/Tx cleanup and
-  // codec drain. Keep its owner and scheduler alive until it completes.
-  linkDone.wait();
-  if (m_state->telRing.rdrID() >= 0) m_state->telRing.detach();
-  m_state->telRing.close();
-  m_state->http.final();
-  m_state->httpFn = {};
-  bool ok = m_state->client.stop();
-  m_state->client.final();
-  m_state->mx->stop();
-  m_state->started = false;
+  }
+  // The native WebSocket consumer must retire before PingHTTP stops its
+  // owned resolver. Its stop includes codec and Rx/Tx completion drainage.
+  m_state->client.stop([this, failed](bool ok) {
+    m_state->mx->rxRun([this, failed, ok]() {
+      m_state->stopOK &= ok;
+      m_state->link = nullptr;
+      m_state->http.stop([this, failed](bool ok) {
+        m_state->mx->rxRun([this, failed, ok]() {
+          m_state->stopOK &= ok;
+          m_state->childrenDrained = true;
+          drain_(failed);
+        });
+      });
+    });
+  });
+}
+
+void Agent::telDone_()
+{
+  m_state->telExited = true;
+  drain_(false);
+}
+
+void Agent::drain_(bool failed)
+{
+  if (!m_state->childrenDrained || !m_state->telExited ||
+      m_state->drainPosted || (m_credit.load_() & AgentCredit::Count)) return;
+  m_state->drainPosted = true;
+  clearBatch_(failed);
+}
+
+void Agent::clearBatch_(bool failed)
+{
+  unsigned budget = m_state->cf.fanoutBatch;
+  while (budget && m_state->reqs.count_()) {
+    Agent_::Reqs::Node *node = nullptr;
+    { auto i = m_state->reqs.iter(); node = i(); }
+    ZmAssert_(node);
+    auto &req = node->val();
+    auto legNode = req.pending.shift();
+    if (!legNode) legNode = req.legs.shift();
+    if (legNode) {
+      auto &leg = legNode->val();
+      if (leg.active) {
+	Request request = req.request;
+	request.id = leg.pub->id;
+	request.seqNo = leg.seqNo;
+	request.subscribe = false;
+	(void)Agent_::writeRequest(m_state, leg.pub->ring, Agent_::requestFrame(request));
+      }
+      // Both request lists are shadow links. The publisher hash owns storage.
+      leg.pub->legs.delNode(static_cast<Agent_::LegHash::Node *>(&leg));
+    } else {
+      m_state->reqs.delNode(node);
+    }
+    --budget;
+  }
+  while (budget && m_state->pubs.count_()) {
+    Agent_::Pubs::Node *node = nullptr;
+    { auto i = m_state->pubs.iter(); node = i(); }
+    ZmAssert_(node && !node->val().legs.count_());
+    m_state->pubIdx.del(node->val().id);
+    m_state->pubs.delNode(node);
+    --budget;
+  }
+  if (m_state->reqs.count_() || m_state->pubs.count_()) {
+    m_state->mx->rxRun([this, failed]() { clearBatch_(failed); });
+    return;
+  }
+  m_state->mx->rxRun([this, failed]() {
+    m_state->mx->txRun([this, failed]() {
+      m_state->mx->rxRun([this, failed]() {
+        ZmAssert_(!m_state->pendingTelFrames.load_() && !m_state->pendingTelBytes.load_());
+        m_state->client.final();
+        m_state->httpFn = {};
+        m_state->http.final();
+        m_state->mx->ZmEngine<ZmScheduler>::stop([this, failed](bool ok) {
+          m_state->stopOK &= ok;
+          closeRuntime_(failed);
+        });
+      });
+    });
+  });
+}
+
+void Agent::closeRuntime_(bool failed)
+{
+  // All workers, including the telemetry slot, have joined. Dispose the
+  // multiplex on its existing control thread, which detaches its own handle.
+  if (!m_state->telRing.closed()) {
+    if (m_state->telRing.rdrID() >= 0) m_state->telRing.detach();
+    m_state->telRing.close();
+  }
+  delete m_state->mx;
+  m_state->mx = nullptr;
+  m_state->childrenDrained = false;
+  m_state->drainPosted = false;
+  m_state->awaitingProvision = false;
+  m_state->tokenPending = false;
+  m_state->pubGCID.null();
+  m_state->rxFrame.length(0);
   if (m_state->token.mutable_()) ZuClear(m_state->token);
   m_state->token.null();
-  return ok;
+  if (failed) Engine::started(false);
+  else Engine::stopped(m_state->stopOK);
 }
 
 ZuBSpan Agent::clientSecret() const
@@ -1077,21 +1185,32 @@ ZuBSpan Agent::clientSecret() const
 
 void Agent::provisioned(bool ok)
 {
-  if (!m_state) return;
-  m_state->mx->run([state = m_state, ok]() {
-    if (state->stop.load_() || !state->awaitingProvision) return;
-    state->awaitingProvision = false;
-    if (!ok) return;
-    state->env.provision = false;
-    Agent_::connectToken(state);
-  }, 1);
+  uint64_t count;
+  do {
+    count = m_credit.load_();
+    if (count & AgentCredit::Closed) return;
+  } while (m_credit.cmpXch(count + 1, count) != count);
+  m_state->mx->rxRun([this, ok]() {
+    if (!m_state->stop.load_() && m_state->awaitingProvision) {
+      m_state->awaitingProvision = false;
+      if (ok) {
+        m_state->env.provision = false;
+        Agent_::connectToken(m_state);
+      }
+    }
+    --m_credit;
+    drain_(false);
+  });
 }
 
 void Agent::final()
 {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  ZmAssert_(!(m_credit.load_() & AgentCredit::Count));
   if (!m_state) return;
-  stop();
-  delete m_state->mx;
+  ZmAssert_(!m_state->mx && m_state->telExited && !m_state->link);
+  ZmAssert_(!m_state->childrenDrained && !m_state->drainPosted);
+  ZmAssert_(!m_state->reqs.count_() && !m_state->pubs.count_());
   delete m_state;
   m_state = nullptr;
 }
@@ -1104,6 +1223,7 @@ void Agent::connected(Link &link, const Zhttp::ConnectedInfo &)
   if (!generation) generation = m_state->nextGeneration++;
   m_state->currentGeneration = generation;
   m_state->mx->run([state = m_state, generation]() {
+    if (state->stop.load_()) return;
     Agent_::fence(state, 0);
     state->routeGeneration = generation;
     Agent_::inventoryAll(state, generation);
@@ -1119,9 +1239,10 @@ void Agent::disconnected(Link &link, bool)
   auto generation = m_state->currentGeneration.load_();
   if (m_state->currentGeneration.load_() == generation)
     m_state->currentGeneration = 0;
-  m_state->mx->run([state = m_state, generation]() {
-    Agent_::fence(state, generation);
-  }, 1);
+  if (!m_state->stop.load_())
+    m_state->mx->run([state = m_state, generation]() {
+      if (!state->stop.load_()) Agent_::fence(state, generation);
+    }, 1);
   Agent_::linkDown(m_state);
 }
 
@@ -1157,7 +1278,7 @@ int Agent::process(Link_ &link, Rx &rx)
 template <typename Link>
 int Agent::messageEnd(Link &link)
 {
-  if (&link != m_state->link.ptr()) return -1;
+  if (m_state->stop.load_() || &link != m_state->link.ptr()) return -1;
   auto msg = Ztc::msg(ZuBSpan{
     m_state->rxFrame.data(), m_state->rxFrame.length()});
   if (!msg || msgBody(msg).tag() != Body::Request ||

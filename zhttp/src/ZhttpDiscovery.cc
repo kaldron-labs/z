@@ -183,7 +183,7 @@ DiscoveryError params(
 	break;
       case SvcIPv4Hint:
 	if (len % 4) return error(DiscoveryCode::Malformed, off);
-	if (record.ipv4Hints.length() + len / 4 > limits.maxHints)
+	if (record.ipv4Hints.length() + (len>>2) > limits.maxHints)
 	  return error(DiscoveryCode::HintLimit, off);
 	for (unsigned i = 0; i < len; i += 4) {
 	  in_addr addr;

@@ -14,7 +14,6 @@
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuMatcher.hh>
 
-#include <zlib/ZmBlock.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZtlsRandom.hh>
@@ -161,6 +160,7 @@ using TokenIdx = ZmHashKV<Zum::TokenID, TokenSessions,
   ZmHashLock<ZmNoLock, ZmHashHeapID<"Ztc.Hub.TokenIdx">>>;
 
 struct StateData {
+  Hubd			*owner = nullptr;
 	HubdCf		cf;
   HubdState::T		state = HubdState::Down;
   Agents		agents;
@@ -182,12 +182,46 @@ struct StateData {
   ZiMultiplex		*multiplex = nullptr;
   Ztls::Random		random;
   Zum::Service		service;
-  bool			serviceReady = false;
-  bool			serviceStarted = false;
+  HubActivateFn		activateFn;
+  bool			serviceInit = false;
+  bool			rollback = false;
+  bool			draining = false;
+  bool			drainPosted = false;
+  bool			stopOK = true;
+  bool			roleUp = false;
+  bool			roleDraining = false;
+  int			startError = Zum::ServiceError::OK;
+  ZmAtomic<unsigned>	posts = 0;
 };
 
 struct State : public ZmNHeap<State>, public ZmObject, public StateData {
 friend inline ZuStringT<"Ztc.Hub.State"> ZmNHeapID(State *);
+
+  void activate(bool active, HubCtrlFn complete = {}) {
+    if (!activateFn) { if (complete) complete(true); return; }
+    ++posts; // includes the external hub transition through its owner reply
+    activateFn(active, [this, active, complete = ZuMv(complete)](bool ok) mutable {
+      post([this, active, ok, complete = ZuMv(complete)]() mutable {
+        --posts;
+        if (!ok) state = HubdState::Down;
+        if (!active && !ok) stopOK = false;
+        if (complete) complete(ok);
+      });
+    });
+  }
+
+  void clearRole();
+
+  template <typename L> void post(L &&fn) {
+    ++posts;
+    auto run = [this, fn = ZuFwd<L>(fn)]() mutable {
+      { auto complete = ZuMv(fn); complete(); }
+      --posts;
+      owner->drain_();
+    };
+    if (multiplex) multiplex->rxRun(ZuMv(run));
+    else run();
+  }
 };
 
 struct HubDB : public Zdb {
@@ -196,13 +230,50 @@ struct HubDB : public Zdb {
   State *state;
 };
 
-static void clearBrowsers(StateData &state)
+// Remove at most budget owning nodes per mixed-worker turn. Hash iterators
+// end before each deletion; AgentReqs aliases Routes and retires before Subs.
+static bool clearRouting(StateData &state, unsigned budget)
 {
-  if (state.multiplex) {
-    auto i = state.browserSessions.iter();
-    while (auto node = i()) state.multiplex->del(&node->expiry);
+  auto clear = [&budget](auto &hash) {
+    while (budget && hash.count_()) {
+      typename ZuDecay<decltype(hash)>::Node *node = nullptr;
+      { auto i = hash.iter(); node = i(); }
+      ZmAssert_(node);
+      hash.delNode(node);
+      --budget;
+    }
+    return !hash.count_();
+  };
+  while (budget && state.browserSessions.count_()) {
+    BrowserSession *node = nullptr;
+    { auto i = state.browserSessions.iter(); node = i(); }
+    if (state.multiplex) state.multiplex->del(&node->expiry);
+    state.browserSessions.delNode(node);
+    --budget;
   }
-  state.browserSessions.clean();
+  bool done = !state.browserSessions.count_() &&
+    clear(state.agentReqs) && clear(state.agentReqIdx) &&
+    clear(state.subIdx) && clear(state.subs) &&
+    clear(state.appSubs) && clear(state.inventories) &&
+    clear(state.agentSessions) && clear(state.agents) &&
+    clear(state.tokenIdx) && clear(state.sessions);
+  if (done) state.agentCount = state.frontEndCount = 0;
+  return done;
+}
+
+void State::clearRole()
+{
+  if (!clearRouting(*this, cf.schedulerTurnWork)) {
+    post([this]() { clearRole(); });
+    return;
+  }
+  // Start a new role only after the previous listener generation and all its
+  // routing state have retired. Runtime stop joins these counted posts.
+  roleDraining = false;
+  if (roleUp && owner->state() == ZmEngineState::Running) {
+    state = HubdState::Up;
+    activate(true);
+  }
 }
 
 using InventoryBuf = ZiIOBufAlloc<1024, 1U << 30, "Ztc.Hub.Inventory">;
@@ -488,9 +559,10 @@ static unsigned disconnectAgent(State &state, uint64_t sessionID,
     auto index = state.agentReqIdx.findPtr(sessionID);
     if (!index || !index->val().length()) break;
     if (n == limit) {
-      state.multiplex->rxRun([hold = ZmRef<State>{&state}, sessionID,
+      state.post([state = &state, sessionID,
           generation, routeFn = ZuMv(routeFn)]() mutable {
-        disconnectAgent(*hold, sessionID, generation, ZuMv(routeFn));
+        if (state->owner->state() != ZmEngineState::Running) return;
+        disconnectAgent(*state, sessionID, generation, ZuMv(routeFn));
       });
       return n;
     }
@@ -550,33 +622,31 @@ static uint32_t ssfPort(const ListenerCf &listener)
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto state = static_cast<Hubd_::HubDB *>(db)->state;
-  state->multiplex->rxRun([state = ZmRef<Hubd_::State>{state}]() mutable {
-    if (state->state != HubdState::Publishing &&
-        state->state != HubdState::Down) return;
-    state->state = HubdState::Listening;
-    state->state = HubdState::Up;
+  state->post([state]() {
+    state->roleUp = true;
+    if (state->roleDraining) return;
+    switch (state->owner->state()) {
+      case ZmEngineState::Starting:
+      case ZmEngineState::StopPending:
+        state->state = HubdState::Up;
+        break;
+      case ZmEngineState::Running:
+        state->state = HubdState::Up;
+        state->activate(true);
+        break;
+    }
   });
 }
 
 static void dbDown(Zdb *db, bool)
 {
   auto state = static_cast<Hubd_::HubDB *>(db)->state;
-  state->multiplex->rxRun([state = ZmRef<Hubd_::State>{state}]() mutable {
-    if (state->state == HubdState::Up ||
-        state->state == HubdState::Listening) {
-      state->agents.clean();
-      state->agentReqs.clean();
-      state->agentReqIdx.clean();
-      state->subs.clean();
-      state->subIdx.clean();
-      state->agentSessions.clean();
-      state->sessions.clean();
-      state->tokenIdx.clean();
-      Hubd_::clearBrowsers(*state);
-      state->agentCount = 0;
-      state->frontEndCount = 0;
-      state->state = HubdState::Down;
-    }
+  state->post([state]() {
+    state->roleUp = false;
+    state->state = HubdState::Down;
+    if (state->roleDraining) return;
+    state->roleDraining = true;
+    state->activate(false, [state](bool) { state->clearRole(); });
   });
 }
 
@@ -584,6 +654,7 @@ Hubd::~Hubd() { final(); }
 
 bool Hubd::init(HubdCf cf)
 {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   if (m_state || !cf.listeners.length() || !cf.issuerURL || !cf.audience ||
       !cf.managementIssuer || !cf.managementClientID ||
       !cf.ssfCallbackPath || cf.ssfCallbackPath[0] != '/' ||
@@ -613,7 +684,7 @@ bool Hubd::init(HubdCf cf)
     return false;
   }
   state->cf = ZuMv(cf);
-  state->state = HubdState::Starting;
+  state->owner = this;
   m_state = state;
   return true;
 }
@@ -654,7 +725,7 @@ bool Hubd::init(HubdCf cf, ZiMultiplex *scheduler, Zum::ServiceHTTPFn http,
     final();
     return false;
   }
-  state.serviceReady = true;
+  state.serviceInit = true;
   return true;
 }
 
@@ -672,199 +743,164 @@ static bool validManifest(const Hubd_::State &state)
       (role0 == "Agent" && role1 == "Client"));
 }
 
-bool Hubd::start()
+ZiMultiplex *Hubd::mx_() const
 {
-  if (!m_state || m_state->state != HubdState::Starting) return false;
-  if (!validManifest(*m_state)) {
-    m_state->state = HubdState::Down;
-    return false;
-  }
-  if (m_state->serviceReady) return false;
-  m_state->state = HubdState::Publishing;
-  m_state->state = HubdState::Listening;
-  m_state->state = HubdState::Up;
-  return true;
+  return m_state ? m_state->multiplex : nullptr;
 }
 
-void Hubd::start(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Start">> complete)
+void Hubd::start_()
 {
-  if (m_state && m_state->multiplex) {
-    m_state->multiplex->rxInvoke([this, complete = ZuMv(complete)]() mutable {
-      start_(ZuMv(complete));
-    });
-  } else start_(ZuMv(complete));
+  if (!m_state) { Engine::started(false); return; }
+  post_([this]() { startRx_(); });
 }
 
-void Hubd::start_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Start">> complete)
+void Hubd::startRx_()
 {
-  if (!m_state || !complete || m_state->state != HubdState::Starting) {
-    if (complete) complete(Zum::ServiceError::Invalid);
-    return;
-  }
+  m_state->startError = Zum::ServiceError::OK;
   if (!validManifest(*m_state)) {
-    m_state->state = HubdState::Down;
-    complete(Zum::ServiceError::Invalid);
+    m_state->startError = Zum::ServiceError::Invalid;
+    Engine::started(false);
     return;
   }
-  if (!m_state->serviceReady) {
-    complete(start() ? Zum::ServiceError::OK : Zum::ServiceError::Invalid);
+  if (!m_state->serviceInit) {
+    m_state->state = HubdState::Up;
+    Engine::started(true);
     return;
   }
-  m_state->serviceStarted = true;
-  m_state->state = HubdState::Publishing;
-  auto state = ZmRef<Hubd_::State>{m_state};
-    state->service.start([this, state = ZuMv(state),
-      complete = ZuMv(complete)](int error) mutable {
-    if (error != Zum::ServiceError::OK) {
-      state->serviceStarted = false;
-      state->service.final();
-      state->serviceReady = false;
-      state->state = HubdState::Down;
-      complete(error);
-      return;
-    }
-    state->service.publish(manifest(),
-      [state = ZuMv(state), complete = ZuMv(complete)](
-          Zum::ServiceProtocolResult result) mutable {
-        if (result.error != Zum::ServiceError::OK) {
-          state->service.stop([state = ZuMv(state), complete = ZuMv(complete)](
-              int) mutable {
-            state->service.final();
-            state->serviceStarted = false;
-            state->serviceReady = false;
-            state->state = HubdState::Down;
-            complete(Zum::ServiceError::Unavailable); });
-          return;
-        }
-        if (!state->db) {
-          state->state = HubdState::Listening;
-          state->state = HubdState::Up;
-          complete(Zum::ServiceError::OK);
-          return;
-        }
-        state->db->start([state = ZuMv(state),
-            complete = ZuMv(complete)](bool ok) mutable {
-          state->multiplex->rxRun([state = ZuMv(state),
-              complete = ZuMv(complete), ok]() mutable {
-            if (!ok) {
-              state->state = HubdState::Down;
-              complete(Zum::ServiceError::Unavailable);
-              return;
-            }
-            // Zdb::start() reports startup completion, not activation.
-            // dbUp() owns the transition to Up; a standby remains Down.
-            if (state->state == HubdState::Publishing)
-              state->state = HubdState::Down;
-            complete(Zum::ServiceError::OK);
-          });
+  m_state->service.start([this](bool ok) {
+    post_([this, ok]() {
+      if (!ok) {
+        m_state->startError = m_state->service.startError();
+        stopRx_(true);
+        return;
+      }
+      m_state->service.publish(manifest(), [this](Zum::ServiceProtocolResult result) {
+        int error = result.error;
+        post_([this, error]() {
+          if (error != Zum::ServiceError::OK) {
+            m_state->startError = Zum::ServiceError::Unavailable;
+            stopRx_(true);
+            return;
+          }
+          startDB_();
         });
       });
+    });
   });
 }
 
-bool Hubd::stop()
+void Hubd::startDB_()
 {
-  if (!m_state) return true;
-  if (m_state->multiplex)
-    return ZmBlock<bool>{}([this](auto wake) {
-      stop([wake = ZuMv(wake)](int error) mutable {
-        wake(error == Zum::ServiceError::OK);
-      });
-    });
-  m_state->state = HubdState::Stopping;
-  m_state->state = HubdState::Draining;
-  m_state->agents.clean();
-  m_state->agentReqs.clean();
-  m_state->agentReqIdx.clean();
-  m_state->subs.clean();
-  m_state->subIdx.clean();
-  m_state->agentSessions.clean();
-  m_state->sessions.clean();
-  m_state->tokenIdx.clean();
-  Hubd_::clearBrowsers(*m_state);
-  m_state->state = HubdState::Down;
-  return true;
-}
-
-void Hubd::stop(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">> complete)
-{
-  if (m_state && m_state->multiplex) {
-    m_state->multiplex->rxInvoke([this, complete = ZuMv(complete)]() mutable {
-      stop_(ZuMv(complete));
-    });
-  } else stop_(ZuMv(complete));
-}
-
-void Hubd::stop_(ZmFn<void(int), ZmFnHeapID<"Ztc.Hub.Stop">> complete)
-{
-  if (!complete) return;
-  if (!m_state) {
-    complete(Zum::ServiceError::OK);
+  if (!m_state->db) {
+    m_state->state = HubdState::Up;
+    Engine::started(true);
     return;
   }
-  if (m_state->state == HubdState::Down) {
-    auto state = ZmRef<Hubd_::State>{m_state};
-    auto drained = [state = ZuMv(state), complete = ZuMv(complete)]() mutable {
-      complete(Zum::ServiceError::OK);
-    };
-    if (m_state->multiplex) m_state->multiplex->rxRun(ZuMv(drained));
-    else drained();
-    return;
-  }
-  auto state = ZmRef<Hubd_::State>{m_state};
-  state->state = HubdState::Stopping;
-  state->state = HubdState::Draining;
-  state->agents.clean();
-  state->agentReqs.clean();
-  state->agentReqIdx.clean();
-  state->subs.clean();
-  state->subIdx.clean();
-  state->agentSessions.clean();
-  state->sessions.clean();
-  state->tokenIdx.clean();
-  Hubd_::clearBrowsers(*state);
-  // Complete shutdown after queued browser expiry callbacks drain on Rx.
-  auto drained = [state = ZuMv(state), complete = ZuMv(complete)]() mutable {
-    if (!state->serviceReady) {
-      state->state = HubdState::Down;
-      complete(Zum::ServiceError::OK);
-      return;
-    }
-    if (!state->serviceStarted) {
-      state->service.final();
-      state->serviceReady = false;
-      state->state = HubdState::Down;
-      complete(Zum::ServiceError::OK);
-      return;
-    }
-    bool dbRunning = state->db && state->db->running();
-    auto stopService = [state, complete = ZuMv(complete)](
-        bool dbOK) mutable {
-      state->service.stop([state = ZuMv(state), complete = ZuMv(complete),
-          dbOK](int error) mutable {
-        state->service.final();
-        state->serviceStarted = false;
-        state->serviceReady = false;
-        state->state = HubdState::Down;
-        complete(!dbOK ? Zum::ServiceError::Unavailable :
-          error == Zum::ServiceError::OK ? Zum::ServiceError::OK : error);
+  m_state->db->start([this](bool ok) {
+    post_([this, ok]() {
+      if (!ok) {
+        m_state->startError = Zum::ServiceError::Unavailable;
+        stopRx_(true);
+        return;
+      }
+      // DB startup and role activation differ. dbUp owns readiness; a standby
+      // is Running with readiness Down.
+      // Queue activation before publishing completion, so callbacks can stop
+      // safely without any owner access after started(). The queued role check
+      // suppresses activation if stop/down wins before this continuation.
+      auto state = m_state.ptr();
+      state->post([state]() {
+        if (state->owner->state() == ZmEngineState::Running &&
+            state->roleUp && !state->roleDraining) {
+          state->state = HubdState::Up;
+          state->activate(true);
+        }
       });
-    };
-    if (dbRunning)
-      state->db->stop([stopService = ZuMv(stopService)](bool ok) mutable {
-        stopService(ok);
-      });
-    else
-      stopService(true);
+      Engine::started(true);
+    });
+  });
+}
+
+void Hubd::stop_()
+{
+  post_([this]() { stopRx_(false); });
+}
+
+void Hubd::stopRx_(bool failed)
+{
+  m_state->stopOK = true;
+  if (!m_state->db) { stopService_(failed); return; }
+  // A failure is diagnostic; all remaining shutdown steps must still run.
+  m_state->db->stop([this, failed](bool ok) {
+    post_([this, failed, ok]() {
+      if (!ok) m_state->stopOK = false;
+      stopService_(failed);
+    });
+  });
+}
+
+void Hubd::stopService_(bool failed)
+{
+  // Also joins a role transition when no dbDown callback was needed (e.g.
+  // failed startup or an already inactive DB). Engine stop is idempotent.
+  m_state->activate(false);
+  auto drained = [this, failed]() {
+    m_state->state = HubdState::Down;
+    m_state->rollback = failed;
+    m_state->draining = true;
+    drain_();
   };
-  if (m_state->multiplex) m_state->multiplex->rxRun(ZuMv(drained));
-  else drained();
+  if (!m_state->serviceInit) { drained(); return; }
+  m_state->service.stop([this, drained = ZuMv(drained)](bool ok) mutable {
+    post_([this, ok, drained = ZuMv(drained)]() mutable {
+      if (!ok) m_state->stopOK = false;
+      drained();
+    });
+  });
+}
+
+void Hubd::drain_()
+{
+  if (!m_state || !m_state->draining || m_state->drainPosted ||
+      m_state->posts.load_()) return;
+  m_state->drainPosted = true;
+  clearBatch_();
+}
+
+void Hubd::clearBatch_()
+{
+  unsigned budget = mx_() ? m_state->cf.schedulerTurnWork : UINT_MAX;
+  if (!Hubd_::clearRouting(*m_state, budget)) {
+    post_([this]() { clearBatch_(); });
+    return;
+  }
+  auto finish = [this]() {
+    bool failed = m_state->rollback;
+    bool ok = m_state->stopOK;
+    m_state->stopOK = true;
+    m_state->rollback = false;
+    m_state->draining = false;
+    m_state->drainPosted = false;
+    if (failed) Engine::started(false);
+    else Engine::stopped(ok);
+  };
+  if (auto mx = mx_()) {
+    mx->rxRun([this, finish = ZuMv(finish)]() mutable {
+      mx_()->txRun([this, finish = ZuMv(finish)]() mutable {
+        mx_()->rxRun(ZuMv(finish));
+      });
+    });
+  } else finish();
 }
 
 void Hubd::final()
 {
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
   if (!m_state) return;
-  stop();
+  ZmAssert_(!m_state->posts.load_() && !m_state->draining && !m_state->drainPosted);
+  ZmAssert_(!m_state->roleDraining);
+  ZmAssert_(!m_state->sessions.count_() && !m_state->browserSessions.count_());
+  if (m_state->serviceInit) m_state->service.final();
   if (m_state->db) {
     m_state->db->final();
     m_state->db = nullptr;
@@ -874,26 +910,38 @@ void Hubd::final()
 
 void Hubd::verify(Zum::String token, Zum::ServiceVerifyFn complete)
 {
-  if (!m_state || !m_state->serviceReady || !complete) return;
+  if (!m_state || !m_state->serviceInit || !complete) return;
   m_state->service.verify(ZuMv(token), ZuMv(complete));
 }
 
 void Hubd::setRefreshRevocationFn(Zum::ServiceRefreshFn fn)
 {
-  if (!m_state || !m_state->serviceReady) return;
+  if (!m_state || !m_state->serviceInit) return;
   m_state->service.setRefreshRevocationFn(ZuMv(fn));
 }
 
 void Hubd::receiveSET(Zum::ServiceSETRequest request,
     Zum::ServiceSETDoneFn complete)
 {
-  if (!m_state || !m_state->serviceReady || !complete) return;
+  if (!m_state || !m_state->serviceInit || !complete) return;
   m_state->service.receiveSET(ZuMv(request), ZuMv(complete));
 }
 
-HubdState::T Hubd::state() const
+HubdState::T Hubd::readiness() const
 {
   return m_state ? m_state->state : HubdState::Down;
+}
+
+void Hubd::activateFn(HubActivateFn fn)
+{
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  ZmAssert_(m_state);
+  m_state->activateFn = ZuMv(fn);
+}
+
+int Hubd::startError() const
+{
+  return m_state ? m_state->startError : Zum::ServiceError::Invalid;
 }
 
 const HubdCf &Hubd::config() const
@@ -964,7 +1012,8 @@ bool Hubd::addAgent(
     const Zum::ServicePrincipal &principal, HubSendFn send, HubError::T &error)
 {
   error = HubError::Unauthorized;
-  if (!m_state || m_state->state != HubdState::Up || !sessionID || !deviceID ||
+  if (Engine::state() != ZmEngineState::Running ||
+      !m_state || m_state->state != HubdState::Up || !sessionID || !deviceID ||
       !generation || principal.subject != deviceID ||
       principal.tokenID.issuerURL != m_state->cf.issuerURL ||
       principal.audience != m_state->cf.audience ||
@@ -986,7 +1035,8 @@ bool Hubd::addAgent(
 bool Hubd::addFrontend(uint64_t sessionID,
     const Zum::ServicePrincipal &principal, HubSendFn send)
 {
-  if (!m_state || m_state->state != HubdState::Up || !sessionID || !send ||
+  if (Engine::state() != ZmEngineState::Running ||
+      !m_state || m_state->state != HubdState::Up || !sessionID || !send ||
       m_state->sessions.findPtr(sessionID) ||
       m_state->frontEndCount >= m_state->cf.activeFrontEnds ||
       principal.tokenID.issuerURL != m_state->cf.issuerURL ||
@@ -1002,7 +1052,8 @@ bool Hubd::createBrowserSession(
     const Zum::ServicePrincipal &principal, HubString &cookie)
 {
   cookie.null();
-  if (!m_state || m_state->state != HubdState::Up || !principal.subject ||
+  if (Engine::state() != ZmEngineState::Running ||
+      !m_state || m_state->state != HubdState::Up || !principal.subject ||
       principal.tokenID.issuerURL != m_state->cf.issuerURL ||
       principal.audience != m_state->cf.audience ||
       !authorized(principal, "Request") || !principal.tokenID.jti ||
@@ -1013,9 +1064,9 @@ bool Hubd::createBrowserSession(
   session->cookie = cookie;
   if (m_state->multiplex) m_state->multiplex->add(&session->expiry,
     ZuTime{principal.expires}, ZmScheduler::Update,
-    [state = m_state.ptr(), cookie = HubString{session->cookie}](auto &&arm) mutable {
-      return arm([state, cookie = ZuMv(cookie)]() mutable {
-        state->browserSessions.del(cookie);
+    [state = m_state.ptr(), session](auto &&arm) mutable {
+      return arm([state, session = ZuMv(session)]() {
+        state->browserSessions.del(session->cookie);
       });
     }, m_state->multiplex->rxThread());
   m_state->browserSessions.addNode(ZuMv(session));
@@ -1025,7 +1076,8 @@ bool Hubd::createBrowserSession(
 bool Hubd::browserPrincipal(ZuCSpan cookie, Zum::ServicePrincipal &principal)
 {
   principal = {};
-  if (!m_state || !cookie) return false;
+  if (Engine::state() != ZmEngineState::Running ||
+      !m_state || m_state->state != HubdState::Up || !cookie) return false;
   auto node = m_state->browserSessions.del(cookie);
   if (!node) return false;
   if (m_state->multiplex) m_state->multiplex->del(&node->expiry);
@@ -1082,7 +1134,8 @@ bool Hubd::addSubscription(uint64_t frontEndID, uint64_t subID,
 {
   error = HubError::BadReq;
   agentSessionID = agentGeneration = requestSeqNo = 0;
-  if (!m_state || m_state->state != HubdState::Up || !frontEndID || !subID ||
+  if (Engine::state() != ZmEngineState::Running ||
+      !m_state || m_state->state != HubdState::Up || !frontEndID || !subID ||
       !deviceID) return false;
   auto session = m_state->sessions.findPtr(frontEndID);
   if (!session || session->val().agent) return false;
@@ -1158,7 +1211,8 @@ bool Hubd::appSubscribe(uint64_t frontEndID, uint64_t subID,
     uint32_t interval, HubError::T &error)
 {
   error = HubError::BadReq;
-  if (!m_state || m_state->state != HubdState::Up || !frontEndID || !subID)
+  if (Engine::state() != ZmEngineState::Running ||
+      !m_state || m_state->state != HubdState::Up || !frontEndID || !subID)
     return false;
   auto session = m_state->sessions.findPtr(frontEndID);
   if (!session || session->val().agent ||

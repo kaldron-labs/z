@@ -18,7 +18,16 @@
 using namespace ZuTestUtil;
 using namespace Zhttpd;
 
+unsigned zhttpdOptionsSize();
+
 namespace {
+
+void testOptionsLayout()
+{
+  ZuTestScope(testOptionsLayout);
+  ZuCHECK(sizeof(Options) == zhttpdOptionsSize(),
+    "options layout must not depend on native-header include order");
+}
 
 using Zhttp::Test::TempDir;
 
@@ -404,6 +413,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZiTestResidue::init("zhttpdtest");
   ZuTestMain();
+  ZuTestCall(testOptionsLayout);
   ZuTestCall(testPathNormalize);
   ZuTestCall(testCLI);
   ZuTestCall(testMime);

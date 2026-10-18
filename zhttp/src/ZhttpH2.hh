@@ -35,21 +35,24 @@ using HeaderScratchBase = Stream::HeaderBytes;
 template <typename Stream>
 ZuDerive(HeaderScratch, (HeaderScratchBase<Stream>));
 
-constexpr uint32_t DefltFrameSize = 1U<<14;
-constexpr uint32_t MaxFrameSize = (1U<<24) - 1;
-constexpr uint32_t DefltWindow = (1U<<16) - 1;
-constexpr uint32_t MaxWindow = (1U<<31) - 1;
+enum {
+  DefltFrameSize = 1U<<14,
+  MaxFrameSize = (1U<<24) - 1,
+  DefltWindow = (1U<<16) - 1,
+  MaxWindow = (1U<<31) - 1
+};
 enum {
   FrameHeaderSize = 9,		// RFC 9113 section 4.1
   FixedPayloadSize = 8		// largest incrementally parsed fixed payload
 };
 
-ZtEnumNS(ZhttpAPI, FrameType, uint8_t,
+// Signed aliases retain the complete domains of unknown wire values.
+ZtEnumNS(ZhttpAPI, FrameType, int16_t,
   Data, Headers, Priority, RSTStream, Settings, PushPromise, Ping, Goaway,
   WindowUpdate, Continuation);
 
 namespace Flag {
-  enum : uint8_t {
+  enum : int8_t {
     ACK = 0x01,
     EndStream = 0x01,
     EndHeaders = 0x04,
@@ -58,13 +61,13 @@ namespace Flag {
   };
 }
 
-ZtEnumNS(ZhttpAPI, Error, uint32_t,
+ZtEnumNS(ZhttpAPI, Error, int64_t,
   NoError, ProtocolError, InternalError, FlowControlError, SettingsTimeout,
   StreamClosed, FrameSizeError, RefusedStream, Cancel, CompressionError,
   ConnectError, EnhanceYourCalm, InadequateSecurity, HTTP11Required);
 
 namespace Setting {
-  using T = uint16_t;
+  using T = int32_t;
   enum : T {
     HeaderTableSize = 0x01,
     EnablePush = 0x02,
@@ -934,8 +937,8 @@ protected:
       !informational && !streamMode && !HasBody;
     stream.beginHeaders(section, endStream);
     ZuBArray<StatusSize> status;
-    status[0] = uint8_t('0' + ((value / 100) % 10));
-    status[1] = uint8_t('0' + ((value / 10) % 10));
+    status[0] = uint8_t('0' + ((value/100) % 10));
+    status[1] = uint8_t('0' + ((value/10) % 10));
     status[2] = uint8_t('0' + (value % 10));
     field_(stream, ":status", status.span());
     headers_(stream);

@@ -5,6 +5,9 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmAtomic.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZfCf.hh>
 #include "../../zdb/test/ZdbTestCf.hh"
@@ -13,6 +16,7 @@
 #include <zlib/ZdbMemStore.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_request.hh>
+#include <zlib/zumd_token.hh>
 
 #include "ZumTestSupport.hh"
 
@@ -43,13 +47,93 @@ static ZuPtr<const ZfCf::AnyNode> dbConfig()
 static void dbUp(Zdb *db, ZdbHost *)
 {
   auto test = static_cast<TestDB *>(db);
-  test->requests->activate();
-  test->active.post();
+  test->requests->activate([test](bool) { test->active.post(); });
 }
 
 static void dbDown(Zdb *db, bool)
 {
   static_cast<TestDB *>(db)->requests->deactivate();
+}
+
+struct HelperCredit : ZmNHeap<HelperCredit>, ZmPolymorph {
+friend inline ZuStringT<"ZumRuntimeTokenTest.Credit"> ZmNHeapID(HelperCredit *);
+  ZmAtomic<unsigned> *released;
+  ZmSemaphore *complete;
+
+  HelperCredit(ZmAtomic<unsigned> *released_, ZmSemaphore *complete_) :
+    released{released_}, complete{complete_} { }
+  ~HelperCredit() {
+    *released = 1;
+    complete->post();
+  }
+};
+
+static void helperCredit(TestDB *db, Ztls::Random &rng)
+{
+  ZuTestScopeRT(helperCredit);
+  auto requests = db->requests;
+  auto scheduler = requests->scheduler();
+  auto sid = requests->sid();
+  ZmSemaphore submitted, completed, retired, barrier;
+  ZmAtomic<unsigned> released = 0;
+  bool holding = true;
+  int result = Zum::TokenIssue::OK;
+  unsigned completedCalls = 0;
+  Zum::SignatureFn pending;
+  ZmRef<HelperCredit> work = new HelperCredit{&released, &retired};
+  bool queued = Zum::tokenRequest(ZuMv(work), requests,
+    Zm::now() + ZuTime{10}, db, rng,
+    "grant_type=client_credentials", "Basic d29ya2xvYWQ6c2VjcmV0",
+    Zum::TokenConfig{.issuer = "issuer/oauth2/9", .appID = 9,
+      .maxKeys = 64, .now = 340, .accessExpires = 400,
+      .refreshExpires = 1000, .generationLimit = 8, .spentLimit = 8},
+    [requests, &holding, &pending, &submitted](
+        const Zum::SignKey &, ZuBSpan, Zum::SignatureFn complete) mutable {
+      ZuCheckRT(requests->scheduler()->invoked(requests->sid()));
+      if (!holding) { complete(Zum::Bytes{}); return; }
+      pending = ZuMv(complete);
+      submitted.post();
+    }, [&result, &completedCalls, &completed](int error, Zum::TokenResponse response) {
+      ++completedCalls;
+      result = error;
+      Zum::tokenClear(response);
+      completed.post();
+    });
+  ZuCheckRT(queued);
+  bool held = queued && !submitted.timedwait(Zm::now(10));
+  ZuCheckRT(held);
+  // This fixture's DB callbacks and Requests owner share shard 5. Release late
+  // sign attempts normally if an earlier setup check failed.
+  scheduler->run([&holding, &barrier]() {
+    holding = false;
+    barrier.post();
+  }, sid);
+  barrier.wait();
+  requests->deactivate([&barrier](bool) { barrier.post(); });
+  barrier.wait();
+  if (queued) {
+    ZuCheckRT(!completed.timedwait(Zm::now(10)));
+    ZuCheckRT(result == Zum::OAuthError::TemporarilyUnavailable);
+  }
+  // Application cancellation has returned, but the signing helper still
+  // borrows caller resources and must retain the caller's graph credit.
+  if (held) ZuCheckRT(!released.load_());
+  if (pending) pending(Zum::Bytes{});
+  bool drained = !retired.timedwait(Zm::now(10));
+  ZuCheckRT(drained);
+  if (!drained) {
+    pending = {}; // release a retained fired callback on the regression path
+    retired.wait();
+  }
+  ZuCheckRT(released.load_());
+  // Retaining or accidentally repeating a fired signing completion cannot
+  // retain or dereference the helper, nor deliver another application result.
+  if (pending) pending(Zum::Bytes{});
+  ZuCheckRT(completedCalls == unsigned(queued));
+  pending = {};
+  ZuCheckRT(ZmBlock<bool>{}([requests](auto wake) {
+    requests->activate(ZuMv(wake));
+  }));
 }
 
 static void runtimeToken()
@@ -91,8 +175,9 @@ static void runtimeToken()
   prepareToken(db, context, rng, state, passkeyHandle,
     *passkey, tokenKey, tokenPublic, token);
   ZuCheck(token.browserCode);
+  helperCredit(db, rng);
   ZmSemaphore requestsDown;
-  db->requests->deactivate([&requestsDown]() { requestsDown.post(); });
+  db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};

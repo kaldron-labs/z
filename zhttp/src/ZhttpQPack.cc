@@ -25,15 +25,15 @@ struct NeverIndexIDs {
   using Keys = ZuStringTL<"authorization", "cookie", "set-cookie">;
 };
 
-static int qpackStaticName_(ZuBSpan value)
+static int staticName_(ZuBSpan value)
 {
   static constexpr auto matcher = ZuMatcher<QPackNameIDs>();
   return matcher.exact(value);
 }
 
-static int qpackStaticNameIndex_(ZuBSpan value)
+static int staticNameIndex_(ZuBSpan value)
 {
-  int i = qpackStaticName_(value);
+  int i = staticName_(value);
   if (i < 0) return -1;
   int index = -1;
   ZuSwitch::dispatch<QPackStatic_::Names::N>(
@@ -44,9 +44,9 @@ static int qpackStaticNameIndex_(ZuBSpan value)
   return index;
 }
 
-static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
+static int staticIndex_(ZuBSpan name, ZuBSpan value)
 {
-  int i = qpackStaticName_(name);
+  int i = staticName_(name);
   if (i < 0) return -1;
   int index = -1;
   ZuSwitch::dispatch<QPackStatic_::Names::N>(
@@ -68,12 +68,12 @@ static int qpackStaticIndex_(ZuBSpan name, ZuBSpan value)
 
 bool Params::neverIndex(ZuBSpan name) const
 {
-  if (neverIndex_ && neverIndex_->find(name)) return true;
+  if (m_neverIndex && m_neverIndex->find(name)) return true;
   static constexpr auto matcher = ZuMatcher<NeverIndexIDs>();
   return matcher.exact(name) >= 0;
 }
 
-static uint32_t qpackEntrySize_(ZuBSpan name, ZuBSpan value)
+static uint32_t entrySize_(ZuBSpan name, ZuBSpan value)
 {
   uint64_t n = uint64_t(name.length()) + value.length() + 32;
   return n > uint32_t(-1) ? uint32_t(-1) : uint32_t(n);
@@ -82,7 +82,7 @@ static uint32_t qpackEntrySize_(ZuBSpan name, ZuBSpan value)
 ZuAssert(QPackTbl::N == 99);
 
 template <unsigned I>
-static Header qpackStaticField_()
+static Header staticField_()
 {
   using KV = QPackKV<I>;
   using Key = StaticKey<KV>;
@@ -133,6 +133,9 @@ void QPackRxTable::dropOldest()
   usedBytes_ -= entries[head_].size;
   ++head_;
   ++baseAbs_;
+  // Half-dead order bounds survivor moves by evictions + 1. The minimum 64
+  // is an unmeasured batching policy; owned dead strings survive to compaction.
+  // Slot storage remains bounded by configured capacity/32 plus array rounding.
   if (head_ == entries.length()) {
     entries.length(0);
     head_ = 0;
@@ -162,7 +165,7 @@ bool QPackRxTable::insert(Header h)
 
 bool QPackRxTable::insert(ZuBSpan name, ZuBSpan value)
 {
-  uint32_t n = qpackEntrySize_(name, value);
+  uint32_t n = entrySize_(name, value);
   if (n > capacityBytes_) return false;
   while (oldest() && usedBytes_ + n > capacityBytes_) dropOldest();
   auto e = pushNewest();
@@ -257,11 +260,11 @@ bool QPackTxTable::init(uint32_t capacity, uint32_t maxSections)
   uint32_t n = capacity>>5;
   if (n) {
     order.ensure(n);
-    exact = new QPackTxHash{ZmHashParams{n}};
-    names = new QPackTxNames{ZmHashParams{n}};
+    exact = new QPackTxExactHash{ZmHashParams{n}};
+    names = new QPackTxNameHash{ZmHashParams{n}};
   }
   if (maxSections)
-    sections = new QPackTxSections{ZmHashParams{maxSections}};
+    sections = new QPackTxSectionHash{ZmHashParams{maxSections}};
   return order.size() >= n &&
     (!exact || exact->size() >= n) &&
     (!names || names->size() >= n) &&
@@ -377,7 +380,7 @@ bool QPackTxTable::insert(
     if (abs) *abs = e->abs;
     return true;
   }
-  uint32_t n = qpackEntrySize_(name, value);
+  uint32_t n = entrySize_(name, value);
   if (n > capacityBytes_) return false;
   unsigned l = order.length();
   while (orderHead_ < l && usedBytes_ + n > capacityBytes_)
@@ -427,7 +430,7 @@ bool QPackTxTable::insertView(Header field, uint64_t *abs)
     if (abs) *abs = e->abs;
     return true;
   }
-  uint32_t n = qpackEntrySize_(field.name, field.value);
+  uint32_t n = entrySize_(field.name, field.value);
   if (n > capacityBytes_) return false;
   unsigned l = order.length();
   while (orderHead_ < l && usedBytes_ + n > capacityBytes_)
@@ -488,6 +491,8 @@ bool QPackTxTable::dropOldest()
   if (name && name->abs == old.abs)
     names->del(Compression::NameView{old.name});
   ++orderHead_;
+  // Same 64-and-half policy as Rx; Tx also clears allocated hash slots when
+  // rebuilding. Evicted owning entries retain their payload until compaction.
   if (orderHead_ == order.length()) {
     order.length(0);
     orderHead_ = 0;
@@ -585,7 +590,7 @@ bool QPackTxTable::applyDecoder(QPackInsn::T type, uint64_t value)
 
 bool QPack::staticNameIndex(ZuBSpan name, uint64_t &index)
 {
-  int i = qpackStaticNameIndex_(name);
+  int i = staticNameIndex_(name);
   if (i < 0) return false;
   index = unsigned(i);
   return true;
@@ -593,7 +598,7 @@ bool QPack::staticNameIndex(ZuBSpan name, uint64_t &index)
 
 int QPack::staticIndex(ZuBSpan name, ZuBSpan value)
 {
-  return qpackStaticIndex_(name, value);
+  return staticIndex_(name, value);
 }
 
 bool QPack::staticField(uint64_t index, Header &field)
@@ -602,7 +607,7 @@ bool QPack::staticField(uint64_t index, Header &field)
   bool ok = false;
   ZuSwitch::dispatch<QPackTbl::N>(unsigned(index),
     [&field, &ok](auto i) {
-      field = qpackStaticField_<i>();
+      field = staticField_<i>();
       ok = true;
     });
   return ok;

@@ -13,9 +13,13 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuPtr.hh>
 
+#include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmObject.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmRBTree.hh>
+#include <zlib/ZmRef.hh>
 
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
@@ -35,8 +39,6 @@ ZuDerive(ServiceHTTPResultFn, (ZmFn<void(ServiceHTTPResponse),
   ZmFnHeapID<"Zum.Service.HTTPResult">>));
 ZuDerive(ServiceReadyVec, (ZtArray<ServiceReadyFn,
   ZtArrayHeapID<"Zum.Service.ReadyVec">>));
-ZuDerive(ServiceDoneVec, (ZtArray<ServiceDoneFn,
-  ZtArrayHeapID<"Zum.Service.DoneVec">>));
 
 static bool userAuthMethod(ZuCSpan method)
 {
@@ -381,17 +383,110 @@ static bool serviceIssuer(
   return true;
 }
 
-struct ServiceState : public ZmNHeap<ServiceState>, public ZmObject  {
+// One bounded cleanup turn handles at most 64 container entries. This is
+// a scheduler work budget, independent of configured key/dedup capacities.
+namespace ServiceWork { enum { Batch = 64 }; }
+namespace ServiceIngress { enum { Closed = 1LL<<62, Count = Closed - 1 }; }
+
+template <typename Data, typename Done>
+struct ServiceAction : public ZmNHeap<ServiceAction<Data, Done>>, public ZmObject {
+friend inline ZuStringT<"Zum.Service.Action"> ZmNHeapID(ServiceAction *);
+
+  Data data;
+  Done done;
+  ServiceAction(Data data_, Done done_) :
+    data{ZuMv(data_)}, done{ZuMv(done_)} { }
+};
+
+struct ServiceState : public ZmNHeap<ServiceState> {
 friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *);
 
-  enum { Initial, Starting, Started, Stopping, Stopped };
+  Service *owner;
+  ServiceConfig config;
+  ServiceHTTPFn http;
+  AppID appID = 0;
+  AppID managementAppID = 0;
 
-  ServiceState(ServiceConfig config, ServiceHTTPFn http,
+  // Shared admission word; owner-shard protocol state has its own cache line.
+  alignas(Zm::CacheLineSize)
+  ZmAtomic<uint64_t> ingress = ServiceIngress::Closed;
+
+  alignas(Zm::CacheLineSize)
+  ServiceKeySet keys;
+  ServiceKeySet managementKeys;
+  ServiceKeySet ssfKeys;
+  SETSeenHash seen;
+  SETSeenExpiries seenExpiries;
+  ServiceRefreshFn refreshFn;
+  ServiceReadyVec tokenWaiters;
+  ServiceReadyVec keyWaiters;
+  String jwksURL;
+  String managementJWKSURL;
+  String ssfJWKSURL;
+  String tokenURL;
+  String resourceTokenURL;
+  String accessToken;
+  int64_t accessExpires = 0;
+  int64_t keysLoaded = 0;
+  unsigned inflight = 0;
+  int startupError = ServiceError::OK;
+  int startResult = -1;
+  bool workloadManagement = false;
+  bool settlePosted = false;
+  bool renewing = false;
+  bool keysRefreshing = false;
+  ZmScheduler::Timer registerTimer;
+  bool registerArmed = false;
+  ZmScheduler::Timer expiryTimer;
+  bool expiryArmed = false;
+
+  ServiceState(Service *owner_, ServiceConfig config, ServiceHTTPFn http,
       AppID appID_, AppID managementAppID_) :
-    config{ZuMv(config)}, http{ZuMv(http)}, appID{appID_},
-    managementAppID{managementAppID_} { }
+    owner{owner_}, config{ZuMv(config)}, http{ZuMv(http)},
+    appID{appID_}, managementAppID{managementAppID_} { }
 
-  ~ServiceState() { clear_(); }
+  ~ServiceState() {
+    ZmAssert_(quiescent_());
+    if (config.clientSecret.mutable_()) ZuClear(config.clientSecret);
+    if (config.introspectionSecret.mutable_()) ZuClear(config.introspectionSecret);
+    if (config.ssf.callbackAuth.mutable_()) ZuClear(config.ssf.callbackAuth);
+  }
+
+  bool active_() const {
+    if (startResult == 0) return false;
+    switch (owner->state()) {
+      case ZmEngineState::Starting:
+      case ZmEngineState::StopPending:
+      case ZmEngineState::Running: return true;
+    }
+    return false;
+  }
+  bool quiescent_() const {
+    return !(ingress.load_() & ServiceIngress::Count) && !inflight && !settlePosted &&
+      !registerArmed && !expiryArmed && !renewing && !keysRefreshing;
+  }
+
+  bool admit_() {
+    uint64_t count;
+    do {
+      count = ingress.load_();
+      if (count & ServiceIngress::Closed) return false;
+    } while (ingress.cmpXch(count + 1, count) != count);
+    return true;
+  }
+  void seal_() { ingress |= ServiceIngress::Closed; }
+
+  template <typename Data, typename Done, typename L>
+  void submit_(Data data, Done done, L &&fn) {
+    using Action = ServiceAction<Data, Done>;
+    ZmRef<Action> action = new Action{ZuMv(data), ZuMv(done)};
+    post([this, action = ZuMv(action), fn = ZuFwd<L>(fn)]() mutable {
+      fn(ZuMv(action->data), ZuMv(action->done));
+      action = nullptr;
+      --ingress;
+      settle_();
+    });
+  }
 
   template <typename L> void post(L &&fn) {
     config.scheduler->run(ZuFwd<L>(fn), config.sid);
@@ -399,109 +494,80 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void send_(ServiceHTTPRequest request, ServiceHTTPResultFn complete)
   {
-    if (state == Stopping || state == Stopped) {
+    if (!active_()) {
       complete(ServiceHTTPResponse{});
       return;
     }
     ++inflight;
     request.timeout = config.requestTimeout;
-    http(ZuMv(request), [self = ZmRef<ServiceState>{this},
-        complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
-      self->post([self = ZuMv(self), response = ZuMv(response),
-          complete = ZuMv(complete)]() mutable {
-        if (self->inflight) --self->inflight;
-        if (response.body.length() > self->config.responseMax) response = {};
-        complete(ZuMv(response));
-        self->stopped_();
+    http(ZuMv(request), [this, complete = ZuMv(complete)](
+        ServiceHTTPResponse response) mutable {
+      using Action = ServiceAction<ServiceHTTPResponse, ServiceHTTPResultFn>;
+      ZmRef<Action> action = new Action{ZuMv(response), ZuMv(complete)};
+      post([this, action = ZuMv(action)]() mutable {
+        if (action->data.body.length() > config.responseMax) action->data = {};
+        action->done(ZuMv(action->data));
+        action = nullptr; // release callback captures before lifecycle completion
+        --inflight;
+        settle_();
       });
     });
   }
 
-  void start_(ServiceDoneFn complete)
+  void start_()
   {
-    if (state != Initial) { complete(ServiceError::Invalid); return; }
-    state = Starting;
-    discovery_([self = ZmRef<ServiceState>{this},
-        complete = ZuMv(complete)](bool ok) mutable {
-      if (self->state != Starting) { complete(ServiceError::Stopped); return; }
-      if (!ok) { self->state = Initial; complete(ServiceError::Invalid); return; }
-      self->authenticate_([self = ZuMv(self),
-          complete = ZuMv(complete)](bool ok) mutable {
-        if (self->state != Starting) { complete(ServiceError::Stopped); return; }
-        if (!ok) { self->state = Initial; complete(ServiceError::Unavailable); return; }
-	self->keys_(self->workloadManagement,
-	 [self = ZuMv(self), complete = ZuMv(complete)](
-            bool ok) mutable {
-          if (self->state != Starting) { complete(ServiceError::Stopped); return; }
-          if (!ok || !self->verifyWorkload_()) {
-            self->state = Initial;
-            complete(ServiceError::Unauthorized);
-            return;
-          }
-          if (self->config.ssf.enabled &&
-              self->config.ssf.transmitterIssuer ==
-		self->config.managementIssuerURL) {
+    ZmAssert_(quiescent_());
+    startupError = ServiceError::OK;
+    startResult = -1;
+    discovery_([this](bool ok) {
+      if (!ok) { finishStart_(ServiceError::Invalid); return; }
+      authenticate_([this](bool ok) {
+	if (!ok) { finishStart_(ServiceError::Unavailable); return; }
+	keys_(workloadManagement, [this](bool ok) {
+	  if (!ok || !verifyWorkload_()) {
+	    finishStart_(ServiceError::Unauthorized);
+	    return;
+	  }
+	  if (config.ssf.enabled &&
+	      config.ssf.transmitterIssuer == config.managementIssuerURL) {
 	    ServiceKeySet next;
-	    if (self->managementKeys) {
-	      next = serviceKeys(self->managementKeys->count_());
-	      auto i = self->managementKeys->citer();
+	    if (managementKeys) {
+	      next = serviceKeys(managementKeys->count_());
+	      auto i = managementKeys->citer();
 	      while (auto key = i()) next->add(*key);
 	    }
-	    self->ssfKeys = ZuMv(next);
+	    ssfKeys = ZuMv(next);
 	  }
-          self->keys_(false, [self = ZuMv(self),
-              complete = ZuMv(complete)](bool ok) mutable {
-            if (self->state != Starting) {
-              complete(ServiceError::Stopped);
-              return;
-            }
-            if (!ok) {
-              self->state = Initial;
-              complete(ServiceError::Unauthorized);
-              return;
-            }
-            if (!self->config.ssf.enabled ||
-                self->config.ssf.transmitterIssuer ==
-                  self->config.managementIssuerURL) {
-              self->started_(ZuMv(complete));
-              return;
-            }
-            self->ssfKeys_([self = ZuMv(self), complete = ZuMv(complete)](
-                bool ok) mutable {
-              if (self->state != Starting) {
-                complete(ServiceError::Stopped);
-                return;
-              }
-              if (!ok) {
-                self->state = Initial;
-                complete(ServiceError::Unauthorized);
-                return;
-              }
-              self->started_(ZuMv(complete));
-            });
-          });
-        });
+	  keys_(false, [this](bool ok) {
+	    if (!ok) { finishStart_(ServiceError::Unauthorized); return; }
+	    if (!config.ssf.enabled ||
+		config.ssf.transmitterIssuer == config.managementIssuerURL) {
+	      started_();
+	      return;
+	    }
+	    ssfKeys_([this](bool ok) {
+	      if (!ok) { finishStart_(ServiceError::Unauthorized); return; }
+	      started_();
+	    });
+	  });
+	});
       });
     });
   }
 
-  void started_(ServiceDoneFn complete)
+  void started_()
   {
-    state = Started;
-    if (!config.ssf.enabled) { complete(ServiceError::OK); return; }
-    register_([self = ZmRef<ServiceState>{this},
-        complete = ZuMv(complete)](bool ok) mutable {
-      if (self->state != Started) { complete(ServiceError::Stopped); return; }
-      if (!ok) self->state = Initial;
-      complete(ok ? ServiceError::OK : ServiceError::Unavailable);
+    if (!config.ssf.enabled) { finishStart_(ServiceError::OK); return; }
+    register_([self = this](bool ok) mutable {
+      self->finishStart_(ok ? ServiceError::OK : ServiceError::Unavailable);
     });
   }
 
   void register_(ServiceReadyFn complete)
   {
-    token_([self = ZmRef<ServiceState>{this}, complete = ZuMv(complete)](
+    token_([self = this, complete = ZuMv(complete)](
         bool ok) mutable {
-      if (!ok || self->state != Started) { complete(false); return; }
+      if (!ok || !self->active_()) { complete(false); return; }
       String url = endpoint(self->config.managementURL, "/admin/apps/");
       url << self->appID << "/ssf";
       String body;
@@ -514,10 +580,10 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
         .url = ZuMv(url),
         .authorization = String{"Bearer "} << self->accessToken,
         .contentType = "application/json", .body = ZuMv(body)},
-        [self = ZuMv(self), complete = ZuMv(complete)](
+        [self, complete = ZuMv(complete)](
             ServiceHTTPResponse response) mutable {
           SSFLease lease;
-          bool ok = self->state == Started && response.status == 200 &&
+          bool ok = self->active_() && response.status == 200 &&
             jsonLoad(response.body, self->config.responseMax, lease) &&
             lease.expiresIn >= 2 && lease.expires > Zm::now().sec();
           if (ok) self->registerArm_(lease.expiresIn>>1);
@@ -528,14 +594,15 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void registerArm_(uint32_t delay)
   {
-    if (state != Started) return;
+    if (!active_()) return;
     if (registerArmed) config.scheduler->del(&registerTimer);
     registerArmed = true;
     config.scheduler->add(&registerTimer, Zm::now() + ZuTime{double(delay)},
       ZmScheduler::Update, [this](auto &&arm) {
         return arm([this]() {
           registerArmed = false;
-          register_([self = ZmRef<ServiceState>{this}](bool ok) mutable {
+          if (!active_()) return;
+          register_([self = this](bool ok) mutable {
             if (!ok) self->registerArm_(1);
           });
         });
@@ -554,7 +621,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       .url = ZuMv(url),
       .authorization = basicAuth(config.clientID, config.clientSecret),
       .contentType = "application/x-www-form-urlencoded",
-      .body = ZuMv(form)}, [self = ZmRef<ServiceState>{this}, management,
+      .body = ZuMv(form)}, [self = this, management,
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token;
       uint64_t expires = 0;
@@ -585,7 +652,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       complete(false);
       return;
     }
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = this,
         managementURL = ZuMv(managementURL),
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token, jwks;
@@ -596,7 +663,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       if (!ok) { complete(false); return; }
       self->resourceTokenURL = ZuMv(token);
       self->jwksURL = ZuMv(jwks);
-      self->managementDiscovery_(ZuMv(managementURL), [self = ZuMv(self),
+      self->managementDiscovery_(ZuMv(managementURL), [self,
           complete = ZuMv(complete)](bool ok) mutable {
         if (!ok) { complete(false); return; }
         self->transmitterDiscovery_(ZuMv(complete));
@@ -606,7 +673,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void managementDiscovery_(String url, ServiceReadyFn complete)
   {
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = this,
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token, jwks;
       bool ok = response.status == 200 && discoveryResponse(
@@ -634,7 +701,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       complete(false);
       return;
     }
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = this,
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
       String token, jwks;
       bool ok = response.status == 200 && discoveryResponse(
@@ -649,7 +716,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
   void keys_(bool management, ServiceReadyFn complete)
   {
     String url = management ? managementJWKSURL : jwksURL;
-    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = ZmRef<ServiceState>{this},
+    send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = this,
         management, complete = ZuMv(complete)](
         ServiceHTTPResponse response) mutable {
       auto keys = response.status == 200 ? jwksResponse(ZuMv(response.body),
@@ -670,7 +737,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
   void ssfKeys_(ServiceReadyFn complete)
   {
     send_(ServiceHTTPRequest{.url = ZuMv(ssfJWKSURL)},
-      [self = ZmRef<ServiceState>{this}, complete = ZuMv(complete)](
+      [self = this, complete = ZuMv(complete)](
           ServiceHTTPResponse response) mutable {
 	auto next = response.status == 200 ? jwksResponse(
           ZuMv(response.body), self->config.responseMax,
@@ -721,15 +788,15 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     int64_t now = Zm::now().sec();
     if (deadline <= now) { expire_(); return; }
     expiryArmed = true;
-    config.scheduler->add(&expiryTimer,
-      Zm::now() + ZuTime{double(deadline - now)}, ZmScheduler::Update,
+    config.scheduler->add(&expiryTimer, ZuTime{deadline}, ZmScheduler::Update,
       [this](auto &&arm) {
         return arm([this]() {
           expiryArmed = false;
+          if (!active_()) return;
           expire_();
           scheduleExpiry_();
         });
-      });
+      }, config.sid);
   }
 
   void setRefreshRevocationFn_(ServiceRefreshFn fn)
@@ -739,7 +806,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void receiveSET_(ServiceSETRequest request, ServiceSETDoneFn complete)
   {
-    if (state != Started || !config.ssf.enabled || !complete ||
+    if (!active_() || !config.ssf.enabled || !complete ||
         request.body.length() > config.ssf.maxBytes ||
         !contentType(request.contentType) ||
         request.authorization != config.ssf.callbackAuth) {
@@ -793,9 +860,9 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       return;
     }
 
+    seenExpiries.add(SETSeenExpiry{subject.expires, value.id});
     seen.add(SETSeen{
       .id = ZuMv(value.id), .expires = subject.expires});
-    seenExpiries.add(SETSeenExpiry{subject.expires, value.id});
     if (refreshFn) refreshFn(RefreshID{
       .issuerURL = ZuMv(subject.issuerURL), .familyID = ZuMv(subject.familyID)},
       subject.expires);
@@ -814,7 +881,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       return;
     }
     keysRefreshing = true;
-    keys_(false, [self = ZmRef<ServiceState>{this}](bool ok) mutable {
+    keys_(false, [self = this](bool ok) mutable {
       self->keysRefreshing = false;
       completeAll(self->keyWaiters, ok);
     });
@@ -850,7 +917,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void token_(ServiceReadyFn complete)
   {
-    if (state != Started) { complete(false); return; }
+    if (!active_()) { complete(false); return; }
     int64_t now = Zm::now().sec();
     if (accessToken && accessExpires > now + config.renewSkew) {
       complete(true);
@@ -859,10 +926,10 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     tokenWaiters.push(ZuMv(complete));
     if (renewing) return;
     renewing = true;
-    authenticate_([self = ZmRef<ServiceState>{this}](bool ok) mutable {
-      if (!ok || self->state != Started) { self->renewed_(false); return; }
-      self->keys_(true, [self = ZuMv(self)](bool ok) mutable {
-        self->renewed_(ok && self->state == Started &&
+    authenticate_([self = this](bool ok) mutable {
+      if (!ok || !self->active_()) { self->renewed_(false); return; }
+      self->keys_(true, [self](bool ok) mutable {
+        self->renewed_(ok && self->active_() &&
           self->verifyWorkload_());
       });
     });
@@ -883,7 +950,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       .authorization = basicAuth(config.introspectionClientID,
         config.introspectionSecret),
       .contentType = "application/x-www-form-urlencoded",
-      .body = ZuMv(form)}, [self = ZmRef<ServiceState>{this},
+      .body = ZuMv(form)}, [self = this,
         token = ZuMv(token), complete = ZuMv(complete)](
         ServiceHTTPResponse response) mutable {
       Introspection value;
@@ -919,9 +986,9 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void verify_(String token, ServiceVerifyFn complete)
   {
-    if (state != Started || !token) {
+    if (!active_() || !token) {
       if (token.mutable_()) ZuClear(token);
-      complete(state == Started ? ServiceError::Invalid : ServiceError::Stopped,
+      complete(active_() ? ServiceError::Invalid : ServiceError::Stopped,
         ServicePrincipal{});
       return;
     }
@@ -944,10 +1011,10 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       complete(ServiceError::Unauthorized, ServicePrincipal{});
       return;
     }
-    refreshKeys_([self = ZmRef<ServiceState>{this}, token = ZuMv(token),
+    refreshKeys_([self = this, token = ZuMv(token),
         complete = ZuMv(complete)](bool ok) mutable {
       Principal principal;
-      if (self->state != Started) {
+      if (!self->active_()) {
         if (token.mutable_()) ZuClear(token);
         complete(ServiceError::Stopped, ServicePrincipal{});
         return;
@@ -976,11 +1043,11 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 
   void publish_(ServiceManifest manifest, ServiceProtocolFn complete)
   {
-    token_([self = ZmRef<ServiceState>{this}, manifest = ZuMv(manifest),
+    token_([self = this, manifest = ZuMv(manifest),
         complete = ZuMv(complete)](bool ok) mutable {
       if (!ok || !manifest.revision) {
         complete(ServiceProtocolResult{.error = ok ? ServiceError::Invalid :
-          self->state == Started ? ServiceError::Unavailable :
+          self->active_() ? ServiceError::Unavailable :
             ServiceError::Stopped});
         return;
       }
@@ -1002,78 +1069,87 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     });
   }
 
-  void stop_(ServiceDoneFn complete)
+  void finishStart_(int error)
   {
-    if (state == Stopped) { complete(ServiceError::OK); return; }
-    if (state == Stopping) { stopWaiters.push(ZuMv(complete)); return; }
-    state = Stopping;
-    if (registerArmed) {
-      config.scheduler->del(&registerTimer);
-      registerArmed = false;
-    }
-    stopWaiters.push(ZuMv(complete));
-    stopped_();
+    startupError = error;
+    startResult = error == ServiceError::OK;
+    if (!startResult) cancelTimers_();
+    settle_();
   }
 
-  void stopped_()
+  void stop_()
   {
-    if (state != Stopping || inflight) return;
-    state = Stopped;
-    clear_();
-    completeAll(stopWaiters, ServiceError::OK);
+    cancelTimers_();
+    // Drain the timer owner's already-posted callbacks before publication.
+    settle_();
   }
 
-  void clear_()
+  void cancelTimers_()
   {
-    if (registerArmed) {
-      config.scheduler->del(&registerTimer);
-      registerArmed = false;
+    config.scheduler->del(&registerTimer);
+    registerArmed = false;
+    config.scheduler->del(&expiryTimer);
+    expiryArmed = false;
+  }
+
+  static void clearKeys_(ServiceKeySet &set, unsigned &left)
+  {
+    if (!set) return;
+    {
+      auto i = set->iter();
+      while (left && i()) { --left; i.del(); }
     }
-    if (expiryArmed) {
-      config.scheduler->del(&expiryTimer);
-      expiryArmed = false;
+    if (!set->count_()) set = nullptr;
+  }
+
+  bool clearRuntime_()
+  {
+    unsigned left = ServiceWork::Batch;
+    clearKeys_(keys, left);
+    clearKeys_(managementKeys, left);
+    clearKeys_(ssfKeys, left);
+    while (left && seenExpiries.count_()) {
+      --left;
+      auto key = seenExpiries.minimumKey();
+      seen.delVal(key.id);
+      seenExpiries.del(key);
     }
-    if (accessToken.mutable_())
-      ZuClear(accessToken);
+    if (keys || managementKeys || ssfKeys || seenExpiries.count_()) return false;
+    ZmAssert_(!seen.count_() && !tokenWaiters.length() && !keyWaiters.length());
+    if (accessToken.mutable_()) ZuClear(accessToken);
     accessToken.null();
-    if (config.clientSecret.mutable_())
-      ZuClear(config.clientSecret);
-    if (config.introspectionSecret.mutable_())
-      ZuClear(config.introspectionSecret);
-    if (config.ssf.callbackAuth.mutable_())
-      ZuClear(config.ssf.callbackAuth);
+    accessExpires = keysLoaded = 0;
+    workloadManagement = false;
+    jwksURL.null();
+    managementJWKSURL.null();
+    ssfJWKSURL.null();
+    tokenURL.null();
+    resourceTokenURL.null();
+    return true;
   }
 
-  ServiceConfig config;
-  ServiceHTTPFn http;
-  ServiceKeySet keys;
-  ServiceKeySet managementKeys;
-  ServiceKeySet ssfKeys;
-  SETSeenHash seen;
-  SETSeenExpiries seenExpiries;
-  ServiceRefreshFn refreshFn;
-  ServiceReadyVec tokenWaiters;
-  ServiceReadyVec keyWaiters;
-  ServiceDoneVec stopWaiters;
-  String jwksURL;
-  String managementJWKSURL;
-  String ssfJWKSURL;
-  String tokenURL;
-  String resourceTokenURL;
-  String accessToken;
-  bool workloadManagement = false;
-  AppID appID = 0;
-  AppID managementAppID = 0;
-  int64_t accessExpires = 0;
-  int64_t keysLoaded = 0;
-  unsigned inflight = 0;
-  int8_t state = Initial;
-  bool renewing = false;
-  bool keysRefreshing = false;
-  ZmScheduler::Timer registerTimer;
-  bool registerArmed = false;
-  ZmScheduler::Timer expiryTimer;
-  bool expiryArmed = false;
+  void settle_()
+  {
+    bool stopping = owner->stopping();
+    if (settlePosted || (!stopping && startResult < 0)) return;
+    settlePosted = true;
+    post([this]() {
+      settlePosted = false;
+      if (inflight || (ingress.load_() & ServiceIngress::Count)) return;
+      if (startResult == 1) {
+        startResult = -1;
+        ingress = 0;
+        owner->started(true);
+        return;
+      }
+      if (!clearRuntime_()) { settle_(); return; }
+      bool failedStart = startResult == 0;
+      startResult = -1;
+      if (failedStart) owner->started(false);
+      else owner->stopped(true);
+    });
+  }
+
 };
 
 Service::Service() = default;
@@ -1101,70 +1177,89 @@ bool Service::init(ServiceConfig config, ServiceHTTPFn http)
         !config.ssf.audience ||
         !config.ssf.maxBytes || !config.ssf.dedupMax))) return false;
   m_state = new ServiceState{
-    ZuMv(config), ZuMv(http), appID, managementAppID};
+    this, ZuMv(config), ZuMv(http), appID, managementAppID};
   return true;
 }
 
-void Service::start(ServiceDoneFn complete)
+void Service::start_()
 {
-  if (!m_state || !complete) return;
-  auto state = m_state;
-  state->post([state = ZuMv(state), complete = ZuMv(complete)]() mutable {
-    state->start_(ZuMv(complete));
-  });
+  if (!m_state) { Engine::started(false); return; }
+  auto state = m_state.ptr();
+  state->post([state]() { state->start_(); });
+}
+
+void Service::stop_()
+{
+  auto state = m_state.ptr();
+  state->seal_();
+  state->post([state]() { state->stop_(); });
+}
+
+int Service::startError() const
+{
+  return m_state ? m_state->startupError : ServiceError::Invalid;
 }
 
 void Service::verify(String accessToken, ServiceVerifyFn complete)
 {
-  if (!m_state || !complete) return;
-  auto state = m_state;
-  state->post([state = ZuMv(state), accessToken = ZuMv(accessToken),
-      complete = ZuMv(complete)]() mutable {
-    state->verify_(ZuMv(accessToken), ZuMv(complete));
-  });
+  if (!complete) return;
+  if (!m_state || Engine::state() != ZmEngineState::Running || !m_state->admit_()) {
+    if (accessToken.mutable_()) ZuClear(accessToken);
+    complete(ServiceError::Stopped, ServicePrincipal{});
+    return;
+  }
+  auto state = m_state.ptr();
+  state->submit_(ZuMv(accessToken), ZuMv(complete),
+    [state](String token, ServiceVerifyFn complete) {
+      state->verify_(ZuMv(token), ZuMv(complete));
+    });
 }
 
 void Service::setRefreshRevocationFn(ServiceRefreshFn fn)
 {
   if (!m_state) return;
-  auto state = m_state;
-  state->post([state = ZuMv(state), fn = ZuMv(fn)]() mutable {
+  auto state = m_state.ptr();
+  if (Engine::state() == ZmEngineState::Stopped) {
     state->setRefreshRevocationFn_(ZuMv(fn));
-  });
+    return;
+  }
+  if (Engine::state() != ZmEngineState::Running || !state->admit_()) return;
+  state->submit_(ZuMv(fn), ZuVoid{},
+    [state](ServiceRefreshFn fn, ZuVoid) { state->setRefreshRevocationFn_(ZuMv(fn)); });
 }
 
 void Service::receiveSET(ServiceSETRequest request, ServiceSETDoneFn complete)
 {
-  if (!m_state || !complete) return;
-  auto state = m_state;
-  state->post([state = ZuMv(state), request = ZuMv(request),
-      complete = ZuMv(complete)]() mutable {
-    state->receiveSET_(ZuMv(request), ZuMv(complete));
-  });
+  if (!complete) return;
+  if (!m_state || Engine::state() != ZmEngineState::Running || !m_state->admit_()) {
+    complete(ServiceError::Stopped);
+    return;
+  }
+  auto state = m_state.ptr();
+  state->submit_(ZuMv(request), ZuMv(complete),
+    [state](ServiceSETRequest request, ServiceSETDoneFn complete) {
+      state->receiveSET_(ZuMv(request), ZuMv(complete));
+    });
 }
 
 void Service::publish(ServiceManifest manifest, ServiceProtocolFn complete)
 {
-  if (!m_state || !complete) return;
-  auto state = m_state;
-  state->post([state = ZuMv(state), manifest = ZuMv(manifest),
-      complete = ZuMv(complete)]() mutable {
-    state->publish_(ZuMv(manifest), ZuMv(complete));
-  });
-}
-
-void Service::stop(ServiceDoneFn complete)
-{
-  if (!m_state || !complete) return;
-  auto state = m_state;
-  state->post([state = ZuMv(state), complete = ZuMv(complete)]() mutable {
-    state->stop_(ZuMv(complete));
-  });
+  if (!complete) return;
+  if (!m_state || Engine::state() != ZmEngineState::Running || !m_state->admit_()) {
+    complete(ServiceProtocolResult{.error = ServiceError::Stopped});
+    return;
+  }
+  auto state = m_state.ptr();
+  state->submit_(ZuMv(manifest), ZuMv(complete),
+    [state](ServiceManifest manifest, ServiceProtocolFn complete) {
+      state->publish_(ZuMv(manifest), ZuMv(complete));
+    });
 }
 
 void Service::final()
 {
-  if (!m_state) return;
+  ZmAssert_(Engine::state() == ZmEngineState::Stopped);
+  if (m_state) ZmAssert_(m_state->quiescent_());
   m_state = nullptr;
 }
 

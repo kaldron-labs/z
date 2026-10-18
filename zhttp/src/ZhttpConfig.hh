@@ -13,9 +13,14 @@
 #include <zlib/ZhttpLib.hh>
 #endif
 
+#include <zlib/ZuDerive.hh>
 #include <zlib/ZuTime.hh>
+
+#include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
+
 #include <zlib/ZiIP.hh>
+
 #include <zlib/ZhttpProfiles.hh>
 
 class ZiMultiplex;
@@ -82,15 +87,19 @@ private:
   bool		m_mTLS = false;
 };
 
-class H2Config : public TLSConfig {
+class H2Config : private TLSConfig {
 public:
   enum { MaxHPackCapacity = 1U<<24 };
 
-  ZuCSpan caPath() const { return TLSConfig::caPath(); }
-  ZuCSpan certPath() const { return TLSConfig::certPath(); }
-  ZuCSpan keyPath() const { return TLSConfig::keyPath(); }
-  bool mTLS() const { return TLSConfig::mTLS(); }
-  int cacheTimeout() const { return TLSConfig::cacheTimeout(); }
+  TLSConfig &tls() { return *this; }
+  const TLSConfig &tls() const { return *this; }
+
+  template <typename L>
+  H2Config &&tls(L &&l) {
+    ZuFwd<L>(l)(tls());
+    return ZuMv(*this);
+  }
+
   uint32_t hpackRxCapacity() const { return m_hpackRxCapacity; }
   uint32_t hpackTxCapacity() const { return m_hpackTxCapacity; }
   uint32_t maxHeaderListSize() const { return m_maxHeaderListSize; }
@@ -105,26 +114,6 @@ public:
   H2Policy::T policy() const { return m_policy; }
   bool extendedConnect() const { return m_extendedConnect; }
 
-  H2Config &caPath(ZuCSpan v) {
-    TLSConfig::caPath(v);
-    return *this;
-  }
-  H2Config &certPath(ZuCSpan v) {
-    TLSConfig::certPath(v);
-    return *this;
-  }
-  H2Config &keyPath(ZuCSpan v) {
-    TLSConfig::keyPath(v);
-    return *this;
-  }
-  H2Config &mTLS(bool v) {
-    TLSConfig::mTLS(v);
-    return *this;
-  }
-  H2Config &cacheTimeout(int v) {
-    TLSConfig::cacheTimeout(v);
-    return *this;
-  }
   H2Config &hpackRxCapacity(uint32_t v) {
     m_hpackRxCapacity = v;
     return *this;
@@ -183,6 +172,10 @@ private:
   uint32_t	m_maxFrameSize = 1U<<14;
   uint32_t	m_maxConcurrentStreams = 100;
   uint32_t	m_maxStreamID = 0x7fffffffU;
+  // Local per-connection admission policies, not protocol sizes or eager
+  // allocation. Pending links and separate data/control queues grow on demand;
+  // retained bytes depend on buffer capacities and queue/allocator rounding.
+  // These numeric workload defaults have not been performance-validated.
   uint32_t	m_maxPending = 1024;
   uint32_t	m_maxQueuedFrames = 4096;
   unsigned	m_settingsTimeout = 10;
@@ -195,8 +188,8 @@ class QUICConfig {
 public:
   // HTTP transfer windows: enough for large bodies without connection-level
   // head-of-line flow-control stalls; applications may lower them explicitly.
-  static constexpr uint64_t DefltMaxData = uint64_t(100)<<20;
-  static constexpr uint64_t DefltMaxStreamData = uint64_t(16)<<20;
+  enum { DefltMaxData = 100<<20 };
+  enum { DefltMaxStreamData = 16<<20 };
   static constexpr uint64_t RoleDefault = uint64_t(-1);
   enum {
     // Request concurrency defaults; the server limit also bounds admission.
@@ -204,6 +197,8 @@ public:
     DefltServerStreams = 4096,
     // Three mandatory H3 streams plus bounded diagnostic/extension headroom.
     DefltControlStreams = 16,
+    // Local queue admission policy, not a protocol or retained-byte limit.
+    // Queues grow on demand; this numeric workload default is unmeasured.
     DefltMaxQueuedFrames = 4096,
     DefltMigrationCIDReserve = 1,
     // Bound per-connection QPACK storage to 16MiB/1M sections.  These are

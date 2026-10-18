@@ -192,9 +192,9 @@ static void routing()
   ZuTestScope(routing);
   Ztc::Hubd hub;
   ZuCheck(hub.init(config()));
-  ZuCheck(hub.state() == Ztc::HubdState::Starting);
+  ZuCheck(hub.state() == ZmEngineState::Stopped);
   ZuCheck(hub.start());
-  ZuCheck(hub.state() == Ztc::HubdState::Up);
+  ZuCheck(hub.readiness() == Ztc::HubdState::Up);
 
   auto agentPrincipal = principal("device-1", "Telemetry");
   auto agentPrincipal2 = principal("device-2", "Telemetry");
@@ -285,7 +285,11 @@ static void routing()
   ZuCheck(!hub.route(10, 3, 1, route));
   ZuCheck(!hub.route(10, 3, seq, route) && !hub.route(10, 3, seq2, route));
   ZuCheck(hub.stop());
-  ZuCheck(hub.state() == Ztc::HubdState::Down);
+  ZuCheck(hub.readiness() == Ztc::HubdState::Down);
+  ZuCheck(!hub.browserPrincipal(unusedCookie, browserPrincipal));
+  ZuCheck(hub.start());
+  ZuCheck(!hub.browserPrincipal(unusedCookie, browserPrincipal));
+  ZuCheck(hub.stop());
 }
 
 static bool app(Ztc::Hubd &hub, uint64_t agent, uint64_t generation,
@@ -404,6 +408,45 @@ static void appInventory()
   ZuCheck(hub.stop());
 }
 
+static void lifecycle()
+{
+  ZuTestScopeRT(lifecycle);
+  Ztc::Hubd hub;
+  ZuCheckRT(!hub.start());
+  ZuCheckRT(hub.stop());
+  hub.final();
+  ZuCheckRT(hub.init(config()));
+  ZuCheckRT(hub.state() == ZmEngineState::Stopped);
+  hub.final();
+  ZuCheckRT(hub.init(config()));
+  Ztc::HubCtrlFn held;
+  bool hold = true, inactive = false, stopped = false, stopOK = true;
+  hub.activateFn([&held, &hold, &inactive, &stopOK](bool active, Ztc::HubCtrlFn complete) {
+    inactive = !active;
+    if (hold) held = ZuMv(complete);
+    else complete(stopOK);
+  });
+  ZuCheckRT(hub.start());
+  ZuCheckRT(hub.start());
+  hub.stop([&stopped](bool ok) { stopped = ok; });
+  ZuCheckRT(inactive && bool(held) && !stopped);
+  ZuCheckRT(hub.state() == ZmEngineState::Stopping);
+  auto complete = ZuMv(held);
+  complete(true);
+  complete = {};
+  ZuCheckRT(stopped && hub.state() == ZmEngineState::Stopped);
+  ZuCheckRT(hub.stop());
+  hold = false;
+  stopOK = false;
+  ZuCheckRT(hub.start());
+  stopped = false;
+  hub.stop([&hub, &stopped](bool ok) {
+    stopped = !ok;
+    hub.final(); // diagnostic failure still completes stopped and drained
+  });
+  ZuCheckRT(stopped && hub.state() == ZmEngineState::Stopped);
+}
+
 static void configValidation()
 {
   ZuTestScope(configValidation);
@@ -426,9 +469,11 @@ static void configValidation()
 
 } // ZtcHubTest_
 
-int main()
+int main(int argc, char **argv)
 {
+  parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(ZtcHubTest_::lifecycle);
   ZuTestCall(ZtcHubTest_::protocol);
   ZuTestCall(ZtcHubTest_::messages);
   ZuTestCall(ZtcHubTest_::payloadCopy);
@@ -436,4 +481,5 @@ int main()
   ZuTestCall(ZtcHubTest_::appInventory);
   ZuTestCall(ZtcHubTest_::appInventoryLimits);
   ZuTestCall(ZtcHubTest_::configValidation);
+  return 0;
 }
