@@ -2669,6 +2669,7 @@ void testLocalResetStopSend()
   ZuCHECK(reset->resetSent() &&
       reset->txError() == Zquic::StreamError::Reset &&
       reset->txAppError() == 42 &&
+      !reset->txRangeCount() && !reset->txBufferedBytes() && !reset->txQueueCount() &&
       link->queuedControlFrames() == 1,
     "local RESET_STREAM did not queue control state");
   unsigned n = link->flushSentRefs(refs, 2);
@@ -2677,16 +2678,42 @@ void testLocalResetStopSend()
       refs[0].controlType == Zquic::FrameType::ResetStream &&
       refs[0].streamID == uint64_t(reset->id()) &&
       refs[0].value == 42 &&
-      refs[0].length == 3 &&
+      !refs[0].length &&
       !link->queuedControlFrames(),
-    "local RESET_STREAM sent ref mismatch");
+    "unsent application bytes entered RESET_STREAM final size");
   Zquic::Frame rebuilt;
   ZuCHECK(link->rebuildControl(refs[0], rebuilt) &&
       rebuilt.type == Zquic::FrameType::ResetStream &&
       rebuilt.streamID == uint64_t(reset->id()) &&
       rebuilt.errorCode == 42 &&
-      rebuilt.length == 3,
+      !rebuilt.length,
     "local RESET_STREAM retransmit rebuild failed");
+  ZuCHECK(!reset->ackReset(42, 3) && reset->ackReset(42, 0),
+    "RESET_STREAM acknowledgement used queued application extent");
+
+  auto partial = link->stream(Zquic::StreamType::Duplex);
+  partial->txCredit(2);
+  link->grantDataCredit(6);
+  {
+    auto tx = partial->txStream_();
+    tx << "abcdef" << Zi::flush();
+  }
+  n = link->flushSentRefs(refs, 2);
+  ZuCHECK(n == 1 && refs[0].kind == Zquic::SentFrameKind::Stream &&
+      refs[0].length == 2 && partial->txBufferedBytes() == 4,
+    "partial STREAM transmission did not stop at peer credit");
+  ZuCHECK(partial->recordTxUnackd(0, 2, false),
+    "partial STREAM recovery range setup failed");
+  partial->reset(43);
+  ZuCHECK(!partial->txRangeCount() && !partial->txBufferedBytes() &&
+      !partial->txQueueCount() && !partial->txUnackdCount(),
+    "RESET_STREAM retained unsent or recovery ranges");
+  n = link->flushSentRefs(refs, 2);
+  ZuCHECK(n == 1 && refs[0].controlType == Zquic::FrameType::ResetStream &&
+      refs[0].streamID == uint64_t(partial->id()) && refs[0].length == 2 &&
+      link->rebuildControl(refs[0], rebuilt) && rebuilt.length == 2 &&
+      !partial->ackReset(43, 6) && partial->ackReset(43, 2),
+    "flow-stalled RESET_STREAM included unsent bytes in final size");
 
   auto stop = link->stream(Zquic::StreamType::Duplex);
   stop->stop(9);

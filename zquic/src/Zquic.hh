@@ -915,9 +915,10 @@ protected:
   }
 
   void start_() {
-    startQLog_();
-    warmup_();
-    this->started(true);
+    startQLog_([this]() {
+      warmup_();
+      this->started(true);
+    });
   }
 
   void stop_() {		// hub callback - enter Rx thread
@@ -948,18 +949,20 @@ protected:
     rxRun([this]() { this->stopped(); });
   }
 
-  void startQLog_() {
-    if (!m_qlogParams.enabled()) return;
-    ZquicLogger::start();
+  template <typename L>
+  void startQLog_(L &&l) {
+    if (!m_qlogParams.enabled()) { l(); return; }
+    ZquicLogger::start([this, l = ZuFwd<L>(l)](bool) mutable {
+      rxRun(ZuMv(l));
+    });
   }
 
   template <typename L>
   void stopQLog_(L &&l) {
     if (!m_qlogParams.enabled()) { l(); return; }
     ZquicLogger::close(m_qlogTrace, [this, l = ZuFwd<L>(l)]() mutable {
-      rxRun([l = ZuMv(l)]() mutable {
-	ZquicLogger::stopIdle();
-	l();
+      ZquicLogger::stopIdle([this, l = ZuMv(l)](bool) mutable {
+	rxRun(ZuMv(l));
       });
     });
   }
@@ -1546,7 +1549,10 @@ private:
 	ZmHashParams().bits(5).loadFactor(1).cBits(3)};
     m_routes.init();
     m_stopCount = 0;
-    Base::startQLog_();
+    Base::startQLog_([this]() { start_1(); });
+  }
+
+  void start_1() {
     Base::warmup_();
     ZiIP localIP = this->app()->localIP();
     uint16_t localPort = this->app()->localPort();

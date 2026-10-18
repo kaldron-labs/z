@@ -3457,7 +3457,7 @@ protected:
   void releaseCandidatePeerCID_() {
     CxnID id = m_txCandidatePeerCID;
     uint64_t sequence = m_txCandidatePeerSeq;
-    m_txCandidatePeerCID = {};
+    m_txCandidatePeerCID.clear();
     m_txCandidatePeerSeq = U64Null;
     releasePeerCID_(id, sequence);
   }
