@@ -690,6 +690,57 @@ static void malformed()
   ZuCheck(!result && result.error == ZfDBUS::Error::Unsupported);
 }
 
+// Exercise decoding failures directly: protocol errors must remain recoverable
+// even when encountered after the handler's initial validation.
+static void loadErrors()
+{
+  ZuTestScope(loadErrors);
+  uint8_t shortInt[] = {1, 2};
+  ZfDBUS::Reader integer{{shortInt, "u"}};
+  auto value = ZfDBUS::loadFieldValue<ZfDBUS::RawField<uint32_t>>(integer);
+  ZuCheck(value == ZuCmp<uint32_t>::null());
+  ZuCheck(!integer.result && integer.result.error == ZfDBUS::Error::Bounds);
+
+  uint8_t badBool[] = {2, 0, 0, 0};
+  ZfDBUS::Reader boolean{{badBool, "b"}};
+  auto flag = ZfDBUS::loadFieldValue<ZfDBUS::RawField<bool>>(boolean);
+  ZuCheck(!flag);
+  ZuCheck(!boolean.result && boolean.result.error == ZfDBUS::Error::Syntax);
+
+  uint8_t badVariant[] = {1, 'u', 0, 0, 1};
+  ZfDBUS::Reader variant{{badVariant, "v"}};
+  using VariantHandler = ZfDBUS::As<Variant>::Handler<Variant, ZuFacet::DBUS>;
+  Variant alternative{Text{"unchanged"}};
+  ZuCheck(!VariantHandler::loadValue(variant, alternative));
+  ZuCheck(!variant.result && variant.result.error == ZfDBUS::Error::Bounds);
+  ZuCheck(alternative.template is<Text>() &&
+    alternative.template p<1>() == "unchanged");
+
+  VariantHandler::loadCtor(variant);
+  ZuCheck(!variant.result);
+
+  ZfDBUS::Reader object{{shortInt, "(qu)"}};
+  using ObjectHandler = ZfDBUS::As<Constructed>::Handler<Constructed, ZuFacet::DBUS>;
+  auto constructed = ObjectHandler::loadCtor(object);
+  ZuCheck(!object.result && object.result.error == ZfDBUS::Error::Bounds);
+  ZuCheck(constructed.first == 0x0201 &&
+    constructed.second == ZuCmp<uint32_t>::null());
+
+  ZfDBUS::Reader nested{{shortInt, "((qu))"}};
+  using NestedHandler = ZfDBUS::As<NestedConstructed>::Handler<
+    NestedConstructed, ZuFacet::DBUS>;
+  auto nestedCopy = NestedHandler::loadCtor(nested);
+  ZuCheck(!nested.result);
+  ZuCheck(nestedCopy.inner.first == ZuCmp<uint16_t>::null() &&
+    nestedCopy.inner.second == ZuCmp<uint32_t>::null());
+
+  Buffer output;
+  auto failed = ZfDBUS::measure(BoolOnly{true});
+  failed.error = ZfDBUS::Error::Syntax;
+  ZfDBUS::saveMeasured(output, BoolOnly{true}, {}, failed);
+  ZuCheck(!output.length());
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -704,5 +755,6 @@ int main(int argc, char **argv)
   ZuTestCall(mappings);
   ZuTestCall(metadata);
   ZuTestCall(malformed);
+  ZuTestCall(loadErrors);
   return 0;
 }

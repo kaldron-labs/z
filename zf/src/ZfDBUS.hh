@@ -16,6 +16,7 @@
 #include <string.h>
 
 #include <zlib/ZuSpan.hh>
+#include <zlib/ZuCmp.hh>
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuIntrin.hh>
 #include <zlib/ZuMatcher.hh>
@@ -1044,7 +1045,8 @@ Field::T loadFieldValue(Reader &reader)
       typename Field::Props>::loadCtor(reader);
   else {
     T value;
-    loadField<Field>(reader, value);
+    if (!reader.result || !loadField<Field>(reader, value))
+      return ZuCmp<T>::null();
     return value;
   }
 }
@@ -1136,10 +1138,8 @@ struct AsObject {
     template <typename Field>
     static Field::T value(const FieldViewsScratch &fields) {
       constexpr unsigned I = ZuTypeIndex<Field, WireFields>{};
-      Reader reader{fields[I]};
-      auto value = loadFieldValue<Field>(reader);
-      ZmAssert_(reader.result && reader.p == reader.end);
-      return value;
+      Reader reader{I < fields.length() ? fields[I] : View{}};
+      return loadFieldValue<Field>(reader);
     }
 
     template <typename ...Field>
@@ -1165,7 +1165,7 @@ struct AsObject {
       ZmAssert_(status);
       Reader reader{view};
       auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
-      ZmAssert_(indexFields(reader, fields) && reader.p == reader.end);
+      indexFields(reader, fields);
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(
 	fields, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([&fields, &o]<typename Field>() {
@@ -1178,7 +1178,7 @@ struct AsObject {
       ZmAssert_(status);
       Reader reader{view};
       auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
-      ZmAssert_(indexFields(reader, fields) && reader.p == reader.end);
+      indexFields(reader, fields);
       O *o = ZuTypeApply<Ctor, CtorFields>::alloc(
 	fields, ZuFwd<Args>(args)...);
       ZuUnroll::all<InitFields>([&fields, o]<typename Field>() {
@@ -1191,7 +1191,7 @@ struct AsObject {
       ZmAssert_(status);
       Reader reader{view};
       auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
-      ZmAssert_(indexFields(reader, fields) && reader.p == reader.end);
+      indexFields(reader, fields);
       ZuTypeApply<Ctor, CtorFields>::new_(
 	p, fields, ZuFwd<Args>(args)...);
       O &o = *static_cast<O *>(p);
@@ -1202,7 +1202,7 @@ struct AsObject {
     void load(O &o) const {
       if (!status) return;
       Reader reader{view};
-      ZmAssert_(loadFields(reader, o) && reader.p == reader.end);
+      loadFields(reader, o);
     }
     static bool skipFields(Reader &reader) {
       ZuUnroll::all<WireFields>([&reader]<typename Field>() {
@@ -1239,9 +1239,8 @@ struct AsObject {
       return loadFields(reader, o);
     }
     static O loadCtor(Reader &reader) {
-      ZmAssert_(reader.align(8));
       auto fields = ZtScratch(FieldViewsScratch, WireFields::N);
-      ZmAssert_(indexFields(reader, fields));
+      if (reader.result && reader.align(8)) indexFields(reader, fields);
       O o = ZuTypeApply<Ctor, CtorFields>::ctor(fields);
       ZuUnroll::all<InitFields>([&fields, &o]<typename Field>() {
 	Field::set(o, value<Field>(fields));
@@ -1335,7 +1334,7 @@ struct AsArray {
     }
     static O loadCtor(Reader &reader) {
       O o;
-      ZmAssert_(load_(reader, o));
+      load_(reader, o);
       return o;
     }
     static bool load(Reader &reader, O &o) {
@@ -1473,7 +1472,7 @@ struct AsMap {
     }
     static O loadCtor(Reader &reader) {
       O o;
-      ZmAssert_(load_(reader, o));
+      load_(reader, o);
       return o;
     }
     static bool load(Reader &reader, O &o) {
@@ -1637,7 +1636,7 @@ struct AsVariant {
     }
     static O loadCtor(Reader &reader) {
       O o;
-      ZmAssert_(loadValue(reader, o));
+      loadValue(reader, o);
       return o;
     }
     static bool load(Reader &reader, O &o) {
@@ -1726,11 +1725,10 @@ inline Result measure(const O &o, Context context = {})
 template <typename Facet = ZuFacet::DBUS, typename S, typename O>
 inline S &saveMeasured(S &s, const O &o, Context context, Result measured)
 {
-  ZmAssert_(measured && measured.offset >= context.offset);
+  if (!measured || measured.offset < context.offset) return s;
   State_ state{context};
   using Handler = As<O>::template Handler<O, Facet>;
-  ZmAssert_(Handler::saveTop(s, state, o) &&
-    state.offset == measured.offset);
+  Handler::saveTop(s, state, o);
   return s;
 }
 
