@@ -31,10 +31,28 @@ ZuStruct(Foo_,
 ZmPolyHashDerive(Hash, Foo_, ZmPolyHash_Defaults);
 using Foo = Hash::Node;
 
+static void directNodes()
+{
+  ZuTestScope(directNodes);
+  using Direct = ZmPolyHash<Foo_>;
+  Direct hash("direct");
+  auto node = new Direct::Node{7, 8, 9, 10};
+  hash.add(node);
+  ZuCheck(hash.find<0>(ZuFwdTuple(7, 9)) == node);
+  ZuCheck(hash.find<1>(ZuFwdTuple(8, 9)) == node);
+  ZuCheck(hash.find<2>(ZuFwdTuple(8)) == node);
+  ZuCheck(hash.find<3>(ZuFwdTuple(10)) == node);
+  auto removed = hash.del<1>(ZuFwdTuple(8, 9));
+  ZuCheck(removed == node);
+  ZuCheck(!hash.find<0>(ZuFwdTuple(7, 9)) &&
+      !hash.find<2>(ZuFwdTuple(8)) && !hash.find<3>(ZuFwdTuple(10)));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(directNodes);
   Hash hash("test");
   hash.add(new Foo{1,2,3,4});
   hash.add(new Foo{2,3,4,5});

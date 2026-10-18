@@ -80,7 +80,9 @@ struct HandleCloser : public ZmObject {
 #endif
 
 struct ZmThread_Main {
-  static bool &is_() { return ZmTLS<bool, is_>(); }
+  // Library/platform cleanup can still join workers. Their TLS key must
+  // outlive those joins and the thread-context cleanup that follows them.
+  static bool &is_() { return ZmTLS<bool, is_, ZmCleanup::Final>(); }
   ZmThread_Main() { is_() = true; }
   bool is() { return is_(); }
 };

@@ -26,7 +26,7 @@
 #pragma warning(disable:4996)
 #endif
 
-void ZmAssert_fail(
+[[noreturn]] void ZmAssert_fail(
     const char *expr, const char *file, unsigned line, const char *fn)
 {
   auto buf = ZmScratch(char, 16384);

@@ -94,16 +94,11 @@ public:
   using T = ZmHash_NodeT<Next, HashNTP>::T;
 };
 
-// The only public purpose of this trait is its resolved concrete node type.
+// Resolve the native node without duplicating its constructor overload set.
+// Derive macros supply the short owner-named node identities.
 template <typename Index_, unsigned KeyID_>
 struct ZmPolyHash_NodeT {
-private:
-  using Base = ZmPolyHash_NodeT_<Index_, KeyID_>::T;
-
-public:
-  struct T : public Base {
-    ZuDerive_(T, Base)
-  };
+  using T = ZmPolyHash_NodeT_<Index_, KeyID_>::T;
 };
 
 template <typename Index_, unsigned KeyID_>
