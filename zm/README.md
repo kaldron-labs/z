@@ -1,6 +1,134 @@
-# Zm
+# Zm: concurrency, containers and memory
 
-## Heap arena sizing
+Zm supplies Z's execution and allocation runtime: policy-based containers,
+intrusive ownership, delegates, threads, rings, scheduling, named heaps and
+diagnostics. Include individual headers such as `<zlib/ZmHash.hh>` and link
+`libZm` with its dependencies. Networking builds on these facilities in
+[Zi](../zi/README.md); owning text and arrays are in [Zt](../zt/README.md).
+
+## Containers and indices
+
+| Facility | Choose it for |
+| --- | --- |
+| `ZmHash` | Separately chained hash lookup, with node/ownership policies and optional striped locking |
+| `ZmLHash` | Linear-probing, by-value lookup for unlocked or mostly uncontended reference data |
+| `ZmPolyHash` | Multiple intrusive hash indices over the keys of a reflected object |
+| `ZmList`, `ZmRBTree` | Linked traversal and ordered tree indices |
+| `ZmCache`, `ZmPolyCache` | LRU eviction with one hash index or multiple reflected-key indices |
+| `ZmStack`, `ZmQueue` | Stack and queue storage |
+| `ZmPQueue`, `ZmPQRx`, `ZmPQTx` | Sequence reassembly and transmit/receive queueing, including gaps and overlaps |
+| `ZmBitmap` | Runtime-sized bitmap used for topology and resource selection |
+
+`ZmPolyHash` consolidates an object and its index nodes into one allocation;
+the primary index normally owns it. Use the reflected key metadata and
+[ZmPolyHashTest](test/ZmPolyHashTest.cc) when adding secondary indices.
+
+`ZmPQueue` is a deterministic skip-list sequence queue, not a conventional
+binary heap for arbitrary priorities. Configure its item key/length operations
+for the sequence being represented.
+
+A simple hash of unsigned keys uses the default value-as-key accessor:
+
+```cpp
+#include <zlib/ZmHash.hh>
+
+void lookup() {
+  ZmHash<unsigned> values;
+  values.add(42U);
+  auto found = values.find(42U);
+  auto removed = values.del(42U);
+}
+```
+
+For records, use `ZmHashKey` to select the accessor and named policies for
+locking, heap identity and node behavior. `ZmHashDerive` exposes a derived
+container/node pair. `ZmHashParams` controls bucket sizing, load factor and
+lock striping; `ZmHashMgr` provides named configuration and telemetry.
+[ZmHashTest2](test/ZmHashTest2.cc) demonstrates both reference-owned records
+and concurrent operations. [ZmRBTest](test/ZmRBTest.cc) and
+[ZmLHTest](test/ZmLHTest.cc) cover tree and linear-hash usage.
+
+Container policies determine node retention and removal semantics. Do not
+assume a raw pointer returned during iteration remains valid after mutation
+or that a `ZmNoLock` instance becomes safe merely because another object is
+locked. Use `iter()`/`citer()` and their node accessors as shown in the tests.
+
+## Ownership and callbacks
+
+`ZmObject` supplies atomic intrusive reference counting; `ZmRef<T>` retains
+objects without a separate control block. Use `ZmPolymorph` when the lifetime
+model requires polymorphic destruction. Atomic reference counting protects
+ownership, not concurrent access to the object's fields. Owners still need to
+quiesce callbacks and break any reference cycles before shutdown.
+
+`ZmFn<Signature>` is a function delegate optimized for a function plus a small
+context pointer; larger captures can allocate. `ZmRingFn` packages captured
+functions for ring storage and invocation. Its fast path moves the payload
+into the ring; deferred/move-assigned wrappers can require heap promotion.
+See [delegate tests](test/ZmFnTest.cc) and [ring-function tests](test/ZmRingFnTest.cc).
+Capture fixed metadata and owning handles across threads, not references to
+stack objects that will have expired when the function runs.
+
+## Threads, synchronization and scheduling
+
+`ZmThread` starts an explicitly owned worker; `ZmThreadParams` selects its
+stack, priority, affinity and partition. Join workers before destroying the
+state they access. `ZmLock`, `ZmRWLock`, `ZmPLock`, `ZmGuard`, `ZmCondition`,
+`ZmSemaphore` and `ZmAtomic` provide synchronization where shared state is
+intentional. `ZmSpecific` supplies thread-specific objects; `ZmSingleton`
+provides shared runtime instances.
+
+`ZmScheduler` owns a configured set of destinations and timer dispatch:
+
+```cpp
+#include <zlib/ZmScheduler.hh>
+#include <zlib/ZmSemaphore.hh>
+
+void schedule() {
+  ZmSemaphore done;
+  ZmScheduler scheduler{ZmSchedParams{}.id("app").nThreads(1)};
+  if (!scheduler.start()) return;
+  scheduler.run([&done] { done.post(); }, 1);
+  done.wait(); // wait on the caller, never on the destination thread
+  scheduler.stop();
+}
+```
+
+`run()` always queues; `invoke()` can call immediately when already on the
+selected destination. Use `run()` when deferral matters for ordering or stack
+depth. Configure isolated destinations, CPU sets, partitions and queue sizing
+before startup. `ZmTime`, `ZmTimeout` and `ZmBackoff` support clocks, timeouts
+and retry scheduling. [ZmSchedTest](test/ZmSchedTest.cc) covers timed work and
+thread-specific state; `ZmEngine` supplies a higher-level execution facility
+with its own [tests](test/ZmEngineTest.cc).
+
+## Ring buffers and message passing
+
+`ZmRing` supports fixed- and variable-size records with single/multiple writers
+and readers. Multiple-reader mode broadcasts each message to every reader;
+use separate destination rings to distribute unicast work. Choose the writer,
+reader and sizing policies for the actual producer/consumer topology.
+
+The low-level interface reserves storage, publishes a completed record, and
+lets readers consume/retire it. Respect those phases: uncommitted storage is
+not a delivered message, and a borrowed record cannot outlive reader retirement.
+Use [ZmRingTest2](test/ZmRingTest2.cc) and
+[ZmRingTest3](test/ZmRingTest3.cc) for concrete setup and producer/reader loops.
+Most applications should post functions through `ZmScheduler`; use the raw
+ring when defining a record protocol. For cross-process broadcast see `ZiRing`.
+
+## Heap tuning
+
+`ZmNHeap<T>` supplies pooled fixed-size object allocation; `ZmVHeap` supplies
+variable-size classes. Assign meaningful heap IDs and configure each logical
+partition's reserve before the workload starts. Reserves recycle storage and
+fall back to ordinary allocation when exhausted: they are not admission limits.
+`ZmAlloc` provides scoped allocation support for temporary work.
+
+The detailed capacity, ownership and counter rules follow. File-based tuning
+and measurement utilities are exposed by [ZiHeapTune](../zi/README.md#resource-tuning).
+
+### Heap arena sizing
 
 `ZmNHeap` uses `ZmHeapCacheT` to retain a thread-local pointer to a
 `ZmHeapCache` arena. The arena owns its atomic local counters and points
@@ -161,3 +289,21 @@ or overwrite it with a lower observation.
 `zm/test/ZmAllocatorTest` covers reserve and fallback accounting, sharded
 heaps, shared statistics after thread exit, cross-partition returns, and
 per-ID sharing across size/alignment/sharding variants.
+
+## Diagnostics and supporting facilities
+
+`ZmBackTrace` captures/formats call stacks, `ZmBackTracer` tracks scoped execution,
+`ZmAssert` enforces debug invariants, and `ZmTrap` installs process signal/trap
+handling. The `Ztc::*Mgr` watch interfaces track resource creation/removal. `ZmRandom`
+is a non-cryptographic Mersenne Twister, and `ZmCodec` supplies scoped
+Base64/Base32/hex conversion callbacks. Use `Ztls::Random`
+when the caller needs the security module's random generator. Component
+headers and the [test directory](test/) show the corresponding APIs.
+
+## Examples and tests
+
+Run `make -C zm test` from a configured build tree. See
+[test/README.md](test/README.md) for focused coverage and the top-level
+[testing guide](../TESTING.md) for sanitizers and debugging. Heap tests include
+cross-thread and cross-partition ownership cases; run them when changing
+allocator policy rather than relying only on single-thread smoke tests.

@@ -9,7 +9,7 @@ dependencies. The library is not header-only.
 compile-time field dispatch and formatting, decode into mutable input in place,
 and support borrowed values to avoid unnecessary copies. FlatBuffers has the
 same latency-sensitive intent; its implementation and usage are documented in
-[Zi's README](../zi/README.md#flatbuffers).
+[Zfb's README](../zfb/README.md#flatbuffers).
 
 ## ZfStruct and its format bindings
 

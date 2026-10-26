@@ -1,0 +1,98 @@
+# Ztcp: asynchronous TCP links
+
+Ztcp provides CRTP client/server links over `ZiMultiplex`, with pooled receive
+and transmit streams and explicit Rx/Tx ownership. It supplies TCP connection
+lifecycle and byte transport; application framing belongs in the link's parser.
+Include `<zlib/Ztcp.hh>` and link `libZtcp` and its framework dependencies.
+For encrypted transport see [Ztls](../ztls/README.md); for HTTP applications use
+[Zhttp](../zhttp/README.md).
+
+## Clients and servers
+
+A client derives from `Ztcp::Client<App>` and defines a link derived from
+`Ztcp::CliLink<App, Link, RxBufAlloc, TxBufAlloc>`. A server uses
+`Ztcp::Server<App>` and `Ztcp::SrvLink` instead. Select pooled buffer sizes with
+`Ztcp::RxBufAlloc<N>` and `Ztcp::TxBufAlloc<N>` according to the workload.
+
+Client links implement `connected(Ztcp::Connected)`, `connectFailed(bool)`,
+`disconnected(bool)` and `process(Ztcp::RxStream &)`. The application may set
+its reconnect policy through `reconnFreq()`. On the server, supply `localIP()`,
+`localPort()`, `nAccepts()` and `accepted(const ZiCxnInfo &)`, plus listener
+success/failure callbacks. The example's accept callback creates a link and
+its connection wrapper:
+
+```cpp
+// Member definition after App::Link has been declared/defined.
+ZiConnection *App::accepted(const ZiCxnInfo &info) {
+  return new Link::Cxn(new Link(this), info);
+}
+```
+
+The full types and their lifetimes are demonstrated by
+[ztcpclient.cc](example/ztcpclient.cc) and
+[ztcpserver.cc](example/ztcpserver.cc). These are complete applications, whereas
+the snippets here are extracts used inside those application/link types.
+
+## Multiplexer and lifecycle
+
+Start a configured `ZiMultiplex`, then initialize the client/server with
+`Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or `ServerParams`. The IDs
+select transport work destinations in that scheduler; they need not be the
+multiplexer's low-level socket Rx/Tx threads. The examples use four isolated
+threads to make the separation explicit.
+
+For clients, retain the link with `ZmRef`, call `connect(host, port)` and handle
+completion asynchronously. For servers, call `listen()` after initialization;
+stop accepting with `stopListening()`. Keep the application, multiplexer and
+buffer infrastructure alive until links and queued callbacks have quiesced,
+then call `final()` and stop the multiplexer. Do not block an Rx/Tx callback
+waiting for work that needs the same scheduler.
+
+## Receiving and framing
+
+TCP delivers a byte stream: one read can contain a partial message or several
+messages. `process()` receives a `Ztcp::RxStream`; use its `consume()` API to
+recognize a complete frame before acting on it. The ping/pong examples use a
+six-byte frame and preserve incomplete input until enough bytes arrive.
+Return parser progress as the stream contract expects; do not equate one
+callback with one application message.
+
+The two callbacks to `consume()` separate boundary detection from delivery of
+the recognized bytes. Inspect [ZtcpStreamTest](test/ZtcpStreamTest.cc) for
+fragmentation and consumption behavior. Spans into received buffers are
+borrowed; copy required fields or retain appropriate buffer ownership before
+posting application work elsewhere.
+
+## Transmitting and failures
+
+Inside a link, write through the pooled transmit stream and flush explicitly:
+
+```cpp
+void sendPing() {
+  auto tx = txStream();
+  tx << "ping\r\n" << Zi::flush();
+}
+```
+
+Install `txErrorFn(ZiTxErrorFn{...})` to handle `ZeException` transmit failures;
+the examples log the exception and return `false`. A local flush is not a peer
+application acknowledgement. Preserve Rx/Tx ownership when building replies,
+and use the public dispatching entry points rather than calling internal
+trailing-underscore methods from an arbitrary thread.
+
+To try the examples in separate terminals after building:
+
+```sh
+./ztcp/example/ztcpserver 127.0.0.1 18080
+./ztcp/example/ztcpclient 127.0.0.1 18080 3
+```
+
+Choose an available port for manual use; automated test reservations are listed
+in the top-level testing guide.
+
+## Examples and tests
+
+Run `make -C ztcp test` from a configured build tree. The [test directory](test/)
+contains executable API examples and boundary cases. See the top-level
+[testing guide](../TESTING.md) for environment, diagnostics and port allocations,
+and [dependencies](../DEPENDENCIES.md) for build prerequisites.
