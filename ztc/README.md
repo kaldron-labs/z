@@ -1,4 +1,42 @@
-# Z telemetry collector
+# Ztc: telemetry publication, collection and routing
+
+Ztc exposes framework resource measurements and application health through a
+publisher, shared-memory transport, collector agent and authenticated hub.
+Publishers observe heaps, hashes, threads, queues, I/O and database resources;
+clients subscribe to the attributed telemetry through the hub. Include
+`<zlib/ZtcApp.hh>` for publication and link `libZtc` with its dependencies.
+
+## Application publication
+
+Create a `Ztc::App`, fill `Ztc::AppCf` with the application identity and ring,
+scheduler, subscription and alert limits, then call `init(config)` and
+`start()`, checking both results. Keep its identity unique in the deployment's
+publisher registry. `stop()` followed by `final()` completes the lifecycle;
+callback-based start/stop overloads are available when the caller must not block.
+
+`rag(state)` updates application health; the callback overload obtains the
+current state. `alertSink()` supplies a `ZiLog` sink for application alerts.
+Resource managers expose the underlying framework statistics, so ordinary
+framework containers/heaps do not need a second application metrics registry.
+Configure capacities and retain the publisher for the lifetime of publication.
+See [ZtcApp.hh](src/ZtcApp.hh) for the complete configuration and public API.
+
+## Messages, filters and clients
+
+`ZtcMsg.hh` and `ZtcFB.hh` define native message/FlatBuffers integration;
+`ZtcFilter.hh` compiles component-key filters for subscriptions. Use the typed
+control protocol to subscribe/unsubscribe and process acknowledgements,
+telemetry, errors and end-of-stream notifications. Clients must preserve the
+source identity attached to telemetry rather than treating local IDs as globally
+unique. The [client example](example/README.md) shows authentication, WSS
+connection, subscription and credential renewal.
+
+The deployment flow is publisher → shared telemetry ring → `ztcagent` →
+`ztchub` → subscribed clients. The publisher owns a scheduler, not a network
+multiplexer. The agent/hub own network and identity concerns. Their operational
+configuration is described below.
+
+## Collector agent
 
 `ztcagent` owns the shared telemetry-ring reader and is intended to run inside
 a deployment-owned image. It uses a Zum service identity and sends an OAuth
@@ -212,3 +250,12 @@ receiver, so separate hub instances register independently. It renews on a timer
 granted lease. `ssfLease` requests a lease in seconds (default 300); `zumd`
 caps it with `ssf.leaseMax`. Configure only receiver bounds and callback TLS
 trust on `zumd`; destinations and callback credentials come from registration.
+
+
+## Examples and tests
+
+Run `make -C ztc test` in a configured build tree. See
+[test/README.md](test/README.md) for focused protocol coverage,
+[example/README.md](example/README.md) for the native client, and
+[interop/README.md](interop/README.md) for canonical wire checks.
+Shared test environment requirements are in [TESTING.md](../TESTING.md).

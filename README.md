@@ -1,181 +1,203 @@
-# Zero Overhead library
+# Z — Zero Overhead framework
 
-Note: Work in Progress
+Z is a vertically integrated C++ framework for latency-sensitive applications
+and services: from vocabulary types, intrusive containers and NUMA-aware memory
+management to sharded I/O, modern network protocols, replicated databases,
+identity services and telemetry. Its layers share the same object model,
+reflection metadata, buffers, scheduling and resource tuning, so applications
+can carry data from a socket through a codec into storage without assembling
+unrelated runtime frameworks.
 
-The Z library is a vertically-integrated collection of general purpose
-system programming C++ frameworks organized into layers, intended for
-latency-sensitive applications and servers. Hallmarks of the library are:
+Z targets current GCC and Clang in GNU C++23 mode on Linux and Windows
+(MSYS2/MinGW), with x64 and ARM as target architectures. It combines templates
+and headers with versioned shared libraries/DLLs. Development is active;
+individual module documentation describes supported protocol profiles and
+limitations.
 
-1. Minimal dependency on, and use of, the STL while remaining interoperable
-2. No use of, or dependency on, other C++ frameworks (Boost, BDE, Folly, etc.)
-3. Not header-only - built and deployed as a traditional combination of headers and C++ ABI shared libraries / DLLs
-4. Cross-platform - Linux and Windows
-5. Intrusive containers and reference counting
-6. No uncontrolled memory allocation, permitting fine-tuned NUMA-aware memory allocation
-    - No use of shared_ptr control blocks
-7. No uncontrolled thread creation, permitting fine-tuned binding of threads to CPU cores
-    - No use of STL/Boost coroutines, threads, promise/futures, asio, etc.
-8. Prefer message-passing and shared-nothing sharding to lock-free algorithms or locking
-9. Explicitly interoperable with C
-10. Lean C dependencies: SSL (picotls fork), lock-free (ck), hardware locality (hwloc), regular expressions (pcre), backtracing (bfd)
-11. Extensive advanced use of the C macro pre-processor
-12. Use of prefixes alongside namespaces, aligning with C and pre-processor naming
-13. Brevity - short names, less typing
-14. Transparent - intentionally weakly encapsulated - no engine covers
-15. Modern C++ functional style and template metaprogramming
-16. No dogma
-    - No conformance to purely theoretical undefined behavior or standards
-17. Physical naming
-    - A hash table is a hash table, not a map
+[Build dependencies](DEPENDENCIES.md) · [Testing and environment setup](TESTING.md) ·
+[Engineering guidelines](GUIDELINES.md)
 
-## Test port allocations
+## Design priorities
 
-Network tests use fixed, non-overlapping 100-port blocks so that module test
-suites can run concurrently.  An integration-test (`itest`) directory has its
-own block.  Ports not assigned below remain reserved for future tests in that
-directory; tests which do not open a listening socket do not consume a port.
+- **Latency and predictable resource use.** Minimize copies, allocations and
+  contention; expose heap sizing, hash sizing, queue capacity, CPU affinity and
+  NUMA placement to the application. Allocation is explicit and tunable, not
+  forbidden.
+- **Sharding and message passing.** Bind mutable state to a thread and post work
+  to its owner. Ring buffers and continuations connect stages; applications
+  control thread creation and placement.
+- **Intrusive ownership and containers.** Reference counts and container hooks
+  live with the objects they describe, avoiding separate shared-pointer control
+  blocks and allowing nodes to participate in multiple indices.
+- **Compile-time specialization.** CRTP, traits, SFINAE, ADL and named template
+  policies select behavior; reflection drives dispatch and serialization.
+- **Direct access to data.** Borrow spans, decode mutable input in place, and
+  serialize into destination buffers when lifetimes permit. Pooled I/O buffers
+  pass by reference through asynchronous operations.
+- **One coherent C++ stack.** Minimal STL use with deliberate interoperability;
+  no production dependency on Boost, Folly or BDE. C interfaces and platform
+  facilities remain accessible. Short component prefixes (`Zu`, `Zm`, `Zi`,
+  etc.) work consistently with both C++ and the preprocessor.
 
-| Directory | Allocated ports |
+## Core highlights
+
+### Containers, ownership and memory
+
+[`ZmHash`](zm/src/ZmHash.hh) is a policy-based, separately chained hash table
+with configurable node ownership, optional locking and lock striping. Its
+heap and bucket configuration can be tuned centrally through `ZmHashMgr`,
+and its statistics feed telemetry. `ZmList` and `ZmRBTree` provide the same
+framework approach to linked lists and ordered indices (red/black trees).
+
+`ZmRef` supplies intrusive reference counting; `ZmFn` stores a function and
+small context directly, allocating only for larger captures. `ZmNHeap` and
+`ZmVHeap` provide named fixed- and variable-size allocation pools with partition
+and NUMA-aware tuning. `ZiHeapTune` connects runtime allocation measurements
+to configuration. See [heap sizing](zm/README.md) for the precise capacity model.
+
+### Rings, scheduling and I/O
+
+[`ZmRing`](zm/src/ZmRing.hh) carries fixed- or variable-size messages with
+single or multiple writers and readers. Multiple-reader mode is **broadcast**:
+every reader receives every message. Shard writes across rings for unicast
+work distribution. `ZmRingFn` carries captured functions through the ring;
+`ZmScheduler` adds controlled worker threads, timers and destination-specific
+execution. `run()` queues work; `invoke()` can execute immediately when already
+on the destination thread.
+
+[`ZiRing`](zi/src/ZiRing.hh) extends this design across processes using shared
+memory, with broadcast readers. [`ZiMultiplex`](zi/src/ZiMultiplex.hh) integrates
+socket I/O with scheduling using Linux epoll or Windows I/O completion ports.
+Explicit Rx and Tx ownership, pooled `ZiIOBuf` buffers and configurable thread
+placement carry through the transport and application layers. Zi also supplies
+file I/O, asynchronous DNS resolution, logging integration and allocation tuning.
+
+### Compile-time strings, matching and reflection
+
+[`ZuString`](zu/src/ZuString.hh) is a structural compile-time string usable
+directly as a template argument: `template <ZuString Name> struct Field;`
+permits `Field<"price">`. It is distinct from the runtime owning `ZtString`
+and borrowed `ZuSpan`/`ZuCSpan` types. Compile-time strings are not unique to Z
+(Boost.Hana has one), but Z uses them throughout field metadata and dispatch.
+
+[`ZuMatcher`](zu/src/ZuMatcher.hh) constructs an Aho–Corasick finite-state
+machine at compile time for a declared set of strings. It supports prefix,
+exact and search matching, useful for field names, protocol tokens and headers.
+This is a specialized multi-string matcher, rather than a regular-expression
+engine. Its compile-time construction and integration with Z metadata are
+notable features; large instantiations also have a compile-time cost.
+
+`ZuStruct` and `ZfStruct` describe existing C++ objects, including members,
+accessors, defaults, bounds, keys and format-specific field views (facets).
+The same metadata supports JSON, URI, CLI, CSV, ASN.1 and D-Bus adapters, plus
+native FlatBuffers and protobuf codecs. Borrowed views, typed dispatch and
+direct buffer construction avoid unnecessary intermediate object trees.
+`zflatc` and `zprotoc` supply schema tooling; normal codec use does not require
+the canonical FlatBuffers or protobuf C++ runtimes.
+
+### Network services, state and operations
+
+Z supplies TCP, TLS and QUIC transports, HTTP/1.1, HTTP/2 and HTTP/3 clients
+and servers, WebSockets, typed REST endpoints, JSON-RPC and MCP. The HTTP layer
+owns connection pools, request streams, framing and protocol selection; higher
+layers reuse its lifetimes and Rx/Tx scheduling. See each module's documentation
+for protocol support rather than assuming every extension is implemented.
+
+`Zdb` combines typed tables and indices, asynchronous backing stores, row
+caches, sharding, replication, leader election/failover and recoverable sagas.
+Its replication is asynchronous and its election is RAFT-like; it is not a claim
+of synchronous Raft consensus. SQLite and PostgreSQL backing stores are supplied.
+`Zdf` builds compressed typed dataframes and time series on Zdb, with historical
+readers that become live subscribers, seeks, retention and rolling statistics.
+
+`Zum` adds an embeddable authentication library and an OAuth 2.0/OIDC identity
+server with persistent authorization state. `Ztc` publishes runtime telemetry
+through shared-memory rings, collects it with an agent and serves it through
+a hub. Heap, hash, thread and I/O statistics make the framework's resource model
+observable. Terminal editing and GTK integration support operational tools.
+
+## Finding familiar capabilities
+
+These are equivalents **in purpose**, not interchangeable APIs, data layouts or
+performance claims. A dash means no close counterpart is listed. In particular,
+ordinary STL containers do not supply Z's intrusive ownership and tuning model.
+
+| Z facility | STL / standard C++ | Boost | Folly | BDE |
+| --- | --- | --- | --- | --- |
+| `ZmHash` | `std::unordered_map`, `std::unordered_set` | `boost::unordered_map`; `boost::intrusive::unordered_set` for intrusive nodes | `F14NodeMap`, `F14NodeSet` for node-based hash lookup | `bsl::unordered_map`; `bdlcc::StripedUnorderedMap` for striped locking |
+| `ZmList`, `ZmRBTree` | `std::list`, `std::map`, `std::set` | Intrusive `list`, `rbtree`, `set` | — | `bsl::list`, `bsl::map`, `bsl::set` |
+| `ZmRef` | `std::shared_ptr` serves shared ownership, but uses a control block | `boost::intrusive_ptr` | — | `bsl::shared_ptr` serves shared ownership |
+| `ZtArray`, `ZuArray` | `std::vector`, `std::inplace_vector` (C++26); fixed storage differs from `std::array`'s fixed logical size | Container `vector`, `static_vector` | `fbvector`, `small_vector` | `bsl::vector` |
+| `ZtString`, `ZuCSpan` | `std::string`, `std::string_view` | Container `string`, Utility `string_view` | `fbstring`, `StringPiece` | `bsl::string`, `bsl::string_view` |
+| `ZuTuple`, `ZuUnion` | `std::tuple`, `std::variant` | Tuple, Variant2 | — | `bsl::tuple`, `bsl::variant` |
+| `ZuTL`, `ZuTraits`, `ZuPP` | Type traits and integer sequences | Mp11, TypeTraits, Preprocessor | Traits utilities | `bslmf` metaprogramming utilities |
+| `ZuString` | No standard C++23 structural string class for literal template arguments | `hana::string` is a related compile-time string | — | — |
+| `ZuMatcher` | No direct compile-time multi-pattern automaton | Regex/Xpressive solve related pattern problems, not the same fixed-string dispatch | — | — |
+| `ZmFn` | `std::function`, `std::move_only_function` | Function | `Function` | `bsl::function` |
+| `ZmNHeap`, `ZmVHeap` | `std::pmr` pool resources | Pool | `Arena` (different lifetime model) | `bdlma::ConcurrentPool`, `bdlma::ConcurrentPoolAllocator` |
+| `ZmRing` | No concurrent ring container | Lockfree `spsc_queue`, `queue` for queue use cases | `ProducerConsumerQueue`, `MPMCQueue` for queue use cases | `bdlcc::FixedQueue` for bounded queues |
+| `ZmScheduler` | Threads and synchronization primitives, no equivalent sharded scheduler | Asio `thread_pool`, `io_context`, timers | `CPUThreadPoolExecutor`, `EventBase` | `bdlmt::MultiQueueThreadPool`, `bdlmt::EventScheduler` |
+| `ZiMultiplex`, `ZiIOBuf` | No standard C++23 asynchronous socket runtime | Asio `io_context`, sockets and buffer sequences | `EventBase`, `AsyncSocket`, `IOBuf` | No direct equivalent in core BDE |
+| `ZuStruct`, `ZfStruct` | No standard C++23 reflection facility | Describe, Hana Struct adaptation | — | `bdlat` attribute/selection protocols |
+| `ZfJSON`, `ZtRegex`, `ZiLog` | No JSON codec; `std::regex`; streams cover only basic output | JSON, Regex, Log | `dynamic`/JSON utilities, logging | `baljsn`, `bdlpcre`, `ball` |
+
+`ZmRing`'s variable-size records and broadcast semantics go beyond the queue
+analogues above. `ZiRing` combines shared-memory transport with those semantics;
+Boost.Interprocess supplies related shared-memory building blocks, not the same
+ready-made ring. `ZiMultiplex` additionally combines the reactor/completion
+mechanism with Z's explicit shard and buffer ownership.
+
+Reference documentation: [Boost.Intrusive](https://www.boost.org/doc/libs/latest/doc/html/intrusive.html),
+[Boost.Hana strings](https://www.boost.org/doc/libs/latest/libs/hana/doc/html/structboost_1_1hana_1_1string.html),
+[Folly components](https://github.com/facebook/folly/blob/main/folly/docs/Overview.md),
+[Folly's single-producer queue](https://github.com/facebook/folly/blob/main/folly/ProducerConsumerQueue.h),
+and [BDE striped hash maps](https://bloomberg.github.io/bde-resources/doxygen/bde_api_prod/group__bdlcc__stripedunorderedmap.html).
+
+## Module map
+
+| Module | Scope |
 | --- | --- |
-| `zi/test` | 20000-20099 |
-| `ztcp/test` | 20100-20199 |
-| `ztls/test` | 20200-20299 |
-| `zquic/test` | 20300-20399 |
-| `zhttp/test` | 20400-20499 |
-| `zhttp/itest` | 20500-20599 |
-| `zrest/test` | 20600-20699 |
-| `zrest/itest` | 20700-20799 |
-| `zws/test` | 20800-20899 |
-| `zhttp/interop` | 20900-20999 |
-| `zmcp/itest` | 21000-21099 |
+| [zu](zu/README.md) | Universal foundation: traits, metaprogramming, strings, spans, tuples, unions, reflection, formatting, fixed/decimal arithmetic, time, UTF and C APIs |
+| [zm](zm/README.md) | Threads, synchronization, intrusive containers, reference counting, delegates, rings, scheduler, heaps, topology and backtraces |
+| [zt](zt/README.md) | Owning arrays/strings, scratch storage, regex, time zones, bitmaps and formatting utilities |
+| [ze](ze/README.md) | Platform errors, event and log vocabulary; Zi supplies asynchronous log sinks |
+| [zf](zf/README.md) | Structured metadata and format adapters |
+| [zi](zi/README.md) | Files, sockets, DNS, multiplexing, pooled buffers, shared-memory rings and heap tuning |
+| [zpb](zpb/README.md), [zfb](zfb/README.md) | Native protobuf and FlatBuffers codecs and schema compilers |
+| [zv](zv/README.md) | Configuration trees, TOML/YAML and runtime parameter binding |
+| [zdbus](zdbus/README.md) | Native Linux D-Bus client/server and typed message routing |
+| [ztcp](ztcp/README.md), [ztls](ztls/README.md) | TCP/TLS; TLS module also provides HPKE, age encryption, TOTP and credential Vault |
+| [zquic](zquic/README.md) | QUIC transport, streams, recovery, flow control, path migration and qlog |
+| [zhttp](zhttp/README.md), [zws](zws/README.md) | HTTP/1.1–3 applications, pools and streams; WebSockets over H1/H2/H3 |
+| [zrest](zrest/README.md) | Typed request/response catalogs, REST clients/servers and SSE |
+| [zjrpc](zjrpc/README.md), [zmcp](zmcp/README.md) | JSON-RPC envelopes, correlation and dispatch; Model Context Protocol endpoints |
+| [zdb](zdb/README.md) | Typed, sharded, replicated database and recoverable sagas |
+| [zdb_sqlite](zdb_sqlite/README.md), [zdb_pq](zdb_pq/README.md) | SQLite/PostgreSQL persistence; PostgreSQL type integration |
+| [zdf](zdf/README.md) | Compressed dataframes, time series, live readers and statistics |
+| [zum](zum/README.md) | Authentication, authorization, OAuth 2.0/OIDC server and management tools |
+| [ztc](ztc/README.md) | Telemetry publishers, collector agent and hub |
+| [zrl](zrl/README.md), [zgtk](zgtk/README.md) | Terminal line editing/CLI and GTK application/model integration |
+| [zdash](zdash/README.md) | Telemetry dashboard; currently outside the default top-level build |
 
-Subsidiary allocations within those blocks are:
+## Build and explore
 
-| Directory | Test | Ports |
-| --- | --- | --- |
-| `zi/test` | `ZiIPTest` | 20000 |
-| `zi/test` | `ZiResolverTest` | 20010 |
-| `zi/test` | `ZiEventLoopTest` | 20020 |
-| `zi/test` | `ZiMxLoopTest` | 20030-20033 |
-| `ztcp/test` | `ZtcpLoopTest` | 20100-20101 |
-| `ztls/test` | `ZtlsBufHookTest` | 20200-20299 |
-| `zquic/test` | `ZquicSockTest` | 20300-20301 |
-| `zquic/test` | `ZquicRuntimeTest` | 20310 |
-| `zquic/test` | interoperability fixtures | 20320-20329 |
-| `zhttp/test` | `ZhttpH1HubTest` | 20400-20411 |
-| `zhttp/test` | `ZhttpH3HubTest` | 20412-20416 |
-| `zhttp/test` | `ZhttpH2HubTest` | 20417-20422 |
-| `zhttp/test` | `ZhttpMessageH1TCPTest` | 20423 |
-| `zhttp/test` | `ZhttpMessageH1TLSTest` | 20424 |
-| `zhttp/test` | `ZhttpMessageH2Test` | 20425 |
-| `zhttp/test` | `ZhttpMessageH3Test` | 20426 |
-| `zhttp/test` | `ZhttpServerIdleTest` | 20427-20436 |
-| `zhttp/test` | `ZhttpClientCancelTest` | 20437-20448 |
-| `zhttp/test` | `ZhttpClientPoolTest` | 20449-20482 |
-| `zhttp/itest` | `zhttpmatrix` | 20500 |
-| `zhttp/itest` | `zhttpapptest` | 20510-20516 |
-| `zhttp/itest` | `zhttpmultirequesttest` | 20520 |
-| `zhttp/itest` | `zhttplifecycletest` | 20530-20532 |
-| `zhttp/itest` | `zhttpclientfallbacktest` | 20540 |
-| `zhttp/itest` | `zhttpserverstreamtest` | 20550-20569 |
-| `zrest/itest` | `zrestmatrix` | 20700-20709 |
-| `zws/test` | `ZwsH1HubTest` | 20800-20809 |
-| `zws/test` | `ZwsH2HubTest` | 20810-20819 |
-| `zws/test` | `ZwsH3HubTest` | 20820-20829 |
-| `zws/bench` | `zwsbench` | 20830 |
-| `zhttp/interop` | QIR smoke tests | 20900-20903 |
-| `zhttp/interop` | HTTP/3 interoperability | 20910-20914 |
-| `zhttp/interop` | darkhttpd compatibility | 20920-20921 |
-| `zmcp/itest` | plain and legacy HTTP | 21000-21002 |
-| `zmcp/itest` | secure H1/H2/H3 | 21010-21012 |
+Install the requirements in [DEPENDENCIES.md](DEPENDENCIES.md), then:
 
-## FAQs
-
-1. why no Z namespace?
-    - consistency with the pre-processor (macros are name-scoped with
-      prefixes not namespaces)
-    - unneeded - Z uses prefixes with a very low probability of collision
-      (`Zu`, `Zt`, `Zf`, ...)
-    - a short prefix is more succinct
-    - no uncontrolled large-scale naming imports (no `using namespace std`)
-    - mitigation of C++ name-mangling bloat with heavily templated code
-    - intentional design preference for small focused namespaces
-    - `Zxx` namespaces exist where useful in context
-      (`ZuFmt`, `Ztc`, `Ztls`, ...)
-    - `Zxx_` namespaces are used for internals
-      (`ZtWindow_`, `Zdb_`, ...)
-
-2. Isn't this pattern in class definitions redundant?
-    ```
-    using Base::Base;
-    template <typename ...Args>
-    Derived(Args &&...args) : Base{ZuFwd<Args>(args)...} { }
-    ```
-    - this is needed in 3 cases:
-        - the Base has no constructor (it's a pure data structure)
-        - the Base is a template typename (i.e. the above could apply)
-        - Derived needs to be constructible/convertible from an instance of Base
-
-3. Why so much use of run() / invoke()?
-    - intentionally and tightly controlled thread creation within a small pool,
-      with key long-running threads performing isolated workloads and bound
-      to specific isolated CPU cores for performance
-    - sharding (binding data to single threads and passing messages between
-      threads via lambdas) is preferred to lock contention or lock-free
-      memory contention
-        - latency - less jitter due to avoidance of contention
-        - throughput - higher concurrency due to pipelining
-    - cheap context-switching and message-passing with capturing lambdas is
-      enabled by ZmRing (MWSR variant) and ZmScheduler; this is exploited
-      for I/O multiplexing by ZiMultiplex
-    - threads can be named, bound and isolated by the app and the kernel
-        - Linux kernel parameter isolcpus
-    - some interfaces require the caller to context-switch prior to making
-      the call, others internalize the context-switch within the called function
-        - if the caller is potentially sharing the same thread as the callee,
-          the callee should not redundantly context-switch - in these cases
-          it should be the caller's responsibility (the callee can validate
-          the current thread using invoked())
-        - if the thread is exclusive to the callee, the callee can internalize
-          the context switch
-        - callbacks mirror calls in this regard
-    - thread/workload association is re-configurable for performance tuning
-        - run() passes via the ring buffer and defers calls regardless
-        - invoke() is used to elide message-passing make an immediate call when
-          the destination is the same thread
-        - invoke() should not be used when stack-depth or long-running functions
-          are a concern
-
-## DLLs / shared objects
-
-This is not a complete list.
-
-- Zu	- "Universal" - foundation (meta-programming, traits, etc.)
-- Zm	- Multithreading - threads, locks, scheduler, concurrent containers
-- Zt	- Vocabulary Types - dates/times, arrays, strings, formatting, etc.
-- Ze	- Errors & Logging - errors & logging to file / syslog / event log
-- Zf	- Data Formats - reflection, JSON, URI, CLI, CSV, ASN.1
-- Zi	- I/O - file I/O and socket I/O multiplexing (epoll 
-- Zv	- Service Frameworks - I/O framework, option parsing, config files
-- Zdb	- Database - in-memory DB, using Zi for HA clustering/replication
-- ZdbSL - persistent SQLite backing store for Zdb
-- ZdbPQ - persistent Postgres backing store for Zdb
-
-## building libbfd shared object (Linux)
-
-```
-git clone https://github.com/djnz00/binutils-gdb.git
-cd binutils-gdb
-git checkout binutils-2_40
-./configure --enable-shared --enable-install-libbfd --with-pic --prefix=/usr/local
-make -j8 all-bfd
-sudo make install-bfd
+```sh
+./z.config -c -G -P /opt/z
+make -j
+make install
 ```
 
-## building libbfd DLL (Windows)
+This builds without GTK or PostgreSQL, retaining SQLite. The wrapper defaults
+to GCC and an x64 Linux build; `-L` selects Clang and `-M` selects MinGW.
+Its current defaults are not an ARM configuration recipe. Run `./z.config -h`
+for options and use platform-appropriate configure/compiler flags when needed.
+Installation may require permission to write the selected prefix.
 
-```
-./mingw/mingw_bfd_dll.sh
-```
-
-See `mingw/README.md` for details.
+Installed headers use `<zlib/Component.hh>` and applications link the owning
+module libraries. Start with the [reflection examples](zf/README.md),
+[HTTP applications](zhttp/README.md), [REST examples](zrest/example/), or
+[database lifecycle](zdb/README.md). Module `example/` directories contain
+runnable programs. Test commands, fixture services, logs and port assignments
+are in [TESTING.md](TESTING.md).

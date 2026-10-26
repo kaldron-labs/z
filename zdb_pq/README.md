@@ -1,3 +1,36 @@
+# ZdbPQ: PostgreSQL backing store and native types
+
+ZdbPQ implements a PostgreSQL backing store for [Zdb](../zdb/README.md), using
+libpq asynchronously through `ZiEventLoop`. It translates reflected table/key
+metadata to prepared SQL and uses binary values for runtime I/O. The separate
+PostgreSQL `libz` extension supplies Z decimal, time and bitmap types.
+Enable PostgreSQL support when configuring; see [dependencies](../DEPENDENCIES.md).
+
+## Store integration
+
+Load `libZdbPQ` through Zdb's store-module configuration and provide a libpq
+connection string for the intended database. Define the application's tables
+and keys through Zdb metadata before startup; use Zdb's CRUD, select and saga
+APIs rather than operating directly on backend connection state. Keep the
+multiplexer/event loop and store alive through asynchronous writes and shutdown.
+
+[ZdbPQ.hh](src/ZdbPQ.hh) documents the C++/wire/PostgreSQL type mapping and
+store implementation. The SQL builder supports composite keys and mixed-order
+continuations; the benchmark below shows generated queries and database plans.
+[Zdb's lifecycle guide](../zdb/README.md#lifecycle-init-start-stop-final) describes
+application activation, quiescence and finalization.
+
+## PostgreSQL type extension
+
+The `ext/` directory is a PGXS extension build, separate from the normal C++
+library layout. Select the matching server development installation through
+`pg_config`, build/install `libz`, and enable it in each database that uses the
+Z types. The existing fixture also requires the `uint` extension. Extension
+SQL/control names follow PostgreSQL conventions; `ext/test/` holds regression
+inputs and expected output. The detailed local fixture setup follows.
+
+## Test database setup
+
 For Postgres testing:
 1. Postgres uses path to control which installation is used
 2. Ensure that the correct `pg_config` is found first in the path
