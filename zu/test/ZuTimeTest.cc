@@ -95,6 +95,26 @@ void testNsecBoundaries()
   ZuCheck(u.nsec() == 999999999);
 }
 
+void testFIXPrecision()
+{
+  ZuTestScope(testFIXPrecision);
+  ZuDateTime dt{ZuDateTimeScan::FIX{}, "20261026-12:34:56.123456789"};
+  ZuDateTimeFmt::FIX<3> millis;
+  ZuDateTimeFmt::FIX<6> micros;
+  ZuDateTimeFmt::FIX<9> nanos;
+  ZuDateTimeFmt::FIX<0> seconds;
+  ZuCheck((ZuCArray<sizeof("20261026-12:34:56.123456789")>{} << dt.fmt(millis)) == "20261026-12:34:56.123");
+  ZuCheck((ZuCArray<sizeof("20261026-12:34:56.123456789")>{} << dt.fmt(micros)) == "20261026-12:34:56.123456");
+  ZuCheck((ZuCArray<sizeof("20261026-12:34:56.123456789")>{} << dt.fmt(nanos)) == "20261026-12:34:56.123456789");
+  ZuCheck((ZuCArray<sizeof("20261026-12:34:56.123456789")>{} << dt.fmt(seconds)) == "20261026-12:34:56");
+  ZuCheck((ZuCArray<sizeof("123")>{} << ZuBox<unsigned>{123456789}.
+    fmt<ZuFmt::Frac<9, 3, '0'>>()) == "123");
+  ZuCheck((ZuCArray<sizeof("123")>{} << ZuBox<int>{-123456789}.
+    fmt<ZuFmt::Frac<9, 3, '0'>>()) == "123");
+  ZuDateTime zero{ZuDateTimeScan::FIX{}, "20261026-12:34:56"};
+  ZuCheck((ZuCArray<sizeof("20261026-12:34:56.123456789")>{} << zero.fmt(millis)) == "20261026-12:34:56.000");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -104,5 +124,6 @@ int main(int argc, char **argv)
   ZuTestCall(testInvalidFormatPaths);
   ZuTestCall(testIncrementalScan);
   ZuTestCall(testNsecBoundaries);
+  ZuTestCall(testFIXPrecision);
   return 0;
 }
