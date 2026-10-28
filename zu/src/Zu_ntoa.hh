@@ -888,6 +888,8 @@ template <unsigned Width, unsigned NDP>
 struct Zu_nprint_frac<Width, NDP, '0'> : public Zu_nprint_frac_<NDP> {
   template <typename T>
   static unsigned utoa(T v, char *buf) {
+    if constexpr (NDP < Width)
+      v /= ZuDecimalFn::pow10<sizeof(T)>(Width - NDP);
     Zu_ntoa::Base10_print(v, NDP, buf);
     return NDP;
   }
@@ -895,6 +897,8 @@ struct Zu_nprint_frac<Width, NDP, '0'> : public Zu_nprint_frac_<NDP> {
   static unsigned itoa(T v_, char *buf) {
     Zu_ntoa::Unsigned<T> v = v_;
     if (ZuUnlikely(v_ < 0)) v = ~v + 1;
+    if constexpr (NDP < Width)
+      v /= ZuDecimalFn::pow10<sizeof(T)>(Width - NDP);
     Zu_ntoa::Base10_print(v, NDP, buf);
     return NDP;
   }
