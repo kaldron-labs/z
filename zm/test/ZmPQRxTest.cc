@@ -165,10 +165,122 @@ void send(App &a, uint32_t seqNo, uint64_t length)
   while (a.runDequeue());
 }
 
+template <typename NTP>
+class GapApp : public ZmPQRx<GapApp<NTP>, Queue, NTP> {
+public:
+  using Rx = ZmPQRx<GapApp<NTP>, Queue, NTP>;
+  using Msg = Queue::Node;
+  using Span = Queue::Span;
+
+  GapApp() : m_queue{5} { }
+  Queue *rxQueue() { return &m_queue; }
+  void process(Msg *) { ++m_processed; }
+  void request(Span, Span now) { ++m_requests; m_requested = now; }
+  void reRequest(Span now) { ++m_retries; m_requested = now; }
+  void scheduleDequeue() { ++m_dequeues; }
+  void rescheduleDequeue() { ++m_dequeues; }
+  void idleDequeue() { }
+  void scheduleReRequest() { ++m_arms; }
+  void rescheduleReRequest() { ++m_arms; }
+  void cancelReRequest() { m_arms = 0; }
+
+  Span requested() const { return m_requested; }
+  unsigned requests() const { return m_requests; }
+  unsigned retries() const { return m_retries; }
+  unsigned arms() const { return m_arms; }
+  unsigned dequeues() const { return m_dequeues; }
+  unsigned processed() const { return m_processed; }
+  void retry() { Rx::reRequest(); }
+  void drainOne() {
+    ZmAssert(m_dequeues, return);
+    --m_dequeues;
+    Rx::dequeue();
+  }
+
+private:
+  Queue		m_queue;
+  Span		m_requested;
+  unsigned	m_requests = 0;
+  unsigned	m_retries = 0;
+  unsigned	m_arms = 0;
+  unsigned	m_dequeues = 0;
+  unsigned	m_processed = 0;
+};
+
+template <typename NTP>
+void testHeartbeatGap()
+{
+  ZuTestScope(testHeartbeatGap);
+  GapApp<NTP> a;
+  a.rcvd(new Queue::Node(ZuFwdTuple(10, 0)));
+  ZuCheck(!a.rxQueue()->count_() && a.rxQueue()->head() == 5 &&
+      a.rxQueue()->tail() == 10);
+  ZuCheck(a.rxQueue()->gap().equals(ZuFwdTuple(5, 5)));
+  if constexpr (NTP::GapPolicy == ZmPQRxGapPolicy::Ignore) {
+    ZuCheck(!a.requests() && !a.arms());
+  } else {
+    ZuCheck(a.requests() == 1 && a.requested().equals(ZuFwdTuple(5, 5)));
+    ZuCheck(a.arms() == (NTP::GapPolicy == ZmPQRxGapPolicy::Fill));
+  }
+  a.rcvd(new Queue::Node(ZuFwdTuple(10, 0)));
+  ZuCheck(a.requests() == (NTP::GapPolicy != ZmPQRxGapPolicy::Ignore));
+  a.retry();
+  ZuCheck(a.retries() == (NTP::GapPolicy == ZmPQRxGapPolicy::Fill));
+  ZuCheck(a.arms() == (NTP::GapPolicy == ZmPQRxGapPolicy::Fill));
+  a.rcvd(new Queue::Node(ZuFwdTuple(5, 5)));
+  ZuCheck(a.processed() == 1 && !a.rxQueue()->count_() &&
+      a.rxQueue()->head() == 10 && !a.rxQueue()->gap().length());
+  ZuCheck(!a.arms() && !a.dequeues());
+  unsigned retries = a.retries();
+  a.retry();
+  ZuCheck(a.retries() == retries && !a.arms());
+}
+
+template <typename NTP>
+void testDequeueGap()
+{
+  ZuTestScope(testDequeueGap);
+  GapApp<NTP> a;
+  a.rcvd(new Queue::Node(ZuFwdTuple(7, 3)));
+  a.rcvd(new Queue::Node(ZuFwdTuple(5, 2)));
+  ZuCheck(a.dequeues() == 1 && a.processed() == 1);
+  a.drainOne();
+  ZuCheck(!a.dequeues() && a.processed() == 2 && !a.arms());
+  unsigned retries = a.retries();
+  a.retry();
+  ZuCheck(a.retries() == retries && !a.arms());
+
+  a.rcvd(new Queue::Node(ZuFwdTuple(12, 1)));
+  a.rcvd(new Queue::Node(ZuFwdTuple(10, 2)));
+  // A heartbeat received during dequeue extends the logical tail without
+  // retaining another node. Finishing the last node must find that gap.
+  a.rcvd(new Queue::Node(ZuFwdTuple(15, 0)));
+  unsigned requests = a.requests();
+  ZuCheck(a.dequeues() == 1);
+  a.drainOne();
+  ZuCheck(!a.dequeues() && a.processed() == 4);
+  if constexpr (NTP::GapPolicy != ZmPQRxGapPolicy::Ignore)
+    ZuCheck(a.requests() == requests + 1 &&
+	a.requested().equals(ZuFwdTuple(13, 2)));
+  else
+    ZuCheck(!a.requests());
+  a.rcvd(new Queue::Node(ZuFwdTuple(13, 2)));
+  ZuCheck(a.processed() == 5 && !a.arms() && !a.dequeues());
+  retries = a.retries();
+  a.retry();
+  ZuCheck(a.retries() == retries && !a.arms());
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testHeartbeatGap<ZmPQRxGapIgnore<>>);
+  ZuTestCall(testHeartbeatGap<ZmPQRxGapObserve<>>);
+  ZuTestCall(testHeartbeatGap<ZmPQRxGapFill<>>);
+  ZuTestCall(testDequeueGap<ZmPQRxGapIgnore<>>);
+  ZuTestCall(testDequeueGap<ZmPQRxGapObserve<>>);
+  ZuTestCall(testDequeueGap<ZmPQRxGapFill<>>);
   App a(1);
 
   // a.send(key, length);
