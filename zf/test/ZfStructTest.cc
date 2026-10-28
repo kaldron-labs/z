@@ -23,6 +23,10 @@ using namespace ZuTestUtil;
 struct FieldBase { int value; };
 ZfStruct(, FieldBase, (value,, Int32));
 ZfStructImpl(FieldBase);
+ZuStructFacet(EmptyRender);
+ZfStructRender(, FieldBase, EmptyRender);
+ZfStructImpl(FieldBase, EmptyRender);
+ZuAssert((ZuFields<FieldBase, ZuFacet::EmptyRender>::N == 0));
 struct FieldDerived : public FieldBase { };
 struct FieldShim : public ZuStructShim<FieldShim, FieldBase> {
   int value() const { return 0; }
@@ -397,6 +401,12 @@ int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  {
+    ZtString json;
+    ZfJSON::AsObject::Handler<FieldBase, ZuFacet::EmptyRender>::save<ZfFieldFilter::Save>(
+      json, FieldBase{9});
+    ZuCheck(json == "{}");
+  }
 
   {
     Accessors o;

@@ -3460,9 +3460,9 @@ struct ZfFieldMatcher {
   ZuPP_Defer(ZfField_RenderType_)(ZuPP_Strip(O_Facet), ZuPP_Strip(Args))
 
 #define ZfStructRender(API, O, Facet, ...) \
-  ZuPP_Eval(ZuPP_MapArg(ZfField_RenderDecl, (O, Facet), __VA_ARGS__)) \
+  __VA_OPT__(ZuPP_Eval(ZuPP_MapArg(ZfField_RenderDecl, (O, Facet), __VA_ARGS__))) \
   using ZfFields_##O##_##Facet = ZuTypeList< \
-    ZuPP_Eval(ZuPP_MapArgComma(ZfField_RenderType, (O, Facet), __VA_ARGS__))>; \
+    __VA_OPT__(ZuPP_Eval(ZuPP_MapArgComma(ZfField_RenderType, (O, Facet), __VA_ARGS__)))>; \
   ZfFields_##O##_##Facet ZuFields_(O *, ZuFacet::Facet *); \
   API ZfVFieldMatchFn ZfFieldMatcher_(O *, ZuFacet::Facet *)
 
