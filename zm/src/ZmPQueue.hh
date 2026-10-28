@@ -1266,20 +1266,22 @@ public:
 
   // shift, unlike dequeue, ignores gaps
 private:
-  NodeMvRef shift_() {
+  template <bool Bounded = false>
+  NodeMvRef shift_(Key limit = {}) {
   loop:
     Node *node = m_head[0];
     if (!node) return nullptr;
     Fn item{node->Node::data()};
     Length length = item.length();
+    Key end;
+    ZmAssert(endOf_(item.key(), length, end), return nullptr);
+    if constexpr (Bounded) if (end > limit) return nullptr;
     NodeMvRef ret{node};
     delHead_<0>();
     nodeDeref(node);
     m_length -= length;
     --m_count;
     if (!length) goto loop;
-    Key end;
-    ZmAssert(endOf_(item.key(), length, end), return nullptr);
     m_headKey = end;
     if constexpr (Stats) this->outCount(length);
     return ret;
@@ -1295,7 +1297,7 @@ public:
   NodeMvRef shift(Key key) {
     Guard guard(m_lock);
     if (m_headKey >= key) return nullptr;
-    return shift_();
+    return shift_<true>(key);
   }
 
   // deletes an item by exact start key, leaving a gap in the queue
@@ -2030,6 +2032,7 @@ public:
     if (ZuUnlikely(!msg)) { stalled(); return; }
     impl->process(msg);
     if (scheduleDequeue) impl->scheduleDequeue();
+    else stalled();
   }
 
   // dequeue a message - called via scheduleDequeue(), may reschedule itself
@@ -2044,8 +2047,10 @@ public:
     impl->process(msg);
     if (scheduleDequeue)
       impl->rescheduleDequeue();
-    else
+    else {
+      stalled();
       impl->idleDequeue();
+    }
   }
 
   void reRequest() {
@@ -2081,7 +2086,8 @@ private:
     Span old, gap;
     {
       Guard guard(m_lock);
-      if (!impl->rxQueue()->count_()) return;
+      // process() may have resumed queueing or scheduled another dequeue.
+      if (m_flags & (Queuing | Dequeuing)) return;
       gap = impl->rxQueue()->gap();
       if (gap == m_gap) return;
       old = m_gap;
@@ -2235,11 +2241,16 @@ public:
   using ReadGuard = ZmReadGuard<Lock>;
 
   // start concurrent sending and re-sending (datagrams)
-  void start() {
+  void start() { start_<false>({}); }
+
+  // start concurrent sending and re-sending, from key onwards (streams)
+  void start(Key key) { start_<true>(key); }
+
+private:
+  template <bool FromKey> void start_(Key key) {
     Impl *impl = static_cast<Impl *>(this);
-    bool scheduleSend = false;
+    bool scheduleSend, scheduleResend, sendIdle, resendIdle;
     bool scheduleArchive = false;
-    bool scheduleResend = false;
     {
       Guard guard(m_lock);
 #if 0
@@ -2249,6 +2260,10 @@ public:
 #endif
       bool alreadyRunning = m_flags & Running;
       if (!alreadyRunning) m_flags |= Running;
+      if constexpr (FromKey) {
+	m_sendKey = key;
+	if constexpr (Ordered) m_ackdKey = key;
+      }
       if (alreadyRunning && (m_flags &SendFailed))
 	scheduleSend = true;
       else if (scheduleSend = !(m_flags &Sending) &&
@@ -2263,6 +2278,8 @@ public:
       else if (scheduleResend = !(m_flags &Resending) && m_gap.length())
 	m_flags |= Resending;
       m_flags &= ~(SendFailed | ResendFailed);
+      sendIdle = !scheduleSend && !(m_flags &Sending);
+      resendIdle = !scheduleResend && !(m_flags &Resending) && !m_gap.length();
 #if 0
       std::cerr << (ZuCArray<200>()
 	  << "start() POST " << *this << "\n  " << *(impl->txQueue()) << '\n')
@@ -2271,67 +2288,20 @@ public:
     }
     if (scheduleSend)
       impl->scheduleSend();
-    else
+    else if (sendIdle)
       impl->idleSend();
     if (scheduleArchive) impl->scheduleArchive();
     if (scheduleResend)
       impl->scheduleResend();
-    else
+    else if (resendIdle)
       impl->idleResend();
   }
 
-  // start concurrent sending and re-sending, from key onwards (streams)
-  void start(Key key) {
-    Impl *impl = static_cast<Impl *>(this);
-    bool scheduleSend = false;
-    bool scheduleArchive = false;
-    bool scheduleResend = false;
-    {
-      Guard guard(m_lock);
-#if 0
-      std::cerr << (ZuCArray<200>()
-	  << "start() PRE  " << *this << "\n  " << *(impl->txQueue()) << '\n')
-	<< std::flush;
-#endif
-      bool alreadyRunning = m_flags & Running;
-      if (!alreadyRunning) m_flags |= Running;
-      m_sendKey = key;
-      if constexpr (Ordered) m_ackdKey = key;
-      if (alreadyRunning && (m_flags &SendFailed))
-	scheduleSend = true;
-      else if (scheduleSend = !(m_flags &Sending) &&
-	  key < impl->txQueue()->tail())
-	m_flags |= Sending;
-      if constexpr (Ordered)
-	if (scheduleArchive = !(m_flags &Archiving) &&
-	    key > m_archiveKey)
-	  m_flags |= Archiving;
-      if (alreadyRunning && (m_flags &ResendFailed))
-	scheduleResend = true;
-      else if (scheduleResend = !(m_flags &Resending) && m_gap.length())
-	m_flags |= Resending;
-      m_flags &= ~(SendFailed | ResendFailed);
-#if 0
-      std::cerr << (ZuCArray<200>()
-	  << "start() POST " << *this << "\n  " << *(impl->txQueue()) << '\n')
-	<< std::flush;
-#endif
-    }
-    if (scheduleSend)
-      impl->scheduleSend();
-    else
-      impl->idleSend();
-    if (scheduleArchive) impl->scheduleArchive();
-    if (scheduleResend)
-      impl->scheduleResend();
-    else
-      impl->idleResend();
-  }
-
+public:
   // stop sending
   void stop() {
     Guard guard(m_lock);
-    if (!(m_flags &Running)) return;
+    if (!(m_flags & Running)) return;
     m_flags &= ~(Running | Sending | Resending);
   }
 
@@ -2348,6 +2318,21 @@ public:
 	  << "txReset() " << *this << "\n  " << *(impl->txQueue()) << '\n')
 	<< std::flush;
 #endif
+  }
+
+  // Restore independent ordered cursors after the owner stops and drains work.
+  // Queue boundaries are unchanged; restoration requires no retained nodes.
+  template <bool Ordered_ = Ordered, typename = ZuIfT<Ordered_>>
+  bool txRestore(Key send, Key ackd) {
+    Impl *impl = static_cast<Impl *>(this);
+    Guard guard(m_lock);
+    if ((m_flags & Running) || impl->txQueue()->count_() || ackd > send)
+      return false;
+    m_sendKey = send;
+    m_ackdKey = m_archiveKey = ackd;
+    m_gap = {};
+    m_flags = 0;
+    return true;
   }
 
   // send message (with key already allocated)
@@ -2594,7 +2579,7 @@ public:
     ZmRef<Msg> msg;
     {
       Guard guard(m_lock);
-      if (!(m_flags &Running)) { m_flags &= ~Resending; return; }
+      if (!(m_flags & Running)) { m_flags &= ~Resending; return; }
       prevGap = m_gap;
       while (m_gap.length()) {
 	Length length;

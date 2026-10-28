@@ -618,6 +618,58 @@ void testNoStatsNoOverlap()
   log(q);
 }
 
+void testBoundedShift()
+{
+  ZuTestScope(testBoundedShift);
+  PQueue q(1);
+  q.add(new QMsg(ZuFwdTuple(3, 4)));
+  q.add(new QMsg(ZuFwdTuple(9, 1)));
+  // Prefix archival must preserve a node beyond a gap, and a node only
+  // partially covered by the acknowledged prefix.
+  ZuCheck(!q.shift(2));
+  ZuCheck(q.count_() == 2 && q.has(3) && q.has(9));
+  ZuCheck(!q.shift(5));
+  ZuCheck(q.count_() == 2 && q.head() == 1);
+  ZmRef<QMsg> msg = q.shift(7);
+  ZuCheck(msg && msg->Msg::key() == 3 && msg->length() == 4);
+  ZuCheck(q.head() == 7 && q.count_() == 1 && q.has(9));
+  ZuCheck(!q.shift(8) && !q.shift(9));
+  ZuCheck(q.count_() == 1 && q.has(9));
+  msg = q.shift(10);
+  ZuCheck(msg && msg->Msg::key() == 9 && q.head() == 10 && !q.count_());
+  ZuCheck(q.verify());
+}
+
+static void testDeletedGap()
+{
+  ZuTestScope(testDeletedGap);
+  PQueue q(100);
+  q.add(new QMsg(100, 1));
+  q.add(new QMsg(101, 1));
+  q.add(new QMsg(102, 1));
+  ZuCheck(q.tail() == 103 && q.count_() == 3);
+  ZmRef<QMsg> removed = q.del(102);
+  ZuCheck(removed && q.tail() == 103 && q.has(100) && q.has(101));
+  removed = q.del(101);
+  ZuCheck(removed && q.tail() == 103 && q.has(100));
+  ZuCheck(q.gap().equals(ZuFwdTuple(101, 2)) && q.verify());
+}
+
+static void testLogicalTail()
+{
+  ZuTestScope(testLogicalTail);
+  PQueue q(5);
+  q.add(new QMsg(10, 0));
+  ZuCheck(!q.count_() && q.head() == 5 && q.tail() == 10);
+  ZuCheck(q.gap().equals(ZuFwdTuple(5, 5)));
+  q.add(new QMsg(8, 0));
+  ZuCheck(q.tail() == 10);
+  q.add(new QMsg(5, 1));
+  ZuCheck(q.gap().equals(ZuFwdTuple(6, 4)) && q.verify());
+  q.head(10);
+  ZuCheck(!q.count_() && !q.gap().length() && q.head() == q.tail() && q.verify());
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -628,6 +680,9 @@ int main(int argc, char **argv)
   ZuTestCall(testOverwritePolicy);
   ZuTestCall(testAddResults);
   ZuTestCall(testNodeMvRef);
+  ZuTestCall(testBoundedShift);
+  ZuTestCall(testDeletedGap);
+  ZuTestCall(testLogicalTail);
   ZuTestCall(testNoStatsNoOverlap);
   PQueue q(1);
 

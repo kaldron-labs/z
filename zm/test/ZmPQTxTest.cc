@@ -79,17 +79,45 @@ public:
     return true;
   }
 
+  void failSend(bool v) { m_failSend = v; }
+  void failResend(bool v) { m_failResend = v; }
+  void stopOnFailure(bool v) { m_stopOnFailure = v; }
+  bool stopPending() const { return m_stopPending; }
+  bool completeStop() {
+    if (!m_stopPending) return false;
+    m_stopPending = false;
+    Tx::stop();
+    return true;
+  }
+  unsigned sendSchedules() const { return m_sendSchedules; }
+  unsigned resendSchedules() const { return m_resendSchedules; }
+  unsigned sendIdles() const { return m_sendIdles; }
+  unsigned resendIdles() const { return m_resendIdles; }
+  unsigned sendFlags() const { return m_sendFlags; }
+  unsigned resendFlags() const { return m_resendFlags; }
+  unsigned sendCalls() const { return m_sendCalls; }
+  unsigned sendGapCalls() const { return m_sendGapCalls; }
+
   // --- sender callback interface
 
   Queue *txQueue() { return &m_queue; }
 
   // send message
   bool send_(Msg *msg, bool) {
+    if (m_failSend) {
+      if (m_stopOnFailure) m_stopPending = true;
+      return false;
+    }
+    ++m_sendCalls;
     log("send ", msg->key(), ", ", msg->length());
     m_sent = msg;
     return true;
   }
   bool resend_(Msg *msg, bool) { // resend
+    if (m_failResend) {
+      if (m_stopOnFailure) m_stopPending = true;
+      return false;
+    }
     log("resend ", msg->key(), ", ", msg->length());
     m_resent = msg;
     return true;
@@ -97,6 +125,7 @@ public:
 
   // send gap (optional)
   bool sendGap_(const Span &gap, bool) {
+    ++m_sendGapCalls;
     log("sendGap ", gap.key(), ", ", gap.length());
     m_sentGap = gap;
     return true;
@@ -128,17 +157,21 @@ public:
   void scheduleSend() {
     log("schedule send");
     ++m_sends;
+    ++m_sendSchedules;
+    m_sendFlags = flags();
   }
   void rescheduleSend() { scheduleSend(); }
-  void idleSend() { }
+  void idleSend() { ++m_sendIdles; }
 
   // schedule resend() to be called (possibly from different thread)
   void scheduleResend() {
     log("schedule resend");
     ++m_resends;
+    ++m_resendSchedules;
+    m_resendFlags = flags();
   }
   void rescheduleResend() { scheduleResend(); }
-  void idleResend() { }
+  void idleResend() { ++m_resendIdles; }
 
   // schedule archive() to be called (possibly from different thread)
   void scheduleArchive() {
@@ -177,6 +210,18 @@ protected:
   unsigned			m_sends = 0;
   unsigned			m_resends = 0;
   unsigned			m_archives = 0;
+  bool				m_failSend = false;
+  bool				m_failResend = false;
+  bool				m_stopOnFailure = false;
+  bool				m_stopPending = false;
+  unsigned			m_sendSchedules = 0;
+  unsigned			m_resendSchedules = 0;
+  unsigned			m_sendIdles = 0;
+  unsigned			m_resendIdles = 0;
+  unsigned			m_sendFlags = 0;
+  unsigned			m_resendFlags = 0;
+  unsigned			m_sendCalls = 0;
+  unsigned			m_sendGapCalls = 0;
   ZmRef<Msg>			m_sent;
   Span				m_sentGap;
   ZmRef<Msg>			m_resent;
@@ -264,6 +309,136 @@ private:
   Key		m_archivedKey = 0;
 };
 
+template <bool FromKey>
+static bool restart(App &a, App::Key key)
+{
+  // The owner must complete its queued stop before the next queued start.
+  if (a.stopPending()) return false;
+  if constexpr (FromKey) a.start(key);
+  else a.start();
+  return true;
+}
+
+template <bool FromKey>
+void testStopFailure()
+{
+  ZuTestScope(testStopFailure);
+  App a{1};
+  a.txReset(1);
+  a.stopOnFailure(true);
+  ZmRef<App::Msg> msg = new App::Msg(App::Span{1, 1});
+  ZuCheck(restart<FromKey>(a, 1));
+  a.failSend(true);
+  a.send(msg);
+  ZuCheck(a.runSend() && a.stopPending());
+  ZuCheck(!a.runSend() && !a.checkSent(msg));
+  // Return from the failed sender first; only its owner continuation stops it.
+  ZuCheck(a.completeStop() && !a.stopPending());
+  a.failSend(false);
+  ZuCheck(restart<FromKey>(a, 1));
+  while (a.runSend());
+  ZuCheck(a.checkSent(msg));
+  a.failResend(true);
+  a.resend(App::Span{1, 1});
+  ZuCheck(a.runResend() && a.stopPending());
+  ZuCheck(!a.runResend() && !a.checkResent(msg));
+  ZuCheck(a.completeStop() && !a.stopPending());
+  a.failResend(false);
+  ZuCheck(restart<FromKey>(a, 2));
+  while (a.runResend());
+  ZuCheck(a.checkResent(msg));
+}
+
+template <bool FromKey>
+void testRunningRetry()
+{
+  ZuTestScope(testRunningRetry);
+  App a{1};
+  a.txReset(1);
+  ZuCheck(restart<FromKey>(a, 1));
+  ZmRef<App::Msg> msg = new App::Msg(App::Span{1, 1});
+  a.failSend(true);
+  a.send(msg);
+  ZuCheck(a.runSend() && !a.runSend() && !a.stopPending());
+  unsigned schedules = a.sendSchedules(), idles = a.sendIdles();
+  a.failSend(false);
+  ZuCheck(restart<FromKey>(a, 1));
+  ZuCheck(a.sendSchedules() == schedules + 1 && a.sendIdles() == idles);
+  while (a.runSend());
+  ZuCheck(a.checkSent(msg));
+  a.failResend(true);
+  a.resend(App::Span{1, 1});
+  ZuCheck(a.runResend() && !a.runResend() && !a.stopPending());
+  schedules = a.resendSchedules();
+  idles = a.resendIdles();
+  a.failResend(false);
+  ZuCheck(restart<FromKey>(a, 2));
+  ZuCheck(a.resendSchedules() == schedules + 1 && a.resendIdles() == idles);
+  while (a.runResend());
+  ZuCheck(a.checkResent(msg));
+}
+
+template <bool FromKey>
+void testStartIdle()
+{
+  ZuTestScope(testStartIdle);
+  App a{1};
+  a.txReset(1);
+  ZuCheck(restart<FromKey>(a, 1));
+  ZuCheck(a.sendIdles() == 1 && a.resendIdles() == 1);
+  ZuCheck(restart<FromKey>(a, 1));
+  ZuCheck(a.sendIdles() == 2 && a.resendIdles() == 2);
+  ZmRef<App::Msg> msg = new App::Msg(App::Span{1, 1});
+  a.send(msg);
+  ZuCheck(a.sendSchedules() == 1 && a.sendFlags() == a.flags());
+  unsigned sendIdles = a.sendIdles();
+  ZuCheck(restart<FromKey>(a, 1));
+  ZuCheck(restart<FromKey>(a, 1));
+  ZuCheck(a.sendSchedules() == 1 && a.sendIdles() == sendIdles);
+  while (a.runSend());
+  ZuCheck(a.checkSent(msg) && a.sendIdles() == sendIdles + 1);
+  a.resend(App::Span{1, 1});
+  ZuCheck(a.resendSchedules() == 1 && a.resendFlags() == a.flags());
+  unsigned resendIdles = a.resendIdles();
+  ZuCheck(restart<FromKey>(a, 2));
+  ZuCheck(restart<FromKey>(a, 2));
+  ZuCheck(a.resendSchedules() == 1 && a.resendIdles() == resendIdles);
+  while (a.runResend());
+  ZuCheck(a.checkResent(msg) && a.resendIdles() == resendIdles + 1);
+}
+
+void testRestore()
+{
+  ZuTestScope(testRestore);
+  App a{1};
+  a.txReset(1);
+  ZuCheck(a.txRestore(5, 3));
+  ZuCheck(a.txQueue()->head() == 1 && a.txQueue()->tail() == 1);
+  ZuCheck(!a.txRestore(4, 5));
+  ZmRef<App::Msg> old = new App::Msg(App::Span{3, 1});
+  ZmRef<App::Msg> next = new App::Msg(App::Span{5, 1});
+  a.txQueue()->add(old);
+  a.txQueue()->add(next);
+  ZuCheck(!a.txRestore(1, 1));
+  a.start();
+  unsigned flags = a.flags();
+  ZuCheck(!a.txRestore(1, 1) && a.flags() == flags);
+  while (a.runSend());
+  ZuCheck(a.checkSent(next) && a.sendCalls() == 1 && !a.sendGapCalls());
+  a.resend(App::Span{3, 1});
+  while (a.runResend());
+  ZuCheck(a.checkResent(old));
+  ZuCheck(a.txQueue()->has(3) && a.txQueue()->has(5));
+  a.ackd(4);
+  while (a.runArchive());
+  ZuCheck(a.checkArchived(old));
+  ZuCheck(!a.txQueue()->has(3) && a.txQueue()->has(5));
+  a.stop();
+  ZuCheck(!a.txRestore(1, 1));
+  a.start();
+  ZuCheck(!a.runSend());
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -271,6 +446,14 @@ int main(int argc, char **argv)
   ZuTestMain();
 
   ZmHeapMgr::init("ZmPQueue", 0, 0, ZmHeapConfig{100});
+
+  ZuTestCall(testRestore);
+  ZuTestCall(testStopFailure<false>);
+  ZuTestCall(testStopFailure<true>);
+  ZuTestCall(testRunningRetry<false>);
+  ZuTestCall(testRunningRetry<true>);
+  ZuTestCall(testStartIdle<false>);
+  ZuTestCall(testStartIdle<true>);
 
   App a(1);
   ZmRef<App::Msg> msg, msg2;
