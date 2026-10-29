@@ -834,7 +834,7 @@ Additional library-specific guidelines may exist in `[directory]/GUIDELINES.md`:
 - Preserve tabular alignment for data members, macro bodies, and compact tables already using tabs to align names, initializers, or comments.
 - Vertically align `ZfStruct` field typecodes with hard tabs;
   wrap long properties at natural delimiters to keep declarations within 98 columns.
-- Right-align members with hard tabs.
+- Right-align data member names with hard tabs.
 - Do not let a verbose member type defeat tabular alignment. Give a complex or long member type a short local `using` alias when that keeps the member declaration aligned; place that alias immediately before the data declarations that use it.
 - `*` and `&` go with the member, not the type: `void<TAB>*m_`, not `void *<TAB>m_`.
 
