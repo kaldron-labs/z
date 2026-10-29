@@ -75,13 +75,23 @@ act as a skeptical principal software engineer
 scrutinize link, session and connection state (member data):
 - are any counters, values etc. duplicative of state maintained in dependencies or in lower layers?
 - can member data be simplified or consolidated?
-- is member data clearly marked as stable following initialization (i.e. immutable), rx-owned, tx-owned, shared/contended (locked or atomics)
-  - is sharded data access consistently respected and asserted?
-- should shared/contended data be rx- or tx-owned and sharded
-  - Note: follow `GUIDELINES.md` guidance in this regard
+- member data must be clearly marked as one of:
+  - immutable: stable following initialization
+  - rx-owned: only mutated by the rx thread once initialized
+  - tx-owned: only mutated by the tx thread once initialized
+  - shared: contended data protected by a lock or atomic, shared by multiple threads
+- sharded data access must be consistently respected and asserted
+  - cross-sharded access/mutation of rx- or tx-owned data is a fatal error
+  - unclean snapshots are permitted for telemetry, logging, etc.
+- evaluate if shared/contended data should be rx- or tx-owned and sharded:
   - shared/contended data should be minimized
-- are rx-owned and tx-owned member data members grouped, cache-line aligned in the usual way (refer to existing examples)
-  - is shared/contended data also cache-line aligned and separated from rx- and tx-owned data?
+  - follow `GUIDELINES.md` guidance in this regard
+- rx-owned, tx-owned and shared member data members should be:
+  - grouped together largest to smallest
+  - cache-line aligned in the usual way (refer to existing examples)
+- check inheritance, MI and containing of cache-line-aligned data
+  - rx-owned, tx-owned and shared cache-line-aligned member data must NOT be inherited or contained by a derived class that **also** declares its own rx-owned, tx-owned or shared cache-line-aligned groups of member data
+  - in such cases, member data groups must be flattened and consolidated using appropriate techniques, e.g. CRTP
 
 find performance impairments
 - unnecessary copying
