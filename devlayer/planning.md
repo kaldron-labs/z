@@ -70,12 +70,25 @@ act as a skeptical principal software engineer
 - repair all findings
 - limit scope to `plan.md` work
 
+---
+
+scrutinize link, session and connection state (member data):
+- are any counters, values etc. duplicative of state maintained in dependencies or in lower layers?
+- can member data be simplified or consolidated?
+- is member data clearly marked as stable following initialization (i.e. immutable), rx-owned, tx-owned, shared/contended (locked or atomics)
+  - is sharded data access consistently respected and asserted?
+- should shared/contended data be rx- or tx-owned and sharded
+  - Note: follow `GUIDELINES.md` guidance in this regard
+  - shared/contended data should be minimized
+- are rx-owned and tx-owned member data members grouped, cache-line aligned in the usual way (refer to existing examples)
+  - is shared/contended data also cache-line aligned and separated from rx- and tx-owned data?
+
 find performance impairments
-  - unnecessary copying
-  - unnecessary use of heap (where stack scratch would be better)
-  - unnecessary validation
-  - unnecessary hand-rolled code
-    - where use of dependency Z framework capabilities would be better
-    - particularly format conversions, printing, scanning, byte-swapping, etc.
-  - unnecessarily complex algorithms
-  - repeated evaluation of stable expressions
+- unnecessary copying
+- unnecessary use of heap (where stack scratch would be better)
+- unnecessary validation
+- unnecessary hand-rolled code
+  - where use of dependency Z framework capabilities would be better
+  - particularly format conversions, printing, scanning, byte-swapping, etc.
+- unnecessarily complex algorithms
+- repeated evaluation of stable expressions
