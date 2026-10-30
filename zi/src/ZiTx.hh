@@ -16,6 +16,7 @@
 
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
 #include <zlib/ZmList.hh>
 
 ZmListDerive(ZiTxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
@@ -53,13 +54,18 @@ public:
   ZiConnection *cxn() { return static_cast<ZiConnection *>(impl()); }
 
   void send(ZmRef<ZiTxBuf> buf) {
-    if (ZuUnlikely(!buf || !buf->length)) return;
-    auto cxn = impl()->cxn();
-    if constexpr (!ZuIsSame<decltype(&Impl::cxn), decltype(&ZiTx::cxn)>{})
-      if (ZuUnlikely(!cxn)) return;
+    send(impl()->cxn(), ZuMv(buf));
+  }
+
+  // Bind an already prepared wire representation to its physical connection.
+  template <typename Cxn>
+  void send(Cxn *cxn, ZmRef<ZiTxBuf> buf) {
+    if (ZuUnlikely(!buf || !buf->length || !cxn)) return;
     buf->owner = impl();
     cxn->send(ZiIOFn::mvFn(ZuMv(buf),
 	[](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
+	  // A queued setup can run after abrupt close and physical-queue handoff.
+	  if (ZuUnlikely(!io.cxn->up())) return false;
 	  auto impl_ = impl(buf);
 	  auto &queue = impl_->ZiTx::txQueue;
 	  if (queue.count_()) {
