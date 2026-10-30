@@ -1,12 +1,6 @@
 # TODO
 
-`repair2.md`
-
 - `Zsbe`: SBE (simple binary encoding)
-- `Zfix`: FIX
-  - each `ZfStruct` is a message
-    - nested are repeated groups
-  - `FIX::Tag<42>` property to associate tag IDs
 
 ## zdash
 

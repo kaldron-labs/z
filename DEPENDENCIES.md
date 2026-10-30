@@ -160,3 +160,16 @@ For a nonstandard prefix, configure `PKG_CONFIG_PATH`, compiler include/library
 search paths, and the platform runtime loader consistently. See
 [z.config](z.config) for the wrapper's feature defaults and
 [configure.ac](configure.ac) for exact checks.
+
+## Zfix independent FIX peer
+
+QuickFIX/C++ is an optional fixture dependency, separate from the Zfix libraries.
+The pinned version, source/dictionary checksums and SSL build helper are in
+[zfix/interop](zfix/interop/README.md). Build prerequisites are CMake, a C++17
+compiler, OpenSSL development files, curl, tar and SHA-256 tools. The helper
+uses a caller-selected installation root and verifies the canonical FIX 4.4
+dictionary. Configure `--with-quickfix=PREFIX` to enable the independent codec
+fixture (or `--with-quickfix=yes` with pkg-config); omit it for the production
+build. `QUICKFIX_DICT` selects the canonical FIX44.xml path. The runner verifies
+the pinned dictionary checksum. Dependency setup and codec checks alone do not
+satisfy the live interoperability gate.

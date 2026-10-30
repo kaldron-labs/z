@@ -218,6 +218,48 @@ PKG_CHECK_MODULES([PB_INTEROP], [protobuf >= 25], [z_have_pb_interop=yes], [
 ])
 AM_CONDITIONAL([HAVE_PB_INTEROP], [test "x$z_have_pb_interop" = "xyes"])
 
+# Independent QuickFIX/C++ fixture dependency; never add flags to Zfix libraries.
+AC_ARG_WITH([quickfix],
+  AS_HELP_STRING([--with-quickfix@<:@=PREFIX@:>@], [Build independent FIX interop fixtures (default: no)]),
+  [], [with_quickfix=no])
+AC_ARG_VAR([QUICKFIX_DICT], [Canonical FIX44.xml for independent QuickFIX fixtures])
+z_have_quickfix=no
+QUICKFIX_CFLAGS=
+QUICKFIX_LIBS=
+AS_IF([test "x$with_quickfix" != "xno"], [
+  AS_IF([test "x$with_quickfix" = "xyes"], [
+    PKG_CHECK_MODULES([QUICKFIX], [quickfix >= 1.16.0], [], [
+      AC_MSG_ERROR([QuickFIX >= 1.16.0 required; use --with-quickfix=PREFIX for a CMake installation])
+    ])
+    AS_IF([test -z "$QUICKFIX_DICT"], [
+      QUICKFIX_DICT=`$PKG_CONFIG --variable=prefix quickfix`/share/quickfix/FIX44.xml
+    ])
+  ], [
+    QUICKFIX_CFLAGS="-I$with_quickfix/include"
+    QUICKFIX_LIBS="-L$with_quickfix/lib -Wl,-rpath,$with_quickfix/lib -lquickfix"
+    AS_IF([test -z "$QUICKFIX_DICT"], [QUICKFIX_DICT="$with_quickfix/share/quickfix/FIX44.xml"])
+  ])
+  z_quickfix_CPPFLAGS=$CPPFLAGS
+  z_quickfix_LIBS=$LIBS
+  CPPFLAGS="$QUICKFIX_CFLAGS $CPPFLAGS"
+  LIBS="$QUICKFIX_LIBS $LIBS"
+  AC_LINK_IFELSE([AC_LANG_PROGRAM([[
+#include <quickfix/config.h>
+#include <quickfix/DataDictionary.h>
+#include <quickfix/SSLSocketInitiator.h>
+#ifndef HAVE_SSL
+#error QuickFIX must be built with SSL
+#endif
+  ]], [[FIX::DataDictionary dictionary; return dictionary.isMsgType("D");]])],
+    [z_have_quickfix=yes], [AC_MSG_ERROR([QuickFIX headers/library with SSL required])])
+  CPPFLAGS=$z_quickfix_CPPFLAGS
+  LIBS=$z_quickfix_LIBS
+  AS_IF([test ! -f "$QUICKFIX_DICT"], [AC_MSG_ERROR([Canonical FIX44.xml not found: $QUICKFIX_DICT])])
+])
+AC_SUBST(QUICKFIX_CFLAGS)
+AC_SUBST(QUICKFIX_LIBS)
+AM_CONDITIONAL([HAVE_QUICKFIX], [test "x$z_have_quickfix" = "xyes"])
+
 # postgres libpq (optional)
 AC_ARG_WITH([pq], AS_HELP_STRING([--with-pq], [Build with PostgreSQL]))
 AS_IF([test ".$with_pq" = ".yes"], [
@@ -260,7 +302,7 @@ AM_CONDITIONAL([GTK], [test ".$with_gtk" = ".yes"])
 CPPFLAGS=`echo $CPPFLAGS | perl -pe 's/-I(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$I{$1}++ ? "" : "-I${1}${2}"/ge;'`
 LDFLAGS=`echo $LDFLAGS | perl -pe 's|/[^/]+/\.\./|/|g; s/-L(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$L{$1}++ ? "" : "-L${1}${2}"/ge; s/(-Wl,-R,|-R)(@<:@^ \n@:>@+)(@<:@ \n@:>@)/$R{$2}++ ? "" : "${1}${2}${3}"/ge'`
 
-for i in zu zm zt ze zf zi zpb zfb zv zdbus ztcp ztls zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
+for i in zu zm zt ze zf zi zpb zfb zv zdbus ztcp ztls zfix zquic zhttp zgrpc zrest zjrpc zmcp zws zdb zdb_pq zdb_sqlite ztc zum zdf zrl zgtk zdash; do {
   for j in src ext; do {
     if test -d $i/$j -a ! -e $i/$j/AC_PACKAGE_NAME; then (
       cd $i/$j;
@@ -289,6 +331,9 @@ AC_CONFIG_FILES([Makefile \
 	zdbus/Makefile zdbus/src/Makefile zdbus/test/Makefile \
 	zdbus/util/Makefile zdbus/itest/Makefile zdbus/example/Makefile \
 	zdbus/interop/Makefile \
+	zfix/Makefile zfix/src/Makefile zfix/test/Makefile \
+	zfix/util/Makefile zfix/itest/Makefile zfix/example/Makefile \
+	zfix/interop/Makefile zfix/bench/Makefile \
 	ztcp/Makefile ztcp/src/Makefile ztcp/test/Makefile ztcp/example/Makefile \
 	ztls/Makefile ztls/src/Makefile ztls/test/Makefile ztls/itest/Makefile ztls/example/Makefile \
 	ztls/interop/Makefile \

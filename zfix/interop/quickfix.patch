@@ -1,0 +1,321 @@
+--- a/src/C++/SocketServer.cpp
++++ b/src/C++/SocketServer.cpp
+@@ -98,6 +98,7 @@
+   }
+   m_monitor.addRead(socket);
+ 
++  port = static_cast<uint16_t>(socket_hostport(socket));
+   SocketInfo info(socket, port, noDelay, sendBufSize, rcvBufSize);
+   m_socketToInfo[socket] = info;
+   m_portToInfo[port] = info;
+--- a/src/C++/SSLSocketAcceptor.h
++++ b/src/C++/SSLSocketAcceptor.h
+@@ -137,10 +137,14 @@
+   friend class SSLSocketConnection;
+ 
+ public:
++  typedef std::map<SessionID, uint16_t> SessionToPort;
++
+   SSLSocketAcceptor(Application &, MessageStoreFactory &, const SessionSettings &) EXCEPT(ConfigError);
+   SSLSocketAcceptor(Application &, MessageStoreFactory &, const SessionSettings &, LogFactory &) EXCEPT(ConfigError);
+ 
+   virtual ~SSLSocketAcceptor();
++
++  const SessionToPort &sessionToPort() { return m_sessionToPort; }
+ 
+   void setPassword(const std::string &pwd) { m_password.assign(pwd); }
+ 
+@@ -171,6 +175,7 @@
+ 
+   SocketServer *m_pServer;
+   PortToSessions m_portToSessions;
++  SessionToPort m_sessionToPort;
+   SocketConnections m_connections;
+ 
+   bool m_sslInit;
+--- a/src/C++/SSLSocketAcceptor.cpp
++++ b/src/C++/SSLSocketAcceptor.cpp
+@@ -212,7 +212,7 @@
+     m_sslInit = true;
+   }
+ 
+-  short port = 0;
++  uint16_t port = 0;
+ 
+   try {
+     m_pServer = new SocketServer(1);
+@@ -230,8 +230,10 @@
+ 
+       const int rcvBufSize = settings.has(SOCKET_RECEIVE_BUFFER_SIZE) ? settings.getInt(SOCKET_RECEIVE_BUFFER_SIZE) : 0;
+ 
+-      m_portToSessions[port].insert(sessionID);
+-      m_pServer->add(port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
++      socket_handle acceptSocket = m_pServer->add(port, reuseAddress, noDelay, sendBufSize, rcvBufSize);
++      uint16_t boundPort = socket_hostport(acceptSocket);
++      m_portToSessions[boundPort].insert(sessionID);
++      m_sessionToPort[sessionID] = boundPort;
+     }
+   } catch (SocketException &e) {
+     throw RuntimeError(
+@@ -299,7 +301,7 @@
+   if (i != m_connections.end()) {
+     return;
+   }
+-  int port = server.socketToPort(a);
++  uint16_t port = server.socketToPort(a);
+   Sessions sessions = m_portToSessions[port];
+ 
+   SSL *ssl = SSL_new(m_ctx);
+--- a/src/C++/SSLSocketInitiator.cpp
++++ b/src/C++/SSLSocketInitiator.cpp
+@@ -124,6 +124,8 @@
+ #include "Session.h"
+ #include "Settings.h"
+ #include "UtilitySSL.h"
++#include "openssl/x509_vfy.h"
++#include <memory>
+ 
+ namespace FIX {
+ 
+@@ -302,6 +304,31 @@
+         "Connecting to " + host.address + " on port " + IntConvertor::convert((unsigned short)host.port) + " (Source "
+         + host.sourceAddress + ":" + IntConvertor::convert((unsigned short)host.sourcePort)
+         + ") ReconnectInterval=" + IntConvertor::convert((int)m_reconnectInterval));
++    std::unique_ptr<SSL, decltype(&SSL_free)> ssl(SSL_new(m_ctx), SSL_free);
++    if (!ssl) {
++      log->onEvent("Failed to create ssl object");
++      return;
++    }
++    if (SSL_clear(ssl.get()) != 1) {
++      log->onEvent("Failed to initialize ssl object");
++      return;
++    }
++
++    std::string peer = host.address;
++    if (peer.size() >= 2 && peer.front() == '[' && peer.back() == ']') {
++      peer = peer.substr(1, peer.size() - 2);
++    }
++    if (peer.empty()
++        || (is_ip_address(peer)
++                ? X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl.get()), peer.c_str())
++                : SSL_set1_host(ssl.get(), peer.c_str())) != 1) {
++      log->onEvent("Failed to configure TLS peer identity: " + host.address);
++      return;
++    }
++
++    // Keep SNI separate from certificate identity and existing CA verification.
++    ssl_set_sni_hostname(ssl.get(), host.address, log);
++
+     socket_handle result = m_connector.connect(
+         host.address,
+         host.port,
+@@ -310,28 +337,23 @@
+         m_rcvBufSize,
+         host.sourceAddress,
+         host.sourcePort);
+-
++    if (!socket_isValid(result)) {
++      log->onEvent("Failed to create socket");
++      return;
++    }
+     log->onEvent("Socket created with handle:" + std::to_string(result));
+ 
+-    SSL *ssl = SSL_new(m_ctx);
+-    if (ssl == 0) {
+-      log->onEvent("Failed to create ssl object");
+-      return;
+-    }
+-    SSL_clear(ssl);
+     BIO *sbio = BIO_new_socket(result, BIO_NOCLOSE); // unfortunately OpenSSL assumes socket is int
+-
+     if (sbio == 0) {
+       log->onEvent("BIO_new_socket failed");
++      m_connector.getMonitor().drop(result);
+       return;
+     }
+-    SSL_set_bio(ssl, sbio, sbio);
+-
+-    // Set SNI hostname for TLS connections
+-    ssl_set_sni_hostname(ssl, host.address, log);
++    SSL_set_bio(ssl.get(), sbio, sbio);
+ 
+     setPending(sessionID);
+-    m_pendingConnections[result] = new SSLSocketConnection(*this, sessionID, result, ssl, &m_connector.getMonitor());
++    m_pendingConnections[result] = new SSLSocketConnection(*this, sessionID, result, ssl.get(), &m_connector.getMonitor());
++    ssl.release(); // SSLSocketConnection owns SSL and its BIO after construction.
+   } catch (std::exception &ex) {
+     getLog()->onEvent(ex.what());
+   }
+--- a/src/C++/UtilitySSL.cpp
++++ b/src/C++/UtilitySSL.cpp
+@@ -315,7 +315,6 @@
+ 
+ static void thread_setup(void); // For thread safety.
+ static void thread_cleanup(void);
+-static void ssl_rand_seed(void);
+ 
+ void ssl_init() {
+ 
+@@ -338,7 +337,7 @@
+   ERR_load_BIO_strings();       // Load BIO error strings
+   OpenSSL_add_all_algorithms(); // Load all available encryption algorithms
+ 
+-  ssl_rand_seed();
++  RAND_poll();
+ 
+   ssl_initialized = 1;
+ 
+@@ -432,51 +431,6 @@
+ #endif
+ 
+   lock_cs = 0;
+-}
+-
+-static int ssl_rand_choose_num(int l, int h) {
+-  int i;
+-  char buf[50];
+-
+-  srand((unsigned int)time(0));
+-  snprintf(buf, sizeof(buf), "%.0f", (((double)(rand() % RAND_MAX) / RAND_MAX) * (h - l)));
+-  buf[sizeof(buf) - 1] = 0;
+-  i = atoi(buf) + 1;
+-  if (i < l) {
+-    i = l;
+-  }
+-  if (i > h) {
+-    i = h;
+-  }
+-  return i;
+-}
+-
+-static void ssl_rand_seed(void) {
+-#ifdef _MSC_VER
+-  int pid;
+-#else
+-  pid_t pid;
+-#endif
+-  int n, l;
+-  unsigned char stackdata[256];
+-  time_t t = time(0);
+-
+-  /*
+-   * seed in the current time (usually just 4 bytes)
+-   */
+-  l = sizeof(time_t);
+-  RAND_seed((unsigned char *)&t, l);
+-  /*
+-   * seed in the current process id (usually just 4 bytes)
+-   */
+-  pid = getpid();
+-  l = sizeof(pid);
+-  RAND_seed((unsigned char *)&pid, l);
+-  /*
+-   * seed in some current state of the run-time stack (128 bytes)
+-   */
+-  n = ssl_rand_choose_num(0, sizeof(stackdata) - 128 - 1);
+-  RAND_seed(stackdata + n, 128);
+ }
+ 
+ int caListX509NameCmp(const X509_NAME *const *a, const X509_NAME *const *b) { return (X509_NAME_cmp(*a, *b)); }
+@@ -535,7 +489,7 @@
+     cp[n] = 0;
+     BIO_free(bio);
+     cp2 = X509_NAME_oneline(subject, NULL, 0);
+-    printf("CA CRL: Issuer: %s, %s\n", cp2, cp);
++    fprintf(stderr, "CA CRL: Issuer: %s, %s\n", cp2, cp);
+     free(cp2);
+     free(cp);
+ 
+@@ -543,7 +497,7 @@
+      * Verify the signature on this CRL
+      */
+     if (X509_CRL_verify(crl, X509_get_pubkey(xs)) <= 0) {
+-      printf("Invalid signature on CRL\n");
++      fprintf(stderr, "Invalid signature on CRL\n");
+       X509_STORE_CTX_set_error(ctx, X509_V_ERR_CRL_SIGNATURE_FAILURE);
+       X509_OBJECT_free_contents(&obj);
+       return 0;
+@@ -554,13 +508,13 @@
+      */
+     i = X509_cmp_current_time(X509_CRL_get_nextUpdate(crl));
+     if (i == 0) {
+-      printf("Found CRL has invalid nextUpdate field\n");
++      fprintf(stderr, "Found CRL has invalid nextUpdate field\n");
+       X509_STORE_CTX_set_error(ctx, X509_V_ERR_ERROR_IN_CRL_NEXT_UPDATE_FIELD);
+       X509_OBJECT_free_contents(&obj);
+       return 0;
+     }
+     if (i < 0) {
+-      printf(
++      fprintf(stderr,
+           "Found CRL is expired - revoking all certificates until you get "
+           "updated CRL\n");
+       X509_STORE_CTX_set_error(ctx, X509_V_ERR_CRL_HAS_EXPIRED);
+@@ -587,7 +541,7 @@
+       if (ASN1_INTEGER_cmp(revoked->serialNumber, X509_get_serialNumber(xs)) == 0) {
+         serial = ASN1_INTEGER_get(revoked->serialNumber);
+         cp = X509_NAME_oneline(issuer, NULL, 0);
+-        printf(
++        fprintf(stderr,
+             "Certificate with serial %ld (0x%lX) revoked per CRL from "
+             "issuer %s\n",
+             serial,
+@@ -624,7 +578,7 @@
+    */
+   cp = X509_NAME_oneline(X509_get_subject_name(xs), NULL, 0);
+   cp2 = X509_NAME_oneline(X509_get_issuer_name(xs), NULL, 0);
+-  printf(
++  fprintf(stderr,
+       "Certificate Verification: depth: %d, subject: %s, issuer: %s\n",
+       errdepth,
+       cp != NULL ? cp : "-unknown-",
+@@ -655,7 +609,7 @@
+    * If we already know it's not ok, log the real reason
+    */
+   if (!ok) {
+-    printf("Certificate Verification: Error (%d): %s\n", errnum, X509_verify_cert_error_string(errnum));
++    fprintf(stderr, "Certificate Verification: Error (%d): %s\n", errnum, X509_verify_cert_error_string(errnum));
+     ERR_print_errors_fp(stderr);
+   }
+ 
+@@ -668,7 +622,7 @@
+ 
+   t = SSL_ALGO_UNKNOWN;
+   if (pCert != 0) {
+-    pKey = X509_get_pubkey(pCert);
++    pKey = X509_get0_pubkey(pCert);
+   }
+   if (pKey != 0) {
+ #if OPENSSL_VERSION_NUMBER < 0x10100000L
+@@ -726,8 +680,11 @@
+       // X509_NAME_oneline(sk_X509_NAME_value(sk, n), 0, 0));
+       if (sk_X509_NAME_find(skCAList, sk_X509_NAME_value(sk, n)) < 0) {
+         sk_X509_NAME_push(skCAList, sk_X509_NAME_value(sk, n));
+-      }
+-    }
++      } else {
++        X509_NAME_free(sk_X509_NAME_value(sk, n));
++      }
++    }
++    sk_X509_NAME_free(sk);
+   }
+ 
+   /*
+@@ -747,13 +704,17 @@
+ #endif
+       cp = string_concat(cpCApath, SLASH, direntry->d_name, 0);
+       sk = SSL_load_client_CA_file(cp);
++      delete[] cp;
+       for (n = 0; sk != 0 && n < sk_X509_NAME_num(sk); n++) {
+         // TODO log->onEvent(std::string("CA certificate: %s") +
+         //           X509_NAME_oneline(sk_X509_NAME_value(sk, n), 0, 0));
+         if (sk_X509_NAME_find(skCAList, sk_X509_NAME_value(sk, n)) < 0) {
+           sk_X509_NAME_push(skCAList, sk_X509_NAME_value(sk, n));
++        } else {
++          X509_NAME_free(sk_X509_NAME_value(sk, n));
+         }
+       }
++      sk_X509_NAME_free(sk);
+     }
+ #ifndef HAVE_ACE_DIRENT
+     closedir(dir);
