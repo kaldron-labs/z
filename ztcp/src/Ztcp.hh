@@ -28,6 +28,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiResolver.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/ZiTxStream.hh>
@@ -276,16 +277,37 @@ private:
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP connected dispatch outside Rx thread", return);
     if (ZuUnlikely(m_cxn == cxn)) return;
-    if (ZuUnlikely(m_cxn)) {
-      auto cxn_ = ZuMvPtr(m_cxn);
-      cxn_->close();
-    }
     auto oldState = state_();
+    ZmRef<Cxn> old{ZuMvPtr(m_cxn)};
+    if (!old) old = m_closing.load_();
+    bool replacing = bool(old);
+    m_closing = nullptr;
+    if (ZuUnlikely(old)) {
+      old->close();
+      // Retire the old physical output on I/O Tx before publishing B. This
+      // neither flushes A nor waits for its disconnect callbacks. Delayed A
+      // send setups must reject the closed socket before touching the queue.
+      auto old_ = old.ptr();
+      old_->send(ZiIOFn{[
+	impl = ZmRef(this->impl()), cxn = ZuMv(old)
+      ](ZiIOContext &io) {
+	io.complete();
+	impl->Tx::txQueue.clean();
+	(void)cxn;
+	return false;
+      }});
+    }
     m_cxn = ZuMv(cxn);
     m_disconnecting = 0;
     stateChanged_(oldState);
     m_rxStream.clean();
     app()->linkConnected_();
+    if (!impl()->connectSocket_(replacing)) { impl()->disconnect_(false); return; }
+    // Protocol binding posts first; connected() publication follows this post.
+    app()->txRun([impl = ZmRef(this->impl()), cxn = ZmRef<Cxn>{m_cxn}]() mutable {
+      impl->m_txCxn = ZuMv(cxn);
+    });
+    if (!impl()->connectReady_()) return;
     impl()->connected(Connected{});
   }
 
@@ -296,17 +318,22 @@ private:
       impl->disconnected_(cxn.ptr());
       auto app = impl->app();
       app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
-	// Application Tx has drained; drain its queued socket sends next.
+	if (impl->m_txCxn == cxn) impl->m_txCxn = nullptr;
+	// Retain owners across posted work; stale closes cannot clean the successor.
 	auto mx = cxn->mx();
 	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	]() mutable {
-	  impl->Tx::txQueue.clean();
+	  if (impl->m_closing.load_() == cxn.ptr()) impl->Tx::txQueue.clean();
 	  auto app = impl->app();
 	  app->rxRun([
 	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	  ]() mutable {
-	    impl->disconnected_1(peer);
+	    if (impl->m_closing.load_() == cxn.ptr()) {
+	      impl->m_closing = nullptr;
+	      impl->disconnected_1(peer);
+	    }
+	    impl->app()->linkDisconnected_();
 	    (void)cxn;
 	  });
 	});
@@ -317,8 +344,10 @@ private:
   void disconnected_(Cxn *cxn) {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP disconnected dispatch outside Rx thread", return);
+    if (m_cxn != cxn && m_closing.load_() != cxn) return;
     auto oldState = state_();
-    if (m_cxn == cxn) m_cxn = nullptr;
+    m_cxn = nullptr;
+    m_closing = cxn;
     m_disconnecting = 0;
     stateChanged_(oldState);
   }
@@ -326,10 +355,9 @@ private:
   void disconnected_1(bool peer) {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP disconnect completion outside Rx thread", return);
-    auto app = impl()->app();
-    impl()->disconnected(peer);
     m_rxStream.clean();
-    app->linkDisconnected_();
+    impl()->connectClosed_();
+    impl()->disconnected(peer);
   }
 
   void rcvd_(Cxn *cxn, ZmRef<ZiIOBuf> buf) {
@@ -347,6 +375,7 @@ private:
     }
   }
 
+public:
   ZmRef<ZiIOBuf> allocTxBuf_() {
     ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
     buf->skip = 0;
@@ -421,19 +450,22 @@ protected:
     ZiAssert(app()->txInvoked(), "Ztcp", (),
       "TCP send_ outside Tx thread", return false);
     if (ZuUnlikely(!buf || buf->failed() || !buf->length ||
-	m_disconnecting.load_() || !m_cxn))
-      return tcpTxError_(
-	"TCP connection is closed for transmission");
+	m_disconnecting.load_() || !m_txCxn)) {
+      queueTxError_(m_txCxn, "TCP connection is closed for transmission");
+      return false;
+    }
     buf->owner = impl();
     auto length = buf->length;
     m_txInCount.store_(m_txInCount.load_() + 1);
     m_txInBytes.store_(m_txInBytes.load_() + length);
-    Tx::send(ZuMv(buf));
+    Tx::send(m_txCxn.ptr(), ZuMv(buf));
     return true;
   }
 
 public:
   void sent(ZmRef<ZiTxBuf>, bool ok) {
+    // ZiConnection::errorSend already closes the failed physical socket.
+    // A diagnostic callback cannot authorize closing a different successor.
     if (ZuUnlikely(!ok))
       tcpTxError_("TCP transmit failed");
   }
@@ -454,8 +486,10 @@ public:
     m_disconnecting = 1;
     stateChanged_(oldState);
     impl()->cancelReconn_();
+    impl()->stopConnect_();
     auto cxn = ZmRef<Cxn>{ZuMvPtr(m_cxn)};
     if (cxn) {
+      m_closing = cxn.ptr();
       auto mx = cxn->mx();
       if (notify)
 	mx->txRun([cxn = ZuMv(cxn)]() { cxn->disconnect(); });
@@ -467,12 +501,26 @@ public:
 protected:
   void up_() { }
   void cancelReconn_() { }
+  void stopConnect_() { }
+  bool connectSocket_(bool) { return true; }
+  bool connectReady_() { return true; }
+  void connectClosed_() { }
+
 
 private:
   bool tcpTxError_(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Ztcp", message);
-    if (m_txErrorFn && !m_txErrorFn(e)) disconnect();
+    if (m_txErrorFn) m_txErrorFn(e);
     return false;
+  }
+
+  void queueTxError_(ZmRef<Cxn> cxn, const char *message) {
+    app()->rxRun([impl = ZmRef(this->impl()), cxn = ZuMv(cxn), message] {
+      auto e = ZeEXCEPT(Error, "Ztcp", message);
+      bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
+      // Policy callbacks may themselves replace or close the connection.
+      if (close && cxn && impl->m_cxn == cxn.ptr()) impl->disconnect_(false);
+    });
   }
 
   LinkState::T state_() const {
@@ -523,6 +571,10 @@ private:
   ZiTxErrorFn		m_txErrorFn;
   // Read-mostly connection reference; mutation remains Rx-owned.
   CxnRef		m_cxn = nullptr;
+  // A pending close owns cleanup only until a new association invalidates it.
+  // Rx mutates the token; queued Tx/I/O cleanup only reads it. The close
+  // continuations retain the connection, so its address cannot be recycled.
+  ZmAtomic<Cxn *>	m_closing = nullptr;
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
@@ -530,6 +582,8 @@ private:
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
+  // Producer destination changes on this shard before connected() work runs.
+  ZmRef<Cxn>		m_txCxn;
   ZmAtomic<uint64_t>	m_txInCount = 0;
   ZmAtomic<uint64_t>	m_txInBytes = 0;
 };
@@ -575,6 +629,7 @@ template <typename> friend class Client;
   void connect(Host server, uint16_t port) {
     app()->rxInvoke(
       [this, server = ZuMv(server), port]() mutable {
+	if (m_connectBusy || !impl()->connectAllowed_()) return;
 	m_server = ZuMv(server);
 	m_port = port;
 	connect_();
@@ -587,14 +642,46 @@ template <typename> friend class Client;
   void connect_() { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP connect outside Rx thread", return);
-    ZiIP ip = m_server;
-    if (!ip) {
-      app()->error_(ZeEXCEPT(Error, "Ztcp", ([server = LogMsg{m_server}](auto &s) {
-	s << '"' << server << "\": hostname lookup failure";
-      })));
-      impl()->connectFailed(true);
-      return;
+    if (m_connectBusy) return;
+    if (!impl()->connectAllowed_()) { retryConnect_(); return; }
+    cancelReconn_();
+    m_connectBusy = true;
+    m_connectStopping = false;
+    // Consume the resolver through its terminal continuation, including both
+    // address families. Move the retained owner into the application post.
+    ZiResolver::resolve(m_server, ZiResolver_::ResolveFn{
+      [owner = ZmRef(impl()), ip = ZiIP{}](auto result) mutable {
+	if (result.template is<ZiIP>()) {
+	  if (!ip) ip = result.template p<ZiIP>();
+	  return true;
+	}
+	auto app = owner->app();
+	app->rxRun([owner = ZuMv(owner), ip] { owner->resolved_(ip); });
+	return false;
+      }});
+  }
+
+  bool connectAllowed_() const { return true; }
+  void connectRetired_() { }
+  bool connectSocket_(bool) { return !m_connectStopping; }
+  bool connectReady_() { return !m_connectStopping; }
+  void connectClosed_() { m_connectBusy = false; }
+  // Shutdown stops new setup work, but submitted DNS/socket operations drain
+  // through their ordinary completion. The hub/multiplex must remain alive.
+  void stopConnect_() { m_connectStopping = true; }
+  void resolved_(ZiIP ip) {
+    if (!ip) { setupFailed_(true); return; }
+    if (m_connectStopping) {
+      m_connectBusy = false; impl()->connectRetired_(); return;
     }
+    impl()->connectIP_(ip);
+  }
+  void setupFailed_(bool transient) {
+    m_connectBusy = false;
+    impl()->connectRetired_();
+    impl()->connectFailed(transient);
+  }
+  void connectIP_(ZiIP ip) {
     app()->mx()->connect(
       ZiConnectFn{ZmRef(impl()),
 	[](Impl *impl, const ZiCxnInfo &ci) -> ZiConnection * {
@@ -602,26 +689,14 @@ template <typename> friend class Client;
 	}},
       ZiFailFn{ZmRef(impl()), [](Impl *impl, bool transient) {
 	auto app = impl->app();
-	app->rxRun([
-	  impl = ZmRef<Impl>{impl}, transient
-	]() mutable {
-	  impl->connectFailed(transient);
-	});
-      }},
-      ZiIP(), 0, ip, m_port);
+	app->rxRun([owner = ZmRef(impl), transient] { owner->setupFailed_(transient); });
+      }}, ZiIP{}, 0, ip, m_port);
   }
 
   void connectFailed(bool transient) {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP connect failure outside Rx thread", return);
-    unsigned reconnFreq = app()->reconnFreq();
-    if (transient && reconnFreq > 0)
-	app()->mx()->add(
-	  &m_reconnTimer, Zm::now(reconnFreq), ZmScheduler::Update,
-	  [this](auto &&arm) {
-	    return arm([this]() { connect_(); });
-	  }, app()->rxThread());
-    else
+    if (!m_connectStopping && (!transient || !retryConnect_()))
       app()->error_(ZeEXCEPT(Error, "Ztcp", "connect failed"));
   }
 
@@ -629,15 +704,32 @@ protected:
   void up_() { connect(); }
 
 private:
+  void retryConnect_(uint64_t serial) {
+    if (m_reconnSerial == serial) connect_();
+  }
+  bool retryConnect_() {
+    unsigned freq = app()->reconnFreq();
+    if (!freq) return false;
+    auto serial = ++m_reconnSerial;
+    app()->mx()->del(&m_reconnTimer);
+    app()->mx()->add(&m_reconnTimer, Zm::now(freq), ZmScheduler::Update,
+      [this, serial](auto &&arm) {
+	return arm([this, serial]() { retryConnect_(serial); });
+      }, app()->rxThread());
+    return true;
+  }
   void cancelReconn_() {
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP reconnect cancellation outside Rx thread", return);
+    ++m_reconnSerial;
     app()->mx()->del(&m_reconnTimer);
   }
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_reconnTimer;
+  uint64_t m_reconnSerial = 0;
+  bool m_connectBusy = false, m_connectStopping = false;
   Host			m_server;
   uint16_t		m_port = 0;
 };
@@ -930,6 +1022,7 @@ private:
 };
 
 template <typename App> class Client : public Hub<App> {
+template <typename, typename, typename, typename> friend class CliLink;
 public:
   using Base = Hub<App>;
 friend Base;
@@ -972,6 +1065,7 @@ friend Base;
   void final() { Base::final(); }
 
   void listen() {
+    if (!this->running()) return;
     mx()->listen(
       ZiListenFn{app(),
 	[](App *app, const ZiListenInfo &info) {
@@ -997,7 +1091,7 @@ friend Base;
   void stopListening() {
     mx()->del(&m_rebindTimer);
     if (m_listening)
-      mx()->stopListening(app()->localIP(), app()->localPort());
+      mx()->stopListening(m_listenIP, m_listenPort);
     m_listening = false;
   }
 
@@ -1022,12 +1116,18 @@ protected:
   void listening_(const ZiListenInfo &info) {
     ZiAssert(this->rxInvoked(), "Ztcp", (),
       "TCP listen completion outside Rx thread", return);
+    if (!this->running()) {
+      m_listenClosing = true;
+      mx()->stopListening(info.ip, info.port); return;
+    }
+    m_listenIP = info.ip; m_listenPort = info.port;
     m_listening = true;
     app()->listening(info);
   }
   void listenFailed_(bool transient) {
     ZiAssert(this->rxInvoked(), "Ztcp", (),
       "TCP listen failure outside Rx thread", return);
+    if (!this->running()) return;
     app()->listenFailed(transient);
   }
 
@@ -1070,6 +1170,15 @@ protected:
   void stop_0() {
     ZiAssert(this->rxInvoked(), "Ztcp", (),
       "TCP server stop drain outside Rx thread", return);
+    if (m_listenClosing) {
+      m_listenClosing = false;
+      // A late bind queued its close after the initial I/O barrier. Drain that
+      // close and any accepted-connection notifications before downLinks_().
+      mx()->rxRun([this]() {
+	this->rxRun([this]() { stop_0(); });
+      });
+      return;
+    }
     // Link lifetime can extend beyond disconnect completion. Count accepted
     // connections until their completion, not retained telemetry links.
     this->template downLinks_<typename App::Link>();
@@ -1088,7 +1197,10 @@ private:
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer	m_rebindTimer;
   unsigned		m_pending = 0;
+  ZiIP			m_listenIP;
+  uint16_t		m_listenPort = 0;
   bool			m_listening = false;
+  bool			m_listenClosing = false;
   bool			m_stopDrained = false;
 };
 

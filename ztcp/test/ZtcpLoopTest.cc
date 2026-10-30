@@ -15,6 +15,7 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmPlatform.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -25,9 +26,20 @@
 
 using namespace ZuTestUtil;
 
-#define ZTCP_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+namespace ZtcpLoopTest {
 
-namespace {
+static Zm::ThreadID mainThread = 0;
+static ZmAtomic<unsigned> cbErrors{0}, cbChecks{0};
+
+// ZuTestMgr is single-threaded. Callbacks collect results; only the test thread
+// emits TAP, after the native owners have drained.
+#define ZTCP_CHECK_RT(x, ...) do { \
+  if (Zm::getTID() == mainThread) { ZuCheckRT(x, log_(__VA_ARGS__)); } \
+  else { \
+    ++cbChecks; \
+    if (!(x)) { ++cbErrors; log_(__VA_ARGS__); } \
+  } \
+} while (0)
 
 constexpr ZuString Ping{"ping\r\n"};
 constexpr ZuString Pong{"pong\r\n"};
@@ -267,6 +279,7 @@ void testLoop(
   const char *testName, ZiIP ip, const char *connectIP, unsigned port)
 {
   ZuTestScopeRT(testName);
+  cbErrors = 0; auto priorChecks = cbChecks.load_();
 
   State state;
   state.ip = ip;
@@ -328,21 +341,24 @@ void testLoop(
   server.final();
   mx.stop();
   link = nullptr;
+  ZuCheckRT(!cbErrors.load_(), log_("callback checks failed"));
+  ZuCheckRT(cbChecks.load_() > priorChecks, log_("callback checks did not run"));
 }
 
-} // namespace
+} // namespace ZtcpLoopTest
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
+  ZtcpLoopTest::mainThread = Zm::getTID();
   ZiLog::init("ZtcpLoopTest");
   ZiLog::level(0);
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
-  ZuTestCall(testLoop, "testLoopIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1",
+  ZuTestCall(ZtcpLoopTest::testLoop, "testLoopIPv4", ZiIP{"127.0.0.1"}, "127.0.0.1",
     ZtcpTestPort::Loop4);
-  ZuTestCall(testLoop, "testLoopIPv6", ZiIP{"::1"}, "::1",
+  ZuTestCall(ZtcpLoopTest::testLoop, "testLoopIPv6", ZiIP{"::1"}, "::1",
     ZtcpTestPort::Loop6);
   ZiLog::stop();
   return 0;
