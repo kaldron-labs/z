@@ -42,11 +42,22 @@ multiplexer's low-level socket Rx/Tx threads. The examples use four isolated
 threads to make the separation explicit.
 
 For clients, retain the link with `ZmRef`, call `connect(host, port)` and handle
-completion asynchronously. For servers, call `listen()` after initialization;
-stop accepting with `stopListening()`. Keep the application, multiplexer and
+completion asynchronously. For servers, call `start()` after successful
+initialization, then `listen()`; call `stop()` to stop accepting and drain
+connections before `final()`. Keep the application, multiplexer and
 buffer infrastructure alive until links and queued callbacks have quiesced,
 then call `final()` and stop the multiplexer. Do not block an Rx/Tx callback
 waiting for work that needs the same scheduler.
+
+A server retains the actual bound address, so `localPort() == 0` requests an
+ephemeral listener that `stop()` can remove. A success callback arriving after
+stop begins closes that new listener; late failures/retries cannot reopen it.
+`listen()` accepts requests only while the hub is starting/running. After stop
+completes, the same hub may start/listen again with its retained configuration.
+Call `final()` after failed initialization before correcting parameters and
+initializing again. Zfix's [integration suite](../zfix/itest/README.md) exercises
+failed startup, bind conflicts, exact-port rebinding and pending-listen shutdown
+through the production transport hubs.
 
 ## Receiving and framing
 
@@ -75,7 +86,13 @@ void sendPing() {
 ```
 
 Install `txErrorFn(ZiTxErrorFn{...})` to handle `ZeException` transmit failures;
-the examples log the exception and return `false`. A local flush is not a peer
+the examples log the exception and return `false`. Physical send failures notify
+on I/O Tx; Zi closes that original socket independently of the callback result.
+App Tx validation failures notify through an Rx post, where `false` requests
+close only if the originating socket is still current after the callback.
+Rejections detected by public `send()` are diagnostic only and notify on the
+calling thread without capturing a socket origin. Callbacks must dispatch
+mutations to their owner shard; they do not all run on Rx. A local flush is not a peer
 application acknowledgement. Preserve Rx/Tx ownership when building replies,
 and use the public dispatching entry points rather than calling internal
 trailing-underscore methods from an arbitrary thread.
@@ -93,6 +110,19 @@ in the top-level testing guide.
 ## Examples and tests
 
 Run `make -C ztcp test` from a configured build tree. The [test directory](test/)
-contains executable API examples and boundary cases. See the top-level
+contains executable API examples and boundary cases. ZtcpLoopTest collects
+worker callback diagnostics and reports them on the test thread after owner
+drain; the TAP manager is single-threaded. See the top-level
 [testing guide](../TESTING.md) for environment, diagnostics and port allocations,
 and [dependencies](../DEPENDENCIES.md) for build prerequisites.
+
+Outgoing TCP links resolve hostnames asynchronously and consume the resolver's
+terminal continuation before submitting a socket connect. Submitted DNS and TCP
+operations complete normally; applications keep links, hubs and the multiplex
+alive until their continuations and connection shutdown have drained. Stopping
+prevents new setup work and closes a late successful socket through the ordinary
+connection path. There is no protocol-imposed DNS/connect cancellation or native
+setup deadline. Busy links reject overlapping connects before address/SNI mutation.
+`connectRetired_()` starts protocol owner drain after pre-readiness failure;
+`connectFailed()` reports native failures. Reconnect timers retain the owner and
+ignore queued callbacks from earlier timer generations.

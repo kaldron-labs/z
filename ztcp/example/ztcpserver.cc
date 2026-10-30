@@ -113,12 +113,15 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
   if (!mx.start()) return 1;
-  if (!app.init(Ztcp::ServerParams(&mx, "3", "4"))) return 1;
+  if (!app.init(Ztcp::ServerParams(&mx, "3", "4"))) {
+    app.final(); mx.stop(); ZiLog::stop(); return 1;
+  }
+  if (!app.start()) { app.final(); mx.stop(); ZiLog::stop(); return 1; }
   app.listen();
   app.done.wait();
-  app.stopListening();
+  bool stopped = app.stop();
   app.final();
   mx.stop();
   ZiLog::stop();
-  return 0;
+  return stopped ? 0 : 1;
 }
