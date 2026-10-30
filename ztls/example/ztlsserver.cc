@@ -173,16 +173,19 @@ int main(int argc, char **argv)
 	  .certPath(argv[3])
 	  .keyPath(argv[4]))) {
     std::cerr << "TLS server initialization failed\n" << std::flush;
-    return 1;
+    app.final(); mx.stop(); ZiLog::stop(); return 1;
   }
 
+  if (!app.start()) { app.final(); mx.stop(); ZiLog::stop(); return 1; }
   app.listen();
 
   app.wait();
 
+  bool stopped = app.stop();
+  app.final();
   mx.stop();
 
   ZiLog::stop();
 
-  return 0;
+  return stopped ? 0 : 1;
 }
