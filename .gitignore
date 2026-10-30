@@ -149,3 +149,31 @@ old/**
 zhttp/itest/zhttpserverstreamtest.ZhttpServerStop-*/
 
 /zgrpc/src/Zgrpc.pc
+
+# Zfix source-tree TAP consumers.
+/zfix/test/ZfixDeclTest
+/zfix/test/ZfixLinkTest
+/zfix/test/ZfixInstDeclTest
+/zfix/test/ZfixInstLinkTest
+
+/zfix/test/ZfixCodecTest
+/zfix/test/ZfixInstCodecTest
+/zfix/test/ZfixGroupTest
+/zfix/test/ZfixUnionTest
+
+/zfix/test/ZfixFrameTest
+
+/zfix/test/ZfixFrameFuzz
+
+/zfix/test/ZfixAsan*Test
+
+/zfix/test/ZfixMsgsTest
+
+/zfix/test/ZfixSeqTest
+/zfix/test/ZfixInst*Test
+
+/zfix/test/ZfixSeqTxTest
+
+/zfix/test/ZfixSessionTest
+
+/zfix/test/ZfixRxTest

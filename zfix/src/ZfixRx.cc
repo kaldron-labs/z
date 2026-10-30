@@ -1,0 +1,25 @@
+//  -*- mode:c++; indent-tabs-mode:t; tab-width:8; c-basic-offset:2; -*-
+//  vi: noet ts=8 sw=2 cino=+0,(s,l1,m1,g0,N-s,j1,U1,W2,i2
+
+// (c) Copyright 2026 Huw Rogers
+// This code is licensed by the MIT license (see LICENSE for details)
+
+#include <zlib/ZfixRx.hh>
+
+namespace Zfix {
+
+int rejectReason(Fmt::Error error)
+{
+  switch (error.code) {
+    case Fmt::ErrorCode::Required: return 1;
+    case Fmt::ErrorCode::Value: return 5;
+    case Fmt::ErrorCode::Duplicate: return 13;
+    case Fmt::ErrorCode::Unresolved: return 11;
+    case Fmt::ErrorCode::Reserved:
+    case Fmt::ErrorCode::Envelope: return 14;
+    case Fmt::ErrorCode::Group: return 16;
+    default: return 99;
+  }
+}
+} // Zfix
+
