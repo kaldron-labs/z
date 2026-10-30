@@ -16,6 +16,15 @@ and ALPN before initiating connections. `connected(Ztls::Connected)` reports
 handshake completion and negotiated information; consume plaintext through the
 receive stream and emit plaintext through `txStream()` for encryption/output.
 
+Configure `txErrorFn(ZiTxErrorFn{...})` before using the link. Queued protection
+and validation failures notify on Rx. A `false` result requests close only when
+the originating TLS generation is still current after the callback and has a
+bound socket; stale failures remain diagnostic. Physical send failures notify
+on I/O Tx and Zi closes the failed original socket independently of the result.
+Invalid public buffer input is diagnostic only and can notify on the calling
+thread. Dispatch application mutations to their owner shard instead of assuming
+every transmit-error callback runs on Rx.
+
 [ztlsclient.cc](example/ztlsclient.cc) is a complete client, including transmit
 errors and session-resumption observations. The [example directory](example/)
 and [integration guide](itest/README.md) demonstrate server/client lifecycles.
@@ -26,6 +35,15 @@ Maintain Rx/Tx ownership, keep owners alive during pending handshake and I/O
 work, and drain links before stopping the multiplexer. Session resumption and
 early data are separate behaviors; inspect the configured policy and link
 information rather than assuming a resumed connection admits early data.
+
+Initialize a server, call `start()`, then `listen()`. `stop()` cancels listening
+and drains native connections before `final()`. The bound address is retained,
+including an OS-assigned port requested with zero. Late listener success during
+stop closes the new socket; late failures/retries cannot reopen it. Start a
+stopped hub again to reuse its configuration. After failed initialization, call
+`final()` to release partially loaded credentials before correcting parameters
+and reinitializing. Zfix's [integration suite](../zfix/itest/README.md) tests these
+paths through TCP/TLS hubs, including explicit TLS trust/key failure cleanup.
 
 ## Hashes, MACs, randomness and secrets
 
@@ -91,3 +109,14 @@ Run `make -C ztls test` from a configured build tree. See
 [test/README.md](test/README.md), [itest/README.md](itest/README.md) and
 [interop/README.md](interop/README.md) for vectors, transport fixtures and
 external peers. Environment and ports are centralized in [TESTING.md](../TESTING.md).
+
+Outgoing TLS links resolve hostnames asynchronously and consume the resolver's
+terminal continuation before submitting a socket connect. Submitted DNS and TCP
+operations complete normally; applications keep links, hubs and the multiplex
+alive until their continuations and connection shutdown have drained. Stopping
+prevents new setup work and closes a late successful socket through the ordinary
+connection path. There is no protocol-imposed DNS/connect cancellation or native
+setup deadline. Busy links reject overlapping connects before address/SNI mutation.
+`connectRetired_()` starts protocol owner drain after pre-readiness failure;
+`connectFailed()` reports native failures. Reconnect timers retain the owner and
+ignore queued callbacks from earlier timer generations.

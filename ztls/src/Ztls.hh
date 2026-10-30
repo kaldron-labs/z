@@ -26,6 +26,7 @@
 
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiResolver.hh>
 #include <zlib/ZiEventLoop.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRx.hh>
@@ -353,6 +354,7 @@ public:
   }
   ~Link() {
     ZmAssert(!m_txTLS);
+    ZmAssert(!m_txCxn);
     app()->linkDeleted_(this, state_());
     if (m_tls) {
       if (ZuUnlikely(asyncPending_()))
@@ -437,15 +439,31 @@ private:
       "TLS connected dispatch outside Rx thread", return);
     // idempotent
     if (ZuUnlikely(m_cxn == cxn)) return;
-    // handle overlapping connections
-    if (ZuUnlikely(m_cxn)) {
-      auto cxn_ = ZuMvPtr(m_cxn);
-      cxn_->close();
-    }
     auto oldState = state_();
+    ZmRef<Cxn> old{ZuMvPtr(m_cxn)};
+    if (!old) old = m_closing.load_();
+    bool replacing = bool(old);
+    m_closing = nullptr;
+    if (ZuUnlikely(old)) {
+      old->close();
+      // Retire the old physical output on I/O Tx before publishing B. This
+      // neither flushes A nor waits for its disconnect callbacks. Delayed A
+      // send setups must reject the closed socket before touching the queue.
+      auto old_ = old.ptr();
+      old_->send(ZiIOFn{[
+	impl = ZmRef(this->impl()), cxn = ZuMv(old)
+      ](ZiIOContext &io) {
+	io.complete();
+	impl->Tx::txQueue.clean();
+	(void)cxn;
+	return false;
+      }});
+    }
     m_cxn = ZuMv(cxn);
+    m_closePending = m_peerClosed = false;
     stateChanged_(oldState);
     app()->linkConnected_();
+    if (!impl()->connectSocket_(replacing)) { impl()->disconnect_(false); return; }
     impl()->connected_(); // client initiates handshake
   }
 
@@ -495,6 +513,7 @@ protected:
       return false;
     }
 
+    ZmRef<Cxn> target{m_cxn};
     ptls_buffer_t pbuf;
     auto txbuf = rxTxBuf_(pbuf);
     int n;
@@ -503,7 +522,7 @@ protected:
     else {
       // Handshake input is read-only here; pbuf is only handshake Tx output.
       n = ptls_handshake(m_tls, &pbuf, input, inlen, &m_props);
-      finalizeTxBuf_(pbuf, ZuMv(txbuf));
+      finalizeTxBuf_(pbuf, ZuMv(txbuf), target.ptr());
     }
     if (!n) return finishHandshake_();
     if (n == PTLS_ERROR_IN_PROGRESS) return true;
@@ -572,24 +591,27 @@ private:
     m_txDeferred = false;
     m_txPending = true;
     app()->txRun([
-      impl = ZmRef(impl()), txTLS, gen, headroom = m_headroom
+      impl = ZmRef(impl()), txTLS, gen, headroom = m_headroom,
+      cxn = ZmRef<Cxn>{m_cxn}
     ]() mutable {
-      impl->installTx_(txTLS, gen, headroom);
+      impl->installTx_(txTLS, gen, headroom, ZuMv(cxn));
     });
     return true;
   }
 
-  void installTx_(ptls_tx_t *txTLS, uint64_t gen, unsigned headroom) {
+  void installTx_(ptls_tx_t *txTLS, uint64_t gen, unsigned headroom, ZmRef<Cxn> cxn) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS Tx install outside Tx thread", ptls_tx_free(txTLS); return);
     bool installed = false;
     if (ZuLikely(gen == m_tlsGen.load_() && !m_disconnecting.load_())) {
-      if (m_txTLS && m_txTLSGen != gen) {
+      if (m_txTLSGen != gen) {
 	ptls_tx_free(m_txTLS);
 	m_txTLS = nullptr;
+	m_txCxn = nullptr;
       }
       if (!m_txTLS) {
 	m_txTLS = txTLS;
+	m_txCxn = cxn;
 	m_txTLSGen = gen;
 	m_txHeadroom = headroom;
 	txTLS = nullptr;
@@ -597,15 +619,15 @@ private:
       }
     }
     ptls_tx_free(txTLS);
-    app()->rxRun([impl = ZmRef(impl()), gen, installed]() mutable {
-      impl->txInstalled_(gen, installed);
+    app()->rxRun([impl = ZmRef(impl()), cxn = ZuMv(cxn), gen, installed]() mutable {
+      impl->txInstalled_(cxn.ptr(), gen, installed);
     });
   }
 
-  void txInstalled_(uint64_t gen, bool installed) {
+  void txInstalled_(Cxn *cxn, uint64_t gen, bool installed) {
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS Tx acknowledgement outside Rx thread", return);
-    if (ZuUnlikely(gen != m_tlsGen.load_())) return;
+    if (ZuUnlikely(gen != m_tlsGen.load_() || m_cxn != cxn)) return;
     m_txPending = false;
     m_txDeferred = false;
     if (ZuUnlikely(!installed)) {
@@ -622,6 +644,7 @@ private:
     stateChanged_(oldState);
     auto tlsver = ptls_get_protocol_version(m_tls);
     const char *alpn = ptls_get_negotiated_protocol(m_tls);
+    if (!impl()->connectReady_()) { disconnect_(false); return; }
     impl()->connected(Connected{
       .alpn = alpn ? ZuCSpan{alpn, unsigned(strlen(alpn))} : ZuCSpan{},
       .version = tlsver_(tlsver)
@@ -666,7 +689,7 @@ private:
     return true;
   }
 
-  bool finalizeTxBuf_(ptls_buffer_t &pbuf, ZmRef<ZiIOBuf> buf) {
+  bool finalizeTxBuf_(ptls_buffer_t &pbuf, ZmRef<ZiIOBuf> buf, Cxn *cxn) {
     if (!assertTxBuf_(pbuf, buf.ptr())) return false;
     if (!pbuf.off) return true;
     // Publish exactly the serialized TLS record bytes.
@@ -674,7 +697,7 @@ private:
     buf->length = uint32_t(pbuf.off);
     ++m_txInCount;
     m_txInBytes += buf->length;
-    Tx::send(ZuMv(buf));
+    Tx::send(cxn, ZuMv(buf));
     return true;
   }
 
@@ -791,22 +814,31 @@ private:
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMvPtr(impl_)};
     app()->rxRun([impl = ZuMv(impl), cxn = ZmRef(cxn), peer]() mutable {
-      if (!impl->disconnected_(cxn)) return;
+      // Even a stale Cxn retains its link through the local owner barriers:
+      // preexisting encrypt/send posts can still refer to that physical Cxn.
+      // The close token makes these barriers cleanup-free after replacement.
+      impl->disconnected_(cxn);
+      auto gen = impl->m_tlsGen.load_();
       auto app = impl->app();
       // drain Tx while keeping cxn/impl referenced
-      app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), peer]() mutable {
-	impl->clearTx_();
+      app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
+	if (impl->m_closing.load_() == cxn.ptr()) impl->clearTx_(gen);
 	// TLS Tx has stopped producing; drain its queued socket sends next.
 	auto mx = cxn->mx();
 	mx->txRun([
-	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
+	  impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
 	]() mutable {
-	  impl->Tx::txQueue.clean();
+	  if (impl->m_closing.load_() == cxn.ptr() && gen == impl->m_tlsGen.load_())
+	    impl->Tx::txQueue.clean();
 	  auto app = impl->app();
 	  app->rxRun([
-	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
+	    impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
 	  ]() mutable {
-	    impl->disconnected_1(peer);
+	    if (impl->m_closing.load_() == cxn.ptr()) {
+	      impl->m_closing = nullptr;
+	      if (gen == impl->m_tlsGen.load_()) impl->disconnected_1(peer);
+	    }
+	    impl->app()->linkDisconnected_();
 	    (void)cxn;
 	  });
 	});
@@ -817,13 +849,14 @@ private:
     // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnected dispatch outside Rx thread", return false);
-    if (m_cxn == cxn) {
+    if (m_cxn == cxn || m_closing.load_() == cxn) {
       auto oldState = state_();
       m_cxn = nullptr;
+      m_closing = cxn;
       stateChanged_(oldState);
       return true;
     }
-    return !m_cxn && m_disconnecting.load_();
+    return false;
   }
 
   void disconnected_1(bool peer) {
@@ -831,10 +864,9 @@ private:
       "TLS disconnect completion outside Rx thread", return);
     peer |= m_peerClosed;
     reset_tls_<false>();
-    auto app = impl()->app();
-    impl()->disconnected(peer);
     m_rxStream.clean();
-    app->linkDisconnected_();
+    impl()->connectClosed_();
+    impl()->disconnected(peer);
   }
 
 public:
@@ -955,10 +987,12 @@ public:
   }
 protected:
   bool send(ZmRef<ZiIOBuf> buf, uint64_t gen) {
-    if (ZuUnlikely(!buf || buf->failed() || !buf->length || m_disconnecting.load_() ||
-	gen != m_tlsGen.load_()))
+    if (ZuUnlikely(!buf || buf->failed() || !buf->length))
       return reportTxError_(
 	"TLS session is closed for transmission");
+    if (ZuUnlikely(m_disconnecting.load_() || gen != m_tlsGen.load_())) {
+      queueTxError_(gen, "TLS session is closed for transmission"); return false;
+    }
     buf->owner = impl();
     app()->txInvoke([buf = ZuMv(buf), gen]() mutable {
       auto link = static_cast<Impl *>(buf->owner);
@@ -980,9 +1014,11 @@ private:
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS send_ outside Tx thread", return false);
     if (ZuUnlikely(!buf || buf->failed() || !buf->length || gen != m_tlsGen.load_() ||
-	!m_txTLS || m_txTLSGen != gen || m_txClosing))
-      return reportTxError_(
-	"TLS session is closed for transmission");
+	!m_txTLS || m_txTLSGen != gen || m_txClosing)) {
+      queueTxError_(gen, "TLS session is closed for transmission",
+	bool(m_txCxn) && m_txTLSGen == gen);
+      return false;
+    }
 
     ZiAssert(buf->skip >= m_txHeadroom && buf->skip <= TxRecordCapacity,
       "Ztls", (), "TLS Tx buffer missing headroom", return false);
@@ -1018,7 +1054,7 @@ private:
       return false;
     }
     impl()->txProtected_();
-    if (!finalizeTxBuf_(pbuf, ZuMv(buf))) {
+    if (!finalizeTxBuf_(pbuf, ZuMv(buf), m_txCxn.ptr())) {
       queueTxError_(gen, "TLS Tx buffer finalization failed");
       return false;
     }
@@ -1027,6 +1063,8 @@ private:
 
 public:
   void sent(ZmRef<ZiTxBuf>, bool ok) {
+    // The underlying connection closes its own failed socket after this
+    // diagnostic. It may already have been displaced by another TLS session.
     if (ZuUnlikely(!ok))
       reportTxError_("TLS transmit failed");
   }
@@ -1068,7 +1106,7 @@ private:
       queueTxError_(gen, "ptls_tx_update_key()", n);
       return;
     }
-    if (!finalizeTxBuf_(pbuf, ZuMv(buf)))
+    if (!finalizeTxBuf_(pbuf, ZuMv(buf), m_txCxn.ptr()))
       queueTxError_(gen, "TLS KeyUpdate buffer finalization failed");
   }
 
@@ -1087,7 +1125,7 @@ private:
 	queueTxError_(gen, "TLS alert buffer invariant failed");
       } else if (ZuUnlikely(n)) {
 	queueTxError_(gen, "ptls_tx_send_alert()", n);
-      } else if (buf && !finalizeTxBuf_(pbuf, ZuMv(buf))) {
+      } else if (buf && !finalizeTxBuf_(pbuf, ZuMv(buf), m_txCxn.ptr())) {
 	queueTxError_(gen, "TLS alert buffer finalization failed");
       }
       m_txClosing = true;
@@ -1096,20 +1134,22 @@ private:
     mx->txRun([cxn = ZuMv(cxn)]() { cxn->disconnect(); });
   }
 
-  void queueTxError_(uint64_t gen, const char *message) {
-    app()->rxRun([impl = ZmRef(impl()), gen, message]() mutable {
-      if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
-      impl->reportTxError_(message);
+  void queueTxError_(uint64_t gen, const char *message, bool origin = true) {
+    app()->rxRun([impl = ZmRef(impl()), gen, message, origin]() mutable {
+      auto e = ZeEXCEPT(Error, "Ztls", message);
+      bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
+      if (close && origin && gen == impl->m_tlsGen.load_() && impl->m_cxn)
+	impl->disconnect_(false);
     });
   }
 
   void queueTxError_(uint64_t gen, const char *function, int n) {
     app()->rxRun([impl = ZmRef(impl()), gen, function, n]() mutable {
-      if (ZuUnlikely(gen != impl->m_tlsGen.load_())) return;
       auto e = ZeEXCEPT(Error, "Ztls", ([function, n](auto &s) {
 	s << function << ": " << strerror_(n);
       }));
-      if (impl->m_txErrorFn && !impl->m_txErrorFn(e))
+      bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
+      if (close && gen == impl->m_tlsGen.load_() && impl->m_cxn)
 	impl->disconnect_(false);
     });
   }
@@ -1117,20 +1157,23 @@ private:
   void retireTx_(uint64_t gen) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS Tx retirement outside Tx thread", return);
-    if (m_txTLS && m_txTLSGen != gen) {
+    if (m_txTLSGen != gen) {
       ptls_tx_free(m_txTLS);
       m_txTLS = nullptr;
+      m_txCxn = nullptr;
       m_txTLSGen = 0;
       m_txHeadroom = 0;
       m_txClosing = false;
     }
   }
 
-  void clearTx_() {
+  void clearTx_(uint64_t gen) {
     ZiAssert(app()->txInvoked(), "Ztls", (),
       "TLS Tx cleanup outside Tx thread", return);
+    if (gen != m_tlsGen.load_() || (m_txTLS && m_txTLSGen != gen)) return;
     ptls_tx_free(m_txTLS);
     m_txTLS = nullptr;
+    m_txCxn = nullptr;
     m_txTLSGen = 0;
     m_txHeadroom = 0;
     m_txClosing = false;
@@ -1139,7 +1182,7 @@ private:
 private:
   bool reportTxError_(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Ztls", message);
-    if (m_txErrorFn && !m_txErrorFn(e)) disconnect();
+    if (m_txErrorFn) m_txErrorFn(e);
     return false;
   }
 
@@ -1270,19 +1313,20 @@ public:
   void disconnect_(bool notify = true) { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS disconnect outside Rx thread", return);
+    impl()->cancelReconn_();
+    impl()->stopConnect_();
     if (m_closePending) return;
     m_closePending = true;
     auto oldState = state_();
     m_disconnecting = 1; // disconnect() might be bypassed
     stateChanged_(oldState);
-    impl()->cancelReconn_();
     bool asyncPending = asyncPending_();
     if (asyncPending) {
       asyncRetireTLS_();
       m_tls = nullptr;
     }
     ZmRef<Cxn> cxn;
-    if (m_cxn) cxn = ZmRef(static_cast<Cxn *>(m_cxn));
+    if (m_cxn) cxn = ZmRef<Cxn>{m_cxn};
     if (cxn) {
       if (notify) {
 	uint64_t gen = m_tlsGen.load_();
@@ -1299,6 +1343,11 @@ public:
 protected:
   void up_() { }
   void cancelReconn_() { }
+  void stopConnect_() { }
+  bool connectSocket_(bool) { return true; }
+  bool connectReady_() { return true; }
+  void connectClosed_() { }
+
 
   static int tlsver_(uint16_t v) {
     switch (v) {
@@ -1386,6 +1435,8 @@ private:
   // shared
   ZmAtomic<uint64_t>	m_tlsGen = 0;
   ZmAtomic<unsigned>	m_disconnecting = 0;
+  // Physical close obligation only; invalidated before successor association.
+  ZmAtomic<Cxn *>	m_closing = nullptr;
   // Telemetry counters may be updated/read uncleanly across shards.
   uint64_t		m_rxInCount = 0;
   uint64_t		m_rxInBytes = 0;
@@ -1437,6 +1488,8 @@ private:
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
   ptls_tx_t		*m_txTLS = nullptr;
+  // Detached keys and their physical destination have the same Tx lifetime.
+  ZmRef<Cxn>		m_txCxn;
   uint64_t		m_txTLSGen = 0;
   unsigned		m_txHeadroom = 0;
   bool			m_txClosing = false;
@@ -1493,6 +1546,7 @@ template <typename> friend class Client;
   void connect(Host server, uint16_t port) { // App thread(s)
     app()->rxInvoke(
       [this, server = ZuMv(server), port]() mutable {
+	if (m_connectBusy || !impl()->connectAllowed_()) return;
 	m_server = ZuMv(server);
 	m_port = port;
 	m_remote = ZiIP{};
@@ -1502,6 +1556,7 @@ template <typename> friend class Client;
   void connect(Host server, uint16_t port, ZiIP remote) { // App thread(s)
     app()->rxInvoke(
       [this, server = ZuMv(server), port, remote = ZuMv(remote)]() mutable {
+	if (m_connectBusy || !impl()->connectAllowed_()) return;
 	m_server = ZuMv(server);
 	m_port = port;
 	m_remote = ZuMv(remote);
@@ -1515,28 +1570,56 @@ template <typename> friend class Client;
   void connect_() { // direct call from within rx thread
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS connect outside Rx thread", return);
-    ZiIP ip = m_remote ? m_remote : ZiIP{m_server};
-    if (!ip) {
-      app()->error_(ZeEXCEPT(Error, "Ztls", ([server = LogMsg{m_server}](auto &s) {
-	s << '"' << server << "\": hostname lookup failure";
-      })));
-      impl()->connectFailed(true);
-      return;
-    }
-    reset_tls_();
-    {
-      int n = ptls_set_server_name(
-	tls(), m_server.data(), m_server.length());
-      if (n) {
-	app()->error_(ZeEXCEPT(Error, "Ztls", ([server = LogMsg{m_server}, n](auto &s) {
-	  s << "ptls_set_server_name(\"" << server << "\"): " <<
-	    strerror_(n);
-	})));
-	impl()->connectFailed(true);
-	return;
-      }
-    }
+    if (m_connectBusy) return;
+    if (!impl()->connectAllowed_()) { retryConnect_(); return; }
+    cancelReconn_();
+    m_connectBusy = true;
+    m_connectStopping = false;
+    if (auto ip = m_remote) { resolved_(ip); return; }
+    // Consume the resolver through its terminal continuation, including both
+    // address families. Move the retained owner into the application post.
+    ZiResolver::resolve(m_server, ZiResolver_::ResolveFn{
+      [owner = ZmRef(impl()), ip = ZiIP{}](auto result) mutable {
+	if (result.template is<ZiIP>()) {
+	  if (!ip) ip = result.template p<ZiIP>();
+	  return true;
+	}
+	auto app = owner->app();
+	app->rxRun([owner = ZuMv(owner), ip] { owner->resolved_(ip); });
+	return false;
+      }});
+  }
 
+  bool connectAllowed_() const { return true; }
+  void connectRetired_() { }
+  bool connectSocket_(bool) { return !m_connectStopping; }
+  bool connectReady_() { return !m_connectStopping; }
+  void connectClosed_() { m_connectBusy = false; }
+  // Shutdown stops new setup work, but submitted DNS/socket operations drain
+  // through their ordinary completion. The hub/multiplex must remain alive.
+  void stopConnect_() { m_connectStopping = true; }
+  void resolved_(ZiIP ip) {
+    if (!ip) { setupFailed_(true); return; }
+    if (m_connectStopping) {
+      m_connectBusy = false; impl()->connectRetired_(); return;
+    }
+    impl()->connectIP_(ip);
+  }
+  void setupFailed_(bool transient) {
+    m_connectBusy = false;
+    impl()->connectRetired_();
+    impl()->connectFailed(transient);
+  }
+  void connectIP_(ZiIP ip) {
+    reset_tls_();
+    if (!tls()) { setupFailed_(true); return; }
+    int n = ptls_set_server_name(tls(), m_server.data(), m_server.length());
+    if (n) {
+      app()->error_(ZeEXCEPT(Error, "Ztls", ([server = LogMsg{m_server}, n](auto &s) {
+	s << "ptls_set_server_name(\"" << server << "\"): " << strerror_(n);
+      })));
+      setupFailed_(true); return;
+    }
     app()->mx()->connect(
       ZiConnectFn{ZmRef(impl()),
 	[](Impl *impl, const ZiCxnInfo &ci) -> ZiConnection * {
@@ -1544,13 +1627,8 @@ template <typename> friend class Client;
 	}},
       ZiFailFn{ZmRef(impl()), [](Impl *impl, bool transient) {
 	auto app = impl->app();
-	app->rxRun([
-	  impl = ZmRef<Impl>{impl}, transient
-	]() mutable {
-	  impl->connectFailed(transient);
-	});
-      }},
-      ZiIP(), 0, ip, m_port);
+	app->rxRun([owner = ZmRef(impl), transient] { owner->setupFailed_(transient); });
+      }}, ZiIP{}, 0, ip, m_port);
   }
 
 private:
@@ -1592,14 +1670,7 @@ public:
   void connectFailed(bool transient) {
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS connect failure outside Rx thread", return);
-    unsigned reconnFreq = app()->reconnFreq();
-    if (transient && reconnFreq > 0)
-	app()->mx()->add(
-	  &m_reconnTimer, Zm::now(reconnFreq), ZmScheduler::Update,
-	  [this](auto &&arm) {
-	    return arm([this]() { connect_(); });
-	  }, app()->rxThread());
-    else
+    if (!m_connectStopping && (!transient || !retryConnect_()))
       app()->error_(ZeEXCEPT(Error, "Ztls", "connect failed"));
   }
 
@@ -1607,9 +1678,24 @@ protected:
   void up_() { connect(); }
 
 private:
+  void retryConnect_(uint64_t serial) {
+    if (m_reconnSerial == serial) connect_();
+  }
+  bool retryConnect_() {
+    unsigned freq = app()->reconnFreq();
+    if (!freq) return false;
+    auto serial = ++m_reconnSerial;
+    app()->mx()->del(&m_reconnTimer);
+    app()->mx()->add(&m_reconnTimer, Zm::now(freq), ZmScheduler::Update,
+      [this, serial](auto &&arm) {
+	return arm([this, serial]() { retryConnect_(serial); });
+      }, app()->rxThread());
+    return true;
+  }
   void cancelReconn_() {
     ZiAssert(app()->rxInvoked(), "Ztls", (),
       "TLS reconnect cancellation outside Rx thread", return);
+    ++m_reconnSerial;
     app()->mx()->del(&m_reconnTimer);
   }
 
@@ -1618,6 +1704,8 @@ private:
   ZmScheduler::Timer	m_reconnTimer;
   Ticket		m_ticket;
   size_t		m_maxEarlyData = 0;
+  uint64_t m_reconnSerial = 0;
+  bool m_connectBusy = false, m_connectStopping = false;
   Host			m_server;
   ZiIP			m_remote;
   uint16_t		m_port;
@@ -2325,6 +2413,7 @@ struct App : public Client<App> {
 };
 #endif
 template <typename App> class Client : public Hub<App> {
+template <typename, typename, typename, typename> friend class CliLink;
 public:
   using Base = Hub<App>;
 friend Base;
@@ -2501,6 +2590,7 @@ public:
   void final() { Base::final(); release_(); }
 
   void listen() {
+    if (!this->running()) return;
     mx()->listen(
       ZiListenFn{app(),
 	[](App *app, const ZiListenInfo &info) {
@@ -2526,7 +2616,7 @@ public:
   void stopListening() {
     mx()->del(&m_rebindTimer);
     if (m_listening)
-      mx()->stopListening(app()->localIP(), app()->localPort());
+      mx()->stopListening(m_listenIP, m_listenPort);
     m_listening = false;
   }
 
@@ -2551,12 +2641,18 @@ protected:
   void listening_(const ZiListenInfo &info) {
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS listen completion outside Rx thread", return);
+    if (!this->running()) {
+      m_listenClosing = true;
+      mx()->stopListening(info.ip, info.port); return;
+    }
+    m_listenIP = info.ip; m_listenPort = info.port;
     m_listening = true;
     app()->listening(info);
   }
   void listenFailed_(bool transient) {
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS listen failure outside Rx thread", return);
+    if (!this->running()) return;
     app()->listenFailed(transient);
   }
 
@@ -2599,6 +2695,15 @@ protected:
   void stop_0() {
     ZiAssert(this->rxInvoked(), "Ztls", (),
       "TLS server stop drain outside Rx thread", return);
+    if (m_listenClosing) {
+      m_listenClosing = false;
+      // A late bind queued its close after the initial I/O barrier. Drain that
+      // close and any accepted-connection notifications before downLinks_().
+      mx()->rxRun([this]() {
+	this->rxRun([this]() { stop_0(); });
+      });
+      return;
+    }
     // Link lifetime can extend beyond disconnect completion. Count accepted
     // connections until their completion, not retained telemetry links.
     this->template downLinks_<typename App::Link>();
@@ -2622,7 +2727,10 @@ private:
   alignas(Zm::CacheLineSize)
   ZmScheduler::Timer		m_rebindTimer;
   unsigned			m_pending = 0;
+  ZiIP				m_listenIP;
+  uint16_t			m_listenPort = 0;
   bool				m_listening = false;
+  bool				m_listenClosing = false;
   bool				m_stopDrained = false;
 };
 
