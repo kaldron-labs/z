@@ -17,9 +17,14 @@ namespace {
 
 using TxAlloc = ZiTxBufAlloc<32, 128>;
 
-struct FakeConnection {
+struct FakeConnection : ZiConnection {
   ZiIOContext	io;
   unsigned	sendCalls = 0;
+
+  FakeConnection() : ZiConnection{nullptr, {}} { io.cxn = this; }
+
+  void connected(ZiIOContext &) override { }
+  void disconnected(bool) override { }
 
   void send(ZiIOFn fn)
   {
