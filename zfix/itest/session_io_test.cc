@@ -33,6 +33,13 @@ namespace Net = Ztcp;
 
 using namespace ZuTestUtil;
 using namespace Zfix;
+
+struct Progress {
+  uint64_t	epoch = 0;
+  RxProgress	rx;
+  TxProgress	tx;
+};
+
 struct Order {
   ZuCSpan	id;
   unsigned	lane = 0;
@@ -42,14 +49,14 @@ ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String),
   (lane, (FIX::ID<7001>), UInt32));
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
-using Reply0 = MT<Order, "8", ZuFacet::FIX, Discriminator<7001, "0">>;
-using Reply1 = MT<Order, "8", ZuFacet::FIX, Discriminator<7001, "1">>;
-using Reply2 = MT<Order, "8", ZuFacet::FIX, Discriminator<7001, "2">>;
-using Reply3 = MT<Order, "8", ZuFacet::FIX, Discriminator<7001, "3">>;
-using Lane0 = MT<Order, "D", ZuFacet::FIX, Discriminator<7001, "0">, ZuTypeList<Reply0>>;
-using Lane1 = MT<Order, "D", ZuFacet::FIX, Discriminator<7001, "1">, ZuTypeList<Reply1>>;
-using Lane2 = MT<Order, "D", ZuFacet::FIX, Discriminator<7001, "2">, ZuTypeList<Reply2>>;
-using Lane3 = MT<Order, "D", ZuFacet::FIX, Discriminator<7001, "3">, ZuTypeList<Reply3>>;
+using Reply0 = MT<Order, "8", ZuFacet::FIX, Discrim<7001, "0">>;
+using Reply1 = MT<Order, "8", ZuFacet::FIX, Discrim<7001, "1">>;
+using Reply2 = MT<Order, "8", ZuFacet::FIX, Discrim<7001, "2">>;
+using Reply3 = MT<Order, "8", ZuFacet::FIX, Discrim<7001, "3">>;
+using Lane0 = MT<Order, "D", ZuFacet::FIX, Discrim<7001, "0">, ZuTypeList<Reply0>>;
+using Lane1 = MT<Order, "D", ZuFacet::FIX, Discrim<7001, "1">, ZuTypeList<Reply1>>;
+using Lane2 = MT<Order, "D", ZuFacet::FIX, Discrim<7001, "2">, ZuTypeList<Reply2>>;
+using Lane3 = MT<Order, "D", ZuFacet::FIX, Discrim<7001, "3">, ZuTypeList<Reply3>>;
 using Dictionary = MTList<Lane0, Lane1, Lane2, Lane3, Reply0, Reply1, Reply2, Reply3>;
 #ifdef ZFIX_TEST_TLS
 using Network = Zfix::TLS;
@@ -92,7 +99,7 @@ struct TestState {
   ZmAtomic<unsigned>	listenFailures{0}, setupFailures{0}, overloadEvents{0};
   bool			expectListenFailure = false;
   unsigned		lane = 0, reconn = 0;
-  SessionString		id{"SESSION"}, sub;
+  SessionString		sub;
   ZmRef<ServerLink>	serverLink; // network Rx-owned; released after owner drains
   bool			asyncAdmission = false, forceBusy = false, trace = false;
   bool			asymmetric = false;
@@ -101,8 +108,7 @@ struct TestState {
   bool			setup = false, socketGate = false;
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "# ZfixLinkStateIOTest failure %s:%u mode=%u lane=%u\n", file, line, mode,
-      lane);
+    log("# ZfixLinkStateIOTest failure ", file, ":", line, " mode=", mode, " lane=", lane);
     ++errors; done.post();
   }
 
@@ -112,7 +118,6 @@ struct TestState {
 static SessionConfig config(bool client, const TestState *s) {
   auto mode = s->mode; auto heartbeat = s->heartbeat;
   SessionConfig c; c.mode = mode; c.initiator = client; c.heartBtInt = heartbeat;
-  c.id = s->id;
   c.header.version = mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
   c.appVerID = AppVersion::V5_0_SP2; c.header.local = client ? "CLIENT" : "SERVER";
   c.header.peer = client ? "SERVER" : "CLIENT";
@@ -211,7 +216,7 @@ template <typename Impl> struct Peer {
   auto self() { return static_cast<Impl *>(this); }
   auto state() { return self()->test; }
 
-  unsigned fixAssociateTx_(TxBody::Ref b, TxContext c, uint64_t ticket) {
+  unsigned fixAssociateTx(TxBody::Ref b, TxContext c, uint64_t ticket) {
     if (!self()->app()->txInvoked() || c.epoch != 1 || c.seqNo != ++lastLoad) state()->fail();
     if (!b->administrative() &&
 	((client && state()->scenario == Scenario::LoadClose) ||
@@ -221,10 +226,9 @@ template <typename Impl> struct Peer {
     return TxLoad::Accepted;
   }
 
-  void fixStopTx_(uint64_t) {
+  void fixStopTx(uint64_t) {
     queue.clean();
-    Checkpoint snapshot;
-    if (!self()->snapshotTx_(snapshot) || !(snapshot.fields & StateMask::Tx)) state()->fail();
+    if (!self()->txProgress_().loaded) state()->fail();
     ++state()->snapshots;
     if (pendingLoad) {
       if (state()->scenario == Scenario::DrainHold) {
@@ -241,11 +245,10 @@ template <typename Impl> struct Peer {
     }
   }
 
-  void fixStopRx_(uint64_t, uint64_t) {
+  void fixStopRx(uint64_t, uint64_t) {
     if (!client && state()->workCase == 2)
       self()->app()->rxRun([this] { state()->workStop.post(); });
-    Checkpoint snapshot;
-    if (!self()->snapshotRx_(snapshot) || !(snapshot.fields & StateMask::Rx)) state()->fail();
+    if (!self()->rxProgress_().processed) state()->fail();
     ++state()->snapshots;
     if (admission) {
       ++state()->cancelled;
@@ -254,19 +257,19 @@ template <typename Impl> struct Peer {
     }
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime original) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime original) {
     if (!c.replay)
       history.push(TxHistory{ZuMv(body), original, c.epoch, c.seqNo});
   }
 
-  TxReload fixRetrieveTx_(TxContext c, uint64_t, uint64_t) {
+  TxReload fixRetrieveTx(TxContext c, uint64_t, uint64_t) {
     for (const auto &h : history)
       if (h.epoch == c.epoch && h.seqNo == c.seqNo &&
 	  (!h.body->administrative() || h.body->msgType() == "3")) return {h};
     return {};
   }
 
-  TxBody::Ref fixLogonTx_(TxBody::Ref body) {
+  TxBody::Ref fixLogonTx(TxBody::Ref body) {
     if (!self()->app()->txInvoked()) state()->fail();
     if (client && state()->scenario == Scenario::PrepareRefused) return {};
     if (!state()->trace) return body;
@@ -277,14 +280,14 @@ template <typename Impl> struct Peer {
     if (error) state()->fail(); return out;
   }
 
-  void fixCompleteTx_(TxBody::Ref b, TxContext, bool ok) {
+  void fixCompleteTx(TxBody::Ref b, TxContext, bool ok) {
     if (!self()->app()->txInvoked() || (!ok
       && state()->scenario == Scenario::Normal)) state()->fail();
     if (b->msgType() == "D" || b->msgType() == "8") ++state()->businessSent;
     if (state()->workCase >= 2 && ok && !b->administrative()) state()->workSent.post();
   }
 
-  void fixAckdTx_(TxContext, uint64_t previous, uint64_t next) {
+  void fixAckdTx(TxContext, uint64_t previous, uint64_t next) {
     if (!state()->trace) return;
     if (!self()->app()->txInvoked() || next <= previous) state()->fail();
     state()->done.post();
@@ -301,21 +304,21 @@ template <typename Impl> struct Peer {
     for (auto c : text) if (uint8_t(c) < 32 || uint8_t(c) >= 127) state()->fail();
   }
 
-  void fixTraceRx_(TraceRef entry) {
+  void fixTraceRx(TraceRef entry) {
     if (!self()->app()->rxInvoked()) state()->fail();
     traceCheck(entry); rxTrace = ZuMv(entry); ++state()->traceRx;
   }
 
-  void fixTraceTx_(TraceRef entry) {
+  void fixTraceTx(TraceRef entry) {
     if (!self()->app()->txInvoked()) state()->fail();
     traceCheck(entry); txTrace = ZuMv(entry); ++state()->traceTx;
   }
 
-  void fixFaultTx_(TxContext, Fmt::Error) {
+  void fixFaultTx(TxContext, Fmt::Error) {
     if (state()->scenario == Scenario::Normal && state()->workCase != 2) state()->fail();
   }
 
-  unsigned fixAdmissionRx_(SessionEvent, ZmRef<Msg> msg, AdmitRequest &request) {
+  unsigned fixAdmissionRx(SessionEvent, ZmRef<Msg> msg, AdmitRequest &request) {
     if (!self()->app()->rxInvoked() || !msg || !msg->data().control.template is<Session::Logon>())
       state()->fail();
     if (state()->asymmetric && msg && msg->data().control.template is<Session::Logon>()) {
@@ -331,7 +334,7 @@ template <typename Impl> struct Peer {
     return Admission::Pending;
   }
 
-  void fixBlockedRx_(TxContext) {
+  void fixBlockedRx(TxContext) {
     ++state()->blocked;
     if (!admission) return;
     if (state()->scenario == Scenario::PendingClose) { state()->pending.post(); return; }
@@ -341,7 +344,7 @@ template <typename Impl> struct Peer {
     self()->app()->mx()->run([reply = ZuMv(reply)] { reply(true); }, 5);
   }
 
-  void fixControlRx_(ZmRef<Msg> msg) {
+  void fixControlRx(ZmRef<Msg> msg) {
     if (client || !state()->cutReplay
       || !msg->data().control.template is<Session::ResendReq>()) return;
     // Recovery's fixed lifecycle event has been admitted. Leave exactly that
@@ -352,22 +355,21 @@ template <typename Impl> struct Peer {
     state()->cutReplay = false;
   }
 
-  void fixControlTx_(TxBody::Ref body, TxContext) {
+  void fixControlTx(TxBody::Ref body, TxContext) {
     if (body->msgType() == "0" && !body->body().length())
       if (state()->periodic.xchAdd(1) == 1) state()->timerDone.post();
   }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (!client && state()->workCase == 3 && (e.actions & SessionAction::Drained))
       state()->workDrained.post();
     if (!self()->app()->rxInvoked()) state()->fail();
     if (state()->adminTest && e.state == State::Disconnected) ++state()->downEvents;
     if (e.actions & SessionAction::Failure) {
-      fprintf(stderr, "# session failure role=%s mode=%u lane=%u scenario=%u work=%u "
-        "admin=%u state=%u error=%u tag=%u conn=%llu epoch=%llu actions=%u\n",
-        client ? "client" : "server", state()->mode, state()->lane, state()->scenario,
-        state()->workCase, unsigned(state()->adminTest), e.state, e.error, e.tag,
-        (unsigned long long)e.connection, (unsigned long long)e.epoch, e.actions);
+      log("# session failure role=", client ? "client" : "server", " mode=", state()->mode,
+	" lane=", state()->lane, " scenario=", state()->scenario, " work=", state()->workCase,
+	" admin=", unsigned(state()->adminTest), " state=", e.state, " error=", e.error, " tag=",
+	e.tag, " conn=", e.connection, " epoch=", e.epoch, " actions=", e.actions);
       ++state()->failures;
       if (e.error == SessionError::Overload) ++state()->overloadEvents;
       if (state()->scenario == Scenario::Normal && state()->workCase != 2) state()->fail();
@@ -412,11 +414,11 @@ template <typename Impl> struct Peer {
     }
   }
 
-  TxBody::Ref fixDequeueTx_() {
+  TxBody::Ref fixDequeueTx() {
     auto node = queue.shift(); return node ? ZuMv(node->data()) : TxBody::Ref{};
   }
 
-  void fixSelectedTx_(TxBody::Ref, TxContext, unsigned result) {
+  void fixSelectedTx(TxBody::Ref, TxContext, unsigned result) {
     bool cancelled = state()->scenario == Scenario::LoadClose ||
       (!client && state()->scenario == Scenario::DrainHold);
     if (!self()->app()->txInvoked() ||
@@ -424,12 +426,11 @@ template <typename Impl> struct Peer {
 	  && result == TxSelect::Refused))) state()->fail();
   }
 
-  void fixSubmittedTx_(TxBody::Ref body, unsigned result) {
+  void fixSubmittedTx(TxBody::Ref body, unsigned result) {
     if (result == TxSelect::Busy || result == TxSelect::Held) {
       if (result == TxSelect::Busy) {
 	if (!state()->forceBusy)
-	  fprintf(stderr, "# deferred Busy submission client=%u lane=%u\n", client,
-	    state()->lane);
+	  log("# deferred Busy submission client=", client, " lane=", state()->lane);
 	++state()->busy;
       }
       queue.push(ZuMv(body)); self()->queued(); return;
@@ -437,14 +438,13 @@ template <typename Impl> struct Peer {
     bool pending = state()->scenario == Scenario::LoadClose ||
       (!client && state()->scenario == Scenario::DrainHold);
     if (result != (pending ? TxSelect::Pending : TxSelect::Accepted)) {
-      fprintf(stderr, "# submission result=%u client=%u lane=%u\n", result, client,
-	state()->lane);
+      log("# submission result=", result, " client=", client, " lane=", state()->lane);
       state()->fail();
     }
   }
 
   template <typename Entry>
-  Fmt::Error fixReceiveRx_(Entry *, const Order &o, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(Entry *, const Order &o, const RequestContext &context) {
     const auto &meta = context.context(); const auto &header = context.header();
     const auto &session = self()->session_();
     if (!context || meta.session != session.instance_() || meta.epoch != session.epoch_() ||
@@ -474,13 +474,13 @@ template <typename Impl> struct Peer {
       if (client != state()->reverse) { state()->fail(); return {}; }
       using Response = ZuType<0, typename Entry::Responses>;
       if (state()->workCase && !client) {
-	constexpr uint64_t runBytes =
+	constexpr uint64_t RunBytes =
 	  ZmHeapAllocSize<sizeof(WorkRun<Entry>) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{} +
 	  ZmHeapAllocSize<sizeof(WorkReply<Entry>) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{};
-	constexpr uint64_t dropBytes =
+	constexpr uint64_t DropBytes =
 	  ZmHeapAllocSize<sizeof(DropWork) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{} +
 	  ZmHeapAllocSize<sizeof(DropDispatch) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{};
-	auto work = admitWork<Entry>(context, state()->workCase >= 2 ? dropBytes : runBytes);
+	auto work = admitWork<Entry>(context, state()->workCase >= 2 ? DropBytes : RunBytes);
 	if (!work) return {Fmt::ErrorCode::Size};
 	if (state()->workCase >= 2) {
 	  pendingWork = ZuMv(work);
@@ -536,7 +536,7 @@ template <typename Impl> struct Peer {
   }
 
   template <typename Request, typename Response>
-  Fmt::Error fixReplyRx_(Request *, Response *, const RequestContext &context) {
+  Fmt::Error fixReplyRx(Request *, Response *, const RequestContext &context) {
     if (!self()->app()->rxInvoked()) state()->fail();
     ++replyCalls;
     if (refuseReply) return {Fmt::ErrorCode::Value, 11, 37};
@@ -548,7 +548,7 @@ template <typename Impl> struct Peer {
     return {};
   }
 
-  void fixStoppedRx_(bool) {
+  void fixStoppedRx(bool) {
     if (!self()->app()->rxInvoked()
       || self()->session_().state_() != State::Disconnected) state()->fail();
     ++stopReports;
@@ -597,28 +597,28 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
     if (test->socketGate) test->socketSubmitted.post();
   }
 
-  using Peer<Link>::fixAssociateTx_;
-  using Peer<Link>::fixPublishedTx_;
-  using Peer<Link>::fixRetrieveTx_;
-  using Peer<Link>::fixCompleteTx_;
-  using Peer<Link>::fixAckdTx_;
-  using Peer<Link>::fixLogonTx_;
-  using Peer<Link>::fixTraceRx_;
-  using Peer<Link>::fixTraceTx_;
-  using Peer<Link>::fixFaultTx_;
-  using Peer<Link>::fixAdmissionRx_;
-  using Peer<Link>::fixBlockedRx_;
-  using Peer<Link>::fixControlTx_;
-  using Peer<Link>::fixControlRx_;
-  using Peer<Link>::fixEventRx_;
-  using Peer<Link>::fixSubmittedTx_;
-  using Peer<Link>::fixDequeueTx_;
-  using Peer<Link>::fixSelectedTx_;
-  using Peer<Link>::fixReceiveRx_;
-  using Peer<Link>::fixReplyRx_;
-  using Peer<Link>::fixStoppedRx_;
-  using Peer<Link>::fixStopRx_;
-  using Peer<Link>::fixStopTx_;
+  using Peer<Link>::fixAssociateTx;
+  using Peer<Link>::fixPublishedTx;
+  using Peer<Link>::fixRetrieveTx;
+  using Peer<Link>::fixCompleteTx;
+  using Peer<Link>::fixAckdTx;
+  using Peer<Link>::fixLogonTx;
+  using Peer<Link>::fixTraceRx;
+  using Peer<Link>::fixTraceTx;
+  using Peer<Link>::fixFaultTx;
+  using Peer<Link>::fixAdmissionRx;
+  using Peer<Link>::fixBlockedRx;
+  using Peer<Link>::fixControlTx;
+  using Peer<Link>::fixControlRx;
+  using Peer<Link>::fixEventRx;
+  using Peer<Link>::fixSubmittedTx;
+  using Peer<Link>::fixDequeueTx;
+  using Peer<Link>::fixSelectedTx;
+  using Peer<Link>::fixReceiveRx;
+  using Peer<Link>::fixReplyRx;
+  using Peer<Link>::fixStoppedRx;
+  using Peer<Link>::fixStopRx;
+  using Peer<Link>::fixStopTx;
 };
 
 struct SrvHub : public Zfix::Server<SrvHub, Dictionary, Network> {
@@ -659,28 +659,28 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(ServerLink *);
   explicit ServerLink(SrvHub *app, TestState *s) : Base{app, config(false, s)},
     Peer<ServerLink>{false}, test{s} { }
 
-  using Peer<ServerLink>::fixAssociateTx_;
-  using Peer<ServerLink>::fixPublishedTx_;
-  using Peer<ServerLink>::fixRetrieveTx_;
-  using Peer<ServerLink>::fixCompleteTx_;
-  using Peer<ServerLink>::fixAckdTx_;
-  using Peer<ServerLink>::fixLogonTx_;
-  using Peer<ServerLink>::fixTraceRx_;
-  using Peer<ServerLink>::fixTraceTx_;
-  using Peer<ServerLink>::fixFaultTx_;
-  using Peer<ServerLink>::fixAdmissionRx_;
-  using Peer<ServerLink>::fixBlockedRx_;
-  using Peer<ServerLink>::fixControlTx_;
-  using Peer<ServerLink>::fixControlRx_;
-  using Peer<ServerLink>::fixEventRx_;
-  using Peer<ServerLink>::fixSubmittedTx_;
-  using Peer<ServerLink>::fixDequeueTx_;
-  using Peer<ServerLink>::fixSelectedTx_;
-  using Peer<ServerLink>::fixReceiveRx_;
-  using Peer<ServerLink>::fixReplyRx_;
-  using Peer<ServerLink>::fixStoppedRx_;
-  using Peer<ServerLink>::fixStopRx_;
-  using Peer<ServerLink>::fixStopTx_;
+  using Peer<ServerLink>::fixAssociateTx;
+  using Peer<ServerLink>::fixPublishedTx;
+  using Peer<ServerLink>::fixRetrieveTx;
+  using Peer<ServerLink>::fixCompleteTx;
+  using Peer<ServerLink>::fixAckdTx;
+  using Peer<ServerLink>::fixLogonTx;
+  using Peer<ServerLink>::fixTraceRx;
+  using Peer<ServerLink>::fixTraceTx;
+  using Peer<ServerLink>::fixFaultTx;
+  using Peer<ServerLink>::fixAdmissionRx;
+  using Peer<ServerLink>::fixBlockedRx;
+  using Peer<ServerLink>::fixControlTx;
+  using Peer<ServerLink>::fixControlRx;
+  using Peer<ServerLink>::fixEventRx;
+  using Peer<ServerLink>::fixSubmittedTx;
+  using Peer<ServerLink>::fixDequeueTx;
+  using Peer<ServerLink>::fixSelectedTx;
+  using Peer<ServerLink>::fixReceiveRx;
+  using Peer<ServerLink>::fixReplyRx;
+  using Peer<ServerLink>::fixStoppedRx;
+  using Peer<ServerLink>::fixStopRx;
+  using Peer<ServerLink>::fixStopTx;
 };
 
 void SrvHub::final() {
@@ -835,7 +835,7 @@ static void routeMatrix(unsigned mode) {
   Items<TestState *> states; states << &first << &second << &third;
   unsigned lane = 0;
   for (auto *s : states) {
-    s->mode = mode; s->lane = ++lane; s->id.length(0); s->id << "SESSION" << lane;
+    s->mode = mode; s->lane = ++lane;
   }
   SrvHub server{&first}, other{&third};
   server.routes << &first << &second; other.routes << &third;
@@ -1082,30 +1082,30 @@ static void setupCleanup(unsigned mode) {
   ZuCheck(!::getsockname(refused, reinterpret_cast<sockaddr *>(&addr), &size));
   unsigned refusedPort = ntohs(addr.sin_port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
-  Checkpoint rx, tx;
-  auto snapshot = [&client, &link, &rx, &tx] {
-    return ZmBlock<bool>{}([&client, &link, &rx, &tx](auto wake) {
-      client.rxRun([&client, &link, &rx, &tx, wake = ZuMv(wake)]() mutable {
-	bool ok = link->snapshotRx_(rx);
-	client.txRun([&link, &tx, ok, wake = ZuMv(wake)]() mutable {
-	  wake(link->snapshotTx_(tx) && ok);
+  Progress progress;
+  auto snapshot = [&client, &link, &progress] {
+    return ZmBlock<bool>{}([&client, &link, &progress](auto wake) {
+      client.rxRun([&client, &link, &progress, wake = ZuMv(wake)]() mutable {
+	progress.epoch = link->session_().epoch_(); progress.rx = link->rxProgress_();
+	client.txRun([&link, &progress, wake = ZuMv(wake)]() mutable {
+	  progress.tx = link->txProgress_(); wake(true);
 	});
       });
     });
   };
-  auto restore = [&client, &link, &rx, &tx] {
-    return ZmBlock<bool>{}([&client, &link, &rx, &tx](auto wake) {
-      client.rxRun([&client, &link, &rx, &tx, wake = ZuMv(wake)]() mutable {
-	bool ok = link->restoreRx_(rx);
-	client.txRun([&link, &tx, ok, wake = ZuMv(wake)]() mutable {
-	  wake(link->restoreTx_(tx) && ok);
+  auto restore = [&client, &link, &progress] {
+    return ZmBlock<bool>{}([&client, &link, &progress](auto wake) {
+      client.rxRun([&client, &link, &progress, wake = ZuMv(wake)]() mutable {
+	bool ok = link->restoreRx_(progress.epoch, progress.rx);
+	client.txRun([&link, &progress, ok, wake = ZuMv(wake)]() mutable {
+	  wake(link->restoreTx_(progress.epoch, progress.tx) && ok);
 	});
       });
     });
   };
   ZuCheck(snapshot());
-  rx.rx.received = rx.rx.processed = 19;
-  tx.tx.loaded = tx.tx.sent = tx.tx.acknowledged = 27;
+  progress.rx.received = progress.rx.processed = 19;
+  progress.tx.loaded = progress.tx.sent = progress.tx.acknowledged = 27;
   ZuCheck(restore());
   // Stop during numeric/DNS/socket setup. Submitted operations must finish
   // normally before the endpoint reports stopped; no setup deadline cancels them.
@@ -1130,8 +1130,8 @@ static void setupCleanup(unsigned mode) {
     }
     ZuCheck(state.stoppedOne.timedwait(Zm::now(3)) == 0);
     ZuCheck(snapshot());
-    ZuCheck(rx.epoch == 1 && tx.epoch == 1 && rx.rx.received == 19 && rx.rx.processed == 19);
-    ZuCheck(tx.tx.loaded == 27 && tx.tx.sent == 27 && tx.tx.acknowledged == 27);
+    ZuCheck(progress.epoch == 1 && progress.rx.received == 19 && progress.rx.processed == 19);
+    ZuCheck(progress.tx.loaded == 27 && progress.tx.sent == 27 && progress.tx.acknowledged == 27);
     ZuCheck(!state.ready.load_() && !state.admission.load_() && !link->lastLoad);
   }
 #ifdef ZFIX_TEST_TLS
@@ -1152,7 +1152,7 @@ static void setupCleanup(unsigned mode) {
     else if (sink) sink->close();
     ZuCheck(state.stoppedOne.timedwait(Zm::now(3)) == 0);
     ZuCheck(snapshot());
-    ZuCheck(rx.rx.received == 19 && tx.tx.loaded == 27 && !state.ready.load_()
+    ZuCheck(progress.rx.received == 19 && progress.tx.loaded == 27 && !state.ready.load_()
       && !link->lastLoad);
     if (sink) sink->close();
     ZuCheck(closed.timedwait(Zm::now(5)) == 0); sink = nullptr;
@@ -1161,8 +1161,8 @@ static void setupCleanup(unsigned mode) {
 #endif
   ZuCheck(state.setupFailures.load_() == 4);
   // A later prepared owner completes normal Session::Logon/business/logout.
-  rx.rx.received = rx.rx.processed = 1;
-  tx.tx.loaded = tx.tx.sent = tx.tx.acknowledged = 1;
+  progress.rx.received = progress.rx.processed = 1;
+  progress.tx.loaded = progress.tx.sent = progress.tx.acknowledged = 1;
 #ifdef ZFIX_TEST_TLS
   // TLS socket association now allocates its FIX connection before auth.
   // Restoring this used owner must fail; cold restore uses a fresh owner after
@@ -1350,7 +1350,7 @@ static void adminBudget(unsigned kind) {
   if (kind == 0) cliLimits.link.postedAdminBytes = 0;
   if (kind == 1 || kind == 8) cliLimits.admin.bytes = 0;
   TestState other; other.scenario = Scenario::PostedOverflow;
-  other.heartbeat = 0; other.adminTest = true; other.lane = 1; other.id = "SECOND";
+  other.heartbeat = 0; other.adminTest = true; other.lane = 1;
   CliHub client{&state, cliLimits}; SrvHub server{&state};
   if (kind == 6) { server.routes << &state << &other; }
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
@@ -1464,7 +1464,7 @@ static void adminBudget(unsigned kind) {
 #ifdef ZFIX_TEST_TLS
 	  head = link->template txHeadRoom<false>();
 #endif
-	  auto buf = link->fixAllocTx_(head);
+	  auto buf = link->fixAllocTx(head);
 	  if (error || !frame || !buf || !buf->append(frame->cspan())) { state.fail(); return; }
 	  if (kind == 5 && ordinal == 3) {
 	    // Two complete frames in one native write/TLS record. Overload on the
@@ -1479,11 +1479,8 @@ static void adminBudget(unsigned kind) {
 	auto deadline = Zm::now(5);
 	do { sampleRx(); if (rx.frames >= initial + n) return true;
 	  } while (Zm::now() < deadline);
-	fprintf(stderr,
-	  "# wait frames=%llu initial=%llu n=%u work=%llu bytes=%llu refused=%llu hub=%llu\n",
-	  (unsigned long long)rx.frames, (unsigned long long)initial, n,
-	  (unsigned long long)local.count, (unsigned long long)local.bytes,
-	  (unsigned long long)local.refused, (unsigned long long)hub.bytes);
+	log("# wait frames=", rx.frames, " initial=", initial, " n=", n, " work=", local.count,
+	  " bytes=", local.bytes, " refused=", local.refused, " hub=", hub.bytes);
 	return false;
       };
       bool separated = false;
@@ -1694,7 +1691,7 @@ static void readAheadOverload() {
 #ifdef ZFIX_TEST_TLS
     head = link->template txHeadRoom<false>();
 #endif
-    auto buf = link->fixAllocTx_(head);
+    auto buf = link->fixAllocTx(head);
     if (error || !frame || !buf || !buf->append(frame->cspan()) ||
 	  !link->sendRecord_(ZuMv(buf))) state.fail();
   });
@@ -1751,17 +1748,17 @@ friend inline ZuStringT<"Zfix.SessionIOTest.Gap"> ZmNHeapID(GapDrainOwner *);
     state.done.post();
   }
 
-  void processRx_(Msg *) { ++state.processed; }
+  void processRx(Msg *) { ++state.processed; }
 
-  void requestRx_(Span, Span) { ++state.requests; }
+  void requestRx(Span, Span) { ++state.requests; }
 
-  void reRequestRx_(Span) { ++state.retries; }
+  void reRequestRx(Span) { ++state.retries; }
 
-  void postRx_(uint64_t ticket) {
+  void postRx(uint64_t ticket) {
     scheduler.run([this, ticket] { drain_(ticket); }, 1);
   }
 
-  void armGap_(uint64_t ticket) {
+  void armGap(uint64_t ticket) {
     ++state.arms;
     scheduler.add(&gap, Zm::now(), ZmScheduler::Update,
       [this, ticket](auto &&arm) {
@@ -1775,7 +1772,7 @@ friend inline ZuStringT<"Zfix.SessionIOTest.Gap"> ZmNHeapID(GapDrainOwner *);
       }, 1);
   }
 
-  void cancelGap_() { ++state.cancels; scheduler.del(&gap); }
+  void cancelGap() { ++state.cancels; scheduler.del(&gap); }
 
   void stop_() {
     if (!scheduler.invoked(1)) ++state.errors;
@@ -1851,15 +1848,14 @@ struct OwnState {
   unsigned connection() const { return independent ? 1U : preauth || chain ? 3U : 2U; }
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "# replacement failure %s:%u mode=%u\n", file, line, mode);
+    log("# replacement failure ", file, ":", line, " mode=", mode);
     ++errors;
   }
 };
 
 static SessionConfig ownConfig(bool client, const OwnState *s)
 {
-  SessionConfig c; c.id = s->independent ? "SIDE" : "OWN";
-  c.mode = s->mode; c.initiator = client;
+  SessionConfig c; c.mode = s->mode; c.initiator = client;
   c.heartBtInt = 0; c.appVerID = AppVersion::V5_0_SP2;
   c.header.version = c.mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
   c.header.local = client ? "CLIENT" : "SERVER";
@@ -2017,7 +2013,7 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
     if (session_().connection_() >= 2) test->authenticated.post();
   }
 
-  unsigned fixAdmissionRx_(SessionEvent event, ZmRef<Zfix::RxQueue::Node>,
+  unsigned fixAdmissionRx(SessionEvent event, ZmRef<Zfix::RxQueue::Node>,
       AdmitRequest &request) {
     if (test->established || test->independent || event.connection != 1)
       return Admission::Accepted;
@@ -2025,7 +2021,7 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
     return Admission::Pending;
   }
 
-  unsigned fixAssociateTx_(TxBody::Ref body, TxContext c, uint64_t ticket) {
+  unsigned fixAssociateTx(TxBody::Ref body, TxContext c, uint64_t ticket) {
     auto state = test;
     if (state->established && body->id() == 502 && !state->loadContext.seqNo) {
       pendingLoad = ticket; state->loadContext = c; state->loadStarted.post();
@@ -2034,18 +2030,18 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
     return TxLoad::Accepted;
   }
 
-  void fixSubmittedTx_(TxBody::Ref body, unsigned result) {
+  void fixSubmittedTx(TxBody::Ref body, unsigned result) {
     ownSubmitted(this, ZuMv(body), result);
   }
 
-  bool fixEnqueueTx_(TxBody::Ref body) { return output.enqueue(ZuMv(body)); }
-  TxBody::Ref fixDequeueTx_() { return output.dequeue(); }
+  bool fixEnqueueTx(TxBody::Ref body) { return output.enqueue(ZuMv(body)); }
+  TxBody::Ref fixDequeueTx() { return output.dequeue(); }
 
-  void fixSelectedTx_(TxBody::Ref, TxContext, unsigned result) {
+  void fixSelectedTx(TxBody::Ref, TxContext, unsigned result) {
     if (result != TxSelect::Accepted && result != TxSelect::Pending) test->fail();
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime time) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime time) {
     if (test->established && body->id() == 502 && !c.replay) {
       if (c.epoch != 1 || c.connection != test->connection() ||
 	  c.seqNo != test->loadContext.seqNo)
@@ -2055,19 +2051,19 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
     if (!output.published(ZuMv(body), c, time)) test->fail();
   }
 
-  TxReload fixRetrieveTx_(TxContext c, uint64_t, uint64_t) { return output.retrieve(c); }
+  TxReload fixRetrieveTx(TxContext c, uint64_t, uint64_t) { return output.retrieve(c); }
 
-  void fixArchiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void fixArchiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     output.archive(epoch, begin, end);
   }
 
-  Fmt::Error fixReplyRx_(Lane0 *, Reply0 *, const RequestContext &context) {
+  Fmt::Error fixReplyRx(Lane0 *, Reply0 *, const RequestContext &context) {
     return context.context().session == session_().instance_() &&
       context.context().epoch == session_().epoch_() ? Fmt::Error{} :
       Fmt::Error{Fmt::ErrorCode::Unresolved, 35};
   }
 
-  Fmt::Error fixReceiveRx_(Lane0 *, const Order &order, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(Lane0 *, const Order &order, const RequestContext &context) {
     auto state = test;
     if (context.context().epoch != 1) state->fail();
     ++test->served;
@@ -2099,36 +2095,33 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
     heldID = {}; ++test->workReplied;
   }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Zfix::RxQueue::Node>) {
+  void fixEventRx(SessionEvent e, ZmRef<Zfix::RxQueue::Node>) {
     if (e.actions & SessionAction::Failure) {
-      fprintf(stderr, "# replacement server failure state=%u error=%u tag=%u "
-	"actions=%u conn=%llu epoch=%llu\n", e.state, e.error, e.tag, e.actions,
-	(unsigned long long)e.connection, (unsigned long long)e.epoch);
+      log("# replacement server failure state=", e.state, " error=", e.error, " tag=", e.tag,
+	" actions=", e.actions, " conn=", e.connection, " epoch=", e.epoch);
       test->fail();
     }
   }
 
-  void fixFaultTx_(TxContext c, Fmt::Error error) {
-    fprintf(stderr, "# replacement server Tx fault code=%u tag=%u "
-      "epoch=%llu conn=%llu seq=%llu\n", error.code, error.tag,
-      (unsigned long long)c.epoch, (unsigned long long)c.connection,
-      (unsigned long long)c.seqNo);
+  void fixFaultTx(TxContext c, Fmt::Error error) {
+    log("# replacement server Tx fault code=", error.code, " tag=", error.tag, " epoch=",
+      c.epoch, " conn=", c.connection, " seq=", c.seqNo);
     test->fail();
   }
 
-  void fixStopRx_(uint64_t, uint64_t) {
+  void fixStopRx(uint64_t, uint64_t) {
     auto reply = ZuMv(test->admit);
     if (reply) reply(false);
     held = nullptr; heldID = {};
   }
 
-  void fixStopTx_(uint64_t) {
+  void fixStopTx(uint64_t) {
     if (!pendingLoad) return;
     auto ticket = pendingLoad; pendingLoad = 0;
     loaded(ticket, false);
   }
 
-  void fixStoppedRx_(bool) {
+  void fixStoppedRx(bool) {
     ownStopped(this);
     ++test->serverStops; test->stoppedServer.post();
   }
@@ -2202,22 +2195,22 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
     Base{hub, first ? ZuID{"ownA"} : id, ownConfig(true, s ? s : hub->state)},
     test{s ? s : hub->state}, primary{first}, middle{interim} { }
 
-  unsigned fixAssociateTx_(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
+  unsigned fixAssociateTx(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
 
-  void fixSubmittedTx_(TxBody::Ref body, unsigned result) {
+  void fixSubmittedTx(TxBody::Ref body, unsigned result) {
     ownSubmitted(this, ZuMv(body), result);
   }
 
-  bool fixEnqueueTx_(TxBody::Ref body) { return output.enqueue(ZuMv(body)); }
-  TxBody::Ref fixDequeueTx_() { return output.dequeue(); }
+  bool fixEnqueueTx(TxBody::Ref body) { return output.enqueue(ZuMv(body)); }
+  TxBody::Ref fixDequeueTx() { return output.dequeue(); }
 
-  void fixSelectedTx_(TxBody::Ref, TxContext, unsigned result) {
+  void fixSelectedTx(TxBody::Ref, TxContext, unsigned result) {
     if (result != TxSelect::Accepted && result != TxSelect::Pending) test->fail();
   }
 
-  TxReload fixRetrieveTx_(TxContext c, uint64_t, uint64_t) { return output.retrieve(c); }
+  TxReload fixRetrieveTx(TxContext c, uint64_t, uint64_t) { return output.retrieve(c); }
 
-  void fixArchiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void fixArchiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     output.archive(epoch, begin, end);
   }
 
@@ -2226,13 +2219,12 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
     if (!send<Lane0>(Order{id, 0}, 501, error) || error) test->fail();
   }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Zfix::RxQueue::Node>) {
+  void fixEventRx(SessionEvent e, ZmRef<Zfix::RxQueue::Node>) {
     if ((e.actions & SessionAction::Failure) && !primary &&
 	(e.error != SessionError::Transport ||
 	 (!test->terminal && !(middle && test->accepted.load_() >= 4)))) {
-      fprintf(stderr, "# replacement B failure state=%u error=%u tag=%u "
-	"actions=%u conn=%llu epoch=%llu\n", e.state, e.error, e.tag, e.actions,
-	(unsigned long long)e.connection, (unsigned long long)e.epoch);
+      log("# replacement B failure state=", e.state, " error=", e.error, " tag=", e.tag,
+	" actions=", e.actions, " conn=", e.connection, " epoch=", e.epoch);
       test->fail();
     }
     if (!(e.actions & SessionAction::Ready)) return;
@@ -2244,22 +2236,21 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
       business("held"); business("load"); return;
     }
     auto ready = test->bReady.xchAdd(1) + 1;
-    fprintf(stderr, "# replacement B ready=%u mode=%u conn=%llu epoch=%llu actions=%u\n",
-      ready, test->mode, (unsigned long long)e.connection,
-      (unsigned long long)e.epoch, e.actions);
+    log("# replacement B ready=", ready, " mode=", test->mode, " conn=", e.connection, " epoch=",
+      e.epoch, " actions=", e.actions);
     if (started) return;
     started = true; ++test->bStarted; test->readyB.post();
     if (!test->established && !test->independent) business("before");
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime time) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime time) {
     if (!primary && !c.replay && body->msgType() == "A") {
       test->bLogon = c.seqNo; test->clientLogon.post();
     }
     if (!output.published(ZuMv(body), c, time)) test->fail();
   }
 
-  Fmt::Error fixReceiveRx_(Reply0 *, const Order &order, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(Reply0 *, const Order &order, const RequestContext &context) {
     auto state = test;
     unsigned index = state->received.xchAdd(1);
     ZuCSpan expected = state->established ? (index ? "held" : "load") :
@@ -2269,16 +2260,14 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
     state->business.post(); return {};
   }
 
-  void fixFaultTx_(TxContext c, Fmt::Error error) {
+  void fixFaultTx(TxContext c, Fmt::Error error) {
     if (primary) return;
-    fprintf(stderr, "# replacement B Tx fault code=%u tag=%u "
-      "epoch=%llu conn=%llu seq=%llu\n", error.code, error.tag,
-      (unsigned long long)c.epoch, (unsigned long long)c.connection,
-      (unsigned long long)c.seqNo);
+    log("# replacement B Tx fault code=", error.code, " tag=", error.tag, " epoch=", c.epoch,
+      " conn=", c.connection, " seq=", c.seqNo);
     test->fail();
   }
 
-  void fixStoppedRx_(bool) {
+  void fixStoppedRx(bool) {
     ownStopped(this);
     (primary ? test->stoppedA : middle ? test->stoppedMiddle : test->stoppedB).post();
   }
@@ -2319,12 +2308,12 @@ static void nativeReplacement(unsigned mode, bool established = false)
     ZuCheck(pending); if (!pending) break;
     if (established) ZuCheck(state.aReady.load_() == 1 && state.loadContext.connection == 1 &&
       state.loadContext.epoch == 1 && state.loadContext.seqNo);
-    Checkpoint snapshot;
+    Progress snapshot;
     bool saved = ZmBlock<bool>{}([&client, &a, &snapshot](auto wake) {
       client.rxRun([&client, &a, &snapshot, wake = ZuMv(wake)]() mutable {
-	bool ok = a->snapshotRx_(snapshot);
-	client.txRun([&a, &snapshot, ok, wake = ZuMv(wake)]() mutable {
-	  wake(a->snapshotTx_(snapshot) && ok);
+	snapshot.epoch = a->session_().epoch_(); snapshot.rx = a->rxProgress_();
+	client.txRun([&a, &snapshot, wake = ZuMv(wake)]() mutable {
+	  snapshot.tx = a->txProgress_(); wake(true);
 	});
       });
     });
@@ -2332,9 +2321,9 @@ static void nativeReplacement(unsigned mode, bool established = false)
       snapshot.tx.sent == snapshot.tx.loaded && snapshot.rx.processed == (established ? 2U : 1U));
     bool restored = ZmBlock<bool>{}([&client, &b, &snapshot](auto wake) {
       client.rxRun([&client, &b, &snapshot, wake = ZuMv(wake)]() mutable {
-	bool ok = b->restoreRx_(snapshot);
+	bool ok = b->restoreRx_(snapshot.epoch, snapshot.rx);
 	client.txRun([&b, &snapshot, ok, wake = ZuMv(wake)]() mutable {
-	  wake(b->restoreTx_(snapshot) && ok);
+	  wake(b->restoreTx_(snapshot.epoch, snapshot.tx) && ok);
 	});
       });
     });
@@ -2419,7 +2408,7 @@ static void nativeReplacement(unsigned mode, bool established = false)
     ZuCheck(stopped); drained &= stopped;
   }
   if (!drained) {
-    fprintf(stderr, "Bail out! replacement owner did not drain mode=%u\n", mode);
+    log_("Bail out! replacement owner did not drain mode=", mode);
     abort();
   }
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
@@ -2459,12 +2448,18 @@ static void nativeChain(unsigned mode)
     link->connect("127.0.0.1", state.port);
 #endif
   };
-  auto checkpoint = [&client](OwnCliLink *link, Checkpoint &snapshot, bool restore) {
+  auto checkpoint = [&client](OwnCliLink *link, Progress &snapshot, bool restore) {
     return ZmBlock<bool>{}([&client, link, &snapshot, restore](auto wake) {
       client.rxRun([&client, link, &snapshot, restore, wake = ZuMv(wake)]() mutable {
-	bool ok = restore ? link->restoreRx_(snapshot) : link->snapshotRx_(snapshot);
+	bool ok = true;
+	if (restore) ok = link->restoreRx_(snapshot.epoch, snapshot.rx);
+	else {
+	  snapshot.epoch = link->session_().epoch_(); snapshot.rx = link->rxProgress_();
+	}
 	client.txRun([link, &snapshot, restore, ok, wake = ZuMv(wake)]() mutable {
-	  wake((restore ? link->restoreTx_(snapshot) : link->snapshotTx_(snapshot)) && ok);
+	  if (restore) ok = link->restoreTx_(snapshot.epoch, snapshot.tx) && ok;
+	  else snapshot.tx = link->txProgress_();
+	  wake(ok);
 	});
       });
     });
@@ -2495,7 +2490,7 @@ static void nativeChain(unsigned mode)
     });
     bool prefix = state.prefix.timedwait(Zm::now(5)) == 0;
     ZuCheck(prefix); if (!prefix) break;
-    Checkpoint snapshot;
+    Progress snapshot;
     bool saved = checkpoint(a.ptr(), snapshot, false);
     ZuCheck(saved && snapshot.epoch == 1 && snapshot.tx.loaded == 4 &&
       snapshot.tx.sent == 4 && snapshot.rx.processed == 2);
@@ -2514,7 +2509,7 @@ static void nativeChain(unsigned mode)
     ZuCheck(state.authenticated.timedwait(Zm::now(5)) == 0);
     bool logonB = state.clientLogon.timedwait(Zm::now(5)) == 0;
     ZuCheck(logonB); if (!logonB) break;
-    Checkpoint successor;
+    Progress successor;
     bool savedB = checkpoint(b.ptr(), successor, false);
     ZuCheck(savedB && successor.epoch == 1 && successor.tx.loaded == 5 &&
       successor.tx.sent == 5 && successor.rx.processed == 2 && state.bLogon == 4);
@@ -2593,7 +2588,7 @@ static void nativeChain(unsigned mode)
   stop(bool(state.logical.load_()), state.stoppedServer);
   stop(bool(side.logical.load_()), side.stoppedServer);
   if (!drained) {
-    fprintf(stderr, "Bail out! replacement chain owner did not drain mode=%u\n", mode);
+    log_("Bail out! replacement chain owner did not drain mode=", mode);
     abort();
   }
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);

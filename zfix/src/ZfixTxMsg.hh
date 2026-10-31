@@ -23,57 +23,33 @@ namespace Zfix {
 
 namespace TxFrame_ {
 
-template <typename Scan>
-Fmt::Error inspect(ZuCSpan bytes, Fmt::Position &selector, Fmt::Limits limits) {
-  using S = Fmt::Schema<Scan, ZuFacet::FIX>;
-  if (bytes.length() > limits.frameBytes) return {Fmt::ErrorCode::Size};
-  Fmt::Error error;
-  ZtBuiltin<Fmt::Positions, S::Leaves::N> positions;
-  Fmt::Parse input{bytes, limits, positions, error};
-  input.slots(S::Leaves::N);
-  input.selectTag = S::SelectTag; input.selected = &selector;
-  unsigned offset = 0;
-  Fmt::Scope scope{nullptr, Fmt::scopeContains<Scan, ZuFacet::FIX>, 0, 0};
-  if (!error) Fmt::parseScope<Scan, ZuFacet::FIX>(input, 0, offset, scope, false);
-  return error;
-}
-template <typename Key> Fmt::Error match(ZuCSpan bytes, Fmt::Position selector) {
-  if (selector.offset == UINT_MAX) return {Fmt::ErrorCode::Required, Key::tag};
-  if (ZuCSpan{bytes.data() + selector.offset, selector.length} != ZuCSpan{Key::value})
-    return {Fmt::ErrorCode::Unresolved, Key::tag, selector.offset};
+template <typename Key> Fmt::Error match(ZuCSpan bytes, Fmt::FieldPos selector) {
+  if (selector.offset == UINT_MAX) return {Fmt::ErrorCode::Required, Key::Tag};
+  if (ZuCSpan{bytes.data() + selector.offset, selector.length} != ZuCSpan{Key::Value})
+    return {Fmt::ErrorCode::Unresolved, Key::Tag, selector.offset};
   return {};
 }
-template <typename Entry> struct Body {
-  using Key = typename Entry::Discriminator;
-  using Sources = ZuTypeList<Dispatch_::EntrySource<Entry>>;
-
-  static consteval bool contains() {
-    bool found = false;
-    ZuUnroll::all<Dispatch_::RawLeaves<Sources>>([&found]<typename L>() {
-      using F = typename L::Field;
-      if (Fmt::tag<F>() == Key::tag || Fmt::lenTag<F>() == Key::tag) found = true;
-    });
-    return found;
-  }
-
-  using Scan = Dispatch_::Scope<ZuTypeConcat<Sources,
-    ZuIf<contains(), ZuTypeList<>,
-      ZuTypeList<Dispatch_::Source<Dispatch_::Key<Key::tag>, ZuFacet::FIX>>>>,
-    false, Key::tag>;
-};
+template <typename Entry> consteval bool bodyContains() {
+  bool found = false;
+  using S = Fmt::Schema<typename Entry::Object, typename Entry::Mapping>;
+  ZuUnroll::all<typename S::Leaves>([&found]<typename L>() {
+    if (Fmt::tag<typename L::Field>() == Entry::Discrim::Tag) found = true;
+  });
+  return found;
+}
 
 // Encode may add an unmodelled root key; history restore preserves exact bytes.
 template <typename Entry>
 Fmt::Error bodySelector(ZuCSpan bytes, Fmt::Limits limits, Fmt::Sink *out = nullptr) {
-  using Key = typename Entry::Discriminator;
-  if constexpr (!Key::tag || Fmt::reserved(Key::tag)) return {};
+  using Key = typename Entry::Discrim;
+  if constexpr (!Key::Tag || Fmt::reserved(Key::Tag)) return {};
   else {
-    Fmt::Position selector{UINT_MAX, 0, 0, 0};
-    auto error = inspect<typename Body<Entry>::Scan>(bytes, selector, limits);
+    Fmt::FieldPos selector;
+    auto error = Fmt::inspect(bytes, Key::Tag, selector, limits);
     if (error) return error;
-    if constexpr (!Body<Entry>::contains()) {
+    if constexpr (!bodyContains<Entry>()) {
       if (out && selector.offset == UINT_MAX) {
-	out->field(Key::tag); *out << Key::value; out->end(); return out->error();
+	out->field(Key::Tag); *out << Key::Value; out->end(); return out->error();
       }
     }
     return match<Key>(bytes, selector);
@@ -81,14 +57,11 @@ Fmt::Error bodySelector(ZuCSpan bytes, Fmt::Limits limits, Fmt::Sink *out = null
 }
 template <typename Entry>
 Fmt::Error frameSelector(const Fmt::FrameView &frame, Fmt::Limits limits) {
-  using Key = typename Entry::Discriminator;
-  using Scan = typename Dispatch_::Wire<ZuTypeList<Entry>, Key::tag>::T;
-  Fmt::Position selector{UINT_MAX, 0, 0, 0};
-  auto error = inspect<Scan>(frame.content, selector, limits);
+  using Key = typename Entry::Discrim;
+  Fmt::FieldPos selector;
+  auto error = Fmt::inspect(frame.content, Key::Tag, selector, limits);
   if (!error) error = match<Key>(frame.content, selector);
-  if (error.offset || error.code == Fmt::ErrorCode::Unresolved)
-    error.offset += unsigned(frame.content.data() - frame.wire.data());
-  return error;
+  return Dispatch_::wireError(error, frame);
 }
 } // TxFrame_
 
@@ -122,7 +95,7 @@ public:
   template <typename Entry>
   static Ref encode(const typename Entry::Object &o, uint64_t id,
       Fmt::Error &error, Fmt::Limits limits = {}) {
-    if (Session::type(Entry::msgType)) {
+    if (Session::type(Entry::MsgType)) {
       error = {Fmt::ErrorCode::Reserved, 35}; return {};
     }
     return encodeRaw<Entry>(o, id, false, error, limits);
@@ -133,7 +106,7 @@ public:
   template <typename Entry>
   static Ref encodeRaw(const typename Entry::Object &o, uint64_t id, bool admin,
       Fmt::Error &error, Fmt::Limits limits = {}) {
-    auto buf = start(Entry::msgType, id, admin, error, limits);
+    auto buf = start(Entry::MsgType, id, admin, error, limits);
     if (!buf) return {};
     auto cfg = limits;
     cfg.frameBytes -= buf->m_typeLen;
@@ -151,14 +124,14 @@ public:
   // bytes. Store the entry/facet identity with history; no union trial decoding.
   template <typename Entry>
   static Ref restore(ZuCSpan bytes, uint64_t id, Fmt::Error &error, Fmt::Limits limits = {}) {
-    if (Session::type(Entry::msgType)) { error = {Fmt::ErrorCode::Reserved, 35}; return {}; }
+    if (Session::type(Entry::MsgType)) { error = {Fmt::ErrorCode::Reserved, 35}; return {}; }
     return restore_<Entry>(bytes, id, false, error, limits);
   }
 
   template <typename Entry>
   static Ref restoreControl(ZuCSpan bytes, uint64_t id,
       Fmt::Error &error, Fmt::Limits limits = {}) {
-    if (!Session::type(Entry::msgType)) { error = {Fmt::ErrorCode::Unresolved, 35}; return {}; }
+    if (!Session::type(Entry::MsgType)) { error = {Fmt::ErrorCode::Unresolved, 35}; return {}; }
     return restore_<Entry>(bytes, id, true, error, limits);
   }
 
@@ -182,18 +155,17 @@ private:
     if constexpr (Fmt::Format<O, Facet>::Kind != Fmt::Kind::Object) {
       error = {Fmt::ErrorCode::Unresolved, 35}; return {};
     } else {
-      using Key = typename Entry::Discriminator;
-      enum { Select = Key::tag && !Fmt::reserved(Key::tag) ? Key::tag : 0 };
-      Fmt::Position selector;
+      using Key = typename Entry::Discrim;
+      enum { Select = Key::Tag && !Fmt::reserved(Key::Tag) ? Key::Tag : 0 };
       {
-	Fmt::Handler<O, Facet> input{bytes, limits, ZuUnsigned<Select>{}, selector};
+	Fmt::Handler<O, Facet> input{bytes, limits};
 	if (!input.check()) { error = input.error(); return {}; }
       }
       if constexpr (Select) {
-	error = TxFrame_::match<Key>(bytes, selector);
+	error = TxFrame_::bodySelector<Entry>(bytes, limits);
 	if (error) return {};
       }
-      auto buf = archive_(Entry::msgType, bytes, id, admin, error, limits);
+      auto buf = archive_(Entry::MsgType, bytes, id, admin, error, limits);
       if (buf) buf->template selector_<Entry>();
       return buf;
     }
@@ -209,8 +181,8 @@ private:
   }
 
   template <typename Entry> void selector_() {
-    using Key = typename Entry::Discriminator;
-    if constexpr (Key::tag && Fmt::reserved(Key::tag))
+    using Key = typename Entry::Discrim;
+    if constexpr (Key::Tag && Fmt::reserved(Key::Tag))
       m_validate = TxFrame_::frameSelector<Entry>;
   }
 

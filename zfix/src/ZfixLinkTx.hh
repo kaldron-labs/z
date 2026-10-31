@@ -76,16 +76,16 @@ Fmt::Error controlCommands(SessionEvent event, const LinkState &session,
 // and notices between owners; it never reads another owner's live state.
 //
 // Impl hooks (all called on Tx):
-// txSchedule_(kind, ticket) posts run_; associateTx_, releaseTx_, retrieveTx_,
-// archiveTx_, clockTx_ and faultTx_ implement Tx's application/clock hooks;
-// admitFrameTx_(body, context, frame, original) reserves complete transport output
+// txSchedule(kind, ticket) posts run_; associateTx, releaseTx, retrieveTx,
+// archiveTx, clockTx and faultTx implement Tx's application/clock hooks;
+// admitFrameTx(body, context, frame, original) reserves complete transport output
 //   and retains no bytes on false; it MUST NOT expose bytes to the peer yet;
-// notifyTx_(TxNotice) queues an ordered post to Rx, never invokes Rx inline;
-// flushTx_() starts transport only after that post is queued;
-// completeTx_(body, context, ok) observes one-shot local completion, not ack.
-// nowTx_() samples the monotonic timer clock. idleArmTx_(connection, ticket,
+// notifyTx(TxNotice) queues an ordered post to Rx, never invokes Rx inline;
+// flushTx() starts transport only after that post is queued;
+// completeTx(body, context, ok) observes one-shot local completion, not ack.
+// nowTx() samples the monotonic timer clock. idleArmTx(connection, ticket,
 // deadline) arms the owner's dedicated idle timer at an absolute deadline;
-// idleCancelTx_() cancels it. Its callback invokes idle_(connection, ticket).
+// idleCancelTx() cancels it. Its callback invokes idle_(connection, ticket).
 // Cancel and drain callbacks on Tx before destruction, as for owner tasks.
 // The transport calls sent_ exactly once per admitted frame, including replay.
 // Frames/continuations and owner tasks must be drained before destruction.
@@ -113,7 +113,6 @@ public:
   using Base::failed_;
   using Base::waiting_;
   using Base::restore_;
-  using Base::snapshot_;
   using Base::progress_;
 
   TxStats stats_() const {
@@ -133,7 +132,7 @@ public:
 
   using Base::abortTx_;
 
-  void epochTx_(TxContext, uint64_t, TxProgress, uint64_t) { }
+  void epochTx(TxContext, uint64_t, TxProgress, uint64_t) { }
 
   ZuTime idleDeadline_() const { return m_idleDeadline; }
 
@@ -256,7 +255,7 @@ public:
       m_established = true;
       m_heartBtInt = event.heartBtInt;
       if (m_heartBtInt) {
-	m_idleDeadline = (m_wireStarted ? m_lastSend : impl()->nowTx_()) + ZuTime{m_heartBtInt};
+	m_idleDeadline = (m_wireStarted ? m_lastSend : impl()->nowTx()) + ZuTime{m_heartBtInt};
 	armIdle();
       }
       m_recovered = !Base::replaying_() && !Base::waiting_();
@@ -293,7 +292,7 @@ public:
   // These run on Tx. The application owns/bounds the unsequenced queue.
   bool enqueue_(TxBody::Ref body) {
     if (!body || body->administrative()) return false;
-    if (!impl()->enqueueTx_(ZuMv(body))) { ++m_enqueueRefused; return false; }
+    if (!impl()->enqueueTx(ZuMv(body))) { ++m_enqueueRefused; return false; }
     queued_(); return true;
   }
 
@@ -307,7 +306,7 @@ public:
     if (!report.buffer || context.epoch != Base::epoch_() || !context.connection ||
 	context.connection > Base::connection_() || !context.seqNo || !report.message.refSeqNo)
       return false;
-    impl()->rejectedTx_(ZuMv(report));
+    impl()->rejectedTx(ZuMv(report));
     return true;
   }
 
@@ -371,7 +370,7 @@ public:
       --m_inFlight;
       if (!ok && Base::attached_()) fail({Fmt::ErrorCode::Output});
     }
-    impl()->completeTx_(ZuMv(body), context, ok);
+    impl()->completeTx(ZuMv(body), context, ok);
     resetProgress();
     drainReady();
     closeReady();
@@ -379,9 +378,9 @@ public:
 
   // Optional progress notification on the same Tx owner as association. The
   // application posts it to its association owner, preserving that hook order.
-  void publishedTx_(TxBody::Ref, TxContext, ZuDateTime) { }
-  void acknowledgedTx_(TxContext, uint64_t, uint64_t) { }
-  void sequenceLimitTx_(TxContext, uint64_t, unsigned) { }
+  void publishedTx(TxBody::Ref, TxContext, ZuDateTime) { }
+  void acknowledgedTx(TxContext, uint64_t, uint64_t) { }
+  void sequenceLimitTx(TxContext, uint64_t, unsigned) { }
 
   // A consumed/duplicate/old-connection callback cannot emit another heartbeat.
   // Early callbacks re-arm at the current logical deadline; output activity
@@ -390,7 +389,7 @@ public:
     if (!Base::attached_() || m_faulted || !m_idleArmed || !m_heartBtInt ||
 	connection != Base::connection_() || ticket != m_idleTicket) return false;
     m_idleArmed = false;
-    auto now = impl()->nowTx_();
+    auto now = impl()->nowTx();
     if (now < m_idleDeadline) { armIdle(); return true; }
     m_idleDeadline = now + ZuTime{m_heartBtInt};
     if (!m_commands.count_() && !m_selected && !Base::loading_() &&
@@ -435,7 +434,7 @@ private:
     Base::detach_(Base::connection_());
     clear();
     if (aborted)
-      impl()->notifyTx_(TxNotice{.context = {m_prepareEpoch, Base::connection_(), 0},
+      impl()->notifyTx(TxNotice{.context = {m_prepareEpoch, Base::connection_(), 0},
 	.marker = m_drain, .kind = TxNoticeKind::ResetAborted,
 	.nextEpoch = m_resetTarget, .request = m_resetRequest});
   }
@@ -459,7 +458,7 @@ private:
   void armIdle() {
     if (m_idleArmed || !m_heartBtInt) return;
     m_idleArmed = true;
-    impl()->idleArmTx_(Base::connection_(), ++m_idleTicket, m_idleDeadline);
+    impl()->idleArmTx(Base::connection_(), ++m_idleTicket, m_idleDeadline);
   }
 
   void stopIdle() {
@@ -468,7 +467,7 @@ private:
     if (!m_idleArmed) return;
     m_idleArmed = false;
     ++m_idleTicket;
-    impl()->idleCancelTx_();
+    impl()->idleCancelTx();
   }
 
   void dropSelected() {
@@ -484,7 +483,7 @@ private:
   void selected(unsigned result) {
     auto body = ZuMv(m_candidate);
     if (result != TxSelect::Accepted) m_queued = false;
-    impl()->selectedTx_(ZuMv(body), m_candidateCtx, result);
+    impl()->selectedTx(ZuMv(body), m_candidateCtx, result);
   }
 
   void postPump() {
@@ -493,7 +492,7 @@ private:
 	m_pumpPosted || m_selected || (!m_commands.count_() && !businessReady()) ||
 	Base::loading_()) return;
     m_pumpPosted = true;
-    impl()->txSchedule_(ControlTask::Pump, ++m_pumpTicket);
+    impl()->txSchedule(ControlTask::Pump, ++m_pumpTicket);
   }
 
   void start() {
@@ -509,7 +508,7 @@ private:
     auto item = m_commands.headPtr();
     if (!item) {
       if (!businessReady()) return;
-      m_candidate = impl()->dequeueTx_();
+      m_candidate = impl()->dequeueTx();
       if (!m_candidate) { m_queued = false; return; }
       m_candidateCtx = {Base::epoch_(), Base::connection_(), Base::next_()};
       unsigned result = m_candidate->administrative() ? TxSelect::Invalid :
@@ -533,7 +532,7 @@ private:
     if (!context.connection) context = {Base::epoch_(), Base::connection_(), 0};
     auto published = Base::published_();
     if (kind == TxNoticeKind::Logon || kind == TxNoticeKind::Probe) published = context.seqNo + 1;
-    impl()->notifyTx_(TxNotice{context, marker, Base::next_(), published,
+    impl()->notifyTx(TxNotice{context, marker, Base::next_(), published,
       Base::acknowledged_(), kind, done});
   }
 
@@ -564,18 +563,18 @@ private:
     if (!m_resetRequest) fail({Fmt::ErrorCode::Output});
   }
 
-  void resetTx_(TxContext context, uint64_t epoch, TxProgress previous, uint64_t id) {
+  void resetTx(TxContext context, uint64_t epoch, TxProgress previous, uint64_t id) {
     if (!m_preparing || id != m_resetRequest || context.epoch != m_prepareEpoch ||
 	epoch != m_resetTarget) { fail({Fmt::ErrorCode::Output}); return; }
     m_resetCommitted = true;
     m_started = m_wireStarted = m_established = false;
     m_recovered = true;
-    impl()->epochTx_(context, epoch, previous, id);
-    impl()->notifyTx_(TxNotice{.context = context, .marker = m_drain,
+    impl()->epochTx(context, epoch, previous, id);
+    impl()->notifyTx(TxNotice{.context = context, .marker = m_drain,
       .kind = TxNoticeKind::ResetReady, .nextEpoch = epoch, .request = id});
   }
 
-  void resetFailedTx_(TxContext context, uint64_t epoch, uint64_t id, Fmt::Error error) {
+  void resetFailedTx(TxContext context, uint64_t epoch, uint64_t id, Fmt::Error error) {
     if (!m_preparing || id != m_resetRequest || context.epoch != m_prepareEpoch ||
 	epoch != m_resetTarget) return;
     m_resetRequest = 0;
@@ -595,52 +594,52 @@ private:
     m_faulted = true;
     stopIdle();
     Base::hold_();
-    impl()->faultTx_(TxContext{Base::epoch_(), Base::connection_(), Base::next_()}, error);
+    impl()->faultTx(TxContext{Base::epoch_(), Base::connection_(), Base::next_()}, error);
   }
 
-  void txPost_(unsigned kind, uint64_t ticket) {
+  void txPost(unsigned kind, uint64_t ticket) {
     if (kind == TxTask::Replay && !m_wireStarted) { m_replayTask = ticket; return; }
-    impl()->txSchedule_(kind, ticket);
+    impl()->txSchedule(kind, ticket);
   }
 
-  unsigned loadTx_(TxBody::Ref body, TxContext context, uint64_t ticket) {
-    return impl()->associateTx_(ZuMv(body), context, ticket);
+  unsigned loadTx(TxBody::Ref body, TxContext context, uint64_t ticket) {
+    return impl()->associateTx(ZuMv(body), context, ticket);
   }
 
-  bool unloadTx_(TxBody::Ref body, TxContext context, uint64_t ticket) {
-    return impl()->releaseTx_(ZuMv(body), context, ticket);
+  bool unloadTx(TxBody::Ref body, TxContext context, uint64_t ticket) {
+    return impl()->releaseTx(ZuMv(body), context, ticket);
   }
 
-  TxReload historyTx_(TxContext context, uint64_t ackd, uint64_t ticket) {
-    return impl()->retrieveTx_(context, ackd, ticket);
+  TxReload historyTx(TxContext context, uint64_t ackd, uint64_t ticket) {
+    return impl()->retrieveTx(context, ackd, ticket);
   }
 
-  void limitTx_(TxContext context, uint64_t maximum, unsigned headroom) {
-    impl()->sequenceLimitTx_(context, maximum, headroom);
+  void limitTx(TxContext context, uint64_t maximum, unsigned headroom) {
+    impl()->sequenceLimitTx(context, maximum, headroom);
   }
 
-  void ackdTx_(TxContext context, uint64_t previous, uint64_t next) {
-    impl()->acknowledgedTx_(context, previous, next);
+  void ackdTx(TxContext context, uint64_t previous, uint64_t next) {
+    impl()->acknowledgedTx(context, previous, next);
   }
 
-  void historyArchive_(uint64_t epoch, uint64_t begin, uint64_t end) {
-    impl()->archiveTx_(epoch, begin, end);
+  void historyArchive(uint64_t epoch, uint64_t begin, uint64_t end) {
+    impl()->archiveTx(epoch, begin, end);
   }
 
-  ZuDateTime utcTx_() { return impl()->clockTx_(); }
+  ZuDateTime utcTx() { return impl()->clockTx(); }
 
-  void errorTx_(TxContext context, Fmt::Error error) {
-    ++m_faults; impl()->faultTx_(context, error);
+  void errorTx(TxContext context, Fmt::Error error) {
+    ++m_faults; impl()->faultTx(context, error);
   }
 
-  bool frameTx_(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime original) {
+  bool frameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime original) {
     if (m_resetArmed && body->msgType() == "A" && context.seqNo != 1) {
       fail({Fmt::ErrorCode::Value, 34}); return false;
     }
-    if (!impl()->admitFrameTx_(body, context, ZuMv(frame), original)) return false;
+    if (!impl()->admitFrameTx(body, context, ZuMv(frame), original)) return false;
     if (!context.replay && body->msgType() == "A") m_resetArmed = false;
     ++m_inFlight;
-    m_lastSend = impl()->nowTx_();
+    m_lastSend = impl()->nowTx();
     if (m_heartBtInt) {
       m_idleDeadline = m_lastSend + ZuTime{m_heartBtInt};
       armIdle();
@@ -651,13 +650,13 @@ private:
       else if (body->msgType() == "1" && body->id())
 	notice(TxNoticeKind::Probe, context, body->id());
       if (m_replayTask) {
-	impl()->txSchedule_(TxTask::Replay, m_replayTask);
+	impl()->txSchedule(TxTask::Replay, m_replayTask);
 	m_replayTask = 0;
       }
     }
-    if (body->administrative()) impl()->sessionTx_(body, context);
-    impl()->publishedTx_(ZuMv(body), context, original);
-    impl()->flushTx_();
+    if (body->administrative()) impl()->sessionTx(body, context);
+    impl()->publishedTx(ZuMv(body), context, original);
+    impl()->flushTx();
     return true;
   }
 

@@ -57,25 +57,29 @@ Decoded spans borrow the input. Retain its backing for deferred use, or copy the
 values the application keeps. Moving owning fields out of the callback is an
 application choice.
 
-Primary MsgType and secondary values use immutable static hash indexes. A
-qualified MsgType's candidate schemas contribute one shared wire dictionary:
-known binary pairs and nested groups are inspected by the existing codec before
-a root selector chooses the payload type. Recognized structural errors and
-duplicates are rejected in that common scope; scalar conversion and required
-payload fields use the selected schema. Different candidate objects/facets and
-group entry layouts are supported. Inconsistent binary pairing or scalar/group
-meaning for one ID is rejected when the dispatcher's wire schema is instantiated.
+Framing requires the leading fields 8, 9 and 35, in that order, and exposes
+MsgType directly in `FrameView::msgType`. Primary MsgType and secondary values
+use immutable static hash indexes. A qualified MsgType selects by one unique,
+non-repeating root field; that tag must not also occur in a repeating group.
+Catalog metadata rejects modeled group selectors at compile time.
 
-A single unqualified MsgType takes the ordinary MessageHandler path. Secondary
-selection scans the shared scope once and projects field-position records into
-the selected layout; payload bytes are not copied or decoded as other types.
-Nested/binary values cannot supply a root selector. Empty, binary data and paired
-length values can be explicit selectors. The parse budget covers both live
-position arrays at projection's peak. All frame/field/group/depth bounds apply.
-The normal codec compiles out selector observation.
+Secondary selection scans SOH-delimited tag/value fields without allocation or
+candidate decoding. It records only the selector position, rejects duplicate
+selectors, and compares the exact value. Substrings in other field values do not
+select an entry. Empty selector values and unmodeled root selectors are supported.
+Binary Data and Length/Data inspection are outside this selection contract.
+
+Every selected entry uses its ordinary `MessageHandler<Object, Facet>`, including
+entries sharing MsgType with different objects, facets or group layouts. Only
+the selected schema performs required-field checks, scalar conversion and group
+validation. Selection does not merge schemas or project position trees. Its
+extra field scan trades input traversal for simpler code and lower metadata
+storage; `parseBytes` covers only the ordinary selected position tree.
+Frame/field bounds apply to selection; group/depth/storage bounds apply in the
+selected codec. Standalone binary codec support is independent of this contract.
 
 Standalone dispatch is caller-owned. Managed endpoints bind the same catalog to
-`fixReceiveRx_` and provide a copyable `RequestContext` retaining pooled backing
+`fixReceiveRx` and provide a copyable `RequestContext` retaining pooled backing
 for escaped spans. See [ENDPOINTS.md](ENDPOINTS.md) for context and object
 lifetimes, typed send/selector and reply-policy contracts. The
 [application examples](example/README.md) demonstrate explicit correlation,
@@ -114,6 +118,32 @@ including after flattening, and body schemas reject reserved envelope tags.
 Counted/nested groups use scoped membership and a delimiter inferred from the
 first recognized field; cumulative entry/depth and parse-storage limits are
 configurable. Explicit zero counts clear groups, and empty groups emit zero.
+
+The `FIX` field properties parallel the JSON formatting properties, except
+numeric `String` formatting does not apply to FIX:
+
+- `ID<N>` selects an integer tag; `Optional<true>` (`Opt`) omits unset values
+  on output. `Optional<false>` retains them. Required input presence remains
+  controlled by `Required`; optional boolean fields still emit `Y` or `N`.
+- `NumberFmt<Fmt>` and its `Number<Fmt>` shorthand use a Z numeric formatter
+  directly, without a JSON-style `String` flag. Field properties override the
+  facet's `NumberFmt` default for both parsing and printing.
+- `BytesFmt<I>` has `Base64`, `Base64URL`, `Base32`, `Hex`, and `Raw`
+  shorthands. FIX defaults to raw bytes. Raw data requires `Len<N>`; encoded
+  bytes may omit it. When present, the length tag describes encoded wire bytes.
+  Encoders write directly to the sink; decoders write into owning field storage
+  such as `ZtArray<uint8_t>`. Borrowed byte spans use `Raw`: immutable input
+  cannot retain an additional decoded representation. Validation does not
+  allocate a decoded buffer, and raw byte borrowing is unchanged.
+- `TimeFmt<Fmt>` overrides the facet's time format. The default is
+  `Zfix::TimeFmt<>`, which uses FIX timestamps with up to nine fractional digits.
+  `ISO<Scale, NDP>`, `FIX<Scale, NDP>`, `CSV<Scale, NDP>`, and
+  `Unix<Scale, NDP>` select the corresponding input and output formats.
+  Unix scales are `Zfix::Time::Sec`, `MSec`, `USec`, or `NSec`; the scale
+  parameter is unused by the other styles. FIX and Unix honor `NDP`; a negative
+  precision trims trailing zeroes. Direct `ZuDateTimeFmt` FIX/ISO/CSV overrides
+  are also supported. Properties containing template commas need parentheses,
+  for example `(FIX::Unix<Zfix::Time::MSec, 3>)` in a `ZfStruct` property list.
 
 `AsUnion` supports ordinary application unions. A root union can carry a
 `ParseView` alternative borrowing the complete bounded input. Select exactly
@@ -274,7 +304,7 @@ reconnect Logon marker remains only until contiguous catch-up consumes it.
 It can never supply replay content.
 
 Every replay attempt requests the app through
-`fixRetrieveTx_(TxContext, acknowledged, ticket)`. The context identifies epoch,
+`fixRetrieveTx(TxContext, acknowledged, ticket)`. The context identifies epoch,
 connection, exact sequence and replay versus ordinary missing-send retrieval.
 An immediate `TxReload` supplies a body, no body, or Pending. Deferred results
 complete through `reloaded(ticket, history)` after the hook returns. Replay
@@ -304,13 +334,13 @@ bounded owner handoffs. Publication notices precede transport flush; completion
 returns through the existing posted owner barrier. Required controls do not
 become an application replay cache.
 
-`fixPublishedTx_(body, context, originalTime)` informs the app of the actual
-original or replay output before flush. `fixCompleteTx_` reports local completion;
-`fixAckdTx_` reports independently established session progress. Neither proves
+`fixPublishedTx(body, context, originalTime)` informs the app of the actual
+original or replay output before flush. `fixCompleteTx` reports local completion;
+`fixAckdTx` reports independently established session progress. Neither proves
 business completion. All payload retention, history availability and durability
 belong to the app.
 
-Generic ordered archive completion emits `fixArchiveTx_(epoch, begin, end)` for
+Generic ordered archive completion emits `fixArchiveTx(epoch, begin, end)` for
 each nonempty half-open `[begin,end)` range, even though core message nodes have
 already retired. The app can move its own records to longer-term storage or
 delete them. There is no `archived()` core-payload-release handshake. Archive
@@ -321,20 +351,25 @@ Warm hold/reconnect resumes unfinished archive chunks without repeating ranges
 already reported. A fresh owner restored from a checkpoint starts at restored
 acknowledged progress and emits no retrospective archive callbacks.
 
-## Selective startup restoration
+## Link progress and startup restoration
 
-`Checkpoint` in `ZfixCheckpoint.hh` carries an owned application `id`, epoch and
-a presence mask for independently supplied Rx received/processed/gap and Tx loaded/sent/acknowledged/
-pending-replay progress. Ends and cursors are exclusive. Omitted bits preserve
-current values; explicit zero range pairs clear recovery. Restore both owners
-while inactive, before opening transport-dependent FIX activity. ID/epoch,
-range and sequence checks remain explicit. The ID is the opaque
-`SessionConfig.id`, also the sole managed attachment key. `HeaderConfig header`
-contains version, CompIDs and optional sub/location IDs; mode and application
-version remain separate configuration. Checkpoint matching excludes all of
-those wire settings, so a new connection can use updated headers with the same
-application ID and epoch. Its current wire headers still undergo normal
-validation. Applications choose their own ID qualifiers and routing policy.
+Sequence progress and pending recovery belong to the link's embedded Rx/Tx
+queues and survive transport reconnects. There is no separate session key or
+checkpoint registry. Select the logical link directly through the application's
+existing ownership and transport association.
+
+`rxProgress_()` and `txProgress_()` read each owner's cursors and pending range.
+`restoreRx_(epoch, progress)` and `restoreTx_(epoch, progress)` restore those
+queues while inactive, before opening transport-dependent FIX activity. The
+explicit epoch must match the selected link. Cursor ordering, ranges and
+sequence limits are validated before mutation; cursors and range ends are
+exclusive, and a zero range pair clears pending recovery. Each operation runs
+on its owning shard.
+
+Applications persist the fields they need with their existing link record and
+restore each direction explicitly. `HeaderConfig header` contains version,
+CompIDs and optional sub/location IDs; mode and application version remain
+connection configuration. Current wire headers undergo normal validation.
 
 Physical queue memory is not persisted progress: `TxBytes` and restored byte debt
 are removed. An empty restored operational queue begins charged at zero, even
@@ -382,7 +417,7 @@ The generic `SeqTx` component remains independent of protocol epochs.
 Core `Tx::reset_(oldEpoch, nextEpoch)` is a quiescent owner primitive, requiring
 business readiness off, publication stopped, no pending association/replay,
 and an empty, acknowledged operational queue. It starts the new sequence space
-at one and reports optional `resetTx_(oldContext, nextEpoch, previousProgress, requestID)`
+at one and reports optional `resetTx(oldContext, nextEpoch, previousProgress, requestID)`
 with the old exclusive progress snapshot (requestID zero for synchronous reset).
 Epochs must advance and never wrap.
 Connection identity and continuation ticket counters persist, so old callbacks
@@ -417,8 +452,8 @@ Preparation holds business admission, finishes earlier commands and local output
 then asks Tx to confirm that operational catch-up and owner work are quiescent.
 Application history does not block preparation or require a release handshake.
 Tx commits the new epoch and posts a request-keyed `ResetReady` notice to Rx; Rx resets its held
-queue and commits the same epoch. Optional `epochTx_(oldContext, nextEpoch,
-previousProgress, requestID)` and `epochRx_(connection, oldEpoch, nextEpoch,
+queue and commits the same epoch. Optional `epochTx(oldContext, nextEpoch,
+previousProgress, requestID)` and `epochRx(connection, oldEpoch, nextEpoch,
 previousProgress)` report the old owner snapshots. Applications can wait for
 both owner notifications and persist combined state before activation; no store
 or mandatory persistence barrier is imposed.
@@ -460,8 +495,8 @@ an attempt. Wire backing is retained only for an already admitted physical outpu
 
 `TxLimits::controlHeadroom` reserves the final sequence numbers for controls
 (default 1024). Once the next new sequence enters that range, core Tx calls
-optional `limitTx_(nextContext, maximum, controlHeadroom)`; `LinkTx` exposes
-it as `sequenceLimitTx_` on the application implementation. The context carries
+optional `limitTx(nextContext, maximum, controlHeadroom)`; `LinkTx` exposes
+it as `sequenceLimitTx` on the application implementation. The context carries
 current epoch/connection and the next sequence, rather than a published-message
 identity. The notification runs on Tx after association commits, before subsequent
 owner work. Post application policy work from it; do not reenter the sequence
@@ -507,13 +542,13 @@ TLS certificate/peer verification remains the transport's responsibility.
 ## Application-owned unsequenced queues
 
 `LinkTx` inherits the optional queue boundary `Hooks<Impl>`. Its owner-local
-`enqueue_(body)` calls `enqueueTx_(body)` without assigning an epoch, connection,
+`enqueue_(body)` calls `enqueueTx(body)` without assigning an epoch, connection,
 sequence or timestamp to that body. The application bounds and owns its queue;
 false refuses admission. Administrative bodies and null handles are refused.
 Default hooks refuse enqueue and return no candidate, preserving direct
 `candidate_` use when the application already supplies selected work.
 
-Override `dequeueTx_()` to transfer one retained next candidate to Tx. The pump
+Override `dequeueTx()` to transfer one retained next candidate to Tx. The pump
 fetches only while business-ready and after older controls. One candidate is
 selected per owner task, yielding between candidates. An empty result pauses
 fetching. `queued_()` announces externally prepared work or wakes a paused queue;
@@ -522,7 +557,7 @@ disconnected, recovering, draining or reset preparation is pending. The engine
 retains at most one fetched candidate while association completes; it creates no
 parallel application backlog or persistence store.
 
-Override `selectedTx_(body, proposedContext, result)` together with the queue
+Override `selectedTx(body, proposedContext, result)` together with the queue
 hooks. The body is returned with the final selection result; asynchronous Pending
 loads defer this notification until completion. Accepted means association has
 committed, before any publication. For refusal/overload/limit/invalid results,
@@ -547,7 +582,7 @@ the existing endpoint contract.
 
 ## Peer Reject delivery to the association owner
 
-Ordered managed receive processing emits optional `peerRejectRx_(PeerReject)`
+Ordered managed receive processing emits optional `peerRejectRx(PeerReject)`
 after the session observer. The fixed record holds one const pooled backing,
 parsed Reject fields, its exact wire view, incoming epoch/connection/sequence and
 PossDup flag. Parsed text borrows that backing; moving/retaining the record keeps
@@ -556,7 +591,7 @@ this hook, high Rejects wait for recovery, and low replay duplicates do not noti
 again. Raw mode remains under the external manager.
 
 Post this record to the owner that handled outbound association and call
-`LinkTx::peerReject_(report)` there. Its optional `rejectedTx_(report)` callback
+`LinkTx::peerReject_(report)` there. Its optional `rejectedTx(report)` callback
 lets the application resolve `{report.context.epoch, report.message.refSeqNo}`
 using the mapping established by load. `context.seqNo` is the incoming Reject's
 own sequence; `context.connection` is its receive provenance, which can differ
@@ -574,14 +609,14 @@ Reject fields. Concrete endpoints must wire this post and drain it at teardown.
 
 ## State and outbound session observers
 
-Optional `Rx::stateChangeRx_(SessionEvent)` receives each Changed event before
-the general `eventRx_` hook. The fixed snapshot includes instance, change sequence,
+Optional `Rx::stateChangeRx(SessionEvent)` receives each Changed event before
+the general `eventRx` hook. The fixed snapshot includes instance, change sequence,
 state/actions, epoch and connection. Change sequences remain monotone across
 reconnect and agreed epoch turnover. Timer-only events, ignored stale callbacks
 and raw bypass do not invent state notifications. Post the snapshot to a separate
 application owner; do not reenter lifecycle mutation from the observer.
 
-Optional `sessionTx_(body, context)` observes administrative frames after transport
+Optional `sessionTx(body, context)` observes administrative frames after transport
 admission and publication notices have been queued, before flush exposes bytes.
 The immutable retained body and assigned context identify the admitted message.
 Refused frame/association attempts, ordinary business output and local completion
@@ -591,8 +626,8 @@ The replay flag distinguishes those frames. The hook may retain the body or post
 it to another owner without copying its fields. The published cursor advances
 when the enclosing admission returns; use the supplied context in the callback.
 
-Incoming session observation continues through `eventRx_` with Observe and its
-retained input, and `sessionRx_` for ordered controls handled by the queue. These
+Incoming session observation continues through `eventRx` with Observe and its
+retained input, and `sessionRx` for ordered controls handled by the queue. These
 callbacks and the outbound observer report session activity, not business results.
 
 

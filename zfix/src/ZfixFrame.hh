@@ -38,6 +38,8 @@ struct Header {
   bool		possDup = false;
   ZuBSpan	secureData;
   ZuCSpan	encoding;
+  // Header-prefix bytes in FrameView::content, set by readHeader().
+  unsigned	bytes = 0;
 };
 
 struct Trailer {
@@ -46,21 +48,22 @@ struct Trailer {
 };
 
 ZfStruct(ZfixFmtAPI, (Header, FIX),
-  (sender, (FIX::ID<49>, Required),		String),
-  (target, (FIX::ID<56>, Required),		String),
-  (senderSub, (FIX::ID<50>),			String),
-  (targetSub, (FIX::ID<57>),			String),
-  (senderLocation, (FIX::ID<142>),		String),
-  (targetLocation, (FIX::ID<143>),		String),
-  (appVerID, (FIX::ID<1128>),		String),
-  (seqNo, (FIX::ID<34>, Required),		UInt64),
-  (possDup, (FIX::ID<43>),			Bool),
-  (sendingTime, (FIX::ID<52>, Required),		DateTime),
-  (origSendingTime, (FIX::ID<122>),		DateTime),
-  (secureData, (FIX::ID<91>, FIX::Len<90>),	Bytes),
-  (encoding, (FIX::ID<347>),			String));
+  (sender,		(FIX::ID<49>, Required),	String),
+  (target,		(FIX::ID<56>, Required),	String),
+  (senderSub,		(FIX::ID<50>),			String),
+  (targetSub,		(FIX::ID<57>),			String),
+  (senderLocation,	(FIX::ID<142>),			String),
+  (targetLocation,	(FIX::ID<143>),			String),
+  (appVerID,		(FIX::ID<1128>),		String),
+  (seqNo,		(FIX::ID<34>, Required),	UInt64),
+  (possDup,		(FIX::ID<43>),			Bool),
+  (sendingTime,		(FIX::ID<52>, Required),	DateTime),
+  (origSendingTime,	(FIX::ID<122>),			DateTime),
+  (secureData,		(FIX::ID<91>, FIX::Len<90>),	Bytes),
+  (encoding,		(FIX::ID<347>),			String));
+
 ZfStruct(ZfixFmtAPI, (Trailer, FIX),
-  (signature, (FIX::ID<89>, FIX::Len<93>),	Bytes));
+  (signature,		(FIX::ID<89>, FIX::Len<93>),	Bytes));
 
 template <typename Facet> struct Schema<Header, Facet> :
   Schema_<Header, Facet, ZuActiveFields<Header, Facet>, true> {
@@ -141,24 +144,28 @@ template <typename O, typename Facet = ZuFacet::FIX> class MessageHandler {
   ZuAssert((Format<O, Facet>::Kind == Kind::Object));
   using S = Schema<Wire_<O>, Facet>;
 public:
-  explicit MessageHandler(const FrameView &frame, Limits limits = {}) :
+  // A supplied header must be a successful readHeader() of this same frame.
+  // Managed Rx has already decoded it before sequencing; continue at the body.
+  explicit MessageHandler(const FrameView &frame, Limits limits = {},
+      const Header *header = nullptr) :
     m_input{frame.content}, m_offset{frame.content.data() ?
-      unsigned(frame.content.data() - frame.wire.data()) : 0}
+      unsigned(frame.content.data() - frame.wire.data()) : 0},
+    m_header{header ? *header :
+      Header{.beginString = frame.beginString, .msgType = frame.msgType}}
   {
-    m_header.beginString = frame.beginString;
-    m_header.msgType = frame.msgType;
     m_trailer.checksum = frame.trailer.checksum;
     m_positions.length(S::Leaves::N, false);
-    for (unsigned i = 0; i < S::Leaves::N; ++i) m_positions[i].offset = UINT_MAX;
+    for (unsigned i = header ? S::HeaderN : 0; i < S::Leaves::N; ++i)
+      m_positions[i].offset = UINT_MAX;
     if (frame.wire.length() > limits.frameBytes ||
 	S::Leaves::N > limits.parseBytes/sizeof(Position)) {
       m_error = {ErrorCode::Size}; return;
     }
     Parse p{m_input, limits, m_positions, m_error};
-    unsigned offset = 0;
+    unsigned offset = header ? header->bytes : 0;
     Scope scope{nullptr, scopeContains<Wire_<O>, Facet>, 0, 0};
-    parseScope<Wire_<O>, Facet>(p, 0, offset, scope, false);
-    m_error = loadHeader_(m_input, m_positions, m_header, m_error);
+    parseScope<Wire_<O>, Facet>(p, 0, offset, scope, false, true, header ? 1 : 0);
+    if (!header) m_error = loadHeader_(m_input, m_positions, m_header, m_error);
     if (m_error) return;
     ObjectView<Trailer, ZuFacet::FIX> trailer{m_input, m_positions,
       S::HeaderN + S::BodyN, m_error};

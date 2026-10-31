@@ -6,6 +6,7 @@
 
 #include <zlib/ZmRef.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
 #include "load_main.hh"
@@ -30,23 +31,21 @@ static bool getText(ZiFile &f, Zfix::SessionString &text) {
   if (!get(f, length) || length > Zfix::Fmt::Limits::FrameBytes) return false;
   text.length(length); return !length || f.read(text.data(), length) == length;
 }
-static bool putState(ZiFile &f, const Zfix::Checkpoint &s) {
+static bool putState(ZiFile &f, const NativeCheckpoint &s) {
   const auto &r = s.rx; const auto &t = s.tx;
-  return putText(f, s.id) &&
-    put(f, s.epoch, s.fields, r.received, r.processed, r.gapBegin, r.gapEnd,
-      t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
+  return put(f, s.epoch, r.received, r.processed, r.gapBegin, r.gapEnd,
+    t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
 }
-static bool getState(ZiFile &f, Zfix::Checkpoint &s) {
+static bool getState(ZiFile &f, NativeCheckpoint &s) {
   auto &r = s.rx; auto &t = s.tx;
-  return getText(f, s.id) &&
-    get(f, s.epoch, s.fields, r.received, r.processed, r.gapBegin, r.gapEnd,
-      t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
+  return get(f, s.epoch, r.received, r.processed, r.gapBegin, r.gapEnd,
+    t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
 }
 static bool save(const Options &o, const NativeCheckpoint &s) {
   ZiFile f{o.stateOut, ZiFile::Write | ZiFile::NoFollow | ZiFile::GC, 0600};
-  uint32_t magic = 0x5a464958, version = 3, count = s.history.length();
+  uint32_t magic = 0x5a464958, version = 4, count = s.history.length();
   if (!f || !put(f, magic, version, s.businessKey, count) ||
-      !putState(f, s.rx) || !putState(f, s.tx)) return false;
+      !putState(f, s)) return false;
   for (const auto &h : s.history) {
     const auto &dt = h.originalTime;
     uint64_t id = h.body->id(); bool admin = h.body->administrative();
@@ -59,25 +58,18 @@ static bool load(const Options &o, NativeCheckpoint &s) {
   ZiFile f{o.stateIn, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC};
   uint32_t magic, version, count;
   if (!f || !get(f, magic, version, s.businessKey, count) ||
-      magic != 0x5a464958 || version != 3 || count > o.retain ||
-      s.businessKey != o.keyOffset || !getState(f, s.rx) || !getState(f, s.tx)) return false;
-  auto config = nativeConfig(true, o, 0);
-  Zfix::RxProgress rx; Zfix::TxProgress tx;
-  if (!s.rx.epoch || s.tx.epoch != s.rx.epoch ||
-      !Zfix::stateMatches(s.rx, config.id, s.rx.epoch) ||
-      !Zfix::stateMatches(s.tx, config.id, s.rx.epoch) ||
-      (s.rx.fields & Zfix::StateMask::Rx) != Zfix::StateMask::Rx ||
-      (s.tx.fields & Zfix::StateMask::Tx) != Zfix::StateMask::Tx ||
-      !Zfix::restoreRx(s.rx, {}, config.sequenceLimit, rx) ||
-      !Zfix::restoreTx(s.tx, {}, config.sequenceLimit, tx)) return false;
+      magic != 0x5a464958 || version != 4 || count > o.retain ||
+      s.businessKey != o.keyOffset || !getState(f, s)) return false;
+  if (!s.epoch) return false;
+  // Cursor and range validation runs on each selected link owner during prepare.
   uint64_t last = 0, bytes = 0;
   for (unsigned i = 0; i < count; ++i) {
     Zfix::TxHistory h; uint64_t id; bool admin;
     Zfix::SessionString type, body;
     if (!get(f, h.epoch, h.seqNo, id, admin, h.originalTime.julian(),
 	h.originalTime.sec(), h.originalTime.nsec()) || !getText(f, type) || !getText(f, body) ||
-	h.epoch != s.tx.epoch || h.seqNo <= last || h.seqNo >= tx.loaded || admin ||
-	type != NewOrder::msgType || !*h.originalTime) return false;
+	h.epoch != s.epoch || h.seqNo <= last || h.seqNo >= s.tx.loaded || admin ||
+	type != NewOrder::MsgType || !*h.originalTime) return false;
     Zfix::Fmt::Error error;
     h.body = Zfix::TxBody::restore<NewOrder>(body, id, error);
     if (error || !h.body || h.body->memory() > o.cacheBytes - bytes) return false;
@@ -155,7 +147,7 @@ template <typename Net> static int server(const Options &options, Ports ports) {
 template <typename Net> static int client(const Options &options, Ports ports) {
   NativeState state{options, ZuMv(ports)};
   if (options.stateIn.length() && !load(options, state.checkpoint)) {
-    fputs("invalid native workload checkpoint\n", stderr); return 1;
+    ZiLOG(Error, "zfix", "invalid native workload checkpoint"); return 1;
   }
   NativeHub<Net, true> hub{&state};
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
@@ -212,7 +204,7 @@ template <typename Net> static int client(const Options &options, Ports ports) {
   if (!failed && options.stateOut.length()) {
     state.checkpoint.businessKey = options.keyOffset + state.results[0].progress.complete;
     if (!save(options, state.checkpoint)) {
-      fputs("cannot save native workload checkpoint\n", stderr);
+      ZiLOG(Error, "zfix", "cannot save native workload checkpoint");
       ++state.results[0].errors; failed = true;
     }
   }
@@ -223,8 +215,14 @@ int native(bool acceptor, int argc, char **argv) {
   Options o; Ports ports;
   if (!options(o, acceptor, argc, argv, ports)) { usage(acceptor); return 2; }
   if (o.help) { usage(acceptor); return 0; }
-  if (acceptor) return o.tcp ? server<Zfix::TCP>(o, ZuMv(ports)) : server<Zfix::TLS>(o,
-    ZuMv(ports));
-  return o.tcp ? client<Zfix::TCP>(o, ZuMv(ports)) : client<Zfix::TLS>(o, ZuMv(ports));
+  ZiLog::init(acceptor ? "zfixd" : "zfix");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
+  int result;
+  if (acceptor) result = o.tcp ? server<Zfix::TCP>(o, ZuMv(ports)) :
+    server<Zfix::TLS>(o, ZuMv(ports));
+  else result = o.tcp ? client<Zfix::TCP>(o, ZuMv(ports)) : client<Zfix::TLS>(o, ZuMv(ports));
+  ZiLog::stop();
+  return result;
 }
 } // ZfixLoad

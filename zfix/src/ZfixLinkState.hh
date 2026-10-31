@@ -26,7 +26,7 @@ namespace Zfix {
 ZtEnumNS(ZfixAPI, ResetPath, int8_t, Live, Reconnect);
 
 using SessionString = ZtString<ZtStringHeapID<"Zfix.LinkState">>;
-// Wire identities belong to a connection configuration, not its durable key.
+// Wire identities belong to the link configuration.
 struct HeaderConfig {
   unsigned	version = Version::N;
   SessionString	local;
@@ -42,7 +42,6 @@ struct HeaderConfig {
 };
 
 struct SessionConfig {
-  SessionString	id; // application-defined durable session key
   HeaderConfig	header;
   unsigned	appVerID = AppVersion::N;
   unsigned	mode = Transport::FIX4;

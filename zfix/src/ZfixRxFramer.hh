@@ -13,6 +13,8 @@
 #include <zlib/ZfixLib.hh>
 #endif
 
+#include <string.h>
+
 #include <zlib/ZmRef.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
@@ -62,37 +64,57 @@ public:
 	if (!m_prefix) return fail({Fmt::ErrorCode::Output});
       }
       // Only the leading 8/9 fields need gathering to learn the full length.
-      // Scan each new header byte once; never walk a growing body repeatedly.
+      // Append spans up to each field boundary, then inspect the prefix.
       Zi::RxFramePos pos;
 
       unsigned frameBytes = m_framer.limits().frameBytes;
       stream.scan([this, frameBytes](auto span) -> int64_t {
-	unsigned n = span.length();
-	for (unsigned i = 0; i < n; ++i) {
+	unsigned used = 0, length = span.length();
+	while (used < length) {
 	  if (m_prefix->length >= frameBytes) {
 	    m_error = {Fmt::ErrorCode::Size}; return -1;
 	  }
-	  if (!m_prefix->append(span.data() + i, 1)) {
+	  unsigned n = length - used, available = frameBytes - m_prefix->length;
+	  if (n > available) n = available;
+	  auto data = span.data() + used;
+	  auto end = static_cast<const uint8_t *>(memchr(data, '\1', n));
+	  if (end) n = unsigned(end - data) + 1;
+	  if (!m_prefix->append(data, n)) {
 	    m_error = {Fmt::ErrorCode::Output}; return -1;
 	  }
+	  used += n;
 	  auto r = m_framer.scan(ZuCSpan{m_prefix->cspan()});
 	  if (r.error) { m_error = r.error; return -1; }
-	  if (r.expected) { m_expected = r.expected; return i + 1; }
+	  if (r.expected) { m_expected = r.expected; return used; }
 	}
 	return 0;
       }, pos, m_prefix->length);
       if (m_error) return -1;
       if (!m_expected) return 0;
-      m_prefix = nullptr;
     }
     if (stream.length() < m_expected) return 0;
-    unsigned remaining = m_expected;
-    auto n = stream.extract([&remaining](auto span) -> int64_t {
-      if (span.length() >= remaining) return remaining;
-      remaining -= span.length(); return 0;
-    }, ZuFwd<Alloc>(alloc), out);
-    if (n < 0) return fail({Fmt::ErrorCode::Output});
-    if (!n) return 0;
+    if (m_prefix) {
+      // The gathered envelope already occupies the final pooled buffer.
+      // Copy only the remaining bytes, then retire the stream's fragments.
+      unsigned prefix = m_prefix->length;
+      // BodyLength is final: retain extract()'s exact jumbo allocation size.
+      if (!m_prefix->ensure<[](unsigned, unsigned n) { return n; }>(m_expected))
+	return fail({Fmt::ErrorCode::Output});
+      auto n = stream.each(prefix, m_expected - prefix, [this](auto span) -> int64_t {
+	return m_prefix->append(span) ? int64_t(span.length()) : -1;
+      });
+      if (n < 0) return fail({Fmt::ErrorCode::Output});
+      stream.advance(m_expected);
+      out = ZuMv(m_prefix);
+    } else {
+      unsigned remaining = m_expected;
+      auto n = stream.extract([&remaining](auto span) -> int64_t {
+	if (span.length() >= remaining) return remaining;
+	remaining -= span.length(); return 0;
+      }, ZuFwd<Alloc>(alloc), out);
+      if (n < 0) return fail({Fmt::ErrorCode::Output});
+      if (!n) return 0;
+    }
     if (!validated) {
       auto r = Fmt::frame(ZuCSpan{out->cspan()}, m_framer.limits());
       if (r.error) { out = nullptr; return fail(r.error); }

@@ -22,7 +22,7 @@ struct Other { };
 
 using OtherEntry = MT<Other, "8">;
 using ReplyEntry = MT<Order, "8">;
-using RequestEntry = MT<Order, "D", ZuFacet::FIX, NoDiscriminator, ZuTypeList<ReplyEntry>>;
+using RequestEntry = MT<Order, "D", ZuFacet::FIX, NoDiscrim, ZuTypeList<ReplyEntry>>;
 template <typename E = Entry> static RequestContext make(ZuCSpan &id) {
   Fmt::Error error;
   auto body = TxBody::encode<E>(Order{"retained"}, 99, error);
@@ -77,7 +77,7 @@ struct SomeHooks {
   unsigned	called = 0, replies = 0;
   bool		permit = true;
 
-  Fmt::Error fixReplyRx_(RequestEntry *, ReplyEntry *, const RequestContext &context) {
+  Fmt::Error fixReplyRx(RequestEntry *, ReplyEntry *, const RequestContext &context) {
     if (!context) return {Fmt::ErrorCode::Unresolved, 35};
     if (!permit) return {Fmt::ErrorCode::Value, 11, 37};
     if (context.context().session != 1234 || context.context().epoch != 3)
@@ -85,7 +85,7 @@ struct SomeHooks {
     ++replies; return {}; // explicit fixture policy permits replay/multiple replies
   }
 
-  Fmt::Error fixReceiveRx_(Entry *, const Order &o, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(Entry *, const Order &o, const RequestContext &context) {
     ++called;
     if (o.id != "retained" || context.context().seqNo != 9) return {Fmt::ErrorCode::Value, 11};
     return {};
@@ -125,8 +125,8 @@ static void replyPolicy() {
     context);
   ZuCheck(error.code == Fmt::ErrorCode::Unresolved && error.tag == 35 && hooks.replies == 2);
 }
-using SelectedA = MT<Order, "D", ZuFacet::FIX, Discriminator<9000, "A">>;
-using SelectedB = MT<Order, "D", ZuFacet::FIX, Discriminator<9000, "B">>;
+using SelectedA = MT<Order, "D", ZuFacet::FIX, Discrim<9000, "A">>;
+using SelectedB = MT<Order, "D", ZuFacet::FIX, Discrim<9000, "B">>;
 static void selection() {
   ZuTestScope(selection);
   ZuCSpan id; auto context = make<SelectedA>(id);

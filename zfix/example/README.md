@@ -29,7 +29,7 @@ teardown. The client additionally drains DNS continuations before stopping its
 multiplex. Only main waits on semaphores; the owner callbacks remain asynchronous.
 Each link explicitly accepts its business sends into the core's bounded
 operational queue. This single-call example keeps no resend history and adds no
-external persistence barrier. Every resend asks `fixRetrieveTx_`, which diagnoses
+external persistence barrier. Every resend asks `fixRetrieveTx`, which diagnoses
 the requested context and returns no content; the engine gap-fills that assigned
 sequence. There is no core replay store. Peer rejects report their referenced
 outbound sequence, independently
@@ -42,8 +42,8 @@ passed with successful client/server exits, expected reports and event, and
 empty sanitizer stderr; see [STATUS.md](../STATUS.md) for evidence. Installation
 has not been repeated for this repair.
 
-The server's `fixReplyRx_` checks that a request context belongs to its current
-session and epoch. Its `fixAdmissionRx_` accepts Logon without FIX credentials;
+The server's `fixReplyRx` checks that a request context belongs to its current
+session and epoch. Its `fixAdmissionRx` accepts Logon without FIX credentials;
 an application can validate its own credentials there. This example imposes no
 FIX authentication scheme.
 

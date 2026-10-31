@@ -23,7 +23,7 @@ template <typename Entry> Text frame(const typename Entry::Object &o) {
   Text storage;
   Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, &storage};
   Zfix::Fmt::Header h;
-  h.beginString = "FIX.4.4"; h.msgType = Entry::msgType;
+  h.beginString = "FIX.4.4"; h.msgType = Entry::MsgType;
   h.sender = "ZFIX-C"; h.target = "ZFIX-S"; h.seqNo = 2;
   h.sendingTime = ZuDateTime{Zm::now()};
   if (Zfix::Fmt::writeHeader(writer.body(), h)) return {};

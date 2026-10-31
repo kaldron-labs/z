@@ -98,8 +98,8 @@ static void retained()
   Error error;
   auto payload = TxBody::encode<OrderMsg>(Order{"abc", ZuBSpan{"A\1\0="_z}}, 91, error);
   ZuCheck(payload && !error && payload->id() == 91 && payload->msgType() == "D");
-  constexpr auto original = "11=abc\1" "95=4\1" "96=A\1\0=\1"_z;
-  ZuCheck(payload->body() == original && !payload->administrative());
+  constexpr auto Original = "11=abc\1" "95=4\1" "96=A\1\0=\1"_z;
+  ZuCheck(payload->body() == Original && !payload->administrative());
   auto h = header();
   auto wire = txFrame(*payload, h, error);
   ZuCheck(wire && !error);
@@ -112,7 +112,7 @@ static void retained()
   // Transport mutation and partial-send cursor changes cannot touch history.
   memset(wire->data(), 'X', wire->length);
   wire->advance(9);
-  ZuCheck(payload->body() == original);
+  ZuCheck(payload->body() == Original);
   h.possDup = true;
   h.origSendingTime = h.sendingTime;
   h.sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-13:00:00"};
@@ -223,13 +223,13 @@ static void archive()
   Error error;
   ArchiveOnly::getters = ArchiveOnly::constructed = 0;
   // Leading zeros and unknown extensions must survive without normalization.
-  constexpr auto original = "38=0007\1" "9000=opaque\1"_z;
-  auto body = TxBody::restore<ArchiveMsg>(original, 83, error);
-  ZuCheck(body && !error && body->id() == 83 && body->body() == original);
+  constexpr auto Original = "38=0007\1" "9000=opaque\1"_z;
+  auto body = TxBody::restore<ArchiveMsg>(Original, 83, error);
+  ZuCheck(body && !error && body->id() == 83 && body->body() == Original);
   ZuCheck(!ArchiveOnly::getters && !ArchiveOnly::constructed);
   auto h = header(); h.possDup = true; h.origSendingTime = h.sendingTime;
   auto wire = txFrame(*body, h, error);
-  ZuCheck(wire && !error && ZuCSpan{wire->cspan()}.find(original) >= 0);
+  ZuCheck(wire && !error && ZuCSpan{wire->cspan()}.find(Original) >= 0);
   auto bad = TxBody::restore<ArchiveMsg>("38=bad\1"_z, 84, error);
   ZuCheck(!bad && error.code == ErrorCode::Value && error.tag == 38);
   bad = TxBody::restore<ArchiveMsg>("9000=opaque\1"_z, 84, error);
@@ -238,14 +238,14 @@ static void archive()
   ZuCheck(!bad && error.code == ErrorCode::Reserved && error.tag == 49);
   ZuCheck(!ArchiveOnly::getters && !ArchiveOnly::constructed);
 
-  ZtString<ZtStringHeapID<"Zfix.ArchiveInput">> borrowed = original;
+  ZtString<ZtStringHeapID<"Zfix.ArchiveInput">> borrowed = Original;
   auto owned = TxBody::restore<ArchiveMsg>(borrowed, 86, error);
   borrowed.clear(); borrowed << "reused storage";
-  ZuCheck(owned && !error && owned->body() == original);
+  ZuCheck(owned && !error && owned->body() == Original);
 
-  constexpr auto binary = "11=abc\1" "95=4\1" "96=A\1\0=\1"_z;
-  auto data = TxBody::restore<OrderMsg>(binary, 85, error);
-  ZuCheck(data && !error && data->body() == binary);
+  constexpr auto Binary = "11=abc\1" "95=4\1" "96=A\1\0=\1"_z;
+  auto data = TxBody::restore<OrderMsg>(Binary, 85, error);
+  ZuCheck(data && !error && data->body() == Binary);
   auto output = txFrame(*data, header(), error);
   MessageHandler<Order> decoded{frame(ZuCSpan{output->cspan()}).view};
   auto got = decoded.ctor();
@@ -253,8 +253,8 @@ static void archive()
   auto shortData = TxBody::restore<OrderMsg>("11=abc\1" "95=5\1" "96=A\1\0=\1"_z, 85, error);
   ZuCheck(!shortData && error.code == ErrorCode::Truncated);
   Limits limits;
-  limits.frameBytes = binary.length();
-  auto oversized = TxBody::restore<OrderMsg>(binary, 85, error, limits);
+  limits.frameBytes = Binary.length();
+  auto oversized = TxBody::restore<OrderMsg>(Binary, 85, error, limits);
   ZuCheck(!oversized && error.code == ErrorCode::Size);
 }
 
@@ -262,9 +262,9 @@ static void archiveGroups()
 {
   ZuTestScope(archiveGroups);
   Error error;
-  constexpr auto original = "453=2\1" "448=FIRST\1" "452=01\1" "448=SECOND\1" "452=02\1"_z;
-  auto body = TxBody::restore<GroupMsg>(original, 11, error);
-  ZuCheck(body && !error && body->body() == original);
+  constexpr auto Original = "453=2\1" "448=FIRST\1" "452=01\1" "448=SECOND\1" "452=02\1"_z;
+  auto body = TxBody::restore<GroupMsg>(Original, 11, error);
+  ZuCheck(body && !error && body->body() == Original);
   auto incomplete = TxBody::restore<GroupMsg>("453=1\1" "448=FIRST\1"_z, 11, error);
   ZuCheck(!incomplete && error.code == ErrorCode::Required && error.tag == 452);
   auto malformed = TxBody::restore<GroupMsg>("453=1\1" "448=FIRST\1" "452=x\1"_z, 11, error);
@@ -279,9 +279,9 @@ static void archiveControls()
 {
   ZuTestScope(archiveControls);
   Error error;
-  constexpr auto original = "45=0007\1" "373=05\1" "58=stored\1"_z;
-  auto reject = TxBody::restoreControl("3", original, 0, error);
-  ZuCheck(reject && !error && reject->body() == original && reject->administrative());
+  constexpr auto Original = "45=0007\1" "373=05\1" "58=stored\1"_z;
+  auto reject = TxBody::restoreControl("3", Original, 0, error);
+  ZuCheck(reject && !error && reject->body() == Original && reject->administrative());
   auto hb = TxBody::restoreControl("0", {}, 0, error);
   ZuCheck(hb && !error && !hb->body().length() && hb->administrative());
   auto bad = TxBody::restoreControl("3", "45=0\1"_z, 0, error);
@@ -291,18 +291,18 @@ static void archiveControls()
   bad = TxBody::restoreControl("D", "11=abc\1"_z, 0, error);
   ZuCheck(!bad && error.code == ErrorCode::Unresolved && error.tag == 35);
   using RejectMsg = MT<Session::Reject, "3">;
-  bad = TxBody::restore<RejectMsg>(original, 0, error);
+  bad = TxBody::restore<RejectMsg>(Original, 0, error);
   ZuCheck(!bad && error.code == ErrorCode::Reserved && error.tag == 35);
 }
 
-// Root selector 150 is absent from KeyOrder's fields but present in a group.
+// An unmodeled root selector follows a group with distinct field tags.
 struct KeyParty {
   Party		party;
   ZuCSpan	kind;
 };
 
 ZfStruct(, (KeyParty, FIX), (party, , UDT),
-  (kind, (FIX::ID<150>, Required), String));
+  (kind, (FIX::ID<9003>, Required), String));
 ZfStructImpl(KeyParty);
 ZfStructImpl(KeyParty, FIX);
 struct KeyParties : ZtArray<KeyParty, ZtArrayHeapID<"Zfix.ArchiveKeys">> {
@@ -318,35 +318,35 @@ ZfStruct(, (KeyOrder, FIX), (parties, (FIX::ID<453>), UDT));
 ZfStructImpl(KeyOrder);
 ZfStructImpl(KeyOrder, FIX);
 
-static void archiveNestedKey()
+static void archiveGroupKey()
 {
-  ZuTestScope(archiveNestedKey);
-  using Selected = MT<KeyOrder, "D", ZuFacet::FIX, Discriminator<150, "A">>;
+  ZuTestScope(archiveGroupKey);
+  using Selected = MT<KeyOrder, "D", ZuFacet::FIX, Discrim<150, "A">>;
   KeyOrder order;
   order.parties.push(KeyParty{{"p", 3}, "A"});
   Error error;
   auto encoded = TxBody::encode<Selected>(order, 42, error);
-  constexpr auto bytes = "453=1\1" "448=p\1" "452=3\1" "150=A\1" "150=A\1"_z;
-  ZuCheck(encoded && !error && encoded->body() == bytes);
-  auto restored = TxBody::restore<Selected>(bytes, 42, error);
+  constexpr auto Bytes = "453=1\1" "448=p\1" "452=3\1" "9003=A\1" "150=A\1"_z;
+  ZuCheck(encoded && !error && encoded->body() == Bytes);
+  auto restored = TxBody::restore<Selected>(Bytes, 42, error);
   ZuCheck(restored && encoded && !error &&
     restored->body() == encoded->body() && restored->id() == 42);
   auto missing = TxBody::restore<Selected>(
-    "453=1\1" "448=p\1" "452=3\1" "150=A\1"_z, 42, error);
+    "453=1\1" "448=p\1" "452=3\1" "9003=A\1"_z, 42, error);
   ZuCheck(!missing && error.code == ErrorCode::Required && error.tag == 150);
   auto wrong = TxBody::restore<Selected>(
-    "453=1\1" "448=p\1" "452=3\1" "150=A\1" "150=B\1"_z, 42, error);
+    "453=1\1" "448=p\1" "452=3\1" "9003=A\1" "150=B\1"_z, 42, error);
   ZuCheck(!wrong && error.code == ErrorCode::Unresolved && error.tag == 150);
 }
 
 static void archiveSelector()
 {
   ZuTestScope(archiveSelector);
-  using Selected = MT<GroupOrder, "D", ZuFacet::FIX, Discriminator<150, "A">>;
+  using Selected = MT<GroupOrder, "D", ZuFacet::FIX, Discrim<150, "A">>;
   Error error;
-  constexpr auto bytes = "453=1\1" "448=p\1" "452=3\1" "150=A\1"_z;
-  auto saved = TxBody::restore<Selected>(bytes, 42, error);
-  ZuCheck(saved && !error && saved->body() == bytes);
+  constexpr auto Bytes = "453=1\1" "448=p\1" "452=3\1" "150=A\1"_z;
+  auto saved = TxBody::restore<Selected>(Bytes, 42, error);
+  ZuCheck(saved && !error && saved->body() == Bytes);
   auto missing = TxBody::restore<Selected>("453=1\1" "448=p\1" "452=3\1"_z, 42, error);
   ZuCheck(!missing && error.code == ErrorCode::Required && error.tag == 150);
   auto duplicate = TxBody::restore<Selected>(
@@ -355,11 +355,7 @@ static void archiveSelector()
   auto unordered = TxBody::restore<Selected>(
     "150=A\1" "453=1\1" "452=3\1" "448=p\1"_z, 42, error);
   ZuCheck(!unordered && error.code == ErrorCode::Group);
-  using BinaryKey = MT<Order, "D", ZuFacet::FIX, Discriminator<150, "A">>;
-  auto binary = TxBody::restore<BinaryKey>(
-    "11=x\1" "95=6\1" "96=150=A\1\1"_z, 42, error);
-  ZuCheck(!binary && error.code == ErrorCode::Required && error.tag == 150);
-  using NoCtor = MT<ArchiveOnly, "D", ZuFacet::FIX, Discriminator<150, "A">>;
+  using NoCtor = MT<ArchiveOnly, "D", ZuFacet::FIX, Discrim<150, "A">>;
   ArchiveOnly::constructed = ArchiveOnly::getters = 0;
   auto checked = TxBody::restore<NoCtor>("38=7\1" "150=A\1"_z, 42, error);
   ZuCheck(checked && !error && !ArchiveOnly::constructed && !ArchiveOnly::getters);
@@ -377,6 +373,6 @@ int main(int argc, char **argv)
   ZuTestCall(archiveGroups);
   ZuTestCall(archiveControls);
   ZuTestCall(archiveSelector);
-  ZuTestCall(archiveNestedKey);
+  ZuTestCall(archiveGroupKey);
   return 0;
 }

@@ -25,7 +25,7 @@ using OrderMsg = MT<Order, "D">;
 static SessionConfig config()
 {
   SessionConfig c;
-  c.id = "PRIMARY"; c.header.version = Version::V4_4;
+  c.header.version = Version::V4_4;
   c.header.local = "CLIENT";
   c.header.peer = "SERVER";
   return c;
@@ -117,23 +117,23 @@ struct Engine : Zfix::Tx<Engine> {
   explicit Engine(TxLimits limits = {}, SessionConfig c = config(), uint64_t epoch = 1) :
     Zfix::Tx<Engine>{ZuMv(c), limits, epoch} { }
 
-  void txPost_(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
+  void txPost(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
 
-  ZuDateTime utcTx_() { return now; }
+  ZuDateTime utcTx() { return now; }
 
-  unsigned loadTx_(TxBody::Ref body, TxContext context, uint64_t ticket) {
+  unsigned loadTx(TxBody::Ref body, TxContext context, uint64_t ticket) {
     loadTicket = ticket;
     if (loadResult == TxLoad::Accepted) associations.push(Association{body, context});
     return loadResult;
   }
 
-  bool unloadTx_(TxBody::Ref body, TxContext context, uint64_t ticket) {
+  bool unloadTx(TxBody::Ref body, TxContext context, uint64_t ticket) {
     unloadTicket = ticket;
     unloaded.push(Association{body, context});
     return !delayUnload;
   }
 
-  bool frameTx_(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> wire, ZuDateTime original) {
+  bool frameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> wire, ZuDateTime original) {
     if (refuseOutput || (outputLimit && output.length() >= outputLimit)) return false;
     bool associated = context.replay;
     for (unsigned i = 0, n = associations.length(); i < n; ++i) {
@@ -153,7 +153,7 @@ struct Engine : Zfix::Tx<Engine> {
     return true;
   }
 
-  TxReload historyTx_(TxContext context, uint64_t, uint64_t ticket) {
+  TxReload historyTx(TxContext context, uint64_t, uint64_t ticket) {
     lookups.push(context);
     auto epoch = context.epoch, key = context.seqNo;
     ++historyCalls;
@@ -176,26 +176,26 @@ struct Engine : Zfix::Tx<Engine> {
     return {};
   }
 
-  void historyArchive_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void historyArchive(uint64_t epoch, uint64_t begin, uint64_t end) {
     archives.push(TxContext{epoch, 0, begin});
     archiveEnds.push(end);
   }
 
-  void resetFailedTx_(TxContext context, uint64_t epoch, uint64_t id, Fmt::Error error) {
+  void resetFailedTx(TxContext context, uint64_t epoch, uint64_t id, Fmt::Error error) {
     resetFailures.push(ResetFail{context, epoch, error, id});
   }
 
-  void resetTx_(TxContext context, uint64_t epoch, TxProgress previous, uint64_t id) {
+  void resetTx(TxContext context, uint64_t epoch, TxProgress previous, uint64_t id) {
     resets.push(Reset{context, epoch, previous, id});
   }
 
-  void errorTx_(TxContext, Fmt::Error e) { error = e; }
+  void errorTx(TxContext, Fmt::Error e) { error = e; }
 
-  void limitTx_(TxContext context, uint64_t maximum, unsigned headroom) {
+  void limitTx(TxContext context, uint64_t maximum, unsigned headroom) {
     limits.push(Limit{context, maximum, headroom});
   }
 
-  void ackdTx_(TxContext context, uint64_t previous, uint64_t next) {
+  void ackdTx(TxContext context, uint64_t previous, uint64_t next) {
     acks.push(Ack{context, previous, next});
   }
 
@@ -779,7 +779,7 @@ static void abortedAssigned()
 static void reconstructedHistory()
 {
   ZuTestScope(reconstructedHistory);
-  Checkpoint state;
+  TxProgress state;
   StoredHistory record;
   {
     Engine old{{}, config(), 17};
@@ -787,7 +787,7 @@ static void reconstructedHistory()
     old.start();
     ZuCheck(old.send(73, "restored/0007") == TxSelect::Accepted); old.drain();
     ZuCheck(old.output.length() == 1 && old.acknowledge_(old.epoch_(), 2)); old.drain();
-    ZuCheck(old.snapshot_(state));
+    state = old.progress_();
     const auto &published = old.output[0];
     record = {SessionString{published.body->body()}, published.original,
       published.body->id(), published.context.epoch, published.context.seqNo};
@@ -796,7 +796,7 @@ static void reconstructedHistory()
   // reconstructs history from stored bytes only when the Tx retrieval hook runs.
   Engine restored{{}, config(), 17};
   restored.stored.push(ZuMv(record));
-  ZuCheck(restored.restore_(state));
+  ZuCheck(restored.restore_(17, state));
   restored.now = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-13:00:00"};
   restored.start();
   ZuCheck(restored.replay_(restored.epoch_(), 1, 1)); restored.drain();

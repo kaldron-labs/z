@@ -34,8 +34,8 @@ public:
   using EngineBase::send;
   using EngineBase::reply;
   using EngineBase::work;
-  using Hooks::fixTraceField_;
-  using Hooks::fixTraceSecret_;
+  using Hooks::fixTraceField;
+  using Hooks::fixTraceSecret;
   using typename NetBase::Cxn;
   using typename NetBase::RxBufAlloc;
   using typename NetBase::TxBufAlloc;

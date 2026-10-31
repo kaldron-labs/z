@@ -6,7 +6,7 @@
 
 // Independent SDK routing/TLS probe; no native FIX parser or session engine
 
-#include <stdio.h>
+#include <iostream>
 #include <string.h>
 #include <string>
 
@@ -82,7 +82,7 @@ template <typename T> static void json(const T &value)
 {
   ZtString<ZtStringHeapID<"Zfix.QFProbe.JSON">> text;
   ZfJSON::save(text, value); text << '\n';
-  fwrite(text.data(), 1, text.length(), stdout); fflush(stdout);
+  std::cout << text << std::flush;
 }
 struct ProbeState {
   ZmSemaphore		ready, failed;
@@ -121,7 +121,7 @@ friend inline ZuStringT<"Zfix.QFProbe.Log"> ZmNHeapID(ProbeLog *);
   void onOutgoing(const std::string &) override { }
 
   void onEvent(const std::string &event) override {
-    fprintf(stderr, "# QuickFIX: %s\n", event.c_str());
+    log("QuickFIX: ", event);
     if (event.find("SSL_connect failed") != std::string::npos) {
       ++state.failures; state.failed.post();
     }
@@ -165,7 +165,8 @@ static FIX::SessionID session(bool acceptor, unsigned index)
     acceptor ? client : "SERVER"};
 }
 template <bool TLS>
-static ProbeResult run(ProbeCase::T kind, const char *dictionary, const char *root, bool print)
+static ProbeResult run(ProbeCase::T kind, const char *dictionary, const char *root,
+    bool print, bool force = true)
 {
   ProbeResult result; result.scenario = ProbeCase::Wire::v2s(kind);
   result.expectedFailure = kind >= ProbeCase::WrongName;
@@ -223,6 +224,9 @@ static ProbeResult run(ProbeCase::T kind, const char *dictionary, const char *ro
       for (unsigned i = 0; i < result.sessions * 2; ++i)
 	if (state.ready.timedwait(deadline) != 0) { ++state.errors; break; }
     }
+    // Stop and join both workers while applications, stores, logs and callback
+    // state remain alive. Guards cover exceptions; ASan observes SDK shutdown.
+    client.stop(force); server.stop(force);
   }
   result.client = state.client.load_(); result.server = state.server.load_();
   result.failures = state.failures.load_(); result.errors = state.errors.load_();
@@ -267,6 +271,20 @@ static void pair(ProbeCase::T kind, const char *dictionary, const char *root)
   ZuCheck(result.expectedFailure ? !result.client && !result.server && result.failures :
     result.client == 3 && result.server == 3 && !result.failures);
 }
+static void shutdown(const char *dictionary, const char *root, bool force)
+{
+  ZuTestScope(shutdown);
+  enum { Rounds = 4 };
+  unsigned errors = 0;
+  for (unsigned round = 0; round < Rounds; ++round) {
+    // Recreate two real sessions each round; do not intercept SDK shutdown.
+    log("shutdown force=", force, " round=", round);
+    auto result = run<false>(ProbeCase::TCP, dictionary, root, false, force);
+    errors += result.errors;
+  }
+  ZuCheck(!errors);
+}
+
 int main(int argc, char **argv)
 {
   try {
@@ -277,19 +295,22 @@ int main(int argc, char **argv)
       json(result); return result.errors ? 1 : 0;
     }
     if (argc != 3) {
-      fputs("usage: quickfixprobe [--json CASE] FIX44.xml CERT_DIRECTORY\n", stderr); return 2;
+      std::cerr << "usage: quickfixprobe [--json CASE] FIX44.xml CERT_DIRECTORY\n";
+      return 2;
     }
     parse(1, argv); ZuTestMain();
     ZuTestCall(ports);
     ZuTestCall(caNames, argv[2]);
     ZuTestCall(pair, ProbeCase::TCP, argv[1], argv[2]);
+    ZuTestCall(shutdown, argv[1], argv[2], true);
+    ZuTestCall(shutdown, argv[1], argv[2], false);
     ZuTestCall(pair, ProbeCase::DNS, argv[1], argv[2]);
     ZuTestCall(pair, ProbeCase::IP, argv[1], argv[2]);
     ZuTestCall(pair, ProbeCase::WrongName, argv[1], argv[2]);
     ZuTestCall(pair, ProbeCase::WrongIP, argv[1], argv[2]);
     ZuTestCall(pair, ProbeCase::Untrusted, argv[1], argv[2]);
   } catch (const std::exception &error) {
-    fprintf(stderr, "QuickFIX dependency probe: %s\n", error.what()); return 1;
+    log("QuickFIX dependency probe: ", error.what()); return 1;
   }
   return 0;
 }

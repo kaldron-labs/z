@@ -16,11 +16,14 @@
 
 #include <link.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuStream.hh>
+#include <zlib/ZuString.hh>
 
 #if !defined(__linux__) || !defined(__x86_64__) || !defined(__GLIBC__) || defined(__ILP32__)
 #error audittrace requires Linux x64 glibc
@@ -104,25 +107,37 @@ __attribute__((destructor)) static void finish() {
   if (!path || !*path) return;
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (fd < 0) return;
-  static constexpr const char format[] =
-    "{\"scope\":\"LD_AUDIT main-namespace PLT entries from preinit through exit hook; "
-    "excludes direct/inlined/custom allocator internal calls; attempts not success; "
-    "copy sums can include nested calls\","
-    "\"allocAttempts\":%llu,\"requestedBytes\":%llu,\"requestOverflows\":%llu,"
-    "\"freeCalls\":%llu,\"copyCalls\":%llu,\"copyBytes\":%llu,"
-    "\"asanCopyCalls\":%llu,\"asanCopyBytes\":%llu}\n";
-  // Eight uint64 values need at most20 digits each; fixed JSON plus this bound
-  // fits stack storage without observing our own formatter's allocator work.
-  char buffer[sizeof(format) + 8 * 20];
-#define Value(v) static_cast<unsigned long long>(__atomic_load_n(&v, __ATOMIC_RELAXED))
-  int n = snprintf(buffer, sizeof(buffer), format, Value(allocAttempts), Value(requestedBytes),
-    Value(requestOverflows), Value(freeCalls), Value(copyCalls), Value(copyBytes),
-    Value(asanCopyCalls), Value(asanCopyBytes));
-#undef Value
-  if (n > 0 && size_t(n) < sizeof(buffer)) {
+  static constexpr auto Prefix =
+    "{\"scope\":\"LD_AUDIT main-namespace PLT entries from preinit through exit hook;"
+    " excludes direct/inlined/custom allocator internal calls; attempts not "
+    "success; copy sums can include nested calls\",\"allocAttempts\":"_z;
+  static constexpr auto Requested = ",\"requestedBytes\":"_z;
+  static constexpr auto Overflows = ",\"requestOverflows\":"_z;
+  static constexpr auto Free = ",\"freeCalls\":"_z;
+  static constexpr auto Copy = ",\"copyCalls\":"_z;
+  static constexpr auto Copied = ",\"copyBytes\":"_z;
+  static constexpr auto AsanCopy = ",\"asanCopyCalls\":"_z;
+  static constexpr auto AsanCopied = ",\"asanCopyBytes\":"_z;
+  static constexpr auto End = "}\n"_z;
+  // A uint64 needs at most 20 decimal digits. Literal extents plus that bound
+  // keep exit-hook formatting entirely on the stack, outside allocator hooks.
+  char buffer[
+    Prefix.length() + Requested.length() + Overflows.length() + Free.length() +
+    Copy.length() + Copied.length() + AsanCopy.length() + AsanCopied.length() +
+    End.length() + 8 * 20];
+  ZuStream out{ZuSpan{buffer, sizeof(buffer)}};
+  auto value = [](const uint64_t &v) {
+    return ZuBox<uint64_t>{__atomic_load_n(&v, __ATOMIC_RELAXED)};
+  };
+  out << Prefix << value(allocAttempts) << Requested << value(requestedBytes) << Overflows
+    << value(requestOverflows) << Free << value(freeCalls) << Copy << value(copyCalls) <<
+    Copied << value(copyBytes) << AsanCopy << value(asanCopyCalls) << AsanCopied <<
+    value(asanCopyBytes) << End;
+  size_t n = out.data() - buffer;
+  if (!out.overflow() && n) {
     size_t done = 0;
-    while (done < size_t(n)) {
-      auto wrote = write(fd, buffer + done, size_t(n) - done);
+    while (done < n) {
+      auto wrote = write(fd, buffer + done, n - done);
       if (wrote < 0) { if (errno == EINTR) continue; break; }
       if (!wrote) break;
       done += size_t(wrote);

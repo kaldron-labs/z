@@ -35,8 +35,8 @@ public:
   RequestContext(Entry *, uint128_t session, ZmRef<const RxQueue::Node> message) :
     m_message{ZuMv(message)} {
     if (!m_message) return;
-    using Key = typename Entry::Discriminator;
-    m_tag = Key::tag; m_key = Key::value;
+    using Key = typename Entry::Discrim;
+    m_tag = Key::Tag; m_key = Key::Value;
     const auto &input = m_message->data();
     m_context = {.session = session, .connection = input.connection,
       .epoch = input.epoch, .seqNo = input.header.seqNo,
@@ -47,9 +47,9 @@ public:
   explicit operator bool() const { return m_message.ptr(); }
 
   template <typename Entry> bool is() const {
-    using Key = typename Entry::Discriminator;
-    return m_message && m_message->data().header.msgType == ZuCSpan{Entry::msgType} &&
-      m_tag == Key::tag && m_key == ZuCSpan{Key::value};
+    using Key = typename Entry::Discrim;
+    return m_message && m_message->data().header.msgType == ZuCSpan{Entry::MsgType} &&
+      m_tag == Key::Tag && m_key == ZuCSpan{Key::Value};
   }
 
   const Context &context() const { return m_context; }
@@ -84,11 +84,11 @@ template <typename Impl, typename Entry, typename = void> struct Receive {
 };
 
 template <typename Impl, typename Entry>
-struct Receive<Impl, Entry, decltype(ZuDeclVal<Impl *>()->fixReceiveRx_(
+struct Receive<Impl, Entry, decltype(ZuDeclVal<Impl *>()->fixReceiveRx(
     ZuDeclVal<Entry *>(), ZuDeclVal<const typename Entry::Object &>(),
     ZuDeclVal<const RequestContext &>()), void())> {
   static Fmt::Error call(Impl *impl, Entry *type, const typename Entry::Object &object,
-      const RequestContext &context) { return impl->fixReceiveRx_(type, object, context); }
+      const RequestContext &context) { return impl->fixReceiveRx(type, object, context); }
 };
 
 // Reply policy belongs to the application. Missing overloads refuse locally;
@@ -99,10 +99,10 @@ template <typename Impl, typename Request, typename Response, typename Ctx,
 };
 
 template <typename Impl, typename Request, typename Response, typename Ctx>
-struct Reply<Impl, Request, Response, Ctx, decltype(ZuDeclVal<Impl *>()->fixReplyRx_(
+struct Reply<Impl, Request, Response, Ctx, decltype(ZuDeclVal<Impl *>()->fixReplyRx(
     ZuDeclVal<Request *>(), ZuDeclVal<Response *>(), ZuDeclVal<const Ctx &>()), void())> {
   static Fmt::Error call(Impl *impl, const Ctx &context) {
-    return impl->fixReplyRx_(static_cast<Request *>(nullptr),
+    return impl->fixReplyRx(static_cast<Request *>(nullptr),
       static_cast<Response *>(nullptr), context);
   }
 };

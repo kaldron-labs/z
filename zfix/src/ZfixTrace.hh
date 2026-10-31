@@ -61,7 +61,7 @@ TraceField traceField(unsigned tag) {
   TraceField out;
   int index = S::index().find(tag);
   if constexpr (S::Leaves::N) if (index >= 0) {
-    ZuSwitch::dispatch<S::Leaves::N>(unsigned(index) >> 1, [&out, index]<typename I>(I) {
+    ZuSwitch::dispatch<S::Leaves::N>(unsigned(index) >> 2, [&out, index]<typename I>(I) {
       using F = typename ZuType<I{}, typename S::Leaves>::Field;
       out.known = true;
       if (index & 1) out.dataTag = Fmt::tag<F>();

@@ -26,11 +26,6 @@ the target ID defaults to `ZFIX-S`. Expected IDs derive from the listener index,
 independently of connection arrival order. All client sessions complete Logon
 before any workload starts.
 
-`--id ID` sets the native application's logical session-key prefix, default
-`ZFIX`. Per-slot keys are `ID-C-N` for clients and `ID-S-N` for servers, with
-one-based N. These application keys are independent of sender/target headers,
-version and mode. This naming is a utility policy, not a library key format.
-
 Counts, warmup, rate and in-flight limits are **per session**. Defaults are 1000
 measured orders, 100 warmup orders, 64 in-flight orders and saturation (`--rate 0`).
 `--duration SECONDS` stops measured offering at that duration or `--count`,
@@ -67,16 +62,14 @@ FIXT use `--mode T11 --version FIXT.1.1`. The business dictionary remains explic
 FIX 4.4 and FIXT application version is 6. `--heartbeat` controls the Logon interval.
 Fresh-process recovery uses `--state-out FILE` on the first client and
 `--state-in FILE --key-offset N` on its replacement, where N is the first
-process's completed order count. The checkpoint binds that completed prefix,
-application session ID, Rx/Tx progress and bounded original Tx bodies/timestamps.
+process's completed order count. The saved state contains that completed prefix,
+the link epoch, Rx/Tx progress and bounded original Tx bodies/timestamps.
 Main reads it before workers start and writes it only after owners stop. It is a
-version-3 fixture-local native binary format, not a framework journal. Each
-`Checkpoint.id` is persisted as the application key; saved headers, mode,
-version and qualifier are absent. Matching requires the ID and epoch, permitting
-changed wire configuration on restart while validating current connection
-headers normally. Its restored progress carries no historical queue-memory debt;
-an empty operational
-queue begins with zero charge, and reloaded content is charged when installed.
+version-4 fixture-local native binary format, not a framework journal. Progress
+is restored directly into the selected link's owner queues; no application
+session key or saved wire headers are included. Current connection headers are
+validated normally. An empty restored operational queue begins with zero
+charge, and reloaded content is charged when installed.
 
 Run the acceptor with `--connections 2 --count 8 --warmup 0` and each client
 with `--count 4 --warmup 0`. After the first client exits, wait for the server's

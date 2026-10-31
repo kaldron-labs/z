@@ -87,7 +87,7 @@ TxBody::Ref TxBody::restoreControl(ZuCSpan type, ZuCSpan bytes, uint64_t id,
     [bytes, id, &error, limits, &result]<typename I>(I) {
       using O = Session::Msg::Type<I{}>;
       if constexpr (!ZuIsSame<O, void>{})
-	result = restoreControl<MT<O, O::msgType>>(bytes, id, error, limits);
+	result = restoreControl<MT<O, O::MsgType>>(bytes, id, error, limits);
     });
   return result;
 }

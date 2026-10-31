@@ -82,20 +82,20 @@ struct RxSide : Rx<RxSide> {
   void piece_(ZmRef<ZiIOBuf>, TxContext, unsigned, unsigned);
   void abandon_(uint64_t);
   RxSide(Endpoint *, SessionConfig);
-  ZuTime nowRx_() const;
-  void eventRx_(SessionEvent, ZmRef<Msg>);
-  void rejectRx_(ZmRef<Msg>, unsigned, int);
-  void resendRx_(uint64_t, uint64_t, ZmRef<Msg>);
+  ZuTime nowRx() const;
+  void eventRx(SessionEvent, ZmRef<Msg>);
+  void rejectRx(ZmRef<Msg>, unsigned, int);
+  void resendRx(uint64_t, uint64_t, ZmRef<Msg>);
 
-  void sessionRx_(ZmRef<Msg>) { }
-  void peerRejectRx_(Zfix::PeerReject);
-  void rxPost_(uint64_t);
+  void sessionRx(ZmRef<Msg>) { }
+  void peerRejectRx(Zfix::PeerReject);
+  void rxPost(uint64_t);
 
-  void gapArm_(uint64_t) { }
-  void gapCancel_() { }
+  void gapArm(uint64_t) { }
+  void gapCancel() { }
 
-  Error headerRx_(const FrameView &f, Header &h, Limits l) { return readHeader<Order>(f, h, l); }
-  Error businessRx_(Msg *, Limits);
+  Error headerRx(const FrameView &f, Header &h, Limits l) { return readHeader<Order>(f, h, l); }
+  Error businessRx(Msg *, Limits);
 };
 
 // Shared core TxBody objects cannot carry this fixture FIFO's links.
@@ -116,10 +116,10 @@ struct TxSide : LinkTx<TxSide> {
   bool			queueBehind = false;
   AppQueue		appQueue;
   uint64_t		appBytes = 0;
-  bool enqueueTx_(TxBody::Ref);
-  TxBody::Ref dequeueTx_();
-  void selectedTx_(TxBody::Ref, TxContext, unsigned);
-  void rejectedTx_(Zfix::PeerReject);
+  bool enqueueTx(TxBody::Ref);
+  TxBody::Ref dequeueTx();
+  void selectedTx(TxBody::Ref, TxContext, unsigned);
+  void rejectedTx(Zfix::PeerReject);
   Endpoint		*endpoint;
   TxBody::Ref		pendingBody;
   TxContext		pendingContext;
@@ -141,11 +141,11 @@ struct TxSide : LinkTx<TxSide> {
   uint64_t		idleConnection = 0;
   uint64_t		idleTicket = 0;
   TxSide(Endpoint *, SessionConfig);
-  void txSchedule_(unsigned, uint64_t);
-  unsigned associateTx_(TxBody::Ref, TxContext, uint64_t);
-  bool releaseTx_(TxBody::Ref, TxContext, uint64_t);
+  void txSchedule(unsigned, uint64_t);
+  unsigned associateTx(TxBody::Ref, TxContext, uint64_t);
+  bool releaseTx(TxBody::Ref, TxContext, uint64_t);
 
-  TxReload retrieveTx_(TxContext context, uint64_t, uint64_t ticket) {
+  TxReload retrieveTx(TxContext context, uint64_t, uint64_t ticket) {
     historyTicket = ticket;
     if (delayHistory) return {{}, true};
     for (const auto &record : history)
@@ -153,11 +153,11 @@ struct TxSide : LinkTx<TxSide> {
     return {};
   }
 
-  void archiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void archiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     archives.push(ArchivedRange{epoch, begin, end});
   }
 
-  void publishedTx_(TxBody::Ref body, TxContext c, ZuDateTime original) {
+  void publishedTx(TxBody::Ref body, TxContext c, ZuDateTime original) {
     // Application retention is independent of local completion and archive.
     // This fixture keeps business/Reject records in its own long-term array.
     if (c.replay || (body->msgType() != "D" && body->msgType() != "3")) return;
@@ -168,22 +168,21 @@ struct TxSide : LinkTx<TxSide> {
     history.push(TxHistory{ZuMv(body), original, c.epoch, c.seqNo});
   }
 
-  ZuDateTime clockTx_();
-  ZuTime nowTx_();
-  void idleArmTx_(uint64_t, uint64_t, ZuTime);
-  void idleCancelTx_();
-  void faultTx_(TxContext, Error);
-  bool admitFrameTx_(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime);
-  void notifyTx_(TxNotice);
-  void flushTx_();
-  void completeTx_(TxBody::Ref, TxContext, bool);
-  void acknowledgedTx_(TxContext, uint64_t, uint64_t);
+  ZuDateTime clockTx();
+  ZuTime nowTx();
+  void idleArmTx(uint64_t, uint64_t, ZuTime);
+  void idleCancelTx();
+  void faultTx(TxContext, Error);
+  bool admitFrameTx(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime);
+  void notifyTx(TxNotice);
+  void flushTx();
+  void completeTx(TxBody::Ref, TxContext, bool);
+  void acknowledgedTx(TxContext, uint64_t, uint64_t);
 };
 
 static SessionConfig config(bool client, unsigned mode, unsigned version)
 {
   SessionConfig c;
-  c.id = client ? "CLIENT-SESSION" : "SERVER-SESSION";
   c.header.version = version;
   c.header.local = client ? "CLIENT" : "SERVER";
   c.header.peer = client ? "SERVER" : "CLIENT";
@@ -268,12 +267,12 @@ struct Loop {
 
 RxSide::RxSide(Endpoint *e, SessionConfig c) : Rx<RxSide>{ZuMv(c)}, endpoint{e} { }
 TxSide::TxSide(Endpoint *e, SessionConfig c) : LinkTx<TxSide>{ZuMv(c)}, endpoint{e} { }
-ZuTime RxSide::nowRx_() const { return endpoint->loop->now; }
-void RxSide::rxPost_(uint64_t ticket)
+ZuTime RxSide::nowRx() const { return endpoint->loop->now; }
+void RxSide::rxPost(uint64_t ticket)
 {
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::RxTask, .ticket = ticket});
 }
-void RxSide::eventRx_(SessionEvent event, ZmRef<Msg> msg)
+void RxSide::eventRx(SessionEvent event, ZmRef<Msg> msg)
 {
   auto loop = endpoint->loop;
   ZmAssert(loop->owner == 1);
@@ -296,7 +295,7 @@ void RxSide::eventRx_(SessionEvent event, ZmRef<Msg> msg)
     loop->post(Work{.endpoint = endpoint, .kind = WorkKind::Input,
       .context = endpoint->blockedContext, .frame = ZuMv(endpoint->blockedFrame)});
 }
-void RxSide::rejectRx_(ZmRef<Msg> msg, unsigned tag, int reason)
+void RxSide::rejectRx(ZmRef<Msg> msg, unsigned tag, int reason)
 {
   Session::Msg c;
   c.p<Session::Reject>(Session::Reject{.refSeqNo = msg->data().header.seqNo,
@@ -307,12 +306,12 @@ void RxSide::rejectRx_(ZmRef<Msg> msg, unsigned tag, int reason)
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::Control,
     .context = {session_().epoch_(), session_().connection_(), 0}, .body = ZuMv(body)});
 }
-void RxSide::resendRx_(uint64_t begin, uint64_t end, ZmRef<Msg>)
+void RxSide::resendRx(uint64_t begin, uint64_t end, ZmRef<Msg>)
 {
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::Resend,
     .context = {session_().epoch_(), session_().connection_(), 0}, .begin = begin, .end = end});
 }
-Error RxSide::businessRx_(Msg *msg, Limits limits)
+Error RxSide::businessRx(Msg *msg, Limits limits)
 {
   ZmAssert(endpoint->loop->owner == 1);
   MessageHandler<Order> h{msg->data().frame, limits};
@@ -323,7 +322,7 @@ Error RxSide::businessRx_(Msg *msg, Limits limits)
   endpoint->epochs.push(msg->data().epoch);
   return {};
 }
-bool TxSide::enqueueTx_(TxBody::Ref body)
+bool TxSide::enqueueTx(TxBody::Ref body)
 {
   ZmAssert(endpoint->loop->owner == 2);
   auto charge = uint64_t(body->size) + sizeof(AppQueue::Node);
@@ -331,7 +330,7 @@ bool TxSide::enqueueTx_(TxBody::Ref body)
     || appBytes > Fmt::Limits::FrameBytes - charge) return false;
   appBytes += charge; appQueue.push(ZuMv(body)); return true;
 }
-TxBody::Ref TxSide::dequeueTx_()
+TxBody::Ref TxSide::dequeueTx()
 {
   ZmAssert(endpoint->loop->owner == 2);
   auto node = appQueue.shift();
@@ -339,7 +338,7 @@ TxBody::Ref TxSide::dequeueTx_()
   appBytes -= uint64_t(node->data()->size) + sizeof(AppQueue::Node);
   return ZuMv(node->data());
 }
-void TxSide::selectedTx_(TxBody::Ref body, TxContext context, unsigned result)
+void TxSide::selectedTx(TxBody::Ref body, TxContext context, unsigned result)
 {
   ZmAssert(endpoint->loop->owner == 2);
   if (endpoint->asyncMap) {
@@ -350,7 +349,7 @@ void TxSide::selectedTx_(TxBody::Ref body, TxContext context, unsigned result)
   if (result != TxSelect::Accepted || context.epoch != epoch_() ||
       context.connection != connection_()) ++endpoint->loop->errors;
 }
-void RxSide::peerRejectRx_(Zfix::PeerReject report)
+void RxSide::peerRejectRx(Zfix::PeerReject report)
 {
   ZmAssert(endpoint->loop->owner == 1);
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::PeerReject,
@@ -393,7 +392,7 @@ void Endpoint::reject_(Zfix::PeerReject report)
   rejectIds.push(id);
   peerRejects.push(ZuMv(report));
 }
-void TxSide::rejectedTx_(Zfix::PeerReject report)
+void TxSide::rejectedTx(Zfix::PeerReject report)
 {
   ZmAssert(endpoint->loop->owner == 2);
   if (endpoint->asyncMap) {
@@ -403,12 +402,12 @@ void TxSide::rejectedTx_(Zfix::PeerReject report)
   }
   endpoint->reject_(ZuMv(report));
 }
-void TxSide::txSchedule_(unsigned kind, uint64_t ticket)
+void TxSide::txSchedule(unsigned kind, uint64_t ticket)
 {
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::Task, .ticket = ticket,
     .task = kind});
 }
-unsigned TxSide::associateTx_(TxBody::Ref body, TxContext context, uint64_t ticket)
+unsigned TxSide::associateTx(TxBody::Ref body, TxContext context, uint64_t ticket)
 {
   ZmAssert(endpoint->loop->owner == 2);
   if (endpoint->asyncMap) {
@@ -419,7 +418,7 @@ unsigned TxSide::associateTx_(TxBody::Ref body, TxContext context, uint64_t tick
   endpoint->map_(body, context);
   return TxLoad::Accepted;
 }
-bool TxSide::releaseTx_(TxBody::Ref body, TxContext context, uint64_t ticket)
+bool TxSide::releaseTx(TxBody::Ref body, TxContext context, uint64_t ticket)
 {
   ZmAssert(endpoint->loop->owner == 2);
   if (endpoint->asyncMap) {
@@ -432,24 +431,24 @@ bool TxSide::releaseTx_(TxBody::Ref body, TxContext context, uint64_t ticket)
   if (enqueue_(ZuMv(body))) return true;
   ++endpoint->loop->errors; return false;
 }
-ZuDateTime TxSide::clockTx_() { return endpoint->loop->utc; }
-ZuTime TxSide::nowTx_() { return endpoint->loop->now; }
-void TxSide::idleArmTx_(uint64_t connection, uint64_t ticket, ZuTime deadline)
+ZuDateTime TxSide::clockTx() { return endpoint->loop->utc; }
+ZuTime TxSide::nowTx() { return endpoint->loop->now; }
+void TxSide::idleArmTx(uint64_t connection, uint64_t ticket, ZuTime deadline)
 {
   ZmAssert(endpoint->loop->owner == 2);
   idleConnection = connection; idleTicket = ticket; idleAt = deadline;
 }
-void TxSide::idleCancelTx_()
+void TxSide::idleCancelTx()
 {
   ZmAssert(endpoint->loop->owner == 2);
   idleAt.null();
 }
-void TxSide::faultTx_(TxContext context, Error) {
+void TxSide::faultTx(TxContext context, Error) {
   ++endpoint->loop->errors;
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::OutputFailed,
     .context = context});
 }
-bool TxSide::admitFrameTx_(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime)
+bool TxSide::admitFrameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime)
 {
   ZmAssert(endpoint->loop->owner == 2 && !pendingFrame);
   if (fragmentFrame) {
@@ -461,11 +460,11 @@ bool TxSide::admitFrameTx_(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> f
   pendingBody = ZuMv(body); pendingContext = context; pendingFrame = ZuMv(frame);
   return true;
 }
-void TxSide::notifyTx_(TxNotice notice)
+void TxSide::notifyTx(TxNotice notice)
 {
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::Notice, .notice = notice});
 }
-void TxSide::flushTx_()
+void TxSide::flushTx()
 {
   auto loop = endpoint->loop;
   auto context = pendingContext;
@@ -561,13 +560,13 @@ bool TxSide::write_(TxContext context, unsigned count, bool ok, uint64_t ticket)
   writable_(context.connection);
   return true;
 }
-void TxSide::completeTx_(TxBody::Ref, TxContext, bool ok)
+void TxSide::completeTx(TxBody::Ref, TxContext, bool ok)
 {
   ZmAssert(endpoint->loop->owner == 2);
   ++endpoint->completions;
   if (!ok) ++endpoint->failures;
 }
-void TxSide::acknowledgedTx_(TxContext context, uint64_t previous, uint64_t next)
+void TxSide::acknowledgedTx(TxContext context, uint64_t previous, uint64_t next)
 {
   ZmAssert(endpoint->loop->owner == 2 && context.epoch == epoch_() &&
     context.connection == connection_() && next > previous);
@@ -765,10 +764,7 @@ static void priorityPendingRecovery()
     // was assigned but never published before the owners were reconstructed.
     loop.owner = 1;
     for (auto ep : {&client, &server}) {
-      Checkpoint state;
-      ZuCheck(ep->rx.snapshot_(state));
-      state.rx = {2, 2, 0, 0};
-      ZuCheck(ep->rx.restore_(state));
+      ZuCheck(ep->rx.restore_(1, RxProgress{2, 2, 0, 0}));
     }
     loop.owner = 2;
     ZuCheck(client.tx.restore_(1, 3, 2, 1));
@@ -950,11 +946,9 @@ static void liveReset()
 	client.tx.epoch_() == 2 && server.tx.epoch_() == 2 && loop.wire.length() == before);
       ZuCheck(client.rx.expected_() == 1 && server.rx.expected_() == 1 &&
 	client.tx.next_() == 1 && server.tx.next_() == 1);
-      Checkpoint state;
-      loop.owner = 1; ZuCheck(client.rx.snapshot_(state));
-      loop.owner = 2; ZuCheck(client.tx.snapshot_(state)); loop.owner = 0;
-      ZuCheck(state.epoch == 2 && state.fields == StateMask::All &&
-	state.rx.processed == 1 && state.tx.loaded == 1);
+      loop.owner = 1; auto rx = client.rx.progress_();
+      loop.owner = 2; auto tx = client.tx.progress_(); loop.owner = 0;
+      ZuCheck(rx.processed == 1 && tx.loaded == 1);
       auto driver = clientDriver ? &client : &server;
       auto follower = driver->peer;
       // Start the driver first. The prepared peer retains the reset frame until

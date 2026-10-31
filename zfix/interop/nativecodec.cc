@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <stdio.h>
+#include <iostream>
 #include <string.h>
 #include <zlib/ZfixDispatch.hh>
 #include "../util/zfix_load_frame.hh"
@@ -97,13 +98,14 @@ static int checkFrames(const char *directory) {
     }) && check<ReplaceOrder>(directory, "replace", [](const auto &a, const auto &b) {
       return a.original == b.original && sameOrder(a.order, b.order);
     });
-  if (!ok) fputs("independent peer frame mismatch\n", stderr);
-  else puts("independent peer frames: scalar/group/binary D, ack/fill 8, F/G values preserved");
+  if (!ok) std::cerr << "independent peer frame mismatch\n";
+  else std::cout <<
+    "independent peer frames: scalar/group/binary D, ack/fill 8, F/G values preserved\n";
   return ok ? 0 : 1;
 }
 int main(int argc, char **argv) {
   if (argc == 3 && !strcmp(argv[1], "--frames")) return dump(argv[2]);
   if (argc == 3 && !strcmp(argv[1], "--check-frames")) return checkFrames(argv[2]);
-  fputs("usage: nativecodec --frames|--check-frames DIRECTORY\n", stderr);
+  std::cerr << "usage: nativecodec --frames|--check-frames DIRECTORY\n";
   return 2;
 }

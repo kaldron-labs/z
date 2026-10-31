@@ -319,3 +319,20 @@
      }
  #ifndef HAVE_ACE_DIRENT
      closedir(dir);
+--- a/src/C++/Acceptor.h
++++ b/src/C++/Acceptor.h
+@@ -113,2 +113,4 @@
+ protected:
++  bool isProcessing() const { return m_processing; }
++
+   SessionSettings m_settings;
+--- a/src/C++/SocketAcceptor.cpp
++++ b/src/C++/SocketAcceptor.cpp
+@@ -146,3 +146,6 @@
+ void SocketAcceptor::onStop() {
+-  if (m_pServer) {
++  // start()/block() own server cleanup until onStart() returns and clears
++  // m_processing. Closing here before the join races that cleanup. Polling
++  // and failed-start paths have no active worker and still close here.
++  if (!isProcessing() && m_pServer) {
+     m_pServer->close();

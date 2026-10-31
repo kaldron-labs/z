@@ -5,8 +5,12 @@ measurement snapshot. Current-build functional verification is recorded in
 [STATUS.md](../STATUS.md); installation has not been repeated for this repair.
 All published numbers/manifests are historical; no benchmark rerun, archive
 rewrite or new performance claim accompanies this migration. Commands here document
-measurement entry points; the current authorization covers Zfix rebuilds and
-functional tests only.
+measurement entry points; that migration covered Zfix rebuilds and functional
+tests only.
+
+The dispatch simplification has a separate instrumented comparison in
+[REPAIR3.md](REPAIR3.md), with raw observations in [results/repair3](results/repair3).
+It does not replace the historical process-load measurements below.
 
 The [recorded baseline](RESULTS.md) covers all four pairings over TCP/TLS,
 six profiles and three repetitions, with separate allocation/copy diagnostics.
@@ -32,6 +36,25 @@ make -C zfix/bench audittrace
 zfix/bench/nativecodec 100000 10000
 zfix/bench/quickfixcodec 100000 10000
 ```
+
+`dispatchcodec` times dispatch against a preframed execution report, excluding
+encoding and framing. It compares primary lookup, secondary lookup with one
+shared object schema, and secondary lookup with different candidate schemas,
+using zero or eight parties.
+The `managed-primary` and `managed-secondary` rows additionally include catalog
+header inspection and reuse that decoded prefix during dispatch. These rows
+exclude transport framing and sequencing, just as the other rows do.
+The matching `rescan-*` rows decode the header again to isolate the cost of
+that repeated work in the same binary.
+Count and warmup are optional:
+
+```sh
+zfix/bench/dispatchcodec 20000 2000
+```
+
+An optional third argument selects one mode, for example `managed-primary` or
+`rescan-primary`. Use separate processes for allocation-heavy comparisons so
+earlier modes do not change the sanitizer allocator's quarantine state.
 
 Both emit three JSON rows for scalar, eight-party/four-subparty groups with
 32 text bytes, and 4096 binary bytes. Each row contains encode/decode latency

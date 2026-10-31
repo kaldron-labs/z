@@ -49,13 +49,13 @@ struct Rx : public SeqRx<Rx, Queue> {
 
   using SeqRx::SeqRx;
 
-  void processRx_(Msg *msg) {
+  void processRx(Msg *msg) {
     auto seqNo = msg->data().seqNo;
     processed.push(seqNo);
     if (seqNo == stopAt) hold_();
   }
 
-  void requestRx_(const Span &prev, const Span &gap) {
+  void requestRx(const Span &prev, const Span &gap) {
     previous.push(prev.key());
     previous.push(prev.length());
     requests.push(gap.key());
@@ -63,18 +63,18 @@ struct Rx : public SeqRx<Rx, Queue> {
     hook(requestHook);
   }
 
-  void reRequestRx_(const Span &gap) {
+  void reRequestRx(const Span &gap) {
     ++retried;
     retries.push(gap.key());
     retries.push(gap.length());
     hook(retryHook);
   }
 
-  void postRx_(uint64_t ticket) { tasks.push(ticket); }
+  void postRx(uint64_t ticket) { tasks.push(ticket); }
 
-  void armGap_(uint64_t ticket) { retry = ticket; ++arms; }
+  void armGap(uint64_t ticket) { retry = ticket; ++arms; }
 
-  void cancelGap_() { ++cancelled; retry = 0; }
+  void cancelGap() { ++cancelled; retry = 0; }
 
   void hook(unsigned &value) {
     auto action = value;
@@ -583,17 +583,17 @@ struct CountRx : public SeqRx<CountRx, CountQueue> {
   unsigned	requests = 0;
   uint64_t	retry = 0;
 
-  void processRx_(Msg *) { ++processed; }
+  void processRx(Msg *) { ++processed; }
 
-  void requestRx_(const Span &, const Span &) { ++requests; }
+  void requestRx(const Span &, const Span &) { ++requests; }
 
-  void reRequestRx_(const Span &) { }
+  void reRequestRx(const Span &) { }
 
-  void postRx_(uint64_t ticket) { tasks.push(ticket); }
+  void postRx(uint64_t ticket) { tasks.push(ticket); }
 
-  void armGap_(uint64_t ticket) { retry = ticket; }
+  void armGap(uint64_t ticket) { retry = ticket; }
 
-  void cancelGap_() { retry = 0; }
+  void cancelGap() { retry = 0; }
 
   unsigned receive(uint64_t seqNo) { return receive_(new Msg{Input{seqNo, 20}}); }
 

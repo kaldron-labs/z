@@ -4,13 +4,16 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
+#include <iostream>
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuPrint.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZePlatform.hh>
 #include <zlib/ZfCLI.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZfixClient.hh>
@@ -18,13 +21,16 @@
 
 namespace Example {
 
-  ZfStructImpl(Party);
+  ZtEnumImplNS(Handling);
+  ZtEnumImplNS(Handling, FIX);
+  ZtEnumImplNS(Side);
+  ZtEnumImplNS(Side, FIX);
+  ZtEnumImplNS(OrdType);
+  ZtEnumImplNS(OrdType, FIX);
+
   ZfStructImpl(Party, FIX);
-  ZfStructImpl(Order);
   ZfStructImpl(Order, FIX);
-  ZfStructImpl(Execution);
   ZfStructImpl(Execution, FIX);
-  ZfStructImpl(Event);
   ZfStructImpl(Event, FIX);
 }
 
@@ -37,17 +43,20 @@ struct Options {
   bool		tls = false, help = false;
 };
 
-ZfStruct(, (Options, CLI), (host, (CLI::Long<"host">), String),
-  (port, (CLI::Long<"port">), UInt32), (symbol, (CLI::Long<"symbol">), String),
-  (qty, (CLI::Long<"qty">), UInt32), (price, (CLI::Long<"price">), Decimal),
-  (timeout, (CLI::Long<"timeout">), UInt32), (ca, (CLI::Long<"ca">), String),
-  (tls, (CLI::Long<"tls">), Bool), (help, (CLI::Flag<'h'>, CLI::Long<"help">), Bool));
-ZfStructImpl(Options);
+ZfStruct(, (Options, CLI),
+  (host,	(CLI::Long<"host">),				String),
+  (port,	(CLI::Long<"port">),				UInt32),
+  (symbol,	(CLI::Long<"symbol">),				String),
+  (qty,		(CLI::Long<"qty">),				UInt32),
+  (price,	(CLI::Long<"price">),				Decimal),
+  (timeout,	(CLI::Long<"timeout">),				UInt32),
+  (ca,		(CLI::Long<"ca">),				String),
+  (tls,		(CLI::Long<"tls">),				Bool),
+  (help,	(CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 ZfStructImpl(Options, CLI);
 
 static Zfix::SessionConfig config() {
   Zfix::SessionConfig c;
-  c.id = "EXAMPLE-CLIENT";
   c.header.version = Zfix::Version::V4_4;
   c.header.local = "EXAMPLE-C"; c.header.peer = "EXAMPLE-S";
   return c;
@@ -64,13 +73,13 @@ public:
 
   explicit Link(Client<Net> *app) : Base{app, config()} { }
 
-  unsigned fixAssociateTx_(Zfix::TxBody::Ref, Zfix::TxContext, uint64_t) {
+  unsigned fixAssociateTx(Zfix::TxBody::Ref, Zfix::TxContext, uint64_t) {
     // Accept this one call into the core's bounded queue without an external
     // persistence barrier. Its sequence association lives until teardown.
     return Zfix::TxLoad::Accepted;
   }
 
-  void fixEventRx_(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
+  void fixEventRx(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
     if (event.actions & Zfix::SessionAction::Failure) app()->fail("FIX session failed");
     if (!(event.actions & Zfix::SessionAction::Ready) || m_started) return;
     m_started = true;
@@ -85,8 +94,8 @@ public:
     if (!this->template send<NewOrder>(order, Key, error)) app()->fail("order refused");
   }
 
-  template <typename Entry> Zfix::Fmt::Error fixReceiveRx_(Entry *, const Execution &r,
-      const Zfix::RequestContext &) {
+  template <typename Entry>
+  Zfix::Fmt::Error fixReceiveRx(Entry *, const Execution &r, const Zfix::RequestContext &) {
     if (r.key != Key || !r.order || !r.exec ||
 	(m_order && m_order != r.order) || r.qty != app()->options.qty ||
 	r.price != app()->options.price || r.symbol != app()->options.symbol ||
@@ -95,12 +104,12 @@ public:
 	r.parties[1].id != "desk" || r.parties[1].source != "D" || r.parties[1].role != 11)
       { app()->fail("unexpected execution report"); return {Zfix::Fmt::ErrorCode::Value, 11}; }
     if constexpr (ZuIsSame<Entry, Ack>{}) {
-      if (r.status != "0" || r.leaves != r.qty || r.cum) {
+      if (r.status != "0" || r.leavesQty != r.qty || r.cumQty) {
 	app()->fail("invalid acknowledgement");
 	return {Zfix::Fmt::ErrorCode::Value, 39};
       }
     } else {
-      if (r.status != "2" || r.leaves || r.cum != r.qty || r.lastQty != r.qty) {
+      if (r.status != "2" || r.leavesQty || r.cumQty != r.qty || r.lastQty != r.qty) {
 	app()->fail("invalid fill");
 	return {Zfix::Fmt::ErrorCode::Value, 39};
       }
@@ -113,43 +122,43 @@ public:
     }
     if (exec) return {}; // application policy for an identical duplicate report
     exec = r.exec;
-    printf("%s order=%llu exec=%llu\n", ZuIsSame<Entry, Ack>{} ? "ack" : "fill",
-      (unsigned long long)r.key, (unsigned long long)r.exec);
+    std::cout << (ZuIsSame<Entry, Ack>{} ? "ack" : "fill") << " order=" <<
+      ZuBoxed(r.key) << " exec=" << ZuBoxed(r.exec) << '\n';
     // Both responses belong to the same call. A local send completion alone
     // cannot complete it; the application waits for acknowledgement AND fill.
     finished();
     return {};
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(Tick *, const Event &event,
-      const Zfix::RequestContext &) {
+  Zfix::Fmt::Error fixReceiveRx(Tick *, const Event &event, const Zfix::RequestContext &) {
     if (event.symbol != app()->options.symbol || event.price != app()->options.price) {
       app()->fail("unexpected market event"); return {Zfix::Fmt::ErrorCode::Value, 55};
     }
-    if (!m_tick) printf("event symbol=%.*s\n", int(event.symbol.length()), event.symbol.data());
+    if (!m_tick) std::cout << "event symbol=" << event.symbol << '\n';
     m_tick = true; finished(); return {};
   }
 
-  void fixSubmittedTx_(Zfix::TxBody::Ref, unsigned result) {
+  void fixSubmittedTx(Zfix::TxBody::Ref, unsigned result) {
     if (result != Zfix::TxSelect::Accepted && result != Zfix::TxSelect::Pending)
       app()->fail("order admission failed");
   }
 
-  void fixRejectedTx_(Zfix::PeerReject reject) {
+  void fixRejectedTx(Zfix::PeerReject reject) {
     // RefSeqNum identifies the rejected outbound message in this epoch.
-    fprintf(stderr, "peer reject epoch=%llu seq=%llu tag=%u\n",
-      (unsigned long long)reject.context.epoch,
-      (unsigned long long)reject.message.refSeqNo, reject.message.refTagID);
+    ZiLOG(Error, "zfix", ([epoch = reject.context.epoch, seq = reject.message.refSeqNo,
+      tag = reject.message.refTagID](auto &s) {
+      s << "peer reject epoch=" << epoch << " seq=" << seq << " tag=" << tag;
+    }));
     app()->fail("peer rejected the order");
   }
 
-  Zfix::TxReload fixRetrieveTx_(Zfix::TxContext context, uint64_t, uint64_t) {
-    fprintf(stderr, "history unavailable epoch=%llu seq=%llu; gap-fill\n",
-      (unsigned long long)context.epoch, (unsigned long long)context.seqNo);
+  Zfix::TxReload fixRetrieveTx(Zfix::TxContext context, uint64_t, uint64_t) {
+    std::cerr << "history unavailable epoch=" << ZuBoxed(context.epoch) <<
+      " seq=" << ZuBoxed(context.seqNo) << "; gap-fill\n";
     return {}; // application policy: keep no resend content; gap-fill every request
   }
 
-  void fixStoppedRx_(bool) {
+  void fixStoppedRx(bool) {
     if (!m_ack || !m_fill) app()->fail("connection stopped before both reports");
     app()->stopped.post();
   }
@@ -172,7 +181,7 @@ template <typename Net> struct Client : Zfix::Client<Client<Net>, MTList, Net> {
   explicit Client(const Options &o) : options{o} { }
 
   void fail(const char *reason) {
-    if (!errors.xchAdd(1)) fprintf(stderr, "%s\n", reason);
+    if (!errors.xchAdd(1)) ZiLOG(Error, "zfix", reason);
     done.post();
   }
 };
@@ -203,7 +212,7 @@ template <typename Net> static int run(const Options &options) {
   if (!ZiResolver::stopSync()) client.fail("resolver drain failed");
   ZiResolver::final();
   mx.stop(); link = nullptr;
-  if (!client.errors.load_()) puts("completed order=1001");
+  if (!client.errors.load_()) std::cout << "completed order=1001\n";
   return client.errors.load_() ? 1 : 0;
 }
 int main(int argc, char **argv) {
@@ -213,9 +222,15 @@ int main(int argc, char **argv) {
   if (options.help || argc != 1 || !options.host || !options.symbol || !options.qty ||
       !options.port || options.port > 65535 || !options.timeout ||
       options.price <= ZuDecimal{0} || (options.tls && !options.ca)) {
-    fputs("usage: zfix [--host HOST --port PORT --symbol SYMBOL --qty N --price DECIMAL]\n"
-      "  [--tls --ca PEM] [--timeout SECONDS]\n", stderr);
+    std::cerr <<
+      "usage: zfix [--host HOST --port PORT --symbol SYMBOL --qty N --price DECIMAL]\n"
+      "  [--tls --ca PEM] [--timeout SECONDS]\n";
     return options.help ? 0 : 2;
   }
-  return options.tls ? run<Zfix::TLS>(options) : run<Zfix::TCP>(options);
+  ZiLog::init("zfix");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
+  int result = options.tls ? run<Zfix::TLS>(options) : run<Zfix::TCP>(options);
+  ZiLog::stop();
+  return result;
 }

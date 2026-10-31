@@ -40,7 +40,7 @@ struct Logon : ZmNHeap<Logon> {
   uint32_t		maxMessageSize = Fmt::Limits::FrameBytes;
   uint64_t		nextExpected = 0;
   ZuCSpan		defaultAppVerID;
-  static constexpr auto	msgType = "A"_z;
+  static constexpr auto	MsgType = "A"_z;
 friend Fmt::AsObject Zfix_Fmt(Logon *);
 friend inline ZuStringT<"Zfix.Logon"> ZmNHeapID(Logon *);
 };
@@ -63,7 +63,7 @@ ZfStructRender(ZfixAPI, Logon, FIXLogonSyncApp,
 
 struct HeartBt : ZmNHeap<HeartBt> {
   ZuCSpan		testReqID;
-  static constexpr auto	msgType = "0"_z;
+  static constexpr auto	MsgType = "0"_z;
 friend Fmt::AsObject Zfix_Fmt(HeartBt *);
 friend inline ZuStringT<"Zfix.HeartBt"> ZmNHeapID(HeartBt *);
 };
@@ -74,7 +74,7 @@ ZfStructRender(ZfixAPI, HeartBt, FIXEmpty);
 
 struct TestReq : ZmNHeap<TestReq> {
   ZuCSpan		testReqID;
-  static constexpr auto	msgType = "1"_z;
+  static constexpr auto	MsgType = "1"_z;
 friend Fmt::AsObject Zfix_Fmt(TestReq *);
 friend inline ZuStringT<"Zfix.TestReq"> ZmNHeapID(TestReq *);
 };
@@ -85,7 +85,7 @@ ZfStruct(ZfixAPI, (TestReq, FIX),
 struct ResendReq : ZmNHeap<ResendReq> {
   uint64_t		beginSeqNo = 1;
   uint64_t		endSeqNo = 0;
-  static constexpr auto	msgType = "2"_z;
+  static constexpr auto	MsgType = "2"_z;
 friend Fmt::AsObject Zfix_Fmt(ResendReq *);
 friend inline ZuStringT<"Zfix.ResendReq"> ZmNHeapID(ResendReq *);
 };
@@ -99,7 +99,7 @@ struct Reject : ZmNHeap<Reject> {
   uint32_t		refTagID = 0;
   int32_t		reason = -1;
   ZuCSpan		text;
-  static constexpr auto	msgType = "3"_z;
+  static constexpr auto	MsgType = "3"_z;
 friend Fmt::AsObject Zfix_Fmt(Reject *);
 friend inline ZuStringT<"Zfix.Reject"> ZmNHeapID(Reject *);
 };
@@ -120,7 +120,7 @@ ZfStructRender(ZfixAPI, Reject, FIXRejectRefAll, refSeqNo, refTagID, text);
 struct SeqReset : ZmNHeap<SeqReset> {
   uint64_t		newSeqNo = 1;
   bool			gapFill = false;
-  static constexpr auto	msgType = "4"_z;
+  static constexpr auto	MsgType = "4"_z;
 friend Fmt::AsObject Zfix_Fmt(SeqReset *);
 friend inline ZuStringT<"Zfix.SeqReset"> ZmNHeapID(SeqReset *);
 };
@@ -131,7 +131,7 @@ ZfStruct(ZfixAPI, (SeqReset, FIX),
 
 struct Logout : ZmNHeap<Logout> {
   ZuCSpan		text;
-  static constexpr auto	msgType = "5"_z;
+  static constexpr auto	MsgType = "5"_z;
 friend Fmt::AsObject Zfix_Fmt(Logout *);
 friend inline ZuStringT<"Zfix.Logout"> ZmNHeapID(Logout *);
 };

@@ -33,11 +33,11 @@ struct PeerReject {
 // by the library. Off-owner queues hand prepared candidates to this owner.
 template <typename App> class Hooks {
 public:
-  bool enqueueTx_(TxBody::Ref) { return false; }
-  TxBody::Ref dequeueTx_() { return {}; }
-  void selectedTx_(TxBody::Ref, TxContext, unsigned) { }
-  void rejectedTx_(PeerReject) { }
-  void sessionTx_(TxBody::Ref, TxContext) { }
+  bool enqueueTx(TxBody::Ref) { return false; }
+  TxBody::Ref dequeueTx() { return {}; }
+  void selectedTx(TxBody::Ref, TxContext, unsigned) { }
+  void rejectedTx(PeerReject) { }
+  void sessionTx(TxBody::Ref, TxContext) { }
 };
 
 }

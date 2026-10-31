@@ -148,14 +148,14 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
 
     void open(uint64_t c) {
       if (c != connection || stopping) return;
-      live = Wire::open_(c, link->impl()->fixGeometryTx_());
+      live = Wire::open_(c, link->impl()->fixGeometryTx());
       if (!live) {
 	++faults;
-	link->impl()->fixRawFaultTx_(c, {Fmt::ErrorCode::Output});
+	link->impl()->fixRawFaultTx(c, {Fmt::ErrorCode::Output});
 	link->app()->rxRun([link = link, c] { link->closeRx_(c); }); return;
       }
       link->app()->rxRun([link = link, c] { link->openedRx_(c); });
-      link->impl()->fixRawWritableTx_(c);
+      link->impl()->fixRawWritableTx(c);
     }
 
     unsigned send(const RawOutput::Ref &out) {
@@ -166,26 +166,26 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
 	++outputRefused; return RawSend::Overload;
       }
       ++completions;
-      link->impl()->fixRawPublishedTx_(*out);
+      link->impl()->fixRawPublishedTx(*out);
       Wire::flush_(); return RawSend::Accepted;
     }
 
-    void frameTrace_(ZuCSpan wire, TxContext c) { link->traceTx_(wire, c); }
+    void frameTrace(ZuCSpan wire, TxContext c) { link->traceTx_(wire, c); }
 
-    ZmRef<WireBuf> recordAlloc_(unsigned head) { return link->impl()->fixAllocTx_(head); }
+    ZmRef<WireBuf> recordAlloc(unsigned head) { return link->impl()->fixAllocTx(head); }
 
-    bool recordSend_(ZmRef<ZiIOBuf> b) { return link->impl()->fixSendTx_(ZuMv(b)); }
+    bool recordSend(ZmRef<ZiIOBuf> b) { return link->impl()->fixSendTx(ZuMv(b)); }
 
-    void outputDone_(TxBody::Ref b, TxContext c, bool ok) {
+    void outputDone(TxBody::Ref b, TxContext c, bool ok) {
       link->app()->txRun([this, b = ZuMv(b), c, ok]() mutable {
 	ZmAssert(completions); --completions;
-	link->impl()->fixRawCompleteTx_(ZuMv(b), c, ok);
+	link->impl()->fixRawCompleteTx(ZuMv(b), c, ok);
 	if (ok && live && c.connection == connection)
-	  link->impl()->fixRawWritableTx_(connection);
+	  link->impl()->fixRawWritableTx(connection);
 	if (!ok && live && c.connection == connection) {
 	  ++faults;
 	  live = false;
-	  link->impl()->fixRawFaultTx_(connection, {Fmt::ErrorCode::Output});
+	  link->impl()->fixRawFaultTx(connection, {Fmt::ErrorCode::Output});
 	  link->app()->rxRun([link = link, c] { link->closeRx_(c.connection); });
 	}
 	checkStop();
@@ -197,7 +197,7 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
       live = false; stopping = true; posted = false; Wire::close_(c);
       ++stops;
       RawStopRequest request{link, deferTx_};
-      link->impl()->fixRawStopTx_(c, request);
+      link->impl()->fixRawStopTx(c, request);
       if (!request.deferred()) --stops;
       checkStop();
     }
@@ -265,7 +265,7 @@ public:
     if (!m_live) return -1;
     if (!m_ready || m_pending) return 0;
     ZmRef<ZiIOBuf> bytes; Fmt::FrameView frame;
-    int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx_(); }, bytes, &frame);
+    int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx(); }, bytes, &frame);
     if (n < 0) {
       ++m_rxStats.framingErrors;
       faultRx_(m_framer.error_()); return -1;
@@ -286,7 +286,7 @@ public:
     m_pending->connection = m_connection; m_pending->received = Zm::now();
     if (m_traceRx.enabled_()) {
       auto entry = m_traceRx.capture_(frame, {0, m_connection, 0}, traceField_, impl());
-      if (entry) impl()->fixTraceRx_(ZuMv(entry));
+      if (entry) impl()->fixTraceRx(ZuMv(entry));
     }
     receive_(); return m_pending ? 0 : 1;
   }
@@ -294,10 +294,10 @@ public:
   TraceStats rxTraceStats_() const { ZmAssert(app()->rxInvoked()); return m_traceRx.stats_(); }
   TraceStats txTraceStats_() const { ZmAssert(app()->txInvoked()); return m_traceTx.stats_(); }
 
-  TraceField fixTraceField_(ZuCSpan, unsigned) { return {}; }
-  bool fixTraceSecret_(ZuCSpan, unsigned) { return false; }
-  void fixTraceRx_(TraceRef) { }
-  void fixTraceTx_(TraceRef) { }
+  TraceField fixTraceField(ZuCSpan, unsigned) { return {}; }
+  bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
+  void fixTraceRx(TraceRef) { }
+  void fixTraceTx(TraceRef) { }
 
   RxStats rxStats_() const {
     ZmAssert(app()->rxInvoked()); RxStats s{m_rxStats};
@@ -321,14 +321,14 @@ public:
   [[nodiscard]] bool sendRaw(const RawOutput::Ref &out) {
     if (!out) return false;
     if (app()->txInvoked()) {
-      unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx_(out, result); return true;
+      unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx(out, result); return true;
     }
     if (!app()->rxInvoked() || !m_live) return false;
     uint64_t bytes = sizeof(RawOutput) + out->body()->memory() +
       sizeof(ZiIOBuf) + uint64_t(out->frame()->size);
     if (!impl()->txPost_(bytes)) return false;
     app()->txRun([this, out, bytes] {
-      unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx_(out, result);
+      unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx(out, result);
       app()->rxRun([this, bytes] { impl()->txUnpost_(bytes); finishStop_(); });
     });
     return true;
@@ -359,7 +359,7 @@ public:
     ZuAssert((ZuTypeIn<Response, typename Dictionary::Messages>{}));
     ZuAssert((ZuTypeIn<Response, typename Request::Responses>{}));
     if (!app()->rxInvoked()) { error = {Fmt::ErrorCode::Output}; return false; }
-    if (!input.buffer || input.frame.msgType != ZuCSpan{Request::msgType}) {
+    if (!input.buffer || input.frame.msgType != ZuCSpan{Request::MsgType}) {
       error = {Fmt::ErrorCode::Unresolved, 35}; return false;
     }
     error = Context_::Reply<Impl, Request, Response, RawInput>::call(impl(), input);
@@ -389,17 +389,17 @@ public:
     app()->rxRun([this, connection] { resumeRaw_(connection); });
   }
 
-  void fixRawUpRx_(uint64_t) { }
-  bool fixRawRx_(ZmRef<RawInput>, Fmt::Limits) { return false; }
-  void fixRawPublishedTx_(const RawOutput &) { }
-  void fixRawSubmittedTx_(RawOutput::Ref, unsigned) { }
-  void fixRawCompleteTx_(TxBody::Ref, TxContext, bool) { }
-  void fixRawWritableTx_(uint64_t) { }
-  void fixRawFaultRx_(uint64_t, Fmt::Error) { }
-  void fixRawFaultTx_(uint64_t, Fmt::Error) { }
-  void fixRawStopRx_(uint64_t, RawStopRequest &) { }
-  void fixRawStopTx_(uint64_t, RawStopRequest &) { }
-  void fixRawStoppedRx_(uint64_t, bool) { }
+  void fixRawUpRx(uint64_t) { }
+  bool fixRawRx(ZmRef<RawInput>, Fmt::Limits) { return false; }
+  void fixRawPublishedTx(const RawOutput &) { }
+  void fixRawSubmittedTx(RawOutput::Ref, unsigned) { }
+  void fixRawCompleteTx(TxBody::Ref, TxContext, bool) { }
+  void fixRawWritableTx(uint64_t) { }
+  void fixRawFaultRx(uint64_t, Fmt::Error) { }
+  void fixRawFaultTx(uint64_t, Fmt::Error) { }
+  void fixRawStopRx(uint64_t, RawStopRequest &) { }
+  void fixRawStopTx(uint64_t, RawStopRequest &) { }
+  void fixRawStoppedRx(uint64_t, bool) { }
 
 private:
   static RawStopFn deferRx_(void *owner) { return defer_(owner, false); }
@@ -420,7 +420,7 @@ private:
   void openedRx_(uint64_t connection) {
     if (!m_live || connection != m_connection) return;
     m_ready = true;
-    impl()->fixRawUpRx_(connection);
+    impl()->fixRawUpRx(connection);
     if (m_live) impl()->resumeRx_();
   }
 
@@ -433,30 +433,30 @@ private:
     if (!m_closeRef) m_closeRef = impl();
     ++m_stops;
     RawStopRequest request{this, deferRx_};
-    impl()->fixRawStopRx_(c, request);
+    impl()->fixRawStopRx(c, request);
     if (!request.deferred()) --m_stops;
     app()->txRun([this, c] { m_tx.stop(c); });
     finishStop_();
   }
 
   static TraceField traceField_(void *owner, ZuCSpan type, unsigned tag) {
-    auto p = static_cast<Impl *>(owner); auto f = p->fixTraceField_(type, tag);
-    f.secret |= p->fixTraceSecret_(type, tag); return f;
+    auto p = static_cast<Impl *>(owner); auto f = p->fixTraceField(type, tag);
+    f.secret |= p->fixTraceSecret(type, tag); return f;
   }
 
   void traceTx_(ZuCSpan wire, TxContext c) {
     if (!m_traceTx.enabled_()) return;
     auto entry = m_traceTx.capture_(wire, c, traceField_, impl());
-    if (entry) impl()->fixTraceTx_(ZuMv(entry));
+    if (entry) impl()->fixTraceTx(ZuMv(entry));
   }
 
   void receive_() {
-    if (m_pending && impl()->fixRawRx_(m_pending, m_framer.limits())) m_pending = nullptr;
+    if (m_pending && impl()->fixRawRx(m_pending, m_framer.limits())) m_pending = nullptr;
   }
 
   void faultRx_(Fmt::Error error) {
     ++m_rxStats.faults; if (error.code == Fmt::ErrorCode::Size) ++m_rxStats.overloads;
-    impl()->fixRawFaultRx_(m_connection, error);
+    impl()->fixRawFaultRx(m_connection, error);
   }
 
   void closeRx_(uint64_t c) { if (m_live && c == m_connection) impl()->disconnect_(); }
@@ -465,11 +465,12 @@ private:
     if (m_live || !m_closeRef || m_stops || !m_txDone || impl()->txPosted_().count ||
 	impl()->workState_().count) return;
     auto retain = ZuMv(m_closeRef);
-    impl()->fixRawStoppedRx_(m_connection, m_peer);
+    impl()->fixRawStoppedRx(m_connection, m_peer);
   }
 
   const Fmt::Limits	m_outputLimits;
   const uint64_t	m_bufferBytes;
+
   // Native ledgers/input and framing form one Rx-owned group.
   alignas(Zm::CacheLineSize)
   RxCounters		m_rxStats;
@@ -483,6 +484,7 @@ private:
   uint64_t		m_stops = 0;
   bool			m_live = false, m_ready = false, m_txDone = false,
 			m_peer = false;
+
   alignas(Zm::CacheLineSize)
   TxSide		m_tx;
   WireTrace		m_traceTx;

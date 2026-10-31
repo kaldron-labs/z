@@ -147,7 +147,6 @@ static void cli() {
   strings.push("--mode"); strings.push("44A");
   strings.push("--version"); strings.push("FIX.4.2");
   strings.push("--scenario"); strings.push("cancel");
-  strings.push("--id"); strings.push("APPLICATION-KEY");
   strings.push("--sender"); strings.push("WIRE-C");
   strings.push("--target"); strings.push("WIRE-S");
   Rows<char *> args; for (auto &s : strings) args.push(s.data()); args.push(nullptr);
@@ -157,15 +156,13 @@ static void cli() {
     && ports[1] == 20124);
   ZuCheck(options.mode == Mode::FIX44A && options.version == Version::V4_2 &&
     options.scenario == Scenario::Cancel);
-  ZuCheck(options.id == "APPLICATION-KEY" && options.sender == "WIRE-C" &&
+  ZuCheck(options.sender == "WIRE-C" &&
     options.target == "WIRE-S");
   auto invalid = options; invalid.mode = Mode::N;
   ZuCheck(!ZfixLoad::options(invalid, false, 1, args.data(), ports));
   invalid = options; invalid.version = Version::N;
   ZuCheck(!ZfixLoad::options(invalid, false, 1, args.data(), ports));
   invalid = options; invalid.scenario = Scenario::N;
-  ZuCheck(!ZfixLoad::options(invalid, false, 1, args.data(), ports));
-  invalid = options; invalid.id = "";
   ZuCheck(!ZfixLoad::options(invalid, false, 1, args.data(), ports));
   options.duration = options.deadline;
   ZuCheck(!ZfixLoad::options(options, false, 1, args.data(), ports));

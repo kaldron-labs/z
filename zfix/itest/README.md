@@ -4,11 +4,11 @@ Current repair verification passes 13 TAP programs/261 scopes (TCP127, TLS132,
 demo2), including 42 demo scenario results;
 see [STATUS.md](../STATUS.md) for evidence and verification scope. Earlier counts below
 belong to their recorded snapshots. Current fixtures use
-`fixRetrieveTx_(TxContext, acknowledged, ticket)` for every resend and retain any
+`fixRetrieveTx(TxContext, acknowledged, ticket)` for every resend and retain any
 desired records in application stores at publication. Archive notifications carry
-epoch/ranges and do not release core payloads. Version-3 native fixture checkpoints
-match the opaque application ID and epoch, exclude wire headers/mode and old
-queued-memory debt. Ordinary Ready follows actual owner recovery;
+epoch/ranges and do not release core payloads. Version-4 native fixture state restores epoch and directional progress directly
+into the selected link, without session-key matching, saved wire headers/mode or
+old queued-memory debt. Ordinary Ready follows actual owner recovery;
 only explicit liveness/progress/drain probes require their matching echo.
 
 Reuse compatible dependencies and build `zfix/src`
@@ -331,7 +331,7 @@ selection; no sequence is reserved by the earlier local handoff.
 
 `native_io_test.py` launches the `../util/zfix` and `../util/zfixd` tools as
 separate processes. It checks 18 cases: scalar orders, multiple sessions,
-retention, groups with binary data, pacing, duration, FIX4.4A, FIXT1.1 and
+retention, groups with text data, pacing, duration, FIX4.4A, FIXT1.1 and
 expected byte-quota refusal, each over TCP and verified TLS. Readiness is
 pipe-driven; child results, exact business counts and shutdown exit codes are
 validated. Every run retains commands, hashes, JSON results and stderr logs in

@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <stdlib.h>
 #include <string.h>
 #include <zlib/ZmRef.hh>
@@ -77,7 +78,7 @@ template <typename Net> static int run(Options options) {
   s.scenario = Scenario::CLI::v2s(options.scenario); s.tls = options.tls;
   s.errors = state.errors.load_();
   ZtString<ZtStringHeapID<"Zfix.Demo.JSON">> json;
-  ZfJSON::save(json, s); json << '\n'; fwrite(json.data(), 1, json.length(), stdout);
+  ZfJSON::save(json, s); json << '\n'; std::cout << json;
   return s.errors ? 1 : 0;
 }
 int main(int argc, char **argv) {
@@ -112,7 +113,7 @@ int main(int argc, char **argv) {
   }
   return run<Zfix::TCP>(o);
 usage:
-  fputs("usage: zfix_demo [rpc|groups|events|reject|policy] [--mode 4|44A|T11]\n"
-    "  [--auth TOKEN [--bad-auth]] [--tls --cert FILE --key FILE --ca FILE]\n", stderr);
+  std::cerr << "usage: zfix_demo [rpc|groups|events|reject|policy] [--mode 4|44A|T11]\n"
+    "  [--auth TOKEN [--bad-auth]] [--tls --cert FILE --key FILE --ca FILE]\n";
   return 2;
 }

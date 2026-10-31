@@ -54,7 +54,7 @@ FrameResult frame(ZuCSpan input, Limits limits)
     if (e.code == ErrorCode::Truncated) return {};
     return failed(e.code, e.tag, e.offset);
   }
-  uint128_t bodyLength;
+  unsigned bodyLength;
   bool negative;
   if (!integer<32, false>({input.data() + length.offset, length.length},
       bodyLength, negative)) return failed(ErrorCode::Length, 9, length.offset);
@@ -64,7 +64,7 @@ FrameResult frame(ZuCSpan input, Limits limits)
   if (start > limits.frameBytes || limits.frameBytes - start < 7 ||
       bodyLength > limits.frameBytes - start - 7)
     return failed(ErrorCode::Size, 9, length.offset);
-  unsigned end = start + unsigned(bodyLength), total = end + 7;
+  unsigned end = start + bodyLength, total = end + 7;
   FrameResult pending;
   pending.expected = total;
   unsigned available = bounded.length() < end ? bounded.length() : end;
@@ -87,11 +87,8 @@ FrameResult frame(ZuCSpan input, Limits limits)
   if (memcmp(trailer, "10=", 3) || trailer[6] != '\1')
     return failed(ErrorCode::Envelope, 10, end);
   unsigned expected = 0;
-  for (unsigned i = 3; i < 6; ++i) {
-    char c = trailer[i];
-    if (c < '0' || c > '9') return failed(ErrorCode::Checksum, 10, end + i);
-    expected = expected * 10 + unsigned(c - '0');
-  }
+  unsigned digits = Zu_nscan<>::atou(expected, trailer + 3, 3);
+  if (digits != 3) return failed(ErrorCode::Checksum, 10, end + 3 + digits);
   unsigned sum = 0;
   for (unsigned i = 0; i < end; ++i) sum += uint8_t(input[i]);
   if ((sum & 255) != expected) return failed(ErrorCode::Checksum, 10, end);
@@ -263,7 +260,7 @@ FrameOutput FrameWriter::finish()
   checksum &= 255;
   Sink trailer{{output + end, 7}, m_limits};
   trailer.field(10);
-  trailer << char('0' + checksum/100) << char('0' + checksum/10%10) << char('0' + checksum%10);
+  trailer << ZuBox<unsigned>{checksum}.fmt<ZuFmt::Right<3, '0'>>();
   trailer.end();
   if (!trailer.flush()) return {{}, trailer.error()};
   return {{output, end + 7}, {}};
@@ -289,8 +286,8 @@ Error loadHeader_(ZuCSpan input, const Positions &positions, Header &h, Error pa
   if (error.code == ErrorCode::Duplicate && error.tag == 34) h.seqNo = 0;
   if (error) return error;
   auto bad = [&positions]<typename F>() {
-    constexpr unsigned i = Schema<Header, ZuFacet::FIX>::template offset<F>();
-    return Error{ErrorCode::Value, tag<F>(), positions[i].offset};
+    constexpr unsigned I = Schema<Header, ZuFacet::FIX>::template offset<F>();
+    return Error{ErrorCode::Value, tag<F>(), positions[I].offset};
   };
   if (!h.sender.length()) return bad.template operator()<ZfField(Header, sender)>();
   if (!h.target.length()) return bad.template operator()<ZfField(Header, target)>();
@@ -322,6 +319,7 @@ Error readHeader_(const FrameView &frame, Header &header,
   Scope scope{bodyContains ? &body : nullptr, scopeContains<Header, ZuFacet::FIX>, 0, 0};
   parseScope<Header, ZuFacet::FIX>(p, 0, offset, scope, false);
   error = loadHeader_(frame.content, positions, header, error);
+  header.bytes = offset;
   if (error && error.code != ErrorCode::Required)
     error.offset += unsigned(frame.content.data() - frame.wire.data());
   return error;

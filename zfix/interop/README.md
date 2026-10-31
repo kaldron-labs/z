@@ -3,23 +3,27 @@
 Recorded managed repair verification passed the codec/load/SDK checks and
 all 258 process cases; see [STATUS.md](../STATUS.md) for its captured source and scope.
 Earlier recorded passing counts below belong to their recorded snapshots.
-Native resend now always requests application-owned content; its checkpoint
-format is version 3, keyed only by the opaque application ID and epoch, and
-omits saved wire headers/mode and restored queue-memory debt. The shared `--id`
-option supplies native application keys; QuickFIX keeps its independent SDK
-session/store identity. The liveness fixture
+Native resend always requests application-owned content. The version-4 native
+fixture format saves epoch and directional progress for direct restoration into
+the selected link, without a session key, saved wire headers/mode or restored
+queue-memory debt. QuickFIX keeps its independent SDK session/store identity. The liveness fixture
 below checks ordinary readiness without a synchronization challenge; its current
 execution status is recorded in STATUS.md. Historical measurement archives
 and their source/ELF manifests remain unchanged.
 
-Current opaque-ID verification encountered an external QuickFIX TCP shutdown
-race in `dependency-test`. The probe calls the documented `stop(true)` API:
-main enters `SocketServer::close()` while the SDK worker closes and deletes the
-same server before the join. ASan reports a heap-use-after-free; the retained
-[probe stack](zfix-qf-dependency.ts_hf9ex/probe.log) resolves to
-`SocketServer.cpp:129` and `Acceptor.cpp:230`. This limits the current gate;
-earlier passes do not resolve it. No SDK change, fixture workaround or sanitizer
-suppression was applied, and retries are not counted as a repair.
+ASan identified a QuickFIX TCP shutdown race in `dependency-test`:
+`Acceptor::stop()` calls `onStop()` before joining its worker. Both threads
+could enter `SocketServer::close()`, while the worker also deleted the server
+and its socket map. The pinned patch now gives an active `start()`/`block()`
+worker exclusive ownership of that cleanup. Caller-side closure remains for
+non-processing paths, including serialized polling and failed startup. The
+guard reads QuickFIX's existing atomic processing flag, cleared only after
+`onStart()` returns; it adds no lock or second lifecycle flag. The existing
+one-second socket-monitor timeout bounds wakeup without a concurrent close.
+The 2026-10-31 SDK ASan verification passed all ten TAP scopes and six JSON/TLS
+scenarios with leak detection enabled, including eight forced/graceful TCP
+shutdown rounds. The original failing probe binary also passed against the
+repaired SDK before the regression was added.
 
 The peer dependency is pinned to [QuickFIX/C++ 1.16.0](https://github.com/quickfix/quickfix/releases/tag/v1.16.0),
 commit `2ce8a60667d95a55cdc57a210f165e19cb757126`.
@@ -56,7 +60,7 @@ A repeated invocation verifies the patch and reuses CMake's existing build.
 Rebuild the SDK and fixture consumers together; the SSL acceptor's new port map
 changes its class layout. Keep source/installed SDK headers and libraries matched.
 
-The small dependency patch corrects the fixture prerequisites and observed TLS
+The small dependency patch corrects the fixture prerequisites, TCP shutdown and observed TLS
 memory failures:
 
 - `SocketServer` stores each listener's actual bound port. Multiple sessions
@@ -64,6 +68,9 @@ memory failures:
   share their existing listener. SSL routing uses actual ports and exposes the
   same `sessionToPort()` view as TCP. Unsigned port handling preserves high
   ephemeral ports without changing `SocketInfo` layout.
+- TCP acceptor shutdown closes the server on the caller only when no worker
+  is processing it. Active workers close and delete their own server before
+  publishing completion and being joined. Polling retains caller-side closure.
 - The SSL initiator sets DNS or numeric-IP reference identity before registering
   its connector socket, retaining existing CA verification and SNI. IPv6 brackets
   are normalized for the certificate parameter; the pinned upstream connector
@@ -90,12 +97,18 @@ make -C zfix/interop dependency-test
 
 `quickfixprobe` uses QuickFIX's own session/parser, memory stores and TCP/TLS
 initiator/acceptor classes; it includes neither native FIX parser nor session
-headers. Eight TAP scopes cover one socket server's distinct ephemeral ports and
+headers. Ten TAP scopes cover one socket server's distinct ephemeral ports and
 fixed-port reuse; duplicate CA-name aggregation across a file and directory;
 two real FIX sessions routed through separate port-zero
 listeners over TCP and verified TLS; DNS/IP SAN success; trusted-chain DNS/IP
-mismatch; and untrusted CA refusal before FIX Logon. Main waits on callback
-semaphores; workers never block to establish fixture ordering.
+mismatch; and untrusted CA refusal before FIX Logon. Two shutdown scopes add
+eight two-session TCP rounds with forced and graceful stop. Both peers reach
+Logon before the initiator and acceptor are stopped and joined, in that order.
+Applications, stores, logs and callback state remain alive through both joins.
+The regression checks session readiness and sanitizer-clean shutdown; forced
+stop does not promise a logout callback for every session. Main waits on
+callback semaphores; workers never block to establish fixture ordering. No
+sleeps, SDK interception or sanitizer suppression establish shutdown ordering.
 
 `dependency-test.py` creates a disposable CA, SAN certificates and keys through
 OpenSSL. It verifies the TAP plan, then reruns the six session cases through the

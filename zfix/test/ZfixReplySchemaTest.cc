@@ -14,7 +14,7 @@ ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
 using Allowed = Zfix::MT<Order, "8">;
 using Foreign = Zfix::MT<Order, "X">;
 using Undeclared = Zfix::MT<Order, "9">;
-using Request = Zfix::MT<Order, "D", ZuFacet::FIX, Zfix::NoDiscriminator,
+using Request = Zfix::MT<Order, "D", ZuFacet::FIX, Zfix::NoDiscrim,
   ZuTypeList<Allowed, Foreign>>;
 using Dictionary = Zfix::MTList<Request, Allowed, Undeclared>;
 struct Hub : Zfix::Client<Hub, Dictionary> { struct Link; };

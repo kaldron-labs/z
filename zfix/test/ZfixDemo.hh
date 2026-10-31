@@ -63,9 +63,9 @@ ZfStruct(, (Event, FIX), (symbol, (FIX::ID<55>, Required), String), (price, (FIX
   Int64));
 ZfStruct(, (Login, FIX), (common, , UDT), (user, (FIX::ID<553>, Required), String),
   (password, (FIX::ID<554>, Required), String));
-using Ack = Zfix::MT<Report, "U2", ZuFacet::FIX, Zfix::Discriminator<150, "A">>;
-using Fill = Zfix::MT<Report, "U2", ZuFacet::FIX, Zfix::Discriminator<150, "F">>;
-using Req = Zfix::MT<Request, "U1", ZuFacet::FIX, Zfix::NoDiscriminator, ZuTypeList<Ack,
+using Ack = Zfix::MT<Report, "U2", ZuFacet::FIX, Zfix::Discrim<150, "A">>;
+using Fill = Zfix::MT<Report, "U2", ZuFacet::FIX, Zfix::Discrim<150, "F">>;
+using Req = Zfix::MT<Request, "U1", ZuFacet::FIX, Zfix::NoDiscrim, ZuTypeList<Ack,
   Fill>>;
 using Tick = Zfix::MT<Event, "U3">;
 using Dictionary = Zfix::MTList<Req, Ack, Fill, Tick>;
