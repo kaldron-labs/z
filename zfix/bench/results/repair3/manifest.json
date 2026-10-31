@@ -1,0 +1,103 @@
+{
+  "date": "2026-10-31",
+  "platform": "Linux-7.0.0-1014-aws-x86_64-with-glibc2.43",
+  "machine": "x86_64",
+  "compiler": "Ubuntu clang version 21.1.8 (6ubuntu1)",
+  "cpu": "Intel(R) Xeon(R) Platinum 8488C",
+  "git_head": "d77a15e4b4cb4c0deec1c8f4003dc9a0e8aa7919",
+  "build": {
+    "CXX": "clang++",
+    "CXXFLAGS": "-march=x86-64-v2 -g -DZDEBUG -O3 -DNDEBUG -fsanitize=address -fno-omit-frame-pointer",
+    "AM_CXXFLAGS": "-std=gnu++2b -fno-aligned-allocation -ftemplate-backtrace-limit=0 -fconstexpr-steps=10000000 -Wno-unused-private-field -Wno-deprecated-enum-enum-conversion -Wno-deprecated-enum-compare -Wno-deprecated-anon-enum-enum-conversion -Wno-defaulted-function-deleted -Wno-unused-function -fvisibility=hidden -fno-math-errno -fno-trapping-math -fno-rounding-math -fno-signaling-nans -Wall -Wno-parentheses -Wno-invalid-offsetof -Wno-misleading-indentation -Wno-sign-compare -Wno-empty-body -Wno-unknown-warning-option -Wno-ignored-optimization-argument -Wno-int-in-bool-context -Wno-varargs -Wno-unneeded-internal-declaration -Wno-unused-function",
+    "AM_LDFLAGS": "-rdynamic -Wl,--compress-debug-sections=zstd"
+  },
+  "note": "Shared configured ASan build with existing working-tree changes, not a clean release baseline. Dispatch is timed against a preframed fixed execution report; encode and framing are outside the timing interval.",
+  "command": "zfix/bench/dispatchcodec 20000 2000",
+  "repetitions": 3,
+  "before_sources": {
+    "ZfixDispatch.hh": "6608ce4d416cd98e6e77a10083a8718f24a03073ccc8779620c1db25413c38d3",
+    "ZfixFmt.hh": "8b7543a2ef9db3466e590f875cac29a0bde2eae0c5a634891c2fefc23068fcea",
+    "ZfixFmt.cc": "27813bf3346df127aa6873255d58f9afbc001ff7d6909ae9543b875fe40f9d10",
+    "Zfix.hh": "a2c8299d9ee1b030c7316891b20e0aa18ae42cd410b93de00c21052a75b3a54c",
+    "ZfixTxMsg.hh": "4285de4fa3a19c8d92bb4de80bdc58068bc2929f4b8ea7b485d5606b6e9f9c1b"
+  },
+  "after_sources": {
+    "ZfixDispatch.hh": "bb70be119bca3da6a75d9cd6e88e59679b238d514d08e047c09f5f2b73292645",
+    "ZfixFmt.hh": "b7e828763685740110896744c2e11102626c30b091e6e0a96a08e51734b57545",
+    "ZfixFmt.cc": "3bacb5112e2b65820878e7edc6e5ec689b801a19bf786ce6142d2cf6d23c9e96",
+    "Zfix.hh": "f563185d9b0f6481f3dc75dbee920a8ad3cf27ace63b7fbb4b6a7f25d831cda9",
+    "ZfixTxMsg.hh": "253eb72c0dbdb980642a00efc2e0bc771d1523f4065f8e90d52e14459039f77b"
+  },
+  "alloc_observer": "libtool exec env LD_AUDIT=$PWD/zfix/bench/audittrace.so ZFIX_AUDITTRACE_FILE=... ASAN_OPTIONS=detect_leaks=1 /tmp/zfix-repair3/inspect N",
+  "valgrind": {
+    "compiler": "g++-15 -O0 -g -DZDEBUG (no ASan)",
+    "current_sources": [
+      "ZfixFmt.cc",
+      "ZfixFrame.cc"
+    ],
+    "consumers": [
+      "Dispatch",
+      "Codec",
+      "Group",
+      "Frame"
+    ],
+    "foundation": "/tmp/zfix-stage/opt/z/lib, existing unsanitized staged DSOs; auxiliary check, not full clean-system verification"
+  },
+  "inspector_build": [
+    "/home/ubuntu/src/z/libtool",
+    "--tag=CXX",
+    "--mode=link",
+    "clang++",
+    "-std=gnu++2b",
+    "-O3",
+    "-g",
+    "-fsanitize=address",
+    "-fno-omit-frame-pointer",
+    "-fno-aligned-allocation",
+    "-DZ_VMAJOR=10",
+    "-DZ_VMINOR=0",
+    "-DZ_VPATCH=0",
+    "-D_REENTRANT",
+    "-D_GNU_SOURCE",
+    "-Wno-deprecated-enum-enum-conversion",
+    "-Wno-deprecated-anon-enum-enum-conversion",
+    "-Wno-defaulted-function-deleted",
+    "-Wno-parentheses",
+    "-Wno-invalid-offsetof",
+    "-Wno-uninitialized",
+    "-Wno-unknown-warning-option",
+    "-I/home/ubuntu/src/z/zu/src",
+    "-I/home/ubuntu/src/z/zm/src",
+    "-I/home/ubuntu/src/z/zt/src",
+    "-I/home/ubuntu/src/z/ze/src",
+    "-I/home/ubuntu/src/z/zf/src",
+    "-I/home/ubuntu/src/z/zfix/src",
+    "/home/ubuntu/src/z/zfix/bench/results/repair3/inspect.cc",
+    "/home/ubuntu/src/z/zfix/src/libZfixFmt.la",
+    "/home/ubuntu/src/z/zf/src/libZf.la",
+    "/home/ubuntu/src/z/ze/src/libZe.la",
+    "/home/ubuntu/src/z/zt/src/libZt.la",
+    "/home/ubuntu/src/z/zm/src/libZm.la",
+    "/home/ubuntu/src/z/zu/src/libZu.la",
+    "-lhwloc",
+    "-lck",
+    "-lpcre",
+    "-lbfd",
+    "-liberty",
+    "-lpthread",
+    "-lrt",
+    "-latomic",
+    "-ldl",
+    "-lm",
+    "-o",
+    "/tmp/zfix-repair3/inspect"
+  ],
+  "after_note": "Final after measurements ran after the module build completed, with no remaining compiler processes from this task.",
+  "verification": {
+    "unit": "ASAN_OPTIONS=detect_leaks=1 make -C zfix/test -j8 test: 29 binaries, 351 TAP scopes, PASS; positive schema fixture and 21 expected failures, send and reply fixtures PASS",
+    "integration": "ASAN_OPTIONS=detect_leaks=1 make -C zfix/itest -j8 test: TCP 6 binaries/127 scopes, TLS 6/132, demo 1/2, native peers 1/1, PASS",
+    "top_build": "make -j8: zfix completed; failed later in unrelated zhttp/src/ZhttpTLS.cc at ztls/src/Ztls.hh private m_closing and bool member access; zhttp/ztls working-tree sources unchanged",
+    "valgrind": "Current dispatch/codec/group/frame auxiliary consumers: 0 errors, 0 definite or indirect leaks; existing staged unsanitized foundation DSOs reused",
+    "module_build": "make -C zfix -j8: PASS, no warnings; all src/test/util/itest/example/interop/bench targets built."
+  }
+}

@@ -84,14 +84,14 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Server"> ZmNHeapID(Link *);
   using Parent = Peer<Link, Zfix::SrvLink<PartialServer, Link, Dictionary, Network>, false>;
   using Parent::Peer;
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions & SessionAction::Failure) state()->fail();
     if (!(e.actions & SessionAction::Ready) || readyConnection == e.connection) return;
     readyConnection = e.connection;
     (e.connection == 1 ? state()->initialReady : state()->peerReady).post();
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime original) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime original) {
     if (!app()->txInvoked() || c.epoch != 1) state()->fail();
     if (!c.replay) {
       auto record = store->find(c.epoch, c.seqNo);
@@ -112,14 +112,14 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Server"> ZmNHeapID(Link *);
     }
   }
 
-  TxReload fixRetrieveTx_(TxContext c, uint64_t, uint64_t) {
+  TxReload fixRetrieveTx(TxContext c, uint64_t, uint64_t) {
     if (!app()->txInvoked() || !c.replay || c.epoch != 1) state()->fail();
     if (c.seqNo != 2) return {}; // application suppresses old operational controls
     ++state()->loads;
     return {TxHistory{state()->replacement, state()->oldTime, 1, 2}};
   }
 
-  void fixCompleteTx_(TxBody::Ref body, TxContext c, bool ok) {
+  void fixCompleteTx(TxBody::Ref body, TxContext c, bool ok) {
     if (!app()->txInvoked()) state()->fail();
     if (body->id() == 301) {
       if (c.connection != 1 || c.seqNo != 2 || c.replay || ok) state()->fail();
@@ -127,19 +127,19 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Server"> ZmNHeapID(Link *);
     }
   }
 
-  void fixArchiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void fixArchiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     if (!app()->txInvoked() || epoch != 1 || begin >= end) state()->fail();
     if (state()->probeTarget && end >= state()->probeTarget) {
       state()->probeTarget = 0; state()->archived.post();
     }
   }
 
-  void fixStopTx_(uint64_t) {
-    if (!snapshotTx_(store->tx)) state()->fail();
+  void fixStopTx(uint64_t) {
+    store->tx = this->txProgress_();
     queue.clean();
   }
 
-  void fixStoppedRx_(bool) { ++state()->serverStops; state()->serverStopped.post(); }
+  void fixStoppedRx(bool) { ++state()->serverStops; state()->serverStopped.post(); }
 };
 
 struct PartialServer::Cxn : ZmNHeap<Cxn>, Link::Cxn {
@@ -187,20 +187,20 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Client"> ZmNHeapID(Link *);
   using Parent = Peer<Link, Zfix::CliLink<PartialClient, Link, Dictionary, Network>, true>;
   using Parent::Peer;
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions & SessionAction::Failure) state()->fail();
     if (!(e.actions & SessionAction::Ready) || readyConnection == e.connection) return;
     readyConnection = e.connection; state()->done.post();
   }
 
-  Fmt::Error fixReceiveRx_(OrderMsg *, const Order &o, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(OrderMsg *, const Order &o, const RequestContext &context) {
     if (!app()->rxInvoked() || o.id != "repriced" || context.context().epoch != 1 ||
 	context.header().seqNo != 2 || !context.header().possDup ||
 	context.header().origSendingTime != state()->oldTime) state()->fail();
     ++state()->delivered; state()->selected.post(); return {};
   }
 
-  void fixStoppedRx_(bool) { ++state()->bStops; state()->cliStopped.post(); }
+  void fixStoppedRx(bool) { ++state()->bStops; state()->cliStopped.post(); }
 };
 
 // Main is the raw peer: no worker is blocked and no callback changes native
@@ -296,15 +296,14 @@ static void managedPartial()
     ZuCheck(blocked && state.shortWrites.load_() && state.wouldBlock.load_());
     if (!blocked) break;
     b = new PartialClient::Link{&client};
-    Checkpoint checkpoint;
-    stampState(checkpoint, config(true, Transport::FIX4, Version::V4_4).id, 1);
-    checkpoint.fields = StateMask::All;
+    Progress checkpoint;
+    checkpoint.epoch = 1;
     checkpoint.rx = {2, 2, 0, 0}; checkpoint.tx = {2, 2, 1, 0, 0};
     bool restored = ZmBlock<bool>{}([&client, &b, &checkpoint](auto wake) {
       client.rxRun([&client, &b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	if (!b->restoreRx_(checkpoint)) { wake(false); return; }
+	if (!b->restoreRx_(checkpoint.epoch, checkpoint.rx)) { wake(false); return; }
 	client.txRun([&b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	  if (!b->restoreTx_(checkpoint)) { wake(false); return; }
+	  if (!b->restoreTx_(checkpoint.epoch, checkpoint.tx)) { wake(false); return; }
 	  b->store->lastLoad = 1; wake(true);
 	});
       });

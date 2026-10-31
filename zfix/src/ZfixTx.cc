@@ -14,7 +14,7 @@ ZtEnumImplNS(TxSelect);
 TxConfig txConfig(SessionConfig config)
 {
   ZmAssert(config.valid() && config.mode != Transport::Raw);
-  return {ZuMv(config.id), ZuMv(config.header),
+  return {ZuMv(config.header),
     config.appVerID, config.sequenceLimit, config.mode};
 }
 

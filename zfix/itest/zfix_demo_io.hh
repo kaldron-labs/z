@@ -7,7 +7,7 @@
 #ifndef zfix_demo_io_HH
 #define zfix_demo_io_HH
 
-#include <stdio.h>
+#include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
@@ -63,7 +63,7 @@ struct State {
   explicit State(Options value) : options{value} { }
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "demo failure %s:%u\n", file, line); ++errors; done.post();
+    ZuTestUtil::log("demo failure ", file, ":", line); ++errors; done.post();
   }
 
   void closed_() { if (closed.xchAdd(1) == 1) stopped.post(); }
@@ -71,7 +71,6 @@ struct State {
 
 static Zfix::SessionConfig config(bool client, const Options &options) {
   Zfix::SessionConfig c; c.mode = options.mode; c.initiator = client; c.heartBtInt = 0;
-  c.id = client ? "DEMO-CLIENT" : "DEMO-SERVER";
   c.header.version = options.mode == Zfix::Transport::FIXT11 ?
     Zfix::Version::VT1_1 : Zfix::Version::V4_4;
   c.header.local = client ? "DEMO-C" : "DEMO-S"; c.header.peer = client ? "DEMO-S" : "DEMO-C";
@@ -129,39 +128,39 @@ public:
     // Finite batch plus one Session::Logon and one Session::Logout; byte cap is independent.
     m_store{hub->state->options.messages() + hub->state->options.requests() + 2} { }
 
-  unsigned fixAssociateTx_(Zfix::TxBody::Ref body, Zfix::TxContext context, uint64_t) {
+  unsigned fixAssociateTx(Zfix::TxBody::Ref body, Zfix::TxContext context, uint64_t) {
     ZmAssert(app()->txInvoked());
     if (body->administrative() && body->msgType() != "3") return Zfix::TxLoad::Accepted;
     bool saved = m_store.associate(body, context);
     return saved || body->administrative() ? Zfix::TxLoad::Accepted : Zfix::TxLoad::Refused;
   }
 
-  bool fixReleaseTx_(Zfix::TxBody::Ref, Zfix::TxContext c, uint64_t) {
+  bool fixReleaseTx(Zfix::TxBody::Ref, Zfix::TxContext c, uint64_t) {
     ZmAssert(app()->txInvoked()); m_store.erase(c.epoch, c.seqNo); return true;
   }
 
-  void fixPublishedTx_(Zfix::TxBody::Ref body, Zfix::TxContext c, ZuDateTime time) {
+  void fixPublishedTx(Zfix::TxBody::Ref body, Zfix::TxContext c, ZuDateTime time) {
     ZmAssert(app()->txInvoked());
     if ((!body->administrative() || body->msgType() == "3") &&
 	!m_store.published(c, time) && !body->administrative()) state()->fail();
   }
 
-  void fixArchiveTx_(uint64_t, uint64_t begin, uint64_t end) {
+  void fixArchiveTx(uint64_t, uint64_t begin, uint64_t end) {
     ZmAssert(app()->txInvoked()); state()->summary.archived += end - begin;
   }
 
-  Zfix::TxReload fixRetrieveTx_(Zfix::TxContext c, uint64_t, uint64_t) {
+  Zfix::TxReload fixRetrieveTx(Zfix::TxContext c, uint64_t, uint64_t) {
     ZmAssert(app()->txInvoked()); ++state()->summary.retrieved;
     return m_store.fetch(c.epoch, c.seqNo);
   }
 
-  void fixCompleteTx_(Zfix::TxBody::Ref, Zfix::TxContext, bool ok) {
+  void fixCompleteTx(Zfix::TxBody::Ref, Zfix::TxContext, bool ok) {
     ZmAssert(app()->txInvoked());
     if (!ok && !options().badAuth) state()->fail();
     if (ok) ++state()->summary.localSent; // local transport completion, never Calls::complete
   }
 
-  void fixSubmittedTx_(Zfix::TxBody::Ref body, unsigned result) {
+  void fixSubmittedTx(Zfix::TxBody::Ref body, unsigned result) {
     ZmAssert(app()->txInvoked());
     if (result == Zfix::TxSelect::Accepted || result == Zfix::TxSelect::Pending) return;
     if (result != Zfix::TxSelect::Busy && result != Zfix::TxSelect::Held) { state()->fail();
@@ -172,17 +171,17 @@ public:
     m_queue.push(body); m_queueBytes += bytes; this->queued();
   }
 
-  Zfix::TxBody::Ref fixDequeueTx_() {
+  Zfix::TxBody::Ref fixDequeueTx() {
     ZmAssert(app()->txInvoked()); auto node = m_queue.shift(); if (!node) return {};
     auto body = ZuMv(node->data());
     m_queueBytes -= body->memory() + ZmHeapAllocSize<sizeof(BodyQueue::Node)>{}; return body;
   }
 
-  void fixSelectedTx_(Zfix::TxBody::Ref body, Zfix::TxContext, unsigned result) {
+  void fixSelectedTx(Zfix::TxBody::Ref body, Zfix::TxContext, unsigned result) {
     if (result != Zfix::TxSelect::Accepted && !m_stopping) state()->fail();
   }
 
-  void fixRejectedTx_(Zfix::PeerReject report) {
+  void fixRejectedTx(Zfix::PeerReject report) {
     ZmAssert(app()->txInvoked());
     if constexpr (Client) {
       // Reference is epoch + outbound FIX sequence, not queue ID or reject frame sequence.
@@ -195,7 +194,7 @@ public:
     } else state()->fail();
   }
 
-  Zfix::TxBody::Ref fixLogonTx_(Zfix::TxBody::Ref body) {
+  Zfix::TxBody::Ref fixLogonTx(Zfix::TxBody::Ref body) {
     if (!options().token.length()) return body;
     // Handshake only: preserve every managed byte and validate added fields.
     auto token = Client && options().badAuth ? ZuCSpan{"wrong"} : options().token;
@@ -206,7 +205,7 @@ public:
     return Zfix::TxBody::restoreControl<LoginMsg>(bytes, body->id(), error);
   }
 
-  unsigned fixAdmissionRx_(Zfix::SessionEvent, ZmRef<Zfix::RxQueue::Node> input,
+  unsigned fixAdmissionRx(Zfix::SessionEvent, ZmRef<Zfix::RxQueue::Node> input,
       Zfix::AdmitRequest &) {
     ZmAssert(app()->rxInvoked());
     if (options().token.length()) {
@@ -218,7 +217,7 @@ public:
     ++state()->summary.authAccepted; return Zfix::Admission::Accepted;
   }
 
-  void fixEventRx_(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
+  void fixEventRx(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
     ZmAssert(app()->rxInvoked());
     if (event.actions & Zfix::SessionAction::Failure) {
       if (!options().badAuth) state()->fail(); else state()->done.post();
@@ -240,13 +239,13 @@ public:
   }
 
   template <typename Response>
-  Zfix::Fmt::Error fixReplyRx_(Req *, Response *, const Zfix::RequestContext &context) {
+  Zfix::Fmt::Error fixReplyRx(Req *, Response *, const Zfix::RequestContext &context) {
     const auto &s = this->session_();
     return context.context().session == s.instance_() && context.context().epoch == s.epoch_() ?
       Zfix::Fmt::Error{} : Zfix::Fmt::Error{Zfix::Fmt::ErrorCode::Unresolved, 11};
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(Req *, const Request &request,
+  Zfix::Fmt::Error fixReceiveRx(Req *, const Request &request,
     const Zfix::RequestContext &context) {
     ZmAssert(app()->rxInvoked());
     if constexpr (Client) return {Zfix::Fmt::ErrorCode::Unresolved, 35};
@@ -288,19 +287,19 @@ public:
   }
 
   template <typename Entry>
-  Zfix::Fmt::Error fixReceiveRx_(Entry *, const Report &report, const Zfix::RequestContext &) {
+  Zfix::Fmt::Error fixReceiveRx(Entry *, const Report &report, const Zfix::RequestContext &) {
     if constexpr (Client) { m_calls.report(report); ++m_messages; finished(); return {}; }
     else return {Zfix::Fmt::ErrorCode::Unresolved, 35};
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(Tick *, const Event &event, const Zfix::RequestContext &) {
+  Zfix::Fmt::Error fixReceiveRx(Tick *, const Event &event, const Zfix::RequestContext &) {
     if constexpr (Client) {
       if (event.symbol != "DEMO" || event.price != 12345) state()->fail();
       ++m_events; ++m_messages; finished(); return {};
     } else return {Zfix::Fmt::ErrorCode::Unresolved, 35};
   }
 
-  void fixStopRx_(uint64_t, uint64_t) {
+  void fixStopRx(uint64_t, uint64_t) {
     m_jobs.clean();
     if constexpr (Client) {
       const auto &s = m_calls.stats(); auto &out = state()->summary;
@@ -313,11 +312,11 @@ public:
     }
   }
 
-  void fixStopTx_(uint64_t) {
+  void fixStopTx(uint64_t) {
     m_stopping = true; m_queue.clean(); m_queueBytes = 0; m_store.clear();
   }
 
-  void fixStoppedRx_(bool) { state()->closed_(); }
+  void fixStoppedRx(bool) { state()->closed_(); }
 private:
   State *state() const { return this->app()->state; }
   const Options &options() const { return state()->options; }

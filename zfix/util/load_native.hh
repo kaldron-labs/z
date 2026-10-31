@@ -16,6 +16,7 @@
 #include <zlib/ZmPlatform.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 #include "load_run.hh"
@@ -30,14 +31,18 @@ using NativeHistory = Cache<HistKey, Zfix::TxHistory>;
 using NativeQueue = ZmList<Zfix::TxBody::Ref,
   ZmListHeapID<"Zfix.Load.Queue">>;
 struct NativeStore {
-  Zfix::Checkpoint	rx, tx;
+  Zfix::RxProgress	rx;
+  Zfix::TxProgress	tx;
+  uint64_t		epoch = 0;
   NativeHistory		history;
 
   NativeStore(const Options &o, unsigned = 0) : history{o.retain, o.cacheBytes} { }
 };
 
 struct NativeCheckpoint {
-  Zfix::Checkpoint	rx, tx;
+  Zfix::RxProgress	rx;
+  Zfix::TxProgress	tx;
+  uint64_t		epoch = 0;
   Rows<Zfix::TxHistory>	history;
   uint64_t		businessKey = 0;
 };
@@ -64,7 +69,10 @@ struct NativeState {
   }
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "zfix failure %s:%u\n", file, line); ++errors; readySem.post(); done.post();
+    ZiLOG(Error, "zfix", ([file, line](auto &s) {
+      s << "zfix failure " << file << ':' << line;
+    }));
+    ++errors; readySem.post(); done.post();
   }
 
   void readyRx_(unsigned index, ZmFn<void()> start = {}) {
@@ -100,7 +108,6 @@ static Zfix::SessionConfig nativeConfig(bool client, const Options &o, unsigned 
     Version::V4_3 == Zfix::Version::V4_3 && Version::V4_4 == Zfix::Version::V4_4 &&
     Version::VT1_1 == Zfix::Version::VT1_1 && Version::N == Zfix::Version::N);
   c.mode = o.mode + Zfix::Transport::FIX4;
-  c.id << o.id << (client ? "-C-" : "-S-") << index + 1;
   c.header.version = o.version;
   c.appVerID = Zfix::AppVersion::V4_4; c.heartBtInt = o.heartbeat;
   Text sender; sender << o.sender << '-' << index + 1;
@@ -229,12 +236,13 @@ public:
   bool prepare() {
     return ZmBlock<bool>{}([this](auto wake) {
       app()->rxRun([this, wake = ZuMv(wake)]() mutable {
-	if ((state()->checkpoint.rx.fields && !this->restoreRx_(state()->checkpoint.rx)) ||
+	auto &saved = state()->checkpoint;
+	if ((saved.epoch && !this->restoreRx_(saved.epoch, saved.rx)) ||
 	    (options().resetLogon && !resetOpen_())) { wake(false); return; }
 	app()->txRun([this, wake = ZuMv(wake)]() mutable {
 	  bool restored = true;
 	  auto &saved = state()->checkpoint;
-	  if (saved.tx.fields) restored = this->restoreTx_(saved.tx) && restored;
+	  if (saved.epoch) restored = this->restoreTx_(saved.epoch, saved.tx) && restored;
 	  for (const auto &h : saved.history)
 	    restored = store_().history.put({h.epoch, h.seqNo}, h, h.body->memory()) && restored;
 	  saved.history.length(0);
@@ -250,10 +258,11 @@ public:
   void prepareServer(ZmFn<void(bool)> done) {
     app()->rxRun([this, done = ZuMv(done)]() mutable {
       bool reset = options().resetLogon && m_round > 1;
-      bool ok = reset ? resetOpen_() : !store_().rx.fields || this->restoreRx_(store_().rx);
+      auto epoch = store_().epoch;
+      bool ok = reset ? resetOpen_() : !epoch || this->restoreRx_(epoch, store_().rx);
       if (!ok) { done(false); return; }
-      app()->txRun([this, done = ZuMv(done), reset]() mutable {
-	bool restored = reset || !store_().tx.fields || this->restoreTx_(store_().tx);
+      app()->txRun([this, done = ZuMv(done), reset, epoch]() mutable {
+	bool restored = reset || !epoch || this->restoreTx_(epoch, store_().tx);
 	app()->rxRun([done = ZuMv(done), restored]() mutable { done(restored); });
       });
     });
@@ -263,7 +272,7 @@ public:
     m_ready = false; Base::connected(event);
   }
 
-  unsigned fixAssociateTx_(Zfix::TxBody::Ref body, Zfix::TxContext, uint64_t) {
+  unsigned fixAssociateTx(Zfix::TxBody::Ref body, Zfix::TxContext, uint64_t) {
     // The operational assignment carries the association until publication;
     // Wire owns local completion. This app adds no external durability barrier.
     if (body->administrative()) return Zfix::TxLoad::Accepted;
@@ -271,9 +280,9 @@ public:
       Zfix::TxLoad::Accepted : Zfix::TxLoad::Refused;
   }
 
-  bool fixReleaseTx_(Zfix::TxBody::Ref, Zfix::TxContext, uint64_t) { return true; }
+  bool fixReleaseTx(Zfix::TxBody::Ref, Zfix::TxContext, uint64_t) { return true; }
 
-  void fixPublishedTx_(Zfix::TxBody::Ref body, Zfix::TxContext c, ZuDateTime time) {
+  void fixPublishedTx(Zfix::TxBody::Ref body, Zfix::TxContext c, ZuDateTime time) {
     // This workload retains business output and Rejects, and suppresses stale
     // operational controls. That choice belongs to this application store.
     if (c.replay || (body->administrative() && body->msgType() != "3")) return;
@@ -287,13 +296,13 @@ public:
 
   // The cache's count/byte policy retains these records beyond archive progress
   // so reconnect can recover them. Archive imposes no core release handshake.
-  Zfix::TxReload fixRetrieveTx_(Zfix::TxContext context, uint64_t, uint64_t) {
+  Zfix::TxReload fixRetrieveTx(Zfix::TxContext context, uint64_t, uint64_t) {
     auto record = store_().history.get({context.epoch, context.seqNo});
     if (record) return {*record};
     ++result().historyMiss; return {};
   }
 
-  void fixSubmittedTx_(Zfix::TxBody::Ref body, unsigned selected) {
+  void fixSubmittedTx(Zfix::TxBody::Ref body, unsigned selected) {
     if (selected == Zfix::TxSelect::Accepted || selected == Zfix::TxSelect::Pending) return;
     if (selected != Zfix::TxSelect::Busy && selected != Zfix::TxSelect::Held) { state()->fail();
       return; }
@@ -304,18 +313,18 @@ public:
     m_queue.push(ZuMv(body)); m_queueBytes += bytes; this->queued();
   }
 
-  Zfix::TxBody::Ref fixDequeueTx_() {
+  Zfix::TxBody::Ref fixDequeueTx() {
     auto node = m_queue.shift(); if (!node) return {};
     auto body = ZuMv(node->data());
     m_queueBytes -= body->memory() + ZmHeapAllocSize<sizeof(NativeQueue::Node)>{};
     return body;
   }
 
-  void fixSelectedTx_(Zfix::TxBody::Ref, Zfix::TxContext, unsigned selected) {
+  void fixSelectedTx(Zfix::TxBody::Ref, Zfix::TxContext, unsigned selected) {
     if (selected != Zfix::TxSelect::Accepted && !m_stopping) state()->fail();
   }
 
-  Zfix::TxBody::Ref fixLogonTx_(Zfix::TxBody::Ref body) {
+  Zfix::TxBody::Ref fixLogonTx(Zfix::TxBody::Ref body) {
     // A prepared reset owner has not touched the shared store. Clear obsolete
     // history only after this owner is actually bound, before its first Logon.
     if constexpr (!Client)
@@ -324,17 +333,20 @@ public:
     m_stopping = false; return body;
   }
 
-  void fixRejectedTx_(Zfix::PeerReject reject) {
-    fprintf(stderr, "session reject: refSeq=%llu tag=%u reason=%d\n",
-      (unsigned long long)reject.message.refSeqNo, reject.message.refTagID,
-	reject.message.reason);
+  void fixRejectedTx(Zfix::PeerReject reject) {
+    ZiLOG(Error, "zfix", ([seq = reject.message.refSeqNo, tag = reject.message.refTagID,
+      reason = reject.message.reason](auto &s) {
+      s << "session reject: refSeq=" << seq << " tag=" << tag << " reason=" << reason;
+    }));
     state()->fail();
   }
 
-  void fixEventRx_(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
+  void fixEventRx(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
     if (event.actions & Zfix::SessionAction::Failure) {
-      if (event.error == Zfix::SessionError::Timeout) fputs("FIX session timeout\n", stderr);
-      else fprintf(stderr, "FIX session failure error=%u tag=%u\n", event.error, event.tag);
+      if (event.error == Zfix::SessionError::Timeout) ZiLOG(Error, "zfix", "FIX session timeout");
+      else ZiLOG(Error, "zfix", ([error = event.error, tag = event.tag](auto &s) {
+	s << "FIX session failure error=" << error << " tag=" << tag;
+      }));
       state()->fail();
     }
     if (!(event.actions & Zfix::SessionAction::Ready)) return;
@@ -345,26 +357,26 @@ public:
     else state()->readyRx_(m_index);
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(NewOrder *, const Order &o,
+  Zfix::Fmt::Error fixReceiveRx(NewOrder *, const Order &o,
     const Zfix::RequestContext &context) {
     if constexpr (Client) return {Zfix::Fmt::ErrorCode::Unresolved, 35};
     else return serve_(o, context);
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(CancelOrder *, const Cancel &o,
+  Zfix::Fmt::Error fixReceiveRx(CancelOrder *, const Cancel &o,
       const Zfix::RequestContext &context) {
     if constexpr (Client) return {Zfix::Fmt::ErrorCode::Unresolved, 35};
     else return serve_(o, context);
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(ReplaceOrder *, const Replace &o,
+  Zfix::Fmt::Error fixReceiveRx(ReplaceOrder *, const Replace &o,
       const Zfix::RequestContext &context) {
     if constexpr (Client) return {Zfix::Fmt::ErrorCode::Unresolved, 35};
     else return serve_(o, context);
   }
 
   template <typename Entry>
-  Zfix::Fmt::Error fixReceiveRx_(Entry *, const Report &r, const Zfix::RequestContext &) {
+  Zfix::Fmt::Error fixReceiveRx(Entry *, const Report &r, const Zfix::RequestContext &) {
     if constexpr (!Client) return {Zfix::Fmt::ErrorCode::Unresolved, 35};
     else {
       if (!m_run.shape(r.text, r.encoded)) { state()->fail();
@@ -383,7 +395,7 @@ public:
     }
   }
 
-  void fixStopRx_(uint64_t, uint64_t) {
+  void fixStopRx(uint64_t, uint64_t) {
     m_ready = m_live = false; ++m_timerSerial; app()->mx()->del(&m_timer);
     auto &r = result();
     if constexpr (Client) m_run.finish(r, monotonic(), &state()->measurements[m_index]);
@@ -391,23 +403,22 @@ public:
       r.progress = broker_().progress; r.cached = broker_().cached;
       r.replayRefused = broker_().replayRefused;
     }
-    if constexpr (!Client)
-      if (options().resetLogon && m_round > 1) store_().rx = {};
-    if (!this->snapshotRx_(store_().rx)) state()->fail();
-    if constexpr (Client) if (options().stateOut.length()) state()->checkpoint.rx = store_().rx;
-    r.nextTarget = store_().rx.rx.processed;
+    store_().rx = this->rxProgress_();
+    store_().epoch = this->session_().epoch_();
+    if constexpr (Client) if (options().stateOut.length()) {
+      state()->checkpoint.rx = store_().rx; state()->checkpoint.epoch = store_().epoch;
+    }
+    r.nextTarget = store_().rx.processed;
     auto stats = this->rxStats_();
     if (m_round == 1) { r.rxFrames = stats.frames; r.rxBytes = stats.bytes; }
     else { r.rxFrames += stats.frames; r.rxBytes += stats.bytes; }
     state()->starters[m_index] = {};
   }
 
-  void fixStopTx_(uint64_t) {
+  void fixStopTx(uint64_t) {
     m_stopping = true; auto stats = this->txStats_(); auto &r = result();
-    if constexpr (!Client)
-      if (options().resetLogon && m_round > 1) store_().tx = {};
-    if (!this->snapshotTx_(store_().tx)) state()->fail();
-    r.nextSender = store_().tx.tx.loaded;
+    store_().tx = this->txProgress_();
+    r.nextSender = store_().tx.loaded;
     if constexpr (Client) if (options().stateOut.length()) {
       auto &saved = state()->checkpoint; saved.tx = store_().tx; saved.history.length(0);
       store_().history.each([&saved](const HistKey &, const Zfix::TxHistory &h) {
@@ -419,12 +430,12 @@ public:
     r.retainedPeak = store_().history.peak(); m_queue.clean(); m_queueBytes = 0;
   }
 
-  void fixStoppedRx_(bool) {
+  void fixStoppedRx(bool) {
     if constexpr (!Client) {
       // Model a lagging durable receive checkpoint after all old owner work
       // drains. Committed business knowledge and sender history remain intact.
       if (m_round == 1 && options().recoverRx) {
-	auto &rx = store_().rx.rx;
+	auto &rx = store_().rx;
 	if (options().recoverRx >= rx.processed) state()->fail();
 	else {
 	  rx.received = rx.processed = options().recoverRx;
@@ -444,7 +455,7 @@ private:
   static uint64_t epoch_(NativeHub<Net, Client> *hub) {
     if constexpr (Client) {
       if (hub->state->options.resetLogon) return 2;
-      auto epoch = hub->state->checkpoint.rx.epoch; return epoch ? epoch : 1;
+      auto epoch = hub->state->checkpoint.epoch; return epoch ? epoch : 1;
     } else return hub->nextEpoch;
   }
 
@@ -484,8 +495,8 @@ private:
   template <typename Entry> bool submit(const typename Entry::Object &o, uint64_t id,
     Zfix::Fmt::Error &error) {
     auto body = mapping(o, [&o, id, &error]<typename Facet>(Facet) {
-      using E = Zfix::MT<typename Entry::Object, Entry::msgType, Facet,
-	typename Entry::Discriminator>;
+      using E = Zfix::MT<typename Entry::Object, Entry::MsgType, Facet,
+	typename Entry::Discrim>;
       return Zfix::TxBody::encode<E>(o, id, error);
     });
     if (!body || error) return false;

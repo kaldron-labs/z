@@ -67,32 +67,53 @@ struct Context {
   ZuCSpan	version; // borrowed BeginString, including unknown Raw wire versions
 };
 
-// Secondary selectors compare one root-scoped wire field. Entries sharing a
+// Secondary selectors compare one unique, non-repeating root wire field. It
+// must not also occur inside any repeating group. Inspection uses SOH-delimited
+// text; binary Length/Data inspection is outside this contract. Entries sharing a
 // MsgType must use the same tag and disjoint values, so selection is explicit
 // and cannot depend on decoding alternatives or declaration order.
-struct NoDiscriminator {
-  enum { tag = 0 };
-  static constexpr auto	value = ZuString{""};
+struct NoDiscrim {
+  enum { Tag = 0 };
+  static constexpr auto	Value = ZuString{""};
 };
 
-template <unsigned Tag, ZuString Value> struct Discriminator {
+template <unsigned Tag_, ZuString Value_>
+struct Discrim {
+  enum { Tag = Tag_ };
+  static constexpr auto	Value = Value_;
   ZuAssert(Tag && Tag != 8 && Tag != 9 && Tag != 10 && Tag != 35);
-  enum { tag = Tag };
-  static constexpr auto	value = Value;
 };
 
 // Responses describe the application's allowed reply types, not correlation,
 // cardinality or a promise to complete a business operation.
-template <typename O, ZuString MsgType, typename Facet = ZuFacet::FIX,
-  typename Selector = NoDiscriminator, typename ReplyTypes = ZuTypeList<>>
+template <typename O, ZuString MsgType_, typename Facet = ZuFacet::FIX,
+  typename Selector = NoDiscrim, typename ReplyTypes = ZuTypeList<>>
 struct MT {
   using Object = O;
   using Mapping = Facet;
-  using Discriminator = Selector;
+  using Discrim = Selector;
   using Responses = ReplyTypes;
-  static constexpr auto	msgType = MsgType;
+  static constexpr auto	MsgType = MsgType_;
   ZuAssert((ZuTypeUnique<Responses>::N == Responses::N));
 };
+
+namespace Catalog_ {
+
+// Schema metadata can reject a selector declared inside a group without any
+// runtime group inspection. Flattened components retain their enclosing scope.
+template <typename O, typename Facet, unsigned Tag, bool Nested = false>
+consteval bool rootSelector() {
+  bool ok = true;
+  ZuUnroll::all<typename Fmt::Schema<O, Facet>::Leaves>([&ok]<typename L>() {
+    using F = typename L::Field;
+    if constexpr (Nested)
+      if (Fmt::tag<F>() == Tag || Fmt::lenTag<F>() == Tag) ok = false;
+    if constexpr (Fmt::GroupField<F, Facet>{})
+      if (!rootSelector<Fmt::GroupElem<typename F::T>, Facet, Tag, true>()) ok = false;
+  });
+  return ok;
+}
+} // Zfix::Catalog_
 
 // Entries carry explicit application types and facets; BeginString never
 // selects a business dictionary. Dispatch is supplied by the typed API stage.
@@ -104,13 +125,16 @@ template <typename ...Entries> struct MTList {
     bool ok = ZuTypeUnique<Messages>::N == Messages::N;
     ZuUnroll::all<Messages>([&ok]<typename L>() {
       using Replies = typename L::Responses;
-      if (!L::msgType.length() || ZuTypeUnique<Replies>::N != Replies::N) ok = false;
+      if constexpr (L::Discrim::Tag)
+	if (!Catalog_::rootSelector<typename L::Object, typename L::Mapping,
+	    L::Discrim::Tag>()) ok = false;
+      if (!L::MsgType.length() || ZuTypeUnique<Replies>::N != Replies::N) ok = false;
       ZuUnroll::all<Messages>([&ok]<typename R>() {
 	if constexpr (ZuTypeIndex<L, Messages>{} < ZuTypeIndex<R, Messages>{}) {
-	  using LS = typename L::Discriminator;
-	  using RS = typename R::Discriminator;
-	  if (L::msgType == R::msgType &&
-	      (!LS::tag || LS::tag != RS::tag || LS::value == RS::value)) ok = false;
+	  using LS = typename L::Discrim;
+	  using RS = typename R::Discrim;
+	  if (L::MsgType == R::MsgType &&
+	      (!LS::Tag || LS::Tag != RS::Tag || LS::Value == RS::Value)) ok = false;
 	}
       });
     });

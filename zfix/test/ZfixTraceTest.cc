@@ -55,8 +55,8 @@ static bool contains(ZuCSpan text, ZuCSpan term) {
 }
 static ZmRef<ZiIOBuf> wire(ZuCSpan type, ZuCSpan content) {
   ZmRef<ZiIOBuf> b = new ZiIOBufAlloc<>;
-  constexpr auto envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
-  b->ensure(type.length() + content.length() + envelope.length());
+  constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
+  b->ensure(type.length() + content.length() + Envelope.length());
   ZuSpan<char> storage{b->data(), b->size};
   Fmt::FrameWriter out{storage, "FIX.4.4"};
   out.body() << "35=" << type << '\1' << content;

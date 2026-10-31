@@ -20,7 +20,7 @@ ZfStruct(, (Value, FIX), (id, (FIX::ID<11>), String));
 ZfStructImpl(Value); ZfStructImpl(Value, FIX);
 using CustomLogon = MT<Value, "A">;
 using Order = MT<Value, "D">;
-constexpr auto wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
+constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
 static auto buffer(ZuCSpan bytes) {
   ZmRef<ZiIOBuf> b = new ZiIOBufAlloc<>; b->append(bytes); return b;
 }
@@ -53,16 +53,16 @@ static void headers() {
 static void opaque() {
   ZuTestScope(opaque);
   Fmt::Error error; auto body = TxBody::encode<Order>(Value{"abc"}, 23, error);
-  auto bytes = buffer(wire);
+  auto bytes = buffer(Wire);
   auto out = RawOutput::fromFrame(body, {0, 1, 0}, bytes, error);
   ZuCheck(out && !error && out->frame() == bytes && out->body() == body);
   ZuCheck(out->context().epoch == 0 && out->context().seqNo == 0 && !*out->originalTime());
   auto wrong = TxBody::encodeRaw<CustomLogon>(Value{"abc"}, 24, true, error);
   ZuCheck(!RawOutput::fromFrame(wrong, {0, 1, 0}, bytes, error) && error.tag == 35);
-  auto two = buffer(wire); two->append(wire);
+  auto two = buffer(Wire); two->append(Wire);
   ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, two,
     error) && error.code == Fmt::ErrorCode::Envelope);
-  auto shortFrame = buffer({wire.data(), wire.length() - 1});
+  auto shortFrame = buffer({Wire.data(), Wire.length() - 1});
   ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, shortFrame,
     error) && error.code == Fmt::ErrorCode::Truncated);
   bytes->data()[bytes->length - 2] = '2';
@@ -72,10 +72,10 @@ static void opaque() {
 static void limits() {
   ZuTestScope(limits);
   Fmt::Error error; auto body = TxBody::encode<Order>(Value{"abc"}, 1, error);
-  Fmt::Limits l; l.frameBytes = wire.length() - 1;
-  ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, buffer(wire), error,
+  Fmt::Limits l; l.frameBytes = Wire.length() - 1;
+  ZuCheck(!RawOutput::fromFrame(body, {0, 1, 0}, buffer(Wire), error,
     l) && error.code == Fmt::ErrorCode::Size);
-  ZuCheck(!RawOutput::fromFrame({}, {}, buffer(wire),
+  ZuCheck(!RawOutput::fromFrame({}, {}, buffer(Wire),
     error) && error.code == Fmt::ErrorCode::Output);
 }
 
@@ -140,33 +140,33 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
   Owner *app() const { return owner; }
   PostedState txPosted_() const { return {}; }
   WorkState workState_() const { return {}; }
-  WireGeometry fixGeometryTx_() const { return {}; }
+  WireGeometry fixGeometryTx() const { return {}; }
 
-  ZmRef<WireBuf> fixAllocTx_(unsigned head) {
+  ZmRef<WireBuf> fixAllocTx(unsigned head) {
     ZmRef<WireBuf> b = new WireBufAlloc<>; b->skip = head; return b;
   }
 
-  bool fixSendTx_(ZmRef<ZiIOBuf> b) { records.push(Record{ZuMv(b)}); return true; }
+  bool fixSendTx(ZmRef<ZiIOBuf> b) { records.push(Record{ZuMv(b)}); return true; }
   void disconnect_(bool = true) { ++closes; }
   void resumeRx_() { }
-  void fixRawUpRx_(uint64_t c) { up.push(c); }
-  void fixRawWritableTx_(uint64_t c) { writable.push(c); }
-  void fixRawFaultTx_(uint64_t, Fmt::Error) { ++faults; }
-  void fixRawCompleteTx_(TxBody::Ref, TxContext, bool) { ++completed; }
+  void fixRawUpRx(uint64_t c) { up.push(c); }
+  void fixRawWritableTx(uint64_t c) { writable.push(c); }
+  void fixRawFaultTx(uint64_t, Fmt::Error) { ++faults; }
+  void fixRawCompleteTx(TxBody::Ref, TxContext, bool) { ++completed; }
 
-  void fixRawStopRx_(uint64_t c, RawStopRequest &request) {
+  void fixRawStopRx(uint64_t c, RawStopRequest &request) {
     if (deferred) rxStops.push(Stop{c, request.defer()});
   }
 
-  void fixRawStopTx_(uint64_t c, RawStopRequest &request) {
+  void fixRawStopTx(uint64_t c, RawStopRequest &request) {
     if (deferred) txStops.push(Stop{c, request.defer()});
   }
 
-  void fixRawStoppedRx_(uint64_t c, bool) { stopped.push(c); }
+  void fixRawStoppedRx(uint64_t c, bool) { stopped.push(c); }
 
   unsigned send(uint64_t c) {
     Fmt::Error error; auto body = TxBody::encode<Order>(Value{"abc"}, 23, error);
-    auto out = RawOutput::fromFrame(body, {0, c, 0}, buffer(wire), error);
+    auto out = RawOutput::fromFrame(body, {0, c, 0}, buffer(Wire), error);
     owner->rx = false;
     unsigned result = sendRaw_(out);
     owner->rx = true;

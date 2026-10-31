@@ -22,7 +22,7 @@ template <typename T> using Values = ZtArray<T, ZtArrayHeapID<"Zfix.LinkTxTest">
 static SessionConfig config(unsigned mode = Transport::FIX4)
 {
   SessionConfig c;
-  c.id = "PRIMARY"; c.header.version = Version::V4_4;
+  c.header.version = Version::V4_4;
   c.header.local = "LOCAL";
   c.header.peer = "PEER";
   c.mode = mode;
@@ -119,13 +119,13 @@ struct Engine : LinkTx<Engine> {
   explicit Engine(ControlLimits limits = {}, SessionConfig c = config(), TxLimits tx = {}) :
     LinkTx<Engine>{ZuMv(c), tx, limits} { }
 
-  bool enqueueTx_(TxBody::Ref body) {
+  bool enqueueTx(TxBody::Ref body) {
     auto charge = uint64_t(body->size) + sizeof(AppQueue::Node);
     if (charge > appLimit || appBytes > appLimit - charge) return false;
     appBytes += charge; appQueue.push(ZuMv(body)); return true;
   }
 
-  TxBody::Ref dequeueTx_() {
+  TxBody::Ref dequeueTx() {
     ++dequeues;
     auto node = appQueue.shift();
     if (!node) return {};
@@ -133,21 +133,21 @@ struct Engine : LinkTx<Engine> {
     return ZuMv(node->data());
   }
 
-  void selectedTx_(TxBody::Ref body, TxContext context, unsigned result) {
+  void selectedTx(TxBody::Ref body, TxContext context, unsigned result) {
     selections.push(Selection{ZuMv(body), context, result});
   }
 
-  void sessionTx_(TxBody::Ref body, TxContext context) {
+  void sessionTx(TxBody::Ref body, TxContext context) {
     observed.push(Observation{ZuMv(body), context, unsigned(output.length()), flushed});
   }
 
-  void publishedTx_(TxBody::Ref b, TxContext c, ZuDateTime original) {
+  void publishedTx(TxBody::Ref b, TxContext c, ZuDateTime original) {
     if (!c.replay && (!b->administrative() || b->msgType() == "3"))
       history.push(TxHistory{b, original, c.epoch, c.seqNo});
     published.push(TxHistory{ZuMv(b), original, c.epoch, c.seqNo});
   }
 
-  void rejectedTx_(PeerReject report) { peerRejects.push(ZuMv(report)); }
+  void rejectedTx(PeerReject report) { peerRejects.push(ZuMv(report)); }
 
   bool queueOrder(uint64_t id) {
     Error e;
@@ -155,17 +155,17 @@ struct Engine : LinkTx<Engine> {
     return !e && enqueue_(ZuMv(body));
   }
 
-  void txSchedule_(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
+  void txSchedule(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
 
-  unsigned associateTx_(TxBody::Ref, TxContext, uint64_t ticket) {
+  unsigned associateTx(TxBody::Ref, TxContext, uint64_t ticket) {
     loadTicket = ticket; return loadResult;
   }
 
-  bool releaseTx_(TxBody::Ref, TxContext context, uint64_t ticket) {
+  bool releaseTx(TxBody::Ref, TxContext context, uint64_t ticket) {
     releaseTicket = ticket; released.push(context); return !delayRelease;
   }
 
-  TxReload retrieveTx_(TxContext context, uint64_t, uint64_t ticket) {
+  TxReload retrieveTx(TxContext context, uint64_t, uint64_t ticket) {
     auto epoch = context.epoch, key = context.seqNo;
     historyTicket = ticket;
     if (delayHistory) return {{}, true};
@@ -174,23 +174,23 @@ struct Engine : LinkTx<Engine> {
     return {};
   }
 
-  void archiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void archiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     archives.push(TxContext{epoch, 0, begin});
     archiveEnds.push(end);
   }
 
-  ZuDateTime clockTx_() { return stamp; }
-  ZuTime nowTx_() { return now; }
+  ZuDateTime clockTx() { return stamp; }
+  ZuTime nowTx() { return now; }
 
-  void idleArmTx_(uint64_t connection, uint64_t ticket, ZuTime deadline) {
+  void idleArmTx(uint64_t connection, uint64_t ticket, ZuTime deadline) {
     idleConnection = connection; idleTicket = ticket; armed = deadline; ++idleArms;
   }
 
-  void idleCancelTx_() { armed.null(); ++idleCancels; }
+  void idleCancelTx() { armed.null(); ++idleCancels; }
 
-  void faultTx_(TxContext, Error e) { error = e; }
+  void faultTx(TxContext, Error e) { error = e; }
 
-  bool admitFrameTx_(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame,
+  bool admitFrameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame,
     ZuDateTime original) {
     if (block) return false;
     order.push(1);
@@ -198,17 +198,17 @@ struct Engine : LinkTx<Engine> {
     return true;
   }
 
-  void notifyTx_(TxNotice n) { order.push(2); notices.push(n); }
+  void notifyTx(TxNotice n) { order.push(2); notices.push(n); }
 
-  void flushTx_() { order.push(3); flushed = output.length(); }
+  void flushTx() { order.push(3); flushed = output.length(); }
 
-  void completeTx_(TxBody::Ref, TxContext, bool) { ++completions; }
+  void completeTx(TxBody::Ref, TxContext, bool) { ++completions; }
 
-  void sequenceLimitTx_(TxContext context, uint64_t maximum, unsigned headroom) {
+  void sequenceLimitTx(TxContext context, uint64_t maximum, unsigned headroom) {
     limits.push(Limit{context, maximum, headroom});
   }
 
-  void acknowledgedTx_(TxContext context, uint64_t previous, uint64_t next) {
+  void acknowledgedTx(TxContext context, uint64_t previous, uint64_t next) {
     acks.push(Ack{context, previous, next});
   }
 
@@ -280,13 +280,13 @@ static void factory()
     wide.epoch = wide.connection = wide.probe = UINT64_MAX - 1;
     auto largest = controlBody(SessionAction::SendProbe, wide, s, 17, {}, e,
       Limits::FrameBytes);
-    constexpr auto expected = "Zfix/340282366920938463463374607431768211454/"
+    constexpr auto Expected = "Zfix/340282366920938463463374607431768211454/"
       "18446744073709551614/18446744073709551614/18446744073709551614"_z;
-    ZuCheck(largest && !e && !load(request, largest->body()) && request.testReqID == expected);
-    constexpr auto opaque = "0001 abc/xyz"_z;
-    auto echo = controlBody(SessionAction::Echo, event, s, 17, opaque, e, Limits::FrameBytes);
+    ZuCheck(largest && !e && !load(request, largest->body()) && request.testReqID == Expected);
+    constexpr auto Opaque = "0001 abc/xyz"_z;
+    auto echo = controlBody(SessionAction::Echo, event, s, 17, Opaque, e, Limits::FrameBytes);
     Session::HeartBt hb;
-    ZuCheck(echo && !load(hb, echo->body()) && hb.testReqID == opaque);
+    ZuCheck(echo && !load(hb, echo->body()) && hb.testReqID == Opaque);
     auto empty = controlBody(SessionAction::Echo, event, s, 17, ""_z, e, Limits::FrameBytes);
     ZuCheck(empty && empty->body() == "112=\1"_z);
     ZuCheck(!controlBody(SessionAction::Echo, event, s, 17, {}, e,
@@ -522,10 +522,7 @@ static void restoredRecovery()
 {
   ZuTestScope(restoredRecovery);
   Engine tx;
-  Checkpoint state;
-  ZuCheck(tx.snapshot_(state));
-  state.tx = {3, 3, 1, 1, 2};
-  ZuCheck(tx.restore_(state));
+  ZuCheck(tx.restore_(1, TxProgress{3, 3, 1, 1, 2}));
   tx.delayHistory = true;
   tx.start();
   ZuCheck(tx.waiting_() && tx.output.length() == 1 && tx.output[0].body->msgType() == "A");
@@ -883,13 +880,13 @@ static void initialReset()
   ZuTestScope(initialReset);
   for (unsigned n = 0; n < 3; ++n) {
     Engine tx;
-    Checkpoint state; state.id = config().id; state.epoch = 1; state.fields = StateMask::Tx;
+    TxProgress state;
     switch (n) {
-      case 0: state.tx = {3, 3, 3}; break;
-      case 1: state.tx = {3, 3, 1}; break;
-      default: state.tx = {3, 1, 1}; break;
+      case 0: state = {3, 3, 3}; break;
+      case 1: state = {3, 3, 1}; break;
+      default: state = {3, 1, 1}; break;
     }
-    ZuCheck(tx.restore_(state));
+    ZuCheck(tx.restore_(1, state));
     auto e = tx.event(State::Logon, 0); e.nextEpoch = 1;
     auto before = tx.progress_();
     ZuCheck(tx.apply_(e) == TxSelect::Invalid && !tx.connection_() &&

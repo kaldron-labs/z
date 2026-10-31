@@ -4,11 +4,13 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
+#include <iostream>
 #include <stdlib.h>
 #include <string.h>
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuPrint.hh>
 #include <zlib/ZtcHeap.hh>
+#include <zlib/ZePlatform.hh>
 #include "load_run.hh"
 
 namespace ZfixLoad {
@@ -30,29 +32,29 @@ void heapEvent() {
   output(record);
 }
 void usage(bool server) {
-  fprintf(stderr, "usage: %s --port N [--sessions N] [--ports N,N,...] [--tcp]\n"
+  std::cerr << "usage: " << (server ? "zfixd" : "zfix") <<
+    " --port N [--sessions N] [--ports N,N,...] [--tcp]\n"
     "  [--host NAME] [--bind IP] [--cert PEM --key PEM --ca PEM]\n"
     "  [--count N --warmup N --duration SECONDS --rate ORDERS_PER_SECOND]\n"
     "  [--inflight N --deadline SECONDS --heartbeat SECONDS]\n"
     "  [--scenario orders|groups|cancel|replace --parties N --subs N --text N --binary N]\n"
-    "  [--id ID --sender ID --target ID --seed N --mode 4|44A|T11]\n"
+    "  [--sender ID --target ID --seed N --mode 4|44A|T11]\n"
     "  [--version FIX.4.0|FIX.4.1|FIX.4.2|FIX.4.3|FIX.4.4|FIXT.1.1]\n"
     "  [--retain N --cache-bytes N --queue-bytes N]\n"
     "  [--state-in FILE --state-out FILE --key-offset N --connections N --reset-logon]\n"
-    "  [--recover-rx N]\n",
-    server ? "zfixd" : "zfix");
+    "  [--recover-rx N]\n";
 }
 bool options(Options &o, bool server, int argc, char **argv, Ports &ports) {
   ports.length(0);
   try { argc = ZfCLI::load(o, argc, argv); }
-  catch (const ZeException &e) { Text error; error << e; fprintf(stderr, "%s\n", error.data());
+  catch (const ZeException &e) { std::cerr << e << '\n';
     return false; }
   if (o.help) return true;
   if (argc != 1 || !o.sessions || !o.count || !o.inFlight || !o.deadline || !o.retain ||
       !o.cacheBytes || !o.queueBytes || o.queueBytes > UINT64_MAX - (1U<<20) || o.port > 65535
 	|| o.sessions > 65535 ||
       o.duration >= o.deadline || o.queueBytes > UINT64_MAX/o.sessions ||
-      o.count > UINT_MAX - o.warmup || !o.id.length() ||
+      o.count > UINT_MAX - o.warmup ||
       !o.sender.length() || !o.target.length() ||
       o.mode < 0 || o.mode >= Mode::N || o.version < 0 || o.version >= Version::N ||
       o.scenario < 0 || o.scenario >= Scenario::N) return false;

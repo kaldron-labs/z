@@ -34,7 +34,7 @@ ZfStructImpl(Packet); ZfStructImpl(Packet, FIX);
 // A deliberately external schema for a built-in control MsgType. There are
 // no managed Session::Logon fields, admission, header matching or sequence semantics.
 using Response = MT<Packet, "8">;
-using Entry = MT<Packet, "A", ZuFacet::FIX, NoDiscriminator, ZuTypeList<Response>>;
+using Entry = MT<Packet, "A", ZuFacet::FIX, NoDiscrim, ZuTypeList<Response>>;
 using Dictionary = MTList<Entry, Response>;
 // RawOutput is a shared core object; its application FIFO needs its own links.
 using OutputQueue = ZmList<RawOutput::Ref, ZmListHeapID<"Zfix.RawIOTest.Queue">>;
@@ -141,12 +141,12 @@ struct Peer : Base {
     }
   }
 
-  void fixRawUpRx_(uint64_t connection) {
+  void fixRawUpRx(uint64_t connection) {
     if (!this->app()->rxInvoked() || connection != 1) state()->fail();
     if constexpr (Client) for (unsigned i = 0; i < 4; ++i) enqueue(packet(connection, i));
   }
 
-  bool fixRawRx_(ZmRef<RawInput> msg, Fmt::Limits l) {
+  bool fixRawRx(ZmRef<RawInput> msg, Fmt::Limits l) {
     if (!this->app()->rxInvoked() || msg->connection != 1) state()->fail();
     if (!Client && state()->pause && !allowed) {
       if (pausedInput) state()->fail(); pausedInput = msg.ptr(); ++state()->paused;
@@ -166,10 +166,10 @@ struct Peer : Base {
 	hdr.possDup != (received == 3)) state()->fail();
     ++state()->received;
     if constexpr (!Client) {
-      constexpr uint64_t extra =
+      constexpr uint64_t Extra =
 	ZmHeapAllocSize<sizeof(WorkRun) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{} +
 	ZmHeapAllocSize<sizeof(WorkReply) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{};
-      Fmt::Error error; auto work = this->work(ZmRef<const RawInput>{msg}, error, extra);
+      Fmt::Error error; auto work = this->work(ZmRef<const RawInput>{msg}, error, Extra);
       if (!work || error) state()->fail();
       else this->app()->mx()->run(WorkRun{this, work, p.data, received}, 5);
     }
@@ -177,14 +177,14 @@ struct Peer : Base {
     return true;
   }
 
-  Fmt::Error fixReplyRx_(Entry *, Response *, const RawInput &input) {
+  Fmt::Error fixReplyRx(Entry *, Response *, const RawInput &input) {
     if (!this->app()->rxInvoked()) state()->fail();
     // Raw manager accepts the fixture's repeated/low wire sequences explicitly.
     return input.connection == this->rawConnection_() ? Fmt::Error{} :
       Fmt::Error{Fmt::ErrorCode::Unresolved, 35};
   }
 
-  void fixRawSubmittedTx_(RawOutput::Ref out, unsigned result) {
+  void fixRawSubmittedTx(RawOutput::Ref out, unsigned result) {
     if (result == RawSend::Accepted) return;
     if (result == RawSend::Held || result == RawSend::Overload) {
       queue.push(ZuMv(out)); return;
@@ -192,25 +192,25 @@ struct Peer : Base {
     state()->fail();
   }
 
-  void fixRawPublishedTx_(const RawOutput &out) {
+  void fixRawPublishedTx(const RawOutput &out) {
     if (!this->app()->txInvoked() || out.context().epoch
       || out.body()->msgType() != (Client ? "A" : "8")) state()->fail();
     ++state()->published;
   }
 
-  void fixRawCompleteTx_(TxBody::Ref b, TxContext c, bool ok) {
+  void fixRawCompleteTx(TxBody::Ref b, TxContext c, bool ok) {
     if (!this->app()->txInvoked() || c.epoch || !ok
       || b->msgType() != (Client ? "A" : "8")) state()->fail();
     ++state()->complete;
   }
 
-  void fixRawWritableTx_(uint64_t) { flush(); }
+  void fixRawWritableTx(uint64_t) { flush(); }
 
-  void fixRawFaultRx_(uint64_t, Fmt::Error) { state()->fail(); }
+  void fixRawFaultRx(uint64_t, Fmt::Error) { state()->fail(); }
 
-  void fixRawFaultTx_(uint64_t, Fmt::Error) { state()->fail(); }
+  void fixRawFaultTx(uint64_t, Fmt::Error) { state()->fail(); }
 
-  void fixRawStopRx_(uint64_t, RawStopRequest &request) {
+  void fixRawStopRx(uint64_t, RawStopRequest &request) {
     if (!this->app()->rxInvoked()) state()->fail();
     if (!state()->deferStop) return;
     this->app()->mx()->run([this, done = request.defer()] {
@@ -219,7 +219,7 @@ struct Peer : Base {
     }, 5);
   }
 
-  void fixRawStopTx_(uint64_t, RawStopRequest &request) {
+  void fixRawStopTx(uint64_t, RawStopRequest &request) {
     if (!this->app()->txInvoked()) state()->fail();
     queue.clean();
     if (!state()->deferStop) return;
@@ -234,7 +234,7 @@ struct Peer : Base {
     }, 5);
   }
 
-  void fixRawStoppedRx_(uint64_t c, bool) {
+  void fixRawStoppedRx(uint64_t c, bool) {
     if (!this->app()->rxInvoked() || c != (state()->setup ? 0 : 1)) state()->fail();
       state()->stopped();
   }
@@ -286,8 +286,8 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   TestState state; state.pause = pause; state.deferStop = stop; state.quota = quota;
     state.payload = payload;
   state.binary = new ZiIOBufAlloc<>; state.binary->ensure(payload);
-  constexpr auto bits = "A\1\0="_z;
-  for (unsigned i = 0; i < payload; ++i) state.binary->data()[i] = bits[i % bits.length()];
+  constexpr auto Bits = "A\1\0="_z;
+  for (unsigned i = 0; i < payload; ++i) state.binary->data()[i] = Bits[i % Bits.length()];
   state.binary->length = payload;
   SrvHub server{&state}; CliHub client{&state};
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
@@ -391,7 +391,7 @@ struct SwapPeer : Base {
 
   auto state() { return this->app()->state; }
 
-  void fixRawUpRx_(uint64_t c) {
+  void fixRawUpRx(uint64_t c) {
     if (!this->app()->rxInvoked()) state()->fail();
     if constexpr (Client) {
       if (c != 1) state()->fail();
@@ -418,7 +418,7 @@ struct SwapPeer : Base {
     });
   }
 
-  bool fixRawRx_(ZmRef<RawInput> msg, Fmt::Limits limits) {
+  bool fixRawRx(ZmRef<RawInput> msg, Fmt::Limits limits) {
     Fmt::MessageHandler<Packet> handler{msg->frame, limits}; auto p = handler.ctor();
     if (!this->app()->rxInvoked() || !handler.valid() ||
 	msg->connection != this->rawConnection_() || p.data != "A\1\0="_z ||
@@ -434,12 +434,12 @@ struct SwapPeer : Base {
     return true;
   }
 
-  bool fixSendTx_(ZmRef<ZiIOBuf> b) {
+  bool fixSendTx(ZmRef<ZiIOBuf> b) {
     if constexpr (!Client) if (!oldToken) oldToken = static_cast<WireBuf *>(b.ptr())->token;
-    return Base::fixSendTx_(ZuMv(b));
+    return Base::fixSendTx(ZuMv(b));
   }
 
-  Fmt::Error fixReplyRx_(Entry *, Response *, const RawInput &input) {
+  Fmt::Error fixReplyRx(Entry *, Response *, const RawInput &input) {
     return input.connection == this->rawConnection_() ? Fmt::Error{} :
       Fmt::Error{Fmt::ErrorCode::Unresolved, 35};
   }
@@ -463,7 +463,7 @@ struct SwapPeer : Base {
     }
   }
 
-  void fixRawCompleteTx_(TxBody::Ref, TxContext c, bool ok) {
+  void fixRawCompleteTx(TxBody::Ref, TxContext c, bool ok) {
     if (!this->app()->txInvoked() || c.epoch) state()->fail();
     if constexpr (!Client) {
       if (!ok) {
@@ -473,14 +473,14 @@ struct SwapPeer : Base {
     } else if (!ok) state()->fail();
   }
 
-  void fixRawSubmittedTx_(RawOutput::Ref, unsigned result) {
+  void fixRawSubmittedTx(RawOutput::Ref, unsigned result) {
     if (result != RawSend::Accepted) state()->fail();
   }
 
-  void fixRawFaultRx_(uint64_t, Fmt::Error) { state()->fail(); }
-  void fixRawFaultTx_(uint64_t, Fmt::Error) { state()->fail(); }
+  void fixRawFaultRx(uint64_t, Fmt::Error) { state()->fail(); }
+  void fixRawFaultTx(uint64_t, Fmt::Error) { state()->fail(); }
 
-  void fixRawStopRx_(uint64_t c, RawStopRequest &request) {
+  void fixRawStopRx(uint64_t c, RawStopRequest &request) {
     if (!this->app()->rxInvoked()) state()->fail();
     if constexpr (!Client) {
       ++state()->rxStops;
@@ -489,7 +489,7 @@ struct SwapPeer : Base {
     }
   }
 
-  void fixRawStopTx_(uint64_t c, RawStopRequest &request) {
+  void fixRawStopTx(uint64_t c, RawStopRequest &request) {
     if (!this->app()->txInvoked()) state()->fail();
     if constexpr (!Client) {
       ++state()->txStops;
@@ -498,7 +498,7 @@ struct SwapPeer : Base {
     }
   }
 
-  void fixRawStoppedRx_(uint64_t c, bool) {
+  void fixRawStoppedRx(uint64_t c, bool) {
     if (!this->app()->rxInvoked()) state()->fail();
     if constexpr (Client) {
       if (c != 1) state()->fail();

@@ -44,10 +44,16 @@ using AppQueue = ZmList<TxBody::Ref, ZmListHeapID<"Zfix.RecoveryIOTest.Queue">>;
 // Application-owned test store survives replacement of all connection/session
 // owners. Rx/Tx segments have separate owners; main inspects them only after
 // both managed stopped barriers. The fixed test workload bounds this history.
+struct Progress {
+  uint64_t	epoch = 0;
+  RxProgress	rx;
+  TxProgress	tx;
+};
+
 struct Store : public ZmNHeap<Store>, public ZmObject {
 friend inline ZuStringT<"Zfix.RecoveryIOTest.Store"> ZmNHeapID(Store *);
-  Checkpoint		rx; // Rx-owned snapshot segment
-  Checkpoint		tx; // Tx-owned snapshot segment
+  RxProgress		rx; // Rx-owned progress
+  TxProgress		tx; // Tx-owned progress
   Items<TxHistory>	history; // Tx-owned application mapping and original bytes
   uint64_t		lastLoad = 0;
 
@@ -75,22 +81,20 @@ template <typename S> static bool getText(ZiFile &f, S &text) {
   if (!get(f, length) || length > Fmt::Limits::FrameBytes) return false;
   text.length(length); return !length || f.read(text.data(), length) == length;
 }
-static bool putState(ZiFile &f, const Checkpoint &s) {
-  const auto &id = s.id; const auto &r = s.rx; const auto &t = s.tx;
-  return id.length() && putText(f, id) &&
-    put(f, s.epoch, s.fields, r.received, r.processed, r.gapBegin, r.gapEnd,
-      t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
+static bool putState(ZiFile &f, const Store &s) {
+  const auto &r = s.rx; const auto &t = s.tx;
+  return put(f, r.received, r.processed, r.gapBegin, r.gapEnd,
+    t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
 }
-static bool getState(ZiFile &f, Checkpoint &s) {
-  auto &id = s.id; auto &r = s.rx; auto &t = s.tx;
-  return getText(f, id) && id.length() &&
-    get(f, s.epoch, s.fields, r.received, r.processed, r.gapBegin, r.gapEnd,
-      t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
+static bool getState(ZiFile &f, Store &s) {
+  auto &r = s.rx; auto &t = s.tx;
+  return get(f, r.received, r.processed, r.gapBegin, r.gapEnd,
+    t.loaded, t.sent, t.acknowledged, t.replayBegin, t.replayEnd);
 }
 static bool save(const ZiFile::Path &path, const Store &s) {
   ZiFile f{path, ZiFile::Write | ZiFile::GC, 0600};
-  uint32_t version = 3, count = s.history.length();
-  if (!f || !put(f, version, count, s.lastLoad) || !putState(f, s.rx) || !putState(f, s.tx))
+  uint32_t version = 4, count = s.history.length();
+  if (!f || !put(f, version, count, s.lastLoad) || !putState(f, s))
     return false;
   for (const auto &h : s.history) {
     uint64_t id = h.body->id(); bool admin = h.body->administrative();
@@ -103,8 +107,8 @@ static bool save(const ZiFile::Path &path, const Store &s) {
 static ZmRef<Store> load(const ZiFile::Path &path) {
   ZiFile f{path, ZiFile::ReadOnly | ZiFile::NoFollow | ZiFile::GC};
   uint32_t version, count; ZmRef<Store> s = new Store;
-  if (!f || !get(f, version, count, s->lastLoad) || version != 3 ||
-      count > s->lastLoad || !getState(f, s->rx) || !getState(f, s->tx)) return {};
+  if (!f || !get(f, version, count, s->lastLoad) || version != 4 ||
+      count > s->lastLoad || !getState(f, *s)) return {};
   for (unsigned i = 0; i < count; ++i) {
     TxHistory h; uint64_t id; bool admin;
     SessionString type, bytes;
@@ -113,7 +117,7 @@ static ZmRef<Store> load(const ZiFile::Path &path) {
       return {};
     Fmt::Error error;
     if (admin) h.body = TxBody::restoreControl(type, bytes, id, error);
-    else if (type == OrderMsg::msgType) h.body = TxBody::restore<OrderMsg>(bytes, id, error);
+    else if (type == OrderMsg::MsgType) h.body = TxBody::restore<OrderMsg>(bytes, id, error);
     else return {};
     if (error || !h.body || h.body->body() != bytes) return {};
     s->history.push(ZuMv(h));
@@ -140,7 +144,7 @@ struct TestState {
   ZuDateTime		oldTime;
 
   void fail(unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "# ZfixRecoveryIOTest failure line=%u mode=%u phase=%u\n", line, mode, phase);
+    log("# ZfixRecoveryIOTest failure line=", line, " mode=", mode, " phase=", phase);
     ++errors; dropped.post(); done.post();
   }
 
@@ -153,7 +157,6 @@ struct TestState {
 
 static SessionConfig config(bool client, unsigned mode, unsigned version) {
   SessionConfig c; c.mode = mode; c.initiator = client;
-  c.id = client ? "RECOVERY-CLIENT" : "RECOVERY-SERVER";
   c.header.version = version < Version::N ? version :
     mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
   c.header.local = client ? "CLIENT" : "SERVER"; c.header.peer = client ? "SERVER" : "CLIENT";
@@ -182,7 +185,7 @@ struct Peer : public Base {
   auto self() { return static_cast<Impl *>(this); }
   auto state() { return this->app()->state; }
 
-  unsigned fixAssociateTx_(TxBody::Ref b, TxContext c, uint64_t ticket) {
+  unsigned fixAssociateTx(TxBody::Ref b, TxContext c, uint64_t ticket) {
     if (!this->app()->txInvoked() || c.epoch != 1 || c.seqNo != store->lastLoad + 1)
       state()->fail();
     store->lastLoad = c.seqNo;
@@ -203,13 +206,13 @@ struct Peer : public Base {
     return TxLoad::Accepted;
   }
 
-  void fixArchiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void fixArchiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     // Keep the fixture's app-owned records available after archive progress.
     // An archive notification carries no payload and releases no core history.
     if (!this->app()->txInvoked() || epoch != 1 || begin >= end) state()->fail();
   }
 
-  TxReload fixRetrieveTx_(TxContext context, uint64_t, uint64_t ticket) {
+  TxReload fixRetrieveTx(TxContext context, uint64_t, uint64_t ticket) {
     auto record = store->find(context.epoch, context.seqNo);
     if (!record) return {};
     if (context.replay && record->body->administrative() && record->body->msgType() != "3")
@@ -242,7 +245,7 @@ struct Peer : public Base {
     return {{}, true};
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime original) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime original) {
     dropFrame = false;
     if (!c.replay) {
       auto record = store->find(c.epoch, c.seqNo);
@@ -265,7 +268,7 @@ struct Peer : public Base {
     }
   }
 
-  bool fixSendTx_(ZmRef<ZiIOBuf> bytes) {
+  bool fixSendTx(ZmRef<ZiIOBuf> bytes) {
     if (dropFrame) {
       // Fault injection occurs after logical publication: model bytes accepted
       // locally and lost before peer processing when the connection dies.
@@ -282,7 +285,7 @@ struct Peer : public Base {
       if (wireHeld_()) state()->wirePending.post();
       return true;
     }
-    return Base::fixSendTx_(ZuMv(bytes));
+    return Base::fixSendTx(ZuMv(bytes));
   }
 
   bool wireHeld_() const {
@@ -294,7 +297,7 @@ struct Peer : public Base {
     this->app()->txRun([this] {
       holdWire = false;
       while (auto node = pendingWire.shift())
-	if (!Base::fixSendTx_(ZuMv(node->data()))) state()->fail();
+	if (!Base::fixSendTx(ZuMv(node->data()))) state()->fail();
     });
   }
 
@@ -303,22 +306,22 @@ struct Peer : public Base {
     ++state()->setupFailures; state()->setupFailed.post();
   }
 
-  void fixControlTx_(TxBody::Ref b, TxContext c) {
+  void fixControlTx(TxBody::Ref b, TxContext c) {
     if (b->msgType() != "A") return;
     Session::Logon logon; auto error = Fmt::load(logon, b->body());
     if (error || logon.resetSeqNum || c.epoch != 1) state()->fail();
-    if (state()->phase && c.seqNo != store->tx.tx.loaded) state()->fail();
+    if (state()->phase && c.seqNo != store->tx.loaded) state()->fail();
     ++state()->logons;
   }
 
-  bool fixEnqueueTx_(TxBody::Ref b) { queue.push(ZuMv(b)); return true; }
+  bool fixEnqueueTx(TxBody::Ref b) { queue.push(ZuMv(b)); return true; }
 
-  TxBody::Ref fixDequeueTx_() {
+  TxBody::Ref fixDequeueTx() {
     if (holdQueue) return {};
     auto node = queue.shift(); return node ? ZuMv(node->data()) : TxBody::Ref{};
   }
 
-  void fixSelectedTx_(TxBody::Ref, TxContext, unsigned result) {
+  void fixSelectedTx(TxBody::Ref, TxContext, unsigned result) {
     if (result != TxSelect::Accepted) state()->fail();
   }
 
@@ -328,16 +331,16 @@ struct Peer : public Base {
     });
   }
 
-  void fixCompleteTx_(TxBody::Ref body, TxContext c, bool) {
+  void fixCompleteTx(TxBody::Ref body, TxContext c, bool) {
     if (!this->app()->txInvoked()) state()->fail();
     if (Client && state()->failover && state()->phase && body->msgType() == "D" && !c.replay)
       ++state()->newCompleted;
     if (wireHeld_()) state()->wirePending.post();
   }
 
-  void fixFaultTx_(TxContext, Fmt::Error) { state()->fail(); }
+  void fixFaultTx(TxContext, Fmt::Error) { state()->fail(); }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions & SessionAction::Failure) {
       if (state()->phase || e.error != SessionError::Transport) state()->fail();
     }
@@ -358,7 +361,7 @@ struct Peer : public Base {
     }
   }
 
-  Fmt::Error fixReceiveRx_(OrderMsg *, const Order &o, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(OrderMsg *, const Order &o, const RequestContext &context) {
     const auto &h = context.header(); const auto &meta = context.context();
     auto version = state()->version;
     if (!this->app()->rxInvoked() || meta.session != this->session_().instance_() ||
@@ -381,27 +384,28 @@ struct Peer : public Base {
     return {};
   }
 
-  void fixStopRx_(uint64_t, uint64_t ticket) {
-    if (ticket || !this->snapshotRx_(store->rx)) state()->fail();
+  void fixStopRx(uint64_t, uint64_t ticket) {
+    store->rx = this->rxProgress_();
+    if (ticket) state()->fail();
   }
 
-  void fixStopTx_(uint64_t) {
+  void fixStopTx(uint64_t) {
     holdWire = false; pendingWire.clean();
     if (pendingLoad) {
       state()->fail(); this->loaded(pendingLoad, false); pendingLoad = 0;
     }
     bool retain = Client && state()->failover && !state()->newPublished.load_();
-    if (!this->snapshotTx_(store->tx) ||
-	(queue.count_() && (!retain || queue.count_() != 1))) state()->fail();
+    store->tx = this->txProgress_();
+    if (queue.count_() && (!retain || queue.count_() != 1)) state()->fail();
   }
 
-  void fixStoppedRx_(bool) { state()->stopped(Client); }
+  void fixStoppedRx(bool) { state()->stopped(Client); }
 
   void restore() {
     this->app()->rxRun([this] {
-      if (!this->restoreRx_(store->rx)) state()->fail();
+      if (!this->restoreRx_(1, store->rx)) state()->fail();
       this->app()->txRun([this] {
-	if (!this->restoreTx_(store->tx)) state()->fail();
+	if (!this->restoreTx_(1, store->tx)) state()->fail();
 	++state()->restoredCount; state()->restored.post();
       });
     });
@@ -504,8 +508,8 @@ static void run(TestState &state, unsigned begin, unsigned end) {
       for (const auto &h : state.client->history) {
 	if (h.body->msgType() == "D") { state.oldSeq = h.seqNo; state.oldTime = h.originalTime; }
       }
-      ZuCheck(state.oldSeq && *state.oldTime && state.client->tx.tx.sent > state.oldSeq);
-      ZuCheck(state.server->rx.rx.processed <= state.oldSeq);
+      ZuCheck(state.oldSeq && *state.oldTime && state.client->tx.sent > state.oldSeq);
+      ZuCheck(state.server->rx.processed <= state.oldSeq);
     }
   }
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
@@ -527,10 +531,7 @@ static void recovery(unsigned mode, bool restart) {
     state.client = nullptr; state.server = nullptr;
     state.client = load(cliPath); state.server = load(srvPath);
     ZuCheck(state.client && state.server); if (!state.client || !state.server) return;
-    ZuCheck(state.client->rx.id == "RECOVERY-CLIENT" &&
-      state.client->tx.id == state.client->rx.id && state.server->rx.id == "RECOVERY-SERVER" &&
-      state.server->tx.id == state.server->rx.id);
-    // The application key and sequence epoch survive a coordinated wire change.
+    // The selected links retain their sequence epoch across a coordinated wire change.
     if (mode == Transport::FIX4) state.version = Version::V4_3;
     // A fresh listening endpoint/port, hubs, mux and both session owners.
     state.port = 0;
@@ -625,7 +626,7 @@ static void failover(unsigned mode, bool cold) {
   for (const auto &h : state.client->history)
     if (h.body->msgType() == "D") { state.oldSeq = h.seqNo; state.oldTime = h.originalTime; }
   ZuCheck(state.oldSeq && *state.oldTime && state.oldLoad && state.oldToken && state.oldPart);
-  ZuCheck(!state.oldReceived.load_() && state.client->tx.tx.sent > state.oldSeq);
+  ZuCheck(!state.oldReceived.load_() && state.client->tx.sent > state.oldSeq);
   // The backup is already listening when the primary becomes unavailable.
   bool primaryStopped = primary.stop(); ZuCheck(primaryStopped);
   if (primaryStopped) ps = false;

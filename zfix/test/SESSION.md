@@ -23,29 +23,29 @@ gates, which remain Stage 9 work. Source names below refer to this directory.
 | Seven built-in controls and prescribed fields | ZfixMsgs; shared metadata codec | Msgs golden bodies, optional facets, malformed/missing controls; Frame/TxFrame wire fixtures |
 | Mode independent of declared version | SessionConfig, controlBody/saveControl | Session `modes`, `invalidLogon`; Tx `modes`; Managed `handshake` |
 | Raw external control/sequence manager | Session bypass, Rx rawRx, explicit TxFrame headers | Session `raw`; Rx `limitsAndRaw`; TxFrame fixtures |
-| Application identity and connection lifetime separation | Opaque SessionConfig.id, separate HeaderConfig, monotone connection tokens | Session `identities`, `initiator`, `logoutReconnect`; Rx `reconnect`; Managed `continuingReconnect` |
+| Link ownership and connection lifetime separation | Embedded owner progress, separate HeaderConfig, monotone connection tokens | Session `identities`, `initiator`, `logoutReconnect`; Rx `reconnect`; Managed `continuingReconnect` |
 | Asynchronous admission, refusal and connection replacement | Session admission tickets; Rx retained first frame; managed one-shot deferred replies | Session `acceptor`; Rx `admission`, `rejectedAdmission`; Ctl command ordering |
 | Lifecycle/probe/idle/deadline state | Session and LinkTx owner clocks | Session `clocks`, `zeroHeartbeat`, `recovery`, `probePublication`, `recreatedProbe`, `probeWatermark`; Ctl idle scopes |
 | ZmPQRx read-ahead/gaps and ZmPQTx send/replay | ZfixSeq owner wrappers | Seq scopes including bounded permutations, callback holds and restored gaps; SeqTx bounded replay/history/deferred scopes |
 | Original replay content/number/time, current framing | TxHistory/TxBody/txFrame | Tx `replay`, `clockReversal`, `reconstructedHistory`, `recovery`; Frame/TxFrame golden fixtures |
 | Independent directional recovery and unavailable history | Session recovery flags, SeqTx replay cursor/gap fill | Managed `simultaneousRecovery`; SeqTx `history`, `deferredMissing`, `replay`; Rx gap-fill scopes |
-| Selective owner restore/snapshot before activity | Checkpoint flags, Rx/Tx restore guards | State `merging`, `ownerRestore`, `stamp`, `stagedUnsent`; Rx `restoredDrainGap`; Tx restored scopes |
+| Direct owner restore before activity | Link epoch, Rx/Tx restore guards and range validation | Restore `ownerRestore`, `ranges`, `lifecycle`, `wireChange`, `stagedUnsent`; Rx `restoredDrainGap`; Tx restored scopes |
 | Application storage/retention policy | Identified pooled bodies and external history hooks | Tx delayed/refused association/archive/history scopes; SeqTx `deferredReplayBound`; no database/store dependency |
 
 ## Hook implementations
 
 | Contract role | Owner entry/notification | Focused evidence |
 | --- | --- | --- |
-| enqueue/dequeue | LinkTx enqueue_/queued_; Hooks enqueueTx_/dequeueTx_/selectedTx_ | Ctl applicationQueue/queueAssociation/queueReconnect/queueBounds/queueClose; Managed reset backlogs |
-| load | Core loadTx_, coordinator associateTx_, loaded_ | Tx assignment/staleLoad; Ctl pending and queue association; Managed peerReject mapping before immediate response |
-| reload | Core historyTx_/reloaded_, coordinator retrieveTx_ | SeqTx deferred/history/unavailable/cache-bound scopes; Tx reconstructedHistory |
-| unload | Core unloadTx_/unloaded_, coordinator releaseTx_ | Tx/Ctl/Managed stale accepted pre-commit load rollback; no committed-assignment unwind |
-| sent | LinkTx sent_/completeTx_ | Ctl completion and drain/close scopes; Managed complete-frame transport |
-| ackd | Core ackdTx_, coordinator acknowledgedTx_ | Tx ackNotifications; Session probeWatermark; Ctl acknowledgement; Managed probeAcknowledgement |
-| reject | Rx peerRejectRx_, coordinator peerReject_/rejectedTx_ | Rx/Ctl/Managed peerReject including retained backing, replay suppression and sequence reuse in a new epoch |
-| stateChange | Rx stateChangeRx_ before general eventRx_ | Rx stateChanges: monotone fixed snapshot, ordering, timeout/close, reconnect/raw and duplicate suppression |
-| reset | Core resetTx_, coordinator epochTx_; Rx epochRx_ | Tx bounded turnover/retirement; Rx/Ctl resetPreparation; Managed live/reconnect reset and close races |
-| session | Rx eventRx_ Observe/input and sessionRx_; Tx sessionTx_ | Ctl sessionObservation, including admission-before-observer-before-flush and actual replay gap-fill type |
+| enqueue/dequeue | LinkTx enqueue_/queued_; Hooks enqueueTx/dequeueTx/selectedTx | Ctl applicationQueue/queueAssociation/queueReconnect/queueBounds/queueClose; Managed reset backlogs |
+| load | Core loadTx, coordinator associateTx, loaded_ | Tx assignment/staleLoad; Ctl pending and queue association; Managed peerReject mapping before immediate response |
+| reload | Core historyTx/reloaded_, coordinator retrieveTx | SeqTx deferred/history/unavailable/cache-bound scopes; Tx reconstructedHistory |
+| unload | Core unloadTx/unloaded_, coordinator releaseTx | Tx/Ctl/Managed stale accepted pre-commit load rollback; no committed-assignment unwind |
+| sent | LinkTx sent_/completeTx | Ctl completion and drain/close scopes; Managed complete-frame transport |
+| ackd | Core ackdTx, coordinator acknowledgedTx | Tx ackNotifications; Session probeWatermark; Ctl acknowledgement; Managed probeAcknowledgement |
+| reject | Rx peerRejectRx, coordinator peerReject_/rejectedTx | Rx/Ctl/Managed peerReject including retained backing, replay suppression and sequence reuse in a new epoch |
+| stateChange | Rx stateChangeRx before general eventRx | Rx stateChanges: monotone fixed snapshot, ordering, timeout/close, reconnect/raw and duplicate suppression |
+| reset | Core resetTx, coordinator epochTx; Rx epochRx | Tx bounded turnover/retirement; Rx/Ctl resetPreparation; Managed live/reconnect reset and close races |
+| session | Rx eventRx Observe/input and sessionRx; Tx sessionTx | Ctl sessionObservation, including admission-before-observer-before-flush and actual replay gap-fill type |
 
 Callbacks run on their documented owners. Application-owned association state
 receives ordered posts, never direct off-owner mutation. Concrete endpoint
@@ -122,7 +122,7 @@ zero-epoch check exposed and fixed a genuine inconsistency with snapshot/Tx stat
 
 The source/installed suite, focused matrix results and memory/build evidence are
 recorded in STATUS.md. This gate covers the fake-clock/transport/application
-session engine, including the named hook roles and selective owner restoration.
+session engine, including the named hook roles and direct owner restoration.
 Concrete endpoint routing, admission/customized Logon, transport teardown and
 independent interoperability have separate native/application/process fixtures.
 Those results complement this engine mapping; see ../STATUS.md for scope.

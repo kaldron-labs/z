@@ -17,7 +17,6 @@ static SessionConfig config(bool initiator = true, unsigned mode = Transport::FI
     unsigned version = Version::V4_4)
 {
   SessionConfig cfg;
-  cfg.id = "PRIMARY";
   cfg.header.version = version;
   cfg.header.local = "LOCAL";
   cfg.header.peer = "PEER";
@@ -337,7 +336,7 @@ static void configBounds()
 {
   ZuTestScope(configBounds);
   SessionConfig empty;
-  ZuCheck(!empty.id.length() && empty.header.version == Version::N &&
+  ZuCheck(empty.header.version == Version::N &&
     empty.appVerID == AppVersion::N && !empty.valid());
   for (unsigned version = 0; version < Version::N; ++version) {
     auto cfg = config(true, Transport::FIX4, version);
@@ -365,8 +364,6 @@ static void configBounds()
   auto e = bad.open_(ZuTime{100});
   ZuCheck(e.error == E::Config && (e.actions & A::Refuse) && !e.connection);
   auto cfg = config(); cfg.logonTimeout = ZuTime{0};
-  ZuCheck(!cfg.valid());
-  cfg = config(); cfg.id = "";
   ZuCheck(!cfg.valid());
   cfg = config(); cfg.receivePct = 0;
   ZuCheck(!cfg.valid());
@@ -1112,7 +1109,7 @@ static void replacement()
         !s.timer_(1, T::Logon, ZuTime{1000}).actions && !s.closed_(1).actions &&
         !s.recovery_(1, true, true, ZuTime{111}).actions);
       e = s.replace_(ZuTime{112});
-      ZuCheck(e.connection == 3 && e.epoch == epoch && s.config_().id == "PRIMARY" &&
+      ZuCheck(e.connection == 3 && e.epoch == epoch &&
         !(e.actions & (A::Failure | A::Close | A::Ready)));
     }
   }

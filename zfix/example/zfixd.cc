@@ -4,26 +4,32 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <stdio.h>
+#include <iostream>
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuPrint.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZePlatform.hh>
 #include <zlib/ZfCLI.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZfixServer.hh>
 #include "zfix.hh"
 
 namespace Example {
 
-  ZfStructImpl(Party);
+  ZtEnumImplNS(Handling);
+  ZtEnumImplNS(Handling, FIX);
+  ZtEnumImplNS(Side);
+  ZtEnumImplNS(Side, FIX);
+  ZtEnumImplNS(OrdType);
+  ZtEnumImplNS(OrdType, FIX);
+
   ZfStructImpl(Party, FIX);
-  ZfStructImpl(Order);
   ZfStructImpl(Order, FIX);
-  ZfStructImpl(Execution);
   ZfStructImpl(Execution, FIX);
-  ZfStructImpl(Event);
   ZfStructImpl(Event, FIX);
 }
 
@@ -35,16 +41,18 @@ struct Options {
   bool		tls = false, help = false;
 };
 
-ZfStruct(, (Options, CLI), (bind, (CLI::Long<"bind">), String),
-  (port, (CLI::Long<"port">), UInt32), (timeout, (CLI::Long<"timeout">), UInt32),
-  (cert, (CLI::Long<"cert">), String), (key, (CLI::Long<"key">), String),
-  (tls, (CLI::Long<"tls">), Bool), (help, (CLI::Flag<'h'>, CLI::Long<"help">), Bool));
-ZfStructImpl(Options);
+ZfStruct(, (Options, CLI),
+  (bind,	(CLI::Long<"bind">),				String),
+  (port,	(CLI::Long<"port">),				UInt32),
+  (timeout,	(CLI::Long<"timeout">),				UInt32),
+  (cert,	(CLI::Long<"cert">),				String),
+  (key,		(CLI::Long<"key">),				String),
+  (tls,		(CLI::Long<"tls">),				Bool),
+  (help,	(CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 ZfStructImpl(Options, CLI);
 
 static Zfix::SessionConfig config() {
   Zfix::SessionConfig c;
-  c.id = "EXAMPLE-SERVER";
   c.header.version = Zfix::Version::V4_4;
   c.header.local = "EXAMPLE-S"; c.header.peer = "EXAMPLE-C";
   return c;
@@ -61,37 +69,38 @@ public:
 
   explicit Link(Server<Net> *app) : Base{app, config()} { }
 
-  unsigned fixAssociateTx_(Zfix::TxBody::Ref, Zfix::TxContext, uint64_t) {
+  unsigned fixAssociateTx(Zfix::TxBody::Ref, Zfix::TxContext, uint64_t) {
     // Accept into the bounded operational queue; this app keeps no replay store.
     return Zfix::TxLoad::Accepted;
   }
 
   template <typename Response>
-  Zfix::Fmt::Error fixReplyRx_(NewOrder *, Response *, const Zfix::RequestContext &context) {
+  Zfix::Fmt::Error fixReplyRx(NewOrder *, Response *, const Zfix::RequestContext &context) {
     const auto &session = this->session_();
     return context.context().session == session.instance_() &&
       context.context().epoch == session.epoch_() ? Zfix::Fmt::Error{} :
       Zfix::Fmt::Error{Zfix::Fmt::ErrorCode::Unresolved, 35};
   }
 
-  unsigned fixAdmissionRx_(Zfix::SessionEvent, ZmRef<Zfix::RxQueue::Node>,
+  unsigned fixAdmissionRx(Zfix::SessionEvent, ZmRef<Zfix::RxQueue::Node>,
       Zfix::AdmitRequest &) {
     // Optional FIX authentication belongs here. This example permits no FIX
     // credentials; TLS certificate policy is configured separately by the hub.
     return Zfix::Admission::Accepted;
   }
 
-  Zfix::Fmt::Error fixReceiveRx_(NewOrder *, const Order &order,
+  Zfix::Fmt::Error fixReceiveRx(NewOrder *, const Order &order,
       const Zfix::RequestContext &context) {
     if (app()->orders || !order.key || !order.qty || order.price <= ZuDecimal{0} ||
 	!order.parties.length())
       return {Zfix::Fmt::ErrorCode::Value, 11};
     ++app()->orders;
-    printf("received order=%llu qty=%u\n", (unsigned long long)order.key, order.qty);
+    std::cout << "received order=" << ZuBoxed(order.key) << " qty=" <<
+      ZuBoxed(order.qty) << '\n';
     Execution report;
     report.key = order.key; report.order = 5001; report.exec = 1;
     report.kind = "0"; report.status = "0"; report.symbol = order.symbol;
-    report.side = order.side; report.qty = report.leaves = order.qty;
+    report.side = order.side; report.qty = report.leavesQty = order.qty;
     report.price = order.price; report.time = order.time;
     // Both replies encode synchronously while the retained request is alive.
     report.parties -= order.parties;
@@ -101,7 +110,7 @@ public:
       return error ? error : Zfix::Fmt::Error{Zfix::Fmt::ErrorCode::Output};
     }
     report.exec = 2; report.kind = "F"; report.status = "2";
-    report.leaves = 0; report.cum = report.lastQty = order.qty;
+    report.leavesQty = 0; report.cumQty = report.lastQty = order.qty;
     report.avg = report.lastPx = order.price;
     if (!this->template reply<NewOrder, Fill>(context, report, report.exec, error)) {
       app()->fail("fill refused");
@@ -113,29 +122,30 @@ public:
     return {};
   }
 
-  void fixEventRx_(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
+  void fixEventRx(Zfix::SessionEvent event, ZmRef<Zfix::RxQueue::Node>) {
     if (event.actions & Zfix::SessionAction::Failure) app()->fail("FIX session failed");
   }
 
-  void fixSubmittedTx_(Zfix::TxBody::Ref, unsigned result) {
+  void fixSubmittedTx(Zfix::TxBody::Ref, unsigned result) {
     if (result != Zfix::TxSelect::Accepted && result != Zfix::TxSelect::Pending)
       app()->fail("reply admission failed");
   }
 
-  void fixRejectedTx_(Zfix::PeerReject reject) {
-    fprintf(stderr, "peer reject epoch=%llu seq=%llu tag=%u\n",
-      (unsigned long long)reject.context.epoch,
-      (unsigned long long)reject.message.refSeqNo, reject.message.refTagID);
+  void fixRejectedTx(Zfix::PeerReject reject) {
+    ZiLOG(Error, "zfixd", ([epoch = reject.context.epoch, seq = reject.message.refSeqNo,
+      tag = reject.message.refTagID](auto &s) {
+      s << "peer reject epoch=" << epoch << " seq=" << seq << " tag=" << tag;
+    }));
     app()->fail("peer rejected the reply");
   }
 
-  Zfix::TxReload fixRetrieveTx_(Zfix::TxContext context, uint64_t, uint64_t) {
-    fprintf(stderr, "history unavailable epoch=%llu seq=%llu; gap-fill\n",
-      (unsigned long long)context.epoch, (unsigned long long)context.seqNo);
+  Zfix::TxReload fixRetrieveTx(Zfix::TxContext context, uint64_t, uint64_t) {
+    std::cerr << "history unavailable epoch=" << ZuBoxed(context.epoch) <<
+      " seq=" << ZuBoxed(context.seqNo) << "; gap-fill\n";
     return {}; // application policy: keep no resend content; gap-fill every request
   }
 
-  void fixStoppedRx_(bool) { app()->retired(); }
+  void fixStoppedRx(bool) { app()->retired(); }
 };
 
 template <typename Net> struct Server : Zfix::Server<Server<Net>, MTList, Net> {
@@ -162,7 +172,7 @@ template <typename Net> struct Server : Zfix::Server<Server<Net>, MTList, Net> {
   void listenFailed(bool) { fail("listen failed"); listeningDone.post(); }
 
   void fail(const char *reason) {
-    if (!errors.xchAdd(1)) fprintf(stderr, "%s\n", reason);
+    if (!errors.xchAdd(1)) ZiLOG(Error, "zfixd", reason);
     done.post();
   }
 
@@ -191,7 +201,8 @@ template <typename Net> static int run(const Options &options) {
     if (server.listeningDone.timedwait(Zm::now(options.timeout)))
       server.fail("listen deadline expired");
     if (!server.errors.load_()) {
-      printf("listening port=%u tls=%u\n", server.port, unsigned(Net::Encrypted)); fflush(stdout);
+      std::cout << "listening port=" << ZuBoxed(server.port) << " tls=" <<
+	ZuBoxed(unsigned(Net::Encrypted)) << '\n' << std::flush;
       if (server.done.timedwait(Zm::now(options.timeout)))
 	server.fail("session deadline expired");
     }
@@ -206,7 +217,7 @@ template <typename Net> static int run(const Options &options) {
   mx.stop();
   server.connection = nullptr;
   if (!server.orders) server.fail("no order received");
-  if (!server.errors.load_()) puts("served orders=1");
+  if (!server.errors.load_()) std::cout << "served orders=1\n";
   return server.errors.load_() ? 1 : 0;
 }
 int main(int argc, char **argv) {
@@ -215,9 +226,14 @@ int main(int argc, char **argv) {
   catch (const ZeException &) { argc = 0; }
   if (options.help || argc != 1 || !options.bind || options.port > 65535 ||
       !options.timeout || (options.tls && (!options.cert || !options.key))) {
-    fputs("usage: zfixd [--bind ADDRESS --port PORT] [--timeout SECONDS]\n"
-      "  [--tls --cert PEM --key PEM]\n", stderr);
+    std::cerr << "usage: zfixd [--bind ADDRESS --port PORT] [--timeout SECONDS]\n"
+      "  [--tls --cert PEM --key PEM]\n";
     return options.help ? 0 : 2;
   }
-  return options.tls ? run<Zfix::TLS>(options) : run<Zfix::TCP>(options);
+  ZiLog::init("zfixd");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
+  int result = options.tls ? run<Zfix::TLS>(options) : run<Zfix::TCP>(options);
+  ZiLog::stop();
+  return result;
 }

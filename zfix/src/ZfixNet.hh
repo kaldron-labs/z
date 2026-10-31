@@ -113,11 +113,11 @@ template <typename Net> struct NativeRx {
 // Stateless native hooks for managed and raw links.
 template <typename Impl, typename Net> class LinkHooks_ {
 public:
-  TraceField fixTraceField_(ZuCSpan type, unsigned tag) {
+  TraceField fixTraceField(ZuCSpan type, unsigned tag) {
     return traceField<typename Impl::MessageCatalog>(type, tag);
   }
 
-  bool fixTraceSecret_(ZuCSpan, unsigned) { return false; }
+  bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
 
   bool txPost_(uint64_t bytes) {
     auto &hub = impl()->app()->fixSubmitRx_();
@@ -164,15 +164,15 @@ public:
   auto workRx_(const Input &input, uint64_t retained, uint64_t extra, Fmt::Error &error) {
     ZmAssert(impl()->app()->rxInvoked());
     using W = Zfix::Work<Input, Impl>;
-    constexpr uint64_t overhead = ZmHeapAllocSize<sizeof(W)>{} +
+    constexpr uint64_t Overhead = ZmHeapAllocSize<sizeof(W)>{} +
       ZmHeapAllocSize<sizeof(WorkReturn<Input>) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{};
     auto &hub = impl()->app()->fixWorkRx_();
     auto &work = impl()->nativeRx_().work;
-    if (!retained || overhead > UINT64_MAX - retained ||
-	extra > UINT64_MAX - (retained + overhead)) {
+    if (!retained || Overhead > UINT64_MAX - retained ||
+	extra > UINT64_MAX - (retained + Overhead)) {
       work.refuse_(); hub.refuse_(); error = {Fmt::ErrorCode::Size}; return typename W::Ref{};
     }
-    uint64_t bytes = retained + overhead + extra;
+    uint64_t bytes = retained + Overhead + extra;
     if (!work.fits_(bytes)) {
       work.refuse_(); hub.refuse_(); error = {Fmt::ErrorCode::Size}; return typename W::Ref{};
     }
@@ -183,11 +183,11 @@ public:
     error = {}; return W::alloc_(impl(), input, bytes);
   }
 
-  ZmRef<ZiRxQueue::Node> fixAllocRx_() {
+  ZmRef<ZiRxQueue::Node> fixAllocRx() {
     return new typename Impl::RxBufAlloc{impl()};
   }
 
-  WireGeometry fixGeometryTx_() {
+  WireGeometry fixGeometryTx() {
     ZmAssert(impl()->app()->txInvoked());
     WireGeometry g;
     if constexpr (Net::Encrypted) {
@@ -200,7 +200,7 @@ public:
     return g;
   }
 
-  ZmRef<WireBuf> fixAllocTx_(unsigned head) {
+  ZmRef<WireBuf> fixAllocTx(unsigned head) {
     ZmRef<WireBuf> b = new typename Impl::TxBufAlloc{impl()}; b->skip = head;
     if constexpr (Net::Encrypted) {
       unsigned size = impl()->txMaxSize();
@@ -209,7 +209,7 @@ public:
     return b;
   }
 
-  bool fixSendTx_(ZmRef<ZiIOBuf> b) { return impl()->sendRecord_(ZuMv(b)); }
+  bool fixSendTx(ZmRef<ZiIOBuf> b) { return impl()->sendRecord_(ZuMv(b)); }
 
   static SessionConfig role(SessionConfig config, bool initiator) {
     config.initiator = initiator; return config;

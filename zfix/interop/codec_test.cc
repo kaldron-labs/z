@@ -7,6 +7,7 @@
 // Independent parser/dictionary; intentionally no native FIX headers
 
 #include <stdio.h>
+#include <iostream>
 #include <limits.h>
 #include <string>
 #include <quickfix/config.h>
@@ -86,11 +87,11 @@ static void validate(const char *dict, int argc, char **argv) {
 	int closed = fclose(file); ZuCheck(ok && !closed);
       }
     } catch (const FIX::Exception &error) {
-      fprintf(stderr, "# %s: %s\n", argv[i], error.what()); ZuCheck(false);
+      log(argv[i], ": ", error.what()); ZuCheck(false);
     }
   }
 }
 int main(int argc, char **argv) {
-  if (argc < 3) { fputs("usage: codec_test FIX44.xml FRAME...\n", stderr); return 2; }
+  if (argc < 3) { std::cerr << "usage: codec_test FIX44.xml FRAME...\n"; return 2; }
   parse(1, argv); ZuTestMain(); ZuTestCall(validate, argv[1], argc, argv); return 0;
 }

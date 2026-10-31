@@ -80,7 +80,7 @@ ZuCSpan msgType(const Msg &control)
   ZuCSpan type;
   ZuSwitch::dispatch<Msg::N>(control.type(), [&type]<typename I>(I) {
     using O = Msg::Type<I{}>;
-    if constexpr (!ZuIsSame<O, void>{}) type = O::msgType;
+    if constexpr (!ZuIsSame<O, void>{}) type = O::MsgType;
   });
   return type;
 }

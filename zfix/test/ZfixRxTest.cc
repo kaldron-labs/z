@@ -31,7 +31,7 @@ static const ZuDateTime stamp{ZuDateTimeScan::FIX{}, "20261027-00:00:00"};
 static SessionConfig config(unsigned mode = Transport::FIX4)
 {
   SessionConfig c;
-  c.id = "PRIMARY"; c.header.version = Version::V4_4;
+  c.header.version = Version::V4_4;
   c.header.local = "LOCAL"; c.header.peer = "PEER";
   c.mode = mode; c.appVerID = AppVersion::V5_0_SP2;
   return c;
@@ -110,21 +110,21 @@ struct Receiver : public Rx<Receiver> {
 
   using Rx::Rx;
 
-  ZuTime nowRx_() { ++clocks; return now; }
+  ZuTime nowRx() { ++clocks; return now; }
 
-  void rxPost_(uint64_t ticket) { tasks.push(ticket); }
+  void rxPost(uint64_t ticket) { tasks.push(ticket); }
 
-  void gapArm_(uint64_t ticket) { gapTimer = ticket; }
-  void gapCancel_() { gapTimer = 0; }
+  void gapArm(uint64_t ticket) { gapTimer = ticket; }
+  void gapCancel() { gapTimer = 0; }
 
-  void epochRx_(uint64_t connection, uint64_t previous, uint64_t next, RxProgress progress) {
+  void epochRx(uint64_t connection, uint64_t previous, uint64_t next, RxProgress progress) {
     ZmAssert(connection == session_().connection_());
     ++epochChanges; oldEpoch = previous; newEpoch = next; oldProgress = progress;
   }
 
-  void stateChangeRx_(SessionEvent e) { changes.push(e); }
+  void stateChangeRx(SessionEvent e) { changes.push(e); }
 
-  void eventRx_(SessionEvent e, ZmRef<Msg> msg) {
+  void eventRx(SessionEvent e, ZmRef<Msg> msg) {
     if (e.actions & A::Changed)
       changeBeforeEvent &= changes.length() && changes[changes.length() - 1].change == e.change;
     events.push(e);
@@ -137,27 +137,27 @@ struct Receiver : public Rx<Receiver> {
     }
   }
 
-  void rejectRx_(ZmRef<Msg> msg, unsigned tag, int reason) {
+  void rejectRx(ZmRef<Msg> msg, unsigned tag, int reason) {
     codecError = msg->data().error.code;
     rejected.push(msg->data().header.seqNo);
     rejected.push(tag); rejected.push(reason);
   }
 
-  void resendRx_(uint64_t begin, uint64_t end, ZmRef<Msg> msg) {
+  void resendRx(uint64_t begin, uint64_t end, ZmRef<Msg> msg) {
     outputOrder.push(1);
     replay.push(begin); replay.push(end); replay.push(msg->data().header.seqNo);
   }
 
-  void peerRejectRx_(PeerReject report) { peerRejects.push(ZuMv(report)); }
+  void peerRejectRx(PeerReject report) { peerRejects.push(ZuMv(report)); }
 
-  void sessionRx_(ZmRef<Msg> msg) { controls.push(msg->data().header.seqNo); }
+  void sessionRx(ZmRef<Msg> msg) { controls.push(msg->data().header.seqNo); }
 
-  Fmt::Error headerRx_(const Fmt::FrameView &frame, Fmt::Header &header, Fmt::Limits limits) {
+  Fmt::Error headerRx(const Fmt::FrameView &frame, Fmt::Header &header, Fmt::Limits limits) {
     if (frame.msgType == "D") return Fmt::readHeader<Order>(frame, header, limits);
     return Fmt::readHeader(frame, header, limits);
   }
 
-  Fmt::Error businessRx_(Msg *msg, Fmt::Limits limits) {
+  Fmt::Error businessRx(Msg *msg, Fmt::Limits limits) {
     if (msg->data().frame.msgType != "D") return {Fmt::ErrorCode::Unresolved, 35};
     Fmt::MessageHandler<Order> h{msg->data().frame, limits};
     if (!h.valid()) return h.error();
@@ -167,7 +167,7 @@ struct Receiver : public Rx<Receiver> {
     return {};
   }
 
-  bool rawRx_(uint64_t, ZmRef<Msg> msg, ZuTime, ZuDateTime) {
+  bool rawRx(uint64_t, ZmRef<Msg> msg, ZuTime, ZuDateTime) {
     ++rawCount;
     return !msg->data().header.seqNo;
   }
@@ -574,10 +574,7 @@ static void restoredDrainGap()
 {
   ZuTestScope(restoredDrainGap);
   Receiver r{config()};
-  Checkpoint state;
-  ZuCheck(r.snapshot_(state));
-  state.rx = {8, 1, 2, 8};
-  ZuCheck(r.restore_(state));
+  ZuCheck(r.restore_(1, RxProgress{8, 1, 2, 8}));
   r.begin(); r.admit();
   ZuCheck(r.expected_() == 2 && !r.retained_() && !r.session_().ready_() &&
     !r.session_().probeID_().length());
@@ -674,15 +671,14 @@ static void initialReset()
 {
   ZuTestScope(initialReset);
   Receiver r{config()};
-  Checkpoint state; state.id = config().id; state.epoch = 1;
-  state.fields = StateMask::Rx; state.rx = {2, 2};
-  ZuCheck(r.restore_(state) && !r.resetOnOpen_(1) && r.expected_() == 2);
-  state.rx = {};
-  ZuCheck(r.restore_(state) && !r.resetOnOpen_(2) && r.resetOnOpen_(1));
-  state.rx = {2, 2};
-  ZuCheck(!r.restore_(state) && r.expected_() == 1 && r.session_().resetOnOpen_());
-  ZuCheck(r.resetOnOpen_(1, false) && r.restore_(state) && !r.resetOnOpen_(1));
-  state.rx = {}; ZuCheck(r.restore_(state) && r.resetOnOpen_(1));
+  RxProgress state{2, 2};
+  ZuCheck(r.restore_(1, state) && !r.resetOnOpen_(1) && r.expected_() == 2);
+  state = {};
+  ZuCheck(r.restore_(1, state) && !r.resetOnOpen_(2) && r.resetOnOpen_(1));
+  state = {2, 2};
+  ZuCheck(!r.restore_(1, state) && r.expected_() == 1 && r.session_().resetOnOpen_());
+  ZuCheck(r.resetOnOpen_(1, false) && r.restore_(1, state) && !r.resetOnOpen_(1));
+  state = {}; ZuCheck(r.restore_(1, state) && r.resetOnOpen_(1));
   r.begin("98=0\1" "108=30\1" "141=Y\1");
   ZuCheck(r.admission && !r.session_().ready_() && r.expected_() == 1);
   r.admit(); r.heartbeat();

@@ -13,13 +13,13 @@
 #include <unistd.h>
 
 template <typename Hub, typename Link>
-static bool preauthSnapshot(Hub &hub, ZmRef<Link> link, Checkpoint &snapshot)
+static bool preauthSnapshot(Hub &hub, ZmRef<Link> link, Progress &snapshot)
 {
   return ZmBlock<bool>{}([&hub, link = ZuMv(link), &snapshot](auto wake) mutable {
     hub.rxRun([&hub, link = ZuMv(link), &snapshot, wake = ZuMv(wake)]() mutable {
-      bool ok = link->snapshotRx_(snapshot);
-      hub.txRun([link = ZuMv(link), &snapshot, ok, wake = ZuMv(wake)]() mutable {
-	wake(link->snapshotTx_(snapshot) && ok);
+      snapshot.epoch = link->session_().epoch_(); snapshot.rx = link->rxProgress_();
+      hub.txRun([link = ZuMv(link), &snapshot, wake = ZuMv(wake)]() mutable {
+	snapshot.tx = link->txProgress_(); wake(true);
       });
     });
   });
@@ -72,16 +72,16 @@ static void nativePreauth(unsigned mode, bool alert)
     bool pending = state.admission.timedwait(Zm::now(5)) == 0;
     ZuCheck(pending); if (!pending) break;
     owner = state.serverLink;
-    Checkpoint peer, before;
+    Progress peer, before;
     bool saved = preauthSnapshot(client, a, peer) && preauthSnapshot(server, owner, before);
     ZuCheck(saved && peer.tx.loaded == 2 && peer.rx.processed == 1 &&
       before.epoch == 1 && before.tx.loaded == 1 && before.rx.processed == 1);
     if (!saved) break;
     bool restored = ZmBlock<bool>{}([&client, c, &peer](auto wake) {
       client.rxRun([&client, c, &peer, wake = ZuMv(wake)]() mutable {
-	bool ok = c->restoreRx_(peer);
+	bool ok = c->restoreRx_(peer.epoch, peer.rx);
 	client.txRun([c, &peer, ok, wake = ZuMv(wake)]() mutable {
-	  wake(c->restoreTx_(peer) && ok);
+	  wake(c->restoreTx_(peer.epoch, peer.tx) && ok);
 	});
       });
     });
@@ -104,7 +104,7 @@ static void nativePreauth(unsigned mode, bool alert)
 	  s.epoch_() == 1 && !s.ready_() && !s.admissionPending_() && !*at);
       });
     });
-    Checkpoint bound;
+    Progress bound;
     ZuCheck(socketOnly && preauthSnapshot(server, owner, bound));
     ZuCheck(bound.rx.received == before.rx.received &&
       bound.rx.processed == before.rx.processed &&
@@ -113,9 +113,9 @@ static void nativePreauth(unsigned mode, bool alert)
       state.oldDecisions.load_() == 1 && state.authenticated.trywait() != 0);
     if (alert) {
       // A real fatal handshake_failure alert, before either side authenticates.
-      constexpr auto failure = "\x15\x03\x03\x00\x02\x02\x28"_z;
-      ZuCheck(::send(raw, failure.data(), failure.length(), MSG_NOSIGNAL) ==
-	ssize_t(failure.length()));
+      constexpr auto Failure = "\x15\x03\x03\x00\x02\x02\x28"_z;
+      ZuCheck(::send(raw, Failure.data(), Failure.length(), MSG_NOSIGNAL) ==
+	ssize_t(Failure.length()));
     } else { ::close(raw); raw = -1; }
     stoppedB = state.stoppedServer.timedwait(Zm::now(5)) == 0;
     ZuCheck(stoppedB && state.serverStops.load_() == 1);
@@ -165,7 +165,7 @@ static void nativePreauth(unsigned mode, bool alert)
     bool done = state.stoppedServer.timedwait(Zm::now(5)) == 0;
     ZuCheck(done); drained &= done;
   }
-  if (!drained) { fputs("Bail out! TLS preauth owner did not drain\n", stderr); abort(); }
+  if (!drained) { log_("Bail out! TLS preauth owner did not drain"); abort(); }
   bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop();
   state.serverLink = nullptr; owner = nullptr; a = c = nullptr;
@@ -206,14 +206,14 @@ static void nativeStopBeforeBind(unsigned mode)
 #endif
     bool pending = state.admission.timedwait(Zm::now(5)) == 0;
     ZuCheck(pending); if (!pending) break;
-    Checkpoint snapshot;
+    Progress snapshot;
     bool saved = preauthSnapshot(client, a, snapshot);
     ZuCheck(saved); if (!saved) break;
     bool restored = ZmBlock<bool>{}([&client, b, &snapshot](auto wake) {
       client.rxRun([&client, b, &snapshot, wake = ZuMv(wake)]() mutable {
-	bool ok = b->restoreRx_(snapshot);
+	bool ok = b->restoreRx_(snapshot.epoch, snapshot.rx);
 	client.txRun([b, &snapshot, ok, wake = ZuMv(wake)]() mutable {
-	  wake(b->restoreTx_(snapshot) && ok);
+	  wake(b->restoreTx_(snapshot.epoch, snapshot.tx) && ok);
 	});
       });
     });
@@ -264,7 +264,7 @@ static void nativeStopBeforeBind(unsigned mode)
   }
   bool sstop = stopping ? hubStopped.timedwait(Zm::now(5)) == 0 : !ss || server.stop();
   ZuCheck(sstop); drained &= sstop;
-  if (!drained) { fputs("Bail out! late TLS binding did not drain\n", stderr); abort(); }
+  if (!drained) { log_("Bail out! late TLS binding did not drain"); abort(); }
   bool cstop = !cs || client.stop(); ZuCheck(cstop);
   client.final(); server.final(); mx.stop();
   state.serverLink = nullptr; a = b = nullptr;

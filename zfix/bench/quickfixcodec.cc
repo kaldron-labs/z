@@ -4,12 +4,14 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
+
 #include <quickfix/DataDictionary.h>
 #include "../interop/quickfixwire.hh"
 #include "codec.hh"
 
 struct QuickfixCodec {
-  static constexpr auto	name = "quickfix"_z;
+  static constexpr auto	Name = "quickfix"_z;
   FIX::DataDictionary	dictionary{QUICKFIX_DICT_PATH};
   std::string		storage;
 
@@ -37,5 +39,5 @@ struct QuickfixCodec {
 
 int main(int argc, char **argv) {
   try { QuickfixCodec engine; return ZfixBench::codec(engine, argc, argv); }
-  catch (const FIX::Exception &error) { fprintf(stderr, "%s\n", error.what()); return 1; }
+  catch (const FIX::Exception &error) { std::cerr << error.what() << '\n'; return 1; }
 }

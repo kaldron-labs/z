@@ -75,14 +75,14 @@ ZfixExtern ZmRef<WireBuf> wireBorrow(ZmRef<ZiIOBuf>);
 
 // Tx-owned. admit_ retains a complete frame without exposing bytes; flush_
 // follows the LinkTx publication notice and makes that admission writable.
-// Exactly one outputDone_ is posted per admission, including failed/closed
+// Exactly one outputDone is posted per admission, including failed/closed
 // frames whose queued records never received a socket completion. A successful
 // result means every record was written locally; it never means peer ack.
 //
 // Impl hooks, all on Tx:
-// recordAlloc_(head) -> ZmRef<WireBuf>, with capacity >= geometry.size;
-// recordSend_(ZmRef<ZiIOBuf>) -> bool, transferring one record to TCP/TLS;
-// outputDone_(body, context, ok) MUST POST completion, never invoke LinkTx
+// recordAlloc(head) -> ZmRef<WireBuf>, with capacity >= geometry.size;
+// recordSend(ZmRef<ZiIOBuf>) -> bool, transferring one record to TCP/TLS;
+// outputDone(body, context, ok) MUST POST completion, never invoke LinkTx
 //   inline: the core publication cursor advances after flush_ returns. On Tx,
 //   call LinkTx::sent_ and then writable_(context.connection) on success to
 //   resume work paused by this adapter's admission limit.
@@ -164,7 +164,7 @@ public:
     ++m_stats.published; m_stats.bytes += item.frame->length;
     if (item.context.replay) ++m_stats.replays;
     if (item.body->msgType() == "3") ++m_stats.rejects;
-    impl()->frameTrace_(ZuCSpan{item.frame->cspan()}, item.context);
+    impl()->frameTrace(ZuCSpan{item.frame->cspan()}, item.context);
     send(node->data());
   }
 
@@ -181,7 +181,7 @@ public:
     return true;
   }
 
-  void frameTrace_(ZuCSpan, TxContext) { }
+  void frameTrace(ZuCSpan, TxContext) { }
 
   void close_(uint64_t connection) {
     if (connection != m_connection) return;
@@ -204,7 +204,7 @@ private:
     auto &item = node->data();
     m_bytes -= item.charge;
     if (ok) ++m_stats.completed; else ++m_stats.failed;
-    impl()->outputDone_(ZuMv(item.body), item.context, ok);
+    impl()->outputDone(ZuMv(item.body), item.context, ok);
   }
 
   void send(WireFrame &item) {
@@ -212,14 +212,14 @@ private:
     if (!m_geometry.size) {
       auto buf = wireBorrow(item.frame);
       buf->token = item.token; buf->part = 1;
-      if (!impl()->recordSend_(ZuMv(buf))) fail();
+      if (!impl()->recordSend(ZuMv(buf))) fail();
       return;
     }
     unsigned offset = 0;
     unsigned capacity = m_geometry.size - m_geometry.head - m_geometry.tail;
     unsigned parts = item.parts;
     for (unsigned part = 0; part < parts; ++part) {
-      auto buf = impl()->recordAlloc_(m_geometry.head);
+      auto buf = impl()->recordAlloc(m_geometry.head);
       if (!buf || buf->size < m_geometry.size) { fail(); return; }
       unsigned length = item.frame->length - offset;
       if (length > capacity) length = capacity;
@@ -227,7 +227,7 @@ private:
       buf->token = item.token; buf->part = part + 1;
       if (!buf->append(item.frame->data() + offset, length)) { fail(); return; }
       offset += length;
-      if (!impl()->recordSend_(ZuMv(buf))) { fail(); return; }
+      if (!impl()->recordSend(ZuMv(buf))) { fail(); return; }
     }
   }
 

@@ -183,10 +183,10 @@ static void delimiter()
   DynamicBody body;
   body.entries.push(Dynamic{});
   body.entries.push(Dynamic{});
-  constexpr auto wire = "7002=2\1" "452=0\1" "452=0\1"_z;
-  char bytes[wire.length() + sizeof("448=0\1") - 1];
+  constexpr auto Wire = "7002=2\1" "452=0\1" "452=0\1"_z;
+  char bytes[Wire.length() + sizeof("448=0\1") - 1];
   Sink same{{bytes, sizeof(bytes)}};
-  ZuCheck(save(same, body) && same.data() == wire);
+  ZuCheck(save(same, body) && same.data() == Wire);
   body.entries[0].optional = new Optional{};
   Sink different{{bytes, sizeof(bytes)}};
   ZuCheck(!save(different, body) && different.error().code == ErrorCode::Group);
@@ -195,29 +195,29 @@ static void delimiter()
 static void nested()
 {
   ZuTestScope(nested);
-  constexpr auto wire =
+  constexpr auto Wire =
     "11=order\1" "453=2\1"
     "448=A\1" "447=B\1" "452=1\1" "802=2\1"
       "523=sub1\1" "803=10\1" "523=sub2\1" "803=11\1"
     "448=C\1" "447=D\1" "452=2\1" "802=0\1"_z;
   Body body;
-  auto e = load(body, wire);
+  auto e = load(body, Wire);
   ZuCheck(!e);
   ZuCheck(body.id == "order" && body.parties.length() == 2);
   ZuCheck(body.parties[0].id == "A" && body.parties[1].id == "C");
   ZuCheck(body.parties[0].subs.length() == 2 && !body.parties[1].subs.length());
   ZuCheck(body.parties[0].subs[1].id == "sub2");
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, body));
-  ZuCheck(out.data() == wire && out.flush());
+  ZuCheck(out.data() == Wire && out.flush());
   e = update(body, "453=0\1"_z);
   ZuCheck(!e && !body.parties.length());
   ZuCheck(body.id == "order");
   Sink zero{{bytes, sizeof(bytes)}};
   ZuCheck(save(zero, body));
   ZuCheck(zero.data() == "11=order\1" "453=0\1"_z);
-  ZuCheck(!load(body, wire));
+  ZuCheck(!load(body, Wire));
   ZuCheck(!load(body, "11=missing-group\1"_z));
   ZuCheck(!body.parties.length());
 }
@@ -272,22 +272,22 @@ static void malformed()
 static void limits()
 {
   ZuTestScope(limits);
-  constexpr auto wire = "453=1\1" "448=A\1" "447=B\1" "452=1\1" "802=1\1"
+  constexpr auto Wire = "453=1\1" "448=A\1" "447=B\1" "452=1\1" "802=1\1"
     "523=sub\1" "803=10\1"_z;
   Body body;
   Limits cfg;
   cfg.groupEntries = 1;
-  ZuCheck(load(body, wire, cfg).code == ErrorCode::Size);
+  ZuCheck(load(body, Wire, cfg).code == ErrorCode::Size);
   cfg.groupEntries = 2;
   cfg.groupDepth = 1;
-  ZuCheck(load(body, wire, cfg).code == ErrorCode::Depth);
+  ZuCheck(load(body, Wire, cfg).code == ErrorCode::Depth);
   cfg.groupDepth = 2;
-  ZuCheck(!load(body, wire, cfg));
+  ZuCheck(!load(body, Wire, cfg));
   cfg.parseBytes = sizeof(Position) * 2;
-  ZuCheck(load(body, wire, cfg).code == ErrorCode::Size);
+  ZuCheck(load(body, Wire, cfg).code == ErrorCode::Size);
   cfg.parseBytes = Limits::ParseBytes;
-  ZuCheck(!load(body, wire, cfg));
-  char bytes[wire.length() + sizeof("11=\1") - 1];
+  ZuCheck(!load(body, Wire, cfg));
+  char bytes[Wire.length() + sizeof("11=\1") - 1];
   cfg.groupEntries = 1;
   Sink countOut{{bytes, sizeof(bytes)}, cfg};
   ZuCheck(!save(countOut, body) && countOut.error().code == ErrorCode::Size);
@@ -303,18 +303,18 @@ static void limits()
 static void binary()
 {
   ZuTestScope(binary);
-  constexpr auto wire = "7001=2\1" "1001=1\1" "95=9\1" "96=A\1" "1001=9\1\1"
+  constexpr auto Wire = "7001=2\1" "1001=1\1" "95=9\1" "96=A\1" "1001=9\1\1"
     "1001=2\1" "95=0\1" "96=\1"_z;
   BinaryBody b;
-  auto e = load(b, wire);
+  auto e = load(b, Wire);
   ZuCheck(!e && b.blobs.length() == 2);
   ZuCheck(b.blobs[0].id == 1 && b.blobs[1].id == 2);
   ZuCheck(b.blobs[0].data == ZuBSpan{"A\1" "1001=9\1"_z});
   ZuCheck(!b.blobs[1].data);
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, b) && out.flush());
-  ZuCheck(out.data() == wire);
+  ZuCheck(out.data() == Wire);
 }
 
 int main(int argc, char **argv)

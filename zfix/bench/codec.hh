@@ -42,7 +42,7 @@ template <typename Engine> int codec(Engine &engine, int argc, char **argv) {
   auto run = [count, warmup, &engine](ZuCSpan name, Shape shape) {
     Model model{shape};
     Samples encode{count}, decode{count}, clock{count};
-    CodecResult result; result.engine = Engine::name;
+    CodecResult result; result.engine = Engine::Name;
     result.shape = name; result.count = count; result.warmup = warmup;
     // Identical input in both engines; trailing fractional zeros would let
     // FIXDeflt trim bytes that QuickFIX's fixed precision retains.

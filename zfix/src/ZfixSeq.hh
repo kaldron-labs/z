@@ -68,9 +68,9 @@ private:
 // endpoint supplies dispatch, timers and orderly teardown. Scheduled callbacks
 // carry tickets, never ownership of the session.
 //
-// Impl hooks: processRx_(Msg *), requestRx_(Span, Span), reRequestRx_(Span),
-// postRx_(ticket), armGap_(ticket), cancelGap_(). postRx_ calls drain_(ticket),
-// armGap_ calls retry_(ticket) at an absolute deadline on the same owner.
+// Impl hooks: processRx(Msg *), requestRx(Span, Span), reRequestRx(Span),
+// postRx(ticket), armGap(ticket), cancelGap(). postRx calls drain_(ticket),
+// armGap calls retry_(ticket) at an absolute deadline on the same owner.
 // Holding invalidates posted work but preserves accepted read-ahead.
 template <typename Impl, typename Queue> class SeqRx :
     private ZmPQRx<SeqRx<Impl, Queue>, SeqRxQueue_<Queue>, ZmPQRxGapObserve<>> {
@@ -220,7 +220,7 @@ public:
       return;
     }
     auto generation = m_retryTicket;
-    impl()->reRequestRx_(gap);
+    impl()->reRequestRx(gap);
     arm_(gap, generation);
   }
 
@@ -231,7 +231,7 @@ private:
 
   void process(Msg *msg) {
     m_bytes -= msg->data().retainedBytes();
-    impl()->processRx_(msg);
+    impl()->processRx(msg);
     if (!m_held && !m_queue.count_() && expected_() == received_()) {
       m_requested = {};
       cancelReRequest();
@@ -256,7 +256,7 @@ private:
     cancelReRequest();
     auto generation = m_retryTicket;
     m_requested = gap;
-    impl()->requestRx_(prev, gap);
+    impl()->requestRx(prev, gap);
     arm_(gap, generation);
   }
 
@@ -268,7 +268,7 @@ private:
   void scheduleDequeue() {
     if (m_held || m_scheduled) return;
     m_scheduled = true;
-    impl()->postRx_(++m_ticket);
+    impl()->postRx(++m_ticket);
   }
 
   void rescheduleDequeue() { scheduleDequeue(); }
@@ -278,14 +278,14 @@ private:
   void scheduleReRequest() {
     if (m_held || m_retry) return;
     m_retry = true;
-    impl()->armGap_(++m_retryTicket);
+    impl()->armGap(++m_retryTicket);
   }
 
   void cancelReRequest() {
     ++m_retryTicket;
     if (!m_retry) return;
     m_retry = false;
-    impl()->cancelGap_();
+    impl()->cancelGap();
   }
 
   const SeqLimits	m_limits;
@@ -338,9 +338,9 @@ template <typename Record> struct SeqReload {
 // Tx owns unpublished operational nodes only. Replay always asks the application;
 // a result lives only through its current admission attempt. Ordered generic
 // archiving reports completed ranges without retaining message bodies.
-// Hooks: retrieveTx_(key, ackd, ticket, replay), validReloadTx_(record,key,replay),
-// reloadMsgTx_(record), publishTx_(record,replay), publishTx_(Msg *,false),
-// gapTx_(Span), archiveTx_(begin,end), postTx_(kind,ticket).
+// Hooks: retrieveTx(key, ackd, ticket, replay), validReloadTx(record,key,replay),
+// reloadMsgTx(record), publishTx(record,replay), publishTx(Msg *,false),
+// gapTx(Span), archiveTx(begin,end), postTx(kind,ticket).
 template <typename Impl, typename Queue,
   typename Record = ZmRef<typename Queue::Node>> class SeqTx :
     private ZmPQTx<SeqTx<Impl, Queue, Record>, SeqTxQueue_<Queue>> {
@@ -495,12 +495,12 @@ public:
   }
 
   // Defaults for queues whose application record is already their node handle.
-  bool validReloadTx_(const Record &record, uint64_t key, bool) {
+  bool validReloadTx(const Record &record, uint64_t key, bool) {
     typename Queue::Fn fn{record->data()};
     return fn.key() == key && fn.length() == 1 && record->data().wireBytes();
   }
 
-  ZmRef<Msg> reloadMsgTx_(Record record) { return record; }
+  ZmRef<Msg> reloadMsgTx(Record record) { return record; }
 
   // Only the matching obligation retires. Replay results never enter m_queue.
   bool completeReload_(uint64_t token, Record record) {
@@ -511,14 +511,14 @@ public:
     if (m_running) {
       if (!!record && (kind != TxTask::Replay ||
 	  (m_active.length() && m_active.key() == key)) &&
-	  !impl()->validReloadTx_(record, key, kind == TxTask::Replay)) {
+	  !impl()->validReloadTx(record, key, kind == TxTask::Replay)) {
 	m_failed = true;
 	return true;
       }
       if (kind == TxTask::Replay) {
 	if (m_active.length() && m_active.key() == key && !m_failed) {
 	  if (!record) replayGap(Span{key, 1});
-	  else if (impl()->publishTx_(record, true)) replayed(key + 1);
+	  else if (impl()->publishTx(record, true)) replayed(key + 1);
 	  else m_failed = true;
 	}
       } else if (!record) {
@@ -574,7 +574,7 @@ private:
   void schedule(unsigned kind) {
     if (!m_running || (m_scheduled & (1U<<kind))) return;
     m_scheduled |= 1U<<kind;
-    impl()->postTx_(kind, ++ticket(kind));
+    impl()->postTx(kind, ++ticket(kind));
   }
 
   void continue_() {
@@ -604,7 +604,7 @@ private:
     for (auto key = m_active.key(); key < end; ++key) {
       m_reloadKey = key;
       m_reloadKind = TxTask::Replay;
-      auto result = impl()->retrieveTx_(key, m_ackd, ++m_reloadTicket, true);
+      auto result = impl()->retrieveTx(key, m_ackd, ++m_reloadTicket, true);
       if (!result.pending) m_reloadKey = 0;
       if (!m_running || token != m_replayTicket) return;
       if (result.pending) { if (gap.length()) replayGap(gap); return; }
@@ -614,12 +614,12 @@ private:
 	++gap.length();
 	continue;
       }
-      if (!impl()->validReloadTx_(record, key, true)) { m_failed = true; return; }
+      if (!impl()->validReloadTx(record, key, true)) { m_failed = true; return; }
       if (gap.length()) {
 	if (!replayGap(gap)) return;
 	gap = {};
       }
-      if (!m_running || !impl()->publishTx_(record, true)) {
+      if (!m_running || !impl()->publishTx(record, true)) {
 	m_failed = true; return;
       }
       replayed(key + 1);
@@ -630,7 +630,7 @@ private:
   }
 
   bool replayGap(const Span &gap) {
-    if (!m_running || !impl()->gapTx_(gap)) { m_failed = true; return false; }
+    if (!m_running || !impl()->gapTx(gap)) { m_failed = true; return false; }
     replayed(gap.key() + gap.length());
     return true;
   }
@@ -654,7 +654,7 @@ private:
     auto key = fn.key();
     auto bytes = item.wireBytes();
     if (!m_running || key != m_published || bytes > m_bytes ||
-	!impl()->publishTx_(msg, false)) { m_failed = true; return false; }
+	!impl()->publishTx(msg, false)) { m_failed = true; return false; }
     ++m_published;
     m_bytes -= bytes;
     m_queue.del(key);
@@ -666,7 +666,7 @@ private:
   bool sendGap_(const Span &gap, bool) {
     auto end = gap.key() + gap.length();
     if (!m_running || waiting_() || m_lookupError || gap.key() != m_published ||
-	(end == m_next && m_bytes) || !impl()->gapTx_(gap)) {
+	(end == m_next && m_bytes) || !impl()->gapTx(gap)) {
       m_failed = !waiting_();
       if (m_failed) m_sendUnavailable = {};
       return false;
@@ -679,7 +679,7 @@ private:
   }
 
   ZmRef<Msg> install(Record record) {
-    auto msg = impl()->reloadMsgTx_(ZuMv(record));
+    auto msg = impl()->reloadMsgTx(ZuMv(record));
     if (!msg || space_(msg->data().wireBytes()) != SeqResult::Accepted) {
       m_failed = m_lookupError = true; return nullptr;
     }
@@ -698,7 +698,7 @@ private:
 	key - missing.key() < missing.length()) return nullptr;
     m_reloadKey = key;
     m_reloadKind = TxTask::Send;
-    auto result = impl()->retrieveTx_(key, m_ackd, ++m_reloadTicket, false);
+    auto result = impl()->retrieveTx(key, m_ackd, ++m_reloadTicket, false);
     if (result.pending) return nullptr;
     m_reloadKey = 0;
     if (!m_running) return nullptr;
@@ -707,7 +707,7 @@ private:
       if (!unavailable(key)) m_failed = m_lookupError = true;
       return nullptr;
     }
-    if (!impl()->validReloadTx_(record, key, false)) {
+    if (!impl()->validReloadTx(record, key, false)) {
       m_failed = m_lookupError = true; return nullptr;
     }
     return install(ZuMv(record));
@@ -741,7 +741,7 @@ private:
   void idleArchive() {
     auto begin = m_archiveScan, end = m_archiveTarget;
     m_archiveScan = end;
-    if (begin < end) impl()->archiveTx_(begin, end);
+    if (begin < end) impl()->archiveTx(begin, end);
     feedArchive();
   }
 

@@ -110,7 +110,7 @@ static void archivePolicy() {
   ZuCheck(replacement && !error && longTerm.erase(7, 3));
   ZuCheck(longTerm.restore({replacement, original, 7, 3}));
   history = longTerm.fetch(7, 3).history;
-  ZuCheck(history.body && history.seqNo == 3 && history.body->msgType() == Req::msgType &&
+  ZuCheck(history.body && history.seqNo == 3 && history.body->msgType() == Req::MsgType &&
     history.body->id() == 3001 && history.originalTime == original);
   ZuCheck(longTerm.erase(7, 3) && !longTerm.fetch(7, 3).history.body && !longTerm.bytes());
 }

@@ -5,7 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <limits.h>
-#include <stdio.h>
+#include <iostream>
 #include <stdlib.h>
 #include <quickfix/config.h>
 #include <quickfix/Application.h>
@@ -25,6 +25,7 @@
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiFile.hh>
+#include <zlib/ZiLog.hh>
 #include "quickfixapp.hh"
 #include "../util/load_run.hh"
 
@@ -246,7 +247,10 @@ public:
   int waitClosed(ZuTime at) { return m_closedSem.timedwait(at); }
 
   void fail(const char *where = "callback") {
-    if (!m_errors.xchAdd(1)) fprintf(stderr, "QuickFIX fixture failure: %s\n", where);
+    if (!m_errors.xchAdd(1))
+      ZiLOG(Error, "quickfix", ([where](auto &s) {
+	s << "QuickFIX fixture failure: " << where;
+      }));
     m_readySem.post(); m_completeSem.post(); m_closedSem.post();
   }
 
@@ -470,7 +474,10 @@ private:
       FIX::Message message; encode(message, value);
       return FIX::Session::sendToTarget(message, m_slots[i]->id);
     } catch (const FIX::Exception &error) {
-      fprintf(stderr, "QuickFIX send: %s\n", error.what()); return false;
+      ZiLOG(Error, "quickfix", ([message = Text{error.what()}](auto &s) {
+	s << "QuickFIX send: " << message;
+      }));
+      return false;
     }
   }
 
@@ -570,7 +577,10 @@ static bool execute(App<Client> &app, Peer &peer, ZmScheduler &scheduler,
     }
     if (!app.errors() && app.waitClosed(deadline)) app.fail("Logout deadline");
   } catch (const std::exception &error) {
-    fprintf(stderr, "QuickFIX startup: %s\n", error.what()); app.fail("startup");
+    ZiLOG(Error, "quickfix", ([message = Text{error.what()}](auto &s) {
+      s << "QuickFIX startup: " << message;
+    }));
+    app.fail("startup");
   }
   // Only main blocks in the SDK stop/join. Keep app and timer owners alive until
   // all callbacks queued by that IO thread have crossed their application owner.
@@ -592,19 +602,24 @@ int run(bool server, int argc, char **argv) {
   if (!options(o, server, argc, argv, ports)) { usage(server); return 2; }
   if (o.help) {
     usage(server);
-    fputs("  quickfix/quickfixd support --mode 4 --version FIX.4.4\n", stderr);
-    if (server) fputs("  quickfixd listens on 0.0.0.0; --bind accepts only 0.0.0.0\n", stderr);
+    std::cerr << "  quickfix/quickfixd support --mode 4 --version FIX.4.4\n";
+    if (server) std::cerr <<
+      "  quickfixd listens on 0.0.0.0; --bind accepts only 0.0.0.0\n";
     return 0;
   }
   if (server && o.bind != "0.0.0.0") {
-    fputs("quickfixd: --bind must be 0.0.0.0 (the SDK listener address)\n", stderr);
+    std::cerr << "quickfixd: --bind must be 0.0.0.0 (the SDK listener address)\n";
     return 2;
   }
   if (o.mode != Mode::FIX4 || o.version != Version::V4_4) {
-    fputs("QuickFIX fixtures require canonical FIX.4.4 mode 4\n", stderr); return 2;
+    std::cerr << "QuickFIX fixtures require canonical FIX.4.4 mode 4\n"; return 2;
   }
+  ZiLog::init(server ? "quickfixd" : "quickfix");
+  ZiLog::level(Ze::Error);
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+  ZiLog::start();
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1).thread(1, [](auto &t) { t.isolated(1); })};
-  if (!scheduler.start()) return 1;
+  if (!scheduler.start()) { ZiLog::stop(); return 1; }
   bool ok = false;
   try {
     if (server) {
@@ -621,8 +636,10 @@ int run(bool server, int argc, char **argv) {
 	ok = execute(app, peer, scheduler, o, ports); }
     }
   } catch (const std::exception &error) {
-    fprintf(stderr, "QuickFIX fixture: %s\n", error.what());
+    ZiLOG(Error, "quickfix", ([message = Text{error.what()}](auto &s) {
+      s << "QuickFIX fixture: " << message;
+    }));
   }
-  scheduler.stop(); return ok ? 0 : 1;
+  scheduler.stop(); ZiLog::stop(); return ok ? 0 : 1;
 }
 } // QfLoad

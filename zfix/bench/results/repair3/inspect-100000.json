@@ -1,0 +1,1 @@
+{"scope":"LD_AUDIT main-namespace PLT entries from preinit through exit hook; excludes direct/inlined/custom allocator internal calls; attempts not success; copy sums can include nested calls","allocAttempts":0,"requestedBytes":0,"requestOverflows":0,"freeCalls":1,"copyCalls":0,"copyBytes":0,"asanCopyCalls":0,"asanCopyBytes":0}

@@ -39,7 +39,7 @@ struct Side {
   ZmAtomic<unsigned>	errors{0}, receives{0}, stops{0}, faults{0}, published{0}, complete{0};
 
   void fail(unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "# ZfixIngressIOTest failure line=%u\n", line); ++errors;
+    log("# ZfixIngressIOTest failure line=", line); ++errors;
   }
 };
 
@@ -63,34 +63,34 @@ struct Peer : Base {
   template <typename Hub> Peer(Hub *hub, Side *s, LinkLimits limits) :
     Base{hub, config(), limits}, state{s} { }
 
-  void fixRawUpRx_(uint64_t c) {
+  void fixRawUpRx(uint64_t c) {
     if (!app()->rxInvoked() || c != 1) state->fail(); state->ready.post();
   }
 
-  bool fixRawRx_(ZmRef<RawInput> input, Fmt::Limits limits) {
+  bool fixRawRx(ZmRef<RawInput> input, Fmt::Limits limits) {
     Fmt::MessageHandler<Packet> handler{input->frame, limits}; auto packet = handler.ctor();
     if (!app()->rxInvoked() || !handler.valid() || packet.value != 1) state->fail();
     ++state->receives; state->received.post(); return !state->pause;
   }
 
-  void fixRawFaultRx_(uint64_t, Fmt::Error e) {
+  void fixRawFaultRx(uint64_t, Fmt::Error e) {
     if (!app()->rxInvoked() || e.code != Fmt::ErrorCode::Size) state->fail(); ++state->faults;
   }
 
-  void fixRawPublishedTx_(const RawOutput &) {
+  void fixRawPublishedTx(const RawOutput &) {
     if (!app()->txInvoked()) state->fail(); ++state->published;
   }
 
-  void fixRawSubmittedTx_(RawOutput::Ref, unsigned result) {
+  void fixRawSubmittedTx(RawOutput::Ref, unsigned result) {
     if (!app()->txInvoked() || result != state->expectedSubmit) state->fail();
     state->submitted.post();
   }
 
-  void fixRawCompleteTx_(TxBody::Ref, TxContext, bool) {
+  void fixRawCompleteTx(TxBody::Ref, TxContext, bool) {
     if (!app()->txInvoked()) state->fail(); ++state->complete;
   }
 
-  void fixRawStoppedRx_(uint64_t, bool) {
+  void fixRawStoppedRx(uint64_t, bool) {
     if (!app()->rxInvoked()) state->fail(); ++state->stops; state->stopped.post();
   }
 
@@ -105,13 +105,13 @@ struct Peer : Base {
     return output;
   }
 
-  void fixTraceRx_(TraceRef entry) {
+  void fixTraceRx(TraceRef entry) {
     if (!app()->rxInvoked() || !entry || entry->data().context.epoch ||
 	entry->data().context.seqNo) state->fail();
     state->rxTrace = ZuMv(entry);
   }
 
-  void fixTraceTx_(TraceRef entry) {
+  void fixTraceTx(TraceRef entry) {
     if (!app()->txInvoked() || !entry || entry->data().context.epoch ||
 	entry->data().context.seqNo) state->fail();
     state->txTrace = ZuMv(entry);

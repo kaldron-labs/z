@@ -54,7 +54,7 @@ struct Side {
   History		history;
 
   void fail(unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "# ZfixResetIOTest failure line=%u\n", line); ++errors;
+    log("# ZfixResetIOTest failure line=", line); ++errors;
   }
 };
 
@@ -78,7 +78,6 @@ static bool readyTransitions(const Side &side) {
 }
 static SessionConfig config(bool cli, const TestState &test) {
   SessionConfig c; c.mode = test.mode; c.initiator = cli;
-  c.id = cli ? "RESET-CLIENT" : "RESET-SERVER";
   c.header.version = test.mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
   c.header.local = cli ? "CLIENT" : "SERVER"; c.header.peer = cli ? "SERVER" : "CLIENT";
   c.appVerID = AppVersion::V5_0_SP2;
@@ -107,34 +106,34 @@ struct Peer : Base {
     if (error) { side()->fail(); return; } enqueue(ZuMv(body));
   }
 
-  TxBody::Ref fixDequeueTx_() {
+  TxBody::Ref fixDequeueTx() {
     auto node = side()->queue.shift(); return node ? ZuMv(node->data()) : TxBody::Ref{};
   }
 
-  unsigned fixAssociateTx_(TxBody::Ref body, TxContext c, uint64_t) {
+  unsigned fixAssociateTx(TxBody::Ref body, TxContext c, uint64_t) {
     if (!app()->txInvoked() || c.epoch != side()->txEpoch || c.seqNo != ++side()->lastLoad)
       side()->fail();
     if (!body->administrative()) side()->businessEnd = c.seqNo + 1;
     return TxLoad::Accepted;
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime original) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime original) {
     if (!c.replay)
       side()->history.push(TxHistory{ZuMv(body), original, c.epoch, c.seqNo});
   }
 
-  TxReload fixRetrieveTx_(TxContext c, uint64_t, uint64_t) {
+  TxReload fixRetrieveTx(TxContext c, uint64_t, uint64_t) {
     for (const auto &h : side()->history)
       if (h.epoch == c.epoch && h.seqNo == c.seqNo &&
 	  (!h.body->administrative() || h.body->msgType() == "3")) return {h};
     return {};
   }
 
-  void fixSelectedTx_(TxBody::Ref, TxContext, unsigned result) {
+  void fixSelectedTx(TxBody::Ref, TxContext, unsigned result) {
     if (result != TxSelect::Accepted) side()->fail();
   }
 
-  void fixCompleteTx_(TxBody::Ref body, TxContext context, bool ok) {
+  void fixCompleteTx(TxBody::Ref body, TxContext context, bool ok) {
     if (body->msgType() == "A" && context.epoch == 2 && context.connection == 1 && ok)
       side()->resetSent.post();
     if (body->msgType() == "D") {
@@ -142,7 +141,7 @@ struct Peer : Base {
     }
   }
 
-  TxBody::Ref fixLogonTx_(TxBody::Ref body) {
+  TxBody::Ref fixLogonTx(TxBody::Ref body) {
     if (!app()->txInvoked()) side()->fail();
     if constexpr (Client) {
       if (app()->test->fault == Fault::RefusedLogon && side()->txEpoch == 2
@@ -153,24 +152,23 @@ struct Peer : Base {
     return body;
   }
 
-  void fixFaultTx_(TxContext c, Fmt::Error e) {
+  void fixFaultTx(TxContext c, Fmt::Error e) {
     if (!app()->txInvoked() || app()->test->fault != Fault::RefusedLogon ||
 	!Client || c.epoch != 2 || e.code != Fmt::ErrorCode::Output) {
-      fprintf(stderr, "# ZfixResetIOTest unexpected Tx fault mode=%u fault=%u role=%s "
-	"epoch=%llu connection=%llu code=%u tag=%u\n",
-	app()->test->mode, app()->test->fault, Client ? "client" : "server",
-	(unsigned long long)c.epoch, (unsigned long long)c.connection, e.code, e.tag);
+      log("# ZfixResetIOTest unexpected Tx fault mode=", app()->test->mode, " fault=",
+	app()->test->fault, " role=", Client ? "client" : "server", " epoch=", c.epoch,
+	" connection=", c.connection, " code=", e.code, " tag=", e.tag);
       side()->fail();
     }
     ++side()->outputs;
   }
 
-  void fixBlockedRx_(TxContext) {
+  void fixBlockedRx(TxContext) {
     if (!app()->rxInvoked()) side()->fail();
     side()->blocked.post();
   }
 
-  void fixControlTx_(TxBody::Ref body, TxContext c) {
+  void fixControlTx(TxBody::Ref body, TxContext c) {
     if (body->msgType() != "A") return;
     Session::Logon logon;
     if (Fmt::load(logon, body->body()) || c.epoch != side()->txEpoch) side()->fail();
@@ -180,7 +178,7 @@ struct Peer : Base {
     }
   }
 
-  void fixEpochTx_(TxContext old, uint64_t epoch, TxProgress p, uint64_t) {
+  void fixEpochTx(TxContext old, uint64_t epoch, TxProgress p, uint64_t) {
     if (!app()->txInvoked() || old.epoch != side()->txEpoch || epoch != old.epoch + 1 ||
 	p.acknowledged < side()->businessEnd || p.acknowledged > p.sent || p.sent != p.loaded)
       side()->fail();
@@ -188,13 +186,13 @@ struct Peer : Base {
     side()->history.length(0); ++side()->epochsTx;
   }
 
-  void fixEpochRx_(uint64_t, uint64_t old, uint64_t epoch, RxProgress p) {
+  void fixEpochRx(uint64_t, uint64_t old, uint64_t epoch, RxProgress p) {
     if (!app()->rxInvoked() || epoch != old + 1 || p.received != p.processed || p.gapBegin)
       side()->fail();
     ++side()->epochsRx;
   }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions & SessionAction::Failure) {
       if (!app()->test->fault) side()->fail();
       ++side()->failures;
@@ -219,20 +217,20 @@ struct Peer : Base {
     if (e.actions & SessionAction::ResetReady) side()->prepared.post();
   }
 
-  void fixControlRx_(ZmRef<Msg> msg) {
+  void fixControlRx(ZmRef<Msg> msg) {
     if (!app()->rxInvoked()) side()->fail();
     if (msg && msg->data().control.template is<Session::ResendReq>()) ++side()->resendReqs;
   }
 
-  void fixResetRx_(ResetRequest, bool accepted) {
+  void fixResetRx(ResetRequest, bool accepted) {
     if (!app()->rxInvoked()) side()->fail(); side()->accepted = accepted; side()->result.post();
   }
 
-  Fmt::Error fixHeaderRx_(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
+  Fmt::Error fixHeaderRx(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
     return Fmt::readHeader<Order>(f, h, l);
   }
 
-  Fmt::Error fixBusinessRx_(Msg *msg, Fmt::Limits limits) {
+  Fmt::Error fixBusinessRx(Msg *msg, Fmt::Limits limits) {
     Fmt::MessageHandler<Order> handler{msg->data().frame, limits}; auto o = handler.ctor();
     if (!handler.valid()) return handler.error();
     if (!app()->rxInvoked() || o.phase != this->session_().epoch_() ||
@@ -242,14 +240,14 @@ struct Peer : Base {
     return {};
   }
 
-  void fixStopRx_(uint64_t, uint64_t ticket) { if (ticket) side()->fail(); }
+  void fixStopRx(uint64_t, uint64_t ticket) { if (ticket) side()->fail(); }
 
-  void fixStopTx_(uint64_t) {
+  void fixStopTx(uint64_t) {
     if (side()->queue.count_() &&
 	!(Client && app()->test->fault && side()->queue.count_() == 1)) side()->fail();
   }
 
-  void fixStoppedRx_(bool) { side()->stopped.post(); }
+  void fixStoppedRx(bool) { side()->stopped.post(); }
 };
 
 struct CliHub : Zfix::Client<CliHub, Dictionary, Network> {
@@ -296,8 +294,14 @@ friend inline ZuStringT<"Zfix.reset_io_test.Link"> ZmNHeapID(Link *);
 };
 
 ZiConnection *SrvHub::accepted(const ZiCxnInfo &i) { return new Link::Cxn{link.ptr(), i}; }
+struct Progress {
+  uint64_t	epoch = 0;
+  RxProgress	rx;
+  TxProgress	tx;
+};
+
 struct Snapshot {
-  Checkpoint	state;
+  Progress	state;
   uint64_t	connection = 0;
   unsigned	phase = 0;
   bool		drained = false, timers = false;
@@ -320,10 +324,10 @@ template <typename Link> static bool inspect(Link *link, Snapshot &out) {
       out.rx = link->rxStats_(); out.admin = link->adminPosted_();
       for (unsigned kind = SessionTimer::Logon; kind <= SessionTimer::Drain; ++kind)
 	out.timers |= *s.deadline_(kind);
-      bool ok = link->snapshotRx_(out.state);
-      link->app()->txRun([link, &out, ok, wake = ZuMv(wake)]() mutable {
+      out.state.epoch = link->session_().epoch_(); out.state.rx = link->rxProgress_();
+      link->app()->txRun([link, &out, wake = ZuMv(wake)]() mutable {
 	out.tx = link->txStats_(); out.queued = link->side()->queue.count_();
-	wake(link->snapshotTx_(out.state) && ok);
+	out.state.tx = link->txProgress_(); wake(true);
       });
     });
   });

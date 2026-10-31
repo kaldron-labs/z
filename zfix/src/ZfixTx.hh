@@ -18,11 +18,20 @@
 #include <zlib/ZfixNotice.hh>
 #include <zlib/ZfixSeq.hh>
 #include <zlib/ZfixLinkState.hh>
-#include <zlib/ZfixCheckpoint.hh>
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixStats.hh>
 
 namespace Zfix {
+
+// Exclusive cursors and range end, read from the link's Tx queue.
+struct TxProgress {
+  uint64_t	loaded = 1;
+  // ZmPQTx's send cursor: transport-admitted wire progress, not local completion.
+  uint64_t	sent = 1;
+  uint64_t	acknowledged = 1;
+  uint64_t	replayBegin = 0;
+  uint64_t	replayEnd = 0;
+};
 
 ZtEnumNS(ZfixAPI, TxLoad, int8_t, Refused, Accepted, Pending);
 ZtEnumNS(ZfixAPI, TxSelect, int8_t,
@@ -59,10 +68,9 @@ struct TxLimits {
   unsigned	controlHeadroom = 1024;
 };
 
-// Tx owns its durable key, header configuration, mode and sequence domain. Rx clocks,
+// Tx owns its header configuration, mode and sequence domain. Rx clocks,
 // role and heartbeat policy stay in SessionConfig on the Rx owner.
 struct TxConfig {
-  SessionString	id;
   HeaderConfig	header;
   unsigned	appVerID;
   uint64_t	sequenceLimit;
@@ -80,19 +88,19 @@ ZfixExtern Fmt::Header txHeader(const TxConfig &, uint64_t seqNo,
 // of its unsequenced queue. Header strings belong to this owner's config.
 //
 // Mandatory Impl hooks:
-// loadTx_(TxBody::Ref, TxContext, ticket) -> TxLoad; asynchronous completion
+// loadTx(TxBody::Ref, TxContext, ticket) -> TxLoad; asynchronous completion
 //   invokes loaded_ on Tx after the hook returns;
-// unloadTx_(TxBody::Ref, TxContext, ticket) -> bool completed; false requires
+// unloadTx(TxBody::Ref, TxContext, ticket) -> bool completed; false requires
 //   unloaded_ on Tx before replacing a stale, uncommitted load candidate;
-// frameTx_(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime original) -> bool;
+// frameTx(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime original) -> bool;
 //   true transfers the complete frame to transport; false retains no bytes;
-// historyTx_(TxContext, acknowledged, ticket) -> TxReload; deferred completion
-//   invokes reloaded_; historyArchive_(epoch, begin, end) reports archive ranges;
-// txPost_(kind, ticket) posts run_ back to Tx; utcTx_() samples SendingTime;
-// errorTx_(TxContext, Fmt::Error) reports an unpublished frame failure.
-// Optional ackdTx_(owner context, previous, next) reports exclusive progress;
+// historyTx(TxContext, acknowledged, ticket) -> TxReload; deferred completion
+//   invokes reloaded_; historyArchive(epoch, begin, end) reports archive ranges;
+// txPost(kind, ticket) posts run_ back to Tx; utcTx() samples SendingTime;
+// errorTx(TxContext, Fmt::Error) reports an unpublished frame failure.
+// Optional ackdTx(owner context, previous, next) reports exclusive progress;
 // context.seqNo is zero; history retention stays with the application.
-// Optional limitTx_(next context, maximum, control headroom) reports entering the
+// Optional limitTx(next context, maximum, control headroom) reports entering the
 // reserved control range once per epoch. Post policy work; do not reenter Tx.
 //
 // Retained handles + fixed metadata may cross to the association owner. No
@@ -158,7 +166,7 @@ public:
     auto previous = Base::acknowledged_();
     if (!Base::acknowledge_(next)) return false;
     if (next > previous)
-      impl()->ackdTx_(TxContext{m_epoch, m_connection, 0}, previous, next);
+      impl()->ackdTx(TxContext{m_epoch, m_connection, 0}, previous, next);
     return true;
   }
 
@@ -195,14 +203,14 @@ public:
     return true;
   }
 
-  void resetFailedTx_(TxContext context, uint64_t, uint64_t, Fmt::Error error) {
-    impl()->errorTx_(context, error);
+  void resetFailedTx(TxContext context, uint64_t, uint64_t, Fmt::Error error) {
+    impl()->errorTx(context, error);
   }
 
-  void resetTx_(TxContext, uint64_t, TxProgress, uint64_t) { }
+  void resetTx(TxContext, uint64_t, TxProgress, uint64_t) { }
   // Optional ordered notification, independent of application archive policy.
-  void ackdTx_(TxContext, uint64_t, uint64_t) { }
-  void limitTx_(TxContext, uint64_t, unsigned) { }
+  void ackdTx(TxContext, uint64_t, uint64_t) { }
+  void limitTx(TxContext, uint64_t, unsigned) { }
 
   bool resume_() {
     if (!m_attached || resetting_()) return false;
@@ -215,7 +223,7 @@ public:
 	// admission hook so a hook's hold/detach remains authoritative.
 	auto connection = m_connection, epoch = m_epoch;
 	Base::resume_();
-	if (!publishTx_(latest, false)) {
+	if (!publishTx(latest, false)) {
 	  if (connection == m_connection && epoch == m_epoch) Base::hold_();
 	  return false;
 	}
@@ -283,7 +291,7 @@ public:
     auto context = pendingContext();
     auto token = m_loadTicket = ++m_ticket;
     m_unloading = false;
-    switch (impl()->loadTx_(m_pending->data().history.body, context, token)) {
+    switch (impl()->loadTx(m_pending->data().history.body, context, token)) {
       case TxLoad::Pending: return TxSelect::Pending;
       case TxLoad::Accepted: return accept();
       default: ++m_stats.loadRefused; m_pending = nullptr; return TxSelect::Refused;
@@ -312,26 +320,16 @@ public:
       replay.length() ? uint64_t(replay.key()) + replay.length() : 0};
   }
 
-  bool snapshot_(Checkpoint &state) const {
-    if (!stampState(state, m_config.id, m_epoch)) return false;
-    state.tx = progress_();
-    state.fields |= StateMask::Tx;
-    return true;
-  }
-
-  bool restore_(const Checkpoint &state) {
-    if (m_connection || m_attached || m_pending || resetting_() ||
-	!stateMatches(state, m_config.id, m_epoch)) return false;
-    if (!(state.fields & StateMask::Tx)) return true;
-    TxProgress p;
-    if (!restoreTx(state, progress_(), m_config.sequenceLimit, p)) return false;
-    return restore_(state.epoch, p.loaded, p.sent, p.acknowledged,
+  bool restore_(uint64_t epoch, const TxProgress &p) {
+    if (p.replayBegin ? p.replayEnd <= p.replayBegin : p.replayEnd != 0) return false;
+    return restore_(epoch, p.loaded, p.sent, p.acknowledged,
       p.replayBegin ? Span{p.replayBegin, p.replayEnd - p.replayBegin} : Span{});
   }
 
   bool restore_(uint64_t epoch, uint64_t loaded, uint64_t published,
       uint64_t ackd, Span replay = {}) {
-    if (epoch != m_epoch || m_connection || m_attached || m_pending || resetting_()) return false;
+    if (!epoch || epoch != m_epoch || m_connection || m_attached || m_pending || resetting_())
+      return false;
     return Base::restore_(loaded, published, ackd, replay);
   }
 
@@ -349,7 +347,7 @@ private:
     auto next = Base::next_();
     if (m_limitNotified || next <= m_config.sequenceLimit - m_limits.controlHeadroom) return;
     m_limitNotified = true;
-    impl()->limitTx_(TxContext{m_epoch, m_connection, next},
+    impl()->limitTx(TxContext{m_epoch, m_connection, next},
       m_config.sequenceLimit, m_limits.controlHeadroom);
   }
 
@@ -361,20 +359,20 @@ private:
     m_epoch = nextEpoch;
     m_limitNotified = false;
     m_resetTicket = m_resetEpoch = m_resetID = 0;
-    impl()->resetTx_(TxContext{epoch, m_connection, 0}, nextEpoch, previous, id);
+    impl()->resetTx(TxContext{epoch, m_connection, 0}, nextEpoch, previous, id);
     if (m_attached) checkLimit();
   }
 
   void postReset() {
     m_resetTicket = ++m_ticket;
-    impl()->txPost_(TxTask::Reset, m_resetTicket);
+    impl()->txPost(TxTask::Reset, m_resetTicket);
   }
 
   void failReset(Fmt::Error error) {
     auto nextEpoch = m_resetEpoch;
     auto id = m_resetID;
     m_resetTicket = m_resetEpoch = m_resetID = 0;
-    impl()->resetFailedTx_(TxContext{m_epoch, m_connection, 0}, nextEpoch, id, error);
+    impl()->resetFailedTx(TxContext{m_epoch, m_connection, 0}, nextEpoch, id, error);
   }
 
   void resetNext() {
@@ -393,18 +391,18 @@ private:
     return true;
   }
 
-  bool validReloadTx_(const TxHistory &history, uint64_t key, bool replay) {
+  bool validReloadTx(const TxHistory &history, uint64_t key, bool replay) {
     if (history.body && history.epoch == m_epoch && history.seqNo == key &&
 	key && key < Base::next_() && (!replay || *history.originalTime)) return true;
-    impl()->errorTx_(TxContext{m_epoch, m_connection, key, replay},
+    impl()->errorTx(TxContext{m_epoch, m_connection, key, replay},
       {Fmt::ErrorCode::Value, 34});
     return false;
   }
 
-  ZmRef<Msg> reloadMsgTx_(TxHistory history) {
+  ZmRef<Msg> reloadMsgTx(TxHistory history) {
     uint64_t charge = history.body->size + sizeof(Msg);
     if (!room(history.body, charge)) {
-      impl()->errorTx_(TxContext{m_epoch, m_connection, history.seqNo},
+      impl()->errorTx(TxContext{m_epoch, m_connection, history.seqNo},
 	{Fmt::ErrorCode::Size});
       return nullptr;
     }
@@ -426,7 +424,7 @@ private:
 	(m_pending->data().history.body->administrative() &&
 	 (!m_attached || context.connection != m_connection))) {
       m_unloading = true;
-      if (impl()->unloadTx_(m_pending->data().history.body, context, m_loadTicket)) {
+      if (impl()->unloadTx(m_pending->data().history.body, context, m_loadTicket)) {
 	m_pending = nullptr;
 	m_unloading = false;
       }
@@ -444,36 +442,36 @@ private:
     return TxSelect::Accepted;
   }
 
-  void postTx_(unsigned kind, uint64_t ticket) { impl()->txPost_(kind, ticket); }
+  void postTx(unsigned kind, uint64_t ticket) { impl()->txPost(kind, ticket); }
 
-  bool publishTx_(Msg *msg, bool) {
+  bool publishTx(Msg *msg, bool) {
     auto &history = msg->data().history;
     // These controls belong to their original connection's first-send attempt.
     if (msg->data().connection != m_connection && history.body->administrative() &&
-	history.body->msgType() != "3") return gapTx_(Span{history.seqNo, 1});
+	history.body->msgType() != "3") return gapTx(Span{history.seqNo, 1});
     if (msg->data().connection == m_connection &&
 	history.body->msgType() == "A" && *history.originalTime) return true;
-    return publishTx_(history, false);
+    return publishTx(history, false);
   }
 
-  bool publishTx_(TxHistory &history, bool replay) {
+  bool publishTx(TxHistory &history, bool replay) {
     if (!m_attached || !Base::running_()) return false;
-    auto now = impl()->utcTx_();
+    auto now = impl()->utcTx();
     auto header = txHeader(m_config, history.seqNo, now,
       replay ? history.originalTime : ZuDateTime{});
     Fmt::Error error;
     auto frame = txFrame(*history.body, header, error, m_limits.codec);
     TxContext context{m_epoch, m_connection, history.seqNo, replay};
-    if (!frame) { ++m_stats.encodeErrors; impl()->errorTx_(context, error); return false; }
+    if (!frame) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     auto original = replay ? history.originalTime : now;
-    if (!impl()->frameTx_(history.body, context, ZuMv(frame), original)) {
+    if (!impl()->frameTx(history.body, context, ZuMv(frame), original)) {
       ++m_stats.outputRefused; return false;
     }
     if (!replay) history.originalTime = now;
     return true;
   }
 
-  bool gapTx_(const Span &gap) {
+  bool gapTx(const Span &gap) {
     if (!m_attached) return false;
     Session::Msg control;
     Session::SeqReset reset;
@@ -483,21 +481,21 @@ private:
     Fmt::Error error;
     auto body = TxBody::control(control, error, m_config.mode, m_limits.codec);
     TxContext context{m_epoch, m_connection, gap.key(), true};
-    if (!body) { ++m_stats.encodeErrors; impl()->errorTx_(context, error); return false; }
-    auto now = impl()->utcTx_();
+    if (!body) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
+    auto now = impl()->utcTx();
     auto output = txFrame(*body, txHeader(m_config, gap.key(), now, now), error, m_limits.codec);
-    if (!output) { ++m_stats.encodeErrors; impl()->errorTx_(context, error); return false; }
-    bool ok = impl()->frameTx_(ZuMv(body), context, ZuMv(output), now);
+    if (!output) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
+    bool ok = impl()->frameTx(ZuMv(body), context, ZuMv(output), now);
     if (!ok) ++m_stats.outputRefused;
     return ok;
   }
 
-  TxReload retrieveTx_(uint64_t key, uint64_t ackd, uint64_t ticket, bool replay) {
-    return impl()->historyTx_(TxContext{m_epoch, m_connection, key, replay}, ackd, ticket);
+  TxReload retrieveTx(uint64_t key, uint64_t ackd, uint64_t ticket, bool replay) {
+    return impl()->historyTx(TxContext{m_epoch, m_connection, key, replay}, ackd, ticket);
   }
 
-  void archiveTx_(uint64_t begin, uint64_t end) {
-    impl()->historyArchive_(m_epoch, begin, end);
+  void archiveTx(uint64_t begin, uint64_t end) {
+    impl()->historyArchive(m_epoch, begin, end);
   }
 
   const TxConfig	m_config;

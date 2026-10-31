@@ -15,16 +15,14 @@ static Error prefix(ZuCSpan input, unsigned offset, Token &out)
   auto first = input[offset];
   if (first < '1' || first > '9')
     return {ErrorCode::Tag, 0, offset};
-  unsigned tag = 0;
-  while (offset < n) {
-    unsigned c = unsigned(input[offset]);
-    if (c == '=') { out.tag = tag; out.offset = offset + 1; return {}; }
-    if (c < '0' || c > '9' || tag > (UINT_MAX - (c - '0'))/10)
-      return {ErrorCode::Tag, tag, start};
-    tag = tag * 10 + c - '0';
-    ++offset;
-  }
-  return {ErrorCode::Truncated, tag, start};
+  // At most the decimal width of unsigned; a uint64_t scan cannot overflow.
+  uint64_t tag;
+  offset += Zu_nscan<ZuFmt::Right<Zu_ntoa::Log10_MaxLog<sizeof(unsigned)>::N>>::atou(
+    tag, input.data() + offset, n - offset);
+  if (tag > UINT_MAX) return {ErrorCode::Tag, unsigned(tag/10), start};
+  if (offset == n) return {ErrorCode::Truncated, unsigned(tag), start};
+  if (input[offset] != '=') return {ErrorCode::Tag, unsigned(tag), start};
+  out.tag = unsigned(tag); out.offset = offset + 1; return {};
 }
 
 ZfixFmtExtern Error scan(ZuCSpan input, unsigned offset, Token &out)
@@ -50,6 +48,25 @@ ZfixFmtExtern Error scanData(
     return {ErrorCode::Pair, tag, out.offset + length};
   out.length = length;
   out.next = out.offset + length + 1;
+  return {};
+}
+
+Error inspect(ZuCSpan input, unsigned tag, FieldPos &out, Limits limits, unsigned offset)
+{
+  out = {UINT_MAX, 0};
+  if (input.length() > limits.frameBytes) return {ErrorCode::Size};
+  unsigned n = input.length();
+  while (offset < n) {
+    Token token;
+    if (auto error = scan(input, offset, token)) return error;
+    if (token.length > limits.fieldBytes)
+      return {ErrorCode::Size, token.tag, token.offset};
+    if (token.tag == tag) {
+      if (out.offset != UINT_MAX) return {ErrorCode::Duplicate, tag, token.offset};
+      out = {token.offset, token.length};
+    }
+    offset = token.next;
+  }
   return {};
 }
 
@@ -189,11 +206,7 @@ void Sink::entry(unsigned offset, unsigned &delimiter)
   if (failed()) return;
   if (offset == m_used) { fail(ErrorCode::Group); return; }
   unsigned tag = 0;
-  while (offset < m_used) {
-    char c = m_storage[offset++];
-    if (c == '=') break;
-    tag = tag * 10 + unsigned(c - '0');
-  }
+  Zu_nscan<>::atou(tag, m_storage.data() + offset, m_used - offset);
   if (delimiter && delimiter != tag) { fail(ErrorCode::Group); return; }
   delimiter = tag;
 }

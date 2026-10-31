@@ -24,10 +24,17 @@
 #include <zlib/ZfixNotice.hh>
 #include <zlib/ZfixSeq.hh>
 #include <zlib/ZfixLinkState.hh>
-#include <zlib/ZfixCheckpoint.hh>
 #include <zlib/ZfixStats.hh>
 
 namespace Zfix {
+
+// Exclusive cursors and range end, read from the link's Rx queue.
+struct RxProgress {
+  uint64_t	received = 1;
+  uint64_t	processed = 1;
+  uint64_t	gapBegin = 0;
+  uint64_t	gapEnd = 0;
+};
 
 struct RxLimits {
   Fmt::Limits	codec;
@@ -49,13 +56,13 @@ ZfixExtern int rejectReason(Fmt::Error);
 // only in sequence, through the same typed MessageHandler as standalone users.
 //
 // Impl hooks:
-// eventRx_(SessionEvent, ZmRef<Msg>) - fixed event + retained input handle;
-// rejectRx_(ZmRef<Msg>, tag, reason) - emit Session::Reject using input reference context;
-// resendRx_(begin, end, ZmRef<Msg>) - post a replay request to Tx;
-// sessionRx_(ZmRef<Msg>) - observe other ordered controls, including peer Session::Reject;
-// businessRx_(Msg *, Fmt::Limits) -> Fmt::Error - validate/decode before application dispatch;
-// rxPost_(ticket), gapArm_(ticket), gapCancel_() - owner scheduling hooks;
-// nowRx_() -> ZuTime - current injected monotonic time.
+// eventRx(SessionEvent, ZmRef<Msg>) - fixed event + retained input handle;
+// rejectRx(ZmRef<Msg>, tag, reason) - emit Session::Reject using input reference context;
+// resendRx(begin, end, ZmRef<Msg>) - post a replay request to Tx;
+// sessionRx(ZmRef<Msg>) - observe other ordered controls, including peer Session::Reject;
+// businessRx(Msg *, Fmt::Limits) -> Fmt::Error - validate/decode before application dispatch;
+// rxPost(ticket), gapArm(ticket), gapCancel() - owner scheduling hooks;
+// nowRx() -> ZuTime - current injected monotonic time.
 template <typename Impl> class Rx : private SeqRx<Rx<Impl>, RxQueue> {
   using Base = SeqRx<Rx<Impl>, RxQueue>;
 friend Base;
@@ -98,21 +105,12 @@ public:
       gap.length() ? uint64_t(gap.key()) + gap.length() : 0};
   }
 
-  bool snapshot_(Checkpoint &state) const {
-    if (m_session.config_().mode == Transport::Raw ||
-	!stampState(state, m_session.config_().id, m_session.epoch_())) return false;
-    state.rx = progress_();
-    state.fields |= StateMask::Rx;
-    return true;
-  }
-
-  bool restore_(const Checkpoint &state) {
-    if (m_session.config_().mode == Transport::Raw || m_session.connection_() ||
-	m_session.state_() != State::Disconnected ||
-	m_first || !stateMatches(state, m_session.config_().id, m_session.epoch_())) return false;
-    if (!(state.fields & StateMask::Rx)) return true;
-    RxProgress p;
-    if (!restoreRx(state, progress_(), m_session.config_().sequenceLimit, p)) return false;
+  // Progress belongs to this link's Rx queue. Restore before opening activity.
+  bool restore_(uint64_t epoch, const RxProgress &p) {
+    if (!epoch || epoch != m_session.epoch_() ||
+	m_session.config_().mode == Transport::Raw || m_session.connection_() ||
+	m_session.state_() != State::Disconnected || m_first ||
+	(p.gapBegin ? p.gapEnd <= p.gapBegin : p.gapEnd != 0)) return false;
     if (m_session.resetOnOpen_() && (p.received != 1 || p.processed != 1 || p.gapBegin))
       return false;
     return Base::restore_(p.received, p.processed,
@@ -171,7 +169,7 @@ public:
   bool drainBegin_(uint64_t connection, ZuTime now) {
     auto e = m_session.drain_(connection, now);
     bool accepted = e.actions & SessionAction::Drain;
-    if (accepted && !impl()->workIdleRx_()) {
+    if (accepted && !impl()->workIdleRx()) {
       auto recovery = m_session.recovery_(connection, false, m_session.txDone_(), now);
       recovery.actions |= e.actions; e = recovery;
     }
@@ -200,7 +198,7 @@ public:
     apply(e); return true;
   }
 
-  void epochRx_(uint64_t, uint64_t, uint64_t, RxProgress) { }
+  void epochRx(uint64_t, uint64_t, uint64_t, RxProgress) { }
 
   void probe_(uint64_t connection, ZuTime now) { apply(m_session.probe_(connection, now)); }
 
@@ -211,7 +209,7 @@ public:
 
   void workDone_() { recovered(); }
 
-  bool workIdleRx_() const { return true; }
+  bool workIdleRx() const { return true; }
 
   void closed_(uint64_t connection) { apply(m_session.closed_(connection)); }
 
@@ -242,7 +240,7 @@ public:
 	auto e = m_session.resetReady_(context.connection, notice.nextEpoch, now, associated);
 	e.ticket = notice.request;
 	m_logonGap = 0;
-	impl()->epochRx_(m_session.connection_(), context.epoch, notice.nextEpoch, previous);
+	impl()->epochRx(m_session.connection_(), context.epoch, notice.nextEpoch, previous);
 	emit(e);
 	break;
       }
@@ -282,12 +280,12 @@ public:
     return receive(connection, ZuMv(msg), now, utc);
   }
 
-  void stateChangeRx_(SessionEvent) { }
-  void peerRejectRx_(PeerReject) { }
-  bool rawRx_(uint64_t, ZmRef<Msg>, ZuTime, ZuDateTime) { return false; }
-  Fmt::Error businessRx_(Msg *, Fmt::Limits) { return {Fmt::ErrorCode::Unresolved, 35}; }
+  void stateChangeRx(SessionEvent) { }
+  void peerRejectRx(PeerReject) { }
+  bool rawRx(uint64_t, ZmRef<Msg>, ZuTime, ZuDateTime) { return false; }
+  Fmt::Error businessRx(Msg *, Fmt::Limits) { return {Fmt::ErrorCode::Unresolved, 35}; }
 
-  Fmt::Error headerRx_(const Fmt::FrameView &frame, Fmt::Header &header, Fmt::Limits limits) {
+  Fmt::Error headerRx(const Fmt::FrameView &frame, Fmt::Header &header, Fmt::Limits limits) {
     return Fmt::readHeader(frame, header, limits);
   }
 
@@ -309,7 +307,7 @@ private:
 
   unsigned receive(uint64_t connection, ZmRef<Msg> msg, ZuTime now, ZuDateTime utc) {
     if (m_session.config_().mode == Transport::Raw)
-      return impl()->rawRx_(connection, ZuMv(msg), now, utc) ?
+      return impl()->rawRx(connection, ZuMv(msg), now, utc) ?
 	RxResult::Accepted : RxResult::Refused;
     auto state = m_session.state_();
     if (connection != m_session.connection_() || state == State::Disconnected ||
@@ -331,7 +329,7 @@ private:
 	input.trailer, m_limits.codec);
     else {
       input.trailer = input.frame.trailer;
-      input.error = impl()->headerRx_(input.frame, input.header, m_limits.codec);
+      input.error = impl()->headerRx(input.frame, input.header, m_limits.codec);
     }
     if (input.error) ++m_stats.decodeErrors;
     input.fault = m_session.validateHeader_(input.header, input.utc);
@@ -369,7 +367,7 @@ private:
   auto impl() const { return static_cast<const Impl *>(this); }
 
   void reject(ZmRef<Msg> msg, unsigned tag, int reason) {
-    ++m_stats.rejectsOut; impl()->rejectRx_(ZuMv(msg), tag, reason);
+    ++m_stats.rejectsOut; impl()->rejectRx(ZuMv(msg), tag, reason);
   }
 
   void emit(SessionEvent e, Msg *msg = nullptr) {
@@ -377,8 +375,8 @@ private:
       ++m_stats.faults; if (e.error == SessionError::Overload) ++m_stats.overloads;
     }
     if (e.actions & SessionAction::RequestGap) ++m_stats.gaps;
-    if (e.actions & SessionAction::Changed) impl()->stateChangeRx_(e);
-    if (e.actions) impl()->eventRx_(e, ZmRef<Msg>{msg});
+    if (e.actions & SessionAction::Changed) impl()->stateChangeRx(e);
+    if (e.actions) impl()->eventRx(e, ZmRef<Msg>{msg});
   }
 
   void apply(SessionEvent e, Msg *input = nullptr) {
@@ -393,7 +391,7 @@ private:
     auto msg = m_first;
     auto &input = msg->data();
     auto e = m_session.peerLogon_(m_session.connection_(), input.header,
-      input.control.template p<Session::Logon>(), Base::expected_(), impl()->nowRx_());
+      input.control.template p<Session::Logon>(), Base::expected_(), impl()->nowRx());
     if (e.state == State::Established) {
       e.actions &= ~SessionAction::RequestGap; // ZmPQRx owns gap notifications.
       if (m_session.config_().mode == Transport::FIX44A && input.key() > Base::expected_())
@@ -411,7 +409,7 @@ private:
     auto result = Base::receive_(ZuMv(msg));
     if (result != SeqResult::Accepted) {
       apply(m_session.fault_(m_session.connection_(), SessionError::Overload, 0,
-	impl()->nowRx_(), false));
+	impl()->nowRx(), false));
       return;
     }
     if (!immediate) Base::resume_();
@@ -426,20 +424,20 @@ private:
     if (input.key() < Base::expected_()) {
       if (!input.header.possDup) {
 	apply(m_session.fault_(m_session.connection_(), SessionError::Sequence, 34,
-	  impl()->nowRx_(), true));
+	  impl()->nowRx(), true));
 	return RxResult::Refused;
       }
       if (input.fault) {
 	reject(msg, input.fault.tag, input.fault.reason);
 	if (input.fault.fatal) apply(m_session.fault_(m_session.connection_(),
-	  input.fault.error, input.fault.tag, impl()->nowRx_(), true));
+	  input.fault.error, input.fault.tag, impl()->nowRx(), true));
       }
       ++m_stats.duplicates; ++m_stats.ignored; return RxResult::Ignored;
     }
     bool high = input.key() > Base::expected_();
     if (high && input.fault && input.fault.fatal) {
       apply(m_session.fault_(m_session.connection_(), input.fault.error,
-	input.fault.tag, impl()->nowRx_(), true));
+	input.fault.tag, impl()->nowRx(), true));
       return RxResult::Refused;
     }
     m_receiving = true;
@@ -449,12 +447,12 @@ private:
       case SeqResult::Accepted:
 	if (high && m_session.state_() == State::Established) {
 	  emit(m_session.recovery_(m_session.connection_(), false,
-	    m_session.txDone_(), impl()->nowRx_()));
+	    m_session.txDone_(), impl()->nowRx()));
 	  if (!input.error && !input.fault) early(msg);
 	}
 	if (m_deferredGap.length()) {
 	  auto gap = m_deferredGap; m_deferredGap = {};
-	  requestRx_({}, gap);
+	  requestRx({}, gap);
 	}
 	recovered();
 	return RxResult::Accepted;
@@ -462,7 +460,7 @@ private:
 	++m_stats.duplicates; ++m_stats.ignored; return RxResult::Ignored;
       default:
 	apply(m_session.fault_(m_session.connection_(), SessionError::Overload, 0,
-	  impl()->nowRx_(), false));
+	  impl()->nowRx(), false));
 	return RxResult::Overload;
     }
   }
@@ -498,10 +496,10 @@ private:
     if (next < Base::expected_() || !Base::advance_(next)) {
       reject(ZmRef<Msg>{msg}, 36, 5); return;
     }
-    impl()->sessionRx_(ZmRef<Msg>{msg});
+    impl()->sessionRx(ZmRef<Msg>{msg});
   }
 
-  void processRx_(Msg *msg) {
+  void processRx(Msg *msg) {
     auto &input = msg->data();
     if (input.epoch != m_session.epoch_()) return;
     if (input.fault || input.error) {
@@ -510,7 +508,7 @@ private:
       if (input.error && input.error.tag == tag) reason = rejectReason(input.error);
       reject(ZmRef<Msg>{msg}, tag, reason);
       if (input.fault.fatal) apply(m_session.fault_(input.connection,
-	input.fault.error, tag, impl()->nowRx_(), true));
+	input.fault.error, tag, impl()->nowRx(), true));
       return;
     }
     m_session.activity_(input.connection, input.received);
@@ -535,28 +533,28 @@ private:
 	auto &reset = control.template p<Session::SeqReset>();
 	if (reset.newSeqNo <= input.key() || !Base::advance_(reset.newSeqNo))
 	  reject(ZmRef<Msg>{msg}, 36, 5);
-	else impl()->sessionRx_(ZmRef<Msg>{msg});
+	else impl()->sessionRx(ZmRef<Msg>{msg});
 	break;
       }
       case Session::Msg::Index<Session::Logout>{}: {
 	if (input.connection == m_session.connection_()) {
-	  auto e = m_session.peerLogout_(m_session.connection_(), impl()->nowRx_());
+	  auto e = m_session.peerLogout_(m_session.connection_(), impl()->nowRx());
 	  if (input.logoutReply) e.actions &= ~SessionAction::Observe;
 	  apply(e, msg);
-	} else if (!input.logoutReply) impl()->sessionRx_(ZmRef<Msg>{msg});
+	} else if (!input.logoutReply) impl()->sessionRx(ZmRef<Msg>{msg});
 	break;
       }
       case Session::Msg::Index<Session::Logon>{}: reject(ZmRef<Msg>{msg}, 35, 11); break;
       case Session::Msg::Index<Session::Reject>{}:
 	++m_stats.rejectsIn;
-	impl()->sessionRx_(ZmRef<Msg>{msg});
-	impl()->peerRejectRx_(PeerReject{.buffer = input.buffer,
+	impl()->sessionRx(ZmRef<Msg>{msg});
+	impl()->peerRejectRx(PeerReject{.buffer = input.buffer,
 	  .context = {input.epoch, input.connection, input.header.seqNo},
 	  .message = control.template p<Session::Reject>(), .wire = input.frame.wire,
 	  .possDup = input.header.possDup});
 	break;
       default:
-	if (auto error = impl()->businessRx_(msg, m_limits.codec)) {
+	if (auto error = impl()->businessRx(msg, m_limits.codec)) {
 	  ++m_stats.decodeErrors; ++m_stats.hookFailures;
 	  input.error = error;
 	  reject(ZmRef<Msg>{msg}, error.tag, rejectReason(error));
@@ -566,14 +564,14 @@ private:
 
   void resend(uint64_t begin, uint64_t end, Msg *msg) {
     ++m_stats.replays;
-    emit(m_session.recovery_(m_session.connection_(), rxDone(), false, impl()->nowRx_()));
-    impl()->sessionRx_(ZmRef<Msg>{msg});
-    impl()->resendRx_(begin, end, ZmRef<Msg>{msg});
+    emit(m_session.recovery_(m_session.connection_(), rxDone(), false, impl()->nowRx()));
+    impl()->sessionRx(ZmRef<Msg>{msg});
+    impl()->resendRx(begin, end, ZmRef<Msg>{msg});
   }
 
   bool rxDone() const {
     return !Base::retained_() && Base::expected_() == Base::received_() &&
-      (!m_session.draining_() || impl()->workIdleRx_());
+      (!m_session.draining_() || impl()->workIdleRx());
   }
 
   void recovered() {
@@ -584,13 +582,13 @@ private:
     // cannot change it; gaps, drain and initial recovery take the full path.
     if (done && m_session.ready_()) return;
     emit(m_session.recovery_(m_session.connection_(), done,
-      m_session.txDone_(), impl()->nowRx_()));
+      m_session.txDone_(), impl()->nowRx()));
   }
 
   void requestGap(const Span &gap, bool force) {
     if (m_session.state_() != State::Established) return;
     auto e = m_session.recovery_(m_session.connection_(), false,
-      m_session.txDone_(), impl()->nowRx_());
+      m_session.txDone_(), impl()->nowRx());
     if (force || !m_logonGap || gap.key() + gap.length() > m_logonGap) {
       e.actions |= SessionAction::RequestGap;
       e.gapBegin = gap.key(); e.gapEnd = gap.key() + gap.length() - 1;
@@ -598,18 +596,18 @@ private:
     emit(e);
   }
 
-  void requestRx_(const Span &, const Span &gap) {
+  void requestRx(const Span &, const Span &gap) {
     if (m_receiving) { m_deferredGap = gap; return; }
     requestGap(gap, false);
   }
 
-  void reRequestRx_(const Span &gap) { requestGap(gap, true); }
+  void reRequestRx(const Span &gap) { requestGap(gap, true); }
 
-  void postRx_(uint64_t ticket) { impl()->rxPost_(ticket); }
+  void postRx(uint64_t ticket) { impl()->rxPost(ticket); }
 
-  void armGap_(uint64_t ticket) { impl()->gapArm_(ticket); }
+  void armGap(uint64_t ticket) { impl()->gapArm(ticket); }
 
-  void cancelGap_() { impl()->gapCancel_(); }
+  void cancelGap() { impl()->gapCancel(); }
 
   const RxLimits	m_limits;
 

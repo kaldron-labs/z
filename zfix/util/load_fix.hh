@@ -82,15 +82,15 @@ template <typename O, typename Fn> decltype(auto) mapping(const O &o, Fn &&fn) {
     return fn(ZuFacet::LoadScalar{});
   }
 }
-using Ack = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discriminator<150, "0">>;
-using Fill = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discriminator<150, "F">>;
-using Canceled = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discriminator<150, "4">>;
-using Replaced = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discriminator<150, "5">>;
-using NewOrder = Zfix::MT<Order, "D", ZuFacet::FIX, Zfix::NoDiscriminator, ZuTypeList<Ack,
+using Ack = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discrim<150, "0">>;
+using Fill = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discrim<150, "F">>;
+using Canceled = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discrim<150, "4">>;
+using Replaced = Zfix::MT<Report, "8", ZuFacet::FIX, Zfix::Discrim<150, "5">>;
+using NewOrder = Zfix::MT<Order, "D", ZuFacet::FIX, Zfix::NoDiscrim, ZuTypeList<Ack,
   Fill>>;
-using CancelOrder = Zfix::MT<Cancel, "F", ZuFacet::FIX, Zfix::NoDiscriminator,
+using CancelOrder = Zfix::MT<Cancel, "F", ZuFacet::FIX, Zfix::NoDiscrim,
   ZuTypeList<Canceled>>;
-using ReplaceOrder = Zfix::MT<Replace, "G", ZuFacet::FIX, Zfix::NoDiscriminator,
+using ReplaceOrder = Zfix::MT<Replace, "G", ZuFacet::FIX, Zfix::NoDiscrim,
   ZuTypeList<Replaced, Fill>>;
 using Dictionary = Zfix::MTList<NewOrder, Ack, Fill, CancelOrder, ReplaceOrder, Canceled,
   Replaced>;

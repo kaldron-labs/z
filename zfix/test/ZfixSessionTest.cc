@@ -46,19 +46,19 @@ static void liveness()
   ZuTestScope(liveness);
   Session::HeartBt heartbeat;
   ZuCheck((golden<ZuFacet::FIXEmpty>(heartbeat, {})));
-  constexpr auto wire = "112=opaque/001 abc\1"_z;
+  constexpr auto Wire = "112=opaque/001 abc\1"_z;
   Session::TestReq request;
-  ZuCheck(!load(request, wire));
+  ZuCheck(!load(request, Wire));
   heartbeat.testReqID = request.testReqID;
-  ZuCheck((golden(heartbeat, wire)));
-  ZuCheck((golden(request, wire)));
+  ZuCheck((golden(heartbeat, Wire)));
+  ZuCheck((golden(request, Wire)));
   ZuCheck(request.testReqID == "opaque/001 abc");
   ZuCheck(load(request, {}).code == ErrorCode::Required);
-  constexpr auto empty = "112=\1"_z;
-  ZuCheck(!load(request, empty) && request.testReqID.data() && !request.testReqID.length());
+  constexpr auto Empty = "112=\1"_z;
+  ZuCheck(!load(request, Empty) && request.testReqID.data() && !request.testReqID.length());
   ZuCheck(load(request, "112=a\1" "112=b\1"_z).code == ErrorCode::Duplicate);
   ZuCheck(load(request, "112=a\0b\1"_z).code == ErrorCode::Value);
-  auto h = handler<Session::TestReq>(wire);
+  auto h = handler<Session::TestReq>(Wire);
   auto p = h.alloc();
   ZuCheck(h.valid() && p && p->testReqID == "opaque/001 abc");
   delete p;
@@ -119,9 +119,9 @@ static void dispatch()
   ZuCheck(Session::type("0") == Session::Msg::Index<Session::HeartBt>{});
   ZuCheck(Session::type("5") == Session::Msg::Index<Session::Logout>{});
   ZuCheck(!Session::type("D") && !Session::type("AA") && !Session::type({}));
-  constexpr auto wire = "8=FIX.4.4\1" "9=60\1" "35=1\1" "49=S\1" "56=T\1" "34=7\1"
+  constexpr auto Wire = "8=FIX.4.4\1" "9=60\1" "35=1\1" "49=S\1" "56=T\1" "34=7\1"
     "52=20261026-12:34:56\1" "112=opaque/001 abc\1" "10=029\1"_z;
-  auto framed = frame(wire);
+  auto framed = frame(Wire);
   Session::Msg message;
   Header header;
   Trailer trailer;
@@ -135,7 +135,7 @@ static void dispatch()
   error = Session::read(invalid, message, header, trailer);
   ZuCheck(error.code == ErrorCode::Unresolved && message.is<void>());
   ZtArray<char, ZtArrayHeapID<"Zfix.SessionTest">> malformed;
-  malformed.length(wire.length() + sizeof("112=a\1"), false);
+  malformed.length(Wire.length() + sizeof("112=a\1"), false);
   FrameWriter bad{{malformed.data(), malformed.length()}, "FIX.4.4"};
   Header validHeader{.beginString = "FIX.4.4", .msgType = "1",
     .sender = "S", .target = "T", .seqNo = 7, .sendingTime = ZuDateTime{ZuDateTimeScan::FIX{},
@@ -156,9 +156,9 @@ static void writing()
   ZuTestScope(writing);
   Header header{.beginString = "FIX.4.4", .sender = "S", .target = "T",
     .seqNo = 7, .sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20261026-12:34:56"}};
-  constexpr auto maxBody = "98=0\1" "108=30\1" "141=N\1" "383=1048576\1"
+  constexpr auto MaxBody = "98=0\1" "108=30\1" "141=N\1" "383=1048576\1"
     "789=17\1" "1137=9\1"_z;
-  unsigned capacity = maxBody.length() + sizeof(
+  unsigned capacity = MaxBody.length() + sizeof(
     "8=FIX.4.4\1" "9=999\1" "35=A\1" "49=S\1" "56=T\1" "34=7\1"
     "52=20261026-12:34:56.123456789\1" "10=000\1") - 1;
   ZtArray<char, ZtArrayHeapID<"Zfix.SessionTest">> bytes;

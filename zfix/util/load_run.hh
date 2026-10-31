@@ -7,7 +7,8 @@
 #ifndef ZfixLoadRun_HH
 #define ZfixLoadRun_HH
 
-#include <stdio.h>
+#include <iostream>
+#include <zlib/ZuPrint.hh>
 #include <zlib/ZmTime.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfCLI.hh>
@@ -18,7 +19,7 @@ namespace ZfixLoad {
 
 struct Options {
   Text		host{"localhost"}, bind{"127.0.0.1"}, ports, cert, key, ca;
-  Text		id{"ZFIX"}, sender{"ZFIX-C"}, target{"ZFIX-S"};
+  Text		sender{"ZFIX-C"}, target{"ZFIX-S"};
   Mode::T	mode = Mode::FIX4;
   Version::T	version = Version::V4_4;
   Scenario::T	scenario = Scenario::Orders;
@@ -38,7 +39,6 @@ ZfStruct(, (Options, CLI), (host, (CLI::Long<"host">), String),
   (bind, (CLI::Long<"bind">), String), (port, (CLI::Long<"port">), UInt32),
   (ports, (CLI::Long<"ports">), String), (cert, (CLI::Long<"cert">), String),
   (key, (CLI::Long<"key">), String), (ca, (CLI::Long<"ca">), String),
-  (id, (CLI::Long<"id">), String),
   (sender, (CLI::Long<"sender">), String), (target, (CLI::Long<"target">), String),
   (mode, (CLI::Long<"mode">, Enum<Mode::CLI>), Int8),
   (version, (CLI::Long<"version">, Enum<Version::Wire>), Int8),
@@ -106,7 +106,7 @@ ZfStruct(, (Result, JSON), (event, , String), (engine, , String), (role, , Strin
   (nextTarget, , UInt64), (connections, , UInt32));
 template <typename T> void output(const T &value) {
   Text json; ZfJSON::save(json, value); json << '\n';
-  fwrite(json.data(), 1, json.length(), stdout); fflush(stdout);
+  std::cout << json << std::flush;
 }
 struct Clock { uint64_t operator()() const { return monotonic(); } };
 

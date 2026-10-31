@@ -3,7 +3,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/s
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 EXTRA_DIST = ZfixDemo.hh README.md SESSION.md
-noinst_PROGRAMS = ZfixLoadTest ZfixLoadFIXTest ZfixLoadRunTest ZfixDemoTest ZfixWorkTest ZfixSelectTest ZfixContextTest ZfixDispatchTest ZfixTraceTest ZfixIngressTest ZfixRawTest ZfixWireTest ZfixRxFramerTest ZfixDeclTest ZfixLinkTest ZfixCodecTest ZfixGroupTest ZfixUnionTest ZfixFrameTest ZfixSessionTest ZfixSeqTest ZfixSeqTxTest ZfixLinkStateTest ZfixRxTest ZfixTxMsgTest ZfixTxTest ZfixLinkTxTest ZfixManagedTest ZfixCheckpointTest
+noinst_PROGRAMS = ZfixLoadTest ZfixLoadFIXTest ZfixLoadRunTest ZfixDemoTest ZfixWorkTest ZfixSelectTest ZfixContextTest ZfixDispatchTest ZfixTraceTest ZfixIngressTest ZfixRawTest ZfixWireTest ZfixRxFramerTest ZfixDeclTest ZfixLinkTest ZfixCodecTest ZfixGroupTest ZfixUnionTest ZfixFrameTest ZfixSessionTest ZfixSeqTest ZfixSeqTxTest ZfixLinkStateTest ZfixRxTest ZfixTxMsgTest ZfixTxTest ZfixLinkTxTest ZfixManagedTest ZfixRestoreTest
 ZfixDemoTest_SOURCES = ZfixDemoTest.cc ZfixDemo.cc
 ZfixDemoTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixDemoTest_LDADD = $(ZfixLinkTest_LDADD)
@@ -39,9 +39,9 @@ ZfixCodecTest_SOURCES = ZfixCodecTest.cc
 ZfixGroupTest_SOURCES = ZfixGroupTest.cc
 ZfixUnionTest_SOURCES = ZfixUnionTest.cc
 ZfixFrameTest_SOURCES = ZfixFrameTest.cc
-ZfixCheckpointTest_SOURCES = ZfixCheckpointTest.cc
-ZfixCheckpointTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
-ZfixCheckpointTest_LDADD = $(ZfixRxTest_LDADD)
+ZfixRestoreTest_SOURCES = ZfixRestoreTest.cc
+ZfixRestoreTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
+ZfixRestoreTest_LDADD = $(ZfixRxTest_LDADD)
 ZfixManagedTest_SOURCES = ZfixManagedTest.cc
 ZfixManagedTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixManagedTest_LDADD = $(ZfixRxTest_LDADD)
@@ -77,13 +77,13 @@ ZfixLinkTest_LDADD = $(top_builddir)/zfix/src/libZfix.la $(ZfixDeclTest_LDADD)
 
 .PHONY: test
 test: all schema-test send-schema-test reply-schema-test
-	prove ./ZfixLoadTest ./ZfixLoadFIXTest ./ZfixLoadRunTest ./ZfixDemoTest ./ZfixWorkTest ./ZfixSelectTest ./ZfixContextTest ./ZfixDispatchTest ./ZfixTraceTest ./ZfixIngressTest ./ZfixRawTest ./ZfixWireTest ./ZfixRxFramerTest ./ZfixDeclTest ./ZfixLinkTest ./ZfixCodecTest ./ZfixGroupTest ./ZfixUnionTest ./ZfixFrameTest ./ZfixSessionTest ./ZfixSeqTest ./ZfixSeqTxTest ./ZfixLinkStateTest ./ZfixRxTest ./ZfixTxMsgTest ./ZfixTxTest ./ZfixLinkTxTest ./ZfixManagedTest ./ZfixCheckpointTest
+	prove ./ZfixLoadTest ./ZfixLoadFIXTest ./ZfixLoadRunTest ./ZfixDemoTest ./ZfixWorkTest ./ZfixSelectTest ./ZfixContextTest ./ZfixDispatchTest ./ZfixTraceTest ./ZfixIngressTest ./ZfixRawTest ./ZfixWireTest ./ZfixRxFramerTest ./ZfixDeclTest ./ZfixLinkTest ./ZfixCodecTest ./ZfixGroupTest ./ZfixUnionTest ./ZfixFrameTest ./ZfixSessionTest ./ZfixSeqTest ./ZfixSeqTxTest ./ZfixLinkStateTest ./ZfixRxTest ./ZfixTxMsgTest ./ZfixTxTest ./ZfixLinkTxTest ./ZfixManagedTest ./ZfixRestoreTest
 
 # Recompile the boundary consumers using only installed Z headers/libraries.
 # Override ZFIX_PREFIX to point at a staged installation.
 ZFIX_PREFIX = $(prefix)
 CLEANFILES = ZfixInstRawTest ZfixInstWireTest ZfixInstRxFramerTest ZfixInstDeclTest ZfixInstLinkTest ZfixInstCodecTest \
-	ZfixInstGroupTest ZfixInstUnionTest ZfixInstFrameTest ZfixInstSessionTest ZfixInstSeqTest ZfixInstSeqTxTest ZfixInstLinkStateTest ZfixInstRxTest ZfixInstTxMsgTest ZfixInstTxTest ZfixInstLinkTxTest ZfixInstManagedTest ZfixInstCheckpointTest
+	ZfixInstGroupTest ZfixInstUnionTest ZfixInstFrameTest ZfixInstSessionTest ZfixInstSeqTest ZfixInstSeqTxTest ZfixInstLinkStateTest ZfixInstRxTest ZfixInstTxMsgTest ZfixInstTxTest ZfixInstLinkTxTest ZfixInstManagedTest ZfixInstRestoreTest
 .PHONY: installed-test
 installed-test:
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
@@ -106,7 +106,7 @@ installed-test:
 	    -lZfixFmt -lZf -lZe -lZt -lZm -lZu \
 	    @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInst$${zfix_test}Test || exit $$?; \
 	done
-	@for zfix_test in Raw Session LinkState Rx RxFramer Wire TxMsg Tx LinkTx Managed Checkpoint; do \
+	@for zfix_test in Raw Session LinkState Rx RxFramer Wire TxMsg Tx LinkTx Managed Restore; do \
 	  $(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
 	    -I$(ZFIX_PREFIX)/include $(srcdir)/Zfix$${zfix_test}Test.cc \
 	    -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
@@ -115,7 +115,7 @@ installed-test:
 	done
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" \
 	  prove ./ZfixInstRawTest ./ZfixInstWireTest ./ZfixInstRxFramerTest ./ZfixInstDeclTest ./ZfixInstLinkTest ./ZfixInstCodecTest \
-	    ./ZfixInstGroupTest ./ZfixInstUnionTest ./ZfixInstFrameTest ./ZfixInstSessionTest ./ZfixInstSeqTest ./ZfixInstSeqTxTest ./ZfixInstLinkStateTest ./ZfixInstRxTest ./ZfixInstTxMsgTest ./ZfixInstTxTest ./ZfixInstLinkTxTest ./ZfixInstManagedTest ./ZfixInstCheckpointTest
+	    ./ZfixInstGroupTest ./ZfixInstUnionTest ./ZfixInstFrameTest ./ZfixInstSessionTest ./ZfixInstSeqTest ./ZfixInstSeqTxTest ./ZfixInstLinkStateTest ./ZfixInstRxTest ./ZfixInstTxMsgTest ./ZfixInstTxTest ./ZfixInstLinkTxTest ./ZfixInstManagedTest ./ZfixInstRestoreTest
 
 # Check a positive fixture first so toolchain/include failures cannot count as
 # successful schema rejection. Each negative case instantiates Schema itself.
@@ -157,8 +157,8 @@ fuzz-build:
 
 # Instrument the codec and conversion consumers without changing the configured
 # foundation build. Full dependency instrumentation remains a separate clean run.
-CLEANFILES += ZfixAsanRawTest ZfixAsanWireTest ZfixAsanRxFramerTest ZfixAsanCodecTest ZfixAsanGroupTest ZfixAsanUnionTest ZfixAsanFrameTest ZfixAsanSessionTest ZfixAsanSeqTest ZfixAsanSeqTxTest ZfixAsanLinkStateTest ZfixAsanRxTest ZfixAsanTxMsgTest ZfixAsanTxTest ZfixAsanLinkTxTest ZfixAsanManagedTest ZfixAsanCheckpointTest
-ASAN_TESTS = Raw Wire RxFramer Codec Group Union Frame Session Seq SeqTx LinkState Rx TxMsg Tx LinkTx Managed Checkpoint
+CLEANFILES += ZfixAsanRawTest ZfixAsanWireTest ZfixAsanRxFramerTest ZfixAsanCodecTest ZfixAsanGroupTest ZfixAsanUnionTest ZfixAsanFrameTest ZfixAsanSessionTest ZfixAsanSeqTest ZfixAsanSeqTxTest ZfixAsanLinkStateTest ZfixAsanRxTest ZfixAsanTxMsgTest ZfixAsanTxTest ZfixAsanLinkTxTest ZfixAsanManagedTest ZfixAsanRestoreTest
+ASAN_TESTS = Raw Wire RxFramer Codec Group Union Frame Session Seq SeqTx LinkState Rx TxMsg Tx LinkTx Managed Restore
 .PHONY: asan-test
 asan-test:
 	@for zfix_test in $(ASAN_TESTS); do \
@@ -166,21 +166,21 @@ asan-test:
 	  case $$zfix_test in \
 	    Raw) zfix_extra="$(top_srcdir)/zfix/src/ZfixRaw.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
-	    Wire) zfix_extra="$(top_srcdir)/zfix/src/ZfixWire.cc $(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixCheckpoint.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
+	    Wire) zfix_extra="$(top_srcdir)/zfix/src/ZfixWire.cc $(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
 	    RxFramer) zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
 	    LinkState) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc";; \
-	    Checkpoint) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixCheckpoint.cc"; \
+	    Restore) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
-	    Managed) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixCheckpoint.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
+	    Managed) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
-	    LinkTx) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixCheckpoint.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
+	    LinkTx) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixLinkTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
-	    Tx) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc $(top_srcdir)/zfix/src/ZfixCheckpoint.cc"; \
+	    Tx) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixTxMsg.cc $(top_srcdir)/zfix/src/ZfixTx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
 	    TxMsg) zfix_extra="$(top_srcdir)/zfix/src/ZfixTxMsg.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
-	    Rx) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc $(top_srcdir)/zfix/src/ZfixCheckpoint.cc"; \
+	    Rx) zfix_extra="$(top_srcdir)/zfix/src/ZfixLinkState.cc $(top_srcdir)/zfix/src/ZfixRx.cc"; \
 	      zfix_extra_cpp="-I$(top_srcdir)/zi/src"; zfix_extra_lib="$(top_builddir)/zi/src/libZi.la";; \
 	  esac; \
 	  $(LIBTOOL) --tag=CXX --mode=link $(CXX) $(DEFS) $(AM_CPPFLAGS) \

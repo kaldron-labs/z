@@ -114,10 +114,10 @@ TraceRef WireTrace::capture_(ZuCSpan wire, const Fmt::FrameView *known,
       else escaped(out, {wire.data() + token.offset, token.length});
       out << "\\x01";
       if (field.dataTag) {
-	uint128_t length; bool negative;
+	unsigned length; bool negative;
 	if (!Fmt::integer<32, false>(
 	      {wire.data() + token.offset, token.length}, length, negative) ||
-	    Fmt::scanData(wire, token.next, field.dataTag, unsigned(length), token)) {
+	    Fmt::scanData(wire, token.next, field.dataTag, length, token)) {
 	  out << "<malformed>"; break;
 	}
 	auto dataField = traceBuiltin(type, token.tag);

@@ -256,7 +256,7 @@ def pair_cases(smoke=False, canonical=False, workflows=False, names=None):
     if not smoke:
         cases += [("sessions", [], 17, 3, 3, False),
                   ("retention", ["--retain", "2"], 37, 5, 1, False),
-                  ("groups", ["--scenario", "groups", "--text", "24", "--binary", "4096"],
+                  ("groups", ["--scenario", "groups", "--text", "24"],
                    9, 2, 2, False),
                   ("paced", ["--rate", "20"], 6, 2, 2, False),
                   ("duration", ["--rate", "50", "--duration", "1"], 1000, 2, 1, False)]

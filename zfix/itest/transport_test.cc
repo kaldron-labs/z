@@ -4,6 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <iostream>
 #include <stdlib.h>
 #ifdef __linux__
 #include <errno.h>
@@ -36,10 +37,10 @@ namespace Net = Ztcp;
 
 using namespace ZuTestUtil;
 
-constexpr auto wire = "8=FIX.4.4\1" "9=18\1" "35=D\1" "95=4\1" "96=A\1\0=\1" "10=247\1"_z;
+constexpr auto Wire = "8=FIX.4.4\1" "9=18\1" "35=D\1" "95=4\1" "96=A\1\0=\1" "10=247\1"_z;
 static ZmRef<ZiIOBuf> makePacket(unsigned payload) {
   if (!payload) {
-    ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>; buf->append(wire); return buf;
+    ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>; buf->append(Wire); return buf;
   }
   Zfix::TxFrame frame{"FIX.4.4"}; auto &out = frame.body();
   out.field(35); out << 'D'; out.end();
@@ -151,7 +152,7 @@ struct Output : public Zfix::WireTx<Output<Link>> {
     Base::flush_();
   }
 
-  ZmRef<Zfix::WireBuf> recordAlloc_(unsigned head) {
+  ZmRef<Zfix::WireBuf> recordAlloc(unsigned head) {
     using Alloc = typename Link::TxBufAlloc;
     ZmRef<Zfix::WireBuf> buf = new Alloc{link};
     buf->skip = head;
@@ -161,9 +162,9 @@ struct Output : public Zfix::WireTx<Output<Link>> {
     return buf;
   }
 
-  bool recordSend_(ZmRef<ZiIOBuf> buf) { return link->sendRecord_(ZuMv(buf)); }
+  bool recordSend(ZmRef<ZiIOBuf> buf) { return link->sendRecord_(ZuMv(buf)); }
 
-  void outputDone_(Zfix::TxBody::Ref, Zfix::TxContext context, bool ok) {
+  void outputDone(Zfix::TxBody::Ref, Zfix::TxContext context, bool ok) {
     link->app()->txRun([this, context, ok] {
       if (!link->app()->txInvoked() || (!ok
 	&& !link->app()->state->abort)) link->app()->state->fail();
@@ -403,8 +404,8 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
 #else
     ZuCheck(state.shortWrites.load_());
 #endif
-    fprintf(stderr, "# native writes: short=%u EAGAIN=%u close=%u\n",
-      state.shortWrites.load_(), state.wouldBlock.load_(), unsigned(abort));
+    log("# native writes: short=", state.shortWrites.load_(), " EAGAIN=",
+      state.wouldBlock.load_(), " close=", unsigned(abort));
     if (abort) ZuCheck(!state.received.load_());
   }
 }
@@ -423,7 +424,7 @@ struct SwapState {
   bool			checkLate = false; // immutable before workers start
 
   void fail(unsigned line = __builtin_LINE()) {
-    fprintf(stderr, "# native replacement failure line=%u\n", line);
+    log("# native replacement failure line=", line);
     ++errors; response.post();
   }
 };
@@ -478,7 +479,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Cli"> ZmNHeapID(Link *);
       }, bytes);
     if (n < 0) { app()->state->fail(); return -1; }
     if (!n) return 0;
-    if (ZuCSpan{bytes->cspan()} != ZuCSpan{wire}) { app()->state->fail(); return -1; }
+    if (ZuCSpan{bytes->cspan()} != ZuCSpan{Wire}) { app()->state->fail(); return -1; }
     ++app()->state->replies; app()->state->response.post(); return 1;
   }
 };
@@ -544,7 +545,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Srv"> ZmNHeapID(Link *);
 
   void write() {
     app()->txRun([this] {
-      auto output = this->txStream_(); output << wire;
+      auto output = this->txStream_(); output << Wire;
 #ifndef ZFIX_TEST_TLS
       auto s = app()->state;
       if (s->protectNext.xch(0)) {
@@ -574,9 +575,9 @@ friend inline ZuStringT<"Zfix.TransportSwap.Srv"> ZmNHeapID(Link *);
       if (!prefixSeen) { prefixSeen = true; app()->state->prefix.post(); }
       return 0;
     }
-    if (ZuCSpan{bytes->cspan()} != ZuCSpan{wire}) { app()->state->fail(); return -1; }
+    if (ZuCSpan{bytes->cspan()} != ZuCSpan{Wire}) { app()->state->fail(); return -1; }
     app()->txRun([this] {
-      auto output = this->txStream_(); output << wire;
+      auto output = this->txStream_(); output << Wire;
       if (!output.flush()) app()->state->fail();
     });
     return 1;
@@ -655,7 +656,7 @@ void SwapSrv::checkClosed(ZmRef<ZiConnection> cxn) {
     using Alloc = ZiTxBufAlloc<ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
       "Zfix.TransportSwap.Late">;
     ZmRef<ZiTxBuf> buf = new Alloc;
-    if (!buf->append(wire)) { s->fail(); return; }
+    if (!buf->append(Wire)) { s->fail(); return; }
     // ZiConnection::send invokes its real I/O-context starter inline on this
     // socket's I/O Tx owner. A down socket must not repopulate any Tx queue.
     ClosedOutput output{cxn.ptr()}; output.send(ZuMv(buf));
@@ -775,7 +776,7 @@ static void replacement(bool late = false, bool refuse = false,
 	}
 #ifdef ZFIX_TEST_TLS
 	auto oldStream = run->server.link->txStream();
-	if (stale) oldStream << wire;
+	if (stale) oldStream << Wire;
 #endif
 	connect(run->b.ptr());
 	if (protect) {
@@ -802,14 +803,14 @@ static void replacement(bool late = false, bool refuse = false,
 	  bool retired = swapWait(s.oldRetired); ZuCheck(retired);
 	  ZuCheck(!s.staleCloses.load_());
 	} else if (bReady && oldClosed) {
-	  unsigned half = wire.length()/2;
-	  run->b->write({wire.data(), half});
+	  unsigned half = Wire.length()/2;
+	  run->b->write({Wire.data(), half});
 	  bool prefix = swapWait(s.prefix); ZuCheck(prefix);
 	  run->server.release();
 	  bool retired = swapWait(s.oldRetired); ZuCheck(retired);
 	  ZuCheck(!s.staleCloses.load_());
 	  if (prefix && retired) {
-	    run->b->write({wire.data() + half, unsigned(wire.length()) - half});
+	    run->b->write({Wire.data() + half, unsigned(Wire.length()) - half});
 	    bool response = swapWait(s.response); ZuCheck(response && s.replies.load_() == 1);
 	  }
 	}
@@ -835,7 +836,7 @@ static void replacement(bool late = false, bool refuse = false,
   if (!clientStopped || !serverStopped) {
     // Do not destroy a still-running native owner to conceal broken accounting.
     // The final scope reports failure before main terminates this reproducer.
-    fprintf(stderr, "# native replacement physical accounting did not drain\n");
+    log("# native replacement physical accounting did not drain");
     swapUndrained = true; return;
   }
   run->client.final(); run->server.final(); run->mx.stop();
@@ -906,7 +907,7 @@ static void partialReplacement()
 	  bool retired = swapWait(s.oldRetired); ZuCheck(retired);
 	  ZuCheck(swapWait(s.lateChecked));
 	  if (bReady && oldClosed && retired) {
-	    run->b->write(wire);
+	    run->b->write(Wire);
 	    bool response = swapWait(s.response); ZuCheck(response && s.replies.load_() == 1);
 	  }
 	}
@@ -987,9 +988,9 @@ static void resetTxPolicy()
 	  if (bReady && error && oldClosed && retired) {
 	    timeval timeout{5, 0};
 	    ZuCheck(!setsockopt(b, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)));
-	    ZuCheck(::send(b, wire.data(), wire.length(), MSG_NOSIGNAL) == ssize_t(wire.length()));
+	    ZuCheck(::send(b, Wire.data(), Wire.length(), MSG_NOSIGNAL) == ssize_t(Wire.length()));
 	    ZtArray<uint8_t, ZtArrayHeapID<"Zfix.TransportSwap.Response">> response;
-	    response.length(wire.length());
+	    response.length(Wire.length());
 	    unsigned received = 0;
 	    while (received < response.length()) {
 	      auto n = ::recv(b, response.data() + received, response.length() - received, 0);
@@ -998,7 +999,7 @@ static void resetTxPolicy()
 	      received += unsigned(n);
 	    }
 	    ZuCheck((received == response.length() &&
-	      ZuCSpan{response.data(), response.length()} == ZuCSpan{wire}));
+	      ZuCSpan{response.data(), response.length()} == ZuCSpan{Wire}));
 	  }
 	}
       }
@@ -1042,6 +1043,6 @@ int main(int argc, char **argv) {
   ZuTestCall(partialReplacement);
   ZuTestCall(resetTxPolicy);
 #endif
-  if (swapUndrained) { fflush(stdout); fflush(stderr); _Exit(1); }
+  if (swapUndrained) { std::cout << std::flush; std::cerr << std::flush; _Exit(1); }
   return 0;
 }

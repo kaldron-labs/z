@@ -43,9 +43,9 @@ struct Tx : SeqTx<Tx, Queue> {
   using SeqTx::SeqTx;
   using SeqTx::admitted_;
 
-  void postTx_(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
+  void postTx(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
 
-  bool publishTx_(Msg *msg, bool replay) {
+  bool publishTx(Msg *msg, bool replay) {
     auto key = msg->data().seqNo;
     if (key == failAt) {
       if (stopOnFailure) hold_();
@@ -56,12 +56,12 @@ struct Tx : SeqTx<Tx, Queue> {
     return true;
   }
 
-  bool gapTx_(const Span &gap) {
+  bool gapTx(const Span &gap) {
     if (refuseGap) return false;
     gaps.push(gap.key()); gaps.push(gap.length()); return true;
   }
 
-  SeqReload<ZmRef<Msg>> retrieveTx_(uint64_t key, uint64_t, uint64_t ticket, bool replay) {
+  SeqReload<ZmRef<Msg>> retrieveTx(uint64_t key, uint64_t, uint64_t ticket, bool replay) {
     requests.push(key); requests.push(replay);
     if (holdLookup) { holdLookup = false; hold_(); }
     if (key == deferAt) { reloadTicket = ticket; return {{}, true}; }
@@ -69,7 +69,7 @@ struct Tx : SeqTx<Tx, Queue> {
     return {new Msg{Item{key + unsigned(badHistory), reloadBytes, value}}};
   }
 
-  void archiveTx_(uint64_t begin, uint64_t end) {
+  void archiveTx(uint64_t begin, uint64_t end) {
     archived.push(begin); archived.push(end);
     if (holdArchive) { holdArchive = false; hold_(); }
     if (ackOnArchive) {

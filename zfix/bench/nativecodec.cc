@@ -9,7 +9,7 @@
 #include "codec.hh"
 
 struct NativeCodec {
-  static constexpr auto	name = "zfix"_z;
+  static constexpr auto	Name = "zfix"_z;
   ZfixLoad::Text	storage;
 
   static ZuSpan<char> grow(void *owner, unsigned used, unsigned needed) {

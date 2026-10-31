@@ -65,7 +65,7 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Server"> ZmNHeapID(Link *);
   using Parent = Peer<Link, Zfix::SrvLink<ReplayServer, Link, Dictionary, Network>, false>;
   using Parent::Peer;
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions & SessionAction::Failure) state()->fail();
     if (e.actions & SessionAction::Replay) {
       if (e.replayBegin == 2) ++state()->requests;
@@ -75,14 +75,14 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Server"> ZmNHeapID(Link *);
     }
   }
 
-  void fixControlRx_(ZmRef<Msg> input) {
+  void fixControlRx(ZmRef<Msg> input) {
     const auto &control = input->data().control;
     if (!control.is<Session::ResendReq>()) return;
     // Later gaps can legitimately start at seq3 after seq2 has arrived.
     if (control.p<Session::ResendReq>().beginSeqNo == 2) ++state()->requests;
   }
 
-  void fixPublishedTx_(TxBody::Ref body, TxContext c, ZuDateTime original) {
+  void fixPublishedTx(TxBody::Ref body, TxContext c, ZuDateTime original) {
     dropFrame = false;
     if (!c.replay) {
       auto record = store->find(c.epoch, c.seqNo);
@@ -105,7 +105,7 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Server"> ZmNHeapID(Link *);
     }
   }
 
-  TxReload fixRetrieveTx_(TxContext c, uint64_t, uint64_t ticket) {
+  TxReload fixRetrieveTx(TxContext c, uint64_t, uint64_t ticket) {
     if (!app()->txInvoked() || !c.replay || c.epoch != 1) state()->fail();
     switch (c.seqNo) {
       case 2:
@@ -121,7 +121,7 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Server"> ZmNHeapID(Link *);
     }
   }
 
-  void fixArchiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
+  void fixArchiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
     auto s = state();
     if (!app()->txInvoked() || epoch != 1 || begin >= end ||
 	(s->archiveEnd && s->archiveEnd != begin)) s->fail();
@@ -132,12 +132,12 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Server"> ZmNHeapID(Link *);
     }
   }
 
-  void fixStopTx_(uint64_t) {
-    if (!snapshotTx_(store->tx)) state()->fail();
+  void fixStopTx(uint64_t) {
+    store->tx = this->txProgress_();
     queue.clean();
   }
 
-  void fixStoppedRx_(bool) { ++state()->serverStops; state()->serverStopped.post(); }
+  void fixStoppedRx(bool) { ++state()->serverStops; state()->serverStopped.post(); }
 };
 
 struct ReplayServer::Cxn : ZmNHeap<Cxn>, Link::Cxn {
@@ -187,21 +187,21 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Client"> ZmNHeapID(Link *);
 
   Link(ReplayClient *hub, bool first) : Parent{hub}, initial{first} { }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if ((e.actions & SessionAction::Failure) && !initial) state()->fail();
     if (!(e.actions & SessionAction::Ready) || readyConnection == e.connection) return;
     readyConnection = e.connection;
     (initial ? state()->initialReady : state()->done).post();
   }
 
-  Fmt::Error fixReceiveRx_(OrderMsg *, const Order &o, const RequestContext &context) {
+  Fmt::Error fixReceiveRx(OrderMsg *, const Order &o, const RequestContext &context) {
     if (initial || o.id != "repriced" || context.context().epoch != 1 ||
 	context.header().seqNo != 2 || !context.header().possDup ||
 	context.header().origSendingTime != state()->oldTime) state()->fail();
     ++state()->delivered; state()->selected.post(); return {};
   }
 
-  void fixStoppedRx_(bool) {
+  void fixStoppedRx(bool) {
     ++(initial ? state()->aStops : state()->bStops);
     state()->stopped(true);
   }
@@ -244,10 +244,10 @@ static void replayReplacement(unsigned mode, bool logoutA)
     attemptedA = true; connectPeer(a.ptr());
     bool ready = wait(state.initialReady) && wait(state.peerReady); ZuCheck(ready);
     if (!ready) break;
-    Checkpoint checkpoint;
+    Progress checkpoint;
     bool snapshot = ZmBlock<bool>{}([&client, &a, &checkpoint](auto wake) {
       client.rxRun([&a, &checkpoint, wake = ZuMv(wake)]() mutable {
-	wake(a->snapshotRx_(checkpoint));
+	checkpoint.epoch = a->session_().epoch_(); checkpoint.rx = a->rxProgress_(); wake(true);
       });
     });
     ZuCheck(snapshot && checkpoint.rx.processed == 2);
@@ -262,7 +262,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
     if (!pending) break;
     snapshot = ZmBlock<bool>{}([&client, &a, &checkpoint](auto wake) {
       client.txRun([&a, &checkpoint, wake = ZuMv(wake)]() mutable {
-	wake(a->snapshotTx_(checkpoint));
+	checkpoint.tx = a->txProgress_(); wake(true);
       });
     });
     ZuCheck(snapshot && checkpoint.tx.loaded > 2 && state.request.connection == 1 &&
@@ -271,9 +271,9 @@ static void replayReplacement(unsigned mode, bool logoutA)
     b = new ReplayClient::Link{&client, false};
     bool restored = ZmBlock<bool>{}([&client, &b, &checkpoint](auto wake) {
       client.rxRun([&client, &b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	if (!b->restoreRx_(checkpoint)) { wake(false); return; }
+	if (!b->restoreRx_(checkpoint.epoch, checkpoint.rx)) { wake(false); return; }
 	client.txRun([&b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	  if (!b->restoreTx_(checkpoint)) { wake(false); return; }
+	  if (!b->restoreTx_(checkpoint.epoch, checkpoint.tx)) { wake(false); return; }
 	  b->store->lastLoad = checkpoint.tx.loaded - 1; wake(true);
 	});
       });
@@ -337,7 +337,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
   ZuCheck(success && !state.errors.load_() && state.serverStops.load_() == 1 &&
     state.accepts.load_() == 2 && state.aStops.load_() == 1 && state.bStops.load_() == 1 &&
     !state.retire);
-  ZuCheck(state.archiveBegin == 1 && state.archiveEnd == state.server->tx.tx.acknowledged &&
+  ZuCheck(state.archiveBegin == 1 && state.archiveEnd == state.server->tx.acknowledged &&
     state.archiveEnd > 3 && !state.probeTarget && state.delivered.load_() == 1 &&
     state.replaced.load_() == state.replayLoads.load_());
 }

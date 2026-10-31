@@ -4,18 +4,22 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// Linux/glibc diagnostic interposer. No allocation, framework objects or logging
-// in hooks: these functions can run before C++/loader initialization completes.
+// Linux/glibc diagnostic interposer. No allocation or logging in allocator
+// hooks: they can run before C++/loader initialization completes. The exit
+// report uses only stack-backed Z formatting and low-level file I/O.
 // Observes dynamically dispatched libc calls, not inlined/custom allocator work.
 
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuStream.hh>
+#include <zlib/ZuString.hh>
 
 #ifndef __GLIBC__
 #error heaptrace requires Linux glibc allocator entry points
@@ -105,24 +109,30 @@ __attribute__((destructor)) static void finish() {
   if (!path || !*path) return;
   int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
   if (fd < 0) return;
-  static constexpr const char format[] =
-    "{\"scope\":\"dynamic glibc calls after observer init through exit hook; "
-    "excludes inlined copies and custom allocator internals\","
-    "\"allocCalls\":%llu,\"requestedBytes\":%llu,\"freeCalls\":%llu,"
-    "\"copyCalls\":%llu,\"copyBytes\":%llu}\n";
-  // At most20 decimal digits per uint64, plus fixed literals. Stack storage
-  // avoids calling the observed allocator during destruction.
-  char buffer[sizeof(format) + 5 * 20];
-  int n = snprintf(buffer, sizeof(buffer), format,
-    static_cast<unsigned long long>(__atomic_load_n(&allocCalls, __ATOMIC_RELAXED)),
-    static_cast<unsigned long long>(__atomic_load_n(&requestedBytes, __ATOMIC_RELAXED)),
-    static_cast<unsigned long long>(__atomic_load_n(&freeCalls, __ATOMIC_RELAXED)),
-    static_cast<unsigned long long>(__atomic_load_n(&copyCalls, __ATOMIC_RELAXED)),
-    static_cast<unsigned long long>(__atomic_load_n(&copyBytes, __ATOMIC_RELAXED)));
-  if (n > 0 && size_t(n) < sizeof(buffer)) {
+  static constexpr auto Prefix =
+    "{\"scope\":\"dynamic glibc calls after observer init through exit hook; excludes"
+    " inlined copies and custom allocator internals\",\"allocCalls\":"_z;
+  static constexpr auto Requested = ",\"requestedBytes\":"_z;
+  static constexpr auto Free = ",\"freeCalls\":"_z;
+  static constexpr auto Copy = ",\"copyCalls\":"_z;
+  static constexpr auto Copied = ",\"copyBytes\":"_z;
+  static constexpr auto End = "}\n"_z;
+  // A uint64 needs at most 20 decimal digits. Literal extents plus that bound
+  // keep exit-hook formatting entirely on the stack, outside allocator hooks.
+  char buffer[
+    Prefix.length() + Requested.length() + Free.length() + Copy.length() + Copied.length()
+    + End.length() + 5 * 20];
+  ZuStream out{ZuSpan{buffer, sizeof(buffer)}};
+  auto value = [](const uint64_t &v) {
+    return ZuBox<uint64_t>{__atomic_load_n(&v, __ATOMIC_RELAXED)};
+  };
+  out << Prefix << value(allocCalls) << Requested << value(requestedBytes) << Free <<
+    value(freeCalls) << Copy << value(copyCalls) << Copied << value(copyBytes) << End;
+  size_t n = out.data() - buffer;
+  if (!out.overflow() && n) {
     size_t done = 0;
-    while (done < size_t(n)) {
-      auto wrote = write(fd, buffer + done, size_t(n) - done);
+    while (done < n) {
+      auto wrote = write(fd, buffer + done, n - done);
       if (wrote < 0) { if (errno == EINTR) continue; break; }
       done += size_t(wrote);
       if (!wrote) break;

@@ -3,7 +3,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/s
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 pkginclude_HEADERS = ZfixFmtLib.hh ZfixFmt.hh ZfixFrame.hh ZfixLib.hh \
-	Zfix.hh ZfixIOBuf.hh ZfixWork.hh ZfixContext.hh ZfixDispatch.hh ZfixSession.hh ZfixHooks.hh ZfixLinkState.hh ZfixSeq.hh ZfixRxMsg.hh ZfixRx.hh ZfixRxFramer.hh ZfixWire.hh ZfixLink.hh ZfixNet.hh ZfixRaw.hh ZfixIngress.hh ZfixStats.hh ZfixTrace.hh ZfixTxMsg.hh ZfixTx.hh ZfixNotice.hh ZfixCheckpoint.hh ZfixLinkTx.hh ZfixClient.hh ZfixServer.hh
+	Zfix.hh ZfixIOBuf.hh ZfixWork.hh ZfixContext.hh ZfixDispatch.hh ZfixSession.hh ZfixHooks.hh ZfixLinkState.hh ZfixSeq.hh ZfixRxMsg.hh ZfixRx.hh ZfixRxFramer.hh ZfixWire.hh ZfixLink.hh ZfixNet.hh ZfixRaw.hh ZfixIngress.hh ZfixStats.hh ZfixTrace.hh ZfixTxMsg.hh ZfixTx.hh ZfixNotice.hh ZfixLinkTx.hh ZfixClient.hh ZfixServer.hh
 lib_LTLIBRARIES = libZfixFmt.la libZfix.la
 libZfixFmt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZFIXFMT_EXPORTS
 libZfixFmt_la_LDFLAGS = @Z_SO_LDFLAGS@
@@ -13,7 +13,7 @@ libZfix_la_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src \
 	-I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src -DZFIX_EXPORTS
 libZfix_la_LDFLAGS = @Z_SO_LDFLAGS@
 libZfix_la_SOURCES = ZfixLib.cc Zfix.cc ZfixSession.cc ZfixLinkState.cc ZfixRx.cc \
-	ZfixTxMsg.cc ZfixTx.cc ZfixCheckpoint.cc ZfixLinkTx.cc ZfixWire.cc ZfixRaw.cc \
+	ZfixTxMsg.cc ZfixTx.cc ZfixLinkTx.cc ZfixWire.cc ZfixRaw.cc \
 	ZfixIngress.cc ZfixTrace.cc ZfixWork.cc
 libZfix_la_LIBADD = libZfixFmt.la \
 	$(top_builddir)/ztls/src/libZtls.la $(top_builddir)/ztcp/src/libZtcp.la \

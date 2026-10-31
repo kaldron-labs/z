@@ -19,11 +19,15 @@
 #include <stdlib.h>
 
 #include <zlib/ZuBox.hh>
+#include <zlib/ZuBase32.hh>
+#include <zlib/ZuBase64.hh>
+#include <zlib/ZuBase64URL.hh>
 #include <zlib/ZuCmp.hh>
 #include <zlib/ZuDateTime.hh>
 #include <zlib/ZuDecimal.hh>
 #include <zlib/ZuFixed.hh>
 #include <zlib/ZuIntrin.hh>
+#include <zlib/ZuHex.hh>
 #include <zlib/ZuSpan.hh>
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuSwitch.hh>
@@ -31,18 +35,38 @@
 #include <zlib/ZuTL.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZuUnroll.hh>
+#include <zlib/Zu_aton.hh>
+#include <zlib/Zu_ntoa.hh>
 
 #include <zlib/ZmLHash.hh>
 #include <zlib/ZmStackAvail.hh>
+#include <zlib/ZmSpecific.hh>
 #include <zlib/ZmVHeap.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
+#include <zlib/ZtBytesFmt.hh>
 #include <zlib/ZtFmt.hh>
 
 #include <zlib/ZfStruct.hh>
 
 ZuStructFacet(FIX);
+
+namespace Zfix::Time {
+
+  enum { ISO, FIX, CSV, Unix };
+  enum { Sec, MSec, USec, NSec };
+}
+
+namespace Zfix {
+
+template <unsigned Fmt_ = Time::FIX, unsigned Unit_ = Time::Sec, int NDP_ = -9>
+struct TimeFmt {
+  enum { Fmt = Fmt_, Unit = Unit_, NDP = NDP_ };
+  ZuAssert(Fmt <= Time::Unix && Unit <= Time::NSec && NDP >= -9 && NDP <= 9);
+};
+
+}
 
 namespace ZuFieldProp::FIX {
 
@@ -54,9 +78,47 @@ namespace ZuFieldProp::FIX {
 
   struct Multiple { };
 
+  template <uint8_t I> struct BytesFmt { };
+
   template <typename Fmt> struct NumberFmt { using T = Fmt; };
 
   template <typename Fmt> struct TimeFmt { using T = Fmt; };
+
+  template <bool> struct Optional { };
+
+  using Base64 = BytesFmt<ZtBytesFmt::Base64>;
+  using Base64URL = BytesFmt<ZtBytesFmt::Base64URL>;
+  using Base32 = BytesFmt<ZtBytesFmt::Base32>;
+  using Hex = BytesFmt<ZtBytesFmt::Hex>;
+  using Raw = BytesFmt<ZtBytesFmt::Raw>;
+
+  template <typename Fmt = ZtFmt::Default> using Number = NumberFmt<Fmt>;
+  template <uint8_t Scale, int8_t NDP>
+  using ISO = TimeFmt<Zfix::TimeFmt<Zfix::Time::ISO, Scale, NDP>>;
+  template <uint8_t Scale, int8_t NDP>
+  using FIX = TimeFmt<Zfix::TimeFmt<Zfix::Time::FIX, Scale, NDP>>;
+  template <uint8_t Scale, int8_t NDP>
+  using CSV = TimeFmt<Zfix::TimeFmt<Zfix::Time::CSV, Scale, NDP>>;
+  template <uint8_t Scale, int8_t NDP>
+  using Unix = TimeFmt<Zfix::TimeFmt<Zfix::Time::Unix, Scale, NDP>>;
+
+  using Opt = Optional<true>;
+
+  template <typename Props, bool = HasValue<Props, BytesFmt>{}>
+  struct GetBytesFmt_ { using T = ZuConstant<uint8_t, ZtBytesFmt::Raw>; };
+
+  template <typename Props>
+  struct GetBytesFmt_<Props, true> { using T = GetValue<Props, BytesFmt>; };
+
+  template <typename Props> using GetBytesFmt = GetBytesFmt_<Props>::T;
+
+  template <typename Props, bool = HasValue<Props, Optional>{}>
+  struct GetOptional_ { using T = ZuFalse; };
+
+  template <typename Props>
+  struct GetOptional_<Props, true> { using T = GetValue<Props, Optional>; };
+
+  template <typename Props> using GetOptional = GetOptional_<Props>::T;
 
 }
 
@@ -87,7 +149,7 @@ struct ParseView {
 
 struct DefltConfig {
   using NumberFmt = ZtFmt::Default;
-  using TimeFmt = ZuDateTimeFmt::FIXDeflt;
+  using TimeFmt = Zfix::TimeFmt<>;
   template <typename U> using Union = void;
 };
 
@@ -231,6 +293,12 @@ struct Position {
   unsigned	count;
 };
 
+// One borrowed text field, independent of the codec's group position tree.
+struct FieldPos {
+  unsigned	offset;
+  unsigned	length;
+};
+
 using Positions = ZtArray<Position, ZtArrayHeapID<"Zfix.Parse">>;
 
 // All entries use offsets into one caller-owned input and one bounded slot
@@ -242,16 +310,6 @@ struct ZfixFmtAPI Parse {
   Positions	&positions;
   Error		&error;
   unsigned	entries = 0;
-  unsigned	selectTag = 0;
-  Position	*selected = nullptr;
-
-  bool select(unsigned tag, unsigned offset, unsigned length) {
-    if (tag != selectTag || !selected) return true;
-    if (selected->offset != UINT_MAX) return fail(ErrorCode::Duplicate, tag, offset);
-    if (length > limits.fieldBytes) return fail(ErrorCode::Size, tag, offset);
-    *selected = {offset, length, 0, 0}; return true;
-  }
-
   bool fail(unsigned code, unsigned tag, unsigned offset) {
     if (!error) error = {code, tag, offset};
     return false;
@@ -284,33 +342,72 @@ struct Token {
 // original caller-owned bytes; no token allocates or null-terminates input.
 ZfixFmtExtern Error scan(ZuCSpan, unsigned, Token &);
 ZfixFmtExtern Error scanData(ZuCSpan, unsigned, unsigned, unsigned, Token &);
-// Validate before narrowing. The accumulator and bounds follow the compile-time
-// wire width; ordinary 32/64-bit fields do not pay for 128-bit arithmetic.
-template <unsigned Bits, bool Sign>
-bool integer(ZuCSpan value, uint128_t &magnitude, bool &negative) {
+// Inspect one unique field in SOH-delimited text. Binary Length/Data inspection
+// is outside this contract. An absent field leaves offset == UINT_MAX.
+ZfixFmtExtern Error inspect(ZuCSpan, unsigned tag, FieldPos &, Limits = {}, unsigned offset = 0);
+// Bound significant digits before scanning: Zu_nscan does not detect overflow.
+// Only boundary-width values need a lexical comparison with the wire limit.
+template <unsigned Bits, bool Sign, typename T, typename Fmt = ZuFmt::Default>
+bool integer(ZuCSpan value, T &magnitude, bool &negative) {
   ZuAssert(Bits && Bits <= 128);
+  ZuAssert(ZuTraits<T>::IsIntegral && !ZuTraits<T>::IsSigned && (sizeof(T)<<3) >= Bits);
   using U = ZuIf<(Bits <= (sizeof(unsigned)<<3)), unsigned,
     ZuIf<(Bits <= 64), uint64_t, uint128_t>>;
-  constexpr U max = (~U(0) >> ((sizeof(U)<<3) - Bits)) >> unsigned(Sign);
-  constexpr U min = max + unsigned(Sign);
-  unsigned i = 0, n = value.length();
+  constexpr U Max = (~U(0) >> ((sizeof(U)<<3) - Bits)) >> unsigned(Sign);
+  constexpr U Min = Max + unsigned(Sign);
+  unsigned n = value.length();
   if (!n) return false;
-  negative = value[0] == '-';
+  const char *data = value.data();
+  if constexpr (Fmt::Justification_ != ZuFmt::Just::None) {
+    if (n > Fmt::Width_) return false;
+    if constexpr (Fmt::Pad_ && Fmt::Pad_ != '0') {
+      if constexpr (Fmt::Justification_ == ZuFmt::Just::Right)
+	while (n && *data == Fmt::Pad_) { ++data; --n; }
+      else while (n && data[n - 1] == Fmt::Pad_) --n;
+    }
+    if (!n) return false;
+  }
+  negative = data[0] == '-';
   if (negative) {
     if constexpr (!Sign) return false;
     if (n == 1) return false;
-    ++i;
+    ++data; --n;
   }
-  U quotient = negative ? min/10 : max/10;
-  unsigned remainder = negative ? unsigned(min%10) : unsigned(max%10);
-  U v = 0;
-  for (; i < n; ++i) {
-    unsigned c = unsigned(value[i]);
-    if (c < '0' || c > '9') return false;
-    unsigned digit = c - '0';
-    if (v > quotient || (v == quotient && digit > remainder)) return false;
-    v = v * 10 + digit;
+  if constexpr (Fmt::Hex_)
+    if (n > 2 && data[0] == '0' && data[1] == 'x') { data += 2; n -= 2; }
+  while (n > 1 && (*data == '0' || (Fmt::Comma_ && *data == Fmt::Comma_))) {
+    ++data; --n;
   }
+  unsigned digits = n;
+  if constexpr (Fmt::Comma_) {
+    digits = 0;
+    for (unsigned i = 0; i < n; ++i) if (data[i] != Fmt::Comma_) ++digits;
+    if (!digits) return false;
+  }
+  unsigned width = Zu_ntoa::LogN<Fmt::Hex_, sizeof(U)>::log(Max);
+  if (digits > width) return false;
+  if (digits == width) {
+    using BaseFmt = ZuIf<Fmt::Hex_, ZuFmt::Hex<true>, ZuFmt::Default>;
+    char bound[Zu_nprint<BaseFmt>::template ulen<U>()];
+    Zu_nprint<BaseFmt>::utoa(negative ? Min : Max, bound);
+    if constexpr (!Fmt::Hex_ && !Fmt::Comma_) {
+      if (memcmp(data, bound, n) > 0) return false;
+    } else {
+      int cmp = 0;
+      for (unsigned i = 0, j = 0; i < n; ++i) {
+	if (Fmt::Comma_ && data[i] == Fmt::Comma_) continue;
+	int digit, limit;
+	if constexpr (Fmt::Hex_) {
+	  digit = Zu_aton::Base16<Fmt>::hex(data[i]); limit = Zu_aton::Base16<Fmt>::hex(bound[j++]);
+	  if (digit < 0) return false;
+	} else { digit = uint8_t(data[i]); limit = bound[j++]; }
+	if (!cmp && digit != limit) cmp = digit < limit ? -1 : 1;
+      }
+      if (cmp > 0) return false;
+    }
+  }
+  U v;
+  if (Zu_nscan<Fmt>::atou(v, data, n) != n) return false;
   magnitude = v;
   return true;
 }
@@ -444,12 +541,15 @@ template <typename F> consteval unsigned lenTag() {
     ZuAssert(F::Type::Code == ZfFieldTC::Bytes);
     return ZuFieldProp::GetValue<P, ZuFieldProp::FIX::Len>{};
   } else {
-    ZuAssert(F::Type::Code != ZfFieldTC::Bytes);
+    if constexpr (F::Type::Code == ZfFieldTC::Bytes) {
+      ZuAssert((ZuFieldProp::HasValue<P, ZuFieldProp::FIX::BytesFmt>{}));
+      ZuAssert((ZuFieldProp::GetValue<P, ZuFieldProp::FIX::BytesFmt>{} != ZtBytesFmt::Raw));
+    }
     return 0;
   }
 }
 
-template <typename Leaves>
+template <typename Leaves, typename Facet>
 struct TagIndex : ZmLHashKV<unsigned, unsigned,
   ZmLHashStatic<(Leaves::N > 1 ? ZuIntrin::log2(Leaves::N) + 2 : 2),
     ZmLHashLocal<>>> {
@@ -460,9 +560,11 @@ struct TagIndex : ZmLHashKV<unsigned, unsigned,
   TagIndex() {
     ZuUnroll::all<Leaves>([this]<typename L>() {
       using F = L::Field;
-      constexpr unsigned i = ZuTypeIndex<L, Leaves>{};
-      this->add(tag<F>(), i << 1);
-      if constexpr (lenTag<F>()) this->add(lenTag<F>(), (i << 1) | 1);
+      enum { I = ZuTypeIndex<L, Leaves>{} };
+      // Plain values need only a position write; dispatch only groups/pairs.
+      this->add(tag<F>(), (I << 2) | (GroupField<F, Facet>{} ? 2 : 0) |
+	(lenTag<F>() ? 2 : 0));
+      if constexpr (lenTag<F>()) this->add(lenTag<F>(), (I << 2) | 1);
     });
   }
 
@@ -475,7 +577,7 @@ struct TagIndex : ZmLHashKV<unsigned, unsigned,
 template <typename O, typename Facet, typename Fields_, bool Envelope_ = false>
 struct Schema_ {
   using Fields = Fields_;
-  enum { Envelope = Envelope_, Prefix = false, Ordered = true, SelectTag = 0 };
+  enum { Envelope = Envelope_, Prefix = false };
 
   static unsigned region(unsigned) { return 1; }
 
@@ -485,16 +587,16 @@ struct Schema_ {
     bool ok = true;
     ZuUnroll::all<Leaves>([&ok]<typename L>() {
       using F = L::Field;
-      constexpr unsigned n = tag<F>(), len = lenTag<F>();
+      enum { N = tag<F>(), Len = lenTag<F>() };
       if constexpr (ZfFieldTC::IsVec<F::Type::Code>{})
 	if (!ZuTypeIn<ZuFieldProp::FIX::Multiple, typename F::Props>{}) ok = false;
-      if (!n || (!Envelope_ && reserved(n)) ||
-	  (len && (len == n || (!Envelope_ && reserved(len))))) ok = false;
+      if (!N || (!Envelope_ && reserved(N)) ||
+	  (Len && (Len == N || (!Envelope_ && reserved(Len))))) ok = false;
       ZuUnroll::all<Leaves>([&ok]<typename R>() {
 	if constexpr (ZuTypeIndex<L, Leaves>{} < ZuTypeIndex<R, Leaves>{}) {
 	  using G = R::Field;
-	  if (n == tag<G>() || (len && len == tag<G>()) ||
-	      (lenTag<G>() && (n == lenTag<G>() || len == lenTag<G>())))
+	  if (N == tag<G>() || (Len && Len == tag<G>()) ||
+	      (lenTag<G>() && (N == lenTag<G>() || Len == lenTag<G>())))
 	    ok = false;
 	}
       });
@@ -515,24 +617,18 @@ struct Schema_ {
 
   // Schema-sized immutable metadata; the local/static hash stores its slots
   // inline and performs no heap allocation or per-object reconstruction.
-  static const auto &index() { static const TagIndex<Leaves> map; return map; }
+  static const auto &index() { static const TagIndex<Leaves, Facet> map; return map; }
 };
 
 template <typename O, typename Facet>
 struct Schema : Schema_<O, Facet, ZuActiveFields<O, Facet>> { };
 
-template <typename O, typename Facet, unsigned Select = Schema<O, Facet>::SelectTag>
-bool parseScope(Parse &, unsigned, unsigned &, Scope &, bool, bool = true);
+template <typename O, typename Facet>
+bool parseScope(Parse &, unsigned, unsigned &, Scope &, bool, bool = true, unsigned = 0);
 
 template <typename O, typename Facet> bool scopeContains(unsigned tag) {
   return Schema<O, Facet>::index().find(tag) >= 0;
 }
-template <typename O, typename Facet, unsigned Select>
-bool rootContains(unsigned tag) {
-  if constexpr (Select) if (tag == Select) return true;
-  return scopeContains<O, Facet>(tag);
-}
-
 template <typename O, typename Facet>
 bool parseGroup(Parse &p, unsigned slot, Token &token, Scope &parent) {
   using E = GroupElem<O>;
@@ -540,11 +636,10 @@ bool parseGroup(Parse &p, unsigned slot, Token &token, Scope &parent) {
   ZuAssert((Format<O, Facet>::ElemCode == ZfFieldTC::UDT));
   ZuAssert((Format<E, Facet>::Kind == Kind::Object));
   ZuAssert(S::Leaves::N > 0);
-  uint128_t count;
+  unsigned n;
   bool negative;
-  if (!integer<32, false>({p.input.data() + token.offset, token.length}, count, negative))
+  if (!integer<32, false>({p.input.data() + token.offset, token.length}, n, negative))
     return p.fail(ErrorCode::Value, token.tag, token.offset);
-  unsigned n = unsigned(count);
   if (parent.depth >= p.limits.groupDepth)
     return p.fail(ErrorCode::Depth, token.tag, token.offset);
   if (n > p.limits.groupEntries - p.entries)
@@ -578,19 +673,17 @@ bool parseGroup(Parse &p, unsigned slot, Token &token, Scope &parent) {
   return true;
 }
 
-template <typename O, typename Facet, unsigned Select>
+template <typename O, typename Facet>
 bool parseScope(
-    Parse &p, unsigned base, unsigned &offset, Scope &scope, bool entry, bool lastEntry) {
+    Parse &p, unsigned base, unsigned &offset, Scope &scope, bool entry, bool lastEntry,
+    unsigned region) {
   using S = Schema<O, Facet>;
   bool started = false;
   int last = -1;
-  unsigned region = 0;
   unsigned length = p.input.length();
   while (offset < length) {
     Token token;
     if (p.error = scan(p.input, offset, token)) return false;
-    if constexpr (Select)
-      if (!scope.parent && !p.select(token.tag, token.offset, token.length)) return false;
     int index = S::index().find(token.tag);
     if (index < 0) {
       if constexpr (S::Prefix) {
@@ -611,7 +704,7 @@ bool parseScope(
 	started = true;
       } else if (scope.delimiter == token.tag) return true;
     }
-    unsigned field = unsigned(index) >> 1;
+    unsigned field = unsigned(index) >> 2;
     if constexpr (S::Envelope) {
       unsigned next = S::region(field);
       if (next < region) return p.fail(ErrorCode::Envelope, token.tag, offset);
@@ -622,30 +715,30 @@ bool parseScope(
       if (entry && lastEntry && scope.outside(token.tag)) return true;
       return p.fail(ErrorCode::Duplicate, token.tag, offset);
     }
-    if constexpr (S::Ordered) {
-      if (entry && int(field) < last) {
-	if (lastEntry && scope.outside(token.tag)) return true;
-	return p.fail(ErrorCode::Group, token.tag, offset);
-      }
+    if (entry && int(field) < last) {
+      if (lastEntry && scope.outside(token.tag)) return true;
+      return p.fail(ErrorCode::Group, token.tag, offset);
     }
     last = field;
+    if (token.length > p.limits.fieldBytes)
+      return p.fail(ErrorCode::Size, token.tag, token.offset);
+    if (!(index & 3)) {
+      p.positions[slot] = {token.offset, token.length, 0, 0};
+      offset = token.next;
+      continue;
+    }
     if constexpr (S::Leaves::N) {
       ZuSwitch::dispatch<S::Leaves::N>(field,
 	[&p, &token, &scope, slot, index]<typename I>(I) {
 	  using F = typename ZuType<I{}, typename S::Leaves>::Field;
-	  if (token.length > p.limits.fieldBytes) {
-	    p.fail(ErrorCode::Size, token.tag, token.offset); return;
-	  }
 	  if (index & 1) {
-	    uint128_t n;
+	    unsigned n;
 	    bool negative;
 	    if (!integer<32, false>(
 		{p.input.data() + token.offset, token.length}, n, negative)) {
 	      p.fail(ErrorCode::Value, token.tag, token.offset); return;
 	    }
-	    p.error = scanData(p.input, token.next, tag<F>(), unsigned(n), token);
-	    if constexpr (Select)
-	      if (!p.error && !scope.parent) p.select(token.tag, token.offset, token.length);
+	    p.error = scanData(p.input, token.next, tag<F>(), n, token);
 	  } else if constexpr (lenTag<F>())
 	    p.fail(ErrorCode::Pair, token.tag, token.offset);
 	  if (p.error) return;
@@ -677,6 +770,225 @@ template <typename Props, typename Facet = ZuFacet::FIX>
 using TimeFmt = FormatProp<Props, ZuFieldProp::FIX::TimeFmt,
   typename Config<Facet>::TimeFmt>::T;
 
+template <unsigned Fmt> struct BytesCodec;
+template <> struct BytesCodec<ZtBytesFmt::Base64> : ZuBase64 { };
+
+template <> struct BytesCodec<ZtBytesFmt::Base64URL> : ZuBase64URL { };
+
+template <> struct BytesCodec<ZtBytesFmt::Base32> : ZuBase32 { };
+
+template <> struct BytesCodec<ZtBytesFmt::Hex> : ZuHex { };
+
+// The scanner reports bytes written, not input consumed. Validate the alphabet
+// and padding once before decoding directly into destination-owned storage.
+template <typename Props> bool bytesValid(ZuCSpan value) {
+  enum { Fmt = ZuFieldProp::FIX::GetBytesFmt<Props>{} };
+  ZuAssert(Fmt <= ZtBytesFmt::Raw);
+  if constexpr (Fmt == ZtBytesFmt::Raw) return true;
+  else {
+    unsigned n = value.length(), end = n;
+    if constexpr (Fmt == ZtBytesFmt::Hex) {
+      if (n & 1) return false;
+    } else {
+      while (end && value[end - 1] == '=') --end;
+      unsigned padding = n - end;
+      if constexpr (Fmt == ZtBytesFmt::Base32) {
+	switch (end & 7) { case 1: case 3: case 6: return false; }
+	if (padding && (padding > 6 || (n & 7))) return false;
+      } else {
+	if ((end & 3) == 1 || (padding && (padding > 2 || (n & 3)))) return false;
+      }
+      if (n && !end) return false;
+    }
+    for (unsigned i = 0; i < end; ++i)
+      if (!BytesCodec<Fmt>::is(value[i])) return false;
+    return true;
+  }
+}
+
+template <unsigned Fmt> struct BytesPrint;
+template <unsigned Fmt> struct BytesPrinter : ZuPrintBuffer {
+  static unsigned length(const BytesPrint<Fmt> &v) { return v.size; }
+  static unsigned print(char *out, unsigned n, const BytesPrint<Fmt> &v) {
+    return BytesCodec<Fmt>::encode({reinterpret_cast<uint8_t *>(out), n}, v.bytes);
+  }
+};
+
+template <unsigned Fmt> struct BytesPrint {
+  ZuBSpan	bytes;
+  unsigned	size;
+  friend BytesPrinter<Fmt> ZuPrintType(BytesPrint *);
+};
+
+template <typename Props> uint64_t bytesLength(ZuBSpan value) {
+  enum { Fmt = ZuFieldProp::FIX::GetBytesFmt<Props>{} };
+  if (value.length() > UINT_MAX) return UINT64_MAX;
+  if constexpr (Fmt == ZtBytesFmt::Raw) return value.length();
+  else {
+    if constexpr (Fmt == ZtBytesFmt::Hex) return value.length()<<1;
+    else return BytesCodec<Fmt>::enclen(value.length());
+  }
+}
+
+template <typename Props, typename Out>
+void saveBytes(Out &out, ZuBSpan value, unsigned size) {
+  enum { Fmt = ZuFieldProp::FIX::GetBytesFmt<Props>{} };
+  if constexpr (Fmt == ZtBytesFmt::Raw) out << ZuCSpan{value};
+  else out << BytesPrint<Fmt>{value, size};
+}
+
+template <typename T, typename = void> struct OwnBytes : ZuFalse { };
+template <typename T>
+struct OwnBytes<T, decltype(ZuDeclVal<T &>().ensure(unsigned{}), void())> : ZuTrue { };
+
+template <typename Props, typename T> T loadBytes(ZuCSpan value, Error &error) {
+  enum { Fmt = ZuFieldProp::FIX::GetBytesFmt<Props>{} };
+  if (!bytesValid<Props>(value)) { error.code = ErrorCode::Value; return T{}; }
+  if constexpr (Fmt == ZtBytesFmt::Raw) return T(value);
+  else {
+    // Immutable input cannot back a decoded borrowed span. Encoded fields use
+    // owning destinations; raw FIX Data fields keep their borrowing semantics.
+    ZuAssert((OwnBytes<T>{}));
+    T out;
+    unsigned n = BytesCodec<Fmt>::declen(value.length());
+    out.length(n);
+    if (n) out.length(BytesCodec<Fmt>::decode(ZuSpan<uint8_t>{out}, ZuBSpan{value}), false);
+    return out;
+  }
+}
+
+template <typename Fmt> struct TimePolicy {
+  enum { Kind = Time::FIX, Unit = Time::Sec, NDP = -9 };
+  using Print = Fmt;
+  using Scan = ZuDateTimeScan::FIX;
+};
+
+template <> struct TimePolicy<ZuDateTimeFmt::ISO> {
+  enum { Kind = Time::ISO };
+  using Print = ZuDateTimeFmt::ISO;
+  using Scan = ZuDateTimeScan::ISO;
+};
+
+template <> struct TimePolicy<ZuDateTimeFmt::CSV> {
+  enum { Kind = Time::CSV };
+  using Print = ZuDateTimeFmt::CSV;
+  using Scan = ZuDateTimeScan::CSV;
+};
+
+template <unsigned Fmt, unsigned Unit_, int NDP_>
+struct TimePolicy<Zfix::TimeFmt<Fmt, Unit_, NDP_>> {
+  enum { Kind = Fmt, Unit = Unit_, NDP = NDP_ };
+  using Print = ZuIf<Fmt == Time::FIX, ZuDateTimeFmt::FIX<NDP>,
+    ZuIf<Fmt == Time::ISO, ZuDateTimeFmt::ISO, ZuDateTimeFmt::CSV>>;
+  using Scan = ZuIf<Fmt == Time::FIX, ZuDateTimeScan::FIX,
+    ZuIf<Fmt == Time::ISO, ZuDateTimeScan::ISO, ZuDateTimeScan::CSV>>;
+};
+
+template <typename Props, typename Facet, typename T>
+T loadTime(ZuCSpan value, Error &error) {
+  using P = TimePolicy<TimeFmt<Props, Facet>>;
+  auto fail = [&error]() { error.code = ErrorCode::Value; return T{}; };
+  if constexpr (P::Kind == Time::Unix) {
+    if (!decimal(value)) return fail();
+    ZuDecimal d;
+    if (d.scan(value) != value.length() || !*d) return fail();
+    auto time = ZuTime{d / ZuDecimal{int64_t(ZuDecimalFn::pow10_64(P::Unit * 3))}};
+    if (!*time) return fail();
+    if constexpr (ZuIsSame<T, ZuTime>{}) return time;
+    else return ZuDateTime{time};
+  } else {
+    if constexpr (P::Kind == Time::FIX) if (!timestamp(value)) return fail();
+    auto &fmt = ZmTLS<typename P::Scan, (int Props::*){}>();
+    ZuDateTime v;
+    if (v.scan(fmt, value) != value.length()) return fail();
+    if constexpr (P::Kind == Time::FIX) {
+      auto date = ZuBox<unsigned>::eov(ZuCSpan{value.data(), 8}).template p<1>().val();
+      if (v.yyyymmdd() != date) return fail();
+    }
+    if constexpr (ZuIsSame<T, ZuTime>{}) return v.as_time();
+    else return v;
+  }
+}
+
+template <typename Props, typename Facet, typename Out, typename T>
+void saveTime(Out &out, const T &value) {
+  using P = TimePolicy<TimeFmt<Props, Facet>>;
+  ZuDateTime date{value};
+  if constexpr (P::Kind == Time::Unix) {
+    if (!*date) return;
+    auto time = date.as_time();
+    if (time.sec() < 0) { out << '-'; time = -time; }
+    constexpr uint64_t Scale = ZuDecimalFn::pow10_64(P::Unit * 3);
+    constexpr uint64_t Divisor = 1000000000/Scale;
+    // Scaled Unix timestamps can exceed 64 bits within the supported date range.
+    using I = ZuIf<P::Unit == Time::Sec, int64_t, int128_t>;
+    out << ZuBox<I>{I(time.sec()) * Scale + time.nsec()/Divisor};
+    if constexpr (P::Unit < Time::NSec && P::NDP) {
+      auto fraction = time.nsec()%Divisor;
+      if (P::NDP > 0 || fraction)
+	out << '.' << ZuBoxed(fraction).template fmt<ZuFmt::Frac<9 - P::Unit * 3,
+	  (P::NDP < 0 ? -P::NDP : P::NDP), (P::NDP < 0 ? '\0' : '0')>>();
+    }
+  } else {
+    auto &fmt = ZmTLS<typename P::Print, (int Props::*){}>();
+    out << date.fmt(fmt);
+  }
+}
+
+template <typename Fmt> ZuCSpan numberText(ZuCSpan value) {
+  if constexpr (Fmt::Pad_ && Fmt::Pad_ != '0') {
+    if constexpr (Fmt::Justification_ == ZuFmt::Just::Right)
+      while (value && value[0] == Fmt::Pad_) value.offset(1);
+    else if constexpr (Fmt::Justification_ == ZuFmt::Just::Left)
+      while (value && value[value.length() - 1] == Fmt::Pad_) value.trunc(value.length() - 1);
+  }
+  return value;
+}
+
+template <typename Fmt> bool numberValid(ZuCSpan value) {
+  if constexpr (!Fmt::Comma_) return decimal(value);
+  else {
+    bool point = false, digits = false;
+    for (unsigned i = value && value[0] == '-' ? 1 : 0; i < value.length(); ++i) {
+      auto c = value[i];
+      if (c >= '0' && c <= '9') { digits = true; continue; }
+      if (!point && c == Fmt::Comma_) continue;
+      if (!point && c == '.') { point = true; continue; }
+      return false;
+    }
+    return digits;
+  }
+}
+
+template <typename Fmt> bool loadDecimal(ZuCSpan value, ZuDecimal &out) {
+  value = numberText<Fmt>(value);
+  if constexpr (!Fmt::Hex_ && !Fmt::Comma_ && Fmt::Justification_ == ZuFmt::Just::None) {
+    if (!decimal(value)) return false;
+    if (value[value.length() - 1] == '.') value.trunc(value.length() - 1);
+    return out.scan(value) == value.length() && *out;
+  } else {
+    if (!value) return false;
+    bool negative = value[0] == '-';
+    if (negative) value.offset(1);
+    if (!value) return false;
+    auto point = static_cast<const char *>(memchr(value.data(), '.', value.length()));
+    unsigned n = point ? unsigned(point - value.data()) : unsigned(value.length());
+    uint64_t whole = 0;
+    bool sign;
+    if (n && !integer<64, false, uint64_t, Fmt>({value.data(), n}, whole, sign)) return false;
+    if (!n && (!point || value.length() == 1)) return false;
+    out = ZuDecimal{whole};
+    if (point && value.length() > n + 1) {
+      ZuCSpan fraction{point, value.length() - n};
+      ZuDecimal part;
+      if (!decimal(fraction) || part.scan(fraction) != fraction.length() || !*part) return false;
+      out += part;
+    }
+    if (negative) out = -out;
+    return bool(*out);
+  }
+}
+
 template <typename Fn>
 void multipleTokens(ZuCSpan value, Error &error, Fn fn) {
   unsigned begin = 0, n = value.length();
@@ -690,7 +1002,7 @@ void multipleTokens(ZuCSpan value, Error &error, Fn fn) {
     if (begin == n) error.code = ErrorCode::Value;
   }
 }
-template <unsigned Code, typename Props, typename T>
+template <unsigned Code, typename Props, typename T, typename Facet = ZuFacet::FIX>
 T scalar(ZuCSpan value, Error &error);
 template <typename T> void freeCStrings(const T &values) {
   using E = GroupElem<T>;
@@ -698,16 +1010,18 @@ template <typename T> void freeCStrings(const T &values) {
     for (unsigned i = 0, n = ZuTraits<T>::length(values); i < n; ++i)
       ::free(const_cast<char *>(values[i]));
 }
-template <unsigned Code, typename Props>
+template <unsigned Code, typename Props, typename Facet = ZuFacet::FIX>
 void validateMultiple(ZuCSpan value, Error &error) {
   ZuAssert(Code != ZfFieldTC::UDT && !ZfFieldTC::IsVec<Code>{});
   multipleTokens(value, error, [&error](ZuCSpan token) {
-    if constexpr (Code == ZfFieldTC::CString || Code == ZfFieldTC::Bytes) {
-      scalar<ZfFieldTC::String, Props, ZuCSpan>(token, error);
-    } else scalar<Code, Props, ZfFieldTC::Type<Code>>(token, error);
+    if constexpr (Code == ZfFieldTC::Bytes) {
+      if (!text(token) || !bytesValid<Props>(token)) error.code = ErrorCode::Value;
+    } else if constexpr (Code == ZfFieldTC::CString) {
+      scalar<ZfFieldTC::String, Props, ZuCSpan, Facet>(token, error);
+    } else scalar<Code, Props, ZfFieldTC::Type<Code>, Facet>(token, error);
   });
 }
-template <unsigned Code, typename Props, typename T>
+template <unsigned Code, typename Props, typename T, typename Facet = ZuFacet::FIX>
 T loadMultiple(ZuCSpan value, Error &error) {
   ZuAssert(Code != ZfFieldTC::UDT && !ZfFieldTC::IsVec<Code>{});
   using E = GroupElem<T>;
@@ -715,7 +1029,7 @@ T loadMultiple(ZuCSpan value, Error &error) {
   multipleTokens(value, error, [&out, &error](ZuCSpan token) {
     if constexpr (Code == ZfFieldTC::Bytes)
       if (!text(token)) { error.code = ErrorCode::Value; return; }
-    auto elem = scalar<Code, Props, E>(token, error);
+    auto elem = scalar<Code, Props, E, Facet>(token, error);
     if (!error) out.push(ZuMv(elem));
   });
   if constexpr (Code == ZfFieldTC::CString) {
@@ -724,12 +1038,12 @@ T loadMultiple(ZuCSpan value, Error &error) {
   return out;
 }
 
-template <unsigned Code, typename Props, typename T>
+template <unsigned Code, typename Props, typename T, typename Facet>
 T scalar(ZuCSpan value, Error &error) {
   auto fail = [&error]() { error.code = ErrorCode::Value; return T{}; };
   if constexpr (ZfFieldTC::IsVec<Code>{}) {
     ZuAssert((ZuTypeIn<ZuFieldProp::FIX::Multiple, Props>{}));
-    return loadMultiple<ZfFieldTC::Elem<Code>{}, Props, T>(value, error);
+    return loadMultiple<ZfFieldTC::Elem<Code>{}, Props, T, Facet>(value, error);
   } else if constexpr (Code == ZfFieldTC::CString) {
     if constexpr (ZuTypeIn<ZuFieldProp::FIX::Char, Props>{})
       if (value.length() != 1) return fail();
@@ -737,7 +1051,9 @@ T scalar(ZuCSpan value, Error &error) {
     if constexpr (ZuTraits<T>::IsPointer && ZuTraits<T>::IsPrimitive)
       return T(cstring(value, error));
     else return T(value);
-  } else if constexpr (Code == ZfFieldTC::String || Code == ZfFieldTC::Bytes) {
+  } else if constexpr (Code == ZfFieldTC::Bytes) {
+    return loadBytes<Props, T>(value, error);
+  } else if constexpr (Code == ZfFieldTC::String) {
     if constexpr (ZuTypeIn<ZuFieldProp::FIX::Char, Props>{})
       if (value.length() != 1 || !text(value)) return fail();
     if constexpr (Code == ZfFieldTC::String) if (!text(value)) return fail();
@@ -770,20 +1086,18 @@ T scalar(ZuCSpan value, Error &error) {
       });
       if (error) return T{};
     } else {
-      uint128_t magnitude;
+      Zu_ntoa::Unsigned<V> magnitude;
       bool negative;
-      if (!integer<(sizeof(V)<<3), ZuTraits<V>::IsSigned>(value,
-	magnitude, negative)) return fail();
+      if (!integer<(sizeof(V)<<3), ZuTraits<V>::IsSigned, decltype(magnitude),
+	NumberFmt<Props, Facet>>(value, magnitude, negative)) return fail();
       v = V(negative ? ~magnitude + 1 : magnitude);
     }
     if constexpr (ZuFieldProp::HasRange<Props>{})
       if (!ZfFieldLimit<Props>(v)) return fail();
     return T(v);
   } else if constexpr (Code == ZfFieldTC::Decimal || Code == ZfFieldTC::Fixed) {
-    if (!decimal(value)) return fail();
-    if (value[value.length() - 1] == '.') value.trunc(value.length() - 1);
     ZuDecimal d;
-    if (d.scan(value) != value.length() || !*d) return fail();
+    if (!loadDecimal<NumberFmt<Props, Facet>>(value, d)) return fail();
     if constexpr (ZuFieldProp::HasRange<Props>{})
       if (!ZfFieldLimit<Props>(d)) return fail();
     if constexpr (Code == ZfFieldTC::Decimal) return d;
@@ -791,8 +1105,10 @@ T scalar(ZuCSpan value, Error &error) {
       return ZuFixed{d, ZuFieldProp::GetNDP<Props>{}};
     else return ZuFixed{d};
   } else if constexpr (Code == ZfFieldTC::Float) {
-    if (!decimal(value)) return fail();
-    auto r = ZuBox<double>::eov(value);
+    using Fmt = NumberFmt<Props, Facet>;
+    value = numberText<Fmt>(value);
+    if (!numberValid<Fmt>(value)) return fail();
+    auto r = ZuBox<double>::template eov<Fmt>(value);
     if (r.template p<0>() < 0 || unsigned(r.template p<0>()) != value.length() ||
 	!isfinite(r.template p<1>().val())) return fail();
     auto v = r.template p<1>().val();
@@ -800,19 +1116,14 @@ T scalar(ZuCSpan value, Error &error) {
       if (!ZfFieldLimit<Props>(v)) return fail();
     return T(v);
   } else if constexpr (Code == ZfFieldTC::DateTime || Code == ZfFieldTC::Time) {
-    if (!timestamp(value)) return fail();
-    ZuDateTime v;
-    if (v.scan(ZuDateTimeScan::FIX{}, value) != value.length()) return fail();
-    // Session::Reject dates normalized by the scanner (e.g. February 31) without
-    // duplicating the framework's calendar implementation.
-    auto date = ZuBox<unsigned>::eov(ZuCSpan{value.data(), 8}).template p<1>().val();
-    if (v.yyyymmdd() != date) return fail();
-    if constexpr (Code == ZfFieldTC::DateTime) return v;
-    else return v.as_time();
+    auto v = loadTime<Props, Facet, T>(value, error);
+    if constexpr (ZuFieldProp::HasRange<Props>{})
+      if (!error && !ZfFieldLimit<Props>(v)) return fail();
+    return v;
   } else if constexpr (Code == ZfFieldTC::UDT) {
     if constexpr (Multiple<As<T>>{}) {
       using A = As<T>;
-      return loadMultiple<A::ElemCode, typename A::ElemProps, T>(value, error);
+      return loadMultiple<A::ElemCode, typename A::ElemProps, T, Facet>(value, error);
     } else {
       if (!text(value)) return fail();
       using Fmt = decltype(Zfix_StringFmt(ZuDeclVal<T *>()));
@@ -836,7 +1147,8 @@ void saveMultiple(Out &out, const T &value) {
     const auto &element = value[i];
     if (i) out << ' ';
     if constexpr (Code == ZfFieldTC::CString || Code == ZfFieldTC::String ||
-	Code == ZfFieldTC::Bytes) {
+	(Code == ZfFieldTC::Bytes &&
+	 ZuFieldProp::FIX::GetBytesFmt<Props>{} == ZtBytesFmt::Raw)) {
       ZuCSpan span{element};
       if (!span.length() || memchr(span.data(), ' ', span.length())) {
 	out.fail(ErrorCode::Value); return;
@@ -853,8 +1165,11 @@ void saveScalar(Out &out, const T &value) {
   if constexpr (ZfFieldTC::IsVec<Code>{}) {
     ZuAssert((ZuTypeIn<ZuFieldProp::FIX::Multiple, Props>{}));
     saveMultiple<Facet, ZfFieldTC::Elem<Code>{}, Props>(out, value);
-  } else if constexpr (Code == ZfFieldTC::CString || Code == ZfFieldTC::String ||
-	Code == ZfFieldTC::Bytes) {
+  } else if constexpr (Code == ZfFieldTC::Bytes) {
+    auto size = bytesLength<Props>(ZuBSpan{value});
+    if (size > UINT_MAX) { out.fail(ErrorCode::Size); return; }
+    saveBytes<Props>(out, ZuBSpan{value}, unsigned(size));
+  } else if constexpr (Code == ZfFieldTC::CString || Code == ZfFieldTC::String) {
     ZuCSpan span{value};
     if constexpr (ZuTypeIn<ZuFieldProp::FIX::Char, Props>{})
       if (span.length() != 1 || !text(span)) { out.fail(ErrorCode::Value); return; }
@@ -867,9 +1182,8 @@ void saveScalar(Out &out, const T &value) {
     else if constexpr (ZuFieldProp::HasEnum<Props>{})
       out << ZuFieldProp::GetEnum<Props>::v2s(value);
     else out << ZuBox<T>{value}.template fmt<NumberFmt<Props, Facet>>();
-  } else if constexpr (Code == ZfFieldTC::DateTime) out << value.fmt(TimeFmt<Props, Facet>{});
-  else if constexpr (Code == ZfFieldTC::Time)
-    out << ZuDateTime{value}.fmt(TimeFmt<Props, Facet>{});
+  } else if constexpr (Code == ZfFieldTC::DateTime || Code == ZfFieldTC::Time)
+    saveTime<Props, Facet>(out, value);
   else if constexpr (Code == ZfFieldTC::Decimal || Code == ZfFieldTC::Fixed) {
     if (!*value) { out.fail(ErrorCode::Value); return; }
     if constexpr (ZuFieldProp::HasNDP<Props>{})
@@ -895,6 +1209,14 @@ template <typename O, typename Facet, template <typename> class Filter,
   using S = Schema<O, Facet>;
   ZuUnroll::all<typename S::Fields>([&out, &o]<typename F>() {
     if constexpr (Filter<F>{}) {
+      if constexpr (ZuFieldProp::FIX::GetOptional<typename F::Props>{}) {
+	if constexpr (F::Type::Code != ZfFieldTC::Bool) {
+	  const auto &value = F::get(o);
+	  if constexpr (ZuFieldProp::HasEnum<typename F::Props>{}) {
+	    if (value < 0) return;
+	  } else if (ZuNull(value)) return;
+	}
+      }
       if (out.failed()) return;
       if constexpr (Component<F, Facet>{}) {
 	using T = ComponentType<F, Facet>;
@@ -930,13 +1252,19 @@ template <typename O, typename Facet, template <typename> class Filter,
 	if constexpr (F::Type::Code == ZfFieldTC::UDT)
 	  ZuAssert((Format<typename F::T, Facet>::Kind == Kind::String));
 	const auto &value = F::get(o);
-	if constexpr (lenTag<F>()) {
-	  out.field(lenTag<F>());
-	  out << ZuBox<unsigned>{unsigned(ZuTraits<typename F::T>::length(value))};
-	  out.end();
+	if constexpr (F::Type::Code == ZfFieldTC::Bytes) {
+	  auto bytes = ZuBSpan{value};
+	  auto size = bytesLength<typename F::Props>(bytes);
+	  if (size > UINT_MAX) { out.fail(ErrorCode::Size); return; }
+	  if constexpr (lenTag<F>()) {
+	    out.field(lenTag<F>()); out << ZuBox<unsigned>{unsigned(size)}; out.end();
+	  }
+	  out.field(tag<F>(), lenTag<F>() != 0);
+	  saveBytes<typename F::Props>(out, bytes, unsigned(size));
+	} else {
+	  out.field(tag<F>());
+	  saveScalar<Facet, F::Type::Code, typename F::Props>(out, value);
 	}
-	out.field(tag<F>(), lenTag<F>() != 0);
-	saveScalar<Facet, F::Type::Code, typename F::Props>(out, value);
 	out.end();
       }
     }
@@ -950,27 +1278,27 @@ template <typename O, typename Facet> class ObjectView {
   using CtorFields = ZuTypeSort<CtorIndex, ZuTypeGrep<ZfFieldFilter::Ctor, Fields>>;
 
   template <typename F> bool present() const {
-    constexpr unsigned i = S::template offset<F>();
+    constexpr unsigned I = S::template offset<F>();
     if constexpr (Component<F, Facet>{}) {
-      for (unsigned j = i, n = i + FlattenField<F, Facet, ZuTypeList<>>::T::N;
+      for (unsigned j = I, n = I + FlattenField<F, Facet, ZuTypeList<>>::T::N;
 	  j < n; ++j) if (m_positions[m_base + j].offset != UINT_MAX) return true;
       return false;
-    } else return m_positions[m_base + i].offset != UINT_MAX;
+    } else return m_positions[m_base + I].offset != UINT_MAX;
   }
 
   template <typename F> auto field() const {
     using T = F::T;
-    constexpr unsigned i = S::template offset<F>();
+    constexpr unsigned I = S::template offset<F>();
     if constexpr (Component<F, Facet>{}) {
       ObjectView<ComponentType<F, Facet>, Facet> child{
-	m_input, m_positions, m_base + i, m_error};
+	m_input, m_positions, m_base + I, m_error};
       if constexpr (ObjPtr<T>{}) {
 	if (!present<F>()) return T{};
 	return T{child.alloc()};
       } else return T{child.ctor()};
     } else if constexpr (GroupField<F, Facet>{}) {
       using E = GroupElem<T>;
-      const auto &p = m_positions[m_base + i];
+      const auto &p = m_positions[m_base + I];
       T out;
       if (p.offset == UINT_MAX) return out;
       out.ensure(p.count);
@@ -982,7 +1310,7 @@ template <typename O, typename Facet> class ObjectView {
       }
       return out;
     } else {
-      const auto &p = m_positions[m_base + i];
+      const auto &p = m_positions[m_base + I];
       if constexpr (F::Type::Code == ZfFieldTC::UDT)
 	ZuAssert((Format<T, Facet>::Kind == Kind::String));
       if (p.offset == UINT_MAX) {
@@ -1007,7 +1335,7 @@ template <typename O, typename Facet> class ObjectView {
 	else return T(F::deflt());
       }
       Error error;
-      auto value = scalar<F::Type::Code, typename F::Props, T>(
+      auto value = scalar<F::Type::Code, typename F::Props, T, Facet>(
 	{m_input.data() + p.offset, p.length}, error);
       if (error && !m_error) m_error = {error.code, tag<F>(), p.offset};
       return value;
@@ -1061,20 +1389,20 @@ public:
     required<ZuTypeList<F>>();
     validateField<F>();
     if (m_error) return {};
-    constexpr unsigned i = S::template offset<F>();
-    const auto &p = m_positions[m_base + i];
+    constexpr unsigned I = S::template offset<F>();
+    const auto &p = m_positions[m_base + I];
     if (p.offset == UINT_MAX) return {};
     return {m_input.data() + p.offset, p.length};
   }
 
   template <typename F> void validateField() const {
-    constexpr unsigned i = S::template offset<F>();
+    constexpr unsigned I = S::template offset<F>();
     if constexpr (Component<F, Facet>{}) {
       ObjectView<ComponentType<F, Facet>, Facet> child{
-	m_input, m_positions, m_base + i, m_error};
+	m_input, m_positions, m_base + I, m_error};
       child.validate();
     } else {
-      const auto &p = m_positions[m_base + i];
+      const auto &p = m_positions[m_base + I];
       if (p.offset == UINT_MAX || m_error) return;
       if constexpr (GroupField<F, Facet>{}) {
 	using E = GroupElem<typename F::T>;
@@ -1088,23 +1416,26 @@ public:
 	if constexpr (ZfFieldTC::IsVec<F::Type::Code>{}) {
 	  using P = F::Props;
 	  ZuAssert((ZuTypeIn<ZuFieldProp::FIX::Multiple, P>{}));
-	  validateMultiple<ZfFieldTC::Elem<F::Type::Code>{}, P>(
+	  validateMultiple<ZfFieldTC::Elem<F::Type::Code>{}, P, Facet>(
 	    {m_input.data() + p.offset, p.length}, error);
+	} else if constexpr (F::Type::Code == ZfFieldTC::Bytes) {
+	  if (!bytesValid<typename F::Props>({m_input.data() + p.offset, p.length}))
+	    error.code = ErrorCode::Value;
 	} else if constexpr (F::Type::Code == ZfFieldTC::CString) {
 	  ZuCSpan value{m_input.data() + p.offset, p.length};
-	  scalar<ZfFieldTC::String, typename F::Props, ZuCSpan>(value, error);
+	  scalar<ZfFieldTC::String, typename F::Props, ZuCSpan, Facet>(value, error);
 	} else if constexpr (F::Type::Code == ZfFieldTC::UDT) {
 	  using T = F::T;
 	  ZuAssert((Format<T, Facet>::Kind == Kind::String));
 	  if constexpr (Multiple<As<T>>{}) {
 	    using A = As<T>;
-	    validateMultiple<A::ElemCode, typename A::ElemProps>(
+	    validateMultiple<A::ElemCode, typename A::ElemProps, Facet>(
 	      {m_input.data() + p.offset, p.length}, error);
-	  } else scalar<F::Type::Code, typename F::Props, T>(
+	  } else scalar<F::Type::Code, typename F::Props, T, Facet>(
 	    {m_input.data() + p.offset, p.length}, error);
 	} else {
 	  using T = ZfFieldTC::Type<F::Type::Code>;
-	  scalar<F::Type::Code, typename F::Props, T>(
+	  scalar<F::Type::Code, typename F::Props, T, Facet>(
 	    {m_input.data() + p.offset, p.length}, error);
 	}
 	if (error) m_error = {error.code, tag<F>(), p.offset};
@@ -1125,14 +1456,14 @@ public:
     required<ZuTypeGrep<Filter, Fields>>();
     ZuUnroll::all<Fields>([this]<typename F>() {
       if (m_error) return;
-      constexpr unsigned i = S::template offset<F>();
+      constexpr unsigned I = S::template offset<F>();
       if constexpr (Component<F, Facet>{} && Filter<F>{}) {
 	if constexpr (ObjPtr<typename F::T>{}) if (!present<F>()) return;
 	ObjectView<ComponentType<F, Facet>, Facet> child{
-	  m_input, m_positions, m_base + i, m_error};
+	  m_input, m_positions, m_base + I, m_error};
 	child.template check<Filter>();
       } else if constexpr (GroupField<F, Facet>{} && Filter<F>{}) {
-	const auto &p = m_positions[m_base + i];
+	const auto &p = m_positions[m_base + I];
 	if (p.offset == UINT_MAX) return;
 	using E = GroupElem<typename F::T>;
 	for (unsigned j = 0; j < p.count && !m_error; ++j) {
@@ -1147,8 +1478,8 @@ public:
   template <typename F, bool Update> void component(O &o) const {
     using T = F::T;
     using E = ComponentType<F, Facet>;
-    constexpr unsigned i = S::template offset<F>();
-    ObjectView<E, Facet> child{m_input, m_positions, m_base + i, m_error};
+    constexpr unsigned I = S::template offset<F>();
+    ObjectView<E, Facet> child{m_input, m_positions, m_base + I, m_error};
     auto apply = [&child]<typename V>(V &value, bool has) {
       if constexpr (ObjPtr<T>{}) {
 	if (!has) {
@@ -1256,10 +1587,8 @@ template <typename O, typename Facet = ZuFacet::FIX,
 template <typename O, typename Facet> class Handler<O, Facet, Kind::Object> {
   using S = Schema<O, Facet>;
 
-  template <unsigned Select>
-  Handler(ZuCSpan input, Limits limits, ZuUnsigned<Select>, Position *selector) :
-    m_input{input} {
-    if constexpr (Select) *selector = {UINT_MAX, 0, 0, 0};
+public:
+  explicit Handler(ZuCSpan input, Limits limits = {}) : m_input{input} {
     // Builtin root slots exist even on an early limit failure: ctor() must
     // still be able to supply absent/default constructor arguments safely.
     m_positions.length(S::Leaves::N, false);
@@ -1268,21 +1597,11 @@ template <typename O, typename Facet> class Handler<O, Facet, Kind::Object> {
 	S::Leaves::N > limits.parseBytes/sizeof(Position)) {
       m_error = {ErrorCode::Size}; return;
     }
-    Parse p{input, limits, m_positions, m_error, 0, Select, selector};
+    Parse p{input, limits, m_positions, m_error};
     unsigned offset = 0;
-    Scope scope{nullptr, rootContains<O, Facet, Select>, 0, 0};
-    parseScope<O, Facet, Select>(p, 0, offset, scope, false);
+    Scope scope{nullptr, scopeContains<O, Facet>, 0, 0};
+    parseScope<O, Facet>(p, 0, offset, scope, false);
   }
-
-public:
-  explicit Handler(ZuCSpan input, Limits limits = {}) :
-    Handler{input, limits, ZuUnsigned<0>{}, nullptr} { }
-
-  // Capture a root discriminator while parsing the selected ordinary schema.
-  // Nested groups never become candidates for this root-scoped value.
-  template <unsigned Select>
-  Handler(ZuCSpan input, Limits limits, ZuUnsigned<Select> tag, Position &selector) :
-    Handler{input, limits, tag, &selector} { }
 
   Handler(const Handler &) = delete;
   Handler &operator =(const Handler &) = delete;

@@ -24,14 +24,14 @@ struct Order {
 ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using Entry = MT<Order, "D">;
-constexpr auto wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
+constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
 static TxBody::Ref body(bool admin = false) {
   Fmt::Error error;
   if (!admin) return TxBody::encode<Entry>(Order{"abc"}, 99, error);
   Session::Msg c; c.p<Session::HeartBt>(Session::HeartBt{}); return TxBody::control(c, error);
 }
 static auto frame() {
-  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>; buf->append(wire); return buf;
+  ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>; buf->append(Wire); return buf;
 }
 struct Completion {
   TxBody::Ref	body;
@@ -50,18 +50,18 @@ struct Harness : public WireTx<Harness> {
 
   explicit Harness(WireLimits limits = {}) : Base{limits} { }
 
-  ZmRef<WireBuf> recordAlloc_(unsigned head) {
+  ZmRef<WireBuf> recordAlloc(unsigned head) {
     if (refuseAlloc) return {};
     ZmRef<WireBuf> buf = new Alloc; buf->skip = head; return buf;
   }
 
-  bool recordSend_(ZmRef<ZiIOBuf> buf) {
+  bool recordSend(ZmRef<ZiIOBuf> buf) {
     if (!notice) early = true;
     if (++sends == refuseAt) return false;
     records.push(static_cast<WireBuf *>(buf.ptr())); return true;
   }
 
-  void outputDone_(TxBody::Ref body, TxContext c, bool ok) {
+  void outputDone(TxBody::Ref body, TxContext c, bool ok) {
     // Record the work an endpoint posts; don't call back into LinkTx here.
     done.push(Completion{ZuMv(body), c, ok});
   }
@@ -96,7 +96,7 @@ static void records() {
   ZuTestScope(records);
   Harness h; ZuCheck(h.open_(1, h.geometry()));
   ZuCheck(h.admit_(body(), {1, 1, 1}, frame())); h.flush();
-  unsigned count = wire.length() / 5 + !!(wire.length() % 5);
+  unsigned count = Wire.length() / 5 + !!(Wire.length() % 5);
   ZuCheck(h.records.length() == count);
   ZtString<ZtStringHeapID<"Zfix.WireTest">> joined;
   for (unsigned i = 0; i < count; ++i) {
@@ -105,7 +105,7 @@ static void records() {
     h.finish(i);
     ZuCheck(h.done.length() == (i + 1 == count ? 1 : 0));
   }
-  ZuCheck(joined == wire && h.done[0].ok && !h.count_() && !h.bytes_());
+  ZuCheck(joined == Wire && h.done[0].ok && !h.count_() && !h.bytes_());
 }
 static void queued() {
   ZuTestScope(queued);
@@ -230,10 +230,10 @@ struct SessionOutput : public WireTx<SessionOutput> {
   explicit SessionOutput(SessionOwner *owner_, WireLimits limits = {}) :
     WireTx<SessionOutput>{limits}, owner{owner_} { }
 
-  ZmRef<WireBuf> recordAlloc_(unsigned) { return new WireBufAlloc<>; }
-  bool recordSend_(ZmRef<ZiIOBuf>);
+  ZmRef<WireBuf> recordAlloc(unsigned) { return new WireBufAlloc<>; }
+  bool recordSend(ZmRef<ZiIOBuf>);
 
-  void outputDone_(TxBody::Ref b, TxContext c, bool ok) {
+  void outputDone(TxBody::Ref b, TxContext c, bool ok) {
     done.push(Completion{ZuMv(b), c, ok});
   }
 };
@@ -251,39 +251,39 @@ struct SessionOwner : public LinkTx<SessionOwner> {
   Fmt::Error	error;
 
   static SessionConfig config() {
-    SessionConfig c; c.id = "PRIMARY"; c.header.version = Version::V4_4;
+    SessionConfig c; c.header.version = Version::V4_4;
     c.header.local = "LOCAL"; c.header.peer = "PEER"; return c;
   }
 
   explicit SessionOwner(WireLimits limits = {}) :
     LinkTx<SessionOwner>{config()}, wire{this, limits} { }
 
-  void txSchedule_(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
+  void txSchedule(unsigned kind, uint64_t ticket) { tasks.push(Task{kind, ticket}); }
 
-  unsigned associateTx_(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
+  unsigned associateTx(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
 
-  bool releaseTx_(TxBody::Ref, TxContext, uint64_t) { return true; }
-  TxReload retrieveTx_(TxContext, uint64_t, uint64_t) { return {}; }
-  void archiveTx_(uint64_t, uint64_t, uint64_t) { }
+  bool releaseTx(TxBody::Ref, TxContext, uint64_t) { return true; }
+  TxReload retrieveTx(TxContext, uint64_t, uint64_t) { return {}; }
+  void archiveTx(uint64_t, uint64_t, uint64_t) { }
 
-  ZuDateTime clockTx_() { return {ZuDateTimeScan::FIX{}, "20261027-12:00:00"}; }
+  ZuDateTime clockTx() { return {ZuDateTimeScan::FIX{}, "20261027-12:00:00"}; }
 
-  ZuTime nowTx_() { return ZuTime{100}; }
+  ZuTime nowTx() { return ZuTime{100}; }
 
-  void idleArmTx_(uint64_t, uint64_t, ZuTime) { }
-  void idleCancelTx_() { }
+  void idleArmTx(uint64_t, uint64_t, ZuTime) { }
+  void idleCancelTx() { }
 
-  void faultTx_(TxContext, Fmt::Error e) { error = e; }
+  void faultTx(TxContext, Fmt::Error e) { error = e; }
 
-  bool admitFrameTx_(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
+  bool admitFrameTx(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
     notified = false; admitted = wire.admit_(ZuMv(b), c, ZuMv(f)); return admitted;
   }
 
-  void notifyTx_(TxNotice) { ++notices; notified = admitted; }
+  void notifyTx(TxNotice) { ++notices; notified = admitted; }
 
-  void flushTx_() { wire.flush_(); }
+  void flushTx() { wire.flush_(); }
 
-  void completeTx_(TxBody::Ref, TxContext, bool) { ++completed; }
+  void completeTx(TxBody::Ref, TxContext, bool) { ++completed; }
 
   void drain() {
     while (task < tasks.length() || completion < wire.done.length()) {
@@ -306,7 +306,7 @@ struct SessionOwner : public LinkTx<SessionOwner> {
   }
 };
 
-bool SessionOutput::recordSend_(ZmRef<ZiIOBuf> b) {
+bool SessionOutput::recordSend(ZmRef<ZiIOBuf> b) {
   early |= !owner->notified || !owner->inFlight_();
   if (refuse) return false;
   records.push(static_cast<WireBuf *>(b.ptr())); return true;
@@ -372,13 +372,13 @@ static void statistics() {
   ZuCheck(s.queuedBytes == h.bytes_() && s.peakBytes == s.queuedBytes);
   h.flush(); h.finish(0); h.finish(0); // Duplicate completion is inert.
   s = h.stats_();
-  ZuCheck(s.published == 1 && s.bytes == wire.length() && s.completed == 1 && !s.failed);
+  ZuCheck(s.published == 1 && s.bytes == Wire.length() && s.completed == 1 && !s.failed);
   ZuCheck(!s.queuedBytes && !s.queuedCount);
   h.close_(1); ZuCheck(h.open_(2));
   ZuCheck(h.admit_(native, {1, 2, 1, true}, bytes)); h.flush(); h.close_(2);
   s = h.stats_();
   ZuCheck(s.admitted == 2 && s.published == 2 && s.replays == 1 && s.failed == 1);
-  ZuCheck(s.bytes == 2 * wire.length() && s.completed == 1 && s.refused == 1);
+  ZuCheck(s.bytes == 2 * Wire.length() && s.completed == 1 && s.refused == 1);
   ZuCheck(h.open_(3));
   ZuCheck(h.admit_(native, {1, 3, 2}, bytes)); h.close_(3);
   s = h.stats_();
@@ -509,15 +509,15 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   AdmitApp *app() const { return owner; }
   WorkState workState_() const { return {}; }
   PostedState txPosted_() const { return {}; }
-  WireGeometry fixGeometryTx_() { ++geometries; return {}; }
+  WireGeometry fixGeometryTx() { ++geometries; return {}; }
 
-  ZmRef<ZiRxQueue::Node> fixAllocRx_() { return new RxBufAlloc; }
+  ZmRef<ZiRxQueue::Node> fixAllocRx() { return new RxBufAlloc; }
 
-  ZmRef<WireBuf> fixAllocTx_(unsigned head) {
+  ZmRef<WireBuf> fixAllocTx(unsigned head) {
     ZmRef<WireBuf> buf = new WireBufAlloc<>; buf->skip = head; return buf;
   }
 
-  bool fixSendTx_(ZmRef<ZiIOBuf> buf) {
+  bool fixSendTx(ZmRef<ZiIOBuf> buf) {
     auto record = static_cast<WireBuf *>(buf.ptr());
     if (holdOutput) records.push(ZmRef<WireBuf>{record});
     else transportSent(record, true);
@@ -540,29 +540,29 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
 
   void down(bool peer) { native = false; transportDown_(peer); }
 
-  unsigned fixAdmissionRx_(SessionEvent, ZmRef<Msg>, AdmitRequest &request) {
+  unsigned fixAdmissionRx(SessionEvent, ZmRef<Msg>, AdmitRequest &request) {
     replies.push(Reply{request.defer()}); return Admission::Pending;
   }
 
-  void fixStopRx_(uint64_t, uint64_t) { ++stops; }
-  void fixStoppedRx_(bool) { ++stopped; }
+  void fixStopRx(uint64_t, uint64_t) { ++stops; }
+  void fixStoppedRx(bool) { ++stopped; }
 
-  TxBody::Ref fixLogonTx_(TxBody::Ref body) { return refuseLogon ? TxBody::Ref{} : body; }
+  TxBody::Ref fixLogonTx(TxBody::Ref body) { return refuseLogon ? TxBody::Ref{} : body; }
 
-  void fixEventRx_(SessionEvent e, ZmRef<Msg>) {
+  void fixEventRx(SessionEvent e, ZmRef<Msg>) {
     if (e.actions == SessionAction::Timers) ++pureTimers;
   }
 
-  void fixEpochTx_(TxContext, uint64_t, TxProgress, uint64_t) {
+  void fixEpochTx(TxContext, uint64_t, TxProgress, uint64_t) {
     ++epochs;
     if (!bindOnEpoch) return;
     bindOnEpoch = false;
     app()->rxRun([this] { ZmAssert(bind()); });
   }
 
-  void fixFaultTx_(TxContext, Fmt::Error) { ++faults; }
+  void fixFaultTx(TxContext, Fmt::Error) { ++faults; }
 
-  void fixCompleteTx_(TxBody::Ref body, TxContext c, bool ok) {
+  void fixCompleteTx(TxBody::Ref body, TxContext c, bool ok) {
     completions.push(Completion{ZuMv(body), c, ok});
   }
 
@@ -573,7 +573,7 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
     auto cfg = txConfig(ZuMv(peer));
     auto frame = txFrame(*body, txHeader(cfg, seqNo, ZuDateTime{Zm::now()}), error);
     ZmAssert(frame && !error);
-    auto input = fixAllocRx_(); input->append(frame->cspan());
+    auto input = fixAllocRx(); input->append(frame->cspan());
     Stream stream; stream.push(ZuMv(input));
     return process_(stream);
   }

@@ -20,17 +20,17 @@ using Entry = Zfix::MT<Order, "D">;
 using MTList = Zfix::MTList<Entry>;
 ZuAssert(MTList::Messages::N == 1);
 ZuAssert((ZuIsSame<ZuType<0, MTList::Messages>, Entry>{}));
-using Fill = Zfix::MT<Order, "8", ZuFacet::FIX, Zfix::Discriminator<150, "F">>;
-using Cancel = Zfix::MT<Order, "8", ZuFacet::FIX, Zfix::Discriminator<150, "4">>;
-using Request = Zfix::MT<Order, "D", ZuFacet::FIX, Zfix::NoDiscriminator,
+using Fill = Zfix::MT<Order, "8", ZuFacet::FIX, Zfix::Discrim<150, "F">>;
+using Cancel = Zfix::MT<Order, "8", ZuFacet::FIX, Zfix::Discrim<150, "4">>;
+using Request = Zfix::MT<Order, "D", ZuFacet::FIX, Zfix::NoDiscrim,
   ZuTypeList<Fill, Cancel>>;
 using Selected = Zfix::MTList<Request, Fill, Cancel>;
 ZuAssert(Selected::Messages::N == 3);
 ZuAssert((Selected::Contains<Fill>{}));
 ZuAssert((!Selected::Contains<Entry>{}));
 ZuAssert((ZuIsSame<Request::Responses, ZuTypeList<Fill, Cancel>>{}));
-ZuAssert(Fill::Discriminator::tag == 150);
-ZuAssert(Cancel::Discriminator::value == "4");
+ZuAssert(Fill::Discrim::Tag == 150);
+ZuAssert(Cancel::Discrim::Value == "4");
 
 
 // Adapter bases must stay stateless: native Rx state belongs inside the engine,
@@ -51,7 +51,7 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuCheck(ZfixLib[0] == '@');
   ZuCheck(ZfixFmtLib[0] == '@');
-  ZuCheck(Entry::msgType == "D");
+  ZuCheck(Entry::MsgType == "D");
   ZuTestCall(layout<Zfix::TCP>);
   ZuTestCall(layout<Zfix::TLS>);
   return 0;

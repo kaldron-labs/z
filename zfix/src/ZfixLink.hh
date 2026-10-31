@@ -92,7 +92,7 @@ struct NoLinkRx {
 
 // Impl is a reference-counted physical transport link. Its app() supplies the
 // existing hub's isolated Rx/Tx dispatch and mx(). Transport hooks are:
-// fixGeometryTx_(), fixAllocTx_(head), fixSendTx_(buffer), resumeRx_(), and
+// fixGeometryTx(), fixAllocTx(head), fixSendTx(buffer), resumeRx_(), and
 // disconnect_(). Configure the link's output allocator as WireBufAlloc so socket
 // callbacks can pass their fixed token/part to transportSent().
 //
@@ -101,7 +101,7 @@ struct NoLinkRx {
 // delivered only after physical I/O, timers, owner tasks, output completions and
 // outstanding load/unload/history continuations have drained. The application
 // must keep hubs running until that observer; pending hooks must complete or
-// be cancelled by fixStopTx_. Populous tasks use raw dependent back-pointers.
+// be cancelled by fixStopTx. Populous tasks use raw dependent back-pointers.
 // The single teardown reference retains the enclosing link while draining.
 template <typename Impl, typename NativeRx = NoLinkRx> class Link {
 public:
@@ -111,9 +111,10 @@ public:
 private:
   struct AdmitReply : ZmNHeap<AdmitReply>, ZmPolymorph {
   friend inline ZuStringT<"Zfix.AdmitReply"> ZmNHeapID(AdmitReply *);
+
     const ZmRef<Impl>	owner;
     const uint64_t	connection, ticket;
-    bool			done = false; // Rx-owned one-shot disposition
+    bool		done = false; // Rx-owned one-shot disposition
 
     AdmitReply(Impl *p, uint64_t c, uint64_t t) : owner{p}, connection{c}, ticket{t} { }
 
@@ -135,46 +136,46 @@ private:
     RxSide(Link *l, SessionConfig c, RxLimits limits, uint64_t epoch) :
       Rx<RxSide>{ZuMv(c), limits, epoch}, link{l} { }
 
-    ZuTime nowRx_() { return Zm::now(); }
+    ZuTime nowRx() { return Zm::now(); }
 
-    void eventRx_(SessionEvent e, ZmRef<Msg> msg) { link->event_(e, ZuMv(msg)); }
+    void eventRx(SessionEvent e, ZmRef<Msg> msg) { link->event_(e, ZuMv(msg)); }
 
-    bool workIdleRx_() const { return !link->impl()->workState_().count; }
+    bool workIdleRx() const { return !link->impl()->workState_().count; }
 
-    void stateChangeRx_(SessionEvent e) { link->impl()->fixStateRx_(e); }
+    void stateChangeRx(SessionEvent e) { link->impl()->fixStateRx(e); }
 
-    void sessionRx_(ZmRef<Msg> msg) { link->impl()->fixControlRx_(ZuMv(msg)); }
+    void sessionRx(ZmRef<Msg> msg) { link->impl()->fixControlRx(ZuMv(msg)); }
 
-    void peerRejectRx_(PeerReject report) { link->peerReject_(ZuMv(report)); }
+    void peerRejectRx(PeerReject report) { link->peerReject_(ZuMv(report)); }
 
-    void rejectRx_(ZmRef<Msg> msg, unsigned tag, int reason) {
+    void rejectRx(ZmRef<Msg> msg, unsigned tag, int reason) {
       link->reject_(msg->data().header.seqNo, tag, reason);
     }
 
-    void resendRx_(uint64_t begin, uint64_t end, ZmRef<Msg>) {
+    void resendRx(uint64_t begin, uint64_t end, ZmRef<Msg>) {
       link->resend_(begin, end);
     }
 
-    Fmt::Error headerRx_(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
-      return link->impl()->fixHeaderRx_(f, h, l);
+    Fmt::Error headerRx(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
+      return link->impl()->fixHeaderRx(f, h, l);
     }
 
-    Fmt::Error businessRx_(Msg *msg, Fmt::Limits limits) {
-      return link->impl()->fixBusinessRx_(msg, limits);
+    Fmt::Error businessRx(Msg *msg, Fmt::Limits limits) {
+      return link->impl()->fixBusinessRx(msg, limits);
     }
 
-    void rxPost_(uint64_t ticket) {
+    void rxPost(uint64_t ticket) {
       link->app()->rxRun([this, ticket] { this->drain_(ticket); });
     }
 
-    void gapArm_(uint64_t ticket) { link->armGap_(ticket); }
-    void gapCancel_() { link->cancelGap_(); }
+    void gapArm(uint64_t ticket) { link->armGap_(ticket); }
+    void gapCancel() { link->cancelGap_(); }
 
-    void epochRx_(uint64_t c, uint64_t old, uint64_t epoch, RxProgress p) {
+    void epochRx(uint64_t c, uint64_t old, uint64_t epoch, RxProgress p) {
       // Every timer captures its epoch. An earlier old-epoch deadline cannot
       // stand in for the new one: its callback will correctly be ignored.
       link->cancelTimers_();
-      link->impl()->fixEpochRx_(c, old, epoch, p);
+      link->impl()->fixEpochRx(c, old, epoch, p);
     }
   };
 
@@ -192,12 +193,12 @@ private:
 
     void bind(SessionEvent e) {
       auto old = Ctl::connection_();
-      idleCancelTx_();
+      idleCancelTx();
       auto result = Ctl::bind_(e);
       Wire::close_(old);
       stopping = stopPosted = false;
       if (result == TxSelect::Invalid || result == TxSelect::Overload)
-	faultTx_({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output});
+	faultTx({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output});
     }
 
     void applyEvent(SessionEvent e, TxBody::Ref body) {
@@ -205,71 +206,71 @@ private:
 
       if (e.connection > Wire::connection_() &&
 	  e.state != State::Closing && e.state != State::Disconnected) {
-	if (!Wire::open_(e.connection, link->impl()->fixGeometryTx_())) {
-	  faultTx_({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output}); return;
+	if (!Wire::open_(e.connection, link->impl()->fixGeometryTx())) {
+	  faultTx({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output}); return;
 	}
 	stopping = stopPosted = false;
       }
       if (body && body->msgType() == "A") {
-	body = link->impl()->fixLogonTx_(ZuMv(body));
+	body = link->impl()->fixLogonTx(ZuMv(body));
 	if (!body || !body->administrative() || body->msgType() != "A") {
-	  faultTx_({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output}); return;
+	  faultTx({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output}); return;
 	}
       }
       auto result = Ctl::apply_(e, ZuMv(body));
       if (result == TxSelect::Invalid || result == TxSelect::Overload)
-	faultTx_({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output});
+	faultTx({e.epoch, e.connection, 0}, {Fmt::ErrorCode::Output});
       checkStop();
     }
 
-    void txSchedule_(unsigned kind, uint64_t ticket) {
+    void txSchedule(unsigned kind, uint64_t ticket) {
       link->app()->txRun([this, kind, ticket] { Ctl::run_(kind, ticket); checkStop(); });
     }
 
-    unsigned associateTx_(TxBody::Ref body, TxContext c, uint64_t ticket) {
-      return link->impl()->fixAssociateTx_(ZuMv(body), c, ticket);
+    unsigned associateTx(TxBody::Ref body, TxContext c, uint64_t ticket) {
+      return link->impl()->fixAssociateTx(ZuMv(body), c, ticket);
     }
 
-    bool releaseTx_(TxBody::Ref body, TxContext c, uint64_t ticket) {
-      return link->impl()->fixReleaseTx_(ZuMv(body), c, ticket);
+    bool releaseTx(TxBody::Ref body, TxContext c, uint64_t ticket) {
+      return link->impl()->fixReleaseTx(ZuMv(body), c, ticket);
     }
 
-    TxReload retrieveTx_(TxContext context, uint64_t acknowledged, uint64_t ticket) {
-      return link->impl()->fixRetrieveTx_(context, acknowledged, ticket);
+    TxReload retrieveTx(TxContext context, uint64_t acknowledged, uint64_t ticket) {
+      return link->impl()->fixRetrieveTx(context, acknowledged, ticket);
     }
 
-    void archiveTx_(uint64_t epoch, uint64_t begin, uint64_t end) {
-      link->impl()->fixArchiveTx_(epoch, begin, end);
+    void archiveTx(uint64_t epoch, uint64_t begin, uint64_t end) {
+      link->impl()->fixArchiveTx(epoch, begin, end);
     }
 
-    bool enqueueTx_(TxBody::Ref body) { return link->impl()->fixEnqueueTx_(ZuMv(body)); }
+    bool enqueueTx(TxBody::Ref body) { return link->impl()->fixEnqueueTx(ZuMv(body)); }
 
-    TxBody::Ref dequeueTx_() { return link->impl()->fixDequeueTx_(); }
+    TxBody::Ref dequeueTx() { return link->impl()->fixDequeueTx(); }
 
-    void selectedTx_(TxBody::Ref b, TxContext c, unsigned result) {
-      link->impl()->fixSelectedTx_(ZuMv(b), c, result);
+    void selectedTx(TxBody::Ref b, TxContext c, unsigned result) {
+      link->impl()->fixSelectedTx(ZuMv(b), c, result);
     }
 
-    void rejectedTx_(PeerReject r) { link->impl()->fixRejectedTx_(ZuMv(r)); }
+    void rejectedTx(PeerReject r) { link->impl()->fixRejectedTx(ZuMv(r)); }
 
-    void sessionTx_(TxBody::Ref b, TxContext c) { link->impl()->fixControlTx_(ZuMv(b), c); }
+    void sessionTx(TxBody::Ref b, TxContext c) { link->impl()->fixControlTx(ZuMv(b), c); }
 
-    void acknowledgedTx_(TxContext c, uint64_t old, uint64_t next) {
-      link->impl()->fixAckdTx_(c, old, next);
+    void acknowledgedTx(TxContext c, uint64_t old, uint64_t next) {
+      link->impl()->fixAckdTx(c, old, next);
     }
 
-    void sequenceLimitTx_(TxContext c, uint64_t max, unsigned headroom) {
-      link->impl()->fixLimitTx_(c, max, headroom);
+    void sequenceLimitTx(TxContext c, uint64_t max, unsigned headroom) {
+      link->impl()->fixLimitTx(c, max, headroom);
     }
 
-    void epochTx_(TxContext c, uint64_t epoch, TxProgress p, uint64_t request) {
-      link->impl()->fixEpochTx_(c, epoch, p, request);
+    void epochTx(TxContext c, uint64_t epoch, TxProgress p, uint64_t request) {
+      link->impl()->fixEpochTx(c, epoch, p, request);
     }
 
-    ZuDateTime clockTx_() { return ZuDateTime{Zm::now()}; }
-    ZuTime nowTx_() { return Zm::now(); }
+    ZuDateTime clockTx() { return ZuDateTime{Zm::now()}; }
+    ZuTime nowTx() { return Zm::now(); }
 
-    void idleArmTx_(uint64_t connection, uint64_t ticket, ZuTime at) {
+    void idleArmTx(uint64_t connection, uint64_t ticket, ZuTime at) {
       link->app()->mx()->del(&link->m_idleTimer);
       link->app()->mx()->add(&link->m_idleTimer, at, ZmScheduler::Update,
 	[this, connection, ticket](auto &&arm) {
@@ -279,39 +280,39 @@ private:
 	}, link->app()->txThread());
     }
 
-    void idleCancelTx_() { link->app()->mx()->del(&link->m_idleTimer); }
+    void idleCancelTx() { link->app()->mx()->del(&link->m_idleTimer); }
 
-    void faultTx_(TxContext c, Fmt::Error e) {
+    void faultTx(TxContext c, Fmt::Error e) {
       if (!c.connection) c = {Ctl::epoch_(), Ctl::connection_(), 0};
-      link->impl()->fixFaultTx_(c, e);
+      link->impl()->fixFaultTx(c, e);
       link->app()->rxRun([link = link, c] { link->outputFailed_(c); });
     }
 
-    bool admitFrameTx_(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
+    bool admitFrameTx(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
       return Wire::admit_(ZuMv(b), c, ZuMv(f));
     }
 
-    void notifyTx_(TxNotice notice) {
+    void notifyTx(TxNotice notice) {
       link->app()->rxRun([link = link, notice] { link->notice_(notice); });
     }
 
-    void frameTrace_(ZuCSpan wire, TxContext c) { link->traceTx_(wire, c); }
+    void frameTrace(ZuCSpan wire, TxContext c) { link->traceTx_(wire, c); }
 
-    void flushTx_() { Wire::flush_(); }
+    void flushTx() { Wire::flush_(); }
 
-    void publishedTx_(TxBody::Ref b, TxContext c, ZuDateTime original) {
-      link->impl()->fixPublishedTx_(ZuMv(b), c, original);
+    void publishedTx(TxBody::Ref b, TxContext c, ZuDateTime original) {
+      link->impl()->fixPublishedTx(ZuMv(b), c, original);
     }
 
-    void completeTx_(TxBody::Ref b, TxContext c, bool ok) {
-      link->impl()->fixCompleteTx_(ZuMv(b), c, ok);
+    void completeTx(TxBody::Ref b, TxContext c, bool ok) {
+      link->impl()->fixCompleteTx(ZuMv(b), c, ok);
     }
 
-    ZmRef<WireBuf> recordAlloc_(unsigned head) { return link->impl()->fixAllocTx_(head); }
+    ZmRef<WireBuf> recordAlloc(unsigned head) { return link->impl()->fixAllocTx(head); }
 
-    bool recordSend_(ZmRef<ZiIOBuf> b) { return link->impl()->fixSendTx_(ZuMv(b)); }
+    bool recordSend(ZmRef<ZiIOBuf> b) { return link->impl()->fixSendTx(ZuMv(b)); }
 
-    void outputDone_(TxBody::Ref b, TxContext c, bool ok) {
+    void outputDone(TxBody::Ref b, TxContext c, bool ok) {
       link->app()->txRun([this, b = ZuMv(b), c, ok]() mutable {
 	Ctl::sent_(ZuMv(b), c, ok);
 	if (ok) Ctl::writable_(c.connection);
@@ -322,10 +323,10 @@ private:
     void stop(uint64_t connection) {
       if (connection < Ctl::connection_()) return;
       stopConnection = connection;
-      stopping = true; stopPosted = false; idleCancelTx_();
+      stopping = true; stopPosted = false; idleCancelTx();
       Ctl::close_(Ctl::connection_());
       Wire::close_(Ctl::connection_()); Wire::close_(connection);
-      link->impl()->fixStopTx_(connection); checkStop();
+      link->impl()->fixStopTx(connection); checkStop();
     }
 
     void checkStop() {
@@ -363,7 +364,7 @@ public:
       session.resetPreparing_();
     auto e = m_rx.bind_(replace);
     if (e.actions & SessionAction::Refuse) {
-      impl()->fixEventRx_(e, {}); return false;
+      impl()->fixEventRx(e, {}); return false;
     }
     app()->txRun([this, e] { m_tx.bind(e); });
     return true;
@@ -387,7 +388,7 @@ public:
     cancelTimers_(); m_pending = nullptr; m_framer.reset_();
     auto connection = m_rx.session_().connection_();
     m_rx.lost_(connection); m_rx.closed_(connection);
-    impl()->fixStopRx_(connection, m_admissionTicket);
+    impl()->fixStopRx(connection, m_admissionTicket);
     app()->txRun([this, connection] { m_tx.stop(connection); });
   }
 
@@ -403,7 +404,7 @@ public:
     if (!m_live || m_adminFailed) return -1;
     if (m_pending) return 0;
     ZmRef<ZiIOBuf> bytes; Fmt::FrameView frame;
-    int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx_(); }, bytes, &frame);
+    int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx(); }, bytes, &frame);
     if (n < 0) {
       m_rx.framingError_(); fault_(SessionError::Protocol, m_framer.error_().tag);
       return -1;
@@ -420,7 +421,7 @@ public:
       context.seqNo = retained->data().header.seqNo;
       auto entry = m_traceRx.capture_(retained->data().frame, context,
 	traceField_, impl());
-      if (entry) impl()->fixTraceRx_(ZuMv(entry));
+      if (entry) impl()->fixTraceRx(ZuMv(entry));
     }
     return m_pending ? 0 : 1;
   }
@@ -430,11 +431,11 @@ public:
   TraceStats rxTraceStats_() const { ZmAssert(app()->rxInvoked()); return m_traceRx.stats_(); }
   TraceStats txTraceStats_() const { ZmAssert(app()->txInvoked()); return m_traceTx.stats_(); }
 
-  TraceField fixTraceField_(ZuCSpan, unsigned) { return {}; }
-  bool fixTraceSecret_(ZuCSpan, unsigned) { return false; }
+  TraceField fixTraceField(ZuCSpan, unsigned) { return {}; }
+  bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
 
-  void fixTraceRx_(TraceRef) { }
-  void fixTraceTx_(TraceRef) { }
+  void fixTraceRx(TraceRef) { }
+  void fixTraceTx(TraceRef) { }
 
   RxStats rxStats_() const {
     ZmAssert(app()->rxInvoked()); auto s = m_rx.stats_();
@@ -454,20 +455,12 @@ public:
   TxProgress txProgress_() const { ZmAssert(app()->txInvoked()); return m_tx.Ctl::progress_(); }
   RxProgress rxProgress_() const { ZmAssert(app()->rxInvoked()); return m_rx.progress_(); }
 
-  bool snapshotRx_(Checkpoint &s) const {
-    ZmAssert(app()->rxInvoked()); return m_rx.snapshot_(s);
+  bool restoreRx_(uint64_t epoch, const RxProgress &p) {
+    ZmAssert(app()->rxInvoked()); return m_rx.restore_(epoch, p);
   }
 
-  bool snapshotTx_(Checkpoint &s) const {
-    ZmAssert(app()->txInvoked()); return m_tx.Ctl::snapshot_(s);
-  }
-
-  bool restoreRx_(const Checkpoint &s) {
-    ZmAssert(app()->rxInvoked()); return m_rx.restore_(s);
-  }
-
-  bool restoreTx_(const Checkpoint &s) {
-    ZmAssert(app()->txInvoked()); return m_tx.Ctl::restore_(s);
+  bool restoreTx_(uint64_t epoch, const TxProgress &p) {
+    ZmAssert(app()->txInvoked()); return m_tx.Ctl::restore_(epoch, p);
   }
 
   unsigned submit_(TxBody::Ref body) {
@@ -477,13 +470,13 @@ public:
   [[nodiscard]] bool submit(const TxBody::Ref &body) {
     if (!body) return false;
     if (app()->txInvoked()) {
-      unsigned result = submit_(body); impl()->fixSubmittedTx_(body, result); return true;
+      unsigned result = submit_(body); impl()->fixSubmittedTx(body, result); return true;
     }
     if (!app()->rxInvoked() || !m_live) return false;
     uint64_t bytes = body->memory();
     if (!impl()->txPost_(bytes)) return false;
     app()->txRun([this, body, bytes] {
-      unsigned result = submit_(body); impl()->fixSubmittedTx_(body, result);
+      unsigned result = submit_(body); impl()->fixSubmittedTx(body, result);
       app()->rxRun([this, bytes] {
 	impl()->txUnpost_(bytes); if (m_txStopped) stopped_(m_rx.session_().connection_());
       });
@@ -591,7 +584,7 @@ public:
   // reports only local command admission; drain/epoch events prove completion.
   void reset(ResetRequest request) {
     app()->rxRun([this, request] {
-      bool accepted = reset_(request); impl()->fixResetRx_(request, accepted);
+      bool accepted = reset_(request); impl()->fixResetRx(request, accepted);
     });
   }
 
@@ -620,70 +613,70 @@ public:
 
   // Side-effect-safe defaults. Business association/storage and decoding remain
   // explicit application policy; nothing is silently accepted as a business send.
-  unsigned fixAssociateTx_(TxBody::Ref b, TxContext, uint64_t) {
+  unsigned fixAssociateTx(TxBody::Ref b, TxContext, uint64_t) {
     return b->administrative() ? TxLoad::Accepted : TxLoad::Refused;
   }
 
-  bool fixReleaseTx_(TxBody::Ref, TxContext, uint64_t) { return true; }
+  bool fixReleaseTx(TxBody::Ref, TxContext, uint64_t) { return true; }
 
-  TxReload fixRetrieveTx_(TxContext, uint64_t, uint64_t) { return {}; }
-  void fixArchiveTx_(uint64_t, uint64_t, uint64_t) { }
+  TxReload fixRetrieveTx(TxContext, uint64_t, uint64_t) { return {}; }
+  void fixArchiveTx(uint64_t, uint64_t, uint64_t) { }
 
-  bool fixEnqueueTx_(TxBody::Ref) { return false; }
-  TxBody::Ref fixDequeueTx_() { return {}; }
+  bool fixEnqueueTx(TxBody::Ref) { return false; }
+  TxBody::Ref fixDequeueTx() { return {}; }
 
-  void fixSelectedTx_(TxBody::Ref, TxContext, unsigned) { }
-  void fixSubmittedTx_(TxBody::Ref, unsigned) { }
+  void fixSelectedTx(TxBody::Ref, TxContext, unsigned) { }
+  void fixSubmittedTx(TxBody::Ref, unsigned) { }
 
-  void fixRejectedTx_(PeerReject) { }
+  void fixRejectedTx(PeerReject) { }
 
-  void fixControlTx_(TxBody::Ref, TxContext) { }
+  void fixControlTx(TxBody::Ref, TxContext) { }
 
-  TxBody::Ref fixLogonTx_(TxBody::Ref b) { return b; }
+  TxBody::Ref fixLogonTx(TxBody::Ref b) { return b; }
 
-  void fixPublishedTx_(TxBody::Ref, TxContext, ZuDateTime) { }
-  void fixCompleteTx_(TxBody::Ref, TxContext, bool) { }
+  void fixPublishedTx(TxBody::Ref, TxContext, ZuDateTime) { }
+  void fixCompleteTx(TxBody::Ref, TxContext, bool) { }
 
-  void fixFaultTx_(TxContext, Fmt::Error) { }
+  void fixFaultTx(TxContext, Fmt::Error) { }
 
-  void fixAckdTx_(TxContext, uint64_t, uint64_t) { }
+  void fixAckdTx(TxContext, uint64_t, uint64_t) { }
 
-  void fixLimitTx_(TxContext, uint64_t, unsigned) { }
+  void fixLimitTx(TxContext, uint64_t, unsigned) { }
 
-  void fixEpochTx_(TxContext, uint64_t, TxProgress, uint64_t) { }
-  void fixEpochRx_(uint64_t, uint64_t, uint64_t, RxProgress) { }
+  void fixEpochTx(TxContext, uint64_t, TxProgress, uint64_t) { }
+  void fixEpochRx(uint64_t, uint64_t, uint64_t, RxProgress) { }
 
-  void fixStopTx_(uint64_t) { }
-  void fixStopRx_(uint64_t, uint64_t) { }
-  void fixStoppedRx_(bool) { }
+  void fixStopTx(uint64_t) { }
+  void fixStopRx(uint64_t, uint64_t) { }
+  void fixStoppedRx(bool) { }
 
-  void fixBlockedRx_(TxContext) { }
+  void fixBlockedRx(TxContext) { }
 
-  void fixStateRx_(SessionEvent) { }
+  void fixStateRx(SessionEvent) { }
 
-  void fixResetRx_(ResetRequest, bool) { }
+  void fixResetRx(ResetRequest, bool) { }
 
-  void fixEventRx_(SessionEvent, ZmRef<Msg>) { }
+  void fixEventRx(SessionEvent, ZmRef<Msg>) { }
 
-  void fixControlRx_(ZmRef<Msg>) { }
+  void fixControlRx(ZmRef<Msg>) { }
 
-  unsigned fixAdmissionRx_(SessionEvent, ZmRef<Msg>, AdmitRequest &) {
+  unsigned fixAdmissionRx(SessionEvent, ZmRef<Msg>, AdmitRequest &) {
     return Admission::Accepted;
   }
 
-  Fmt::Error fixHeaderRx_(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
+  Fmt::Error fixHeaderRx(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
     return catalogHeader<typename Impl::MessageCatalog>(f, h, l);
   }
 
-  Fmt::Error fixBusinessRx_(Msg *message, Fmt::Limits limits) {
+  Fmt::Error fixBusinessRx(Msg *message, Fmt::Limits limits) {
     ZmAssert(app()->rxInvoked());
     return dispatch<typename Impl::MessageCatalog>(message->data().frame,
       [this, message]<typename Entry>(Entry *type, const typename Entry::Object &object,
-	  const Fmt::Header &header, const Fmt::Trailer &trailer) {
-	auto &input = message->data(); input.header = header; input.trailer = trailer;
+	  const Fmt::Header &, const Fmt::Trailer &trailer) {
+	message->data().trailer = trailer;
 	RequestContext context{type, m_rx.session_().instance_(), ZmRef<const Msg>{message}};
 	return Context_::Receive<Impl, Entry>::call(impl(), type, object, context);
-      }, limits);
+	}, limits, &message->data().header);
   }
 
 private:
@@ -709,14 +702,14 @@ private:
   auto app() const { return impl()->app(); }
 
   static TraceField traceField_(void *owner, ZuCSpan type, unsigned tag) {
-    auto p = static_cast<Impl *>(owner); auto f = p->fixTraceField_(type, tag);
-    f.secret |= p->fixTraceSecret_(type, tag); return f;
+    auto p = static_cast<Impl *>(owner); auto f = p->fixTraceField(type, tag);
+    f.secret |= p->fixTraceSecret(type, tag); return f;
   }
 
   void traceTx_(ZuCSpan wire, TxContext c) {
     if (!m_traceTx.enabled_()) return;
     auto entry = m_traceTx.capture_(wire, c, traceField_, impl());
-    if (entry) impl()->fixTraceTx_(ZuMv(entry));
+    if (entry) impl()->fixTraceTx(ZuMv(entry));
   }
   struct AdminReturn {
     Link	*link;
@@ -765,7 +758,7 @@ private:
     auto connection = s.connection_(), epoch = s.epoch_(), bytes = body->memory();
     if (!postAdmin_(bytes, [connection, epoch, body = ZuMv(body)](Link *link) mutable {
       if (link->m_tx.control_(connection, epoch, ZuMv(body)) == TxSelect::Overload)
-	link->m_tx.faultTx_({}, {Fmt::ErrorCode::Size});
+	link->m_tx.faultTx({}, {Fmt::ErrorCode::Size});
     })) adminFailed_();
   }
 
@@ -801,14 +794,14 @@ private:
     using Work = AdminWork<Fn>;
     // Account the callable/delegate envelopes in both directions, including
     // pending credit returns. Ring capacity and idle heap caches are separate.
-    constexpr uint64_t overhead =
+    constexpr uint64_t Overhead =
       ZmHeapAllocSize<sizeof(Work) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{} +
       ZmHeapAllocSize<sizeof(AdminReturn) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{};
     auto &hub = app()->fixAdminRx_();
-    if (retained > UINT64_MAX - overhead || !m_admin.fits_(retained + overhead)) {
+    if (retained > UINT64_MAX - Overhead || !m_admin.fits_(retained + Overhead)) {
       m_admin.refuse_(); hub.refuse_(); return false;
     }
-    uint64_t bytes = retained + overhead;
+    uint64_t bytes = retained + Overhead;
     if (!hub.acquire_(bytes)) { m_admin.refuse_(); return false; }
     [[maybe_unused]] bool acquired = m_admin.acquire_(bytes); ZmAssert(acquired);
     app()->txRun(Work{this, bytes, ZuMv(fn)}); return true;
@@ -832,12 +825,12 @@ private:
     auto now = Zm::now();
     if (m_rx.receive_(s.connection_(), m_pending, now, ZuDateTime{now}) ==
 	RxResult::Blocked)
-      impl()->fixBlockedRx_(TxContext{s.epoch_(), s.connection_(), 0});
+      impl()->fixBlockedRx(TxContext{s.epoch_(), s.connection_(), 0});
   }
 
   void event_(SessionEvent event, ZmRef<Msg> msg) {
     if (!event.connection && (event.actions & SessionAction::Refuse)) {
-      impl()->fixEventRx_(event, ZuMv(msg));
+      impl()->fixEventRx(event, ZuMv(msg));
       return;
     }
     if (event.actions & SessionAction::Timers) syncTimers_();
@@ -864,7 +857,7 @@ private:
     if (event.actions & SessionAction::Admission) {
       m_admissionTicket = event.ticket;
       AdmitRequest request{this, event.connection, event.ticket, deferAdmission_};
-      auto result = impl()->fixAdmissionRx_(event, msg, request);
+      auto result = impl()->fixAdmissionRx(event, msg, request);
       if (result != Admission::Pending || !request.deferred()) {
 	bool accepted = result == Admission::Accepted;
 	if (request.deferred()) request.defer()(accepted);
@@ -879,7 +872,7 @@ private:
 	receive_(); if (!m_pending) impl()->resumeRx_();
       });
     }
-    impl()->fixEventRx_(event, ZuMv(msg));
+    impl()->fixEventRx(event, ZuMv(msg));
     if (m_live && event.connection == m_rx.session_().connection_() &&
 	(event.actions & SessionAction::Close)) impl()->disconnect_(!m_adminFailed);
   }
@@ -942,7 +935,7 @@ private:
     if (m_admissionTicket || m_admissions || !m_closeRef || impl()->txPosted_().count ||
 	m_admin.state_().count || impl()->workState_().count) return;
     auto retain = ZuMv(m_closeRef);
-    impl()->fixStoppedRx_(m_peerClosed);
+    impl()->fixStoppedRx(m_peerClosed);
   }
 
   const ZuTime		m_gapRetry;

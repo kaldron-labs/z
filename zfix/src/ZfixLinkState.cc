@@ -27,7 +27,7 @@ bool SessionConfig::valid() const
 {
   if (mode >= Transport::N) return false;
   if (mode == Transport::Raw) return true;
-  return id.length() && header.valid() && appVerID <= AppVersion::N &&
+  return header.valid() && appVerID <= AppVersion::N &&
     sequenceLimit && sequenceLimit < UINT64_MAX &&
     receivePct && probePct &&
     *logonTimeout && logonTimeout > ZuTime{0} &&

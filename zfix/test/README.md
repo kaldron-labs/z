@@ -294,7 +294,7 @@ is complete with current unit/native evidence in ../STATUS.md. Foundation tests
 use ordinary zero-length items for logical tails beyond payload nodes; real FIX
 messages still consume one sequence.
 
-Use `make -C zfix/test asan-test ASAN_TESTS='Seq SeqTx Checkpoint Managed'` for focused
+Use `make -C zfix/test asan-test ASAN_TESTS='Seq SeqTx Restore Managed'` for focused
 instrumentation. State's implementation and owner templates are instrumented;
 dependency DSOs retain their configured instrumentation. Stage the foundation
 header before installed-consumer checks. Run Valgrind after installation finishes,
@@ -625,7 +625,7 @@ reservation, and releases/reuses the charge on physical close/reconnect.
 independent Tx encoding bounds in every managed mode.
 
 Catalog descriptors accept `MT<Object, MsgType, Facet, Selector, Responses>`.
-`NoDiscriminator` selects a unique MsgType; `Discriminator<Tag, Value>` declares
+`NoDiscrim` selects a unique MsgType; `Discrim<Tag, Value>` declares
 one root-scoped secondary wire key. Same-MsgType entries must share that tag and
 use disjoint values. `Responses` is an explicit type list with unique entries;
 it supplies no correlation index or response-count policy. `ZfixLinkTest` checks
@@ -634,16 +634,16 @@ schema-negative cases reject duplicate discriminator values, selectors on
 different tags for the same MsgType, qualified/unqualified overlap, duplicate
 response types and an envelope/MsgType secondary tag. Runtime scanning and native typed receive are implemented; typed send and reply are implemented.
 
-`ZfixDispatchTest` exercises runtime primary/secondary catalog dispatch in nine
-scopes. It covers distinct objects and facets, unmodelled root selectors, empty
-values, binary and paired-length selectors, nested groups with different entry
-layouts, selector-looking binary/group values, invalid inactive scalar values,
-selected-type required/value failures, duplicate keys, malformed pair/group and
-header ordering, exact shared/projection metadata budgets, effective envelope
-field limits, unchanged application refusal and explicit borrowed/owning copies.
+`ZfixDispatchTest` exercises primary/secondary catalog dispatch with distinct
+objects and facets, unmodeled root selectors, empty values, valid nested groups
+with distinct tags, selector-looking text, and invalid inactive scalar values.
+It checks selected required/value/group failures, duplicate keys, header ordering,
+exact selected-layout budgets, envelope field limits, wire error locations,
+application refusal and borrowed/owning copies. The inspector uses no parse slots.
 Catalog header-prefix checks cover unknown extensions before required headers,
 known body boundaries and conservative unknown-MsgType inspection.
-Schema cases 20–21 reject inconsistent wire pairing among candidates.
+Schema cases 20–21 reject immediate and nested group discriminator declarations.
+`ZfixFrameTest` covers the required 8/9/35 order and rejects misplaced MsgType.
 
 Run `make -C zfix/test asan-dispatch-test` to instrument the codec sources and
 new templates, or `installed-dispatch-test ZFIX_PREFIX=/tmp/zfix-stage/opt/z` to
@@ -663,10 +663,10 @@ Recovery TCP/TLS fixtures verify typed receive context during PossDup replay,
 including recovery before the new physical connection becomes Ready.
 
 `ZfixSelectTest` checks outbound descriptor/selector agreement in four scopes:
-known body keys, binary/paired-length/empty selectors, appended unmodelled keys,
-selector-looking opaque bytes, exact archive restore, duplicate/missing/mismatched
-history keys, raw conversion and final header/trailer-key validation. It also
-checks parse/output bounds and RawOutput::fromFrame envelope-policy refusal.
+known body keys, empty selectors, appended unmodeled keys, exact archive restore,
+duplicate/missing/mismatched history keys, raw conversion and final header-key
+validation. It also checks selected parse/output bounds, allocation-free selector
+inspection with zero parse budget, and RawOutput::fromFrame envelope-policy refusal.
 `asan-select-test` instruments the fixture/templates, codec and TxFrame sources;
 configured foundation DSOs remain unchanged. `installed-select-test` uses staged
 artifacts. `send-schema-test` must fail the catalog-membership assertion when a
@@ -698,3 +698,7 @@ exact-fit/tight-byte admission, pending-retirement charging, worker access to
 borrowed input, forced close while work is held and reset drain withholding its
 proof until work retires. Each scenario runs in all three managed modes. Raw
 fixtures move binary input through a worker and typed reply under work admission.
+
+`ZfixRestoreTest` verifies direct owner restoration without a session string key:
+Rx/Tx cursor and recovery-range validation, sequence limits, epoch/lifecycle
+guards, changed wire headers and zero allocation charge after reconstruction.

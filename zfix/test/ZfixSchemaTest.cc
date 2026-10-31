@@ -7,9 +7,6 @@
 // Compilation fixtures: case 0 must compile, cases 1–21 must fail.
 #include <zlib/ZtArray.hh>
 #include <zlib/Zfix.hh>
-#if ZFIX_SCHEMA_CASE >= 20
-#include <zlib/ZfixDispatch.hh>
-#endif
 
 struct Child {
   int	n;
@@ -99,22 +96,22 @@ struct Response { };
 using RequestMsg = Zfix::MT<Request, "D">;
 #if ZFIX_SCHEMA_CASE == 15
 using MTList = Zfix::MTList<
-  Zfix::MT<Request, "D", ZuFacet::FIX, Zfix::Discriminator<9000, "a">>,
-  Zfix::MT<Response, "D", ZuFacet::FIX, Zfix::Discriminator<9000, "a">>>;
+  Zfix::MT<Request, "D", ZuFacet::FIX, Zfix::Discrim<9000, "a">>,
+  Zfix::MT<Response, "D", ZuFacet::FIX, Zfix::Discrim<9000, "a">>>;
 #elif ZFIX_SCHEMA_CASE == 16
 using MTList = Zfix::MTList<
-  Zfix::MT<Request, "D", ZuFacet::FIX, Zfix::Discriminator<9000, "a">>,
-  Zfix::MT<Response, "D", ZuFacet::FIX, Zfix::Discriminator<9001, "b">>>;
+  Zfix::MT<Request, "D", ZuFacet::FIX, Zfix::Discrim<9000, "a">>,
+  Zfix::MT<Response, "D", ZuFacet::FIX, Zfix::Discrim<9001, "b">>>;
 #elif ZFIX_SCHEMA_CASE == 17
 using MTList = Zfix::MTList<RequestMsg,
-  Zfix::MT<Response, "D", ZuFacet::FIX, Zfix::Discriminator<9000, "a">>>;
+  Zfix::MT<Response, "D", ZuFacet::FIX, Zfix::Discrim<9000, "a">>>;
 #elif ZFIX_SCHEMA_CASE == 18
 using Reply = Zfix::MT<Response, "8">;
 using MTList = Zfix::MTList<Zfix::MT<Request, "D", ZuFacet::FIX,
-  Zfix::NoDiscriminator, ZuTypeList<Reply, Reply>>>;
+  Zfix::NoDiscrim, ZuTypeList<Reply, Reply>>>;
 #elif ZFIX_SCHEMA_CASE == 19
 using MTList = Zfix::MTList<
-  Zfix::MT<Request, "D", ZuFacet::FIX, Zfix::Discriminator<35, "D">>>;
+  Zfix::MT<Request, "D", ZuFacet::FIX, Zfix::Discrim<35, "D">>>;
 #elif ZFIX_SCHEMA_CASE == 6
 using MTList = Zfix::MTList<RequestMsg, Zfix::MT<Response, "D">>;
 #elif ZFIX_SCHEMA_CASE == 7
@@ -124,10 +121,10 @@ using MTList = Zfix::MTList<RequestMsg, Zfix::MT<Response, "8">>;
 #endif
 ZuAssert(sizeof(MTList) > 0);
 #if ZFIX_SCHEMA_CASE == 0
-using Fill = Zfix::MT<Response, "8", ZuFacet::FIX, Zfix::Discriminator<150, "F">>;
-using Cancel = Zfix::MT<Response, "8", ZuFacet::FIX, Zfix::Discriminator<150, "4">>;
+using Fill = Zfix::MT<Response, "8", ZuFacet::FIX, Zfix::Discrim<150, "F">>;
+using Cancel = Zfix::MT<Response, "8", ZuFacet::FIX, Zfix::Discrim<150, "4">>;
 using RequestWithReplies = Zfix::MT<Request, "D", ZuFacet::FIX,
-  Zfix::NoDiscriminator, ZuTypeList<Fill, Cancel>>;
+  Zfix::NoDiscrim, ZuTypeList<Fill, Cancel>>;
 using Selected = Zfix::MTList<RequestWithReplies, Fill, Cancel>;
 ZuAssert(sizeof(Selected) > 0);
 #endif
@@ -189,28 +186,24 @@ ZuAssert((sizeof(Zfix::Fmt::Schema<Vec, ZuFacet::FIX>) > 0));
 #endif
 
 #if ZFIX_SCHEMA_CASE >= 20
-struct LeftWire {
-  ZuBSpan	data;
+// A selector is never a repeating-group field, including nested groups.
+template <typename T> struct Rows : ZtArray<T, ZtArrayHeapID<"Zfix.Schema.Rows">> {
+  ZuDerive_(Rows, (ZtArray<T, ZtArrayHeapID<"Zfix.Schema.Rows">>));
+friend Zfix::Fmt::AsArray<> Zfix_Fmt(Rows *);
 };
-
-ZfStruct(, (LeftWire, FIX), (data, (FIX::ID<96>, FIX::Len<95>), Bytes));
-struct RightWire {
+struct Nested {
+  Rows<Child> children;
+};
+ZfStruct(, (Nested, FIX), (children, (FIX::ID<9002>), UDT));
+struct Selected {
 #if ZFIX_SCHEMA_CASE == 20
-  ZuCSpan data;
+  Rows<Child> entries;
 #else
-  ZuBSpan data;
+  Rows<Nested> entries;
 #endif
 };
-
-ZfStruct(, (RightWire, FIX),
-#if ZFIX_SCHEMA_CASE == 20
-  (data, (FIX::ID<96>), String));
-#else
-  (data, (FIX::ID<96>, FIX::Len<94>), Bytes));
-#endif
-using LeftMsg = Zfix::MT<LeftWire, "X", ZuFacet::FIX, Zfix::Discriminator<9000, "L">>;
-using RightMsg = Zfix::MT<RightWire, "X", ZuFacet::FIX, Zfix::Discriminator<9000, "R">>;
-using Choices = Zfix::MTList<LeftMsg, RightMsg>;
-using Scan = typename Zfix::Dispatch_::Wire<Choices::Messages, 9000>::T;
-ZuAssert((sizeof(Zfix::Fmt::Schema<Scan, ZuFacet::FIX>) > 0));
+ZfStruct(, (Selected, FIX), (entries, (FIX::ID<9001>), UDT));
+using Invalid = Zfix::MTList<Zfix::MT<Selected, "X", ZuFacet::FIX,
+  Zfix::Discrim<100, "A">>>;
+ZuAssert(sizeof(Invalid) > 0);
 #endif

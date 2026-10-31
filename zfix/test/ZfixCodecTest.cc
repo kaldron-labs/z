@@ -212,13 +212,13 @@ ZfStructImpl(Named, FIX);
 static void names()
 {
   ZuTestScope(names);
-  constexpr auto wire = "54=Sell\1" "9003=One Three\1"_z;
+  constexpr auto Wire = "54=Sell\1" "9003=One Three\1"_z;
   Named n;
-  ZuCheck(!load(n, wire));
+  ZuCheck(!load(n, Wire));
   ZuCheck(n.side == Side::Sell && n.features == (Features::One() | Features::Three()));
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, n) && out.data() == wire);
+  ZuCheck(save(out, n) && out.data() == Wire);
   ZuCheck(load(n, "54=invalid\1"_z).code == ErrorCode::Value);
   ZuCheck(load(n, "9003=One invalid\1"_z).code == ErrorCode::Value);
   ZuCheck(load(n, "54=SellX\1"_z).code == ErrorCode::Value);
@@ -242,26 +242,26 @@ ZfStructImpl(Numbers, FIX);
 static void numbers()
 {
   ZuTestScope(numbers);
-  constexpr auto wire =
+  constexpr auto Wire =
     "8001=-170141183460469231731687303715884105728\1"
     "8002=340282366920938463463374607431768211455\1"
     "8003=-1.25\1" "8004=-12.125\1"_z;
   Numbers n;
-  ZuCheck(!load(n, wire));
+  ZuCheck(!load(n, Wire));
   ZuCheck(n.signed_ == ZuCmp<int128_t>::null() && n.unsigned_ == ~uint128_t(0));
   ZuCheck(n.float_ == -1.25 && n.fixed == ZuFixed{"-12.125"});
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, n) && out.data() == wire);
+  ZuCheck(save(out, n) && out.data() == Wire);
   ZuCheck(load(n, "8003=1e2\1"_z).code == ErrorCode::Value);
   ZuCheck(load(n, "8004=nan\1"_z).code == ErrorCode::Value);
   Record r;
   auto nullTime = handler<Record, ZuFacet::Millis>("60=\1");
   ZuCheck(!nullTime.load(r) && nullTime.error().code == ErrorCode::Value);
-  constexpr auto nullWire = "60=\1"_z;
-  char nullBytes[nullWire.length()];
+  constexpr auto NullWire = "60=\1"_z;
+  char nullBytes[NullWire.length()];
   Sink nullOut{{nullBytes, sizeof(nullBytes)}};
-  ZuCheck(save<ZuFacet::Millis>(nullOut, r) && nullOut.data() == nullWire);
+  ZuCheck(save<ZuFacet::Millis>(nullOut, r) && nullOut.data() == NullWire);
   Sink invalid{{bytes, sizeof(bytes)}};
   ZuCheck(!save(invalid, r) && invalid.error().code == ErrorCode::Value);
 }
@@ -280,10 +280,10 @@ static void filters()
   ZuTestScope(filters);
   Accessors a;
   a.key = 7; a.value = 8;
-  constexpr auto upd = "1=7\1" "2=8\1"_z;
-  char bytes[upd.length()];
+  constexpr auto Upd = "1=7\1" "2=8\1"_z;
+  char bytes[Upd.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck((save<ZuFacet::FIX, ZfFieldFilter::Upd>(out, a) && out.data() == upd));
+  ZuCheck((save<ZuFacet::FIX, ZfFieldFilter::Upd>(out, a) && out.data() == Upd));
   Sink del{{bytes, sizeof(bytes)}};
   ZuCheck((save<ZuFacet::FIX, ZfFieldFilter::Del>(del, a) && del.data() == "1=7\1"_z));
   Limited l;
@@ -314,10 +314,10 @@ static void cstrings()
   ZuCheck(ZuCSpan{b.text} == "owned" && b.text != backing + 3);
   backing[3] = 'X';
   ZuCheck(ZuCSpan{b.text} == "owned");
-  constexpr auto wire = "11=owned\1"_z;
-  char bytes[wire.length()];
+  constexpr auto Wire = "11=owned\1"_z;
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, b) && out.data() == wire);
+  ZuCheck(save(out, b) && out.data() == Wire);
   ZuCheck(!load(b, "11=\1"_z) && b.text && !*b.text);
   ZuCheck(load(b, "11=A\0B\1"_z).code == ErrorCode::Value);
   ZuCheck(!update(b, {}) && ZuCSpan{b.text} == "preset");
@@ -345,10 +345,10 @@ static void pointers()
   auto ptr = b.owned.ptr();
   ZuCheck(!load(b, "21=43\1"_z));
   ZuCheck(b.owned.ptr() == ptr && b.owned->value() == 43);
-  constexpr auto wire = "21=43\1"_z;
-  char bytes[wire.length()];
+  constexpr auto Wire = "21=43\1"_z;
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, b) && out.data() == wire);
+  ZuCheck(save(out, b) && out.data() == Wire);
   ZuCheck(!load(b, {}) && !b.owned);
   auto h = handler<PtrBody>("21=bad\1");
   auto failed = h.ctor();
@@ -357,9 +357,9 @@ static void pointers()
 
 // Named constant storage makes pointer defaults structural; decoding clones
 // these values into independently owned destination strings.
-constexpr char defaultOne[] = "one";
-constexpr char defaultTwo[] = "two";
-constexpr ZuArray<const char *, 2> cDefaults{defaultOne, defaultTwo};
+constexpr char DefaultOne[] = "one";
+constexpr char DefaultTwo[] = "two";
+constexpr ZuArray<const char *, 2> CDefaults{DefaultOne, DefaultTwo};
 using CStrings = ZtArray<const char *, ZtArrayHeapID<"Zfix.TestCStrings">>;
 using Labels = ZtArray<Text, ZtArrayHeapID<"Zfix.TestLabels">>;
 struct CLists : ZmNHeap<CLists> {
@@ -377,7 +377,7 @@ friend inline ZuStringT<"Zfix.TestCLists"> ZmNHeapID(CLists *);
 };
 
 ZfStruct(, (CLists, FIX),
-  (strings, (FIX::ID<9010>, FIX::Multiple, Mutable, Deflt<cDefaults>), CStringVec),
+  (strings, (FIX::ID<9010>, FIX::Multiple, Mutable, Deflt<CDefaults>), CStringVec),
   (labels, (FIX::ID<9011>, FIX::Multiple, Mutable),	StringVec),
   (cLabels, (FIX::ID<9012>, FIX::Multiple, Mutable),	CStringVec));
 ZfStructImpl(CLists);
@@ -396,25 +396,25 @@ ZfStructImpl(CRead, FIX);
 static void stringLists()
 {
   ZuTestScope(stringLists);
-  constexpr auto wire = "9010=alpha beta\1" "9011=gamma delta\1" "9012=epsilon zeta\1"_z;
-  auto h = handler<CLists>(wire);
+  constexpr auto Wire = "9010=alpha beta\1" "9011=gamma delta\1" "9012=epsilon zeta\1"_z;
+  auto h = handler<CLists>(Wire);
   auto lists = h.ctor();
   ZuCheck(h.valid() && lists.strings.length() == 2);
   ZuCheck(ZuCSpan{lists.strings[0]} == "alpha" && ZuCSpan{lists.strings[1]} == "beta");
   ZuCheck(lists.labels.length() == 2 && lists.labels[1] == "delta");
   ZuCheck(lists.cLabels.length() == 2 && lists.cLabels[1] == "zeta");
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, lists) && out.data() == wire);
+  ZuCheck(save(out, lists) && out.data() == Wire);
   ZuCheck(!load(lists, "9010=next\1"_z));
   ZuCheck(lists.strings.length() == 1 && !lists.labels.length() && !lists.cLabels.length());
   ZuCheck(load(lists, "9010=first \1"_z).code == ErrorCode::Value);
   ZuCheck(load(lists, "9010=first bad\0value\1"_z).code == ErrorCode::Value);
   ZuCheck(!update(lists, {}) && lists.strings.length() == 2);
-  ZuCheck(ZuCSpan{lists.strings[0]} == "one" && lists.strings[0] != defaultOne);
+  ZuCheck(ZuCSpan{lists.strings[0]} == "one" && lists.strings[0] != DefaultOne);
   ZuCheck(!load(lists, "9010=\1"_z) && !lists.strings.length());
-  constexpr auto badWire = "9010=alpha beta\1" "9011=bad\0value\1"_z;
-  auto bad = handler<CLists>(badWire);
+  constexpr auto BadWire = "9010=alpha beta\1" "9011=bad\0value\1"_z;
+  auto bad = handler<CLists>(BadWire);
   ZuCheck(!bad.alloc() && bad.error().code == ErrorCode::Value);
   CRead skipped;
   ZuCheck(!load(skipped, "9010=alpha beta\1" "1=7\1"_z));
@@ -446,17 +446,17 @@ ZfStructImpl(Lists, FIX);
 static void multiple()
 {
   ZuTestScope(multiple);
-  constexpr auto wire = "9001=-1 0 2147483647\1" "9002=alpha beta\1"_z;
+  constexpr auto Wire = "9001=-1 0 2147483647\1" "9002=alpha beta\1"_z;
   Lists lists;
-  ZuCheck(!load(lists, wire));
+  ZuCheck(!load(lists, Wire));
   ZuCheck(lists.codes.length() == 3 && lists.codes[0] == -1 &&
     lists.codes[2] == INT_MAX);
   ZuCheck(lists.words.length() == 2 && lists.words[1] == "beta");
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, lists) && out.flush() && out.data() == wire);
-  auto bad = [&lists](ZuCSpan wire) {
-    ZuCheck(load(lists, wire).code == ErrorCode::Value);
+  ZuCheck(save(out, lists) && out.flush() && out.data() == Wire);
+  auto bad = [&lists](ZuCSpan Wire) {
+    ZuCheck(load(lists, Wire).code == ErrorCode::Value);
   };
   bad("9001= 1\1"_z); bad("9001=1 \1"_z); bad("9001=1  2\1"_z);
   bad("9001=2147483648\1"_z); bad("9001=1 X\1"_z);
@@ -470,10 +470,10 @@ static void multiple()
 static void inspect()
 {
   ZuTestScope(inspect);
-  constexpr auto wire = "1000000=42\1" "11=\1"_z;
-  auto h = handler<Record>(wire);
+  constexpr auto Wire = "1000000=42\1" "11=\1"_z;
+  auto h = handler<Record>(Wire);
   auto number = h.raw<ZfField(Record, number)>();
-  ZuCheck(h.valid() && number == "42" && number.data() == wire.data() + 8);
+  ZuCheck(h.valid() && number == "42" && number.data() == Wire.data() + 8);
   auto empty = h.raw<ZfField(Record, text)>();
   ZuCheck(h.valid() && !empty.length() && empty.data());
   auto absent = h.raw<ZfField(Record, small)>();
@@ -614,25 +614,40 @@ static void bounds()
   ZuCheck((!integer<128, false>("340282366920938463463374607431768211456",
     magnitude, negative)));
   ZuCheck((!integer<32, false>("-1", magnitude, negative)));
+  Token token;
+  ZuCheck(!scan("4294967295=x\1"_z, 0, token) && token.tag == UINT_MAX);
+  ZuCheck(scan("4294967296=x\1"_z, 0, token).code == ErrorCode::Tag);
+  ZuCheck(scan("999999999999999999999=x\1"_z, 0, token).code == ErrorCode::Tag);
+  ZuCheck(scan("4294967295"_z, 0, token).code == ErrorCode::Truncated);
 }
 
 template <unsigned Bits, bool Sign> static bool integerWidth()
 {
-  constexpr uint128_t max = (~uint128_t(0) >> (128 - Bits)) >> unsigned(Sign);
-  uint128_t magnitude;
+  constexpr uint128_t Max = (~uint128_t(0) >> (128 - Bits)) >> unsigned(Sign);
+  using U = ZuIf<(Bits <= 8), uint8_t, ZuIf<(Bits <= 16), uint16_t,
+    ZuIf<(Bits <= 32), uint32_t, ZuIf<(Bits <= 64), uint64_t, uint128_t>>>>;
+  U magnitude;
   bool negative;
-  Text bound; bound << ZuBox<uint128_t>{max};
-  if (!integer<Bits, Sign>(bound, magnitude, negative) || magnitude != max || negative)
+  Text bound; bound << ZuBox<uint128_t>{Max};
+  if (!integer<Bits, Sign>(bound, magnitude, negative) || magnitude != Max || negative)
+    return false;
+  Text padded; padded << "00000000000000000000" << bound;
+  if (!integer<Bits, Sign>(padded, magnitude, negative) || magnitude != Max || negative)
     return false;
   Text over;
-  if constexpr (max != ~uint128_t(0)) over << ZuBox<uint128_t>{max + 1};
+  if constexpr (Max != ~uint128_t(0)) over << ZuBox<uint128_t>{Max + 1};
   else over << bound << '0';
   if (integer<Bits, Sign>(over, magnitude, negative)) return false;
+  padded.length(0); padded << "00000000000000000000" << over;
+  if (integer<Bits, Sign>(padded, magnitude, negative)) return false;
   if constexpr (Sign) {
-    bound.length(0); bound << '-' << ZuBox<uint128_t>{max + 1};
+    bound.length(0); bound << '-' << ZuBox<uint128_t>{Max + 1};
     if (!integer<Bits, Sign>(bound, magnitude, negative) ||
-	magnitude != max + 1 || !negative) return false;
-    over.length(0); over << '-' << ZuBox<uint128_t>{max + 2};
+	magnitude != Max + 1 || !negative) return false;
+    padded.length(0); padded << "-00000000000000000000" << ZuBox<uint128_t>{Max + 1};
+    if (!integer<Bits, Sign>(padded, magnitude, negative) ||
+	magnitude != Max + 1 || !negative) return false;
+    over.length(0); over << '-' << ZuBox<uint128_t>{Max + 2};
     if (integer<Bits, Sign>(over, magnitude, negative)) return false;
     if (!integer<Bits, Sign>("-0", magnitude, negative) || magnitude || !negative) return false;
   } else if (integer<Bits, Sign>("-1", magnitude, negative)) return false;
@@ -657,12 +672,12 @@ static void output()
   ZuTestScope(output);
   Args a{"order", 4};
   a.value = 9;
-  constexpr auto wire = "21=4\1" "22=order\1" "23=9\1"_z;
-  char bytes[wire.length()]; // exact golden-fixture size, exercises tail fallback
+  constexpr auto Wire = "21=4\1" "22=order\1" "23=9\1"_z;
+  char bytes[Wire.length()]; // exact golden-fixture size, exercises tail fallback
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, a));
   ZuCheck(out.flush());
-  ZuCheck(out.data() == wire);
+  ZuCheck(out.data() == Wire);
   char small[sizeof("21=4") - 1];
   Sink bad{{small, sizeof(small)}};
   ZuCheck(!save(bad, a));
@@ -679,15 +694,15 @@ static void output()
 static void binary()
 {
   ZuTestScope(binary);
-  constexpr auto wire = "95=4\1" "96=A\1\0=\1"_z;
+  constexpr auto Wire = "95=4\1" "96=A\1\0=\1"_z;
   Binary b;
-  auto e = load(b, wire);
+  auto e = load(b, Wire);
   ZuCheck(!e);
   ZuCheck(b.bytes == ZuBSpan{"A\1\0="_z});
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, b));
-  ZuCheck(out.data() == wire && out.flush());
+  ZuCheck(out.data() == Wire && out.flush());
   SkippedBinary skipped;
   e = load(skipped, "95=4\1" "96=A\1\0=\1" "21=8\1"_z);
   ZuCheck(!e);
@@ -709,23 +724,23 @@ static void policies()
   ZuTestScope(policies);
   Record r;
   r.time = ZuDateTime{ZuDateTimeScan::FIX{}, "20261026-12:34:56.123456789"};
-  constexpr auto wire = "60=20261026-12:34:56.123\1"_z;
-  char bytes[wire.length()];
+  constexpr auto Wire = "60=20261026-12:34:56.123\1"_z;
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save<ZuFacet::Millis>(out, r));
-  if (out.data() != wire) log("timestamp wire: ", out.data());
-  ZuCheck(out.data() == wire);
-  constexpr auto secondWire = "60=20261026-12:34:56\1"_z;
-  char seconds[secondWire.length()];
+  if (out.data() != Wire) log("timestamp wire: ", out.data());
+  ZuCheck(out.data() == Wire);
+  constexpr auto SecondWire = "60=20261026-12:34:56\1"_z;
+  char seconds[SecondWire.length()];
   Sink secondOut{{seconds, sizeof(seconds)}};
   ZuCheck(save<ZuFacet::Seconds>(secondOut, r));
-  ZuCheck(secondOut.data() == secondWire);
+  ZuCheck(secondOut.data() == SecondWire);
   Character c;
   ZuCheck(!load(c, "54=2\1"_z) && c.value == '2');
-  constexpr auto charWire = "54=2\1"_z;
-  char chars[charWire.length()];
+  constexpr auto CharWire = "54=2\1"_z;
+  char chars[CharWire.length()];
   Sink charOut{{chars, sizeof(chars)}};
-  ZuCheck(save(charOut, c) && charOut.data() == charWire);
+  ZuCheck(save(charOut, c) && charOut.data() == CharWire);
   ZuCheck(load(c, "54=22\1"_z).code == ErrorCode::Value);
   Accessors a;
   ZuCheck(!update(a, "2=8\1"_z));
@@ -763,10 +778,10 @@ static void customAndBorrowed()
   ScalarUDT o;
   ZuCheck(!load(o, "55=valid\1"_z));
   ZuCheck(o.label.value == "valid");
-  constexpr auto wire = "55=valid\1"_z;
-  char bytes[wire.length()];
+  constexpr auto Wire = "55=valid\1"_z;
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, o) && out.data() == wire);
+  ZuCheck(save(out, o) && out.data() == Wire);
   ZuCheck(load(o, "55=bad\1"_z).code == ErrorCode::Value);
   ZuCheck(!load(o, {}) && !o.label.value);
   char backing[] = "11=borrowed\1";
@@ -778,6 +793,125 @@ static void customAndBorrowed()
   ZuCheck(!load(empty, "777=untyped\1"_z));
   Sink emptyOut{{}};
   ZuCheck(save(emptyOut, empty) && !emptyOut.length());
+}
+
+using FormatBytes = ZtArray<uint8_t, ZtArrayHeapID<"Zfix.TestFormat">>;
+struct ByteFormats {
+  FormatBytes	b64, url, b32, hex, raw;
+};
+
+ZfStruct(, (ByteFormats, FIX),
+  (b64, (FIX::ID<6101>, FIX::Len<6100>, FIX::Base64),		Bytes),
+  (url, (FIX::ID<6111>, FIX::Len<6110>, FIX::Base64URL),	Bytes),
+  (b32, (FIX::ID<6121>, FIX::Base32),				Bytes),
+  (hex, (FIX::ID<6131>, FIX::Hex),				Bytes),
+  (raw, (FIX::ID<6141>, FIX::Len<6140>, FIX::Raw),		Bytes));
+ZfStructImpl(ByteFormats, FIX);
+
+static void byteFormats()
+{
+  ZuTestScope(byteFormats);
+  constexpr auto Data = "\xfb\xff"_z;
+  constexpr auto Wire = "6100=4\1" "6101=+/8=\1" "6110=3\1" "6111=-_8\1"
+    "6121=7P7Q====\1" "6131=FBFF\1" "6140=2\1" "6141=\xfb\xff\1"_z;
+  ByteFormats value;
+  value.b64 = Data; value.url = Data; value.b32 = Data; value.hex = Data; value.raw = Data;
+  char bytes[Wire.length()];
+  Sink out{{bytes, sizeof(bytes)}};
+  ZuCheck(save(out, value) && out.data() == Wire);
+  ByteFormats copy;
+  auto input = handler<ByteFormats>(Wire);
+  ZuCheck(input.check() && input.load(copy));
+  ZuCheck(ZuCSpan{copy.b64} == Data && ZuCSpan{copy.url} == Data &&
+    ZuCSpan{copy.b32} == Data && ZuCSpan{copy.hex} == Data && ZuCSpan{copy.raw} == Data);
+  ZuCheck(load(copy, "6100=4\1" "6101=TQ?=\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6100=3\1" "6101=TQ=\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6121=ABC\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6131=F\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6131=FG\1"_z).code == ErrorCode::Value);
+}
+
+struct NumberFormats {
+  unsigned	hex = 0xabc;
+  uint64_t	comma = 1234567;
+  int		padded = -12;
+  ZuDecimal	decimal{123456789, 3};
+  double	real = 1234.5;
+  int		absent = ZuCmp<int>::null(), retained = ZuCmp<int>::null();
+  Text		empty;
+  bool		flag = false;
+};
+
+using HexNumber = ZtFmt::Alt<ZtFmt::Hex<true>>;
+using PaddedNumber = ZtFmt::Right<8, ' '>;
+
+ZfStruct(, (NumberFormats, FIX),
+  (hex, (FIX::ID<6201>, FIX::Number<HexNumber>),		UInt32),
+  (comma, (FIX::ID<6202>, FIX::Number<ZtFmt::Comma<>>),		UInt64),
+  (padded, (FIX::ID<6203>, FIX::Number<PaddedNumber>),		Int32),
+  (decimal, (FIX::ID<6204>, FIX::Number<ZtFmt::Comma<>>),	Decimal),
+  (real, (FIX::ID<6205>, FIX::Number<ZtFmt::Comma<>>),		Float),
+  (absent, (FIX::ID<6206>, FIX::Opt),				Int32),
+  (retained, (FIX::ID<6207>, FIX::Optional<false>),		Int32),
+  (empty, (FIX::ID<6208>, FIX::Opt),				String),
+  (flag, (FIX::ID<6209>, FIX::Opt),				Bool));
+ZfStructImpl(NumberFormats, FIX);
+
+static void numberFormats()
+{
+  ZuTestScope(numberFormats);
+  constexpr auto Wire = "6201=0xABC\1" "6202=1,234,567\1" "6203=     -12\1"
+    "6204=123,456.789\1" "6205=1,234.5\1" "6207=-2147483648\1" "6209=N\1"_z;
+  NumberFormats value;
+  char bytes[Wire.length()];
+  Sink out{{bytes, sizeof(bytes)}};
+  ZuCheck(save(out, value) && out.data() == Wire);
+  NumberFormats copy;
+  copy.hex = 0; copy.comma = 0; copy.padded = 0; copy.decimal = ZuDecimal{0}; copy.real = 0;
+  ZuCheck(!load(copy, Wire));
+  ZuCheck(copy.hex == value.hex && copy.comma == value.comma && copy.padded == value.padded &&
+    copy.decimal == value.decimal && copy.real == value.real && !copy.flag);
+  ZuCheck(load(copy, "6201=0x100000000\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6202=18,446,744,073,709,551,616\1"_z).code == ErrorCode::Value);
+}
+
+struct TimeFormats {
+  ZuDateTime	deflt, fix, iso, csv;
+  ZuTime	sec, msec, usec, nsec;
+};
+
+ZfStruct(, (TimeFormats, FIX),
+  (deflt, (FIX::ID<6301>),					DateTime),
+  (fix, (FIX::ID<6302>, (FIX::FIX<0, 3>)),				DateTime),
+  (iso, (FIX::ID<6303>, (FIX::ISO<0, 3>)),				DateTime),
+  (csv, (FIX::ID<6304>, (FIX::CSV<0, 3>)),				DateTime),
+  (sec, (FIX::ID<6305>, (FIX::Unix<0, 3>)),				Time),
+  (msec, (FIX::ID<6306>, (FIX::Unix<1, 3>)),				Time),
+  (usec, (FIX::ID<6307>, (FIX::Unix<2, 3>)),				Time),
+  (nsec, (FIX::ID<6308>, (FIX::Unix<3, 0>)),				Time));
+ZfStructImpl(TimeFormats, FIX);
+
+static void timeFormats()
+{
+  ZuTestScope(timeFormats);
+  ZuTime stamp{1234, 567000000};
+  ZuDateTime date{stamp};
+  TimeFormats value{date, date, date, date, stamp, stamp, stamp, stamp};
+  Text expected;
+  auto iso = ZuDateTimeFmt::ISO{}; auto csv = ZuDateTimeFmt::CSV{};
+  expected << "6301=19700101-00:20:34.567\1" "6302=19700101-00:20:34.567\1"
+    "6303=" << date.fmt(iso) << '\1' << "6304=" << date.fmt(csv) << '\1' <<
+    "6305=1234.567\1" "6306=1234567.000\1" "6307=1234567000.000\1" "6308=1234567000000\1";
+  auto bytes = ZtScratch(PrintBuf, expected.length());
+  Sink out{{bytes.data(), unsigned(expected.length())}};
+  ZuCheck(save(out, value) && out.data() == expected);
+  TimeFormats copy;
+  ZuCheck(!load(copy, expected));
+  ZuCheck(copy.deflt == date && copy.fix == date && copy.iso == date && copy.csv == date &&
+    copy.sec == stamp && copy.msec == stamp && copy.usec == stamp && copy.nsec == stamp);
+  ZuCheck(load(copy, "6301=1970-01-01T00:20:34.567Z\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6303=not-a-time\1"_z).code == ErrorCode::Value);
+  ZuCheck(load(copy, "6305=1e3\1"_z).code == ErrorCode::Value);
 }
 
 int main(int argc, char **argv)
@@ -803,5 +937,8 @@ int main(int argc, char **argv)
   ZuTestCall(policies);
   ZuTestCall(allocation);
   ZuTestCall(customAndBorrowed);
+  ZuTestCall(byteFormats);
+  ZuTestCall(numberFormats);
+  ZuTestCall(timeFormats);
   return 0;
 }

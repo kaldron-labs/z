@@ -116,23 +116,23 @@ ZfStructImpl(Envelope, DataFIX);
 static void nested()
 {
   ZuTestScope(nested);
-  constexpr auto wire = "1000=7\1" "55=123\1"_z;
-  auto text = handler<Envelope, ZuFacet::TextFIX>(wire);
+  constexpr auto Wire = "1000=7\1" "55=123\1"_z;
+  auto text = handler<Envelope, ZuFacet::TextFIX>(Wire);
   auto a = text.ctor();
   ZuCheck(text.valid() && a.marker == 7 && a.choice.is<TextMsg>());
   ZuCheck(a.choice.p<TextMsg>().value == "123");
-  auto number = handler<Envelope, ZuFacet::NumFIX>(wire);
+  auto number = handler<Envelope, ZuFacet::NumFIX>(Wire);
   ZuCheck(number.load(a));
   ZuCheck(a.choice.is<NumMsg>() && a.choice.p<NumMsg>().value == 123);
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save<ZuFacet::NumFIX>(out, a) && out.flush());
-  ZuCheck(out.data() == wire);
+  ZuCheck(out.data() == Wire);
   Sink wrong{{bytes, sizeof(bytes)}};
   ZuCheck(!save<ZuFacet::TextFIX>(wrong, a));
   ZuCheck(wrong.error().code == ErrorCode::Unresolved);
-  constexpr auto binary = "1000=1\1" "95=4\1" "96=A\1\0=\1"_z;
-  auto data = handler<Envelope, ZuFacet::DataFIX>(binary);
+  constexpr auto Binary = "1000=1\1" "95=4\1" "96=A\1\0=\1"_z;
+  auto data = handler<Envelope, ZuFacet::DataFIX>(Binary);
   auto b = data.ctor();
   ZuCheck(data.valid() && b.choice.is<DataMsg>());
   ZuCheck(b.choice.p<DataMsg>().data == ZuBSpan{"A\1\0="_z});
@@ -141,22 +141,22 @@ static void nested()
 static void selection()
 {
   ZuTestScope(selection);
-  constexpr auto wire = "55=123\1"_z;
-  auto h = handler<Choice>(wire);
+  constexpr auto Wire = "55=123\1"_z;
+  auto h = handler<Choice>(Wire);
   auto a = h.ctor();
   ZuCheck(h.valid() && a.is<ParseView>());
-  ZuCheck(a.p<ParseView>().input.data() == wire.data());
+  ZuCheck(a.p<ParseView>().input.data() == Wire.data());
   ZuCheck(!resolve<TextMsg>(a));
   ZuCheck(a.is<TextMsg>() && a.p<TextMsg>().value == "123");
-  auto b = handler<Choice>(wire).ctor();
+  auto b = handler<Choice>(Wire).ctor();
   ZuCheck(!resolve<NumMsg>(b));
   ZuCheck(b.is<NumMsg>() && b.p<NumMsg>().value == 123);
-  char bytes[wire.length()];
+  char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
   ZuCheck(save(out, b) && out.flush());
-  ZuCheck(out.data() == wire);
+  ZuCheck(out.data() == Wire);
   Immediate immediate;
-  auto selected = handler<Immediate>(wire);
+  auto selected = handler<Immediate>(Wire);
   ZuCheck(selected.resolve<NumMsg>(immediate));
   ZuCheck(immediate.is<NumMsg>() && immediate.p<NumMsg>().value == 123);
 }
@@ -176,8 +176,8 @@ static void lifetime()
   ZuCheck(c.p<TextMsg>().value == "new");
   backing[3] = 'x';
   ZuCheck(c.p<TextMsg>().value == "new");
-  constexpr auto binaryWire = "95=4\1" "96=A\1\0=\1"_z;
-  auto binary = handler<Choice>(binaryWire).ctor();
+  constexpr auto BinaryWire = "95=4\1" "96=A\1\0=\1"_z;
+  auto binary = handler<Choice>(BinaryWire).ctor();
   ZuCheck(!resolve<DataMsg>(binary));
   ZuCheck(binary.p<DataMsg>().data == ZuBSpan{"A\1\0="_z});
 }
@@ -223,11 +223,11 @@ static void construction()
   auto noView = handler<Immediate>("55=8\1");
   ZuCheck(!noView.load(immediate) && noView.error().code == ErrorCode::Unresolved);
   auto explicit_ = handler<Explicit>("raw-but-not-pass-through").ctor();
-  constexpr auto wire = "55=explicit\1"_z;
-  char output[wire.length()];
+  constexpr auto Wire = "55=explicit\1"_z;
+  char output[Wire.length()];
   Sink out{{output, sizeof(output)}};
   ZuCheck(save(out, explicit_) && out.flush());
-  ZuCheck(out.data() == wire);
+  ZuCheck(out.data() == Wire);
 }
 
 int main(int argc, char **argv)
