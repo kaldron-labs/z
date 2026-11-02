@@ -7,10 +7,16 @@
 #include <zlib/ZiPlatform.hh>
 
 #include <zlib/ZmScratch.hh>
+#include <zlib/ZmSingleton.hh>
+
+#include <zlib/ZiIOBuf.hh>
 
 #ifndef _WIN32
 
 #include <pwd.h>
+#include <sys/syscall.h>
+#include <time.h>
+#include <linux/time_types.h>
 
 Zi::Username Zi::username(ZeError *e)
 {
@@ -44,6 +50,149 @@ Zi::Hostname Zi::hostname(ZeError *e)
   return name;
 }
 
+class ZiPlatform_URing {
+public:
+  ZiPlatform_URing() {
+    Zi::IOBufRing ring;
+    if (!ring.init(1)) return;
+    // Probe required opcodes once; this is not a kernel-version guess.
+    enum { N = IORING_OP_LAST };
+    auto bytes = ZmScratch(uint8_t,
+      sizeof(io_uring_probe) + N * sizeof(io_uring_probe_op), Zi::VHeap);
+    memset(bytes.data(), 0, bytes.size());
+    auto probe = reinterpret_cast<io_uring_probe *>(bytes.data());
+    if (syscall(__NR_io_uring_register, ring.fd(), IORING_REGISTER_PROBE,
+	probe, N) < 0) return;
+    constexpr unsigned ops[] = {
+      IORING_OP_NOP, IORING_OP_RECV, IORING_OP_RECVMSG,
+      IORING_OP_SEND_ZC, IORING_OP_SENDMSG_ZC,
+      IORING_OP_POLL_ADD, IORING_OP_READ, IORING_OP_ASYNC_CANCEL
+    };
+    for (auto op : ops)
+      if (op > probe->last_op || op >= probe->ops_len ||
+	  !(probe->ops[op].flags & IO_URING_OP_SUPPORTED)) return;
+
+    // Complete a harmless operation to establish actual process usability.
+    const auto &sq = ring.sq();
+    sq.sqes[0] = {};
+    sq.sqes[0].opcode = IORING_OP_NOP;
+    sq.array[0] = 0;
+    *sq.tail = 1U;
+    timespec deadline;
+    clock_gettime(CLOCK_MONOTONIC, &deadline);
+    deadline.tv_sec += ProbeSecs;
+    io_uring_cqe cqe;
+    if (!complete_(ring, deadline, cqe) || cqe.res) return;
+    m_enabled = probe_(ring, deadline);
+  }
+
+  bool enabled() const { return m_enabled; }
+
+private:
+  // Optional-backend startup has one bounded CQ wait budget, including EINTR.
+  enum { ProbeSecs = 1 };
+
+  static bool complete_(Zi::IOBufRing &ring, const timespec &deadline,
+    io_uring_cqe &cqe)
+  {
+    const auto &sq = ring.sq();
+    const auto &cq = ring.cq();
+    for (;;) {
+      timespec now;
+      clock_gettime(CLOCK_MONOTONIC, &now);
+      __kernel_timespec remaining{
+	deadline.tv_sec - now.tv_sec, deadline.tv_nsec - now.tv_nsec};
+      if (remaining.tv_nsec < 0) {
+	--remaining.tv_sec;
+	remaining.tv_nsec += 1000000000;
+      }
+      if (remaining.tv_sec < 0 || (!remaining.tv_sec && !remaining.tv_nsec))
+	return false;
+      io_uring_getevents_arg args{};
+      args.ts = uintptr_t(&remaining);
+      unsigned n = sq.tail->load_() - unsigned(*sq.head);
+      int rc = syscall(__NR_io_uring_enter, ring.fd(), n, 1,
+	IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG, &args, sizeof(args));
+      unsigned head = cq.head->load_();
+      if (head != unsigned(*cq.tail)) {
+	cqe = cq.cqes[head & cq.mask];
+	*cq.head = head + 1;
+	return true;
+      }
+      if (rc < 0 && errno == EINTR) continue;
+      return false;
+    }
+  }
+
+  // Opcode probing alone does not establish support for these modifiers.
+  // Run once on the availability probe's unregistered ring. Invalid
+  // buffer references and NOWAIT guarantee that no application data is moved.
+  static bool probe_(Zi::IOBufRing &ring, const timespec &deadline)
+  {
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd < 0) return false;
+    auto &sq = ring.sq();
+    msghdr msg{};
+    constexpr unsigned ops[] = {
+      IORING_OP_SEND_ZC, IORING_OP_SENDMSG_ZC,
+      IORING_OP_RECV, IORING_OP_RECVMSG
+    };
+    bool supported = true;
+    for (auto opcode : ops) {
+      bool tx = opcode == IORING_OP_SEND_ZC || opcode == IORING_OP_SENDMSG_ZC;
+      bool message = opcode == IORING_OP_SENDMSG_ZC || opcode == IORING_OP_RECVMSG;
+      unsigned tail = sq.tail->load_();
+      unsigned i = tail & sq.mask;
+      auto &sqe = sq.sqes[i];
+      sqe = {};
+      sqe.opcode = opcode;
+      sqe.fd = fd;
+      sqe.msg_flags = MSG_DONTWAIT | MSG_NOSIGNAL;
+      if (tx) {
+        sqe.ioprio = IORING_RECVSEND_FIXED_BUF;
+        sqe.addr = 1;
+        sqe.len = 1;
+        msg.msg_iovlen = 1; // null iovec: recognized operation must fault
+      } else {
+        sqe.ioprio = IORING_RECV_MULTISHOT;
+        sqe.flags = IOSQE_BUFFER_SELECT;
+        msg.msg_iovlen = 0;
+        msg.msg_namelen = sizeof(sockaddr_storage);
+        msg.msg_controllen = CMSG_SPACE(sizeof(int));
+      }
+      if (message) { sqe.addr = uintptr_t(&msg); sqe.len = 1; }
+      sq.array[i] = i;
+      *sq.tail = tail + 1;
+      io_uring_cqe cqe;
+      if (!complete_(ring, deadline, cqe) ||
+	  (tx ? cqe.res != -EFAULT :
+	    (cqe.res != -EAGAIN && cqe.res != -ENOBUFS)) ||
+	  (cqe.flags & IORING_CQE_F_NOTIF)) {
+	supported = false;
+	break;
+      }
+      if (cqe.flags & IORING_CQE_F_MORE) {
+	// Failed sends may still owe a notification. Consume that actual CQE
+	// before reusing the one-entry probe ring; an Rx probe must terminate.
+	if (!tx || !complete_(ring, deadline, cqe) ||
+	    !(cqe.flags & IORING_CQE_F_NOTIF) || (cqe.flags & IORING_CQE_F_MORE)) {
+	  supported = false;
+	  break;
+	}
+      }
+    }
+    ::close(fd);
+    return supported;
+  }
+
+  bool m_enabled = false;
+};
+
+static const bool ZiPlatform_uring =
+  ZmSingleton<ZiPlatform_URing>::instance()->enabled();
+
+bool Zi::uring() { return ZiPlatform_uring; }
+
 #else
 
 Zi::Username Zi::username(ZeError *e)
@@ -63,23 +212,14 @@ Zi::Username Zi::username(ZeError *e)
 Zi::Hostname Zi::hostname(ZeError *e)
 {
   Zi::Hostname name;
-#ifdef _WIN32
   ZuCArray<Zi::NameMax + 1> buf;
-#else
-  Zi::Hostname &buf = name;
-#endif
   name.size(Zi::NameMax + 1);
   if (gethostname(buf.data(), Zi::NameMax))
     buf.null();
   else {
     buf.calcLength();
-#ifndef _WIN32
-    buf.truncate();
-#endif
   }
-#ifdef _WIN32
   name = buf;
-#endif
   return name;
 }
 

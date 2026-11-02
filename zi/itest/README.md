@@ -110,3 +110,9 @@ prefix. The launcher kills and reaps timed-out children using the established
 heap harness process-group/job conventions. Use Valgrind only if needed to
 investigate observed corruption or crashes, through `libtool exec` and normal
 wrapper paths. Do not launch `.libs` binaries directly.
+
+`make -C zi/itest test-examples` builds and runs all four multiplexer examples
+against real TCP/UDP peers. The fixtures use readiness pipes, exercise concurrent
+HTTP clients, split request delimiters, early TCP close, repeated UDP, empty
+packets and queued UDP replies to distinct destinations. This also runs as part
+of `make -C zi/itest test`. No sleeps are used for server startup.

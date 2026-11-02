@@ -33,6 +33,7 @@ using ZiTxBufAlloc = Zi::IOBufAlloc<ZiTxBuf, Size, MaxSize, ZuStringT<HeapID>>;
 #if 0
 struct Impl : public ZiTx<Impl> {
   ZiConnection *cxn();				// optional
+  void sending(ZiIOContext &);			// optional metadata setup
   void sent(ZmRef<ZiTxBuf>, bool ok);		// ''
   void aborted(ZmRef<ZiTxBuf> buf, bool ok);	// ''
 };
@@ -60,47 +61,35 @@ public:
   // Bind an already prepared wire representation to its physical connection.
   template <typename Cxn>
   void send(Cxn *cxn, ZmRef<ZiTxBuf> buf) {
-    if (ZuUnlikely(!buf || !buf->length || !cxn)) return;
+    if (ZuUnlikely(!buf || !cxn)) return;
     buf->owner = impl();
     cxn->send(ZiIOFn::mvFn(ZuMv(buf),
-	[](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
-	  // A queued setup can run after abrupt close and physical-queue handoff.
-	  if (ZuUnlikely(!io.cxn->up())) return false;
-	  auto impl_ = impl(buf);
-	  auto &queue = impl_->ZiTx::txQueue;
-	  if (queue.count_()) {
-	    queue.pushNode(ZuMv(buf));
-	    return true;
+      [](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
+	if (ZuUnlikely(!io.cxn->up())) return false;
+	auto self = impl(buf);
+	auto &queue = self->ZiTx::txQueue;
+	queue.pushNode(ZmRef<ZiTxBuf>::acquire(
+	  static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+	if (!io.completed()) return true;
+	io.init(ZiIOFn{self, [](Impl *self, ZiIOContext &io) {
+	  auto &queue = self->ZiTx::txQueue;
+	  if (io.buf) {
+	    bool ok = io.length >= 0;
+	    self->sent(ZmRef<ZiTxBuf>::acquire(
+	      static_cast<ZiTxBuf *>(ZuMv(io.buf).release())), ok);
+	    if (!ok) { queue.clean(); io.complete(); }
+	  } else {
+	    io.buf = queue.shift();
+	    if (!io.buf) io.complete();
+	    else self->sending(io);
 	  }
-	  auto buf_ = buf.ptr();
-	  queue.pushNode(ZuMv(buf));
-	  io.init(ZiIOFn{queue.headPtr(),
-	    [](ZiIOBuf *buf, ZiIOContext &io) {
-	      auto impl_ = impl(buf);
-	      auto &queue = impl_->ZiTx::txQueue;
-	      if (ZuUnlikely(io.length < 0)) {
-		impl_->sent(queue.shift(), false);
-		queue.clean();
-		io.complete();
-		return true;
-	      }
-	      if (ZuUnlikely((io.offset += io.length) < io.size)) return true;
-	      impl_->sent(queue.shift(), true);
-	      if (queue.count_()) {
-		buf = queue.headPtr();
-		io.fn.object(buf);
-		io.ptr = buf->data();
-		io.size = buf->length;
-		io.offset = 0;
-	      } else {
-		io.complete();
-	      }
-	      return true;
-	    }}, buf_->data(), buf_->length, 0);
 	  return true;
-	}));
+	}});
+	return io();
+      }));
   }
 
+  void sending(ZiIOContext &) { } // optional address/TOS from the installed buffer
   void sent(ZmRef<ZiTxBuf>, bool ok) { } // can be overridden
 
   void abort(ZmRef<ZiTxBuf> buf) {
@@ -110,10 +99,6 @@ public:
     cxn->mx()->txInvoke([buf = ZuMv(buf)]() mutable {
       auto impl_ = impl(buf);
       auto &queue = impl_->ZiTx::txQueue;
-      if (queue.headPtr() == buf.ptr()) {
-	impl_->aborted(ZuMv(buf), false); // too late to abort
-	return;
-      }
 	bool ok = !!queue.delNode(buf);
 	impl_->aborted(ZuMv(buf), ok);
     });

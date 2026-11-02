@@ -279,8 +279,20 @@ void testSockAddrHelpers()
   ZuCheck(sa.ip() == ip6);
   ZuCheck(sa.port() == 4243);
 
+  sa.sin6().sin6_scope_id = 3;
+  ZiSockAddr snapshot;
+  memcpy(static_cast<void *>(&snapshot), sa.sa(), sa.len());
+  snapshot.sync();
+  ZuCheck(snapshot == sa);
+  ZuCheck(snapshot.sin6().sin6_scope_id == 3);
+  sa.init(ip, 4242);
+  memcpy(static_cast<void *>(&snapshot), sa.sa(), sa.len());
+  snapshot.sync();
+  ZuCheck(snapshot == sa);
+  ZuCheck(snapshot.len() == sizeof(sockaddr_in));
   sa.null();
   ZuCheck(!sa);
+  ZuCheck(snapshot.ip() == ip && snapshot.port() == 4242);
 }
 
 void testNullWildcardCompareHash()

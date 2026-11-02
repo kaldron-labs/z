@@ -18,7 +18,7 @@ using namespace ZuTestUtil;
 
 namespace ZiTxStreamTest_ {
 
-using StreamAlloc = ZiIOBufAlloc<64, 256, "ZiTxStreamTest.Buf">;
+using StreamAlloc = Zi::IOBufAlloc<ZiIOBuf, 64, 256, ZuStringT<"ZiTxStreamTest.Buf">>;
 
 struct BigPrint_Print;
 struct BigPrint {
@@ -53,7 +53,7 @@ struct StreamHarness {
   ZmRef<ZiIOBuf> alloc(unsigned headRoom) {
     // Model lower-layer admission rejection, not Z heap allocation failure.
     if (++allocCount == rejectAt) return nullptr;
-    ZmRef<ZiIOBuf> buf = new StreamAlloc{};
+    ZmRef<ZiIOBuf> buf = new StreamAlloc{nullptr, 0};
     buf->skip = headRoom;
     buf->length = 0;
     return buf;
@@ -128,7 +128,7 @@ void testAdoptedBuffers()
   ZuTestScope(testAdoptedBuffers);
   StreamHarness direct;
   TestTxStream same{direct, 12, 2, 1};
-  ZmRef<ZiIOBuf> small = new StreamAlloc{};
+  ZmRef<ZiIOBuf> small = new StreamAlloc{nullptr, 0};
   small->skip = 3;
   small->append(ZuBSpan{"small"});
   same << small;
@@ -138,7 +138,7 @@ void testAdoptedBuffers()
 
   StreamHarness split;
   TestTxStream frames{split, 12, 2, 1};
-  ZmRef<ZiIOBuf> large = new StreamAlloc{};
+  ZmRef<ZiIOBuf> large = new StreamAlloc{nullptr, 0};
   large->skip = 7;
   large->append(ZuBSpan{"abcdefghijklmnopqrst"});
   frames << large;
@@ -152,7 +152,7 @@ void testAdoptedBuffers()
 
   StreamHarness geometry;
   TestTxStream adjusted{geometry, 12, 2, 1};
-  ZmRef<ZiIOBuf> noRoom = new StreamAlloc{};
+  ZmRef<ZiIOBuf> noRoom = new StreamAlloc{nullptr, 0};
   noRoom->append(ZuBSpan{"space"});
   noRoom->size = noRoom->length; // readable storage has no head or tail space
   adjusted << noRoom;

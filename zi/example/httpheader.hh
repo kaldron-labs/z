@@ -4,19 +4,20 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-// a HTTP header ends with two CR/LFs
-bool httpHeaderEnd(void *ptr, unsigned offset, unsigned length) {
-  int n = offset + length - 3;
-  if (n <= 0) return false;
-  int i = offset - 3;
-  if (i < 0) i = 0;
-  while (i < n) {
-    if (((char *)ptr)[i]      == '\r' && ((char *)ptr)[i + 1] == '\n' &&
-	((char *)ptr)[i += 2] == '\r' && ((char *)ptr)[i + 1] == '\n') {
-      m_headerLen = i + 2;
-      return true;
+// Streaming delimiter state; every incoming byte is visited once.
+bool httpHeaderEnd(const void *ptr, unsigned offset, unsigned length) {
+  auto data = static_cast<const uint8_t *>(ptr);
+  for (unsigned i = 0; i < length; ++i) {
+    auto c = data[i];
+    switch (m_headerState) {
+      case 0: m_headerState = c == '\r' ? 1 : 0; break;
+      case 1: m_headerState = c == '\n' ? 2 : c == '\r' ? 1 : 0; break;
+      case 2: m_headerState = c == '\r' ? 3 : 0; break;
+      case 3:
+        if (c == '\n') { m_headerLen = offset + i + 1; return true; }
+        m_headerState = c == '\r' ? 1 : 0;
+        break;
     }
-    ++i;
   }
   return false;
 }

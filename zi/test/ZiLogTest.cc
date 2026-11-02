@@ -170,7 +170,7 @@ void testLambdaSinkReceivesEvents()
     severity = info.severity;
     component = info.component;
     msg = {};
-    msg << ZuCSpan(buf.data(), buf.length());
+    msg << ZuCSpan{buf};
   }));
 
   ZiLog::start();
