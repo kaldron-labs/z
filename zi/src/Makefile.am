@@ -20,7 +20,7 @@ libZi_la_SOURCES = \
 	ZiDir.cc ZiFile.cc ZiGlob.cc ZiIOContext.hh ZiIP.cc ZiLib.cc \
 	ZiModule.cc ZiMultiplex.cc ZiPlatform.cc ZiProgram.cc \
 	ZiRing.cc ZiLog.cc ZiEventLoop.cc ZiDaemon.cc ZiPIDFile.cc \
-	ZiResolver.cc ZtcHub.cc \
+	ZiResolver.cc ZtcHub.cc ZiIOBuf.cc \
 	ZtcLink.cc ZtcPool.cc
 libZi_la_LIBADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
 	$(top_builddir)/zt/src/libZt.la \

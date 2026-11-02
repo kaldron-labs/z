@@ -18,6 +18,7 @@
 #include <zlib/ZmFn.hh>
 
 #include <zlib/ZiIP.hh>
+#include <zlib/ZiIOBuf.hh>
 
 class ZiConnection;
 
@@ -26,15 +27,20 @@ using ZiTOS = ZuUnion<void, uint8_t>;	// IP TOS raw byte
 struct ZiIOContext {
   ZiConnection	*cxn = nullptr;	// connection - set by ZiMultiplex
   ZmAnyFn	fn;		// callback - set by app
-  uint8_t	*ptr = nullptr;	// buffer - set by app
-  unsigned	size = 0;	// size of buffer - set by app
-  unsigned	offset = 0;	// offset within buffer - set by app
+  ZmRef<Zi::IOBuf> buf;		// original backing, moved through the I/O path
+  unsigned	offset = 0;	// Tx accepted bytes; Rx length lives in buf
   int		length = 0;	// length - set by ZiMultiplex (-1 on error)
+  unsigned	flags = 0;	// receive message flags
   ZiSockAddr	addr;		// UDP - set by app (send) / ZiMultiplex (recv)
   ZiTOS		tos;		// TOS raw byte
 
-  // ptr sentinel value to disconnect
-  static constexpr uintptr_t invalid_ptr() { return uintptr_t(-1); }
+  bool		disconnect_ = false;
+
+  // Rx delivers the original buffer; consumers move buf out and keep fn armed.
+  // Tx calls fn without buf to select pending output, and with buf to report
+  // its final result, once all kernel holds retire. Selecting subsequent
+  // output does not imply retirement of an earlier buffer. The backend alone
+  // updates offset/length; the callback never repeats that progress update.
 
 private:
 friend ZiConnection;
@@ -42,52 +48,50 @@ friend ZiConnection;
   template <typename L>
   void init_(L &&l) {
     fn = ZuFwd<L>(l);
-    ptr = nullptr;
-    size = offset = length = 0;
+    buf = nullptr;
+    offset = length = 0;
+    flags = 0;
+    disconnect_ = false;
     tos = {};
-    (*this)();
   }
 
 public:
   // send/receive
   template <typename L>
-  void init(L &&l, const void *ptr_, unsigned size_, unsigned offset_) {
-    ZmAssert(size_);
+  void init(L &&l, ZmRef<Zi::IOBuf> buf_ = {}, unsigned offset_ = 0) {
     fn = ZuFwd<L>(l);
-    ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
-    size = size_; offset = offset_; length = 0;
+    buf = ZuMv(buf_);
+    offset = offset_; length = 0;
+    flags = 0;
+    disconnect_ = false;
     tos = {};
   }
   // UDP send
   template <typename L, typename Addr>
   void init(L &&l,
-    const void *ptr_, unsigned size_, unsigned offset_,
+    ZmRef<Zi::IOBuf> buf_, unsigned offset_,
     Addr &&addr_, ZiTOS tos_ = {})
   {
-    ZmAssert(size_);
-    fn = ZuFwd<L>(l);
-    ptr = static_cast<uint8_t *>(const_cast<void *>(ptr_));
-    size = size_; offset = offset_; length = 0;
+    init(ZuFwd<L>(l), ZuMv(buf_), offset_);
     addr = ZuFwd<Addr>(addr_);
     tos = tos_;
   }
-  // initially, ptr will be null and app must set it via init()
-  bool initialized() { return ptr; }
+  bool initialized() const { return bool(fn); }
 
   // complete send/receive without disconnecting
   void complete() {
     fn = {};
-    ptr = nullptr;
+    buf = nullptr;
   }
   bool completed() const { return !fn; }
 
   // complete send/receive and disconnect
   void disconnect() {
-    fn = {};
-    ptr = reinterpret_cast<uint8_t *>(invalid_ptr());
+    complete();
+    disconnect_ = true;
   }
   bool disconnected() const {
-    return ptr == reinterpret_cast<uint8_t *>(invalid_ptr());
+    return disconnect_;
   }
 
   bool operator()();	// return true if complete

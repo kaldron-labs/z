@@ -415,7 +415,7 @@ void testSocketBackpressure()
 
   // Limit the fixture's work even if the host has a large socket send buffer.
   constexpr unsigned FillLimit = 1U << 20;
-  ZmRef<ZiIOBuf> fill = new ZiIOBufAlloc<>{};
+  ZmRef<ZiIOBuf> fill = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
   memset(fill->data(), 'F', fill->size);
   unsigned filled = 0;
   bool blocked = false;
@@ -690,7 +690,7 @@ void testHandleWriteReady()
     return;
   }
 
-  ZmRef<ZiIOBuf> fill = new ZiIOBufAlloc<ZiIOBuf_DefltSize>{};
+  ZmRef<ZiIOBuf> fill = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
   memset(fill->data(), 'F', fill->size);
   unsigned filled = 0;
   for (;;) {

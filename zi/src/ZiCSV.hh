@@ -92,7 +92,7 @@ private:
       // One stack-only view per compile-time schema field; no byte copies.
       ZuSpan<char> header_[Base::AllFields::N];
       Header header(&header_[0], 0, Base::AllFields::N, false);
-      auto n = split(ZuSpan<char>(data.data(), data.length()), header);
+      auto n = split(ZuSpan<char>{data}, header);
       if (n >= 0) {
 	if (this->matchHdr(header)) return true;
 	error = headerError(path);
@@ -216,7 +216,7 @@ private:
       // One stack-only view per compile-time schema field; no byte copies.
       ZuSpan<char> header_[Base::AllFields::N];
       Header header(&header_[0], 0, Base::AllFields::N, false);
-      auto n = split(ZuSpan<char>(data.data(), data.length()), header);
+      auto n = split(ZuSpan<char>{data}, header);
       if (n >= 0) {
 	if (this->matchHdr(header)) return true;
 	error = headerError(path);
@@ -342,7 +342,7 @@ struct Reader : public ZfCSV::Reader<O_, Facet> {
 	if (r == Zi::IOError) goto error;
 	if (r <= 0) return {};
 	buf.length(length + r);
-	auto n = this->process(ZuSpan<char>(buf.data(), buf.length()), l);
+	auto n = this->process(ZuSpan<char>{buf}, l);
 	unsigned consumed = n > 0 ? n : 0;
 	if (consumed && consumed <= buf.length()) {
 	  unsigned length = buf.length() - consumed;

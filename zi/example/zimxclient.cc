@@ -33,8 +33,8 @@ const char Request[] =
 
 class Connection : public ZiConnection {
 public:
-  Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now) :
-      ZiConnection(mx, ci), m_headerLen(0), m_connectTime(now) { }
+  Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now, Zi::IOBufAllocator *allocator) :
+      ZiConnection(mx, ci), m_headerLen(0), m_connectTime(now), m_allocator(allocator) { }
   ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
@@ -42,10 +42,8 @@ public:
   void disconnected(bool);
 
   void connected(ZiIOContext &io) {
-    m_header.size(4096);
     io.init(
-      ZiIOFn{this, ZmFnPtr<&Connection::recvHeader>{}},
-      m_header.data(), m_header.size(), 0);
+      ZiIOFn{this, ZmFnPtr<&Connection::recvHeader>{}});
     send(ZiIOFn{this, ZmFnPtr<&Connection::sendRequest>{}});
   }
 
@@ -53,12 +51,13 @@ public:
     m_sendTime = Zm::now();
     Global::timeInterval(0).add(m_sendTime - m_connectTime);
     //fwrite(Request, 1, len, stdout); fflush(stdout);
-    io.init(ZiIOFn{this, ZmFnPtr<&Connection::sendComplete>{}},
-	(void *)Request, strlen(Request), 0);
+    auto buf = m_allocator->alloc();
+    *buf << Request;
+    io.init(ZiIOFn{this, ZmFnPtr<&Connection::sendComplete>{}}, ZuMv(buf));
     return true;
   }
   bool sendComplete(ZiIOContext &io) {
-    if (io.length >= 0 && (io.offset += io.length) < io.size) return true;
+    if (!io.buf) { io.complete(); return true; }
     io.complete();
     Global::timeInterval(1).add(Zm::now() - m_sendTime);
     Global::sent(io.offset);
@@ -69,45 +68,31 @@ public:
 
   bool recvHeader(ZiIOContext &io) {
     m_recvTime = Zm::now();
-    {
-      bool incomplete = !httpHeaderEnd(io.ptr, io.offset, io.length);
-      io.offset += io.length;
-      if (incomplete) return true; // completed reading the available data
-    }
-    {
-      ZtRegex::Captures c(3);
-      int i;
-
-      m_header.length(m_headerLen, false);
-      try {
-	i = ZtREGEX("\bContent-Length:\s+(\d+)").m(m_header, c);
-      } catch (...) { i = 0; }
-      if (i < 2) {
-	ZiLOG(Error, "zimxclient", "could not parse Content-Length");
-	io.disconnect();
-	return true;
-      }
-      //{ printf("Content-Length: %d\n", contentLength); fflush(stdout); }
-      m_content.size(ZuBox<unsigned>(c[2]));
-    }
-    if (io.offset > m_headerLen) {
-      memcpy(m_content.data(),
-	  m_header.data() + m_headerLen, io.offset - m_headerLen);
-      if ((io.offset - m_headerLen) >= m_content.size()) {
-	contentRcvd(io.offset);
-	io.disconnect();
-	return true;
-      }
-    }
-    io.init(
-      ZiIOFn{this, ZmFnPtr<&Connection::recvContent>{}},
-      m_content.data(), m_content.size(), io.offset - m_headerLen);
+    auto buf = ZuMv(io.buf);
+    bool complete = httpHeaderEnd(buf->data(), m_rcvd, buf->length);
+    unsigned prefix = complete ? m_headerLen - m_rcvd : buf->length;
+    m_header << ZuCSpan{reinterpret_cast<const char *>(buf->data()), prefix};
+    m_rcvd += buf->length;
+    if (!complete) return true;
+    ZtRegex::Captures c(3);
+    int n;
+    try { n = ZtREGEX("\\bContent-Length:\\s+(\\d+)").m(m_header, c); }
+    catch (...) { n = 0; }
+    if (n < 2) { io.disconnect(); return true; }
+    m_contentLen = ZuBox<unsigned>(c[2]);
+    m_contentRcvd = buf->length - prefix;
+    if (m_contentRcvd >= m_contentLen) {
+      contentRcvd(m_contentRcvd);
+      io.disconnect();
+    } else io.fn = ZiIOFn{this, ZmFnPtr<&Connection::recvContent>{}};
     return true;
   }
 
   bool recvContent(ZiIOContext &io) {
-    if ((io.offset += io.length) >= io.size) {
-      contentRcvd(io.offset);
+    m_contentRcvd += io.buf->length;
+    io.buf = nullptr;
+    if (m_contentRcvd >= m_contentLen) {
+      contentRcvd(m_contentRcvd);
       io.disconnect();
     }
     return true;
@@ -129,13 +114,17 @@ public:
   }
 
 private:
-  ZtArray<char>	m_header;
+  ZtString<>	m_header;
   unsigned	m_headerLen;
-  ZtArray<char>	m_content;
+  unsigned	m_headerState = 0;
+  unsigned	m_rcvd = 0;
+  unsigned	m_contentLen = 0;
+  unsigned	m_contentRcvd = 0;
   ZuTime	m_connectTime;
   ZuTime	m_sendTime;
   ZuTime	m_recvTime;
   ZuTime	m_completedTime;
+  Zi::IOBufAllocator *m_allocator;
 };
 
 class Mx : public ZiMultiplex {
@@ -154,7 +143,7 @@ public:
   ~Mx() { }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
-    return new Connection(this, ci, Zm::now());
+    return new Connection(this, ci, Zm::now(), m_allocator.ptr());
   }
 
   void disconnected(Connection *connection) {
@@ -187,6 +176,7 @@ public:
   unsigned maxRecv() const { return m_maxRecv; }
 
 private:
+  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxTCPBufAllocator<>;
   ZiIP			m_ip;
   unsigned		m_port;
   ZiCxnOptions		m_options;

@@ -69,8 +69,9 @@ class Mx;
 class Connection : public ZiConnection {
 public:
   Connection(
-      ZiMultiplex *mx, const ZiCxnInfo &ci, const ZiSockAddr &dest) :
-    ZiConnection(mx, ci), m_counter(0), m_dest(dest) { }
+      ZiMultiplex *mx, const ZiCxnInfo &ci, const ZiSockAddr &dest,
+      Zi::IOBufAllocator *allocator) :
+    ZiConnection(mx, ci), m_counter(0), m_dest(dest), m_allocator(allocator) { }
   ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
@@ -83,9 +84,7 @@ public:
   }
 
   void recvEcho(ZiIOContext &io) {
-    m_msg.size(strlen(Messages[index()]));
-    io.init(ZiIOFn{this, ZmFnPtr<&Connection::recvComplete>{}},
-	m_msg.data(), m_msg.size(), 0);
+    io.init(ZiIOFn{this, ZmFnPtr<&Connection::recvComplete>{}});
   }
   bool recvComplete(ZiIOContext &);
 
@@ -95,9 +94,10 @@ public:
   bool sendEcho_(ZiIOContext &io) {
     unsigned i = index();
     unsigned len = strlen(Messages[i]);
-    io.init(
-	ZiIOFn{this, ZmFnPtr<&Connection::sendComplete>{}},
-	(void *)Messages[i], len, 0, m_dest);
+    auto buf = m_allocator->alloc();
+    buf->append(reinterpret_cast<const uint8_t *>(Messages[i]), len);
+    io.init(ZiIOFn{this, ZmFnPtr<&Connection::sendComplete>{}},
+      ZuMv(buf), 0, m_dest);
     return true;
   }
   bool sendComplete(ZiIOContext &io) { io.complete(); return true; }
@@ -109,7 +109,7 @@ public:
 private:
   unsigned   	m_counter;
   ZiSockAddr	m_dest;
-  ZtArray<char>	m_msg;
+  Zi::IOBufAllocator *m_allocator;
   ZiSockAddr	m_addr;
 };
 
@@ -125,7 +125,7 @@ public:
   ~Mx() { }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
-    return new Connection(this, ci, m_dest);
+    return new Connection(this, ci, m_dest, m_allocator.ptr());
   }
 
   void udp() {
@@ -150,6 +150,7 @@ public:
   unsigned nMessages() const { return m_nMessages; }
 
 private:
+  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxUDPBufAllocator<>;
   ZiIP		m_localIP;
   unsigned	m_localPort;
   ZiIP		m_remoteIP;
@@ -340,7 +341,7 @@ int main(int argc, const char *argv[])
 
 bool Connection::recvComplete(ZiIOContext &io)
 {
-  if (io.length < io.size) {
+  if (io.length < strlen(Messages[index()])) {
     ZiLOG(Error, "zimxudpclient", "recvEcho - short packet");
     io.disconnect();
     return true;
@@ -354,7 +355,7 @@ bool Connection::recvComplete(ZiIOContext &io)
 
   std::cout << ZtHexDump(
       ZtString<>{} << io.addr.ip() << ':' << ZuBoxed(io.addr.port()) << ' ' <<
-      ZuCSpan(m_msg.data(), io.length), m_msg.data(), io.length);
+      ZuCSpan(io.buf->data(), io.length), io.buf->data(), io.length);
 
   fflush(stdout);
 

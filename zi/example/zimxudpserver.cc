@@ -19,6 +19,7 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiTx.hh>
 
 #include "global.hh"
 
@@ -66,7 +67,13 @@ void error(ZiConnection *, const char *op, int result, ZeError e)
 
 class Mx;
 
-class Connection : public ZiConnection {
+struct Packet : public ZiTxBuf {
+  using ZiTxBuf::ZiTxBuf;
+  ZiSockAddr addr;
+  ZiTOS tos;
+};
+
+class Connection : public ZiConnection, public ZiTx<Connection> {
 public:
   Connection(
       ZiMultiplex *mx, const ZiCxnInfo &ci,
@@ -83,25 +90,21 @@ public:
   void connected(ZiIOContext &io) { recvEcho(io); }
 
   bool recvEcho(ZiIOContext &io) {
-    m_msg.size(128);
-    io.init(ZiIOFn{this, ZmFnPtr<&Connection::recvComplete>{}},
-	m_msg.data(), m_msg.size(), 0);
+    io.init(ZiIOFn{this, ZmFnPtr<&Connection::recvComplete>{}});
     return true;
   }
   bool recvComplete(ZiIOContext &);
 
-  bool sendEcho(ZiIOContext &io) {
-    io.init(ZiIOFn{this, ZmFnPtr<&Connection::sendComplete>{}},
-	m_msg.data(), m_msg.length(), 0, m_echo);
-    return true;
+  void sending(ZiIOContext &io) {
+    auto pkt = static_cast<Packet *>(io.buf.ptr());
+    io.addr = pkt->addr;
+    io.tos = pkt->tos;
   }
-  bool sendComplete(ZiIOContext &io);
+  void sent(ZmRef<ZiTxBuf>, bool);
 
 private:
   unsigned	m_counter;
-  ZtArray<char>	m_msg;
   ZiSockAddr	m_dest;
-  ZiSockAddr	m_echo;
 };
 
 class Mx : public ZiMultiplex {
@@ -111,13 +114,15 @@ public:
   Mx(ZiIP localIP, unsigned localPort, ZiIP remoteIP, unsigned remotePort,
       bool connect, const ZiCxnOptions &options, unsigned nMessages,
       ZiMxParams params) :
-    ZiMultiplex(ZuMv(params)),
+    ZiMultiplex(ZuMv(params).udpBufAllocator(new Zi::RxUDPBufAllocator<
+      Packet, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>)),
     m_localIP(localIP), m_localPort(localPort),
     m_remoteIP(remoteIP), m_remotePort(remotePort),
     m_connect(connect), m_options(options), m_nMessages(nMessages) { }
   ~Mx() { }
 		
   ZiConnection *connected(const ZiCxnInfo &ci) {
+    std::cerr << "listening\n" << std::flush;
     return new Connection(this, ci, m_remoteIP, m_remotePort);
   }
 
@@ -154,25 +159,21 @@ private:
 
 bool Connection::recvComplete(ZiIOContext &io)
 {
-  m_msg.length(io.offset + io.length);
-
+  auto buf = ZmRef<Packet>::acquire(static_cast<Packet *>(ZuMv(io.buf).release()));
+  buf->addr = !m_dest ? io.addr : m_dest;
+  buf->tos = io.tos;
   std::cout << ZtHexDump(
-      ZtString<>{} << io.addr.ip() << ':' << ZuBoxed(io.addr.port()) << ' ' <<
-      ZuCSpan(m_msg.data(), io.length), m_msg.data(), io.length) << std::flush;
-
-  m_echo = !m_dest ? io.addr : m_dest;
-  send(ZiIOFn{this, ZmFnPtr<&Connection::sendEcho>{}});
+    ZtString<>{} << io.addr.ip() << ':' << ZuBoxed(io.addr.port()) << ' ' <<
+    buf->cspan(), buf->cspan()) << std::flush;
+  ZiTx::send(ZuMv(buf));
   return true;
 }
 
-bool Connection::sendComplete(ZiIOContext &io)
+void Connection::sent(ZmRef<ZiTxBuf>, bool ok)
 {
   int nMessages = mx()->nMessages();
-  if (nMessages >= 0 && ++m_counter >= (unsigned)nMessages)
-    io.disconnect();
-  else
-    io.complete();
-  return true;
+  if (!ok || (nMessages >= 0 && ++m_counter >= unsigned(nMessages)))
+    disconnect();
 }
 
 void usage()
