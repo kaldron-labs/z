@@ -196,8 +196,8 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Client"> ZmNHeapID(Link *);
 
   Fmt::Error fixReceiveRx(OrderMsg *, const Order &o, const RequestContext &context) {
     if (initial || o.id != "repriced" || context.context().epoch != 1 ||
-	context.header().seqNo != 2 || !context.header().possDup ||
-	context.header().origSendingTime != state()->oldTime) state()->fail();
+	context.context().seqNo != 2 || !context.context().possDup ||
+	context.origSendingTime() != state()->oldTime) state()->fail();
     ++state()->delivered; state()->selected.post(); return {};
   }
 

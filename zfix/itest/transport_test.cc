@@ -24,6 +24,7 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiTx.hh>
 #include <zlib/ZfixIOBuf.hh>
+#include <zlib/ZtlsHMAC.hh>
 #ifdef ZFIX_TEST_TLS
 #include <zlib/Ztls.hh>
 namespace Net = Ztls;
@@ -37,24 +38,67 @@ namespace Net = Ztcp;
 
 using namespace ZuTestUtil;
 
-constexpr auto Wire = "8=FIX.4.4\1" "9=18\1" "35=D\1" "95=4\1" "96=A\1\0=\1" "10=247\1"_z;
+constexpr auto Wire = "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1"_z;
+struct Payload {
+  ZuBSpan text, bytes, signature;
+};
+ZfStruct(, (Payload, FIX),
+  (text, (FIX::ID<58>, FIX::Opt), String),
+  (bytes, (FIX::ID<212>, FIX::Binary<213>, FIX::Opt), Bytes),
+  (signature, ((FIX::Sig<93, 89>)), Bytes));
+ZfStructImpl(Payload); ZfStructImpl(Payload, FIX);
+using Packet = Zfix::MT<Payload, "D">;
+using Signature = ZfField(Payload, signature);
+
+struct PacketSigner {
+  enum { SignMsg = 1 };
+  template <typename S>
+  void signMsg(S &out, const Zfix::TxBody *, Zfix::TxContext, ZuCSpan message) const {
+    Ztls::HMAC<> mac;
+    mac.start(ZuBSpan{"transport test"}); mac.update(ZuBSpan{message});
+    uint8_t digest[Ztls::HMAC<>::Size]; // fixed by SHA-256
+    mac.finish(digest); Zfix::Fmt::saveBinary<Signature>(out, digest);
+  }
+};
 static ZmRef<ZiIOBuf> makePacket(unsigned payload) {
   if (!payload) {
     ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>; buf->append(Wire); return buf;
   }
   Zfix::TxFrame frame{"FIX.4.4"}; auto &out = frame.body();
   out.field(35); out << 'D'; out.end();
-  out.field(95); out << payload; out.end();
-  out.field(96, true);
-  for (unsigned i = 0; i < payload; ++i) {
-    switch (i % 4) {
-      case 0: out << 'A'; break;
-      case 1: out << '\1'; break;
-      case 2: out << '\0'; break;
-      default: out << '='; break;
-    }
-  }
-  out.end(); Zfix::Fmt::Error error; return frame.finish(error);
+  out.field(212); out << ZuBox<unsigned>{payload}; out.end();
+  out.field(213);
+  for (unsigned i = 0; i < payload; ++i) out << char(uint8_t(i));
+  out.end();
+  Zfix::Fmt::Error error;
+  return frame.finish(error, PacketSigner{}, nullptr, {});
+}
+
+// Validate application bytes after native TCP/TLS extraction. Both borrowed
+// spans must address this exact extracted allocation, including across echo.
+static bool checkPacket(const ZiIOBuf &buffer, unsigned expected, Payload &object) {
+  auto parsed = Zfix::Fmt::frame(buffer.cspan());
+  if (parsed.state != Zfix::Fmt::FrameState::Complete ||
+      Zfix::Fmt::load(object, parsed.view.content)) return false;
+  if (!expected) return object.text == ZuBSpan{"ABCD"} && !object.bytes.length();
+  if (object.bytes.length() != expected || object.signature.length() != Ztls::HMAC<>::Size)
+    return false;
+  Zfix::Fmt::FieldPos data, signature, length;
+  if (Zfix::Fmt::inspect<Payload>(parsed.view.content, 213, data) ||
+      Zfix::Fmt::inspect<Payload>(parsed.view.content, 89, signature) ||
+      Zfix::Fmt::inspect<Payload>(parsed.view.content, 93, length) ||
+      data.offset == UINT_MAX || signature.offset == UINT_MAX || length.offset == UINT_MAX)
+    return false;
+  if (object.bytes.data() != reinterpret_cast<const uint8_t *>(parsed.view.content.data() +
+        data.offset) || object.signature.data() != reinterpret_cast<const uint8_t *>(
+        parsed.view.content.data() + signature.offset)) return false;
+  auto first = parsed.view.msgType.data() - 3; // fixed 35=
+  auto last = parsed.view.content.data() + length.offset - 3; // application 93=
+  Ztls::HMAC<> mac;
+  mac.start(ZuBSpan{"transport test"});
+  mac.update(ZuBSpan{ZuCSpan{first, uint64_t(last - first)}});
+  uint8_t digest[Ztls::HMAC<>::Size]; mac.finish(digest);
+  return object.signature == ZuBSpan{digest};
 }
 struct TestState {
   ZmSemaphore		listening, done, drained, ready, blocked, held, release, peerReset;
@@ -65,6 +109,8 @@ struct TestState {
   bool			partial = false, abort = false;
   unsigned		port = 0;
   unsigned		sessions = 1;
+  unsigned		payload = 0;
+  ZmAtomic<unsigned>	binaryViews{0}, retainedViews{0};
   ZmRef<ZiIOBuf>	packet;
 
   void fail() { errors = 1; done.post(); }
@@ -110,14 +156,6 @@ ssize_t recv(int fd, void *buf, size_t len, int flags)
 }
 #endif
 
-struct Payload {
-  ZuBSpan	bytes;
-};
-
-ZfStruct(, (Payload, FIX), (bytes, (FIX::ID<96>, FIX::Len<95>), Bytes));
-ZfStructImpl(Payload); ZfStructImpl(Payload, FIX);
-using Packet = Zfix::MT<Payload, "D">;
-
 template <typename Link>
 struct Output : public Zfix::WireTx<Output<Link>> {
   using Base = Zfix::WireTx<Output<Link>>;
@@ -143,7 +181,9 @@ struct Output : public Zfix::WireTx<Output<Link>> {
   void send_(ZmRef<ZiIOBuf> packet) {
     auto view = Zfix::Fmt::frame(ZuCSpan{packet->cspan()}).view;
     Zfix::Fmt::Error error;
-    auto body = Zfix::TxBody::restore<Packet>(view.content, ++seq, error);
+    Payload object;
+    error = Zfix::Fmt::load(object, view.content);
+    auto body = error ? Zfix::TxBody::Ref{} : Zfix::TxBody::encode<Packet>(object, ++seq, error);
     // The fixture packet remains unchanged; TLS encrypts record copies.
     if (error || !Base::admit_(ZuMv(body), {1, 1, seq}, ZuMv(packet))) {
       link->app()->state->fail(); return;
@@ -240,6 +280,9 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
     if (!n) return 0;
     if (ZuCSpan{buf->cspan()} != ZuCSpan{app()->state->packet->cspan()}) { app()->state->fail();
       return -1; }
+    Payload object;
+    if (!checkPacket(*buf, app()->state->payload, object)) { app()->state->fail(); return -1; }
+    if (app()->state->payload) ++app()->state->binaryViews;
     if (app()->state->received.xchAdd(1) + 1 == 2 * app()->state->sessions)
       app()->state->done.post();
     return 1;
@@ -301,8 +344,20 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
     if (!n) return 0;
     if (ZuCSpan{buf->cspan()} != ZuCSpan{app()->state->packet->cspan()}) { app()->state->fail();
       return -1; }
+    Payload object;
+    if (!checkPacket(*buf, app()->state->payload, object)) { app()->state->fail(); return -1; }
+    if (app()->state->payload) ++app()->state->binaryViews;
     // Preserve the extracted buffer across the Rx -> Tx handoff.
-    app()->txRun([this, buf = ZuMv(buf)] { output.send_(ZuMv(buf)); });
+    app()->txRun([this, buf = ZuMv(buf), bytes = object.bytes, signature = object.signature] {
+      if (app()->state->payload) {
+	Payload retained;
+	if (!checkPacket(*buf, app()->state->payload, retained) ||
+	    retained.bytes.data() != bytes.data() ||
+	    retained.signature.data() != signature.data()) { app()->state->fail(); return; }
+	++app()->state->retainedViews;
+      }
+      output.send_(ZuMv(buf));
+    });
     return 1;
   }
 
@@ -321,7 +376,7 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
   bool partial = false, bool abort = false) {
   ZuTestScopeRT(name);
   TestState state; state.sessions = sessions; state.packet = makePacket(payload);
-  state.partial = partial; state.abort = abort;
+  state.partial = partial; state.abort = abort; state.payload = payload;
   ZuCheck(state.packet); if (!state.packet) return;
 #ifdef __linux__
   sendState = &state;
@@ -397,6 +452,10 @@ static void loopback(const char *name, unsigned sessions, unsigned payload = 0,
   ZuCheck(state.closed.load_() == 2 * sessions);
   ZuCheck(state.completed.load_() == (abort ? 2 : 4) * sessions);
   ZuCheck(state.failed.load_() == (abort ? 2 : 0) * sessions);
+  if (payload && !abort) {
+    ZuCheck(state.binaryViews.load_() == 4 * sessions);
+    ZuCheck(state.retainedViews.load_() == 2 * sessions);
+  }
   if (partial) {
     ZuCheck(state.wouldBlock.load_());
 #ifdef ZFIX_TEST_TLS

@@ -66,20 +66,11 @@ static ZuDateTime time(const FIX::FieldMap &m, int tag) {
   if (!*value) throw FIX::IncorrectDataFormat(tag);
   return value;
 }
-static void extra(FIX::FieldMap &m, ZuCSpan text, ZuBSpan binary) {
+static void extra(FIX::FieldMap &m, ZuCSpan text) {
   if (text.length()) put(m, 58, text);
-  if (binary.length()) {
-    put(m, 354, binary.length());
-    put(m, 355, ZuCSpan{binary});
-  }
 }
 template <typename T> static void extra(const FIX::FieldMap &m, Arena &arena, T &out) {
   if (m.isSetField(58)) out.text = field(m, arena, 58);
-  if (m.isSetField(355)) {
-    auto bytes = field(m, arena, 355);
-    if (number<unsigned>(m, 354) != bytes.length()) throw FIX::IncorrectTagValue(354);
-    out.encoded = bytes;
-  }
 }
 template <typename MT> static void order(MT &m, const Order &o) {
   put(m, 11, o.key); put(m, 21, o.handling); put(m, 55, o.symbol);
@@ -100,7 +91,7 @@ template <typename MT> static void order(MT &m, const Order &o) {
     }
     m.addGroupPtr(453, party.ptr(), false); ZuMv(party).release();
   }
-  extra(m, o.text, o.encoded);
+  extra(m, o.text);
 }
 static void order(const FIX::FieldMap &m, Arena &arena, Order &o) {
   o.key = number<uint64_t>(m, 11); o.handling = field(m, arena, 21);
@@ -142,7 +133,7 @@ void encode(FIX::Message &m, const Report &r) {
   put(m, 150, r.kind); put(m, 39, r.status); put(m, 55, r.symbol); put(m, 54, r.side);
   put(m, 38, r.qty); put(m, 44, r.price); put(m, 151, r.leaves); put(m, 14, r.cum);
   put(m, 6, r.avg); put(m, 32, r.lastQty); put(m, 31, r.lastPx); put(m, 60, r.time);
-  extra(m, r.text, r.encoded);
+  extra(m, r.text);
 }
 void decode(const FIX::Message &m, Input<Order> &out) { order(m, out.arena, out.value); }
 void decode(const FIX::Message &m, Input<Replace> &out) {

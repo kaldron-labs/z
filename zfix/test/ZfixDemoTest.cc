@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZfixDispatch.hh>
+#include <zlib/ZfixRxMsg.hh>
 #include "ZfixDemo.hh"
 using namespace ZuTestUtil;
 using namespace ZfixDemo;
@@ -105,7 +106,8 @@ static void archivePolicy() {
   Event value;
   ZuCheck(history.body && history.body == quote && history.body->id() == 2001 &&
     history.seqNo == 3);
-  ZuCheck(history.body && !Zfix::Fmt::load(value, history.body->body()) && value.price == 125);
+  ZuCheck((history.body && Zfix::Fmt::read<Event, ZuFacet::FIX, Zfix::ArchiveField>(
+    value, history.body->body(), error) && value.price == 125));
   auto replacement = Zfix::TxBody::encode<Req>(Request{3001, 10, "DEMO", {}}, 3001, error);
   ZuCheck(replacement && !error && longTerm.erase(7, 3));
   ZuCheck(longTerm.restore({replacement, original, 7, 3}));
@@ -114,11 +116,15 @@ static void archivePolicy() {
     history.body->id() == 3001 && history.originalTime == original);
   ZuCheck(longTerm.erase(7, 3) && !longTerm.fetch(7, 3).history.body && !longTerm.bytes());
 }
-static Zfix::Fmt::Header replayHeader() {
-  Zfix::Fmt::Header h;
-  h.beginString = "FIX.4.4"; h.sender = "DEMO-C"; h.target = "DEMO-S";
-  h.seqNo = 3; h.sendingTime = ZuDateTime{Zm::now()};
-  h.origSendingTime = ZuDateTime{Zm::now(-10)}; h.possDup = true; return h;
+static Zfix::TxConfig replayConfig() {
+  Zfix::SessionConfig session;
+  session.identity.version = Zfix::Version::V4_4;
+  session.identity.local = "DEMO-C"; session.identity.peer = "DEMO-S";
+  return Zfix::txConfig(session);
+}
+static Zfix::TxContext replayContext() {
+  return {.seqNo = 3, .sendingTime = ZuDateTime{Zm::now()},
+    .origSendingTime = ZuDateTime{Zm::now(-10)}, .possDup = true};
 }
 static void wireReplay() {
   ZuTestScope(wireReplay);
@@ -126,17 +132,18 @@ static void wireReplay() {
   for (uint64_t key = 1001; key <= 1002; ++key) {
     Zfix::Fmt::Error error;
     auto body = Zfix::TxBody::encode<Req>(Request{key, 10, "DEMO", {}}, key, error);
-    auto output = Zfix::txFrame(*body, replayHeader(), error);
+    auto output = Zfix::txFrame(*body, replayConfig(), replayContext(), error);
     ZuCheck(output && !error);
     auto parsed = Zfix::Fmt::frame(output->cspan());
+    Zfix::RxMsg input; input.frame = parsed.view;
+    ZuCheck(!Zfix::catalogSession<Dictionary>(input));
     unsigned seen = 0;
     error = Zfix::dispatch<Dictionary>(parsed.view,
-      [&results, &seen, key](auto *entry, const auto &object, const auto &h,
-	const auto &) -> Zfix::Fmt::Error {
+      [&results, &seen, &input, key](auto *entry, const auto &object) -> Zfix::Fmt::Error {
 	using E = ZuDecay<decltype(*entry)>;
 	if constexpr (ZuIsSame<E, Req>{}) {
-	  ++seen; ZuCheck(h.possDup && *h.origSendingTime && object.key == key);
-	  auto decision = results.admit(object.key, object.qty, h.possDup);
+	  ++seen; ZuCheck(input.possDup && *input.origSendingTime && object.key == key);
+	  auto decision = results.admit(object.key, object.qty, input.possDup);
 	  ZuCheck(decision == (key == 1001 ? Decision::Cached : Decision::UnknownReplay));
 	} else ZuCheck(false);
 	return {};
@@ -152,8 +159,8 @@ static void authCodec() {
   auto body = Zfix::TxBody::restoreControl<LoginMsg>(
     "98=0\1" "108=30\1" "553=demo\1" "554=example\1", 1, error);
   ZuCheck(body && !error);
-  auto h = replayHeader(); h.possDup = false; h.origSendingTime = ZuDateTime{};
-  auto output = Zfix::txFrame(*body, h, error); ZuCheck(output && !error);
+  auto h = replayContext(); h.possDup = false; h.origSendingTime = ZuDateTime{};
+  auto output = Zfix::txFrame(*body, replayConfig(), h, error); ZuCheck(output && !error);
   Zfix::Fmt::MessageHandler<Login> decoded{Zfix::Fmt::frame(output->cspan()).view};
   auto login = decoded.ctor();
   ZuCheck(decoded.valid() && login.user == "demo" && login.password == "example" &&

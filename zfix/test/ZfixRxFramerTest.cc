@@ -13,7 +13,7 @@
 using namespace ZuTestUtil;
 using namespace Zfix;
 
-constexpr auto Wire = "8=FIX.4.4\1" "9=18\1" "35=D\1" "95=4\1" "96=A\1\0=\1" "10=247\1"_z;
+constexpr auto Wire = "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1"_z;
 using Queue = ZiRxQueue;
 using Stream = ZiRxStream<Queue>;
 
@@ -91,7 +91,7 @@ static void gathered() {
   auto wire = writer.finish(); ZuCheck(bool(wire));
   if (!wire) return;
   Stream stream; RxFramer frame; ZmRef<ZiIOBuf> out;
-  unsigned allocations = 0;
+  unsigned	allocations = 0;
   auto counted = [&allocations] { ++allocations; return alloc(); };
   push(stream, {wire.data.data(), 1});
   ZuCheck(frame.next_(stream, counted, out) == 0);
@@ -147,8 +147,69 @@ static void errors() {
   ZuCheck(bounded.next_(stream, alloc, out) == -1);
   ZuCheck(bounded.error_().code == Fmt::ErrorCode::Size);
 }
+static constexpr auto BinaryWire = "8=FIX.4.4\1" "9=136\1" "35=n\1"
+  "212=35\1" "213=RTRF<8=FIX.4.4\1" "9=5\1" "35=D\1" "10=999\1\0=\xff>\1"
+  "95=52\1" "96=8=FIX.4.4\1" "9=5\1" "35=D\1" "10=111\1"
+  "8=FIX.4.4\1" "9=5\1" "35=8\1" "10=222\1\1"
+  "11=outer\1" "93=4\1" "89=\0\1=\xff\1" "10=108\1"_z;
+static constexpr auto XML = "RTRF<8=FIX.4.4\1" "9=5\1" "35=D\1" "10=999\1\0=\xff>"_z;
+static constexpr auto Replay = "8=FIX.4.4\1" "9=5\1" "35=D\1" "10=111\1"
+  "8=FIX.4.4\1" "9=5\1" "35=8\1" "10=222\1"_z;
+struct BinaryMessage {
+  ZuBSpan	xml;
+  ZuCSpan	replay;
+  ZuCSpan	id;
+  ZuBSpan	signature;
+};
+ZfStruct(, (BinaryMessage, FIX),
+  (xml, (FIX::ID<212>, FIX::Binary<213>, Required), Bytes),
+  (replay, (FIX::ID<95>, FIX::Binary<96>, Required), String),
+  (id, (FIX::ID<11>, Required), String),
+  (signature, ((FIX::Sig<93, 89>), Required), Bytes));
+
+static void binarySplits() {
+  ZuTestScope(binarySplits);
+  for (unsigned split = 0; split <= BinaryWire.length(); ++split) {
+    Stream stream; RxFramer parser;
+    push(stream, {BinaryWire.data(), split});
+    ZmRef<ZiIOBuf> first, second; Fmt::FrameView view;
+    int n = parser.next_(stream, alloc, first, &view);
+    ZuCheck(n == (split == BinaryWire.length() ? 1 : 0));
+    auto tail = alloc();
+    tail->append({BinaryWire.data() + split, BinaryWire.length() - split});
+    tail->append(Wire); stream.push(ZuMv(tail));
+    if (!n) ZuCheck(parser.next_(stream, alloc, first, &view) == 1);
+    ZuCheck(first && first->cspan() == BinaryWire && view.wire.data() == ZuCSpan{first->cspan()}.data());
+    if (!first) continue;
+    BinaryMessage value;
+    ZuCheck(!Fmt::load(value, view.content));
+    auto original = ZuCSpan{first->cspan()}.data();
+    auto xml = reinterpret_cast<const uint8_t *>(original + ZuCSpan{BinaryWire}.find(XML));
+    auto replay = original + ZuCSpan{BinaryWire}.find(Replay);
+    auto signature = reinterpret_cast<const uint8_t *>(
+      original + ZuCSpan{BinaryWire}.find("89="_z) + 3);
+    ZuCheck(value.xml.data() == xml && value.replay.data() == replay &&
+      value.signature.data() == signature);
+    ZuCheck(value.xml == ZuBSpan{XML} && value.replay == Replay && value.signature.length() == 4);
+    ZuCheck(parser.next_(stream, alloc, second) == 1 && second->cspan() == Wire && !stream);
+    stream.clean(); parser.reset_();
+    // All three borrowed members still address the retained first message
+    // allocation after extracting the next frame and cleaning the input stream.
+    ZuCheck(ZuCSpan{first->cspan()}.data() == original && value.xml.data() == xml &&
+      value.replay.data() == replay && value.signature.data() == signature &&
+      value.xml == ZuBSpan{XML} && value.replay == Replay);
+  }
+  Stream stream; RxFramer parser; ZmRef<ZiIOBuf> out;
+  for (unsigned i = 0; i < BinaryWire.length(); ++i) {
+    push(stream, {BinaryWire.data() + i, 1});
+    ZuCheck(parser.next_(stream, alloc, out) == (i + 1 == BinaryWire.length() ? 1 : 0));
+  }
+  ZuCheck(out && out->cspan() == BinaryWire && !stream);
+}
+
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
+  ZuTestCall(binarySplits);
   ZuTestCall(splits);
   ZuTestCall(bytes);
   ZuTestCall(coalesced);

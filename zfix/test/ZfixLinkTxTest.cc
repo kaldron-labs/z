@@ -13,6 +13,7 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfixLinkTx.hh>
+#include <zlib/ZfixRxMsg.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -22,9 +23,9 @@ template <typename T> using Values = ZtArray<T, ZtArrayHeapID<"Zfix.LinkTxTest">
 static SessionConfig config(unsigned mode = Transport::FIX4)
 {
   SessionConfig c;
-  c.header.version = Version::V4_4;
-  c.header.local = "LOCAL";
-  c.header.peer = "PEER";
+  c.identity.version = Version::V4_4;
+  c.identity.local = "LOCAL";
+  c.identity.peer = "PEER";
   c.mode = mode;
   c.appVerID = AppVersion::V5_0_SP2;
   return c;
@@ -33,7 +34,9 @@ struct Order {
   ZuCSpan	id;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
+ZfStruct(, (Order), (id, (FIX::ID<11>), String));
+using OrderFIXFields = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order);
 ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
@@ -252,6 +255,14 @@ struct Engine : LinkTx<Engine> {
   }
 };
 
+// Factory bodies are unsigned archives; session values are supplied at final Tx.
+template <typename O> static Error loadArchive(O &object, ZuCSpan bytes)
+{
+  Error error;
+  Fmt::read<O, ZuFacet::FIX, ArchiveField>(object, bytes, error);
+  return error;
+}
+
 static void factory()
 {
   ZuTestScope(factory);
@@ -263,7 +274,7 @@ static void factory()
       Limits{.frameBytes = 1024});
     ZuCheck(body && !e && body->msgType() == "A");
     Session::Logon logon;
-    ZuCheck(!load(logon, body->body()));
+    ZuCheck(!loadArchive(logon, body->body()));
     ZuCheck(logon.maxMessageSize == 8192);
     ZuCheck(logon.nextExpected == (mode == Transport::FIX44A ? 17 : 0));
     ZuCheck(logon.defaultAppVerID == (mode == Transport::FIXT11 ? "9" : ""));
@@ -273,7 +284,7 @@ static void factory()
     e = {};
     auto probe = controlBody(SessionAction::SendProbe, event, s, 17, {}, e, Limits::FrameBytes);
     Session::TestReq request;
-    ZuCheck(probe && probe->id() == 41 && !load(request, probe->body()) &&
+    ZuCheck(probe && probe->id() == 41 && !loadArchive(request, probe->body()) &&
       request.testReqID == "Zfix/0/9/2/41");
     auto wide = event;
     wide.instance = uint128_t(-1) - 1;
@@ -282,11 +293,11 @@ static void factory()
       Limits::FrameBytes);
     constexpr auto Expected = "Zfix/340282366920938463463374607431768211454/"
       "18446744073709551614/18446744073709551614/18446744073709551614"_z;
-    ZuCheck(largest && !e && !load(request, largest->body()) && request.testReqID == Expected);
+    ZuCheck(largest && !e && !loadArchive(request, largest->body()) && request.testReqID == Expected);
     constexpr auto Opaque = "0001 abc/xyz"_z;
     auto echo = controlBody(SessionAction::Echo, event, s, 17, Opaque, e, Limits::FrameBytes);
     Session::HeartBt hb;
-    ZuCheck(echo && !load(hb, echo->body()) && hb.testReqID == Opaque);
+    ZuCheck(echo && !loadArchive(hb, echo->body()) && hb.testReqID == Opaque);
     auto empty = controlBody(SessionAction::Echo, event, s, 17, ""_z, e, Limits::FrameBytes);
     ZuCheck(empty && empty->body() == "112=\1"_z);
     ZuCheck(!controlBody(SessionAction::Echo, event, s, 17, {}, e,
@@ -352,12 +363,10 @@ static void reconnect()
   ZuCheck(tx.output.length() == 2 && tx.output[0].context.connection == 2 &&
     tx.output[0].context.seqNo == 2 && tx.output[0].body->msgType() == "A");
   Session::Msg fill;
-  Fmt::Header header;
-  Fmt::Trailer trailer;
-  ZuCheck(!Session::read(frame(ZuCSpan{tx.output[1].frame->cspan()}).view,
-    fill, header, trailer));
+  RxMsg metadata; metadata.frame = frame(ZuCSpan{tx.output[1].frame->cspan()}).view;
+  ZuCheck(!catalogSession<Session::MTs>(metadata) && !Session::read(metadata.frame, fill));
   ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
-    fill.p<Session::SeqReset>().newSeqNo == 2 && header.seqNo == 1 && header.possDup);
+    fill.p<Session::SeqReset>().newSeqNo == 2 && metadata.seqNo == 1 && metadata.possDup);
   unsigned logons = 0;
   for (const auto &notice : tx.notices)
     if (notice.kind == TxNoticeKind::Logon) ++logons;
@@ -1054,12 +1063,12 @@ static PeerReject rejectReport(uint64_t refSeqNo = 2)
     .text = "bad value"});
   Error error;
   auto body = TxBody::control(c, error);
-  auto wire = txFrame(*body, txHeader(txConfig(config()), 9,
-    ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-12:00:00"}), error);
+  auto wire = txFrame(*body, txConfig(config()),
+    TxContext{.seqNo = 9, .sendingTime =
+      ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-12:00:00"}}, error);
   ZmAssert(wire && !error);
   auto parsed = Fmt::frame(ZuCSpan{wire->cspan()});
-  Fmt::Header h; Fmt::Trailer t;
-  error = Session::read(parsed.view, c, h, t); ZmAssert(!error);
+  error = Session::read(parsed.view, c); ZmAssert(!error);
   return {.buffer = ZuMv(wire), .context = {1, 1, 9}, .message = c.p<Session::Reject>(),
     .wire = parsed.view.wire};
 }

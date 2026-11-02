@@ -21,7 +21,9 @@ struct Order {
   ZuCSpan	id;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
+ZfStruct(, (Order), (id, (FIX::ID<11>), String));
+using OrderFIXFields = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order);
 ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
@@ -84,7 +86,7 @@ struct RxSide : Rx<RxSide> {
   RxSide(Endpoint *, SessionConfig);
   ZuTime nowRx() const;
   void eventRx(SessionEvent, ZmRef<Msg>);
-  void rejectRx(ZmRef<Msg>, unsigned, int);
+  void rejectRx(ZmRef<Msg>, int32_t, int);
   void resendRx(uint64_t, uint64_t, ZmRef<Msg>);
 
   void sessionRx(ZmRef<Msg>) { }
@@ -94,7 +96,7 @@ struct RxSide : Rx<RxSide> {
   void gapArm(uint64_t) { }
   void gapCancel() { }
 
-  Error headerRx(const FrameView &f, Header &h, Limits l) { return readHeader<Order>(f, h, l); }
+  Error sessionRx(RxMsg &input, Limits l) { return catalogSession<MTList<OrderMsg>>(input, l); }
   Error businessRx(Msg *, Limits);
 };
 
@@ -183,9 +185,9 @@ struct TxSide : LinkTx<TxSide> {
 static SessionConfig config(bool client, unsigned mode, unsigned version)
 {
   SessionConfig c;
-  c.header.version = version;
-  c.header.local = client ? "CLIENT" : "SERVER";
-  c.header.peer = client ? "SERVER" : "CLIENT";
+  c.identity.version = version;
+  c.identity.local = client ? "CLIENT" : "SERVER";
+  c.identity.peer = client ? "SERVER" : "CLIENT";
   c.mode = mode;
   c.initiator = client;
   c.appVerID = AppVersion::V5_0_SP2;
@@ -295,10 +297,10 @@ void RxSide::eventRx(SessionEvent event, ZmRef<Msg> msg)
     loop->post(Work{.endpoint = endpoint, .kind = WorkKind::Input,
       .context = endpoint->blockedContext, .frame = ZuMv(endpoint->blockedFrame)});
 }
-void RxSide::rejectRx(ZmRef<Msg> msg, unsigned tag, int reason)
+void RxSide::rejectRx(ZmRef<Msg> msg, int32_t tag, int reason)
 {
   Session::Msg c;
-  c.p<Session::Reject>(Session::Reject{.refSeqNo = msg->data().header.seqNo,
+  c.p<Session::Reject>(Session::Reject{.refSeqNo = msg->data().seqNo,
     .refTagID = tag, .reason = reason, .text = "bad value"});
   Error e;
   auto body = TxBody::control(c, e);
@@ -468,10 +470,12 @@ void TxSide::flushTx()
 {
   auto loop = endpoint->loop;
   auto context = pendingContext;
-  auto parsed = Fmt::frame(ZuCSpan{pendingFrame->cspan()}); Header header;
-  ZmAssert(parsed.state == FrameState::Complete && !readHeader(parsed.view, header));
+  auto parsed = Fmt::frame(ZuCSpan{pendingFrame->cspan()});
+  RxMsg metadata; metadata.frame = parsed.view;
+  ZmAssert_(parsed.state == FrameState::Complete &&
+    !catalogSession<MTList<OrderMsg>>(metadata));
   loop->wire.push(Wire{pendingBody, context, endpoint->client,
-    header.sendingTime, header.origSendingTime, header.possDup});
+    metadata.sendingTime, metadata.origSendingTime, metadata.possDup});
   if (fragmentFrame) {
     auto charge = uint64_t(pendingFrame->size) + sizeof(FrameQueue::Node);
     queuedBytes += charge;
@@ -584,7 +588,7 @@ void Loop::drain(unsigned limit)
     owner = 1;
     switch (w.kind) {
       case WorkKind::Open: {
-	auto e = ep->rx.open_(now);
+	[[maybe_unused]] auto e = ep->rx.open_(now);
 	ZmAssert(e.connection);
 	break;
       }
@@ -701,6 +705,14 @@ void Loop::drain(unsigned limit)
   }
   owner = 0;
   if (!limit && cursor != work.length()) ++errors;
+}
+
+// Retained control bodies are unsigned archives without final session values.
+template <typename O> static Error loadArchive(O &object, ZuCSpan bytes)
+{
+  Error error;
+  Fmt::read<O, ZuFacet::FIX, ArchiveField>(object, bytes, error);
+  return error;
 }
 
 static void handshake()
@@ -965,7 +977,7 @@ static void liveReset()
 	const auto &wire = loop.wire[i];
 	if (wire.body->msgType() != "A") continue;
 	Session::Logon logon;
-	ZuCheck(!load(logon, wire.body->body()) && logon.resetSeqNum &&
+	ZuCheck(!loadArchive(logon, wire.body->body()) && logon.resetSeqNum &&
 	  wire.context.epoch == 2 && wire.context.connection == 1 && wire.context.seqNo == 1);
 	++resetLogons;
       }
@@ -1023,7 +1035,7 @@ static void reconnectReset()
       const auto &wire = loop.wire[i];
       if (wire.body->msgType() != "A") continue;
       Session::Logon logon;
-      ZuCheck(!load(logon, wire.body->body()) && logon.resetSeqNum && wire.context.seqNo == 1 &&
+      ZuCheck(!loadArchive(logon, wire.body->body()) && logon.resetSeqNum && wire.context.seqNo == 1 &&
 	wire.context.epoch == 2 && wire.context.connection == 2);
       ++count;
     }
@@ -1056,7 +1068,7 @@ static void continuingReconnect()
     const auto &wire = loop.wire[i];
     if (wire.body->msgType() != "A") continue;
     Session::Logon logon;
-    ZuCheck(!load(logon, wire.body->body()) && !logon.resetSeqNum &&
+    ZuCheck(!loadArchive(logon, wire.body->body()) && !logon.resetSeqNum &&
       wire.context.connection == 2 && wire.context.epoch == 1 && wire.context.seqNo > 1);
     if (wire.client) ZuCheck(wire.context.seqNo == next);
     ++count;
@@ -1135,7 +1147,7 @@ static void initialReset()
     for (const auto &wire : loop.wire) {
       if (wire.body->msgType() != "A") continue;
       Session::Logon logon;
-      ZuCheck(!load(logon, wire.body->body()) && logon.resetSeqNum &&
+      ZuCheck(!loadArchive(logon, wire.body->body()) && logon.resetSeqNum &&
 	wire.context.seqNo == 1 && wire.context.epoch == 1 && wire.context.connection == 1);
       ++count;
     }
@@ -1150,7 +1162,7 @@ static void initialReset()
     for (unsigned i = before, n = loop.wire.length(); i < n; ++i) {
       const auto &wire = loop.wire[i]; if (wire.body->msgType() != "A") continue;
       Session::Logon logon;
-      ZuCheck(!load(logon, wire.body->body()) && !logon.resetSeqNum &&
+      ZuCheck(!loadArchive(logon, wire.body->body()) && !logon.resetSeqNum &&
 	wire.context.seqNo > 1 && wire.context.epoch == 1 && wire.context.connection == 2);
       ++count;
     }
@@ -1252,9 +1264,10 @@ static void simultaneousRecovery()
 static ZuDateTime frameTime(const ZiIOBuf *buffer)
 {
   auto parsed = Fmt::frame(ZuCSpan{buffer->cspan()});
-  Header h;
-  ZmAssert(parsed.state == FrameState::Complete && !readHeader(parsed.view, h));
-  return h.sendingTime;
+  RxMsg metadata; metadata.frame = parsed.view;
+  ZmAssert_(parsed.state == FrameState::Complete &&
+    !catalogSession<MTList<OrderMsg>>(metadata));
+  return metadata.sendingTime;
 }
 static void partialWrites()
 {
@@ -1376,7 +1389,7 @@ static void partialFailure()
 	}
 	if (wire.body->msgType() == "A") {
 	  Session::Logon logon;
-	  ZuCheck(!load(logon, wire.body->body()) && !logon.resetSeqNum &&
+	  ZuCheck(!loadArchive(logon, wire.body->body()) && !logon.resetSeqNum &&
 	    wire.context.seqNo == assigned);
 	  continuing = true;
 	}

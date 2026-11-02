@@ -113,7 +113,7 @@ template <typename Net> struct NativeRx {
 // Stateless native hooks for managed and raw links.
 template <typename Impl, typename Net> class LinkHooks_ {
 public:
-  TraceField fixTraceField(ZuCSpan type, unsigned tag) {
+  TraceField fixTraceField(ZuCSpan type, int32_t tag) {
     return traceField<typename Impl::MessageCatalog>(type, tag);
   }
 

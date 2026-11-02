@@ -7,6 +7,14 @@ AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 EXTRA_DIST = README.md tls-test.sh zfix_demo_io.hh zfix_demo_check.sh zfix_demo_tls_check.sh \
 	native_io_test.py recovery_swap.hh session_preauth_test.hh managed_partial_test.hh
+noinst_LTLIBRARIES = libZfixITest.la
+nodist_libZfixITest_la_SOURCES = ZiTestResidue.cc
+BUILT_SOURCES = ZiTestResidue.cc
+CLEANFILES = ZiTestResidue.cc
+
+ZiTestResidue.cc:
+	$(AM_V_GEN)$(LN_S) $(abs_top_srcdir)/zi/test/ZiTestResidue.cc $@
+
 noinst_PROGRAMS = native_io_test zfix_demo zfix_demo_test ingress_tcp_test ingress_tls_test reset_tcp_test reset_tls_test raw_tcp_test raw_tls_test recovery_tcp_test recovery_tls_test tcp_test tls_test session_tcp_test session_tls_test
 zfix_demo_SOURCES = zfix_demo.cc $(top_srcdir)/zfix/test/ZfixDemo.cc
 native_io_test_SOURCES = native_io_test.cc
@@ -23,9 +31,9 @@ raw_tcp_test_SOURCES = raw_io_test.cc
 raw_tls_test_SOURCES = raw_io_test.cc
 raw_tls_test_CPPFLAGS = $(AM_CPPFLAGS) -DZFIX_TEST_TLS
 recovery_tcp_test_SOURCES = recovery_io_test.cc
-recovery_tcp_test_LDADD = $(top_builddir)/zi/test/libZiTest.la $(LDADD)
+recovery_tcp_test_LDADD = libZfixITest.la $(LDADD)
 recovery_tls_test_SOURCES = recovery_io_test.cc
-recovery_tls_test_LDADD = $(top_builddir)/zi/test/libZiTest.la $(LDADD)
+recovery_tls_test_LDADD = libZfixITest.la $(LDADD)
 recovery_tls_test_CPPFLAGS = $(AM_CPPFLAGS) -DZFIX_TEST_TLS
 session_tcp_test_SOURCES = session_io_test.cc
 session_tls_test_SOURCES = session_io_test.cc
@@ -56,7 +64,7 @@ io-test: all
 	ZFIX_IO_DIR=$(srcdir) ZFIX_IO_CLIENT=$(top_builddir)/zfix/util/zfix \
 	  ZFIX_IO_SERVER=$(top_builddir)/zfix/util/zfixd prove ./native_io_test
 
-CLEANFILES = native_io_asan_test native_io_inst_test zfix_asan_native.o zfix_asan zfixd_asan zfix_inst_native.o zfix_inst zfixd_inst
+CLEANFILES += native_io_asan_test native_io_inst_test zfix_asan_native.o zfix_asan zfixd_asan zfix_inst_native.o zfix_inst zfixd_inst
 asan-io-test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 asan-io-test:
 	$(CXX) $(DEFS) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) \
@@ -174,32 +182,32 @@ installed-test:
 CLEANFILES += asan_recovery_tcp_test asan_recovery_tls_test
 .PHONY: asan-recovery-test
 asan-recovery-test: export ZI_LOGDIR = $(abs_top_builddir)/logs
-asan-recovery-test:
+asan-recovery-test: libZfixITest.la
 	$(LIBTOOL) --tag=CXX --mode=link $(CXX) $(DEFS) $(AM_CPPFLAGS) \
 	  $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -fsanitize=address \
 	  -fno-omit-frame-pointer $(srcdir)/recovery_io_test.cc \
-	  $(top_builddir)/zi/test/libZiTest.la $(LDADD) -o asan_recovery_tcp_test
+	  libZfixITest.la $(LDADD) -o asan_recovery_tcp_test
 	$(LIBTOOL) --tag=CXX --mode=link $(CXX) $(DEFS) $(AM_CPPFLAGS) \
 	  $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS -fsanitize=address \
 	  -fno-omit-frame-pointer $(srcdir)/recovery_io_test.cc \
-	  $(top_builddir)/zi/test/libZiTest.la $(LDADD) -o asan_recovery_tls_test
+	  libZfixITest.la $(LDADD) -o asan_recovery_tls_test
 	ASAN_OPTIONS=detect_leaks=1 prove ./asan_recovery_tcp_test
 	ASAN_OPTIONS=detect_leaks=1 $(SHELL) $(srcdir)/tls-test.sh ./asan_recovery_tls_test
 
 CLEANFILES += inst_recovery_tcp_test inst_recovery_tls_test
 .PHONY: installed-recovery-test
 installed-recovery-test: export ZI_LOGDIR = $(abs_top_builddir)/logs
-installed-recovery-test:
+installed-recovery-test: libZfixITest.la
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
 	  -I$(top_srcdir)/zi/test -I$(ZFIX_PREFIX)/include $(srcdir)/recovery_io_test.cc \
-	  $(top_builddir)/zi/test/.libs/libZiTest.a \
+	  .libs/libZfixITest.a \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
 	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_recovery_tcp_test
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS \
 	  -I$(top_srcdir)/zi/test -I$(ZFIX_PREFIX)/include $(srcdir)/recovery_io_test.cc \
-	  $(top_builddir)/zi/test/.libs/libZiTest.a \
+	  .libs/libZfixITest.a \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
 	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \

@@ -148,16 +148,16 @@ private:
 
     void peerRejectRx(PeerReject report) { link->peerReject_(ZuMv(report)); }
 
-    void rejectRx(ZmRef<Msg> msg, unsigned tag, int reason) {
-      link->reject_(msg->data().header.seqNo, tag, reason);
+    void rejectRx(ZmRef<Msg> msg, int32_t tag, int reason) {
+      link->reject_(msg->data().seqNo, tag, reason);
     }
 
     void resendRx(uint64_t begin, uint64_t end, ZmRef<Msg>) {
       link->resend_(begin, end);
     }
 
-    Fmt::Error headerRx(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
-      return link->impl()->fixHeaderRx(f, h, l);
+    Fmt::Error sessionRx(RxMsg &input, Fmt::Limits limits) {
+      return link->impl()->fixSessionRx(input, limits);
     }
 
     Fmt::Error businessRx(Msg *msg, Fmt::Limits limits) {
@@ -180,6 +180,13 @@ private:
   };
 
   struct TxSide : public LinkTx<TxSide>, public WireTx<TxSide> {
+    static constexpr bool SignMsg = [] { return bool(Impl::SignMsg); }();
+    template <typename S>
+    void signMsg(S &out, const TxBody *body, TxContext context, ZuCSpan message) const {
+      ZmAssert(link->app()->txInvoked());
+      link->impl()->signMsg(out, body, context, message);
+    }
+
     using Ctl = LinkTx<TxSide>;
     using Wire = WireTx<TxSide>;
 
@@ -418,7 +425,7 @@ public:
     TxContext context{m_rx.session_().epoch_(), m_rx.session_().connection_(), 0};
     receive_();
     if (retained) {
-      context.seqNo = retained->data().header.seqNo;
+      context.seqNo = retained->data().seqNo;
       auto entry = m_traceRx.capture_(retained->data().frame, context,
 	traceField_, impl());
       if (entry) impl()->fixTraceRx(ZuMv(entry));
@@ -632,6 +639,10 @@ public:
 
   void fixControlTx(TxBody::Ref, TxContext) { }
 
+  enum { SignMsg = 0 };
+  template <typename S>
+  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+
   TxBody::Ref fixLogonTx(TxBody::Ref b) { return b; }
 
   void fixPublishedTx(TxBody::Ref, TxContext, ZuDateTime) { }
@@ -664,19 +675,17 @@ public:
     return Admission::Accepted;
   }
 
-  Fmt::Error fixHeaderRx(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
-    return catalogHeader<typename Impl::MessageCatalog>(f, h, l);
+  Fmt::Error fixSessionRx(RxMsg &input, Fmt::Limits limits) {
+    return catalogSession<typename Impl::MessageCatalog>(input, limits);
   }
 
   Fmt::Error fixBusinessRx(Msg *message, Fmt::Limits limits) {
     ZmAssert(app()->rxInvoked());
     return dispatch<typename Impl::MessageCatalog>(message->data().frame,
-      [this, message]<typename Entry>(Entry *type, const typename Entry::Object &object,
-	  const Fmt::Header &, const Fmt::Trailer &trailer) {
-	message->data().trailer = trailer;
+      [this, message]<typename Entry>(Entry *type, const typename Entry::Object &object) {
 	RequestContext context{type, m_rx.session_().instance_(), ZmRef<const Msg>{message}};
 	return Context_::Receive<Impl, Entry>::call(impl(), type, object, context);
-	}, limits, &message->data().header);
+	}, limits);
   }
 
 private:
@@ -701,7 +710,7 @@ private:
   auto app() { return impl()->app(); }
   auto app() const { return impl()->app(); }
 
-  static TraceField traceField_(void *owner, ZuCSpan type, unsigned tag) {
+  static TraceField traceField_(void *owner, ZuCSpan type, int32_t tag) {
     auto p = static_cast<Impl *>(owner); auto f = p->fixTraceField(type, tag);
     f.secret |= p->fixTraceSecret(type, tag); return f;
   }
@@ -747,7 +756,7 @@ private:
     })) adminFailed_();
   }
 
-  void reject_(uint64_t seqNo, unsigned tag, int reason) {
+  void reject_(uint64_t seqNo, int32_t tag, int reason) {
     Session::Msg c;
     c.template p<Session::Reject>(Session::Reject{
       .refSeqNo = seqNo, .refTagID = tag, .reason = reason});
@@ -815,7 +824,7 @@ private:
     fault_(SessionError::Overload); impl()->disconnect_(false);
   }
 
-  void fault_(unsigned error, unsigned tag = 0) {
+  void fault_(unsigned error, int32_t tag = 0) {
     m_rx.fault_(m_rx.session_().connection_(), error, tag, Zm::now());
   }
 

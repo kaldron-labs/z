@@ -53,16 +53,22 @@ struct Login {
 };
 
 ZfStruct(, (Party, FIX), (id, (FIX::ID<448>, Required), String), (role, (FIX::ID<452>), UInt32));
-ZfStruct(, (Request, FIX), (key, (FIX::ID<11>, Required), UInt64),
+ZfStruct(, (Request), (key, (FIX::ID<11>, Required), UInt64),
   (qty, (FIX::ID<38>, Required), UInt32), (symbol, (FIX::ID<55>, Required), String),
   (parties, (FIX::ID<453>), UDT));
-ZfStruct(, (Report, FIX), (key, (FIX::ID<11>, Required), UInt64),
+ZfStruct(, (Report), (key, (FIX::ID<11>, Required), UInt64),
   (exec, (FIX::ID<17>, Required), UInt64), (kind, (FIX::ID<150>, Required), String),
   (qty, (FIX::ID<14>), UInt32));
-ZfStruct(, (Event, FIX), (symbol, (FIX::ID<55>, Required), String), (price, (FIX::ID<44>),
+ZfStruct(, (Event), (symbol, (FIX::ID<55>, Required), String), (price, (FIX::ID<44>),
   Int64));
 ZfStruct(, (Login, FIX), (common, , UDT), (user, (FIX::ID<553>, Required), String),
   (password, (FIX::ID<554>, Required), String));
+using RequestFIX = ZuTypeConcat<Zfix::SessionFields<Request>, ZfFields_Request>;
+RequestFIX ZuFields_(Request *, ZuFacet::FIX *);
+using ReportFIX = ZuTypeConcat<Zfix::SessionFields<Report>, ZfFields_Report>;
+ReportFIX ZuFields_(Report *, ZuFacet::FIX *);
+using EventFIX = ZuTypeConcat<Zfix::SessionFields<Event>, ZfFields_Event>;
+EventFIX ZuFields_(Event *, ZuFacet::FIX *);
 using Ack = Zfix::MT<Report, "U2", ZuFacet::FIX, Zfix::Discrim<150, "A">>;
 using Fill = Zfix::MT<Report, "U2", ZuFacet::FIX, Zfix::Discrim<150, "F">>;
 using Req = Zfix::MT<Request, "U1", ZuFacet::FIX, Zfix::NoDiscrim, ZuTypeList<Ack,

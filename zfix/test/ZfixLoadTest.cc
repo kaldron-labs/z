@@ -16,7 +16,7 @@ using namespace ZuTestUtil;
 using namespace ZfixLoad;
 static void model() {
   ZuTestScope(model);
-  Model first{{2, 3, 24, 300}, 42}, second{{2, 3, 24, 300}, 42}, different{{}, 43};
+  Model first{{2, 3, 24}, 42}, second{{2, 3, 24}, 42}, different{{}, 43};
   ZuDateTime time{Zm::now()};
   const auto &o = first.next(1001, time);
   const auto &same = second.next(1001, time);
@@ -25,11 +25,10 @@ static void model() {
   ZuCheck(o.price != different.next(1001, time).price);
   ZuCheck(o.parties.length() == 2 && o.parties[1].subs.length() == 3
     && o.parties[1].subs[2].type == 1);
-  ZuCheck(o.text.length() == 24 && o.encoded.length() == 300 &&
-    !o.encoded[0] && o.encoded[1] == 1 && o.encoded[61] == '=');
-  auto text = o.text.data(); auto binary = o.encoded.data(); auto parties = o.parties.data();
+  ZuCheck(o.text.length() == 24);
+  auto text = o.text.data(); auto parties = o.parties.data();
   first.next(1002, time);
-  ZuCheck(o.text.data() == text && o.encoded.data() == binary && o.parties.data() == parties
+  ZuCheck(o.text.data() == text && o.parties.data() == parties
     && o.price != price);
   auto ack = report(o, 17, "0"), fill = report(o, 18, "F");
   ZuCheck(matches(ack, o) && matches(fill, o));

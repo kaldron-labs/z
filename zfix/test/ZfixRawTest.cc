@@ -9,6 +9,7 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfixRaw.hh>
+#include <zlib/ZfixRxMsg.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -20,6 +21,14 @@ ZfStruct(, (Value, FIX), (id, (FIX::ID<11>), String));
 ZfStructImpl(Value); ZfStructImpl(Value, FIX);
 using CustomLogon = MT<Value, "A">;
 using Order = MT<Value, "D">;
+struct RoutingValue {
+  ZuCSpan id;
+};
+ZfStruct(, (RoutingValue), (id, (FIX::ID<11>), String));
+using RoutingFIXFields = ZuTypeConcat<SessionFields<RoutingValue>, ZfFields_RoutingValue>;
+RoutingFIXFields ZuFields_(RoutingValue *, ZuFacet::FIX *);
+ZfStructImpl(RoutingValue); ZfStructImpl(RoutingValue, FIX);
+using RoutingLogon = MT<RoutingValue, "A">;
 constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
 static auto buffer(ZuCSpan bytes) {
   ZmRef<ZiIOBuf> b = new ZiIOBufAlloc<>; b->append(bytes); return b;
@@ -35,20 +44,25 @@ static void controls() {
   ZuCheck(restored && !error && !restored->administrative() && restored->id() == 77);
   ZuCheck(restored->body() == "9999=private\1" "11=abc\1"_z);
 }
-static void headers() {
-  ZuTestScope(headers);
-  Fmt::Error error; auto body = TxBody::encodeRaw<CustomLogon>(Value{"abc"}, 51, true, error);
-  Fmt::Header h; h.beginString = "FIX.9.9"; h.sender = "EXTERNAL"; h.target = "PEER";
-  h.seqNo = 17; h.sendingTime = {ZuDateTimeScan::FIX{}, "20000101-00:00:00"};
-  auto out = RawOutput::encode(body, h, {0, 5, 17, false}, error);
+static void routingFields() {
+  ZuTestScope(routingFields);
+  Fmt::Error error;
+  auto body = TxBody::encodeRaw<RoutingLogon>(RoutingValue{"abc"}, 51, true, error);
+  TxConfig cfg; cfg.beginString = "FIX.9.9";
+  cfg.identity.local = "EXTERNAL"; cfg.identity.peer = "PEER";
+  TxContext ctx{.connection = 5, .seqNo = 17,
+    .sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20000101-00:00:00"}};
+  auto out = RawOutput::encode(body, cfg, ctx, error);
   ZuCheck(out && !error && out->context().epoch == 0 && out->context().seqNo == 17);
-  auto parsed = Fmt::frame(ZuCSpan{out->frame()->cspan()}); Fmt::Header got;
-  ZuCheck(!Fmt::readHeader(parsed.view, got) && got.seqNo == 17 && got.beginString == "FIX.9.9");
-  ZuCheck(got.sender == "EXTERNAL" && got.sendingTime == h.sendingTime
+  auto parsed = Fmt::frame(ZuCSpan{out->frame()->cspan()});
+  RxMsg got; got.frame = parsed.view;
+  ZuCheck(!catalogSession<MTList<RoutingLogon>>(got) && got.seqNo == 17 &&
+    parsed.view.beginString == "FIX.9.9");
+  ZuCheck(got.sender == "EXTERNAL" && got.sendingTime == ctx.sendingTime
     && parsed.view.msgType == "A");
-  h.seqNo = 2; h.possDup = true; h.origSendingTime = h.sendingTime;
-  auto low = RawOutput::encode(body, h, {0, 5, 2, true}, error);
-  ZuCheck(low && !error && low->originalTime() == h.origSendingTime && low->context().replay);
+  ctx.seqNo = 2; ctx.replay = true; ctx.possDup = true; ctx.origSendingTime = ctx.sendingTime;
+  auto low = RawOutput::encode(body, cfg, ctx, error);
+  ZuCheck(low && !error && low->originalTime() == ctx.origSendingTime && low->context().replay);
 }
 static void opaque() {
   ZuTestScope(opaque);
@@ -253,7 +267,7 @@ static void preauthFailure() {
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
   ZuTestCall(controls);
-  ZuTestCall(headers);
+  ZuTestCall(routingFields);
   ZuTestCall(opaque);
   ZuTestCall(limits);
   ZuTestCall(replacement);

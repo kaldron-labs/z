@@ -8,7 +8,7 @@
 #define ZfixLoadFrame_HH
 
 #include <string.h>
-#include <zlib/ZfixFrame.hh>
+#include <zlib/ZfixTxMsg.hh>
 #include "load_fix.hh"
 
 namespace ZfixLoad {
@@ -22,12 +22,14 @@ inline ZuSpan<char> grow(void *owner, unsigned used, unsigned needed) {
 template <typename Entry> Text frame(const typename Entry::Object &o) {
   Text storage;
   Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, &storage};
-  Zfix::Fmt::Header h;
-  h.beginString = "FIX.4.4"; h.msgType = Entry::MsgType;
-  h.sender = "ZFIX-C"; h.target = "ZFIX-S"; h.seqNo = 2;
-  h.sendingTime = ZuDateTime{Zm::now()};
-  if (Zfix::Fmt::writeHeader(writer.body(), h)) return {};
-  mapping(o, [&writer, &o]<typename Facet>(Facet) { Zfix::Fmt::save<Facet>(writer.body(), o); });
+  Zfix::TxConfig config;
+  config.identity.local = "ZFIX-C"; config.identity.peer = "ZFIX-S";
+  Zfix::TxContext context{.seqNo = 2, .sendingTime = ZuDateTime{Zm::now()}};
+  writer.body().field(35); writer.body() << Entry::MsgType; writer.body().end();
+  mapping(o, [&writer, &o, &config, &context]<typename Facet>(Facet) {
+    Zfix::ConfiguredSink<Facet> out{writer.body(), config, context};
+    Zfix::Fmt::save<Facet>(out, o);
+  });
   auto result = writer.finish();
   if (!result) return {};
   // Return one owning fixture buffer; Text cannot own an interior data pointer.

@@ -94,6 +94,10 @@ template <typename Impl> class LinkTx :
   using Base = Tx<LinkTx<Impl>>;
 friend Base;
 public:
+  using Hooks<Impl>::SignMsg;
+  using Hooks<Impl>::signMsg;
+  const Impl &signer_() const { return *static_cast<const Impl *>(this); }
+
   explicit LinkTx(SessionConfig config, TxLimits limits = {},
       ControlLimits controlLimits = {}, uint64_t epoch = 1) :
     Base{ZuMv(config), limits, epoch}, m_limits{controlLimits} { }

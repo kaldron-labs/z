@@ -21,9 +21,11 @@ struct Order {
   ZuCSpan	note;
 };
 
-ZfStruct(, (Order, FIX),
+ZfStruct(, (Order),
   (id, (FIX::ID<11>, Required), Int32),
   (note, (FIX::ID<58>), String));
+using OrderFIX = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIX ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order);
 ZfStructImpl(Order, FIX);
 
@@ -31,8 +33,8 @@ static const ZuDateTime stamp{ZuDateTimeScan::FIX{}, "20261027-00:00:00"};
 static SessionConfig config(unsigned mode = Transport::FIX4)
 {
   SessionConfig c;
-  c.header.version = Version::V4_4;
-  c.header.local = "LOCAL"; c.header.peer = "PEER";
+  c.identity.version = Version::V4_4;
+  c.identity.local = "LOCAL"; c.identity.peer = "PEER";
   c.mode = mode; c.appVerID = AppVersion::V5_0_SP2;
   return c;
 }
@@ -58,16 +60,20 @@ static ZmRef<RxQueue::Node> frame(uint64_t seqNo, ZuCSpan type, ZuCSpan body,
     bool dup = false, int age = 0, ZuCSpan sender = "PEER")
 {
   ZmRef<ZiIOBuf> buffer = new ZiIOBufAlloc<>;
-  Fmt::Header h;
-  h.beginString = "FIX.4.4"; h.msgType = type;
-  h.sender = sender; h.target = "LOCAL"; h.seqNo = seqNo;
-  h.sendingTime = stamp - ZuTime{age};
-  h.possDup = dup;
-  if (dup) h.origSendingTime = h.sendingTime - ZuTime{1};
   ZuSpan<char> storage{buffer->data(), buffer->size};
-  Fmt::FrameWriter writer{storage, h.beginString};
-  auto error = Fmt::writeHeader(writer.body(), h);
-  ZmAssert(!error);
+  Fmt::FrameWriter writer{storage, "FIX.4.4"};
+  auto &out = writer.body();
+  out.field(35); out << type; out.end();
+  out.field(49); out << sender; out.end();
+  out.field(56); out << "LOCAL"; out.end();
+  out.field(34); out << ZuBox<uint64_t>{seqNo}; out.end();
+  out.field(52); Fmt::saveScalar<ZuFacet::FIX, ZfFieldTC::DateTime,
+    ZuTypeList<>>(out, stamp - ZuTime{age}); out.end();
+  if (dup) {
+    out.field(43); out << 'Y'; out.end();
+    out.field(122); Fmt::saveScalar<ZuFacet::FIX, ZfFieldTC::DateTime,
+      ZuTypeList<>>(out, stamp - ZuTime{age + 1}); out.end();
+  }
   writer.body() << body;
   auto output = writer.finish();
   ZmAssert(output);
@@ -99,6 +105,7 @@ struct Receiver : public Rx<Receiver> {
   Values	controls;
   Values	outputOrder;
   SessionString	echo;
+  ZuDateTime	seenSending, seenOriginal;
   uint64_t	admission = 0;
   unsigned	task = 0;
   unsigned	echoed = 0;
@@ -137,24 +144,23 @@ struct Receiver : public Rx<Receiver> {
     }
   }
 
-  void rejectRx(ZmRef<Msg> msg, unsigned tag, int reason) {
+  void rejectRx(ZmRef<Msg> msg, int32_t tag, int reason) {
     codecError = msg->data().error.code;
-    rejected.push(msg->data().header.seqNo);
+    rejected.push(msg->data().seqNo);
     rejected.push(tag); rejected.push(reason);
   }
 
   void resendRx(uint64_t begin, uint64_t end, ZmRef<Msg> msg) {
     outputOrder.push(1);
-    replay.push(begin); replay.push(end); replay.push(msg->data().header.seqNo);
+    replay.push(begin); replay.push(end); replay.push(msg->data().seqNo);
   }
 
   void peerRejectRx(PeerReject report) { peerRejects.push(ZuMv(report)); }
 
-  void sessionRx(ZmRef<Msg> msg) { controls.push(msg->data().header.seqNo); }
+  void sessionRx(ZmRef<Msg> msg) { controls.push(msg->data().seqNo); }
 
-  Fmt::Error headerRx(const Fmt::FrameView &frame, Fmt::Header &header, Fmt::Limits limits) {
-    if (frame.msgType == "D") return Fmt::readHeader<Order>(frame, header, limits);
-    return Fmt::readHeader(frame, header, limits);
+  Fmt::Error sessionRx(RxMsg &input, Fmt::Limits limits) {
+    return catalogSession<MTList<MT<Order, "D">>>(input, limits);
   }
 
   Fmt::Error businessRx(Msg *msg, Fmt::Limits limits) {
@@ -163,13 +169,15 @@ struct Receiver : public Rx<Receiver> {
     if (!h.valid()) return h.error();
     auto order = h.ctor();
     if (!h.valid()) return h.error();
+    seenSending = msg->data().sendingTime;
+    seenOriginal = msg->data().origSendingTime;
     business.push(order.id);
     return {};
   }
 
   bool rawRx(uint64_t, ZmRef<Msg> msg, ZuTime, ZuDateTime) {
     ++rawCount;
-    return !msg->data().header.seqNo;
+    return !msg->data().seqNo;
   }
 
   unsigned send(uint64_t seqNo, ZuCSpan type, ZuCSpan body = {}, bool dup = false,
@@ -317,13 +325,11 @@ static void rejects()
   ZuCheck(r.expected_() == 4 && r.rejected.length() == 3);
   ZuCheck(r.rejected[0] == 3 && r.rejected[1] == 112 && r.rejected[2] == 13);
   ZuCheck(r.send(4, "D", "11=bad\1") == RxResult::Accepted);
-  ZuCheck(r.expected_() == 5 && !r.business.length() && r.rejected.length() == 6);
-  ZuCheck(r.rejected[3] == 4 && r.rejected[4] == 11 && r.rejected[5] == 5);
-  // Unsupported binary metadata is not guessed. The original header is usable
-  // without interpreting the fake header fields inside an unknown body.
-  ZuCheck(r.send(5, "Z", "95=17\1" "96=A\1" "34=999\1\0x\1"_z) == RxResult::Accepted);
-  ZuCheck(r.expected_() == 6 && r.rejected.length() == 9);
-  ZuCheck(r.rejected[6] == 5 && r.rejected[7] == 35 && r.rejected[8] == 11);
+  ZuCheck(r.expected_() == 5 && r.business.length() == 1 && r.business[0] == 0 &&
+    r.rejected.length() == 3);
+  ZuCheck(r.send(5, "Z", "9999=opaque\1"_z) == RxResult::Accepted);
+  ZuCheck(r.expected_() == 6 && r.rejected.length() == 6);
+  ZuCheck(r.rejected[3] == 5 && r.rejected[4] == 35 && r.rejected[5] == 11);
 }
 static void earlyControls()
 {
@@ -370,8 +376,8 @@ static void headerFailures()
   ZuTestScope(headerFailures);
   Receiver r{config()}; r.ready();
   r.send(3, "0", {}, false, 121);
-  ZuCheck(r.expected_() == 4 && r.session_().state_() == State::Logout);
-  ZuCheck(r.rejected.length() == 3 && r.rejected[1] == 52 && r.rejected[2] == 10);
+  ZuCheck(r.expected_() == 4 && r.session_().state_() == State::Established);
+  ZuCheck(!r.rejected.length());
   Receiver identity{config()}; identity.ready();
   identity.send(3, "D", "11=42\1", false, 0, "WRONG");
   ZuCheck(identity.expected_() == 4 && identity.business.length() == 0);
@@ -380,6 +386,24 @@ static void headerFailures()
   ZuCheck(low.send(1, "0") == RxResult::Refused);
   ZuCheck(low.expected_() == 3 && low.session_().state_() == State::Logout);
 }
+static void timestampMetadata()
+{
+  ZuTestScope(timestampMetadata);
+  Receiver r{config()}; r.ready();
+  ZuCheck(r.send(3, "D", "11=1\1", false, 3600) == RxResult::Accepted);
+  ZuCheck(r.business.length() == 1 && r.seenSending == stamp - ZuTime{3600});
+  ZuCheck(r.send(4, "D", "11=2\1", false, -3600) == RxResult::Accepted);
+  ZuCheck(r.business.length() == 2 && r.seenSending == stamp + ZuTime{3600});
+  auto msg = rawFrame("35=D\1" "49=PEER\1" "56=LOCAL\1" "34=5\1"
+    "43=Y\1" "52=20261027-00:00:00\1" "122=20261027-00:00:01\1" "11=3\1");
+  ZuCheck(r.receive_(1, msg, r.now, stamp) == RxResult::Accepted);
+  ZuCheck(r.business.length() == 3 && r.seenOriginal > r.seenSending);
+  msg = rawFrame("35=D\1" "49=PEER\1" "56=LOCAL\1" "34=6\1" "11=4\1");
+  ZuCheck(r.receive_(1, msg, r.now, stamp) == RxResult::Accepted);
+  ZuCheck(r.business.length() == 4 && !*r.seenSending && !*r.seenOriginal &&
+    !r.rejected.length() && r.session_().ready_());
+}
+
 static void modes()
 {
   ZuTestScope(modes);
@@ -403,19 +427,13 @@ static void unsafeHeaders()
   auto msg = rawFrame("35=0\1" "49=PEER\1" "56=LOCAL\1" "52=20261027-00:00:00\1");
   ZuCheck(r.receive_(r.session_().connection_(), msg, r.now, stamp) == RxResult::Refused);
   ZuCheck(r.expected_() == 3 && r.session_().state_() == State::Logout && !r.rejected.length());
-  Receiver pair{config()}; pair.ready();
-  msg = rawFrame("35=0\1" "49=PEER\1" "56=LOCAL\1" "34=3\1"
-    "52=20261027-00:00:00\1" "91=orphan\1");
-  ZuCheck(pair.receive_(pair.session_().connection_(), msg, pair.now,
-    stamp) == RxResult::Refused);
-  ZuCheck(pair.expected_() == 3 && pair.session_().state_() == State::Closing);
   Receiver original{config()}; original.ready();
   msg = rawFrame("35=0\1" "49=PEER\1" "56=LOCAL\1" "34=3\1"
     "43=Y\1" "52=20261027-00:00:00\1");
   ZuCheck(original.receive_(original.session_().connection_(), msg, original.now,
     stamp) == RxResult::Accepted);
-  ZuCheck(original.expected_() == 4 && original.rejected.length() == 3 &&
-    original.rejected[1] == 122 && original.session_().state_() == State::Established);
+  ZuCheck(original.expected_() == 4 && !original.rejected.length() &&
+    original.session_().state_() == State::Established);
 }
 static void reconnect()
 {
@@ -763,7 +781,7 @@ static void faultMatrix()
   enum { Charge = ZiIOBufAlloc<>::Size + sizeof(RxQueue::Node) };
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool driver : {false, true})
-      for (unsigned n = 0; n < 11; ++n) {
+      for (unsigned n = 0; n < 10; ++n) {
 	auto c = config(mode); c.initiator = driver;
 	Receiver r{ZuMv(c), RxLimits{.readAheadBytes = Charge}};
 	r.begin("98=0\1" "108=30\1" "789=2\1" "1137=9\1"); r.admit();
@@ -773,26 +791,26 @@ static void faultMatrix()
 	auto seqNo = r.expected_();
 	unsigned result = RxResult::Accepted, state = State::Established,
 	  error = SessionError::None;
-	unsigned tag = 11; int reason = 5;
+	int32_t tag = 11; int reason = 5;
 	bool consume = true, reject = true;
 	switch (n) {
-	  case 0: result = r.send(seqNo, "D", "11=bad\1"); break;
+	  case 0: result = r.send(seqNo, "D", "11=1\1" "11=2\1"); reason = 13; break;
 	  case 1:
 	    result = r.send(seqNo, "1", "112=a\1" "112=b\1"); tag = 112; reason = 13; break;
 	  case 2:
 	    result = r.send(seqNo, "0", {}, false, 121);
-	    state = State::Logout; error = SessionError::Timestamp; tag = 52; reason = 10; break;
+	    reject = false; break;
 	  case 3:
 	    result = r.send(seqNo, "D", "11=1\1", false, 0, "WRONG");
 	    state = State::Logout; error = SessionError::Identity; tag = 49; reason = 9; break;
 	  case 4:
-	  case 9: {
+	  case 8: {
 	    SessionString content;
 	    content << "35=0\1" "49=PEER\1" "56=LOCAL\1" "34=" << seqNo << '\1'
 	      << "43=Y\1" "52=20261027-00:00:00\1";
-	    if (n == 9) content << "122=20261027-00:00:01\1";
+	    if (n == 8) content << "122=20261027-00:00:01\1";
 	    auto msg = rawFrame(content);
-	    result = r.receive_(1, msg, r.now, stamp); tag = 122; reason = n == 4 ? 1 : 10; break;
+	    result = r.receive_(1, msg, r.now, stamp); reject = false; break;
 	  }
 	  case 5: {
 	    auto msg = rawFrame("35=0\1" "49=PEER\1" "56=LOCAL\1" "52=20261027-00:00:00\1");
@@ -800,29 +818,20 @@ static void faultMatrix()
 	    state = State::Logout; error = SessionError::Sequence; tag = 34;
 	    consume = reject = false; break;
 	  }
-	  case 6: {
-	    SessionString content;
-	    content << "35=0\1" "49=PEER\1" "56=LOCAL\1" "34=" << seqNo << '\1'
-	      << "52=20261027-00:00:00\1" "91=orphan\1";
-	    auto msg = rawFrame(content);
-	    result = r.receive_(1, msg, r.now, stamp);
-	    state = State::Closing; error = SessionError::Protocol; tag = 91;
-	    consume = reject = false; break;
-	  }
-	  case 7:
+	  case 6:
 	    ZuCheck(r.send(seqNo + 2, "D",
 	      "11=55\1") == RxResult::Accepted && r.retainedBytes_() == Charge);
 	    result = r.send(seqNo + 3, "1", "112=blocked\1");
 	    state = State::Closing; error = SessionError::Overload; tag = 0;
 	    consume = reject = false; break;
-	  case 8:
+	  case 7:
 	    result = r.send(seqNo - 1, "0");
 	    state = State::Logout; error = SessionError::Sequence; tag = 34;
 	    consume = reject = false; break;
 	  default: result = r.send(seqNo, "Z"); tag = 35; reason = 11; break;
 	}
 	unsigned expectedResult = RxResult::Accepted;
-	if (!consume) expectedResult = n == 7 ? RxResult::Overload : RxResult::Refused;
+	if (!consume) expectedResult = n == 6 ? RxResult::Overload : RxResult::Refused;
 	ZuCheck(result == expectedResult && r.expected_() == seqNo + unsigned(consume) &&
 	  r.session_().state_() == state && !r.business.length() && !r.echoed
 	    && !r.peerRejects.length());
@@ -875,7 +884,7 @@ static void statistics()
   ZuCheck(high.queuedCount == 1 && high.queuedBytes == r.retainedBytes_() && high.gaps > 0);
   r.send(5, "D", "11=55\1", true);
   ZuCheck(r.stats_().duplicates == 1 && r.stats_().ignored == 1);
-  r.send(3, "D", "11=bad\1"); r.drain();
+  r.send(3, "D", "11=1\1" "11=2\1"); r.drain();
   auto bad = r.stats_();
   ZuCheck(bad.decodeErrors == 1 && bad.hookFailures == 1 && bad.rejectsOut == 1);
   auto old = r.session_().connection_(); r.lost_(old); r.closed_(old);
@@ -1004,6 +1013,7 @@ int main(int argc, char **argv)
   ZuTestCall(earlyControls);
   ZuTestCall(gapFill);
   ZuTestCall(headerFailures);
+  ZuTestCall(timestampMetadata);
   ZuTestCall(modes);
   ZuTestCall(limitsAndRaw);
   ZuTestCall(unsafeHeaders);

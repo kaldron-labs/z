@@ -33,6 +33,10 @@ struct PeerReject {
 // by the library. Off-owner queues hand prepared candidates to this owner.
 template <typename App> class Hooks {
 public:
+  enum { SignMsg = 0 };
+  template <typename S>
+  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+
   bool enqueueTx(TxBody::Ref) { return false; }
   TxBody::Ref dequeueTx() { return {}; }
   void selectedTx(TxBody::Ref, TxContext, unsigned) { }

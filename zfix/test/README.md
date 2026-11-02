@@ -13,7 +13,7 @@ With existing dependencies available, build `make -C zfix/src -j8`,
 
 - `ZfixLoadTest`: six isolated workload/model/accounting/sample and cancel/replace
   policy scopes, with compile-time guards against native codec/session includes.
-- `ZfixLoadFIXTest`: eight native mapping scopes covering scalar/text/binary,
+- `ZfixLoadFIXTest`: eight native mapping scopes covering scalar/text,
   nested and heavy groups, execution reports, cancel/replace and absent OrigClOrdID.
 - `ZfixLoadRunTest`: fifteen deterministic workload phase, pacing, refusal,
   bounded-cache, CLI, identity, replay and intended-latency scopes.
@@ -40,7 +40,7 @@ With existing dependencies available, build `make -C zfix/src -j8`,
   ordering, completion after the publication callback, and resumption of a loaded
   body at the same sequence when output capacity returns.
 - `ZfixRxFramerTest`: shared TCP/TLS receive-stream adapter, every byte split,
-  single-byte buffers, fragmented/coalesced binary frames, exact-buffer detachment,
+  single-byte buffers, fragmented/coalesced text frames, exact-buffer detachment,
   retained-frame lifetime, malformed headers/checksums, frame limits, allocation
   refusal, sticky errors and disconnect cleanup. Uses actual `ZiRxStream` queues
   and pooled queue-compatible buffers, without sockets.
@@ -51,22 +51,34 @@ With existing dependencies available, build `make -C zfix/src -j8`,
 - `ZfixLinkTest`: session library and codec version exports, typed message entry,
   and compilation of session/endpoint/hook boundary headers.
 
+- `ZfixSignTest`: HMAC-SHA256 known-vector verification over the exact
+  unsigned FIX bytes, covered-field/signature tampering, unsigned archive
+  restoration and supplied-pair rejection, signature suppression without source
+  mutation, variable signatures and pooled sink growth, required final-frame
+  presence, standalone/raw encoding, managed replay and failed publication,
+  asynchronous raw Tx ownership and routing metadata lifetime, and reuse of
+  finalized signed bytes during transport cursor advancement. Registered in
+  `make test` and `installed-test`.
 - `ZfixCodecTest`: constructor/setter/update/default/requiredness paths;
   mutable and primary-key selection; flattened components; high private IDs;
-  malformed values, overflow, dates, booleans and characters; length-aware binary
-  fields including unselected fields; alternate facets and precision overrides;
+  unchecked numeric/native null results, ignored range metadata, dates, booleans
+  and characters; SOH-delimited text pass-through and unselected field skipping; alternate facets and precision overrides;
   custom scalar dispatch, borrowed input lifetime and identified allocation;
   golden body output, exact-size buffers, configured bounds and sticky failure;
-  explicit MultipleValue, enum/flags, 128-bit/fixed numeric and owning pointer paths.
+  explicit MultipleValue, enum/flags, 128-bit/fixed numeric and owning pointer paths;
+  dual-tag Binary String/Bytes, borrowed pointer identity in live/indexed,
+  constructor and group paths, exact raw output, empty required pairs,
+  schema-aware selector inspection and matching malformed-pair errors.
 - `ZfixGroupTest`: nested/zero groups, reused IDs in distinct scopes, inferred
   delimiters, parent/group shared tags, malformed counts/order/duplicates,
-  selected/unselected validation, binary false delimiters and configured bounds.
+  selected/unselected validation, configured bounds.
 - `ZfixUnionTest`: explicit root resolution, deferred borrowed lifetimes, owning
-  alternatives, selected nested facets, binary alternatives, unresolved-save
+  alternatives, selected nested facets, text alternatives, unresolved-save
   failure, custom representations and allocation/placement construction.
 - `ZfixSessionTest`: golden bodies/complete frames for all seven session controls,
-  mode-required Logon fields, optional-field emission, independent header facets,
-  exact opaque/empty TestReqID echo, and malformed control/header error context.
+  mode-required Logon fields, optional-field emission, ordinary field render facets,
+  exact opaque/empty TestReqID echo, optional raw Logon 95/96 bytes, and malformed
+  control/session-field error context.
 - `ZfixSeqTest`: isolated Rx-owner sequencer over ZmPQRx; bounded read-ahead,
   duplicates, monotonic gap advancement, hold/resume, stale posted/timer work,
   drain-required reset and sequence limits. Callback holds and 128 deterministic
@@ -88,20 +100,23 @@ With existing dependencies available, build `make -C zfix/src -j8`,
   control transitions; native integration fixtures exercise the TCP/TLS boundary.
 - `ZfixRxTest`: pooled complete-frame receive coordinator with fake owners;
   asynchronous admission/backpressure, ordered and duplicate business input,
-  malformed control/business rejects, unknown binary metadata, early recovery
-  controls, gap-fill/reset-mode rules, header identity/time failures, missing
-  sequences, unsafe binary pairs, alternate header order, backing/read-ahead
+  malformed control/business rejects, unknown fields, early recovery
+  controls, gap-fill/reset-mode rules, peer identity failures and timestamp metadata, missing
+  sequences, alternate header order, backing/read-ahead
   limits, mode overlays, high Logout, same-epoch reconnect and raw bypass.
   The business decoder receives effective codec limits; rejected admission
   cannot leak held input into a later connection.
 - `ZfixSchemaTest.cc`: syntax-only compilation fixtures. `schema-test` first
-  compiles a valid schema/catalog, then requires rejection of twenty-one negative
-  cases: duplicate IDs, flattened collisions, absent IDs, invalid binary pair
+  compiles a valid schema/catalog, then requires rejection of thirty-eight negative
+  cases: duplicate IDs, flattened collisions, absent IDs, invalid field
   metadata, reserved envelope tags, equal-MsgType alternatives and duplicate
   catalog registrations, duplicate group-entry tags, primitive group elements
-  missing nested-union selection, Bytes without Len and vectors without explicit
+  missing nested-union selection, Bytes without an encoding and vectors without explicit
   MultipleValue policy, reserved sub-identity and application-version tags. The
-  normal `test` target invokes this gate.
+  Binary cases also reject incompatible types/properties, equal/zero/reserved
+  pair tags, duplicate declarations, conflicting Sig shorthand, multiple
+  signatures and collisions involving payload tags. The normal `test` target
+  invokes this gate.
 
 The declaration/link consumers verify boundaries; ZfixLinkStateTest separately
 exercises Rx lifecycle transitions. The catalog rejects ambiguous primary
@@ -130,10 +145,23 @@ artifacts are under the supplied staging directory; it does not install into
 ## Framing and sanitizer/fuzz checks
 
 `ZfixFrameTest` exercises literal golden envelopes, every byte split, coalesced
-frames, binary SOH/NUL, corrupt lengths/checksums, header ordering, configured
-bounds, typed headers, PossDup/OrigSendingTime and failed output. It sweeps body
-lengths through 10/100/1000 and eleven capacities for each, plus one-byte-short
-failure. Installed verification includes this consumer.
+frames, ordinary text, corrupt lengths/checksums, envelope ordering, configured
+bounds, ordinary session-field metadata, PossDup/OrigSendingTime and failed output.
+It sweeps body lengths through 10/100/1000 and eleven capacities for each, plus
+one-byte-short failure. Installed verification includes this consumer.
+
+The new binary framing cases use an independently counted 159-byte golden frame
+with BodyLength 136 and CheckSum 108. One ordinary object declares 212/213 with
+an RTRF payload, 95/96 with embedded FIX messages, and 93/89 with binary signature
+bytes. Live and indexed decoding check exact original payload addresses. All
+prefix boundaries and a coalesced next frame are checked. Malformed signature
+lengths cannot consume outer CheckSum(10) or the next frame. `ZfixRxFramerTest`
+feeds this frame through every split and one octet at a time using the real
+receive-stream queues; it retains the returned pooled allocation through stream
+cleanup and checks the same payload addresses. Managed message-context retention
+is covered separately by `ZfixContextTest` and the native integration fixtures.
+These additions pass the Header-free binary/signing gate recorded below;
+the verification counts above describe the earlier snapshot.
 
 With configured Clang, `make -C zfix/test asan-test` compiles eighteen
 conversion/frame/control/sequencing/lifecycle consumers with ASan, then runs with
@@ -155,7 +183,7 @@ ASAN_OPTIONS=detect_leaks=1 ./libtool exec ./zfix/test/ZfixFrameFuzz \
 
 The experiment bounds frames/fields to 4096 octets, cumulative entries to 32,
 depth to 8 and parse records to 64 KiB. It fuzzes raw bodies and envelopes,
-including nested groups and paired binary data, then re-encodes successful
+including nested groups and text fields, then re-encodes successful
 conversions and checks frame/decoder invariants. Input is borrowed for one
 iteration; output storage and parsed values are released before returning.
 These bounds describe codec work/retention, not ASan allocator quarantine RSS.
@@ -164,8 +192,8 @@ alternates between fixed storage and a preserving growth callback.
 
 Framing coverage includes progress with one-octet appends, a 4 KiB header value,
 relocated caller storage, body-boundary truncation before checksum arrival,
-opaque header/signature data, read-only body binary data, field inspection and
-facet-selected header timestamp precision. Scalar coverage includes control-byte
+ordinary session fields and read-only text, field inspection and
+facet-selected timestamp precision. Scalar coverage includes control-byte
 rejection and owning/default/partial-failure CString list cases.
 
 For a focused sanitizer rerun after sequencing-only changes, use
@@ -189,12 +217,12 @@ the standalone declaration/codec consumers retain their foundation-only boundary
 ## Retained Tx output and association
 
 `ZfixTxMsgTest` verifies immutable pooled bodies, opaque application identities,
-control facet selection, binary SOH/NUL, independent mutable transport storage,
+control facet selection, ordinary text, independent mutable transport storage,
 original/current replay timestamps, jumbo growth, exact frame limits, long
 BeginString headroom, and unpublished conversion/header failures. Archive-body
 reload covers a non-default-constructible type without output getter calls,
 required serialized fields, exact numeric spelling and unknown extensions,
-borrowed input reuse, binary SOH/NUL and length errors, group requiredness, optional
+borrowed input reuse, ordinary text and length errors, group requiredness, optional
 pointer components and built-in administrative classification. Resend eligibility
 is an application decision, not a property of `TxBody`.
 
@@ -604,8 +632,9 @@ duplicate handling at capacity, capacity reuse after gap-fill purge, count-zero
 in-order progress, and missing-sequence recovery with a full count window.
 `ZfixRxTest` checks managed count-limit overload before business dispatch.
 
-`ZfixTraceTest` covers credential/custom-field redaction, malformed/unknown
-binary boundaries, scoped group metadata conflicts, escaped log-line injection,
+`ZfixTraceTest` covers credential/custom-field redaction, built-in Logon 95/96
+secrecy with ordinary replay 95/96 remaining visible, malformed/unknown pairs and
+scoped group metadata, escaped log-line injection,
 invalid envelopes, disabled capture, byte-budget refusal, rotation, truncation
 and observer-owned records surviving eviction. `asan-trace-test` instruments the
 trace implementation and fixture; `installed-trace-test` compiles against a
@@ -640,8 +669,11 @@ with distinct tags, selector-looking text, and invalid inactive scalar values.
 It checks selected required/value/group failures, duplicate keys, header ordering,
 exact selected-layout budgets, envelope field limits, wire error locations,
 application refusal and borrowed/owning copies. The inspector uses no parse slots.
-Catalog header-prefix checks cover unknown extensions before required headers,
-known body boundaries and conservative unknown-MsgType inspection.
+Catalog session-prefix checks cover unknown extensions before required identity
+and sequence fields, schema-derived binary boundaries and conservative
+unknown-MsgType inspection. Dispatch callbacks receive the entry and one object;
+RequestContext exposes individual retained metadata getters, without Header or
+Trailer accessors.
 Schema cases 20–21 reject immediate and nested group discriminator declarations.
 `ZfixFrameTest` covers the required 8/9/35 order and rejects misplaced MsgType.
 
@@ -697,8 +729,75 @@ Native session TCP/TLS fixtures additionally exercise per-link/hub refusal,
 exact-fit/tight-byte admission, pending-retirement charging, worker access to
 borrowed input, forced close while work is held and reset drain withholding its
 proof until work retires. Each scenario runs in all three managed modes. Raw
-fixtures move binary input through a worker and typed reply under work admission.
+fixtures move text input through a worker and typed reply under work admission.
 
 `ZfixRestoreTest` verifies direct owner restoration without a session string key:
 Rx/Tx cursor and recovery-range validation, sequence limits, epoch/lifecycle
 guards, changed wire headers and zero allocation charge after reconstruction.
+
+## Binary migration verification (2026-11-01)
+
+This earlier gate records the initial codec, Trailer removal and timestamp
+snapshot. The Header-free binary/signing verification below supersedes its
+implementation status; these earlier counts remain historical.
+
+Verified with Ubuntu clang 21.1.8, GNU C++2b,
+`-march=x86-64-v2 -O3 -g -DNDEBUG`, using the existing compatible prerequisites.
+No prerequisite modules were rebuilt, cleaned or installed. Builds ran with
+`make -C zfix/src -j8` before `make -C zfix/test -j8`, followed by
+`make -C zfix/test test`: 29 binaries, 359 top-level TAP tests, and the
+positive/38-negative schema plus send/reply compilation gates passed.
+The `zfix/util`, `zfix/itest`, `zfix/bench` and `zfix/interop` directories also
+built with `-j8`. QuickFIX is disabled in this configuration, so the interop
+build covered its native consumer.
+
+`make -C zfix/itest test` passed with local network access: six TCP fixtures
+(127 top-level tests), six TLS fixtures (132), the demo fixtures and the native
+client/server matrix. An initial sandbox run could not start local listeners;
+the successful run used system/network access. No sanitizer builds or final
+Valgrind gate were run for this incomplete migration.
+
+An exploratory `zfix/bench/nativecodec 10000 1000` run exercised ordinary
+170-byte scalar and 910-byte group frames. It ran while other builds were
+active and is not a controlled performance comparison; ordinary/binary
+comparisons remain an acceptance requirement.
+
+
+## Header-free binary and signing verification (2026-11-01)
+
+The complete source unit target passes with Ubuntu clang 21.1.8, GNU C++2b,
+`-march=x86-64-v2 -O3 -g -DNDEBUG`: 30 binaries and 391 top-level TAP tests,
+plus the positive/38-negative schema and typed send/reply compile gates.
+Source, utility, example, integration, benchmark and interop default builds
+are warning-free. No prerequisite module was built, cleaned or installed.
+
+The current native integration target passes six TCP fixtures (130 tests),
+six TLS fixtures (135), the demo (two) and the native client/server matrix
+(one TAP test covering 16 process cases). Signed binary records exercise real
+fragmentation, partial writes and writability retries. Managed signing covers
+all three session modes, administrative Logon authentication, application HMAC
+verification and exact borrowed 96/89 addresses after retained-context teardown.
+
+The independent QuickFIX gate passes twelve canonical frames, five workload
+scopes, ten dependency scopes and six SDK diagnostic scenarios. Binary XML
+String/Bytes, Logon authentication and signature payloads retain their exact
+bytes and original native/peer input addresses. The pinned existing SDK and
+canonical dictionary were reused.
+
+A staged SDK uses hash-verified existing prerequisites. All 30 installed unit
+consumers pass 391 tests and resolve every Z dependency from the stage. The
+new regressions cover nullable components, constructor-required fields,
+archive parse-budget boundaries and constructor-bound binary borrowing.
+See [the benchmark report](../bench/BINARY.md) for measurements and their limits.
+
+The final installed integration gate also passes twelve harness runs and 248
+TAP tests, including the 16-case native client/server matrix. All 45 installed
+unit/native executables resolve their Z libraries from the stage. The 30 public
+Zfix headers match source, and all 257 original prerequisite/runtime artifact
+hashes remain unchanged. The final SDK was installed only from `zfix/src`.
+
+The final memory gate runs through `libtool exec valgrind` on 15 core binaries
+(162 top-level TAP tests), including codec/group/union, framing, dispatch,
+selection, retained contexts, Logon, trace, raw/managed delivery, signing,
+restore and TxBody. Valgrind 3.26.0 reports zero memory errors and zero definite,
+indirect or possible lost bytes. No sanitizer builds were used.

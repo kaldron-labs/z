@@ -9,12 +9,8 @@
 
 namespace Zfix::Fmt {
 
-ZfStructImpl(Header);
-ZfStructImpl(Header, FIX);
-ZfStructImpl(Trailer);
-ZfStructImpl(Trailer, FIX);
 
-static FrameResult failed(unsigned code, unsigned tag, unsigned offset)
+static FrameResult failed(unsigned code, int32_t tag, unsigned offset)
 {
   FrameResult r;
   r.state = FrameState::Error;
@@ -29,7 +25,7 @@ FrameResult frame(ZuCSpan input, Limits limits)
   ZuCSpan bounded{input.data(), input.length() < limits.frameBytes ?
     input.length() : limits.frameBytes};
   Token begin{}, length{}, type{};
-  auto leading = [bounded, limits](unsigned offset, unsigned tag, Token &out) {
+  auto leading = [bounded, limits](unsigned offset, int32_t tag, Token &out) {
     auto e = scan(bounded, offset, out);
     if (e) {
       if (e.code == ErrorCode::Truncated) {
@@ -42,8 +38,6 @@ FrameResult frame(ZuCSpan input, Limits limits)
     if (out.tag != tag) return Error{ErrorCode::Envelope, out.tag, offset};
     if (!out.length) return Error{ErrorCode::Value, tag, out.offset};
     if (out.length > limits.fieldBytes) return Error{ErrorCode::Size, tag, out.offset};
-    if (tag == 8 && !text({bounded.data() + out.offset, out.length}))
-      return Error{ErrorCode::Value, tag, out.offset};
     return Error{};
   };
   if (auto e = leading(0, 8, begin)) {
@@ -54,10 +48,8 @@ FrameResult frame(ZuCSpan input, Limits limits)
     if (e.code == ErrorCode::Truncated) return {};
     return failed(e.code, e.tag, e.offset);
   }
-  unsigned bodyLength;
-  bool negative;
-  if (!integer<32, false>({input.data() + length.offset, length.length},
-      bodyLength, negative)) return failed(ErrorCode::Length, 9, length.offset);
+  unsigned bodyLength = ZuBox<unsigned>{ZuCSpan{
+    input.data() + length.offset, length.length}}.val();
   unsigned start = length.next;
   // Seven octets are mandatory for 10=ddd<SOH>. Subtract before adding so
   // hostile lengths cannot wrap either the checksum offset or frame size.
@@ -78,7 +70,7 @@ FrameResult frame(ZuCSpan input, Limits limits)
       35, start);
   }
   if (type.tag != 35) return failed(ErrorCode::Envelope, type.tag, start);
-  if (!type.length || !text({input.data() + type.offset, type.length}))
+  if (!type.length)
     return failed(ErrorCode::Value, 35, type.offset);
   if (type.length > limits.fieldBytes) return failed(ErrorCode::Size, 35, type.offset);
   if (input.length() < total) return pending;
@@ -98,7 +90,7 @@ FrameResult frame(ZuCSpan input, Limits limits)
   r.expected = total;
   r.view = {{input.data(), total}, {input.data() + begin.offset, begin.length},
     {input.data() + type.offset, type.length},
-    {input.data() + type.next, end - type.next}, {expected}};
+    {input.data() + type.next, end - type.next}};
   return r;
 }
 
@@ -152,7 +144,7 @@ FrameResult Framer::scan(ZuCSpan input)
       if (r.state != FrameState::Incomplete) return result(r);
       if (r.expected) m_expected = r.expected;
     } else if (m_valueOffset && m_search - m_valueOffset > m_limits.fieldBytes) {
-      unsigned tag;
+      int32_t tag;
       switch (m_fields) {
 	case 0: tag = 8; break;
 	case 1: tag = 9; break;
@@ -266,108 +258,4 @@ FrameOutput FrameWriter::finish()
   return {{output, end + 7}, {}};
 }
 
-Error loadHeader_(ZuCSpan input, const Positions &positions, Header &h, Error parsed)
-{
-  Error error;
-  ObjectView<Header, ZuFacet::FIX> view{input, positions, 0, error};
-  if (!view.load(h)) {
-    // A required-field failure precedes assignment in the ordinary loader.
-    // Recover each independently valid header value for protocol diagnostics;
-    // this does not turn a failed message into a successful decode.
-    ZuUnroll::all<typename Schema<Header, ZuFacet::FIX>::Fields>(
-      [input, &positions, &h]<typename F>() {
-	Error fieldError;
-	ObjectView<Header, ZuFacet::FIX> field{input, positions, 0, fieldError};
-	auto value = field.template get<F>();
-	if (!fieldError) F::set(h, ZuMv(value));
-      });
-  }
-  if (parsed) error = parsed;
-  if (error.code == ErrorCode::Duplicate && error.tag == 34) h.seqNo = 0;
-  if (error) return error;
-  auto bad = [&positions]<typename F>() {
-    constexpr unsigned I = Schema<Header, ZuFacet::FIX>::template offset<F>();
-    return Error{ErrorCode::Value, tag<F>(), positions[I].offset};
-  };
-  if (!h.sender.length()) return bad.template operator()<ZfField(Header, sender)>();
-  if (!h.target.length()) return bad.template operator()<ZfField(Header, target)>();
-  if (!h.seqNo) return bad.template operator()<ZfField(Header, seqNo)>();
-  if (h.possDup && !*h.origSendingTime) return {ErrorCode::Required, 122};
-  return {};
-}
-
-Error readHeader(const FrameView &frame, Header &header, Limits limits)
-{
-  return readHeader_(frame, header, nullptr, limits);
-}
-Error readHeader_(const FrameView &frame, Header &header,
-    bool (*bodyContains)(unsigned), Limits limits)
-{
-  using S = Schema<Header, ZuFacet::FIX>;
-  header = Header{};
-  header.beginString = frame.beginString;
-  header.msgType = frame.msgType;
-  if (frame.wire.length() > limits.frameBytes ||
-      S::Leaves::N > limits.parseBytes/sizeof(Position)) return {ErrorCode::Size};
-  ZtBuiltin<Positions, S::Leaves::N> positions;
-  positions.length(S::Leaves::N, false);
-  for (unsigned i = 0; i < S::Leaves::N; ++i) positions[i].offset = UINT_MAX;
-  Error error;
-  Parse p{frame.content, limits, positions, error};
-  unsigned offset = 0;
-  Scope body{nullptr, bodyContains, 0, 0};
-  Scope scope{bodyContains ? &body : nullptr, scopeContains<Header, ZuFacet::FIX>, 0, 0};
-  parseScope<Header, ZuFacet::FIX>(p, 0, offset, scope, false);
-  error = loadHeader_(frame.content, positions, header, error);
-  header.bytes = offset;
-  if (error && error.code != ErrorCode::Required)
-    error.offset += unsigned(frame.content.data() - frame.wire.data());
-  return error;
-}
-
-Error writeHeader_(Sink &out, const Header &h)
-{
-  if (out.failed()) return out.error();
-  if (!h.msgType.length()) return {ErrorCode::Required, 35};
-  if (!h.sender.length()) return {ErrorCode::Required, 49};
-  if (!h.target.length()) return {ErrorCode::Required, 56};
-  if (!h.seqNo) return {ErrorCode::Value, 34};
-  if (!*h.sendingTime) return {ErrorCode::Required, 52};
-  if (h.possDup && !*h.origSendingTime) return {ErrorCode::Required, 122};
-  if (h.possDup && h.origSendingTime > h.sendingTime) return {ErrorCode::Value, 122};
-  out.field(35); out << h.msgType; out.end();
-  out.field(49); out << h.sender; out.end();
-  out.field(56); out << h.target; out.end();
-  auto optional = [&out](unsigned tag, ZuCSpan value) {
-    if (value.data()) { out.field(tag); out << value; out.end(); }
-  };
-  optional(50, h.senderSub);
-  optional(57, h.targetSub);
-  optional(142, h.senderLocation);
-  optional(143, h.targetLocation);
-  optional(1128, h.appVerID);
-  out.field(34); out << ZuBox<uint64_t>{h.seqNo}; out.end();
-  if (h.encoding.data()) { out.field(347); out << h.encoding; out.end(); }
-  if (h.secureData.data()) {
-    out.field(90); out << ZuBox<unsigned>{unsigned(h.secureData.length())}; out.end();
-    out.field(91, true); out << h.secureData; out.end();
-  }
-  if (h.possDup) { out.field(43); out << 'Y'; out.end(); }
-  return out.error();
-}
-
-Error writeHeader(Sink &out, const Header &h)
-{
-  return writeHeader<ZuFacet::FIX>(out, h);
-}
-
-Error writeTrailer(Sink &out, const Trailer &trailer)
-{
-  if (trailer.signature.data()) {
-    out.field(93); out << ZuBox<unsigned>{unsigned(trailer.signature.length())}; out.end();
-    out.field(89, true); out << trailer.signature; out.end();
-  }
-  return out.error();
-}
 } // Zfix::Fmt
-

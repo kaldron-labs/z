@@ -40,7 +40,7 @@ stopped/finalized. Pacing timers belong to AppRx and are cancelled during stop.
 Latency arrays move to the reporting thread and sort after the runtime stops.
 
 `--scenario groups` selects a 32-party/eight-subparty shape by default. Explicit
-`--parties`, `--subs`, `--text` and `--binary` control shape; zero default values
+`--parties`, `--subs` and `--text` control shape; zero default values
 select the group's convenience defaults under that named scenario. The `orders`
 scenario permits zero groups/subgroups. `--scenario cancel` keeps the initial
 order open after its acknowledgement, then sends an OrderCancelRequest with a
@@ -154,11 +154,10 @@ samples. It depends on the foundation through Zf and includes neither FIX parser
 nor session engine. The native and independent peers can share these workload
 objects while implementing their own wire conversion and session handling.
 
-`Model` constructs group/text/binary storage once per session and mutates only
+`Model` constructs group/text storage once per session and mutates only
 scalar key, quantity, price and timestamp for the next order. Its seeded
 SplitMix64 permutation is identical across peers. The price has two decimal
-places; IDs are explicit numeric workload IDs. Generated binary data includes
-NUL, SOH and equals bytes. Party roles/subtypes cycle through canonical values
+places; IDs are explicit numeric workload IDs. Party roles/subtypes cycle through canonical values
 so larger group shapes remain dictionary-valid.
 
 `Calls` is a single application owner's bounded registry. The caller registers

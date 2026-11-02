@@ -38,52 +38,66 @@ struct TraceStats : TraceCounters {
 };
 
 struct TraceField {
-  unsigned	dataTag = 0; // nonzero denotes a binary length tag
-  bool		known = false, binary = false, secret = false, ambiguous = false;
+  using Reader = unsigned (*)(ZuCSpan, Fmt::Token &, Fmt::Limits, Fmt::Error &);
+  bool		known = false, secret = false, ambiguous = false;
+  Reader	reader = nullptr;
+  int32_t	valueTag = 0;
 
-  void merge(TraceField f) {
-    if (ambiguous || f.ambiguous || (known && f.known &&
-	(dataTag != f.dataTag || binary != f.binary))) {
-      *this = {}; ambiguous = true; return;
-    }
-    bool redact = secret || f.secret;
-    if (f.known) *this = f;
-    secret = redact;
+  constexpr void merge(TraceField f) {
+    // Equivalent hidden template functions can have different addresses in
+    // the application and shared library. Compare their wire interpretation.
+    if (known && f.known && valueTag != f.valueTag) ambiguous = true;
+    ambiguous |= f.ambiguous;
+    if (f.known) { reader = f.reader; valueTag = f.valueTag; }
+    known |= f.known;
+    secret |= f.secret;
   }
 };
 
-// Tag metadata only. Conflicting binary semantics across group scopes make the
-// remaining trace opaque; capture never guesses a binary boundary. Runtime union
-// discrimination remains application policy, as in the codec.
-template <typename O, typename Facet = ZuFacet::FIX, unsigned Depth = 0>
-TraceField traceField(unsigned tag) {
-  using S = Fmt::Schema<O, Facet>;
-  TraceField out;
-  int index = S::index().find(tag);
-  if constexpr (S::Leaves::N) if (index >= 0) {
-    ZuSwitch::dispatch<S::Leaves::N>(unsigned(index) >> 2, [&out, index]<typename I>(I) {
-      using F = typename ZuType<I{}, typename S::Leaves>::Field;
-      out.known = true;
-      if (index & 1) out.dataTag = Fmt::tag<F>();
-      else out.binary = bool(Fmt::lenTag<F>());
-    });
-  }
-  if constexpr (Depth < Fmt::Limits::GroupDepth) {
-    ZuUnroll::all<typename S::Leaves>([&out, tag]<typename L>() {
-      using F = typename L::Field;
-      if constexpr (Fmt::GroupField<F, Facet>{})
-	out.merge(traceField<Fmt::GroupElem<typename F::T>, Facet, Depth + 1>(tag));
-    });
-  }
-  return out;
-}
-ZfixExtern TraceField traceBuiltin(ZuCSpan msgType, unsigned tag);
+// One primary-key lookup yields the reader and its interpretation. Conflicting
+// group/candidate metadata is opaque, rather than a payload parsing guess.
+template <typename Fields> struct TraceFields {
+  template <typename F> using Key = ZuConstant<int32_t, int32_t(F::Tag)>;
+  using Keys = ZuTypeUnique<ZuTypeMap<Key, Fields>>;
+  enum { Bits = Keys::N > 1 ? ZuIntrin::log2(Keys::N) + 2 : 2 };
 
-template <typename MTList> TraceField traceField(ZuCSpan type, unsigned tag) {
+  template <typename K> struct Meta {
+    inline static constexpr TraceField field = [] {
+      TraceField out;
+      ZuUnroll::all<Fields>([&out]<typename F>() {
+	if constexpr (F::Tag == K{}) {
+	  out.merge({.known = true,
+	    .reader = F::Payload ? &F::read : nullptr, .valueTag = F::Payload});
+	}
+      });
+      return out;
+    }();
+  };
+  struct Index : ZmLHashKV<int32_t, const TraceField *,
+    ZmLHashStatic<Bits, ZmLHashLocal<>>> {
+    Index() {
+      ZuUnroll::all<Keys>([this]<typename K>() {
+	this->add(int32_t(K{}), &Meta<K>::field);
+      });
+    }
+  };
+  inline static const Index index{};
+};
+
+// Resolve known tags and secrets across the selected schema and group scopes.
+template <typename O, typename Facet = ZuFacet::FIX>
+TraceField traceField(int32_t tag) {
+  using Fields = TraceFields<typename Fmt::WireFields<O, Facet>::T>;
+  auto field = Fields::index.findVal(tag);
+  return field ? *field : TraceField{};
+}
+ZfixExtern TraceField traceBuiltin(ZuCSpan msgType, int32_t tag);
+
+template <typename MTList> TraceField traceField(ZuCSpan type, int32_t tag) {
   using Messages = typename MTList::Messages;
   if constexpr (!Messages::N) return {};
   else {
-    int index = Dispatch_::index<Messages>().find(type);
+    int index = Dispatch_::find<Messages>(type);
     if (index < 0) return {};
     return ZuSwitch::dispatch<Messages::N>(index, [tag]<typename I>(I) {
       using E = ZuType<I{}, Messages>;
@@ -115,7 +129,7 @@ using TraceQueue = ZmList<TraceRecord, ZmListNode<ZiIOBuf, ZmListHeapID<"">>>;
 using TraceRef = ZmRef<const TraceQueue::Node>;
 class ZfixAPI WireTrace {
 public:
-  using Resolve = TraceField (*)(void *, ZuCSpan, unsigned);
+  using Resolve = TraceField (*)(void *, ZuCSpan, int32_t);
 
   explicit WireTrace(TraceLimits limits = {}) : m_limits{limits} { }
 

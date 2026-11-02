@@ -18,6 +18,7 @@
 #include <zlib/ZiIOBuf.hh>
 
 #include <zlib/ZfixFrame.hh>
+#include <zlib/ZfixDispatch.hh>
 #include <zlib/ZfixRxMsg.hh>
 #include <zlib/ZfixSession.hh>
 #include <zlib/ZfixHooks.hh>
@@ -153,7 +154,7 @@ public:
     apply(m_session.timer_(connection, timer, now));
   }
 
-  void fault_(uint64_t connection, unsigned error, unsigned tag,
+  void fault_(uint64_t connection, unsigned error, int32_t tag,
       ZuTime now, bool logout = false) {
     apply(m_session.fault_(connection, error, tag, now, logout));
   }
@@ -285,8 +286,8 @@ public:
   bool rawRx(uint64_t, ZmRef<Msg>, ZuTime, ZuDateTime) { return false; }
   Fmt::Error businessRx(Msg *, Fmt::Limits) { return {Fmt::ErrorCode::Unresolved, 35}; }
 
-  Fmt::Error headerRx(const Fmt::FrameView &frame, Fmt::Header &header, Fmt::Limits limits) {
-    return Fmt::readHeader(frame, header, limits);
+  Fmt::Error sessionRx(RxMsg &input, Fmt::Limits limits) {
+    return readSession(input, limits);
   }
 
 private:
@@ -324,30 +325,26 @@ private:
       return RxResult::Overload;
     }
     if (!input.nativeMemory) input.charge = uint64_t(input.buffer->size) + sizeof(Msg);
-    if (Session::type(input.frame.msgType))
-      input.error = Session::read(input.frame, input.control, input.header,
-	input.trailer, m_limits.codec);
-    else {
-      input.trailer = input.frame.trailer;
-      input.error = impl()->headerRx(input.frame, input.header, m_limits.codec);
-    }
+    if (Session::type(input.frame.msgType)) {
+      input.error = catalogSession<Session::MTs>(input, m_limits.codec);
+      if (!input.error) input.error = Session::read(input.frame, input.control, m_limits.codec);
+    } else input.error = impl()->sessionRx(input, m_limits.codec);
     if (input.error) ++m_stats.decodeErrors;
-    input.fault = m_session.validateHeader_(input.header, input.utc);
-    if (!input.header.seqNo) {
+    input.fault = m_session.validateSession_(input);
+    if (!input.seqNo) {
       bool logout = state == State::Established &&
-	!m_session.config_().header.mismatch(input.header);
+	!m_session.config_().identity.mismatch(input);
       apply(m_session.fault_(connection, SessionError::Sequence, 34, now, logout));
       return RxResult::Refused;
     }
-    if (input.error.code == Fmt::ErrorCode::Pair ||
-	input.error.code == Fmt::ErrorCode::Truncated) {
+    if (input.error.code == Fmt::ErrorCode::Truncated) {
       apply(m_session.fault_(connection, SessionError::Protocol, input.error.tag, now, false));
       return RxResult::Refused;
     }
     if (state == State::Accepting || state == State::Logon) {
       if (!m_first) {
 	if (!input.control.template is<Session::Logon>() || input.error || input.fault) {
-	  bool logout = input.header.msgType == "A" &&
+	  bool logout = input.frame.msgType == "A" &&
 	    input.fault.error != SessionError::Identity;
 	  apply(m_session.fault_(connection, input.fault ? input.fault.error :
 	    SessionError::Type, input.fault ? input.fault.tag : input.error.tag,
@@ -366,7 +363,7 @@ private:
   auto impl() { return static_cast<Impl *>(this); }
   auto impl() const { return static_cast<const Impl *>(this); }
 
-  void reject(ZmRef<Msg> msg, unsigned tag, int reason) {
+  void reject(ZmRef<Msg> msg, int32_t tag, int reason) {
     ++m_stats.rejectsOut; impl()->rejectRx(ZuMv(msg), tag, reason);
   }
 
@@ -390,7 +387,7 @@ private:
   void first() {
     auto msg = m_first;
     auto &input = msg->data();
-    auto e = m_session.peerLogon_(m_session.connection_(), input.header,
+    auto e = m_session.peerLogon_(m_session.connection_(), input,
       input.control.template p<Session::Logon>(), Base::expected_(), impl()->nowRx());
     if (e.state == State::Established) {
       e.actions &= ~SessionAction::RequestGap; // ZmPQRx owns gap notifications.
@@ -422,7 +419,7 @@ private:
       !input.control.template p<Session::SeqReset>().gapFill && !input.error && !input.fault;
     if (reset) { resetMode(msg); recovered(); return RxResult::Accepted; }
     if (input.key() < Base::expected_()) {
-      if (!input.header.possDup) {
+      if (!input.possDup) {
 	apply(m_session.fault_(m_session.connection_(), SessionError::Sequence, 34,
 	  impl()->nowRx(), true));
 	return RxResult::Refused;
@@ -503,7 +500,7 @@ private:
     auto &input = msg->data();
     if (input.epoch != m_session.epoch_()) return;
     if (input.fault || input.error) {
-      unsigned tag = input.fault ? input.fault.tag : input.error.tag;
+      int32_t tag = input.fault ? input.fault.tag : input.error.tag;
       int reason = input.fault ? input.fault.reason : rejectReason(input.error);
       if (input.error && input.error.tag == tag) reason = rejectReason(input.error);
       reject(ZmRef<Msg>{msg}, tag, reason);
@@ -549,9 +546,9 @@ private:
 	++m_stats.rejectsIn;
 	impl()->sessionRx(ZmRef<Msg>{msg});
 	impl()->peerRejectRx(PeerReject{.buffer = input.buffer,
-	  .context = {input.epoch, input.connection, input.header.seqNo},
+	  .context = {input.epoch, input.connection, input.seqNo},
 	  .message = control.template p<Session::Reject>(), .wire = input.frame.wire,
-	  .possDup = input.header.possDup});
+	  .possDup = input.possDup});
 	break;
       default:
 	if (auto error = impl()->businessRx(msg, m_limits.codec)) {

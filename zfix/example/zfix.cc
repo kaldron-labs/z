@@ -57,8 +57,8 @@ ZfStructImpl(Options, CLI);
 
 static Zfix::SessionConfig config() {
   Zfix::SessionConfig c;
-  c.header.version = Zfix::Version::V4_4;
-  c.header.local = "EXAMPLE-C"; c.header.peer = "EXAMPLE-S";
+  c.identity.version = Zfix::Version::V4_4;
+  c.identity.local = "EXAMPLE-C"; c.identity.peer = "EXAMPLE-S";
   return c;
 }
 template <typename Net> struct Client;

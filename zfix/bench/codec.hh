@@ -62,8 +62,7 @@ template <typename Engine> int codec(Engine &engine, int argc, char **argv) {
     result.encodeNs = encode.finish(); result.decodeNs = decode.finish();
     result.clockNs = clock.finish(); output(result); return true;
   };
-  return !(run("scalar", {}) && run("groups", {8, 4, 32, 0}) &&
-    run("binary", {0, 0, 0, 4096}));
+  return !(run("scalar", {}) && run("groups", {8, 4, 32}));
 }
 } // ZfixBench
 

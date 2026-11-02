@@ -195,8 +195,8 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Client"> ZmNHeapID(Link *);
 
   Fmt::Error fixReceiveRx(OrderMsg *, const Order &o, const RequestContext &context) {
     if (!app()->rxInvoked() || o.id != "repriced" || context.context().epoch != 1 ||
-	context.header().seqNo != 2 || !context.header().possDup ||
-	context.header().origSendingTime != state()->oldTime) state()->fail();
+	context.seqNo() != 2 || !context.possDup() ||
+	context.origSendingTime() != state()->oldTime) state()->fail();
     ++state()->delivered; state()->selected.post(); return {};
   }
 
@@ -222,15 +222,16 @@ static bool partialLogon(int fd)
   Session::Msg msg; msg.p<Session::Logon>(Session::Logon{});
   Fmt::Error error;
   auto body = TxBody::control(msg, error);
-  auto frame = body ? txFrame(*body, txHeader(txConfig(config(true,
-    Transport::FIX4, Version::V4_4)), 1, ZuDateTime{Zm::now()}), error) : ZmRef<ZiIOBuf>{};
+  auto frame = body ? txFrame(*body, txConfig(config(true,
+    Transport::FIX4, Version::V4_4)), TxContext{.seqNo = 1,
+      .sendingTime = ZuDateTime{Zm::now()}}, error) : ZmRef<ZiIOBuf>{};
   if (error || !frame || !partialWrite(fd, frame->cspan())) return false;
   ZmRef<ZiIOBuf> input = new ZiIOBufAlloc<>;
   for (;;) {
     auto r = Fmt::frame(input->cspan());
     if (r.state == Fmt::FrameState::Complete) {
-      Fmt::Header h;
-      return !Fmt::readHeader(r.view, h) && h.seqNo == 1 && h.msgType == "A";
+      RxMsg msg; msg.frame = r.view;
+      return !readSession(msg) && msg.seqNo == 1 && r.view.msgType == "A";
     }
     if (r.state != Fmt::FrameState::Incomplete || input->length == input->size) return false;
     pollfd p{fd, POLLIN, 0};

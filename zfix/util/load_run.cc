@@ -37,7 +37,7 @@ void usage(bool server) {
     "  [--host NAME] [--bind IP] [--cert PEM --key PEM --ca PEM]\n"
     "  [--count N --warmup N --duration SECONDS --rate ORDERS_PER_SECOND]\n"
     "  [--inflight N --deadline SECONDS --heartbeat SECONDS]\n"
-    "  [--scenario orders|groups|cancel|replace --parties N --subs N --text N --binary N]\n"
+    "  [--scenario orders|groups|cancel|replace --parties N --subs N --text N]\n"
     "  [--sender ID --target ID --seed N --mode 4|44A|T11]\n"
     "  [--version FIX.4.0|FIX.4.1|FIX.4.2|FIX.4.3|FIX.4.4|FIXT.1.1]\n"
     "  [--retain N --cache-bytes N --queue-bytes N]\n"
@@ -73,7 +73,7 @@ bool options(Options &o, bool server, int argc, char **argv, Ports &ports) {
       (o.recoverRx && (!server || o.connections != 2 || o.resetLogon ||
 	o.recoverRx > INT_MAX))) return false;
   // Fixture bounds, matching the native default codec budgets.
-  if (o.text > (1U<<18) || o.binary > (1U<<18) ||
+  if (o.text > (1U<<18) ||
       uint64_t(o.parties) * (uint64_t(o.subs) + 1) > (1U<<16)) return false;
   if (!o.tcp && (server ? !o.cert.length() || !o.key.length() : !o.ca.length())) return false;
   if (o.ports.length()) {
@@ -107,7 +107,7 @@ static bool groups(const Order &o, unsigned subs) {
 }
 Prepared Broker::prepare(const Order &o, bool replay) {
   if (!valid(o) || o.parties.length() != m_options.parties ||
-      !m_model.shape(o.text, o.encoded) || !groups(o, m_options.subs)) return {};
+      !m_model.shape(o.text) || !groups(o, m_options.subs)) return {};
   if (auto r = results.get(o.key)) {
     if (r->kind != Request::Order || r->qty != o.qty || r->price != o.price) return {};
     ++cached; return {*r};
@@ -130,7 +130,7 @@ Prepared Broker::prepare(const Cancel &o, bool replay) {
 Prepared Broker::prepare(const Replace &o, bool replay) {
   if (m_flow != Workflow::Replace || !valid(o.order) ||
       o.order.parties.length() != m_options.parties ||
-      !m_model.shape(o.order.text, o.order.encoded) ||
+      !m_model.shape(o.order.text) ||
       !groups(o.order, m_options.subs)) return {};
   return change(o.order.key, o.original, o.order.qty, o.order.price, o.order.time,
     Request::Replace, replay);
@@ -204,7 +204,9 @@ void Run::finish(Result &r, uint64_t now, Measurements *deferred) {
     s.complete - b.complete,
     s.reports - b.reports, s.duplicate - b.duplicate, s.unknown - b.unknown,
     s.invalid - b.invalid, s.refused - b.refused, s.inFlight, m_peak};
-  r.warmup = b.complete; r.elapsedNs = m_start ? (m_end ? m_end : now) - m_start : 0;
+  r.warmup = b.complete;
+  r.startNs = m_start; r.endNs = m_start ? (m_end ? m_end : now) : 0;
+  r.elapsedNs = r.endNs - r.startNs;
   r.targetRate = m_options.rate; r.seed = m_options.seed; r.cap = m_options.count;
   r.inFlightLimit = m_options.inFlight;
   r.oldReports = m_oldReports;
@@ -220,17 +222,14 @@ void Run::finish(Result &r, uint64_t now, Measurements *deferred) {
   if (m_phase != Phase::Complete) ++r.errors;
   m_calls.clear();
 }
-bool shape(ZuCSpan text, ZuBSpan binary, unsigned textBytes, unsigned binaryBytes) {
-  if (text.length() != textBytes || binary.length() != binaryBytes) return false;
+bool shape(ZuCSpan text, unsigned textBytes) {
+  if (text.length() != textBytes) return false;
   for (unsigned i = 0; i < textBytes; ++i)
     if (text[i] != 'a' + i % 26) return false;
-  for (unsigned i = 0; i < binaryBytes; ++i)
-    if (binary[i] != uint8_t(i % 251)) return false;
   return true;
 }
 bool shape(const Order &o, Shape s) {
-  if (o.parties.length() != s.parties || !shape(o.text, o.encoded, s.text,
-    s.binary)) return false;
+  if (o.parties.length() != s.parties || !shape(o.text, s.text)) return false;
   return groups(o, s.subs);
 }
 } // ZfixLoad

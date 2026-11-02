@@ -137,7 +137,7 @@ python3 zfix/interop/matrix.py --profile faults --artifacts /tmp/zfix-faults
 ```
 
 Artifact directories must be new. The canonical profile includes scalar,
-multiple sessions, bounded retention, group/binary payloads, pacing/duration,
+multiple sessions, bounded retention, group/text payloads, pacing/duration,
 cancel/replace, quota refusal and separately declared native 44A/T11 modes.
 The fault profile exercises both directions of fragmentation, frame loss,
 duplication, unknown tags, CheckSum and BodyLength corruption, plus malformed
@@ -322,14 +322,37 @@ The codec runner verifies the dictionary's pinned SHA-256 before using it.
 QuickFIX flags belong only to the independent fixture, and an unconfigured
 `codec-test` fails explicitly.
 
-The native helper writes nine FIX 4.4 frames: scalar, text-only, binary-only,
-nested groups, a 32-party/eight-subparty group-heavy shape with 4096 encoded
-bytes, acknowledgement/fill reports, cancel and replace. The independent parser
-checks these with the canonical dictionary and **all default validation
-settings**, including nested/zero group counts and binary NUL/SOH/equals data.
-It serializes each message with QuickFIX's framing and ordering, then the native
-helper reads it back and checks IDs, quantities, decimal values, timestamps,
-text, binary bytes and every group entry.
+The native helper writes twelve FIX 4.4 frames: scalar, text, nested groups,
+a 32-party/eight-subparty group-heavy shape, acknowledgement/fill reports,
+cancel and replace, plus four binary cases. The binary cases are two `35=n`
+XMLDataLen/XMLData 212/213 frames using native String and Bytes mappings, a Logon
+95/96 credential frame, and an order with StandardTrailer 93/89. Their payloads
+include SOH, NUL, equals signs, high octets and embedded FIX-looking fields. The
+independent parser checks these with the canonical dictionary and all default
+validation settings, serializes them with QuickFIX, and the native helper checks
+IDs, quantities, decimals, timestamps, text, binary octets and every group entry
+after roundtrip. Each borrowed binary value's pointer and extent must match its
+payload range in the corresponding original native or QuickFIX input allocation. The trailer signature is a literal byte fixture for structural
+interoperability; cryptographic verification is established separately by
+`ZfixSignTest` and the managed signing integration fixtures. The new canonical
+codec cases passed the 2026-11-01 clang release run; earlier recorded verification
+counts above remain historical evidence.
+
+The Binary/API interop gate used Ubuntu clang 21.1.8 with GNU C++2b and
+`-march=x86-64-v2 -O3 -g -DNDEBUG`, the existing matched QuickFIX Release SDK at
+`/tmp/zfix-qf-release/install`, and its pinned canonical FIX44.xml. No external
+SDK or prerequisite module was rebuilt. `make -C zfix/interop -j8` and
+`make -C zfix/interop test` passed: the twelve-frame codec scope, five workload
+scopes, ten dependency scopes and six independent TCP/TLS/negative diagnostic
+scenarios. Native binary spans matched the original input payload addresses on
+both directions of codec conversion. Build/test logs are
+`/tmp/zfix-ctor-interop-build.log` and
+`/tmp/zfix-ctor-interop-test.log`; this gate covers those fixtures rather
+than rerunning the historical process matrices. Final executable/library/SDK hashes
+are in `/tmp/zfix-ctor-interop-manifest.json`. Binary pointer inspection uses
+the payload tag; inspecting the primary tag returns the decimal length range.
+A preserved twelve-frame corpus, source/ELF hashes and replay evidence are under
+`/tmp/zfix-interop-preserved-qidn36u0`.
 
 The independent fixture includes no Zfix codec/session headers, enforced by
 compile-time guards. Its ELF dependency list contains the common foundation,
@@ -338,7 +361,8 @@ The independent peer still uses QuickFIX for networking, framing and sessions.
 
 | Input | QuickFIX default expectation | Native expectation checked |
 | --- | --- | --- |
-| Canonical scalar/groups/binary D/8/F/G | Valid | Values preserved after peer serialization |
+| Canonical scalar/groups/text D/8/F/G | Valid | Values preserved after peer serialization |
+| Canonical 212/213, 95/96 and 93/89 | Valid | Exact opaque payload bytes preserved |
 | Extra unknown body tag 9999 | `InvalidTagNumber` | Skip it and preserve known fields |
 | Corrupted CheckSum | `InvalidMessage` | Existing native framing negative gate |
 

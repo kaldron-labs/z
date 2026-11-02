@@ -4,7 +4,7 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#include <zlib/ZfixDispatch.hh>
+#include <zlib/ZfixTxMsg.hh>
 #include "../util/load_fix.hh"
 #include "codec.hh"
 
@@ -20,12 +20,13 @@ struct NativeCodec {
 
   ZuCSpan encode(const ZfixLoad::Order &o) {
     Zfix::Fmt::FrameWriter writer{{storage.data(), storage.length()}, "FIX.4.4", grow, this};
-    Zfix::Fmt::Header h;
-    h.beginString = "FIX.4.4"; h.msgType = "D";
-    h.sender = "ZFIX-C"; h.target = "ZFIX-S"; h.seqNo = 2; h.sendingTime = o.time;
-    if (Zfix::Fmt::writeHeader(writer.body(), h)) return {};
-    ZfixLoad::mapping(o, [&writer, &o]<typename Facet>(Facet) {
-      Zfix::Fmt::save<Facet>(writer.body(), o);
+    Zfix::TxConfig config;
+    config.identity.local = "ZFIX-C"; config.identity.peer = "ZFIX-S";
+    Zfix::TxContext context{.seqNo = 2, .sendingTime = o.time};
+    writer.body().field(35); writer.body() << "D"; writer.body().end();
+    ZfixLoad::mapping(o, [&writer, &o, &config, &context]<typename Facet>(Facet) {
+      Zfix::ConfiguredSink<Facet> out{writer.body(), config, context};
+      Zfix::Fmt::save<Facet>(out, o);
     });
     auto result = writer.finish(); return result ? result.data : ZuCSpan{};
   }

@@ -108,11 +108,11 @@ static Zfix::SessionConfig nativeConfig(bool client, const Options &o, unsigned 
     Version::V4_3 == Zfix::Version::V4_3 && Version::V4_4 == Zfix::Version::V4_4 &&
     Version::VT1_1 == Zfix::Version::VT1_1 && Version::N == Zfix::Version::N);
   c.mode = o.mode + Zfix::Transport::FIX4;
-  c.header.version = o.version;
+  c.identity.version = o.version;
   c.appVerID = Zfix::AppVersion::V4_4; c.heartBtInt = o.heartbeat;
   Text sender; sender << o.sender << '-' << index + 1;
-  c.header.local = client ? ZuCSpan{sender} : ZuCSpan{o.target};
-  c.header.peer = client ? ZuCSpan{o.target} : ZuCSpan{sender};
+  c.identity.local = client ? ZuCSpan{sender} : ZuCSpan{o.target};
+  c.identity.peer = client ? ZuCSpan{o.target} : ZuCSpan{sender};
   c.logonTimeout = ZuTime{o.deadline}; return c;
 }
 struct NoRun { NoRun(const Options &, unsigned) { } };
@@ -379,7 +379,7 @@ public:
   Zfix::Fmt::Error fixReceiveRx(Entry *, const Report &r, const Zfix::RequestContext &) {
     if constexpr (!Client) return {Zfix::Fmt::ErrorCode::Unresolved, 35};
     else {
-      if (!m_run.shape(r.text, r.encoded)) { state()->fail();
+      if (!m_run.shape(r.text)) { state()->fail();
 	return {Zfix::Fmt::ErrorCode::Value, 355}; }
       auto outcome = m_run.receive(r, monotonic(), [this]<typename O>(const O &o) {
 	Zfix::Fmt::Error error;

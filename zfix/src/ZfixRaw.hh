@@ -30,26 +30,26 @@ friend inline ZuStringT<"Zfix.RawInput"> ZmNHeapID(RawInput *);
   ZuTime		received;
 };
 
-// Headers are supplied and encoded by the external manager, on any owner where
-// their borrowed strings are valid. Only retained complete-frame handles cross
+// Routing configuration and fixed transmission metadata are supplied by the
+// external manager. Only retained complete-frame handles cross
 // to Tx. Neither the engine nor this envelope assigns sequence/epoch values.
 class ZfixAPI RawOutput : public ZmNHeap<RawOutput>, public ZmObject {
 friend inline ZuStringT<"Zfix.RawOutput"> ZmNHeapID(RawOutput *);
 public:
   using Ref = ZmRef<const RawOutput>;
 
-  template <typename Facet = ZuFacet::FIX>
-  static Ref encode(TxBody::Ref body, const Fmt::Header &header, TxContext context,
-      Fmt::Error &error, Fmt::Limits limits = {}) {
+  template <typename Signer = NoSign>
+  static Ref encode(TxBody::Ref body, const TxConfig &config, TxContext context,
+      Fmt::Error &error, Fmt::Limits limits = {}, const Signer &signer = {}) {
     if (!body) { error = {Fmt::ErrorCode::Required, 35}; return {}; }
-    auto frame = txFrame<Facet>(*body, header, error, limits);
+    auto frame = txFrame(*body, config, context, error, limits, signer);
     if (!frame) return {};
     return new RawOutput{ZuMv(body), context, ZuMv(frame),
-      header.possDup ? header.origSendingTime : header.sendingTime};
+      (context.possDup || context.replay) ? context.origSendingTime : context.sendingTime};
   }
 
-  // Also admit standalone framing output without imposing managed header
-  // requiredness. The caller owns the external metadata and native body type.
+  // Also admit standalone framing output without imposing managed session
+  // policy. The caller owns the external metadata and native body type.
   static Ref fromFrame(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, Fmt::Error &,
     Fmt::Limits = {}, ZuDateTime original = {});
 
@@ -104,6 +104,25 @@ private:
 // aggregate owner obligations; they cannot change the successor's state. Final
 // stopped is delivered only without a current association, after all owners drain.
 template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
+  // The immutable configuration snapshot owns its strings on the destination
+  // side. Only this named heap handle and fixed metadata cross the shard post.
+  struct Encode : ZmNHeap<Encode>, ZmObject {
+  friend ZuStringT<"Zfix.RawEncode"> ZmNHeapID(Encode *);
+    const TxBody::Ref body;
+    const TxConfig config;
+    const TxContext context;
+
+    Encode(TxBody::Ref b, const TxConfig &c, TxContext x) :
+      body{ZuMv(b)}, config{c}, context{x} { }
+    uint64_t memory() const {
+      const auto &ids = config.identity;
+      return ZmHeapAllocSize<sizeof(Encode)>{} + body->memory() +
+	ids.local.size() + ids.peer.size() + ids.localSub.size() + ids.peerSub.size() +
+	ids.localLocation.size() + ids.peerLocation.size() + config.beginString.size() +
+	config.appVersion.size() + config.encoding.size();
+    }
+  };
+
   struct StopReply : ZmNHeap<StopReply>, ZmPolymorph {
   friend inline ZuStringT<"Zfix.RawStopReply"> ZmNHeapID(StopReply *);
     const ZmRef<Impl>	owner;
@@ -294,6 +313,10 @@ public:
   TraceStats rxTraceStats_() const { ZmAssert(app()->rxInvoked()); return m_traceRx.stats_(); }
   TraceStats txTraceStats_() const { ZmAssert(app()->txInvoked()); return m_traceTx.stats_(); }
 
+  enum { SignMsg = 0 };
+  template <typename S>
+  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+
   TraceField fixTraceField(ZuCSpan, unsigned) { return {}; }
   bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
   void fixTraceRx(TraceRef) { }
@@ -334,10 +357,10 @@ public:
     return true;
   }
 
-  // External managers explicitly supply wire header and session metadata.
+  // External managers explicitly supply routing configuration and transmission metadata.
   template <typename Entry>
   [[nodiscard]] bool send(const typename Entry::Object &object, uint64_t id,
-      const Fmt::Header &header, TxContext context, bool admin, Fmt::Error &error) {
+      const TxConfig &config, TxContext context, bool admin, Fmt::Error &error) {
     using Dictionary = typename Impl::MessageCatalog;
     ZuAssert((ZuTypeIn<Entry, typename Dictionary::Messages>{}));
     if (!app()->rxInvoked() && !app()->txInvoked()) {
@@ -345,7 +368,25 @@ public:
     }
     auto body = TxBody::encodeRaw<Entry>(object, id, admin, error, m_outputLimits);
     if (!body) return false;
-    auto output = RawOutput::encode(ZuMv(body), header, context, error, m_outputLimits);
+    if constexpr (Impl::SignMsg) {
+      if (!app()->txInvoked()) {
+	if (!m_live) { error = {Fmt::ErrorCode::Output}; return false; }
+	ZmRef<Encode> pending = new Encode{ZuMv(body), config, context};
+	uint64_t bytes = pending->memory();
+	if (!impl()->txPost_(bytes)) { error = {Fmt::ErrorCode::Output}; return false; }
+	app()->txRun([this, pending = ZuMv(pending), bytes] {
+	  Fmt::Error error;
+	  auto output = RawOutput::encode(pending->body, pending->config,
+	    pending->context, error, m_outputLimits, *impl());
+	  if (output) {
+	    unsigned result = sendRaw_(output); impl()->fixRawSubmittedTx(output, result);
+	  } else impl()->fixRawFaultTx(pending->context.connection, error);
+	  app()->rxRun([this, bytes] { impl()->txUnpost_(bytes); finishStop_(); });
+	});
+	return true;
+      }
+    }
+    auto output = RawOutput::encode(ZuMv(body), config, context, error, m_outputLimits, *impl());
     if (!output) return false;
     if (!sendRaw(output)) { error = {Fmt::ErrorCode::Output}; return false; }
     return true;
@@ -353,7 +394,7 @@ public:
 
   template <typename Request, typename Response>
   [[nodiscard]] bool reply(const RawInput &input, const typename Response::Object &object,
-      uint64_t id, const Fmt::Header &header, TxContext context, bool admin, Fmt::Error &error) {
+      uint64_t id, const TxConfig &config, TxContext context, bool admin, Fmt::Error &error) {
     using Dictionary = typename Impl::MessageCatalog;
     ZuAssert((ZuTypeIn<Request, typename Dictionary::Messages>{}));
     ZuAssert((ZuTypeIn<Response, typename Dictionary::Messages>{}));
@@ -363,7 +404,7 @@ public:
       error = {Fmt::ErrorCode::Unresolved, 35}; return false;
     }
     error = Context_::Reply<Impl, Request, Response, RawInput>::call(impl(), input);
-    return !error && send<Response>(object, id, header, context, admin, error);
+    return !error && send<Response>(object, id, config, context, admin, error);
   }
 
   auto work(const ZmRef<const RawInput> &input, Fmt::Error &error, uint64_t extra = 0) {
@@ -439,7 +480,7 @@ private:
     finishStop_();
   }
 
-  static TraceField traceField_(void *owner, ZuCSpan type, unsigned tag) {
+  static TraceField traceField_(void *owner, ZuCSpan type, int32_t tag) {
     auto p = static_cast<Impl *>(owner); auto f = p->fixTraceField(type, tag);
     f.secret |= p->fixTraceSecret(type, tag); return f;
   }

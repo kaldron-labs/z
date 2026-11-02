@@ -1,6 +1,114 @@
 # Measurement evidence
 
-The current archive is [2026-10-28.tar.xz](2026-10-28.tar.xz). Its root report,
+The current [unchecked-conversion comparison](CONVERT.md) measures native Zu
+conversion without Zfix field prevalidation, including all four pairings.
+
+The earlier [direct-loader comparison](LOADERS.md) measures tag-to-loader function
+pointers, including all four engine pairings over TCP/TLS with four sessions.
+
+The earlier [signed static-tag comparison](TAGS.md) measures the startup-populated
+`int32_t` tag map with all four engine pairings, four sessions, and TCP/TLS.
+
+The earlier [one-pass receive comparison](ONEPASS.md) includes the static tag
+dispatch, text-only codec, before/after measurements and release validation.
+The thread-owner and acceptor comparisons below precede this refactor.
+
+The [fresh thread-owner comparison](THREADS.md) reruns all four pairings with
+separate owners, a shared acceptor, and shared owners on both native peers.
+It covers TCP/TLS, one/four sessions and three repetitions per case.
+
+The current uninstrumented release comparison and the investigation of
+QuickFIX-to-zfixd performance are in [ACCEPTOR.md](ACCEPTOR.md). The ASan
+measurements below describe the earlier build.
+
+## 10K orders at one and four sessions
+
+The [2026-10-31 archive](2026-10-31-10k-multisession.tar.xz) compares all four
+client/server pairings with the core at commit `2881f4e2` and measurement-only
+timestamp/reporting additions retained in `measurement.patch`. Each case uses
+10,000 measured orders and 1,000 warmup orders **per session**, 64 orders in flight per session,
+and three repetitions. One and four concurrent FIX sessions run over TCP and
+verified TLS on loopback, with one client process and one server process per
+case. Each order produces an acknowledgement and a terminal execution report.
+The scalar order workload, history/queue bounds and validation settings are
+identical across session counts. Four sessions therefore measure 40,000 orders
+per case with up to 256 orders in flight overall.
+
+All 48 timing cases passed: 120 session runs, 1.2 million measured orders,
+zero reported errors, zero unfinished orders and successful peer exits.
+Executable hashes were independently rechecked after measurement. Cases ran
+sequentially, without concurrent builds or QA, on the recorded shared Linux x64
+host with an Intel Xeon Platinum 8488C.
+
+These are optimized **instrumented** measurements. Native peers use Clang 21
+with `-O3`, ASan and the existing foundation DSOs. The pinned QuickFIX SDK uses
+Clang 21, `-O2 -g -DNDEBUG` and ASan; `ASAN_OPTIONS=detect_leaks=1` applies to
+all peer processes. Native validation uses its declared typed dictionary;
+QuickFIX uses the canonical FIX 4.4 dictionary and default validation. Both
+retain bounded history, using different native-body/serialized representations.
+The measured rates describe these builds and workloads, not clean release or
+production throughput.
+
+Pair names are **client-server**, with `native` meaning `zfix`/`zfixd`. Rates
+below are medians across three repetitions of shared-window throughput: all
+measured completions divided by the time from the first session's measured
+start to the last session's measured finish, on the same client process's
+monotonic clock. Thus the four-session rate uses a common interval rather than
+summing four independent rates. The independent sum is also retained in the
+full report. Ack p99 is the worst individual-session p99 across
+all repetitions, without pooling or averaging quantiles.
+
+| Client-server pair | Transport | 1 session orders/s | 4 sessions orders/s | 4 sessions worst ack p99 ms |
+| --- | --- | --- | --- | --- |
+| native-native | TCP | 31150.9 | 31681.3 | 10.683 |
+| native-native | TLS | 25282.4 | 31307.6 | 10.528 |
+| native-quickfix | TCP | 18969.5 | 17863.4 | 25.887 |
+| native-quickfix | TLS | 15027.5 | 15934.1 | 23.927 |
+| quickfix-native | TCP | 12792.5 | 13415.7 | 28.070 |
+| quickfix-native | TLS | 10671.7 | 12551.9 | 29.918 |
+| quickfix-quickfix | TCP | 15917.7 | 15071.1 | 27.665 |
+| quickfix-quickfix | TLS | 12009.2 | 14483.1 | 27.905 |
+
+Zfix/Zfix has the highest measured rate in both transports and session counts.
+Four sessions do not deliver proportional rate scaling in this configuration;
+the larger total in-flight window accompanies higher per-session latency.
+This experiment does not isolate the cause of scaling limits.
+
+The archive contains `sessions-1/` and `sessions-4/` with exact commands,
+per-case results, client/server JSON and stderr, executable/library hashes and
+whole-process CPU/RSS observations. `comparison.md` includes the rate, latency,
+resource and individual-session tables; `comparison.json` retains numeric
+comparison rows. `results.py` is the reducer used after timing, separately
+hashed with the other archived files. `measurement.patch` records the exact
+measurement harness and timestamp changes from the base commit. `measurement.json`
+records runtime sanitizer settings and SDK flags. `verification.json` records
+the independent completion/count/quantile/exit/hash/window audit. Generated private
+keys and binaries are excluded.
+
+CPU and RSS include startup, warmup, leak checking and shutdown. RSS can inherit
+the fork/exec parent's pre-exec high-water floor; these resource figures are
+not isolated measured-phase costs. All session distributions remain separate.
+The complete report also retains p50/p95/p99/p99.9/max for each session/run.
+
+Recheck and regenerate after unpacking:
+
+```sh
+tar -xJf 2026-10-31-10k-multisession.tar.xz
+cd 2026-10-31-10k-multisession
+sha256sum -c SHA256SUMS
+python3 results.py sessions-1 sessions-4 --output regenerated.md
+```
+
+The recorded absolute paths remain provenance; regeneration uses the supplied
+relative artifact directories. To repeat measurement, use the session-count
+loop in [the benchmark commands](../README.md#four-pairing-process-loads)
+with current local dictionary/SDK paths and an accurately labelled build.
+
+Archive SHA256: `c78578adffcb778f3db1666d1acab1c7f97c476c92e7cbc8820e3790fef265cc`.
+
+## Earlier measurement archive
+
+The original archive is [2026-10-28.tar.xz](2026-10-28.tar.xz). Its root report,
 `build-manifest.json`, codec rows and `process/` tree describe the fresh post-Link
 run with the shared codec input timestamp `20261028-12:34:56.123456789`.
 All 288 process cases and 18 codec rows pass the strict retained-data audit.

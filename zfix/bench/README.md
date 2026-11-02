@@ -1,12 +1,33 @@
 # Zfix measurements
 
-The managed repair changes resend ownership and readiness after the recorded
-measurement snapshot. Current-build functional verification is recorded in
-[STATUS.md](../STATUS.md); installation has not been repeated for this repair.
-All published numbers/manifests are historical; no benchmark rerun, archive
-rewrite or new performance claim accompanies this migration. Commands here document
-measurement entry points; that migration covered Zfix rebuilds and functional
-tests only.
+The current codec supports ordinary SOH-delimited fields and declared dual-tag
+Binary String/Bytes fields. `nativecodec` keeps the ordinary complete-frame
+workload for regression comparison; `binarycodec` measures body serialization and
+borrowed live/indexed decoding over configurable payload sizes. `txbodycodec`
+measures the actual retained-body metadata footprint and pooled allocation
+thresholds for dense and sparse schemas. Their source and command descriptions
+appear below. The final clang release measurements, source audit and raw archive
+are in [BINARY.md](BINARY.md), including the measured allocation/growth-copy cost
+at dense and sparse pool boundaries.
+
+The historical [one-pass receive comparison](results/ONEPASS.md) records its
+compile-time tag dispatch and streaming decoder, release validation, codec
+timings and all four process pairings. That snapshot used SOH-delimited text and
+omitted Length/Data workloads. Its measurements and the other archives below
+describe their recorded implementations, not the new Binary/API snapshot.
+
+The [release acceptor investigation](results/ACCEPTOR.md) compares all four
+Zfix/QuickFIX client/server pairings over TCP and TLS, with 10K orders per
+session, one and four sessions and three repetitions. It includes the original
+release baseline, controlled changes and the final comparison, CPU samples
+and a QuickFIX decoder experiment. The original native worker assignment is
+retained after measuring the peer-dependent cost of sharing I/O owners.
+Ordinary execution reports omit OrigClOrdID and declare their scalar fields
+in tag order.
+The [earlier ASan comparison](results/README.md#10k-orders-at-one-and-four-sessions)
+and the original measurement snapshot below remain historical. Current-build
+functional verification is recorded in [STATUS.md](../STATUS.md). Historical
+installation and timing results do not establish the new Binary/API gate.
 
 The dispatch simplification has a separate instrumented comparison in
 [REPAIR3.md](REPAIR3.md), with raw observations in [results/repair3](results/repair3).
@@ -21,14 +42,19 @@ The published baseline tables use the post-Link run with identical fixed codec
 timestamps. The archive keeps the original and rejected pre-fix snapshots
 separate, alongside current verification evidence; see [results/README.md](results/README.md).
 
-Build the configured targets before running measurements:
+After the source and dependent-consumer build gates, build configured benchmark
+targets and collect ordinary uninstrumented timing first:
 
 ```sh
 make -C zfix/bench -j8
 make -C zfix/bench codec-bench
-make -C zfix/bench heaptrace
-make -C zfix/bench audittrace
 ```
+
+Keep timing runs separate from builds and diagnostics. After timing, the existing
+Linux observers can be built inside this module with `make -C zfix/bench heaptrace`
+and, when needed, `make -C zfix/bench audittrace`. The Binary acceptance run uses
+heaptrace separately from uninstrumented timings. These targets do not rebuild
+prerequisite modules or the independent QuickFIX SDK.
 
 `nativecodec` and `quickfixcodec` accept optional count and warmup arguments:
 
@@ -42,10 +68,10 @@ encoding and framing. It compares primary lookup, secondary lookup with one
 shared object schema, and secondary lookup with different candidate schemas,
 using zero or eight parties.
 The `managed-primary` and `managed-secondary` rows additionally include catalog
-header inspection and reuse that decoded prefix during dispatch. These rows
+session-field observation into the retained Rx metadata before dispatch. These rows
 exclude transport framing and sequencing, just as the other rows do.
-The matching `rescan-*` rows decode the header again to isolate the cost of
-that repeated work in the same binary.
+Dispatch then loads the one ordinary object schema; there is no separate header
+representation or prefix-reuse parameter.
 Count and warmup are optional:
 
 ```sh
@@ -53,14 +79,14 @@ zfix/bench/dispatchcodec 20000 2000
 ```
 
 An optional third argument selects one mode, for example `managed-primary` or
-`rescan-primary`. Use separate processes for allocation-heavy comparisons so
-earlier modes do not change the sanitizer allocator's quarantine state.
+`same-schema`. Use separate processes for allocation-heavy comparisons so earlier
+modes do not change allocator state.
 
-Both emit three JSON rows for scalar, eight-party/four-subparty groups with
-32 text bytes, and 4096 binary bytes. Each row contains encode/decode latency
+`nativecodec` and `quickfixcodec` emit JSON rows for scalar and
+eight-party/four-subparty groups with 32 text bytes. Each row contains encode/decode latency
 quantiles and the empty monotonic-clock-pair distribution. Clock overhead is
 reported without subtracting quantiles. Both use the fixed timestamp
-`20261028-12:34:56.123456789`, giving equal 170/910/4281-byte scalar/group/binary
+`20261028-12:34:56.123456789`, giving equal 170/910-byte scalar/group
 frames despite their selected timestamp precision rules. Both use the same FIX 4.4 shape; native
 typed validation and QuickFIX strict canonical dictionary validation remain
 distinct. QuickFIX decode includes constructing its input `std::string` and
@@ -73,6 +99,33 @@ without constituting final performance evidence.
 
 ## Four-pairing process loads
 
+For the one/four-session scalar comparison, use a separate artifact directory
+per session count. `--count` and `--warmup` apply to each session, so four
+sessions measure 40,000 orders per case and allow 256 orders in flight overall:
+
+```sh
+for sessions in 1 4; do
+  python3 zfix/bench/load.py \
+    --dictionary /tmp/zfix-qf-release/quickfix-2ce8a60667d95a55cdc57a210f165e19cb757126/spec/FIX44.xml \
+    --artifacts /tmp/zfix-10k-s$sessions \
+    --count 10000 --warmup 1000 --sessions "$sessions" --inflight 64 \
+    --repeat 3 --profile scalar --build-label clang21-O3-release
+done
+python3 zfix/bench/results.py /tmp/zfix-10k-s1 /tmp/zfix-10k-s4 \
+  --output /tmp/zfix-10k-comparison.md
+```
+
+The reducer accepts one or more artifact roots from the same build and workload,
+keeps session counts separate, and rejects different executable/library hashes
+or workload settings. It adds client/server comparison and process-resource
+tables, retains individual session quantiles, and writes a machine-readable
+comparison beside the Markdown report. Shared-window throughput uses all
+measured completions from the first session's measured start to the last
+session's measured finish in the same client process. The sum of independent
+session rates is retained alongside it. Latency quantiles remain separate.
+
+For the full six-profile matrix:
+
 ```sh
 python3 zfix/bench/load.py \
   --dictionary /tmp/zfix-deps/install/share/quickfix/FIX44.xml \
@@ -84,11 +137,11 @@ python3 zfix/bench/load.py \
 The default matrix includes all four initiator/acceptor pairings over TCP and
 verified TLS. Separate local peer processes use their ordinary libtool wrappers.
 Each pairing receives the same profile parameters: scalar orders; group-heavy
-orders (32 parties/eight subparties); 4096 binary bytes; fragmentation of binary
+orders (32 parties/eight subparties); 4096 text bytes; fragmentation of text
 orders; recovery of one lost first-measured acknowledgement; and scalar overload
 at a declared high offered rate. `--profile`, `--pair` and `--transport` select
 subsets. Count, warmup, sessions, rate, overload rate, in-flight limit, group and
-binary dimensions, seed and history/queue bounds are configurable; see `--help`.
+text dimensions, seed and history/queue bounds are configurable; see `--help`.
 
 Readiness comes from actual JSON events. Process deadlines diagnose failures;
 the fixture does not sleep to establish ordering. Raw outputs and failures are
@@ -104,8 +157,8 @@ errors, measured order rates, wire counts/rates, per-session acknowledgement and
 terminal latency quantiles, intended-submit scheduling delay, local CPU/RSS and
 history-cache retained-byte peaks. Intended-submit-to-acknowledgement/terminal
 columns appear when supplied by the helper results; missing metrics are marked
-unavailable. Quantiles remain separate per session and repeat. Sum-of-session
-order rates use client measured phases; wire rates use the complete case wall
+unavailable. Quantiles remain separate per session and repeat. Shared-window
+and sum-of-session order rates use client measured phases; wire rates use the complete case wall
 interval, including setup, warmup and teardown.
 
 The harness uses `wait4` to measure each local child, including the libtool
@@ -232,3 +285,71 @@ the artifacts: a host-specific regression envelope of 1.25 times the largest
 observed intended-submit-to-terminal p99, rounded up. This measured comparison
 envelope is not a portable threshold or production SLA. Preserve raw reports,
 metadata and run-to-run distributions with it.
+
+## Binary codec isolation
+
+`binarycodec` measures body serialization and borrowed decoding separately from
+framing, checksums, signing and transport. It runs an ordinary String control,
+Binary String and Binary Bytes through live and indexed paths. The ordinary
+control payload contains letters without SOH; Binary payloads contain SOH, NUL,
+`=`, high octets and field/checksum-looking text. These distributions are
+intentionally different, so use the ordinary full-frame `nativecodec` rows to
+track text-only regressions rather than interpreting a binary/text ratio as an
+identical-input comparison.
+
+The arguments are measured count, warmup count, payload octets, optional mode,
+and optional phase (`both`, `encode` or `decode`). Modes are `text-live`,
+`text-indexed`, `string-live`, `string-indexed`, `bytes-live`, and `bytes-indexed`.
+An omitted mode emits all six. Each JSON row records payload/wire extents,
+latency quantiles, clock overhead and a consumed-result accumulator. Buffers and
+samples are sized from the workload before measurement; borrowed payload
+addresses and full byte equality are checked before the timing loop, and each
+measured decode checks the direct input address and extent again.
+
+```sh
+make -C zfix/bench -j8
+zfix/bench/nativecodec 100000 10000
+for size in 0 32 4096 65536; do
+  zfix/bench/binarycodec 100000 10000 "$size"
+done
+zfix/bench/binarycodec 100000 10000 4096 bytes-live decode
+```
+
+Keep timing runs isolated from builds and instrumentation and repeat them on a
+fixed CPU where possible. Save the exact commands, compiler/flags and executable
+hashes with each result. For allocation/copy diagnostics, run a single mode and
+phase with `heaptrace.so`/`audittrace.so` in separate processes and compare counts
+at multiple iteration counts and payload sizes. The observers include setup,
+sample storage and quantile/output work and cannot see inlined copies or custom
+allocator internals. Consequently, use count/size scaling plus pointer-identity
+checks and source inspection to assess borrowed paths; observer totals alone
+cannot prove zero payload allocation or copy. No payload temporary is needed for
+serialization into the preallocated sink.
+
+## Retained-body allocation thresholds
+
+`txbodycodec COUNT WARMUP BYTES [dense|sparse]` separately measures
+`TxBody::encode` and its actual retained pool footprint. Dense has three logical
+root leaves. Sparse has the same emitted wire fields plus twelve omitted
+optional leaves. Identical body bytes therefore expose metadata/capture overhead
+without conflating it with payload copies or extra wire fields. JSON records
+logical leaves, encoded body extent, retained `IOBuf::length`, allocated capacity
+and `TxBody::memory()` charge; the recorded extents describe the actual build
+rather than assuming a particular internal range layout. Buffer destruction is
+outside the encode timing interval and before the next allocation, so the pool
+can reuse it.
+
+Scan payload sizes around the current pool transition, then time both sides of
+each observed threshold. For example:
+
+```sh
+for size in 800 832 864 896 928 960 992 1024; do
+  zfix/bench/txbodycodec 10000 1000 "$size"
+done
+```
+
+Run dense/sparse allocation diagnostics in separate processes as well. Omitted
+fields must not add another allocation per retained body; crossing the built-in
+pool threshold can legitimately change capacity/charge and must be reported.
+The full `nativecodec` timing remains necessary to detect ordinary message
+regressions outside this isolated retained-body factory.

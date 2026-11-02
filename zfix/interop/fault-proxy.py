@@ -57,8 +57,7 @@ def mutate(frame, action):
     if action == "unknown":
         return build(begin, header, body + b"9999=fixture" + SOH)
     if action == "qty":
-        # Only the declared scalar-order fault uses this body edit; binary data
-        # is otherwise opaque to the relay and never split into token strings.
+        # This mutation targets the declared scalar-order quantity.
         parts = body.split(SOH)
         parts = [b"38=invalid" if part.startswith(b"38=") else part for part in parts]
         return build(begin, header, SOH.join(parts))

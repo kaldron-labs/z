@@ -20,80 +20,6 @@
 
 namespace Zfix::Fmt {
 
-// Borrowed values: backing storage belongs to the standalone caller, or to
-// the enclosing retained receive context in managed sessions.
-struct Header {
-  ZuCSpan	beginString;
-  ZuCSpan	msgType;
-  ZuCSpan	sender;
-  ZuCSpan	target;
-  ZuCSpan	senderSub;
-  ZuCSpan	targetSub;
-  ZuCSpan	senderLocation;
-  ZuCSpan	targetLocation;
-  ZuCSpan	appVerID;
-  uint64_t	seqNo = 0;
-  ZuDateTime	sendingTime;
-  ZuDateTime	origSendingTime;
-  bool		possDup = false;
-  ZuBSpan	secureData;
-  ZuCSpan	encoding;
-  // Header-prefix bytes in FrameView::content, set by readHeader().
-  unsigned	bytes = 0;
-};
-
-struct Trailer {
-  unsigned	checksum = 0;
-  ZuBSpan	signature;
-};
-
-ZfStruct(ZfixFmtAPI, (Header, FIX),
-  (sender,		(FIX::ID<49>, Required),	String),
-  (target,		(FIX::ID<56>, Required),	String),
-  (senderSub,		(FIX::ID<50>),			String),
-  (targetSub,		(FIX::ID<57>),			String),
-  (senderLocation,	(FIX::ID<142>),			String),
-  (targetLocation,	(FIX::ID<143>),			String),
-  (appVerID,		(FIX::ID<1128>),		String),
-  (seqNo,		(FIX::ID<34>, Required),	UInt64),
-  (possDup,		(FIX::ID<43>),			Bool),
-  (sendingTime,		(FIX::ID<52>, Required),	DateTime),
-  (origSendingTime,	(FIX::ID<122>),			DateTime),
-  (secureData,		(FIX::ID<91>, FIX::Len<90>),	Bytes),
-  (encoding,		(FIX::ID<347>),			String));
-
-ZfStruct(ZfixFmtAPI, (Trailer, FIX),
-  (signature,		(FIX::ID<89>, FIX::Len<93>),	Bytes));
-
-template <typename Facet> struct Schema<Header, Facet> :
-  Schema_<Header, Facet, ZuActiveFields<Header, Facet>, true> {
-  enum { Prefix = true };
-};
-
-template <typename Facet> struct Schema<Trailer, Facet> :
-  Schema_<Trailer, Facet, ZuActiveFields<Trailer, Facet>, true> { };
-
-// One effective scope uses the ordinary metadata and scanner for header, body
-// and trailer. The original body schema must independently reject reserved IDs.
-template <typename O> struct Wire_ { };
-
-template <typename O, typename Facet> struct Schema<Wire_<O>, Facet> :
-  Schema_<Wire_<O>, Facet, ZuTypeConcat<
-    typename Schema<Header, ZuFacet::FIX>::Fields,
-    typename Schema<O, Facet>::Fields,
-    typename Schema<Trailer, ZuFacet::FIX>::Fields>, true> {
-  enum {
-    HeaderN = Schema<Header, ZuFacet::FIX>::Leaves::N,
-    BodyN = Schema<O, Facet>::Leaves::N
-  };
-
-  static unsigned region(unsigned field) {
-    if (field < HeaderN) return 0;
-    if (field < HeaderN + BodyN) return 1;
-    return 2;
-  }
-};
-
 namespace FrameState {
 
   enum { Incomplete, Complete, Error };
@@ -105,7 +31,6 @@ struct FrameView {
   ZuCSpan	msgType;
   // Bytes after MsgType and before CheckSum; includes remaining header fields.
   ZuCSpan	content;
-  Trailer	trailer;
 };
 
 struct FrameResult {
@@ -121,101 +46,106 @@ struct FrameResult {
 // to continue over coalesced input. No bytes are retained or allocated here.
 ZfixFmtExtern FrameResult frame(ZuCSpan input, Limits limits = {});
 
-// Header-only inspection stops at the first non-header tag. It does not guess
-// unknown body/binary metadata, and is suitable for unsupported MsgType errors.
-ZfixFmtExtern Error readHeader(const FrameView &, Header &, Limits = {});
-ZfixFmtExtern Error readHeader_(const FrameView &, Header &,
-  bool (*bodyContains)(unsigned), Limits);
-template <typename O, typename Facet = ZuFacet::FIX>
-Error readHeader(const FrameView &frame, Header &header, Limits limits = {}) {
-  // A known body scope distinguishes legal unknown header fields from the
-  // first recognized body/trailer field; no business values are constructed.
-  return readHeader_(frame, header, [](unsigned tag) {
-    return scopeContains<O, Facet>(tag) || scopeContains<Trailer, ZuFacet::FIX>(tag);
-  }, limits);
-}
-// Shared partial-header load for the typed whole-message and prefix paths.
-ZfixFmtExtern Error loadHeader_(ZuCSpan, const Positions &, Header &, Error);
-
-// Construct only from a successful frame() result. All backing storage remains
-// caller-owned. Groups and binary pairs are scanned once across the shared
-// scope, including recognized fields that an operation does not assign.
-template <typename O, typename Facet = ZuFacet::FIX> class MessageHandler {
-  ZuAssert((Format<O, Facet>::Kind == Kind::Object));
-  using S = Schema<Wire_<O>, Facet>;
+// One ordinary message schema consumes the complete bounded content. Session
+// metadata is observed independently into retained Rx state, never a second
+// public message object or a combined header/body slot layout.
+template <typename O, typename Facet = ZuFacet::FIX> class IndexedMessage :
+    public Indexed<O, Facet> {
+  using Base = Indexed<O, Facet>;
 public:
-  // A supplied header must be a successful readHeader() of this same frame.
-  // Managed Rx has already decoded it before sequencing; continue at the body.
-  explicit MessageHandler(const FrameView &frame, Limits limits = {},
-      const Header *header = nullptr) :
-    m_input{frame.content}, m_offset{frame.content.data() ?
-      unsigned(frame.content.data() - frame.wire.data()) : 0},
-    m_header{header ? *header :
-      Header{.beginString = frame.beginString, .msgType = frame.msgType}}
-  {
-    m_trailer.checksum = frame.trailer.checksum;
-    m_positions.length(S::Leaves::N, false);
-    for (unsigned i = header ? S::HeaderN : 0; i < S::Leaves::N; ++i)
-      m_positions[i].offset = UINT_MAX;
-    if (frame.wire.length() > limits.frameBytes ||
-	S::Leaves::N > limits.parseBytes/sizeof(Position)) {
-      m_error = {ErrorCode::Size}; return;
-    }
-    Parse p{m_input, limits, m_positions, m_error};
-    unsigned offset = header ? header->bytes : 0;
-    Scope scope{nullptr, scopeContains<Wire_<O>, Facet>, 0, 0};
-    parseScope<Wire_<O>, Facet>(p, 0, offset, scope, false, true, header ? 1 : 0);
-    if (!header) m_error = loadHeader_(m_input, m_positions, m_header, m_error);
-    if (m_error) return;
-    ObjectView<Trailer, ZuFacet::FIX> trailer{m_input, m_positions,
-      S::HeaderN + S::BodyN, m_error};
-    trailer.load(m_trailer);
-    m_trailer.checksum = frame.trailer.checksum;
+  explicit IndexedMessage(const FrameView &frame, Limits limits = {}) :
+    Base{frame.content, limits}, m_frame{frame}, m_limits{limits}, m_offset{frame.content.data() ?
+      unsigned(frame.content.data() - frame.wire.data()) : 0} { }
+  template <int32_t Tag> O selected(FieldPos &selector) {
+    Read input{m_frame.content, m_limits, m_selectedError};
+    input.selectTag = Tag;
+    unsigned offset = 0;
+    Scope scope{nullptr, scopeContains<O, Facet, Tag>, 0, 0};
+    readScope<O, Facet, ZfFieldFilter::Init, false, Tag, false>(
+      input, nullptr, offset, scope, false);
+    selector = input.selector;
+    return Base::ctor();
   }
-
-  MessageHandler(const MessageHandler &) = delete;
-  MessageHandler &operator =(const MessageHandler &) = delete;
-
-  bool valid() const { return !m_error; }
-
   Error error() const {
-    auto error = m_error;
-    if (error && error.code != ErrorCode::Required) error.offset += m_offset;
-    return error;
+    auto e = m_selectedError ? m_selectedError : Base::error();
+    if (e && e.code != ErrorCode::Required) e.offset += m_offset;
+    return e;
   }
+private:
+  FrameView m_frame;
+  Limits m_limits;
+  Error m_selectedError;
+  unsigned m_offset;
+};
 
-  const Header &header() const { return m_header; }
-  const Trailer &trailer() const { return m_trailer; }
-
-  template <typename F> ZuCSpan raw() { return view().template raw<F>(); }
-
+template <typename O, typename Facet> class LiveMessage {
+public:
+  explicit LiveMessage(const FrameView &frame, Limits limits = {}) :
+    m_frame{frame}, m_limits{limits} {
+    if (frame.wire.length() > limits.frameBytes) m_error = {ErrorCode::Size};
+  }
+  bool valid() const { return !m_error; }
+  Error error() const { return m_error; }
+  template <typename F> ZuCSpan raw() {
+    if (m_error) return {};
+    IndexedMessage<O, Facet> h{m_frame, m_limits};
+    auto value = h.template raw<F>(); m_error = h.error(); return value;
+  }
   template <typename ...Args> O ctor(Args &&...args) {
-    return view().ctor(ZuFwd<Args>(args)...);
+    if constexpr (sizeof...(Args)) {
+      IndexedMessage<O, Facet> h{m_frame, m_limits};
+      auto o = h.ctor(ZuFwd<Args>(args)...); m_error = h.error(); return o;
+    } else {
+      O o{}; load_<ZfFieldFilter::Init>(o); return o;
+    }
   }
-
+  template <int32_t Tag> O selected(FieldPos &selector) {
+    O o{}; load_<ZfFieldFilter::Init, Tag>(o, &selector); return o;
+  }
   template <typename ...Args> O *alloc(Args &&...args) {
     if (m_error) return nullptr;
-    return view().alloc(ZuFwd<Args>(args)...);
+    if constexpr (sizeof...(Args)) {
+      IndexedMessage<O, Facet> h{m_frame, m_limits};
+      auto o = h.alloc(ZuFwd<Args>(args)...); m_error = h.error(); return o;
+    } else {
+      O *o = new O{};
+      if (!load_<ZfFieldFilter::Init>(*o)) { delete o; return nullptr; }
+      return o;
+    }
   }
-
   template <typename ...Args> bool new_(void *ptr, Args &&...args) {
     if (m_error) return false;
-    return view().new_(ptr, ZuFwd<Args>(args)...);
+    if constexpr (sizeof...(Args)) {
+      IndexedMessage<O, Facet> h{m_frame, m_limits};
+      bool result = h.new_(ptr, ZuFwd<Args>(args)...); m_error = h.error(); return result;
+    } else {
+      auto o = new (ptr) O{};
+      if (load_<ZfFieldFilter::Init>(*o)) return true;
+      o->~O(); return false;
+    }
   }
-
-  bool load(O &o) { return !m_error && view().load(o); }
-  bool update(O &o) { return !m_error && view().update(o); }
-
+  bool load(O &o) { return load_<ZfFieldFilter::Load>(o); }
+  bool update(O &o) { return load_<ZfFieldFilter::Upd>(o); }
 private:
-  auto view() { return ObjectView<O, Facet>{m_input, m_positions, S::HeaderN, m_error}; }
+  template <template <typename> class Filter, int32_t SelectTag = 0>
+  bool load_(O &o, FieldPos *selector = nullptr) {
+    if (m_error) return false;
+    Error error;
+    read<O, Facet, Filter, SelectTag>(o, m_frame.content, error, m_limits, 0, selector);
+    if (error && error.code != ErrorCode::Required)
+      error.offset += unsigned(m_frame.content.data() - m_frame.wire.data());
+    m_error = error; return !error;
+  }
+  FrameView m_frame;
+  Limits m_limits;
+  Error m_error;
+};
 
-  using Slots = ZtBuiltin<Positions, S::Leaves::N>;
-  ZuCSpan	m_input;
-  unsigned	m_offset;
-  Slots		m_positions;
-  Header	m_header;
-  Trailer	m_trailer;
-  Error		m_error;
+template <typename O, typename Facet = ZuFacet::FIX> class MessageHandler :
+    public ZuIf<liveRead<O, Facet>(), LiveMessage<O, Facet>, IndexedMessage<O, Facet>> {
+  using Base = ZuIf<liveRead<O, Facet>(), LiveMessage<O, Facet>, IndexedMessage<O, Facet>>;
+public:
+  using Base::Base;
 };
 
 // Incremental progress without input ownership. Input may move as its caller
@@ -267,6 +197,15 @@ public:
 
   FrameOutput finish();
 
+  // Consume this span before appending: a growing sink may relocate storage.
+  // Coverage is exactly 35 through the final unsigned field, excluding 8/9/10.
+  template <typename Signer, typename Body, typename Context>
+  FrameOutput finish(const Signer &signer, const Body *body, Context context) {
+    if constexpr (Signer::SignMsg)
+      if (!m_finished && !m_body.failed()) signer.signMsg(m_body, body, context, m_body.data());
+    return finish();
+  }
+
 private:
   struct Layout {
     unsigned	prefix;
@@ -288,33 +227,13 @@ private:
   bool		m_finished = false;
 };
 
-ZfixFmtExtern Error writeHeader_(Sink &, const Header &);
-ZfixFmtExtern Error writeHeader(Sink &, const Header &);
-ZfixFmtExtern Error writeTrailer(Sink &, const Trailer &);
-template <typename Facet> Error writeHeader(Sink &out, const Header &h) {
-  if (auto error = writeHeader_(out, h)) return error;
-  using Sending = ZfField(Header, sendingTime);
-  out.field(52);
-  saveScalar<Facet, Sending::Type::Code, typename Sending::Props>(out, h.sendingTime);
-  out.end();
-  if (h.possDup) {
-    using Original = ZfField(Header, origSendingTime);
-    out.field(122);
-    saveScalar<Facet, Original::Type::Code, typename Original::Props>(out, h.origSendingTime);
-    out.end();
-  }
-  return out.error();
-}
-template <typename Facet = ZuFacet::FIX,
-  template <typename> class Filter = ZfFieldFilter::Save,
-  typename HeaderFacet = Facet, typename O>
-FrameOutput writeFrame(ZuSpan<char> storage, const Header &header, const O &o,
-    Limits limits = {}, const Trailer &trailer = {}) {
-  FrameWriter writer{storage, header.beginString, limits};
-  if (writer.body().failed()) return writer.finish();
-  if (auto error = writeHeader<HeaderFacet>(writer.body(), header)) return {{}, error};
-  if (!save<Facet, Filter>(writer.body(), o)) return {{}, writer.body().error()};
-  if (auto error = writeTrailer(writer.body(), trailer)) return {{}, error};
+template <typename Entry, template <typename> class Filter = SaveField>
+FrameOutput writeFrame(ZuSpan<char> storage, ZuCSpan beginString,
+    const typename Entry::Object &object, Limits limits = {}) {
+  FrameWriter writer{storage, beginString, limits};
+  writer.body().field(35); writer.body() << Entry::MsgType; writer.body().end();
+  if (!save<typename Entry::Mapping, Filter>(writer.body(), object))
+    return {{}, writer.body().error()};
   return writer.finish();
 }
 } // Zfix::Fmt

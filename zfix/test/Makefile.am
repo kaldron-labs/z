@@ -3,7 +3,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/s
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
 EXTRA_DIST = ZfixDemo.hh README.md SESSION.md
-noinst_PROGRAMS = ZfixLoadTest ZfixLoadFIXTest ZfixLoadRunTest ZfixDemoTest ZfixWorkTest ZfixSelectTest ZfixContextTest ZfixDispatchTest ZfixTraceTest ZfixIngressTest ZfixRawTest ZfixWireTest ZfixRxFramerTest ZfixDeclTest ZfixLinkTest ZfixCodecTest ZfixGroupTest ZfixUnionTest ZfixFrameTest ZfixSessionTest ZfixSeqTest ZfixSeqTxTest ZfixLinkStateTest ZfixRxTest ZfixTxMsgTest ZfixTxTest ZfixLinkTxTest ZfixManagedTest ZfixRestoreTest
+noinst_PROGRAMS = ZfixSignTest ZfixLoadTest ZfixLoadFIXTest ZfixLoadRunTest ZfixDemoTest ZfixWorkTest ZfixSelectTest ZfixContextTest ZfixDispatchTest ZfixTraceTest ZfixIngressTest ZfixRawTest ZfixWireTest ZfixRxFramerTest ZfixDeclTest ZfixLinkTest ZfixCodecTest ZfixGroupTest ZfixUnionTest ZfixFrameTest ZfixSessionTest ZfixSeqTest ZfixSeqTxTest ZfixLinkStateTest ZfixRxTest ZfixTxMsgTest ZfixTxTest ZfixLinkTxTest ZfixManagedTest ZfixRestoreTest
 ZfixDemoTest_SOURCES = ZfixDemoTest.cc ZfixDemo.cc
 ZfixDemoTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixDemoTest_LDADD = $(ZfixLinkTest_LDADD)
@@ -16,7 +16,8 @@ ZfixContextTest_SOURCES = ZfixContextTest.cc
 ZfixContextTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixContextTest_LDADD = $(ZfixRxTest_LDADD)
 ZfixDispatchTest_SOURCES = ZfixDispatchTest.cc
-ZfixDispatchTest_LDADD = $(ZfixDeclTest_LDADD)
+ZfixDispatchTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
+ZfixDispatchTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixTraceTest_SOURCES = ZfixTraceTest.cc
 ZfixTraceTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixTraceTest_LDADD = $(ZfixRxTest_LDADD)
@@ -58,12 +59,14 @@ ZfixRxTest_SOURCES = ZfixRxTest.cc
 ZfixRxTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixRxTest_LDADD = $(ZfixLinkTest_LDADD) $(top_builddir)/zi/src/libZi.la
 ZfixLinkStateTest_SOURCES = ZfixLinkStateTest.cc
+ZfixLinkStateTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixLinkStateTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixSeqTxTest_SOURCES = ZfixSeqTxTest.cc
 ZfixSeqTxTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixSeqTest_SOURCES = ZfixSeqTest.cc
 ZfixSeqTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixSessionTest_SOURCES = ZfixSessionTest.cc
+ZfixSessionTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixSessionTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixFrameTest_LDADD = $(ZfixDeclTest_LDADD)
 ZfixUnionTest_LDADD = $(ZfixDeclTest_LDADD)
@@ -125,7 +128,7 @@ CLEANFILES += ZfixSchemaTest*.log
 schema-test:
 	$(CXX) $(DEFS) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	  -fsyntax-only -DZFIX_SCHEMA_CASE=0 $(srcdir)/ZfixSchemaTest.cc
-	@for zfix_case in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21; do \
+	@for zfix_case in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38; do \
 	  if $(CXX) $(DEFS) $(AM_CPPFLAGS) $(CPPFLAGS) $(AM_CXXFLAGS) $(CXXFLAGS) \
 	    -fsyntax-only -DZFIX_SCHEMA_CASE=$$zfix_case \
 	    $(srcdir)/ZfixSchemaTest.cc > ZfixSchemaTest$$zfix_case.log 2>&1; then \
@@ -141,8 +144,8 @@ schema-test:
 # Optional Clang libFuzzer/ASan target. Compile codec sources into the instrumented
 # executable; foundation dependencies remain the configured build's libraries.
 FUZZ_CXX = $(CXX)
-EXTRA_DIST += ZfixFrameFuzz.cc fuzz/Scalar fuzz/Binary fuzz/Zero fuzz/Nested \
-	fuzz/Frame fuzz/BinaryFrame fuzz/TruncatedType fuzz/SubIdsFrame
+EXTRA_DIST += ZfixFrameFuzz.cc fuzz/Scalar fuzz/Text fuzz/Zero fuzz/Nested \
+	fuzz/Frame fuzz/TextFrame fuzz/TruncatedType fuzz/SubIdsFrame
 CLEANFILES += ZfixFrameFuzz
 .PHONY: fuzz-build
 fuzz-build:
@@ -235,8 +238,8 @@ installed-dispatch-test:
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/ZfixDispatchTest.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
-	  -lZfixFmt -lZf -lZe -lZt -lZm -lZu \
-	  @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstDispatchTest
+	  -lZfix -lZfixFmt -lZi -lZf -lZe -lZt -lZm -lZu \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstDispatchTest
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./ZfixInstDispatchTest
 
 CLEANFILES += ZfixAsanContextTest ZfixInstContextTest
@@ -347,7 +350,8 @@ ZFIX_LOAD_LIBS = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la
 ZfixLoadTest_SOURCES = ZfixLoadTest.cc $(top_srcdir)/zfix/util/load.cc
 ZfixLoadTest_LDADD = $(ZFIX_LOAD_LIBS)
 ZfixLoadFIXTest_SOURCES = ZfixLoadFIXTest.cc $(top_srcdir)/zfix/util/load.cc $(top_srcdir)/zfix/util/load_fix.cc
-ZfixLoadFIXTest_LDADD = $(ZfixDeclTest_LDADD)
+ZfixLoadFIXTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
+ZfixLoadFIXTest_LDADD = $(ZfixLinkTest_LDADD)
 ZfixLoadRunTest_SOURCES = ZfixLoadRunTest.cc $(top_srcdir)/zfix/util/load.cc $(top_srcdir)/zfix/util/load_run.cc
 ZfixLoadRunTest_LDADD = $(ZFIX_LOAD_LIBS)
 
@@ -377,9 +381,27 @@ installed-load-test:
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/ZfixLoadFIXTest.cc $(top_srcdir)/zfix/util/load.cc $(top_srcdir)/zfix/util/load_fix.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
-	  -lZfixFmt -lZf -lZe -lZt -lZm -lZu @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstLoadFIXTest
+	  -lZfix -lZfixFmt -lZi -lZf -lZe -lZt -lZm -lZu @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstLoadFIXTest
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/ZfixLoadRunTest.cc $(top_srcdir)/zfix/util/load_run.cc $(top_srcdir)/zfix/util/load.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZf -lZe -lZt -lZm -lZu @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstRunTest
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./ZfixInstLoadTest ./ZfixInstLoadFIXTest ./ZfixInstRunTest
+
+ZfixSignTest_SOURCES = ZfixSignTest.cc
+ZfixSignTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src
+ZfixSignTest_LDADD = $(ZfixRxTest_LDADD) $(top_builddir)/ztls/src/libZtls.la @PTLS_LIBS@
+test: sign-test
+.PHONY: sign-test
+sign-test: all
+	prove ./ZfixSignTest
+CLEANFILES += ZfixInstSignTest
+installed-test: installed-sign-test
+.PHONY: installed-sign-test
+installed-sign-test:
+	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
+	  -I$(ZFIX_PREFIX)/include $(srcdir)/ZfixSignTest.cc \
+	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
+	  -lZfix -lZfixFmt -lZtls -lZi -lZf -lZe -lZt -lZm -lZu \
+	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstSignTest
+	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./ZfixInstSignTest

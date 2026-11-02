@@ -51,21 +51,16 @@ unsigned type(ZuCSpan type)
   }
 }
 
-Fmt::Error read(const Fmt::FrameView &frame, Msg &control,
-    Fmt::Header &header, Fmt::Trailer &trailer, Fmt::Limits limits)
+Fmt::Error read(const Fmt::FrameView &frame, Msg &control, Fmt::Limits limits)
 {
   control = Msg{};
-  header = {};
-  trailer = {};
   Fmt::Error error;
   ZuSwitch::dispatch<Msg::N>(type(frame.msgType),
-    [&frame, &control, &header, &trailer, &error, limits]<typename I>(I) {
+    [&frame, &control, &error, limits]<typename I>(I) {
       using O = Msg::Type<I{}>;
       if constexpr (ZuIsSame<O, void>{}) error = {Fmt::ErrorCode::Unresolved, 35};
       else {
 	Fmt::MessageHandler<O> h{frame, limits};
-	header = h.header();
-	trailer = h.trailer();
 	if (!h.valid()) { error = h.error(); return; }
 	auto message = h.ctor();
 	if (!h.valid()) { error = h.error(); return; }
@@ -84,59 +79,6 @@ ZuCSpan msgType(const Msg &control)
   });
   return type;
 }
-Fmt::Error save(Fmt::Sink &out, const Msg &control, unsigned mode)
-{
-  Fmt::Error result{Fmt::ErrorCode::Unresolved, 35};
-  ZuSwitch::dispatch<Msg::N>(control.type(),
-    [&out, &control, mode, &result]<typename I>(I) {
-      using O = Msg::Type<I{}>;
-      if constexpr (!ZuIsSame<O, void>{}) {
-	const auto &message = control.template p<I{}>();
-	auto send = [&out, &message]<typename Facet>() {
-	  Fmt::save<Facet>(out, message);
-	  return out.error();
-	};
-	if constexpr (ZuIsSame<O, Logon>{}) {
-	  if (mode == Transport::FIX44A && !message.nextExpected) {
-	    result = {Fmt::ErrorCode::Required, 789}; return;
-	  }
-	  if (mode == Transport::FIXT11 && !message.defaultAppVerID.length()) {
-	    result = {Fmt::ErrorCode::Required, 1137}; return;
-	  }
-	  if (message.nextExpected) {
-	    if (message.defaultAppVerID.data())
-	      result = send.template operator()<ZuFacet::FIXLogonSyncApp>();
-	    else result = send.template operator()<ZuFacet::FIXLogonSync>();
-	  } else {
-	    if (message.defaultAppVerID.data())
-	      result = send.template operator()<ZuFacet::FIXLogonApp>();
-	    else result = send.template operator()<ZuFacet::FIXLogon>();
-	  }
-	} else if constexpr (ZuIsSame<O, HeartBt>{}) {
-	  if (message.testReqID.data()) result = send.template operator()<ZuFacet::FIX>();
-	  else result = send.template operator()<ZuFacet::FIXEmpty>();
-	} else if constexpr (ZuIsSame<O, Logout>{}) {
-	  if (message.text.data()) result = send.template operator()<ZuFacet::FIX>();
-	  else result = send.template operator()<ZuFacet::FIXEmpty>();
-	} else if constexpr (ZuIsSame<O, Reject>{}) {
-	  if (!message.refSeqNo) { result = {Fmt::ErrorCode::Value, 45}; return; }
-	  if (message.reason < -1 || message.reason > 99) {
-	    result = {Fmt::ErrorCode::Value, 373}; return;
-	  }
-	  using Facets = ZuTypeList<ZuFacet::FIXRejectRef, ZuFacet::FIXRejectRefTag,
-	    ZuFacet::FIXRejectRefText, ZuFacet::FIXRejectRefAll,
-	    ZuFacet::FIXRejectBase, ZuFacet::FIXRejectTag, ZuFacet::FIXRejectText, ZuFacet::FIX>;
-	  unsigned fields = unsigned(message.refTagID != 0) |
-	    (unsigned(message.text.data() != nullptr) << 1) |
-	    (unsigned(message.reason >= 0) << 2);
-	  ZuSwitch::dispatch<Facets::N>(fields, [&send, &result]<typename J>(J) {
-	    result = send.template operator()<ZuType<J{}, Facets>>();
-	  });
-	} else result = send.template operator()<ZuFacet::FIX>();
-      }
-    });
-  if (result) out.fail(result);
-  return result;
-}
+
 } // Zfix::Session
 

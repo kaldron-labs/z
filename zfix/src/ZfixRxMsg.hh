@@ -26,8 +26,12 @@ namespace Zfix {
 struct RxMsg {
   ZmRef<ZiIOBuf>	buffer;
   Fmt::FrameView	frame;
-  Fmt::Header		header;
-  Fmt::Trailer		trailer;
+  ZuCSpan		sender, target, senderSub, targetSub;
+  ZuCSpan		senderLocation, targetLocation, appVerID, encoding;
+  uint64_t		seqNo = 0;
+  ZuDateTime		sendingTime, origSendingTime;
+  bool			possDup = false;
+  unsigned		sessionBytes = 0;
   Session::Msg		control;
   Fmt::Error		error;
   SessionFault		fault;
@@ -41,7 +45,7 @@ struct RxMsg {
   bool			early = false;
   bool			logoutReply = false;
 
-  uint64_t key() const { return header.seqNo; }
+  uint64_t key() const { return seqNo; }
   uint64_t length() const { return 1; }
   uint64_t retainedBytes() const { return charge; }
 };

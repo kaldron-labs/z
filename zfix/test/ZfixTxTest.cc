@@ -8,6 +8,7 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfixTx.hh>
+#include <zlib/ZfixRxMsg.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -15,9 +16,15 @@ using namespace Zfix::Fmt;
 
 struct Order {
   ZuCSpan	id;
+  ZuCSpan sender, target, senderSub, targetLocation, appVerID;
+  uint64_t seqNo = 0;
+  bool possDup = false;
+  ZuDateTime sendingTime, origSendingTime;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
+ZfStruct(, (Order), (id, (FIX::ID<11>), String));
+using OrderFIX = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIX ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order);
 ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
@@ -25,10 +32,15 @@ using OrderMsg = MT<Order, "D">;
 static SessionConfig config()
 {
   SessionConfig c;
-  c.header.version = Version::V4_4;
-  c.header.local = "CLIENT";
-  c.header.peer = "SERVER";
+  c.identity.version = Version::V4_4;
+  c.identity.local = "CLIENT";
+  c.identity.peer = "SERVER";
   return c;
+}
+static Fmt::Error readControl(const Fmt::FrameView &frame, Session::Msg &message, RxMsg &input) {
+  input = {}; input.frame = frame;
+  if (auto error = readSession(input)) return error;
+  return Session::read(frame, message);
 }
 struct Task {
   unsigned	kind;
@@ -251,7 +263,7 @@ static void assignment()
   ZuCheck(tx.output.length() == 1 && tx.associationBeforeWire);
   MessageHandler<Order> received{view(tx.output[0])};
   ZuCheck(received.valid() && received.ctor().id == "first");
-  ZuCheck(received.header().sendingTime == tx.now && received.header().seqNo == 1);
+  ZuCheck(received.ctor().sendingTime == tx.now && received.ctor().seqNo == 1);
   ZuCheck(tx.published_() == 2 && tx.acknowledged_() == 1);
   tx.loadResult = TxLoad::Refused;
   ZuCheck(tx.send(82) == TxSelect::Refused && tx.next_() == 2);
@@ -329,15 +341,15 @@ static void replay()
   ZuCheck(tx.output.length() == 8 && tx.next_() == 5 && tx.published_() == 5);
   MessageHandler<Order> first{view(tx.output[4])};
   ZuCheck(first.valid() && first.ctor().id == "first");
-  ZuCheck(first.header().possDup && first.header().seqNo == 1 &&
-    first.header().sendingTime == tx.now && first.header().origSendingTime == original);
+  ZuCheck(first.ctor().possDup && first.ctor().seqNo == 1 &&
+    first.ctor().sendingTime == tx.now && first.ctor().origSendingTime == original);
   Session::Msg fill;
-  Fmt::Header h;
-  Fmt::Trailer t;
-  ZuCheck(!Session::read(view(tx.output[5]), fill, h, t));
+  RxMsg h;
+
+  ZuCheck(!readControl(view(tx.output[5]), fill, h));
   ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
     fill.p<Session::SeqReset>().newSeqNo == 3 && h.seqNo == 2 && h.possDup);
-  ZuCheck(!Session::read(view(tx.output[6]), fill, h, t) && fill.is<Session::Reject>());
+  ZuCheck(!readControl(view(tx.output[6]), fill, h) && fill.is<Session::Reject>());
   ZuCheck(h.seqNo == 3 && h.origSendingTime == original);
   ZuCheck(tx.acknowledge_(tx.epoch_(), 5));
   tx.drain();
@@ -367,7 +379,7 @@ static void failedOutput()
   ZuCheck(tx.next_() == 2 && tx.published_() == 2 && tx.acknowledged_() == 1);
   ZuCheck(tx.replay_(tx.epoch_(), 1, 1)); tx.drain();
   MessageHandler<Order> replayed{view(tx.output[1])};
-  ZuCheck(replayed.valid() && replayed.header().seqNo == 1 && replayed.header().possDup);
+  ZuCheck(replayed.valid() && replayed.ctor().seqNo == 1 && replayed.ctor().possDup);
 }
 
 static void recovery()
@@ -391,10 +403,10 @@ static void recovery()
   missing.missingHistory = true;
   ZuCheck(missing.replay_(1, 1)); missing.drain();
   Session::Msg fill;
-  Fmt::Header h;
-  Fmt::Trailer t;
+  RxMsg h;
+
   ZuCheck(missing.output.length() == 2 &&
-    !Session::read(view(missing.output[1]), fill, h, t));
+    !readControl(view(missing.output[1]), fill, h));
   ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().newSeqNo == 2);
 }
 
@@ -441,10 +453,10 @@ static void sequenceLimit()
   ZuCheck(tx.replay_(tx.epoch_(), 1)); tx.drain();
   ZuCheck(tx.output.length() == 7 && tx.next_() == 5);
   Session::Msg fill;
-  Fmt::Header header;
-  Fmt::Trailer trailer;
+  RxMsg header;
+
   if (tx.output.length() == 7)
-    ZuCheck(!Session::read(view(tx.output[6]), fill, header, trailer) &&
+    ZuCheck(!readControl(view(tx.output[6]), fill, header) &&
       fill.is<Session::SeqReset>() && header.seqNo == 3 &&
       fill.p<Session::SeqReset>().newSeqNo == 5);
 }
@@ -510,14 +522,15 @@ static void clockReversal()
   auto original = tx.now;
   tx.now = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-11:59:59"};
   ZuCheck(tx.replay_(tx.epoch_(), 1)); tx.drain();
-  ZuCheck(tx.output.length() == 1 && tx.failed_() && tx.error.tag == 122);
+  ZuCheck(tx.output.length() == 2 && !tx.failed_());
   ZuCheck(tx.next_() == 2 && tx.published_() == 2);
   tx.now = original;
   tx.resume_(); tx.drain();
   ZuCheck(tx.output.length() == 2 && !tx.failed_());
   MessageHandler<Order> replayed{view(tx.output[1])};
-  ZuCheck(replayed.valid() && replayed.header().origSendingTime == original &&
-    replayed.header().sendingTime == original);
+  ZuCheck((replayed.valid() && replayed.ctor().origSendingTime == original &&
+    replayed.ctor().sendingTime == ZuDateTime{ZuDateTimeScan::FIX{},
+      "20261027-11:59:59"}));
 }
 
 static void modes()
@@ -526,19 +539,19 @@ static void modes()
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     auto c = config();
     c.mode = mode;
-    c.header.version = mode == Transport::FIXT11 ? Version::V4_4 : Version::VT1_1;
+    c.identity.version = mode == Transport::FIXT11 ? Version::V4_4 : Version::VT1_1;
     c.appVerID = AppVersion::V5_0_SP2;
-    c.header.localSub = "DESK";
-    c.header.peerLocation = "LOC";
-    auto version = Version::Wire::v2s(c.header.version);
+    c.identity.localSub = "DESK";
+    c.identity.peerLocation = "LOC";
+    auto version = Version::Wire::v2s(c.identity.version);
     Engine tx{{}, ZuMv(c)};
     tx.start();
     ZuCheck(tx.send(1) == TxSelect::Accepted); tx.drain();
     MessageHandler<Order> message{view(tx.output[0])};
-    ZuCheck(message.valid() && message.header().beginString == version);
-    ZuCheck(message.header().senderSub == "DESK" && message.header().targetLocation == "LOC");
-    if (mode == Transport::FIXT11) ZuCheck(message.header().appVerID == "9");
-    else ZuCheck(!message.header().appVerID.data());
+    ZuCheck(message.valid() && view(tx.output[0]).beginString == version);
+    ZuCheck(message.ctor().senderSub == "DESK" && message.ctor().targetLocation == "LOC");
+    if (mode == Transport::FIXT11) ZuCheck(message.ctor().appVerID == "9");
+    else ZuCheck(!message.ctor().appVerID.data());
   }
 }
 
@@ -565,9 +578,9 @@ static void reconnectRetained()
   ZuCheck(tx.output[2].body->id() == 2 && tx.output[2].context.seqNo == 2 &&
     tx.output[2].context.connection == 2 && !tx.output[2].context.replay);
   Session::Msg fill;
-  Fmt::Header header;
-  Fmt::Trailer trailer;
-  ZuCheck(!Session::read(view(tx.output[3]), fill, header, trailer));
+  RxMsg header;
+
+  ZuCheck(!readControl(view(tx.output[3]), fill, header));
   ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
     fill.p<Session::SeqReset>().newSeqNo == 4 && header.seqNo == 3 && header.possDup);
   ZuCheck(tx.output[4].body->id() == 3 && tx.output[4].context.seqNo == 4 &&
@@ -577,8 +590,8 @@ static void reconnectRetained()
   tx.resume_(); tx.drain();
   ZuCheck(tx.output.length() == 5 && tx.replay_(tx.epoch_(), 1, 1)); tx.drain();
   MessageHandler<Order> old{view(tx.output[5])};
-  ZuCheck(old.valid() && old.ctor().id == "order" && old.header().seqNo == 1 &&
-    old.header().possDup);
+  ZuCheck(old.valid() && old.ctor().id == "order" && old.ctor().seqNo == 1 &&
+    old.ctor().possDup);
 }
 
 static void repeatedReconnect()
@@ -608,9 +621,9 @@ static void repeatedReconnect()
   ZuCheck(tx.output.length() == 5 && tx.output[3].body->id() == 2 &&
     tx.output[3].context.seqNo == 2 && tx.output[3].context.connection == 3);
   Session::Msg fill;
-  Fmt::Header header;
-  Fmt::Trailer trailer;
-  ZuCheck(!Session::read(view(tx.output[4]), fill, header, trailer));
+  RxMsg header;
+
+  ZuCheck(!readControl(view(tx.output[4]), fill, header));
   ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
     fill.p<Session::SeqReset>().newSeqNo == 4 && header.seqNo == 3 && header.possDup);
   ZuCheck(tx.next_() == 5 && tx.published_() == 5 && tx.acknowledged_() == 1 &&
@@ -702,8 +715,8 @@ static void priorityPendingReplay()
 	!tx.output[1].context.replay && tx.output[2].body->id() == 42 &&
 	tx.output[2].context.seqNo == 1 && tx.output[2].context.replay);
       MessageHandler<Order> replayed{view(tx.output[2])};
-      ZuCheck(replayed.valid() && replayed.header().possDup &&
-	replayed.header().origSendingTime == tx.output[1].original);
+      ZuCheck(replayed.valid() && replayed.ctor().possDup &&
+	replayed.ctor().origSendingTime == tx.output[1].original);
     }
   }
 }
@@ -725,10 +738,10 @@ static void unavailableAssigned()
   ZuCheck(tx.output.length() == 2 && tx.next_() == 4 && tx.published_() == 4 &&
     tx.acknowledged_() == 1 && !tx.queuedBytes_() && !tx.waiting_() && !tx.error);
   Session::Msg fill;
-  Fmt::Header header;
-  Fmt::Trailer trailer;
+  RxMsg header;
+
   if (tx.output.length() == 2) {
-    ZuCheck(!Session::read(view(tx.output[1]), fill, header, trailer));
+    ZuCheck(!readControl(view(tx.output[1]), fill, header));
     ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
       fill.p<Session::SeqReset>().newSeqNo == 3 && header.seqNo == 1 && header.possDup);
   }
@@ -763,9 +776,9 @@ static void abortedAssigned()
   uint64_t next = 2;
   for (unsigned i = 2, n = tx.output.length(); i < n; ++i) {
     Session::Msg fill;
-    Fmt::Header header;
-    Fmt::Trailer trailer;
-    ZuCheck(!Session::read(view(tx.output[i]), fill, header, trailer));
+    RxMsg header;
+
+    ZuCheck(!readControl(view(tx.output[i]), fill, header));
     ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
       header.seqNo == next && header.possDup);
     auto end = fill.p<Session::SeqReset>().newSeqNo;
@@ -806,9 +819,9 @@ static void reconstructedHistory()
   MessageHandler<Order> replayed{view(published)};
   auto order = replayed.ctor();
   ZuCheck(replayed.valid() && order.id == "restored/0007" &&
-    replayed.header().seqNo == 1 && replayed.header().possDup &&
-    replayed.header().origSendingTime == restored.stored[0].original &&
-    replayed.header().sendingTime == restored.now);
+    replayed.ctor().seqNo == 1 && replayed.ctor().possDup &&
+    replayed.ctor().origSendingTime == restored.stored[0].original &&
+    replayed.ctor().sendingTime == restored.now);
   ZuCheck(published.context.epoch == 17 && published.context.replay &&
     restored.next_() == 2 && restored.published_() == 2 &&
     restored.acknowledged_() == 2 && !restored.associations.length());
@@ -926,12 +939,12 @@ static void appReplayChoice()
     tx.output[1].context.seqNo == 1 && tx.output[1].context.replay);
   MessageHandler<Order> received{view(tx.output[1])};
   ZuCheck(received.valid() && received.ctor().id == "latest-price" &&
-    received.header().origSendingTime == tx.output[0].original);
+    received.ctor().origSendingTime == tx.output[0].original);
   tx.missingHistory = true;
   ZuCheck(tx.replay_(1, 1)); tx.drain();
-  Session::Msg fill; Fmt::Header header; Fmt::Trailer trailer;
+  Session::Msg fill; RxMsg header;
   ZuCheck(tx.historyCalls == 3 && tx.output.length() == 3 &&
-    !Session::read(view(tx.output[2]), fill, header, trailer));
+    !readControl(view(tx.output[2]), fill, header));
   ZuCheck(fill.is<Session::SeqReset>() && header.seqNo == 1);
   ZuCheck(tx.lookups.length() == 3 && tx.lookups[0].replay && tx.lookups[2].replay);
   Engine held;
