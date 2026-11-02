@@ -82,7 +82,7 @@ protected:
     size{size_}, length{length_} { }
 
 public:
-  virtual ~IOBuf() { if (ZuUnlikely(data__ &Jumbo)) vfree(data_()); }
+  virtual ~IOBuf() { if (ZuUnlikely(data__ & Jumbo)) vfree(data_()); }
 
   IOBuf(const IOBuf &buf) = delete;
   IOBuf &operator =(const IOBuf &buf) = delete;
@@ -112,13 +112,13 @@ public:
     if (ZuLikely(newSize <= size)) return data();
     auto jumbo = static_cast<uint8_t *>(valloc(newSize));
     size = newSize;
-    if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
+    if (ZuUnlikely(data__ & Jumbo)) vfree(data_());
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return jumbo;
   }
 
   void free(uint8_t *ptr) {
-    if (!(data__ &Jumbo) && ptr == data_()) return;
+    if (!(data__ & Jumbo) && ptr == data_()) return;
     if (ptr == data_()) { data__ = 0; length = size = 0; }
     vfree(ptr);
   }
@@ -182,7 +182,7 @@ public:
     if (tail)
       memcpy(jumbo + newSize_ - tail, old + oldSize - tail, tail);
     size = newSize_;
-    if (ZuUnlikely(data__ &Jumbo)) vfree(data_());
+    if (ZuUnlikely(data__ & Jumbo)) vfree(data_());
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return jumbo + skip;
   }
@@ -205,7 +205,7 @@ public:
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
     if (length) memcpy(jumbo + skip, old + skip, length);
     size = newSize;
-    if (ZuUnlikely(data__ &Jumbo)) vfree(old);
+    if (ZuUnlikely(data__ & Jumbo)) vfree(old);
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return jumbo + skip;
   }
@@ -236,7 +236,7 @@ public:
     size = newSize;
     skip = newSkip - length_;
     length += length_;
-    if (ZuUnlikely(data__ &Jumbo)) vfree(old);
+    if (ZuUnlikely(data__ & Jumbo)) vfree(old);
     data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
     return data();
   }

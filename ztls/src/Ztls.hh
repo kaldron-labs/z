@@ -810,6 +810,10 @@ private:
     return base;
   }
 
+  Cxn *closing_() const { return m_closing.load_(); }
+  void closing_(Cxn *cxn) { m_closing = cxn; }
+  uint64_t tlsGen_() const { return m_tlsGen.load_(); }
+
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMvPtr(impl_)};
@@ -818,25 +822,25 @@ private:
       // preexisting encrypt/send posts can still refer to that physical Cxn.
       // The close token makes these barriers cleanup-free after replacement.
       impl->disconnected_(cxn);
-      auto gen = impl->m_tlsGen.load_();
+      auto gen = impl->tlsGen_();
       auto app = impl->app();
       // drain Tx while keeping cxn/impl referenced
       app->txRun([impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer]() mutable {
-	if (impl->m_closing.load_() == cxn.ptr()) impl->clearTx_(gen);
+	if (impl->closing_() == cxn.ptr()) impl->clearTx_(gen);
 	// TLS Tx has stopped producing; drain its queued socket sends next.
 	auto mx = cxn->mx();
 	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
 	]() mutable {
-	  if (impl->m_closing.load_() == cxn.ptr() && gen == impl->m_tlsGen.load_())
+	  if (impl->closing_() == cxn.ptr() && gen == impl->tlsGen_())
 	    impl->Tx::txQueue.clean();
 	  auto app = impl->app();
 	  app->rxRun([
 	    impl = ZuMv(impl), cxn = ZuMv(cxn), gen, peer
 	  ]() mutable {
-	    if (impl->m_closing.load_() == cxn.ptr()) {
-	      impl->m_closing = nullptr;
-	      if (gen == impl->m_tlsGen.load_()) impl->disconnected_1(peer);
+	    if (impl->closing_() == cxn.ptr()) {
+	      impl->closing_(nullptr);
+	      if (gen == impl->tlsGen_()) impl->disconnected_1(peer);
 	    }
 	    impl->app()->linkDisconnected_();
 	    (void)cxn;
@@ -1138,7 +1142,7 @@ private:
     app()->rxRun([impl = ZmRef(impl()), gen, message, origin]() mutable {
       auto e = ZeEXCEPT(Error, "Ztls", message);
       bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
-      if (close && origin && gen == impl->m_tlsGen.load_() && impl->m_cxn)
+      if (close && origin && gen == impl->tlsGen_() && impl->m_cxn)
 	impl->disconnect_(false);
     });
   }
@@ -1149,7 +1153,7 @@ private:
 	s << function << ": " << strerror_(n);
       }));
       bool close = impl->m_txErrorFn && !impl->m_txErrorFn(e);
-      if (close && gen == impl->m_tlsGen.load_() && impl->m_cxn)
+      if (close && gen == impl->tlsGen_() && impl->m_cxn)
 	impl->disconnect_(false);
     });
   }
