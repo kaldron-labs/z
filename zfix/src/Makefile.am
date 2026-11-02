@@ -2,7 +2,7 @@ METASOURCES = AUTO
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src -I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src -I$(top_srcdir)/zfix/src @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-pkginclude_HEADERS = ZfixFmtLib.hh ZfixFmt.hh ZfixFrame.hh ZfixLib.hh \
+pkginclude_HEADERS = ZfixFmtLib.hh ZfixFmt.hh ZfixFields.hh ZfixFrame.hh ZfixLib.hh \
 	Zfix.hh ZfixIOBuf.hh ZfixWork.hh ZfixContext.hh ZfixDispatch.hh ZfixSession.hh ZfixHooks.hh ZfixLinkState.hh ZfixSeq.hh ZfixRxMsg.hh ZfixRx.hh ZfixRxFramer.hh ZfixWire.hh ZfixLink.hh ZfixNet.hh ZfixRaw.hh ZfixIngress.hh ZfixStats.hh ZfixTrace.hh ZfixTxMsg.hh ZfixTx.hh ZfixNotice.hh ZfixLinkTx.hh ZfixClient.hh ZfixServer.hh
 lib_LTLIBRARIES = libZfixFmt.la libZfix.la
 libZfixFmt_la_CPPFLAGS = $(AM_CPPFLAGS) -DZFIXFMT_EXPORTS

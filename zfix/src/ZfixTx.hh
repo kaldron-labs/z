@@ -68,24 +68,10 @@ struct TxLimits {
   unsigned	controlHeadroom = 1024;
 };
 
-// Tx owns its header configuration, mode and sequence domain. Rx clocks,
-// role and heartbeat policy stay in SessionConfig on the Rx owner.
-struct TxConfig {
-  HeaderConfig	header;
-  unsigned	appVerID;
-  uint64_t	sequenceLimit;
-  unsigned	mode;
-};
-
-ZfixExtern TxConfig txConfig(SessionConfig);
-// Returned spans borrow config; retain it until the frame has been encoded.
-ZfixExtern Fmt::Header txHeader(const TxConfig &, uint64_t seqNo,
-  ZuDateTime now, ZuDateTime original = {});
-
 // All entry points run on Tx. select_ receives already selected, encoded work,
 // encoded with this owner's effective codec limits, never an off-shard application
 // submission. The application retains ownership
-// of its unsequenced queue. Header strings belong to this owner's config.
+// of its unsequenced queue. Routing strings belong to this owner's config.
 //
 // Mandatory Impl hooks:
 // loadTx(TxBody::Ref, TxContext, ticket) -> TxLoad; asynchronous completion
@@ -110,6 +96,12 @@ template <typename Impl> class Tx : private SeqTx<Tx<Impl>, TxQueue, TxHistory> 
   using Base = SeqTx<Tx<Impl>, TxQueue, TxHistory>;
 friend Base;
 public:
+  enum { SignMsg = 0 };
+  template <typename S>
+  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+
+  const Impl &signer_() const { return *static_cast<const Impl *>(this); }
+
   using Msg = TxQueue::Node;
   using Span = TxQueue::Span;
 
@@ -434,7 +426,7 @@ private:
     // load survives physical replacement; its first publication uses the current
     // connection. Connection-specific controls remain subject to the guard above.
     m_pending->data().connection = m_connection;
-    auto result = Base::commit_(ZuMv(m_pending));
+    [[maybe_unused]] auto result = Base::commit_(ZuMv(m_pending));
     // Reload admission includes this candidate's reserved charge. Publication
     // can release operational bytes while its association is pending.
     ZmAssert(result == SeqResult::Accepted);
@@ -457,11 +449,13 @@ private:
   bool publishTx(TxHistory &history, bool replay) {
     if (!m_attached || !Base::running_()) return false;
     auto now = impl()->utcTx();
-    auto header = txHeader(m_config, history.seqNo, now,
-      replay ? history.originalTime : ZuDateTime{});
     Fmt::Error error;
-    auto frame = txFrame(*history.body, header, error, m_limits.codec);
     TxContext context{m_epoch, m_connection, history.seqNo, replay};
+    context.sendingTime = now;
+    context.origSendingTime = replay ? history.originalTime : ZuDateTime{};
+    context.possDup = replay;
+    auto frame = txFrame(*history.body, m_config, context, error,
+      m_limits.codec, impl()->signer_());
     if (!frame) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     auto original = replay ? history.originalTime : now;
     if (!impl()->frameTx(history.body, context, ZuMv(frame), original)) {
@@ -483,7 +477,10 @@ private:
     TxContext context{m_epoch, m_connection, gap.key(), true};
     if (!body) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     auto now = impl()->utcTx();
-    auto output = txFrame(*body, txHeader(m_config, gap.key(), now, now), error, m_limits.codec);
+    context.sendingTime = context.origSendingTime = now;
+    context.possDup = true;
+    auto output = txFrame(*body, m_config, context, error,
+      m_limits.codec, impl()->signer_());
     if (!output) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     bool ok = impl()->frameTx(ZuMv(body), context, ZuMv(output), now);
     if (!ok) ++m_stats.outputRefused;

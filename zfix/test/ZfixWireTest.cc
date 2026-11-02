@@ -21,7 +21,9 @@ struct Order {
   ZuCSpan	id;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
+ZfStruct(, (Order), (id, (FIX::ID<11>), String));
+using OrderFIXFields = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using Entry = MT<Order, "D">;
 constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
@@ -251,8 +253,8 @@ struct SessionOwner : public LinkTx<SessionOwner> {
   Fmt::Error	error;
 
   static SessionConfig config() {
-    SessionConfig c; c.header.version = Version::V4_4;
-    c.header.local = "LOCAL"; c.header.peer = "PEER"; return c;
+    SessionConfig c; c.identity.version = Version::V4_4;
+    c.identity.local = "LOCAL"; c.identity.peer = "PEER"; return c;
   }
 
   explicit SessionOwner(WireLimits limits = {}) :
@@ -536,7 +538,7 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
     return transportBind_(replacing);
   }
 
-  void up() { ZmAssert(bind()); transportUp_(); }
+  void up() { ZmAssert_(bind()); transportUp_(); }
 
   void down(bool peer) { native = false; transportDown_(peer); }
 
@@ -557,7 +559,7 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
     ++epochs;
     if (!bindOnEpoch) return;
     bindOnEpoch = false;
-    app()->rxRun([this] { ZmAssert(bind()); });
+    app()->rxRun([this] { ZmAssert_(bind()); });
   }
 
   void fixFaultTx(TxContext, Fmt::Error) { ++faults; }
@@ -569,9 +571,10 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   int control(uint64_t seqNo, const Session::Msg &msg) {
     Fmt::Error error;
     auto body = TxBody::control(msg, error);
-    auto peer = config(); peer.header.local = "PEER"; peer.header.peer = "LOCAL";
+    auto peer = config(); peer.identity.local = "PEER"; peer.identity.peer = "LOCAL";
     auto cfg = txConfig(ZuMv(peer));
-    auto frame = txFrame(*body, txHeader(cfg, seqNo, ZuDateTime{Zm::now()}), error);
+    auto frame = txFrame(*body, cfg,
+      TxContext{.seqNo = seqNo, .sendingTime = ZuDateTime{Zm::now()}}, error);
     ZmAssert(frame && !error);
     auto input = fixAllocRx(); input->append(frame->cspan());
     Stream stream; stream.push(ZuMv(input));
@@ -795,12 +798,11 @@ static void resetCloseOutcome(bool committed, unsigned stage)
   app.drain();
   ZuCheck(link->records.length() == 1 && link->session_().connection_() == 2);
   Session::Msg logon;
-  Fmt::Header header;
-  Fmt::Trailer trailer;
   if (link->records.length() == 1) {
     auto parsed = Fmt::frame(ZuCSpan{link->records[0]->cspan()});
-    ZuCheck(!Session::read(parsed.view, logon, header, trailer) &&
-      logon.is<Session::Logon>() && header.seqNo == unsigned(committed ? 1 : 3) &&
+    RxMsg metadata; metadata.frame = parsed.view;
+    ZuCheck(!catalogSession<Session::MTs>(metadata) && !Session::read(parsed.view, logon) &&
+      logon.is<Session::Logon>() && metadata.seqNo == unsigned(committed ? 1 : 3) &&
       logon.p<Session::Logon>().resetSeqNum == bool(committed && stage));
     link->finish(0, true); app.drain();
   }

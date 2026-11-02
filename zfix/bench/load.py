@@ -16,7 +16,7 @@ import traceback
 
 HERE = Path(__file__).resolve().parent
 BASE = HERE.parent
-PROFILES = ("scalar", "groups", "binary", "fragmentation", "replay", "overload")
+PROFILES = ("scalar", "groups", "text", "fragmentation", "replay", "overload")
 PAIRS = ("native-native", "native-quickfix", "quickfix-native", "quickfix-quickfix")
 
 
@@ -118,6 +118,9 @@ def metadata(options, pair, programs):
                              "same configured count/byte bounds, different stored representation",
                   "logging": "peer wire/event logging disabled; timing relay aggregate summary",
                   "wireCounters": "native socket-completed; QuickFIX SDK wire attempts",
+                  "measuredWindow": "client CLOCK_MONOTONIC nanoseconds; first session's "
+                                    "measured start through last session's measured finish; "
+                                    "sum of session rates also reported",
                   "resources": "wait4 whole process including startup/warmup/shutdown and "
                                "libtool wrapper/fork-exec highwater; inherited pre-exec RSS can "
                                "dominate small cases; latency/throughput cover measured workload",
@@ -181,8 +184,8 @@ def common_args(options, profile):
     if profile == "groups":
         args += ["--scenario", "groups", "--parties", str(options.parties),
                  "--subs", str(options.subs)]
-    if profile in ("binary", "fragmentation"):
-        args += ["--binary", str(options.binary)]
+    if profile in ("text", "fragmentation"):
+        args += ["--text", str(options.text)]
     return args
 
 
@@ -285,6 +288,8 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
             assert row["errors"] == progress["invalid"] == progress["unknown"] == 0, row
             assert progress["complete"] == progress["admitted"] == options.count, row
             assert progress["reports"] == 2 * options.count and progress["inFlight"] == 0, row
+            assert 0 < row["startNs"] < row["endNs"], row
+            assert row["endNs"] - row["startNs"] == row["elapsedNs"], row
         for row in servers:
             assert row["errors"] == 0, row
             assert row["progress"]["complete"] == options.count + options.warmup, row
@@ -297,6 +302,9 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
             if profile == "fragmentation":
                 assert outcome[0]["chunks"] > outcome[0]["frames"], outcome
             case["relay"] = outcome[0]
+        case["startNs"] = min(row["startNs"] for row in clients)
+        case["endNs"] = max(row["endNs"] for row in clients)
+        case["elapsedNs"] = case["endNs"] - case["startNs"]
         case["status"] = "passed"
     except subprocess.TimeoutExpired:
         case.update(status="failed", timeouts=1, error="process diagnostic deadline expired")
@@ -365,13 +373,16 @@ def report(root, manifest, results):
              "No configured clean release or platform acceptance is inferred from a label.", "",
              "CPU/RSS cover whole local processes; latency and orders/s use each client's "
              "measured phase. Wire bytes include warmup and controls, so wire B/s uses "
-             "case wall duration including setup/teardown. Orders/s is the sum of per-session "
-             "rates, rather than a shared global interval. LinkState quantiles are reported "
+             "case wall duration including setup/teardown. Shared-window orders/s divides "
+             "all measured completions by the interval from the first session's measured "
+             "start to the last session's measured finish in the same client process. "
+             "Sum-of-session rates are also retained. LinkState quantiles are reported "
              "separately and are not averaged across sessions or repeats.", "",
              "| Pair / profile / transport / repeat | Transport | Status | Complete / unfinished | "
-             "Errors / bad exits / timeouts | Orders/s | Client CPU s / RSS bytes | "
+             "Errors / bad exits / timeouts | Shared-window orders/s | Sum session orders/s | "
+             "Client CPU s / RSS bytes | "
              "Server CPU s / RSS bytes |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
 
     def resource(case, role):
         value = case["resources"].get(role, {}).get("wait4")
@@ -383,12 +394,14 @@ def report(root, manifest, results):
         clients = case.get("clients", [])
         throughput = sum(row["progress"]["complete"] * 1e9 / row["elapsedNs"]
                          for row in clients if row["elapsedNs"])
+        shared = (f"{case['complete'] * 1e9 / case['elapsedNs']:.3f}"
+                  if case.get("elapsedNs") else "unmeasured")
         label = f"{case['pair']} / {case['profile']} / {case['transport']} / {case['repeat']}"
         mode = f"{case['diagnosticObserver']} diagnostic" if case["diagnostic"] else "timing"
         lines.append(f"| {label} | {mode} | "
                      f"{case['status']} | {case['complete']} / {case['unfinished']} | "
                      f"{case['errors']} / {case['processErrors']} / {case['timeouts']} | "
-                     f"{throughput:.3f} | "
+                     f"{shared} | {throughput:.3f} | "
                      f"{resource(case, 'client')} | {resource(case, 'server')} |")
     lines += ["", "## Work and process counters", "",
               "Wire counts include warmup, controls and any replay. Retention is the "
@@ -512,7 +525,7 @@ def main():
     parser.add_argument("--queue-bytes", type=int, default=16 << 20)
     parser.add_argument("--parties", type=int, default=32)
     parser.add_argument("--subs", type=int, default=8)
-    parser.add_argument("--binary", type=int, default=4096)
+    parser.add_argument("--text", type=int, default=4096)
     parser.add_argument("--fragment", type=int, default=64)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--sender", default="ZFIX-C")
@@ -536,7 +549,7 @@ def main():
         parser.error("wait4 process resource measurement requires a supported POSIX host")
     if any(getattr(options, name) <= 0 for name in (
             "count", "inflight", "sessions", "repeat", "retain", "cache_bytes", "queue_bytes",
-            "parties", "subs", "binary", "fragment", "deadline", "ready_timeout",
+            "parties", "subs", "text", "fragment", "deadline", "ready_timeout",
             "process_timeout", "overload_rate")) or options.warmup < 0 or options.rate < 0:
         parser.error("positive bounds and nonnegative warmup/rate required")
     if bool(options.remote_host) != bool(options.remote_ports):

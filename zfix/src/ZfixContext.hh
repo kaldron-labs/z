@@ -39,22 +39,26 @@ public:
     m_tag = Key::Tag; m_key = Key::Value;
     const auto &input = m_message->data();
     m_context = {.session = session, .connection = input.connection,
-      .epoch = input.epoch, .seqNo = input.header.seqNo,
-      .replay = input.header.possDup, .possDup = input.header.possDup,
-      .version = input.header.beginString};
+      .epoch = input.epoch, .seqNo = input.seqNo,
+      .replay = input.possDup, .possDup = input.possDup,
+      .version = input.frame.beginString};
   }
 
   explicit operator bool() const { return m_message.ptr(); }
 
   template <typename Entry> bool is() const {
     using Key = typename Entry::Discrim;
-    return m_message && m_message->data().header.msgType == ZuCSpan{Entry::MsgType} &&
+    return m_message && m_message->data().frame.msgType == ZuCSpan{Entry::MsgType} &&
       m_tag == Key::Tag && m_key == ZuCSpan{Key::Value};
   }
 
   const Context &context() const { return m_context; }
-  const Fmt::Header &header() const { ZmAssert(m_message); return m_message->data().header; }
-  const Fmt::Trailer &trailer() const { ZmAssert(m_message); return m_message->data().trailer; }
+  uint64_t seqNo() const { ZmAssert(m_message); return m_message->data().seqNo; }
+  bool possDup() const { ZmAssert(m_message); return m_message->data().possDup; }
+  ZuCSpan sender() const { ZmAssert(m_message); return m_message->data().sender; }
+  ZuCSpan target() const { ZmAssert(m_message); return m_message->data().target; }
+  ZuDateTime sendingTime() const { ZmAssert(m_message); return m_message->data().sendingTime; }
+  ZuDateTime origSendingTime() const { ZmAssert(m_message); return m_message->data().origSendingTime; }
   const Fmt::FrameView &frame() const { ZmAssert(m_message); return m_message->data().frame; }
 
   uint64_t memory() const {
@@ -71,7 +75,7 @@ private:
   Context			m_context;
   // selected descriptor constant, not a per-field input retain
   ZuCSpan			m_key;
-  unsigned			m_tag = 0;
+  int32_t			m_tag = 0;
 };
 
 namespace Context_ {

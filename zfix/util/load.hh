@@ -61,7 +61,6 @@ struct Order {
   ZuDecimal	price;
   Rows<Party>	parties;
   ZuCSpan	text;
-  ZuBSpan	encoded;
 };
 
 struct Cancel {
@@ -83,11 +82,10 @@ struct Report {
   ZuDecimal	price, avg, lastPx;
   ZuDateTime	time;
   ZuCSpan	text;
-  ZuBSpan	encoded;
 };
 
 struct Shape {
-  unsigned	parties = 0, subs = 0, text = 0, binary = 0;
+  unsigned	parties = 0, subs = 0, text = 0;
 };
 
 // Build shape once per session. Returned spans remain valid until destruction;
@@ -100,15 +98,13 @@ public:
 
   const Order &order() const { return m_order; }
 
-  bool shape(ZuCSpan text, ZuBSpan binary) const {
-    return text == m_order.text && binary == m_order.encoded;
+  bool shape(ZuCSpan text) const {
+    return text == m_order.text;
   }
 private:
-  using Binary = ZtArray<uint8_t, ZtArrayHeapID<"Zfix.Load.Binary">>;
   uint64_t	m_seed;
   Order		m_order;
   Text		m_text;
-  Binary	m_binary;
 };
 
 Report report(const Order &, uint64_t exec, ZuCSpan kind,

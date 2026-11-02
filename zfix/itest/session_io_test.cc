@@ -26,6 +26,7 @@ namespace Net = Ztls;
 #include <zlib/Ztcp.hh>
 namespace Net = Ztcp;
 #endif
+#include <zlib/ZtlsHMAC.hh>
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixRx.hh>
 #include <zlib/ZfixSeq.hh>
@@ -43,10 +44,17 @@ struct Progress {
 struct Order {
   ZuCSpan	id;
   unsigned	lane = 0;
+  ZuBSpan	data, signature;
+  uint64_t	seqNo = 0;
+  bool		possDup = false;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String),
-  (lane, (FIX::ID<7001>), UInt32));
+ZfStruct(, (Order), (id, (FIX::ID<11>), String),
+  (lane, (FIX::ID<7001>), UInt32),
+  (data, (FIX::ID<95>, FIX::Binary<96>, FIX::Opt), Bytes),
+  (signature, ((FIX::Sig<93, 89>)), Bytes));
+using OrderFIXFields = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
 using Reply0 = MT<Order, "8", ZuFacet::FIX, Discrim<7001, "0">>;
@@ -63,6 +71,29 @@ using Network = Zfix::TLS;
 #else
 using Network = Zfix::TCP;
 #endif
+static constexpr auto SignedPayload =
+  "8=FIX.4.4\1" "9=13\1" "35=D\1" "58=ABCD\1" "10=155\1" "\0"
+  "8=FIX.4.4\1" "9=13\1" "35=8\1" "58=ABCD\1" "10=143\1"_z;
+
+template <typename O>
+static bool verifySignature(const Fmt::FrameView &frame, ZuBSpan signature) {
+  if (signature.length() != Ztls::HMAC<>::Size) return false;
+  Fmt::FieldPos length, payload;
+  if (Fmt::inspect<O>(frame.content, 93, length) ||
+      Fmt::inspect<O>(frame.content, 89, payload) ||
+      length.offset == UINT_MAX || payload.offset == UINT_MAX ||
+      payload.offset + payload.length + 1 != frame.content.length()) return false;
+  if (signature.data() != reinterpret_cast<const uint8_t *>(
+      frame.content.data() + payload.offset)) return false;
+  auto first = frame.msgType.data() - 3; // the profile covers the complete 35= field
+  auto last = frame.content.data() + length.offset - 3; // immediately before 93=
+  Ztls::HMAC<> mac;
+  mac.start(ZuBSpan{"session fixture"});
+  mac.update(ZuBSpan{ZuCSpan{first, uint64_t(last - first)}});
+  uint8_t digest[Ztls::HMAC<>::Size]; mac.finish(digest);
+  return signature == ZuBSpan{digest};
+}
+
 template <typename T> using Items = ZtArray<T, ZtArrayHeapID<"Zfix.SessionIOTest">>;
 // Shared core TxBody objects cannot carry this application FIFO's links.
 using PendingQueue = ZmList<TxBody::Ref, ZmListHeapID<"Zfix.SessionIOTest.Queue">>;
@@ -76,6 +107,10 @@ struct ServerLink;
 struct TestState {
   RequestContext	retained;
   ZuCSpan		retainedID;
+  ZuBSpan		retainedData, retainedSignature;
+  const char		*retainedWire = nullptr;
+  bool			signing = false; // immutable before workers start
+  ZmAtomic<unsigned>	signedClient{0}, signedServer{0}, verifiedData{0}, verifiedAdmin{0};
   ZmSemaphore		contextReady;
   unsigned		workCase = 0; // immutable before workers start
   ZmSemaphore		workReady, workStop, workSent, workStarted, workDrained;
@@ -118,10 +153,10 @@ struct TestState {
 static SessionConfig config(bool client, const TestState *s) {
   auto mode = s->mode; auto heartbeat = s->heartbeat;
   SessionConfig c; c.mode = mode; c.initiator = client; c.heartBtInt = heartbeat;
-  c.header.version = mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
-  c.appVerID = AppVersion::V5_0_SP2; c.header.local = client ? "CLIENT" : "SERVER";
-  c.header.peer = client ? "SERVER" : "CLIENT";
-  (client ? c.header.localSub : c.header.peerSub) = s->sub; return c;
+  c.identity.version = mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
+  c.appVerID = AppVersion::V5_0_SP2; c.identity.local = client ? "CLIENT" : "SERVER";
+  c.identity.peer = client ? "SERVER" : "CLIENT";
+  (client ? c.identity.localSub : c.identity.peerSub) = s->sub; return c;
 }
 static bool contains(ZuCSpan text, ZuCSpan term) {
   return text.find(term) >= 0;
@@ -216,6 +251,20 @@ template <typename Impl> struct Peer {
   auto self() { return static_cast<Impl *>(this); }
   auto state() { return self()->test; }
 
+  enum { SignMsg = 1 };
+  template <typename S>
+  void signMsg(S &out, const TxBody *, TxContext, ZuCSpan message) const {
+    auto link = static_cast<const Impl *>(this);
+    auto s = link->test;
+    if (!s->signing) return;
+    if (!link->app()->txInvoked()) { s->fail(); out.fail(Fmt::ErrorCode::Output); return; }
+    Ztls::HMAC<> mac;
+    mac.start(ZuBSpan{"session fixture"}); mac.update(ZuBSpan{message});
+    uint8_t digest[Ztls::HMAC<>::Size]; mac.finish(digest);
+    Fmt::saveBinary<ZfField(Order, signature)>(out, digest);
+    if (client) ++s->signedClient; else ++s->signedServer;
+  }
+
   unsigned fixAssociateTx(TxBody::Ref b, TxContext c, uint64_t ticket) {
     if (!self()->app()->txInvoked() || c.epoch != 1 || c.seqNo != ++lastLoad) state()->fail();
     if (!b->administrative() &&
@@ -272,9 +321,12 @@ template <typename Impl> struct Peer {
   TxBody::Ref fixLogonTx(TxBody::Ref body) {
     if (!self()->app()->txInvoked()) state()->fail();
     if (client && state()->scenario == Scenario::PrepareRefused) return {};
-    if (!state()->trace) return body;
+    if (!state()->trace && !state()->signing) return body;
     SessionString auth;
-      auth << body->body() << "553=trace-user\1" "554=trace-secret\1" "10001=auth-private\1";
+    auth << body->body() << "95=" << ZuBoxed(SignedPayload.length()) << '\1' <<
+      "96=" << SignedPayload << '\1';
+    if (state()->trace)
+      auth << "553=trace-user\1" "554=trace-secret\1" "10001=auth-private\1";
     Fmt::Error error;
     auto out = TxBody::restoreControl("A", auth, body->id(), error);
     if (error) state()->fail(); return out;
@@ -327,6 +379,19 @@ template <typename Impl> struct Peer {
       if (msg->data().control.template p<Session::Logon>().maxMessageSize != expected)
 	state()->fail();
     }
+    if (state()->signing || state()->trace) {
+      const auto &auth = msg->data().control.template p<Session::Logon>().rawAuth;
+      Fmt::FieldPos pos;
+      if (Fmt::inspect<Session::Logon>(msg->data().frame.content, 96, pos) ||
+	  pos.offset == UINT_MAX || auth != ZuBSpan{SignedPayload} ||
+	  auth.data() != reinterpret_cast<const uint8_t *>(
+	    msg->data().frame.content.data() + pos.offset)) state()->fail();
+    }
+    if (state()->signing) {
+      const auto &logon = msg->data().control.template p<Session::Logon>();
+      if (!verifySignature<Session::Logon>(msg->data().frame, logon.signature)) state()->fail();
+      ++state()->verifiedAdmin;
+    }
     ++state()->admission;
     if (!client && state()->scenario == Scenario::Refused) return Admission::Refused;
     if (!state()->asyncAdmission || !client) return Admission::Accepted;
@@ -345,6 +410,17 @@ template <typename Impl> struct Peer {
   }
 
   void fixControlRx(ZmRef<Msg> msg) {
+    if (state()->signing) {
+      bool verified = false;
+      ZuSwitch::dispatch<Session::Msg::N>(msg->data().control.type(),
+	[&verified, &msg]<typename I>(I) {
+	  using O = Session::Msg::Type<I{}>;
+	  if constexpr (!ZuIsSame<O, void>{}) verified = verifySignature<O>(
+	    msg->data().frame, msg->data().control.template p<O>().signature);
+	});
+      if (!verified) state()->fail();
+      ++state()->verifiedAdmin;
+    }
     if (client || !state()->cutReplay
       || !msg->data().control.template is<Session::ResendReq>()) return;
     // Recovery's fixed lifecycle event has been admitted. Leave exactly that
@@ -405,11 +481,13 @@ template <typename Impl> struct Peer {
   }
 
   bool sendOrder(const Order &order, uint64_t id, Fmt::Error &error) {
-    switch (order.lane) {
-      case 0: return self()->template send<Lane0>(order, id, error);
-      case 1: return self()->template send<Lane1>(order, id, error);
-      case 2: return self()->template send<Lane2>(order, id, error);
-      case 3: return self()->template send<Lane3>(order, id, error);
+    auto value = order;
+    if (state()->signing) value.data = ZuBSpan{SignedPayload};
+    switch (value.lane) {
+      case 0: return self()->template send<Lane0>(value, id, error);
+      case 1: return self()->template send<Lane1>(value, id, error);
+      case 2: return self()->template send<Lane2>(value, id, error);
+      case 3: return self()->template send<Lane3>(value, id, error);
       default: error = {Fmt::ErrorCode::Value, 7001}; return false;
     }
   }
@@ -445,14 +523,14 @@ template <typename Impl> struct Peer {
 
   template <typename Entry>
   Fmt::Error fixReceiveRx(Entry *, const Order &o, const RequestContext &context) {
-    const auto &meta = context.context(); const auto &header = context.header();
+    const auto &meta = context.context();
     const auto &session = self()->session_();
     if (!context || meta.session != session.instance_() || meta.epoch != session.epoch_() ||
-	meta.connection != session.connection_() || meta.seqNo != header.seqNo ||
-	meta.version != Version::Wire::v2s(session.config_().header.version) ||
-	meta.replay != header.possDup ||
-	meta.possDup != header.possDup || header.sender != session.config_().header.peer ||
-	header.target != session.config_().header.local || !*context.received()
+	meta.connection != session.connection_() || meta.seqNo != o.seqNo ||
+	meta.version != Version::Wire::v2s(session.config_().identity.version) ||
+	meta.replay != o.possDup ||
+	meta.possDup != o.possDup || context.sender() != session.config_().identity.peer ||
+	context.target() != session.config_().identity.local || !*context.received()
 	  || !*context.utc()) state()->fail();
     if constexpr ((ZuIsSame<Entry, Lane0>{} || ZuIsSame<Entry,
       Reply0>{})) { if (o.lane) state()->fail(); }
@@ -463,8 +541,18 @@ template <typename Impl> struct Peer {
     else if constexpr ((ZuIsSame<Entry, Lane3>{} || ZuIsSame<Entry,
       Reply3>{})) { if (o.lane != 3) state()->fail(); }
     else state()->fail();
+    if (state()->signing) {
+      Fmt::FieldPos pos;
+      if (o.data != ZuBSpan{SignedPayload} || !verifySignature<Order>(context.frame(), o.signature) ||
+	  Fmt::inspect<Order>(context.frame().content, 96, pos) || pos.offset == UINT_MAX ||
+	  o.data.data() != reinterpret_cast<const uint8_t *>(context.frame().content.data() +
+	    pos.offset)) state()->fail();
+      ++state()->verifiedData;
+    }
     if (!client && state()->keepContext) {
       state()->retained = context; state()->retainedID = o.id;
+      state()->retainedData = o.data; state()->retainedSignature = o.signature;
+      state()->retainedWire = context.frame().wire.data();
       state()->contextReady.post();
     }
     if (!self()->app()->rxInvoked() || o.id != (client != state()->reverse ? "res" : "req")
@@ -520,8 +608,10 @@ template <typename Impl> struct Peer {
 	error.code != Fmt::ErrorCode::Value || error.tag != 11 || error.offset != 37 ||
 	replyCalls != before + 1) state()->fail();
       refuseReply = false;
+      Order response{"res", state()->lane};
+      if (state()->signing) response.data = ZuBSpan{SignedPayload};
       if (!self()->template reply<Entry, Response>(context,
-	Order{"res", state()->lane}, client ? 101 : 201, error)) return error;
+	response, client ? 101 : 201, error)) return error;
       if (replyCalls != before + 2) state()->fail();
     } else {
       if (client == state()->reverse) state()->fail();
@@ -597,6 +687,8 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
     if (test->socketGate) test->socketSubmitted.post();
   }
 
+  using Peer<Link>::SignMsg;
+  using Peer<Link>::signMsg;
   using Peer<Link>::fixAssociateTx;
   using Peer<Link>::fixPublishedTx;
   using Peer<Link>::fixRetrieveTx;
@@ -659,6 +751,8 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(ServerLink *);
   explicit ServerLink(SrvHub *app, TestState *s) : Base{app, config(false, s)},
     Peer<ServerLink>{false}, test{s} { }
 
+  using Peer<ServerLink>::SignMsg;
+  using Peer<ServerLink>::signMsg;
   using Peer<ServerLink>::fixAssociateTx;
   using Peer<ServerLink>::fixPublishedTx;
   using Peer<ServerLink>::fixRetrieveTx;
@@ -697,11 +791,11 @@ ZiConnection *SrvHub::accepted(const ZiCxnInfo &ci) {
 }
 static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
   unsigned scenario = Scenario::Normal, bool forceBusy = false, bool keepContext = false,
-  bool reverse = false, unsigned workCase = 0) {
+  bool reverse = false, unsigned workCase = 0, bool signing = false) {
   ZuTestScope(loopback);
   TestState state; state.mode = mode; state.asyncAdmission = async; state.heartbeat = heartbeat;
     state.scenario = scenario; state.forceBusy = forceBusy;
-  state.asymmetric = true;
+  state.asymmetric = true; state.signing = signing;
   HubLimits sl, cl;
   sl.link.rx.codec.frameBytes = 8192; sl.link.tx.codec.frameBytes = 2048;
   cl.link.rx.codec.frameBytes = 4096; cl.link.tx.codec.frameBytes = 1024;
@@ -819,10 +913,26 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
     ZuCheck(bool(copy) && copy.context().session && copy.context().epoch == 1);
     ZuCheck(copy.context().connection == 1 && copy.context().seqNo >= 2
       && !copy.context().replay);
-    ZuCheck(copy.header().sender == "CLIENT" && copy.header().target == "SERVER");
+    ZuCheck(copy.sender() == "CLIENT" && copy.target() == "SERVER");
     ZuCheck(state.retainedID == "req" && copy.frame().wire.length());
     auto parsed = Fmt::frame(copy.frame().wire);
     ZuCheck(parsed.state == Fmt::FrameState::Complete && parsed.view.msgType == "D");
+    if (signing) {
+      ZuCheck(copy.frame().wire.data() == state.retainedWire);
+      ZuCheck(state.retainedData == ZuBSpan{SignedPayload} &&
+	verifySignature<Order>(copy.frame(), state.retainedSignature));
+      Fmt::FieldPos data, signature;
+      ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 96, data));
+      ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 89, signature));
+      ZuCheck(state.retainedData.data() == reinterpret_cast<const uint8_t *>(
+	copy.frame().content.data() + data.offset));
+      ZuCheck(state.retainedSignature.data() == reinterpret_cast<const uint8_t *>(
+	copy.frame().content.data() + signature.offset));
+    }
+  }
+  if (signing) {
+    ZuCheck(state.signedClient.load_() && state.signedServer.load_());
+    ZuCheck(state.verifiedData.load_() == 2 && state.verifiedAdmin.load_() >= 2);
   }
   ZuCheck(!state.errors.load_() && state.closed.load_() == 2);
   ZuCheck(state.snapshots.load_() == 4);
@@ -1459,8 +1569,8 @@ static void adminBudget(unsigned kind) {
 	  auto &state = *link->test;
 	  Fmt::Error error;
 	  auto cfg = txConfig(config(true, &state));
-	  auto h = txHeader(cfg, link->lastLoad + ordinal, ZuDateTime{Zm::now()});
-	  auto frame = txFrame(*body, h, error); unsigned head = 0;
+	  TxContext c{.seqNo = link->lastLoad + ordinal, .sendingTime = ZuDateTime{Zm::now()}};
+	  auto frame = txFrame(*body, cfg, c, error); unsigned head = 0;
 #ifdef ZFIX_TEST_TLS
 	  head = link->template txHeadRoom<false>();
 #endif
@@ -1469,7 +1579,7 @@ static void adminBudget(unsigned kind) {
 	  if (kind == 5 && ordinal == 3) {
 	    // Two complete frames in one native write/TLS record. Overload on the
 	    // first must stop parsing the second, even before physical down arrives.
-	    ++h.seqNo; frame = txFrame(*body, h, error);
+	    ++c.seqNo; frame = txFrame(*body, cfg, c, error);
 	    if (error || !frame || !buf->append(frame->cspan())) { state.fail(); return; }
 	  }
 	  if (!link->sendRecord_(ZuMv(buf))) state.fail();
@@ -1685,8 +1795,8 @@ static void readAheadOverload() {
   client.txRun([link, body = ZuMv(body), &state] {
     Fmt::Error error;
     auto cfg = txConfig(config(true, &state));
-    auto h = txHeader(cfg, link->txProgress_().loaded + 1, ZuDateTime{Zm::now()});
-    auto frame = txFrame(*body, h, error);
+    TxContext c{.seqNo = link->txProgress_().loaded + 1, .sendingTime = ZuDateTime{Zm::now()}};
+    auto frame = txFrame(*body, cfg, c, error);
     unsigned head = 0;
 #ifdef ZFIX_TEST_TLS
     head = link->template txHeadRoom<false>();
@@ -1857,9 +1967,9 @@ static SessionConfig ownConfig(bool client, const OwnState *s)
 {
   SessionConfig c; c.mode = s->mode; c.initiator = client;
   c.heartBtInt = 0; c.appVerID = AppVersion::V5_0_SP2;
-  c.header.version = c.mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
-  c.header.local = client ? "CLIENT" : "SERVER";
-  c.header.peer = client ? "SERVER" : "CLIENT";
+  c.identity.version = c.mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
+  c.identity.local = client ? "CLIENT" : "SERVER";
+  c.identity.peer = client ? "SERVER" : "CLIENT";
   return c;
 }
 
@@ -2607,6 +2717,9 @@ static void nativeChain(unsigned mode)
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
   ZuTestCall(gapTimerDrain);
+  ZuTestCall(loopback, Transport::FIX4, false, 0, Scenario::Normal, false, true, false, 0, true);
+  ZuTestCall(loopback, Transport::FIX44A, false, 0, Scenario::Normal, false, true, false, 0, true);
+  ZuTestCall(loopback, Transport::FIXT11, false, 0, Scenario::Normal, false, true, false, 0, true);
   ZuTestCall(loopback, Transport::FIX4, false, 0, Scenario::Normal, false, false, false, 1);
   ZuTestCall(loopback, Transport::FIX44A, false, 0, Scenario::Normal, false, false, false, 1);
   ZuTestCall(loopback, Transport::FIXT11, false, 0, Scenario::Normal, false, false, false, 1);

@@ -5,7 +5,10 @@ and [resolved decisions Q001–Q018](../zfix.md). The earlier Stage 1–9 result
 source implementation and consumer migration of the breaking repair in
 [zfix_repair.md](../zfix_repair.md) and persistent-link replacement in
 [zfix_repair2.md](../zfix_repair2.md) are complete. Current-build verification passes
-with the existing configuration and compatible dependencies. See
+with the existing configuration and compatible dependencies for that recorded
+snapshot. The Binary/Header-free API and signing migration below is complete;
+its current [verification](test/README.md#header-free-binary-and-signing-verification-2026-11-01)
+and [measurements](bench/BINARY.md) use the requested clang release build. See
 [STATUS.md](STATUS.md) for checks, repaired failures and verification scope
 and [CONTRACTS.md](CONTRACTS.md) for current source contracts.
 The [state audit](STATE_AUDIT.md) records member ownership, retained-state
@@ -20,10 +23,12 @@ typed receive is implemented. Typed send/reply, bounded deferred processing and 
 correlation, archive availability and
 durability policy belong to the application.
 
-Build with `make -C zfix -j8` using the existing
-compatible foundation and transport libraries; do not rebuild dependencies.
-Build each directory's `all` before `make test`. The module traverses `src`,
-`test`, `util`, `itest`, `example`, `interop`, `bench` in dependency order.
+Build `make -C zfix/src -j8` before `make -C zfix/test -j8` and
+`make -C zfix/test test`, using existing compatible foundation and transport
+libraries. Build affected `util`, `itest`, `example`, `interop` and `bench`
+consumers afterward; build each directory's `all` before its tests. The Binary
+acceptance scope uses clang release with debug symbols and does not rebuild,
+clean or install dependency modules.
 [Native workload tools](util/README.md) provide separate TLS-default `zfix` and
 `zfixd` processes with count/duration/rate/session controls and JSON results.
 QuickFIX is an optional fixture dependency confined to `interop` and `bench`;
@@ -51,32 +56,33 @@ then drain its posted completions before releasing the enclosing owner.
 `ZfixDispatch.hh` provides `dispatch<Catalog>(frameView, callback, limits)`.
 Supply a successful `Fmt::frame`/`Framer` view and keep its backing alive through
 the call. The callback has the shape
-`Fmt::Error(Entry *, Object &, const Fmt::Header &, const Fmt::Trailer &)`; it runs
-once after selected-type validation and can return an application error unchanged.
+`Fmt::Error(Entry *, Object &)`; it runs
+once after selected-type decoding and can return an application error unchanged.
 Decoded spans borrow the input. Retain its backing for deferred use, or copy the
 values the application keeps. Moving owning fields out of the callback is an
 application choice.
 
-Framing requires the leading fields 8, 9 and 35, in that order, and exposes
-MsgType directly in `FrameView::msgType`. Primary MsgType and secondary values
-use immutable static hash indexes. A qualified MsgType selects by one unique,
-non-repeating root field; that tag must not also occur in a repeating group.
-Catalog metadata rejects modeled group selectors at compile time.
+Framing requires leading fields 8, 9 and 35, in that order, and exposes
+MsgType directly in `FrameView::msgType`. Numeric tag IDs are `int32_t`, including
+negative IDs. Each schema has a
+`ZmLHashStatic`/`ZmLHashLocal` map populated at program initialization from its
+compile-time field IDs; the streaming map value is a stateless loader function
+pointer that invokes the typed converter/setter directly. MsgTypes and
+secondary values use generated compile-time cases. Unknown ordinary tags are skipped.
 
-Secondary selection scans SOH-delimited tag/value fields without allocation or
-candidate decoding. It records only the selector position, rejects duplicate
-selectors, and compares the exact value. Substrings in other field values do not
-select an entry. Empty selector values and unmodeled root selectors are supported.
-Binary Data and Length/Data inspection are outside this selection contract.
+Ordinary writable messages decode in one pass: read a tag, resolve its typed
+handler, consume the complete field, assign its value, and advance. A Binary
+handler consumes both tags and the advertised opaque payload together. Repeating
+groups retain their own scope, delimiter and presence bits. Managed Rx observes
+session fields directly into its retained message state through the same framing
+metadata. Constructor-bound or non-writable component representations retain a
+positional fallback, as does explicit raw-field inspection.
 
-Every selected entry uses its ordinary `MessageHandler<Object, Facet>`, including
-entries sharing MsgType with different objects, facets or group layouts. Only
-the selected schema performs required-field checks, scalar conversion and group
-validation. Selection does not merge schemas or project position trees. Its
-extra field scan trades input traversal for simpler code and lower metadata
-storage; `parseBytes` covers only the ordinary selected position tree.
-Frame/field bounds apply to selection; group/depth/storage bounds apply in the
-selected codec. Standalone binary codec support is independent of this contract.
+A qualified MsgType selects by one unique root field that must not occur in a
+group. Entries sharing one object/facet decode once and retain only that
+selector's span before choosing the callback. Different object/facet alternatives
+inspect the selector first and then decode the selected representation. Catalog
+metadata rejects modeled group selectors at compile time.
 
 Standalone dispatch is caller-owned. Managed endpoints bind the same catalog to
 `fixReceiveRx` and provide a copyable `RequestContext` retaining pooled backing
@@ -111,9 +117,9 @@ never sends/flushes to a network transport. Complete-envelope APIs are described
 is recorded in STATUS.md.
 
 Implemented conversion includes scalar integers, booleans, decimal/fixed/float,
-FIX time, characters, strings, binary length/data pairs, custom scalar formatters
+FIX time, characters, SOH-delimited text, custom scalar formatters
 and flattened components. Facet configuration supplies number/time defaults;
-field-specific properties override them. Scoped indexes reject tag collisions,
+field-specific properties override them. Compile-time scopes reject tag collisions,
 including after flattening, and body schemas reject reserved envelope tags.
 Counted/nested groups use scoped membership and a delimiter inferred from the
 first recognized field; cumulative entry/depth and parse-storage limits are
@@ -128,13 +134,22 @@ numeric `String` formatting does not apply to FIX:
 - `NumberFmt<Fmt>` and its `Number<Fmt>` shorthand use a Z numeric formatter
   directly, without a JSON-style `String` flag. Field properties override the
   facet's `NumberFmt` default for both parsing and printing.
-- `BytesFmt<I>` has `Base64`, `Base64URL`, `Base32`, `Hex`, and `Raw`
-  shorthands. FIX defaults to raw bytes. Raw data requires `Len<N>`; encoded
-  bytes may omit it. When present, the length tag describes encoded wire bytes.
-  Encoders write directly to the sink; decoders write into owning field storage
-  such as `ZtArray<uint8_t>`. Borrowed byte spans use `Raw`: immutable input
-  cannot retain an additional decoded representation. Validation does not
-  allocate a decoded buffer, and raw byte borrowing is unchanged.
+- `Binary<ValueTag>` pairs the field's `ID<LengthTag>` with an adjacent raw
+  payload tag. String and Bytes fields use their octet extent, including SOH,
+  NUL and `=`. A present empty field emits both tags with a zero count; `Opt`
+  omits the complete pair for an unset value. Binary Bytes need no encoding.
+  Binary cannot combine with `BytesFmt`, `Char` or `Multiple`.
+  For example `(data, (FIX::ID<212>, FIX::Binary<213>), Bytes)` models XMLData.
+  Borrowed spans point into the caller's original input; keep that input alive.
+- `Sig<LengthTag, ValueTag>` supplies `ID`, `Binary` and `Signature` semantics
+  for one root-scoped String/Bytes field. Parenthesize the property because it
+  contains a template comma: `(signature, ((FIX::Sig<93, 89>)), Bytes)`.
+  The ordinary Tx `Fmt::SaveField` predicate suppresses the complete pair,
+  including a stale signature, while normal Rx loads the same declared member.
+- `BytesFmt<I>` on non-Binary Bytes requires an explicit `Base64`, `Base64URL`, `Base32` or `Hex`
+  text encoding. Encoders write directly to the sink; decoders write into
+  owning field storage such as `ZtArray<uint8_t>`. The framework decoder consumes
+  the encoded value directly, without a separate alphabet/padding scan.
 - `TimeFmt<Fmt>` overrides the facet's time format. The default is
   `Zfix::TimeFmt<>`, which uses FIX timestamps with up to nine fractional digits.
   `ISO<Scale, NDP>`, `FIX<Scale, NDP>`, `CSV<Scale, NDP>`, and
@@ -145,6 +160,31 @@ numeric `String` formatting does not apply to FIX:
   are also supported. Properties containing template commas need parentheses,
   for example `(FIX::Unix<Zfix::Time::MSec, 3>)` in a `ZfStruct` property list.
 
+For example, a `35=n` drop-copy message can own one ordinary declaration list:
+
+```cpp
+struct Drop {
+  ZuCSpan xml;
+  ZuBSpan signature;
+};
+ZfStruct(, (Drop),
+  (xml, (FIX::ID<212>, FIX::Binary<213>, Required), String),
+  (signature, ((FIX::Sig<93, 89>), Required), Bytes));
+using DropFIXFields = ZuTypeConcat<Zfix::SessionFields<Drop>, ZfFields_Drop>;
+DropFIXFields ZuFields_(Drop *, ZuFacet::FIX *);
+using DropMsg = Zfix::MT<Drop, "n">;
+```
+
+The configured writer supplies the session values through those ordinary
+fields. Normal Tx omits the declared signature even when nonempty; the signing
+hook appends the fresh 93/89 pair. Rx loads both payloads as borrowed spans.
+Declare 95/96 the same way for B3 authentication or replay messages. Authentication
+secrecy belongs to that message/profile; replay data is not automatically secret.
+Payload tag numbers need not ascend: 93 immediately precedes 89. Pair tags must
+be distinct, nonzero and collision-free in their effective scope; 8/9/10/35 are
+library-owned. Binary cannot annotate CString, UDT adapters, vectors or groups;
+components and group entries may contain ordinary binary String/Bytes fields.
+
 `AsUnion` supports ordinary application unions. A root union can carry a
 `ParseView` alternative borrowing the complete bounded input. Select exactly
 one alternative with `resolve<Alternative>(object)` and check its returned
@@ -154,14 +194,13 @@ lifetimes. No alternative is guessed. Saving a deferred/void alternative fails
 unless a custom scalar handler explicitly supplies a valid wire representation.
 A flattened union requires the chosen facet's configuration to declare
 `template <typename U> using Union = Alternative;`; the selected alternative's
-fields supply the parent scope, including its binary/group boundaries. Choose
+fields supply the parent scope, including its group boundaries. Choose
 the facet through application/catalog discrimination before decoding.
 
 `AsMultiple<Code, Props>` explicitly selects space-delimited primitive elements
 in one UDT field. Vector type codes use the field property `FIX::Multiple`.
-Empty input produces an empty container. Empty tokens,
-trailing separators and malformed elements fail; string elements cannot contain
-spaces. Primitive `AsArray` is rejected as a repeating-group schema.
+Empty input produces an empty container. Empty tokens and repeated separators
+are skipped; string elements are split on spaces. Primitive `AsArray` is rejected as a repeating-group schema.
 
 Default pointer-to-object UDTs flatten their pointee's fields. `ZuPtr<T>` is the
 preferred owning form; pointees use their normal identified `new`/`delete`.
@@ -173,18 +212,21 @@ valid load/update destinations. A const/value getter needs a setter and an
 ownership-compatible value type. Null optional pointers emit no child fields;
 null required pointers fail output.
 
-The built-in FIX timestamp formatter's null output remains its default empty
-value; a present empty timestamp is rejected by the ordinary timestamp parser.
-Non-finite numeric values have no FIX numeric representation and fail output.
+Field values use the native Zu converters without Zfix lexical, overflow, range,
+calendar or finite-value checks. Partial conversions, wrapping, native nulls and
+non-finite results are delivered to the application. Applications own value
+policy. FIX timestamp scanning uses a stateless formatter directly, without TLS
+or a validation/date-reparse pass. Skipped and read-only scalars are not parsed.
+The built-in FIX timestamp formatter's null output remains its default empty value.
 CString values use the framework C ABI convention: the adapter allocates
 NUL-terminated destination storage with malloc, releases the prior selected
 value with free on assignment/clearing, and transfers the final pointer to the
 application. Fields must start null or point to independently malloc-owned
 storage. A setter receives ownership and must not free the prior value again;
-the application destructor frees its final pointer. Embedded NUL input is
-rejected; explicit empty input creates an owned empty string. Missing defaults
-are copied into destination-owned storage. Unselected CString validation does
-not allocate. Prefer framework owning strings when C ABI storage is unnecessary.
+the application destructor frees its final pointer. Input bytes are copied as
+supplied, including embedded NULs; explicit empty input creates an owned empty
+string. Missing defaults are copied into destination-owned storage. Unselected
+CString fields are skipped. Prefer framework owning strings when C ABI storage is unnecessary.
 The stage 2 body-conversion gate is recorded in STATUS.md; complete-message
 framing and sessions have separate acceptance gates.
 
@@ -199,23 +241,30 @@ the next frame. Once known, `expected` reports the bounded total frame length.
 Only offsets and fixed metadata are retained. The stateless `frame` facade uses
 the same validation parser. The parser allocates
 nothing, validates leading 8/9/35, derives the checksum boundary from BodyLength,
-and checks the modulo-256 checksum over original octets. It does not search
-binary content for trailer-like bytes. `FrameView::content` starts after MsgType
-and still includes any remaining header fields. `MessageHandler<O, Facet>` consumes a successful FrameView using one scoped
-metadata index for standard header, selected body, nested groups and trailer.
-It exposes checked header/trailer values and body ctor/alloc/new_/load/update.
-Recognized header/trailer binary pairs remain available during inspection,
-including unselected body data. Header fields after body, or body after a
-signature, fail ordering validation. Application/catalog discrimination chooses
-a concrete body schema before constructing the complete-message handler.
+and checks the modulo-256 checksum over original octets. `FrameView::content`
+starts after MsgType and includes all remaining ordinary fields, including session
+metadata and any declared signature. `MessageHandler<O, Facet>(frame, limits)`
+and `IndexedMessage<O, Facet>(frame, limits)` load one ordinary object. They expose
+ctor/alloc/new_/load/update operations and borrowed field inspection; there are
+no Header or Trailer objects or checksum accessors. Validation status reflects
+the last consuming operation; use ctor/load/update/check before relying on it.
 
-`writeFrame(storage, header, body, limits)` writes a typed standard header,
-selected body fields and computed envelope. Check the returned `FrameOutput`;
-its data is empty on failure. `Header` spans borrow their source values through
-the call. PossDup requires OrigSendingTime. Standalone/raw managers supply these
-values; managed sessions will supply owner-shard snapshots.
+`Fmt::writeFrame<Entry>(storage, beginString, object, limits)` writes MsgType from
+`Entry`, the object's declared fields, and the computed envelope. Check the
+returned `FrameOutput`; its data is empty on failure. Ordinary field declaration
+order determines wire order, including fields49/56/34/52. A message can reuse
+`SessionFields<Object>` by explicitly concatenating it into its actual
+`ZuFields_` declaration, or declare those members/fields directly. No separate
+field-order table or message prefix object is needed.
 
-For explicit raw header/body production, construct `FrameWriter(storage,
+`Zfix::writeFrame<Entry>(storage, config, context, object, limits)` uses the same
+ordinary metadata and substitutes final TxConfig/TxContext session values.
+`TxConfig::identity` holds routing identity; context carries sequence, SendingTime,
+PossDup and OrigSendingTime. Managed owners supply these values at publication.
+Rx passes timestamps as metadata without rejecting missing, old, future or
+relatively ordered timestamps; sequencing and peer identity checks still apply.
+
+For explicit raw field production, construct `FrameWriter(storage,
 beginString, limits)`, write into its `body()` sink, then call `finish()` once.
 The first body field must be MsgType(35). Both storage and BeginString backing
 must remain alive through finish; a temporary inline string is not retained.
@@ -238,13 +287,13 @@ conversion; a routing inspection does not complete semantic validation of the
 remaining body. Requiredness follows the selected operation. Custom handlers
 retain their own ordinary conversion/allocation behavior.
 
-Known text uses the TagValue single-byte profile and rejects C0/C1 control
-bytes. Paired Bytes fields preserve arbitrary octets; a Bytes declaration must
-supply Len metadata. Unknown values receive no semantic text validation.
-Header encoding carries MessageEncoding(347) for application-declared encoded
-fields; encoding-specific business validation belongs to the selected dictionary.
-Header secureData and Trailer signature are opaque length/data spans. Their
-presence can be represented by a non-null span, including explicit zero length.
+Text bytes are passed through without character prevalidation. Ordinary fields
+are SOH-delimited. Declared Binary fields consume the decimal count and the
+immediately adjacent value tag atomically; payload delimiters are opaque.
+Non-Binary Bytes require an explicit text encoding such as Base64 or Hex.
+Unknown fields receive ordinary SOH skipping and no semantic text validation;
+all binary length tags must therefore be declared in the active schema. MessageEncoding(347) remains
+application metadata for ordinary text.
 
 Native vector codes require `FIX::Multiple`. Raw CStringVec elements use the
 same malloc/free ownership contract as CString fields, with every old selected
@@ -263,13 +312,21 @@ and compile-time facets as application messages. Runtime ROE registration is
 not provided. `Transport` selects FIX4/FIX44A/FIXT11/Raw session behavior;
 TCP/TLS bindings live separately in `ZfixNet.hh`.
 
+Built-in `Session::Logon::rawAuth` is an optional borrowed raw Bytes field declared
+as 95/96. Normal Logon preparation/admission hooks can supply or examine it;
+its extent determines RawDataLength and no text encoding is applied. The received
+span borrows the retained Logon allocation. Built-in Logon trace metadata marks
+this authentication payload secret. The same 95/96 mapping in a replay or other
+application message follows that message's sensitivity policy; tag 96 is not
+redacted globally merely because it is used for authentication elsewhere.
+
 `RxMsg` in `ZfixRxMsg.hh` retains one received backing buffer and its frame,
-header, trailer, control and receive metadata. `RxFramer` extracts one pooled
+session, control and receive metadata. `RxFramer` extracts one pooled
 complete frame from a native stream; it is not the message representation.
 `SeqRx` uses `ZmPQRx` and the queue's first gap. Restore records a known logical
 tail without inventing payload nodes. Input/queue/work bounds and retry tickets
 remain on Rx. Unknown application fields are skipped by the declared schema;
-malformed known fields are reported through ordinary Reject handling.
+application conversion failures can use ordinary Reject handling.
 
 `LinkState` in `ZfixLinkState.hh` owns the Rx lifecycle. It begins after native
 TCP establishment/TLS authentication, enters initiator Logon or acceptor
@@ -367,9 +424,10 @@ exclusive, and a zero range pair clears pending recovery. Each operation runs
 on its owning shard.
 
 Applications persist the fields they need with their existing link record and
-restore each direction explicitly. `HeaderConfig header` contains version,
-CompIDs and optional sub/location IDs; mode and application version remain
-connection configuration. Current wire headers undergo normal validation.
+restore each direction explicitly. `SessionConfig::identity` is a `PeerConfig`
+containing version, CompIDs and optional sub/location IDs; mode and application
+version remain connection configuration. Current wire identity and sequence
+fields undergo normal validation. Timestamps remain passed metadata.
 
 Physical queue memory is not persisted progress: `TxBytes` and restored byte debt
 are removed. An empty restored operational queue begins charged at zero, even
@@ -681,8 +739,66 @@ Managed and raw endpoints expose owner-local `rxStats_()`/`txStats_()` snapshots
 and optional bounded Rx/Tx wire traces. Configure trace quotas through HubLimits;
 capture is disabled by default. Records own escaped/redacted text, rotate within
 charged limits, and can be retained through observer handles without retaining
-links or original input. Authentication/binary values and unknown dictionary
-suffixes are hidden. See ENDPOINTS.md for exact counters, redaction policy,
+links or original input. Authentication values and unknown dictionary
+suffixes are hidden. Built-in Logon 95/96 secrecy is type-specific; an ordinary
+95/96 replay payload remains visible unless its own profile marks it sensitive. See ENDPOINTS.md for exact counters, redaction policy,
 custom-sensitive-field hooks, lifetime and budget scope. Reproducible trace
 unit, memory and installed checks are in test/README.md; TCP/TLS counter/trace
 coverage is in itest/README.md.
+
+## Message signing
+
+Managed and raw endpoints can select `SignMsg = 1` and implement this const
+CRTP hook, with Tx-owned keys/profile state prepared before transmission:
+
+```cpp
+template <typename S>
+void signMsg(S &out, const Zfix::TxBody *body,
+    Zfix::TxContext context, ZuCSpan message) const;
+```
+
+The default policy is disabled and the default hook has no effect. The hook
+receives the immutable encoded body and final transmission context. Its borrowed
+`message` covers exactly the serialized bytes from `35=` through the final
+unsigned field, including the final sequence, SendingTime, PossDup and
+OrigSendingTime. The application's profile chooses any narrower cryptographic
+coverage. The codec supplies no algorithm or implicit signature verification.
+
+Compute the signature before appending anything that can grow the sink. Append
+its complete pair with `Fmt::saveBinary<ZfField(Message, signature)>(out, bytes)`;
+the field's normalized metadata supplies both tags, and the byte extent supplies
+the decimal length. The received `message` view must not be reused after an
+append that can relocate output storage. Sink failure remains sticky and
+prevents publication. BodyLength and CheckSum are finalized after the hook.
+
+Signing runs on the Tx owner for managed publication, replay, and raw typed
+endpoint sends. An Rx-side raw typed submission queues a retained unsigned body
+and an owned snapshot of its borrowed routing metadata; encoding failures after
+that admission are reported through `fixRawFaultTx`. The disabled raw path keeps
+its ordinary synchronous encoding behavior. Administrative messages also declare
+an optional signature field and load it normally. Each reconstructed replay is
+signed with its new session fields; transport cursor retries retain the already
+constructed frame and signature.
+
+A standalone `FrameWriter::finish(signer, body, context)` and
+`txFrame(body, config, context, error, limits, signer)` use the same hook.
+`RawOutput::encode` also accepts the signer after its limits argument; its caller
+supplies the appropriate owner. Admission of a complete `RawOutput::fromFrame`
+preserves the supplied frame without signing it again.
+
+`TxBody::encode` produces the unsigned field set and leaves the source signature
+member unchanged. Archive restoration validates requiredness with that same save
+filter, retaining complete binary framing metadata, and rejects a supplied
+signature pair. Final typed frames use the complete receiving schema, so a field
+required on Rx still requires an emitted signature in the final frame.
+
+`ZfixSignTest` supplies an HMAC-SHA256 example with an independently calculated
+known MAC, explicit payload/header/signature tampering, borrowed signature
+addresses, variable extents, sink growth, archive conflicts, replay, failure
+before publication, and Tx ownership of asynchronous raw submissions. Its
+verification function is application policy, separate from successful parsing.
+The Binary, Header-free API and signing acceptance matrix is specified in
+[zfix_binary.md](../zfix_binary.md). The clang release source and installed unit
+gates each pass 391 tests, with TCP/TLS, independent interop and final Valgrind
+checks also passing. See [verification](test/README.md#header-free-binary-and-signing-verification-2026-11-01)
+and [benchmark results](bench/BINARY.md), including retained-buffer growth costs.

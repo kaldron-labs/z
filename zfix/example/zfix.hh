@@ -79,7 +79,7 @@ ZfStruct(, (Party, FIX),
   (source,	(FIX::ID<447>, Required),			String),
   (role,	(FIX::ID<452>, Required),			UInt32));
 
-ZfStruct(, (Order, FIX),
+ZfStruct(, (Order),
   (key,		(FIX::ID<11>, Required),			UInt64),
   (handling,	(FIX::ID<21>, Required, Enum<Handling::FIX>),	Int8),
   (symbol,	(FIX::ID<55>, Required),			String),
@@ -89,8 +89,10 @@ ZfStruct(, (Order, FIX),
   (type,	(FIX::ID<40>, Required, Enum<OrdType::FIX>),	Int8),
   (price,	(FIX::ID<44>, Required),			Decimal),
   (parties,	(FIX::ID<453>),					UDT));
+using OrderFIXFields = ZuTypeConcat<Zfix::SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 
-ZfStruct(, (Execution, FIX),
+ZfStruct(, (Execution),
   (order,	(FIX::ID<37>, Required),			UInt64),
   (key,		(FIX::ID<11>, Required),			UInt64),
   (exec,	(FIX::ID<17>, Required),			UInt64),
@@ -107,10 +109,14 @@ ZfStruct(, (Execution, FIX),
   (lastPx,	(FIX::ID<31>),					Decimal),
   (time,	(FIX::ID<60>),					DateTime),
   (parties,	(FIX::ID<453>),					UDT));
+using ExecutionFIXFields = ZuTypeConcat<Zfix::SessionFields<Execution>, ZfFields_Execution>;
+ExecutionFIXFields ZuFields_(Execution *, ZuFacet::FIX *);
 
-ZfStruct(, (Event, FIX),
+ZfStruct(, (Event),
   (symbol,	(FIX::ID<55>, Required),			String),
   (price,	(FIX::ID<44>, Required),			Decimal));
+using EventFIXFields = ZuTypeConcat<Zfix::SessionFields<Event>, ZfFields_Event>;
+EventFIXFields ZuFields_(Event *, ZuFacet::FIX *);
 
 using Ack = Zfix::MT<Execution, "8", ZuFacet::FIX, Zfix::Discrim<150, "0">>;
 using Fill = Zfix::MT<Execution, "8", ZuFacet::FIX, Zfix::Discrim<150, "F">>;

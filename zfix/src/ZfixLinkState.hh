@@ -23,11 +23,13 @@
 
 namespace Zfix {
 
+struct RxMsg;
+
 ZtEnumNS(ZfixAPI, ResetPath, int8_t, Live, Reconnect);
 
 using SessionString = ZtString<ZtStringHeapID<"Zfix.LinkState">>;
 // Wire identities belong to the link configuration.
-struct HeaderConfig {
+struct PeerConfig {
   unsigned	version = Version::N;
   SessionString	local;
   SessionString	peer;
@@ -38,11 +40,11 @@ struct HeaderConfig {
 
   bool valid() const { return version < Version::N && local.length() && peer.length(); }
 
-  ZfixAPI unsigned mismatch(const Fmt::Header &) const;
+  ZfixAPI int32_t mismatch(const RxMsg &) const;
 };
 
 struct SessionConfig {
-  HeaderConfig	header;
+  PeerConfig	identity;
   unsigned	appVerID = AppVersion::N;
   unsigned	mode = Transport::FIX4;
   bool		initiator = true;
@@ -53,10 +55,23 @@ struct SessionConfig {
   ZuTime	logonTimeout{10};
   ZuTime	logoutTimeout{2};
   ZuTime	drainTimeout{30};
-  ZuTime	sendingTolerance{120};
 
   ZfixAPI bool valid() const;
 };
+
+// Tx owns the durable routing/profile configuration. Per-transmission sequence,
+// time and replay values are fixed metadata in TxContext, not another message.
+struct TxConfig {
+  PeerConfig identity;
+  unsigned appVerID = AppVersion::N;
+  uint64_t sequenceLimit = 2147483647;
+  unsigned mode = Transport::FIX4;
+  SessionString beginString;
+  SessionString appVersion;
+  SessionString encoding;
+};
+
+ZfixExtern TxConfig txConfig(SessionConfig);
 
 namespace SessionAction {
 
@@ -82,7 +97,7 @@ namespace SessionError {
 
 struct SessionFault {
   unsigned	error = 0;
-  unsigned	tag = 0;
+  int32_t	tag = 0;
   int		reason = 99;
   bool		fatal = false;
 
@@ -98,7 +113,7 @@ struct SessionEvent {
   unsigned	actions = 0;
   unsigned	state = State::Disconnected;
   unsigned	error = SessionError::None;
-  unsigned	tag = 0;
+  int32_t	tag = 0;
   uint64_t	connection = 0;
   uint64_t	epoch = 0;
   uint64_t	change = 0;
@@ -154,8 +169,8 @@ public:
   ZuTime deadline_(unsigned timer) const;
   unsigned nextTimer_(ZuTime &at) const;
 
-  SessionFault validateHeader_(const Fmt::Header &, const ZuDateTime &utc) const;
-  SessionEvent fault_(uint64_t connection, unsigned error, unsigned tag,
+  SessionFault validateSession_(const RxMsg &) const;
+  SessionEvent fault_(uint64_t connection, unsigned error, int32_t tag,
     ZuTime now, bool logout);
 
   // Explicit initial reset agreement; only on a never-opened session owner.
@@ -169,7 +184,7 @@ public:
   SessionEvent open_(ZuTime now);
   SessionEvent replace_(ZuTime now);
   SessionEvent logonSent_(uint64_t connection, uint64_t seqNo, ZuTime now);
-  SessionEvent peerLogon_(uint64_t connection, const Fmt::Header &,
+  SessionEvent peerLogon_(uint64_t connection, const RxMsg &,
     const Session::Logon &, uint64_t expected, ZuTime now);
   SessionEvent admit_(uint64_t connection, uint64_t ticket, bool accepted, ZuTime now);
   SessionEvent recovery_(uint64_t connection, bool rxDone, bool txDone, ZuTime now);
@@ -207,9 +222,9 @@ public:
 private:
   SessionEvent open(ZuTime now, bool replace);
   bool current(uint64_t connection) const;
-  SessionEvent event(unsigned actions = 0, unsigned error = 0, unsigned tag = 0) const;
+  SessionEvent event(unsigned actions = 0, unsigned error = 0, int32_t tag = 0) const;
   SessionEvent transition(unsigned state, unsigned actions);
-  SessionEvent reject(unsigned error, unsigned tag, ZuTime now);
+  SessionEvent reject(unsigned error, int32_t tag, ZuTime now);
   SessionEvent close(unsigned error);
   SessionEvent synchronize(ZuTime now);
   SessionEvent startProbe(ZuTime now);

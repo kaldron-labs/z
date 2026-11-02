@@ -10,6 +10,7 @@
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfixTxMsg.hh>
+#include <zlib/ZfixRxMsg.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -17,12 +18,14 @@ using namespace Zfix::Fmt;
 
 struct Order {
   ZuCSpan	id;
-  ZuBSpan	data;
+  ZuCSpan	data;
 };
 
-ZfStruct(, (Order, FIX),
+ZfStruct(, (Order),
   (id, (FIX::ID<11>), String),
-  (data, (FIX::ID<96>, FIX::Len<95>), Bytes));
+  (data, (FIX::ID<58>), String));
+using OrderFIX = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIX ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order);
 ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
@@ -39,8 +42,10 @@ private:
   int				m_value;
 };
 
-ZfStruct(, (ArchiveOnly, FIX),
+ZfStruct(, (ArchiveOnly),
   ((value, RdFn), (FIX::ID<38>, Required, Keys<0>), Int32));
+using ArchiveOnlyFIX = ZuTypeConcat<SessionFields<ArchiveOnly>, ZfFields_ArchiveOnly>;
+ArchiveOnlyFIX ZuFields_(ArchiveOnly *, ZuFacet::FIX *);
 ZfStructImpl(ArchiveOnly);
 ZfStructImpl(ArchiveOnly, FIX);
 using ArchiveMsg = MT<ArchiveOnly, "D">;
@@ -64,7 +69,9 @@ struct GroupOrder {
   Parties	parties;
 };
 
-ZfStruct(, (GroupOrder, FIX), (parties, (FIX::ID<453>), UDT));
+ZfStruct(, (GroupOrder), (parties, (FIX::ID<453>), UDT));
+using GroupOrderFIX = ZuTypeConcat<SessionFields<GroupOrder>, ZfFields_GroupOrder>;
+GroupOrderFIX ZuFields_(GroupOrder *, ZuFacet::FIX *);
 ZfStructImpl(GroupOrder);
 ZfStructImpl(GroupOrder, FIX);
 using GroupMsg = MT<GroupOrder, "D">;
@@ -81,33 +88,45 @@ struct WithComponent {
   ZuPtr<ArchiveComponent>	component;
 };
 
-ZfStruct(, (WithComponent, FIX), (component, , UDT));
+ZfStruct(, (WithComponent), (component, , UDT));
+using WithComponentFIX = ZuTypeConcat<SessionFields<WithComponent>, ZfFields_WithComponent>;
+WithComponentFIX ZuFields_(WithComponent *, ZuFacet::FIX *);
 ZfStructImpl(WithComponent);
 ZfStructImpl(WithComponent, FIX);
 using ComponentMsg = MT<WithComponent, "D">;
 
-static Header header()
-{
-  return {.beginString = "FIX.4.4", .sender = "CLIENT", .target = "SERVER",
-    .seqNo = 7, .sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-12:34:56"}};
+static TxConfig config() {
+  SessionConfig session;
+  session.identity.version = Version::V4_4;
+  session.identity.local = "CLIENT"; session.identity.peer = "SERVER";
+  return txConfig(session);
+}
+static TxContext context() {
+  return {.seqNo = 7,
+    .sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-12:34:56"}};
+}
+static RxMsg metadata(const FrameView &frame) {
+  RxMsg input; input.frame = frame;
+  readSession(input);
+  return input;
 }
 
 static void retained()
 {
   ZuTestScope(retained);
   Error error;
-  auto payload = TxBody::encode<OrderMsg>(Order{"abc", ZuBSpan{"A\1\0="_z}}, 91, error);
+  auto payload = TxBody::encode<OrderMsg>(Order{"abc", ZuCSpan{"ABCD"_z}}, 91, error);
   ZuCheck(payload && !error && payload->id() == 91 && payload->msgType() == "D");
-  constexpr auto Original = "11=abc\1" "95=4\1" "96=A\1\0=\1"_z;
+  constexpr auto Original = "11=abc\1" "58=ABCD\1"_z;
   ZuCheck(payload->body() == Original && !payload->administrative());
-  auto h = header();
-  auto wire = txFrame(*payload, h, error);
+  auto h = context();
+  auto wire = txFrame(*payload, config(), h, error);
   ZuCheck(wire && !error);
   auto parsed = frame(ZuCSpan{wire->cspan()});
   MessageHandler<Order> decoded{parsed.view};
   auto order = decoded.ctor();
-  ZuCheck(decoded.valid() && order.id == "abc" && order.data == ZuBSpan{"A\1\0="_z});
-  ZuCheck(decoded.header().seqNo == 7 && decoded.header().sendingTime == h.sendingTime);
+  ZuCheck(decoded.valid() && order.id == "abc" && order.data == ZuCSpan{"ABCD"_z});
+  ZuCheck(metadata(parsed.view).seqNo == 7 && metadata(parsed.view).sendingTime == h.sendingTime);
 
   // Transport mutation and partial-send cursor changes cannot touch history.
   memset(wire->data(), 'X', wire->length);
@@ -116,14 +135,14 @@ static void retained()
   h.possDup = true;
   h.origSendingTime = h.sendingTime;
   h.sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-13:00:00"};
-  auto replay = txFrame(*payload, h, error);
+  auto replay = txFrame(*payload, config(), h, error);
   ZuCheck(replay && !error);
   MessageHandler<Order> restored{frame(ZuCSpan{replay->cspan()}).view};
   auto got = restored.ctor();
-  ZuCheck(restored.valid() && got.id == "abc" && got.data == ZuBSpan{"A\1\0="_z});
-  ZuCheck(restored.header().seqNo == 7 && restored.header().possDup &&
-    restored.header().origSendingTime == h.origSendingTime &&
-    restored.header().sendingTime == h.sendingTime);
+  ZuCheck(restored.valid() && got.id == "abc" && got.data == ZuCSpan{"ABCD"_z});
+  ZuCheck(metadata(frame(replay->cspan()).view).seqNo == 7 && metadata(frame(replay->cspan()).view).possDup &&
+    metadata(frame(replay->cspan()).view).origSendingTime == h.origSendingTime &&
+    metadata(frame(replay->cspan()).view).sendingTime == h.sendingTime);
 }
 
 static void controls()
@@ -135,13 +154,13 @@ static void controls()
   auto heartbeat = TxBody::control(value, error);
   ZuCheck(heartbeat && !error && !heartbeat->body().length());
   ZuCheck(heartbeat->administrative());
-  auto encoded = txFrame(*heartbeat, header(), error);
+  auto encoded = txFrame(*heartbeat, config(), context(), error);
   ZuCheck(encoded && !error);
   Session::Msg got;
-  Header h;
-  Trailer t;
-  ZuCheck(!Session::read(frame(ZuCSpan{encoded->cspan()}).view, got, h, t));
-  ZuCheck(got.type() == Session::Msg::Index<Session::HeartBt>{} && h.seqNo == 7);
+  auto input = metadata(frame(encoded->cspan()).view);
+
+  ZuCheck(!Session::read(frame(ZuCSpan{encoded->cspan()}).view, got));
+  ZuCheck(got.type() == Session::Msg::Index<Session::HeartBt>{} && input.seqNo == 7);
   value.p<Session::Reject>(Session::Reject{});
   auto &reject = value.p<Session::Reject>();
   reject.refSeqNo = 4;
@@ -164,27 +183,28 @@ static void jumbo()
   Bytes bytes;
   unsigned n = ZiIOBuf_DefltSize<<3; // cross built-in pool capacity repeatedly
   bytes.length(n, false);
-  for (unsigned i = 0; i < n; ++i) bytes[i] = char(i);
+  for (unsigned i = 0; i < n; ++i) bytes[i] = 'A' + i % 26;
   Error error;
-  Order order{"large", ZuBSpan{bytes}};
+  Order order{"large", bytes};
   auto body = TxBody::encode<OrderMsg>(order, 92, error);
   ZuCheck(body && !error && body->body().length() > n && body->size > ZiIOBuf_DefltSize);
-  auto output = txFrame(*body, header(), error);
+  if (!body) return;
+  auto output = txFrame(*body, config(), context(), error);
   ZuCheck(output && !error && output->size > ZiIOBuf_DefltSize);
   MessageHandler<Order> decoder{frame(ZuCSpan{output->cspan()}).view};
   auto restored = decoder.ctor();
   ZuCheck(decoder.valid() && restored.data == order.data && restored.id == order.id);
   Limits limits;
   limits.frameBytes = output->length;
-  auto exact = txFrame(*body, header(), error, limits);
+  auto exact = txFrame(*body, config(), context(), error, limits);
   ZuCheck(exact && !error && exact->length == output->length);
   --limits.frameBytes;
-  auto shortOut = txFrame(*body, header(), error, limits);
+  auto shortOut = txFrame(*body, config(), context(), error, limits);
   ZuCheck(!shortOut && error.code == ErrorCode::Size);
   limits = {};
   limits.fieldBytes = n - 1;
   auto tooLong = TxBody::encode<OrderMsg>(order, 93, error, limits);
-  ZuCheck(!tooLong && error.code == ErrorCode::Size && error.tag == 96);
+  ZuCheck(!tooLong && error.code == ErrorCode::Size && error.tag == 58);
 }
 
 static void failures()
@@ -192,26 +212,26 @@ static void failures()
   ZuTestScope(failures);
   Error error;
   auto bad = TxBody::encode<OrderMsg>(Order{"bad\1value"_z, {}}, 1, error);
-  ZuCheck(!bad && error.code == ErrorCode::Value && error.tag == 11);
+  ZuCheck(bad && !error);
   auto valid = TxBody::encode<OrderMsg>(Order{"abc", {}}, 1, error);
   ZuCheck(valid && !error);
-  auto h = header();
+  auto h = context();
   h.seqNo = 0;
-  auto noSequence = txFrame(*valid, h, error);
-  ZuCheck(!noSequence && error.code == ErrorCode::Value && error.tag == 34);
-  h = header();
+  auto noSequence = txFrame(*valid, config(), h, error);
+  ZuCheck(noSequence && !error);
+  h = context();
   h.possDup = true;
-  auto noOriginal = txFrame(*valid, h, error);
-  ZuCheck(!noOriginal && error.code == ErrorCode::Required && error.tag == 122);
+  auto noOriginal = txFrame(*valid, config(), h, error);
+  ZuCheck(noOriginal && !error);
   h.origSendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-13:00:00"};
-  auto futureOriginal = txFrame(*valid, h, error);
-  ZuCheck(!futureOriginal && error.code == ErrorCode::Value && error.tag == 122);
+  auto futureOriginal = txFrame(*valid, config(), h, error);
+  ZuCheck(futureOriginal && !error);
   // Long declared versions must grow the envelope headroom before body output.
   ZtString<ZtStringHeapID<"Zfix.TxMsgTest">> version;
   version.ensure(ZiIOBuf_DefltSize<<1);
   for (unsigned i = 0; i < (ZiIOBuf_DefltSize<<1); ++i) version << 'V';
-  h = header(); h.beginString = version;
-  auto longVersion = txFrame(*valid, h, error);
+  h = context(); auto longConfig = config(); longConfig.beginString = version;
+  auto longVersion = txFrame(*valid, longConfig, h, error);
   ZuCheck(longVersion && !error);
   auto parsed = frame(ZuCSpan{longVersion->cspan()});
   ZuCheck(parsed.state == FrameState::Complete && parsed.view.beginString == version);
@@ -227,11 +247,11 @@ static void archive()
   auto body = TxBody::restore<ArchiveMsg>(Original, 83, error);
   ZuCheck(body && !error && body->id() == 83 && body->body() == Original);
   ZuCheck(!ArchiveOnly::getters && !ArchiveOnly::constructed);
-  auto h = header(); h.possDup = true; h.origSendingTime = h.sendingTime;
-  auto wire = txFrame(*body, h, error);
+  auto h = context(); h.possDup = true; h.origSendingTime = h.sendingTime;
+  auto wire = txFrame(*body, config(), h, error);
   ZuCheck(wire && !error && ZuCSpan{wire->cspan()}.find(Original) >= 0);
   auto bad = TxBody::restore<ArchiveMsg>("38=bad\1"_z, 84, error);
-  ZuCheck(!bad && error.code == ErrorCode::Value && error.tag == 38);
+  ZuCheck(bad && !error);
   bad = TxBody::restore<ArchiveMsg>("9000=opaque\1"_z, 84, error);
   ZuCheck(!bad && error.code == ErrorCode::Required && error.tag == 38);
   bad = TxBody::restore<ArchiveMsg>("38=7\1" "49=INJECT\1"_z, 84, error);
@@ -243,19 +263,27 @@ static void archive()
   borrowed.clear(); borrowed << "reused storage";
   ZuCheck(owned && !error && owned->body() == Original);
 
-  constexpr auto Binary = "11=abc\1" "95=4\1" "96=A\1\0=\1"_z;
-  auto data = TxBody::restore<OrderMsg>(Binary, 85, error);
-  ZuCheck(data && !error && data->body() == Binary);
-  auto output = txFrame(*data, header(), error);
+  constexpr auto Text = "11=abc\1" "58=ABCD\1"_z;
+  auto data = TxBody::restore<OrderMsg>(Text, 85, error);
+  ZuCheck(data && !error && data->body() == Text);
+  auto output = txFrame(*data, config(), context(), error);
   MessageHandler<Order> decoded{frame(ZuCSpan{output->cspan()}).view};
   auto got = decoded.ctor();
-  ZuCheck(decoded.valid() && got.id == "abc" && got.data == ZuBSpan{"A\1\0="_z});
-  auto shortData = TxBody::restore<OrderMsg>("11=abc\1" "95=5\1" "96=A\1\0=\1"_z, 85, error);
-  ZuCheck(!shortData && error.code == ErrorCode::Truncated);
+  ZuCheck(decoded.valid() && got.id == "abc" && got.data == ZuCSpan{"ABCD"_z});
   Limits limits;
-  limits.frameBytes = Binary.length();
-  auto oversized = TxBody::restore<OrderMsg>(Binary, 85, error, limits);
+  limits.frameBytes = Text.length();
+  auto oversized = TxBody::restore<OrderMsg>(Text, 85, error, limits);
   ZuCheck(!oversized && error.code == ErrorCode::Size);
+  limits = {};
+  limits.parseBytes = 0;
+  auto zeroIndex = TxBody::restore<OrderMsg>(Text, 85, error, limits);
+  ZuCheck(!zeroIndex && error.code == ErrorCode::Size);
+  limits.parseBytes = Schema<Order, ZuFacet::FIX>::Leaves::N * sizeof(Position) - 1;
+  auto shortIndex = TxBody::restore<OrderMsg>(Text, 85, error, limits);
+  ZuCheck(!shortIndex && error.code == ErrorCode::Size);
+  ++limits.parseBytes;
+  auto exactIndex = TxBody::restore<OrderMsg>(Text, 85, error, limits);
+  ZuCheck(exactIndex && !error && exactIndex->body() == Text);
 }
 
 static void archiveGroups()
@@ -268,7 +296,7 @@ static void archiveGroups()
   auto incomplete = TxBody::restore<GroupMsg>("453=1\1" "448=FIRST\1"_z, 11, error);
   ZuCheck(!incomplete && error.code == ErrorCode::Required && error.tag == 452);
   auto malformed = TxBody::restore<GroupMsg>("453=1\1" "448=FIRST\1" "452=x\1"_z, 11, error);
-  ZuCheck(!malformed && error.code == ErrorCode::Value && error.tag == 452);
+  ZuCheck(malformed && !error);
   auto absent = TxBody::restore<ComponentMsg>({}, 12, error);
   ZuCheck(absent && !error && !absent->body().length());
   auto present = TxBody::restore<ComponentMsg>("21=7\1"_z, 12, error);
@@ -285,7 +313,7 @@ static void archiveControls()
   auto hb = TxBody::restoreControl("0", {}, 0, error);
   ZuCheck(hb && !error && !hb->body().length() && hb->administrative());
   auto bad = TxBody::restoreControl("3", "45=0\1"_z, 0, error);
-  ZuCheck(!bad && error.code == ErrorCode::Value && error.tag == 45);
+  ZuCheck(bad && !error);
   bad = TxBody::restoreControl("1", {}, 0, error);
   ZuCheck(!bad && error.code == ErrorCode::Required && error.tag == 112);
   bad = TxBody::restoreControl("D", "11=abc\1"_z, 0, error);

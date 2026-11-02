@@ -7,12 +7,13 @@
 #include <zlib/ZmRandom.hh>
 
 #include <zlib/ZfixLinkState.hh>
+#include <zlib/ZfixRxMsg.hh>
 
 namespace Zfix {
 
 ZtEnumImplNS(ResetPath);
 
-unsigned HeaderConfig::mismatch(const Fmt::Header &h) const
+int32_t PeerConfig::mismatch(const RxMsg &h) const
 {
   if (h.sender != peer) return 49;
   if (h.target != local) return 56;
@@ -27,13 +28,12 @@ bool SessionConfig::valid() const
 {
   if (mode >= Transport::N) return false;
   if (mode == Transport::Raw) return true;
-  return header.valid() && appVerID <= AppVersion::N &&
+  return identity.valid() && appVerID <= AppVersion::N &&
     sequenceLimit && sequenceLimit < UINT64_MAX &&
     receivePct && probePct &&
     *logonTimeout && logonTimeout > ZuTime{0} &&
     *logoutTimeout && logoutTimeout > ZuTime{0} &&
     *drainTimeout && drainTimeout > ZuTime{0} &&
-    *sendingTolerance && sendingTolerance >= ZuTime{0} &&
     (mode != Transport::FIXT11 || appVerID < AppVersion::N);
 }
 
@@ -61,7 +61,7 @@ bool LinkState::current(uint64_t connection) const
 {
   return connection && connection == m_connection && m_state != State::Disconnected;
 }
-SessionEvent LinkState::event(unsigned actions, unsigned error, unsigned tag) const
+SessionEvent LinkState::event(unsigned actions, unsigned error, int32_t tag) const
 {
   return {.actions = actions, .state = m_state, .error = error, .tag = tag,
     .connection = m_connection, .epoch = m_epoch, .change = m_change,
@@ -100,27 +100,20 @@ unsigned LinkState::nextTimer_(ZuTime &at) const
   }
   return kind;
 }
-SessionFault LinkState::validateHeader_(const Fmt::Header &h, const ZuDateTime &utc) const
+SessionFault LinkState::validateSession_(const RxMsg &h) const
 {
   if (m_config.mode == Transport::Raw) return {};
   if (!h.seqNo || h.seqNo > m_config.sequenceLimit)
     return {SessionError::Sequence, 34, 5, true};
-  if (h.beginString != Version::Wire::v2s(m_config.header.version))
+  if (h.frame.beginString != Version::Wire::v2s(m_config.identity.version))
     return {SessionError::Version, 8, 5, true};
-  if (auto tag = m_config.header.mismatch(h)) return {SessionError::Identity, tag, 9, true};
-  if (!*h.sendingTime) return {SessionError::Timestamp, 52, 1, false};
-  if (!*utc) return {SessionError::Timestamp, 52, 10, true};
-  auto delta = utc - h.sendingTime;
-  if (!*delta || delta > m_config.sendingTolerance || delta < -m_config.sendingTolerance)
-    return {SessionError::Timestamp, 52, 10, true};
-  if (h.possDup && (!*h.origSendingTime || h.origSendingTime > h.sendingTime))
-    return {SessionError::Duplicate, 122, 10, false};
+  if (auto tag = m_config.identity.mismatch(h)) return {SessionError::Identity, tag, 9, true};
   if (h.appVerID.data() && m_config.appVerID < AppVersion::N &&
       h.appVerID != AppVersion::Wire::v2s(m_config.appVerID))
     return {SessionError::AppVersion, 1128, 5, true};
   return {};
 }
-SessionEvent LinkState::fault_(uint64_t connection, unsigned error, unsigned tag,
+SessionEvent LinkState::fault_(uint64_t connection, unsigned error, int32_t tag,
     ZuTime now, bool logout)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
@@ -198,7 +191,7 @@ SessionEvent LinkState::logonSent_(uint64_t connection, uint64_t seqNo, ZuTime)
   m_txBoundary = seqNo + 1;
   return event(m_admitted ? SessionAction::RetryInput : 0);
 }
-SessionEvent LinkState::reject(unsigned error, unsigned tag, ZuTime now)
+SessionEvent LinkState::reject(unsigned error, int32_t tag, ZuTime now)
 {
   m_admission = 0;
   m_ready = false;
@@ -210,20 +203,20 @@ SessionEvent LinkState::reject(unsigned error, unsigned tag, ZuTime now)
   e.error = error; e.tag = tag;
   return e;
 }
-SessionEvent LinkState::peerLogon_(uint64_t connection, const Fmt::Header &h,
+SessionEvent LinkState::peerLogon_(uint64_t connection, const RxMsg &h,
     const Session::Logon &logon, uint64_t expected, ZuTime now)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || (m_state != State::Accepting && m_state != State::Logon))
     return event();
-  if (h.msgType != "A") {
+  if (h.frame.msgType != "A") {
     auto e = close(SessionError::Type);
     e.actions |= SessionAction::Refuse; e.tag = 35;
     return e;
   }
-  if (h.beginString != Version::Wire::v2s(m_config.header.version))
+  if (h.frame.beginString != Version::Wire::v2s(m_config.identity.version))
     return reject(SessionError::Version, 8, now);
-  if (auto tag = m_config.header.mismatch(h)) {
+  if (auto tag = m_config.identity.mismatch(h)) {
     auto e = close(SessionError::Identity);
     e.actions |= SessionAction::Refuse; e.tag = tag;
     return e;

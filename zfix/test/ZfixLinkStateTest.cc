@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZfixLinkState.hh>
+#include <zlib/ZfixRxMsg.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -17,18 +18,18 @@ static SessionConfig config(bool initiator = true, unsigned mode = Transport::FI
     unsigned version = Version::V4_4)
 {
   SessionConfig cfg;
-  cfg.header.version = version;
-  cfg.header.local = "LOCAL";
-  cfg.header.peer = "PEER";
+  cfg.identity.version = version;
+  cfg.identity.local = "LOCAL";
+  cfg.identity.peer = "PEER";
   cfg.appVerID = AppVersion::V5_0_SP2;
   cfg.initiator = initiator;
   cfg.mode = mode;
   return cfg;
 }
-static Fmt::Header header(uint64_t seqNo = 1, ZuCSpan version = "FIX.4.4")
+static RxMsg header(uint64_t seqNo = 1, ZuCSpan version = "FIX.4.4")
 {
-  Fmt::Header h;
-  h.beginString = version; h.msgType = "A";
+  RxMsg h;
+  h.frame.beginString = version; h.frame.msgType = "A";
   h.sender = "PEER"; h.target = "LOCAL"; h.seqNo = seqNo;
   return h;
 }
@@ -43,7 +44,7 @@ static SessionEvent establish(LinkState &s, uint64_t peerSeq = 1, uint64_t expec
 {
   auto e = start(s, localSeq);
   Session::Logon logon; logon.nextExpected = nextExpected; logon.defaultAppVerID = "9";
-  auto h = header(peerSeq, Version::Wire::v2s(s.config_().header.version));
+  auto h = header(peerSeq, Version::Wire::v2s(s.config_().identity.version));
   auto admission = s.peerLogon_(e.connection, h, logon, expected, ZuTime{102});
   s.admit_(e.connection, admission.ticket, true, ZuTime{103});
   if (!s.config_().initiator) s.logonSent_(e.connection, localSeq, ZuTime{104});
@@ -124,16 +125,16 @@ static void identities()
 {
   ZuTestScope(identities);
   auto cfg = config(false);
-  cfg.header.localSub = "LS"; cfg.header.peerSub = "PS";
-  cfg.header.localLocation = "LL"; cfg.header.peerLocation = "PL";
+  cfg.identity.localSub = "LS"; cfg.identity.peerSub = "PS";
+  cfg.identity.localLocation = "LL"; cfg.identity.peerLocation = "PL";
   auto h = header();
-  ZuCheck(cfg.header.mismatch(h) == 50);
+  ZuCheck(cfg.identity.mismatch(h) == 50);
   h.senderSub = "PS"; h.targetSub = "LS";
-  ZuCheck(cfg.header.mismatch(h) == 142);
+  ZuCheck(cfg.identity.mismatch(h) == 142);
   h.senderLocation = "PL"; h.targetLocation = "LL";
-  ZuCheck(!cfg.header.mismatch(h));
+  ZuCheck(!cfg.identity.mismatch(h));
   h.target = "PEER";
-  ZuCheck(cfg.header.mismatch(h) == 56);
+  ZuCheck(cfg.identity.mismatch(h) == 56);
   LinkState s{ZuMv(cfg)};
   auto e = s.open_(ZuTime{100});
   e = s.peerLogon_(e.connection, h, Session::Logon{}, 1, ZuTime{101});
@@ -172,7 +173,7 @@ static void modes()
 static void invalidLogon()
 {
   ZuTestScope(invalidLogon);
-  auto invalid = [](unsigned mode, Fmt::Header h, Session::Logon peer) {
+  auto invalid = [](unsigned mode, RxMsg h, Session::Logon peer) {
     LinkState s{config(true, mode)};
     auto e = start(s);
     e = s.peerLogon_(e.connection, h, peer, 1, ZuTime{103});
@@ -183,7 +184,7 @@ static void invalidLogon()
     return e;
   };
   Session::Logon peer;
-  auto wrongType = header(); wrongType.msgType = "D";
+  auto wrongType = header(); wrongType.frame.msgType = "D";
   auto e = invalid(Transport::FIX4, wrongType, peer);
   ZuCheck(e.error == E::Type && (e.actions & A::Refuse) &&
     !(e.actions & (A::Admission | A::SendLogout)));
@@ -336,7 +337,7 @@ static void configBounds()
 {
   ZuTestScope(configBounds);
   SessionConfig empty;
-  ZuCheck(empty.header.version == Version::N &&
+  ZuCheck(empty.identity.version == Version::N &&
     empty.appVerID == AppVersion::N && !empty.valid());
   for (unsigned version = 0; version < Version::N; ++version) {
     auto cfg = config(true, Transport::FIX4, version);
@@ -375,12 +376,10 @@ static void configBounds()
   ZuCheck(cfg.valid());
   cfg.appVerID = AppVersion::N + 1;
   ZuCheck(!cfg.valid());
-  cfg = config(); cfg.header.version = Version::N;
+  cfg = config(); cfg.identity.version = Version::N;
   ZuCheck(!cfg.valid());
-  cfg.header.version = Version::N + 1;
+  cfg.identity.version = Version::N + 1;
   ZuCheck(!cfg.valid());
-  cfg = config(); cfg.sendingTolerance = ZuTime{0};
-  ZuCheck(cfg.valid());
   cfg = config(); cfg.mode = Transport::N;
   ZuCheck(!cfg.valid());
   LinkState mode{cfg}; e = mode.open_(ZuTime{100});
@@ -808,7 +807,7 @@ static SessionEvent phase(LinkState &s, unsigned n)
   if (n < 3) {
     auto e = start(s);
     Session::Logon peer; peer.nextExpected = 2; peer.defaultAppVerID = "9";
-    e = s.peerLogon_(e.connection, header(1, Version::Wire::v2s(s.config_().header.version)),
+    e = s.peerLogon_(e.connection, header(1, Version::Wire::v2s(s.config_().identity.version)),
       peer, 1, ZuTime{102});
     return n == 1 ? e : s.admit_(e.connection, e.ticket, true, ZuTime{103});
   }

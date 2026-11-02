@@ -8,6 +8,13 @@ recovery without a synchronization challenge; managed FIX begins after native
 transport readiness. Old Connecting, history-release and cached-resend entries
 below are historical, not current requirements or proof of the repairs.
 
+The Binary/API migration removes Header/Trailer message representations. Current
+session fields use ordinary message metadata and are observed directly into
+retained Rx state. Timestamp presence, age, clock skew and OrigSendingTime order
+are metadata, never session admission or rejection gates. Earlier timestamp-based
+rejection entries below are superseded. New source/fixtures await the coordinated
+clang release acceptance run; historical counts are unchanged.
+
 The tables below retain earlier session/queue acceptance descriptions, with
 current fixture filename spellings. They do not override the repaired contracts.
 The queue-repair migration in `zmpqfix.md` is complete; older reverse-unwind/
@@ -23,7 +30,7 @@ gates, which remain Stage 9 work. Source names below refer to this directory.
 | Seven built-in controls and prescribed fields | ZfixMsgs; shared metadata codec | Msgs golden bodies, optional facets, malformed/missing controls; Frame/TxFrame wire fixtures |
 | Mode independent of declared version | SessionConfig, controlBody/saveControl | Session `modes`, `invalidLogon`; Tx `modes`; Managed `handshake` |
 | Raw external control/sequence manager | Session bypass, Rx rawRx, explicit TxFrame headers | Session `raw`; Rx `limitsAndRaw`; TxFrame fixtures |
-| Link ownership and connection lifetime separation | Embedded owner progress, separate HeaderConfig, monotone connection tokens | Session `identities`, `initiator`, `logoutReconnect`; Rx `reconnect`; Managed `continuingReconnect` |
+| Link ownership and connection lifetime separation | Embedded owner progress, PeerConfig identity, monotone connection tokens | Session `identities`, `initiator`, `logoutReconnect`; Rx `reconnect`; Managed `continuingReconnect` |
 | Asynchronous admission, refusal and connection replacement | Session admission tickets; Rx retained first frame; managed one-shot deferred replies | Session `acceptor`; Rx `admission`, `rejectedAdmission`; Ctl command ordering |
 | Lifecycle/probe/idle/deadline state | Session and LinkTx owner clocks | Session `clocks`, `zeroHeartbeat`, `recovery`, `probePublication`, `recreatedProbe`, `probeWatermark`; Ctl idle scopes |
 | ZmPQRx read-ahead/gaps and ZmPQTx send/replay | ZfixSeq owner wrappers | Seq scopes including bounded permutations, callback holds and restored gaps; SeqTx bounded replay/history/deferred scopes |
@@ -98,10 +105,9 @@ acceptor heartbeat negotiation, required application version and unprepared rese
 | Heartbeat, 789 or application-version mismatch | diagnostic Logout with correct reference tag, no readiness; future 789 cannot acknowledge | Session invalidLogon/logonMatrix/admissionMatrix; Ctl factory mode checks |
 | Admission refusal or stale acceptance | no establishment, bounded Logout, cancelled admission/Logon state | Session admissionMatrix; Rx rejectedAdmission; Ctl pending load handling |
 | Malformed integer, duplicate recognized field, unknown message type | consume once, Reject exact sequence/tag/reason, no typed dispatch; session remains operational | Rx faultMatrix across all modes and both roles; Msgs/codec negative fixtures; Managed peerReject |
-| Missing or future OrigSendingTime | consume only expected input; Reject tag 122 with missing-tag reason 1 or timestamp reason 10 | Rx faultMatrix/unsafeHeaders; low duplicates suppressed |
-| Wrong attached identity or expired SendingTime | consume expected input, Reject then bounded Logout; clear probe/receive deadlines | Rx faultMatrix/headerFailures; state-change notification precedes general routing |
+| Missing, future or relatively ordered timestamps | pass metadata; sequence and PossDup policy remain independent | New timestamp regressions await coordinated acceptance |
+| Wrong attached identity | consume expected input, Reject then bounded Logout; clear probe/receive deadlines | Rx identity regressions; state-change notification precedes general routing |
 | Missing sequence or low non-PossDup | no cursor advance; bounded Logout without an invented Reject reference | Rx faultMatrix/headerFailures/unsafeHeaders |
-| Orphan binary metadata | close immediately without consuming sequence or guessing field boundaries | Rx faultMatrix/unsafeHeaders; SessionError::Protocol, cancelled deadlines |
 | Read-ahead/output bounds | bounded retained bytes; failed candidate/input cannot echo, dispatch or reserve a sequence | Rx faultMatrix/limitsAndRaw/businessLimits; Tx limits; Ctl queueBounds/control bounds |
 | Current/future/stale fault routing, including limit-coded failure | correct tag/error/epoch; immediate close or explicitly requested bounded Logout; stale connection inert | Session faultRouting across modes, roles and both dispositions; failureMatrix/timeoutMatrix |
 
@@ -113,9 +119,8 @@ fault routing and its callback/deadline disposition are exercised separately.
 
 The matrix initially expected a receive deadline while a synchronization probe
 was active; the contract instead uses a separate probe deadline until the exact
-reply. Missing OrigSendingTime is also a required-tag failure (reason 1), whereas
-a future original timestamp is reason 10. Those test expectations were corrected
-before final evidence. Unknown mode rejection already existed; the new managed
+reply. The historical OrigSendingTime rejection expectations are superseded by
+the current timestamp-metadata contract above. Unknown mode rejection already existed; the new managed
 zero-epoch check exposed and fixed a genuine inconsistency with snapshot/Tx state.
 
 ## Acceptance scope
@@ -140,7 +145,7 @@ the native integration suite.
 | Tx selection, control ordering, conversion before association | TxBody encode/control errors return before select/load; TxFrame and codec negative fixtures exercise failures. LinkTx prioritizes controls before dequeue. Ctl factory/applicationQueue and Managed associationOwner/queuedAssociationOwner interleave Heartbeat with pending business selection. |
 | Exact load identity/context, no refused-load gap | Core select proposes one sequence and commits only after load acceptance. Ctl pending/queueAssociation and Tx assignment/staleLoad cover refusal/delay. Managed associationOwner checks the application map before Tx completion, in all modes and both roles; refused business leaves its sequence available for Heartbeat. |
 | Separate association owner and continuation ordering | Fake owner 3 owns mapping, refusal, unload and Reject lookup. Tx posts immutable handles plus captured context/tickets, then waits. associated/unloaded completions return to owner 2. Managed associationOwner and queuedAssociationOwner assert pending/commit/publication and final-selection-before-Reject order. |
-| Current headers and complete pooled output before publication | Tx samples current header/time at publication; Header/Frame/TxFrame golden fixtures verify framing. Managed associationOwner advances UTC after mapping but before Tx completion and checks current SendingTime; deferredOwnerClose checks new headers after reconnect and requeue. |
+| Current headers and complete pooled output before publication | Tx supplies current session fields/time at publication through ordinary metadata; Frame/TxFrame golden fixtures verify framing. Managed associationOwner advances UTC after mapping but before Tx completion and checks current SendingTime; deferredOwnerClose checks new headers after reconnect and requeue. |
 | Partial writes, immutable assigned sequence and replay identity | Managed partialWrites scans every byte split; queuedPartialWrites checks multiple admitted frames and all completions on failure. partialFailure covers incomplete peer data and full peer delivery with failed local completion. replayDuringPartial needs a unique transport ticket even for otherwise equal replay context. |
 | Retain/abort accepted unpublished work | Committed work retains its assigned sequence on reconnect. Explicit application abort leaves a missing range for ordinary retrieval/GapFill without renumbering. Only stale pre-commit acceptance invokes unload rollback. Logon is assigned at unchanged next and admitted before catch-up; Tx/Ctl/Managed retained-reconnect, priority-hook reentry and deferred-history recovery fixtures pass. |
 | Sequence-keyed Reject on association owner | Rx retains exact parsed reference fields and pooled backing, posts through Tx's epoch/connection guard, then the fixture routes to application owner 3. Managed queuedAssociationOwner checks selection and map order before immediate peer rejection; peerReject checks duplicate replay and reference reuse in a new epoch. No business registry is supplied by Zfix. |

@@ -8,26 +8,24 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
+#include <zlib/ZfixSession.hh>
 #include <zlib/ZfixTrace.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
 struct MessageBody {
   ZuCSpan	id, password, extra;
-  ZuBSpan	blob;
 };
 
 ZfStruct(, (MessageBody, FIX),
   (id, (FIX::ID<11>), String), (password, (FIX::ID<554>), String),
-  (extra, (FIX::ID<9000>), String), (blob, (FIX::ID<9002>, FIX::Len<9001>), Bytes));
+  (extra, (FIX::ID<9000>), String));
 ZfStructImpl(MessageBody); ZfStructImpl(MessageBody, FIX);
 struct Party {
   ZuCSpan	id;
-  ZuBSpan	blob;
 };
 
-ZfStruct(, (Party, FIX), (id, (FIX::ID<448>), String),
-  (blob, (FIX::ID<9002>, FIX::Len<9001>), Bytes));
+ZfStruct(, (Party, FIX), (id, (FIX::ID<448>), String));
 ZfStructImpl(Party); ZfStructImpl(Party, FIX);
 struct Parties : ZtArray<Party, ZtArrayHeapID<"Zfix.TraceTest">> {
 friend Fmt::AsArray<> Zfix_Fmt(Parties *);
@@ -40,14 +38,7 @@ struct GroupBody {
 
 ZfStruct(, (GroupBody, FIX), (id, (FIX::ID<11>), String), (parties, (FIX::ID<453>), UDT));
 ZfStructImpl(GroupBody); ZfStructImpl(GroupBody, FIX);
-struct Ambiguous {
-  ZuCSpan	id;
-  Parties	parties;
-};
-
-ZfStruct(, (Ambiguous, FIX), (id, (FIX::ID<9002>), String), (parties, (FIX::ID<453>), UDT));
-ZfStructImpl(Ambiguous); ZfStructImpl(Ambiguous, FIX);
-static TraceField resolve(void *, ZuCSpan, unsigned tag) {
+static TraceField resolve(void *, ZuCSpan, int32_t tag) {
   auto f = traceField<MessageBody>(tag); if (tag == 9000) f.secret = true; return f;
 }
 static bool contains(ZuCSpan text, ZuCSpan term) {
@@ -88,28 +79,6 @@ static void redaction() {
     !contains(record->data().text(), "custom-secret") && !contains(record->data().text(),
       "HIDDEN"));
 }
-static void binary() {
-  ZuTestScope(binary);
-  WireTrace t{{.bytes = 64 << 10}};
-  auto payload = "\1" "11=STOLEN\1\0="_z;
-  ZtString content;
-  content << "9001=" << payload.length() << '\1'
-    << "9002=" << payload << '\1' << "11=visible\1";
-  auto b = wire("D", content);
-  auto record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheck(record && !contains(record->data().text(), "STOLEN"));
-  ZuCheck(contains(record->data().text(), "11=visible") && contains(record->data().text(),
-    "9002=<redacted>"));
-  // Unknown binary metadata makes the entire remaining suffix opaque.
-  b = wire("D", "9998=12\1" "9999=prefix\1" "11=HIDDEN\1");
-  record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheck(contains(record->data().text(), "<opaque>") && !contains(record->data().text(),
-    "HIDDEN"));
-  b = wire("D", "9001=999\1" "9002=hidden\1" "11=HIDDEN\1");
-  record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheck(contains(record->data().text(), "<malformed>") && !contains(record->data().text(),
-    "HIDDEN"));
-}
 static void escaping() {
   ZuTestScope(escaping);
   WireTrace t{{.bytes = 64 << 10}};
@@ -143,30 +112,123 @@ static void bounds() {
 }
 static void groups() {
   ZuTestScope(groups);
-  auto f = traceField<GroupBody>(9001);
-  ZuCheck(f.known && f.dataTag == 9002 && !f.ambiguous);
-  f = traceField<Ambiguous>(9002); ZuCheck(f.ambiguous && !f.known);
+  ZuCheck(traceField<GroupBody>(448).known && !traceField<GroupBody>(9001).known);
   WireTrace t{{.bytes = 64 << 10}};
-  auto b = wire("D", "453=1\1" "448=party\1" "9001=3\1" "9002=x\1=\1" "11=visible\1");
+  auto b = wire("D", "453=2\1" "448=party1\1" "448=party2\1" "11=visible\1");
   auto record = t.capture_(ZuCSpan{b->cspan()}, {},
-    [](void *, ZuCSpan, unsigned tag) { return traceField<GroupBody>(tag); });
-  ZuCheck(contains(record->data().text(), "448=party") &&
-    contains(record->data().text(), "11=visible") && contains(record->data().text(),
-      "9002=<redacted>"));
-  record = t.capture_(ZuCSpan{b->cspan()}, {},
-    [](void *, ZuCSpan, unsigned tag) { return traceField<Ambiguous>(tag); });
-  ZuCheck(contains(record->data().text(), "<opaque>") && !contains(record->data().text(),
-    "9002="));
-  record = t.capture_(ZuCSpan{b->cspan()}, {}, [](void *, ZuCSpan, unsigned tag) {
-    auto f = traceField<GroupBody>(tag); if (tag == 9002) f.secret = true; return f;
-  });
-  ZuCheck(!contains(record->data().text(), "visible") && contains(record->data().text(),
-    "<opaque>"));
+    [](void *, ZuCSpan, int32_t tag) { return traceField<GroupBody>(tag); });
+  ZuCheck(contains(record->data().text(), "448=party1") &&
+    contains(record->data().text(), "448=party2") && contains(record->data().text(), "11=visible"));
+  b = wire("D", "9999=unknown\1" "11=HIDDEN\1");
+  record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
+  ZuCheck(contains(record->data().text(), "<opaque>") && !contains(record->data().text(), "HIDDEN"));
 }
+struct BinaryBody {
+  ZuBSpan data;
+  ZuCSpan id;
+};
+ZfStruct(, (BinaryBody, FIX),
+  (data, (FIX::ID<212>, FIX::Binary<213>), Bytes),
+  (id, (FIX::ID<11>), String));
+
+static void binary() {
+  ZuTestScope(binary);
+  WireTrace trace{{.bytes = 64 << 10}};
+  constexpr auto content = "212=14\1" "213=A\1\0=11=FAKE\1" "\xffZ\1" "11=real\1"_z;
+  auto b = wire("n", content);
+  auto resolve = [](void *, ZuCSpan, int32_t tag) { return traceField<BinaryBody>(tag); };
+  auto record = trace.capture_(ZuCSpan{b->cspan()}, {}, resolve);
+  ZuCheck(record && contains(record->data().text(), "213=A\\x01\\x00=11=FAKE\\x01\\xFFZ"));
+  ZuCheck(contains(record->data().text(), "11=real") &&
+    !contains(record->data().text(), "<malformed>"));
+  record = trace.capture_(ZuCSpan{b->cspan()}, {},
+    [](void *, ZuCSpan, int32_t tag) {
+      auto f = traceField<BinaryBody>(tag);
+      if (tag == 212) f.secret = true;
+      return f;
+    });
+  ZuCheck(contains(record->data().text(), "212=<redacted>") &&
+    !contains(record->data().text(), "FAKE") && !contains(record->data().text(), "11=real"));
+  b = wire("n", "212=200\1" "213=A\1" "11=HIDDEN\1");
+  record = trace.capture_(ZuCSpan{b->cspan()}, {}, resolve);
+  ZuCheck(contains(record->data().text(), "<malformed>") &&
+    !contains(record->data().text(), "HIDDEN"));
+  b = wire("n", content);
+  record = trace.capture_(ZuCSpan{b->cspan()}, {},
+    [](void *, ZuCSpan, int32_t tag) {
+      auto f = traceField<BinaryBody>(tag);
+      if (tag == 212) f.merge({.known = true});
+      return f;
+    });
+  ZuCheck(contains(record->data().text(), "<opaque>") &&
+    !contains(record->data().text(), "FAKE"));
+}
+
+struct RawReplay {
+  ZuBSpan data;
+};
+ZfStruct(, (RawReplay, FIX), (data, (FIX::ID<95>, FIX::Binary<96>), Bytes));
+
+static void authentication() {
+  ZuTestScope(authentication);
+  WireTrace trace{{.bytes = 64 << 10}};
+  constexpr auto Credentials = "95=10\1" "96=secret\1\0=X\1"_z;
+  auto b = wire("A", Credentials);
+  auto record = trace.capture_(ZuCSpan{b->cspan()}, {});
+  ZuCheck(record && contains(record->data().text(), "95=<redacted>") &&
+    !contains(record->data().text(), "secret"));
+  b = wire("U", Credentials);
+  record = trace.capture_(ZuCSpan{b->cspan()}, {},
+    [](void *, ZuCSpan, int32_t tag) { return traceField<RawReplay>(tag); });
+  ZuCheck(record && contains(record->data().text(), "96=secret\\x01\\x00=X") &&
+    !contains(record->data().text(), "<redacted>"));
+}
+
+struct AmbigEntry {
+  ZuBSpan data;
+};
+ZfStruct(, (AmbigEntry, FIX), (data, (FIX::ID<212>, FIX::Binary<214>), Bytes));
+struct AmbigEntries : ZtArray<AmbigEntry, ZtArrayHeapID<"Zfix.TraceAmbig">> {
+friend Fmt::AsArray<> Zfix_Fmt(AmbigEntries *);
+};
+struct AmbigMessage {
+  ZuBSpan data;
+  AmbigEntries rows;
+};
+ZfStruct(, (AmbigMessage, FIX),
+  (data, (FIX::ID<212>, FIX::Binary<213>), Bytes),
+  (rows, (FIX::ID<6000>), UDT));
+
+static void interpretations() {
+  ZuTestScope(interpretations);
+  auto builtin = traceBuiltin("0", 93);
+  auto application = traceField<Session::HeartBt>(93);
+  ZuCheck(builtin.known && application.known && builtin.valueTag == 89 &&
+    application.valueTag == 89);
+  builtin.merge(application);
+  ZuCheck(!builtin.ambiguous);
+  WireTrace trace{{.bytes = 64 << 10}};
+  auto b = wire("0", "93=5\1" "89=A\1\0=B\1"_z);
+  auto record = trace.capture_(ZuCSpan{b->cspan()}, {},
+    [](void *, ZuCSpan, int32_t tag) { return traceField<Session::HeartBt>(tag); });
+  ZuCheck(contains(record->data().text(), "93=5\\x0189=A\\x01\\x00=B\\x01") &&
+    !contains(record->data().text(), "<opaque>") &&
+    !contains(record->data().text(), "<malformed>"));
+  auto ambiguous = traceField<AmbigMessage>(212);
+  ZuCheck(ambiguous.known && ambiguous.ambiguous);
+  b = wire("n", "6000=1\1" "212=3\1" "214=A\1B\1"_z);
+  record = trace.capture_(ZuCSpan{b->cspan()}, {},
+    [](void *, ZuCSpan, int32_t tag) { return traceField<AmbigMessage>(tag); });
+  ZuCheck(contains(record->data().text(), "<opaque>") &&
+    !contains(record->data().text(), "214="));
+}
+
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
-  ZuTestCall(redaction);
+  ZuTestCall(authentication);
+  ZuTestCall(interpretations);
   ZuTestCall(binary);
+  ZuTestCall(redaction);
   ZuTestCall(escaping);
   ZuTestCall(bounds);
   ZuTestCall(groups);

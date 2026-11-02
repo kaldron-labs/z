@@ -35,6 +35,10 @@ static Text read(const char *path) {
   bool ok = fread(bytes.data(), 1, bytes.length(), file) == bytes.length();
   fclose(file); return ok ? ZuMv(bytes) : Text{};
 }
+static const std::string XMLPayload{"RTRF<8=FIX.4.4\1" "9=5\1" "35=D\1" "10=999\1\0=\xff>", 35};
+static const std::string AuthPayload{"user\0credential\1" "35=A\1" "10=999\1=\xff", 30};
+static const std::string SigPayload{"S\0\1=\xff", 5};
+
 static void validate(const char *dict, int argc, char **argv) {
   ZuTestScope(validate);
   FIX::DataDictionary dictionary{dict};
@@ -45,12 +49,18 @@ static void validate(const char *dict, int argc, char **argv) {
       FIX::Message message{std::string{bytes.data(), bytes.length()}, dictionary, true};
       dictionary.validate(message); // all upstream defaults; no validation switches
       auto type = message.getHeader().getField(35);
-      ZuCheck(type == "D" || type == "8" || type == "F" || type == "G");
-      ZuCheck(message.getField(11).length() && message.getField(55) == "ZFIX");
-      if (message.isSetField(355)) {
-	const auto &data = message.getField(355);
-	ZuCheck((data.length() == 300 || data.length() == 4096) && !data[0] && data[1] == 1
-	  && data[61] == '=');
+      ZuCheck(type == "D" || type == "8" || type == "F" || type == "G" ||
+	type == "n" || type == "A");
+      if (type == "n") {
+	const auto &h = message.getHeader();
+	ZuCheck(h.getField(212) == "35" && h.getField(213) == XMLPayload);
+      } else if (type == "A") {
+	ZuCheck(message.getField(98) == "0" && message.getField(108) == "30");
+	ZuCheck(message.getField(95) == "30" && message.getField(96) == AuthPayload);
+      } else ZuCheck(message.getField(11).length() && message.getField(55) == "ZFIX");
+      if (message.getTrailer().isSetField(89)) {
+	const auto &trailer = message.getTrailer();
+	ZuCheck(trailer.getField(93) == "5" && trailer.getField(89) == SigPayload);
       }
       if (message.isSetField(453) && message.getField(453) == "2") {
 	FIX::Group party{453, 448}; message.getGroup(2, party);

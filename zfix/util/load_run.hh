@@ -27,12 +27,12 @@ struct Options {
   unsigned	port = 0, sessions = 1, count = 1000, warmup = 100, inFlight = 64;
   unsigned	connections = 1;
   unsigned	duration = 0, deadline = 30, heartbeat = 30;
-  unsigned	parties = 0, subs = 0, text = 0, binary = 0, retain = 4096;
+  unsigned	parties = 0, subs = 0, text = 0, retain = 4096;
   uint64_t	rate = 0, seed = 1, queueBytes = 16U<<20, cacheBytes = 64U<<20;
   uint64_t	keyOffset = 0, recoverRx = 0;
   bool		tcp = false, help = false, resetLogon = false;
 
-  Shape shape() const { return {parties, subs, text, binary}; }
+  Shape shape() const { return {parties, subs, text}; }
 };
 
 ZfStruct(, (Options, CLI), (host, (CLI::Long<"host">), String),
@@ -53,7 +53,7 @@ ZfStruct(, (Options, CLI), (host, (CLI::Long<"host">), String),
   (inFlight, (CLI::Long<"inflight">), UInt32), (duration, (CLI::Long<"duration">), UInt32),
   (deadline, (CLI::Long<"deadline">), UInt32), (heartbeat, (CLI::Long<"heartbeat">), UInt32),
   (parties, (CLI::Long<"parties">), UInt32), (subs, (CLI::Long<"subs">), UInt32),
-  (text, (CLI::Long<"text">), UInt32), (binary, (CLI::Long<"binary">), UInt32),
+  (text, (CLI::Long<"text">), UInt32),
   (retain, (CLI::Long<"retain">), UInt32), (rate, (CLI::Long<"rate">), UInt64),
   (seed, (CLI::Long<"seed">), UInt64), (queueBytes, (CLI::Long<"queue-bytes">), UInt64),
   (cacheBytes, (CLI::Long<"cache-bytes">), UInt64), (tcp, (CLI::Long<"tcp">), Bool),
@@ -86,6 +86,7 @@ struct Result {
   unsigned	session = 0, errors = 0;
   Progress	progress;
   uint64_t	warmup = 0, elapsedNs = 0, targetRate = 0, seed = 0;
+  uint64_t	startNs = 0, endNs = 0;
   unsigned	cap = 0, inFlightLimit = 0;
   Quantiles	ackNs, terminalNs, scheduleNs, intendedAckNs, intendedTerminalNs;
   uint64_t	rxFrames = 0, txFrames = 0, rxBytes = 0, txBytes = 0;
@@ -98,6 +99,7 @@ struct Result {
 ZfStruct(, (Result, JSON), (event, , String), (engine, , String), (role, , String),
   (session, , UInt32), (errors, , UInt32), (progress, , UDT), (warmup, , UInt64),
   (elapsedNs, , UInt64), (targetRate, , UInt64), (seed, , UInt64), (cap, , UInt32),
+  (startNs, , UInt64), (endNs, , UInt64),
   (inFlightLimit, , UInt32), (ackNs, , UDT), (terminalNs, , UDT), (scheduleNs, , UDT),
   (intendedAckNs, , UDT), (intendedTerminalNs, , UDT),
   (rxFrames, , UInt64), (txFrames, , UInt64), (rxBytes, , UInt64), (txBytes, , UInt64),
@@ -159,7 +161,7 @@ struct BrokerData {
 class Broker : public BrokerData {
 public:
   Broker(const Options &o, unsigned index) : BrokerData{o, index},
-    m_options{o}, m_flow{workflow(o.scenario)}, m_model{{0, 0, o.text, o.binary}, o.seed} { }
+    m_options{o}, m_flow{workflow(o.scenario)}, m_model{{0, 0, o.text}, o.seed} { }
 
   template <typename O, typename Emit> bool receive(const O &o, bool replay, Emit emit) {
     auto prepared = prepare(o, replay);
@@ -208,7 +210,7 @@ public:
     m_floor{m_key}, m_namespace{uint64_t(index)<<48} {
     if (m_flow == Workflow::Replace) {
       const auto &o = m_model.order();
-      m_follow.order.text = o.text; m_follow.order.encoded = o.encoded;
+      m_follow.order.text = o.text;
       // Model groups are immutable and outlive this read-only replacement view.
       m_follow.order.parties -= o.parties;
     }
@@ -264,7 +266,7 @@ public:
 
   uint64_t nextDue(uint64_t now) const;
 
-  bool shape(ZuCSpan text, ZuBSpan binary) const { return m_model.shape(text, binary); }
+  bool shape(ZuCSpan text) const { return m_model.shape(text); }
 
   unsigned phase() const { return m_phase; }
 
@@ -293,7 +295,7 @@ private:
   unsigned		m_offered = 0, m_completed = 0, m_peak = 0, m_phase = Phase::Idle;
 };
 
-bool shape(ZuCSpan text, ZuBSpan binary, unsigned textBytes, unsigned binaryBytes);
+bool shape(ZuCSpan text, unsigned textBytes);
 bool shape(const Order &, Shape);
 } // ZfixLoad
 

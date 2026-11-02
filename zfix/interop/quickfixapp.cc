@@ -485,7 +485,7 @@ private:
     if (!m_live || errors()) return;
     auto &s = *m_slots[i];
     if constexpr (Client) {
-      if (!s.run.shape(value.text, value.encoded)) {
+      if (!s.run.shape(value.text)) {
 	fail("report shape"); return;
       }
       auto previous = s.run.phase();

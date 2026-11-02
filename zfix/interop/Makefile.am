@@ -11,7 +11,7 @@ AM_LDFLAGS = @Z_LDFLAGS@
 noinst_PROGRAMS = nativecodec
 nativecodec_SOURCES = nativecodec.cc
 nativecodec_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zfix/src
-nativecodec_LDADD = $(top_builddir)/zfix/util/libZfixLoadFIX.la $(top_builddir)/zfix/util/libZfixLoad.la \
+nativecodec_LDADD = $(top_builddir)/zfix/src/libZfix.la $(top_builddir)/zfix/util/libZfixLoadFIX.la $(top_builddir)/zfix/util/libZfixLoad.la \
 	$(top_builddir)/zfix/src/libZfixFmt.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
@@ -35,7 +35,7 @@ quickfixd_CPPFLAGS = $(QF_CPPFLAGS)
 quickfixd_LDADD = libquickfixload.la $(QF_LDADD)
 quickfixloadtest_SOURCES = quickfixloadtest.cc
 quickfixloadtest_CPPFLAGS = $(QF_CPPFLAGS)
-quickfixloadtest_LDADD = libquickfixload.la $(top_builddir)/zi/test/libZiTest.la $(QF_LDADD)
+quickfixloadtest_LDADD = libquickfixload.la $(top_builddir)/zfix/itest/libZfixITest.la $(QF_LDADD)
 quickfixprobe_SOURCES = quickfixprobe.cc
 quickfixprobe_CPPFLAGS = $(AM_CPPFLAGS) @QUICKFIX_CFLAGS@
 quickfixprobe_LDADD = $(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \
@@ -98,7 +98,7 @@ if HAVE_QUICKFIX
 	$(LIBTOOL) --tag=CXX --mode=link $(CXX) $(DEFS) $(QF_CPPFLAGS) $(CPPFLAGS) \
 	  $(AM_CXXFLAGS) $(CXXFLAGS) -fsanitize=address -fno-omit-frame-pointer \
 	  $(srcdir)/quickfixloadtest.cc QfAsanApp.o QfAsanWire.o QfAsanLoad.o QfAsanRun.o \
-	  $(top_builddir)/zi/test/libZiTest.la $(QF_LDADD) -o quickfixloadasan
+	  $(top_builddir)/zfix/itest/libZfixITest.la $(QF_LDADD) -o quickfixloadasan
 else
 	@echo "configure --with-quickfix=PREFIX to build independent FIX sanitizer tools" >&2
 	@exit 1

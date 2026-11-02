@@ -6,26 +6,28 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZfixDispatch.hh>
+#include <zlib/ZfixRxMsg.hh>
 #include "../util/zfix_load_frame.hh"
 using namespace ZuTestUtil;
 using namespace ZfixLoad;
-static void order(unsigned parties, unsigned subs, unsigned binary, unsigned text) {
+static void order(unsigned parties, unsigned subs, unsigned text) {
   ZuTestScope(order);
-  Model model{{parties, subs, text, binary}, 42}; const auto &o = model.next(1001,
+  Model model{{parties, subs, text}, 42}; const auto &o = model.next(1001,
     ZuDateTime{Zm::now()});
   auto wire = frame<NewOrder>(o); auto parsed = Zfix::Fmt::frame(wire);
   ZuCheck(parsed.state == Zfix::Fmt::FrameState::Complete);
+  Zfix::RxMsg input; input.frame = parsed.view;
+  ZuCheck(!Zfix::catalogSession<Dictionary>(input));
   unsigned calls = 0;
   auto error = Zfix::dispatch<Dictionary>(parsed.view,
-    [&o, &calls, parties, subs](auto *entry, const auto &value, const auto &h,
-      const auto &) -> Zfix::Fmt::Error {
+    [&o, &calls, &input, parties, subs](auto *entry, const auto &value) -> Zfix::Fmt::Error {
       using E = ZuDecay<decltype(*entry)>;
       if constexpr (ZuIsSame<E, NewOrder>{}) {
 	++calls;
 	  ZuCheck(valid(value) && value.key == o.key && value.qty == o.qty
 	  && value.price == o.price);
-	ZuCheck(value.time == o.time && value.text == o.text && value.encoded == o.encoded
-	  && h.seqNo == 2);
+	ZuCheck(value.time == o.time && value.text == o.text
+	  && input.seqNo == 2);
 	ZuCheck(value.parties.length() == parties);
 	if (parties) ZuCheck(value.parties[parties - 1].subs.length() == subs);
       } else ZuCheck(false);
@@ -35,17 +37,17 @@ static void order(unsigned parties, unsigned subs, unsigned binary, unsigned tex
 }
 static void reports() {
   ZuTestScope(reports);
-  Model model{{0, 0, 20, 100}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
+  Model model{{0, 0, 20}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
   auto ack = report(o, 17, "0"), fill = report(o, 18, "F");
   auto a = frame<Ack>(ack), f = frame<Fill>(fill);
   Zfix::Fmt::MessageHandler<Report> ad{Zfix::Fmt::frame(a).view}, fd{Zfix::Fmt::frame(f).view};
   auto av = ad.ctor(), fv = fd.ctor();
   ZuCheck(ad.valid() && fd.valid() && matches(av, o) && matches(fv, o));
-  ZuCheck(av.exec == 17 && fv.exec == 18 && fv.encoded == o.encoded);
+  ZuCheck(av.exec == 17 && fv.exec == 18);
 }
 static void changes() {
   ZuTestScope(changes);
-  Model model{{0, 0, 20, 100}};
+  Model model{{0, 0, 20}};
   const auto &o = model.next(1002, ZuDateTime{Zm::now()});
   Cancel cancel{1001, o.key, "ZFIX", "1", o.time, o.qty};
   Replace replace{Order{o}, 1001};
@@ -68,16 +70,42 @@ static void changes() {
     a.order == 1001 && b.order == 1001 && d.order == 1001 &&
     !a.leaves && b.status == "0" && b.leaves == o.qty && d.cum == o.qty);
 }
+static void scalarReport() {
+  ZuTestScope(scalarReport);
+  Model model{{}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
+  auto wire = frame<Ack>(report(o, 17, "0"));
+  auto parsed = Zfix::Fmt::frame(wire);
+  Zfix::RxMsg input; input.frame = parsed.view;
+  ZuCheck(parsed.state == Zfix::Fmt::FrameState::Complete &&
+    !Zfix::catalogSession<Dictionary>(input));
+  unsigned offset = input.sessionBytes, previous = 0, count = 0;
+  bool ordered = true, original = false;
+  while (offset < parsed.view.content.length()) {
+    Zfix::Fmt::Token token;
+    if (Zfix::Fmt::scan(parsed.view.content, offset, token)) {
+      ordered = false; break;
+    }
+    ordered &= token.tag > previous;
+    original |= token.tag == 41;
+    previous = token.tag; offset = token.next; ++count;
+  }
+  ZuCheck(ordered && !original && count == 15);
+  Zfix::Fmt::MessageHandler<Report> handler{parsed.view};
+  auto value = handler.ctor();
+  ZuCheck(handler.valid() && !value.original && !value.avg && !value.cum &&
+    !value.lastQty && !value.lastPx && matches(value, o));
+}
 static void absentOriginal() {
   ZuTestScope(absentOriginal);
   Model model{{}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
   Text storage;
   Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, &storage};
-  Zfix::Fmt::Header h;
-  h.beginString = "FIX.4.4"; h.msgType = "8"; h.seqNo = 2;
-  h.sender = "ZFIX-S"; h.target = "ZFIX-C"; h.sendingTime = o.time;
-  ZuCheck(!Zfix::Fmt::writeHeader(writer.body(), h));
-  auto field = [&writer]<typename T>(unsigned tag, const T &value) {
+  auto &out = writer.body();
+  out.field(35); out << '8'; out.end();
+  out.field(49); out << "ZFIX-S"; out.end();
+  out.field(56); out << "ZFIX-C"; out.end();
+  out.field(34); out << '2'; out.end();
+  auto field = [&writer]<typename T>(int32_t tag, const T &value) {
     auto &body = writer.body(); body.field(tag); body << value; body.end();
   };
   field(37, 9001); field(11, o.key); field(17, 17);
@@ -94,13 +122,14 @@ static void absentOriginal() {
 }
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
-  ZuTestCall(order, 0, 0, 0, 0);
-  ZuTestCall(order, 2, 0, 0, 24);
-  ZuTestCall(order, 0, 0, 300, 0);
-  ZuTestCall(order, 2, 2, 300, 24);
-  ZuTestCall(order, 32, 8, 4096, 24);
+  ZuTestCall(order, 0, 0, 0);
+  ZuTestCall(order, 2, 0, 24);
+  ZuTestCall(order, 0, 0, 0);
+  ZuTestCall(order, 2, 2, 24);
+  ZuTestCall(order, 32, 8, 24);
   ZuTestCall(reports);
   ZuTestCall(changes);
+  ZuTestCall(scalarReport);
   ZuTestCall(absentOriginal);
   return 0;
 }

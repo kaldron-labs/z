@@ -24,7 +24,9 @@ struct Packet {
   unsigned	value;
 };
 
-ZfStruct(, (Packet, FIX), (value, (FIX::ID<7001>), UInt32));
+ZfStruct(, (Packet), (value, (FIX::ID<7001>), UInt32));
+using PacketFIXFields = ZuTypeConcat<Zfix::SessionFields<Packet>, ZfFields_Packet>;
+PacketFIXFields ZuFields_(Packet *, ZuFacet::FIX *);
 ZfStructImpl(Packet); ZfStructImpl(Packet, FIX);
 using Entry = MT<Packet, "D">;
 using Dictionary = MTList<Entry>;
@@ -97,10 +99,10 @@ struct Peer : Base {
   RawOutput::Ref output() {
     Fmt::Error error;
     auto body = TxBody::encodeRaw<Entry>(Packet{1}, 1, false, error);
-    Fmt::Header header; header.beginString = "FIX.9.9";
-    header.sender = "EXTERNAL-C"; header.target = "EXTERNAL-S";
-    header.seqNo = 17; header.sendingTime = ZuDateTime{Zm::now()};
-    auto output = RawOutput::encode(ZuMv(body), header, {0, 1, 0}, error);
+    TxConfig config; config.beginString = "FIX.9.9";
+    config.identity.local = "EXTERNAL-C"; config.identity.peer = "EXTERNAL-S";
+    TxContext context{.connection = 1, .seqNo = 17, .sendingTime = ZuDateTime{Zm::now()}};
+    auto output = RawOutput::encode(ZuMv(body), config, context, error);
     if (error || !output) state->fail();
     return output;
   }
@@ -113,7 +115,7 @@ struct Peer : Base {
 
   void fixTraceTx(TraceRef entry) {
     if (!app()->txInvoked() || !entry || entry->data().context.epoch ||
-	entry->data().context.seqNo) state->fail();
+	entry->data().context.seqNo != 17) state->fail();
     state->txTrace = ZuMv(entry);
   }
 

@@ -12,17 +12,22 @@
 
 namespace Zfix {
 
-TraceField traceBuiltin(ZuCSpan type, unsigned tag)
+template <typename F> using SessionWire = Fmt::WireField<Fmt::tag<F>(), Fmt::payloadTag<F>()>;
+
+TraceField traceBuiltin(ZuCSpan type, int32_t tag)
 {
   switch (tag) {
     case 8: case 9: case 35: case 10:
     case 553: case 554: case 925: return {.known = true};
-    case 95: return {.dataTag = 96, .known = true};
-    case 96: return {.known = true, .binary = true};
   }
-  auto f = traceField<Fmt::Header>(tag); f.merge(traceField<Fmt::Trailer>(tag));
+  using Fields = TraceFields<ZuTypeMap<SessionWire, SessionFields<Fmt::FrameView>>>;
+  auto standard = Fields::index.findVal(tag);
+  TraceField f = standard ? *standard : TraceField{};
   if (type.length() == 1) switch (type[0]) {
-    case 'A': f.merge(traceField<Session::Logon>(tag)); break;
+    case 'A':
+      f.merge(traceField<Session::Logon>(tag));
+      if (tag == 95) f.secret = true;
+      break;
     case '0': f.merge(traceField<Session::HeartBt>(tag)); break;
     case '1': f.merge(traceField<Session::TestReq>(tag)); break;
     case '2': f.merge(traceField<Session::ResendReq>(tag)); break;
@@ -33,12 +38,10 @@ TraceField traceBuiltin(ZuCSpan type, unsigned tag)
   return f;
 }
 
-static bool secret(unsigned tag)
+static bool secret(int32_t tag)
 {
   switch (tag) {
-    case 89: case 91: case 96: // signature, SecureData, RawData
     case 553: case 554: case 925: // user, password, new password
-    case 1402: case 1404: // encrypted password/new password
       return true;
     default: return false;
   }
@@ -99,37 +102,39 @@ TraceRef WireTrace::capture_(ZuCSpan wire, const Fmt::FrameView *known,
     unsigned length = wire.length();
     while (offset < length && out.available() && !out.failed()) {
       Fmt::Token token;
-      if (Fmt::scan(wire, offset, token)) { out << "<malformed>"; break; }
+      if (Fmt::prefix(wire, offset, token)) { out << "<malformed>"; break; }
       auto field = traceBuiltin(type, token.tag);
       if (resolve) field.merge(resolve(owner, type, token.tag));
-      if (!field.known || field.ambiguous || field.binary) { out << "<opaque>"; break; }
+      if (!field.known || field.ambiguous) { out << "<opaque>"; break; }
+      Fmt::Limits limits;
+      // Only content can contain declared pairs. Never lend a binary count
+      // the outer checksum or the next coalesced frame.
+      auto bounded = field.reader ?
+	ZuCSpan{wire.data(), uint64_t(known->content.data() - wire.data()) +
+	  known->content.length()} : wire;
+      limits.fieldBytes = limits.frameBytes = bounded.length();
+      Fmt::Error error;
+      unsigned value = token.offset;
+      unsigned consumed = field.reader ? field.reader(bounded, token, limits, error) :
+	Fmt::consume(bounded, token, limits, error);
+      if (!consumed) { out << "<malformed>"; break; }
       out << token.tag << '=';
-      bool sensitive = field.secret || secret(token.tag) || secret(field.dataTag);
+      bool sensitive = field.secret || secret(token.tag);
       if (logon) switch (token.tag) {
 	case 8: case 9: case 35: case 10: break;
 	default: sensitive = true; break;
       }
-      bool redact = field.dataTag || sensitive;
-      if (redact) out << "<redacted>";
-      else escaped(out, {wire.data() + token.offset, token.length});
-      out << "\\x01";
-      if (field.dataTag) {
-	unsigned length; bool negative;
-	if (!Fmt::integer<32, false>(
-	      {wire.data() + token.offset, token.length}, length, negative) ||
-	    Fmt::scanData(wire, token.next, field.dataTag, length, token)) {
-	  out << "<malformed>"; break;
+      if (sensitive) out << "<redacted>";
+      else {
+	if (field.reader) {
+	  escaped(out, {wire.data() + value, token.countLength});
+	  out << "\\x01" << token.valueTag << '=';
 	}
-	auto dataField = traceBuiltin(type, token.tag);
-	if (resolve) dataField.merge(resolve(owner, type, token.tag));
-	if (!dataField.known || dataField.ambiguous || !dataField.binary) {
-	  out << "<opaque>"; break;
-	}
-	sensitive |= dataField.secret || secret(token.tag);
-	out << token.tag << "=<redacted>\\x01";
+	escaped(out, {wire.data() + token.offset, token.length});
       }
+      out << "\\x01";
       if (sensitive) { out << "<opaque>"; break; }
-      offset = token.next;
+      offset = value + consumed;
       if (!out.available() && offset < length) truncated = true;
     }
   }

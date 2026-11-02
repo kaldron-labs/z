@@ -16,10 +16,7 @@ namespace ZfixLoad {
   ZfStructImpl(Report); ZfStructImpl(Report, FIX);
   ZfStructImpl(SubParty, LoadScalar); ZfStructImpl(Party, LoadScalar);
   ZfStructImpl(SubParty, LoadText); ZfStructImpl(Party, LoadText);
-  ZfStructImpl(SubParty, LoadBinary); ZfStructImpl(Party, LoadBinary);
-  ZfStructImpl(Order, LoadScalar); ZfStructImpl(Order, LoadText); ZfStructImpl(Order, LoadBinary);
-  ZfStructImpl(Replace, LoadScalar); ZfStructImpl(Replace, LoadText); ZfStructImpl(Replace,
-  LoadBinary);
-  ZfStructImpl(Report, LoadScalar); ZfStructImpl(Report, LoadText); ZfStructImpl(Report,
-  LoadBinary);
+  ZfStructImpl(Order, LoadScalar); ZfStructImpl(Order, LoadText);
+  ZfStructImpl(Replace, LoadScalar); ZfStructImpl(Replace, LoadText);
+  ZfStructImpl(Report, LoadScalar); ZfStructImpl(Report, LoadText);
 } // ZfixLoad

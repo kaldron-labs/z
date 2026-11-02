@@ -14,7 +14,9 @@ trap 'rm -rf "$zfix_tmp"' EXIT HUP INT TERM
 "$zfix_native" --frames "$zfix_tmp"
 if ! "$zfix_peer" "$zfix_dict" "$zfix_tmp/order.fix" "$zfix_tmp/groups.fix" \
   "$zfix_tmp/ack.fix" "$zfix_tmp/fill.fix" "$zfix_tmp/cancel.fix" \
-  "$zfix_tmp/replace.fix" "$zfix_tmp/binary.fix" "$zfix_tmp/text.fix" "$zfix_tmp/heavy.fix" > "$zfix_tmp/peer.tap"; then
+  "$zfix_tmp/replace.fix" "$zfix_tmp/text.fix" "$zfix_tmp/heavy.fix" \
+  "$zfix_tmp/xml.fix" "$zfix_tmp/xmlbytes.fix" "$zfix_tmp/auth.fix" \
+  "$zfix_tmp/signed.fix" > "$zfix_tmp/peer.tap"; then
   cat "$zfix_tmp/peer.tap"
   exit 1
 fi

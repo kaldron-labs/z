@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZfixDispatch.hh>
+#include <zlib/ZfixRxMsg.hh>
 #include "../example/zfix.hh"
 #include "codec.hh"
 
@@ -47,21 +48,21 @@ static bool run(ZuCSpan mode, unsigned parties, unsigned count, unsigned warmup,
   if (!wire) return false;
   auto parsed = frame(wire.data);
   if (parsed.state != FrameState::Complete) return false;
+  RxMsg input; input.frame = parsed.view;
   Samples decode{count}, clock{count};
   DispatchResult result{mode, parties, unsigned(wire.data.length()), count, 0, {}, {}};
   for (unsigned i = 0; i < count + warmup; ++i) {
     auto begin = monotonic(), end = monotonic();
     if (i >= warmup && !clock.add(end - begin)) return false;
     begin = monotonic();
-    Header header;
-    if (managed && catalogHeader<Dictionary>(parsed.view, header)) return false;
+    if (managed && catalogSession<Dictionary>(input)) return false;
     auto error = dispatch<Dictionary>(parsed.view,
-      [&result, parties](auto *, const auto &o, const Header &, const Trailer &) -> Error {
+      [&result, parties](auto *, const auto &o) -> Error {
 	if constexpr (ZuIsSame<ZuDecay<decltype(o)>, Example::Execution>{}) {
 	  if (o.key != 2 || o.parties.length() != parties) return {ErrorCode::Value};
 	  result.sink += o.exec; return {};
 	} else return {ErrorCode::Unresolved};
-      }, {}, managed == 1 ? &header : nullptr);
+      });
     end = monotonic();
     if (error || (i >= warmup && !decode.add(end - begin))) return false;
   }
@@ -90,9 +91,7 @@ int main(int argc, char **argv) {
         !bench.template operator()<Shared>("same-schema") ||
         !bench.template operator()<Mixed>("different-schema") ||
 	!bench.template operator()<Plain>("managed-primary", 1) ||
-	!bench.template operator()<Shared>("managed-secondary", 1) ||
-	!bench.template operator()<Plain>("rescan-primary", 2) ||
-	!bench.template operator()<Shared>("rescan-secondary", 2)) return 1;
+	!bench.template operator()<Shared>("managed-secondary", 1)) return 1;
   }
   return matched ? 0 : 2;
 }

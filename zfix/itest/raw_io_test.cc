@@ -25,11 +25,15 @@ using Network = Zfix::TCP;
 #endif
 struct Packet {
   ZuCSpan	value;
-  ZuBSpan	data;
+  ZuCSpan	data;
+  uint64_t	seqNo = 0;
+  bool		possDup = false;
 };
 
-ZfStruct(, (Packet, FIX), (value, (FIX::ID<11>), String),
-  (data, (FIX::ID<96>, FIX::Len<95>), Bytes));
+ZfStruct(, (Packet), (value, (FIX::ID<11>), String),
+  (data, (FIX::ID<58>), String));
+using PacketFIXFields = ZuTypeConcat<Zfix::SessionFields<Packet>, ZfFields_Packet>;
+PacketFIXFields ZuFields_(Packet *, ZuFacet::FIX *);
 ZfStructImpl(Packet); ZfStructImpl(Packet, FIX);
 // A deliberately external schema for a built-in control MsgType. There are
 // no managed Session::Logon fields, admission, header matching or sequence semantics.
@@ -45,7 +49,7 @@ struct TestState {
     cancelled{0}, refused{0};
   unsigned		port = 0, payload = 4;
   bool			pause = false, deferStop = false, quota = false, setup = false;
-  ZmRef<ZiIOBuf>	binary;
+  ZmRef<ZiIOBuf>	text;
 
   void fail() { ++errors; done.post(); }
 
@@ -53,8 +57,8 @@ struct TestState {
 };
 
 static SessionConfig config() {
-  SessionConfig c; c.mode = Transport::Raw; c.header.version = Version::N;
-  c.header.local = "UNUSED"; c.header.peer = "UNUSED";
+  SessionConfig c; c.mode = Transport::Raw; c.identity.version = Version::N;
+  c.identity.local = "UNUSED"; c.identity.peer = "UNUSED";
   c.heartBtInt = 1; c.logonTimeout = ZuTime{0, 1}; return c;
 }
 static LinkLimits limits(TestState *s) {
@@ -75,13 +79,13 @@ struct Peer : Base {
   struct WorkReply {
     Peer		*peer;
     typename W::Ref	work;
-    ZuBSpan		data;
+    ZuCSpan		data;
     unsigned		index;
 
     void operator ()() {
-      auto h = peer->header(index); Fmt::Error error;
+      auto c = peer->context(work->input()->connection, index); Fmt::Error error;
       if (!peer->template reply<Entry, Response>(*work->input(), Packet{"res", data},
-	201 + index, h, {0, work->input()->connection, h.seqNo, h.possDup}, true,
+	201 + index, peer->routing(), c, true,
 	  error)) peer->state()->fail();
     }
   };
@@ -89,12 +93,12 @@ struct Peer : Base {
   struct WorkRun {
     Peer		*peer;
     typename W::Ref	work;
-    ZuBSpan		data;
+    ZuCSpan		data;
     unsigned		index;
 
     void operator ()() {
       if (peer->app()->rxInvoked() || peer->app()->txInvoked() ||
-	data != peer->state()->binary->cspan() ||
+	data != peer->state()->text->cspan() ||
 	Fmt::frame(work->input()->frame.wire).state != Fmt::FrameState::Complete)
 	peer->state()->fail();
       peer->app()->rxRun(WorkReply{peer, work, data, index});
@@ -106,22 +110,26 @@ struct Peer : Base {
   auto self() { return static_cast<Impl *>(this); }
   auto state() { return this->app()->state; }
 
-  Fmt::Header header(unsigned i) {
-    Fmt::Header h; h.beginString = "FIX.9.9";
-    h.sender = Client ? "EXTERNAL-C" : "EXTERNAL-S";
-    h.target = Client ? "EXTERNAL-S" : "EXTERNAL-C";
-    h.seqNo = seq(i); h.sendingTime = {ZuDateTimeScan::FIX{}, "20000101-00:00:00"};
-    h.possDup = i == 3; if (h.possDup) h.origSendingTime = h.sendingTime;
-    return h;
+  TxConfig routing() {
+    auto c = txConfig(config()); c.beginString = "FIX.9.9";
+    c.identity.local = Client ? "EXTERNAL-C" : "EXTERNAL-S";
+    c.identity.peer = Client ? "EXTERNAL-S" : "EXTERNAL-C";
+    return c;
+  }
+
+  TxContext context(uint64_t connection, unsigned i) {
+    TxContext c{0, connection, seq(i), i == 3};
+    c.sendingTime = {ZuDateTimeScan::FIX{}, "20000101-00:00:00"};
+    c.possDup = i == 3; if (c.possDup) c.origSendingTime = c.sendingTime;
+    return c;
   }
 
   RawOutput::Ref packet(uint64_t connection, unsigned i) {
     Fmt::Error error;
-    auto body = TxBody::encodeRaw<Entry>(Packet{Client ? "req" : "res", state()->binary->cspan()},
+    auto body = TxBody::encodeRaw<Entry>(Packet{Client ? "req" : "res", state()->text->cspan()},
       (Client ? 101 : 201) + i, true, error);
     if (error) { state()->fail(); return {}; }
-    auto h = header(i);
-    auto out = RawOutput::encode(body, h, {0, connection, h.seqNo, h.possDup}, error);
+    auto out = RawOutput::encode(body, routing(), context(connection, i), error);
     if (error) state()->fail(); return out;
   }
 
@@ -159,11 +167,10 @@ struct Peer : Base {
       retried = true; }
     Fmt::MessageHandler<Packet> h{msg->frame, l}; auto p = h.ctor();
     if (!h.valid()) { state()->fail(); return true; }
-    auto &hdr = h.header();
     if (msg->frame.msgType != (Client ? "8" : "A")) state()->fail();
-    if (p.value != (Client ? "res" : "req") || p.data != state()->binary->cspan() ||
-	hdr.seqNo != seq(received) || hdr.beginString != "FIX.9.9" ||
-	hdr.possDup != (received == 3)) state()->fail();
+    if (p.value != (Client ? "res" : "req") || p.data != state()->text->cspan() ||
+	p.seqNo != seq(received) || msg->frame.beginString != "FIX.9.9" ||
+	p.possDup != (received == 3)) state()->fail();
     ++state()->received;
     if constexpr (!Client) {
       constexpr uint64_t Extra =
@@ -285,10 +292,10 @@ static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
   ZuTestScope(loopback);
   TestState state; state.pause = pause; state.deferStop = stop; state.quota = quota;
     state.payload = payload;
-  state.binary = new ZiIOBufAlloc<>; state.binary->ensure(payload);
-  constexpr auto Bits = "A\1\0="_z;
-  for (unsigned i = 0; i < payload; ++i) state.binary->data()[i] = Bits[i % Bits.length()];
-  state.binary->length = payload;
+  state.text = new ZiIOBufAlloc<>; state.text->ensure(payload);
+  constexpr auto Bits = "ABCD"_z;
+  for (unsigned i = 0; i < payload; ++i) state.text->data()[i] = Bits[i % Bits.length()];
+  state.text->length = payload;
   SrvHub server{&state}; CliHub client{&state};
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
@@ -402,34 +409,38 @@ struct SwapPeer : Base {
     }
   }
 
-  Fmt::Header header() {
-    Fmt::Header h; h.beginString = "FIX.9.9";
-    h.sender = Client ? "EXTERNAL-C" : "EXTERNAL-S";
-    h.target = Client ? "EXTERNAL-S" : "EXTERNAL-C";
-    h.seqNo = 17; h.sendingTime = {ZuDateTimeScan::FIX{}, "20000101-00:00:00"};
-    return h;
+  TxConfig routing() {
+    auto c = txConfig(config()); c.beginString = "FIX.9.9";
+    c.identity.local = Client ? "EXTERNAL-C" : "EXTERNAL-S";
+    c.identity.peer = Client ? "EXTERNAL-S" : "EXTERNAL-C";
+    return c;
+  }
+
+  TxContext context(uint64_t connection) {
+    TxContext c{0, connection, 17};
+    c.sendingTime = {ZuDateTimeScan::FIX{}, "20000101-00:00:00"}; return c;
   }
 
   void request() {
     this->app()->rxRun([this] {
-      Fmt::Error error; auto h = header();
-      if (!this->template send<Entry>(Packet{"req", "A\1\0="_z}, 101, h,
-	  {0, this->rawConnection_(), h.seqNo}, true, error)) state()->fail();
+      Fmt::Error error;
+      if (!this->template send<Entry>(Packet{"req", "ABCD"_z}, 101, routing(),
+	  context(this->rawConnection_()), true, error)) state()->fail();
     });
   }
 
   bool fixRawRx(ZmRef<RawInput> msg, Fmt::Limits limits) {
     Fmt::MessageHandler<Packet> handler{msg->frame, limits}; auto p = handler.ctor();
     if (!this->app()->rxInvoked() || !handler.valid() ||
-	msg->connection != this->rawConnection_() || p.data != "A\1\0="_z ||
-	p.value != (Client ? "res" : "req") || handler.header().seqNo != 17) {
+	msg->connection != this->rawConnection_() || p.data != "ABCD"_z ||
+	p.value != (Client ? "res" : "req") || p.seqNo != 17) {
       state()->fail(); return true;
     }
     if constexpr (Client) { ++state()->replies; state()->reply.post(); }
     else {
-      Fmt::Error error; auto h = header();
-      if (!this->template reply<Entry, Response>(*msg, Packet{"res", p.data}, 201, h,
-	  {0, msg->connection, h.seqNo}, true, error)) state()->fail();
+      Fmt::Error error;
+      if (!this->template reply<Entry, Response>(*msg, Packet{"res", p.data}, 201, routing(),
+	  context(msg->connection), true, error)) state()->fail();
     }
     return true;
   }

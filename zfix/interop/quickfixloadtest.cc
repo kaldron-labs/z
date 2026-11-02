@@ -25,7 +25,7 @@ static void header(FIX::Message &m) {
 static void orders() {
   ZuTestScopeRT(orders);
   FIX::DataDictionary dictionary{QUICKFIX_DICT_PATH};
-  for (auto shape : {Shape{}, Shape{2, 0, 24, 0}, Shape{2, 2, 24, 300}}) {
+  for (auto shape : {Shape{}, Shape{2, 0, 24}, Shape{2, 2, 24}}) {
     Model model{shape, 17};
     const auto &o = model.next(123,
       ZuDateTime{ZuDateTimeScan::FIX{}, "20261028-12:34:56.123456789"});
@@ -37,13 +37,12 @@ static void orders() {
     ZuCheckRT(input->value.key == o.key && input->value.qty == o.qty &&
       input->value.price == o.price && input->value.time == o.time);
     ZuCheckRT(ZfixLoad::valid(input->value) && ZfixLoad::shape(input->value, shape));
-    if (shape.binary) ZuCheckRT(!input->value.encoded[0] && input->value.encoded[1] == 1);
   }
 }
 static void reports() {
   ZuTestScopeRT(reports);
   FIX::DataDictionary dictionary{QUICKFIX_DICT_PATH};
-  Model model{{0, 0, 24, 300}, 17};
+  Model model{{0, 0, 24}, 17};
   const auto &o = model.next(42,
     ZuDateTime{ZuDateTimeScan::FIX{}, "20261028-12:34:56.123456789"});
   for (ZuCSpan kind : {ZuCSpan{"0"}, ZuCSpan{"F"}, ZuCSpan{"4"}, ZuCSpan{"5"}}) {
@@ -55,7 +54,7 @@ static void reports() {
     decode(parsed, *input); const auto &r = input->value;
     ZuCheckRT(r.key == report.key && r.order == 19 && r.exec == 71 && r.kind == kind &&
       r.original == report.original && r.price == report.price && r.time == o.time &&
-      r.text == o.text && r.encoded.length() == o.encoded.length());
+      r.text == o.text);
     ZuCheckRT(r.status == report.status && r.qty == report.qty && r.leaves == report.leaves &&
       r.cum == report.cum && r.lastQty == report.lastQty && r.lastPx == report.lastPx &&
       r.avg == report.avg);
@@ -64,7 +63,7 @@ static void reports() {
 static void mutations() {
   ZuTestScope(mutations);
   FIX::DataDictionary dictionary{QUICKFIX_DICT_PATH};
-  Model model{{2, 2, 0, 300}, 13};
+  Model model{{2, 2, 0}, 13};
   const auto &o = model.next(7, ZuDateTime{ZuDateTimeScan::FIX{}, "20261028-12:34:56.123456789"});
   Cancel cancel{3, 7, o.symbol, o.side, o.time, o.qty};
   FIX::Message message; encode(message, cancel); header(message);
@@ -78,7 +77,7 @@ static void mutations() {
   ZmRef<Input<Replace>> input = new Input<Replace>{unsigned(replaced.calculateLength())};
   decode(replaced, *input);
   ZuCheck(input->value.original == 3 && input->value.order.key == 7 &&
-    input->value.order.price == o.price && ZfixLoad::shape(input->value.order, {2, 2, 0, 300}));
+    input->value.order.price == o.price && ZfixLoad::shape(input->value.order, {2, 2, 0}));
 }
 static void storage() {
   ZuTestScope(storage);
@@ -102,7 +101,7 @@ static void checkpoint() {
   ZuTestScope(checkpoint);
   auto path = ZiTestResidue::file("checkpoint.bin");
   auto now = FIX::UtcTimeStamp::now(); FIX::SessionID id{"FIX.4.4", "C", "S"};
-  Model model{{2, 2, 24, 300}, 17};
+  Model model{{2, 2, 24}, 17};
   const auto &order = model.next(4,
     ZuDateTime{ZuDateTimeScan::FIX{}, "20261028-12:34:56.123456789"});
   FIX::Message message; encode(message, order); header(message);

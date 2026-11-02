@@ -9,26 +9,47 @@ import statistics
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("artifacts", type=Path)
+    parser.add_argument("artifacts", type=Path, nargs="+")
     parser.add_argument("--codec", type=Path, action="append", default=[])
     parser.add_argument("--output", type=Path, required=True)
     options = parser.parse_args()
-    root = options.artifacts.resolve()
-    manifest = json.loads((root / "manifest.json").read_text())
-    summary = json.loads((root / "summary.json").read_text())
-    assert not summary["failed"], summary
-    paths = sorted(root.glob("*/case.json"))
-    assert len(paths) == summary["cases"] > 0, "incomplete retained case evidence"
+    roots = [root.resolve() for root in options.artifacts]
+    manifest = None
     groups = collections.defaultdict(list)
-    for path in paths:
-        case = json.loads(path.read_text())
-        assert case["status"] == "passed", path
-        if case["diagnostic"]:
-            continue
-        assert case["clients"], f"missing client results: {path}"
-        for row in case["clients"]:
-            assert row["progress"]["complete"] > 0 and row["elapsedNs"] > 0, path
-            groups[(case["pair"], case["transport"], case["profile"], row["session"])].append(row)
+    processes = collections.defaultdict(list)
+    for root in roots:
+        current = json.loads((root / "manifest.json").read_text())
+        if manifest is None:
+            manifest = current
+        else:
+            for key in ("buildFlags", "dictionarySha256",
+                        "cpu", "affinity", "sourceFiles"):
+                assert current[key] == manifest[key], f"different {key}: {root}"
+            for key, digest in (("programs", "elfSha256"), ("linkedLibraries", "sha256")):
+                assert {name: value[digest] for name, value in current[key].items()} == {
+                    name: value[digest] for name, value in manifest[key].items()}, (
+                        f"different {key}: {root}")
+            for key in ("count", "warmup", "inflight", "rate", "overload_rate", "retain",
+                        "cache_bytes", "queue_bytes", "parties", "subs", "text",
+                        "fragment", "seed"):
+                assert current["arguments"][key] == manifest["arguments"][key], (
+                    f"different workload {key}: {root}")
+        summary = json.loads((root / "summary.json").read_text())
+        assert not summary["failed"], summary
+        paths = sorted(root.glob("*/case.json"))
+        assert len(paths) == summary["cases"] > 0, "incomplete retained case evidence"
+        for path in paths:
+            case = json.loads(path.read_text())
+            assert case["status"] == "passed", path
+            if case["diagnostic"]:
+                continue
+            sessions = current["arguments"]["sessions"]
+            assert len(case["clients"]) == sessions, f"missing client results: {path}"
+            key = (case["pair"], case["transport"], case["profile"], sessions)
+            processes[key].append(case)
+            for row in case["clients"]:
+                assert row["progress"]["complete"] > 0 and row["elapsedNs"] > 0, path
+                groups[(*key, row["session"])].append(row)
     assert groups, "no retained timing cases"
     flags = manifest["buildFlags"]
     lines = ["# FIX measured baseline", "",
@@ -46,7 +67,56 @@ def main():
              "not a production service-level promise or a portable CI threshold. Startup, "
              "TLS relay and shared-host effects are described in report.md. Overload "
              "intended latency includes the delay before the bounded client can submit.", "",
-             "| Pair / transport / shape / session | Runs | Orders/s median | "
+             "## Client and server comparison", "",
+             "Shared-window rate divides all measured completions by the interval from "
+             "the first session's measured start to the last session's measured finish "
+             "in the same client process. Sum-of-session rates use independent intervals. "
+             "Rates are medians across repetitions. Worst p99 is the largest session p99 in any "
+             "repetition. Both peers run in separate local processes.", "",
+             "| Pair / transport / shape | Sessions | Runs | Shared-window orders/s median | "
+             "Sum session orders/s median | "
+             "Ack p99 worst ms | Terminal p99 worst ms |",
+             "| --- | --- | --- | --- | --- | --- | --- |"]
+    comparison = []
+    for key, cases in sorted(processes.items()):
+        rate = statistics.median(sum(row["progress"]["complete"] * 1e9 / row["elapsedNs"]
+                                     for row in case["clients"]) for case in cases)
+        shared = (statistics.median(case["complete"] * 1e9 / case["elapsedNs"]
+                                    for case in cases) if all(case.get("elapsedNs")
+                                    for case in cases) else None)
+        shared_text = f"{shared:.1f}" if shared is not None else "unmeasured"
+        ack99 = max(row["ackNs"]["p99"] for case in cases for row in case["clients"])
+        terminal99 = max(row["terminalNs"]["p99"] for case in cases for row in case["clients"])
+        lines.append(f"| {' / '.join(map(str, key[:3]))} | {key[3]} | {len(cases)} | "
+                     f"{shared_text} | {rate:.1f} | {ack99 / 1e6:.3f} | {terminal99 / 1e6:.3f} |")
+        item = dict(pair=key[0], transport=key[1], profile=key[2], sessions=key[3],
+                    runs=len(cases), sharedWindowRateMedian=shared, sumSessionRateMedian=rate,
+                    ackP99WorstNs=ack99, terminalP99WorstNs=terminal99)
+        for role in ("client", "server"):
+            values = [case["resources"].get(role, {}).get("wait4") for case in cases]
+            if all(value is not None for value in values):
+                item[role] = dict(cpuSecondsMedian=statistics.median(
+                    value["userSeconds"] + value["systemSeconds"] for value in values),
+                    maxRssBytes=max(value["maxRssBytes"] for value in values))
+        comparison.append(item)
+    lines += ["", "## Local process resources", "",
+              "CPU seconds include startup, warmup and shutdown. RSS is the largest "
+              "process high-water mark across repetitions; fork/exec can inherit the "
+              "parent's pre-exec high-water floor. These are whole-process observations, "
+              "not isolated measured-phase costs.", "",
+              "| Pair / transport / shape | Sessions | Client CPU s median | "
+              "Server CPU s median | Client RSS MiB max | Server RSS MiB max |",
+              "| --- | --- | --- | --- | --- | --- |"]
+    for item in comparison:
+        label = ' / '.join(item[key] for key in ("pair", "transport", "profile"))
+        def resource(role, field, scale=1):
+            return (f"{item[role][field] / scale:.3f}" if role in item else "unmeasured")
+        lines.append(f"| {label} | {item['sessions']} | " + " | ".join((
+            resource("client", "cpuSecondsMedian"), resource("server", "cpuSecondsMedian"),
+            resource("client", "maxRssBytes", 1 << 20),
+            resource("server", "maxRssBytes", 1 << 20))) + " |")
+    lines += ["", "## Individual session measurements", "",
+             "| Pair / transport / shape / session count / session | Runs | Orders/s median | "
              "Ack p50 median ns | Ack p99 worst ns | Terminal p99 worst ns | "
              "Intended terminal p99 worst ns | Regression envelope ns |",
              "| --- | --- | --- | --- | --- | --- | --- | --- |"]
@@ -64,7 +134,7 @@ def main():
         lines.append(f"| {' / '.join(map(str, key))} | {len(rows)} | {throughput:.1f} | "
                      f"{ack50:.0f} | {ack99} | {terminal99} | {intended99} | {budget} |")
         budgets.append({"pair": key[0], "transport": key[1], "profile": key[2],
-                        "session": key[3], "runs": len(rows),
+                        "sessions": key[3], "session": key[4], "runs": len(rows),
                         "observedIntendedTerminalP99MaxNs": intended99,
                         "regressionEnvelopeNs": budget})
     codecs = collections.defaultdict(list)
@@ -96,10 +166,12 @@ def main():
                              statistics.median(r["decodeNs"]["p50"] for r in rows),
                              max(r["decodeNs"]["p99"] for r in rows),
                              statistics.median(r["clockNs"]["p50"] for r in rows))) + " |")
-    lines += ["", "Raw artifacts: `" + str(root) + "`.", ""]
+    lines += ["", "Raw artifacts: " + ", ".join(f"`{root}`" for root in roots) + ".", ""]
     options.output.write_text("\n".join(lines))
-    (root / "budgets.json").write_text(json.dumps({"scope": manifest["buildLabel"],
+    (options.output.parent / "budgets.json").write_text(json.dumps({"scope": manifest["buildLabel"],
         "multiplier": 1.25, "hostSpecific": True, "budgets": budgets}, indent=2) + "\n")
+    options.output.with_suffix(".json").write_text(json.dumps({
+        "buildLabel": manifest["buildLabel"], "comparison": comparison}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

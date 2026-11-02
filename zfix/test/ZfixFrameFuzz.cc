@@ -5,18 +5,19 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZtArray.hh>
+#include <zlib/Zfix.hh>
 #include <zlib/ZfixFrame.hh>
 
 using namespace Zfix::Fmt;
 
 struct Entry {
   int		id = 0;
-  ZuBSpan	data;
+  ZuCSpan	data;
 };
 
 ZfStruct(, (Entry, FIX),
   (id, (FIX::ID<448>),		Int32),
-  (data, (FIX::ID<96>, FIX::Len<95>),	Bytes));
+  (data, (FIX::ID<58>), String));
 ZfStructImpl(Entry);
 ZfStructImpl(Entry, FIX);
 struct Entries : ZtArray<Entry, ZtArrayHeapID<"Zfix.FuzzEntries">> {
@@ -40,15 +41,31 @@ friend AsArray<> Zfix_Fmt(Groups *);
 struct Body {
   int		id = 0;
   Groups	groups;
-  ZuBSpan	data;
+  ZuCSpan	data;
 };
 
 ZfStruct(, (Body, FIX),
   (id, (FIX::ID<11>),			Int32),
   (groups, (FIX::ID<7000>),		UDT),
-  (data, (FIX::ID<96>, FIX::Len<95>),	Bytes));
+  (data, (FIX::ID<58>), String));
 ZfStructImpl(Body);
 ZfStructImpl(Body, FIX);
+
+struct OutBody : Body {
+  ZuCSpan sender = "FUZZ.SENDER";
+  ZuCSpan target = "FUZZ.TARGET";
+  uint64_t seqNo = 1;
+  ZuDateTime sendingTime;
+};
+ZfStruct(, (OutBody),
+  (id, (FIX::ID<11>), Int32),
+  (groups, (FIX::ID<7000>), UDT),
+  (data, (FIX::ID<58>), String));
+using OutFIXFields = ZuTypeConcat<Zfix::SessionFields<OutBody>, ZfFields_OutBody>;
+OutFIXFields ZuFields_(OutBody *, ZuFacet::FIX *);
+ZfStructImpl(OutBody);
+ZfStructImpl(OutBody, FIX);
+using OutEntry = Zfix::MT<OutBody, "D">;
 
 using Output = ZtArray<char, ZtArrayHeapID<"Zfix.FuzzOutput">>;
 static ZuSpan<char> growOutput(void *owner, unsigned used, unsigned needed)
@@ -63,7 +80,7 @@ static ZuSpan<char> growOutput(void *owner, unsigned used, unsigned needed)
 
 extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-  // Experiment limits, not storage capacities: large enough for nested/binary
+  // Experiment limits, not storage capacities: large enough for nested/text
   // mutations, small enough to bound each coverage-guided iteration's work.
   Limits cfg;
   cfg.frameBytes = 4096;
@@ -90,23 +107,18 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
   }
   Output bytes;
   static const ZuDateTime stamp{ZuDateTimeScan::FIX{}, "20261026-00:00:00"};
-  Header header{.beginString = "FIX.4.4", .msgType = "D",
-    .sender = "FUZZ.SENDER", .target = "FUZZ.TARGET", .seqNo = 1, .sendingTime = stamp};
-  header.secureData = body.data;
-  Trailer trailer;
-  trailer.signature = body.data;
+  OutBody output;
+  static_cast<Body &>(output) = ZuMv(body);
+  output.sendingTime = stamp;
   FrameOutput encoded;
   if (size & 1) {
-    FrameWriter writer{{}, header.beginString, growOutput, &bytes, cfg};
-    auto error = writeHeader(writer.body(), header);
-    if (!error) {
-      save(writer.body(), body);
-      error = writeTrailer(writer.body(), trailer);
-    }
-    encoded = error ? FrameOutput{{}, error} : writer.finish();
+    FrameWriter writer{{}, "FIX.4.4", growOutput, &bytes, cfg};
+    writer.body().field(35); writer.body() << "D"; writer.body().end();
+    save(writer.body(), output);
+    encoded = writer.finish();
   } else {
     bytes.length(cfg.frameBytes, false);
-    encoded = writeFrame({bytes.data(), bytes.length()}, header, body, cfg, trailer);
+    encoded = writeFrame<OutEntry>({bytes.data(), bytes.length()}, "FIX.4.4", output, cfg);
   }
   if (!encoded) {
     if (encoded.error.code != ErrorCode::Size) abort();
@@ -118,6 +130,5 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
   if (!verify.valid()) abort();
   auto reconstructed = verify.ctor();
   if (!verify.valid()) abort();
-  if (verify.header().secureData != body.data || verify.trailer().signature != body.data) abort();
   return 0;
 }

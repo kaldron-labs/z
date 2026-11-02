@@ -8,6 +8,7 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZfixContext.hh>
 #include <zlib/ZfixTxMsg.hh>
+#include <zlib/ZfixLinkState.hh>
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -15,7 +16,9 @@ struct Order {
   ZuCSpan	id;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>, Required), String));
+ZfStruct(, (Order), (id, (FIX::ID<11>, Required), String));
+using OrderFIXFields = ZuTypeConcat<SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using Entry = MT<Order, "D">;
 struct Other { };
@@ -27,21 +30,22 @@ template <typename E = Entry> static RequestContext make(ZuCSpan &id) {
   Fmt::Error error;
   auto body = TxBody::encode<E>(Order{"retained"}, 99, error);
   auto stamp = ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-12:34:56"};
-  Fmt::Header header{.beginString = "FIX.4.4", .msgType = "D", .sender = "PEER",
-    .target = "LOCAL", .seqNo = 9, .sendingTime = stamp,
-    .origSendingTime = stamp, .possDup = true};
+  SessionConfig c; c.identity.version = Version::V4_4;
+  c.identity.local = "PEER"; c.identity.peer = "LOCAL";
+  TxContext tx{.epoch = 3, .connection = 7, .seqNo = 9, .replay = true,
+    .sendingTime = stamp, .origSendingTime = stamp, .possDup = true};
   if (!body || error) return {};
-  auto buffer = txFrame(*body, header, error);
+  auto buffer = txFrame(*body, txConfig(ZuMv(c)), tx, error);
   if (!buffer || error) return {};
   auto parsed = Fmt::frame(buffer->cspan());
   if (parsed.state != Fmt::FrameState::Complete) return {};
-  Fmt::MessageHandler<Order> input{parsed.view}; auto object = input.ctor();
-  if (!input.valid()) return {};
   ZmRef<RxQueue::Node> message = new RxQueue::Node;
   auto &data = message->data();
   data.buffer = ZuMv(buffer); data.frame = parsed.view;
-  data.header = input.header(); data.trailer = input.trailer();
   data.connection = 7; data.epoch = 3; data.received = ZuTime{123}; data.utc = stamp;
+  if (catalogSession<MTList<E>>(data)) return {};
+  Fmt::MessageHandler<Order> input{data.frame}; auto object = input.ctor();
+  if (!input.valid()) return {};
   id = object.id;
   return {static_cast<E *>(nullptr), uint128_t{1234}, ZmRef<const RxQueue::Node>{ZuMv(message)}};
 }
@@ -66,8 +70,8 @@ static void retention() {
   ZuCheck(meta.session == 1234 && meta.connection == 7 && meta.epoch == 3 && meta.seqNo == 9);
   ZuCheck(meta.replay && meta.possDup && meta.version == "FIX.4.4");
   ZuCheck(copy.is<Entry>() && copy.is<RequestEntry>() && !copy.is<OtherEntry>());
-  ZuCheck(copy.header().sender == "PEER" && copy.header().target == "LOCAL");
-  ZuCheck(copy.received() == ZuTime{123} && copy.utc() == copy.header().sendingTime);
+  ZuCheck(copy.sender() == "PEER" && copy.target() == "LOCAL");
+  ZuCheck(copy.received() == ZuTime{123} && copy.utc() == copy.sendingTime());
   auto parsed = Fmt::frame(copy.frame().wire);
   ZuCheck(parsed.state == Fmt::FrameState::Complete);
 }
@@ -136,7 +140,7 @@ static void selection() {
   ZuCheck(!context.is<SelectedA>() && copy.is<SelectedA>() && id == "retained");
   unsigned called = 0;
   auto error = dispatch<MTList<SelectedA, SelectedB>>(copy.frame(),
-    [&called](auto *type, const Order &object, const auto &, const auto &) -> Fmt::Error {
+    [&called](auto *type, const Order &object) -> Fmt::Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*type)>, SelectedA>{}) {
 	++called; ZuCheck(object.id == "retained");
       } else ZuCheck(false);
@@ -144,9 +148,86 @@ static void selection() {
     });
   ZuCheck(!error && called == 1);
 }
+struct BinaryRequest {
+  ZuCSpan id;
+  ZuBSpan xml;
+  ZuCSpan replay;
+  ZuBSpan signature;
+};
+ZfStruct(, (BinaryRequest),
+  (id, (FIX::ID<11>, Required), String),
+  (xml, (FIX::ID<212>, FIX::Binary<213>, Required), Bytes),
+  (replay, (FIX::ID<95>, FIX::Binary<96>, Required), String),
+  (signature, ((FIX::Sig<93, 89>), Required), Bytes));
+using BinaryFields = ZuTypeConcat<SessionFields<BinaryRequest>, ZfFields_BinaryRequest>;
+BinaryFields ZuFields_(BinaryRequest *, ZuFacet::FIX *);
+using BinaryEntry = MT<BinaryRequest, "n">;
+static void binaryRetention()
+{
+  ZuTestScope(binaryRetention);
+  constexpr auto XML = "<RTRF>49=FAKE\1" "34=999\1" "52=bad\1"
+    "8=FIX.4.4\1" "35=D\1" "10=000\1" "</RTRF>"_z;
+  constexpr auto Replay = "8=FIX.4.4\1" "35=D\1" "10=000\1"
+    "8=FIX.4.4\1" "35=8\1" "10=001\1"_z;
+  constexpr auto Signature = "\0\1\xff"_z;
+  Fmt::Error error;
+  TxFrame writer{"FIX.4.4"};
+  writer.body() << "35=n\1" "49=PEER\1" "56=LOCAL\1" "34=9\1"
+    "43=Y\1" "52=20261027-12:34:56\1" "122=20261027-12:34:55\1" "11=retained\1";
+  Fmt::saveBinary<ZfField(BinaryRequest, xml)>(writer.body(), XML);
+  Fmt::saveBinary<ZfField(BinaryRequest, replay)>(writer.body(), Replay);
+  Fmt::saveBinary<ZfField(BinaryRequest, signature)>(writer.body(), Signature);
+  auto buffer = writer.finish(error);
+  ZuCheck(buffer && !error);
+  if (!buffer) return;
+  auto parsed = Fmt::frame(buffer->cspan());
+  ZuCheck(parsed.state == Fmt::FrameState::Complete);
+  auto original = parsed.view.wire.data();
+  ZmRef<RxQueue::Node> message = new RxQueue::Node;
+  auto &data = message->data();
+  data.buffer = buffer; data.frame = parsed.view;
+  data.epoch = 3; data.connection = 7; data.received = ZuTime{123};
+  data.utc = {ZuDateTimeScan::FIX{}, "20261027-12:34:56"};
+  ZuCheck(!catalogSession<MTList<BinaryEntry>>(data));
+  ZuCheck(data.seqNo == 9 && data.sender == "PEER" && data.target == "LOCAL");
+  Fmt::FieldPos xml, replay, signature;
+  ZuCheck(!Fmt::inspect<BinaryRequest>(data.frame.content, 213, xml));
+  ZuCheck(!Fmt::inspect<BinaryRequest>(data.frame.content, 96, replay));
+  ZuCheck(!Fmt::inspect<BinaryRequest>(data.frame.content, 89, signature));
+  unsigned base = data.frame.content.data() - original;
+  BinaryRequest borrowed;
+  RequestContext context;
+  error = dispatch<MTList<BinaryEntry>>(data.frame,
+    [&borrowed, &context, &message](auto *type, const BinaryRequest &object) -> Fmt::Error {
+      borrowed = object;
+      context = RequestContext{type, uint128_t{1234}, ZmRef<const RxQueue::Node>{message}};
+      return {};
+    });
+  ZuCheck(!error && bool(context));
+  auto retained = context;
+  context = {}; message = nullptr; buffer = nullptr; parsed = {};
+  ZuCheck(!context && retained.frame().wire.data() == original && retained.is<BinaryEntry>());
+  ZuCheck(borrowed.xml.data() == reinterpret_cast<const uint8_t *>(original + base + xml.offset));
+  ZuCheck(borrowed.replay.data() == original + base + replay.offset);
+  ZuCheck(borrowed.signature.data() ==
+    reinterpret_cast<const uint8_t *>(original + base + signature.offset));
+  ZuCheck(borrowed.xml == ZuBSpan{XML} && borrowed.replay == Replay &&
+    borrowed.signature == ZuBSpan{Signature} && borrowed.id == "retained");
+  ZuCheck(retained.sender() == "PEER" && retained.target() == "LOCAL" &&
+    retained.context().seqNo == 9 && retained.context().possDup);
+  ZuCheck(retained.sender().data() ==
+    original + unsigned(retained.frame().wire.find("49=PEER")) + 3);
+  ZuCheck(retained.target().data() ==
+    original + unsigned(retained.frame().wire.find("56=LOCAL")) + 3);
+  ZuCheck((retained.sendingTime() == ZuDateTime{ZuDateTimeScan::FIX{},
+    "20261027-12:34:56"} && retained.origSendingTime() == ZuDateTime{ZuDateTimeScan::FIX{},
+    "20261027-12:34:55"}));
+}
+
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();
   ZuTestCall(empty);
+  ZuTestCall(binaryRetention);
   ZuTestCall(retention);
   ZuTestCall(defaults);
   ZuTestCall(replyPolicy);

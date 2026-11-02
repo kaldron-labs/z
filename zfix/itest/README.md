@@ -21,12 +21,18 @@ make -C zfix/itest test
 
 `tcp_test` and `tls_test` compile the same transport fixture over Ztcp
 and Ztls. Each runs one connection, three simultaneous connections, and two
-connections carrying binary FIX frames larger than two TLS plaintext records.
+connections carrying signed binary FIX frames larger than two TLS plaintext records.
 The initiator admits two completed frames through `WireTx` before their socket
 completions. TCP borrows each frame without copying its bytes; TLS uses tagged
 record buffers with the transport's negotiated headroom and plaintext bound. Each acceptor extracts pooled frames with `RxFramer`,
 retains them across an Rx-to-Tx post, and echoes their exact bytes. Both endpoints
-check Rx ownership and one local completion per admitted frame. Stop drains
+check Rx ownership and one local completion per admitted frame. Large packets
+declare 212/213 and 93/89, carry every octet including SOH/NUL, and verify an
+application HMAC-SHA256 over the serialized 35-through-payload bytes. Both
+endpoints check decoded span addresses against the exact extracted allocation;
+the echo post retains that allocation and checks the same payload/signature
+addresses on Tx. Raw completed frames preserve their signatures during native
+partial-write retries. Stop drains
 physical I/O, then output-completion posts, before releasing links and finalizing
 hub TLS contexts.
 The fixture waits for physical close callbacks before finalizing hub TLS contexts.
@@ -38,7 +44,7 @@ On Linux, two additional cases constrain native socket receive/send buffers
 through `ZiMxParams`, pause the native Rx owner after TCP/TLS readiness, and
 observe real `send` results through a test-executable symbol that calls
 `SYS_sendto` with the original arguments. Both require actual EAGAIN; resuming
-must preserve every binary byte and deliver ordered, exactly-once completion.
+must preserve all binary bytes and deliver ordered, exactly-once completion.
 Positive short writes are required for TCP and for the resumed TLS case. TLS
 close at the first EAGAIN can precede a positive short write. The close case
 cancels both pending frames exactly once, retains no wire queue bytes/nodes,
@@ -112,7 +118,7 @@ is linked from the build tree.
 Each covers external control schemas without managed Logon fields, deliberately
 mismatched FIX version/identities and old timestamps, nonmonotonic/repeated
 sequence values, exact paused-input backing resumed through a third owner,
-zero-output-quota refusal without publication, binary payloads exceeding two TLS
+zero-output-quota refusal without publication, text payloads exceeding two TLS
 records, and asynchronous Rx/Tx manager stop. Assertions check owner affinity,
 one completion per admission and stopped callbacks after both external drains.
 
@@ -319,7 +325,7 @@ request ID through the retained context. Close observers wait until explicit
 release on a third owner; retained plain context remains readable after both
 hubs are finalized. Drain blocks new work and produces its proof only after
 retirement; no business response is synthesized for cancelled work. Raw server
-binary replies also pass through a third owner using a work lease; worker/result
+text replies also pass through a third owner using a work lease; worker/result
 callback allocation charges are derived from their actual delegate types.
 
 The session fixture's application queue retains both Busy and Held local selection

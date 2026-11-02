@@ -15,7 +15,7 @@ using namespace Zfix;
 static SessionConfig config()
 {
   SessionConfig c;
-  c.header.version = Version::V4_4; c.header.local = "LOCAL"; c.header.peer = "PEER";
+  c.identity.version = Version::V4_4; c.identity.local = "LOCAL"; c.identity.peer = "PEER";
   return c;
 }
 struct Receiver : Rx<Receiver> {
@@ -106,7 +106,7 @@ static void wireChange()
 {
   ZuTestScope(wireChange);
   RxProgress r; TxProgress t;
-  auto c = config(); c.header.version = Version::V4_2;
+  auto c = config(); c.identity.version = Version::V4_2;
   {
     Receiver rx{c, 17}; Sender tx{c, 17};
     ZuCheck(rx.restore_(17, RxProgress{14, 8, 9, 12}));
@@ -114,10 +114,10 @@ static void wireChange()
     r = rx.progress_(); t = tx.progress_();
   }
   c.mode = Transport::FIXT11; c.appVerID = AppVersion::V5_0_SP2;
-  c.header.version = Version::VT1_1;
-  c.header.local = "NEW-LOCAL"; c.header.peer = "NEW-PEER";
-  c.header.localSub = "NEW-LS"; c.header.peerSub = "NEW-PS";
-  c.header.localLocation = "NEW-LL"; c.header.peerLocation = "NEW-PL";
+  c.identity.version = Version::VT1_1;
+  c.identity.local = "NEW-LOCAL"; c.identity.peer = "NEW-PEER";
+  c.identity.localSub = "NEW-LS"; c.identity.peerSub = "NEW-PS";
+  c.identity.localLocation = "NEW-LL"; c.identity.peerLocation = "NEW-PL";
   ZuCheck(c.valid());
   Receiver rx{c, 17}; Sender tx{c, 17};
   ZuCheck(rx.restore_(17, r) && tx.restore_(17, t));

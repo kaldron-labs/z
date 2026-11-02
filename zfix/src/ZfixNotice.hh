@@ -14,6 +14,7 @@
 #endif
 
 #include <zlib/ZtEnum.hh>
+#include <zlib/ZuDateTime.hh>
 
 namespace Zfix {
 
@@ -22,6 +23,9 @@ struct TxContext {
   uint64_t	connection = 0;
   uint64_t	seqNo = 0;
   bool		replay = false;
+  ZuDateTime	sendingTime;
+  ZuDateTime	origSendingTime;
+  bool		possDup = false;
 };
 
 ZtEnumNS(ZfixAPI, TxNoticeKind, int8_t,

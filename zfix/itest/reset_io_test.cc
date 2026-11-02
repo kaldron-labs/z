@@ -26,7 +26,9 @@ struct Order {
   unsigned	phase;
 };
 
-ZfStruct(, (Order, FIX), (phase, (FIX::ID<7001>), UInt32));
+ZfStruct(, (Order), (phase, (FIX::ID<7001>), UInt32));
+using OrderFIXFields = ZuTypeConcat<Zfix::SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using Entry = MT<Order, "D">;
 using Dictionary = MTList<Entry>;
@@ -78,8 +80,8 @@ static bool readyTransitions(const Side &side) {
 }
 static SessionConfig config(bool cli, const TestState &test) {
   SessionConfig c; c.mode = test.mode; c.initiator = cli;
-  c.header.version = test.mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
-  c.header.local = cli ? "CLIENT" : "SERVER"; c.header.peer = cli ? "SERVER" : "CLIENT";
+  c.identity.version = test.mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
+  c.identity.local = cli ? "CLIENT" : "SERVER"; c.identity.peer = cli ? "SERVER" : "CLIENT";
   c.appVerID = AppVersion::V5_0_SP2;
   if (test.fault) c.logonTimeout = ZuTime{1};
   return c;
@@ -170,8 +172,9 @@ struct Peer : Base {
 
   void fixControlTx(TxBody::Ref body, TxContext c) {
     if (body->msgType() != "A") return;
-    Session::Logon logon;
-    if (Fmt::load(logon, body->body()) || c.epoch != side()->txEpoch) side()->fail();
+    Session::Logon logon; Fmt::Error error;
+    Fmt::read<Session::Logon, ZuFacet::FIX, ArchiveField>(logon, body->body(), error);
+    if (error || c.epoch != side()->txEpoch) side()->fail();
     if (app()->test->fault && c.connection > 1 && logon.resetSeqNum) side()->fail();
     if (logon.resetSeqNum) {
       if (c.seqNo != 1) side()->fail(); ++side()->resetLogons;
@@ -226,15 +229,11 @@ struct Peer : Base {
     if (!app()->rxInvoked()) side()->fail(); side()->accepted = accepted; side()->result.post();
   }
 
-  Fmt::Error fixHeaderRx(const Fmt::FrameView &f, Fmt::Header &h, Fmt::Limits l) {
-    return Fmt::readHeader<Order>(f, h, l);
-  }
-
   Fmt::Error fixBusinessRx(Msg *msg, Fmt::Limits limits) {
     Fmt::MessageHandler<Order> handler{msg->data().frame, limits}; auto o = handler.ctor();
     if (!handler.valid()) return handler.error();
     if (!app()->rxInvoked() || o.phase != this->session_().epoch_() ||
-	msg->data().header.seqNo < 2) side()->fail();
+	msg->data().seqNo < 2) side()->fail();
     side()->received.post();
     if constexpr (!Client) order(o.phase);
     return {};

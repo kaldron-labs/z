@@ -22,9 +22,7 @@ ZfStructImpl(Progress); ZfStructImpl(Progress, JSON);
 Model::Model(Shape shape, uint64_t seed) : m_seed{seed} {
   m_text.length(shape.text);
   for (unsigned i = 0; i < shape.text; ++i) m_text[i] = 'a' + i % 26;
-  m_binary.length(shape.binary, false);
-  for (unsigned i = 0; i < shape.binary; ++i) m_binary[i] = uint8_t(i % 251);
-  m_order.text = m_text; m_order.encoded = m_binary;
+  m_order.text = m_text;
   m_order.parties.size(shape.parties);
   for (unsigned i = 0; i < shape.parties; ++i) {
     Party party{"PARTY", "D", 1 + i % 2, {}};
@@ -52,8 +50,7 @@ Report report(const Order &o, uint64_t exec, ZuCSpan kind,
   auto status = fill ? ZuCSpan{"2"} : kind == "5" ? ZuCSpan{"0"} : kind;
   return {o.key, order ? order : o.key, exec, original, kind, status, o.symbol, o.side,
     o.qty, fill || cancel ? 0U : o.qty, fill ? o.qty : 0U, fill ? o.qty : 0U,
-    o.price, fill ? o.price : ZuDecimal{0}, fill ? o.price : ZuDecimal{0}, o.time, o.text,
-      o.encoded};
+    o.price, fill ? o.price : ZuDecimal{0}, fill ? o.price : ZuDecimal{0}, o.time, o.text};
 }
 bool valid(const Order &o) {
   return o.key && o.qty && o.price > ZuDecimal{0} && *o.time && o.symbol == "ZFIX" &&

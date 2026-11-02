@@ -71,9 +71,9 @@ struct State {
 
 static Zfix::SessionConfig config(bool client, const Options &options) {
   Zfix::SessionConfig c; c.mode = options.mode; c.initiator = client; c.heartBtInt = 0;
-  c.header.version = options.mode == Zfix::Transport::FIXT11 ?
+  c.identity.version = options.mode == Zfix::Transport::FIXT11 ?
     Zfix::Version::VT1_1 : Zfix::Version::V4_4;
-  c.header.local = client ? "DEMO-C" : "DEMO-S"; c.header.peer = client ? "DEMO-S" : "DEMO-C";
+  c.identity.local = client ? "DEMO-C" : "DEMO-S"; c.identity.peer = client ? "DEMO-S" : "DEMO-C";
   c.appVerID = Zfix::AppVersion::V5_0_SP2; return c;
 }
 template <typename Net, bool Client> struct Hub;
@@ -198,7 +198,6 @@ public:
     if (!options().token.length()) return body;
     // Handshake only: preserve every managed byte and validate added fields.
     auto token = Client && options().badAuth ? ZuCSpan{"wrong"} : options().token;
-    if (!Zfix::Fmt::text(token)) return {};
     ZtString<ZtStringHeapID<"Zfix.Demo.Auth">> bytes{body->body()};
     bytes << "553=demo\1" "554=" << token << '\1';
     Zfix::Fmt::Error error;

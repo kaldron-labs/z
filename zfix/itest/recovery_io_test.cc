@@ -32,7 +32,9 @@ struct Order {
   ZuCSpan	id;
 };
 
-ZfStruct(, (Order, FIX), (id, (FIX::ID<11>), String));
+ZfStruct(, (Order), (id, (FIX::ID<11>), String));
+using OrderFIXFields = ZuTypeConcat<Zfix::SessionFields<Order>, ZfFields_Order>;
+OrderFIXFields ZuFields_(Order *, ZuFacet::FIX *);
 ZfStructImpl(Order); ZfStructImpl(Order, FIX);
 using OrderMsg = MT<Order, "D">;
 using Dictionary = MTList<OrderMsg>;
@@ -157,9 +159,9 @@ struct TestState {
 
 static SessionConfig config(bool client, unsigned mode, unsigned version) {
   SessionConfig c; c.mode = mode; c.initiator = client;
-  c.header.version = version < Version::N ? version :
+  c.identity.version = version < Version::N ? version :
     mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
-  c.header.local = client ? "CLIENT" : "SERVER"; c.header.peer = client ? "SERVER" : "CLIENT";
+  c.identity.local = client ? "CLIENT" : "SERVER"; c.identity.peer = client ? "SERVER" : "CLIENT";
   c.appVerID = AppVersion::V5_0_SP2; return c;
 }
 
@@ -308,7 +310,8 @@ struct Peer : public Base {
 
   void fixControlTx(TxBody::Ref b, TxContext c) {
     if (b->msgType() != "A") return;
-    Session::Logon logon; auto error = Fmt::load(logon, b->body());
+    Session::Logon logon; Fmt::Error error;
+    Fmt::read<Session::Logon, ZuFacet::FIX, ArchiveField>(logon, b->body(), error);
     if (error || logon.resetSeqNum || c.epoch != 1) state()->fail();
     if (state()->phase && c.seqNo != store->tx.loaded) state()->fail();
     ++state()->logons;
@@ -362,19 +365,19 @@ struct Peer : public Base {
   }
 
   Fmt::Error fixReceiveRx(OrderMsg *, const Order &o, const RequestContext &context) {
-    const auto &h = context.header(); const auto &meta = context.context();
+    const auto &meta = context.context();
     auto version = state()->version;
     if (!this->app()->rxInvoked() || meta.session != this->session_().instance_() ||
 	meta.epoch != 1 || meta.connection != this->session_().connection_()
-	  || meta.seqNo != h.seqNo ||
-	meta.version != h.beginString || meta.replay != h.possDup || meta.possDup != h.possDup)
+	  || !meta.seqNo ||
+	meta.version != context.frame().beginString || meta.replay != meta.possDup)
       state()->fail();
-    if (version < Version::N && h.beginString != Version::Wire::v2s(version)) state()->fail();
+    if (version < Version::N && context.frame().beginString != Version::Wire::v2s(version)) state()->fail();
     if (!state()->phase || (o.id != "old" && o.id != "new")) state()->fail();
     if constexpr (!Client) {
       if (o.id == "old") {
-	if (!h.possDup || h.seqNo != state()->oldSeq ||
-	    h.origSendingTime != state()->oldTime) state()->fail();
+	if (!meta.possDup || meta.seqNo != state()->oldSeq ||
+	    context.origSendingTime() != state()->oldTime) state()->fail();
 	++state()->oldReceived;
 	state()->oldDelivered.post();
       } else ++state()->newReceived;

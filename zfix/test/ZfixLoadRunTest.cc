@@ -15,23 +15,20 @@ using namespace ZfixLoad;
 static void cachedBytes() {
   ZuTestScope(cachedBytes);
   Options options; options.count = 1; options.warmup = 0;
-  options.text = 7; options.binary = 300;
+  options.text = 7;
   Model model{options.shape()}; Run run{options};
   const auto &o = model.next(3, ZuDateTime{Zm::now()}, 42, ZuDecimal{12345, 2});
   ZuCheck((o.key == 3 && o.qty == 42 && o.price == ZuDecimal{12345, 2}));
-  Text text{o.text}, binary{ZuCSpan{o.encoded}};
-  auto check = [&model, &run, &options](ZuCSpan text, ZuBSpan binary, bool expected) {
-    ZuCheck(model.shape(text, binary) == expected && run.shape(text, binary) == expected &&
-      shape(text, binary, options.text, options.binary) == expected);
+  Text text{o.text};
+  auto check = [&model, &run, &options](ZuCSpan text, bool expected) {
+    ZuCheck(model.shape(text) == expected && run.shape(text) == expected &&
+      shape(text, options.text) == expected);
   };
-  check(text, ZuBSpan{binary}, true);
-  check({text.data(), text.length() - 1}, ZuBSpan{binary}, false);
-  check(text, {binary.data(), binary.length() - 1}, false);
+  check(text, true);
+  check({text.data(), text.length() - 1}, false);
   auto tail = text.length() - 1; text[tail] ^= 1;
-  check(text, ZuBSpan{binary}, false); text[tail] ^= 1;
-  tail = binary.length() - 1; binary[tail] ^= 1;
-  check(text, ZuBSpan{binary}, false); binary[tail] ^= 1;
-  check(text, ZuBSpan{binary}, true);
+  check(text, false); text[tail] ^= 1;
+  check(text, true);
 }
 static void phases() {
   ZuTestScope(phases);
@@ -49,11 +46,11 @@ static void phases() {
     now += 20;
   }
   ZuCheck(run.phase() == Phase::Complete && !run.nextDue(now));
-  Result result; run.finish(result, now);
+  Result result; run.finish(result, now + 100);
   ZuCheck(!result.errors && result.warmup == 1 && result.progress.complete == 2 &&
     result.progress.admitted == 2 && result.progress.reports == 4 && !result.progress.inFlight);
   ZuCheck(result.ackNs.count == 2 && result.ackNs.max == 10 && result.terminalNs.max == 20
-    && result.elapsedNs == 40);
+    && result.elapsedNs == 40 && result.startNs == 120 && result.endNs == 160);
   ZuCheck(result.intendedAckNs.count == 2 && result.intendedAckNs.max == result.ackNs.max &&
     result.intendedTerminalNs.max == result.terminalNs.max);
 }
@@ -171,7 +168,7 @@ static void workflows(Scenario::T scenario) {
   ZuTestScope(workflows);
   Options options; options.scenario = scenario;
   options.count = 3; options.warmup = 1; options.inFlight = 2;
-  options.text = 8; options.binary = 12;
+  options.text = 8;
   options.parties = options.subs = 2;
   Run run{options}; Broker broker{options, 0};
   Rows<Report> replies; unsigned next = 0;
@@ -212,7 +209,7 @@ static void workflows(Scenario::T scenario) {
   if (scenario == Scenario::Replace) ZuCheck(changes == 4);
   for (unsigned i = 0, n = replies.length(); i < n; ++i) {
     const auto &r = replies[i];
-    ZuCheck(r.text.length() == options.text && r.encoded.length() == options.binary);
+    ZuCheck(r.text.length() == options.text);
     if (r.kind != "0") ZuCheck(r.original && r.original == r.order && r.key != r.original);
   }
 }
