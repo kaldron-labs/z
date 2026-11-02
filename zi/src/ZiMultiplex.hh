@@ -1059,6 +1059,10 @@ public:
   unsigned epollMaxFDs() const { return m_epollMaxFDs; }
   unsigned epollQuantum() const { return m_epollQuantum; }
 #endif
+  // Rx-owner allocation for final frame storage when backing is shared.
+  Zi::IOBufAllocator *rxAllocator(bool udp) const {
+    return udp ? m_udpBufAllocator.ptr() : m_tcpBufAllocator.ptr();
+  }
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
 
@@ -1081,9 +1085,6 @@ private:
   void wake();			// wake up rx(), cause it to return
   void wakeRx();		// re-run rx() after wake()
 
-  Zi::IOBufAllocator *rxAllocator(bool udp) const {
-    return udp ? m_udpBufAllocator.ptr() : m_tcpBufAllocator.ptr();
-  }
 #ifdef ZiMultiplex_URing
   Zi::URing *uring(Zi::IOBufRing *, bool rx, bool udp);
   int controlFD() const { return m_epollFD; }

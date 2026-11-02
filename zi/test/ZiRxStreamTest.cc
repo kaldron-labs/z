@@ -730,6 +730,42 @@ void testSlicesOnlyAtSharedBoundaries()
   ZuCheck(spanEq(out.span(), "ab"));
 }
 
+void testExtractAfterEarlyGrowth()
+{
+  ZuTestScope(testExtractAfterEarlyGrowth);
+  ZiRxStream<RxQueue> stream;
+  auto first = mkBuf("abc");
+  auto original = first.ptr();
+  unsigned length = first->size * 2;
+  stream.push(ZuMv(first));
+  unsigned allocs = 0;
+  auto alloc = [&]() -> ZmRef<RxQueue::Node> {
+    ++allocs;
+    return new RxBufAlloc{nullptr, 0};
+  };
+  ZuCheck(stream.gather(length, alloc));
+  ZuCheck(original->jumbo() && !allocs);
+  auto backing = original->span().data();
+  auto rest = alloc();
+  rest->ensure(length);
+  memset(rest->span().data(), 'x', length);
+  rest->length = length;
+  memcpy(rest->span().data() + length - 3, "end", 3);
+  stream.push(rest);
+  ZuCheck(stream.gather(length, alloc));
+  Zi::RxRange out;
+  ZuCheck(extractN(stream, length, out, allocs) == length);
+  ZuCheck(allocs == 1); // only the incoming fragment, no extraction allocation
+  ZuCheck(out.buf.ptr() == original && out.span().data() == backing);
+  ZuCheck(!memcmp(out.span().data(), "abc", 3));
+  bool bytes = true;
+  for (unsigned i = 3; i < length; ++i) bytes &= out.span()[i] == 'x';
+  ZuCheck(bytes);
+  ZuCheck(stream.length() == 3 && spanEq(stream.span(), "end"));
+  ZuCheck(rest->length == length && rest->skip == 0);
+  ZuCheck(stream.range().buf.ptr() == rest.ptr());
+}
+
 } // namespace ZiRxStreamTest_
 
 int main(int argc, char **argv)
@@ -762,5 +798,6 @@ int main(int argc, char **argv)
   ZuTestCall(testSplicedRangesRetainBacking);
   ZuTestCall(testExclusivePartialHeadReuse);
   ZuTestCall(testSlicesOnlyAtSharedBoundaries);
+  ZuTestCall(testExtractAfterEarlyGrowth);
   return 0;
 }

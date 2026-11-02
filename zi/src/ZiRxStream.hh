@@ -8,7 +8,7 @@
 // - owns a queue of receive buffers and presents a consumable stream view
 // - applications define:
 //   - queue type, which must support:
-//     count_(), headNode(), shift(), pushNode(node), clean()
+//     count_(), headNode(), shift(), pushNode(node), unshiftNode(node), clean()
 // - stream operations:
 //   - scan(frame, pos) recognizes a complete prefix without consuming it
 //   - consume(frame, data) returns the total number of bytes consumed across all spans
@@ -177,6 +177,61 @@ public:
     return node ? range_(node, m_offset, nodeSpan_(node).length() - m_offset) :
       RxRange{};
   }
+  unsigned capacity() const {
+    NodeRef node = head();
+    if (!node) return 0;
+    auto range = node->range;
+    auto buf = range ? range->buf.ptr() : static_cast<IOBuf *>(&*node);
+    // Stream consumption does not reduce the configured receive capacity.
+    return buf->size - buf->skip;
+  }
+
+private:
+  template <typename Alloc>
+  typename Queue::NodeRef gather_(unsigned length, Alloc &&alloc) {
+    NodeRef node = head();
+    typename Queue::NodeRef buf;
+    if (!node->range && node->refCount() == 1 + Locked) {
+      unsigned first = node->length - m_offset;
+      node->skip += m_offset;
+      node->length = first;
+      if (ZuUnlikely(!node->ensure(length))) return {};
+      buf = m_queue.shift();
+      m_length -= first;
+      m_offset = 0;
+    } else {
+      buf = alloc();
+      if (ZuUnlikely(!buf || !buf->ensure(length))) return {};
+    }
+    while (m_length && buf->length < length) {
+      auto part = span();
+      unsigned remaining = length - buf->length;
+      if (part.length() > remaining) part.trunc(remaining);
+      buf->append(part);
+      advance(part.length());
+    }
+    return buf;
+  }
+
+public:
+  // Assemble an oversized frame as it arrives, returning receive slots before
+  // waiting for the suffix. Only the final frame buffer grows; trailing bytes
+  // keep their original backing and an independent position.
+  template <typename Alloc>
+  bool gather(unsigned length, Alloc &&alloc) {
+    auto buf = gather_(length, ZuFwd<Alloc>(alloc));
+    if (ZuUnlikely(!buf)) return false;
+    if (m_offset) {
+      auto tail = range();
+      m_queue.shift();
+      m_queue.unshiftNode(new RxSlice<typename Queue::Node>{ZuMv(tail)});
+      m_offset = 0;
+    }
+    m_length += buf->length;
+    m_queue.unshiftNode(ZuMv(buf));
+    return true;
+  }
+
   uint64_t advance(uint64_t n) {
     if (n > m_length) n = m_length;
     uint64_t advanced = n;
@@ -276,8 +331,8 @@ public:
     if (framed <= 0) return framed;
     if (ZuUnlikely(pos.total > UINT32_MAX)) return -1;
     unsigned length = unsigned(pos.total);
-    NodeRef node = head();
     if (!pos.count) {
+      NodeRef node = head();
       if (!node->range && length == node->length - m_offset) {
 	out = {m_queue.shift(), m_offset, length};
 	m_length -= length;
@@ -288,36 +343,8 @@ public:
       advance(length);
       return framed;
     }
-    unsigned first = nodeSpan_(node).length() - m_offset;
-    if (!node->range && node->refCount() == 1 + Locked) {
-      // Consolidation owns this backing exclusively. Drop an already consumed
-      // prefix before growth so only the live frame bytes are preserved.
-      if (m_offset) {
-	node->skip += m_offset;
-	node->length = first;
-	m_offset = 0;
-      }
-      if (ZuUnlikely(!node->ensure(length))) return -1;
-      out.buf = m_queue.shift();
-      m_length -= first;
-      unsigned remaining = length - first;
-      while (remaining) {
-	auto part = span();
-	if (part.length() > remaining) part.trunc(remaining);
-	out.buf->append(part);
-	remaining -= part.length();
-	advance(part.length());
-      }
-    } else {
-      out.buf = alloc();
-      if (ZuUnlikely(!out.buf)) return -1;
-      if (ZuUnlikely(!out.buf->ensure(length))) { out = {}; return -1; }
-      each(length, [&out](auto span) -> int64_t {
-	out.buf->append(span);
-	return span.length();
-      });
-      advance(length);
-    }
+    out.buf = gather_(length, ZuFwd<Alloc>(alloc));
+    if (ZuUnlikely(!out.buf)) return -1;
     out.length = length;
     return framed;
   }

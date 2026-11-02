@@ -27,7 +27,7 @@ struct RxHarness : public ZiRx<RxHarness> {
   unsigned frames = 0;
   ZtArray<Zi::RxRange> retained;
 
-  RxHarness() : ZiRx{64} { }
+  RxHarness(unsigned maxSize = 64) : ZiRx{maxSize} { }
 
   auto alloc() { return ZmRef<ZiRxBuf>{new RxBufAlloc{this, 0}}; }
 
@@ -200,6 +200,108 @@ void testSyncNetworkFragments()
   ZuCheck(!rx.rxStream());
 }
 
+// The test protocol permits 255 payload bytes; a 64-byte slot cannot hold
+// the 200-byte frame, and two slots cannot hold it by retaining fragments.
+struct JumboBuf : public ZiRxBuf {
+  using ZiRxBuf::ZiRxBuf;
+  unsigned cookie = 0x1234;
+};
+using JumboAlloc = Zi::IOBufAlloc_<JumboBuf, 64, 512, ZuStringT<"ZiRxTest.Jumbo">>;
+
+void testSharedOversize()
+{
+  ZuTestScope(testSharedOversize);
+  RxHarness rx{512};
+  unsigned allocations = 0;
+  auto alloc = [&]() {
+    ++allocations;
+    return ZmRef<ZiRxBuf>{new JumboAlloc{&rx, 0}};
+  };
+  auto feed = [&](ZuBSpan bytes) {
+    return rx.recvMem<&RxHarness::hdr, &RxHarness::body>(
+      bytes.data(), bytes.length(), alloc);
+  };
+  const uint8_t prefix[] = {1, 1, 'a', 198, 0xaa};
+  ZuCheck(!feed(prefix));
+  ZuCheck(allocations == 2); // shared first backing requires final storage
+  auto first = rx.retained[0];
+  ZuCheck(first.buf->length == sizeof(prefix));
+  ZuCheck(!first.buf->jumbo());
+  uint8_t chunk[64];
+  memset(chunk, 'x', sizeof(chunk));
+  for (unsigned i = 0; i < 3; ++i) ZuCheck(!feed(chunk));
+  const uint8_t tail[] = {'x', 'x', 'x', 'x', 'x', 'x', 1, 2, 'b'};
+  ZuCheck(feed(tail) == sizeof(tail));
+  ZuCheck(rx.frames == 3 && rx.retained.length() == 3);
+  const auto &frame = rx.retained[1];
+  ZuCheck(frame.length == 200 && frame.buf->jumbo());
+  ZuCheck(static_cast<JumboBuf *>(frame.buf.ptr())->cookie == 0x1234);
+  ZuCheck(frame.span()[0] == 198 && frame.span()[1] == 0xaa);
+  for (unsigned i = 2; i < frame.length; ++i) ZuCheck(frame.span()[i] == 'x');
+  ZuCheck(!memcmp(first.span().data(), prefix, 3));
+  ZuCheck(first.buf->length == sizeof(prefix) && first.buf->skip == 0);
+  ZuCheck(rx.retained[2].length == 3 && rx.retained[2].offset == 6);
+  ZuCheck(rx.retained[2].buf->length == sizeof(tail));
+  ZuCheck(!rx.rxStream());
+}
+
+#ifndef _WIN32
+void testOversizeSlotReturn()
+{
+  ZuTestScope(testOversizeSlotReturn);
+  if (!Zi::uring()) { ZuCheck(!Zi::uring()); return; }
+  using Alloc = Zi::RxTCPBufAllocator<JumboBuf, 64, 512,
+    ZuStringT<"ZiRxTest.Jumbo">>;
+  ZmRef<Zi::IOBufAllocator> allocator = new Alloc{2};
+  RxHarness rx{512};
+  ZiIOContext io;
+  rx.recv<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
+  auto first = allocator->alloc(&rx);
+  auto held = allocator->alloc(&rx);
+  ZuCheck(first->uring() && held->uring());
+  auto original = first.ptr();
+  auto slot = first->data_();
+  const uint8_t header[] = {198, 0xaa};
+  first->append(header, sizeof(header));
+  io.buf = ZuMv(first);
+  io.length = sizeof(header);
+  ZuCheck(io());
+  ZuCheck(original->jumbo() && !original->uring());
+  auto reused = allocator->alloc(&rx);
+  ZuCheck(reused->uring() && reused->data_() == slot);
+  reused = held = nullptr;
+  unsigned remaining = 198;
+  while (remaining) {
+    auto input = allocator->alloc(&rx);
+    ZuCheck(input->uring());
+    unsigned n = remaining < 64 ? remaining : 64;
+    memset(input->data(), 'x', n);
+    input->length = n;
+    io.length = n;
+    io.buf = ZuMv(input);
+    ZuCheck(io());
+    remaining -= n;
+  }
+  ZuCheck(rx.hdrCalls == 1 && rx.frames == 1);
+  ZuCheck(rx.retained.length() == 1);
+  ZuCheck(rx.retained[0].buf.ptr() == original);
+  ZuCheck(rx.retained[0].length == 200);
+  ZuCheck(static_cast<JumboBuf *>(original)->cookie == 0x1234);
+  for (unsigned i = 2; i < 200; ++i) ZuCheck(original->data()[i] == 'x');
+  ZuCheck(!rx.rxStream());
+  rx.retained.null();
+  // Reset an incomplete oversized frame too; no slot remains held by it.
+  auto input = allocator->alloc(&rx);
+  input->append(header, sizeof(header));
+  io.buf = ZuMv(input);
+  ZuCheck(io());
+  rx.rxReset();
+  first = allocator->alloc(&rx);
+  held = allocator->alloc(&rx);
+  ZuCheck(first->uring() && held->uring());
+}
+#endif
+
 } // ZiRxTest_
 
 int main(int argc, char **argv)
@@ -213,5 +315,9 @@ int main(int argc, char **argv)
   ZuTestCall(testSyncMemoryKeepsTrailingRanges);
   ZuTestCall(testNetworkOriginalBacking);
   ZuTestCall(testSyncNetworkFragments);
+  ZuTestCall(testSharedOversize);
+#ifndef _WIN32
+  ZuTestCall(testOversizeSlotReturn);
+#endif
   return 0;
 }

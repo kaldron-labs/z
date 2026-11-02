@@ -28,6 +28,7 @@
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
+#include <zlib/ZiMultiplex.hh>
 
 using ZiRxBuf = ZiRxQueue::Node;
 
@@ -62,7 +63,7 @@ public:
   template <auto Hdr, auto Body>
   void recvSync(ZiIOContext &io) { arm_<Hdr, Body>(io); }
 
-  void rxReset() { m_stream.clean(); m_frameLen = 0; }
+  void rxReset() { m_stream.clean(); m_frameLen = 0; m_gather = false; }
   const Stream &rxStream() const { return m_stream; }
 
   // Borrowed memory needs ownership acquisition. The caller supplies the
@@ -72,7 +73,7 @@ public:
     auto buf = alloc();
     if (ZuUnlikely(!buf->append(data, length))) return -1;
     m_stream.push(ZuMv(buf));
-    int result = process_<Hdr, Body, false>(nullptr);
+    int result = process_<Hdr, Body, false>(nullptr, alloc);
     return result > 0 ? int(length) : result;
   }
   template <auto Hdr, auto Body, typename Alloc>
@@ -91,13 +92,17 @@ private:
 	buf->owner = self;
 	rx->m_stream.push(ZuMv(buf));
       }
-      if (rx->template process_<Hdr, Body, true>(&io) < 0) io.disconnect();
+      if (rx->template process_<Hdr, Body, true>(&io, [&io, self]() {
+	auto allocator = io.cxn->mx()->rxAllocator(io.cxn->info().options.udp());
+	return ZmRef<ZiRxBuf>::acquire(
+	  static_cast<ZiRxBuf *>(allocator->alloc(self).release()));
+      }) < 0) io.disconnect();
       return true;
     }});
   }
 
-  template <auto Hdr, auto Body, bool Network>
-  int process_(const ZiIOContext *io) {
+  template <auto Hdr, auto Body, bool Network, typename Alloc>
+  int process_(const ZiIOContext *io, Alloc &&alloc) {
     while (m_stream) {
       if (!m_frameLen || m_frameLen == INT_MAX) {
 	if constexpr (Network)
@@ -107,8 +112,13 @@ private:
 	if (ZuUnlikely(m_frameLen < 0 ||
 	    (m_frameLen != INT_MAX && unsigned(m_frameLen) > m_maxSize)))
 	  return -1;
+	m_gather = m_frameLen != INT_MAX &&
+	  m_stream.length() < unsigned(m_frameLen) &&
+	  unsigned(m_frameLen) > m_stream.capacity();
       }
-      if (m_frameLen == INT_MAX || m_stream.length() < unsigned(m_frameLen)) return 0;
+      if (m_frameLen == INT_MAX) return 0;
+      if (m_gather && !m_stream.gather(unsigned(m_frameLen), alloc)) return -1;
+      if (m_stream.length() < unsigned(m_frameLen)) return 0;
       int consumed;
       if constexpr (Network)
 	consumed = ZuInvoke<Body>(impl(), *io, m_stream, unsigned(m_frameLen));
@@ -118,6 +128,7 @@ private:
       if (!consumed) { rxReset(); return 1; }
       m_stream.advance(unsigned(consumed));
       m_frameLen = 0;
+      m_gather = false;
     }
     return 1;
   }
@@ -125,6 +136,7 @@ private:
   Stream		m_stream;
   unsigned		m_maxSize;
   int			m_frameLen = 0;
+  bool			m_gather = false;
 };
 
 #endif /* ZiRx_HH */
