@@ -33,7 +33,15 @@
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 
+namespace ZuFieldProp::REST {
+  struct Signature { }; // loaded normally; emitted only by signing hooks
+}
+
 namespace Zrest {
+
+template <typename Field>
+using SaveField = ZuBool<ZfFieldFilter::Save<Field>{} &&
+  !ZuTypeIn<ZuFieldProp::REST::Signature, typename Field::Props>{}>;
 
 ZtEnumNS(ZrestAPI, QueryPolicy, int8_t, None, URI, Raw);
 

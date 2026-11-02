@@ -5,11 +5,13 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZuHex.hh>
 
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZrestServer.hh>
 
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZtlsHMAC.hh>
 
 using namespace ZuTestUtil;
 
@@ -311,6 +313,74 @@ struct SignedReq : public SignedBuilder<
     Zrest::ReqBuilder<SignedReq, SignedObject>> { };
 struct SignedRes : public SignedBuilder<
     Zrest::ResBuilder<SignedRes, SignedObject>> { };
+
+struct AuthObject : public ZmObject {
+  TestString value;
+  TestString signature;
+};
+ZfStruct(, (AuthObject, JSON, URI),
+  (value,	(Required),			String),
+  (signature,	(REST::Signature, Required),	String));
+
+static TestString authMAC(ZuCSpan data)
+{
+  Ztls::HMAC<> mac;
+  mac.start(ZuBSpan{"secret"});
+  mac.update(ZuBSpan{data});
+  // SHA-256 fixes the digest and its hex representation sizes.
+  uint8_t digest[Ztls::HMAC<>::Size];
+  char hex[ZuHex::enclen(sizeof(digest))];
+  mac.finish(digest);
+  ZuHex::encode<false>(hex, digest);
+  return TestString{ZuCSpan{hex, sizeof(hex)}};
+}
+
+template <typename Base, unsigned Policy, bool Sign>
+struct AuthBuilder : public Base {
+  enum { Body = Policy, SignBody = Sign };
+  mutable TestString covered;
+
+  template <typename S>
+  void signBody(S &s, const AuthObject *, ZuCSpan data) const {
+    covered = data;
+    auto sig = authMAC(data);
+    if constexpr (Policy == Zrest::BodyPolicy::JSON) {
+      s.length(s.length() - 1);
+      s << ",\"signature\":\"" << sig << "\"}";
+    } else s << "&signature=" << sig;
+  }
+};
+template <unsigned Policy, bool Sign = true>
+struct AuthReq : public AuthBuilder<
+    Zrest::ReqBuilder<AuthReq<Policy, Sign>, AuthObject>, Policy, Sign> { };
+template <unsigned Policy, bool Sign = true>
+struct AuthRes : public AuthBuilder<
+    Zrest::ResBuilder<AuthRes<Policy, Sign>, AuthObject>, Policy, Sign> { };
+template <unsigned Policy>
+struct AuthReqParser : public Zrest::ReqParser<AuthReqParser<Policy>, AuthObject> {
+  enum { Body = Policy };
+};
+template <unsigned Policy>
+struct AuthResParser : public Zrest::ResParser<AuthResParser<Policy>, AuthObject> {
+  enum { Body = Policy };
+};
+template <bool Sign = true>
+struct AuthQuery : public Zrest::ReqBuilder<AuthQuery<Sign>, AuthObject> {
+  using Path = ZuStringT<"/signed">;
+  enum { Query = Zrest::QueryPolicy::URI, SignQuery = Sign };
+  mutable TestString covered;
+
+  template <typename S>
+  void signQuery(S &s, const AuthObject *, ZuCSpan data) const {
+    covered = data;
+    auto sig = authMAC(data);
+    s << "&signature=" << sig;
+  }
+};
+struct AuthQueryParser : public Zrest::ReqParser<AuthQueryParser, AuthObject> {
+  using Path = ZuStringT<"/signed">;
+  enum { Query = Zrest::QueryPolicy::URI };
+};
 
 struct ReplyA { };
 struct ReplyB { };
@@ -1149,6 +1219,194 @@ static void signedBodyTest()
     "{\"body\":{\"value\":\"value\"},\"signed\":true}");
 }
 
+template <unsigned Policy>
+static bool authVerify(ZuCSpan wire, const AuthObject &object)
+{
+  // This test profile signs the exact unsigned wire representation. JSON's
+  // closing brace is replaced when appending the signature member.
+  int64_t end;
+  if constexpr (Policy == Zrest::BodyPolicy::JSON)
+    end = wire.template find<",\"signature\":">();
+  else end = wire.template find<"&signature=">();
+  if (end < 0 || object.signature.length() != Ztls::HMAC<>::Size * 2) return false;
+  wire.trunc(end);
+  TestString covered{wire};
+  if constexpr (Policy == Zrest::BodyPolicy::JSON) covered << '}';
+  return object.signature == authMAC(covered);
+}
+
+template <typename Parser>
+static bool authReceive(TestString wire, bool *decoded = nullptr)
+{
+  if (decoded) *decoded = false;
+  TestString original{wire}; // JSON/URI parsing may mutate its input.
+  Parser parser;
+  parser.init();
+  parser.bodyMax(wire.length());
+  if (!parser.bodyInfo(Zhttp::BodyType::Fixed, wire.length())) return false;
+  auto rx = fragment(wire);
+  if (!parser.body(rx) || !parser.finishBody() || !parser.object) return false;
+  if (decoded) *decoded = true;
+  bool valid = authVerify<Parser::Body>(original, *parser.object);
+  parser.reset();
+  return valid;
+}
+
+template <typename Builder>
+static TestString authBody(Builder &builder, AuthObject *object)
+{
+  builder.init(object);
+  BodySink sink;
+  builder.body([&sink](auto emit) { emit(sink); });
+  return ZuMv(sink.data);
+}
+
+template <typename Builder, typename Parser>
+static void authBodyCase(ZuCSpan expectedBody, ZuCSpan expectedMAC)
+{
+  ZuTestScope(authBodyCase);
+  ZmRef<AuthObject> object = new AuthObject{};
+  object->value = "value";
+  object->signature = "stale";
+  Builder builder;
+  auto wire = authBody(builder, object.ptr());
+  ZuCheck(builder.bodyLength == wire.length());
+  ZuCheck(builder.covered == expectedBody);
+  ZuCheck(authMAC(builder.covered) == expectedMAC);
+  ZuCheck(object->signature == "stale");
+  ZuCheck((wire.template find<"stale">() < 0));
+  auto sig = wire.find(expectedMAC);
+  ZuCheck(sig >= 0);
+  if (sig < 0) return;
+  ZuCheck(authReceive<Parser>(wire));
+
+  TestString changedBody{wire};
+  auto value = changedBody.template rfind<"value">();
+  ZuCheck(value >= 0);
+  if (value >= 0) {
+    changedBody.data()[value] = 'V';
+    bool decoded;
+    ZuCheck(!authReceive<Parser>(changedBody, &decoded));
+    ZuCheck(decoded);
+  }
+  TestString changedSig{wire};
+  auto c = changedSig.data()[sig];
+  changedSig.data()[sig] = c == '0' ? '1' : '0';
+  bool decoded;
+  ZuCheck(!authReceive<Parser>(changedSig, &decoded));
+  ZuCheck(decoded);
+  TestString shortSig{expectedBody};
+  if constexpr (Builder::Body == Zrest::BodyPolicy::JSON) {
+    shortSig.length(shortSig.length() - 1);
+    shortSig << ",\"signature\":\"short\"}";
+  } else shortSig << "&signature=short";
+  ZuCheck(!authReceive<Parser>(shortSig, &decoded));
+  ZuCheck(decoded);
+  // A well-formed unsigned payload must not pass application verification.
+  ZuCheck(!authReceive<Parser>(TestString{expectedBody}));
+}
+
+template <typename Builder>
+static void authUnsignedCase(ZuCSpan expectedBody)
+{
+  ZuTestScope(authUnsignedCase);
+  ZmRef<AuthObject> object = new AuthObject{};
+  object->value = "value";
+  object->signature = "stale";
+  Builder builder;
+  auto wire = authBody(builder, object.ptr());
+  ZuCheck(builder.bodyLength == wire.length());
+  ZuCheck(wire == expectedBody);
+  ZuCheck(!builder.covered.length());
+  ZuCheck(object->signature == "stale");
+}
+
+static void signatureBodyTest()
+{
+  ZuTestScope(signatureBody);
+  using namespace Zrest::BodyPolicy;
+  constexpr auto json = "{\"value\":\"value\"}"_z;
+  constexpr auto jsonMAC =
+    "e540aa8e4aae142d0b1573f0b498000e7f2684cdd9475b3e11fd85d3d85f52d7"_z;
+  constexpr auto uri = "value=value"_z;
+  constexpr auto uriMAC =
+    "7c2580adc51aafd297b694dd5344eaf55def703686af74af2a5d6182843b91a6"_z;
+  // Response URI serialization retains its existing leading query separator.
+  constexpr auto resURI = "?value=value"_z;
+  constexpr auto resMAC =
+    "3e6231fbb426de4e74270f9d3ed748c6731f77ad2d2bf4a00daa8daed0c5f9eb"_z;
+  ZuTestCall((authBodyCase<AuthReq<JSON>, AuthReqParser<JSON>>), json, jsonMAC);
+  ZuTestCall((authBodyCase<AuthRes<JSON>, AuthResParser<JSON>>), json, jsonMAC);
+  ZuTestCall((authBodyCase<AuthReq<URI>, AuthReqParser<URI>>), uri, uriMAC);
+  ZuTestCall((authBodyCase<AuthRes<URI>, AuthResParser<URI>>), resURI, resMAC);
+  ZuTestCall((authUnsignedCase<AuthReq<JSON, false>>), json);
+  ZuTestCall((authUnsignedCase<AuthRes<JSON, false>>), json);
+  ZuTestCall((authUnsignedCase<AuthReq<URI, false>>), uri);
+  ZuTestCall((authUnsignedCase<AuthRes<URI, false>>), resURI);
+}
+
+template <typename Builder>
+static TestString authTarget(Builder &builder, AuthObject *object)
+{
+  builder.init(object);
+  TestString wire;
+  builder.operation([&wire](auto, auto operation) {
+    operation([&wire](auto emit) { emit(wire); });
+  });
+  return wire;
+}
+
+static bool authQueryReceive(TestString wire, bool *decoded = nullptr)
+{
+  if (decoded) *decoded = false;
+  TestString original{wire};
+  AuthQueryParser parser;
+  parser.init();
+  auto input = target(wire);
+  if (!parser.operation(Zhttp::Method::GET, input)) return false;
+  if (decoded) *decoded = true;
+  return authVerify<Zrest::BodyPolicy::URI>(original, *parser.object);
+}
+
+static void signatureQueryTest()
+{
+  ZuTestScope(signatureQuery);
+  ZmRef<AuthObject> object = new AuthObject{};
+  object->value = "value";
+  object->signature = "stale";
+  AuthQuery<> builder;
+  auto wire = authTarget(builder, object.ptr());
+  constexpr auto expectedMAC =
+    "2b6cfd23550f01510e85b3057d81e11eda17b8e9ccc3a3019249ed3f893af62a"_z;
+  ZuCheck(builder.covered == "/signed?value=value");
+  ZuCheck(authMAC(builder.covered) == expectedMAC);
+  ZuCheck(object->signature == "stale");
+  ZuCheck(authQueryReceive(wire));
+  auto value = wire.template rfind<"value">();
+  auto sig = wire.find(expectedMAC);
+  ZuCheck(value >= 0 && sig >= 0);
+  if (value >= 0 && sig >= 0) {
+    TestString changedBody{wire};
+    changedBody.data()[value] = 'V';
+    bool decoded;
+    ZuCheck(!authQueryReceive(changedBody, &decoded));
+    ZuCheck(decoded);
+    TestString changedSig{wire};
+    auto c = changedSig.data()[sig];
+    changedSig.data()[sig] = c == '0' ? '1' : '0';
+    ZuCheck(!authQueryReceive(changedSig, &decoded));
+    ZuCheck(decoded);
+  }
+  TestString changedPath{wire};
+  changedPath.data()[1] = 'S';
+  ZuCheck(!authQueryReceive(changedPath));
+  AuthQuery<false> unsignedBuilder;
+  auto unsignedWire = authTarget(unsignedBuilder, object.ptr());
+  ZuCheck(unsignedWire == "/signed?value=value");
+  ZuCheck(!unsignedBuilder.covered.length());
+  ZuCheck(!authQueryReceive(unsignedWire));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -1167,5 +1425,7 @@ int main(int argc, char **argv)
   ZuTestCall(skipPathTest);
   ZuTestCall(rootPathTest);
   ZuTestCall(signedBodyTest);
+  ZuTestCall(signatureBodyTest);
+  ZuTestCall(signatureQueryTest);
   return 0;
 }

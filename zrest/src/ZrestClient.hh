@@ -67,7 +67,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
 	  using Path = Impl::Path;
 	  using Query_URI_Facet = Impl::Query_URI_Facet;
 	  s << Path{}();
-	  ZfURI::save<Query_URI_Facet>(s, impl()->queryObject(object.ptr()));
+	  ZfURI::save_<Query_URI_Facet, SaveField>(s, impl()->queryObject(object.ptr()));
 	});
       });
     } else if constexpr (Impl::Query == QueryPolicy::URI) {
@@ -76,7 +76,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       auto buf = ZtScratch(SignBufScratch, Impl::SignQueryBufSize);
       const auto &query = impl()->queryObject(object.ptr());
       buf << Path{}();
-      ZfURI::save<Query_URI_Facet>(buf, query);
+      ZfURI::save_<Query_URI_Facet, SaveField>(buf, query);
       impl()->signQuery(buf, object.ptr(), buf.cspan());
       emit(Impl::Method, [&buf](auto &&emit) {
 	emit([&buf](auto &s) { s << buf; });
@@ -98,7 +98,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
     } else if constexpr (Impl::Body == BodyPolicy::JSON && !Impl::SignBody) {
       emit([this](auto &s) {
 	using Body_JSON_Facet = Impl::Body_JSON_Facet;
-	ZfJSON::save<Body_JSON_Facet>(s, impl()->bodyObject(object.ptr()));
+	ZfJSON::save<Body_JSON_Facet, SaveField>(s, impl()->bodyObject(object.ptr()));
 	s.flush();
 	bodyLength = s.produced();
 	return Zhttp::WriteOutcome::End;
@@ -109,7 +109,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       const auto &body = impl()->bodyObject(object.ptr());
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
-      ZfJSON::save<Body_JSON_Facet>(buf, body);
+      ZfJSON::save<Body_JSON_Facet, SaveField>(buf, body);
       impl()->signBody(buf, object.ptr(), buf.cspan().offset(offset));
       emit([this, &buf](auto &s) {
 	s << buf;
@@ -120,7 +120,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
     } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
       emit([this](auto &s) {
 	using Body_URI_Facet = Impl::Body_URI_Facet;
-	ZfURI::saveBody<Body_URI_Facet>(s, impl()->bodyObject(object.ptr()));
+	ZfURI::saveBody_<Body_URI_Facet, SaveField>(s, impl()->bodyObject(object.ptr()));
 	s.flush();
 	bodyLength = s.produced();
 	return Zhttp::WriteOutcome::End;
@@ -131,7 +131,7 @@ struct ReqBuilder : public Request, public Zhttp::Builder {
       const auto &body = impl()->bodyObject(object.ptr());
       impl()->prefixBody(buf, object.ptr());
       unsigned offset = buf.length();
-      ZfURI::saveBody<Body_URI_Facet>(buf, body);
+      ZfURI::saveBody_<Body_URI_Facet, SaveField>(buf, body);
       impl()->signBody(buf, object.ptr(), buf.cspan().offset(offset));
       emit([this, &buf](auto &s) {
 	s << buf;

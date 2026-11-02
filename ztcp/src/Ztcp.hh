@@ -311,6 +311,9 @@ private:
     impl()->connected(Connected{});
   }
 
+  Cxn *closing_() const { return m_closing.load_(); }
+  void closing_(Cxn *cxn) { m_closing = cxn; }
+
   template <typename ImplRef_>
   void disconnected_0(Cxn *cxn, ImplRef_ impl_, bool peer) {
     ZmRef<Impl> impl{ZuMvPtr(impl_)};
@@ -324,13 +327,13 @@ private:
 	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	]() mutable {
-	  if (impl->m_closing.load_() == cxn.ptr()) impl->Tx::txQueue.clean();
+	  if (impl->closing_() == cxn.ptr()) impl->Tx::txQueue.clean();
 	  auto app = impl->app();
 	  app->rxRun([
 	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	  ]() mutable {
-	    if (impl->m_closing.load_() == cxn.ptr()) {
-	      impl->m_closing = nullptr;
+	    if (impl->closing_() == cxn.ptr()) {
+	      impl->closing_(nullptr);
 	      impl->disconnected_1(peer);
 	    }
 	    impl->app()->linkDisconnected_();

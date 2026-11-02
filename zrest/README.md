@@ -48,6 +48,26 @@ A descriptor with `Borrowed = 1` retains parsed body, path, query and header
 backing through the selected codec's lifetime. The default `Borrowed = 0`
 requires the decoded object to own callback-visible variable data.
 
+## Signing
+
+Mark a JSON or URI signature member with `REST::Signature` in its ordinary
+`ZfStruct` declaration. REST builders omit that member from normal query/body
+serialization, including when signing is disabled. Rx loads the member normally
+using the same declaration. The source object's signature is never cleared or
+changed to suppress output. Raw representations are application-written bytes
+and have no field filtering.
+
+Enable `SignQuery` or `SignBody` and implement `signQuery(stream, object, bytes)`
+or `signBody(stream, object, bytes)` to append the computed signature. The body
+hook receives the serialized body excluding bytes written by `prefixBody`;
+the query hook receives the serialized path and query. The application chooses
+the algorithm, key, encoding and covered bytes. Verification belongs to the
+application's receive policy: recompute over the agreed payload and compare
+with the received signature before accepting the request or response. Parsing
+the signature field alone does not verify it. Preserve original signed bytes
+when the signing profile requires exact wire coverage; JSON/URI parsing may
+mutate its input.
+
 ## SSE
 
 An SSE response is declared with `Body = Zrest::BodyPolicy::SSE`. The server
