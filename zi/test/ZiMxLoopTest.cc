@@ -763,7 +763,7 @@ public:
   void disconnected(bool) override { rxReset(); }
 private:
   bool sent(ZiIOContext &);
-  int header(const ZiIOContext &, Stream &) { return 64; }
+  int header(const ZiIOContext &, Stream &);
   int body(const ZiIOContext &, Stream &, unsigned);
   BurstMx *m_owner;
   Zi::IOBufAllocator *m_allocator;
@@ -776,10 +776,12 @@ private:
 class BurstMx : public ZiMultiplex {
 public:
   enum { Clients = 20, Messages = 500, Hold = ZiIOBuf_DefltRingSize };
-  explicit BurstMx(bool shared, bool many = false) : ZiMultiplex{
+  explicit BurstMx(bool shared, bool many = false, bool jumbo = false) : ZiMultiplex{
     ZiMxParams{}.backend(ZiMxBackend::URing).txThread(shared ? 1 : 2).txBufSize(2048)
       .tcpBufAllocator(new Zi::RxTCPBufAllocator<
-	BurstBuf, 256, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>)} {
+	BurstBuf, 256, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{
+	  jumbo ? 4U : unsigned(ZiIOBuf_DefltRingSize)})},
+    m_jumbo{jumbo}, m_released{jumbo} {
     if (many) {
       m_clients = ZiIOBuf_DefltRingSize + 8;
       for (unsigned i = 0; i < m_clients; ++i)
@@ -818,10 +820,12 @@ public:
   void first() { if (++m_started == m_clients) m_bound.post(); }
   bool bound() { return !m_bound.timedwait(Zm::now(15)); }
   bool many() const { return m_clients != Clients; }
+  bool jumbo() const { return m_jumbo; }
   void received(Zi::RxRange range) {
     auto buf = static_cast<BurstBuf *>(range.buf.ptr());
-    m_original &= buf->uring() && buf->ring() && buf->cookie == 0x1234 &&
-      invoked(rxThread());
+    m_original &= buf->cookie == 0x1234 && invoked(rxThread()) &&
+      (m_jumbo ? (range.length <= 256 || buf->jumbo()) :
+	(buf->uring() && buf->ring()));
     if (!m_bytes) m_ingress.post();
     m_bytes += range.length;
     if (!m_released && (!m_held.length() || m_held[m_held.length() - 1] != buf)) {
@@ -854,6 +858,7 @@ private:
   unsigned m_sent = 0;
   unsigned m_partial = 0;
   unsigned m_bytes = 0;
+  bool m_jumbo = false;
   bool m_original = true;
   bool m_released = false;
 };
@@ -894,6 +899,11 @@ bool BurstCxn::sent(ZiIOContext &io)
   return true;
 }
 
+int BurstCxn::header(const ZiIOContext &, Stream &)
+{
+  return m_owner->jumbo() ? BurstMx::size(m_message) : 64;
+}
+
 int BurstCxn::body(const ZiIOContext &, Stream &stream, unsigned n)
 {
   stream.eachRange(n, [this](Zi::RxRange range) -> int64_t {
@@ -906,6 +916,21 @@ int BurstCxn::body(const ZiIOContext &, Stream &stream, unsigned n)
   m_offset += n;
   if (m_offset == BurstMx::size(m_message)) { ++m_message; m_offset = 0; }
   return n;
+}
+
+void testNativeJumbo()
+{
+  ZuTestScopeRT(testNativeJumbo);
+  if (!Zi::uring()) { ZuCheckRT(!Zi::uring()); return; }
+  // Four 256-byte slots must keep twenty 256 KiB frames progressing.
+  for (bool shared : {false, true}) {
+    BurstMx mx{shared, false, true};
+    ZuCheckRT(mx.start());
+    mx.startServer();
+    ZuCheckRT(mx.done());
+    ZuCheckRT(mx.stop());
+    ZuCheckRT(mx.ok());
+  }
 }
 
 void testNativeBurst()
@@ -1080,6 +1105,7 @@ int main(int argc, char **argv)
 #ifndef _WIN32
   ZuTestCall(testNativeOwners);
   ZuTestCall(testNativeBurst);
+  ZuTestCall(testNativeJumbo);
   ZuTestCall(testUdpGeometry);
   ZuTestCall(testRingPressure);
   ZuTestCall(testEpollOwners);
