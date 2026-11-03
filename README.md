@@ -15,7 +15,20 @@ individual module documentation describes supported protocol profiles and
 limitations.
 
 [Build dependencies](DEPENDENCIES.md) · [Testing and environment setup](TESTING.md) ·
-[Engineering guidelines](GUIDELINES.md)
+[Repository guidance map](AGENTS.md)
+
+Development guidance is split by task; start with the map and read the relevant
+documents:
+
+- [Engineering principles](GUIDELINES.md): performance priorities and target systems.
+- [Build and development](BUILD.md): module layout, commands, verification and PR conventions.
+- [C++ rules](CPP.md): language idioms, constraints and portability.
+- [Code style](STYLE.md): header layout, indentation, class shape and naming.
+- [Framework facilities](FRAMEWORK.md): Z types, storage, concurrency and other APIs.
+- [I/O ownership](IO.md): Rx/Tx sharding, handoffs, lifetime and teardown.
+- [Audit flags and fixes](AUDIT.md): audit scope, repair procedure and review criteria.
+
+Individual modules may also provide a `GUIDELINES.md` with library-specific rules.
 
 ## Design priorities
 
