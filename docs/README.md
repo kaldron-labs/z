@@ -15,7 +15,7 @@ individual module documentation describes supported protocol profiles and
 limitations.
 
 [Build dependencies](DEPENDENCIES.md) · [Testing and environment setup](TESTING.md) ·
-[Repository guidance map](AGENTS.md)
+[Repository guidance map](../AGENTS.md)
 
 Development guidance is split by task; start with the map and read the relevant
 documents:
@@ -207,6 +207,9 @@ to GCC and an x64 Linux build; `-L` selects Clang and `-M` selects MinGW.
 Its current defaults are not an ARM configuration recipe. Run `./z.config -h`
 for options and use platform-appropriate configure/compiler flags when needed.
 Installation may require permission to write the selected prefix.
+
+io_uring is enabled by default when available. Use `-u` to build without it;
+each process still checks runtime availability.
 
 Installed headers use `<zlib/Component.hh>` and applications link the owning
 module libraries. Start with the [reflection examples](zf/README.md),

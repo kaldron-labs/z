@@ -50,6 +50,37 @@ callbacks. [ZiEventLoopTest](test/ZiEventLoopTest.cc) and
 
 `ZiIOBuf` provides pooled, reference-counted I/O storage. Configure the pool for
 your message sizes and keep buffers alive through asynchronous output.
+
+`ZiMxParams::rxRingSize(n)` and `txRingSize(n)` select receive and transmit
+pool/ring counts independently, both defaulting to 128. Native service counts
+must be in `[ZiMxParams::MinRingSize, ZiMxParams::MaxRingSize]` (2..32768);
+non-power-of-two payload counts are preserved while kernel descriptor rings
+round up. A shared Rx/Tx owner loop uses the larger count. `rxBufSize` and
+`txBufSize` still select socket receive/send byte limits.
+
+Set counts before constructing custom receive pools with
+`params.tcpBufAllocator<Allocator>()` or `udpBufAllocator<Allocator>()`.
+These setters construct immediately using `params.rxRingSize()`. The existing
+reference-taking setters preserve explicitly sized/shared allocators, including
+one-slot allocator tests. TCP/TLS producer policies, QUIC endpoints and Zdb
+table/shard producers use their multiplexer’s `txRingSize()` at initialization.
+The `ZvMxParams` configuration fields use the same names and bounds.
+
+Counts are per allocator, not per socket: receive pools are shared by all
+connections using a multiplexer; transmit policies may have separate pools per
+producer/type, endpoint or database table/shard. Account for these owners when
+budgeting memory. Each QUIC Rx slot occupies 1664 mapped bytes with the default
+1472-byte payload policy; 128 slots require 208 KiB per receive allocator.
+A QUIC Tx allocator maps 184 KiB for 128 slots, excluding descriptors and kernel
+queues. Pool counts do not guarantee progress under arbitrary retention: UDP
+keeps an ordinary-backed receive available when mapped buffers are exhausted.
+
+Build-time defaults remain independently overridable through
+`ZiIOBuf_DefltRxRingSize` and `ZiIOBuf_DefltTxRingSize`. Heap tuning controls
+buffer descriptors and ordinary backing; mapped payload storage follows these
+allocator counts and geometry.
+The [workload sizing inventory](test/POOL_SIZING.md) records the policies used
+by protocol tests, interoperability runners and benchmarks.
 `ZiRx`/`ZiTx` and `ZiRxStream`/`ZiTxStream` manage receive/transmit flow; stream
 parsers must handle fragmented input, while writers should flush at deliberate
 message boundaries. A span into a buffer is only a view, not an ownership token.
@@ -171,4 +202,4 @@ I/O telemetry vocabulary consumed by the telemetry layer.
 [example/](example/README.md) contains complete logging/network programs.
 Run `make -C zi test` from a configured build tree; [test/README.md](test/README.md)
 and [itest/README.md](itest/README.md) describe focused fixtures and residue.
-See [TESTING.md](../TESTING.md) for environment, logs and ports.
+See [TESTING.md](../docs/TESTING.md) for environment, logs and ports.

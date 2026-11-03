@@ -74,5 +74,5 @@ with every feature of canonical protobuf.
 Run `make -C zpb test` from a configured build tree. See
 [example/README.md](example/README.md), [itest/README.md](itest/README.md), and
 [interop/README.md](interop/README.md) for focused programs and independent
-wire checks. Build/test prerequisites are in [DEPENDENCIES.md](../DEPENDENCIES.md)
-and [TESTING.md](../TESTING.md).
+wire checks. Build/test prerequisites are in [DEPENDENCIES.md](../docs/DEPENDENCIES.md)
+and [TESTING.md](../docs/TESTING.md).

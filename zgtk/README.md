@@ -91,5 +91,5 @@ model. Use the [model header](src/ZGtkTreeModel.hh) and
 
 Run `make -C zgtk test` from a configured build tree. The [test directory](test/)
 contains executable API examples and boundary cases. See the top-level
-[testing guide](../TESTING.md) for environment, diagnostics and port allocations,
-and [dependencies](../DEPENDENCIES.md) for build prerequisites.
+[testing guide](docs/TESTING.md) for environment, diagnostics and port allocations,
+and [dependencies](docs/DEPENDENCIES.md) for build prerequisites.

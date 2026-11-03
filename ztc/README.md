@@ -258,4 +258,4 @@ Run `make -C ztc test` in a configured build tree. See
 [test/README.md](test/README.md) for focused protocol coverage,
 [example/README.md](example/README.md) for the native client, and
 [interop/README.md](interop/README.md) for canonical wire checks.
-Shared test environment requirements are in [TESTING.md](../TESTING.md).
+Shared test environment requirements are in [TESTING.md](../docs/TESTING.md).

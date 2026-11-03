@@ -4,7 +4,7 @@ Ztls supplies asynchronous TLS links, cryptographic primitives, key encoding,
 HPKE, age-format encryption, TOTP and a credential Vault. It integrates
 zpicotls/OpenSSL with Zi buffers and Rx/Tx scheduling. Include `<zlib/Ztls.hh>`
 for transport or individual facility headers, and link `libZtls`. See
-[DEPENDENCIES.md](../DEPENDENCIES.md) for the required zpicotls backends and
+[DEPENDENCIES.md](../docs/DEPENDENCIES.md) for the required zpicotls backends and
 OpenSSL capabilities.
 
 ## TLS clients and servers
@@ -108,7 +108,7 @@ keyring. [Vault tests](test/README.md) cover store variants and encrypted files.
 Run `make -C ztls test` from a configured build tree. See
 [test/README.md](test/README.md), [itest/README.md](itest/README.md) and
 [interop/README.md](interop/README.md) for vectors, transport fixtures and
-external peers. Environment and ports are centralized in [TESTING.md](../TESTING.md).
+external peers. Environment and ports are centralized in [TESTING.md](../docs/TESTING.md).
 
 Outgoing TLS links resolve hostnames asynchronously and consume the resolver's
 terminal continuation before submitting a socket connect. Submitted DNS and TCP
