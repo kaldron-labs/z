@@ -304,6 +304,6 @@ headers and the [test directory](test/) show the corresponding APIs.
 
 Run `make -C zm test` from a configured build tree. See
 [test/README.md](test/README.md) for focused coverage and the top-level
-[testing guide](../TESTING.md) for sanitizers and debugging. Heap tests include
+[testing guide](docs/TESTING.md) for sanitizers and debugging. Heap tests include
 cross-thread and cross-partition ownership cases; run them when changing
 allocator policy rather than relying only on single-thread smoke tests.

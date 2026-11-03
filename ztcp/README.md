@@ -10,9 +10,16 @@ For encrypted transport see [Ztls](../ztls/README.md); for HTTP applications use
 ## Clients and servers
 
 A client derives from `Ztcp::Client<App>` and defines a link derived from
-`Ztcp::CliLink<App, Link, RxBufAlloc, TxBufAlloc>`. A server uses
+`Ztcp::CliLink<App, Link, TxBufAlloc>`. A server uses
 `Ztcp::Server<App>` and `Ztcp::SrvLink` instead. Select pooled buffer sizes with
-`Ztcp::RxBufAlloc<N>` and `Ztcp::TxBufAlloc<N>` according to the workload.
+`Zi::RxTCPBufAllocator<ZiRxBuf, N, MaxSize, HeapID>` in
+`ZiMxParams::tcpBufAllocator()` and `Ztcp::TxBufAlloc<N>` on the link.
+The receive allocator must preserve the `ZiRxBuf` queue node base.
+The hub retains separate application and Tx producer allocators for each concrete
+`TxBufAlloc` type. Links with identical policies share those pools; different
+Base, size or heap policies remain independent. Keep the hub alive through
+multiplexer stop and release retained wire buffers before destroying it. Link
+teardown and `Hub::final()` do not release pools still watched by the multiplexer.
 
 Client links implement `connected(Ztcp::Connected)`, `connectFailed(bool)`,
 `disconnected(bool)` and `process(Ztcp::RxStream &)`. The application may set
@@ -113,8 +120,8 @@ Run `make -C ztcp test` from a configured build tree. The [test directory](test/
 contains executable API examples and boundary cases. ZtcpLoopTest collects
 worker callback diagnostics and reports them on the test thread after owner
 drain; the TAP manager is single-threaded. See the top-level
-[testing guide](../TESTING.md) for environment, diagnostics and port allocations,
-and [dependencies](../DEPENDENCIES.md) for build prerequisites.
+[testing guide](docs/TESTING.md) for environment, diagnostics and port allocations,
+and [dependencies](docs/DEPENDENCIES.md) for build prerequisites.
 
 Outgoing TCP links resolve hostnames asynchronously and consume the resolver's
 terminal continuation before submitting a socket connect. Submitted DNS and TCP

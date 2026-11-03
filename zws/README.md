@@ -14,6 +14,9 @@ to a concrete HTTP profile. H1 profiles include `Zhttp::H1TCP` and
 profile selection determines the transport, rather than a WebSocket frame
 codec creating its own socket.
 
+An HTTP/3 binding uses the multiplexer UDP packet policy described in
+[Zhttp's setup](../zhttp/README.md); H1-only applications need no QUIC policy.
+
 The [client](src/zws.cc) and [echo server](src/zwsd.cc) show complete H1
 applications, including multiplexer setup, trust configuration, signals and
 shutdown. Run them in separate terminals:
@@ -99,5 +102,5 @@ the timeout and close-deadline paths as well as normal shutdown.
 
 Run `make -C zws test` from a configured build tree. The [test directory](test/)
 contains executable API examples and boundary cases. See the top-level
-[testing guide](../TESTING.md) for environment, diagnostics and port allocations,
-and [dependencies](../DEPENDENCIES.md) for build prerequisites.
+[testing guide](docs/TESTING.md) for environment, diagnostics and port allocations,
+and [dependencies](docs/DEPENDENCIES.md) for build prerequisites.

@@ -74,12 +74,12 @@ and flushes it, reporting file/output failures as exceptions. It does not
 promise a transactional temporary-file-and-rename update.
 
 See [TOML tests](test/ZvTOMLTest.cc), [YAML tests](test/ZvYAMLTest.cc), and the
-[TOML coverage audit](test/TOML-AUDIT.md) for supported syntax and limits.
+[TOML coverage audit](test/TOML-docs/AUDIT.md) for supported syntax and limits.
 The `interop/` directory compares TOML output against an independent parser.
 
 ## Examples and tests
 
 Run `make -C zv test` from a configured build tree. The [test directory](test/)
 contains executable API examples and boundary cases. See the top-level
-[testing guide](../TESTING.md) for environment, diagnostics and port allocations,
-and [dependencies](../DEPENDENCIES.md) for build prerequisites.
+[testing guide](docs/TESTING.md) for environment, diagnostics and port allocations,
+and [dependencies](docs/DEPENDENCIES.md) for build prerequisites.

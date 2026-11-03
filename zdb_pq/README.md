@@ -4,7 +4,7 @@ ZdbPQ implements a PostgreSQL backing store for [Zdb](../zdb/README.md), using
 libpq asynchronously through `ZiEventLoop`. It translates reflected table/key
 metadata to prepared SQL and uses binary values for runtime I/O. The separate
 PostgreSQL `libz` extension supplies Z decimal, time and bitmap types.
-Enable PostgreSQL support when configuring; see [dependencies](../DEPENDENCIES.md).
+Enable PostgreSQL support when configuring; see [dependencies](docs/DEPENDENCIES.md).
 
 ## Store integration
 
