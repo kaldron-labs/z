@@ -66,15 +66,10 @@ struct ZmCache_LRU_NTP : public ZmListNode<T_, ZmListShadow<>> {
   ZuDerive_(ZmCache_LRU_NTP, (ZmListNode<T_, ZmListShadow<>>))
 };
 template <typename T_>
-struct ZmCache_LRU_Node : public ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T {
-  ZuDerive_(ZmCache_LRU_Node,
-    (ZmList_NodeT<T_, ZmCache_LRU_NTP<T_>>::T))
-};
-template <typename T_>
 struct ZmCache_LRU : public ZmList<
-    T_, ZmCache_LRU_NTP<T_>, ZmCache_LRU_Node<T_>, ZmCache_LRU<T_>> {
+    T_, ZmCache_LRU_NTP<T_>, ZmCache_LRU<T_>> {
   using Base = ZmList<
-    T_, ZmCache_LRU_NTP<T_>, ZmCache_LRU_Node<T_>, ZmCache_LRU<T_>>;
+    T_, ZmCache_LRU_NTP<T_>, ZmCache_LRU<T_>>;
   using Base::Base;
 };
 template <typename T_>
@@ -106,18 +101,12 @@ struct ZmCache_FindFnList_NTP : public ZmList_Defaults {
   ZuDerive_(ZmCache_FindFnList_NTP, ZmList_Defaults)
 };
 template <typename FindFn_>
-struct ZmCache_FindFnList_Node : public
-    ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T {
-  ZuDerive_(ZmCache_FindFnList_Node,
-    (ZmList_NodeT<FindFn_, ZmCache_FindFnList_NTP<FindFn_>>::T))
-};
-template <typename FindFn_>
 struct ZmCache_FindFnList : public ZmList<
     FindFn_, ZmCache_FindFnList_NTP<FindFn_>,
-    ZmCache_FindFnList_Node<FindFn_>, ZmCache_FindFnList<FindFn_>> {
+    ZmCache_FindFnList<FindFn_>> {
   using Base = ZmList<
     FindFn_, ZmCache_FindFnList_NTP<FindFn_>,
-    ZmCache_FindFnList_Node<FindFn_>, ZmCache_FindFnList<FindFn_>>;
+    ZmCache_FindFnList<FindFn_>>;
   using Base::Base;
 };
 

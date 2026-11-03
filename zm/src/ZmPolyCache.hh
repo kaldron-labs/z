@@ -58,17 +58,11 @@ struct ZmPolyCache_LRUList_NTP : public
   ZuDerive_(ZmPolyCache_LRUList_NTP, (ZmListNode<T_, ZmListShadow<>>))
 };
 template <typename T_>
-struct ZmPolyCache_LRUList_Node : public
-    ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T {
-  ZuDerive_(ZmPolyCache_LRUList_Node,
-    (ZmList_NodeT<T_, ZmPolyCache_LRUList_NTP<T_>>::T))
-};
-template <typename T_>
 struct ZmPolyCache_LRUList : public
     ZmList<T_, ZmPolyCache_LRUList_NTP<T_>,
-      ZmPolyCache_LRUList_Node<T_>, ZmPolyCache_LRUList<T_>> {
+      ZmPolyCache_LRUList<T_>> {
   using Base = ZmList<T_, ZmPolyCache_LRUList_NTP<T_>,
-    ZmPolyCache_LRUList_Node<T_>, ZmPolyCache_LRUList<T_>>;
+    ZmPolyCache_LRUList<T_>>;
   using Base::Base;
 };
 template <typename T_>
@@ -96,24 +90,15 @@ struct ZmPolyCache_FindFn : public ZmFn<void(Node_ *),
       ZmFnHeapID<HeapID_{}() + ".FindFn"_z, ZmFnSharded<Sharded_>>>) )
 };
 template <typename FindFn_, typename HeapID_>
-struct ZmPolyCache_FindFnList_NTP : public ZmHashHeapID_<HeapID_> {
-  ZuDerive_(ZmPolyCache_FindFnList_NTP, (ZmHashHeapID_<HeapID_>))
-};
-template <typename FindFn_, typename HeapID_>
-struct ZmPolyCache_FindFnList_Node : public ZmList_NodeT<
-    FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>>::T {
-  ZuDerive_(ZmPolyCache_FindFnList_Node,
-    (ZmList_NodeT<
-      FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>>::T))
+struct ZmPolyCache_FindFnList_NTP : public ZmList_Defaults {
+  using HeapID = HeapID_;
 };
 template <typename FindFn_, typename HeapID_>
 struct ZmPolyCache_FindFnList : public ZmList<
     FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>,
-    ZmPolyCache_FindFnList_Node<FindFn_, HeapID_>,
     ZmPolyCache_FindFnList<FindFn_, HeapID_>> {
   using Base = ZmList<
     FindFn_, ZmPolyCache_FindFnList_NTP<FindFn_, HeapID_>,
-    ZmPolyCache_FindFnList_Node<FindFn_, HeapID_>,
     ZmPolyCache_FindFnList<FindFn_, HeapID_>>;
   using Base::Base;
 };

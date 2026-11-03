@@ -96,7 +96,7 @@ struct W {
     if (!s)
       out(prefix, ": ", c->tid());
     else
-      out(prefix, ": ", ZuCSpan(s.data(), s.length()));
+      out(prefix, ": ", ZuCSpan{s});
   }
   void fn1(const ZmThreadContext *c) { fn("list1", c); }
   void fn2(const ZmThreadContext *c) { fn("list2", c); }
