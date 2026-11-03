@@ -60,7 +60,7 @@ friend inline ZuStringT<"ZmTest.ShadowNode"> ZmNHeapID(ShadowNode *);
 };
 
 using ZListDefault = ZmList<ZmRef<Z>, ZList_NTP>;
-using ZListExplicit = ZmList<ZmRef<Z>, ZList_NTP, ZList_Node, ZList>;
+using ZListExplicit = ZmList<ZmRef<Z>, ZList_NTP, ZList>;
 ZuAssert((ZuIsSame<ZList::Impl, ZList>{}));
 ZuAssert((ZuIsSame<ZList::Node, ZList_Node>{}));
 ZuAssert((ZuIsSame<ZListExplicit::Node, ZList::Node>{}));

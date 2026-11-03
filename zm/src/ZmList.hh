@@ -134,7 +134,6 @@ public:
 };
 
 template <typename T_, class NTP = ZmList_Defaults,
-  typename Node_ = ZmList_NodeT<T_, NTP>::T,
   typename Impl_ = void>
 class ZmList : public ZmNodeFn<NTP::Shadow, typename NTP::Node> {
 public:
@@ -165,7 +164,7 @@ private:
 template <typename> friend class Iter_;
 
 public:
-  using Node = Node_;
+  using Node = typename ZmList_NodeT<T, NTP>::T;
   using NodeRef = NodeFn::template Ref<Node>;
   using NodeMvRef = NodeFn::template MvRef<Node>;
   using NodePtr = Node *;
@@ -845,25 +844,23 @@ using ZmListKV =
 
 #define ZmListDerive(Name, T_, ...) \
   ZuDerive(Name ## _NTP, (__VA_ARGS__)); \
-  ZuDerive(Name ## _Node, \
-    (ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP>::T)); \
+  using Name ## _Node = typename ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP>::T; \
   ZuDerive(Name, \
-    (ZmList<ZuPP_Strip(T_), Name ## _NTP, Name ## _Node, Name>));
+    (ZmList<ZuPP_Strip(T_), Name ## _NTP, Name>));
 
 #define ZmListDeriveT_4(Args, Name, T_, NTP) \
   ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
-  ZuPP_PfxTypename(Args) ZuDerive(Name ## _Node, \
-    (ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T)); \
+  ZuPP_PfxTypename(Args) using Name ## _Node = \
+    typename ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T; \
   ZuPP_PfxTypename(Args) ZuDerive(Name, \
     (ZmList<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
-      Name ## _Node<ZuPP_Strip(Args)>, Name<ZuPP_Strip(Args)>>));
+      Name<ZuPP_Strip(Args)>>));
 #define ZmListDeriveT_5(Args, XArgs, Name, T_, NTP) \
   ZuPP_PfxTypename(Args) ZuDerive(Name ## _NTP, NTP); \
-  ZuPP_PfxTypename(Args) ZuDerive(Name ## _Node, \
-    (ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T)); \
+  ZuPP_PfxTypename(Args) using Name ## _Node = \
+    typename ZmList_NodeT<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>>::T; \
   ZuPP_PfxTypename((ZuPP_Strip(Args) ZuPP_StripAppend(XArgs))) ZuDerive(Name, \
     (ZmList<ZuPP_Strip(T_), Name ## _NTP<ZuPP_Strip(Args)>, \
-      Name ## _Node<ZuPP_Strip(Args)>, \
       Name<ZuPP_Strip(Args) ZuPP_StripAppend(XArgs)>>));
 #define ZmListDeriveT_N(_0, _1, _2, _3, _4, Fn, ...) Fn
 #define ZmListDeriveT(...) \
