@@ -156,9 +156,7 @@ public:
     QueryThreadCycleTime(m_handle, &m_cpuLast);
     m_rtLast = __rdtsc();
     if (ZuUnlikely(!cpuLast || !rtLast)) return 0.0;
-    return
-      static_cast<double>(m_cpuLast - cpuLast) /
-      static_cast<double>(m_rtLast - rtLast);
+    return double(m_cpuLast - cpuLast) / double(m_rtLast - rtLast);
   }
   int32_t sysPriority() const {
     return GetThreadPriority(m_handle);
