@@ -442,7 +442,7 @@ int Scan::eod(ZuCSpan span, AnyNode *node)
   auto argSpans = ZmScratch(ZuCSpan, nArgs, ArgSpans::VHeap);
   argSpans.length(nArgs);
   for (unsigned j = 0, n = args.length(); j < n; j++) argSpans[j] = args[j];
-  ZuSpan<const ZuCSpan> argSpan{argSpans.data(), argSpans.length()};
+  ZuSpan<const ZuCSpan> argSpan{argSpans};
   if (!m_pctFn(*this, directive, argSpan,
     [this, node](ZuCSpan span) {
       auto outerState = m_state;
