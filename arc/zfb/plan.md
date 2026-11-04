@@ -11,7 +11,7 @@ only to its recorded source snapshots and scope. Subsequent repairs required by
 accepted checks, current build and outstanding gates. Historical component names
 below identify the sources and artifacts used at each checkpoint.
 Older execution entries retain their original pending statements as history.
-`AGENTS.md` and `GUIDELINES.md` apply subject to the explicit scope here.
+`AGENTS.md` and `docs/GUIDELINES.md` apply subject to the explicit scope here.
 
 ## Subsequent constructor-metadata correction — 2026-10-09
 
@@ -57,7 +57,7 @@ regenerate build inputs through `z.config` before the next incremental build.
 ## Working-tree guideline audit — 2026-10-09
 
 Reviewed the current tracked delta and new implementation source against every
-section and audit-flag family in [GUIDELINES.md](GUIDELINES.md), including the
+section and audit-flag family in [GUIDELINES.md](docs/GUIDELINES.md), including the
 supplementary [QUIC guidelines](zquic/GUIDELINES.md) for its allocation changes.
 Scope includes source, test, integration, example, benchmark and interop code;
 canonical generated headers, frozen comparator code and historical evidence are
@@ -67,19 +67,19 @@ and timing results describe their recorded snapshots.
 
 | Guidelines | Review and repairs |
 | --- | --- |
-| [Repair procedure](GUIDELINES.md#repair-procedure), general principles, scope/cleanup | Retain unrelated implementation and intentional test coverage; repair demonstrated violations without new containers, validation layers or codec fast paths. No legacy `zfb` compatibility layer is restored. |
-| [Indentation](GUIDELINES.md#indentation), multiline layout, compact layout/alignment | Align multi-field `ZfStruct` typecodes with hard tabs; preserve property/accessor tokens and field order. Split compressed multi-field declarations, wrap long properties and migrated accessor expressions to 98 columns, and normalize changed indentation to tab stops of eight with two-column logical nesting. Align exposed reflection data and pointer/reference members. |
-| [Class and struct shape](GUIDELINES.md#class-and-struct-shape), bad code structure | Move `PendingAlert` data before behavior; make the public-data subscription/pending composites structs. Move native detach operations into `ZmThreadContext`, preserving the thread wrapper's release/return behavior. Put view metadata friends in its initial private section. |
-| [Header layout](GUIDELINES.md#header-layout), module layout, naming | Add direct byte-order/assertion/comparison/C-library dependencies to the new headers/sources. Rename the SQLite integration metadata header to `zdbsltypes.hh`, updating its guard, include and distribution declaration. Add the latest benchmark rerun to `EXTRA_DIST` with the existing evidence. Preserve mandated canonical schema names and existing heap IDs. |
-| [Core language](GUIDELINES.md#core-language), static polymorphism/constraints, ADL, enums | Replace implicit lambda capture with named captures and integer-literal macros with width-preserving functional casts. Remove enum-to-integer casts from wire-invariant assertions. Retain SFINAE, ADL and compile-time metadata dispatch; generic dependent construction remains templated. |
-| [Storage and capacity](GUIDELINES.md#storage-and-capacity), heap allocation | Preserve named pooled I/O allocation, default capacities, growth/downward-writing, alignment and ownership transfer. Keep workload-sized `ZtScratch` fallback and metadata-bounded inline offsets. Fixed wire arrays represent protocol widths, not arbitrary capacities. |
-| [Containers and intrusion](GUIDELINES.md#containers-and-intrusion), callbacks/lifetimes | Retain intrusive ownership and existing node integration. Shared row references in independent secondary indexes and pooled buffers shared with the alert writer have documented ownership exceptions. No new locks, owner references or allocation bases are introduced. |
-| [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization), bad casting | Preserve direct writes and raw serialized-span copies. Remove the redundant cast of the canonical interop byte pointer. Keep required wire reinterpretation casts: a `ZuLittleEndian<T>` object is not a char-equivalent pointer. Preserve constructor metadata and deliberate `Init` tests. |
-| [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow), liveness | Cache invariant benchmark connection counts and repeated telemetry handles. Remove repeated empty-span/length predicates where span truth already proves length. Use a scoped telemetry case with its final `} break;`. Retain existing bounded scheduler/snapshot turns and continuation-based I/O. |
-| [Framework fit](GUIDELINES.md#framework-fit), strings/formatting/parsing | Retain `ZuMatcher`, existing enum lookup, `ZuBox`/`ZuFmt`, percent codec and Z stream contracts. Exact FBS floating defaults retain `ZtString::sprintf("%a", ...)` on `ZtScratch`: decimal `ZuFmt::FP` cannot preserve all subnormals. This is an existing formatter exception to the varargs flag, not a private formatter/parser. |
-| [Dynamic modules](GUIDELINES.md#dynamic-modules-1), persistence | Keep `ZiModule` factories and resident store implementations; schema views borrow table-owned BFBS. Keep store/saga persistence and coordinated breaking API propagation. |
-| [I/O sharding](GUIDELINES.md#io-sharding), unnecessary atomics/locks/copies | Preserve owner-thread dispatch and raw dependent back-pointers. Do not introduce synchronization for telemetry or move variable payloads into callback captures. Existing scheduler synchronization protects scheduling/lifetime, not approximate diagnostic counters. |
-| [Tests](GUIDELINES.md#tests), acceptance/debugging, build configuration | Preserve TAP and blocking primitives, embedded benchmark prechecks, external-boundary verification and trusted local readers. Retain the configured release artifacts and the user's `-j4` cap; no rebuild/reconfiguration, separate tests or Valgrind run in this audit. Executable acceptance of these repairs remains outstanding. |
+| [Repair procedure](docs/GUIDELINES.md#repair-procedure), general principles, scope/cleanup | Retain unrelated implementation and intentional test coverage; repair demonstrated violations without new containers, validation layers or codec fast paths. No legacy `zfb` compatibility layer is restored. |
+| [Indentation](docs/GUIDELINES.md#indentation), multiline layout, compact layout/alignment | Align multi-field `ZfStruct` typecodes with hard tabs; preserve property/accessor tokens and field order. Split compressed multi-field declarations, wrap long properties and migrated accessor expressions to 98 columns, and normalize changed indentation to tab stops of eight with two-column logical nesting. Align exposed reflection data and pointer/reference members. |
+| [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape), bad code structure | Move `PendingAlert` data before behavior; make the public-data subscription/pending composites structs. Move native detach operations into `ZmThreadContext`, preserving the thread wrapper's release/return behavior. Put view metadata friends in its initial private section. |
+| [Header layout](docs/GUIDELINES.md#header-layout), module layout, naming | Add direct byte-order/assertion/comparison/C-library dependencies to the new headers/sources. Rename the SQLite integration metadata header to `zdbsltypes.hh`, updating its guard, include and distribution declaration. Add the latest benchmark rerun to `EXTRA_DIST` with the existing evidence. Preserve mandated canonical schema names and existing heap IDs. |
+| [Core language](docs/GUIDELINES.md#core-language), static polymorphism/constraints, ADL, enums | Replace implicit lambda capture with named captures and integer-literal macros with width-preserving functional casts. Remove enum-to-integer casts from wire-invariant assertions. Retain SFINAE, ADL and compile-time metadata dispatch; generic dependent construction remains templated. |
+| [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), heap allocation | Preserve named pooled I/O allocation, default capacities, growth/downward-writing, alignment and ownership transfer. Keep workload-sized `ZtScratch` fallback and metadata-bounded inline offsets. Fixed wire arrays represent protocol widths, not arbitrary capacities. |
+| [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion), callbacks/lifetimes | Retain intrusive ownership and existing node integration. Shared row references in independent secondary indexes and pooled buffers shared with the alert writer have documented ownership exceptions. No new locks, owner references or allocation bases are introduced. |
+| [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization), bad casting | Preserve direct writes and raw serialized-span copies. Remove the redundant cast of the canonical interop byte pointer. Keep required wire reinterpretation casts: a `ZuLittleEndian<T>` object is not a char-equivalent pointer. Preserve constructor metadata and deliberate `Init` tests. |
+| [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow), liveness | Cache invariant benchmark connection counts and repeated telemetry handles. Remove repeated empty-span/length predicates where span truth already proves length. Use a scoped telemetry case with its final `} break;`. Retain existing bounded scheduler/snapshot turns and continuation-based I/O. |
+| [Framework fit](docs/GUIDELINES.md#framework-fit), strings/formatting/parsing | Retain `ZuMatcher`, existing enum lookup, `ZuBox`/`ZuFmt`, percent codec and Z stream contracts. Exact FBS floating defaults retain `ZtString::sprintf("%a", ...)` on `ZtScratch`: decimal `ZuFmt::FP` cannot preserve all subnormals. This is an existing formatter exception to the varargs flag, not a private formatter/parser. |
+| [Dynamic modules](docs/GUIDELINES.md#dynamic-modules-1), persistence | Keep `ZiModule` factories and resident store implementations; schema views borrow table-owned BFBS. Keep store/saga persistence and coordinated breaking API propagation. |
+| [I/O sharding](docs/GUIDELINES.md#io-sharding), unnecessary atomics/locks/copies | Preserve owner-thread dispatch and raw dependent back-pointers. Do not introduce synchronization for telemetry or move variable payloads into callback captures. Existing scheduler synchronization protects scheduling/lifetime, not approximate diagnostic counters. |
+| [Tests](docs/GUIDELINES.md#tests), acceptance/debugging, build configuration | Preserve TAP and blocking primitives, embedded benchmark prechecks, external-boundary verification and trusted local readers. Retain the configured release artifacts and the user's `-j4` cap; no rebuild/reconfiguration, separate tests or Valgrind run in this audit. Executable acceptance of these repairs remains outstanding. |
 
 Final static checks: all 260 multi-field metadata macros in the 156 reviewed
 C++ files have aligned typecodes; changed/new implementation code has no
@@ -141,8 +141,8 @@ Valgrind is for needed memory-corruption debugging and the final M2 leak/
 corruption gate; use `libtool exec`. ASan is not a substitute for that gate.
 
 This explicit scope overrides the broader configuration/rebuild defaults in
-[Build configuration](GUIDELINES.md#build-configuration) and
-[Acceptance](GUIDELINES.md#acceptance). Retain their dependency ordering,
+[Build configuration](docs/GUIDELINES.md#build-configuration) and
+[Acceptance](docs/GUIDELINES.md#acceptance). Retain their dependency ordering,
 incremental-target, TAP, and source-tree execution conventions.
 
 ## Mandatory implementation contracts
@@ -226,26 +226,26 @@ audit to declarations and uses across `src`, `test`, `util`, `itest`,
 
 | Element / audit area | Prescribed implementation and simplification | Applicable guideline |
 | --- | --- | --- |
-| Structure metadata | Extend the existing `ZuStruct`/`ZfStruct` field machinery for `Skip`; retain one complete declaration and derive active filters. Do not add another field-list macro, shadow declaration, or independently maintained wire schema. | [Metadata](GUIDELINES.md#metadata), [Framework fit](GUIDELINES.md#framework-fit) |
-| Compile-time schema work | Use `ZuTypeList`, `ZuSeq`, `ZuUnroll`, `ZuType*`, and `ZuString`/`ZuStringT`. Resolve the reachable schema and emission order at compile time. No custom typelist/string package, runtime registration graph, hash, or global type registry. | [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching), [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow) |
-| Reflection | Use canonical BFBS bytes and thin borrowed views as the runtime wire description. Reuse store field records for links to existing `ZfVField`/keys. Do not duplicate BFBS in an owning native graph, universal descriptor hierarchy, or thunk registry. | [Repair procedure](GUIDELINES.md#repair-procedure), [Framework fit](GUIDELINES.md#framework-fit) |
-| Code organization | Keep non-type-dependent primitives out of templates and in the existing shared library. Factor typed/erased operations over those primitives; use ADL, SFINAE and `if constexpr`. No concepts, new virtual codec hierarchy, abstract allocator hierarchy, or forwarding-only wrappers. | [Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints), [Code structure](GUIDELINES.md#code-structure), [Header layout](GUIDELINES.md#header-layout) |
-| Transient storage | Use caller-scoped `ZtScratch` with a heap-identified Z array/string for offset vectors, temporary field work, and formatting scratch. Pass scratch through existing callbacks. Use neither raw `alloca` nor heap-only temporary vectors. | [Storage and capacity](GUIDELINES.md#storage-and-capacity), [Heap allocation](GUIDELINES.md#heap-allocation), [Storage and lifetime](GUIDELINES.md#storage-and-lifetime) |
-| Persistent storage | Each `Table` owns one heap-identified `ZtArray` byte buffer for BFBS. Keep codec views on the stack or borrowed. I/O payloads retain pooled `ZiIOBuf`/`ZmRef` ownership. No shared schema cache, separately allocated descriptor objects, owner/refcount wrapper, or custom `operator new`. | [Heap allocation](GUIDELINES.md#heap-allocation), [Containers and intrusion](GUIDELINES.md#containers-and-intrusion), [I/O and system integration](GUIDELINES.md#io-and-system-integration) |
-| Capacity and layout | Derive metadata bounds from field/type counts and wire widths; retain tuned pool/growth behavior. Use named wire alignment constants. Avoid arbitrary fixed arrays, fixed lookup tables, duplicate lengths, or zeroing storage before writing it. Protocol-mandated inline IP arrays remain. | [Storage and capacity](GUIDELINES.md#storage-and-capacity), [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization) |
-| Serialization and copying | Reproduce `IOBuilder`'s downward arena and live-region relocation. Write vectors directly into uninitialized storage. Copy unchanged self-contained serialized spans with `memcpy`; do not reserialize fields, reapply filters, or make temporary contiguous copies. | [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization), [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow) |
-| Validation | Check compile-time metadata when resolving the schema; verify external spans once at ingress. Typed/reflected trusted reads share unchecked wire primitives. No new verified-buffer wrapper, repeated table/row checks, generated-BFBS verification, or revalidation after local copies. | [Repair procedure](GUIDELINES.md#repair-procedure), [No dogma](GUIDELINES.md#no-dogma) |
-| Formatting/parsing | Keep object JSON in `ZfJSON` and structured printing in `ZfStructPrint`/`ZuPrint`. Render FBS syntax through `S <<` with `ZuBox`/`ZuFmt` and existing string/escaping facilities. Add only FBS-specific punctuation/grammar; no JSON, decimal, float, hex, or string parser/formatter replacement. No FBS parser is required. | [Formatting](GUIDELINES.md#formatting), [Metadata](GUIDELINES.md#metadata), [Framework fit](GUIDELINES.md#framework-fit) |
-| Names and conversions | Preserve the existing `ZtCase::camelSnake` semantics; reuse/factor its character transform for compile-time use rather than add a second naming algorithm. Pass convertible spans/strings/arrays directly. Only cast for an actual wire representation boundary. | [Framework fit](GUIDELINES.md#framework-fit), [Bad casting](GUIDELINES.md#bad-casting), [Strings](GUIDELINES.md#strings) |
-| Stream/error behavior | Template output on `S` with `operator <<`. Honor the destination's existing state and failure conventions; for Z Tx streams keep sticky failure and explicit completion-boundary flush checks. Do not require `failed()`, flush, seeking, or allocation APIs from every generic `S`. | [Tx streams](GUIDELINES.md#tx-streams), [Formatting](GUIDELINES.md#formatting) |
-| Runtime algorithms | Reuse existing one-time store field association and keyed BFBS lookup. Use `ZuMatcher` where actual multi-token matching is needed and `switch` for runtime type codes. Avoid custom hashes, extra indexes, duplicated dispatch, invariant work inside loops, or speculative writer strategies. | [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow), [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching) |
-| Ownership/concurrency | Retain existing Rx/Tx ownership and buffer-reference handoff. No new locks, atomics, threads, GC scans, or refcount captures of longer-lived owners. Drain callbacks before table/buffer teardown. | [Scope and cleanup](GUIDELINES.md#scope-and-cleanup), [I/O sharding](GUIDELINES.md#io-sharding), [Lifetime](GUIDELINES.md#lifetime), [Teardown](GUIDELINES.md#teardown) |
-| Store modules | Keep the existing `ZiModule`/`ZmPolymorph` factory interface; migrate it together. Do not substitute function tables or opaque callback protocols, or invent cross-DLL type identity. Loaded store code stays resident under the existing contract. | [Dynamic modules](GUIDELINES.md#dynamic-modules), [Dynamic modules contract](GUIDELINES.md#dynamic-modules-1) |
-| Naming/style | New code names are at most 28 bytes under authoritative `GUIDELINES.md`; use concise camelCase and project abbreviations. `src`/unit-test basenames use module-prefixed CamelCase; owned `interop`/`bench`/`itest` basenames are lowercase. Private class state uses `m_`; public struct data comes first without `m_`. Use accessor overloads, internal trailing underscores, tabs, and the header skeleton. | [Naming](GUIDELINES.md#naming), [Length and abbreviations](GUIDELINES.md#length-and-abbreviations), [Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes), [Class and struct shape](GUIDELINES.md#class-and-struct-shape), [Indentation](GUIDELINES.md#indentation) |
-| Cleanup/tests | Delete obsolete bindings, schemas, wrappers, and unused helpers. Retain diagnostics and unrelated changes. Use `ZuTestUtil`/TAP, `log`, and deterministic existing synchronization; no sleep-based tests or standalone fuzz infrastructure added speculatively. | [Audit flags](GUIDELINES.md#audit-flags), [Scope and cleanup](GUIDELINES.md#scope-and-cleanup), [Tests](GUIDELINES.md#tests) |
-| Remaining structure flags | Put nondependent declarations outside templates; use concise aliases only where needed for member layout. Keep real counts rather than shadow lengths, cache invariant element reads, and use compile-time string literals rather than constexpr span objects. Order native members for locality without changing logical metadata order; retain existing thread-exclusive layout. Access private state through its narrow interface and use enum values directly where convertible. | [Code structure](GUIDELINES.md#code-structure), [Storage and capacity](GUIDELINES.md#storage-and-capacity), [Bad code structure](GUIDELINES.md#bad-code-structure) |
-| Traversal and asynchronous work | Keep iterators inside traversal scope, count actual visited elements where filtering matters, and remove checks already proved by the iterator. Continue after asynchronous completion, not after posting; preserve saga prerequisite failure exits. Preserve existing bounded I/O work and continuations; add no polling, locks, or atomic telemetry counters. | [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow), [Liveness](GUIDELINES.md#liveness), [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies) |
-| Diagnostics and representation | Retain `ZiLOG` probes and platform-normalizing I/O. Capture required log values by value (`ZeString` for scratch strings). Use sentinel state where already supplied by Z types; do not add parallel null flags. Preserve necessary wire-presence queries independently of logical default values. | [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization), [Framework fit](GUIDELINES.md#framework-fit), [Scope and cleanup](GUIDELINES.md#scope-and-cleanup) |
+| Structure metadata | Extend the existing `ZuStruct`/`ZfStruct` field machinery for `Skip`; retain one complete declaration and derive active filters. Do not add another field-list macro, shadow declaration, or independently maintained wire schema. | [Metadata](docs/GUIDELINES.md#metadata), [Framework fit](docs/GUIDELINES.md#framework-fit) |
+| Compile-time schema work | Use `ZuTypeList`, `ZuSeq`, `ZuUnroll`, `ZuType*`, and `ZuString`/`ZuStringT`. Resolve the reachable schema and emission order at compile time. No custom typelist/string package, runtime registration graph, hash, or global type registry. | [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching), [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow) |
+| Reflection | Use canonical BFBS bytes and thin borrowed views as the runtime wire description. Reuse store field records for links to existing `ZfVField`/keys. Do not duplicate BFBS in an owning native graph, universal descriptor hierarchy, or thunk registry. | [Repair procedure](docs/GUIDELINES.md#repair-procedure), [Framework fit](docs/GUIDELINES.md#framework-fit) |
+| Code organization | Keep non-type-dependent primitives out of templates and in the existing shared library. Factor typed/erased operations over those primitives; use ADL, SFINAE and `if constexpr`. No concepts, new virtual codec hierarchy, abstract allocator hierarchy, or forwarding-only wrappers. | [Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints), [Code structure](docs/GUIDELINES.md#code-structure), [Header layout](docs/GUIDELINES.md#header-layout) |
+| Transient storage | Use caller-scoped `ZtScratch` with a heap-identified Z array/string for offset vectors, temporary field work, and formatting scratch. Pass scratch through existing callbacks. Use neither raw `alloca` nor heap-only temporary vectors. | [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), [Heap allocation](docs/GUIDELINES.md#heap-allocation), [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime) |
+| Persistent storage | Each `Table` owns one heap-identified `ZtArray` byte buffer for BFBS. Keep codec views on the stack or borrowed. I/O payloads retain pooled `ZiIOBuf`/`ZmRef` ownership. No shared schema cache, separately allocated descriptor objects, owner/refcount wrapper, or custom `operator new`. | [Heap allocation](docs/GUIDELINES.md#heap-allocation), [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion), [I/O and system integration](docs/GUIDELINES.md#io-and-system-integration) |
+| Capacity and layout | Derive metadata bounds from field/type counts and wire widths; retain tuned pool/growth behavior. Use named wire alignment constants. Avoid arbitrary fixed arrays, fixed lookup tables, duplicate lengths, or zeroing storage before writing it. Protocol-mandated inline IP arrays remain. | [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization) |
+| Serialization and copying | Reproduce `IOBuilder`'s downward arena and live-region relocation. Write vectors directly into uninitialized storage. Copy unchanged self-contained serialized spans with `memcpy`; do not reserialize fields, reapply filters, or make temporary contiguous copies. | [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization), [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow) |
+| Validation | Check compile-time metadata when resolving the schema; verify external spans once at ingress. Typed/reflected trusted reads share unchecked wire primitives. No new verified-buffer wrapper, repeated table/row checks, generated-BFBS verification, or revalidation after local copies. | [Repair procedure](docs/GUIDELINES.md#repair-procedure), [No dogma](docs/GUIDELINES.md#no-dogma) |
+| Formatting/parsing | Keep object JSON in `ZfJSON` and structured printing in `ZfStructPrint`/`ZuPrint`. Render FBS syntax through `S <<` with `ZuBox`/`ZuFmt` and existing string/escaping facilities. Add only FBS-specific punctuation/grammar; no JSON, decimal, float, hex, or string parser/formatter replacement. No FBS parser is required. | [Formatting](docs/GUIDELINES.md#formatting), [Metadata](docs/GUIDELINES.md#metadata), [Framework fit](docs/GUIDELINES.md#framework-fit) |
+| Names and conversions | Preserve the existing `ZtCase::camelSnake` semantics; reuse/factor its character transform for compile-time use rather than add a second naming algorithm. Pass convertible spans/strings/arrays directly. Only cast for an actual wire representation boundary. | [Framework fit](docs/GUIDELINES.md#framework-fit), [Bad casting](docs/GUIDELINES.md#bad-casting), [Strings](docs/GUIDELINES.md#strings) |
+| Stream/error behavior | Template output on `S` with `operator <<`. Honor the destination's existing state and failure conventions; for Z Tx streams keep sticky failure and explicit completion-boundary flush checks. Do not require `failed()`, flush, seeking, or allocation APIs from every generic `S`. | [Tx streams](docs/GUIDELINES.md#tx-streams), [Formatting](docs/GUIDELINES.md#formatting) |
+| Runtime algorithms | Reuse existing one-time store field association and keyed BFBS lookup. Use `ZuMatcher` where actual multi-token matching is needed and `switch` for runtime type codes. Avoid custom hashes, extra indexes, duplicated dispatch, invariant work inside loops, or speculative writer strategies. | [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow), [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching) |
+| Ownership/concurrency | Retain existing Rx/Tx ownership and buffer-reference handoff. No new locks, atomics, threads, GC scans, or refcount captures of longer-lived owners. Drain callbacks before table/buffer teardown. | [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup), [I/O sharding](docs/GUIDELINES.md#io-sharding), [Lifetime](docs/GUIDELINES.md#lifetime), [Teardown](docs/GUIDELINES.md#teardown) |
+| Store modules | Keep the existing `ZiModule`/`ZmPolymorph` factory interface; migrate it together. Do not substitute function tables or opaque callback protocols, or invent cross-DLL type identity. Loaded store code stays resident under the existing contract. | [Dynamic modules](docs/GUIDELINES.md#dynamic-modules), [Dynamic modules contract](docs/GUIDELINES.md#dynamic-modules-1) |
+| Naming/style | New code names are at most 28 bytes under authoritative `docs/GUIDELINES.md`; use concise camelCase and project abbreviations. `src`/unit-test basenames use module-prefixed CamelCase; owned `interop`/`bench`/`itest` basenames are lowercase. Private class state uses `m_`; public struct data comes first without `m_`. Use accessor overloads, internal trailing underscores, tabs, and the header skeleton. | [Naming](docs/GUIDELINES.md#naming), [Length and abbreviations](docs/GUIDELINES.md#length-and-abbreviations), [Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes), [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape), [Indentation](docs/GUIDELINES.md#indentation) |
+| Cleanup/tests | Delete obsolete bindings, schemas, wrappers, and unused helpers. Retain diagnostics and unrelated changes. Use `ZuTestUtil`/TAP, `log`, and deterministic existing synchronization; no sleep-based tests or standalone fuzz infrastructure added speculatively. | [Audit flags](docs/GUIDELINES.md#audit-flags), [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup), [Tests](docs/GUIDELINES.md#tests) |
+| Remaining structure flags | Put nondependent declarations outside templates; use concise aliases only where needed for member layout. Keep real counts rather than shadow lengths, cache invariant element reads, and use compile-time string literals rather than constexpr span objects. Order native members for locality without changing logical metadata order; retain existing thread-exclusive layout. Access private state through its narrow interface and use enum values directly where convertible. | [Code structure](docs/GUIDELINES.md#code-structure), [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), [Bad code structure](docs/GUIDELINES.md#bad-code-structure) |
+| Traversal and asynchronous work | Keep iterators inside traversal scope, count actual visited elements where filtering matters, and remove checks already proved by the iterator. Continue after asynchronous completion, not after posting; preserve saga prerequisite failure exits. Preserve existing bounded I/O work and continuations; add no polling, locks, or atomic telemetry counters. | [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow), [Liveness](docs/GUIDELINES.md#liveness), [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies) |
+| Diagnostics and representation | Retain `ZiLOG` probes and platform-normalizing I/O. Capture required log values by value (`ZeString` for scratch strings). Use sentinel state where already supplied by Z types; do not add parallel null flags. Preserve necessary wire-presence queries independently of logical default values. | [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization), [Framework fit](docs/GUIDELINES.md#framework-fit), [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup) |
 
 The required custom code is the FlatBuffers wire algorithm, schema mapping,
 and its integration. Formatting, matching, byte-order conversion, storage,
@@ -969,7 +969,7 @@ builds/tests remain queued for M2, with missing coverage recorded explicitly.
    settings. Audit include dependencies, link inputs, installation lists,
    and generated prerequisites for stale `zfb` artifacts. No separate clean
    build or configuration without installed canonical tools is scheduled.
-6. Update `README.md`, `CODEBASE.md`, module docs, test entry points, and
+6. Update `docs/README.md`, `docs/CODEBASE.md`, module docs, test entry points, and
    obsolete `ZuStruct`/guideline references. Preserve historical documents
    where appropriate; distinguish historical mentions from live dependencies.
 7. Search the entire tree again for `Zfb`, `zfb`, `flatbuffers`, `reflection`,
@@ -1189,8 +1189,8 @@ compiled envelope metadata extent. All slots are written by the existing
 field/omission operations; no initialization pass is needed. This removes
 callback machinery without changing the generic codec's workload-dependent
 `ZtScratch` fallback, heap IDs, allocation, growth or ownership. It follows
-GUIDELINES.md's [storage and capacity](GUIDELINES.md#storage-and-capacity)
-and [audit flags](GUIDELINES.md#audit-flags) rules to prefer
+GUIDELINES.md's [storage and capacity](docs/GUIDELINES.md#storage-and-capacity)
+and [audit flags](docs/GUIDELINES.md#audit-flags) rules to prefer
 existing framework storage and the smallest demonstrated simplification.
 The private candidate passes the existing interop checks (8 tests across
 baseline/candidate). Three paired release processes show nested reuse at
@@ -1257,10 +1257,10 @@ sequence; do not accept stale dependent binaries.
   16 bytes on the retained platform. Its owning/isolated builds and 465
   functional checks passed (`/tmp/zffb-typed-small-*`). The large-vector
   comparison exposed extra per-child work, addressed in the third stage
-  below; the second stage alone is superseded. Applies [Storage and capacity](GUIDELINES.md#storage-and-capacity),
-  [Storage and lifetime](GUIDELINES.md#storage-and-lifetime),
-  [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-  and [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  below; the second stage alone is superseded. Applies [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+  [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime),
+  [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+  and [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 - Third-stage writer candidate keeps scalar-only singleton tables on the
   existing arena-record path: they have no child-offset scratch to consolidate.
@@ -1296,9 +1296,9 @@ sequence; do not accept stale dependent binaries.
   verification/printing and final consumer refresh remain open. These are
   intermediate results, not final completion. Next inspect unnecessary
   scratch setup for empty offset vectors. Applies
-  [Storage and lifetime](GUIDELINES.md#storage-and-lifetime),
-  [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-  and [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime),
+  [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+  and [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 - Empty offset vectors now bypass child-offset scratch setup, and vector
   emission skips zero-byte reserve/fill work. An attempted singleton stack
@@ -1325,9 +1325,9 @@ sequence; do not accept stale dependent binaries.
   compiler diagnostics (`/tmp/zffb-writer-check-*`); this is not a final dependent refresh or
   closure of the remaining verification/printing gaps. Empty-vector results
   from the subsequent current-writer run are recorded below.
-  Applies [Storage and lifetime](GUIDELINES.md#storage-and-lifetime),
-  [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-  and [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  Applies [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime),
+  [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+  and [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 - Current writer correctness milestone: 25 binaries / 473 checks pass under
   the retained release configuration; the source hashes are captured by
@@ -1368,9 +1368,9 @@ sequence; do not accept stale dependent binaries.
   No JSON formatter, number converter, or duplicate unroll algorithm is added.
   Evidence: `/tmp/zffb-writer-check-*`, `/tmp/zffb-view-hint-*`, and the
   upcoming `/tmp/zffb-unroll-*`. Applies
-  [Type mechanics](GUIDELINES.md#type-mechanics),
-  [Code structure](GUIDELINES.md#code-structure), and
-  [Formatting](GUIDELINES.md#formatting).
+  [Type mechanics](docs/GUIDELINES.md#type-mechanics),
+  [Code structure](docs/GUIDELINES.md#code-structure), and
+  [Formatting](docs/GUIDELINES.md#formatting).
 
 - The metadata access candidate states two existing trusted-schema invariants
   through `ZuUnreachable`: schema/object views are present, and the required
@@ -1387,9 +1387,9 @@ sequence; do not accept stale dependent binaries.
   gates have zero errors and definite/indirect/possible losses, no suppressions.
   Evidence: `/tmp/zffb-metadata-*`. Final dependent/M2 refresh remains open;
   the small nested telemetry gap still needs resolution. Applies
-  [Repair procedure](GUIDELINES.md#repair-procedure),
-  [Assertions](GUIDELINES.md#assertions), and
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Repair procedure](docs/GUIDELINES.md#repair-procedure),
+  [Assertions](docs/GUIDELINES.md#assertions), and
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 - Rejected forcing `withOffsets` inline: it removes one outlined forwarding
   symbol but outlines the containing telemetry helper instead, grows telemetry
@@ -1408,7 +1408,7 @@ sequence; do not accept stale dependent binaries.
   During the refresh, before traversal reached any telemetry consumer, the
   final style review replaced the two implicit captures in the changed
   `saveMsg` helpers with an explicit builder reference and fixed scalar
-  values. This applies [Core language](GUIDELINES.md#core-language).
+  values. This applies [Core language](docs/GUIDELINES.md#core-language).
   Earlier-layer depfiles contain no `ZtcMsg.hh` dependency; the remaining
   traversal compiles the corrected header. The acceptance source snapshot
   was updated for that header alone, preserving the preceding snapshot as
@@ -1419,7 +1419,7 @@ sequence; do not accept stale dependent binaries.
   `fieldUnion`, including omitted optional fields. Failure paths return from
   `endTable` before reading positions. These concrete schemas have no gaps
   or uncomposed fields; no speculative future-schema initialization is needed.
-  This applies [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+  This applies [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
   The source snapshot includes this removal before telemetry compilation.
   The final consumer review also added the existing `zdf/itest` SQLite
   persistence, `zgtk/test` value and `zdash/itest` OAuth/live lifecycle
@@ -1460,7 +1460,7 @@ sequence; do not accept stale dependent binaries.
   narrow improvement is not proof of parity; retain the removal of unused
   metadata access. Owning build and 67 focused wire/schema/interop checks pass
   (`/tmp/zffb-parity-index-*`). Applies
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 - Rejected a targeted `Builder::field` inlining experiment. Three process
   pairs show fresh routing copies improving from 127.11–128.71 ns to
   111.08–115.37 ns, but nested construction has no consistent improvement
@@ -1509,8 +1509,8 @@ sequence; do not accept stale dependent binaries.
   tests pass. No check, metadata representation or public API changed.
   Evidence: `/tmp/zffb-parity-reflect-*`, `/tmp/zffb-parity-inline-*.csv`,
   `/tmp/zffb-parity-size-before.txt`. Applies
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)
-  and [Repair procedure](GUIDELINES.md#repair-procedure).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)
+  and [Repair procedure](docs/GUIDELINES.md#repair-procedure).
 - The next isolated writer experiment replaces `Arena::data()`'s redundant
   null conditional with `at(m_size)`. The arena invariant requires nonzero
   capacity to have storage; allocation is infallible after `canGrow` accepts.
@@ -1558,7 +1558,7 @@ limit for Zum and subsequent dependents.
   paths retry or invoke `ZmHeapFail`, rather than return null. Removed the
   speculative check added during the first pass. `Arena::grow_` retains its
   existing null handling for storage policies that can return null. This
-  follows [Repair procedure](GUIDELINES.md#repair-procedure): establish the
+  follows [Repair procedure](docs/GUIDELINES.md#repair-procedure): establish the
   concrete allocator contract before adding validation.
 - Initial storage review confirms pooled ownership remains in `ZiFB`, arena
   vtable records share the existing buffer, and `Zdb_::Schema` borrows BFBS
@@ -1570,13 +1570,13 @@ limit for Zum and subsequent dependents.
   by the input's minimum length-word footprint. Each element still checks
   its length before borrowing bytes, and trailing bytes remain an error.
   No incomplete output escapes a failed conversion. This applies
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)
-  and [Storage and capacity](GUIDELINES.md#storage-and-capacity).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)
+  and [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity).
   Removed a redundant SQLite unsigned-char-to-char span cast under
-  [Bad casting](GUIDELINES.md#bad-casting). Verification is pending the batch.
+  [Bad casting](docs/GUIDELINES.md#bad-casting). Verification is pending the batch.
 - Replaced default lambda captures in the new reflected verifier and
   telemetry interop benchmark with explicit captures, per
-  [Core language](GUIDELINES.md#core-language). Existing default captures
+  [Core language](docs/GUIDELINES.md#core-language). Existing default captures
   in unrelated surrounding logic are outside this repair's scope.
 - Core storage review: retain separate typed offset and byte-tag scratch in
   `saveObject`. Both are sized by selected metadata, and tags exist only for
@@ -1605,13 +1605,13 @@ limit for Zum and subsequent dependents.
   metadata declares a union, handled by each resolver's union branch.
   Object UDT resolution now compares the single supported `Bitmap` token;
   removed the three unused two-token matchers and their includes. This
-  follows [Scope and cleanup](GUIDELINES.md#scope-and-cleanup) and
-  [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching).
+  follows [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup) and
+  [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching).
 - `DBState::save` uses the local hash count only to provision offset scratch,
   appends offsets for actual visited states, and ends the iterator's scope
   before constructing the enclosing vector/table. This applies the count
   and iterator-lifetime flags under
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 - Database storage decisions: retained memory-store native tuples are the
   mutable indexed row representation, not transient serialization copies.
   Their string/vector allocations predate the migration and cannot borrow
@@ -1638,10 +1638,10 @@ limit for Zum and subsequent dependents.
 - Admission-test review added a heap ID to byte scratch fallback and changed
   its allocated Link fixture to the concrete `Heap = ZuVoid`, first-base
   heap pattern with `ZuDerive` aliases. Fixed four overlong reflection lines.
-  These apply [Storage and lifetime](GUIDELINES.md#storage-and-lifetime),
-  [Heap allocation](GUIDELINES.md#heap-allocation),
-  [Core language](GUIDELINES.md#core-language), and
-  [Multiline layout](GUIDELINES.md#multiline-layout).
+  These apply [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime),
+  [Heap allocation](docs/GUIDELINES.md#heap-allocation),
+  [Core language](docs/GUIDELINES.md#core-language), and
+  [Multiline layout](docs/GUIDELINES.md#multiline-layout).
 - Began one incremental top-level `make -j4` for the accumulated audit
   repairs, retaining the current Clang release configuration. Log:
   `/tmp/zffb-audit-build.log`. Build completion and runtime checks are pending;
@@ -1655,7 +1655,7 @@ limit for Zum and subsequent dependents.
   generation. No additional runtime field container or parser was introduced.
 - Reconciled direct foundational includes in both codec headers (including
   `ZuMatcher` in `ZfFB.hh` and `ZuBox`/`ZuFP`/`ZtEnum` in `ZfFBReflect.hh`)
-  under [Header layout](GUIDELINES.md#header-layout). This declaration-only
+  under [Header layout](docs/GUIDELINES.md#header-layout). This declaration-only
   batch occurred after the running build passed Zf, so a final dependent
   refresh is required; the earlier core test pass does not claim to verify
   these updated headers. No separate concurrent build was launched.
@@ -1677,9 +1677,9 @@ limit for Zum and subsequent dependents.
   comparison harness with explicit `f`/`bytes` captures and cached invariant
   vector lengths in the canonical save loop and truncation-verifier test.
   The compile-time `qualifier` name traversal needs no runtime cache.
-  Applied [Core language](GUIDELINES.md#core-language),
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-  and [Style](GUIDELINES.md#style). Verification awaits the batch refresh;
+  Applied [Core language](docs/GUIDELINES.md#core-language),
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+  and [Style](docs/GUIDELINES.md#style). Verification awaits the batch refresh;
   no performance measurements were run during compilation.
 - Store serialization review found repeated `force_align` attribute lookup
   and integer parsing for every row's offset/inline fields. Memory, PostgreSQL
@@ -1688,8 +1688,8 @@ limit for Zum and subsequent dependents.
   The unsigned value fits existing padding on the current 64-bit target;
   no new container or allocation is introduced. Scalar defaults and IDs still
   borrow BFBS rather than duplicating the schema. This applies
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)
-  and [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)
+  and [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
   These repairs occurred after the build passed the stores and require the
   final refresh and renewed store acceptance.
 - Added `ZdbPQTest::fieldAlignment` to exercise the cached-alignment contract:
@@ -1720,9 +1720,9 @@ limit for Zum and subsequent dependents.
   interop. Exactly `ZfFB.hh` and `ZfFBReflect.hh` form the codec's header API.
   This is source/build-input evidence; refreshed binary linkage still needs
   inspection after the build. Applied
-  [Build system](GUIDELINES.md#build-system),
-  [Metadata](GUIDELINES.md#metadata), and
-  [Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+  [Build system](docs/GUIDELINES.md#build-system),
+  [Metadata](docs/GUIDELINES.md#metadata), and
+  [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 - I/O review retains pooled buffers, complete-span copying for independently
   owned alert replay frames, and in-place sequence mutation within those
   copies. `ZfFB::save` reports codec errors and uses only the established
@@ -1746,8 +1746,8 @@ limit for Zum and subsequent dependents.
   28-character limit are external GTK/SQLite/picotls/Windows/canonical APIs
   or unchanged Zdf names; no migration identifier requires renaming. Wrapped
   two overlong lines in the I/O interop harness under
-  [Naming](GUIDELINES.md#naming) and
-  [Multiline layout](GUIDELINES.md#multiline-layout).
+  [Naming](docs/GUIDELINES.md#naming) and
+  [Multiline layout](docs/GUIDELINES.md#multiline-layout).
 - Inspected ELF `NEEDED` entries for the 12 currently built shared libraries
   in Zf, Zi, Zdb, PostgreSQL, SQLite, Ztc, Zum, Zdf and Zgtk: none depends on
   canonical FlatBuffers or `libZfb`. This checks dynamic dependencies only,
@@ -1901,9 +1901,9 @@ limit for Zum and subsequent dependents.
   and read those two fields directly. Their backing receive frame remains
   owned throughout `messageEnd`; no field escapes the callback. This removes
   unused field conversions without adding storage, allocation, validation
-  or a cache. Applies [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow), and
-  [Metadata](GUIDELINES.md#metadata). The isolated `ztc/itest` incremental
+  or a cache. Applies [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow), and
+  [Metadata](docs/GUIDELINES.md#metadata). The isolated `ztc/itest` incremental
   build is pending in `/tmp/zffb-audit-load-view-build.log`; this fixture-only
   change requires direct and hub-path acceptance before being counted as
   verified. Earlier load timings describe the prior instrumentation.
@@ -1927,8 +1927,8 @@ limit for Zum and subsequent dependents.
   steps and are not callback-local scratch. The load fixture retains its
   timing storage through receive completion and sorts it only after client
   stop and link release. These are explicit lifetime/representation reasons
-  to retain storage, under [Storage and lifetime](GUIDELINES.md#storage-and-lifetime)
-  and [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
+  to retain storage, under [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime)
+  and [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
   rather than assuming every array or copy can be deleted.
 - A controlled current-state performance pass rebuilt the missing temporary
   canonical reflection object from the local source tree (24.3.25, initially
@@ -1952,7 +1952,7 @@ limit for Zum and subsequent dependents.
   Alignment, minimum field position, table boundaries and external-data
   validation are unchanged. This removes compare/subtract chains without
   new state, allocations or validation, under
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
   Added a wire-test case for exact-end empty spans, past-end spans and
   `UINT_MAX` endpoints/widths. The owning Zf/Zi, test and interop batch
   passed without diagnostics; the late test addition required only its
@@ -2007,8 +2007,8 @@ limit for Zum and subsequent dependents.
   traversing child values. `copyRoot` likewise must bound its 64-bit span
   length before delegation. Removing these checks would introduce an
   overflow bug, not simplify equivalent validation. This follows
-  [Repair procedure](GUIDELINES.md#repair-procedure) and
-  [Storage and capacity](GUIDELINES.md#storage-and-capacity); no code change
+  [Repair procedure](docs/GUIDELINES.md#repair-procedure) and
+  [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity); no code change
   was made from the initial duplicate-check suspicion.
 - Reopen-path review found a remaining cache-consistency issue introduced
   by the alignment repair: memory, PostgreSQL and SQLite `StoreTbl::schema`
@@ -2028,8 +2028,8 @@ limit for Zum and subsequent dependents.
   check insufficient. This forces only their dependent rebuilds, without
   cleaning, changing configuration or overlapping compiler batches.
   Keep its result distinct from final acceptance. Applies
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)
-  and [Storage and lifetime](GUIDELINES.md#storage-and-lifetime).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)
+  and [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime).
 - The final-build tool handle was lost, but process inspection confirmed
   its original `make -j4` (PID 186878) remained live with four compiler jobs.
   Its wrapper shell had exited, so the dashboard/interop tail could not be
@@ -2079,8 +2079,8 @@ limit for Zum and subsequent dependents.
   No row-time numeric-ID scan or justification for a second runtime index
   was found in these paths. Name lookup of externally supplied schema
   metadata uses `ZuSearch`; its token set is not known at compile time.
-  Applies [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)
-  and [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching).
+  Applies [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)
+  and [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching).
 - Rebind verification scope: `ZdbPQTest::fieldAlignment` tests forced
   alignment through the retained writer descriptor; existing store saga
   fixtures exercise reopening. SQLite's namespace reopen case reuses the
@@ -2090,7 +2090,7 @@ limit for Zum and subsequent dependents.
   including memory-store key records; final refreshed runtime results remain
   pending.
 
-- Further [Liveness](GUIDELINES.md#liveness) review found that the new
+- Further [Liveness](docs/GUIDELINES.md#liveness) review found that the new
   pre-authorization frame queue was drained in one Rx callback. Its frame
   limit is configurable up to `INT_MAX`, so the memory bound does not bound
   work per scheduler turn. Replaced the loop with one frame per turn and a
@@ -2117,9 +2117,9 @@ limit for Zum and subsequent dependents.
   unnecessary adapter. Added a deferred-drain disconnect case to confirm
   the closed-state guard prevents processing or reposting after queue cleanup.
   Both new cases await the queued build/test pass. Applies
-  [Callbacks](GUIDELINES.md#callbacks),
-  [Framework fit](GUIDELINES.md#framework-fit) and
-  [Teardown](GUIDELINES.md#teardown).
+  [Callbacks](docs/GUIDELINES.md#callbacks),
+  [Framework fit](docs/GUIDELINES.md#framework-fit) and
+  [Teardown](docs/GUIDELINES.md#teardown).
 
 - Original make PID 186878 has exited after its log reached the final
   top-level directory; that log contains no warning/error diagnostics.
@@ -2145,7 +2145,7 @@ limit for Zum and subsequent dependents.
 
 - The naming scan found no identifiers exceeding 28 characters in the six
   new codec/I/O source files. Arithmetic-style review did find unresolved
-  [Style](GUIDELINES.md#style) violations: power-of-two integer arithmetic
+  [Style](docs/GUIDELINES.md#style) violations: power-of-two integer arithmetic
   and spaced division in the core headers, pooled-buffer tests, interop
   checks, and load fixture. Collect these into one remaining source batch;
   preserve type-width, signedness and grouping when using shifts. Existing
@@ -2786,7 +2786,7 @@ lists. This is not an installation into `/usr`.
   also finds no unlisted or missing evidence paths. This closes the core
   evidence-packaging check. The first top-level distdir attempt stopped on obsolete `naming.md`
   in `Makefile.am` (`/tmp/zffb-current-dist.log`); that migration plan is now
-  archived under `arc/`, with current naming rules in `GUIDELINES.md`.
+  archived under `arc/`, with current naming rules in `docs/GUIDELINES.md`.
   Read-only expansion of DISTFILES in 122 generated manifests found this
   as the only missing input (`/tmp/zffb-current-dist-inputs.txt`).
   The obsolete distribution entry was removed after the top-level build

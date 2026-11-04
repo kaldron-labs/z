@@ -6,7 +6,7 @@ demonstrated object/node allocation pairs; three are QUIC registry or work-queue
 memberships whose links can be embedded in their existing application objects.
 This document specifies pending work, not completed repairs.
 
-Apply `GUIDELINES.md` and `zquic/GUIDELINES.md`. Preserve unrelated local work,
+Apply `docs/GUIDELINES.md` and `zquic/GUIDELINES.md`. Preserve unrelated local work,
 protocol behavior, limits, callbacks, cancellation, shutdown, and shard ownership.
 Propagate changed node types through dependent code rather than adding
 compatibility aliases, forwarding APIs, or fallback wrapper allocations.

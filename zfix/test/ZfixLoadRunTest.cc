@@ -13,15 +13,15 @@
 using namespace ZuTestUtil;
 using namespace ZfixLoad;
 static void cachedBytes() {
-  ZuTestScope(cachedBytes);
+  ZuTestScopeRT(cachedBytes);
   Options options; options.count = 1; options.warmup = 0;
   options.text = 7;
   Model model{options.shape()}; Run run{options};
   const auto &o = model.next(3, ZuDateTime{Zm::now()}, 42, ZuDecimal{12345, 2});
-  ZuCheck((o.key == 3 && o.qty == 42 && o.price == ZuDecimal{12345, 2}));
+  ZuCheckRT((o.key == 3 && o.qty == 42 && o.price == ZuDecimal{12345, 2}));
   Text text{o.text};
   auto check = [&model, &run, &options](ZuCSpan text, bool expected) {
-    ZuCheck(model.shape(text) == expected && run.shape(text) == expected &&
+    ZuCheckRT(model.shape(text) == expected && run.shape(text) == expected &&
       shape(text, options.text) == expected);
   };
   check(text, true);
@@ -31,27 +31,27 @@ static void cachedBytes() {
   check(text, true);
 }
 static void phases() {
-  ZuTestScope(phases);
+  ZuTestScopeRT(phases);
   Options options; options.count = 2; options.warmup = 1; options.inFlight = 1;
   Run run{options}; uint64_t now = 100; Rows<Order> sent;
   auto send = [&sent](const Order &o) { sent.push(o); return true; };
   auto clock = [&now] { return now; };
-  ZuCheck(run.start(now) && !run.start(now));
+  ZuCheckRT(run.start(now) && !run.start(now));
   for (unsigned i = 0; i < 3; ++i) {
-    run.pump(now, send, clock); ZuCheck(sent.length() == i + 1);
+    run.pump(now, send, clock); ZuCheckRT(sent.length() == i + 1);
     const auto &o = sent[i];
-    ZuCheck(run.receive(report(o, 2 * i + 1, "0"), now + 10) == Outcome::Ack);
-    run.pump(now + 10, send, clock); ZuCheck(sent.length() == i + 1);
-    ZuCheck(run.receive(report(o, 2 * i + 2, "F"), now + 20) == Outcome::Complete);
+    ZuCheckRT(run.receive(report(o, 2 * i + 1, "0"), now + 10) == Outcome::Ack);
+    run.pump(now + 10, send, clock); ZuCheckRT(sent.length() == i + 1);
+    ZuCheckRT(run.receive(report(o, 2 * i + 2, "F"), now + 20) == Outcome::Complete);
     now += 20;
   }
-  ZuCheck(run.phase() == Phase::Complete && !run.nextDue(now));
+  ZuCheckRT(run.phase() == Phase::Complete && !run.nextDue(now));
   Result result; run.finish(result, now + 100);
-  ZuCheck(!result.errors && result.warmup == 1 && result.progress.complete == 2 &&
+  ZuCheckRT(!result.errors && result.warmup == 1 && result.progress.complete == 2 &&
     result.progress.admitted == 2 && result.progress.reports == 4 && !result.progress.inFlight);
-  ZuCheck(result.ackNs.count == 2 && result.ackNs.max == 10 && result.terminalNs.max == 20
+  ZuCheckRT(result.ackNs.count == 2 && result.ackNs.max == 10 && result.terminalNs.max == 20
     && result.elapsedNs == 40 && result.startNs == 120 && result.endNs == 160);
-  ZuCheck(result.intendedAckNs.count == 2 && result.intendedAckNs.max == result.ackNs.max &&
+  ZuCheckRT(result.intendedAckNs.count == 2 && result.intendedAckNs.max == result.ackNs.max &&
     result.intendedTerminalNs.max == result.terminalNs.max);
 }
 static void pacing() {
@@ -86,28 +86,28 @@ static void refusal() {
     !result.progress.admitted && !result.progress.inFlight);
 }
 static void cache() {
-  ZuTestScope(cache);
+  ZuTestScopeRT(cache);
   Cache<uint64_t, uint64_t> cache{2, 1U<<20};
-  ZuCheck(cache.put(1, 10) && cache.put(2, 20)); auto bytes = cache.bytes();
-  ZuCheck(!cache.put(2, 30) && !cache.put(3, 30, UINT64_MAX) && cache.bytes() == bytes);
-  ZuCheck(cache.put(3, 30) && !cache.get(1) && *cache.get(3) == 30 && cache.count() == 2);
-  ZuCheck(cache.erase(2) && cache.bytes() == bytes / 2 && !cache.erase(2));
+  ZuCheckRT(cache.put(1, 10) && cache.put(2, 20)); auto bytes = cache.bytes();
+  ZuCheckRT(!cache.put(2, 30) && !cache.put(3, 30, UINT64_MAX) && cache.bytes() == bytes);
+  ZuCheckRT(cache.put(3, 30) && !cache.get(1) && *cache.get(3) == 30 && cache.count() == 2);
+  ZuCheckRT(cache.erase(2) && cache.bytes() == bytes / 2 && !cache.erase(2));
   Cache<uint64_t, uint64_t> tight{10, bytes / 2};
-  ZuCheck(tight.put(1, 1) && tight.put(2, 2) && tight.count() == 1 && !tight.get(1));
-  cache.clear(); ZuCheck(!cache.count() && !cache.bytes() && cache.peak() == bytes);
-  ZuCheck(cache.put(4, 40) && cache.put(5, 50) && *cache.get(4) == 40);
+  ZuCheckRT(tight.put(1, 1) && tight.put(2, 2) && tight.count() == 1 && !tight.get(1));
+  cache.clear(); ZuCheckRT(!cache.count() && !cache.bytes() && cache.peak() == bytes);
+  ZuCheckRT(cache.put(4, 40) && cache.put(5, 50) && *cache.get(4) == 40);
   unsigned visited = 0;
   cache.each([&visited](uint64_t key, uint64_t value) {
-    ZuCheck(key == 4 + visited && value == 10 * key); ++visited;
+    ZuCheckRT(key == 4 + visited && value == 10 * key); ++visited;
   });
-  ZuCheck(visited == 2 && cache.put(6, 60) && !cache.get(4));
-  ZuCheck(cache.erase(5)); visited = 0;
+  ZuCheckRT(visited == 2 && cache.put(6, 60) && !cache.get(4));
+  ZuCheckRT(cache.erase(5)); visited = 0;
   cache.each([&visited](uint64_t key, uint64_t value) {
-    ZuCheck(key == 6 && value == 60); ++visited;
+    ZuCheckRT(key == 6 && value == 60); ++visited;
   });
-  ZuCheck(visited == 1); cache.clear();
+  ZuCheckRT(visited == 1); cache.clear();
   cache.each([&visited](uint64_t, uint64_t) { ++visited; });
-  ZuCheck(visited == 1 && !cache.bytes() && cache.put(7, 70));
+  ZuCheckRT(visited == 1 && !cache.bytes() && cache.put(7, 70));
 }
 static void deferred() {
   ZuTestScope(deferred);
@@ -146,6 +146,8 @@ static void cli() {
   strings.push("--scenario"); strings.push("cancel");
   strings.push("--sender"); strings.push("WIRE-C");
   strings.push("--target"); strings.push("WIRE-S");
+  strings.push("--rx-ring-size"); strings.push("1024");
+  strings.push("--tx-ring-size"); strings.push("512");
   Rows<char *> args; for (auto &s : strings) args.push(s.data()); args.push(nullptr);
   Options options; Ports ports;
   ZuCheck(ZfixLoad::options(options, false, args.length() - 1, args.data(), ports));
@@ -155,6 +157,7 @@ static void cli() {
     options.scenario == Scenario::Cancel);
   ZuCheck(options.sender == "WIRE-C" &&
     options.target == "WIRE-S");
+  ZuCheck(options.rxRingSize == 1024 && options.txRingSize == 512);
   auto invalid = options; invalid.mode = Mode::N;
   ZuCheck(!ZfixLoad::options(invalid, false, 1, args.data(), ports));
   invalid = options; invalid.version = Version::N;
@@ -165,7 +168,7 @@ static void cli() {
   ZuCheck(!ZfixLoad::options(options, false, 1, args.data(), ports));
 }
 static void workflows(Scenario::T scenario) {
-  ZuTestScope(workflows);
+  ZuTestScopeRT(workflows);
   Options options; options.scenario = scenario;
   options.count = 3; options.warmup = 1; options.inFlight = 2;
   options.text = 8;
@@ -179,38 +182,38 @@ static void workflows(Scenario::T scenario) {
     if constexpr (ZuIsSame<O, Order>{}) parties = o.parties.data();
     else if constexpr (ZuIsSame<O, Replace>{}) {
       // Follow-up key/price changes must keep borrowing the live model groups.
-      ZuCheck(o.order.parties.data() == parties && shape(o.order, options.shape()));
+      ZuCheckRT(o.order.parties.data() == parties && shape(o.order, options.shape()));
       ++changes;
     }
     return broker.receive(o, false, [&replies](const Report &r) {
       replies.push(r); return true;
     });
   };
-  ZuCheck(run.start(now));
+  ZuCheckRT(run.start(now));
   for (unsigned turns = 0; turns < 16 && run.phase() != Phase::Complete; ++turns) {
     run.pump(now, send, [&now] { return now; });
     while (next < replies.length()) {
       auto r = replies[next++];
-      ZuCheck(run.receive(r, ++now, send) != Outcome::Invalid);
+      ZuCheckRT(run.receive(r, ++now, send) != Outcome::Invalid);
     }
   }
   Result result; run.finish(result, now);
   unsigned reports = scenario == Scenario::Replace ? 3 : 2;
-  ZuCheck(run.phase() == Phase::Complete && !result.errors && result.warmup == 1 &&
+  ZuCheckRT(run.phase() == Phase::Complete && !result.errors && result.warmup == 1 &&
     result.progress.offered == 3 && result.progress.admitted == 3 && result.progress.ack == 3 &&
     result.progress.complete == 3 && !result.progress.inFlight &&
     result.progress.reports == 3 * reports);
-  ZuCheck(result.ackNs.count == 3 && result.terminalNs.count == 3 &&
+  ZuCheckRT(result.ackNs.count == 3 && result.terminalNs.count == 3 &&
     result.intendedAckNs.count == 3 && result.intendedTerminalNs.count == 3 &&
     result.intendedAckNs.max == result.ackNs.max &&
     result.intendedTerminalNs.max == result.terminalNs.max &&
     broker.progress.admitted == 4 && broker.progress.complete == 4 &&
     broker.progress.reports == 4 * reports);
-  if (scenario == Scenario::Replace) ZuCheck(changes == 4);
+  if (scenario == Scenario::Replace) ZuCheckRT(changes == 4);
   for (unsigned i = 0, n = replies.length(); i < n; ++i) {
     const auto &r = replies[i];
-    ZuCheck(r.text.length() == options.text);
-    if (r.kind != "0") ZuCheck(r.original && r.original == r.order && r.key != r.original);
+    ZuCheckRT(r.text.length() == options.text);
+    if (r.kind != "0") ZuCheckRT(r.original && r.original == r.order && r.key != r.original);
   }
 }
 static void businessDuplicates(Scenario::T scenario) {

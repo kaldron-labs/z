@@ -8,6 +8,7 @@
 
 #include <stdlib.h>
 #include <signal.h>
+#include <iostream>
 
 #include <zlib/ZuTime.hh>
 #include <zlib/ZmRandom.hh>
@@ -18,6 +19,9 @@
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiRx.hh>
+#include <zlib/ZiTx.hh>
+#include <zlib/ZiTxStream.hh>
 
 #include "global.hh"
 
@@ -34,11 +38,31 @@ const char ResponseEnd[] =
   "Connection: close\r\n"
   "\r\n";
 
-class Connection : public ZiConnection {
+class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Connection> {
+  using Rx = ZiRx<Connection>;
+  using Tx = ZiTx<Connection>;
+
+  class Output : public ZiTxStream<Output> {
+  public:
+    Output(Connection *cxn, unsigned size) : ZiTxStream<Output>{size, 0, 0}, m_cxn{cxn} { }
+    ~Output() { flush(); }
+    ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
+      auto buf = m_cxn->m_allocator->alloc();
+      buf->skip = headRoom;
+      return buf;
+    }
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+      m_cxn->Tx::send(ZmRef<ZiTxBuf>::acquire(
+        static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+      return true;
+    }
+  private:
+    Connection *m_cxn;
+  };
 public:
   Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now, Zi::IOBufAllocator *allocator) :
       ZiConnection(mx, ci), m_headerLen(0), m_acceptTime(now), m_allocator(allocator) { }
-  ~Connection() { }
+  ~Connection() { Tx::clean(); }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
 
@@ -46,28 +70,29 @@ public:
 
   void disconnected(bool);
 
-  void connected(ZiIOContext &io) {
-    io.init(
-      ZiIOFn{this, ZmFnPtr<&Connection::recvRequest>{}});
+  void connected(ZiRxContext &io) {
+    Rx::recv<&Connection::frame, &Connection::recvRequest>(io);
     m_recvTime = Zm::now();
     Global::timeInterval(0).add(m_recvTime - m_acceptTime);
   }
 
 #include "httpheader.hh"
 
-  // read HTTP request
-  bool recvRequest(ZiIOContext &io) {
-    {
-      bool incomplete = !httpHeaderEnd(io.buf->data(), m_rcvd, io.buf->length);
-      m_rcvd += io.buf->length;
-      io.buf = nullptr;
-      if (incomplete) return true;
-    }
+  int frame(const ZiRxContext &, ZiRxStream<ZiRxQueue> &stream) {
+    bool complete = false;
+    stream.each(m_rcvd, stream.length() - m_rcvd, [this, &complete](auto span) {
+      if (!complete) complete = httpHeaderEnd(span.data(), m_rcvd, span.length());
+      m_rcvd += span.length();
+      return int64_t(span.length());
+    });
+    return complete ? m_headerLen : INT_MAX;
+  }
+
+  int recvRequest(const ZiRxContext &, ZiRxStream<ZiRxQueue> &, unsigned length) {
     Global::timeInterval(1).add(Zm::now() - m_recvTime);
-    Global::rcvd(m_rcvd);
-    io.complete();
-    send(ZiIOFn{this, ZmFnPtr<&Connection::sendHeader>{}});
-    return true;
+    Global::rcvd(length);
+    ZiConnection::send(ZiTxFn{this, ZmFnPtr<&Connection::sendHeader>{}});
+    return 0;
   }
 
   // create random-length content (normally distributed, mean 16K + 8K)
@@ -87,7 +112,7 @@ public:
 
   // Reserve the maximum decimal length plus constant HTTP framing, then
   // generate payload and prepend framing in this final wire allocation.
-  bool sendHeader(ZiIOContext &io) {
+  bool sendHeader(ZiTxContext &) {
     enum { DecDigits = 10 }; // uint32_t decimal width
     enum { HeadRoom = sizeof(ResponseStart) + sizeof(ResponseEnd) - 2 + DecDigits };
     auto buf = m_allocator->alloc();
@@ -102,19 +127,24 @@ public:
     header += digits.length();
     memcpy(header, ResponseEnd, sizeof(ResponseEnd) - 1);
     m_sendTime = Zm::now();
-    io.init(ZiIOFn{this, ZmFnPtr<&Connection::sendComplete>{}}, ZuMv(buf));
+    Output out{this, buf->size};
+    out << ZuMv(buf);
+    if (!out.flush()) disconnect();
     return true;
   }
-  bool sendComplete(ZiIOContext &io) {
-    if (!io.buf) { io.complete(); return true; }
-    m_completedTime = Zm::now();
-    Global::timeInterval(2).add(m_completedTime - m_sendTime);
-    Global::sent(io.offset);
-    io.disconnect();
-    return true;
+  void sending(ZiTxContext &io) { m_sendBytes = io.buf->length; }
+
+  void sent(ZmRef<ZiTxBuf>, bool ok) {
+    if (ok) {
+      m_completedTime = Zm::now();
+      Global::timeInterval(2).add(m_completedTime - m_sendTime);
+      Global::sent(m_sendBytes);
+    }
+    disconnect();
   }
 
 private:
+  unsigned		m_sendBytes = 0;
   int			m_headerLen;
   unsigned		m_headerState = 0;
   unsigned		m_rcvd = 0;
@@ -175,7 +205,8 @@ public:
 private:
   // Covers the example's 24 KiB mean response and normal variation.
   enum { TxSize = 64<<10 };
-  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxTCPBufAllocator<TxSize>;
+  ZmRef<Zi::IOBufAllocator> m_allocator = new Zi::TxTCPBufAllocator<ZiTxBuf, TxSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{txRingSize()};
   ZiIP			m_ip;
   unsigned		m_port;
   unsigned		m_nAccepts;

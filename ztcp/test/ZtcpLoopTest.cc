@@ -137,6 +137,9 @@ void checkQueues(Link &link)
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .tcpBufAllocator<Zi::RxTCPBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Ztcp.RxBuf">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -186,6 +189,23 @@ bool consume(Ztcp::RxStream &rx, ZuCSpan expected)
   return ok;
 }
 
+template <typename Link>
+static void checkRepeatedDisconnect(Link &link)
+{
+  Ztc::LinkTelemetry data;
+  link.telemetry(data);
+  ZTCP_CHECK_RT(data.state == Ztc::LinkState::Down,
+    "completed disconnect is not Down");
+  link.disconnect();
+  link.telemetry(data);
+  ZTCP_CHECK_RT(data.state == Ztc::LinkState::Down,
+    "repeated public disconnect changed a Down link");
+  link.disconnect_(false);
+  link.telemetry(data);
+  ZTCP_CHECK_RT(data.state == Ztc::LinkState::Down,
+    "repeated Rx disconnect changed a Down link");
+}
+
 struct ClientApp : public Ztcp::Client<ClientApp> {
   struct Link;
 
@@ -208,11 +228,19 @@ struct ClientApp::Link : public Ztcp::CliLink<ClientApp, Link> {
     auto tx = stream->txStream();
     (void)tx;
     app()->state->clientConnected = 1;
-    sendBytes(*this, Ping);
+    auto buf = tx.allocBuf(0);
+    ZTCP_CHECK_RT(buf, "TCP source allocation failed");
+    *buf << "prefix";
+    buf->append(Ping);
+    buf->advance(6);
+    ZTCP_CHECK_RT(buf->cspan() == Ping, "TCP source span selection failed");
+    tx << ZuMv(buf);
+    ZTCP_CHECK_RT(tx.flush(), "TCP original buffer admission failed");
   }
   void disconnected(bool) {
     ZTCP_CHECK_RT(this->txQueue.empty_(),
       "disconnect completed before I/O Tx drained");
+    checkRepeatedDisconnect(*this);
   }
 
   int process(Ztcp::RxStream &rx) {
@@ -261,6 +289,7 @@ struct ServerApp::Link : public Ztcp::SrvLink<ServerApp, Link> {
   void disconnected(bool) {
     ZTCP_CHECK_RT(this->txQueue.empty_(),
       "disconnect completed before I/O Tx drained");
+    checkRepeatedDisconnect(*this);
   }
 
   int process(Ztcp::RxStream &rx) {

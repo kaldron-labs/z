@@ -20,6 +20,7 @@
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZfixDispatch.hh>
 #include <zlib/ZfixNotice.hh>
+#include <zlib/ZfixTxImage.hh>
 
 namespace Zfix {
 
@@ -120,7 +121,8 @@ struct TraceRecord : public ZiIOBuf {
   unsigned	wireBytes = 0;
   bool		truncated = false;
 
-  TraceRecord(uint8_t *data, unsigned size) : ZiIOBuf{data, size} { }
+  TraceRecord(uint8_t *data, unsigned size, void *owner, unsigned length) :
+    ZiIOBuf{data, size, owner, length} { }
 
   ZuCSpan text() const { return cspan(); }
 };
@@ -145,13 +147,15 @@ public:
   TraceRef capture_(ZuCSpan, TxContext, Resolve = nullptr, void * = nullptr);
   // Reuse a successful framing result; never checksum an admitted frame again.
   TraceRef capture_(const Fmt::FrameView &, TxContext, Resolve = nullptr, void * = nullptr);
+  TraceRef capture_(const TxImage &, ZuCSpan type, TxContext, Resolve = nullptr, void * = nullptr);
 
   TraceRef head_() const { return m_queue.headNode(); }
 
   TraceRef pop_();
   void clear_();
 private:
-  TraceRef capture_(ZuCSpan, const Fmt::FrameView *, TxContext, Resolve, void *);
+  TraceRef capture_(ZuCSpan, const Fmt::FrameView *, const TxImage *, ZuCSpan,
+    TxContext, Resolve, void *);
 
   const TraceLimits	m_limits;
   TraceCounters		m_stats;

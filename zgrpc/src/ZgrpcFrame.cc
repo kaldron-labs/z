@@ -14,7 +14,8 @@ ZtEnumImplNS(FrameResult);
 
 // Reuse Zi's tuned packet size and heap, allowing assembly up to the codec's
 // implementation ceiling. The per-call limit is checked before allocation.
-using MessageBuf = ZiIOBufAlloc<ZiIOBuf_DefltSize, INT_MAX, "Zgrpc.Message">;
+using MessageBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  INT_MAX, ZuStringT<"Zgrpc.Message">>;
 
 void FrameRx::reset(unsigned limit)
 {
@@ -32,7 +33,7 @@ FrameResult::T FrameRx::fail(FrameError::T error)
 }
 
 FrameResult::T FrameRx::feed(ZuBSpan input, ZmRef<ZiIOBuf> backing,
-  unsigned &used, Frame &out, unsigned budget)
+  unsigned &used, Frame &out, unsigned budget, bool exclusive)
 {
   used = 0;
   out = {};
@@ -68,11 +69,19 @@ FrameResult::T FrameRx::feed(ZuBSpan input, ZmRef<ZiIOBuf> backing,
     return FrameResult::Message;
   }
   if (n) {
-    if (!m_buf) {
-      m_buf = new MessageBuf{};
-      m_buf->alloc(m_length);
+    if (!m_buf && backing && exclusive && used + n == input.length()) {
+      unsigned offset = unsigned(input.data() + used - backing->data());
+      backing->skip += offset;
+      backing->length = n;
+      m_buf = ZuMv(backing);
+      if (!m_buf->ensure(m_length)) return fail(FrameError::Limit);
+    } else {
+      if (!m_buf) {
+	m_buf = new MessageBuf{nullptr, 0};
+	m_buf->alloc(m_length);
+      }
+      memcpy(m_buf->data() + m_received, input.data() + used, n);
     }
-    memcpy(m_buf->data() + m_received, input.data() + used, n);
     m_received += n;
     used += n;
   }

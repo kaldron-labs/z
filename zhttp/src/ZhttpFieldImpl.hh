@@ -83,7 +83,7 @@ const WriterOps &bufferWriterOps()
     [](void *, unsigned head) -> ZmRef<ZiIOBuf> {
       using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
 	ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.Header.Print">>;
-      auto buf = ZmRef<ZiIOBuf>{new Alloc{}};
+      auto buf = ZmRef<ZiIOBuf>{new Alloc{nullptr, 0}};
       buf->skip = head;
       return buf;
     },
@@ -98,6 +98,15 @@ const WriterOps &bufferWriterOps()
       auto &out = *static_cast<Out *>(ctx);
       if constexpr (String) out.length(out.length() + length);
       else printCommit(out, length, 0);
+    },
+    [](void *ctx, Zi::RxRange range) {
+      if (!range.buf || range.offset > range.buf->size ||
+	  range.length > range.buf->size - range.offset) return false;
+      auto &out = *static_cast<Out *>(ctx);
+      // A semantic formatting destination owns the resulting representation.
+      out << range.cspan();
+      if constexpr (String) return true;
+      else return !printFailed(out, 0);
     }};
   return ops;
 }
@@ -210,7 +219,7 @@ inline bool parseKV(ZuSpan<uint8_t> line, KV &&kv) {
     line.trunc(0);
   else
     line.offset(n); // skip white space
-  ZuSpan value{line.data(), line.length()};
+  auto value = line;
   if (value) {
     n = eov(value);
     if (ZuUnlikely(n < 0)) return false; // should never happen
@@ -226,9 +235,9 @@ public:
   using Queue = ZiRxQueue;
   using Stream = ZiRxStream<Queue>;
   using BufAlloc = BodyBufAlloc;
-  using WireBufAlloc = Zi::IOBufAlloc<
+  using MetaBufAlloc = Zi::IOBufAlloc<
     Queue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zhttp.Wire.Rx.Split">>;
+    ZuStringT<"Zhttp.Meta.Rx">>;
 
   BodyRx(uint64_t max = uint64_t(-1)) : m_max{max} { }
 
@@ -263,16 +272,13 @@ public:
     Stream src;
     src.push(ZuFwd<NodeRef>(node));
     return splice(src, n, [n](ZuBSpan) { return int64_t(n); },
-      []() { return new WireBufAlloc{}; }, []() { return new BufAlloc{}; },
       0, 0, ZuFwd<L>(l)) > 0;
   }
 
-  template <typename SrcQueue, typename Frame,
-    typename SrcAlloc, typename DstAlloc, typename L,
+  template <typename SrcQueue, typename Frame, typename L,
     typename Transform = Zi::RxPass>
   int64_t splice(
     ZiRxStream<SrcQueue> &src, uint64_t length, Frame &&frame,
-    SrcAlloc &&srcAlloc, DstAlloc &&dstAlloc,
     uint64_t headLen, uint64_t tailLen, L &&l,
     Transform &&transform = {})
   {
@@ -287,7 +293,6 @@ public:
     if (ZuLikely(length <= m_max - m_rx.length())) {
       int64_t n = src.splice(
 	m_rx, ZuFwd<Frame>(frame),
-	ZuFwd<SrcAlloc>(srcAlloc), ZuFwd<DstAlloc>(dstAlloc),
 	headLen, tailLen, ZuFwd<Transform>(transform));
       if (n <= 0) return n;
       m_received += length;
@@ -321,7 +326,7 @@ public:
 	    return 0;
 	  }
 	  return rest;
-	}, srcAlloc, dstAlloc, 0, 0, transform);
+	}, 0, 0, transform);
       if (ZuUnlikely(moved <= 0)) return discard();
       m_received += n;
       remaining -= n;

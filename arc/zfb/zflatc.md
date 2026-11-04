@@ -111,7 +111,7 @@ corrections, not generator completion; generated fixtures and all four
 - `configure.ac` currently confines canonical FlatBuffers dependencies to
   explicit interoperability targets. Keep the ordinary `zflatc` build and
   generated code independent of canonical FlatBuffers (resolved Q001).
-- Apply `GUIDELINES.md`: GNU C++2b, Z containers and formatting, tunable heaps,
+- Apply `docs/GUIDELINES.md`: GNU C++2b, Z containers and formatting, tunable heaps,
   SFINAE/ADL, hard tabs, concise names, direct includes, and no compatibility
   shims. Generated code follows the same rules, including the authoritative
   28-byte naming limit; report unrepresentable public names (Q005).

@@ -48,7 +48,7 @@ ZuStructReflect(DelimitedRow, ZuFacet::PrefixedPB, ZuFacet::PB);
 
 static void testDelimited()
 {
-  ZuTestScope(testDelimited);
+  ZuTestScopeRT(testDelimited);
   // Field 1 matches FileDescriptorProto::name. Exercise empty messages and
   // both sides of the first two varint-length boundaries.
   const unsigned lengths[] = {0, 125, 126, 16380, 16381};
@@ -64,17 +64,17 @@ static void testDelimited()
     Zpb::ArrayStorage storage{output};
     Zpb::Builder builder{storage};
     auto frame = Zpb::save<ZuFacet::PrefixedPB>(builder, native);
-    ZuCheck(!builder.failed());
-    if (!length) ZuCheck(frame.length() == 1 && !frame[0]);
+    ZuCheckRT(!builder.failed());
+    if (!length) ZuCheckRT(frame.length() == 1 && !frame[0]);
 
     auto canonical = factory.GetPrototype(desc)->New();
     auto reflection = canonical->GetReflection();
     google::protobuf::io::ArrayInputStream input{frame.data(), int(frame.length())};
     bool eof = false;
-    ZuCheck(google::protobuf::util::ParseDelimitedFromZeroCopyStream(
+    ZuCheckRT(google::protobuf::util::ParseDelimitedFromZeroCopyStream(
       canonical, &input, &eof) && !eof);
     auto loaded = reflection->GetString(*canonical, name);
-    ZuCheck(loaded.size() == length &&
+    ZuCheckRT(loaded.size() == length &&
       (!length || !memcmp(loaded.data(), text.data(), length)));
 
     canonical->Clear();
@@ -83,13 +83,13 @@ static void testDelimited()
     std::string encoded;
     {
       google::protobuf::io::StringOutputStream stream{&encoded};
-      ZuCheck(google::protobuf::util::SerializeDelimitedToZeroCopyStream(
+      ZuCheckRT(google::protobuf::util::SerializeDelimitedToZeroCopyStream(
 	*canonical, &stream));
     }
-    ZuBSpan bytes{encoded.data(), unsigned(encoded.size())};
-    ZuCheck(bytes == frame);
-    ZuCheck((Zpb::verify<DelimitedRow, ZuFacet::PrefixedPB>(bytes)));
-    ZuCheck((Zpb::load<DelimitedRow, ZuFacet::PrefixedPB>(bytes).name == text));
+    ZuBSpan bytes{encoded};
+    ZuCheckRT(bytes == frame);
+    ZuCheckRT((Zpb::verify<DelimitedRow, ZuFacet::PrefixedPB>(bytes)));
+    ZuCheckRT((Zpb::load<DelimitedRow, ZuFacet::PrefixedPB>(bytes).name == text));
     delete canonical;
   }
 }
@@ -409,12 +409,10 @@ static void testProto3Optional()
   file->CopyTo(set.add_file());
   std::string descriptorBytes;
   bool imported = set.SerializeToString(&descriptorBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-      unsigned(descriptorBytes.length())});
+    verifySchema(descriptorBytes);
   ZuCheck(imported);
   if (!imported) return;
-  Schema schema{{reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-    unsigned(descriptorBytes.length())}};
+  Schema schema{descriptorBytes};
   auto reflected = schema.message(".demo.OptRow");
   ZuCheck(reflected && reflected->oneofs.length() == 4 &&
     reflected->fields.length() == 4 &&
@@ -469,8 +467,7 @@ static void testProto3Optional()
     message->SerializeToString(&wire);
   ZuCheck(present);
   if (present) {
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(wire.data()),
-      unsigned(wire.length())};
+    ZuBSpan bytes{wire};
     ZuCheck(verify(schema, *reflected, bytes) && wire.length() == 6);
   }
   delete message;
@@ -496,12 +493,10 @@ static void testRecursive()
   file->CopyTo(set.add_file());
   std::string descriptorBytes;
   bool imported = set.SerializeToString(&descriptorBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-      unsigned(descriptorBytes.length())});
+    verifySchema(descriptorBytes);
   ZuCheck(imported);
   if (!imported) return;
-  Schema schema{{reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-    unsigned(descriptorBytes.length())}};
+  Schema schema{descriptorBytes};
   auto reflected = schema.message(".demo.NativeNode");
   ZuCheck(reflected && schema.field(*reflected, "next") &&
     schema.field(*reflected, "next")->typeName == ".demo.NativeNode");
@@ -564,8 +559,7 @@ static void testRecursive()
   bool canonicalWrite = message->SerializeToString(&canonicalWire);
   ZuCheck(canonicalWrite);
   if (canonicalWrite) {
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-      unsigned(canonicalWire.length())};
+    ZuBSpan bytes{canonicalWire};
     ZuCheck(Zpb::verify<NativeNode>(bytes, {1}) &&
       verify(schema, *reflected, bytes, {1}) &&
       !Zpb::verify<NativeNode>(bytes, {0}) &&
@@ -609,16 +603,12 @@ static void testRequiredSyntax()
   std::string bytes2, bytes3;
   bool imported = set2.SerializeToString(&bytes2) &&
     set3.SerializeToString(&bytes3) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(bytes2.data()),
-      unsigned(bytes2.length())}) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(bytes3.data()),
-      unsigned(bytes3.length())});
+    verifySchema(bytes2) &&
+    verifySchema(bytes3);
   ZuCheck(imported);
   if (!imported) return;
-  Schema schema2{{reinterpret_cast<const uint8_t *>(bytes2.data()),
-    unsigned(bytes2.length())}};
-  Schema schema3{{reinterpret_cast<const uint8_t *>(bytes3.data()),
-    unsigned(bytes3.length())}};
+  Schema schema2{bytes2};
+  Schema schema3{bytes3};
   auto reflected2 = schema2.message(".demo.NativeRequired");
   auto reflected3 = schema3.message(".demo.NativeRequired");
   ZuCheck(reflected2 && reflected3 &&
@@ -636,8 +626,7 @@ static void testRequiredSyntax()
   bool written = message2->SerializeToString(&wire);
   ZuCheck(written);
   if (written) {
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(wire.data()),
-      unsigned(wire.length())};
+    ZuBSpan bytes{wire};
     ZuCheck(message3->ParseFromString(wire) &&
       message3->GetReflection()->GetUInt32(*message3,
 	type3->field(0)) == 7 &&
@@ -682,16 +671,12 @@ static void testCompatibility()
   std::string oldDescBytes, newDescBytes;
   bool imported = oldSet.SerializeToString(&oldDescBytes) &&
     newSet.SerializeToString(&newDescBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(oldDescBytes.data()),
-      unsigned(oldDescBytes.length())}) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(newDescBytes.data()),
-      unsigned(newDescBytes.length())});
+    verifySchema(oldDescBytes) &&
+    verifySchema(newDescBytes);
   ZuCheck(imported);
   if (!imported) return;
-  Schema oldSchema{{reinterpret_cast<const uint8_t *>(oldDescBytes.data()),
-    unsigned(oldDescBytes.length())}};
-  Schema newSchema{{reinterpret_cast<const uint8_t *>(newDescBytes.data()),
-    unsigned(newDescBytes.length())}};
+  Schema oldSchema{oldDescBytes};
+  Schema newSchema{newDescBytes};
   auto oldRef = oldSchema.message(".demo.Compat");
   auto newRef = newSchema.message(".demo.Compat");
   ZuCheck(oldRef && newRef);
@@ -726,8 +711,7 @@ static void testCompatibility()
   bool newWritten = newMessage->SerializeToString(&newWire);
   ZuCheck(newWritten);
   if (newWritten) {
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(newWire.data()),
-      unsigned(newWire.length())};
+    ZuBSpan bytes{newWire};
     ZuCheck(Zpb::verify<CompatOld>(bytes) &&
       Zpb::verify<CompatNew>(bytes) &&
       verify(oldSchema, *oldRef, bytes) &&
@@ -844,10 +828,8 @@ static void testInterop()
   userCanonical->CopyTo(canonicalSet.add_file());
   std::string canonicalBytes;
   ZuCheck(canonicalSet.SerializeToString(&canonicalBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(canonicalBytes.data()),
-      unsigned(canonicalBytes.length())}));
-  Schema imported{{reinterpret_cast<const uint8_t *>(canonicalBytes.data()),
-    unsigned(canonicalBytes.length())}};
+    verifySchema(canonicalBytes));
+  Schema imported{canonicalBytes};
   auto canonicalRow = userCanonical->FindMessageTypeByName("Row");
   ZuCheck(canonicalRow && canonicalRow->field_count() == 3 &&
     canonicalRow->field(0)->is_map() &&
@@ -889,8 +871,7 @@ static void testInterop()
   std::string canonicalWire;
   ZuCheck(message->SerializeToString(&canonicalWire) &&
     verify(schema, *nativeRow,
-      {reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-	unsigned(canonicalWire.length())}));
+      canonicalWire));
   delete message;
 }
 
@@ -1003,22 +984,15 @@ static void testNativeExport()
   selectedItem->GetReflection()->SetUInt32(selectedItem, itemType->field(0), 53);
   std::string canonicalWire;
   bool validWire = canonicalMsg->SerializeToString(&canonicalWire) &&
-    Zpb::verify<NativeRow>({
-      reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-      unsigned(canonicalWire.length())});
+    Zpb::verify<NativeRow>(canonicalWire);
   ZuCheck(validWire);
   if (!validWire) { delete canonicalMsg; return; }
   auto reflectedRow = schema.message(".demo.NativeRow");
   ZuCheck(reflectedRow && verify(schema, *reflectedRow,
-    {reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-      unsigned(canonicalWire.length())}));
+    canonicalWire));
   canonicalWire.append("\x98\x06\x07", 3); // unknown field 99
-  ZuCheck(Zpb::verify<NativeRow>({
-    reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-    unsigned(canonicalWire.length())}));
-  auto loaded = Zpb::load<NativeRow>({
-    reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-    unsigned(canonicalWire.length())});
+  ZuCheck(Zpb::verify<NativeRow>(canonicalWire));
+  auto loaded = Zpb::load<NativeRow>(canonicalWire);
   auto loadedBlob = loaded.blobs.find(10);
   ZuCheck(loaded.id == 29 && loaded.entries.count_() == 1 &&
     loaded.entries.findVal(7) == 55 && loaded.choice.type() == 1 &&
@@ -1102,8 +1076,7 @@ static void testFacetInterop()
     reflection->SetUInt32(message, hidden, 41);
     std::string canonicalWire;
     bool encoded = message->SerializeToString(&canonicalWire);
-    ZuBSpan input{reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-      unsigned(canonicalWire.length())};
+    ZuBSpan input{canonicalWire};
     auto reflected = schema.message(".demo.FacetRow");
     ZuCheck((encoded && reflected && verify(schema, *reflected, input) &&
       Zpb::verify<FacetRow, ZuFacet::InteropFacet>(input)));
@@ -1290,8 +1263,7 @@ static void testNativeEnumImport()
   canonical->GetReflection()->SetEnumValue(canonical, field, NativeColor::Red);
   std::string reverse;
   bool serialized = canonical->SerializeToString(&reverse);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-    unsigned(reverse.length())};
+  ZuBSpan bytes{reverse};
   ZuCheck(serialized && Zpb::verify<ImportedColorRow>(bytes) &&
     Zpb::load<ImportedColorRow>(bytes).color == NativeColor::Red);
   delete canonical;
@@ -1426,8 +1398,7 @@ static void testScalarVocabulary()
   fields->AddDouble(canonical, precisions, 8.25);
   std::string reverse;
   bool serialized = canonical->SerializeToString(&reverse);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-    unsigned(reverse.length())};
+  ZuBSpan bytes{reverse};
   ZuCheck(serialized && verify(schema, *reflected, bytes) &&
     Zpb::verify<NativeScalarRow>(bytes));
   if (serialized) {
@@ -1451,8 +1422,7 @@ static void testScalarVocabulary()
   fields->SetInt32(canonical, small, 128);
   std::string tooWide;
   serialized = canonical->SerializeToString(&tooWide);
-  ZuBSpan invalid{reinterpret_cast<const uint8_t *>(tooWide.data()),
-    unsigned(tooWide.length())};
+  ZuBSpan invalid{tooWide};
   ZuCheck(serialized && verify(schema, *reflected, invalid) &&
     !Zpb::verify<NativeScalarRow>(invalid));
   delete canonical;
@@ -1504,8 +1474,7 @@ static void testIPMapping()
     canonical->GetReflection()->SetString(canonical, addr, raw);
     std::string reverse;
     ok &= canonical->SerializeToString(&reverse);
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-      unsigned(reverse.length())};
+    ZuBSpan bytes{reverse};
     ok &= verify(schema, *reflected, bytes) &&
       Zpb::verify<ZiIP>(bytes) && Zpb::load<ZiIP>(bytes) == ip;
     delete canonical;
@@ -1520,8 +1489,7 @@ static void testIPMapping()
   invalid->GetReflection()->SetString(invalid, addr, std::string("\x7f\0\x01", 3));
   std::string wrong;
   bool serialized = invalid->SerializeToString(&wrong);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(wrong.data()),
-    unsigned(wrong.length())};
+  ZuBSpan bytes{wrong};
   ZuCheck(serialized && verify(schema, *reflected, bytes) &&
     Zpb::verify<ZiIP>(bytes));
   delete invalid;
@@ -1579,15 +1547,13 @@ static void testFixedMapping()
   fields->SetUInt32(canonical, ndp, 2);
   std::string reverse;
   bool serialized = canonical->SerializeToString(&reverse);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-    unsigned(reverse.length())};
+  ZuBSpan bytes{reverse};
   ZuCheck(serialized && verify(schema, *reflected, bytes) &&
     Zpb::verify<ZuFixed>(bytes) && Zpb::load<ZuFixed>(bytes) == native);
   fields->SetUInt32(canonical, ndp, 19);
   std::string invalid;
   serialized = canonical->SerializeToString(&invalid);
-  ZuBSpan invalidBytes{reinterpret_cast<const uint8_t *>(invalid.data()),
-    unsigned(invalid.length())};
+  ZuBSpan invalidBytes{invalid};
   ZuCheck(serialized && verify(schema, *reflected, invalidBytes) &&
     Zpb::verify<ZuFixed>(invalidBytes));
   delete canonical;
@@ -1643,8 +1609,7 @@ static bool exchangeWords(const T &native, ZuCSpan fileName, ZuCSpan name,
   fields->SetUInt64(canonical, l, low);
   std::string reverse;
   ok &= canonical->SerializeToString(&reverse);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-    unsigned(reverse.length())};
+  ZuBSpan bytes{reverse};
   ok &= verify(schema, *reflected, bytes) &&
     Zpb::verify<T>(bytes) && Zpb::load<T>(bytes) == native;
   if constexpr (ZuIsSame<T, ZuDecimal>{}) {
@@ -1653,8 +1618,7 @@ static bool exchangeWords(const T &native, ZuCSpan fileName, ZuCSpan name,
     fields->SetUInt64(canonical, l, uint64_t(invalid));
     std::string wrong;
     bool serialized = canonical->SerializeToString(&wrong);
-    ZuBSpan invalidBytes{reinterpret_cast<const uint8_t *>(wrong.data()),
-      unsigned(wrong.length())};
+    ZuBSpan invalidBytes{wrong};
     ok &= serialized && verify(schema, *reflected, invalidBytes) &&
       Zpb::verify<T>(invalidBytes);
   }
@@ -1739,8 +1703,7 @@ static void testBoolVecInterop()
       fields->AddBool(canonical, value, false);
       std::string reverse;
       bool serialized = canonical->SerializeToString(&reverse);
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	unsigned(reverse.length())};
+      ZuBSpan bytes{reverse};
       ok &= serialized && Zpb::verify<NativeBoolRow>(bytes) &&
 	verify(schema, reflected, bytes);
       if (ok) {
@@ -1761,9 +1724,7 @@ static void testBoolVecInterop()
       type.file()->CopyTo(canonicalSet.add_file());
       std::string descriptorBytes;
       if (!canonicalSet.SerializeToString(&descriptorBytes)) return false;
-      ZuBSpan descriptorWire{
-	reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-	unsigned(descriptorBytes.length())};
+      ZuBSpan descriptorWire{descriptorBytes};
       if (!verifySchema(descriptorWire)) return false;
       Schema imported{descriptorWire};
       auto importedType = imported.message(".demo.NativePackedBoolRow");
@@ -1832,8 +1793,7 @@ static void testCStringInterop()
       fields->AddString(canonical, valuesField, "three");
       std::string reverse;
       ok &= canonical->SerializeToString(&reverse);
-      ZuBSpan result{reinterpret_cast<const uint8_t *>(reverse.data()),
-	unsigned(reverse.length())};
+      ZuBSpan result{reverse};
       ok &= verify(schema, reflected, result) &&
 	Zpb::verify<NativeCStringRow>(result);
       if (ok) {
@@ -1845,8 +1805,7 @@ static void testCStringInterop()
       fields->SetString(canonical, textField, "");
       std::string empty;
       ok &= canonical->SerializeToString(&empty);
-      ZuBSpan invalid{reinterpret_cast<const uint8_t *>(empty.data()),
-	unsigned(empty.length())};
+      ZuBSpan invalid{empty};
       ok &= verify(schema, reflected, invalid) &&
 	Zpb::verify<NativeCStringRow>(invalid);
       delete canonical;
@@ -1992,8 +1951,7 @@ static void testWireNumbers()
       std::string reverse;
       ok &= canonical->SerializeToString(&reverse);
       reverse.append("\x38\x11", 2); // unpacked zig32 field 7 = -9
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	unsigned(reverse.length())};
+      ZuBSpan bytes{reverse};
       ok &= verify(schema, reflected, bytes) &&
 	Zpb::verify<NativeWireRow>(bytes);
       if (ok) {
@@ -2048,8 +2006,7 @@ static bool benchExchange(ZuCSpan fileName, ZuCSpan name, const T &native,
 	write(*canonical);
 	std::string reverse;
 	ok = canonical->SerializeToString(&reverse);
-	ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	  unsigned(reverse.length())};
+	ZuBSpan bytes{reverse};
 	ok &= verify(schema, reflected, bytes) &&
 	  Zpb::verify<T>(bytes) && check(Zpb::load<T>(bytes));
       }
@@ -2208,9 +2165,7 @@ static bool benchCanonical(ZuCSpan fileName, ZuCSpan name, const T &native,
 	canonical->IsInitialized();
       std::string encoded;
       if (ok) ok = canonical->SerializeToString(&encoded);
-      ZuBSpan canonicalWire{
-	reinterpret_cast<const uint8_t *>(encoded.data()),
-	unsigned(encoded.length())};
+      ZuBSpan canonicalWire{encoded};
       if (ok) ok = Zpb::verify<T>(canonicalWire) &&
 	verify(schema, reflected, canonicalWire);
       if (!ok) { delete canonical; return false; }
@@ -2322,15 +2277,13 @@ static void testTemporalMappings()
       fields->SetInt32(canonical, nsec, 456);
       std::string reverse;
       ok &= canonical->SerializeToString(&reverse);
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	unsigned(reverse.length())};
+      ZuBSpan bytes{reverse};
       ok &= verify(schema, reflected, bytes) &&
 	Zpb::verify<ZuTime>(bytes) && Zpb::load<ZuTime>(bytes) == time;
       fields->SetInt64(canonical, sec, ZuCmp<int64_t>::null());
       std::string invalid;
       bool serialized = canonical->SerializeToString(&invalid);
-      ZuBSpan invalidBytes{reinterpret_cast<const uint8_t *>(invalid.data()),
-	unsigned(invalid.length())};
+      ZuBSpan invalidBytes{invalid};
       ok &= serialized && verify(schema, reflected, invalidBytes) &&
 	Zpb::verify<ZuTime>(invalidBytes);
       delete canonical;
@@ -2371,8 +2324,7 @@ static void testTemporalMappings()
       fields->SetInt32(canonical, nsec, dateTime.nsec());
       std::string reverse;
       ok &= canonical->SerializeToString(&reverse);
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	unsigned(reverse.length())};
+      ZuBSpan bytes{reverse};
       ok &= verify(schema, reflected, bytes) &&
 	Zpb::verify<ZuDateTime>(bytes) &&
 	Zpb::load<ZuDateTime>(bytes) == dateTime;
@@ -2407,8 +2359,7 @@ static void testBitmapMappings()
 	canonical->GetReflection()->SetString(canonical, words, raw);
 	std::string reverse;
 	ok &= canonical->SerializeToString(&reverse);
-	ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	  unsigned(reverse.length())};
+	ZuBSpan bytes{reverse};
 	ok &= verify(schema, reflected, bytes) &&
 	  Zpb::verify<B>(bytes) && Zpb::load<B>(bytes) == native;
 	delete canonical;
@@ -2427,8 +2378,7 @@ static void testBitmapMappings()
       invalid->GetReflection()->SetString(invalid, words, std::string(1, '\1'));
       std::string wrong;
       bool serialized = invalid->SerializeToString(&wrong);
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(wrong.data()),
-	unsigned(wrong.length())};
+      ZuBSpan bytes{wrong};
       ok &= serialized && verify(schema, reflected, bytes) &&
 	Zpb::verify<ZuBitmap<128>>(bytes) &&
 	Zpb::verify<ZtBitmap>(bytes);
@@ -2459,16 +2409,14 @@ static void testBitmapMappings()
       fields->SetString(canonical, ranges, "3-5,7,9-");
       std::string reverse;
       ok &= canonical->SerializeToString(&reverse);
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-	unsigned(reverse.length())};
+      ZuBSpan bytes{reverse};
       ok &= verify(schema, reflected, bytes) &&
 	Zpb::verify<ZmBitmap>(bytes) &&
 	Zpb::load<ZmBitmap>(bytes) == native;
       fields->SetString(canonical, ranges, "1-2,garbage");
       std::string invalid;
       bool serialized = canonical->SerializeToString(&invalid);
-      ZuBSpan invalidBytes{reinterpret_cast<const uint8_t *>(invalid.data()),
-	unsigned(invalid.length())};
+      ZuBSpan invalidBytes{invalid};
       ok &= serialized && verify(schema, reflected, invalidBytes) &&
 	Zpb::verify<ZmBitmap>(invalidBytes);
       delete canonical;
@@ -2499,12 +2447,10 @@ static void testGenerated()
   file->CopyTo(canonicalSet.add_file());
   std::string descriptorBytes;
   bool validDesc = canonicalSet.SerializeToString(&descriptorBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-      unsigned(descriptorBytes.length())});
+    verifySchema(descriptorBytes);
   ZuCheck(validDesc);
   if (!validDesc) return;
-  Schema imported{{reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-    unsigned(descriptorBytes.length())}};
+  Schema imported{descriptorBytes};
   auto importedRow = imported.message(".demo.GenRow");
   ZuCheck(importedRow && importedRow->oneofs.length() == 1 &&
     imported.message(".demo.GenRow.ItemsEntry"));
@@ -2592,14 +2538,10 @@ static void testGenerated()
     addedBlobType->FindFieldByName("value"), std::string("x\0z", 3));
   std::string canonicalWire;
   bool validWire = message->SerializeToString(&canonicalWire) &&
-    Zpb::verify<demo::GenRow>({
-      reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-      unsigned(canonicalWire.length())});
+    Zpb::verify<demo::GenRow>(canonicalWire);
   ZuCheck(validWire);
   if (!validWire) { delete message; return; }
-  auto loaded = Zpb::load<demo::GenRow>({
-    reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-    unsigned(canonicalWire.length())});
+  auto loaded = Zpb::load<demo::GenRow>(canonicalWire);
   auto loadedBlob = loaded.blobs.find(10);
   ZuCheck(loaded.id == 29 && loaded.items.count_() == 1 &&
     loaded.items.findVal(8).value == 71 && loaded.choice.type() == 1 &&
@@ -2628,8 +2570,7 @@ static void testGenerated()
       fields->GetRepeatedInt32(*message, deltasField, 0) == -9 &&
       fields->GetRepeatedInt32(*message, deltasField, 1) == -9;
     ZuCheck(canonicalMixed);
-    ZuBSpan mixed{reinterpret_cast<const uint8_t *>(mixedWire.data()),
-      unsigned(mixedWire.length())};
+    ZuBSpan mixed{mixedWire};
     ZuCheck(Zpb::verify<demo::GenRow>(mixed) &&
       verify(imported, *importedRow, mixed));
     if (canonicalMixed) {
@@ -2649,8 +2590,7 @@ static void testGenerated()
     fields->GetUInt32(*message, idField) == ZuCmp<uint32_t>::null();
   ZuCheck(canonicalSentinel);
   if (canonicalSentinel) {
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(sentinelWire.data()),
-      unsigned(sentinelWire.length())};
+    ZuBSpan bytes{sentinelWire};
     ZuCheck(verify(imported, *importedRow, bytes) &&
       Zpb::verify<demo::GenRow>(bytes));
   }
@@ -2690,12 +2630,10 @@ static void testGeneratedMultiChoice()
   file->CopyTo(canonicalSet.add_file());
   std::string descriptorBytes;
   bool validDesc = canonicalSet.SerializeToString(&descriptorBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-      unsigned(descriptorBytes.length())});
+    verifySchema(descriptorBytes);
   ZuCheck(validDesc);
   if (!validDesc) return;
-  Schema imported{{reinterpret_cast<const uint8_t *>(descriptorBytes.data()),
-    unsigned(descriptorBytes.length())}};
+  Schema imported{descriptorBytes};
   auto importedType = imported.message(".demo.GenMultiChoice");
   ZuCheck(importedType && importedType->oneofs.length() == 2);
   if (!importedType) return;
@@ -2738,8 +2676,7 @@ static void testGeneratedMultiChoice()
     d->GetDescriptor()->FindFieldByName("value"), 2);
   std::string canonicalWire;
   bool serialized = message->SerializeToString(&canonicalWire);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(canonicalWire.data()),
-    unsigned(canonicalWire.length())};
+  ZuBSpan bytes{canonicalWire};
   ZuCheck(serialized && Zpb::verify<demo::GenMultiChoice>(bytes) &&
     verify(imported, *importedType, bytes));
   if (serialized) {
@@ -2850,8 +2787,7 @@ static void testGeneratedNumeric()
   fields->AddDouble(message, field(18), 7.5);
   std::string reverse;
   bool serialized = message->SerializeToString(&reverse);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-    unsigned(reverse.length())};
+  ZuBSpan bytes{reverse};
   ZuCheck(serialized && Zpb::verify<demo::NumericRow>(bytes));
   if (serialized && Zpb::verify<demo::NumericRow>(bytes)) {
     auto loaded = Zpb::load<demo::NumericRow>(bytes);
@@ -2919,10 +2855,8 @@ static void testDefaults()
   built->CopyTo(canonicalSet.add_file());
   std::string canonicalBytes;
   ZuCheck(canonicalSet.SerializeToString(&canonicalBytes) &&
-    verifySchema({reinterpret_cast<const uint8_t *>(canonicalBytes.data()),
-      unsigned(canonicalBytes.length())}));
-  Schema imported{{reinterpret_cast<const uint8_t *>(canonicalBytes.data()),
-    unsigned(canonicalBytes.length())}};
+    verifySchema(canonicalBytes));
+  Schema imported{canonicalBytes};
   auto importedField = imported.field(*imported.message(".demo.Defaults"),
     "text");
   ZuCheck(importedField && importedField->defaultValue == "a\n\"b");
@@ -2978,8 +2912,7 @@ static void testDefaults()
     canonicalMsg->SerializeToString(&payload);
   ZuCheck(explicitDefaults);
   if (explicitDefaults) {
-    ZuBSpan bytes{reinterpret_cast<const uint8_t *>(payload.data()),
-      unsigned(payload.length())};
+    ZuBSpan bytes{payload};
     auto reflected = nativeSchema.message(".demo.NativeDefaults");
     ZuCheck(reflected && verify(nativeSchema, *reflected, bytes) &&
       Zpb::verify<NativeDefaults>(bytes));
@@ -3086,9 +3019,7 @@ static void testGeneratedValues()
   *dependencies.add_file() = addressProto;
   std::string dependencyBytes;
   bool encoded = dependencies.SerializeToString(&dependencyBytes);
-  ZuBSpan dependencyWire{
-    reinterpret_cast<const uint8_t *>(dependencyBytes.data()),
-    unsigned(dependencyBytes.length())};
+  ZuBSpan dependencyWire{dependencyBytes};
   ZuCheck(encoded && verifySchema(dependencyWire));
   if (!encoded || !verifySchema(dependencyWire)) return;
   auto nativeSet = Zpb::load<DescSet>(dependencyWire);
@@ -3356,8 +3287,7 @@ static void testGeneratedValues()
     secondDate.nsec());
   std::string reverse;
   bool serialized = canonical->SerializeToString(&reverse);
-  ZuBSpan bytes{reinterpret_cast<const uint8_t *>(reverse.data()),
-    unsigned(reverse.length())};
+  ZuBSpan bytes{reverse};
   ZuCheck(serialized && Zpb::verify<demo::ValueRow>(bytes));
   if (serialized && Zpb::verify<demo::ValueRow>(bytes)) {
     auto loaded = Zpb::load<demo::ValueRow>(bytes);

@@ -766,7 +766,7 @@ struct FieldNode {
       else if constexpr (id == 8) return !Tag && V::Key;
       else if constexpr (id == 9) return AttrAt - Header::Data - Header::template offset<H>();
       else if constexpr (id == 11)
-	return !Tag && !IsStruct && !V::Required && V::Kind != ValueKind::Scalar;
+	return !Tag && !V::Required && V::Kind != ValueKind::Scalar;
       else return padding();
     });
     Name::emit(stream);

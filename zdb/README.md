@@ -12,6 +12,8 @@ Replication is async.
 
 Restart/recovery is from backing data store, then from the cluster
 leader (if the local host itself is not elected leader).
+Startup replays recovered incomplete sagas that are crash residue
+from a previous run.
 
 Principal features:
 - Immutable compile-time schema (intentional design)
@@ -47,8 +49,10 @@ The usual owner sequence is:
 6. Serve requests while active. Stop admitting work when deactivated.
 7. Quiesce application producers and finish outstanding application callbacks;
    call `stop()` and wait for completion.
-8. Release application table/row references, call the typed DB's `final()`, and
-   release the DB/store. Stop the multiplex last.
+8. Release application table/row and retained network-buffer references, call
+   the typed DB's `final()`, and release the DB/store.
+9. Stop the multiplex after its remaining owners have stopped. It may remain
+   running while an independently stopped DB is finalized or replaced.
 
 `init()` and `final()` are synchronous and may throw `ZeException`. Register
 tables and sagas after initialization and before startup. The table configuration
@@ -78,8 +82,10 @@ Handlers run on the DB thread and must return promptly. Activation can recur
 after failover. `downFn` distinguishes failure from orderly deactivation.
 
 Graceful stop drains the framework's pending work, closes tables/stops the store,
-and drains resulting shard callbacks. It cannot finish a step whose application
-has retained its completion indefinitely. Keep the multiplex, DB, and tables alive through teardown. A stopped DB can be started again; after
+drains resulting shard callbacks, and waits for table/store/heartbeat allocator
+services to unbind from the I/O shards. It cannot finish a step whose application
+has retained its completion indefinitely. Keep the multiplex, DB, and tables
+alive until stop completes. A stopped DB can be started again; after
 `final()`, initialize and register it again before reuse. For a saga DB, call
 `final()` through its `ZdbSagaDB` owner: that class
 releases the saga definitions after base finalization.
@@ -263,7 +269,10 @@ The supported teardown boundary is completed `stop()` followed by `final()`.
 
 ## Sagas
 
-A saga is a serialized application intent whose payload determines a fixed
+A saga is an aggregate intent to complete several individual actions, typically
+writes to dependent tables or databases. The saga and its actions have a 1:N
+parent/child relationship, with a distinct action ID for each action. In Zdb,
+the serialized application intent's payload determines a fixed
 sequence of mutation effects. Each applicable forward step invocation describes
 one table mutation; repeated phases expand to zero or more such invocations, and
 skipped steps allow payload-selected branches and later convergence. If an
@@ -583,8 +592,8 @@ effect.
   run. Examples include an inactive/unconfigured DB, invalid shard, or invalid
   saga object.
 - `submit(true)`: the main intent was locally committed and accepted for
-  execution. Like row commit, this is not a synchronous backend durability
-  acknowledgment.
+  execution. Like row commit, this does not acknowledge completion of either
+  replication or a write to local persistent storage.
 - Application `complete(true)`: final forward success followed by normal journal
   cleanup.
 - Application `complete(false)`: forward failure followed by all necessary
@@ -649,6 +658,68 @@ zero; an expired saga re-enters compensation or terminal reconciliation. This
 gives operators an opportunity to repair the compensation failure before
 restarting; after repair, recovery can complete and remove the retained journal
 records.
+
+### Durable transmission intents
+
+A saga action can complete by persisting an intent for independent processing.
+For example, a journaled table mutation can record a message to be transmitted
+by an application-owned worker. The action's success then means that the
+transmission obligation has been recorded, not that the remote effect has
+completed. This requires a recovery path that processes the transmission intent
+independently of the parent saga. The local commit and durability distinction
+in the submission contract still applies.
+
+Zdb adopts the durability posture that successful replication is as good as
+writing to local persistent storage. Either satisfies the framework's durability
+posture for a transmission intent; both are not required.
+
+Recover transmission intents for idempotent resend or requeue, using stable message identities
+and receiver-side duplicate handling. Include the parent saga identity, action
+ID, and enough data to send the message again. Store the action ID explicitly
+when it cannot be inferred unambiguously: multiple ledger updates in one saga,
+for example, need distinct identities. A FIX message identity can include its
+session and sequence number; other transports need their own stable identity
+and replay rules.
+
+Maintain a persistent, write-through-cached index from message identity to its
+transmission record so resend requests can find the payload. Store the payload
+directly, or reconstruct it from retained saga/action data. Reconstruction must
+remain possible after normal saga journal cleanup; do not depend on the internal
+main intent surviving completion. Retain transmission records during recovery
+so the resend index can be rebuilt.
+
+Protocol replay and application-level resend may have different identities and
+duplicate indicators. Retention must cover the applicable acknowledgement,
+session-reset, and replay-window rules; saga completion alone does not establish
+that a message can no longer be requested again. Delete transmission intents
+only after both saga completion and the end of any resend obligation, such as
+a receiver's durable acknowledgement or expiry of the agreed retention window.
+Perform this garbage collection incrementally in a background worker.
+
+Transmission timing, workers, resend indices, retention policy, and remote deduplication
+are application responsibilities. Coordinate worker visibility with rollback:
+compensating a local intent cannot retract an already-observed remote effect.
+The completion and recovery contracts above govern the journaled mutation;
+they do not supply an atomic transaction with the remote receiver.
+
+### Example: exchange trade workflow
+
+A trade can aggregate ledger mutations and notification intents for both sides:
+
+| Actions | Participants / effects |
+| --- | --- |
+| Settle balances | Buyer and seller base/quote credits or debits, plus commission debits |
+| Record trade notifications | Buyer fill, seller fill, and trade broadcast |
+| Allocate commissions | Referral and exchange commission credits for each side |
+| Record balance notifications | Buyer and seller base, quote, commission, and referral commission balances; exchange balance |
+
+Give each ledger mutation and transmission intent its own action identity, even
+when several affect the same account or use the same message format. Encode
+required ordering in the saga phases and persisted payload, and define
+compensation for each completed mutation. Recording a notification intent and
+delivering it are separate events; decide when each notification may become
+visible relative to settlement and compensation. Repeated phases can expand
+participant-specific work using the stable iteration mapping described above.
 
 ## Replication and activation
 
@@ -802,3 +873,34 @@ They are distinct from separate-process crash fixtures. Executable acceptance of
 the new variants is pending milestone20. The parameter callback fixture also
 requires the existing size-policy diagnostic, so an unrelated backend error does
 not satisfy its error assertion.
+
+
+Network buffer ownership
+------------------------
+
+Configure the replication multiplexer with
+`tcpBufAllocator(new Zdb_::RxBufAllocator{})` for its database receive size and heap policy. Shared HTTP/TLS multiplexers
+may use their larger transport pool with the same `ZiRxQueue::Node` Base;
+received database frame metadata lives in a retained range descriptor. Each table instance owns separate typed transmit allocator
+callbacks for every producer shard and for its store; ADL `ZdbBufSize` and
+`ZdbBufHeapID` policies continue to select row allocation. Heartbeat buffers use
+the database-owned control allocator.
+
+`IOBufAllocFn` retains the callback's existing ownership and exposes a borrowed
+allocator handle for cold teardown. `tableBufAllocFn<T>()` records that handle
+automatically. A custom native callback must retain its allocator and record the
+same handle with `fn.allocator(ptr)`; ordinary local callbacks leave it null.
+Buffer allocation and release do not acquire allocator references.
+
+Finalize typed DB record builders with `saveFrame(builder, owner)`. It prepends
+the wire header and seals the message's physical origin before replication and
+store work share the original buffer. `hdr()` and `frameSpan()` retain that
+complete message while transport advances the buffer's active `skip`/`length`.
+Recovery copies preserve this canonical span and its alignment when changing
+the replication discriminator.
+
+Await database stop before finalizing tables/database objects. Stop completion
+includes retirement of their native ring service watches; the shared multiplexer
+can remain running through DB finalization and replacement. Stopping the
+multiplexer before DB finalization also remains valid. Release retained network
+frames before their allocator owners.

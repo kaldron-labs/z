@@ -320,7 +320,8 @@ static void exercise(unsigned mode)
   ZuTestScopeRT(exercise);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {});
@@ -335,8 +336,8 @@ static void exercise(unsigned mode)
   ZuCheckRT(started);
   if (!started) {
     orders = {}; items = {};
+    ZuCheckRT(mx.stop());
     db->final();
-    mx.stop();
     return;
   }
 
@@ -404,8 +405,10 @@ static void exercise(unsigned mode)
       // driver before a fresh connection reopens it. This is not a hard-crash test.
       ZuCheckRT(db->stop());
       orders = {}; items = {};
+      ZuCheckRT(mx.stop());
       db->final();
       db = new zdbtest::SagaDB{};
+      ZuCheckRT(mx.start());
       db->init(ZdbCf{cf}, &mx, {});
       orders = db->initTable<zdbtest::Order>("pq_saga_order");
       items = db->initTable<zdbtest::Order>("pq_saga_item");
@@ -419,8 +422,8 @@ static void exercise(unsigned mode)
       ZuCheckRT(started);
       if (!started) {
 	orders = {}; items = {};
+	ZuCheckRT(mx.stop());
 	db->final();
-	mx.stop();
 	return;
       }
     }
@@ -453,9 +456,9 @@ static void exercise(unsigned mode)
   ZuCheckRT(clean);
   ZuCheckRT(db->stop());
   orders = {}; items = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
-  ZuCheckRT(mx.stop());
 }
 
 static void batches(
@@ -464,10 +467,12 @@ static void batches(
   ZuTestScopeRT(batches);
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   auto cuts = recover ? (fail ? 2 : 2 * (2 * count + 1)) : 1;
   for (unsigned cut = 0; cut < cuts; ++cut) {
+    if (cut) ZuCheckRT(mx.start());
     ZmRef<DB> db;
     ZdbTblRef<zdbtest::Order> orders, items;
     ZmRef<zdbtest::SagaDB> context;
@@ -482,9 +487,10 @@ static void batches(
       db->sagas({zdbtest::liveSagaDef(), zdbtest::batchSagaDef()});
       return db->start();
     };
-    auto stop = [&db, &orders, &items, &context]() {
+    auto stop = [&db, &orders, &items, &context, &mx]() {
       bool ok = db->stop(); // drains PostgreSQL and shard callbacks
       orders = {}; items = {}; context = {};
+      ZuCheckRT(mx.stop());
       db->final();
       return ok;
     };
@@ -525,6 +531,7 @@ static void batches(
 	context->pausedComplete(false);
       });
       ZuCheckRT(stop());
+      ZuCheckRT(mx.start());
       ZuCheckRT(start());
       // Recovered work has no callback from the interrupted live instance.
     } else {
@@ -582,7 +589,6 @@ static void batches(
     }));
     ZuCheckRT(stop());
   }
-  ZuCheckRT(mx.stop());
 }
 
 static Zdb_::OpenResult open(
@@ -592,7 +598,7 @@ static Zdb_::OpenResult open(
   using zdbtest::Order;
   return ZmBlock<OpenResult>{}([store, internal, id = ZuMv(id), schema](auto wake) mutable {
     store->open(internal, ZuMv(id), ZfVFields<Order>(), ZfVKeyFields<Order>(),
-      schema, Table<Order>::allocBuf,
+      schema, localBufAllocFn<Order>(),
       [wake = ZuMv(wake)](OpenResult result) mutable {
 	if (result.is<ZeException>()) ZiLogEvent(result.p<ZeException>());
 	wake(ZuMv(result));
@@ -614,12 +620,12 @@ static bool write(Zdb_::OpenData &state, ZuCSpan id, int vn, int qty)
   UN un = state.un[0] == nullUN() ? 0 : state.un[0] + 1;
   SN sn = state.sn + 1;
   Order row{"NS", 1, "NS", "probe", 0, zdbtest::Side::Buy, {100}, {qty}};
-  Builder fbb{Table<Order>::allocBuf()};
+  Builder fbb{new Zdb_::IOBufAlloc<Order>{nullptr, 0}};
   auto nested = fbb.startNested();
   auto data = fbb.endNested(nested, Zfb::save(fbb, row));
   fbb.finish(saveMsg(fbb, saveRecord(fbb, id, un, sn, vn, 0, data),
     Msg::Tag::Replication));
-  bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveHdr(fbb)](auto wake) mutable {
+  bool ok = ZmBlock<bool>{}([table = state.storeTbl, buf = saveFrame(fbb)](auto wake) mutable {
     table->write(ZuMv(buf),
       [wake = ZuMv(wake)](ZmRef<IOBuf>, CommitResult result) mutable {
 	wake(result.is<void>());
@@ -634,7 +640,7 @@ static int read(Zdb_::StoreTbl *table)
   using namespace Zdb_;
   using zdbtest::Order;
   Table<Order>::Key<0> key{"NS", 1};
-  Builder fbb{Table<Order>::allocBuf()};
+  Builder fbb{new Zdb_::IOBufAlloc<Order>{nullptr, 0}};
   fbb.finish(Zfb::save(fbb, key));
   return ZmBlock<int>{}([table, buf = fbb.buf()](auto wake) mutable {
     table->find(0, ZuMv(buf), [wake = ZuMv(wake)](RowResult result) mutable {
@@ -660,7 +666,8 @@ static void namespaces(bool maxID)
     while (id.length() < IDSize_ - 1) id << 'n';
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<Zdb> db = new Zdb{};
   db->init(ZdbCf{cf}, &mx, {});
@@ -669,9 +676,9 @@ static void namespaces(bool maxID)
   ZuCheckRT(started);
   if (!started) {
     orders = {};
+    ZuCheckRT(mx.stop());
     db->final();
     db = {};
-    ZuCheckRT(mx.stop());
     return;
   }
   SchemaBuf appSchema = SchemaBuf(Zfb::SchemaOut::Schema<zdbtest::Order>::Size);
@@ -718,7 +725,9 @@ static void namespaces(bool maxID)
 	ZuCheckRT(db->stop());
 	if (restart) {
 	  orders = {};
+	  ZuCheckRT(mx.stop());
 	  db->final();
+	  ZuCheckRT(mx.start());
 	  db->init(ZdbCf{cf}, &mx, {});
 	  orders = db->initTable<zdbtest::Order>("pq_saga_order");
 	}
@@ -750,9 +759,9 @@ static void namespaces(bool maxID)
   }
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
-  ZuCheckRT(mx.stop());
 }
 
 static int child(const char *self, const char *option)

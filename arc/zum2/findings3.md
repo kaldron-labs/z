@@ -1,7 +1,7 @@
 # `zum/src` guideline audit
 
 Scope: all repository-owned `*.cc` and `*.hh` files under `zum/src`, checked
-against `GUIDELINES.md`. Generated FlatBuffers headers, generated dependency
+against `docs/GUIDELINES.md`. Generated FlatBuffers headers, generated dependency
 files, objects, and libtool artifacts were excluded. This is an audit only;
 no source changes were made.
 
@@ -53,7 +53,7 @@ Named `enum T` declarations remain at:
 - `zum/src/ZumService.cc:234` (`ServiceState::State`); and
 - `zum/src/zumd_sagas.hh:1972,2073` (`RoleEdit::Kind`, `ScopeEdit::Kind`).
 
-`GUIDELINES.md` explicitly forbids `enum T`. Use the repository form
+`docs/GUIDELINES.md` explicitly forbids `enum T`. Use the repository form
 `struct E { enum { ... }; };` when a scoped type-like grouping is needed, or
 an appropriately named namespace for constants, then update uses consistently.
 

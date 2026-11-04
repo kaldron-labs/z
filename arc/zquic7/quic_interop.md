@@ -517,7 +517,7 @@ components already solve the problem.
 
 ## Guidelines Alignment Requirements
 
-Apply `GUIDELINES.md` and `zquic/GUIDELINES.md` as hard requirements for this
+Apply `docs/GUIDELINES.md` and `zquic/GUIDELINES.md` as hard requirements for this
 implementation.
 
 C++ and file layout:

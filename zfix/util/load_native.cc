@@ -4,6 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <stdio.h>
+
 #include <zlib/ZmRef.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
@@ -13,6 +15,36 @@
 #include "load_native.hh"
 
 namespace ZfixLoad {
+
+static ZiMxBackend::T backend(const Options &options) {
+  if (options.backend == "epoll") return ZiMxBackend::EPoll;
+  if (options.backend == "uring") return ZiMxBackend::URing;
+  return ZiMxBackend::Auto;
+}
+static ZuCSpan backendName(ZiMxBackend::T backend) {
+  switch (backend) {
+    case ZiMxBackend::URing: return "uring";
+    case ZiMxBackend::EPoll: return "epoll";
+    default: return "auto";
+  }
+}
+
+static ZiMxParams nativeMxParams(const Options &options, bool server) {
+  // One request, two reports and a retiring send can overlap per in-flight
+  // order. Rx is shared by all sessions; each server hub has its own Tx pools.
+  uint64_t burst = 4 * uint64_t(options.inFlight);
+  auto slots = [](unsigned requested, unsigned deflt, uint64_t needed) {
+    if (requested) return requested;
+    if (needed > ZiMxParams::MaxRingSize) needed = ZiMxParams::MaxRingSize;
+    if (needed < deflt) needed = deflt;
+    return unsigned(needed);
+  };
+  return ZiMxParams{}.backend(backend(options))
+    .rxRingSize(slots(options.rxRingSize, ZiIOBuf_DefltRxRingSize,
+      burst * options.sessions))
+    .txRingSize(slots(options.txRingSize, ZiIOBuf_DefltTxRingSize,
+      burst * (server ? 1 : options.sessions)));
+}
 
 // Fixture-local checkpoint. Main alone reads/writes the file, with owner
 // workers stopped; fields are serialized individually without process pointers.
@@ -49,8 +81,11 @@ static bool save(const Options &o, const NativeCheckpoint &s) {
   for (const auto &h : s.history) {
     const auto &dt = h.originalTime;
     uint64_t id = h.body->id(); bool admin = h.body->administrative();
+    Zfix::Fmt::Error error;
+    auto body = h.body->archive(error);
+    if (error || !body) return false;
     if (!put(f, h.epoch, h.seqNo, id, admin, dt.julian(), dt.sec(), dt.nsec()) ||
-      !putText(f, h.body->msgType()) || !putText(f, h.body->body())) return false;
+      !putText(f, h.body->msgType()) || !putText(f, body.cspan())) return false;
   }
   return f.sync() == Zi::OK;
 }
@@ -74,7 +109,8 @@ static bool load(const Options &o, NativeCheckpoint &s) {
     h.body = Zfix::TxBody::restore<NewOrder>(body, id, error);
     if (error || !h.body || h.body->memory() > o.cacheBytes - bytes) return false;
     Order order;
-    if (Zfix::Fmt::load(order, body) || !id || order.key != id || id > s.businessKey)
+    if (!Zfix::Fmt::read<Order, ZuFacet::FIX, Zfix::ArchiveField>(order, body, error) ||
+	!id || order.key != id || id > s.businessKey)
       return false;
     bytes += h.body->memory(); last = h.seqNo; s.history.push(ZuMv(h));
   }
@@ -82,13 +118,27 @@ static bool load(const Options &o, NativeCheckpoint &s) {
 }
 template <typename Net> static int server(const Options &options, Ports ports) {
   NativeState state{options, ZuMv(ports), true};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  auto mxParams = nativeMxParams(options, true);
+  mxParams.tcpBufAllocator(new typename Net::template RxAllocator<>{
+    mxParams.rxRingSize()})
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
-  }).rxThread(1).txThread(2)};
+  }).rxThread(1).txThread(2);
+#ifdef ZiMultiplex_BENCH
+  if (state.diag) {
+    state.diag->prepare(mxParams.scheduler().nThreads());
+    mxParams.benchFn(state.diag->observer());
+  }
+#endif
+  ZiMultiplex mx{ZuMv(mxParams)};
   auto deadline = Zm::now(options.deadline); auto start = monotonic();
   if (!mx.start()) return 1;
+  for (auto &result : state.results) {
+    result.backend = backendName(mx.backend());
+    result.rxRingSize = mx.rxRingSize(); result.txRingSize = mx.txRingSize();
+  }
   using Hub = NativeHub<Net, false>;
   Rows<ZuPtr<Hub>> hubs;
   for (unsigned i = 0; i < options.sessions; ++i) {
@@ -104,7 +154,9 @@ template <typename Net> static int server(const Options &options, Ports ports) {
     for (unsigned i = 0; i < options.sessions; ++i)
       if (state.listening.timedwait(deadline)) { state.fail(); break; }
     if (!state.errors.load_()) {
-      Ready ready; ready.role = "acceptor"; ready.ports = state.ports; output(ready);
+      Ready ready; ready.backend = backendName(mx.backend());
+      ready.rxRingSize = mx.rxRingSize(); ready.txRingSize = mx.txRingSize();
+      ready.role = "acceptor"; ready.ports = state.ports; output(ready);
       if (state.done.timedwait(deadline)) state.fail();
     }
   }
@@ -132,6 +184,12 @@ template <typename Net> static int server(const Options &options, Ports ports) {
   for (auto &hub : hubs) if (hub->active && !hub->stop()) state.fail();
   for (auto &hub : hubs) if (hub->initialized) hub->final();
   mx.stop(); hubs.length(0);
+#ifndef _WIN32
+  if (state.serverWindow && !state.serverWindow->finish("zfix", options.sessions)) state.fail();
+#endif
+#ifdef ZiMultiplex_BENCH
+  if (state.diag) state.diag->report(backendName(mx.backend()));
+#endif
   if (state.closed != state.expected || state.ready != state.expected) state.fail();
   const unsigned errors = state.errors.load_(); bool failed = errors;
   for (auto &r : state.results) {
@@ -150,16 +208,35 @@ template <typename Net> static int client(const Options &options, Ports ports) {
     ZiLOG(Error, "zfix", "invalid native workload checkpoint"); return 1;
   }
   NativeHub<Net, true> hub{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  auto mxParams = nativeMxParams(options, false);
+  mxParams.tcpBufAllocator(new typename Net::template RxAllocator<>{
+    mxParams.rxRingSize()})
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
-  }).rxThread(1).txThread(2)};
+  }).rxThread(1).txThread(2);
+#ifdef ZiMultiplex_BENCH
+  if (state.diag) {
+    state.diag->prepare(mxParams.scheduler().nThreads());
+    mxParams.benchFn(state.diag->observer());
+  }
+#endif
+  ZiMultiplex mx{ZuMv(mxParams)};
   auto deadline = Zm::now(options.deadline);
   if (!mx.start()) return 1;
+  for (auto &result : state.results) {
+    result.backend = backendName(mx.backend());
+    result.rxRingSize = mx.rxRingSize(); result.txRingSize = mx.txRingSize();
+  }
   typename Net::ClientParams params{&mx, "3", "4"};
   if constexpr (Net::Encrypted) params.caPath(options.ca);
   bool initialized = hub.init(ZuMv(params)), active = initialized && hub.start();
+#ifndef _WIN32
+  if (state.window) state.window->configure(
+    WindowClient::Post{[&hub](WindowClient::Fn fn) { hub.rxRun([fn = ZuMv(fn)] { fn(); }); }},
+    WindowClient::Fn{[&state] { state.fail(); }});
+#endif
   Rows<ZmRef<NativeLink<Net, true>>> links;
   if (!active) state.fail();
   else {
@@ -169,9 +246,13 @@ template <typename Net> static int client(const Options &options, Ports ports) {
       link->connect(options.host, state.ports[i]); links.push(ZuMv(link));
     }
     if (state.readySem.timedwait(deadline)) state.fail();
-    else if (!state.errors.load_()) { Ready ready; ready.role = "initiator";
+    else if (!state.errors.load_()) { Ready ready; ready.backend = backendName(mx.backend()); ready.role = "initiator";
+      ready.rxRingSize = mx.rxRingSize(); ready.txRingSize = mx.txRingSize();
       ready.ports = state.ports; output(ready); }
     if (!state.errors.load_() && state.done.timedwait(deadline)) state.fail();
+#ifndef _WIN32
+    if (!state.errors.load_() && state.window && !state.window->finish("zfix", deadline)) state.fail();
+#endif
     for (auto &link : links) {
       if (state.errors.load_()) link->disconnect(); else link->logout();
     }
@@ -184,12 +265,18 @@ template <typename Net> static int client(const Options &options, Ports ports) {
 	state.stopped.wait();
       }
   }
+#ifndef _WIN32
+  if (state.window) state.window->shutdown();
+#endif
   heapEvent();
   if (active && !hub.stop()) state.fail();
   if (initialized) hub.final();
   if (!ZiResolver::stopSync()) state.fail();
   ZiResolver::final();
   mx.stop(); links.length(0);
+#ifdef ZiMultiplex_BENCH
+  if (state.diag) state.diag->report(backendName(mx.backend()));
+#endif
   if (state.closed != options.sessions || state.ready != options.sessions) state.fail();
   const unsigned errors = state.errors.load_(); bool failed = errors;
   for (auto &r : state.results) {
@@ -215,10 +302,32 @@ int native(bool acceptor, int argc, char **argv) {
   Options o; Ports ports;
   if (!options(o, acceptor, argc, argv, ports)) { usage(acceptor); return 2; }
   if (o.help) { usage(acceptor); return 0; }
+  if ((o.rxRingSize && (o.rxRingSize < ZiMxParams::MinRingSize ||
+      o.rxRingSize > ZiMxParams::MaxRingSize)) ||
+      (o.txRingSize && (o.txRingSize < ZiMxParams::MinRingSize ||
+      o.txRingSize > ZiMxParams::MaxRingSize))) {
+    fprintf(stderr, "ring sizes must be zero or in [%u, %u]\n",
+      unsigned(ZiMxParams::MinRingSize), unsigned(ZiMxParams::MaxRingSize));
+    return 2;
+  }
+#ifndef ZiMultiplex_BENCH
+  if (o.observeIO) {
+    fprintf(stderr, "--observe-io requires a ZiMultiplex_BENCH build\n");
+    return 2;
+  }
+#endif
   ZiLog::init(acceptor ? "zfixd" : "zfix");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   int result;
+#ifdef ZiMultiplex_BENCH
+  if (o.observeIO) {
+    if (acceptor) result = o.tcp ? server<DiagnosticNet<Zfix::TCP>>(o, ZuMv(ports)) :
+      server<DiagnosticNet<Zfix::TLS>>(o, ZuMv(ports));
+    else result = o.tcp ? client<DiagnosticNet<Zfix::TCP>>(o, ZuMv(ports)) :
+      client<DiagnosticNet<Zfix::TLS>>(o, ZuMv(ports));
+  } else
+#endif
   if (acceptor) result = o.tcp ? server<Zfix::TCP>(o, ZuMv(ports)) :
     server<Zfix::TLS>(o, ZuMv(ports));
   else result = o.tcp ? client<Zfix::TCP>(o, ZuMv(ports)) : client<Zfix::TLS>(o, ZuMv(ports));

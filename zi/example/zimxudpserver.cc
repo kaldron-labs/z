@@ -87,15 +87,15 @@ public:
 
   void disconnected(bool) { Global::post(); }
 
-  void connected(ZiIOContext &io) { recvEcho(io); }
+  void connected(ZiRxContext &io) { recvEcho(io); }
 
-  bool recvEcho(ZiIOContext &io) {
-    io.init(ZiIOFn{this, ZmFnPtr<&Connection::recvComplete>{}});
+  bool recvEcho(ZiRxContext &io) {
+    io.init(ZiRxFn{this, ZmFnPtr<&Connection::recvComplete>{}});
     return true;
   }
-  bool recvComplete(ZiIOContext &);
+  bool recvComplete(ZiRxContext &);
 
-  void sending(ZiIOContext &io) {
+  void sending(ZiTxContext &io) {
     auto pkt = static_cast<Packet *>(io.buf.ptr());
     io.addr = pkt->addr;
     io.tos = pkt->tos;
@@ -114,8 +114,8 @@ public:
   Mx(ZiIP localIP, unsigned localPort, ZiIP remoteIP, unsigned remotePort,
       bool connect, const ZiCxnOptions &options, unsigned nMessages,
       ZiMxParams params) :
-    ZiMultiplex(ZuMv(params).udpBufAllocator(new Zi::RxUDPBufAllocator<
-      Packet, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>)),
+    ZiMultiplex(ZuMv(params).udpBufAllocator<Zi::RxUDPBufAllocator<
+      Packet, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>>()),
     m_localIP(localIP), m_localPort(localPort),
     m_remoteIP(remoteIP), m_remotePort(remotePort),
     m_connect(connect), m_options(options), m_nMessages(nMessages) { }
@@ -157,7 +157,7 @@ private:
 	  ZmScheduler::Timer	m_retryTimer;
 	};
 
-bool Connection::recvComplete(ZiIOContext &io)
+bool Connection::recvComplete(ZiRxContext &io)
 {
   auto buf = ZmRef<Packet>::acquire(static_cast<Packet *>(ZuMv(io.buf).release()));
   buf->addr = !m_dest ? io.addr : m_dest;

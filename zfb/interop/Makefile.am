@@ -32,7 +32,7 @@ zfbmapbench_SOURCES = zfbmapbench.cc
 $(am_zfbmapbench_OBJECTS): | fb-deps
 $(am_zfbmapbench_OBJECTS): maps_generated.h
 
-EXTRA_DIST = README.md bench.fbs maps.fbs trace-growth.py contracts.md codec-history.md
+EXTRA_DIST = README.md bench.fbs maps.fbs trace-growth.py codec-history.md
 .PHONY: test
 test: $(noinst_PROGRAMS)
 	prove zfbinterop zfbmapinterop

@@ -71,11 +71,9 @@ void App::attach_()
   m_source = g_source_new(&funcs, sizeof(GSource));
   g_source_attach(m_source, nullptr);
 
-  m_sched->push([this]{
-    m_sched->wakeFn(m_sid,
-      ZmScheduler::WakeFn{this, [](App *app) { app->wake(); }});
-    run_();
-  }, m_sid);
+  m_sched->wakeFn(m_sid,
+    ZmScheduler::WakeFn{this, [](App *app) { app->wake(); }});
+  m_sched->push([this]() { run_(); }, m_sid);
 }
 
 void App::detach_()

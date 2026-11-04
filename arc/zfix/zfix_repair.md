@@ -12,7 +12,7 @@ runtime verification is complete for that authorized scope. See the current-buil
 record in [zfix/STATUS.md](zfix/STATUS.md) for results and repairs found by testing.
 Current evidence is recorded in [zfix/STATUS.md](zfix/STATUS.md). Source:
 [zfix_findings.md](zfix_findings.md), with the subsequent
-user corrections incorporated below. `GUIDELINES.md` is authoritative.
+user corrections incorporated below. `docs/GUIDELINES.md` is authoritative.
 Sections 1–6 use final source identifiers. The naming section records the
 pre-repair-to-final mapping; its old names identify the original snapshot only.
 It does not define an alternative API or authorize keeping both names.

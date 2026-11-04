@@ -273,6 +273,10 @@ struct WriterOps {
   ZmRef<ZiIOBuf> (*alloc)(void *, unsigned);
   ZuSpan<uint8_t> (*reserve)(void *, unsigned);
   void (*commit)(void *, unsigned);
+  bool (*range)(void *, Zi::RxRange);
+  bool (*canAdopt)(const void *, const ZiIOBuf &, unsigned, unsigned) = nullptr;
+  bool (*allocated)(const void *, const ZiIOBuf *) = nullptr;
+  bool (*takeAllocated)(void *, ZmRef<ZiIOBuf>) = nullptr;
 };
 
 class Writer {
@@ -282,14 +286,52 @@ public:
   Writer &operator =(const Writer &) = delete;
   ~Writer() { (void)flush(); }
 
-  bool flush() { m_span = {}; return m_ops->flush(m_ctx); }
-  bool failed() const { return m_ops->failed(m_ctx); }
+  bool flush() { m_span = {}; return m_ops->flush(m_ctx) && !m_failed; }
+  bool failed() const { return m_failed || m_ops->failed(m_ctx); }
   uint64_t produced() const { return m_ops->produced(m_ctx); }
   unsigned maxSize() const { return m_ops->maxSize(m_ctx); }
   unsigned headRoom() const { return m_ops->headRoom(m_ctx); }
   unsigned tailRoom() const { return m_ops->tailRoom(m_ctx); }
   ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     return m_ops->alloc(m_ctx, headRoom);
+  }
+  bool allocatedBuf_(const ZiIOBuf *buf) const {
+    return m_ops->allocated && m_ops->allocated(m_ctx, buf);
+  }
+  template <typename Buf,
+    typename = ZuIfT<ZuIsSame<ZuDecay<Buf>, ZmRef<ZiIOBuf>>{}>>
+  bool allocatedBuf_(Buf &&buf) {
+    m_span = {};
+    ZmRef<ZiIOBuf> held = ZuFwd<Buf>(buf);
+    if (failed() || !held || held->failed() || !m_ops->takeAllocated ||
+	!m_ops->takeAllocated(m_ctx, ZuMv(held))) {
+      m_failed = true; return false;
+    }
+    return true;
+  }
+  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+    if (m_ops->canAdopt) return m_ops->canAdopt(m_ctx, buf, head, tail);
+    if (head > buf.skip || tail > buf.avail()) return false;
+    uint64_t reserve = uint64_t(headRoom()) + tailRoom();
+    uint64_t length = uint64_t(buf.length) + head + tail;
+    return reserve < maxSize() && length <= maxSize() - reserve &&
+      buf.skip - head >= headRoom() && buf.avail() - tail >= tailRoom();
+  }
+  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
+    if (!buf || offset > buf->length || length > buf->length - offset)
+      return appendRange(Zi::RxRange{});
+    return appendRange(Zi::RxRange{ZuMv(buf), offset, length});
+  }
+  bool appendRange(Zi::RxRange range) {
+    m_span = {};
+    if (failed() || !m_ops->range || !range.buf ||
+	range.offset > range.buf->size ||
+	range.length > range.buf->size - range.offset ||
+	!m_ops->range(m_ctx, ZuMv(range))) {
+      m_failed = true;
+      return false;
+    }
+    return true;
   }
   bool reserve(unsigned length) {
     m_span = m_ops->reserve(m_ctx, length);
@@ -304,11 +346,13 @@ public:
   ZuOpBool
 
   Writer &operator <<(ZuBSpan v) {
+    if (failed()) return *this;
     m_span = {};
     m_ops->append(m_ctx, v);
     return *this;
   }
   Writer &operator <<(ZmRef<ZiIOBuf> buf) {
+    if (failed()) return *this;
     m_span = {};
     m_ops->buffer(m_ctx, ZuMv(buf));
     return *this;
@@ -340,6 +384,7 @@ public:
   }
 
 private:
+  bool m_failed = false;
   void		*m_ctx;
   const WriterOps *m_ops;
   ZuSpan<uint8_t> m_span;
@@ -603,21 +648,13 @@ struct ResponseOps {
   void (*encode)(void *, FieldContext &, void *, void (*)(void *, FieldProvider &));
 };
 
-// Ready responses use list links; ordered H1 replies use separate tree links.
-// The three tree words avoid an unbounded sorted-list scan without a wrapper.
-struct ResponseRecord : MessageRecord, ZmList_NodeExt<ResponseRecord>,
-    ZmRBTree_NodeExt<ResponseRecord, true> {
-  using Ext = ZmList_NodeExt<ResponseRecord>;
-
+struct ResponseData : MessageRecord {
   const ResponseOps *responseOps = nullptr;
   const CatalogView *catalog = nullptr;
   uint64_t sequence = 0;
   unsigned hdrBufSize = 0;
   unsigned hdrPlan = unsigned(-1);
 
-  ResponseRecord &data() { return *this; }
-  const ResponseRecord &data() const { return *this; }
-  uint64_t key() const { return sequence; }
   uint64_t routeSequence() const { return sequence; }
   void routeSequence(uint64_t value) { sequence = value; }
   unsigned status() const { return responseOps->status(ctx); }
@@ -635,6 +672,14 @@ struct ResponseRecord : MessageRecord, ZmList_NodeExt<ResponseRecord>,
     responseOps->encode(ctx, fields, encoder, put);
   }
 };
+
+// Ready responses use generated list nodes; ordered H1 replies have separate
+// tree links in the same embedded record, without another allocation.
+using ResponseList = ZmList<ResponseData,
+  ZmListKey<[](const ResponseData &response) { return response.sequence; },
+    ZmListNode<MessageRecord, ZmListShadow<>>>>;
+struct ResponseRecord : ResponseList::Node,
+    ZmRBTree_NodeExt<ResponseRecord, true> { };
 
 using ResponseRef = RecordRef<ResponseRecord>;
 

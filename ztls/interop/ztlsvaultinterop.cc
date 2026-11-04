@@ -51,6 +51,22 @@ static Zi::Path agePath(const Zi::Path &dir, ZuCSpan account)
 #pragma GCC diagnostic pop
 #endif
 
+// The environment line precedes acquisition of the Secret Service bus name.
+// Wait on that actual readiness event, on the fixture main thread only.
+static bool serviceReady()
+{
+  pid_t child = ::fork();
+  if (!child) {
+    ::execlp("gdbus", "gdbus", "wait", "--session", "--timeout=5",
+      "org.freedesktop.secrets", static_cast<char *>(nullptr));
+    ::_exit(errno == ENOENT ? 127 : 126);
+  }
+  if (child < 0) return false;
+  int status = 0;
+  return ZdbusTestTool::waitChild(child, 0, status) &&
+    WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 static void native()
 {
   ZuTestScopeRT(native);
@@ -145,6 +161,7 @@ static void native()
   }};
   ZdbusAddress::Text daemonReady;
   ZuCheckRT(ZdbusTestTool::line(daemonOut[0], daemonReady));
+  ZuCheckRT(serviceReady());
 
   Ztls::VaultConfig cf;
   cf.program = "ztls-vault-interop-test";

@@ -64,9 +64,20 @@ void usage(int code = 1)
   ::exit(code);
 }
 
-ZiMxParams mxParams()
+ZiMxParams mxParams(unsigned bytes)
 {
+  // One outstanding round trip, including framing and retirement overlap.
+  uint64_t needed = 4 * ((uint64_t(bytes) + ZiIOBuf_DefltSize - 1)/ZiIOBuf_DefltSize);
+  unsigned slots = needed > ZiMxParams::MaxRingSize ?
+    unsigned(ZiMxParams::MaxRingSize) : unsigned(needed);
   return ZiMxParams()
+    .rxRingSize(slots < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : slots)
+    .txRingSize(slots < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : slots)
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -327,7 +338,7 @@ int run(const Options &options, const TempDir &temp)
   for (unsigned i = 0; i < payloadLen; ++i)
     payloadData[i] = 'a' + (i % 26);
 
-  ZiMultiplex mx{mxParams()};
+  ZiMultiplex mx{mxParams(options.size)};
   if (!state.port || !mx.start()) return 1;
   ServerApp serverApp{&state};
   ClientApp clientApp{&state};

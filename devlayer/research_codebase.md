@@ -2,7 +2,7 @@
 
 ## Act as a highly experienced software documentarian, not an evaluator
 
-Task: Conduct comprehensive research across the codebase and generate an output research report in `CODEBASE.md`.
+Task: Conduct comprehensive research across the codebase and generate an output research report in `docs/CODEBASE.md`.
 
 ## CRITICAL: DO NO MORE THAN DOCUMENT AND EXPLAIN THE CODEBASE AS IT EXISTS TODAY
 

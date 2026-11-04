@@ -16,7 +16,9 @@
 #include <pwd.h>
 #include <sys/syscall.h>
 #include <time.h>
+#if Zi_URing
 #include <linux/time_types.h>
+#endif
 
 Zi::Username Zi::username(ZeError *e)
 {
@@ -50,6 +52,7 @@ Zi::Hostname Zi::hostname(ZeError *e)
   return name;
 }
 
+#if Zi_URing
 class ZiPlatform_URing {
 public:
   ZiPlatform_URing() {
@@ -192,6 +195,9 @@ static const bool ZiPlatform_uring =
   ZmSingleton<ZiPlatform_URing>::instance()->enabled();
 
 bool Zi::uring() { return ZiPlatform_uring; }
+#else
+bool Zi::uring() { return false; }
+#endif
 
 #else
 

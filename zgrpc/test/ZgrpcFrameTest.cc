@@ -12,7 +12,8 @@
 
 using namespace ZuTestUtil;
 using namespace Zgrpc;
-using Pool = ZiIOBufAlloc<32, 1U << 20, "ZgrpcFrameTest">;
+using Pool = Zi::IOBufAlloc<ZiIOBuf, 32, 1U << 20,
+  ZuStringT<"ZgrpcFrameTest">>;
 
 struct Payload { ZuBSpan bytes; };
 ZfStruct(, (Payload, PB), (bytes, (Ctor<0>, PB::FieldID<1>), Bytes));
@@ -64,21 +65,21 @@ ZuAssert((MethodValid<RichRPC>{}));
 
 static void splits()
 {
-  ZuTestScope(splits);
+  ZuTestScopeRT(splits);
   const uint8_t wire[] = {0, 0, 0, 0, 3, 'a', 'b', 'c'};
   for (unsigned split = 0; split <= sizeof(wire); split++) {
     FrameRx rx;
     Frame frame;
     unsigned used = 0;
     auto result = rx.feed({wire, split}, nullptr, used, frame);
-    ZuCheck(used == split);
+    ZuCheckRT(used == split);
     if (split < sizeof(wire)) {
-      ZuCheck(result == FrameResult::More);
+      ZuCheckRT(result == FrameResult::More);
       result = rx.feed({wire + split, sizeof(wire) - split}, nullptr, used, frame);
-      ZuCheck(used == sizeof(wire) - split);
+      ZuCheckRT(used == sizeof(wire) - split);
     }
-    ZuCheck(result == FrameResult::Message && frame.bytes == ZuBSpan{"abc"});
-    ZuCheck(frame.backing && rx.end());
+    ZuCheckRT(result == FrameResult::Message && frame.bytes == ZuBSpan{"abc"});
+    ZuCheckRT(frame.backing && rx.end());
   }
   // Feed every byte independently, then reuse the input before inspecting output.
   FrameRx rx;
@@ -88,42 +89,42 @@ static void splits()
     unsigned used;
     auto result = rx.feed({&c, 1}, nullptr, used, frame);
     c = 0xff;
-    ZuCheck(used == 1 && result ==
+    ZuCheckRT(used == 1 && result ==
       (i + 1 == sizeof(wire) ? FrameResult::Message : FrameResult::More));
   }
-  ZuCheck(frame.bytes == ZuBSpan{"abc"} && rx.end());
+  ZuCheckRT(frame.bytes == ZuBSpan{"abc"} && rx.end());
 }
 
 static void coalesced()
 {
-  ZuTestScope(coalesced);
+  ZuTestScopeRT(coalesced);
   const uint8_t wire[] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 'x', 0, 0, 0, 0, 0};
   FrameRx rx;
   unsigned offset = 0;
   for (unsigned i = 0; i < 3; i++) {
     Frame frame;
     unsigned used;
-    ZuCheck(rx.feed({wire + offset, sizeof(wire) - offset}, nullptr, used, frame) ==
+    ZuCheckRT(rx.feed({wire + offset, sizeof(wire) - offset}, nullptr, used, frame) ==
       FrameResult::Message);
     offset += used;
-    ZuCheck(frame.bytes.length() == (i == 1 ? 1 : 0));
+    ZuCheckRT(frame.bytes.length() == (i == 1 ? 1 : 0));
   }
-  ZuCheck(offset == sizeof(wire) && rx.end());
+  ZuCheckRT(offset == sizeof(wire) && rx.end());
 }
 
 static void errors()
 {
-  ZuTestScope(errors);
+  ZuTestScopeRT(errors);
   const uint8_t wire[] = {0, 0, 0, 0, 3, 'a', 'b', 'c'};
   for (unsigned n = 1; n < sizeof(wire); n++) {
     FrameRx rx;
     Frame frame;
     unsigned used;
     rx.feed({wire, n}, nullptr, used, frame);
-    ZuCheck(!rx.end() && rx.error() == FrameError::Truncated);
-    ZuCheck(rx.feed(wire, nullptr, used, frame) == FrameResult::Failed && !used);
+    ZuCheckRT(!rx.end() && rx.error() == FrameError::Truncated);
+    ZuCheckRT(rx.feed(wire, nullptr, used, frame) == FrameResult::Failed && !used);
     rx.reset(3);
-    ZuCheck(rx.feed(wire, nullptr, used, frame) == FrameResult::Message && rx.end());
+    ZuCheckRT(rx.feed(wire, nullptr, used, frame) == FrameResult::Message && rx.end());
   }
   const uint8_t flags[] = {1, 2, 255};
   for (auto flag : flags) {
@@ -131,42 +132,42 @@ static void errors()
     FrameRx rx;
     Frame frame;
     unsigned used;
-    ZuCheck(rx.feed(prefix, nullptr, used, frame) == FrameResult::Failed);
-    ZuCheck(rx.error() == (flag == 1 ? FrameError::Compression : FrameError::Flag));
-    ZuCheck(!frame.backing);
+    ZuCheckRT(rx.feed(prefix, nullptr, used, frame) == FrameResult::Failed);
+    ZuCheckRT(rx.error() == (flag == 1 ? FrameError::Compression : FrameError::Flag));
+    ZuCheckRT(!frame.backing);
   }
   FrameRx rx{2};
   Frame frame;
   unsigned used;
-  ZuCheck(rx.feed(wire, nullptr, used, frame) == FrameResult::Failed && used == 5);
-  ZuCheck(rx.error() == FrameError::Limit && !frame.backing);
+  ZuCheckRT(rx.feed(wire, nullptr, used, frame) == FrameResult::Failed && used == 5);
+  ZuCheckRT(rx.error() == FrameError::Limit && !frame.backing);
   rx.reset(UINT_MAX);
   const uint8_t huge[] = {0, 255, 255, 255, 255};
-  ZuCheck(rx.feed(huge, nullptr, used, frame) == FrameResult::Failed && used == 5);
-  ZuCheck(rx.error() == FrameError::Limit);
+  ZuCheckRT(rx.feed(huge, nullptr, used, frame) == FrameResult::Failed && used == 5);
+  ZuCheckRT(rx.error() == FrameError::Limit);
 }
 
 static void budgets()
 {
-  ZuTestScope(budgets);
+  ZuTestScopeRT(budgets);
   const uint8_t wire[] = {0, 0, 0, 0, 3, 'a', 'b', 'c'};
   FrameRx rx;
   Frame frame;
   unsigned used, offset = 0;
-  ZuCheck(rx.feed(wire, nullptr, used, frame, 0) == FrameResult::More && !used);
+  ZuCheckRT(rx.feed(wire, nullptr, used, frame, 0) == FrameResult::More && !used);
   while (offset < sizeof(wire)) {
     auto result = rx.feed({wire + offset, sizeof(wire) - offset}, nullptr, used, frame, 2);
-    ZuCheck(used <= 2 && used > 0);
+    ZuCheckRT(used <= 2 && used > 0);
     offset += used;
-    ZuCheck(result == (offset == sizeof(wire) ? FrameResult::Message : FrameResult::More));
+    ZuCheckRT(result == (offset == sizeof(wire) ? FrameResult::Message : FrameResult::More));
   }
-  ZuCheck(frame.bytes == ZuBSpan{"abc"} && rx.end());
+  ZuCheckRT(frame.bytes == ZuBSpan{"abc"} && rx.end());
 }
 
 static void buffers()
 {
   ZuTestScope(buffers);
-  ZmRef<ZiIOBuf> buf = new Pool{};
+  ZmRef<ZiIOBuf> buf = new Pool{nullptr, 0};
   const uint8_t wire[] = {0, 0, 0, 0, 3, 'a', 'b', 'c'};
   memcpy(buf->data(), wire, sizeof(wire));
   buf->length = sizeof(wire);
@@ -181,39 +182,48 @@ static void buffers()
 
 static void protobuf()
 {
-  ZuTestScope(protobuf);
+  ZuTestScopeRT(protobuf);
   for (auto size : {0U, 1U, 300U, 70000U}) {
     Bytes data;
     data.length(size);
     if (size) memset(data.data(), 0x71, size);
-    ZmRef<ZiIOBuf> initial = new Pool{};
+    ZmRef<ZiIOBuf> initial = new Pool{nullptr, 0};
     initial->skip = 8;
     FrameError::T error;
+    auto identity = initial.ptr();
     auto buf = encodeFrame(initial, 4, 100000, Payload{data}, error);
-    ZuCheck(buf && error == FrameError::OK && buf->skip >= 8 && buf->avail() >= 4);
+    ZuCheckRT(buf.ptr() == identity);
+    ZuCheckRT(buf && error == FrameError::OK && buf->skip >= 8 && buf->avail() >= 4);
     FrameRx rx;
     Frame frame;
     unsigned used;
-    ZuCheck(rx.feed(buf->cspan(), buf, used, frame) == FrameResult::Message);
-    ZuCheck(Zpb::verify<Payload>(frame.bytes));
+    ZuCheckRT(rx.feed(buf->cspan(), buf, used, frame) == FrameResult::Message);
+    ZuCheckRT(Zpb::verify<Payload>(frame.bytes));
     auto object = Zpb::handler<Payload>(frame.bytes).ctor();
-    ZuCheck(object.bytes == ZuBSpan{data});
+    ZuCheckRT(object.bytes == ZuBSpan{data});
   }
   FrameError::T error;
-  auto empty = encodeFrame(ZmRef<ZiIOBuf>{new Pool{}}, 0, 0, Payload{}, error);
-  ZuCheck(empty && empty->length == PrefixSize && error == FrameError::OK);
-  auto fail = encodeFrame(ZmRef<ZiIOBuf>{new Pool{}}, 0, 1, Payload{{"abc"}}, error);
-  ZuCheck(!fail && error == FrameError::Limit);
-  auto overflow = encodeFrame(ZmRef<ZiIOBuf>{new Pool{}}, UINT_MAX, UINT_MAX,
+  auto empty = encodeFrame(ZmRef<ZiIOBuf>{new Pool{nullptr, 0}}, 0, 0, Payload{}, error);
+  ZuCheckRT(empty && empty->length == PrefixSize && error == FrameError::OK);
+  ZmRef<ZiIOBuf> tiny = new Pool{nullptr, 0};
+  tiny->skip = tiny->size - 2;
+  auto identity = tiny.ptr();
+  auto grown = encodeFrame(ZuMv(tiny), 0, 0, Payload{}, error);
+  ZuCheckRT(grown && grown.ptr() == identity && grown->length == PrefixSize);
+  ZuCheckRT(grown->skip + grown->length <= grown->size && grown->jumbo());
+  ZuCheckRT(error == FrameError::OK);
+  auto fail = encodeFrame(ZmRef<ZiIOBuf>{new Pool{nullptr, 0}}, 0, 1, Payload{{"abc"}}, error);
+  ZuCheckRT(!fail && error == FrameError::Limit);
+  auto overflow = encodeFrame(ZmRef<ZiIOBuf>{new Pool{nullptr, 0}}, UINT_MAX, UINT_MAX,
     Payload{}, error);
-  ZuCheck(!overflow && error == FrameError::Limit);
+  ZuCheckRT(!overflow && error == FrameError::Limit);
 }
 
 static void decoding()
 {
   ZuTestScope(decoding);
   FrameError::T error;
-  auto encoded = encodeFrame(ZmRef<ZiIOBuf>{new Pool{}}, 0, 100,
+  auto encoded = encodeFrame(ZmRef<ZiIOBuf>{new Pool{nullptr, 0}}, 0, 100,
     CtorOnly{Payload{{"borrowed"}}}, error);
   FrameRx rx;
   Frame frame;
@@ -234,7 +244,7 @@ static void decoding()
 
 static void rich()
 {
-  ZuTestScope(rich);
+  ZuTestScopeRT(rich);
   // Independent protobuf bytes: unknown varint and delimited fields, packed
   // integers, a borrowed map value, a nested message, and a oneof alternative.
   const uint8_t wire[]{
@@ -248,23 +258,23 @@ static void rich()
   const uint8_t last[]{0x9a, 0x01, 0x05, 0x0a, 0x03, 'a', 'l', 't'};
   for (bool changed : {false, true}) {
     auto check = [changed](const Rich &value) {
-      ZuCheck(value.id == 42 && value.nested.bytes == ZuBSpan{"nested"});
-      ZuCheck(value.nums.length() == 3 && value.nums[0] == 1 &&
+      ZuCheckRT(value.id == 42 && value.nested.bytes == ZuBSpan{"nested"});
+      ZuCheckRT(value.nums.length() == 3 && value.nums[0] == 1 &&
 	value.nums[1] == 2 && value.nums[2] == 3);
       auto entry = value.map.find(5);
-      ZuCheck(value.map.count_() == 1 && entry, (return));
-      ZuCheck(entry->val() == ZuBSpan{"map"});
+      ZuCheckRT(value.map.count_() == 1 && entry, (return));
+      ZuCheckRT(entry->val() == ZuBSpan{"map"});
       if (changed) {
-	ZuCheck(value.choice.is<Payload>(), (return));
-	ZuCheck(value.choice.p<Payload>().bytes == ZuBSpan{"alt"});
+	ZuCheckRT(value.choice.is<Payload>(), (return));
+	ZuCheckRT(value.choice.p<Payload>().bytes == ZuBSpan{"alt"});
       } else {
-	ZuCheck(value.choice.is<ChoiceNum>(), (return));
-	ZuCheck(value.choice.p<ChoiceNum>().value == 9);
+	ZuCheckRT(value.choice.is<ChoiceNum>(), (return));
+	ZuCheckRT(value.choice.p<ChoiceNum>().value == 9);
       }
     };
     auto size = sizeof(wire) + (changed ? sizeof(last) : 0);
-    ZmRef<ZiIOBuf> input = new Pool{};
-    ZuCheck(input->ensure(PrefixSize + size), (return));
+    ZmRef<ZiIOBuf> input = new Pool{nullptr, 0};
+    ZuCheckRT(input->ensure(PrefixSize + size), (return));
     framePrefix(input->data(), size);
     memcpy(input->data() + PrefixSize, wire, sizeof(wire));
     if (changed) memcpy(input->data() + PrefixSize + sizeof(wire), last, sizeof(last));
@@ -272,28 +282,47 @@ static void rich()
     FrameRx rx;
     Frame frame;
     unsigned used;
-    ZuCheck(rx.feed(input->cspan(), input, used, frame) == FrameResult::Message && rx.end());
+    ZuCheckRT(rx.feed(input->cspan(), input, used, frame) == FrameResult::Message && rx.end());
     auto decoded = decodeFrame<RichRPC::Request,
       RichRPC::ReqFacet, RichRPC::ReqBorrowed>(frame);
-    ZuCheck(decoded.is<Message<Rich>>(), (return));
+    ZuCheckRT(decoded.is<Message<Rich>>(), (return));
     auto message = ZuMv(decoded.p<Message<Rich>>());
-    ZuCheck(message.backing.ptr() == input.ptr());
+    ZuCheckRT(message.backing.ptr() == input.ptr());
     input = nullptr;
     frame = {};
     check(message.object()); // Nested/container views survive receive retirement.
     FrameError::T error;
-    auto output = encodeFrame(ZmRef<ZiIOBuf>{new Pool{}}, 0, 1024, message.object(), error);
-    ZuCheck(output && error == FrameError::OK, (return));
-    ZuCheck(rx.feed(output->cspan(), output, used, frame) == FrameResult::Message && rx.end());
+    auto output = encodeFrame(ZmRef<ZiIOBuf>{new Pool{nullptr, 0}}, 0, 1024, message.object(), error);
+    ZuCheckRT(output && error == FrameError::OK, (return));
+    ZuCheckRT(rx.feed(output->cspan(), output, used, frame) == FrameResult::Message && rx.end());
     auto round = decodeFrame<RichRPC::Response,
       RichRPC::ResFacet, RichRPC::ResBorrowed>(frame);
-    ZuCheck(round.is<Message<Rich>>(), (return));
+    ZuCheckRT(round.is<Message<Rich>>(), (return));
     auto response = ZuMv(round.p<Message<Rich>>());
-    ZuCheck(response.backing.ptr() == output.ptr());
+    ZuCheckRT(response.backing.ptr() == output.ptr());
     output = nullptr;
     frame = {};
     check(response.object());
   }
+}
+
+static void fragmentedOwner()
+{
+  ZuTestScope(fragmentedOwner);
+  ZmRef<ZiIOBuf> first = new Pool{nullptr, 0};
+  uint8_t prefix[PrefixSize];
+  framePrefix(prefix, 6);
+  first->append(ZuBSpan{prefix});
+  first->append(ZuBSpan{"ab"});
+  auto identity = first.ptr();
+  auto input = first->cspan();
+  FrameRx parser;
+  Frame out;
+  unsigned used;
+  ZuCheck(parser.feed(input, ZuMv(first), used, out, UINT_MAX, true) == FrameResult::More);
+  ZuCheck(used == PrefixSize + 2 && !out.backing);
+  ZuCheck(parser.feed(ZuBSpan{"cdef"}, {}, used, out) == FrameResult::Message);
+  ZuCheck(out.backing.ptr() == identity && out.bytes == ZuBSpan{"abcdef"});
 }
 
 int main(int argc, char **argv)
@@ -305,6 +334,7 @@ int main(int argc, char **argv)
   ZuTestCall(errors);
   ZuTestCall(budgets);
   ZuTestCall(buffers);
+  ZuTestCall(fragmentedOwner);
   ZuTestCall(protobuf);
   ZuTestCall(decoding);
   ZuTestCall(rich);

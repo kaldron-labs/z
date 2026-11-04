@@ -6,6 +6,9 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
+
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZrestServer.hh>
 #include <zlib/ZmcpClient.hh>
@@ -116,18 +119,6 @@ private:
 
 using Catalog = ZuTypeList<AddOperation>;
 
-struct BodyRx {
-  ZuSpan<uint8_t> body;
-
-  template <typename Scan, typename Consume>
-  int64_t consume(Scan &&scan, Consume &&consume) {
-    int64_t n = scan(body);
-    if (n > 0)
-      consume(ZuSpan<uint8_t>{body.data(), static_cast<unsigned>(n)});
-    return n;
-  }
-};
-
 static SharedOutcome restCall(ZuCSpan authorization)
 {
   RESTAdd request;
@@ -145,7 +136,12 @@ static SharedOutcome restCall(ZuCSpan authorization)
   constexpr unsigned jsonLength = sizeof(json) - 1;
   request.bodyMax(jsonLength);
   if (!request.bodyInfo(Zhttp::BodyType::Fixed, jsonLength)) return {};
-  BodyRx rx{{json, jsonLength}};
+  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zmcp.ZrestTest.Rx">>;
+  ZmRef<ZiRxQueue::Node> buf = new Alloc{nullptr, 0};
+  if (!buf->append(ZuSpan<uint8_t>{json, jsonLength})) return {};
+  ZiRxStream<ZiRxQueue> rx;
+  rx.push(ZuMv(buf));
   if (!request.body(rx)) return {};
   return SharedHandler{}(*request.object, request);
 }

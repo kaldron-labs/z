@@ -898,7 +898,7 @@ capture copy and allposts remain. Move final-use update/delete temporarykeys
 into existing missing-row diagnostic lambdas (coldpath, no warm latencyclaim).
 Before accepted key49 sources/artifacts saved and verified; all owning binaries
 remain unchanged. No build/test/profiler thisturn; candidate source not accepted
-by earlier171 tests orpaired50 timings. Evidence `zdb/interop/evidence/repair2-20261010/read51/source.diff`, `README.md`,
+by earlier171 tests orpaired50 timings. Evidence `zdb/interop/evidence/repair2-20261010/read51/source.diff`, `docs/README.md`,
 unbuilt.json. Continue static batch review before owning-j4 milestone; no HTTP,
 aggregate, alternate configuration, exceptions or validation changes. Goalactive.
 

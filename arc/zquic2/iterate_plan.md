@@ -25,7 +25,7 @@ IMPORTANT
 - DO NOT RELY ON MEMORY - `http3_qpack.md` may have been edited outside this session
 - RETAIN ALL IMPORTANT DETAIL from `http3_qpack.md`
 - `http3_qpack.new.md` must be an improved and clarified version of `http3_qpack.md`, with no legacy open questions remaining and all details retained
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
+- Read `AGENTS.md` and `docs/CODEBASE.md` to understand the existing codebase
 - For each requirement, evaluate its complexity and feasibility, specifically:
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack
   - Comprehensively research the implications of the requirement for the codebase

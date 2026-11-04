@@ -26,6 +26,8 @@
 
 #include <zlib/ZtScratch.hh>
 
+#include <zlib/ZiIOBuf.hh>
+
 namespace Zhttp {
 
 template <typename Key_, typename Value_ = void>
@@ -184,6 +186,41 @@ struct ValueSpan {
   unsigned length = 0;
 };
 
+// Encoded fields live in the selected writer's original allocation. Growth
+// changes storage within that owner; all patch locations remain offsets.
+template <typename Writer>
+class WriterBytes {
+public:
+  explicit WriterBytes(Writer &writer, unsigned reserve = 0) :
+    m_buf{writer.allocBuf(writer.headRoom())}
+  {
+    if (m_buf) length(reserve);
+  }
+  bool valid() const { return m_buf && !m_buf->failed(); }
+  uint64_t length() const { return m_buf ? m_buf->length : 0; }
+  void length(uint64_t n) {
+    if (ensure(n)) m_buf->length = unsigned(n);
+  }
+  uint8_t *ensure(uint64_t n) {
+    if (!m_buf) return nullptr;
+    if (n > UINT_MAX) { m_buf->failed(true); return nullptr; }
+    return m_buf->ensure(unsigned(n));
+  }
+  uint8_t *data() { return m_buf->data(); }
+  const uint8_t *data() const { return m_buf->data(); }
+  uint8_t &operator [](uint64_t i) { return data()[i]; }
+  uint8_t operator [](uint64_t i) const { return data()[i]; }
+  void push(uint8_t c) {
+    auto n = m_buf->length;
+    auto p = ensure(uint64_t(n) + 1);
+    if (p) { p[n] = c; m_buf->length = n + 1; }
+  }
+  const ZmRef<ZiIOBuf> &buf() const { return m_buf; }
+
+private:
+  ZmRef<ZiIOBuf> m_buf;
+};
+
 template <typename Bytes>
 class FieldSectionBuffer {
 public:
@@ -199,6 +236,18 @@ public:
   int putPrint(
       uint8_t prefix, unsigned bits, const P &value,
       uint64_t &offset, unsigned &length) {
+    if constexpr (IsPrintString<P>{}) {
+      auto size = ZuTraits<P>::length(value);
+      if (size > UINT_MAX ||
+	  Compression::putPref(m_bytes, prefix, bits, size) < 0) return -1;
+      offset = m_bytes.length();
+      length = unsigned(size);
+      auto ptr = m_bytes.ensure(offset + length);
+      if (!ptr) return -1;
+      if (length) memcpy(ptr + offset, ZuTraits<P>::data(value), length);
+      m_bytes.length(offset + length);
+      return 0;
+    }
     uint64_t start_ = m_bytes.length();
     if (start_ > UINT32_MAX - PrefixReserve) return -1;
     if constexpr (ZuPrint<P>::Buffer) {
@@ -206,6 +255,7 @@ public:
       m_bytes.length(start_ + PrefixReserve);
       offset = m_bytes.length();
       auto ptr = m_bytes.ensure(offset + size);
+      if (!ptr) return -1;
       length = size ? ZuPrint<P>::print(
 	ZuSpan<char>{ptr + offset, size}.data(), size, value) : 0;
       if (length > size) return -1;
@@ -232,7 +282,7 @@ public:
   }
 
   template <typename L>
-  void each(uint64_t start, L &&l) const {
+  void eachRange(uint64_t start, L &&l) const {
     uint64_t offset = start;
     uint32_t link = m_head;
     while (link) {
@@ -240,14 +290,19 @@ public:
       uint32_t next;
       memcpy(&next, m_bytes.data() + gap, sizeof(next));
       unsigned length = m_bytes[gap + sizeof(next)];
-      if (gap > offset)
-	l(ZuBSpan{m_bytes.data() + offset, unsigned(gap - offset)});
+      if (gap > offset) l(offset, unsigned(gap - offset));
       offset = uint64_t(gap) + length;
       link = next;
     }
     if (offset < m_bytes.length())
-      l(ZuBSpan{
-	m_bytes.data() + offset, unsigned(m_bytes.length() - offset)});
+      l(offset, unsigned(m_bytes.length() - offset));
+  }
+
+  template <typename L>
+  void each(uint64_t start, L &&l) const {
+    eachRange(start, [this, &l](uint64_t offset, unsigned length) {
+      l(ZuBSpan{m_bytes.data() + offset, length});
+    });
   }
 
 private:

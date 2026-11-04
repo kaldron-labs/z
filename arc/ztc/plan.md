@@ -37,7 +37,7 @@ contract.
 
 ## Architecture Documentation
 
-Update `CODEBASE.md` as the implementation lands, in the same commits as the
+Update `docs/CODEBASE.md` as the implementation lands, in the same commits as the
 corresponding architectural changes:
 
 - Document `Ztc::App` as the active telemetry service and the `Ztc` contracts as

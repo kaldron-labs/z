@@ -179,9 +179,14 @@ static PathStatus appendOutput_(ZuCSpan path, const Zi::Path &downloads,
   return PathOK;
 }
 
-static ZiMxParams mxParams_()
+static ZiMxParams mxParams_(const Env &env)
 {
   return ZiMxParams()
+    .rxRingSize(env.rxRingSize).txRingSize(env.txRingSize)
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -322,7 +327,7 @@ static bool sendH3Request_(const Request &request, StreamRef stream)
   if (!builder.begin(tx)) return false;
   builder.finish(tx);
   tx.flush();
-  return !tx.failed() && stream->link()->send_(stream, {}, true);
+  return !tx.failed() && stream->link()->send_(stream, ZuBSpan{}, true);
 }
 
 struct HQServerLink;
@@ -907,6 +912,20 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
   getpathFn("QLOGDIR", env.qlogPath);
   setQLogPath_(env.qlogPath, role);
 
+  auto ringSize = [&](const char *name, unsigned &size) {
+    ZuCSpan s = env_(getenvFn, name);
+    if (!s.length()) return true;
+    ZuBox<unsigned> box;
+    if (box.scan(s) != s.length()) return false;
+    unsigned v = box;
+    if (v < ZiMxParams::MinRingSize || v > ZiMxParams::MaxRingSize)
+      return false;
+    size = v;
+    return true;
+  };
+  if (!ringSize("ZHTTP_QIR_RX_RING_SIZE", env.rxRingSize) ||
+      !ringSize("ZHTTP_QIR_TX_RING_SIZE", env.txRingSize)) return Usage;
+
   env.port = DefaultPort;
   ZuCSpan port = env_(getenvFn, "ZHTTP_QIR_PORT");
   if (port.length() && !scanPort_(port, env.port)) return Usage;
@@ -1023,7 +1042,7 @@ static int runHQServer_(const Env &env)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx{mxParams_()};
+  ZiMultiplex mx{mxParams_(env)};
   if (!mx.start()) {
     ZiLog::stop();
     return Error;
@@ -1062,7 +1081,7 @@ static int runHQClient_(const Env &env, Requests requests)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx{mxParams_()};
+  ZiMultiplex mx{mxParams_(env)};
   if (!mx.start()) {
     ZiLog::stop();
     return Error;
@@ -1112,7 +1131,7 @@ static int runH3Client_(const Env &env, Requests requests)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
 
-  ZiMultiplex mx{mxParams_()};
+  ZiMultiplex mx{mxParams_(env)};
   if (!mx.start()) {
     ZiLog::stop();
     return Error;
@@ -1149,6 +1168,8 @@ static int runH3Client_(const Env &env, Requests requests)
 static int runH3Server_(const Env &env)
 {
   Zhttpd::Options options;
+  options.rxRingSize = env.rxRingSize;
+  options.txRingSize = env.txRingSize;
   options.root = env.www;
   options.addr = "0.0.0.0";
   options.port = env.port;

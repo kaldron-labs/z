@@ -8,9 +8,9 @@
 
 // Ensure the included flatbuffers.h is the same version as when this file was
 // generated, otherwise it may not be compatible.
-static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
-              FLATBUFFERS_VERSION_MINOR == 12 &&
-              FLATBUFFERS_VERSION_REVISION == 19,
+static_assert(FLATBUFFERS_VERSION_MAJOR == 24 &&
+              FLATBUFFERS_VERSION_MINOR == 3 &&
+              FLATBUFFERS_VERSION_REVISION == 25,
              "Non-compatible flatbuffers version included");
 
 namespace Peer {
@@ -70,10 +70,8 @@ template<> struct TelemetryBodyTraits<Peer::Shutdown> {
   static const TelemetryBody enum_value = TelemetryBody::Shutdown;
 };
 
-template <bool B = false>
-bool VerifyTelemetryBody(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, TelemetryBody type);
-template <bool B = false>
-bool VerifyTelemetryBodyVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<TelemetryBody> *types);
+bool VerifyTelemetryBody(::flatbuffers::Verifier &verifier, const void *obj, TelemetryBody type);
+bool VerifyTelemetryBodyVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<TelemetryBody> *types);
 
 enum class Body : uint8_t {
   NONE = 0,
@@ -141,10 +139,8 @@ template<> struct BodyTraits<Peer::Error> {
   static const Body enum_value = Body::Error;
 };
 
-template <bool B = false>
-bool VerifyBody(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, Body type);
-template <bool B = false>
-bool VerifyBodyVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<Body> *types);
+bool VerifyBody(::flatbuffers::Verifier &verifier, const void *obj, Body type);
+bool VerifyBodyVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<Body> *types);
 
 struct Request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef RequestBuilder Builder;
@@ -183,8 +179,7 @@ struct Request FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *id() const {
     return GetPointer<const ::flatbuffers::String *>(VT_ID);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_SEQ_NO, 8) &&
            VerifyField<uint8_t>(verifier, VT_GROUP, 1) &&
@@ -311,8 +306,7 @@ struct Ack FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint32_t interval() const {
     return GetField<uint32_t>(VT_INTERVAL, 4294967295);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_ID) &&
            verifier.VerifyString(id()) &&
@@ -387,8 +381,7 @@ inline ::flatbuffers::Offset<Ack> CreateAckDirect(
 struct Shutdown FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   typedef ShutdownBuilder Builder;
   struct Traits;
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            verifier.EndTable();
   }
@@ -445,8 +438,7 @@ struct Telemetry FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const Peer::Shutdown *value_as_Shutdown() const {
     return value_type() == Peer::TelemetryBody::Shutdown ? static_cast<const Peer::Shutdown *>(value()) : nullptr;
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_ID) &&
            verifier.VerifyString(id()) &&
@@ -536,8 +528,7 @@ struct EOS FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t seq_no() const {
     return GetField<uint64_t>(VT_SEQ_NO, 18446744073709551615ULL);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_ID) &&
            verifier.VerifyString(id()) &&
@@ -614,8 +605,7 @@ struct Error FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::String *message() const {
     return GetPointer<const ::flatbuffers::String *>(VT_MESSAGE);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_ID) &&
            verifier.VerifyString(id()) &&
@@ -718,8 +708,7 @@ struct Payload FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const Peer::Error *body_as_Error() const {
     return body_type() == Peer::Body::Error ? static_cast<const Peer::Error *>(body()) : nullptr;
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint8_t>(verifier, VT_BODY_TYPE, 1) &&
            VerifyOffset(verifier, VT_BODY) &&
@@ -805,8 +794,7 @@ struct Msg FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t agent_gen() const {
     return GetField<uint64_t>(VT_AGENT_GEN, 0);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyOffset(verifier, VT_DATA) &&
            verifier.VerifyVector(data()) &&
@@ -880,8 +868,7 @@ inline ::flatbuffers::Offset<Msg> CreateMsgDirect(
       agent_gen);
 }
 
-template <bool B>
-inline bool VerifyTelemetryBody(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, TelemetryBody type) {
+inline bool VerifyTelemetryBody(::flatbuffers::Verifier &verifier, const void *obj, TelemetryBody type) {
   switch (type) {
     case TelemetryBody::NONE: {
       return true;
@@ -894,8 +881,7 @@ inline bool VerifyTelemetryBody(::flatbuffers::VerifierTemplate<B> &verifier, co
   }
 }
 
-template <bool B>
-inline bool VerifyTelemetryBodyVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<TelemetryBody> *types) {
+inline bool VerifyTelemetryBodyVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<TelemetryBody> *types) {
   if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
   for (::flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
@@ -907,8 +893,7 @@ inline bool VerifyTelemetryBodyVector(::flatbuffers::VerifierTemplate<B> &verifi
   return true;
 }
 
-template <bool B>
-inline bool VerifyBody(::flatbuffers::VerifierTemplate<B> &verifier, const void *obj, Body type) {
+inline bool VerifyBody(::flatbuffers::Verifier &verifier, const void *obj, Body type) {
   switch (type) {
     case Body::NONE: {
       return true;
@@ -937,8 +922,7 @@ inline bool VerifyBody(::flatbuffers::VerifierTemplate<B> &verifier, const void 
   }
 }
 
-template <bool B>
-inline bool VerifyBodyVector(::flatbuffers::VerifierTemplate<B> &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<Body> *types) {
+inline bool VerifyBodyVector(::flatbuffers::Verifier &verifier, const ::flatbuffers::Vector<::flatbuffers::Offset<void>> *values, const ::flatbuffers::Vector<Body> *types) {
   if (!values || !types) return !values && !types;
   if (values->size() != types->size()) return false;
   for (::flatbuffers::uoffset_t i = 0; i < values->size(); ++i) {
@@ -958,16 +942,14 @@ inline const Peer::Msg *GetSizePrefixedMsg(const void *buf) {
   return ::flatbuffers::GetSizePrefixedRoot<Peer::Msg>(buf);
 }
 
-template <bool B = false>
 inline bool VerifyMsgBuffer(
-    ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifyBuffer<Peer::Msg>(nullptr);
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifyBuffer<Peer::Msg>(nullptr);
 }
 
-template <bool B = false>
 inline bool VerifySizePrefixedMsgBuffer(
-    ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifySizePrefixedBuffer<Peer::Msg>(nullptr);
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifySizePrefixedBuffer<Peer::Msg>(nullptr);
 }
 
 inline void FinishMsgBuffer(

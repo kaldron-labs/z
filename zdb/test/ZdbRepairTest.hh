@@ -25,41 +25,88 @@ namespace zdbtest {
 template <typename F>
 using RepairDefaults = ZuBool<!ZuIsSame<F, ZfField(RepairRow, real)>{}>;
 
+template <typename T>
+inline bool policyBuf(Zdb_::IOBuf *buf, Zi::IOBufRing *ring)
+{
+  if (dynamic_cast<Zdb_::IOBufAlloc<T> *>(buf)) return !ring && !buf->rep;
+#if Zi_URing
+  using RingBuf = Zi::IOBufURing<Zdb_::IOBuf, ZdbBuf_HeapID<T>>;
+  if (dynamic_cast<RingBuf *>(buf))
+    return !buf->rep && (buf->ring() == ring || (!buf->ring() && buf->jumbo()));
+#endif
+  return false;
+}
+
+template <typename T>
+inline void tableBufPolicy(ZdbTable<T> *table, ZdbTable<T> *other = nullptr)
+{
+  ZuTestScopeRT(tableBufPolicy);
+  auto first = ZmBlock<ZmRef<Zdb_::IOBuf>>{}([table](auto done) {
+    table->run(0, [table, done = ZuMv(done)]() mutable {
+      done(table->allocBuf(0));
+    });
+  });
+  if (!other) other = table;
+  auto second = ZmBlock<ZmRef<Zdb_::IOBuf>>{}([other](auto done) {
+    other->run(0, [other, done = ZuMv(done)]() mutable {
+      done(other->bufAllocFn(0)());
+    });
+  });
+  ZuCheckRT(first && second);
+  if (!first || !second) return;
+  ZuCheckRT(policyBuf<T>(first.ptr(), first->ring()));
+  ZuCheckRT(policyBuf<T>(second.ptr(), second->ring()));
+  ZuCheckRT(first->size >= ZdbBuf_Size<T>{} && second->size >= ZdbBuf_Size<T>{});
+  ZuCheckRT(first->skip == Zfb::Wire::MaxAlign && second->skip == Zfb::Wire::MaxAlign);
+  if (other != table && first->ring()) ZuCheckRT(first->ring() != second->ring());
+}
+
 // Shared supported-column fixture: the caller owns store startup/teardown.
+template <bool CanonicalZero>
 inline void repairBindings(Zdb_::Store *store)
 {
   ZuTestScopeRT(repairBindings);
   using namespace Zdb_;
   using T = RepairRow;
+  auto allocator = tableBufAllocFn<T>();
+  IOBufAllocFn replacementAllocator;
+  auto prototype = allocator();
+  ZuCheckRT(policyBuf<T>(prototype.ptr(), prototype->ring()));
   SchemaBuf schema = SchemaBuf(Zfb::SchemaOut::Schema<T>::Size);
   Zfb::saveSchema<T>(schema);
   using KeyIDs = ZuStructKeyIDs<T>;
   ZuArray<ZfVFieldArray, KeyIDs::N> keys(KeyIDs::N, false);
   ZuUnroll::all<KeyIDs>([&keys](auto I) { keys[I] = SplitKey<T, I>::storeFields(); });
-  auto open = [&store, &schema, &keys]() {
-    return ZmBlock<OpenResult>{}([&store, &schema, &keys](auto done) {
+  auto open = [&store, &schema, &keys](IOBufAllocFn alloc) {
+    return ZmBlock<OpenResult>{}([
+      &store, &schema, &keys, alloc = ZuMv(alloc)](auto done) mutable {
       store->open(false, "repair", ZfVFields<T>(), keys,
-	Schema::from<T>(schema), Table<T>::allocBuf, ZuMv(done));
+	Schema::from<T>(schema), ZuMv(alloc), ZuMv(done));
     });
   };
-  auto opened = open();
-  ZuCheckRT(opened.is<OpenData>());
-  if (opened.is<OpenData>()) {
-    auto table = opened.p<OpenData>().storeTbl;
+  auto opened = open(allocator);
+  ZuCheckRT(opened.template is<OpenData>());
+  if (opened.template is<OpenData>()) {
+    const auto &data = opened.template p<OpenData>();
+    auto table = data.storeTbl;
+    // A preceding run deleted its row, but the store retains its last UN/SN.
+    UN baseUN = data.un[0] == nullUN() ? 0 : data.un[0] + 1;
+    SN baseSN = data.sn == nullSN() ? 0 : data.sn + 1;
     T row{7, {-0.0f, -2.5f, __builtin_inff(), __builtin_nanf("")},
       {"short", "another long owning string"}, "immutable required field", 1.5f, {},
       -2.5, {"", "short", "another long owning string"}};
     in_addr v4;
     memset(&v4, 0x7f, sizeof(v4));
     row.ip = ZiIP{v4};
-    auto write = [&table, &row]<template <typename> class Filter>(UN un, VN vn) {
-      Builder fbb{Table<T>::allocBuf(), Zfb::BufferAlign<T>::N};
+    auto write = [&table, &row, baseUN, baseSN]<
+      template <typename> class Filter>(UN un, VN vn) {
+      Builder fbb{new Zdb_::IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<T>::N};
       auto nested = fbb.startNested();
       auto data = fbb.endNested(nested,
 	Zfb::save<ZuFacet::FB, Filter>(fbb, row));
-      fbb.finish(saveMsg(fbb, saveRecord(fbb, "repair", un, SN{un}, vn, 0, data),
-	Msg::Tag::Replication));
-      ZmRef<IOBuf> buf = saveHdr(fbb);
+      fbb.finish(saveMsg(fbb, saveRecord(fbb, "repair",
+	baseUN + un, baseSN + un, vn, 0, data), Msg::Tag::Replication));
+      ZmRef<IOBuf> buf = saveFrame(fbb);
       auto record = record_(msg_(buf->hdr()));
       ZuCheckRT(bool(Zdb_::data<T>(record)));
       if (vn) {
@@ -75,17 +122,19 @@ inline void repairBindings(Zdb_::Store *store)
       ZuCheckRT(result.template is<void>());
     };
     auto find = [&table, &row]<unsigned KeyID>() {
-      Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<T>::N};
+      Builder key{new Zdb_::IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<T>::N};
       key.finish(Zfb::save(key, ZuStructKey<KeyID>(row)));
       return ZmBlock<RowResult>{}([&table, buf = key.buf()](auto done) mutable {
 	table->find(KeyID, ZuMv(buf), ZuMv(done));
       });
     };
-    auto check = [&row](RowResult result) {
+    auto check = [&row, &prototype](RowResult result) {
       ZuCheckRT(result.is<RowData>());
       if (!result.is<RowData>()) return;
       auto &buf = result.p<RowData>().buf;
+      ZuCheckRT(policyBuf<T>(buf.ptr(), prototype->ring()));
       auto bytes = record_(msg_(buf->hdr())).get<Msg::ZfField(Record, data)>();
+      ZuCheckRT(!(uintptr_t(bytes.data()) & (Zfb::BufferAlign<T>::N - 1)));
       ZuCheckRT(Zfb::verify<T>(bytes));
       if (!Zfb::verify<T>(bytes)) return;
       auto loaded = Zfb::load<T>(bytes);
@@ -95,14 +144,16 @@ inline void repairBindings(Zdb_::Store *store)
 	if (__builtin_isnan(row.reals[i])) ZuCheckRT(__builtin_isnan(loaded.reals[i]));
 	else ZuCheckRT(loaded.reals[i] == row.reals[i]);
 	if (!row.reals[i])
-	  ZuCheckRT(__builtin_signbit(loaded.reals[i]) == __builtin_signbit(row.reals[i]));
+	  ZuCheckRT(__builtin_signbit(loaded.reals[i]) ==
+	  (CanonicalZero ? false : __builtin_signbit(row.reals[i])));
       }
       ZuCheckRT(loaded.names.length() == row.names.length());
       for (unsigned i = 0, n = loaded.names.length(); i < n; ++i)
 	ZuCheckRT(ZuCSpan{loaded.names[i]} == row.names[i]);
       ZuCheckRT(loaded.stamp == row.stamp && loaded.real == row.real);
       if (!row.real)
-	ZuCheckRT(__builtin_signbit(loaded.real) == __builtin_signbit(row.real));
+	ZuCheckRT(__builtin_signbit(loaded.real) ==
+	  (CanonicalZero ? false : __builtin_signbit(row.real)));
       ZuCheckRT(loaded.ip == row.ip);
       ZuCheckRT(loaded.wide == row.wide && loaded.strings == row.strings);
     };
@@ -112,14 +163,14 @@ inline void repairBindings(Zdb_::Store *store)
     check(find.template operator()<2>());
     {
       using Group = SplitKey<T, 2>::GroupKey;
-      Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<Group>::N};
+      Builder key{new Zdb_::IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<Group>::N};
       key.finish(Zfb::save(key, Group{row.stamp}));
       auto keyBuf = key.buf();
       auto counted = ZmBlock<CountResult>{}([&table, buf = keyBuf](auto done) mutable {
 	table->count(2, ZuMv(buf), ZuMv(done));
       });
-      ZuCheckRT(counted.is<CountData>());
-      if (counted.is<CountData>()) ZuCheckRT(counted.p<CountData>().count == 1);
+      ZuCheckRT(counted.template is<CountData>());
+      if (counted.template is<CountData>()) ZuCheckRT(counted.template p<CountData>().count == 1);
       unsigned selected = 0;
       ZmBlock<>{}([&table, &row, &selected, buf = ZuMv(keyBuf)](auto done) mutable {
 	  table->select(false, false, false, 2, ZuMv(buf), 1,
@@ -143,8 +194,8 @@ inline void repairBindings(Zdb_::Store *store)
     check(find.template operator()<0>());
     check(find.template operator()<1>());
     check(find.template operator()<2>());
-    auto recovered = ZmBlock<RowResult>{}([&table](auto done) {
-      table->recover(0, 1, ZuMv(done));
+    auto recovered = ZmBlock<RowResult>{}([&table, baseUN](auto done) {
+      table->recover(0, baseUN + 1, ZuMv(done));
     });
     check(ZuMv(recovered));
 
@@ -157,16 +208,21 @@ inline void repairBindings(Zdb_::Store *store)
     SchemaBuf replacement = SchemaBuf(Zfb::SchemaOut::Schema<T>::Size);
     Zfb::saveSchema<T>(replacement);
     schema = ZuMv(replacement);
-    opened = open();
-    ZuCheckRT(opened.is<OpenData>());
-    if (opened.is<OpenData>()) {
-      table = opened.p<OpenData>().storeTbl;
+    replacementAllocator = tableBufAllocFn<T>();
+    auto replacementPrototype = replacementAllocator();
+    if (prototype->ring())
+      ZuCheckRT(prototype->ring() != replacementPrototype->ring());
+    prototype = ZuMv(replacementPrototype);
+    opened = open(replacementAllocator);
+    ZuCheckRT(opened.template is<OpenData>());
+    if (opened.template is<OpenData>()) {
+      table = opened.template p<OpenData>().storeTbl;
       check(find.template operator()<1>());
       check(find.template operator()<2>());
       write.template operator()<ZfFieldFilter::Del>(3, -3);
-      ZuCheckRT(find.template operator()<0>().is<void>());
-      ZuCheckRT(find.template operator()<1>().is<void>());
-      ZuCheckRT(find.template operator()<2>().is<void>());
+      ZuCheckRT(find.template operator()<0>().template is<void>());
+      ZuCheckRT(find.template operator()<1>().template is<void>());
+      ZuCheckRT(find.template operator()<2>().template is<void>());
       ZmBlock<>{}([&table](auto done) { table->close(ZuMv(done)); });
 
     }
@@ -220,7 +276,7 @@ inline void repairSize(Zdb_::Store *store)
   ZuUnroll::all<KeyIDs>([&keys](auto I) { keys[I] = SplitKey<T, I>::storeFields(); });
   auto opened = ZmBlock<OpenResult>{}([store, &schema, &keys](auto done) {
     store->open(false, "repair_limit", ZfVFields<T>(), keys,
-      Schema::from<T>(schema), Table<T>::allocBuf, ZuMv(done));
+      Schema::from<T>(schema), localBufAllocFn<T>(), ZuMv(done));
   });
   ZuCheckRT(opened.is<OpenData>());
   if (!opened.is<OpenData>()) return;
@@ -232,7 +288,7 @@ inline void repairSize(Zdb_::Store *store)
   };
   using Key = ZuStructKeyT<T, 1>;
   using Field = ZuType<0, ZuFields<Key>>;
-  Builder key{Table<T>::allocBuf(), Zfb::BufferAlign<Key>::N};
+  Builder key{new Zdb_::IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<Key>::N};
   key.finish(Zfb::save(key, ZuStructKey<1>(row)));
   ZmRef<IOBuf> keyBuf = key.buf();
   oversize(Zfb::TableView{Zfb::root(keyBuf->cspan())}, Zfb::As<Key>::template Handler<Key>::id<Field>());
@@ -250,13 +306,13 @@ inline void repairSize(Zdb_::Store *store)
   });
   ZuCheckRT(repairSizeError(find));
   for (VN vn = 0; vn <= 1; ++vn) {
-    Builder builder{Table<T>::allocBuf(), Zfb::BufferAlign<T>::N};
+    Builder builder{new Zdb_::IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<T>::N};
     auto nested = builder.startNested();
     auto data = builder.endNested(nested, Zfb::save(builder, row));
     builder.finish(saveMsg(builder,
       saveRecord(builder, "repair_limit", UN(vn), SN{0}, vn, 0, data),
       Msg::Tag::Replication));
-    ZmRef<IOBuf> buf = saveHdr(builder);
+    ZmRef<IOBuf> buf = saveFrame(builder);
     auto record = record_(msg_(buf->hdr()));
     oversize(Zfb::TableView{Zfb::root(record.get<Msg::ZfField(Record, data)>())},
       Zfb::As<T>::template Handler<T>::id<ZfField(RepairLimit, vec)>());
@@ -279,7 +335,8 @@ inline void repairSaga(
   ZuTestScopeRT(repairSaga);
   using DB = RepairDB;
   using M = ZdbAnySaga<RepairDB>;
-  ZiMultiplex mx{ZvMxParams("mx", mxCf)};
+  ZiMultiplex mx{ZvMxParams("mx", mxCf)
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<DB> db = new DB{};
   db->init(ZdbCf{cf}, &mx, {}, store);
@@ -312,8 +369,10 @@ inline void repairSaga(
 	});
 	ZuCheckRT(db->stop());
 	table = {};
+	ZuCheckRT(mx.stop());
 	db->final();
 	db = new RepairDB{};
+	ZuCheckRT(mx.start());
 	db->init(ZdbCf{cf}, &mx, {}, store);
 	table = db->initTable<RepairRow>("repair_saga");
 	context = db;
@@ -323,9 +382,9 @@ inline void repairSaga(
 	ZuCheckRT(started);
 	if (!started) {
 	  table = {};
+	  ZuCheckRT(mx.stop());
 	  db->final();
 	  db = {};
-	  ZuCheckRT(mx.stop());
 	  return;
 	}
       } else {
@@ -369,9 +428,9 @@ inline void repairSaga(
       context->deletes == unsigned(fail));
   }
   table = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
-  ZuCheckRT(mx.stop());
 }
 
 } // zdbtest

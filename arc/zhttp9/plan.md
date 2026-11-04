@@ -4,7 +4,7 @@ This plan implements the ownership rules in `iosharding.md` for `zquic`.
 The goal is to remove cross-thread queue/state access, not to paper over it
 with locks.
 
-Align all work with `GUIDELINES.md`
+Align all work with `docs/GUIDELINES.md`
 
 ## Phase 0: Stabilize the Baseline
 

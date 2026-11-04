@@ -15,9 +15,12 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmThread.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
+
+#include <zlib/Zquic.hh>
 
 #include <zlib/ZhttpClient.hh>
 #include "../src/ZhttpServerImpl.hh"
@@ -73,6 +76,9 @@ struct State {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+#ifdef ZHTTP_H3_HUB_TEST
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+#endif
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -182,10 +188,12 @@ struct Server :
 
 template <typename Profile>
 struct ServerLink :
+  public ZmNHeap<ServerLink<Profile>>,
   public Zhttp::ServerLink<
     Server<Profile>, ServerLink<Profile>, Profile, ServerSession> {
   using Base = Zhttp::ServerLink<
     Server<Profile>, ServerLink<Profile>, Profile, ServerSession>;
+  friend inline ZuStringT<"Zhttp.Test.SrvLink"> ZmNHeapID(ServerLink *);
   using Base::Base;
 
   template <typename Stream, typename Rx>
@@ -205,7 +213,9 @@ template <typename Profile>
 struct Client :
   public Zhttp::ClientHub<Client<Profile>, Profile> {
   struct Link :
+    public ZmNHeap<Link>,
     public Zhttp::ClientLink<Client, Link, Profile> {
+    friend inline ZuStringT<"Zhttp.Test.CliLink"> ZmNHeapID(Link *);
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
 
@@ -255,7 +265,9 @@ struct Client :
 struct FailClient :
   public Zhttp::ClientHub<FailClient, Zhttp::H1TLS> {
   struct Link :
+    public ZmNHeap<Link>,
     public Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS> {
+    friend inline ZuStringT<"Zhttp.Test.FailLink"> ZmNHeapID(Link *);
     using Base = Zhttp::ClientLink<FailClient, Link, Zhttp::H1TLS>;
     using Base::Base;
 
@@ -455,12 +467,14 @@ struct UpgradeServer :
 
 template <typename Profile>
 struct UpgradeSrvLink :
+  public ZmNHeap<UpgradeSrvLink<Profile>>,
   public Zhttp::ServerLink<
     UpgradeServer<Profile>, UpgradeSrvLink<Profile>,
     Profile, UpgradeSession> {
   using Base = Zhttp::ServerLink<
     UpgradeServer<Profile>, UpgradeSrvLink<Profile>,
     Profile, UpgradeSession>;
+  friend inline ZuStringT<"Zhttp.Test.UpSrvLink"> ZmNHeapID(UpgradeSrvLink *);
   using Base::Base;
 
   template <typename Stream, typename Rx>
@@ -480,7 +494,9 @@ template <typename Profile>
 struct UpgradeClient :
   public Zhttp::ClientHub<UpgradeClient<Profile>, Profile> {
   struct Link :
+    public ZmNHeap<Link>,
     public Zhttp::ClientLink<UpgradeClient, Link, Profile> {
+    friend inline ZuStringT<"Zhttp.Test.UpCliLink"> ZmNHeapID(Link *);
     using Base = Zhttp::ClientLink<UpgradeClient, Link, Profile>;
     using Base::Base;
 
@@ -839,17 +855,20 @@ void runServerStop(const TempDir &temp)
 
   ZmSemaphore stopDone;
   ZmAtomic<unsigned> stopErrors = 0;
-  ZmAtomic<unsigned> stopReturned = 0;
+  auto stopCaller = ZmSelf();
   ZmAtomic<unsigned> stopWasAsync = 1;
   server.stop([
-    &state, &stopDone, &stopErrors, &stopReturned, &stopWasAsync
+    &state, &stopDone, &stopErrors, &stopWasAsync, &mx, &server, stopCaller
   ](bool ok) {
-    if (!stopReturned.load_()) stopWasAsync = false;
+    // Another worker may finish before stop() returns on the caller.
+    // H1/H2 complete on Rx; H3 without qlog completes its drain on Tx.
+    if (ZmSelf() == stopCaller ||
+        (!mx.invoked(server.rxThread()) && !mx.invoked(server.txThread())))
+      stopWasAsync = false;
     if (!ok) ++stopErrors;
     state.trace.push(LifeEvt::Stop);
     stopDone.post();
   });
-  stopReturned = true;
   bool stopped = stopDone.timedwait(Zm::now(10)) == 0;
   ZuCHECK(stopped && !stopErrors.load_(),
     "active-stop server completion timed out");

@@ -77,15 +77,14 @@ ZgrpcAPI int64_t remaining(int64_t expires);
 // Intrusive registry linkage and terminal selection are exclusively Rx-owned.
 // The concrete work supplies cancellation dispatch and owns its directional
 // state. Virtual destruction is the framework's ordinary erased callback base.
-struct WorkEntry : ZmPolymorph, ZmList_NodeExt<WorkEntry> {
-  using Ext = ZmList_NodeExt<WorkEntry>;
-  WorkEntry &data() { return *this; }
-  const WorkEntry &data() const { return *this; }
-  void (*cancelFn)(WorkEntry *, Code::T) = nullptr;
+struct WorkData : ZmPolymorph {
+  void (*cancelFn)(WorkData *, Code::T) = nullptr;
   bool terminal = false;
   bool registered = false;
 };
-using WorkList = ZmList<WorkEntry, ZmListNode<WorkEntry>, WorkEntry>;
+using WorkList = ZmList<WorkData,
+  ZmListNode<ZmPolymorph, ZmListHeapID<"">>>;
+using WorkEntry = WorkList::Node;
 
 // Shared bounded admission and event-driven endpoint drain. Retained public
 // tokens never hold this object or the endpoint; a reserved ingress slot keeps

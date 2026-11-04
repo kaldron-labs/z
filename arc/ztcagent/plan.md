@@ -16,8 +16,8 @@ The held `ZiPIDFile` is process coordination, not persistent agent state.
 Complete `ztls.md` first and use its `saveCSR()`, `Ztls::ClientCreds`,
 supplemental-CA, and `Ztls::ClientParams` APIs directly.  Do not add another
 TLS, HTTP, crypto, resolver, platform, persistence, or buffering abstraction
-([Framework fit](GUIDELINES.md#framework-fit),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Framework fit](docs/GUIDELINES.md#framework-fit),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ## Authoritative corrections to `goal.md`
 
@@ -51,9 +51,9 @@ in `goal.md`; implementation and tests must follow these corrections directly:
   deployment-owned container images.
 
 These are deliberate scope corrections, not compatibility accommodations
-([General principles](GUIDELINES.md#general-principles),
-[No dogma](GUIDELINES.md#no-dogma),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([General principles](docs/GUIDELINES.md#general-principles),
+[No dogma](docs/GUIDELINES.md#no-dogma),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ## Files and build wiring
 
@@ -99,7 +99,7 @@ Extend existing `ZtcSchemaTest.cc` for version/schema/sentinel coverage and
 admission.  Do not create single-purpose `ZtcVerTest` or `ZtcRingTest` binaries.
 Keep isolated routing/state cases in `ZtcAgentTest`; keep only multi-process,
 HTTPS, mTLS, and shared-memory scenarios in `ztcagenttest`
-([Module layout](GUIDELINES.md#module-layout), [Tests](GUIDELINES.md#tests)).
+([Module layout](docs/GUIDELINES.md#module-layout), [Tests](docs/GUIDELINES.md#tests)).
 
 Use namespace `Ztc`, with private implementation types under `Ztc::Agent_`.
 The private reusable interface names are `Ztc::AgentCf`, `Ztc::AgentEnv`, and
@@ -107,10 +107,10 @@ The private reusable interface names are `Ztc::AgentCf`, `Ztc::AgentEnv`, and
 node names are `App`, `Req`, and `Leg`.  Do not add a `ZtcAgent` namespace or
 export agent types.  Program/resource basenames,
 member prefixes, accessors, trailing underscores, and the 28-byte name limit
-must follow [Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes),
-[Length and abbreviations](GUIDELINES.md#length-and-abbreviations),
-[Accessors](GUIDELINES.md#accessors), and
-[Trailing underscores](GUIDELINES.md#trailing-underscores).
+must follow [Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes),
+[Length and abbreviations](docs/GUIDELINES.md#length-and-abbreviations),
+[Accessors](docs/GUIDELINES.md#accessors), and
+[Trailing underscores](docs/GUIDELINES.md#trailing-underscores).
 
 ## Slice 1: common protocol primitives
 
@@ -135,8 +135,8 @@ minor below 100 and patch below 1000, matching the encoding.  `compatible()`
 requires equal major versions and `receiver.minor >= sender.minor`; it ignores
 patch.  Replace all duplicate version arithmetic with this API and retain
 `Z_VERSION` as the current encoded value.  Do not add legacy forwarders
-([Constant literals](GUIDELINES.md#constant-literals),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Constant literals](docs/GUIDELINES.md#constant-literals),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ### Ring API
 
@@ -154,8 +154,8 @@ namespace Ztc {
 from `ZtcApp.cc` and the test copy from `ZtcTestClient.hh`; use `Ztc::Ring`
 everywhere.  Keep `Ztc::Hdr` as the only application frame and use the same
 configured complete-frame `maxFrame` locally and remotely
-([Code structure](GUIDELINES.md#code-structure),
-[Type and API friction](GUIDELINES.md#type-and-api-friction)).
+([Code structure](docs/GUIDELINES.md#code-structure),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction)).
 
 ### Message boundary API
 
@@ -166,9 +166,9 @@ FlatBuffers default `18446744073709551615` so omission decodes to that sentinel
 while an explicit zero remains representable.  Regenerate only through
 `fbscodegen` and propagate the breaking schema change directly; do not add a
 compatibility field or shim
-([Metadata](GUIDELINES.md#metadata),
-[Framework fit](GUIDELINES.md#framework-fit),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Metadata](docs/GUIDELINES.md#metadata),
+[Framework fit](docs/GUIDELINES.md#framework-fit),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 Retain `Ztc::msg()` as the structural verifier.  Do not add agent routing policy
 to exported `ZtcMsg.hh`.  Define only this file-scope function in
@@ -186,9 +186,9 @@ generated mutable scalar accessor, rejects an unsequenced `Error`, and runs only
 on a verified, outbound-owned mutable frame.  This is the one justified direct
 generated-FlatBuffers boundary; construction and native conversion use
 `ZfbStruct`
-([Metadata](GUIDELINES.md#metadata),
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Type and API friction](GUIDELINES.md#type-and-api-friction)).
+([Metadata](docs/GUIDELINES.md#metadata),
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction)).
 
 Do not globally tighten `validMsg()` for agent policy and do not reject unknown
 optional fields.  Generate schemas only through `fbscodegen`.  Test all version
@@ -216,8 +216,8 @@ existing pending application-snapshot state and return failure through the
 existing publisher policy.  Once the agent is up, its registry snapshot
 request causes another publish attempt.  Publishers cannot receive such a
 request before the agent has created and attached its telemetry reader
-([Storage and capacity](GUIDELINES.md#storage-and-capacity),
-[Framework fit](GUIDELINES.md#framework-fit)).
+([Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+[Framework fit](docs/GUIDELINES.md#framework-fit)).
 
 Prescribe this publisher loop:
 
@@ -240,8 +240,8 @@ ordinary telemetry.  Do not inspect PIDs, call private GC, sleep for
 `killWait`, or implement process termination separately; those operations are
 encapsulated by public `kill()`.  Do not add a lock or move this state from its
 current worker.  This implements the applicable stalled-reader requirement
-using only `ZiRing`'s public contract ([I/O sharding](GUIDELINES.md#io-sharding),
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization)).
+using only `ZiRing`'s public contract ([I/O sharding](docs/GUIDELINES.md#io-sharding),
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization)).
 
 Change the declaration and definition of `Ztc::App::sendError_()` to:
 
@@ -284,7 +284,7 @@ regression, zero, the null sentinel, and unsubscribe reuse without sleeps.
 Extend `ZtcAppTest` to coordinate a responsive and stalled reader with
 `ZmBlock`/`ZmSemaphore`, prove eviction and control delivery, and cover every
 terminal `writeStatus()`.  It must not use sleeps as completion conditions
-([Tests](GUIDELINES.md#tests)).
+([Tests](docs/GUIDELINES.md#tests)).
 
 ## Slice 3: configuration and lifecycle
 
@@ -319,8 +319,8 @@ Interpret `pidDir` exactly as `Ztc::App` does: a relative registry path below
 `https://enroll.devices.kaldron.io:443/v1/enroll`.  Reject an empty token.
 These owned types prevent environment views from escaping startup and give
 each variable one source
-([Strings](GUIDELINES.md#strings), [Lifetime](GUIDELINES.md#lifetime),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Strings](docs/GUIDELINES.md#strings), [Lifetime](docs/GUIDELINES.md#lifetime),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 Define `AgentCf` as all-public `ZfStruct` configuration.  It contains:
 
@@ -348,9 +348,9 @@ positive `telFrames`/`reqFrames`, `telFrames < UINT_MAX`, each frame limit to
 be representable by its byte bound, and `telSize >= maxFrame +
 Zm::CacheLineSize`.  Configure frame and byte limits independently.  Do not use
 fixed arrays or duplicate a field in the environment or CLI
-([Storage and capacity](GUIDELINES.md#storage-and-capacity),
-[Metadata](GUIDELINES.md#metadata),
-[Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes)).
+([Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+[Metadata](docs/GUIDELINES.md#metadata),
+[Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes)).
 
 Use `ZfCLI` only for configuration-file selection, validation, help, and
 version.  The configuration file is the only source for `AgentCf`; environment
@@ -391,9 +391,9 @@ from owned shards, stops asynchronously, and permits only the main thread to
 block.  `start(CtrlFn)` and `stop(CtrlFn)` are thin asynchronous dispatchers
 callable from any thread; their blocking overloads are main-thread only.
 `final()` is idempotent and asserts/drains all dependent state
-([Standard function name vocabulary](GUIDELINES.md#standard-function-name-vocabulary),
-[I/O Function Organization](GUIDELINES.md#io-function-organization),
-[Teardown](GUIDELINES.md#teardown)).
+([Standard function name vocabulary](docs/GUIDELINES.md#standard-function-name-vocabulary),
+[I/O Function Organization](docs/GUIDELINES.md#io-function-organization),
+[Teardown](docs/GUIDELINES.md#teardown)).
 
 Build the relative name `<pidDir>/ztcagent.pid` with `ZiFile::append()` and pass
 it to `ZiPIDFile::init(ZiFile::tmpDir(), name)`.  The basename is exactly
@@ -417,9 +417,9 @@ Teardown prevents ingress, cancels timers,
 drains the telemetry reader and route owner, finalizes the hub and enrollment
 clients, closes/detaches rings, stops the multiplexer, and releases the PID
 file last.  Each failed startup step unwinds only completed predecessors in reverse
-order ([Timer Teardown](GUIDELINES.md#timer-teardown),
-[Teardown](GUIDELINES.md#teardown),
-[General principles](GUIDELINES.md#general-principles)).
+order ([Timer Teardown](docs/GUIDELINES.md#timer-teardown),
+[Teardown](docs/GUIDELINES.md#teardown),
+[General principles](docs/GUIDELINES.md#general-principles)).
 
 An agent-only process restart follows this same startup path.  It reattaches to
 the shared publish ring, begins consuming first, then scans the existing
@@ -465,10 +465,10 @@ where logical grouping permits.  Store one `int8_t phase` whose values are
 `PendingEnroll` only while enrolling or `Identity` after successful enrollment;
 do not retain empty response arrays in `PendingEnroll` or add parallel
 `hasPending`/`hasIdentity` booleans
-([Class and struct shape](GUIDELINES.md#class-and-struct-shape),
-[Heap allocation](GUIDELINES.md#heap-allocation),
-[Framework fit](GUIDELINES.md#framework-fit),
-[Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes)).
+([Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape),
+[Heap allocation](docs/GUIDELINES.md#heap-allocation),
+[Framework fit](docs/GUIDELINES.md#framework-fit),
+[Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes)).
 
 ### Enrollment transaction
 
@@ -519,10 +519,10 @@ process-global roots.
 This cold path performs one JSON parse and one base64 decode per returned DER
 item, moves the resulting Z arrays into TLS, and creates no duplicate PEM/DER
 or certificate wrapper
-([Metadata](GUIDELINES.md#metadata),
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-[Framework fit](GUIDELINES.md#framework-fit),
-[Heap allocation](GUIDELINES.md#heap-allocation)).
+([Metadata](docs/GUIDELINES.md#metadata),
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+[Framework fit](docs/GUIDELINES.md#framework-fit),
+[Heap allocation](docs/GUIDELINES.md#heap-allocation)).
 
 On success, move key/certificates into `Ztls::ClientCreds`, move supplemental
 CAs and normalized host/port into `Identity`, erase the bootstrap token and
@@ -552,8 +552,8 @@ Rx-owned reconnect timer schedules `connect_()`.  Reset the current interval
 to `ZmBackoff::initial()` in `connected()` immediately after TLS succeeds.  Do
 not add a stability interval, a second reconnect timer, or another backoff
 implementation; base teardown cancels and drains the existing timer
-([Framework fit](GUIDELINES.md#framework-fit),
-[Timers](GUIDELINES.md#timers), [Timer Teardown](GUIDELINES.md#timer-teardown)).
+([Framework fit](docs/GUIDELINES.md#framework-fit),
+[Timers](docs/GUIDELINES.md#timers), [Timer Teardown](docs/GUIDELINES.md#timer-teardown)).
 
 Give `Link` one Rx-owned partial-frame `ZiIOBuf` allocated from
 `ZiIOBufAlloc<..., "Ztc.Agent.HubRx">`.  Copy the four-byte header first, call
@@ -565,17 +565,17 @@ second parsing quantum.
 
 The Rx partial buffer is link-owned and never crosses shards; move only the
 completed `ZiIOBuf` reference to routing
-([I/O sharding](GUIDELINES.md#io-sharding),
-[I/O and system integration](GUIDELINES.md#io-and-system-integration),
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization)).
+([I/O sharding](docs/GUIDELINES.md#io-sharding),
+[I/O and system integration](docs/GUIDELINES.md#io-and-system-integration),
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization)).
 
 Submit each complete outbound `ZiIOBuf` through the existing `Ztls` send API.
 `Ztls` owns record fragmentation, buffer retention, transmit ordering,
 backpressure, partial writes, and completion.  Configure its existing bounded
 send buffer; do not add `TxFrame`, an agent-owned Tx queue, offsets, completion
 credits, or outbound frame/byte counters
-([Framework fit](GUIDELINES.md#framework-fit),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Framework fit](docs/GUIDELINES.md#framework-fit),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ## Slice 5: execution ownership and bounded handoffs
 
@@ -595,8 +595,8 @@ Never read another context's state and never add a lock to permit it.  Public
 cross-context functions post immediately to a trailing-underscore owner
 function.  On-owner functions assert their context.  A scheduler `run`/`invoke`
 is asynchronous; dependent work occurs only in its continuation
-([I/O sharding](GUIDELINES.md#io-sharding),
-[Concurrency and sharding](GUIDELINES.md#concurrency-and-sharding)).
+([I/O sharding](docs/GUIDELINES.md#io-sharding),
+[Concurrency and sharding](docs/GUIDELINES.md#concurrency-and-sharding)).
 
 Implement two agent-owned frame handoffs: telemetry-to-route and
 hub-Rx-to-route.  Each producing owner maintains its own pending frame and byte
@@ -616,10 +616,10 @@ the deployment invariant is that these registries remain small and never
 contain thousands of entries.  Publisher-ring fan-out writes are different:
 each can block for its configured timeout/kill policy, so perform at most
 `fanoutBatch` of those writes in one route turn and repost the remaining work
-([Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs),
-[Liveness](GUIDELINES.md#liveness), [Callbacks](GUIDELINES.md#callbacks),
-[Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies),
-[No dogma](GUIDELINES.md#no-dogma)).
+([Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs),
+[Liveness](docs/GUIDELINES.md#liveness), [Callbacks](docs/GUIDELINES.md#callbacks),
+[Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies),
+[No dogma](docs/GUIDELINES.md#no-dogma)).
 
 The telemetry thread performs timed `shift()`, checks its stop sentinel after
 each return, and validates each shared frame in place.  It checks its owned
@@ -673,8 +673,8 @@ or `Req::legs`.  List membership is the send state, so do not add a
 and `Leg` from named `ZmHeap`s; do
 not separately allocate container nodes or reference counts.  All objects are
 route-thread-affined and are deleted synchronously when terminal
-([Containers and intrusion](GUIDELINES.md#containers-and-intrusion),
-[Storage and capacity](GUIDELINES.md#storage-and-capacity)).
+([Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion),
+[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity)).
 
 Use one agent-process-wide `nextSeqNo`, starting at one and incrementing once
 for every application request the agent sends.  Do not reset it on app or hub
@@ -743,9 +743,9 @@ scan `AppIdx`, or add per-app timers.  Retire a registered app and its affected
 legs only when a normal request-ring operation reports missing/no-reader/error,
 or replace it when a later startup announcement establishes a new registered
 instance
-([I/O and system integration](GUIDELINES.md#io-and-system-integration),
-[Liveness](GUIDELINES.md#liveness),
-[Containers and intrusion](GUIDELINES.md#containers-and-intrusion)).
+([I/O and system integration](docs/GUIDELINES.md#io-and-system-integration),
+[Liveness](docs/GUIDELINES.md#liveness),
+[Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion)).
 
 ### Request admission and fan-out
 
@@ -851,8 +851,8 @@ Implement one `delLeg_()` path and one `delReq_()` path.  App death,
 unsubscribe, EOS, Error, overload, disconnect, and shutdown call these paths;
 no terminal object remains for a later sweep.  Iterator scopes end before
 callbacks, posts, or container destruction
-([Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Lifetime](GUIDELINES.md#lifetime)).
+([Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Lifetime](docs/GUIDELINES.md#lifetime)).
 
 ## Slice 7: operations documentation and tests
 
@@ -896,7 +896,7 @@ restart, and residue checks in `ztc/itest`.  Use real `Ztc::App` fixtures, an
 independent telemetry reader, a local trusted enrollment issuer, and a raw mTLS
 hub.  Use dynamic ports and `ZiTestResidue`; synchronize concurrent work with
 `ZmBlock`/`ZmSemaphore`, never sleeps or polling
-([Module layout](GUIDELINES.md#module-layout), [Tests](GUIDELINES.md#tests)).
+([Module layout](docs/GUIDELINES.md#module-layout), [Tests](docs/GUIDELINES.md#tests)).
 
 ## Build and verification order
 
@@ -917,9 +917,9 @@ hub.  Use dynamic ports and `ZiTestResidue`; synchronize concurrent work with
    shared-memory/process/CA-store
    code, or direct OS calls.
 
-This order follows [Build configuration](GUIDELINES.md#build-configuration),
-[Acceptance](GUIDELINES.md#acceptance), and
-[Debugging](GUIDELINES.md#debugging).
+This order follows [Build configuration](docs/GUIDELINES.md#build-configuration),
+[Acceptance](docs/GUIDELINES.md#acceptance), and
+[Debugging](docs/GUIDELINES.md#debugging).
 
 ## Guideline alignment ledger
 
@@ -928,52 +928,52 @@ cannot be demonstrated in code and tests.
 
 | Element | Required guideline alignment and audit disposition |
 |---|---|
-| files, Automake wiring, private API | Existing module boundaries and direct dependencies only; no installed agent surface or compatibility shim ([Module layout](GUIDELINES.md#module-layout), [Scope and cleanup](GUIDELINES.md#scope-and-cleanup)). |
-| `Ver`, `Ring`, schema, `rewriteSeq` | One shared implementation, generated schema path, `ZfbStruct` except the justified mutable-scalar boundary; no duplicated arithmetic, framing, null flag, or reconstruction ([Code structure](GUIDELINES.md#code-structure), [Metadata](GUIDELINES.md#metadata), [Framework fit](GUIDELINES.md#framework-fit)). |
-| publisher delivery | Worker-owned state, size-zero idempotent attachment to the agent-created ring, one reservation/copy, `ZiRing` timeout/status/kill semantics, and one common control/telemetry path; no publisher creation/resize/reset, PID probing, lock, sleep, or private GC ([Data movement and initialization](GUIDELINES.md#data-movement-and-initialization), [I/O sharding](GUIDELINES.md#io-sharding)). |
-| configuration and lifecycle | `ZfStruct`/`ZfCLI`, one source per value, named workload bounds, Z naming, asynchronous owner dispatch, and reverse-order teardown ([Metadata](GUIDELINES.md#metadata), [Naming](GUIDELINES.md#naming), [I/O Function Organization](GUIDELINES.md#io-function-organization), [Teardown](GUIDELINES.md#teardown)). |
-| enrollment and identity | `Zhttp`, `ZfJSON`, and `Ztls` directly; one bounded body and one owned in-memory transaction; no URI parser for host/port, policy wrapper, duplicate chain validation, persistence, or credential logging ([Framework fit](GUIDELINES.md#framework-fit), [Strings](GUIDELINES.md#strings), [Heap allocation](GUIDELINES.md#heap-allocation)). |
-| hub session | Incremental `ZiIOBuf` parsing, existing Ztls send/backpressure/reconnect timer, and `ZmBackoff`; no contiguous conversion, agent Tx queue, second timer, or TLS wrapper ([I/O and system integration](GUIDELINES.md#io-and-system-integration), [Timers](GUIDELINES.md#timers), [Scope and cleanup](GUIDELINES.md#scope-and-cleanup)). |
-| sharding and handoffs | Three explicit owners, variable data moved by buffer reference, fixed metadata by value, producer-owned admission/credit state, and bounded turns; no cross-owner access, repair lock, or diagnostic atomic ([Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs), [Liveness](GUIDELINES.md#liveness), [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies)). |
-| registry and routing | One synchronous blocking unbatched startup `ZiDir` scan, untracked snapshot requests, last-AppTelemetry-wins updates, intrusive named-heap nodes, Z hashes/lists, global nonreused request sequence, `fanoutBatch` publisher-write turns backed by `Req::pending`, and immediate terminal deletion; no app generation, second request allocator, periodic liveness scan, count cap, registry batching, ordinal/cursor state, or GC sweep ([I/O and system integration](GUIDELINES.md#io-and-system-integration), [Containers and intrusion](GUIDELINES.md#containers-and-intrusion), [Storage and capacity](GUIDELINES.md#storage-and-capacity), [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow), [No dogma](GUIDELINES.md#no-dogma)). |
-| operations and tests | Framework-only portable process, no image artifact, TAP tests synchronized by Z primitives, and deterministic residue checks ([Windows](GUIDELINES.md#windows), [Tests](GUIDELINES.md#tests), [Acceptance](GUIDELINES.md#acceptance)). |
+| files, Automake wiring, private API | Existing module boundaries and direct dependencies only; no installed agent surface or compatibility shim ([Module layout](docs/GUIDELINES.md#module-layout), [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)). |
+| `Ver`, `Ring`, schema, `rewriteSeq` | One shared implementation, generated schema path, `ZfbStruct` except the justified mutable-scalar boundary; no duplicated arithmetic, framing, null flag, or reconstruction ([Code structure](docs/GUIDELINES.md#code-structure), [Metadata](docs/GUIDELINES.md#metadata), [Framework fit](docs/GUIDELINES.md#framework-fit)). |
+| publisher delivery | Worker-owned state, size-zero idempotent attachment to the agent-created ring, one reservation/copy, `ZiRing` timeout/status/kill semantics, and one common control/telemetry path; no publisher creation/resize/reset, PID probing, lock, sleep, or private GC ([Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization), [I/O sharding](docs/GUIDELINES.md#io-sharding)). |
+| configuration and lifecycle | `ZfStruct`/`ZfCLI`, one source per value, named workload bounds, Z naming, asynchronous owner dispatch, and reverse-order teardown ([Metadata](docs/GUIDELINES.md#metadata), [Naming](docs/GUIDELINES.md#naming), [I/O Function Organization](docs/GUIDELINES.md#io-function-organization), [Teardown](docs/GUIDELINES.md#teardown)). |
+| enrollment and identity | `Zhttp`, `ZfJSON`, and `Ztls` directly; one bounded body and one owned in-memory transaction; no URI parser for host/port, policy wrapper, duplicate chain validation, persistence, or credential logging ([Framework fit](docs/GUIDELINES.md#framework-fit), [Strings](docs/GUIDELINES.md#strings), [Heap allocation](docs/GUIDELINES.md#heap-allocation)). |
+| hub session | Incremental `ZiIOBuf` parsing, existing Ztls send/backpressure/reconnect timer, and `ZmBackoff`; no contiguous conversion, agent Tx queue, second timer, or TLS wrapper ([I/O and system integration](docs/GUIDELINES.md#io-and-system-integration), [Timers](docs/GUIDELINES.md#timers), [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)). |
+| sharding and handoffs | Three explicit owners, variable data moved by buffer reference, fixed metadata by value, producer-owned admission/credit state, and bounded turns; no cross-owner access, repair lock, or diagnostic atomic ([Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs), [Liveness](docs/GUIDELINES.md#liveness), [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies)). |
+| registry and routing | One synchronous blocking unbatched startup `ZiDir` scan, untracked snapshot requests, last-AppTelemetry-wins updates, intrusive named-heap nodes, Z hashes/lists, global nonreused request sequence, `fanoutBatch` publisher-write turns backed by `Req::pending`, and immediate terminal deletion; no app generation, second request allocator, periodic liveness scan, count cap, registry batching, ordinal/cursor state, or GC sweep ([I/O and system integration](docs/GUIDELINES.md#io-and-system-integration), [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion), [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow), [No dogma](docs/GUIDELINES.md#no-dogma)). |
+| operations and tests | Framework-only portable process, no image artifact, TAP tests synchronized by Z primitives, and deterministic residue checks ([Windows](docs/GUIDELINES.md#windows), [Tests](docs/GUIDELINES.md#tests), [Acceptance](docs/GUIDELINES.md#acceptance)). |
 
 ## Mandatory implementation audit
 
 Reject the implementation if any item below remains:
 
-- **[Code structure](GUIDELINES.md#code-structure):** parameter-independent declarations nested in templates;
+- **[Code structure](docs/GUIDELINES.md#code-structure):** parameter-independent declarations nested in templates;
   invariant calls in loop conditions; repeated indexed access; near-identical
   blocks.
-- **[Storage and capacity](GUIDELINES.md#storage-and-capacity):** unexplained capacities; fixed arrays/tables; container GC scans;
+- **[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity):** unexplained capacities; fixed arrays/tables; container GC scans;
   ref-counted objects stored by value; disordered members; false sharing between
   shard-owned groups; storage not chosen for its workload.
-- **[Heap allocation](GUIDELINES.md#heap-allocation):** buffers or nodes outside `ZiIOBuf`/`ZmHeap`/`ZmVHeap`; missing
+- **[Heap allocation](docs/GUIDELINES.md#heap-allocation):** buffers or nodes outside `ZiIOBuf`/`ZmHeap`/`ZmVHeap`; missing
   heap IDs; hot-path scratch allocation; separate object/refcount/container-node
   allocation where intrusion combines them.
-- **[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization):** logger captures by pointer/reference; more than one local-frame
+- **[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization):** logger captures by pointer/reference; more than one local-frame
   copy; temporary contiguous conversion; default initialization immediately
   overwritten; variable data copied into a scheduler capture.
-- **[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow):** assuming `run`/`invoke` blocks; manual polling; time-based
+- **[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow):** assuming `run`/`invoke` blocks; manual polling; time-based
   concurrent tests; iterator lifetime beyond traversal; snapshotted traversal
   counts; needless aliases/null checks; chained discrete `if`; deep nesting;
   hand-written hashes; unbounded work on an I/O turn.
-- **[Framework fit](GUIDELINES.md#framework-fit) and [Type and API friction](GUIDELINES.md#type-and-api-friction):** reimplemented Z facility; `FILE`/`syslog`; printf
+- **[Framework fit](docs/GUIDELINES.md#framework-fit) and [Type and API friction](docs/GUIDELINES.md#type-and-api-friction):** reimplemented Z facility; `FILE`/`syslog`; printf
   formatting; separate null-state boolean; unnecessary/char/span/CRTP casts;
   enum-to-integer mapping instead of direct enum use.
-- **[Scope and cleanup](GUIDELINES.md#scope-and-cleanup) and [Lifetime](GUIDELINES.md#lifetime):** compatibility shim, dead/speculative code, short-lived
+- **[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup) and [Lifetime](docs/GUIDELINES.md#lifetime):** compatibility shim, dead/speculative code, short-lived
   dependent retaining its owner, stale timer/back-pointer, or agent feature not
   required by `goal.md`.
-- **[Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies):** lock added for non-owner access, shared mutable routing state, or
+- **[Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies):** lock added for non-owner access, shared mutable routing state, or
   atomic diagnostic state.  Atomics are permitted only where an existing
   framework primitive requires them, not to repair ownership.
 
-This covers every item in [Audit flags](GUIDELINES.md#audit-flags).  Also audit
-[Header layout](GUIDELINES.md#header-layout),
-[Indentation](GUIDELINES.md#indentation),
-[Multiline layout](GUIDELINES.md#multiline-layout),
-[Compact layout and alignment](GUIDELINES.md#compact-layout-and-alignment), and
-[Class and struct shape](GUIDELINES.md#class-and-struct-shape).  Use hard tabs,
+This covers every item in [Audit flags](docs/GUIDELINES.md#audit-flags).  Also audit
+[Header layout](docs/GUIDELINES.md#header-layout),
+[Indentation](docs/GUIDELINES.md#indentation),
+[Multiline layout](docs/GUIDELINES.md#multiline-layout),
+[Compact layout and alignment](docs/GUIDELINES.md#compact-layout-and-alignment), and
+[Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape).  Use hard tabs,
 direct includes, repository header prologues, and no concepts/`requires`,
 anonymous namespaces, broad lambda captures, `enum class`, or gratuitous STL.
 

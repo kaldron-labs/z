@@ -27,8 +27,8 @@ ZfixRawTest_SOURCES = ZfixRawTest.cc
 ZfixRawTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixRawTest_LDADD = $(ZfixRxTest_LDADD)
 ZfixWireTest_SOURCES = ZfixWireTest.cc
-ZfixWireTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
-ZfixWireTest_LDADD = $(ZfixRxTest_LDADD)
+ZfixWireTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src -I$(top_srcdir)/ztcp/src -I$(top_srcdir)/ztls/src
+ZfixWireTest_LDADD = $(ZfixRxTest_LDADD) $(top_builddir)/ztcp/src/libZtcp.la $(top_builddir)/ztls/src/libZtls.la
 ZfixRxFramerTest_SOURCES = ZfixRxFramerTest.cc
 ZfixRxFramerTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src
 ZfixRxFramerTest_LDADD = $(ZfixRxTest_LDADD)
@@ -390,7 +390,7 @@ installed-load-test:
 
 ZfixSignTest_SOURCES = ZfixSignTest.cc
 ZfixSignTest_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src
-ZfixSignTest_LDADD = $(ZfixRxTest_LDADD) $(top_builddir)/ztls/src/libZtls.la @PTLS_LIBS@
+ZfixSignTest_LDADD = $(ZfixRxTest_LDADD) $(top_builddir)/ztls/src/libZtls.la
 test: sign-test
 .PHONY: sign-test
 sign-test: all
@@ -403,5 +403,7 @@ installed-sign-test:
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/ZfixSignTest.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstSignTest
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o ZfixInstSignTest
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./ZfixInstSignTest
+
+EXTRA_DIST += ZfixLabel.hh ZfixTxImageTest.hh

@@ -37,7 +37,7 @@ Implement two independently usable layers:
 
 Repository references:
 
-- [GUIDELINES.md](GUIDELINES.md): metadata, integer field lookup, allocation,
+- [GUIDELINES.md](docs/GUIDELINES.md): metadata, integer field lookup, allocation,
   sharding, timers, transport lifetime and teardown requirements.
 - [ZfStruct.hh](zf/src/ZfStruct.hh): type codes, properties, accessors,
   constructors, defaults, field filters and facets.
@@ -940,7 +940,7 @@ Exercise multiple sessions/listeners, application admission callbacks (including
 no FIX-layer authentication, acceptance and refusal), connection displacement,
 reconnect/failover, bounded overload, delayed application recovery, partial send, and graceful
 stop with outstanding timers/replay/work. Reserve integration ports according
-to [TESTING.md](TESTING.md).
+to [TESTING.md](docs/TESTING.md).
 
 Gate: end-to-end loopback and restart recovery; no stale callbacks, unbounded
 queues, unintended sequence reuse within an epoch or missed lifecycle/hook

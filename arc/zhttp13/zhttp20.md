@@ -8,7 +8,7 @@ concurrency, queued work, connection churn, or message size.  Distinguish
 these from unavoidable byte-oriented parsing, protocol-bounded iteration,
 amortized table maintenance, diagnostics, and shutdown traversal.
 
-`GUIDELINES.md` is authoritative.  In particular, latency matters more than
+`docs/GUIDELINES.md` is authoritative.  In particular, latency matters more than
 throughput, long-lived containers must not grow monotonically, short-lived
 objects must be removed deterministically, and hot-path storage and algorithms
 must be workload-aware.

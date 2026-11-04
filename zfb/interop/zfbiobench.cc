@@ -30,6 +30,9 @@
 
 #include "bench_generated.h"
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
 namespace Bench {
 
 struct Row { uint64_t seq; ZuBSpan data; };
@@ -398,7 +401,7 @@ template <typename O>
 static void operations(const O &input, unsigned count, unsigned rounds)
 {
   Schemas<O> schema;
-  Canonical::Builder builder{new ZiIOBufAlloc<>};
+  Canonical::Builder builder{new LocalBuf{nullptr, 0}};
   Canonical::save(builder, input);
   auto owner = builder.buf();
   auto bytes = owner->cspan();
@@ -451,7 +454,7 @@ template <typename Codec, bool Reflected = false, typename O>
 void run(ZuCSpan name, const O &input, unsigned count, bool fresh,
   const Schemas<O> *schema = nullptr)
 {
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> owner = new LocalBuf{nullptr, 0};
   typename Codec::Builder builder{owner};
   uint64_t sum = 0, bytes = 0;
   unsigned capacity = 0;
@@ -468,7 +471,7 @@ void run(ZuCSpan name, const O &input, unsigned count, bool fresh,
     sum += Codec::read(owner->cspan());
     bytes += owner->length;
     capacity = owner->size;
-    if (fresh) owner = new ZiIOBufAlloc<>;
+    if (fresh) owner = new LocalBuf{nullptr, 0};
     else owner->clear();
     builder.buf(owner);
   }
@@ -503,7 +506,7 @@ void saves(const O &input, unsigned count, unsigned rounds)
 {
   // Check the native writer against the independent canonical declaration.
   Schemas<O> schema;
-  Native::Builder builder{new ZiIOBufAlloc<>};
+  Native::Builder builder{new LocalBuf{nullptr, 0}};
   if constexpr (Reflected) write<Native>(builder, input, schema);
   else Native::save(builder, input);
   auto owner = builder.buf();
@@ -519,7 +522,7 @@ void saves(const O &input, unsigned count, unsigned rounds)
     Zm::exit(1);
   }
   if constexpr (Reflected) {
-    Canonical::Builder peer{new ZiIOBufAlloc<>};
+    Canonical::Builder peer{new LocalBuf{nullptr, 0}};
     write<Canonical>(peer, input, schema);
     auto buf = peer.buf();
     if (!buf || !Zfb::verify<O>(buf->cspan())) Zm::exit(1);
@@ -549,7 +552,7 @@ static void vectors(ZuBSpan payload, unsigned count, unsigned rounds)
   }
   Vectors row{42, payload, points, ptrs};
   auto check = [&row, n]<typename Codec>() {
-    typename Codec::Builder builder{new ZiIOBufAlloc<>};
+    typename Codec::Builder builder{new LocalBuf{nullptr, 0}};
     Codec::save(builder, row);
     auto owner = builder.buf();
     if (!owner) Zm::exit(1);
@@ -607,7 +610,7 @@ struct TxSink : public ZiTxStream<TxSink> {
   }
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
     ++allocs;
-    ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>;
+    ZmRef<ZiIOBuf> buf = new LocalBuf{nullptr, 0};
     buf->skip = head;
     return buf;
   }

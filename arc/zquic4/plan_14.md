@@ -9,7 +9,7 @@ Preconditions: plans 1 through 13 complete.
 `zquic` supports traffic secret updates and attempts next receive keys when short-packet decrypt fails.  The current behavior is optimistic and lacks a full old/new retention window and validated key phase state machine.  This plan hardens key update behavior while reusing existing crypto primitives.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -68,7 +68,7 @@ New or changed data stores: retain bounded old/new secrets and discard deadlines
 - Open question: exact discard duration should follow QUIC packet threshold/time guidance using existing RTT state.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

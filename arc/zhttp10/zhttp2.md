@@ -49,7 +49,7 @@ or the meaning of multiplexing.  Backward compatibility with the current
 program-local machinery is not required; delete it as library facilities
 replace it.
 
-Apply root `AGENTS.md` and `GUIDELINES.md` throughout.  Preserve static
+Apply root `AGENTS.md` and `docs/GUIDELINES.md` throughout.  Preserve static
 polymorphism on message data paths, owner-thread state, pooled buffers,
 deterministic cleanup, bounded storage, exactly-once completion, and
 allocation/copy discipline.
@@ -338,7 +338,7 @@ Current source counts are 797 lines for `zhttp.cc`, 424 for `zhttpd.cc`, and
   passing;
 - `git diff --check`, including every new Zhttp source/test file: clean.
 
-The concluding `GUIDELINES.md` alignment audit re-read the repository teardown,
+The concluding `docs/GUIDELINES.md` alignment audit re-read the repository teardown,
 sharding, timer, lifetime, container, and control-flow rules plus the
 supplementary QUIC guidance.  The operational stop paths are continuation
 based and do not block an I/O shard: they prevent ingress, drain Rx, drain Tx,
@@ -830,7 +830,7 @@ Valgrind, qlog, `--debug`, `--quic-diag`, `--mem-diag`, and `-v`.
 
 Each phase must leave the default build usable, add deterministic tests for its
 new behavior, meet its hand-off criteria, and conclude with a
-`GUIDELINES.md` alignment audit and repair.  A later phase may not weaken an
+`docs/GUIDELINES.md` alignment audit and repair.  A later phase may not weaken an
 earlier gate.
 
 ### Phase 0: characterize behavior and lock down regressions
@@ -875,9 +875,9 @@ behavior before moving ownership.
 - the Phase 0 hand-off names every still-failing regression and every still
   prohibited executable responsibility; nothing is silently deferred.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `AGENTS.md`, root `GUIDELINES.md`, and
+1. Re-read root `AGENTS.md`, root `docs/GUIDELINES.md`, and
    `zquic/GUIDELINES.md` for H3 diagnostics.
 2. Audit new fixtures for time-based completion, private API reach-through,
    fixed capacities, shared mutable counters, and nondeterminism.
@@ -918,9 +918,9 @@ fully-tested `libZhttp` value types.
 - every remaining client function still maps to one allowed category or to a
   later phase with an explicit removal owner.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read `GUIDELINES.md` sections on strings/spans, copies, containers,
+1. Re-read `docs/GUIDELINES.md` sections on strings/spans, copies, containers,
    layout, framework fit, and API friction.
 2. Audit value ownership, normalization copies, fixed capacities, parsing
    control flow, hash identity, expiry cleanup, and error representation.
@@ -967,9 +967,9 @@ than a Boolean availability hint.
 - the boundary manifest and negative scans prove that discovery responsibility
   has left the executable closure before Phase 3 begins.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read `GUIDELINES.md` sections on async continuations, sharding,
+1. Re-read `docs/GUIDELINES.md` sections on async continuations, sharding,
    cross-thread capture, containers, bounds, and cleanup.
 2. Audit resolver ownership, callback captures, alias/endpoint storage,
    cancellation, error propagation, and cache garbage collection.
@@ -1020,9 +1020,9 @@ versus H3 or `Multiplexed`.
   and the automated negative scan fails when a representative prohibited
   symbol is injected into its fixture.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read `GUIDELINES.md` sections on CRTP/templates, detector traits,
+1. Re-read `docs/GUIDELINES.md` sections on CRTP/templates, detector traits,
    repeated blocks, casts, API boundaries, and hot-path dispatch.
 2. Audit for runtime type erasure, virtual dispatch, compatibility aliases,
    protocol booleans, duplicated adapters, and internal API exposure.
@@ -1088,9 +1088,9 @@ queues, server admission/session composition, and engine lifetime into
 - the updated manifest classifies all retained server code within the six
   categories and assigns every remaining client routing item to Phase 5.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read `GUIDELINES.md` sections on owner threads, intrusive ownership,
+1. Re-read `docs/GUIDELINES.md` sections on owner threads, intrusive ownership,
    deterministic GC, scheduling, buffers, heaps, and shutdown.
 2. Audit every client pool, server coordinator, and scheduler member by owner;
    audit queue-node heap identity, registry removal, admission, cross-shard
@@ -1141,9 +1141,9 @@ fallback, and terminal results while leaving choices configurable.
   migration; Phase 6 is exclusively final deletion, classification, docs, and
   enforcement.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read `GUIDELINES.md` sections on state, control flow, callbacks,
+1. Re-read `docs/GUIDELINES.md` sections on state, control flow, callbacks,
    cross-thread ownership, logging captures, and cleanup.
 2. Audit the complete state machine for duplicate flags, nested branches,
    stale callbacks, replay safety, cache lifetime, exactly-once completion,
@@ -1237,9 +1237,9 @@ functionality to the six allow-listed categories.
 - the source-boundary test enumerates the program-only closure explicitly and
   fails if an unclassified helper file or top-level declaration is added.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `AGENTS.md`, root `GUIDELINES.md`, and applicable zquic
+1. Re-read root `AGENTS.md`, root `docs/GUIDELINES.md`, and applicable zquic
    guidance.
 2. Audit both complete programs and all program-only helpers, not only changed
    hunks, against the six-category allow-list and for repeated protocol blocks,
@@ -1312,9 +1312,9 @@ valid base for H2.
 - final line counts are reported for review context, while acceptance is based
   on ownership, closure classification, and behavior tests.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `AGENTS.md`, root `GUIDELINES.md`,
+1. Re-read root `AGENTS.md`, root `docs/GUIDELINES.md`,
    `zquic/GUIDELINES.md`, and guidance for every other touched module.
 2. Audit the complete final diff for layering, the six-category executable
    boundary, static polymorphism, message hot paths, ownership/sharding,

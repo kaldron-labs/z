@@ -190,7 +190,7 @@ retain each successful response and do not blindly rerun creates. For a failed
 request, retain the retry key reported on stderr and pass it with
 `--idempotence KEY` when retrying the same operation. Existing-record changes
 use their current ETag via `--if-match`, while creation of an access grant uses
-`--if-none-match '*'`. See [management operations](../zum/MANAGEMENT.md).
+`--if-none-match '*'`. See [management operations](../zum/README.md#management-operations).
 
 ## Enroll and start `ztchub`
 

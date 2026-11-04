@@ -17,7 +17,9 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmThread.hh>
 
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -39,17 +41,17 @@ public:
   LoopCxn(LoopMx *mx, const ZiCxnInfo &ci);
   ~LoopCxn() = default;
 
-  void connected(ZiIOContext &io) override;
+  void connected(ZiRxContext &io) override;
   void disconnected(bool) override;
 
 private:
-  bool sendClient(ZiIOContext &io);
-  bool sendClientDone(ZiIOContext &io);
-  bool recvClient(ZiIOContext &io);
+  bool sendClient(ZiTxContext &io);
+  bool sendClientDone(ZiTxContext &io);
+  bool recvClient(ZiRxContext &io);
 
-  bool recvServer(ZiIOContext &io);
-  bool sendServer(ZiIOContext &io);
-  bool sendServerDone(ZiIOContext &io);
+  bool recvServer(ZiRxContext &io);
+  bool sendServer(ZiTxContext &io);
+  bool sendServerDone(ZiTxContext &io);
 
 private:
   LoopMx		*m_owner = nullptr;
@@ -64,13 +66,13 @@ public:
   UdpTOSCxn(UdpTOSMx *mx, const ZiCxnInfo &ci);
   ~UdpTOSCxn() = default;
 
-  void connected(ZiIOContext &io) override;
+  void connected(ZiRxContext &io) override;
   void disconnected(bool) override;
 
 private:
-  bool send_(ZiIOContext &io);
-  bool sendDone_(ZiIOContext &io);
-  bool recv_(ZiIOContext &io);
+  bool send_(ZiTxContext &io);
+  bool sendDone_(ZiTxContext &io);
+  bool recv_(ZiRxContext &io);
 
 private:
   UdpTOSMx	*m_owner = nullptr;
@@ -223,7 +225,7 @@ private:
   }
 
 private:
-  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxTCPBufAllocator<>;
+  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxTCPBufAllocator<>{txRingSize()};
 	  ZmSemaphore		m_done;
 	  ZmSemaphore		m_discDone;
 	  ZmScheduler::Timer	m_retryTimer;
@@ -333,7 +335,7 @@ private:
   }
 
 private:
-  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxUDPBufAllocator<>;
+  ZmRef<Zi::IOBufAllocator> m_allocator = new ZiTxUDPBufAllocator<>{txRingSize()};
   ZmRef<ZiIOBuf> m_retained;
   ZmSemaphore		m_done;
   ZiIP			m_loopIP;
@@ -369,15 +371,15 @@ LoopCxn::LoopCxn(LoopMx *mx, const ZiCxnInfo &ci) :
 {
 }
 
-void LoopCxn::connected(ZiIOContext &io)
+void LoopCxn::connected(ZiRxContext &io)
 {
   if (m_client) {
     io.init(
-      ZiIOFn{this, ZmFnPtr<&LoopCxn::recvClient>{}});
-    send(ZiIOFn{this, ZmFnPtr<&LoopCxn::sendClient>{}});
+      ZiRxFn{this, ZmFnPtr<&LoopCxn::recvClient>{}});
+    send(ZiTxFn{this, ZmFnPtr<&LoopCxn::sendClient>{}});
   } else {
     io.init(
-      ZiIOFn{this, ZmFnPtr<&LoopCxn::recvServer>{}});
+      ZiRxFn{this, ZmFnPtr<&LoopCxn::recvServer>{}});
   }
 }
 
@@ -389,14 +391,14 @@ void LoopCxn::disconnected(bool peer)
     m_owner->markServerDisconnected(peer);
 }
 
-bool LoopCxn::sendClient(ZiIOContext &io)
+bool LoopCxn::sendClient(ZiTxContext &io)
 {
   io.init(
-    ZiIOFn{this, ZmFnPtr<&LoopCxn::sendClientDone>{}}, txBuf());
+    ZiTxFn{this, ZmFnPtr<&LoopCxn::sendClientDone>{}}, txBuf());
   return true;
 }
 
-bool LoopCxn::sendClientDone(ZiIOContext &io)
+bool LoopCxn::sendClientDone(ZiTxContext &io)
 {
   if (!io.buf) { io.complete(); return true; }
   if (io.length < 0) {
@@ -404,18 +406,13 @@ bool LoopCxn::sendClientDone(ZiIOContext &io)
     io.disconnect();
     return true;
   }
-  if (io.buf->length < sizeof(Msg)) return true;
+  if (io.buf->length) return true;
   io.complete();
   return true;
 }
 
-bool LoopCxn::recvClient(ZiIOContext &io)
+bool LoopCxn::recvClient(ZiRxContext &io)
 {
-  if (io.length < 0) {
-    m_owner->markIOFailure();
-    io.disconnect();
-    return true;
-  }
   if (io.buf->length < sizeof(Msg)) return true;
 
   m_owner->markClientEcho(!::memcmp(io.buf->data(), Msg, sizeof(Msg)));
@@ -423,28 +420,23 @@ bool LoopCxn::recvClient(ZiIOContext &io)
   return true;
 }
 
-bool LoopCxn::recvServer(ZiIOContext &io)
+bool LoopCxn::recvServer(ZiRxContext &io)
 {
-  if (io.length < 0) {
-    m_owner->markIOFailure();
-    io.disconnect();
-    return true;
-  }
   if (io.buf->length < sizeof(Msg)) return true;
 
-  send(ZiIOFn{this, ZmFnPtr<&LoopCxn::sendServer>{}});
+  send(ZiTxFn{this, ZmFnPtr<&LoopCxn::sendServer>{}});
   io.complete();
   return true;
 }
 
-bool LoopCxn::sendServer(ZiIOContext &io)
+bool LoopCxn::sendServer(ZiTxContext &io)
 {
   io.init(
-    ZiIOFn{this, ZmFnPtr<&LoopCxn::sendServerDone>{}}, txBuf());
+    ZiTxFn{this, ZmFnPtr<&LoopCxn::sendServerDone>{}}, txBuf());
   return true;
 }
 
-bool LoopCxn::sendServerDone(ZiIOContext &io)
+bool LoopCxn::sendServerDone(ZiTxContext &io)
 {
   if (!io.buf) { io.complete(); return true; }
   if (io.length < 0) {
@@ -452,7 +444,7 @@ bool LoopCxn::sendServerDone(ZiIOContext &io)
     io.disconnect();
     return true;
   }
-  if (io.buf->length < sizeof(Msg)) return true;
+  if (io.buf->length) return true;
 
   io.disconnect();
   return true;
@@ -465,14 +457,14 @@ UdpTOSCxn::UdpTOSCxn(UdpTOSMx *mx, const ZiCxnInfo &ci) :
 {
 }
 
-void UdpTOSCxn::connected(ZiIOContext &io)
+void UdpTOSCxn::connected(ZiRxContext &io)
 {
   if (m_client) {
-    send(ZiIOFn{this, ZmFnPtr<&UdpTOSCxn::send_>{}});
+    send(ZiTxFn{this, ZmFnPtr<&UdpTOSCxn::send_>{}});
     io.complete();
   } else {
     io.init(
-      ZiIOFn{this, ZmFnPtr<&UdpTOSCxn::recv_>{}});
+      ZiRxFn{this, ZmFnPtr<&UdpTOSCxn::recv_>{}});
     m_owner->serverReady(this);
   }
 }
@@ -481,15 +473,15 @@ void UdpTOSCxn::disconnected(bool)
 {
 }
 
-bool UdpTOSCxn::send_(ZiIOContext &io)
+bool UdpTOSCxn::send_(ZiTxContext &io)
 {
   io.init(
-    ZiIOFn{this, ZmFnPtr<&UdpTOSCxn::sendDone_>{}}, txBuf());
+    ZiTxFn{this, ZmFnPtr<&UdpTOSCxn::sendDone_>{}}, txBuf());
   io.tos = uint8_t(0x2e);
   return true;
 }
 
-bool UdpTOSCxn::sendDone_(ZiIOContext &io)
+bool UdpTOSCxn::sendDone_(ZiTxContext &io)
 {
   if (!io.buf) { io.complete(); return true; }
   if (io.length < 0) {
@@ -501,16 +493,11 @@ bool UdpTOSCxn::sendDone_(ZiIOContext &io)
   return true;
 }
 
-bool UdpTOSCxn::recv_(ZiIOContext &io)
+bool UdpTOSCxn::recv_(ZiRxContext &io)
 {
-  if (io.length < 0) {
-    m_owner->ioFailure();
-    io.disconnect();
-    return true;
-  }
   unsigned n = m_owner->size(), cap = io.buf->size - io.buf->skip;
   if (n > cap) n = cap;
-  bool payloadOK = io.length == int(n) &&
+  bool payloadOK = io.buf->length == n &&
     (!n || !::memcmp(io.buf->data(), Msg, sizeof(Msg)));
   m_owner->recvTOS(io.tos, payloadOK, io.flags, io.buf);
   io.disconnect();
@@ -643,26 +630,26 @@ LoopResult runTcpLoopbackAndTelemetry(
 }
 
 #define CheckTcpLoopback(result) do { \
-  ZuCheck((result).started); \
-  ZuCheck((result).telemetry); \
-  ZuCheck((result).emptyCxns); \
-  ZuCheck((result).done); \
+  ZuCheckRT((result).started); \
+  ZuCheckRT((result).telemetry); \
+  ZuCheckRT((result).emptyCxns); \
+  ZuCheckRT((result).done); \
   if ((result).failed) { \
-    ZuCheck((result).failKind == 1); \
+    ZuCheckRT((result).failKind == 1); \
     return; \
   } \
-  ZuCheck((result).clientEcho); \
-  ZuCheck((result).clientDisc); \
-  ZuCheck((result).serverDisc); \
-  ZuCheck((result).waitDisc); \
-  ZuCheck((result).disconnects >= 4); \
-  ZuCheck((result).peerDisconnects == 0); \
-  ZuCheck((result).localDisconnects >= 4); \
+  ZuCheckRT((result).clientEcho); \
+  ZuCheckRT((result).clientDisc); \
+  ZuCheckRT((result).serverDisc); \
+  ZuCheckRT((result).waitDisc); \
+  ZuCheckRT((result).disconnects >= 4); \
+  ZuCheckRT((result).peerDisconnects == 0); \
+  ZuCheckRT((result).localDisconnects >= 4); \
 } while (0)
 
 void testTcpLoopbackIPv4()
 {
-  ZuTestScope(testTcpLoopbackIPv4);
+  ZuTestScopeRT(testTcpLoopbackIPv4);
 
   auto result = runTcpLoopbackAndTelemetry(
     ZiIP{"127.0.0.1"}, ZiTestPort::MxLoopTCP4);
@@ -671,7 +658,7 @@ void testTcpLoopbackIPv4()
 
 void testTcpLoopbackIPv6()
 {
-  ZuTestScope(testTcpLoopbackIPv6);
+  ZuTestScopeRT(testTcpLoopbackIPv6);
 
   auto result = runTcpLoopbackAndTelemetry(
     ZiIP{"::1"}, ZiTestPort::MxLoopTCP6);
@@ -695,6 +682,122 @@ void testUdpTOSIPv4()
 }
 
 #ifndef _WIN32
+void testRingSizes()
+{
+  ZuTestScopeRT(testRingSizes);
+  ZiMxParams defaults;
+  ZuCheckRT(defaults.rxRingSize() == ZiIOBuf_DefltRxRingSize);
+  ZuCheckRT(defaults.txRingSize() == ZiIOBuf_DefltTxRingSize);
+  for (unsigned size : {0U, 1U, unsigned(ZiMxParams::MaxRingSize) + 1}) {
+    ZiMultiplex rx{ZiMxParams{}.rxRingSize(size)};
+    ZiMultiplex tx{ZiMxParams{}.txRingSize(size)};
+    ZuCheckRT(!rx.start());
+    ZuCheckRT(!tx.start());
+  }
+  for (bool shared : {false, true}) {
+    auto params = ZiMxParams{}.rxRingSize(257).txRingSize(513)
+      .txThread(shared ? 1 : 2);
+    params.udpBufAllocator<ZiRxUDPBufAllocator<>>();
+    ZiMultiplex mx{ZuMv(params)};
+    ZuCheckRT(mx.rxRingSize() == 257 && mx.txRingSize() == 513);
+#if Zi_URing
+    if (Zi::uring()) {
+      ZuCheckRT(mx.rxAllocator(false)->ring()->bufCount() == 257);
+      ZuCheckRT(mx.rxAllocator(true)->ring()->bufCount() == 257);
+      ZiTxUDPBufAllocator<> tx{mx.txRingSize()};
+      ZuCheckRT(tx.ring()->bufCount() == 513);
+    }
+#endif
+    ZuCheckRT(mx.start());
+    ZuCheckRT(mx.stop());
+  }
+}
+
+struct UdpHoldState {
+  ZmSemaphore ready, received;
+  ZiSockAddr addr;
+  ZtArray<ZmRef<ZiIOBuf>> held;
+  bool failed = false;
+  bool overflow = false;
+};
+
+class UdpHoldCxn : public ZiConnection {
+public:
+  UdpHoldCxn(ZiMultiplex *mx, const ZiCxnInfo &ci, UdpHoldState &state) :
+    ZiConnection{mx, ci}, m_state{state} { }
+  void connected(ZiRxContext &io) override {
+    m_state.addr.init(ZiIPType::V4);
+    socklen_t length = m_state.addr.len();
+    if (getsockname(info().socket, m_state.addr.sa(), &length))
+      m_state.failed = true;
+    m_state.addr.sync();
+    io.init(ZiRxFn{this, ZmFnPtr<&UdpHoldCxn::received>{}});
+    m_state.ready.post();
+  }
+  void disconnected(bool) override { }
+private:
+  bool received(ZiRxContext &io) {
+    if (!io.buf || io.buf->length != sizeof(unsigned))
+      m_state.failed = true;
+    else {
+      m_state.overflow |= !io.buf->uring();
+      m_state.held.push(ZuMv(io.buf));
+    }
+    m_state.received.post();
+    return true;
+  }
+  UdpHoldState &m_state;
+};
+
+void testUdpRetained()
+{
+  ZuTestScopeRT(testUdpRetained);
+  if (!Zi::uring()) { ZuCheckRT(!Zi::uring()); return; }
+  for (bool shared : {false, true}) {
+    UdpHoldState state;
+    ZiMultiplex mx{
+      ZiMxParams{}.backend(ZiMxBackend::URing).txThread(shared ? 1 : 2)};
+    ZuCheckRT(mx.start());
+    mx.udp({[&mx, &state](const ZiCxnInfo &ci) {
+      return new UdpHoldCxn{&mx, ci, state};
+    }}, {[&state](bool) {
+      state.failed = true;
+      state.ready.post();
+    }}, ZiIP{"127.0.0.1"}, 0, {}, 0, ZiCxnOptions{}.udp(true));
+    bool ready = !state.ready.timedwait(Zm::now(5));
+    ZuCheckRT(ready && !state.failed);
+    int fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+    ZuCheckRT(fd >= 0);
+    if (ready && !state.failed && fd >= 0) {
+      // Retain the entire mapped pool until subsequent datagrams arrive.
+      // Repeat after releasing it with an overflow receive still provided.
+      for (unsigned round = 0; round < 2; ++round) {
+	for (unsigned i = 0; i < ZiIOBuf_DefltRxRingSize + 2; ++i) {
+	  bool sent = ::sendto(fd, &i, sizeof(i), 0,
+	    state.addr.sa(), state.addr.len()) == sizeof(i);
+	  bool received = sent && !state.received.timedwait(Zm::now(5));
+	  ZuCheckRT(received);
+	  if (!received) break;
+	}
+	mx.rxRun([&state]() {
+	  if (state.held.length() != ZiIOBuf_DefltRxRingSize + 2)
+	    state.failed = true;
+	  for (unsigned i = 0; i < state.held.length(); ++i)
+	    if (memcmp(state.held[i]->data(), &i, sizeof(i)))
+	      state.failed = true;
+	  state.held.null();
+	  state.ready.post();
+	});
+	ZuCheckRT(!state.ready.timedwait(Zm::now(5)));
+      }
+    }
+    if (fd >= 0) ::close(fd);
+    ZuCheckRT(mx.stop());
+    ZuCheckRT(!state.failed && state.overflow);
+    state.held.null();
+  }
+}
+
 void testNativeOwners()
 {
   ZuTestScopeRT(testNativeOwners);
@@ -751,6 +854,388 @@ void testEpollOwners()
 #endif
 
 #ifndef _WIN32
+struct PoolRetireState {
+  ZiMultiplex *mx = nullptr;
+  ZmRef<Zi::IOBufAllocator> pool;
+  ZmRef<ZiIOBuf> pending;
+  ZiIOBuf *original = nullptr;
+  ZmSemaphore sent, received, closed, turn;
+  ZmAtomic<unsigned> callbacks = 0, destructors = 0, errors = 0;
+  ZmAtomic<unsigned> disconnects = 0;
+  unsigned coldRefs = 0, allocRefs = 0, releaseRefs = 0;
+  bool destructorOnTx = false, runningAtDestroy = false, nativeBound = false;
+  bool payloadOK = false, runningAfter = false;
+  bool releaseOnTx = true;
+};
+
+struct RetireUDPAllocator : public ZiTxUDPBufAllocator<>,
+    public ZmNHeap<RetireUDPAllocator> {
+  using Heap = ZmNHeap<RetireUDPAllocator>;
+  using Heap::operator new;
+  using Heap::operator delete;
+  friend inline ZuStringT<"ZiMx.UDPRetire"> ZmNHeapID(RetireUDPAllocator *);
+
+  explicit RetireUDPAllocator(PoolRetireState *s) : state{s} { }
+  ~RetireUDPAllocator() override {
+    ++state->destructors;
+    state->destructorOnTx = state->mx->invoked(state->mx->txThread());
+    state->runningAtDestroy = state->mx->state() == ZmEngineState::Running;
+  }
+  PoolRetireState *state;
+};
+
+class PoolRetireMx;
+class PoolRetireCxn : public ZiConnection {
+public:
+  PoolRetireCxn(PoolRetireMx *, const ZiCxnInfo &);
+  void connected(ZiRxContext &) override;
+  void disconnected(bool) override;
+private:
+  bool send_(ZiTxContext &);
+  bool recv_(ZiRxContext &);
+  PoolRetireMx *m_owner;
+  bool m_client;
+};
+
+constexpr char PoolRetirePayload[] = "UDP allocator retirement";
+
+class PoolRetireMx : public ZiMultiplex {
+public:
+  PoolRetireMx(PoolRetireState &s, ZiMxBackend::T backend, bool shared) :
+      ZiMultiplex{ZiMxParams{}.backend(backend).txThread(shared ? 1 : 2)},
+      m_state{s} {
+    s.mx = this;
+    s.pool = new RetireUDPAllocator{&s};
+    prepare();
+  }
+  void prepare() {
+    auto &s = m_state;
+    s.coldRefs = s.pool->refCount();
+    s.pending = s.pool->alloc();
+    s.allocRefs = s.pool->refCount();
+    s.original = s.pending.ptr();
+    if (!s.pending || !s.pending->append(
+	ZuBSpan{PoolRetirePayload, sizeof(PoolRetirePayload) - 1})) ++s.errors;
+  }
+  PoolRetireState &result() { return m_state; }
+  ZiConnection *connected(const ZiCxnInfo &ci) {
+    auto cxn = new PoolRetireCxn{this, ci};
+    if (!!ci.remoteIP) m_client = cxn; else m_server = cxn;
+    return cxn;
+  }
+  void failed(bool) {
+    ++m_state.errors;
+    m_state.sent.post(); m_state.received.post();
+  }
+  void startServer() {
+    udp(ZiConnectFn{this, ZmFnPtr<&PoolRetireMx::connected>{}},
+      ZiFailFn{this, ZmFnPtr<&PoolRetireMx::failed>{}},
+      ZiIP{"127.0.0.1"}, 0, ZiIP{}, 0, ZiCxnOptions{}.udp(true));
+  }
+  void serverReady(ZiConnection *cxn) {
+    ZiSockAddr address;
+    address.init(ZiIPType::V4);
+    socklen_t length = address.len();
+    if (::getsockname(cxn->info().socket, address.sa(), &length) < 0) {
+      failed(false); return;
+    }
+    address.sync();
+    udp(ZiConnectFn{this, ZmFnPtr<&PoolRetireMx::connected>{}},
+      ZiFailFn{this, ZmFnPtr<&PoolRetireMx::failed>{}},
+      ZiIP{"127.0.0.1"}, 0, ZiIP{"127.0.0.1"}, address.port(),
+      ZiCxnOptions{}.udp(true));
+  }
+  void disconnectBoth() {
+    rxRun([this] {
+      if (m_client) m_client->disconnect();
+      if (m_server) m_server->disconnect();
+    });
+  }
+private:
+  PoolRetireState &m_state;
+  ZmRef<PoolRetireCxn> m_client, m_server;
+};
+
+PoolRetireCxn::PoolRetireCxn(PoolRetireMx *owner, const ZiCxnInfo &ci) :
+    ZiConnection{owner, ci}, m_owner{owner}, m_client{!!ci.remoteIP} { }
+
+void PoolRetireCxn::connected(ZiRxContext &io)
+{
+  if (m_client) {
+    io.complete();
+    send(ZiTxFn{this, ZmFnPtr<&PoolRetireCxn::send_>{}});
+  } else {
+    io.init(ZiRxFn{this, ZmFnPtr<&PoolRetireCxn::recv_>{}});
+    m_owner->serverReady(this);
+  }
+}
+
+void PoolRetireCxn::disconnected(bool)
+{
+  auto &s = m_owner->result();
+  ++s.disconnects;
+  s.closed.post();
+}
+
+bool PoolRetireCxn::send_(ZiTxContext &io)
+{
+  auto &s = m_owner->result();
+  if (!io.buf) {
+    if (io.length < 0) ++s.errors;
+    if (s.pending) {
+      io.init(ZiTxFn{this, ZmFnPtr<&PoolRetireCxn::send_>{}}, ZuMv(s.pending));
+    } else io.complete(); // native next-output selection is not retirement
+    return true;
+  }
+  ++s.callbacks;
+  bool sole = io.buf.ptr() == s.original && io.buf->refCount() == 1 && !s.pending;
+  bool success = sole && !io.buf->length && io.length >= 0 &&
+    m_owner->invoked(m_owner->txThread());
+#if Zi_URing
+  s.nativeBound = io.buf->uring() && io.buf->ring() == s.pool->ring() &&
+    s.pool->ring() && s.pool->ring()->io();
+#endif
+  if (!success) ++s.errors;
+  // Return the actual slot and finish its context before initiating teardown.
+  // Keep the sole allocator owner until asynchronous unbinding acknowledges
+  // the Rx/Tx turns and all terminal kernel controls.
+  io.buf = nullptr;
+  s.releaseRefs = s.pool->refCount();
+  io.complete();
+  if (s.releaseOnTx && success && s.releaseRefs == s.coldRefs && s.coldRefs == 1) {
+    m_owner->unbind(s.pool.ptr(), {[&s] {
+      s.pool = nullptr;
+      s.sent.post();
+    }});
+  } else s.sent.post();
+  return true;
+}
+
+bool PoolRetireCxn::recv_(ZiRxContext &io)
+{
+  auto &s = m_owner->result();
+  s.payloadOK = io.buf->length == sizeof(PoolRetirePayload) - 1 &&
+    !memcmp(io.buf->data(), PoolRetirePayload, sizeof(PoolRetirePayload) - 1);
+  if (!s.payloadOK) ++s.errors;
+  io.complete();
+  s.received.post();
+  return true;
+}
+
+void testUdpPoolRetire()
+{
+  ZuTestScopeRT(testUdpPoolRetire);
+  for (ZiMxBackend::T backend : {ZiMxBackend::EPoll, ZiMxBackend::URing}) {
+    if (backend == ZiMxBackend::URing && !Zi::uring()) continue;
+    for (bool shared : {false, true}) {
+      PoolRetireState s;
+      PoolRetireMx mx{s, backend, shared};
+      ZuCheckRT(s.pending && s.coldRefs == 1 && s.allocRefs == s.coldRefs);
+      bool started = mx.start();
+      ZuCheckRT(started);
+      if (started && s.pending) {
+	ZuCheckRT(mx.backend() == backend);
+	mx.startServer();
+	auto timeout = Zm::now(5);
+	bool sent = !s.sent.timedwait(timeout);
+	bool received = !s.received.timedwait(timeout);
+	ZuCheckRT(sent && received);
+	if (sent && received) {
+	  // A later normal Tx turn proves the CQ callback stack returned while
+	  // mx is still running, before disconnection/stop is requested.
+	  mx.txRun([&mx, &s] {
+	    s.runningAfter = mx.state() == ZmEngineState::Running;
+	    s.turn.post();
+	  });
+	  bool turned = !s.turn.timedwait(Zm::now(5));
+	  ZuCheckRT(turned && s.runningAfter);
+	  ZuCheckRT(s.callbacks.load_() == 1 && s.destructors.load_() == 1);
+	  ZuCheckRT(s.destructorOnTx && s.runningAtDestroy);
+	  ZuCheckRT(s.releaseRefs == s.coldRefs && !s.pool && !s.pending);
+	  ZuCheckRT(s.payloadOK && !s.errors.load_());
+	  if (backend == ZiMxBackend::URing) ZuCheckRT(s.nativeBound);
+	}
+	mx.disconnectBoth();
+	timeout = Zm::now(5);
+	ZuCheckRT(!s.closed.timedwait(timeout) && !s.closed.timedwait(timeout));
+      }
+      ZuCheckRT(mx.stop());
+      // Failure cleanup never destroys a pool before stop drains kernel holds.
+      s.pending = nullptr;
+      s.pool = nullptr;
+      ZuCheckRT(s.callbacks.load_() == 1 && s.destructors.load_() == 1);
+      ZuCheckRT(s.disconnects.load_() == 2 && !s.errors.load_());
+    }
+  }
+}
+
+// Both real UDP connections are disconnected before initiating allocator
+// teardown. These ordinary turns drain callback stacks, not kernel controls.
+bool drainRetirePool(PoolRetireMx &mx, PoolRetireState &s)
+{
+  mx.startServer();
+  auto timeout = Zm::now(5);
+  bool sent = !s.sent.timedwait(timeout);
+  bool received = !s.received.timedwait(timeout);
+  ZuCheckRT(sent && received);
+  if (!sent || !received) return false;
+  mx.disconnectBoth();
+  timeout = Zm::now(5);
+  bool closed = !s.closed.timedwait(timeout) && !s.closed.timedwait(timeout);
+  ZuCheckRT(closed);
+  if (!closed) return false;
+  ZmSemaphore drain;
+  mx.rxRun([&drain] { drain.post(); });
+  bool rx = !drain.timedwait(Zm::now(5));
+  // Stop drains a timed-out post before its stack semaphore can disappear.
+  if (!rx) { ZuCheckRT(rx); mx.stop(); return false; }
+  mx.txRun([&drain] { drain.post(); });
+  bool tx = !drain.timedwait(Zm::now(5));
+  ZuCheckRT(rx && tx);
+  if (!tx) mx.stop();
+  return tx;
+}
+
+void testUdpPoolStopRace()
+{
+  ZuTestScopeRT(testUdpPoolStopRace);
+  for (ZiMxBackend::T backend : {ZiMxBackend::EPoll, ZiMxBackend::URing}) {
+    if (backend == ZiMxBackend::URing && !Zi::uring()) continue;
+    for (bool shared : {false, true}) {
+      // Eight independently bound native pools race each owner layout. EPoll
+      // supplies one ordinary allocator-destruction baseline per layout.
+      unsigned iterations = backend == ZiMxBackend::URing ? 8 : 1;
+      for (unsigned i = 0; i < iterations; ++i) {
+	PoolRetireState s;
+	s.releaseOnTx = false;
+	PoolRetireMx mx{s, backend, shared};
+	bool started = mx.start();
+	ZuCheckRT(started);
+	bool drained = started && drainRetirePool(mx, s);
+	ZuCheckRT(drained && s.callbacks.load_() == 1 &&
+	  s.disconnects.load_() == 2 && !s.pending);
+	if (drained) {
+	  ZuCheckRT(mx.backend() == backend && s.payloadOK && !s.errors.load_());
+	  ZuCheckRT(s.pool && s.coldRefs == 1 && s.allocRefs == 1 &&
+	    s.releaseRefs == 1 && s.pool->refCount() == 1);
+	  if (backend == ZiMxBackend::URing) ZuCheckRT(s.nativeBound);
+	  ZmSemaphore ready, go;
+	  ZmAtomic<unsigned> workerRefs = 0;
+	  auto pool = s.pool.ptr();
+	  ZmThread worker{[pool = ZuMv(s.pool), &ready, &go, &workerRefs]() mutable {
+	    ready.post();
+	    go.wait();
+	    workerRefs = pool ? pool->refCount() : 0;
+	    pool = nullptr;
+	  }};
+	  ready.wait();
+	  ZuCheckRT(!s.pool);
+	  // Initiate while ingress is still open. Pool destruction becomes legal
+	  // only after the asynchronous detach acknowledges its terminal CQEs.
+	  // Global stop joins that drain instead of racing destructor-time posts.
+	  mx.unbind(pool, {[&go] { go.post(); }});
+	  bool stopped = mx.stop();
+	  worker.join();
+	  ZuCheckRT(stopped && mx.state() == ZmEngineState::Stopped);
+	  ZuCheckRT(workerRefs.load_() == 1 && s.destructors.load_() == 1);
+	  ZuCheckRT(!s.destructorOnTx && !s.pending && !s.pool);
+	  ZuCheckRT(s.callbacks.load_() == 1 && s.disconnects.load_() == 2 &&
+	    s.payloadOK && !s.errors.load_());
+	} else {
+	  ZuCheckRT(mx.stop());
+	  s.pending = nullptr;
+	  s.pool = nullptr;
+	}
+      }
+    }
+  }
+}
+
+void testUdpPoolReuse()
+{
+  ZuTestScopeRT(testUdpPoolReuse);
+  if (!Zi::uring()) { ZuCheckRT(!Zi::uring()); return; }
+  for (bool shared : {false, true}) {
+    PoolRetireState s;
+    s.releaseOnTx = false;
+    PoolRetireMx mx{s, ZiMxBackend::URing, shared};
+    auto allocator = s.pool.ptr();
+    for (unsigned round = 0; round < 2; ++round) {
+      bool started = mx.start();
+      ZuCheckRT(started && mx.backend() == ZiMxBackend::URing);
+      bool drained = started && drainRetirePool(mx, s);
+      ZuCheckRT(drained && s.callbacks.load_() == round + 1 &&
+	s.disconnects.load_() == (round + 1) * 2);
+      ZuCheckRT(mx.stop());
+      ZuCheckRT(s.pool.ptr() == allocator && s.pool->refCount() == 1 &&
+	!s.destructors.load_() && !s.pending);
+      ZuCheckRT(s.payloadOK && s.nativeBound && !s.errors.load_());
+      if (!drained) break;
+      if (!round) {
+	// Allocate from the surviving registration, then bind it again through
+	// another real UDP send after mx.stop(), rather than an idle restart.
+	s.nativeBound = false;
+	s.payloadOK = false;
+	mx.prepare();
+	ZuCheckRT(s.pending && s.coldRefs == 1 && s.allocRefs == 1);
+      }
+    }
+    s.pending = nullptr;
+    s.pool = nullptr;
+    ZuCheckRT(s.destructors.load_() == 1 && !s.destructorOnTx);
+    ZuCheckRT(s.callbacks.load_() == 2 && s.disconnects.load_() == 4 &&
+      !s.errors.load_());
+  }
+}
+
+// Exercise explicit detach and rebind without stopping either I/O shard.
+void testUdpPoolUnbindReuse()
+{
+  ZuTestScopeRT(testUdpPoolUnbindReuse);
+  for (ZiMxBackend::T backend : {ZiMxBackend::EPoll, ZiMxBackend::URing}) {
+    if (backend == ZiMxBackend::URing && !Zi::uring()) continue;
+    for (bool shared : {false, true}) {
+      PoolRetireState s;
+      s.releaseOnTx = false;
+      PoolRetireMx mx{s, backend, shared};
+      bool started = mx.start();
+      ZuCheckRT(started);
+      for (unsigned round = 0; started && round < 2; ++round) {
+	bool drained = drainRetirePool(mx, s);
+	ZuCheckRT(drained);
+	if (!drained) break;
+	ZmSemaphore done;
+	ZmAtomic<unsigned> detached = 0;
+	auto acknowledge = [&mx, &done, &detached] {
+	  ZuCheckRT(mx.invoked(mx.txThread()));
+	  if (++detached == 2) done.post();
+	};
+	// Rx storage and the application's Tx registration retain their pools.
+	// Each acknowledgment is after its own terminal watches/reads drain.
+	mx.unbind(mx.rxAllocator(true), {acknowledge});
+	mx.unbind(s.pool.ptr(), {acknowledge});
+	bool unbound = !done.timedwait(Zm::now(5));
+	ZuCheckRT(unbound);
+	if (!unbound) {
+	  // Drain callbacks before their stack semaphore leaves scope.
+	  mx.stop();
+	  started = false;
+	  break;
+	}
+	ZuCheckRT(s.pool && s.pool->refCount() == 1 && !s.destructors.load_());
+	ZuCheckRT(s.callbacks.load_() == round + 1 &&
+	  s.disconnects.load_() == (round + 1) * 2 && !s.errors.load_());
+	if (!round) mx.prepare();
+      }
+      ZuCheckRT(mx.stop());
+      s.pending = nullptr;
+      s.pool = nullptr;
+      ZuCheckRT(s.destructors.load_() == 1 && !s.destructorOnTx);
+      ZuCheckRT(s.callbacks.load_() == 2 && s.disconnects.load_() == 4);
+    }
+  }
+}
+
 struct BurstBuf : public ZiRxBuf {
   using ZiRxBuf::ZiRxBuf;
   unsigned cookie = 0x1234;
@@ -759,12 +1244,12 @@ class BurstMx;
 class BurstCxn : public ZiConnection, public ZiRx<BurstCxn> {
 public:
   BurstCxn(BurstMx *mx, const ZiCxnInfo &ci, Zi::IOBufAllocator *allocator);
-  void connected(ZiIOContext &) override;
+  void connected(ZiRxContext &) override;
   void disconnected(bool) override { rxReset(); }
 private:
-  bool sent(ZiIOContext &);
-  int header(const ZiIOContext &, Stream &);
-  int body(const ZiIOContext &, Stream &, unsigned);
+  bool sent(ZiTxContext &);
+  int header(const ZiRxContext &, Stream &);
+  int body(const ZiRxContext &, Stream &, unsigned);
   BurstMx *m_owner;
   Zi::IOBufAllocator *m_allocator;
   unsigned m_next = 0;
@@ -775,17 +1260,17 @@ private:
 
 class BurstMx : public ZiMultiplex {
 public:
-  enum { Clients = 20, Messages = 500, Hold = ZiIOBuf_DefltRingSize };
+  enum { Clients = 20, Messages = 500, Hold = ZiIOBuf_DefltRxRingSize };
   explicit BurstMx(bool shared, bool many = false, bool jumbo = false) : ZiMultiplex{
     ZiMxParams{}.backend(ZiMxBackend::URing).txThread(shared ? 1 : 2).txBufSize(2048)
       .tcpBufAllocator(new Zi::RxTCPBufAllocator<
 	BurstBuf, 256, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{
-	  jumbo ? 4U : unsigned(ZiIOBuf_DefltRingSize)})},
+	  jumbo ? 4U : unsigned(ZiIOBuf_DefltRxRingSize)})},
     m_jumbo{jumbo}, m_released{jumbo} {
     if (many) {
-      m_clients = ZiIOBuf_DefltRingSize + 8;
+      m_clients = ZiIOBuf_DefltRxRingSize + 8;
       for (unsigned i = 0; i < m_clients; ++i)
-	m_allocators.push(new ZiTxTCPBufAllocator<64>);
+	m_allocators.push(new ZiTxTCPBufAllocator<64>{txRingSize()});
     }
   }
   void startClients(const ZiListenInfo &info) {
@@ -812,8 +1297,8 @@ public:
     for (unsigned i = 0; i < Messages; ++i) n += size(i);
     return Clients * n;
   }
-  void sent(const ZiIOContext &io) {
-    if (unsigned(io.length) < io.buf->length) ++m_partial;
+  void sent(const ZiTxContext &io, unsigned length) {
+    if (unsigned(io.length) < length) ++m_partial;
     if (++m_sent == Clients * Messages) m_txDone.post();
   }
   bool ingress() { return !m_ingress.timedwait(Zm::now(15)); }
@@ -847,8 +1332,8 @@ public:
       m_sent == Clients * Messages && m_bytes == bytes();
   }
 private:
-  ZmRef<Zi::IOBufAllocator> m_tcp = new ZiTxTCPBufAllocator<32<<10>;
-  ZmRef<Zi::IOBufAllocator> m_tls = new ZiTxTLSBufAllocator<32<<10>;
+  ZmRef<Zi::IOBufAllocator> m_tcp = new ZiTxTCPBufAllocator<32<<10>{txRingSize()};
+  ZmRef<Zi::IOBufAllocator> m_tls = new ZiTxTLSBufAllocator<32<<10>{txRingSize()};
   ZtArray<ZmRef<Zi::IOBufAllocator>> m_allocators;
   ZtArray<ZmRef<ZiIOBuf>> m_held;
   ZmSemaphore m_rxDone, m_txDone, m_ingress, m_bound;
@@ -866,24 +1351,27 @@ private:
 BurstCxn::BurstCxn(BurstMx *mx, const ZiCxnInfo &ci, Zi::IOBufAllocator *allocator) :
   ZiConnection{mx, ci}, m_owner{mx}, m_allocator{allocator} { }
 
-void BurstCxn::connected(ZiIOContext &io)
+void BurstCxn::connected(ZiRxContext &io)
 {
   if (m_allocator) {
     io.complete();
-    send(ZiIOFn{this, ZmFnPtr<&BurstCxn::sent>{}});
+    send(ZiTxFn{this, ZmFnPtr<&BurstCxn::sent>{}});
   } else ZiRx::recv<&BurstCxn::header, &BurstCxn::body>(io);
 }
 
-bool BurstCxn::sent(ZiIOContext &io)
+bool BurstCxn::sent(ZiTxContext &io)
 {
   if (!m_owner->invoked(m_owner->txThread()) || io.length < 0) {
     m_owner->failed(); io.disconnect(); return true;
   }
   if (io.buf) {
-    if (io.buf->data()[0] != uint8_t(++m_retired) || io.offset != io.buf->length)
+    unsigned n = m_owner->many() ? 64 : BurstMx::size(m_retired);
+    ++m_retired;
+    if (io.buf->length || io.buf->skip < n ||
+	io.buf->data_()[io.buf->skip - n] != uint8_t(m_retired))
       m_owner->failed();
     if (m_retired == 1) m_owner->first();
-    m_owner->sent(io);
+    m_owner->sent(io, n);
     io.complete();
     return true;
   }
@@ -895,16 +1383,16 @@ bool BurstCxn::sent(ZiIOContext &io)
   ++m_next;
   memset(buf->ensure(n), int(m_next), n);
   buf->length = n;
-  io.init(ZiIOFn{this, ZmFnPtr<&BurstCxn::sent>{}}, ZuMv(buf));
+  io.init(ZiTxFn{this, ZmFnPtr<&BurstCxn::sent>{}}, ZuMv(buf));
   return true;
 }
 
-int BurstCxn::header(const ZiIOContext &, Stream &)
+int BurstCxn::header(const ZiRxContext &, Stream &)
 {
   return m_owner->jumbo() ? BurstMx::size(m_message) : 64;
 }
 
-int BurstCxn::body(const ZiIOContext &, Stream &stream, unsigned n)
+int BurstCxn::body(const ZiRxContext &, Stream &stream, unsigned n)
 {
   stream.eachRange(n, [this](Zi::RxRange range) -> int64_t {
     auto length = range.length;
@@ -996,7 +1484,7 @@ struct MxWatchState {
 
 void testMxWatch()
 {
-  ZuTestScope(testMxWatch);
+  ZuTestScopeRT(testMxWatch);
   MxWatchState state;
   Ztc::MxMgr::watch(
     {[&state](Ztc::Mx *mx_) {
@@ -1006,20 +1494,20 @@ void testMxWatch()
 	{[](Ztc::Queue *) { }});
     }},
     {[&state](Ztc::Mx *mx_) {
-      ZuCheck(mx_ == state.mx);
+      ZuCheckRT(mx_ == state.mx);
       ++state.rootDels;
     }});
   {
     LoopMx mx{ZiIP{"127.0.0.1"}, ZiTestPort::MxLoopTCP4};
-    ZuCheck(state.mx == &mx);
-    ZuCheck(mx.start());
-    ZuCheck(state.rootAdds == 1);
-    ZuCheck(state.queueSeeds == mx.params().nThreads());
-    ZuCheck(mx.stop());
+    ZuCheckRT(state.mx == &mx);
+    ZuCheckRT(mx.start());
+    ZuCheckRT(state.rootAdds == 1);
+    ZuCheckRT(state.queueSeeds == mx.params().nThreads());
+    ZuCheckRT(mx.stop());
     mx.unwatch();
   }
   Ztc::MxMgr::unwatch();
-  ZuCheck(state.rootDels == 1);
+  ZuCheckRT(state.rootDels == 1);
 }
 
 #ifdef linux
@@ -1028,6 +1516,7 @@ void testNativeStartFailure()
   ZuTestScopeRT(testNativeStartFailure);
   // Keep descriptor limits and failure-time cleanup isolated from the harness.
   pid_t child = ::fork();
+  if (!child) ::dup2(STDERR_FILENO, STDOUT_FILENO);
   ZuCheckRT(child >= 0);
   if (child < 0) return;
   if (!child) {
@@ -1067,6 +1556,99 @@ void testNativeStartFailure()
 }
 #endif
 
+#ifdef ZiMultiplex_EPoll
+struct TurnState {
+  ZmSemaphore done;
+  unsigned sent = 0;
+  unsigned atMarker = 0;
+  bool failed = false;
+};
+
+class TurnCxn : public ZmNHeap<TurnCxn>, public ZiConnection {
+friend inline ZuStringT<"ZiTest.TurnCxn"> ZmNHeapID(TurnCxn *);
+public:
+  enum { Count = ZiMxParams::IOQuantum * 3 };
+
+  TurnCxn(ZiMultiplex *mx, const ZiCxnInfo &ci, TurnState &state) :
+    ZiConnection{mx, ci}, m_state{state} { }
+
+  void connected(ZiRxContext &rx) override {
+    rx.complete();
+    ZiSockAddr addr;
+    addr.init(ZiIPType::V4);
+    socklen_t len = addr.len();
+    if (getsockname(info().socket, addr.sa(), &len)) {
+      m_state.failed = true;
+      m_state.done.post();
+      return;
+    }
+    addr.sync();
+    m_addr = addr;
+    mx()->txRun([this]() {
+      // The marker is already queued when the first send turn starts. A
+      // replenished UDP context must yield before exhausting the producer.
+      mx()->txRun([this]() { m_state.atMarker = m_state.sent; });
+      ZiConnection::send_(ZiTxFn{this, ZmFnPtr<&TurnCxn::begin> {}});
+    });
+  }
+  void disconnected(bool) override { }
+
+private:
+  bool begin(ZiTxContext &io) {
+    auto buf = m_pool->alloc();
+    *buf->data() = 1;
+    buf->length = 1;
+    io.init(ZiTxFn{this, ZmFnPtr<&TurnCxn::next>{}}, ZuMv(buf), m_addr);
+    return true;
+  }
+  bool next(ZiTxContext &io) {
+    if (io.length < 0) m_state.failed = true;
+    if (++m_state.sent == Count || m_state.failed) {
+      io.complete();
+      m_state.done.post();
+      return true;
+    }
+    return begin(io);
+  }
+
+  using PoolRef = ZmRef<Zi::IOBufAllocator>;
+  TurnState	&m_state;
+  PoolRef	m_pool = new ZiTxUDPBufAllocator<>{mx()->txRingSize()};
+  ZiSockAddr	m_addr;
+};
+
+void testIOTurns()
+{
+  ZuTestScopeRT(testIOTurns);
+  ZiCxnInfo ci;
+  ZuCheckRT(!ci);
+  ci.type = ZiCxnType::TCPIn;
+  ZuCheckRT(!!ci);
+  for (unsigned quantum : {0U, unsigned(INT_MAX) + 1}) {
+    ZiMultiplex mx{ZiMxParams{}.epollQuantum(quantum)};
+    ZuCheckRT(!mx.start());
+    ZuCheckRT(mx.state() == ZmEngineState::Stopped);
+  }
+  for (bool shared : {false, true}) {
+    TurnState state;
+    ZiMultiplex mx{ZiMxParams{}.backend(ZiMxBackend::EPoll).txThread(shared ? 1 : 2)};
+    bool started = mx.start();
+    ZuCheckRT(started);
+    if (!started) continue;
+    mx.udp({[&mx, &state](const ZiCxnInfo &ci) {
+      return new TurnCxn{&mx, ci, state};
+    }}, {[&state](bool) {
+      state.failed = true;
+      state.done.post();
+    }}, ZiIP{"127.0.0.1"}, 0, {}, 0, ZiCxnOptions{}.udp(true));
+    ZuCheckRT(!state.done.timedwait(Zm::now(10)));
+    ZuCheckRT(mx.stop());
+    ZuCheckRT(!state.failed && state.sent == TurnCxn::Count);
+    ZuCheckRT(state.atMarker > 0 && state.atMarker < TurnCxn::Count);
+  }
+}
+#endif
+
 void testWakeBurst()
 {
   ZuTestScope(testWakeBurst);
@@ -1102,11 +1684,20 @@ int main(int argc, char **argv)
   ZuTestCall(testUdpTOSIPv4);
   ZuTestCall(testMxWatch);
   ZuTestCall(testWakeBurst);
+#ifdef ZiMultiplex_EPoll
+  ZuTestCall(testIOTurns);
+#endif
 #ifndef _WIN32
+  ZuTestCall(testRingSizes);
+  ZuTestCall(testUdpRetained);
   ZuTestCall(testNativeOwners);
   ZuTestCall(testNativeBurst);
   ZuTestCall(testNativeJumbo);
   ZuTestCall(testUdpGeometry);
+  ZuTestCall(testUdpPoolRetire);
+  ZuTestCall(testUdpPoolStopRace);
+  ZuTestCall(testUdpPoolReuse);
+  ZuTestCall(testUdpPoolUnbindReuse);
   ZuTestCall(testRingPressure);
   ZuTestCall(testEpollOwners);
   ZuTestCall(testBackendSelection);

@@ -75,7 +75,7 @@ static int run(int argc, char **argv)
   ZtlsAge::Recipient sshRecipient;
   if (ssh) {
     auto decoded = ZtlsAge::decodeSSHRecipient(keyText,
-      {keyText.data(), keyText.length()});
+      keyText);
     if (decoded.template is<ZeException>()) return 1;
     sshRecipient = ZuMv(decoded).template p<ZtlsAge::Recipient>();
     if (sshRSA != sshRecipient.template is<ZtlsAge::SshRSARecipient>() ||
@@ -126,8 +126,8 @@ static int run(int argc, char **argv)
       if (!readFile(argv[3], privateText)) return 1;
       embedded.length(4096);
       auto decoded = ZtlsAge::loadOpenSSH(
-        {privateText.data(), privateText.length()},
-        {embedded.data(), embedded.length()});
+        privateText,
+        embedded);
       if (decoded.template is<ZeException>()) return 1;
       auto key = ZuMv(decoded).template p<ZtlsAge::SshKey>();
       ZuBSpan expected = sshRSA ?
@@ -149,7 +149,7 @@ static int run(int argc, char **argv)
       ZtlsAge::Identity{ZtlsAge::X25519Identity{{key, keySize}}} :
       ZtlsAge::Identity{ZtlsAge::HybridIdentity{{key, keySize}}};
   auto decrypted = age.decrypt(input, {&identity, 1},
-    {plaintext.data(), plaintext.length()});
+    plaintext);
   if (decrypted.template is<ZeException>()) return 1;
   ZiFile output{argv[5], ZiFile::Write | ZiFile::GC, 0600};
   if (!output) return 1;

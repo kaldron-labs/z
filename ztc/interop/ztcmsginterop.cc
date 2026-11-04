@@ -24,43 +24,43 @@ using Text = ZtString<ZtStringHeapID<"ztcmsginterop.Text">>;
 template <typename O>
 static void schema()
 {
-  ZuTestScope(schema);
+  ZuTestScopeRT(schema);
   auto bytes = ZtScratch(Text, Zfb::SchemaOut::Schema<O>::Size);
   Zfb::saveSchema<O>(bytes);
   ZuBSpan span{bytes};
   flatbuffers::Verifier verifier{span.data(), span.length()};
   bool valid = reflection::VerifySchemaBuffer(verifier);
-  ZuCheck(valid);
+  ZuCheckRT(valid);
   if (!valid) return;
   flatbuffers::Parser imported;
   bool loaded = imported.Deserialize(span.data(), span.length());
-  ZuCheck(loaded);
+  ZuCheckRT(loaded);
   if (!loaded) { log(imported.error_); return; }
   auto source = ZtScratch(Text, 0);
   Zfb::saveFBS<O>(source);
   flatbuffers::Parser parsed;
   parsed.opts.lang_to_generate = flatbuffers::IDLOptions::kCpp;
   bool compiled = parsed.Parse(source.data());
-  ZuCheck(compiled);
+  ZuCheckRT(compiled);
   if (!compiled) { log(parsed.error_); return; }
   parsed.Serialize();
   auto binary = reflection::GetSchema(span.data());
   auto text = reflection::GetSchema(parsed.builder_.GetBufferPointer());
-  ZuCheck(binary->root_table()->name()->str() == text->root_table()->name()->str());
-  ZuCheck(binary->objects()->size() == text->objects()->size());
+  ZuCheckRT(binary->root_table()->name()->str() == text->root_table()->name()->str());
+  ZuCheckRT(binary->objects()->size() == text->objects()->size());
   for (auto object : *binary->objects()) {
     auto other = text->objects()->LookupByKey(object->name()->c_str());
-    ZuCheck(other);
+    ZuCheckRT(other);
     if (!other) continue;
-    ZuCheck(object->fields()->size() == other->fields()->size());
+    ZuCheckRT(object->fields()->size() == other->fields()->size());
     for (auto field : *object->fields()) {
       auto peer = other->fields()->LookupByKey(field->name()->c_str());
-      ZuCheck(peer);
+      ZuCheckRT(peer);
       if (!peer) continue;
-      ZuCheck(field->id() == peer->id());
-      ZuCheck(field->offset() == peer->offset());
-      ZuCheck(field->type()->base_type() == peer->type()->base_type());
-      ZuCheck(field->type()->element() == peer->type()->element());
+      ZuCheckRT(field->id() == peer->id());
+      ZuCheckRT(field->offset() == peer->offset());
+      ZuCheckRT(field->type()->base_type() == peer->type()->base_type());
+      ZuCheckRT(field->type()->element() == peer->type()->element());
       auto deflt = peer->default_integer();
       if (field->type()->base_type() == reflection::ULong) {
 	// Canonical 25.12.19 FieldDef::Serialize uses StringToInt for
@@ -69,10 +69,10 @@ static void schema()
 	auto objectDef = parsed.structs_.Lookup(object->name()->c_str());
 	auto fieldDef = objectDef->fields.Lookup(field->name()->c_str());
 	uint64_t value = 0;
-	ZuCheck(flatbuffers::StringToNumber(fieldDef->value.constant.c_str(), &value));
+	ZuCheckRT(flatbuffers::StringToNumber(fieldDef->value.constant.c_str(), &value));
 	deflt = int64_t(value);
       }
-      ZuCheck(field->default_integer() == deflt);
+      ZuCheckRT(field->default_integer() == deflt);
       if (field->default_integer() != deflt)
 	log(object->name()->c_str(), '.', field->name()->c_str(),
 	  ": BFBS ", field->default_integer(), ", FBS ", deflt);
@@ -83,7 +83,8 @@ static void schema()
 static void request()
 {
   ZuTestScope(request);
-  Ztc::Builder builder{new ZiIOBufAlloc<>};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   Ztc::Request request;
   request.filter = "heap*";
@@ -148,7 +149,8 @@ static void copy()
   peer.Finish(Peer::CreatePayload(peer, Peer::Body::Telemetry, telemetry.Union()));
   ZuBSpan original{peer.GetBufferPointer(), peer.GetSize()};
   ZuCheck(Zfb::verify<Ztc::Payload>(original));
-  Ztc::Builder builder{new ZiIOBufAlloc<>};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto data = builder.copyRoot(original, Ztc::Builder::Align);
   builder.finish(Ztc::saveMsg(builder, data, 59, "routed", 61));
   auto owner = builder.buf();
@@ -249,7 +251,8 @@ template <typename Codec, bool Copy>
 static void measure(ZuCSpan name, const Ztc::Request &row, ZuBSpan original,
     unsigned count, bool fresh)
 {
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> owner = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
   typename Codec::Builder builder{owner};
   // Verify both roots and their independent field expectations before timing.
   Codec::template save<Copy>(builder, row, original, 1);
@@ -283,7 +286,8 @@ static void measure(ZuCSpan name, const Ztc::Request &row, ZuBSpan original,
     __asm__ __volatile__("" : : "g"(owner->data()), "g"(owner->length) : "memory");
     sum += Peer::GetMsg(owner->data())->sub_id();
     bytes += owner->length;
-    if (fresh) owner = new ZiIOBufAlloc<>;
+    if (fresh) owner = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
     else owner->clear();
     builder.buf(owner);
   }
@@ -304,7 +308,8 @@ static int run(unsigned count, unsigned rounds)
   row.group = Ztc::Group::Heap;
   row.interval = 7;
   row.subscribe = true;
-  Canonical::Builder builder{new ZiIOBufAlloc<>};
+  Canonical::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   Canonical::save<false>(builder, row, {}, 1);
   auto original = builder.buf();
   auto data = Peer::GetMsg(original->data())->data();

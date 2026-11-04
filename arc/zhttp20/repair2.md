@@ -13,7 +13,7 @@ incremental validation policy below.
 
 ## Governing requirements
 
-[`GUIDELINES.md`](GUIDELINES.md) is authoritative in full, together with
+[`docs/GUIDELINES.md`](docs/GUIDELINES.md) is authoritative in full, together with
 applicable `AGENTS.md` and module guidelines. Read the relevant rules before
 each implementation stage. The requirements below apply them to this repair;
 they do not replace or narrow the remaining guidelines. Explicit user

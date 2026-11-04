@@ -20,9 +20,9 @@ namespace {
 
 using Buf = Ztcp::RxBufAlloc<16>;
 
-ZmRef<ZiIOBuf> buf(ZuCSpan s)
+ZmRef<ZiRxQueue::Node> buf(ZuCSpan s)
 {
-  ZmRef<ZiIOBuf> b = new Buf{};
+  ZmRef<ZiRxQueue::Node> b = new Buf{nullptr, 0};
   *b << s;
   return b;
 }
@@ -41,7 +41,7 @@ void pushPayload(Ztcp::RxStream &rx, const ZtArray<uint8_t> &p)
   while (off < l) {
     unsigned n = l - off;
     if (n > 13) n = 13;
-    ZmRef<ZiIOBuf> b = new Buf{};
+    ZmRef<ZiRxQueue::Node> b = new Buf{nullptr, 0};
     b->append(p.data() + off, n);
     rx.push(ZuMv(b));
     off += n;

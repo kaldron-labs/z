@@ -24,6 +24,8 @@
 #include <zlib/ZiPlatform.hh>
 #include <zlib/ZiResolver.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpDiscovery.hh>
 #include "../src/ZhttpClientImpl.hh"
@@ -42,6 +44,8 @@ enum { TestPortBegin = ZhttpTestPort::ClientCancel };
 enum { TestPortEnd = ZhttpTestPort::ClientCancelEnd };
 #endif
 
+// Includes mux-owned Rx descriptors: compare outside the mux lifetime, since
+// live native provided/free slot occupancy is not an allocation invariant.
 uint64_t zhttpClientAllocated()
 {
   uint64_t allocated = 0;
@@ -300,6 +304,10 @@ struct App : public Zhttp::Client<App, Pool> {
   unsigned	fallbackEvents = 0;
   unsigned	cancelledEvents = 0;
   unsigned	completedEvents = 0;
+  unsigned	completedSeen = 0;
+  unsigned	failedSeen = 0;
+  unsigned	poolCompletedSeen = 0;
+  unsigned	poolFailedSeen = 0;
   unsigned	retiredEvents = 0;
   uint64_t	firstSelectedRequest = 0;
   uint64_t	firstSelectedAttempt = 0;
@@ -334,6 +342,10 @@ struct App : public Zhttp::Client<App, Pool> {
   }
 
   void requestCompleted(const Zhttp::Result &result) {
+    completedSeen = Base::completed();
+    failedSeen = Base::failed();
+    poolCompletedSeen = Base::completed(result.pool);
+    poolFailedSeen = Base::failed(result.pool);
     results.push(result);
     if (results.length() == expected) done.post();
   }
@@ -410,6 +422,10 @@ void ReqBuilder_::retired() { ++app->retiredEvents; }
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -534,7 +550,7 @@ void attemptState()
       !typedParser.status_ && !typedParser.completed && !typedParser.ok,
     "response completion enters closing phase and resets the parser");
 
-  ZmRef<ZiRxQueue::Node> buffer = new Zhttp::BodyBufAlloc{};
+  ZmRef<ZiRxQueue::Node> buffer = new Zhttp::BodyBufAlloc{nullptr, 0};
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[0] = 'a';
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[1] = 'b';
   static_cast<ZiIOBuf *>(buffer.ptr())->data()[2] = 'c';
@@ -1690,48 +1706,50 @@ void waves()
   ZuCHECK(fd >= 0 && port, "create successive-wave listener");
   if (fd < 0) return;
 
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start successive-wave multiplexer");
-  uint64_t heapBaseline = zhttpClientAllocated();
   App app;
-  app.expected = 2;
-  ZmAtomic<unsigned> serverOK = 0;
-  ServerSockets sockets{fd};
-  ZmThread server{[&sockets, &serverOK]() {
-    serverOK.store_(serveWaves(sockets));
-  }};
-  auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkMax(1)
-    .protocol(Zhttp::ProtoPolicy::DisableH3)
-    .tcp(true).tls(false).quic(false);
-  ZuCHECK(startApp(app, mx, port, config),
-    "initialize/start successive-wave pool");
+  uint64_t heapBaseline = zhttpClientAllocated();
+  {
+    ZiMultiplex mx{mxParams()};
+    ZuCHECK(mx.start(), "start successive-wave multiplexer");
+    app.expected = 2;
+    ZmAtomic<unsigned> serverOK = 0;
+    ServerSockets sockets{fd};
+    ZmThread server{[&sockets, &serverOK]() {
+      serverOK.store_(serveWaves(sockets));
+    }};
+    auto config = Zhttp::Config()
+      .links(1).concurrency(1).linkMax(1)
+      .protocol(Zhttp::ProtoPolicy::DisableH3)
+      .tcp(true).tls(false).quic(false);
+    ZuCHECK(startApp(app, mx, port, config),
+      "initialize/start successive-wave pool");
 
-  app.send(0, app.request());
-  ZuCHECK(app.archiveDone.timedwait(Zm::now(10)) == 0,
-    "first wave completes before the second is submitted");
-  app.send(0, app.request());
-  app.seal(0);
-  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
-    "second wave completes on the reusable pool link");
-  app.stop();
-  sockets.stop();
-  server.join();
+    app.send(0, app.request());
+    ZuCHECK(app.archiveDone.timedwait(Zm::now(10)) == 0,
+      "first wave completes before the second is submitted");
+    app.send(0, app.request());
+    app.seal(0);
+    ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
+      "second wave completes on the reusable pool link");
+    app.stop();
+    sockets.stop();
+    server.join();
 
-  ZuCHECK(serverOK.load_(),
-    "both waves use one persistent native H1 connection");
-  ZuCHECK(app.results.length() == 2 && app.results[0].ok() &&
-      app.results[1].ok() && app.results[0].link == 0 &&
-      app.results[1].link == 0 && app.results[0].status == 200 &&
-      app.results[1].status == 201,
-    "successive waves retain stable pool/link identity");
+    ZuCHECK(serverOK.load_(),
+      "both waves use one persistent native H1 connection");
+    ZuCHECK(app.results.length() == 2 && app.results[0].ok() &&
+	app.results[1].ok() && app.results[0].link == 0 &&
+	app.results[1].link == 0 && app.results[0].status == 200 &&
+	app.results[1].status == 201,
+      "successive waves retain stable pool/link identity");
 
-  app.final();
+    app.final();
+    mx.stop();
+  }
   uint64_t heapFinal = zhttpClientAllocated();
   ZuCHECK(heapFinal == heapBaseline,
     "client final returns identified Zhttp heaps to baseline (before=",
     heapBaseline, ", after=", heapFinal, ')');
-  mx.stop();
 }
 
 void sealedAdmission()
@@ -1776,58 +1794,60 @@ void stopQueuedLimited()
 {
   ZuTestScope(stopQueuedLimited);
 
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start queued-stop multiplexer");
-  uint64_t heapBaseline = zhttpClientAllocated();
   App app;
-  app.expected = 1;
-  auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkMax(1)
-    .protocol(Zhttp::ProtoPolicy::DisableH3)
-    .tcp(true).tls(false).quic(false);
-  bool started = startApp(app, mx, 1, config);
-  ZuCHECK(started, "start queued-stop pool");
-  bool limited = started && app.limited(0, 0, true);
-  ZmSemaphore rxBarrier;
-  mx.run([&rxBarrier]() { rxBarrier.post(); }, mx.sid("3"));
-  limited &= rxBarrier.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(limited, "publish application limit before queueing");
+  uint64_t heapBaseline = zhttpClientAllocated();
+  {
+    ZiMultiplex mx{mxParams()};
+    ZuCHECK(mx.start(), "start queued-stop multiplexer");
+    app.expected = 1;
+    auto config = Zhttp::Config()
+      .links(1).concurrency(1).linkMax(1)
+      .protocol(Zhttp::ProtoPolicy::DisableH3)
+      .tcp(true).tls(false).quic(false);
+    bool started = startApp(app, mx, 1, config);
+    ZuCHECK(started, "start queued-stop pool");
+    bool limited = started && app.limited(0, 0, true);
+    ZmSemaphore rxBarrier;
+    mx.run([&rxBarrier]() { rxBarrier.post(); }, mx.sid("3"));
+    limited &= rxBarrier.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(limited, "publish application limit before queueing");
 
-  ZmRef<ReqBuilder> request = app.request();
-  if (started) {
-    app.send(0, request);
-    app.seal(0);
+    ZmRef<ReqBuilder> request = app.request();
+    if (started) {
+      app.send(0, request);
+      app.seal(0);
+    }
+    ZmSemaphore txBarrier;
+    app.txRun(0, [&txBarrier]() { txBarrier.post(); });
+    bool queued = txBarrier.timedwait(Zm::now(10)) == 0;
+    mx.run([&rxBarrier]() { rxBarrier.post(); }, mx.sid("3"));
+    queued &= rxBarrier.timedwait(Zm::now(10)) == 0 &&
+      app.done.trywait() != 0;
+    ZuCHECK(queued, "limited link retains queued request without connecting");
+
+    ZmSemaphore stopped;
+    ZmAtomic<unsigned> stopCalls = 0;
+    bool stopOK = false;
+    app.stop([&stopped, &stopCalls, &stopOK](bool ok) {
+      stopOK = ok;
+      ++stopCalls;
+      stopped.post();
+    });
+    bool drained = stopped.timedwait(Zm::now(10)) == 0 &&
+      app.done.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(drained && stopOK && stopCalls.load_() == 1 &&
+	request->completions == 1 &&
+	request->resultCode == Zhttp::ResultCode::Cancelled,
+      "stop drains queued limited work exactly once");
+
+    request = nullptr;
+    app.final();
+    mx.stop();
   }
-  ZmSemaphore txBarrier;
-  app.txRun(0, [&txBarrier]() { txBarrier.post(); });
-  bool queued = txBarrier.timedwait(Zm::now(10)) == 0;
-  mx.run([&rxBarrier]() { rxBarrier.post(); }, mx.sid("3"));
-  queued &= rxBarrier.timedwait(Zm::now(10)) == 0 &&
-    app.done.trywait() != 0;
-  ZuCHECK(queued, "limited link retains queued request without connecting");
-
-  ZmSemaphore stopped;
-  ZmAtomic<unsigned> stopCalls = 0;
-  bool stopOK = false;
-  app.stop([&stopped, &stopCalls, &stopOK](bool ok) {
-    stopOK = ok;
-    ++stopCalls;
-    stopped.post();
-  });
-  bool drained = stopped.timedwait(Zm::now(10)) == 0 &&
-    app.done.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(drained && stopOK && stopCalls.load_() == 1 &&
-      request->completions == 1 &&
-      request->resultCode == Zhttp::ResultCode::Cancelled,
-    "stop drains queued limited work exactly once");
-
-  request = nullptr;
-  app.final();
   uint64_t heapFinal = zhttpClientAllocated();
   ZuCHECK(heapFinal == heapBaseline,
     "queued-stop final returns production heaps to baseline (before=",
     heapBaseline, ", after=", heapFinal, ')');
-  mx.stop();
 }
 
 void stopActivePipeline()
@@ -1899,56 +1919,58 @@ void stopReusableIdle()
   int fd = listener(port);
   ZuCHECK(fd >= 0 && port, "create reusable-idle stop listener");
   if (fd < 0) return;
-  ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start reusable-idle stop multiplexer");
-  uint64_t heapBaseline = zhttpClientAllocated();
-
   App app;
-  app.expected = 1;
-  ZmAtomic<unsigned> serverOK = 0;
-  ZmSemaphore idle;
-  ServerSockets sockets{fd};
-  ZmThread server{[&sockets, &idle, &serverOK]() {
-    serverOK.store_(serveIdleStop(sockets, idle));
-  }};
-  auto config = Zhttp::Config()
-    .links(1).concurrency(1).linkMax(1)
-    .protocol(Zhttp::ProtoPolicy::DisableH3)
-    .tcp(true).tls(false).quic(false);
-  bool started = startApp(app, mx, port, config);
-  ZuCHECK(started, "start reusable-idle pool");
-  ZmRef<ReqBuilder> request = app.request();
-  if (started) {
-    app.send(0, request);
-    app.seal(0);
+  uint64_t heapBaseline = zhttpClientAllocated();
+  {
+    ZiMultiplex mx{mxParams()};
+    ZuCHECK(mx.start(), "start reusable-idle stop multiplexer");
+
+    app.expected = 1;
+    ZmAtomic<unsigned> serverOK = 0;
+    ZmSemaphore idle;
+    ServerSockets sockets{fd};
+    ZmThread server{[&sockets, &idle, &serverOK]() {
+      serverOK.store_(serveIdleStop(sockets, idle));
+    }};
+    auto config = Zhttp::Config()
+      .links(1).concurrency(1).linkMax(1)
+      .protocol(Zhttp::ProtoPolicy::DisableH3)
+      .tcp(true).tls(false).quic(false);
+    bool started = startApp(app, mx, port, config);
+    ZuCHECK(started, "start reusable-idle pool");
+    ZmRef<ReqBuilder> request = app.request();
+    if (started) {
+      app.send(0, request);
+      app.seal(0);
+    }
+    bool completed = app.done.timedwait(Zm::now(10)) == 0 &&
+      idle.timedwait(Zm::now(10)) == 0;
+    ZuCHECK(completed && request->completions == 1 &&
+	request->resultCode == Zhttp::ResultCode::OK,
+      "request completes while its H1 connection remains reusable");
+
+    ZmSemaphore stopped;
+    ZmAtomic<unsigned> stopCalls = 0;
+    bool stopOK = false;
+    app.stop([&stopped, &stopCalls, &stopOK](bool ok) {
+      stopOK = ok;
+      ++stopCalls;
+      stopped.post();
+    });
+    bool drained = stopped.timedwait(Zm::now(10)) == 0;
+    sockets.stop();
+    server.join();
+    ZuCHECK(drained && stopOK && stopCalls.load_() == 1 && serverOK.load_(),
+      "stop closes a reusable-idle connection exactly once");
+
+    request = nullptr;
+    app.final();
+    mx.stop();
   }
-  bool completed = app.done.timedwait(Zm::now(10)) == 0 &&
-    idle.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(completed && request->completions == 1 &&
-      request->resultCode == Zhttp::ResultCode::OK,
-    "request completes while its H1 connection remains reusable");
-
-  ZmSemaphore stopped;
-  ZmAtomic<unsigned> stopCalls = 0;
-  bool stopOK = false;
-  app.stop([&stopped, &stopCalls, &stopOK](bool ok) {
-    stopOK = ok;
-    ++stopCalls;
-    stopped.post();
-  });
-  bool drained = stopped.timedwait(Zm::now(10)) == 0;
-  sockets.stop();
-  server.join();
-  ZuCHECK(drained && stopOK && stopCalls.load_() == 1 && serverOK.load_(),
-    "stop closes a reusable-idle connection exactly once");
-
-  request = nullptr;
-  app.final();
   uint64_t heapFinal = zhttpClientAllocated();
   ZuCHECK(heapFinal == heapBaseline,
     "idle-stop final returns production heaps to baseline (before=",
     heapBaseline, ", after=", heapFinal, ')');
-  mx.stop();
 }
 
 void boundedLinkScan()
@@ -2035,6 +2057,9 @@ void timeout()
   ZuCHECK(app.Base::completed() == 1 && app.results.length() == 1 &&
       app.results[0].code == Zhttp::ResultCode::TimedOut,
     "timeout result classification");
+  ZuCHECK(app.completedSeen == 1 && app.failedSeen == 1 &&
+      app.poolCompletedSeen == 1 && app.poolFailedSeen == 1,
+    "terminal callbacks observe committed client and pool counts");
   app.stop();
   ZuCHECK(app.completedEvents == 1,
     "typed timeout completion event");
@@ -2275,16 +2300,16 @@ void crossOriginRedirect()
 
 void retryLimit(bool noReplay = false, bool tls = false)
 {
-  ZuTestScope(retryLimit);
+  ZuTestScopeRT(retryLimit);
 
   uint16_t port;
   int reserve = listener(port);
-  ZuCHECK(reserve >= 0 && port, "reserve closed retry port");
+  ZuCheckRT(reserve >= 0 && port, log_( "reserve closed retry port"));
   if (reserve < 0) return;
   ::close(reserve);
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "start multiplexer");
+  ZuCheckRT(mx.start(), log_( "start multiplexer"));
   App app;
   app.expected = 1;
   auto config = Zhttp::Config()
@@ -2302,34 +2327,34 @@ void retryLimit(bool noReplay = false, bool tls = false)
   } else {
     started = startApp(app, mx, port, config);
   }
-  ZuCHECK(started, "initialize/start retry-limit agent");
+  ZuCheckRT(started, log_( "initialize/start retry-limit agent"));
 
   auto request = app.request();
   request->target = "/";
   request->replayable_ = !noReplay;
   app.send(0, request);
   app.seal(0);
-  ZuCHECK(app.done.timedwait(Zm::now(10)) == 0,
-    "retry budget exhaustion completes");
+  ZuCheckRT(app.done.timedwait(Zm::now(10)) == 0, log_(
+    "retry budget exhaustion completes"));
   app.stop();
 
-  ZuCHECK(app.results.length() == 1 &&
+  ZuCheckRT(app.results.length() == 1 &&
       app.results[0].code == (noReplay ?
 	Zhttp::ResultCode::ReplayUnsafe : Zhttp::ResultCode::Failed) &&
-      app.results[0].retries == (noReplay ? 0 : 2),
-    "retry budget produces one failed result");
-  ZuCHECK(app.selectedEvents == (tls ? 0 : noReplay ? 1 : 3) &&
+      app.results[0].retries == (noReplay ? 0 : 2), log_(
+    "retry budget produces one failed result"));
+  ZuCheckRT(app.selectedEvents == (tls ? 0 : noReplay ? 1 : 3) &&
       app.attemptFailedEvents == (noReplay ? 1 : 3) &&
       app.retriedEvents == (noReplay ? 0 : 2) &&
-      app.completedEvents == 1,
-    "retry budget bounds attempts");
+      app.completedEvents == 1, log_(
+    "retry budget bounds attempts"));
 
-  ZuCHECK(request->replayReads == 1, "retry attempts retain the submitted replay policy");
+  ZuCheckRT(request->replayReads == 1, log_( "retry attempts retain the submitted replay policy"));
 
   if (tls)
-    ZuCHECK(app.results.length() == 1 &&
-	app.results[0].transport == Zhttp::Transport::TLS,
-      "unprocessed TLS refusal preserves its transport");
+    ZuCheckRT(app.results.length() == 1 &&
+	app.results[0].transport == Zhttp::Transport::TLS, log_(
+      "unprocessed TLS refusal preserves its transport"));
 
   app.final();
   mx.stop();

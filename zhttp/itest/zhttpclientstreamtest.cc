@@ -12,6 +12,8 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtcHeap.hh>
 #include <zlib/ZiResolver.hh>
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 #include "../src/ZhttpClientImpl.hh"
@@ -296,7 +298,7 @@ bool rejectLate(State &state, bool release = true)
 template <typename Profile, unsigned Turn>
 void run()
 {
-  ZuTestScope(run);
+  ZuTestScopeRT(run);
 
   State state;
   state.mode = Turn;
@@ -305,25 +307,29 @@ void run()
   ZtString<> certPath, keyPath;
   bool cert = temp.init("ZhttpClientStream") &&
     Zhttp::Test::writeLocalhostCert(temp, certPath, keyPath);
-  ZuCheck(cert);
+  ZuCheckRT(cert);
   if (!cert) return;
   uint16_t port = testPort();
-  ZuCheck(port);
+  ZuCheckRT(port);
   if (!port) return;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4);
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
   bool up = mx.start();
-  ZuCheck(up);
+  ZuCheckRT(up);
   if (!up) return;
-  ZiMultiplex peerMx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex peerMx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4);
   }).rxThread(3).txThread(4)};
   if constexpr (Turn == Mode::Peer) {
     // Holding client Tx must not also hold the peer's physical I/O queue.
     bool peerUp = peerMx.start();
-    ZuCheck(peerUp);
+    ZuCheckRT(peerUp);
     if (!peerUp) { mx.stop(); return; }
     state.srvMx = &peerMx;
   }
@@ -345,7 +351,7 @@ void run()
   bool srv = server.init(Zhttp::HubConfig{state.srvMx ? state.srvMx : &mx, "3", "4"},
     ZuMv(serverConfig));
   bool listening = srv && server.start() && await(state.listening);
-  ZuCheck(listening && !state.errors.load_());
+  ZuCheckRT(listening && !state.errors.load_());
 
   Client client;
   auto config = Zhttp::Config{}.links(1).concurrency(1).linkMax(1)
@@ -361,23 +367,23 @@ void run()
     Zhttp::QUICConfig{}.caPath(certPath.cspan()));
   bool started = cli && client.pool(0, Zhttp::Destination{"localhost", port}) &&
     client.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   ZmRef<Requests::Node> request;
   if (started) {
     request = new Requests::Node{};
     request->state = &state;
   }
   bool opened = request && client.send(0, request) && await(state.opened);
-  ZuCheck(opened);
+  ZuCheckRT(opened);
 
   if constexpr (Turn == Mode::Turns || Turn == Mode::High || Turn == Mode::Failed ||
       Turn == Mode::Stop || Turn == Mode::Channel || Turn == Mode::Peer) {
     bool headers = opened && await(state.headers);
-    ZuCheck(headers && !state.requestEnds.load_() && !state.closeCount.load_());
+    ZuCheckRT(headers && !state.requestEnds.load_() && !state.closeCount.load_());
     if (headers) {
       emit(state, "ab", Zhttp::WriteOutcome::Stream);
       bool delivered = await(state.turn) && state.admitted && await(state.data);
-      ZuCheck(delivered && state.rxBytes.load_() == 2 &&
+      ZuCheckRT(delivered && state.rxBytes.load_() == 2 &&
 	  !state.requestEnds.load_() && !state.closeCount.load_());
     }
   }
@@ -390,23 +396,23 @@ void run()
 	break;
       }
     }
-    ZuCheck(all && state.rxBytes.load_() == HighTurns + 2 &&
+    ZuCheckRT(all && state.rxBytes.load_() == HighTurns + 2 &&
 	producers() == baseline + 1 && !state.closeCount.load_());
     emit(state, {}, Zhttp::WriteOutcome::End);
-    ZuCheck(await(state.turn) && state.admitted);
+    ZuCheckRT(await(state.turn) && state.admitted);
   } else if constexpr (Turn == Mode::Turns) {
     emit(state, "c", Zhttp::WriteOutcome::End);
-    ZuCheck(await(state.turn) && state.admitted);
+    ZuCheckRT(await(state.turn) && state.admitted);
   } else if constexpr (Turn == Mode::Failed) {
     emit(state, {}, Zhttp::WriteOutcome::Failed);
-    ZuCheck(await(state.turn) && state.admitted);
+    ZuCheckRT(await(state.turn) && state.admitted);
   }
 
   if constexpr (Turn == Mode::Channel) {
     ZmSemaphore held, release, requested;
     mx.run([&held, &release]() { held.post(); release.wait(); }, 2);
     bool blocked = await(held);
-    ZuCheck(blocked);
+    ZuCheckRT(blocked);
     if (blocked) {
       // This accepted turn precedes channel cancellation on Tx. The Rx abort
       // must not clear the native link while this writer is still queued.
@@ -416,17 +422,17 @@ void run()
         else ++state.errors;
         requested.post();
       }, 1);
-      ZuCheck(await(requested));
-      ZuCheck(!state.closeCount.load_() && !state.results.load_());
+      ZuCheckRT(await(requested));
+      ZuCheckRT(!state.closeCount.load_() && !state.results.load_());
       release.post();
-      ZuCheck(await(state.turn) && state.admitted);
+      ZuCheckRT(await(state.turn) && state.admitted);
     }
   }
   if constexpr (Turn == Mode::Peer) {
     ZmSemaphore held, release;
     mx.run([&held, &release]() { held.post(); release.wait(); }, 2);
     bool blocked = await(held);
-    ZuCheck(blocked);
+    ZuCheckRT(blocked);
     if (blocked) {
       emit(state, "d", Zhttp::WriteOutcome::Stream);
       peerMx.run([&state]() {
@@ -436,7 +442,7 @@ void run()
 	state.peerChannel.reset();
       }, 3);
       bool failed = await(state.peerFailed);
-      ZuCheck(failed);
+      ZuCheckRT(failed);
       if (failed) {
 	ZmSemaphore observed;
 	// The first hop follows the parser callback; the second follows its
@@ -444,12 +450,12 @@ void run()
 	mx.run([&mx, &observed]() {
 	  mx.run([&observed]() { observed.post(); }, 1);
 	}, 1);
-	ZuCheck(await(observed));
+	ZuCheckRT(await(observed));
       }
-      ZuCheck(!state.closeCount.load_() && !state.results.load_());
+      ZuCheckRT(!state.closeCount.load_() && !state.results.load_());
     }
     release.post();
-    if (blocked) ZuCheck(await(state.turn));
+    if (blocked) ZuCheckRT(await(state.turn));
   }
   bool stopped = false;
   if constexpr (Turn == Mode::Stop) {
@@ -458,21 +464,21 @@ void run()
       state.stopped.post();
     });
     stopped = await(state.stopped) && state.stopOK;
-    ZuCheck(stopped);
+    ZuCheckRT(stopped);
   }
   bool completed = opened && await(state.completed);
   bool retired = completed && await(state.retired);
-  ZuCheck(completed && retired && state.results.load_() == 1 &&
+  ZuCheckRT(completed && retired && state.results.load_() == 1 &&
       state.retirements.load_() == 1 && state.replayReads.load_() == 1);
   bool closed = completed && await(state.closed);
-  ZuCheck(closed && state.closeCount.load_() == 1 && !state.errors.load_());
+  ZuCheckRT(closed && state.closeCount.load_() == 1 && !state.errors.load_());
   if constexpr (Turn == Mode::Replay || Turn == Mode::Failed || Turn == Mode::Stop ||
       Turn == Mode::Channel || Turn == Mode::Peer)
-    ZuCheck(completed && !state.result.ok());
+    ZuCheckRT(completed && !state.result.ok());
   else
-    ZuCheck(completed && state.result.ok() && state.responseEnds.load_() == 1);
+    ZuCheckRT(completed && state.result.ok() && state.responseEnds.load_() == 1);
   if constexpr (Turn == Mode::Turns)
-    ZuCheck(state.result.requestBodyProduced == 3 &&
+    ZuCheckRT(state.result.requestBodyProduced == 3 &&
 	state.result.requestBodyCommitted == 3 && !state.result.requestBodyReset);
   state.channel.reset();
   request = nullptr;
@@ -485,50 +491,50 @@ void run()
     second->sequence = 2;
     bool received = client.send(0, second) && await(next.completed);
     bool retired = received && await(next.retired);
-    ZuCheck(received && retired && next.result.ok() &&
+    ZuCheckRT(received && retired && next.result.ok() &&
 	next.responseEnds.load_() == 1 && !next.errors.load_());
     mx.run([&next]() { next.late = {}; next.turn.post(); }, 2);
-    ZuCheck(await(next.turn));
+    ZuCheckRT(await(next.turn));
   }
   if constexpr (Turn == Mode::Restart) {
     client.stop([&state](bool ok) { state.stopOK = ok; state.stopped.post(); });
     stopped = await(state.stopped) && state.stopOK;
-    ZuCheck(stopped);
-    ZuCheck(server.stop());
+    ZuCheckRT(stopped);
+    ZuCheckRT(server.stop());
     State next;
     next.mx = &mx;
     next.mode = Mode::Single;
     server.state = &next; // both endpoints are stopped and drained
     bool listening = server.start() && await(next.listening);
-    ZuCheck(listening);
+    ZuCheckRT(listening);
     bool running = listening && client.start();
-    ZuCheck(running);
-    ZuCheck(rejectLate(state, false));
+    ZuCheckRT(running);
+    ZuCheckRT(rejectLate(state, false));
     ZmRef<Requests::Node> second = new Requests::Node{};
     second->state = &next;
     second->sequence = 2;
     bool received = running && client.send(0, second) && await(next.completed);
     bool retired = received && await(next.retired);
     bool closed = retired && await(next.closed);
-    ZuCheck(received && retired && closed && next.result.ok() &&
+    ZuCheckRT(received && retired && closed && next.result.ok() &&
 	next.results.load_() == 1 && next.retirements.load_() == 1 &&
 	next.closeCount.load_() == 1 && next.responseEnds.load_() == 1 &&
 	!next.errors.load_());
     client.stop([&next](bool ok) { next.stopOK = ok; next.stopped.post(); });
     stopped = await(next.stopped) && next.stopOK;
-    ZuCheck(stopped);
-    ZuCheck(server.stop());
+    ZuCheckRT(stopped);
+    ZuCheckRT(server.stop());
     server.state = &state;
     mx.run([&next]() { next.late = {}; next.turn.post(); }, 2);
-    ZuCheck(await(next.turn));
+    ZuCheckRT(await(next.turn));
   }
   if (cli && !stopped) {
     client.stop([&state](bool ok) { state.stopOK = ok; state.stopped.post(); });
     stopped = await(state.stopped) && state.stopOK;
-    ZuCheck(stopped);
+    ZuCheckRT(stopped);
   }
   if (cli && stopped) client.final();
-  ZuCheck(rejectLate(state) && state.closeCount.load_() == 1 &&
+  ZuCheckRT(rejectLate(state) && state.closeCount.load_() == 1 &&
       producers() == baseline);
   if (srv) {
     ZmSemaphore done;
@@ -538,7 +544,7 @@ void run()
       server.final();
       done.post();
     });
-    ZuCheck(await(done) && ok);
+    ZuCheckRT(await(done) && ok);
   }
   mx.stop();
   if constexpr (Turn == Mode::Peer) peerMx.stop();
@@ -657,7 +663,9 @@ void earlyWire()
   ZuCheck(tls);
   if (!tls) return;
   unsigned port = testPort();
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(4); })
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) { s.nThreads(4); })
     .rxThread(1).txThread(2)};
   state.mx = &mx;
   bool up = port && mx.start();
@@ -714,7 +722,9 @@ void earlyWire()
 void ownedResolver()
 {
   ZuTestScope(ownedResolver);
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4);
   }).rxThread(1).txThread(2)};
   bool up = mx.start();

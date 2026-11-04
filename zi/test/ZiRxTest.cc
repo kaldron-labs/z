@@ -51,8 +51,8 @@ struct RxHarness : public ZiRx<RxHarness> {
     ++frames;
     return frameLen;
   }
-  int hdrIO(const ZiIOContext &, Stream &stream) { return hdr(stream); }
-  int bodyIO(const ZiIOContext &, Stream &stream, unsigned frameLen) {
+  int hdrIO(const ZiRxContext &, Stream &stream) { return hdr(stream); }
+  int bodyIO(const ZiRxContext &, Stream &stream, unsigned frameLen) {
     return body(stream, frameLen);
   }
   int feed(const uint8_t *data, unsigned length) {
@@ -148,14 +148,13 @@ void testNetworkOriginalBacking()
   ZuTestScope(testNetworkOriginalBacking);
 
   RxHarness rx;
-  ZiIOContext io;
+  ZiRxContext io;
   rx.recv<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
   auto input = rx.alloc();
   const uint8_t frames[] = {1, 1, 'a', 1, 2, 'b'};
   input->append(frames, sizeof(frames));
   auto original = input.ptr();
   io.buf = ZuMv(input);
-  io.length = sizeof(frames);
   ZuCheck(io());
   ZuCheck(!io.buf);
   ZuCheck(io.initialized());
@@ -176,21 +175,19 @@ void testSyncNetworkFragments()
   ZuTestScope(testSyncNetworkFragments);
 
   RxHarness rx;
-  ZiIOContext io;
+  ZiRxContext io;
   rx.recvSync<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
   auto first = rx.alloc();
   const uint8_t head[] = {2, 1};
   first->append(head, sizeof(head));
   auto original = first.ptr();
   io.buf = ZuMv(first);
-  io.length = sizeof(head);
   ZuCheck(io());
   ZuCheck(!rx.frames);
   auto second = rx.alloc();
   const uint8_t body[] = {'a', 'b'};
   second->append(body, sizeof(body));
   io.buf = ZuMv(second);
-  io.length = sizeof(body);
   ZuCheck(io());
   ZuCheck(rx.hdrCalls == 1);
   ZuCheck(rx.frames == 1);
@@ -210,7 +207,7 @@ using JumboAlloc = Zi::IOBufAlloc_<JumboBuf, 64, 512, ZuStringT<"ZiRxTest.Jumbo"
 
 void testSharedOversize()
 {
-  ZuTestScope(testSharedOversize);
+  ZuTestScopeRT(testSharedOversize);
   RxHarness rx{512};
   unsigned allocations = 0;
   auto alloc = [&]() {
@@ -222,83 +219,81 @@ void testSharedOversize()
       bytes.data(), bytes.length(), alloc);
   };
   const uint8_t prefix[] = {1, 1, 'a', 198, 0xaa};
-  ZuCheck(!feed(prefix));
-  ZuCheck(allocations == 2); // shared first backing requires final storage
+  ZuCheckRT(!feed(prefix));
+  ZuCheckRT(allocations == 2); // shared first backing requires final storage
   auto first = rx.retained[0];
-  ZuCheck(first.buf->length == sizeof(prefix));
-  ZuCheck(!first.buf->jumbo());
+  ZuCheckRT(first.buf->length == sizeof(prefix));
+  ZuCheckRT(!first.buf->jumbo());
   uint8_t chunk[64];
   memset(chunk, 'x', sizeof(chunk));
-  for (unsigned i = 0; i < 3; ++i) ZuCheck(!feed(chunk));
+  for (unsigned i = 0; i < 3; ++i) ZuCheckRT(!feed(chunk));
   const uint8_t tail[] = {'x', 'x', 'x', 'x', 'x', 'x', 1, 2, 'b'};
-  ZuCheck(feed(tail) == sizeof(tail));
-  ZuCheck(rx.frames == 3 && rx.retained.length() == 3);
+  ZuCheckRT(feed(tail) == sizeof(tail));
+  ZuCheckRT(rx.frames == 3 && rx.retained.length() == 3);
   const auto &frame = rx.retained[1];
-  ZuCheck(frame.length == 200 && frame.buf->jumbo());
-  ZuCheck(static_cast<JumboBuf *>(frame.buf.ptr())->cookie == 0x1234);
-  ZuCheck(frame.span()[0] == 198 && frame.span()[1] == 0xaa);
-  for (unsigned i = 2; i < frame.length; ++i) ZuCheck(frame.span()[i] == 'x');
-  ZuCheck(!memcmp(first.span().data(), prefix, 3));
-  ZuCheck(first.buf->length == sizeof(prefix) && first.buf->skip == 0);
-  ZuCheck(rx.retained[2].length == 3 && rx.retained[2].offset == 6);
-  ZuCheck(rx.retained[2].buf->length == sizeof(tail));
-  ZuCheck(!rx.rxStream());
+  ZuCheckRT(frame.length == 200 && frame.buf->jumbo());
+  ZuCheckRT(static_cast<JumboBuf *>(frame.buf.ptr())->cookie == 0x1234);
+  ZuCheckRT(frame.span()[0] == 198 && frame.span()[1] == 0xaa);
+  for (unsigned i = 2; i < frame.length; ++i) ZuCheckRT(frame.span()[i] == 'x');
+  ZuCheckRT(!memcmp(first.span().data(), prefix, 3));
+  ZuCheckRT(first.buf->length == sizeof(prefix) && first.buf->skip == 0);
+  ZuCheckRT(rx.retained[2].length == 3 && rx.retained[2].offset == 6);
+  ZuCheckRT(rx.retained[2].buf->length == sizeof(tail));
+  ZuCheckRT(!rx.rxStream());
 }
 
 #ifndef _WIN32
 void testOversizeSlotReturn()
 {
-  ZuTestScope(testOversizeSlotReturn);
-  if (!Zi::uring()) { ZuCheck(!Zi::uring()); return; }
+  ZuTestScopeRT(testOversizeSlotReturn);
+  if (!Zi::uring()) { ZuCheckRT(!Zi::uring()); return; }
   using Alloc = Zi::RxTCPBufAllocator<JumboBuf, 64, 512,
     ZuStringT<"ZiRxTest.Jumbo">>;
   ZmRef<Zi::IOBufAllocator> allocator = new Alloc{2};
   RxHarness rx{512};
-  ZiIOContext io;
+  ZiRxContext io;
   rx.recv<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
   auto first = allocator->alloc(&rx);
   auto held = allocator->alloc(&rx);
-  ZuCheck(first->uring() && held->uring());
+  ZuCheckRT(first->uring() && held->uring());
   auto original = first.ptr();
   auto slot = first->data_();
   const uint8_t header[] = {198, 0xaa};
   first->append(header, sizeof(header));
   io.buf = ZuMv(first);
-  io.length = sizeof(header);
-  ZuCheck(io());
-  ZuCheck(original->jumbo() && !original->uring());
+  ZuCheckRT(io());
+  ZuCheckRT(original->jumbo() && !original->uring());
   auto reused = allocator->alloc(&rx);
-  ZuCheck(reused->uring() && reused->data_() == slot);
+  ZuCheckRT(reused->uring() && reused->data_() == slot);
   reused = held = nullptr;
   unsigned remaining = 198;
   while (remaining) {
     auto input = allocator->alloc(&rx);
-    ZuCheck(input->uring());
+    ZuCheckRT(input->uring());
     unsigned n = remaining < 64 ? remaining : 64;
     memset(input->data(), 'x', n);
     input->length = n;
-    io.length = n;
     io.buf = ZuMv(input);
-    ZuCheck(io());
+    ZuCheckRT(io());
     remaining -= n;
   }
-  ZuCheck(rx.hdrCalls == 1 && rx.frames == 1);
-  ZuCheck(rx.retained.length() == 1);
-  ZuCheck(rx.retained[0].buf.ptr() == original);
-  ZuCheck(rx.retained[0].length == 200);
-  ZuCheck(static_cast<JumboBuf *>(original)->cookie == 0x1234);
-  for (unsigned i = 2; i < 200; ++i) ZuCheck(original->data()[i] == 'x');
-  ZuCheck(!rx.rxStream());
+  ZuCheckRT(rx.hdrCalls == 1 && rx.frames == 1);
+  ZuCheckRT(rx.retained.length() == 1);
+  ZuCheckRT(rx.retained[0].buf.ptr() == original);
+  ZuCheckRT(rx.retained[0].length == 200);
+  ZuCheckRT(static_cast<JumboBuf *>(original)->cookie == 0x1234);
+  for (unsigned i = 2; i < 200; ++i) ZuCheckRT(original->data()[i] == 'x');
+  ZuCheckRT(!rx.rxStream());
   rx.retained.null();
   // Reset an incomplete oversized frame too; no slot remains held by it.
   auto input = allocator->alloc(&rx);
   input->append(header, sizeof(header));
   io.buf = ZuMv(input);
-  ZuCheck(io());
+  ZuCheckRT(io());
   rx.rxReset();
   first = allocator->alloc(&rx);
   held = allocator->alloc(&rx);
-  ZuCheck(first->uring() && held->uring());
+  ZuCheckRT(first->uring() && held->uring());
 }
 #endif
 

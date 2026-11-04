@@ -173,7 +173,7 @@ ZuDerive(Events, (ZtArray<Value, ZtArrayHeapID<"ZpbReflectTest.Events">>));
 
 static void testDescriptor()
 {
-  ZuTestScope(testDescriptor);
+  ZuTestScopeRT(testDescriptor);
   // FileDescriptorSet for proto3 package demo, message Row { uint32 id = 1; }.
   // This fixture is encoded independently of Zpb's serializer.
   const uint8_t bytes[] = {
@@ -187,69 +187,69 @@ static void testDescriptor()
 	  0x18, 0x01, 0x20, 0x01, 0x28, 0x0d,
 	  0x52, 0x02, 'i', 'd',
       0x62, 0x06, 'p', 'r', 'o', 't', 'o', '3'};
-  ZuCheck(verifySchema({bytes, sizeof(bytes)}));
+  ZuCheckRT(verifySchema({bytes, sizeof(bytes)}));
   const uint8_t mapOptionWire[] = {0x38, 0x01};
-  ZuCheck(Zpb::verify<MsgOpts>({mapOptionWire, sizeof(mapOptionWire)}));
+  ZuCheckRT(Zpb::verify<MsgOpts>({mapOptionWire, sizeof(mapOptionWire)}));
   ZuPtr<MsgOpts> allocatedOption{
     Zpb::handler<MsgOpts>({mapOptionWire, sizeof(mapOptionWire)}).alloc()};
-  ZuCheck(allocatedOption && allocatedOption->mapEntry);
+  ZuCheckRT(allocatedOption && allocatedOption->mapEntry);
   uint8_t input[sizeof(bytes)];
   memcpy(input, bytes, sizeof(bytes));
   Schema schema{{input, sizeof(input)}};
   memset(input, 0, sizeof(input));
   auto file = schema.file("row.proto");
-  ZuCheck(file && file->package == "demo" && file->syntax == "proto3");
-  ZuCheck(schema.file("row.proto", Syntax::Proto3) == file &&
+  ZuCheckRT(file && file->package == "demo" && file->syntax == "proto3");
+  ZuCheckRT(schema.file("row.proto", Syntax::Proto3) == file &&
     !schema.file("row.proto", Syntax::Proto2) &&
     !schema.file("row.proto", Syntax::T(2)));
   ProtoText proto;
   const char expectedProto[] =
     "syntax = \"proto3\";\npackage demo;\n\n"
     "message Row {\n  uint32 id = 1;\n}\n\n";
-  ZuCheck(emitProto(proto, schema, *file,
+  ZuCheckRT(emitProto(proto, schema, *file,
       fileSyntax(*file)) &&
     !strcmp(proto.data(), expectedProto));
   auto message = schema.message(*file, "Row");
-  ZuCheck(message && message->fields.length() == 1);
+  ZuCheckRT(message && message->fields.length() == 1);
   auto field = schema.field(*message, 1);
-  ZuCheck(field && field->name == "id" && field->number == 1 &&
+  ZuCheckRT(field && field->name == "id" && field->number == 1 &&
     field->label == 1 && field->type == 13 && field->jsonName == "id");
-  ZuCheck(schema.field(*message, "id") == field);
-  ZuCheck(!schema.file("missing.proto") && !schema.message(*file, "Missing") &&
+  ZuCheckRT(schema.field(*message, "id") == field);
+  ZuCheckRT(!schema.file("missing.proto") && !schema.message(*file, "Missing") &&
     !schema.field(*message, 2));
   const uint8_t row[] = {0x08, 0x96, 0x01};
-  ZuCheck(verify(*message, {row, sizeof(row)}) &&
+  ZuCheckRT(verify(*message, {row, sizeof(row)}) &&
     Zpb::verify<NativeRow>({row, sizeof(row)}) &&
     Zpb::load<NativeRow>({row, sizeof(row)}).id == 150);
 
   uint8_t badType[sizeof(bytes)];
   memcpy(badType, bytes, sizeof(bytes));
   badType[39] = 0;
-  ZuCheck(!verifySchema({badType, sizeof(badType)}));
+  ZuCheckRT(!verifySchema({badType, sizeof(badType)}));
   uint8_t groupType[sizeof(bytes)];
   memcpy(groupType, bytes, sizeof(bytes));
   groupType[37] = Type::Group;
   ZuCSpan reason;
-  ZuCheck(!verifySchema({groupType, sizeof(groupType)}, {}, &reason) &&
+  ZuCheckRT(!verifySchema({groupType, sizeof(groupType)}, {}, &reason) &&
     reason == "unsupported group field");
-  ZuCheck(!verifySchema({bytes, sizeof(bytes) - 1}));
+  ZuCheckRT(!verifySchema({bytes, sizeof(bytes) - 1}));
   uint8_t dependency[sizeof(bytes) + 2];
   memcpy(dependency, bytes, sizeof(bytes));
   dependency[1] += 2;
   dependency[sizeof(bytes)] = 0x1a; // FileDescriptorProto.dependency
   dependency[sizeof(bytes) + 1] = 0;
-  ZuCheck(!verifySchema({dependency, sizeof(dependency)}));
+  ZuCheckRT(!verifySchema({dependency, sizeof(dependency)}));
   // FileOptions.java_package affects other language generators, not Zpb wire.
   uint8_t optioned[sizeof(bytes) + 7];
   memcpy(optioned, bytes, sizeof(bytes));
   optioned[1] += 7;
   const uint8_t javaPackage[] = {0x42, 0x05, 0x0a, 0x03, 'a', 'b', 'c'};
   memcpy(optioned + sizeof(bytes), javaPackage, sizeof(javaPackage));
-  ZuCheck(verifySchema({optioned, sizeof(optioned)}));
+  ZuCheckRT(verifySchema({optioned, sizeof(optioned)}));
   Schema withOptions{{optioned, sizeof(optioned)}};
   ProtoText withoutOptions;
   auto optionFile = withOptions.file("row.proto", Syntax::Proto3);
-  ZuCheck(optionFile && emitProto(withoutOptions, withOptions, *optionFile,
+  ZuCheckRT(optionFile && emitProto(withoutOptions, withOptions, *optionFile,
     Syntax::Proto3) && !strcmp(withoutOptions.data(), expectedProto));
   const uint8_t rejectedOptions[][5] = {
     {0x42, 0x03, 0x92, 0x03, 0x00}, // FileOptions.features
@@ -260,7 +260,7 @@ static void testDescriptor()
     memcpy(unsupportedOption, bytes, sizeof(bytes));
     unsupportedOption[1] += sizeof(option);
     memcpy(unsupportedOption + sizeof(bytes), option, sizeof(option));
-    ZuCheck(!verifySchema({unsupportedOption, sizeof(unsupportedOption)},
+    ZuCheckRT(!verifySchema({unsupportedOption, sizeof(unsupportedOption)},
       {}, &reason) && reason == "unsupported file options");
   }
   // These valid descriptor wire fields carry schema semantics we do not import.
@@ -286,13 +286,13 @@ static void testDescriptor()
 	expected = "unsupported import qualifier"; break;
       case 0x70: expected = "unsupported edition descriptor"; break;
     }
-    ZuCheck(!verifySchema({semantic, sizeof(semantic)}, {}, &reason) &&
+    ZuCheckRT(!verifySchema({semantic, sizeof(semantic)}, {}, &reason) &&
       reason == expected);
   }
   uint8_t duplicate[sizeof(bytes) * 2];
   memcpy(duplicate, bytes, sizeof(bytes));
   memcpy(duplicate + sizeof(bytes), bytes, sizeof(bytes));
-  ZuCheck(!verifySchema({duplicate, sizeof(duplicate)}));
+  ZuCheckRT(!verifySchema({duplicate, sizeof(duplicate)}));
 }
 
 static void testNativeExport()
@@ -1796,7 +1796,7 @@ static void testPayload()
   Output output;
   Zpb::ArrayStorage storage{output};
   Zpb::Builder builder{storage};
-  ZuCheck(write(builder, ZuSpan<const Value>{events.data(), events.length()}));
+  ZuCheck(write(builder, ZuSpan<const Value>{events}));
   auto rewritten = builder.bytes();
   ZuCheck(verify(message, rewritten));
   unsigned compared = 0;

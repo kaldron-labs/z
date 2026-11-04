@@ -114,40 +114,35 @@ static bool bearer(ZtString<> &value)
   return true;
 }
 
-static Frame finish(Ztc::Builder &builder)
-{
-  Frame frame;
-  frame.length(unsigned(builder.size()));
-  memcpy(frame.data(), builder.data(), frame.length());
-  return frame;
-}
-
-static Frame subscribe(ZuCSpan deviceID, uint32_t interval,
+static ZmRef<ZiIOBuf> subscribe(ZuCSpan deviceID, uint32_t interval,
     Ztc::Group::T group)
 {
-  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   auto request = Zfb::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = interval,
     .group = group, .subscribe = true});
   builder.finish(Ztc::saveMsg(
     builder, nested, Ztc::Body::Request, request, 1, deviceID));
-  return finish(builder);
+  return builder.buf();
 }
 
-static Frame ack(uint64_t seqNo)
+static ZmRef<ZiIOBuf> ack(uint64_t seqNo)
 {
-  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Ack{ZuID{"wire"}, seqNo, 1000});
   builder.finish(Ztc::saveMsg(
     builder, nested, Ztc::Body::Ack, value));
-  return finish(builder);
+  return builder.buf();
 }
 
-static Frame telemetry(uint64_t seqNo, uint32_t payload)
+static ZmRef<ZiIOBuf> telemetry(uint64_t seqNo, uint32_t payload)
 {
-  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   ZtString<> id;
   id.length(payload ? payload : 4);
@@ -163,14 +158,14 @@ static Frame telemetry(uint64_t seqNo, uint32_t payload)
     data);
   builder.finish(Ztc::saveMsg(
     builder, nested, Ztc::Body::Telemetry, tel));
-  return finish(builder);
+  return builder.buf();
 }
 
 // Inject an empty unsolicited snapshot completion on the public telemetry ring.
 static bool emptySnapshot(const Ztc::AppCf &cf)
 {
-  using MsgFrame = ZiIOBufAlloc<1024, 1U<<20, "Ztc.Wire.Snapshot">;
-  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame})};
+  using MsgFrame = Zi::IOBufAlloc<ZiIOBuf, 1024, 1U<<20, ZuStringT<"Ztc.Wire.Snapshot">>;
+  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new MsgFrame{nullptr, 0}})};
   auto nested = builder.startNested();
   auto eos = Zfb::save(builder, Ztc::EOS{cf.id, 0});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::EOS, eos));
@@ -189,9 +184,10 @@ static bool emptySnapshot(const Ztc::AppCf &cf)
   return ok;
 }
 
-static Frame unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
+static ZmRef<ZiIOBuf> unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
 {
-  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Request{
     .filter = inventory ? "*" : "", .seqNo = 0,
@@ -199,13 +195,14 @@ static Frame unsubscribe(ZuCSpan deviceID, uint64_t subID, bool inventory)
     .subscribe = false});
   builder.finish(Ztc::saveMsg(
     builder, nested, Ztc::Body::Request, value, subID, deviceID));
-  return finish(builder);
+  return builder.buf();
 }
 
-static void sendFrame(auto &link, Frame frame)
+static void sendFrame(auto &link, ZmRef<ZiIOBuf> frame)
 {
   link.txStream([frame = ZuMv(frame)](auto &tx) mutable {
-    tx << ZuBSpan{frame.data(), frame.length()};
+    auto length = frame->length;
+    tx.appendRange(ZuMv(frame), 0, length);
     tx.flush();
   }, Zws::Opcode::Binary);
 }
@@ -285,7 +282,7 @@ struct App {
   template <typename Link_>
   int messageEnd(Link_ &link)
   {
-    auto msg = Ztc::msg(ZuBSpan{frame.data(), frame.length()});
+    auto msg = Ztc::msg(ZuBSpan{frame});
     if (!msg) {
       failed = true;
       link.close(Zws::CloseCode::InvalidData);

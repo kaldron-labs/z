@@ -11,6 +11,8 @@
 
 using namespace ZuTestUtil;
 
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
 namespace {
 
 struct TestRouteLink { };
@@ -75,12 +77,12 @@ void testCxnRouter()
 
 void testCxnRouterTombstoneFIFO()
 {
-  ZuTestScope(testCxnRouterTombstoneFIFO);
+  ZuTestScopeRT(testCxnRouterTombstoneFIFO);
 
   TestRouteLink link;
   Zquic::CxnRouter<TestRouteLink> router;
   Zquic::CxnID active{"active01"};
-  ZuCHECK(router.add(active, 0, &link), "active CID add failed");
+  ZQUIC_CHECK_RT(router.add(active, 0, &link), "active CID add failed");
 
   char tomb[9] = "tmb00000";
   for (unsigned i = 0; i < Zquic::CxnRouter<TestRouteLink>::TombstoneMax + 4;
@@ -90,19 +92,19 @@ void testCxnRouterTombstoneFIFO()
     tomb[5] = char('0' + ((i / 10) % 10));
     tomb[6] = char('0' + (i % 10));
     Zquic::CxnID cid{ZuBSpan{tomb, 8}};
-    ZuCHECK(router.tombstone(cid), "tombstone route setup failed");
+    ZQUIC_CHECK_RT(router.tombstone(cid), "tombstone route setup failed");
   }
   Zquic::CxnID oldTombstone{"tmb00000"};
-  ZuCHECK(router.add(oldTombstone, 1000, &link),
+  ZQUIC_CHECK_RT(router.add(oldTombstone, 1000, &link),
     "oldest FIFO-evicted tombstone was retained");
   char kept[9] = "tmb00000";
   kept[6] = '4';
   Zquic::CxnID newTombstone{ZuBSpan{kept, 8}};
-  ZuCHECK(!router.add(newTombstone, 1001, &link),
+  ZQUIC_CHECK_RT(!router.add(newTombstone, 1001, &link),
     "retained tombstone was reactivated");
-  ZuCHECK(router.find(active) == &link && router.active() == 2,
+  ZQUIC_CHECK_RT(router.find(active) == &link && router.active() == 2,
     "tombstone FIFO disturbed active routes");
-  ZuCHECK(router.tombstoneCount() == Zquic::CxnRouter<TestRouteLink>::TombstoneMax,
+  ZQUIC_CHECK_RT(router.tombstoneCount() == Zquic::CxnRouter<TestRouteLink>::TombstoneMax,
     "tombstone FIFO exceeded retention bound");
 }
 
@@ -210,7 +212,7 @@ void testVariableShortCIDRouteMatch()
 
 void testAllShortCIDLengths()
 {
-  ZuTestScope(testAllShortCIDLengths);
+  ZuTestScopeRT(testAllShortCIDLengths);
 
   TestRouteLink links[Zquic::CxnIDMax];
   uint8_t cidBytes[Zquic::CxnIDMax];
@@ -222,7 +224,7 @@ void testAllShortCIDLengths()
   }
   Zquic::CxnRouter<TestRouteLink> router;
   for (unsigned length = 1; length <= Zquic::CxnIDMax; ++length)
-    ZuCHECK(router.add(
+    ZQUIC_CHECK_RT(router.add(
 	Zquic::CxnID{ZuBSpan{cidBytes, length}}, length, &links[length - 1]),
       "CID length route add failed");
   ZuBSpan datagram{packet, sizeof(packet)};
@@ -230,18 +232,18 @@ void testAllShortCIDLengths()
 #ifdef ZDEBUG
     router.resetShortProbes();
 #endif
-    ZuCHECK(router.matchShort(datagram) == &links[length - 1],
+    ZQUIC_CHECK_RT(router.matchShort(datagram) == &links[length - 1],
       "CID prefix routing did not choose longest installed length");
 #ifdef ZDEBUG
-    ZuCHECK(router.shortProbes() == 1,
+    ZQUIC_CHECK_RT(router.shortProbes() == 1,
       "CID prefix routing probed an uninstalled length");
 #endif
-    ZuCHECK(router.retire(Zquic::CxnID{ZuBSpan{cidBytes, length}}),
+    ZQUIC_CHECK_RT(router.retire(Zquic::CxnID{ZuBSpan{cidBytes, length}}),
       "CID length route retire failed");
   }
 #ifdef ZDEBUG
   router.resetShortProbes();
-  ZuCHECK(!router.matchShort(datagram) && !router.shortProbes(),
+  ZQUIC_CHECK_RT(!router.matchShort(datagram) && !router.shortProbes(),
     "retired CID lengths remained in the active-length index");
 #endif
 }

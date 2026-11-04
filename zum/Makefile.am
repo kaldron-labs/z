@@ -1,6 +1,6 @@
 METASOURCES = AUTO
 SUBDIRS = src test itest example interop
-dist_noinst_DATA = MANAGEMENT.md
+dist_noinst_DATA = README.md
 
 .PHONY: test
 test: all

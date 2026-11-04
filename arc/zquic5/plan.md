@@ -17,7 +17,7 @@ streams, CIDs/routes, ACK receive ranges, outbound control queues, and dependent
 references released during stream/link teardown.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 ## Current State
 
@@ -576,7 +576,7 @@ Keep existing tests around:
 
 ## Acceptance Criteria
 
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

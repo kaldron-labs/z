@@ -161,7 +161,7 @@ view's lifetime and that the vault does not log identities or values.
 ## Back-end pluggable interface and module contract
 
 The back-end interface is the installed `ZtlsVaultStore.hh` module contract. It
-must conform to the `ZiModule` guidance in `GUIDELINES.md` and follow
+must conform to the `ZiModule` guidance in `docs/GUIDELINES.md` and follow
 `Zdb_::Store` directly. Do not use a function table, opaque context, ABI
 version negotiation, host-mutation callback, or bespoke callback protocol.
 Every built-in and loaded backend implements this abstract `ZmPolymorph` base:

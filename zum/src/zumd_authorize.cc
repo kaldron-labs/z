@@ -289,7 +289,7 @@ public:
       return;
     }
     if (!m_query.mutable_()) m_query.length(m_query.length());
-    bool parsed = parseAuthorize({m_query.data(), m_query.length()}, m_params);
+    bool parsed = parseAuthorize(m_query, m_params);
     m_profileError = parsed ? validateAuthorize(m_params) :
       ProfileError::Unsupported;
     if (!m_params.has(AuthorizeParams::ClientID) ||

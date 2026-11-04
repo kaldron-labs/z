@@ -98,7 +98,7 @@ public:
 
   bool receive(ZuCSpan input, bool retain = false,
       Zjrpc::WorkControl *control = nullptr, bool peer = true) {
-    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{};
+    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{nullptr, 0};
     *body << input;
     return Base::receive(ZuMv(body), [this, retain](auto message, int policy) {
       if (policy == Zjrpc::RoutePolicy::Abort) { m_aborted = true; return true; }
@@ -395,6 +395,33 @@ struct OwnedEcho : public Zjrpc::Request {
   using Responses = ZuTypeList<OK>;
 };
 
+struct BatchPayload {
+  ZmRef<Payload> payload;
+  template <typename S>
+  void write(S &out) const { out << "{\"value\":" << payload->value << '}'; }
+};
+
+template <bool Write>
+static void batchResponseLifetimeTest()
+{
+  ZuTestScopeRT(batchResponseLifetime);
+  unsigned destroyed = 0;
+  ZmRef<Payload> payload = new Payload{&destroyed};
+  ZmRef<Zjrpc::BatchData> batch =
+    new Zjrpc::BatchData{1, Zjrpc::Default::MaxJSONBytes};
+  ZuCheckRT(batch->append(BatchPayload{payload}, {}));
+  payload = nullptr;
+  ZuCheckRT(!destroyed);
+  if constexpr (Write) {
+    ZtString<> output;
+    batch->write(output);
+    ZuCheckRT(output == "[{\"value\":7}]");
+    ZuCheckRT(!destroyed);
+  }
+  batch = nullptr;
+  ZuCheckRT(destroyed == 1);
+}
+
 static void batchLifetimeTest()
 {
   ZuTestScope(batchLifetime);
@@ -496,5 +523,7 @@ int main(int argc, char **argv)
   ZuTestCall(shortBatchTest);
   ZuTestCall(batchCollisionTest);
   ZuTestCall(batchLifetimeTest);
+  ZuTestCall(batchResponseLifetimeTest<false>);
+  ZuTestCall(batchResponseLifetimeTest<true>);
   return 0;
 }

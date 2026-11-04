@@ -9,6 +9,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZgrpcHTTP.hh>
 #include "ZhttpTestUtil.hh"
 
@@ -110,21 +111,23 @@ struct Client : Zhttp::Client<Client, Pool> { };
 
 static void deadline(bool h3, bool zero = false)
 {
-  ZuTestScope(deadline);
+  ZuTestScopeRT(deadline);
   Zhttp::Test::TempDir temp;
-  ZuCheck(temp.init("ZgrpcDeadline"), (return));
+  ZuCheckRT(temp.init("ZgrpcDeadline"), (return));
   ZtString<> cert, key;
-  ZuCheck(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZuCheckRT(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(6);
     for (unsigned i = 1; i <= 6; ++i)
       s.thread(i, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   DeadlineState state;
   state.mx = &mx;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
-  ZuCheck(port, ({ mx.stop(); return; }));
+  ZuCheckRT(port, ({ mx.stop(); return; }));
   RPCApp app{&state};
   Zgrpc::Server<RPCApp, Matrix> server;
   ServerConfig config;
@@ -134,11 +137,11 @@ static void deadline(bool h3, bool zero = false)
     tls.certPath(cert).keyPath(key);
   }));
   bool initialized = server.init(Zhttp::HubConfig{&mx, "3", "4"}, config, &app);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   bool started = initialized && server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_());
+  ZuCheckRT(listening && !state.errors.load_());
   Client client;
   Zhttp::Config clientConfig;
   clientConfig.protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3)
@@ -148,38 +151,38 @@ static void deadline(bool h3, bool zero = false)
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
-  ZuCheck(cliInit);
+  ZuCheckRT(cliInit);
   bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
-  ZuCheck(cliUp);
+  ZuCheckRT(cliUp);
   if (cliUp) {
     ZmRef<Requests::Node> request = new Requests::Node{};
     request->state = &state;
     request->timeout = zero ? 0 : 1000000000; // Server-only timeout; no client RPC timer.
-    ZuCheck(client.send(0, ZuMv(request)));
+    ZuCheckRT(client.send(0, ZuMv(request)));
     if (!zero) {
-      ZuCheck(state.opened.timedwait(Zm::now(10)) == 0);
-      ZuCheck(state.held.timedwait(Zm::now(10)) == 0);
-      ZuCheck(state.cancelled.timedwait(Zm::now(10)) == 0);
-      ZuCheck(server.pending() == 1 && state.opens == 1 && state.cancels == 1 && !state.messages);
-      ZuCheck(state.token && !state.token->live() && state.token->cancelled());
+      ZuCheckRT(state.opened.timedwait(Zm::now(10)) == 0);
+      ZuCheckRT(state.held.timedwait(Zm::now(10)) == 0);
+      ZuCheckRT(state.cancelled.timedwait(Zm::now(10)) == 0);
+      ZuCheckRT(server.pending() == 1 && state.opens == 1 && state.cancels == 1 && !state.messages);
+      ZuCheckRT(state.token && !state.token->live() && state.token->cancelled());
       state.release.post();
     }
-    ZuCheck(state.received.timedwait(Zm::now(10)) == 0);
-    ZuCheck(state.completed.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(state.received.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(state.completed.timedwait(Zm::now(10)) == 0);
     client.stop();
   }
   client.final();
-  if (started) ZuCheck(server.stop());
-  ZuCheck(!server.pending());
+  if (started) ZuCheckRT(server.stop());
+  ZuCheckRT(!server.pending());
   server.final();
   ZiResolver::stopSync(); ZiResolver::final();
-  ZuCheck(mx.stop());
-  ZuCheck(state.httpOK && state.status == Code::DEADLINE_EXCEEDED &&
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(state.httpOK && state.status == Code::DEADLINE_EXCEEDED &&
     state.cancels == unsigned(!zero) && !state.errors.load_());
-  ZuCheck(state.opens == unsigned(!zero) && state.headers == unsigned(!zero));
-  if (state.token) ZuCheck(!state.token->send(Packet{}) && !state.token->finish() && !state.token->cancel());
+  ZuCheckRT(state.opens == unsigned(!zero) && state.headers == unsigned(!zero));
+  if (state.token) ZuCheckRT(!state.token->send(Packet{}) && !state.token->finish() && !state.token->cancel());
 }
 
 int main(int argc, char **argv)

@@ -13,9 +13,10 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
-tap_drivers = zringmatrix zitestresidue zheaptune zhashtune
+tap_drivers = zringmatrix zitestresidue zheaptune zhashtune zmultibinding
 noinst_PROGRAMS = $(tap_drivers) zheapwork zhashwork
 zringmatrix_SOURCES = zringmatrix.cc
+zmultibinding_SOURCES = zmultibinding.cc
 zitestresidue_SOURCES = zitestresidue.cc
 zheaptune_SOURCES = zheaptune.cc zheaptune.hh
 zheapwork_SOURCES = zheapwork.cc zheaptune.hh

@@ -826,7 +826,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     ZmRef<Zum::DB> context, Ztls::Random &rng, Zum::Bytes &passkeyHandle,
     ZmRef<Ztls::PK::SK_EC> &passkey)
 {
-  ZuTestScope(prepareIdentity);
+  ZuTestScopeRT(prepareIdentity);
   Zum::Grant authorization;
   authorization.id = Zum::Bytes{ZuBSpan{"authorization-id"}};
   authorization.issuer = "issuer";
@@ -846,23 +846,23 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   authorization.kind = Zum::GrantKind::Ceremony;
   authorization.purpose = Zum::GrantPurpose::Authorization;
   authorization.state = Zum::State::Active;
-  ZuCheck(insertIssuer(context, "issuer"));
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertIssuer(context, "issuer"));
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 8, .name = "code-app", .state = Zum::State::Active,
     .authVersion = 10, .audience = "orders"}));
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 20, .name = "independent-app", .state = Zum::State::Active,
     .authVersion = 17, .audience = "https://independent-app.example"}));
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 21, .name = "disabled-app", .state = Zum::State::Disabled,
     .authVersion = 10, .audience = "https://disabled-app.example"}));
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 22, .name = "owned-app", .state = Zum::State::Active,
     .authVersion = 10, .owner = 1, .audience = "https://owned-app.example"}));
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 24, .name = "other-app", .state = Zum::State::Active,
     .authVersion = 10, .audience = "https://other-app.example"}));
-  ZuCheck(insertRecord(context->signKeys, Zum::SignKey{
+  ZuCheckRT(insertRecord(context->signKeys, Zum::SignKey{
     .id = "token-key",
     .issuer = "issuer",
     .algorithm = "ES256",
@@ -881,9 +881,9 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       wake(ok ? ZuMv(json) : Zum::String{});
     });
   });
-  ZuCheck(persistedJWKS ==
+  ZuCheckRT(persistedJWKS ==
     "{\"keys\":[{\"kty\":\"EC\",\"kid\":\"token-key\"}]}");
-  ZuCheck(insertRecord(context->users, Zum::User{
+  ZuCheckRT(insertRecord(context->users, Zum::User{
     .id = 41,
     .name = "code user",
     .handle = Zum::Bytes{ZuBSpan{"code handle"}},
@@ -892,35 +892,35 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     .created = 100, .expires = 200, .kind = Zum::GrantKind::Ceremony,
     .purpose = Zum::GrantPurpose::Enrollment, .state = Zum::State::Active,
     .issuer = "issuer"};
-  ZuCheck(insertRecord(context->grants, collisionCeremony));
-  ZuCheck(!runSaga(db, Zum::enrollment(Zum::EnrollmentArgs{.ceremonyID = collisionCeremony.id,
+  ZuCheckRT(insertRecord(context->grants, collisionCeremony));
+  ZuCheckRT(!runSaga(db, Zum::enrollment(Zum::EnrollmentArgs{.ceremonyID = collisionCeremony.id,
     .userID = 41, .name = "duplicate code user", .created = 101,
     .beforeGrant = collisionCeremony}), ZdbSagaID{12010}));
   auto restoredCeremony = loadGrant(context, collisionCeremony.id);
-  ZuCheck(restoredCeremony.state == Zum::State::Active && !restoredCeremony.owner &&
+  ZuCheckRT(restoredCeremony.state == Zum::State::Active && !restoredCeremony.owner &&
     restoredCeremony.expires == collisionCeremony.expires);
   Zum::User invitedBefore{.id = 12011, .name = "rollback invite",
     .created = 90, .updated = 95, .state = Zum::State::Pending,
     .version = 3};
-  ZuCheck(insertRecord(context->users, invitedBefore));
+  ZuCheckRT(insertRecord(context->users, invitedBefore));
   Zum::Bytes duplicateCred{ZuBSpan{"enrollment-collision-cred"}};
-  ZuCheck(insertRecord(context->creds, Zum::Cred{.id = duplicateCred,
+  ZuCheckRT(insertRecord(context->creds, Zum::Cred{.id = duplicateCred,
     .userID = 41, .state = Zum::State::Active}));
-  ZuCheck(!runSaga(db, Zum::enrollment(Zum::EnrollmentArgs{.ceremonyID = collisionCeremony.id,
+  ZuCheckRT(!runSaga(db, Zum::enrollment(Zum::EnrollmentArgs{.ceremonyID = collisionCeremony.id,
     .userID = invitedBefore.id, .name = invitedBefore.name,
     .handle = Zum::Bytes{ZuBSpan{"rollback invite handle"}},
     .credentialID = duplicateCred, .created = 101, .precreated = true,
     .beforeGrant = collisionCeremony, .beforeUser = invitedBefore}), ZdbSagaID{12011}));
   auto invitedRestored = loadUser(context, invitedBefore.id);
-  ZuCheck(invitedRestored.id == invitedBefore.id && !invitedRestored.handle &&
+  ZuCheckRT(invitedRestored.id == invitedBefore.id && !invitedRestored.handle &&
     !invitedRestored.owner && invitedRestored.version == invitedBefore.version &&
     invitedRestored.updated == invitedBefore.updated &&
     invitedRestored.state == Zum::State::Pending);
-  ZuCheck(loadCred(context, duplicateCred).userID == 41);
+  ZuCheckRT(loadCred(context, duplicateCred).userID == 41);
   collisionCeremony.purpose = Zum::GrantPurpose::AddCredential;
   collisionCeremony.id = Zum::Bytes{ZuBSpan{"credential-collision-ceremony"}};
   collisionCeremony.userID = 41;
-  ZuCheck(insertRecord(context->grants, collisionCeremony));
+  ZuCheckRT(insertRecord(context->grants, collisionCeremony));
   Zum::CredentialAddArgs duplicateAdd;
   duplicateAdd.ceremonyID = collisionCeremony.id;
   duplicateAdd.issuer = "issuer";
@@ -929,9 +929,9 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   duplicateAdd.credentialID = duplicateCred;
   duplicateAdd.created = 101;
   duplicateAdd.beforeGrant = collisionCeremony;
-  ZuCheck(!runSaga(db, Zum::credentialAdd(ZuMv(duplicateAdd)), ZdbSagaID{12012}));
+  ZuCheckRT(!runSaga(db, Zum::credentialAdd(ZuMv(duplicateAdd)), ZdbSagaID{12012}));
   restoredCeremony = loadGrant(context, collisionCeremony.id);
-  ZuCheck(restoredCeremony.state == Zum::State::Active && !restoredCeremony.owner);
+  ZuCheckRT(restoredCeremony.state == Zum::State::Active && !restoredCeremony.owner);
   // Issuer version is 10; app 20 independently has version 17.
   for (unsigned i = 0; i < 6; ++i) {
     Zum::Grant candidate{authorization};
@@ -946,15 +946,15 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     }
     Zum::Bytes id{candidate.id};
     uint64_t version = candidate.authVersion;
-    ZuCheck(storeAuthorization(context, ZuMv(candidate)));
+    ZuCheckRT(storeAuthorization(context, ZuMv(candidate)));
     Zum::String code;
     bool ok = finishAuthorization(context, rng, Zum::Bytes{id},
       Zum::Bytes{ZuBSpan{"browser binding"}}, 41,
       ZuBSpan{"code credential"}, code, version);
-    ZuCheck(ok == (i == 0) && bool(code) == (i == 0));
-    if (!i) ZuCheck(authorizationState(
+    ZuCheckRT(ok == (i == 0) && bool(code) == (i == 0));
+    if (!i) ZuCheckRT(authorizationState(
       context, id, code, 41, ZuBSpan{"code credential"}));
-    if (!i) ZuCheck(ZmBlock<bool>{}([context, id](auto wake) mutable {
+    if (!i) ZuCheckRT(ZmBlock<bool>{}([context, id](auto wake) mutable {
       auto grants = context->grants;
       grants->run(0, [grants, id = ZuMv(id), wake = ZuMv(wake)]() mutable {
 	Zum::GrantTable::Key<2> key{id, Zum::UserID{41}, Zum::AppID{20}};
@@ -965,87 +965,87 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       });
     }));
   }
-  ZuCheck(storeAuthorization(context, ZuMv(authorization)));
+  ZuCheckRT(storeAuthorization(context, ZuMv(authorization)));
   Zum::String authorizationCode;
-  ZuCheck(!finishAuthorization(context, rng,
+  ZuCheckRT(!finishAuthorization(context, rng,
     Zum::Bytes{ZuBSpan{"authorization-id"}},
     Zum::Bytes{ZuBSpan{"wrong binding"}}, 41,
     ZuBSpan{"code credential"}, authorizationCode));
-  ZuCheck(!authorizationCode);
-  ZuCheck(finishAuthorization(context, rng,
+  ZuCheckRT(!authorizationCode);
+  ZuCheckRT(finishAuthorization(context, rng,
     Zum::Bytes{ZuBSpan{"authorization-id"}},
     Zum::Bytes{ZuBSpan{"browser binding"}}, 41,
     ZuBSpan{"code credential"}, authorizationCode));
-  ZuCheck(authorizationState(
+  ZuCheckRT(authorizationState(
     context, ZuBSpan{"authorization-id"}, authorizationCode,
     41, ZuBSpan{"code credential"}));
   Zum::String replayCode;
-  ZuCheck(!finishAuthorization(context, rng,
+  ZuCheckRT(!finishAuthorization(context, rng,
     Zum::Bytes{ZuBSpan{"authorization-id"}},
     Zum::Bytes{ZuBSpan{"browser binding"}}, 41,
     ZuBSpan{"code credential"}, replayCode));
-  ZuCheck(!replayCode);
+  ZuCheckRT(!replayCode);
 
   Zum::CodeFamilyArgs family;
   Zum::String refreshToken;
-  ZuCheck(prepareCodeFamily(
+  ZuCheckRT(prepareCodeFamily(
     context, rng, authorizationCode, family, refreshToken));
   auto collisionFamily = family;
   collisionFamily.familyID = Zum::Bytes{ZuBSpan{"family-collision"}};
-  ZuCheck(insertRecord(context->refresh, Zum::Refresh{.id = collisionFamily.familyID,
+  ZuCheckRT(insertRecord(context->refresh, Zum::Refresh{.id = collisionFamily.familyID,
     .expires = 1000, .state = Zum::State::Active}));
-  ZuCheck(!runSaga(db, Zum::codeFamily(ZuMv(collisionFamily)), ZdbSagaID{12013}));
+  ZuCheckRT(!runSaga(db, Zum::codeFamily(ZuMv(collisionFamily)), ZdbSagaID{12013}));
   auto rolledBackCode = loadGrant(context, family.codeID);
-  ZuCheck(rolledBackCode.state == Zum::State::Active && !rolledBackCode.owner &&
+  ZuCheckRT(rolledBackCode.state == Zum::State::Active && !rolledBackCode.owner &&
     rolledBackCode.digest == family.codeDigest && rolledBackCode.scope == family.beforeGrant.scope);
-  ZuCheck(loadRefresh(context, ZuBSpan{"family-collision"}).state == Zum::State::Active);
+  ZuCheckRT(loadRefresh(context, ZuBSpan{"family-collision"}).state == Zum::State::Active);
   Zum::Bytes familyID = family.familyID;
   Zum::Bytes refreshID, refreshDigest;
-  ZuCheck(Zum::opaqueParse(refreshToken, refreshID, refreshDigest) &&
+  ZuCheckRT(Zum::opaqueParse(refreshToken, refreshID, refreshDigest) &&
     refreshID == family.familyID && refreshDigest == family.digest);
-  ZuCheck(runSaga(db, Zum::codeFamily(ZuMv(family)), ZdbSagaID{2}));
-  ZuCheck(codeFamilyState(context,
+  ZuCheckRT(runSaga(db, Zum::codeFamily(ZuMv(family)), ZdbSagaID{2}));
+  ZuCheckRT(codeFamilyState(context,
     ZuBSpan{"authorization-id"}, familyID, true));
-  ZuCheck(releaseToken(context, familyID, 10, true));
-  ZuCheck(releaseToken(context, {}, 10, true));
-  ZuCheck(releaseToken(context, {}, 17, true, 130, 20));
-  ZuCheck(releaseToken(context, {}, 10, false, 130, 20));
-  ZuCheck(releaseToken(context, {}, 10, false, 130, 21));
-  ZuCheck(releaseToken(context, {}, 10, false, 130, 22));
-  ZuCheck(releaseToken(context, {}, 10, false, 130, 23));
-  ZuCheck(releaseToken(context, {}, 10, false, 130, 0));
-  ZuCheck(releaseToken(context, familyID, 17, false, 130, 20));
-  ZuCheck(releaseToken(context, familyID, 10, false, 130, 24));
-  ZuCheck(releaseToken(context, familyID, 9, false));
-  ZuCheck(releaseToken(context, familyID, 10, false, 1000));
-  ZuCheck(releaseToken(context, ZuBSpan{"missing family"}, 10, false));
+  ZuCheckRT(releaseToken(context, familyID, 10, true));
+  ZuCheckRT(releaseToken(context, {}, 10, true));
+  ZuCheckRT(releaseToken(context, {}, 17, true, 130, 20));
+  ZuCheckRT(releaseToken(context, {}, 10, false, 130, 20));
+  ZuCheckRT(releaseToken(context, {}, 10, false, 130, 21));
+  ZuCheckRT(releaseToken(context, {}, 10, false, 130, 22));
+  ZuCheckRT(releaseToken(context, {}, 10, false, 130, 23));
+  ZuCheckRT(releaseToken(context, {}, 10, false, 130, 0));
+  ZuCheckRT(releaseToken(context, familyID, 17, false, 130, 20));
+  ZuCheckRT(releaseToken(context, familyID, 10, false, 130, 24));
+  ZuCheckRT(releaseToken(context, familyID, 9, false));
+  ZuCheckRT(releaseToken(context, familyID, 10, false, 1000));
+  ZuCheckRT(releaseToken(context, ZuBSpan{"missing family"}, 10, false));
   Zum::String wrongRefresh = refreshToken;
   wrongRefresh[wrongRefresh.length() - 1] ^= 1;
   Zum::String nextRefresh;
-  ZuCheck(rotateRefresh(context, rng, refreshToken, nextRefresh, 24) ==
+  ZuCheckRT(rotateRefresh(context, rng, refreshToken, nextRefresh, 24) ==
     Zum::RefreshRotate::Invalid && !nextRefresh);
-  ZuCheck(rotateRefresh(context, rng, wrongRefresh, nextRefresh) ==
+  ZuCheckRT(rotateRefresh(context, rng, wrongRefresh, nextRefresh) ==
     Zum::RefreshRotate::Unknown && !nextRefresh);
-  ZuCheck(refreshState(context, familyID, refreshDigest, 0,
+  ZuCheckRT(refreshState(context, familyID, refreshDigest, 0,
     Zum::State::Active));
-  ZuCheck(rotateRefresh(context, rng, refreshToken, nextRefresh) ==
+  ZuCheckRT(rotateRefresh(context, rng, refreshToken, nextRefresh) ==
     Zum::RefreshRotate::Rotated && nextRefresh);
   Zum::Bytes nextID, nextDigest;
-  ZuCheck(Zum::opaqueParse(nextRefresh, nextID, nextDigest) &&
+  ZuCheckRT(Zum::opaqueParse(nextRefresh, nextID, nextDigest) &&
     nextID == familyID);
-  ZuCheck(refreshState(context, familyID, nextDigest, 1,
+  ZuCheckRT(refreshState(context, familyID, nextDigest, 1,
     Zum::State::Active));
   Zum::String replayRefresh;
-  ZuCheck(rotateRefresh(context, rng, refreshToken, replayRefresh) ==
+  ZuCheckRT(rotateRefresh(context, rng, refreshToken, replayRefresh) ==
     Zum::RefreshRotate::Reused && !replayRefresh);
-  ZuCheck(refreshState(context, familyID, nextDigest, 1,
+  ZuCheckRT(refreshState(context, familyID, nextDigest, 1,
     Zum::State::Revoked));
-  ZuCheck(releaseToken(context, familyID, 10, false));
+  ZuCheckRT(releaseToken(context, familyID, 10, false));
 
   Zum::String bootstrap;
   Zum::BootstrapConfig bootstrapConfig{
     .issuer = "issuer", .appID = 9, .now = 90, .expires = 1000};
-  ZuCheck(ZmBlock<bool>{}([
+  ZuCheckRT(ZmBlock<bool>{}([
     &db, &context, &rng, &bootstrapConfig, &bootstrap
   ](auto wake) mutable {
     Zum::bootstrapIssue({}, db->requests, Zm::now() + ZuTime{10},
@@ -1058,7 +1058,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   }) && bootstrap);
   Zum::BootstrapConfig duplicateBootstrap{
     .issuer = "issuer", .appID = 9, .now = 91, .expires = 1000};
-  ZuCheck(!ZmBlock<bool>{}([
+  ZuCheckRT(!ZmBlock<bool>{}([
     &db, &context, &rng, &duplicateBootstrap
   ](auto wake) mutable {
     Zum::bootstrapIssue({}, db->requests, Zm::now() + ZuTime{10},
@@ -1068,7 +1068,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   }));
 
   Zum::EnrollmentBeginResult enrollmentBegin;
-  ZuCheck(insertRecord(context->users, Zum::User{
+  ZuCheckRT(insertRecord(context->users, Zum::User{
     .id = 42, .source = Zum::UserSource::Local, .name = "first user",
     .created = 90, .updated = 90, .state = Zum::State::Pending}));
   Zum::EnrollmentBeginConfig enrollmentConfig{
@@ -1085,7 +1085,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   };
   Zum::String replayCapability = bootstrap;
   auto replayConfig = enrollmentConfig;
-  ZuCheck(ZmBlock<int>{}([
+  ZuCheckRT(ZmBlock<int>{}([
     &db, &context, &rng, &bootstrap, &enrollmentConfig, &enrollmentBegin
   ](auto wake) mutable {
     Zum::bootstrapBegin({}, db->requests, Zm::now() + ZuTime{10},
@@ -1097,12 +1097,12 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
 	wake(error);
       });
   }) == Zum::WebAuthnError::OK);
-  ZuCheck(enrollmentBegin.ceremonyID.length() == 16 &&
+  ZuCheckRT(enrollmentBegin.ceremonyID.length() == 16 &&
     enrollmentBegin.options);
   auto enrollmentGrant = loadGrant(context, enrollmentBegin.ceremonyID);
-  ZuCheck(enrollmentGrant.challenge && enrollmentGrant.userHandle &&
+  ZuCheckRT(enrollmentGrant.challenge && enrollmentGrant.userHandle &&
     enrollmentGrant.purpose == Zum::GrantPurpose::Bootstrap);
-  ZuCheck(ZmBlock<int>{}([
+  ZuCheckRT(ZmBlock<int>{}([
     &db, &context, &rng, &replayCapability, &replayConfig
   ](auto wake) mutable {
     Zum::bootstrapBegin({}, db->requests, Zm::now() + ZuTime{10},
@@ -1114,13 +1114,13 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   passkeyHandle = enrollmentGrant.userHandle;
   passkey = new Ztls::PK::SK_EC{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t passkeyPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(passkey->key, passkeyPublic));
+  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(passkey->key, passkeyPublic));
   Zum::RegistrationInput registrationInput;
-  ZuCheck(makeRegistration(passkeyPublic, 5, "credential",
+  ZuCheckRT(makeRegistration(passkeyPublic, 5, "credential",
     enrollmentGrant.challenge,
     "https://example.com", "example.com", registrationInput));
   Zum::Bytes enrollmentID = enrollmentBegin.ceremonyID;
-  ZuCheck(ZmBlock<int>{}([
+  ZuCheckRT(ZmBlock<int>{}([
     &db, &enrollmentBegin, &registrationInput
   ](auto wake) mutable {
     Zum::enrollmentFinish({}, db->requests, Zm::now() + ZuTime{10},
@@ -1133,14 +1133,14 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
 	.now = 123
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::WebAuthnError::OK);
-  ZuCheck(enrollmentState(
+  ZuCheckRT(enrollmentState(
     context, enrollmentID, 42, ZuBSpan{"credential"}));
-  ZuCheck(logged(
+  ZuCheckRT(logged(
     Zum::String{} << " event=" << int(Zum::AuditEvent::PrincipalChange) << " ",
     Zum::String{} << " outcome=" << int(Zum::AuditOutcome::Success) << " ",
     Zum::String{} << " subject=" << Zum::auditID(passkeyHandle) << " ",
     Zum::String{} << " detail=" << "enrollment" << " "));
-  ZuCheck(logged(
+  ZuCheckRT(logged(
     Zum::String{} << " event=" << int(Zum::AuditEvent::CredentialChange) << " ",
     Zum::String{} << " outcome=" << int(Zum::AuditOutcome::Success) << " ",
     Zum::String{} << " subject=" << Zum::auditID(passkeyHandle) << " ",
@@ -1150,7 +1150,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   auto sessionUser = loadUser(context, 42);
   Zum::Session providerSession;
   Zum::String sessionToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &sessionUser,
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &rng, &sessionUser,
       &providerSession, &sessionToken](auto wake) mutable {
     Zum::sessionIssue({}, db->requests, Zm::now() + ZuTime{10}, context, rng,
       Zum::SessionConfig{.issuer = "issuer/oauth2/9",
@@ -1169,7 +1169,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     providerSession.absoluteDeadline == 160 &&
     providerSession.state == Zum::State::Active);
   Zum::String reusableSession = sessionToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession,
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &reusableSession,
       &providerSession](auto wake) mutable {
     Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 135, 10,
@@ -1180,7 +1180,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       });
   }) == Zum::SessionError::OK && providerSession.idleDeadline == 145 &&
     providerSession.absoluteDeadline == 160 && providerSession.version == 2);
-  ZuCheck(ZmBlock<bool>{}([context, &providerSession](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context, &providerSession](auto wake) mutable {
     auto sessions = context->sessions;
     sessions->run(0, [sessions, &providerSession, wake = ZuMv(wake)]() mutable {
       sessions->find<2>(0, ZuFwdTuple(int64_t{145}), [
@@ -1204,9 +1204,9 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       });
     });
   };
-  ZuCheck(sessionOwner(12023).digest == providerSession.digest);
+  ZuCheckRT(sessionOwner(12023).digest == providerSession.digest);
   reusableSession = sessionToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
     Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 136, 10,
       [wake = ZuMv(wake)](int error, Zum::Session, Zum::String) mutable {
@@ -1214,25 +1214,25 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       });
   }) == Zum::SessionError::Expired);
   reusableSession = sessionToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
     Zum::sessionRevoke({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 136,
       [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::SessionError::Storage);
   auto reservedSession = sessionOwner(0);
-  ZuCheck(reservedSession.owner == 12023 &&
+  ZuCheckRT(reservedSession.owner == 12023 &&
     reservedSession.state == providerSession.state &&
     reservedSession.version == providerSession.version &&
     reservedSession.idleDeadline == providerSession.idleDeadline &&
     reservedSession.updated == providerSession.updated);
   Zum::String revokedSession = sessionToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &revokedSession](auto wake) mutable {
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &revokedSession](auto wake) mutable {
     Zum::sessionRevoke({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(revokedSession), Zum::String{"issuer/oauth2/9"}, 136,
       [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::SessionError::OK);
   reusableSession = sessionToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &reusableSession](auto wake) mutable {
     Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       ZuMv(reusableSession), Zum::String{"issuer/oauth2/9"}, 137, 10,
       [wake = ZuMv(wake)](int error, Zum::Session, Zum::String) mutable {
@@ -1241,15 +1241,15 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   }) == Zum::SessionError::Expired);
 
   Zum::OpaqueToken inviteToken;
-  ZuCheck(Zum::opaqueIssue(rng, inviteToken));
+  ZuCheckRT(Zum::opaqueIssue(rng, inviteToken));
   auto inviteID = inviteToken.id;
   auto inviteDigest = inviteToken.digest;
   Zum::String invitation = ZuMv(inviteToken.token);
   Zum::User inviteExternal{.id = 18001, .source = Zum::UserSource::External,
     .name = "invited", .created = 100, .updated = 100,
     .state = Zum::State::Active, .authVersion = 3, .version = 5};
-  ZuCheck(insertRecord(context->users, Zum::User{inviteExternal}));
-  ZuCheck(runSaga(db, Zum::userInvite(Zum::UserInviteArgs{
+  ZuCheckRT(insertRecord(context->users, Zum::User{inviteExternal}));
+  ZuCheckRT(runSaga(db, Zum::userInvite(Zum::UserInviteArgs{
     .before = Zum::User{.id = 45, .version = 0},
     .values = Zum::User{.id = 45, .name = "invited"},
     .grant = Zum::Grant{.id = ZuMv(inviteToken.id), .userID = 45,
@@ -1262,19 +1262,19 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     .external = inviteExternal}),
     ZdbSagaID{12000}));
   auto invalidatedExternal = loadUser(context, inviteExternal.id);
-  ZuCheck(invalidatedExternal.authVersion == 4 && invalidatedExternal.version == 6 &&
+  ZuCheckRT(invalidatedExternal.authVersion == 4 && invalidatedExternal.version == 6 &&
     invalidatedExternal.updated == 123 && !invalidatedExternal.owner &&
     invalidatedExternal.name == inviteExternal.name &&
     invalidatedExternal.state == Zum::State::Active);
   Zum::User staleExternal{.id = 18002, .source = Zum::UserSource::External,
     .name = "stale-invited", .created = 100, .updated = 100,
     .state = Zum::State::Active, .authVersion = 3, .version = 5};
-  ZuCheck(insertRecord(context->users, Zum::User{staleExternal}));
+  ZuCheckRT(insertRecord(context->users, Zum::User{staleExternal}));
   --staleExternal.version;
   Zum::OpaqueToken staleToken;
-  ZuCheck(Zum::opaqueIssue(rng, staleToken));
+  ZuCheckRT(Zum::opaqueIssue(rng, staleToken));
   auto staleGrantID = staleToken.id;
-  ZuCheck(!runSaga(db, Zum::userInvite(Zum::UserInviteArgs{
+  ZuCheckRT(!runSaga(db, Zum::userInvite(Zum::UserInviteArgs{
     .before = Zum::User{.id = 18003, .version = 0},
     .values = Zum::User{.id = 18003, .name = "stale-invited"},
     .grant = Zum::Grant{.id = ZuMv(staleToken.id), .userID = 18003,
@@ -1285,22 +1285,22 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::userInvite, .idempotence = "invite-stale-external"},
     .external = staleExternal}), ZdbSagaID{18003}));
-  ZuCheck(!loadUser(context, 18003).id && !loadGrant(context, staleGrantID).id);
+  ZuCheckRT(!loadUser(context, 18003).id && !loadGrant(context, staleGrantID).id);
   auto retainedExternal = loadUser(context, staleExternal.id);
-  ZuCheck(retainedExternal.version == 5 && retainedExternal.authVersion == 3 &&
+  ZuCheckRT(retainedExternal.version == 5 && retainedExternal.authVersion == 3 &&
     retainedExternal.updated == 100 && !retainedExternal.owner);
   auto pendingInvite = loadUser(context, 45);
   auto inviteCapability = loadGrant(context, inviteID);
-  ZuCheck(pendingInvite.id == 45 && pendingInvite.name == "invited" &&
+  ZuCheckRT(pendingInvite.id == 45 && pendingInvite.name == "invited" &&
     pendingInvite.source == Zum::UserSource::Local && !pendingInvite.owner &&
     pendingInvite.state == Zum::State::Pending && !pendingInvite.handle);
-  ZuCheck(inviteCapability.userID == 45 && !inviteCapability.owner &&
+  ZuCheckRT(inviteCapability.userID == 45 && !inviteCapability.owner &&
     inviteCapability.kind == Zum::GrantKind::Capability &&
     inviteCapability.purpose == Zum::GrantPurpose::Enrollment &&
     inviteCapability.digest == inviteDigest);
   // A grant collision occurs after user insertion; compensation removes only
   // this invitation's user and leaves the existing invitation intact.
-  ZuCheck(!runSaga(db, Zum::userInvite(Zum::UserInviteArgs{
+  ZuCheckRT(!runSaga(db, Zum::userInvite(Zum::UserInviteArgs{
     .before = Zum::User{.id = 12001, .version = 0},
     .values = Zum::User{.id = 12001, .name = "failed-invitation"},
     .grant = Zum::Grant{.id = inviteID, .userID = 12001,
@@ -1311,12 +1311,12 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::userInvite, .idempotence = "invite-rollback"}}),
     ZdbSagaID{12001}));
-  ZuCheck(!loadUser(context, 12001).id);
+  ZuCheckRT(!loadUser(context, 12001).id);
   auto retainedInvite = loadGrant(context, inviteID);
-  ZuCheck(retainedInvite.userID == 45 && retainedInvite.digest == inviteDigest &&
+  ZuCheckRT(retainedInvite.userID == 45 && retainedInvite.digest == inviteDigest &&
     !retainedInvite.owner && retainedInvite.state == Zum::State::Active);
   Zum::EnrollmentBeginResult invitedBegin;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &invitation,
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &rng, &invitation,
       &invitedBegin](auto wake) mutable {
     Zum::bootstrapBegin({}, db->requests, Zm::now() + ZuTime{10}, context,
       rng, ZuMv(invitation), Zum::Bytes{ZuBSpan{"invited binding"}},
@@ -1329,14 +1329,14 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       });
   }) == Zum::WebAuthnError::OK);
   auto invitedGrant = loadGrant(context, invitedBegin.ceremonyID);
-  ZuCheck(invitedGrant.kind == Zum::GrantKind::Ceremony &&
+  ZuCheckRT(invitedGrant.kind == Zum::GrantKind::Ceremony &&
     invitedGrant.purpose == Zum::GrantPurpose::Enrollment &&
     invitedGrant.userID == 45 && invitedGrant.userName == "invited" &&
     invitedGrant.actor == "precreated" &&
     invitedGrant.bindingDigest == ZuBSpan{"invited binding"});
 
   Zum::EnrollmentBeginResult addBegin;
-  ZuCheck(ZmBlock<int>{}([
+  ZuCheckRT(ZmBlock<int>{}([
     &db, &context, &rng, &addBegin
   ](auto wake) mutable {
     Zum::credentialBegin({}, db->requests, Zm::now() + ZuTime{10},
@@ -1359,18 +1359,18 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
       });
   }) == Zum::WebAuthnError::OK);
   auto addGrant = loadGrant(context, addBegin.ceremonyID);
-  ZuCheck(addGrant.purpose == Zum::GrantPurpose::AddCredential &&
+  ZuCheckRT(addGrant.purpose == Zum::GrantPurpose::AddCredential &&
     addGrant.userID == 42 && addGrant.userHandle == passkeyHandle);
   Ztls::PK::SK_EC secondPasskey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t secondPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(
+  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(
     secondPasskey.key, secondPublic));
-  ZuCheck(makeRegistration(secondPublic, 0, "credential-2",
+  ZuCheckRT(makeRegistration(secondPublic, 0, "credential-2",
     addGrant.challenge, "https://example.com", "example.com",
     registrationInput));
   Zum::Bytes addID = addBegin.ceremonyID;
-  ZuCheck(ZmBlock<int>{}([
+  ZuCheckRT(ZmBlock<int>{}([
     &db, &addBegin, &registrationInput
   ](auto wake) mutable {
     Zum::credentialFinish({}, db->requests, Zm::now() + ZuTime{10},
@@ -1383,9 +1383,9 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
 	.now = 125
       }, [wake = ZuMv(wake)](int error) mutable { wake(error); });
   }) == Zum::WebAuthnError::OK);
-  ZuCheck(credentialCount(context, ZuBSpan{"credential-2"}, 0));
-  ZuCheck(!loadGrant(context, addID).id);
-  ZuCheck(logged(
+  ZuCheckRT(credentialCount(context, ZuBSpan{"credential-2"}, 0));
+  ZuCheckRT(!loadGrant(context, addID).id);
+  ZuCheckRT(logged(
     Zum::String{} << " event=" << int(Zum::AuditEvent::CredentialChange) << " ",
     Zum::String{} << " outcome=" << int(Zum::AuditOutcome::Success) << " ",
     Zum::String{} << " actor=" << Zum::auditID(passkeyHandle) << " ",
@@ -1414,35 +1414,35 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   passkeyAuthorization.kind = Zum::GrantKind::Ceremony;
   passkeyAuthorization.purpose = Zum::GrantPurpose::Authorization;
   passkeyAuthorization.state = Zum::State::Active;
-  ZuCheck(storeAuthorization(context, ZuMv(passkeyAuthorization)));
+  ZuCheckRT(storeAuthorization(context, ZuMv(passkeyAuthorization)));
 
   Zum::AssertionInput passkeyInput;
-  ZuCheck(makeAssertion(rng, *passkey, 6, passkeyInput));
+  ZuCheckRT(makeAssertion(rng, *passkey, 6, passkeyInput));
   passkeyInput.userHandle = passkeyHandle;
   auto authenticated = storedAssertion(context, ZuMv(passkeyInput));
-  ZuCheck(authenticated.error == Zum::WebAuthnError::OK &&
+  ZuCheckRT(authenticated.error == Zum::WebAuthnError::OK &&
     authenticated.user.id == 42 && authenticated.grant.id ==
       ZuBSpan{"passkey-auth-id0"} &&
     authenticated.result.counter == Zum::CounterState::Advanced &&
     authenticated.result.signCount == 6 &&
     credentialCount(context, ZuBSpan{"credential"}, 6));
 
-  ZuCheck(makeAssertion(rng, *passkey, 6, passkeyInput));
+  ZuCheckRT(makeAssertion(rng, *passkey, 6, passkeyInput));
   passkeyInput.userHandle = passkeyHandle;
   authenticated = storedAssertion(context, ZuMv(passkeyInput));
-  ZuCheck(authenticated.error == Zum::WebAuthnError::Counter &&
+  ZuCheckRT(authenticated.error == Zum::WebAuthnError::Counter &&
     credentialCount(context, ZuBSpan{"credential"}, 6));
 
   Zum::String passkeyCode;
-  ZuCheck(finishAuthorization(context, rng,
+  ZuCheckRT(finishAuthorization(context, rng,
     Zum::Bytes{ZuBSpan{"passkey-auth-id0"}},
     Zum::Bytes{ZuBSpan{"passkey binding"}}, 42,
     ZuBSpan{"credential"}, passkeyCode));
-  ZuCheck(authorizationState(
+  ZuCheckRT(authorizationState(
     context, ZuBSpan{"passkey-auth-id0"}, passkeyCode,
     42, ZuBSpan{"credential"}));
 
-  ZuCheck(insertCode(context, ZuBSpan{"stale code"}));
+  ZuCheckRT(insertCode(context, ZuBSpan{"stale code"}));
   family = {};
   family.codeID = Zum::Bytes{ZuBSpan{"stale code"}};
   family.codeDigest = Zum::Bytes{ZuBSpan{"code digest"}};
@@ -1457,11 +1457,11 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   family.authTime = family.created = 126;
   family.expires = 1000;
   family.beforeGrant = loadGrant(context, family.codeID);
-  ZuCheck(!runSaga(db, Zum::codeFamily(ZuMv(family)), ZdbSagaID{3}));
-  ZuCheck(codeFamilyState(
+  ZuCheckRT(!runSaga(db, Zum::codeFamily(ZuMv(family)), ZdbSagaID{3}));
+  ZuCheckRT(codeFamilyState(
     context, ZuBSpan{"stale code"}, ZuBSpan{"stale family"}, false));
 
-  ZuCheck(insertCode(context, ZuBSpan{"wrong code"}));
+  ZuCheckRT(insertCode(context, ZuBSpan{"wrong code"}));
   family = {};
   family.authVersion = 10;
   family.codeID = Zum::Bytes{ZuBSpan{"wrong code"}};
@@ -1476,7 +1476,7 @@ void zumtest::prepareIdentity(ZmRef<RuntimeDB> db,
   family.authTime = family.created = 127;
   family.expires = 1000;
   family.beforeGrant = loadGrant(context, family.codeID);
-  ZuCheck(!runSaga(db, Zum::codeFamily(ZuMv(family)), ZdbSagaID{4}));
-  ZuCheck(codeFamilyState(
+  ZuCheckRT(!runSaga(db, Zum::codeFamily(ZuMv(family)), ZdbSagaID{4}));
+  ZuCheckRT(codeFamilyState(
     context, ZuBSpan{"wrong code"}, ZuBSpan{"wrong family"}, false));
 }

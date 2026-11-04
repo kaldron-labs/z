@@ -16,7 +16,6 @@
 
 struct App : public Ztcp::Server<App> {
   struct Link;
-  using RxBufAlloc = Ztcp::RxBufAlloc<8<<10>;
   using TxBufAlloc = Ztcp::TxBufAlloc<8<<10>;
 
   App(ZuCSpan ip_, unsigned port_) : ip{ip_}, port{port_} { }
@@ -42,8 +41,8 @@ struct App : public Ztcp::Server<App> {
 };
 
 struct App::Link :
-  public Ztcp::SrvLink<App, App::Link, App::RxBufAlloc, App::TxBufAlloc> {
-  using Base = Ztcp::SrvLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
+  public Ztcp::SrvLink<App, App::Link, App::TxBufAlloc> {
+  using Base = Ztcp::SrvLink<App, Link, App::TxBufAlloc>;
 
   Link(App *app) : Base{app} {
     txErrorFn(ZiTxErrorFn{[](ZeException &e) {
@@ -105,6 +104,9 @@ int main(int argc, char **argv)
   App app(ip, port);
   ZiMultiplex mx(
       ZiMxParams()
+    .tcpBufAllocator<Zi::RxTCPBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Ztcp.RxBuf">>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })

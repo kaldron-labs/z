@@ -9,7 +9,7 @@ Preconditions: plans 1 through 22 complete.
 After the implementation stack, public examples and internal architecture notes need to match the new runtime behavior.  This plan cleans up documentation and APIs after behavior is complete, with dependent compatibility explicitly not a goal.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -52,7 +52,7 @@ New or changed data stores: document runtime-owned recovery/path/CID/key state w
 - `zquic/src/ZquicRecovery.hh` - Recovery utilities and packet-space docs.
 - `zquic/src/ZquicPath.hh` - Path/PMTUD state docs.
 - `zquic/test/*` - Examples may reuse test app patterns.
-- `README.md` and module docs if present - User-facing build/API notes.
+- `docs/README.md` and module docs if present - User-facing build/API notes.
 
 ## Detailed Test Plan
 - Build all examples.
@@ -70,7 +70,7 @@ New or changed data stores: document runtime-owned recovery/path/CID/key state w
 - Open question: where project maintainers prefer API examples to live if no current examples directory exists.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

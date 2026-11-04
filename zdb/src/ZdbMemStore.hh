@@ -831,7 +831,7 @@ private:
     auto data = fbb.endNested(nested, root);
     auto record = saveRecord(fbb, this->id(), row->un, row->sn, row->vn, row->shard, data);
     fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
-    return saveHdr(fbb);
+    return saveFrame(fbb);
   }
 
 public:
@@ -865,6 +865,7 @@ public:
     m_xKeyFields = ZuMv(keys);
     m_rowAlign = align;
   }
+  void bufAllocFn(IOBufAllocFn fn) { m_bufAllocFn = ZuMv(fn); }
   void open() { m_opened = true; }
   void close(CloseFn fn) {
     m_store->run([this, fn = ZuMv(fn)]() mutable {
@@ -1014,8 +1015,10 @@ public:
 	this, internal, ZuMv(id), m_nShards,
 	ZuMv(fields), ZuMv(keyFields), schema, ZuMv(bufAllocFn)};
       m_storeTbls->addNode(storeTbl);
-    } else
+    } else {
       storeTbl->schema(schema);
+      storeTbl->bufAllocFn(ZuMv(bufAllocFn));
+    }
     storeTbl->open();
     openFn(OpenResult{OpenData{
       .storeTbl = storeTbl,

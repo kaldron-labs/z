@@ -11,6 +11,8 @@
 
 using namespace ZuTestUtil;
 
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
 void testDiagAggregation()
 {
   ZuTestScope(testDiagAggregation);
@@ -115,21 +117,21 @@ void testDiagAggregation()
 
 void testPktBuildMetadata()
 {
-  ZuTestScope(testPktBuildMetadata);
+  ZuTestScopeRT(testPktBuildMetadata);
 
   uint8_t byte = 0x5a;
   Zquic::PktBuild build;
   for (unsigned i = 0; i < Zquic::PlainVec::Max; ++i)
-    ZuCHECK(build.add(ZuBSpan{&byte, 1}),
+    ZQUIC_CHECK_RT(build.add(ZuBSpan{&byte, 1}),
       "packet plaintext vector append failed");
-  ZuCHECK(build.count() == Zquic::PlainVec::Max &&
+  ZQUIC_CHECK_RT(build.count() == Zquic::PlainVec::Max &&
       build.bytes() == Zquic::PlainVec::Max &&
       !build.add(ZuBSpan{&byte, 1}) &&
       !build.pad(1),
     "packet plaintext vector capacity was not enforced");
 
   build.reset();
-  ZuCHECK(build.scratchAvail() == Zquic::PktBuildScratchSize &&
+  ZQUIC_CHECK_RT(build.scratchAvail() == Zquic::PktBuildScratchSize &&
       build.padTo(Zquic::MinUDPPayload) &&
       build.count() == 1 &&
       build.bytes() == Zquic::MinUDPPayload &&
@@ -138,16 +140,59 @@ void testPktBuildMetadata()
     "QUIC Initial minimum padding metadata mismatch");
 
   build.reset();
-  ZuCHECK(build.padForProtSample(1, 16) &&
+  ZQUIC_CHECK_RT(build.padForProtSample(1, 16) &&
       build.count() == 1 &&
       build.bytes() == 3,
     "packet protection sample padding metadata mismatch");
+}
+
+void testPacketAllocRoles()
+{
+  ZuTestScope(testPacketAllocRoles);
+
+  ZmRef<Zi::IOBufAllocator> rx = new Zquic::PktRxBufAllocator<>;
+  ZmRef<Zi::IOBufAllocator> tx = new Zquic::PktTxBufAllocator<>;
+  auto packet = rx->alloc();
+  auto wire = tx->alloc();
+  ZuCHECK(packet->avail() >= Zquic::BufSize && wire->avail() >= Zquic::BufSize,
+    "UDP recvmsg metadata must not reduce packet payload capacity");
+  ZuCHECK(rx->type() == Zi::IOBufType::RxUDP &&
+      tx->type() == Zi::IOBufType::TxUDP,
+    "packet allocator roles mismatch");
+  packet->data()[0] = 0x5a;
+  packet->data()[1] = 0xa5;
+  Zquic::StreamRxData first{packet, packet->data(), 1, nullptr, 0};
+  Zquic::StreamRxData second{packet, packet->data() + 1, 1, nullptr, 1};
+  auto backing = packet.ptr();
+  packet = nullptr;
+  ZuCHECK(first.packet.ptr() == backing && second.packet.ptr() == backing &&
+      first.span()[0] == 0x5a && second.span()[0] == 0xa5,
+    "STREAM slices must retain original packet backing");
+  first.packet = nullptr;
+  ZuCHECK(second.packet.ptr() == backing && second.span()[0] == 0xa5,
+    "one STREAM release must not recycle another STREAM's packet");
+
+  auto heldMemory = second.memory();
+  ZuCHECK(second.ensure(second.size + 1) && second.jumbo() &&
+      !second.packet && second.span()[0] == 0xa5,
+    "growing a retained STREAM view must immediately release its packet owner");
+  ZuCHECK(heldMemory >= sizeof(Zquic::StreamRxData),
+    "retained STREAM view memory includes its descriptor and backing");
+
+  ZmRef<ZiIOBuf> stream = new Zquic::StreamTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> crypto = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> reassembly =
+    new Zquic::CryptoRxBufAlloc<>{nullptr, 0};
+  ZuCHECK(!stream->uring() && !crypto->uring() && !reassembly->uring() &&
+      !stream->ring() && !crypto->ring() && !reassembly->ring(),
+    "retained plaintext must remain ordinary allocation");
 }
 
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(testPacketAllocRoles);
   ZuTestCall(testDiagAggregation);
   ZuTestCall(testPktBuildMetadata);
 }

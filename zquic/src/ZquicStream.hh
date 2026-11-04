@@ -84,7 +84,7 @@ public:
     uint64_t limit = m_resetReceived ? finalSize() : m_rxDelivered;
     return m_rxRetired < limit ? limit - m_rxRetired : 0;
   }
-  unsigned txRangeCount() const { return m_txQueue.count_(); }
+  unsigned txRangeCount() const { return m_txQueue.count_() + m_txRanges.count_(); }
   unsigned txQueueCount() const { return m_txQueueCount.load_(); }
   unsigned txQueueMax() const { return m_txQueueMax; }
   void txQueueMax(unsigned v) { m_txQueueMax = v; }
@@ -123,7 +123,7 @@ public:
     return !m_txQueueCount.load_() && !m_txUnackd.count_();
   }
   bool finReady() const {
-    return !m_resetSent && m_fin && !m_finDequeued && !m_txQueue.count_();
+    return !m_resetSent && m_fin && !m_finDequeued && !txRangeCount();
   }
   bool finReceived() const { return m_rxState.finSeen(); }
   bool resetSent() const { return m_resetSent; }
@@ -332,15 +332,24 @@ public:
   void idleArchive() { }
 
   bool txRange(unsigned i, TxRange &range) const {
-    auto iter = m_txQueue.citer();
-    while (auto node = iter()) {
+    auto original = m_txQueue.citer();
+    auto retained = m_txRanges.citer();
+    auto node = original();
+    auto part = retained();
+    while (node || part) {
+      bool fromRange = part && (!node ||
+	part->data().range.streamOffset < node->data().streamOffset);
       if (!i--) {
-	const auto &data = node->data();
-	range = TxRange{
-	  node, uint32_t(data.skip), uint32_t(data.length),
-	  data.streamOffset};
+	if (fromRange) range = part->data().range;
+	else {
+	  const auto &data = node->data();
+	  range = TxRange{node, uint32_t(data.skip), uint32_t(data.length),
+	    data.streamOffset};
+	}
 	return true;
       }
+      if (fromRange) part = retained();
+      else node = original();
     }
     return false;
   }
@@ -354,21 +363,16 @@ public:
     return true;
   }
   bool dequeueTxRange(TxRange &range) {
-    auto iter = m_txQueue.citer();
-    auto node = iter();
-    if (!node) return false;
-    return consumeTxRange(range, uint32_t(node->data().length));
+    TxRange selected;
+    if (!txRange(0, selected)) return false;
+    return consumeTxRange(range, selected, selected.length);
   }
   bool commitTxRange(TxRange &range, uint32_t length) {
     return consumeTxRange(range, length);
   }
   bool consumeTxRange(TxRange &range, uint32_t length) {
-    auto iter = m_txQueue.citer();
-    auto first = iter();
-    if (!first) return false;
-    return consumeTxRange(range, TxRange{
-      first, uint32_t(first->data().skip),
-      uint32_t(first->data().length), first->data().streamOffset}, length);
+    TxRange selected;
+    return txRange(0, selected) && consumeTxRange(range, selected, length);
   }
   bool commitTxRange(
     TxRange &range, const TxRange &selected, uint32_t length) {
@@ -379,6 +383,20 @@ public:
     if (!length) return false;
     if (!selected.buf) return false;
     uint64_t key = selected.streamOffset;
+    if (auto part = m_txRanges.find(key)) {
+      const auto &stored = part->data().range;
+      if (stored.buf != selected.buf || stored.offset != selected.offset ||
+	  stored.length != selected.length || length > stored.length) return false;
+      auto node = m_txRanges.del(key);
+      range = stored;
+      range.length = length;
+      m_txBufferedBytes -= length;
+      if (length < node->data().length()) {
+	node->data().clipHead(length);
+	m_txRanges.add(ZuMv(node).release());
+      } else --m_txQueueCount;
+      return true;
+    }
     auto current = m_txQueue.find(key);
     if (!current) return false;
     ZiIOBuf *currentBuf = current.ptr();
@@ -479,6 +497,12 @@ public:
       return buf;
     }
 
+    bool sendRange_(Zi::RxRange source) {
+      TxRange range{ZuMv(source.buf), source.offset, source.length};
+      if constexpr (AppThread) return m_stream->sendRange(ZuMv(range));
+      else return m_stream->sendRange_(ZuMv(range));
+    }
+
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_stream;
       auto stream = static_cast<Stream *>(buf->owner);
@@ -518,8 +542,9 @@ public:
     auto finalSize = m_txCredit.used();
     // Packet recovery retains its own references. A reset forbids further
     // STREAM retransmission and releases all stream-owned queued ranges now.
-    unsigned queued = m_txQueue.count_();
+    unsigned queued = txRangeCount();
     m_txQueue.clean();
+    m_txRanges.clean();
     m_txQueueCount -= queued; // Pending off-shard admissions still retire once.
     m_txBufferedBytes = 0;
     m_txUnackd.clean();
@@ -749,6 +774,20 @@ private:
     return false;
   }
 
+  bool sendRange(TxRange range) {
+    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
+    txInvoke_([this, range = ZuMv(range)]() mutable {
+      sendRangeAdmitted_(ZuMv(range));
+    });
+    return true;
+  }
+  bool sendRange_(TxRange range) {
+    ZiAssert(txInvoked_(), "Zquic", (),
+      "QUIC stream range send outside Tx thread", return false);
+    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
+    return sendRangeAdmitted_(ZuMv(range));
+  }
+
   bool send(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(!buf || buf->failed() || !buf->length)) return false;
     if (ZuUnlikely(!admitTx_())) return sendError_(
@@ -770,6 +809,23 @@ private:
   }
 
 private:
+  bool sendRangeAdmitted_(TxRange range) {
+    if (!range.buf || range.buf->failed() || !range.length || m_resetSent ||
+	range.offset > range.buf->size ||
+	range.length > range.buf->size - range.offset) {
+      --m_txQueueCount;
+      return sendError_("invalid QUIC stream transmit range");
+    }
+    // Retained and packetizer ranges use physical allocation offsets.
+    range.streamOffset = m_txBytes;
+    auto length = range.length;
+    m_txRanges.add(new StreamTxRanges::Node{StreamTxRange{ZuMv(range)}});
+    m_txBytes += length;
+    m_txBufferedBytes += length;
+    notifyTx_();
+    return true;
+  }
+
   bool admitTx_() {
     if (++m_txQueueCount <= m_txQueueMax) return true;
     --m_txQueueCount;
@@ -936,6 +992,7 @@ private:
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
+  StreamTxRanges	m_txRanges{0};
   uint64_t		m_txBytes = 0;
   uint64_t		m_txBufferedBytes = 0;
   FlowCredit		m_txCredit;

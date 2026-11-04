@@ -90,8 +90,6 @@ struct InitialInfo {
 
 ZuDerive(ALPNData, (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.ALPNData">>));
 ZuDerive(ALPN, (ZtArray<ptls_iovec_t, ZtArrayHeapID<"Zquic.ALPN">>));
-ZuDerive(AsyncSendPayload,
-  (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.AsyncSendPayload">>));
 ZuDerive(TokenBytes,
   (ZtArray<uint8_t, ZtArrayHeapID<"Zquic.TokenBytes">>));
 ZuDerive(TokenSecret,
@@ -388,10 +386,10 @@ inline bool validCryptoOffsets(
 template <typename CryptoStreams, typename Send>
 inline bool sendCryptoFlights_(
   CryptoStreams &txCrypto, LinkTxDiag &diag,
-  const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
+  ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
   unsigned chunkMax, ZiSockAddr addr, Send send)
 {
-  if (!chunkMax) return false;
+  if (!data || !chunkMax || !validCryptoOffsets(offsets, data->length)) return false;
   for (unsigned epoch = 0; epoch < TLSEpochCount; ++epoch) {
     if (offsets[epoch + 1] <= offsets[epoch]) continue;
     PktNumSpace::T space;
@@ -409,17 +407,17 @@ inline bool sendCryptoFlights_(
 	return false;
       }
       SentFrameRef ref = SentFrameRef::crypto(cryptoOffset, chunk);
-      if (!txCrypto[space].sent(cryptoOffset, byteSpan(data + off, chunk))) {
+      if (!txCrypto[space].sent(cryptoOffset, Zi::RxRange{data, off, chunk})) {
 	++diag.failures;
 	return false;
       }
       diag.cryptoBytesTx += chunk;
       if (!send(space, byteSpan(frame.data(), unsigned(n)),
-	    byteSpan(data + off, chunk), ref, addr))
+	    byteSpan(data->data() + off, chunk), ref, addr))
 	return false;
       if (space == PktNumSpace::Handshake &&
 	  !send(space, byteSpan(frame.data(), unsigned(n)),
-	    byteSpan(data + off, chunk), ref, addr))
+	    byteSpan(data->data() + off, chunk), ref, addr))
 	return false;
       off += chunk;
       remaining -= chunk;
@@ -447,8 +445,10 @@ inline bool sendCryptoFlights(
     ++diag.failures;
     return false;
   }
+  ZmRef<ZiIOBuf> backing = new CryptoTxBufAlloc<>{nullptr, 0};
+  if (!backing->append(ZuBSpan{data, len})) return false;
   return sendCryptoFlights_(
-    txCrypto, diag, data, len, offsets_, chunkMax, ZuMv(addr), ZuMv(send));
+    txCrypto, diag, ZuMv(backing), offsets_, chunkMax, ZuMv(addr), ZuMv(send));
 }
 
 // Hub configuration
@@ -1529,9 +1529,9 @@ private:
 
 public:
   void disconnected(Link *link, bool) {
-    if (Base::stopping()) {
-      if (m_stopCount && !--m_stopCount)
-	stop_1();
+    // The engine can stop before Rx has counted the remaining links.
+    if (m_stopCount) {
+      if (!--m_stopCount) stop_1();
       return;
     }
     m_links->del(link);

@@ -46,7 +46,7 @@ static void call()
   ZuCheck(parsed.info.headers.destination == head.destination);
   ZuCheck(parsed.info.headers.signature == "su");
   ZuCheck(parsed.info.total == made.buf->length);
-  auto body = made.buf->cspan(parsed.info.bodyOffset);
+  auto body = parsed.info.body();
   auto handler = ZfDBUS::handler<Args>({body, "su",
     parsed.info.bodyOffset, parsed.info.order});
   ZuCHECK(bool(handler), "body handler failed");
@@ -79,7 +79,7 @@ static void alternate()
   ZuCheck(!parsed.info.headers.signature.length());
 
   unsigned memberOffset = 0, typeOffset = 0;
-  ZuCheck(Zdbus_::eachHeader(made.buf->cspan(), parsed.info,
+  ZuCheck(Zdbus_::eachHeader(parsed.info.span(), parsed.info,
     [&made, &memberOffset, &typeOffset](unsigned code,
         ZfDBUS::Any value) {
       if (code != Zdbus_::HeaderCode::Member) return;
@@ -117,7 +117,7 @@ static void emptyString()
   ZuCHECK(bool(parsed), "empty-string message parse failed");
   if (!parsed) return;
   auto handler = ZfDBUS::handler<Args>({
-    made.buf->cspan(parsed.info.bodyOffset),
+    parsed.info.body(),
     parsed.info.headers.signature, parsed.info.bodyOffset,
     parsed.info.order});
   ZuCHECK(bool(handler), "empty-string body handler failed");
@@ -153,9 +153,9 @@ static void invalid()
 
 namespace Zdbus_ {
 
-static void frameCopy(bool shortTail)
+static void frameRanges(bool shortTail)
 {
-  ZuTestScope(frameCopy);
+  ZuTestScopeRT(frameRanges);
   HeadSpec head;
   head.type = MessageType::MethodCall;
   head.serial = 27;
@@ -165,45 +165,155 @@ static void frameCopy(bool shortTail)
   head.destination = "org.example.Service";
   Args args{{"frame"}, 7};
   auto made = message(head, args);
-  ZuCHECK(bool(made), "frame build failed");
+  ZuCheckRT(bool(made), log_("frame build failed"));
   if (!made) return;
 
   unsigned total = made.buf->length;
   unsigned tail = shortTail ? 8 : total;
-  ZmRef<ZiIOBuf> input = new ZiIOBufAlloc<ZiIOBuf_DefltSize,
-    Wire::MaxMessageSize, "Zdbus.FrameTest">{};
-  ZuCHECK(input->ensure(total + tail), "input allocation failed");
-  if (input->size < total + tail) return;
+  // The parser's input need not start at its backing's original address.
+  unsigned start = sizeof(uint32_t) + 1;
+  ZmRef<ZiIOBuf> input = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    Wire::MaxMessageSize, ZuStringT<"Zdbus.FrameTest">>{nullptr, 0};
+  ZuCheckRT(input->ensure(start + total + tail), log_("input allocation failed"));
+  if (input->size < start + total + tail) return;
+  input->skip = start;
   memcpy(input->data(), made.buf->data(), total);
   memcpy(input->data() + total, made.buf->data(), tail);
   input->length = total + tail;
 
   auto parsed = frame(input->cspan());
-  ZuCHECK(bool(parsed), "frame parse failed");
+  ZuCheckRT(bool(parsed), log_("frame parse failed"));
   if (!parsed) return;
   auto info = parsed.info;
+  auto backing = input;
+  auto original = input->data();
+  unsigned capacity = input->size;
   auto observed = splitFrame_(input, info);
-  ZuCHECK(bool(observed), "frame split failed");
+  ZuCheckRT(bool(observed), log_("frame split failed"));
   if (!observed) return;
-  ZuCheck(observed->length == total);
-  ZuCheck(input && input->length == tail);
-  ZuCheck(!memcmp(input->data(), made.buf->data(), tail));
-  ZuCheck(info.headers.path == head.path);
-  ZuCheck(info.headers.interface == head.interface);
-  ZuCheck(info.headers.member == head.member);
-  ZuCheck(info.headers.destination == head.destination);
-  ZuCheck(info.headers.signature == "su");
-  auto begin = reinterpret_cast<uintptr_t>(observed->data());
-  auto end = begin + observed->length;
-  auto inside = [begin, end](ZuCSpan span) {
+  ZuCheckRT(observed.ptr() == backing.ptr() && input.ptr() == backing.ptr());
+  ZuCheckRT(info.span().length() == total);
+  ZuCheckRT(info.span().data() == original);
+  ZuCheckRT(input->data() == original + total);
+  ZuCheckRT(backing->data_() + start == original && backing->size == capacity);
+  ZuCheckRT(input && input->length == tail);
+  ZuCheckRT(!memcmp(input->data(), made.buf->data(), tail));
+  ZuCheckRT(info.headers.path == head.path);
+  ZuCheckRT(info.headers.interface == head.interface);
+  ZuCheckRT(info.headers.member == head.member);
+  ZuCheckRT(info.headers.destination == head.destination);
+  ZuCheckRT(info.headers.signature == "su");
+  auto begin = reinterpret_cast<uintptr_t>(info.data);
+  auto end = begin + info.total;
+  auto inside = [begin, end](auto span) {
     auto address = reinterpret_cast<uintptr_t>(span.data());
     return address >= begin && address + span.length() <= end;
   };
-  ZuCheck(inside(info.headers.path));
-  ZuCheck(inside(info.headers.interface));
-  ZuCheck(inside(info.headers.member));
-  ZuCheck(inside(info.headers.destination));
-  ZuCheck(inside(info.headers.signature));
+  ZuCheckRT(inside(info.headers.path));
+  ZuCheckRT(inside(info.headers.interface));
+  ZuCheckRT(inside(info.headers.member));
+  ZuCheckRT(inside(info.headers.destination));
+  ZuCheckRT(inside(info.headers.signature));
+  ZuCheckRT(info.body().data() == info.data + info.bodyOffset &&
+    info.body().length() == info.bodyLength && inside(info.body()));
+
+  if (shortTail) {
+    // The unfinished tail constructs directly in its final ordinary owner.
+    // The delivered frame and its borrowed views keep the original backing.
+    ZuCheckRT(detachInput_(input, total));
+    ZuCheckRT(input.ptr() != backing.ptr());
+    ZuCheckRT(backing->refCount() == 2);
+    ZuCheckRT(input->append(made.buf->cspan(tail)));
+    auto next = frame(input->cspan());
+    ZuCheckRT(bool(next) && next.info.span().data() == input->data());
+  } else {
+    // A complete coalesced frame uses the exact same original ZiIOBuf.
+    auto next = frame(input->cspan());
+    ZuCheckRT(bool(next));
+    ZuCheckRT(next.info.data == original + total && next.info.total == total);
+    auto second = input;
+    ZuCheckRT(second.ptr() == observed.ptr());
+    input->advance(total);
+    ZuCheckRT(!input->length);
+    ZuCheckRT(!memcmp(next.info.span().data(), made.buf->data(), total));
+    input = ZuMv(second);
+  }
+  ZuCheckRT(info.span().data() == original);
+  ZuCheckRT(!memcmp(info.span().data(), made.buf->data(), total));
+  ZuCheckRT(info.headers.member == head.member);
+  // Connection/input release must not invalidate an already delivered frame.
+  input = nullptr;
+  backing = nullptr;
+  ZuCheckRT(info.span().data() == original);
+  auto handler = ZfDBUS::handler<Args>({info.body(), info.headers.signature,
+    info.bodyOffset, info.order});
+  ZuCheckRT(bool(handler));
+  if (handler) {
+    auto value = handler.ctor();
+    ZuCheckRT(value.text == args.text && value.count == args.count);
+  }
+}
+
+static void frameAssembly()
+{
+  ZuTestScopeRT(frameAssembly);
+  HeadSpec head;
+  head.type = MessageType::MethodCall;
+  head.serial = 28;
+  head.path = "/org/example/Test";
+  head.interface = "org.example.Test";
+  head.member = "Copy";
+  Args args{{"first"}, 7};
+  auto first = message(head, args);
+  Args large;
+  large.count = 9;
+  large.text.length(CxnDefault::RxBytes + Wire::MinHeaderSize);
+  memset(large.text.data(), 'x', large.text.length());
+  auto second = message(head, large);
+  ZuCheckRT(bool(first) && bool(second));
+  if (!first || !second) return;
+
+  ZmRef<ZiIOBuf> input = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    Wire::MaxMessageSize, ZuStringT<"Zdbus.FrameTest">>{nullptr, 0};
+  ZuCheckRT(input->append(first.buf->cspan()));
+  ZuCheckRT(input->append(second.buf->data(), Wire::MinHeaderSize));
+  auto parsed = frame(input->cspan());
+  ZuCheckRT(bool(parsed));
+  if (!parsed) return;
+  auto info = parsed.info;
+  auto observed = splitFrame_(input, info);
+  ZuCheckRT(observed.ptr() == input.ptr());
+  auto pending = frame(input->cspan());
+  ZuCheckRT(pending.error == FrameError::NeedMore &&
+    pending.info.total == second.buf->length &&
+    pending.info.total > CxnDefault::RxBytes);
+  ZuCheckRT(detachInput_(input, pending.info.total));
+  auto storage = input->data();
+  unsigned capacity = input->size;
+  ZuCheckRT(capacity >= pending.info.total && input.ptr() != observed.ptr());
+  unsigned offset = Wire::MinHeaderSize;
+  while (offset < second.buf->length) {
+    unsigned n = second.buf->length - offset;
+    if (n > CxnDefault::RxBytes) n = CxnDefault::RxBytes;
+    ZuCheckRT(input->append(second.buf->data() + offset, n));
+    ZuCheckRT(input->data() == storage && input->size == capacity);
+    offset += n;
+  }
+  auto complete = frame(input->cspan());
+  ZuCheckRT(bool(complete));
+  if (complete) {
+    auto handler = ZfDBUS::handler<Args>({complete.info.body(),
+      complete.info.headers.signature, complete.info.bodyOffset,
+      complete.info.order});
+    ZuCheckRT(bool(handler));
+    if (handler) {
+      auto value = handler.ctor();
+      ZuCheckRT(value.text == large.text && value.count == large.count);
+    }
+  }
+  input = nullptr;
+  ZuCheckRT(info.headers.member == head.member &&
+    !memcmp(info.span().data(), first.buf->data(), first.buf->length));
 }
 
 } // Zdbus_
@@ -216,7 +326,8 @@ int main(int argc, char **argv)
   ZuTestCall(alternate);
   ZuTestCall(emptyString);
   ZuTestCall(invalid);
-  ZuTestCall(Zdbus_::frameCopy, true);
-  ZuTestCall(Zdbus_::frameCopy, false);
+  ZuTestCall(Zdbus_::frameRanges, true);
+  ZuTestCall(Zdbus_::frameRanges, false);
+  ZuTestCall(Zdbus_::frameAssembly);
   return 0;
 }

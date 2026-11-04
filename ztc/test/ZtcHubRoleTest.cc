@@ -101,8 +101,8 @@ static void retirement()
   state->activateFn = {};
   state = nullptr;
   ZuCheckRT(owner.stop());
-  owner.final();
   ZuCheckRT(mx.stop());
+  owner.final();
 }
 
 } // ZtcHubRoleTest_

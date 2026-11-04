@@ -39,7 +39,7 @@ bool data(Parser &parser, ZuBSpan payload, bool endStream = false)
 {
   enum { Header = 9 };
   unsigned length = Header + payload.length();
-  ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::WireBufAlloc{};
+  ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::MetaBufAlloc{nullptr, 0};
   buf->alloc(length);
   buf->length = length;
   auto io = static_cast<ZiIOBuf *>(buf.ptr());
@@ -272,7 +272,9 @@ struct CustomTarget {
 };
 
 struct CaptureStream {
-  using HeaderBytes = Zhttp::H2::HPackBytes;
+  struct HeaderBytes : public Zhttp::H2::HPackBytes {
+    explicit HeaderBytes(CaptureStream &) { }
+  };
   using HeaderSection =
     Zhttp::Compression::FieldSectionBuffer<HeaderBytes>;
 
@@ -638,12 +640,12 @@ void testReceiveLimits()
 
 void testBodyRejection()
 {
-  ZuTestScope(testBodyRejection);
+  ZuTestScopeRT(testBodyRejection);
 
   RejectingRequest operationRejected;
   operationRejected.reset();
   operationRejected.rejectOperation = true;
-  ZuCHECK(operationRejected.beginHeaders() &&
+  ZuCheckRT(operationRejected.beginHeaders() &&
       operationRejected.field(":method", "POST") &&
       operationRejected.field(":scheme", "https") &&
       operationRejected.field(":authority", "example.com") &&
@@ -654,46 +656,46 @@ void testBodyRejection()
 	Zhttp::RequestErrorCode::OperationRejected &&
       operationRejected.operations == 1 && !operationRejected.bodies &&
       operationRejected.completions == 1 &&
-      operationRejected.completeState == Zhttp::H2::ParserState::Error,
-    "H2 operation rejection did not complete exactly once");
-  ZuCHECK(!operationRejected.endHeaders(false) &&
+      operationRejected.completeState == Zhttp::H2::ParserState::Error, log_(
+    "H2 operation rejection did not complete exactly once"));
+  ZuCheckRT(!operationRejected.endHeaders(false) &&
       operationRejected.operations == 1 &&
-      operationRejected.completions == 1,
-    "H2 operation rejection produced duplicate callbacks");
+      operationRejected.completions == 1, log_(
+    "H2 operation rejection produced duplicate callbacks"));
 
   RejectingRequest rejected;
   rejected.reset();
-  ZuCHECK(rejected.beginHeaders() &&
+  ZuCheckRT(rejected.beginHeaders() &&
       rejected.field(":method", "POST") &&
       rejected.field(":scheme", "https") &&
       rejected.field(":authority", "example.com") &&
       rejected.field(":path", "/") &&
       rejected.field("content-length", "3") &&
-      rejected.endHeaders(false),
-    "H2 body rejection setup failed");
-  ZuCHECK(!data(rejected, "abc", true) &&
+      rejected.endHeaders(false), log_(
+    "H2 body rejection setup failed"));
+  ZuCheckRT(!data(rejected, "abc", true) &&
       rejected.state() == Zhttp::H2::ParserState::Error &&
       rejected.error().code == Zhttp::RequestErrorCode::BodyRejected &&
       rejected.error().scope == Zhttp::RequestErrorScope::Request &&
       rejected.error().responsePossible && rejected.bodies == 1 &&
       rejected.completions == 1 &&
-      rejected.completeState == Zhttp::H2::ParserState::Error,
-    "H2 body rejection was not a one-shot stream-local failure");
-  ZuCHECK(!data(rejected, "later") && rejected.bodies == 1 &&
-      rejected.completions == 1,
-    "H2 body rejection produced duplicate callbacks");
+      rejected.completeState == Zhttp::H2::ParserState::Error, log_(
+    "H2 body rejection was not a one-shot stream-local failure"));
+  ZuCheckRT(!data(rejected, "later") && rejected.bodies == 1 &&
+      rejected.completions == 1, log_(
+    "H2 body rejection produced duplicate callbacks"));
 
   for (unsigned retained = 2; retained <= 3; ++retained) {
     RejectingRequest checked;
     checked.reset(3, retained);
-    ZuCHECK(checked.beginHeaders() &&
+    ZuCheckRT(checked.beginHeaders() &&
 	checked.field(":method", "POST") &&
 	checked.field(":scheme", "https") &&
 	checked.field(":authority", "example.com") &&
-	checked.field(":path", "/") && checked.endHeaders(false),
-      "H2 rejected-frame transfer setup");
+	checked.field(":path", "/") && checked.endHeaders(false), log_(
+      "H2 rejected-frame transfer setup"));
     enum { Head = Zhttp::H2::FrameHeaderSize, Payload = 3 };
-    ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::WireBufAlloc{};
+    ZmRef<ZiRxQueue::Node> buf = new Zhttp::BodyRx::MetaBufAlloc{nullptr, 0};
     buf->length = Head + Payload + 2;
     auto io = static_cast<ZiIOBuf *>(buf.ptr());
     memset(io->data(), 0, Head);
@@ -701,24 +703,24 @@ void testBodyRejection()
     ZiRxStream<ZiRxQueue> wire;
     wire.push(ZuMv(buf));
     bool transferred = false;
-    ZuCHECK(!checked.data(wire, Head + Payload, Head, 0, true, transferred) &&
+    ZuCheckRT(!checked.data(wire, Head + Payload, Head, 0, true, transferred) &&
 	transferred && wire.length() == 2 && wire.span() == "ok" &&
 	checked.consumed() == Payload && checked.bodies == 1 &&
-	checked.completions == 1,
-      "H2 body rejection transfers exactly one DATA frame and all its credit");
+	checked.completions == 1, log_(
+      "H2 body rejection transfers exactly one DATA frame and all its credit"));
   }
 
   Parsed sibling;
   sibling.reset();
-  ZuCHECK(sibling.beginHeaders() &&
+  ZuCheckRT(sibling.beginHeaders() &&
       sibling.field(":method", "POST") &&
       sibling.field(":scheme", "https") &&
       sibling.field(":authority", "example.com") &&
       sibling.field(":path", "/sibling") &&
       sibling.field("content-length", "2") &&
       sibling.endHeaders(false) && data(sibling, "ok", true) &&
-      sibling.state() == Zhttp::H2::ParserState::Complete,
-    "independent H2 sibling parser did not survive body rejection");
+      sibling.state() == Zhttp::H2::ParserState::Complete, log_(
+    "independent H2 sibling parser did not survive body rejection"));
 }
 
 void testResponses()

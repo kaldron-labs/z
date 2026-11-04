@@ -116,6 +116,11 @@ struct HTTPRx {
 };
 
 struct HTTPBodyOut {
+  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
+    data << buf->cspan().offset(offset).trunc(length);
+    return !failure;
+  }
+
   template <typename V>
   HTTPBodyOut &operator <<(V &&v) {
     data << ZuFwd<V>(v);
@@ -403,7 +408,7 @@ struct HTTPResponderHarness : public Zjrpc::Dispatcher<HTTPResponderHarness<Cata
     return true;
   }
   bool receive(ZuCSpan input) {
-    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{};
+    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{nullptr, 0};
     *body << input;
     return Dispatch::receive(ZuMv(body), [this](auto message, int policy) {
       if (policy == Zjrpc::RoutePolicy::Abort) { failed(); return false; }
@@ -586,7 +591,7 @@ public:
   template <typename L> void continue_(L &&l) { m_turns.push(ZuFwd<L>(l)); }
 
   bool receive(ZuCSpan input) {
-    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{};
+    ZmRef<ZiIOBuf> body = new Zjrpc::BatchBuf{nullptr, 0};
     *body << input;
     return Dispatch::receive(ZuMv(body), [this](auto message, int policy) {
       if (policy == Zjrpc::RoutePolicy::Abort) { fail_(); return false; }
@@ -815,7 +820,7 @@ static void emptyTest()
     "\"supportedVersions\":[\"2026-07-28\"]}}";
   ZuCheck(client.receive(discovered, emit));
   ZuCheck(client.tools(emit).is<int64_t>());
-  ZmRef<ZiIOBuf> listed = new Zjrpc::StdioBuf{};
+  ZmRef<ZiIOBuf> listed = new Zjrpc::StdioBuf{nullptr, 0};
   *listed << "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{"
     "\"tools\":[]}}";
   ZuCheck(client.receive(ZuMv(listed), emit));
@@ -898,7 +903,7 @@ static void clientTest()
   ZuCheck(out == expected);
   auto toolsID = client.tools(emit);
   ZuCheck(toolsID.is<int64_t>() && toolsID.template p<int64_t>() == 3);
-  ZmRef<ZiIOBuf> catalog = new Zjrpc::StdioBuf{};
+  ZmRef<ZiIOBuf> catalog = new Zjrpc::StdioBuf{nullptr, 0};
   *catalog << "{\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{"
     "\"tools\":[{\"name\":\"echo\"}]}}";
   ZuCheck(client.receive(ZuMv(catalog), emit));
@@ -999,7 +1004,7 @@ static void pendingTest()
 
 static void residueTest()
 {
-  ZuTestScope(residue);
+  ZuTestScopeRT(residue);
   uint64_t before = zmcpAllocated();
   {
     Zmcp::Peer<EchoCatalog> peer;
@@ -1009,19 +1014,19 @@ static void residueTest()
     };
     char discover[] =
       "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"server/discover\"}";
-    ZuCheck(peer.receive(discover, out, tool));
+    ZuCheckRT(peer.receive(discover, out, tool));
     for (unsigned i = 0; i < 4096; ++i) {
       char request[] =
 	"{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
 	"\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":7}}}";
       out.length_(0);
       if (!peer.receive(request, out, tool)) {
-	ZuCheck(false);
+	ZuCheckRT(false);
 	break;
       }
     }
   }
-  ZuCheck(zmcpAllocated() == before);
+  ZuCheckRT(zmcpAllocated() == before);
 }
 
 static void completionTest()
@@ -1152,38 +1157,38 @@ static void completionTest()
 
 static void completionPostsTest()
 {
-  ZuTestScope(completionPosts);
+  ZuTestScopeRT(completionPosts);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
     .thread(1, [](auto &thread) { thread.isolated(1); })};
   CompletionHarness completions;
   completions.executor = {&scheduler, 1, 2};
   auto token = completions.make<Echo>(Zjrpc::ID{int64_t{1}},
     Zjrpc::ID{int64_t{2}}, Zmcp::LogLevel::Info);
-  ZuCheck(token->progress(.5, 1, "half"));
-  ZuCheck(token->log("info", "working", "echo"));
+  ZuCheckRT(token->progress(.5, 1, "half"));
+  ZuCheckRT(token->log("info", "working", "echo"));
   for (unsigned i = 0; i < 8; ++i) {
-    ZuCheck(!token->progress(.75, 1));
-    ZuCheck(!token->log("info", "refused"));
+    ZuCheckRT(!token->progress(.75, 1));
+    ZuCheckRT(!token->log("info", "refused"));
   }
-  ZuCheck(token->complete(Zjrpc::Reply<EchoOK>{EchoResult{4}}));
-  ZuCheck(!token->live());
-  ZuCheck(!token->complete(Zjrpc::Reply<EchoOK>{EchoResult{5}}));
-  ZuCheck(!completions.out);
+  ZuCheckRT(token->complete(Zjrpc::Reply<EchoOK>{EchoResult{4}}));
+  ZuCheckRT(!token->live());
+  ZuCheckRT(!token->complete(Zjrpc::Reply<EchoOK>{EchoResult{5}}));
+  ZuCheckRT(!completions.out);
   ZmSemaphore drained;
   scheduler.run([&drained]() { drained.post(); }, 1);
-  ZuCheck(scheduler.start(), (return));
+  ZuCheckRT(scheduler.start(), (return));
   drained.wait();
-  ZuCheck(completions.out.find("notifications/progress") >= 0);
-  ZuCheck(completions.out.find("notifications/message") >= 0);
-  ZuCheck(completions.out.find("\"value\":4") >= 0);
-  ZuCheck(!token->live());
-  ZuCheck(!token->progress(1, 1) && !token->log("info", "late"));
-  ZuCheck(scheduler.stop());
+  ZuCheckRT(completions.out.find("notifications/progress") >= 0);
+  ZuCheckRT(completions.out.find("notifications/message") >= 0);
+  ZuCheckRT(completions.out.find("\"value\":4") >= 0);
+  ZuCheckRT(!token->live());
+  ZuCheckRT(!token->progress(1, 1) && !token->log("info", "late"));
+  ZuCheckRT(scheduler.stop());
 }
 
 static void httpTest()
 {
-  ZuTestScope(http);
+  ZuTestScopeRT(http);
   HTTPHarness parser;
   Zhttp::Target target;
   char path[] = "/mcp";
@@ -1193,7 +1198,7 @@ static void httpTest()
   char name[] = "advisory-name";
   char body[] = "{\"x\":1}";
   target.path = mutableBytes(path);
-  ZuCheck(parser.operation(Zhttp::Method::POST, target));
+  ZuCheckRT(parser.operation(Zhttp::Method::POST, target));
   parser.template header<HTTPHarness::Origin>(
     Zhttp::FieldSection::Final, mutableBytes(origin));
   parser.template header<HTTPHarness::Session>(
@@ -1202,41 +1207,41 @@ static void httpTest()
     Zhttp::FieldSection::Final, mutableBytes(method));
   parser.template header<HTTPHarness::Name>(
     Zhttp::FieldSection::Final, mutableBytes(name));
-  ZuCheck(parser.bodyInfo(Zhttp::BodyType::Fixed, 7));
+  ZuCheckRT(parser.bodyInfo(Zhttp::BodyType::Fixed, 7));
   HTTPRx rx{mutableBytes(body)};
-  ZuCheck(parser.body(rx));
+  ZuCheckRT(parser.body(rx));
   parser.complete(static_cast<void *>(nullptr), true);
-  ZuCheck(parser.received == 1);
-  ZuCheck(parser.receivedBody == "{\"x\":1}");
-  ZuCheck(parser.sessionID == "session-7");
-  ZuCheck(parser.method == "tools/call");
-  ZuCheck(parser.name == "advisory-name");
+  ZuCheckRT(parser.received == 1);
+  ZuCheckRT(parser.receivedBody == "{\"x\":1}");
+  ZuCheckRT(parser.sessionID == "session-7");
+  ZuCheckRT(parser.method == "tools/call");
+  ZuCheckRT(parser.name == "advisory-name");
 
   parser.reset();
-  ZuCheck(parser.operation(Zhttp::Method::DELETE, target));
+  ZuCheckRT(parser.operation(Zhttp::Method::DELETE, target));
   parser.template header<HTTPHarness::Origin>(
     Zhttp::FieldSection::Final, mutableBytes(origin));
-  ZuCheck(parser.bodyInfo(Zhttp::BodyType::Fixed, 0));
+  ZuCheckRT(parser.bodyInfo(Zhttp::BodyType::Fixed, 0));
   parser.complete(static_cast<void *>(nullptr), true);
-  ZuCheck(parser.deletes == 1);
+  ZuCheckRT(parser.deletes == 1);
 
   parser.reset();
   parser.limits_.maxJSONBytes = 4;
-  ZuCheck(parser.operation(Zhttp::Method::POST, target));
+  ZuCheckRT(parser.operation(Zhttp::Method::POST, target));
   parser.template header<HTTPHarness::Origin>(
     Zhttp::FieldSection::Final, mutableBytes(origin));
-  ZuCheck(!parser.bodyInfo(Zhttp::BodyType::Fixed, 5));
+  ZuCheckRT(!parser.bodyInfo(Zhttp::BodyType::Fixed, 5));
   parser.complete(static_cast<void *>(nullptr), false);
-  ZuCheck(parser.corrupt == 1);
+  ZuCheckRT(parser.corrupt == 1);
 
   parser.reset();
   char rejectedOrigin[] = "https://blocked.example";
-  ZuCheck(parser.operation(Zhttp::Method::POST, target));
+  ZuCheckRT(parser.operation(Zhttp::Method::POST, target));
   parser.template header<HTTPHarness::Origin>(
     Zhttp::FieldSection::Final, mutableBytes(rejectedOrigin));
-  ZuCheck(!parser.bodyInfo(Zhttp::BodyType::Fixed, 0));
+  ZuCheckRT(!parser.bodyInfo(Zhttp::BodyType::Fixed, 0));
   parser.complete(static_cast<void *>(nullptr), false);
-  ZuCheck(parser.originRejected == 1);
+  ZuCheckRT(parser.originRejected == 1);
 
   Zjrpc::HTTPFixedBuilder<Zmcp::DiscoverMessage> response;
   response.message.id = int64_t{11};
@@ -1245,17 +1250,17 @@ static void httpTest()
   response.body([&out, &outcome](auto write) {
     outcome = write(out);
   });
-  ZuCheck(outcome == Zhttp::WriteOutcome::End);
+  ZuCheckRT(outcome == Zhttp::WriteOutcome::End);
   HTTPBodyOut rejected;
   rejected.flushOK = false;
   response.body([&rejected, &outcome](auto write) { outcome = write(rejected); });
-  ZuCheck(rejected.failed() && outcome == Zhttp::WriteOutcome::Abort);
+  ZuCheckRT(rejected.failed() && outcome == Zhttp::WriteOutcome::Abort);
   auto prefix = ZuCSpan{out.data};
   prefix.trunc(sizeof("{\"jsonrpc\":\"2.0\",\"id\":11,") - 1);
-  ZuCheck(prefix == "{\"jsonrpc\":\"2.0\",\"id\":11,");
+  ZuCheckRT(prefix == "{\"jsonrpc\":\"2.0\",\"id\":11,");
   HTTPHeaderPatch patch;
   response.bodyHdrs(patch);
-  ZuCheck(ZuBox<unsigned>{patch.value} == out.data.length());
+  ZuCheckRT(ZuBox<unsigned>{patch.value} == out.data.length());
 
   Zjrpc::HTTPFixedBuilder<Zmcp::DiscoverMessage> boundedResponse;
   boundedResponse.message.id = int64_t{12};
@@ -1265,8 +1270,8 @@ static void httpTest()
   boundedResponse.body([&boundedOut, &outcome](auto write) {
     outcome = write(boundedOut);
   });
-  ZuCheck(outcome == Zhttp::WriteOutcome::Abort);
-  ZuCheck(boundedOut.data.length() <= boundedResponse.maxBodyBytes);
+  ZuCheckRT(outcome == Zhttp::WriteOutcome::Abort);
+  ZuCheckRT(boundedOut.data.length() <= boundedResponse.maxBodyBytes);
 
   Zmcp::ToolsCallParams<EchoCatalog> params;
   params.arguments() = Zmcp::ToolArg<Echo>{EchoReq{21}};
@@ -1283,9 +1288,9 @@ static void httpTest()
     requestMethod = method_;
     emit([&requestPath](auto write) { write(requestPath); });
   });
-  ZuCheck(requestMethod == Zhttp::Method::POST);
-  ZuCheck(requestPath == "/mcp");
-  ZuCheck(request.key() == 9);
+  ZuCheckRT(requestMethod == Zhttp::Method::POST);
+  ZuCheckRT(requestPath == "/mcp");
+  ZuCheckRT(request.key() == 9);
   ZtString<> version, methodHeader, nameHeader;
   request.template header<decltype(request)::Version>(
     [&version](auto value) { version = value; });
@@ -1293,28 +1298,28 @@ static void httpTest()
     [&methodHeader](auto value) { methodHeader = value; });
   request.template header<decltype(request)::Name>(
     [&nameHeader](auto value) { nameHeader = value; });
-  ZuCheck(version == "2026-07-28");
-  ZuCheck(methodHeader == "tools/call");
-  ZuCheck(nameHeader == "echo");
+  ZuCheckRT(version == "2026-07-28");
+  ZuCheckRT(methodHeader == "tools/call");
+  ZuCheckRT(nameHeader == "echo");
   ZtString<> parameterName, parameterValue;
   request.header([&parameterName, &parameterValue](auto name, auto value) {
     parameterName = name;
     parameterValue = value;
   });
-  ZuCheck(parameterName == "Mcp-Param-Value");
-  ZuCheck(parameterValue == "21");
+  ZuCheckRT(parameterName == "Mcp-Param-Value");
+  ZuCheckRT(parameterValue == "21");
   ZtString<> encoded;
   Zmcp::headerValue(" padded ", [&encoded](auto value) {
     encoded = value;
   });
-  ZuCheck(encoded == "=?base64?IHBhZGRlZCA=?=");
+  ZuCheckRT(encoded == "=?base64?IHBhZGRlZCA=?=");
   ZtString<> nestedHeaders;
   Zmcp::parameterHeaders(
     HeaderReq{ZtString<>{"line1\nline2"}, HeaderNested{true}},
     [&nestedHeaders](auto name, auto value) {
       nestedHeaders << name << ':' << value << '\n';
     });
-  ZuCheck(nestedHeaders ==
+  ZuCheckRT(nestedHeaders ==
     "Mcp-Param-Text:=?base64?bGluZTEKbGluZTI=?=\n"
     "Mcp-Param-Enabled:true\n");
 
@@ -1329,11 +1334,11 @@ static void httpTest()
   request.header([&parameterName](auto name, auto) {
     parameterName = name;
   });
-  ZuCheck(!methodHeader && !nameHeader && !parameterName);
+  ZuCheckRT(!methodHeader && !nameHeader && !parameterName);
   request.era = Zmcp::Era::Modern;
   HTTPBodyOut requestOut;
   request.body([&requestOut](auto write) { (void)write(requestOut); });
-  ZuCheck(requestOut.data ==
+  ZuCheckRT(requestOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":21,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":21},"
     "\"_meta\":{\"progressToken\":\"progress-21\","
@@ -1350,22 +1355,22 @@ static void httpTest()
       requestMethod = method_;
       emit([&requestPath](auto write) { write(requestPath); });
     });
-  ZuCheck(requestMethod == Zhttp::Method::DELETE);
-  ZuCheck(deleteRequest.bodyPolicy() == Zhttp::BodyPolicy::None);
+  ZuCheckRT(requestMethod == Zhttp::Method::DELETE);
+  ZuCheckRT(deleteRequest.bodyPolicy() == Zhttp::BodyPolicy::None);
   ZtString<> deleteLength, deleteSession;
   deleteRequest.template header<decltype(deleteRequest)::ContentLength>(
     [&deleteLength](auto value) { deleteLength = value; });
   deleteRequest.template header<decltype(deleteRequest)::Session>(
     [&deleteSession](auto value) { deleteSession = value; });
-  ZuCheck(deleteLength == "0" && deleteSession == "session-9");
+  ZuCheckRT(deleteLength == "0" && deleteSession == "session-9");
 
   Zmcp::HTTPResponseBuilder<EchoCatalog> generic;
   generic.init(Zmcp::ToolReplyMessage<EchoOK>{
     Zjrpc::ID{int64_t{22}}, Zjrpc::Reply<EchoOK>{EchoResult{22}}});
-  ZuCheck(generic.bodyPolicy() == Zhttp::BodyPolicy::Fixed);
+  ZuCheckRT(generic.bodyPolicy() == Zhttp::BodyPolicy::Fixed);
   HTTPBodyOut genericOut;
   generic.body([&genericOut](auto write) { (void)write(genericOut); });
-  ZuCheck(genericOut.data ==
+  ZuCheckRT(genericOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":22,\"result\":{"
     "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{"
       "\"name\":\"zmcp\",\"version\":\"" Z_VERNAME "\"}},"
@@ -1373,36 +1378,36 @@ static void httpTest()
     "\"structuredContent\":{\"code\":200,\"data\":{\"value\":22}},"
     "\"isError\":false}}");
   generic.accepted();
-  ZuCheck(generic.status() == 202);
-  ZuCheck(generic.bodyPolicy() == Zhttp::BodyPolicy::None);
+  ZuCheckRT(generic.status() == 202);
+  ZuCheckRT(generic.bodyPolicy() == Zhttp::BodyPolicy::None);
 
   // HTTP output must retain the dispatcher's borrowed input until it closes.
-  ZmRef<Zjrpc::BatchBuf> input = new Zjrpc::BatchBuf{};
+  ZmRef<Zjrpc::BatchBuf> input = new Zjrpc::BatchBuf{nullptr, 0};
   using WireMessage = Zmcp::Server_::DispatchPolicy<EchoCatalog>::Message;
   WireMessage pinned{Zjrpc::ErrorMessage{
     Zjrpc::ID{int64_t{23}}, Zjrpc::ErrorCode::InvalidRequest, "Duplicate request ID"}};
   pinned.input(input);
   generic.init(ZuMv(pinned));
-  ZuCheck(input->refCount() == 2);
+  ZuCheckRT(input->refCount() == 2);
   HTTPBodyOut errorOut;
   generic.body([&errorOut](auto write) { (void)write(errorOut); });
-  ZuCheck(errorOut.data ==
+  ZuCheckRT(errorOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":23,\"error\":{"
     "\"code\":-32600,\"message\":\"Duplicate request ID\"}}");
   generic.close();
-  ZuCheck(input->refCount() == 1);
+  ZuCheckRT(input->refCount() == 1);
 
   using HTTPBuilderQ = Zmcp::HTTPBuilderQ<EchoCatalog>;
   ZmRef<HTTPBuilderQ::Node> fixedNode = new HTTPBuilderQ::Node{};
   fixedNode->data().fixed(Zmcp::ToolReplyMessage<EchoOK>{
     Zjrpc::ID{int64_t{24}}, Zjrpc::Reply<EchoOK>{EchoResult{24}}});
-  ZuCheck(fixedNode->data().fixedPtr());
-  ZuCheck(!fixedNode->data().streamPtr());
-  ZuCheck(fixedNode->data().bodyPolicy() == Zhttp::BodyPolicy::Fixed);
+  ZuCheckRT(fixedNode->data().fixedPtr());
+  ZuCheckRT(!fixedNode->data().streamPtr());
+  ZuCheckRT(fixedNode->data().bodyPolicy() == Zhttp::BodyPolicy::Fixed);
   HTTPBodyOut nodeOut;
   fixedNode->data().body(
     [&nodeOut](auto write) { (void)write(nodeOut); return true; });
-  ZuCheck(nodeOut.data ==
+  ZuCheckRT(nodeOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":24,\"result\":{"
     "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{"
       "\"name\":\"zmcp\",\"version\":\"" Z_VERNAME "\"}},"
@@ -1412,10 +1417,10 @@ static void httpTest()
 
   ZmRef<HTTPBuilderQ::Node> streamNode = new HTTPBuilderQ::Node{};
   auto nodeSSE = streamNode->data().stream();
-  ZuCheck(!streamNode->data().fixedPtr());
-  ZuCheck(streamNode->data().streamPtr());
-  ZuCheck(streamNode->data().bodyPolicy() == Zhttp::BodyPolicy::Stream);
-  ZuCheck(nodeSSE->emit(Zmcp::ToolReplyMessage<EchoOK>{
+  ZuCheckRT(!streamNode->data().fixedPtr());
+  ZuCheckRT(streamNode->data().streamPtr());
+  ZuCheckRT(streamNode->data().bodyPolicy() == Zhttp::BodyPolicy::Stream);
+  ZuCheckRT(nodeSSE->emit(Zmcp::ToolReplyMessage<EchoOK>{
     Zjrpc::ID{int64_t{25}}, Zjrpc::Reply<EchoOK>{EchoResult{25}}}));
   HTTPBodyOut nodeSSEOut;
   streamNode->data().body(
@@ -1425,7 +1430,7 @@ static void httpTest()
 	streamNode->data().close();
       return true;
     });
-  ZuCheck(nodeSSEOut.data ==
+  ZuCheckRT(nodeSSEOut.data ==
     "id: 1\ndata: {\"jsonrpc\":\"2.0\",\"id\":25,\"result\":{"
     "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{"
       "\"name\":\"zmcp\",\"version\":\"" Z_VERNAME "\"}},"
@@ -1438,16 +1443,16 @@ static void httpTest()
   char fixedCall[] =
     "{\"jsonrpc\":\"2.0\",\"id\":26,\"method\":\"tools/call\","
     "\"params\":{\"name\":\"echo\",\"arguments\":{\"value\":26}}}";
-  ZuCheck(fixedHarness.receive(fixedCall));
-  ZuCheck(fixedHarness.sends == 1);
-  ZuCheck(fixedResponder.terminal());
+  ZuCheckRT(fixedHarness.receive(fixedCall));
+  ZuCheckRT(fixedHarness.sends == 1);
+  ZuCheckRT(fixedResponder.terminal());
   HTTPBodyOut fixedResponderOut;
   fixedHarness.builder->data().body(
     [&fixedResponderOut](auto write) {
       (void)write(fixedResponderOut);
       return true;
     });
-  ZuCheck(fixedResponderOut.data ==
+  ZuCheckRT(fixedResponderOut.data ==
     "{\"jsonrpc\":\"2.0\",\"id\":26,\"result\":{"
     "\"_meta\":{\"io.modelcontextprotocol/serverInfo\":{"
       "\"name\":\"zmcp\",\"version\":\"" Z_VERNAME "\"}},"
@@ -1462,10 +1467,10 @@ static void httpTest()
     "\"params\":{\"name\":\"echo_stream\","
     "\"arguments\":{\"value\":27},"
     "\"_meta\":{\"progressToken\":\"progress-27\"}}}";
-  ZuCheck(responderHarness.receive(streamCall));
-  ZuCheck(responderHarness.sends == 1);
-  ZuCheck(responder.streaming());
-  ZuCheck(responder.terminal());
+  ZuCheckRT(responderHarness.receive(streamCall));
+  ZuCheckRT(responderHarness.sends == 1);
+  ZuCheckRT(responder.streaming());
+  ZuCheckRT(responder.terminal());
   HTTPBodyOut responderOut;
   responderHarness.builder->data().body(
     [&responderHarness, &responderOut](auto write) {
@@ -1474,7 +1479,7 @@ static void httpTest()
 	responderHarness.builder->data().close();
       return true;
     });
-  ZuCheck(responderOut.data ==
+  ZuCheckRT(responderOut.data ==
     "id: 1\ndata: {\"jsonrpc\":\"2.0\","
     "\"method\":\"notifications/progress\",\"params\":{"
     "\"progressToken\":\"progress-27\",\"progress\":0.25,"
@@ -1488,9 +1493,9 @@ static void httpTest()
 
   Zmcp::HTTPSSEBuilder<EchoCatalog> sseBuilder;
   sseBuilder.sessionID("legacy-22");
-  ZuCheck(sseBuilder.emit(Zmcp::ProgressMessage{
+  ZuCheckRT(sseBuilder.emit(Zmcp::ProgressMessage{
     Zjrpc::IDString{"progress-22"}, "half", .5, 1}));
-  ZuCheck(sseBuilder.emit(Zmcp::ToolReplyMessage<EchoOK>{
+  ZuCheckRT(sseBuilder.emit(Zmcp::ToolReplyMessage<EchoOK>{
     Zjrpc::ID{int64_t{22}}, Zjrpc::Reply<EchoOK>{EchoResult{22}}}));
   HTTPBodyOut sseOut;
   unsigned sseWrites = 0;
@@ -1500,9 +1505,9 @@ static void httpTest()
     if (outcome == Zhttp::WriteOutcome::End) sseBuilder.close();
     return true;
   });
-  ZuCheck(sseWrites == 2);
-  ZuCheck(sseBuilder.state() == Zjrpc::SSEState::Closed);
-  ZuCheck(sseOut.data ==
+  ZuCheckRT(sseWrites == 2);
+  ZuCheckRT(sseBuilder.state() == Zjrpc::SSEState::Closed);
+  ZuCheckRT(sseOut.data ==
     "id: 1\ndata: {\"jsonrpc\":\"2.0\","
     "\"method\":\"notifications/progress\",\"params\":{"
     "\"progressToken\":\"progress-22\",\"progress\":0.5,"
@@ -1513,7 +1518,7 @@ static void httpTest()
     "\"resultType\":\"complete\",\"content\":[],"
     "\"structuredContent\":{\"code\":200,"
     "\"data\":{\"value\":22}},\"isError\":false}}\n\n");
-  ZuCheck(!sseBuilder.emit(Zmcp::LogMessage{"info", "late", {}}));
+  ZuCheckRT(!sseBuilder.emit(Zmcp::LogMessage{"info", "late", {}}));
 
   Zjrpc::Limits batchLimits;
   batchLimits.workBatch = 2;
@@ -1521,8 +1526,8 @@ static void httpTest()
   SSEPostHarness batchPost{&batchSSE};
   batchSSE.owner(&batchPost, 0);
   for (unsigned i = 0; i < 4; ++i)
-    ZuCheck(batchSSE.emit(Zmcp::LogMessage{"info", "queued", {}}));
-  ZuCheck(batchSSE.emit(Zmcp::ToolReplyMessage<EchoOK>{
+    ZuCheckRT(batchSSE.emit(Zmcp::LogMessage{"info", "queued", {}}));
+  ZuCheckRT(batchSSE.emit(Zmcp::ToolReplyMessage<EchoOK>{
     Zjrpc::ID{int64_t{24}}, Zjrpc::Reply<EchoOK>{EchoResult{24}}}));
   HTTPBodyOut batchOut;
   unsigned batchWrites = 0;
@@ -1532,13 +1537,13 @@ static void httpTest()
     if (outcome == Zhttp::WriteOutcome::End) batchSSE.close();
     return true;
   });
-  ZuCheck(batchWrites == 1 && batchSSE.queued() == 4 &&
+  ZuCheckRT(batchWrites == 1 && batchSSE.queued() == 4 &&
     batchPost.posts == 1);
   batchPost.run();
-  ZuCheck(batchWrites == 3 && batchSSE.queued() == 2 &&
+  ZuCheckRT(batchWrites == 3 && batchSSE.queued() == 2 &&
     batchPost.posts == 2);
   batchPost.run();
-  ZuCheck(batchWrites == 5 &&
+  ZuCheckRT(batchWrites == 5 &&
     batchSSE.state() == Zjrpc::SSEState::Closed);
 
   Zmcp::HTTPSSEBuilder<EchoCatalog> liveSSE;
@@ -1550,20 +1555,20 @@ static void httpTest()
     if (outcome == Zhttp::WriteOutcome::End) liveSSE.close();
     return true;
   });
-  ZuCheck(liveWrites == 1);
-  ZuCheck(liveSSE.emit(Zmcp::LogMessage{"info", "working", "echo"}));
-  ZuCheck(liveWrites == 2);
-  ZuCheck(liveSSE.emit(Zmcp::ToolReplyMessage<EchoOK>{
+  ZuCheckRT(liveWrites == 1);
+  ZuCheckRT(liveSSE.emit(Zmcp::LogMessage{"info", "working", "echo"}));
+  ZuCheckRT(liveWrites == 2);
+  ZuCheckRT(liveSSE.emit(Zmcp::ToolReplyMessage<EchoOK>{
     Zjrpc::ID{int64_t{23}}, Zjrpc::Reply<EchoOK>{EchoResult{23}}}));
-  ZuCheck(liveWrites == 3);
-  ZuCheck(liveSSE.state() == Zjrpc::SSEState::Closed);
+  ZuCheckRT(liveWrites == 3);
+  ZuCheckRT(liveSSE.state() == Zjrpc::SSEState::Closed);
 
   Zjrpc::Limits sseLimits;
   sseLimits.maxQueue = 1;
   Zmcp::HTTPSSEBuilder<EchoCatalog> saturatedSSE{sseLimits};
-  ZuCheck(saturatedSSE.emit(Zmcp::LogMessage{"info", "one", {}}));
-  ZuCheck(!saturatedSSE.emit(Zmcp::LogMessage{"info", "two", {}}));
-  ZuCheck(saturatedSSE.state() == Zjrpc::SSEState::Failed);
+  ZuCheckRT(saturatedSSE.emit(Zmcp::LogMessage{"info", "one", {}}));
+  ZuCheckRT(!saturatedSSE.emit(Zmcp::LogMessage{"info", "two", {}}));
+  ZuCheckRT(saturatedSSE.state() == Zjrpc::SSEState::Failed);
   HTTPBodyOut saturatedOut;
   int saturatedOutcome = -1;
   saturatedSSE.body(
@@ -1573,22 +1578,22 @@ static void httpTest()
 	saturatedSSE.close();
       return true;
     });
-  ZuCheck(saturatedOutcome == Zhttp::WriteOutcome::Abort);
-  ZuCheck(!saturatedOut.data);
-  ZuCheck(saturatedSSE.state() == Zjrpc::SSEState::Closed);
+  ZuCheckRT(saturatedOutcome == Zhttp::WriteOutcome::Abort);
+  ZuCheckRT(!saturatedOut.data);
+  ZuCheckRT(saturatedSSE.state() == Zjrpc::SSEState::Closed);
 
   sseLimits.maxQueue = Zjrpc::Default::MaxQueue;
   sseLimits.maxSSEEventBytes = 4;
   Zmcp::HTTPSSEBuilder<EchoCatalog> oversizedEvent{sseLimits};
-  ZuCheck(!oversizedEvent.emit(Zmcp::LogMessage{"info", "large", {}}));
-  ZuCheck(oversizedEvent.state() == Zjrpc::SSEState::Failed);
+  ZuCheckRT(!oversizedEvent.emit(Zmcp::LogMessage{"info", "large", {}}));
+  ZuCheckRT(oversizedEvent.state() == Zjrpc::SSEState::Failed);
   oversizedEvent.close();
 
   sseLimits.maxSSEEventBytes = Zjrpc::Default::MaxSSEEventBytes;
   sseLimits.maxJSONBytes = 4;
   Zmcp::HTTPSSEBuilder<EchoCatalog> oversizedJSON{sseLimits};
-  ZuCheck(!oversizedJSON.emit(Zmcp::LogMessage{"info", "large", {}}));
-  ZuCheck(oversizedJSON.state() == Zjrpc::SSEState::Failed);
+  ZuCheckRT(!oversizedJSON.emit(Zmcp::LogMessage{"info", "large", {}}));
+  ZuCheckRT(oversizedJSON.state() == Zjrpc::SSEState::Failed);
   oversizedJSON.close();
 
   HTTPResponseHarness fixed;
@@ -1597,73 +1602,73 @@ static void httpTest()
   fixed.status(200);
   fixed.template header<Zmcp::SessionID>(
     Zhttp::FieldSection::Final, mutableBytes(responseSession));
-  ZuCheck(fixed.bodyInfo(
+  ZuCheckRT(fixed.bodyInfo(
     Zhttp::BodyType::Fixed, sizeof(responseBody) - 1));
   HTTPRx fixedRx{mutableBytes(responseBody)};
-  ZuCheck(fixed.body(fixedRx));
+  ZuCheckRT(fixed.body(fixedRx));
   fixed.complete(static_cast<void *>(nullptr), true);
-  ZuCheck(fixed.received == 1);
-  ZuCheck(fixed.responseStatus == 200);
-  ZuCheck(fixed.receivedBody == responseBody);
-  ZuCheck(fixed.sessionID == "response-session");
+  ZuCheckRT(fixed.received == 1);
+  ZuCheckRT(fixed.responseStatus == 200);
+  ZuCheckRT(fixed.receivedBody == responseBody);
+  ZuCheckRT(fixed.sessionID == "response-session");
 
   HTTPResponseHarness accepted;
   accepted.status(202);
   accepted.complete(static_cast<void *>(nullptr), true);
-  ZuCheck(accepted.accepted == 1 && accepted.responseStatus == 202);
+  ZuCheckRT(accepted.accepted == 1 && accepted.responseStatus == 202);
 
   HTTPResponseHarness streamed;
   streamed.status(200);
   streamed.template header<HTTPResponseHarness::ContentType,
     HTTPResponseHarness::SSEContent>(Zhttp::FieldSection::Final);
-  ZuCheck(streamed.bodyInfo(Zhttp::BodyType::Streamed, 0));
+  ZuCheckRT(streamed.bodyInfo(Zhttp::BodyType::Streamed, 0));
   char sse1[] = "id: 1\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"not";
   char sse2[] = "ifications/progress\"}\n\n"
     "id: 2\ndata: {\"jsonrpc\":\"2.0\",\"id\":21,\"result\":{}}\n\n";
   HTTPRx sseRx1{mutableBytes(sse1)};
   HTTPRx sseRx2{mutableBytes(sse2)};
-  ZuCheck(streamed.body(sseRx1));
-  ZuCheck(streamed.body(sseRx2));
+  ZuCheckRT(streamed.body(sseRx1));
+  ZuCheckRT(streamed.body(sseRx2));
   streamed.complete(static_cast<void *>(nullptr), true);
-  ZuCheck(streamed.events == 2);
-  ZuCheck(streamed.eventID == "2");
-  ZuCheck(streamed.receivedBody ==
+  ZuCheckRT(streamed.events == 2);
+  ZuCheckRT(streamed.eventID == "2");
+  ZuCheckRT(streamed.receivedBody ==
     "{\"jsonrpc\":\"2.0\",\"id\":21,\"result\":{}}");
-  ZuCheck(streamed.completed == 1);
+  ZuCheckRT(streamed.completed == 1);
 
   HTTPResponseHarness rejectedEvent;
   rejectedEvent.acceptSSE = false;
   rejectedEvent.status(200);
   rejectedEvent.template header<HTTPResponseHarness::ContentType,
     HTTPResponseHarness::SSEContent>(Zhttp::FieldSection::Final);
-  ZuCheck(rejectedEvent.bodyInfo(Zhttp::BodyType::Streamed, 0));
+  ZuCheckRT(rejectedEvent.bodyInfo(Zhttp::BodyType::Streamed, 0));
   char rejectedSSE[] = "data: {}\n\n";
   HTTPRx rejectedRx{mutableBytes(rejectedSSE)};
-  ZuCheck(!rejectedEvent.body(rejectedRx));
+  ZuCheckRT(!rejectedEvent.body(rejectedRx));
   rejectedEvent.complete(static_cast<void *>(nullptr), false);
-  ZuCheck(rejectedEvent.corrupt == 1);
+  ZuCheckRT(rejectedEvent.corrupt == 1);
 
   HTTPResponseHarness jsonOverride;
   jsonOverride.streaming(true);
   jsonOverride.status(200);
   jsonOverride.template header<HTTPResponseHarness::ContentType,
     HTTPResponseHarness::JSONContent>(Zhttp::FieldSection::Final);
-  ZuCheck(jsonOverride.bodyInfo(
+  ZuCheckRT(jsonOverride.bodyInfo(
     Zhttp::BodyType::Fixed, sizeof(responseBody) - 1));
   HTTPRx jsonOverrideRx{mutableBytes(responseBody)};
-  ZuCheck(jsonOverride.body(jsonOverrideRx));
+  ZuCheckRT(jsonOverride.body(jsonOverrideRx));
   jsonOverride.complete(static_cast<void *>(nullptr), true);
-  ZuCheck(jsonOverride.received == 1 && !jsonOverride.events);
+  ZuCheckRT(jsonOverride.received == 1 && !jsonOverride.events);
 
   HTTPResponseHarness bounded;
   bounded.streaming(true);
   bounded.limits_.maxSSELineBytes = 4;
-  ZuCheck(bounded.bodyInfo(Zhttp::BodyType::Streamed, 0));
+  ZuCheckRT(bounded.bodyInfo(Zhttp::BodyType::Streamed, 0));
   char oversizedSSE[] = "data: {}\n\n";
   HTTPRx boundedRx{mutableBytes(oversizedSSE)};
-  ZuCheck(!bounded.body(boundedRx));
+  ZuCheckRT(!bounded.body(boundedRx));
   bounded.complete(static_cast<void *>(nullptr), false);
-  ZuCheck(bounded.corrupt == 1);
+  ZuCheckRT(bounded.corrupt == 1);
 }
 
 int main(int argc, char **argv)

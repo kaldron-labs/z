@@ -28,6 +28,7 @@
 #include <zlib/Zdb.hh>
 
 #include "ZdbTest.hh"
+#include "ZdbRepairTest.hh"
 #include "zdbsltypes.hh"
 
 using namespace zdbtest;
@@ -109,7 +110,7 @@ void gtfo()
 
 static void cursors()
 {
-  ZuTestScope(cursors);
+  ZuTestScopeRT(cursors);
   for (unsigned i = 0; i < 3; ++i) {
     bool committed = false;
     orders->run(0, [i, &committed]() {
@@ -129,7 +130,7 @@ static void cursors()
       });
     });
     done.wait();
-    ZuCheck(committed);
+    ZuCheckRT(committed);
   }
   for (bool inclusive: {false, true}) {
     unsigned count = 0;
@@ -145,8 +146,8 @@ static void cursors()
 	  key.template p<1>() == (index == 1 ? "b" : "a");
       });
     done.wait();
-    ZuCheck(matched);
-    ZuCheck(count == (inclusive ? 3 : 2));
+    ZuCheckRT(matched);
+    ZuCheckRT(count == (inclusive ? 3 : 2));
     count = 0;
     matched = true;
     orders->nextKeys<2>(ZuFwdTuple("scan-a", uint64_t{102}), inclusive, 3,
@@ -159,14 +160,14 @@ static void cursors()
 	  key.template p<1>() == 102 - index;
       });
     done.wait();
-    ZuCheck(matched);
-    ZuCheck(count == (inclusive ? 2 : 1));
+    ZuCheckRT(matched);
+    ZuCheckRT(count == (inclusive ? 2 : 1));
   }
 }
 
 static void nonUnique()
 {
-  ZuTestScope(nonUnique);
+  ZuTestScopeRT(nonUnique);
   for (uint64_t id: {UINT64_C(900001), UINT64_C(900002)}) {
     orders->run(0, [id]() {
       orders->findDel<0>(0, ZuFwdTuple("DUPSK", id),
@@ -191,7 +192,7 @@ static void nonUnique()
       });
     });
     done.wait();
-    ZuCHECK(committed, "insert duplicate secondary key");
+    ZuCheckRT(committed, log_("insert duplicate secondary key"));
   }
 
   bool updated = false;
@@ -206,7 +207,7 @@ static void nonUnique()
       });
   });
   done.wait();
-  ZuCHECK(updated, "update one duplicate secondary-key match");
+  ZuCheckRT(updated, log_("update one duplicate secondary-key match"));
 
   unsigned updatedRows = 0;
   for (uint64_t id: {UINT64_C(900001), UINT64_C(900002)}) {
@@ -219,7 +220,7 @@ static void nonUnique()
     });
     done.wait();
   }
-  ZuCHECK(updatedRows == 1, "secondary-key update changes one row");
+  ZuCheckRT(updatedRows == 1, log_("secondary-key update changes one row"));
 
   bool removed = false;
   orders->run(0, [&removed]() {
@@ -230,7 +231,7 @@ static void nonUnique()
       });
   });
   done.wait();
-  ZuCHECK(removed, "delete one duplicate secondary-key match");
+  ZuCheckRT(removed, log_("delete one duplicate secondary-key match"));
 
   unsigned remaining = 0;
   for (uint64_t id: {UINT64_C(900001), UINT64_C(900002)}) {
@@ -243,7 +244,7 @@ static void nonUnique()
     });
     done.wait();
   }
-  ZuCHECK(remaining == 1, "secondary-key delete removes one row");
+  ZuCheckRT(remaining == 1, log_("secondary-key delete removes one row"));
 }
 
 static void setTypes(AllTypes &v)
@@ -368,7 +369,7 @@ static bool emptyTypes(const AllTypes &v)
 
 static void types()
 {
-  ZuTestScope(types);
+  ZuTestScopeRT(types);
   for (uint64_t id: {uint64_t{1}, uint64_t{2}}) {
     allTypes->run(0, [id] {
       allTypes->findDel<0>(0, ZuFwdTuple(id),
@@ -393,7 +394,7 @@ static void types()
     });
   });
   done.wait();
-  ZuCHECK(committed, "all type families insert");
+  ZuCheckRT(committed, log_("all type families insert"));
 
   bool emptyCommitted = false;
   allTypes->run(0, [&emptyCommitted] {
@@ -407,7 +408,7 @@ static void types()
     });
   });
   done.wait();
-  ZuCHECK(emptyCommitted, "empty type families insert");
+  ZuCheckRT(emptyCommitted, log_("empty type families insert"));
 
   if (!db->stop() || !db->start())
     throw ZeEXCEPT(Fatal, "zdbsltest", "all-types restart failed");
@@ -422,7 +423,7 @@ static void types()
       });
   });
   done.wait();
-  ZuCHECK(matched, "all type families round trip");
+  ZuCheckRT(matched, log_("all type families round trip"));
 
   bool emptyMatched = false;
   allTypes->run(0, [&emptyMatched] {
@@ -434,7 +435,7 @@ static void types()
       });
   });
   done.wait();
-  ZuCHECK(emptyMatched, "empty type families round trip");
+  ZuCheckRT(emptyMatched, log_("empty type families round trip"));
 
   for (bool clear : {true, false}) {
     bool updated = ZmBlock<bool>{}([clear](auto complete) {
@@ -449,7 +450,7 @@ static void types()
 	  });
       });
     });
-    ZuCHECK(updated, "cold update of all type families");
+    ZuCheckRT(updated, log_("cold update of all type families"));
     bool matched = ZmBlock<bool>{}([clear](auto complete) {
       allTypes->run(0, [clear, complete = ZuMv(complete)]() mutable {
 	allTypes->evict<0>(0, ZuFwdTuple(uint64_t{1}));
@@ -460,7 +461,7 @@ static void types()
 	  });
       });
     });
-    ZuCHECK(matched, "cold read after whole-field update");
+    ZuCheckRT(matched, log_("cold read after whole-field update"));
   }
   bool removed = ZmBlock<bool>{}([](auto complete) {
     allTypes->run(0, [complete = ZuMv(complete)]() mutable {
@@ -472,7 +473,7 @@ static void types()
 	});
     });
   });
-  ZuCHECK(removed, "cold secondary-key delete of all type families");
+  ZuCheckRT(removed, log_("cold secondary-key delete of all type families"));
   bool absent = ZmBlock<bool>{}([](auto complete) {
     allTypes->run(0, [complete = ZuMv(complete)]() mutable {
       allTypes->find<0>(0, ZuFwdTuple(uint64_t{1}),
@@ -481,7 +482,7 @@ static void types()
 	});
     });
   });
-  ZuCHECK(absent, "primary key absent after secondary-key delete");
+  ZuCheckRT(absent, log_("primary key absent after secondary-key delete"));
 }
 
 int main(int argc_, char **argv)
@@ -557,7 +558,8 @@ int main(int argc_, char **argv)
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbsltest", "multiplexer start failed");
 
@@ -577,6 +579,10 @@ int main(int argc_, char **argv)
     allTypes = db->initTable<AllTypes>("all_types");
 
     if (!db->start()) throw ZeEXCEPT(Fatal, "zdbsltest", "Zdb start failed");
+
+    ZuTestCall(zdbtest::tableBufPolicy<Order>, orders.ptr(), payments.ptr());
+    ZuTestCall(zdbtest::tableBufPolicy<AllTypes>, allTypes.ptr());
+    ZuTestCall((zdbtest::repairBindings<true>), db->store());
 
     payments->run(1, [] {
       payments->find<0>(1, ZuFwdTuple("MISSING", UINT64_C(0)),

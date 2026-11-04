@@ -47,7 +47,7 @@ template <typename T> static T number(const FIX::FieldMap &m, int tag, bool requ
   const auto &text = m.getField(tag);
   ZuBox<T> value;
   if (!text.length() ||
-      value.scan(ZuCSpan{text.data(), unsigned(text.length())}) != text.length())
+      value.scan(ZuCSpan{text}) != text.length())
     throw FIX::IncorrectDataFormat(tag);
   return value.val();
 }
@@ -56,13 +56,13 @@ static ZuDecimal decimal(const FIX::FieldMap &m, int tag, bool required = true) 
   const auto &text = m.getField(tag);
   ZuDecimal value;
   if (!text.length() ||
-      value.scan(ZuCSpan{text.data(), unsigned(text.length())}) != text.length())
+      value.scan(ZuCSpan{text}) != text.length())
     throw FIX::IncorrectDataFormat(tag);
   return value;
 }
 static ZuDateTime time(const FIX::FieldMap &m, int tag) {
   const auto &text = m.getField(tag);
-  ZuDateTime value{ZuDateTimeScan::FIX{}, ZuCSpan{text.data(), unsigned(text.length())}};
+  ZuDateTime value{ZuDateTimeScan::FIX{}, ZuCSpan{text}};
   if (!*value) throw FIX::IncorrectDataFormat(tag);
   return value;
 }

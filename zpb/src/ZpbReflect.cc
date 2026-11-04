@@ -56,8 +56,8 @@ friend inline ZuStringT<"Zpb.Reflect.Index"> ZmNHeapID(Index *);
 };
 
 Schema::Schema(ZuBSpan bytes, bool prepareFields) :
-  m_bytes{bytes.data(), bytes.length()},
-  m_desc{Zpb::load<DescSet>({m_bytes.data(), m_bytes.length()})}
+  m_bytes{bytes},
+  m_desc{Zpb::load<DescSet>(m_bytes)}
 {
   if (!prepareFields) return;
   auto prepare = [&](auto &&self, const MsgDesc &message) -> void {

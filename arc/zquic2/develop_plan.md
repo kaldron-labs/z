@@ -18,7 +18,7 @@ IMPORTANT
 - MAKE A PLAN, DO NOT IMPLEMENT IT
 - Read `quic_review.md` in full
 - Document how what IS will change to what WILL BE
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
+- Read `AGENTS.md` and `docs/CODEBASE.md` to understand the existing codebase
 - For each requirement, evaluate its complexity and feasibility, specifically:
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack
   - Comprehensively research the implications of the requirement for the codebase

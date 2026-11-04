@@ -37,6 +37,7 @@
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
 
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
@@ -550,7 +551,7 @@ public:
     bool duplicate = false;
     String code_, state_, error_;
     static constexpr auto matcher = ZuMatcher<CallbackKeys>();
-    if (ok) ok = formEach({form.data(), form.length()},
+    if (ok) ok = formEach(form,
       [&lookup, &duplicate, &code_, &state_, &error_](ZuCSpan name, ZuCSpan value) {
         int id = matcher.exact(name);
         if (id < 0) return;
@@ -599,7 +600,8 @@ static void interrupted() { callbackDone.post(); }
 
 static ZiMxParams mxParams()
 {
-  return ZiMxParams().scheduler([](auto &s) {
+  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>().scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
@@ -612,7 +614,7 @@ static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -684,7 +686,7 @@ static bool metadataJSON(String &json, ZuCSpan issuerURL, MetadataWire &metadata
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -903,11 +905,11 @@ ZfStruct(, (Options, CLI),
   (help, (CLI::Flag<'h'>, CLI::Long<"help">),		Bool));
 
 using Frame = ZmRef<ZiIOBuf>;
-using FrameBuf = ZiIOBufAlloc<1024, 1U << 20, "Ztc.Example.Frame">;
 
-static Frame requestFrame(ZuCSpan deviceID, uint64_t subID, bool subscribe)
+static Frame requestFrame(
+    Frame frame, unsigned tailRoom, ZuCSpan deviceID, uint64_t subID, bool subscribe)
 {
-  Ztc::Builder builder{Frame{new FrameBuf}};
+  Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
   auto nested = builder.startNested();
   auto request = Zfb::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
@@ -925,7 +927,7 @@ struct App {
   ZmSemaphore down;
   String deviceID;
   uint64_t subID = 1;
-  Frame frame;
+  ZiRxStream<ZiRxQueue> frame;
   bool failed = false;
   bool subscribed = false;
   bool received = false;
@@ -933,8 +935,13 @@ struct App {
   template <typename Link_>
   void connected(Link_ &link, const Zhttp::ConnectedInfo &)
   {
-    link.txStream([frame = ZuMv(frame)](auto &tx) {
-      tx << ZuBSpan{frame->data(), frame->length};
+    link.txStream([this](auto &tx) {
+      unsigned head = (tx.headRoom() + Ztc::Builder::Align - 1) &
+	~(Ztc::Builder::Align - 1);
+      auto buf = tx.allocBuf(head);
+      if (!buf) return;
+      tx.appendOwned_(requestFrame(
+	ZuMv(buf), tx.tailRoom(), deviceID, subID, true));
       tx.flush();
     }, Zws::Opcode::Binary);
     subscribed = true;
@@ -948,30 +955,36 @@ struct App {
       failed = true;
       return -1;
     }
-    if (!frame) frame = new FrameBuf;
-    frame->length = 0;
+    frame.clean();
     return 1;
   }
 
   template <typename Link_, typename Rx>
   int process(Link_ &link, Rx &rx)
   {
-    return Zhttp::bodyEach(rx, [this, &link](ZuSpan<uint8_t> span) {
-      if (span.length() > (1U << 20) - frame->length) {
-        link.close(Zws::CloseCode::TooLarge);
-        failed = true;
-        return false;
-      }
-      auto size = frame->length + span.length();
-      frame->append(span);
-      return frame->length == size;
-    }) ? 1 : -1;
+    auto &message = frame;
+    unsigned incoming = rx.length();
+    if (incoming > (1U << 20) - message.length()) {
+      link.close(Zws::CloseCode::TooLarge); failed = true; return -1;
+    }
+    while (rx) {
+      if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
+	{ link.close(Zws::CloseCode::TooLarge); failed = true; return -1; }
+    }
+    if (message.length() > message.span().length() &&
+	!message.gather(unsigned(message.length()), [&link]() {
+	  auto allocator = link.app()->mx()->rxAllocator(false);
+	  return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
+	    allocator->alloc().release()));
+	})) { link.close(Zws::CloseCode::TooLarge); failed = true; return -1; }
+    return 1;
   }
 
   template <typename Link_>
   int messageEnd(Link_ &link)
   {
-    auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
+    auto bytes = frame.range();
+    auto msg = Ztc::msg(bytes.cspan());
     if (!msg || !msg.get<Ztc::ZfField(Msg, deviceID)>() ||
       !msg.get<Ztc::ZfField(Msg, agentGen)>() ||
 	msg.get<Ztc::ZfField(Msg, subID)>() != subID ||
@@ -980,6 +993,7 @@ struct App {
       failed = true;
       return -1;
     }
+    frame.clean();
     switch (Ztc::msgBody(msg).tag()) {
       case Ztc::Body::Telemetry: {
         received = true;
@@ -1023,7 +1037,8 @@ struct App {
 
 static ZiMxParams mxParams()
 {
-  return ZiMxParams().scheduler([](auto &s) {
+  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>().scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -1061,7 +1076,6 @@ static int session(const ZtcHubClient_::Options &options, ZuCSpan token)
   ws.pongTimeout = 60;
   Zhttp::TLSConfig tls;
   if (options.caPath) tls.caPath(options.caPath);
-  app.frame = requestFrame(options.deviceID, app.subID, true);
   if (!client.init(Zhttp::HubConfig{&mx, "3", "4"}, tls,
       Zhttp::Destination{uri.host, uri.port, uri.ipv6Literal}, ws) ||
       !client.start()) {
@@ -1076,11 +1090,15 @@ static int session(const ZtcHubClient_::Options &options, ZuCSpan token)
   link->connect();
   done.wait();
   if (app.subscribed && link) {
-    client.rxRun([link, deviceID = app.deviceID, subID = app.subID]() mutable {
-      auto unsubscribe = requestFrame(deviceID, subID, false);
-      link->txStream([unsubscribe = ZuMv(unsubscribe)](auto &tx) mutable {
-        tx << ZuBSpan{unsubscribe->data(), unsubscribe->length};
-        tx.flush();
+    client.rxRun([link, app = &app]() mutable {
+      link->txStream([app](auto &tx) {
+	unsigned head = (tx.headRoom() + Ztc::Builder::Align - 1) &
+	  ~(Ztc::Builder::Align - 1);
+	auto buf = tx.allocBuf(head);
+	if (!buf) return;
+	tx.appendOwned_(requestFrame(
+	  ZuMv(buf), tx.tailRoom(), app->deviceID, app->subID, false));
+	tx.flush();
       }, Zws::Opcode::Binary);
       link->close();
     });

@@ -21,10 +21,13 @@ Zfb::AsTable<"Zum.fbs.KeyBinding"> Zfb_Fmt(KeyBindingArgs *);
 
 static void keys()
 {
-  ZuTestScope(keys);
-  roundTrip(Zum::keyBindingDef(), Zum::keyBinding(Zum::KeyBindingArgs{}));
-  roundTrip(Zum::secretRekeyDef(), Zum::secretRekey(Zum::SecretRekeyArgs{}));
-  roundTrip(Zum::ssfDeliveryAddDef(), Zum::ssfDeliveryAdd(Zum::SSFDelivery{}));
+  ZuTestScopeRT(keys);
+  ZuTestCallRT(roundTrip_, Zum::keyBindingDef(),
+    Zum::keyBinding(Zum::KeyBindingArgs{}));
+  ZuTestCallRT(roundTrip_, Zum::secretRekeyDef(),
+    Zum::secretRekey(Zum::SecretRekeyArgs{}));
+  ZuTestCallRT(roundTrip_, Zum::ssfDeliveryAddDef(),
+    Zum::ssfDeliveryAdd(Zum::SSFDelivery{}));
 
   Zum::KeyBindingArgs binding{
     .issuer = "issuer",
@@ -33,19 +36,19 @@ static void keys()
     .afterPending = Zum::Bytes{ZuBSpan{"new-check"}}};
   auto saga = Zum::keyBinding(ZuMv(binding));
   Zdb_::SagaPayload payload;
-  ZuCheck(saga->save(payload) == Zfb::Error::OK);
+  ZuCheckRT(saga->save(payload) == Zfb::Error::OK);
   auto decoded = Zfb::handler<Zum::KeyBindingArgs>(payload).ctor();
-  ZuCheck(decoded.issuer == "issuer" &&
+  ZuCheckRT(decoded.issuer == "issuer" &&
     decoded.beforeCheck == ZuBSpan{"old-check"} &&
     decoded.afterCheck == decoded.beforeCheck && !decoded.beforePending &&
     decoded.afterPending == ZuBSpan{"new-check"});
-  distinct(Zum::keyBindingDef(), ZuMv(saga),
+  ZuTestCallRT(distinct_, Zum::keyBindingDef(), ZuMv(saga),
     Zum::keyBinding(Zum::KeyBindingArgs{}));
-  phase(Zum::keyBindingDef(), 0, "zum.issuer", ZdbSagaOp::Update);
+  ZuTestCallRT(phase_, Zum::keyBindingDef(), 0, "zum.issuer", ZdbSagaOp::Update);
   bool rejected = false;
   try { Zum::keyBinding(ZuBSpan{"invalid payload"}); }
   catch (...) { rejected = true; }
-  ZuCheck(rejected);
+  ZuCheckRT(rejected);
 
   for (unsigned field = Zum::SecretRekeyArgs::ProviderField;
       field <= Zum::SecretRekeyArgs::SSFField; ++field) {
@@ -53,7 +56,7 @@ static void keys()
       .appID = 8, .userID = 9, .keyID = "signer",
       .before = Zum::Bytes{ZuBSpan{"old-envelope"}},
       .after = Zum::Bytes{ZuBSpan{"new-envelope"}}};
-    distinct(Zum::secretRekeyDef(), Zum::secretRekey(ZuMv(rekey)),
+    ZuTestCallRT(distinct_, Zum::secretRekeyDef(), Zum::secretRekey(ZuMv(rekey)),
       Zum::secretRekey(Zum::SecretRekeyArgs{}));
   }
 }

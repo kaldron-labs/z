@@ -164,15 +164,13 @@ using TableModelT = ZuDecay<decltype(*ZdbTableModel(ZuDeclVal<Impl *>()))>;
 
 class Cxn_ :
   public ZiConnection,
-  public ZiRx<Cxn_, RxBufAlloc>,
+  public ZiRx<Cxn_>,
   public ZiTx<Cxn_> {
 friend DB;
 friend Host;
 friend AnyTable;
 
-  using BufAlloc = Zdb_::RxBufAlloc;
-
-  using Rx = ZiRx<Cxn_, BufAlloc>;
+  using Rx = ZiRx<Cxn_>;
   using Tx = ZiTx<Cxn_>;
 
   using Rx::recv; // de-conflict with ZiConnection
@@ -186,10 +184,10 @@ private:
   void host(Host *host) { m_host = host; }
   Host *host() const { return m_host; }
 
-  void connected(ZiIOContext &);
+  void connected(ZiRxContext &);
   void disconnected(bool);
 
-  void msgRead(ZiIOContext &);
+  void msgRead(ZiRxContext &);
   int msgRead2(ZmRef<IOBuf>);
   void msgRead3(ZmRef<IOBuf>);
 
@@ -606,7 +604,7 @@ friend AnyRow;
 friend Record_Print;	// uses rowPrintFB
 
 protected:
-  AnyTable(DB *db, TableCf *cf, bool internal, IOBufAllocFn);
+  AnyTable(DB *db, TableCf *cf, bool internal, IOBufAllocFactory);
 
 public:
   ~AnyTable() noexcept;
@@ -623,7 +621,7 @@ public:
   DB *db() const { return m_db; }
   ZiMultiplex *mx() const { return m_mx; }
   const TableCf &config() const { return *m_cf; }
-  IOBufAllocFn bufAllocFn() const { return m_bufAllocFn; }
+  IOBufAllocFn bufAllocFn(Shard shard) const { return m_bufAllocFn[shard]; }
 
   static const auto &IDAxor(AnyTable *table) { return table->config().id; }
 
@@ -641,7 +639,7 @@ public:
   uint64_t count() const { return m_count.load_(); }
 
   // allocate I/O buffer
-  ZmRef<IOBuf> allocBuf() { return m_bufAllocFn(); }
+  ZmRef<IOBuf> allocBuf(Shard shard) { return m_bufAllocFn[shard](); }
 
 private:
   IOBuf *findBufUN(Shard shard, UN un) {
@@ -796,7 +794,8 @@ private:
   BufCacheUNArray	m_bufCacheUN;
 
   // I/O buffer allocation
-  IOBufAllocFn		m_bufAllocFn;
+  ZtArray<IOBufAllocFn>	m_bufAllocFn;
+  IOBufAllocFn		m_storeBufAllocFn;
 };
 
 // replication buffer
@@ -1002,10 +1001,8 @@ private:
   using MemberKey = SplitKey<T, KeyID>::MemberKey;
 
 public:
-  static ZmRef<IOBuf> allocBuf() { return new IOBufAlloc<T>{}; }
-
   Table_(DB *db, TableCf *cf, bool internal) :
-    AnyTable{db, cf, internal, Table_::allocBuf},
+    AnyTable{db, cf, internal, [](unsigned ringSize) { return tableBufAllocFn<T>(ringSize); }},
     m_schema(Zfb::SchemaOut::Schema<T>::Size)
   {
     Zfb::saveSchema<T>(m_schema);
@@ -1956,6 +1953,7 @@ public:
     ZiMultiplex *mx,
     DBHandler handler,
     ZmRef<Store> store = {});
+  // Stop the owning multiplexer before final releases watched Tx pools.
   void final();
 
   template <typename T>
@@ -2099,6 +2097,8 @@ private:
   void stop_0();
   void stop_1();
   void stop_2();
+  void stop_3();
+  void unbind_(Zi::IOBufAllocator *);
   using DrainFn = ZmFn<void(), ZmFnHeapID<"Zdb.DrainFn">>;
   template <typename L>
   void drainShards(unsigned shard, L &&l) {
@@ -2204,6 +2204,7 @@ private:
   DBCf			m_cf;
   ZiMultiplex		*m_mx = nullptr;
   ZmRef<Store>		m_store;
+  ZmRef<Zi::IOBufAllocator> m_hbAllocator;
   bool			m_repStore = false;	// replicated data store
 
   // immutable after optional pre-start saga registration
@@ -2231,6 +2232,7 @@ private:
   AllDoneFn		m_allDoneFn;		// ''
   unsigned		m_allCount = 0;		// remaining count
   unsigned		m_allNotOK = 0;		// remaining not OK
+  unsigned		m_unbinding = 0;	// allocator service detach count
 
   ZmRef<SagaHashObj>	m_sagaHash;
   ZmRef<SagaStepHashObj> m_sagaStepHash;
@@ -2318,7 +2320,7 @@ inline void Table_<Impl_>::count(GroupKey<KeyID> key, L &&l)
 
   auto context = ZmRef(new Context{ZuFwd<L>(l)});
 
-  Builder fbb{allocBuf(), Zfb::BufferAlign<GroupKey<KeyID>>::N};
+  Builder fbb{new IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<GroupKey<KeyID>>::N};
   fbb.finish(Zfb::save(fbb, key));
   auto keyBuf = fbb.buf();
   AnyTable::count(KeyID, ZuMv(keyBuf), ZuMv(context));
@@ -2339,7 +2341,7 @@ inline void Table_<Impl_>::select_(
 
   auto context = ZmRef(new Context{this, ZuFwd<L>(l)});
 
-  Builder fbb{allocBuf(), Zfb::BufferAlign<SelectKey>::N};
+  Builder fbb{new IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<SelectKey>::N};
   fbb.finish(Zfb::save(fbb, selectKey));
   auto keyBuf = fbb.buf();
 
@@ -2398,7 +2400,7 @@ inline void Table_<Impl_>::retrieve(
   auto context = ZmRef(new Context{
     this, shard, ZuMv(key), ZuFwd<L>(l)});
 
-  Builder fbb{allocBuf(), Zfb::BufferAlign<Key_>::N};
+  Builder fbb{new IOBufAlloc<T>{nullptr, 0}, Zfb::BufferAlign<Key_>::N};
   fbb.finish(Zfb::save(fbb, context->key));
   auto keyBuf = fbb.buf();
   AnyTable::retrieve(KeyID, ZuMv(keyBuf), ZuMv(context));
@@ -2824,7 +2826,7 @@ struct HB_Print {
 
 template <typename S>
 inline void IOBuf_::Print::print(S &s) const {
-  auto msg = Zdb_::msg(buf->ptr<Hdr>());
+  auto msg = Zdb_::msg(buf->hdr());
   if (!msg) { s << "corrupt{}"; return; }
   if (auto record = Zdb_::record(msg)) {
     s << "record=" << Record_Print{record, table};

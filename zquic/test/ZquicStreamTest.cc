@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZiFile.hh>
@@ -15,6 +16,8 @@
 #include <zpicotls/openssl.h>
 
 using namespace ZuTestUtil;
+
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 
@@ -82,7 +85,7 @@ struct App : public Zquic::Hub<App> {
 
 private:
   static ZiMxParams mxParams_() {
-    return ZiMxParams()
+    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -122,11 +125,16 @@ struct TestCIDRoutes {
   unsigned	tombstones = 0;
 };
 struct TestLink :
+  public ZmNHeap<TestLink>,
   public Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>
 {
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
+  friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
+  using ZmNHeap<TestLink>::operator new;
+  using ZmNHeap<TestLink>::operator delete;
+
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
     Base::configLocalParams_(app);
   }
@@ -331,9 +339,12 @@ struct TestLink :
     ZuBSpan data, Zquic::PktNumSpace::T level = Zquic::PktNumSpace::AppData) {
     size_t offsets[5] = {0, 0, 0, 0, data.length()};
     if (level == Zquic::PktNumSpace::Handshake) offsets[3] = data.length();
+    ZmRef<ZiIOBuf> backing = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+    backing->append(data);
+    Zquic::CryptoOffsets positions(Zquic::TLSEpochCount + 1, false);
+    for (unsigned i = 0; i <= Zquic::TLSEpochCount; ++i) positions[i] = offsets[i];
     return Base::sendCryptoFlights_(
-      data.data(), data.length(),
-      offsets, 900, ZiSockAddr{},
+      ZuMv(backing), positions, 900, ZiSockAddr{},
       [this](
 	  Zquic::PktNumSpace::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
@@ -359,7 +370,11 @@ struct TestLink :
     refs.add(ref);
     pn = sentPkts++;
     Base::setTxPN_(level, pn);
-    auto alloc = []() { return new Zquic::PktTxBufAlloc<>{nullptr}; };
+    auto alloc = []() { return ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr); };
     auto send = [this, &bytes, reject](auto buf, ZiSockAddr addr) {
       bytes = buf->length;
       if (reject) return false;
@@ -450,8 +465,16 @@ struct TestLink :
   }
   bool coalesceProbe(unsigned &sends, unsigned &bytes) {
     sends = bytes = 0;
-    ZmRef<ZiIOBuf> initial = new Zquic::PktTxBufAlloc<>{nullptr};
-    ZmRef<ZiIOBuf> handshake = new Zquic::PktTxBufAlloc<>{nullptr};
+    ZmRef<ZiIOBuf> initial = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
+    ZmRef<ZiIOBuf> handshake = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
     initial->skip = handshake->skip = 0;
     initial->length = 100;
     handshake->length = 40;
@@ -541,7 +564,11 @@ struct TestLink :
   }
   void pathReceived(unsigned bytes) { Base::recordPathRxTx_(ZiSockAddr{}, bytes); }
   bool pathSend(unsigned bytes) {
-    ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
+    ZmRef<ZiIOBuf> buf = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
     buf->skip = 0;
     buf->length = bytes;
     return Base::sendPathPkt_(
@@ -634,7 +661,11 @@ struct TestLink :
       Base::CIDSel::Peer, Base::CIDSel::Local,
       Base::txPNLength_(Zquic::PktNumSpace::AppData),
       payload, ZiSockAddr{}, span_(ping, unsigned(n)), nullptr, true,
-      []() { return new Zquic::PktTxBufAlloc<>{nullptr}; },
+      []() { return ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr); },
       [&sent](auto buf, ZiSockAddr) {
 	sent = ZuMv(buf);
 	return true;
@@ -718,7 +749,11 @@ static ZmRef<ZiIOBuf> shortPing_(
 {
   Zquic::PktProtState tx;
   if (!tx.init(secret, Zquic::PktNumSpace::AppData, true)) return {};
-  ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> buf = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   enum { PNLength = 2 };
   int h = Zquic::Pkt::writeShort(
     buf->data_(), buf->size, dcid, pn, PNLength, keyPhase);
@@ -739,7 +774,11 @@ static ZmRef<ZiIOBuf> shortPing_(
 
 static ZmRef<ZiIOBuf> zeroRTTLongHdr_(uint64_t pn)
 {
-  ZmRef<ZiIOBuf> buf = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> buf = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   Zquic::CxnID dcid{"server01"};
   Zquic::CxnID scid{"client01"};
   enum { PNLength = 2 };
@@ -767,7 +806,11 @@ static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -921,7 +964,11 @@ void testStreamRxSliceDelivery()
   ZmRef<TestLink> client = testLink(&app);
   auto stream = client->stream(Zquic::StreamType::Duplex);
 
-  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, stream->id(), 0, "slice", false);
   ZuCHECK(n > 0, "packet-backed STREAM frame write failed");
@@ -1142,6 +1189,42 @@ void testStreamTxRetention()
     "FIN dequeued more than once");
   ZuCHECK(!stream->dequeueTxRange(range),
     "empty Tx range dequeue succeeded");
+}
+
+void testStreamTxRetainedRanges()
+{
+  ZuTestScope(testStreamTxRetainedRanges);
+
+  App app;
+  auto link = testLink(&app);
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  auto tx = stream->txStream_();
+  auto backing = tx.allocBuf(7);
+  backing->append(reinterpret_cast<const uint8_t *>("A-gap-BC"), 8);
+  auto original = backing.ptr();
+  ZuCHECK(tx.appendRange(backing, 0, 1) && tx.appendRange(backing, 6, 2),
+    "QUIC retained range publication failed");
+  tx << "D" << Zi::Flush{};
+  ZuCHECK(stream->txBytes() == 4 && stream->txRangeCount() == 3,
+    "QUIC range and ordinary node stream offsets mismatch");
+  Zquic::TxRange selected;
+  Zquic::TxRange consumed;
+  ZuCHECK(stream->txRange(0, selected) && selected.buf.ptr() == original &&
+      selected.offset == 7 && selected.length == 1 &&
+      stream->commitTxRange(consumed, selected, 1),
+    "QUIC retained first range lost original backing");
+  ZuCHECK(stream->txRange(0, selected) && selected.buf.ptr() == original &&
+      selected.offset == 13 && selected.streamOffset == 1 &&
+      stream->commitTxRange(consumed, selected, 1) &&
+      stream->txRange(0, selected) && selected.offset == 14 &&
+      selected.length == 1 && selected.streamOffset == 2,
+    "QUIC partial retained range consumption copied or lost positions");
+  ZuCHECK(backing->length == 8 && backing->skip == 7 &&
+      !memcmp(backing->data(), "A-gap-BC", 8),
+    "QUIC range publication must not mutate retained plaintext");
+  stream->reset(0);
+  ZuCHECK(!stream->txRangeCount() && !stream->txQueueCount(),
+    "QUIC reset failed to release mixed range metadata and plaintext nodes");
 }
 
 void testStreamTxQueueLimit()
@@ -1679,11 +1762,11 @@ void testCryptoRetransmitClipsUnackd()
 
 void testCryptoRetxBudget()
 {
-  ZuTestScope(testCryptoRetxBudget);
+  ZuTestScopeRT(testCryptoRetxBudget);
 
   App app;
   Zquic::TrafficSecret secret;
-  ZuCHECK(trafficSecret_(secret, 0x42), "crypto retransmit secret failed");
+  ZQUIC_CHECK_RT(trafficSecret_(secret, 0x42), "crypto retransmit secret failed");
   using Data = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Test.CryptoRetx">>;
   Data data;
   data.length(Zquic::MinUDPPayload<<1);
@@ -1691,11 +1774,11 @@ void testCryptoRetxBudget()
   for (bool ack : {false, true}) {
     auto space = Zquic::PktNumSpace::Handshake;
     ZmRef<TestLink> link = testLink(&app);
-    ZuCHECK(link->installHandshake(secret),
+    ZQUIC_CHECK_RT(link->installHandshake(secret),
       "crypto retransmit key setup failed");
     link->initServerPath();
     link->validatePath();
-    ZuCHECK(link->sendCryptoBytes(data, space), "crypto flight setup failed");
+    ZQUIC_CHECK_RT(link->sendCryptoBytes(data, space), "crypto flight setup failed");
     if (ack) link->receiveMarked(1, Zquic::EcnMark::NotECT, true, space);
 
     Zquic::PktNumSpace::T level;
@@ -1703,26 +1786,26 @@ void testCryptoRetxBudget()
     unsigned bytes = 0;
     uint64_t pn = 0;
     // A rejected retransmission must preserve data from the original flight.
-    ZuCHECK(link->nextCryptoPTO(level, ref), "missing crypto PTO range");
+    ZQUIC_CHECK_RT(link->nextCryptoPTO(level, ref), "missing crypto PTO range");
     ref.length = 32;
-    ZuCHECK(!link->sendRetxCrypto(level, ref, bytes, pn, true),
+    ZQUIC_CHECK_RT(!link->sendRetxCrypto(level, ref, bytes, pn, true),
       "crypto retransmit rejection did not fail");
     uint64_t offset = 0;
     unsigned packets = 0;
     while (offset < data.length()) {
       bool pending = link->nextCryptoPTO(level, ref);
-      ZuCHECK(pending && level == space && ref.offset == offset,
+      ZQUIC_CHECK_RT(pending && level == space && ref.offset == offset,
 	"crypto retransmit lost an unacknowledged prefix");
       if (!pending || ref.offset != offset) break;
       bool sent = link->sendRetxCrypto(level, ref, bytes, pn);
-      ZuCHECK(sent && bytes <= link->activePathMaxUDP(),
+      ZQUIC_CHECK_RT(sent && bytes <= link->activePathMaxUDP(),
 	"crypto retransmit exceeded path budget");
       if (!sent) break;
       offset += ref.length;
       ++packets;
       link->ackOnly(pn, level);
     }
-    ZuCHECK(offset == data.length() && packets > 1 &&
+    ZQUIC_CHECK_RT(offset == data.length() && packets > 1 &&
 	!link->nextCryptoPTO(level, ref),
       "crypto retransmit did not deliver and ACK the complete flight");
     link->teardown();
@@ -2319,18 +2402,18 @@ void testBlockedFrameDedup()
 
 void testKeyedControlReplacement()
 {
-  ZuTestScope(testKeyedControlReplacement);
+  ZuTestScopeRT(testKeyedControlReplacement);
 
   App app;
   ZmRef<TestLink> link = testLink(&app);
-  ZuCHECK(link->queueMaxData(1024) &&
+  ZQUIC_CHECK_RT(link->queueMaxData(1024) &&
       !link->queueMaxData(1024) &&
       link->queueMaxData(2048) &&
       link->queuedControlFrames() == 1,
     "MAX_DATA keyed replacement mismatch");
 
   ZmRef<TestLink> streams = testLink(&app);
-  ZuCHECK(streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 7) &&
+  ZQUIC_CHECK_RT(streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 7) &&
       !streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 7) &&
       streams->queueStreamsBlocked(Zquic::StreamType::Duplex, 8) &&
       streams->queuedControlFrames() == 1,
@@ -2338,8 +2421,8 @@ void testKeyedControlReplacement()
 
   ZmRef<TestLink> path = testLink(&app);
   for (unsigned i = 0; i < TestLink::PathResponseMax + 4; ++i)
-    ZuCHECK(path->queuePathResponse(i + 1), "PATH_RESPONSE queue failed");
-  ZuCHECK(path->queuedControlFrames() ==
+    ZQUIC_CHECK_RT(path->queuePathResponse(i + 1), "PATH_RESPONSE queue failed");
+  ZQUIC_CHECK_RT(path->queuedControlFrames() ==
       TestLink::PathResponseMax,
     "PATH_RESPONSE FIFO exceeded retention cap");
 }
@@ -2916,7 +2999,7 @@ void testStreamBlockedValidate()
 
 void testInvalidClosedStreamActivity()
 {
-  ZuTestScope(testInvalidClosedStreamActivity);
+  ZuTestScopeRT(testInvalidClosedStreamActivity);
 
   App app;
   uint8_t b[128];
@@ -2928,13 +3011,13 @@ void testInvalidClosedStreamActivity()
   local->reset(1);
   int n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(local->id()), 4096);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZQUIC_CHECK_RT(parseFrame_(b, n, frame) &&
       maxLink->applyMaxStreamData(frame) &&
       !maxLink->closeError(),
     "closed-stream MAX_STREAM_DATA was not ignored");
 #ifdef Zquic_DEBUG
   Zquic::LinkDiag diag = maxLink->diag();
-  ZuCHECK(!diag.rx.invalidStreamFrames &&
+  ZQUIC_CHECK_RT(!diag.rx.invalidStreamFrames &&
       !diag.rx.closedStreamFrames &&
       diag.rx.streamMaxClosedRx == 1 &&
       !diag.rx.suspectStreamCloses,
@@ -2943,41 +3026,41 @@ void testInvalidClosedStreamActivity()
 
   ZmRef<TestLink> resetLink = testLink(&app, true);
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZQUIC_CHECK_RT(parseFrame_(b, n, frame) &&
       resetLink->receiveFrame(frame) == 0 &&
       resetLink->receiveFrame(frame) == 0,
     "duplicate RESET_STREAM final size was not ignored");
 #ifdef Zquic_DEBUG
   diag = resetLink->diag();
-  ZuCHECK(!diag.rx.invalidStreamFrames &&
+  ZQUIC_CHECK_RT(!diag.rx.invalidStreamFrames &&
       !diag.rx.closedStreamFrames &&
       !resetLink->closeError(),
     "duplicate RESET_STREAM diagnostics mismatch");
 #endif
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 1);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZQUIC_CHECK_RT(parseFrame_(b, n, frame) &&
       resetLink->receiveFrame(frame) < 0 &&
       resetLink->closeError() == Zquic::TransportError::FinalSize,
     "active duplicate RESET_STREAM final-size violation did not close");
 #ifdef Zquic_DEBUG
   diag = resetLink->diag();
-  ZuCHECK(diag.rx.suspectStreamCloses == 1,
+  ZQUIC_CHECK_RT(diag.rx.suspectStreamCloses == 1,
     "final-size violation close diagnostics mismatch");
 #endif
 
   ZmRef<TestLink> blockedLink = testLink(&app, true);
   n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 0);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZQUIC_CHECK_RT(parseFrame_(b, n, frame) &&
       blockedLink->receiveFrame(frame) == 0,
     "closed STREAM_DATA_BLOCKED reset setup failed");
   n = Zquic::FrameCodec::writeStreamDataBlocked(b, sizeof(b), 0, 0);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZQUIC_CHECK_RT(parseFrame_(b, n, frame) &&
       blockedLink->rxStreamBlocked(frame) &&
       !blockedLink->closeError(),
     "closed-stream STREAM_DATA_BLOCKED was not ignored");
 #ifdef Zquic_DEBUG
   diag = blockedLink->diag();
-  ZuCHECK(diag.rx.invalidStreamFrames == 1 &&
+  ZQUIC_CHECK_RT(diag.rx.invalidStreamFrames == 1 &&
       diag.rx.closedStreamFrames == 1,
     "closed-stream STREAM_DATA_BLOCKED diagnostics mismatch");
 #endif
@@ -2985,11 +3068,11 @@ void testInvalidClosedStreamActivity()
   ZmRef<TestLink> dupLink = testLink(&app);
   auto dup = dupLink->stream(Zquic::StreamType::Duplex);
   auto packet = streamPkt_(dup->id(), 0, "dup", false, frame, used);
-  ZuCHECK(packet &&
+  ZQUIC_CHECK_RT(packet &&
       dupLink->receiveFrame(frame, packet) == 0,
     "duplicate STREAM setup failed");
   packet = streamPkt_(dup->id(), 0, "dup", false, frame, used);
-  ZuCHECK(packet &&
+  ZQUIC_CHECK_RT(packet &&
       dupLink->receiveFrame(frame, packet) == 0 &&
       !dupLink->diag().rx.invalidStreamFrames,
     "ordinary duplicate STREAM was treated as invalid");
@@ -2999,23 +3082,23 @@ void testInvalidClosedStreamActivity()
   noisy->reset(3);
   n = Zquic::FrameCodec::writeMaxStreamData(
     b, sizeof(b), uint64_t(noisy->id()), 4096);
-  ZuCHECK(parseFrame_(b, n, frame), "threshold frame setup failed");
+  ZQUIC_CHECK_RT(parseFrame_(b, n, frame), "threshold frame setup failed");
   for (unsigned i = 0, n = TestLink::suspiciousStreamThreshold(); i < n; ++i)
-    ZuCHECK(threshold->applyMaxStreamData(frame),
+    ZQUIC_CHECK_RT(threshold->applyMaxStreamData(frame),
       "closed-stream threshold frame was rejected");
 #ifdef Zquic_DEBUG
   diag = threshold->diag();
-  ZuCHECK(!threshold->closeError() &&
+  ZQUIC_CHECK_RT(!threshold->closeError() &&
       diag.rx.streamMaxClosedRx == TestLink::suspiciousStreamThreshold() &&
       !diag.rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA was not tracked as benign");
-  ZuCHECK(threshold->applyMaxStreamData(frame) &&
+  ZQUIC_CHECK_RT(threshold->applyMaxStreamData(frame) &&
       threshold->diag().rx.streamMaxClosedRx ==
 	TestLink::suspiciousStreamThreshold() + 1 &&
       !threshold->diag().rx.suspectStreamCloses,
     "closed-stream MAX_STREAM_DATA produced suspicious close diagnostics");
 #else
-  ZuCHECK(!threshold->closeError() &&
+  ZQUIC_CHECK_RT(!threshold->closeError() &&
       threshold->applyMaxStreamData(frame),
     "closed-stream MAX_STREAM_DATA was not handled as benign");
 #endif
@@ -3712,6 +3795,7 @@ int main(int argc, char **argv)
   ZuTestCall(testOutOfOrderStreamDelivery);
   ZuTestCall(testRxRetirement);
   ZuTestCall(testStreamTxRetention);
+  ZuTestCall(testStreamTxRetainedRanges);
   ZuTestCall(testStreamTxQueueLimit);
   ZuTestCall(testStreamTxUnackd);
   ZuTestCall(testStreamTxUnackdFin);

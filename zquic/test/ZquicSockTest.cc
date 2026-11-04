@@ -103,7 +103,7 @@ void testEndpointRebind()
   ZuTestScope(testEndpointRebind);
 
   ZiMultiplex mx(
-      ZiMxParams()
+      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })

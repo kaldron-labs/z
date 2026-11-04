@@ -361,7 +361,7 @@ checkpoint.
 Interim testing is limited to deterministic functional unit tests.  Defer the
 full external-peer H1/H2/H3/WebSocket interoperability matrix until phase 7.
 That matrix is the final validation action after the final repository search,
-`GUIDELINES.md` audit and repair, clang/debug build, and functional tests.
+`docs/GUIDELINES.md` audit and repair, clang/debug build, and functional tests.
 
 ## Phase 1 — Restore the `zi` receive contracts
 
@@ -414,7 +414,7 @@ types to keep them compiling.
   remains.
 - Queue length is exact after every mutation and is not computed by scanning.
 - Focused `zi` unit tests pass at the first stable buildable checkpoint.
-- Audit every phase 1 change against `GUIDELINES.md` and repair buffer pooling,
+- Audit every phase 1 change against `docs/GUIDELINES.md` and repair buffer pooling,
   head/tail-room arithmetic, overflow, move semantics, naming, layout,
   allocation, copying, and direct-header issues before accepting the phase.
 
@@ -488,7 +488,7 @@ at the end of phase 4.
 - `bodyEach()` is demonstrably eager over existing input only.
 - Focused `zi` transfer tests pass.  Zhttp body-owner tests are present but
   explicitly deferred to phase 4 because protocol propagation is incomplete.
-- Audit phase 2 against `GUIDELINES.md` and repair intrusive ownership, heap
+- Audit phase 2 against `docs/GUIDELINES.md` and repair intrusive ownership, heap
   IDs, split-copy choice, hidden allocation, temporary contiguity, counter
   maintenance, and callback lifetime issues.
 
@@ -575,7 +575,7 @@ through every HTTP version.
 - Focused H1 parser, boundary, message-engine, service-idle, and upgraded-stream
   functional tests are updated here and run at the phase 4 clang/debug
   checkpoint; no knowingly unbuildable phase 3 build is attempted.
-- Audit phase 3 against `GUIDELINES.md`, focusing on Rx-shard ownership,
+- Audit phase 3 against `docs/GUIDELINES.md`, focusing on Rx-shard ownership,
   receive-loop liveness, pipelining, EOF semantics, in-place buffer mutation,
   allocation, and boundary copies; repair every issue before acceptance.
 
@@ -711,7 +711,7 @@ this phase changes only Rx lifecycle signaling and ownership.
 - The phase 2 body-owner tests, phase 3 H1 tests, and focused H2/H3 frame,
   message, engine, cancellation, QPACK/HPACK, flow-control, and
   extended-CONNECT functional tests pass at this stable clang/debug checkpoint.
-- Audit phase 4 against `GUIDELINES.md`, especially Rx/Tx sharding,
+- Audit phase 4 against `docs/GUIDELINES.md`, especially Rx/Tx sharding,
   cross-shard captures, flow-control arithmetic, bounded scheduler turns,
   buffer lifetime, retained compression-table spans, and copy/allocation
   behavior; repair all findings.
@@ -784,7 +784,7 @@ start/end no-ops; do not preserve event-mask fallbacks.
   bounded by configuration/transport flow control.
 - Focused WebSocket protocol, H1 engine, H2/H3 engine, masking, UTF-8,
   fragmentation, control-frame, close, and pressure tests pass in clang/debug.
-- Audit phase 5 against `GUIDELINES.md`, focusing on mutable-buffer ownership,
+- Audit phase 5 against `docs/GUIDELINES.md`, focusing on mutable-buffer ownership,
   queue limits, UTF-8 state, timer/shutdown ordering, CRTP defaults, callback
   capture lifetime, allocation, and copying; repair all findings.
 
@@ -848,14 +848,14 @@ mixed-workload I/O turns where a peer can supply an unbounded sequence.
 - Build manifests and public comments match the new file/type ownership.
 - All affected deterministic functional tests pass in the existing
   clang/debug build.
-- Audit phase 6 against the complete `GUIDELINES.md` and repair dead code,
+- Audit phase 6 against the complete `docs/GUIDELINES.md` and repair dead code,
   compatibility residue, naming, header layout, loop liveness, sharding,
   storage, allocation, copying, and test synchronization issues.
 
 ## Phase 7 — Integrated validation
 
 First repeat the repository-wide residue searches and the complete
-`GUIDELINES.md` audit.  Repair every finding.  Then perform the smallest
+`docs/GUIDELINES.md` audit.  Repair every finding.  Then perform the smallest
 dependency-ordered clang/debug rebuild which proves all changed `zi`, `ztcp`,
 `ztls`, `zquic`, `zhttp`, and `zws` library/test targets use current headers
 and libraries.  Run the complete deterministic functional test set with
@@ -894,7 +894,7 @@ create another build variant during this refactor.
 
 If any build, functional test, sanitizer, or audit exposes a defect, repair it
 and repeat the affected dependency build, functional tests, repository search,
-and `GUIDELINES.md` audit until clean.
+and `docs/GUIDELINES.md` audit until clean.
 
 Only then run the full H1/H2/H3 and WebSocket external-peer interoperability
 matrix.  It must be the final validation action.  If interoperability exposes
@@ -913,7 +913,7 @@ make a successful full matrix the new final action.
 - H2/H3/QUIC flow control and queue limits bound unread application data.
 - Shutdown, cancellation, reset, and error paths release all queued buffers and
   deliver one terminal outcome.
-- Audit phase 7 against the complete `GUIDELINES.md`, repair every finding,
+- Audit phase 7 against the complete `docs/GUIDELINES.md`, repair every finding,
   and confirm the final repository searches and repeated audit are clean.
 - The final external-peer interoperability matrix passes and is the last
   validation action performed.

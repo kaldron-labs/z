@@ -123,32 +123,35 @@ static bool readBytes(SocketReady &source, int fd, uint8_t *out,
   return true;
 }
 
+#define ZDBUS_CHECK_RT(expr, ...) \
+  ZuCheckRT(expr, log_(__VA_ARGS__))
+
 static void transport()
 {
-  ZuTestScope(transport);
+  ZuTestScopeRT(transport);
 
   ZdbusAddress::Text text;
   text << "unix:abstract=zdbus-cxn-test-" << unsigned(::getpid());
   ZdbusAddress address;
-  ZuCHECK(ZdbusAddress::parse(address, text), "address parse failed");
+  ZDBUS_CHECK_RT(ZdbusAddress::parse(address, text), "address parse failed");
   if (!address) return;
 
   sockaddr_un sa;
   socklen_t saLen;
-  ZuCHECK(address.socketAddr(sa, saLen), "sockaddr conversion failed");
+  ZDBUS_CHECK_RT(address.socketAddr(sa, saLen), "sockaddr conversion failed");
   int listener = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  ZuCHECK(listener >= 0, "socket failed");
+  ZDBUS_CHECK_RT(listener >= 0, "socket failed");
   if (listener < 0) return;
   if (::bind(listener, reinterpret_cast<sockaddr *>(&sa), saLen) ||
       ::listen(listener, 1)) {
-    ZuCHECK(false, "bind/listen failed");
+    ZDBUS_CHECK_RT(false, "bind/listen failed");
     ::close(listener);
     return;
   }
   ZmScheduler sched{ZmSchedParams().id("ZdbusConnectionTest").nThreads(3)};
   sched.start();
   SocketReady source;
-  ZuCHECK(source.start(&sched), "peer event loop did not start");
+  ZDBUS_CHECK_RT(source.start(&sched), "peer event loop did not start");
   if (source.state.load_() != 1) {
     sched.stop();
     ::close(listener);
@@ -165,6 +168,8 @@ static void transport()
   ZmSemaphore stoppedAgain;
   ZmAtomic<unsigned> failures = 0;
   ZmAtomic<unsigned> frames = 0;
+  ZmRef<ZiIOBuf> heldFrame;
+  Zdbus_::FrameInfo heldInfo;
   ZmAtomic<unsigned> rejectedOK = 0;
   ZmAtomic<unsigned> stage = 0;
   ZmAtomic<int> failureCode = -1;
@@ -177,7 +182,10 @@ static void transport()
 
   cxn.init(&sched, 1, 2, ZuMv(address), params,
     [&ready, &cxn] { cxn.ready(); ready.post(); },
-    [&frames, &frame, &stage](ZmRef<ZiIOBuf>, Zdbus_::FrameInfo info) {
+    [&frames, &frame, &stage, &heldFrame, &heldInfo](
+        ZmRef<ZiIOBuf> owner, Zdbus_::FrameInfo info) {
+      heldInfo = info;
+      heldFrame = ZuMv(owner);
       if (info.serial == 7) ++frames;
       stage.store_(stage.load_() == 1 ? 2U : ~0U);
       frame.post();
@@ -196,37 +204,39 @@ static void transport()
   int peer = -1;
   if (source.readable(listener)) peer = ::accept4(listener, nullptr, nullptr,
     SOCK_CLOEXEC);
-  ZuCHECK(peer >= 0, "connection timed out");
+  ZDBUS_CHECK_RT(peer >= 0, "connection timed out");
   if (peer >= 0) {
     ZuArray<char, AuthLineCapacity> line;
     bool nul = source.readable(peer) &&
       ::recv(peer, line.data(), 1, MSG_DONTWAIT) == 1 && !line[0];
-    ZuCHECK(nul, "missing initial NUL");
+    ZDBUS_CHECK_RT(nul, "missing initial NUL");
     bool auth = readLine(source, peer, line.data(), line.size() - 1);
-    ZuCHECK(auth && !strncmp(line.data(), "AUTH EXTERNAL ", 14),
+    ZDBUS_CHECK_RT(auth && !strncmp(line.data(), "AUTH EXTERNAL ", 14),
       "missing EXTERNAL auth");
     constexpr char ok[] = "OK 0123456789abcdef0123456789abcdef\r\n";
-    ZuCHECK(::send(peer, ok, sizeof(ok) - 1, MSG_NOSIGNAL) ==
+    ZDBUS_CHECK_RT(::send(peer, ok, sizeof(ok) - 1, MSG_NOSIGNAL) ==
       int(sizeof(ok) - 1), "auth reply send failed");
     bool begin = readLine(source, peer, line.data(), line.size() - 1);
-    ZuCHECK(begin && !strcmp(line.data(), "BEGIN\r\n"),
+    ZDBUS_CHECK_RT(begin && !strcmp(line.data(), "BEGIN\r\n"),
       "missing BEGIN");
-    ZuCHECK(waitFor(ready), "ready callback timed out");
+    ZDBUS_CHECK_RT(waitFor(ready), "ready callback timed out");
 
     const uint8_t msg[] = {
       'l', 5, 0, 1, 0, 0, 0, 0, 7, 0, 0, 0, 0, 0, 0, 0
     };
     ZuAssert(sizeof(msg) == Zdbus_::Wire::MinHeaderSize);
-    ZmRef<ZiIOBuf> oversized = new ZiIOBufAlloc<>{};
+    ZmRef<ZiIOBuf> oversized = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
     oversized->append(msg);
     *oversized << char(0);
     cxn.send(ZuMv(oversized), [&rejected, &rejectedOK](bool ok) {
       rejectedOK.store_(!ok);
       rejected.post();
     });
-    ZuCHECK(waitFor(rejected) && rejectedOK.load_(),
+    ZDBUS_CHECK_RT(waitFor(rejected) && rejectedOK.load_(),
       "oversized queued frame was not rejected");
-    ZmRef<ZiIOBuf> outbound = new ZiIOBufAlloc<>{};
+    ZmRef<ZiIOBuf> outbound = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
     outbound->append(msg);
     cxn.send(ZuMv(outbound), [&sent, &failures, &stage](bool ok) {
       if (!ok) ++failures;
@@ -234,17 +244,17 @@ static void transport()
       sent.post();
     });
     ZuArray<uint8_t, Zdbus_::Wire::MinHeaderSize> received;
-    ZuCHECK(readBytes(source, peer, received.data(), received.size()),
+    ZDBUS_CHECK_RT(readBytes(source, peer, received.data(), received.size()),
       "outbound frame timed out");
-    ZuCHECK(!memcmp(msg, received.data(), received.size()),
+    ZDBUS_CHECK_RT(!memcmp(msg, received.data(), received.size()),
       "outbound frame mismatch");
-    ZuCHECK(waitFor(sent), "send completion timed out");
+    ZDBUS_CHECK_RT(waitFor(sent), "send completion timed out");
 
-    ZuCHECK(::send(peer, msg, sizeof(msg), MSG_NOSIGNAL) ==
+    ZDBUS_CHECK_RT(::send(peer, msg, sizeof(msg), MSG_NOSIGNAL) ==
       int(sizeof(msg)), "frame send failed");
-    ZuCHECK(waitFor(frame), "frame callback timed out");
+    ZDBUS_CHECK_RT(waitFor(frame), "frame callback timed out");
     ::close(peer);
-    ZuCHECK(waitFor(disconnected), "peer EOF was not reported");
+    ZDBUS_CHECK_RT(waitFor(disconnected), "peer EOF was not reported");
   }
   ::close(listener);
   source.stop();
@@ -254,18 +264,28 @@ static void transport()
     stopped.post();
   });
   cxn.stop([&stoppedAgain] { stoppedAgain.post(); });
-  ZuCHECK(waitFor(stopped), "stop timed out");
+  ZDBUS_CHECK_RT(waitFor(stopped), "stop timed out");
   cxn.final();
-  ZuCHECK(waitFor(stoppedAgain), "second stop timed out");
+  ZDBUS_CHECK_RT(waitFor(stoppedAgain), "second stop timed out");
   sched.stop();
-  ZuCHECK(frames.load_() == 1, "frame not received");
-  ZuCHECK(stage.load_() == 4,
+  ZDBUS_CHECK_RT(frames.load_() == 1, "frame not received");
+  ZuCheckRT(heldFrame && heldInfo.span().length() == Zdbus_::Wire::MinHeaderSize);
+  ZuCheckRT(heldFrame && heldInfo.data >= heldFrame->data_() &&
+    heldInfo.data + heldInfo.total <= heldFrame->data_() + heldFrame->size);
+  auto retained = Zdbus_::frame(heldInfo.span());
+  ZuCheckRT(bool(retained) && retained.info.serial == 7);
+  ZuCheckRT(heldFrame &&
+    heldInfo.body().data() == heldInfo.data + heldInfo.bodyOffset &&
+    !heldInfo.body().length());
+  ZDBUS_CHECK_RT(stage.load_() == 4,
     "Tx send, Rx frame/failure, Tx stop ordering was violated");
-  ZuCHECK(failures.load_() == 1 &&
+  ZDBUS_CHECK_RT(failures.load_() == 1 &&
     failureCode.load_() == Zdbus_::CxnError::System &&
     failureSystem.load_() == ECONNRESET,
     "peer EOF was not the single terminal failure");
 }
+
+#undef ZDBUS_CHECK_RT
 
 static void stopBeforeStart()
 {

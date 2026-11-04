@@ -157,7 +157,7 @@ static void fields()
     "49=LATE\1" "10=255\1"_z;
   ZtArray<char, ZtArrayHeapID<"Zfix.FieldFrame">> bytes;
   bytes.length(Largest.length(), false);
-  auto encoded = writeFrame<OrderMsg>({bytes.data(), bytes.length()}, "FIX.4.4", value);
+  auto encoded = writeFrame<OrderMsg>(bytes, "FIX.4.4", value);
   ZuCheck(bool(encoded));
   auto parsed = frame(encoded.data);
   MessageHandler<Order> received{parsed.view};
@@ -167,12 +167,12 @@ static void fields()
   ZuCheck(received.valid() && indexed.valid() && cached.id == "abc" &&
     cached.sender == "CLIENT" && cached.sender.data() == direct.sender.data());
   DataOrder source{"abc", "text"};
-  auto dataFrame = writeFrame<DataMsg>({bytes.data(), bytes.length()}, "FIX.4.4", source);
+  auto dataFrame = writeFrame<DataMsg>(bytes, "FIX.4.4", source);
   ZuCheck(dataFrame && frame(dataFrame.data).state == FrameState::Complete);
   MessageHandler<ReadOrder> skipped{frame(dataFrame.data).view};
   ReadOrder destination{"old", {}};
   ZuCheck(skipped.load(destination) && destination.data == "old" && destination.id == "abc");
-  FrameWriter wrong{{bytes.data(), bytes.length()}, "FIX.4.4"};
+  FrameWriter wrong{bytes, "FIX.4.4"};
   wrong.body() << "35=D\1";
   ZuCheck(save(wrong.body(), value));
   wrong.body().field(49); wrong.body() << "LATE"; wrong.body().end();
@@ -187,41 +187,41 @@ static void fields()
 
 static void splits()
 {
-  ZuTestScope(splits);
+  ZuTestScopeRT(splits);
   auto check = [](ZuCSpan wire) {
     Framer parser;
     for (unsigned i = 0; i < wire.length(); ++i) {
       auto r = frame({wire.data(), i});
-      ZuCheck(r.state == FrameState::Incomplete && !r.error && !r.consumed);
+      ZuCheckRT(r.state == FrameState::Incomplete && !r.error && !r.consumed);
       auto incremental = parser.scan({wire.data(), i});
-      ZuCheck(incremental.state == FrameState::Incomplete && !incremental.error);
+      ZuCheckRT(incremental.state == FrameState::Incomplete && !incremental.error);
     }
     auto incremental = parser.scan(wire);
-    ZuCheck(incremental.state == FrameState::Complete && incremental.consumed == wire.length());
+    ZuCheckRT(incremental.state == FrameState::Complete && incremental.consumed == wire.length());
     parser.reset();
-    ZuCheck(parser.scan(wire).state == FrameState::Complete);
+    ZuCheckRT(parser.scan(wire).state == FrameState::Complete);
     auto r = frame(wire);
-    ZuCheck(r.state == FrameState::Complete && r.consumed == wire.length());
-    ZuCheck(r.view.wire.data() == wire.data() && r.view.wire == wire);
-    ZuCheck(r.view.beginString == "FIX.4.4" && r.view.msgType == "D");
+    ZuCheckRT(r.state == FrameState::Complete && r.consumed == wire.length());
+    ZuCheckRT(r.view.wire.data() == wire.data() && r.view.wire == wire);
+    ZuCheckRT(r.view.beginString == "FIX.4.4" && r.view.msgType == "D");
   };
   check(ScalarWire);
   check(TextWire);
   auto r = frame(TextWire);
-  ZuCheck(r.view.content == "58=ABCD\1"_z);
-  ZuCheck((ZuCSpan{TextWire.data() + TextWire.length() - 7, 7} == "10=155\1"));
+  ZuCheckRT(r.view.content == "58=ABCD\1"_z);
+  ZuCheckRT((ZuCSpan{TextWire.data() + TextWire.length() - 7, 7} == "10=155\1"));
 }
 
 static void progress()
 {
-  ZuTestScope(progress);
+  ZuTestScopeRT(progress);
   ZtString<ZtStringHeapID<"Zfix.FrameTest">> input;
   Framer parser;
   for (unsigned i = 0; i < ScalarWire.length(); ++i) {
     input << ScalarWire[i];
     auto r = parser.scan(input);
-    if (i + 1 < ScalarWire.length()) ZuCheck(r.state == FrameState::Incomplete);
-    else ZuCheck(r.state == FrameState::Complete && r.view.wire.data() == input.data());
+    if (i + 1 < ScalarWire.length()) ZuCheckRT(r.state == FrameState::Incomplete);
+    else ZuCheckRT(r.state == FrameState::Complete && r.view.wire.data() == input.data());
   }
   parser.reset();
   Limits cfg;
@@ -234,28 +234,28 @@ static void progress()
   cfg.frameBytes = size;
   ZtArray<char, ZtArrayHeapID<"Zfix.FrameTest">> bytes;
   bytes.length(size, false);
-  FrameWriter writer{{bytes.data(), bytes.length()}, begin, cfg};
+  FrameWriter writer{bytes, begin, cfg};
   writer.body().field(35); writer.body() << 'D'; writer.body().end();
   auto wire = writer.finish();
-  ZuCheck(wire && wire.data.length() == size);
+  ZuCheckRT(wire && wire.data.length() == size);
   Framer large{cfg};
   for (unsigned i = 0; i < wire.data.length(); ++i) {
     auto r = large.scan({wire.data.data(), i});
-    ZuCheck(r.state == FrameState::Incomplete);
-    if (i >= begin.length() + 7) ZuCheck(r.expected == size);
+    ZuCheckRT(r.state == FrameState::Incomplete);
+    if (i >= begin.length() + 7) ZuCheckRT(r.expected == size);
   }
   auto complete = large.scan(wire.data);
-  ZuCheck(complete.state == FrameState::Complete && complete.expected == size);
+  ZuCheckRT(complete.state == FrameState::Complete && complete.expected == size);
   auto reused = large.scan(wire.data);
-  ZuCheck(reused.state == FrameState::Error);
+  ZuCheckRT(reused.state == FrameState::Error);
   large.reset();
-  ZuCheck(large.scan(wire.data).state == FrameState::Complete);
+  ZuCheckRT(large.scan(wire.data).state == FrameState::Complete);
   constexpr auto Incomplete = "8=FIX.4.4\1" "9=5\1" "35=XX"_z;
   Framer shortType;
   auto prefix = shortType.scan({Incomplete.data(), Incomplete.length() - 1});
-  ZuCheck(prefix.state == FrameState::Incomplete);
+  ZuCheckRT(prefix.state == FrameState::Incomplete);
   auto boundary = shortType.scan(Incomplete);
-  ZuCheck(boundary.state == FrameState::Error && boundary.error.code == ErrorCode::Length);
+  ZuCheckRT(boundary.state == FrameState::Error && boundary.error.code == ErrorCode::Length);
 
 }
 
@@ -277,11 +277,11 @@ static void coalesced()
 
 static void corrupt()
 {
-  ZuTestScope(corrupt);
+  ZuTestScopeRT(corrupt);
   auto bad = [](ZuCSpan wire, unsigned code, int32_t tag) {
     auto r = frame(wire);
-    ZuCheck(r.state == FrameState::Error && r.error.code == code && r.error.tag == tag);
-    ZuCheck(!r.consumed);
+    ZuCheckRT(r.state == FrameState::Error && r.error.code == code && r.error.tag == tag);
+    ZuCheckRT(!r.consumed);
   };
   bad("9=12\1"_z, ErrorCode::Envelope, 9);
   bad("8=FIX.4.4\1" "35=D\1"_z, ErrorCode::Envelope, 35);
@@ -353,7 +353,7 @@ static void output()
 
 static void capacity()
 {
-  ZuTestScope(capacity);
+  ZuTestScopeRT(capacity);
   using Bytes = ZtArray<char, ZtArrayHeapID<"Zfix.FrameTest">>;
   for (unsigned n = 0; n <= 1010; ++n) {
     unsigned bodyLength = 9 + n, digits = 1;
@@ -362,7 +362,7 @@ static void capacity()
     for (unsigned extra = 0; extra <= 10; ++extra) {
       Bytes bytes;
       bytes.length(size + extra, false);
-      FrameWriter writer{{bytes.data(), bytes.length()}, "FIX.4.4"};
+      FrameWriter writer{bytes, "FIX.4.4"};
       auto &out = writer.body();
       out.field(35); out << 'D'; out.end();
       out.field(11);
@@ -370,21 +370,21 @@ static void capacity()
       out.end();
       const char *body = out.data().data();
       auto r = writer.finish();
-      ZuCheck(r && r.data.length() == size);
+      ZuCheckRT(r && r.data.length() == size);
       auto parsed = frame(r.data);
-      ZuCheck(parsed.state == FrameState::Complete && parsed.consumed == size);
-      ZuCheck(parsed.view.msgType.data() == body + "35="_z.length());
+      ZuCheckRT(parsed.state == FrameState::Complete && parsed.consumed == size);
+      ZuCheckRT(parsed.view.msgType.data() == body + "35="_z.length());
     }
     Bytes shortBytes;
     shortBytes.length(size - 1, false);
-    FrameWriter shortOut{{shortBytes.data(), shortBytes.length()}, "FIX.4.4"};
+    FrameWriter shortOut{shortBytes, "FIX.4.4"};
     auto &out = shortOut.body();
     out.field(35); out << 'D'; out.end();
     out.field(11);
     for (unsigned i = 0; i < n; ++i) out << 'x';
     out.end();
     auto r = shortOut.finish();
-    ZuCheck(!r && r.error.code == ErrorCode::Size && !r.data);
+    ZuCheckRT(!r && r.error.code == ErrorCode::Size && !r.data);
   }
 }
 
@@ -407,7 +407,7 @@ struct Growing {
       memcpy(next.data(), self->bytes.data(), n);
     }
     self->bytes = ZuMv(next);
-    return {self->bytes.data(), self->bytes.length()};
+    return self->bytes;
   }
 };
 
@@ -452,6 +452,45 @@ static void growing()
   ZuCheck(!tooLarge && tooLarge.error.code == ErrorCode::Size && !tooLarge.data);
 }
 
+static void retainedOutput()
+{
+  ZuTestScope(retainedOutput);
+  constexpr auto Body = "35=D\1"_z;
+  constexpr auto Payload = "11=abc\1"_z;
+  Growing storage;
+  FrameWriter writer{{}, "FIX.4.4", Growing::grow, &storage};
+  writer.body() << Body;
+  auto metadata = writer.body().data();
+  unsigned checksum = 0;
+  auto sum = [&checksum](ZuCSpan bytes) {
+    for (unsigned i = 0; i < bytes.length(); ++i) checksum += uint8_t(bytes[i]);
+  };
+  SpanView{metadata}.each(sum); SpanView{Payload}.each(sum);
+  auto parts = writer.finishParts(Body.length() + Payload.length(), checksum);
+  ZuCheck(parts && parts.prefix == "8=FIX.4.4\1" "9=12\1"_z &&
+    parts.trailer == "10=171\1"_z);
+  ZuCheck(writer.body().data().data() == metadata.data() && writer.body().data() == Body);
+  ZuCheck(parts.prefix.data() + parts.prefix.length() == metadata.data() &&
+    parts.trailer.data() == metadata.data() + metadata.length());
+  // Concatenation is assertion-only; production keeps Payload's original span.
+  ZtString<ZtStringHeapID<"Zfix.FramePartsTest">> wire;
+  wire << parts.prefix << metadata << Payload << parts.trailer;
+  ZuCheck(wire == ScalarWire);
+  ZuCheck(!writer.finishParts(Body.length() + Payload.length(), checksum));
+
+  Limits cfg; cfg.frameBytes = ScalarWire.length() - 1;
+  Growing bounded;
+  FrameWriter shortWriter{{}, "FIX.4.4", Growing::grow, &bounded, cfg};
+  shortWriter.body() << Body;
+  auto tooLarge = shortWriter.finishParts(Body.length() + Payload.length(), checksum);
+  ZuCheck(!tooLarge && tooLarge.error.code == ErrorCode::Size);
+  Growing invalid;
+  FrameWriter wrong{{}, "FIX.4.4", Growing::grow, &invalid};
+  wrong.body() << Payload;
+  auto noType = wrong.finishParts(Payload.length(), checksum);
+  ZuCheck(!noType && noType.error.code == ErrorCode::Envelope);
+}
+
 // Independently counted with Python len()/sum(); embedded envelope-looking
 // tags are payload octets, including the SOH that ends each inner FIX message.
 static constexpr auto BinaryWire = "8=FIX.4.4\1" "9=136\1" "35=n\1"
@@ -482,50 +521,50 @@ ZfStruct(, (SignatureMessage, FIX),
 
 static void binaryEnvelope()
 {
-  ZuTestScope(binaryEnvelope);
-  ZuCheck(BinaryWire.length() == 159 && XML.length() == 35 && Replay.length() == 52);
+  ZuTestScopeRT(binaryEnvelope);
+  ZuCheckRT(BinaryWire.length() == 159 && XML.length() == 35 && Replay.length() == 52);
   auto parsed = frame(BinaryWire);
-  ZuCheck(parsed.state == FrameState::Complete && parsed.consumed == BinaryWire.length());
-  ZuCheck(parsed.view.msgType == "n");
+  ZuCheckRT(parsed.state == FrameState::Complete && parsed.consumed == BinaryWire.length());
+  ZuCheckRT(parsed.view.msgType == "n");
   BinaryMessage value;
-  ZuCheck(!load(value, parsed.view.content));
-  ZuCheck(value.xml == ZuBSpan{XML} && value.replay == Replay && value.id == "outer" &&
+  ZuCheckRT(!load(value, parsed.view.content));
+  ZuCheckRT(value.xml == ZuBSpan{XML} && value.replay == Replay && value.id == "outer" &&
     value.signature == ZuBSpan{SigPayload});
-  ZuCheck(value.xml.data() == reinterpret_cast<const uint8_t *>(
+  ZuCheckRT(value.xml.data() == reinterpret_cast<const uint8_t *>(
     BinaryWire.data() + ZuCSpan{BinaryWire}.find(XML)));
-  ZuCheck(value.replay.data() == BinaryWire.data() + ZuCSpan{BinaryWire}.find(Replay));
-  ZuCheck(value.signature.data() == reinterpret_cast<const uint8_t *>(
+  ZuCheckRT(value.replay.data() == BinaryWire.data() + ZuCSpan{BinaryWire}.find(Replay));
+  ZuCheckRT(value.signature.data() == reinterpret_cast<const uint8_t *>(
     BinaryWire.data() + ZuCSpan{BinaryWire}.find("89="_z) + 3));
   Indexed<BinaryMessage, ZuFacet::FIX> indexed{parsed.view.content};
   BinaryMessage copy;
-  ZuCheck(indexed.load(copy) && copy.xml.data() == value.xml.data() &&
+  ZuCheckRT(indexed.load(copy) && copy.xml.data() == value.xml.data() &&
     copy.replay.data() == value.replay.data() && copy.signature.data() == value.signature.data());
   using Bytes = ZtArray<char, ZtArrayHeapID<"Zfix.BinaryFrame">>;
   Bytes storage; storage.length(BinaryWire.length(), false);
-  FrameWriter writer{{storage.data(), storage.length()}, "FIX.4.4"};
+  FrameWriter writer{storage, "FIX.4.4"};
   writer.body() << "35=n\1";
-  ZuCheck((save<ZuFacet::FIX, ZfFieldFilter::Save>(writer.body(), value)));
+  ZuCheckRT((save<ZuFacet::FIX, ZfFieldFilter::Save>(writer.body(), value)));
   auto encoded = writer.finish();
-  ZuCheck(encoded && encoded.data == BinaryWire);
+  ZuCheckRT(encoded && encoded.data == BinaryWire);
   // Both framing APIs use BodyLength, ignoring inner 8/9/35/10 byte patterns.
   Framer incremental;
   for (unsigned n = 0; n < BinaryWire.length(); ++n) {
-    ZuCheck(frame({BinaryWire.data(), n}).state == FrameState::Incomplete);
-    ZuCheck(incremental.scan({BinaryWire.data(), n}).state == FrameState::Incomplete);
+    ZuCheckRT(frame({BinaryWire.data(), n}).state == FrameState::Incomplete);
+    ZuCheckRT(incremental.scan({BinaryWire.data(), n}).state == FrameState::Incomplete);
   }
-  ZuCheck(incremental.scan(BinaryWire).state == FrameState::Complete);
+  ZuCheckRT(incremental.scan(BinaryWire).state == FrameState::Complete);
   ZtString<ZtStringHeapID<"Zfix.BinaryFrame">> coalesced{BinaryWire}; coalesced << TextWire;
   auto first = frame(coalesced);
-  ZuCheck(first.state == FrameState::Complete && first.consumed == BinaryWire.length());
+  ZuCheckRT(first.state == FrameState::Complete && first.consumed == BinaryWire.length());
   auto second = frame(ZuCSpan{coalesced}.offset(first.consumed));
-  ZuCheck(second.state == FrameState::Complete && second.view.wire == TextWire);
+  ZuCheckRT(second.state == FrameState::Complete && second.view.wire == TextWire);
   Limits limit; limit.frameBytes = BinaryWire.length();
-  ZuCheck(frame(coalesced, limit).state == FrameState::Complete);
+  ZuCheckRT(frame(coalesced, limit).state == FrameState::Complete);
   --limit.frameBytes;
-  ZuCheck(frame(BinaryWire, limit).error.code == ErrorCode::Size);
+  ZuCheckRT(frame(BinaryWire, limit).error.code == ErrorCode::Size);
   ZtString<ZtStringHeapID<"Zfix.BinaryFrame">> corrupt{BinaryWire};
   corrupt[corrupt.length() - 2] ^= 1;
-  ZuCheck(frame(corrupt).error.code == ErrorCode::Checksum);
+  ZuCheckRT(frame(corrupt).error.code == ErrorCode::Checksum);
 }
 
 static void signatureBoundary()
@@ -537,7 +576,7 @@ static void signatureBoundary()
     using Bytes = ZtArray<char, ZtArrayHeapID<"Zfix.SignBoundary">>;
     constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "10=255\1"_z;
     Bytes storage; storage.length(body.length() + Envelope.length(), false);
-    FrameWriter writer{{storage.data(), storage.length()}, "FIX.4.4"};
+    FrameWriter writer{storage, "FIX.4.4"};
     writer.body() << body;
     auto encoded = writer.finish();
     if (!encoded) return false;
@@ -572,6 +611,7 @@ int main(int argc, char **argv)
   ZuTestCall(binaryEnvelope);
   ZuTestCall(signatureBoundary);
   ZuTestCall(growing);
+  ZuTestCall(retainedOutput);
   ZuTestCall(progress);
   ZuTestCall(fields);
   ZuTestCall(subIds);

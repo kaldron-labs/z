@@ -26,6 +26,10 @@ struct Options {
   ZuCSpan	ca;
   ZuCSpan	agent{"Zws"};
   ZuCSpan	server{"ws://127.0.0.1:9001"};
+  // One MiB echo burst, plus control and retiring buffers.
+  uint32_t	rxRingSize = ZiIOBuf_DefltRxRingSize +
+    ((1U<<20) + ZiIOBuf_DefltSize - 1) / ZiIOBuf_DefltSize;
+  uint32_t	txRingSize = ZiIOBuf_DefltTxRingSize + (1U<<20) / (16U<<10);
   uint32_t	timeout = 600;
   bool		verbose = false;
   bool		help = false;
@@ -34,6 +38,8 @@ struct Options {
 ZfStruct(, (Options, CLI),
   (ca,       (CLI::Opt<'c'>, CLI::Long<"ca">),			String),
   (agent,    (CLI::Opt<'a'>, CLI::Long<"agent">),		String),
+  (rxRingSize, (CLI::Long<"rx-ring-size">),			UInt32),
+  (txRingSize, (CLI::Long<"tx-ring-size">),			UInt32),
   (timeout,  (CLI::Opt<'t'>, CLI::Long<"timeout">),		UInt32),
   (verbose,  (CLI::Flag<'v'>, CLI::Long<"verbose">),		Bool),
   (server,   (CLI::Arg<1>),					String),
@@ -46,14 +52,20 @@ void usage(int code = 1)
     "  -c, --ca=PATH       CA path for wss\n"
     "  -a, --agent=NAME    report agent name, default Zws\n"
     "  -t, --timeout=N     suite timeout, default 600 seconds\n"
+    "      --rx-ring-size=N receive pool slots, default 1 MiB burst + 128\n"
+    "      --tx-ring-size=N transmit pool slots, default 1 MiB burst + 128\n"
     "  -v, --verbose       report each case\n"
     "  -h, --help          show help\n" << std::flush;
   ::exit(code);
 }
 
-ZiMxParams mxParams()
+ZiMxParams mxParams(const Options &options)
 {
   return ZiMxParams()
+    .rxRingSize(options.rxRingSize).txRingSize(options.txRingSize)
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -205,7 +217,7 @@ int run(const Options &options, const Zws::URI &base)
   trapDone = &done;
   ZmTrap::sigintFn(trapped);
   ZmTrap::trap();
-  ZiMultiplex mx{mxParams()};
+  ZiMultiplex mx{mxParams(options)};
   if (!mx.start()) {
     trapDone = nullptr;
     return 1;
@@ -268,7 +280,11 @@ int main(int argc, char **argv)
     usage();
   }
   if (options.help) usage(0);
-  if (argc < 0 || argc > 2) usage();
+  if (argc < 0 || argc > 2 ||
+      options.rxRingSize < ZiMxParams::MinRingSize ||
+      options.rxRingSize > ZiMxParams::MaxRingSize ||
+      options.txRingSize < ZiMxParams::MinRingSize ||
+      options.txRingSize > ZiMxParams::MaxRingSize) usage();
 
   Zws::URI uri;
   auto error = Zws::URI::parse(uri, options.server);

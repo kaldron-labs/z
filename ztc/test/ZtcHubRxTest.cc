@@ -17,7 +17,12 @@ using namespace ZuTestUtil;
 
 namespace ZtcHubRxTest_ {
 
+using TestRxAllocator = Zi::RxTCPBufAllocator<ZiRxQueue::Node, 64, 1U << 20,
+  ZuStringT<"Ztc.Test.HubRx">>;
+
 struct Timers {
+  ZmRef<Zi::IOBufAllocator> allocator{new TestRxAllocator{2}};
+  auto rxAllocator(bool) { return allocator; }
   template <typename ...Args> void add(Args &&...) { }
   template <typename T> void del(T *) { }
 };
@@ -40,7 +45,17 @@ struct Server {
   template <typename L> void txRun(L &&fn) { fn(); }
 };
 struct Sink {
-  Sink &operator <<(ZuBSpan) { return *this; }
+  unsigned headRoom() const { return 0; }
+  unsigned tailRoom() const { return 0; }
+  ZmRef<ZiIOBuf> allocBuf(unsigned head) {
+    ZmRef<ZiIOBuf> buf = new ZtcHub_::HubBuf{nullptr, 0};
+    buf->skip = head;
+    return buf;
+  }
+  bool canAdopt_(const ZiIOBuf &) const { return false; }
+  template <typename P> Sink &operator <<(P &&) { return *this; }
+  bool appendOwned_(ZmRef<ZiIOBuf>) { return true; }
+  bool appendRange(Zi::RxRange) { return true; }
   void flush() { }
 };
 struct Link_ : public ZmNHeap<Link_>, public ZmObject {
@@ -52,7 +67,12 @@ friend inline ZuStringT<"Ztc.Test.HubLink"> ZmNHeapID(Link_ *);
 
   Link_(Server *server_) : server{server_} { }
   auto app() { return server; }
+  auto &channel() { return *this; }
   auto &state() { return input; }
+  template <typename L> void streamTx(L &&fn) {
+    Sink sink;
+    fn(sink);
+  }
   void close(unsigned code) { closeCode = code; }
   template <typename L> void txStream_(L &&fn, Zws::Opcode::T) {
     Sink sink;
@@ -62,17 +82,6 @@ friend inline ZuStringT<"Ztc.Test.HubLink"> ZmNHeapID(Link_ *);
 
 ZuDerive(Link, Link_);
 ZuDerive(Bytes, (ZtArray<uint8_t, ZtArrayHeapID<"Ztc.Test.HubBytes">>));
-struct Rx {
-  ZuSpan<uint8_t> bytes;
-
-  explicit operator bool() const { return bool(bytes); }
-  template <typename F, typename L> int64_t consume(F &&f, L &&l) {
-    auto n = f(bytes);
-    if (!l(bytes)) return -1;
-    bytes.offset(n);
-    return n;
-  }
-};
 
 static Ztc::HubdCf config(unsigned frames)
 {
@@ -112,7 +121,13 @@ struct Fixture {
   }
   int start() { return app.messageStart(*link, Zws::Opcode::Binary); }
   int receive(ZuSpan<uint8_t> bytes) {
-    Rx rx{bytes};
+    auto backing = server.timers.allocator->alloc();
+    if (!backing || !backing->append(ZuBSpan{bytes})) return -1;
+    return receive(Zi::RxRange{ZuMv(backing), 0, bytes.length()});
+  }
+  int receive(Zi::RxRange range) {
+    ZiRxStream<ZiRxQueue> rx;
+    rx.push(ZuMv(range));
     return app.process(*link, rx);
   }
   int end() { return app.messageEnd(*link); }
@@ -132,18 +147,277 @@ struct Fixture {
   }
 };
 
-static Ztc::HubFrame ack(unsigned seqNo)
+static Ztc::HubFrame ack(uint64_t seqNo, ZuCSpan id = "publisher")
 {
-  Ztc::Builder builder{new ZtcHub_::HubBuf};
+  Ztc::Builder builder{new ZtcHub_::HubBuf{nullptr, 0}};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, Ztc::Ack{
-    .id = "publisher", .seqNo = seqNo, .status = Ztc::AckStatus::OK});
+    .id = ZuID{id}, .seqNo = seqNo, .status = Ztc::AckStatus::OK});
   builder.finish(Ztc::saveMsg(builder, nested, Ztc::Body::Ack, value));
   return builder.buf();
 }
 static ZuSpan<uint8_t> bytes(const Ztc::HubFrame &frame)
 {
   return {frame->data(), frame->length};
+}
+
+static Ztc::HubFrame packetStorage()
+{
+  Ztc::HubFrame frame = new ZtcHub_::HubBuf{nullptr, 0};
+  frame->skip = 32; // composed lower framing room in this test writer
+  return frame;
+}
+
+// A decoder needs a contiguous wire artifact; the real output below retains
+// its two original ranges. This join exists only for schema verification.
+static Bytes packetBytes(const Ztc::HubPacket &packet)
+{
+  Bytes result;
+  result.length(unsigned(packet.length()));
+  memcpy(result.data(), packet.head.cspan().data(), packet.head.length);
+  if (packet.tail.length)
+    memcpy(result.data() + packet.head.length,
+      packet.tail.cspan().data(), packet.tail.length);
+  return result;
+}
+
+struct PacketSink {
+  ZtArray<Zi::RxRange, ZtArrayHeapID<"Ztc.Test.PacketParts">> parts;
+
+  bool canAdopt_(const ZiIOBuf &) const { return false; }
+  PacketSink &operator <<(ZmRef<ZiIOBuf> buf) {
+    auto length = buf->length;
+    parts.push(Zi::RxRange{ZuMv(buf), 0, length});
+    return *this;
+  }
+  bool appendRange(Zi::RxRange range) {
+    parts.push(ZuMv(range));
+    return true;
+  }
+  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
+    auto length = buf->length;
+    return appendRange(Zi::RxRange{ZuMv(buf), 0, length});
+  }
+};
+
+// Like TCPStream, a writer retains its allocation as provenance. A compatible
+// non-retaining lower layer can otherwise mutate any buffer handed to it.
+struct PacketWriter : public PacketSink {
+  Ztc::HubFrame allocated;
+  Ztc::HubFrame sent;
+  unsigned adopted = 0;
+
+  Ztc::HubFrame allocBuf(unsigned head) {
+    allocated = packetStorage();
+    allocated->skip = head;
+    return allocated;
+  }
+  bool canAdopt_(const ZiIOBuf &buf) const {
+    return buf.skip >= 32 && buf.avail() >= 16;
+  }
+  PacketWriter &operator <<(ZmRef<ZiIOBuf> buf) {
+    ++adopted;
+    buf->data()[0] ^= 0x5a; // observable stand-in for in-place WS masking
+    sent = ZuMv(buf);
+    return *this;
+  }
+  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
+    *this << ZuMv(buf);
+    return true;
+  }
+};
+
+static void prefixAuthority()
+{
+  ZuTestScope(prefixAuthority);
+  auto source = ack(51);
+  auto message = Ztc::msg(source->cspan());
+  Bytes original;
+  original.length(source->length);
+  memcpy(original.data(), source->data(), source->length);
+  Ztc::RouteInfo route;
+  route.subID = 7; route.deviceID = "device-a"; route.agentGeneration = 3;
+  bool valid = true;
+  auto build = ZtcHub_::agentFrame(route, message, source, UINT32_MAX, &valid);
+  PacketWriter writer;
+  auto storage = writer.allocBuf(32);
+  auto allocated = storage.ptr();
+  auto packet = build(ZuMv(storage), 16);
+  ZuCheck(valid && packet && packet.head.buf.ptr() == allocated, (return));
+  ZuCheck(packet.head.buf->refCount() > 1 && writer.canAdopt_(*allocated));
+  auto payload = packet.head.cspan().data();
+  auto first = payload[0];
+  ZuMv(packet).write(writer, true);
+  ZuCheck(writer.adopted == 1 && writer.sent.ptr() == allocated &&
+    writer.parts.length() == 1 && writer.parts[0].buf == source, (return));
+  ZuCheck(writer.sent->data() == payload && payload[0] == uint8_t(first ^ 0x5a));
+  ZuCheck(source->cspan() == ZuBSpan{original});
+
+  auto borrowed = build(packetStorage(), 16);
+  ZuCheck(valid && borrowed, (return));
+  auto expected = packetBytes(borrowed);
+  auto backing = borrowed.head.buf.ptr();
+  auto offset = backing->skip, length = backing->length;
+  PacketWriter lower;
+  ZuCheck(backing->refCount() == 1 && lower.canAdopt_(*backing));
+  ZuMv(borrowed).write(lower, false);
+  ZuCheck(!lower.adopted && !lower.sent && lower.parts.length() == 2, (return));
+  ZuCheck(lower.parts[0].buf.ptr() == backing && lower.parts[1].buf == source &&
+    backing->skip == offset && backing->length == length);
+  Ztc::HubPacket retained;
+  retained.head = lower.parts[0]; retained.tail = lower.parts[1];
+  auto actual = packetBytes(retained);
+  ZuCheck(ZuBSpan{actual} == ZuBSpan{expected} && source->cspan() == ZuBSpan{original});
+}
+
+static void segmentedEnvelope()
+{
+  ZuTestScope(segmentedEnvelope);
+  Fixture<ZuTest_scope> f;
+  f.authorize();
+  auto first = ack(11), second = ack(22);
+  ZuCheck(f.start() == 1 && f.receive(bytes(first)) == 1);
+  auto source = f.link->input.frame.range().buf.ptr();
+  auto original = source->data_();
+  auto message = Ztc::msg(source->cspan());
+  auto payload = message.get<Ztc::ZfField(Msg, data)>();
+  Ztc::RouteInfo a, b;
+  a.subID = 7; a.deviceID = "device-a"; a.agentGeneration = 3;
+  b.subID = 19; b.deviceID = "a-different-device-with-a-longer-identifier";
+  b.agentGeneration = 5;
+  bool validA = true, validB = true;
+  auto buildA = ZtcHub_::agentFrame(a, message, ZmRef<ZiIOBuf>{source},
+    UINT32_MAX, &validA);
+  auto buildB = ZtcHub_::agentFrame(b, message, ZmRef<ZiIOBuf>{source},
+    UINT32_MAX, &validB);
+  auto storageA = packetStorage(), storageB = packetStorage();
+  auto allocatedA = storageA.ptr(), allocatedB = storageB.ptr();
+  auto packetA = buildA(ZuMv(storageA), 16);
+  auto packetB = buildB(ZuMv(storageB), 16);
+  buildA = {}; buildB = {};
+  ZuCheck(validA && validB && packetA && packetB, (return));
+  ZuCheck(packetA.head.buf.ptr() == allocatedA && packetB.head.buf.ptr() == allocatedB);
+  ZuCheck(packetA.head.offset >= 32 && packetB.head.offset >= 32 &&
+    allocatedA->avail() >= 16 && allocatedB->avail() >= 16);
+  ZuCheck(packetA.tail.buf.ptr() == source && packetB.tail.buf.ptr() == source &&
+    packetA.tail.cspan().data() == payload.data() &&
+    packetB.tail.cspan().data() == payload.data() &&
+    packetA.tail.length == payload.length() && packetB.tail.length == payload.length());
+  ZuCheck(!(packetA.head.length & (Ztc::Builder::Align - 1)) &&
+    !(packetB.head.length & (Ztc::Builder::Align - 1)));
+  PacketSink pending;
+  auto delivered = packetA;
+  ZuMv(delivered).write(pending, false);
+  ZuCheck(pending.parts.length() == 2 &&
+    pending.parts[0].buf == packetA.head.buf && pending.parts[1].buf.ptr() == source &&
+    pending.parts[1].cspan().data() == payload.data());
+  ZuCheck(f.end() == 1 && !f.link->input.frame);
+  // Another delivery may finish while this one is still queued. All geometry
+  // above is physical, independent of the backing descriptor's current cursor.
+  source->advance(source->length);
+  allocatedA->advance(allocatedA->length);
+  ZuCheck(source->data_() == original && packetA.tail.cspan().data() == payload.data() &&
+    packetA.body().get<Ztc::Body::Ack>().get<Ztc::ZfField(Ack, seqNo)>() == 11);
+  ZuCheck(f.start() == 1 && f.link->input.frame.range().buf.ptr() != source &&
+    f.receive(bytes(second)) == 1 && f.end() == 1);
+  auto wireA = packetBytes(packetA), wireB = packetBytes(packetB);
+  auto msgA = Ztc::msg(wireA), msgB = Ztc::msg(wireB);
+  ZuCheck(msgA && msgB, (return));
+  ZuCheck(msgA.get<Ztc::ZfField(Msg, subID)>() == a.subID &&
+    msgB.get<Ztc::ZfField(Msg, subID)>() == b.subID &&
+    msgA.get<Ztc::ZfField(Msg, deviceID)>() == a.deviceID &&
+    msgB.get<Ztc::ZfField(Msg, deviceID)>() == b.deviceID &&
+    msgA.get<Ztc::ZfField(Msg, agentGen)>() == a.agentGeneration &&
+    msgB.get<Ztc::ZfField(Msg, agentGen)>() == b.agentGeneration);
+  ZuCheck(msgA.get<Ztc::ZfField(Msg, data)>() == payload &&
+    msgB.get<Ztc::ZfField(Msg, data)>() == payload &&
+    Ztc::msgBody(msgA).get<Ztc::Body::Ack>().get<Ztc::ZfField(Ack, seqNo)>() == 11 &&
+    Ztc::msgBody(msgB).get<Ztc::Body::Ack>().get<Ztc::ZfField(Ack, seqNo)>() == 11);
+}
+
+static void packetBounds()
+{
+  ZuTestScope(packetBounds);
+  auto source = ack(31);
+  auto message = Ztc::msg(source->cspan());
+  Ztc::RouteInfo route;
+  route.subID = UINT64_MAX; route.agentGeneration = UINT64_MAX;
+  bool valid = true;
+  auto build = ZtcHub_::agentFrame(route, message, source, UINT32_MAX, &valid);
+  auto packet = build(packetStorage(), 16);
+  ZuCheck(valid && packet && !packet.message().get<Ztc::ZfField(Msg, deviceID)>(), (return));
+  auto length = unsigned(packet.length());
+  source->advance(source->length);
+  auto exact = ZtcHub_::agentFrame(route, message, source, length, &valid);
+  auto accepted = exact(packetStorage(), 16);
+  ZuCheck(valid && accepted && accepted.length() == length &&
+    accepted.tail.cspan().data() == packet.tail.cspan().data(), (return));
+  auto bounded = ZtcHub_::agentFrame(route, message, source, length - 1, &valid);
+  auto rejected = bounded(packetStorage(), 16);
+  ZuCheck(!valid && !rejected);
+  auto wire = packetBytes(accepted);
+  auto msg = Ztc::msg(wire);
+  ZuCheck(msg && msg.get<Ztc::ZfField(Msg, subID)>() == UINT64_MAX &&
+    msg.get<Ztc::ZfField(Msg, agentGen)>() == UINT64_MAX &&
+    Ztc::msgBody(msg).get<Ztc::Body::Ack>().get<Ztc::ZfField(Ack, seqNo)>() == 31);
+}
+
+static void packetCharges()
+{
+  ZuTestScope(packetCharges);
+  Fixture<ZuTest_scope> f;
+  auto source = ack(41);
+  auto message = Ztc::msg(source->cspan());
+  Ztc::RouteInfo route;
+  route.subID = 7; route.deviceID = "device-a"; route.agentGeneration = 3;
+  bool valid = true;
+  auto build = ZtcHub_::agentFrame(route, message, source, UINT32_MAX, &valid);
+  auto packet = build(packetStorage(), 16);
+  ZuCheck(valid && packet, (return));
+  auto max = f.hub.config().controlBytes - f.hub.config().maxFrame;
+  unsigned count = max / packet.length() + 1;
+  ZuCheck(valid && packet && count <= f.hub.config().controlFrames - 1 &&
+    uint64_t(count) * packet.head.length <= max);
+  f.link->input.sending = true; // an earlier Tx turn still owns this connection
+  for (unsigned i = 0; i < count; ++i) ZtcHub_::App::enqueue(f.link, packet, false);
+  auto egress = f.link->input.egresses.find(route.subID);
+  ZuCheck(f.link->input.closed && f.link->closeCode == Zws::CloseCode::Policy);
+  ZuCheck(egress && egress->controlBytes == uint64_t(count - 1) * packet.length() &&
+    egress->control.length() == count - 1);
+}
+
+static void packetAlign()
+{
+  ZuTestScopeRT(packetAlign);
+  ZtString<> id;
+  bool partialEnd = false;
+  for (unsigned i = 0; i < Ztc::Builder::Align; ++i) {
+    id << 'x';
+    // Omit the 64-bit field using its schema default. Zero is an explicit
+    // sequence number and would force eight-byte nested-root alignment.
+    auto source = ack(Ztc::ZfField(Ack, seqNo)::deflt(), id);
+    auto message = Ztc::msg(source->cspan());
+    ZuCheckRT(message && !Ztc::msgBody(message).get<Ztc::Body::Ack>()
+      .has<Ztc::ZfField(Ack, seqNo)>(), (return));
+    Ztc::RouteInfo route;
+    route.subID = i;
+    if (i & 1) { route.deviceID = "device-a"; route.agentGeneration = 3; }
+    bool valid = true;
+    auto build = ZtcHub_::agentFrame(route, message, source, UINT32_MAX, &valid);
+    auto packet = build(packetStorage(), 16);
+    ZuCheckRT(valid && packet, (return));
+    partialEnd |= bool(packet.tail.length & (Ztc::Builder::Align - 1));
+    auto wire = packetBytes(packet);
+    auto msg = Ztc::msg(wire);
+    ZuCheckRT(msg && !(packet.head.length & (Ztc::Builder::Align - 1)), (return));
+    ZuCheckRT(msg.get<Ztc::ZfField(Msg, subID)>() == i &&
+      msg.get<Ztc::ZfField(Msg, deviceID)>() == route.deviceID &&
+      msg.get<Ztc::ZfField(Msg, agentGen)>() == route.agentGeneration &&
+      Ztc::msgBody(msg).get<Ztc::Body::Ack>().get<Ztc::ZfField(Ack, id)>() == id);
+  }
+  // Nested roots need not end on the outer Msg's maximum alignment. No copy
+  // or synthetic trailing payload bytes are necessary for these valid roots.
+  ZuCheckRT(partialEnd);
 }
 
 static void frameLimit()
@@ -175,7 +449,7 @@ static void byteLimit()
   ZuCheck(f.start() == 1);
   ZuCheck(f.receive(data.span().trunc(1)) == 1);
   ZuCheck(f.receive(data.span().trunc(1)) < 0);
-  ZuCheck(f.link->input.pendingBytes == 511 && f.link->input.frame->length == 1);
+  ZuCheck(f.link->input.pendingBytes == 511 && f.link->input.frame.length() == 1);
   f.authorize();
   ZuCheck(f.link->input.closed && !f.link->input.authenticated);
 }
@@ -201,11 +475,11 @@ static void partial()
   ZuCheck(f.start() == 1);
   auto half = second->length >> 1;
   ZuCheck(f.receive(bytes(second).trunc(half)) == 1);
-  auto saved = f.link->input.frame.ptr();
+  auto saved = f.link->input.frame.range().buf.ptr();
   f.authorize();
   ZuCheck(f.link->input.authenticated && !f.link->input.closed);
   ZuCheck(!f.link->input.pending.length() && !f.link->input.pendingBytes);
-  ZuCheck(f.link->input.frame.ptr() == saved && saved->length == half);
+  ZuCheck(f.link->input.frame.range().buf.ptr() == saved && saved->length == half);
   ZuCheck(f.receive(bytes(second).offset(half)) == 1);
   ZuCheck(f.end() == 1);
   ZuCheck(!f.link->closeCode && !f.link->input.pending.length());
@@ -234,13 +508,12 @@ static void reuse()
   auto value = ack(1);
   ZuCheck(f.start() == 1);
   ZuCheck(f.receive(bytes(value)) == 1);
-  auto saved = f.link->input.frame.ptr();
   ZuCheck(f.end() == 1);
   f.authorize();
   ZuCheck(f.link->input.authenticated && !f.link->input.closed);
-  ZuCheck(f.link->input.frame.ptr() == saved);
+  ZuCheck(!f.link->input.frame);
   ZuCheck(f.start() == 1);
-  ZuCheck(f.link->input.frame.ptr() == saved && !saved->length);
+  ZuCheck(!f.link->input.frame);
 }
 
 static void drain()
@@ -248,10 +521,13 @@ static void drain()
   ZuTestScope(drain);
   Fixture<ZuTest_scope> f;
   auto value = ack(1);
-  for (unsigned i = 0; i < 3; ++i) {
-    ZuCheck(f.start() == 1);
-    ZuCheck(f.receive(bytes(value)) == 1);
-    ZuCheck(f.end() == 1);
+  {
+    ZuTestRepeat(queued, 3);
+    for (unsigned i = 0; i < 3; ++i) {
+      ZuCheck(f.start() == 1);
+      ZuCheck(f.receive(bytes(value)) == 1);
+      ZuCheck(f.end() == 1);
+    }
   }
   f.authorize();
   ZuCheck(f.link->input.authenticated && !f.link->input.closed);
@@ -275,10 +551,13 @@ static void closedDrain()
   ZuTestScope(closedDrain);
   Fixture<ZuTest_scope> f;
   auto value = ack(1);
-  for (unsigned i = 0; i < 2; ++i) {
-    ZuCheck(f.start() == 1);
-    ZuCheck(f.receive(bytes(value)) == 1);
-    ZuCheck(f.end() == 1);
+  {
+    ZuTestRepeat(queued, 2);
+    for (unsigned i = 0; i < 2; ++i) {
+      ZuCheck(f.start() == 1);
+      ZuCheck(f.receive(bytes(value)) == 1);
+      ZuCheck(f.end() == 1);
+    }
   }
   f.authorize();
   ZuCheck(f.link->input.pending.length() == 1 && f.server.pending);
@@ -287,6 +566,71 @@ static void closedDrain()
   f.server.run();
   ZuCheck(!f.server.pending && !f.link->input.pendingBytes);
   ZuCheck(!f.link->closeCode);
+}
+
+static void retainedInput()
+{
+  ZuTestScope(retainedInput);
+  Fixture<ZuTest_scope> f;
+  auto first = ack(71), second = ack(72);
+  Ztc::HubFrame wire = new ZtcHub_::HubBuf{nullptr, 0};
+  const uint8_t prefix[13] = {};
+  wire->append(prefix, sizeof(prefix));
+  wire->append(first->cspan()); wire->append(second->cspan());
+  auto expected = wire->data() + sizeof(prefix);
+  ZuCheck(f.start() == 1 && f.receive(Zi::RxRange{wire, sizeof(prefix), first->length}) == 1);
+  auto retained = f.link->input.frame.range();
+  ZuCheck(retained.buf == wire && retained.cspan().data() == expected &&
+    retained.length == first->length && !memcmp(retained.cspan().data(),
+      first->data(), first->length));
+  ZuCheck(f.end() == 1 && f.link->input.pendingBytes == first->length &&
+    !f.link->input.frame);
+  ZuCheck(f.start() == 1 && f.receive(Zi::RxRange{
+    wire, unsigned(sizeof(prefix)) + first->length, second->length}) == 1 && f.end() == 1);
+  ZuCheck(f.link->input.pendingBytes == first->length + second->length &&
+    f.link->input.pending.length() == 2);
+  auto queued = f.link->input.pending.shift();
+  ZuCheck(queued.buf == wire && queued.cspan().data() == expected &&
+    Ztc::msgBody(Ztc::msg(queued.cspan())).get<Ztc::Body::Ack>()
+      .get<Ztc::ZfField(Ack, seqNo)>() == 71);
+  auto next = f.link->input.pending.shift();
+  ZuCheck(next.buf == wire && next.offset == queued.offset + queued.length &&
+    Ztc::msgBody(Ztc::msg(next.cspan())).get<Ztc::Body::Ack>()
+      .get<Ztc::ZfField(Ack, seqNo)>() == 72);
+  f.link->input.pendingBytes = 0;
+}
+
+static void fragmentedInput()
+{
+  ZuTestScopeRT(fragmentedInput);
+  Fixture<ZuTest_scope> f;
+  ZtString<> id;
+  for (unsigned i = 0; i < 144; ++i) id << 'x';
+  auto source = ack(81, id);
+  ZuCheckRT(source->length > 128 && source->length <= f.hub.config().maxFrame, (return));
+#if Zi_URing
+  if (Zi::uring()) {
+    auto ring = f.server.timers.allocator->ring();
+    ZuCheckRT(ring && ring->bufCount() == 2 && ring->bufSize() == 64, (return));
+  }
+#endif
+  ZuCheckRT(f.start() == 1);
+  for (unsigned off = 0; off < source->length;) {
+    unsigned n = source->length - off;
+    if (n > 23) n = 23;
+    auto backing = f.server.timers.allocator->alloc();
+    ZuCheckRT(backing && backing->append(source->data() + off, n), (return));
+#if Zi_URing
+    if (Zi::uring()) ZuCheckRT(backing->uring(), (return));
+#endif
+    ZuCheckRT(f.receive(Zi::RxRange{ZuMv(backing), 0, n}) == 1, (return));
+    off += n;
+    auto range = f.link->input.frame.range();
+    ZuCheckRT(range.length == off && !memcmp(range.cspan().data(), source->data(), off));
+  }
+  auto frame = f.link->input.frame.range();
+  ZuCheckRT(f.end() == 1 && f.link->input.pendingBytes == source->length &&
+    frame.length == source->length && frame.buf->jumbo());
 }
 
 } // namespace ZtcHubRxTest_
@@ -298,6 +642,8 @@ int main()
   ZiLog::init("ZtcHubRxTest");
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
+  ZuTestCall(retainedInput);
+  ZuTestCall(fragmentedInput);
   ZuTestCall(frameLimit);
   ZuTestCall(byteLimit);
   ZuTestCall(invalid);
@@ -306,5 +652,10 @@ int main()
   ZuTestCall(reuse);
   ZuTestCall(drain);
   ZuTestCall(closedDrain);
+  ZuTestCall(segmentedEnvelope);
+  ZuTestCall(packetBounds);
+  ZuTestCall(packetCharges);
+  ZuTestCall(packetAlign);
+  ZuTestCall(prefixAuthority);
   ZiLog::stop();
 }

@@ -54,7 +54,8 @@ static void protocol()
   ZuTestScope(protocol);
   auto check = [](ZuCSpan deviceID, uint64_t subID, unsigned group,
       bool subscribe, uint64_t generation) {
-    Ztc::Builder builder{new ZiIOBufAlloc<>()};
+    Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
     auto nested = builder.startNested();
     auto request = Zfb::save(builder, Ztc::Request{
       .seqNo = 9, .interval = 1000, .group = uint8_t(group),
@@ -73,7 +74,8 @@ static void protocol()
   ZuCheck(!Ztc::validMsg({}));
 
   auto app = [](ZuCSpan deviceID, unsigned group, ZuCSpan filter) {
-    Ztc::Builder builder{new ZiIOBufAlloc<>()};
+    Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
     auto nested = builder.startNested();
     auto request = Zfb::save(builder, Ztc::Request{
       .filter = Ztc::RequestFilter{filter}, .seqNo = 0,
@@ -88,7 +90,8 @@ static void protocol()
   ZuCheck(!app({}, unsigned(Ztc::Group::Heap), {}));
   ZuCheck(!app({}, unsigned(Ztc::Group::App), "app-*"));
 
-  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   auto request = Zfb::save(builder, Ztc::Request{
     .filter = "*", .seqNo = 0, .interval = 1000,
@@ -114,7 +117,8 @@ static void messages()
 {
   ZuTestScope(messages);
   auto verify = [](auto make, unsigned expected) {
-    Ztc::Builder builder{new ZiIOBufAlloc<>()};
+    Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
     auto nested = builder.startNested();
     auto body = make(builder);
     auto bytes = builder.finish(Ztc::saveMsg(
@@ -152,10 +156,12 @@ static void messages()
 static void payloadCopy()
 {
   ZuTestScope(payloadCopy);
-  Ztc::Builder routed{new ZiIOBufAlloc<>()};
+  Ztc::Builder routed{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   ZuBSpan bytes;
   {
-    Ztc::Builder source{new ZiIOBufAlloc<>()};
+    Ztc::Builder source{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
     auto nested = source.startNested();
     auto id = source.string("publisher");
     auto value = Zfb::save(source, Ztc::AppTelemetry{});
@@ -236,9 +242,9 @@ static void routing()
   ZuCheck(!Ztc::Hubd::authorized(combined, "Telemetry"));
 
   ZuCheck(hub.addFrontend(20, browser, Ztc::HubSendFn{
-    [](Ztc::HubFrame) { }}));
+    [](Ztc::HubPacket, Ztc::HubBuildFn) { }}));
   ZuCheck(hub.addFrontend(22, browser, Ztc::HubSendFn{
-    [](Ztc::HubFrame) { }}));
+    [](Ztc::HubPacket, Ztc::HubBuildFn) { }}));
 
   Ztc::HubError::T error = Ztc::HubError::Unauthorized;
   ZuCheck(hub.addAgent(10, "device-1", 3, agentPrincipal, error));
@@ -295,7 +301,8 @@ static void routing()
 static bool app(Ztc::Hubd &hub, uint64_t agent, uint64_t generation,
     ZuCSpan publisher, ZuCSpan version, uint64_t seqNo = 0)
 {
-  Ztc::Builder builder{new ZiIOBufAlloc<>()};
+  Ztc::Builder builder{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}};
   auto nested = builder.startNested();
   auto id = builder.string(publisher);
   Ztc::AppTelemetry value;
@@ -344,8 +351,10 @@ static void appInventory()
     bool attributed = true;
     bool sourceGone = false;
     bool sourceShutdown = false;
-    void operator ()(Ztc::HubFrame frame) {
-      auto msg = Ztc::msg(ZuBSpan{frame->data(), frame->length});
+    bool finalStorage = true;
+    unsigned builds = 0;
+    void operator ()(Ztc::HubPacket frame) {
+      auto msg = Ztc::msg(frame.head.cspan());
       if (!msg) { attributed = false; return; }
       types.push(uint8_t(Ztc::msgBody(msg).tag()));
       if (Ztc::msgBody(msg).tag() == Ztc::Body::Telemetry) {
@@ -376,9 +385,22 @@ static void appInventory()
     }
   } frames;
   ZuCheck(hub.addFrontend(20, browser, Ztc::HubSendFn{
-    [&frames](Ztc::HubFrame frame) { frames(ZuMv(frame)); }}));
+    [&frames](Ztc::HubPacket frame, Ztc::HubBuildFn build) {
+      if (build) {
+	ZmRef<ZiIOBuf> buf = new
+	  Zi::IOBufAlloc<ZiIOBuf, 1024, 1U << 30, ZiIOBuf_HeapID>{nullptr, 0};
+	auto allocated = buf.ptr();
+	buf->skip = 32;
+	frame = build(ZuMv(buf), 16);
+	frames.finalStorage &= frame && frame.head.buf.ptr() == allocated &&
+	  frame.head.offset >= 32 && frame.head.buf->avail() >= 16;
+	++frames.builds;
+      }
+      frames(ZuMv(frame));
+    }}));
   ZuCheck(app(hub, 10, 3, "publisher-1", "v1"));
   ZuCheck(hub.appSubscribe(20, 7, 0, error));
+  ZuCheck(frames.finalStorage && frames.builds == 3);
   ZuCheck(frames.attributed && frames.types.length() == 3 &&
     frames.types[0] == uint8_t(Ztc::Body::Telemetry) &&
     frames.types[1] == uint8_t(Ztc::Body::Ack) &&

@@ -10,6 +10,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZgrpcHTTP.hh>
 #include "ZhttpTestUtil.hh"
 
@@ -140,7 +141,9 @@ static void flow(bool h3)
   Zhttp::Test::TempDir temp;
   ZtString<> cert, key;
   ZuCheck(temp.init("ZgrpcFlow") && Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  // Retention is bounded by StreamWindow; keep the default pool for backpressure.
+  ZiMultiplex mx{ZiMxParams{}.udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(6);
     for (unsigned i = 1; i <= 6; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};

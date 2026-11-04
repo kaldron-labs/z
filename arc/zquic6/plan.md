@@ -4,7 +4,7 @@ Scope: fix the `zquic` shard-ownership and teardown issues identified in
 `arc/zquic6/findings.md`, preserving the existing Rx/Tx split and continuation style.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 ## 1. Endpoint connection ownership and send path
 
@@ -178,7 +178,7 @@ Additional checks:
 
 ## Final Acceptance Criteria
 
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

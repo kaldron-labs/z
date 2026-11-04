@@ -30,7 +30,8 @@ static void appendBytes(Zhttp::H3::HdrBytes &bytes, ZuBSpan s)
 
 namespace ZhttpQPackDynamicTest_ {
 
-using StreamAlloc = ZiIOBufAlloc<256, 4096, "ZhttpQPackDynamicTest.Buf">;
+using StreamAlloc = Zi::IOBufAlloc<ZiIOBuf, 256, 4096,
+  ZuStringT<"ZhttpQPackDynamicTest.Buf">>;
 using BuilderHeaderList = ZhttpHeaders("accept");
 ZhttpHdrCatalogDerive(BuilderHeaders, BuilderHeaderList);
 ZhttpHdrCatalogImpl(BuilderHeaders)
@@ -53,7 +54,7 @@ using RxStream = ZiRxStream<RxQueue>;
 
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
   if (span.length()) buf->append(span);
   return buf;
 }
@@ -75,7 +76,7 @@ static void putSetting(
 
 void testVar()
 {
-  ZuTestScope(testVar);
+  ZuTestScopeRT(testVar);
 
   static const uint64_t values[] = {
     0x25, 0x1234, 0x12345678, 0x123456789abcdef
@@ -84,22 +85,22 @@ void testVar()
     Zhttp::H3::HdrBytes bytes;
     Zhttp::H3::putVar(bytes, values[i]);
     uint64_t value = 0;
-    ZuCHECK(Zhttp::H3::var(bytes, value) && value == values[i],
-      "contiguous QUIC varint round trip failed");
+    ZuCheckRT(Zhttp::H3::var(bytes, value) && value == values[i], log_(
+      "contiguous QUIC varint round trip failed"));
 
     RxStream rx;
     unsigned length = 0;
     if (bytes.length() > 1) {
       unsigned split = bytes.length() - 1;
       rx.push(rxBuf(ZuBSpan{bytes.data(), split}));
-      ZuCHECK(!Zhttp::H3::rxVar(rx, 0, value, length),
-	"partial reactive QUIC varint was consumed");
+      ZuCheckRT(!Zhttp::H3::rxVar(rx, 0, value, length), log_(
+	"partial reactive QUIC varint was consumed"));
       rx.push(rxBuf(ZuBSpan{&bytes[split], 1}));
     } else
       rx.push(rxBuf(ZuBSpan{bytes}));
-    ZuCHECK(Zhttp::H3::rxVar(rx, 0, value, length) == 1 &&
-	value == values[i] && length == bytes.length(),
-      "reactive QUIC varint round trip failed");
+    ZuCheckRT(Zhttp::H3::rxVar(rx, 0, value, length) == 1 &&
+	value == values[i] && length == bytes.length(), log_(
+      "reactive QUIC varint round trip failed"));
   }
 }
 
@@ -111,10 +112,19 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
   ~CaptureTxStream() { this->flush(); }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = new StreamAlloc{};
+    ZmRef<ZiIOBuf> buf = new StreamAlloc{nullptr, 0};
     buf->skip = headRoom;
     buf->length = 0;
+    allocated = buf.ptr();
     return buf;
+  }
+
+  bool sendRange_(Zi::RxRange range) {
+    if (!sendOK || !range.buf) return false;
+    ++ranges;
+    original &= range.buf.ptr() == allocated;
+    for (auto c : range.cspan()) bytes.push(c);
+    return true;
   }
 
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
@@ -125,6 +135,9 @@ struct CaptureTxStream : public Zi::TxStream<CaptureTxStream> {
 
   Zhttp::H3::HdrBytes	bytes;
   bool sendOK = true;
+  ZiIOBuf *allocated = nullptr;
+  unsigned ranges = 0;
+  bool original = true;
 };
 
 struct CaptureEncoder {
@@ -1376,7 +1389,7 @@ void testParserInvalidFields()
 
 void testParserStrictContentLength()
 {
-  ZuTestScope(testParserStrictContentLength);
+  ZuTestScopeRT(testParserStrictContentLength);
 
   static const char *values[] = { "5x", "18446744073709551616" };
   for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
@@ -1391,12 +1404,12 @@ void testParserStrictContentLength()
     Zhttp::H3::HdrBytes frame;
     putHeadersFrame(frame, ZuSpan<Zhttp::H3::Header>{initialHeaders, 5});
     parser.push(frame);
-    ZuCHECK(parser.process(parser) == Zhttp::H3::ParserState::Error,
-      "invalid H3 content-length was not rejected");
-    ZuCHECK(!parser.contentLenCalls && !parser.bodyCalls &&
+    ZuCheckRT(parser.process(parser) == Zhttp::H3::ParserState::Error, log_(
+      "invalid H3 content-length was not rejected"));
+    ZuCheckRT(!parser.contentLenCalls && !parser.bodyCalls &&
 	parser.completeCalls == 1 &&
-	parser.completeState == Zhttp::H3::ParserState::Error,
-      "invalid H3 content-length delivered callbacks");
+	parser.completeState == Zhttp::H3::ParserState::Error, log_(
+      "invalid H3 content-length delivered callbacks"));
   }
 }
 
@@ -1478,7 +1491,7 @@ void testCxnQPackCredit()
 
 void testCxnControlCredit()
 {
-  ZuTestScope(testCxnControlCredit);
+  ZuTestScopeRT(testCxnControlCredit);
   for (unsigned mode = 0; mode < 2; ++mode) {
     bool settings = !mode;
     CxnStream stream;
@@ -1498,10 +1511,10 @@ void testCxnControlCredit()
       offset += length;
       if (stream.process(stream) == Zhttp::H3::CxnState::Error) break;
     }
-    ZuCHECK(offset == wire.length() && stream.retired == offset &&
+    ZuCheckRT(offset == wire.length() && stream.retired == offset &&
 	!stream.rx && stream.settings == (settings ? 400U : 0U) &&
-	stream.h3State() == Zhttp::H3::CxnState::PeerSettingsReceived,
-      "SETTINGS pairs and unknown control payloads cross receive windows");
+	stream.h3State() == Zhttp::H3::CxnState::PeerSettingsReceived, log_(
+      "SETTINGS pairs and unknown control payloads cross receive windows"));
   }
   for (unsigned mode = 0; mode < 2; ++mode) {
     CxnStream stream;
@@ -1521,11 +1534,11 @@ void testCxnControlCredit()
       offset += length;
       if (stream.process(stream) == Zhttp::H3::CxnState::Error) break;
     }
-    ZuCHECK(offset == wire.length() && stream.retired == offset &&
+    ZuCheckRT(offset == wire.length() && stream.retired == offset &&
 	!stream.rx && stream.settings == (mode ? 0U : 1U) &&
 	stream.h3State() == (mode ? Zhttp::H3::CxnState::Goaway :
-	  Zhttp::H3::CxnState::PeerSettingsReceived),
-      "control integers larger than the receive window retire by prefix");
+	  Zhttp::H3::CxnState::PeerSettingsReceived), log_(
+      "control integers larger than the receive window retire by prefix"));
   }
 }
 
@@ -1813,7 +1826,7 @@ void testFieldDecodeAllocationDiscipline()
 
 void testSettingsKeyBoundary()
 {
-  ZuTestScope(testSettingsKeyBoundary);
+  ZuTestScopeRT(testSettingsKeyBoundary);
 
   for (unsigned enabled = 0; enabled <= 1; ++enabled) {
     CxnStream stream;
@@ -1823,10 +1836,10 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) ==
+    ZuCheckRT(stream.process(stream) ==
 	Zhttp::H3::CxnState::PeerSettingsReceived &&
-	stream.extendedConnect == int(enabled),
-      "valid SETTINGS_ENABLE_CONNECT_PROTOCOL value was not retained");
+	stream.extendedConnect == int(enabled), log_(
+      "valid SETTINGS_ENABLE_CONNECT_PROTOCOL value was not retained"));
   }
   {
     CxnStream stream;
@@ -1834,10 +1847,10 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) ==
+    ZuCheckRT(stream.process(stream) ==
 	Zhttp::H3::CxnState::PeerSettingsReceived &&
-	stream.extendedConnect < 0,
-      "absent SETTINGS_ENABLE_CONNECT_PROTOCOL changed capability");
+	stream.extendedConnect < 0, log_(
+      "absent SETTINGS_ENABLE_CONNECT_PROTOCOL changed capability"));
   }
   {
     CxnStream stream;
@@ -1852,15 +1865,15 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) ==
+    ZuCheckRT(stream.process(stream) ==
 	Zhttp::H3::CxnState::PeerSettingsReceived &&
 	stream.qpackTxTable.peerCapacity() == uint32_t(-1) &&
 	stream.qpackTxTable.peerBlocked() == 77 &&
 	stream.qpackTxTable.orderSlots() == orderSlots &&
 	stream.qpackTxTable.exactSlots() == exactSlots &&
 	stream.qpackTxTable.nameSlots() == nameSlots &&
-	stream.qpackTxTable.sectionSlots() == sectionSlots,
-      "peer QPACK SETTINGS allocated or were not retained");
+	stream.qpackTxTable.sectionSlots() == sectionSlots, log_(
+      "peer QPACK SETTINGS allocated or were not retained"));
   }
   {
     CxnStream stream;
@@ -1871,14 +1884,14 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) ==
-	Zhttp::H3::CxnState::PeerSettingsReceived && !stream.extendedConnect,
-      "repeated SETTINGS did not apply the last valid capability value");
+    ZuCheckRT(stream.process(stream) ==
+	Zhttp::H3::CxnState::PeerSettingsReceived && !stream.extendedConnect, log_(
+      "repeated SETTINGS did not apply the last valid capability value"));
     bytes.length(0);
     putFrame(bytes, 0x04, ZuBSpan{});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) == Zhttp::H3::CxnState::Error,
-      "a second SETTINGS frame was accepted");
+    ZuCheckRT(stream.process(stream) == Zhttp::H3::CxnState::Error, log_(
+      "a second SETTINGS frame was accepted"));
   }
   {
     CxnStream stream;
@@ -1889,10 +1902,10 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00); // control stream
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) ==
+    ZuCheckRT(stream.process(stream) ==
 	Zhttp::H3::CxnState::PeerSettingsReceived &&
-	stream.settings == 40,
-      "more than 32 unique SETTINGS were not accepted");
+	stream.settings == 40, log_(
+      "more than 32 unique SETTINGS were not accepted"));
   }
   {
     CxnStream stream;
@@ -1904,9 +1917,9 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) ==
-	Zhttp::H3::CxnState::PeerSettingsReceived && stream.settings == 34,
-      "repeated unknown SETTINGS key was rejected");
+    ZuCheckRT(stream.process(stream) ==
+	Zhttp::H3::CxnState::PeerSettingsReceived && stream.settings == 34, log_(
+      "repeated unknown SETTINGS key was rejected"));
   }
   {
     CxnStream stream;
@@ -1916,8 +1929,8 @@ void testSettingsKeyBoundary()
     Zhttp::H3::putVar(bytes, 0x00);
     putFrame(bytes, 0x04, ZuBSpan{settings});
     stream.push(bytes);
-    ZuCHECK(stream.process(stream) == Zhttp::H3::CxnState::Error,
-      "invalid SETTINGS_ENABLE_CONNECT_PROTOCOL value was accepted");
+    ZuCheckRT(stream.process(stream) == Zhttp::H3::CxnState::Error, log_(
+      "invalid SETTINGS_ENABLE_CONNECT_PROTOCOL value was accepted"));
   }
 }
 
@@ -2013,164 +2026,164 @@ void testTxNameLookup()
 
 void testBoundedStorage()
 {
-  ZuTestScope(testBoundedStorage);
+  ZuTestScopeRT(testBoundedStorage);
 
   Zhttp::H3::QPackRxTable rx;
   Zhttp::H3::QPackTxTable tx;
-  ZuCHECK(rx.init(0) && tx.init(0, 0) &&
+  ZuCheckRT(rx.init(0) && tx.init(0, 0) &&
       !rx.slots() && !tx.orderSlots() && !tx.exactSlots() &&
       !tx.nameSlots() &&
-      !tx.sectionSlots(),
-    "zero QPACK limits allocated dynamic storage");
+      !tx.sectionSlots(), log_(
+    "zero QPACK limits allocated dynamic storage"));
 
-  ZuCHECK(rx.init(31) && !rx.maxEntries() && !rx.slots(),
-    "31-byte Rx capacity allocated an impossible entry");
-  ZuCHECK(rx.init(32) && rx.maxEntries() == 1 && rx.slots() >= 1,
-    "32-byte Rx capacity did not allocate one entry slot");
+  ZuCheckRT(rx.init(31) && !rx.maxEntries() && !rx.slots(), log_(
+    "31-byte Rx capacity allocated an impossible entry"));
+  ZuCheckRT(rx.init(32) && rx.maxEntries() == 1 && rx.slots() >= 1, log_(
+    "32-byte Rx capacity did not allocate one entry slot"));
 
   enum { Capacity = 32768, Entries = 300, Sections = 128 };
-  ZuCHECK(rx.init(Capacity) && rx.setCapacity(Capacity),
-    "bounded Rx setup failed");
+  ZuCheckRT(rx.init(Capacity) && rx.setCapacity(Capacity), log_(
+    "bounded Rx setup failed"));
   uint32_t rxSlots = rx.slots();
   for (unsigned i = 0; i < Entries; ++i) {
     char name[24], value[24];
     unsigned nameLen = snprintf(name, sizeof(name), "x-rx-bound-%u", i);
     unsigned valueLen = snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(rx.insert({ZuCSpan{name, nameLen}, ZuCSpan{value, valueLen}}),
-      "bounded Rx churn insert failed");
+    ZuCheckRT(rx.insert({ZuCSpan{name, nameLen}, ZuCSpan{value, valueLen}}), log_(
+      "bounded Rx churn insert failed"));
   }
-  ZuCHECK(rx.slots() == rxSlots,
-    "bounded Rx churn changed array capacity");
+  ZuCheckRT(rx.slots() == rxSlots, log_(
+    "bounded Rx churn changed array capacity"));
 
-  ZuCHECK(tx.init(Capacity, Sections),
-    "bounded Tx setup failed");
+  ZuCheckRT(tx.init(Capacity, Sections), log_(
+    "bounded Tx setup failed"));
   uint32_t orderSlots = tx.orderSlots();
   uint32_t exactSlots = tx.exactSlots();
   uint32_t nameSlots = tx.nameSlots();
   uint32_t sectionSlots = tx.sectionSlots();
-  ZuCHECK(tx.peerCapacity(uint32_t(-1)) &&
+  ZuCheckRT(tx.peerCapacity(uint32_t(-1)) &&
       tx.orderSlots() == orderSlots && tx.exactSlots() == exactSlots &&
       tx.nameSlots() == nameSlots &&
       tx.sectionSlots() == sectionSlots &&
       tx.effectiveCapacity() == Capacity &&
-      tx.setCapacity(Capacity),
-    "peer capacity changed locally bounded storage");
+      tx.setCapacity(Capacity), log_(
+    "peer capacity changed locally bounded storage"));
   uint64_t newest = 0;
   for (unsigned i = 0; i < Entries; ++i) {
     char name[24], value[24];
     unsigned nameLen = snprintf(name, sizeof(name), "x-tx-bound-%u", i);
     unsigned valueLen = snprintf(value, sizeof(value), "v%u", i);
-    ZuCHECK(tx.insert(
-	{ZuCSpan{name, nameLen}, ZuCSpan{value, valueLen}}, &newest),
-      "bounded Tx churn insert failed");
+    ZuCheckRT(tx.insert(
+	{ZuCSpan{name, nameLen}, ZuCSpan{value, valueLen}}, &newest), log_(
+      "bounded Tx churn insert failed"));
   }
-  ZuCHECK(tx.orderSlots() == orderSlots &&
+  ZuCheckRT(tx.orderSlots() == orderSlots &&
       tx.exactSlots() == exactSlots && !tx.exactResized() &&
-      tx.nameSlots() == nameSlots && !tx.nameResized(),
-    "bounded Tx churn grew or resized entry storage");
+      tx.nameSlots() == nameSlots && !tx.nameResized(), log_(
+    "bounded Tx churn grew or resized entry storage"));
 
   for (unsigned i = 0; i < Sections; ++i) {
-    ZuCHECK(tx.registerSection(1000 + i),
-      "bounded section insertion failed");
+    ZuCheckRT(tx.registerSection(1000 + i), log_(
+      "bounded section insertion failed"));
   }
-  ZuCHECK(!tx.registerSection(2000) &&
+  ZuCheckRT(!tx.registerSection(2000) &&
       tx.sectionCount() == Sections &&
-      tx.sectionSlots() == sectionSlots && !tx.sectionResized(),
-    "section bound grew or resized section storage");
+      tx.sectionSlots() == sectionSlots && !tx.sectionResized(), log_(
+    "section bound grew or resized section storage"));
   for (unsigned i = Sections; i; --i)
-    ZuCHECK(tx.sectionAck(999 + i), "bounded section release failed");
-  ZuCHECK(!tx.sectionCount() && !tx.sectionResized(),
-    "section churn retained state or resized");
+    ZuCheckRT(tx.sectionAck(999 + i), log_( "bounded section release failed"));
+  ZuCheckRT(!tx.sectionCount() && !tx.sectionResized(), log_(
+    "section churn retained state or resized"));
 
-  ZuCHECK(tx.peerCapacity(64) && tx.capacity() <= 64 &&
+  ZuCheckRT(tx.peerCapacity(64) && tx.capacity() <= 64 &&
       tx.orderSlots() == orderSlots && tx.exactSlots() == exactSlots &&
-      tx.nameSlots() == nameSlots,
-    "peer capacity reduction reallocated Tx storage");
+      tx.nameSlots() == nameSlots, log_(
+    "peer capacity reduction reallocated Tx storage"));
   rx.final();
   tx.final();
-  ZuCHECK(!rx.slots() && !tx.orderSlots() && !tx.exactSlots() &&
+  ZuCheckRT(!rx.slots() && !tx.orderSlots() && !tx.exactSlots() &&
       !tx.nameSlots() &&
-      !tx.sectionSlots() && rx.init(0) && tx.init(0, 0),
-    "QPACK init/final retained dynamic storage");
+      !tx.sectionSlots() && rx.init(0) && tx.init(0, 0), log_(
+    "QPACK init/final retained dynamic storage"));
 }
 
 void testRxTxChurn()
 {
-  ZuTestScope(testRxTxChurn);
+  ZuTestScopeRT(testRxTxChurn);
 
   Zhttp::H3::QPackRxTable rx;
   rx.init(96);
-  ZuCHECK(rx.setCapacity(96), "rx churn capacity setup failed");
+  ZuCheckRT(rx.setCapacity(96), log_( "rx churn capacity setup failed"));
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-rx-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
     const char *name_ = name, *value_ = value;
-    ZuCHECK(rx.insert({name_, value_}),
-      "rx churn insert failed");
-    ZuCHECK(rx.used() <= rx.capacity(), "rx churn exceeded capacity");
+    ZuCheckRT(rx.insert({name_, value_}), log_(
+      "rx churn insert failed"));
+    ZuCheckRT(rx.used() <= rx.capacity(), log_( "rx churn exceeded capacity"));
   }
   Zhttp::H3::Header h;
-  ZuCHECK(rx.baseAbs() > 0 && rx.insertCount() == 40 &&
-      !rx.lookupAbs(rx.baseAbs() - 1, h),
-    "rx churn base accounting failed");
-  ZuCHECK(rx.lookupAbs(rx.insertCount() - 1, h),
-    "rx churn newest lookup failed");
+  ZuCheckRT(rx.baseAbs() > 0 && rx.insertCount() == 40 &&
+      !rx.lookupAbs(rx.baseAbs() - 1, h), log_(
+    "rx churn base accounting failed"));
+  ZuCheckRT(rx.lookupAbs(rx.insertCount() - 1, h), log_(
+    "rx churn newest lookup failed"));
 
   Zhttp::H3::QPackTxTable tx;
-  ZuCHECK(tx.init(96, 8) && tx.peerCapacity(96) &&
-      tx.setCapacity(96),
-    "tx churn capacity setup failed");
+  ZuCheckRT(tx.init(96, 8) && tx.peerCapacity(96) &&
+      tx.setCapacity(96), log_(
+    "tx churn capacity setup failed"));
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-tx-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
     const char *name_ = name, *value_ = value;
     uint64_t abs = 0;
-    ZuCHECK(tx.insert({name_, value_}, &abs) &&
-	abs == i,
-      "tx churn insert failed");
-    ZuCHECK(tx.used() <= tx.capacity(), "tx churn exceeded capacity");
+    ZuCheckRT(tx.insert({name_, value_}, &abs) &&
+	abs == i, log_(
+      "tx churn insert failed"));
+    ZuCheckRT(tx.used() <= tx.capacity(), log_( "tx churn exceeded capacity"));
   }
   ZuBSpan name{"x-tx-39"};
   ZuBSpan value{"v39"};
-  ZuCHECK(!tx.lookupAbs(0, h), "tx churn failed to evict oldest");
-  ZuCHECK(tx.lookupAbs(tx.insertCount() - 1, h),
-    "tx churn newest lookup failed");
-  ZuCHECK(h.name == name && h.value == value,
-    "tx churn newest value mismatch");
-  ZuCHECK(tx.find(name, value), "tx churn hash lookup failed");
+  ZuCheckRT(!tx.lookupAbs(0, h), log_( "tx churn failed to evict oldest"));
+  ZuCheckRT(tx.lookupAbs(tx.insertCount() - 1, h), log_(
+    "tx churn newest lookup failed"));
+  ZuCheckRT(h.name == name && h.value == value, log_(
+    "tx churn newest value mismatch"));
+  ZuCheckRT(tx.find(name, value), log_( "tx churn hash lookup failed"));
 }
 
 void testTxSectionStress()
 {
-  ZuTestScope(testTxSectionStress);
+  ZuTestScopeRT(testTxSectionStress);
 
   Zhttp::H3::QPackTxTable table;
-  ZuCHECK(table.init(512, 8) && table.peerCapacity(512) &&
-      table.setCapacity(512),
-    "tx section stress capacity setup failed");
+  ZuCheckRT(table.init(512, 8) && table.peerCapacity(512) &&
+      table.setCapacity(512), log_(
+    "tx section stress capacity setup failed"));
   uint64_t abs[6];
   for (unsigned i = 0; i < 6; ++i) {
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-ref-%u", i);
     snprintf(value, sizeof(value), "v%u", i);
     const char *name_ = name, *value_ = value;
-    ZuCHECK(table.insert({name_, value_}, &abs[i]),
-      "tx section stress insert failed");
+    ZuCheckRT(table.insert({name_, value_}, &abs[i]), log_(
+      "tx section stress insert failed"));
   }
   for (unsigned i = 0; i < 6; ++i) {
-    ZuCHECK(table.registerSection(100 + i),
-      "tx section stress track failed");
+    ZuCheckRT(table.registerSection(100 + i), log_(
+      "tx section stress track failed"));
   }
-  ZuCHECK(!table.registerSection(100),
-    "duplicate tx section stream ID was accepted");
-  ZuCHECK(table.sectionAck(103) && table.streamCancellation(101) &&
+  ZuCheckRT(!table.registerSection(100), log_(
+    "duplicate tx section stream ID was accepted"));
+  ZuCheckRT(table.sectionAck(103) && table.streamCancellation(101) &&
       table.sectionAck(105) && table.sectionAck(100) &&
-      table.sectionAck(102) && table.sectionAck(104),
-    "out-of-order tx section release failed");
-  ZuCHECK(!table.sectionAck(100),
-    "duplicate tx section ack was accepted");
+      table.sectionAck(102) && table.sectionAck(104), log_(
+    "out-of-order tx section release failed"));
+  ZuCheckRT(!table.sectionAck(100), log_(
+    "duplicate tx section ack was accepted"));
 }
 
 void testInstructionEncoding()
@@ -2273,7 +2286,7 @@ void testInstructionParserSplit()
       !encoderApplied,
     "split encoder instruction was applied early");
   ZuCHECK(decoder.parse(
-      ZuBSpan{decoderBytes.data(), decoderBytes.length()},
+      ZuBSpan{decoderBytes},
       decodeDecoder, applyDecoder) && decoderApplied == 1,
     "decoder parser did not stay independent of partial encoder parser");
   ZuCHECK(encoder.parse(
@@ -2546,7 +2559,7 @@ void testBuilderSectionFallback()
 
 void testPolicyAllocations()
 {
-  ZuTestScope(testPolicyAllocations);
+  ZuTestScopeRT(testPolicyAllocations);
   unsigned names = 0, settings = 0;
   Ztc::HashMgr::watch([&names, &settings](Ztc::Hash *hash) {
     struct IDs {
@@ -2563,20 +2576,20 @@ void testPolicyAllocations()
     ParserStream request;
     ResponseParserStream response;
     BuilderState builder;
-    ZuCHECK(!names && !settings,
-      "default stream or policy constructed a lookup hash");
+    ZuCheckRT(!names && !settings, log_(
+      "default stream or policy constructed a lookup hash"));
     builder.params.qpackIndex("accept").qpackNeverIndex("cookie");
-    ZuCHECK(names == 2, "configured QPACK policy did not create its two tables");
+    ZuCheckRT(names == 2, log_( "configured QPACK policy did not create its two tables"));
     names = 0;
     for (unsigned i = 0; i < 3; ++i) {
       CaptureTxStream stream;
       builder.begin(stream);
       ZuSpan<uint8_t> payload;
-      ZuCHECK(headersPayload(stream.bytes, payload),
-        "allocation probe did not build a HEADERS frame");
+      ZuCheckRT(headersPayload(stream.bytes, payload), log_(
+        "allocation probe did not build a HEADERS frame"));
     }
-    ZuCHECK(!names && !settings,
-      "repeated header builds constructed policy or SETTINGS lookup hashes");
+    ZuCheckRT(!names && !settings, log_(
+      "repeated header builds constructed policy or SETTINGS lookup hashes"));
   }
   Ztc::HashMgr::unwatch();
 }
@@ -2606,6 +2619,8 @@ void testBuilderQueryPath()
   custom.customTarget = true;
   CaptureTxStream customStream;
   custom.begin(customStream);
+  ZuCHECK(customStream.original && customStream.ranges > 1,
+    "unknown-length QPACK fields must submit original backing ranges across prefix gaps");
   ZuCHECK(headersPayload(customStream.bytes, payload),
     "custom printable target did not emit a valid HEADERS frame");
   sawPath = false;

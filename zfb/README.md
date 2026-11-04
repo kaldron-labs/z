@@ -66,7 +66,9 @@ generated C++ headers for ordinary framework use.
 
 ```cpp
 Record record{42, "worker"};
-Zfb::IOBuilder<> builder{new ZiIOBufAlloc<>};
+using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+Zfb::IOBuilder<> builder{new Buf{nullptr, 0}};
 auto bytes = builder.finish(Zfb::save(builder, record));
 if (!builder.failed() && Zfb::verify<Record>(bytes)) {
   auto view = Zfb::view<Record>(bytes);

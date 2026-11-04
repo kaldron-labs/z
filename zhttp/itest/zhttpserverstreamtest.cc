@@ -11,11 +11,14 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmThread.hh>
 
 #include <zlib/ZtcHeap.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
+
+#include <zlib/Zquic.hh>
 
 #include <zlib/ZhttpClient.hh>
 #include "../src/ZhttpServerImpl.hh"
@@ -621,6 +624,10 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -634,15 +641,15 @@ ZiMxParams mxParams()
 template <typename Profile, int StreamResult = StreamTurn::Idle>
 void activeStop()
 {
-  ZuTestScope(activeStop);
+  ZuTestScopeRT(activeStop);
 
   Zhttp::Test::TempDir temp;
   bool tempOK = temp.init("ZhttpServerStop");
-  ZuCHECK(tempOK, "create temporary directory");
+  ZuCheckRT(tempOK, log_("create temporary directory"));
   if (!tempOK) return;
   ZtString<> cert, key;
   bool certOK = Zhttp::Test::writeLocalhostCert(temp, cert, key);
-  ZuCHECK(certOK, "create localhost certificate");
+  ZuCheckRT(certOK, log_("create localhost certificate"));
   if (!certOK) return;
 
   State state;
@@ -663,14 +670,14 @@ void activeStop()
       StreamResult != StreamTurn::QueueTrailers &&
       StreamResult != StreamTurn::ResetTrailers);
   HeapCounts heapBase = streamHeapCounts();
-  ZuCHECK(state.port, "allocate loopback port");
+  ZuCheckRT(state.port, log_("allocate loopback port"));
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
   state.mx = &mx;
   state.checkThreads = true;
   bool mxUp = mx.start();
-  ZuCHECK(mxUp, "start multiplexer");
+  ZuCheckRT(mxUp, log_("start multiplexer"));
   if (!mxUp) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
 
@@ -700,12 +707,12 @@ void activeStop()
 	  1 : Zhttp::QUICConfig{}.maxQueuedFrames()));
   bool serverInited =
     app.init(hub, ZuMv(serverConfig));
-  ZuCHECK(serverInited, "initialize server");
+  ZuCheckRT(serverInited, log_("initialize server"));
   bool serverUp = serverInited && app.start();
-  ZuCHECK(serverUp, "start server");
+  ZuCheckRT(serverUp, log_("start server"));
   bool listening = serverUp &&
     state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "server listens for HTTP/3");
+  ZuCheckRT(listening, log_("server listens for HTTP/3"));
 
   Client<Profile> client{&state};
   bool clientInited = false;
@@ -734,9 +741,9 @@ void activeStop()
 	    StreamResult == StreamTurn::QueueTrailers ||
 	    StreamResult == StreamTurn::ResetTrailers) ?
 	  128 : Zhttp::QUICConfig{}.maxStreamData()));
-  ZuCHECK(clientInited, "initialize client");
+  ZuCheckRT(clientInited, log_("initialize client"));
   bool clientUp = clientInited && client.start();
-  ZuCHECK(clientUp, "start client");
+  ZuCheckRT(clientUp, log_("start client"));
   using ClientLink = Client<Profile>::Link;
   ZmRef<ClientLink> link;
   if (clientUp) link = new ClientLink{&client};
@@ -753,44 +760,44 @@ void activeStop()
   if (link) link->connect("localhost", state.port);
   bool connected = link &&
     state.connected.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(connected, "establish active HTTP/3 logical link");
+  ZuCheckRT(connected, log_("establish active HTTP/3 logical link"));
   bool admitted = connected &&
     state.admitted.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(admitted, "server admits active link");
+  ZuCheckRT(admitted, log_("server admits active link"));
   if (admitted)
-    ZuCHECK(app.activeConnections() == 1,
-	"server accounts for active link");
+    ZuCheckRT(app.activeConnections() == 1,
+	log_("server accounts for active link"));
   bool requestStarted = admitted &&
     state.requestStarted.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(requestStarted, "server admits partial request");
+  ZuCheckRT(requestStarted, log_("server admits partial request"));
   if (requestStarted)
-    ZuCHECK(state.completeRequest || app.activeRequests() == 1,
-	"server accounts for admitted request");
+    ZuCheckRT(state.completeRequest || app.activeRequests() == 1,
+	log_("server accounts for admitted request"));
   bool producerStarted =
     state.producerStarted.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(producerStarted, "asynchronous body producer starts");
-  ZuCHECK(!app.retainedBytes(),
-    "streaming response retains no transactional body bytes");
+  ZuCheckRT(producerStarted, log_("asynchronous body producer starts"));
+  ZuCheckRT(!app.retainedBytes(),
+    log_("streaming response retains no transactional body bytes"));
   if constexpr (StreamResult == StreamTurn::QueueResponses ||
       StreamResult == StreamTurn::QueueRoutes) {
-    ZuCHECK(state.queueReady.timedwait(Zm::now(10)) == 0 &&
+    ZuCheckRT(state.queueReady.timedwait(Zm::now(10)) == 0 &&
 	app.queuedResponses() == QueuedResponseCount,
-      "one active producer holds more pending responses than a cleanup turn");
+      log_("one active producer holds more pending responses than a cleanup turn"));
   }
   if constexpr (StreamResult == StreamTurn::HighTurns) {
     HeapCounts open = streamHeapCounts();
-    ZuCHECK(open.emitter == heapBase.emitter + 1 &&
+    ZuCheckRT(open.emitter == heapBase.emitter + 1 &&
 	open.driver == heapBase.driver + 1 &&
 	open.task == heapBase.task + 1,
-      "one emitter, driver, and task are allocated per open stream");
+      log_("one emitter, driver, and task are allocated per open stream"));
   }
   if constexpr (StreamResult == StreamTurn::PeerReset) {
     mx.run([&state, link]() mutable {
       link->disconnect();
       state.turnDone.post();
     }, 4);
-    ZuCHECK(state.turnDone.timedwait(Zm::now(10)) == 0,
-      "peer resets the active response stream");
+    ZuCheckRT(state.turnDone.timedwait(Zm::now(10)) == 0,
+      log_("peer resets the active response stream"));
   }
   if constexpr (StreamResult != StreamTurn::Idle &&
 	StreamResult != StreamTurn::QueueResponses &&
@@ -828,8 +835,8 @@ void activeStop()
 	    turnsOK = false;
 	}
     }
-    ZuCHECK(turnsOK,
-      "retained emitter accepts all dispatched response turns");
+    ZuCheckRT(turnsOK,
+      log_("retained emitter accepts all dispatched response turns"));
   }
   constexpr bool CompletedResponse =
     StreamResult == StreamTurn::StreamEnd ||
@@ -843,10 +850,10 @@ void activeStop()
   if constexpr (CompletedResponse) {
     bool completed =
       state.responseComplete.timedwait(Zm::now(10)) == 0;
-    ZuCHECK(completed && state.responseCompletions.load_() == 1,
-	"client observes one normally completed streamed response: body=",
+    ZuCheckRT(completed && state.responseCompletions.load_() == 1,
+	log_("client observes one normally completed streamed response: body=",
 	state.responseBody.length(), " trailers=", state.responseTrailers,
-	" admitted=", state.trailerAdmitted.load_());
+	" admitted=", state.trailerAdmitted.load_()));
     ZuCSpan expected;
     if constexpr (StreamResult == StreamTurn::StreamEnd)
       expected = "xx";
@@ -862,67 +869,66 @@ void activeStop()
       bool bodyOK = state.responseBody.length() == n;
       for (unsigned i = 0; bodyOK && i < n; ++i)
 	if (state.responseBody[i] != 'x') bodyOK = false;
-      ZuCHECK(bodyOK,
-	"high-turn stream preserves exact response-body byte order");
+      ZuCheckRT(bodyOK,
+	log_("high-turn stream preserves exact response-body byte order"));
     } else {
-      ZuCHECK(state.responseBody == expected,
-	"stream turns preserve exact response-body byte order");
+      ZuCheckRT(state.responseBody == expected,
+	log_("stream turns preserve exact response-body byte order"));
     }
     if constexpr (StreamResult == StreamTurn::Trailers ||
 	StreamResult == StreamTurn::InitialTrailers ||
 	StreamResult == StreamTurn::StalledTrailers) {
       constexpr bool Supported = Profile::HTTPVersion != Zhttp::Version::H1;
-      ZuCHECK(state.responseTrailers == (Supported ? 2U : 0U) &&
+      ZuCheckRT(state.responseTrailers == (Supported ? 2U : 0U) &&
 	state.trailerAdmitted.load_() == unsigned(Supported) &&
 	state.trailerProviders.load_() == unsigned(Supported),
-	"terminal admission preserves repeated owned fields after complete DATA");
+	log_("terminal admission preserves repeated owned fields after complete DATA"));
     }
   } else if constexpr (StreamResult == StreamTurn::Idle) {
-    ZuCHECK(!state.writerCalls.load_(),
-	"idle stream causes no library-driven producer polling");
+    ZuCheckRT(!state.writerCalls.load_(),
+	log_("idle stream causes no library-driven producer polling"));
   }
   if constexpr ((StreamResult == StreamTurn::Abort ||
       StreamResult == StreamTurn::Saturate) && HTTP::Multiplexed)
-    ZuCHECK(app.activeConnections() == 1,
-      "stream-local termination preserves the multiplexed transport session");
+    ZuCheckRT(app.activeConnections() == 1,
+      log_("stream-local termination preserves the multiplexed transport session"));
 
   if constexpr (StreamResult == StreamTurn::StopTrailers)
-    ZuCHECK(state.trailerAdmitted.load_() && !state.responseNotifies.load_(),
-      "closing producer admission preserves the response behind stalled DATA");
+    ZuCheckRT(state.trailerAdmitted.load_() && !state.responseNotifies.load_(),
+      log_("closing producer admission preserves the response behind stalled DATA"));
 
   if constexpr (StreamResult == StreamTurn::ResetTrailers) {
     mx.run([&state, link]() mutable {
       link->disconnect();
       state.turnDone.post();
     }, 3);
-    ZuCHECK(state.turnDone.timedwait(Zm::now(10)) == 0 &&
+    ZuCheckRT(state.turnDone.timedwait(Zm::now(10)) == 0 &&
 	state.responseNotified.timedwait(Zm::now(10)) == 0 &&
 	state.responseNotifies.load_() == 1 && state.responseDiscards.load_() == 1,
-      "peer reset drains the accepted terminal command and response once");
+      log_("peer reset drains the accepted terminal command and response once"));
   }
 
-  ZmAtomic<unsigned> stopReturned = 0;
+  auto stopCaller = ZmSelf();
   if (serverInited) app.stop([
-    &state, &stopReturned
+    &state, &mx, &app, stopCaller
   ](bool ok) {
     if (!ok) state.errors = 1;
-    if (!stopReturned.load_()) state.errors = 1;
+    if (ZmSelf() == stopCaller || !mx.invoked(app.rxThread())) state.errors = 1;
     if (state.releaseCount.load_() != 1)
       ++state.stopBeforeRelease;
     ++state.stopCount;
     state.stopped.post();
   });
-  stopReturned = 1;
   bool stoppedEarly = false;
   if (state.stopped.trywait() == 0)
     stoppedEarly = state.stopCount.load_();
   bool cancelled = state.producerClosedCount.load_();
   if (!cancelled)
     cancelled = state.producerClosed.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(cancelled,
-    "terminal path closes body production before producer release");
-  ZuCHECK(state.producerClosedCount.load_() == 1,
-    "streaming Builder close runs exactly once");
+  ZuCheckRT(cancelled,
+    log_("terminal path closes body production before producer release"));
+  ZuCheckRT(state.producerClosedCount.load_() == 1,
+    log_("streaming Builder close runs exactly once"));
   StreamEmitFn done{ZuMv(state.lateEmit)};
   if (done) {
     unsigned writerCalls = state.writerCalls.load_();
@@ -931,58 +937,58 @@ void activeStop()
       state.turnDone.post();
     }, 4);
     bool lateDone = state.turnDone.timedwait(Zm::now(10)) == 0;
-    ZuCHECK(lateDone && state.turnOK &&
+    ZuCheckRT(lateDone && state.turnOK &&
 	state.writerCalls.load_() == writerCalls,
-      "closed emitter rejects a late turn without invoking its writer");
+      log_("closed emitter rejects a late turn without invoking its writer"));
   }
   bool stopped = !serverInited || stoppedEarly;
   if (!stopped)
     stopped = state.stopped.timedwait(Zm::now(10)) == 0;
   if (!stopped && serverInited) (void)app.stop();
-  ZuCHECK(stopped, "active server stop completes");
-  ZuCHECK(state.stopCount.load_() == 1,
-    "active server stop callback completes exactly once");
-  ZuCHECK(!state.stopBeforeRelease.load_(),
-    "active server admission releases before stop completion");
-  ZuCHECK(state.completedCount.load_() == 1,
-    "active server stop completes partial request exactly once");
-  ZuCHECK(app.activeRequests() == 0,
-	"active server stop releases request admission");
+  ZuCheckRT(stopped, log_("active server stop completes"));
+  ZuCheckRT(state.stopCount.load_() == 1,
+    log_("active server stop callback completes exactly once"));
+  ZuCheckRT(!state.stopBeforeRelease.load_(),
+    log_("active server admission releases before stop completion"));
+  ZuCheckRT(state.completedCount.load_() == 1,
+    log_("active server stop completes partial request exactly once"));
+  ZuCheckRT(app.activeRequests() == 0,
+	log_("active server stop releases request admission"));
   if constexpr (StreamResult == StreamTurn::QueueResponses ||
       StreamResult == StreamTurn::QueueRoutes) {
     unsigned expected = QueuedResponseCount + 1 +
       unsigned(StreamResult == StreamTurn::QueueRoutes);
-    ZuCHECK(state.discardProbe.load_() && state.discardProbe.load_() < expected,
-      "response cancellation yields to other Tx work before all callbacks finish");
-    ZuCHECK(state.responseNotifies.load_() == expected &&
+    ZuCheckRT(state.discardProbe.load_() && state.discardProbe.load_() < expected,
+      log_("response cancellation yields to other Tx work before all callbacks finish"));
+    ZuCheckRT(state.responseNotifies.load_() == expected &&
 	state.responseDiscards.load_() == expected && !app.queuedResponses(),
-      "stop completion waits for every queued response callback and release");
+      log_("stop completion waits for every queued response callback and release"));
     if constexpr (StreamResult == StreamTurn::QueueRoutes)
-      ZuCHECK(state.discardedRoute == QueuedResponseCount + 1,
-	"reverse-inserted routes retire in order and duplicate sequence is discarded");
+      ZuCheckRT(state.discardedRoute == QueuedResponseCount + 1,
+	log_("reverse-inserted routes retire in order and duplicate sequence is discarded"));
   }
-  ZuCHECK(!app.serverFaults() && !app.parseFailures() &&
+  ZuCheckRT(!app.serverFaults() && !app.parseFailures() &&
 	!app.bodyFailures() &&
 	app.responseBuildFailures() ==
 	  unsigned(StreamResult == StreamTurn::Failed ||
 	    StreamResult == StreamTurn::FailedInitial),
-	"stream outcome has the expected build-failure accounting");
-  ZuCHECK(app.transportFailures() ==
+	log_("stream outcome has the expected build-failure accounting"));
+  ZuCheckRT(app.transportFailures() ==
       unsigned(StreamResult == StreamTurn::Saturate ||
 	StreamResult == StreamTurn::QueueTrailers),
-    "stream outcome has the expected transport-failure accounting");
+    log_("stream outcome has the expected transport-failure accounting"));
   if constexpr (StreamResult == StreamTurn::StopTrailers)
-    ZuCHECK(state.responseNotifies.load_() == 1 && state.responseDiscards.load_() == 1,
-      "stop drains the pending terminal command and discards its response once");
+    ZuCheckRT(state.responseNotifies.load_() == 1 && state.responseDiscards.load_() == 1,
+      log_("stop drains the pending terminal command and discards its response once"));
   if constexpr (StreamResult == StreamTurn::QueueTrailers)
-    ZuCHECK(!state.trailerAdmitted.load_() && state.trailerProviders.load_() == 1 &&
+    ZuCheckRT(!state.trailerAdmitted.load_() && state.trailerProviders.load_() == 1 &&
 	state.responseNotifies.load_() == 1 && state.responseFailures.load_() == 1,
-      "terminal queue refusal after rendering fails its response once");
+      log_("terminal queue refusal after rendering fails its response once"));
   if (clientInited) (void)client.stop();
-  ZuCHECK(state.disconnected.timedwait(Zm::now(10)) == 0,
-    "client stop completes active disconnect");
-  ZuCHECK(app.activeConnections() == 0,
-	"active server stop drains admission");
+  ZuCheckRT(state.disconnected.timedwait(Zm::now(10)) == 0,
+    log_("client stop completes active disconnect"));
+  ZuCheckRT(app.activeConnections() == 0,
+	log_("active server stop drains admission"));
 
   link = nullptr;
   if (clientInited) client.final();
@@ -997,9 +1003,9 @@ void activeStop()
       StreamResult == StreamTurn::StopTrailers ||
       StreamResult == StreamTurn::QueueTrailers ||
       StreamResult == StreamTurn::ResetTrailers)
-    ZuCHECK(streamHeapCounts() == heapBase,
-	"stream teardown recycles emitter, driver, and task");
-  ZuCHECK(!state.errors.load_(), "active server stop has no error");
+    ZuCheckRT(streamHeapCounts() == heapBase,
+	log_("stream teardown recycles emitter, driver, and task"));
+  ZuCheckRT(!state.errors.load_(), log_("active server stop has no error"));
 }
 
 struct FailedStopState {

@@ -16,7 +16,7 @@
 - CRITICAL: Scrutinize `zquic` and ensure that the requirements of this plan are not already met by the current implementation
   - IMPORTANT: Elide any redundant work and delete any requirements already met
 - Identify preconditions - preceding work that is depended on for this plan
-- Align the plan with `AGENTS.md` and `GUIDELINES.md`
+- Align the plan with `AGENTS.md` and `docs/GUIDELINES.md`
 - Dependent compatibility is a non-goal
 - Think hard about the implementation:
   - Re-use existing utilities, implementations, libraries and code modules as needed

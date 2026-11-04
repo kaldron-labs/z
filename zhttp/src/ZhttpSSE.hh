@@ -31,8 +31,8 @@ namespace Zhttp {
 
 ZuDerive(SSELine, (ZtString<ZtStringHeapID<"Zhttp.SSE.Line">>));
 ZuDerive(SSEID, (ZtString<ZtStringHeapID<"Zhttp.SSE.ID">>));
-ZuDerive(SSEInputBuf, (ZiIOBufAlloc<
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zhttp.SSE.Input">));
+ZuDerive(SSEInputBuf, (Zi::IOBufAlloc<ZiIOBuf,
+  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zhttp.SSE.Input">>));
 
 namespace Private {
 ZhttpAPI int sseField(ZuCSpan field);
@@ -142,7 +142,7 @@ private:
 	  close();
 	  return;
 	}
-	if (!m_data) m_data = new SSEInputBuf{};
+	if (!m_data) m_data = new SSEInputBuf{nullptr, 0};
 	if ((separator && !m_data->append(ZuBSpan{"\n"})) ||
 	    !m_data->append(value)) close();
 	else m_haveData = true;

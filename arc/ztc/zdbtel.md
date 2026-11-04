@@ -28,7 +28,7 @@ The delivered state has:
   filling plain values rather than serializing FlatBuffers; and
 - no active `ZdbTelemetry.hh` or telemetry-schema ownership in `zdb`.
 
-`GUIDELINES.md` is authoritative throughout implementation and review.
+`docs/GUIDELINES.md` is authoritative throughout implementation and review.
 
 ## Fixed module boundary
 
@@ -295,7 +295,7 @@ replication, election, cache, sampling, or database lifecycle behavior.
    compile-time enum ordinal checks.
 7. Build `zv` alone and audit headers, direct includes, generated dependencies,
    constructor indices, identifier storage, and allocation paths against
-   `GUIDELINES.md`.
+   `docs/GUIDELINES.md`.
 
 ### Phase 2: Manager and lifecycle watcher
 
@@ -336,7 +336,7 @@ replication, election, cache, sampling, or database lifecycle behavior.
 3. Verify `zv` has no source, include, link, or generated-schema dependency on
    `zdb`, and `zdb` contains no telemetry serialization.
 4. Run a top-level warning-free build and affected tests, then perform a final
-   line-by-line `GUIDELINES.md` red/amber audit.
+   line-by-line `docs/GUIDELINES.md` red/amber audit.
 
 ## Code references
 
@@ -394,7 +394,7 @@ replication, election, cache, sampling, or database lifecycle behavior.
 - Active code no longer includes or installs `ZdbTelemetry.hh`; `zdb` retains
   only its non-telemetry schemas.
 - Focused `zv`/`zdb` tests and a top-level build pass without warnings, and the
-  final `GUIDELINES.md` audit has no unresolved red or amber finding.
+  final `docs/GUIDELINES.md` audit has no unresolved red or amber finding.
 
 ## Non-goals
 

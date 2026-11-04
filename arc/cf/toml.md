@@ -855,7 +855,7 @@ Adapt the non-include portions of `ZvCfTest`:
 ## Mandatory implementation audit
 
 Do not treat passing functional tests as completion. Before final verification,
-audit every applicable red and amber flag in `GUIDELINES.md` and record either
+audit every applicable red and amber flag in `docs/GUIDELINES.md` and record either
 the repair or why the flag is inapplicable. At minimum, inspect the following
 areas that required post-completion YAML correction:
 
@@ -929,7 +929,7 @@ areas that required post-completion YAML correction:
    assignment/header passes, nested table-array paths, and reflected
    save/load/update/delete round trips.
 10. Implement the `ZvTOML` mmap and file-save wrappers and file diagnostics.
-11. Perform the mandatory `GUIDELINES.md` red/amber audit, including allocation
+11. Perform the mandatory `docs/GUIDELINES.md` red/amber audit, including allocation
     enumeration and recorded state/frame layouts, and repair every finding.
 12. Run the focused tests and curated repository-owned `toml-test` subset,
     then audit every divergence from Cf/YAML as TOML-driven.

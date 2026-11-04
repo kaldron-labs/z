@@ -1,0 +1,25 @@
+ZhttpHeaderLifeTest
+
+Build the configured module normally, then run ./ZhttpHeaderLifeTest from
+zhttp/test (or make test). Use the configured source-tree libtool wrappers for
+external debuggers. The Zi/Ztcp/Ztls/Zhttp DSOs and consumer headers must all
+belong to the same current layout cohort before this executable is linked/run.
+
+This TAP test uses actual IOBufAlloc / IOBufURing<Header> allocations. It verifies
+that ordinary backing survives allocator destruction; the caller retains a
+native header's real allocator until the outer IOBufURing destructor returns its
+exact slot; and grown Jumbo backing returns that slot once without depending
+on the allocator for the new payload. The native cases report themselves as
+untested when io_uring is unavailable.
+
+Posted-continuation cases use the actual Header on a real scheduler without
+a socket/data-submission fixture. They check final Header and allocator
+destruction, including slot return, after terminal notification and an earlier
+cross-shard continuation have both drained. Retained payload ranges no longer
+acquire a descriptor lease: each I/O context owns its own transmit cursor.
+The 20-second wait is a fixture failure deadline, not a protocol capacity bound.
+
+These scoped destruction tests do not establish network lifecycle correctness.
+The linked cohort must additionally exercise original-buffer identity through
+partial writes, late NOTIF after the next part, pending message ordering and
+connection replacement/cancel. No diagnostic-only production hook is required.

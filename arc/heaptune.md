@@ -156,7 +156,7 @@ Use these hand-derived examples to make aggregation coverage concrete:
   registration and module traversal already cover these additions.
 
 Use existing Z allocation, CSV, file, thread, and test facilities. Follow
-`GUIDELINES.md`, including lowercase integration-test filenames, hard tabs,
+`docs/GUIDELINES.md`, including lowercase integration-test filenames, hard tabs,
 and direct includes. No external dependencies or timing benchmark is needed.
 
 ## Workload fixture

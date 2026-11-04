@@ -16,6 +16,13 @@ REGRESS_OPTS = --inputdir=test
 
 #EXTRA_CLEAN += 
 
+# PGXS retains the server configure compiler's options. Match this extension's
+# actual compiler, and preserve printf checking when the server used GCC.
+ifneq ($(findstring __clang__,$(shell $(CC) -dM -E - < /dev/null)),)
+PG_CPPFLAGS += -Dgnu_printf=printf
+PG_CFLAGS += -Wno-unknown-warning-option
+endif
+
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 

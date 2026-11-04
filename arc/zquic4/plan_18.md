@@ -9,7 +9,7 @@ Preconditions: plans 1 through 17 complete.
 `zquic` has diagnostics counters and debug log points but no qlog event stream.  This plan adds an optional structured event sink designed to compile and run with no hot-path allocation when disabled.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -67,7 +67,7 @@ New or changed data stores: optional writer state belongs to the app; runtime st
 - Open question: whether repository already has a preferred JSON streaming helper beyond `ZtJSON`.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

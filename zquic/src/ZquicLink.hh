@@ -4224,7 +4224,7 @@ protected:
     SendFlights sendFlights, MarkEstablished markEstablished,
     AfterEstablished afterEstablished) {
     ZmRef<ZiIOBuf> out =
-      new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{this};
+      new CryptoTxBufAlloc<TLSBufSize_, TLSBufSize_>{this, 0};
     // picotls writes this fixed five-offset array through its C callback ABI.
     size_t offsets[5] = {};
     int n =
@@ -4237,7 +4237,8 @@ protected:
     for (unsigned i = 0; i <= TLSEpochCount; ++i)
       offsets_[i] = offsets[i];
     syncEarlyDataTLS_();
-    if (!sendFlights(out->data(), unsigned(n), offsets_, addr))
+    out->length = unsigned(n);
+    if (!sendFlights(ZuMv(out), offsets_, addr))
       return false;
     markEstablished();
     return afterEstablished(ZuMv(addr));
@@ -6486,9 +6487,9 @@ nextSpace:
 	continue;
       }
       ZuBSpan payload;
-      if (!m_txCrypto[level].txPayload(ref.offset, length, payload) ||
-	  !build.commitScratch(unsigned(n)) || !build.add(payload))
-	return false;
+      if (!m_txCrypto[level].txPayload(ref.offset, length, payload)) return false;
+      if (payload.length() < length) { length = payload.length(); continue; }
+      if (!build.commitScratch(unsigned(n)) || !build.add(payload)) return false;
       if (ref.length > length) {
 	SentFrameRef tail = ref;
 	tail.offset += length;
@@ -7294,11 +7295,11 @@ nextSpace:
 
   template <typename SendCryptoPkt>
   bool sendCryptoFlights_(
-    const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
+    ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
     unsigned chunkMax, ZiSockAddr addr, SendCryptoPkt sendCryptoPkt) {
     return Zquic::sendCryptoFlights_(
       m_txCrypto, m_txDiag,
-      data, len, offsets, chunkMax, ZuMv(addr),
+      ZuMv(data), offsets, chunkMax, ZuMv(addr),
       [sendCryptoPkt](
 	  PktNumSpace::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) mutable {
@@ -8047,7 +8048,7 @@ nextSpace:
     unsigned offset = 0;
     while (offset < d.buf->length) {
       ZuBSpan packet{
-	d.buf->data_() + offset, d.buf->length - offset};
+	d.buf->data() + offset, d.buf->length - offset};
       if (Pkt::isLong(packet)) {
 	LongHdr h;
 	if (Pkt::parseLong(packet, h) < 0) {
@@ -8110,7 +8111,7 @@ nextSpace:
   bool receiveProtLongPkt_(
     InitialKeyDir::T keyDir, Datagram &d, unsigned packetOffset, unsigned packetLen,
     PrepareLong prepareLong, ConsumeFrames consumeFrames) {
-    uint8_t *base = d.buf->data_() + packetOffset;
+    uint8_t *base = d.buf->data() + packetOffset;
     ZuBSpan packet{base, packetLen};
     auto datagram = d.buf->cspan();
     LongHdr h;
@@ -8337,7 +8338,7 @@ nextSpace:
   bool rxProtShortPkt_(
     Datagram &d, unsigned packetOffset, unsigned packetLen,
     ConsumeFrames consumeFrames, const CxnID *routedDCID = nullptr) {
-    uint8_t *base = d.buf->data_() + packetOffset;
+    uint8_t *base = d.buf->data() + packetOffset;
     ZuBSpan packet{base, packetLen};
     auto datagram = d.buf->cspan();
     if (!m_crypto.rxSecretInstalled(PktNumSpace::AppData)) {

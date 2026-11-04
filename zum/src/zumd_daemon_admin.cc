@@ -761,7 +761,7 @@ static bool adminBody(String &body, T &value)
 {
   if (!body || body.length() > ServerLimitMax::JSON) return false;
   if (!body.mutable_()) body.length(body.length());
-  auto parsed = ZfJSON::scan({body.data(), body.length()});
+  auto parsed = ZfJSON::scan(body);
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -784,7 +784,7 @@ static bool adminBodyFields(String &body, T &value, uint64_t &seen)
 {
   if (!body || body.length() > ServerLimitMax::JSON) return false;
   if (!body.mutable_()) body.length(body.length());
-  auto parsed = ZfJSON::scan({body.data(), body.length()});
+  auto parsed = ZfJSON::scan(body);
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -816,7 +816,7 @@ static bool stringPatchBody(String &body,
 {
   if (!body || body.length() > ServerLimitMax::JSON) return false;
   if (!body.mutable_()) body.length(body.length());
-  auto parsed = ZfJSON::scan({body.data(), body.length()});
+  auto parsed = ZfJSON::scan(body);
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -2747,26 +2747,33 @@ template <typename Record, typename Key>
 static String adminCursorEncode(
     ZuBSpan secret, int operation, AppID appID, const Key &key)
 {
-  Zfb::IOBuilder<Zfb::BufferAlign<Key>::N> fbb{new ZiIOBufAlloc<>()};
-  fbb.finish(Zfb::save(fbb, key));
-  unsigned dataLength = fbb.size();
   constexpr unsigned headerLength = 10;
   constexpr unsigned macLength = Ztls::HMAC<>::Size;
-  Bytes raw;
-  raw.length(headerLength + dataLength + macLength, false);
-  raw[0] = 1;
-  raw[1] = uint8_t(operation);
+  constexpr unsigned align = Zfb::BufferAlign<Key>::N;
+  constexpr unsigned headRoom = (headerLength + align - 1) & ~(align - 1);
+  using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    ZiIOBuf_DefltMaxSize, ZuStringT<"Zum.Admin.Cursor">>;
+  Zfb::IOBuilder<align> fbb{new Buf{nullptr, 0}, align,
+    ZiIOBuf_DefltMaxSize, macLength, headRoom};
+  fbb.finish(Zfb::save(fbb, key));
+  auto raw = fbb.buf();
+  if (!raw) return {};
+  raw->skip -= headerLength;
+  raw->length += headerLength;
+  auto data = raw->data();
+  data[0] = 1;
+  data[1] = uint8_t(operation);
   ZuBigEndian<uint64_t> app{appID};
-  memcpy(raw.data() + 2, &app, sizeof(app));
-  memcpy(raw.data() + headerLength, fbb.data(), dataLength);
+  memcpy(data + 2, &app, sizeof(app));
   Ztls::HMAC<> hmac;
   hmac.start(secret);
-  hmac.update({raw.data(), headerLength + dataLength});
-  hmac.finish({raw.data() + headerLength + dataLength, macLength});
+  hmac.update(raw->cspan());
+  hmac.finish({raw->end(), macLength});
+  raw->length += macLength;
   String encoded;
-  encoded.length(ZuBase64URL::enclen(raw.length()));
-  encoded.length(ZuBase64URL::encode(encoded.span(), raw));
-  ZuClear(raw);
+  encoded.length(ZuBase64URL::enclen(raw->length));
+  encoded.length(ZuBase64URL::encode(encoded.span(), raw->cspan()));
+  ZuClear(raw->span());
   return encoded;
 }
 
@@ -3047,7 +3054,7 @@ static bool stateBody(String &body, State::T &state)
 {
   if (!body || body.length() > ServerLimitMax::JSON) return false;
   if (!body.mutable_()) body.length(body.length());
-  auto parsed = ZfJSON::scan({body.data(), body.length()});
+  auto parsed = ZfJSON::scan(body);
   if (parsed.p<0>() != int(body.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();

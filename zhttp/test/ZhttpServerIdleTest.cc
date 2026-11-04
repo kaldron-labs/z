@@ -15,9 +15,12 @@
 
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmThread.hh>
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
+
+#include <zlib/Zquic.hh>
 
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
@@ -306,7 +309,9 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
   };
 
   struct Link :
+    public ZmNHeap<Link>,
     public Zhttp::ClientLink<Client, Link, Profile> {
+    friend inline ZuStringT<"Zhttp.Test.IdleLink"> ZmNHeapID(Link *);
     using Base = Zhttp::ClientLink<Client, Link, Profile>;
     using Base::Base;
 
@@ -360,6 +365,10 @@ struct Client : public Zhttp::ClientHub<Client<Profile>, Profile> {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -621,19 +630,19 @@ void activeStop()
 	"request-limit refusal allocates no application request");
   }
 
-  ZmAtomic<unsigned> stopReturned = 0;
+  auto stopCaller = ZmSelf();
   constexpr unsigned ExpectedReleases = Limit ? 2 : 1;
   if (serverInited) app.stop([
-    &state, &stopReturned
+    &state, &mx, &app, stopCaller
   ](bool ok) {
     if (!ok) state.errors = 1;
-    if (!stopReturned.load_()) state.errors = 1;
+    // Fast worker completion may precede return on the control thread.
+    if (ZmSelf() == stopCaller || !mx.invoked(app.rxThread())) state.errors = 1;
     if (state.releaseCount.load_() != ExpectedReleases)
       ++state.stopBeforeRelease;
     ++state.stopCount;
     state.stopped.post();
   });
-  stopReturned = 1;
   bool stopped = !serverInited;
   if (!stopped) {
     auto timeout = Zm::now(10);

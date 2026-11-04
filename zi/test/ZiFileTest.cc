@@ -380,43 +380,43 @@ struct FileBigPrint { friend FileBigPrintFn ZuPrintType(FileBigPrint *); };
 
 void testTxFailures()
 {
-  ZuTestScope(testTxFailures);
+  ZuTestScopeRT(testTxFailures);
   cleanupFiles();
   ZiFile file;
-  ZuCheck(file.open(g_foo, ZiFile::Write | ZiFile::GC) == Zi::OK);
+  ZuCheckRT(file.open(g_foo, ZiFile::Write | ZiFile::GC) == Zi::OK);
   using Stream = ZiFileTxStream<ZiFileTxBufSize<8>>;
   {
     Stream stream{file};
     stream << "prefix" << FileBigPrint{} << "ignored";
-    ZuCheck(stream.failed() && !file.error());
-    ZuCheck(!stream.flush());
-    ZuCheck(file.size() == 6);
-    ZuCheck(!stream.flush());
-    ZuCheck(file.size() == 6);
+    ZuCheckRT(stream.failed() && !file.error());
+    ZuCheckRT(!stream.flush());
+    ZuCheckRT(file.size() == 6);
+    ZuCheckRT(!stream.flush());
+    ZuCheckRT(file.size() == 6);
   }
   file.close();
 
   Stream failed{file};
   failed << "lost";
-  ZuCheck(!failed.flush() && failed.failed() && file.error());
-  ZuCheck(file.open(g_bar, ZiFile::Write | ZiFile::GC) == Zi::OK);
+  ZuCheckRT(!failed.flush() && failed.failed() && file.error());
+  ZuCheckRT(file.open(g_bar, ZiFile::Write | ZiFile::GC) == Zi::OK);
   failed << "ignored";
-  ZuCheck(!failed.flush() && file.size() == 0);
+  ZuCheckRT(!failed.flush() && file.size() == 0);
   file.close();
 
   Stream rollover{file};
   rollover << "12345678" << 'x';
-  ZuCheck(rollover.failed() && !rollover.flush());
+  ZuCheckRT(rollover.failed() && !rollover.flush());
   Stream direct{file};
   direct << "prefix" << "0123456789";
-  ZuCheck(direct.failed() && !direct.flush());
+  ZuCheckRT(direct.failed() && !direct.flush());
 
 #ifndef _WIN32
   ZiFile full{"/dev/full", ZiFile::Write | ZiFile::GC};
   if (full) {
     Stream output{full};
     output << "0123456789";
-    ZuCheck(output.failed() && !output.flush());
+    ZuCheckRT(output.failed() && !output.flush());
   }
 #endif
 }

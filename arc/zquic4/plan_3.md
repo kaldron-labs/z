@@ -10,11 +10,11 @@ Preconditions: plans 1 and 2 complete.
 `zquic` already performs ACK-triggered packet-threshold loss for 1-RTT and immediately calls `retransmit_()` when loss is detected.  `PktTxSpace` also has utility behavior for time-threshold loss and retransmit queueing.  The remaining work is runtime integration: use a loss-time timer, apply loss detection across spaces, and connect persistent congestion to the congestion controller from plan 4.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
-CRITICAL: Implementing safe timer shutdown and callback draining is key to this phase, follow the "Timer Teardown" guideline in `GUIDELINES.md` precisely
+CRITICAL: Implementing safe timer shutdown and callback draining is key to this phase, follow the "Timer Teardown" guideline in `docs/GUIDELINES.md` precisely
 
 ## Architecture Documentation
 New or changed components: add loss-deadline computation over the existing sent-packet spaces.
@@ -72,7 +72,7 @@ New or changed data stores: add per-space persistent congestion episode tracking
 - Open question: exact storage for lost interval endpoints if existing packet records do not retain enough metadata.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

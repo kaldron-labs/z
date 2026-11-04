@@ -19,7 +19,7 @@ unwiped, dedicated temporary may also become secret-typed solely to preserve
 an existing move into that migrated owner; do not add a copy or broaden a
 mixed-purpose type for this. Migrate only if the policy improves the
 established contract without adding an allocation, copy, wider type change,
-or delayed wipe. Preserve unrelated dirty work. Follow `GUIDELINES.md`'s repair
+or delayed wipe. Preserve unrelated dirty work. Follow `docs/GUIDELINES.md`'s repair
 procedure, storage/capacity and heap flags,
 and its dependent-compatibility rule.
 

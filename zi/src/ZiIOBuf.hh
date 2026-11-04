@@ -16,7 +16,7 @@
 #include <zlib/ZiLib.hh>
 #endif
 
-#ifndef _WIN32
+#if Zi_URing
 #include <linux/io_uring.h>
 #endif
 
@@ -27,7 +27,6 @@
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
-#include <zlib/ZmRing.hh>
 #include <zlib/ZmVHeap.hh>
 
 #include <zlib/ZiPlatform.hh>
@@ -41,10 +40,16 @@
 #define ZiIOBuf_DefltSize 980
 #endif
 
-// Default ring slots/SQ capacity; bounds pinned storage and is build-overridable.
-#ifndef ZiIOBuf_DefltRingSize
-#define ZiIOBuf_DefltRingSize 64
+// Direction-specific payload pools and descriptor rings, build-overridable.
+#ifndef ZiIOBuf_DefltRxRingSize
+#define ZiIOBuf_DefltRxRingSize 128
 #endif
+#ifndef ZiIOBuf_DefltTxRingSize
+#define ZiIOBuf_DefltTxRingSize 128
+#endif
+
+// Linux SQ/provided-ring limit; reserve the extra UDP buffer id separately.
+enum { ZiIOBuf_MaxRingSize = 32768 };
 
 // default hard-coded sane upper limit on an individual buffer size
 #ifndef ZiIOBuf_DefltMaxSize
@@ -75,22 +80,22 @@ struct IOBufAllocator : public ZmPolymorph {
   virtual IOBufRing *ring() const { return nullptr; }
 };
 
-#ifndef _WIN32
+#if Zi_URing
 class URing;
 // Views of the kernel-owned queues, bound once at initialization.
 struct IOBufSQ {
-  ZmAtomic<unsigned> *head;
-  ZmAtomic<unsigned> *tail;
-  unsigned	*array;
-  io_uring_sqe	*sqes;
-  unsigned	mask;
-  ZmAtomic<unsigned> *flags;
+  ZmAtomic<unsigned>	*head;
+  ZmAtomic<unsigned>	*tail;
+  unsigned		*array;
+  io_uring_sqe		*sqes;
+  unsigned		mask;
+  ZmAtomic<unsigned>	*flags;
 };
 struct IOBufCQ {
-  ZmAtomic<unsigned> *head;
-  ZmAtomic<unsigned> *tail;
-  io_uring_cqe	*cqes;
-  unsigned	mask;
+  ZmAtomic<unsigned>	*head;
+  ZmAtomic<unsigned>	*tail;
+  io_uring_cqe		*cqes;
+  unsigned		mask;
 };
 
 // Ring mappings and registered payload storage; SQ/CQ are owned by the I/O shard.
@@ -111,6 +116,8 @@ public:
   ZmRef<IOBuf> alloc(void *owner = nullptr, uint32_t length = 0) override;
   IOBufRing *ring() const override { return const_cast<IOBufRing *>(this); }
 
+  // Slot allocation/return support competing threads. SQ/CQ and provided-ring
+  // publication remain exclusive to the I/O shard; init/final require quiescence.
   uint8_t *allocSlot();
   void free(uint8_t *data);
 
@@ -119,7 +126,8 @@ public:
   const IOBufCQ &cq() const { return m_cq; }
   unsigned bufSize() const { return m_bufSize; }
   unsigned bufCount() const { return m_bufCount; }
-  bool available() { return m_free.tryShift(); }
+  unsigned slotSize() const { return m_slotSize; }
+  bool available() const { return uintptr_t(m_free) & ~uintptr_t(1); }
   int returnFD() const { return m_returnFD; }
   void wait();
 
@@ -131,7 +139,7 @@ public:
 protected:
   bool init_(unsigned ringSize, unsigned bufSize);
   unsigned index(const void *p) const {
-    return (uintptr_t(p) - uintptr_t(m_bufs))/m_bufSize;
+    return (uintptr_t(p) - uintptr_t(m_bufs))/m_slotSize;
   }
   bool initReturn();
 
@@ -139,11 +147,22 @@ private:
   IOBufSQ			m_sq{};
   IOBufCQ			m_cq{};
   void				*m_map = nullptr;
-  using Free = ZmRing<ZmRingT<uint8_t *, ZmRingMW<true>>>;
-  Free				m_free;
+  // SQ/CQ queue operations/completion records, not free payload buffers:
+  // - SQ entries are reusable after consumption, before buffer use ends.
+  // - CQ entries are reusable after consumption, while Rx data may be retained.
+  // - Zero-copy DATA can finish before the kernel releases its hold at NOTIF.
+  // A slot returns here only after all application and kernel users release it;
+  // SQ/CQ availability alone cannot establish that the payload is reusable.
+  //
+  // Same MPMC recycling protocol as ZmHeapCache. Bit zero protects the
+  // head while a consumer reads the popped slot's next word. The next
+  // pointer overlaps the buffer head only while the slot is free.
+  ZuAssert(sizeof(uintptr_t) <= ZiIOBuf_Align);
+  ZmAtomic<uintptr_t>		m_free{0};
   uint8_t			*m_bufs = nullptr;
   unsigned			m_bufSize = 0;
   unsigned			m_bufCount = 0;
+  unsigned			m_slotSize = 0;
   int				m_fd = -1;
   int				m_returnFD = -1;
   ZmAtomic<unsigned>		m_waiting{0};
@@ -169,36 +188,60 @@ private:
 #endif
 
 struct IOBuf : private VHeap, public ZmPolymorph {
+  uint32_t	size = 0;
   mutable void	*owner = nullptr;
   uintptr_t	data__ = 0;
-  uint32_t	size = 0;
   uint32_t	length = 0;
   uint32_t	skip = 0;
-  bool		failed_ = false;
 
-  // 64bit pointer-packing - uses bits 63 and 62
+  // 64bit pointer-packing - uses bits 63, 62 and 61
   ZuAssert(sizeof(uintptr_t) == 8);
   static constexpr uintptr_t Jumbo = (uintptr_t(1)<<63);
   static constexpr uintptr_t URing = (uintptr_t(1)<<62);
+  static constexpr uintptr_t Failed = (uintptr_t(1)<<61);
 
 private:
   using VHeap::valloc;
   using VHeap::vfree;
 
 protected:
+#ifdef ZiMultiplex_DEBUG
+  // The concrete URing descriptor calls this with its actual Base type, so
+  // the default disappears at compile time. A diagnostic Base may hide it.
+  void preSlotRelease_() { }
+  // Actual preservation traffic only; serialization/appends are not included.
+  // inPlace distinguishes relocation from copies into grown backing.
+  virtual void copied_(uint64_t, bool inPlace) { }
+#endif
   virtual void releaseURing_() { }
+  virtual void releaseView_() { }
+  uint64_t storageMemory_() const {
+    if (!(data__ & Jumbo)) return 0;
+    uint64_t bytes = uint64_t(size) + ZiIOBuf_Align;
+    unsigned i = VHeap::cacheI(bytes);
+    return i < VHeap::NCaches ? VHeap::blockSize(i) : bytes;
+  }
   void release_() {
     if (data__ & URing) releaseURing_();
     else if (data__ & Jumbo) vfree(data_());
+    else releaseView_();
   }
 
   IOBuf(uint8_t *data_, uint32_t size_, void *owner_, uint32_t length_) :
-    owner{owner_}, data__{reinterpret_cast<uintptr_t>(data_)},
-    size{size_}, length{length_} { }
+    size{size_}, owner{owner_}, data__{reinterpret_cast<uintptr_t>(data_)},
+    length{length_} { }
 
 public:
   virtual ~IOBuf() { if (ZuUnlikely(data__ & Jumbo)) vfree(data_()); }
   virtual IOBufRing *ring() const { return nullptr; }
+#ifdef ZiMultiplex_DEBUG
+  // Called only for a genuine receive consolidation copy. The source is its
+  // original backing, not a slice descriptor. No diagnostic state by default.
+  virtual void mergeRx_(const IOBuf &, unsigned) { }
+#endif
+  virtual uint64_t memory() const {
+    return ZmHeapAllocSize<sizeof(IOBuf)>{} + storageMemory_();
+  }
 
   IOBuf(const IOBuf &buf) = delete;
   IOBuf &operator =(const IOBuf &buf) = delete;
@@ -206,7 +249,7 @@ public:
   IOBuf &operator =(IOBuf &&buf) = delete;
 
   uint8_t *data_() {
-    return reinterpret_cast<uint8_t *>(data__ & ~(Jumbo | URing));
+    return reinterpret_cast<uint8_t *>(data__ & ~(Jumbo | URing | Failed));
   }
   const uint8_t *data_() const {
     return const_cast<IOBuf *>(this)->data_();
@@ -216,7 +259,11 @@ public:
   bool uring() const { return data__ & URing; }
 
   // Boolean conversion describes readable bytes; output status is separate.
-  bool failed() const { return failed_; }
+  bool failed() const { return data__ & Failed; }
+  void failed(bool value) {
+    if (value) data__ |= Failed;
+    else data__ &= ~Failed;
+  }
   bool operator !() const { return !length; }
 
   uint8_t *data() { return data_() + skip; }
@@ -232,7 +279,7 @@ public:
     auto jumbo = static_cast<uint8_t *>(valloc(newSize));
     size = newSize;
     release_();
-    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
+    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo | (data__ & Failed);
     return jumbo;
   }
 
@@ -240,7 +287,7 @@ public:
     if (ptr == data_()) {
       if (!(data__ & (Jumbo | URing))) return;
       release_();
-      data__ = 0;
+      data__ &= Failed;
       length = size = 0;
       return;
     }
@@ -250,7 +297,7 @@ public:
   void clear() {
     length = 0;
     skip = 0;
-    failed_ = false; // begin a new output operation
+    failed(false); // begin a new output operation
   }
 
   template <typename T>
@@ -296,7 +343,12 @@ public:
     auto old = data();
     unsigned newSize_ = newSize + skip;
     if (ZuLikely(newSize_ <= size)) {
-      if (tail) memmove(old + newSize - tail, old + oldSize - tail, tail);
+      if (tail && newSize != oldSize) {
+	memmove(old + newSize - tail, old + oldSize - tail, tail);
+#ifdef ZiMultiplex_DEBUG
+	copied_(tail, true);
+#endif
+      }
       size = newSize_;
       return old;
     }
@@ -305,9 +357,12 @@ public:
     if (head) memcpy(jumbo + skip, old, head);
     if (tail)
       memcpy(jumbo + newSize_ - tail, old + oldSize - tail, tail);
+#ifdef ZiMultiplex_DEBUG
+    if (head || tail) copied_(uint64_t(head) + tail, false);
+#endif
     size = newSize_;
     release_();
-    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
+    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo | (data__ & Failed);
     return jumbo + skip;
   }
 
@@ -316,21 +371,26 @@ public:
   // - allocation failure is handled by ZmHeapFail
   template <auto Grow = ZmGrow>
   uint8_t *ensure(unsigned newSize) {
-    if (ZuUnlikely(failed_ || newSize > UINT32_MAX - skip)) {
-      failed_ = true;
+    if (ZuUnlikely(failed() || newSize > UINT32_MAX - skip)) {
+      failed(true);
       return nullptr;
     }
     newSize += skip;
     if (ZuLikely(newSize <= size)) return data();
     unsigned grown = Grow(size, newSize);
-    if (ZuUnlikely(grown < newSize)) { failed_ = true; return nullptr; }
+    if (ZuUnlikely(grown < newSize)) { failed(true); return nullptr; }
     newSize = grown;
     auto old = data_();
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
-    if (length) memcpy(jumbo + skip, old + skip, length);
+    if (length) {
+      memcpy(jumbo + skip, old + skip, length);
+#ifdef ZiMultiplex_DEBUG
+      copied_(length, false);
+#endif
+    }
     size = newSize;
     release_();
-    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
+    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo | (data__ & Failed);
     return jumbo + skip;
   }
 
@@ -348,7 +408,12 @@ public:
     auto newSize = length + length_;
     if (ZuLikely(newSize <= size)) {
       auto newSkip = size - length;
-      if (length) memmove(old + newSkip, old + skip, length);
+      if (length && newSkip != skip) {
+	memmove(old + newSkip, old + skip, length);
+#ifdef ZiMultiplex_DEBUG
+	copied_(length, true);
+#endif
+      }
       skip = newSkip - length_;
       length += length_;
       return data();
@@ -356,20 +421,25 @@ public:
     newSize = Grow(size, newSize);
     auto jumbo = reinterpret_cast<uint8_t *>(valloc(newSize));
     auto newSkip = newSize - length;
-    if (length) memcpy(jumbo + newSkip, old + skip, length);
+    if (length) {
+      memcpy(jumbo + newSkip, old + skip, length);
+#ifdef ZiMultiplex_DEBUG
+      copied_(length, false);
+#endif
+    }
     size = newSize;
     skip = newSkip - length_;
     length += length_;
     release_();
-    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo;
+    data__ = reinterpret_cast<uintptr_t>(jumbo) | Jumbo | (data__ & Failed);
     return data();
   }
 
   bool append(const uint8_t *data, unsigned length_) {
-    if (ZuUnlikely(failed_)) return false;
+    if (ZuUnlikely(failed())) return false;
     if (!length_) return true;
     if (ZuUnlikely(length_ > UINT32_MAX - length)) {
-      failed_ = true;
+      failed(true);
       return false;
     }
     unsigned total = length + length_;
@@ -389,16 +459,16 @@ private:
 
   template <typename P, typename = MatchPDelegate<P>>
   void append(P &&p) {
-    if (ZuUnlikely(failed_)) return;
+    if (ZuUnlikely(failed())) return;
     ZuPrint<P>::print(*this, ZuFwd<P>(p));
   }
   template <typename P, typename = MatchPBuffer<P>>
   void append(const P &p) {
-    if (ZuUnlikely(failed_)) return;
+    if (ZuUnlikely(failed())) return;
     unsigned length_ = ZuPrint<P>::length(p);
     if (!length_) return;
     if (ZuUnlikely(length_ > UINT32_MAX - length)) {
-      failed_ = true;
+      failed(true);
       return;
     }
     auto ptr = ensure(length + length_);
@@ -471,6 +541,9 @@ friend inline HeapID ZmNHeapID(IOBufAlloc__ *);
     Base(&data_[0], Size, owner, length) { }
 
   ~IOBufAlloc__() = default;
+  uint64_t memory() const override {
+    return ZmHeapAllocSize<sizeof(IOBufAlloc__)>{} + this->storageMemory_();
+  }
 
   IOBufAlloc__(const IOBufAlloc__ &) = delete;
   IOBufAlloc__ &operator =(const IOBufAlloc__ &) = delete;
@@ -505,7 +578,7 @@ using IOBufAlloc = IOBufAlloc_<Base, BuiltinSize<Base>(Size), MaxSize, HeapID>;
 // ensure cache line alignment
 ZuAssert(!((sizeof(IOBufAlloc<IOBuf, 1, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>)) & (Zm::CacheLineSize - 1)));
 
-#ifndef _WIN32
+#if Zi_URing
 template <typename Base, typename HeapID>
 struct IOBufURing :
     public ZmNHeap<IOBufURing<Base, HeapID>>, public Base {
@@ -526,12 +599,19 @@ friend inline HeapID ZmNHeapID(IOBufURing *);
   ~IOBufURing() { if (this->data__ & IOBuf::URing) releaseURing_(); }
 
   IOBufRing *ring() const override { return ring_; }
+  uint64_t memory() const override {
+    return ZmHeapAllocSize<sizeof(IOBufURing)>{} +
+      (this->uring() ? ring_->slotSize() : this->storageMemory_());
+  }
 
 protected:
   void releaseURing_() override {
+#ifdef ZiMultiplex_DEBUG
+    Base::preSlotRelease_();
+#endif
     auto data = this->data_();
     auto ring = ring_;
-    this->data__ = 0;
+    this->data__ &= IOBuf::Failed;
     ring_ = nullptr;
     ring->free(data);
   }
@@ -570,22 +650,25 @@ struct AppBufAllocator :
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 struct RxUDPBufAllocator :
   public ZmNHeap<RxUDPBufAllocator<Base, Size, MaxSize, HeapID>>,
-#ifndef _WIN32
+#if Zi_URing
   public IOBufURingBase<Base, Size, HeapID, true, true>
 #else
   public IOBufAllocator
 #endif
 {
-#ifndef _WIN32
+#if Zi_URing
   using URing = IOBufURingBase<Base, Size, HeapID, true, true>;
-  RxUDPBufAllocator(unsigned ringSize = ZiIOBuf_DefltRingSize) {
-    if (Zi::uring()) IOBufRxRing::init(ringSize, URing::BufSize);
-  }
 #endif
+  RxUDPBufAllocator(unsigned ringSize = ZiIOBuf_DefltRxRingSize) {
+#if Zi_URing
+    if (Zi::uring()) IOBufRxRing::init(ringSize, URing::BufSize);
+#endif
+  }
+
 
   IOBufType::T type() override { return IOBufType::RxUDP; }
   ZmRef<IOBuf> alloc(void *owner, uint32_t length) override {
-#ifndef _WIN32
+#if Zi_URing
     if (Zi::uring()) {
       return URing::alloc(IOBufRxRing::allocSlot(), owner, length);
     } else {
@@ -600,22 +683,25 @@ struct RxUDPBufAllocator :
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 struct TxUDPBufAllocator :
   public ZmNHeap<TxUDPBufAllocator<Base, Size, MaxSize, HeapID>>,
-#ifndef _WIN32
+#if Zi_URing
   public IOBufURingBase<Base, Size, HeapID, false, true>
 #else
   public IOBufAllocator
 #endif
 {
-#ifndef _WIN32
+#if Zi_URing
   using URing = IOBufURingBase<Base, Size, HeapID, false, true>;
-  TxUDPBufAllocator(unsigned ringSize = ZiIOBuf_DefltRingSize) {
-    if (Zi::uring()) IOBufRing::init(ringSize, URing::BufSize);
-  }
 #endif
+  TxUDPBufAllocator(unsigned ringSize = ZiIOBuf_DefltTxRingSize) {
+#if Zi_URing
+    if (Zi::uring()) IOBufRing::init(ringSize, URing::BufSize);
+#endif
+  }
+
 
   IOBufType::T type() override { return IOBufType::TxUDP; }
   ZmRef<IOBuf> alloc(void *owner, uint32_t length) override {
-#ifndef _WIN32
+#if Zi_URing
     if (Zi::uring()) {
       return URing::alloc(IOBufRing::allocSlot(), owner, length);
     } else {
@@ -630,22 +716,25 @@ struct TxUDPBufAllocator :
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 struct RxTCPBufAllocator :
   public ZmNHeap<RxTCPBufAllocator<Base, Size, MaxSize, HeapID>>,
-#ifndef _WIN32
+#if Zi_URing
   public IOBufURingBase<Base, Size, HeapID, true, false>
 #else
   public IOBufAllocator
 #endif
 {
-#ifndef _WIN32
+#if Zi_URing
   using URing = IOBufURingBase<Base, Size, HeapID, true, false>;
-  RxTCPBufAllocator(unsigned ringSize = ZiIOBuf_DefltRingSize) {
-    if (Zi::uring()) IOBufRxRing::init(ringSize, URing::BufSize);
-  }
 #endif
+  RxTCPBufAllocator(unsigned ringSize = ZiIOBuf_DefltRxRingSize) {
+#if Zi_URing
+    if (Zi::uring()) IOBufRxRing::init(ringSize, URing::BufSize);
+#endif
+  }
+
 
   IOBufType::T type() override { return IOBufType::RxTCP; }
   ZmRef<IOBuf> alloc(void *owner, uint32_t length) override {
-#ifndef _WIN32
+#if Zi_URing
     if (Zi::uring()) {
       return URing::alloc(IOBufRxRing::allocSlot(), owner, length);
     } else {
@@ -660,22 +749,26 @@ struct RxTCPBufAllocator :
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 struct TxTCPBufAllocator :
   public ZmNHeap<TxTCPBufAllocator<Base, Size, MaxSize, HeapID>>,
-#ifndef _WIN32
+#if Zi_URing
   public IOBufURingBase<Base, Size, HeapID, false, false>
 #else
   public IOBufAllocator
 #endif
 {
-#ifndef _WIN32
+  static constexpr unsigned Capacity = Size;
+#if Zi_URing
   using URing = IOBufURingBase<Base, Size, HeapID, false, false>;
-  TxTCPBufAllocator(unsigned ringSize = ZiIOBuf_DefltRingSize) {
-    if (Zi::uring()) IOBufRing::init(ringSize, URing::BufSize);
-  }
 #endif
+  TxTCPBufAllocator(unsigned ringSize = ZiIOBuf_DefltTxRingSize) {
+#if Zi_URing
+    if (Zi::uring()) IOBufRing::init(ringSize, URing::BufSize);
+#endif
+  }
+
 
   IOBufType::T type() override { return IOBufType::TxTCP; }
   ZmRef<IOBuf> alloc(void *owner, uint32_t length) override {
-#ifndef _WIN32
+#if Zi_URing
     if (Zi::uring()) {
       return URing::alloc(IOBufRing::allocSlot(), owner, length);
     } else {
@@ -690,22 +783,25 @@ struct TxTCPBufAllocator :
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 struct RxTLSBufAllocator :
   public ZmNHeap<RxTLSBufAllocator<Base, Size, MaxSize, HeapID>>,
-#ifndef _WIN32
+#if Zi_URing
   public IOBufURingBase<Base, Size, HeapID, true, false>
 #else
   public IOBufAllocator
 #endif
 {
-#ifndef _WIN32
+#if Zi_URing
   using URing = IOBufURingBase<Base, Size, HeapID, true, false>;
-  RxTLSBufAllocator(unsigned ringSize = ZiIOBuf_DefltRingSize) {
-    if (Zi::uring()) IOBufRxRing::init(ringSize, URing::BufSize);
-  }
 #endif
+  RxTLSBufAllocator(unsigned ringSize = ZiIOBuf_DefltRxRingSize) {
+#if Zi_URing
+    if (Zi::uring()) IOBufRxRing::init(ringSize, URing::BufSize);
+#endif
+  }
+
 
   IOBufType::T type() override { return IOBufType::RxTLS; }
   ZmRef<IOBuf> alloc(void *owner, uint32_t length) override {
-#ifndef _WIN32
+#if Zi_URing
     if (Zi::uring()) {
       return URing::alloc(IOBufRxRing::allocSlot(), owner, length);
     } else {
@@ -720,23 +816,27 @@ struct RxTLSBufAllocator :
 template <typename Base, unsigned Size, unsigned MaxSize, typename HeapID>
 struct TxTLSBufAllocator :
   public ZmNHeap<TxTLSBufAllocator<Base, Size, MaxSize, HeapID>>,
-#ifndef _WIN32
+#if Zi_URing
   public IOBufURingBase<Base, Size, HeapID, false, false>
 #else
   public IOBufAllocator
 #endif
 {
-#ifndef _WIN32
+  static constexpr unsigned Capacity = Size;
+#if Zi_URing
   using URing = IOBufURingBase<Base, Size, HeapID, false, false>;
-  TxTLSBufAllocator(unsigned ringSize = ZiIOBuf_DefltRingSize) {
-    if (Zi::uring()) IOBufRing::init(ringSize, URing::BufSize);
-  }
 #endif
+  TxTLSBufAllocator(unsigned ringSize = ZiIOBuf_DefltTxRingSize) {
+#if Zi_URing
+    if (Zi::uring()) IOBufRing::init(ringSize, URing::BufSize);
+#endif
+  }
+
 
   // Plaintext and final ciphertext share the same registered wire buffer.
   IOBufType::T type() override { return IOBufType::TxTLS; }
   ZmRef<IOBuf> alloc(void *owner, uint32_t length) override {
-#ifndef _WIN32
+#if Zi_URing
     if (Zi::uring()) {
       return URing::alloc(IOBufRing::allocSlot(), owner, length);
     } else {

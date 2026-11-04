@@ -9,8 +9,11 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZfCf.hh>
 #include "../../zdb/test/ZdbTestCf.hh"
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZvMxParams.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZdbMemStore.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_app_db.hh>
@@ -191,7 +194,9 @@ static void runtimeRoles()
   ZiLog::start();
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
@@ -203,17 +208,17 @@ static void runtimeRoles()
   ZmRef<Zum::DB> context = db;
   ZuCheck(db->start());
   db->active.wait();
-  roleNames(db, context);
+  ZuTestCall(roleNames, db, context);
   ZmSemaphore requestsDown;
   db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};
+  ZuCheck(mx.stop());
   db->final();
   db->requests = {};
   db = {};
   store = {};
-  ZuCheck(mx.stop());
   ZiLog::stop();
 }
 

@@ -4,8 +4,13 @@
 // (c) Copyright 2024 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 #include <zlib/ZuArray.hh>
 #include <zlib/ZuTestUtil.hh>
@@ -41,6 +46,9 @@ void usage_()
     "  -W\t\t- multiple writers (default: single writer)\n"
     "  -R\t\t- multiple readers (no-op for intrinsically MR ZiRing)\n"
     "  --no-eof\t- do not send/wait for EOF\n"
+#ifndef _WIN32
+    "  -F FD\t- signal reader attachment on FD, then close it\n"
+#endif
     "  -l N\t\t- loop N times\n"
     "  -b BUFSIZE\t- set buffer size to BUFSIZE (default: 8192)\n"
     "  -n COUNT\t- set number of messages to COUNT (default: 1)\n"
@@ -90,6 +98,9 @@ struct Params {
   unsigned		timeout = 1;
   unsigned		loop = 1;
   unsigned		count = 1;
+#ifndef _WIN32
+  int			readyFD = -1;
+#endif
   ZuTime		interval;
   bool			slow = false;
   ZmBitmap		cpuset;
@@ -172,7 +183,10 @@ int main(int argc, char **argv)
   params.defaultUnit = argc == 1;
 
   ZiTestResidue::init("ZiRingTest");
-  ZmTrap::sigintFn(&ZiTestResidue::cleanup);
+  ZmTrap::sigintFn([] {
+    ZiTestResidue::cleanup();
+    Zm::exit(1);
+  });
   ZmTrap::trap();
 
   ZuTestUtil::parse(1, argv);
@@ -215,6 +229,13 @@ int main(int argc, char **argv)
       case 'R':
 	params.mr = true;
 	break;
+#ifndef _WIN32
+      case 'F':
+	if (++i >= argc) usage_();
+	params.readyFD = ZuBox<int>{argv[i]};
+	if (params.readyFD < 0) usage_();
+	break;
+#endif
       case 'l':
 	if (++i >= argc) usage_();
 	params.loop = ZuBox<unsigned>{argv[i]};
@@ -377,6 +398,22 @@ void App<Ring>::reader()
     reader.close();
     return;
   }
+#ifndef _WIN32
+  if (readyFD >= 0) {
+    int fd = readyFD;
+    readyFD = -1;
+    int n;
+    do { n = ::write(fd, "\n", 1); } while (n < 0 && errno == EINTR);
+    ::close(fd);
+    if (n != 1) {
+      fail("reader readiness signal failed");
+      end = Zm::now();
+      reader.detach();
+      reader.close();
+      return;
+    }
+  }
+#endif
   WriterSeqs seqs;
   for (unsigned j = 0, n = count; j < n; j++) {
     ZuTime readStart = Zm::now();

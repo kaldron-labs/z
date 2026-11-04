@@ -6,6 +6,11 @@ changes, read `docs/GUIDELINES.md` and applicable task-specific guidance below.
 Also read the affected module's `docs/GUIDELINES.md` when present (for example,
 `zquic/GUIDELINES.md`); it supplies additional library-specific rules.
 
+Use this map to select guidance as the task develops. Do not concatenate the
+guidance corpus into a temporary manual or bulk-read it as a prerequisite.
+Read relevant sections directly; expand when the task requires additional
+guidance.
+
 | Document | Read when | Contents |
 | --- | --- | --- |
 | [GUIDELINES.md](docs/GUIDELINES.md) | Designing or changing code | Engineering principles, performance priorities, supported targets |

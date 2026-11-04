@@ -35,10 +35,10 @@ Test that size-zero open creates no ring/blocker object, fails cleanly when
 absent, succeeds on the same object after creation, and preserves creator size.
 
 Guidelines: reuse the size sentinel and built-in GC rather than adding flags or
-duplicating lower-level behavior ([No dogma](GUIDELINES.md#no-dogma),
-[Framework fit](GUIDELINES.md#framework-fit)). Cleanup remains explicit and
-timely, not a background scan ([General principles](GUIDELINES.md#general-principles)).
-The Windows branch is required by [Target systems](GUIDELINES.md#target-systems).
+duplicating lower-level behavior ([No dogma](docs/GUIDELINES.md#no-dogma),
+[Framework fit](docs/GUIDELINES.md#framework-fit)). Cleanup remains explicit and
+timely, not a background scan ([General principles](docs/GUIDELINES.md#general-principles)).
+The Windows branch is required by [Target systems](docs/GUIDELINES.md#target-systems).
 
 ## 2. Apply the FlatBuffers break once
 
@@ -62,11 +62,11 @@ generated headers manually.
 
 Guidelines: schema spelling retains FlatBuffers conventions, while C++ uses
 camel case and worker-only trailing underscores
-([Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes),
-[Trailing underscores](GUIDELINES.md#trailing-underscores)). Removing obsolete
-fields follows [Scope and cleanup](GUIDELINES.md#scope-and-cleanup). Using `Zfb`
-instead of another validation layer follows [Metadata](GUIDELINES.md#metadata)
-and Postel's Law in [No dogma](GUIDELINES.md#no-dogma).
+([Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes),
+[Trailing underscores](docs/GUIDELINES.md#trailing-underscores)). Removing obsolete
+fields follows [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup). Using `Zfb`
+instead of another validation layer follows [Metadata](docs/GUIDELINES.md#metadata)
+and Postel's Law in [No dogma](docs/GUIDELINES.md#no-dogma).
 
 ## 3. Reduce `AppCf` and the public API
 
@@ -95,12 +95,12 @@ In `ZtcApp.hh`:
 Use `req*`, not `ring*`: these settings do not configure the shared telemetry
 ring. Guidelines: `req` is prescribed, names stay below 28 bytes, public struct
 fields need no accessors, and class members retain `m_`
-([Length and abbreviations](GUIDELINES.md#length-and-abbreviations),
-[Accessors](GUIDELINES.md#accessors),
-[Class and struct shape](GUIDELINES.md#class-and-struct-shape)). Named,
-documented capacity addresses [Storage and capacity](GUIDELINES.md#storage-and-capacity).
-Direct includes and no shims follow [Module layout](GUIDELINES.md#module-layout)
-and [General principles](GUIDELINES.md#general-principles).
+([Length and abbreviations](docs/GUIDELINES.md#length-and-abbreviations),
+[Accessors](docs/GUIDELINES.md#accessors),
+[Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape)). Named,
+documented capacity addresses [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity).
+Direct includes and no shims follow [Module layout](docs/GUIDELINES.md#module-layout)
+and [General principles](docs/GUIDELINES.md#general-principles).
 
 ## 4. Keep transport state small and explicitly owned
 
@@ -144,14 +144,14 @@ Rx/Tx allocators into the minimum request/message pools; keep a separate alert
 pool only if its lifetime/tuning differs.
 
 Guidelines: `msgSize` is a short file-static name; complex aliases use `ZuDerive`;
-struct fields omit `m_` ([Naming](GUIDELINES.md#naming),
-[Assertions and type mechanics](GUIDELINES.md#assertions-and-type-mechanics),
-[Class and struct shape](GUIDELINES.md#class-and-struct-shape)). In-place PID
+struct fields omit `m_` ([Naming](docs/GUIDELINES.md#naming),
+[Assertions and type mechanics](docs/GUIDELINES.md#assertions-and-type-mechanics),
+[Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape)). In-place PID
 storage removes an uninstrumented allocation; pooled `ZiIOBuf` is the I/O-buffer
-exception ([Heap allocation](GUIDELINES.md#heap-allocation),
-[I/O and system integration](GUIDELINES.md#io-and-system-integration)). Layout and
-alignment follow [Storage and capacity](GUIDELINES.md#storage-and-capacity) and
-[I/O sharding](GUIDELINES.md#io-sharding).
+exception ([Heap allocation](docs/GUIDELINES.md#heap-allocation),
+[I/O and system integration](docs/GUIDELINES.md#io-and-system-integration)). Layout and
+alignment follow [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity) and
+[I/O sharding](docs/GUIDELINES.md#io-sharding).
 
 ## 5. Sample names once, without extra policy
 
@@ -166,11 +166,11 @@ boundary, preserving narrow ring/program names and Windows wide paths. Never
 resample on restart.
 
 Guidelines: the value sentinel replaces a parallel boolean
-([Framework fit](GUIDELINES.md#framework-fit),
-[Assertions and type mechanics](GUIDELINES.md#assertions-and-type-mechanics)).
-Direct string conversion avoids casts ([Strings](GUIDELINES.md#strings),
-[Type and API friction](GUIDELINES.md#type-and-api-friction)); `ZiPIDFile`/`ZiFile`
-reuse follows [I/O and system integration](GUIDELINES.md#io-and-system-integration).
+([Framework fit](docs/GUIDELINES.md#framework-fit),
+[Assertions and type mechanics](docs/GUIDELINES.md#assertions-and-type-mechanics)).
+Direct string conversion avoids casts ([Strings](docs/GUIDELINES.md#strings),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction)); `ZiPIDFile`/`ZiFile`
+reuse follows [I/O and system integration](docs/GUIDELINES.md#io-and-system-integration).
 
 ## 6. Make startup transactional
 
@@ -199,10 +199,10 @@ After starting the existing multiplex and alert store:
 
 Missing shared telemetry ring/consumer is not a startup error. `start()` and
 `stop()` remain idempotent. Guidelines: reverse-order unwind satisfies graceful
-24x7 teardown ([General principles](GUIDELINES.md#general-principles)); callback
+24x7 teardown ([General principles](docs/GUIDELINES.md#general-principles)); callback
 completion must not assume scheduler `run` is synchronous
-([Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Callbacks](GUIDELINES.md#callbacks)).
+([Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Callbacks](docs/GUIDELINES.md#callbacks)).
 
 ## 7. Isolate the request-reader thread
 
@@ -227,11 +227,11 @@ touches no subscription/alert/output state. `ZiLOG` callbacks capture durable
 values by copy only.
 
 Guidelines: the sole shared-memory-to-pool copy transfers ownership; only a
-pooled handle crosses threads ([Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs),
-[I/O and system integration](GUIDELINES.md#io-and-system-integration)). Computing
-size once and releasing every branch address [Code structure](GUIDELINES.md#code-structure)
-and [Liveness](GUIDELINES.md#liveness). Logging follows
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+pooled handle crosses threads ([Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs),
+[I/O and system integration](docs/GUIDELINES.md#io-and-system-integration)). Computing
+size once and releasing every branch address [Code structure](docs/GUIDELINES.md#code-structure)
+and [Liveness](docs/GUIDELINES.md#liveness). Logging follows
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 ## 8. Make publication one-shot, lossy, and worker-owned
 
@@ -265,11 +265,11 @@ FlatBuffer construction, and owned buffers support persistence/replay. Add no
 intermediate contiguous copy.
 
 Guidelines: `tryPush` favors latency and uses framework IPC
-([General principles](GUIDELINES.md#general-principles),
-[Concurrency and sharding](GUIDELINES.md#concurrency-and-sharding)). Direct writes
-to reserved storage address [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
-Worker-only primitives/no locks follow [I/O sharding](GUIDELINES.md#io-sharding)
-and [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies).
+([General principles](docs/GUIDELINES.md#general-principles),
+[Concurrency and sharding](docs/GUIDELINES.md#concurrency-and-sharding)). Direct writes
+to reserved storage address [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
+Worker-only primitives/no locks follow [I/O sharding](docs/GUIDELINES.md#io-sharding)
+and [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies).
 
 ## 9. Collapse connection state
 
@@ -293,11 +293,11 @@ frame marks publisher restart and tells the consumer to discard that publisher's
 subscription view; a sequence-zero request is the inverse consumer-restart
 signal described in section 8.
 
-Guidelines: deletion follows [Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
-Existing intrusive `ZmHash` indexes follow [Containers and intrusion](GUIDELINES.md#containers-and-intrusion).
+Guidelines: deletion follows [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
+Existing intrusive `ZmHash` indexes follow [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion).
 Keep iterator scope narrow and snapshot batches bounded
-([Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Liveness](GUIDELINES.md#liveness)).
+([Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Liveness](docs/GUIDELINES.md#liveness)).
 
 ## 10. Centralize construction and teardown
 
@@ -319,10 +319,10 @@ ring. `final()` is idempotent. Callbacks do not retain an owning `App` reference
 drain them before destruction.
 
 Guidelines: shared constructors eliminate repeated blocks
-([Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)); `Zfb`
-remains the serializer ([Metadata](GUIDELINES.md#metadata)). Shutdown follows
-[Timer Teardown](GUIDELINES.md#timer-teardown), [Teardown](GUIDELINES.md#teardown),
-and [Lifetime](GUIDELINES.md#lifetime).
+([Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)); `Zfb`
+remains the serializer ([Metadata](docs/GUIDELINES.md#metadata)). Shutdown follows
+[Timer Teardown](docs/GUIDELINES.md#timer-teardown), [Teardown](docs/GUIDELINES.md#teardown),
+and [Lifetime](docs/GUIDELINES.md#lifetime).
 
 ## 11. Propagate deletion and update tests
 
@@ -337,15 +337,15 @@ and [Lifetime](GUIDELINES.md#lifetime).
   `CreateTelemetry`, and `AppTelemetry::id` must return no stale references.
 
 Guidelines: shared TAP fixture and Z synchronization avoid duplication and flaky
-timing ([Tests](GUIDELINES.md#tests),
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)). Total
+timing ([Tests](docs/GUIDELINES.md#tests),
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)). Total
 deletion follows compatibility-as-non-goal
-([General principles](GUIDELINES.md#general-principles)).
+([General principles](docs/GUIDELINES.md#general-principles)).
 
 ## 12. Explicit audit-flag review
 
 This checklist is normative and covers every subsection of
-[Audit flags](GUIDELINES.md#audit-flags).
+[Audit flags](docs/GUIDELINES.md#audit-flags).
 
 | Area | Required disposition |
 |---|---|
@@ -386,7 +386,7 @@ Focused TAP tests must prove:
 
 Use PID/nonce names, scoped environment restoration, reader detach-before-close,
 and existing residue cleanup. Use `ZmBlock`/`ZmSemaphore`, never sleeps/polling
-([Tests](GUIDELINES.md#tests), [Acceptance](GUIDELINES.md#acceptance)).
+([Tests](docs/GUIDELINES.md#tests), [Acceptance](docs/GUIDELINES.md#acceptance)).
 
 ## 14. Build and verification
 
@@ -412,8 +412,8 @@ to this final sequence:
    switch build type or toolchain as part of this implementation; ASan/LSan,
    release, and MinGW rebuilds are outside this pass unless separately requested.
 
-This follows [Build configuration](GUIDELINES.md#build-configuration),
-[Acceptance](GUIDELINES.md#acceptance), and [Debugging](GUIDELINES.md#debugging).
+This follows [Build configuration](docs/GUIDELINES.md#build-configuration),
+[Acceptance](docs/GUIDELINES.md#acceptance), and [Debugging](docs/GUIDELINES.md#debugging).
 
 ## Deleted design elements
 

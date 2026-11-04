@@ -16,7 +16,7 @@ then as a final memory leak and corruption gate.
 
 - Preserve existing worktree changes and the historical report in
   `zhttp/findings.md`. Do not revert unrelated work.
-- Follow the repair procedure in `GUIDELINES.md`: establish the contract,
+- Follow the repair procedure in `docs/GUIDELINES.md`: establish the contract,
   violated invariant, owning component, and smallest demonstrated repair for
   each finding. Correct or qualify a finding if further inspection disproves
   it; do not change code merely to remove a flagged pattern.

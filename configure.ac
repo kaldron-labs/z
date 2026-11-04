@@ -5,7 +5,7 @@ Z_VERSION=Z_VERSION_
 AC_CONFIG_MACRO_DIR([m4])
 AC_CONFIG_HEADERS(config.h)
 
-AM_INIT_AUTOMAKE([subdir-objects -Wno-portability])
+AM_INIT_AUTOMAKE([foreign subdir-objects -Wno-portability])
 
 AC_LANG([C++])
 AC_PROG_CXX
@@ -33,6 +33,7 @@ LT_LANG([C++])
 
 AS_CASE([$host_os], [linux*], [z_linux=yes], [z_linux=no])
 AM_CONDITIONAL([LINUX], [test "$z_linux" = yes])
+ZI_IO_URING
 AS_IF([test "$z_linux" = yes], [
   PKG_CHECK_MODULES([DBUS], [dbus-1], [z_have_dbus=yes], [z_have_dbus=no])
 ], [z_have_dbus=no])
@@ -173,6 +174,21 @@ PKG_CHECK_MODULES([PTLS], [
 ])
 AC_SUBST(PTLS_LIBS)
 AC_SUBST(PTLS_CFLAGS)
+PKG_CHECK_VAR([PTLS_LIBDIR], [zpicotls-core], [libdir], [], [
+  AC_MSG_ERROR([zpicotls-core pkg-config libdir required])
+])
+# Ztls public template headers need the selected dependency's include path.
+CPPFLAGS="$PTLS_CFLAGS $CPPFLAGS"
+z_save_LIBS=$LIBS
+LIBS="$PTLS_LIBS $LIBS"
+AC_MSG_CHECKING([for zpicotls vector Tx records])
+AC_LINK_IFELSE([AC_LANG_PROGRAM([[#include <zpicotls.h>]], [[
+  return ptls_tx_sendv(0, 0, 0, 0);
+]])], [AC_MSG_RESULT([yes])], [
+  AC_MSG_RESULT([no])
+  AC_MSG_ERROR([zpicotls with ptls_tx_sendv required; rebuild the zpicotls dependency])
+])
+LIBS=$z_save_LIBS
 
 PKG_CHECK_MODULES([OPENSSL], [openssl >= 3.5], [], [
   AC_MSG_ERROR([OpenSSL >= 3.5 with ML-KEM-768 support required])
@@ -338,7 +354,7 @@ AC_CONFIG_FILES([Makefile \
 	ztls/Makefile ztls/src/Makefile ztls/test/Makefile ztls/itest/Makefile ztls/example/Makefile \
 	ztls/interop/Makefile \
 	zquic/Makefile zquic/src/Makefile zquic/test/Makefile \
-	zquic/example/Makefile \
+	zquic/itest/Makefile zquic/example/Makefile \
 	zhttp/Makefile zhttp/src/Makefile zhttp/test/Makefile \
 	zhttp/util/Makefile zhttp/itest/Makefile zhttp/interop/Makefile zhttp/bench/Makefile \
 	zgrpc/Makefile zgrpc/src/Makefile zgrpc/src/Zgrpc.pc zgrpc/test/Makefile \
@@ -364,6 +380,7 @@ AC_CONFIG_FILES([Makefile \
 	zdf/Makefile zdf/src/Makefile zdf/test/Makefile zdf/itest/Makefile \
 	zrl/Makefile zrl/src/Makefile zrl/test/Makefile zrl/example/Makefile \
 	zgtk/Makefile zgtk/src/Makefile zgtk/test/Makefile \
+	zgtk/itest/Makefile \
 	zgtk/example/Makefile zdash/Makefile zdash/src/Makefile \
 	zdash/test/Makefile zdash/itest/Makefile])
 AC_OUTPUT

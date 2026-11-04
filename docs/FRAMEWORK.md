@@ -236,7 +236,8 @@ Part of the repository guidance mapped in [AGENTS.md](AGENTS.md).
 ### Callbacks
 - Use `ZmFn` for type-erased lambdas.
 - Consolidate captures into a single 64-bit value where possible, e.g. `ZmRef`; use `ZmFn` built-in capture to elide heap allocation and leverage `mvFn`.
-- Combine `ZmFn` with `ZiIOFn` and `ZiIOContext` to optimize I/O processing.
+- Use `ZiRxFn`/`ZiRxContext` for receive callbacks and
+  `ZiTxFn`/`ZiTxContext` for transmit callbacks; both retain `ZmAnyFn` storage.
 
 ### Tests
 - C++ TAP emitters use `ZuTestUtil`, or underlying `ZuTest` when the utilities

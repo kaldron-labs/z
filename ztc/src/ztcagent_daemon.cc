@@ -23,6 +23,8 @@
 #include <zlib/ZmRBTree.hh>
 #include <zlib/ZmScheduler.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiDir.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -129,8 +131,7 @@ ZmHashDerive(Reqs, Req,
       ZmHashLock<ZmNoLock,
         ZmHashHeapID<"Ztc.Agent.PubReq">>>>));
 
-using Frame = ZiIOBufAlloc<1024, AgentCf::MaxFrame,
-  "Ztc.Agent.Frame">;
+using Frame = Zi::IOBufAlloc<ZiIOBuf, 1024, AgentCf::MaxFrame, ZuStringT<"Ztc.Agent.Frame">>;
 
 struct Mx final : public ZmNHeap<Mx>, public ZiMultiplex {
 friend inline ZuStringT<"Ztc.Agent.Mx"> ZmNHeapID(Mx *);
@@ -173,7 +174,7 @@ struct StateData {
   ZmScheduler::Timer	reconnectTimer;
   ZmScheduler::Timer	pubGCTimer;
   unsigned	reconnectDelay = 1;
-  ZtArray<uint8_t, ZtArrayHeapID<"Ztc.Agent.Rx">> rxFrame;
+  ZiRxStream<ZiRxQueue> rxFrame;
   Pubs	pubs;
   PubIdx	pubIdx;
   Reqs	reqs;
@@ -219,7 +220,7 @@ static bool rewriteSeq(uint8_t *data, uint64_t seqNo)
 static ZmRef<ZiIOBuf> requestFrame(const Request &request)
 {
   Ztc::Builder builder{
-    frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+    frameBuf(ZmRef<ZiIOBuf>{new Frame{nullptr, 0}})};
   auto nested = builder.startNested();
   auto value = Zfb::save(builder, request);
   builder.finish(saveMsg(builder, nested, Body::Request,
@@ -227,16 +228,22 @@ static ZmRef<ZiIOBuf> requestFrame(const Request &request)
   return saveHdr(builder);
 }
 
-static ZmRef<ZiIOBuf> hubErrorFrame(
+using BuildFn = ZmFn<ZmRef<ZiIOBuf>(ZmRef<ZiIOBuf>, unsigned),
+  ZmFnHeapID<"Ztc.Agent.Build">>;
+
+static BuildFn hubErrorFrame(
     const ZuID &id, uint64_t seqNo, int32_t code, ZuCSpan message)
 {
-  Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
-  auto nested = builder.startNested();
-  auto error = Zfb::save(builder, Error{
-    ErrorMessage{message}, id ? id : ZuID{"ztcagent"}, seqNo, code});
-  builder.finish(saveMsg(builder, nested, Body::Error,
-    error));
-  return builder.buf();
+  return BuildFn{[id, seqNo, code, message = ErrorMessage{message}](
+    ZmRef<ZiIOBuf> frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto error = Zfb::save(builder, Error{
+      ErrorMessage{message}, id ? id : ZuID{"ztcagent"}, seqNo, code});
+    builder.finish(saveMsg(builder, nested, Body::Error,
+      error));
+    return builder.buf();
+  }};
 }
 
 static bool writeRequest(
@@ -265,7 +272,31 @@ static void transmit(
     if (state->currentGeneration.load_() != generation || !link)
       return;
     link->txStream([frame = ZuMv(frame)](auto &tx) mutable {
-      tx << ZuBSpan{frame->data(), frame->length};
+      auto length = frame->length;
+      tx.appendRange(ZuMv(frame), 0, length);
+      tx.flush();
+    }, Zws::Opcode::Binary);
+  });
+}
+
+static void transmit(Agent::State *state, BuildFn build, uint64_t generation)
+{
+  if (!build || !generation || state->stop.load_()) return;
+  state->client.rxRun([state, build = ZuMv(build), generation]() mutable {
+    if (state->stop.load_() || state->currentGeneration.load_() != generation) return;
+    auto link = state->link;
+    if (!link) return;
+    ZmRef<ZiIOBuf> frame;
+    link->channel().streamTx([&frame, &build](auto &lower) {
+      unsigned head = lower.headRoom() + sizeof(uint16_t) + sizeof(uint64_t) +
+	sizeof(uint32_t); // client mask key
+      head = (head + Ztc::Builder::Align - 1) & ~(Ztc::Builder::Align - 1);
+      auto buf = lower.allocBuf(head);
+      if (buf) frame = build(ZuMv(buf), lower.tailRoom());
+    });
+    if (!frame) return;
+    link->txStream([frame = ZuMv(frame)](auto &tx) mutable {
+      tx.appendOwned_(ZuMv(frame));
       tx.flush();
     }, Zws::Opcode::Binary);
   });
@@ -312,14 +343,17 @@ static void shutdown(Agent::State *state, Pub_ *pub,
     uint64_t generation)
 {
   if (!pub) return;
-  Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
-  auto nested = builder.startNested();
-  auto id = builder.string(pub->id);
-  auto value = Zfb::save(builder, Shutdown{});
-  auto telemetry = saveTelemetry(builder, id, 0,
-    TelemetryBody::Shutdown, value);
-  builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry));
-  transmit(state, builder.buf(), generation);
+  auto build = BuildFn{[id = pub->id](ZmRef<ZiIOBuf> frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto publisher = builder.string(id);
+    auto value = Zfb::save(builder, Shutdown{});
+    auto telemetry = saveTelemetry(builder, publisher, 0,
+      TelemetryBody::Shutdown, value);
+    builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry));
+    return builder.buf();
+  }};
+  transmit(state, ZuMv(build), generation);
 }
 
 static void unlinkLeg(Leg *leg)
@@ -366,12 +400,15 @@ static void finishReq(Agent::State *state, Req *req)
       transmit(state, hubErrorFrame({}, req->request.seqNo,
 	HubError::SnapshotFailed, "snapshot incomplete"), req->cxnGen);
     else {
-      Ztc::Builder builder{ZmRef<ZiIOBuf>{new Frame}};
-      auto nested = builder.startNested();
-      auto eos = Zfb::save(builder,
-	  EOS{ZuID{"ztcagent"}, req->request.seqNo});
-      builder.finish(saveMsg(builder, nested, Body::EOS, eos));
-      transmit(state, builder.buf(), req->cxnGen);
+      auto build = BuildFn{[seqNo = req->request.seqNo](
+	ZmRef<ZiIOBuf> frame, unsigned tailRoom) {
+	Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+	auto nested = builder.startNested();
+	auto eos = Zfb::save(builder, EOS{ZuID{"ztcagent"}, seqNo});
+	builder.finish(saveMsg(builder, nested, Body::EOS, eos));
+	return builder.buf();
+      }};
+      transmit(state, ZuMv(build), req->cxnGen);
     }
   }
   delReq(state, req);
@@ -472,10 +509,10 @@ static void drainReq(Agent::State *state,
 }
 
 static void admitRequest(Agent::State *state,
-    ZmRef<ZiIOBuf> frame, uint64_t generation)
+    Zi::RxRange frame, uint64_t generation)
 {
   if (state->stop.load_() || state->routeGeneration != generation || !frame) return;
-  auto root = Zfb::view<Msg>({frame->data(), frame->length});
+  auto root = Zfb::view<Msg>(frame.cspan());
   if (msgBody(root).tag() != Body::Request) return;
   auto value = msgBody(root).get<Body::Request>();
   auto request = Zfb::handler<Request>(value).ctor();
@@ -666,7 +703,7 @@ static void telemetry(Agent::State *state)
         state->telRing.shift2(recordSize);
         break;
       }
-      ZmRef<ZiIOBuf> frame = new Frame;
+      ZmRef<ZiIOBuf> frame = new Frame{nullptr, 0};
       frame->alloc(size);
       memcpy(frame->data(), hdr->data(), size);
       frame->length = size;
@@ -724,7 +761,7 @@ static bool jsonLoad(Zum::String &json, T &value)
 {
   if (!json || json.length() > 64U<<10) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -925,7 +962,8 @@ void Agent::start_()
   ZmAssert_(!m_state->mx && m_credit.load_() == AgentCredit::Closed);
   try {
     m_state->mx = new Agent_::Mx{
-      ZiMxParams{}.scheduler([](auto &scheduler) {
+      ZiMxParams{}.tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>().scheduler([](auto &scheduler) {
         scheduler.nThreads(3)
           .thread(1, [](auto &thread) { thread.name("rx"); thread.isolated(true); })
           .thread(2, [](auto &thread) { thread.name("tx"); thread.isolated(true); })
@@ -1170,7 +1208,7 @@ void Agent::closeRuntime_(bool failed)
   m_state->awaitingProvision = false;
   m_state->tokenPending = false;
   m_state->pubGCID.null();
-  m_state->rxFrame.length(0);
+  m_state->rxFrame.clean();
   if (m_state->token.mutable_()) ZuClear(m_state->token);
   m_state->token.null();
   if (failed) Engine::started(false);
@@ -1258,7 +1296,7 @@ int Agent::messageStart(Link &link, Zws::Opcode::T opcode)
 {
   if (&link != m_state->link.ptr()) return -1;
   if (opcode != Zws::Opcode::Binary) return -1;
-  m_state->rxFrame.length(0);
+  m_state->rxFrame.clean();
   return 1;
 }
 
@@ -1266,30 +1304,34 @@ template <typename Link_, typename Rx>
 int Agent::process(Link_ &link, Rx &rx)
 {
   if (&link != m_state->link.ptr()) return -1;
-  return Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> span) {
-    if (span.length() > m_state->cf.maxFrame -
-        m_state->rxFrame.length())
-      return false;
-    m_state->rxFrame << span;
-    return true;
-  }) ? 1 : -1;
+  auto &message = m_state->rxFrame;
+  unsigned incoming = rx.length();
+  if (incoming > m_state->cf.maxFrame - message.length()) { return -1; }
+  while (rx) {
+    if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
+      { return -1; }
+  }
+  if (message.length() > message.span().length() &&
+      !message.gather(unsigned(message.length()), [&link]() {
+	auto allocator = link.app()->mx()->rxAllocator(false);
+	return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
+	  allocator->alloc().release()));
+      })) { return -1; }
+  return 1;
 }
 
 template <typename Link>
 int Agent::messageEnd(Link &link)
 {
   if (m_state->stop.load_() || &link != m_state->link.ptr()) return -1;
-  auto msg = Ztc::msg(ZuBSpan{
-    m_state->rxFrame.data(), m_state->rxFrame.length()});
+  auto frame = m_state->rxFrame.range();
+  m_state->rxFrame.clean();
+  auto msg = frame ? Ztc::msg(frame.cspan()) : Ztc::MsgView{};
   if (!msg || msgBody(msg).tag() != Body::Request ||
       !m_state->currentGeneration.load_()) {
     link.close(Zws::CloseCode::Protocol);
     return -1;
   }
-  ZmRef<ZiIOBuf> frame = new Agent_::Frame;
-  frame->alloc(m_state->rxFrame.length());
-  memcpy(frame->data(), m_state->rxFrame.data(), m_state->rxFrame.length());
-  frame->length = m_state->rxFrame.length();
   auto generation = m_state->currentGeneration.load_();
   m_state->mx->run([state = m_state, frame = ZuMv(frame), generation]() mutable {
     Agent_::admitRequest(state, ZuMv(frame), generation);

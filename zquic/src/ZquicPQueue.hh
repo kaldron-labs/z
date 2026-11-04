@@ -51,6 +51,9 @@ struct StreamRxData : public ZiRxQueue::Node {
     Base{const_cast<uint8_t *>(data_), length_, owner_, length_},
     packet{ZuMv(packet_)}, offset{offset_} { }
 
+  void releaseView_() override { packet = nullptr; }
+  uint64_t memory() const override;
+
   uint64_t key() const { return offset; }
 
   uint64_t clipHead(uint64_t n) {
@@ -81,8 +84,8 @@ struct StreamTxData : public ZiIOBuf {
   alignas(ZiIOBuf_Align) uint8_t data_[BufSize];
   uint64_t		streamOffset = 0;
 
-  StreamTxData() : ZiIOBuf{data_, BufSize, nullptr} { }
-  explicit StreamTxData(void *owner_) : ZiIOBuf{data_, BufSize, owner_} { }
+  StreamTxData() : ZiIOBuf{data_, BufSize, nullptr, 0} { }
+  explicit StreamTxData(void *owner_) : ZiIOBuf{data_, BufSize, owner_, 0} { }
 
   void publish(uint32_t offset_, uint32_t length_, uint64_t streamOffset_) {
     skip = offset_;
@@ -460,6 +463,11 @@ using StreamRxPQueue =
 	    ZmPQueueBits<2,
 	      ZmPQueueLevels<2>>>>>>>;
 
+inline uint64_t StreamRxData::memory() const {
+  return ZmHeapAllocSize<sizeof(StreamRxPQueue::Node)>{} + storageMemory_() +
+    (packet ? packet->memory() : 0);
+}
+
 using CryptoRxPQueue =
   ZmPQueue<CryptoRxData,
     ZmPQueueNode<CryptoRxData,
@@ -484,6 +492,33 @@ using TxDataPQueue =
 	ZmPQueueFn<StreamTxPQueueFn,
 	  ZmPQueueBits<2,
 	    ZmPQueueLevels<3>>>>>>;
+
+// Ownership-bearing application ranges coexist with the original intrusive
+// plaintext nodes. Packetization consumes metadata without editing backing.
+struct StreamTxRange {
+  TxRange range;
+
+  StreamTxRange() = default;
+  explicit StreamTxRange(TxRange range_) : range{ZuMv(range_)} { }
+  uint64_t key() const { return range.streamOffset; }
+  uint64_t length() const { return range.length; }
+  uint64_t clipHead(uint64_t n) {
+    if (n > range.length) n = range.length;
+    range.offset += n;
+    range.streamOffset += n;
+    return range.length -= n;
+  }
+  uint64_t clipTail(uint64_t n) {
+    if (n > range.length) n = range.length;
+    return range.length -= n;
+  }
+  template <typename I> void write(const I &) { }
+};
+using StreamTxRanges = ZmPQueue<StreamTxRange,
+  ZmPQueueNode<StreamTxRange,
+    ZmPQueueHeapID<"Zquic.Stream.TxRanges",
+      ZmPQueueFn<ZmPQueueDefaultFn<StreamTxRange>,
+	ZmPQueueBits<2, ZmPQueueLevels<3>>>>>>;
 
 using StreamTxPQueue = TxUnackdRanges;
 using CryptoTxPQueue = TxUnackdRanges;

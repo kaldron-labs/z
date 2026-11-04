@@ -104,9 +104,9 @@ BuildResult message(const HeadSpec &head, const Body &body,
     result.error = BuildError::Resource;
     return result;
   }
-  using Buf = ZiIOBufAlloc<ZiIOBuf_DefltSize,
-    Wire::MaxMessageSize, "Zdbus.Message">;
-  result.buf = new Buf{};
+  using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+    Wire::MaxMessageSize, ZuStringT<"Zdbus.Message">>;
+  result.buf = new Buf{nullptr, 0};
   result.buf->ensure(total);
   Sink sink{result.buf.ptr()};
   writeHead(sink, plan, head, signature, total - plan.bodyOffset);

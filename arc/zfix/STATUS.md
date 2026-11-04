@@ -3168,7 +3168,7 @@ canonical order/execution interop matrix.
 - `interop/build-quickfix.sh` verifies both hashes, builds Release with SSL and
   installs under the caller-selected root. Upstream examples/tests are disabled;
   no QuickFIX parser/session code is linked into Zfix. Dependency prerequisites
-  and exact paths are documented in `interop/README.md` and `DEPENDENCIES.md`.
+  and exact paths are documented in `interop/README.md` and `docs/DEPENDENCIES.md`.
 - Actual build: /tmp/zfix-quickfix-build.log; prefix /tmp/zfix-deps/install.
   GNU C++ 15.2.0, upstream C++17 mode, OpenSSL 3.5.5. Upstream OpenSSL deprecated
   API warnings are present; compilation/install succeed. Installed config defines
@@ -4398,7 +4398,7 @@ is inferred.
 
 ## Implementation pressure audit — 2026-10-29
 
-The separate post-delivery audit is complete. [AUDIT.md](AUDIT.md) records the
+The separate post-delivery audit is complete. [AUDIT.md](docs/AUDIT.md) records the
 full guideline coverage, concrete cost removals, justified storage/validation
 boundaries and current verification. It covers all 126 C++ files across the
 seven source roles and the plan-owned transport integration hunks.
@@ -4444,7 +4444,7 @@ The current workspace now passes the combined member-layout and performance-path
 gate. [STATE_AUDIT.md](STATE_AUDIT.md) records the corrected packed scheduler
 group and native Rx storage: complete managed TCP/TLS links shrink another
 256 bytes from the earlier isolation layout, while Raw sizes remain unchanged.
-[AUDIT.md](AUDIT.md) records native-width integer scanning, one-tree identical
+[AUDIT.md](docs/AUDIT.md) records native-width integer scanning, one-tree identical
 source dispatch, one-pass archive restoration, fewer steady-input clock reads
 and reference operations, and reused workload values/byte/group storage.
 

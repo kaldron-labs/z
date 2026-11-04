@@ -99,26 +99,25 @@ bool writeCompatScript(
 
 void testDarkhttpdCompat()
 {
-  ZuTestScope(testDarkhttpdCompat);
+  ZuTestScopeRT(testDarkhttpdCompat);
 
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpDarkhttpd"),
-    "Zhttp darkhttpd temporary directory failed");
+  ZuCheckRT(temp.init("ZhttpDarkhttpd"),
+    log_("Zhttp darkhttpd temporary directory failed"));
   unsigned zport = loopbackPort(ZhttpInteropPort::DarkZ);
   unsigned dport = loopbackPort(ZhttpInteropPort::DarkD);
-  ZuCHECK(zport && dport && zport != dport,
-    "Zhttp darkhttpd port allocation failed");
+  ZuCheckRT(zport && dport && zport != dport, log_("Zhttp darkhttpd port allocation failed"));
   if (!zport || !dport || zport == dport) return;
   auto script = temp.pathOf("compat.sh");
-  ZuCHECK(writeCompatScript(
+  ZuCheckRT(writeCompatScript(
       script, static_cast<const char *>(temp.path), zport, dport),
-    "Zhttp darkhttpd script generation failed");
+    log_("Zhttp darkhttpd script generation failed"));
   ZtString<> cmd;
   cmd << "sh " << script;
   int rc = ::system(cmd.data());
 #ifndef _WIN32
   if (WIFEXITED(rc) && WEXITSTATUS(rc) == 77) {
-    ZuCHECK(true, "darkhttpd compatibility skipped");
+    ZuCheckRT(true, log_("darkhttpd compatibility skipped"));
     return;
   }
 #endif
@@ -127,9 +126,9 @@ void testDarkhttpdCompat()
     printFile("darkhttpd stderr", temp.pathOf("dark.err"));
     printFile("zhttp body", temp.pathOf("z.body"));
     printFile("darkhttpd body", temp.pathOf("d.body"));
-    ZuCHECK(false, "darkhttpd compatibility failed");
+    ZuCheckRT(false, log_("darkhttpd compatibility failed"));
   } else {
-    ZuCHECK(true, "darkhttpd compatibility matched");
+    ZuCheckRT(true, log_("darkhttpd compatibility matched"));
   }
 }
 

@@ -16,9 +16,12 @@
 #include <zlib/ZfCf.hh>
 
 #include "../../zdb/test/ZdbTestCf.hh"
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZvMxParams.hh>
+#include <zlib/ZhttpNative.hh>
 
 #include <zlib/ZdbMemStore.hh>
 
@@ -866,12 +869,14 @@ static void runtimeRecovery()
   ZiLog::sink(ZiLog::lambdaSink([](
       ZeLogBuf &buf, const ZeEventInfo &info) {
     if (info.component == "Zum")
-      logRows.push(Zum::String{" "} << ZuCSpan{buf.data(), buf.length()} << " ");
+      logRows.push(Zum::String{" "} << ZuCSpan{buf} << " ");
   }));
   ZiLog::start();
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
@@ -887,15 +892,15 @@ static void runtimeRecovery()
   ZuCheck(rng.init());
   Zum::Bytes passkeyHandle;
   ZmRef<Ztls::PK::SK_EC> passkey;
-  prepareIdentity(db, context, rng, passkeyHandle, passkey);
+  ZuTestCall(prepareIdentity, db, context, rng, passkeyHandle, passkey);
   Zum::RegistrationInput registrationInput;
 
   OIDCSetup oidcSetup;
-  prepareOIDC(db, context, rng, oidcSetup);
+  ZuTestCall(prepareOIDC, db, context, rng, oidcSetup);
   Ztls::PK::SK_EC tokenKey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t tokenPublic[Ztls::COSE::ES256::PublicKeySize];
   TokenSetup tokenSetup;
-  prepareToken(db, context, rng, oidcSetup, passkeyHandle,
+  ZuTestCall(prepareToken, db, context, rng, oidcSetup, passkeyHandle,
     *passkey, tokenKey, tokenPublic, tokenSetup);
   Zum::ActionID readAction = 0;
   Zum::IDVec appRoles{ZuMv(oidcSetup.appRoles)};
@@ -1185,11 +1190,11 @@ static void runtimeRecovery()
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};
+  ZuCheck(mx.stop());
   db->final();
   db->requests = {};
   db = {};
   store = {};
-  ZuCheck(mx.stop());
   ZuCheck(!logged("next workload secret"));
   ZuCheck(recoveryCapabilityLog && !logged(recoveryCapabilityLog));
   recoveryCapabilityLog.null();

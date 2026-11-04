@@ -11,6 +11,8 @@
 
 using namespace ZuTestUtil;
 
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
 static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
 {
   unsigned n = 0;
@@ -227,23 +229,23 @@ void testRecovery()
 
 void testPktReorderDuplicateLoss()
 {
-  ZuTestScope(testPktReorderDuplicateLoss);
+  ZuTestScopeRT(testPktReorderDuplicateLoss);
 
   Zquic::AckTracker ack;
-  ZuCHECK(ack.add(0) && ack.add(2),
+  ZQUIC_CHECK_RT(ack.add(0) && ack.add(2),
     "out-of-order packet ACK setup failed");
-  ZuCHECK(ack.count() == 2 &&
+  ZQUIC_CHECK_RT(ack.count() == 2 &&
       ack.first(0) == 0 &&
       ack.last(0) == 0 &&
       ack.first(1) == 2 &&
       ack.last(1) == 2,
     "out-of-order packet ACK gap mismatch");
-  ZuCHECK(ack.add(2) &&
+  ZQUIC_CHECK_RT(ack.add(2) &&
       ack.count() == 2 &&
       ack.first(1) == 2 &&
       ack.last(1) == 2,
     "duplicate out-of-order packet changed ACK ranges");
-  ZuCHECK(ack.add(1) &&
+  ZQUIC_CHECK_RT(ack.add(1) &&
       ack.count() == 1 &&
       ack.first(0) == 0 &&
       ack.last(0) == 2,
@@ -251,13 +253,13 @@ void testPktReorderDuplicateLoss()
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
-    ZuCHECK(tx.add(txPkt_(pn)), "sent packet setup failed");
-  ZuCHECK(tx.bytesInFlight() == 600,
+    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)), "sent packet setup failed");
+  ZQUIC_CHECK_RT(tx.bytesInFlight() == 600,
     "sent packet bytes-in-flight setup mismatch");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
   unsigned lost = 0;
-  ZuCHECK(tx.ack(ranges, 1, &lost) == 1 &&
+  ZQUIC_CHECK_RT(tx.ack(ranges, 1, &lost) == 1 &&
       lost == 2 &&
       tx.ackd() == 1 &&
       tx.lost() == 2 &&
@@ -266,20 +268,20 @@ void testPktReorderDuplicateLoss()
     "reordered ACK did not mark packet-threshold loss");
 
   Zquic::SentFrameRef ref;
-  ZuCHECK(tx.nextRetransmit(ref) &&
+  ZQUIC_CHECK_RT(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 0 &&
       ref.length == 1,
     "first threshold-lost packet was not queued for retransmit");
-  ZuCHECK(tx.nextRetransmit(ref) &&
+  ZQUIC_CHECK_RT(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 10 &&
       ref.length == 2,
     "second threshold-lost packet was not queued for retransmit");
-  ZuCHECK(!tx.nextRetransmit(ref),
+  ZQUIC_CHECK_RT(!tx.nextRetransmit(ref),
     "threshold loss queued duplicate retransmits");
 
-  ZuCHECK(!tx.ack(ranges, 1, &lost) &&
+  ZQUIC_CHECK_RT(!tx.ack(ranges, 1, &lost) &&
       !lost &&
       tx.ackd() == 1 &&
       tx.lost() == 2 &&
@@ -449,29 +451,29 @@ void testLossThresholds()
 
 void testRetainedLossFrontier()
 {
-  ZuTestScope(testRetainedLossFrontier);
+  ZuTestScopeRT(testRetainedLossFrontier);
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 1; pn <= 1024; ++pn)
-    ZuCHECK(tx.add(txPkt_(pn)) && tx.lose(pn),
+    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)) && tx.lose(pn),
       "retained-loss frontier setup failed");
-  ZuCHECK(tx.add(txPkt_(1200)) && tx.retainedLost() == 1024 &&
+  ZQUIC_CHECK_RT(tx.add(txPkt_(1200)) && tx.retainedLost() == 1024 &&
       tx.recoveryCount() == 1,
     "active recovery frontier retained final packet history");
 #ifdef ZDEBUG
   tx.resetRecoveryVisits();
 #endif
-  ZuCHECK(tx.nextLossTime(1201, Zquic::timeUS(150), 256) ==
+  ZQUIC_CHECK_RT(tx.nextLossTime(1201, Zquic::timeUS(150), 256) ==
       Zquic::timeUS(120150),
     "retained loss history hid the active loss deadline");
 #ifdef ZDEBUG
-  ZuCHECK(tx.recoveryVisits() == 1,
+  ZQUIC_CHECK_RT(tx.recoveryVisits() == 1,
     "loss timer examined retained packet history");
   tx.resetOutstandingVisits();
-  ZuCHECK(!tx.requeueRetransmit(Zquic::SentFrameRef::crypto(12000, 1201)) &&
+  ZQUIC_CHECK_RT(!tx.requeueRetransmit(Zquic::SentFrameRef::crypto(12000, 1201)) &&
       tx.outstandingVisits() == 1,
     "retransmission suppression examined retained packet history");
-  ZuCHECK(tx.verifyOutstanding(),
+  ZQUIC_CHECK_RT(tx.verifyOutstanding(),
     "retained-loss outstanding index mismatch");
 #endif
 }
@@ -510,7 +512,7 @@ void testOutstandingLifecycleIndex()
 
 void testPktNumSpaceAckLoss()
 {
-  ZuTestScope(testPktNumSpaceAckLoss);
+  ZuTestScopeRT(testPktNumSpaceAckLoss);
 
   static const Zquic::PktNumSpace::T spaces[] = {
     Zquic::PktNumSpace::Initial,
@@ -520,12 +522,12 @@ void testPktNumSpaceAckLoss()
   for (auto space : spaces) {
     Zquic::PktTxSpace tx;
     for (uint64_t pn = 0; pn < 6; ++pn)
-      ZuCHECK(tx.add(txPkt_(pn, 100, true, space)),
+      ZQUIC_CHECK_RT(tx.add(txPkt_(pn, 100, true, space)),
 	"packet-space sent packet setup failed");
     Zquic::AckRange ranges[] = { Zquic::AckRange{5, 3} };
     unsigned lost = 0;
     ZuTime sentTime;
-    ZuCHECK(tx.ack(ranges, 1, &lost, 3, &sentTime) == 3 &&
+    ZQUIC_CHECK_RT(tx.ack(ranges, 1, &lost, 3, &sentTime) == 3 &&
 	lost == 3 &&
 	tx.ackd() == 3 &&
 	tx.lost() == 3 &&
@@ -535,13 +537,13 @@ void testPktNumSpaceAckLoss()
 
     Zquic::SentFrameRef ref;
     for (uint64_t pn = 0; pn < 3; ++pn) {
-      ZuCHECK(tx.nextRetransmit(ref) &&
+      ZQUIC_CHECK_RT(tx.nextRetransmit(ref) &&
 	  ref.kind == Zquic::SentFrameKind::Crypto &&
 	  ref.offset == pn * 10 &&
 	  ref.length == pn + 1,
 	"packet-space retransmit ref mismatch");
     }
-    ZuCHECK(!tx.nextRetransmit(ref),
+    ZQUIC_CHECK_RT(!tx.nextRetransmit(ref),
       "packet-space retransmit queue retained extra refs");
   }
 }
@@ -582,15 +584,15 @@ void testPTOReclaimUsesRetxQueue()
 
 void testAckLeavesOnlyRetxPending()
 {
-  ZuTestScope(testAckLeavesOnlyRetxPending);
+  ZuTestScopeRT(testAckLeavesOnlyRetxPending);
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
-    ZuCHECK(tx.add(txPkt_(pn)), "sent packet setup failed");
+    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)), "sent packet setup failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{5, 2} };
   unsigned lost = 0;
-  ZuCHECK(tx.ack(ranges, 1, &lost) == 4 &&
+  ZQUIC_CHECK_RT(tx.ack(ranges, 1, &lost) == 4 &&
       lost == 2 &&
       tx.ackd() == 4 &&
       tx.lost() == 2 &&
@@ -600,12 +602,12 @@ void testAckLeavesOnlyRetxPending()
     "ACK/loss did not leave queued retransmits without bytes in flight");
 
   Zquic::SentFrameRef ref;
-  ZuCHECK(tx.nextRetransmit(ref) &&
+  ZQUIC_CHECK_RT(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 0 &&
       ref.length == 1,
     "first zero-flight retransmit ref mismatch");
-  ZuCHECK(tx.nextRetransmit(ref) &&
+  ZQUIC_CHECK_RT(tx.nextRetransmit(ref) &&
       ref.kind == Zquic::SentFrameKind::Crypto &&
       ref.offset == 10 &&
       ref.length == 2 &&
@@ -719,11 +721,11 @@ void testFlowControlRetransmit()
 
 void testPktNumSpaceBatchCursors()
 {
-  ZuTestScope(testPktNumSpaceBatchCursors);
+  ZuTestScopeRT(testPktNumSpaceBatchCursors);
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn <= 5; ++pn)
-    ZuCHECK(tx.add(txPkt_(pn)), "batch cursor sent-packet add failed");
+    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)), "batch cursor sent-packet add failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{5, 5} };
   Zquic::PktAckBatch ackBatch;
@@ -733,7 +735,7 @@ void testPktNumSpaceBatchCursors()
   Zquic::PktTxUpdate ackUpdate1;
   done = done || tx.ackBatch(
     ranges, 1, ackBatch, 1, Zquic::PktNumSpace::AppData, &ackUpdate1);
-  ZuCHECK(done && ackBatch.ackd == 1 && ackUpdate0.ackdBytes == 100 &&
+  ZQUIC_CHECK_RT(done && ackBatch.ackd == 1 && ackUpdate0.ackdBytes == 100 &&
       !ackUpdate1.ackdBytes &&
       ackBatch.latestSentTime == Zquic::timeUS(500),
     "batch ACK cursor failed");
@@ -741,17 +743,17 @@ void testPktNumSpaceBatchCursors()
   Zquic::PktLossBatch lossBatch;
   Zquic::PktTxUpdate lossUpdate0;
   done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate0);
-  ZuCHECK(!done && lossBatch.lost == 2 && lossUpdate0.lostBytes == 200,
+  ZQUIC_CHECK_RT(!done && lossBatch.lost == 2 && lossUpdate0.lostBytes == 200,
     "first batch loss cursor failed");
 
   Zquic::PktTxUpdate lossUpdate1;
   done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate1);
-  ZuCHECK(done && lossBatch.lost == 3 && lossUpdate1.lostBytes == 100,
+  ZQUIC_CHECK_RT(done && lossBatch.lost == 3 && lossUpdate1.lostBytes == 100,
     "second batch loss cursor failed");
 
   Zquic::PktTxUpdate lossUpdate2;
   done = tx.markPktThreshLossBatch(5, 3, lossBatch, 2, &lossUpdate2);
-  ZuCHECK(done && lossBatch.lost == 3 && !lossUpdate2.lostBytes &&
+  ZQUIC_CHECK_RT(done && lossBatch.lost == 3 && !lossUpdate2.lostBytes &&
       tx.lost() == 3 && tx.ackd() == 1 && tx.retransmitPending() == 3,
     "final batch loss cursor failed");
 }

@@ -10,6 +10,8 @@
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixLinkState.hh>
 
+#include "ZfixTxImageTest.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 struct Order {
@@ -35,7 +37,7 @@ template <typename E = Entry> static RequestContext make(ZuCSpan &id) {
   TxContext tx{.epoch = 3, .connection = 7, .seqNo = 9, .replay = true,
     .sendingTime = stamp, .origSendingTime = stamp, .possDup = true};
   if (!body || error) return {};
-  auto buffer = txFrame(*body, txConfig(ZuMv(c)), tx, error);
+  auto buffer = testFrame(*body, txConfig(ZuMv(c)), tx, error);
   if (!buffer || error) return {};
   auto parsed = Fmt::frame(buffer->cspan());
   if (parsed.state != Fmt::FrameState::Complete) return {};
@@ -132,21 +134,21 @@ static void replyPolicy() {
 using SelectedA = MT<Order, "D", ZuFacet::FIX, Discrim<9000, "A">>;
 using SelectedB = MT<Order, "D", ZuFacet::FIX, Discrim<9000, "B">>;
 static void selection() {
-  ZuTestScope(selection);
+  ZuTestScopeRT(selection);
   ZuCSpan id; auto context = make<SelectedA>(id);
-  ZuCheck(bool(context)); if (!context) return;
-  ZuCheck(context.is<SelectedA>() && !context.is<SelectedB>() && !context.is<Entry>());
+  ZuCheckRT(bool(context)); if (!context) return;
+  ZuCheckRT(context.is<SelectedA>() && !context.is<SelectedB>() && !context.is<Entry>());
   auto copy = context; context = {};
-  ZuCheck(!context.is<SelectedA>() && copy.is<SelectedA>() && id == "retained");
+  ZuCheckRT(!context.is<SelectedA>() && copy.is<SelectedA>() && id == "retained");
   unsigned called = 0;
   auto error = dispatch<MTList<SelectedA, SelectedB>>(copy.frame(),
     [&called](auto *type, const Order &object) -> Fmt::Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*type)>, SelectedA>{}) {
-	++called; ZuCheck(object.id == "retained");
-      } else ZuCheck(false);
+	++called; ZuCheckRT(object.id == "retained");
+      } else ZuCheckRT(false);
       return {};
     });
-  ZuCheck(!error && called == 1);
+  ZuCheckRT(!error && called == 1);
 }
 struct BinaryRequest {
   ZuCSpan id;
@@ -177,7 +179,7 @@ static void binaryRetention()
   Fmt::saveBinary<ZfField(BinaryRequest, xml)>(writer.body(), XML);
   Fmt::saveBinary<ZfField(BinaryRequest, replay)>(writer.body(), Replay);
   Fmt::saveBinary<ZfField(BinaryRequest, signature)>(writer.body(), Signature);
-  auto buffer = writer.finish(error);
+  auto buffer = testBytes(writer.finish(error));
   ZuCheck(buffer && !error);
   if (!buffer) return;
   auto parsed = Fmt::frame(buffer->cspan());

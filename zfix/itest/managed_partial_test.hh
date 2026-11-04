@@ -7,6 +7,8 @@
 #ifndef managed_partial_test_HH
 #define managed_partial_test_HH
 
+#include "../test/ZfixTxImageTest.hh"
+
 #if defined(__linux__) && !defined(ZFIX_TEST_TLS)
 #include <arpa/inet.h>
 #include <errno.h>
@@ -15,6 +17,9 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
+
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
 
 // Real kernel backpressure is the only injected output condition. The native
 // close callback is retained separately, after displacement physically closes A.
@@ -222,11 +227,11 @@ static bool partialLogon(int fd)
   Session::Msg msg; msg.p<Session::Logon>(Session::Logon{});
   Fmt::Error error;
   auto body = TxBody::control(msg, error);
-  auto frame = body ? txFrame(*body, txConfig(config(true,
+  auto frame = body ? testFrame(*body, txConfig(config(true,
     Transport::FIX4, Version::V4_4)), TxContext{.seqNo = 1,
       .sendingTime = ZuDateTime{Zm::now()}}, error) : ZmRef<ZiIOBuf>{};
   if (error || !frame || !partialWrite(fd, frame->cspan())) return false;
-  ZmRef<ZiIOBuf> input = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> input = new LocalBuf{nullptr, 0};
   for (;;) {
     auto r = Fmt::frame(input->cspan());
     if (r.state == Fmt::FrameState::Complete) {
@@ -249,7 +254,11 @@ static void managedPartial()
   enum { PayloadBytes = 200<<10 };
   PartialState state;
   PartialServer server{&state}; PartialClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  // This scope observes libc send results through the executable's interposer.
+  ZiMultiplex mx{ZiMxParams{}
+    .backend(ZiMxBackend::EPoll)
+    .tcpBufAllocator<Network::RxAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
@@ -285,7 +294,7 @@ static void managedPartial()
       if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) { s->fail(); return; }
       s->socket = fd; s->watch = 1;
       link->app()->txRun([link] {
-	ZmRef<ZiIOBuf> data = new ZiIOBufAlloc<>; data->ensure(PayloadBytes);
+	ZmRef<ZiIOBuf> data = new LocalBuf{nullptr, 0}; data->ensure(PayloadBytes);
 	memset(data->data(), 'X', PayloadBytes); data->length = PayloadBytes;
 	Fmt::Error error;
 	auto body = TxBody::encode<OrderMsg>(Order{data->cspan()}, 301, error);

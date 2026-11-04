@@ -22,6 +22,57 @@ namespace {
 struct App : public Ztcp::Hub<App> {
 };
 
+struct PolicyApp : public Ztcp::Client<PolicyApp> { };
+
+template <unsigned Size>
+struct PolicyAlloc : Zi::TxTCPBufAllocator<ZiTxBuf, Size, 4096,
+    ZuStringT<"Ztcp.PolicyTest">> {
+  inline static unsigned live = 0;
+
+  explicit PolicyAlloc(unsigned ringSize) :
+    Zi::TxTCPBufAllocator<ZiTxBuf, Size, 4096,
+      ZuStringT<"Ztcp.PolicyTest">>{ringSize} { ++live; }
+  ~PolicyAlloc() { --live; }
+};
+
+template <unsigned Size>
+struct PolicyLink : Ztcp::CliLink<PolicyApp, PolicyLink<Size>, PolicyAlloc<Size>> {
+  using Base = Ztcp::CliLink<PolicyApp, PolicyLink<Size>, PolicyAlloc<Size>>;
+  using Base::Base;
+
+  void connected(Ztcp::Connected) { }
+  void disconnected(bool) { }
+  int process(Ztcp::RxStream &) { return 0; }
+};
+
+void testAllocatorPolicies()
+{
+  ZuTestScopeRT(testAllocatorPolicies);
+  ZuCheckRT(!PolicyAlloc<64>::live && !PolicyAlloc<256>::live);
+  {
+    PolicyApp app;
+    {
+      PolicyLink<64> small{&app};
+      PolicyLink<64> other{&app};
+      PolicyLink<256> large{&app};
+      // Each allocation type has separate application and Tx producers.
+      ZuCheckRT(PolicyAlloc<64>::live == 2);
+      ZuCheckRT(PolicyAlloc<256>::live == 2);
+      auto a = small.template allocTxBuf_<true>();
+      auto b = other.template allocTxBuf_<false>();
+      auto c = large.template allocTxBuf_<true>();
+      ZuCheckRT(a->size >= 64 && a->size == b->size && c->size >= 256 && a->size < c->size);
+      ZuCheckRT(a->owner == &small && b->owner == &other && c->owner == &large);
+      if (a->uring()) {
+	ZuCheckRT(a->ring() != b->ring() && a->ring() != c->ring());
+      }
+    }
+    // Links may disappear before multiplexer stop removes ring watches.
+    ZuCheckRT(PolicyAlloc<64>::live == 2 && PolicyAlloc<256>::live == 2);
+  }
+  ZuCheckRT(!PolicyAlloc<64>::live && !PolicyAlloc<256>::live);
+}
+
 Ztcp::ErrorFn countErrors(ZmAtomic<unsigned> &errors)
 {
   return Ztcp::ErrorFn{[&errors](ZeException) { errors.xchAdd(1); }};
@@ -30,6 +81,9 @@ Ztcp::ErrorFn countErrors(ZmAtomic<unsigned> &errors)
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .tcpBufAllocator<Zi::RxTCPBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Ztcp.RxBuf">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -107,6 +161,7 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
+  ZuTestCall(testAllocatorPolicies);
   ZuTestCall(testValidation);
   ZiLog::stop();
   return 0;

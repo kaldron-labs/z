@@ -16,7 +16,7 @@ namespace ZhttpURLTest_ {
 
 void parseURL()
 {
-  ZuTestScope(parseURL);
+  ZuTestScopeRT(parseURL);
 
   struct Test {
     ZuCSpan	input;
@@ -52,72 +52,72 @@ void parseURL()
   for (const auto &test : tests) {
     Zhttp::URL storage;
     auto e = storage.assign(ZuBSpan{test.input});
-    ZuCHECK(e.ok() == test.ok, test.input);
+    ZuCheckRT(e.ok() == test.ok, log_( test.input));
     if (!test.ok) continue;
     auto url = storage.url();
-    ZuCHECK(url.host == test.host, test.input);
+    ZuCheckRT(url.host == test.host, log_( test.input));
     Zhttp::URLString target;
     url.writeTarget(target);
-    ZuCHECK(target == test.target, test.input);
-    ZuCHECK(url.port == test.port, test.input);
+    ZuCheckRT(target == test.target, log_( test.input));
+    ZuCheckRT(url.port == test.port, log_( test.input));
   }
 
   Zhttp::URLString mutableURL;
   mutableURL << "HTTP://Example.COM/a?#";
   Zhttp::URLView url{mutableURL.span()};
-  ZuCHECK(url.ok() && url.host == "example.com", "in-place host case fold");
-  ZuCHECK(url.hasQuery && !url.query && url.hasFragment && !url.fragment,
-    "empty query and fragment presence");
+  ZuCheckRT(url.ok() && url.host == "example.com", log_( "in-place host case fold"));
+  ZuCheckRT(url.hasQuery && !url.query && url.hasFragment && !url.fragment, log_(
+    "empty query and fragment presence"));
   Zhttp::URLString printed;
   printed << url;
-  ZuCHECK(printed == "http://example.com/a?#", "direct URL print");
+  ZuCheckRT(printed == "http://example.com/a?#", log_( "direct URL print"));
 
   Zhttp::URL empty;
-  ZuCHECK(!empty.ok() && !empty.url().ok(), "default storage is not a URL");
+  ZuCheckRT(!empty.ok() && !empty.url().ok(), log_( "default storage is not a URL"));
   Zhttp::URLView nullURL;
-  ZuCHECK(!nullURL.ok(), "default borrowed view is not a URL");
+  ZuCheckRT(!nullURL.ok(), log_( "default borrowed view is not a URL"));
   Zhttp::URL retained{ZuBSpan{"https://Example.COM:8443/p?"}};
   Zhttp::URL copied = retained;
   Zhttp::URL moved = ZuMv(copied);
   Zhttp::URLString movedText;
   movedText << moved.url();
-  ZuCHECK(moved.ok() && movedText == "https://example.com:8443/p?",
-    "owned URL offsets survive copy and move");
+  ZuCheckRT(moved.ok() && movedText == "https://example.com:8443/p?", log_(
+    "owned URL offsets survive copy and move"));
   auto failed = moved.assign(ZuBSpan{"https://bad host/"});
   movedText.length(0);
   movedText << moved.url();
-  ZuCHECK(!failed.ok() && moved.ok() &&
-      movedText == "https://example.com:8443/p?",
-    "failed assignment preserves retained URL");
+  ZuCheckRT(!failed.ok() && moved.ok() &&
+      movedText == "https://example.com:8443/p?", log_(
+    "failed assignment preserves retained URL"));
   Zhttp::URLString adoptedText{"HTTP://Adopted.EXAMPLE/a"};
   auto adopted = moved.adopt(ZuMv(adoptedText));
   movedText.length(0);
   movedText << moved.url();
-  ZuCHECK(adopted.ok() && movedText == "http://adopted.example/a",
-    "adopt transfers URL storage and normalizes in place");
+  ZuCheckRT(adopted.ok() && movedText == "http://adopted.example/a", log_(
+    "adopt transfers URL storage and normalizes in place"));
   Zhttp::URLString invalidAdopt{"https://bad host/"};
   failed = moved.adopt(ZuMv(invalidAdopt));
   movedText.length(0);
   movedText << moved.url();
-  ZuCHECK(!failed.ok() && moved.ok() &&
-      movedText == "http://adopted.example/a",
-    "failed adopt preserves retained URL");
+  ZuCheckRT(!failed.ok() && moved.ok() &&
+      movedText == "http://adopted.example/a", log_(
+    "failed adopt preserves retained URL"));
   Zhttp::AuthorityView readOnly;
-  ZuCHECK(Zhttp::parseAuthority(
+  ZuCheckRT(Zhttp::parseAuthority(
       readOnly, ZuBSpan{"Example.COM:443"}, 0, 0, true).ok() &&
-      readOnly.host == "Example.COM" && !readOnly.normalized,
-    "read-only authority validation preserves source bytes");
-  ZuCHECK(Zhttp::parseAuthority(
+      readOnly.host == "Example.COM" && !readOnly.normalized, log_(
+    "read-only authority validation preserves source bytes"));
+  ZuCheckRT(Zhttp::parseAuthority(
       readOnly, ZuBSpan{"127.0.0.1:0"}, 0, 0, false, true).ok() &&
-      readOnly.explicitPort && !readOnly.port,
-    "socket authority policy permits an explicit ephemeral port");
+      readOnly.explicitPort && !readOnly.port, log_(
+    "socket authority policy permits an explicit ephemeral port"));
 }
 
 void redirect()
 {
-  ZuTestScope(redirect);
+  ZuTestScopeRT(redirect);
   Zhttp::URL baseStorage{ZuBSpan{"http://a/b/c/d;p?q"}};
-  ZuCHECK(baseStorage.ok(), "parse base");
+  ZuCheckRT(baseStorage.ok(), log_( "parse base"));
   auto base = baseStorage.url();
   struct Test {
     ZuCSpan	ref;
@@ -172,19 +172,19 @@ void redirect()
     Zhttp::URL storage;
     auto e = storage.resolve(base, test.ref);
     if (test.ref == "g:h") {
-      ZuCHECK(!e.ok(), test.ref);
+      ZuCheckRT(!e.ok(), log_( test.ref));
       continue;
     }
-    ZuCHECK(e.ok(), test.ref);
+    ZuCheckRT(e.ok(), log_( test.ref));
     Zhttp::URLString result;
     result << storage.url();
-    ZuCHECK(result == test.result, test.ref);
+    ZuCheckRT(result == test.result, log_( test.ref));
   }
 }
 
 void target()
 {
-  ZuTestScope(target);
+  ZuTestScopeRT(target);
 
   struct Test {
     ZuCSpan input;
@@ -214,18 +214,18 @@ void target()
     Zhttp::URLString input{test.input};
     Zhttp::Target target;
     auto e = Zhttp::Target::parseH1(target, test.method, input.span());
-    ZuCHECK(e.ok() == test.ok, test.input);
+    ZuCheckRT(e.ok() == test.ok, log_( test.input));
     if (test.ok) {
-      ZuCHECK(target.form == test.form, test.input);
-      ZuCHECK(target.path == test.path, test.input);
+      ZuCheckRT(target.form == test.form, log_( test.input));
+      ZuCheckRT(target.path == test.path, log_( test.input));
       if (target.path)
-	ZuCHECK(target.path.data() >=
+	ZuCheckRT(target.path.data() >=
 	    input.data() &&
 	    target.path.data() + target.path.length() <=
-	    input.data() + input.length(),
-	  "path-query borrows the input target");
+	    input.data() + input.length(), log_(
+	  "path-query borrows the input target"));
       if (target.authority.host)
-	ZuCHECK(target.authority.normalized, "target authority normalized");
+	ZuCheckRT(target.authority.normalized, log_( "target authority normalized"));
     }
   }
 
@@ -236,15 +236,15 @@ void target()
   Zhttp::Target target;
   auto e = Zhttp::Target::fromPseudo(target, Zhttp::Method::CONNECT,
     Zhttp::Scheme::https, authority.span(), path.span(), protocol.span());
-  ZuCHECK(e.ok() && target.form == Zhttp::TargetForm::ExtendedConnect &&
+  ZuCheckRT(e.ok() && target.form == Zhttp::TargetForm::ExtendedConnect &&
       target.authority.host == "example.com" &&
-      target.path == "/chat?", "extended CONNECT");
+      target.path == "/chat?", log_( "extended CONNECT"));
   path = "bad";
   e = Zhttp::Target::fromPseudo(target, Zhttp::Method::GET,
     Zhttp::Scheme::https, authority.span(), path.span(), {});
-  ZuCHECK(e.code == Zhttp::TargetParseCode::InvalidPath &&
-      e.field == Zhttp::TargetField::Path && !e.offset,
-    "pseudo-header error identifies its source field");
+  ZuCheckRT(e.code == Zhttp::TargetParseCode::InvalidPath &&
+      e.field == Zhttp::TargetField::Path && !e.offset, log_(
+    "pseudo-header error identifies its source field"));
 }
 
 } // namespace ZhttpURLTest_

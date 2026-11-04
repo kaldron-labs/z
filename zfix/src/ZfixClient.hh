@@ -18,15 +18,15 @@
 namespace Zfix {
 
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
-  typename RxAlloc = typename Net::template RxBufAlloc<>,
-  typename TxAlloc = WireBufAlloc<>, template <typename, typename> class Engine = Link>
-class CliLink : public Net::template CliLink<App, Impl, RxAlloc, TxAlloc>,
+  typename TxAlloc = typename Net::template TxAllocator<>, template <typename, typename> class Engine = Link>
+class CliLink : public Net::template CliLink<App, Impl, TxAlloc>,
     public Engine<Impl, NativeRx<Net>>, public LinkHooks_<Impl, Net>,
     public NetInput<Impl, typename Net::RxStream> {
-  ZuAssert((ZuIs_<TxAlloc, WireBuf>{}));
-  using NetBase = Net::template CliLink<App, Impl, RxAlloc, TxAlloc>;
+  using NetBase = Net::template CliLink<App, Impl, TxAlloc>;
   using EngineBase = Engine<Impl, NativeRx<Net>>;
   using Hooks = LinkHooks_<Impl, Net>;
+  using NetBase::txStream;
+  using NetBase::txStream_;
 public:
   using MessageCatalog = MTList;
   using NetBase::app;
@@ -34,10 +34,10 @@ public:
   using EngineBase::send;
   using EngineBase::reply;
   using EngineBase::work;
+  using EngineBase::process_;
   using Hooks::fixTraceField;
   using Hooks::fixTraceSecret;
   using typename NetBase::Cxn;
-  using typename NetBase::RxBufAlloc;
   using typename NetBase::TxBufAlloc;
 
   CliLink(App *app, SessionConfig config, uint64_t epoch = 1) :
@@ -69,7 +69,21 @@ public:
 
   int process(typename Net::RxStream &s) { this->input_(s); return this->process_(s); }
 
+  template <bool E = Net::Encrypted, typename = ZuIfT<!E>>
+  bool sendFrame_(ZmRef<WireQueue::Node> node) {
+    // A custom output hook may return an already-ended old admission after
+    // replacement. It must not consult/fault the successor transport policy.
+    if (node->canceled()) return true;
+    auto bytes = node->frame.length();
+    return NetBase::sendPending_(ZuMv(node), bytes);
+  }
+  template <bool E = Net::Encrypted, typename = ZuIfT<E>>
   bool sendRecord_(ZmRef<ZiIOBuf> b) { return NetBase::send_(ZuMv(b)); }
+  template <bool E = Net::Encrypted, typename = ZuIfT<E>>
+  bool sendRecord_(Zi::RxRange source, ZmRef<ZiIOBuf> wire) {
+    return NetBase::protectRecord_(ZuMv(source), ZuMv(wire));
+  }
+
 
   void sent(ZmRef<ZiTxBuf> b, bool ok) {
     this->transportSent(static_cast<WireBuf *>(b.ptr()), ok);
@@ -89,14 +103,14 @@ public:
   using Params = typename Net::ClientParams;
   using MessageCatalog = MTList;
   template <typename Impl> using LinkBase = CliLink<App, Impl, MTList, Net,
-    typename Net::template RxBufAlloc<>, WireBufAlloc<>, Engine>;
+    typename Net::template TxAllocator<>, Engine>;
 };
 
 template <typename App, typename MTList, typename Net = TCP>
 using RawClient = Client<App, MTList, Net, Raw>;
 template <typename App, typename Impl, typename MTList, typename Net = TCP,
-  typename RxAlloc = typename Net::template RxBufAlloc<>, typename TxAlloc = WireBufAlloc<>>
-using RawCliLink = CliLink<App, Impl, MTList, Net, RxAlloc, TxAlloc, Raw>;
+  typename TxAlloc = typename Net::template TxAllocator<>>
+using RawCliLink = CliLink<App, Impl, MTList, Net, TxAlloc, Raw>;
 } // Zfix
 
 #endif /* ZfixClient_HH */

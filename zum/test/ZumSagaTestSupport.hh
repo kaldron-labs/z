@@ -35,8 +35,8 @@ static void roundTrip_(const Zdb_::SagaDef &def,
   }
   Zdb_::SagaPayload again;
   ZuCheckRT(loaded->save(again) == Zfb::Error::OK);
-  ZuCheckRT((ZuBSpan{payload.data(), payload.length()} ==
-    ZuBSpan{again.data(), again.length()}));
+  ZuCheckRT((ZuBSpan{payload} ==
+    ZuBSpan{again}));
 }
 
 static void distinct_(const Zdb_::SagaDef &def,
@@ -47,8 +47,8 @@ static void distinct_(const Zdb_::SagaDef &def,
   Zdb_::SagaPayload first, second;
   ZuCheck(populated->save(first) == Zfb::Error::OK);
   ZuCheck(empty->save(second) == Zfb::Error::OK);
-  ZuCheck((ZuBSpan{first.data(), first.length()} !=
-    ZuBSpan{second.data(), second.length()}));
+  ZuCheck((ZuBSpan{first} !=
+    ZuBSpan{second}));
 }
 
 static void phase_(const Zdb_::SagaDef &def,

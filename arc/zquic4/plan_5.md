@@ -10,7 +10,7 @@ Preconditions: plans 1 through 4 complete, especially ACK delay timer ownership 
 `AckTracker` and `AckManager` already exist and tests cover ACK range behavior.  Runtime ACK generation is still snapshot/immediate-flush oriented.  This work wires ACK management into receive processing and packet assembly while preserving existing range tracking.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -72,7 +72,7 @@ New or changed data stores: store per-space largest receive timestamp and delaye
 - Open question: exact immediate ACK thresholds for packet reordering; start with QUIC baseline behavior.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

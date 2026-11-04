@@ -9,7 +9,7 @@ Preconditions: plans 1 through 19 complete.
 `zquic` already has broad unit and runtime tests, including recovery, PMTUD, streams, handshake, packet protection, and endpoint tests.  This plan fills gaps left by feature work and organizes regressions as standalone `zquic/test/*` binaries consistent with repository practice.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -71,7 +71,7 @@ New or changed data stores: no production data stores.
 - Open question: whether timer determinism requires a scheduler test mode; add one only if existing scheduler cannot be controlled reliably.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

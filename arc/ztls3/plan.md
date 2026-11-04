@@ -9,7 +9,7 @@ records the application and module contracts and must agree with this plan.
 
 ## 0. Establish the implementation boundary
 
-- Read `GUIDELINES.md` and any directory-specific guidance before editing.
+- Read `docs/GUIDELINES.md` and any directory-specific guidance before editing.
   Preserve unrelated work. Use the current configured build and existing
   objects; batch edits, rebuild `ztls/src` before dependent tests, and defer
   top-level dependent rebuilding until integration.
@@ -284,7 +284,7 @@ format tests inside `ZtlsVaultTest`.
    `make test`. Use `libtool exec` for debugger/Valgrind runs; use Valgrind
    sparingly for suspected corruption and as the final leak/corruption gate.
    Review plaintext and passphrase lifetime, callback/shard teardown, every
-   allocation/copy, and every changed line against `GUIDELINES.md`.
+   allocation/copy, and every changed line against `docs/GUIDELINES.md`.
 4. Completion means the frozen contracts remain intact; the full
    store × variant matrix works where permitted; age-format and
    concurrent first-write tests pass; `Auto` follows native-first per-call

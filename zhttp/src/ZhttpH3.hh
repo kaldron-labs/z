@@ -458,7 +458,7 @@ private:
 	rx.advance(unsigned(n));
 	return retire_(stream, unsigned(n)) ? n : -1;
       }
-      m_qpackBuf = new BodyRx::WireBufAlloc{};
+      m_qpackBuf = new BodyRx::MetaBufAlloc{nullptr, 0};
     }
     auto buf = m_qpackBuf.ptr();
     if (buf->length >= QPackInsnMax)
@@ -924,7 +924,7 @@ private:
 	  return 0;
 	}
 	return remaining;
-      }, wireAlloc_, alloc_, frame.header, 0,
+      }, frame.header, 0,
       [this, &accepted](auto &body) {
 	if (m_state == State::Stream)
 	  impl()->streamRx_(body);
@@ -958,7 +958,7 @@ private:
     }
     if (ZuUnlikely(frame.total > UINT_MAX)) return fail_(ExcessiveLoad);
     uint64_t remaining = frame.total;
-    ZmRef<ZiIOBuf> buf;
+    Zi::RxRange range;
     int64_t n = rx.extract(
       [&remaining](ZuBSpan span) -> int64_t {
 	if (remaining > span.length()) {
@@ -966,10 +966,10 @@ private:
 	  return 0;
 	}
 	return remaining;
-      }, wireAlloc_, buf);
+      }, metaAlloc_, range);
     if (ZuUnlikely(n <= 0)) return fail_(InternalError);
     if (!retire_(stream, frame.total)) return false;
-    auto span = buf->span();
+    auto span = range.span();
     span.offset(frame.header);
     bool ok = payloadFrame_(frame.type, span);
     if (!ok) return fail_(MessageError);
@@ -1020,11 +1020,8 @@ private:
     (void)retire_(stream, length);
   }
 
-  static ZmRef<ZiRxQueue::Node> alloc_() {
-    return new BodyRx::BufAlloc{};
-  }
-  static ZmRef<ZiRxQueue::Node> wireAlloc_() {
-    return new BodyRx::WireBufAlloc{};
+  static ZmRef<ZiRxQueue::Node> metaAlloc_() {
+    return new BodyRx::MetaBufAlloc{nullptr, 0};
   }
 
 public:
@@ -1086,7 +1083,7 @@ public:
 	  case 0x03: // CANCEL_PUSH
 	  case 0x05: // PUSH_PROMISE
 	  case 0x0d: // MAX_PUSH_ID
-	    m_metaBuf = new BodyRx::WireBufAlloc{};
+	    m_metaBuf = new BodyRx::MetaBufAlloc{nullptr, 0};
 	    break;
 	}
 	rx.advance(frame.header);
@@ -1317,7 +1314,7 @@ public:
 
   DataStream(Lower &lower, uint64_t remaining = uint64_t(-1)) :
     Base(lower, 9, 0, DataStream_::frameMax(lower, 0)),
-    m_remaining{remaining} { }
+    m_lower{lower}, m_remaining{remaining} { }
 
   ~DataStream() { this->flush(); }
 
@@ -1344,6 +1341,31 @@ public:
     putVar(frameHdr, length);
     return true;
   }
+  bool prepareRange_(Zi::RxRange range) {
+    if (m_remaining != uint64_t(-1) && m_remaining < range.length) {
+      m_valid = false;
+      range.length = unsigned(m_remaining);
+    }
+    if (m_remaining != uint64_t(-1)) m_remaining -= range.length;
+    unsigned max = this->maxSize() - this->headRoom() - this->tailRoom();
+    while (range.length) {
+      auto n = range.length < max ? range.length : max;
+      if (!n) return false;
+      auto header = m_lower.allocBuf(m_lower.headRoom());
+      if (!header) return false;
+      CountBytes count;
+      putVar(count, 0); putVar(count, n);
+      header->length = unsigned(count.length());
+      SpanBytes out{{header->data(), header->length}};
+      putVar(out, 0); putVar(out, n);
+      m_lower << ZuMv(header);
+      if (m_lower.failed() || !m_lower.appendRange(range.subspan(0, n))) return false;
+      range.offset += n;
+      range.length -= n;
+      m_produced += n;
+    }
+    return true;
+  }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid && !Base::operator !(); }
   bool complete() const {
@@ -1352,6 +1374,7 @@ public:
   }
 
 private:
+  Lower &m_lower;
   uint64_t	m_remaining;
   uint64_t	m_produced = 0;
   bool		m_valid = true;
@@ -1401,11 +1424,6 @@ private:
     buf[1] = uint8_t('0' + ((status/10) % 10));
     buf[2] = uint8_t('0' + (status % 10));
     return buf.span();
-  }
-
-  template <typename Stream>
-  static void writeSpan_(Stream &stream, ZuBSpan span) {
-    stream << span;
   }
 
   template <typename Stream>
@@ -1581,8 +1599,11 @@ private:
   template <bool Patch = true, typename Stream, typename Encode>
   void writeHeaders_(Stream &stream, Encode &&encode) {
     impl()->qpackFailure(QPackBuildFailure::None);
-    auto fields = ZtScratch(
-      HdrScratch, HeaderHeadroom, Impl::HdrBufSize);
+    Compression::WriterBytes fields{stream, HeaderHeadroom};
+    if (!fields.valid()) {
+      impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
+      return;
+    }
     Compression::FieldSectionBuffer section{fields};
     Build build{fields, impl()->h3Params()};
     build.section = &section;
@@ -1593,7 +1614,7 @@ private:
       build.dynamic = true;
       build.base = build.tx->insertCount();
     }
-    if (!encode(build) || !build.ok) {
+    if (!encode(build) || !build.ok || !fields.valid()) {
       impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
       ZiLOG(Error, "Zhttp", "failed to emit H3 headers");
       return;
@@ -1634,9 +1655,16 @@ private:
 	ZiLOG(Error, "Zhttp", "failed to finalize H3 QPACK prefix");
 	return;
     }
-    section.each(start, [&stream](ZuBSpan span) {
-      writeSpan_(stream, span);
+    bool submitted = true;
+    section.eachRange(start, [&stream, &fields, &submitted](
+	uint64_t offset, unsigned length) {
+      if (submitted)
+	submitted = stream.appendRange(fields.buf(), unsigned(offset), length);
     });
+    if (!submitted) {
+      impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
+      return;
+    }
     if (!flush_(stream)) {
       impl()->qpackFailure(QPackBuildFailure::HeadersPayloadEmit);
       return;
@@ -1884,8 +1912,8 @@ struct Cxn {
     enc = ZuMv(streams.enc);
     dec = ZuMv(streams.dec);
 
-    using Scratch = ZtArray<char, ZtArrayHeapID<"Zhttp.H3.Cxn">>;
-    auto payload = ZmScratch(char, 64, Scratch::VHeap);
+    auto controlTx = control->txStream();
+    TxBytes payload{controlTx};
     CountBytes count;
     if (putVar(count, 0x01) < 0 ||
 	putVar(count, params.qpackRxCapacity()) < 0 ||
@@ -1908,7 +1936,7 @@ struct Cxn {
 	(extendedConnect &&
 	  (putVar(payload, 0x08) < 0 || putVar(payload, 1) < 0)))
       return false;
-    if (!link.send(control, payload, false)) return false;
+    if (!controlTx.flush()) return false;
     {
       auto tx = enc->txStream();
       TxBytes out{tx};

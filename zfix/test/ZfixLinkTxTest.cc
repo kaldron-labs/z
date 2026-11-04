@@ -15,6 +15,8 @@
 #include <zlib/ZfixLinkTx.hh>
 #include <zlib/ZfixRxMsg.hh>
 
+#include "ZfixTxImageTest.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 using namespace Zfix::Fmt;
@@ -193,9 +195,10 @@ struct Engine : LinkTx<Engine> {
 
   void faultTx(TxContext, Error e) { error = e; }
 
-  bool admitFrameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame,
+  bool admitFrameTx(TxBody::Ref body, TxContext context, TxImage image,
     ZuDateTime original) {
     if (block) return false;
+    auto frame = testBytes(image);
     order.push(1);
     output.push(Output{ZuMv(body), context, ZuMv(frame), original});
     return true;
@@ -256,35 +259,38 @@ struct Engine : LinkTx<Engine> {
 };
 
 // Factory bodies are unsigned archives; session values are supplied at final Tx.
-template <typename O> static Error loadArchive(O &object, ZuCSpan bytes)
+template <typename O> struct Archived : O { Zi::RxRange bytes; };
+template <typename O> static Error loadArchive(Archived<O> &object, const TxBody::Ref &body)
 {
   Error error;
-  Fmt::read<O, ZuFacet::FIX, ArchiveField>(object, bytes, error);
+  object.bytes = body->archive(error);
+  if (error) return error;
+  Fmt::read<O, ZuFacet::FIX, ArchiveField>(object, object.bytes.cspan(), error);
   return error;
 }
 
 static void factory()
 {
-  ZuTestScope(factory);
+  ZuTestScopeRT(factory);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     LinkState s{config(mode)};
     Error e;
     SessionEvent event{.connection = 2, .epoch = 9, .probe = 41};
     auto body = controlBody(SessionAction::SendLogon, event, s, 17, {}, e, 8192,
       Limits{.frameBytes = 1024});
-    ZuCheck(body && !e && body->msgType() == "A");
-    Session::Logon logon;
-    ZuCheck(!loadArchive(logon, body->body()));
-    ZuCheck(logon.maxMessageSize == 8192);
-    ZuCheck(logon.nextExpected == (mode == Transport::FIX44A ? 17 : 0));
-    ZuCheck(logon.defaultAppVerID == (mode == Transport::FIXT11 ? "9" : ""));
+    ZuCheckRT(body && !e && body->msgType() == "A");
+    Archived<Session::Logon> logon;
+    ZuCheckRT(!loadArchive(logon, body));
+    ZuCheckRT(logon.maxMessageSize == 8192);
+    ZuCheckRT(logon.nextExpected == (mode == Transport::FIX44A ? 17 : 0));
+    ZuCheckRT(logon.defaultAppVerID == (mode == Transport::FIXT11 ? "9" : ""));
     auto refused = controlBody(SessionAction::SendLogon, event, s, 17, {}, e,
       8192, Limits{.frameBytes = 1});
-    ZuCheck(!refused && e.code == ErrorCode::Size);
+    ZuCheckRT(!refused && e.code == ErrorCode::Size);
     e = {};
     auto probe = controlBody(SessionAction::SendProbe, event, s, 17, {}, e, Limits::FrameBytes);
-    Session::TestReq request;
-    ZuCheck(probe && probe->id() == 41 && !loadArchive(request, probe->body()) &&
+    Archived<Session::TestReq> request;
+    ZuCheckRT(probe && probe->id() == 41 && !loadArchive(request, probe) &&
       request.testReqID == "Zfix/0/9/2/41");
     auto wide = event;
     wide.instance = uint128_t(-1) - 1;
@@ -293,14 +299,14 @@ static void factory()
       Limits::FrameBytes);
     constexpr auto Expected = "Zfix/340282366920938463463374607431768211454/"
       "18446744073709551614/18446744073709551614/18446744073709551614"_z;
-    ZuCheck(largest && !e && !loadArchive(request, largest->body()) && request.testReqID == Expected);
+    ZuCheckRT(largest && !e && !loadArchive(request, largest) && request.testReqID == Expected);
     constexpr auto Opaque = "0001 abc/xyz"_z;
     auto echo = controlBody(SessionAction::Echo, event, s, 17, Opaque, e, Limits::FrameBytes);
-    Session::HeartBt hb;
-    ZuCheck(echo && !loadArchive(hb, echo->body()) && hb.testReqID == Opaque);
+    Archived<Session::HeartBt> hb;
+    ZuCheckRT(echo && !loadArchive(hb, echo) && hb.testReqID == Opaque);
     auto empty = controlBody(SessionAction::Echo, event, s, 17, ""_z, e, Limits::FrameBytes);
-    ZuCheck(empty && empty->body() == "112=\1"_z);
-    ZuCheck(!controlBody(SessionAction::Echo, event, s, 17, {}, e,
+    ZuCheckRT(empty && !loadArchive(hb, empty) && hb.testReqID == ""_z);
+    ZuCheckRT(!controlBody(SessionAction::Echo, event, s, 17, {}, e,
       Limits::FrameBytes) && e.tag == 112);
   }
 }
@@ -425,35 +431,35 @@ static void replayBeforeLogon()
 
 static void priorityPendingRecovery()
 {
-  ZuTestScope(priorityPendingRecovery);
+  ZuTestScopeRT(priorityPendingRecovery);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool lifecycle : {false, true}) {
       Engine tx{{}, config(mode)};
       Error error;
       auto body = TxBody::encode<OrderMsg>(Order{"pending"}, 42, error);
-      ZuCheck(tx.restore_(1, 2, 1, 1));
+      ZuCheckRT(tx.restore_(1, 2, 1, 1));
       tx.delayHistory = true;
       tx.start();
-      ZuCheck(tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
+      ZuCheckRT(tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
 	tx.output[0].context.seqNo == 2 && tx.published_() == 1 && tx.waiting_());
       auto event = tx.event(State::Established, lifecycle ? SessionAction::Replay : 0);
       if (lifecycle) { event.replayBegin = 1; event.replayEnd = 3; }
-      ZuCheck(tx.apply_(event) == TxSelect::Accepted);
-      if (!lifecycle) ZuCheck(tx.replay_(1, 1, 1));
+      ZuCheckRT(tx.apply_(event) == TxSelect::Accepted);
+      if (!lifecycle) ZuCheckRT(tx.replay_(1, 1, 1));
       auto progress = tx.progress_();
-      ZuCheck(progress.replayBegin == 1 && progress.replayEnd == 3);
+      ZuCheckRT(progress.replayBegin == 1 && progress.replayEnd == 3);
       tx.drain();
-      ZuCheck(tx.waiting_() && tx.output.length() == 1 && !tx.error);
+      ZuCheckRT(tx.waiting_() && tx.output.length() == 1 && !tx.error);
       auto before = tx.notices.length();
       tx.delayHistory = false;
-      ZuCheck(tx.reloaded_(tx.historyTicket, TxHistory{body, {}, 1, 1})); tx.drain();
+      ZuCheckRT(tx.reloaded_(tx.historyTicket, TxHistory{body, {}, 1, 1})); tx.drain();
       bool recovered = false;
       for (unsigned i = before, n = tx.notices.length(); i < n; ++i)
 	if (tx.notices[i].kind == TxNoticeKind::Recovery && tx.notices[i].done)
 	  recovered = true;
-      ZuCheck(recovered && !tx.waiting_() && !tx.error && tx.next_() == 3 &&
+      ZuCheckRT(recovered && !tx.waiting_() && !tx.error && tx.next_() == 3 &&
 	tx.published_() == 3 && !tx.queuedBytes_());
-      ZuCheck(tx.output.length() == 4 && tx.output[0].body->msgType() == "A" &&
+      ZuCheckRT(tx.output.length() == 4 && tx.output[0].body->msgType() == "A" &&
 	tx.output[0].context.seqNo == 2 && tx.output[1].context.seqNo == 1 &&
 	!tx.output[1].context.replay && tx.output[2].context.seqNo == 1 &&
 	tx.output[2].context.replay);
@@ -569,7 +575,7 @@ static void idleTraffic()
   auto ticket = tx.idleTicket;
   ZuCheck(tx.idle_(1, ticket) && !tx.idle_(1, ticket)); tx.drain();
   ZuCheck(tx.output.length() == 3 && tx.output[2].body->msgType() == "0" &&
-    !tx.output[2].body->body().length() && tx.output[2].context.seqNo == 3);
+    tx.output[2].body->empty() && tx.output[2].context.seqNo == 3);
   ZuCheck(tx.idleDeadline_() == ZuTime{119} && tx.acknowledged_() == 1);
   tx.now = ZuTime{114};
   ZuCheck(tx.replay_(1, 1, 2, 2)); tx.drain();
@@ -765,31 +771,31 @@ static void resetPreparation()
 
 static void resetReplacement()
 {
-  ZuTestScope(resetReplacement);
+  ZuTestScopeRT(resetReplacement);
   for (bool committed : {false, true}) {
     Engine tx; drainReset(tx);
-    ZuCheck(prepareReset(tx) == TxSelect::Accepted);
+    ZuCheckRT(prepareReset(tx) == TxSelect::Accepted);
     if (committed) tx.drain();
     auto e = tx.event(State::Logon, SessionAction::Pause, 2);
     e.drain = 7; e.nextEpoch = 2;
-    ZuCheck(tx.apply_(e) == TxSelect::Accepted && tx.connection_() == 2 &&
+    ZuCheckRT(tx.apply_(e) == TxSelect::Accepted && tx.connection_() == 2 &&
       tx.preparing_() && !tx.inFlight_() && tx.epoch_() == (committed ? 2 : 1));
     // Wire's old failed completion can arrive before the saved reset notice.
     // It settles its physical attempt without failing the successor/reset.
     auto completed = tx.completions;
     tx.sent_(tx.output[0].body, tx.output[0].context, false);
-    ZuCheck(!tx.error && tx.completions == completed + 1 && tx.preparing_());
+    ZuCheckRT(!tx.error && tx.completions == completed + 1 && tx.preparing_());
     tx.drain();
-    ZuCheck(tx.epoch_() == 2 && tx.next_() == 1 && tx.preparing_() && !tx.error);
+    ZuCheckRT(tx.epoch_() == 2 && tx.next_() == 1 && tx.preparing_() && !tx.error);
     const auto &notice = tx.notices[tx.notices.length() - 1];
-    ZuCheck(notice.kind == TxNoticeKind::ResetReady && notice.nextEpoch == 2 &&
+    ZuCheckRT(notice.kind == TxNoticeKind::ResetReady && notice.nextEpoch == 2 &&
       notice.context.epoch == 1 && notice.context.connection == (committed ? 1 : 2));
     e = tx.event(State::Logon, SessionAction::ResetReady |
       SessionAction::SendLogon | SessionAction::RetryInput, 2);
     e.epoch = e.nextEpoch = 2; e.drain = 7; e.ticket = notice.request;
-    ZuCheck(tx.send(e, SessionAction::SendLogon) == TxSelect::Accepted);
+    ZuCheckRT(tx.send(e, SessionAction::SendLogon) == TxSelect::Accepted);
     tx.drain();
-    ZuCheck(!tx.error && !tx.preparing_() && tx.output.length() == 3 &&
+    ZuCheckRT(!tx.error && !tx.preparing_() && tx.output.length() == 3 &&
       tx.output[2].context.connection == 2 && tx.output[2].context.epoch == 2 &&
       tx.output[2].context.seqNo == 1 && tx.output[2].body->msgType() == "A");
   }
@@ -797,28 +803,28 @@ static void resetReplacement()
 
 static void resetBinding()
 {
-  ZuTestScope(resetBinding);
+  ZuTestScopeRT(resetBinding);
   for (bool committed : {false, true}) {
     Engine tx; drainReset(tx);
-    ZuCheck(prepareReset(tx) == TxSelect::Accepted);
+    ZuCheckRT(prepareReset(tx) == TxSelect::Accepted);
     if (committed) tx.drain();
     auto bound = tx.event(State::Disconnected, 0, 2);
     bound.nextEpoch = 2; bound.drain = 7;
-    ZuCheck(tx.bind_(bound) == TxSelect::Accepted && tx.connection_() == 2 &&
+    ZuCheckRT(tx.bind_(bound) == TxSelect::Accepted && tx.connection_() == 2 &&
       tx.preparing_() && tx.output.length() == 2);
     tx.drain();
-    ZuCheck(tx.epoch_() == 2 && tx.preparing_() && !tx.error);
+    ZuCheckRT(tx.epoch_() == 2 && tx.preparing_() && !tx.error);
     auto ready = tx.event(State::Disconnected, SessionAction::ResetReady, 2);
     ready.epoch = ready.nextEpoch = 2; ready.drain = 7;
     ready.ticket = tx.notices[tx.notices.length() - 1].request;
-    ZuCheck(tx.apply_(ready) == TxSelect::Accepted && !tx.preparing_());
+    ZuCheckRT(tx.apply_(ready) == TxSelect::Accepted && !tx.preparing_());
     tx.drain();
-    ZuCheck(tx.output.length() == 2 && !tx.error && tx.sendOrder(18) == TxSelect::Held);
+    ZuCheckRT(tx.output.length() == 2 && !tx.error && tx.sendOrder(18) == TxSelect::Held);
     auto opened = tx.event(State::Logon, SessionAction::SendLogon, 2);
     opened.epoch = opened.nextEpoch = 2;
-    ZuCheck(tx.send(opened, SessionAction::SendLogon) == TxSelect::Accepted);
+    ZuCheckRT(tx.send(opened, SessionAction::SendLogon) == TxSelect::Accepted);
     tx.drain();
-    ZuCheck(tx.output.length() == 3 && tx.output[2].context.connection == 2 &&
+    ZuCheckRT(tx.output.length() == 3 && tx.output[2].context.connection == 2 &&
       tx.output[2].context.epoch == 2 && tx.output[2].context.seqNo == 1 && !tx.error);
   }
 }
@@ -886,7 +892,7 @@ static void sequenceNotice()
 
 static void initialReset()
 {
-  ZuTestScope(initialReset);
+  ZuTestScopeRT(initialReset);
   for (unsigned n = 0; n < 3; ++n) {
     Engine tx;
     TxProgress state;
@@ -895,22 +901,22 @@ static void initialReset()
       case 1: state = {3, 3, 1}; break;
       default: state = {3, 1, 1}; break;
     }
-    ZuCheck(tx.restore_(1, state));
+    ZuCheckRT(tx.restore_(1, state));
     auto e = tx.event(State::Logon, 0); e.nextEpoch = 1;
     auto before = tx.progress_();
-    ZuCheck(tx.apply_(e) == TxSelect::Invalid && !tx.connection_() &&
+    ZuCheckRT(tx.apply_(e) == TxSelect::Invalid && !tx.connection_() &&
       !tx.output.length() && tx.next_() == before.loaded && tx.published_() == before.sent);
   }
   Engine fresh;
   auto e = fresh.event(State::Logon, 0); e.nextEpoch = 2;
-  ZuCheck(fresh.apply_(e) == TxSelect::Invalid && !fresh.connection_());
+  ZuCheckRT(fresh.apply_(e) == TxSelect::Invalid && !fresh.connection_());
   e.nextEpoch = 1;
-  ZuCheck(fresh.apply_(e) == TxSelect::Accepted && fresh.next_() == 1);
+  ZuCheckRT(fresh.apply_(e) == TxSelect::Accepted && fresh.next_() == 1);
   Engine pending; pending.loadResult = TxLoad::Pending; pending.start();
-  ZuCheck(pending.loading_() && pending.next_() == 1);
+  ZuCheckRT(pending.loading_() && pending.next_() == 1);
   pending.apply_(pending.event(State::Closing, SessionAction::Close));
   e = pending.event(State::Logon, 0, 2); e.nextEpoch = 1;
-  ZuCheck(pending.apply_(e) == TxSelect::Invalid && pending.connection_() == 1 &&
+  ZuCheckRT(pending.apply_(e) == TxSelect::Invalid && pending.connection_() == 1 &&
     pending.loading_() && pending.next_() == 1 && !pending.output.length());
 }
 
@@ -1013,24 +1019,24 @@ static void queueReplacement()
 
 static void queueClose(bool physical = false)
 {
-  ZuTestScope(queueClose);
+  ZuTestScopeRT(queueClose);
   Engine tx; tx.start();
   tx.apply_(tx.event(State::Established, SessionAction::Ready)); tx.drain();
   tx.loadResult = TxLoad::Pending;
-  ZuCheck(tx.queueOrder(101)); tx.drain(); auto ticket = tx.loadTicket;
+  ZuCheckRT(tx.queueOrder(101)); tx.drain(); auto ticket = tx.loadTicket;
   if (physical) {
-    tx.close_(2); ZuCheck(tx.loading_());
+    tx.close_(2); ZuCheckRT(tx.loading_());
     tx.close_(1); tx.close_(1);
   } else tx.apply_(tx.event(State::Closing, SessionAction::Close));
   tx.loadResult = TxLoad::Accepted;
-  ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted && !tx.released.length() &&
+  ZuCheckRT(tx.loaded_(ticket, true) == TxSelect::Accepted && !tx.released.length() &&
     tx.selections.length() == 1 && tx.selections[0].body->id() == 101 &&
     tx.selections[0].result == TxSelect::Accepted &&
     tx.selections[0].context.connection == 1 && tx.next_() == 3 && tx.output.length() == 1);
   tx.start(2);
   if (physical) tx.close_(1); // an old physical close cannot detach the new owner
   tx.apply_(tx.event(State::Established, SessionAction::Ready, 2)); tx.drain();
-  ZuCheck(tx.output.length() == 3 && tx.output[1].body->msgType() == "A" &&
+  ZuCheckRT(tx.output.length() == 3 && tx.output[1].body->msgType() == "A" &&
     tx.output[1].context.seqNo == 3 && tx.output[2].body->id() == 101 &&
     tx.output[2].context.connection == 2 && tx.output[2].context.seqNo == 2 &&
     tx.selections.length() == 1);
@@ -1063,7 +1069,7 @@ static PeerReject rejectReport(uint64_t refSeqNo = 2)
     .text = "bad value"});
   Error error;
   auto body = TxBody::control(c, error);
-  auto wire = txFrame(*body, txConfig(config()),
+  auto wire = testFrame(*body, txConfig(config()),
     TxContext{.seqNo = 9, .sendingTime =
       ZuDateTime{ZuDateTimeScan::FIX{}, "20261027-12:00:00"}}, error);
   ZmAssert(wire && !error);

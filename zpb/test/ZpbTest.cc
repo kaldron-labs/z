@@ -23,6 +23,9 @@
 
 #include <zlib/Zpb.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
 using namespace ZuTestUtil;
 
 ZuDerive(Output, (ZtArray<uint8_t, ZtArrayHeapID<"ZpbTest.Output">>));
@@ -1716,7 +1719,7 @@ static void testPointer()
   ZuCheck(!Zpb::save(partialBuilder, partial).length() &&
     partialBuilder.error() == Zpb::Error::Required &&
     partialBuilder.size() == 2);
-  Zpb::IOBuilder pooledPartial{new ZiIOBufAlloc<>};
+  Zpb::IOBuilder pooledPartial{new LocalBuf{nullptr, 0}};
   ZuCheck(!Zpb::save(pooledPartial, partial).length() &&
     pooledPartial.error() == Zpb::Error::Required &&
     !pooledPartial.buf());

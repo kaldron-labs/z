@@ -9,7 +9,7 @@ Preconditions: plans 1 through 6 complete.
 `zquic` already has packet builders, control queues, stream frame builders, and ACK appending.  Runtime packet assembly is conservative: one queued control frame and at most one stream frame per packet, with fixed packet number length.  This plan makes packet assembly budget-driven while preserving existing frame priority.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -69,7 +69,7 @@ New or changed data stores: track largest acknowledged packet per space for pack
 - Open question: whether coalescing should be limited to handshake until path budgeting is complete.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

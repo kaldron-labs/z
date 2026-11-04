@@ -10,6 +10,7 @@
 #include <zlib/ZtcHeap.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZgrpcHTTP.hh>
 #include "ZhttpTestUtil.hh"
 
@@ -248,11 +249,11 @@ static void heapSample(bool h3, unsigned messages)
 template <typename M = Unary>
 static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 3)
 {
-  ZuTestScope(wire);
+  ZuTestScopeRT(wire);
   Zhttp::Test::TempDir temp;
-  ZuCheck(temp.init("ZgrpcWire"), (return));
+  ZuCheckRT(temp.init("ZgrpcWire"), (return));
   ZtString<> cert, key;
-  ZuCheck(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
+  ZuCheckRT(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
   TestState state;
   state.sensitive = mode == Mode::Sensitive;
   bool queue = mode == Mode::QueueBytes || mode == Mode::QueueCount;
@@ -266,7 +267,19 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
     state.payload.length((256U << 10) + 7);
     memset(state.payload.data(), 0x71, state.payload.length());
   }
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  // Keep a complete retained message plus request/reply retirement overlap;
+  // TLS emits records, while QUIC emits path-sized packets.
+  unsigned rxSlots = 4 * ((state.payload.length() + ZiIOBuf_DefltSize - 1)/
+    ZiIOBuf_DefltSize);
+  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U << 10;
+  unsigned txSlots = 4 * ((state.payload.length() + txBytes - 1)/txBytes);
+  ZiMultiplex mx{ZiMxParams{}
+    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : rxSlots)
+    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : txSlots)
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -274,9 +287,9 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
-  ZuCheck(port, ({ mx.stop(); return; }));
+  ZuCheckRT(port, ({ mx.stop(); return; }));
   uint64_t baseline = mode == Mode::Long ? rpcAllocated() : 0;
   if (mode == Mode::Long) heapSample(h3, 0);
   Zhttp::HubConfig hub{&mx, "3", "4"};
@@ -296,11 +309,11 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
   })
     .policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig, &rpc);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   bool started = initialized && server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_());
+  ZuCheckRT(listening && !state.errors.load_());
   ClientApp app{&state};
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
@@ -314,31 +327,31 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
-  ZuCheck(cliInit);
+  ZuCheckRT(cliInit);
   bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
-  ZuCheck(cliUp);
+  ZuCheckRT(cliUp);
   ZmSemaphore held, release;
   bool blocked = cliUp && (mode == Mode::Ingress || mode == Mode::Deadline);
   if (blocked) {
     mx.run([&held, &release]() { held.post(); release.wait(); }, 4);
-    ZuCheck(held.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(held.timedwait(Zm::now(10)) == 0);
   }
   ZmRef<Call> call = new Call{&state};
   ZmRef<ClientCall<Unary>> token;
   bool admitted = false;
   if (cliUp) {
     CallOptions options;
-    if (state.sensitive) ZuCheck(options.metadata.add("x-private-req", "request secret"));
+    if (state.sensitive) ZuCheckRT(options.metadata.add("x-private-req", "request secret"));
     if (mode == Mode::Expired) options.timeout = 0;
     if (mode == Mode::Deadline) options.timeout = 10000000;
     if (blocked) {
       token = client.open<Unary>(0, call, ZuMv(options));
       admitted = bool(token);
       auto denied = client.open<Unary>(0, call);
-      ZuCheck(!denied && client.pending() == 1);
-      if (token && mode == Mode::Ingress) ZuCheck(token->cancel());
+      ZuCheckRT(!denied && client.pending() == 1);
+      if (token && mode == Mode::Ingress) ZuCheckRT(token->cancel());
     } else {
       if constexpr (M::Kind == Kind::Unary)
         admitted = client.call<M>(0, Packet{42, state.payload}, call, ZuMv(options));
@@ -350,11 +363,11 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
           uint64_t allocated = 0;
           for (unsigned i = 0; i < n; ++i) {
             bool sent = stream->send(Packet{42, state.payload});
-            ZuCheck(sent);
+            ZuCheckRT(sent);
             if (!sent) break;
             if constexpr (M::Kind == Kind::Duplex) {
               bool received = call->messageReady.timedwait(Zm::now(15)) == 0;
-              ZuCheck(received);
+              ZuCheckRT(received);
               if (!received) break;
               if (mode == Mode::Long && (i + 1) % SampleMessages == 0) {
                 // Retire the echo's owner work before taking each heap sample.
@@ -363,21 +376,21 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
                   mx.run([&sampled]() { sampled.post(); }, 3);
                 }, 4);
                 bool drained = sampled.timedwait(Zm::now(10)) == 0;
-                ZuCheck(drained);
+                ZuCheckRT(drained);
                 if (!drained) break;
                 heapSample(h3, i + 1);
                 auto live = rpcAllocated();
-                ZuCheck(live);
+                ZuCheckRT(live);
                 if (!allocated) allocated = live;
-                ZuCheck(live == allocated);
-                ZuCheck(uint64_t(i + 1) * state.payload.length() > (1U << 20));
+                ZuCheckRT(live == allocated);
+                ZuCheckRT(uint64_t(i + 1) * state.payload.length() > (1U << 20));
               }
             }
           }
           if constexpr (ZuIsSame<M, Early>{}) {
-            ZuCheck(state.done.timedwait(Zm::now(15)) == 0);
+            ZuCheckRT(state.done.timedwait(Zm::now(15)) == 0);
             state.done.post();
-            ZuCheck(!stream->send(Packet{}) && !stream->end());
+            ZuCheckRT(!stream->send(Packet{}) && !stream->end());
           } else if (queue) {
             // The echoed warmup proves both retained producers are ready.
             // Submit on Tx: the pending-post bound cannot mask encoded limits.
@@ -393,20 +406,20 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
               }
               submitted.post();
             }, 4);
-            ZuCheck(submitted.timedwait(Zm::now(10)) == 0);
-            ZuCheck(first && !second);
-          } else ZuCheck(stream->end());
+            ZuCheckRT(submitted.timedwait(Zm::now(10)) == 0);
+            ZuCheckRT(first && !second);
+          } else ZuCheckRT(stream->end());
         }
       }
     }
   }
-  ZuCheck(admitted);
+  ZuCheckRT(admitted);
   bool done = admitted && state.done.timedwait(Zm::now(15)) == 0;
-  ZuCheck(done);
+  ZuCheckRT(done);
   if (blocked) {
-    ZuCheck(client.pending() == 1); // logical failure does not bypass Tx drain
+    ZuCheckRT(client.pending() == 1); // logical failure does not bypass Tx drain
     if (token) {
-      ZuCheck(!token->live() && !token->send(Packet{}) && !token->end() && !token->cancel());
+      ZuCheckRT(!token->live() && !token->send(Packet{}) && !token->end() && !token->cancel());
     }
     release.post();
   }
@@ -415,53 +428,54 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal, unsigned count = 
     // call may switch transport; the completed request is never replayed.
     state.version = Zhttp::Version::H3;
     bool next = client.call<Unary>(0, Packet{42, state.payload}, call);
-    ZuCheck(next);
-    ZuCheck(next && state.done.timedwait(Zm::now(15)) == 0);
+    ZuCheckRT(next);
+    ZuCheckRT(next && state.done.timedwait(Zm::now(15)) == 0);
   }
   if (mode == Mode::Restart && done) {
-    ZuCheck(client.stop());
-    ZuCheck(server.stop());
-    ZuCheck(!client.up() && !client.pending() && !server.up() && !server.pending());
-    ZuCheck(!client.call<Unary>(0, Packet{42, state.payload}, call));
+    ZuCheckRT(client.stop());
+    ZuCheckRT(server.stop());
+    ZuCheckRT(!client.up() && !client.pending() && !server.up() && !server.pending());
+    ZuCheckRT(!client.call<Unary>(0, Packet{42, state.payload}, call));
     bool listening = server.start() && state.listening.timedwait(Zm::now(10)) == 0;
-    ZuCheck(listening);
+    ZuCheckRT(listening);
     bool running = listening && client.start();
-    ZuCheck(running);
+    ZuCheckRT(running);
     bool next = running && client.call<Unary>(0, Packet{42, state.payload}, call);
-    ZuCheck(next);
-    ZuCheck(next && state.done.timedwait(Zm::now(15)) == 0);
+    ZuCheckRT(next);
+    ZuCheckRT(next && state.done.timedwait(Zm::now(15)) == 0);
   }
   if (serverQueue && rpc.duplex) {
-    ZuCheck(rpc.duplex->cancelReady.timedwait(Zm::now(10)) == 0);
-    ZuCheck(rpc.duplex->cancelCode == Code::RESOURCE_EXHAUSTED);
+    ZuCheckRT(rpc.duplex->cancelReady.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(rpc.duplex->cancelCode == Code::RESOURCE_EXHAUSTED);
   }
-  if (cliUp) ZuCheck(client.stop());
-  ZuCheck(!client.pending());
+  if (cliUp) ZuCheckRT(client.stop());
+  ZuCheckRT(!client.pending());
   client.final();
-  if (started) ZuCheck(server.stop());
+  if (started) ZuCheckRT(server.stop());
   server.final();
   rpc.duplex = nullptr;
   ZiResolver::stopSync();
   ZiResolver::final();
-  ZuCheck(mx.stop());
-  ZuCheck(!state.errors.load_());
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(!state.errors.load_());
   if (mode == Mode::Normal || mode == Mode::Long ||
       mode == Mode::Discovery || mode == Mode::Restart || mode == Mode::Sensitive) {
     bool twice = mode == Mode::Discovery || mode == Mode::Restart;
     unsigned expected = twice ? 2 :
       M::Kind == Kind::ServerStream ? 3 : M::Kind == Kind::Duplex ? count : 1;
-    if (twice) ZuCheck(rpc.requests == 2);
-    if (state.sensitive) ZuCheck(state.policy == 7 && state.headers == 1);
-    ZuCheck(state.received == expected && !state.failures);
+    if (twice) ZuCheckRT(rpc.requests == 2);
+    if (state.sensitive) ZuCheckRT(state.policy == 7 && state.headers == 1);
+    ZuCheckRT(state.received == expected && !state.failures);
     if (state.result.is<Message<Packet>>()) {
-      ZuCheck(state.result.p<Message<Packet>>().object().payload == ZuBSpan{state.payload});
-    } else ZuCheck(!expected);
-  } else ZuCheck(state.received == unsigned(queue) && state.failures == 1);
+      ZuCheckRT(state.result.p<Message<Packet>>().object().payload == ZuBSpan{state.payload});
+    } else ZuCheckRT(!expected);
+  } else ZuCheckRT(state.received == unsigned(queue) && state.failures == 1);
+  // Release retained receive backing before its mux allocator is destroyed.
+  state.result = {};
   if (mode == Mode::Long) {
     call = nullptr;
-    state.result = {};
     heapSample(h3, LongMessages + 1);
-    ZuCheck(rpcAllocated() == baseline);
+    ZuCheckRT(rpcAllocated() == baseline);
   }
 
 }

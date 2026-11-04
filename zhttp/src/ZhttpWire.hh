@@ -309,6 +309,7 @@ struct RetainedBudget {
   bool		valid = true;
 
   bool add(uint64_t n) {
+    if (!valid) return false;
     if (n > max - size) {
       valid = false;
       return false;
@@ -319,28 +320,35 @@ struct RetainedBudget {
 
 };
 
-struct RetainedEntry {
-  ZmRef<ZiIOBuf>	buf;
-  bool		final;
-
-  RetainedEntry() = default;
-  RetainedEntry(ZmRef<ZiIOBuf> buf_, bool final_) :
-    buf{ZuMv(buf_)}, final{final_} { }
-
-};
-
+template <typename Lower, typename = void>
+struct HasRetainedTCP : ZuFalse { };
 template <typename Lower>
-class RetainedTx : public ZiTxStream<RetainedTx<Lower>> {
-  using Base = ZiTxStream<RetainedTx<Lower>>;
-  using Entries =
-    ZtArray<RetainedEntry, ZtArrayHeapID<"Zhttp.RetainedTx.Entries">>;
+struct HasRetainedTCP<Lower, decltype(
+  ZuDeclVal<Lower &>().sendRetained_(ZuDeclVal<RetainedEntries>()), void())> :
+    ZuTrue { };
+
+template <typename Lower, bool KeepBuffers = false>
+class RetainedTx : public ZiTxStream<RetainedTx<Lower, KeepBuffers>> {
+  using Base = ZiTxStream<RetainedTx<Lower, KeepBuffers>>;
+  using Entries = RetainedEntries;
 
 public:
+  enum { RetainBuffers = KeepBuffers };
+
   RetainedTx(Lower &lower_, RetainedBudget &budget_) :
     Base{lower_.maxSize(), lower_.headRoom(), lower_.tailRoom()},
     m_lower{lower_}, m_budget{budget_} { }
 
   ~RetainedTx() { this->flush(); }
+
+  bool appendBuf_(ZmRef<ZiIOBuf> &buf) {
+    if constexpr (KeepBuffers) {
+      auto length = buf->length;
+      appendRange(Zi::RxRange{ZuMv(buf), 0, length});
+      return true; // handled even when appendRange sets sticky failure
+    }
+    return false;
+  }
 
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     if (ZuUnlikely(m_lower.failed())) return nullptr;
@@ -355,14 +363,67 @@ public:
     return true;
   }
 
+  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+    return m_lower.canAdopt_(buf, head, tail);
+  }
+  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
+    if (!buf || offset > buf->length || length > buf->length - offset)
+      return appendRange(Zi::RxRange{});
+    return appendRange(Zi::RxRange{ZuMv(buf), offset, length});
+  }
+  bool appendRange(Zi::RxRange range) {
+    if (!this->flush_(false) || !range.buf || range.offset > range.buf->size ||
+	range.length > range.buf->size - range.offset || !m_budget.add(range.length)) {
+      m_valid = false;
+      this->fail();
+      return false;
+    }
+    if (!range.length) return true;
+    auto entry = new (m_entries.push()) RetainedEntry{ZuMv(range.buf), false};
+    entry->offset = range.offset;
+    entry->length = range.length;
+    entry->range = true;
+    return true;
+  }
+
   bool seal() { return this->flush() && valid(); }
   bool valid() const {
     return !this->failed() && m_valid && m_budget.valid;
   }
+  template <typename Owner>
+  bool commitWith(RetainedTx &body, Owner &owner) {
+    if constexpr (HasRetainedTCP<Owner>{}) {
+      if (!seal() || !body.seal()) return false;
+      bool ranges = false;
+      for (const auto &part : m_entries) ranges |= part.range;
+      for (const auto &part : body.m_entries) ranges |= part.range;
+      if (ranges) {
+	for (auto &part : body.m_entries) m_entries.push(ZuMv(part));
+	body.m_entries.length(0);
+	if (owner.sendRetained_(ZuMv(m_entries))) return true;
+	this->fail();
+	return false;
+      }
+    }
+    return commit() && body.commit();
+  }
   bool commit() {
     if (!seal()) { m_entries.length(0); return false; }
     for (unsigned i = 0, n = m_entries.length(); i < n; ++i) {
-      m_lower << ZuMv(m_entries[i].buf);
+      auto &entry = m_entries[i];
+      if (entry.range) {
+	if constexpr (KeepBuffers) {
+	  // TCP borrowed entries are admitted with their actual header by
+	  // commitWith(); this fallback contains only serialized output.
+	  ZiAssert(false, "Zhttp", (), "retained TCP entry without header batch",
+	    this->fail(); m_entries.length(0); return false);
+	} else if (!m_lower.appendRange(Zi::RxRange::fromStorage(
+	    ZuMv(entry.buf), entry.offset, entry.length))) {
+	  this->fail();
+	  m_entries.length(0);
+	  return false;
+	}
+      } else m_lower << ZuMv(entry.buf);
       if (m_entries[i].final) m_lower << Zi::Flush{};
       if (m_lower.failed()) {
 	this->fail();
@@ -449,8 +510,9 @@ public:
       return fixedH2_(builder, native, optional);
     else {
       RetainedBudget budget{.max = m_ops->retainedMax()};
-      RetainedTx headerTx{native, budget};
-      RetainedTx bodyTx{native, budget};
+      constexpr bool KeepBuffers = HasRetainedTCP<ZuDecay<decltype(link)>>{};
+      RetainedTx<decltype(native), KeepBuffers> headerTx{native, budget};
+      RetainedTx<decltype(native), KeepBuffers> bodyTx{native, budget};
       auto body = builder.body(bodyTx, m_ops->fixedBodyMax());
       bool emitted = false;
       bool duplicate = false;
@@ -475,7 +537,7 @@ public:
       builder.finish(bodyTx);
       if (!headerTx.seal() || !bodyTx.seal())
 	return m_ops->template fail<false>();
-      if (!headerTx.commit() || !bodyTx.commit())
+      if (!headerTx.commitWith(bodyTx, link))
 	return m_ops->template fail<false>();
       if (!m_ops->complete(builder.produced)) return false;
       link.finish();

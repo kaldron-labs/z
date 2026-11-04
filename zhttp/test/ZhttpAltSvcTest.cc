@@ -111,46 +111,46 @@ void printing()
 
 void cache()
 {
-  ZuTestScope(cache);
+  ZuTestScopeRT(cache);
   auto a = origin("a.example");
   auto b = origin("b.example");
   Zhttp::AltSvcCache cache{1};
-  ZuCHECK(cache.update(a, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{100}) &&
-      cache.count() == 1, "insert bounded origin");
+  ZuCheckRT(cache.update(a, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{100}) &&
+      cache.count() == 1, log_( "insert bounded origin"));
   unsigned values = 0;
-  ZuCHECK(cache.get(a, [&values](const Zhttp::AltSvcValue &value) {
+  ZuCheckRT(cache.get(a, [&values](const Zhttp::AltSvcValue &value) {
       values += value.h3 && value.host == "a.example";
-    }, ZuTime{109}) && values == 1, "borrowed cache iteration");
-  ZuCHECK(!cache.update(
+    }, ZuTime{109}) && values == 1, log_( "borrowed cache iteration"));
+  ZuCheckRT(!cache.update(
       a, ZuBSpan{"h3=\":444\", bad"}, 2, ZuTime{100}) &&
-      cache.count() == 1, "malformed update is transactional");
-  ZuCHECK(cache.update(
+      cache.count() == 1, log_( "malformed update is transactional"));
+  ZuCheckRT(cache.update(
       b, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{100}) &&
-      cache.count() == 1, "bounded admission evicts an origin");
+      cache.count() == 1, log_( "bounded admission evicts an origin"));
   values = 0;
-  ZuCHECK(!cache.get(a, [&values](const Zhttp::AltSvcValue &) {
+  ZuCheckRT(!cache.get(a, [&values](const Zhttp::AltSvcValue &) {
       ++values;
-    }, ZuTime{109}) && !values, "evicted origin is absent");
-  ZuCHECK(!cache.get(b, [&values](const Zhttp::AltSvcValue &) {
+    }, ZuTime{109}) && !values, log_( "evicted origin is absent"));
+  ZuCheckRT(!cache.get(b, [&values](const Zhttp::AltSvcValue &) {
       ++values;
-    }, ZuTime{110}) && !values && !cache.count(), "expiry releases capacity");
-  ZuCHECK(cache.update(a, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{110}) &&
+    }, ZuTime{110}) && !values && !cache.count(), log_( "expiry releases capacity"));
+  ZuCheckRT(cache.update(a, ZuBSpan{"h3=\":443\"; ma=10"}, 2, ZuTime{110}) &&
       cache.update(b, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
-      cache.count() == 1, "cold expiry cannot block admission");
-  ZuCHECK(cache.update(b, ZuBSpan{"clear"}, 2, ZuTime{120}) && !cache.count(),
-    "validated clear removes origin");
+      cache.count() == 1, log_( "cold expiry cannot block admission"));
+  ZuCheckRT(cache.update(b, ZuBSpan{"clear"}, 2, ZuTime{120}) && !cache.count(), log_(
+    "validated clear removes origin"));
   for (unsigned i = 0; i < 4; ++i) {
     const auto &key = i & 1 ? a : b;
     const auto &old = i & 1 ? b : a;
-    ZuCHECK(cache.update(key, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
+    ZuCheckRT(cache.update(key, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
         cache.count() == 1 && cache.hasH3(key, ZuTime{120}) &&
-        !cache.hasH3(old, ZuTime{120}), "repeated admission stays bounded");
+        !cache.hasH3(old, ZuTime{120}), log_( "repeated admission stays bounded"));
   }
   cache.del(a);
-  ZuCHECK(!cache.count(), "explicit retirement releases cached values");
+  ZuCheckRT(!cache.count(), log_( "explicit retirement releases cached values"));
   Zhttp::AltSvcCache disabled{0};
-  ZuCHECK(!disabled.update(a, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
-      !disabled.count(), "zero origin limit rejects admission");
+  ZuCheckRT(!disabled.update(a, ZuBSpan{"h3=\":443\""}, 2, ZuTime{120}) &&
+      !disabled.count(), log_( "zero origin limit rejects admission"));
 }
 
 } // namespace ZhttpAltSvcTest_

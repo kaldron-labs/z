@@ -23,8 +23,8 @@ namespace Zdbus_ {
 
 ZtEnumImplNS(CxnState);
 
-using FrameAlloc = ZiIOBufAlloc<ZiIOBuf_DefltSize,
-  Wire::MaxMessageSize, "Zdbus.Frame">;
+using FrameAlloc = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  Wire::MaxMessageSize, ZuStringT<"Zdbus.Frame">>;
 
 struct StopDispatch : ZmNHeap<StopDispatch>, ZuObject {
 friend inline ZuStringT<"Zdbus.CxnStopDispatch"> ZmNHeapID(StopDispatch *);
@@ -236,7 +236,7 @@ void Connection::connected_()
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (), "connected off Rx", return);
   m_state = CxnState::Authenticating;
-  ZmRef<ZiIOBuf> buf = new FrameAlloc{};
+  ZmRef<ZiIOBuf> buf = new FrameAlloc{nullptr, 0};
   m_auth.start(*buf, unsigned(geteuid()));
   m_output.pushNode(new Out{ZuMv(buf), {}, 0});
 }
@@ -299,7 +299,7 @@ bool Connection::auth_()
     return true;
   }
   m_state = CxnState::Hello;
-  ZmRef<ZiIOBuf> begin = new FrameAlloc{};
+  ZmRef<ZiIOBuf> begin = new FrameAlloc{nullptr, 0};
   *begin << Auth::begin();
   m_output.pushNode(new Out{ZuMv(begin), {}, 0});
   rxWrite_();
@@ -309,44 +309,26 @@ bool Connection::auth_()
   return true;
 }
 
-static void retarget(ZuCSpan &span, ZuCSpan from, ZuCSpan to)
-{
-  if (span.length())
-    span = {to.data() + (span.data() - from.data()), span.length()};
-}
-
-ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input,
-  FrameInfo &info)
+ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input, const FrameInfo &info)
 {
   ZmAssert_(input && info.total && input->length > info.total);
-  unsigned total = info.total;
-  unsigned tail = input->length - total;
-  ZmRef<ZiIOBuf> copied = new FrameAlloc{};
-  copied->ensure(tail < total ? tail : total);
-  if (tail < total) {
-    memcpy(copied->data(), input->data() + total, tail);
-    copied->length = tail;
-    ZmRef<ZiIOBuf> complete = ZuMv(input);
-    complete->length = total;
-    input = ZuMv(copied);
-    // The parsed header spans still point into the retained frame.
-    return complete;
-  }
-  auto from = ZuCSpan{input->cspan()};
-  memcpy(copied->data(), input->data(), total);
-  copied->length = total;
-  auto to = ZuCSpan{copied->cspan()};
-  input->advance(total);
-  // The frame was validated before splitting; only its borrowed views move.
-  auto &h = info.headers;
-  retarget(h.path, from, to);
-  retarget(h.interface, from, to);
-  retarget(h.member, from, to);
-  retarget(h.errorName, from, to);
-  retarget(h.destination, from, to);
-  retarget(h.sender, from, to);
-  retarget(h.signature, from, to);
-  return copied;
+  auto complete = input;
+  input->advance(info.total);
+  return complete;
+}
+
+bool detachInput_(ZmRef<ZiIOBuf> &input, unsigned size)
+{
+  ZmAssert_(input && size >= input->length);
+  // A delivered frame still borrows this backing. Construct only the
+  // unfinished tail in its final storage before receiving further bytes.
+  ZmRef<ZiIOBuf> next = new FrameAlloc{nullptr, 0};
+  if (!next->ensure(size)) return false;
+  unsigned n = input->length;
+  if (n) memcpy(next->data(), input->data(), n);
+  next->length = n;
+  input = ZuMv(next);
+  return true;
 }
 
 bool Connection::frame_()
@@ -387,31 +369,36 @@ void Connection::rxRead_()
   unsigned budget = m_params.rxBytes;
   unsigned msgs = 0;
   while (budget && msgs < m_params.msgs) {
-    if (!m_input) m_input = new FrameAlloc{};
+    if (!m_input) m_input = new FrameAlloc{nullptr, 0};
     if (!consume_(msgs)) return;
     if (msgs == m_params.msgs) break;
-    if (!m_input) m_input = new FrameAlloc{};
+    if (!m_input) m_input = new FrameAlloc{nullptr, 0};
     unsigned n = m_input->length;
-    unsigned want;
+    unsigned want, reserve;
     if (m_state == CxnState::Authenticating) {
       if (n >= Auth::MaxLine + 1) {
         rxFail_({0, 0, CxnError::Auth});
         return;
       }
       // A malformed auth line cannot drive allocation up to rxBytes.
-      want = Auth::MaxLine + 1 - n;
-    } else if (n < Wire::MinHeaderSize)
-      want = Wire::MinHeaderSize - n;
-    else {
+      reserve = Auth::MaxLine + 1;
+      want = reserve - n;
+    } else if (n < Wire::MinHeaderSize) {
+      reserve = Wire::MinHeaderSize;
+      want = reserve - n;
+    } else {
       auto parsed = frame(m_input->cspan(), m_params.frameLimit);
       if (parsed.error != FrameError::NeedMore) {
         if (!consume_(msgs)) return;
         continue;
       }
-      want = parsed.info.total - n;
+      reserve = parsed.info.total;
+      want = reserve - n;
     }
     if (want > budget) want = budget;
-    if (!m_input->ensure(n + want)) {
+    bool reserved = m_input->refCount() > 1 ?
+      detachInput_(m_input, reserve) : bool(m_input->ensure(reserve));
+    if (!reserved) {
       rxFail_({0, 0, CxnError::Resource});
       return;
     }

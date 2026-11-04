@@ -37,10 +37,13 @@
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiLog.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZrestServer.hh>
@@ -196,7 +199,7 @@ static bool loadConfig(ZuCSpan path, Config &config)
   String source;
   if (!readFile(path, source)) return false;
   if (!source.mutable_()) source.length(source.length());
-  auto scan = ZfCf::scan({source.data(), source.length()});
+  auto scan = ZfCf::scan(source);
   if (scan.p<0>() < 0 || !scan.p<1>()) return false;
   ZfCf::handler<Config>(scan.p<1>()).update(config);
   return true;
@@ -647,7 +650,7 @@ public:
     bool duplicate = false;
     String code_, state_, error_;
     static constexpr auto matcher = ZuMatcher<CallbackKeys>();
-    if (ok) ok = formEach({query.data(), query.length()},
+    if (ok) ok = formEach(query,
       [&lookup, &duplicate, &code_, &state_, &error_](ZuCSpan name, ZuCSpan value) {
         int id = matcher.exact(name);
         if (id < 0) return;
@@ -702,14 +705,16 @@ static ZiMxParams mxParams()
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(3, [](auto &t) { t.name("cb-rx"); t.isolated(1); })
       .thread(4, [](auto &t) { t.name("cb-tx"); t.isolated(1); });
-  }).rxThread(1).txThread(2);
+  }).rxThread(1).txThread(2)
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>();
 }
 
 static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -755,7 +760,7 @@ static bool saveTokens(const ZumVaultClient::Credential &tokens)
 static ZuPtr<ZfJSON::AnyNode> jsonObject(String &json)
 {
   if (!json || !json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return {};
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();

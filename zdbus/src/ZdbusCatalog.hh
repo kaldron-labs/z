@@ -82,7 +82,7 @@ struct RemoteError {
 
   ZuCSpan name() const { return info.headers.errorName; }
   ZuCSpan signature() const { return info.headers.signature; }
-  ZuBSpan body() const { return frame->cspan(info.bodyOffset); }
+  ZuBSpan body() const { return info.body(); }
 };
 
 namespace TypedError {

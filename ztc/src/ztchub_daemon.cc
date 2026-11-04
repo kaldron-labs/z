@@ -276,75 +276,74 @@ void State::clearRole()
   }
 }
 
-using InventoryBuf = ZiIOBufAlloc<1024, 1U << 30, "Ztc.Hub.Inventory">;
 
-static HubFrame inventoryFrame(const Inventory &value, uint64_t subID)
+static HubBuildFn inventoryFrame(const Inventory &value, uint64_t subID)
 {
-  HubFrame frame = new InventoryBuf;
-  frame->skip = Ztc::Builder::Align;
-  Ztc::Builder builder{ZuMv(frame)};
-  auto nested = builder.startNested();
-  auto publisher = builder.string(value.publisherID);
-  auto app = Zfb::save(builder, value.app);
-  auto telemetry = saveTelemetry(builder, publisher, 0,
-    TelemetryBody::AppTelemetry, app);
-  builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
-    subID, value.deviceID, value.generation));
-  return builder.buf();
+  return HubBuildFn{[&value, subID](HubFrame frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto publisher = builder.string(value.publisherID);
+    auto app = Zfb::save(builder, value.app);
+    auto telemetry = saveTelemetry(builder, publisher, 0,
+      TelemetryBody::AppTelemetry, app);
+    builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
+      subID, value.deviceID, value.generation));
+    return HubPacket{builder.buf()};
+  }};
 }
 
-static HubFrame inventoryAck(uint64_t subID, uint32_t interval)
+static HubBuildFn inventoryAck(uint64_t subID, uint32_t interval)
 {
-  HubFrame frame = new InventoryBuf;
-  frame->skip = Ztc::Builder::Align;
-  Ztc::Builder builder{ZuMv(frame)};
-  auto nested = builder.startNested();
-  auto ack = Zfb::save(builder, Ack{
-    .id = "inventory", .seqNo = 0, .interval = interval,
-    .status = uint8_t(AckStatus::OK)});
-  builder.finish(saveMsg(builder, nested, Body::Ack, ack, subID));
-  return builder.buf();
+  return HubBuildFn{[subID, interval](HubFrame frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto ack = Zfb::save(builder, Ack{
+      .id = "inventory", .seqNo = 0, .interval = interval,
+      .status = uint8_t(AckStatus::OK)});
+    builder.finish(saveMsg(builder, nested, Body::Ack, ack, subID));
+    return HubPacket{builder.buf()};
+  }};
 }
 
-static HubFrame inventoryEOS(uint64_t subID)
+static HubBuildFn inventoryEOS(uint64_t subID)
 {
-  HubFrame frame = new InventoryBuf;
-  frame->skip = Ztc::Builder::Align;
-  Ztc::Builder builder{ZuMv(frame)};
-  auto nested = builder.startNested();
-  auto eos = Zfb::save(builder, EOS{ZuID{"inventory"}, 0});
-  builder.finish(saveMsg(builder, nested, Body::EOS, eos, subID));
-  return builder.buf();
+  return HubBuildFn{[subID](HubFrame frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto eos = Zfb::save(builder, EOS{ZuID{"inventory"}, 0});
+    builder.finish(saveMsg(builder, nested, Body::EOS, eos, subID));
+    return HubPacket{builder.buf()};
+  }};
 }
 
-static HubFrame inventoryGone(const Inventory &value, uint64_t subID)
+static HubBuildFn inventoryGone(const Inventory &value, uint64_t subID)
 {
-  HubFrame frame = new InventoryBuf;
-  frame->skip = Ztc::Builder::Align;
-  Ztc::Builder builder{ZuMv(frame)};
-  auto nested = builder.startNested();
-  auto error = Zfb::save(builder, Error{
-    ErrorMessage{"agent disconnected"}, ZuID{value.publisherID},
-    0, int(HubError::AgentGone)});
-  builder.finish(saveMsg(builder, nested, Body::Error, error,
-    subID, value.deviceID, value.generation));
-  return builder.buf();
+  return HubBuildFn{[&value, subID](HubFrame frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto error = Zfb::save(builder, Error{
+      ErrorMessage{"agent disconnected"}, ZuID{value.publisherID},
+      0, int(HubError::AgentGone)});
+    builder.finish(saveMsg(builder, nested, Body::Error, error,
+      subID, value.deviceID, value.generation));
+    return HubPacket{builder.buf()};
+  }};
 }
 
 // A confirmed publisher removal is Shutdown, never snapshot completion.
-static HubFrame inventoryShutdown(const Inventory &value, uint64_t subID)
+static HubBuildFn inventoryShutdown(const Inventory &value, uint64_t subID)
 {
-  HubFrame frame = new InventoryBuf;
-  frame->skip = Ztc::Builder::Align;
-  Ztc::Builder builder{ZuMv(frame)};
-  auto nested = builder.startNested();
-  auto publisher = builder.string(value.publisherID);
-  auto shutdown = Zfb::save(builder, Shutdown{});
-  auto telemetry = saveTelemetry(builder, publisher, 0,
-    TelemetryBody::Shutdown, shutdown);
-  builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
-    subID, value.deviceID, value.generation));
-  return builder.buf();
+  return HubBuildFn{[&value, subID](HubFrame frame, unsigned tailRoom) {
+    Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, UINT32_MAX, tailRoom};
+    auto nested = builder.startNested();
+    auto publisher = builder.string(value.publisherID);
+    auto shutdown = Zfb::save(builder, Shutdown{});
+    auto telemetry = saveTelemetry(builder, publisher, 0,
+      TelemetryBody::Shutdown, shutdown);
+    builder.finish(saveMsg(builder, nested, Body::Telemetry, telemetry,
+      subID, value.deviceID, value.generation));
+    return HubPacket{builder.buf()};
+  }};
 }
 
 static void inventorySend(StateData &state, const Inventory &value)
@@ -353,7 +352,7 @@ static void inventorySend(StateData &state, const Inventory &value)
   while (auto sub = i()) {
     auto session = state.sessions.findPtr(sub->val().frontEndID);
     if (session && !session->val().agent && session->val().send)
-      session->val().send(inventoryFrame(value, sub->val().subID));
+      session->val().send(HubPacket{}, inventoryFrame(value, sub->val().subID));
   }
 }
 
@@ -370,7 +369,7 @@ static bool inventoryDel(StateData &state, ZuCSpan deviceID,
     while (auto sub = subs()) {
       auto session = state.sessions.findPtr(sub->val().frontEndID);
       if (session && !session->val().agent && session->val().send)
-	session->val().send(publisherID ?
+	session->val().send(HubPacket{}, publisherID ?
 	  inventoryShutdown(value, sub->val().subID) :
 	  inventoryGone(value, sub->val().subID));
     }
@@ -1230,14 +1229,14 @@ bool Hubd::appSubscribe(uint64_t frontEndID, uint64_t subID,
   if (interval) {
     m_state->appSubs.addNode(new Hubd_::AppSubs::Node{
       Hubd_::AppSub{frontEndID, subID}});
-    session->val().send(Hubd_::inventoryAck(subID, interval));
+    session->val().send(HubPacket{}, Hubd_::inventoryAck(subID, interval));
   }
   auto apps = m_state->inventories.iter();
   while (auto node = apps())
-    session->val().send(Hubd_::inventoryFrame(node->val(), subID));
-  if (!interval) session->val().send(Hubd_::inventoryAck(subID, interval));
+    session->val().send(HubPacket{}, Hubd_::inventoryFrame(node->val(), subID));
+  if (!interval) session->val().send(HubPacket{}, Hubd_::inventoryAck(subID, interval));
   // Every initial inventory snapshot completes, even a continuing stream.
-  session->val().send(Hubd_::inventoryEOS(subID));
+  session->val().send(HubPacket{}, Hubd_::inventoryEOS(subID));
   return true;
 }
 
@@ -1272,23 +1271,43 @@ bool Hubd::route(uint64_t sessionID, uint64_t generation, uint64_t seq,
   return true;
 }
 
-bool Hubd::sendAgent(uint64_t sessionID, uint64_t generation, HubFrame frame)
+bool Hubd::sendAgent(uint64_t sessionID, uint64_t generation, HubPacket frame)
 {
   if (!m_state || !frame) return false;
   auto agent = m_state->agentSessions.findPtr(sessionID);
   if (!agent || agent->val().generation != generation) return false;
   auto session = m_state->sessions.findPtr(sessionID);
   if (!session || !session->val().send) return false;
-  session->val().send(ZuMv(frame));
+  session->val().send(ZuMv(frame), HubBuildFn{});
   return true;
 }
 
-bool Hubd::sendFrontend(uint64_t sessionID, HubFrame frame)
+bool Hubd::sendFrontend(uint64_t sessionID, HubPacket frame)
 {
   if (!m_state || !frame) return false;
   auto session = m_state->sessions.findPtr(sessionID);
   if (!session || session->val().agent || !session->val().send) return false;
-  session->val().send(ZuMv(frame));
+  session->val().send(ZuMv(frame), HubBuildFn{});
+  return true;
+}
+
+bool Hubd::sendAgent(uint64_t sessionID, uint64_t generation, HubBuildFn build)
+{
+  if (!m_state || !build) return false;
+  auto agent = m_state->agentSessions.findPtr(sessionID);
+  if (!agent || agent->val().generation != generation) return false;
+  auto session = m_state->sessions.findPtr(sessionID);
+  if (!session || !session->val().send) return false;
+  session->val().send(HubPacket{}, ZuMv(build));
+  return true;
+}
+
+bool Hubd::sendFrontend(uint64_t sessionID, HubBuildFn build)
+{
+  if (!m_state || !build) return false;
+  auto session = m_state->sessions.findPtr(sessionID);
+  if (!session || session->val().agent || !session->val().send) return false;
+  session->val().send(HubPacket{}, ZuMv(build));
   return true;
 }
 

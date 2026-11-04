@@ -375,7 +375,7 @@ No new scheduler threads are required. The work should tighten ownership:
 - Replace them with base `Link` queue helpers and a single
   `flushControlAndStreams_` path.
 - Keep CRTP defaults side-effect-safe in the base, consistent with
-  `GUIDELINES.md`.
+  `docs/GUIDELINES.md`.
 - Preserve the current packet-protection lock until the Tx/Rx send call graph is
   audited and all protected sends are serialized.
 

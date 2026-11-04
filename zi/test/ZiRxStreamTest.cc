@@ -704,6 +704,47 @@ uint64_t sliceAllocs()
   return stats.allocs.load_() + stats.heapAllocs.load_();
 }
 
+void testRangeSurvivesActiveSpanChanges()
+{
+  ZuTestScope(testRangeSurvivesActiveSpanChanges);
+
+  auto input = mkBuf("..abcdef!!");
+  input->advance(2);
+  input->length = 6;
+  auto original = static_cast<ZiIOBuf *>(input.ptr());
+  auto data = original->data_();
+  unsigned size = original->size;
+  auto before = sliceAllocs();
+  Zi::RxRange retained{input, 1, 4};
+  auto inner = retained.subspan(1, 2);
+  ZuCheck(retained.buf.ptr() == original && retained.offset == 3);
+  ZuCheck(inner.buf.ptr() == original && inner.offset == 4);
+  ZuCheck(sliceAllocs() == before);
+
+  ZiRxStream<RxQueue> stream;
+  stream.push(retained);
+  ZuCheck(sliceAllocs() == before + 1);
+  ZuCheck(stream.range().buf.ptr() == original && stream.range().offset == 3);
+  ZuCheck(stream.span().data() == data + 3 && spanEq(stream.span(), "bcde"));
+  input->advance(3);
+  input->length = 1;
+  ZuCheck(spanEq(input->span(), "d"));
+  ZuCheck(spanEq(retained.span(), "bcde") && spanEq(inner.span(), "cd"));
+  ZuCheck(retained.span().data() == data + 3 && inner.span().data() == data + 4);
+  ZuCheck(original->data_() == data && original->size == size);
+  ZuCheck(stream.advance(1) == 1);
+  ZuCheck(stream.range().offset == 4 && spanEq(stream.span(), "cde"));
+  unsigned allocs = 0;
+  Zi::RxRange out;
+  ZuCheck(extractN(stream, 2, out, allocs) == 2);
+  ZuCheck(out.buf.ptr() == original && out.offset == 4 && spanEq(out.span(), "cd"));
+  ZuCheck(!allocs && sliceAllocs() == before + 1);
+  ZuCheck(spanEq(stream.span(), "e"));
+  stream.clean();
+  ZuCheck(spanEq(retained.span(), "bcde") && spanEq(inner.span(), "cd"));
+  ZuCheck(original->data_() == data && original->size == size);
+}
+
 void testSlicesOnlyAtSharedBoundaries()
 {
   ZuTestScope(testSlicesOnlyAtSharedBoundaries);
@@ -766,6 +807,112 @@ void testExtractAfterEarlyGrowth()
   ZuCheck(stream.range().buf.ptr() == rest.ptr());
 }
 
+#ifdef ZiMultiplex_DEBUG
+// Metadata belongs to original completions, even when queue nodes are slices.
+struct DiagRx : Zi::RxBuf {
+  uint64_t completion = 0;
+  unsigned gathered = 0;
+  unsigned preserved = 0;
+  using Zi::RxBuf::RxBuf;
+
+  void mergeRx_(const ZiIOBuf &source, unsigned n) override {
+    auto &rx = static_cast<const DiagRx &>(source);
+    if (completion < rx.completion) completion = rx.completion;
+    gathered += n;
+  }
+
+protected:
+  void copied_(uint64_t n, bool) override { preserved += n; }
+};
+ZmListDerive(DiagQueue, DiagRx, ZmListNode<DiagRx, ZmListHeapID<"">>);
+using DiagAlloc = Zi::IOBufAlloc<DiagQueue::Node, 16, 4096,
+  ZuStringT<"Zi.RxDiagTest">>;
+
+ZmRef<DiagQueue::Node> diagBuf(const char *s, uint64_t completion)
+{
+  ZmRef<DiagQueue::Node> buf = new DiagAlloc{nullptr, 0};
+  *buf << s;
+  buf->completion = completion;
+  return buf;
+}
+
+int64_t diagExtract(
+    ZiRxStream<DiagQueue> &stream, unsigned n, Zi::RxRange &out)
+{
+  return stream.extract(
+    [remaining = n](ZuBSpan span) mutable -> int64_t {
+      if (remaining > span.length()) {
+	remaining -= span.length();
+	return 0;
+      }
+      return remaining;
+    },
+    []() -> ZmRef<DiagQueue::Node> { return new DiagAlloc{nullptr, 0}; }, out);
+}
+
+void testRxObservations()
+{
+  ZuTestScope(testRxObservations);
+  ZiRxStream<DiagQueue> stream;
+  auto first = diagBuf("abc", 10);
+  auto original = first.ptr();
+  stream.push(ZuMv(first));
+  Zi::RxRange out;
+  ZuCheck(diagExtract(stream, 3, out) == 3);
+  auto rx = static_cast<DiagRx *>(out.buf.ptr());
+  ZuCheck(rx == original && rx->completion == 10);
+  ZuCheck(!rx->gathered && !rx->preserved);
+  out = {};
+
+  // Reuse an exclusive first fragment, fold the latest completion, and copy
+  // only the missing suffix. An earlier timestamp cannot replace a later one.
+  first = diagBuf("ab", 20);
+  original = first.ptr();
+  stream.push(ZuMv(first));
+  stream.push(diagBuf("cd", 40));
+  stream.push(diagBuf("ef", 30));
+  ZuCheck(diagExtract(stream, 6, out) == 6);
+  rx = static_cast<DiagRx *>(out.buf.ptr());
+  ZuCheck(rx == original && rx->completion == 40);
+  ZuCheck(rx->gathered == 4 && !rx->preserved);
+  ZuCheck(spanEq(out.span(), "abcdef") && !stream);
+  out = {};
+
+  // Shared range nodes carry no completion of their own. Consolidation must
+  // merge their original source metadata into the final destination exactly.
+  first = diagBuf("!abc?", 50);
+  auto second = diagBuf("!de?", 60);
+  stream.push(Zi::RxRange{first, 1, 3});
+  stream.push(Zi::RxRange{second, 1, 2});
+  ZuCheck(diagExtract(stream, 5, out) == 5);
+  rx = static_cast<DiagRx *>(out.buf.ptr());
+  ZuCheck(rx != first.ptr() && rx != second.ptr());
+  ZuCheck(rx->completion == 60 && rx->gathered == 5 && !rx->preserved);
+  ZuCheck(spanEq(out.span(), "abcde"));
+  ZuCheck(first->cspan() == "!abc?" && second->cspan() == "!de?");
+  out = {};
+
+  // Early growth preserves the original prefix before the next completion;
+  // appending its suffix counts the gather separately from preservation.
+  first = diagBuf("abc", 70);
+  original = first.ptr();
+  auto total = first->size + 1;
+  stream.push(ZuMv(first));
+  auto alloc = []() -> ZmRef<DiagQueue::Node> {
+    return new DiagAlloc{nullptr, 0};
+  };
+  ZuCheck(stream.gather(total, alloc));
+  ZuCheck(original->preserved == 3 && !original->gathered);
+  second = diagBuf("de", 80);
+  stream.push(ZuMv(second));
+  ZuCheck(diagExtract(stream, 5, out) == 5);
+  rx = static_cast<DiagRx *>(out.buf.ptr());
+  ZuCheck(rx == original && rx->completion == 80);
+  ZuCheck(rx->preserved == 3 && rx->gathered == 2);
+  ZuCheck(spanEq(out.span(), "abcde") && !stream);
+}
+#endif
+
 } // namespace ZiRxStreamTest_
 
 int main(int argc, char **argv)
@@ -797,7 +944,11 @@ int main(int argc, char **argv)
   ZuTestCall(testRejectedConsolidationKeepsInput);
   ZuTestCall(testSplicedRangesRetainBacking);
   ZuTestCall(testExclusivePartialHeadReuse);
+  ZuTestCall(testRangeSurvivesActiveSpanChanges);
   ZuTestCall(testSlicesOnlyAtSharedBoundaries);
   ZuTestCall(testExtractAfterEarlyGrowth);
+#ifdef ZiMultiplex_DEBUG
+  ZuTestCall(testRxObservations);
+#endif
   return 0;
 }

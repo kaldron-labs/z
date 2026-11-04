@@ -34,6 +34,107 @@ static void run()
 
 } // SchemaTest
 
+namespace BufTest {
+
+struct Small {
+  friend ZuUnsigned<256> ZdbBufSize(Small *);
+  friend ZuStringT<"Zdb.Test.Small"> ZdbBufHeapID(Small *);
+};
+struct Large {
+  friend ZuUnsigned<1024> ZdbBufSize(Large *);
+  friend ZuStringT<"Zdb.Test.Large"> ZdbBufHeapID(Large *);
+};
+
+static void run()
+{
+  ZuTestScope(buffers);
+  static_assert(ZdbBuf_Size<Small>{} == 256);
+  static_assert(ZdbBuf_Size<Large>{} == 1024);
+  static_assert(ZuIsSame<ZdbBuf_HeapID<Small>, ZuStringT<"Zdb.Test.Small">>{});
+  static_assert(ZuIsSame<ZdbBuf_HeapID<Large>, ZuStringT<"Zdb.Test.Large">>{});
+  auto first = tableBufAllocFn<Small>();
+  auto second = tableBufAllocFn<Small>();
+  auto large = tableBufAllocFn<Large>();
+  ZuCheck(first.allocator() && second.allocator() && large.allocator());
+  ZuCheck(first.allocator() != second.allocator());
+  auto copied = first;
+  ZuCheck(copied.allocator() == first.allocator());
+  auto moved = ZuMv(copied);
+  ZuCheck(moved.allocator() == first.allocator());
+  IOBufAllocFn assigned;
+  assigned = moved;
+  ZuCheck(assigned.allocator() == first.allocator());
+  assigned = IOBufAllocFn{};
+  ZuCheck(!assigned && !assigned.allocator());
+  auto local = localBufAllocFn<Small>();
+  ZuCheck(local && !local.allocator());
+  auto a = first();
+  auto b = second();
+  auto c = large();
+  ZuCheck(a && b && c);
+  ZuCheck(a->size >= 256 && c->size >= 1024);
+  ZuCheck(a->skip >= sizeof(Hdr));
+  ZuCheck(!a->rep && !b->rep && !c->rep);
+  ZuCheck(!a->ring() || a->ring() != b->ring());
+  auto ptr = a->data();
+  Builder builder{ZuMv(a), Zfb::Wire::Align};
+  builder.finish(saveMsg(builder,
+    saveCommit(builder, "test", 42, 0), Msg::Tag::Commit));
+  ZmRef<IOBuf> frame = saveFrame(builder);
+  ZuCheck(frame && frame->data_() + Zfb::Wire::MaxAlign == ptr);
+  ZuCheck(frame->hdr()->length == frame->length - sizeof(Hdr));
+  auto refs = frame->refCount();
+  auto original = frame->data();
+  auto hdr = frame->hdr();
+  auto length = frame->length;
+  auto range = Zi::RxRange{frame, 0, frame->length};
+  frame->advance(sizeof(Hdr));
+  auto view = ZmRef<IOBuf>{new RxFrame{ZuMv(range)}};
+  ZuCheck(frame->refCount() == refs + 1);
+  ZuCheck(view->data() == original && view->length == length);
+  ZuCheck(view->hdr()->length == hdr->length);
+  frame->advance(frame->length);
+  ZuCheck(!frame->length && view->data() == original &&
+    view->hdr()->length == length - sizeof(Hdr));
+  ZuCheck(view->ensure(view->size + 1024));
+  ZuCheck(view->jumbo());
+  ZuCheck(frame->refCount() == refs);
+  ZuCheck(hdr->length == length - sizeof(Hdr));
+}
+
+static void frameOrigin()
+{
+  ZuTestScope(frameOrigin);
+  auto alloc = tableBufAllocFn<Small>();
+  Builder builder{alloc()};
+  auto nested = builder.startNested();
+  auto data = builder.endNested(nested, Zfb::save(builder, SchemaTest::Row{7, 11}));
+  auto record = saveRecord(builder, "frame", 17, 23, 0, 1, data);
+  builder.finish(saveMsg(builder, record, Msg::Tag::Replication));
+  auto packet = saveFrame(builder);
+  ZuCheck(packet && packet->framePos == packet->skip && packet->framePos);
+  auto hdr = packet->hdr();
+  auto span = packet->frameSpan();
+  auto length = packet->length;
+  ZmRef<RepBuf<SchemaTest::Row>> cached = new RepBuf<SchemaTest::Row>{packet};
+  packet->advance(length >> 1);
+  ZuCheck(packet->data() == span.data() + (length >> 1));
+  ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span);
+  ZuCheck(IOBuf_UNAxor(*packet) == 17 &&
+    cached->fbo_().get<SchemaTest::ZfField(Row, id)>() == 7 &&
+    cached->fbo_().get<SchemaTest::ZfField(Row, value)>() == 11);
+  packet->advance(packet->length);
+  ZuCheck(!packet->length && packet->data() == span.data() + length);
+  ZuCheck(packet->hdr() == hdr && packet->frameSpan() == span &&
+    packet->rep == cached.ptr());
+  auto committed = record_(msg_(packet->hdr()));
+  ZuCheck(committed.get<Msg::ZfField(Record, shard)>() == 1 &&
+    committed.get<Msg::ZfField(Record, un)>() == 17 &&
+    cached->fbo_().get<SchemaTest::ZfField(Row, value)>() == 11);
+}
+
+} // BufTest
+
 static void heartbeat()
 {
   ZuTestScope(heartbeat);
@@ -157,6 +258,8 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(SchemaTest::run);
+  ZuTestCall(BufTest::run);
+  ZuTestCall(BufTest::frameOrigin);
   ZuTestCall(heartbeat);
   ZuTestCall(heartbeatPrint);
   ZuTestCall(empty);

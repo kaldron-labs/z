@@ -34,7 +34,7 @@ Resolve ordinary API details from the cited precedents and repository guidelines
 append any genuinely unresolved design question to `zfix.md` without renumbering
 Q001–Q018. Do not silently change a resolved decision during implementation.
 
-Read [GUIDELINES.md](GUIDELINES.md) and [TESTING.md](TESTING.md) before editing
+Read [GUIDELINES.md](docs/GUIDELINES.md) and [TESTING.md](docs/TESTING.md) before editing
 code. Use GNU C++2b, `.hh`/`.cc`, Z metadata and containers, CRTP/ADL/SFINAE,
 identified heaps, owner-shard callbacks and the prescribed header/indentation
 conventions. Use ZuTest/ZuTestUtil for repository-owned TAP tests. Build with
@@ -168,7 +168,7 @@ commands, negative controls and limitations.
 **Repair gate completed 2026-10-28:** no production references to the removed APIs or old restore
 signature remain; all required current repair checks pass with recorded evidence; the
 shared diff contains only approved bug fixes and narrow Tx restore. Review every
-remaining shared-library hunk against `GUIDELINES.md`. Then resume stages 8 and 9
+remaining shared-library hunk against `docs/GUIDELINES.md`. Then resume stages 8 and 9
 below and revalidate affected earlier stages. Completing this prerequisite does
 not complete the overall Zfix goal.
 
@@ -478,7 +478,7 @@ bounded opt-in wire traces with authentication redaction. `zi` remains unchanged
 auth admission/refusal, connection displacement, reconnect/failover, delayed
 storage recovery, overload, partial sends and stop with pending work. Restore
 sequence state from an application-owned test store across restart. Use the
-ports specified by `TESTING.md`; assert no stale callbacks or unintended
+ports specified by `docs/TESTING.md`; assert no stale callbacks or unintended
 within-epoch sequence reuse.
 
 ## 7. Deliver the typed application API and examples
@@ -709,7 +709,7 @@ business correlation and replay availability outside the library's policy.
 
 ## Implementation pressure audit — 2026-10-29
 
-Completed the requested audit against every `GUIDELINES.md` category and flag
+Completed the requested audit against every `docs/GUIDELINES.md` category and flag
 across all seven Zfix source roles and the plan-owned Ztcp/Ztls integration
 hunks. [The audit report](zfix/AUDIT.md) records findings, repairs, retained
 exceptions and verification. Repairs remove redundant frame-body movement,

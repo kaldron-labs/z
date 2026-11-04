@@ -25,6 +25,7 @@
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 
+#include <zlib/ZiIOContext.hh>
 #include <zlib/ZiRxStream.hh>
 
 #include <zlib/Ztcp.hh>
@@ -42,6 +43,20 @@
 
 namespace Zhttp {
 
+struct RetainedEntry {
+  ZmRef<ZiIOBuf> buf;
+  bool final = false;
+  unsigned offset = 0;
+  unsigned length = 0;
+  bool range = false;
+
+  RetainedEntry() = default;
+  RetainedEntry(ZmRef<ZiIOBuf> buf_, bool final_) :
+    buf{ZuMv(buf_)}, final{final_} { }
+};
+using RetainedEntries =
+  ZtArray<RetainedEntry, ZtArrayHeapID<"Zhttp.RetainedTx.Entries">>;
+
 namespace Transport_ {
 
 enum {
@@ -51,24 +66,324 @@ enum {
 
 using TxBufNode = ZiTxQueue::Node;
 
-inline TxBufNode *txBufNode(ZiIOBuf *buf)
-{
-  return static_cast<TxBufNode *>(buf);
-}
+struct TCPHeader;
+struct TCPState {
+  ZiTxQueue active;
+  ZiTxQueue *pending = nullptr;
+};
 
-inline const TxBufNode *txBufNode(const ZiIOBuf *buf)
-{
-  return static_cast<const TxBufNode *>(buf);
-}
+// The admission is the real first serialized header, never an empty carrier.
+struct TCPHeader : public TxBufNode {
+  RetainedEntries entries;
+  ZmAnyFn parent;
+  ZmRef<ZiConnection> connection;
+  ZmRef<ZmPolymorph> link;
+  ZiMultiplex *mx = nullptr; // immutable dispatch, frozen before early Rx posts
+  TCPState *state = nullptr;
+  void (*ownerAck)(ZmRef<TCPHeader>) = nullptr;
+  void (*terminalPost)(ZmRef<TCPHeader>) = nullptr;
+  ZmAtomic<unsigned> posts{0}; // outstanding cross-shard continuations
+  ZmAtomic<unsigned> ioEnded{0};
+  unsigned appThread = 0;
+  unsigned cursor = 0, origin = 0, extent = 0;
+  enum Park : uint8_t { None, Input };
+  Park parked = None;
+  bool first = true, selecting = false;
+  bool streaming = false, ended = true;
+  bool terminalReserved = false, terminalPosted = false; // I/O owner
+  bool appTerminal = false, appSettled = false; // App Tx owner
 
-using TCPRxBufAlloc = Ztcp::RxBufAlloc<
-  H1BufSize, H1BufMax, "Zhttp.TCP.Rx">;
-using TCPTxBufAlloc = Zi::IOBufAlloc<
-  TxBufNode, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TCP.Tx">>;
-using TLSRxBufAlloc = Ztls::RxBufAlloc<
-  H1BufSize, H1BufMax, "Zhttp.TLS.Rx">;
-using TLSTxBufAlloc = Zi::IOBufAlloc<
-  TxBufNode, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TLS.Tx">>;
+  TCPHeader(uint8_t *data = nullptr, unsigned size = 0,
+      void *owner = nullptr, unsigned length = 0) :
+    TxBufNode{data, size, owner, length} { }
+
+  void detach_() {
+    parent = {}; connection = nullptr; state = nullptr;
+  }
+  void prepareEnd_() {
+    if (terminalReserved) return;
+    terminalReserved = true;
+    ++posts; // terminal notification joins the existing continuation drain
+  }
+  void endIO_() {
+    prepareEnd_();
+    entries.length(0);
+    ioEnded = 1;
+  }
+  void postEnd_() {
+    if (terminalPosted) return;
+    terminalPosted = true;
+    terminalPost(ZmRef<TCPHeader>{this}); // LAST owner operation
+  }
+
+};
+
+struct TCPTxOps : ZiTxBufOps {
+  using State = TCPState;
+  static bool batch(const Node *node) { return uintptr_t(node->owner) & 1; }
+  template <typename Impl> static void owner(Node *node, Impl *impl) {
+    ZuAssert(alignof(Impl) > 1, "unaligned HTTP TCP link");
+    node->owner = reinterpret_cast<void *>(uintptr_t(impl) | unsigned(batch(node)));
+  }
+  template <typename Impl> static Impl *owner(const Node *node) {
+    return reinterpret_cast<Impl *>(uintptr_t(node->owner) & ~uintptr_t(1));
+  }
+  template <typename Impl, typename Cxn>
+  static bool prepare(Impl *, Node *node, Cxn *cxn) {
+    if (!batch(node)) return true;
+    auto head = static_cast<TCPHeader *>(node);
+    head->connection = cxn;
+    return !head->ioEnded.load_();
+  }
+  template <typename Impl>
+  static void queued(Impl *impl, Node *node, ZiTxContext &io) {
+    if (!batch(node)) return;
+    auto head = static_cast<TCPHeader *>(node);
+    auto &state = impl->txState_();
+    state.pending = &impl->txQueue;
+    head->state = &state;
+    ZmAssert(head->connection.ptr() == io.cxn);
+  }
+  template <typename Impl>
+  static void select(Impl *impl, Ref node, ZiTxContext &io) {
+    while (node) {
+      if (!batch(node)) { ZiTxBufOps::select(impl, ZuMv(node), io); return; }
+      auto head = static_cast<TCPHeader *>(node.ptr());
+      if (head->ioEnded.load_()) {
+	aborted(impl, ZuMv(node), true);
+	node = impl->txQueue.shift();
+	continue;
+      }
+      // A replaced physical association cannot inspect this frame's wait /
+      // input policy or select any of its source parts for the successor.
+      if (head->connection.ptr() != io.cxn) {
+	head->state->pending->unshiftNode(node.ptr()); io.complete(); return;
+      }
+      bool waiting = head->parked == TCPHeader::Input &&
+	!head->ended && head->cursor == head->entries.length();
+      if (waiting) {
+	head->state->pending->unshiftNode(node.ptr()); io.complete(); return;
+      }
+      head->state->active.pushNode(node);
+      head->selecting = true; head->parked = TCPHeader::None;
+      produce_<Impl>(head, io);
+      return;
+    }
+    io.complete();
+  }
+  template <typename Impl> static void aborted(Impl *impl, Ref node, bool removed) {
+    if (!removed) return;
+    if (!batch(node)) { ZiTxBufOps::aborted(impl, ZuMv(node), true); return; }
+    auto head = static_cast<TCPHeader *>(node.ptr());
+    head->endIO_();
+    head->postEnd_();
+  }
+  template <typename Impl>
+  static void cleanup(Impl *impl, State &state, Queue &pending, ZiConnection *cxn) {
+    for (auto node = pending.headPtr(); node;) {
+      auto next = node->Ext::next;
+      if (batch(node)) {
+	auto head = static_cast<TCPHeader *>(node);
+	if (!cxn || head->connection.ptr() == cxn) {
+	  auto held = pending.delNode(node); aborted(impl, ZuMv(held), true);
+	}
+      }
+      node = next;
+    }
+    for (auto node = state.active.headPtr(); node;) {
+      auto next = node->Ext::next;
+      auto head = static_cast<TCPHeader *>(node);
+      if (!cxn || head->connection.ptr() == cxn) {
+	auto held = state.active.delNode(node);
+	head->endIO_();
+	head->postEnd_();
+      }
+      node = next;
+    }
+  }
+
+  static void postAck_(ZmRef<TCPHeader> head) {
+    auto mx = head->mx;
+    auto thread = head->appThread;
+    mx->run([head = ZuMv(head)]() mutable {
+      auto ack = head->ownerAck;
+      ack(ZuMv(head));
+    }, thread);
+  }
+  template <typename Impl> static void wake(TCPHeader *head) {
+    if (!head->state || head->ioEnded.load_() || !head->connection) return;
+    head->connection->send_(ZiTxFn{ZmRef<TCPHeader>{head},
+      [](TCPHeader *head, ZiTxContext &io) {
+	if (!io.completed() || head->ioEnded.load_() ||
+	    head->connection.ptr() != io.cxn || !io.cxn->up()) return false;
+	if (head->state->pending->headPtr() != static_cast<Node *>(head)) return false;
+	io.init(ZuMv(head->parent));
+	while (!io());
+	return true;
+      }});
+  }
+
+private:
+  static void park_(TCPHeader *head, ZiTxContext &io, TCPHeader::Park reason) {
+    auto held = head->state->active.delNode(static_cast<Node *>(head));
+    ZmAssert(held);
+    head->state->pending->unshiftNode(held.ptr());
+    head->parked = reason;
+    io.complete();
+  }
+  template <typename Impl> static bool produce_(TCPHeader *head, ZiTxContext &io) {
+    if (head->selecting) {
+      head->selecting = false;
+      head->parent = ZuMv(io.fn);
+      io.fn = ZiTxFn{ZmRef<TCPHeader>{head}, [](TCPHeader *head, ZiTxContext &io) {
+	return produce_<Impl>(head, io);
+      }};
+    } else if (io.buf) {
+      bool ok = io.length >= 0;
+      io.buf = nullptr;
+      if ((io.flags & ZiTxContext::TxDataDone) || head->ioEnded.load_()) {
+	io.complete(); return true;
+      }
+      if (!ok) { io.complete(); return true; }
+    }
+    if (head->ioEnded.load_() || !io.cxn->up()) {
+      io.complete(); return true;
+    }
+    ZiAssert(io.cxn == head->connection.ptr(), "Zhttp", (),
+      "HTTP source uses another physical connection", io.complete(); return true);
+    if (!head->first && head->cursor == head->entries.length()) {
+      head->entries.length(0); head->cursor = 0;
+      if (head->streaming && !head->ended) {
+	park_(head, io, TCPHeader::Input);
+	return true;
+      }
+      auto held = head->state->active.delNode(static_cast<Node *>(head));
+      auto pin = ZmRef<TCPHeader>{head};
+      auto parent = ZuMv(head->parent);
+      head->owner = owner<Impl>(head);
+      head->endIO_();
+      io.fn = ZuMv(parent); io.buf = ZuMv(held);
+      io.flags &= ~ZiTxContext::TxDataDone; io.length = 0;
+      bool result = io();
+      // The synthetic header retirement consumes buf. Finish the parent
+      // selection now: native DATA needs a real next buffer or completion.
+      while (result && io.initialized() && !io.buf) result = io();
+      head->postEnd_();
+      return result;
+    }
+    Zi::RxRange part;
+    if (head->first) part = Zi::RxRange::fromStorage(ZmRef<TCPHeader>{head}, head->origin, head->extent);
+    else {
+      auto &entry = head->entries[head->cursor];
+      part = entry.range ? Zi::RxRange::fromStorage(entry.buf, entry.offset, entry.length) :
+	Zi::RxRange{entry.buf, 0, entry.buf->length};
+    }
+    if (head->first) head->first = false;
+    else ++head->cursor;
+    io.txRange(ZuMv(part.buf), part.offset, part.length);
+    io.flags &= ~ZiTxContext::TxDataDone;
+    return true;
+  }
+};
+
+template <typename Impl> struct TCPDrain {
+  using Notify = void (*)(ZmRef<Impl>, bool);
+  ZmRef<Impl> link;
+  Notify notify;
+  bool peer;
+};
+template <typename Impl>
+struct alignas(Zm::CacheLineSize) TCPActor {
+  unsigned count = 0;
+  ZtArray<TCPDrain<Impl>, ZtArrayHeapID<"Zhttp.TCP.Drains">> drains;
+};
+struct TCPNoActor { };
+template <typename Impl, typename Traits>
+using TCPActorT = ZuIf<Traits::ID == Transport::TCP, TCPActor<Impl>, TCPNoActor>;
+
+// Request producers pass their existing first-header handle across turns.
+// An upgraded framed writer uses one local header owner per synchronous turn.
+template <typename Link, bool AppThread>
+class TCPStream : public ZiTxStream<TCPStream<Link, AppThread>> {
+  using Base = ZiTxStream<TCPStream<Link, AppThread>>;
+  using Alloc = typename Link::TxBufAlloc;
+public:
+  enum { RetainBuffers = true };
+  TCPStream(Link &link, ZmRef<TCPHeader> *slot = nullptr) :
+    Base{Alloc::Capacity, 0, 0}, m_link{&link}, m_slot{slot},
+    m_head{slot ? *slot : ZmRef<TCPHeader>{}} { }
+  ~TCPStream() { this->flush(); if (!m_slot) endTCP_(); }
+
+  ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
+    auto buf = m_link->template allocTxBuf_<AppThread>();
+    if (!buf || skip > buf->size) return nullptr;
+    buf->skip = skip;
+    m_allocated = buf;
+    return buf;
+  }
+  bool allocatedBuf_(const ZiIOBuf *buf) const {
+    return buf == m_allocated.ptr();
+  }
+  template <typename Buf,
+    typename = ZuIfT<ZuIsSame<ZuDecay<Buf>, ZmRef<ZiIOBuf>>{}>>
+  bool allocatedBuf_(Buf &&buf) {
+    // An earlier first header consumes provenance when published. Flush that
+    // wire before accepting authority for this unpublished writer allocation.
+    if (!this->flush_(false)) return false;
+    m_allocated = ZuFwd<Buf>(buf);
+    return true;
+  }
+  bool appendBuf_(ZmRef<ZiIOBuf> &buf) {
+    // Detached framing allocated by this exact writer can become its real
+    // first header. Caller backing never passes this proven pointer test.
+    if (!m_head && buf == m_allocated) return false;
+    auto n = buf->length;
+    this->appendRange(Zi::RxRange{ZuMv(buf), 0, n});
+    return true;
+  }
+  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+    if (!m_head) {
+      auto head = ZmRef<TCPHeader>::acquire(
+	static_cast<TCPHeader *>(ZuMv(buf).release()));
+      if (!m_link->startTCP_(head, AppThread)) return false;
+      m_head = ZuMv(head);
+      if (m_slot) *m_slot = m_head;
+      m_allocated = nullptr;
+      return true;
+    }
+    auto n = buf->length;
+    return sendRange_(Zi::RxRange{ZuMv(buf), 0, n});
+  }
+  bool sendRange_(Zi::RxRange range) {
+    // HTTP first headers are serialized before body writes. Later content-
+    // length turns retain that same owner even though there is no new header.
+    ZiAssert(m_head, "Zhttp", (), "body source before its protocol header", return false);
+    if (range.buf == m_allocated) m_allocated = nullptr;
+    return m_link->partTCP_(m_head, ZuMv(range));
+  }
+  void endTCP_() {
+    if (m_ended) return;
+    this->flush(); m_ended = true;
+    if (m_head) m_link->endTCP_(m_head);
+    if (m_slot) *m_slot = nullptr;
+    m_head = nullptr;
+  }
+private:
+  Link *m_link;
+  ZmRef<TCPHeader> *m_slot;
+  ZmRef<TCPHeader> m_head;
+  ZmRef<ZiIOBuf> m_allocated;
+  bool m_ended = false;
+};
+
+using TCPRxBufAllocator = Zi::RxTCPBufAllocator<
+  ZiRxQueue::Node, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TCP.Rx">>;
+using TCPTxBufAlloc = Zi::TxTCPBufAllocator<
+  TCPHeader, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TCP.Tx">>;
+using TLSRxBufAllocator = Zi::RxTLSBufAllocator<
+  ZiRxQueue::Node, H1BufSize, H1BufMax, ZuStringT<"Zhttp.TLS.Rx">>;
+using TLSTxBufAlloc = Ztls::TxBufAlloc<
+  H1BufSize, H1BufMax, "Zhttp.TLS.Tx">;
 using H3TxBufAlloc = Zquic::StreamTxBufAlloc<
   Zquic::BufSize, ZiIOBuf_DefltMaxSize, "Zhttp.H3.Tx">;
 
@@ -77,6 +392,27 @@ struct HasTxStream : public ZuFalse { };
 template <typename Link>
 struct HasTxStream<Link,
   decltype(ZuDeclVal<Link &>().txStream(), void())> : public ZuTrue { };
+
+template <bool AppThread, typename Native,
+  typename = decltype(ZuDeclVal<const Native &>().template txCanAdopt<AppThread>(
+    ZuDeclVal<const ZiIOBuf &>(), unsigned{}, unsigned{}))>
+bool canAdopt(
+  const Native &native, const ZiIOBuf &buf, unsigned head, unsigned tail, int)
+{
+  return native.template txCanAdopt<AppThread>(buf, head, tail);
+}
+template <bool AppThread, typename Native>
+bool canAdopt(
+  const Native &native, const ZiIOBuf &buf, unsigned head, unsigned tail, long)
+{
+  if (head > buf.skip || tail > buf.avail()) return false;
+  uint64_t front = native.template txHeadRoom<AppThread>();
+  uint64_t back = native.template txTailRoom<AppThread>();
+  uint64_t reserve = front + back;
+  uint64_t length = uint64_t(buf.length) + head + tail;
+  return reserve < native.txMaxSize() && length <= native.txMaxSize() - reserve &&
+    buf.skip - head >= front && buf.avail() - tail >= back;
+}
 
 template <typename Link, typename Rx, typename = void>
 struct HasProcess : public ZuFalse { };
@@ -176,10 +512,10 @@ template <> struct Traits<TCP> {
   template <typename App> using Server = Ztcp::Server<App>;
   template <typename App, typename Link>
   using ClientLink =
-    Ztcp::CliLink<App, Link, TCPRxBufAlloc, TCPTxBufAlloc>;
+    Ztcp::CliLink<App, Link, TCPTxBufAlloc, TCPTxOps>;
   template <typename App, typename Link>
   using ServerLink =
-    Ztcp::SrvLink<App, Link, TCPRxBufAlloc, TCPTxBufAlloc>;
+    Ztcp::SrvLink<App, Link, TCPTxBufAlloc, TCPTxOps>;
 
   static ClientParams clientParams(
     const HubConfig &hub, const TCPConfig &)
@@ -225,10 +561,10 @@ template <> struct Traits<TLS> {
   template <typename App> using Server = Ztls::Server<App>;
   template <typename App, typename Link>
   using ClientLink =
-    Ztls::CliLink<App, Link, TLSRxBufAlloc, TLSTxBufAlloc>;
+    Ztls::CliLink<App, Link, TLSTxBufAlloc>;
   template <typename App, typename Link>
   using ServerLink =
-    Ztls::SrvLink<App, Link, TLSRxBufAlloc, TLSTxBufAlloc>;
+    Ztls::SrvLink<App, Link, TLSTxBufAlloc>;
 
   static ClientParams clientParams(
     const HubConfig &hub, const TLSConfig &config)
@@ -249,8 +585,7 @@ template <> struct Traits<TLS> {
   }
   static ConnectedInfo connected(Connected info) {
     return {
-      .alpn = ALPNString{
-	info.alpn.data(), unsigned(info.alpn.length())},
+      .alpn = ALPNString{info.alpn},
       .version = uint32_t(info.version),
       .transport = Transport::TLS,
       .secure = true
@@ -305,8 +640,7 @@ template <> struct Traits<QUIC> {
   }
   static ConnectedInfo connected(Connected info) {
     return {
-      .alpn = ALPNString{
-	info.alpn.data(), unsigned(info.alpn.length())},
+      .alpn = ALPNString{info.alpn},
       .version = info.version,
       .transport = Transport::QUIC,
       .secure = true
@@ -321,6 +655,249 @@ template <> struct Traits<QUIC> {
   template <typename Link>
   static void disconnect(Link &link) { link.disconnect_(); }
 };
+
+template <typename Base_, typename Impl, typename Traits>
+class TCPProtocol : public Base_ {
+  using Base = Base_;
+public:
+  using Base::Base;
+  auto impl() { return static_cast<Impl *>(this); }
+  template <typename Builder, typename T = Traits,
+    typename = ZuIfT<T::ID == Transport::TCP>>
+  auto transmit_(Builder &, ZmRef<TCPHeader> &head) {
+    return TCPStream<Impl, false>{*impl(), &head};
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  bool startTCP_(ZmRef<TCPHeader> header, bool appThread) {
+    header->origin = header->skip; header->extent = header->length;
+    header->streaming = true; header->ended = false;
+    header->appThread = this->app()->txThread();
+    header->link = ZmRef<ZmPolymorph>{impl()};
+    header->owner = reinterpret_cast<void *>(uintptr_t(impl()) | 1);
+    initTCP_(header.ptr());
+    if (appThread) {
+      if (header->ioEnded.load_()) return false;
+      ++header->posts;
+      this->app()->txRun([link = ZmRef(impl()), header = ZuMv(header)]() mutable {
+	link->enqueueTCP_(header);
+	link = nullptr; // no actor capture remains past the registration ACK
+	auto ack = header->ownerAck;
+	ack(ZuMv(header));
+      });
+      return true;
+    }
+    return enqueueTCP_(ZuMv(header));
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  bool enqueueTCP_(ZmRef<TCPHeader> header) {
+    registerTCP_(header.ptr());
+    if (Base::sendPending_(header, header->extent)) return true;
+    this->app()->mx()->txRun([header = ZuMv(header)] {
+      header->endIO_(); header->postEnd_();
+    });
+    return false;
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  bool partTCP_(ZmRef<TCPHeader> header, Zi::RxRange range) {
+    if (!range.buf || range.buf->failed() || range.offset > range.buf->size ||
+	range.length > range.buf->size - range.offset) return false;
+    if (!range.length) return true;
+    if (header->ioEnded.load_()) return false;
+    ++header->posts;
+    auto mx = header->mx;
+    mx->txRun([header = ZuMv(header), range = ZuMv(range)]() mutable {
+      if (!header->ioEnded.load_()) {
+	// Only I/O Tx changes queue storage; reclaim consumed metadata promptly.
+	if (header->cursor && header->cursor >= header->entries.length() / 2) {
+	  header->entries.shift(header->cursor); header->cursor = 0;
+	}
+	RetainedEntry entry{ZuMv(range.buf), false};
+	entry.offset = range.offset; entry.length = range.length; entry.range = true;
+	header->entries.push(ZuMv(entry));
+	TCPTxOps::wake<Impl>(header.ptr());
+      }
+      range.buf = nullptr; // no source capture can outlive the terminal ACK
+      TCPTxOps::postAck_(ZuMv(header));
+    });
+    return true;
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  void endTCP_(ZmRef<TCPHeader> header) {
+    if (header->ioEnded.load_()) return;
+    ++header->posts;
+    auto mx = header->mx;
+    mx->txRun([header = ZuMv(header)]() mutable {
+      if (!header->ioEnded.load_()) {
+	header->ended = true;
+	TCPTxOps::wake<Impl>(header.ptr());
+      }
+      TCPTxOps::postAck_(ZuMv(header));
+    });
+  }
+  template <bool AppThread>
+  auto frameTx_() {
+    if constexpr (Traits::ID == Transport::TCP)
+      return TCPStream<Impl, AppThread>{*impl()};
+    else if constexpr (AppThread) return this->txStream();
+    else return this->txStream_();
+  }
+
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  void initTCP_(TCPHeader *header) {
+    header->mx = this->app()->mx();
+    header->terminalPost = [](ZmRef<TCPHeader> header) {
+      auto mx = header->mx;
+      auto thread = header->appThread;
+      mx->run([header = ZuMv(header)]() mutable {
+	header->appTerminal = true;
+	auto ack = header->ownerAck;
+	ack(ZuMv(header));
+      }, thread);
+    };
+    header->ownerAck = [](ZmRef<TCPHeader> header) {
+      auto link = static_cast<Impl *>(header->link.ptr()); // reserved capability
+      link->ackTCP_(ZuMv(header));
+    };
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  void registerTCP_(TCPHeader *) { ++m_tcp.count; }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  void ackTCP_(ZmRef<TCPHeader> header) {
+    unsigned pending = --header->posts;
+    if (!header->appTerminal || pending) return;
+    ZmAssert(header->ioEnded.load_() && !header->appSettled && m_tcp.count);
+    header->appSettled = true;
+    // Move the native-link hold to Rx BEFORE dropping any Cxn hold. Final link
+    // destruction follows the same Rx ownership as normal disconnected drain.
+    auto link = ZmRef<Impl>::acquire(static_cast<Impl *>(ZuMv(header->link).release()));
+    auto mx = this->app()->mx();
+    auto rx = this->app()->rxThread();
+    header->detach_();
+    decltype(m_tcp.drains) fns;
+    bool drained = !--m_tcp.count;
+    if (drained) {
+      fns = ZuMv(m_tcp.drains);
+      m_tcp.drains.init_();
+    }
+    // Release this descriptor before signaling the App-owned logical drain.
+    // Backend retirement copies still retain their own actual source handles;
+    // physical disconnected drain precedes allocator-owner stop completion.
+    header = nullptr;
+    if (drained) impl()->tcpDrained_();
+    // LAST App-owner operation. Release our extra hold on Rx before invoking
+    // the existing drain callbacks, whose own release/completion order stands.
+    mx->run([link = ZuMv(link), fns = ZuMv(fns)]() mutable {
+      link = nullptr;
+      for (auto &fn : fns) {
+	auto notify = fn.notify;
+	notify(ZuMv(fn.link), fn.peer);
+      }
+    }, rx);
+  }
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  bool pendingTCP_() const { return m_tcp.count; }
+  void drainTCP_(bool peer, typename TCPDrain<Impl>::Notify notify) {
+    auto app = this->app();
+    app->txRun([link = ZmRef(impl()), peer, notify]() mutable {
+      if constexpr (Traits::ID == Transport::TCP) {
+	if (link->m_tcp.count) {
+	  link->m_tcp.drains.push(TCPDrain<Impl>{ZuMv(link), notify, peer});
+	  return;
+	}
+      }
+      auto app = link->app();
+      app->mx()->run([link = ZuMv(link), peer, notify]() mutable {
+	notify(ZuMv(link), peer);
+      }, app->rxThread());
+    });
+  }
+
+  template <typename T = Traits, typename = ZuIfT<T::ID == Transport::TCP>>
+  bool sendRetained_(RetainedEntries entries) {
+    ZiAssert(this->app()->txInvoked(), "Zhttp", (),
+      "retained TCP message outside Tx thread", return false);
+    if (!entries.length() || entries[0].range) return false;
+    auto first = entries.shift();
+    unsigned bytes = first.buf->length;
+    for (const auto &part : entries) {
+      uint64_t n = part.range ? part.length : part.buf->length;
+      if (n > UINT_MAX - bytes) return false;
+      bytes += unsigned(n);
+    }
+    // begin() serialized this first HTTP header through our TCP allocator.
+    auto header = ZmRef<TCPHeader>::acquire(
+      static_cast<TCPHeader *>(ZuMv(first.buf).release()));
+    header->entries = ZuMv(entries);
+    header->origin = header->skip; header->extent = header->length;
+    header->appThread = this->app()->txThread();
+    header->link = ZmRef<ZmPolymorph>{impl()};
+    header->owner = reinterpret_cast<void *>(uintptr_t(impl()) | 1);
+    initTCP_(header.ptr());
+    registerTCP_(header.ptr());
+    if (Base::sendPending_(header, bytes)) return true;
+    this->app()->mx()->txRun([header = ZuMv(header)] {
+      header->endIO_(); header->postEnd_();
+    });
+    return false;
+  }
+
+private:
+  [[no_unique_address]] TCPActorT<Impl, Traits> m_tcp;
+};
+
+template <typename App, typename Impl, typename Traits>
+using ClientProtocol = TCPProtocol<
+  typename Traits::template ClientLink<App, Impl>, Impl, Traits>;
+template <typename App, typename Impl, typename Traits>
+using ServerProtocol = TCPProtocol<
+  typename Traits::template ServerLink<App, Impl>, Impl, Traits>;
+
+
+// The optional H1 TLS close capability is armed once on I/O Tx, after the
+// final record submissions. It never participates in allocation or data sends.
+template <typename Impl>
+class TLSClose {
+public:
+  void closeAfterTx_() {
+    closeLink_()->app()->rxInvoke([link = ZmRef(closeLink_())]() mutable {
+      auto cxn = ZmRef{link->cxn()}; // exact physical capability, Rx-owned lookup
+      if (!cxn) return;
+      cxn->send(ZiTxFn{ZuMv(link), [](Impl *link, ZiTxContext &io) {
+	if (!io.cxn->up()) return false;
+	auto self = static_cast<TLSClose *>(link);
+	self->m_end = ZmRef{io.cxn};
+	self->closeTLSIO_(io);
+	return false;
+      }});
+    });
+  }
+  void sentTLS_(bool ok) {
+    if (!m_end) return;
+    if (!ok) { m_end = nullptr; return; } // core aborts the failed physical send
+    // Same-owner control; the actual retirement already retains the Cxn.
+    // A stateless bound callback allocates no Fn closure or submission node.
+    m_end->send_(ZiTxFn{closeLink_(), [](Impl *link, ZiTxContext &io) {
+      static_cast<TLSClose *>(link)->closeTLSIO_(io);
+      return false;
+    }});
+  }
+  void endedTLS_() {
+    // Quiescent terminal handoff: the existing physical I/O cleanup fence has
+    // passed and Rx cleared cxn(), preventing later end controls from arming.
+    m_end = nullptr;
+  }
+private:
+  auto closeLink_() { return static_cast<Impl *>(this); }
+  void closeTLSIO_(ZiTxContext &io) {
+    if (m_end.ptr() != io.cxn) return;
+    if (!io.cxn->up()) { m_end = nullptr; return; }
+    if (io.buf || closeLink_()->txQueue.count_()) return;
+    m_end = nullptr;
+    closeLink_()->streamTxClose_();
+  }
+  ZmRef<ZiConnection> m_end; // I/O Tx; one cold handle per closing TLS link
+};
+struct NoTLSClose { };
 
 } // namespace Transport_
 
@@ -588,6 +1165,21 @@ private:
 
 } // namespace H1
 
+template <typename Link, typename Builder>
+auto streamMessageTx(Link &link, Builder &builder,
+    ZmRef<Transport_::TCPHeader> &head, int) -> decltype(link.transmit_(builder, head)) {
+  return link.transmit_(builder, head);
+}
+template <typename Link, typename Builder>
+auto streamMessageTx(Link &link, Builder &builder,
+    ZmRef<Transport_::TCPHeader> &, ...) {
+  return link.transmit_(builder);
+}
+template <typename Tx>
+auto finishTCPStream(Tx &tx, int) -> decltype(tx.endTCP_(), void()) { tx.endTCP_(); }
+template <typename Tx>
+void finishTCPStream(Tx &, ...) { }
+
 namespace Link_ {
 
 template <typename Consumer, typename Stream, typename Rx,
@@ -622,10 +1214,11 @@ void error(Consumer &, Stream, ...) { }
 
 template <typename App, typename Impl, typename Profile>
 class ClientLink :
-  public NativeTraits<Profile>::Transport::template ClientLink<App, Impl> {
+  public Transport_::ClientProtocol<
+    App, Impl, typename NativeTraits<Profile>::Transport> {
   using HTTP = NativeTraits<Profile>;
   using Traits = HTTP::Transport;
-  using Base = Traits::template ClientLink<App, Impl>;
+  using Base = Transport_::ClientProtocol<App, Impl, Traits>;
   using StreamBinding =
     H1::StreamBinding<Impl, Impl>;
 
@@ -668,11 +1261,22 @@ public:
     if (m_connected) {
       m_connected = false;
       m_failed = true;
-      m_stream.disconnected(peer);
-      this->app()->txRun([link = ZmRef(impl())]() {
-	link->streamClosedTx_();
-      });
-      this->app()->disconnected(*impl(), peer);
+      if constexpr (Traits::ID == Transport::TCP) {
+	this->drainTCP_(peer, [](ZmRef<Impl> link, bool peer) {
+	  link->m_stream.disconnected(peer);
+	  link->app()->txRun([link = ZuMv(link), peer]() mutable {
+	    link->streamClosedTx_();
+	    auto app = link->app();
+	    app->rxRun([link = ZuMv(link), peer] {
+	      link->app()->disconnected(*link, peer);
+	    });
+	  });
+	});
+      } else {
+	m_stream.disconnected(peer);
+	this->app()->txRun([link = ZmRef(impl())]() { link->streamClosedTx_(); });
+	this->app()->disconnected(*impl(), peer);
+      }
     } else if (!m_failed) {
       m_failed = true;
       this->app()->connectFailed(*impl(), false);
@@ -713,14 +1317,14 @@ public:
   void streamTx(L &&l) {
     ZmAssert(this->app()->rxInvoked());
     if (!m_stream.tx()) return;
-    auto tx = this->txStream();
+    auto tx = this->template frameTx_<true>();
     ZuFwd<L>(l)(tx);
   }
   template <typename L>
   void streamTx_(L &&l) {
     ZmAssert(this->app()->txInvoked());
     if (!m_streamTx) return;
-    auto tx = this->txStream_();
+    auto tx = this->template frameTx_<false>();
     ZuFwd<L>(l)(tx);
   }
   void streamTxEnd() {
@@ -730,7 +1334,16 @@ public:
   }
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
     Base::sent(ZuMv(buf), ok);
-    if (!m_streamEnd || (ok && this->txQueue.count_())) return;
+    if constexpr (Traits::ID != Transport::TCP &&
+	Traits::ID != Transport::TLS) {
+      if (!m_streamEnd || (ok && this->txQueue.count_())) return;
+      m_streamEnd = false;
+      streamTxClose_();
+    }
+  }
+  void tcpDrained_() {
+    ZmAssert(this->app()->txInvoked());
+    if (!m_streamEnd) return;
     m_streamEnd = false;
     streamTxClose_();
   }
@@ -757,12 +1370,15 @@ public:
   }
   template <typename Builder>
   auto transmit(Builder &) {
-    return this->txStream();
+    return this->template frameTx_<true>();
   }
+  using Base::transmit_;
   template <typename Builder>
   auto transmit_(Builder &) {
-    return this->txStream_();
+    // Bodyless H1 output participates in the same close drain as body output.
+    return this->template frameTx_<false>();
   }
+
   void finish() { }
   bool active() const { return !!this->cxn(); }
   template <typename State>
@@ -787,9 +1403,18 @@ private:
   void streamEndRx_() {
     ZmAssert(this->app()->rxInvoked());
     if (!m_stream.end()) return;
-    this->app()->txRun([link = ZmRef(impl())]() {
-      link->streamTxEnd_();
-    });
+    if constexpr (Traits::ID == Transport::TLS) {
+      auto cxn = ZmRef{this->cxn()};
+      if (!cxn) return;
+      this->app()->txRun([
+	link = ZmRef(impl()), cxn = ZuMv(cxn)]() mutable {
+	link->streamTxEnd_(ZuMv(cxn));
+      });
+    } else {
+      this->app()->txRun([link = ZmRef(impl())]() {
+	link->streamTxEnd_();
+      });
+    }
   }
   void streamResetRx_() {
     ZmAssert(this->app()->rxInvoked());
@@ -799,18 +1424,27 @@ private:
       link->app()->rxRun([link]() { link->disconnect(); });
     });
   }
-  void streamTxEnd_() {
+  void streamTxEnd_(ZmRef<ZiConnection> cxn = {}) {
     ZmAssert(this->app()->txInvoked());
     m_streamTx = false;
-    if (this->txQueue.count_()) {
-      m_streamEnd = true;
-      return;
+    if constexpr (Traits::ID != Transport::TLS) {
+      bool pending;
+      if constexpr (Traits::ID == Transport::TCP) pending = this->pendingTCP_();
+      else pending = this->txQueue.count_();
+      if (pending) {
+	m_streamEnd = true;
+	return;
+      }
     }
-    streamTxClose_();
+    // TLS disconnect queues close_notify after preceding App Tx records and
+    // drains its actual wire buffer on I/O Tx before closing the frozen Cxn.
+    streamTxClose_(ZuMv(cxn));
   }
-  void streamTxClose_() {
+  void streamTxClose_(ZmRef<ZiConnection> cxn = {}) {
     auto app = this->app();
-    app->rxRun([link = ZmRef(impl())]() mutable {
+    app->rxRun([link = ZmRef(impl()), cxn = ZuMv(cxn)]() mutable {
+      if constexpr (Traits::ID == Transport::TLS)
+	if (link->cxn() != cxn.ptr()) return;
       Traits::disconnect(*link);
     });
   }
@@ -830,10 +1464,14 @@ using ServerDrainFn = ZmFn<void(), ZmFnHeapID<"Zhttp.ServerDrain">>;
 template <
   typename App, typename Impl, typename Profile, typename Session>
 class ServerLink :
-  public NativeTraits<Profile>::Transport::template ServerLink<App, Impl> {
+  public Transport_::ServerProtocol<
+    App, Impl, typename NativeTraits<Profile>::Transport>,
+  public ZuIf<NativeTraits<Profile>::Transport::ID == Transport::TLS,
+    Transport_::TLSClose<Impl>, Transport_::NoTLSClose> {
   using HTTP = NativeTraits<Profile>;
   using Traits = HTTP::Transport;
-  using Base = Traits::template ServerLink<App, Impl>;
+  using Base = Transport_::ServerProtocol<App, Impl, Traits>;
+  friend Transport_::TLSClose<Impl>;
   using StreamBinding =
     H1::StreamBinding<Impl, Impl>;
 
@@ -874,6 +1512,14 @@ public:
       }, this->app()->rxThread());
   }
   void notifyDisconnected_(bool peer) {
+    if constexpr (Traits::ID == Transport::TLS) this->endedTLS_();
+    if constexpr (Traits::ID == Transport::TCP) {
+      this->drainTCP_(peer, [](ZmRef<Impl> link, bool peer) {
+	link->notifyAfterTCP_(peer);
+      });
+    } else notifyAfterTCP_(peer);
+  }
+  void notifyAfterTCP_(bool peer) {
     m_stream.disconnected(peer);
     m_session.disconnected(*impl(), peer);
     this->app()->disconnected(*impl(), peer);
@@ -924,14 +1570,14 @@ public:
   void streamTx(L &&l) {
     ZmAssert(this->app()->rxInvoked());
     if (!m_stream.tx()) return;
-    auto tx = this->txStream();
+    auto tx = this->template frameTx_<true>();
     ZuFwd<L>(l)(tx);
   }
   template <typename L>
   void streamTx_(L &&l) {
     ZmAssert(this->app()->txInvoked());
     if (!m_streamTx) return;
-    auto tx = this->txStream_();
+    auto tx = this->template frameTx_<false>();
     ZuFwd<L>(l)(tx);
   }
   void streamTxEnd() {
@@ -941,7 +1587,17 @@ public:
   }
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
     Base::sent(ZuMv(buf), ok);
-    if (!m_streamEnd || (ok && this->txQueue.count_())) return;
+    if constexpr (Traits::ID == Transport::TCP) return;
+    if constexpr (Traits::ID == Transport::TLS) this->sentTLS_(ok);
+    else {
+      if (!m_streamEnd || (ok && this->txQueue.count_())) return;
+      m_streamEnd = false;
+      streamTxClose_();
+    }
+  }
+  void tcpDrained_() {
+    ZmAssert(this->app()->txInvoked());
+    if (!m_streamEnd) return;
     m_streamEnd = false;
     streamTxClose_();
   }
@@ -968,12 +1624,15 @@ public:
   }
   template <typename Builder>
   auto transmit(Builder &) {
-    return this->txStream();
+    return this->template frameTx_<true>();
   }
+  using Base::transmit_;
   template <typename Builder>
   auto transmit_(Builder &) {
-    return this->txStream_();
+    // Bodyless H1 output participates in the same close drain as body output.
+    return this->template frameTx_<false>();
   }
+
   bool active() const { return !!this->cxn(); }
   void finish() { }
   void touch() {
@@ -990,7 +1649,8 @@ public:
 private:
   void streamClosedTx_() {
     ZmAssert(this->app()->txInvoked());
-    m_streamTx = m_streamEnd = false;
+    m_streamTx = false;
+    if constexpr (Traits::ID != Transport::TLS) m_streamEnd = false;
   }
   void releaseDisconnected_() {
     if (m_counted) {
@@ -1006,7 +1666,7 @@ private:
     ZmAssert(this->app()->rxInvoked());
     if (!m_stream.end()) return;
     this->app()->txRun([link = impl()]() {
-      link->streamTxEnd_();
+      link->closeAfterTx_();
     });
   }
   void streamResetRx_() {
@@ -1017,15 +1677,21 @@ private:
       link->app()->rxRun([link]() { link->disconnect(); });
     });
   }
-  void streamTxEnd_() {
+public:
+  void closeAfterTx_() {
     ZmAssert(this->app()->txInvoked());
     m_streamTx = false;
-    if (this->txQueue.count_()) {
-      m_streamEnd = true;
-      return;
+    if constexpr (Traits::ID == Transport::TLS)
+      Transport_::TLSClose<Impl>::closeAfterTx_();
+    else {
+      bool pending;
+      if constexpr (Traits::ID == Transport::TCP) pending = this->pendingTCP_();
+      else pending = this->txQueue.count_();
+      if (pending) { m_streamEnd = true; return; }
+      streamTxClose_();
     }
-    streamTxClose_();
   }
+private:
   void streamTxClose_() {
     auto app = this->app();
     app->rxRun([link = impl()]() {
@@ -1043,7 +1709,8 @@ private:
   bool			m_disconnected = false;
   alignas(Zm::CacheLineSize)
   bool			m_streamTx = false;	// Tx-owned
-  bool			m_streamEnd = false;	// Tx-owned
+  ZuCanOverlap ZuIf<Traits::ID == Transport::TLS,
+    Transport_::NoTLSClose, bool> m_streamEnd{}; // App Tx for cleartext
 };
 
 namespace Native_ {
@@ -1130,6 +1797,31 @@ bool failed(const Stream &stream, int) {
 template <typename Stream>
 bool failed(const Stream &stream, long) { return stream.failed(); }
 
+template <typename Stream, typename = void>
+struct NeedsProvenance : ZuFalse { };
+template <typename Stream>
+struct NeedsProvenance<Stream, decltype(Stream::RetainBuffers, void())> :
+  ZuBool<Stream::RetainBuffers> { };
+
+template <typename Stream, typename = decltype(
+  ZuDeclVal<const Stream &>().allocatedBuf_(ZuDeclVal<const ZiIOBuf *>()))>
+bool allocated(const Stream &stream, const ZiIOBuf *buf, int) {
+  return stream.allocatedBuf_(buf);
+}
+template <typename Stream>
+bool allocated(const Stream &, const ZiIOBuf *, ...) {
+  return !NeedsProvenance<Stream>{};
+}
+template <typename Stream, typename = decltype(
+  ZuDeclVal<Stream &>().allocatedBuf_(ZuDeclVal<ZmRef<ZiIOBuf>>()))>
+bool allocated(Stream &stream, ZmRef<ZiIOBuf> buf, int) {
+  return stream.allocatedBuf_(ZuMv(buf));
+}
+template <typename Stream>
+bool allocated(Stream &, ZmRef<ZiIOBuf>, ...) {
+  return !NeedsProvenance<Stream>{};
+}
+
 template <typename Stream>
 const WriterOps &writerOps()
 {
@@ -1151,7 +1843,19 @@ const WriterOps &writerOps()
     [](const void *ctx) { return static_cast<const Stream *>(ctx)->tailRoom(); },
     [](void *ctx, unsigned head) { return static_cast<Stream *>(ctx)->allocBuf(head); },
     [](void *ctx, unsigned length) { return static_cast<Stream *>(ctx)->reserve(length); },
-    [](void *ctx, unsigned length) { static_cast<Stream *>(ctx)->commit(length); }};
+    [](void *ctx, unsigned length) { static_cast<Stream *>(ctx)->commit(length); },
+    [](void *ctx, Zi::RxRange range) {
+      return static_cast<Stream *>(ctx)->appendRange(ZuMv(range));
+    },
+    [](const void *ctx, const ZiIOBuf &buf, unsigned head, unsigned tail) {
+      return static_cast<const Stream *>(ctx)->canAdopt_(buf, head, tail);
+    },
+    [](const void *ctx, const ZiIOBuf *buf) {
+      return allocated(*static_cast<const Stream *>(ctx), buf, 0);
+    },
+    [](void *ctx, ZmRef<ZiIOBuf> buf) {
+      return allocated(*static_cast<Stream *>(ctx), ZuMv(buf), 0);
+    }};
   return ops;
 }
 

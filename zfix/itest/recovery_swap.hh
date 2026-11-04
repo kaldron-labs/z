@@ -209,24 +209,26 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Client"> ZmNHeapID(Link *);
 
 static void replayReplacement(unsigned mode, bool logoutA)
 {
-  ZuTestScope(replayReplacement);
+  ZuTestScopeRT(replayReplacement);
   ReplayState state{mode, logoutA};
   ReplayServer server{&state}; ReplayClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}
+    .tcpBufAllocator<Network::RxAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheck(started); if (!started) return;
+  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
   Network::ServerParams sp{&mx, "3", "4"}; Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   auto cert = getenv("ZFIX_TEST_CERT"), key = getenv("ZFIX_TEST_KEY");
-  if (!cert || !key) { ZuCheck(false); mx.stop(); return; }
+  if (!cert || !key) { ZuCheckRT(false); mx.stop(); return; }
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
-  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
+  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheckRT(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
   ZmRef<ReplayClient::Link> a, b;
   bool attemptedA = false, attemptedB = false, success = false;
   auto connectPeer = [&state](ReplayClient::Link *link) {
@@ -239,10 +241,10 @@ static void replayReplacement(unsigned mode, bool logoutA)
   if (ss && cs) do {
     server.session = new ReplayServer::Link{&server};
     a = new ReplayClient::Link{&client, true};
-    server.listen(); bool listening = wait(state.listening); ZuCheck(listening);
+    server.listen(); bool listening = wait(state.listening); ZuCheckRT(listening);
     if (!listening) break;
     attemptedA = true; connectPeer(a.ptr());
-    bool ready = wait(state.initialReady) && wait(state.peerReady); ZuCheck(ready);
+    bool ready = wait(state.initialReady) && wait(state.peerReady); ZuCheckRT(ready);
     if (!ready) break;
     Progress checkpoint;
     bool snapshot = ZmBlock<bool>{}([&client, &a, &checkpoint](auto wake) {
@@ -250,7 +252,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
 	checkpoint.epoch = a->session_().epoch_(); checkpoint.rx = a->rxProgress_(); wake(true);
       });
     });
-    ZuCheck(snapshot && checkpoint.rx.processed == 2);
+    ZuCheckRT(snapshot && checkpoint.rx.processed == 2);
     server.txRun([link = server.session] {
       Fmt::Error error;
       auto old = TxBody::encode<OrderMsg>(Order{"old"}, 301, error);
@@ -258,14 +260,14 @@ static void replayReplacement(unsigned mode, bool logoutA)
       if (error || !old || !stale) { link->state()->fail(); return; }
       link->enqueue(ZuMv(old)); link->enqueue(ZuMv(stale));
     });
-    bool pending = wait(state.resendPending); ZuCheck(pending);
+    bool pending = wait(state.resendPending); ZuCheckRT(pending);
     if (!pending) break;
     snapshot = ZmBlock<bool>{}([&client, &a, &checkpoint](auto wake) {
       client.txRun([&a, &checkpoint, wake = ZuMv(wake)]() mutable {
 	checkpoint.tx = a->txProgress_(); wake(true);
       });
     });
-    ZuCheck(snapshot && checkpoint.tx.loaded > 2 && state.request.connection == 1 &&
+    ZuCheckRT(snapshot && checkpoint.tx.loaded > 2 && state.request.connection == 1 &&
       state.request.seqNo == 2 && state.ticket);
     state.client = new Store;
     b = new ReplayClient::Link{&client, false};
@@ -278,7 +280,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
 	});
       });
     });
-    ZuCheck(restored); if (!restored) break;
+    ZuCheckRT(restored); if (!restored) break;
     if (logoutA) {
       server.session->logout();
       bool loggingOut = ZmBlock<bool>{}([&server](auto wake) {
@@ -286,10 +288,10 @@ static void replayReplacement(unsigned mode, bool logoutA)
 	  wake(link->session_().state_() == State::Logout && link->cxn());
 	});
       });
-      ZuCheck(loggingOut); if (!loggingOut) break;
+      ZuCheckRT(loggingOut); if (!loggingOut) break;
     }
     attemptedB = true; connectPeer(b.ptr());
-    bool bound = wait(state.successorLogon) && wait(state.oldClose); ZuCheck(bound);
+    bool bound = wait(state.successorLogon) && wait(state.oldClose); ZuCheckRT(bound);
     if (!bound) break;
     server.txRun([link = server.session] {
       Fmt::Error error;
@@ -300,21 +302,21 @@ static void replayReplacement(unsigned mode, bool logoutA)
     });
     bool recovered = wait(state.selected) && wait(state.done) && wait(state.peerReady) &&
       wait(state.replayComplete);
-    ZuCheck(recovered); if (!recovered) break;
-    ZuCheck(state.delivered.load_() == 1);
+    ZuCheckRT(recovered); if (!recovered) break;
+    ZuCheckRT(state.delivered.load_() == 1);
     // A's pending request and B's recovery request each select app content.
     // Repeated requests legitimately retransmit; the receiver applies seq2 once.
-    ZuCheck(state.requests.load_() >= 2 && state.replayLoads.load_() >= 2 &&
+    ZuCheckRT(state.requests.load_() >= 2 && state.replayLoads.load_() >= 2 &&
       state.replaced.load_() == state.replayLoads.load_());
-    ZuCheck(state.suppressed.load_());
-    ZuCheck(!state.serverStops.load_() && state.retire);
+    ZuCheckRT(state.suppressed.load_());
+    ZuCheckRT(!state.serverStops.load_() && state.retire);
     server.session->probe();
-    bool archived = wait(state.archived); ZuCheck(archived);
+    bool archived = wait(state.archived); ZuCheckRT(archived);
     mx.rxRun([&state] { auto retire = ZuMv(state.retire); if (retire) retire(); });
-    bool retired = wait(state.oldRetired); ZuCheck(retired);
+    bool retired = wait(state.oldRetired); ZuCheckRT(retired);
     // Prove B can exchange a fresh TestRequest/Heartbeat after every A cleanup stage.
     server.session->probe();
-    bool usable = wait(state.archived); ZuCheck(usable);
+    bool usable = wait(state.archived); ZuCheckRT(usable);
     success = archived && retired && usable;
   } while (false);
   // Always settle a held logical request before waiting for terminal owner drain.
@@ -328,16 +330,16 @@ static void replayReplacement(unsigned mode, bool logoutA)
   bool stoppedA = !attemptedA || wait(state.cliStopped);
   bool stoppedB = !attemptedB || wait(state.cliStopped);
   bool stoppedServer = !state.accepts.load_() || wait(state.serverStopped);
-  ZuCheck(stoppedA && stoppedB && stoppedServer);
+  ZuCheckRT(stoppedA && stoppedB && stoppedServer);
   if (!stoppedA || !stoppedB || !stoppedServer) abort();
-  bool cstop = !cs || client.stop(), sstop = !ss || server.stop(); ZuCheck(cstop && sstop);
+  bool cstop = !cs || client.stop(), sstop = !ss || server.stop(); ZuCheckRT(cstop && sstop);
   if (ci) client.final();
   if (si) server.final();
   mx.stop(); a = b = nullptr; server.session = nullptr;
-  ZuCheck(success && !state.errors.load_() && state.serverStops.load_() == 1 &&
+  ZuCheckRT(success && !state.errors.load_() && state.serverStops.load_() == 1 &&
     state.accepts.load_() == 2 && state.aStops.load_() == 1 && state.bStops.load_() == 1 &&
     !state.retire);
-  ZuCheck(state.archiveBegin == 1 && state.archiveEnd == state.server->tx.acknowledged &&
+  ZuCheckRT(state.archiveBegin == 1 && state.archiveEnd == state.server->tx.acknowledged &&
     state.archiveEnd > 3 && !state.probeTarget && state.delivered.load_() == 1 &&
     state.replaced.load_() == state.replayLoads.load_());
 }

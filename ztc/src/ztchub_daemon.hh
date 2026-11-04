@@ -15,6 +15,7 @@
 #include <zlib/ZuDerive.hh>
 
 #include <zlib/ZmAtomic.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmEngine.hh>
 #include <zlib/ZmFn.hh>
 #include <zlib/ZmScheduler.hh>
@@ -24,6 +25,7 @@
 
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiRxStream.hh>
 
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfCf.hh>
@@ -44,7 +46,66 @@ namespace HubdState {
 ZuDerive(HubString, (ZtString<ZtStringHeapID<"Ztc.Hub.String">>));
 ZuDerive(HubStrings, (ZtArray<HubString, ZtArrayHeapID<"Ztc.Hub.Strings">>));
 using HubFrame = ZmRef<ZiIOBuf>;
-using HubSendFn = ZmFn<void(HubFrame), ZmFnHeapID<"Ztc.Hub.Send">>;
+
+// Delivery metadata snapshots physical spans: another delivery may advance the
+// same backing descriptor while this packet is still queued on its Rx owner.
+struct HubPacket {
+  Zi::RxRange head;
+  Zi::RxRange tail;
+
+  HubPacket() = default;
+  explicit HubPacket(HubFrame frame, Zi::RxRange tail_ = {}) :
+      tail{ZuMv(tail_)} {
+    if (frame) {
+      auto length = frame->length;
+      head = Zi::RxRange{ZuMv(frame), 0, length};
+    }
+  }
+  explicit operator bool() const { return bool(head.buf); }
+  uint64_t length() const { return uint64_t(head.length) + tail.length; }
+
+  // The outer fields are entirely in head. A segmented packet's Bytes vector
+  // points at tail on the wire, so never dereference it through the prefix.
+  MsgView message() const { return Zfb::view<Msg>(head.cspan()); }
+  auto body() const {
+    auto payload = tail.buf ? tail.cspan() : message().get<ZfField(Msg, data)>();
+    return Zfb::view<Payload>(payload).get<ZfField(Payload, body)>();
+  }
+
+  template <typename Tx>
+  void write(Tx &tx, bool writerOwned) && {
+    auto buf = head.buf.ptr();
+    // A writer may retain a provenance reference to its own unpublished
+    // allocation. The producing BuildFn grants mutability, not its RC count.
+    if (writerOwned && head.offset == buf->skip &&
+	head.length == buf->length && tx.canAdopt_(*buf))
+      tx.appendOwned_(ZuMv(head.buf));
+    else tx.appendRange(ZuMv(head));
+    if (tail.buf) tx.appendRange(ZuMv(tail));
+  }
+};
+
+// Build the real destination-owned Msg prefix with its empty Bytes child
+// first. Backwards construction leaves that child's length word at the end;
+// its aligned payload is the original nested root appended by reference.
+inline HubPacket wrapHubFrame(HubFrame frame, Zi::RxRange payload,
+    uint64_t subID, ZuCSpan deviceID, uint64_t generation, unsigned tailRoom) {
+  Builder builder{ZuMv(frame), Builder::Align, UINT32_MAX, tailRoom};
+  auto data = builder.copyRoot({}, Builder::Align);
+  builder.finish(saveMsg(builder, data, subID, deviceID, generation));
+  auto head = builder.buf();
+  if (!head) return {};
+  ZmAssert(Zfb::view<Msg>(head->cspan()).get<ZfField(Msg, data)>().data() ==
+    head->data() + head->length);
+  ZmAssert(!(head->length & (Builder::Align - 1)));
+  Zfb::write<Zfb::Offset>(head->data() + head->length - sizeof(Zfb::Offset),
+    payload.length);
+  return HubPacket{ZuMv(head), ZuMv(payload)};
+}
+
+// Builders are consumed synchronously on the sending producer's shard.
+using HubBuildFn = ZmFn<HubPacket(HubFrame, unsigned), ZmFnHeapID<"Ztc.Hub.Build">>;
+using HubSendFn = ZmFn<void(HubPacket, HubBuildFn), ZmFnHeapID<"Ztc.Hub.Send">>;
 using HubCtrlFn = ZmFn<void(bool), ZmFnHeapID<"ZmEngine.CtrlFn">>;
 using HubActivateFn = ZmFn<void(bool, HubCtrlFn),
   ZmFnHeapID<"Ztc.Hub.Activate">>;
@@ -216,8 +277,10 @@ public:
   bool appUnsubscribe(uint64_t frontEndID, uint64_t subID);
   bool route(uint64_t agentSessionID, uint64_t agentGeneration,
     uint64_t requestSeqNo, RouteInfo &) const;
-  bool sendAgent(uint64_t sessionID, uint64_t generation, HubFrame);
-  bool sendFrontend(uint64_t sessionID, HubFrame);
+  bool sendAgent(uint64_t sessionID, uint64_t generation, HubPacket);
+  bool sendFrontend(uint64_t sessionID, HubPacket);
+  bool sendAgent(uint64_t sessionID, uint64_t generation, HubBuildFn);
+  bool sendFrontend(uint64_t sessionID, HubBuildFn);
   unsigned disconnectAgent(uint64_t sessionID, uint64_t generation);
   unsigned disconnectAgent(uint64_t sessionID, uint64_t generation,
     HubRouteFn);

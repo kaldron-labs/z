@@ -11,17 +11,13 @@
 #include <iostream>
 
 #include <zlib/ZtString.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/Zquic.hh>
 
 namespace {
 
 ZuDerive(AppRequest,
   (ZtString<ZtStringHeapID<"Zquic.Example.Request">>));
-
-ZuCSpan cspan(const ZtString<> &s)
-{
-  return ZuCSpan{s.data(), s.length()};
-}
 
 bool isNumber(const char *s)
 {
@@ -36,7 +32,7 @@ struct App : public Zquic::Client<App> {
 
   App(ZuCSpan request) { m_request << request; }
 
-  ZuCSpan request() const { return cspan(m_request); }
+  ZuCSpan request() const { return m_request; }
   void done() { m_done.post(); }
   void setError(const char *msg) {
     if (!m_error.xch(1))
@@ -63,7 +59,12 @@ struct App::Stream :
 };
 
 struct App::Link :
+  public ZmNHeap<Link>,
   public Zquic::CliLink<App, App::Link, App::Stream> {
+  friend inline ZuStringT<"Zquic.Example.CliLink"> ZmNHeapID(Link *);
+  using ZmNHeap<Link>::operator new;
+  using ZmNHeap<Link>::operator delete;
+
   using Base = Zquic::CliLink<App, App::Link, App::Stream>;
   using Base::Base;
 
@@ -147,7 +148,7 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZiMultiplex mx(
-      ZiMxParams()
+      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })

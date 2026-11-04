@@ -1,5 +1,62 @@
 # Zi unit tests
 
+`ZiIOBufTest::testCustomPolicies` uses the same custom Base and heap ID with
+the TCP, UDP and TLS Rx/Tx allocators. It checks metadata, independent pools,
+allocator handle moves, exhaustion, and growth while `ZiTxContext::buf` owns
+the descriptor. The old slot must become reusable immediately and must not be
+returned again when the grown descriptor is destroyed. Native
+`testConcurrentReturns` returns a saturated pool from two semaphore-coordinated
+workers and checks that its single allocating owner recovers every slot once.
+
+`ZiMxLoopTest::testIOTurns` checks connection-info null semantics, rejection of
+invalid epoll budgets before worker startup, and Tx fairness for a continuously
+replenished UDP producer with shared and separate Rx/Tx shards. A queued marker
+must run before the producer finishes; semaphore completion avoids sleeps.
+
+`ZiMxLoopTest` covers asynchronous allocator unbinding on shared and separate
+Rx/Tx threads. UDP pool tests release the allocator only after unbind completion,
+join explicit detach with global stop, retain registrations across stop/start,
+and detach/rebind both Rx and Tx pools while the multiplexer stays running.
+Native cases exercise terminal kernel-control CQEs before releasing pools;
+they run when the build and runtime support `io_uring`. EPoll runs the same
+owner-handoff and pool-release cases. Build with `make -C zi/test -j8` and run
+`./zi/test/ZiMxLoopTest`.
+
+`ZiMxLoopTest::testRingSizes` checks independent runtime counts, custom receive
+allocator propagation, invalid service-count rejection, and shared/separate
+owner startup. `ZvCfTest::mxRingSizes` checks the corresponding configuration
+fields, bounds and distinction from socket byte limits.
+
+`ZiMxLoopTest::testUdpRetained` retains the entire native UDP receive pool
+while receiving more datagrams, then releases and repeats to check pool
+recycling. It verifies payload integrity and progress with shared and separate
+Rx/Tx shards, including ordinary backing when every mapped slot is retained.
+
+For native Memcheck runs, opt into the reviewed provided-buffer exceptions:
+
+```sh
+./libtool exec valgrind --error-exitcode=99 --leak-check=full \
+  --errors-for-leak-kinds=definite,indirect,possible \
+  --suppressions=uring.valgrind.supp ./zi/test/ZiMxLoopTest
+```
+
+Memcheck 3.26.0 does not mark kernel-written heap-backed provided buffers as
+initialized. The suppression file covers the observed UDP address/TOS reads
+and the retained-payload comparison, using narrow conditional-error stack
+matches. It does not suppress invalid accesses or leaks. A standalone native
+receive comparison confirmed correct bytes with undefined validity bits after
+io_uring completion, whereas ordinary `recvmsg` marks those bytes initialized.
+Revalidate these exceptions with another compiler or Valgrind version; stack
+matching cannot establish the origin of every future report at the same sites.
+
+`ZiIOContextTest` covers directional receive/transmit context moves, last-owner
+release, receive native flags and available accumulated backing, packed Tx status
+transitions, and send results without selected backing. Independent retained-range
+transmit cursors leave the backing descriptor unchanged; ordinary single-owner
+buffers retain their existing advancement semantics. Transport results remain
+independent of buffer construction failure and other sends of the same backing.
+`ZiIOBufTest` covers competing allocators and cross-thread slot recycling.
+
 `ZiResolverTest` covers resolver lifecycle and DNS fixtures. Startup and stop
 cases hold callbacks open and verify that continuation-based lifecycle calls
 return before those callbacks drain. It also covers reentrant start callbacks,
@@ -101,7 +158,7 @@ construction scratch in these fixtures. `../interop/zpbinterop` checks the
 same four workload shapes against canonical protobuf and has matching
 `parse`/`serialize` measurement commands. No comparative timing has been run.
 Do not use the debug configuration for comparative results. See
-[`zpbinterop`](../interop/zpb.md) for canonical commands and setup.
+[`zpbinterop`](../interop/README.md) for canonical commands and setup.
 `ZpbReflectTest` checks descriptor-set import with
 independent wire bytes, borrowed schema lookups, owned input lifetime, and
 explicit rejection of malformed or unsupported descriptor metadata. It checks
@@ -200,3 +257,47 @@ measure resource behavior separately from latency benchmarks.
 contract: getter-only constructor fields, writable constructor fields,
 non-mutable initial fields, mutable fields, and primary-key fields, through
 `ctor`, `alloc`, placement construction, `load`, and `update`.
+
+
+---
+
+## Network buffer pool sizing in workloads
+
+`ZiMxParams::rxRingSize()` and `txRingSize()` default independently to 128.
+Receive pools are shared by the multiplexer; transmit pools belong to protocol
+producers, endpoints, and database table/shard/store policies. Set the counts
+before constructing a custom receive allocator with the template setter.
+Explicit allocator instances retain their own policy. See the
+[Zi buffer guide](../README.md#buffers-and-streams) for API, limits and memory
+geometry.
+
+Automatic workload choices below keep the corresponding direction's default
+as a floor and saturate variable workloads at `ZiMxParams::MaxRingSize` (32768).
+Four slots per exchange cover request, response and retirement overlap; this
+is a workload working set, not a bound on arbitrary retention or fragmentation.
+Larger repeating groups or simultaneous transfers may need explicit overrides.
+
+| Workload | Pool policy |
+| --- | --- |
+| Zi native regressions | 257 Rx/513 Tx verifies runtime counts; 128+2 retained UDP packets exercises exhaustion. One-slot allocator and four-slot jumbo tests retain their deliberate small pools. |
+| TCP/TLS fixtures and examples | Small sequential fixtures use 128. TLS payload examples reserve four times `ceil(payload bytes / 16 KiB)` in each direction. |
+| QUIC fixtures | Small transport cases use 128 with packet-sized Rx backing; each endpoint inherits the configured Tx count. Standalone codec buffers have no multiplexer policy. |
+| HTTP1/2/3 matrix | Both counts are `4 * jobs * ceil(bodyBytes / 980)`. The unchanged 278528-byte migration response uses 1140 slots. `zhttp` and `zhttpd` expose `--rx-ring-size` and `--tx-ring-size`. |
+| HTTP benchmark | Both counts are four slots per concurrent job. |
+| WebSocket benchmark | Both counts cover four times the configured message's 980-byte fragments. |
+| Autobahn client | A 1 MiB echo working set plus 128 reserve gives 1198 Rx/192 Tx slots (980-byte Rx/16 KiB Tx geometry). CLI ring-size overrides select another profile. |
+| QUIC Interop Runner | A 1 MiB working set in 1200-byte packets plus 128 reserve gives 1002 slots in each direction. `ZHTTP_QIR_RX_RING_SIZE` and `ZHTTP_QIR_TX_RING_SIZE` override it for HQ/H3 clients and servers. This does not reserve the full advertised 100 MiB connection window. |
+| gRPC large-message fixtures and Go/.NET interop | Four times payload fragments: 980-byte Rx, 1200-byte H3 Tx or 16 KiB H2 Tx. Interop peers reserve for the three-message 256 KiB stream burst plus retirement overlap (1072 Rx, 876 H3 Tx or 128 H2 Tx). H3 uses packet-sized Rx backing. The 4096-byte flow-control test keeps 128; progressive stream consumption does not retain every message. |
+| FIX load and transport fixtures | Four slots per in-flight order; shared Rx and client Tx aggregate sessions, server Tx is per session hub. Heavy transport fixtures use complete framed packet lengths. Explicit ring-size options cover larger groups. |
+| REST, JSON-RPC and MCP | Small sequential requests and two-request batches keep 128. H3 fixtures explicitly select `Zquic::PktRxBufAllocator` with the configured Rx count; generic 980-byte UDP backing is smaller than a QUIC Initial. Stdio bulk payloads do not consume native network pools. |
+| Zdb, SQLite and PostgreSQL | Serial store/saga work and small replication fixtures keep 128; factories forward configured counts to shard and store producers. The table policy test uses 257/513 and checks real mapped counts, recycling and retained lifetime. |
+| Telemetry load | Both counts reserve `4 * clients * (publishers + subscribers)` slots. |
+| Zum, Zdash and Zdbus | Sequential management/identity/database fixtures keep 128; configured counts propagate through their network owners. |
+
+Large streaming backpressure tests intentionally retain bounded pools. A pool
+is a reusable working set, not storage for the entire response or flow-control
+window. UDP receive progress continues through ordinary backing when mapped
+buffers are exhausted. Native capacity verification checks actual pool backing
+and successful kernel registration; configured counts alone do not establish
+that registration succeeded. Account for the number of allocator owners and
+slot geometry when setting the process memory-lock limit.

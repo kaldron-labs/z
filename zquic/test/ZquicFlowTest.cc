@@ -35,7 +35,7 @@ struct FlowApp : public Zquic::Hub<FlowApp> {
 
 private:
   static ZiMxParams mxParams_() {
-    return ZiMxParams()
+    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -64,7 +64,11 @@ static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;

@@ -53,51 +53,51 @@ using namespace zumtest;
 
 static void managementCatalog()
 {
-  ZuTestScope(managementCatalog);
-  ZuCheck(Zum::MgmtOp::N == 61);
-  ZuCheck(!Zum::managementAction(-1));
-  ZuCheck(!Zum::managementAction(Zum::MgmtOp::N));
-  ZuCheck(Zum::managementAction(Zum::MgmtOp::userRecover) ==
+  ZuTestScopeRT(managementCatalog);
+  ZuCheckRT(Zum::MgmtOp::N == 61);
+  ZuCheckRT(!Zum::managementAction(-1));
+  ZuCheckRT(!Zum::managementAction(Zum::MgmtOp::N));
+  ZuCheckRT(Zum::managementAction(Zum::MgmtOp::userRecover) ==
     "Zum.userRecover");
-  ZuCheck(Zum::managementAction(Zum::MgmtOp::assignmentAdd) ==
+  ZuCheckRT(Zum::managementAction(Zum::MgmtOp::assignmentAdd) ==
     "Zum.assignmentAdd");
-  ZuCheck(Zum::MgmtOp::lookup("assignmentQuery") ==
+  ZuCheckRT(Zum::MgmtOp::lookup("assignmentQuery") ==
     Zum::MgmtOp::assignmentQuery &&
     Zum::MgmtOp::lookup("membershipQuery") < 0);
-  ZuCheck(Zum::CoreAction::N == Zum::MgmtOp::N &&
+  ZuCheckRT(Zum::CoreAction::N == Zum::MgmtOp::N &&
     !Zum::coreAction(Zum::CoreAction::N));
-  ZuCheck(Zum::managementNeedsIdempotency(Zum::MgmtOp::appEnroll) &&
+  ZuCheckRT(Zum::managementNeedsIdempotency(Zum::MgmtOp::appEnroll) &&
     Zum::managementNeedsIdempotency(Zum::MgmtOp::catalogPublish) &&
     !Zum::managementNeedsIdempotency(Zum::MgmtOp::appState) &&
     !Zum::managementNeedsIdempotency(Zum::MgmtOp::appQuery));
   for (unsigned i = 0; i < Zum::MgmtOp::N; ++i) {
     const auto *route = Zum::managementRoute(i);
     if (!Zum::managementAction(i)) {
-      ZuCheck(!route && !Zum::managementAudited(i));
+      ZuCheckRT(!route && !Zum::managementAudited(i));
       continue;
     }
-    ZuCheck(route && Zum::managementAudited(i) ==
+    ZuCheckRT(route && Zum::managementAudited(i) ==
       (route->method != Zhttp::Method::GET));
   }
-  ZuCheck(!Zum::managementAudited(-1) &&
+  ZuCheckRT(!Zum::managementAudited(-1) &&
     !Zum::managementAudited(Zum::MgmtOp::N));
   auto audit = Zum::managementAuditRecord("issuer", Zum::MgmtOp::roleActions,
     "administrator", 42, "/admin/apps/42/roles/7/actions", "request-1",
     412, 123);
-  ZuCheck(audit.time == 123 && audit.issuer == "issuer" &&
+  ZuCheckRT(audit.time == 123 && audit.issuer == "issuer" &&
     audit.appID == 42 && audit.operationID == Zum::MgmtOp::roleActions &&
     audit.actor == "administrator" &&
     audit.target == "/admin/apps/42/roles/7/actions" &&
     audit.event == Zum::AuditEvent::Administration &&
     audit.outcome == Zum::AuditOutcome::Failure &&
     audit.correlationID == "request-1" && audit.detail == "roleActions");
-  ZuCheck(Zum::MgmtOp::lookup("credentialAdd") < 0);
-  ZuCheck(Zum::MgmtOp::lookup("auditUpdate") < 0);
-  ZuCheck(Zum::MgmtOp::lookup("auditQuery") < 0 &&
+  ZuCheckRT(Zum::MgmtOp::lookup("credentialAdd") < 0);
+  ZuCheckRT(Zum::MgmtOp::lookup("auditUpdate") < 0);
+  ZuCheckRT(Zum::MgmtOp::lookup("auditQuery") < 0 &&
     Zum::MgmtOp::lookup("auditCleanup") < 0);
-  ZuCheck(Zum::managementOperation(Zhttp::Method::GET, "/admin/audit") < 0 &&
+  ZuCheckRT(Zum::managementOperation(Zhttp::Method::GET, "/admin/audit") < 0 &&
     Zum::managementOperation(Zhttp::Method::POST, "/admin/audit/cleanup") < 0);
-  ZuCheck(Zum::MgmtOp::lookup("grantCreate") < 0);
+  ZuCheckRT(Zum::MgmtOp::lookup("grantCreate") < 0);
   bool unique = true;
   for (unsigned i = 0; i < Zum::MgmtOp::N; ++i) {
     if (!Zum::managementAction(i)) continue;
@@ -114,33 +114,33 @@ static void managementCatalog()
   unique &= !Zum::managementRoute(-1) &&
     !Zum::managementRoute(Zum::MgmtOp::N) &&
     Zum::managementOperation(Zhttp::Method::GET, "/admin/unknown") < 0;
-  ZuCheck(unique);
-  ZuCheck(Zum::managementAllow("/admin/apps") == "GET, POST");
-  ZuCheck(Zum::managementAllow("/admin/apps/42?ignored=true") == "PATCH");
-  ZuCheck(Zum::managementOperation(
+  ZuCheckRT(unique);
+  ZuCheckRT(Zum::managementAllow("/admin/apps") == "GET, POST");
+  ZuCheckRT(Zum::managementAllow("/admin/apps/42?ignored=true") == "PATCH");
+  ZuCheckRT(Zum::managementOperation(
     Zhttp::Method::PATCH, "/admin/apps/state") == Zum::MgmtOp::appUpdate);
-  ZuCheck(Zum::managementOperation(
+  ZuCheckRT(Zum::managementOperation(
     Zhttp::Method::PUT, "/admin/apps/42/state") == Zum::MgmtOp::appState);
-  ZuCheck(Zum::managementOperation(
+  ZuCheckRT(Zum::managementOperation(
     Zhttp::Method::PUT, "/apps/42/state") == Zum::MgmtOp::appState);
-  ZuCheck(Zum::managementAllow("/apps") == "GET, POST");
-  ZuCheck(Zum::managementAllow("/admin/apps/42/assignments") == "GET, POST");
-  ZuCheck(Zum::managementOperation(Zhttp::Method::GET,
+  ZuCheckRT(Zum::managementAllow("/apps") == "GET, POST");
+  ZuCheckRT(Zum::managementAllow("/admin/apps/42/assignments") == "GET, POST");
+  ZuCheckRT(Zum::managementOperation(Zhttp::Method::GET,
     "/admin/apps/42/assignments?user_id=7") == Zum::MgmtOp::assignmentQuery);
-  ZuCheck(Zum::managementOperation(Zhttp::Method::POST,
+  ZuCheckRT(Zum::managementOperation(Zhttp::Method::POST,
     "/admin/apps/42/assignments") == Zum::MgmtOp::assignmentAdd);
-  ZuCheck(Zum::managementOperation(Zhttp::Method::PUT,
+  ZuCheckRT(Zum::managementOperation(Zhttp::Method::PUT,
     "/admin/apps/42/assignments/7/roles") == Zum::MgmtOp::assignmentRoles);
-  ZuCheck(Zum::managementOperation(Zhttp::Method::PUT,
+  ZuCheckRT(Zum::managementOperation(Zhttp::Method::PUT,
     "/admin/apps/42/assignments/7/state") == Zum::MgmtOp::assignmentState);
-  ZuCheck(!Zum::managementAllow("/admin/apps/42/memberships"));
-  ZuCheck(Zum::managementOperation(
+  ZuCheckRT(!Zum::managementAllow("/admin/apps/42/memberships"));
+  ZuCheckRT(Zum::managementOperation(
     Zhttp::Method::GET, "/admin/apps/") < 0);
-  ZuCheck(Zum::managementOperation(
+  ZuCheckRT(Zum::managementOperation(
     Zhttp::Method::GET, "/admin//apps") < 0);
-  ZuCheck(Zum::managementOperation(
+  ZuCheckRT(Zum::managementOperation(
     Zhttp::Method::PUT, "/admin/apps/42/state/extra") < 0);
-  ZuCheck(!Zum::managementAllow("/admin/unknown"));
+  ZuCheckRT(!Zum::managementAllow("/admin/unknown"));
 }
 static void jsonContract()
 {

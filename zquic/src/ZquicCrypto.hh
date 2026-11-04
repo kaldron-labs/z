@@ -15,6 +15,7 @@
 #include <zpicotls.h>
 
 #include <zlib/ZmFn.hh>
+#include <zlib/ZiRxStream.hh>
 
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtBuiltin.hh>
@@ -232,6 +233,7 @@ public:
 
   void reset();
   bool sent(uint64_t, ZuBSpan);
+  bool sent(uint64_t, Zi::RxRange);
   bool txPayload(uint64_t, uint64_t, ZuBSpan &) const;
   int writeFramePrefix(uint8_t *, unsigned, unsigned, CryptoDiag * = nullptr);
   int writeFrame(uint8_t *, unsigned, ZuBSpan, CryptoDiag * = nullptr);
@@ -258,13 +260,13 @@ ZuDerive(Delivery,
     ZtArrayHeapMax<MaxBufSize,
       ZtArrayHeapID<"Zquic.CryptoDelivery">>>,
   BuiltinBufSize>));
-ZuDerive(TxData,
-(ZtBuiltin<
-  ZtArray<uint8_t,
-    ZtArrayHeapMax<MaxBufSize,
-      ZtArrayHeapID<"Zquic.CryptoTx">>>,
-  BuiltinBufSize>));
+  struct TxRange {
+    Zi::RxRange data;
+    uint64_t offset;
+  };
+  using TxRanges = ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>;
 
+  bool matches_(uint64_t, ZuBSpan) const;
   void appendDelivery_(const uint8_t *, uint64_t);
   void resumeReadyDequeue_();
 
@@ -272,7 +274,8 @@ ZuDerive(TxData,
   uint64_t		m_rxOffset = 0;
   CryptoRxPQueue	m_rxQueue{0};
   Delivery		m_delivery;
-  TxData		m_txData;
+  TxRanges		m_txRanges;
+  uint64_t		m_txBytes = 0;
   DequeueFn		m_dequeueFn;
   DeliveryFn		m_deliveryFn;
   bool			m_asyncDelivery = false;

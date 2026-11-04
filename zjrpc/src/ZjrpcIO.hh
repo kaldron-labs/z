@@ -17,20 +17,51 @@
 #include <zlib/ZuPrint.hh>
 #include <zlib/ZuTraits.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/Zjrpc.hh>
 
 namespace Zjrpc {
 
-using BatchBuf = ZiIOBufAlloc<ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, "Zjrpc.Batch">;
+using BatchBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Batch">>;
 
-ZuDerive(InputBuf, (ZiIOBufAlloc<
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, "Zjrpc.Input">));
+using InputBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Input">>;
+
+struct InputView : public ZmNHeap<InputView>, public ZiIOBuf {
+  ZmRef<ZiIOBuf> backing;
+
+  friend inline ZuStringT<"Zjrpc.InputView"> ZmNHeapID(InputView *);
+  InputView(Zi::RxRange range) :
+    ZiIOBuf{range.buf->data_() + range.offset, range.length, nullptr, range.length},
+    backing{ZuMv(range.buf)} { }
+  void releaseView_() override { backing = nullptr; }
+  uint64_t memory() const override {
+    return sizeof(InputView) + storageMemory_() + (backing ? backing->memory() : 0);
+  }
+};
 
 template <typename Out>
 class Output {
 public:
   Output(Out &out_, uint64_t max_) : m_out{out_}, m_max{max_} { }
+
+  void fail() { m_overflow = true; }
+  unsigned headRoom() const { return m_out.headRoom(); }
+  unsigned tailRoom() const { return m_out.tailRoom(); }
+  template <typename O = Out>
+  auto allocBuf(unsigned headRoom) -> decltype(ZuDeclVal<O &>().allocBuf(headRoom)) {
+    return m_out.allocBuf(headRoom);
+  }
+  Output &operator <<(ZmRef<ZiIOBuf> buf) {
+    if (failed()) return *this;
+    if (!buf || buf->length > m_max - m_produced) { fail(); return *this; }
+    unsigned length = buf->length;
+    m_out << ZuMv(buf);
+    if (m_out.failed()) { fail(); return *this; }
+    m_produced += length;
+    return *this;
+  }
 
   bool failed() const { return m_overflow || m_out.failed(); }
   explicit operator bool() const { return !failed(); }
@@ -107,38 +138,65 @@ public:
   bool begin(uint64_t length, unsigned max) {
     m_body = nullptr;
     m_max = max;
-    if (length > max) return false;
-    m_body = new InputBuf{};
-    if (length) m_body->alloc(length);
-    return true;
+    m_hint = length <= max ? unsigned(length) : 0;
+    m_active = length <= max;
+    return m_active;
   }
   bool feed(ZuSpan<uint8_t> span) {
-    if (!m_body) return false;
+    if (!m_active) return false;
+    if (!m_body) m_body = new InputBuf{nullptr, 0};
+    if (m_hint && !m_body->ensure(m_hint)) return false;
     unsigned length = m_body->length;
     if (length > m_max || span.length() > m_max - length || !m_body->append(span)) {
       m_body = nullptr;
+      m_active = false;
       return false;
     }
     return true;
   }
-  template <typename Rx>
-  bool body(Rx &rx) {
-    rx.consume([](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
-      [this](ZuSpan<uint8_t> span) { (void)feed(span); });
-    return bool(m_body);
+  bool feed(Zi::RxRange range) {
+    if (!m_active || !range.buf || range.length > m_max - (m_body ? m_body->length : 0)) {
+      reset();
+      return false;
+    }
+    if (!m_body) {
+      m_body = new InputView{ZuMv(range)};
+      return true;
+    }
+    return feed(range.span());
   }
+  template <typename Rx>
+  bool body(Rx &rx) { return body_(rx, 0); }
   const ZmRef<ZiIOBuf> &buffer() const { return m_body; }
   ZmRef<ZiIOBuf> take() { return ZuMv(m_body); }
-  void reset() { m_body = nullptr; }
+  void reset() { m_body = nullptr; m_active = false; }
 
 private:
+  template <typename Rx>
+  auto body_(Rx &rx, int) -> decltype(rx.range(), bool()) {
+    auto range = rx.range();
+    auto length = range.length;
+    bool ok = feed(ZuMv(range));
+    rx.consume([length](ZuSpan<uint8_t>) -> int64_t { return length; },
+      [](ZuSpan<uint8_t>) { });
+    return ok;
+  }
+  template <typename Rx>
+  bool body_(Rx &rx, long) {
+    rx.consume([](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+      [this](ZuSpan<uint8_t> span) { (void)feed(span); });
+    return m_active;
+  }
   ZmRef<ZiIOBuf> m_body;
   unsigned m_max = 0;
+  unsigned m_hint = 0;
+  bool m_active = false;
 };
 
 class BufOutput {
 public:
-  BufOutput(ZiIOBuf &buf_, uint64_t max_) : m_buf{buf_}, m_max{max_} { }
+  BufOutput(ZiIOBuf &buf_, uint64_t max_, unsigned tailRoom = 0) :
+    m_buf{buf_}, m_max{max_}, m_tailRoom{tailRoom} { }
 
   bool failed() const { return m_overflow || m_buf.failed(); }
   explicit operator bool() const { return !failed(); }
@@ -151,7 +209,7 @@ public:
       m_overflow = true;
       return *this;
     }
-    if (!m_buf.append(value)) m_overflow = true;
+    if (!reserve_(offset + length) || !m_buf.append(value)) m_overflow = true;
     return *this;
   }
 
@@ -189,7 +247,7 @@ private:
 	m_overflow = true;
 	return *this;
       }
-      auto data = m_buf.ensure(offset + length);
+      auto data = reserve_(offset + length);
       if (ZuUnlikely(!data)) {
 	m_overflow = true;
 	return *this;
@@ -200,10 +258,55 @@ private:
     }
   }
 
+  uint8_t *reserve_(unsigned length) {
+    if (uint64_t(length) + m_tailRoom > UINT32_MAX) return nullptr;
+    return m_buf.ensure(length + m_tailRoom);
+  }
   ZiIOBuf	&m_buf;
   uint64_t	m_max;
+  unsigned	m_tailRoom;
   bool		m_overflow = false;
 };
+
+struct CountOutput {
+  uint64_t length = 0;
+
+  CountOutput &operator <<(ZuBSpan value) {
+    length += value.length();
+    return *this;
+  }
+
+  template <typename P,
+    typename = ZuIfT<
+      (ZuTraits<P>::IsPrimitive && ZuTraits<P>::IsReal) ||
+      (ZuPrint<P>::OK && !ZuPrint<P>::String)>>
+  CountOutput &operator <<(const P &value) {
+    if constexpr (ZuEquiv<P, char>{}) ++length;
+    else if constexpr (ZuTraits<P>::IsPrimitive && ZuTraits<P>::IsReal)
+      *this << ZuBoxed(value);
+    else if constexpr (ZuPrint<P>::Delegate) ZuPrint<P>::print(*this, value);
+    else length += ZuPrint<P>::length(value);
+    return *this;
+  }
+  bool failed() const { return false; }
+  bool flush() { return true; }
+};
+
+// Network output reserves its unpublished final allocation. Ordinary file/test
+// sinks serialize directly into the storage already owned by that sink.
+template <typename S, typename Write>
+auto writeOwned(S &out, unsigned max, Write &&write, int) ->
+  decltype(out.allocBuf(out.headRoom()), void())
+{
+  auto buf = out.allocBuf(out.headRoom());
+  if (!buf) { out.fail(); return; }
+  BufOutput wire{*buf, max, out.tailRoom()};
+  write(wire);
+  if (!wire) { out.fail(); return; }
+  out << ZuMv(buf);
+}
+template <typename S, typename Write>
+void writeOwned(S &out, unsigned, Write &&write, long) { write(out); }
 
 } // Zjrpc
 

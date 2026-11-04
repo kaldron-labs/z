@@ -290,60 +290,60 @@ struct SendHarness : public Zjrpc::Caller<SendHarness, ZuTypeList<Echo>> {
 
 static void sendPostsTest()
 {
-  ZuTestScope(sendPosts);
+  ZuTestScopeRT(sendPosts);
   SendHarness sender;
-  ZuCheck(sender.notify<Echo>(Body{1}));
-  ZuCheck(sender.notify<Echo>(Body{2}));
+  ZuCheckRT(sender.notify<Echo>(Body{1}));
+  ZuCheckRT(sender.notify<Echo>(Body{2}));
   for (unsigned i = 0; i < 8; ++i)
-    ZuCheck(!sender.notify<Echo>(Body{3}));
-  ZuCheck(!sender.sent && sender.posts.count_() == 2);
+    ZuCheckRT(!sender.notify<Echo>(Body{3}));
+  ZuCheckRT(!sender.sent && sender.posts.count_() == 2);
   sender.owner = true;
-  ZuCheck(sender.notify<Echo>(Body{4}));
+  ZuCheckRT(sender.notify<Echo>(Body{4}));
   sender.owner = false;
-  ZuCheck(sender.sent == 1 && sender.posts.count_() == 2);
-  ZuCheck(sender.turn());
-  ZuCheck(sender.notify<Echo>(Body{5}));
+  ZuCheckRT(sender.sent == 1 && sender.posts.count_() == 2);
+  ZuCheckRT(sender.turn());
+  ZuCheckRT(sender.notify<Echo>(Body{5}));
   while (sender.turn()) { }
-  ZuCheck(sender.sent == 4 && !sender.failed);
+  ZuCheckRT(sender.sent == 4 && !sender.failed);
   sender.accept = false;
-  ZuCheck(!sender.notify<Echo>(Body{6}));
+  ZuCheckRT(!sender.notify<Echo>(Body{6}));
   sender.accept = true;
-  ZuCheck(sender.notify<Echo>(Body{7}));
-  ZuCheck(sender.notify<Echo>(Body{8}));
+  ZuCheckRT(sender.notify<Echo>(Body{7}));
+  ZuCheckRT(sender.notify<Echo>(Body{8}));
   sender.live = false;
   while (sender.turn()) { }
   sender.live = true;
-  ZuCheck(sender.notify<Echo>(Body{9}));
-  ZuCheck(sender.notify<Echo>(Body{10}));
+  ZuCheckRT(sender.notify<Echo>(Body{9}));
+  ZuCheckRT(sender.notify<Echo>(Body{10}));
   while (sender.turn()) { }
-  ZuCheck(sender.sent == 6 && !sender.failed);
+  ZuCheckRT(sender.sent == 6 && !sender.failed);
 
   // An admitted caller has not yet posted its work when close registers.
   // Its final credit must notify once, with no readiness-only queued turns.
-  ZuCheck(sender.hold());
+  ZuCheckRT(sender.hold());
   unsigned ready = 0;
-  ZuCheck(!sender.close([&ready]() { ++ready; }));
-  ZuCheck(sender.waiting() && !sender.posts.count_());
-  ZuCheck(!sender.hold());
+  ZuCheckRT(!sender.close([&ready]() { ++ready; }));
+  ZuCheckRT(sender.waiting() && !sender.posts.count_());
+  ZuCheckRT(!sender.hold());
   sender.release();
-  ZuCheck(sender.posts.count_() == 1 && !ready);
-  ZuCheck(!sender.close([&ready]() { ready += 100; }));
-  ZuCheck(sender.waiting() && sender.posts.count_() == 1);
-  ZuCheck(sender.turn());
-  ZuCheck(ready == 1 && !sender.waiting() && !sender.posts.count_());
-  ZuCheck(sender.close([&ready]() { ++ready; }));
-  ZuCheck(ready == 1);
+  ZuCheckRT(sender.posts.count_() == 1 && !ready);
+  ZuCheckRT(!sender.close([&ready]() { ready += 100; }));
+  ZuCheckRT(sender.waiting() && sender.posts.count_() == 1);
+  ZuCheckRT(sender.turn());
+  ZuCheckRT(ready == 1 && !sender.waiting() && !sender.posts.count_());
+  ZuCheckRT(sender.close([&ready]() { ++ready; }));
+  ZuCheckRT(ready == 1);
 
   // A credit returned before registration needs no notification at all.
-  ZuCheck(sender.reopen() && sender.hold());
+  ZuCheckRT(sender.reopen() && sender.hold());
   sender.release();
-  ZuCheck(sender.close([&ready]() { ++ready; }));
-  ZuCheck(ready == 1 && !sender.posts.count_());
+  ZuCheckRT(sender.close([&ready]() { ++ready; }));
+  ZuCheckRT(ready == 1 && !sender.posts.count_());
 }
 
 static void deferredCloseTest()
 {
-  ZuTestScope(deferredClose);
+  ZuTestScopeRT(deferredClose);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
     .thread(1, [](auto &thread) { thread.isolated(1); })};
   auto responder = new DeferredResponder{};
@@ -355,18 +355,18 @@ static void deferredCloseTest()
     responder->close(1);
     delete responder;
   }, 1);
-  ZuCheck(token->complete(Zjrpc::Reply<OK>{Body{7}}));
-  ZuCheck(!token->live());
-  ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{8}}));
+  ZuCheckRT(token->complete(Zjrpc::Reply<OK>{Body{7}}));
+  ZuCheckRT(!token->live());
+  ZuCheckRT(!token->complete(Zjrpc::Reply<OK>{Body{8}}));
   for (unsigned i = 0; i < 8; ++i)
-    ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{9}}));
+    ZuCheckRT(!token->complete(Zjrpc::Reply<OK>{Body{9}}));
   ZmSemaphore drained;
   scheduler.run([&drained]() { drained.post(); }, 1);
-  ZuCheck(scheduler.start(), (return));
+  ZuCheckRT(scheduler.start(), (return));
   drained.wait();
-  ZuCheck(!token->live());
-  ZuCheck(!token->complete(Zjrpc::Reply<OK>{Body{8}}));
-  ZuCheck(scheduler.stop());
+  ZuCheckRT(!token->live());
+  ZuCheckRT(!token->complete(Zjrpc::Reply<OK>{Body{8}}));
+  ZuCheckRT(scheduler.stop());
 }
 
 int main(int argc, char **argv)

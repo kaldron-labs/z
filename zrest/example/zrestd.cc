@@ -36,6 +36,8 @@
 #include <zlib/ZiHeapTune.hh>
 #include <zlib/ZiLog.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestServer.hh>
 
@@ -1694,6 +1696,7 @@ void App::finish_()
 static ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })

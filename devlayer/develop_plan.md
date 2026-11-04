@@ -19,8 +19,8 @@ IMPORTANT
 - Read `requirements.new.md` in full
 - Use web search as required to further research the requirements
 - Document how what IS will change to what WILL BE
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
-- Read and align with `GUIDELINES.md`
+- Read `AGENTS.md` and `docs/CODEBASE.md` to understand the existing codebase
+- Read and align with `docs/GUIDELINES.md`
 - For each requirement, evaluate its complexity and feasibility, specifically:
   - Use web search to research how comparable features were designed and implemented in comparable open source software
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack

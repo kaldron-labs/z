@@ -1,0 +1,35 @@
+# Opt-in exceptions for Memcheck 3.26.0's io_uring provided-buffer tracking.
+# The kernel writes heap-backed UDP buffers, but their validity bits remain
+# undefined after a RECVMSG multishot completion. A standalone comparison with
+# recvmsg confirms correct packet bytes and missing shadow updates. Tracking
+# origins in ZiMxLoopTest identifies the ordinary overflow allocation supplied
+# by URing::replenish after the mapped receive pool is exhausted.
+# Limit suppression to the observed address/TOS reads and retained-payload
+# comparison. Revalidate after compiler/tool changes. These stack matches cannot
+# distinguish another undefined-value cause at the same sites; invalid accesses,
+# allocation errors and leaks remain enabled. See zi/test/README.md.
+{
+   uring-provided-udp-address
+   Memcheck:Cond
+   fun:memmove
+   fun:_ZN12ZiConnection13uringReceivedE*
+   fun:_ZN2Zi5URing7serviceERj
+   fun:_ZN2Zi9URingLoop3runEv
+}
+{
+   uring-provided-udp-tos
+   Memcheck:Cond
+   fun:getTOS
+   fun:_ZN12ZiConnection13uringReceivedE*
+   fun:_ZN2Zi5URing7serviceERj
+   fun:_ZN2Zi9URingLoop3runEv
+}
+{
+   uring-provided-udp-retained-payload
+   Memcheck:Cond
+   fun:operator()
+   fun:operator()
+   fun:_ZZN9ZmRingFn_*15testUdpRetainedEvE3$_3*
+   fun:invoke<>
+   fun:_ZN11ZmScheduler4workEv
+}

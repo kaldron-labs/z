@@ -91,7 +91,7 @@ void testSpliceCoverage()
     ZtString<> s = "abcdef";
     ZtString<> removed;
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 2, 2);
     ZuCheck(removed == "cd");
     ZuCheck(s == "abef");
@@ -116,7 +116,7 @@ void testSpliceCoverage()
     ZtString<> removed;
     ZtString<> repl = "12";
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 1, 3, repl);
     ZuCheck(removed == "bcd");
     ZuCheck(s == "a12ef");
@@ -139,7 +139,7 @@ void testSpliceCoverage()
     ZtString<> removed;
     const char *repl = "Q";
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 1, 2, repl);
     ZuCheck(removed == "bc");
     ZuCheck(s == "aQdef");
@@ -159,7 +159,7 @@ void testSpliceCoverage()
     ZtString<> s = "abcdef";
     ZtString<> removed;
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 2, 2, repl);
     ZuCheck(removed == "cd");
     ZuCheck(s == "abPef");
@@ -177,7 +177,7 @@ void testSpliceCoverage()
     ZtString<> removed;
     ZtWString<> repl = L"R";
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 2, 2, repl);
     ZuCheck(removed == "cd");
     ZuCheck(s == "abRef");
@@ -195,7 +195,7 @@ void testSpliceCoverage()
     ZtString<> removed;
     wchar_t repl = L'K';
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 2, 2, repl);
     ZuCheck(removed == "cd");
     ZuCheck(s == "abKef");
@@ -206,7 +206,7 @@ void testSpliceCoverage()
     ZtString<> s = "ab";
     ZtString<> removed;
     s.splice([&removed](ZuSpan<char> span) {
-      removed = ZuSpan<const char>(span.data(), span.length());
+      removed = span;
     }, 5, 3, "XY");
     ZuCheck(!removed);
     ZuCheck(s == "ab   XY");

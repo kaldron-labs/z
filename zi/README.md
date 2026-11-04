@@ -46,6 +46,93 @@ than the socket-only IOCP path. Follow its asynchronous start/stop result
 callbacks. [ZiEventLoopTest](test/ZiEventLoopTest.cc) and
 [ZiMxLoopTest](test/ZiMxLoopTest.cc) exercise the two interfaces.
 
+## Common I/O object model
+
+Zi provides the foundational I/O framework. Protocol implementations built on
+it are required to adopt the following generic object model consistently,
+including its client/server ownership and lifetime relationships. The names
+`Hub`, `Link`, `Pool` and `Cxn` describe roles shared across protocols.
+
+The framework supplies the common hub, link and pool interfaces as `Ztc::Hub`,
+`Ztc::Link` and `Ztc::Pool`, declared in Zi's `ZtcHub.hh`, `ZtcLink.hh` and
+`ZtcPool.hh`. Socket transport is provided by `ZiMultiplex` and `ZiConnection`;
+protocol types implement the model on that foundation. The model follows
+verbatim.
+
+### Z I/O generic object model
+
+- Client-side:
+  - `Hub`:
+    - owns `Link`s and `Pool`s
+    - explicitly configured
+    - can be started/stopped under app control
+    - long living, typically the same lifetime as the process
+  - `Link`:
+    - explicitly instantiated by the app
+    - used as an explicitly selected outbound route
+    - specifies destination
+    - long living, typically the same lifetime as the process
+    - encapsulates application message processing
+    - sometimes termed "line" or "session" in other frameworks
+  - `Pool`:
+    - load-balancing group of `Link`s
+  - `Cxn`:
+    - instantiated by the transport when the app starts the `Link`, causing a `connect`
+    - owned by a `Link`
+    - transient and can be short-lived
+    - typically automatically re-instantiated via reconnection under `Link`/`Hub` control
+    - encapsulates transport state
+- Server-side:
+  - `Hub`:
+    - keeps track of `Link`s
+    - explicitly configured
+    - can be started/stopped under app control
+    - long living, typically the same lifetime as the process
+  - `Pool`: unused on server-side
+  - `Link`:
+    - instantiated on-demand when incoming connections are accepted
+    - encapsulates application message processing
+    - is constructed with origin, and often enriched with identity following auth
+    - the same lifetime as the incoming connection
+    - sometimes termed "line" or "session" in other frameworks
+  - `Cxn`:
+    - instantiated by the transport once the app calls `listen` and connections are accepted
+    - owns the `Link`
+    - transient and can be short-lived
+    - encapsulates transport state
+
+### Mapping the model to Zi and protocol types
+
+| Model name | Framework type | Protocol implementation |
+| --- | --- | --- |
+| `Hub` | [`Ztc::Hub`](src/ZtcHub.hh) supplies common control, link/pool enumeration and telemetry. | A protocol hub implements lifecycle and ownership; for TCP, `Ztcp::Hub<App>` underlies `Ztcp::Client<App>` and `Ztcp::Server<App>`. |
+| `Link` | [`Ztc::Link`](src/ZtcLink.hh) supplies common up/down control and telemetry. | A protocol link carries application processing and routing state; TCP uses `Ztcp::CliLink` and `Ztcp::SrvLink`. |
+| `Pool` | [`Ztc::Pool`](src/ZtcPool.hh) supplies the common link-pool telemetry and queue enumeration interface. | A client protocol pool implements grouping and load balancing of outbound links. |
+| `Cxn` | [`ZiConnection`](src/ZiMultiplex.hh) supplies socket transport state, receive/send operations and connection callbacks. | A protocol connection wrapper binds transport to a link; TCP uses `Ztcp::CliCxn` and `Ztcp::SrvCxn`. |
+
+`ZiMultiplex` supplies the scheduler and socket I/O runtime used by protocol
+hubs. A hub uses it to connect or listen; the multiplexer is a separate runtime
+object from the model's `Hub`. `ZiCxnInfo` supplies connection metadata,
+including local and remote addresses. At the socket API boundary, a
+`ZiConnectFn` completion callback returns the concrete `ZiConnection` subclass
+for an outgoing connection or an accepted incoming connection. This is where
+the protocol constructs the model's transport connection and, on acceptance,
+its server link.
+
+The ownership distinction in the model is explicit in
+[`Ztcp.hh`](../ztcp/src/Ztcp.hh): a client link holds a `ZmRef<Cxn>` and its
+`Ztcp::CliCxn` holds a raw link pointer, allowing the link to survive replacement
+connections. A server link holds a raw connection pointer and its
+`Ztcp::SrvCxn` holds a `ZmRef<Link>`, tying the link to the accepted connection.
+Other protocols must preserve these model relationships in their own types.
+See the [Ztcp guide](../ztcp/README.md) for complete client/server examples.
+
+The model's `Pool` groups links for outbound routing. The receive/transmit buffer
+pools described below allocate I/O storage and serve a different purpose.
+Protocol-specific transport machinery must retain the same distinction between
+application links and transient transport connections, even when a logical
+connection does not correspond one-to-one with a socket.
+
 ## Buffers and streams
 
 `ZiIOBuf` provides pooled, reference-counted I/O storage. Configure the pool for
@@ -79,13 +166,14 @@ Build-time defaults remain independently overridable through
 `ZiIOBuf_DefltRxRingSize` and `ZiIOBuf_DefltTxRingSize`. Heap tuning controls
 buffer descriptors and ordinary backing; mapped payload storage follows these
 allocator counts and geometry.
-The [workload sizing inventory](test/POOL_SIZING.md) records the policies used
+The [workload sizing inventory](test/README.md#network-buffer-pool-sizing-in-workloads) records the policies used
 by protocol tests, interoperability runners and benchmarks.
 `ZiRx`/`ZiTx` and `ZiRxStream`/`ZiTxStream` manage receive/transmit flow; stream
 parsers must handle fragmented input, while writers should flush at deliberate
 message boundaries. A span into a buffer is only a view, not an ownership token.
 
-Use `ZiIOContext` for low-level operation context and callback integration.
+Use `ZiRxContext` and `ZiTxContext` for low-level receive and transmit
+callbacks, respectively. Both are defined in `ZiIOContext.hh`.
 Transport-specific buffer allocators in Ztcp/Ztls reuse this infrastructure.
 Avoid copying whole payloads into queued lambdas; pass buffer references and
 small fixed metadata instead.

@@ -86,7 +86,7 @@ enum {
   NameMax = 255,	// NTFS & FAT limit
   NVecMax = 2048	// Undocumented system-wide limit
 };
-ZuInline constexpr bool uring() { return false };
+ZuInline constexpr bool uring() { return false; }
 #endif
 
 enum {

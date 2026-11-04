@@ -33,6 +33,30 @@ ZfStruct(, (SignedObject, JSON),
 
 struct BodySink {
   TestString data;
+  ZmRef<ZiIOBuf> allocated;
+  ZmRef<ZiIOBuf> submitted;
+  unsigned headRoom() const { return 0; }
+  unsigned tailRoom() const { return 0; }
+  unsigned maxSize() const { return UINT_MAX; }
+  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+    return head <= buf.skip && tail <= buf.avail() &&
+      uint64_t(buf.length) + head + tail <= maxSize();
+  }
+  ZmRef<ZiIOBuf> allocBuf(unsigned head) {
+    allocated = new Zrest::InputBuf{nullptr, 0};
+    allocated->skip = head;
+    return allocated;
+  }
+  BodySink &operator <<(ZmRef<ZiIOBuf> value) {
+    submitted = ZuMv(value);
+    data << submitted->cspan();
+    return *this;
+  }
+  bool appendRange(Zi::RxRange range) {
+    data << range.cspan();
+    submitted = ZuMv(range.buf);
+    return true;
+  }
   template <typename T> BodySink &operator <<(T &&value) {
     data << ZuFwd<T>(value);
     return *this;
@@ -260,7 +284,19 @@ static void endpointHandoffTest()
 }
 
 struct FragmentRx {
+  ZmRef<ZiIOBuf> owner;
   ZuSpan<uint8_t> data;
+
+  FragmentRx(ZuSpan<uint8_t> bytes) {
+    owner = new Zrest::InputBuf{nullptr, 0};
+    owner->append(bytes);
+    data = owner->span();
+  }
+  unsigned length() const { return data.length(); }
+  void advance(unsigned n) { data.offset(n); }
+  template <typename L> int64_t eachRange(unsigned n, L &&l) {
+    return l(Zi::RxRange{owner, unsigned(data.data() - owner->data()), n});
+  }
 
   template <typename Check, typename Consume>
   int64_t consume(Check &&check, Consume &&consume) {
@@ -276,7 +312,7 @@ struct FragmentRx {
 
 static FragmentRx fragment(TestString &data)
 {
-  return {ZuSpan<uint8_t>{data.data(), data.length()}};
+  return {ZuSpan<uint8_t>{data}};
 }
 struct ExactReq : public Zrest::ReqParser<ExactReq, RawObject> {
   using Path = ZuStringT<"/authorize">;
@@ -850,7 +886,7 @@ ZrestCatalogImpl(ExactCatalog)
 
 static void exactPathTest()
 {
-  ZuTestScope(exactPath);
+  ZuTestScopeRT(exactPath);
   using Parser = Zrest::MReqParser<ExactCatalog>;
   auto match = [](ZuCSpan path) {
     unsigned constructions = RawObject::constructions;
@@ -861,15 +897,15 @@ static void exactPathTest()
     target.path = data;
     bool matched = parser.operation(Zhttp::Method::GET, target);
     if (matched && path.find<"/authorize">() == 0)
-      ZuCheck(RawObject::constructions == constructions + 1);
+      ZuCheckRT(RawObject::constructions == constructions + 1);
     return matched;
   };
-  ZuCheck(match("/authorize"));
-  ZuCheck(match("/authorize?client_id=x"));
-  ZuCheck(!match("/authorize?client_id=long"));
-  ZuCheck(!match("/authorize/extra"));
-  ZuCheck(match("/.well-known/oauth-authorization-server"));
-  ZuCheck(!match("/.well-known/oauth-authorization-server?x=y"));
+  ZuCheckRT(match("/authorize"));
+  ZuCheckRT(match("/authorize?client_id=x"));
+  ZuCheckRT(!match("/authorize?client_id=long"));
+  ZuCheckRT(!match("/authorize/extra"));
+  ZuCheckRT(match("/.well-known/oauth-authorization-server"));
+  ZuCheckRT(!match("/.well-known/oauth-authorization-server?x=y"));
 }
 
 struct ResponseA : public Zrest::ResBuilder<ResponseA, TestObject> {
@@ -929,40 +965,40 @@ static void completionClaimTest()
 
 static void sseSendPostsTest()
 {
-  ZuTestScope(sseSendPosts);
+  ZuTestScopeRT(sseSendPosts);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
     .thread(1, [](auto &thread) { thread.isolated(1); })};
   Zrest::Limits limits;
   limits.maxQueue = 2;
   ZmRef<Zrest::SSEProducer> producer =
     new Zrest::SSEProducer{&scheduler, 1, limits};
-  ZuCheck(producer->emit("one"));
-  ZuCheck(producer->emit("two"));
+  ZuCheckRT(producer->emit("one"));
+  ZuCheckRT(producer->emit("two"));
   for (unsigned i = 0; i < 8; ++i)
-    ZuCheck(!producer->emit("refused"));
-  ZuCheck(producer->queued() == 2 && !producer->failed());
+    ZuCheckRT(!producer->emit("refused"));
+  ZuCheckRT(producer->queued() == 2 && !producer->failed());
   BodySink sink;
   ZmSemaphore drained;
   scheduler.run([producer, &sink, &drained]() {
     producer->start([&sink](auto write) { write(sink); return true; });
     drained.post();
   }, 1);
-  ZuCheck(scheduler.start(), (return));
+  ZuCheckRT(scheduler.start(), (return));
   drained.wait();
-  ZuCheck(!producer->queued() && !producer->failed());
-  ZuCheck(sink.data == "data: one\n\ndata: two\n\n");
+  ZuCheckRT(!producer->queued() && !producer->failed());
+  ZuCheckRT(sink.data == "data: one\n\ndata: two\n\n");
   ZmSemaphore held, release;
   scheduler.run([&held, &release]() { held.post(); release.wait(); }, 1);
   held.wait();
-  ZuCheck(producer->emit("three"));
+  ZuCheckRT(producer->emit("three"));
   producer->close();
   producer->close();
-  ZuCheck(!producer->emit("closed"));
+  ZuCheckRT(!producer->emit("closed"));
   scheduler.run([&drained]() { drained.post(); }, 1);
   release.post();
   drained.wait();
-  ZuCheck(!producer->queued() && !producer->emit("closed"));
-  ZuCheck(scheduler.stop());
+  ZuCheckRT(!producer->queued() && !producer->emit("closed"));
+  ZuCheckRT(scheduler.stop());
 }
 
 struct ResponseWork : public ZmObject {
@@ -1209,11 +1245,13 @@ static void signedBodyTest()
   ZuTestScope(signedBody);
   SignedReq request;
   auto requestBody = signedBody(request);
+  ZuCheck(requestBody.allocated && requestBody.submitted == requestBody.allocated);
   ZuCheck(request.signedBody == "{\"value\":\"value\"}");
   ZuCheck(requestBody.data ==
     "{\"body\":{\"value\":\"value\"},\"signed\":true}");
   SignedRes response;
   auto responseBody = signedBody(response);
+  ZuCheck(responseBody.allocated && responseBody.submitted == responseBody.allocated);
   ZuCheck(response.signedBody == "{\"value\":\"value\"}");
   ZuCheck(responseBody.data ==
     "{\"body\":{\"value\":\"value\"},\"signed\":true}");
@@ -1407,10 +1445,95 @@ static void signatureQueryTest()
   ZuCheck(!authQueryReceive(unsignedWire));
 }
 
+static void inputRangesTest()
+{
+  ZuTestScope(inputRanges);
+  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node, 32, 512,
+    ZuStringT<"Zrest.InputRangeTest">>;
+  ZmRef<ZiRxQueue::Node> original = new Alloc{nullptr, 0};
+  *original << "xxbodytail";
+  auto data = original->span().data();
+  ZiRxStream<ZiRxQueue> rx;
+  rx.push(Zi::RxRange{original, 2, 4});
+  Zrest::Input input;
+  ZuCheck(input.begin(4, 32) && input.body(rx) && !rx);
+  auto retained = input.take();
+  ZuCheck(retained && retained->data() == data + 2 && retained->cspan() == "body");
+  ZuCheck(original->skip == 0 && original->length == 10);
+  auto memory = retained->memory();
+  ZuCheck(retained->ensure(128) && retained->jumbo() && retained->cspan() == "body");
+  ZuCheck(original->refCount() == 1 && memory >= original->memory());
+  retained = nullptr;
+  input.reset();
+  ZuCheck(input.begin(8, 32));
+  rx.push(Zi::RxRange{original, 2, 4});
+  ZuCheck(input.body(rx));
+  rx.push(Zi::RxRange{original, 6, 4});
+  ZuCheck(input.body(rx));
+  retained = input.take();
+  ZuCheck(retained->data() == data + 2 && retained->cspan() == "bodytail");
+  input.reset();
+  ZuCheck(input.begin(8, 32));
+  uint8_t head[] = {'b', 'o', 'd', 'y'};
+  uint8_t tail[] = {'t', 'a', 'i', 'l'};
+  ZuCheck(input.feed(ZuSpan<uint8_t>{head, sizeof(head)}) &&
+    input.feed(ZuSpan<uint8_t>{tail, sizeof(tail)}));
+  head[0] = tail[0] = 'x';
+  ZuCheck(input.take()->cspan() == "bodytail");
+  input.reset();
+  ZuCheck(input.begin(0, 32));
+  rx.push(Zi::RxRange{original, 2, 4});
+  ZuCheck(input.body(rx));
+  ZmRef<ZiRxQueue::Node> fragment = new Alloc{nullptr, 0};
+  *fragment << "tail";
+  rx.push(fragment);
+  ZuCheck(input.body(rx));
+  retained = input.take();
+  ZuCheck(retained->data() != data + 2 && retained->cspan() == "bodytail");
+}
+
+struct OwnedRaw : public ZmNHeap<OwnedRaw>, public ZmObject {
+  friend inline ZuStringT<"Zrest.Test.OwnedRaw"> ZmNHeapID(OwnedRaw *);
+  TestString data;
+  OwnedRaw &operator =(ZuSpan<uint8_t> span) { data = span; return *this; }
+};
+struct OwnedReq : public Zrest::ReqParser<OwnedReq, OwnedRaw> {
+  enum { Body = Zrest::BodyPolicy::Raw };
+};
+struct OwnedRes : public Zrest::ResParser<OwnedRes, OwnedRaw> {
+  enum { Body = Zrest::BodyPolicy::Raw };
+};
+template <typename Parser>
+static void fragmentedFixedBody()
+{
+  ZuTestScopeRT(fragmentedFixedBody);
+  Parser parser;
+  parser.init();
+  parser.bodyMax(4);
+  ZuCheckRT(parser.bodyInfo(Zhttp::BodyType::Fixed, 4));
+  using Alloc = Zi::IOBufAlloc<ZiRxQueue::Node, 32, 512,
+    ZuStringT<"Zrest.Test.FixedBody">>;
+  Zhttp::Input rx;
+  ZmRef<ZiRxQueue::Node> first = new Alloc{nullptr, 0};
+  *first << "ab";
+  rx.push(first);
+  ZuCheckRT(parser.body(rx));
+  ZuCheckRT(rx.length() == 2 && !parser.bodySeen);
+  ZmRef<ZiRxQueue::Node> second = new Alloc{nullptr, 0};
+  *second << "cd";
+  rx.push(second);
+  ZuCheckRT(parser.body(rx));
+  ZuCheckRT(!rx && parser.bodySeen);
+  ZuCheckRT(parser.finishBody());
+  ZuCheckRT(parser.object->data == "abcd");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(fragmentedFixedBody<OwnedReq>);
+  ZuTestCall(fragmentedFixedBody<OwnedRes>);
   ZuTestCall(zeroBodyTest);
   ZuTestCall(fixedBodyTest);
   ZuTestCall(streamedBodyTest);
@@ -1425,6 +1548,7 @@ int main(int argc, char **argv)
   ZuTestCall(skipPathTest);
   ZuTestCall(rootPathTest);
   ZuTestCall(signedBodyTest);
+  ZuTestCall(inputRangesTest);
   ZuTestCall(signatureBodyTest);
   ZuTestCall(signatureQueryTest);
   return 0;

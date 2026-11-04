@@ -6,6 +6,8 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZrestClient.hh>
 #include <zlib/ZrestServer.hh>
 
@@ -765,7 +767,9 @@ struct StreamResFixture {
 
 ZiMxParams mxParams()
 {
-  return ZiMxParams().scheduler([](auto &scheduler) {
+  return ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) {
 	thread.name("rx");
@@ -993,13 +997,10 @@ void multiplexed(bool h3)
     ZuCheck(bodyResult.rawOK);
     ZuCheck(bodyResult.jsonAccepted);
     ZuCheck(bodyResult.jsonOK);
-    if (h3) {
-      ZuCheck(h3Raw.run(hub, port, cert, false));
-      ZuCheck(h3JSON.run(hub, port, cert, true));
-    } else {
-      ZuCheck(h2Raw.run(hub, port, cert, false));
-      ZuCheck(h2JSON.run(hub, port, cert, true));
-    }
+    ZuCheck(h3 ? h3Raw.run(hub, port, cert, false) :
+      h2Raw.run(hub, port, cert, false));
+    ZuCheck(h3 ? h3JSON.run(hub, port, cert, true) :
+      h2JSON.run(hub, port, cert, true));
   }
   if (clientUp) {
     auto responseResult = responseStream.run(hub,

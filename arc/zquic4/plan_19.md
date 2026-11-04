@@ -9,7 +9,7 @@ Preconditions: plans 1 through 18 complete, especially plan 4 congestion runtime
 `zquic` already has `NewReno` and a `Pacer` utility appears in flow tests, but runtime pacing and alternate controllers are not integrated.  This plan adds controller selection and scheduling delays without disturbing the established NewReno path.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -71,7 +71,7 @@ New or changed data stores: controller state remains inline; avoid virtual heap 
 - Open question: whether pacing should be per connection or per path; start per connection and revisit for migration/multipath.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

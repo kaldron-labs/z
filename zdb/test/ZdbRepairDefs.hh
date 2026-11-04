@@ -14,6 +14,8 @@
 namespace zdbtest {
 
 struct RepairRow {
+  friend ZuUnsigned<1024> ZdbBufSize(RepairRow *);
+  friend ZuStringT<"Zdb.Test.Repair"> ZdbBufHeapID(RepairRow *);
   uint64_t id;
   ZtArray<float> reals;
   ZtArray<ZtString<>> names;

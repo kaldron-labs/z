@@ -122,7 +122,7 @@ does not itself specify this post-quantum recipient profile.
   OpenSSL call appears in the public KEM types. It does **not** claim age
   interoperability until zpicotls HPKE (or the equivalent composition) and `ZtlsAge`
   stanza handling are complete.
-- Follow `GUIDELINES.md` for direct includes, hard tabs, concrete heap
+- Follow `docs/GUIDELINES.md` for direct includes, hard tabs, concrete heap
   identity, fixed-size contract-bound primitive arrays, minimal copying,
   and no redundant validation. Use tagged heap-fallback scratch only if
   a larger, non-contract-bound temporary is actually needed.

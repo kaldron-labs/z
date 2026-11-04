@@ -36,7 +36,7 @@ template <int K> struct Contract : Method {
   enum { Kind = K, ReqBorrowed = 1, ResBorrowed = 1 };
 };
 
-using Pool = ZiIOBufAlloc<32, 1U << 20, "Zgrpc.ITest">;
+using Pool = Zi::IOBufAlloc<ZiIOBuf, 32, 1U << 20, ZuStringT<"Zgrpc.ITest">>;
 
 // Component integration before the transport adapter is available. This is
 // deliberately not counted as HTTP or independent-peer qualification.
@@ -58,7 +58,7 @@ template <int K> class Pipe {
 	return false;
       }
       FrameError::T error;
-      ZmRef<ZiIOBuf> initial = new Pool{};
+      ZmRef<ZiIOBuf> initial = new Pool{nullptr, 0};
       initial->skip = 8;
       auto buf = encodeFrame(ZuMv(initial), 4, Default::MaxMessageBytes,
 	message.object(), error);
@@ -164,21 +164,24 @@ public:
     }, Rx);
     ZuCheck(m_scheduler.start(), (return));
     ready.wait();
-    unsigned count = Streamed ? 3 : 1;
-    for (unsigned i = 0; i < count; ++i) {
-      bool admitted = m_call->send(Packet{m_empty ? 0 : i + 1, m_payload});
-      ZuCheck(admitted);
-      if (!admitted) break;
-      m_messageDone.wait();
+    enum { Count = Streamed ? 3 : 1 };
+    {
+      ZuTestRepeat(message, Count);
+      for (unsigned i = 0; i < Count; ++i) {
+	bool admitted = m_call->send(Packet{m_empty ? 0 : i + 1, m_payload});
+	ZuCheck(admitted);
+	if (!admitted) break;
+	m_messageDone.wait();
+      }
     }
     bool ended = m_call->end();
     ZuCheck(ended);
     if (ended) m_endDone.wait();
     ZuCheck(m_scheduler.stop());
     ZuCheck(m_rxOK && m_txOK && m_completions == 1);
-    ZuCheck(m_txDir.count() == count && m_rxDir.count() == count);
+    ZuCheck(m_txDir.count() == Count && m_rxDir.count() == Count);
     ZuCheck(!m_call->live() && !m_call->send(Packet{}) && !m_call->end());
-    ZuCheck(m_turns >= (m_empty ? 1 : count * 32));
+    ZuCheck(m_turns >= (m_empty ? 1 : Count<<5));
   }
 
 private:

@@ -128,6 +128,10 @@ public:
     auto b = builder<M>();
     return b && b->sendRaw_(bytes);
   }
+  template <typename M> bool sendRaw_(ZmRef<ZiIOBuf> buf, bool writerOwned) {
+    auto b = builder<M>();
+    return b && b->sendRaw_(ZuMv(buf), writerOwned);
+  }
   template <bool R = Response, typename = ZuIfT<!R>> bool end_() {
     return m_active.type() && m_active.dispatch([](auto, auto &b) { return b.end_(); });
   }

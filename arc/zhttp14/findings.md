@@ -1,6 +1,6 @@
 # Pending Diff Audit
 
-The pending diff does not yet pass the `GUIDELINES.md` audit. The findings below
+The pending diff does not yet pass the `docs/GUIDELINES.md` audit. The findings below
 are divided into blockers, amber flags, and categories checked without a
 finding.
 

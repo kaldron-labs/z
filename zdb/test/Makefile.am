@@ -10,7 +10,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	@Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@
-noinst_HEADERS =  ZdbMockStore.hh ZdbTest.hh ZdbRepairTest.hh ZdbRepairDefs.hh ZdbTestCf.hh
+noinst_HEADERS =  ZdbPolicyTable.hh ZdbMockStore.hh ZdbTest.hh ZdbRepairTest.hh ZdbRepairDefs.hh ZdbTestCf.hh
 LDADD = $(top_builddir)/zdb/src/libZdbMem.la \
 	$(top_builddir)/zdb/src/libZdb.la \
 	$(top_builddir)/zv/src/libZv.la \

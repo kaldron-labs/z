@@ -115,7 +115,7 @@ real loopback App snapshot over the public wire. Each later slice expands that
 same path end-to-end: process/network discovery, generic DB discovery,
 subscriptions, live alerts, then persistence/replay. A slice is not handed off
 until its tests pass and every applicable red or amber flag in
-`GUIDELINES.md` has either been repaired or explicitly justified in the code.
+`docs/GUIDELINES.md` has either been repaired or explicitly justified in the code.
 
 The following decisions are fixed:
 
@@ -1402,7 +1402,7 @@ Handoff acceptance:
 - Top-level `make -j8` rebuilds all lower dependencies before
   `make -C zv/test -j8 && make -C zv/test test`; affected Zfb, Zi, Ztcp, and
   Zdb tests then pass.
-- Audit all Phase 1 changes against every `GUIDELINES.md` red/amber flag:
+- Audit all Phase 1 changes against every `docs/GUIDELINES.md` red/amber flag:
   headers/direct includes, tabs/names, anonymous namespace prohibition,
   specific lambda captures (no `[&]`/`[=]`), STL/casts, heap IDs, hidden
   copies, fixed capacities,
@@ -1488,7 +1488,7 @@ Handoff acceptance:
   other objects, without counter adjustment or self-exclusion.
 - Top-level `make -j8` completes before relevant `zm`, `zi`, `ztcp`, and `zv`
   tests, and all pass.
-- Repeat the complete `GUIDELINES.md` red/amber audit for touched modules,
+- Repeat the complete `docs/GUIDELINES.md` red/amber audit for touched modules,
   including approximate-counter posture, pointer callback lifetimes,
   batching/fairness, allocation sites, container heaps, and direct includes.
   Repair all findings before Phase 3.
@@ -1528,7 +1528,7 @@ Handoff acceptance:
   its callback lifetime.
 - Relevant `zdb` and `zv` tests pass with no dependency flowing from `zv` to
   Zdb and no serialization in Zdb; top-level `make -j8` precedes those tests.
-- Run the full `GUIDELINES.md` audit, especially approximate-counter posture,
+- Run the full `docs/GUIDELINES.md` audit, especially approximate-counter posture,
   locks/iterators, raw/ref pointer flags, names, heap IDs, and hidden
   allocations. Repair before Phase 4.
 
@@ -1580,7 +1580,7 @@ Handoff acceptance:
   destroyed worker state.
 - Top-level `make -j8`, subscription/integration tests, and affected lower
   transport tests pass in that order.
-- Run and repair the complete `GUIDELINES.md` audit, emphasizing timer
+- Run and repair the complete `docs/GUIDELINES.md` audit, emphasizing timer
   teardown, batching, captures, mutable ownership, allocation per tick/
   subscriber, intrusive nodes, and deterministic container removal.
 
@@ -1616,7 +1616,7 @@ Handoff acceptance:
 - No sink callback performs file/network/FlatBuffers work or recursively logs.
 - Top-level `make -j8` precedes alert live tests, which pass under repeated
   concurrency runs.
-- Run and repair the full `GUIDELINES.md` audit, with special attention to
+- Run and repair the full `docs/GUIDELINES.md` audit, with special attention to
   short-lived references, long-lived ownership cycles, cross-thread variable
   data, heap identity, lambdas, approximate counters, and blocking.
 
@@ -1657,7 +1657,7 @@ Handoff acceptance:
   has no gap/duplicate, and all replay memory is bounded.
 - Alert persistence tests pass on Linux and Windows/msys2 file paths where
   available, after a top-level `make -j8`.
-- Run and repair the complete `GUIDELINES.md` audit, focusing on file error
+- Run and repair the complete `docs/GUIDELINES.md` audit, focusing on file error
   paths, integer/offset overflow, bounded loops, deletion target precision,
   file/buffer teardown, fixed arrays, and recursive diagnostics.
 
@@ -1669,7 +1669,7 @@ Handoff acceptance:
    duplicate schemas, or dual dispatch.
 2. Verify all new public headers follow the library-header skeleton and contain
    only direct ordered dependencies. Confirm C++ source identifiers remain at
-   or below the authoritative 32-byte `GUIDELINES.md` naming limit; this limit
+   or below the authoritative 32-byte `docs/GUIDELINES.md` naming limit; this limit
    does not apply to telemetry IDs, structured keys, filters, or wire values.
    Confirm every new
    source has the standard modelines/license header and all implementation
@@ -1684,7 +1684,7 @@ Handoff acceptance:
 5. Run clang ASan/LSan and the integration test under
    `libtool exec valgrind --leak-check=full`. Resolve all warnings, leaks,
    use-after-free, queue residue, and generated-code mismatches.
-6. Perform a final line-by-line `GUIDELINES.md` audit across every changed
+6. Perform a final line-by-line `docs/GUIDELINES.md` audit across every changed
    module. Record any intentional amber exception with a measured reason;
    repair every other red/amber finding before release.
 
@@ -2042,7 +2042,7 @@ debuggers and analysis tools; `.libs` binaries are never invoked directly.
   first App has finalized.
 - The clean build/test/analysis matrix passes without warnings, leaks,
   sanitizer defects, deadlocks, test sleeps/polling, or unresolved
-  `GUIDELINES.md` audit flags.
+  `docs/GUIDELINES.md` audit flags.
 
 ## Non-goals
 

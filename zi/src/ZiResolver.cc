@@ -577,20 +577,11 @@ void Main::stopRx_()
 
 void Main::closeSched_()
 {
-  ZmScheduler *sched;
-  {
-    Guard guard(m_lock);
-    ZmAssert_(!m_accepting && !m_up && m_queries.empty_());
-    sched = m_sched;
-    m_sched = nullptr;
-    closeChannel_();
-    m_loop.final();
-  }
-  // Called on this scheduler's control thread after its workers have joined
-  // (or failed startup). Its destructor detaches that last control handle.
-  // Each restart constructs a fresh scheduler, so there is no predecessor
-  // control-thread chain to join after parent completion.
-  delete sched;
+  Guard guard(m_lock);
+  ZmAssert_(!m_accepting && !m_up && m_queries.empty_());
+  closeChannel_();
+  // Keep the stopped scheduler until final(): its control thread may still
+  // be publishing completion callbacks to an external scheduler.
 }
 
 void Main::final_()
@@ -601,8 +592,9 @@ void Main::final_()
   ZmAssert_(!m_sched || m_sched->state() == ZmEngineState::Stopped);
   closeChannel_();
   m_loop.final();
-  // A surviving scheduler was initialized but never started: it has no
-  // control/worker thread handles. Running schedulers retire inside stop.
+  // External finalization joins the stopped control thread and any restart
+  // predecessors before callers can destroy their callback destinations.
+  // Finalization from that control thread uses its existing self-detach.
   auto sched = m_sched;
   m_sched = nullptr;
   m_params.null();

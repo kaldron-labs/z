@@ -197,7 +197,7 @@ void testRetransmitQueue()
 {
   ZuTestScope(testRetransmitQueue);
 
-  ZmRef<ZiIOBuf> buf = new Zquic::StreamTxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> buf = new Zquic::StreamTxBufAlloc<>{nullptr, 0};
   memcpy(buf->data_(), "data", 4);
   buf->length = 4;
 

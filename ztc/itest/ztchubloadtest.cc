@@ -73,19 +73,20 @@ ZfStruct(, (Config, Cf),
   (key,		(Mutable),		String));
 
 using Frame = ZmRef<ZiIOBuf>;
-using Buf = ZiIOBufAlloc<1024, 1U << 16, "Ztc.Load.Frame">;
+using Buf = Zi::IOBufAlloc<ZiIOBuf, 1024, 1U << 16, ZuStringT<"Ztc.Load.Frame">>;
 
 static void send(auto &link, Frame frame)
 {
-  link.txStream([frame = ZuMv(frame)](auto &tx) {
-    tx << ZuBSpan{frame->data(), frame->length};
+  link.txStream([frame = ZuMv(frame)](auto &tx) mutable {
+    auto length = frame->length;
+    tx.appendRange(ZuMv(frame), 0, length);
     tx.flush();
   }, Zws::Opcode::Binary);
 }
 
 static Frame request(ZuCSpan device, uint64_t sub, bool subscribe)
 {
-  Ztc::Builder builder{Frame{new Buf}};
+  Ztc::Builder builder{Frame{new Buf{nullptr, 0}}};
   auto nested = builder.startNested();
   auto body = Zfb::save(builder, Ztc::Request{
     .seqNo = 0, .interval = subscribe ? 1000U : 0U,
@@ -196,7 +197,7 @@ struct App {
       auto publisher = unsigned((sent / routes.length()) % cf->publishers);
       ZtString<> name{"publisher-"};
       name << publisher;
-      Ztc::Builder builder{Frame{new Buf}};
+      Ztc::Builder builder{Frame{new Buf{nullptr, 0}}};
       auto nested = builder.startNested();
       auto id = builder.string(name);
       auto value = Zfb::save(builder, Ztc::AppTelemetry{
@@ -258,7 +259,7 @@ struct App {
   template <typename L> int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary) { fail("opcode"); return -1; }
     auto &frame = link.state().frame;
-    if (!frame) frame = new Buf;
+    if (!frame) frame = new Buf{nullptr, 0};
     frame->length = 0;
     return 1;
   }
@@ -285,7 +286,7 @@ struct App {
       if (!body.get<Ztc::ZfField(Request, subscribe)>()) return 1;
       if (routes.length() >= uint64_t(cf->clients) * cf->subs) { fail("route count"); return -1; }
       routes.push(Route{&link, body.get<Ztc::ZfField(Request, seqNo)>()});
-      Ztc::Builder builder{Frame{new Buf}};
+      Ztc::Builder builder{Frame{new Buf{nullptr, 0}}};
       auto nested = builder.startNested();
       auto ack = Zfb::save(builder,
 	Ztc::Ack{ZuID{"publisher"}, body.get<Ztc::ZfField(Request, seqNo)>(), 1000});
@@ -406,7 +407,7 @@ struct Echo {
   template <typename L> void disconnected(L &, bool) { }
   template <typename L> int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary) return -1;
-    link.state().frame = new Buf;
+    link.state().frame = new Buf{nullptr, 0};
     return 1;
   }
   template <typename L, typename Rx> int process(L &link, Rx &rx) {
@@ -428,7 +429,15 @@ struct Echo {
 
 static bool runEcho(const Config &cf, const Zws::URI &uri)
 {
+  // Fan-out reserves request/reply and retirement overlap for each active
+  // publisher/subscription across clients; the kernel bounds the shared pool.
+  uint64_t slots = uint64_t(cf.clients) * (cf.publishers + uint64_t(cf.subs)) * 4;
+  if (slots > ZiMxParams::MaxRingSize) slots = ZiMxParams::MaxRingSize;
   ZiMxParams params;
+  params.rxRingSize(unsigned(slots) < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : unsigned(slots))
+    .txRingSize(unsigned(slots) < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : unsigned(slots));
   params.scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i).isolated(true);
@@ -471,7 +480,15 @@ static bool run(const char *path)
     tokens.length() != cf.devices.length())) {
     return false;
   }
+  // Fan-out reserves request/reply and retirement overlap for each active
+  // publisher/subscription across clients; the kernel bounds the shared pool.
+  uint64_t slots = uint64_t(cf.clients) * (cf.publishers + uint64_t(cf.subs)) * 4;
+  if (slots > ZiMxParams::MaxRingSize) slots = ZiMxParams::MaxRingSize;
   ZiMxParams params;
+  params.rxRingSize(unsigned(slots) < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : unsigned(slots))
+    .txRingSize(unsigned(slots) < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : unsigned(slots));
   params.scheduler([](auto &s) {
     s.nThreads(8);
     for (unsigned i = 1; i <= 8; ++i) s.thread(i).isolated(true);

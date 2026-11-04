@@ -3,7 +3,7 @@
 Managed configuration uses `ZtEnum` for closed choices. Wire views retain the
 received bytes: recognizing a configured value and preserving an unsupported
 peer value are separate responsibilities. This follows the enum and string
-rules in [GUIDELINES.md](../GUIDELINES.md).
+rules in [GUIDELINES.md](docs/GUIDELINES.md).
 
 | Domain | Representation and reason |
 | --- | --- |

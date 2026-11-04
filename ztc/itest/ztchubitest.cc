@@ -96,14 +96,14 @@ static void productionInit()
   ZuCheck(hub.init(ZuMv(cf), &mx, ZuMv(http), Zum::Bytes{"secret"},
     "Bearer callback"));
   ZuCheck(hub.state() == ZmEngineState::Stopped);
-  hub.final();
   ZuCheck(mx.stop());
+  hub.final();
 }
 
 // Cardinality and routing only; ztchubloadtest measures the running WSS hub.
 static void routingScale()
 {
-  ZuTestScope(routingScale);
+  ZuTestScopeRT(routingScale);
   auto cf = config();
   cf.maxFrame = 1U << 16;
   cf.controlBytes = 1U << 20;
@@ -116,7 +116,7 @@ static void routingScale()
   cf.schedulerTurnWork = 64;
 
   Ztc::Hubd hub;
-  ZuCheck(hub.init(ZuMv(cf)) && hub.start());
+  ZuCheckRT(hub.init(ZuMv(cf)) && hub.start());
 
   Ztc::HubError::T error = Ztc::HubError::Unauthorized;
   bool agentsOK = true;
@@ -126,15 +126,15 @@ static void routingScale()
     if (!hub.addAgent(1000 + i, device, i + 1, value, error))
       agentsOK = false;
   }
-  ZuCheck(agentsOK);
+  ZuCheckRT(agentsOK);
 
   bool frontEndsOK = true;
   for (unsigned i = 0; i < cf.activeFrontEnds; ++i) {
     auto value = principal(numbered("user-", i), "Request");
     if (!hub.addFrontend(10000 + i, value, Ztc::HubSendFn{
-        [](Ztc::HubFrame) { }})) frontEndsOK = false;
+        [](Ztc::HubPacket, Ztc::HubBuildFn) { }})) frontEndsOK = false;
   }
-  ZuCheck(frontEndsOK);
+  ZuCheckRT(frontEndsOK);
 
   bool routesOK = true;
   for (unsigned i = 0; i < cf.activeFrontEnds && routesOK; ++i)
@@ -147,14 +147,14 @@ static void routingScale()
         break;
       }
     }
-  ZuCheck(routesOK);
+  ZuCheckRT(routesOK);
 
   for (unsigned i = 0; i < cf.activeFrontEnds; ++i)
     for (unsigned j = 0; j < cf.subscriptionsPerFrontEnd; ++j)
-      ZuCheck(hub.removeSubscription(10000 + i, j + 1));
+      ZuCheckRT(hub.removeSubscription(10000 + i, j + 1));
 
-  Ztc::HubFrame frame = new ZiIOBufAlloc<1024, 1U << 30,
-    "Ztc.Hub.Frame">;
+  Ztc::HubFrame frame = new
+    Zi::IOBufAlloc<ZiIOBuf, 1024, 1U << 30, ZuStringT<"Ztc.Hub.Frame">>{nullptr, 0};
   frame->length = 1;
   bool telemetryOK = true;
   uint64_t sent = 0;
@@ -174,7 +174,7 @@ static void routingScale()
       }
       for (unsigned publisher = 0; publisher < cf.publishersPerAgent;
           ++publisher) {
-        if (!hub.sendFrontend(route.frontEndID, Ztc::HubFrame{frame})) {
+        if (!hub.sendFrontend(route.frontEndID, Ztc::HubPacket{frame})) {
           telemetryOK = false;
           break;
         }
@@ -183,9 +183,9 @@ static void routingScale()
       if (!hub.removeSubscription(10000 + i, 100000 + j))
         telemetryOK = false;
     }
-  ZuCheck(telemetryOK && sent == uint64_t(cf.activeFrontEnds) *
+  ZuCheckRT(telemetryOK && sent == uint64_t(cf.activeFrontEnds) *
     cf.subscriptionsPerFrontEnd * cf.publishersPerAgent);
-  ZuCheck(hub.stop());
+  ZuCheckRT(hub.stop());
 }
 
 int main()

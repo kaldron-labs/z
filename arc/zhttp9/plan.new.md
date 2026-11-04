@@ -16,7 +16,7 @@ ownership model.
 
 Research inputs:
 
-- `AGENTS.md`, `GUIDELINES.md`, `CODEBASE.md`, `iosharding.md`, and the current
+- `AGENTS.md`, `docs/GUIDELINES.md`, `docs/CODEBASE.md`, `iosharding.md`, and the current
   `plan.md`.
 - `plan.feedback.md` was checked and does not exist.
 - RFC 9002 confirms that sent-packet tracking and ACK processing are per packet

@@ -205,7 +205,7 @@ COSE/CBOR is completely out of scope.
   `ZtlsKEM.cc` to the library sources, and a
   focused `ztls/test/ZtlsKEMTest.cc` TAP binary to `ztls/test/Makefile.am`.
   Implement the header with direct includes and the standard modelines,
-  copyright, include guard, and `ZtlsLib.hh` preamble from `GUIDELINES.md`.
+  copyright, include guard, and `ZtlsLib.hh` preamble from `docs/GUIDELINES.md`.
   Put non-template OpenSSL work in `ZtlsOpenSSL.cc` and the loader factories
   in `ZtlsKEM.cc`; keep generic `save(S &)` methods in the header.
 - Test generated and seed-imported pairs; public export/import and `mkPK`;
@@ -227,7 +227,7 @@ COSE/CBOR is completely out of scope.
   substitute for fixing the current build. Run the focused TAP test on Linux
   and Windows/MSYS2. Use Valgrind sparingly, as a final Linux leak/corruption
   gate or to diagnose observed corruption.
-- Audit every changed line against `GUIDELINES.md`'s repair procedure and
+- Audit every changed line against `docs/GUIDELINES.md`'s repair procedure and
   flags: direct dependencies; concrete `ZmHeap` type identity; no extra
   dispatch/container/allocation; direct KEM output without copies;
   `ZmScratch` for bounded key/DER intermediates; no pre-zeroing before

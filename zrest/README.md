@@ -6,6 +6,10 @@ server routes. Pass an explicit `Zhttp::Profiles<...>` selection through each
 endpoint; the client pool carries that same selection. `MReqBuilder`, `MResParser`, `MReqParser` and `MResBuilder` remain
 available for direct catalog use.
 
+HTTP/3-capable endpoints bind the multiplexer UDP packet allocator before
+startup, as described in [Zhttp's setup](../zhttp/README.md). The REST endpoint
+does not allocate or resize socket receive packets itself.
+
 ## Calls and replies
 
 `client.call<Req>(pool, requestObject, call)` returns `false` when the call was

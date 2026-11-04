@@ -106,7 +106,7 @@ substrate in `libZhttp`.
 - Do not add concepts, `requires`, virtual protocol interfaces, locks around
   shard violations, polling, or timer-based test completion.
 - No slice starts until the preceding slice satisfies its hand-off criteria,
-  including its concluding `GUIDELINES.md` audit and repairs.
+  including its concluding `docs/GUIDELINES.md` audit and repairs.
 
 ### Build and iteration discipline
 
@@ -156,7 +156,7 @@ substrate in `libZhttp`.
 - No Zhttp application-facing contract mentions `Ztcp`, `Ztls`, `Zquic`, an
   H2/H3 frame, QPACK, HPACK, or native flow-control types.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read the sections on CRTP/detectors, constants, buffer ownership, sharding,
 and teardown.  Audit every new contract and test for concepts, virtual or
@@ -200,7 +200,7 @@ only after this audit is clean.
 - Finalization leaves no tunnel event, callback-scoped view, buffer reference,
   flow-control entry, or logical link.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read the Rx ownership, liveness, intrusive lifetime, buffer-pool, and
 teardown guidance.  Audit H2 event ownership, window accounting, callback
@@ -242,7 +242,7 @@ starts only after this audit is clean.
 - Finalization leaves empty stream registries, flow-control queues, pending Tx
   buffers, timers, and connection/session references.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read compile-time dispatch, discrete branching, QUIC sharding, pooled I/O,
 and lifecycle guidance, plus `zquic/GUIDELINES.md`.  Audit setting dispatch,
@@ -295,7 +295,7 @@ Slice 3 starts only after this audit is clean.
   body buffer or logical stream.
 - Applications never write HTTP framing or name protocol-native stream types.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read Tx sharding, uninitialized destination storage, pooled allocation,
 CRTP defaults, and hot-path guidance.  Audit body-source storage, builder
@@ -349,7 +349,7 @@ Slice 4 starts only after this audit is clean.
   lower-layer transport state.
 - No retry decision reads Tx-owned mutable state directly from Rx.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read async continuations, sharding, liveness, callback captures, owner
 lifetime, and teardown.  Audit every Rx/Tx hand-off, attempt-generation check,
@@ -396,7 +396,7 @@ retry/fallback/cancel tests under the consistent Clang debug build and run
 - Finalization leaves no Rx buffer, view/refill state, parser continuation, or
   link reference.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read Rx stream, scratch-storage, parser control-flow, liveness, and
 teardown guidance.  Audit chunk parsing, decoded-byte counters, scratch
@@ -444,7 +444,7 @@ audit is clean.
 - Finalization leaves empty body-view state, native buffer refs,
   flow-control queues, logical-stream registries, and sessions.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read buffer preservation, lower-layer flow-control ownership, multiplexed
 liveness, template factoring, and teardown guidance, plus
@@ -522,7 +522,7 @@ audit is clean.
 - No callback, refill, borrowed span, cursor, or body buffer survives terminal
   completion.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Re-read application/library boundaries, shard ownership, file I/O, callback
 captures, lifecycle, and dead-code guidance.  Classify every changed
@@ -579,10 +579,10 @@ code; rerun boundary and application tests and run `git diff --check`.  Slice
 - Source scans find no old body-span callback, copying compatibility shim,
   native application stream, or protocol-conditioned application body path.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Perform a complete audit of every file changed by this plan against
-`AGENTS.md`, all of `GUIDELINES.md`, and `zquic/GUIDELINES.md` where
+`AGENTS.md`, all of `docs/GUIDELINES.md`, and `zquic/GUIDELINES.md` where
 applicable.  Inspect allocation/heap IDs, buffer copies, initialization,
 constants, containers, CRTP factoring, branching, Rx/Tx ownership, captures,
 liveness, teardown, diagnostics, naming, headers, tabs, and dead code.  Repair

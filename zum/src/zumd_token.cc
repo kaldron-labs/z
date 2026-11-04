@@ -694,7 +694,7 @@ public:
       return;
     }
     if (!m_form.mutable_()) m_form.length(m_form.length());
-    bool parsed = parseToken({m_form.data(), m_form.length()}, m_params);
+    bool parsed = parseToken(m_form, m_params);
     int error = parsed ? validateToken(m_params, m_grant) :
       ProfileError::Unsupported;
     if (error) {
@@ -705,7 +705,7 @@ public:
     if (m_authorization) {
       if (!m_authorization.mutable_())
 	m_authorization.length(m_authorization.length());
-      if (!parseBasic({m_authorization.data(), m_authorization.length()},
+      if (!parseBasic(m_authorization,
 	  m_basic)) {
 	clientAuthFail_(OAuthError::InvalidClient, {});
 	return;
@@ -1006,7 +1006,7 @@ public:
       return;
     }
     if (!m_form.mutable_()) m_form.length(m_form.length());
-    if (!parseRevoke({m_form.data(), m_form.length()}, m_params) ||
+    if (!parseRevoke(m_form, m_params) ||
 	validateRevoke(m_params)) {
       finish_(OAuthError::InvalidRequest);
       return;
@@ -1015,7 +1015,7 @@ public:
     if (m_hasBasic) {
       if (!m_authorization.mutable_())
 	m_authorization.length(m_authorization.length());
-      if (!parseBasic({m_authorization.data(), m_authorization.length()},
+      if (!parseBasic(m_authorization,
 	  m_basic) || (m_params.has(RevokeParams::ClientID) &&
 	  m_params.clientID != m_basic.clientID)) {
 	finish_(OAuthError::InvalidClient);

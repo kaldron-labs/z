@@ -111,19 +111,19 @@ bool writeScript(ZuCSpan path, const char *tempPath_, unsigned port)
 
 void testMultiRequestCLIAndOutput()
 {
-  ZuTestScope(testMultiRequestCLIAndOutput);
+  ZuTestScopeRT(testMultiRequestCLIAndOutput);
 
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpMultiRequest"),
-    "Zhttp multi-request temporary directory failed");
+  ZuCheckRT(temp.init("ZhttpMultiRequest"),
+    log_("Zhttp multi-request temporary directory failed"));
   unsigned port = loopbackPort(ZhttpITestPort::MultiRequest);
   if (!port) {
-    ZuCHECK(true, "Zhttp multi-request integration skipped");
+    ZuCheckRT(true, log_("Zhttp multi-request integration skipped"));
     return;
   }
   auto script = temp.pathOf("multi.sh");
-  ZuCHECK(writeScript(script, static_cast<const char *>(temp.path), port),
-    "Zhttp multi-request script generation failed");
+  ZuCheckRT(writeScript(script, static_cast<const char *>(temp.path), port),
+    log_("Zhttp multi-request script generation failed"));
   ZtString<> cmd;
   cmd << "sh " << script;
   if (!systemOK(::system(cmd.data()))) {
@@ -131,9 +131,9 @@ void testMultiRequestCLIAndOutput()
     printFile("client stderr", temp.pathOf("client.err"));
     printFile("client -j stderr", temp.pathOf("client-j.err"));
     printFile("client default stderr", temp.pathOf("client-default.err"));
-    ZuCHECK(false, "Zhttp multi-request integration failed");
+    ZuCheckRT(false, log_("Zhttp multi-request integration failed"));
   } else {
-    ZuCHECK(true, "Zhttp multi-request integration succeeded");
+    ZuCheckRT(true, log_("Zhttp multi-request integration succeeded"));
   }
 }
 

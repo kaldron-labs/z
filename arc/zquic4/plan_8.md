@@ -10,7 +10,7 @@ Preconditions: plans 1 through 7 complete.
 `zquic` already has a `Path` utility with anti-amplification accounting, active max UDP, PMTUD state, and tests.  Runtime send/receive paths do not use it.  This plan wires one active path into `Link` runtime and uses it for packet budgets and byte accounting.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -71,7 +71,7 @@ New or changed data stores: active path stores local/remote addresses, validatio
 - Open question: exact handshake point for server validation in all Retry/no-Retry cases; align with transport parameter validation.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

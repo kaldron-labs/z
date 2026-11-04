@@ -9,6 +9,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZgrpcHTTP.hh>
 #include "ZhttpTestUtil.hh"
 
@@ -90,18 +91,30 @@ struct Client : Zhttp::Client<Client, Pool> { };
 
 static void wire(bool h3, bool empty)
 {
-  ZuTestScope(wire);
+  ZuTestScopeRT(wire);
   Zhttp::Test::TempDir temp;
-  ZuCheck(temp.init("ZgrpcWire"), (return));
+  ZuCheckRT(temp.init("ZgrpcWire"), (return));
   ZtString<> cert, key;
-  ZuCheck(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
+  ZuCheckRT(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
   State state;
   state.version = h3 ? Zhttp::Version::H3 : Zhttp::Version::H2;
   if (!empty) {
     state.payload.length((256U << 10) + 7);
     memset(state.payload.data(), 0x71, state.payload.length());
   }
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  // Keep a complete retained message plus request/reply retirement overlap;
+  // TLS emits records, while QUIC emits path-sized packets.
+  unsigned rxSlots = 4 * ((state.payload.length() + ZiIOBuf_DefltSize - 1)/
+    ZiIOBuf_DefltSize);
+  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U << 10;
+  unsigned txSlots = 4 * ((state.payload.length() + txBytes - 1)/txBytes);
+  ZiMultiplex mx{ZiMxParams{}
+    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : rxSlots)
+    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : txSlots)
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -109,9 +122,9 @@ static void wire(bool h3, bool empty)
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
-  ZuCheck(port, ({ mx.stop(); return; }));
+  ZuCheckRT(port, ({ mx.stop(); return; }));
   Zhttp::HubConfig hub{&mx, "3", "4"};
   App server{&state};
   Zhttp::ServerConfig serverConfig;
@@ -123,11 +136,11 @@ static void wire(bool h3, bool empty)
   })
     .policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   bool started = initialized && server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_());
+  ZuCheckRT(listening && !state.errors.load_());
   Client client;
   Zhttp::Config config;
   config.bodyMax(uint64_t(-1)).retainedBodyMax(1U << 20)
@@ -137,11 +150,11 @@ static void wire(bool h3, bool empty)
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
-  ZuCheck(cliInit);
+  ZuCheckRT(cliInit);
   bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
-  ZuCheck(cliUp);
+  ZuCheckRT(cliUp);
   bool admitted = false;
   ZmRef<Requests::Node> request;
   if (cliUp) {
@@ -149,28 +162,31 @@ static void wire(bool h3, bool empty)
     request->state = &state;
     admitted = client.send(0, request);
   }
-  ZuCheck(admitted);
+  ZuCheckRT(admitted);
   bool done = admitted && state.done.timedwait(Zm::now(15)) == 0;
-  ZuCheck(done);
+  ZuCheckRT(done);
   if (done) {
     ZmSemaphore checked;
     bool rejected = false;
     mx.run([request, &checked, &rejected]() { rejected = request->late(); checked.post(); }, 4);
     checked.wait();
-    ZuCheck(rejected && state.requestClosed.load_() == 1);
+    ZuCheckRT(rejected && state.requestClosed.load_() == 1);
   }
   if (cliUp) client.stop();
   client.final();
   request = nullptr;
-  if (started) ZuCheck(server.stop());
+  if (started) ZuCheckRT(server.stop());
   server.final();
   ZiResolver::stopSync();
   ZiResolver::final();
-  ZuCheck(mx.stop());
-  ZuCheck(!state.errors.load_() && state.received == 1);
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(!state.errors.load_() && state.received == 1);
   if (state.result.is<Message<Packet>>()) {
-    ZuCheck(state.result.p<Message<Packet>>().object().payload == ZuBSpan{state.payload});
-  } else ZuCheck(false);
+    ZuCheckRT(state.result.p<Message<Packet>>().object().payload == ZuBSpan{state.payload});
+  } else ZuCheckRT(false);
+  // Release retained receive backing before its mux allocator is destroyed.
+  state.result = {};
+
 }
 
 int main(int argc, char **argv)

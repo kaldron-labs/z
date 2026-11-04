@@ -12,7 +12,7 @@ using namespace ZuTestUtil;
 
 void globalWildcard()
 {
-  ZuTestScope(globalWildcard);
+  ZuTestScopeRT(globalWildcard);
 
   for (unsigned i = unsigned(Ztc::Group::Heap);
       i <= unsigned(Ztc::Group::Alert); ++i) {
@@ -21,9 +21,9 @@ void globalWildcard()
       group == Ztc::Group::Queue ? "*:*:*" : "*";
     Ztc::Filter_::Filter filter;
     auto check = [&filter, group, key](ZuCSpan input) {
-      ZuCheck(filter.compile(group, input, 32));
-      ZuCheck(filter.key() == key);
-      ZuCheck(filter.all());
+      ZuCheckRT(filter.compile(group, input, 32));
+      ZuCheckRT(filter.key() == key);
+      ZuCheckRT(filter.all());
     };
     check({});
     check(ZuCSpan{"", 0});

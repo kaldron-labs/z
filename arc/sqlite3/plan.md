@@ -24,7 +24,7 @@ does for PostgreSQL.
 
 This plan uses the current working-tree versions of `zdb/README.md`,
 `zdb/src/ZdbStore.hh`, `zdb/src/ZdbTypes.hh`, and `zdb_pq/src/ZdbPQ.{hh,cc}`.
-Implementation must follow `GUIDELINES.md`; unrelated working-tree changes
+Implementation must follow `docs/GUIDELINES.md`; unrelated working-tree changes
 must be preserved.
 
 ### Guideline constraints used throughout
@@ -369,7 +369,7 @@ data and matching`, `Storage and lifetime`, `Formatting`, and `Metadata`.
 
 ## 3. Scaffold the module and build integration
 
-- Add `zdb_sqlite/Makefile.am`, `README.md`, and `src`, `test`, and `itest`
+- Add `zdb_sqlite/Makefile.am`, `docs/README.md`, and `src`, `test`, and `itest`
   Makefiles. Traverse `src`, `test`, then `itest`; add `util` or `bench` only
   when needed.
 - Add `src/ZdbSLLib.hh`, `ZdbSLLib.cc`, `ZdbSL.hh`, and `ZdbSL.cc`;

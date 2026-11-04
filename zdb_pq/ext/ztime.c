@@ -11,19 +11,15 @@ inline static bool isspace__(char c) {
   return ((c >= '\t' && c <= '\r') || c == ' ');
 }
 
-inline static bool isdigit__(char c) {
-  return c >= '0' && c <= '9';
-}
-
 #define ztime_in_fn(fmt) \
   PG_FUNCTION_INFO_V1(ztime_in_##fmt); \
   Datum ztime_in_##fmt(PG_FUNCTION_ARGS) { \
 	zu_time *v = (zu_time *)palloc(sizeof(zu_time)); \
 	const char *s = PG_GETARG_CSTRING(0); \
-	unsigned int n = zu_time_in_##fmt(v, s); \
+	int n = zu_time_in_##fmt(v, s); \
  \
-	if (likely(n)) while (unlikely(isspace__(s[n]))) ++n; \
-	if (!n || s[n]) { \
+	if (likely(n > 0)) while (unlikely(isspace__(s[n]))) ++n; \
+	if (n <= 0 || s[n]) { \
 	  ereport( \
 		ERROR, \
 		(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION), \

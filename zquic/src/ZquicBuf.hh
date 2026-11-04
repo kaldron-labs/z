@@ -24,9 +24,9 @@ namespace Zquic_ {
 // Intrusive base shared by packet, stream and crypto buffers; Zi::IOBufAlloc
 // supplies the role heap. It is deliberately independent of either I/O queue.
 struct BufNode : public ZiIOBuf {
-  BufNode(uint8_t *data_, unsigned size_) : ZiIOBuf(data_, size_) { }
+  BufNode(uint8_t *data_, unsigned size_) : ZiIOBuf(data_, size_, nullptr, 0) { }
   BufNode(uint8_t *data_, unsigned size_, void *owner_) :
-    ZiIOBuf(data_, size_, owner_) { }
+    ZiIOBuf(data_, size_, owner_, 0) { }
   BufNode(uint8_t *data_, unsigned size_, void *owner_, unsigned length_) :
     ZiIOBuf(data_, size_, owner_, length_) { }
 };
@@ -50,13 +50,15 @@ template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Pkt.Rx">
-using PktRxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+using PktRxBufAllocator =
+  Zi::RxUDPBufAllocator<Zquic_::BufNode, Size, MaxSize, ZuStringT<HeapID>>;
 
 template <
   unsigned Size = BufSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = "Zquic.Pkt.Tx">
-using PktTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
+using PktTxBufAllocator =
+  Zi::TxUDPBufAllocator<Zquic_::BufNode, Size, MaxSize, ZuStringT<HeapID>>;
 
 template <
   unsigned Size = BufSize,
@@ -72,6 +74,7 @@ using CryptoTxBufAlloc = Zquic_::BufAlloc<Size, MaxSize, HeapID>;
 
 struct BufDiag { };
 
+// Retained payload positions are relative to the original allocation.
 struct TxRange {
   ZmRef<ZiIOBuf>	buf;
   uint32_t		offset = 0;

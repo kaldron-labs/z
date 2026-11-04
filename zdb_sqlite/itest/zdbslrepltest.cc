@@ -68,7 +68,8 @@ int main()
   auto leaderCfFields = ZfCf::handler<zdbtest::ConfigFields>(leaderCf).ctor();
   auto followerCf = config(followerPath, "1");
 
-  ZiMultiplex mx{ZvMxParams("mx", leaderCfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", leaderCfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
 
   ZmSemaphore leaderUp;
@@ -130,11 +131,11 @@ int main()
 
   leaderOrders = {};
   followerOrders = {};
+  ZuCheck(mx.stop());
   leader->final();
   follower->final();
   leader = {};
   follower = {};
-  ZuCheck(mx.stop());
   ZiLog::stop();
   return 0;
 }

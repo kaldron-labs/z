@@ -41,99 +41,99 @@ static bool cliRequest(const char *const *argv, unsigned argc,
 
 static void cliArgs()
 {
-  ZuTestScope(cliArgs);
+  ZuTestScopeRT(cliArgs);
   ZumCLI::String json;
   const char *enroll[] = {"zum", "app", "add", "ztchub-local",
     "http://localhost:8090/admin", "--label", "Hub \"local\""};
-  ZuCheck(cliRequest(enroll, ZuArray{enroll}.length(), json));
-  ZuCheck(json == "{\"name\":\"ztchub-local\","
+  ZuCheckRT(cliRequest(enroll, ZuArray{enroll}.length(), json));
+  ZuCheckRT(json == "{\"name\":\"ztchub-local\","
     "\"audience\":\"http://localhost:8090/admin\","
     "\"label\":\"Hub \\\"local\\\"\"}");
   const char *roles[] = {"zum", "assign", "roles", "18446744073709551614",
     "42", "9,18446744073709551614", "--if-match", "\"v1\""};
-  ZuCheck(cliRequest(roles, ZuArray{roles}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"18446744073709551614\",\"user_id\":\"42\","
+  ZuCheckRT(cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"18446744073709551614\",\"user_id\":\"42\","
     "\"role_ids\":[\"9\",\"18446744073709551614\"]}");
   roles[5] = "";
-  ZuCheck(cliRequest(roles, ZuArray{roles}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"18446744073709551614\",\"user_id\":\"42\",\"role_ids\":[]}");
+  ZuCheckRT(cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"18446744073709551614\",\"user_id\":\"42\",\"role_ids\":[]}");
   roles[3] = "18446744073709551615";
   roles[4] = "18446744073709551615";
-  ZuCheck(cliRequest(roles, ZuArray{roles}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"18446744073709551615\","
+  ZuCheckRT(cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"18446744073709551615\","
     "\"user_id\":\"18446744073709551615\",\"role_ids\":[]}");
   roles[3] = "-1";
-  ZuCheck(!cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheckRT(!cliRequest(roles, ZuArray{roles}.length(), json));
   roles[3] = "18446744073709551616";
-  ZuCheck(!cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheckRT(!cliRequest(roles, ZuArray{roles}.length(), json));
   roles[3] = "1oops";
-  ZuCheck(!cliRequest(roles, ZuArray{roles}.length(), json));
+  ZuCheckRT(!cliRequest(roles, ZuArray{roles}.length(), json));
   const char *client[] = {"zum", "client", "add", "9", "native", "--grants", "AuthCode,Refresh",
     "--refresh-allowed", "false", "--redirect-uris", "http://localhost/cb"};
-  ZuCheck(cliRequest(client, ZuArray{client}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"9\",\"profile\":\"native\","
+  ZuCheckRT(cliRequest(client, ZuArray{client}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"9\",\"profile\":\"native\","
     "\"redirect_uris\":[\"http://localhost/cb\"],\"grants\":\"AuthCode,Refresh\",\"refresh_allowed\":false}");
   client[6] = "Refresh,AuthCode";
-  ZuCheck(cliRequest(client, ZuArray{client}.length(), json));
-  ZuCheck(json.find<"\"grants\":\"AuthCode,Refresh\"">() >= 0);
+  ZuCheckRT(cliRequest(client, ZuArray{client}.length(), json));
+  ZuCheckRT(json.find<"\"grants\":\"AuthCode,Refresh\"">() >= 0);
   for (auto grants: {"5", "AuthCode|Refresh", "AuthCode,RefreshToken",
       "AuthCode,", "Unknown"}) {
     client[6] = grants;
-    ZuCheck(!cliRequest(client, ZuArray{client}.length(), json));
+    ZuCheckRT(!cliRequest(client, ZuArray{client}.length(), json));
   }
   client[6] = "AuthCode,Refresh";
   client[8] = "yes";
-  ZuCheck(!cliRequest(client, ZuArray{client}.length(), json));
+  ZuCheckRT(!cliRequest(client, ZuArray{client}.length(), json));
   const char *missing[] = {"zum", "app", "add", "hub"};
-  ZuCheck(!cliRequest(missing, ZuArray{missing}.length(), json));
+  ZuCheckRT(!cliRequest(missing, ZuArray{missing}.length(), json));
   const char *extra[] = {"zum", "app", "add", "hub", "aud", "extra"};
-  ZuCheck(!cliRequest(extra, ZuArray{extra}.length(), json));
+  ZuCheckRT(!cliRequest(extra, ZuArray{extra}.length(), json));
   const char *wrong[] = {"zum", "app", "add", "hub", "aud", "--grants", "AuthCode,Refresh"};
-  ZuCheck(!cliRequest(wrong, ZuArray{wrong}.length(), json));
+  ZuCheckRT(!cliRequest(wrong, ZuArray{wrong}.length(), json));
   const char *legacy[] = {"zum", "app", "add", "hub", "aud", "--json", "request.json"};
-  ZuCheck(!cliRequest(legacy, ZuArray{legacy}.length(), json));
+  ZuCheckRT(!cliRequest(legacy, ZuArray{legacy}.length(), json));
   const char *catalog[] = {"zum", "catalog", "publish", "9", "{\"actions\":[]}", "1", "digest"};
-  ZuCheck(cliRequest(catalog, ZuArray{catalog}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"9\",\"catalog\":{\"actions\":[]},"
+  ZuCheckRT(cliRequest(catalog, ZuArray{catalog}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"9\",\"catalog\":{\"actions\":[]},"
     "\"revision\":1,\"digest\":\"digest\"}");
   const char *users[] = {"zum", "user", "list", "admin@localhost",
     "--source", "Local"};
-  ZuCheck(cliRequest(users, ZuArray{users}.length(), json));
-  ZuCheck(json == "{\"name\":\"admin@localhost\",\"source\":\"Local\"}");
-  ZuCheck(cliRequest(users, 3, json));
-  ZuCheck(json == "{}");
+  ZuCheckRT(cliRequest(users, ZuArray{users}.length(), json));
+  ZuCheckRT(json == "{\"name\":\"admin@localhost\",\"source\":\"Local\"}");
+  ZuCheckRT(cliRequest(users, 3, json));
+  ZuCheckRT(json == "{}");
   const char *duplicateSource[] = {"zum", "user", "list",
     "--source", "Local", "--source", "External"};
-  ZuCheck(!cliRequest(duplicateSource, ZuArray{duplicateSource}.length(), json));
+  ZuCheckRT(!cliRequest(duplicateSource, ZuArray{duplicateSource}.length(), json));
   const char *shortHelp[] = {"zum", "issuer", "list", "-h"};
-  ZuCheck(cliRequest(shortHelp, ZuArray{shortHelp}.length(), json));
-  ZuCheck(json == "{}");
+  ZuCheckRT(cliRequest(shortHelp, ZuArray{shortHelp}.length(), json));
+  ZuCheckRT(json == "{}");
   const char *userID[] = {"zum", "user", "list", "--id", "42"};
-  ZuCheck(cliRequest(userID, ZuArray{userID}.length(), json));
-  ZuCheck(json == "{\"id\":\"42\"}");
+  ZuCheckRT(cliRequest(userID, ZuArray{userID}.length(), json));
+  ZuCheckRT(json == "{\"id\":\"42\"}");
   const char *namedUser[] = {"zum", "user", "list", "--name", "admin"};
-  ZuCheck(!cliRequest(namedUser, ZuArray{namedUser}.length(), json));
+  ZuCheckRT(!cliRequest(namedUser, ZuArray{namedUser}.length(), json));
   const char *invite[] = {"zum", "user", "add", "user@example.test"};
-  ZuCheck(cliRequest(invite, ZuArray{invite}.length(), json));
-  ZuCheck(json == "{\"name\":\"user@example.test\"}");
+  ZuCheckRT(cliRequest(invite, ZuArray{invite}.length(), json));
+  ZuCheckRT(json == "{\"name\":\"user@example.test\"}");
   const char *access[] = {"zum", "client", "access", "set", "9", "cli", "1,2"};
-  ZuCheck(cliRequest(access, ZuArray{access}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"9\",\"client_id\":\"cli\",\"role_ids\":[\"1\",\"2\"]}");
+  ZuCheckRT(cliRequest(access, ZuArray{access}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"9\",\"client_id\":\"cli\",\"role_ids\":[\"1\",\"2\"]}");
   const char *policy[] = {"zum", "auth", "policy", "set", "9", "true", "Any",
     "300", "600", "3600", "900", "Always"};
-  ZuCheck(cliRequest(policy, ZuArray{policy}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"9\",\"local_first\":true,\"eligibility_mode\":\"Any\","
+  ZuCheckRT(cliRequest(policy, ZuArray{policy}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"9\",\"local_first\":true,\"eligibility_mode\":\"Any\","
     "\"assignment_max_age\":300,\"session_idle\":600,\"session_absolute\":3600,"
     "\"token_lifetime\":900,\"consent_policy\":\"Always\"}");
   const char *assignments[] = {"zum", "assign", "list", "9", "--user-id", "42"};
-  ZuCheck(cliRequest(assignments, ZuArray{assignments}.length(), json));
-  ZuCheck(json == "{\"app_id\":\"9\",\"user_id\":\"42\"}");
+  ZuCheckRT(cliRequest(assignments, ZuArray{assignments}.length(), json));
+  ZuCheckRT(json == "{\"app_id\":\"9\",\"user_id\":\"42\"}");
   const char *flat[] = {"zum", "userQuery"};
-  ZuCheck(!cliRequest(flat, ZuArray{flat}.length(), json));
+  ZuCheckRT(!cliRequest(flat, ZuArray{flat}.length(), json));
   const char *group[] = {"zum", "client", "access"};
-  ZuCheck(!cliRequest(group, ZuArray{group}.length(), json));
+  ZuCheckRT(!cliRequest(group, ZuArray{group}.length(), json));
   const char *verb[] = {"zum", "user", "unknown"};
-  ZuCheck(!cliRequest(verb, ZuArray{verb}.length(), json));
+  ZuCheckRT(!cliRequest(verb, ZuArray{verb}.length(), json));
 }
 
 static void publicAPI()
@@ -910,12 +910,12 @@ static void serviceKeys()
 
 static void stopStarting()
 {
-  ZuTestScope(stopStarting);
+  ZuTestScopeRT(stopStarting);
   ZmSchedParams params;
   params.nThreads(1);
   params.thread(1).isolated(true);
   ZmScheduler scheduler{ZuMv(params)};
-  ZuCheck(scheduler.start());
+  ZuCheckRT(scheduler.start());
   // Hold each startup HTTP phase in turn; queue stop before its response.
   for (unsigned phase = 0; phase < 4; ++phase) {
     Zum::Service service;
@@ -923,7 +923,7 @@ static void stopStarting()
     ZmSemaphore held, started;
     unsigned requests = 0;
     bool startOK = true;
-    ZuCheck(service.init(Zum::ServiceConfig{
+    ZuCheckRT(service.init(Zum::ServiceConfig{
       .scheduler = &scheduler, .sid = 1,
       .issuerURL = "https://issuer/oauth2/9",
       .managementIssuerURL = "https://issuer/oauth2/9",
@@ -951,18 +951,18 @@ static void stopStarting()
       started.post();
     });
     held.wait();
-    ZuCheck(ZmBlock<bool>{}([&service, &scheduler, &pending](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([&service, &scheduler, &pending](auto wake) mutable {
       service.stop([wake = ZuMv(wake)](bool ok) mutable { wake(ok); });
       scheduler.run([complete = ZuMv(pending)]() mutable {
 	complete(Zum::ServiceHTTPResponse{503, "{}"});
       }, 1);
     }));
     started.wait();
-    ZuCheck(!startOK && service.state() == ZmEngineState::Stopped &&
+    ZuCheckRT(!startOK && service.state() == ZmEngineState::Stopped &&
       requests == phase + 1);
     service.final();
   }
-  ZuCheck(scheduler.stop());
+  ZuCheckRT(scheduler.stop());
 }
 
 static void ssfDelivery()

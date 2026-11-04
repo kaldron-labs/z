@@ -35,54 +35,54 @@ static bool badStr(ZuCSpan in)
 }
 static void run()
 {
-  ZuTestScope(run);
+  ZuTestScopeRT(run);
   Scan scan{7, " \t// line\n/* block */foo_bar: [uint];"};
   auto key = scan.next();
-  ZuCheck(key.kind == Tok::Name && key.text == "foo_bar");
-  ZuCheck(key.loc.file == 7 && key.loc.offset == 21);
-  ZuCheck(scan.next().kind == ':');
-  ZuCheck(scan.next().kind == '[');
-  ZuCheck(scan.next().text == "uint");
-  ZuCheck(scan.next().kind == ']');
-  ZuCheck(scan.next().kind == ';');
-  ZuCheck(scan.next().kind == Tok::End);
+  ZuCheckRT(key.kind == Tok::Name && key.text == "foo_bar");
+  ZuCheckRT(key.loc.file == 7 && key.loc.offset == 21);
+  ZuCheckRT(scan.next().kind == ':');
+  ZuCheckRT(scan.next().kind == '[');
+  ZuCheckRT(scan.next().text == "uint");
+  ZuCheckRT(scan.next().kind == ']');
+  ZuCheckRT(scan.next().kind == ';');
+  ZuCheckRT(scan.next().kind == Tok::End);
   Scan nums{0, "-12 +3 .5 1.25e-3 0xFF 0x1.fp+2"};
-  for (unsigned i = 0; i < 6; ++i) ZuCheck(nums.next().kind == Tok::Number);
-  ZuCheck(nums.next().kind == Tok::End);
-  ZuCheck(bad("/*"));
-  ZuCheck(bad("\"unterminated"));
-  ZuCheck(bad("\"line\nfeed\""));
-  ZuCheck(bad("\"escaped\\\nfeed\""));
-  ZuCheck(bad("1e+"));
-  ZuCheck(bad("0x"));
-  ZuCheck(bad("0x1.2"));
-  ZuCheck(bad("12oops"));
-  ZuCheck(bad("1.2.3"));
-  ZuCheck(uintValue({Tok::Number, "18446744073709551615", {}}) == UINT64_MAX);
-  ZuCheck(uintValue({Tok::Number, "0xFFFFFFFFFFFFFFFF", {}}) == UINT64_MAX);
-  ZuCheck(uintValue({Tok::Number, "+00042", {}}) == 42);
-  ZuCheck(uintValue({Tok::Number, "012", {}}) == 12);
-  ZuCheck(badInt("18446744073709551616"));
-  ZuCheck(badInt("0x10000000000000000"));
-  ZuCheck(badInt("-1"));
-  ZuCheck(badInt("1e2"));
-  ZuCheck(badInt(""));
+  for (unsigned i = 0; i < 6; ++i) ZuCheckRT(nums.next().kind == Tok::Number);
+  ZuCheckRT(nums.next().kind == Tok::End);
+  ZuCheckRT(bad("/*"));
+  ZuCheckRT(bad("\"unterminated"));
+  ZuCheckRT(bad("\"line\nfeed\""));
+  ZuCheckRT(bad("\"escaped\\\nfeed\""));
+  ZuCheckRT(bad("1e+"));
+  ZuCheckRT(bad("0x"));
+  ZuCheckRT(bad("0x1.2"));
+  ZuCheckRT(bad("12oops"));
+  ZuCheckRT(bad("1.2.3"));
+  ZuCheckRT(uintValue({Tok::Number, "18446744073709551615", {}}) == UINT64_MAX);
+  ZuCheckRT(uintValue({Tok::Number, "0xFFFFFFFFFFFFFFFF", {}}) == UINT64_MAX);
+  ZuCheckRT(uintValue({Tok::Number, "+00042", {}}) == 42);
+  ZuCheckRT(uintValue({Tok::Number, "012", {}}) == 12);
+  ZuCheckRT(badInt("18446744073709551616"));
+  ZuCheckRT(badInt("0x10000000000000000"));
+  ZuCheckRT(badInt("-1"));
+  ZuCheckRT(badInt("1e2"));
+  ZuCheckRT(badInt(""));
   Scan str{0, "\"plain\" \"a\\\"b\""};
-  ZuCheck(unquote(str.next()) == "plain");
-  ZuCheck(unquote(str.next()) == "a\"b");
-  ZuCheck(unquote({Tok::String, "a\\n\\x62\\u20AC\\uD83D\\uDE00", {}}) == "a\nb\xe2\x82\xac\xf0\x9f\x98\x80");
-  ZuCheck(badStr("\\x0G"));
-  ZuCheck(badStr("\\x0x"));
-  ZuCheck(badStr("\\u0x00"));
-  ZuCheck(badStr("\\uZZZZ"));
-  ZuCheck(badStr("\\uD800"));
-  ZuCheck(badStr("\\uDC00"));
-  ZuCheck(badStr("\\q"));
-  ZuCheck(scalarCode("uint") == ZfFieldTC::UInt32);
-  ZuCheck(scalarCode("uint_more") == -1);
+  ZuCheckRT(unquote(str.next()) == "plain");
+  ZuCheckRT(unquote(str.next()) == "a\"b");
+  ZuCheckRT(unquote({Tok::String, "a\\n\\x62\\u20AC\\uD83D\\uDE00", {}}) == "a\nb\xe2\x82\xac\xf0\x9f\x98\x80");
+  ZuCheckRT(badStr("\\x0G"));
+  ZuCheckRT(badStr("\\x0x"));
+  ZuCheckRT(badStr("\\u0x00"));
+  ZuCheckRT(badStr("\\uZZZZ"));
+  ZuCheckRT(badStr("\\uD800"));
+  ZuCheckRT(badStr("\\uDC00"));
+  ZuCheckRT(badStr("\\q"));
+  ZuCheckRT(scalarCode("uint") == ZfFieldTC::UInt32);
+  ZuCheckRT(scalarCode("uint_more") == -1);
   bool keyword = false;
   try { identifier("class", {}); } catch (const Failure &) { keyword = true; }
-  ZuCheck(keyword);
+  ZuCheckRT(keyword);
   identifier("className", {});
 }
 static void parsed(Schema &schema, ZuCSpan text)
@@ -246,7 +246,7 @@ static void syntax()
 
 static void emission()
 {
-  ZuTestScope(emission);
+  ZuTestScopeRT(emission);
   Schema schema;
   parsed(schema, "namespace test; table Row { display_name:string; "
     "names:[string]; count:ulong = 18446744073709551615; }");
@@ -259,36 +259,36 @@ static void emission()
   auto guardA = Emit{schema, 0, opts}.header();
   opts.output = "dir_a/unit";
   auto guardB = Emit{schema, 0, opts}.header();
-  ZuCheck(guardA.find("#ifndef Zflatc_dir_2Da_2Funit_HH") >= 0);
-  ZuCheck(guardB.find("#ifndef Zflatc_dir_5Fa_2Funit_HH") >= 0);
+  ZuCheckRT(guardA.find("#ifndef Zflatc_dir_2Da_2Funit_HH") >= 0);
+  ZuCheckRT(guardB.find("#ifndef Zflatc_dir_5Fa_2Funit_HH") >= 0);
   opts.output = "unit";
-  ZuCheck(hh.find("ZtStringHeapID<\"test.Row.displayName\">") >= 0);
-  ZuCheck(hh.find("ZtStringHeapID<\"test.Row.names\">") >= 0);
-  ZuCheck(hh.find("ZtArrayHeapID<\"test.Row.names\">") >= 0);
-  ZuCheck(hh.find("18446744073709551615ULL") >= 0);
-  ZuCheck(hh.find("ZfStruct(, (Row, FB)") >= 0);
-  ZuCheck(cc.find("ZfStructImpl(Row, FB)") >= 0);
+  ZuCheckRT(hh.find("ZtStringHeapID<\"test.Row.displayName\">") >= 0);
+  ZuCheckRT(hh.find("ZtStringHeapID<\"test.Row.names\">") >= 0);
+  ZuCheckRT(hh.find("ZtArrayHeapID<\"test.Row.names\">") >= 0);
+  ZuCheckRT(hh.find("18446744073709551615ULL") >= 0);
+  ZuCheckRT(hh.find("ZfStruct(, (Row, FB)") >= 0);
+  ZuCheckRT(cc.find("ZfStructImpl(Row, FB)") >= 0);
   opts.ref = "ZmObject";
   opts.api = "ZfbAPI";
   Emit refs{schema, 0, opts};
   auto rh = refs.header();
-  ZuCheck(rh.find("public ::ZmObject") >= 0);
-  ZuCheck(rh.find("ZfStruct(ZfbAPI, (Row, FB)") >= 0);
+  ZuCheckRT(rh.find("public ::ZmObject") >= 0);
+  ZuCheckRT(rh.find("ZfStruct(ZfbAPI, (Row, FB)") >= 0);
   Schema names;
   parsed(names, "table O0 { e0:[string]; heap:string; base:[uint]; foo_1:int; ip_v4_address:int; }");
   auto nh = Emit{names, 0, opts}.header();
-  ZuCheck(nh.find("namespace Zflatc_::O0") >= 0);
-  ZuCheck(nh.find("ZuDerive(Base_, (ZtArray<::uint32_t") >= 0);
-  ZuCheck(nh.find("E0_") >= 0 && nh.find("ZmNHeap<O_>") >= 0);
-  ZuCheck(names.objects[0].fields[3].cpp == "foo_1");
-  ZuCheck(names.objects[0].fields[4].cpp == "ipV4Address");
+  ZuCheckRT(nh.find("namespace Zflatc_::O0") >= 0);
+  ZuCheckRT(nh.find("ZuDerive(Base_, (ZtArray<::uint32_t") >= 0);
+  ZuCheckRT(nh.find("E0_") >= 0 && nh.find("ZmNHeap<O_>") >= 0);
+  ZuCheckRT(names.objects[0].fields[3].cpp == "foo_1");
+  ZuCheckRT(names.objects[0].fields[4].cpp == "ipV4Address");
   Schema counts;
   parsed(counts, "table Counts { ref:int; deref:int; mvref:int; "
     "ref_count:int; with_ref:int; }");
   Options plain;
   plain.output = "counts";
   auto countHeader = Emit{counts, 0, plain}.header();
-  ZuCheck(countHeader.find("refCount") >= 0);
+  ZuCheckRT(countHeader.find("refCount") >= 0);
   using Reserved = ZuStringTL<"ref", "deref", "mvref", "ref_count", "with_ref">;
   ZuUnroll::all<Reserved>([&]<typename N>() {
     Text text{"table Counts { "}; text << N{}() << ":int; }";
@@ -297,14 +297,14 @@ static void emission()
     bool rejected = false;
     try { Emit{count, 0, opts}.header(); }
     catch (const Failure &e) { rejected = e.message.find("reference-counting base") >= 0; }
-    ZuCheck(rejected);
+    ZuCheckRT(rejected);
   });
   Schema type;
   parsed(type, "table ref { value:int; }");
   bool rejected = false;
   try { Emit{type, 0, opts}.header(); }
   catch (const Failure &) { rejected = true; }
-  ZuCheck(rejected);
+  ZuCheckRT(rejected);
   using BadNames = ZuStringTL<"table Base {}", "union Base {}", "table row { row:int; }">;
   ZuUnroll::all<BadNames>([&]<typename N>() {
     Schema named;
@@ -312,7 +312,7 @@ static void emission()
     bool rejected = false;
     try { Emit{named, 0, plain}.header(); }
     catch (const Failure &) { rejected = true; }
-    ZuCheck(rejected);
+    ZuCheckRT(rejected);
   });
 }
 

@@ -94,21 +94,21 @@ ZuAssert((!HasComplete<ServerCall<Streaming>>{}));
 
 static void cardinality()
 {
-  ZuTestScope(cardinality);
+  ZuTestScopeRT(cardinality);
   Direction req;
-  ZuCheck(req.message());
-  ZuCheck(!req.message());
-  ZuCheck(req.end());
-  ZuCheck(!req.message() && !req.end());
+  ZuCheckRT(req.message());
+  ZuCheckRT(!req.message());
+  ZuCheckRT(req.end());
+  ZuCheckRT(!req.message() && !req.end());
   Direction empty;
-  ZuCheck(!empty.end());
+  ZuCheckRT(!empty.end());
   Direction error;
-  ZuCheck(error.end(false));
+  ZuCheckRT(error.end(false));
   Direction stream{true};
-  for (unsigned i = 0; i < 100; i++) ZuCheck(stream.message());
-  ZuCheck(stream.count() == 100 && stream.end());
+  for (unsigned i = 0; i < 100; i++) ZuCheckRT(stream.message());
+  ZuCheckRT(stream.count() == 100 && stream.end());
   Direction noMessages{true};
-  ZuCheck(noMessages.end());
+  ZuCheckRT(noMessages.end());
 }
 
 static void terminalClaims()
@@ -185,26 +185,26 @@ static void posts()
 
 static void orderedFinish()
 {
-  ZuTestScope(orderedFinish);
+  ZuTestScopeRT(orderedFinish);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)
     .thread(1, [](auto &thread) { thread.isolated(1); })};
   RxOwner rx;
   TxOwner tx;
   ZmRef<ServerCall<Streaming>> call =
     new ServerCall<Streaming>{7, 9, {}, &rx, {&scheduler, 1}, &tx, 3, ops};
-  ZuCheck(call->send(Item{1}) && call->send(Item{2}));
-  ZuCheck(call->finish() && call->live());
-  for (unsigned i = 0; i < 100; i++) ZuCheck(!call->finish());
+  ZuCheckRT(call->send(Item{1}) && call->send(Item{2}));
+  ZuCheckRT(call->finish() && call->live());
+  for (unsigned i = 0; i < 100; i++) ZuCheckRT(!call->finish());
   // Admission behind finish can succeed; Tx later rejects its production.
-  ZuCheck(call->send(Item{3}));
+  ZuCheckRT(call->send(Item{3}));
   ZmSemaphore drained;
   scheduler.run([call, &drained]() { call->invalidateTx_(); drained.post(); }, 1);
-  ZuCheck(scheduler.start(), (return));
+  ZuCheckRT(scheduler.start(), (return));
   drained.wait();
   const uint8_t order[] = {1, 2, 99};
-  ZuCheck(tx.sent == 2 && tx.finished == 1 && ZuBSpan{tx.order} == ZuBSpan{order});
+  ZuCheckRT(tx.sent == 2 && tx.finished == 1 && ZuBSpan{tx.order} == ZuBSpan{order});
   call->invalidateRx_();
-  ZuCheck(scheduler.stop());
+  ZuCheckRT(scheduler.stop());
 }
 
 static void invalidatedPosts()
@@ -292,7 +292,7 @@ struct CancelWork : WorkEntry, ZmNHeap<CancelWork> {
 friend inline ZuStringT<"Zgrpc.Test.CancelWork"> ZmNHeapID(CancelWork *);
   CancelState *state;
   explicit CancelWork(CancelState *value) : state{value} {
-    cancelFn = [](WorkEntry *ptr, Code::T code) {
+    cancelFn = [](WorkData *ptr, Code::T code) {
       auto self = static_cast<CancelWork *>(ptr);
       auto state = self->state;
       if (!state->calls.rxInvoked() || code != Code::CANCELLED) ++state->errors;

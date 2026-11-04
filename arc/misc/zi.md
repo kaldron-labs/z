@@ -20,7 +20,7 @@ The current baseline is:
   negotiated TLS headroom.
 
 Preserve pooled buffers, in-place operation, shard ownership, and the current
-no-copy single-buffer paths.  Apply `GUIDELINES.md`.
+no-copy single-buffer paths.  Apply `docs/GUIDELINES.md`.
 
 ## Tx boundary signaling
 

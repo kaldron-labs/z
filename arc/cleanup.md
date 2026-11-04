@@ -15,7 +15,7 @@ binaries are build outputs, not test residue.
 
 This is a source and `Makefile.am` audit of repository-owned `test`, `itest`,
 and `interop` programs and their shared fixtures. It does not claim a runtime
-inventory of every optional service or Docker combination. `GUIDELINES.md`
+inventory of every optional service or Docker combination. `docs/GUIDELINES.md`
 puts end-to-end tests in `itest`, permits native external harnesses in
 `interop`, and requires `make test` to run repository-owned test programs.
 
@@ -79,7 +79,7 @@ puts end-to-end tests in `itest`, permits native external harnesses in
 | `zi/itest/zi_test_residue.py` | Define `Residue(name)` with `root`, `path(name)`, `dir(name)`, `tmp_dir(tag)`, `tmp_file(tag)`, `shm(name)` and `finish(passed)`. `path()` returns a validated child path; `dir()` creates one; `tmp_dir()` creates a unique, registered system-temp directory only for APIs fixed to that location; `tmp_file()` creates a registered blocking file for negative registry tests; `shm()` registers an exact base name. Supply a context manager that calls `finish(False)` on exceptions and requires an explicit success indication on the normal path, so a TAP failure that does not throw cannot be mistaken for success. Keep child-process stop/reap code in each driver, before `finish`. |
 | `zi/itest/zi-test-residue.sh` | Sourceable shell functions `zi_residue_init NAME`, `zi_residue_path NAME`, `zi_residue_shm NAME` and `zi_residue_finish STATUS`. `init` sets and exports `ZI_RESIDUE_DIR`; `path` prints a validated child path; `shm` registers a ring base; `finish 0` removes the owned tree, while nonzero status retains and reports it. The caller installs one `EXIT` trap that saves `$?`, stops/waits for children, then calls `zi_residue_finish`; `INT`/`TERM` handlers exit nonzero through that trap. The helper must not overwrite an existing caller trap. |
 | `zi/itest/residue/go.mod` and `zi/itest/residue/residue.go` | Use a small local Go module/package with `New(t *testing.T, name string)`, `Path(name string) string`, `Dir(name string) string` and `Shm(name string)`. `New` registers a `t.Cleanup` callback that observes `t.Failed()`, then finalizes once. Register it before process cleanup callbacks so Go's last-in-first-out cleanup stops processes first. Use local `replace` directives from consumer Go modules only when they actually import the package; no downloaded runtime dependency. Go programs outside `testing.T` can use an explicit `Finish(bool)` constructor variant if a writer is introduced later. |
-| `zi/itest/Makefile.am` | Distribute the Python, shell and Go helper sources and their focused tests; make helper tests runnable from `make test`. Add a short `README.md` with source-tree import/source examples and the naming/retention contract. |
+| `zi/itest/Makefile.am` | Distribute the Python, shell and Go helper sources and their focused tests; make helper tests runnable from `make test`. Add a short `docs/README.md` with source-tree import/source examples and the naming/retention contract. |
 
 Implement the shared lifecycle with language-native filesystem operations.
 Avoid a shell subprocess in the Python or Go cleanup path. Expose cleanup

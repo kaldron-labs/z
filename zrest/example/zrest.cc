@@ -39,6 +39,8 @@
 #include <zlib/ZiHeapTune.hh>
 #include <zlib/ZiLog.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZrestClient.hh>
@@ -647,7 +649,9 @@ static unsigned callbackPort()
 
 static ZiMxParams mxParams(const Options &options)
 {
-  auto params = ZiMxParams().scheduler([](auto &s) {
+  auto params = ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.name("rx"); t.isolated(1); })
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })

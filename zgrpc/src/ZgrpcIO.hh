@@ -44,11 +44,7 @@ struct WireCatalog {
   }
 };
 
-struct RxChunk {
-  ZmRef<ZiIOBuf> buf;
-  unsigned offset = 0;
-};
-using RxChunks = ZmList<RxChunk, ZmListHeapID<"Zgrpc.RxChunks">>;
+using RxChunks = ZmList<Zi::RxRange, ZmListHeapID<"Zgrpc.RxChunks">>;
 
 // All members are Rx-owned. The parser and each scheduled continuation retain
 // this object independently, so HTTP reset cannot erase deferred input or its
@@ -77,23 +73,20 @@ public:
   bool failed() const { return m_failed; }
 
   bool accept(Zhttp::Channel *);
-  bool enqueue(ZmRef<ZiIOBuf>);
+  bool enqueue(Zi::RxRange);
   void complete(Zhttp::Channel *, bool);
   void fail(Code::T);
 
   template <typename Rx> bool body(Rx &rx) {
     if (m_failed || m_peerEnd || m_finished) return false;
-    using Buf = typename Rx::Queue::Node;
-    using Alloc = Zi::IOBufAlloc<Buf,
-      ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zgrpc.Rx.Split">>;
-    // Detach one existing head at a time: never gather a whole RPC stream.
-    // extract transfers ownership; queue reuse cannot mutate returned storage.
+    // Extract each existing contiguous range. Borrowed backing and positions
+    // survive scheduled parsing without changing shared HTTP buffer metadata.
     while (!rx.empty()) {
-      ZmRef<ZiIOBuf> buf;
+      Zi::RxRange range;
       auto n = rx.extract([](ZuSpan<uint8_t> span) -> int64_t {
 	return span.length();
-      }, []() { return ZmRef<Buf>{new Alloc{}}; }, buf);
-      if (n <= 0 || !enqueue(ZuMv(buf))) {
+      }, []() { return ZmRef<typename Rx::Queue::Node>{}; }, range);
+      if (n <= 0 || !enqueue(ZuMv(range))) {
 	fail(Code::RESOURCE_EXHAUSTED);
 	return false;
       }
@@ -130,17 +123,23 @@ private:
   bool m_finished = false;
 };
 
-// Final protobuf/envelope buffers, allocated by the active HTTP writer. Queue
+struct OutputFrame {
+  ZmRef<ZiIOBuf> buf;
+  bool writerOwned = false;
+};
+
+// Final protobuf/envelope buffers; retain whether the concrete Base came from
+// the active writer, so external raw storage never enters an incompatible queue. Queue
 // accounting ends at HTTP handoff; transport retention remains independent.
 class ZgrpcAPI TxFrames {
 public:
-  bool push(ZmRef<ZiIOBuf>, const Limits &);
-  ZmRef<ZiIOBuf> shift();
+  bool push(ZmRef<ZiIOBuf>, const Limits &, bool writerOwned);
+  OutputFrame shift();
   unsigned count() const { return m_frames.count_(); }
   uint64_t bytes() const { return m_bytes; }
   void clear() { m_frames.clean(); m_bytes = 0; }
 private:
-  ZmList<ZmRef<ZiIOBuf>, ZmListHeapID<"Zgrpc.Tx.Frames">> m_frames;
+  ZmList<OutputFrame, ZmListHeapID<"Zgrpc.Tx.Frames">> m_frames;
   uint64_t m_bytes = 0;
 };
 

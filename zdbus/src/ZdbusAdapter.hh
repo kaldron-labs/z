@@ -208,12 +208,12 @@ struct ParseAdapter : public Parser {
       if constexpr (HasUnknownHeader<Impl>{})
         impl()->header(code, value);
     };
-    if (!eachHeader(frame->cspan(), info, unknown))
+    if (!eachHeader(info.span(), info, unknown))
       return {frame, {}, ParseError::Header};
     auto &body = impl()->bodyObject(object);
     using Body = ZuDecay<decltype(body)>;
     using Facet = Impl::Body_DBUS_Facet;
-    auto view = ZfDBUS::View{frame->cspan(info.bodyOffset),
+    auto view = ZfDBUS::View{info.body(),
       info.headers.signature, info.bodyOffset, info.order};
     auto handler = ZfDBUS::handler<Body, Facet>(view);
     if (!handler) return {frame, handler.result(), ParseError::Body};

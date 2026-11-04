@@ -10,6 +10,8 @@
 #error "include zlib/Zquic.hh before this header"
 #endif
 
+#include <zlib/ZiIOContext.hh>
+
 namespace Zquic_ {
 
 template <typename Link_>
@@ -263,9 +265,13 @@ public:
   EndpointCxn_(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
 	ZiConnection(endpoint->mx_(), ci),
 	m_endpoint{endpoint},
-	m_generation{generation} { }
+	m_generation{generation} { m_endpoint->cxnAdded_(); }
 
-  void connected(ZiIOContext &io) override {
+  void connected(ZiRxContext &io) override {
+    if (mx()->backend() == ZiMxBackend::URing)
+      m_sendDone = ZiTxFn{this, ZmFnPtr<&EndpointCxn_::template sendDone_<true>>{}};
+    else
+      m_sendDone = ZiTxFn{this, ZmFnPtr<&EndpointCxn_::template sendDone_<false>>{}};
     m_endpoint->connected_(this, io);
   }
   void disconnected(bool) override {
@@ -277,7 +283,7 @@ public:
   }
 
   unsigned generation() const { return m_generation; }
-  bool txPending() const { return !!m_txBuf; }
+  bool txPending() const { return m_txActive; }
   uint64_t txQueued() const { return m_txQueue.count_(); }
 
   bool sendPkt(
@@ -293,12 +299,13 @@ public:
     }
 	ZiAssert(m_endpoint->endpointTxInvoked_(),
 	"Zquic", (), "QUIC endpoint send outside Tx thread", return false);
-    if (m_txBuf) return enqueueTx_(ZuMv(buf), ZuMv(addr), ecn, priority);
+    if (m_txActive) return enqueueTx_(ZuMv(buf), ZuMv(addr), ecn, priority);
 	m_endpoint->txSubmitted_(buf->length);
+    m_txActive = true;
     m_txBuf = ZuMv(buf);
     m_txAddr = ZuMv(addr);
     m_txECN = ecn;
-    send(ZiIOFn{this, ZmFnPtr<&EndpointCxn_::sendStart_>{}});
+    send(ZiTxFn{this, ZmFnPtr<&EndpointCxn_::sendStart_>{}});
     return true;
   }
 
@@ -310,13 +317,13 @@ private:
   void closeTx_() {
     m_closing = true;
     m_txBuf = nullptr;
+    m_txActive = false;
     m_txECN = EcnMark::NotECT;
     m_txQueue.clean();
   }
 
   void closeRx_() {
     m_closing = true;
-    m_rxBuf = nullptr;
   }
 
   bool enqueueTx_(
@@ -341,79 +348,57 @@ private:
     return true;
   }
 
-  void scheduleTx_() {
-    m_endpoint->txRun_([cxn = ZmRef(this)]() mutable {
-	if (cxn->m_closing.load_() || !cxn->m_txBuf) return;
-	cxn->send(ZiIOFn{cxn.ptr(), ZmFnPtr<&EndpointCxn_::sendStart_>{}});
-    });
-  }
-
-  bool recvDone_(ZiIOContext &io) {
-    if (io.length < 0) {
-	m_endpoint->ioError_();
-	io.disconnect();
-	return true;
+  bool recvDone_(ZiRxContext &io) {
+    if (io.buf && io.buf->length) {
+	// Snapshot recvmsg metadata before transferring the provided slot.
+	auto addr = io.addr;
+	auto ecn = ecnMarkFromTOS(io.tos);
+	m_endpoint->received_(Datagram{ZuMv(io.buf), ZuMv(addr), ecn});
     }
-    if (io.length > 0 && m_rxBuf) {
-	m_rxBuf->skip = 0;
-	m_rxBuf->length = unsigned(io.length);
-	auto buf = ZuMv(m_rxBuf);
-	m_endpoint->received_(
-	  Datagram{ZuMv(buf), io.addr, ecnMarkFromTOS(io.tos)});
-    }
-    if (m_closing.load_()) {
-	io.complete();
-	return true;
-    }
-    armRecv_(io);
+    if (m_closing.load_()) io.complete();
     return true;
   }
 
-  void armRecv_(ZiIOContext &io) {
-    m_rxBuf = m_endpoint->allocRxPkt_();
-    io.init(
-	ZiIOFn{this, ZmFnPtr<&EndpointCxn_::recvDone_>{}},
-	m_rxBuf->data_(), m_rxBuf->size, 0);
+  void armRecv_(ZiRxContext &io) {
+    io.init(ZiRxFn{this, ZmFnPtr<&EndpointCxn_::recvDone_>{}});
   }
 
-  bool sendStart_(ZiIOContext &io) {
+  bool sendStart_(ZiTxContext &io) {
     if (!m_txBuf) {
 	io.complete();
 	return true;
     }
+    m_txActive = true;
+    m_txBytes = m_txBuf->length;
     io.init(
-	ZiIOFn{this, ZmFnPtr<&EndpointCxn_::sendDone_>{}},
-	m_txBuf->data(), m_txBuf->length, 0, m_txAddr, ecnTOS(m_txECN));
+	m_sendDone,
+	ZuMv(m_txBuf), m_txAddr, ecnTOS(m_txECN));
     return true;
   }
 
-  bool sendDone_(ZiIOContext &io) {
-    if (io.length < 0) {
-	m_endpoint->ioError_();
-	bool hadQueue = m_txQueue.count_();
-	m_txBuf = nullptr;
-	if (dequeueTx_()) {
-	  if (hadQueue) m_endpoint->txDrained_();
-	  io.complete();
-	  scheduleTx_();
-	  return true;
-	}
-	if (hadQueue) m_endpoint->txDrained_();
+  template <bool Native>
+  bool sendDone_(ZiTxContext &io) {
+    // Native next-output callbacks run at data completion, independently of
+    // the later buffer-bearing notification retirement callback.
+    if constexpr (Native) if (io.buf) {
+	if (io.length < 0 && !(io.flags & ZiTxContext::TxDataDone))
+	  m_endpoint->ioError_();
 	io.complete();
 	return true;
     }
-    if ((io.offset += io.length) < io.size) return true;
-    bool hadQueue = m_txQueue.count_();
-    m_endpoint->sent_(io.size);
-    m_txBuf = nullptr;
+    if (io.length < 0)
+	m_endpoint->ioError_();
+    else if (m_txActive)
+	m_endpoint->sent_(m_txBytes);
+    m_txActive = false;
     if (dequeueTx_()) {
-	if (hadQueue) m_endpoint->txDrained_();
-	io.complete();
-	scheduleTx_();
+	// Drain callbacks may send synchronously; publish the selected packet
+	// first so reentrant sends queue behind it.
+	sendStart_(io);
+	m_endpoint->txDrained_();
 	return true;
     }
     m_txECN = EcnMark::NotECT;
-    if (hadQueue) m_endpoint->txDrained_();
     io.complete();
     return true;
   }
@@ -426,13 +411,12 @@ private:
   // exceptional atomic close handoff shared by Rx and Tx
   ZmAtomic<unsigned>	m_closing = 0;
 
-  // Rx thread exclusive
-  alignas(Zm::CacheLineSize)
-  ZmRef<ZiIOBuf>	m_rxBuf;
-
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
-  ZmRef<ZiIOBuf>	m_txBuf;
+  ZiTxFn		m_sendDone; // initialized before socket publication
+  ZmRef<ZiIOBuf>	m_txBuf; // pending selection only; active output belongs to io
+  unsigned		m_txBytes = 0;
+  bool			m_txActive = false;
   ZiSockAddr		m_txAddr;
   EcnMark::T		m_txECN = EcnMark::NotECT;
   TxQueue		m_txQueue;
@@ -446,14 +430,12 @@ class Endpoint_ {
 
 public:
   using Impl = Impl_;
-  using RxPktAlloc = PktRxBufAlloc<>;
-  using TxPktAlloc = PktTxBufAlloc<>;
+  using TxPktAllocator = PktTxBufAllocator<>;
   using CxnRef = ZmRef<Cxn_>;
 
   Endpoint_() = default;
   ~Endpoint_() {
-    if (!m_open) return;
-    ZiAssert(false, "Zquic", (),
+    ZiAssert(!m_open && !m_ioCxns && !m_unbinding, "Zquic", (),
       "QUIC endpoint destroyed before finalization", return);
   }
 
@@ -466,6 +448,7 @@ public:
       "endpoint multiplexer is not running", return false);
     if (m_mx) return m_mx == mx;
     m_mx = mx;
+    m_txBufAllocator = new TxPktAllocator{mx->txRingSize()};
     return true;
   }
 
@@ -479,7 +462,7 @@ public:
     ZiMultiplex *mx = m_mx;
     ZiAssert(mx->running(), "Zquic", (),
       "endpoint multiplexer is not running", return false);
-    if (m_open || m_cxn) return false;
+    if (m_open || m_cxn || m_ioCxns || m_unbinding) return false;
 
     m_mode = mode;
     m_local.init(localIP, localPort);
@@ -634,7 +617,7 @@ public:
   }
   SockDiag sockDiag() const { return m_sockDiag; }
   void failure() { ++m_rxDiag.failures; }
-  ZmRef<ZiIOBuf> allocTxPkt() { return new TxPktAlloc{this}; }
+  ZmRef<ZiIOBuf> allocTxPkt() { return m_txBufAllocator->alloc(this, 0); }
 
   bool send(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
@@ -656,7 +639,7 @@ public:
   }
 
 private:
-  void connected_(Cxn_ *cxn, ZiIOContext &io) {
+  void connected_(Cxn_ *cxn, ZiRxContext &io) {
     bool rebind = false;
     CxnRef oldCxn;
     if (m_rebindCxn == cxn && cxn->generation() == m_rebindGeneration) {
@@ -699,34 +682,66 @@ private:
     }
   }
 
+  void cxnAdded_() { ++m_ioCxns; }
+
   template <typename ImplRef_>
   void disconnected_0(Cxn_ *cxn, ImplRef_ impl_) {
     m_mx->rxRun([impl = ZuMvPtr(impl_), cxn = ZmRef(cxn)]() mutable {
-      auto fns = static_cast<Impl *>(impl)->
-	Endpoint_::disconnected_(cxn.ptr());
-      auto mx = cxn->mx();
-      mx->txRun([
-	impl = ZuMvPtr(impl), cxn = ZuMv(cxn), fns = ZuMv(fns)
+      auto self = static_cast<Endpoint_ *>(static_cast<Impl *>(impl));
+      --self->m_ioCxns;
+      self->disconnected_(cxn.ptr());
+      if (!self->m_ioCxns && !self->m_cxn && !self->m_rebindCxn) {
+	self->unbindEndpoint_(ZuMvPtr(impl), ZuMv(cxn));
+	return;
+      }
+      self->m_mx->txRun([
+	impl = ZuMvPtr(impl), cxn = ZuMv(cxn)
       ]() mutable {
 	if constexpr (Impl::EndpointRef) impl = nullptr;
 	cxn = nullptr;
-	Endpoint_::runDiscFns_(fns);
       });
     });
   }
 
-  EndpointDiscFns disconnected_(Cxn_ *cxn) {
+  void disconnected_(Cxn_ *cxn) {
     if (m_cxn == cxn && cxn->generation() == m_generation) {
       cxn->closeRx_();
       m_cxn = nullptr;
       m_listening = false;
       m_connected = false;
       m_open = false;
-      impl()->endpointDown_(this);
-      return takeDiscFns_();
+      m_downPending = true;
     }
-    if (!m_cxn) return takeDiscFns_();
-    return {};
+  }
+
+  template <typename ImplRef_>
+  void unbindEndpoint_(ImplRef_ impl_, CxnRef cxn = {}) {
+    m_unbinding = true;
+    // The endpoint outlives every connection (including obsolete rebinds) and
+    // its allocator controls. No destructor dispatches into a live I/O loop.
+    m_mx->unbind(m_txBufAllocator.ptr(), {[
+      impl = ZuMvPtr(impl_), cxn = ZuMv(cxn)
+    ]() mutable {
+      auto self = static_cast<Endpoint_ *>(static_cast<Impl *>(impl));
+      self->m_mx->rxRun([
+	impl = ZuMvPtr(impl), cxn = ZuMv(cxn)
+      ]() mutable {
+	auto self = static_cast<Endpoint_ *>(static_cast<Impl *>(impl));
+	self->m_unbinding = false;
+	if (self->m_downPending) {
+	  self->m_downPending = false;
+	  self->impl()->endpointDown_(self);
+	}
+	auto fns = self->takeDiscFns_();
+	self->m_mx->txRun([
+	  impl = ZuMvPtr(impl), cxn = ZuMv(cxn), fns = ZuMv(fns)
+	]() mutable {
+	  if constexpr (Impl::EndpointRef) impl = nullptr;
+	  cxn = nullptr;
+	  Endpoint_::runDiscFns_(fns);
+	});
+      });
+    }});
   }
 
   void failed_(bool transient) {
@@ -815,10 +830,11 @@ private:
     return fns;
   }
   void discFns_() {
-    auto fns = takeDiscFns_();
-    m_mx->txRun([fns = ZuMv(fns)]() mutable {
-      Endpoint_::runDiscFns_(fns);
-    });
+    if (m_ioCxns || m_unbinding) return;
+    if constexpr (Impl::EndpointRef)
+      unbindEndpoint_(ZmRef(impl()));
+    else
+      unbindEndpoint_(impl());
   }
   static void runDiscFns_(EndpointDiscFns &fns) {
     while (auto fn = fns.shift()) fn();
@@ -845,15 +861,12 @@ private:
     m_txDiag.submittedBytes += bytes;
   }
   void txBackPressure_() { ++m_txDiag.txBackPressure; }
-  template <typename L> void txRun_(L &&l) {
-    m_mx->txRun(ZuFwd<L>(l));
-  }
-  ZmRef<ZiIOBuf> allocRxPkt_() { return new RxPktAlloc{this}; }
   const Impl *impl() const { return static_cast<const Impl *>(this); }
   Impl *impl() { return static_cast<Impl *>(this); }
 
   // shared: stable after init()
   ZiMultiplex		*m_mx = nullptr;
+  ZmRef<Zi::IOBufAllocator> m_txBufAllocator;
 
   // shared read-mostly active connection identity; mutation is Rx-owned
   CxnRef		m_cxn;
@@ -877,6 +890,9 @@ private:
   CxnRef		m_rebindCxn;
   EndpointDiscFns	m_discFns;
   unsigned		m_rebindGeneration = 0;
+  unsigned		m_ioCxns = 0;
+  bool			m_unbinding = false;
+  bool			m_downPending = false;
   EndpointRebindFn	m_rebindFn;
   ZiSockAddr		m_rebindLocal;
   ZiSockAddr		m_rebindRemote;

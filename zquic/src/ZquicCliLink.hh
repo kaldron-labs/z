@@ -248,20 +248,33 @@ public:
     if (Base::disconnecting_()) return false;
     if (!stream || (!payload && !fin))
       return false;
-    AsyncSendPayload payload_;
-    payload_.append(payload.data(), payload.length());
-    app()->txInvoke([
-      link = this->impl(),
-      stream = ZuMv(stream),
-      payload = ZuMv(payload_),
-      fin
-    ]() mutable {
+    if (app()->txInvoked()) return send_(ZuMv(stream), payload, fin);
+    auto tx = stream->txStream();
+    tx << payload;
+    if (!tx.flush()) return false;
+    app()->txInvoke([link = this->impl(), stream = ZuMv(stream), fin]() mutable {
       if (link->disconnecting_()) return;
-      link->send_(
-	ZuMv(stream),
-	payload,
-	fin);
+      if (fin) stream->fin();
+      link->queueTxFlush_();
     });
+    return true;
+  }
+  bool send(StreamRef stream, Zi::RxRange payload, bool fin = true) {
+    if (Base::disconnecting_() || !stream || (!payload.length && !fin)) return false;
+    app()->txInvoke([link = this->impl(), stream = ZuMv(stream),
+	payload = ZuMv(payload), fin]() mutable {
+      if (!link->disconnecting_()) link->send_(ZuMv(stream), ZuMv(payload), fin);
+    });
+    return true;
+  }
+  bool send_(StreamRef stream, Zi::RxRange payload, bool fin = true) {
+    ZiAssert(app()->txInvoked(), "Zquic", (),
+      "QUIC retained send outside Tx thread", return false);
+    if (Base::linkClosedTx_() || !stream || (!payload.length && !fin)) return false;
+    if (payload.length && !stream->sendRange_(
+	TxRange{ZuMv(payload.buf), payload.offset, payload.length})) return false;
+    if (fin) stream->fin();
+    queueTxFlush_();
     return true;
   }
   bool send_(StreamRef stream, ZuBSpan payload, bool fin = true) {
@@ -726,9 +739,9 @@ private:
     bool ok = Base::template advanceTLS_<TLSBufSize>(
       inEpoch, input, ZuMv(addr),
       [this](
-	  const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
+	  ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
 	  ZiSockAddr addr_) {
-	return sendCryptoFlights_(data, len, offsets, ZuMv(addr_));
+	return sendCryptoFlights_(ZuMv(data), offsets, ZuMv(addr_));
       },
       [this]() { markEstablished_(); },
       [](ZiSockAddr) { return true; });
@@ -737,9 +750,9 @@ private:
   }
 
   bool sendCryptoFlights_(
-    const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
+    ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
     ZiSockAddr addr) {
-    if (!validCryptoOffsets(offsets, len)) {
+    if (!data || !validCryptoOffsets(offsets, data->length)) {
       app()->txRun([link = impl()]() {
 	if (!link->disconnecting_())
 	  link->invalidCryptoOffsetsTx_();
@@ -748,31 +761,29 @@ private:
     }
     typename Base::TxCryptoSnapshot txCrypto;
     Base::snapshotTxCrypto_(txCrypto);
-    AsyncSendPayload payload;
-    payload.append(data, len);
     app()->txRun([
       link = impl(),
       txCrypto,
-      payload = ZuMv(payload),
+      payload = ZuMv(data),
       offsets,
       addr = ZuMv(addr)
     ]() mutable {
       if (link->disconnecting_()) return;
       if (!link->installTxCrypto_(txCrypto)) return;
       (void)link->sendCryptoFlightsTx_(
-	payload.data(), payload.length(), offsets, ZuMv(addr));
+	ZuMv(payload), offsets, ZuMv(addr));
     });
     return true;
   }
 
   bool sendCryptoFlightsTx_(
-    const uint8_t *data, unsigned len, const CryptoOffsets &offsets,
+    ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
     ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client crypto send outside Tx thread", return false);
     Base::beginLongCoalesce_();
     bool ok = Base::sendCryptoFlights_(
-      data, len, offsets, CryptoChunk, ZuMv(addr),
+      ZuMv(data), offsets, CryptoChunk, ZuMv(addr),
       [this](
 	  PktNumSpace::T level, ZuBSpan prefix, ZuBSpan payload,
 	  const SentFrameRef &ref, ZiSockAddr addr_) {

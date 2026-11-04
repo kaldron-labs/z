@@ -24,32 +24,32 @@ them from the intended implementation:
   `ClientCreds`, then parse it back into the same backend key type. Retain the
   existing intrusive key reference instead. This removes a secret copy, a
   parse, failure paths, and the proposed `pkey_load_der()` and `cleanse()` APIs
-  ([Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-  [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies),
-  [Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+  ([Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+  [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies),
+  [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 - Do not add `SupplementalCA`. It provided no invariant beyond an owning
   certificate array. Store supplemental CA certificates directly in
   `ClientParams` as `Certs` and validate them while building the trust store
-  ([Framework fit](GUIDELINES.md#framework-fit),
-  [Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+  ([Framework fit](docs/GUIDELINES.md#framework-fit),
+  [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 - Do not expose an allocated backend `CSR` object with `new/free/size/write`
   functions. Add one synchronous backend operation that emits DER to the
   caller's sink; no intermediate repository-owned CSR object survives the call
-  ([Heap allocation](GUIDELINES.md#heap-allocation),
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)).
+  ([Heap allocation](docs/GUIDELINES.md#heap-allocation),
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)).
 - Do not model PKCS#10 a second time in `ZfASN1`. CSR construction, signature
   algorithm identifiers, public-key encoding, and signing are one atomic
   cryptographic backend operation. OpenSSL already implements it for RSA, EC,
   and Ed25519. Keep that direct use inside `ZtlsOpenSSL.cc`, as is already done
   for X.509 certificate verification and TLS signing
-  ([Framework fit](GUIDELINES.md#framework-fit),
-  [I/O and system integration](GUIDELINES.md#io-and-system-integration)).
+  ([Framework fit](docs/GUIDELINES.md#framework-fit),
+  [I/O and system integration](docs/GUIDELINES.md#io-and-system-integration)).
 - Do not preserve new APIs solely as compatibility shims if their shape changes
   during implementation. The existing file-path client configuration remains
   because it is independently useful and already supported, not as an adapter
   for the new in-memory path
-  ([General principles](GUIDELINES.md#general-principles),
-  [Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+  ([General principles](docs/GUIDELINES.md#general-principles),
+  [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ## Minimal API
 
@@ -75,9 +75,9 @@ configuration; there is no intermediate span-owning wrapper and no DER byte
 copy. These are cold-path, variable-sized arrays, so `ZtArray` with explicit
 heap IDs is
 appropriate; do not use fixed arrays, STL containers, or unexplained built-in
-capacities ([Storage and capacity](GUIDELINES.md#storage-and-capacity),
-[Heap allocation](GUIDELINES.md#heap-allocation),
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime)).
+capacities ([Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+[Heap allocation](docs/GUIDELINES.md#heap-allocation),
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime)).
 
 ### `ClientCreds`
 
@@ -121,16 +121,16 @@ boolean, expose the backend key, expose mutable certificate storage, or provide
 a PKCS#8 accessor. Define operations requiring the complete `PK::AnyPK` type
 out of line so `ZtlsCreds.hh` can forward-declare it and avoid pulling the
 template-heavy `ZtlsPK.hh` into every `Ztls.hh` dependent
-([Framework fit](GUIDELINES.md#framework-fit),
-[Assertions and type mechanics](GUIDELINES.md#assertions-and-type-mechanics),
-[Module layout](GUIDELINES.md#module-layout)).
+([Framework fit](docs/GUIDELINES.md#framework-fit),
+[Assertions and type mechanics](docs/GUIDELINES.md#assertions-and-type-mechanics),
+[Module layout](docs/GUIDELINES.md#module-layout)).
 
 `ClientCreds` is a class because its data is private and its invariants are
 enforced by its interface. Members use `m_`, are ordered largest first where
 practical, and names remain below 28 bytes
-([Class and struct shape](GUIDELINES.md#class-and-struct-shape),
-[Length and abbreviations](GUIDELINES.md#length-and-abbreviations),
-[Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes)).
+([Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape),
+[Length and abbreviations](docs/GUIDELINES.md#length-and-abbreviations),
+[Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes)).
 
 ### CSR generation
 
@@ -162,9 +162,9 @@ declarations within them. RSA uses SHA-256 with PKCS#1 v1.5, EC uses
 ECDSA/SHA-256, and Ed25519 uses Ed25519. The request has an empty X.509 subject
 and no requested extensions. It returns DER through the established Ztls key
 sink/error convention; PEM and base64 remain caller concerns
-([Code structure](GUIDELINES.md#code-structure),
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Type and API friction](GUIDELINES.md#type-and-api-friction)).
+([Code structure](docs/GUIDELINES.md#code-structure),
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction)).
 
 Add only this backend callback operation:
 
@@ -184,15 +184,15 @@ the backend reports sink or crypto failure as `false`. OpenSSL temporary
 objects and its DER buffer are released before return. Do not store the
 callback, capture a long-lived owner, or allocate a Z callback wrapper for this
 cold synchronous boundary
-([Callbacks](GUIDELINES.md#callbacks),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Callbacks](docs/GUIDELINES.md#callbacks),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 The backend name retains the existing C-style `pkey_*` vocabulary. Public C++
 members remain camel case (`saveCSR`, `caCerts`); no new credential API accepts
 `const char *`
-([Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes),
-[Strings](GUIDELINES.md#strings),
-[Type and API friction](GUIDELINES.md#type-and-api-friction)).
+([Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes),
+[Strings](docs/GUIDELINES.md#strings),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction)).
 
 ### `ClientParams`
 
@@ -227,15 +227,15 @@ the `ZiMxParams::scheduler()`/`ZmSchedParams` pattern. This preserves inline
 configuration without forwarding every `HubParams` setter or decaying the
 expression to `HubParams`. It also avoids the near-identical forwarding block
 currently present in `ServerParams`
-([Accessors](GUIDELINES.md#accessors),
-[Code structure](GUIDELINES.md#code-structure),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([Accessors](docs/GUIDELINES.md#accessors),
+[Code structure](docs/GUIDELINES.md#code-structure),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 `ClientParams` is move-only as a consequence of `ClientCreds`; pass it to the
 existing `Client::init(ClientParams)` by move. Do not copy keys or certificate
 collections through the existing Rx initialization continuation
-([Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-[Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs)).
+([Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+[Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs)).
 
 ### Backend certificate operations
 
@@ -275,9 +275,9 @@ CA certificate and is used only for enrollment-supplied trust. Duplicate
 certificates remain idempotent. Keep every `X509`, `BIO`, `EVP_PKEY`, and
 picotls allocation inside `ZtlsOpenSSL.cc`, with one cleanup exit or equivalent
 RAII and no OpenSSL type in a public Ztls header
-([I/O and system integration](GUIDELINES.md#io-and-system-integration),
-[General principles](GUIDELINES.md#general-principles),
-[Type and API friction](GUIDELINES.md#type-and-api-friction)).
+([I/O and system integration](docs/GUIDELINES.md#io-and-system-integration),
+[General principles](docs/GUIDELINES.md#general-principles),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction)).
 
 ## Phase 1: CSR support
 
@@ -298,10 +298,10 @@ RAII and no OpenSSL type in a public Ztls header
 Interim acceptance: all existing key types produce interoperable PKCS#10 DER,
 and malformed/public-only/backend failures return `ZeException` without leaks.
 
-Applicable guidance: [Code structure](GUIDELINES.md#code-structure),
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Framework fit](GUIDELINES.md#framework-fit), and
-[Tests](GUIDELINES.md#tests).
+Applicable guidance: [Code structure](docs/GUIDELINES.md#code-structure),
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Framework fit](docs/GUIDELINES.md#framework-fit), and
+[Tests](docs/GUIDELINES.md#tests).
 
 ## Phase 2: In-memory client credentials
 
@@ -337,11 +337,11 @@ broken, expired/not-yet-valid, wrong-key-usage/EKU, constraint-violating, and
 non-CA-intermediate inputs fail
 before connection establishment.
 
-Applicable guidance: [Header layout](GUIDELINES.md#header-layout),
-[Module layout](GUIDELINES.md#module-layout),
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime),
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-and [Class and struct shape](GUIDELINES.md#class-and-struct-shape).
+Applicable guidance: [Header layout](docs/GUIDELINES.md#header-layout),
+[Module layout](docs/GUIDELINES.md#module-layout),
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime),
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+and [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape).
 
 ## Phase 3: Additive server trust
 
@@ -364,66 +364,66 @@ CA successfully; unrelated, malformed, expired, or non-CA supplemental
 certificates and wrong hostnames fail. Supplemental roots do not replace base
 trust.
 
-Applicable guidance: [Code structure](GUIDELINES.md#code-structure),
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[I/O sharding](GUIDELINES.md#io-sharding), and
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+Applicable guidance: [Code structure](docs/GUIDELINES.md#code-structure),
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[I/O sharding](docs/GUIDELINES.md#io-sharding), and
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 ## Audit checklist for implementation review
 
 - **Code structure:** common CSR work is outside key templates; key-type
   dispatch is one `switch`; invariant lengths/elements are cached; control flow
   uses early failure and one cleanup path
-  ([Code structure](GUIDELINES.md#code-structure),
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow)).
+  ([Code structure](docs/GUIDELINES.md#code-structure),
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow)).
 - **Storage/capacity:** certificate counts and bytes are caller-bounded;
   `ZtArray` carries explicit heap IDs; span scratch uses `ZtScratch`; there are
   no fixed certificate arrays, lookup tables, retained zombies, or periodic GC
-  ([Storage and capacity](GUIDELINES.md#storage-and-capacity),
-  [Liveness](GUIDELINES.md#liveness)).
+  ([Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+  [Liveness](docs/GUIDELINES.md#liveness)).
 - **Allocation:** repository-owned variable storage uses Z heaps. Native
   OpenSSL allocations exist only inside the backend, are cold-path, and are
   released in the same call or normal TLS teardown
-  ([Heap allocation](GUIDELINES.md#heap-allocation),
-  [Storage and lifetime](GUIDELINES.md#storage-and-lifetime)).
+  ([Heap allocation](docs/GUIDELINES.md#heap-allocation),
+  [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime)).
 - **Movement/initialization:** the key reference and `Certs` move through params
   into the client; input certificates are released after their single copy into
   picotls-owned handshake storage; no
   private-key serialization, temporary contiguous DER copy, default-before-
   overwrite array fill, or secret-bearing log capture is introduced
-  ([Data movement and initialization](GUIDELINES.md#data-movement-and-initialization)).
+  ([Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization)).
 - **Framework/API fit:** public data uses `ZmRef`, `ZtArray`, `ZtScratch`,
   `ZuBSpan`, `ZuUnion`, and `ZeException`; OpenSSL remains behind
   `ZtlsBackend.hh`; no STL container, `FILE`, printf, raw credential C string,
   unnecessary cast, or hand-rolled ASN.1 parser is added
-  ([Framework fit](GUIDELINES.md#framework-fit),
-  [Type and API friction](GUIDELINES.md#type-and-api-friction)).
+  ([Framework fit](docs/GUIDELINES.md#framework-fit),
+  [Type and API friction](docs/GUIDELINES.md#type-and-api-friction)).
 - **Concurrency/lifetime:** CSR generation is synchronous and thread-confined;
   credential/trust installation occurs during existing Rx-owned initialization
   and is stable afterward; no new lock or atomic is added; signing is destroyed
   before its retained/path-owned key; no callback outlives its stack context
-  ([Concurrency and sharding](GUIDELINES.md#concurrency-and-sharding),
-  [I/O sharding](GUIDELINES.md#io-sharding),
-  [Lifetime](GUIDELINES.md#lifetime)).
+  ([Concurrency and sharding](docs/GUIDELINES.md#concurrency-and-sharding),
+  [I/O sharding](docs/GUIDELINES.md#io-sharding),
+  [Lifetime](docs/GUIDELINES.md#lifetime)).
 - **Scope:** no enrollment transport, retry, token, JSON, fleet policy,
   persistence, new key type, generic trust manager, or compatibility wrapper is
   implemented in `ztls`
-  ([Scope and cleanup](GUIDELINES.md#scope-and-cleanup),
-  [Persistence](GUIDELINES.md#persistence)).
+  ([Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup),
+  [Persistence](docs/GUIDELINES.md#persistence)).
 - **Style/naming:** new public files are `ZtlsCreds.{hh,cc}`; public types are
   `Cert`, `Certs`, `ClientCreds`, and `ClientParams`; public members are
   `saveCSR`, `creds`, `certs`, and `caCerts`; backend functions follow the
   established C-style names. All names are under 28 bytes, class data uses
   `m_`, no newly added struct has private data, and source uses hard tabs with
   the local two-column logical indent
-  ([Naming](GUIDELINES.md#naming),
-  [Indentation](GUIDELINES.md#indentation),
-  [Class and struct shape](GUIDELINES.md#class-and-struct-shape)).
+  ([Naming](docs/GUIDELINES.md#naming),
+  [Indentation](docs/GUIDELINES.md#indentation),
+  [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape)).
 - **Tests:** use `ZuTestUtil`, TAP, deterministic fixtures/synchronization, and
   no sleep/poll completion. Exercise error cleanup under valgrind; a sanitizer
   build is not required
-  ([Tests](GUIDELINES.md#tests),
-  [Acceptance](GUIDELINES.md#acceptance)).
+  ([Tests](docs/GUIDELINES.md#tests),
+  [Acceptance](docs/GUIDELINES.md#acceptance)).
 
 ## Verification
 
@@ -454,7 +454,7 @@ tests pass.
    verification step. No new platform branch may appear outside
    `ZtlsOpenSSL.cc` or the existing platform trust loader.
 
-This order follows [Build configuration](GUIDELINES.md#build-configuration):
+This order follows [Build configuration](docs/GUIDELINES.md#build-configuration):
 build the changed library before its tests, avoid mixed/stale objects, and
 perform the broad dependent rebuild only after focused implementation work is
 stable.

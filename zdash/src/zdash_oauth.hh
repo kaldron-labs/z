@@ -42,6 +42,7 @@
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZfURI.hh>
 
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
@@ -53,6 +54,7 @@
 #include <zlib/Zws.hh>
 
 #include <zlib/ZhttpClient.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZhttpServer.hh>
 #include <zlib/ZhttpURL.hh>
 
@@ -592,7 +594,7 @@ inline bool CallbackApp::parseQuery(ZuCSpan query, Query &result)
   unsigned seen = 0;
   bool duplicate = false;
   static constexpr auto matcher = ZuMatcher<IDs>();
-  bool valid = formEach({form.data(), form.length()},
+  bool valid = formEach(form,
     [&](ZuCSpan name, ZuCSpan value) {
       int id = matcher.exact(name);
       if (id < 0) return;
@@ -624,7 +626,9 @@ static ZiMxParams mxParams()
       .thread(2, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(3, [](auto &t) { t.name("cb-rx"); t.isolated(1); })
       .thread(4, [](auto &t) { t.name("cb-tx"); t.isolated(1); });
-  }).rxThread(1).txThread(2);
+  }).rxThread(1).txThread(2)
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>();
 }
 
 // Main-thread lease; token borrows the Vault credential until the next refresh.
@@ -639,7 +643,7 @@ static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens,
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -713,7 +717,7 @@ static bool metadataJSON(String &json, ZuCSpan issuerURL, MetadataWire &metadata
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();

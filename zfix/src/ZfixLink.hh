@@ -24,6 +24,7 @@
 #include <zlib/ZfixContext.hh>
 #include <zlib/ZfixIOBuf.hh>
 #include <zlib/ZfixLinkTx.hh>
+#include <zlib/ZfixTxCapture.hh>
 #include <zlib/ZfixDispatch.hh>
 #include <zlib/ZfixRx.hh>
 #include <zlib/ZfixRxFramer.hh>
@@ -87,6 +88,7 @@ struct LinkLimits {
 
 // Standalone engines need no native transport input or application ledgers.
 struct NoLinkRx {
+  enum { WireMode = Zfix::WireMode::Generic };
   explicit NoLinkRx(const LinkLimits &) { }
 };
 
@@ -179,16 +181,16 @@ private:
     }
   };
 
-  struct TxSide : public LinkTx<TxSide>, public WireTx<TxSide> {
+  struct TxSide : public LinkTx<TxSide>, public WireTx<TxSide, NativeRx::WireMode> {
     static constexpr bool SignMsg = [] { return bool(Impl::SignMsg); }();
-    template <typename S>
-    void signMsg(S &out, const TxBody *body, TxContext context, ZuCSpan message) const {
+    template <typename S, typename Message>
+    void signMsg(S &out, const TxBody *body, TxContext context, const Message &message) const {
       ZmAssert(link->app()->txInvoked());
       link->impl()->signMsg(out, body, context, message);
     }
 
     using Ctl = LinkTx<TxSide>;
-    using Wire = WireTx<TxSide>;
+    using Wire = WireTx<TxSide, NativeRx::WireMode>;
 
     Link	*link;
     uint64_t	stopConnection = 0; // requested drain; Ctl may never have opened
@@ -295,7 +297,7 @@ private:
       link->app()->rxRun([link = link, c] { link->outputFailed_(c); });
     }
 
-    bool admitFrameTx(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime) {
+    bool admitFrameTx(TxBody::Ref b, TxContext c, TxImage f, ZuDateTime) {
       return Wire::admit_(ZuMv(b), c, ZuMv(f));
     }
 
@@ -303,7 +305,7 @@ private:
       link->app()->rxRun([link = link, notice] { link->notice_(notice); });
     }
 
-    void frameTrace(ZuCSpan wire, TxContext c) { link->traceTx_(wire, c); }
+    void frameTrace(const TxImage &wire, ZuCSpan type, TxContext c) { link->traceTx_(wire, type, c); }
 
     void flushTx() { Wire::flush_(); }
 
@@ -315,9 +317,38 @@ private:
       link->impl()->fixCompleteTx(ZuMv(b), c, ok);
     }
 
+    TxFrameBuf frameStorageTx() {
+      const auto &geometry = Wire::geometry_();
+      return {link->impl()->fixAllocTx(geometry.head), geometry.tail, true};
+    }
+
     ZmRef<WireBuf> recordAlloc(unsigned head) { return link->impl()->fixAllocTx(head); }
 
     bool recordSend(ZmRef<ZiIOBuf> b) { return link->impl()->fixSendTx(ZuMv(b)); }
+    bool recordStart(ZmRef<WireQueue::Node> node) {
+      return link->impl()->fixStartFrameTx(ZuMv(node));
+    }
+    void recordDoneIO(ZmRef<WireQueue::Node> node, unsigned part, bool ok) {
+      link->app()->txRun([node = ZuMv(node), part, ok]() mutable {
+	auto owner = static_cast<TxSide *>(node->owner);
+	owner->Wire::record_(node->token, part, ok);
+	owner->Wire::ack_(node); owner->checkStop();
+      });
+    }
+    void recordAckIO(ZmRef<WireQueue::Node> node) {
+      link->app()->txRun([held = ZuMv(node)] {
+	auto node = held.ptr();
+	auto owner = static_cast<TxSide *>(node->owner);
+	owner->Wire::ack_(ZmRef<WireQueue::Node>{node}); owner->checkStop();
+      });
+    }
+    bool recordSendRange(Zi::RxRange source, ZmRef<WireBuf> wire) {
+      return link->impl()->fixSendRangeTx(ZuMv(source), ZuMv(wire));
+    }
+    void recordRun(uint64_t connection, uint64_t token) {
+      link->app()->txRun([this, connection, token] { Wire::resume_(connection, token); });
+    }
+
 
     void outputDone(TxBody::Ref b, TxContext c, bool ok) {
       link->app()->txRun([this, b = ZuMv(b), c, ok]() mutable {
@@ -399,28 +430,33 @@ public:
     app()->txRun([this, connection] { m_tx.stop(connection); });
   }
 
-  void transportSent(const WireBuf *buf, bool ok) {
-    if (!buf->token) return;
-    app()->txRun([this, token = buf->token, part = buf->part, ok] {
+  void transportSent(const WireBuf *buf, bool ok) { transportSent(buf->token, buf->part, ok); }
+  void transportSent(uint64_t token, unsigned part, bool ok) {
+    if (!token) return;
+    app()->txRun([this, token, part, ok] {
       m_tx.Wire::record_(token, part, ok); m_tx.checkStop();
     });
+  }
+  bool fixStartFrameTx(ZmRef<WireQueue::Node> node) {
+    return impl()->sendFrame_(ZuMv(node));
   }
 
   template <typename Stream> int process_(Stream &stream) {
     ZmAssert(app()->rxInvoked());
     if (!m_live || m_adminFailed) return -1;
     if (m_pending) return 0;
-    ZmRef<ZiIOBuf> bytes; Fmt::FrameView frame;
+    Zi::RxRange bytes; Fmt::FrameView frame;
     int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx(); }, bytes, &frame);
     if (n < 0) {
       m_rx.framingError_(); fault_(SessionError::Protocol, m_framer.error_().tag);
       return -1;
     }
     if (!n) return 0;
+    impl()->fixFrameRx(bytes, frame);
     m_pending = new Msg;
-    m_pending->data().charge = rxMemory_(*bytes) + ZmHeapAllocSize<sizeof(Msg)>{};
+    m_pending->data().charge = rxMemory_(*bytes.buf) + ZmHeapAllocSize<sizeof(Msg)>{};
     m_pending->data().nativeMemory = true;
-    m_pending->data().buffer = ZuMv(bytes); m_pending->data().frame = frame;
+    m_pending->data().buffer = ZuMv(bytes.buf); m_pending->data().frame = frame;
     auto retained = m_traceRx.enabled_() ? m_pending : ZmRef<Msg>{};
     TxContext context{m_rx.session_().epoch_(), m_rx.session_().connection_(), 0};
     receive_();
@@ -440,6 +476,10 @@ public:
 
   TraceField fixTraceField(ZuCSpan, unsigned) { return {}; }
   bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
+
+  // Rx-owner diagnostic boundary: a complete validated frame is ready, before
+  // message allocation or semantic parsing. The default has no side effects.
+  void fixFrameRx(const Zi::RxRange &, const Fmt::FrameView &) { }
 
   void fixTraceRx(TraceRef) { }
   void fixTraceTx(TraceRef) { }
@@ -501,7 +541,7 @@ public:
     if (!app()->rxInvoked() && !app()->txInvoked()) {
       error = {Fmt::ErrorCode::Output}; return false;
     }
-    auto body = TxBody::encode<Entry>(object, id, error, m_codec);
+    auto body = TxBody::capture<Entry>(object, id, error, m_codec);
     if (!body) return false;
     if (!submit(body)) { error = {Fmt::ErrorCode::Output}; return false; }
     return true;
@@ -640,8 +680,8 @@ public:
   void fixControlTx(TxBody::Ref, TxContext) { }
 
   enum { SignMsg = 0 };
-  template <typename S>
-  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+  template <typename S, typename Message>
+  void signMsg(S &, const TxBody *, TxContext, const Message &) const { }
 
   TxBody::Ref fixLogonTx(TxBody::Ref b) { return b; }
 
@@ -715,9 +755,9 @@ private:
     f.secret |= p->fixTraceSecret(type, tag); return f;
   }
 
-  void traceTx_(ZuCSpan wire, TxContext c) {
+  void traceTx_(const TxImage &wire, ZuCSpan type, TxContext c) {
     if (!m_traceTx.enabled_()) return;
-    auto entry = m_traceTx.capture_(wire, c, traceField_, impl());
+    auto entry = m_traceTx.capture_(wire, type, c, traceField_, impl());
     if (entry) impl()->fixTraceTx(ZuMv(entry));
   }
   struct AdminReturn {
@@ -761,7 +801,7 @@ private:
     c.template p<Session::Reject>(Session::Reject{
       .refSeqNo = seqNo, .refTagID = tag, .reason = reason});
     Fmt::Error error;
-    auto body = TxBody::control(c, error, m_rx.session_().config_().mode, m_codec);
+    auto body = TxBody::captureControl(c, error, m_rx.session_().config_().mode, m_codec);
     if (error) { fault_(SessionError::Protocol, error.tag); return; }
     const auto &s = m_rx.session_();
     auto connection = s.connection_(), epoch = s.epoch_(), bytes = body->memory();
@@ -793,8 +833,7 @@ private:
   }
 
   static uint64_t rxMemory_(const ZiIOBuf &b) {
-    return ZmHeapAllocSize<sizeof(typename Impl::RxBufAlloc)>{} +
-      ((b.data__ & ZiIOBuf::Jumbo) ? Zfix::jumboBytes(b.size) : 0);
+    return b.memory();
   }
 
   template <typename Fn> bool postAdmin_(uint64_t retained, Fn fn) {
