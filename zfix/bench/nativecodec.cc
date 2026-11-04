@@ -15,11 +15,11 @@ struct NativeCodec {
   static ZuSpan<char> grow(void *owner, unsigned used, unsigned needed) {
     auto &s = static_cast<NativeCodec *>(owner)->storage;
     s.length(used < s.length() ? used : s.length());
-    s.length(needed); return {s.data(), s.length()};
+    s.length(needed); return s;
   }
 
   ZuCSpan encode(const ZfixLoad::Order &o) {
-    Zfix::Fmt::FrameWriter writer{{storage.data(), storage.length()}, "FIX.4.4", grow, this};
+    Zfix::Fmt::FrameWriter writer{storage, "FIX.4.4", grow, this};
     Zfix::TxConfig config;
     config.identity.local = "ZFIX-C"; config.identity.peer = "ZFIX-S";
     Zfix::TxContext context{.seqNo = 2, .sendingTime = o.time};

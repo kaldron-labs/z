@@ -845,8 +845,9 @@ def main():
             f'clientID: {json.dumps(example_client["id"])}, '
             f'scope: "Client offline_access", callbackPort: {example_port}, '
             'loginTimeout: 30, loopbackTest: true\n')
+        # Vault derives its environment prefix from the OAuth logger's program.
         example_env = {**os.environ,
-                       "ZTCHUB_CLIENT_HOME": str(directory / "example-vault"),
+                       "NATIVE-OAUTH_HOME": str(directory / "example-vault"),
                        "DBUS_SESSION_BUS_ADDRESS": "unsupported:address"}
         with (directory / "example.log").open("ab") as example_log:
             example = subprocess.Popen([

@@ -132,7 +132,7 @@ answers:
 
 `plan.md`: act as a skeptical principal software engineer; scrutinize the intended implementation against the original `goal.md`:
 
-- align each implementation element with `GUIDELINES.md`
+- align each implementation element with `docs/GUIDELINES.md`
   - align with naming rules
   - check intended implementation against all audit flags
   - add references to specific guidelines that apply in each case
@@ -154,7 +154,7 @@ answers:
 ## User
 
 Provided repository `AGENTS.md` instructions for `/home/count0/src/z`, making
-`GUIDELINES.md` authoritative for engineering style, performance, framework
+`docs/GUIDELINES.md` authoritative for engineering style, performance, framework
 idioms, build/test practice, naming, layout, I/O ownership, and review criteria.
 
 ## User

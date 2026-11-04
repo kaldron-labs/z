@@ -231,7 +231,7 @@ static bool jsonLoad(String &json, unsigned limit, T &value)
 {
   if (!json || json.length() > limit) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();

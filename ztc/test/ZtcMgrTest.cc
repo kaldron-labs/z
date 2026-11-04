@@ -216,43 +216,43 @@ void managerGuards()
 
 void dbRoot()
 {
-  ZuTestScope(dbRoot);
+  ZuTestScopeRT(dbRoot);
   WatchState state;
   MockDB db;
   Ztc::DBMgr::watch(
     {[&state](Ztc::DB *db_) {
       Ztc::DBTelemetry data;
       db_->telemetry(data);
-      ZuCheck(data.self == "db");
+      ZuCheckRT(data.self == "db");
       state.push(WatchState::DBAdd);
     }},
     {[&state](Ztc::DB *db_) {
       Ztc::DBTelemetry data;
       db_->telemetry(data);
-      ZuCheck(data.self == "db");
+      ZuCheckRT(data.self == "db");
       state.push(WatchState::DBDel);
     }},
     {}, {}, {}, {});
   Ztc::DBMgr::add(&db);
   unsigned seen = 0;
   unsigned count = Ztc::DBMgr::all({[&db, &seen](Ztc::DB *db_) {
-    ZuCheck(db_ == &db);
+    ZuCheckRT(db_ == &db);
     ++seen;
   }});
-  ZuCheck(count == 1);
-  ZuCheck(seen == 1);
+  ZuCheckRT(count == 1);
+  ZuCheckRT(seen == 1);
   Ztc::DBMgr::capture([](const auto &captures) {
     unsigned guarded = 0;
     Ztc::DBMgr::guard([&guarded]() { ++guarded; });
-    ZuCheck(guarded == 1);
-    ZuCheck(captures.length() == 1);
-    ZuCheck(captures[0].self == "db");
+    ZuCheckRT(guarded == 1);
+    ZuCheckRT(captures.length() == 1);
+    ZuCheckRT(captures[0].self == "db");
   });
   Ztc::DBMgr::del(&db);
   Ztc::DBMgr::unwatch();
-  ZuCheck(state.events.length() == 2);
-  ZuCheck(state.events[0] == WatchState::DBAdd);
-  ZuCheck(state.events[1] == WatchState::DBDel);
+  ZuCheckRT(state.events.length() == 2);
+  ZuCheckRT(state.events[0] == WatchState::DBAdd);
+  ZuCheckRT(state.events[1] == WatchState::DBDel);
 }
 
 void hubChildren()
@@ -320,7 +320,7 @@ void hubChildren()
 
 void dbChildren()
 {
-  ZuTestScope(dbChildren);
+  ZuTestScopeRT(dbChildren);
   MockDB db;
   unsigned hostAdds = 0, hostDels = 0;
   unsigned tableAdds = 0, tableDels = 0;
@@ -328,29 +328,29 @@ void dbChildren()
     {},
     {},
     {[&hostAdds](Ztc::DBHost *host) {
-      ZuCheck(host->telKey().p<1>() == "host");
+      ZuCheckRT(host->telKey().p<1>() == "host");
       ++hostAdds;
     }},
     {[&hostDels](Ztc::DBHost *host) {
-      ZuCheck(host->telKey().p<1>() == "host");
+      ZuCheckRT(host->telKey().p<1>() == "host");
       ++hostDels;
     }},
     {[&tableAdds](Ztc::DBTable *table) {
-      ZuCheck(
+      ZuCheckRT(
 	table->telKey().p<1>() ==
 	"table_identifier_longer_than_twenty_eight_bytes");
       ++tableAdds;
     }},
     {[&tableDels](Ztc::DBTable *table) {
-      ZuCheck(
+      ZuCheckRT(
 	table->telKey().p<1>() ==
 	"table_identifier_longer_than_twenty_eight_bytes");
       ++tableDels;
     }});
-  ZuCheck(db.allDBHosts({[&hostAdds](Ztc::DBHost *) {
+  ZuCheckRT(db.allDBHosts({[&hostAdds](Ztc::DBHost *) {
     ++hostAdds;
   }}) == 1);
-  ZuCheck(db.allDBTables({[&tableAdds](Ztc::DBTable *) {
+  ZuCheckRT(db.allDBTables({[&tableAdds](Ztc::DBTable *) {
     ++tableAdds;
   }}) == 1);
   db.hostAdd();
@@ -358,10 +358,10 @@ void dbChildren()
   db.tableDel();
   db.hostDel();
   Ztc::DBMgr::unwatch();
-  ZuCheck(hostAdds == 2);
-  ZuCheck(hostDels == 1);
-  ZuCheck(tableAdds == 2);
-  ZuCheck(tableDels == 1);
+  ZuCheckRT(hostAdds == 2);
+  ZuCheckRT(hostDels == 1);
+  ZuCheckRT(tableAdds == 2);
+  ZuCheckRT(tableDels == 1);
 }
 
 void deleteBlocksOnConsumer()

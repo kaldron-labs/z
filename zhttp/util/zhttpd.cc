@@ -46,6 +46,8 @@ void usage(int code = 1)
   std::cerr <<
     "Usage: zhttpd /path/to/wwwroot [OPTION]...\n\n"
     "Options:\n"
+    "  --rx-ring-size=N   receive pool/ring slots, default 128 (2..32768)\n"
+    "  --tx-ring-size=N   transmit pool/ring slots, default 128 (2..32768)\n"
     "  --port number              listen port, default 8080\n"
     "  --addr ip                  listen address, default all interfaces\n"
     "  --ipv6                     listen on IPv6 address\n"
@@ -197,8 +199,8 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
   using HdrCatalog = FixedRespHeaders;
   using ContentLength = ZuStringT<"content-length">;
-  using FileBuf = ZiIOBufAlloc<
-    FileChunk, FileChunk, "Zhttpd.FileBody">;
+  using FileBuf = Zi::IOBufAlloc<ZiIOBuf,
+    FileChunk, FileChunk, ZuStringT<"Zhttpd.FileBody">>;
   using ProducerClose = ZmFn<void(),
     ZmFnHeapID<"zhttpd.FileProducerClose">>;
 
@@ -232,7 +234,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
       state->mx->run([
 	self = ZmRef<Self>{this}, file = ZuMv(file),
 	offset_, n, final]() mutable {
-	ZmRef<ZiIOBuf> buf = new FileBuf{};
+	ZmRef<ZiIOBuf> buf = new FileBuf{nullptr, 0};
 	int r = file.pread(offset_, buf->data(), n);
 	if (r == int(n)) buf->length = n;
 	State *state_ = self->state;
@@ -254,7 +256,7 @@ struct ResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
 
       (void)emit_([self = ZmRef<Self>{this}, buf = ZuMv(buf), final](
 	  auto &body) mutable {
-	body << buf->cspan();
+	if (!body.appendRange(buf, 0, buf->length)) return Zhttp::WriteOutcome::Failed;
 	if (final) return Zhttp::WriteOutcome::End;
 	if (!self->read_()) return Zhttp::WriteOutcome::Failed;
 	return Zhttp::WriteOutcome::Stream;
@@ -605,6 +607,7 @@ void Parser::complete(Zhttp::Channel *link, bool ok)
 ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
+    .rxRingSize(options.rxRingSize).txRingSize(options.txRingSize)
     .scheduler([](auto &s) {
       s.nThreads(5)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -614,6 +617,7 @@ ZiMxParams mxParams(const Options &options)
 	.thread(5, [](auto &t) { t.isolated(1); });
     })
     .rxThread(1).txThread(2);
+  Zhttp::HubConfig::rxBufAllocators(params);
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) params.debug(true);
   if (options.frag) params.frag(true);

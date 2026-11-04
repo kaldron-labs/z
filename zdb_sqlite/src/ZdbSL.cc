@@ -306,7 +306,7 @@ static void validateCoreStrict(sqlite3 *cxn)
   int rc;
   while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
     ZuCSpan table{
-      reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)),
+      sqlite3_column_text(stmt, 0),
       unsigned(sqlite3_column_bytes(stmt, 0))};
     int id = matcher.exact(table);
     if (id >= 0) lookup[id] = sqlite3_column_int(stmt, 1) == 1;
@@ -384,10 +384,10 @@ static void validateCoreTable(
     }
     if (!id || column >= nColumns) break;
     ZuCSpan actualID{
-      reinterpret_cast<const char *>(sqlite3_column_text(stmt, 1)),
+      sqlite3_column_text(stmt, 1),
       unsigned(sqlite3_column_bytes(stmt, 1))};
     ZuCSpan actualType{
-      reinterpret_cast<const char *>(sqlite3_column_text(stmt, 2)),
+      sqlite3_column_text(stmt, 2),
       unsigned(sqlite3_column_bytes(stmt, 2))};
     if (actualID != id || actualType != type ||
         !sqlite3_column_int(stmt, 3) ||
@@ -945,7 +945,7 @@ void Store::startup_()
       int rc;
       while ((rc = sqlite3_step(stmt)) == SQLITE_ROW) {
         ZuCSpan id{
-          reinterpret_cast<const char *>(sqlite3_column_text(stmt, 0)),
+          sqlite3_column_text(stmt, 0),
           unsigned(sqlite3_column_bytes(stmt, 0))};
         sqlite3_int64 value = sqlite3_column_int64(stmt, 1);
         if ((id == "format" && value != 2) ||
@@ -1028,6 +1028,7 @@ void Store::open(
         return;
       }
       tbl->schema(schema);
+      tbl->bufAllocFn(ZuMv(bufAllocFn));
       tbl->open(ZuMv(openFn));
       return;
     }
@@ -1235,10 +1236,10 @@ void StoreTbl::schema_()
         throw ZeEXCEPT(Fatal, "ZdbSL", "stored schema has extra fields");
       const auto &field = m_xFields[ordinal];
       ZuCSpan id{
-        reinterpret_cast<const char *>(sqlite3_column_text(check, 1)),
+        sqlite3_column_text(check, 1),
         unsigned(sqlite3_column_bytes(check, 1))};
       ZuCSpan storage_{
-        reinterpret_cast<const char *>(sqlite3_column_text(check, 4)),
+        sqlite3_column_text(check, 4),
         unsigned(sqlite3_column_bytes(check, 4))};
       if (sqlite3_column_int64(check, 0) != ordinal || id != field.id ||
           sqlite3_column_int64(check, 2) != field.vfield->type->code ||
@@ -1267,10 +1268,10 @@ void StoreTbl::schema_()
     unsigned columns = 0;
     while ((rc = sqlite3_step(tableInfo)) == SQLITE_ROW) {
       ZuCSpan name{
-        reinterpret_cast<const char *>(sqlite3_column_text(tableInfo, 1)),
+        sqlite3_column_text(tableInfo, 1),
         unsigned(sqlite3_column_bytes(tableInfo, 1))};
       ZuCSpan type{
-        reinterpret_cast<const char *>(sqlite3_column_text(tableInfo, 2)),
+        sqlite3_column_text(tableInfo, 2),
         unsigned(sqlite3_column_bytes(tableInfo, 2))};
       ZuCSpan expectedName;
       const char *expectedType;
@@ -1311,7 +1312,7 @@ void StoreTbl::schema_()
       int rc;
       while ((rc = sqlite3_step(list)) == SQLITE_ROW) {
         ZuCSpan id{
-          reinterpret_cast<const char *>(sqlite3_column_text(list, 1)),
+          sqlite3_column_text(list, 1),
           unsigned(sqlite3_column_bytes(list, 1))};
         unsigned i = indexMap.findVal(id);
         if (ZuNull(i))
@@ -1340,7 +1341,7 @@ void StoreTbl::schema_()
       while ((rc = sqlite3_step(info)) == SQLITE_ROW) {
         if (!sqlite3_column_int(info, 5)) continue;
         ZuCSpan id{
-          reinterpret_cast<const char *>(sqlite3_column_text(info, 2)),
+          sqlite3_column_text(info, 2),
           unsigned(sqlite3_column_bytes(info, 2))};
         ZuCSpan expected;
         bool descend = false;
@@ -1989,7 +1990,7 @@ ZmRef<IOBuf> StoreTbl::row_(sqlite3_stmt *stmt)
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, id(), un, sn, vn, shard, data);
   fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
-  return saveHdr(fbb);
+  return saveFrame(fbb);
 }
 
 static Event shutdownError(ZuCSpan operation, ZuCSpan id)

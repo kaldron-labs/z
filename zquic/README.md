@@ -15,6 +15,12 @@ The primary include is `Zquic.hh`, which pulls in the transport vocabulary,
 packet/frame codecs, crypto, recovery, stream/link runtime, socket adapter,
 diagnostics, and qlog support.
 
+Before starting its multiplexer, an application supplies
+`ZiMxParams::udpBufAllocator(new Zquic::PktRxBufAllocator<>)`. This reserves the
+packet payload and recvmsg metadata together. Concrete application links use
+their own first-base `ZmNHeap<Link>` so cache-line alignment and allocation size
+match the actual link type; the examples demonstrate both policies.
+
 Applications use the CRTP API:
 
 - client applications derive from `Zquic::Client<App>` and create

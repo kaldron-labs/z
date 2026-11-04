@@ -108,7 +108,8 @@ static void run()
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbreptest", "multiplexer start failed");
 

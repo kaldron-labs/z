@@ -313,7 +313,7 @@ buffers.
 4. Run `./zv/test/ZvNewCfTest`.
 5. Run `make -C zt/test -j8 && make -C zt/test test`.
 6. Run top-level `make test`.
-7. Review the final diff against `GUIDELINES.md` for mutable source spans,
+7. Review the final diff against `docs/GUIDELINES.md` for mutable source spans,
    source-backed node data, unnamed allocation, temporary strings, repeated
    copies, unnecessary casts, fixed scratch buffers, and default-then-replace
    node construction. None may remain.

@@ -254,7 +254,7 @@ private:
     if (signalSem.timedwait(Zm::now(TimeoutSeconds)))
       return ZeEXCEPT(Error, "ZtlsVault", "prompt timed out");
     auto handler = ZfDBUS::handler<SS::PromptCompleted>({
-      signalFrame->cspan(signalInfo.bodyOffset),
+      signalInfo.body(),
       signalInfo.headers.signature, signalInfo.bodyOffset,
       signalInfo.order});
     if (!handler)
@@ -296,7 +296,7 @@ private:
     if (result.info.type != Zdbus_::MessageType::MethodReturn)
       return ZeEXCEPT(Error, "ZtlsVault", "unexpected Secret Service reply");
     auto handler = ZfDBUS::handler<Res>({
-      result.frame->cspan(result.info.bodyOffset),
+      result.info.body(),
       result.info.headers.signature, result.info.bodyOffset,
       result.info.order});
     if (!handler)

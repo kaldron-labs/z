@@ -4,10 +4,24 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiRxStream.hh>
+#include <zlib/Zquic.hh>
+#include <zlib/ZhttpConfig.hh>
+
 #include "ZhttpServerImpl.hh"
 #include "ZhttpClientImpl.hh"
 
 namespace Zhttp {
+
+void HubConfig::rxBufAllocators(ZiMxParams &params)
+{
+  params.udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>();
+}
 
 class QUICPool final : public ZmNHeap<QUICPool>,
   public ClientPool<PoolImpl, H3QUIC, PoolImpl::LiveReq, RequestRecord, BoundResParser> {

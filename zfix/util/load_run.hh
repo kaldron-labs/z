@@ -14,6 +14,7 @@
 #include <zlib/ZfCLI.hh>
 #include "load.hh"
 #include "load_cache.hh"
+#include "load_window.hh"
 
 namespace ZfixLoad {
 
@@ -24,13 +25,15 @@ struct Options {
   Version::T	version = Version::V4_4;
   Scenario::T	scenario = Scenario::Orders;
   Text		stateIn, stateOut;
+  Text		backend{"auto"};
   unsigned	port = 0, sessions = 1, count = 1000, warmup = 100, inFlight = 64;
-  unsigned	connections = 1;
+  unsigned	connections = 1, diagSamples = 0;
+  unsigned	rxRingSize = 0, txRingSize = 0; // native: zero selects workload sizing
   unsigned	duration = 0, deadline = 30, heartbeat = 30;
   unsigned	parties = 0, subs = 0, text = 0, retain = 4096;
   uint64_t	rate = 0, seed = 1, queueBytes = 16U<<20, cacheBytes = 64U<<20;
   uint64_t	keyOffset = 0, recoverRx = 0;
-  bool		tcp = false, help = false, resetLogon = false;
+  bool		tcp = false, help = false, resetLogon = false, observeIO = false;
 
   Shape shape() const { return {parties, subs, text}; }
 };
@@ -44,6 +47,11 @@ ZfStruct(, (Options, CLI), (host, (CLI::Long<"host">), String),
   (version, (CLI::Long<"version">, Enum<Version::Wire>), Int8),
   (scenario, (CLI::Long<"scenario">, Enum<Scenario::CLI>), Int8),
   (sessions, (CLI::Long<"sessions">), UInt32),
+  (backend, (CLI::Long<"backend">), String),
+  (rxRingSize, (CLI::Long<"rx-ring-size">), UInt32),
+  (txRingSize, (CLI::Long<"tx-ring-size">), UInt32),
+  (observeIO, (CLI::Long<"observe-io">), Bool),
+  (diagSamples, (CLI::Long<"diag-samples">), UInt32),
   (stateIn, (CLI::Long<"state-in">), String), (stateOut, (CLI::Long<"state-out">), String),
   (connections, (CLI::Long<"connections">), UInt32),
   (keyOffset, (CLI::Long<"key-offset">), UInt64),
@@ -66,12 +74,14 @@ friend ZfJSON::AsArray<ZfFieldTC::UInt32> ZfJSON_Fmt(Ports *);
 bool options(Options &, bool server, int argc, char **argv, Ports &);
 void usage(bool server);
 struct Ready {
-  ZuCSpan	event{"ready"}, engine{"zfix"}, role;
+  ZuCSpan	event{"ready"}, engine{"zfix"}, role, backend{"external"};
   Ports		ports;
+  unsigned	rxRingSize = 0, txRingSize = 0;
 };
 
-ZfStruct(, (Ready, JSON), (event, , String), (engine, , String), (role, , String), (ports, ,
-  UDT));
+ZfStruct(, (Ready, JSON), (event, , String), (engine, , String), (role, , String),
+  (backend, , String), (ports, , UDT),
+  (rxRingSize, , UInt32), (txRingSize, , UInt32));
 struct ReconnectReady {
   ZuCSpan	event{"reconnect_ready"};
   ZuCSpan	barrier{"owner-drained"};
@@ -82,8 +92,9 @@ struct ReconnectReady {
 ZfStruct(, (ReconnectReady, JSON), (event, , String),
   (barrier, , String), (connection, , UInt32), (ports, , UDT));
 struct Result {
-  ZuCSpan	event{"result"}, engine{"zfix"}, role;
+  ZuCSpan	event{"result"}, engine{"zfix"}, role, backend{"external"};
   unsigned	session = 0, errors = 0;
+  unsigned	rxRingSize = 0, txRingSize = 0;
   Progress	progress;
   uint64_t	warmup = 0, elapsedNs = 0, targetRate = 0, seed = 0;
   uint64_t	startNs = 0, endNs = 0;
@@ -97,6 +108,8 @@ struct Result {
 };
 
 ZfStruct(, (Result, JSON), (event, , String), (engine, , String), (role, , String),
+  (backend, , String),
+  (rxRingSize, , UInt32), (txRingSize, , UInt32),
   (session, , UInt32), (errors, , UInt32), (progress, , UDT), (warmup, , UInt64),
   (elapsedNs, , UInt64), (targetRate, , UInt64), (seed, , UInt64), (cap, , UInt32),
   (startNs, , UInt64), (endNs, , UInt64),
@@ -197,13 +210,13 @@ private:
 
 namespace Phase {
 
-  enum { Idle, Warmup, Measured, Complete, Failed };
+  enum { Idle, Warmup, Measured, Complete, Failed, MeasuredGate };
 }
 
 class Run {
 public:
   explicit Run(const Options &o, unsigned index = 0) : m_options{o},
-    m_flow{workflow(o.scenario)}, m_model{o.shape(), o.seed},
+    m_index{index}, m_flow{workflow(o.scenario)}, m_model{o.shape(), o.seed},
     m_calls{o.inFlight, m_flow}, m_acks{o.count}, m_terms{o.count},
     m_delay{o.count}, m_intendedAcks{o.count}, m_intendedTerms{o.count},
     m_key{(uint64_t(index)<<48) + o.keyOffset},
@@ -217,6 +230,14 @@ public:
   }
 
   bool start(uint64_t now);
+  void beginMeasured(uint64_t now) {
+    if (m_phase != Phase::MeasuredGate) { m_phase = Phase::Failed; return; }
+    m_start = now; m_phase = Phase::Measured;
+  }
+  bool registerMeasuredGate() {
+    if (m_phase != Phase::MeasuredGate || m_gateRegistered) return false;
+    m_gateRegistered = true; return true;
+  }
 
   template <typename Send, typename Time = Clock> void pump(uint64_t now, Send send,
     Time time = {}) {
@@ -283,8 +304,9 @@ private:
   }
 
   void settle(uint64_t);
+  bool m_gateRegistered = false;
   const Options		&m_options;
-  const unsigned	m_flow;
+  const unsigned	m_index, m_flow;
   Model			m_model;
   Replace		m_follow;
   Calls			m_calls;

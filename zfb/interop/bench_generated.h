@@ -8,9 +8,9 @@
 
 // Ensure the included flatbuffers.h is the same version as when this file was
 // generated, otherwise it may not be compatible.
-static_assert(FLATBUFFERS_VERSION_MAJOR == 25 &&
-              FLATBUFFERS_VERSION_MINOR == 12 &&
-              FLATBUFFERS_VERSION_REVISION == 19,
+static_assert(FLATBUFFERS_VERSION_MAJOR == 24 &&
+              FLATBUFFERS_VERSION_MINOR == 3 &&
+              FLATBUFFERS_VERSION_REVISION == 25,
              "Non-compatible flatbuffers version included");
 
 namespace Bench {
@@ -71,8 +71,7 @@ struct Row FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<uint8_t> *data() const {
     return GetPointer<const ::flatbuffers::Vector<uint8_t> *>(VT_DATA);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_SEQ, 8) &&
            VerifyOffset(verifier, VT_DATA) &&
@@ -161,8 +160,7 @@ struct Wide FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   bool active() const {
     return GetField<uint8_t>(VT_ACTIVE, 0) != 0;
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_SEQ, 8) &&
            VerifyOffset(verifier, VT_DATA) &&
@@ -271,8 +269,7 @@ struct Child FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   uint64_t value() const {
     return GetField<uint64_t>(VT_VALUE, 0);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_VALUE, 8) &&
            verifier.EndTable();
@@ -331,8 +328,7 @@ struct Vectors FLATBUFFERS_FINAL_CLASS : private ::flatbuffers::Table {
   const ::flatbuffers::Vector<::flatbuffers::Offset<Bench::fbs::Child>> *children() const {
     return GetPointer<const ::flatbuffers::Vector<::flatbuffers::Offset<Bench::fbs::Child>> *>(VT_CHILDREN);
   }
-  template <bool B = false>
-  bool Verify(::flatbuffers::VerifierTemplate<B> &verifier) const {
+  bool Verify(::flatbuffers::Verifier &verifier) const {
     return VerifyTableStart(verifier) &&
            VerifyField<uint64_t>(verifier, VT_SEQ, 8) &&
            VerifyOffset(verifier, VT_DATA) &&
@@ -417,16 +413,14 @@ inline const Bench::fbs::Row *GetSizePrefixedRow(const void *buf) {
   return ::flatbuffers::GetSizePrefixedRoot<Bench::fbs::Row>(buf);
 }
 
-template <bool B = false>
 inline bool VerifyRowBuffer(
-    ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifyBuffer<Bench::fbs::Row>(nullptr);
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifyBuffer<Bench::fbs::Row>(nullptr);
 }
 
-template <bool B = false>
 inline bool VerifySizePrefixedRowBuffer(
-    ::flatbuffers::VerifierTemplate<B> &verifier) {
-  return verifier.template VerifySizePrefixedBuffer<Bench::fbs::Row>(nullptr);
+    ::flatbuffers::Verifier &verifier) {
+  return verifier.VerifySizePrefixedBuffer<Bench::fbs::Row>(nullptr);
 }
 
 inline void FinishRowBuffer(

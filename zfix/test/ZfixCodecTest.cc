@@ -12,6 +12,7 @@
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfixFmt.hh>
+#include "ZfixLabel.hh"
 
 using namespace ZuTestUtil;
 using namespace Zfix::Fmt;
@@ -146,29 +147,6 @@ ZfixConfig(Seconds, SecondsConfig);
 ZfStructRender(, Record, Seconds, time);
 ZfStructImpl(Record, Seconds);
 
-struct Label {
-  Text	value;
-  Label() = default;
-
-  explicit Label(ZuCSpan s) : value{s} { }
-};
-
-struct LabelFormat {
-  template <typename O> struct Handler {
-    static O load(ZuCSpan value, Error &error) {
-      if (value == "valid") return O(value);
-      error.code = ErrorCode::Value;
-      return O{};
-    }
-
-    template <typename Out> static void save(Out &out, const O &o) {
-      out << o.value;
-    }
-  };
-
-};
-
-LabelFormat Zfix_StringFmt(Label *);
 struct ScalarUDT {
   Label	label;
 };
@@ -450,26 +428,26 @@ ZfStructImpl(Lists, FIX);
 
 static void multiple()
 {
-  ZuTestScope(multiple);
+  ZuTestScopeRT(multiple);
   constexpr auto Wire = "9001=-1 0 2147483647\1" "9002=alpha beta\1"_z;
   Lists lists;
-  ZuCheck(!load(lists, Wire));
-  ZuCheck(lists.codes.length() == 3 && lists.codes[0] == -1 &&
+  ZuCheckRT(!load(lists, Wire));
+  ZuCheckRT(lists.codes.length() == 3 && lists.codes[0] == -1 &&
     lists.codes[2] == INT_MAX);
-  ZuCheck(lists.words.length() == 2 && lists.words[1] == "beta");
+  ZuCheckRT(lists.words.length() == 2 && lists.words[1] == "beta");
   char bytes[Wire.length()];
   Sink out{{bytes, sizeof(bytes)}};
-  ZuCheck(save(out, lists) && out.flush() && out.data() == Wire);
+  ZuCheckRT(save(out, lists) && out.flush() && out.data() == Wire);
   auto bad = [&lists](ZuCSpan Wire) {
-    ZuCheck(!load(lists, Wire));
+    ZuCheckRT(!load(lists, Wire));
   };
   bad("9001= 1\1"_z); bad("9001=1 \1"_z); bad("9001=1  2\1"_z);
   bad("9001=2147483648\1"_z); bad("9001=1 X\1"_z);
-  ZuCheck(!update(lists, "9001=\1"_z));
-  ZuCheck(!lists.codes.length() && !lists.words.length());
+  ZuCheckRT(!update(lists, "9001=\1"_z));
+  ZuCheckRT(!lists.codes.length() && !lists.words.length());
   lists.words.push("bad word");
   Sink invalid{{bytes, sizeof(bytes)}};
-  ZuCheck(save(invalid, lists));
+  ZuCheckRT(save(invalid, lists));
 }
 
 static void inspect()
@@ -1290,10 +1268,105 @@ static void binaryVenues()
   ZuCheck((save<ZuFacet::FIX, ZfFieldFilter::Save>(ownerOut, owned) && ownerOut.data() == Wire));
 }
 
+// This fixture enumerates borrowed field spans; it owns no encoded payload.
+struct CodecParts {
+  using Pieces = ZtArray<ZuCSpan, ZtArrayHeapID<"Zfix.CodecPartsTest">>;
+  Pieces pieces;
+  unsigned bytes = 0;
+  void add(ZuCSpan part) { pieces.push(part); bytes += part.length(); }
+  unsigned length() const { return bytes; }
+  struct Cursor {
+    const Pieces *pieces;
+    unsigned index = 0;
+    bool next(ZuCSpan &out) {
+      while (index < pieces->length()) {
+	out = (*pieces)[index++];
+	if (out) return true;
+      }
+      return false;
+    }
+  };
+  Cursor cursor() const { return {&pieces}; }
+};
+
+template <typename O> bool samePartsError(
+    const CodecParts &parts, ZuCSpan complete, Limits limits = {}) {
+  Error expected;
+  Read input{complete, limits, expected};
+  Scope scope{nullptr, scopeContains<O, ZuFacet::FIX>, 0, 0};
+  unsigned offset = 0;
+  if (complete.length() > limits.frameBytes) expected = {ErrorCode::Size};
+  else readScope<O, ZuFacet::FIX, ZfFieldFilter::Load, false, 0, false>(
+    input, nullptr, offset, scope, false);
+  auto actual = readParts<O, ZuFacet::FIX, ZfFieldFilter::Load>(parts, limits);
+  return actual.code == expected.code && actual.tag == expected.tag &&
+    actual.offset == expected.offset;
+}
+
+struct NestedPartsRows : ZtArray<BinaryGroup, ZtArrayHeapID<"Zfix.NestedPartsTest">> {
+friend AsArray<> Zfix_Fmt(NestedPartsRows *);
+};
+struct NestedParts {
+  NestedPartsRows groups;
+  ZuCSpan after;
+};
+ZfStruct(, (NestedParts, FIX), (groups, (FIX::ID<6100>), UDT),
+  (after, (FIX::ID<7000>), String));
+
+static void retainedParts()
+{
+  ZuTestScope(retainedParts);
+  constexpr auto Values = "21=7\1" "22=hello\1"_z;
+  CodecParts scalar; scalar.add("21=7\1"); scalar.add("22=hello\1");
+  FieldPos selector;
+  auto error = readParts<Args, ZuFacet::FIX, ZfFieldFilter::Load, 22>(scalar, {}, &selector);
+  ZuCheck(!error && selector.offset == 8 && selector.length == 5);
+  ZuCheck(samePartsError<Args>(scalar, Values));
+  Limits limits; limits.fieldBytes = 2;
+  ZuCheck(samePartsError<Args>(scalar, Values, limits));
+  limits = {}; limits.frameBytes = Values.length() - 1;
+  ZuCheck(samePartsError<Args>(scalar, Values, limits));
+  limits = {}; limits.parseBytes = 0;
+  ZuCheck(samePartsError<Args>(scalar, Values, limits));
+  CodecParts missing; missing.add("21=7\1");
+  ZuCheck(samePartsError<Args>(missing, "21=7\1"_z));
+  scalar.add("21=8\1");
+  ZuCheck(samePartsError<Args>(scalar, "21=7\1" "22=hello\1" "21=8\1"_z));
+
+  constexpr auto Pair = "95=3\1" "96=A\1B\1"_z;
+  constexpr auto Group = "6000=1\1" "95=3\1" "96=A\1B\1" "5000=1\1"_z;
+  CodecParts group; group.add("6000=1\1"); group.add(Pair);
+  // A later chunk can legally extend the final group entry. It must not be
+  // misclassified as an outside root field merely because storage changed.
+  group.add("5000=1\1");
+  ZuCheck(samePartsError<BinaryGroup>(group, Group));
+  error = readParts<BinaryGroup, ZuFacet::FIX, ZfFieldFilter::Load>(group);
+  ZuCheck(!error);
+  limits = {}; limits.groupEntries = 0;
+  ZuCheck(samePartsError<BinaryGroup>(group, Group, limits));
+  group.add("5000=2\1");
+  ZuCheck(samePartsError<BinaryGroup>(group,
+    "6000=1\1" "95=3\1" "96=A\1B\1" "5000=1\1" "5000=2\1"_z));
+
+  CodecParts nested; nested.add("6100=1\1"); nested.add("6000=1\1");
+  nested.add(Pair); nested.add("5000=1\1"); nested.add("7000=done\1");
+  constexpr auto Nested = "6100=1\1" "6000=1\1" "95=3\1" "96=A\1B\1"
+    "5000=1\1" "7000=done\1"_z;
+  ZuCheck(samePartsError<NestedParts>(nested, Nested));
+  error = readParts<NestedParts, ZuFacet::FIX, ZfFieldFilter::Load>(nested);
+  ZuCheck(!error);
+  limits = {}; limits.groupDepth = 1;
+  ZuCheck(samePartsError<NestedParts>(nested, Nested, limits));
+
+  CodecParts binary; binary.add("5000=7\1"); binary.add("95=1\1" "96=XX\1");
+  ZuCheck(samePartsError<BinaryRow>(binary, "5000=7\1" "95=1\1" "96=XX\1"_z));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
   ZuTestMain();
+  ZuTestCall(retainedParts);
   ZuTestCall(binaryFields);
   ZuTestCall(binaryVenues);
   ZuTestCall(binarySpanExtents);

@@ -8,7 +8,7 @@ test, example, and document; do not add compatibility aliases or forwarding
 overloads.
 
 The phases are cumulative.  Each phase concludes with an acceptance record and
-a `GUIDELINES.md` audit.  Keep breaking propagation within a phase when
+a `docs/GUIDELINES.md` audit.  Keep breaking propagation within a phase when
 practical.  If a phase boundary is intentionally left unbuildable because the
 next phase immediately propagates the same break, mark it as an interim rather
 than a validation checkpoint: do not create a compatibility path and do not
@@ -374,7 +374,7 @@ public:
 ```
 
 Declare public enums with `ZtEnumNS(..., int8_t, ...)`, consistent with
-`GUIDELINES.md`; do not hand-write `enum T`.  Scheme enumerator names are the
+`docs/GUIDELINES.md`; do not hand-write `enum T`.  Scheme enumerator names are the
 wire spellings `Scheme::http` and `Scheme::https`, so `Scheme::name()` and
 `Scheme::lookup()` compose with parsing and printing without a second name map.
 Because URI schemes are case-insensitive, parsing mixed-case input uses
@@ -615,7 +615,7 @@ clean the tree or configure gcc/release variants.
 
 Interim validation is limited to focused deterministic functional unit tests.
 Run the complete interoperability matrix only after the final repository and
-`GUIDELINES.md` audits; the successful full matrix must be the final
+`docs/GUIDELINES.md` audits; the successful full matrix must be the final
 validation action.  Every phase's listed build/test criteria are conditional on
 that phase being a buildable checkpoint; an interim phase explicitly records
 them as deferred rather than running a knowingly meaningless build.
@@ -703,7 +703,7 @@ ephemeral port; do not reintroduce a second host/port splitter for that case.
   type renaming.
 - Existing Alt-Svc parse tests use `AltSvcParseError`; no Alt-Svc outcome
   remains in the URL error domain.
-- Audit phase 1 against `GUIDELINES.md` and repair naming, span lifetime,
+- Audit phase 1 against `docs/GUIDELINES.md` and repair naming, span lifetime,
   allocation, copying, container, formatting, layout, and Z-idiom issues.
 
 ## Phase 2 — Make URL parsing zero-copy and retention explicit
@@ -807,7 +807,7 @@ a temporary merely because the former callback supplied a string.
   local URL path/query splitter.
 - Focused URL, redirect, existing Alt-Svc cache, client cancellation, and
   fallback tests pass in the clang/debug build.
-- Audit phase 2 against `GUIDELINES.md` and repair allocation, hidden-copy,
+- Audit phase 2 against `docs/GUIDELINES.md` and repair allocation, hidden-copy,
   temporary-string, ownership, naming, and performance issues.
 
 ## Phase 3 — Unify H1/H2/H3 request-target semantics
@@ -942,7 +942,7 @@ solely to reparse outbound syntax.
   request-target form classifier.
 - Focused parser, fields, H2 message, H3/QPACK, and message-engine tests pass
   in clang/debug.
-- Audit phase 3 against `GUIDELINES.md`, especially borrowed-span lifetimes,
+- Audit phase 3 against `docs/GUIDELINES.md`, especially borrowed-span lifetimes,
   callback synchrony, Rx ownership, copying, and compile-time dispatch.
 
 ## Phase 4 — Migrate `Service` and `zhttpd`
@@ -994,7 +994,7 @@ mechanisms.
   bytes may differ from received spelling, while path and query remain exact.
 - Traversal, percent-escape, hidden-file, directory redirect, empty-query,
   absolute-form, CONNECT, and asterisk-form server tests pass.
-- Audit phase 4 against `GUIDELINES.md`, focusing on Rx/Tx ownership, offsets
+- Audit phase 4 against `docs/GUIDELINES.md`, focusing on Rx/Tx ownership, offsets
   into moved strings, scratch storage, security-policy placement, and copies.
 
 ## Phase 5 — Separate Alt-Svc and remove residue
@@ -1080,13 +1080,13 @@ terminology; do not rename them merely because the word overlaps.
 - Build manifests, aggregate headers, README text, examples, and boundary
   documentation reflect the new organization.
 - All affected functional unit tests pass in the clang/debug build.
-- Audit phase 5 against `GUIDELINES.md` and repair dead code, public-header
+- Audit phase 5 against `docs/GUIDELINES.md` and repair dead code, public-header
   dependencies, heap IDs, naming, layout, allocation, and copying issues.
 
 ## Phase 6 — Integrated validation
 
 Complete the repository-wide parser/name searches and audit the entire change
-against `GUIDELINES.md`.  Repair every identified ownership, allocation, copy,
+against `docs/GUIDELINES.md`.  Repair every identified ownership, allocation, copy,
 parsing, naming, layout, sharding, or performance issue.  Then build the
 complete repository in the existing clang/debug configuration and run the
 complete deterministic functional test set, with particular coverage for:
@@ -1110,7 +1110,7 @@ complete deterministic functional test set, with particular coverage for:
   authority, origin, path/query, and Alt-Svc views;
 
 If the build or a functional test exposes a defect, repair it and repeat the
-repository/`GUIDELINES.md` audit, complete clang/debug build, and affected
+repository/`docs/GUIDELINES.md` audit, complete clang/debug build, and affected
 functional tests until the stable checkpoint is clean.
 
 Only after those steps pass, run the full H1/H2/H3 interoperability matrix as
@@ -1122,7 +1122,7 @@ new final action.
 
 - The complete repository builds and all functional tests pass under
   clang/debug.
-- The final repository and `GUIDELINES.md` audits are clean before
+- The final repository and `docs/GUIDELINES.md` audits are clean before
   interoperability testing begins.
 - Client requests, redirects, server dispatch, access logs, static-file
   planning, H1, H2, H3, CONNECT, and Alt-Svc all use the consolidated model.
@@ -1136,7 +1136,7 @@ new final action.
 - Public terminology is consistent: `URL` for absolute HTTP(S) locators,
   `RequestTarget` for HTTP request targets, and `ZfURI` for generic URI
   encoding/decoding facilities.
-- Audit phase 6 against `GUIDELINES.md` and repair every remaining ownership,
+- Audit phase 6 against `docs/GUIDELINES.md` and repair every remaining ownership,
   allocation, copy, naming, layout, sharding, and Z-idiom issue before the final
   interoperability run.
 - The final full interoperability matrix passes, and no validation action is

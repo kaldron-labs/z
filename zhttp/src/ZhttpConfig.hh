@@ -24,6 +24,7 @@
 #include <zlib/ZhttpProfiles.hh>
 
 class ZiMultiplex;
+class ZiMxParams;
 
 namespace Zhttp {
 
@@ -36,6 +37,9 @@ ZuDerive(ConfigString, ZtString<ZtStringHeapID<"Zhttp.Config">>);
 
 class HubConfig {
 public:
+  // Configure caller-owned receive pools after ring sizing, before mx construction.
+  static ZhttpAPI void rxBufAllocators(ZiMxParams &);
+
   HubConfig(
     ZiMultiplex *mx = nullptr,
     ZuCSpan rxThread = {},

@@ -84,7 +84,7 @@ public:
       ++m_queued;
       m_bytes += framed;
     }
-    ZmRef<SSEQueue::Node> record = new SSEBuf{};
+    ZmRef<SSEQueue::Node> record = new SSEBuf{nullptr, 0};
     if (!Zhttp::saveSSE(*record, id, retry, body) || record->failed() ||
 	record->length != framed) {
       ZmGuard guard{m_admit};
@@ -158,8 +158,11 @@ public:
       --m_queued;
       m_bytes -= record->length;
     }
-    out << ZuCSpan{record->cspan()};
-    return record->data().terminal ?
+    bool terminal = record->data().terminal;
+    auto length = record->length;
+    if (!out.appendRange(Zi::RxRange{ZuMv(record), 0, length}))
+      return Zhttp::WriteOutcome::Abort;
+    return terminal ?
       Zhttp::WriteOutcome::End : Zhttp::WriteOutcome::Stream;
   }
 

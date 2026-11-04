@@ -65,7 +65,9 @@ struct HeaderView {
   uint32_t	unixFDs = 0;
 };
 
+// The companion buffer reference retains the borrowed frame/header/body spans.
 struct FrameInfo {
+  const uint8_t	*data = nullptr;
   HeaderView	headers;
   unsigned	total = 0;
   unsigned	bodyOffset = 0;
@@ -75,6 +77,11 @@ struct FrameInfo {
   uint8_t	order = 0;
   uint8_t	type = 0;
   uint8_t	flags = 0;
+
+  ZuBSpan span() const { return {data, total}; }
+  ZuBSpan body() const {
+    return data ? ZuBSpan{data + bodyOffset, bodyLength} : ZuBSpan{};
+  }
 };
 
 struct FrameResult {

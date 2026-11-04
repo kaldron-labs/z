@@ -57,7 +57,7 @@ This is an intentional new and breaking API.  Propagate changes to dependents;
 do not add default arguments, deprecated overloads, forwarding functions, or
 migration code.  This follows the repository's integrity, latency, simplicity,
 and no-compatibility priorities in
-[`GUIDELINES.md:9-46`](GUIDELINES.md#L9).
+[`GUIDELINES.md:9-46`](docs/GUIDELINES.md#L9).
 
 ## Invariants to preserve in every phase
 
@@ -93,9 +93,9 @@ and no-compatibility priorities in
 
 The critical pair implements thread ownership and handoff directly; it must not
 be made safe with a lock.  See
-[`GUIDELINES.md:266-305`](GUIDELINES.md#L266),
-[`GUIDELINES.md:440-489`](GUIDELINES.md#L440), and
-[`GUIDELINES.md:598-677`](GUIDELINES.md#L598).
+[`GUIDELINES.md:266-305`](docs/GUIDELINES.md#L266),
+[`GUIDELINES.md:440-489`](docs/GUIDELINES.md#L440), and
+[`GUIDELINES.md:598-677`](docs/GUIDELINES.md#L598).
 
 ## Names and files
 
@@ -136,8 +136,8 @@ where they are exported vocabulary.  Private class members use `m_`; public
 aggregate fields do not.  Private control-thread and shard-thread entry points
 use a trailing underscore.  Prefer existing verbs such as `open`, `load`,
 `save`, `run`, `start`, `stop`, `insert`, `update`, and `del`.
-See [`GUIDELINES.md:534-596`](GUIDELINES.md#L534) and
-[`GUIDELINES.md:679-781`](GUIDELINES.md#L679).
+See [`GUIDELINES.md:534-596`](docs/GUIDELINES.md#L534) and
+[`GUIDELINES.md:679-781`](docs/GUIDELINES.md#L679).
 
 Add only these saga-specific files:
 
@@ -155,8 +155,8 @@ include `Zdb.hh` back.  Forward-declare `DB`, `Table<T>`, and `Object<T>` and
 keep table-dependent templates dependent until instantiation.  Put non-template
 definitions in `.cc`; do not make the module header-only.  Update `Makefile.am`
 and generated/install header lists in the same change.
-See [`GUIDELINES.md:62-99`](GUIDELINES.md#L62) and
-[`GUIDELINES.md:503-532`](GUIDELINES.md#L503).
+See [`GUIDELINES.md:62-99`](docs/GUIDELINES.md#L62) and
+[`GUIDELINES.md:503-532`](docs/GUIDELINES.md#L503).
 
 ## 0. Finish prerequisite work
 
@@ -172,8 +172,8 @@ This closes the gap between the accepted DB-wide sharding design and the
 current tree, and prevents saga code from implying that tables own shard
 schedulers.  It follows the rules against compatibility shims, duplicated
 surfaces, and redundant forwarding in
-[`GUIDELINES.md:116-130`](GUIDELINES.md#L116) and
-[`GUIDELINES.md:266-305`](GUIDELINES.md#L266).
+[`GUIDELINES.md:116-130`](docs/GUIDELINES.md#L116) and
+[`GUIDELINES.md:266-305`](docs/GUIDELINES.md#L266).
 
 ### Ordinary idempotent insert
 
@@ -248,9 +248,9 @@ backend lookup error during replay: startup fails and drains, then a retry
 without the injected error recovers the unchanged saga to completion.
 
 These changes use the existing result sentinel and failure path instead of new
-state.  See [`GUIDELINES.md:307-319`](GUIDELINES.md#L307),
-[`GUIDELINES.md:338-369`](GUIDELINES.md#L338), and
-[`GUIDELINES.md:598-677`](GUIDELINES.md#L598).
+state.  See [`GUIDELINES.md:307-319`](docs/GUIDELINES.md#L307),
+[`GUIDELINES.md:338-369`](docs/GUIDELINES.md#L338), and
+[`GUIDELINES.md:598-677`](docs/GUIDELINES.md#L598).
 
 Acceptance: all existing `zdb`/`zdb_pq` tests pass; `rg` finds no table shard
 dispatch surface; the new exact-UN tests cover all five results; a forced select
@@ -334,10 +334,10 @@ Heap allocation and payload spill remain observable and tunable under these
 fixed IDs.
 
 This phase follows the integer/enum rules in
-[`GUIDELINES.md:132-185`](GUIDELINES.md#L132), capacity and member-layout rules
-in [`GUIDELINES.md:211-250`](GUIDELINES.md#L211), byte-container rules in
-[`GUIDELINES.md:371-426`](GUIDELINES.md#L371), and FlatBuffers rules in
-[`GUIDELINES.md:432-438`](GUIDELINES.md#L432).
+[`GUIDELINES.md:132-185`](docs/GUIDELINES.md#L132), capacity and member-layout rules
+in [`GUIDELINES.md:211-250`](docs/GUIDELINES.md#L211), byte-container rules in
+[`GUIDELINES.md:371-426`](docs/GUIDELINES.md#L371), and FlatBuffers rules in
+[`GUIDELINES.md:432-438`](docs/GUIDELINES.md#L432).
 
 Acceptance: `ZdbSagaTest` round-trips all fields and keys, all enum values,
 128-bit IDs, and payloads just below, at, and above the builtin size.  The spill
@@ -394,8 +394,8 @@ backend aware of saga semantics.  Its PostgreSQL implementation necessarily
 retains the namespace bit and derived SQL identities, but exposes the same
 table operations.  The internal bit is relation placement, not a new storage
 protocol.  Centralized SQL generation avoids repeated conditional formatting
-and follows [`GUIDELINES.md:266-305`](GUIDELINES.md#L266); the intentional
-breaking propagation follows [`GUIDELINES.md:116-130`](GUIDELINES.md#L116).
+and follows [`GUIDELINES.md:266-305`](docs/GUIDELINES.md#L266); the intentional
+breaking propagation follows [`GUIDELINES.md:116-130`](docs/GUIDELINES.md#L116).
 
 Acceptance: a PostgreSQL integration test opens the same test row type in both
 namespaces and proves independent DDL, discovery, prepared statements, MRD,
@@ -475,9 +475,9 @@ Use SFINAE/detector traits for diagnostics.  Do not use `concept` or
 `requires`.  Keep non-dependent declarations and code outside templates, and
 instantiate one dispatch body per `Sagas`, not per submission.
 
-See [`GUIDELINES.md:116-160`](GUIDELINES.md#L116),
-[`GUIDELINES.md:199-209`](GUIDELINES.md#L199), and
-[`GUIDELINES.md:400-426`](GUIDELINES.md#L400).
+See [`GUIDELINES.md:116-160`](docs/GUIDELINES.md#L116),
+[`GUIDELINES.md:199-209`](docs/GUIDELINES.md#L199), and
+[`GUIDELINES.md:400-426`](docs/GUIDELINES.md#L400).
 
 ### Registration and direct catalog access
 
@@ -517,8 +517,8 @@ type name or removes the bad rows before retrying.  Do not add rollback or
 repair logic.
 
 This uses compact sentinels and framework containers per
-[`GUIDELINES.md:307-336`](GUIDELINES.md#L307) and direct asynchronous
-continuations per [`GUIDELINES.md:598-677`](GUIDELINES.md#L598).
+[`GUIDELINES.md:307-336`](docs/GUIDELINES.md#L307) and direct asynchronous
+continuations per [`GUIDELINES.md:598-677`](docs/GUIDELINES.md#L598).
 
 Acceptance: compile-time tests reject duplicate type names, empty/invalid step
 definitions, and unsupported signatures.  Mock-store startup tests cover an
@@ -614,10 +614,10 @@ its exactly-sized step-shard array. Recovery structures are bounded by
 crash-residual rows, which were live before the crash, and are destroyed before
 `Active`.
 
-See [`GUIDELINES.md:211-250`](GUIDELINES.md#L211),
-[`GUIDELINES.md:338-357`](GUIDELINES.md#L338),
-[`GUIDELINES.md:408-484`](GUIDELINES.md#L408), and
-[`GUIDELINES.md:645-677`](GUIDELINES.md#L645).
+See [`GUIDELINES.md:211-250`](docs/GUIDELINES.md#L211),
+[`GUIDELINES.md:338-357`](docs/GUIDELINES.md#L338),
+[`GUIDELINES.md:408-484`](docs/GUIDELINES.md#L408), and
+[`GUIDELINES.md:645-677`](docs/GUIDELINES.md#L645).
 
 ### Private tables and scanner
 
@@ -696,8 +696,8 @@ Each posted orphan deletion must own its typed table key; a forwarding tuple
 of references into the scan page would dangle after page reuse or release.
 
 The scanner follows the owner-thread rules in
-[`GUIDELINES.md:338-357`](GUIDELINES.md#L338) and
-[`GUIDELINES.md:598-677`](GUIDELINES.md#L598).
+[`GUIDELINES.md:338-357`](docs/GUIDELINES.md#L338) and
+[`GUIDELINES.md:598-677`](docs/GUIDELINES.md#L598).
 
 Acceptance: deterministic mock scans cover multiple pages, empty relations,
 each corrupt field, unknown/unloadable types, sparse valid step rows,
@@ -839,9 +839,9 @@ Use explicit captures only; `[&]` and `[=]` are forbidden.  Do not introduce a
 base class hierarchy for prepared CRUD.
 
 These rules apply the no-copy/allocation audit in
-[`GUIDELINES.md:238-264`](GUIDELINES.md#L238), DRY/control-flow rules in
-[`GUIDELINES.md:266-305`](GUIDELINES.md#L266), and handoff/capture rules in
-[`GUIDELINES.md:598-677`](GUIDELINES.md#L598).
+[`GUIDELINES.md:238-264`](docs/GUIDELINES.md#L238), DRY/control-flow rules in
+[`GUIDELINES.md:266-305`](docs/GUIDELINES.md#L266), and handoff/capture rules in
+[`GUIDELINES.md:598-677`](docs/GUIDELINES.md#L598).
 
 Acceptance: instrumented tests prove intent commit, target invocation, target
 commit, result post with no intervening same-shard work. Cover all CRUD kinds,
@@ -934,7 +934,7 @@ workload liveness audit: `Rebuilding` completes before application `up`, so the
 control thread is not servicing live application work.  Reads and mutations
 still yield through their existing asynchronous callbacks.  Do not generalize
 this exception to steady-state loops.  See
-[`GUIDELINES.md:354-357`](GUIDELINES.md#L354).
+[`GUIDELINES.md:354-357`](docs/GUIDELINES.md#L354).
 
 ### Completion and lifecycle
 
@@ -1056,10 +1056,10 @@ operations against a preserved catalog, then reopen with the original bundle
 to prove failure released every table handle without rewriting the catalog.
 
 This phase follows asynchronous lifecycle/teardown guidance in
-[`GUIDELINES.md:338-357`](GUIDELINES.md#L338) and
-[`GUIDELINES.md:645-677`](GUIDELINES.md#L645), and the rule against blocking,
+[`GUIDELINES.md:338-357`](docs/GUIDELINES.md#L338) and
+[`GUIDELINES.md:645-677`](docs/GUIDELINES.md#L645), and the rule against blocking,
 polling, and timing-dependent state machines in
-[`GUIDELINES.md:266-305`](GUIDELINES.md#L266).
+[`GUIDELINES.md:266-305`](docs/GUIDELINES.md#L266).
 
 Acceptance: deterministic cut-point tests restart after every main/step/effect
 and cleanup commit boundary and after asynchronous read callbacks.  They prove
@@ -1086,9 +1086,9 @@ Land the work as independently buildable slices in this order:
 Use `ZuTest` TAP assertions.  Coordinate asynchronous tests with `ZmBlock` or
 `ZmSemaphore`; do not use sleeps or elapsed-time assertions.  Keep unit test
 names CamelCase, integration source names lower-case, and FlatBuffers filenames
-snake_case.  See [`GUIDELINES.md:82-89`](GUIDELINES.md#L82),
-[`GUIDELINES.md:486-489`](GUIDELINES.md#L486), and
-[`GUIDELINES.md:716-739`](GUIDELINES.md#L716).
+snake_case.  See [`GUIDELINES.md:82-89`](docs/GUIDELINES.md#L82),
+[`GUIDELINES.md:486-489`](docs/GUIDELINES.md#L486), and
+[`GUIDELINES.md:716-739`](docs/GUIDELINES.md#L716).
 
 For every slice:
 
@@ -1100,8 +1100,8 @@ For every slice:
 5. run the new binaries under Valgrind via `libtool exec`.
 
 The build and dynamic-analysis requirements come from
-[`GUIDELINES.md:100-115`](GUIDELINES.md#L100) and
-[`GUIDELINES.md:783-790`](GUIDELINES.md#L783).
+[`GUIDELINES.md:100-115`](docs/GUIDELINES.md#L100) and
+[`GUIDELINES.md:783-790`](docs/GUIDELINES.md#L783).
 The user's verification override is Clang/debug plus Valgrind; no further
 ASAN/LSAN runs are required. Earlier sanitizer results below are historical
 evidence, not an additional acceptance gate.
@@ -1114,28 +1114,28 @@ silence is not a justification.
 
 | Audit area | Required evidence | Guideline |
 |---|---|---|
-| Scope | No manager/service, compatibility layer, store saga API, compensation, or cross-DB path | [`9-46`](GUIDELINES.md#L9), [`116-130`](GUIDELINES.md#L116) |
-| Application code | The whole body is application-idempotent under replay; reads, queries, branches, and external work are permitted and replayed; all effects journal immediately before mutation; absent deletes record no-op markers | [`266-305`](GUIDELINES.md#L266), [`598-677`](GUIDELINES.md#L598) |
-| Idempotence | Insert advances after local commit and the backend ignores primary-key collisions under the application consistency contract; delete permits an already-absent row; all effects reserve and replay exact UNs; no-op markers reserve none | [`266-305`](GUIDELINES.md#L266), [`440-489`](GUIDELINES.md#L440) |
-| Header DAG | `ZdbSaga.hh` is self-contained; direct includes only; no `Zdb.hh` cycle; non-template code in `.cc` | [`62-99`](GUIDELINES.md#L62), [`503-532`](GUIDELINES.md#L503) |
-| Language | GNU C++2b, no concepts/requires, `enum class`, `[&]`, `[=]`, unnecessary STL, or anonymous namespaces | [`116-185`](GUIDELINES.md#L116) |
-| Code structure | `SagaDB<Sagas>` retains the compile-time bundle, with direct union dispatch and no manual vtable; non-dependent declarations live outside templates; loop-invariant lengths/lookups are cached; repeated CRUD and result-post blocks are factored without virtual dispatch | [`144-160`](GUIDELINES.md#L144), [`199-209`](GUIDELINES.md#L199), [`266-269`](GUIDELINES.md#L266) |
-| Capacity | `ZdbSaga_BuiltinSize` is the sole public capacity knob; `SagaScanSize` is a documented private query-page limit; arrays are exact-sized, and queues grow only with admitted or crash-residual rows | [`211-236`](GUIDELINES.md#L211) |
-| Storage/GC | C++ members are measured and ordered independently of schema order; control-thread ownership avoids cache-line contention; completed attempts and step rows are removed deterministically; activation orphan reconciliation is not periodic GC | [`211-228`](GUIDELINES.md#L211), [`338-357`](GUIDELINES.md#L338) |
-| Allocation | Every allocation uses a named heap; recovery hash/FIFO intrusions share `SagaNode`, recovered-step intrusions share `SagaRec`, and steady-state `Saga` carries neither recovery intrusion; no wrapper allocation occurs between step-intent commit and ordinary Table invocation | [`238-250`](GUIDELINES.md#L238), [`466-484`](GUIDELINES.md#L466) |
-| Data movement | Payload and scan pages move once; exact-sized shard arrays remain uninitialized until filled; no hidden contiguous conversion, default-init-before-overwrite, or logger/reference capture | [`252-264`](GUIDELINES.md#L252), [`371-393`](GUIDELINES.md#L371) |
-| Control flow | Application work uses current continuation patterns; iterator scope ends before mutation/posting; member containers are iterated directly without redundant null tests; traversed counts are accumulated rather than snapshotted; discrete results use `switch`; nesting is flattened; built-in key hashes replace hand-rolled hashes | [`266-305`](GUIDELINES.md#L266), [`598-677`](GUIDELINES.md#L598) |
-| Liveness | Unbatched replay is confined to pre-`up` `Rebuilding`; asynchronous Zdb/application work still yields, and no equivalent long loop is added to steady state | [`354-357`](GUIDELINES.md#L354) |
-| Framework idioms | `ZuUnion`/`ZuMatcher`/`ZuSwitch`, `ZfbStruct`, `ZmHash`/`ZmList`, `ZmFn`, `ZtBuiltin`; no ad-hoc equivalents | [`307-336`](GUIDELINES.md#L307), [`400-489`](GUIDELINES.md#L400) |
-| State representation | Nullable installed saga continuation, nullable first error, lifecycle enum, epoch, and raw no-progress pointer are the sentinels; no parallel initialized/error/blocked booleans | [`307-319`](GUIDELINES.md#L307) |
-| Type boundaries | No avoidable casts or char/span/array reinterpretation; `IDString`, `SagaPayload`, and Z spans cross their existing conversion boundaries directly; no cast is used to force CRTP dispatch | [`321-336`](GUIDELINES.md#L321) |
-| Lifetime | Raw owner back-pointers in subordinate work, `ZmRef<Saga>` across shards, epoch invalidation, and DB drains before destruction | [`338-352`](GUIDELINES.md#L338), [`408-426`](GUIDELINES.md#L408), [`666-677`](GUIDELINES.md#L666) |
-| Threading | Live/recovery indexes, FIFO, and lifecycle counters mutate only on the DB thread; target mutations only on their DB shard. Store callbacks own scan-page construction and catalog results until their terminal continuation hands them back to the DB thread. No new locks or atomics excuse ownership violations | [`349-357`](GUIDELINES.md#L349), [`440-444`](GUIDELINES.md#L440), [`598-677`](GUIDELINES.md#L598) |
-| Scope/cleanup | No dead compatibility code, retained startup catalog, stale scanner, orphan attempt, owner-reference cycle, or post-terminal callback remains | [`338-347`](GUIDELINES.md#L338) |
-| Callbacks/logging | `ZmFn` is used only at erased boundaries; compact captures use `mvFn` where available; every lambda capture is explicit; deferred logs copy `ZeString`/scalars and never pointers or references | [`252-256`](GUIDELINES.md#L252), [`481-484`](GUIDELINES.md#L481) |
-| Naming/layout | Names follow the table above, stay within 28 bytes, use `m_`/trailing `_` correctly, and preserve tabs/style in C++ | [`534-596`](GUIDELINES.md#L534), [`679-781`](GUIDELINES.md#L679) |
-| Persistence | Three schemas and three `ZfbStruct`s; stable field numbers/enums; internal namespace affects only physical store identity | [`432-438`](GUIDELINES.md#L432) |
-| Tests | Deterministic cut points, no sleeps, full build before tests, Clang debug, live PostgreSQL, and Valgrind via `libtool exec` (user override above) | [`82-115`](GUIDELINES.md#L82), [`486-489`](GUIDELINES.md#L486), [`783-790`](GUIDELINES.md#L783) |
+| Scope | No manager/service, compatibility layer, store saga API, compensation, or cross-DB path | [`9-46`](docs/GUIDELINES.md#L9), [`116-130`](docs/GUIDELINES.md#L116) |
+| Application code | The whole body is application-idempotent under replay; reads, queries, branches, and external work are permitted and replayed; all effects journal immediately before mutation; absent deletes record no-op markers | [`266-305`](docs/GUIDELINES.md#L266), [`598-677`](docs/GUIDELINES.md#L598) |
+| Idempotence | Insert advances after local commit and the backend ignores primary-key collisions under the application consistency contract; delete permits an already-absent row; all effects reserve and replay exact UNs; no-op markers reserve none | [`266-305`](docs/GUIDELINES.md#L266), [`440-489`](docs/GUIDELINES.md#L440) |
+| Header DAG | `ZdbSaga.hh` is self-contained; direct includes only; no `Zdb.hh` cycle; non-template code in `.cc` | [`62-99`](docs/GUIDELINES.md#L62), [`503-532`](docs/GUIDELINES.md#L503) |
+| Language | GNU C++2b, no concepts/requires, `enum class`, `[&]`, `[=]`, unnecessary STL, or anonymous namespaces | [`116-185`](docs/GUIDELINES.md#L116) |
+| Code structure | `SagaDB<Sagas>` retains the compile-time bundle, with direct union dispatch and no manual vtable; non-dependent declarations live outside templates; loop-invariant lengths/lookups are cached; repeated CRUD and result-post blocks are factored without virtual dispatch | [`144-160`](docs/GUIDELINES.md#L144), [`199-209`](docs/GUIDELINES.md#L199), [`266-269`](docs/GUIDELINES.md#L266) |
+| Capacity | `ZdbSaga_BuiltinSize` is the sole public capacity knob; `SagaScanSize` is a documented private query-page limit; arrays are exact-sized, and queues grow only with admitted or crash-residual rows | [`211-236`](docs/GUIDELINES.md#L211) |
+| Storage/GC | C++ members are measured and ordered independently of schema order; control-thread ownership avoids cache-line contention; completed attempts and step rows are removed deterministically; activation orphan reconciliation is not periodic GC | [`211-228`](docs/GUIDELINES.md#L211), [`338-357`](docs/GUIDELINES.md#L338) |
+| Allocation | Every allocation uses a named heap; recovery hash/FIFO intrusions share `SagaNode`, recovered-step intrusions share `SagaRec`, and steady-state `Saga` carries neither recovery intrusion; no wrapper allocation occurs between step-intent commit and ordinary Table invocation | [`238-250`](docs/GUIDELINES.md#L238), [`466-484`](docs/GUIDELINES.md#L466) |
+| Data movement | Payload and scan pages move once; exact-sized shard arrays remain uninitialized until filled; no hidden contiguous conversion, default-init-before-overwrite, or logger/reference capture | [`252-264`](docs/GUIDELINES.md#L252), [`371-393`](docs/GUIDELINES.md#L371) |
+| Control flow | Application work uses current continuation patterns; iterator scope ends before mutation/posting; member containers are iterated directly without redundant null tests; traversed counts are accumulated rather than snapshotted; discrete results use `switch`; nesting is flattened; built-in key hashes replace hand-rolled hashes | [`266-305`](docs/GUIDELINES.md#L266), [`598-677`](docs/GUIDELINES.md#L598) |
+| Liveness | Unbatched replay is confined to pre-`up` `Rebuilding`; asynchronous Zdb/application work still yields, and no equivalent long loop is added to steady state | [`354-357`](docs/GUIDELINES.md#L354) |
+| Framework idioms | `ZuUnion`/`ZuMatcher`/`ZuSwitch`, `ZfbStruct`, `ZmHash`/`ZmList`, `ZmFn`, `ZtBuiltin`; no ad-hoc equivalents | [`307-336`](docs/GUIDELINES.md#L307), [`400-489`](docs/GUIDELINES.md#L400) |
+| State representation | Nullable installed saga continuation, nullable first error, lifecycle enum, epoch, and raw no-progress pointer are the sentinels; no parallel initialized/error/blocked booleans | [`307-319`](docs/GUIDELINES.md#L307) |
+| Type boundaries | No avoidable casts or char/span/array reinterpretation; `IDString`, `SagaPayload`, and Z spans cross their existing conversion boundaries directly; no cast is used to force CRTP dispatch | [`321-336`](docs/GUIDELINES.md#L321) |
+| Lifetime | Raw owner back-pointers in subordinate work, `ZmRef<Saga>` across shards, epoch invalidation, and DB drains before destruction | [`338-352`](docs/GUIDELINES.md#L338), [`408-426`](docs/GUIDELINES.md#L408), [`666-677`](docs/GUIDELINES.md#L666) |
+| Threading | Live/recovery indexes, FIFO, and lifecycle counters mutate only on the DB thread; target mutations only on their DB shard. Store callbacks own scan-page construction and catalog results until their terminal continuation hands them back to the DB thread. No new locks or atomics excuse ownership violations | [`349-357`](docs/GUIDELINES.md#L349), [`440-444`](docs/GUIDELINES.md#L440), [`598-677`](docs/GUIDELINES.md#L598) |
+| Scope/cleanup | No dead compatibility code, retained startup catalog, stale scanner, orphan attempt, owner-reference cycle, or post-terminal callback remains | [`338-347`](docs/GUIDELINES.md#L338) |
+| Callbacks/logging | `ZmFn` is used only at erased boundaries; compact captures use `mvFn` where available; every lambda capture is explicit; deferred logs copy `ZeString`/scalars and never pointers or references | [`252-256`](docs/GUIDELINES.md#L252), [`481-484`](docs/GUIDELINES.md#L481) |
+| Naming/layout | Names follow the table above, stay within 28 bytes, use `m_`/trailing `_` correctly, and preserve tabs/style in C++ | [`534-596`](docs/GUIDELINES.md#L534), [`679-781`](docs/GUIDELINES.md#L679) |
+| Persistence | Three schemas and three `ZfbStruct`s; stable field numbers/enums; internal namespace affects only physical store identity | [`432-438`](docs/GUIDELINES.md#L432) |
+| Tests | Deterministic cut points, no sleeps, full build before tests, Clang debug, live PostgreSQL, and Valgrind via `libtool exec` (user override above) | [`82-115`](docs/GUIDELINES.md#L82), [`486-489`](docs/GUIDELINES.md#L486), [`783-790`](docs/GUIDELINES.md#L783) |
 
 The implementation is complete only when the goal's success criteria pass and
 this audit contains no unexplained amber flag.
@@ -1161,7 +1161,7 @@ Layout inspection with `libtool exec gdb` on the x64 debug build found:
   the separately allocated startup `seen` array and string overflow storage.
 
 These checks apply the storage-layout rule in
-[`GUIDELINES.md:211-228`](GUIDELINES.md#L211). They do not justify adding
+[`GUIDELINES.md:211-228`](docs/GUIDELINES.md#L211). They do not justify adding
 cache-line padding to control-thread-owned state.
 
 The critical allocation boundary is intent commit to ordinary Table invocation,
@@ -1180,7 +1180,7 @@ test counts in this implementation history.
 backwards into its pooled arena; the finished payload is copied once into the
 row-owned `SagaPayload`, whose lifetime crosses the admission shard handoff.
 This is an explicit retained-storage copy under
-[`GUIDELINES.md:252-264`](GUIDELINES.md#L252): exactly the serialized byte count,
+[`GUIDELINES.md:252-264`](docs/GUIDELINES.md#L252): exactly the serialized byte count,
 into uninitialized destination storage, with no intermediate string/array.
 The builtin destination cannot adopt an interior pointer into the builder's
 arena. Keep this existing Zfb integration rather than adding a saga-specific
@@ -1237,7 +1237,7 @@ implementation passes all four. The affected debug and ASAN/LSAN suites pass:
 47 unit checks, four replication/integration programs, and nine PostgreSQL
 checks. Valgrind reports no errors or lost memory for the saga unit binary.
 The extra key copy is the explicit ownership/correctness trade-off
-under [`GUIDELINES.md:252-264`](GUIDELINES.md#L252); there is no new type erasure,
+under [`GUIDELINES.md:252-264`](docs/GUIDELINES.md#L252); there is no new type erasure,
 allocation of a retry object, or change to public Table lookup APIs.
 
 The recovery fixture now also covers a committed main row before any mutation,
@@ -1272,7 +1272,7 @@ The header audit removed the unused `SagaDefSteps` alias, added direct
 `string.h`, `ZuSeq.hh`, and `ZuString.hh` dependencies, and corrected lambda
 indentation. The replication test's write-hook comment now identifies its
 committing-shard owner. These apply the dead-code, direct-dependency, layout,
-and ownership rules in [`GUIDELINES.md`](GUIDELINES.md#L338). The refreshed debug
+and ownership rules in [`docs/GUIDELINES.md`](docs/GUIDELINES.md#L338). The refreshed debug
 build passes 55 unit checks, four integration programs, and nine PostgreSQL
 checks without build warnings. A standalone include of `ZdbSaga.hh` compiles
 with the project's GNU C++2b/version settings and no diagnostics. The refreshed
@@ -1287,8 +1287,8 @@ clears the indexes before attempts. Scan callbacks build one store-owned page
 and hand it to the control thread at terminal completion; they do not post one
 control task per row. This phase ownership is intentional and requires no
 locking, atomics, extra copies, or separate per-row allocations for handoff
-([`GUIDELINES.md:238-264`](GUIDELINES.md#L238),
-[`GUIDELINES.md:338-357`](GUIDELINES.md#L338)).
+([`GUIDELINES.md:238-264`](docs/GUIDELINES.md#L238),
+[`GUIDELINES.md:338-357`](docs/GUIDELINES.md#L338)).
 
 The live CRUD trace and both cold-lookup recovery traces also run with a
 dedicated shard SID, separate from the DB control thread. Their mutable trace
@@ -1332,7 +1332,7 @@ the logger read it after its `HostCf` owner was freed. Host/peer log captures
 in `Zdb.cc` now retain `ZeString` values, including incoming association IDs.
 Existing owning table-ID and `ZuID` captures are unchanged. This applies the
 explicit deferred-logging ownership rule in
-[`GUIDELINES.md:252-256`](GUIDELINES.md#L252), without delaying shutdown or
+[`GUIDELINES.md:252-256`](docs/GUIDELINES.md#L252), without delaying shutdown or
 retaining DB/host owners. After the owning captures, the debug unit/integration/
 PostgreSQL suites pass and Valgrind reports zero errors or lost memory; the
 ASAN/LSAN unit suite also passes.
@@ -1446,33 +1446,33 @@ each allocation/copy across its actual lifetime.
    the row. The shard callback performs the same ordinary insert/commit. This
    uses the already-required journal allocation, not a new envelope, and
    preserves cleanup when save throws. See
-   [data movement](GUIDELINES.md#data-movement-and-initialization) and
-   [cross-shard handoffs](GUIDELINES.md#cross-shard-handoffs).
+   [data movement](docs/GUIDELINES.md#data-movement-and-initialization) and
+   [cross-shard handoffs](docs/GUIDELINES.md#cross-shard-handoffs).
 2. **Cleanup copied the immutable saga key into each scheduled lambda.**
    The existing captured saga reference already owns that key. Read it on the
    destination shard and retain only the key copy required by the existing
    asynchronous Table lookup. Do not retain a span into an unowned temporary.
-   See [data movement](GUIDELINES.md#data-movement-and-initialization).
+   See [data movement](docs/GUIDELINES.md#data-movement-and-initialization).
 3. **Membership lookups constructed owning string keys and took references.**
    Admission and recovered-step membership checks now use heterogeneous
    forwarding tuples and `findPtr`; logical-step lookup also uses `findPtr`.
    `ZmHash`/`ZuHash` support these forms directly. The owning hash remains
    control-thread-affined and outlives each borrowed result. See
-   [framework fit](GUIDELINES.md#framework-fit) and
-   [scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+   [framework fit](docs/GUIDELINES.md#framework-fit) and
+   [scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 4. **PostgreSQL stored two identical names per opened table.**
    `m_mrdID` duplicated `m_stmtID` byte-for-byte. Removed the former; the
    namespace-prefixed identity now serves both prepared statements and MRD.
    Logical IDs and qualified SQL relation names remain distinct. See
-   [storage](GUIDELINES.md#storage-and-capacity) and
-   [dead state](GUIDELINES.md#scope-and-cleanup).
+   [storage](docs/GUIDELINES.md#storage-and-capacity) and
+   [dead state](docs/GUIDELINES.md#scope-and-cleanup).
 5. **The activation scan carried an unused error sentinel and dead branches.**
    No path assigned `SagaScan::error`: Table scan errors already invalidate
    activation before terminal callback delivery, and decoder errors fail it
    directly. Removed that field and both impossible branches; retained the
    catalog's genuinely used error sentinel. See
-   [state representation](GUIDELINES.md#framework-fit) and
-   [dead code](GUIDELINES.md#scope-and-cleanup).
+   [state representation](docs/GUIDELINES.md#framework-fit) and
+   [dead code](docs/GUIDELINES.md#scope-and-cleanup).
 
 ### Container and allocation decisions
 

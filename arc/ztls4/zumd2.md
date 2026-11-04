@@ -123,7 +123,7 @@ Resolve the design questions as follows:
   fixtures only where the
   new contract requires it; keep their SQLite/module setup intact. Never point
   a test at a real credential store or home.
-- Follow `GUIDELINES.md` repair, sharding, allocation, naming, and secret
+- Follow `docs/GUIDELINES.md` repair, sharding, allocation, naming, and secret
   handling rules. Use `ZtScratch` for bounded scratch with heap fallback,
   `ZiFile` for any filesystem work, Z framework parsing/formatting, and
   `ZmBlock` for existing async-to-sync transitions. Do not add locks,

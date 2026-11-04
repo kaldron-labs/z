@@ -647,7 +647,7 @@ completion, and release the response without calling any of those outcome
 functions or incrementing build/Tx failure counters. Each function begins with
 a terminal-state guard, making duplicate transport and link callbacks no-ops.
 
-Teardown must follow the `GUIDELINES.md` ownership and sharding sequence. First
+Teardown must follow the `docs/GUIDELINES.md` ownership and sharding sequence. First
 prevent new ingress, timers, and I/O work and post the Rx drain continuation.
 That continuation drains late Rx callbacks and posts the Tx drain continuation.
 Tx then detaches raw callbacks, invokes Builder `close()`, and drains owning

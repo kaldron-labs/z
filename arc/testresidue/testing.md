@@ -46,7 +46,7 @@ The resulting behavior must satisfy these invariants:
 
 - `zi/test/ZiTestResidue.hh` contains all state and function implementations as
   `inline` definitions even though none is a template.
-- The header contains an anonymous namespace, prohibited by `GUIDELINES.md`.
+- The header contains an anonymous namespace, prohibited by `docs/GUIDELINES.md`.
 - `State::lock` currently serializes all mutable state (`initialized`,
   `cleaned`, paths, test name, counter, and the file/directory/shared-memory
   arrays), but the layout does not communicate that ownership.
@@ -404,7 +404,7 @@ The facility remains named `ZiTestResidue`; do not introduce `ZiTestLog`.
    every matrix child environment rather than constructing a second log root.
 4. Regenerate affected Automake outputs once after the Makefile edits, without
    changing or replacing the existing clang debug configuration. Then use that
-   configured build as required by `GUIDELINES.md`:
+   configured build as required by `docs/GUIDELINES.md`:
 
    ```sh
    make -j8
@@ -478,7 +478,7 @@ run to find additional producers:
    `ZI_LOGDIR`; keep external framework outputs inside that framework's result
    tree and lifecycle.
 
-## 7. `GUIDELINES.md` conformance constraints
+## 7. `docs/GUIDELINES.md` conformance constraints
 
 Apply these constraints to every implementation and migration diff, including
 the complete audit-flag list rather than only the examples named elsewhere:
@@ -571,7 +571,7 @@ the complete audit-flag list rather than only the examples named elsewhere:
    - preserve the currently configured clang debug build exactly. Run targeted
      Valgrind leak checks in that build. Its flags do not enable ASan/LSan, so
      the separate sanitizer-configured acceptance run required by
-     `GUIDELINES.md` is explicitly deferred by the instruction not to change
+     `docs/GUIDELINES.md` is explicitly deferred by the instruction not to change
      the build configuration; do not claim that sanitizer verification ran.
 
 ## 8. Implementation order
@@ -665,7 +665,7 @@ migration with redesign of the support API:
    references to `.ZiTestResidue`, manifest helpers, old local residue paths,
    unaged generated files, or ad hoc fixture glob/removal utilities remain.
    Review every changed source file against each red/amber audit flag in
-   `GUIDELINES.md` and the zquic supplementary checklist; treat warnings and
+   `docs/GUIDELINES.md` and the zquic supplementary checklist; treat warnings and
    unexplained exceptions as failures.
 9. Keep the implementation and harness platform-neutral: use portable Z path,
    process, and child-launch APIs; preserve Windows file-closing/removal and

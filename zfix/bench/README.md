@@ -56,6 +56,13 @@ and, when needed, `make -C zfix/bench audittrace`. The Binary acceptance run use
 heaptrace separately from uninstrumented timings. These targets do not rebuild
 prerequisite modules or the independent QuickFIX SDK.
 
+The process-load harness accepts `--rx-ring-size` and `--tx-ring-size` for native
+peers. Zero (the default) uses the workload tools' session/in-flight sizing;
+explicit values are forwarded only to native peers. Each native readiness and
+result record captures the selected counts, and the benchmark manifest retains
+the override arguments. Select larger counts when comparing large-frame or
+retained-input profiles; use the same settings for each backend comparison.
+
 `nativecodec` and `quickfixcodec` accept optional count and warmup arguments:
 
 ```sh
@@ -249,26 +256,24 @@ See [status](../STATUS.md) and [the plan](../../zfix_plan.md) for configuration,
 instrumentation scope and delivery evidence. Verification is scoped to Linux
 x64; ARM and Windows are outside this task.
 
-`z.config` does not forward `--with-quickfix`; supply the isolated SDK selection
-through an explicit configure site file:
+`z.config -k PREFIX` selects the existing independent QuickFIX installation.
+io_uring is enabled when available by default; `-u` builds without it. The
+runtime workload's `--backend` remains a separate resolved-backend selection.
 
 The release example requires matching uninstrumented dependencies already
 available. With existing ASan artifacts, preserve sanitizer compile/link flags
 and label measurements accordingly instead of applying this example unchanged.
 
 ```sh
-cat > /tmp/zfix-release.site <<'EOF'
-with_quickfix=/tmp/zfix-deps/install
-EOF
-CONFIG_SITE=/tmp/zfix-release.site ./z.config -L -G -P /opt/z
+./z.config -L -G -P -k /tmp/zfix-qf-release/install /opt/z
 make -C zfix clean
 make -C zfix -j8
 ```
 
 This selects Clang for the Zfix-only build, reusing compatible dependencies. Repeat through
 the wrapper's GCC configuration for that compiler gate. Sanitizer configurations
-use their own site file and instrumented SDK prefix, separate from release
-measurements; preserve each actual configuration and build log.
+use their own instrumented SDK prefix and compiler/link flags, separate from
+release measurements; preserve each actual configuration and build log.
 
 After collecting release process and codec output from the same configured
 build, generate the combined report:
@@ -353,3 +358,115 @@ fields must not add another allocation per retained body; crossing the built-in
 pool threshold can legitimately change capacity/charge and must be reported.
 The full `nativecodec` timing remains necessary to detect ordinary message
 regressions outside this isolated retained-body factory.
+
+### Pinned Linux transport backends
+
+The native workload peers accept `--backend auto|epoll|uring`. Their readiness
+and result records report the resolved backend. Explicit `uring` fails startup
+when unavailable; the benchmark runner verifies native result rows against the
+requested backend. QuickFIX uses its SDK transport and reports `external`.
+
+For each backend, run the existing four pairings with identical payload and
+resource parameters on an idle host, for example:
+
+```sh
+python3 zfix/bench/load.py --dictionary /path/to/FIX44.xml \
+  --profile scalar --count 10000 --warmup 1000 --sessions 3 --repeat 3 \
+  --transport tcp --transport tls --backend epoll --artifacts /tmp/fix-epoll
+python3 zfix/bench/load.py --dictionary /path/to/FIX44.xml \
+  --profile scalar --count 10000 --warmup 1000 --sessions 3 --repeat 3 \
+  --transport tcp --transport tls --backend uring --artifacts /tmp/fix-uring
+```
+
+The runner randomizes case order using `--seed` and records that order in the
+manifest. Run both commands under the same affinity and use the same seed.
+Reduce each backend into a separate report. The reducer rejects different
+requested backends, native results that disagree with an explicit request, and
+`auto` cohorts that resolve to different backends. Reports and their JSON/budget
+provenance retain both the requested and resolved native backend; QuickFIX's
+independent transport remains `external`.
+Resource usage includes process startup, warmup and teardown; retain the raw
+wait4 records when calculating CPU/order or context-switch counts. Quantiles
+remain per session and repetition rather than being merged.
+
+These loopback fixtures do not measure NIC-arrival-to-framer latency. The
+required Ethernet comparison additionally records peer/MTU, offloads, IRQ and
+arrival timestamp configuration, plus syscall, pool/fallback and copied-byte
+observations. Capture diagnostic runs separately from uninstrumented latency.
+
+
+I/O observation requires a separate instrumented build with
+`-DZiMultiplex_BENCH` defined consistently for Zi and all consumers. Start that
+build with a clean tree; this flag changes the observer API and object layout.
+`ZiMultiplex_BENCH` alone uses ordinary buffer policies: no per-buffer provenance,
+copy/merge hooks, allocation/slot counters or receive-origin tracking.
+`ZiMultiplex_DEBUG` enables the buffer hooks independently. Define both flags
+for provenance observations in the native load utility; these debug cases are
+unsuitable for performance comparisons. The JSON `provenance` flag distinguishes
+the two modes; disabled provenance is reported as disabled.
+Normal builds, including release builds, contain no `IOBench*` types, callback
+storage, accessors or observation branches. A normal utility rejects
+`--observe-io` with an explicit unsupported-build error.
+
+Use `--io-diagnostics` with those instrumented peers to collect diagnostic
+cases only. Collect timing in a separate invocation using ordinary peers and
+matching uninstrumented dependencies. Turning off `--observe-io` in a BENCH
+build does not remove its compiled observation branches or diagnostic layout.
+Native peers receive `--observe-io`; QuickFIX peers remain independent and do
+not receive native-only switches. The case JSON retains one `ioDiagnostics`
+object per native process. These cases are excluded from timing-only tables.
+Use the ordinary run's artifacts with `results.py`; a diagnostic-only artifact
+directory contains no timing cases for that reducer.
+`--diag-samples N` caps stored samples per session (zero derives a bounded
+capacity from count and warmup); overflow fails the instrumented case.
+Debug provenance cases also fail on missing receive origins.
+
+Each owner SID reports actual `io_uring_enter` attempts, wait calls, errors and
+accepted SQEs, prepared SQEs and kernel CQEs by opcode. Accepted SQEs are not
+inferred from preparation. Ordinary-send counts and bytes come from actual Tx
+data CQEs (positive completion bytes); they include receive-slot forwarding
+fallback separately. Data-CQE-to-notification delay has independent pending,
+unpaired and dropped-sample counters. Epoll has no ring events, so these ring
+counters are zero rather than estimates of epoll's total syscall count.
+
+With both `ZiMultiplex_BENCH` and `ZiMultiplex_DEBUG`, the custom native buffer
+policies count allocation/destruction, registered
+versus ordinary allocation, pool depletion, current and peak retained slots and
+bytes, and current and peak application-held Rx slots. Kernel-offered Rx slots
+are excluded from application-held retention until receive completion. Early
+slot returns during growth are observed before the slot is detached. Snapshots
+are taken after `mx.stop()` while allocator caches can still exist; idle pool
+capacity is not attributed as application-held memory. Preservation copies,
+in-place moves and fragmented-stream gather bytes are explicit separate
+counters. Crypto-internal scratch/copies, serialization writes and external
+QuickFIX copies are outside these hook counters; use the separate existing
+copy observer for its documented process-wide coverage.
+
+The debug-only framing distribution starts at the userspace receive-completion callback
+for the last contributing buffer and ends at the validated FIX framer output,
+before semantic decoding. Fragment gathers retain the newest contributing
+origin. It is not a NIC timestamp or request RTT. Native diagnostic observers
+and custom policies are disabled by default. The additional clocks, counters
+and sample storage perturb timing; compare ordinary runs for latency. Whole
+process syscall totals use the separate `--syscalls` mode below; wait4 provides
+context-switch and CPU measurements but cannot substitute syscall totals.
+
+Use `--syscalls` for separate reruns under `strace -f -c -qq -o SUMMARY`.
+Both local native and QuickFIX peers are traced, including their wrapper,
+startup, warmup and shutdown process trees. The raw summaries, validated totals,
+per-syscall calls/errors and syscall time are retained in case JSON and the
+report. Traced runs are excluded from timing-only tables. Syscall times reported
+by strace are not application latency. The tracer requires Linux ptrace access;
+a denied tracer or incomplete summary fails the diagnostic case explicitly.
+Use one observer mode per invocation; I/O, syscall, heap and audit runs each
+have separate artifacts. For remote mode only the local peer can be traced.
+
+
+`--interface NAME` records passive local interface evidence in the manifest:
+MTU/link, ethtool offload/driver/timestamp capabilities, device IRQ membership
+and affinity, and queue RPS/XPS settings. Raw command arguments, output, errors
+and missing files remain visible. This changes no interface or IRQ setting and
+performs no remote probing. Device-backed sysfs topology alone does not prove
+that workload traffic crosses Ethernet. Timestamp capabilities do not establish
+active SO_TIMESTAMPING configuration or a NIC-arrival timestamp source.
+`python3 netmeta.py NAME` captures the same evidence independently.

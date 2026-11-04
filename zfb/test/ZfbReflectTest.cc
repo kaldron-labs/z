@@ -289,7 +289,7 @@ static void reflected()
 
 static void reflectedVectors()
 {
-  ZuTestScope(reflectedVectors);
+  ZuTestScopeRT(reflectedVectors);
   namespace R = Zfb::Reflect;
   auto schemaBytes = ZtScratch(Text, 0);
   Zfb::saveSchema<Batch>(schemaBytes);
@@ -299,8 +299,8 @@ static void reflectedVectors()
   const ZuCSpan names[] = {"one", "two"};
   const Stamp stamps[] = {{123}, {456}};
   auto bytes = ZtScratch(Text, 0);
-  ZuCheck(Zfb::save(bytes, Batch{rows, names, stamps}) == Zfb::Error::OK);
-  ZuCheck(R::verify(schema, bytes) && Zfb::verify<Batch>(bytes));
+  ZuCheckRT(Zfb::save(bytes, Batch{rows, names, stamps}) == Zfb::Error::OK);
+  ZuCheckRT(R::verify(schema, bytes) && Zfb::verify<Batch>(bytes));
   ZuBSpan span{bytes};
   for (unsigned id = 0; id < 2; ++id) {
     auto vector = Zfb::root(span).vector(id);
@@ -308,14 +308,14 @@ static void reflectedVectors()
     auto slot = bytes.data() + at;
     auto saved = Zfb::read<Zfb::Offset>(slot);
     Zfb::write<Zfb::Offset>(slot, UINT32_MAX);
-    ZuCheck(!R::verify(schema, bytes));
+    ZuCheckRT(!R::verify(schema, bytes));
     Zfb::write<Zfb::Offset>(slot, saved);
-    ZuCheck(R::verify(schema, bytes));
+    ZuCheckRT(R::verify(schema, bytes));
   }
   bytes.clear();
   rows[1] = nullptr;
-  ZuCheck(Zfb::save(bytes, Batch{rows, names, stamps}) == Zfb::Error::Required);
-  ZuCheck(!bytes.length());
+  ZuCheckRT(Zfb::save(bytes, Batch{rows, names, stamps}) == Zfb::Error::Required);
+  ZuCheckRT(!bytes.length());
 }
 
 static void externalSchema()

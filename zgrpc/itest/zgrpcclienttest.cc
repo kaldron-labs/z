@@ -10,6 +10,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiTx.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZgrpcHTTP.hh>
 #include "ZhttpTestUtil.hh"
 
@@ -73,11 +74,11 @@ struct Mode { enum { Normal, Expired, Ingress, Deadline, LateRx, Redirect, PeerC
 
 static void wire(bool h3, bool empty, int mode = Mode::Normal)
 {
-  ZuTestScope(wire);
+  ZuTestScopeRT(wire);
   Zhttp::Test::TempDir temp;
-  ZuCheck(temp.init("ZgrpcWire"), (return));
+  ZuCheckRT(temp.init("ZgrpcWire"), (return));
   ZtString<> cert, key;
-  ZuCheck(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
+  ZuCheckRT(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
   State state;
   state.peerCancel = mode == Mode::PeerCancel;
   state.redirect = mode == Mode::Redirect;
@@ -89,7 +90,19 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
     state.payload.length((256U << 10) + 7);
     memset(state.payload.data(), 0x71, state.payload.length());
   }
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  // Keep a complete retained message plus request/reply retirement overlap;
+  // TLS emits records, while QUIC emits path-sized packets.
+  unsigned rxSlots = 4 * ((state.payload.length() + ZiIOBuf_DefltSize - 1)/
+    ZiIOBuf_DefltSize);
+  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U << 10;
+  unsigned txSlots = 4 * ((state.payload.length() + txBytes - 1)/txBytes);
+  ZiMultiplex mx{ZiMxParams{}
+    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : rxSlots)
+    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : txSlots)
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -97,9 +110,9 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
       .thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   unsigned port = peerPort(h3);
-  ZuCheck(port, ({ mx.stop(); return; }));
+  ZuCheckRT(port, ({ mx.stop(); return; }));
   Zhttp::HubConfig hub{&mx, "3", "4"};
   App server{&state};
   Zhttp::ServerConfig serverConfig;
@@ -111,11 +124,11 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
   })
     .policy(Zhttp::H2Policy::Force));
   bool initialized = server.init(hub, serverConfig);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   bool started = initialized && server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_());
+  ZuCheckRT(listening && !state.errors.load_());
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
@@ -128,18 +141,18 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
-  ZuCheck(cliInit);
+  ZuCheckRT(cliInit);
   bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(port)});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   if (state.redirect && pooled)
-    ZuCheck(!client.config(0)->maxRetries() && !client.config(0)->maxRedirects());
+    ZuCheckRT(!client.config(0)->maxRetries() && !client.config(0)->maxRedirects());
   bool cliUp = pooled && client.start();
-  ZuCheck(cliUp);
+  ZuCheckRT(cliUp);
   ZmSemaphore held, release;
   bool blocked = cliUp && (mode == Mode::Ingress || mode == Mode::Deadline);
   if (blocked) {
     mx.run([&held, &release]() { held.post(); release.wait(); }, 4);
-    ZuCheck(held.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(held.timedwait(Zm::now(10)) == 0);
   }
   if (mode == Mode::LateRx) {
     state.holdRx = &held;
@@ -158,48 +171,51 @@ static void wire(bool h3, bool empty, int mode = Mode::Normal)
       token = client.open<Unary>(0, call, ZuMv(options));
       admitted = bool(token);
       auto denied = client.open<Unary>(0, call);
-      ZuCheck(!denied && client.pending() == 1);
-      if (token && mode == Mode::Ingress) ZuCheck(token->cancel());
+      ZuCheckRT(!denied && client.pending() == 1);
+      if (token && mode == Mode::Ingress) ZuCheckRT(token->cancel());
     } else admitted = client.call<Unary>(0, Packet{42, state.payload}, call, ZuMv(options));
   }
-  ZuCheck(admitted);
+  ZuCheckRT(admitted);
   if (mode == Mode::LateRx && admitted) {
-    ZuCheck(held.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(held.timedwait(Zm::now(10)) == 0);
     ZmScheduler::Timer probe;
     ZmSemaphore expired;
     mx.add(&probe, Zm::now(2), ZmScheduler::Update, [&expired](auto &&arm) {
       return arm([&expired]() { expired.post(); });
     }, 1);
-    ZuCheck(expired.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(expired.timedwait(Zm::now(10)) == 0);
     mx.del(&probe);
     release.post();
   }
   bool done = admitted && state.done.timedwait(Zm::now(15)) == 0;
-  ZuCheck(done);
+  ZuCheckRT(done);
   if (blocked) {
-    ZuCheck(client.pending() == 1); // logical failure does not bypass Tx drain
+    ZuCheckRT(client.pending() == 1); // logical failure does not bypass Tx drain
     if (token) {
-      ZuCheck(!token->live() && !token->send(Packet{}) && !token->end() && !token->cancel());
+      ZuCheckRT(!token->live() && !token->send(Packet{}) && !token->end() && !token->cancel());
     }
     release.post();
   }
-  if (cliUp) ZuCheck(client.stop());
-  ZuCheck(!client.pending());
+  if (cliUp) ZuCheckRT(client.stop());
+  ZuCheckRT(!client.pending());
   client.final();
-  if (mode == Mode::LateRx) ZuCheck(!state.headers);
-  if (started) ZuCheck(server.stop());
+  if (mode == Mode::LateRx) ZuCheckRT(!state.headers);
+  if (started) ZuCheckRT(server.stop());
   server.final();
   ZiResolver::stopSync();
   ZiResolver::final();
-  ZuCheck(mx.stop());
-  ZuCheck(!state.errors.load_());
-  if (state.redirect) ZuCheck(state.peerRequests.load_() == 1);
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(!state.errors.load_());
+  if (state.redirect) ZuCheckRT(state.peerRequests.load_() == 1);
   if (mode == Mode::Normal) {
-    ZuCheck(state.received == 1 && !state.failures);
+    ZuCheckRT(state.received == 1 && !state.failures);
     if (state.result.is<Message<Packet>>()) {
-      ZuCheck(state.result.p<Message<Packet>>().object().payload == ZuBSpan{state.payload});
-    } else ZuCheck(false);
-  } else ZuCheck(!state.received && state.failures == 1);
+      ZuCheckRT(state.result.p<Message<Packet>>().object().payload == ZuBSpan{state.payload});
+    } else ZuCheckRT(false);
+  } else ZuCheckRT(!state.received && state.failures == 1);
+
+  // Release retained receive backing before its mux allocator is destroyed.
+  state.result = {};
 
 }
 
@@ -264,7 +280,7 @@ static void encodeExpiry()
 // No timing assumption about transport acknowledgement or scheduler load.
 static void inputFailure(bool metadata, Zhttp::ResultCode::T code, bool expired = false)
 {
-  ZuTestScope(inputFailure);
+  ZuTestScopeRT(inputFailure);
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
@@ -272,11 +288,11 @@ static void inputFailure(bool metadata, Zhttp::ResultCode::T code, bool expired 
   State state;
   state.mx = &mx;
   state.expectedFailure = expired ? Code::DEADLINE_EXCEEDED : Code::UNIMPLEMENTED;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   bool initialized = client.init(Zhttp::HubConfig{&mx, "3", "4"}, 1, ClientConfig{}, &app);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   if (initialized) {
     ZmRef<Call> observer = new Call{&state};
     observer->metadata = metadata ? MetaError::Encoding : MetaError::OK;
@@ -289,27 +305,27 @@ static void inputFailure(bool metadata, Zhttp::ResultCode::T code, bool expired 
       auto input = parser.input();
       input->route(work->rx);
       if (metadata) {
-	ZuCheck(!input->meta().header(Zhttp::FieldSection::Final, "grpc-encoding", "gzip"));
-	ZuCheck(!input->failed() && input->meta().failed());
+	ZuCheckRT(!input->meta().header(Zhttp::FieldSection::Final, "grpc-encoding", "gzip"));
+	ZuCheckRT(!input->failed() && input->meta().failed());
       } else {
 	input->fail(Code::UNIMPLEMENTED);
-	ZuCheck(input->failed() && !input->finished());
+	ZuCheckRT(input->failed() && !input->finished());
       }
       // This generic transport cancellation must retain the local diagnostic.
       work->resultFn(work.ptr(), Zhttp::Result{.code = code});
       work->resultFn(work.ptr(), Zhttp::Result{.code = Zhttp::ResultCode::Failed});
     }, 3);
-    ZuCheck(state.done.timedwait(Zm::now(10)) == 0);
-    ZuCheck(!token->live() && token->cancelled() == expired);
+    ZuCheckRT(state.done.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(!token->live() && token->cancelled() == expired);
     ZmSemaphore drained;
     mx.run([&mx, &drained]() {
       mx.run([&drained]() { drained.post(); }, 3);
     }, 4);
-    ZuCheck(drained.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(drained.timedwait(Zm::now(10)) == 0);
     client.final();
   }
-  ZuCheck(mx.stop());
-  ZuCheck(state.failures == 1 && !state.received && !state.errors.load_());
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(state.failures == 1 && !state.received && !state.errors.load_());
 }
 
 // A test-owned native peer emits GOAWAY after opening the request stream.
@@ -394,11 +410,13 @@ struct GoPeer : Zhttp::ProtocolServer<GoPeer<Profile>, Profile, GoLink<Profile>>
       auto tx = link->transmit_(builder);
       builder.begin(tx);
       FrameError::T error;
-      auto buf = encodeFrame(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>{}},
+      auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}},
 	0, Default::MaxMessageBytes, Packet{42, {}}, error);
       if (!buf || error != FrameError::OK) { ++s->errors; return; }
       auto body = builder.body(tx);
-      body << buf->cspan();
+      auto length = buf->length;
+      if (!body.appendRange(ZuMv(buf), 0, length)) { ++s->errors; return; }
       if (!body.flush() || !builder.trailers(tx, GoTrailers{}) || !tx.flush())
 	++s->errors;
       link->finish();
@@ -504,23 +522,25 @@ friend inline ZuStringT<"Zgrpc.Goaway.Call"> ZmNHeapID(GoCall *);
 template <typename Profile>
 static void goaway(bool drain = false)
 {
-  ZuTestScope(goaway);
+  ZuTestScopeRT(goaway);
   constexpr bool h3 = ZuIsSame<Profile, Zhttp::H3QUIC>{};
   Zhttp::Test::TempDir temp;
-  ZuCheck(temp.init("ZgrpcGoaway"), (return));
+  ZuCheckRT(temp.init("ZgrpcGoaway"), (return));
   ZtString<> cert, key;
-  ZuCheck(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
+  ZuCheckRT(Zhttp::Test::writeLocalhostCert(temp, cert, key), (return));
   GoState state;
   state.drain = drain;
   state.version = h3 ? Zhttp::Version::H3 : Zhttp::Version::H2;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   state.mx = &mx;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   state.port = peerPort(h3);
-  ZuCheck(state.port, ({ mx.stop(); return; }));
+  ZuCheckRT(state.port, ({ mx.stop(); return; }));
   Zhttp::HubConfig hub{&mx, "3", "4"};
   GoPeer<Profile> server{&state};
   bool initialized;
@@ -530,11 +550,11 @@ static void goaway(bool drain = false)
     Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
       tls.certPath(cert).keyPath(key);
     }).policy(Zhttp::H2Policy::Force));
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   bool started = initialized && server.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   bool listening = started && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCheck(listening && !state.errors.load_());
+  ZuCheckRT(listening && !state.errors.load_());
   ClientApp app;
   Zgrpc::Client<ClientApp, Matrix> client;
   ClientConfig config;
@@ -545,46 +565,46 @@ static void goaway(bool drain = false)
       tls.caPath(cert);
     }).policy(Zhttp::H2Policy::Force),
     Zhttp::QUICConfig{}.caPath(cert));
-  ZuCheck(cliInit);
+  ZuCheckRT(cliInit);
   bool pooled = cliInit && client.pool(0, Zhttp::Destination{"localhost", uint16_t(state.port)});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   bool cliUp = pooled && client.start();
-  ZuCheck(cliUp);
+  ZuCheckRT(cliUp);
   ZmRef<GoCall> first, last;
   if (drain && cliUp) {
     first = new GoCall{&state, true};
-    ZuCheck(client.call<Unary>(0, Packet{42, {}}, first));
-    ZuCheck(state.firstOpened.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(client.call<Unary>(0, Packet{42, {}}, first));
+    ZuCheckRT(state.firstOpened.timedwait(Zm::now(10)) == 0);
   }
   ZmRef<GoCall> call = new GoCall{&state};
   CallOptions options;
   options.timeout = 5000000000;
   bool admitted = cliUp && client.call<Unary>(0, Packet{42, {}}, call, ZuMv(options));
-  ZuCheck(admitted);
-  ZuCheck(admitted && state.done.timedwait(Zm::now(15)) == 0);
+  ZuCheckRT(admitted);
+  ZuCheckRT(admitted && state.done.timedwait(Zm::now(15)) == 0);
   if (drain && cliUp) {
-    ZuCheck(state.failures == 1 && !state.received);
+    ZuCheckRT(state.failures == 1 && !state.received);
     server.replyFirst();
-    ZuCheck(state.done.timedwait(Zm::now(15)) == 0);
-    ZuCheck(state.received == 1 && state.failures == 1);
+    ZuCheckRT(state.done.timedwait(Zm::now(15)) == 0);
+    ZuCheckRT(state.received == 1 && state.failures == 1);
     last = new GoCall{&state, true};
     CallOptions next;
     next.timeout = 5000000000;
-    ZuCheck(client.call<Unary>(0, Packet{42, {}}, last, ZuMv(next)));
-    ZuCheck(state.done.timedwait(Zm::now(15)) == 0);
+    ZuCheckRT(client.call<Unary>(0, Packet{42, {}}, last, ZuMv(next)));
+    ZuCheckRT(state.done.timedwait(Zm::now(15)) == 0);
     server.dropFirst();
   }
-  if (cliUp) ZuCheck(client.stop());
-  ZuCheck(!client.pending());
+  if (cliUp) ZuCheckRT(client.stop());
+  ZuCheckRT(!client.pending());
   client.final();
-  if (started) ZuCheck(server.stop());
+  if (started) ZuCheckRT(server.stop());
   server.final();
   ZiResolver::stopSync();
   ZiResolver::final();
-  ZuCheck(mx.stop());
-  ZuCheck(!state.errors.load_());
-  ZuCheck(state.goaways.load_() == 1 && state.peerRequests.load_() == (drain ? 3 : 1));
-  ZuCheck(state.failures == 1 && state.received == (drain ? 2 : 0));
+  ZuCheckRT(mx.stop());
+  ZuCheckRT(!state.errors.load_());
+  ZuCheckRT(state.goaways.load_() == 1 && state.peerRequests.load_() == (drain ? 3 : 1));
+  ZuCheckRT(state.failures == 1 && state.received == (drain ? 2 : 0));
 }
 
 static void transition()
@@ -596,7 +616,9 @@ static void transition()
   ZuCheck(Zhttp::Test::writeLocalhostCert(temp, cert, key) &&
     Zhttp::Test::writeLocalhostCert(other, badCert, badKey), (return));
   GoState state, bad;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(4);
     for (unsigned i = 1; i <= 4; ++i) s.thread(i, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};

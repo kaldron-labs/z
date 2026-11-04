@@ -14,7 +14,7 @@
   - simplify the design as much as possible
   - do not overengineer
   - do not redundantly over-validate
-2. align each implementation element with `GUIDELINES.md`
+2. align each implementation element with `docs/GUIDELINES.md`
   - align all names to naming rules
   - check intended implementation against all audit flags
   - add references to specific guidelines that apply in each case
@@ -53,7 +53,7 @@ work unrestricted and autonomously
 ---
 
 act as a skeptical principal software engineer
-- audit the implementation of `plan.md` against **all** `GUIDELINES.md` flags and guidelines
+- audit the implementation of `plan.md` against **all** `docs/GUIDELINES.md` flags and guidelines
 - scrutinize all new in-memory containers
   - can they be replaced by better code algorithms?
   - can they be made leaner or simpler?
@@ -85,7 +85,7 @@ scrutinize link, session and connection state (member data):
   - unclean snapshots are permitted for telemetry, logging, etc.
 - evaluate if shared/contended data should be rx- or tx-owned and sharded:
   - shared/contended data should be minimized
-  - follow `GUIDELINES.md` guidance in this regard
+  - follow `docs/GUIDELINES.md` guidance in this regard
 - rx-owned, tx-owned and shared member data members should be:
   - grouped together largest to smallest
   - cache-line aligned in the usual way (refer to existing examples)

@@ -44,6 +44,8 @@ constexpr unsigned H3StallTimeout = 15;
 constexpr unsigned H3QuietTimeout = 2;
 
 struct Options {
+  unsigned		rxRingSize = ZiIOBuf_DefltRxRingSize;
+  unsigned		txRingSize = ZiIOBuf_DefltTxRingSize;
   ZuCSpan	ca;
   ZuCSpan	output{"index.html"};
   bool		discardResponse = false;
@@ -87,6 +89,8 @@ struct Options {
 };
 
 ZfStruct(, (Options, CLI),
+  (rxRingSize, (CLI::Long<"rx-ring-size">),			UInt32),
+  (txRingSize, (CLI::Long<"tx-ring-size">),			UInt32),
   (ca,        (CLI::Opt<'c'>,  CLI::Long<"ca">),				String),
   (output,    (CLI::Opt<'o'>,  CLI::Long<"output">),		String),
   (discardResponse,
@@ -145,6 +149,8 @@ void usage(int code = 1)
   std::cerr <<
     "Usage: zhttp [OPTION]... URL\n\n"
     "Options:\n"
+    "  --rx-ring-size=N   receive pool/ring slots, default 128 (2..32768)\n"
+    "  --tx-ring-size=N   transmit pool/ring slots, default 128 (2..32768)\n"
     "  -c, --ca=PATH       CA path for https:\n"
     "  -o, --output=PATH   response body output path\n"
     "  --discard-response  discard response bodies instead of writing files\n"
@@ -244,6 +250,10 @@ bool migrationOnOpen(const Options &options)
 bool validateOptions(Options &options, int argc)
 {
   if (argc < 0 || argc != 2) return false;
+  if (options.rxRingSize < ZiMxParams::MinRingSize ||
+      options.rxRingSize > ZiMxParams::MaxRingSize ||
+      options.txRingSize < ZiMxParams::MinRingSize ||
+      options.txRingSize > ZiMxParams::MaxRingSize) return false;
   if (!options.requests || !options.concurrency || !options.links ||
       !options.linkMax)
     return false;
@@ -750,6 +760,7 @@ void logConnected(const ReqBuilder_ &req, const Zhttp::ConnectedInfo &info)
 ZiMxParams mxParams(const Options &options)
 {
   auto params = ZiMxParams()
+    .rxRingSize(options.rxRingSize).txRingSize(options.txRingSize)
     .scheduler([](auto &s) {
       s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
@@ -757,6 +768,7 @@ ZiMxParams mxParams(const Options &options)
       .thread(3, [](auto &t) { t.isolated(1); })
       .thread(4, [](auto &t) { t.isolated(1); }); })
     .rxThread(1).txThread(2);
+  Zhttp::HubConfig::rxBufAllocators(params);
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) params.debug(true);
   if (options.frag) params.frag(true);

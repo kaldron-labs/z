@@ -11,7 +11,7 @@ Preconditions: plan 1 complete enough to provide explicit PTO/key-discard timer 
 The plan is to keep the existing packet-space array and extend runtime state transitions so every packet number space has the same ACK/loss/PTO bookkeeping, while preserving packet-space-specific frame legality and key discard.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -72,7 +72,7 @@ New or changed data stores: retain existing arrays where possible; add per-space
 - Open question: whether CRYPTO retransmission should stay as `SentFrameRef::crypto` or move to a richer frame chain in plan 21.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

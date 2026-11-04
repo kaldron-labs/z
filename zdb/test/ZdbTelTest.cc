@@ -147,25 +147,28 @@ void run()
     }
     ZuCheck(failed);
   }
-  for (auto source: {
-    ZuCSpan{"thread: zdb, shards: 3"},
-    ZuCSpan{"thread: zdb, shards: 65"},
-    ZuCSpan{"thread: zdb, shards: 4, threads: [a, b, c]"},
-    ZuCSpan{"thread: zdb, shards: 1, threads: [a, b]"}
-  }) {
-    auto scan = ZfCf::scan(source);
-    bool failed = false;
-    try {
-      ZdbCf badCf{scan.p<1>()};
-    } catch (const ZeException &) {
-      failed = true;
+  {
+    ZuTestRT(badConfig);
+    for (auto source: {
+      ZuCSpan{"thread: zdb, shards: 3"},
+      ZuCSpan{"thread: zdb, shards: 65"},
+      ZuCSpan{"thread: zdb, shards: 4, threads: [a, b, c]"},
+      ZuCSpan{"thread: zdb, shards: 1, threads: [a, b]"}
+    }) {
+      auto scan = ZfCf::scan(source);
+      bool failed = false;
+      try {
+        ZdbCf badCf{scan.p<1>()};
+      } catch (const ZeException &) {
+        failed = true;
+      }
+      ZuCheckRT(failed);
     }
-    ZuCheck(failed);
   }
   {
     Zdb_::DBState state{2};
     state.update("o", ZdbShard{1}, 42);
-    Zdb_::Builder fbb{new ZiIOBufAlloc<>()};
+    Zdb_::Builder fbb{new Zdb_::IOBufAlloc<>{nullptr, 0}};
     auto bytes = fbb.finish(Zfb::save(fbb, state));
     auto fbo = Zfb::view<Zdb_::Msg::DBState>(bytes);
     Zdb_::DBState loaded{fbo};
@@ -175,7 +178,8 @@ void run()
     ZuCheck(!loaded.find("o", ZdbShard{0}));
   }
 
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
 
   {
@@ -627,6 +631,7 @@ void run()
 
   orders = {};
   payments = {};
+  ZuCheck(mx.stop());
   db->final();
   ZuCheck(watch.tableDels == 2);
   ZuCheck(watch.hostDels == 1);
@@ -636,9 +641,11 @@ void run()
   ZuCheck(watch.dbDelKeyOK);
   ZuCheck(Ztc::DBMgr::all({[](Ztc::DB *) { }}) == 0);
 
+  ZuCheck(mx.start());
   init();
   orders = db->initTable<Order>("o");
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
 
   ZuCheck(watch.dbAdds == 2);
@@ -666,7 +673,6 @@ void run()
 
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 int main()

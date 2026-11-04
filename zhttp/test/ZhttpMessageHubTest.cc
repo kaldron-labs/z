@@ -12,6 +12,8 @@
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZiResolver.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 
@@ -405,6 +407,12 @@ struct Server : public Zhttp::Server<Server<Profile>, ServerParser<Profile>,
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+#ifdef ZHTTP_TEST_H3
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+#endif
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -418,7 +426,7 @@ ZiMxParams mxParams()
 template <typename Profile>
 void run(const Zhttp::Test::TempDir &cert, bool channel = false)
 {
-  ZuTestScope(run);
+  ZuTestScopeRT(run);
   auto forbidden = ZhttpMessageCounts::forbidden.load_();
   auto pseudo = ZhttpMessageCounts::pseudo.load_();
   State state;
@@ -427,10 +435,10 @@ void run(const Zhttp::Test::TempDir &cert, bool channel = false)
   state.expected = channel ? 1 : 2;
   static unsigned nextPort = TestPort;
   state.port = Zhttp::Test::loopbackPort(nextPort++);
-  ZuCHECK(state.port, "port allocation failed");
+  ZuCheckRT(state.port, log_( "port allocation failed"));
   if (!state.port) return;
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "multiplexer start failed");
+  ZuCheckRT(mx.start(), log_( "multiplexer start failed"));
   if (!mx.running()) return;
   Zhttp::HubConfig hub{&mx, "3", "4"};
   Server<Profile> server{&state};
@@ -460,50 +468,50 @@ void run(const Zhttp::Test::TempDir &cert, bool channel = false)
 	Zhttp::ProtoPolicy::PreferH3 : Zhttp::ProtoPolicy::DisableH3), {}, tls, quic);
   bool pooled = clientInit && client.pool(0,
     Zhttp::Destination{"127.0.0.1", state.port});
-  ZuCHECK(serverInit, "server initialized");
-  ZuCHECK(pooled, "client pool initialized");
+  ZuCheckRT(serverInit, log_( "server initialized"));
+  ZuCheckRT(pooled, log_( "client pool initialized"));
   bool serverUp = serverInit && server.start();
   bool clientUp = pooled && client.start();
-  ZuCHECK(serverUp && clientUp, "endpoints started");
+  ZuCheckRT(serverUp && clientUp, log_( "endpoints started"));
   bool listening = serverUp && state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "server listening");
+  ZuCheckRT(listening, log_( "server listening"));
   if (listening && clientUp)
     for (unsigned i = 0; i < state.expected; ++i) {
       ZmRef<typename RequestQ<Profile>::Node> request = new typename RequestQ<Profile>::Node;
       request->state = &state;
       request->id = i;
-      ZuCHECK(client.send(0, ZuMv(request)), "request submitted");
+      ZuCheckRT(client.send(0, ZuMv(request)), log_( "request submitted"));
     }
   bool responses = true;
   if (clientUp)
     for (unsigned i = 0; i < state.expected; ++i)
       responses &= state.response.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(state.statuses == state.expected * (channel ? 1 : 2),
-    "informational and final statuses received");
-  ZuCHECK(channel || state.bodyBytes == state.expected * 4, "response bodies received");
-  ZuCHECK(channel || state.completions == state.expected,
-    "final responses completed exactly once");
+  ZuCheckRT(state.statuses == state.expected * (channel ? 1 : 2), log_(
+    "informational and final statuses received"));
+  ZuCheckRT(channel || state.bodyBytes == state.expected * 4, log_( "response bodies received"));
+  ZuCheckRT(channel || state.completions == state.expected, log_(
+    "final responses completed exactly once"));
   if (!responses) log_("channel progress: ping=", state.receivedPing ?
       state.receivedPing.data() : "", " pong=", state.receivedPong ?
       state.receivedPong.data() : "", " result=", state.resultCode,
       " statuses=", state.statuses.load_(), " errors=", state.errors.load_());
-  ZuCHECK(responses, "all responses received");
-  if (channel) ZuCHECK(state.receivedPing == "ping" && state.receivedPong == "pong" &&
-      state.pingCalls == 1 && state.pongCalls == 1,
-    "Extended CONNECT keeps both channel directions open for framed input");
-  ZuCHECK(!state.errors, "common message workload has no errors");
+  ZuCheckRT(responses, log_( "all responses received"));
+  if (channel) ZuCheckRT(state.receivedPing == "ping" && state.receivedPong == "pong" &&
+      state.pingCalls == 1 && state.pongCalls == 1, log_(
+    "Extended CONNECT keeps both channel directions open for framed input"));
+  ZuCheckRT(!state.errors, log_( "common message workload has no errors"));
   if (state.admissions != 1) log_("session admissions=", state.admissions.load_());
-  ZuCHECK(state.admissions == 1,
-    "physical connection admissions normalized");
+  ZuCheckRT(state.admissions == 1, log_(
+    "physical connection admissions normalized"));
   if (clientInit) client.stop();
   bool stopped = !serverInit || server.stop();
-  ZuCHECK(stopped && !state.errors, "endpoints stopped");
+  ZuCheckRT(stopped && !state.errors, log_( "endpoints stopped"));
   if (clientInit) client.final();
   if (serverInit) server.final();
   mx.stop();
-  ZuCHECK(ZhttpMessageCounts::forbidden == forbidden &&
-    ZhttpMessageCounts::pseudo == pseudo,
-    "connect, seeds, messages and shutdown perform no classification-helper calls");
+  ZuCheckRT(ZhttpMessageCounts::forbidden == forbidden &&
+    ZhttpMessageCounts::pseudo == pseudo, log_(
+    "connect, seeds, messages and shutdown perform no classification-helper calls"));
 }
 
 } // namespace ZhttpMessageHubTest_

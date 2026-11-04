@@ -181,31 +181,31 @@ bool writeHTTPAppScript(
 
 void testAppTransport(ZuCSpan transport, bool ipv6 = false)
 {
-  ZuTestScope(testAppTransport);
+  ZuTestScopeRT(testAppTransport);
 
   TempDir temp;
-  ZuCHECK(temp.init("ZhttpApp"),
-    "Zhttp app temporary directory failed");
+  ZuCheckRT(temp.init("ZhttpApp"),
+    log_("Zhttp app temporary directory failed"));
   ZtString<> certPath, keyPath;
   if (transport != "http")
-    ZuCHECK(writeLocalhostCert(temp, certPath, keyPath),
-      "Zhttp app certificate generation failed");
+    ZuCheckRT(writeLocalhostCert(temp, certPath, keyPath),
+      log_("Zhttp app certificate generation failed"));
   static unsigned nextPort = ZhttpITestPort::App;
   unsigned port = loopbackPort(nextPort++);
-  ZuCHECK(port, "Zhttp app port allocation failed");
+  ZuCheckRT(port, log_("Zhttp app port allocation failed"));
   if (!port) return;
   auto script = temp.pathOf("client-server.sh");
-  ZuCHECK(writeHTTPAppScript(script, static_cast<const char *>(temp.path), port,
+  ZuCheckRT(writeHTTPAppScript(script, static_cast<const char *>(temp.path), port,
       transport, ipv6, certPath, keyPath),
-    "Zhttp app script generation failed");
+    log_("Zhttp app script generation failed"));
   ZtString<> cmd;
   cmd << "sh " << script;
   if (!systemOK(::system(cmd.data()))) {
     printFile("server stderr", temp.pathOf("server.err"));
     printFile("client stderr", temp.pathOf("client.err"));
-    ZuCHECK(false, "Zhttp app HTTP integration failed");
+    ZuCheckRT(false, log_("Zhttp app HTTP integration failed"));
   } else {
-    ZuCHECK(true, "Zhttp app integration succeeded");
+    ZuCheckRT(true, log_("Zhttp app integration succeeded"));
   }
 }
 

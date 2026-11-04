@@ -10,6 +10,8 @@
 
 using namespace ZuTestUtil;
 
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
+
 void fill_(ZiIOBuf *buf, ZuBSpan data)
 {
   memcpy(buf->data_(), data.data(), data.length());
@@ -19,7 +21,11 @@ void fill_(ZiIOBuf *buf, ZuBSpan data)
 
 ZmRef<ZiIOBuf> packet_(ZuBSpan data)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   fill_(packet, data);
   return packet;
 }
@@ -29,7 +35,7 @@ void testCryptoRxClipping()
   ZuTestScope(testCryptoRxClipping);
 
   ZmRef<Zquic::CryptoRxPQueue::Node> buf =
-    new Zquic::CryptoRxBufAlloc<>{nullptr};
+    new Zquic::CryptoRxBufAlloc<>{nullptr, 0};
   fill_(buf, "abcdef");
   auto &data = buf->data();
   data.skip = 1;
@@ -92,7 +98,7 @@ void testRxOverlapDrop()
 
 void testOutOfOrderDrain()
 {
-  ZuTestScope(testOutOfOrderDrain);
+  ZuTestScopeRT(testOutOfOrderDrain);
 
   Zquic::StreamRxPQueue q{0};
   for (unsigned i = 1; i < 32; ++i) {
@@ -100,7 +106,7 @@ void testOutOfOrderDrain()
     q.add(new Zquic::StreamRxPQueue::Node{
       packet, packet->data(), packet->length, nullptr, uint64_t(i)});
   }
-  ZuCHECK(!q.dequeue(), "out-of-order queue drained before gap was filled");
+  ZQUIC_CHECK_RT(!q.dequeue(), "out-of-order queue drained before gap was filled");
 
   auto head = packet_("x");
   q.add(new Zquic::StreamRxPQueue::Node{
@@ -108,11 +114,11 @@ void testOutOfOrderDrain()
 
   unsigned drained = 0;
   while (auto node = q.dequeue()) {
-    ZuCHECK(node->data().key() == drained,
+    ZQUIC_CHECK_RT(node->data().key() == drained,
       "out-of-order queue drained in wrong order");
     ++drained;
   }
-  ZuCHECK(drained == 32 && !q.count_() && q.head() == 32 && q.verify(),
+  ZQUIC_CHECK_RT(drained == 32 && !q.count_() && q.head() == 32 && q.verify(),
     "out-of-order queue did not drain completely");
 }
 
@@ -135,44 +141,44 @@ void testAckRanges()
 
 void testAckRangeBound()
 {
-  ZuTestScope(testAckRangeBound);
+  ZuTestScopeRT(testAckRangeBound);
 
   Zquic::AckTracker ack;
   for (unsigned i = 0; i < Zquic::AckTracker::MaxRetained + 10; ++i)
-    ZuCHECK(ack.add((uint64_t(i) << 1) + 1),
+    ZQUIC_CHECK_RT(ack.add((uint64_t(i) << 1) + 1),
       "sparse packet Rx mark insertion failed");
 
-  ZuCHECK(ack.count() <= Zquic::AckTracker::MaxRetained,
+  ZQUIC_CHECK_RT(ack.count() <= Zquic::AckTracker::MaxRetained,
     "packet Rx sparse ACK range cap was not enforced");
-  ZuCHECK(!ack.contains(1),
+  ZQUIC_CHECK_RT(!ack.contains(1),
     "packet Rx sparse ACK range cap did not drop oldest range");
-  ZuCHECK(ack.contains(
+  ZQUIC_CHECK_RT(ack.contains(
       ((uint64_t(Zquic::AckTracker::MaxRetained + 9)) << 1) + 1),
     "packet Rx sparse ACK range cap did not retain newest range");
 }
 
 void testAckOfAckTrim()
 {
-  ZuTestScope(testAckOfAckTrim);
+  ZuTestScopeRT(testAckOfAckTrim);
 
   Zquic::AckTracker ack;
   for (unsigned i = 0; i < 6; ++i)
-    ZuCHECK(ack.add(i), "contiguous packet Rx mark insertion failed");
+    ZQUIC_CHECK_RT(ack.add(i), "contiguous packet Rx mark insertion failed");
 
   ack.ackdByPeer(3);
 
   Zquic::AckRange range;
-  ZuCHECK(ack.count() == 1 &&
+  ZQUIC_CHECK_RT(ack.count() == 1 &&
       ack.range(0, range) &&
       range.first == 4 &&
       range.largest == 5,
     "ACK-of-ACK did not trim contiguous ACK range");
 
-  ZuCHECK(ack.add(8) && ack.add(10),
+  ZQUIC_CHECK_RT(ack.add(8) && ack.add(10),
     "sparse packet Rx mark insertion after ACK-of-ACK failed");
   ack.ackdByPeer(8);
 
-  ZuCHECK(ack.count() == 2 &&
+  ZQUIC_CHECK_RT(ack.count() == 2 &&
       ack.range(0, range) &&
       range.first == 8 &&
       range.largest == 8,
@@ -182,7 +188,7 @@ void testAckOfAckTrim()
   int n = ack.writeFrame(b, sizeof(b));
   Zquic::Frame frame;
   unsigned used = 0;
-  ZuCHECK(n > 0 &&
+  ZQUIC_CHECK_RT(n > 0 &&
       !Zquic::FrameCodec::parse(
 	ZuBSpan{b, unsigned(n)}, frame, used) &&
       used == unsigned(n) &&
@@ -221,7 +227,7 @@ void testTxPktLossRequeue()
 
 void testTxPktAckRanges()
 {
-  ZuTestScope(testTxPktAckRanges);
+  ZuTestScopeRT(testTxPktAckRanges);
 
   Zquic::SentPktTracker tracker;
   uint64_t pns[] = { 10, 11, 13, 15 };
@@ -232,7 +238,7 @@ void testTxPktAckRanges()
     p.space = Zquic::PktNumSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
-    ZuCHECK(tracker.add(p), "sent packet add failed");
+    ZQUIC_CHECK_RT(tracker.add(p), "sent packet add failed");
   }
 
   Zquic::AckRange ranges[] = {
@@ -240,7 +246,7 @@ void testTxPktAckRanges()
     Zquic::AckRange{15, 15}
   };
   unsigned lost = 0;
-  ZuCHECK(tracker.ack(ranges, 2, &lost) == 3 &&
+  ZQUIC_CHECK_RT(tracker.ack(ranges, 2, &lost) == 3 &&
       !lost &&
       tracker.ackd() == 3 &&
       tracker.bytesInFlight() == 100,
@@ -262,7 +268,7 @@ static Zquic::TxPkt txPkt_(
 
 void testTxPktAckDelete()
 {
-  ZuTestScope(testTxPktAckDelete);
+  ZuTestScopeRT(testTxPktAckDelete);
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 13; ++pn) {
@@ -272,26 +278,26 @@ void testTxPktAckDelete()
     p.space = Zquic::PktNumSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
-    ZuCHECK(tracker.add(p), "sent packet add failed");
+    ZQUIC_CHECK_RT(tracker.add(p), "sent packet add failed");
   }
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{11, 10} };
-  ZuCHECK(tracker.ack(ranges, 1) == 2 &&
+  ZQUIC_CHECK_RT(tracker.ack(ranges, 1) == 2 &&
       tracker.count() == 1,
     "sent packet ACK did not remove exact packet nodes");
 }
 
 void testTxPktLossRetain()
 {
-  ZuTestScope(testTxPktLossRetain);
+  ZuTestScopeRT(testTxPktLossRetain);
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 15; ++pn)
-    ZuCHECK(tracker.add(txPkt_(pn)), "lost packet add failed");
+    ZQUIC_CHECK_RT(tracker.add(txPkt_(pn)), "lost packet add failed");
   for (uint64_t pn = 10; pn < 15; ++pn)
-    ZuCHECK(tracker.lose(pn), "lost packet setup failed");
+    ZQUIC_CHECK_RT(tracker.lose(pn), "lost packet setup failed");
 
-  ZuCHECK(tracker.count() == 5 &&
+  ZQUIC_CHECK_RT(tracker.count() == 5 &&
       tracker.lost() == 5 &&
       tracker.retainedLost() == 5 &&
       tracker.retransmitPending() == 0,
@@ -300,7 +306,7 @@ void testTxPktLossRetain()
 
 void testTxPktRetainedLostAck()
 {
-  ZuTestScope(testTxPktRetainedLostAck);
+  ZuTestScopeRT(testTxPktRetainedLostAck);
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 13; ++pn) {
@@ -310,10 +316,10 @@ void testTxPktRetainedLostAck()
     p.space = Zquic::PktNumSpace::AppData;
     p.ackEliciting = true;
     p.inFlight = true;
-    ZuCHECK(tracker.add(p), "sent packet add failed");
+    ZQUIC_CHECK_RT(tracker.add(p), "sent packet add failed");
   }
 
-  ZuCHECK(tracker.lose(10) &&
+  ZQUIC_CHECK_RT(tracker.lose(10) &&
       tracker.ack(10) &&
       tracker.ack(11) &&
       tracker.lost() == 1 &&
@@ -390,15 +396,15 @@ void testTxUnackdFinSentinel()
 
 void testTxUnackdFragmentation()
 {
-  ZuTestScope(testTxUnackdFragmentation);
+  ZuTestScopeRT(testTxUnackdFragmentation);
 
   Zquic::StreamTxPQueue q{0};
   constexpr unsigned Ranges = Zquic::StreamTxPQueue::Max << 1;
   for (unsigned i = 0; i < Ranges; ++i)
-    ZuCHECK(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
+    ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
 	ZmPQResult::Inserted,
       "fragmented stream range insert failed");
-  ZuCHECK(q.count_() == Ranges &&
+  ZQUIC_CHECK_RT(q.count_() == Ranges &&
       q.length_() == Ranges &&
       q.find(0) &&
       q.find((uint64_t(Ranges - 1) << 1)) &&
@@ -406,7 +412,7 @@ void testTxUnackdFragmentation()
       q.verify(),
     "fragmented stream ranges did not grow beyond former capacity");
 
-  ZuCHECK(q.add(Zquic::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
+  ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{1, 1}) == ZmPQResult::Inserted &&
       q.count_() == Ranges - 1 &&
       q.length_() == Ranges + 1 &&
       q.find(0)->data().length() == 3 &&
@@ -414,7 +420,7 @@ void testTxUnackdFragmentation()
     "fragmented stream ranges did not coalesce around an inserted bridge");
 
   unsigned spans = 0;
-  ZuCHECK(q.spans(0, 8, [&spans](const auto &) {
+  ZQUIC_CHECK_RT(q.spans(0, 8, [&spans](const auto &) {
 	++spans;
 	return true;
       }) &&
@@ -424,10 +430,10 @@ void testTxUnackdFragmentation()
 
 void testTxUnackdBoundaries()
 {
-  ZuTestScope(testTxUnackdBoundaries);
+  ZuTestScopeRT(testTxUnackdBoundaries);
 
   Zquic::StreamTxPQueue q{0};
-  ZuCHECK(q.add(Zquic::TxUnackdRange{uint64_t(-1), 1}) ==
+  ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{uint64_t(-1), 1}) ==
 	ZmPQResult::Invalid &&
       q.add(Zquic::TxUnackdRange{0, uint64_t(-1), true}) ==
 	ZmPQResult::Invalid &&
@@ -439,26 +445,26 @@ void testTxUnackdBoundaries()
     "stream range endpoint overflow was not rejected");
 
   for (unsigned i = 0; i <= Zquic::StreamTxPQueue::BuiltinRanges; ++i)
-    ZuCHECK(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
+    ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{uint64_t(i) << 1, 1}) ==
 	ZmPQResult::Inserted,
       "stream range inline/heap transition insert failed");
-  ZuCHECK(q.count_() == Zquic::StreamTxPQueue::BuiltinRanges + 1 &&
+  ZQUIC_CHECK_RT(q.count_() == Zquic::StreamTxPQueue::BuiltinRanges + 1 &&
       q.verify(),
     "stream range inline/heap transition lost retained ranges");
 #ifdef ZDEBUG
-  ZuCHECK(q.promotions() == 1 && q.indexed(),
+  ZQUIC_CHECK_RT(q.promotions() == 1 && q.indexed(),
     "fragmented stream ranges did not promote exactly once");
-  ZuCHECK(q.clear(0, 1) && q.indexed() && q.promotions() == 1,
+  ZQUIC_CHECK_RT(q.clear(0, 1) && q.indexed() && q.promotions() == 1,
     "indexed stream ranges demoted before full clear");
   q.clear();
-  ZuCHECK(!q.indexed(),
+  ZQUIC_CHECK_RT(!q.indexed(),
     "full stream-range clear retained indexed representation");
 #endif
 }
 
 void testTxUnackdRandomized()
 {
-  ZuTestScope(testTxUnackdRandomized);
+  ZuTestScopeRT(testTxUnackdRandomized);
 
   Zquic::StreamTxPQueue q{0};
   bool expected[512] = {};
@@ -468,7 +474,7 @@ void testTxUnackdRandomized()
     unsigned offset = (random >> 8) % 480;
     unsigned length = ((random >> 24) & 31) + 1;
     if (random & 1) {
-      ZuCHECK(q.add(Zquic::TxUnackdRange{offset, length}) ==
+      ZQUIC_CHECK_RT(q.add(Zquic::TxUnackdRange{offset, length}) ==
 	  ZmPQResult::Inserted,
 	"randomized stream range insert failed");
       for (unsigned i = offset; i < offset + length; ++i)
@@ -479,7 +485,7 @@ void testTxUnackdRandomized()
 	changed = changed || expected[i];
 	expected[i] = false;
       }
-      ZuCHECK(q.clear(offset, length) == changed,
+      ZQUIC_CHECK_RT(q.clear(offset, length) == changed,
 	"randomized stream range clear result mismatch");
     }
     if (operation & 15) continue;
@@ -493,7 +499,7 @@ void testTxUnackdRandomized()
       }
       inRange = expected[i];
     }
-    ZuCHECK(q.spans(0, 512, [&observed](const auto &range) {
+    ZQUIC_CHECK_RT(q.spans(0, 512, [&observed](const auto &range) {
 	for (uint64_t i = range.key(), n = i + range.length(); i < n; ++i)
 	  observed[i] = true;
 	return true;
@@ -501,7 +507,7 @@ void testTxUnackdRandomized()
     bool equal = true;
     for (unsigned i = 0; i < 512; ++i)
       equal = equal && observed[i] == expected[i];
-    ZuCHECK(equal && q.length_() == expectedLength &&
+    ZQUIC_CHECK_RT(equal && q.length_() == expectedLength &&
 	q.count_() == expectedCount && q.verify(),
       "randomized stream range model mismatch");
   }

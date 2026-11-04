@@ -23,7 +23,7 @@ producers to adopt the new writer's layout choices.
 
 The primary benefits are a single source of truth and dependency removal.
 Improved latency and reduced serialization overhead are measurable objectives,
-not assumptions. Follow `AGENTS.md` and the authoritative `GUIDELINES.md`.
+not assumptions. Follow `AGENTS.md` and the authoritative `docs/GUIDELINES.md`.
 
 ## Existing foundation
 
@@ -596,7 +596,7 @@ Conversion of arbitrary external BFBS to textual FBS is not required (Q4).
 Exported files are derived artifacts, not independently maintained sources
 or prerequisites for normal Z builds or reflection consumers.
 
-Update current architecture/build documentation (`README.md`, `CODEBASE.md`,
+Update current architecture/build documentation (`docs/README.md`, `docs/CODEBASE.md`,
 and affected module documentation) to describe `ZfFB` and the removed module.
 Regenerate Autotools build products through the normal build tooling rather
 than hand editing `Makefile.in`. Remove stale externally generated FlatBuffers

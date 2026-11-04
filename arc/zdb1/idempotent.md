@@ -11,7 +11,7 @@ currently finds no users of the UN-bearing CRUD overloads outside their
 definitions in `Zdb.hh`.  Propagate the new callback contract to any dependent
 found during implementation.  Do not add compatibility overloads, wrappers,
 or forwarders.  This follows the explicit dependent-compatibility rule in
-[`GUIDELINES.md`, lines 9-18](GUIDELINES.md#L9).
+[`docs/GUIDELINES.md`, lines 9-18](docs/GUIDELINES.md#L9).
 
 The scrutinized design deliberately has no exact-operation reservation, no
 per-table/per-shard reservation array, no object-aware `allocUN()`, no hidden
@@ -88,11 +88,11 @@ commit.  `ZdbSaga` controls its update body and can enforce the narrower
 contract; a saga failure after its step row committed is fatal to activation.
 
 This relies on thread-affined shard ownership rather than locks or shared
-state, as prescribed by [`GUIDELINES.md`, lines 440-444](GUIDELINES.md#L440)
-and [lines 598-606](GUIDELINES.md#L598).  Avoiding the reservation array and
+state, as prescribed by [`docs/GUIDELINES.md`, lines 440-444](docs/GUIDELINES.md#L440)
+and [lines 598-606](docs/GUIDELINES.md#L598).  Avoiding the reservation array and
 ordinary-CRUD branch follows the hot-path efficiency and storage audit at
-[`GUIDELINES.md`, lines 211-236](GUIDELINES.md#L211) and
-[lines 294-296](GUIDELINES.md#L294).
+[`docs/GUIDELINES.md`, lines 211-236](docs/GUIDELINES.md#L211) and
+[lines 294-296](docs/GUIDELINES.md#L294).
 
 ## Result and callback contract
 
@@ -118,9 +118,9 @@ namespace ZdbOpResult = Zdb_::OpResult;
 `int8_t` is the prescribed compact signed representation.  `Invalid` is zero
 and first deliberately: value-initialization must not manufacture a success
 result.  See
-[`GUIDELINES.md`, lines 132-142](GUIDELINES.md#L132),
-[lines 144-152](GUIDELINES.md#L144), and
-[lines 173-182](GUIDELINES.md#L173).
+[`docs/GUIDELINES.md`, lines 132-142](docs/GUIDELINES.md#L132),
+[lines 144-152](docs/GUIDELINES.md#L144), and
+[lines 173-182](docs/GUIDELINES.md#L173).
 
 Do not add `UNResult` or any other aggregate.  Every UN-bearing CRUD callback
 receives three direct parameters:
@@ -139,9 +139,9 @@ the existing non-UN CRUD callback convention.  It must not retain that pointer
 after returning.  Passing another `ZmRef` would add avoidable reference-count
 traffic without extending a useful lifetime.  This applies the short-lived
 ownership and callback-capture guidance in
-[`GUIDELINES.md`, lines 338-347](GUIDELINES.md#L338),
-[lines 417-426](GUIDELINES.md#L417), and
-[lines 481-484](GUIDELINES.md#L481).
+[`docs/GUIDELINES.md`, lines 338-347](docs/GUIDELINES.md#L338),
+[lines 417-426](docs/GUIDELINES.md#L417), and
+[lines 481-484](docs/GUIDELINES.md#L481).
 
 The results mean:
 
@@ -164,7 +164,7 @@ Do not encode results as special pointer values.  Every non-fatal attempt
 invokes its callback exactly once.  Existing fatal store lookup errors still
 fail the DB through the current retrieval path and do not become `OpResult`
 values.  Keeping the enum and pointer orthogonal follows the sentinel/state
-guidance in [`GUIDELINES.md`, lines 307-319](GUIDELINES.md#L307).
+guidance in [`docs/GUIDELINES.md`, lines 307-319](docs/GUIDELINES.md#L307).
 
 ## Public API surface
 
@@ -193,7 +193,7 @@ Correct the current UN-bearing `del()` parameter from `ZmRef<AnyObject>` to
 `ZmRef<Object<T>>`; typed table machinery should not require a cast at this
 boundary.  The non-UN overloads retain their current object-or-null callback.
 This follows the type/API audit in
-[`GUIDELINES.md`, lines 321-336](GUIDELINES.md#L321).
+[`docs/GUIDELINES.md`, lines 321-336](docs/GUIDELINES.md#L321).
 
 ## Implementation prescription
 
@@ -221,10 +221,10 @@ Do not add a `UNCheck { result, nextUN }` aggregate merely to return two local
 values.  Do not duplicate the comparison in five templates.  Keeping the
 utility outside template-dependent declarations avoids template/debug-info
 bloat; using one cached snapshot, `ZuCmp`, and `switch` follows
-[`GUIDELINES.md`, lines 199-209](GUIDELINES.md#L199),
-[lines 266-269](GUIDELINES.md#L266),
-[lines 297-302](GUIDELINES.md#L297), and
-[lines 360-368](GUIDELINES.md#L360).
+[`docs/GUIDELINES.md`, lines 199-209](docs/GUIDELINES.md#L199),
+[lines 266-269](docs/GUIDELINES.md#L266),
+[lines 297-302](docs/GUIDELINES.md#L297), and
+[lines 360-368](docs/GUIDELINES.md#L360).
 
 ### Share the existing mutation body
 
@@ -251,9 +251,9 @@ This creates one implementation of cache, stale-buffer, exception, and abort
 handling for ordinary and numbered operations.  It uses a stack callback
 adapter with specific captures; it does not add a type-erased callback,
 operation context, allocation, or copy.  This follows the DRY and allocation
-audits in [`GUIDELINES.md`, lines 238-250](GUIDELINES.md#L238) and
-[lines 266-269](GUIDELINES.md#L266), plus the prohibition on global captures
-at [lines 116-123](GUIDELINES.md#L116).
+audits in [`docs/GUIDELINES.md`, lines 238-250](docs/GUIDELINES.md#L238) and
+[lines 266-269](docs/GUIDELINES.md#L266), plus the prohibition on global captures
+at [lines 116-123](docs/GUIDELINES.md#L116).
 
 Before changing shared control flow, fix two existing preparation defects:
 
@@ -268,8 +268,8 @@ Preserve the established abort and stale-buffer behavior; do not expand this
 precursor into row-data rollback, a copied before-image, or a heap transaction
 context.  `prevUN` uses the prescribed project abbreviation.  See the
 initialization/copy audit in
-[`GUIDELINES.md`, lines 252-264](GUIDELINES.md#L252) and the naming rules at
-[lines 679-714](GUIDELINES.md#L679).
+[`docs/GUIDELINES.md`, lines 252-264](docs/GUIDELINES.md#L252) and the naming rules at
+[lines 679-714](docs/GUIDELINES.md#L679).
 
 ### Object-bearing exact operations
 
@@ -287,7 +287,7 @@ initialization/copy audit in
 
 Use early returns and a `switch` on `OpResult::T`; do not nest the mutation
 path under multiple conditions.  This aligns with the control-flow audit in
-[`GUIDELINES.md`, lines 297-302](GUIDELINES.md#L297).
+[`docs/GUIDELINES.md`, lines 297-302](docs/GUIDELINES.md#L297).
 
 Example application call:
 
@@ -313,8 +313,8 @@ table->findUpd<0>(shard, key, un,
 ```
 
 The capture list is explicit, and the discrete result uses `switch`, matching
-[`GUIDELINES.md`, lines 116-123](GUIDELINES.md#L116) and
-[lines 297-299](GUIDELINES.md#L297).
+[`docs/GUIDELINES.md`, lines 116-123](docs/GUIDELINES.md#L116) and
+[lines 297-299](docs/GUIDELINES.md#L297).
 
 ### Key-bearing exact operations
 
@@ -342,9 +342,9 @@ Do not retain the key, returned object, or application callback after a
 reissues the key lookup later.  The exact overload adds no allocation or queue;
 an uncached lookup continues to use the existing named `Find` heap and
 continuation.  This follows the continuation rules in
-[`GUIDELINES.md`, lines 270-281](GUIDELINES.md#L270), the heap rules at
-[lines 238-250](GUIDELINES.md#L238), and the avoidable-work audit at
-[lines 294-296](GUIDELINES.md#L294).
+[`docs/GUIDELINES.md`, lines 270-281](docs/GUIDELINES.md#L270), the heap rules at
+[lines 238-250](docs/GUIDELINES.md#L238), and the avoidable-work audit at
+[lines 294-296](docs/GUIDELINES.md#L294).
 
 ## Deliberately deleted mechanisms
 
@@ -366,9 +366,9 @@ The existing commit-time equality check is sufficient as the final invariant
 guard.  The saga runner, not primitive CRUD, treats failure after journaling as
 fatal.  Deleting the reservation aligns with the storage, algorithm, scope,
 and unnecessary-latency audits in
-[`GUIDELINES.md`, lines 211-250](GUIDELINES.md#L211),
-[lines 294-296](GUIDELINES.md#L294), and
-[lines 338-352](GUIDELINES.md#L338).
+[`docs/GUIDELINES.md`, lines 211-250](docs/GUIDELINES.md#L211),
+[lines 294-296](docs/GUIDELINES.md#L294), and
+[lines 338-352](docs/GUIDELINES.md#L338).
 
 ### No hidden parking
 
@@ -381,8 +381,8 @@ The caller parks a durable description and retries.  `ZdbSaga` keeps its FIFO
 of incomplete sagas.  During recovery, `NotReady` moves the current saga to
 the tail and immediately drives the next saga.  A full FIFO rotation without
 progress fails activation rather than polling.  This follows the no-polling
-and bounded-turn rules in [`GUIDELINES.md`, lines 270-281](GUIDELINES.md#L270)
-and [lines 354-357](GUIDELINES.md#L354).
+and bounded-turn rules in [`docs/GUIDELINES.md`, lines 270-281](docs/GUIDELINES.md#L270)
+and [lines 354-357](docs/GUIDELINES.md#L354).
 
 ### No rollback expansion
 
@@ -392,8 +392,8 @@ semantics and change only ordering needed to make an invalid state transition
 side-effect-free.  Full transactional rollback is neither required for exact
 UN dispatch nor offered by Zdb.  This keeps the work aligned with scope and
 copy/allocation guidance at
-[`GUIDELINES.md`, lines 238-264](GUIDELINES.md#L238) and
-[lines 338-344](GUIDELINES.md#L338).
+[`docs/GUIDELINES.md`, lines 238-264](docs/GUIDELINES.md#L238) and
+[lines 338-344](docs/GUIDELINES.md#L338).
 
 ## Saga and replication use
 
@@ -427,7 +427,7 @@ incompatible state.  Do not maintain a second UN comparison definition.
 
 ## Naming review
 
-All new names satisfy [`GUIDELINES.md`, lines 679-761](GUIDELINES.md#L679):
+All new names satisfy [`docs/GUIDELINES.md`, lines 679-761](docs/GUIDELINES.md#L679):
 
 | Name | Disposition |
 | --- | --- |
@@ -446,29 +446,29 @@ not renamed for this change.
 ## Audit-flag disposition
 
 The following checks cover every audit category in
-[`GUIDELINES.md`, lines 199-357](GUIDELINES.md#L199):
+[`docs/GUIDELINES.md`, lines 199-357](docs/GUIDELINES.md#L199):
 
 | Audit category | Intended implementation | Guideline |
 | --- | --- | --- |
-| Code structure | `cmpUN_` is non-template; each caller caches one `nextUN` snapshot.  No invariant array access is added. | [Lines 199-209](GUIDELINES.md#L199) |
-| Storage/capacity | No container, array, capacity, scan, member, padding, or cache-line concern is added. | [Lines 211-236](GUIDELINES.md#L211) |
-| Heap allocation | Exact object paths allocate nothing.  Key misses reuse the existing named-heap lookup context. | [Lines 238-250](GUIDELINES.md#L238) |
-| Data movement/initialization | Scalars pass by value; the callback borrows the already-owned object.  No row, key, or byte buffer is copied. | [Lines 252-264](GUIDELINES.md#L252) |
-| Algorithm/control flow | One comparison utility, `switch` dispatch, and early exits; no duplicated mutation body, polling, blocking, iterator, loop, or hand hash. | [Lines 266-305](GUIDELINES.md#L266) |
-| Framework fit | Uses `ZtEnumNS`, `ZuCmp`, existing `ZmRef` ownership, existing table callbacks, and existing Zdb mutation machinery. | [Lines 307-319](GUIDELINES.md#L307) |
-| Type/API friction | Three direct callback parameters; no wrapper, special pointer, cast, enum mapping, or compatibility shim. | [Lines 321-336](GUIDELINES.md#L321) |
-| Scope/cleanup | Deletes the proposed reservation and rollback expansion; propagates the intentional API break. | [Lines 338-347](GUIDELINES.md#L338) |
-| Atomics/locks/copies | Adds none; correctness comes from the existing owning shard and scheduler turn. | [Lines 349-352](GUIDELINES.md#L349) |
-| Liveness | Primitive CRUD never waits.  Saga recovery yields on `NotReady` and bounds a no-progress rotation. | [Lines 354-357](GUIDELINES.md#L354) |
+| Code structure | `cmpUN_` is non-template; each caller caches one `nextUN` snapshot.  No invariant array access is added. | [Lines 199-209](docs/GUIDELINES.md#L199) |
+| Storage/capacity | No container, array, capacity, scan, member, padding, or cache-line concern is added. | [Lines 211-236](docs/GUIDELINES.md#L211) |
+| Heap allocation | Exact object paths allocate nothing.  Key misses reuse the existing named-heap lookup context. | [Lines 238-250](docs/GUIDELINES.md#L238) |
+| Data movement/initialization | Scalars pass by value; the callback borrows the already-owned object.  No row, key, or byte buffer is copied. | [Lines 252-264](docs/GUIDELINES.md#L252) |
+| Algorithm/control flow | One comparison utility, `switch` dispatch, and early exits; no duplicated mutation body, polling, blocking, iterator, loop, or hand hash. | [Lines 266-305](docs/GUIDELINES.md#L266) |
+| Framework fit | Uses `ZtEnumNS`, `ZuCmp`, existing `ZmRef` ownership, existing table callbacks, and existing Zdb mutation machinery. | [Lines 307-319](docs/GUIDELINES.md#L307) |
+| Type/API friction | Three direct callback parameters; no wrapper, special pointer, cast, enum mapping, or compatibility shim. | [Lines 321-336](docs/GUIDELINES.md#L321) |
+| Scope/cleanup | Deletes the proposed reservation and rollback expansion; propagates the intentional API break. | [Lines 338-347](docs/GUIDELINES.md#L338) |
+| Atomics/locks/copies | Adds none; correctness comes from the existing owning shard and scheduler turn. | [Lines 349-352](docs/GUIDELINES.md#L349) |
+| Liveness | Primitive CRUD never waits.  Saga recovery yields on `NotReady` and bounds a no-progress rotation. | [Lines 354-357](docs/GUIDELINES.md#L354) |
 
 Formatting during implementation must preserve hard tabs, local visual
 alignment, pointer placement, and class/struct layout per
-[`GUIDELINES.md`, lines 534-596](GUIDELINES.md#L534).  Runtime ownership checks
+[`docs/GUIDELINES.md`, lines 534-596](docs/GUIDELINES.md#L534).  Runtime ownership checks
 use `ZiAssert` for new run-time ownership checks; do not introduce raw `assert`,
 `ZmAssert`, or a bespoke error channel.  A wrong-shard call is an API contract
 failure before an attempt begins, not an `OpResult`; its graceful assertion
 return is therefore outside the exactly-once result callback guarantee.  See
-[`GUIDELINES.md`, lines 359-368](GUIDELINES.md#L359).
+[`docs/GUIDELINES.md`, lines 359-368](docs/GUIDELINES.md#L359).
 
 ## Implementation sequence
 
@@ -489,7 +489,7 @@ return is therefore outside the exactly-once result callback guarantee.  See
 
 Use `ZuTestUtil`/`ZuTest`, deterministic scheduler barriers, and the deferred
 mock store.  Do not use sleeps or polling, per
-[`GUIDELINES.md`, lines 486-489](GUIDELINES.md#L486).
+[`docs/GUIDELINES.md`, lines 486-489](docs/GUIDELINES.md#L486).
 
 Verify:
 

@@ -9,6 +9,9 @@
 #include <zlib/Zfb.hh>
 #include <zlib/ZiTxStream.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
 using namespace ZuTestUtil;
 
 ZuStructFacet(Prefixed);
@@ -29,7 +32,7 @@ static void addresses()
   in6_addr v6;
   memset(&v6, 0xa5, sizeof(v6));
   // Exercise each address alternative through the same pooled writer.
-  Zfb::IOBuilder<> builder{new ZiIOBufAlloc<>};
+  Zfb::IOBuilder<> builder{new LocalBuf{nullptr, 0}};
   auto check = [&builder](ZiIP ip) {
     ZuTestScope(check);
     builder.clear();
@@ -55,7 +58,7 @@ static void save(B &builder, ZuBSpan payload)
 static void pooled()
 {
   ZuTestScope(pooled);
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> owner = new LocalBuf{nullptr, 0};
   owner->skip = Zfb::IOBuilder<>::Align;
   void *tag = owner.ptr();
   owner->owner = tag;
@@ -88,7 +91,7 @@ static void pooled()
 static void alignment()
 {
   ZuTestScope(alignment);
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> owner = new LocalBuf{nullptr, 0};
   owner->skip = 32;
   Zfb::IOBuilder<32> builder{owner};
   auto bytes = builder.copyRoot(ZuBSpan{"abcdefgh"}, 32);
@@ -104,7 +107,7 @@ static void alignment()
 static void abandonment()
 {
   ZuTestScope(abandonment);
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> owner = new LocalBuf{nullptr, 0};
   unsigned n = owner->size<<2;
   {
     Zfb::IOBuilder<> builder{owner};
@@ -124,7 +127,8 @@ static void abandonment()
 static void framingTailRoom()
 {
   ZuTestScope(framingTailRoom);
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<208>;
+  ZmRef<ZiIOBuf> owner = new Zi::IOBufAlloc<ZiIOBuf, 208,
+    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
   Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{owner};
   ::save(builder, ZuBSpan{"tail room"});
   auto buf = builder.buf();
@@ -143,7 +147,7 @@ static void framingTailRoom()
 static void runtimeAlign(unsigned align)
 {
   ZuTestScopeRT(runtimeAlign);
-  ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> owner = new LocalBuf{nullptr, 0};
   unsigned initial = owner->size;
   owner->skip = align;
   Zfb::IOBuilder<Zfb::Wire::MaxAlign> builder{owner, align};
@@ -215,7 +219,7 @@ struct TxTest : public ZiTxStream<TxTest> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
     ++allocs;
     if (reject) return nullptr;
-    allocated = new ZiIOBufAlloc<>;
+    allocated = new LocalBuf{nullptr, 0};
     initialSize = allocated->size;
     allocated->skip = head;
     return allocated;
@@ -264,7 +268,7 @@ struct GrowStorage : public Zfb::IOStorage<32> {
 
 static void ioRelocation()
 {
-  ZuTestScope(ioRelocation);
+  ZuTestScopeRT(ioRelocation);
   TxTest probe;
   constexpr unsigned Align = Zfb::BufferAlign<Message>::N;
   unsigned head = (probe.headRoom() + Align - 1) & ~(Align - 1);
@@ -275,22 +279,22 @@ static void ioRelocation()
   for (auto n : {small, payload.length()}) {
     Message msg{{payload.data(), n}};
     TxTest stream;
-    ZuCheck(Zfb::save(stream, msg) == Zfb::Error::OK);
-    ZmRef<ZiIOBuf> owner = new ZiIOBufAlloc<>;
+    ZuCheckRT(Zfb::save(stream, msg) == Zfb::Error::OK);
+    ZmRef<ZiIOBuf> owner = new LocalBuf{nullptr, 0};
     owner->skip = head;
     GrowStorage storage{owner, Align, stream.maxSize(), stream.tailRoom()};
     storage.tailRoom = stream.tailRoom();
     Zfb::Builder<GrowStorage> builder{storage, Align};
     auto bytes = builder.finish(Zfb::save(builder, msg));
-    ZuCheck(!builder.failed() && bytes == stream.output);
-    ZuCheck(storage.reallocs && storage.headBytes + storage.tailBytes);
+    ZuCheckRT(!builder.failed() && bytes == stream.output);
+    ZuCheckRT(storage.reallocs && storage.headBytes + storage.tailBytes);
     if (bytes.length() <= capacity) {
       auto sent = storage.detach(builder.capacity(), builder.size());
-      ZuCheck(sent.ptr() == owner.ptr() && sent->cspan() == stream.sent->cspan());
-      ZuCheck(sent->size == stream.sent->size && sent->skip == stream.sent->skip);
-      ZuCheck(storage.compactBytes == bytes.length() && !stream.spanBytes);
+      ZuCheckRT(sent.ptr() == owner.ptr() && sent->cspan() == stream.sent->cspan());
+      ZuCheckRT(sent->size == stream.sent->size && sent->skip == stream.sent->skip);
+      ZuCheckRT(storage.compactBytes == bytes.length() && !stream.spanBytes);
     } else
-      ZuCheck(stream.spanBytes == bytes.length() && stream.allocs > 1);
+      ZuCheckRT(stream.spanBytes == bytes.length() && stream.allocs > 1);
     log("I/O growth: payload=", n, " output=", bytes.length(),
       " backing allocations=", storage.reallocs,
       " relocated head bytes=", storage.headBytes,

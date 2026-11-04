@@ -1,5 +1,5 @@
 METASOURCES = AUTO
-EXTRA_DIST = README.md codec.hh heaptrace.cc audittrace.cc load.py results.py
+EXTRA_DIST = README.md codec.hh heaptrace.cc audittrace.cc load.py netmeta.py results.py
 EXTRA_DIST += RESULTS.md results/README.md results/2026-10-28.tar.xz
 EXTRA_DIST += BINARY.md results/2026-11-01-binary.tar.xz
 EXTRA_DIST += results/2026-10-31-10k-multisession.tar.xz
@@ -66,3 +66,5 @@ audittrace:
 	  $(CPPFLAGS) -isystem $(top_srcdir)/zu/src \
 	  $(srcdir)/audittrace.cc -o audittrace.so
 CLEANFILES += audittrace.so
+
+EXTRA_DIST += window-validate.py

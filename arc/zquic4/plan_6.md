@@ -9,7 +9,7 @@ Preconditions: plan 5 complete so ACK state has runtime ownership and commit sem
 `zquic` currently parses ACK_ECN only enough to skip the counters; `Frame` does not retain them.  `Path` already has an `ecnDisabled` flag.  This plan carries ECN counts through frame parsing, ACK generation, and minimal validation without adding a full ECN congestion response.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -69,7 +69,7 @@ New or changed data stores: per-space ECT0, ECT1, and CE counters plus validatio
 - Open question: how much socket ECN plumbing is already available in `Zi`; inspect before adding any platform wrappers.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

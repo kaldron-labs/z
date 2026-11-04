@@ -35,7 +35,7 @@ Normative reference:
 - [RFC 8949: Concise Binary Object Representation](https://www.rfc-editor.org/rfc/rfc8949.html)
 
 This plan follows the repository priorities of integrity, latency, minimal
-copying, and minimal allocation in [General principles](GUIDELINES.md#general-principles).
+copying, and minimal allocation in [General principles](docs/GUIDELINES.md#general-principles).
 
 Typed load followed by save must preserve every represented CBOR data-model
 value and its semantic CBOR type, matching the fidelity expected of `ZfASN1`.
@@ -95,8 +95,8 @@ Typed access is through `handler<T, Facet>()`; there is no public untyped item
 or traversal API.  Internal header decoding and value skipping are shared by
 both paths.  Do not create parallel cursor, event, view, result, options, or
 callback families.  Update all dependents directly, as required by
-[General principles](GUIDELINES.md#general-principles) and
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+[General principles](docs/GUIDELINES.md#general-principles) and
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 ## Wire scanner
 
@@ -120,7 +120,7 @@ the reserved additional-information encodings are syntax errors.  Do not
 validate or convert UTF-8 in the CBOR scanner; text payload
 interpretation belongs to `ZuUTF` and the destination type.  Accept non-minimal
 integer, length, tag, simple, and floating encodings: Postel's Law is explicit
-repository policy in [No dogma](GUIDELINES.md#no-dogma).  Emission need not
+repository policy in [No dogma](docs/GUIDELINES.md#no-dogma).  Emission need not
 reproduce a non-preferred input spelling.
 
 Additional information 31 denotes an indefinite form only for major types 2
@@ -157,8 +157,8 @@ field indexing, array/map traversal, tag handling, and projection reparse.  Do
 not expose internal type enums, headers, cursors, spans, or callbacks merely to
 test them; test through `scan()` and typed handlers.  Use namespace enums, not
 `enum class`, where an enum is still useful, following
-[Enums](GUIDELINES.md#enums).  Keep common non-template declarations outside
-templates, following [Code structure](GUIDELINES.md#code-structure).
+[Enums](docs/GUIDELINES.md#enums).  Keep common non-template declarations outside
+templates, following [Code structure](docs/GUIDELINES.md#code-structure).
 
 ### Control and bounds
 
@@ -176,10 +176,10 @@ Accumulate indefinite-string lengths with checked arithmetic and validate every
 declared length against remaining input before advancing or allocating.  Use
 `switch` for major type, additional-information width, and simple values, and
 use early returns to keep the parser flat, per
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).  This
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).  This
 also aligns with
-[Storage and capacity](GUIDELINES.md#storage-and-capacity) and
-[Liveness](GUIDELINES.md#liveness).
+[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity) and
+[Liveness](docs/GUIDELINES.md#liveness).
 
 For a typed owning byte or text destination, decode an indefinite string in
 two lightweight passes.  The sizing pass reads and validates only each chunk
@@ -198,8 +198,8 @@ span without giving the codec hidden ownership; for such a destination it is
 incompatible and follows the normal `ZfASN1`-aligned field-default/null path.
 Callers requiring all legal chunkings must use an owning destination type.
 The structural scanner accepts every valid chunking regardless of the typed
-destination.  This follows [Storage and lifetime](GUIDELINES.md#storage-and-lifetime)
-and [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+destination.  This follows [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime)
+and [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 Keep errors compact:
 
@@ -253,9 +253,9 @@ unconditional binary64 or lossy narrowing.  Keep the representability checks
 constant-time and allocation-free, following the `ZuFP`/Zdf precedent;
 interoperability and conformance are acceptance requirements.  This follows
 both the latency and integrity priorities in
-[General principles](GUIDELINES.md#general-principles) and keeps the checks
+[General principles](docs/GUIDELINES.md#general-principles) and keeps the checks
 flat per
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 ## `ZfStruct` loading
 
@@ -263,7 +263,7 @@ flat per
 
 Add `ZuStructFacet(CBOR)` and properties under `ZuFieldProp::CBOR`, paralleling
 the established JSON and ASN.1 integrations in
-[Metadata](GUIDELINES.md#metadata):
+[Metadata](docs/GUIDELINES.md#metadata):
 
 ```text
 ID<ZuString> IntID Tag<uint64_t> Type<uint8_t>
@@ -307,9 +307,9 @@ field incompatible/defaulted, and an undeclared unknown outer tag is not
 silently stripped.  The structural scanner still accepts arbitrary nested
 tags.  If a concrete future schema requires multiple semantic layers, express
 them through statically nested typed schemas, not a dynamic tag container.
-This follows [Metadata](GUIDELINES.md#metadata),
-[Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints),
-and [Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+This follows [Metadata](docs/GUIDELINES.md#metadata),
+[Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints),
+and [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 A reflected object may freely mix default text and `IntID` fields.  The
 application owns duplicate reflected-key mistakes: this codec adds no
@@ -318,7 +318,7 @@ distinct keys.  The marker affects only that field; do not impose one key type
 on the containing map.
 
 Use detector traits and existing `ZuFieldProp` patterns; do not use concepts or
-`requires`, per [Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints).
+`requires`, per [Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints).
 Use `ZfCBOR_Fmt` ADL selection with `AsObject` and `AsArray`, matching
 `ZfASN1`.  Do not add speculative formatter categories.
 
@@ -343,8 +343,8 @@ named `ZmVHeap` fallback otherwise; this avoids both an unbounded handler
 object and a guessed fixed builtin capacity.  Zero-field schemas request no
 storage.  Do not retain a `ZtScratch` allocation in a returned handler: its
 stack backing is operation-local.  This follows
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime) and
-[Heap allocation](GUIDELINES.md#heap-allocation).
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime) and
+[Heap allocation](docs/GUIDELINES.md#heap-allocation).
 
 The input must outlive the handler and every borrowed `ZuBSpan`/`ZuCSpan`
 produced from it, exactly as for `ZfASN1`.  Owning destination fields copy from
@@ -382,7 +382,7 @@ are skipped without allocation.
 The field index has exactly `Fields::N` logical entries.  Initialize those
 spans once to null; do not default-construct decoded values that will
 immediately be overwritten, per
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 After indexing, reuse the `ZfASN1` handler lifecycle:
 
@@ -434,8 +434,8 @@ the named heap fallback; eight is an optimization threshold, not a protocol
 limit.  Record that rationale beside the constant.  Revisit the threshold only
 in a subsequent tuning effort if real workloads provide contrary evidence.
 This follows
-[Storage and capacity](GUIDELINES.md#storage-and-capacity) and
-[Heap allocation](GUIDELINES.md#heap-allocation).
+[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity) and
+[Heap allocation](docs/GUIDELINES.md#heap-allocation).
 
 Match `ZfASN1` for bounded destinations: `ZfCBOR` passes the complete `LoadVec`
 to the destination constructor, assignment operator, or `ZfStruct` field
@@ -447,8 +447,8 @@ field follows that field setter's declared behavior, exactly as in the
 `ZfASN1Test` fixed-array example.  Do not add CBOR-only rejection, padding, or
 parallel fixed-array metadata.  Tests must cover shorter, exact-capacity, and
 over-capacity `ZuArray` input plus one schema-defined native-array setter.  This
-follows [Framework fit](GUIDELINES.md#framework-fit) and
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+follows [Framework fit](docs/GUIDELINES.md#framework-fit) and
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 Do not add `AsMap`.  `ZfASN1` has no corresponding handler, and no current
 ZfCBOR dependent loads an arbitrary run-time map into a Z map.  The wire scanner
@@ -479,8 +479,8 @@ unresolved union alternative.  Discriminated objects use projection and
 selected reparse exactly as above.  If a future fragmented-input API cannot
 keep its source buffer alive, solve buffer ownership at the I/O boundary with
 the established pooled buffer facilities, not inside the CBOR value model. See
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime) and
-[I/O and system integration](GUIDELINES.md#io-and-system-integration).
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime) and
+[I/O and system integration](docs/GUIDELINES.md#io-and-system-integration).
 
 ### Default field mapping
 
@@ -582,15 +582,15 @@ as implicit times.
 
 These mappings use only RFC 8949 standard tags, add no generic tag-semantics
 registry, and keep conversion in fixed-width checked arithmetic.  They follow
-[Framework fit](GUIDELINES.md#framework-fit),
-[No dogma](GUIDELINES.md#no-dogma), and
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+[Framework fit](docs/GUIDELINES.md#framework-fit),
+[No dogma](docs/GUIDELINES.md#no-dogma), and
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 Typed loads accept any valid integer width but range-check before narrowing.
 They do not coerce float to integer, text to bytes, null to zero, undefined to
 null, or an unknown tag to its child.  Optional/null handling follows existing
 Z sentinel and `Optional` conventions; do not add parallel boolean state, per
-[Framework fit](GUIDELINES.md#framework-fit).
+[Framework fit](docs/GUIDELINES.md#framework-fit).
 
 Apply Postel's Law to tag 2/3 bignums as well.  On input, accept a bignum byte
 string with redundant leading zero bytes and accept tag 2/3 values that could
@@ -607,14 +607,14 @@ zero byte.  Thus permissive bignum spellings normalize on save, just as BER
 input normalizes to DER output in `ZfASN1`.  Test redundant-zero input, small
 values under both bignum tags, zero and -1, the major-type boundaries, both
 128-bit limits, and one-byte overflow on each destination type.  This follows
-[No dogma](GUIDELINES.md#no-dogma) and
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+[No dogma](docs/GUIDELINES.md#no-dogma) and
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 For text fields, expose or copy the CBOR payload according to the destination
 string type.  Delegate any UTF validation or width conversion to `ZuUTF`; do
 not duplicate Unicode tables or validation logic in `ZfCBOR`.  This follows
-[Framework fit](GUIDELINES.md#framework-fit) and
-[Strings](GUIDELINES.md#strings).
+[Framework fit](docs/GUIDELINES.md#framework-fit) and
+[Strings](docs/GUIDELINES.md#strings).
 
 ## Encoding
 
@@ -632,9 +632,9 @@ Do not require `reserve()`, writable uninitialized tails, callbacks, or a
 CBOR-specific sink trait.  Allocation policy and append failure semantics
 belong to the sink implementation, as they do for `ZfASN1`; the codec adds no
 parallel status channel or exception contract.  This follows
-[Framework fit](GUIDELINES.md#framework-fit),
-[Type and API friction](GUIDELINES.md#type-and-api-friction), and
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+[Framework fit](docs/GUIDELINES.md#framework-fit),
+[Type and API friction](docs/GUIDELINES.md#type-and-api-friction), and
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 Typed arrays expose their counts, so emit a definite header and values in one
 pass.  For reflected objects, make one cheap compile-time unrolled pass to
@@ -682,30 +682,30 @@ application-schema concern; the application must construct the corresponding
 message type and pass it to ordinary `save()`.  Continue honoring the
 established compile-time `ZfFieldFilter::Save` and CBOR `Optional` behavior for
 that message type.  This avoids importing JSON-specific patch semantics into a
-binary codec and follows [Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+binary codec and follows [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 Keep non-template scanner and numeric primitives in `ZfCBOR.cc`; keep metadata
 and handler templates in `ZfCBOR.hh`.  Do not split headers without a concrete
 build or dependency problem.  This follows
-[Code structure](GUIDELINES.md#code-structure) and avoids speculative API
+[Code structure](docs/GUIDELINES.md#code-structure) and avoids speculative API
 surface.
 
-## Audit against `GUIDELINES.md`
+## Audit against `docs/GUIDELINES.md`
 
 ### Code and control flow
 
 - Move all declarations that do not depend on template parameters out of
   handlers.  Cache span ends and lengths outside loops.  Use a cached byte when
   branching repeatedly on it.  These directly address
-  [Code structure](GUIDELINES.md#code-structure).
+  [Code structure](docs/GUIDELINES.md#code-structure).
 - Use `switch` for major type, width, simple value, field type, and
   discriminator.  Flatten errors with early returns.  Factor repeated scalar
   and container code through templates or short non-template primitives.  See
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 - Parsing is necessarily linear in the input span.  Do not add redundant work
   counters, polling, blocking, locks, atomics, or scheduler interaction.  See
-  [Liveness](GUIDELINES.md#liveness) and
-  [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies).
+  [Liveness](docs/GUIDELINES.md#liveness) and
+  [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies).
 
 ### Storage, allocation, and movement
 
@@ -716,47 +716,47 @@ surface.
 - Decode directly from input spans and encode directly to output.  Do not
   coalesce definite strings, create temporary contiguous values, or copy a
   complete item for inspection.  See
-  [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+  [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 - Indefinite strings use a header-only sizing pass, one exact `ZtScratch`
   allocation, and one coalescing copy before destination construction.
   Multi-chunk strings do not load into borrowed contiguous spans.
 - If any unavoidable scratch or destination overflow allocation is introduced,
   use `ZtScratch`, `ZtBuiltin`, `ZmHeap`, or `ZmVHeap` with a specific heap ID,
-  per [Heap allocation](GUIDELINES.md#heap-allocation) and
-  [Storage and lifetime](GUIDELINES.md#storage-and-lifetime).
+  per [Heap allocation](docs/GUIDELINES.md#heap-allocation) and
+  [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime).
 - Add no fixed lookup tables or guessed builtin capacities.  Object indexing
   uses exact schema-derived `ZtScratch` storage.  See
-  [Storage and capacity](GUIDELINES.md#storage-and-capacity).
+  [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity).
 - Keep iterator scope local to each map traversal.  Count the compile-time
   `ZfFieldFilter::Save` fields that remain present after `Optional` omission
   before emitting the reflected-object map header.  See
-  [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+  [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 - No long-lived container, garbage collection, intrusive reference-counted
   value, cache-line-shared state, or separate object/container-node allocation
   belongs in this stateless codec.  These storage audit flags are inapplicable
   by construction; do not introduce such state while implementing it.  See
-  [Storage and capacity](GUIDELINES.md#storage-and-capacity) and
-  [Heap allocation](GUIDELINES.md#heap-allocation).
+  [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity) and
+  [Heap allocation](docs/GUIDELINES.md#heap-allocation).
 
 ### Framework and type system
 
 - Use `ZuBSpan`, `ZuSpan<char>`, `ZuUTF`, Z containers, `ZuMatcher`, `ZuUnroll`,
   `ZuSwitch`, `ZuBox`, `ZuFmt`, and `ZfStruct` facilities.  Do not use STL
   containers, iostream formatting utilities, or an external CBOR library.  See
-  [Framework fit](GUIDELINES.md#framework-fit),
-  [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching),
-  and [Formatting](GUIDELINES.md#formatting).
+  [Framework fit](docs/GUIDELINES.md#framework-fit),
+  [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching),
+  and [Formatting](docs/GUIDELINES.md#formatting).
 - Rely on Z span interoperability.  Use casts only for actual bit or character
   representation changes; do not cast among equivalent spans.  See
-  [Type and API friction](GUIDELINES.md#type-and-api-friction).
+  [Type and API friction](docs/GUIDELINES.md#type-and-api-friction).
 - Use CRTP/static handlers, SFINAE detector traits, ADL format tags, and
   side-effect-safe defaults.  Add no virtual dispatch.  See
-  [Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints)
-  and [ADL tagging](GUIDELINES.md#adl-tagging).
+  [Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints)
+  and [ADL tagging](docs/GUIDELINES.md#adl-tagging).
 - Use plain namespace enums and native `int`/`unsigned` locals, reserving
   fixed-width integers for wire values and compact stored metadata.  See
-  [Primitive integer types](GUIDELINES.md#primitive-integer-types) and
-  [Enums](GUIDELINES.md#enums).
+  [Primitive integer types](docs/GUIDELINES.md#primitive-integer-types) and
+  [Enums](docs/GUIDELINES.md#enums).
 
 ### Naming and layout
 
@@ -764,23 +764,23 @@ surface.
   `LoadContext`, `AsObject`, and `AsArray`.
 - Use `UInt`, `NInt`, `Bytes`, `Text`, `IntID`, and `ElemType` rather than
   expanded names.  Every proposed identifier is below the 28-byte hard limit in
-  [Length and abbreviations](GUIDELINES.md#length-and-abbreviations).
+  [Length and abbreviations](docs/GUIDELINES.md#length-and-abbreviations).
 - Use camel case, reserve `m_` for private class data, use overloaded accessors,
   and reserve trailing `_` for internal implementations, per
-  [Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes),
-  [Accessors](GUIDELINES.md#accessors), and
-  [Trailing underscores](GUIDELINES.md#trailing-underscores).
+  [Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes),
+  [Accessors](docs/GUIDELINES.md#accessors), and
+  [Trailing underscores](docs/GUIDELINES.md#trailing-underscores).
 - Preserve the library header skeleton and local declaration alignment.  Use
   hard tabs with `ts=8`, `sw=2`; structs remain all-public and classes
-  all-private.  See [Header layout](GUIDELINES.md#header-layout),
-  [Indentation](GUIDELINES.md#indentation), and
-  [Class and struct shape](GUIDELINES.md#class-and-struct-shape).
+  all-private.  See [Header layout](docs/GUIDELINES.md#header-layout),
+  [Indentation](docs/GUIDELINES.md#indentation), and
+  [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape).
 
 ### Scope and cleanup
 
 - Delete superseded narrow scanner logic as it is replaced; do not retain
   compatibility wrappers.  Update Ztls and Zum in the same change.  See
-  [Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+  [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 - Do not add logging, telemetry, background work, caches, global registries,
   or shared mutable state.  They are unrelated to a codec and would introduce
   allocation, lifetime, and concurrency concerns.
@@ -803,8 +803,8 @@ Retain each dependent source file unless it consisted entirely of superseded
 case, delete the dead file and remove its build references.
 Do not retain a legacy header, namespace, overload, adapter, feature flag, or
 compatibility alias.  This is required by
-[General principles](GUIDELINES.md#general-principles) and
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+[General principles](docs/GUIDELINES.md#general-principles) and
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 Treat replacement of the installed, exported `ZfCBOR::scan()` contract as an
 intentional source and ABI break.  Rebuild all dependents in the atomic
@@ -829,8 +829,8 @@ Keep the reflected COSE and attestation schemas local to their owning
 components unless another real consumer exists.  Do not move protocol policy
 into `ZfCBOR`: Zf parses CBOR, Ztls validates COSE/ES256, and Zum validates the
 WebAuthn attestation profile.  This preserves module boundaries and addresses
-[Framework fit](GUIDELINES.md#framework-fit) and
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+[Framework fit](docs/GUIDELINES.md#framework-fit) and
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 The reflected ES256 COSE object recognizes integer labels `1` (`kty`), `3`
 (`alg`), `-1` (`crv`), `-2` (`x`), and `-3` (`y`) but permits any additional
@@ -927,7 +927,7 @@ without naming, constructing, or validating either protocol's messages.
 Add malformed cases beside the valid construct they target, and keep any
 deterministic mutation/fuzz regression seeds in the same test target unless a
 real fuzzing workflow later justifies a separate corpus.  Use `ZuTestUtil`, as
-required by [Tests](GUIDELINES.md#tests).
+required by [Tests](docs/GUIDELINES.md#tests).
 
 ### 2. Complete scanner
 
@@ -969,7 +969,7 @@ old code path remains.
 Add a deterministic mutation test or fuzz target for scanner and typed load.
 Keep the scanner and discriminator paths allocation-free by construction.
 Exercise `ZtScratch` and `LoadVec` heap fallbacks for correctness and leaks.
-Follow the existing `ZfASN1` structure and the applicable `GUIDELINES.md`
+Follow the existing `ZfASN1` structure and the applicable `docs/GUIDELINES.md`
 hot-path rules.  Performance tuning is subsequent work if production evidence
 requires it and is not a completion gate for this implementation.
 
@@ -1014,6 +1014,6 @@ attacker-declared size before validating it against the remaining input span.
 - No legacy/compatibility CBOR source, overload, alias, test, or build target
   remains.
 - Every retained API and identifier has a demonstrated consumer and conforms to
-  `GUIDELINES.md`.
+  `docs/GUIDELINES.md`.
 - Zf, Ztls, and Zum focused tests pass under the clang debug build and
   Valgrind with no reported memory-access errors.

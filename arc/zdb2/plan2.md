@@ -46,8 +46,8 @@ This is an intentional breaking API change. Delete `ZdbSagaSteps`, rename the
 descriptor template from `ZdbSagaStep` to `ZdbSagaStep_`, and migrate all
 dependents. Do not retain aliases, compatibility macros, forwarding overloads,
 or support for `U::Steps`; dependent compatibility is a non-goal under
-[`GUIDELINES.md:8-16`](GUIDELINES.md#L8) and dead compatibility code is a red
-flag under [`GUIDELINES.md:330-344`](GUIDELINES.md#L330).
+[`GUIDELINES.md:8-16`](docs/GUIDELINES.md#L8) and dead compatibility code is a red
+flag under [`GUIDELINES.md:330-344`](docs/GUIDELINES.md#L330).
 
 ## 1. Define the step macro
 
@@ -109,7 +109,7 @@ Keep `table` and `op` as macro parameters so the caller writes bare tokens.
 selects the existing enum. Keep `ZdbSagaStep_` trailing-underscored because it
 is internal machinery. All names remain below the
 28-byte limit and follow the macro/type/internal naming rules in
-[`GUIDELINES.md:679-747`](GUIDELINES.md#L679). `ZdbSaga.hh` already directly
+[`GUIDELINES.md:679-747`](docs/GUIDELINES.md#L679). `ZdbSaga.hh` already directly
 includes `ZuPP.hh`, `ZuInt.hh`, and the other required type machinery; preserve
 direct dependency discipline.
 
@@ -155,8 +155,8 @@ in the existing saga-definition validation. Feed `SagaSteps<S>` to
 Continue to require non-empty, unique saga type discriminators at the bundle
 level. Do not introduce concepts or `requires`; use the existing detector,
 SFINAE, `ZuIfT`, `ZuTypeList`, and `ZuSeq` conventions described in
-[`GUIDELINES.md:140-164`](GUIDELINES.md#L140) and
-[`GUIDELINES.md:388-405`](GUIDELINES.md#L388).
+[`GUIDELINES.md:140-164`](docs/GUIDELINES.md#L140) and
+[`GUIDELINES.md:388-405`](docs/GUIDELINES.md#L388).
 
 An extra declaration whose number is outside `[0, NSteps)` is dead application
 code and is not discoverable from C++ overloads without adding counters or a
@@ -353,8 +353,8 @@ Use `ZuSwitch`, not a function-pointer table or recursive run-time chain. Cache
 the step value before branching, keep captures explicit, and do not add a
 continuation allocation beyond those already needed by the mutation invoked by
 the step. This follows the discrete-dispatch, no-duplication, and hot-path
-rules in [`GUIDELINES.md:266-305`](GUIDELINES.md#L266) and the compile-time
-dispatch guidance in [`GUIDELINES.md:388-405`](GUIDELINES.md#L388).
+rules in [`GUIDELINES.md:266-305`](docs/GUIDELINES.md#L266) and the compile-time
+dispatch guidance in [`GUIDELINES.md:388-405`](docs/GUIDELINES.md#L388).
 
 The macro deliberately exposes `ZdbSaga *saga`, as proposed. Capture and pass
 both the saga-definition `this` and raw `saga` pointer through the asynchronous
@@ -365,7 +365,7 @@ reference, DB ownership of live sagas, or a self-reference for this path.
 Document this lifetime coupling at the macro/API example. It preserves the
 current recovery-only `SagaHash` and scalar graceful-drain design and follows
 the explicit ownership/callback guidance in
-[`GUIDELINES.md:408-484`](GUIDELINES.md#L408).
+[`GUIDELINES.md:408-484`](docs/GUIDELINES.md#L408).
 
 ## 5. Migrate all saga definitions
 
@@ -466,7 +466,7 @@ zero Valgrind errors or lost bytes, and a clean `git diff --check`.
   to a separately owned long-lived object. It is always moved, is not stored
   by `Saga`, and cannot form a cycle; this is the required exception to the
   callback/back-pointer warning in
-  [`GUIDELINES.md:330-344`](GUIDELINES.md#L330).
+  [`GUIDELINES.md:330-344`](docs/GUIDELINES.md#L330).
 - Mutation wrappers never advance an `Executed` step. `complete(true)` and the
   equivalent internal completion for `Skipped` are the only next-step paths;
   all false/error/deferral paths are non-advancing.

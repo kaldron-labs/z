@@ -35,11 +35,11 @@ owned tokens as strings.
 
 **User**
 
-> audit the YAML implementation for alignment with `GUIDELINES.md`, checking all audit flags and repairing as needed
+> audit the YAML implementation for alignment with `docs/GUIDELINES.md`, checking all audit flags and repairing as needed
 
 **Assistant — audit and repairs**
 
-Read `GUIDELINES.md` and audited the YAML implementation against every red and
+Read `docs/GUIDELINES.md` and audited the YAML implementation against every red and
 amber flag. Repairs included:
 
 - Removed anonymous namespaces, typed enums, non-specific lambda captures,

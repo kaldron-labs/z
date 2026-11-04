@@ -35,17 +35,21 @@ bool RxInput::accept(Zhttp::Channel *channel)
   return !m_failed;
 }
 
-bool RxInput::enqueue(ZmRef<ZiIOBuf> buf)
+bool RxInput::enqueue(Zi::RxRange range)
 {
-  if (!buf || m_failed || m_finished || m_peerEnd || !m_accepted) return false;
+  if (!range || m_failed || m_finished || m_peerEnd || !m_accepted) return false;
+  if (range.offset > range.buf->size ||
+      range.length > range.buf->size - range.offset) {
+    fail(Code::RESOURCE_EXHAUSTED); return false;
+  }
   if (m_chunks.count_() >= m_limits.maxQueue ||
-      m_retainedBytes > m_retainedMax || buf->length > m_retainedMax - m_retainedBytes) {
+      m_retainedBytes > m_retainedMax || range.length > m_retainedMax - m_retainedBytes) {
     fail(Code::RESOURCE_EXHAUSTED);
     return false;
   }
-  if (!buf->length) return true;
-  m_retainedBytes += buf->length;
-  m_chunks.push(RxChunk{ZuMv(buf)});
+  if (!range.length) return true;
+  m_retainedBytes += range.length;
+  m_chunks.push(ZuMv(range));
   kick_();
   return true;
 }
@@ -88,12 +92,14 @@ void RxInput::pump_()
     auto &chunk = m_chunks.headPtr()->data();
     unsigned used = 0;
     Frame frame;
-    auto span = chunk.buf->cspan().offset(chunk.offset);
-    auto result = m_frames.feed(span, chunk.buf, used, frame, bytes);
+    auto span = chunk.cspan();
+    bool exclusive = chunk.buf->refCount() == 1;
+    auto result = m_frames.feed(span, chunk.buf, used, frame, bytes, exclusive);
     chunk.offset += used;
+    chunk.length -= used;
     m_retainedBytes -= used;
     bytes -= used;
-    if (chunk.offset == chunk.buf->length) m_chunks.shift();
+    if (!chunk.length) m_chunks.shift();
     if (result == FrameResult::Failed) {
       Code::T code = Code::INTERNAL;
       switch (m_frames.error()) {
@@ -151,23 +157,23 @@ void RxInput::finish_()
   try { if (done) done(*this, !m_failed); } catch (...) { }
 }
 
-bool TxFrames::push(ZmRef<ZiIOBuf> buf, const Limits &limits)
+bool TxFrames::push(ZmRef<ZiIOBuf> buf, const Limits &limits, bool writerOwned)
 {
   if (!buf || m_frames.count_() >= limits.maxQueue ||
       m_bytes > limits.maxQueueBytes || buf->length > limits.maxQueueBytes - m_bytes)
     return false;
   m_bytes += buf->length;
-  m_frames.push(ZuMv(buf));
+  m_frames.push(OutputFrame{ZuMv(buf), writerOwned});
   return true;
 }
 
-ZmRef<ZiIOBuf> TxFrames::shift()
+OutputFrame TxFrames::shift()
 {
   auto node = m_frames.shift();
-  if (!node) return nullptr;
-  auto buf = ZuMv(node->data());
-  m_bytes -= buf->length;
-  return buf;
+  if (!node) return {};
+  auto frame = ZuMv(node->data());
+  m_bytes -= frame.buf->length;
+  return frame;
 }
 
 bool TxBody::attach(Zhttp::BodyEmitter emit)

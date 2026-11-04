@@ -11,14 +11,10 @@
 #include <iostream>
 
 #include <zlib/ZtString.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/Zquic.hh>
 
 namespace {
-
-ZuCSpan cspan(const ZtString<> &s)
-{
-  return ZuCSpan{s.data(), s.length()};
-}
 
 struct AppLink;
 struct AppStream;
@@ -69,7 +65,12 @@ struct AppStream :
 };
 
 struct AppLink :
+  public ZmNHeap<AppLink>,
   public Zquic::SrvLink<App, AppLink, AppStream> {
+  friend inline ZuStringT<"Zquic.Example.SrvLink"> ZmNHeapID(AppLink *);
+  using ZmNHeap<AppLink>::operator new;
+  using ZmNHeap<AppLink>::operator delete;
+
   using Base = Zquic::SrvLink<App, AppLink, AppStream>;
   using Base::Base;
 
@@ -100,7 +101,7 @@ struct AppLink :
 
     ZtString<> response;
     response << "echo: " << payload;
-    if (!send(stream, cspan(response), fin)) {
+    if (!send(stream, response, fin)) {
       app()->setError("stream echo send failed");
       app()->done();
       return;
@@ -139,7 +140,7 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZiMultiplex mx(
-      ZiMxParams()
+      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })

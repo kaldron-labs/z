@@ -151,7 +151,7 @@ Add tests before broad regression runs:
    H2/H3 cases, to expose hangs, duplicate completion, retained-buffer leaks,
    and transient stream-lifecycle failures; harden deterministic synchronization
    rather than adding sleeps.
-5. Review the final diff against `GUIDELINES.md`, checking callback contracts,
+5. Review the final diff against `docs/GUIDELINES.md`, checking callback contracts,
    Rx ownership, error classification, one-shot completion, allocation behavior,
    naming, hard-tab formatting, and absence of legacy return-type probing.
 

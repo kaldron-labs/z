@@ -284,7 +284,8 @@ static int run()
 {
   auto cf = config();
   auto cfFields = ZfCf::handler<zdbsaga::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   if (!mx.start()) return 1;
 
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
@@ -344,10 +345,10 @@ static int run()
   if (!db->stop()) ok = false;
   transfers = {};
   accounts = {};
+  if (!mx.stop()) ok = false;
   db->final();
   db = {};
   store = {};
-  if (!mx.stop()) ok = false;
   return ok ? 0 : 1;
 }
 

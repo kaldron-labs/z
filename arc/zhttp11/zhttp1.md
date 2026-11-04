@@ -184,7 +184,7 @@ containers merely for testing.
 - The test fixture distinguishes local limits, peer permissions, effective
   capacity, allocated slots, and live-entry count.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit the new tests for Z container use, bounded stack storage, hard tabs,
 concise names, and absence of timing-dependent assertions.  Repair every
@@ -226,7 +226,7 @@ with peer settings.
 - Invalid local configuration fails `init()` before an engine starts.
 - Existing zero-capacity interoperability remains unchanged.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit configuration names against the repository's 28-byte naming limit,
 verify overloaded getter/setter style, remove compatibility shims, and verify
@@ -259,7 +259,7 @@ instruction receive path.
   connection error without changing allocation.
 - Rx state is touched only on the Rx shard.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit Rx ownership, initialization-before-advertisement ordering, in-place
 array use, overflow handling, and teardown.  Repair all findings before
@@ -302,7 +302,7 @@ at terminal capacity.
 - No allocation occurs in `find`, `insert`, `dropOldest`, `compactOrder`, or
   `rebuildHash`.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit Tx-only ownership, local/no-lock hash policy, borrowed-span lifetime,
 failure atomicity, and absence of hidden copies or per-entry allocation.
@@ -338,7 +338,7 @@ default and explicit Tx initialization:
   and cancellations.
 - One stream cannot corrupt another stream's tracked references.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit the planner/commit split, ensure there is no compensating error path for
 bad admission, verify no active-path allocation, and check that the Tx shard
@@ -388,7 +388,7 @@ from Rx/destructors.
 - Existing H3 FIN/reset/STOP, stream isolation, and engine lifecycle tests
   remain green.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Perform a shard-by-shard ownership audit and trace setup and teardown
 continuations linearly.  Repair any cross-shard direct access, blocking call,
@@ -438,12 +438,12 @@ corruption that the earlier steps cannot diagnose.
   requires it.
 - `git diff --check -- zhttp` is clean.
 
-#### Final `GUIDELINES.md` alignment audit and repair
+#### Final `docs/GUIDELINES.md` alignment audit and repair
 
 Before handoff:
 
 - re-read the performance, container, sharding, continuation, lifetime, and
-  teardown sections of `GUIDELINES.md`;
+  teardown sections of `docs/GUIDELINES.md`;
 - verify hard tabs and local layout;
 - verify all names remain within the repository limit;
 - confirm local configuration is the sole allocation authority;

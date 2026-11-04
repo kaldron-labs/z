@@ -510,7 +510,7 @@ void SagaDB::sagaCatalog()
     true, "saga_type", ZfVFields<SagaTypeStep>(),
     ZfVKeyFields<SagaTypeStep>(),
     Schema::from<SagaTypeStep>(context->schema),
-    TableT<SagaTypeStep>::allocBuf,
+    localBufAllocFn<SagaTypeStep>(),
     [this, context = ZuMv(context)](OpenResult result) mutable {
       run([this, context = ZuMv(context), result = ZuMv(result)]() mutable {
 	sagaCatalogOpen(ZuMv(context), ZuMv(result));
@@ -619,7 +619,8 @@ void SagaDB::sagaCatalogWrite(ZmRef<SagaCatalog> context)
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, "saga_type", un, sn, 0, 0, data);
   fbb.finish(saveMsg(fbb, record, Msg::Tag::Replication));
-  context->table->write(saveHdr(fbb), CommitFn{[this, context](ZmRef<IOBuf>, CommitResult result) mutable {
+  context->table->write(saveFrame(fbb), CommitFn{[this, context](
+      ZmRef<IOBuf>, CommitResult result) mutable {
       if (ZuUnlikely(result.is<Event>()))
 	context->error = ZuMv(result).p<Event>();
       this->run([this, context = ZmRef(context)]() mutable {

@@ -29,8 +29,7 @@ public:
 
   ZuInline void start(ZuBSpan a) {
     dispose_();
-    m_ctx = ptls_hmac_create(
-      Backend::hash_algorithm(Type), a.data(), a.length());
+    m_ctx = Backend::hmac_create(Type, a);
     ZmAssert(m_ctx);
   }
 

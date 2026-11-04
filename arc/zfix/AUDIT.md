@@ -10,7 +10,7 @@ timer consolidation, cache-line isolation and current verification.
 
 Scope: all `zfix_plan.md` implementation work, including all seven Zfix source
 roles and the plan's Ztcp/Ztls integration hunks. Every guideline category and
-flag in `GUIDELINES.md` was reviewed. Existing dependency binaries are reused;
+flag in `docs/GUIDELINES.md` was reviewed. Existing dependency binaries are reused;
 runtime verification is confined to Zfix on Linux x64. Zi is unchanged.
 
 The 2026-10-28 benchmark report/archive describe their captured pre-audit source

@@ -3,7 +3,7 @@
 Implement [goal.md](goal.md) as one breaking refactor. This
 plan prescribes work; it does not report completed implementation or measurements.
 The four sections below settle the design, build policy, implementation slices,
-and final consistency review. Follow [GUIDELINES.md](GUIDELINES.md), subject to
+and final consistency review. Follow [GUIDELINES.md](docs/GUIDELINES.md), subject to
 these explicit user constraints:
 
 - **DO NOT ADD VALIDATION BEYOND THE CURRENT IMPLEMENTATION.** Preserve existing
@@ -39,16 +39,16 @@ appropriate. Do not stop after extracting the native transport layer.
 
 | Element | Prescribed minimum; redundant work to remove | Applicable guidelines |
 | --- | --- | --- |
-| Profile selection | Explicit selected descriptors; one concrete core implementation, no heavy `Core<Mask>` or global backend registry | [Static polymorphism](GUIDELINES.md#static-polymorphism-and-constraints), [Code structure](GUIDELINES.md#code-structure) |
-| Client/server coordination | Reuse concrete records and move existing algorithms into `ClientCore`, `PoolCore`, `ServerCore`; no parallel scheduler, cache or policy engine | [Repair procedure](GUIDELINES.md#repair-procedure), [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow) |
-| Erased interfaces | Static operation tables plus context, containing only operations required by existing callers; no virtual application hierarchy, RTTI or closure allocator | [Callbacks](GUIDELINES.md#callbacks), [Framework fit](GUIDELINES.md#framework-fit) |
-| Message dispatch | Keep typed catalogs and existing request/stream bindings; no runtime schemas, handler registry, generic decoded-message object or extra response search | [Compile-time matching](GUIDELINES.md#compile-time-data-and-matching) |
-| Header metadata | One immutable catalog view for matching/encoding/seed inputs; reuse cached classification, no request-local map or dynamic-name cache | [Code structure](GUIDELINES.md#code-structure), [Storage and capacity](GUIDELINES.md#storage-and-capacity) |
-| Parser/queue storage | Reuse typed session/operation/stream and intrusive message nodes; no guessed parser buffer, generic allocation base or separate refcount | [Containers and intrusion](GUIDELINES.md#containers-and-intrusion), [Heap allocation](GUIDELINES.md#heap-allocation) |
-| Body and channel access | One concrete input view, writer and route/channel interface; direct pooled-buffer access, no body staging or per-byte indirection | [Data movement](GUIDELINES.md#data-movement-and-initialization), [I/O sharding](GUIDELINES.md#io-sharding) |
-| Configuration | Reuse existing explicit-setting/overlay and policy machinery; selected descriptors bound capabilities, no new configuration framework or server enable/disable API | [Metadata](GUIDELINES.md#metadata), [Accessors](GUIDELINES.md#accessors) |
-| Validation | Move existing checks with their owning code; delete proposed duplicate/new checks, including negative fixtures that require new rejection rules | [Repair procedure](GUIDELINES.md#repair-procedure) |
-| Files and migration | Extend existing modules, delete superseded implementations, propagate breaking APIs; no compatibility facade or transport API redesign | [Module layout](GUIDELINES.md#module-layout), [Scope and cleanup](GUIDELINES.md#scope-and-cleanup) |
+| Profile selection | Explicit selected descriptors; one concrete core implementation, no heavy `Core<Mask>` or global backend registry | [Static polymorphism](docs/GUIDELINES.md#static-polymorphism-and-constraints), [Code structure](docs/GUIDELINES.md#code-structure) |
+| Client/server coordination | Reuse concrete records and move existing algorithms into `ClientCore`, `PoolCore`, `ServerCore`; no parallel scheduler, cache or policy engine | [Repair procedure](docs/GUIDELINES.md#repair-procedure), [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow) |
+| Erased interfaces | Static operation tables plus context, containing only operations required by existing callers; no virtual application hierarchy, RTTI or closure allocator | [Callbacks](docs/GUIDELINES.md#callbacks), [Framework fit](docs/GUIDELINES.md#framework-fit) |
+| Message dispatch | Keep typed catalogs and existing request/stream bindings; no runtime schemas, handler registry, generic decoded-message object or extra response search | [Compile-time matching](docs/GUIDELINES.md#compile-time-data-and-matching) |
+| Header metadata | One immutable catalog view for matching/encoding/seed inputs; reuse cached classification, no request-local map or dynamic-name cache | [Code structure](docs/GUIDELINES.md#code-structure), [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity) |
+| Parser/queue storage | Reuse typed session/operation/stream and intrusive message nodes; no guessed parser buffer, generic allocation base or separate refcount | [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion), [Heap allocation](docs/GUIDELINES.md#heap-allocation) |
+| Body and channel access | One concrete input view, writer and route/channel interface; direct pooled-buffer access, no body staging or per-byte indirection | [Data movement](docs/GUIDELINES.md#data-movement-and-initialization), [I/O sharding](docs/GUIDELINES.md#io-sharding) |
+| Configuration | Reuse existing explicit-setting/overlay and policy machinery; selected descriptors bound capabilities, no new configuration framework or server enable/disable API | [Metadata](docs/GUIDELINES.md#metadata), [Accessors](docs/GUIDELINES.md#accessors) |
+| Validation | Move existing checks with their owning code; delete proposed duplicate/new checks, including negative fixtures that require new rejection rules | [Repair procedure](docs/GUIDELINES.md#repair-procedure) |
+| Files and migration | Extend existing modules, delete superseded implementations, propagate breaking APIs; no compatibility facade or transport API redesign | [Module layout](docs/GUIDELINES.md#module-layout), [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup) |
 
 For every added record, operation, allocation and algorithm, identify its existing
 caller or required boundary and its owner. Reuse an equivalent facility rather
@@ -116,8 +116,8 @@ templates. Profiles/configuration/core contracts must not include native or
 heavy protocol definitions. Move constructors, destructors and operations needing
 opaque complete types out of line. Export public operations/accessors with
 `ZhttpAPI`; retain the project's portable declarations without expanding the
-build matrix. Follow [Header layout](GUIDELINES.md#header-layout) and
-[Code structure](GUIDELINES.md#code-structure).
+build matrix. Follow [Header layout](docs/GUIDELINES.md#header-layout) and
+[Code structure](docs/GUIDELINES.md#code-structure).
 
 ### 1.3 Preserve typed dispatch and catalog work
 
@@ -160,7 +160,7 @@ the existing catalog declaration/definition pattern, including concrete composed
 catalog definitions, rather than inventing a catalog compiler. Preserve existing
 once-initialized integer maps such as REST response-status lookup. Do not replace
 them with linear scans, per-message maps or runtime handler registration.
-See [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching).
+See [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching).
 
 Classify configured names **once per message catalog configuration, never per
 request**. The user-named `Zhttp::forbidden`/`Zhttp::pseudo` are currently
@@ -204,7 +204,7 @@ in concrete header storage, with capacity derived from patchable catalog fields.
 After buffer growth, resolve offsets against the final retained storage before
 synchronous patching/commit; never retain spans across relocation. Preserve
 existing omitted-field, unique-key and fixed-field patch constraints, without
-new checks. See [Data movement](GUIDELINES.md#data-movement-and-initialization).
+new checks. See [Data movement](docs/GUIDELINES.md#data-movement-and-initialization).
 
 One concrete input view exposes mutable borrowed spans and queue consumption
 without coalescing fragments. One writer exposes reserve/span/commit, accounting,
@@ -214,7 +214,7 @@ optional, fixed, streamed, close-delimited, HEAD/bodyless and SSE behavior.
 Deferred producer state belongs in the retained message/stream or a justified
 pooled typed node. Preserve emitter invalidation, close and terminal sequencing.
 
-Apply [Tx streams](GUIDELINES.md#tx-streams) to the writer interface: failure is
+Apply [Tx streams](docs/GUIDELINES.md#tx-streams) to the writer interface: failure is
 sticky; explicitly check `bool flush()` at completion; destructor flushing is
 best effort. An earlier valid prefix may flush once after rejection, but failure
 remains and `flush()` returns false. Retain the output error for diagnostics.
@@ -237,7 +237,7 @@ acknowledgement, archive/retrieve and exactly-once logical retirement. Keep
 `ZmPQTx` operations Tx-owned. Embed concrete records in existing typed intrusive
 nodes or use retain/release thunks casting back to the actual allocated node
 before reference adjustment. Never reinterpret an arbitrary intrusive node as a
-common base. See [Containers and intrusion](GUIDELINES.md#containers-and-intrusion).
+common base. See [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion).
 
 ### 1.5 Routes, WebSockets and shard ownership
 
@@ -264,9 +264,9 @@ Capture handles and small metadata; transfer variable data through destination-
 owned queues or pooled buffers. Do not read results of `run`/`invoke` until its
 continuation. Add no locks for non-owner access. Use `ZmFn` for continuations
 and existing `ZiIOFn`/`ZiIOContext` for I/O, not a new callback framework.
-See [I/O function organization](GUIDELINES.md#io-function-organization),
-[Cross-shard handoffs](GUIDELINES.md#cross-shard-handoffs) and
-[Callbacks](GUIDELINES.md#callbacks).
+See [I/O function organization](docs/GUIDELINES.md#io-function-organization),
+[Cross-shard handoffs](docs/GUIDELINES.md#cross-shard-handoffs) and
+[Callbacks](docs/GUIDELINES.md#callbacks).
 
 Shutdown stops ingress/new timer work, cancels timers and drains their owner-
 thread callbacks, drains Rx then Tx, finishes terminal callbacks/producer cleanup,
@@ -276,7 +276,7 @@ all dependents. Do not add owner references to every timer/buffer/callback.
 owner release. Partial initialization unwinds constructed state. Keep blocking
 wrappers on the main thread and destruction after explicit shutdown; preserve
 existing assertions without adding defensive ones. See
-[Teardown](GUIDELINES.md#teardown) and [Timer teardown](GUIDELINES.md#timer-teardown).
+[Teardown](docs/GUIDELINES.md#teardown) and [Timer teardown](docs/GUIDELINES.md#timer-teardown).
 
 ### 1.6 Configuration and negotiation
 
@@ -292,9 +292,9 @@ introduce no second validation pass or new rejection condition.
 
 Typed fluent capabilities use SFINAE only where the selection supports them.
 Dynamic configuration reaches the same existing policy/initialization path.
-Use [Metadata](GUIDELINES.md#metadata) integrations and `Mutable`/`update()` to
+Use [Metadata](docs/GUIDELINES.md#metadata) integrations and `Mutable`/`update()` to
 preserve omitted fields; defaults belong in C++. Use same-named nested lambda
-configuration accessors per [Accessors](GUIDELINES.md#accessors), not forwarders
+configuration accessors per [Accessors](docs/GUIDELINES.md#accessors), not forwarders
 for every inner setter.
 
 Preserve server listener activation: current `ServerConfig` starts with families
@@ -329,25 +329,25 @@ available H3 endpoint. These are selection/policy changes, not new validators.
 Apply this audit to touched declarations and uses in every affected source
 directory, not just `src`. A flag identifies a review question, not permission
 for unrelated cleanup. The table covers every category in
-[Audit flags](GUIDELINES.md#audit-flags); sections above prescribe the owning
+[Audit flags](docs/GUIDELINES.md#audit-flags); sections above prescribe the owning
 contracts. Saga and dynamic-loading machinery are outside this refactor.
 
 | Guideline category | Required implementation review |
 | --- | --- |
-| [Repair procedure](GUIDELINES.md#repair-procedure) | Name the violated contract/owner before a change; preserve unrelated work and map moved checks to the baseline |
-| [Code structure](GUIDELINES.md#code-structure) | Move type-independent declarations out of templates; use concise local aliases for member alignment, data first in structs, cached invariant loop calls/element reads, indexed matching and `constexpr` `ZuString` literals rather than constexpr spans |
-| [Storage and capacity](GUIDELINES.md#storage-and-capacity) | Size storage from catalog/selection/workload/protocol bounds; no guessed inline buffers, GC scans or refcounted objects by value; group fields by ownership/size and separate Rx/Tx groups with `alignas(Zm::CacheLineSize)` |
-| [Heap allocation](GUIDELINES.md#heap-allocation) | Each separately allocated fixed concrete type has its own first-base `ZmNHeap<Concrete>` and ADL `ZmNHeapID`; preserve sharding/tuning, no allocator base or custom new/delete forwarding; `ZmVHeap` only for variable allocations |
-| [Containers and intrusion](GUIDELINES.md#containers-and-intrusion) | Reuse intrusive ownership, stack memberships with the actual outer node allocation and inner shadow nodes; no separate node/refcount allocation or `ZmList<ZmRef<T>>` for an object that can own its links; document genuine shared-owner exceptions |
-| [Data movement](GUIDELINES.md#data-movement-and-initialization) | Direct mutable input/uninitialized output, no erasure-induced body copies, temporary contiguous conversions or initialization before overwrite; deferred `ZiLOG` captures values, using `ZeString` when required |
-| [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow) | Factor repeated concrete code, use `switch`/early exits, continuation-based sequencing and notification waits; end iterators at traversal boundaries, count actual visits, avoid needless container aliases/redundant null checks; use built-in hashes such as `ZuSpan::hash` |
-| [Framework fit](GUIDELINES.md#framework-fit) | Use `ZiFile`/`ZiLog`, Z formatting/parsing, existing scheduling/containers; use sentinels for unset state instead of redundant booleans; retain the explicit overlay mask because it records provenance |
-| [Dynamic modules](GUIDELINES.md#dynamic-modules) | Descriptors are ordinary linked-library contracts; add no loading/unloading, `ZiModule` subsystem or virtual plugin factory |
-| [Bad casting](GUIDELINES.md#bad-casting) | Use direct Z span/string/array and char-equivalent conversions; erased contexts cast only to their actual type for pointer adjustment; use `using` for CRTP lookup instead of base casts |
-| [Bad code structure](GUIDELINES.md#bad-code-structure) | Narrow accessors/shared data structs instead of external private `m_` access; no enum/integer mapping ladders or needless `this->` |
-| [Scope and cleanup](GUIDELINES.md#scope-and-cleanup) | Delete superseded paths/shims, preserve unrelated diagnostics/probes; raw dependent back-pointers plus owner drains, no ownership cycles or per-packet refcount churn |
-| [Unnecessary atomics/locks/copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies) | Approximate telemetry remains primitive unless accuracy is required; preserve correctness synchronization for admission/lifetime state |
-| [Liveness](GUIDELINES.md#liveness) | Bound I/O scheduling, cancellation and drain work per turn, reuse justified batch limits and post continuations for the remainder |
+| [Repair procedure](docs/GUIDELINES.md#repair-procedure) | Name the violated contract/owner before a change; preserve unrelated work and map moved checks to the baseline |
+| [Code structure](docs/GUIDELINES.md#code-structure) | Move type-independent declarations out of templates; use concise local aliases for member alignment, data first in structs, cached invariant loop calls/element reads, indexed matching and `constexpr` `ZuString` literals rather than constexpr spans |
+| [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity) | Size storage from catalog/selection/workload/protocol bounds; no guessed inline buffers, GC scans or refcounted objects by value; group fields by ownership/size and separate Rx/Tx groups with `alignas(Zm::CacheLineSize)` |
+| [Heap allocation](docs/GUIDELINES.md#heap-allocation) | Each separately allocated fixed concrete type has its own first-base `ZmNHeap<Concrete>` and ADL `ZmNHeapID`; preserve sharding/tuning, no allocator base or custom new/delete forwarding; `ZmVHeap` only for variable allocations |
+| [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion) | Reuse intrusive ownership, stack memberships with the actual outer node allocation and inner shadow nodes; no separate node/refcount allocation or `ZmList<ZmRef<T>>` for an object that can own its links; document genuine shared-owner exceptions |
+| [Data movement](docs/GUIDELINES.md#data-movement-and-initialization) | Direct mutable input/uninitialized output, no erasure-induced body copies, temporary contiguous conversions or initialization before overwrite; deferred `ZiLOG` captures values, using `ZeString` when required |
+| [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow) | Factor repeated concrete code, use `switch`/early exits, continuation-based sequencing and notification waits; end iterators at traversal boundaries, count actual visits, avoid needless container aliases/redundant null checks; use built-in hashes such as `ZuSpan::hash` |
+| [Framework fit](docs/GUIDELINES.md#framework-fit) | Use `ZiFile`/`ZiLog`, Z formatting/parsing, existing scheduling/containers; use sentinels for unset state instead of redundant booleans; retain the explicit overlay mask because it records provenance |
+| [Dynamic modules](docs/GUIDELINES.md#dynamic-modules) | Descriptors are ordinary linked-library contracts; add no loading/unloading, `ZiModule` subsystem or virtual plugin factory |
+| [Bad casting](docs/GUIDELINES.md#bad-casting) | Use direct Z span/string/array and char-equivalent conversions; erased contexts cast only to their actual type for pointer adjustment; use `using` for CRTP lookup instead of base casts |
+| [Bad code structure](docs/GUIDELINES.md#bad-code-structure) | Narrow accessors/shared data structs instead of external private `m_` access; no enum/integer mapping ladders or needless `this->` |
+| [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup) | Delete superseded paths/shims, preserve unrelated diagnostics/probes; raw dependent back-pointers plus owner drains, no ownership cycles or per-packet refcount churn |
+| [Unnecessary atomics/locks/copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies) | Approximate telemetry remains primitive unless accuracy is required; preserve correctness synchronization for admission/lifetime state |
+| [Liveness](docs/GUIDELINES.md#liveness) | Bound I/O scheduling, cancellation and drain work per turn, reuse justified batch limits and post continuations for the remainder |
 
 For temporary headers and work arrays, use **`ZtScratch` with an identified
 underlying array and stack storage with heap fallback**. Use `ZtBuiltin` for a
@@ -358,32 +358,32 @@ framework allocation/growth: `ZmHeapFail` owns failure. Use `ZuObject`/`ZuRef`
 for thread-affine ownership and `ZmObject`/`ZmRef` where sharing actually requires
 it; use existing `ZmSingleton`/`ZmSpecific` facilities if needed, not homemade
 global initialization or `thread_local`. See
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime).
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime).
 
 Do not hand-code JSON, numeric conversion, formatting, hashing or configuration
 parsers. Retain the existing HTTP wire algorithms; reuse `ZfJSON`, `ZfURI` and
 other metadata integrations for application formats, `ZuBox`/`ZuFmt`/`ZuPrint`
 and existing number scanners for numeric fields. Do not wrap convertible Z types
 in redundant casts or allocate intermediate strings. See
-[Formatting](GUIDELINES.md#formatting), [Metadata](GUIDELINES.md#metadata) and
-[Strings](GUIDELINES.md#strings).
+[Formatting](docs/GUIDELINES.md#formatting), [Metadata](docs/GUIDELINES.md#metadata) and
+[Strings](docs/GUIDELINES.md#strings).
 
 All introduced names must satisfy the authoritative **28-byte** limit, camelCase,
 concise `req`/`res`/`cli`/`srv`/`cxn` vocabulary, overloaded accessors and owner-
 thread trailing underscores. Keep proposed role names short; do not mechanically
 rename unrelated existing APIs. Library/unit-test basenames use module-prefixed
 CamelCase; program and `util`/`itest`/`example`/`bench`/`interop` basenames are
-lowercase. See [Naming](GUIDELINES.md#naming).
+lowercase. See [Naming](docs/GUIDELINES.md#naming).
 
 Use GNU C++2b, framework traits and trailing-template-parameter SFINAE; no concepts,
 `requires`, anonymous namespaces, blanket captures or scoped enums. Use `ZtEnum`
 where appropriate and `using` rather than forwarding base methods. Follow the
 header skeleton, direct includes, hard tabs, 2-column logical indentation and
 98-column lines. Structs expose unprefixed data first; classes keep private `m_`
-data last. See [Core language](GUIDELINES.md#core-language),
-[Static polymorphism](GUIDELINES.md#static-polymorphism-and-constraints),
-[Indentation](GUIDELINES.md#indentation) and
-[Class and struct shape](GUIDELINES.md#class-and-struct-shape).
+data last. See [Core language](docs/GUIDELINES.md#core-language),
+[Static polymorphism](docs/GUIDELINES.md#static-polymorphism-and-constraints),
+[Indentation](docs/GUIDELINES.md#indentation) and
+[Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape).
 
 ## 2. Build and measurement policy
 
@@ -401,7 +401,7 @@ toggle sanitizers/LTO/optimization, or rebuild dependencies merely for reassuran
 Regenerate changed build metadata only as necessary with the established
 configuration; reuse unaffected artifacts.
 This narrows the broader matrix in the original design and guideline acceptance
-advice. Apply [Build configuration](GUIDELINES.md#build-configuration) ordering
+advice. Apply [Build configuration](docs/GUIDELINES.md#build-configuration) ordering
 without changing the established Clang debug configuration.
 
 After initial configuration setup, there are only three planned build/test
@@ -449,7 +449,7 @@ Use Valgrind sparingly: only to investigate actual suspected corruption during
 implementation, then one targeted final leak/corruption gate after functional
 checks pass. Run via `libtool exec`; never invoke `.libs` binaries directly.
 Do not run the entire matrix repeatedly under Valgrind. See
-[Debugging](GUIDELINES.md#debugging).
+[Debugging](docs/GUIDELINES.md#debugging).
 
 ## 3. Implementation slices and interim acceptance
 
@@ -557,9 +557,9 @@ Put new unit/compile fixtures in `test`, network/program integration in `itest`,
 interop in `interop`, measurements in `bench`, shared standalone tools in `util`.
 Do not relocate unrelated tests. Wait for completion notifications with `ZmBlock`
 or `ZmSemaphore` on the main test thread; use continuations on I/O threads, never
-sleeps/polling as proof of completion. See [Tests](GUIDELINES.md#tests),
-[Module layout](GUIDELINES.md#module-layout) and
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+sleeps/polling as proof of completion. See [Tests](docs/GUIDELINES.md#tests),
+[Module layout](docs/GUIDELINES.md#module-layout) and
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 | Evidence | Required coverage; reuse existing entry points |
 | --- | --- |

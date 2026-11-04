@@ -96,6 +96,8 @@ friend Base;
 public:
   using Hooks<Impl>::SignMsg;
   using Hooks<Impl>::signMsg;
+  TxFrameBuf allocFrameTx() { return impl()->frameStorageTx(); }
+
   const Impl &signer_() const { return *static_cast<const Impl *>(this); }
 
   explicit LinkTx(SessionConfig config, TxLimits limits = {},
@@ -284,7 +286,10 @@ public:
 	!body || !body->administrative()) return TxSelect::Invalid;
     if (m_preparing || (m_resetArmed && body->msgType() != "A" && body->msgType() != "5"))
       return TxSelect::Held;
-    uint64_t charge = body->memory() + ZmHeapAllocSize<sizeof(ControlQueue::Node)>{};
+    uint64_t charge = body->memory();
+    constexpr uint64_t overhead = ZmHeapAllocSize<sizeof(ControlQueue::Node)>{};
+    if (charge > UINT64_MAX - overhead) return TxSelect::Overload;
+    charge += overhead;
     if (charge > m_limits.queuedBytes || m_bytes > m_limits.queuedBytes - charge)
       return TxSelect::Overload;
     m_commands.push(ControlItem{ZuMv(body), connection, charge});
@@ -401,7 +406,7 @@ public:
       Session::Msg control;
       control.p<Session::HeartBt>(Session::HeartBt{});
       Fmt::Error error;
-      auto body = TxBody::control(control, error, Transport::FIX4, Base::limits().codec);
+      auto body = TxBody::captureControl(control, error, Transport::FIX4, Base::limits().codec);
       if (!error && control_(connection, Base::epoch_(), ZuMv(body)) != TxSelect::Accepted)
 	error = {Fmt::ErrorCode::Size};
       if (error) { fail(error); return true; }
@@ -636,7 +641,7 @@ private:
     ++m_faults; impl()->faultTx(context, error);
   }
 
-  bool frameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime original) {
+  bool frameTx(TxBody::Ref body, TxContext context, TxImage frame, ZuDateTime original) {
     if (m_resetArmed && body->msgType() == "A" && context.seqNo != 1) {
       fail({Fmt::ErrorCode::Value, 34}); return false;
     }

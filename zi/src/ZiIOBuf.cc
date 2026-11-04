@@ -12,7 +12,7 @@ namespace Zi {
   ZtEnumImplNS(IOBufType);
 }
 
-#ifndef _WIN32
+#if Zi_URing
 #include <sys/syscall.h>
 #include <sys/eventfd.h>
 
@@ -22,6 +22,7 @@ ZmRef<Zi::IOBuf> Zi::IOBufRing::alloc(void *, uint32_t) { return {}; }
 
 bool Zi::IOBufRing::init(unsigned ringSize)
 {
+  if (!ringSize || ringSize > ZiIOBuf_MaxRingSize) return false;
   io_uring_params params{};
   size_t sqSize, cqSize;
   uint8_t *map;
@@ -66,22 +67,18 @@ bool Zi::IOBufRing::init_(unsigned ringSize, unsigned bufSize)
   if (!init(ringSize)) return false;
   m_bufSize = bufSize;
   m_bufCount = ringSize;
+  m_slotSize = (bufSize + ZiIOBuf_Align - 1) & ~(ZiIOBuf_Align - 1);
   // Populate writable pages during initialization, before the first receive.
   m_bufs = static_cast<uint8_t *>(mmap(nullptr,
-    size_t(bufSize) * ringSize, PROT_READ | PROT_WRITE,
+    size_t(m_slotSize) * ringSize, PROT_READ | PROT_WRITE,
     MAP_PRIVATE | MAP_ANONYMOUS | MAP_POPULATE, -1, 0));
   if (m_bufs == MAP_FAILED) { m_bufs = nullptr; final(); return false; }
-  m_free.init(ZmRingParams{}.size((ringSize + 1) * Free::MsgSize)
-    .spin(0).timeout(0));
-  if (m_free.open(Free::Read | Free::Write) != Zu::OK) {
-    final();
-    return false;
-  }
   for (unsigned i = 0; i < ringSize; ++i) {
-    auto slot = static_cast<uint8_t **>(m_free.push());
-    *slot = m_bufs + size_t(i) * bufSize;
-    m_free.push2(slot);
+    auto data = m_bufs + size_t(i) * m_slotSize;
+    reinterpret_cast<ZmAtomic<uintptr_t> *>(data)->store_(
+      i + 1 < ringSize ? uintptr_t(data + m_slotSize) : 0);
   }
+  m_free = uintptr_t(m_bufs);
   return true;
 }
 
@@ -89,7 +86,7 @@ bool Zi::IOBufRing::init(unsigned ringSize, unsigned bufSize)
 {
   if (!init_(ringSize, bufSize)) return false;
   // The ring's payload mapping is one fixed-buffer registration, at index zero.
-  iovec region{m_bufs, size_t(bufSize) * ringSize};
+  iovec region{m_bufs, size_t(m_slotSize) * ringSize};
   if (syscall(__NR_io_uring_register, m_fd, IORING_REGISTER_BUFFERS,
       &region, 1) >= 0) return true;
   final();
@@ -98,20 +95,26 @@ bool Zi::IOBufRing::init(unsigned ringSize, unsigned bufSize)
 
 uint8_t *Zi::IOBufRing::allocSlot()
 {
-  if (m_fd < 0) return nullptr;
-  auto slot = m_free.tryShift();
-  if (!slot) return nullptr;
-  auto data = *slot;
-  m_free.shift2();
-  return data;
+  uintptr_t head;
+loop:
+  head = m_free.load_();
+  if (ZuUnlikely(!head)) return nullptr;
+  if (ZuUnlikely(head & 1)) { ZmAtomic_acquire(); goto loop; }
+  if (ZuUnlikely(m_free.cmpXch(head | 1, head) != head)) goto loop;
+  m_free = reinterpret_cast<ZmAtomic<uintptr_t> *>(head)->load_();
+  return reinterpret_cast<uint8_t *>(head);
 }
 
 void Zi::IOBufRing::free(uint8_t *data)
 {
-  auto slot = static_cast<uint8_t **>(m_free.tryPush());
-  ZmAssert(slot);
-  *slot = data;
-  m_free.push2(slot);
+  ZmAssert(index(data) < m_bufCount &&
+    data == m_bufs + size_t(index(data)) * m_slotSize);
+  uintptr_t head;
+loop:
+  head = m_free.load_();
+  if (head & 1) { ZmAtomic_acquire(); goto loop; }
+  reinterpret_cast<ZmAtomic<uintptr_t> *>(data)->store_(head);
+  if (m_free.cmpXch(uintptr_t(data), head) != head) goto loop;
   if (m_waiting.load_() && m_waiting.xch(0)) {
     uint64_t n = 1;
     while (write(m_returnFD, &n, sizeof(n)) < 0 && errno == EINTR);
@@ -136,7 +139,9 @@ void Zi::IOBufRing::wait()
 
 void Zi::IOBufRing::final()
 {
-  // The allocator owner releases all buffers and I/O before destroying its ring.
+  // Owner teardown has already drained buffers and unbound the service.
+  // Its destructor asserts that no loop or kernel operation still owns it;
+  // finalization never posts work or waits for an I/O thread.
   if (m_io) {
     auto io = m_io;
     m_io = nullptr;
@@ -154,12 +159,12 @@ void Zi::IOBufRing::final()
   }
   m_sq = {};
   m_cq = {};
-  m_free.close();
+  m_free.store_(0);
   if (m_bufs) {
-    munmap(m_bufs, size_t(m_bufSize) * m_bufCount);
+    munmap(m_bufs, size_t(m_slotSize) * m_bufCount);
     m_bufs = nullptr;
   }
-  m_bufSize = m_bufCount = 0;
+  m_bufSize = m_bufCount = m_slotSize = 0;
 }
 
 Zi::IOBufRxRing::~IOBufRxRing() { final(); }

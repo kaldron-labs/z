@@ -365,7 +365,7 @@ void DiscoveryRequest::queried(ZiResolver_::QueryResult result)
   auto msg = ZuMv(result).template p<ZiResolver_::DNSMsg>();
   SvcRecords records;
   auto e = parseHTTPS(
-    records, ZuBSpan{msg.buf.data(), msg.buf.length()}, m_query, m_limits);
+    records, ZuBSpan{msg.buf}, m_query, m_limits);
   if (!e.ok()) {
     if (e.code == DiscoveryCode::NoRecord &&
 	m_blindFallback && !m_advertised) {

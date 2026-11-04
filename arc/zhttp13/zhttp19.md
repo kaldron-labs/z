@@ -50,11 +50,11 @@ The work is complete only when all of the following are true:
 
 ## Engineering Constraints
 
-- `GUIDELINES.md` compliance is the overriding engineering constraint for this
+- `docs/GUIDELINES.md` compliance is the overriding engineering constraint for this
   entire plan.  Read and apply its relevant sections before each stage; where
   this document's suggested type, API, queue, ownership, allocation, or file
-  organization conflicts with `GUIDELINES.md`, change the implementation plan
-  detail to comply with `GUIDELINES.md` while preserving the required outcomes
+  organization conflicts with `docs/GUIDELINES.md`, change the implementation plan
+  detail to comply with `docs/GUIDELINES.md` while preserving the required outcomes
   from `zhttp18.md`.
 - Headers contain `ZtEnumStruct`/`ZtFlagsStruct` declarations only.  Every
   corresponding `ZtEnumImpl*`/`ZtFlagsImpl*` definition must be in the owning

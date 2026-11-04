@@ -33,6 +33,5 @@ int main(int argc, char **argv)
   Zfb::Buffer out;
   ZuCheck(Zfb::save(out, row) == Zfb::Error::OK);
   ZuCheck(Zfb::verify<exchange::Row>(out));
-  ZuCheck(FlatcFixture::write(argv[2], ZuCSpan{
-    reinterpret_cast<const char *>(out.data()), out.length()}));
+  ZuCheck(FlatcFixture::write(argv[2], out));
 }

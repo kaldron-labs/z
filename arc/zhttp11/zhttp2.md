@@ -253,7 +253,7 @@ QPACK tests must cover:
   exactly once.
 - Existing RFC decode vectors remain unchanged.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit tests for hard tabs, Z containers, bounded scratch storage, no hidden
 gathers, and deterministic assertions.  Repair all findings before Slice 2.
@@ -285,7 +285,7 @@ identical.
 - Count and emit consume one plan and produce exactly equal lengths.
 - Plans cannot outlive their callback-scoped source spans by API design.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit borrowed lifetime, side-effect-free planning, naming length, template
 use, and absence of STL or generic abstraction overhead.  Repair all findings
@@ -324,7 +324,7 @@ read Rx-owned peer settings from the encoder.
 - Peer settings cause no allocation above the local ceiling.
 - HPACK decoder RFC vectors remain green.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit Tx ownership, local/no-lock hashes, pre-sizing, failure atomicity,
 borrowed hash keys, and SETTINGS cross-shard handoff.  Repair all findings
@@ -365,7 +365,7 @@ table access.
   header-block order.
 - Header encoding adds no per-field heap allocation or payload/name copy.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit the plan/emit/commit boundary, Tx serialization, callback lifetimes,
 failure ordering, and active-path allocation.  Repair all findings before
@@ -404,7 +404,7 @@ reference before emitting its prefix.
 - Literal fallback remains correct when no eligible name or tracking slot
   exists.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit bounded duplicate-chain traversal, exact/name hash consistency,
 reference tracking, failure atomicity, and absence of post-emission
@@ -438,7 +438,7 @@ internal failure.
 - Capacity and failure paths are deterministic and allocation-bounded.
 - Existing HPACK/QPACK error handling and connection isolation remain intact.
 
-#### `GUIDELINES.md` alignment audit and repair
+#### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit overflow checks, switch-based representation dispatch, flat control
 flow, assertions, and absence of compatibility code or silent recovery.
@@ -487,7 +487,7 @@ suite exposes otherwise undiagnosable memory corruption.
   container growth, gathering, and per-field heap allocation.
 - `git diff --check -- zhttp` is clean.
 
-#### Final `GUIDELINES.md` alignment audit and repair
+#### Final `docs/GUIDELINES.md` alignment audit and repair
 
 Before handoff:
 

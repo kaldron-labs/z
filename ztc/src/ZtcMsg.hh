@@ -177,7 +177,8 @@ ZuAssert(sizeof(Hdr) == 4);
 
 inline ZmRef<ZiIOBuf> frameBuf(ZmRef<ZiIOBuf> buf) {
   ZuAssert(sizeof(Hdr) <= Builder::Align);
-  buf->skip = Builder::Align;
+  buf->skip = (buf->skip + sizeof(Hdr) + Builder::Align - 1) &
+    ~(Builder::Align - 1);
   return buf;
 }
 

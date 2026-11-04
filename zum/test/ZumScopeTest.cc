@@ -197,7 +197,7 @@ static void offlineAccess()
 
 static void outputGrowth()
 {
-  ZuTestScope(outputGrowth);
+  ZuTestScopeRT(outputGrowth);
   Zum::Client client{.id = "client", .appID = 1};
   Zum::ClientAccess access{.clientID = "client", .appID = 1};
   Zum::IDVec ids;
@@ -216,14 +216,14 @@ static void outputGrowth()
   for (unsigned attempt = 0; attempt < 2; ++attempt) {
     select.begin(access, true, &ids);
     for (unsigned i = 0; i < Names; ++i) {
-      ZuCheck(select.step() == Zum::ScopeSelect::Lookup && select.id() == i + 1);
+      ZuCheckRT(select.step() == Zum::ScopeSelect::Lookup && select.id() == i + 1);
       Zum::String name; name << "scope." << i;
-      ZuCheck(select.role(Zum::Role{.appID = 1, .id = i + 1, .name = ZuMv(name)}) ==
+      ZuCheckRT(select.role(Zum::Role{.appID = 1, .id = i + 1, .name = ZuMv(name)}) ==
 	Zum::ScopeError::OK);
     }
-    ZuCheck(select.step() == Zum::ScopeError::OK);
+    ZuCheckRT(select.step() == Zum::ScopeError::OK);
     auto result = select.take();
-    ZuCheck(result.scope == expected && result.roleIDs.length() == Names);
+    ZuCheckRT(result.scope == expected && result.roleIDs.length() == Names);
   }
 }
 

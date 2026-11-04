@@ -40,6 +40,7 @@
 #include <zlib/ZePlatform.hh>
 
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 
 // ADL tag for streams accepting ownership of transmit buffers.
 inline ZuFalse ZiIsTxStream_(...);
@@ -99,6 +100,39 @@ public:
     if (!ok) m_buf = {};
     stream.m_failed = false;
     return *this;
+  }
+
+  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
+    if (ZuUnlikely(!buf || offset > buf->length || length > buf->length - offset))
+      return appendRange(Zi::RxRange{});
+    return appendRange(Zi::RxRange{ZuMv(buf), offset, length});
+  }
+
+  bool appendRange(Zi::RxRange range) {
+    if (!flush_(false)) return false;
+    if (ZuUnlikely(!range.buf || range.offset > range.buf->size ||
+	range.length > range.buf->size - range.offset)) {
+      fail();
+      return false;
+    }
+    if (!range.length) return true;
+    if (ZuUnlikely(!impl()->sendRange_(ZuMv(range)))) {
+      fail();
+      return false;
+    }
+    return true;
+  }
+
+  // A protocol may retain caller storage before ordinary buffer adoption.
+  // True means handled, including a sticky failure; false uses normal adoption.
+  bool appendBuf_(ZmRef<IOBuf> &) { return false; }
+
+  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+    if (head > buf.skip || tail > buf.avail()) return false;
+    uint64_t length = uint64_t(buf.length) + head + tail;
+    uint64_t reserve = uint64_t(m_headRoom) + m_tailRoom;
+    return reserve < m_maxSize && length <= m_maxSize - reserve &&
+      buf.skip - head >= m_headRoom && buf.avail() - tail >= m_tailRoom;
   }
 
   unsigned maxSize() const { return m_maxSize; }
@@ -211,13 +245,13 @@ private:
   void append(ZmRef<ZiIOBuf> buf) {
     if (ZuUnlikely(m_failed)) return;
     if (ZuUnlikely(!buf || buf->failed())) { fail(); return; }
+    if (impl()->appendBuf_(buf)) return;
     uint64_t reserve = uint64_t(m_headRoom) + m_tailRoom;
     if (ZuUnlikely(reserve >= m_maxSize)) { fail(); return; }
     // A codec may detach a jumbo buffer or leave different framing geometry.
     // Copy directly into final frame buffers only when adoption cannot fit;
     // never send an oversized protocol frame or overwrite missing headroom.
-    if (buf->length > m_maxSize - reserve || buf->skip < m_headRoom ||
-	buf->avail() < m_tailRoom) {
+    if (!impl()->canAdopt_(*buf)) {
       append(buf->data(), buf->length);
       return;
     }
@@ -270,11 +304,15 @@ public:
 
   // A rejected printable may leave a valid prefix; send it once without
   // clearing failure. Rejected requests/send failures have released m_buf.
-  bool flush() {
-    if (m_buf && m_buf->length) sendBuf(ZuMv(m_buf), true);
+protected:
+  bool flush_(bool final) {
+    if (m_buf && m_buf->length) sendBuf(ZuMv(m_buf), final);
     m_buf = {};
     return !m_failed;
   }
+
+public:
+  bool flush() { return flush_(true); }
   TxStream &operator <<(Flush) {
     flush();
     return *this;
@@ -331,6 +369,25 @@ public:
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     if (ZuUnlikely(m_below.failed())) return nullptr;
     return m_below.allocBuf(headRoom);
+  }
+
+  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+    uint64_t addedHead = uint64_t(head) + this->headRoom() - m_below.headRoom();
+    uint64_t addedTail = uint64_t(tail) + this->tailRoom() - m_below.tailRoom();
+    uint64_t reserve = uint64_t(this->headRoom()) + this->tailRoom();
+    uint64_t length = uint64_t(buf.length) + head + tail;
+    if (reserve >= this->maxSize() || length > this->maxSize() - reserve ||
+	addedHead > buf.skip || addedTail > buf.avail()) return false;
+    return m_below.canAdopt_(buf, unsigned(addedHead), unsigned(addedTail));
+  }
+
+  bool prepareAppend_(ZmRef<IOBuf> &) { return false; }
+  bool appendBuf_(ZmRef<IOBuf> &buf) {
+    return impl()->prepareAppend_(buf);
+  }
+
+  bool sendRange_(Zi::RxRange range) {
+    return impl()->prepareRange_(ZuMv(range));
   }
 
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool flush) {

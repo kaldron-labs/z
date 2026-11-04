@@ -1691,6 +1691,7 @@ public:
     Schema schema, IOBufAllocFn bufAllocFn);
 
   // Closed store tables may outlive the previous BFBS owner.
+  void bufAllocFn(IOBufAllocFn fn) { m_bufAllocFn = ZuMv(fn); }
   void schema(Schema schema) {
     m_rowAlign = Zfb::Wire::Align;
     for (auto &field: m_xFields) {

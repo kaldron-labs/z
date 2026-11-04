@@ -46,7 +46,7 @@ Apply these rules to every code change:
 
 - Use the existing `ZfStruct`/URI form machinery and `scopeContains()`; do not
   hand-code JSON, number, or form serialization/parsing. This follows
-  `GUIDELINES.md` sections “Framework fit” and “Metadata”.
+  `docs/GUIDELINES.md` sections “Framework fit” and “Metadata”.
 - Extend the existing prompt validation rather than adding a second prompt
   parser. Keep one parsed representation and one validation path. This follows
   the “Red Flag: reimplementing lower-level Z Framework capabilities” and
@@ -257,7 +257,7 @@ intervals to wait for database/saga completion.
 ## Build and validation policy
 
 Retain the current configured build throughout this repair. Follow the build
-rules in `GUIDELINES.md` under “Build configuration” and “Acceptance”:
+rules in `docs/GUIDELINES.md` under “Build configuration” and “Acceptance”:
 
 - Batch all production-source edits, then all test/dependent edits. Do not
   rebuild or retest after individual edits or small intermediate changes.

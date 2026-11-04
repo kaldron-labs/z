@@ -621,7 +621,7 @@ make test
 ```
 
 Release validation must use the repository-wide sequence required by
-`GUIDELINES.md`:
+`docs/GUIDELINES.md`:
 
 ```sh
 ./z.config /opt/z

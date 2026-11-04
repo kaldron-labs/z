@@ -14,6 +14,11 @@
 #include <zlib/ZiLib.hh>
 #endif
 
+#include <limits.h>
+#include <stdint.h>
+
+#include <zlib/ZuUnion.hh>
+
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmFn.hh>
 
@@ -24,79 +29,123 @@ class ZiConnection;
 
 using ZiTOS = ZuUnion<void, uint8_t>;	// IP TOS raw byte
 
-struct ZiIOContext {
+struct ZiRxContext {
   ZiConnection	*cxn = nullptr;	// connection - set by ZiMultiplex
   ZmAnyFn	fn;		// callback - set by app
   ZmRef<Zi::IOBuf> buf;		// original backing, moved through the I/O path
-  unsigned	offset = 0;	// Tx accepted bytes; Rx length lives in buf
-  int		length = 0;	// length - set by ZiMultiplex (-1 on error)
+  ZiSockAddr	addr;		// source address for UDP
   unsigned	flags = 0;	// receive message flags
-  ZiSockAddr	addr;		// UDP - set by app (send) / ZiMultiplex (recv)
   ZiTOS		tos;		// TOS raw byte
+  uint8_t	state = 0;	// internal control, distinct from native flags
 
-  bool		disconnect_ = false;
+  enum { Disconnect = 1 };
 
-  // Rx delivers the original buffer; consumers move buf out and keep fn armed.
-  // Tx calls fn without buf to select pending output, and with buf to report
-  // its final result, once all kernel holds retire. Selecting subsequent
-  // output does not imply retirement of an earlier buffer. The backend alone
-  // updates offset/length; the callback never repeats that progress update.
-
-private:
-friend ZiConnection;
-  // initialize (called from within send/recv)
+  // Available input is buf->length, not the latest receive count. A callback
+  // may move the original backing out while leaving its callback armed.
   template <typename L>
-  void init_(L &&l) {
+  void init(L &&l, ZmRef<Zi::IOBuf> buf_ = {}) {
     fn = ZuFwd<L>(l);
-    buf = nullptr;
-    offset = length = 0;
+    buf = ZuMv(buf_);
     flags = 0;
-    disconnect_ = false;
+    state = 0;
     tos = {};
   }
 
-public:
-  // send/receive
+  bool initialized() const { return bool(fn); }
+  void complete() { fn = {}; buf = nullptr; }
+  bool completed() const { return !fn; }
+  void disconnect() { complete(); state |= Disconnect; }
+  bool disconnected() const { return state & Disconnect; }
+
+  // True ends immediate callback processing; complete() separately disarms it.
+  bool operator()();
+};
+using ZiRxFn = ZmFn<bool(ZiRxContext &), ZmFnHeapID<"ZiRxFn">>;
+inline bool ZiRxContext::operator ()() { return fn.as<ZiRxFn>()(*this); }
+
+struct ZiTxContext {
+  ZiConnection	*cxn = nullptr;	// physical connection, also without backing
+  ZmAnyFn	fn;		// output selection and safe retirement callback
+  ZmRef<Zi::IOBuf> buf;		// original backing retained by this operation
+  ZiSockAddr	addr;		// destination address for UDP
+  int		length = 0;	// latest data result (-1 on error)
+  unsigned	txOffset = 0;	// physical backing offset, owned by this send
+  unsigned	txRemaining = UINT_MAX; // UINT_MAX: select buf's published span
+  ZiTOS		tos;		// TOS raw byte
+  uint8_t	flags = 0;	// packed operation state
+
+  enum { TxDataDone = 1, Disconnect = 2, Range = 4 };
+
+  // Tx calls fn without buf to select pending output, and with buf to report
+  // its final result, once all kernel holds retire. Selecting subsequent
+  // output does not imply retirement of an earlier buffer. Native next-output
+  // callbacks carry the preceding data result in length (-1 on failure).
+  // Retained-range progress belongs to this context and leaves its backing
+  // descriptor unchanged. Ordinary exclusive buffers retain their existing
+  // skip/length advancement semantics.
+
+  void txRange(ZmRef<Zi::IOBuf> backing, unsigned offset, unsigned length_) {
+    buf = ZuMv(backing); txOffset = offset; txRemaining = length_; flags |= Range;
+  }
+  void txSelect() {
+    if (txRemaining == UINT_MAX) {
+      txOffset = buf->skip; txRemaining = buf->length;
+    }
+  }
+  uint8_t *txData() const { return buf->data_() + txOffset; }
+  void txAdvance(unsigned n) {
+    txOffset += n; txRemaining -= n;
+    if (!(flags & Range)) buf->advance(n);
+  }
+
+  // Select output; send_(fn) uses its callback's return to decide whether to pump.
   template <typename L>
-  void init(L &&l, ZmRef<Zi::IOBuf> buf_ = {}, unsigned offset_ = 0) {
+  void init(L &&l, ZmRef<Zi::IOBuf> buf_ = {}) {
     fn = ZuFwd<L>(l);
     buf = ZuMv(buf_);
-    offset = offset_; length = 0;
+    length = 0;
     flags = 0;
-    disconnect_ = false;
+    txRemaining = UINT_MAX;
     tos = {};
   }
   // UDP send
   template <typename L, typename Addr>
   void init(L &&l,
-    ZmRef<Zi::IOBuf> buf_, unsigned offset_,
+    ZmRef<Zi::IOBuf> buf_,
     Addr &&addr_, ZiTOS tos_ = {})
   {
-    init(ZuFwd<L>(l), ZuMv(buf_), offset_);
+    init(ZuFwd<L>(l), ZuMv(buf_));
     addr = ZuFwd<Addr>(addr_);
     tos = tos_;
   }
+
   bool initialized() const { return bool(fn); }
 
-  // complete send/receive without disconnecting
+  // Disarm without clearing a previously reported result or disconnect status.
   void complete() {
     fn = {};
     buf = nullptr;
+    txRemaining = UINT_MAX; flags &= ~Range;
   }
   bool completed() const { return !fn; }
 
-  // complete send/receive and disconnect
+  // Disarm and request connection teardown.
   void disconnect() {
     complete();
-    disconnect_ = true;
+    flags |= Disconnect;
   }
   bool disconnected() const {
-    return disconnect_;
+    return flags & Disconnect;
   }
 
-  bool operator()();	// return true if complete
+  // True ends immediate callback processing; complete() separately disarms it.
+  bool operator()();
 };
-using ZiIOFn = ZmFn<bool(ZiIOContext &), ZmFnHeapID<"ZiIOFn">>;
-inline bool ZiIOContext::operator ()() { return fn.as<ZiIOFn>()(*this); }
+using ZiTxFn = ZmFn<bool(ZiTxContext &), ZmFnHeapID<"ZiTxFn">>;
+inline bool ZiTxContext::operator ()() {
+  txRemaining = UINT_MAX;
+  flags &= ~Range;
+  return fn.as<ZiTxFn>()(*this);
+}
 
 #endif /* ZiIOContext_HH */

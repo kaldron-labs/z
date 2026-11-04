@@ -153,8 +153,18 @@ int main(int argc, char **argv)
   }
   App app(server, port, repeats, payload_len);
 
+  uint64_t needed = 4 * ((uint64_t(payload_len) + (16U<<10) - 1) / (16U<<10));
+  unsigned ringSize = needed > ZiMxParams::MaxRingSize ?
+    unsigned(ZiMxParams::MaxRingSize) : unsigned(needed);
   ZiMultiplex mx(
       ZiMxParams()
+    .rxRingSize(ringSize < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : ringSize)
+    .txRingSize(ringSize < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : ringSize)
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxBuf, (16 << 10), ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Ztls.RxBuf">>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })

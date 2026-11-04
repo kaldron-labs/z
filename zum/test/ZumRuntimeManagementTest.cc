@@ -9,8 +9,11 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZfCf.hh>
 #include "../../zdb/test/ZdbTestCf.hh"
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZvMxParams.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZdbMemStore.hh>
 #include <zlib/ZumMgmt.hh>
 #include <zlib/zumd_db.hh>
@@ -169,25 +172,27 @@ static Zum::Cred loadCred(Zum::DB *context, ZuBSpan id)
 
 static void runtimeManagement()
 {
-  ZuTestScope(runtimeManagement);
+  ZuTestScopeRT(runtimeManagement);
   ZiLog::init("ZumRuntimeManagementTest");
   ZiLog::level(0);
   ZiLog::start();
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
-  ZuCheck(mx.start());
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
+  ZuCheckRT(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
   db->requests = new Zum::Requests{};
-  ZuCheck(db->requests->init(&mx, 5, 64));
+  ZuCheckRT(db->requests->init(&mx, 5, 64));
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx,
     ZdbHandler{.upFn = dbUp, .downFn = dbDown}, store);
   Zum::registerSchema(db);
   ZmRef<Zum::DB> context = db;
-  ZuCheck(db->start());
+  ZuCheckRT(db->start());
   db->active.wait();
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 9003, .name = "action-saga", .state = Zum::State::Active,
     .nextActionID = 0, .authVersion = 7, .version = 3,
     .created = 90, .updated = 100, .audience = "https://action-saga.example"}));
@@ -209,44 +214,44 @@ static void runtimeManagement()
       });
     });
   };
-  ZuCheck(runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 0,
+  ZuCheckRT(runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 0,
     .name = "first", .label = "First action", .created = 101,
     .oldAppVersion = 3, .oldAuthVersion = 7, .oldUpdated = 100}),
     ZdbSagaID{9003}));
-  ZuCheck(actionAddState(1, 4, 8, 101));
+  ZuCheckRT(actionAddState(1, 4, 8, 101));
   auto firstAction = loadAction(context, 0, 9003);
-  ZuCheck(firstAction.appID == 9003 && firstAction.name == "first" &&
+  ZuCheckRT(firstAction.appID == 9003 && firstAction.name == "first" &&
     firstAction.label == "First action" && !firstAction.owner &&
     firstAction.state == Zum::State::Active &&
     firstAction.origin == Zum::Origin::Custom);
   // A stale app snapshot cannot allocate another position.
-  ZuCheck(!runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 0,
+  ZuCheckRT(!runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 0,
     .name = "stale", .created = 102, .oldAppVersion = 3,
     .oldAuthVersion = 7, .oldUpdated = 100}), ZdbSagaID{9004}));
-  ZuCheck(actionAddState(1, 4, 8, 101));
+  ZuCheckRT(actionAddState(1, 4, 8, 101));
   // Duplicate names fail after reserving the position; compensation must
   // restore every app field, preserving the previously published action.
-  ZuCheck(!runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 1,
+  ZuCheckRT(!runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 1,
     .name = "first", .created = 102, .oldAppVersion = 4,
     .oldAuthVersion = 8, .oldUpdated = 101}), ZdbSagaID{9005}));
-  ZuCheck(actionAddState(1, 4, 8, 101));
-  ZuCheck(!loadAction(context, 1, 9003).appID);
+  ZuCheckRT(actionAddState(1, 4, 8, 101));
+  ZuCheckRT(!loadAction(context, 1, 9003).appID);
   firstAction = loadAction(context, 0, 9003);
-  ZuCheck(firstAction.name == "first" && !firstAction.owner &&
+  ZuCheckRT(firstAction.name == "first" && !firstAction.owner &&
     firstAction.label == "First action");
-  ZuCheck(runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 1,
+  ZuCheckRT(runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9003, .actionID = 1,
     .name = "second", .created = 103, .oldAppVersion = 4,
     .oldAuthVersion = 8, .oldUpdated = 101}), ZdbSagaID{9006}));
-  ZuCheck(actionAddState(2, 5, 9, 103));
+  ZuCheckRT(actionAddState(2, 5, 9, 103));
   // A missing application is a business rejection inside the saga. Its pending
   // request must disappear on rollback, without deactivating the database.
-  ZuCheck(!runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9999,
+  ZuCheckRT(!runSaga(db, Zum::appActionAdd(Zum::AppActionAddArgs{.appID = 9999,
     .actionID = UINT32_MAX, .name = "missing-app", .created = 104,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::actionAdd, .idempotence = "missing-app",
       .requestDigest = Zum::Bytes{ZuBSpan{"request"}}, .expires = 86400,
       .created = 104, .updated = 104}}), ZdbSagaID{9007}));
-  ZuCheck(ZmBlock<bool>{}([context = context.ptr()](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context = context.ptr()](auto wake) mutable {
     auto requests = context->requests;
     requests->run(0, [requests, wake = ZuMv(wake)]() mutable {
       requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
@@ -255,7 +260,7 @@ static void runtimeManagement()
           ZdbRowRef<Zum::IdemRequest> row) mutable { wake(!row); });
     });
   }));
-  ZuCheck(actionAddState(2, 5, 9, 103));
+  ZuCheckRT(actionAddState(2, 5, 9, 103));
   auto secondAction = loadAction(context, 1, 9003);
   // An unchanged catalog still completes its request while skipping business
   // writes; no application version or authority change is warranted.
@@ -270,17 +275,17 @@ static void runtimeManagement()
 	.appID = 9003, .operationIDs = {Zum::MgmtOp::roleQuery}},
       .ifNoneMatch = "*", .updated = 104}), id);
   };
-  ZuCheck(invalidAdminActor(Zum::ActorKind::User, "99999999", ZdbSagaID{12016}));
-  ZuCheck(invalidAdminActor(Zum::ActorKind::User, "41junk", ZdbSagaID{12017}));
-  ZuCheck(invalidAdminActor(Zum::ActorKind::Client, "missing-admin-client", ZdbSagaID{12018}));
-  ZuCheck(actionAddState(2, 5, 9, 103));
-  ZuCheck(runSaga(db, Zum::catalogPublish(Zum::CatalogPublishArgs{.before = unchanged, .after = unchanged,
+  ZuCheckRT(invalidAdminActor(Zum::ActorKind::User, "99999999", ZdbSagaID{12016}));
+  ZuCheckRT(invalidAdminActor(Zum::ActorKind::User, "41junk", ZdbSagaID{12017}));
+  ZuCheckRT(invalidAdminActor(Zum::ActorKind::Client, "missing-admin-client", ZdbSagaID{12018}));
+  ZuCheckRT(actionAddState(2, 5, 9, 103));
+  ZuCheckRT(runSaga(db, Zum::catalogPublish(Zum::CatalogPublishArgs{.before = unchanged, .after = unchanged,
     .request = Zum::IdemRequest{.actorKind = Zum::ActorKind::Client,
       .actorID = "publisher", .operation = Zum::MgmtOp::catalogPublish,
       .idempotence = "unchanged", .requestDigest = Zum::Bytes{ZuBSpan{"manifest"}},
       .expires = 86400, .created = 105, .updated = 105}}), ZdbSagaID{9008}));
-  ZuCheck(actionAddState(2, 5, 9, 103));
-  ZuCheck(ZmBlock<bool>{}([context = context.ptr()](auto wake) mutable {
+  ZuCheckRT(actionAddState(2, 5, 9, 103));
+  ZuCheckRT(ZmBlock<bool>{}([context = context.ptr()](auto wake) mutable {
     auto requests = context->requests;
     requests->run(0, [requests, wake = ZuMv(wake)]() mutable {
       requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::Client,
@@ -293,13 +298,13 @@ static void runtimeManagement()
         });
     });
   }));
-  ZuCheck(secondAction.name == "second" && !secondAction.owner &&
+  ZuCheckRT(secondAction.name == "second" && !secondAction.owner &&
     secondAction.state == Zum::State::Active);
   // Assignment validation and its request outcome belong to the same saga.
-  ZuCheck(insertRecord(context->users, Zum::User{
+  ZuCheckRT(insertRecord(context->users, Zum::User{
     .id = 9100, .name = "assignment local",
     .handle = Zum::Bytes{ZuBSpan{"assignment local"}}}));
-  ZuCheck(insertRecord(context->users, Zum::User{
+  ZuCheckRT(insertRecord(context->users, Zum::User{
     .id = 9101, .source = Zum::UserSource::External, .name = "assignment external",
     .handle = Zum::Bytes{ZuBSpan{"assignment external"}},
     .state = Zum::State::Active}));
@@ -341,24 +346,24 @@ static void runtimeManagement()
       });
     });
   };
-  ZuCheck(addAssignment(9003, 9100, "assignment-created", 9100));
-  ZuCheck(assignmentReq("assignment-created", true));
-  ZuCheck(assignmentState(9003, 9100, true));
-  ZuCheck(!addAssignment(9003, 9100, "assignment-duplicate", 9101));
-  ZuCheck(assignmentReq("assignment-duplicate", false));
-  ZuCheck(assignmentState(9003, 9100, true));
-  ZuCheck(!addAssignment(9999, 9100, "assignment-no-app", 9102));
-  ZuCheck(assignmentReq("assignment-no-app", false));
-  ZuCheck(assignmentState(9999, 9100, false));
-  ZuCheck(!addAssignment(9003, 9999, "assignment-no-user", 9103));
-  ZuCheck(assignmentReq("assignment-no-user", false));
-  ZuCheck(assignmentState(9003, 9999, false));
-  ZuCheck(!addAssignment(9003, 9101, "assignment-external", 9104));
-  ZuCheck(assignmentReq("assignment-external", false));
-  ZuCheck(assignmentState(9003, 9101, false));
+  ZuCheckRT(addAssignment(9003, 9100, "assignment-created", 9100));
+  ZuCheckRT(assignmentReq("assignment-created", true));
+  ZuCheckRT(assignmentState(9003, 9100, true));
+  ZuCheckRT(!addAssignment(9003, 9100, "assignment-duplicate", 9101));
+  ZuCheckRT(assignmentReq("assignment-duplicate", false));
+  ZuCheckRT(assignmentState(9003, 9100, true));
+  ZuCheckRT(!addAssignment(9999, 9100, "assignment-no-app", 9102));
+  ZuCheckRT(assignmentReq("assignment-no-app", false));
+  ZuCheckRT(assignmentState(9999, 9100, false));
+  ZuCheckRT(!addAssignment(9003, 9999, "assignment-no-user", 9103));
+  ZuCheckRT(assignmentReq("assignment-no-user", false));
+  ZuCheckRT(assignmentState(9003, 9999, false));
+  ZuCheckRT(!addAssignment(9003, 9101, "assignment-external", 9104));
+  ZuCheckRT(assignmentReq("assignment-external", false));
+  ZuCheckRT(assignmentState(9003, 9101, false));
   // Replacing an assignment with itself persists its request result without
   // advancing either assignment or application authority/version.
-  ZuCheck(runSaga(db, Zum::assignmentChange(Zum::AssignmentChangeArgs{.appID = 9003, .userID = 9100,
+  ZuCheckRT(runSaga(db, Zum::assignmentChange(Zum::AssignmentChangeArgs{.appID = 9003, .userID = 9100,
     .oldState = Zum::State::Active, .newState = Zum::State::Active,
     .version = 1, .authVersion = 1, .oldUpdated = 106, .updated = 107,
     .appVersion = 5, .appAuthVersion = 9, .appUpdated = 103,
@@ -367,9 +372,9 @@ static void runtimeManagement()
       .expires = 86400, .version = 1, .created = 107, .updated = 107},
     .assignRoles = true, .ifMatch = "\"v1\""}),
     ZdbSagaID{9105}));
-  ZuCheck(assignmentState(9003, 9100, true));
-  ZuCheck(actionAddState(2, 5, 9, 103));
-  ZuCheck(ZmBlock<bool>{}([context = context.ptr()](auto wake) mutable {
+  ZuCheckRT(assignmentState(9003, 9100, true));
+  ZuCheckRT(actionAddState(2, 5, 9, 103));
+  ZuCheckRT(ZmBlock<bool>{}([context = context.ptr()](auto wake) mutable {
     context->requests->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
         Zum::String{"admin"}, Zum::ActionID(Zum::MgmtOp::assignmentRoles),
@@ -380,13 +385,13 @@ static void runtimeManagement()
         });
     });
   }));
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9003, .id = 500, .name = "assignable", .state = Zum::State::Active}));
   // An unchanged request still obeys its ETag and application preconditions.
   for (unsigned test = 0; test < 4; ++test) {
     Zum::String key;
     key << "bad-member-state-" << test;
-    ZuCheck(!runSaga(db, Zum::assignmentChange(Zum::AssignmentChangeArgs{
+    ZuCheckRT(!runSaga(db, Zum::assignmentChange(Zum::AssignmentChangeArgs{
       .appID = Zum::AppID(test == 3 ? 9999 : 9003), .userID = 9100,
       .oldState = Zum::State::Active,
       .newState = Zum::State::T(test == 1 ? Zum::State::Suspended : Zum::State::Active),
@@ -396,9 +401,9 @@ static void runtimeManagement()
         .operation = Zum::MgmtOp::assignmentState, .idempotence = key,
         .expires = 86400, .version = 1, .created = 108, .updated = 108},
       .ifMatch = test < 2 ? "\"v99\"" : "\"v1\""}), ZdbSagaID{9300 + test}));
-    ZuCheck(assignmentState(9003, 9100, true));
-    ZuCheck(actionAddState(2, 5, 9, 103));
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key](auto wake) mutable {
+    ZuCheckRT(assignmentState(9003, 9100, true));
+    ZuCheckRT(actionAddState(2, 5, 9, 103));
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key](auto wake) mutable {
       context->requests->run(0, [context, key, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, Zum::ActionID(Zum::MgmtOp::assignmentState), key),
@@ -408,17 +413,17 @@ static void runtimeManagement()
       });
     }));
   }
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9003, .id = 501, .name = "disabled", .state = Zum::State::Disabled}));
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9003, .id = 502, .name = "deleted", .state = Zum::State::Active,
     .tombstone = true}));
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9002, .id = 503, .name = "other-app", .state = Zum::State::Active}));
   // Existing projections/orphan records must not make an external or absent
   // user eligible for local role assignments.
   for (auto userID : Zum::IDVec{9101, 9999})
-    ZuCheck(insertRecord(context->assignments, Zum::Assignment{
+    ZuCheckRT(insertRecord(context->assignments, Zum::Assignment{
       .appID = 9003, .userID = userID, .state = Zum::State::Active,
       .version = 1, .created = 106, .updated = 106}));
   for (unsigned test = 0; test < 7; ++test) {
@@ -434,7 +439,7 @@ static void runtimeManagement()
     Zum::UserID userID = test < 5 ? 9100 : test == 5 ? 9101 : 9999;
     Zum::String key;
     key << "bad-role-" << test;
-    ZuCheck(!runSaga(db, Zum::assignmentChange(Zum::AssignmentChangeArgs{.appID = 9003, .userID = userID,
+    ZuCheckRT(!runSaga(db, Zum::assignmentChange(Zum::AssignmentChangeArgs{.appID = 9003, .userID = userID,
       .newRoles = ZuMv(roles), .oldState = Zum::State::Active,
       .newState = Zum::State::Active, .version = 1, .authVersion = 1,
       .oldUpdated = 106, .updated = 108, .appVersion = 5,
@@ -443,9 +448,9 @@ static void runtimeManagement()
         .operation = Zum::MgmtOp::assignmentRoles, .idempotence = key,
         .expires = 86400, .version = 1, .created = 108, .updated = 108},
       .assignRoles = true}), ZdbSagaID{9200 + test}));
-    ZuCheck(assignmentState(9003, userID, true));
-    ZuCheck(actionAddState(2, 5, 9, 103));
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key](auto wake) mutable {
+    ZuCheckRT(assignmentState(9003, userID, true));
+    ZuCheckRT(actionAddState(2, 5, 9, 103));
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key](auto wake) mutable {
       context->requests->run(0, [context, key, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, Zum::ActionID(Zum::MgmtOp::assignmentRoles), key),
@@ -455,7 +460,7 @@ static void runtimeManagement()
       });
     }));
   }
-  ZuCheck(insertRecord(context->actions, Zum::Action{
+  ZuCheckRT(insertRecord(context->actions, Zum::Action{
     .appID = 9001, .id = 5, .name = "shared"}));
   for (unsigned test = 0; test < 4; ++test) {
     Zum::String key;
@@ -482,10 +487,10 @@ static void runtimeManagement()
       change.label = "Edited label";
       change.request.operation = Zum::MgmtOp::roleUpdate;
     }
-    ZuCheck(runSaga(db, Zum::roleEdit(ZuMv(change)), ZdbSagaID{9400 + test}) == (test >= 2));
-    ZuCheck(actionAddState(2, test >= 2 ? 4 + test : 5, test >= 2 ? 10 : 9,
+    ZuCheckRT(runSaga(db, Zum::roleEdit(ZuMv(change)), ZdbSagaID{9400 + test}) == (test >= 2));
+    ZuCheckRT(actionAddState(2, test >= 2 ? 4 + test : 5, test >= 2 ? 10 : 9,
       test >= 2 ? 109 : 103));
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), test](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), test](auto wake) mutable {
       context->roles->run(0, [context, test, wake = ZuMv(wake)]() mutable {
         context->roles->find<0>(0, ZuFwdTuple(Zum::AppID{9003}, Zum::RoleID{500}),
           [test, wake = ZuMv(wake)](ZdbRowRef<Zum::Role> row) mutable {
@@ -499,7 +504,7 @@ static void runtimeManagement()
           });
       });
     }));
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, test](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key, test](auto wake) mutable {
       context->requests->run(0, [context, key, test, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, Zum::ActionID(test == 3 ?
@@ -512,7 +517,7 @@ static void runtimeManagement()
       });
     }));
   }
-  ZuCheck(insertRecord(context->actions, Zum::Action{
+  ZuCheckRT(insertRecord(context->actions, Zum::Action{
     .appID = 9002, .id = 5, .name = "shared"}));
   Zum::App stateApp{.id = 9003, .state = Zum::State::Active, .nextActionID = 2,
     .authVersion = 10, .version = 7, .updated = 109};
@@ -533,7 +538,7 @@ static void runtimeManagement()
         .operation = Zum::MgmtOp::roleState, .idempotence = key,
         .expires = 86400, .version = 1, .created = 110, .updated = 110},
       .kind = Zum::RoleEditArgs::Status, .state = state};
-    ZuCheck(runSaga(db, Zum::roleEdit(ZuMv(change)), ZdbSagaID{9500 + test}) == valid);
+    ZuCheckRT(runSaga(db, Zum::roleEdit(ZuMv(change)), ZdbSagaID{9500 + test}) == valid);
     if (valid && state != stateRole.state) {
       stateRole.state = state;
       ++stateRole.version;
@@ -542,7 +547,7 @@ static void runtimeManagement()
       ++stateApp.authVersion;
       stateApp.updated = 110;
     }
-    ZuCheck(actionAddState(2, stateApp.version, stateApp.authVersion, stateApp.updated));
+    ZuCheckRT(actionAddState(2, stateApp.version, stateApp.authVersion, stateApp.updated));
     auto role = ZmBlock<Zum::Role>{}([context = context.ptr()](auto wake) mutable {
       context->roles->run(0, [context, wake = ZuMv(wake)]() mutable {
         context->roles->find<0>(0, ZuFwdTuple(Zum::AppID{9003}, Zum::RoleID{500}),
@@ -551,10 +556,10 @@ static void runtimeManagement()
           });
       });
     });
-    ZuCheck(role.id == 500 && !role.owner && role.version == stateRole.version &&
+    ZuCheckRT(role.id == 500 && !role.owner && role.version == stateRole.version &&
       role.state == stateRole.state && role.updated == stateRole.updated &&
       role.label == stateRole.label && role.actions == stateRole.actions);
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, valid](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key, valid](auto wake) mutable {
       context->requests->run(0, [context, key, valid, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, Zum::ActionID(Zum::MgmtOp::roleState), key),
@@ -565,11 +570,11 @@ static void runtimeManagement()
       });
     }));
   }
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9001, .id = 5, .name = "shared"}));
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9002, .id = 5, .name = "shared"}));
-  ZuCheck(missingAssertion(context) == Zum::WebAuthnError::Ceremony);
+  ZuCheckRT(missingAssertion(context) == Zum::WebAuthnError::Ceremony);
 
   auto stateAction = loadAction(context, 0, 9003);
   for (unsigned test = 0; test < 6; ++test) {
@@ -585,7 +590,7 @@ static void runtimeManagement()
         .operation = Zum::MgmtOp::actionState, .idempotence = key,
         .expires = 86400, .version = 1, .created = 113, .updated = 113},
       .state = state};
-    ZuCheck(runSaga(db, Zum::actionEdit(ZuMv(change)), ZdbSagaID{9700 + test}) == valid);
+    ZuCheckRT(runSaga(db, Zum::actionEdit(ZuMv(change)), ZdbSagaID{9700 + test}) == valid);
     if (valid && state != stateAction.state) {
       stateAction.state = state;
       ++stateAction.version;
@@ -594,14 +599,14 @@ static void runtimeManagement()
       ++stateApp.authVersion;
       stateApp.updated = 113;
     }
-    ZuCheck(actionAddState(2, stateApp.version, stateApp.authVersion, stateApp.updated));
+    ZuCheckRT(actionAddState(2, stateApp.version, stateApp.authVersion, stateApp.updated));
     auto action = loadAction(context, 0, 9003);
-    ZuCheck(action.appID == 9003 && !action.id && !action.owner &&
+    ZuCheckRT(action.appID == 9003 && !action.id && !action.owner &&
       action.version == stateAction.version && action.state == stateAction.state &&
       action.updated == stateAction.updated && action.created == stateAction.created &&
       action.name == stateAction.name && action.label == stateAction.label &&
       action.origin == stateAction.origin && !action.tombstone);
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, valid](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key, valid](auto wake) mutable {
       context->requests->run(0, [context, key, valid, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, Zum::ActionID(Zum::MgmtOp::actionState), key),
@@ -625,7 +630,7 @@ static void runtimeManagement()
     });
   };
   auto expectedApp = appSnapshot();
-  ZuCheck(expectedApp.id == 9003);
+  ZuCheckRT(expectedApp.id == 9003);
   for (unsigned test = 0; test < 7; ++test) {
     bool valid = test != 0 && test != 5;
     bool stateOnly = test != 2;
@@ -641,7 +646,7 @@ static void runtimeManagement()
         .idempotence = key, .expires = 86400, .version = 1,
         .created = 114, .updated = 114},
       .stateOnly = stateOnly, .state = state};
-    ZuCheck(runSaga(db, Zum::appChange(ZuMv(change)), ZdbSagaID{9800 + test}) == valid);
+    ZuCheckRT(runSaga(db, Zum::appChange(ZuMv(change)), ZdbSagaID{9800 + test}) == valid);
     if (valid && (!stateOnly || expectedApp.state != state)) {
       if (stateOnly) {
         expectedApp.state = state;
@@ -651,14 +656,14 @@ static void runtimeManagement()
       expectedApp.updated = 114;
     }
     auto app = appSnapshot();
-    ZuCheck(app.id == expectedApp.id && !app.owner && app.name == expectedApp.name &&
+    ZuCheckRT(app.id == expectedApp.id && !app.owner && app.name == expectedApp.name &&
       app.label == expectedApp.label && app.state == expectedApp.state &&
       app.version == expectedApp.version && app.authVersion == expectedApp.authVersion &&
       app.created == expectedApp.created && app.updated == expectedApp.updated &&
       app.nextActionID == expectedApp.nextActionID &&
       app.catalogRevision == expectedApp.catalogRevision &&
       app.catalogDigest == expectedApp.catalogDigest);
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
       context->requests->run(0, [context, key, op, valid, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, op, key),
@@ -672,7 +677,7 @@ static void runtimeManagement()
   }
 
   auto expectedUser = loadUser(context, 9100);
-  ZuCheck(expectedUser.id == 9100 && expectedUser.state == Zum::State::Pending);
+  ZuCheckRT(expectedUser.id == 9100 && expectedUser.state == Zum::State::Pending);
   for (unsigned test = 0; test < 7; ++test) {
     bool stateOnly = test >= 4;
     bool valid = test != 3 && test != 4;
@@ -689,7 +694,7 @@ static void runtimeManagement()
         .created = 115, .updated = 115},
       .stateOnly = stateOnly, .state = state, .email = "updated@example.test",
       .fields = fields};
-    ZuCheck(runSaga(db, Zum::userEdit(ZuMv(change)), ZdbSagaID{9900 + test}) == valid);
+    ZuCheckRT(runSaga(db, Zum::userEdit(ZuMv(change)), ZdbSagaID{9900 + test}) == valid);
     if (valid && (!stateOnly || expectedUser.state != state)) {
       if (stateOnly) {
         expectedUser.state = state;
@@ -702,13 +707,13 @@ static void runtimeManagement()
       expectedUser.updated = 115;
     }
     auto user = loadUser(context, 9100);
-    ZuCheck(user.id == 9100 && !user.owner && user.name == expectedUser.name &&
+    ZuCheckRT(user.id == 9100 && !user.owner && user.name == expectedUser.name &&
       user.profile == expectedUser.profile && user.email == expectedUser.email &&
       user.state == expectedUser.state && user.version == expectedUser.version &&
       user.authVersion == expectedUser.authVersion && user.updated == expectedUser.updated &&
       user.source == expectedUser.source && user.handle == expectedUser.handle &&
       user.version == expectedUser.version);
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
       context->requests->run(0, [context, key, op, valid, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, op, key),
@@ -723,29 +728,29 @@ static void runtimeManagement()
   auto externalUser = loadUser(context, 9101);
   Zum::String externalETag;
   externalETag << "\"v" << externalUser.version << '"';
-  ZuCheck(!runSaga(db, Zum::userEdit(Zum::UserEditArgs{.before = externalUser,
+  ZuCheckRT(!runSaga(db, Zum::userEdit(Zum::UserEditArgs{.before = externalUser,
     .ifMatch = ZuMv(externalETag), .updated = 116,
     .request = Zum::IdemRequest{.actorID = "admin",
       .operation = Zum::MgmtOp::userState, .idempotence = "external-state",
       .expires = 86400, .version = 1, .created = 116, .updated = 116},
     .stateOnly = true, .state = Zum::State::Disabled}), ZdbSagaID{9910}));
   auto stillExternal = loadUser(context, 9101);
-  ZuCheck(stillExternal.state == externalUser.state &&
+  ZuCheckRT(stillExternal.state == externalUser.state &&
     stillExternal.version == externalUser.version &&
     stillExternal.authVersion == externalUser.authVersion && !stillExternal.owner);
   Zum::User pendingUser{.id = 9911, .name = "pending-no-handle",
     .state = Zum::State::Suspended, .authVersion = 1, .version = 1};
-  ZuCheck(insertRecord(context->users, pendingUser));
+  ZuCheckRT(insertRecord(context->users, pendingUser));
   Zum::UserEditArgs activation{.before = pendingUser, .ifMatch = "\"v1\"",
     .updated = 116, .stateOnly = true, .state = Zum::State::Active};
-  ZuCheck(!runSaga(db, Zum::userEdit(ZuMv(activation)), ZdbSagaID{9911}));
-  ZuCheck(loadUser(context, 9911).state == Zum::State::Suspended);
+  ZuCheckRT(!runSaga(db, Zum::userEdit(ZuMv(activation)), ZdbSagaID{9911}));
+  ZuCheckRT(loadUser(context, 9911).state == Zum::State::Suspended);
 
   Zum::Cred expectedCred{.id = Zum::Bytes{ZuBSpan{"admin-edit"}},
     .userID = 9100, .publicKey = Zum::Bytes{ZuBSpan{"public-key"}},
     .signCount = 8, .created = 115, .updated = 115,
     .state = Zum::State::Active, .backupEligible = true, .label = "Original"};
-  ZuCheck(insertRecord(context->creds, expectedCred));
+  ZuCheckRT(insertRecord(context->creds, expectedCred));
   for (unsigned test = 0; test < 7; ++test) {
     bool valid = test != 1 && test != 4 && test != 6;
     bool stateOnly = test >= 2 && test <= 5;
@@ -767,7 +772,7 @@ static void runtimeManagement()
     change.before.signCount = 7;
     change.before.backedUp = true;
     if (test == 6) --change.before.updated;
-    ZuCheck(runSaga(db, Zum::credEdit(ZuMv(change)), ZdbSagaID{9920 + test}) == valid);
+    ZuCheckRT(runSaga(db, Zum::credEdit(ZuMv(change)), ZdbSagaID{9920 + test}) == valid);
     if (valid && (!stateOnly || expectedCred.state != state)) {
       if (stateOnly) expectedCred.state = state;
       else expectedCred.label = "Renamed credential";
@@ -775,13 +780,13 @@ static void runtimeManagement()
       expectedCred.updated = 116;
     }
     auto cred = loadCred(context, expectedCred.id);
-    ZuCheck(cred.id == expectedCred.id && !cred.owner &&
+    ZuCheckRT(cred.id == expectedCred.id && !cred.owner &&
       cred.userID == expectedCred.userID && cred.publicKey == expectedCred.publicKey &&
       cred.label == expectedCred.label && cred.state == expectedCred.state &&
       cred.version == expectedCred.version && cred.updated == expectedCred.updated &&
       cred.created == expectedCred.created && cred.signCount == 8 &&
       cred.backupEligible && !cred.backedUp && cred.userVersion == expectedCred.userVersion);
-    ZuCheck(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
+    ZuCheckRT(ZmBlock<bool>{}([context = context.ptr(), key, op, valid](auto wake) mutable {
       context->requests->run(0, [context, key, op, valid, wake = ZuMv(wake)]() mutable {
         context->requests->find<0>(0, ZuFwdTuple(Zum::ActorKind::User,
           Zum::String{"admin"}, op, key),
@@ -797,13 +802,13 @@ static void runtimeManagement()
   ZmSemaphore requestsDown;
   db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
-  ZuCheck(db->stop());
+  ZuCheckRT(db->stop());
   context = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db->requests = {};
   db = {};
   store = {};
-  ZuCheck(mx.stop());
   ZiLog::stop();
 }
 

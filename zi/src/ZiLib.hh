@@ -10,6 +10,14 @@
 #define ZiLib_HH
 
 #include <zlib/ZuLib.hh>
+#include "ZiConfig.hh"
+
+#if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
+#define ZiMultiplex_DEBUG	// enable testing / debugging
+#if !defined(ZiMultiplex_FILTER)
+#define ZiMultiplex_FILTER	// enable traffic filtering
+#endif
+#endif
 
 #ifdef _WIN32
 

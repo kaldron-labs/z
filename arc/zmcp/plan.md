@@ -387,7 +387,7 @@ compatibility is a non-goal until explicitly directed otherwise.  Propagate API
 changes through the new module/examples/tests; do not add shims, aliases, or
 forwarders for superseded design iterations.
 
-Apply the `GUIDELINES.md` directory roles exactly:
+Apply the `docs/GUIDELINES.md` directory roles exactly:
 
 - `test` contains isolated TAP unit tests using `ZuTest`/`ZuTestUtil`;
 - `itest` contains TAP integration programs that launch processes or exercise
@@ -399,12 +399,12 @@ Apply the `GUIDELINES.md` directory roles exactly:
   repository-owned fixture, and place it before `itest` in build traversal.
 
 Document every unit/integration test entry point, prerequisites, and direct-run
-command in its directory's `README.md`; keep third-party setup and explicit
+command in its directory's `docs/README.md`; keep third-party setup and explicit
 execution instructions in `interop/README.md`.
 
 ### Engineering and audit constraints
 
-Treat every phase boundary as a `GUIDELINES.md` review gate, not only the final
+Treat every phase boundary as a `docs/GUIDELINES.md` review gate, not only the final
 review.  Apply these constraints to all new `zmcp` code and to nearby code
 changed while integrating it:
 
@@ -454,7 +454,7 @@ changed while integrating it:
   never capture borrowed spans, pointers, or references for deferred logging.
 
 Before each phase is accepted, scan the added diff for every red/amber flag in
-`GUIDELINES.md`, not merely the prohibited constructs listed above.  Any
+`docs/GUIDELINES.md`, not merely the prohibited constructs listed above.  Any
 intentional exception must be documented beside the design and covered by a
 targeted performance, lifetime, or portability test.
 
@@ -1134,7 +1134,7 @@ application contract and is invalidated during owner shutdown.
 
 ## Build integration
 
-Follow `zrest`'s Automake skeleton and the directory roles in `GUIDELINES.md`:
+Follow `zrest`'s Automake skeleton and the directory roles in `docs/GUIDELINES.md`:
 
 1. Add `zmcp` after `zhttp`/`zrest` in top-level `SUBDIRS` and
    `DIST_SUBDIRS`.
@@ -1463,7 +1463,7 @@ Use `rg` and compiler-warning-clean builds to confirm there are no concepts,
 captures, STL substitutes for Z facilities, unidentified allocations, stdio
 example/log paths writing non-MCP data to stdout, or unbounded
 message/session/stream containers.  Review the final diff manually against
-every remaining `GUIDELINES.md` audit flag which cannot be found textually.
+every remaining `docs/GUIDELINES.md` audit flag which cannot be found textually.
 
 ## Completion criteria
 

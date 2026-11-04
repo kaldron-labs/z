@@ -68,7 +68,7 @@ template <typename Body>
 static bool parse(const ZmRef<ZiIOBuf> &frame,
     const Zdbus_::FrameInfo &info, Body &body)
 {
-  auto handler = ZfDBUS::handler<Body>({frame->cspan(info.bodyOffset),
+  auto handler = ZfDBUS::handler<Body>({info.body(),
     info.headers.signature, info.bodyOffset, info.order});
   if (!handler) return false;
   handler.load(body);

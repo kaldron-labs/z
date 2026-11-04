@@ -100,10 +100,10 @@ bool jwk(ZuBSpan key, ZuSpan<char> out, unsigned &length)
     return false;
   char *p = out.data();
   memcpy(p, prefix.data(), prefix.length()); p += prefix.length();
-  p += ZuBase64URL::encode({reinterpret_cast<uint8_t *>(p), unsigned(out.end() - p)},
+  p += ZuBase64URL::encode({p, unsigned(out.end() - p)},
     {key.data() + 1, CoordinateSize});
   memcpy(p, middle.data(), middle.length()); p += middle.length();
-  p += ZuBase64URL::encode({reinterpret_cast<uint8_t *>(p), unsigned(out.end() - p)},
+  p += ZuBase64URL::encode({p, unsigned(out.end() - p)},
     {key.data() + 1 + CoordinateSize, CoordinateSize});
   memcpy(p, suffix.data(), suffix.length()); p += suffix.length();
   length = unsigned(p - out.data());

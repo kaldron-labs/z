@@ -15,9 +15,15 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmFn.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmPolymorph.hh>
+
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZiRxStream.hh>
 #include <zlib/ZiTxStream.hh>
+
+#include <zlib/Zquic.hh>
 
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpDiscovery.hh>
@@ -31,11 +37,85 @@
 using namespace ZuTestUtil;
 namespace ZhttpContractTCP_ {
 
+struct DrainApp {
+  using Task = ZmFn<void(), ZmFnHeapID<"Zhttp.Test.DrainTask">>;
+  ZtArray<Task, ZtArrayHeapID<"Zhttp.Test.DrainTasks">> posts;
+
+  DrainApp *mx() { return this; }
+  unsigned rxThread() const { return 0; }
+  template <typename L> void txRun(L &&fn) { ZuFwd<L>(fn)(); }
+  template <typename L> void run(L &&fn, unsigned) {
+    posts.push(Task{ZuFwd<L>(fn)});
+  }
+  void deliver() {
+    auto pending = ZuMv(posts);
+    posts.init_();
+    for (auto &fn : pending) {
+      auto task = ZuMv(fn);
+      task();
+    }
+  }
+};
+
+struct DrainBase : ZmPolymorph {
+  DrainApp *application;
+
+  DrainBase(DrainApp *app) : application{app} { }
+  DrainApp *app() { return application; }
+};
+struct DrainLink;
+using DrainProtocol = Zhttp::Transport_::TCPProtocol<
+  DrainBase, DrainLink, Zhttp::Transport_::Traits<Zhttp::TCP>>;
+struct DrainLink : ZmNHeap<DrainLink>, DrainProtocol {
+  friend inline ZuStringT<"Zhttp.Test.DrainLink"> ZmNHeapID(DrainLink *);
+  unsigned drained = 0, notified = 0, peers = 0;
+
+  using DrainProtocol::DrainProtocol;
+  void tcpDrained_() { ++drained; }
+};
+
+void drainBatches()
+{
+  ZuTestScopeRT(drainBatches);
+  using Header = Zhttp::Transport_::TCPHeader;
+  using Alloc = Zi::IOBufAlloc<Header,
+    Zhttp::Transport_::H1BufSize, Zhttp::Transport_::H1BufMax,
+    ZuStringT<"Zhttp.Test.DrainHeader">>;
+  DrainApp app;
+  ZmRef<DrainLink> link = new DrainLink{&app};
+  // Two Tx drain batches precede either Rx delivery. Each callback belongs
+  // only to its own batch, even while the previous batch still owns storage.
+  for (unsigned i = 0; i < 2; ++i) {
+    ZmRef<Header> header = new Alloc{nullptr, 0};
+    header->link = ZmRef<ZmPolymorph>{link.ptr()};
+    header->endIO_();
+    header->appTerminal = true;
+    ZuCheckRT(header->posts == 1);
+    link->registerTCP_(header.ptr());
+    link->drainTCP_(i == 0, [](ZmRef<DrainLink> link, bool peer) {
+      ZuCheckRT(bool(link));
+      if (!link) return;
+      ++link->notified;
+      link->peers += peer;
+    });
+    link->ackTCP_(ZuMv(header));
+  }
+  ZuCheckRT(link->drained == 2 && !link->notified && app.posts.length() == 2);
+  app.deliver();
+  ZuCheckRT(link->notified == 2 && link->peers == 1);
+  ZuCheckRT(link->refCount() == 1 && !app.posts.length());
+}
+
 struct Tx : ZiTxStream<Tx> {
   Tx() : ZiTxStream<Tx>{128, 0, 0} { }
   ZmRef<ZiIOBuf> allocBuf_(unsigned) {
-    ZmRef<ZiIOBuf> buffer = new Zhttp::BodyBufAlloc;
+    ZmRef<ZiIOBuf> buffer = new Zhttp::BodyBufAlloc{nullptr, 0};
     return buffer;
+  }
+  bool sendRange_(Zi::RxRange range) {
+    if (reject) return false;
+    wire << range.cspan();
+    return true;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buffer, bool) {
     if (reject) return false;
@@ -58,7 +138,10 @@ const Zhttp::WriterOps &writerOps() {
     [](const void *p) { return static_cast<const Tx *>(p)->tailRoom(); },
     [](void *p, unsigned head) { return static_cast<Tx *>(p)->allocBuf(head); },
     [](void *p, unsigned n) { return static_cast<Tx *>(p)->reserve(n); },
-    [](void *p, unsigned n) { static_cast<Tx *>(p)->commit(n); }};
+    [](void *p, unsigned n) { static_cast<Tx *>(p)->commit(n); },
+    [](void *p, Zi::RxRange range) {
+      return static_cast<Tx *>(p)->appendRange(ZuMv(range));
+    }};
   return ops;
 }
 void writer() {
@@ -322,7 +405,8 @@ using Contract =
 ZuAssert(sizeof(Contract) == 1);
 
 using TxBufAlloc =
-  ZiIOBufAlloc<64, 256, "Zhttp.Contract.TxBuf">;
+  Zi::IOBufAlloc<Zhttp::Transport_::TxBufNode, 64, 256,
+    ZuStringT<"Zhttp.Contract.TxBuf">>;
 
 struct AppLink {
   ZuDerive(Wire, (ZtString<ZtStringHeapID<"Zhttp.Contract.StreamWire">>));
@@ -344,10 +428,15 @@ struct AppLink {
     ~Tx() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
+      ZmRef<ZiIOBuf> buf = new TxBufAlloc{nullptr, 0};
       buf->skip = headRoom;
       buf->length = 0;
       return buf;
+    }
+    bool sendRange_(Zi::RxRange range) {
+      ++link->handoffs;
+      link->wire << range.cspan();
+      return true;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       ++link->handoffs;
@@ -406,10 +495,15 @@ struct TxLink {
     ~Stream() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
+      ZmRef<ZiIOBuf> buf = new TxBufAlloc{nullptr, 0};
       buf->skip = headRoom;
       buf->length = 0;
       return buf;
+    }
+    bool sendRange_(Zi::RxRange range) {
+      if (++link->sends == link->rejectAt) return false;
+      link->wire << range.cspan();
+      return true;
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       if (++link->sends == link->rejectAt) return false;
@@ -524,7 +618,7 @@ struct H2Native {
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
     // Admission can reject a request before any Z heap allocation.
     if (!admitOK) return nullptr;
-    ZmRef<ZiIOBuf> buf = new TxBufAlloc{};
+    ZmRef<ZiIOBuf> buf = new TxBufAlloc{nullptr, 0};
     buf->skip = headRoom;
     buf->length = 0;
     return buf;
@@ -542,7 +636,7 @@ struct H2Native {
     return headerOK;
   }
   template <bool>
-  bool sendData(uint32_t, ZmRef<ZiIOBuf>) {
+  bool sendData(uint32_t, Zhttp::H2_::TxFrame) {
     ++data;
     return dataOK;
   }
@@ -930,7 +1024,7 @@ void testH2DeferredState()
   {
     H2Native native;
     Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 1, 64};
-    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderBytes bytes{block};
     decltype(block)::HeaderSection section{bytes};
     block.defer(1);
     block.beginHeaders(section, true);
@@ -944,7 +1038,7 @@ void testH2DeferredState()
   {
     H2Native native;
     Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 3, 64};
-    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderBytes bytes{block};
     decltype(block)::HeaderSection section{bytes};
     block.defer(4096);
     block.beginHeaders(section, true);
@@ -987,24 +1081,95 @@ void testHeaderAndRetainedLimits()
     "retained-message cap exposed a partial header block");
 }
 
+void testRetainedRangeAdmission()
+{
+  ZuTestScope(testRetainedRangeAdmission);
+  ZhttpContractTCP_::Tx lower;
+  Zhttp::RetainedBudget budget{.max = 4};
+  Zhttp::RetainedTx tx{lower, budget};
+  ZmRef<ZiIOBuf> source = new Zhttp::BodyBufAlloc{nullptr, 0};
+  *source << "abcdef";
+  ZuCheck(tx.appendRange(source, 1, 3));
+  ZuCheck(!tx.appendRange(source, 4, 2) && tx.failed());
+  ZuCheck(!tx.appendRange(source, 0, 1) && !tx.commit() && !lower.wire);
+  ZuCheck(source->skip == 0 && source->cspan() == "abcdef");
+
+  ZhttpContractTCP_::Tx accepted;
+  Zhttp::RetainedBudget acceptedBudget{.max = 4};
+  Zhttp::RetainedTx output{accepted, acceptedBudget};
+  Zi::RxRange view{source, 1, 3};
+  source->advance(1);
+  ZuCheck(output.appendRange(view) && output.commit() && accepted.wire == "bcd");
+  ZuCheck(view.cspan() == "bcd" && source->skip == 1);
+}
+
+void testRetainedTCPBatch()
+{
+  ZuTestScope(testRetainedTCPBatch);
+  struct Owner {
+    Zhttp::RetainedEntries entries;
+    bool sendRetained_(Zhttp::RetainedEntries entries_) {
+      entries = ZuMv(entries_);
+      return true;
+    }
+  } owner;
+  ZhttpContractTCP_::Tx lower;
+  Zhttp::RetainedBudget budget{.max = 512};
+  Zhttp::RetainedTx<decltype(lower), true> header{lower, budget}, body{lower, budget};
+  header << "HTTP-header";
+  ZmRef<ZiIOBuf> source = new Zhttp::BodyBufAlloc{nullptr, 0};
+  source->skip = 5;
+  *source << "xpayloady";
+  Zi::RxRange range{source, 1, 7};
+  ZuCheck(body.appendRange(range));
+  ZmRef<ZiIOBuf> whole = new Zhttp::BodyBufAlloc{nullptr, 0};
+  whole->ensure(257);
+  whole->length = 257;
+  memset(whole->data(), 'x', whole->length);
+  auto layer = Zhttp::H1::bodyStream(body, whole->length);
+  layer << "" << whole; // chained base-return write exceeds layer capacity
+  ZuCheck(layer.flush() && layer.complete() && layer.produced() == 257);
+  ZuCheck(header.commitWith(body, owner) && !lower.wire);
+  ZuCHECK(owner.entries.length() == 3 &&
+      !owner.entries[0].range && owner.entries[0].buf->cspan() == "HTTP-header" &&
+      owner.entries[1].range && owner.entries[1].buf == source &&
+      owner.entries[1].offset == 6 && owner.entries[1].length == 7 &&
+      owner.entries[2].range && owner.entries[2].buf == whole &&
+      owner.entries[2].length == 257,
+    "retained TCP admission moves existing header and original body metadata");
+  source->advance(1);
+  ZuCheck(Zi::RxRange::fromStorage(owner.entries[1].buf,
+    owner.entries[1].offset, owner.entries[1].length).cspan() == "payload");
+  owner.entries.length(0);
+  ZuCheck(whole->refCount() == 1);
+  ZuCheck(source->refCount() == 2); // this owner and the local retained view
+
+  Zhttp::RetainedBudget directBudget{.max = 64};
+  Zhttp::RetainedTx directHeader{lower, directBudget}, directBody{lower, directBudget};
+  directHeader << "H";
+  directBody << "B";
+  ZuCheck(directHeader.commitWith(directBody, owner) &&
+    !owner.entries.length() && lower.wire == "HB");
+}
+
 void testCommitFailures()
 {
-  ZuTestScope(testCommitFailures);
+  ZuTestScopeRT(testCommitFailures);
 
   for (unsigned rejectAt : {1U, 2U}) {
     ContractOps ops;
     ops.link_.rejectAt = rejectAt;
     ContractBuilder builder;
     Zhttp::MessageTx<ContractMessage, ContractOps> tx{ops};
-    ZuCheck(!tx.fixed(builder, false));
-    ZuCheck(ops.failCalls == 1 && !ops.completeCalls);
-    ZuCheck(!ops.link_.finishes && ops.link_.sends == rejectAt);
+    ZuCheckRT(!tx.fixed(builder, false));
+    ZuCheckRT(ops.failCalls == 1 && !ops.completeCalls);
+    ZuCheckRT(!ops.link_.finishes && ops.link_.sends == rejectAt);
   }
 
   Zhttp::H2::HPackEncoder encoder;
-  ZuCheck(encoder.init(4096));
+  ZuCheckRT(encoder.init(4096));
   Zhttp::HPackSeedPlans seeds;
-  ZuCheck(encoder.bind(seeds));
+  ZuCheckRT(encoder.bind(seeds));
   for (unsigned failure = 0; failure < 4; ++failure) {
     H2Native native;
     native.admitOK = failure != 0;
@@ -1012,7 +1177,7 @@ void testCommitFailures()
     native.dataOK = failure != 2;
     native.endOK = failure != 3;
     Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 1, 64};
-    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderBytes bytes{block};
     decltype(block)::HeaderSection section{bytes};
     block.defer(4096);
     block.beginHeaders(section, false);
@@ -1024,26 +1189,26 @@ void testCommitFailures()
       body.flush();
     }
     block.end();
-    ZuCheck(!block.commit());
-    ZuCheck(block.failed() && !block.flush());
+    ZuCheckRT(!block.commit());
+    ZuCheckRT(block.failed() && !block.flush());
     unsigned attempts = native.headers + native.data + native.ends;
-    ZuCheck(!block.commit());
-    ZuCheck(native.headers + native.data + native.ends == attempts);
-    ZuCheck(native.headers == unsigned(failure != 0));
-    ZuCheck(native.data == unsigned(failure >= 2));
-    ZuCheck(native.ends == unsigned(failure == 3));
+    ZuCheckRT(!block.commit());
+    ZuCheckRT(native.headers + native.data + native.ends == attempts);
+    ZuCheckRT(native.headers == unsigned(failure != 0));
+    ZuCheckRT(native.data == unsigned(failure >= 2));
+    ZuCheckRT(native.ends == unsigned(failure == 3));
   }
   {
     H2Native native;
     Zhttp::H2_::HeaderBlock<H2Native, false> block{native, encoder, 1, 64};
-    Zhttp::H2::HPackBytes bytes;
+    decltype(block)::HeaderBytes bytes{block};
     decltype(block)::HeaderSection section{bytes};
     block.beginHeaders(section, false);
     block.field("x-test", "value");
-    ZuCheck(block.endHeaders(false) && native.headers == 1);
-    ZuCheck(block.flush() && block.valid());
+    ZuCheckRT(block.endHeaders(false) && native.headers == 1);
+    ZuCheckRT(block.flush() && block.valid());
     block.end();
-    ZuCheck(block.flush() && native.ends == 1);
+    ZuCheckRT(block.flush() && native.ends == 1);
   }
   encoder.final();
 }
@@ -1290,7 +1455,7 @@ void testBodyRx()
   ZuTestScope(testBodyRx);
 
   auto buf = [](ZuCSpan value) {
-    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{};
+    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{nullptr, 0};
     auto io = static_cast<ZiIOBuf *>(buf.ptr());
     memcpy(io->data(), value.data(), value.length());
     buf->length = value.length();
@@ -1358,6 +1523,33 @@ void testBodyRx()
     "bodyEach did not return immediately for an empty queue");
 }
 
+void testBodyRangeOwnership()
+{
+  ZuTestScope(testBodyRangeOwnership);
+
+  ZmRef<ZiRxQueue::Node> node = new Zhttp::BodyRx::BufAlloc{nullptr, 0};
+  node->append(reinterpret_cast<const uint8_t *>("HbodyTnext"), 10);
+  auto backing = node.ptr();
+  auto payload = node->span().data() + 1;
+  ZiRxStream<ZiRxQueue> wire;
+  wire.push(ZuMv(node));
+  Zhttp::BodyRx body;
+  ZuCHECK(body.splice(wire, 4,
+      [](ZuBSpan) { return int64_t(6); }, 1, 1, [](auto &) { }) == 6,
+    "body envelope split failed");
+  ZuCHECK(wire.length() == 4 && body.rx().length() == 4 &&
+      body.rx().span().data() == payload && wire.span().data() == payload + 5,
+    "body and wire tail must retain original positions");
+  Zi::RxRange range;
+  ZuCHECK(body.rx().extract([](ZuBSpan) { return int64_t(4); },
+      []() { return new Zhttp::BodyRx::BufAlloc{nullptr, 0}; }, range) == 4 &&
+      range.buf.ptr() == backing && range.span().data() == payload,
+    "contiguous body extraction must retain original backing");
+  wire.clean();
+  ZuCHECK(range.cspan() == ZuBSpan{ZuCSpan{"body"}},
+    "wire-tail release must preserve the retained body");
+}
+
 void testStream()
 {
   ZuTestScope(testStream);
@@ -1380,7 +1572,7 @@ void testStream()
     "logical-stream Tx terminal forwarding mismatch");
 
   auto buf = [](ZuCSpan value) {
-    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{};
+    ZmRef<Zhttp::BodyRx::Queue::Node> buf = new Zhttp::BodyRx::BufAlloc{nullptr, 0};
     auto io = static_cast<ZiIOBuf *>(buf.ptr());
     memcpy(io->data(), value.data(), value.length());
     buf->length = value.length();
@@ -1465,7 +1657,7 @@ struct SubsetServer : Zhttp::Server<SubsetServer<S>, Zhttp::Parser, SubsetResQ, 
 template <typename S>
 void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
 {
-  ZuTestScope(subset);
+  ZuTestScopeRT(subset);
   constexpr bool tcp = bool(typename S::template Has<Zhttp::H1TCP>{});
   constexpr bool h1 = bool(typename S::template Has<Zhttp::H1TLS>{});
   constexpr bool h2 = bool(typename S::template Has<Zhttp::H2TLS>{});
@@ -1473,8 +1665,8 @@ void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
   constexpr bool secure = h1 || h2 || h3;
   Zhttp::HubConfig hub{&mx};
   SubsetServer<S> server;
-  ZuCHECK(!server.init(hub, Zhttp::ServerConfig{}.port(ZhttpTestPort::Profiles)) &&
-    !server.hubCount(), "selection does not activate a listener");
+  ZuCheckRT(!server.init(hub, Zhttp::ServerConfig{}.port(ZhttpTestPort::Profiles)) &&
+    !server.hubCount(), log_( "selection does not activate a listener"));
   server.final();
   auto serverConfig = Zhttp::ServerConfig{}.localIP(ZiIP{"127.0.0.1"})
     .port(ZhttpTestPort::Profiles);
@@ -1485,8 +1677,8 @@ void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
   if constexpr (h3) serverConfig.quic(Zhttp::QUICConfig{}
     .certPath(cert.certPath.cspan()).keyPath(cert.keyPath.cspan()));
   bool serverOK = server.init(hub, ZuMv(serverConfig));
-  ZuCHECK(serverOK && server.hubCount() == unsigned(tcp) + unsigned(h1 || h2) + unsigned(h3),
-    "each selected family registers once, including shared TLS");
+  ZuCheckRT(serverOK && server.hubCount() == unsigned(tcp) + unsigned(h1 || h2) + unsigned(h3), log_(
+    "each selected family registers once, including shared TLS"));
   server.final();
 
   SubsetClient<S> client;
@@ -1497,20 +1689,20 @@ void subset(ZiMultiplex &mx, const Zhttp::Test::TempDir &cert)
     Zhttp::QUICConfig{}.caPath(cert.certPath.cspan()));
   bool pooled = initialized && client.pool(0,
     Zhttp::Destination{"127.0.0.1", ZhttpTestPort::Profiles});
-  ZuCHECK(pooled, "selected client defaults produce a legal candidate");
+  ZuCheckRT(pooled, log_( "selected client defaults produce a legal candidate"));
   const auto *config = client.config(0);
-  ZuCHECK(config && config->secure() == secure && config->tcp() == tcp &&
-    config->tls() == (h1 || h2) && config->quic() == h3,
-    "merged defaults respect the immutable capability ceiling");
+  ZuCheckRT(config && config->secure() == secure && config->tcp() == tcp &&
+    config->tls() == (h1 || h2) && config->quic() == h3, log_(
+    "merged defaults respect the immutable capability ceiling"));
   if (pooled)
-    ZuCHECK(client.hubs() == (secure ? unsigned(h1 || h2) + unsigned(h3) : 1),
-      "only runtime-enabled selected families allocate backends");
+    ZuCheckRT(client.hubs() == (secure ? unsigned(h1 || h2) + unsigned(h3) : 1), log_(
+      "only runtime-enabled selected families allocate backends"));
   client.final();
 }
 
 void subsets()
 {
-  ZuTestScope(subsets);
+  ZuTestScopeRT(subsets);
   using A = Zhttp::H1TCP;
   using B = Zhttp::H1TLS;
   using C = Zhttp::H2TLS;
@@ -1523,18 +1715,20 @@ void subsets()
     Zhttp::Profiles<A, C, D>, Zhttp::Profiles<B, C, D>, Zhttp::AllProfiles>;
   Zhttp::Test::TempDir cert;
   bool certOK = cert.init();
-  ZuCHECK(certOK, "create subset fixture credentials");
+  ZuCheckRT(certOK, log_( "create subset fixture credentials"));
   if (!certOK) return;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) { s.nThreads(4); })
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &s) { s.nThreads(4); })
     .rxThread(1).txThread(2)};
   bool started = mx.start();
-  ZuCHECK(started, "start subset fixture multiplexer");
+  ZuCheckRT(started, log_( "start subset fixture multiplexer"));
   if (!started) return;
   ZiResolver::startSync();
-  ZuUnroll::all<Sets>([&mx, &cert]<typename S>() { subset<S>(mx, cert); });
+  ZuUnroll::all<Sets>([&mx, &cert]<typename S>() { ZuTestCallRT((subset<S>), mx, cert); });
   using Repeated = Zhttp::Profiles<B, B, C, C>;
   ZuAssert(Repeated::N == 2);
-  subset<Repeated>(mx, cert);
+  ZuTestCallRT((subset<Repeated>), mx, cert);
   ZiResolver::stopSync();
   ZiResolver::final();
   mx.stop();
@@ -1552,6 +1746,7 @@ int main(int argc, char **argv)
   ZuTestCall(ZhttpContractTCP_::writer);
   ZuTestCall(ZhttpContractTCP_::intrusive);
   ZuTestCall(ZhttpContractTCP_::parser);
+  ZuTestCall(ZhttpContractTCP_::drainBatches);
   ZuTestCall(testTraits);
   ZuTestCall(testParams);
   ZuTestCall(testMetadata);
@@ -1562,7 +1757,10 @@ int main(int argc, char **argv)
   ZuTestCall(testH2DeferredState);
   ZuTestCall(testHeaderAndRetainedLimits);
   ZuTestCall(testCommitFailures);
+  ZuTestCall(testRetainedRangeAdmission);
+  ZuTestCall(testRetainedTCPBatch);
   ZuTestCall(testBodyRx);
+  ZuTestCall(testBodyRangeOwnership);
   ZuTestCall(testStream);
   ZuTestCall(subsets);
   return 0;

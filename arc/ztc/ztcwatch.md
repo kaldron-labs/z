@@ -25,7 +25,7 @@ The objective is deliberately narrow:
 - preserve all originating telemetry values, counters, sampling,
   synchronization, transport behavior, and accuracy.
 
-`GUIDELINES.md` is authoritative throughout implementation and review.
+`docs/GUIDELINES.md` is authoritative throughout implementation and review.
 
 ## Fixed contracts
 
@@ -363,7 +363,7 @@ aggregation, traversal, synchronization, or counters.
    callback identity, duplicate registration rejection, add/delete order,
    object validity during delete, and `unwatch` drainage.
 5. Run the affected `zm` and `zi` tests and audit the changes against every
-   applicable `GUIDELINES.md` red or amber flag.
+   applicable `docs/GUIDELINES.md` red or amber flag.
 
 ### Phase 2: Mx, Hub, and queue children
 
@@ -386,7 +386,7 @@ aggregation, traversal, synchronization, or counters.
 6. Add low-volume mock tests for order and pointer stability, plus focused TCP,
    TLS, QUIC, multiplexer, scheduler, and pool tests.
 7. Run a top-level rebuild because the affected `Ztc` headers are public, then
-   perform the complete `GUIDELINES.md` review for the touched modules.
+   perform the complete `docs/GUIDELINES.md` review for the touched modules.
 
 ### Phase 3: Generic DB root and children
 
@@ -402,7 +402,7 @@ aggregation, traversal, synchronization, or counters.
    watch-before-all overlap, child churn, callback allocation identity,
    unwatch drainage, and delete-time object validity with minimal mock data.
 5. Run focused `zv` generic-interface and `zdb` tests, followed by a top-level
-   rebuild and `GUIDELINES.md` audit.
+   rebuild and `docs/GUIDELINES.md` audit.
 
 ### Phase 4: Cross-hierarchy lifetime audit
 
@@ -418,7 +418,7 @@ aggregation, traversal, synchronization, or counters.
    callbacks, barriers, `ZmBlock`, or `ZmSemaphore`; do not use sleeps or
    polling as completion conditions.
 5. Run the full affected build/test matrix and a final line-by-line
-   `GUIDELINES.md` audit. Repair every unaccepted red or amber finding.
+   `docs/GUIDELINES.md` audit. Repair every unaccepted red or amber finding.
 
 ## Code references
 
@@ -493,7 +493,7 @@ aggregation, traversal, synchronization, or counters.
   transport behavior, queue semantics, or flow control.
 - Focused manager, Mx, Hub, TCP, TLS, QUIC, scheduler, pool, generic DB, and
   Zdb tests pass after a top-level build.
-- The final `GUIDELINES.md` audit has no unresolved red or amber finding.
+- The final `docs/GUIDELINES.md` audit has no unresolved red or amber finding.
 
 ## Non-goals
 

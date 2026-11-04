@@ -1618,9 +1618,9 @@ static Text header(const FileDesc &file, const Decls &decls,
 	  Text decoded;
 	  if (!unescape(field.defaultValue, decoded))
 	    fail(UINT_MAX, "invalid bytes default");
-	  out << "{\n    reinterpret_cast<const uint8_t *>(";
+	  out << "{ZuBSpan{";
 	  emitQuoted(out, decoded);
-	  out << "), " << ZuBox<unsigned>{decoded.length()} << '}';
+	  out << ", " << ZuBox<unsigned>{decoded.length()} << "}}";
 	} else {
 	  out << '{';
 	  emitDefault(out, decls, field);
@@ -2214,8 +2214,7 @@ int main(int argc, char **argv)
       opts.output = stem;
     }
     if (opts.descriptor) {
-      ZuBSpan bytes{reinterpret_cast<const uint8_t *>(input.data()),
-	input.length()};
+      ZuBSpan bytes{input};
       ZuCSpan reason;
       if (!verifySchema(bytes, {}, &reason))
 	fail(UINT_MAX, reason.length() ? reason : "invalid descriptor set");

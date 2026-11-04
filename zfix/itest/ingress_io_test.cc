@@ -173,7 +173,9 @@ struct Harness {
   TestState		state;
   CliHub		client;
   SrvHub		server;
-  ZiMultiplex		mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZiMultiplex		mx{ZiMxParams{}
+    .tcpBufAllocator<Network::RxAllocator<>>()
+    .scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
@@ -283,8 +285,8 @@ static void submitBudget(bool local) {
   Gate tx; h.client.txRun([&tx] { tx.block(); }); ZuCheck(wait(tx.entered));
   bool first = false, second = false, tuned = false;
   PostedState charged, link;
-  const uint64_t bytes = sizeof(RawOutput) + output->body()->memory() +
-    sizeof(ZiIOBuf) + uint64_t(output->frame()->size);
+  const uint64_t bytes = ZmHeapAllocSize<sizeof(RawOutput)>{} +
+    output->body()->memory() + output->frame().memory();
   ZmBlock<>{}([&h, &output, &first, &second, &tuned, &charged, &link, bytes](auto wake) {
     h.client.rxRun([&h, &output, &first, &second, &tuned, &charged, &link,
 	bytes, wake = ZuMv(wake)]() mutable {
@@ -325,26 +327,26 @@ static void submitBudget(bool local) {
   ZuCheck(!h.state.srv1.errors.load_() && !h.state.srv2.errors.load_());
 }
 static void hubLimits(unsigned kind) {
-  ZuTestScope(hubLimits);
+  ZuTestScopeRT(hubLimits);
   HubLimits cli, srv;
   switch (kind) {
     case 0: srv.link.rx.codec.frameBytes = 1; break;
     case 1: cli.link.tx.codec.frameBytes = 1; break;
     case 2: cli.link.wire.queuedBytes = cli.link.wire.adminBytes = 0; break;
   }
-  Harness h{cli, srv}; bool up = h.start(); ZuCheck(up); if (!up) return;
+  Harness h{cli, srv}; bool up = h.start(); ZuCheckRT(up); if (!up) return;
   h.state.cli1.expectedSubmit = kind ? RawSend::Overload : RawSend::Accepted;
-  h.connect(h.first.ptr()); ZuCheck(wait(h.state.cli1.ready)); ZuCheck(wait(h.state.srv1.ready));
-  h.first->packet(); ZuCheck(wait(h.state.cli1.submitted));
+  h.connect(h.first.ptr()); ZuCheckRT(wait(h.state.cli1.ready)); ZuCheckRT(wait(h.state.srv1.ready));
+  h.first->packet(); ZuCheckRT(wait(h.state.cli1.submitted));
   if (!kind) {
-    ZuCheck(stopped(h.state.srv1) && stopped(h.state.cli1));
-    ZuCheck(h.state.srv1.faults.load_() == 1 && !h.state.srv1.receives.load_());
+    ZuCheckRT(stopped(h.state.srv1) && stopped(h.state.cli1));
+    ZuCheckRT(h.state.srv1.faults.load_() == 1 && !h.state.srv1.receives.load_());
   } else {
-    ZuCheck(!h.state.cli1.published.load_() && !h.state.cli1.complete.load_());
-    ZuCheck(!h.state.cli1.stops.load_() && !h.state.srv1.stops.load_());
+    ZuCheckRT(!h.state.cli1.published.load_() && !h.state.cli1.complete.load_());
+    ZuCheckRT(!h.state.cli1.stops.load_() && !h.state.srv1.stops.load_());
   }
-  ZuCheck(h.finish(false));
-  ZuCheck(!h.state.cli1.errors.load_() && !h.state.srv1.errors.load_());
+  ZuCheckRT(h.finish(false));
+  ZuCheckRT(!h.state.cli1.errors.load_() && !h.state.srv1.errors.load_());
 }
 static void tracing() {
   ZuTestScope(tracing);

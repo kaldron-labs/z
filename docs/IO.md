@@ -18,6 +18,29 @@ exceptionally, if the tx side just needs read access without the overhead
 of posting work onto the rx thread just to read then posting back again
 the remainder
 
+`Zi::IOBufRing` slot allocation and return are explicitly shared, contended
+operations using the `ZmHeapCache` MPMC recycling protocol. Final release may
+return a slot on any thread. The next pointer overlaps the aligned buffer head
+only while the slot is free; there is no per-slot prefix allocation.
+SQ/CQ access and provided-buffer publication remain I/O-owner operations.
+Transfer the original buffer reference and range across shards. Mutable protocol
+state remains sharded. One FIX message is constructed in its own output buffer
+on application Tx. Retained shared ranges carry operation-local transmit
+progress in `ZiTxContext`; they do not arbitrate mutable descriptor cursors.
+
+`ZiRxContext` exposes available input through its held `buf->length`; it has no
+separate latest-receive result. Read the available size before moving or clearing
+that backing. Initialization and `connected()` may have no buffer. Native message
+`flags` remain separate from the packed disconnect `state`; receive errors belong
+to connection error/teardown handling.
+
+`ZiTxContext::length` retains the latest signed send result, including callbacks
+that select subsequent output without a buffer installed. Its packed `flags`
+distinguish data completion, disconnect and retained-range mode. Completion of
+data does not retire kernel-held backing: a saved Tx context retains the original
+buffer and callback until that operation can safely release it. Producer changes
+clear only `TxDataDone`, preserving pending disconnect and retained-range state.
+
 `ZmPQRx` is Rx-owned in its entirety. `ZmPQTx` is Tx-owned in its entirety.
 If a class inherits both, as `Zquic::Stream` does, each base subobject still
 keeps its own shard ownership. Rx code may use only the `ZmPQRx` side; Tx code

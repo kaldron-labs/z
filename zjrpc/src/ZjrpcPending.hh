@@ -23,6 +23,7 @@
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZuVStream.hh>
 
 #include <zlib/Zjrpc.hh>
 #include <zlib/ZjrpcIO.hh>
@@ -323,8 +324,18 @@ struct RequestMessage {
 // id is an actual member ID used only by an HTTP reply route, never a batch wire ID.
 struct BatchWire {
   ID id;
-  ZmRef<ZiIOBuf> body;
-  template <typename S> void write(S &out) const { out << ZuCSpan{*body}; }
+  ZmFn<void(ZuVStream &), ZmFnHeapID<"Zjrpc.Batch.Request">> model;
+  unsigned max;
+
+  template <typename M>
+  BatchWire(ID id_, M message, unsigned max_) : id{ZuMv(id_)},
+    model{[message = ZuMv(message)](ZuVStream &out) { message.write(out); }}, max{max_} { }
+  template <typename S> void write(S &out) const {
+    writeOwned(out, max, [this](auto &wire) {
+      ZuVStream stream{wire};
+      model(stream);
+    }, 0);
+  }
 };
 
 struct MessageFmt {
@@ -390,7 +401,7 @@ public:
     return n;
   }
   ZmRef<ZiIOBuf> frame(unsigned maxBytes) const {
-    ZmRef<ZiIOBuf> body = new BatchBuf{};
+    ZmRef<ZiIOBuf> body = new BatchBuf{nullptr, 0};
     BufOutput out{*body, maxBytes};
     write(out);
     return out ? ZuMv(body) : ZmRef<ZiIOBuf>{};
@@ -570,18 +581,17 @@ private:
       m_caller{caller}, m_items{ZuMv(batch)}, m_call{ZuMv(call)} { }
 
     void start() {
-      auto batch = ZuMv(m_items.template p<B>());
-      m_items.template p<IDs>(IDs{});
+      auto &batch = m_items;
       if (!m_caller->derived()->up() ||
 	  batch.count() > m_caller->derived()->limits().maxPending -
 	    m_caller->pendingCount()) { failed(); return; }
       if (!m_caller->derived()->prepareBatch(batch)) { failed(); return; }
-      m_body = batch.frame(m_caller->derived()->limits().maxJSONBytes);
-      if (!m_body) { failed(); return; }
-      // Serialized payloads are no longer needed. Retain only member IDs for
-      // registration and deterministic cleanup, moving owned string IDs.
+      CountOutput count;
+      Output measure{count, m_caller->derived()->limits().maxJSONBytes};
+      batch.write(measure);
+      if (!measure) { failed(); return; }
       ids().size(batch.count());
-      for (auto &item : batch.items()) ids().push(ZuMv(item.id()));
+      for (const auto &item : batch.items()) ids().push(item.id());
       register_();
     }
     bool received() {
@@ -607,7 +617,7 @@ private:
     void failed(const Error &) { failed(); }
 
   private:
-    IDs &ids() { return m_items.template p<IDs>(); }
+    IDs &ids() { return m_ids; }
     void register_() {
       if (m_finishing) return;
       if (!m_caller->derived()->up()) { failed(); return; }
@@ -625,7 +635,8 @@ private:
 	return;
       }
       m_next = 0;
-      if (!m_caller->derived()->send(BatchWire{ZuMv(m_first), ZuMv(m_body)})) {
+      if (!m_caller->derived()->send(BatchWire{ZuMv(m_first), ZuMv(m_items),
+	  m_caller->derived()->limits().maxJSONBytes})) {
 	failed();
 	m_caller->derived()->fail_();
       }
@@ -654,10 +665,10 @@ private:
     }
 
     BatchCaller *m_caller;
-    ZuUnion<B, IDs> m_items;
+    B m_items;
+    IDs m_ids;
     ZmRef<Call> m_call;
     BatchReply m_reply;
-    ZmRef<ZiIOBuf> m_body;
     ID m_first;
     unsigned m_left = 0;
     unsigned m_next = 0;
@@ -668,8 +679,11 @@ private:
   template <typename B>
   bool notifyBatch_(B &batch) {
     if (!derived()->prepareBatch(batch)) return false;
-    auto body = batch.frame(derived()->limits().maxJSONBytes);
-    return body && derived()->send(BatchWire{{}, ZuMv(body)});
+    CountOutput count;
+    Output measure{count, derived()->limits().maxJSONBytes};
+    batch.write(measure);
+    if (!measure) return false;
+    return derived()->send(BatchWire{{}, ZuMv(batch), derived()->limits().maxJSONBytes});
   }
 
   unsigned pendingCount() const { return m_pending.count(); }

@@ -347,6 +347,13 @@ void testFieldSectionBuffer()
     "stream printable was copied, replayed, or mis-finalized");
 
   bytes.length(0);
+  Zhttp::Compression::FieldSectionBuffer knownSection{bytes};
+  ZuCHECK(knownSection.putPrint(0, 7, ZuCSpan{"known"}, offset, length) == 0 &&
+      offset == 1 && length == 5 && bytes.length() == 6 &&
+      knownSection.length() == bytes.length(),
+    "known-length values must use exact prefixes without reserved gaps");
+
+  bytes.length(0);
   Zhttp::Compression::FieldSectionBuffer boundedSection{bytes};
   auto bounded = ZuBoxed(uint64_t(3));
   ZuCHECK(boundedSection.putPrint(
@@ -364,6 +371,40 @@ void testFieldSectionBuffer()
     "bounded printable used its capacity instead of rendered length");
 }
 
+void testWriterSectionRanges()
+{
+  ZuTestScope(testWriterSectionRanges);
+  struct Writer {
+    unsigned headRoom() const { return 0; }
+    ZmRef<ZiIOBuf> allocBuf(unsigned) {
+      return new Zi::IOBufAlloc<ZiIOBuf, 32, 512,
+	ZuStringT<"Zhttp.WriterBytesTest">>{nullptr, 0};
+    }
+  } writer;
+  Zhttp::Compression::WriterBytes bytes{writer};
+  auto original = bytes.buf().ptr();
+  Zhttp::Compression::FieldSectionBuffer section{bytes};
+  unsigned calls = 0;
+  uint64_t offset;
+  unsigned length;
+  ZuCheck(section.putPrint(0, 7, StreamValue{&calls}, offset, length) == 0);
+  // Grow the final storage after recording a gap; retained patch positions are
+  // offsets in the surviving descriptor, never stale allocation pointers.
+  bytes.ensure(128);
+  ZuCheck(bytes.buf().ptr() == original && bytes.buf()->jumbo());
+  HdrBytes wire;
+  unsigned spans = 0;
+  section.eachRange(0, [&](uint64_t start, unsigned n) {
+    ++spans;
+    Zhttp::Compression::putBytes(wire, ZuBSpan{bytes.data() + start, n});
+  });
+  const uint8_t expected[] = {0x06, 'f', 'o', 'o', 'b', 'a', 'r'};
+  ZuCheck(calls == 1 && spans && wire == ZuBSpan{expected});
+  auto published = bytes.length();
+  bytes.length(uint64_t(UINT_MAX) + 1);
+  ZuCheck(!bytes.valid() && bytes.length() == published);
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -375,4 +416,5 @@ int main(int argc, char **argv)
   ZuTestCall(testPrefixIntegers);
   ZuTestCall(testStrings);
   ZuTestCall(testFieldSectionBuffer);
+  ZuTestCall(testWriterSectionRanges);
 }

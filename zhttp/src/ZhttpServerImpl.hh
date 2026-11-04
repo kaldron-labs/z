@@ -367,14 +367,15 @@ template <typename App, typename AppLink>
 class SrvLink :
   public ZmNHeap<SrvLink<App, AppLink>>,
   public Ztls::SrvLink<ServerHub<App, AppLink>, SrvLink<App, AppLink>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSTxBufAlloc>,
   public Wire<SrvLink<App, AppLink>, AppLink> {
   friend inline ZuStringT<"Zhttp.Server.H2Link"> ZmNHeapID(SrvLink *);
 public:
   using Hub = ServerHub<App, AppLink>;
   using Base = Ztls::SrvLink<Hub, SrvLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<SrvLink, AppLink>;
+friend Wire_;
   using Cxn = Base::Cxn;
   using Active = typename H2ClearState<AppLink>::Active;
 
@@ -831,13 +832,15 @@ private:
   void streamEndRx_() {
     ZmAssert(m_app->rxInvoked());
     if (!m_stream.end() || !m_native) return;
-    m_app->txRun([link = impl()]() { link->streamEndTx_(); });
+    m_app->txRun([link = impl()]() { link->closeAfterTx_(); });
   }
-  void streamEndTx_() {
+public:
+  void closeAfterTx_() {
     ZmAssert(m_app->txInvoked());
     m_streamTx = false;
-    if (m_txNative) m_txNative->streamTxEnd();
+    if (m_txNative) m_txNative->closeAfterTx_();
   }
+private:
   void streamResetRx_() {
     ZmAssert(m_app->rxInvoked());
     if (!m_stream.reset() || !m_native) return;
@@ -990,16 +993,19 @@ template <typename App>
 class SrvLink :
   public ZmNHeap<SrvLink<App>>,
   public Ztls::SrvLink<ServerHub<App>, SrvLink<App>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
-  public H2_::Wire<SrvLink<App>, typename App::H2Link> {
+    Transport_::TLSTxBufAlloc>,
+  public H2_::Wire<SrvLink<App>, typename App::H2Link>,
+  public Transport_::TLSClose<SrvLink<App>> {
   friend inline ZuStringT<"Zhttp.Server.TLSLink"> ZmNHeapID(SrvLink *);
 public:
   using Hub = ServerHub<App>;
   using H1AppLink = App::H1Link;
   using H2AppLink = App::H2Link;
   using Base = Ztls::SrvLink<Hub, SrvLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<SrvLink, H2AppLink>;
+friend Wire;
+  friend Transport_::TLSClose<SrvLink>;
   using Cxn = Base::Cxn;
   using Active = typename H2ClearState<H2AppLink>::Active;
 
@@ -1029,8 +1035,7 @@ public:
 	m_h1 = new H1AppLink{
 	  this->app()->user(), this, m_remoteIP, m_remotePort};
 	m_h1->connected_(NativeTraits<H1TLS>::apply({
-	  .alpn = ALPNString{
-	    info.alpn.data(), unsigned(info.alpn.length())},
+	  .alpn = ALPNString{info.alpn},
 	  .version = uint32_t(info.version),
 	  .transport = Transport::TLS,
 	  .secure = true
@@ -1048,6 +1053,7 @@ public:
   void disconnected(bool peer) {
     if (m_down) return;
     m_down = true;
+    this->endedTLS_();
     Wire::stopWire();
     if (m_h1) {
       m_h1->disconnected_(peer);
@@ -1097,23 +1103,11 @@ public:
     const auto &user = *this->app()->user();
     return AppHPackSeedPlans<ZuDecay<decltype(user)>>::get(user);
   }
-  void streamTxEnd() {
-    this->app()->txInvoke([link = ZmRef(this)]() {
-      link->streamTxEnd_();
-    });
-  }
   void sent(ZmRef<ZiTxBuf> buffer, bool ok) {
     Base::sent(ZuMv(buffer), ok);
-    if (!m_streamEnd || (ok && this->txQueue.count_())) return;
-    m_streamEnd = false;
-    streamTxClose_();
+    this->sentTLS_(ok);
   }
 private:
-  void streamTxEnd_() {
-    ZmAssert(this->app()->txInvoked());
-    if (this->txQueue.count_()) { m_streamEnd = true; return; }
-    streamTxClose_();
-  }
   void streamTxClose_() {
     this->app()->rxRun([link = ZmRef(this)]() mutable { link->disconnectNative(); });
   }
@@ -1257,9 +1251,6 @@ private:
   bool			m_down = false;
   bool			m_stopping = false;
 
-  // Tx thread exclusive.
-  alignas(Zm::CacheLineSize)
-  bool m_streamEnd = false;
 
 };
 
@@ -1870,15 +1861,20 @@ struct RouteState<true> {
 // The queue owns the transferred reference on Tx, using the actual message's
 // existing intrusive allocation. Framework shadow links live in that record.
 class ServerResponseQ {
-  using Items = ZmList<ResponseRecord, ZmListShadow<>, ResponseRecord>;
+  using Items = ResponseList;
 
 public:
   ~ServerResponseQ() { clean(); }
   void pushNode(ResponseRef response) {
     m_items.pushNode(response.release(this));
   }
-  ResponseRef shift() { return ResponseRef::acquire(m_items.shift(), this); }
-  ResponseRecord *headNode() const { return m_items.headNode(); }
+  ResponseRef shift() {
+    return ResponseRef::acquire(
+      static_cast<ResponseRecord *>(m_items.shift()), this);
+  }
+  ResponseRecord *headNode() const {
+    return static_cast<ResponseRecord *>(m_items.headNode());
+  }
   unsigned count() const { return m_items.count_(); }
   void clean() {
     while (auto response = shift()) { }
@@ -1940,7 +1936,7 @@ public:
   using ResQ = ServerResponseQ;
   using ReqHdrCatalog = ReqParser::HdrCatalog;
   using ResBuilder = ResponseRecord;
-  using ResBuilder_ = ResponseRecord;
+  using ResBuilder_ = ResponseData;
   using ResponseHeaders = ZuTypeList<>;
   using Engine::running;
   using Engine::start;
@@ -2283,6 +2279,7 @@ private:
     ZmRef<Emit>			emit;
     Native_::FinalCmd		final;
     Native_::FinalFields		finalFields;
+    ZmRef<Transport_::TCPHeader> tcpHeader;
     StreamTaskQ::Node	*task = nullptr;
     int8_t			state = StreamState::Initial;
 
@@ -2346,7 +2343,7 @@ private:
       ZuRef<Self> self{static_cast<Self *>(this)};
       bool beginHeaders;
       if (!Server_::streamEnter(state, beginHeaders)) return false;
-      auto tx = link->transmit_(response);
+      auto tx = streamMessageTx(*link, response, tcpHeader, 0);
       if (beginHeaders) response.begin(tx);
       if (beginHeaders && !response.validHeaders()) {
 	failed_(server->stats().tx.responseBuildFailures);
@@ -2446,6 +2443,7 @@ private:
       if (!closeProducer_()) return;
       finishTask_();
       response.finish(tx);
+      finishTCPStream(tx, 0);
       link->finish();
       link->responseDone_(appResponse, true);
     }
@@ -2496,6 +2494,7 @@ private:
 	  deferClose = false;
 	  break;
       }
+      tcpHeader = nullptr;
       if (emit) emit->close_(static_cast<Self *>(this));
       emit = nullptr;
       if (!terminal) link->responseCancel_({});
@@ -2744,7 +2743,10 @@ private:
 	ZiLOG(Warning, "Zhttp", "HTTP response transport failed");
       if (!ok || disconnect) {
 	responseCancelPending_();
-	impl()->disconnect();
+	if constexpr (MessageTraits<Profile>::ID == Version::H1) {
+	  if (ok) impl()->closeAfterTx_();
+	  else impl()->disconnect();
+	} else impl()->disconnect();
 	return;
       }
       responseNext_();

@@ -13,6 +13,11 @@
 #include <zlib/ZfixLinkTx.hh>
 #include <zlib/ZfixRx.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
+#include "ZfixTxImageTest.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 using namespace Zfix::Fmt;
@@ -175,7 +180,7 @@ struct TxSide : LinkTx<TxSide> {
   void idleArmTx(uint64_t, uint64_t, ZuTime);
   void idleCancelTx();
   void faultTx(TxContext, Error);
-  bool admitFrameTx(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime);
+  bool admitFrameTx(TxBody::Ref, TxContext, TxImage, ZuDateTime);
   void notifyTx(TxNotice);
   void flushTx();
   void completeTx(TxBody::Ref, TxContext, bool);
@@ -327,7 +332,7 @@ Error RxSide::businessRx(Msg *msg, Limits limits)
 bool TxSide::enqueueTx(TxBody::Ref body)
 {
   ZmAssert(endpoint->loop->owner == 2);
-  auto charge = uint64_t(body->size) + sizeof(AppQueue::Node);
+  auto charge = body->memory() + ZmHeapAllocSize<sizeof(AppQueue::Node)>{};
   if (charge > Fmt::Limits::FrameBytes
     || appBytes > Fmt::Limits::FrameBytes - charge) return false;
   appBytes += charge; appQueue.push(ZuMv(body)); return true;
@@ -337,7 +342,7 @@ TxBody::Ref TxSide::dequeueTx()
   ZmAssert(endpoint->loop->owner == 2);
   auto node = appQueue.shift();
   if (!node) return {};
-  appBytes -= uint64_t(node->data()->size) + sizeof(AppQueue::Node);
+  appBytes -= node->data()->memory() + ZmHeapAllocSize<sizeof(AppQueue::Node)>{};
   return ZuMv(node->data());
 }
 void TxSide::selectedTx(TxBody::Ref body, TxContext context, unsigned result)
@@ -450,8 +455,9 @@ void TxSide::faultTx(TxContext context, Error) {
   endpoint->loop->post(Work{.endpoint = endpoint, .kind = WorkKind::OutputFailed,
     .context = context});
 }
-bool TxSide::admitFrameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame, ZuDateTime)
+bool TxSide::admitFrameTx(TxBody::Ref body, TxContext context, TxImage image, ZuDateTime)
 {
+  auto frame = testBytes(image);
   ZmAssert(endpoint->loop->owner == 2 && !pendingFrame);
   if (fragmentFrame) {
     auto charge = uint64_t(frame->size) + sizeof(FrameQueue::Node);
@@ -515,7 +521,7 @@ void RxSide::piece_(ZmRef<ZiIOBuf> source, TxContext context, unsigned start, un
   if (byteConnection != context.connection) {
     bytes = nullptr; parser.reset(); byteConnection = context.connection;
   }
-  if (!bytes) bytes = new ZiIOBufAlloc<>;
+  if (!bytes) bytes = new LocalBuf{nullptr, 0};
   ZmAssert(source && start <= source->length && count <= source->length - start &&
     bytes->length == start && count <= Fmt::Limits::FrameBytes - bytes->length);
   auto dst = bytes->ensure(bytes->length + count); ZmAssert(dst);
@@ -708,16 +714,19 @@ void Loop::drain(unsigned limit)
 }
 
 // Retained control bodies are unsigned archives without final session values.
-template <typename O> static Error loadArchive(O &object, ZuCSpan bytes)
+template <typename O> struct Archived : O { Zi::RxRange bytes; };
+template <typename O> static Error loadArchive(Archived<O> &object, const TxBody::Ref &body)
 {
   Error error;
-  Fmt::read<O, ZuFacet::FIX, ArchiveField>(object, bytes, error);
+  object.bytes = body->archive(error);
+  if (error) return error;
+  Fmt::read<O, ZuFacet::FIX, ArchiveField>(object, object.bytes.cspan(), error);
   return error;
 }
 
 static void handshake()
 {
-  ZuTestScope(handshake);
+  ZuTestScopeRT(handshake);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     auto version = mode == Transport::FIXT11 ? Version::V4_4 : Version::VT1_1;
@@ -727,16 +736,16 @@ static void handshake()
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open});
     loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
-    ZuCheck(client.tx.inFlight_() == 0 && server.tx.inFlight_() == 0 &&
+    ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
+    ZuCheckRT(client.tx.inFlight_() == 0 && server.tx.inFlight_() == 0 &&
       loop.wire.length() == 2);
-    for (const auto &wire : loop.wire) ZuCheck(wire.body->msgType() == "A");
+    for (const auto &wire : loop.wire) ZuCheckRT(wire.body->msgType() == "A");
     auto clientAck = client.tx.acknowledged_(), serverAck = server.tx.acknowledged_();
-    ZuCheck(loop.submit(client, "first") == TxSelect::Accepted); loop.drain();
-    ZuCheck(server.orders.length() == 1 && server.orders[0] == "first");
-    ZuCheck(client.tx.acknowledged_() == clientAck && server.tx.acknowledged_() == serverAck);
+    ZuCheckRT(loop.submit(client, "first") == TxSelect::Accepted); loop.drain();
+    ZuCheckRT(server.orders.length() == 1 && server.orders[0] == "first");
+    ZuCheckRT(client.tx.acknowledged_() == clientAck && server.tx.acknowledged_() == serverAck);
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Logout}); loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().state_() == State::Disconnected &&
+    ZuCheckRT(!loop.errors && client.rx.session_().state_() == State::Disconnected &&
       server.rx.session_().state_() == State::Disconnected);
   }
 }
@@ -764,7 +773,7 @@ static void recovery()
 }
 static void priorityPendingRecovery()
 {
-  ZuTestScope(priorityPendingRecovery);
+  ZuTestScopeRT(priorityPendingRecovery);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     Endpoint client{&loop, true, mode, Version::V4_4};
@@ -776,93 +785,93 @@ static void priorityPendingRecovery()
     // was assigned but never published before the owners were reconstructed.
     loop.owner = 1;
     for (auto ep : {&client, &server}) {
-      ZuCheck(ep->rx.restore_(1, RxProgress{2, 2, 0, 0}));
+      ZuCheckRT(ep->rx.restore_(1, RxProgress{2, 2, 0, 0}));
     }
     loop.owner = 2;
-    ZuCheck(client.tx.restore_(1, 3, 2, 1));
-    ZuCheck(server.tx.restore_(1, 2, 2, 1));
+    ZuCheckRT(client.tx.restore_(1, 3, 2, 1));
+    ZuCheckRT(server.tx.restore_(1, 2, 2, 1));
     client.map_(body, {1, 0, 2});
     client.tx.delayHistory = true;
     loop.owner = 0;
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-    ZuCheck(!loop.errors && client.tx.waiting_() && client.tx.published_() == 2 &&
+    ZuCheckRT(!loop.errors && client.tx.waiting_() && client.tx.published_() == 2 &&
       !server.orders.length() && !server.rx.session_().ready_());
     auto progress = client.tx.progress_();
-    ZuCheck(progress.replayBegin == 2 && progress.replayEnd == 3);
+    ZuCheckRT(progress.replayBegin == 2 && progress.replayEnd == 3);
     bool first = true;
     for (const auto &wire : loop.wire) {
       if (!wire.client) continue;
       if (first) {
-	ZuCheck(wire.body->msgType() == "A" && wire.context.seqNo == 3);
+	ZuCheckRT(wire.body->msgType() == "A" && wire.context.seqNo == 3);
 	first = false;
       }
     }
     loop.owner = 2;
     client.tx.delayHistory = false;
-    ZuCheck(client.tx.reloaded_(client.tx.historyTicket, TxHistory{body, {}, 1, 2}));
+    ZuCheckRT(client.tx.reloaded_(client.tx.historyTicket, TxHistory{body, {}, 1, 2}));
     loop.owner = 0;
     loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
+    ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
       !client.tx.waiting_() && server.orders.length() == 1 && server.orders[0] == "pending" &&
       client.tx.epoch_() == 1 && !client.released.length());
     bool replayed = false;
     for (const auto &wire : loop.wire)
       if (wire.client && wire.body->msgType() == "D" && wire.context.seqNo == 2 &&
 	wire.context.replay && wire.possDup && *wire.origSendingTime) replayed = true;
-    ZuCheck(replayed && client.tx.next_() == client.tx.published_() &&
+    ZuCheckRT(replayed && client.tx.next_() == client.tx.published_() &&
       client.tx.next_() >= 4 && !client.tx.queuedBytes_());
   }
 }
 
 static void heartbeats()
 {
-  ZuTestScope(heartbeats);
+  ZuTestScopeRT(heartbeats);
   Loop loop;
   Endpoint client{&loop, true, Transport::FIX4, Version::V4_4};
   Endpoint server{&loop, false, Transport::FIX4, Version::V4_4};
   client.peer = &server; server.peer = &client;
   loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
   loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-  ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
-  ZuCheck(client.tx.idleAt == ZuTime{130} && server.tx.idleAt == ZuTime{130});
+  ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
+  ZuCheckRT(client.tx.idleAt == ZuTime{130} && server.tx.idleAt == ZuTime{130});
   auto count = loop.wire.length();
   loop.now = ZuTime{130};
   for (auto ep : {&client, &server})
     loop.post(Work{.endpoint = ep, .kind = WorkKind::Idle,
       .context = {1, ep->tx.idleConnection, 0}, .ticket = ep->tx.idleTicket});
   loop.drain();
-  ZuCheck(loop.wire.length() == count + 2 && !loop.errors);
+  ZuCheckRT(loop.wire.length() == count + 2 && !loop.errors);
   for (unsigned i = count, n = loop.wire.length(); i < n; ++i)
-    ZuCheck(loop.wire[i].body->msgType() == "0" && !loop.wire[i].body->body().length());
+    ZuCheckRT(loop.wire[i].body->msgType() == "0" && loop.wire[i].body->empty());
   loop.now = ZuTime{136};
   for (auto ep : {&client, &server})
     loop.post(Work{.endpoint = ep, .kind = WorkKind::RxTimer,
       .context = {1, 1, 0}, .task = SessionTimer::Receive});
   loop.drain();
-  ZuCheck(!loop.errors && loop.wire.length() == count + 2 &&
+  ZuCheckRT(!loop.errors && loop.wire.length() == count + 2 &&
     client.rx.session_().deadline_(SessionTimer::Receive) == ZuTime{166} &&
     server.rx.session_().deadline_(SessionTimer::Receive) == ZuTime{166});
 
   loop.now = ZuTime{140};
-  ZuCheck(loop.submit(client, "activity") == TxSelect::Accepted); loop.drain();
-  ZuCheck(server.orders.length() == 1 && client.tx.idleDeadline_() == ZuTime{170});
+  ZuCheckRT(loop.submit(client, "activity") == TxSelect::Accepted); loop.drain();
+  ZuCheckRT(server.orders.length() == 1 && client.tx.idleDeadline_() == ZuTime{170});
   count = loop.wire.length();
   loop.now = ZuTime{160};
   for (auto ep : {&client, &server})
     loop.post(Work{.endpoint = ep, .kind = WorkKind::Idle,
       .context = {1, ep->tx.idleConnection, 0}, .ticket = ep->tx.idleTicket});
   loop.drain();
-  ZuCheck(!loop.errors && loop.wire.length() == count + 1 &&
+  ZuCheckRT(!loop.errors && loop.wire.length() == count + 1 &&
     !loop.wire[count].client && loop.wire[count].body->msgType() == "0");
-  ZuCheck(client.rx.session_().ready_() && server.rx.session_().ready_());
+  ZuCheckRT(client.rx.session_().ready_() && server.rx.session_().ready_());
   auto stale = client.tx.idleTicket;
   loop.post(Work{.endpoint = &client, .kind = WorkKind::Logout}); loop.drain();
-  ZuCheck(!loop.errors && !*client.tx.idleAt && !*server.tx.idleAt);
+  ZuCheckRT(!loop.errors && !*client.tx.idleAt && !*server.tx.idleAt);
   count = loop.wire.length();
   loop.post(Work{.endpoint = &client, .kind = WorkKind::Idle,
     .context = {1, 1, 0}, .ticket = stale}); loop.drain();
-  ZuCheck(!loop.errors && loop.wire.length() == count);
+  ZuCheckRT(!loop.errors && loop.wire.length() == count);
 }
 
 static void probeAcknowledgement()
@@ -930,7 +939,7 @@ static void draining()
 
 static void liveReset()
 {
-  ZuTestScope(liveReset);
+  ZuTestScopeRT(liveReset);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     for (bool clientDriver : {true, false}) {
       Loop loop;
@@ -939,56 +948,56 @@ static void liveReset()
       client.peer = &server; server.peer = &client;
       loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-      ZuCheck(loop.submit(client, "old") == TxSelect::Accepted); loop.drain();
+      ZuCheckRT(loop.submit(client, "old") == TxSelect::Accepted); loop.drain();
       for (auto ep : {&client, &server}) loop.post(Work{.endpoint = ep, .kind = WorkKind::Drain});
       loop.drain();
-      ZuCheck(!loop.errors && client.rx.session_().drained_() && server.rx.session_().drained_());
+      ZuCheckRT(!loop.errors && client.rx.session_().drained_() && server.rx.session_().drained_());
       auto before = loop.wire.length();
       auto frontier = client.tx.next_();
-      ZuCheck(loop.enqueue(client, "queued")); loop.drain();
-      ZuCheck(loop.wire.length() == before && client.tx.next_() == frontier &&
+      ZuCheckRT(loop.enqueue(client, "queued")); loop.drain();
+      ZuCheckRT(loop.wire.length() == before && client.tx.next_() == frontier &&
 	client.tx.appQueue.count_() == 1);
       for (auto ep : {&client, &server})
 	loop.post(Work{.endpoint = ep, .kind = WorkKind::Prepare,
 	  .event = {.nextEpoch = 2, .resetInitiator = ep->client == clientDriver},
 	    .context = {1, 1, 0}});
       loop.drain();
-      ZuCheck(!loop.errors && client.rx.session_().epoch_() == 2
+      ZuCheckRT(!loop.errors && client.rx.session_().epoch_() == 2
 	&& server.rx.session_().epoch_() == 2 &&
 	client.tx.epoch_() == 2 && server.tx.epoch_() == 2 && loop.wire.length() == before);
-      ZuCheck(client.rx.expected_() == 1 && server.rx.expected_() == 1 &&
+      ZuCheckRT(client.rx.expected_() == 1 && server.rx.expected_() == 1 &&
 	client.tx.next_() == 1 && server.tx.next_() == 1);
       loop.owner = 1; auto rx = client.rx.progress_();
       loop.owner = 2; auto tx = client.tx.progress_(); loop.owner = 0;
-      ZuCheck(rx.processed == 1 && tx.loaded == 1);
+      ZuCheckRT(rx.processed == 1 && tx.loaded == 1);
       auto driver = clientDriver ? &client : &server;
       auto follower = driver->peer;
       // Start the driver first. The prepared peer retains the reset frame until
       // its explicit start releases ingress; neither owner guesses peer readiness.
       loop.post(Work{.endpoint = driver, .kind = WorkKind::ResetStart, .context = {2, 1, 0}});
       loop.drain();
-      ZuCheck(!loop.errors && follower->blockedFrame && !driver->rx.session_().ready_());
+      ZuCheckRT(!loop.errors && follower->blockedFrame && !driver->rx.session_().ready_());
       loop.post(Work{.endpoint = follower, .kind = WorkKind::ResetStart, .context = {2, 1, 0}});
       loop.drain();
-      ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
+      ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
 	!follower->blockedFrame);
       unsigned resetLogons = 0;
       for (unsigned i = before, n = loop.wire.length(); i < n; ++i) {
 	const auto &wire = loop.wire[i];
 	if (wire.body->msgType() != "A") continue;
-	Session::Logon logon;
-	ZuCheck(!loadArchive(logon, wire.body->body()) && logon.resetSeqNum &&
+	Archived<Session::Logon> logon;
+	ZuCheckRT(!loadArchive(logon, wire.body) && logon.resetSeqNum &&
 	  wire.context.epoch == 2 && wire.context.connection == 1 && wire.context.seqNo == 1);
 	++resetLogons;
       }
-      ZuCheck(resetLogons == 2 && client.rx.session_().connection_() == 1 &&
+      ZuCheckRT(resetLogons == 2 && client.rx.session_().connection_() == 1 &&
 	server.rx.session_().connection_() == 1);
       loop.owner = 2;
-      ZuCheck(client.tx.apply_(SessionEvent{.actions = SessionAction::Close,
+      ZuCheckRT(client.tx.apply_(SessionEvent{.actions = SessionAction::Close,
 	.state = State::Closing, .connection = 1, .epoch = 1}) == TxSelect::Invalid);
       loop.owner = 0;
-      ZuCheck(loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
-      ZuCheck(server.orders.length() == 3 && server.orders[0] == "old"
+      ZuCheckRT(loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
+      ZuCheckRT(server.orders.length() == 3 && server.orders[0] == "old"
 	&& server.orders[1] == "queued" &&
 	server.orders[2] == "new" && server.epochs[0] == 1 && server.epochs[1] == 2 &&
 	server.epochs[2] == 2 && !client.tx.appBytes);
@@ -998,7 +1007,7 @@ static void liveReset()
 
 static void reconnectReset()
 {
-  ZuTestScope(reconnectReset);
+  ZuTestScopeRT(reconnectReset);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     Endpoint client{&loop, true, mode, Version::V4_4};
@@ -1006,41 +1015,41 @@ static void reconnectReset()
     client.peer = &server; server.peer = &client;
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-    ZuCheck(loop.submit(client, "old") == TxSelect::Accepted); loop.drain();
+    ZuCheckRT(loop.submit(client, "old") == TxSelect::Accepted); loop.drain();
     for (auto ep : {&client, &server}) loop.post(Work{.endpoint = ep, .kind = WorkKind::Drain});
     loop.drain();
     auto before = loop.wire.length();
     auto frontier = client.tx.next_();
-    ZuCheck(loop.enqueue(client, "queued")); loop.drain();
-    ZuCheck(loop.wire.length() == before && client.tx.next_() == frontier);
+    ZuCheckRT(loop.enqueue(client, "queued")); loop.drain();
+    ZuCheckRT(loop.wire.length() == before && client.tx.next_() == frontier);
     for (auto ep : {&client, &server})
       loop.post(Work{.endpoint = ep, .kind = WorkKind::Prepare,
 	.event = {.nextEpoch = 2, .resetInitiator = ep->client}, .context = {1, 1, 0},
 	.path = ResetPath::Reconnect});
     loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().epoch_() == 2
+    ZuCheckRT(!loop.errors && client.rx.session_().epoch_() == 2
       && server.rx.session_().epoch_() == 2);
     for (auto ep : {&client, &server})
       loop.post(Work{.endpoint = ep, .kind = WorkKind::ResetDisconnect, .context = {2, 1, 0}});
     loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().state_() == State::Disconnected &&
+    ZuCheckRT(!loop.errors && client.rx.session_().state_() == State::Disconnected &&
       server.rx.session_().state_() == State::Disconnected && loop.wire.length() == before);
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().connection_() == 2
+    ZuCheckRT(!loop.errors && client.rx.session_().connection_() == 2
       && server.rx.session_().connection_() == 2 &&
       client.rx.session_().ready_() && server.rx.session_().ready_());
     unsigned count = 0;
     for (unsigned i = before, n = loop.wire.length(); i < n; ++i) {
       const auto &wire = loop.wire[i];
       if (wire.body->msgType() != "A") continue;
-      Session::Logon logon;
-      ZuCheck(!loadArchive(logon, wire.body->body()) && logon.resetSeqNum && wire.context.seqNo == 1 &&
+      Archived<Session::Logon> logon;
+      ZuCheckRT(!loadArchive(logon, wire.body) && logon.resetSeqNum && wire.context.seqNo == 1 &&
 	wire.context.epoch == 2 && wire.context.connection == 2);
       ++count;
     }
-    ZuCheck(count == 2 && loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
-    ZuCheck(server.orders.length() == 3 && server.orders[1] == "queued"
+    ZuCheckRT(count == 2 && loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
+    ZuCheckRT(server.orders.length() == 3 && server.orders[1] == "queued"
       && server.orders[2] == "new" &&
       server.epochs[1] == 2 && server.epochs[2] == 2 && !client.tx.appBytes);
   }
@@ -1048,38 +1057,38 @@ static void reconnectReset()
 
 static void continuingReconnect()
 {
-  ZuTestScope(continuingReconnect);
+  ZuTestScopeRT(continuingReconnect);
   Loop loop;
   Endpoint client{&loop, true, Transport::FIX4, Version::V4_4};
   Endpoint server{&loop, false, Transport::FIX4, Version::V4_4};
   client.peer = &server; server.peer = &client;
   loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
   loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-  ZuCheck(loop.submit(client, "old") == TxSelect::Accepted); loop.drain();
+  ZuCheckRT(loop.submit(client, "old") == TxSelect::Accepted); loop.drain();
   loop.post(Work{.endpoint = &client, .kind = WorkKind::Logout}); loop.drain();
   auto before = loop.wire.length();
   auto next = client.tx.next_();
   loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
   loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-  ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
+  ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
     client.rx.session_().epoch_() == 1 && client.tx.epoch_() == 1);
   unsigned count = 0;
   for (unsigned i = before, n = loop.wire.length(); i < n; ++i) {
     const auto &wire = loop.wire[i];
     if (wire.body->msgType() != "A") continue;
-    Session::Logon logon;
-    ZuCheck(!loadArchive(logon, wire.body->body()) && !logon.resetSeqNum &&
+    Archived<Session::Logon> logon;
+    ZuCheckRT(!loadArchive(logon, wire.body) && !logon.resetSeqNum &&
       wire.context.connection == 2 && wire.context.epoch == 1 && wire.context.seqNo > 1);
-    if (wire.client) ZuCheck(wire.context.seqNo == next);
+    if (wire.client) ZuCheckRT(wire.context.seqNo == next);
     ++count;
   }
-  ZuCheck(count == 2 && loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
-  ZuCheck(server.orders.length() == 2 && server.orders[1] == "new" && server.epochs[1] == 1);
+  ZuCheckRT(count == 2 && loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
+  ZuCheckRT(server.orders.length() == 2 && server.orders[1] == "new" && server.epochs[1] == 1);
 }
 
 static void resetCloseRace()
 {
-  ZuTestScope(resetCloseRace);
+  ZuTestScopeRT(resetCloseRace);
   for (bool committed : {false, true}) {
     Loop loop;
     Endpoint client{&loop, true, Transport::FIX4, Version::V4_4};
@@ -1096,10 +1105,10 @@ static void resetCloseRace()
     if (committed) {
       unsigned steps = 0;
       while (client.tx.epoch_() == 1 && steps++ < 100) loop.drain(1);
-      ZuCheck(client.tx.epoch_() == 2 && loop.cursor < loop.work.length());
+      ZuCheckRT(client.tx.epoch_() == 2 && loop.cursor < loop.work.length());
       // Model an Rx timer already queued before the cross-owner commit notice.
       auto notice = ZuMv(loop.work[loop.cursor]);
-      ZuCheck(notice.kind == WorkKind::Notice && notice.notice.kind == TxNoticeKind::ResetReady);
+      ZuCheckRT(notice.kind == WorkKind::Notice && notice.notice.kind == TxNoticeKind::ResetReady);
       loop.work[loop.cursor] = Work{.endpoint = &client, .kind = WorkKind::RxTimer,
 	.context = {1, 1, 0}, .task = SessionTimer::Logon};
       loop.post(ZuMv(notice));
@@ -1107,7 +1116,7 @@ static void resetCloseRace()
       // Let an already queued Rx deadline run before Tx consumes Prepare.
       // Its Close then follows Prepare on Tx, ahead of the posted reset task.
       auto prepare = ZuMv(loop.work[loop.cursor]);
-      ZuCheck(prepare.kind == WorkKind::Event &&
+      ZuCheckRT(prepare.kind == WorkKind::Event &&
 	(prepare.event.actions & SessionAction::ResetPrepare));
       loop.work[loop.cursor] = Work{.endpoint = &client, .kind = WorkKind::RxTimer,
 	.context = {1, 1, 0}, .task = SessionTimer::Logon};
@@ -1115,14 +1124,14 @@ static void resetCloseRace()
     }
     loop.now = ZuTime{111}; loop.drain();
     auto epoch = committed ? 2 : 1;
-    ZuCheck(client.rx.session_().state_() == State::Disconnected &&
+    ZuCheckRT(client.rx.session_().state_() == State::Disconnected &&
       !client.rx.session_().resetPreparing_() && client.rx.session_().epoch_() == epoch &&
       client.tx.epoch_() == epoch && loop.wire.length() == before);
     if (!committed) {
       auto errors = loop.errors;
       loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-      ZuCheck(loop.errors == errors && client.rx.session_().ready_()
+      ZuCheckRT(loop.errors == errors && client.rx.session_().ready_()
 	&& server.rx.session_().ready_() &&
 	client.rx.session_().epoch_() == 1 && client.tx.epoch_() == 1);
     }
@@ -1131,7 +1140,7 @@ static void resetCloseRace()
 
 static void initialReset()
 {
-  ZuTestScope(initialReset);
+  ZuTestScopeRT(initialReset);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     auto version = mode == Transport::FIXT11 ? Version::VT1_1 : Version::V4_4;
@@ -1142,37 +1151,37 @@ static void initialReset()
       loop.post(Work{.endpoint = ep, .kind = WorkKind::InitialReset, .context = {1, 0, 0}});
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
+    ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
     unsigned count = 0;
     for (const auto &wire : loop.wire) {
       if (wire.body->msgType() != "A") continue;
-      Session::Logon logon;
-      ZuCheck(!loadArchive(logon, wire.body->body()) && logon.resetSeqNum &&
+      Archived<Session::Logon> logon;
+      ZuCheckRT(!loadArchive(logon, wire.body) && logon.resetSeqNum &&
 	wire.context.seqNo == 1 && wire.context.epoch == 1 && wire.context.connection == 1);
       ++count;
     }
-    ZuCheck(count == 2 && loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
-    ZuCheck(server.orders.length() == 1 && server.orders[0] == "new" && server.epochs[0] == 1);
+    ZuCheckRT(count == 2 && loop.submit(client, "new") == TxSelect::Accepted); loop.drain();
+    ZuCheckRT(server.orders.length() == 1 && server.orders[0] == "new" && server.epochs[0] == 1);
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Logout}); loop.drain();
     auto before = loop.wire.length();
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
+    ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_());
     count = 0;
     for (unsigned i = before, n = loop.wire.length(); i < n; ++i) {
       const auto &wire = loop.wire[i]; if (wire.body->msgType() != "A") continue;
-      Session::Logon logon;
-      ZuCheck(!loadArchive(logon, wire.body->body()) && !logon.resetSeqNum &&
+      Archived<Session::Logon> logon;
+      ZuCheckRT(!loadArchive(logon, wire.body) && !logon.resetSeqNum &&
 	wire.context.seqNo > 1 && wire.context.epoch == 1 && wire.context.connection == 2);
       ++count;
     }
-    ZuCheck(count == 2);
+    ZuCheckRT(count == 2);
   }
 }
 
 static void peerReject()
 {
-  ZuTestScope(peerReject);
+  ZuTestScopeRT(peerReject);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     Endpoint client{&loop, true, mode, Version::V4_4};
@@ -1182,21 +1191,21 @@ static void peerReject()
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Probe}); loop.drain();
     auto seqNo = client.tx.next_(); auto ackd = client.tx.acknowledged_();
-    ZuCheck(loop.submit(client, "bad") == TxSelect::Accepted); loop.drain();
-    ZuCheck(!loop.errors && client.peerRejects.length() == 1 && client.rejectIds.length() == 1 &&
+    ZuCheckRT(loop.submit(client, "bad") == TxSelect::Accepted); loop.drain();
+    ZuCheckRT(!loop.errors && client.peerRejects.length() == 1 && client.rejectIds.length() == 1 &&
       client.rejectIds[0] == client.submission && client.rejectIds[0] != seqNo);
     const auto &report = client.peerRejects[0];
-    ZuCheck(report.context.epoch == 1 && report.context.connection == 1 &&
+    ZuCheckRT(report.context.epoch == 1 && report.context.connection == 1 &&
       report.message.refSeqNo == seqNo && report.message.refTagID == 11 &&
       report.message.reason == 5 && report.message.text == "bad value" && !report.possDup &&
       client.tx.acknowledged_() == ackd);
     auto parsed = Fmt::frame(report.wire);
-    ZuCheck(parsed.state == FrameState::Complete && parsed.view.msgType == "3" &&
+    ZuCheckRT(parsed.state == FrameState::Complete && parsed.view.msgType == "3" &&
       !server.orders.length());
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Resend,
       .context = {1, 1, 0}, .begin = report.context.seqNo, .end = report.context.seqNo});
     loop.drain();
-    ZuCheck(!loop.errors && client.peerRejects.length() == 1 && client.rejectIds.length() == 1);
+    ZuCheckRT(!loop.errors && client.peerRejects.length() == 1 && client.rejectIds.length() == 1);
     auto old = client.peerRejects[0];
     for (auto ep : {&client, &server}) loop.post(Work{.endpoint = ep, .kind = WorkKind::Drain});
     loop.drain();
@@ -1207,14 +1216,14 @@ static void peerReject()
     for (auto ep : {&client, &server})
       loop.post(Work{.endpoint = ep, .kind = WorkKind::ResetStart, .context = {2, 1, 0}});
     loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().ready_() && client.tx.epoch_() == 2);
+    ZuCheckRT(!loop.errors && client.rx.session_().ready_() && client.tx.epoch_() == 2);
     loop.owner = 2;
-    ZuCheck(!client.tx.peerReject_(old) && client.peerRejects.length() == 1);
+    ZuCheckRT(!client.tx.peerReject_(old) && client.peerRejects.length() == 1);
     loop.owner = 0;
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Probe}); loop.drain();
-    ZuCheck(client.tx.next_() == seqNo && loop.submit(client, "bad again") == TxSelect::Accepted);
+    ZuCheckRT(client.tx.next_() == seqNo && loop.submit(client, "bad again") == TxSelect::Accepted);
     loop.drain();
-    ZuCheck(!loop.errors && client.peerRejects.length() == 2 && client.rejectIds.length() == 2 &&
+    ZuCheckRT(!loop.errors && client.peerRejects.length() == 2 && client.rejectIds.length() == 2 &&
       client.peerRejects[1].context.epoch == 2
 	&& client.peerRejects[1].message.refSeqNo == seqNo &&
       client.rejectIds[1] == client.submission && client.rejectIds[1] != client.rejectIds[0] &&
@@ -1224,7 +1233,7 @@ static void peerReject()
 
 static void simultaneousRecovery()
 {
-  ZuTestScope(simultaneousRecovery);
+  ZuTestScopeRT(simultaneousRecovery);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     Endpoint client{&loop, true, mode, Version::V4_4};
@@ -1233,20 +1242,20 @@ static void simultaneousRecovery()
     loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
     client.dropNextOrder = server.dropNextOrder = true;
-    ZuCheck(loop.submit(client, "c1") == TxSelect::Accepted &&
+    ZuCheckRT(loop.submit(client, "c1") == TxSelect::Accepted &&
       loop.submit(client, "c2") == TxSelect::Accepted &&
       loop.submit(server, "s1") == TxSelect::Accepted &&
       loop.submit(server, "s2") == TxSelect::Accepted);
     unsigned steps = 0;
     while (!(client.rx.retained_() && server.rx.retained_()) && steps++ < 100) loop.drain(1);
-    ZuCheck(!loop.errors && client.dropped && server.dropped &&
+    ZuCheckRT(!loop.errors && client.dropped && server.dropped &&
       client.rx.retained_() && server.rx.retained_() && !client.rx.session_().ready_() &&
       !server.rx.session_().ready_() && client.rx.expected_() == server.dropped &&
       server.rx.expected_() == client.dropped);
     loop.drain();
-    ZuCheck(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
+    ZuCheckRT(!loop.errors && client.rx.session_().ready_() && server.rx.session_().ready_() &&
       !client.rx.retained_() && !server.rx.retained_());
-    ZuCheck(client.orders.length() == 2 && client.orders[0] == "s1" && client.orders[1] == "s2" &&
+    ZuCheckRT(client.orders.length() == 2 && client.orders[0] == "s1" && client.orders[1] == "s2" &&
       server.orders.length() == 2 && server.orders[0] == "c1" && server.orders[1] == "c2");
     bool cReplay = false, sReplay = false;
     for (const auto &wire : loop.wire) {
@@ -1254,9 +1263,9 @@ static void simultaneousRecovery()
       if (wire.client && wire.context.seqNo == client.dropped) cReplay = true;
       if (!wire.client && wire.context.seqNo == server.dropped) sReplay = true;
     }
-    ZuCheck(cReplay && sReplay && loop.submit(client, "c3") == TxSelect::Accepted &&
+    ZuCheckRT(cReplay && sReplay && loop.submit(client, "c3") == TxSelect::Accepted &&
       loop.submit(server, "s3") == TxSelect::Accepted); loop.drain();
-    ZuCheck(!loop.errors && client.orders.length() == 3 && client.orders[2] == "s3" &&
+    ZuCheckRT(!loop.errors && client.orders.length() == 3 && client.orders[2] == "s3" &&
       server.orders.length() == 3 && server.orders[2] == "c3");
   }
 }
@@ -1271,7 +1280,7 @@ static ZuDateTime frameTime(const ZiIOBuf *buffer)
 }
 static void partialWrites()
 {
-  ZuTestScope(partialWrites);
+  ZuTestScopeRT(partialWrites);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     unsigned length = 0;
     for (unsigned cut = 0; !length || cut <= length; ++cut) {
@@ -1285,53 +1294,53 @@ static void partialWrites()
       auto seqNo = client.tx.next_(); auto ackd = client.tx.acknowledged_();
       auto completed = client.completions; auto associated = client.associations.length();
       client.tx.holdNext = true;
-      ZuCheck(loop.submit(client, "fragmented") == TxSelect::Accepted); loop.drain();
-      ZuCheck(client.tx.fragmentFrame && !server.orders.length() && client.tx.inFlight_() == 1 &&
+      ZuCheckRT(loop.submit(client, "fragmented") == TxSelect::Accepted); loop.drain();
+      ZuCheckRT(client.tx.fragmentFrame && !server.orders.length() && client.tx.inFlight_() == 1 &&
 	client.tx.next_() == seqNo + 1 && client.tx.published_() == seqNo + 1);
       if (!client.tx.fragmentFrame) break;
       auto context = client.tx.fragmentContext;
       auto ticket = client.tx.writeTicket;
       auto framePtr = client.tx.fragmentFrame.ptr();
       if (!length) length = framePtr->length;
-      ZuCheck(length == framePtr->length && context.seqNo == seqNo && !context.replay);
+      ZuCheckRT(length == framePtr->length && context.seqNo == seqNo && !context.replay);
       auto original = frameTime(framePtr);
       Session::Msg hb; hb.p<Session::HeartBt>(Session::HeartBt{}); Error error;
       auto body = TxBody::control(hb, error);
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Control,
 	.context = {1, 1, 0}, .body = ZuMv(body)}); loop.drain();
-      ZuCheck(!error && client.tx.next_() == seqNo + 2 && client.tx.published_() == seqNo + 1 &&
+      ZuCheckRT(!error && client.tx.next_() == seqNo + 2 && client.tx.published_() == seqNo + 1 &&
 	client.completions == completed && client.associations.length() == associated + 2);
       loop.utc += ZuTime{1};
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = context,
 	.ticket = ticket, .begin = cut});
       loop.drain();
       if (cut < length) {
-	ZuCheck(!loop.errors && !server.orders.length() && client.completions == completed &&
+	ZuCheckRT(!loop.errors && !server.orders.length() && client.completions == completed &&
 	  client.tx.inFlight_() == 1 && client.tx.fragmentFrame.ptr() == framePtr &&
 	  frameTime(framePtr) == original && client.tx.published_() == seqNo + 1 &&
 	  client.tx.acknowledged_() == ackd);
-	ZuCheck(server.rx.incomplete == unsigned(cut != 0));
+	ZuCheckRT(server.rx.incomplete == unsigned(cut != 0));
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = context,
 	  .ticket = ticket}); loop.drain();
-	ZuCheck(client.completions == completed && client.tx.offset == cut);
+	ZuCheckRT(client.completions == completed && client.tx.offset == cut);
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Write,
 	  .context = context, .ticket = ticket, .begin = length - cut}); loop.drain();
       }
-      ZuCheck(!loop.errors && server.orders.length() == 1 && server.orders[0] == "fragmented" &&
+      ZuCheckRT(!loop.errors && server.orders.length() == 1 && server.orders[0] == "fragmented" &&
 	client.completions == completed + 2 && !client.failures && !client.tx.fragmentFrame &&
 	!client.tx.inFlight_() && client.tx.published_() == seqNo + 2
 	  && client.tx.acknowledged_() == ackd);
       loop.owner = 2;
-      ZuCheck(!client.tx.write_(context, 0, true, ticket) && client.completions == completed + 2);
+      ZuCheckRT(!client.tx.write_(context, 0, true, ticket) && client.completions == completed + 2);
       loop.owner = 0;
-      ZuCheck(server.rx.expected_() == seqNo + 2
+      ZuCheckRT(server.rx.expected_() == seqNo + 2
 	&& client.associations.length() == associated + 2);
     }
   }
 }
 static void partialFailure()
 {
-  ZuTestScope(partialFailure);
+  ZuTestScopeRT(partialFailure);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool delivered : {false, true}) {
       Loop loop;
@@ -1343,8 +1352,8 @@ static void partialFailure()
       auto seqNo = client.tx.next_(); auto ackd = client.tx.acknowledged_();
       auto completed = client.completions;
       client.tx.holdNext = client.tx.holdCompletion = true;
-      ZuCheck(loop.submit(client, "uncertain") == TxSelect::Accepted); loop.drain();
-      ZuCheck(client.tx.fragmentFrame && client.tx.inFlight_() == 1);
+      ZuCheckRT(loop.submit(client, "uncertain") == TxSelect::Accepted); loop.drain();
+      ZuCheckRT(client.tx.fragmentFrame && client.tx.inFlight_() == 1);
       if (!client.tx.fragmentFrame) continue;
       auto context = client.tx.fragmentContext;
       auto ticket = client.tx.writeTicket;
@@ -1354,24 +1363,24 @@ static void partialFailure()
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = context,
 	.ticket = ticket, .begin = count});
       loop.drain();
-      ZuCheck(!loop.errors && client.completions == completed && client.tx.inFlight_() == 1 &&
+      ZuCheckRT(!loop.errors && client.completions == completed && client.tx.inFlight_() == 1 &&
 	server.orders.length() == unsigned(delivered) && client.tx.acknowledged_() == ackd);
-      ZuCheck(loop.enqueue(client, "retained"));
+      ZuCheckRT(loop.enqueue(client, "retained"));
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = context,
 	.ticket = ticket, .ok = false});
       loop.drain();
-      ZuCheck(client.rx.session_().state_() == State::Disconnected &&
+      ZuCheckRT(client.rx.session_().state_() == State::Disconnected &&
 	server.rx.session_().state_() == State::Disconnected && client.failures == 1 &&
 	client.completions == completed + 1 && !client.tx.inFlight_()
 	  && !client.tx.fragmentFrame &&
 	!server.rx.bytes && client.tx.epoch_() == 1 && client.tx.published_() == seqNo + 1);
       auto errors = loop.errors;
       auto assigned = client.tx.next_();
-      ZuCheck(assigned == seqNo + 2 && !client.released.length());
+      ZuCheckRT(assigned == seqNo + 2 && !client.released.length());
       loop.utc += ZuTime{5};
       loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-      ZuCheck(loop.errors == errors && client.rx.session_().ready_()
+      ZuCheckRT(loop.errors == errors && client.rx.session_().ready_()
 	&& server.rx.session_().ready_() &&
 	client.tx.epoch_() == 1 && client.tx.connection_() == 2 && server.orders.length() == 2 &&
 	server.orders[0] == "uncertain" && server.orders[1] == "retained" && !client.tx.appBytes);
@@ -1380,16 +1389,16 @@ static void partialFailure()
       for (const auto &wire : loop.wire) {
 	if (!wire.client || wire.context.connection != 2) continue;
 	if (!wire.context.replay && wire.context.seqNo >= assigned) {
-	  ZuCheck(wire.context.seqNo == sent && wire.body->administrative());
+	  ZuCheckRT(wire.context.seqNo == sent && wire.body->administrative());
 	  ++sent;
 	}
 	if (first) {
-	  ZuCheck(wire.body->msgType() == "A" && wire.context.seqNo == assigned);
+	  ZuCheckRT(wire.body->msgType() == "A" && wire.context.seqNo == assigned);
 	  first = false;
 	}
 	if (wire.body->msgType() == "A") {
-	  Session::Logon logon;
-	  ZuCheck(!loadArchive(logon, wire.body->body()) && !logon.resetSeqNum &&
+	  Archived<Session::Logon> logon;
+	  ZuCheckRT(!loadArchive(logon, wire.body) && !logon.resetSeqNum &&
 	    wire.context.seqNo == assigned);
 	  continuing = true;
 	}
@@ -1401,32 +1410,32 @@ static void partialFailure()
       for (unsigned i = 0, n = client.associations.length(); i < n; ++i) {
 	const auto &mapping = client.associations[i];
 	if (mapping.epoch == 1 && mapping.seqNo == seqNo + 1) {
-	  ZuCheck(mapping.connection == 1 && client.assocActive[i]);
+	  ZuCheckRT(mapping.connection == 1 && client.assocActive[i]);
 	  ++mappings;
 	}
       }
-      ZuCheck(continuing && retained && (delivered || replayed) && mappings == 1 &&
+      ZuCheckRT(continuing && retained && (delivered || replayed) && mappings == 1 &&
 	!client.released.length() && sent > assigned && client.tx.next_() == sent &&
 	client.tx.published_() == sent);
       // The application archive permits an explicit old-sequence replay after
       // reconnect, including the already delivered/uncertain-completion case.
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Resend,
 	.context = {1, 2, 0}, .begin = seqNo, .end = seqNo}); loop.drain();
-      ZuCheck(loop.errors == errors && server.orders.length() == 2 && client.failures == 1);
+      ZuCheckRT(loop.errors == errors && server.orders.length() == 2 && client.failures == 1);
       bool originalPreserved = false;
       for (const auto &record : client.tx.history)
 	if (record.epoch == 1
 	  && record.seqNo == seqNo) originalPreserved = record.originalTime == original;
-      ZuCheck(originalPreserved);
+      ZuCheckRT(originalPreserved);
       loop.owner = 2;
-      ZuCheck(!client.tx.write_(context, 0, false, ticket) && client.failures == 1);
+      ZuCheckRT(!client.tx.write_(context, 0, false, ticket) && client.failures == 1);
       loop.owner = 0;
     }
 }
 
 static void queuedPartialWrites()
 {
-  ZuTestScope(queuedPartialWrites);
+  ZuTestScopeRT(queuedPartialWrites);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool fail : {false, true}) {
       Loop loop;
@@ -1438,11 +1447,11 @@ static void queuedPartialWrites()
       auto seqNo = client.tx.next_(); auto ackd = client.tx.acknowledged_();
       auto completed = client.completions;
       client.tx.holdNext = client.tx.queueBehind = true;
-      ZuCheck(loop.submit(client, "first") == TxSelect::Accepted &&
+      ZuCheckRT(loop.submit(client, "first") == TxSelect::Accepted &&
 	loop.submit(client, "second") == TxSelect::Accepted && loop.submit(client,
 	  "third") == TxSelect::Accepted);
       loop.drain();
-      ZuCheck(!loop.errors && client.tx.fragmentFrame && client.tx.behind.count_() == 2 &&
+      ZuCheckRT(!loop.errors && client.tx.fragmentFrame && client.tx.behind.count_() == 2 &&
 	client.tx.inFlight_() == 3 && client.tx.next_() == seqNo + 3 &&
 	client.tx.published_() == seqNo + 3 && !server.orders.length());
       if (!client.tx.fragmentFrame) continue;
@@ -1452,13 +1461,13 @@ static void queuedPartialWrites()
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = context,
 	.ticket = ticket,
 	.begin = client.tx.fragmentFrame->length / 2}); loop.drain();
-      ZuCheck(client.completions == completed && server.orders.length() == 0 &&
+      ZuCheckRT(client.completions == completed && server.orders.length() == 0 &&
 	client.tx.inFlight_() == 3 && client.tx.acknowledged_() == ackd);
       if (fail) {
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = context,
 	  .ticket = ticket, .ok = false});
 	loop.drain();
-	ZuCheck(client.failures == 3 && client.completions == completed + 3
+	ZuCheckRT(client.failures == 3 && client.completions == completed + 3
 	  && !client.tx.inFlight_() &&
 	  !client.tx.fragmentFrame && !client.tx.queuedBytes && !client.tx.behind.count_() &&
 	  client.rx.session_().state_() == State::Disconnected && !server.rx.bytes
@@ -1466,7 +1475,7 @@ static void queuedPartialWrites()
 	auto errors = loop.errors; loop.utc += ZuTime{5};
 	loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-	ZuCheck(loop.errors == errors && client.rx.session_().ready_()
+	ZuCheckRT(loop.errors == errors && client.rx.session_().ready_()
 	  && server.rx.session_().ready_());
 	for (uint64_t key = seqNo; key < seqNo + 3; ++key) {
 	  bool replayed = false, preserved = false;
@@ -1476,39 +1485,39 @@ static void queuedPartialWrites()
 	  for (const auto &record : client.tx.history)
 	    if (record.epoch == 1
 	      && record.seqNo == key) preserved = record.originalTime == original;
-	  ZuCheck(replayed && preserved);
+	  ZuCheckRT(replayed && preserved);
 	}
       } else {
 	unsigned i = 0;
 	while (client.tx.fragmentFrame && i < 3) {
 	  auto current = client.tx.fragmentContext;
 	  auto currentTicket = client.tx.writeTicket;
-	  ZuCheck(current.seqNo == seqNo + i);
+	  ZuCheckRT(current.seqNo == seqNo + i);
 	  loop.post(Work{.endpoint = &client, .kind = WorkKind::Write, .context = current,
 	    .ticket = currentTicket,
 	    .begin = client.tx.fragmentFrame->length - client.tx.offset}); loop.drain(); ++i;
-	  ZuCheck(client.completions == completed + i && client.tx.inFlight_() == 3 - i);
-	  loop.owner = 2; ZuCheck(!client.tx.write_(current, 0, true, currentTicket));
+	  ZuCheckRT(client.completions == completed + i && client.tx.inFlight_() == 3 - i);
+	  loop.owner = 2; ZuCheckRT(!client.tx.write_(current, 0, true, currentTicket));
 	    loop.owner = 0;
 	}
-	ZuCheck(!loop.errors && i == 3 && !client.failures && !client.tx.fragmentFrame &&
+	ZuCheckRT(!loop.errors && i == 3 && !client.failures && !client.tx.fragmentFrame &&
 	  !client.tx.queuedBytes && !client.tx.behind.count_()
 	    && client.tx.acknowledged_() == ackd);
       }
-      ZuCheck(server.orders.length() == 3 && server.orders[0] == "first" &&
+      ZuCheckRT(server.orders.length() == 3 && server.orders[0] == "first" &&
 	server.orders[1] == "second" && server.orders[2] == "third" && !client.released.length());
       for (uint64_t id = client.submission - 2; id <= client.submission; ++id) {
 	unsigned mappings = 0;
 	for (unsigned i = 0, n = client.assocIds.length(); i < n; ++i)
 	  if (client.assocIds[i] == id && client.assocActive[i]) ++mappings;
-	ZuCheck(mappings == 1);
+	ZuCheckRT(mappings == 1);
       }
     }
 }
 
 static void replayDuringPartial()
 {
-  ZuTestScope(replayDuringPartial);
+  ZuTestScopeRT(replayDuringPartial);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     Loop loop;
     Endpoint client{&loop, true, mode, Version::V4_4};
@@ -1518,7 +1527,7 @@ static void replayDuringPartial()
     loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
     auto seqNo = client.tx.next_(); auto completed = client.completions;
     client.tx.holdNext = client.tx.queueBehind = true;
-    ZuCheck(loop.submit(client, "repeated") == TxSelect::Accepted); loop.drain();
+    ZuCheckRT(loop.submit(client, "repeated") == TxSelect::Accepted); loop.drain();
     for (unsigned i = 0; i < 2; ++i) {
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Resend,
 	.context = {1, 1, 0}, .begin = seqNo, .end = seqNo}); loop.drain();
@@ -1532,7 +1541,7 @@ static void replayDuringPartial()
       if (context.replay && context.seqNo == seqNo) {
 	if (priorTicket) {
 	  loop.owner = 2;
-	  ZuCheck(prior.epoch == context.epoch && prior.connection == context.connection &&
+	  ZuCheckRT(prior.epoch == context.epoch && prior.connection == context.connection &&
 	    prior.seqNo == context.seqNo && prior.replay == context.replay
 	      && priorTicket != ticket &&
 	    !client.tx.write_(prior, 0, true, priorTicket));
@@ -1544,7 +1553,7 @@ static void replayDuringPartial()
 	.ticket = ticket,
 	.begin = client.tx.fragmentFrame->length - client.tx.offset}); loop.drain();
     }
-    ZuCheck(!loop.errors && replayed == 2 && server.orders.length() == 1
+    ZuCheckRT(!loop.errors && replayed == 2 && server.orders.length() == 1
       && server.orders[0] == "repeated" &&
       !client.failures && !client.tx.fragmentFrame && !client.tx.inFlight_() &&
       client.completions == completed + writes && client.rx.session_().ready_()
@@ -1554,7 +1563,7 @@ static void replayDuringPartial()
 
 static void associationOwner()
 {
-  ZuTestScope(associationOwner);
+  ZuTestScopeRT(associationOwner);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool driver : {false, true})
       for (bool refuse : {false, true}) {
@@ -1567,7 +1576,7 @@ static void associationOwner()
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
 	auto seqNo = client.tx.next_(); auto count = loop.wire.length();
 	auto maps = client.associations.length();
-	ZuCheck(loop.submit(client, "request") == TxSelect::Pending && client.tx.loading_() &&
+	ZuCheckRT(loop.submit(client, "request") == TxSelect::Pending && client.tx.loading_() &&
 	  client.tx.next_() == seqNo && loop.wire.length() == count);
 	Session::Msg hb; hb.p<Session::HeartBt>(Session::HeartBt{}); Error error;
 	auto body = TxBody::control(hb, error);
@@ -1575,14 +1584,14 @@ static void associationOwner()
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Control,
 	  .context = {1, 1, 0}, .body = ZuMv(body)});
 	loop.drain(1); // application association decision, before Tx completion
-	ZuCheck(loop.wire.length() == count && client.tx.next_() == seqNo &&
+	ZuCheckRT(loop.wire.length() == count && client.tx.next_() == seqNo &&
 	  client.associations.length() == maps + unsigned(!refuse));
 	loop.utc += ZuTime{1}; loop.drain();
-	if (refuse) ZuCheck(!loop.errors && client.refused == 1
+	if (refuse) ZuCheckRT(!loop.errors && client.refused == 1
 	  && client.tx.next_() == seqNo + 1 &&
 	  !client.peerRejects.length() && !client.tx.loading_()
 	    && loop.wire.length() == count + 1);
-	else ZuCheck(!loop.errors && !client.refused && client.peerRejects.length() == 1 &&
+	else ZuCheckRT(!loop.errors && !client.refused && client.peerRejects.length() == 1 &&
 	  client.rejectIds[0] == client.submission
 	    && client.peerRejects[0].message.refSeqNo == seqNo &&
 	  client.peerRejects[0].message.text == "bad value" && !client.tx.loading_());
@@ -1592,13 +1601,13 @@ static void associationOwner()
 	    if (wire.client == client.client && wire.body->msgType() == "D"
 	      && wire.body->id() == client.submission)
 	      current = wire.sendingTime == loop.utc && !*wire.origSendingTime && !wire.possDup;
-	  ZuCheck(current);
+	  ZuCheckRT(current);
 	}
       }
 }
 static void deferredOwnerClose()
 {
-  ZuTestScope(deferredOwnerClose);
+  ZuTestScopeRT(deferredOwnerClose);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool early : {false, true}) {
       Loop loop;
@@ -1609,15 +1618,15 @@ static void deferredOwnerClose()
       loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
       auto seqNo = client.tx.next_(); auto count = loop.wire.length();
-      ZuCheck(loop.submit(client, "delayed") == TxSelect::Pending); loop.drain();
-      ZuCheck(client.deferred.body && client.tx.loading_() && client.tx.next_() == seqNo
+      ZuCheckRT(loop.submit(client, "delayed") == TxSelect::Pending); loop.drain();
+      ZuCheckRT(client.deferred.body && client.tx.loading_() && client.tx.next_() == seqNo
 	&& loop.wire.length() == count);
       auto ticket = client.deferred.ticket;
       auto oldMap = client.associations.length() - 1;
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Lost, .context = {1, 1, 0}});
 	loop.drain();
       auto errors = loop.errors;
-      ZuCheck(client.rx.session_().state_() == State::Disconnected
+      ZuCheckRT(client.rx.session_().state_() == State::Disconnected
 	&& server.rx.session_().state_() == State::Disconnected);
       // The application changes policy on its own owner; the old request stays pending.
       loop.owner = 3; client.deferLoad = false; loop.owner = 0;
@@ -1625,19 +1634,19 @@ static void deferredOwnerClose()
       if (early) {
 	loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
-	ZuCheck(loop.errors == errors && client.tx.connection_() == 2 && client.tx.loading_() &&
+	ZuCheckRT(loop.errors == errors && client.tx.connection_() == 2 && client.tx.loading_() &&
 	  client.tx.next_() == seqNo && client.tx.published_() == seqNo
 	    && !client.released.length() &&
 	  loop.wire.length() == count);
       }
       loop.post(Work{.endpoint = &client, .kind = WorkKind::FinishAssociate}); loop.drain();
       if (!early) {
-	ZuCheck(loop.errors == errors && !client.tx.loading_() && client.tx.next_() == seqNo + 1 &&
+	ZuCheckRT(loop.errors == errors && !client.tx.loading_() && client.tx.next_() == seqNo + 1 &&
 	  !client.tx.appQueue.count_() && loop.wire.length() == count);
 	loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
 	loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
       }
-      ZuCheck(loop.errors == errors && client.rx.session_().ready_()
+      ZuCheckRT(loop.errors == errors && client.rx.session_().ready_()
 	&& server.rx.session_().ready_() &&
 	client.tx.epoch_() == 1 && client.tx.connection_() == 2 && !client.tx.appBytes
 	  && !client.tx.loading_() &&
@@ -1649,18 +1658,18 @@ static void deferredOwnerClose()
 	if (wire.client && wire.context.connection == 2 && wire.body->msgType() == "D")
 	  current |= wire.sendingTime == loop.utc && wire.context.seqNo == seqNo &&
 	    (!wire.possDup || (wire.context.replay && *wire.origSendingTime));
-      ZuCheck(current);
+      ZuCheckRT(current);
       loop.owner = 2;
-      ZuCheck(client.tx.loaded_(ticket,
+      ZuCheckRT(client.tx.loaded_(ticket,
 	true) == TxSelect::Invalid && !client.tx.unloaded_(ticket) && !client.tx.loading_());
       loop.owner = 0; loop.drain();
-      ZuCheck(loop.errors == errors && client.peerRejects.length() == 1);
+      ZuCheckRT(loop.errors == errors && client.peerRejects.length() == 1);
     }
 }
 
 static void queuedAssociationOwner()
 {
-  ZuTestScope(queuedAssociationOwner);
+  ZuTestScopeRT(queuedAssociationOwner);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool refuse : {false, true}) {
       Loop loop;
@@ -1672,22 +1681,22 @@ static void queuedAssociationOwner()
       loop.post(Work{.endpoint = &server, .kind = WorkKind::Open});
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Open}); loop.drain();
       auto seqNo = client.tx.next_(); auto count = loop.wire.length();
-      ZuCheck(loop.enqueue(client, "queued") && client.tx.next_() == seqNo);
+      ZuCheckRT(loop.enqueue(client, "queued") && client.tx.next_() == seqNo);
       loop.drain(1); // Tx dequeue creates only a proposed association.
-      ZuCheck(client.tx.loading_() && !client.selected.length() && client.tx.next_() == seqNo &&
+      ZuCheckRT(client.tx.loading_() && !client.selected.length() && client.tx.next_() == seqNo &&
 	loop.wire.length() == count && !client.tx.appQueue.count_());
       Session::Msg hb; hb.p<Session::HeartBt>(Session::HeartBt{}); Error error;
       auto body = TxBody::control(hb, error); ZmAssert(body && !error);
       loop.post(Work{.endpoint = &client, .kind = WorkKind::Control,
 	.context = {1, 1, 0}, .body = ZuMv(body)}); loop.drain();
-      ZuCheck(!loop.errors && client.selected.length() == 1 &&
+      ZuCheckRT(!loop.errors && client.selected.length() == 1 &&
 	client.selected[0].body->id() == client.submission
 	  && client.selected[0].context.seqNo == seqNo &&
 	client.selected[0].result == (refuse ? TxSelect::Refused : TxSelect::Accepted)
 	  && !client.tx.loading_());
-      if (refuse) ZuCheck(client.tx.next_() == seqNo + 1 && client.refused == 1 &&
+      if (refuse) ZuCheckRT(client.tx.next_() == seqNo + 1 && client.refused == 1 &&
 	!client.peerRejects.length() && loop.wire.length() == count + 1);
-      else ZuCheck(client.tx.next_() == seqNo + 2 && client.peerRejects.length() == 1 &&
+      else ZuCheckRT(client.tx.next_() == seqNo + 2 && client.peerRejects.length() == 1 &&
 	client.rejectIds[0] == client.submission && client.selectedBeforeReject);
     }
 }

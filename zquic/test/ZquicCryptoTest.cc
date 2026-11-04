@@ -63,7 +63,7 @@ void testEarlyDataTLSProperties()
 
   ZmRef<ZiIOBuf> out =
     new Zquic::CryptoTxBufAlloc<
-      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr};
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr, 0};
   size_t offsets[5] = {};
   int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
   ZuCHECK(n > 0, "client TLS initial output failed");
@@ -129,7 +129,7 @@ void testTLSOutputBuffer()
 
   ZmRef<ZiIOBuf> out =
     new Zquic::CryptoTxBufAlloc<
-      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr};
+      Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr, 0};
   size_t offsets[5] = {};
   Ztls::Pico::reset_stats();
   int n = crypto.handleTLSMessage(out.ptr(), offsets, 0, {});
@@ -196,6 +196,102 @@ void testCryptoFlightOffsets()
     "invalid crypto offsets diagnostics mismatch");
 }
 
+void testOwnedCryptoFlights()
+{
+  ZuTestScope(testOwnedCryptoFlights);
+
+  Zquic::Crypto crypto;
+  ZuCHECK(crypto.initTLS(Zquic::CryptoConfig{
+      false, false, "h3", {}, {}, {}, "localhost"}),
+    "owned TLS output initialization failed");
+  ZmRef<ZiIOBuf> out = new Zquic::CryptoTxBufAlloc<
+    Zquic::Crypto::TLSOutputMax, Zquic::Crypto::TLSOutputMax>{nullptr, 0};
+  size_t positions[5] = {};
+  int n = crypto.handleTLSMessage(out.ptr(), positions, 0, {});
+  ZuCHECK(n > 0, "owned TLS output generation failed");
+  if (n <= 0) return;
+  Zquic::CryptoOffsets offsets(Zquic::TLSEpochCount + 1, false);
+  for (unsigned i = 0; i <= Zquic::TLSEpochCount; ++i) offsets[i] = positions[i];
+  Zquic::CryptoStream streams[Zquic::PktNumSpace::N];
+  Zquic::LinkTxDiag diag;
+  const uint8_t *original = out->data();
+  unsigned sent = 0;
+  bool identity = true;
+  ZuCHECK(Zquic::sendCryptoFlights_(streams, diag, out, offsets, 17, {},
+      [original, &sent, &identity](
+	  Zquic::PktNumSpace::T space, ZuBSpan, ZuBSpan payload,
+	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
+	identity = identity && space == Zquic::PktNumSpace::Initial &&
+	  payload.data() == original + ref.offset;
+	sent += payload.length();
+	return true;
+      }) && identity && sent == unsigned(n),
+    "TLS first send lost original output backing or chunk positions");
+  out = nullptr;
+  ZuBSpan retained;
+  ZuCHECK(streams[Zquic::PktNumSpace::Initial].txPayload(0, unsigned(n), retained) &&
+      retained.data() == original && retained.length() == unsigned(n),
+    "TLS chunks did not coalesce and retain original output after handoff");
+  streams[Zquic::PktNumSpace::Initial].reset();
+  ZuCHECK(!streams[Zquic::PktNumSpace::Initial].txPayload(0, unsigned(n), retained),
+    "epoch reset retained retired TLS output");
+}
+
+void testCryptoOwnedRanges()
+{
+  ZuTestScope(testCryptoOwnedRanges);
+
+  ZmRef<ZiIOBuf> first = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  ZmRef<ZiIOBuf> second = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  first->append(bytes_(reinterpret_cast<const uint8_t *>("prefixabcdef"), 12)); first->advance(6);
+  second->append(bytes_(reinterpret_cast<const uint8_t *>("padghij"), 7)); second->advance(3);
+  const uint8_t *a = first->data(), *b = second->data();
+  Zquic::CryptoStream stream;
+  ZuCHECK(stream.sent(0, Zi::RxRange{first, 0, 3}) &&
+      stream.sent(3, Zi::RxRange{first, 3, 3}) &&
+      stream.sent(6, Zi::RxRange{second, 0, 4}),
+    "owned CRYPTO range admission failed");
+  first = nullptr; second = nullptr;
+  ZuBSpan payload;
+  ZuCHECK(stream.txPayload(0, 10, payload) && payload.data() == a &&
+      payload == "abcdef",
+    "coalesced CRYPTO range changed backing or crossed a backing boundary");
+  ZuCHECK(stream.txPayload(4, 6, payload) && payload.data() == a + 4 &&
+      payload == "ef" && stream.txPayload(6, 4, payload) &&
+      payload.data() == b && payload == "ghij",
+    "cross-buffer CRYPTO retry did not clip and continue original ranges");
+  ZuCHECK(stream.sent(4, bytes_(reinterpret_cast<const uint8_t *>("efgh"), 4)) &&
+      !stream.sent(4, bytes_(reinterpret_cast<const uint8_t *>("efxh"), 4)),
+    "duplicate CRYPTO comparison did not traverse retained backing boundaries");
+  ZuCHECK(!stream.sent(11, ZuBSpan{}) && stream.sent(10, ZuBSpan{}) &&
+      !stream.txPayload(9, 2, payload),
+    "CRYPTO gap, empty tail or invalid retained range handling changed");
+
+  ZmRef<ZiIOBuf> shifted = new Zquic::CryptoTxBufAlloc<>{nullptr, 0};
+  shifted->append(bytes_(reinterpret_cast<const uint8_t *>("skipklmnop"), 10)); shifted->advance(4);
+  const uint8_t *c = shifted->data();
+  Zquic::CryptoOffsets offsets(Zquic::TLSEpochCount + 1, false);
+  offsets[0] = 0;
+  for (unsigned i = 1; i <= Zquic::TLSEpochCount; ++i) offsets[i] = 6;
+  Zquic::CryptoStream flights[Zquic::PktNumSpace::N];
+  Zquic::LinkTxDiag diag;
+  bool identity = true;
+  ZuCHECK(Zquic::sendCryptoFlights_(flights, diag, shifted, offsets, 2, {},
+      [c, &identity](Zquic::PktNumSpace::T, ZuBSpan, ZuBSpan bytes,
+	  const Zquic::SentFrameRef &ref, ZiSockAddr) {
+	identity = identity && bytes.data() == c + ref.offset;
+	return true;
+      }) && identity,
+    "offset CRYPTO first send lost backing identity");
+  shifted = nullptr;
+  ZuCHECK(flights[Zquic::PktNumSpace::Initial].txPayload(0, 6, payload) &&
+      payload.data() == c && payload == "klmnop",
+    "offset CRYPTO retransmission retained a storage-relative offset");
+  stream.reset();
+  ZuCHECK(!stream.txPayload(0, 1, payload),
+    "CRYPTO reset retained earlier output buffers");
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -205,4 +301,6 @@ int main(int argc, char **argv)
   ZuTestCall(testEarlyTrafficSecretState);
   ZuTestCall(testTLSOutputBuffer);
   ZuTestCall(testCryptoFlightOffsets);
+  ZuTestCall(testOwnedCryptoFlights);
+  ZuTestCall(testCryptoOwnedRanges);
 }

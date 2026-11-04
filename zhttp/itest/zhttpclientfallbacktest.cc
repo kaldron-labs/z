@@ -26,6 +26,8 @@
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiMultiplex.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpDiscovery.hh>
 
@@ -258,6 +260,10 @@ void ReqBuilder_::completed(const Zhttp::Result &result) {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })

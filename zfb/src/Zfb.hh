@@ -2577,9 +2577,9 @@ class IOStorage {
 public:
   explicit IOStorage(
     ZmRef<ZiIOBuf> buf, unsigned align = Align,
-    unsigned maxSize = UINT32_MAX, unsigned tailRoom = 0)
+    unsigned maxSize = UINT32_MAX, unsigned tailRoom = 0, unsigned headRoom = 0)
   :
-    m_align{align}, m_maxSize{maxSize}, m_tailRoom{tailRoom}
+    m_align{align}, m_maxSize{maxSize}, m_tailRoom{tailRoom}, m_headRoom{headRoom}
   {
     ZmAssert(align >= Wire::Align && align <= Align && !(align & (align - 1)));
     attach(ZuMv(buf));
@@ -2606,6 +2606,7 @@ public:
 
   void attach(ZmRef<ZiIOBuf> buf) {
     if (buf) {
+      if (buf->skip < m_headRoom) buf->skip = m_headRoom;
       ZmAssert(!(buf->skip & (m_align - 1)));
       ZmAssert(!(uintptr_t(buf->data()) & (m_align - 1)));
       ZmAssert(buf->skip <= buf->size);
@@ -2633,6 +2634,7 @@ private:
   unsigned		m_align;
   unsigned		m_maxSize;
   unsigned		m_tailRoom;
+  unsigned		m_headRoom;
 };
 
 template <unsigned Align_ = Zfb::Wire::Align>
@@ -2645,9 +2647,9 @@ public:
 
   explicit IOBuilder(
     ZmRef<ZiIOBuf> buf, unsigned align = Align,
-    unsigned maxSize = UINT32_MAX, unsigned tailRoom = 0)
+    unsigned maxSize = UINT32_MAX, unsigned tailRoom = 0, unsigned headRoom = 0)
   :
-    Storage{ZuMv(buf), align, maxSize, tailRoom}, Base{*this, align} { }
+    Storage{ZuMv(buf), align, maxSize, tailRoom, headRoom}, Base{*this, align} { }
 
   IOBuilder(const IOBuilder &) = delete;
   IOBuilder &operator =(const IOBuilder &) = delete;

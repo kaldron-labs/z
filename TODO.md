@@ -1,5 +1,9 @@
 # TODO
 
+- fix `ZmList<X, ZmListNode<X>>` to be `ZmList<X, ZmListNode<>>`
+  - needlessly repeating X is elided
+  - apply this to all the other containers with this pattern (`ZmHash`, etc.)
+
 - `Zsbe`: SBE (simple binary encoding)
 
 ## zdash
@@ -11,6 +15,19 @@
 - check implementation
   - need administration of all tables for built-in use
   - need to prove OIDC integration
+
+### Test Coverage
+
+- 128bit print/scan tests
+- vector print/scan tests
+- vector ZfCf and ZvCSV tests
+
+## Packaging, Dependencies, CI/CD, Benchmarking, Containerization
+
+- `packaging_plan.md`
+- CI/CD
+- Nanobench
+- Containerize?
 
 ## Zdf
 
@@ -25,88 +42,26 @@
 
 - reimplement mxmd on zdf
 
-## Zdb
-
-- "startup replays recovered incomplete sagas that are crash residue from a previous run"
-
 ## Zrest
+
 - codegen tool?
 - REST interfaces (can be codegen) (3x - core/cli/srv)
   - `xxx{,_cli,_srv}.{hh,cc}` - interface files
 
-## Build system
-- CI/CD
-- Nanobench
-- Containerize?
-
-## Testing
-- catch-2 (compare with `ZuTest`)
-- SAST - cppcheck, clang-tidy
-
-## Dependency Management
-- conan?
-
 ## zdb_pq
+
 - postgresql extension productization
 - register at rds-postgres-extensions-request@amazon.com
 
 ## Mx Work
-- Binance feed handler
-  - https / websockets - https://libwebsockets.org/ - steal
-  - json / REST - steal from libws
 
-### Test Coverage
-- 128bit print/scan tests
-- vector print/scan tests
-- vector ZfCf and ZvCSV tests
+- Binance feed handler
 
 ## Documentation
 
-### Z I/O generic object model
-
-- Client-side:
-  - `Hub`:
-    - owns `Link`s and `Pool`s
-    - explicitly configured
-    - can be started/stopped under app control
-    - long living, typically the same lifetime as the process
-  - `Link`:
-    - explicitly instantiated by the app
-    - used as an explicitly selected outbound route
-    - specifies destination
-    - long living, typically the same lifetime as the process
-    - encapsulates application message processing
-    - sometimes termed "line" or "session" in other frameworks
-  - `Pool`:
-    - load-balancing group of `Link`s
-  - `Cxn`:
-    - instantiated by the transport when the app starts the `Link`, causing a `connect`
-    - owned by a `Link`
-    - transient and can be short-lived
-    - typically automatically re-instantiated via reconnection under `Link`/`Hub` control
-    - encapsulates transport state
-- Server-side:
-  - `Hub`:
-    - keeps track of `Link`s
-    - explicitly configured
-    - can be started/stopped under app control
-    - long living, typically the same lifetime as the process
-  - `Pool`: unused on server-side
-  - `Link`:
-    - instantiated on-demand when incoming connections are accepted
-    - encapsulates application message processing
-    - is constructed with origin, and often enriched with identity following auth
-    - the same lifetime as the incoming connection
-    - sometimes termed "line" or "session" in other frameworks
-  - `Cxn`:
-    - instantiated by the transport once the app calls `listen` and connections are accepted
-    - owns the `Link`
-    - transient and can be short-lived
-    - encapsulates transport state
-
 ### Latency-optimized load balancing
 
-- the key innovation in legacy `ZvEngine`, beyond the `Hub`/`Link`/`Pool`/`Cxn` model is:
+- the key innovation in legacy `ZvEngine`, beyond the `Hub`/`Link`/`Pool`/`Cxn` model was:
   - predictive flow control for pooled links, optimized for minimum latency
   - `Link` is a `Tx`
   - `Pool` is also a `Tx`
@@ -121,9 +76,9 @@
   - the protocol implementation can use reinforcement learning to predict when
     it will become available for sending based on the peer's observed behavior
 
-- `zhttp` implements something like the above, reconcile
-
-- original motivation for this was to elide the thread-contention on pulling from a shared queue, but this is no longer true for a sharded architecture
+- `zhttp` implements something like the above, reconcile?
+  - original motivation for this was to elide the thread-contention on pulling from a
+    shared pool queue, but this is no longer true for a sharded architecture
 
 ### Documentation organization
 
@@ -153,142 +108,11 @@ L-sized work:
 
 # Z Deferred Work
 
-## io_uring
-- UDP with TOS: `io_uring_prep_sendmsg_zc_fixed` / `io_uring_prep_recvmsg_multishot`
-- TCP: `io_uring_prep_send_zc_fixed` / `io_uring_recv_multishot`
-- need a rx and tx buf allocator in Ztls (and ZiMultiplex)
-  - with io_uring, rx is bound to the rx thread io_uring ring, tx likewise
-    - but not jumbo, in that case we fallback to non-registered buffers
-    - see https://chatgpt.com/share/6959a97f-291c-8001-a5bd-8592c2f3e2e4
-- https://medium.unum.cloud/pandas-cudf-modin-arrow-spark-and-a-billion-taxi-rides-f85973bfafd5
-
-## ZfTOML
-- copy of `ZfCf` but TOML format
-
 # Notes
 - https://verdagon.dev/blog/when-to-use-memory-safe-part-2
 
 ## I/O
 https://www.youtube.com/watch?v=w61NXrYIx6Y
-
-## Sagas
-
-Sagas are aggregate intents to complete a number of individual actions,
-where each action is typically a write to a dependent database; the action
-key can be an unsigned integer ID in the range [0,N) where N is the number of
-actions in the saga.
-
-Sagas and actions have a 1:N parent/child relationship.
-
-The saga can be implemented as {RN, bitmap} where bitmap is initialized to a
-mask where each set bit corresponds to a pending action - when the action
-completes, the corresponding bit in the saga is cleared; when the bitmap
-is all zero, the saga is complete
-
-Each completion of an action and/or each subsequent recovery of a
-completed action at restart clears the corresponding bit in the parent saga.
-
-Upon restart/activation following failure/failover, recovery of a
-pending saga recovers a bitmap with all the action bits set.
-
-When the saga is complete, the zero bitmap is written to the saga database
-to elide consideration during recovery - limiting recovery processing
-to incomplete or partially complete sagas.
-
-The saga DB must be recovered first, then the individual action DBs.
-
-Use of a bitmap rather than a sequence counter permits (but does not
-require) concurrent action processing and out-of-order completion -
-any inter-action sequencing dependencies can be enforced by the
-application; however a bitmap may limit the number of actions
-comprising a saga to a low value (64), while a counter would permit
-arbitrarily long sagas at the expense of requiring strict sequencing
-of the actions in order to be able to reliably determine the remaining
-actions that need to be idempotently re-executed on recovery of a saga.
-
-Actions can be persisted as individual intents - once such an action
-intent is successfully persisted, it is guaranteed to be recovered
-for idempotent processing independent of recovery of the parent saga,
-so the corresponding action bit can be cleared in the saga. From the
-saga's POV, the action is completed by persisting its intent.
-
-Actions that are message transmission intents for remote execution
-(whether RPCs or asynchronously queued messages) should be
-idempotently resent/requeued during recovery.
-
-Such transmission intents should be written prior to actual network
-transmissions, but include relevant message IDs
-(FIX: session ID + sequence number; Kafka: partition + offset, etc.).
-
-The transmission intent record should include the parent saga key
-and the action ID (i.e. the bit number) - although the app may be able to
-infer the action ID from the transmission intent being recovered - but for
-example if the transmission is a ledger balance update, and there are multiple
-ledger updates in the saga, each will have it's own action ID, and
-the action ID will need to be stored in the transmission intent.
-
-For resending, there should be a tree lookup from message ID to payload.
-A write-through-cached persistent index should be maintained that maps
-message IDs to records. A resend can then retrieve the payload either
-directly from the transmit DB or reconstruct it from the saga and actionID.
-
-For FIX, resends may occur at any time up to a sequence number reset on
-the session, which should be scheduled once every 24 hours at most.
-
-The transmit intent record should remain in place during recovery so that
-the resend index can be rebuilt from it. (FIX: resends with the same sequence
-number should be PossDupFlag=Y). Once the message is persistently
-delivered such that it will no longer be resent with the same message ID,
-it may still be resent at the application level (FIX: PossResend=Y).
-
-Transmit intent garbage collection (deletion) is triggered by the
-combination of both saga completion and the elimination of any
-need to potentially resend the message; the latter may occur on
-firm acknowledgement from a receiver that the message has been persisted,
-or on expiry of a message retention time window (FIX - typically 24hrs);
-garbage collection of transmit intents should be performed incrementally
-by a background process.
-
----
-
-sagas, idempotent reception and transmission
-example exchange trade saga involves:
-
-buyer {
-  base credit/debit
-  quote credit/debit
-  commission debit
-}
-seller {
-  base credit/debit
-  quote credit/debit
-  commission debit
-}
-buyer { transmit fill }
-seller { transmit fill }
-broadcast trade
-----
-buyer {
-  referral commission credit
-  exchange commission credit
-}
-seller {
-  referral commission credit
-  exchange commission credit
-}
-buyer {
-  transmit base balance
-  transmit quote balance
-  transmit commission balance
-  transmit referral commission balance
-}
-seller {
-  transmit base balance
-  transmit quote balance
-  transmit commission balance
-  transmit referral commission balance
-}
-transmit exchange balance
 
 ---
 

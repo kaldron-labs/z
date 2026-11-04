@@ -9,7 +9,7 @@ Preconditions: plans 1 through 9 complete.
 `Path` already implements PMTUD state transitions, probe attempts, hints, blackhole fallback, and tests.  Runtime currently does not send PMTUD probes or classify probe packets.  This plan wires the existing `Path` PMTUD utility into packet sending, ACK/loss recovery, and socket hints.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -71,7 +71,7 @@ New or changed data stores: sent-packet record needs a PMTUD-probe flag and prob
 - Open question: platform coverage for asynchronous send-too-big errors through `Zi`.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

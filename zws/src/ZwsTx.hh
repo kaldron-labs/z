@@ -20,6 +20,19 @@
 
 namespace Zws {
 
+template <typename Lower, typename = void>
+struct RetainsBuffers : ZuFalse { };
+template <typename Lower>
+struct RetainsBuffers<Lower, decltype(Lower::RetainBuffers, void())> :
+  ZuBool<Lower::RetainBuffers> { };
+
+template <typename Lower, typename = void>
+struct HasAllocatedBuf : ZuFalse { };
+template <typename Lower>
+struct HasAllocatedBuf<Lower, decltype(
+  ZuDeclVal<const Lower &>().allocatedBuf_(ZuDeclVal<const ZiIOBuf *>()), void())> :
+  ZuTrue { };
+
 template <typename Lower, bool Masked, typename Random>
 class TxLayer :
   public ZiTxLayer<TxLayer<Lower, Masked, Random>, Lower> {
@@ -53,6 +66,23 @@ public:
     return *this;
   }
 
+  // Only mutable unpublished output from this destination's writer is owned.
+  // Queued/prebuilt caller and replay storage must use ordinary ranges.
+  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
+    if (m_finalized) { m_valid = false; this->fail(); return false; }
+    if (!valid()) return false;
+    if (!buf || buf->failed()) { this->fail(); return false; }
+    if constexpr (RetainsBuffers<Lower>{} || HasAllocatedBuf<Lower>{}) {
+      // Preserve a pending frame as non-final before transferring authority.
+      // The TCP-specific setter also publishes its older pending first header.
+      if (!this->flush_(false) || !m_lower.allocatedBuf_(buf)) {
+	this->fail(); return false;
+      }
+    }
+    *this << ZuMv(buf);
+    return valid();
+  }
+
   bool flush() {
     if (m_finalized) return valid();
     unsigned emitted = m_emitted;
@@ -66,12 +96,66 @@ public:
   bool valid() const { return m_valid && !this->failed(); }
   using Base::fail;
 
-  bool prepareBuf_(ZiIOBuf *buf, bool final) {
+  bool prepareAppend_(ZmRef<ZiIOBuf> &buf) {
+    if constexpr (RetainsBuffers<Lower>{} || HasAllocatedBuf<Lower>{}) {
+      // Exact writer storage is final frame output, including later parts.
+      if (allocated_(m_lower, buf.ptr(), 0)) return false;
+      if (control(m_opcode)) {
+	// A control packet has one actual final wire buffer. Its bounded
+	// application bytes are serialized there, without a staging buffer.
+	static_cast<Base &>(*this) << buf->cspan();
+	buf = nullptr;
+      } else {
+	auto n = buf->length;
+	this->appendRange(Zi::RxRange{ZuMv(buf), 0, n});
+      }
+      return true;
+    }
+    return false;
+  }
+
+  bool prepareBuf_(ZiIOBuf *buf, bool final) { return prepare_(buf, final, {}); }
+
+  bool prepareRange_(Zi::RxRange range) {
+    // Control frames use their existing single, final owned-buffer path.
+    if (m_finalized || control(m_opcode)) return false;
+    unsigned max = this->maxSize() - this->headRoom() - this->tailRoom();
+    while (range.length) {
+      unsigned n = range.length < max ? range.length : max;
+      if (!n) return false;
+      auto buf = this->allocBuf_(this->headRoom());
+      if (!buf) return false;
+      auto part = range.cspan().trunc(n);
+      if constexpr (Masked) {
+	if (!buf->ensure(n + this->tailRoom())) return false;
+	buf->length = n;
+      }
+      if (!prepare_(buf.ptr(), false, part)) return false;
+      m_lower << ZuMv(buf);
+      if (m_lower.failed()) return false;
+      if constexpr (!Masked)
+	if (!m_lower.appendRange(range.subspan(0, n))) return false;
+      range.offset += n;
+      range.length -= n;
+    }
+    return true;
+  }
+
+private:
+  template <typename T, typename = decltype(
+    ZuDeclVal<const T &>().allocatedBuf_(ZuDeclVal<const ZiIOBuf *>()))>
+  static bool allocated_(const T &lower, const ZiIOBuf *buf, int) {
+    return lower.allocatedBuf_(buf);
+  }
+  template <typename T>
+  static bool allocated_(const T &, const ZiIOBuf *, ...) { return false; }
+
+  bool prepare_(ZiIOBuf *buf, bool final, ZuBSpan source) {
     if (!m_valid) {
       buf->length = 0;
       return false;
     }
-    uint64_t length = buf->length;
+    uint64_t length = source.data() ? source.length() : buf->length;
     Opcode::T opcode = m_emitted ? Opcode::Continuation : m_opcode;
     if (control(opcode) && (!final || length > MaxControl)) {
       m_valid = false;
@@ -112,7 +196,10 @@ public:
       uint32_t key32 =
 	(uint32_t(key[0])<<24) | (uint32_t(key[1])<<16) |
 	(uint32_t(key[2])<<8) | key[3];
-      mask({payload, unsigned(length)}, key32);
+      if (source.data()) {
+	for (unsigned i = 0; i < length; ++i)
+	  payload[i] = source[i] ^ key[i & 3];
+      } else mask({payload, unsigned(length)}, key32);
     }
     ++m_emitted;
     return true;

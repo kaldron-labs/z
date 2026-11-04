@@ -326,7 +326,7 @@ wrapper around `ZfCf`, mmap-backed root-file loading, the include-aware
 `PctFn`, and their error/context machinery.  Keep `ZfCf.hh`, `ZfCf.cc`,
 `ZfCfTest.cc`, their build targets, namespaces, error namespace, customization
 hooks, heap IDs, diagnostics, and dependent format references under the
-`ZfCf` name.  Clean stale descriptions from `CODEBASE.md` and `TODO.md`.  Do
+`ZfCf` name.  Clean stale descriptions from `docs/CODEBASE.md` and `TODO.md`.  Do
 not leave deprecated aliases or forwarding shims for any removed legacy API.
 
 ## 6. Verification and completion gates

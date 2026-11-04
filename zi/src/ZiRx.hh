@@ -42,13 +42,14 @@ using ZiRxBufAlloc = Zi::IOBufAlloc<ZiRxBuf, Size, MaxSize, ZuStringT<HeapID>>;
 // header is incomplete, or a negative error. Body examines that prefix and
 // returns bytes consumed, zero to discard pending input, or a negative error.
 // Body may retain backing/ranges; it must not advance the stream itself.
-// Network callbacks take (Impl *, const ZiIOContext &, Stream &, [size]);
+// Network callbacks take (Impl *, const ZiRxContext &, Stream &, [size]);
 // memory callbacks omit the context. Neither callback owns a socket destination.
-template <typename Impl_>
+template <typename Impl_, typename Queue = ZiRxQueue>
 class ZiRx {
 public:
   using Impl = Impl_;
-  using Stream = ZiRxStream<ZiRxQueue>;
+  using Buf = typename Queue::Node;
+  using Stream = ZiRxStream<Queue>;
 
   ZiRx(unsigned maxSize = ZiIOBuf_DefltMaxSize) : m_maxSize{maxSize} { }
 
@@ -56,12 +57,12 @@ public:
   auto impl() { return static_cast<Impl *>(this); }
 
   template <auto Hdr, auto Body>
-  void recv(ZiIOContext &io) { arm_<Hdr, Body>(io); }
+  void recv(ZiRxContext &io) { arm_<Hdr, Body>(io); }
 
   // Synchronous consumers borrow spans only for the duration of Body.
   // Asynchronous consumers explicitly retain the original backing/ranges.
   template <auto Hdr, auto Body>
-  void recvSync(ZiIOContext &io) { arm_<Hdr, Body>(io); }
+  void recvSync(ZiRxContext &io) { arm_<Hdr, Body>(io); }
 
   void rxReset() { m_stream.clean(); m_frameLen = 0; m_gather = false; }
   const Stream &rxStream() const { return m_stream; }
@@ -83,26 +84,26 @@ public:
 
 private:
   template <auto Hdr, auto Body>
-  void arm_(ZiIOContext &io) {
-    io.init(ZiIOFn{impl(), [](Impl *self, ZiIOContext &io) {
+  void arm_(ZiRxContext &io) {
+    io.init(ZiRxFn{impl(), [](Impl *self, ZiRxContext &io) {
       auto rx = static_cast<ZiRx *>(self);
       if (io.buf) {
-	auto buf = ZmRef<ZiRxBuf>::acquire(
-	  static_cast<ZiRxBuf *>(ZuMv(io.buf).release()));
+	auto buf = ZmRef<Buf>::acquire(
+	  static_cast<Buf *>(ZuMv(io.buf).release()));
 	buf->owner = self;
 	rx->m_stream.push(ZuMv(buf));
       }
       if (rx->template process_<Hdr, Body, true>(&io, [&io, self]() {
 	auto allocator = io.cxn->mx()->rxAllocator(io.cxn->info().options.udp());
-	return ZmRef<ZiRxBuf>::acquire(
-	  static_cast<ZiRxBuf *>(allocator->alloc(self).release()));
+	return ZmRef<Buf>::acquire(
+	  static_cast<Buf *>(allocator->alloc(self).release()));
       }) < 0) io.disconnect();
       return true;
     }});
   }
 
   template <auto Hdr, auto Body, bool Network, typename Alloc>
-  int process_(const ZiIOContext *io, Alloc &&alloc) {
+  int process_(const ZiRxContext *io, Alloc &&alloc) {
     while (m_stream) {
       if (!m_frameLen || m_frameLen == INT_MAX) {
 	if constexpr (Network)

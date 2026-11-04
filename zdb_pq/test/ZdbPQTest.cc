@@ -13,6 +13,9 @@
 #include <zlib/ZfbReflect.hh>
 #include <zlib/ZdbPQ.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZuStringT<"Zdb.PQTest">>;
+
 using namespace ZuTestUtil;
 
 struct AlignedRow { ZuBSpan data; };
@@ -59,7 +62,7 @@ static void paramPlanning()
     ZdbPQ::Value::Index<ZdbPQ::Int8Vec>{}});
   const uint8_t byte[] = {1};
   BoundRow row{"x", byte, {1}, {1}};
-  Zfb::IOBuilder<> input{new ZiIOBufAlloc<>};
+  Zfb::IOBuilder<> input{new LocalBuf{nullptr, 0}};
   input.finish(Zfb::save(input, row));
   auto source = input.buf();
   Zfb::TableView table{Zfb::root(source->cspan())};
@@ -94,7 +97,7 @@ static void paramPlanning()
 
 static void floatWire()
 {
-  ZuTestScope(floatWire);
+  ZuTestScopeRT(floatWire);
   auto schemaBytes = ZtScratch(Zfb::Buffer, 0);
   Zfb::saveSchema<FloatRow>(schemaBytes);
   auto schema = Zdb_::Schema::from<FloatRow>(schemaBytes);
@@ -112,36 +115,40 @@ static void floatWire()
   for (float real: {1.5f, -2.5f}) {
     FloatRow row{real, {-0.0f, 1.25f, -2.5f},
       {"", "short", "a CStringVec element longer than builtin string storage"}};
-    Zfb::IOBuilder<> input{new ZiIOBufAlloc<>};
+    Zfb::IOBuilder<> input{new LocalBuf{nullptr, 0}};
     input.finish(Zfb::save(input, row));
     auto source = input.buf();
     Zfb::TableView fbo{Zfb::root(source->cspan())};
     auto parts = ZtScratch(ZdbPQ::VarBufParts, 2);
     unsigned size = ZdbPQ::planTuple(parts, 3, fields, fields, fbo);
-    ZuCHECK(size != UINT_MAX, "plan Float32 and CStringVec parameters");
+    ZuCheckRT(size != UINT_MAX,
+      log_("plan Float32 and CStringVec parameters"));
     if (size == UINT_MAX) continue;
     auto bytes = ZtScratch(ZdbPQ::VarBuf, size, size);
     auto values = ZtScratch(ZdbPQ::Tuple, 3);
     ZdbPQ::loadTuple(values, bytes.span(), parts.cspan(), oids,
       3, fields, fields, fbo);
-    ZuCHECK(double(values[0].p<ZdbPQ::Float>().v) == real,
-      "Float32 scalar widens including omitted default");
-    ZuCHECK(values[1].p<ZdbPQ::FloatVec>().v.length() == ZdbPQ::vecSize(3, 8),
-      "Float32 vector uses double-width postgres encoding");
-    ZdbPQ::Builder output{new ZiIOBufAlloc<>};
+    ZuCheckRT(double(values[0].p<ZdbPQ::Float>().v) == real,
+      log_("Float32 scalar widens including omitted default"));
+    ZuCheckRT(values[1].p<ZdbPQ::FloatVec>().v.length() == ZdbPQ::vecSize(3, 8),
+      log_("Float32 vector uses double-width postgres encoding"));
+    ZdbPQ::Builder output{new LocalBuf{nullptr, 0}};
     output.finish(ZdbPQ::saveTuple(output, fields, fields, 2, values));
     auto dest = output.buf();
-    ZuCHECK(dest && Zfb::verify<FloatRow>(dest->cspan()), "Float32 result wire layout");
+    ZuCheckRT(dest && Zfb::verify<FloatRow>(dest->cspan()),
+      log_("Float32 result wire layout"));
     if (!dest) continue;
     auto view = Zfb::view<FloatRow>(dest->cspan());
-    ZuCHECK(view.get<ZfField(FloatRow, real)>() == real, "Float32 scalar round trip");
+    ZuCheckRT(view.get<ZfField(FloatRow, real)>() == real,
+      log_("Float32 scalar round trip"));
     auto reals = view.get<ZfField(FloatRow, values)>();
-    ZuCHECK(reals.length() == 3 && reals[0] == 0 &&
-      reals[1] == 1.25f && reals[2] == -2.5f, "Float32 vector stride round trip");
+    ZuCheckRT(reals.length() == 3 && reals[0] == 0 &&
+      reals[1] == 1.25f && reals[2] == -2.5f,
+      log_("Float32 vector stride round trip"));
     auto names = view.get<ZfField(FloatRow, names)>();
-    ZuCHECK(names.length() == 3 && ZuCSpan{names[0]} == "" && ZuCSpan{names[1]} == "short" &&
+    ZuCheckRT(names.length() == 3 && ZuCSpan{names[0]} == "" && ZuCSpan{names[1]} == "short" &&
       ZuCSpan{names[2]} == "a CStringVec element longer than builtin string storage",
-      "CStringVec borrowed input round trip");
+      log_("CStringVec borrowed input round trip"));
   }
 }
 
@@ -161,7 +168,7 @@ static void fieldAlignment()
   auto values = ZtScratch(ZdbPQ::Tuple, 1);
   ZuBSpan data{"alignment"};
   values.push(ZdbPQ::Value{data});
-  ZdbPQ::Builder builder{new ZiIOBufAlloc<>};
+  ZdbPQ::Builder builder{new LocalBuf{nullptr, 0}};
   builder.finish(ZdbPQ::saveTuple(builder, fields, fields, 1, values));
   auto buf = builder.buf();
   ZuCHECK(buf && Zfb::verify<AlignedRow>(buf->cspan()), "aligned store output");
@@ -183,42 +190,42 @@ static void vectorLayout()
 
 static void paramBounds()
 {
-  ZuTestScope(paramBounds);
+  ZuTestScopeRT(paramBounds);
   auto rejected = [](auto fn) { return fn() == UINT_MAX; };
   enum { Limit = Zdb_::MaxBufSize };
-  ZuCheck(ZdbPQ::sizeAdd(0, Limit) == unsigned(Limit));
-  ZuCheck(rejected([] { return ZdbPQ::sizeAdd(0, uint64_t(Limit) + 1); }));
-  ZuCheck(ZdbPQ::sizeAdd(Limit - 1, 1) == unsigned(Limit));
-  ZuCheck(rejected([] { return ZdbPQ::sizeAdd(Limit, 1); }));
-  ZuCheck(rejected([] { return ZdbPQ::sizeAdd(UINT64_MAX, 1); }));
-  ZuCheck(rejected([] { return ZdbPQ::sizeAdd(1, UINT64_MAX); }));
+  ZuCheckRT(ZdbPQ::sizeAdd(0, Limit) == unsigned(Limit));
+  ZuCheckRT(rejected([] { return ZdbPQ::sizeAdd(0, uint64_t(Limit) + 1); }));
+  ZuCheckRT(ZdbPQ::sizeAdd(Limit - 1, 1) == unsigned(Limit));
+  ZuCheckRT(rejected([] { return ZdbPQ::sizeAdd(Limit, 1); }));
+  ZuCheckRT(rejected([] { return ZdbPQ::sizeAdd(UINT64_MAX, 1); }));
+  ZuCheckRT(rejected([] { return ZdbPQ::sizeAdd(1, UINT64_MAX); }));
   // Distinct fixed-width postgres array encodings, without allocating payloads.
   for (unsigned width: {1U, 2U, 4U, 8U, 12U, 16U}) {
     unsigned n = (Limit - sizeof(ZdbPQ::VecHdr))/(sizeof(ZdbPQ::VecElem) + width);
-    ZuCheck(ZdbPQ::vecSize(n, width) ==
+    ZuCheckRT(ZdbPQ::vecSize(n, width) ==
       sizeof(ZdbPQ::VecHdr) + n * (sizeof(ZdbPQ::VecElem) + width));
-    ZuCheck(rejected([n, width] { return ZdbPQ::vecSize(n + 1, width); }));
+    ZuCheckRT(rejected([n, width] { return ZdbPQ::vecSize(n + 1, width); }));
   }
-  ZuCheck(rejected([] { return ZdbPQ::vecSize(UINT_MAX, UINT_MAX); }));
-  ZuCheck(ZdbPQ::vecVarSize(2, [](unsigned i) { return i + 1; }) ==
+  ZuCheckRT(rejected([] { return ZdbPQ::vecSize(UINT_MAX, UINT_MAX); }));
+  ZuCheckRT(ZdbPQ::vecVarSize(2, [](unsigned i) { return i + 1; }) ==
     sizeof(ZdbPQ::VecHdr) + 2 * sizeof(ZdbPQ::VecElem) + 3);
   unsigned head = sizeof(ZdbPQ::VecHdr) + sizeof(ZdbPQ::VecElem);
-  ZuCheck(ZdbPQ::vecVarSize(1, [head](unsigned) { return Limit - head; }) ==
+  ZuCheckRT(ZdbPQ::vecVarSize(1, [head](unsigned) { return Limit - head; }) ==
     unsigned(Limit));
-  ZuCheck(rejected([head] {
+  ZuCheckRT(rejected([head] {
     return ZdbPQ::vecVarSize(1, [head](unsigned) { return uint64_t(Limit) - head + 1; });
   }));
-  ZuCheck(rejected([] {
+  ZuCheckRT(rejected([] {
     return ZdbPQ::vecVarSize(2, [](unsigned) { return unsigned(Limit)/2; });
   }));
-  ZuCheck(rejected([] {
+  ZuCheckRT(rejected([] {
     return ZdbPQ::vecVarSize(1, [](unsigned) { return UINT64_MAX; });
   }));
 }
 
 static void paramLayout()
 {
-  ZuTestScope(paramLayout);
+  ZuTestScopeRT(paramLayout);
   for (unsigned n : {0U, 1U, 32U, Zdb_::maxFields() + 4}) {
     for (bool types : {false, true}) {
       auto words = ZdbPQ::ParamLayout::words(n, types);
@@ -226,19 +233,24 @@ static void paramLayout()
 	uintptr_t, words, ZdbPQ::QueryParams::VHeap);
       ZdbPQ::ParamLayout layout(buf.data(), n, types);
       if (!n) {
-	ZuCHECK(!layout.oids && !layout.values &&
-	    !layout.lengths && !layout.formats, "zero parameter layout");
+	ZuCheckRT(!layout.oids && !layout.values &&
+	    !layout.lengths && !layout.formats,
+	  log_("zero parameter layout"));
 	continue;
       }
-      ZuCHECK(bool(layout.oids) == types, "optional OID region");
-      ZuCHECK(layout.values && layout.lengths && layout.formats,
-	  "parameter regions");
-      ZuCHECK(reinterpret_cast<uintptr_t>(layout.values) %
-	  alignof(const char *) == 0, "value alignment");
-      ZuCHECK(reinterpret_cast<uintptr_t>(layout.lengths) %
-	  alignof(int) == 0, "length alignment");
-      ZuCHECK(reinterpret_cast<uintptr_t>(layout.formats) %
-	  alignof(int) == 0, "format alignment");
+      ZuCheckRT(bool(layout.oids) == types,
+        log_("optional OID region"));
+      ZuCheckRT(layout.values && layout.lengths && layout.formats,
+        log_("parameter regions"));
+      ZuCheckRT(reinterpret_cast<uintptr_t>(layout.values) %
+	  alignof(const char *) == 0,
+        log_("value alignment"));
+      ZuCheckRT(reinterpret_cast<uintptr_t>(layout.lengths) %
+	  alignof(int) == 0,
+        log_("length alignment"));
+      ZuCheckRT(reinterpret_cast<uintptr_t>(layout.formats) %
+	  alignof(int) == 0,
+        log_("format alignment"));
     }
   }
 }
@@ -348,7 +360,7 @@ static void continuationSQL()
 
 static void continuationGrowth()
 {
-  ZuTestScope(continuationGrowth);
+  ZuTestScopeRT(continuationGrowth);
   unsigned prior = 0;
   auto param = [](ZdbPQ::SQLString &sql, unsigned i) {
     sql << '$' << (i + 1) << "::int8";
@@ -360,14 +372,15 @@ static void continuationGrowth()
     ZdbPQ::continuation(sql, fields, key, 0, false, param);
     unsigned length = sql.length();
     if (prior)
-      ZuCHECK(length - prior < 50, "linear continuation growth");
+      ZuCheckRT(length - prior < 50,
+        log_("linear continuation growth"));
     prior = length;
   }
 }
 
 static void continuationCombinations()
 {
-  ZuTestScope(continuationCombinations);
+  ZuTestScopeRT(continuationCombinations);
   auto param = [](ZdbPQ::SQLString &sql, unsigned i) {
     sql << '$' << (i + 1) << "::int8";
   };
@@ -386,12 +399,14 @@ static void continuationCombinations()
 	    closes += c == ')';
 	    params += c == '$';
 	  }
-	  ZuCHECK(opens == closes, "balanced continuation expression");
+	  ZuCheckRT(opens == closes,
+	    log_("balanced continuation expression"));
 	  unsigned m = n - begin;
 	  unsigned expected = begin == n ? 0 :
 	    key.direction == ZdbPQ::XKey::Mixed ?
 	    2 * m : m;
-	  ZuCHECK(params == expected, "linear parameter references");
+	  ZuCheckRT(params == expected,
+	    log_("linear parameter references"));
 	}
     }
   }
@@ -456,7 +471,7 @@ static void catalogMatching()
 
 static void catalogScale()
 {
-  ZuTestScope(catalogScale);
+  ZuTestScopeRT(catalogScale);
   auto fields = testFields(1);
   auto key = testKey(1, 0);
   for (unsigned i = 0; i < Zdb_::maxKeys(); i++) {
@@ -473,28 +488,30 @@ static void catalogScale()
       .descending = false
     };
     ZdbPQ::IndexMatch match;
-    ZuCHECK(ZdbPQ::matchIndex(
+    ZuCheckRT(ZdbPQ::matchIndex(
 	match, id, fields, key, Zdb_::KeyID(i), row, true),
-	"maximum-key catalog match");
+      log_("maximum-key catalog match"));
   }
 }
 
 static void ipOffset()
 {
-  ZuTestScope(ipOffset);
+  ZuTestScopeRT(ipOffset);
   for (ZiIP ip : {ZiIP{"192.0.2.1"}, ZiIP{"2001:db8::1"}}) {
     ZdbPQ::IP packed;
-    ZuCHECK(packed.ziIP(ip), "pack IP");
+    ZuCheckRT(packed.ziIP(ip),
+      log_("pack IP"));
     constexpr unsigned I = ZdbPQ::Value::Index<ZdbPQ::IP>{};
     ZdbPQ::Value value{packed};
-    ZdbPQ::Builder fbb{new ZiIOBufAlloc<>()};
+    ZdbPQ::Builder fbb{new LocalBuf{nullptr, 0}};
     ZdbPQ::SavedOffset saved;
     ZdbPQ::Offsets offsets{&saved};
     ZdbPQ::saveOffset<I>(fbb, offsets, {}, 1, value);
     auto value_ = offsets.shift();
-    ZuCHECK(value_.offset != 0, "saved IP offset");
-    ZuCHECK(value_.ipType == ip.type(),
-	"saved IP discriminator");
+    ZuCheckRT(value_.offset != 0,
+      log_("saved IP offset"));
+    ZuCheckRT(value_.ipType == ip.type(),
+      log_("saved IP discriminator"));
   }
 }
 

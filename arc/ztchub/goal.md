@@ -298,7 +298,7 @@ front-end user or vice versa.
   work may add `StoreTbl`s when hub-owned durable state is required.  Use
   `ZdbMem` for tests unless state must survive a process restart, in which case
   use `ZdbSL`.
-- Follow `AGENTS.md` and `GUIDELINES.md` throughout.  Reuse `Zws`, `Zhttp`,
+- Follow `AGENTS.md` and `docs/GUIDELINES.md` throughout.  Reuse `Zws`, `Zhttp`,
   `Ztls`, `Zdb`, `libZum`, `ZfStruct`, `ZfbStruct`, `ZiIOBuf`, `ZiLog`, and
   `ZmScheduler`; do not create parallel protocol, persistence, JSON,
   FlatBuffers, buffer, logging, or threading facilities.

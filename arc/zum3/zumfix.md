@@ -148,7 +148,7 @@ other applications, or administrative delegations.
 - Clarify that `zum.app` is the catalog namespace and protected resource,
   `zum.client` is credentialed software, and `zum.client_access` is the
   client-to-application role grant.
-- Update `README.md`, `MANAGEMENT.md`, the example README/configuration, and
+- Update `docs/README.md`, `MANAGEMENT.md`, the example README/configuration, and
   management operation descriptions to remove the implication that catalog
   publication requires a special client type. Document that an app manifest
   may register its recognized clients and their role grants alongside the

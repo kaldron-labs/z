@@ -9,6 +9,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZiLog.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/Zquic.hh>
 
 using namespace ZuTestUtil;
@@ -45,7 +46,7 @@ struct App : public Zquic::Hub<App> {
 
 private:
   static ZiMxParams mxParams_() {
-    return ZiMxParams()
+    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -64,11 +65,15 @@ struct TestStream :
   unsigned processed = 0;
 };
 struct TestLink :
+  public ZmNHeap<TestLink>,
   public Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>
 {
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
+  friend inline ZuStringT<"Zquic.Loop.Link"> ZmNHeapID(TestLink *);
+  using ZmNHeap<TestLink>::operator new;
+  using ZmNHeap<TestLink>::operator delete;
   TestLink(App *app) : Base{app, false, ZuID{"client"}} { }
   TestLink(App *app, bool isServer) : Base{app, isServer} { }
   void flushTx_() { }
@@ -86,7 +91,11 @@ struct TestLink :
       Zquic::PktNumSpace::AppData, 0, bytes, {}, nullptr, false);
   }
   void receiveDatagram(unsigned bytes) {
-    ZmRef<ZiIOBuf> buf = new Zquic::PktRxBufAlloc<>{this};
+    ZmRef<ZiIOBuf> buf = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(this);
     memset(buf->data_(), 0, bytes);
     buf->skip = 0;
     buf->length = bytes;
@@ -94,6 +103,28 @@ struct TestLink :
       Zquic::Datagram{ZuMv(buf), {}},
       [](Zquic::Datagram &, unsigned, unsigned) { return true; },
       [](Zquic::Datagram &, unsigned, unsigned) { return true; });
+  }
+  bool receivePayload(ZmRef<ZiIOBuf> buf, unsigned longBytes) {
+    auto original = buf.ptr();
+    auto payload = buf->data();
+    unsigned length = buf->length, longs = 0, shorts = 0;
+    bool geometry = true;
+    Base::receiveDatagram_(Zquic::Datagram{ZuMv(buf), {}},
+      [&geometry, &longs, original, payload, longBytes](
+	  Zquic::Datagram &d, unsigned offset, unsigned bytes) {
+	++longs;
+	geometry &= d.buf.ptr() == original && d.buf->data() == payload &&
+	  !offset && bytes == longBytes;
+	return true;
+      },
+      [&geometry, &shorts, original, payload, longBytes, length](
+	  Zquic::Datagram &d, unsigned offset, unsigned bytes) {
+	++shorts;
+	geometry &= d.buf.ptr() == original && d.buf->data() == payload &&
+	  offset == longBytes && bytes == length - longBytes;
+	return true;
+      });
+    return geometry && longs == 1 && shorts == 1;
   }
   uint64_t txQueueCount() const { return Base::txQueueCount_(); }
 #ifdef Zquic_DEBUG
@@ -227,7 +258,11 @@ static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -521,6 +556,29 @@ void testRecoveryFlowAndPMTUD()
 #endif
 }
 
+void testDatagramPayloadHeadroom(unsigned headroom)
+{
+  ZuTestScopeRT(testDatagramPayloadHeadroom);
+  App app;
+  TestLink link{&app};
+  ZmRef<Zi::IOBufAllocator> allocator = new Zquic::PktRxBufAllocator<>;
+  auto buf = allocator->alloc();
+  memset(buf->data_(), 0, headroom); // model metadata before received payload
+  buf->skip = headroom;
+  Zquic::CxnID dcid{"dst"}, scid{"src"};
+  int header = Zquic::Pkt::writeInitial(
+    buf->data(), buf->size - headroom, dcid, scid, 1, 1);
+  ZuCheckRT(header > 0);
+  if (header < 0) return;
+  auto data = buf->data();
+  data[header] = 0; data[header + 1] = 0; // packet number and payload byte
+  data[header + 2] = 0x40; data[header + 3] = 0; // coalesced short packet
+  buf->length = unsigned(header) + 4;
+  ZuCheckRT(link.receivePayload(buf, unsigned(header) + 2));
+  ZuCheckRT(buf->skip == headroom && buf->data() == buf->data_() + headroom &&
+    buf->length == unsigned(header) + 4 && (!headroom || !buf->data_()[0]));
+}
+
 int main(int argc, char **argv)
 {
   parse(argc, argv);
@@ -528,5 +586,7 @@ int main(int argc, char **argv)
   ZuTestCall(testHandshakeStreamsAndClose);
   ZuTestCall(testSplitReorderedStreamFrames);
   ZuTestCall(testRecoveryFlowAndPMTUD);
+  ZuTestCall(testDatagramPayloadHeadroom, 0);
+  ZuTestCall(testDatagramPayloadHeadroom, Zm::CacheLineSize);
   ZiLog::stop();
 }

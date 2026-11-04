@@ -9,7 +9,7 @@ Preconditions: plans 1 through 21 complete.
 `zquic` already implements connection and stream receive credit, transmit credit, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS, and BLOCKED validation/queueing.  The audit divergence is policy: replenishment is fixed half-window, while ngtcp2 can scale windows.  This plan first evaluates whether adaptive scaling is worth the complexity, then implements it only if justified.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -68,7 +68,7 @@ New or changed data stores: per-connection and per-stream window policy state if
 - Open question: default adaptive policy should depend on product workload expectations not yet encoded in repo.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

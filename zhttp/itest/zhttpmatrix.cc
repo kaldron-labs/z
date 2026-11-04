@@ -505,7 +505,7 @@ bool parseUInt(ZuCSpan s, unsigned &v)
 
 bool parseCase(Case &c)
 {
-  ZuCSpan s{options.caseName.data(), options.caseName.length()};
+  ZuCSpan s{options.caseName};
   int pairEnd = findChar(s, '/');
   if (pairEnd <= 0) return false;
   int protoEnd = findChar(s, '/', pairEnd + 1);
@@ -830,13 +830,29 @@ void appendURL(ZtString<> &s, const Case &c, unsigned port)
     s << "https://localhost:" << port << Path;
 }
 
+unsigned caseRingSize(const Case &c)
+{
+  uint64_t bytes = (Body.length() + 1) *
+    (caseLargeBody(c) ? LargeBodyLines : 1);
+  // Per concurrent exchange: request, response and retirement overlap;
+  // include all body fragments for the migration/reordering workload.
+  uint64_t slots = uint64_t(c.jobs) * 4 *
+    ((bytes + ZiIOBuf_DefltSize - 1)/ZiIOBuf_DefltSize);
+  if (slots < ZiIOBuf_DefltRxRingSize) slots = ZiIOBuf_DefltRxRingSize;
+  if (slots < ZiIOBuf_DefltTxRingSize) slots = ZiIOBuf_DefltTxRingSize;
+  if (slots > ZiMxParams::MaxRingSize) slots = ZiMxParams::MaxRingSize;
+  return unsigned(slots);
+}
+
 void appendZhttpCommand(
   ZtString<> &script, const Case &c, unsigned port, ZuCSpan certPath,
   ZuCSpan tempPath)
 {
   script << "if ! ";
   if (c.timeout) script << "timeout " << c.timeout << "s ";
-  script << "\"$client\" -j " << c.jobs << " -n " << c.requests;
+  script << "\"$client\" -j " << c.jobs << " -n " << c.requests <<
+    " --rx-ring-size=" << caseRingSize(c) <<
+    " --tx-ring-size=" << caseRingSize(c);
 #ifdef ZiMultiplex_DEBUG
   if (options.debug) script << " --debug";
   if (options.frag && !quicProto(c.proto)) script << " --frag";
@@ -1102,6 +1118,8 @@ bool writeScript(
 	break;
     }
     script <<
+      " --rx-ring-size=" << caseRingSize(c) <<
+      " --tx-ring-size=" << caseRingSize(c) <<
       " --addr 127.0.0.1 --port " << port <<
       " --timeout 0 --log " << tempPath << "/access.log"
       " >" << tempPath << "/server.out 2>" << tempPath << "/server.err &\n"

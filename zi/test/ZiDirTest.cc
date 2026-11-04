@@ -54,12 +54,12 @@ void setupDir()
 
 void testOpenReadAndEOF()
 {
-  ZuTestScope(testOpenReadAndEOF);
+  ZuTestScopeRT(testOpenReadAndEOF);
 
   setupDir();
 
   ZiDir dir;
-  ZuCheck(dir.open(g_root) == Zi::OK);
+  ZuCheckRT(dir.open(g_root) == Zi::OK);
 
   bool sawFile = false;
   bool sawDot = false;
@@ -69,7 +69,7 @@ void testOpenReadAndEOF()
   for (;;) {
     int rc = dir.read(name);
     if (rc == Zi::EndOfFile) break;
-    ZuCheck(rc == Zi::OK);
+    ZuCheckRT(rc == Zi::OK);
     if (rc != Zi::OK) break;
 
     if (name == "entry.txt") sawFile = true;
@@ -77,12 +77,12 @@ void testOpenReadAndEOF()
     if (name == "..") sawDotDot = true;
   }
 
-  ZuCheck(sawFile);
-  ZuCheck(sawDot);
-  ZuCheck(sawDotDot);
+  ZuCheckRT(sawFile);
+  ZuCheckRT(sawDot);
+  ZuCheckRT(sawDotDot);
 
   // Stable EOF after iteration completes.
-  ZuCheck(dir.read(name) == Zi::EndOfFile);
+  ZuCheckRT(dir.read(name) == Zi::EndOfFile);
   dir.close();
 }
 

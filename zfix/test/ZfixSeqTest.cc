@@ -105,25 +105,25 @@ struct Rx : public SeqRx<Rx, Queue> {
 
 static void ordered()
 {
-  ZuTestScope(ordered);
+  ZuTestScopeRT(ordered);
   Rx rx;
-  ZuCheck(rx.expected_() == 1 && !rx.retained_());
-  ZuCheck(rx.receive(1) == SeqResult::Accepted);
-  ZuCheck(rx.expected_() == 2 && rx.processed.length() == 1);
-  ZuCheck(rx.receive(4) == SeqResult::Accepted);
-  ZuCheck(rx.expected_() == 2 && rx.retained_() == 1 && rx.retainedBytes_() == 20);
-  ZuCheck(rx.requests.length() == 2 && rx.requests[0] == 2 && rx.requests[1] == 2);
-  ZuCheck(rx.receive(4, 99) == SeqResult::Duplicate && rx.retainedBytes_() == 20);
-  ZuCheck(rx.receive(3) == SeqResult::Accepted);
-  ZuCheck(rx.receive(2) == SeqResult::Accepted);
+  ZuCheckRT(rx.expected_() == 1 && !rx.retained_());
+  ZuCheckRT(rx.receive(1) == SeqResult::Accepted);
+  ZuCheckRT(rx.expected_() == 2 && rx.processed.length() == 1);
+  ZuCheckRT(rx.receive(4) == SeqResult::Accepted);
+  ZuCheckRT(rx.expected_() == 2 && rx.retained_() == 1 && rx.retainedBytes_() == 20);
+  ZuCheckRT(rx.requests.length() == 2 && rx.requests[0] == 2 && rx.requests[1] == 2);
+  ZuCheckRT(rx.receive(4, 99) == SeqResult::Duplicate && rx.retainedBytes_() == 20);
+  ZuCheckRT(rx.receive(3) == SeqResult::Accepted);
+  ZuCheckRT(rx.receive(2) == SeqResult::Accepted);
   rx.drain();
-  ZuCheck(rx.expected_() == 5 && !rx.retained_() && !rx.retainedBytes_());
-  ZuCheck(rx.processed.length() == 4);
-  for (unsigned i = 0; i < 4; ++i) ZuCheck(rx.processed[i] == i + 1);
-  ZuCheck(rx.receive(2) == SeqResult::Low && rx.expected_() == 5);
+  ZuCheckRT(rx.expected_() == 5 && !rx.retained_() && !rx.retainedBytes_());
+  ZuCheckRT(rx.processed.length() == 4);
+  for (unsigned i = 0; i < 4; ++i) ZuCheckRT(rx.processed[i] == i + 1);
+  ZuCheckRT(rx.receive(2) == SeqResult::Low && rx.expected_() == 5);
   auto retried = rx.retried;
   rx.retry_(rx.retry);
-  ZuCheck(rx.retried == retried);
+  ZuCheckRT(rx.retried == retried);
 }
 
 static void held()
@@ -255,22 +255,22 @@ static void staleDrain()
 
 static void callbackHold()
 {
-  ZuTestScope(callbackHold);
+  ZuTestScopeRT(callbackHold);
   Rx rx;
   for (uint64_t i = 2; i <= 5; ++i)
-    ZuCheck(rx.receive(i) == SeqResult::Accepted);
+    ZuCheckRT(rx.receive(i) == SeqResult::Accepted);
   rx.stopAt = 1;
-  ZuCheck(rx.receive(1) == SeqResult::Accepted);
-  ZuCheck(rx.held_() && rx.expected_() == 2 && rx.retained_() == 4);
+  ZuCheckRT(rx.receive(1) == SeqResult::Accepted);
+  ZuCheckRT(rx.held_() && rx.expected_() == 2 && rx.retained_() == 4);
   rx.stopAt = 3;
   rx.resume_();
   rx.drain();
-  ZuCheck(rx.held_() && rx.expected_() == 4 && rx.retainedBytes_() == 40);
+  ZuCheckRT(rx.held_() && rx.expected_() == 4 && rx.retainedBytes_() == 40);
   rx.stopAt = 0;
   rx.resume_();
   rx.drain();
-  ZuCheck(rx.expected_() == 6 && !rx.retained_() && !rx.retainedBytes_());
-  ZuCheck(rx.processed.length() == 5);
+  ZuCheckRT(rx.expected_() == 6 && !rx.retained_() && !rx.retainedBytes_());
+  ZuCheckRT(rx.processed.length() == 5);
 }
 
 static void permutations()
@@ -363,37 +363,37 @@ static void reset()
 
 static void restoredGap()
 {
-  ZuTestScope(restoredGap);
+  ZuTestScopeRT(restoredGap);
   Rx rx;
   rx.hold_();
-  ZuCheck(rx.restore_(10, 5, {7, 2}));
-  ZuCheck(rx.received_() == 10 && rx.expected_() == 5 && !rx.retained_() &&
+  ZuCheckRT(rx.restore_(10, 5, {7, 2}));
+  ZuCheckRT(rx.received_() == 10 && rx.expected_() == 5 && !rx.retained_() &&
     rx.requested_().key() == 7 && rx.requested_().length() == 2);
-  ZuCheck(!rx.restore_(4, 5) && rx.received_() == 10);
+  ZuCheckRT(!rx.restore_(4, 5) && rx.received_() == 10);
   rx.resume_();
-  ZuCheck(rx.requests.length() == 2 && rx.requests[0] == 5 && rx.requests[1] == 5 && rx.retry);
-  ZuCheck(rx.previous.length() == 2 && rx.previous[0] == 7 && rx.previous[1] == 2);
+  ZuCheckRT(rx.requests.length() == 2 && rx.requests[0] == 5 && rx.requests[1] == 5 && rx.retry);
+  ZuCheckRT(rx.previous.length() == 2 && rx.previous[0] == 7 && rx.previous[1] == 2);
   auto retry = rx.retry;
   auto arms = rx.arms;
   rx.resume_();
-  ZuCheck(rx.requests.length() == 2 && rx.retry == retry && rx.arms == arms);
-  ZuCheck(!rx.restore_(10, 5));
-  for (uint64_t key = 5; key < 10; ++key) ZuCheck(rx.receive(key) == SeqResult::Accepted);
+  ZuCheckRT(rx.requests.length() == 2 && rx.retry == retry && rx.arms == arms);
+  ZuCheckRT(!rx.restore_(10, 5));
+  for (uint64_t key = 5; key < 10; ++key) ZuCheckRT(rx.receive(key) == SeqResult::Accepted);
   rx.drain();
-  ZuCheck(rx.expected_() == 10 && rx.received_() == 10 && rx.processed.length() == 5 &&
+  ZuCheckRT(rx.expected_() == 10 && rx.received_() == 10 && rx.processed.length() == 5 &&
     !rx.requested_().length() && !rx.retained_());
-  ZuCheck(!rx.retry);
+  ZuCheckRT(!rx.retry);
 }
 
 static void restoreValidation()
 {
-  ZuTestScope(restoreValidation);
+  ZuTestScopeRT(restoreValidation);
   Rx rx{{.sequenceLimit = 20}};
   rx.hold_();
-  ZuCheck(rx.restore_(10, 5, {7, 2}));
+  ZuCheckRT(rx.restore_(10, 5, {7, 2}));
   auto check = [&rx](uint64_t received, uint64_t processed, Rx::Span gap) {
-    ZuCheck(!rx.restore_(received, processed, gap));
-    ZuCheck(rx.held_() && rx.received_() == 10 && rx.expected_() == 5 &&
+    ZuCheckRT(!rx.restore_(received, processed, gap));
+    ZuCheckRT(rx.held_() && rx.received_() == 10 && rx.expected_() == 5 &&
       rx.requested_() == Rx::Span(7, 2) && !rx.retained_() && !rx.retainedBytes_() &&
       !rx.requests.length() && !rx.arms && !rx.tasks.length());
   };
@@ -407,17 +407,17 @@ static void restoreValidation()
   rx.resume_();
   auto ticket = rx.retry;
   auto arms = rx.arms;
-  ZuCheck(!rx.restore_(10, 5));
-  ZuCheck(rx.retry == ticket && rx.arms == arms);
+  ZuCheckRT(!rx.restore_(10, 5));
+  ZuCheckRT(rx.retry == ticket && rx.arms == arms);
   rx.retry_(ticket);
-  ZuCheck(rx.retried == 1 && rx.retries[0] == 5 && rx.retries[1] == 5);
+  ZuCheckRT(rx.retried == 1 && rx.retries[0] == 5 && rx.retries[1] == 5);
   rx.hold_();
   auto cancelled = rx.cancelled;
-  ZuCheck(rx.restore_(8, 8));
+  ZuCheckRT(rx.restore_(8, 8));
   rx.retry_(ticket);
-  ZuCheck(rx.retried == 1 && rx.cancelled == cancelled && !rx.requested_().length());
+  ZuCheckRT(rx.retried == 1 && rx.cancelled == cancelled && !rx.requested_().length());
   rx.resume_();
-  ZuCheck(rx.received_() == 8 && rx.expected_() == 8 && !rx.retry);
+  ZuCheckRT(rx.received_() == 8 && rx.expected_() == 8 && !rx.retry);
 }
 
 static void trailingGap()
@@ -455,62 +455,62 @@ static void trailingGap()
 
 static void restoredOrder()
 {
-  ZuTestScope(restoredOrder);
+  ZuTestScopeRT(restoredOrder);
   Rx rx;
   rx.hold_();
-  ZuCheck(rx.restore_(10, 5, {7, 2}));
+  ZuCheckRT(rx.restore_(10, 5, {7, 2}));
   rx.resume_();
-  ZuCheck(rx.receive(12) == SeqResult::Accepted);
+  ZuCheckRT(rx.receive(12) == SeqResult::Accepted);
   for (uint64_t key = 9; key > 5; --key) {
-    ZuCheck(rx.receive(key) == SeqResult::Accepted);
-    ZuCheck(rx.receive(key) == SeqResult::Duplicate);
+    ZuCheckRT(rx.receive(key) == SeqResult::Accepted);
+    ZuCheckRT(rx.receive(key) == SeqResult::Duplicate);
     rx.hold_();
     rx.resume_();
     rx.drain();
-    ZuCheck(rx.expected_() == 5 && rx.gap_().key() == 5);
+    ZuCheckRT(rx.expected_() == 5 && rx.gap_().key() == 5);
   }
   auto retry = rx.retry;
-  ZuCheck(rx.receive(5) == SeqResult::Accepted);
+  ZuCheckRT(rx.receive(5) == SeqResult::Accepted);
   rx.drain();
-  ZuCheck(rx.expected_() == 10 && rx.received_() == 13 && rx.retained_() == 1 &&
+  ZuCheckRT(rx.expected_() == 10 && rx.received_() == 13 && rx.retained_() == 1 &&
     rx.gap_() == Rx::Span(10, 2) && rx.requested_() == Rx::Span(10, 2));
-  ZuCheck(rx.processed.length() == 5);
-  for (unsigned i = 0; i < 5; ++i) ZuCheck(rx.processed[i] == i + 5);
+  ZuCheckRT(rx.processed.length() == 5);
+  for (unsigned i = 0; i < 5; ++i) ZuCheckRT(rx.processed[i] == i + 5);
   rx.retry_(retry);
-  ZuCheck(!rx.retried);
-  ZuCheck(rx.advance_(12));
+  ZuCheckRT(!rx.retried);
+  ZuCheckRT(rx.advance_(12));
   rx.drain();
-  ZuCheck(rx.expected_() == 13 && rx.processed.length() == 6 && rx.processed[5] == 12 &&
+  ZuCheckRT(rx.expected_() == 13 && rx.processed.length() == 6 && rx.processed[5] == 12 &&
     !rx.retained_() && !rx.retainedBytes_() && !rx.retry);
 }
 
 static void requestReentry()
 {
-  ZuTestScope(requestReentry);
+  ZuTestScopeRT(requestReentry);
   for (unsigned action = RxHook::Hold; action <= RxHook::Resume; ++action) {
     Rx rx;
     rx.hold_();
-    ZuCheck(rx.restore_(10, 5));
+    ZuCheckRT(rx.restore_(10, 5));
     rx.requestHook = action;
     rx.resume_();
-    ZuCheck(rx.hookOK);
+    ZuCheckRT(rx.hookOK);
     switch (action) {
       case RxHook::Hold:
-	ZuCheck(rx.held_() && !rx.retry && !rx.arms);
+	ZuCheckRT(rx.held_() && !rx.retry && !rx.arms);
 	break;
       case RxHook::Advance:
-	ZuCheck(rx.expected_() == 10 && !rx.retry && !rx.arms);
+	ZuCheckRT(rx.expected_() == 10 && !rx.retry && !rx.arms);
 	rx.drain();
-	ZuCheck(!rx.requested_().length());
+	ZuCheckRT(!rx.requested_().length());
 	break;
       case RxHook::Reset:
-	ZuCheck(rx.held_() && rx.expected_() == 10 && !rx.retry && !rx.arms);
+	ZuCheckRT(rx.held_() && rx.expected_() == 10 && !rx.retry && !rx.arms);
 	break;
       case RxHook::Restore:
-	ZuCheck(rx.held_() && rx.expected_() == 5 && !rx.retry && !rx.arms);
+	ZuCheckRT(rx.held_() && rx.expected_() == 5 && !rx.retry && !rx.arms);
 	break;
       case RxHook::Resume:
-	ZuCheck(!rx.held_() && rx.requests.length() == 4 && rx.arms == 1);
+	ZuCheckRT(!rx.held_() && rx.requests.length() == 4 && rx.arms == 1);
 	break;
     }
   }
@@ -518,32 +518,32 @@ static void requestReentry()
 
 static void retryReentry()
 {
-  ZuTestScope(retryReentry);
+  ZuTestScopeRT(retryReentry);
   for (unsigned action = RxHook::Hold; action <= RxHook::Resume; ++action) {
     Rx rx;
     rx.hold_();
-    ZuCheck(rx.restore_(10, 5));
+    ZuCheckRT(rx.restore_(10, 5));
     rx.resume_();
     auto ticket = rx.retry;
     rx.retryHook = action;
     rx.retry_(ticket);
-    ZuCheck(rx.hookOK);
-    ZuCheck(rx.retried == 1);
+    ZuCheckRT(rx.hookOK);
+    ZuCheckRT(rx.retried == 1);
     rx.retry_(ticket);
-    ZuCheck(rx.retried == 1);
+    ZuCheckRT(rx.retried == 1);
     switch (action) {
       case RxHook::Hold:
       case RxHook::Reset:
       case RxHook::Restore:
-	ZuCheck(rx.held_() && !rx.retry && rx.arms == 1);
+	ZuCheckRT(rx.held_() && !rx.retry && rx.arms == 1);
 	break;
       case RxHook::Advance:
-	ZuCheck(rx.expected_() == 10 && !rx.retry && rx.arms == 1);
+	ZuCheckRT(rx.expected_() == 10 && !rx.retry && rx.arms == 1);
 	rx.drain();
-	ZuCheck(!rx.requested_().length());
+	ZuCheckRT(!rx.requested_().length());
 	break;
       case RxHook::Resume:
-	ZuCheck(!rx.held_() && rx.requests.length() == 4 && rx.arms == 2);
+	ZuCheckRT(!rx.held_() && rx.requests.length() == 4 && rx.arms == 2);
 	break;
     }
   }
@@ -602,38 +602,38 @@ struct CountRx : public SeqRx<CountRx, CountQueue> {
 
 static void gapWork()
 {
-  ZuTestScope(gapWork);
+  ZuTestScopeRT(gapWork);
   // A default replay-sized batch exercises existing one-message continuations.
   enum { Messages = 64 };
   CountRx ordered;
   CountQueue::queries = 0;
   for (unsigned i = 1; i <= Messages; ++i)
-    ZuCheck(ordered.receive(i) == SeqResult::Accepted);
-  ZuCheck(ordered.processed == Messages && !ordered.tasks.length() &&
+    ZuCheckRT(ordered.receive(i) == SeqResult::Accepted);
+  ZuCheckRT(ordered.processed == Messages && !ordered.tasks.length() &&
     CountQueue::queries == Messages);
 
   CountRx queued;
   for (unsigned i = 2; i <= Messages; ++i)
-    ZuCheck(queued.receive(i) == SeqResult::Accepted);
-  ZuCheck(queued.receive(1) == SeqResult::Accepted);
+    ZuCheckRT(queued.receive(i) == SeqResult::Accepted);
+  ZuCheckRT(queued.receive(1) == SeqResult::Accepted);
   auto queries = CountQueue::queries;
   queued.drain();
-  ZuCheck(queued.processed == Messages && queued.tasks.length() == Messages - 1 &&
+  ZuCheckRT(queued.processed == Messages && queued.tasks.length() == Messages - 1 &&
     CountQueue::queries - queries == 1 && !queued.retry);
 
   CountRx restored;
   restored.hold_();
   queries = CountQueue::queries;
-  ZuCheck(restored.restore_(Messages + 1, 1));
-  ZuCheck(CountQueue::queries == queries && !restored.tasks.length());
+  ZuCheckRT(restored.restore_(Messages + 1, 1));
+  ZuCheckRT(CountQueue::queries == queries && !restored.tasks.length());
   restored.resume_();
   auto requests = restored.requests;
   auto retry = restored.retry;
   restored.resume_();
-  ZuCheck(restored.requests == requests && restored.retry == retry);
+  ZuCheckRT(restored.requests == requests && restored.retry == retry);
   for (unsigned i = 1; i <= Messages; ++i)
-    ZuCheck(restored.receive(i) == SeqResult::Accepted);
-  ZuCheck(restored.processed == Messages && !restored.tasks.length() && !restored.retry);
+    ZuCheckRT(restored.receive(i) == SeqResult::Accepted);
+  ZuCheckRT(restored.processed == Messages && !restored.tasks.length() && !restored.retry);
 }
 
 int main(int argc, char **argv)

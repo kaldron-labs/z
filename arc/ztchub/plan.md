@@ -241,7 +241,7 @@ stops admission, cancels timers, drains Rx routing and Tx queues, closes WSS
 links, stops the service, and releases Zdb/multiplex ownership.
 
 All dynamic records and queue nodes use named Z heaps or existing pooled
-I/O buffers. Follow `AGENTS.md` and `GUIDELINES.md`, including Z containers and
+I/O buffers. Follow `AGENTS.md` and `docs/GUIDELINES.md`, including Z containers and
 existing raw back-pointer patterns where owners drain dependent work. Shutdown
 must make new ingress impossible before releasing any owner. Drain routing and
 database continuations, Rx and Tx work, and service callbacks before releasing

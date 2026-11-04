@@ -74,9 +74,11 @@ using CxnFailFn = ZmFn<void(CxnFailure),
 using CxnSendFn = ZmFn<void(bool), ZmFnHeapID<"Zdbus.CxnSendFn">>;
 using CxnStopFn = ZmFn<void(), ZmFnHeapID<"Zdbus.CxnStopFn">>;
 
-// Internal receive-buffer split after a complete frame is parsed.
+// Retain the original backing while advancing its unfinished input range.
 ZdbusExtern ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input,
-  FrameInfo &info);
+  const FrameInfo &info);
+// Copy an unfinished shared tail directly into final input storage.
+ZdbusExtern bool detachInput_(ZmRef<ZiIOBuf> &input, unsigned size);
 
 struct Out_ : public ZmObject {
   ZmRef<ZiIOBuf>	buf;

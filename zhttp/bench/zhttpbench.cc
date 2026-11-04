@@ -17,6 +17,8 @@
 #include <zlib/ZtcHeap.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiResolver.hh>
+#include <zlib/Zquic.hh>
+
 #include <zlib/ZhttpClient.hh>
 #include <zlib/ZhttpServer.hh>
 #include "ZhttpTestUtil.hh"
@@ -177,7 +179,19 @@ int run(const Zhttp::Test::TempDir &cert, unsigned count, unsigned jobs, unsigne
   State state;
   state.samples.size(count);
   state.held.size(jobs);
-  ZiMultiplex mx{ZiMxParams().scheduler([](auto &s) {
+  // Request/response and retirement overlap for every concurrent job.
+  uint64_t needed = uint64_t(jobs) * 4;
+  unsigned slots = needed > ZiMxParams::MaxRingSize ?
+    unsigned(ZiMxParams::MaxRingSize) : unsigned(needed);
+  ZiMultiplex mx{ZiMxParams()
+    .rxRingSize(slots < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : slots)
+    .txRingSize(slots < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : slots)
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>().scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })

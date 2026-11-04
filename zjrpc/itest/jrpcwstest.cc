@@ -6,6 +6,7 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/Zquic.hh>
 #include <zlib/ZjrpcClient.hh>
 #include <zlib/ZjrpcServer.hh>
 
@@ -133,7 +134,9 @@ template <typename Profile>
 static void testWS(const Zquic::Test::TempDir &temp, unsigned port)
 {
   ZuTestScopeRT(testWS);
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &scheduler) {
+  ZiMultiplex mx{ZiMxParams{}
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .scheduler([](auto &scheduler) {
     scheduler.nThreads(2)
       .thread(1, [](auto &thread) { thread.isolated(1); })
       .thread(2, [](auto &thread) { thread.isolated(1); });

@@ -12,7 +12,7 @@ canonical76/lifecycle24/probe6/SDK-policy4/native18 checks also pass.
 
 This file records the execution contract for `zfix_repair2.md` sections 3 and 5,
 not new DNS/connect cancellation, receive-limit, persistence or business policy.
-`GUIDELINES.md` remains authoritative. Defect descriptions explicitly marked
+`docs/GUIDELINES.md` remains authoritative. Defect descriptions explicitly marked
 original or pre-repair explain the starting state, not current failures.
 
 ## Demonstrated original boundary

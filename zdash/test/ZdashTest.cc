@@ -31,7 +31,8 @@ using TypeList = ZuTypeList<
 }
 
 using Frame = ZmRef<ZiIOBuf>;
-using FrameBuf = ZiIOBufAlloc<1024, 1U << 20, "ZDash.TestFrame">;
+using FrameBuf = Zi::IOBufAlloc<ZiIOBuf, 1024, 1U << 20,
+  ZuStringT<"ZDash.TestFrame">>;
 // Several GTK clock-check batches fit in the fixture's 64 KiB ring.
 enum { Burst = 256 };
 
@@ -613,7 +614,7 @@ private:
     };
     auto telemetry = [&deliver, phase](ZuCSpan device, uint64_t generation,
 	int rag, bool shutdown = false) {
-      Ztc::Builder builder{Frame{new FrameBuf}};
+      Ztc::Builder builder{Frame{new FrameBuf{nullptr, 0}}};
       auto builderNested = builder.startNested();
       auto dev = device;
       auto id = builder.string("publisher");
@@ -651,7 +652,7 @@ private:
 	telemetry("test-b", 1, Ztc::RAG::Green);
 	break;
       case 2: {
-	Ztc::Builder builder{Frame{new FrameBuf}};
+	Ztc::Builder builder{Frame{new FrameBuf{nullptr, 0}}};
 	auto builderNested = builder.startNested();
 	auto eos = Zfb::save(builder, Ztc::EOS{ZuID{"inventory"}, 0});
 	builder.finish(Ztc::saveMsg(builder, builderNested, Ztc::Body::EOS,
@@ -686,7 +687,7 @@ private:
 	  }();
 	  auto subID = m_host.subscription_("test-a", "publisher", unsigned(group));
 	  if (!subID) { m_failed = true; return; }
-	  Ztc::Builder builder{Frame{new FrameBuf}};
+	  Ztc::Builder builder{Frame{new FrameBuf{nullptr, 0}}};
 	  auto builderNested = builder.startNested();
 	  auto device = "test-a"_z;
 	  auto id = builder.string("publisher");
@@ -716,7 +717,7 @@ private:
 	  if (phase == 7) {
 	    auto sub = m_host.subscription_("test-a", "publisher",
 		unsigned(Ztc::Group::Hash));
-	    Ztc::Builder ack{Frame{new FrameBuf}};
+	    Ztc::Builder ack{Frame{new FrameBuf{nullptr, 0}}};
 	    auto ackNested = ack.startNested();
 	    auto device = "test-a"_z;
 	    auto body = Zfb::save(ack, Ztc::Ack{
@@ -727,7 +728,7 @@ private:
 	    if (!sub || m_host.subscription_("test-a", "publisher",
 		unsigned(Ztc::Group::Hash))) m_failed = true;
 	    // A late cancelled reply cannot add a row or resurrect its route.
-	    Ztc::Builder late{Frame{new FrameBuf}};
+	    Ztc::Builder late{Frame{new FrameBuf{nullptr, 0}}};
 	    auto lateNested = late.startNested();
 	    auto id = late.string("publisher");
 	    auto hash = sample<Ztc::HashTelemetry>();
@@ -773,7 +774,7 @@ private:
 	send(table);
       } break;
       case 10: { // Source-attributed EOS is still only a snapshot boundary.
-	Ztc::Builder builder{Frame{new FrameBuf}};
+	Ztc::Builder builder{Frame{new FrameBuf{nullptr, 0}}};
 	auto builderNested = builder.startNested();
 	auto device = "test-a"_z;
 	auto eos = Zfb::save(builder, Ztc::EOS{ZuID{"publisher"}, 123});
@@ -782,7 +783,7 @@ private:
 	deliver(builder.buf());
       } break;
       case 13: { // Explicit transport loss preserves objects and selection.
-	Ztc::Builder builder{Frame{new FrameBuf}};
+	Ztc::Builder builder{Frame{new FrameBuf{nullptr, 0}}};
 	auto builderNested = builder.startNested();
 	auto device = "test-a"_z;
 	auto error = Zfb::save(builder, Ztc::Error{
@@ -795,7 +796,7 @@ private:
       case 11: {
 	telemetry("test-a", 3, Ztc::RAG::Green);
 	telemetry("test-a", 2, Ztc::RAG::Red); // obsolete transport generation
-	Ztc::Builder builder{Frame{new FrameBuf}};
+	Ztc::Builder builder{Frame{new FrameBuf{nullptr, 0}}};
 	auto builderNested = builder.startNested();
 	auto device = "test-a"_z;
 	auto id = builder.string("publisher");

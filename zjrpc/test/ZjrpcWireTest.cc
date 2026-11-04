@@ -27,6 +27,11 @@ struct Message {
 };
 
 struct BodyOut {
+  bool appendRange(ZmRef<ZiIOBuf> buf, unsigned offset, unsigned length) {
+    data << buf->cspan().offset(offset).trunc(length);
+    return !failure;
+  }
+
   ZtString<> data;
   bool flushOK = true;
   bool failure = false;
@@ -187,6 +192,117 @@ static void stdioTest()
   ZuCheck(ZuCSpan{*out} == "{}\n");
 }
 
+struct BatchModel {
+  template <typename S> void write(S &out) const {
+    out << '[';
+    Message{}.write(out);
+    out << ']';
+  }
+};
+
+struct FinalOut {
+  ZmRef<ZiIOBuf> allocated;
+  ZmRef<ZiIOBuf> sent;
+  bool failure = false;
+  unsigned allocs = 0;
+
+  unsigned headRoom() const { return 19; }
+  unsigned tailRoom() const { return 23; }
+  ZmRef<ZiIOBuf> allocBuf(unsigned head) {
+    allocated = new Zjrpc::BatchBuf{nullptr, 0};
+    allocated->skip = head;
+    ++allocs;
+    return allocated;
+  }
+  FinalOut &operator <<(ZmRef<ZiIOBuf> buf) { sent = ZuMv(buf); return *this; }
+  template <typename P> FinalOut &operator <<(const P &) { failure = true; return *this; }
+  bool failed() const { return failure; }
+  bool flush() { return !failure; }
+};
+
+static void finalBatchTest()
+{
+  ZuTestScope(finalBatch);
+  FinalOut lower;
+  Zjrpc::Output out{lower, 1024};
+  Zjrpc::BatchWire batch{{}, BatchModel{}, 1024};
+  batch.write(out);
+  ZuCheck(!out.failed());
+  ZuCheck(lower.allocs == 1 && lower.sent == lower.allocated);
+  ZuCheck(lower.sent->skip == lower.headRoom());
+  ZuCheck(lower.sent->avail() >= lower.tailRoom());
+  ZuCheck(lower.sent->cspan() ==
+    "[{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"echo\",\"params\":{}}]");
+  ZuCheck(out.produced() == lower.sent->length);
+}
+
+static void finalSSETest()
+{
+  ZuTestScope(finalSSE);
+  FinalOut lower;
+  Zjrpc::HTTPSSEBuilder builder;
+  ZuCheck(builder.emit(Message{}));
+  ZuCheck(!lower.allocs);
+  Zhttp::WriteOutcome::T outcome = Zhttp::WriteOutcome::Abort;
+  builder.body([&lower, &outcome](auto write) {
+    outcome = write(lower);
+    return outcome;
+  });
+  ZuCheck(outcome == Zhttp::WriteOutcome::End && !lower.failed());
+  ZuCheck(lower.allocs == 1 && lower.sent == lower.allocated);
+  ZuCheck(lower.sent->skip == lower.headRoom());
+  ZuCheck(lower.sent->avail() >= lower.tailRoom());
+  ZuCheck(lower.sent->cspan().length() > 10);
+  ZuCheck(ZuCSpan{lower.sent->cspan()}.trunc(6) == "id: 1\n");
+}
+
+static void retainedInputTest()
+{
+  ZuTestScope(retainedInput);
+  ZmRef<ZiRxQueue::Node> source = new
+    Zi::IOBufAlloc<ZiRxQueue::Node, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Wire.Rx">>{nullptr, 0};
+  *source << "padprefix{\"x\":1}tail";
+  source->advance(3);
+  auto ptr = source->ZiIOBuf::data();
+  ZiRxStream<ZiRxQueue> rx;
+  rx.push(ZuMv(source));
+  rx.advance(6);
+  Zjrpc::Input input;
+  ZuCheck(input.begin(7, 64));
+  auto range = rx.range();
+  range = Zi::RxRange::fromStorage(ZuMv(range.buf), range.offset, 7);
+  auto backing = range.buf.ptr();
+  backing->advance(2);
+  ZuCheck(input.feed(ZuMv(range)));
+  auto body = input.take();
+  ZuCheck(body->data() == ptr + 6);
+  ZuCheck(body->cspan() == "{\"x\":1}");
+  backing->advance(backing->length);
+  ZuCheck(body->data() == ptr + 6 && body->length == 7);
+  rx.clean();
+  ZuCheck(body->cspan() == "{\"x\":1}");
+
+  ZiRxStream<ZiRxQueue> fragments;
+  ZmRef<ZiRxQueue::Node> first = new
+    Zi::IOBufAlloc<ZiRxQueue::Node, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Wire.Rx">>{nullptr, 0};
+  ZmRef<ZiRxQueue::Node> last = new
+    Zi::IOBufAlloc<ZiRxQueue::Node, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.Wire.Rx">>{nullptr, 0};
+  *first << "{\"x\":";
+  *last << "1}";
+  auto original = first->ZiIOBuf::data();
+  fragments.push(ZuMv(first));
+  fragments.push(ZuMv(last));
+  ZuCheck(input.begin(7, 64));
+  ZuCheck(input.body(fragments));
+  ZuCheck(input.buffer()->data() == original);
+  ZuCheck(input.body(fragments));
+  body = input.take();
+  ZuCheck(body->cspan() == "{\"x\":1}" && !fragments);
+}
+
 static void httpInputTest()
 {
   ZuTestScope(httpInput);
@@ -345,6 +461,9 @@ int main(int argc, char **argv)
   ZuTestCall(sseLifetimeTest);
   ZuTestCall(stdioTest);
   ZuTestCall(httpInputTest);
+  ZuTestCall(retainedInputTest);
+  ZuTestCall(finalBatchTest);
+  ZuTestCall(finalSSETest);
   ZuTestCall(httpOutputTest);
   ZuTestCall(sseOutputTest);
   ZuTestCall(wsInputTest);

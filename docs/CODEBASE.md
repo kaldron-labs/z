@@ -556,7 +556,7 @@ Research conducted on 2025-12-27 14:47:25 UTC.
 - `zi/src/ZiDir.hh:10` - Top-level symbols: define ZiDir_HH, class ZiAPI, using Path, using Guard
 - `zi/src/ZiGlob.hh:13` - Top-level symbols: define ZiGlob_HH, class ZiAPI, struct Entry, function NameAxor, using Iter, using NodePtr
 - `zi/src/ZiGlob.cc:1` - Top-level contents (no regex-matched symbols)
-- `zi/src/ZiIOContext.hh:11` - Top-level symbols: define ZiIOContext_HH, class ZiConnection, struct ZiIOContext, function invalid_ptr, function init_, function init
+- `zi/src/ZiIOContext.hh:11` - Top-level symbols: define ZiIOContext_HH, class ZiConnection, using ZiTOS, struct ZiRxContext, using ZiRxFn, struct ZiTxContext, using ZiTxFn
 - `zi/src/ZiLib.cc:1` - Top-level contents (no regex-matched symbols)
 - `zi/src/ZiPlatform.hh:10` - Top-level symbols: define ZiPlatform_HH, using Name, using Handle, function nullHandle, function nullHandle, using Socket
 - `zi/src/ZiMultiplex.cc:34` - Top-level symbols: struct sockaddr, struct sockaddr, define WSAID_CONNECTEX, define WSAID_ACCEPTEX, define WSAID_GETACCEPTEXSOCKADDRS, define WSAID_DISCONNECTEX

@@ -388,14 +388,14 @@ struct BudgetSender {
 
 void testSocketBackpressure()
 {
-  ZuTestScope(testSocketBackpressure);
+  ZuTestScopeRT(testSocketBackpressure);
 
   Zi::Socket loopSocket = Zi::nullSocket();
   Zi::Socket peerSocket = Zi::nullSocket();
-  ZuCHECK(makeSocketPair(loopSocket, peerSocket), "socketpair failed");
+  ZuCheckRT(makeSocketPair(loopSocket, peerSocket), log_("socketpair failed"));
   if (Zi::nullSocket(loopSocket) || Zi::nullSocket(peerSocket)) return;
   if (!ZiEventLoop::unblock(loopSocket)) {
-    ZuCHECK(false, "unblock socket failed");
+    ZuCheckRT(false, log_("unblock socket failed"));
     closeSocket_(loopSocket);
     closeSocket_(peerSocket);
     return;
@@ -407,7 +407,7 @@ void testSocketBackpressure()
   if (::setsockopt(loopSocket, SOL_SOCKET, SO_SNDBUF,
       reinterpret_cast<const char *>(&sendCapacity),
       sizeof(sendCapacity))) {
-    ZuCHECK(false, "set socket send buffer failed");
+    ZuCheckRT(false, log_("set socket send buffer failed"));
     closeSocket_(loopSocket);
     closeSocket_(peerSocket);
     return;
@@ -433,7 +433,7 @@ void testSocketBackpressure()
     blocked = n < 0 && socketWouldBlock_(error);
     break;
   }
-  ZuCHECK(blocked && filled, "socket did not reach would-block");
+  ZuCheckRT(blocked && filled, log_("socket did not reach would-block"));
   if (!blocked || !filled) {
     closeSocket_(loopSocket);
     closeSocket_(peerSocket);
@@ -465,7 +465,10 @@ void testSocketBackpressure()
         [&loop, &closed, &failed, &stage](Zi::Socket socket) {
           char byte;
           if (recvSocketBytes(socket, &byte, 1) != 0) failed.store_(1);
-          if (stage.load_() != 1) failed.store_(1);
+          auto current = stage.load_();
+          // EOF may be dispatched again before the queued deletion runs.
+          if (current == 2) return;
+          if (current != 1) failed.store_(1);
           stage.store_(2);
           loop.run([&loop, socket] { loop.delSocket(socket); });
           closed.post();
@@ -473,8 +476,7 @@ void testSocketBackpressure()
     }
     started.post();
   });
-  ZuCHECK(waitFor(started) && added.load_(),
-    "backpressure socket registration failed");
+  ZuCheckRT(waitFor(started) && added.load_(), log_("backpressure socket registration failed"));
   while (filled) {
     unsigned length = filled < fill->size ? filled : fill->size;
     int n = recvSocketBytes(peerSocket,
@@ -488,8 +490,7 @@ void testSocketBackpressure()
     break;
   }
   bool signalled = waitFor(writable);
-  ZuCHECK(signalled && sender.sent == int(BudgetLength),
-    "bounded writable continuation did not finish after would-block");
+  ZuCheckRT(signalled && sender.sent == int(BudgetLength), log_("bounded writable continuation did not finish after would-block"));
   if (signalled && sender.sent == int(BudgetLength)) {
     ZuArray<char, BudgetLength> received;
     unsigned n = 0;
@@ -499,11 +500,10 @@ void testSocketBackpressure()
       if (r <= 0) break;
       n += unsigned(r);
     }
-    ZuCHECK(n == BudgetLength &&
-      !memcmp(received.data(), BudgetPayload.data(), BudgetLength),
-      "bounded writable payload mismatch");
+    ZuCheckRT(n == BudgetLength &&
+      !memcmp(received.data(), BudgetPayload.data(), BudgetLength), log_("bounded writable payload mismatch"));
     closeSocket_(peerSocket);
-    ZuCHECK(waitFor(closed), "peer EOF was not dispatched");
+    ZuCheckRT(waitFor(closed), log_("peer EOF was not dispatched"));
   }
   if (loopStarted.load_()) {
     loop.stop([&stopped, &failed, &stage](ZiEvent::StopResult) {
@@ -511,17 +511,16 @@ void testSocketBackpressure()
       stage.store_(3);
       stopped.post();
     });
-    ZuCHECK(waitFor(stopped), "backpressure loop stop timed out");
+    ZuCheckRT(waitFor(stopped), log_("backpressure loop stop timed out"));
   }
   sched.stop();
   loop.final();
   closeSocket_(loopSocket);
   closeSocket_(peerSocket);
-  ZuCHECK(sender.sent == int(BudgetLength) &&
-    sender.continuations == BudgetLength - 1,
-    "write budget did not post one continuation per remaining byte");
-  ZuCHECK(stage.load_() == 3, "send, EOF, stop order was violated");
-  ZuCHECK(!failed.load_(), "backpressure path failed");
+  ZuCheckRT(sender.sent == int(BudgetLength) &&
+    sender.continuations == BudgetLength - 1, log_("write budget did not post one continuation per remaining byte"));
+  ZuCheckRT(stage.load_() == 3, log_("send, EOF, stop order was violated"));
+  ZuCheckRT(!failed.load_(), log_("backpressure path failed"));
 }
 
 void testSocketSendOnly()

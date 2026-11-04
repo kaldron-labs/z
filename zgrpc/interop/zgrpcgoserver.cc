@@ -109,7 +109,8 @@ int main()
 {
   auto cert = getenv("ZGRPC_GO_CERT"), key = getenv("ZGRPC_GO_KEY"), port = getenv("ZGRPC_GO_PORT");
   if (!cert || !key || !port) return 1;
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  bool h3 = getenv("ZGRPC_GO_H3");
+  ZiMultiplex mx{peerMxParams(h3).scheduler([](auto &s) {
     s.nThreads(4).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); })
@@ -119,7 +120,7 @@ int main()
   Zgrpc::Server<App, Matrix> server;
   ServerConfig config;
   config.localIP(ZiIP{"127.0.0.1"}).port(atoi(port));
-  if (getenv("ZGRPC_GO_H3")) config.quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key));
+  if (h3) config.quic(Zhttp::QUICConfig{}.certPath(cert).keyPath(key));
   else config.tls(Zhttp::H2Config{}.tls([&cert, &key](auto &tls) {
     tls.certPath(cert).keyPath(key);
   }).policy(Zhttp::H2Policy::Force));

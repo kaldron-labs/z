@@ -12,8 +12,8 @@ and a WebSocket binding. Preserve implemented MCP behavior except the agreed
 Q18 inbound duplicate policy. Ordinary JSON-RPC applications must work without
 MCP discovery, tools, sessions, metadata or result wrappers.
 
-Apply [GUIDELINES.md](GUIDELINES.md), especially
-[Repair procedure](GUIDELINES.md#repair-procedure): establish each invariant,
+Apply [GUIDELINES.md](docs/GUIDELINES.md), especially
+[Repair procedure](docs/GUIDELINES.md#repair-procedure): establish each invariant,
 identify its owner, and choose the smallest implementation. An existing
 container or abstraction is evidence of behavior to preserve, not a requirement
 to reproduce its implementation. Delete redundant storage and dispatch while
@@ -27,14 +27,14 @@ the current compiler, flags, platform and existing artifacts throughout.
 
 | Earlier prescription | Revised prescription and reason | Applicable guideline |
 | --- | --- | --- |
-| A new generic peer framework plus client/server wrappers | Extract only the common correlation, completion and typed dispatch actually consumed by the endpoints. A peer is an ownership scope, not a mandatory additional object, virtual interface or registry. | [Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints): factor common code without weak abstractions. |
-| A fixed list of public headers including `ZjrpcPeer.hh` | Put declarations/codecs in `Zjrpc.hh`, endpoint templates in client/server headers, and shared transport code in transport headers only where it removes duplication or an include cycle. Add no standalone peer header until actual dependencies require it. | [Module layout](GUIDELINES.md#module-layout), [Header layout](GUIDELINES.md#header-layout): acyclic includes and direct dependencies. |
-| Preserve every responder hash and cancellation index, then add a live-ID hash | Use one peer live-request `ZmHash` for inbound lookup and cancellation. Replace overlapping cancellation indexes. An ordinary responder has one completion slot, not another ID hash. Keep work enumeration only where needed for teardown, including notifications and detached HTTP work. | [Containers and intrusion](GUIDELINES.md#containers-and-intrusion), [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow): eliminate extra nodes, lookups and repeated work. |
-| Batch-specific transport responders and multiple completion lifecycles | A batch is one aggregate request and one completed response message. Its members reuse ordinary dispatch and result encoding; only aggregation state is new. | [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow): factor repeated blocks. |
-| A new numeric-ID codec or implicit broadening from `int64_t` | Retain `int64_t` numeric IDs in ordinary decimal integer notation (Q19). Fractional and exponential forms are out of scope. Reuse `ZfJSON` and framework integer comparison/hash; no new numeric representation, parser or normalizer. | [Framework fit](GUIDELINES.md#framework-fit), [Metadata](GUIDELINES.md#metadata), [Repair procedure](GUIDELINES.md#repair-procedure). |
-| Generic HTTP routing, negotiation, sessions and WebSocket machinery | Extract JSON/SSE binding code; let `Zhttp` and `Zws` perform their existing jobs. MCP retains its HTTP routing/session policy. | [Framework fit](GUIDELINES.md#framework-fit): do not reimplement lower-level facilities. |
-| Independent limits, counters and scratch allocations in each new layer | Keep each existing budget with its actual owner. Use stack scratch with heap fallback for synchronous temporary data; pooled buffers for I/O; heap-owned state only when it must survive dispatch. | [Storage and capacity](GUIDELINES.md#storage-and-capacity), [Heap allocation](GUIDELINES.md#heap-allocation), [I/O and system integration](GUIDELINES.md#io-and-system-integration). |
-| Repeated full behavior matrices and copies of moved tests | Move generic tests with their implementation. Test shared wire semantics once and transport-specific framing/lifetime at its boundary. Keep full `zws` profile coverage. | [Repair procedure](GUIDELINES.md#repair-procedure), [Tests](GUIDELINES.md#tests). |
+| A new generic peer framework plus client/server wrappers | Extract only the common correlation, completion and typed dispatch actually consumed by the endpoints. A peer is an ownership scope, not a mandatory additional object, virtual interface or registry. | [Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints): factor common code without weak abstractions. |
+| A fixed list of public headers including `ZjrpcPeer.hh` | Put declarations/codecs in `Zjrpc.hh`, endpoint templates in client/server headers, and shared transport code in transport headers only where it removes duplication or an include cycle. Add no standalone peer header until actual dependencies require it. | [Module layout](docs/GUIDELINES.md#module-layout), [Header layout](docs/GUIDELINES.md#header-layout): acyclic includes and direct dependencies. |
+| Preserve every responder hash and cancellation index, then add a live-ID hash | Use one peer live-request `ZmHash` for inbound lookup and cancellation. Replace overlapping cancellation indexes. An ordinary responder has one completion slot, not another ID hash. Keep work enumeration only where needed for teardown, including notifications and detached HTTP work. | [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion), [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow): eliminate extra nodes, lookups and repeated work. |
+| Batch-specific transport responders and multiple completion lifecycles | A batch is one aggregate request and one completed response message. Its members reuse ordinary dispatch and result encoding; only aggregation state is new. | [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow): factor repeated blocks. |
+| A new numeric-ID codec or implicit broadening from `int64_t` | Retain `int64_t` numeric IDs in ordinary decimal integer notation (Q19). Fractional and exponential forms are out of scope. Reuse `ZfJSON` and framework integer comparison/hash; no new numeric representation, parser or normalizer. | [Framework fit](docs/GUIDELINES.md#framework-fit), [Metadata](docs/GUIDELINES.md#metadata), [Repair procedure](docs/GUIDELINES.md#repair-procedure). |
+| Generic HTTP routing, negotiation, sessions and WebSocket machinery | Extract JSON/SSE binding code; let `Zhttp` and `Zws` perform their existing jobs. MCP retains its HTTP routing/session policy. | [Framework fit](docs/GUIDELINES.md#framework-fit): do not reimplement lower-level facilities. |
+| Independent limits, counters and scratch allocations in each new layer | Keep each existing budget with its actual owner. Use stack scratch with heap fallback for synchronous temporary data; pooled buffers for I/O; heap-owned state only when it must survive dispatch. | [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), [Heap allocation](docs/GUIDELINES.md#heap-allocation), [I/O and system integration](docs/GUIDELINES.md#io-and-system-integration). |
+| Repeated full behavior matrices and copies of moved tests | Move generic tests with their implementation. Test shared wire semantics once and transport-specific framing/lifetime at its boundary. Keep full `zws` profile coverage. | [Repair procedure](docs/GUIDELINES.md#repair-procedure), [Tests](docs/GUIDELINES.md#tests). |
 
 The resolved requirements below remain in force, including the six concrete
 endpoint types, full `zws` support, one completion per batch, and the separate
@@ -66,14 +66,14 @@ application-facing endpoint templates. A transport header exists to share
 implementation, not to create another mandatory adapter/manager object.
 Keep HTTP/WebSocket declarations out of the core include.
 
-Follow [Module layout](GUIDELINES.md#module-layout),
-[Header layout](GUIDELINES.md#header-layout) and
-[Code structure](GUIDELINES.md#code-structure): include guards, ordered direct
+Follow [Module layout](docs/GUIDELINES.md#module-layout),
+[Header layout](docs/GUIDELINES.md#header-layout) and
+[Code structure](docs/GUIDELINES.md#code-structure): include guards, ordered direct
 dependencies, no tail-inclusion cycles, and template-independent declarations
 outside enclosing templates. Do not introduce compatibility aliases or
 forwarders for the moved API
-([General principles](GUIDELINES.md#general-principles),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([General principles](docs/GUIDELINES.md#general-principles),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ## Endpoint and declaration model
 
@@ -99,10 +99,10 @@ Hoist pure base forwarding with `using`. Do not rename lifecycle methods to
 for internal or shard-specific operations. Use established CRTP lookup and
 safe optional callback defaults; add neither virtual dispatch nor a large
 detector/policy framework.
-See [Core language](GUIDELINES.md#core-language),
-[Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints),
-[Bad casting](GUIDELINES.md#bad-casting) and
-[Trailing underscores](GUIDELINES.md#trailing-underscores).
+See [Core language](docs/GUIDELINES.md#core-language),
+[Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints),
+[Bad casting](docs/GUIDELINES.md#bad-casting) and
+[Trailing underscores](docs/GUIDELINES.md#trailing-underscores).
 
 A peer means the scope owning correlation/live requests: a stdio channel,
 WebSocket connection, or identifiable HTTP application/session context.
@@ -120,9 +120,9 @@ No runtime method registry or schema interpreter is needed. Use `ZuUnroll`,
 dispatch; do not hand-build a method lookup table.
 Keep constraints in template parameters using detector traits / `ZuIfT`, with
 `ZuAssert` for declaration invariants; no concepts, `requires` or return-type
-SFINAE. See [Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching),
-[Metadata](GUIDELINES.md#metadata) and
-[Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints).
+SFINAE. See [Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching),
+[Metadata](docs/GUIDELINES.md#metadata) and
+[Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints).
 
 Optional HTTP metadata supplies declared headers and binding choices through
 the existing `Zrest`/`Zhttp` patterns. Configure a shared HTTP endpoint/operation
@@ -158,10 +158,10 @@ Validate untrusted input at the boundary responsible for interpreting it:
 Keep mandatory bounds and lifetime checks. Use `ZiAssert` for internal
 owner-shard invariants, not as a parser for hostile input. Use type metadata
 for compile-time response selection rather than runtime revalidation.
-See [No dogma](GUIDELINES.md#no-dogma),
-[Repair procedure](GUIDELINES.md#repair-procedure),
-[Assertions](GUIDELINES.md#assertions), [Metadata](GUIDELINES.md#metadata)
-and [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization).
+See [No dogma](docs/GUIDELINES.md#no-dogma),
+[Repair procedure](docs/GUIDELINES.md#repair-procedure),
+[Assertions](docs/GUIDELINES.md#assertions), [Metadata](docs/GUIDELINES.md#metadata)
+and [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization).
 
 `Zjrpc::ID` / `IDFmt` own request IDs and their codec for all consumers.
 Current `Zmcp::ID` uses `ZuUnion<void, Null, int64_t, IDString>`:
@@ -180,9 +180,9 @@ Do not silently floor unsupported fractional forms or overflow the supported
 integer range. Any necessary rejection belongs at the ID codec boundary,
 using framework facilities rather than a second number scanner or repeated
 validation downstream.
-See [Framework fit](GUIDELINES.md#framework-fit),
-[Strings](GUIDELINES.md#strings), [Bad casting](GUIDELINES.md#bad-casting)
-and [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+See [Framework fit](docs/GUIDELINES.md#framework-fit),
+[Strings](docs/GUIDELINES.md#strings), [Bad casting](docs/GUIDELINES.md#bad-casting)
+and [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 MCP rejects null request IDs and applies its integer/string rules in `zmcp`.
 Generic JSON-RPC keeps explicit null distinct from a notification. Retain
@@ -262,11 +262,11 @@ for inner nodes where the outer allocation owns the concrete size. A separate
 non-owning index record is justified only by an actual lifetime/layout
 constraint. History needs its own ID node after live work has gone.
 
-See [Containers and intrusion](GUIDELINES.md#containers-and-intrusion),
-[Storage and capacity](GUIDELINES.md#storage-and-capacity),
-[Heap allocation](GUIDELINES.md#heap-allocation),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup) and
-[Liveness](GUIDELINES.md#liveness). These rules remove redundant nodes and
+See [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion),
+[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+[Heap allocation](docs/GUIDELINES.md#heap-allocation),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup) and
+[Liveness](docs/GUIDELINES.md#liveness). These rules remove redundant nodes and
 lookup tables; they do not merge inbound and outbound semantics.
 
 ## Batch requests
@@ -304,10 +304,10 @@ table. Complete only after the response array is decoded, then invoke the
 aggregate callback once. Route closure drains owned member state; cancellation
 does not manufacture an additional JSON-RPC batch ID.
 
-See [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-[Liveness](GUIDELINES.md#liveness) and
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime).
+See [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+[Liveness](docs/GUIDELINES.md#liveness) and
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime).
 
 ## Transport bindings
 
@@ -325,9 +325,9 @@ and existing diagnostic routing. The input/output queue owns retained
 MCP supplies its notifications and result policy over the shared emission
 path. Do not replace working platform normalization with raw POSIX-only I/O.
 
-See [I/O and system integration](GUIDELINES.md#io-and-system-integration),
-[Framework fit](GUIDELINES.md#framework-fit) and
-[Repair procedure](GUIDELINES.md#repair-procedure).
+See [I/O and system integration](docs/GUIDELINES.md#io-and-system-integration),
+[Framework fit](docs/GUIDELINES.md#framework-fit) and
+[Repair procedure](docs/GUIDELINES.md#repair-procedure).
 
 ### Streaming HTTP
 
@@ -360,9 +360,9 @@ and its terminal reply. No standalone GET stream, replay buffer, automatic
 resubmission or generic HTTP server-call channel. Duplex calls use
 stdio/WebSockets. Retain H1 TCP, H1 TLS, H2 TLS and H3 QUIC support.
 
-See [Framework fit](GUIDELINES.md#framework-fit),
-[Formatting](GUIDELINES.md#formatting), [Metadata](GUIDELINES.md#metadata)
-and [Tx streams](GUIDELINES.md#tx-streams): expected allocation/growth,
+See [Framework fit](docs/GUIDELINES.md#framework-fit),
+[Formatting](docs/GUIDELINES.md#formatting), [Metadata](docs/GUIDELINES.md#metadata)
+and [Tx streams](docs/GUIDELINES.md#tx-streams): expected allocation/growth,
 write/admission and flush failures propagate through existing stream state
 and return values; do not add an exception-based transport layer.
 
@@ -393,26 +393,26 @@ oversized input, malformed JSON and rejected MCP envelopes use existing
 `Zws` connection failure/close handling. Valid tool errors remain normal
 replies; unknown/late response IDs remain ignored.
 
-See [Framework fit](GUIDELINES.md#framework-fit),
-[I/O and system integration](GUIDELINES.md#io-and-system-integration)
-and [Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs).
+See [Framework fit](docs/GUIDELINES.md#framework-fit),
+[I/O and system integration](docs/GUIDELINES.md#io-and-system-integration)
+and [Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs).
 
 ## Storage, allocation and shard rules
 
 | Implementation element | Required mechanism; functionality to avoid | Guideline |
 | --- | --- | --- |
-| Synchronous temporary strings/arrays, header encoding and diagnostic scratch | Use `ZtScratch` with an appropriately heap-identified array/string type. Pass scratch through the synchronous callback; never retain its view in deferred work. Use `ZtBuiltin` for measured common-size owned storage, `ZtArray` for cold/retained variable storage, and `ZmAlloc` for large single-object stack scratch when appropriate. No arbitrary fixed stack buffer or heap-only temporary. | [Strings](GUIDELINES.md#strings), [Storage and lifetime](GUIDELINES.md#storage-and-lifetime), [Heap allocation](GUIDELINES.md#heap-allocation). |
-| Network/stdio I/O and asynchronous output | Use pooled `ZiIOBuf`, moved by reference, preserving pool tuning. Write directly into destination storage/Tx streams. I/O buffers are the explicit exception to stack-preferred scratch. | [I/O and system integration](GUIDELINES.md#io-and-system-integration), [Tx streams](GUIDELINES.md#tx-streams). |
-| Parsed payloads and deferred handlers | Decode into owned typed data when sufficient. Retain the existing buffer/tree pair only when deferred code actually needs borrowed JSON. Do not retain every tree by default or copy it into a second DOM. | [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization), [Lifetime](GUIDELINES.md#lifetime). |
-| Numeric/JSON/text formatting | `ZfJSON` and metadata for JSON, `ZuBox`/`ZuFmt`/`ZuPrint` for other formatting. No `printf`, `strto*`, custom decimal/escape loops or hand-coded JSON. Protocol delimiter scanning in the existing stdio/SSE framer remains necessary framing code. | [Framework fit](GUIDELINES.md#framework-fit), [Formatting](GUIDELINES.md#formatting), [Metadata](GUIDELINES.md#metadata). |
-| Span/string/byte conversions | Pass framework types directly using their conversions. Cast only for a demonstrated representation change; no redundant `reinterpret_cast`, char/byte pointer cast, or wrapper copy. | [Bad casting](GUIDELINES.md#bad-casting), [Strings](GUIDELINES.md#strings). |
-| Retained work, tokens and container nodes | Concrete fixed-size `ZmHeap` specialization with `Type_<Heap = ZuVoid>` / `ZuDerive`; variable-size `ZmVHeap`; named heap IDs. Intrusive nodes/refcounts, not separate object/node/refcount allocations or a generic allocation base. Stack allocate objects that do not escape dispatch. | [Heap allocation](GUIDELINES.md#heap-allocation), [Containers and intrusion](GUIDELINES.md#containers-and-intrusion), [Storage and lifetime](GUIDELINES.md#storage-and-lifetime). |
-| Owner pointers and refcounts | Raw dependent-to-owner pointers with orderly drain. `ZuRef` for thread-affined sharing, `ZmRef` for actual cross-thread/shared objects. No short-lived token/buffer capturing a refcount to its longer-lived owner. | [Scope and cleanup](GUIDELINES.md#scope-and-cleanup), [Lifetime](GUIDELINES.md#lifetime). |
-| Counters, state and limits | Retain existing limits: JSON/stdio line/SSE event 16 MiB, SSE line 64 KiB, pending calls/sessions 4096, queue count 1024, queue bytes 64 MiB, work batch 64. MCP session limits remain MCP-owned. Configure/default once; no duplicated composed defaults, independent live-ID cap, unused timers or process-global budget. Use sentinels instead of extra null flags. | [Storage and capacity](GUIDELINES.md#storage-and-capacity), [Metadata](GUIDELINES.md#metadata), [Framework fit](GUIDELINES.md#framework-fit). |
-| State layout and encapsulation | Structs have public unprefixed data first; classes have private `m_` fields at the bottom. Keep narrow ownership and concise aliases for long member types. Group data by owner shard and align only actually contended thread-exclusive groups. | [Class and struct shape](GUIDELINES.md#class-and-struct-shape), [Code structure](GUIDELINES.md#code-structure), [Storage and capacity](GUIDELINES.md#storage-and-capacity). |
-| Cross-shard calls | Preserve HTTP client correlation on configured Rx, server dispatch/completion/session work on configured Tx, stdio peer work on multiplexer Tx, and distinct isolated blocking IO workers. Assign WS state one owner. Public off-shard dispatchers capture handles/fixed metadata and post to owner methods. No locks to allow wrong-shard access; no new atomics for owner-only state. | [I/O sharding](GUIDELINES.md#io-sharding), [I/O Function Organization](GUIDELINES.md#io-function-organization), [Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs), [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies). |
-| Cleanup and liveness | Remove finished entries immediately. Stop ingress, drain Rx, drain Tx, release ownership through continuations; cancel existing MCP timers on their owner before destruction. Bound work per scheduler turn; no GC scans, polling, sleeps or I/O-thread blocking. | [Teardown](GUIDELINES.md#teardown), [Timer Teardown](GUIDELINES.md#timer-teardown), [Liveness](GUIDELINES.md#liveness), [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow). |
-| Diagnostics | Preserve stdout wire-only behavior. Use `ZiLog`, capturing owned diagnostic values rather than pointers/references in deferred logger callbacks; use `ZeString` where needed. No new telemetry system, logger or exact atomic diagnostic counters. | [Data movement and initialization](GUIDELINES.md#data-movement-and-initialization), [Tracing and debug logging](GUIDELINES.md#tracing-and-debug-logging), [Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies). |
+| Synchronous temporary strings/arrays, header encoding and diagnostic scratch | Use `ZtScratch` with an appropriately heap-identified array/string type. Pass scratch through the synchronous callback; never retain its view in deferred work. Use `ZtBuiltin` for measured common-size owned storage, `ZtArray` for cold/retained variable storage, and `ZmAlloc` for large single-object stack scratch when appropriate. No arbitrary fixed stack buffer or heap-only temporary. | [Strings](docs/GUIDELINES.md#strings), [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime), [Heap allocation](docs/GUIDELINES.md#heap-allocation). |
+| Network/stdio I/O and asynchronous output | Use pooled `ZiIOBuf`, moved by reference, preserving pool tuning. Write directly into destination storage/Tx streams. I/O buffers are the explicit exception to stack-preferred scratch. | [I/O and system integration](docs/GUIDELINES.md#io-and-system-integration), [Tx streams](docs/GUIDELINES.md#tx-streams). |
+| Parsed payloads and deferred handlers | Decode into owned typed data when sufficient. Retain the existing buffer/tree pair only when deferred code actually needs borrowed JSON. Do not retain every tree by default or copy it into a second DOM. | [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization), [Lifetime](docs/GUIDELINES.md#lifetime). |
+| Numeric/JSON/text formatting | `ZfJSON` and metadata for JSON, `ZuBox`/`ZuFmt`/`ZuPrint` for other formatting. No `printf`, `strto*`, custom decimal/escape loops or hand-coded JSON. Protocol delimiter scanning in the existing stdio/SSE framer remains necessary framing code. | [Framework fit](docs/GUIDELINES.md#framework-fit), [Formatting](docs/GUIDELINES.md#formatting), [Metadata](docs/GUIDELINES.md#metadata). |
+| Span/string/byte conversions | Pass framework types directly using their conversions. Cast only for a demonstrated representation change; no redundant `reinterpret_cast`, char/byte pointer cast, or wrapper copy. | [Bad casting](docs/GUIDELINES.md#bad-casting), [Strings](docs/GUIDELINES.md#strings). |
+| Retained work, tokens and container nodes | Concrete fixed-size `ZmHeap` specialization with `Type_<Heap = ZuVoid>` / `ZuDerive`; variable-size `ZmVHeap`; named heap IDs. Intrusive nodes/refcounts, not separate object/node/refcount allocations or a generic allocation base. Stack allocate objects that do not escape dispatch. | [Heap allocation](docs/GUIDELINES.md#heap-allocation), [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion), [Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime). |
+| Owner pointers and refcounts | Raw dependent-to-owner pointers with orderly drain. `ZuRef` for thread-affined sharing, `ZmRef` for actual cross-thread/shared objects. No short-lived token/buffer capturing a refcount to its longer-lived owner. | [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup), [Lifetime](docs/GUIDELINES.md#lifetime). |
+| Counters, state and limits | Retain existing limits: JSON/stdio line/SSE event 16 MiB, SSE line 64 KiB, pending calls/sessions 4096, queue count 1024, queue bytes 64 MiB, work batch 64. MCP session limits remain MCP-owned. Configure/default once; no duplicated composed defaults, independent live-ID cap, unused timers or process-global budget. Use sentinels instead of extra null flags. | [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity), [Metadata](docs/GUIDELINES.md#metadata), [Framework fit](docs/GUIDELINES.md#framework-fit). |
+| State layout and encapsulation | Structs have public unprefixed data first; classes have private `m_` fields at the bottom. Keep narrow ownership and concise aliases for long member types. Group data by owner shard and align only actually contended thread-exclusive groups. | [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape), [Code structure](docs/GUIDELINES.md#code-structure), [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity). |
+| Cross-shard calls | Preserve HTTP client correlation on configured Rx, server dispatch/completion/session work on configured Tx, stdio peer work on multiplexer Tx, and distinct isolated blocking IO workers. Assign WS state one owner. Public off-shard dispatchers capture handles/fixed metadata and post to owner methods. No locks to allow wrong-shard access; no new atomics for owner-only state. | [I/O sharding](docs/GUIDELINES.md#io-sharding), [I/O Function Organization](docs/GUIDELINES.md#io-function-organization), [Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs), [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies). |
+| Cleanup and liveness | Remove finished entries immediately. Stop ingress, drain Rx, drain Tx, release ownership through continuations; cancel existing MCP timers on their owner before destruction. Bound work per scheduler turn; no GC scans, polling, sleeps or I/O-thread blocking. | [Teardown](docs/GUIDELINES.md#teardown), [Timer Teardown](docs/GUIDELINES.md#timer-teardown), [Liveness](docs/GUIDELINES.md#liveness), [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow). |
+| Diagnostics | Preserve stdout wire-only behavior. Use `ZiLog`, capturing owned diagnostic values rather than pointers/references in deferred logger callbacks; use `ZeString` where needed. No new telemetry system, logger or exact atomic diagnostic counters. | [Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization), [Tracing and debug logging](docs/GUIDELINES.md#tracing-and-debug-logging), [Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies). |
 
 Audit declarations and uses in `src`, `test`, `util`, `itest`, `example`,
 `bench` and `interop` where present. Every audit flag has been considered:
@@ -424,12 +424,12 @@ Retain ordinary integer enum dispatch; avoid enum/integer mapping switches,
 invariant loop calls, repeated indexed reads, default initialization before
 overwrite, and iterators held beyond traversal. Use compile-time string
 literals with retained extent rather than constexpr spans.
-See [Audit flags](GUIDELINES.md#audit-flags).
+See [Audit flags](docs/GUIDELINES.md#audit-flags).
 
 ### Naming and source shape
 
 The authoritative limit is **28 bytes**, from
-[Length and abbreviations](GUIDELINES.md#length-and-abbreviations), overriding
+[Length and abbreviations](docs/GUIDELINES.md#length-and-abbreviations), overriding
 the older 32-byte summary. The proposed module, header, endpoint, ID, token
 and `histSize` names fit this limit. For new compound names use `req`, `res`,
 `cli`, `srv`, `cxn`, `gen`, `ver`, `param` and `evt`; elide repeated owner words.
@@ -441,11 +441,11 @@ lowercase `jrpctest.cc`-style integration basenames and `zjrpc.cc`/`zjrpcd.cc`
 examples. Use camelCase methods and overloaded accessors such as
 `histSize()` / `histSize(value)`. Preserve fluent composed configuration through
 the existing same-named lambda pattern; do not forward every inner setter.
-Follow [Casing and member prefixes](GUIDELINES.md#casing-and-member-prefixes),
-[Accessors](GUIDELINES.md#accessors), [Vocabulary](GUIDELINES.md#vocabulary)
-and [Standard function name vocabulary](GUIDELINES.md#standard-function-name-vocabulary).
+Follow [Casing and member prefixes](docs/GUIDELINES.md#casing-and-member-prefixes),
+[Accessors](docs/GUIDELINES.md#accessors), [Vocabulary](docs/GUIDELINES.md#vocabulary)
+and [Standard function name vocabulary](docs/GUIDELINES.md#standard-function-name-vocabulary).
 Keep hard tabs, two-column logical indent, header skeleton and 98-column C++
-source width per [Code style](GUIDELINES.md#code-style).
+source width per [Code style](docs/GUIDELINES.md#code-style).
 
 ## Implementation sequence and build changes
 
@@ -473,8 +473,8 @@ inputs only as required to add the module, preserving current configure options
 and reusable artifacts. Document integration entry points and noncolliding port
 ranges. Do not add an empty directory, external interoperability framework,
 benchmark harness or build option without actual content/need.
-See [Module layout](GUIDELINES.md#module-layout) and
-[Build configuration](GUIDELINES.md#build-configuration).
+See [Module layout](docs/GUIDELINES.md#module-layout) and
+[Build configuration](docs/GUIDELINES.md#build-configuration).
 
 ### Build execution policy
 
@@ -547,8 +547,8 @@ Use `ZuTestUtil` / `ZuTest` and TAP; networking/end-to-end cases belong in
 `itest`, not unit tests. Synchronize completion with `ZmBlock` (or
 `ZmSemaphore` where appropriate), never polling or sleeps. Do not duplicate
 framework cache/hash/parser tests or test private implementation shape.
-See [Tests](GUIDELINES.md#tests) and
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+See [Tests](docs/GUIDELINES.md#tests) and
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 Apply the build execution policy above at the final milestone: incrementally
 build libraries before dependents, run MCP/JSON-RPC suites and affected
@@ -559,9 +559,9 @@ do not change configuration to enable unavailable profiles for this task.
 Alternate compilers, release/debug flags, sanitizer configurations and platforms
 are out of scope for both implementation and acceptance. Apply the same
 infrequent, incremental build policy to subsequent audit and repair batches.
-See [Build configuration](GUIDELINES.md#build-configuration),
-[Acceptance](GUIDELINES.md#acceptance) and
-[Debugging](GUIDELINES.md#debugging), subject to this task's build execution
+See [Build configuration](docs/GUIDELINES.md#build-configuration),
+[Acceptance](docs/GUIDELINES.md#acceptance) and
+[Debugging](docs/GUIDELINES.md#debugging), subject to this task's build execution
 policy above.
 
 Compare hot-path allocations/copies and owner references against the baseline:

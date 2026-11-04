@@ -576,7 +576,7 @@ introduced until Slice 1.
 - The handoff record identifies any missing idempotence/reset-dominance
   behavior assigned to Slice 2 or Slice 3.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit only the added tests and any test utilities for callback-scoped
 ownership, no hidden copies/allocations, owner-shard access, deterministic
@@ -680,7 +680,7 @@ Document explicitly that:
   temporary wrapper, parser callbacks/state, tests, and documentation.
 - No H2/H3 parser state or receive callback is renamed yet.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit header structure, direct includes, SFINAE style, class/member layout,
 name lengths, raw-pointer lifetime, dispatch-disable/drain ordering,
@@ -782,7 +782,7 @@ parser `tunnel*` forwarders.
   their parser states and receive callbacks are still `tunnel*`.
 - The H2 factor introduces no additional scheduler post, allocation, or copy.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit Rx/Tx shard ownership, continuation ordering, duplicate client/server
 blocks, iterator lifetime, buffer ownership, dispatch raw-pointer lifetime,
@@ -877,7 +877,7 @@ may explicitly instantiate `Tunnel`.
 - The established H3 data path has no new allocation, copy, queue, or
   scheduling turn.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit the H3 utility and dispatch binding for CRTP factoring, raw
 back-pointers, Rx/Tx separation, bounded work per scheduler turn,
@@ -905,7 +905,7 @@ mode switch in `ztcp` or `ztls`.  The generic H1
 through their existing `App`/`Impl` types and shared by `H1TCP` and `H1TLS`.
 It owns only H1 logical-stream state and a `StreamDispatch`.  Its explicit
 states are `HTTP`, `Stream`, and `Terminal`, using a `ZtEnum` in accordance
-with `GUIDELINES.md`.
+with `docs/GUIDELINES.md`.
 
 The binding is responsible for:
 
@@ -1017,7 +1017,7 @@ profile traits.  Migrate or add H1 Upgrade cases in `ZhttpParserTest` and
 - No changes exist in `ztcp`, `ztls`, or `zi` unless an acceptance test
   demonstrated and documents the required lower-layer delta.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit the H1 mode transition, owner-shard state, Tx completion assumptions,
 dispatch disable/clear lifetime, disconnect sequencing, timer cancellation,
@@ -1093,7 +1093,7 @@ leave aliases, deprecated names, or compatibility forwarders.
 - The single planned incremental `make -j3 zhttp` gate succeeds in the
   unchanged clang debug build; no unaffected library is rebuilt.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Perform a repository-wide dead-code, compatibility-shim, naming, include,
 duplication, API-boundary, and documentation/code agreement audit.  Delete
@@ -1172,7 +1172,7 @@ Compare allocation/copy instrumentation and latency before and after:
   has not introduced compatibility shims, diagnostic-only source
   workarounds, or protocol-specific branches in consumers.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Perform the final full alignment audit: style, naming, compile-time dispatch,
 allocation, copying, buffer pooling, Rx/Tx ownership, continuations,

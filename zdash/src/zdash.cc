@@ -29,11 +29,14 @@
 #include <zlib/ZfCf.hh>
 #include <zlib/ZfCLI.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
 #include <zlib/ZvRingParams.hh>
 
+#include <zlib/ZhttpNative.hh>
 #include <zlib/Zws.hh>
 
 #include <zlib/ZtcFB.hh>
@@ -77,7 +80,7 @@ ZuDerive(Secret, (ZtString<ZtStringSecret<true,
 // Bound network reassembly and queued telemetry independently of ring size.
 enum { FrameMax = 1U << 20, QueuedInputMax = 1U << 22 };
 using Frame = ZmRef<ZiIOBuf>;
-using FrameBuf = ZiIOBufAlloc<1024, FrameMax, "ZDash.Frame">;
+using FrameBuf = Zi::IOBufAlloc<ZiIOBuf, 1024, FrameMax, ZuStringT<"ZDash.Frame">>;
 
 struct Subscription {
   using Filter = Ztc::RequestFilter;
@@ -107,9 +110,10 @@ ZmRBTreeDerive(RoutedSources, RoutedSource,
   ZmRBTreeNode<RoutedSource, ZmRBTreeKey<routeKey, ZmRBTreeUnique<true,
     ZmRBTreeLock<ZmNoLock, ZmRBTreeHeapID<"ZDash.RoutedSource">>>>>);
 
-static Frame requestFrame(const Subscription &sub, bool subscribe)
+static Frame requestFrame(
+    const Subscription &sub, bool subscribe, Frame frame, unsigned tailRoom = 0)
 {
-  Ztc::Builder builder{Frame{new FrameBuf}};
+  Ztc::Builder builder{ZuMv(frame), Ztc::Builder::Align, FrameMax, tailRoom};
   auto nested = builder.startNested();
   auto filter = builder.string(sub.filter);
   auto publisher = sub.publisherID ? builder.string(sub.publisherID) : 0;
@@ -1274,7 +1278,7 @@ public:
     m_client.rxRun([this]() {
       m_closing = true;
       if (m_connected) {
-	if (m_subscribed) send(*m_link, requestFrame(m_sub, false));
+	if (m_subscribed) send(*m_link, m_sub, false);
 	stopSubs_();
 	m_link->close();
       } else
@@ -1352,11 +1356,21 @@ public:
   bool failed() const { return m_failed; }
 
   template <typename L>
-  void send(L &link, Frame frame) {
-    if (m_module && m_module->requested)
-      m_module->requested(ZuBSpan{frame->data(), frame->length});
-    link.txStream([frame = ZuMv(frame)](auto &tx) {
-      tx << ZuBSpan{frame->data(), frame->length};
+  void send(L &link, const Subscription &sub, bool subscribe) {
+    // txStream invokes its printer synchronously on Rx; the channel transfers
+    // resulting owned output to Tx. Observe bytes before client-side masking.
+    link.txStream([this, &sub, subscribe](auto &tx) {
+      unsigned head = (tx.headRoom() + Ztc::Builder::Align - 1) &
+	~(Ztc::Builder::Align - 1);
+      auto frame = requestFrame(sub, subscribe, tx.allocBuf(head), tx.tailRoom());
+      if (!frame) return;
+      if (m_module && m_module->requested) m_module->requested(frame->cspan());
+      if (tx.canAdopt_(*frame)) {
+	tx << ZuMv(frame);
+      } else {
+	unsigned length = frame->length;
+	tx.appendRange(ZuMv(frame), 0, length);
+      }
       tx.flush();
     }, Zws::Opcode::Binary);
   }
@@ -1365,7 +1379,7 @@ public:
   void connected(L &link, const Zhttp::ConnectedInfo &) {
     if (m_closing) { link.close(); return; }
     m_connected = true;
-    send(link, requestFrame(m_sub, true));
+    send(link, m_sub, true);
     m_subscribed = true;
   }
 
@@ -1381,29 +1395,33 @@ public:
   int messageStart(L &link, Zws::Opcode::T opcode) {
     if (opcode != Zws::Opcode::Binary)
       return reject(link, Zws::CloseCode::Unsupported);
-    if (!m_frame) m_frame = new FrameBuf;
-    m_frame->length = 0;
+    m_frame.clean();
     return 1;
   }
 
   template <typename L, typename Rx>
   int process(L &link, Rx &rx) {
-    return Zhttp::bodyEach(rx, [this, &link](ZuSpan<uint8_t> span) {
-      if (span.length() > FrameMax - m_frame->length) {
-	reject(link, Zws::CloseCode::TooLarge);
-	return false;
-      }
-      auto length = m_frame->length + span.length();
-      m_frame->append(span);
-      if (m_frame->length == length) return true;
-      reject(link, Zws::CloseCode::TooLarge);
-      return false;
-    }) ? 1 : -1;
+    auto &message = m_frame;
+    unsigned incoming = rx.length();
+    if (incoming > FrameMax - message.length()) { return reject(link, Zws::CloseCode::TooLarge); }
+    while (rx) {
+      if (rx.splice(message, [](ZuBSpan span) -> int64_t { return span.length(); }) <= 0)
+	{ return reject(link, Zws::CloseCode::TooLarge); }
+    }
+    if (message.length() > message.span().length() &&
+	!message.gather(unsigned(message.length()), [&link]() {
+	  auto allocator = link.app()->mx()->rxAllocator(false);
+	  return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
+	    allocator->alloc().release()));
+	})) { return reject(link, Zws::CloseCode::TooLarge); }
+    return 1;
   }
 
   template <typename L>
   int messageEnd(L &link) {
-    auto code = receive_({m_frame->data(), m_frame->length}, true);
+    auto frame = m_frame.range();
+    auto code = receive_(frame.cspan(), true);
+    m_frame.clean();
     return code == Zws::CloseCode::Normal ? 1 : reject(link, code);
   }
 
@@ -1476,7 +1494,7 @@ public:
   void cancel_(RoutedSources::Node *source, bool unsubscribe = true) {
     for (auto id: source->subs) {
       if (auto sub = m_subs.findPtr(id)) {
-	if (unsubscribe && m_connected) send(*m_link, requestFrame(*sub, false));
+	if (unsubscribe && m_connected) send(*m_link, *sub, false);
 	m_subs.del(id);
       }
     }
@@ -1517,7 +1535,7 @@ public:
 	.interval = m_sub.interval, .group = group, .generation = generation}};
       m_subs.addNode(sub);
       source->subs.push(sub->val().id);
-      if (m_connected) send(*m_link, requestFrame(sub->val(), true));
+      if (m_connected) send(*m_link, sub->val(), true);
     }
   }
   void stopSubs_() {
@@ -1633,7 +1651,9 @@ public:
 	[this]() { return !m_closing; }};
       host.gtkRun = {ZGtk::App::sched(), ZGtk::App::sid(),
 	[this]() { return !m_gtkClosing; }};
-      host.request_ = [this]() { return requestFrame(m_sub, true); };
+      host.request_ = [this]() {
+	return requestFrame(m_sub, true, Frame{new FrameBuf{nullptr, 0}});
+      };
       host.subscription_ = [this](ZuCSpan device, ZuCSpan publisher,
 	  unsigned group) -> uint64_t {
 	if (auto source = m_routes.findPtr(ZuFwdTuple(device, publisher)))
@@ -2028,7 +2048,7 @@ private:
   ZmAtomic<unsigned>	m_telBytes = 0;
 
   alignas(Zm::CacheLineSize) // Rx-owned
-  Frame			m_frame;
+  ZiRxStream<ZiRxQueue>		m_frame;
   Subscriptions		m_subs;
   RoutedSources		m_routes;
   uint64_t		m_nextSub = 2;
@@ -2059,6 +2079,7 @@ static bool session(
     ZDashOAuth::Lease *lease = nullptr)
 {
   unsigned timeout = module ? module->timeout : 0;
+  ZDash::App app;
   ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(ZDash::GtkSID)
       .thread(1, [](auto &t) { t.name("io-rx"); t.isolated(1); })
@@ -2066,9 +2087,10 @@ static bool session(
       .thread(ZDash::RxSID, [](auto &t) { t.name("rx"); t.isolated(1); })
       .thread(ZDash::TxSID, [](auto &t) { t.name("tx"); t.isolated(1); })
       .thread(ZDash::GtkSID, [](auto &t) { t.name("gtk"); t.isolated(1); });
-  }).rxThread(1).txThread(2)};
+  }).rxThread(1).txThread(2)
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
   if (!mx.start()) return false;
-  ZDash::App app;
   signalApp = &app;
   ZmTrap::sigintFn(sigint);
   ZmTrap::trap();

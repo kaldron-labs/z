@@ -179,6 +179,7 @@ struct CaseScript {
   ZtString<> ring;
   ZtString<> exe;
   ZtString<> log;
+  ZtString<> ready;
 
   CaseScript(const TempDir &temp)
   {
@@ -186,6 +187,7 @@ struct CaseScript {
     ZiTestResidue::addShm(Zi::Name{ring});
     exe << matrixDir << "/../test/ZiRingTest";
     log = temp.log;
+    ready << temp.log << ".ready";
     text <<
       "#!/bin/sh\n"
       "set -u\n"
@@ -283,6 +285,9 @@ static bool runCase(const char *name, Build build)
     log("preserved logs: ", static_cast<const char *>(temp.path));
   }
   cleanupRing(script.ring);
+#ifndef _WIN32
+  ::unlink(script.ready.data());
+#endif
   ZuTestMgr::check(nullptr, ok, name);
   return ok;
 }
@@ -349,12 +354,20 @@ static void runMatrix()
   });
 
   runCase("broadcast readers", [](CaseScript &s) {
-    auto r = opts("-r", WrapCount, BroadcastSize, "-R");
+    auto r = opts("-r", WrapCount, BroadcastSize, "-R -F 3");
     auto w = opts("-w", WrapCount, BroadcastSize, "-R --no-eof");
     auto eof = opts("-w", 0, BroadcastSize, "-R");
+    // Both readers must attach before the first broadcast is published.
+    s.text << "mkfifo ";
+    shellQuote(s.text, s.ready);
+    s.text << " || exit 1\nexec 3<>";
+    shellQuote(s.text, s.ready);
+    s.text << " || exit 1\n";
     s.background("ra", s.args(r));
     s.background("rb", s.args(r));
-    s.text << "sleep .01\n";
+    s.text << "IFS= read -r ready <&3 || exit 1\n"
+      "IFS= read -r ready <&3 || exit 1\n"
+      "exec 3>&-\n";
     s.foreground(s.args(w));
     s.foreground(s.args(eof));
     s.wait("ra");

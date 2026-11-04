@@ -10,6 +10,7 @@
 
 #include <zlib/ZvCf.hh>
 #include <zlib/ZvThreadParams.hh>
+#include <zlib/ZvMxParams.hh>
 
 #include "ZiTestResidue.hh"
 
@@ -337,6 +338,31 @@ void includeErrors()
   ZiFile::remove(a);
 }
 
+void mxRingSizes()
+{
+  ZuTestScopeRT(mxRingSizes);
+  auto file = path("mx-rings.cf");
+  write(file, "rxRingSize: 256, txRingSize: 512\n");
+  auto source = ZvCf::load(file);
+  auto params = ZvMxParams("mx", source.p<1>().ptr());
+  ZuCheckRT(params.rxRingSize() == 256 && params.txRingSize() == 512);
+  write(file, "rxBufSize: 4096, txBufSize: 8192\n");
+  source = ZvCf::load(file);
+  params = ZvMxParams("mx", source.p<1>().ptr());
+  ZuCheckRT(params.rxRingSize() == ZiIOBuf_DefltRxRingSize);
+  ZuCheckRT(params.txRingSize() == ZiIOBuf_DefltTxRingSize);
+  ZuCheckRT(params.rxBufSize() == 4096 && params.txBufSize() == 8192);
+  for (auto text : {"rxRingSize: 1", "txRingSize: 32769"}) {
+    write(file, text);
+    source = ZvCf::load(file);
+    auto message = exception([&source]() {
+      ZvMxParams("mx", source.p<1>().ptr());
+    });
+    ZuCheckRT(!!message);
+  }
+  ZiFile::remove(file);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -353,6 +379,7 @@ int main(int argc, char **argv)
 	ZfFieldIndex(ZmThreadParams, cpuset)));
   ZuCheck(ZfVFieldMatcher<ZmThreadParams>()("missing") < 0);
 
+  ZuTestCall(mxRingSizes);
   ZuTestCall(files);
   ZuTestCall(emptyAndErrors);
   ZuTestCall(nestedObjectAndDuplicates);

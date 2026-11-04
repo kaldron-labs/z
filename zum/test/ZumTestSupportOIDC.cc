@@ -825,7 +825,7 @@ static bool setKeyRetirement(
 void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     ZmRef<Zum::DB> context, Ztls::Random &rng, OIDCSetup &state)
 {
-  ZuTestScope(prepareOIDC);
+  ZuTestScopeRT(prepareOIDC);
   Zum::ActionID readAction = 0;
   Zum::Client browser;
   browser.id = "browser";
@@ -839,65 +839,65 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     Zum::ClientGrant::Refresh();
   browser.refreshAllowed = true;
   browser.state = Zum::State::Active;
-  ZuCheck(insertRecord(context->clients, Zum::Client{browser}));
+  ZuCheckRT(insertRecord(context->clients, Zum::Client{browser}));
 
-  ZuCheck(insertRecord(context->apps, Zum::App{
+  ZuCheckRT(insertRecord(context->apps, Zum::App{
     .id = 9, .name = "oidc-app", .state = Zum::State::Active,
     .nextActionID = 1, .authVersion = 12, .audience = "orders"}));
-  ZuCheck(insertRecord(context->actions, Zum::Action{
+  ZuCheckRT(insertRecord(context->actions, Zum::Action{
     .appID = 9, .id = readAction, .name = "orders.read",
     .state = Zum::State::Active}));
   ZtBitmap oidcRoleActions{1U};
   oidcRoleActions.set(readAction);
-  ZuCheck(insertRecord(context->roles, Zum::Role{
+  ZuCheckRT(insertRecord(context->roles, Zum::Role{
     .appID = 9, .id = 7, .name = "read",
     .actions = ZuMv(oidcRoleActions), .state = Zum::State::Active}));
   Zum::IDVec appRoles;
   appRoles.push(7);
-  ZuCheck(insertRecord(context->assignments, Zum::Assignment{
+  ZuCheckRT(insertRecord(context->assignments, Zum::Assignment{
     .appID = 9, .userID = 42, .roleIDs = Zum::IDVec{appRoles},
     .state = Zum::State::Active}));
   Zum::Client oidcBrowser{browser};
   oidcBrowser.id = "oidc-browser";
   oidcBrowser.appID = 9;
-  ZuCheck(insertRecord(context->clients, Zum::Client{oidcBrowser}));
+  ZuCheckRT(insertRecord(context->clients, Zum::Client{oidcBrowser}));
   for (unsigned i = 0; i < 2; ++i)
-    ZuCheck(insertRecord(context->clientAccess, Zum::ClientAccess{
+    ZuCheckRT(insertRecord(context->clientAccess, Zum::ClientAccess{
       .clientID = i ? "oidc-browser" : "browser", .appID = 9, .roleIDs = Zum::IDVec{7},
       .state = Zum::State::Active}));
-  ZuCheck(insertRecord(context->providers, Zum::Provider{
+  ZuCheckRT(insertRecord(context->providers, Zum::Provider{
     .id = 8, .name = "upstream", .issuer =
       "https://upstream.example/oauth2/default",
     .claimSource = Zum::ClaimSource::IDToken,
     .state = Zum::State::Active}));
-  ZuCheck(insertRecord(context->providers, Zum::Provider{
+  ZuCheckRT(insertRecord(context->providers, Zum::Provider{
     .id = 10, .name = "userinfo-upstream", .issuer =
       "https://upstream.example/oauth2/default",
     .claimSource = Zum::ClaimSource::UserInfo,
     .state = Zum::State::Active}));
-  ZuCheck(insertRecord(context->authPolicies, Zum::AuthPolicy{
+  ZuCheckRT(insertRecord(context->authPolicies, Zum::AuthPolicy{
     .appID = 9, .providerID = 8, .assignmentMaxAge = 300,
     .sessionIdle = 1800, .sessionAbsolute = 43200, .tokenLifetime = 300,
     .state = Zum::State::Active, .version = 3}));
-  ZuCheck(insertRecord(context->roleMaps, Zum::RoleMap{
+  ZuCheckRT(insertRecord(context->roleMaps, Zum::RoleMap{
     .appID = 9, .providerID = 8, .value = "Zum-Users", .roleID = 7,
     .state = Zum::State::Active}));
 
-  ZuCheck(insertRecord(context->users, Zum::User{
+  ZuCheckRT(insertRecord(context->users, Zum::User{
     .id = 44,
     .source = Zum::UserSource::External,
     .name = "oidc user",
     .handle = Zum::Bytes{ZuBSpan{"oidc handle"}},
     .state = Zum::State::Active
   }));
-  ZuCheck(insertRecord(context->extIdentities, Zum::ExtIdentity{
+  ZuCheckRT(insertRecord(context->extIdentities, Zum::ExtIdentity{
     .providerID = 8, .issuer = "https://upstream.example/oauth2/default",
     .subject = "00u44", .userID = 44, .created = 100, .updated = 100
   }));
   Ztls::PK::SK_EC upstreamKey{
     rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t upstreamPublic[Ztls::COSE::ES256::PublicKeySize];
-  ZuCheck(Ztls::Backend::pkey_ec_export_public(
+  ZuCheckRT(Ztls::Backend::pkey_ec_export_public(
     upstreamKey.key, upstreamPublic));
   auto x = base64URL(ZuBSpan{
     upstreamPublic + 1, Ztls::COSE::ES256::CoordinateSize});
@@ -963,16 +963,16 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   oidcCeremony.kind = Zum::GrantKind::Ceremony;
   oidcCeremony.purpose = Zum::GrantPurpose::Authorization;
   oidcCeremony.state = Zum::State::Active;
-  ZuCheck(storeAuthorization(context, ZuMv(oidcCeremony)));
+  ZuCheckRT(storeAuthorization(context, ZuMv(oidcCeremony)));
   Zum::OIDC oidc;
-  ZuCheck(oidc.init(db->requests->scheduler(), db->requests->sid(), context,
+  ZuCheckRT(oidc.init(db->requests->scheduler(), db->requests->sid(), context,
     Zum::OIDCLimits{}, 4, 30, []() { return int64_t{200}; },
     [](Zum::OIDCHTTPRequest, Zum::OIDCHTTPDoneFn done) { done(0, Zum::String{}); }));
-  ZuCheck(oidc.state() == ZmEngineState::Stopped);
+  ZuCheckRT(oidc.state() == ZmEngineState::Stopped);
   oidc.final(); // no scheduler dispatch is needed for never-started final
   bool holdDiscovery = false;
   Zum::OIDCHTTPDoneFn heldDiscovery;
-  ZuCheck(oidc.init(db->requests->scheduler(), db->requests->sid(), context,
+  ZuCheckRT(oidc.init(db->requests->scheduler(), db->requests->sid(), context,
     Zum::OIDCLimits{}, 4, 30, []() { return int64_t{200}; }, [
       &upstreamToken, &upstreamJWKS, &upstreamDiscovery,
       &discoveryReqs, &tokenReqs, &jwksReqs, &userinfoReqs,
@@ -1005,10 +1005,10 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
         done(500, Zum::String{});
       }
     }));
-  ZuCheck(oidc.start());
-  ZuCheck(oidc.start());
+  ZuCheckRT(oidc.start());
+  ZuCheckRT(oidc.start());
   Zum::String oidcLocation;
-  ZuCheck(ZmBlock<bool>{}([
+  ZuCheckRT(ZmBlock<bool>{}([
       &oidc, &oidcLocation, &discoveredConfig](auto wake) mutable {
     if (!oidc.begin(Zum::Bytes{ZuBSpan{"oidc-grant-id-00"}},
       discoveredConfig, [
@@ -1019,14 +1019,14 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
       })) wake(false);
   }));
   Zum::String oidcState, oidcNonce;
-  ZuCheck(oidcParams(oidcLocation, oidcState, oidcNonce));
+  ZuCheckRT(oidcParams(oidcLocation, oidcState, oidcNonce));
   Zum::String upstreamClaims{
     "{\"iss\":\"https://upstream.example/oauth2/default\","
     "\"sub\":\"00u44\","
     "\"aud\":\"zum\",\"nonce\":\""};
   upstreamClaims << oidcNonce <<
     "\",\"iat\":195,\"auth_time\":190,\"exp\":260,\"groups\":[\"Zum-Users\"]}";
-  ZuCheck(signJWT(rng, upstreamKey,
+  ZuCheckRT(signJWT(rng, upstreamKey,
     "{\"alg\":\"ES256\",\"kid\":\"upstream\",\"typ\":\"JWT\"}",
     upstreamClaims, upstreamToken));
   Zum::Bytes oidcGrant;
@@ -1036,15 +1036,15 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   int64_t oidcAuthTime = 0;
   Zum::String callback{"code=upstream-code&state="};
   callback << oidcState;
-  ZuCheck(!ZmBlock<bool>{}([&oidc, callback = Zum::String{callback}](
+  ZuCheckRT(!ZmBlock<bool>{}([&oidc, callback = Zum::String{callback}](
       auto wake) mutable {
     if (!oidc.finish(10, ZuMv(callback), [wake = ZuMv(wake)](bool ok,
 	Zum::Bytes, Zum::User, Zum::IDVec, Zum::Evidence, int64_t) mutable {
       wake(ok);
     })) wake(true);
   }));
-  ZuCheck(tokenReqs == 0);
-  ZuCheck(ZmBlock<bool>{}([
+  ZuCheckRT(tokenReqs == 0);
+  ZuCheckRT(ZmBlock<bool>{}([
     &oidc, &callback, &oidcGrant, &oidcUser, &oidcRoles,
     &oidcLoginEvidence, &oidcAuthTime
   ](auto wake) mutable {
@@ -1061,7 +1061,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
         wake(ok);
       })) wake(false);
   }));
-  ZuCheck(oidcGrant == ZuBSpan{"oidc-grant-id-00"} &&
+  ZuCheckRT(oidcGrant == ZuBSpan{"oidc-grant-id-00"} &&
     oidcUser.id == 44 && oidcRoles.length() == 1 && oidcRoles[0] == 7 &&
     oidcAuthTime == 190 && discoveryReqs == 1 && tokenReqs == 1 &&
     jwksReqs == 1);
@@ -1076,7 +1076,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
       });
     });
   });
-  ZuCheck(oidcEvidence.eligible && oidcEvidence.observed == 200 &&
+  ZuCheckRT(oidcEvidence.eligible && oidcEvidence.observed == 200 &&
     oidcEvidence.deadline == 500 && oidcEvidence.policyVersion == 3 &&
     oidcEvidence.roleValues.length() == 1 &&
     oidcEvidence.roleValues[0] == "Zum-Users");
@@ -1091,7 +1091,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     "\"x\":\"" << x << "\",\"y\":\"" << y << "\"}]}";
   upstreamJWKS = ZuMv(multiJWKS);
   Zum::String userinfoLocation;
-  ZuCheck(ZmBlock<bool>{}([
+  ZuCheckRT(ZmBlock<bool>{}([
       &oidc, &userinfoLocation, &userinfoConfig](auto wake) mutable {
     if (!oidc.begin(Zum::Bytes{ZuBSpan{"oidc-userinfo-id"}},
       userinfoConfig, [
@@ -1102,13 +1102,13 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
       })) wake(false);
   }));
   Zum::String userinfoState, userinfoNonce;
-  ZuCheck(oidcParams(userinfoLocation, userinfoState, userinfoNonce));
-  ZuCheck(userinfoLocation.find<"login_hint=person%2Btest%40example.com">() >= 0);
+  ZuCheckRT(oidcParams(userinfoLocation, userinfoState, userinfoNonce));
+  ZuCheckRT(userinfoLocation.find<"login_hint=person%2Btest%40example.com">() >= 0);
   Zum::String userinfoClaims{
     "{\"iss\":\"https://upstream.example/oauth2/default\","
     "\"sub\":\"00u44\",\"aud\":\"zum\",\"nonce\":\""};
   userinfoClaims << userinfoNonce << "\",\"iat\":195,\"auth_time\":191,\"exp\":260}";
-  ZuCheck(signJWT(rng, upstreamKey,
+  ZuCheckRT(signJWT(rng, upstreamKey,
     "{\"alg\":\"ES256\",\"kid\":\"upstream\",\"typ\":\"JWT\"}",
     userinfoClaims, upstreamToken));
   Zum::Bytes userinfoGrant;
@@ -1118,7 +1118,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   int64_t userinfoAuthTime = 0;
   Zum::String userinfoCallback{"code=userinfo-code&state="};
   userinfoCallback << userinfoState;
-  ZuCheck(ZmBlock<bool>{}([
+  ZuCheckRT(ZmBlock<bool>{}([
     &oidc, &userinfoCallback, &userinfoGrant, &userinfoUser,
     &userinfoRoles, &userinfoEvidence, &userinfoAuthTime
   ](auto wake) mutable {
@@ -1136,7 +1136,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
         wake(ok);
       })) wake(false);
   }));
-  ZuCheck(userinfoGrant == ZuBSpan{"oidc-userinfo-id"} &&
+  ZuCheckRT(userinfoGrant == ZuBSpan{"oidc-userinfo-id"} &&
     userinfoUser.id && userinfoUser.source == Zum::UserSource::External &&
     userinfoRoles.length() == 1 &&
     userinfoRoles[0] == 7 && userinfoAuthTime == 191 &&
@@ -1148,7 +1148,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     "\"crv\":\"P-256\",\"x\":\""} << x << "\",\"y\":\"" << y << "\"}," <<
     jwk << "]}";
   Zum::String twoLocation;
-  ZuCheck(ZmBlock<bool>{}([&oidc, &oidcConfig, &twoLocation](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([&oidc, &oidcConfig, &twoLocation](auto wake) mutable {
     if (!oidc.begin(Zum::Bytes{ZuBSpan{"oidc-two-key-id"}}, oidcConfig,
       [&twoLocation, wake = ZuMv(wake)](bool ok, Zum::String location) mutable {
         twoLocation = ZuMv(location);
@@ -1156,25 +1156,25 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
       })) wake(false);
   }));
   Zum::String twoState, twoNonce;
-  ZuCheck(oidcParams(twoLocation, twoState, twoNonce));
+  ZuCheckRT(oidcParams(twoLocation, twoState, twoNonce));
   Zum::String twoClaims{
     "{\"iss\":\"https://upstream.example/oauth2/default\","
     "\"sub\":\"00u44\",\"aud\":\"zum\",\"nonce\":\""};
   twoClaims << twoNonce <<
     "\",\"iat\":195,\"auth_time\":191,\"exp\":260,\"groups\":[\"Zum-Users\"]}";
-  ZuCheck(signJWT(rng, upstreamKey,
+  ZuCheckRT(signJWT(rng, upstreamKey,
     "{\"alg\":\"ES256\",\"kid\":\"upstream\",\"typ\":\"JWT\"}",
     twoClaims, upstreamToken));
   Zum::String twoCallback{"code=two-key-code&state="};
   twoCallback << twoState;
-  ZuCheck(ZmBlock<bool>{}([&oidc, callback = ZuMv(twoCallback)](
+  ZuCheckRT(ZmBlock<bool>{}([&oidc, callback = ZuMv(twoCallback)](
       auto wake) mutable {
     if (!oidc.finish(9, ZuMv(callback), [wake = ZuMv(wake)](bool ok,
         Zum::Bytes, Zum::User, Zum::IDVec, Zum::Evidence, int64_t) mutable {
       wake(ok);
     })) wake(false);
   }));
-  ZuCheck(tokenReqs == 3 && jwksReqs == 3 && userinfoReqs == 1);
+  ZuCheckRT(tokenReqs == 3 && jwksReqs == 3 && userinfoReqs == 1);
   upstreamJWKS = ZuMv(savedJWKS);
   // A formerly trusted key removed by the upstream must not remain usable.
   savedJWKS = ZuMv(upstreamJWKS);
@@ -1185,7 +1185,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   for (auto &invalidKeys: invalidKeySets) {
     upstreamJWKS = invalidKeys;
     Zum::String removedLocation;
-    ZuCheck(ZmBlock<bool>{}([&oidc, &oidcConfig, &removedLocation](
+    ZuCheckRT(ZmBlock<bool>{}([&oidc, &oidcConfig, &removedLocation](
 	auto wake) mutable {
       if (!oidc.begin(Zum::Bytes{ZuBSpan{"removed-key-login"}}, oidcConfig,
 	[&removedLocation, wake = ZuMv(wake)](bool ok, Zum::String location) mutable {
@@ -1194,18 +1194,18 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	})) wake(false);
     }));
     Zum::String removedState, removedNonce;
-    ZuCheck(oidcParams(removedLocation, removedState, removedNonce));
+    ZuCheckRT(oidcParams(removedLocation, removedState, removedNonce));
     Zum::String removedClaims{
       "{\"iss\":\"https://upstream.example/oauth2/default\","
       "\"sub\":\"00u44\",\"aud\":\"zum\",\"nonce\":\""};
     removedClaims << removedNonce <<
       "\",\"iat\":195,\"auth_time\":191,\"exp\":260,\"groups\":[\"Zum-Users\"]}";
-    ZuCheck(signJWT(rng, upstreamKey,
+    ZuCheckRT(signJWT(rng, upstreamKey,
       "{\"alg\":\"ES256\",\"kid\":\"upstream\",\"typ\":\"JWT\"}",
       removedClaims, upstreamToken));
     Zum::String removedCallback{"code=removed-key-code&state="};
     removedCallback << removedState;
-    ZuCheck(!ZmBlock<bool>{}([&oidc, callback = ZuMv(removedCallback)](
+    ZuCheckRT(!ZmBlock<bool>{}([&oidc, callback = ZuMv(removedCallback)](
 	auto wake) mutable {
       if (!oidc.finish(9, ZuMv(callback), [wake = ZuMv(wake)](bool ok,
 	  Zum::Bytes, Zum::User, Zum::IDVec, Zum::Evidence, int64_t) mutable {
@@ -1213,13 +1213,13 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
       })) wake(false);
     }));
   }
-  ZuCheck(tokenReqs == 6 && jwksReqs == 6 && userinfoReqs == 1);
+  ZuCheckRT(tokenReqs == 6 && jwksReqs == 6 && userinfoReqs == 1);
   upstreamJWKS = ZuMv(savedJWKS);
   Zum::User projectedUser;
   Zum::IDVec projectedRoles;
   Zum::StringVec projectedValues;
   projectedValues.push("Zum-Users");
-  ZuCheck(ZmBlock<bool>{}([
+  ZuCheckRT(ZmBlock<bool>{}([
     context, &oidcConfig, &projectedUser, &projectedRoles,
     values = ZuMv(projectedValues)
   ](auto wake) mutable {
@@ -1232,12 +1232,12 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
         wake(ok);
       });
   }));
-  ZuCheck(projectedUser.id && projectedUser.id != 44 &&
+  ZuCheckRT(projectedUser.id && projectedUser.id != 44 &&
     projectedUser.source == Zum::UserSource::External &&
     projectedUser.state == Zum::State::Active && projectedUser.handle &&
     projectedUser.name.prefix("oidc:8:") == "oidc:8:" &&
     projectedRoles.length() == 1 && projectedRoles[0] == 7);
-  ZuCheck(ZmBlock<bool>{}([context, &oidcConfig, &projectedUser](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context, &oidcConfig, &projectedUser](auto wake) mutable {
     Zum::StringVec values;
     values.push("Zum-Users");
     Zum::oidcLoadUser(context, "00u-new", oidcConfig, ZuMv(values), {}, 202,
@@ -1247,7 +1247,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
           evidence.deadline == 502 && evidence.version == 2);
       });
   }));
-  ZuCheck(ZmBlock<bool>{}([context, &projectedUser](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context, &projectedUser](auto wake) mutable {
     auto evidence = context->evidence;
     evidence->run(0, [evidence, &projectedUser, wake = ZuMv(wake)]() mutable {
       evidence->find<1>(0, ZuFwdTuple(int64_t{502}), [
@@ -1257,7 +1257,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
       });
     });
   }));
-  ZuCheck(ZmBlock<bool>{}([context, &projectedUser](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context, &projectedUser](auto wake) mutable {
     context->extIdentities->run(0, [context, &projectedUser,
         wake = ZuMv(wake)]() mutable {
       context->extIdentities->find<0>(0, ZuFwdTuple(
@@ -1274,13 +1274,13 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
     Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
     oidcAuthTime, 200, "issuer/oauth2/10", 9);
-  ZuCheck(wrongOIDCIssuer.error == Zum::OAuthError::AccessDenied &&
+  ZuCheckRT(wrongOIDCIssuer.error == Zum::OAuthError::AccessDenied &&
     !wrongOIDCIssuer.location);
   auto wrongOIDCApp = finishOIDCAuthorization(
     db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
     Zum::IDVec{oidcRoles}, Zum::Evidence{oidcLoginEvidence}, readAction,
     oidcAuthTime, 200, "issuer/oauth2/9", 10);
-  ZuCheck(wrongOIDCApp.error == Zum::OAuthError::AccessDenied &&
+  ZuCheckRT(wrongOIDCApp.error == Zum::OAuthError::AccessDenied &&
     !wrongOIDCApp.location);
   auto oidcAuthorized = finishOIDCAuthorization(
     db->requests, context, rng, Zum::Bytes{oidcGrant}, Zum::User{oidcUser},
@@ -1288,7 +1288,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     oidcAuthTime);
   constexpr auto oidcCodePrefix = "https://app/cb?code="_z;
   constexpr auto oidcCodeSuffix = "&state=oidc-return"_z;
-  ZuCheck(oidcAuthorized.error == Zum::AuthorizeIssue::OK &&
+  ZuCheckRT(oidcAuthorized.error == Zum::AuthorizeIssue::OK &&
     oidcAuthorized.location.length() >
       oidcCodePrefix.length() + oidcCodeSuffix.length() &&
     (ZuCSpan{oidcAuthorized.location.data(), oidcCodePrefix.length()} ==
@@ -1301,14 +1301,14 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     oidcAuthorized.location.length() - oidcCodePrefix.length() -
       oidcCodeSuffix.length()}};
   auto delegatedCode = loadGrant(context, ZuBSpan{oidcGrant});
-  ZuCheck(delegatedCode.authoritySource == Zum::UserSource::External &&
+  ZuCheckRT(delegatedCode.authoritySource == Zum::UserSource::External &&
     delegatedCode.authorityProviderID == 8 &&
     delegatedCode.policyVersion == 3 && delegatedCode.evidenceVersion == 1);
   auto delegatedAuthority = loadInteractiveAuthority(
     context, Zum::Grant{delegatedCode}, Zum::Client{oidcBrowser});
-  ZuCheck(delegatedAuthority.error == Zum::ScopeError::OK &&
+  ZuCheckRT(delegatedAuthority.error == Zum::ScopeError::OK &&
     delegatedAuthority.data.actions[readAction]);
-  ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context](auto wake) mutable {
     context->roleMaps->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->roleMaps->findUpd<0>(0, ZuFwdTuple(Zum::AppID{9},
           Zum::ProviderID{8}, ZuCSpan{"Zum-Users"}), [wake = ZuMv(wake)](
@@ -1321,9 +1321,9 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   }));
   delegatedAuthority = loadInteractiveAuthority(
     context, Zum::Grant{delegatedCode}, Zum::Client{oidcBrowser});
-  ZuCheck(delegatedAuthority.error == Zum::ScopeError::OK &&
+  ZuCheckRT(delegatedAuthority.error == Zum::ScopeError::OK &&
     !delegatedAuthority.data.actions);
-  ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context](auto wake) mutable {
     context->roleMaps->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->roleMaps->findUpd<0>(0, ZuFwdTuple(Zum::AppID{9},
           Zum::ProviderID{8}, ZuCSpan{"Zum-Users"}), [wake = ZuMv(wake)](
@@ -1336,34 +1336,34 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   }));
   auto oidcScheduler = db->requests->scheduler();
   unsigned oidcSID = db->requests->sid();
-  ZuCheck(oidc.stop());
-  ZuCheck(oidc.stop());
-  ZuCheck(oidc.start()); // retained transport/configuration, fresh admission
+  ZuCheckRT(oidc.stop());
+  ZuCheckRT(oidc.stop());
+  ZuCheckRT(oidc.start()); // retained transport/configuration, fresh admission
   holdDiscovery = true;
   bool discoveryFailed = false, stopped = false;
-  ZuCheck(oidc.begin(Zum::Bytes{ZuBSpan{"held-discovery"}}, discoveredConfig,
+  ZuCheckRT(oidc.begin(Zum::Bytes{ZuBSpan{"held-discovery"}}, discoveredConfig,
     [&discoveryFailed](bool ok, Zum::String) { discoveryFailed = !ok; }));
   ZmSemaphore oidcBarrier, oidcDown;
   oidcScheduler->run([&oidcBarrier]() { oidcBarrier.post(); }, oidcSID);
   oidcBarrier.wait();
-  ZuCheck(bool(heldDiscovery));
+  ZuCheckRT(bool(heldDiscovery));
   oidc.stop([&oidc, &stopped, &oidcDown](bool ok) {
-    ZuCheck(ok);
+    ZuCheckRT(ok);
     stopped = true;
     oidc.final(); // supported completion-driven final on the owner shard
     oidcDown.post();
   });
   oidcScheduler->run([&oidcBarrier]() { oidcBarrier.post(); }, oidcSID);
   oidcBarrier.wait();
-  ZuCheck(!stopped && !discoveryFailed);
+  ZuCheckRT(!stopped && !discoveryFailed);
   // Consuming the work capture lets stop complete even while the transport
   // deliberately retains this already-fired completion object.
   if (heldDiscovery) heldDiscovery(503, Zum::String{});
   oidcDown.wait();
-  ZuCheck(stopped && discoveryFailed && oidc.state() == ZmEngineState::Stopped);
+  ZuCheckRT(stopped && discoveryFailed && oidc.state() == ZmEngineState::Stopped);
   heldDiscovery = {};
 
-  ZuCheck(insertRecord(context->signKeys, Zum::SignKey{
+  ZuCheckRT(insertRecord(context->signKeys, Zum::SignKey{
     .id = "app-token-key",
     .issuer = "issuer/oauth2/9",
     .algorithm = "ES256",
@@ -1375,7 +1375,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   }));
   auto ssoUser = loadUser(context, 42);
   Zum::String ssoToken;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &ssoUser,
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &rng, &ssoUser,
       &ssoToken](auto wake) mutable {
     Zum::sessionIssue({}, db->requests, Zm::now() + ZuTime{10}, context, rng,
       Zum::SessionConfig{.issuer = "issuer/oauth2/9",
@@ -1406,34 +1406,34 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	complete(Zum::Bytes{});
       });
   };
-  ZuCheck(initProvider(providerServer));
-  ZuCheck(providerServer.state() == ZmEngineState::Stopped);
+  ZuCheckRT(initProvider(providerServer));
+  ZuCheckRT(providerServer.state() == ZmEngineState::Stopped);
   providerServer.final();
-  ZuCheck(initProvider(providerServer));
-  ZuCheck(providerServer.start());
-  ZuCheck(providerServer.start());
-  ZuCheck(ZmBlock<bool>{}([&db](auto wake) mutable {
+  ZuCheckRT(initProvider(providerServer));
+  ZuCheckRT(providerServer.start());
+  ZuCheckRT(providerServer.start());
+  ZuCheckRT(ZmBlock<bool>{}([&db](auto wake) mutable {
     db->requests->deactivate(ZuMv(wake));
   }));
   auto inactiveInfo = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
     providerServer.userInfo(9, "Bearer invalid",
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
-  ZuCheck(inactiveInfo.type == Zum::ReplyType::ServerError);
+  ZuCheckRT(inactiveInfo.type == Zum::ReplyType::ServerError);
   auto inactiveReady = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
     providerServer.ready([wake = ZuMv(wake)](Zum::ServerReply reply) mutable {
       wake(ZuMv(reply));
     });
   });
-  ZuCheck(inactiveReady.type == Zum::ReplyType::ServerError);
-  ZuCheck(ZmBlock<bool>{}([db](auto wake) {
+  ZuCheckRT(inactiveReady.type == Zum::ReplyType::ServerError);
+  ZuCheckRT(ZmBlock<bool>{}([db](auto wake) {
     db->requests->activate(ZuMv(wake));
   }));
   auto invalidInfo = ZmBlock<Zum::ServerReply>{}([&providerServer](auto wake) mutable {
     providerServer.userInfo(9, "Bearer invalid",
       [wake = ZuMv(wake)](Zum::ServerReply reply) mutable { wake(ZuMv(reply)); });
   });
-  ZuCheck(invalidInfo.type == Zum::ReplyType::BearerError);
+  ZuCheckRT(invalidInfo.type == Zum::ReplyType::BearerError);
   Zum::String loginQuery{
     "response_type=code&client_id=browser&redirect_uri="
     "https%3A%2F%2Fapp%2Fcb&scope=read&state=login-post&code_challenge="
@@ -1446,7 +1446,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	wake(ZuMv(reply));
       });
   });
-  ZuCheck(loginStart.type == Zum::ReplyType::Page && loginStart.body &&
+  ZuCheckRT(loginStart.type == Zum::ReplyType::Page && loginStart.body &&
     loginStart.setCookie.find<"zum_tx=">() == 0);
   Zum::String loginForm{"id="};
   loginForm << loginStart.body << "&login=alice";
@@ -1457,7 +1457,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	wake(ZuMv(reply));
       });
   });
-  ZuCheck(loginSelected.type == Zum::ReplyType::Page &&
+  ZuCheckRT(loginSelected.type == Zum::ReplyType::Page &&
     loginSelected.body == loginStart.body && !loginSelected.setCookie);
   Zum::String ssoQuery{
     "response_type=code&client_id=browser&redirect_uri="
@@ -1483,7 +1483,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     if (end < ssoReply.body.length())
       consentID = ZuCSpan{ssoReply.body.data() + begin, end - begin};
   }
-  ZuCheck(ssoReply.type == Zum::ReplyType::Page && consentID &&
+  ZuCheckRT(ssoReply.type == Zum::ReplyType::Page && consentID &&
     ssoReply.setCookie.find<"zum_tx=">() == 0);
   auto consentReply = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &consentID, &ssoReply](auto wake) mutable {
@@ -1494,18 +1494,18 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	wake(ZuMv(reply));
       });
   });
-  ZuCheck(consentReply.type == Zum::ReplyType::Redirect &&
+  ZuCheckRT(consentReply.type == Zum::ReplyType::Redirect &&
     consentReply.location.find<"https://app/cb?code=">() == 0 &&
     consentReply.location.find<"&state=sso">() > 0 &&
     consentReply.setCookie.find<"zum_tx=">() == 0);
 
-  ZuCheck(insertRecord(context->consents, Zum::Consent{
+  ZuCheckRT(insertRecord(context->consents, Zum::Consent{
     .userID = oidcUser.id, .clientID = "oidc-browser", .appID = 9,
     .roleIDs = Zum::IDVec{Zum::RoleID{7}},
     .state = Zum::State::Active, .created = 210, .updated = 210}));
 
   Zum::String upstreamSession;
-  ZuCheck(ZmBlock<int>{}([&db, &context, &rng, &oidcUser,
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &rng, &oidcUser,
       &upstreamSession](auto wake) mutable {
     Zum::sessionIssue({}, db->requests, Zm::now() + ZuTime{10}, context, rng,
       Zum::SessionConfig{.issuer = "issuer/oauth2/9",
@@ -1538,10 +1538,10 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     });
   };
   auto upstreamSSO = upstreamAuthorize("upstream-sso");
-  ZuCheck(upstreamSSO.type == Zum::ReplyType::Redirect &&
+  ZuCheckRT(upstreamSSO.type == Zum::ReplyType::Redirect &&
     upstreamSSO.location.find<"https://app/cb?code=">() == 0 &&
     upstreamSSO.location.find<"&state=upstream-sso">() > 0);
-  ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context](auto wake) mutable {
     context->roleMaps->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->roleMaps->findUpd<0>(0, ZuFwdTuple(Zum::AppID{9},
 	  Zum::ProviderID{8}, ZuCSpan{"Zum-Users"}), [wake = ZuMv(wake)](
@@ -1553,10 +1553,10 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     });
   }));
   auto unmappedSSO = upstreamAuthorize("unmapped-sso");
-  ZuCheck(unmappedSSO.type == Zum::ReplyType::Redirect &&
+  ZuCheckRT(unmappedSSO.type == Zum::ReplyType::Redirect &&
     unmappedSSO.location.find<"error=login_required">() > 0 &&
     unmappedSSO.location.find<"state=unmapped-sso">() > 0);
-  ZuCheck(ZmBlock<bool>{}([context](auto wake) mutable {
+  ZuCheckRT(ZmBlock<bool>{}([context](auto wake) mutable {
     context->roleMaps->run(0, [context, wake = ZuMv(wake)]() mutable {
       context->roleMaps->findUpd<0>(0, ZuFwdTuple(Zum::AppID{9},
 	  Zum::ProviderID{8}, ZuCSpan{"Zum-Users"}), [wake = ZuMv(wake)](
@@ -1569,7 +1569,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
   }));
   serverNow = 501;
   auto staleSSO = upstreamAuthorize("stale-sso");
-  ZuCheck(staleSSO.type == Zum::ReplyType::Redirect &&
+  ZuCheckRT(staleSSO.type == Zum::ReplyType::Redirect &&
     staleSSO.location.find<"error=login_required">() > 0 &&
     staleSSO.location.find<"state=stale-sso">() > 0);
   serverNow = 210;
@@ -1590,7 +1590,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
     if (end < loginPage.body.length())
       logoutCSRF = ZuCSpan{loginPage.body.data() + begin, end - begin};
   }
-  ZuCheck(loginPage.type == Zum::ReplyType::Page && logoutCSRF);
+  ZuCheckRT(loginPage.type == Zum::ReplyType::Page && logoutCSRF);
   auto badLogout = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &logoutCookie](auto wake) mutable {
     providerServer.logout(9, "csrf=wrong", Zum::String{logoutCookie},
@@ -1598,7 +1598,7 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	wake(ZuMv(reply));
       });
   });
-  ZuCheck(badLogout.type == Zum::ReplyType::OAuthError &&
+  ZuCheckRT(badLogout.type == Zum::ReplyType::OAuthError &&
     !badLogout.setCookie);
   auto goodLogout = ZmBlock<Zum::ServerReply>{}([
       &providerServer, &logoutCookie, &logoutCSRF](auto wake) mutable {
@@ -1609,21 +1609,21 @@ void zumtest::prepareOIDC(ZmRef<RuntimeDB> db,
 	wake(ZuMv(reply));
       });
   });
-  ZuCheck(goodLogout.type == Zum::ReplyType::Page &&
+  ZuCheckRT(goodLogout.type == Zum::ReplyType::Page &&
     goodLogout.body.find<"Signed out of Zum">() > 0 &&
     goodLogout.setCookie.find<"Max-Age=0">() > 0);
-  ZuCheck(ZmBlock<int>{}([&db, &context, &ssoToken](auto wake) mutable {
+  ZuCheckRT(ZmBlock<int>{}([&db, &context, &ssoToken](auto wake) mutable {
     Zum::sessionUse({}, db->requests, Zm::now() + ZuTime{10}, context,
       Zum::String{ssoToken}, "issuer", 211, 1800,
       [wake = ZuMv(wake)](int error, Zum::Session,
 	  Zum::String) mutable { wake(error); });
   }) == Zum::SessionError::Expired);
-  ZuCheck(providerServer.stop());
-  ZuCheck(providerServer.stop());
-  ZuCheck(providerServer.start());
+  ZuCheckRT(providerServer.stop());
+  ZuCheckRT(providerServer.stop());
+  ZuCheckRT(providerServer.start());
   ZmSemaphore providerDown;
   providerServer.stop([&providerServer, &providerDown](bool ok) {
-    ZuCheck(ok);
+    ZuCheckRT(ok);
     providerServer.final();
     providerDown.post();
   });

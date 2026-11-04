@@ -25,6 +25,7 @@
 #include <zlib/ZtString.hh>
 
 #include <zlib/ZiAssert.hh>
+#include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
@@ -51,8 +52,8 @@ template <
   unsigned Size = ZiIOBuf_DefltSize,
   unsigned MaxSize = ZiIOBuf_DefltMaxSize,
   ZuString HeapID = ZiIOBuf_HeapID{}()>
-using TxBufAlloc =
-  Zi::IOBufAlloc<TxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
+using TxBufAlloc = Zi::TxTCPBufAllocator<
+  TxQueue::Node, Size, MaxSize, ZuStringT<HeapID>>;
 
 } // namespace Ztcp_
 
@@ -105,15 +106,18 @@ struct ServerParams : public HubParams {
 };
 
 template <typename Link_, typename LinkRef_>
-class Cxn : public ZiConnection {
+class Cxn : public ZmNHeap<Cxn<Link_, LinkRef_>>, public ZiConnection {
+friend inline ZuStringT<"Ztcp.Cxn"> ZmNHeapID(Cxn *);
 public:
+  using ZmNHeap<Cxn>::operator new;
+  using ZmNHeap<Cxn>::operator delete;
   using Link = Link_;
   using LinkRef = LinkRef_;
 
   Cxn(LinkRef link, const ZiCxnInfo &ci) :
     ZiConnection(link->app()->mx(), ci), m_link(ZuMvPtr(link)) { }
 
-  void connected(ZiIOContext &io) override { m_link->connected_0(this, io); }
+  void connected(ZiRxContext &io) override { m_link->connected_0(this, io); }
   void disconnected(bool peer) override {
     LinkRef link_ = ZuMvPtr(m_link);
     if (Link *link = link_)
@@ -142,15 +146,13 @@ template <
 using TxBufAlloc = Ztcp_::TxBufAlloc<Size, MaxSize, HeapID>;
 
 template <
-  typename App, typename Impl, typename RxBufAlloc_, typename TxBufAlloc_,
-  typename Cxn_, typename CxnRef_>
+  typename App, typename Impl, typename TxBufAlloc_,
+  typename Cxn_, typename CxnRef_, typename TxOps_ = ZiTxBufOps>
 class Link :
   public ZmPolymorph,
-  public ZiTx<Impl>,
+  public ZiTx<Impl, TxOps_>,
   public Ztc::Link
 {
-  ZuAssert((ZuIs_<RxBufAlloc_, Ztcp_::RxQueue::Node>{}));
-  ZuAssert((ZuIs_<TxBufAlloc_, Ztcp_::TxQueue::Node>{}));
 
   class TelQueue final : public Ztc::Queue {
   public:
@@ -174,11 +176,10 @@ class Link :
   };
 
 public:
-  using RxBufAlloc = RxBufAlloc_;
   using TxBufAlloc = TxBufAlloc_;
   using Cxn = Cxn_;
   using CxnRef = CxnRef_;
-  using Tx = ZiTx<Impl>;
+  using Tx = ZiTx<Impl, TxOps_>;
   using Stream = Impl;
   using StreamRef = Impl *;
 
@@ -190,6 +191,8 @@ friend Cxn;
   Link(App *app) : Link{app, ZuID{} << "tcp:" <<
     ZuBoxPtr(this).hex<false, ZuFmt::Alt<>>()} { }
   Link(App *app, ZuID id) : m_app{app}, m_id{ZuMv(id)} {
+    m_appTxBufAllocator = app->template txAllocator_<TxBufAlloc, 0>();
+    m_txBufAllocator = app->template txAllocator_<TxBufAlloc, 1>();
     app->linkAdded_(this);
   }
   ~Link() { app()->linkDeleted_(this, state_()); }
@@ -229,48 +232,25 @@ friend Cxn;
   void down() override { disconnect(); }
 
 private:
-  void connected_0(Cxn *cxn, ZiIOContext &io) {
+  void connected_0(Cxn *cxn, ZiRxContext &io) {
     app()->rxRun([impl = ZmRef(this->impl()), cxn = ZmRef(cxn)]() {
       impl->connected_1(ZuMv(cxn));
     });
     recvRaw_(io);
   }
 
-  void recvRaw_(ZiIOContext &io) {
-    auto buf = ZmRef<ZiIOBuf>{new RxBufAlloc{impl()}};
-    auto buf_ = buf.ptr();
-    buf_->owner = impl();
-    io.init(ZiIOFn::mvFn(ZuMv(buf),
-      [](ZmRef<ZiIOBuf> buf, ZiIOContext &io) {
-	auto link = static_cast<Impl *>(buf->owner);
-	if (ZuUnlikely(io.length < 0)) {
-	  io.complete();
-	  return true;
-	}
-	if (io.length > 0) {
-	  buf->length += io.length;
-	  io.length = 0;
-	  auto cxn = static_cast<Cxn *>(io.cxn);
-	  link->app()->rxRun([
-	    impl = ZmRef(link),
-	    cxn = ZmRef(cxn),
-	    buf = ZuMv(buf)
-	  ]() mutable {
-	    impl->rcvd_(cxn.ptr(), ZuMv(buf));
-	  });
-	  buf = new RxBufAlloc{link};
-	}
-	auto next = buf.ptr();
-	next->owner = link;
-	next->skip = 0;
-	next->length = 0;
-	io.fn.object(ZuMv(buf));
-	io.ptr = next->data_();
-	io.size = next->size;
-	io.offset = 0;
-	io.length = 0;
-	return true;
-      }), buf_->data_(), buf_->size, 0);
+  void recvRaw_(ZiRxContext &io) {
+    io.init(ZiRxFn{impl(), [](Impl *link, ZiRxContext &io) {
+      if (io.buf) {
+	auto buf = ZuMv(io.buf);
+	buf->owner = link;
+	auto cxn = static_cast<Cxn *>(io.cxn);
+	link->app()->rxRun([
+	  impl = ZmRef(link), cxn = ZmRef(cxn), buf = ZuMv(buf)
+	]() mutable { impl->rcvd_(cxn.ptr(), ZuMv(buf)); });
+      }
+      return true;
+    }});
   }
 
   void connected_1(ZmRef<Cxn> cxn) {
@@ -288,11 +268,11 @@ private:
       // neither flushes A nor waits for its disconnect callbacks. Delayed A
       // send setups must reject the closed socket before touching the queue.
       auto old_ = old.ptr();
-      old_->send(ZiIOFn{[
+      old_->send(ZiTxFn{[
 	impl = ZmRef(this->impl()), cxn = ZuMv(old)
-      ](ZiIOContext &io) {
+      ](ZiTxContext &io) {
 	io.complete();
-	impl->Tx::txQueue.clean();
+	impl->Tx::clean();
 	(void)cxn;
 	return false;
       }});
@@ -327,7 +307,8 @@ private:
 	mx->txRun([
 	  impl = ZuMv(impl), cxn = ZuMv(cxn), peer
 	]() mutable {
-	  if (impl->closing_() == cxn.ptr()) impl->Tx::txQueue.clean();
+	  impl->Tx::cleanup(cxn.ptr()); // release claims after this physical Tx is down
+	  if (impl->closing_() == cxn.ptr()) impl->Tx::clean();
 	  auto app = impl->app();
 	  app->rxRun([
 	    impl = ZuMv(impl), cxn = ZuMv(cxn), peer
@@ -367,7 +348,8 @@ private:
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP receive dispatch outside Rx thread", return);
     if (ZuUnlikely(m_cxn != cxn)) return;
-    m_rxStream.push(ZuMv(buf));
+    m_rxStream.push(ZmRef<ZiRxQueue::Node>::acquire(
+      static_cast<ZiRxQueue::Node *>(ZuMv(buf).release())));
     while (m_rxStream) {
       int n = impl()->process(m_rxStream);
       if (!n) return;
@@ -379,8 +361,10 @@ private:
   }
 
 public:
+  template <bool AppThread = true>
   ZmRef<ZiIOBuf> allocTxBuf_() {
-    ZmRef<ZiIOBuf> buf = new TxBufAlloc{impl()};
+    auto allocator = AppThread ? m_appTxBufAllocator.ptr() : m_txBufAllocator.ptr();
+    ZmRef<ZiIOBuf> buf = allocator->alloc(impl());
     buf->skip = 0;
     buf->length = 0;
     return buf;
@@ -392,7 +376,7 @@ public:
 
   public:
     TxStream_(Link &link) :
-      Base(TxBufAlloc::Size, 0, 0),
+      Base(TxBufAlloc::Capacity, 0, 0),
       m_link{&link}
     {
     }
@@ -402,7 +386,7 @@ public:
     TxStream_ &operator =(TxStream_ &&) = default;
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned skip) {
-      auto buf = m_link->allocTxBuf_();
+      auto buf = m_link->template allocTxBuf_<AppThread>();
       if (ZuUnlikely(!buf || skip > buf->size))
 	return nullptr;
       buf->skip = skip;
@@ -411,11 +395,10 @@ public:
 
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       buf->owner = m_link->impl();
-      auto link = static_cast<Impl *>(buf->owner);
       if constexpr (AppThread)
-	return link->send(ZuMv(buf));
+	return m_link->send(ZuMv(buf));
       else
-	return link->send_(ZuMv(buf));
+	return m_link->send_(ZuMv(buf));
     }
 
   private:
@@ -437,7 +420,7 @@ public:
   }
 
   bool send(ZmRef<ZiIOBuf> buf) {
-    if (ZuUnlikely(!buf || buf->failed() || !buf->length || m_disconnecting.load_()))
+    if (ZuUnlikely(!buf || buf->failed() || !txLength_(buf.ptr()) || m_disconnecting.load_()))
       return tcpTxError_(
 	"TCP connection is closed for transmission");
     buf->owner = impl();
@@ -449,19 +432,36 @@ public:
   }
 
 protected:
+  static unsigned txLength_(const ZiIOBuf *buf) { return buf->length; }
+
+  // Protocols queue their already allocated attempt node. Its policy selects
+  // the actual backing on I/O Tx; this entry never allocates a buffer or node.
+  bool sendPending_(typename Tx::NodeRef node, unsigned bytes) {
+    ZiAssert(app()->txInvoked(), "Ztcp", (),
+      "TCP pending output outside Tx thread", return false);
+    if (ZuUnlikely(!node || !bytes || m_disconnecting.load_() || !m_txCxn)) {
+      queueTxError_(m_txCxn, "TCP pending output rejected"); return false;
+    }
+    m_txInCount.store_(m_txInCount.load_() + 1);
+    m_txInBytes.store_(m_txInBytes.load_() + bytes);
+    Tx::send(m_txCxn.ptr(), ZuMv(node));
+    return true;
+  }
+
   bool send_(ZmRef<ZiIOBuf> buf) { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Ztcp", (),
       "TCP send_ outside Tx thread", return false);
-    if (ZuUnlikely(!buf || buf->failed() || !buf->length ||
+    if (ZuUnlikely(!buf || buf->failed() || !txLength_(buf.ptr()) ||
 	m_disconnecting.load_() || !m_txCxn)) {
       queueTxError_(m_txCxn, "TCP connection is closed for transmission");
       return false;
     }
     buf->owner = impl();
-    auto length = buf->length;
+    auto length = txLength_(buf.ptr());
     m_txInCount.store_(m_txInCount.load_() + 1);
     m_txInBytes.store_(m_txInBytes.load_() + length);
-    Tx::send(m_txCxn.ptr(), ZuMv(buf));
+    Tx::send(m_txCxn.ptr(), ZmRef<ZiTxBuf>::acquire(
+      static_cast<ZiTxBuf *>(ZuMv(buf).release())));
     return true;
   }
 
@@ -475,9 +475,6 @@ public:
 
 public:
   void disconnect() {
-    auto oldState = state_();
-    m_disconnecting = 1;
-    stateChanged_(oldState);
     app()->rxInvoke([impl = ZmRef(this->impl())]() {
 	impl->disconnect_();
     });
@@ -486,19 +483,19 @@ public:
     ZiAssert(app()->rxInvoked(), "Ztcp", (),
       "TCP disconnect outside Rx thread", return);
     auto oldState = state_();
-    m_disconnecting = 1;
-    stateChanged_(oldState);
     impl()->cancelReconn_();
     impl()->stopConnect_();
     auto cxn = ZmRef<Cxn>{ZuMvPtr(m_cxn)};
-    if (cxn) {
-      m_closing = cxn.ptr();
-      auto mx = cxn->mx();
-      if (notify)
-	mx->txRun([cxn = ZuMv(cxn)]() { cxn->disconnect(); });
-      else
-	cxn->close();
-    }
+    // An outstanding close keeps its state; an already Down link stays Down.
+    if (!cxn) return;
+    m_disconnecting = 1;
+    stateChanged_(oldState);
+    m_closing = cxn.ptr();
+    auto mx = cxn->mx();
+    if (notify)
+      mx->txRun([cxn = ZuMv(cxn)]() { cxn->disconnect(); });
+    else
+      cxn->close();
   }
 
 protected:
@@ -565,6 +562,8 @@ private:
   }
 
   // immutable
+  ZmRef<Zi::IOBufAllocator> m_appTxBufAllocator;
+  ZmRef<Zi::IOBufAllocator> m_txBufAllocator;
   App			*m_app = nullptr;
   const ZuID		m_id;
 
@@ -593,27 +592,25 @@ private:
 
 template <
   typename App, typename Impl,
-  typename RxBufAlloc, typename TxBufAlloc,
-  typename Cxn>
-using CliLink_ = Link<App, Impl, RxBufAlloc, TxBufAlloc, Cxn, ZmRef<Cxn>>;
+  typename TxBufAlloc,
+  typename Cxn, typename TxOps = ZiTxBufOps>
+using CliLink_ = Link<App, Impl, TxBufAlloc, Cxn, ZmRef<Cxn>, TxOps>;
 
 template <
   typename App, typename Impl,
-  typename RxBufAlloc, typename TxBufAlloc,
-  typename Cxn>
-using SrvLink_ = Link<App, Impl, RxBufAlloc, TxBufAlloc, Cxn, Cxn *>;
+  typename TxBufAlloc,
+  typename Cxn, typename TxOps = ZiTxBufOps>
+using SrvLink_ = Link<App, Impl, TxBufAlloc, Cxn, Cxn *, TxOps>;
 
 template <
   typename App, typename Impl,
-  typename RxBufAlloc_ = Ztcp::RxBufAlloc<>,
-  typename TxBufAlloc_ = Ztcp::TxBufAlloc<>>
+  typename TxBufAlloc_ = Ztcp::TxBufAlloc<>, typename TxOps_ = ZiTxBufOps>
 class CliLink :
-  public CliLink_<App, Impl, RxBufAlloc_, TxBufAlloc_, CliCxn<Impl>> {
+  public CliLink_<App, Impl, TxBufAlloc_, CliCxn<Impl>, TxOps_> {
 public:
   using Cxn = CliCxn<Impl>;
-  using RxBufAlloc = RxBufAlloc_;
   using TxBufAlloc = TxBufAlloc_;
-  using Base = CliLink_<App, Impl, RxBufAlloc, TxBufAlloc, Cxn>;
+  using Base = CliLink_<App, Impl, TxBufAlloc, Cxn, TxOps_>;
 
   using Base::impl;
   using Base::app;
@@ -739,15 +736,13 @@ private:
 
 template <
   typename App, typename Impl,
-  typename RxBufAlloc_ = Ztcp::RxBufAlloc<>,
-  typename TxBufAlloc_ = Ztcp::TxBufAlloc<>>
+  typename TxBufAlloc_ = Ztcp::TxBufAlloc<>, typename TxOps_ = ZiTxBufOps>
 class SrvLink :
-  public SrvLink_<App, Impl, RxBufAlloc_, TxBufAlloc_, SrvCxn<Impl>> {
+  public SrvLink_<App, Impl, TxBufAlloc_, SrvCxn<Impl>, TxOps_> {
 public:
   using Cxn = SrvCxn<Impl>;
-  using RxBufAlloc = RxBufAlloc_;
   using TxBufAlloc = TxBufAlloc_;
-  using Base = SrvLink_<App, Impl, RxBufAlloc, TxBufAlloc, Cxn>;
+  using Base = SrvLink_<App, Impl, TxBufAlloc, Cxn, TxOps_>;
 
   using Base::impl;
   using Base::app;
@@ -910,6 +905,28 @@ public:
   void linkDisconnected_() { }
 
 private:
+  struct TxPolicy {
+    const void *id;
+    ZmRef<Zi::IOBufAllocator> allocator;
+
+    static const void *key(const TxPolicy &policy) { return policy.id; }
+  };
+  using TxPolicies = ZmHash<TxPolicy,
+    ZmHashNode<TxPolicy,
+      ZmHashKey<TxPolicy::key,
+	ZmHashLock<ZmPLock,
+	  ZmHashHeapID<"Ztcp.TxPolicy">>>>>;
+
+  template <typename Allocator, unsigned Producer>
+  ZmRef<Zi::IOBufAllocator> txAllocator_() {
+    // A distinct token for each concrete allocation policy and producing shard.
+    static const char id = 0;
+    const void *key = &id;
+    if (auto policy = m_txPolicies.find(key)) return policy->allocator;
+    return m_txPolicies.findAdd(TxPolicy{key, new Allocator{
+      m_mx ? m_mx->txRingSize() : ZiIOBuf_DefltTxRingSize}})->allocator;
+  }
+
   void linkAdded_(Ztc::Link *link) {
     m_links.add(link);
     Ztc::Hub::linkAdded_(link);
@@ -986,7 +1003,19 @@ protected:
   }
 
   void stop_1() {		// Tx thread - complete stop
-    this->stopped(true);
+    // Link I/O has drained. Keep the policy allocators and hub alive until
+    // their I/O-shard associations and terminal kernel controls detach too.
+    m_unbinding = 1;
+    {
+      auto i = m_txPolicies.iter();
+      while (auto policy = i()) {
+	++m_unbinding;
+	m_mx->unbind(policy->allocator.ptr(), {[this] {
+	  txRun([this] { if (!--m_unbinding) this->stopped(true); });
+	}});
+      }
+    }
+    if (!--m_unbinding) this->stopped(true);
   }
 
   template <typename L>
@@ -1013,11 +1042,17 @@ private:
 
   // stable after init(); m_errorFn is cleared during final()
   const ZuID		m_id;
+  // Lifecycle-only policy registry. Each intrusive node retains its concrete
+  // producer allocator through service unbinding after all links disappear.
+  // Allocator payload allocation remains on its designated producing shard.
+  TxPolicies m_txPolicies;
   ZiMultiplex		*m_mx = nullptr;
   ErrorFn		m_errorFn;
   bool			m_registered = false;
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
+
+  unsigned		m_unbinding = 0; // Tx thread
 
   // shared
   // Exceptional lock-guarded registry used by lifecycle and telemetry callers.

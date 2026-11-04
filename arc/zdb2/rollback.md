@@ -99,7 +99,7 @@ forward intents cause normal roll-forward to be attempted again. That attempt ma
 succeed. If it fails, a new in-memory rollback begins.
 
 This is the smallest design consistent with the required semantics and with
-`GUIDELINES.md` **General principles** (minimize state, allocation, and work),
+`docs/GUIDELINES.md` **General principles** (minimize state, allocation, and work),
 **Persistence** (reuse the existing Zdb saga mechanism), and **Audit flags / Scope
 and cleanup** (delete non-goal machinery and compatibility code).
 
@@ -127,7 +127,7 @@ the ordinary forward path using whichever original intents remain; it must not
 infer or reconstruct reverse progress.
 
 This uses deterministic deletion rather than scanning and keeps scheduler work
-continuation-based, in line with `GUIDELINES.md` **Audit flags / Storage and
+continuation-based, in line with `docs/GUIDELINES.md` **Audit flags / Storage and
 capacity**, **Algorithm and control flow**, **Liveness**, and **Callbacks**.
 
 ### Compile-time direction; one irreducible runtime bit
@@ -146,7 +146,7 @@ removes the unused application branch. Do not add a runtime operation map, virtu
 direction interface, inverse-operation trait, fixed lookup table, concepts, or
 `requires`.
 
-This follows `GUIDELINES.md` **Core language**, **Static polymorphism and
+This follows `docs/GUIDELINES.md` **Core language**, **Static polymorphism and
 constraints**, **Compile-time data and matching**, **Enums**, and **Audit flags /
 Storage and capacity**.
 
@@ -173,7 +173,7 @@ Storage and capacity**.
    The public alias has the module prefix. Use the already-declared internal `Saga`
    type rather than reordering declarations to expose the later `ZdbSaga` alias.
    Applications use `using Base::context; using Base::saga;`, not forwarding
-   accessors. This follows `GUIDELINES.md` **Class and struct shape**, **Naming /
+   accessors. This follows `docs/GUIDELINES.md` **Class and struct shape**, **Naming /
    Casing and member prefixes**, and **Core language** (prefer `using` to base
    forwarders).
 2. Replace the macro, with no compatibility overload:
@@ -186,7 +186,7 @@ Storage and capacity**.
      operator ()(Complete &&complete)
    ```
 
-   This follows `GUIDELINES.md` **General principles** and **Audit flags / Scope
+   This follows `docs/GUIDELINES.md` **General principles** and **Audit flags / Scope
    and cleanup**: dependent compatibility is a non-goal, so delete the old
    three-argument operator contract rather than forwarding it.
 3. Change `SagaSteps_` metadata discovery to call the one-argument
@@ -198,7 +198,7 @@ Storage and capacity**.
    must not declare its own context-type alias. Do not add a redundant
    reverse-signature detector:
    the macro supplies both values of `Fwd`, and the rollback body is instantiated by
-   `MSaga::run`. This follows `GUIDELINES.md` **Static polymorphism and
+   `MSaga::run`. This follows `docs/GUIDELINES.md` **Static polymorphism and
    constraints** and **Assertions and type mechanics**.
    Keep callback-independent step/metadata validation in `MSaga<Sagas>`; put the
    context/base compatibility assertion in `SagaDB<Context, Sagas>`, the first type
@@ -211,10 +211,10 @@ Storage and capacity**.
    `LiveSaga{42}` to include an empty base or use an existing valid designated form.
    Confirm both gcc and clang accept the chosen aggregate form. Do not add
    per-definition forwarding constructors or change generic `ZfbStruct` behavior.
-   This follows `GUIDELINES.md` **Data movement and initialization**, **Metadata**,
+   This follows `docs/GUIDELINES.md` **Data movement and initialization**, **Metadata**,
    and **Scope and cleanup**.
 6. Keep declarations that do not depend on template parameters outside enclosing
-   templates, per `GUIDELINES.md` **Audit flags / Code structure**.
+   templates, per `docs/GUIDELINES.md` **Audit flags / Code structure**.
 7. Replace the heavyweight submission union and DB-wide terminal handler with a
    fully templated per-call interface:
 
@@ -229,7 +229,7 @@ Storage and capacity**.
    `SagaDoneFn`, `SagaErrorFn`, `SagaHandler`, and all corresponding exported
    aliases. Do not retain compatibility aliases, adapters, or a generic callable
    wrapper. This removes framework type erasure, indirect invocation, and possible
-   heap fallback from live submission, following `GUIDELINES.md` **Callbacks**,
+   heap fallback from live submission, following `docs/GUIDELINES.md` **Callbacks**,
    **Heap allocation**, **Data movement and initialization**, **General
    principles**, and **Audit flags / Scope and cleanup**.
    Use the established detector/`ZuIfT` idiom to reject callables which cannot be
@@ -275,7 +275,7 @@ Storage and capacity**.
    state, the serialized saga definition must contain the stable identifier needed
    for the common context to resolve it. Delete the multi-member `SagaHandler`.
    This follows
-   `GUIDELINES.md` **General principles**, **Static polymorphism and constraints**,
+   `docs/GUIDELINES.md` **General principles**, **Static polymorphism and constraints**,
    **Type and API friction**, and **Scope and cleanup**.
 9. Rename the internal zero-argument callback type from `SagaStartFn` to
    `SagaRecoveryFn`, including its heap ID:
@@ -293,7 +293,7 @@ Storage and capacity**.
    from non-template `DB` to `MSaga<Sagas>`. Do not retain a
    `SagaStartFn` alias.
    `SagaRecoveryFn` is the explicitly required name and remains below the 28-byte
-   limit; the shorter member names follow `GUIDELINES.md` **Naming / Length and
+   limit; the shorter member names follow `docs/GUIDELINES.md` **Naming / Length and
    abbreviations** and **Scope and cleanup**.
 
 ### 2. Minimal runtime state, callback threading, and one-time base initialization
@@ -304,7 +304,7 @@ In `zdb/src/ZdbSaga.hh`, `zdb/src/ZdbSaga.cc`, `zdb/src/Zdb.hh`, and
 1. Add only `bool m_fwd = true` to the private data tail of class `Saga_`; reset it
    to true in every `init_`. Do not add a callback member or extend `init_` with a
    callable. The field is not serialized. Its concise camel-case name and `m_`
-   prefix follow `GUIDELINES.md` **Naming / Length and abbreviations**, **Casing and
+   prefix follow `docs/GUIDELINES.md` **Naming / Length and abbreviations**, **Casing and
    member prefixes**, and **Class and struct shape**. Audit member order for
    padding.
 2. Delete `DB::m_sagaHandler` and remove the `SagaHandler` parameter from
@@ -339,7 +339,7 @@ In `zdb/src/ZdbSaga.hh`, `zdb/src/ZdbSaga.cc`, `zdb/src/Zdb.hh`, and
    overload asserts `def.saga` still identifies the same object and never assigns
    either base field. `context` may legitimately be null and is not a sentinel. Do
    not add an `initialized` flag, context lookup dispatch, or cast. This follows
-   `GUIDELINES.md` **Audit flags / Framework fit**, **Type and API friction**, and
+   `docs/GUIDELINES.md` **Audit flags / Framework fit**, **Type and API friction**, and
    **Assertions and type mechanics**.
 4. Template both `MSaga::run` overloads on the application completion type. In
    forward mode, dispatch `operator()<I>(stepComplete)`—never spell the true
@@ -351,7 +351,7 @@ In `zdb/src/ZdbSaga.hh`, `zdb/src/ZdbSaga.cc`, `zdb/src/Zdb.hh`, and
    runners. Live admission and every live follow-on transition call this templated
    runner directly; they must not pass through the erased `DB::sagaRun` recovery
    path.
-   This follows `GUIDELINES.md` **Static polymorphism and constraints**,
+   This follows `docs/GUIDELINES.md` **Static polymorphism and constraints**,
    **Compile-time data and matching**, and **Audit flags / Algorithm and control
    flow** (DRY and flat control flow).
 5. Make the step completion carrier generic over both the concrete saga bundle and
@@ -384,7 +384,7 @@ In `zdb/src/ZdbSaga.hh`, `zdb/src/ZdbSaga.cc`, `zdb/src/Zdb.hh`, and
    completion and moves it through every step, intent-deletion continuation, and
    terminal cleanup. Define its template-dependent operations in the header, but
    keep callback-independent DB mutations in existing non-template `.cc` helpers
-   to contain code size. This follows `GUIDELINES.md` **Class and struct shape**,
+   to contain code size. This follows `docs/GUIDELINES.md` **Class and struct shape**,
    **Callbacks**, **Audit flags / Code structure**, **Storage and capacity**, and
    **Naming**.
 6. Change `SagaDB<Context, Sagas>::saga` to the templated five-argument signature
@@ -403,7 +403,7 @@ In `zdb/src/ZdbSaga.hh`, `zdb/src/ZdbSaga.cc`, `zdb/src/Zdb.hh`, and
    Remove the rejection utility which constructs `ZeException` only to place it in
    `SagaSubmitResult`; operational failures continue through their existing
    diagnostic paths. Use `ZuFwd` at initial ownership and `ZuMv` thereafter,
-   following `GUIDELINES.md` **Callbacks**, **Data movement and initialization**,
+   following `docs/GUIDELINES.md` **Callbacks**, **Data movement and initialization**,
    **Heap allocation**, and **Algorithm and control flow**.
 7. Retain `SagaRunFn` only for the existing non-template `DB` to `MSaga<Sagas>`
    recovery bridge. Add a small non-template `SagaNoop` callable, outside enclosing
@@ -411,7 +411,7 @@ In `zdb/src/ZdbSaga.hh`, `zdb/src/ZdbSaga.cc`, `zdb/src/Zdb.hh`, and
    the initial `MSaga::run(m_sagaContext.ptr(), saga, SagaNoop{})` overload through
    the installed lambda because no live application callback survives a crash. Do not
    erase a live callback merely to reuse this bridge. This follows
-   `GUIDELINES.md` **Audit flags / Code structure**, **Callbacks**, and **Scope and
+   `docs/GUIDELINES.md` **Audit flags / Code structure**, **Callbacks**, and **Scope and
    cleanup**.
 
 ### 3. Completion and intent deletion
@@ -463,7 +463,7 @@ Implement the state transitions without a new state machine object:
    and non-template `DB::sagaStepRecovered(...)`, which re-enters through
    `SagaRunFn` and creates the next `SagaNoop`. These concise event names distinguish
    the saved replay result from live application completion and apply the trailing
-   underscore only to the internal shard-side helper, per `GUIDELINES.md` **Naming
+   underscore only to the internal shard-side helper, per `docs/GUIDELINES.md` **Naming
    / Trailing underscores** and **Standard function name vocabulary**. Assert the
    recovery preconditions; do not make the generic live carrier optional,
    synthesize an application completion, or use this shortcut from a newly admitted
@@ -473,7 +473,7 @@ Implement the state transitions without a new state machine object:
    concise internal continuation utility used by both successful final cleanup and
    rollback. Use a trailing `_` only if it is specifically the DB-thread/on-shard
    variant. Do not add wrapper functions which merely preserve old names. This
-   follows `GUIDELINES.md` **Naming / Trailing underscores**, **Standard function
+   follows `docs/GUIDELINES.md` **Naming / Trailing underscores**, **Standard function
    name vocabulary**, and **Audit flags / Algorithm and control flow**.
 6. Intent deletion failure is a storage failure handled through the existing DB
    failure/deactivation path. It is distinct from application rollback
@@ -489,7 +489,7 @@ Implement the state transitions without a new state machine object:
    It must not delete intents, retry, deactivate, invoke the application
    completion, or dispatch another step. Add `<stdlib.h>` as the direct C header
    dependency in the
-   implementation unit. This follows `GUIDELINES.md` **Core language** (prefer C
+   implementation unit. This follows `docs/GUIDELINES.md` **Core language** (prefer C
    headers), **I/O and system integration** (use `ZiLog`), **Tracing and debug
    logging**, **Audit flags / Data movement and initialization** (log captures by
    value), and **Scope and cleanup**.
@@ -514,7 +514,7 @@ Implement the state transitions without a new state machine object:
    only in the posted operation's continuation; never assume `run`/`invoke` is
    blocking. Short-lived continuations may retain the saga with the existing
    `ZmRef<Saga>`, but capture longer-lived DB/table owners as raw pointers and rely
-   on the existing drain protocol. This follows `GUIDELINES.md` **Callbacks**,
+   on the existing drain protocol. This follows `docs/GUIDELINES.md` **Callbacks**,
    **Audit flags / Algorithm and control flow**, **Scope and cleanup**, and **I/O
    sharding / Lifetime and Teardown**.
 
@@ -538,7 +538,7 @@ APIs:
    `ZuMv`/`ZuFwd`, and callback types consistent with the existing hot path. Add no
    locks, atomics, allocations, STL containers, or payload copies.
 
-This follows `GUIDELINES.md` **Static polymorphism and constraints**, **Framework
+This follows `docs/GUIDELINES.md` **Static polymorphism and constraints**, **Framework
 fit**, **Callbacks**, **Heap allocation**, **Data movement and initialization**,
 **Audit flags / Algorithm and control flow**, and **Unnecessary atomic operations,
 locking and copies**.
@@ -559,21 +559,21 @@ For each saga:
    `ZdbSagaBase<Context>` and use `using Base::context; using Base::saga;`.
    Instantiate the DB as `ZdbSagaDB<Context, Sagas>` while saga objects remain
    `ZdbMSaga<Sagas>` (prefer the DB's existing `M` alias locally where it is
-   clearer). Keep names camel-case and under 28 bytes, per `GUIDELINES.md`
+   clearer). Keep names camel-case and under 28 bytes, per `docs/GUIDELINES.md`
    **Naming** and **Class and struct shape**.
    Update positional construction for the new aggregate base as described above;
    do not hide it behind per-saga forwarding constructors.
 2. Remove `context_` casts and old operator parameters. Capture only
    `[this, complete = ZuMv(complete)]` when sufficient. Do not use `[&]` or `[=]`;
    do not capture `context`, `saga`, shard, or IDs which are cheaply available or
-   re-derived through `this`. This follows `GUIDELINES.md` **Core language**,
+   re-derived through `this`. This follows `docs/GUIDELINES.md` **Core language**,
    **Callbacks**, **Audit flags / Data movement and initialization**, and **I/O
    sharding / Cross-Shard Handoffs**.
 3. Put forward work under `if constexpr (Fwd)` and compensation under `else`.
    Store any data needed to recreate a deleted row or undo an update in the saga's
    existing serialized application payload; do not add framework rollback fields.
    Avoid new allocations/copies; use existing `ZdbRowRef`, placement construction,
-   and move/forward paths. This follows `GUIDELINES.md` **Persistence**, **Heap
+   and move/forward paths. This follows `docs/GUIDELINES.md` **Persistence**, **Heap
    allocation**, **Data movement and initialization**, and **Framework fit**.
 4. Pass `bool(row->commit())` to `complete`. A missing required forward/update row
    is false. A reverse delete uses
@@ -610,7 +610,7 @@ For each saga:
    captures and let each concrete closure remain inline; use test-local type erasure
    only where a fixture genuinely must store heterogeneous callback types.
 
-The intended new names pass `GUIDELINES.md` **Naming**: public `ZdbSagaBase`;
+The intended new names pass `docs/GUIDELINES.md` **Naming**: public `ZdbSagaBase`;
 internal `SagaBase`, `SagaRecoveryFn`, `SagaRunFn`, `m_sagaCatalogFn`, and
 `m_sagaScanFn`; typed `SagaDB` member `m_sagaContext`; macro parameters `Step`,
 `Fwd`, and `Complete`; public base fields `context` and `saga`; private member
@@ -622,7 +622,7 @@ introduce names such as `rollbackDirection`, `rollbackStepCursor`, or
 ## Tests
 
 Use existing TAP programs, `ZuTestUtil`, `ZmBlock`, and `ZmSemaphore`. Do not add
-sleep, polling, arbitrary capacities, or a new harness (`GUIDELINES.md` **Tests**
+sleep, polling, arbitrary capacities, or a new harness (`docs/GUIDELINES.md` **Tests**
 and **Audit flags / Algorithm and control flow**).
 
 ### Unit tests: `zdb/test/ZdbSagaTest.cc`
@@ -683,7 +683,7 @@ and **Audit flags / Algorithm and control flow**).
 
 Keep large recovery fixtures paged/bounded, release iterator scope before posts or
 cleanup, and count records during traversal rather than snapshotting container
-counts. This applies `GUIDELINES.md` **Audit flags / Code structure**, **Algorithm
+counts. This applies `docs/GUIDELINES.md` **Audit flags / Code structure**, **Algorithm
 and control flow**, and **Liveness**.
 
 ### Integration tests
@@ -697,11 +697,11 @@ and control flow**, and **Liveness**.
    residue.
 3. Use semaphores and exact commit hooks, never timing intervals. Run source-tree
    binaries through `libtool exec` under sanitizers/Valgrind where applicable, per
-   `GUIDELINES.md` **Tests**, **Acceptance**, and **Debugging**.
+   `docs/GUIDELINES.md` **Tests**, **Acceptance**, and **Debugging**.
 
 ## Complete audit-flag checklist
 
-Review the implementation diff against every `GUIDELINES.md` **Audit flags**
+Review the implementation diff against every `docs/GUIDELINES.md` **Audit flags**
 subsection:
 
 | Audit subsection | Required disposition |
@@ -717,7 +717,7 @@ subsection:
 | Unnecessary atomic operations, locking and copies | `m_fwd` is a DB-thread-owned primitive; the context incurs ownership churn only at configuration/finalization and is passed to definitions as a raw pointer; add no lock/atomic, copy no callback, and capture only destination metadata plus the moved completion carrier. |
 | Liveness | Every store/shard action completes by continuation, recovery remains paged, intent cleanup advances asynchronously, and no mixed-workload thread runs an unbounded loop. |
 
-Apply `GUIDELINES.md` **Header layout**, **Indentation**, **Multiline layout**,
+Apply `docs/GUIDELINES.md` **Header layout**, **Indentation**, **Multiline layout**,
 **Compact layout and alignment**, and **Naming** to every changed declaration. New
 internal/thread-owned functions use concise camel-case names and trailing `_` only
 for internal/on-shard variants; no new name may exceed 28 bytes.
@@ -740,7 +740,7 @@ for internal/on-shard variants; no new name may exceed 28 bytes.
 4. Run the canonical `zdb/example/zdbsaga` success path. Exercise rollback in the
    focused tests rather than bloating the example.
 5. Run applicable clang ASan/LSan and Valgrind suites via `libtool exec`, per
-   `GUIDELINES.md` **Acceptance** and **Debugging**.
+   `docs/GUIDELINES.md` **Acceptance** and **Debugging**.
 6. Completion requires forward success, live reverse execution, original-intent
    deletion after successful reversal, forward restart after a crash during
    rollback, silent/idempotent compensation, fatal exit on reverse false, correct

@@ -225,37 +225,61 @@ ZuSpan<char> FrameWriter::growBody(void *self_, unsigned used, unsigned needed)
   return {storage.data() + self->m_prefix, n};
 }
 
-FrameOutput FrameWriter::finish()
+Error FrameWriter::finishBody_()
 {
-  if (m_finished) return {{}, {ErrorCode::Output}};
+  if (m_finished) return {ErrorCode::Output};
   m_finished = true;
-  if (m_error) return {{}, m_error};
-  if (!m_body.flush()) return {{}, m_body.error()};
+  if (m_error) return m_error;
+  if (!m_body.flush()) return m_body.error();
   Token type;
-  if (auto e = scan(m_body.data(), 0, type)) return {{}, e};
-  if (type.tag != 35) return {{}, {ErrorCode::Envelope, type.tag}};
-  if (!type.length) return {{}, {ErrorCode::Value, 35, type.offset}};
-  unsigned bodyLength = m_body.length();
-  if (m_body.data()[bodyLength - 1] != '\1')
-    return {{}, {ErrorCode::Envelope, 10, bodyLength - 1}};
+  if (auto e = scan(m_body.data(), 0, type)) return e;
+  if (type.tag != 35) return {ErrorCode::Envelope, type.tag};
+  if (!type.length) return {ErrorCode::Value, 35, type.offset};
+  return {};
+}
+
+FrameParts FrameWriter::envelope_(unsigned bodyLength, unsigned bodyChecksum)
+{
   unsigned prefix = m_beginString.length() + 6 +
     Zu_ntoa::Log10<sizeof(unsigned)>::log(bodyLength);
-
-  unsigned start = m_prefix - prefix;
-  auto output = m_storage.data() + start;
+  if (prefix > m_prefix || uint64_t(prefix) + bodyLength + 7 > m_limits.frameBytes)
+    return {{}, {}, {ErrorCode::Size}};
+  auto output = m_storage.data() + m_prefix - prefix;
   Sink envelope{{output, prefix}, m_limits};
   envelope.field(8); envelope << m_beginString; envelope.end();
   envelope.field(9); envelope << ZuBox<unsigned>{bodyLength}; envelope.end();
-  if (!envelope.flush()) return {{}, envelope.error()};
-  unsigned checksum = 0, end = prefix + bodyLength;
-  for (unsigned i = 0; i < end; ++i) checksum += uint8_t(output[i]);
+  if (!envelope.flush()) return {{}, {}, envelope.error()};
+  unsigned checksum = bodyChecksum;
+  for (unsigned i = 0; i < prefix; ++i) checksum += uint8_t(output[i]);
   checksum &= 255;
-  Sink trailer{{output + end, 7}, m_limits};
+  auto end = m_storage.data() + m_prefix + m_body.length();
+  Sink trailer{{end, 7}, m_limits};
   trailer.field(10);
   trailer << ZuBox<unsigned>{checksum}.fmt<ZuFmt::Right<3, '0'>>();
   trailer.end();
-  if (!trailer.flush()) return {{}, trailer.error()};
-  return {{output, end + 7}, {}};
+  if (!trailer.flush()) return {{}, {}, trailer.error()};
+  return {{output, prefix}, {end, 7}, {}};
+}
+
+FrameOutput FrameWriter::finish()
+{
+  if (auto error = finishBody_()) return {{}, error};
+  auto bytes = m_body.data();
+  unsigned bodyLength = bytes.length();
+  if (bytes[bodyLength - 1] != '\1')
+    return {{}, {ErrorCode::Envelope, 10, bodyLength - 1}};
+  unsigned checksum = 0;
+  for (unsigned i = 0; i < bodyLength; ++i) checksum += uint8_t(bytes[i]);
+  auto output = envelope_(bodyLength, checksum);
+  if (!output) return {{}, output.error};
+  return {{output.prefix.data(), output.prefix.length() + bodyLength + 7}, {}};
+}
+
+FrameParts FrameWriter::finishParts(unsigned bodyLength, unsigned bodyChecksum)
+{
+  if (auto error = finishBody_()) return {{}, {}, error};
+  if (bodyLength < m_body.length()) return {{}, {}, {ErrorCode::Size}};
+  return envelope_(bodyLength, bodyChecksum);
 }
 
 } // Zfix::Fmt

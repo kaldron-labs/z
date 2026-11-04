@@ -13,22 +13,32 @@
 #include <zlib/ZiLib.hh>
 #endif
 
-#include <math.h>
+#include <stdint.h>
+#include <string.h>
 
-#include <zlib/ZuCmp.hh>
-#include <zlib/ZuHash.hh>
-#include <zlib/ZuLargest.hh>
 #include <zlib/ZuArray.hh>
-#include <zlib/ZuID.hh>
+#include <zlib/ZuAssert.hh>
+#include <zlib/ZuBox.hh>
+#include <zlib/ZuCmp.hh>
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuFmt.hh>
+#include <zlib/ZuHash.hh>
+#include <zlib/ZuObject.hh>
+#include <zlib/ZuPrint.hh>
+#include <zlib/ZuSpan.hh>
+#include <zlib/ZuString.hh>
+#include <zlib/ZuTraits.hh>
+#include <zlib/ZuUnion.hh>
 
 #include <zlib/ZmAtomic.hh>
-#include <zlib/ZmObject.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmFn.hh>
-#include <zlib/ZmLock.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmRWLock.hh>
+#include <zlib/ZmSemaphore.hh>
+#include <zlib/ZmPlatform.hh>
 #include <zlib/ZmPolymorph.hh>
 #include <zlib/ZmList.hh>
 
@@ -43,12 +53,6 @@
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZtcMx.hh>
 
-#if defined(ZDEBUG) && !defined(ZiMultiplex_DEBUG)
-#define ZiMultiplex_DEBUG	// enable testing / debugging
-#if !defined(ZiMultiplex_FILTER)
-#define ZiMultiplex_FILTER	// enable traffic filtering
-#endif
-#endif
 
 #ifdef ZiMultiplex_DEBUG
 #include <zlib/ZmBackTracer.hh>
@@ -60,7 +64,9 @@
 
 #ifdef linux
 #define ZiMultiplex_EPoll	// Linux epoll
+#if Zi_URing
 #define ZiMultiplex_URing	// Linux io_uring
+#endif
 #endif
 
 #ifdef ZiMultiplex_DEBUG
@@ -92,52 +98,180 @@ class ZiMultiplex;
 
 ZtEnumNS(ZiAPI, ZiMxBackend, int8_t, Auto, EPoll, URing);
 
+// Benchmark observations; define consistently for Zi and consumers.
+// Per-buffer provenance additionally requires ZiMultiplex_DEBUG.
+#ifdef ZiMultiplex_BENCH
+namespace Zi {
+ZtEnumStruct(ZiAPI, IOBenchKind, int8_t,
+  Rx, Prepared, Enter, TxData, TxNotif, RxZero, RxReady, RxWait, CQE);
+ZtEnumStruct(ZiAPI, IOBenchFallback, int8_t,
+  None, Unregistered, RxForward, Empty);
+
+// Synchronous diagnostic observation on the current I/O owner. All pointers
+// are borrowed for this call; observers must not retain them, reenter I/O,
+// mutate payloads or throw. Debug builds may update provenance metadata.
+// No clock is read here: the observer selects which observations to time.
+struct IOBenchEvent {
+  IOBenchKind::T		kind;
+#ifdef ZiMultiplex_DEBUG
+  IOBuf			*buf;
+#endif
+  const IOBufRing	*ring;
+#ifdef ZiMultiplex_DEBUG
+  const ZiConnection	*cxn;
+#endif
+  uintptr_t		op;
+#ifdef ZiMultiplex_DEBUG
+  uint64_t		streamOffset;
+#endif
+  unsigned		sid;
+  unsigned		count;
+  int			result;
+  int			error;
+  unsigned		flags;
+  unsigned		opcode;
+  IOBenchFallback::T	fallback;
+  bool			fixed;
+  bool			wait;
+};
+using IOBenchFn = ZmFn<void(const IOBenchEvent &), ZmFnHeapID<"Zi.IOBench">>;
+} // Zi
+#endif
+
 #ifdef ZiMultiplex_URing
 namespace Zi {
 class URingLoop;
 struct URingWait_ {
-  ZiConnection	*cxn = nullptr;
-  URing		*ring = nullptr;
-  bool		waiting = false;
+  ZiConnection		*cxn = nullptr;
+  URing			*ring = nullptr;
+  bool			waiting = false;
 };
 using URingWaitList = ZmList<URingWait_,
   ZmListNode<URingWait_, ZmListShadow<>>>;
 using URingWait = URingWaitList::Node;
 struct URingOp_;
 struct URingReq_ {
-  URingOp_ *op = nullptr;
-  const io_uring_sqe *sqe = nullptr;
+  URingOp_		*op = nullptr;
+  const io_uring_sqe	*sqe = nullptr;
 };
 using URingReqList = ZmList<URingReq_,
   ZmListNode<URingReq_, ZmListShadow<>>>;
 using URingReq = URingReqList::Node;
+
+namespace URingOpFlags {
+  ZtFlags_(URingOpFlags, uint16_t,
+    Rx, Active, Queued, DataDone, Safe, Last, Terminal, Cancelling, Filtered);
+}
 
 struct URingOp_ {
   enum { NameSize = sizeof(sockaddr_storage), CtrlSize =
     ((sizeof(io_uring_recvmsg_out) + NameSize + CMSG_SPACE(sizeof(int)) +
       ZiIOBuf_Align - 1) & ~(ZiIOBuf_Align - 1)) -
     sizeof(io_uring_recvmsg_out) - NameSize };
-  ZiConnection	*cxn = nullptr;
-  URing		*ring = nullptr;
-  io_uring_sqe	sqe{};
-  msghdr	msg{};
-  iovec		vec{};
-  ZiSockAddr	addr;
-  alignas(cmsghdr) uint8_t control[CMSG_SPACE(sizeof(int))];
-  ZmRef<IOBuf>	buf;
-  ZiIOContext	context;
-  int		result = 0;
-  bool		rx = false;
-  bool		active = false;
-  bool		queued = false;
-  bool		dataDone = false;
-  bool		safe = false;
-  bool		last = false;
-  bool		terminal = false;
-  bool		cancelling = false;
-  bool		filtered = false;
-  URingWait	waiter;
-  URingReq	pending;
+  ZiConnection		*cxn = nullptr;
+  URing			*ring = nullptr;
+  ZiTxContext		context;
+  io_uring_sqe		sqe{};
+  msghdr		msg{};
+  URingWait		waiter;
+  URingReq		pending;
+  ZiSockAddr		addr;
+  alignas(cmsghdr)
+  uint8_t		control[CMSG_SPACE(sizeof(int))];
+  iovec			vec{};
+  ZmRef<IOBuf>		buf;
+  int			result = 0;
+  URingOpFlags::T	flags = 0;
+
+  bool rx() const {
+    using namespace URingOpFlags;
+    return flags & Rx();
+  }
+  URingOp_ &rx(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Rx()) : (flags &= ~Rx());
+    return *this;
+  }
+
+  bool active() const {
+    using namespace URingOpFlags;
+    return flags & Active();
+  }
+  URingOp_ &active(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Active()) : (flags &= ~Active());
+    return *this;
+  }
+
+  bool queued() const {
+    using namespace URingOpFlags;
+    return flags & Queued();
+  }
+  URingOp_ &queued(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Queued()) : (flags &= ~Queued());
+    return *this;
+  }
+
+  bool dataDone() const {
+    using namespace URingOpFlags;
+    return flags & DataDone();
+  }
+  URingOp_ &dataDone(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= DataDone()) : (flags &= ~DataDone());
+    return *this;
+  }
+
+  bool safe() const {
+    using namespace URingOpFlags;
+    return flags & Safe();
+  }
+  URingOp_ &safe(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Safe()) : (flags &= ~Safe());
+    return *this;
+  }
+
+  bool last() const {
+    using namespace URingOpFlags;
+    return flags & Last();
+  }
+  URingOp_ &last(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Last()) : (flags &= ~Last());
+    return *this;
+  }
+
+  bool terminal() const {
+    using namespace URingOpFlags;
+    return flags & Terminal();
+  }
+  URingOp_ &terminal(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Terminal()) : (flags &= ~Terminal());
+    return *this;
+  }
+
+  bool cancelling() const {
+    using namespace URingOpFlags;
+    return flags & Cancelling();
+  }
+  URingOp_ &cancelling(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Cancelling()) : (flags &= ~Cancelling());
+    return *this;
+  }
+
+  bool filtered() const {
+    using namespace URingOpFlags;
+    return flags & Filtered();
+  }
+  URingOp_ &filtered(bool b) {
+    using namespace URingOpFlags;
+    b ? (flags |= Filtered()) : (flags &= ~Filtered());
+    return *this;
+  }
 };
 using URingOpList = ZmList<URingOp_,
   ZmListNode<URingOp_, ZmListHeapID<"Zi.URingOp">>>;
@@ -153,11 +287,6 @@ using FilterFn = ZmFn<bool(ZiConnection *, uint8_t *, unsigned),
 class ZiCxnOptions;
 struct ZiCxnInfo;
 
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable:4251 4244 4800)
-#endif
-
 // transient
 using ZiFailFn = ZmFn<void(bool), ZmFnHeapID<"ZiMultiplex.FailFn">>;
 
@@ -168,7 +297,8 @@ using ZiIPv6MReq = struct ipv6_mreq;
 #endif
 
 // multicast subscription request (IGMP/MLD Report)
-struct ZiMReq {
+class ZiMReq {
+public:
   using Req = ZuUnion<void, ip_mreq, ZiIPv6MReq>;
   enum {
     Null = Req::Index<void>{},
@@ -307,9 +437,11 @@ struct ZiMReq {
   friend ZuPrintFn ZuPrintType(ZiMReq *);
 
 private:
-  Req		m_req;
+  Req			m_req;
 };
 
+// Inline multicast memberships per socket; override for applications joining
+// multiple groups. The default keeps single-group socket options allocation-free.
 #ifndef ZiCxnOptions_NMReq
 #define ZiCxnOptions_NMReq 1
 #endif
@@ -402,9 +534,10 @@ public:
     if (type == ZiIPType::V4 && !!m_mif && m_mif.type() != ZiIPType::V4)
       return false;
     if (type == ZiIPType::V6 && !!m_mif) return false;
-    for (unsigned i = 0, n = m_mreqs.length(); i < n; i++)
-      if (m_mreqs[i].type() != type || !m_mreqs[i].addr().multicast())
-	return false;
+    for (unsigned i = 0, n = m_mreqs.length(); i < n; i++) {
+      const auto &req = m_mreqs[i];
+      if (req.type() != type || !req.addr().multicast()) return false;
+    }
     return true;
   }
   bool nagle() const {
@@ -502,7 +635,8 @@ struct ZiCxnInfo { // pure aggregate, no ctor
   uint16_t		localPort = 0;
   ZiIP			remoteIP;
   uint16_t		remotePort = 0;
-  bool operator !() const { return type != ZiCxnType::T(-1); }
+
+  bool operator !() const { return type == -1; }
   ZuOpBool
 
   template <typename S> void print(S &s) const {
@@ -580,14 +714,14 @@ public:
   virtual ~ZiConnection();
 
   // recv
-  void recv(ZiIOFn fn);
-  void recv_(ZiIOFn fn);	// direct call from within rx thread
+  void recv(ZiRxFn fn);
+  void recv_(ZiRxFn fn);	// direct call from within rx thread
 
   // send
-  void send(ZiIOFn fn);
-  void send_(ZiIOFn fn);	// direct call from within tx thread
+  void send(ZiTxFn fn);
+  void send_(ZiTxFn fn);	// direct call from within tx thread
 
-  // blocking sync - drains Tx thread
+  // Control-thread blocking sync - drains Tx thread
   void sync();
 
   // graceful disconnect (socket shutdown); then socket close
@@ -597,7 +731,7 @@ public:
   void close();
 
   // low-frequency - vtbl dispatch overhead is fine
-  virtual void connected(ZiIOContext &rxContext) = 0;
+  virtual void connected(ZiRxContext &rxContext) = 0;
   virtual void disconnected(bool peer) = 0;
 
   bool up() const {
@@ -649,6 +783,24 @@ private:
   void executedDisconnect(bool peer);
   void notifyDisconnected(bool peer);
 
+#ifdef ZiMultiplex_URing
+  void uringHold() { ++m_uringPending; }
+  bool ioUp(bool rx) const { return (rx ? m_rxUp : m_txUp).load_(); }
+  void uringRecv();
+  void uringReceived(Zi::URingOp *, int, unsigned);
+  void uringSent(Zi::URingOp *, int, unsigned);
+  void uringSend();
+  void uringTxDone();
+  void uringDone(unsigned n = 1);
+#endif
+
+  void closeSocket_();
+
+  struct Sync_ { ZmFn<void()> wake; };
+  using SyncList = ZmList<Sync_,
+    ZmListNode<Sync_, ZmListHeapID<"Zi.Sync">>>;
+  using Sync = SyncList::Node;
+
   // immutable
   ZiMultiplex		*m_mx;
   ZiCxnInfo		m_info;
@@ -657,12 +809,12 @@ private:
   ZmAtomic<unsigned>	m_rxUp;
   ZmAtomic<unsigned>	m_txUp;
 #ifdef ZiMultiplex_URing
-  ZmAtomic<unsigned>	m_uringPending{0};
+  ZmAtomic<unsigned>	m_uringPending;
 #endif
 
   // Rx thread exclusive
   alignas(Zm::CacheLineSize)
-  ZiIOContext		m_rxContext;
+  ZiRxContext		m_rxContext;
   uint64_t		m_rxCalls;
   uint64_t		m_rxBytes;
 #ifdef ZiMultiplex_URing
@@ -674,7 +826,7 @@ private:
 #endif
 #ifdef ZiMultiplex_IOCP
   ZmRef<Zi::IOBuf>	m_rxPending; // actual outstanding kernel receive hold
-  Zi_Overlapped	 	m_discOverlapped;
+  Zi_Overlapped		m_discOverlapped;
   Zi_Overlapped		m_rxOverlapped;
   WSABUF		m_rxWSABuf;
   WSAMSG		m_rxMsg;
@@ -685,35 +837,32 @@ private:
 
   // Tx thread exclusive
   alignas(Zm::CacheLineSize)
-  ZiIOContext		m_txContext;
+  ZiTxContext		m_txContext;
   uint64_t		m_txCalls;
   uint64_t		m_txBytes;
-  struct Sync_ { ZmFn<void()> wake; };
-  using SyncList = ZmList<Sync_,
-    ZmListNode<Sync_, ZmListHeapID<"Zi.Sync">>>;
-  using Sync = SyncList::Node;
   SyncList		m_syncs;
   bool			m_sending = false;
+
 #ifdef ZiMultiplex_URing
-  Zi::URingOpList		m_txOps;
+  Zi::URingOpList	m_txOps;
   Zi::URingOp		*m_txOp = nullptr;
   Zi::URingWait		m_txWait;
-  void uringRecv();
-  void uringSend();
-  void uringTxDone();
-  void uringDone(unsigned n = 1);
 #endif
 };
 
 // named parameter list for configuring ZiMultiplex
-struct ZiMxParams {
+class ZiMxParams {
+public:
+  enum { MinRingSize = 2, MaxRingSize = ZiIOBuf_MaxRingSize };
   enum { RxThread = 1, TxThread = 2 }; // defaults
+  // Small batches bound scheduler latency; epollQuantum tunes this on Linux.
+  enum { IOQuantum = 8, EPollMaxFDs = 256 };
 
   ZiMxParams() :
     m_scheduler{ZmSchedParams{}
-	.nThreads(3)
-	.thread(ZiMxParams::RxThread, [](auto &t) { t.isolated(true); })
-	.thread(ZiMxParams::TxThread, [](auto &t) { t.isolated(true); })} { }
+      .nThreads(3)
+      .thread(ZiMxParams::RxThread, [](auto &t) { t.isolated(true); })
+      .thread(ZiMxParams::TxThread, [](auto &t) { t.isolated(true); })} { }
 
   ZiMxParams(const ZiMxParams &) = default;
   ZiMxParams &operator =(const ZiMxParams &) = default;
@@ -738,16 +887,32 @@ struct ZiMxParams {
   ZiMxParams &&epollQuantum(unsigned n)
     { m_epollQuantum = n; return ZuMv(*this); }
 #endif
+  ZiMxParams &&rxRingSize(unsigned v)
+    { m_rxRingSize = v; return ZuMv(*this); }
+  ZiMxParams &&txRingSize(unsigned v)
+    { m_txRingSize = v; return ZuMv(*this); }
   ZiMxParams &&rxBufSize(unsigned v)
     { m_rxBufSize = v; return ZuMv(*this); }
   ZiMxParams &&txBufSize(unsigned v)
     { m_txBufSize = v; return ZuMv(*this); }
   ZiMxParams &&backend(ZiMxBackend::T v)
     { m_backend = v; return ZuMv(*this); }
+#ifdef ZiMultiplex_BENCH
+  ZiMxParams &&benchFn(Zi::IOBenchFn v)
+    { m_benchFn = ZuMv(v); return ZuMv(*this); }
+#endif
   ZiMxParams &&tcpBufAllocator(ZmRef<Zi::IOBufAllocator> v)
     { m_tcpBufAllocator = ZuMv(v); return ZuMv(*this); }
   ZiMxParams &&udpBufAllocator(ZmRef<Zi::IOBufAllocator> v)
     { m_udpBufAllocator = ZuMv(v); return ZuMv(*this); }
+  template <typename Allocator>
+  ZiMxParams &&tcpBufAllocator() {
+    return tcpBufAllocator(new Allocator{m_rxRingSize});
+  }
+  template <typename Allocator>
+  ZiMxParams &&udpBufAllocator() {
+    return udpBufAllocator(new Allocator{m_rxRingSize});
+  }
   ZiMxParams &&listenerHash(const char *id)
     { m_listenerHash = id; return ZuMv(*this); }
   ZiMxParams &&requestHash(const char *id)
@@ -777,9 +942,14 @@ struct ZiMxParams {
   unsigned epollMaxFDs() const { return m_epollMaxFDs; }
   unsigned epollQuantum() const { return m_epollQuantum; }
 #endif
+  unsigned rxRingSize() const { return m_rxRingSize; }
+  unsigned txRingSize() const { return m_txRingSize; }
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
   ZiMxBackend::T backend() const { return m_backend; }
+#ifdef ZiMultiplex_BENCH
+  const Zi::IOBenchFn &benchFn() const { return m_benchFn; }
+#endif
   ZmRef<Zi::IOBufAllocator> tcpBufAllocator() const { return m_tcpBufAllocator; }
   ZmRef<Zi::IOBufAllocator> udpBufAllocator() const { return m_udpBufAllocator; }
   ZuCSpan listenerHash() const { return m_listenerHash; }
@@ -793,18 +963,25 @@ struct ZiMxParams {
 #endif
 
 private:
+  using AllocatorRef = ZmRef<Zi::IOBufAllocator>;
+
   ZmSchedParams		m_scheduler;
   unsigned		m_rxThread = RxThread;
   unsigned		m_txThread = TxThread;
 #ifdef ZiMultiplex_EPoll
-  unsigned		m_epollMaxFDs = 256;
-  unsigned		m_epollQuantum = 8;
+  unsigned		m_epollMaxFDs = EPollMaxFDs;
+  unsigned		m_epollQuantum = IOQuantum;
 #endif
+  unsigned		m_rxRingSize = ZiIOBuf_DefltRxRingSize;
+  unsigned		m_txRingSize = ZiIOBuf_DefltTxRingSize;
   unsigned		m_rxBufSize = 0;
   unsigned		m_txBufSize = 0;
-  ZiMxBackend::T		m_backend = ZiMxBackend::Auto;
-  ZmRef<Zi::IOBufAllocator> m_tcpBufAllocator;
-  ZmRef<Zi::IOBufAllocator> m_udpBufAllocator;
+  ZiMxBackend::T	m_backend = ZiMxBackend::Auto;
+  AllocatorRef		m_tcpBufAllocator;
+  AllocatorRef		m_udpBufAllocator;
+#ifdef ZiMultiplex_BENCH
+  Zi::IOBenchFn		m_benchFn;
+#endif
   const char		*m_listenerHash = "ZiMultiplex.ListenerHash";
   const char		*m_requestHash = "ZiMultiplex.RequestHash";
   const char		*m_cxnHash = "ZiMultiplex.CxnHash";
@@ -842,8 +1019,8 @@ friend Zi::URingLoop;
   protected:
     template <typename ...Args>
     Listener_(ZiMultiplex *mx, ZiConnectFn acceptFn, Args &&...args) :
-	m_mx(mx), m_acceptFn(acceptFn), m_up(1),
-	m_info{ZuFwd<Args>(args)...} { }
+	m_mx(mx), m_acceptFn(ZuMv(acceptFn)),
+	m_info{ZuFwd<Args>(args)...}, m_up(1) { }
 
   private:
     const ZiConnectFn &acceptFn() const { return m_acceptFn; }
@@ -853,8 +1030,8 @@ friend Zi::URingLoop;
 
     ZiMultiplex		*m_mx;
     ZiConnectFn		m_acceptFn;
-    bool		m_up;
     ZiListenInfo	m_info;
+    bool		m_up;
   };
   ZmHashDerive(ListenerHash, Listener_,
     (ZmHashNode<Listener_,
@@ -936,6 +1113,9 @@ friend Connect_;
     void fail(bool transient) { m_failFn(transient); }
 
     const ZiConnectFn &fn() const { return m_fn; }
+#ifdef ZiMultiplex_EPoll
+    ZiConnectFn takeFn() { return ZuMv(m_fn); }
+#endif
     const ZiCxnInfo &info() const { return m_info; }
     ZiCxnInfo &info() { return m_info; }
 
@@ -1023,9 +1203,18 @@ public:
 
   bool stop();
 
+  // Quiesce the allocator's producers and drain its I/O before calling this.
+  // Keep the allocator and owner alive until fn runs on Tx, after Rx/Tx turns
+  // and terminal kernel controls drain. Initiate before stopping the scheduler.
+  // stop() also detaches every binding, allowing surviving pools to be reused.
+  void unbind(Zi::IOBufAllocator *, ZmFn<> fn);
+
   unsigned rxThread() const { return m_rxThread; }
   unsigned txThread() const { return m_txThread; }
   ZiMxBackend::T backend() const { return m_backend; }
+#ifdef ZiMultiplex_BENCH
+  const Zi::IOBenchFn &benchFn() const { return m_benchFn; }
+#endif
 
   template <typename ...Args> void rxRun(Args &&...args) {
     run(ZuFwd<Args>(args)..., m_rxThread);
@@ -1041,6 +1230,7 @@ public:
   }
 
 #ifdef ZiMultiplex_DEBUG
+  template <typename S> void traceDump(S &s) { m_tracer.dump(s); }
   bool trace() const { return m_trace; }
   void trace(bool b) { m_trace = b; }
   bool debug() const { return m_debug; }
@@ -1063,6 +1253,8 @@ public:
   Zi::IOBufAllocator *rxAllocator(bool udp) const {
     return udp ? m_udpBufAllocator.ptr() : m_tcpBufAllocator.ptr();
   }
+  unsigned rxRingSize() const { return m_rxRingSize; }
+  unsigned txRingSize() const { return m_txRingSize; }
   unsigned rxBufSize() const { return m_rxBufSize; }
   unsigned txBufSize() const { return m_txBufSize; }
 
@@ -1070,6 +1262,24 @@ public:
   void telemetry(Ztc::MxTelemetry &data) const override;
 
 private:
+  // Bounded callbacks per owner turn; the same budget serves all backends.
+  unsigned ioQuantum() const {
+#ifdef ZiMultiplex_EPoll
+    return m_epollQuantum;
+#else
+    return ZiMxParams::IOQuantum;
+#endif
+  }
+
+#ifdef ZiMultiplex_FILTER
+  bool filterRx(ZiConnection *cxn, uint8_t *buf, unsigned n) {
+    return m_rxFilter(cxn, buf, n);
+  }
+  bool filterTx(ZiConnection *cxn, uint8_t *buf, unsigned n) {
+    return m_txFilter(cxn, buf, n);
+  }
+#endif
+
   bool start__() override;
   bool stop__() override;
 
@@ -1087,6 +1297,7 @@ private:
 
 #ifdef ZiMultiplex_URing
   Zi::URing *uring(Zi::IOBufRing *, bool rx, bool udp);
+  Zi::IOBufRing *txRing();
   int controlFD() const { return m_epollFD; }
 #endif
 
@@ -1128,14 +1339,29 @@ private:
   void writeWake();
 #endif
 
+#ifdef ZiMultiplex_URing
+  void uringStopped();
+#endif
+
+#ifdef ZiMultiplex_DEBUG
+  void traceCapture() { m_tracer.capture(1); }
+#endif
+
+  using AllocatorRef = ZmRef<Zi::IOBufAllocator>;
+
   // immutable
   unsigned		m_rxThread = 0;
   unsigned		m_txThread = 0;
+  unsigned		m_rxRingSize = ZiIOBuf_DefltRxRingSize;
+  unsigned		m_txRingSize = ZiIOBuf_DefltTxRingSize;
   unsigned		m_rxBufSize = 0; // setsockopt SO_RCVBUF option
   unsigned		m_txBufSize = 0; // setsockopt SO_SNDBUF option
-  ZiMxBackend::T		m_backend = ZiMxBackend::Auto;
-  ZmRef<Zi::IOBufAllocator> m_tcpBufAllocator;
-  ZmRef<Zi::IOBufAllocator> m_udpBufAllocator;
+  ZiMxBackend::T	m_backend = ZiMxBackend::Auto;
+  AllocatorRef		m_tcpBufAllocator;
+  AllocatorRef		m_udpBufAllocator;
+#ifdef ZiMultiplex_BENCH
+  Zi::IOBenchFn		m_benchFn;
+#endif
 #ifdef ZiMultiplex_EPoll
   unsigned		m_epollMaxFDs = 0;
   unsigned		m_epollQuantum = 0;
@@ -1146,16 +1372,13 @@ private:
   ZmRWLock		m_cxnWatchLock;
   Ztc::Mx::AddCxnFn	m_addCxnFn;
   Ztc::Mx::DelCxnFn	m_delCxnFn;
+
 #ifdef ZiMultiplex_DEBUG
   bool			m_trace = false;
   bool			m_debug = false;
   bool			m_frag = false;
   bool			m_yield = false;
-  void traceCapture() { m_tracer.capture(1); }
-public:
-  template <typename S> void traceDump(S &s) { m_tracer.dump(s); }
-private:
-  ZmBackTracer<64>	m_tracer;
+  ZmBackTracer<>	m_tracer;
 #endif
 
   // Rx thread exclusive
@@ -1170,7 +1393,6 @@ private:
 #endif
 #ifdef ZiMultiplex_URing
   Zi::URingLoop		*m_rxLoop = nullptr;
-  void uringStopped();
   unsigned		m_uringStopping = 0;
 #endif
   ZmRef<ListenerHash>	m_listeners;
@@ -1184,11 +1406,13 @@ private:
 #endif
 
   // Tx thread exclusive
+#if defined(ZiMultiplex_URing) || defined(ZiMultiplex_FILTER)
+  alignas(Zm::CacheLineSize)
+#endif
 #ifdef ZiMultiplex_URing
   Zi::URingLoop		*m_txLoop = nullptr;
 #endif
 #ifdef ZiMultiplex_FILTER
-  alignas(Zm::CacheLineSize)
   FilterFn		m_txFilter;
 #endif
 };

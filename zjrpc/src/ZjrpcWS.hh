@@ -66,7 +66,8 @@ public:
   }
   template <typename Rx>
   int process(Rx &rx) {
-    bool ok = Zhttp::bodyEach(rx, [this](ZuSpan<uint8_t> span) { (void)m_input.feed(span); });
+    bool ok = true;
+    while (rx && ok) ok = m_input.body(rx);
     return ok && m_input.buffer() ? 1 : -1;
   }
   void open() { m_closed = false; }
@@ -154,7 +155,7 @@ protected:
   }
   template <bool Closed, typename Link>
   void control_(Link &link, uint16_t code, ZuBSpan payload) {
-    ZmRef<ZiIOBuf> body = new InputBuf{};
+    ZmRef<ZiIOBuf> body = new InputBuf{nullptr, 0};
     if (!body->append(payload)) { link.close(Zws::CloseCode::Internal); return; }
     link.app()->txRun([this, link = ZmRef{&link}, body = ZuMv(body), code]() mutable {
       (void)code;

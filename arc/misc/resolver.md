@@ -14,7 +14,7 @@ requiring explicit application teardown.
 The resolver must support runtime enable/disable of IPv6 so deployments can keep
 IPv4-only behavior without rebuilds.
 
-`GUIDELINES.md` applies to this work. Keep the resolver performance-oriented,
+`docs/GUIDELINES.md` applies to this work. Keep the resolver performance-oriented,
 allocation-conscious, and idiomatic to the Z framework; do not add generic C++
 abstractions where a direct c-ares/Z wrapper is clearer and faster.
 
@@ -425,7 +425,7 @@ already introduced by earlier slices.
    - Store active socket/query/timer state in resolver-owned intrusive nodes or
      members with explicit `ZmHeapID`/heap-aware containers where heap allocation
      is required.
-   - If resolver-owned timeout state is added, follow the `GUIDELINES.md`
+   - If resolver-owned timeout state is added, follow the `docs/GUIDELINES.md`
      teardown sequence: cancel/disarm timeout state, set teardown state, post a
      drain continuation on `sid` 1, then complete destruction.
    - Do not scan long-lived containers for cleanup; remove socket/query nodes

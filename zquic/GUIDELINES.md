@@ -3,7 +3,7 @@
 These guidelines are the audit checklist for code changes in `zquic`.  They
 supplement the repo-wide rules in `../GUIDELINES.md`; follow both when editing
 or reviewing `zquic` code.  Implementation discovery and source navigation live
-in `README.md`.
+in `docs/README.md`.
 
 # General zquic
 
@@ -20,13 +20,15 @@ in `README.md`.
 
 # Buffers
 
-`Zquic` exposes role-specific `ZiIOBuf` allocation aliases through
+`Zquic` exposes UDP packet allocator classes and ordinary plaintext allocation aliases through
 `Zquic.hh`. Keep those roles distinct:
 
-- `PktRxBufAlloc` defaults to the `"Zquic.Pkt.Rx"` heap for received UDP
-  datagrams and in-place QUIC packet protection removal.
-- `PktTxBufAlloc` defaults to the `"Zquic.Pkt.Tx"` heap for transmit
-  packetization and packet protection output.
+- `PktRxBufAllocator` defaults to the `"Zquic.Pkt.Rx"` heap for received UDP
+  datagrams and in-place QUIC packet protection removal. Configure it through
+  `ZiMxParams::udpBufAllocator`; the endpoint receives the original `io.buf`.
+- `PktTxBufAllocator` defaults to the `"Zquic.Pkt.Tx"` heap for transmit
+  packetization and packet protection output. Each endpoint retains its own
+  allocator; active output belongs to `ZiTxContext::buf` until kernel retirement.
 - `StreamTxBufAlloc` defaults to the `"Zquic.Stream.TxBuf"` heap for
   application stream bytes that must be retained for ACK, loss,
   retransmission, reset, cancellation, or teardown handling.
@@ -54,6 +56,13 @@ CRYPTO receive is different from STREAM receive.  Fragmented or out-of-order
 CRYPTO data may be copied into retained `CryptoRxBufAlloc` buffers for
 reassembly.  In-order CRYPTO delivery and TLS output should use direct
 spans/origin-backed buffers when possible.
+
+Cross-shard STREAM sends transfer an owned range or construct directly in the
+stream writer's retained buffers. Do not stage bytes in an asynchronous byte
+array before copying them into stream storage. TLS output already has a
+`CryptoTxBufAlloc` owner: transfer it through the CRYPTO send callback and retain
+its ranges for retransmission until the existing epoch/reset teardown retires
+them. Packet protection reads those ranges directly into final UDP output.
 
 Hidden fallback copies below the public API boundary are forbidden.  Any new
 copy path must be documented in this section and covered by a test that explains
@@ -395,3 +404,8 @@ For every qlog call site, verify:
 - JSON output uses `ZfJSON` / `ZfStruct`;
 - release builds erase the qlog-only code at preprocessing time;
 - the hot path does not do qlog formatting or JSON serialization.
+
+Short-header key trials preserve ciphertext in scratch until authentication
+succeeds, then copy authenticated plaintext back into the original packet. This
+copy permits old/next-key retry after a failed authentication; STREAM slices
+still retain the original packet backing.

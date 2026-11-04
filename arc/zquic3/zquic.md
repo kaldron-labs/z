@@ -1,6 +1,6 @@
 # zquic guideline review
 
-Scope: reviewed `zquic/src`, `zquic/test`, `zquic/example`, `zquic/README.md`, `zquic/buffers.md`, and the module `Makefile.am` files against `AGENTS.md` and `GUIDELINES.md`. Generated build outputs, object files, `.libs`, `.deps`, and `Makefile.in` files were ignored.
+Scope: reviewed `zquic/src`, `zquic/test`, `zquic/example`, `zquic/README.md`, `zquic/buffers.md`, and the module `Makefile.am` files against `AGENTS.md` and `docs/GUIDELINES.md`. Generated build outputs, object files, `.libs`, `.deps`, and `Makefile.in` files were ignored.
 
 ## Overall alignment
 
@@ -12,7 +12,7 @@ The main gaps are not cosmetic. They are mostly places where the implementation 
 
 ### High: public templates use `requires`, which the guidelines explicitly forbid
 
-`GUIDELINES.md` and `AGENTS.md` say to avoid concepts and `requires`, and to express compile-time constraints with `ZuIfT`/SFINAE detector structs. `zquic/src/Zquic.hh` uses `if constexpr (requires ...)` throughout the public template surface:
+`docs/GUIDELINES.md` and `AGENTS.md` say to avoid concepts and `requires`, and to express compile-time constraints with `ZuIfT`/SFINAE detector structs. `zquic/src/Zquic.hh` uses `if constexpr (requires ...)` throughout the public template surface:
 
 - `zquic/src/Zquic.hh:1007`
 - `zquic/src/Zquic.hh:1040`
@@ -46,7 +46,7 @@ Once full, `addLink_()` emits `"QUIC server active SrvLink table is full"` and r
 - `zquic/src/ZquicEndpoint.cc:131`
 - `zquic/src/ZquicEndpoint.cc:132`
 
-This is exactly the fixed-array pattern called out in `GUIDELINES.md`. It is also on the packet send path and has no explicit diagnostic for queue-full events. Replace it with a Z container or queue node structure using a named heap, and account for queue-full/back-pressure in diagnostics.
+This is exactly the fixed-array pattern called out in `docs/GUIDELINES.md`. It is also on the packet send path and has no explicit diagnostic for queue-full events. Replace it with a Z container or queue node structure using a named heap, and account for queue-full/back-pressure in diagnostics.
 
 ### Medium: active connection ID storage is a fixed eight-slot table
 
@@ -77,7 +77,7 @@ These are heap allocations outside `ZmHeap`/`ZmVHeap` and occur in packet proces
 
 ### Medium: frame dispatch is long chained `if` logic where `switch` fits the local rule
 
-`GUIDELINES.md` flags chained `if` statements that should be `switch`. `FrameCodec::parse()` is a long frame-type chain:
+`docs/GUIDELINES.md` flags chained `if` statements that should be `switch`. `FrameCodec::parse()` is a long frame-type chain:
 
 - `zquic/src/ZquicFrame.cc:25`
 - `zquic/src/ZquicFrame.cc:131`

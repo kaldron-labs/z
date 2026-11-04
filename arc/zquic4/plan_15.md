@@ -9,7 +9,7 @@ Preconditions: plans 1 through 14 complete.
 `zquic` already parses NEW_CONNECTION_ID/RETIRE_CONNECTION_ID, stores local/peer CIDs, and verifies stateless reset tokens.  The missing work is stronger lifecycle validation: uniqueness checks, path/DCID association, and timer-based cleanup of retired/tombstoned CIDs.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -68,7 +68,7 @@ New or changed data stores: CID entries store sequence, CID, reset token, state,
 - Open question: cleanup timer ownership could be a separate CID timer or folded into draining/lifecycle timer.  Avoid overloading key-discard semantics.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

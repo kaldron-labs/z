@@ -23,7 +23,7 @@ The principal missing wire capability is outbound trailers: ordinary builders
 currently emit only initial fields. Extend existing production and completion
 paths using the implementation contracts below. They prescribe the API and
 owning paths without requiring a shared client/server producer rewrite.
-[GUIDELINES.md](GUIDELINES.md) is authoritative, including ownership, allocation,
+[GUIDELINES.md](docs/GUIDELINES.md) is authoritative, including ownership, allocation,
 formatting and teardown rules. Propagate necessary API changes directly through
 affected dependents.
 

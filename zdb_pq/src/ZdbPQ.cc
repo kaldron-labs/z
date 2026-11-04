@@ -848,6 +848,7 @@ void Store::open(
 	return;
       }
       storeTbl->schema(schema);
+      storeTbl->bufAllocFn(ZuMv(bufAllocFn));
       storeTbl->open(ZuMv(openFn));
       return;
     }
@@ -2565,7 +2566,7 @@ ZmRef<IOBuf> StoreTbl::find_save(ZuSpan<const Value> tuple)
   VN vn = tuple[3].p<Int64>().v;
   auto record = saveRecord(fbb, this->id(), un, sn, vn, shard, data);
   fbb.finish(saveMsg(fbb, record, Recovery ? Msg::Tag::Recovery : Msg::Tag::Replication));
-  return saveHdr(fbb);
+  return saveFrame(fbb);
 }
 void StoreTbl::find_failed(Work::Find &find, ZeException e)
 {

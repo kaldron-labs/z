@@ -445,7 +445,7 @@ Verification:
 - Validate qlog output with both local JSON-SEQ parsing and, where available,
   mainstream qlog tooling.
 - Run full `zquic` and dependent `zhttp` regression suites.
-- Review the final implementation against `GUIDELINES.md`.
+- Review the final implementation against `docs/GUIDELINES.md`.
 
 Acceptance:
 
@@ -482,7 +482,7 @@ Acceptance:
 - The full `zquic` regression suite passes: `make -C zquic/test test`.
 - The full dependent `zhttp` regression suite passes:
   `make -C zhttp/test test`.
-- The implementation is reviewed against `GUIDELINES.md`, especially hot-path
+- The implementation is reviewed against `docs/GUIDELINES.md`, especially hot-path
   allocation/copy rules, thread ownership, shutdown behavior, and Z Framework
   API usage.
 

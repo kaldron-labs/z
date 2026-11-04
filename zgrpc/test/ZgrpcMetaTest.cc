@@ -13,47 +13,47 @@ using namespace Zgrpc;
 
 static void timeouts()
 {
-  ZuTestScope(timeouts);
-  ZuCheck(encodeTimeout(-1) == "0n" && encodeTimeout(0) == "0n");
-  ZuCheck(encodeTimeout(99999999) == "99999999n");
-  ZuCheck(encodeTimeout(100000000) == "100000u");
-  ZuCheck(encodeTimeout(100000001) == "100001u");
-  ZuCheck(encodeTimeout(INT64_MAX) == "2562048H");
+  ZuTestScopeRT(timeouts);
+  ZuCheckRT(encodeTimeout(-1) == "0n" && encodeTimeout(0) == "0n");
+  ZuCheckRT(encodeTimeout(99999999) == "99999999n");
+  ZuCheckRT(encodeTimeout(100000000) == "100000u");
+  ZuCheckRT(encodeTimeout(100000001) == "100001u");
+  ZuCheckRT(encodeTimeout(INT64_MAX) == "2562048H");
   for (auto input : {"0n", "1u", "1m", "1S", "1M", "1H", "99999999H"}) {
     int64_t nanos = -1, roundTrip = -1;
-    ZuCheck(decodeTimeout(input, nanos) && nanos >= 0);
-    ZuCheck(decodeTimeout(encodeTimeout(nanos), roundTrip) && roundTrip >= nanos);
+    ZuCheckRT(decodeTimeout(input, nanos) && nanos >= 0);
+    ZuCheckRT(decodeTimeout(encodeTimeout(nanos), roundTrip) && roundTrip >= nanos);
   }
   int64_t nanos = -1;
-  ZuCheck(decodeTimeout("99999999H", nanos) && nanos == INT64_MAX);
+  ZuCheckRT(decodeTimeout("99999999H", nanos) && nanos == INT64_MAX);
   for (auto input : {"", "n", "1", "1s", "-1n", "+1n", "100000000n", "1 n", "1.5S"}) {
     nanos = -1;
-    ZuCheck(!decodeTimeout(input, nanos) && nanos == -1);
+    ZuCheckRT(!decodeTimeout(input, nanos) && nanos == -1);
   }
 }
 
 static void status()
 {
-  ZuTestScope(status);
+  ZuTestScopeRT(status);
   for (int i = 0; i < Code::N; i++) {
     String wire;
     wire << ZuBoxed(i);
     Code::T code = -1;
-    ZuCheck(decodeCode(wire, code) && code == i);
-    ZuCheck(Code::lookup(Code::name(i)) == i);
+    ZuCheckRT(decodeCode(wire, code) && code == i);
+    ZuCheckRT(Code::lookup(Code::name(i)) == i);
   }
   Code::T code = -1;
   for (auto input : {"", "-1", "+0", " 0", "17", "255", "0x0", "1.0"})
-    ZuCheck(!decodeCode(input, code) && code == -1);
-  ZuCheck(httpCode(400) == Code::INTERNAL);
-  ZuCheck(httpCode(401) == Code::UNAUTHENTICATED);
-  ZuCheck(httpCode(403) == Code::PERMISSION_DENIED);
-  ZuCheck(httpCode(404) == Code::UNIMPLEMENTED);
+    ZuCheckRT(!decodeCode(input, code) && code == -1);
+  ZuCheckRT(httpCode(400) == Code::INTERNAL);
+  ZuCheckRT(httpCode(401) == Code::UNAUTHENTICATED);
+  ZuCheckRT(httpCode(403) == Code::PERMISSION_DENIED);
+  ZuCheckRT(httpCode(404) == Code::UNIMPLEMENTED);
   for (unsigned status : {429U, 502U, 503U, 504U})
-    ZuCheck(httpCode(status) == Code::UNAVAILABLE);
-  ZuCheck(httpCode(200) == Code::UNKNOWN && httpCode(500) == Code::UNKNOWN);
-  ZuCheck(contentType("application/grpc") && contentType("application/grpc+proto"));
-  ZuCheck(!contentType("application/grpc-web") && !contentType("application/json"));
+    ZuCheckRT(httpCode(status) == Code::UNAVAILABLE);
+  ZuCheckRT(httpCode(200) == Code::UNKNOWN && httpCode(500) == Code::UNKNOWN);
+  ZuCheckRT(contentType("application/grpc") && contentType("application/grpc+proto"));
+  ZuCheckRT(!contentType("application/grpc-web") && !contentType("application/json"));
 }
 
 static void text()
@@ -71,54 +71,54 @@ static void text()
 
 static void binary()
 {
-  ZuTestScope(binary);
+  ZuTestScopeRT(binary);
   Bytes out;
-  ZuCheck(decodeBinary("", out, 0) && !out.length());
+  ZuCheckRT(decodeBinary("", out, 0) && !out.length());
   for (auto wire : {"YQ", "YQ=="})
-    ZuCheck(decodeBinary(wire, out, 1) && ZuBSpan{out} == ZuBSpan{"a"});
+    ZuCheckRT(decodeBinary(wire, out, 1) && ZuBSpan{out} == ZuBSpan{"a"});
   for (auto wire : {"YWI", "YWI="})
-    ZuCheck(decodeBinary(wire, out, 2) && ZuBSpan{out} == ZuBSpan{"ab"});
-  ZuCheck(decodeBinary("YWJj", out, 3) && ZuBSpan{out} == ZuBSpan{"abc"});
+    ZuCheckRT(decodeBinary(wire, out, 2) && ZuBSpan{out} == ZuBSpan{"ab"});
+  ZuCheckRT(decodeBinary("YWJj", out, 3) && ZuBSpan{out} == ZuBSpan{"abc"});
   for (auto wire : {"a", "YQ=", "=YQ=", "====", "YQ===", "YQ==a", "YQ,YQ", "Y Q", "YQ-_"})
-    ZuCheck(!decodeBinary(wire, out, 100) && ZuBSpan{out} == ZuBSpan{"abc"});
-  ZuCheck(!decodeBinary("YWJj", out, 2) && ZuBSpan{out} == ZuBSpan{"abc"});
+    ZuCheckRT(!decodeBinary(wire, out, 100) && ZuBSpan{out} == ZuBSpan{"abc"});
+  ZuCheckRT(!decodeBinary("YWJj", out, 2) && ZuBSpan{out} == ZuBSpan{"abc"});
   Bytes bytes;
   bytes.length(256);
   for (unsigned i = 0; i < 256; i++) bytes[i] = i;
   auto wire = encodeBinary(bytes);
-  ZuCheck(decodeBinary(wire, out, 256) && out == bytes);
+  ZuCheckRT(decodeBinary(wire, out, 256) && out == bytes);
 }
 
 static void collection()
 {
-  ZuTestScope(collection);
+  ZuTestScopeRT(collection);
   Metadata meta;
   uint8_t name[] = {'x', '-', 't', 'a', 'g'};
   uint8_t value[] = {'o', 'n', 'e'};
-  ZuCheck(meta.receive(name, value));
+  ZuCheckRT(meta.receive(name, value));
   memset(name, 'z', sizeof(name));
   memset(value, 'z', sizeof(value));
-  ZuCheck(meta.receive("x-tag", "two"));
-  ZuCheck(meta.fields().length() == 2);
-  ZuCheck(meta.name(meta.fields()[0]) == ZuBSpan{"x-tag"});
-  ZuCheck(meta.value(meta.fields()[0]) == ZuBSpan{"one"});
-  ZuCheck(meta.value(meta.fields()[1]) == ZuBSpan{"two"});
+  ZuCheckRT(meta.receive("x-tag", "two"));
+  ZuCheckRT(meta.fields().length() == 2);
+  ZuCheckRT(meta.name(meta.fields()[0]) == ZuBSpan{"x-tag"});
+  ZuCheckRT(meta.value(meta.fields()[0]) == ZuBSpan{"one"});
+  ZuCheckRT(meta.value(meta.fields()[1]) == ZuBSpan{"two"});
   Metadata copy = meta;
   meta.reset(1);
-  ZuCheck(copy.name(copy.fields()[0]) == ZuBSpan{"x-tag"});
-  ZuCheck(copy.value(copy.fields()[1]) == ZuBSpan{"two"});
-  ZuCheck(!meta.add("x", "") && meta.error() == MetaError::Limit);
+  ZuCheckRT(copy.name(copy.fields()[0]) == ZuBSpan{"x-tag"});
+  ZuCheckRT(copy.value(copy.fields()[1]) == ZuBSpan{"two"});
+  ZuCheckRT(!meta.add("x", "") && meta.error() == MetaError::Limit);
   meta.reset(34);
-  ZuCheck(meta.add("x", "a") && meta.size() == 34);
-  ZuCheck(!meta.add("x", "") && meta.error() == MetaError::Limit);
-  ZuCheck(meta.fields().length() == 1);
+  ZuCheckRT(meta.add("x", "a") && meta.size() == 34);
+  ZuCheckRT(!meta.add("x", "") && meta.error() == MetaError::Limit);
+  ZuCheckRT(meta.fields().length() == 1);
   for (auto reserved : {"grpc-status", "grpc-future", "te", "content-type", "content-length"}) {
     Metadata fields;
-    ZuCheck(!fields.add(reserved, "x") && fields.error() == MetaError::Reserved);
+    ZuCheckRT(!fields.add(reserved, "x") && fields.error() == MetaError::Reserved);
   }
   for (auto invalid : {"", "X-UPPER", "has space", ":authority", "bad/key"}) {
     Metadata fields;
-    ZuCheck(!fields.add(invalid, "x") && fields.error() == MetaError::Name);
+    ZuCheckRT(!fields.add(invalid, "x") && fields.error() == MetaError::Name);
   }
 }
 
@@ -207,30 +207,30 @@ static void responseFields()
 
 static void responseErrors()
 {
-  ZuTestScope(responseErrors);
+  ZuTestScopeRT(responseErrors);
   for (auto status : {200U, 400U, 401U, 403U, 404U, 429U, 502U, 503U, 504U}) {
     MetaRx rx{true};
     rx.httpStatus(status);
-    ZuCheck(rx.header(Initial, "content-type", "application/grpc"));
-    ZuCheck(rx.initial());
-    ZuCheck(!rx.end() && rx.error() == MetaError::MissingStatus);
-    ZuCheck(rx.status().code == httpCode(status));
+    ZuCheckRT(rx.header(Initial, "content-type", "application/grpc"));
+    ZuCheckRT(rx.initial());
+    ZuCheckRT(!rx.end() && rx.error() == MetaError::MissingStatus);
+    ZuCheckRT(rx.status().code == httpCode(status));
   }
   for (auto code : {"", "17", "1,2", "garbage"}) {
     MetaRx rx{true};
-    ZuCheck(!rx.header(Initial, "grpc-status", code) && rx.error() == MetaError::Status);
-    ZuCheck(!rx.header(Initial, "content-type", "application/grpc"));
+    ZuCheckRT(!rx.header(Initial, "grpc-status", code) && rx.error() == MetaError::Status);
+    ZuCheckRT(!rx.header(Initial, "content-type", "application/grpc"));
   }
   MetaRx rx{true};
-  ZuCheck(rx.header(Initial, "content-type", "application/grpc"));
-  ZuCheck(rx.initial());
-  ZuCheck(rx.header(Trailing, "grpc-status", "0"));
-  ZuCheck(!rx.header(Trailing, "grpc-status", "0") && rx.error() == MetaError::Duplicate);
+  ZuCheckRT(rx.header(Initial, "content-type", "application/grpc"));
+  ZuCheckRT(rx.initial());
+  ZuCheckRT(rx.header(Trailing, "grpc-status", "0"));
+  ZuCheckRT(!rx.header(Trailing, "grpc-status", "0") && rx.error() == MetaError::Duplicate);
   rx.reset(true, Zhttp::DefltMaxHeaderSection);
-  ZuCheck(!rx.header(Initial, "content-type", "application/json"));
-  ZuCheck(rx.error() == MetaError::ContentType);
+  ZuCheckRT(!rx.header(Initial, "content-type", "application/json"));
+  ZuCheckRT(rx.error() == MetaError::ContentType);
   rx.reset(true, Zhttp::DefltMaxHeaderSection);
-  ZuCheck(!rx.header(Initial, "bad-bin", "YWJj,invalid!") && rx.error() == MetaError::Binary);
+  ZuCheckRT(!rx.header(Initial, "bad-bin", "YWJj,invalid!") && rx.error() == MetaError::Binary);
 }
 
 static void sectionErrors()

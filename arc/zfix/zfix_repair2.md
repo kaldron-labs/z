@@ -110,7 +110,7 @@ against the prior baseline passed. Current native logs use the
 Ztcp/Ztls headers and the ZiTx starter/bound-target entry point; no dependency
 library rebuild or external SDK modification was performed.
 
-`GUIDELINES.md` is authoritative. This plan supersedes attachment-registry and
+`docs/GUIDELINES.md` is authoritative. This plan supersedes attachment-registry and
 concurrent-connection rejection requirements in earlier Zfix documents. It
 preserves the other decisions in `zfix_repair.md`. The user correction is
 authoritative: displacement abruptly closes the stale connection without
@@ -358,7 +358,7 @@ All Rx and Tx state remains on its owning shard. Cross-shard continuations
 carry existing handles and small identity/ticket snapshots, not copied config,
 message bodies, or captures reading foreign-shard members. Keep immutable,
 scheduler-shared, Rx, and Tx groups identified and cache-line separated per
-`GUIDELINES.md`; preserve data alignment and function/definition spacing.
+`docs/GUIDELINES.md`; preserve data alignment and function/definition spacing.
 
 ## 6. Delete the attachment mechanism and its direct dependents
 
@@ -434,7 +434,7 @@ modify the SDK, suppress the failure, or present a retry as a repair.
 - All replacement transitions and stale callbacks satisfy sections 2–5,
   including transport cleanup and accounting prerequisites.
 - State, containers, allocations, copies, and cross-shard captures receive a
-  changed-line review against all applicable `GUIDELINES.md` flags. Every
+  changed-line review against all applicable `docs/GUIDELINES.md` flags. Every
   retained/new field has an explicit owner and non-duplicative purpose.
 - Required regressions pass under the unchanged authorized build, with commands,
   results, and any unresolved prerequisite recorded accurately in module status.

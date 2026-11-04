@@ -430,7 +430,7 @@ struct Bitmap {
     return *this;
   }
   void rebind() {
-    if (owned.length()) words = {owned.data(), owned.length()};
+    if (owned.length()) words = owned;
   }
 #endif
 };
@@ -1295,7 +1295,7 @@ private:
 	builder.varint(span.length());
       } else {
 	ZuCSpan span{value};
-	builder.bytes({reinterpret_cast<const uint8_t *>(span.data()), span.length()});
+	builder.bytes(span);
 	builder.varint(span.length());
       }
       builder.tag(number<F>(), Wire::Length);
@@ -1417,7 +1417,7 @@ private:
 	  builder.varint(elem.length());
 	} else {
 	  ZuCSpan elem{value[--i]};
-	  builder.bytes({reinterpret_cast<const uint8_t *>(elem.data()), elem.length()});
+	  builder.bytes(elem);
 	  builder.varint(elem.length());
 	}
 	builder.tag(number<F>(), Wire::Length);
@@ -1530,7 +1530,7 @@ private:
       ZuBSpan raw;
       if (!Wire::readLength(bytes, pos, raw)) return false;
       if constexpr (code == ZfFieldTC::Bytes) return apply(raw);
-      else return apply(ZuCSpan{reinterpret_cast<const char *>(raw.data()), raw.length()});
+      else return apply(ZuCSpan{raw});
     } else if constexpr (code == ZfFieldTC::Float) {
       using T = F::T;
       if (type != (sizeof(T) == 4 ? Wire::Fixed32 : Wire::Fixed64))
@@ -1608,7 +1608,7 @@ private:
       ZuBSpan raw;
       if (!Wire::readLength(bytes, pos, raw)) return false;
       if constexpr (code == ZfFieldTC::BytesVec) return apply(raw);
-      else return apply(ZuCSpan{reinterpret_cast<const char *>(raw.data()), raw.length()});
+      else return apply(ZuCSpan{raw});
     } else ZuAssert(code == ZfFieldTC::Bool, "field type is not implemented");
   }
 

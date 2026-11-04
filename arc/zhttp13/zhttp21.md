@@ -44,7 +44,7 @@ The work is complete only when all of the following are true:
 
 ## Engineering Constraints
 
-- `GUIDELINES.md` compliance is the overriding constraint.  Read its current
+- `docs/GUIDELINES.md` compliance is the overriding constraint.  Read its current
   storage, intrusion, I/O sharding, lifetime, and test sections before each
   stage and change this plan's implementation detail if necessary while
   preserving the outcomes above.

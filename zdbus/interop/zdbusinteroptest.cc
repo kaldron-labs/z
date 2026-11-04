@@ -287,7 +287,7 @@ static void clientToPeer()
           info.headers.member != "Changed") return;
       if (info.headers.signature == "s") {
         auto handler = ZfDBUS::handler<TextBody>({
-          frame->cspan(info.bodyOffset), "s", info.bodyOffset, info.order});
+          info.body(), "s", info.bodyOffset, info.order});
         if (handler && handler.ctor().text == "changed") ++signalOK;
       }
       signalDone.post();
@@ -309,7 +309,7 @@ static void clientToPeer()
           result.info.headers.replySerial == echoSerial.load_() &&
           result.info.headers.signature == "s") {
         auto handler = ZfDBUS::handler<TextBody>({
-          result.frame->cspan(result.info.bodyOffset), "s",
+          result.info.body(), "s",
           result.info.bodyOffset, result.info.order});
         if (handler && handler.ctor().text == "hello") ++echoOK;
       }
@@ -330,7 +330,7 @@ static void clientToPeer()
           result.info.headers.replySerial == complexSerial.load_() &&
           result.info.headers.signature == "(qu)aua{sv}v") {
         auto handler = ZfDBUS::handler<ComplexBody>({
-          result.frame->cspan(result.info.bodyOffset),
+          result.info.body(),
           result.info.headers.signature, result.info.bodyOffset,
           result.info.order});
         if (handler) {
@@ -356,7 +356,7 @@ static void clientToPeer()
             "org.example.ZdbusPeer.Rejected" &&
           result.info.headers.signature == "us") {
         auto handler = ZfDBUS::handler<ErrorBody>({
-          result.frame->cspan(result.info.bodyOffset), "us",
+          result.info.body(), "us",
           result.info.bodyOffset, result.info.order});
         if (handler) {
           auto body = handler.ctor();
@@ -498,7 +498,7 @@ static void peerToServer()
       ++echoCalls;
       srv.send([frame = ZuMv(frame), info](uint32_t serial) {
         auto handler = ZfDBUS::handler<TextBody>({
-          frame->cspan(info.bodyOffset), info.headers.signature,
+          info.body(), info.headers.signature,
           info.bodyOffset, info.order});
         if (!handler) return Zdbus_::BuildResult{{}, {},
           Zdbus_::BuildError::Body};
@@ -513,7 +513,7 @@ static void peerToServer()
       ++complexCalls;
       srv.send([frame = ZuMv(frame), info](uint32_t serial) {
         auto handler = ZfDBUS::handler<ComplexBody>({
-          frame->cspan(info.bodyOffset), info.headers.signature,
+          info.body(), info.headers.signature,
           info.bodyOffset, info.order});
         if (!handler) return Zdbus_::BuildResult{{}, {},
           Zdbus_::BuildError::Body};

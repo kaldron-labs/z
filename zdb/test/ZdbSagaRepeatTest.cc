@@ -40,7 +40,8 @@ static void execute(uint64_t repeats, bool rollback)
   ZuTestScopeRT(execute);
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   using DB = zdbtest::LiveDB;
@@ -86,10 +87,10 @@ static void execute(uint64_t repeats, bool rollback)
   ZuCheckRT(db->stop());
   orders = {};
   context->orders = nullptr;
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 // Admit no effects, then preserve a corrupt/overflowing main intent for replay.
@@ -98,7 +99,8 @@ static void invalidRecovery(bool overflow)
   ZuTestScopeRT(invalidRecovery);
   auto cf = config();
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -145,7 +147,9 @@ static void invalidRecovery(bool overflow)
   ZuCheckRT(db->stop());
   orders = {};
   context->orders = nullptr;
+  ZuCheckRT(mx.stop());
   db->final();
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
   orders = db->initTable<zdbtest::Order>("o");
   context->orders = orders;
@@ -154,10 +158,10 @@ static void invalidRecovery(bool overflow)
   ZuCheckRT(!context->runs);
   orders = {};
   context->orders = nullptr;
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 int main(int argc, char **argv)

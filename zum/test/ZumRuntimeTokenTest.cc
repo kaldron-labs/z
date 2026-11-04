@@ -11,8 +11,11 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZfCf.hh>
 #include "../../zdb/test/ZdbTestCf.hh"
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZvMxParams.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZdbMemStore.hh>
 #include <zlib/zumd_db.hh>
 #include <zlib/zumd_request.hh>
@@ -145,12 +148,14 @@ static void runtimeToken()
   ZiLog::sink(ZiLog::lambdaSink([](
       ZeLogBuf &buf, const ZeEventInfo &info) {
     if (info.component == "Zum")
-      logRows.push(Zum::String{" "} << ZuCSpan{buf.data(), buf.length()} << " ");
+      logRows.push(Zum::String{" "} << ZuCSpan{buf} << " ");
   }));
   ZiLog::start();
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
@@ -166,26 +171,26 @@ static void runtimeToken()
   ZuCheck(rng.init());
   Zum::Bytes passkeyHandle;
   ZmRef<Ztls::PK::SK_EC> passkey;
-  prepareIdentity(db, context, rng, passkeyHandle, passkey);
+  ZuTestCall(prepareIdentity, db, context, rng, passkeyHandle, passkey);
   OIDCSetup state;
-  prepareOIDC(db, context, rng, state);
+  ZuTestCall(prepareOIDC, db, context, rng, state);
   Ztls::PK::SK_EC tokenKey{rng, Ztls::PK::OIDs::EC_GRP_SECP256R1};
   uint8_t tokenPublic[Ztls::COSE::ES256::PublicKeySize];
   TokenSetup token;
-  prepareToken(db, context, rng, state, passkeyHandle,
+  ZuTestCall(prepareToken, db, context, rng, state, passkeyHandle,
     *passkey, tokenKey, tokenPublic, token);
   ZuCheck(token.browserCode);
-  helperCredit(db, rng);
+  ZuTestCall(helperCredit, db, rng);
   ZmSemaphore requestsDown;
   db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};
+  ZuCheck(mx.stop());
   db->final();
   db->requests = {};
   db = {};
   store = {};
-  ZuCheck(mx.stop());
   ZiLog::stop();
   ZiLog::sink(ZiLog::debugSink());
   logRows.null();

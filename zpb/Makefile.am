@@ -1,7 +1,7 @@
 METASOURCES = AUTO
 SUBDIRS = src test itest example
 DIST_SUBDIRS = src test itest example interop
-EXTRA_DIST = README.md zpb.md
+EXTRA_DIST = README.md
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

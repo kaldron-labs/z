@@ -22,10 +22,33 @@
 #include <zlib/ZfbReflect.hh>
 
 #include "ZdbSagaTestDefs.hh"
+#include "ZdbPolicyTable.hh"
 
 using namespace ZuTestUtil;
 
 namespace zdbtest {
+
+struct SmallPolicy {
+  unsigned id;
+  ZtString<> value;
+  friend ZuUnsigned<256> ZdbBufSize(SmallPolicy *);
+  friend ZuStringT<"Zdb.Test.Small"> ZdbBufHeapID(SmallPolicy *);
+};
+PolicyTable<SmallPolicy> *ZdbTableType(SmallPolicy *);
+Zfb::AsTable<"zdbtest.SmallPolicy"> Zfb_Fmt(SmallPolicy *);
+ZfStruct(, (SmallPolicy, FB),
+  (id, (Ctor<0>, Keys<0>), UInt32), (value, (Ctor<1>), String));
+
+struct LargePolicy {
+  uint64_t id;
+  ZtString<> value;
+  friend ZuUnsigned<1024> ZdbBufSize(LargePolicy *);
+  friend ZuStringT<"Zdb.Test.Large"> ZdbBufHeapID(LargePolicy *);
+};
+PolicyTable<LargePolicy> *ZdbTableType(LargePolicy *);
+Zfb::AsTable<"zdbtest.LargePolicy"> Zfb_Fmt(LargePolicy *);
+ZfStruct(, (LargePolicy, FB),
+  (id, (Ctor<0>, Keys<0>), UInt64), (value, (Ctor<1>), String));
 
 struct KeyOrder {
   unsigned member;
@@ -400,7 +423,8 @@ static void indexes()
   using namespace Zdb_;
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<zdbtest::LiveDB> db =
@@ -458,10 +482,10 @@ static void indexes()
   ZuCheck(db->stop());
   orders = {};
   context->orders = nullptr;
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void registration()
@@ -478,7 +502,8 @@ static void registration()
   ZuCheck(reject({zdbtest::liveSagaDef()}));
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
@@ -523,11 +548,11 @@ static void registration()
   ZuCheck(db->stop());
   ZuCheck(definition.type == "liveSaga");
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   ZuCheck(context->refCount() == refs);
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void tableIDs()
@@ -535,7 +560,8 @@ static void tableIDs()
   ZuTestScopeRT(tableIDs);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<Zdb> db = new Zdb{};
@@ -559,10 +585,137 @@ static void tableIDs()
   }
   ZuCheckRT(db->start());
   ZuCheckRT(db->stop());
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
+}
+
+static void tableBufPolicies()
+{
+  ZuTestScopeRT(tableBufPolicies);
+  using namespace Zdb_;
+  auto config = cf(true);
+  auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
+    .rxRingSize(257).txRingSize(513)
+    .tcpBufAllocator<RxBufAllocator>()};
+  ZuCheckRT(mx.start());
+  ZmRef<zdbtest::Store> store = new zdbtest::Store{};
+  ZmRef<Zdb> db = new Zdb{};
+  db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
+  auto small = db->initTable<zdbtest::SmallPolicy>("small");
+  auto other = db->initTable<zdbtest::SmallPolicy>("other");
+  auto large = db->initTable<zdbtest::LargePolicy>("large");
+  ZuCheckRT(db->start());
+  ZmRef<IOBuf> first, second, third;
+  ZmBlock<>{}([small, other, large, &first, &second, &third](auto done) {
+    small->run(0, [small, other, large, &first, &second, &third, done = ZuMv(done)]() mutable {
+      first = small->allocBuf(0);
+      second = other->bufAllocFn(0)();
+      third = large->allocBuf(0);
+      done();
+    });
+  });
+  ZuCheckRT(first && second && third);
+#if Zi_URing
+  if (Zi::uring()) {
+    ZuCheckRT(first->ring() && first->ring()->bufCount() == mx.txRingSize());
+    ZuCheckRT(second->ring() && second->ring()->bufCount() == mx.txRingSize());
+    ZuCheckRT(third->ring() && third->ring()->bufCount() == mx.txRingSize());
+  }
+#endif
+  ZuCheckRT(first->size >= 256 && third->size >= 1024);
+  if (first->ring()) ZuCheckRT(first->ring() != second->ring());
+  else {
+    ZuCheckRT(bool(dynamic_cast<IOBufAlloc<zdbtest::SmallPolicy> *>(first.ptr())));
+    ZuCheckRT(bool(dynamic_cast<IOBufAlloc<zdbtest::LargePolicy> *>(third.ptr())));
+  }
+  auto firstRing = first->ring();
+#if Zi_URing
+  if (firstRing && firstRing->fd() >= 0) {
+    bool exhausted = false, recycled = false, preserved = false;
+    ZmBlock<>{}([small, &first, firstRing, &exhausted, &recycled, &preserved](auto done) {
+      small->run(0, [small, &first, firstRing, &exhausted, &recycled, &preserved,
+	done = ZuMv(done)]() mutable {
+	ZtArray<ZmRef<IOBuf>> held;
+	unsigned count = firstRing->bufCount();
+	held.size(count);
+	for (unsigned i = 0; i < count; ++i) held.push(small->allocBuf(0));
+	exhausted = count && !held[count - 1]->uring() && !held[count - 1]->rep;
+	auto slot = first->data_();
+	*first << "policy growth";
+	first->ensure(first->size + 1);
+	preserved = first->jumbo() && first->cspan() == "policy growth" && !first->rep;
+	auto reused = small->allocBuf(0);
+	recycled = reused->uring() && reused->data_() == slot && reused->ring() == firstRing;
+	done();
+      });
+    });
+    ZuCheckRT(exhausted && recycled && preserved);
+  }
+#endif
+  auto check = [store]<typename T>(ZdbTable<T> *table, Zi::IOBufRing *ring) {
+    bool committed = ZmBlock<bool>{}([table](auto done) {
+      table->run(0, [table, done = ZuMv(done)]() mutable {
+        ZdbRowRef<T> row = new ZdbRow<T>{table, 0};
+        table->insert(ZuMv(row), [done = ZuMv(done)](ZdbRow<T> *row) mutable {
+          if (!row) { done(false); return; }
+          new (row->ptr()) T{7, "retained policy row"};
+          done(row->commit());
+        });
+      });
+    });
+    ZuCheckRT(committed);
+    store->sync();
+    auto result = ZmBlock<RowResult>{}([table](auto done) {
+      table->recover(0, 0, ZuMv(done));
+    });
+    ZuCheckRT(result.template is<RowData>());
+    if (result.template is<RowData>()) {
+      auto buf = ZuMv(result).template p<RowData>().buf;
+      ZuCheckRT(bool(buf));
+      ZuCheckRT(!buf->rep);
+      if (ring) ZuCheckRT(buf->ring() && buf->ring() != ring);
+#if Zi_URing
+      if (ring)
+	ZuCheckRT(buf->ring() && buf->ring()->bufCount() == ring->bufCount());
+#endif
+      auto record = record_(msg_(buf->hdr()));
+      auto bytes = record.template get<Msg::ZfField(Record, data)>();
+      ZuCheckRT(Zfb::verify<T>(bytes));
+      ZuCheckRT(!(uintptr_t(bytes.data()) & (Zfb::BufferAlign<T>::N - 1)));
+      auto value = Zfb::load<T>(bytes);
+      ZuCheckRT(value.id == 7 && value.value == "retained policy row");
+      if (!buf->ring()) ZuCheckRT(bool(dynamic_cast<IOBufAlloc<T> *>(buf.ptr())));
+      auto old = buf->hdr()->length;
+      ZuCheckRT(buf->ensure(buf->size + 1024));
+      ZuCheckRT(buf->jumbo() && buf->hdr()->length == old);
+    }
+  };
+  check.template operator()<zdbtest::SmallPolicy>(small.ptr(), firstRing);
+  check.template operator()<zdbtest::SmallPolicy>(other.ptr(), second->ring());
+  check.template operator()<zdbtest::LargePolicy>(large.ptr(), third->ring());
+  first = {}; second = {}; third = {};
+  auto retained = small->bufAllocFn(0);
+  ZuCheckRT(db->stop());
+  ZmRef<IOBuf> late;
+  ZmBlock<>{}([small, retained, &late](auto done) {
+    small->run(0, [retained, &late, done = ZuMv(done)]() mutable {
+      late = retained();
+      *late << "late policy";
+      done();
+    });
+  });
+  ZuCheckRT(late && !late->rep && late->cspan() == "late policy");
   ZuCheckRT(mx.stop());
+  ZuCheckRT(late->cspan() == "late policy");
+  late = {};
+  retained = {};
+  small = {}; other = {}; large = {};
+  db->final();
+  db = {}; store = {};
+
 }
 
 static void collisions()
@@ -573,7 +726,8 @@ static void collisions()
 
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
@@ -585,7 +739,7 @@ static void collisions()
   SchemaBuf schema = SchemaBuf(Zfb::SchemaOut::Schema<Order>::Size);
   Zfb::saveSchema<Order>(schema);
   store->open(false, "collisions", ZfVFields<Order>(), ZfVKeyFields<Order>(),
-    Schema::from<Order>(schema), Table<Order>::allocBuf,
+    Schema::from<Order>(schema), localBufAllocFn<Order>(),
     [&table, &opened](OpenResult result) {
       if (result.is<OpenData>()) table = result.p<OpenData>().storeTbl;
       opened.post();
@@ -596,7 +750,7 @@ static void collisions()
   auto insert = [table](UN un, uint64_t seqNo) {
     Order row{"IBM", 1, "FIX0", "collision", seqNo,
       zdbtest::Side::Buy, {100}, {1}};
-    Builder fbb{Table<Order>::allocBuf()};
+    Builder fbb{new Zdb_::IOBufAlloc<Order>{nullptr, 0}};
     auto nested = fbb.startNested();
     auto data = fbb.endNested(nested, Zfb::save(fbb, row));
     fbb.finish(saveMsg(fbb,
@@ -604,7 +758,7 @@ static void collisions()
       Msg::Tag::Replication));
     bool ok = false;
     ZmSemaphore done;
-    table->write(saveHdr(fbb), [&ok, &done](ZmRef<IOBuf>, CommitResult result) {
+    table->write(saveFrame(fbb), [&ok, &done](ZmRef<IOBuf>, CommitResult result) {
       ok = result.is<void>();
       done.post();
     });
@@ -617,7 +771,7 @@ static void collisions()
   bool unchanged = false;
   unsigned rows = 0;
   ZmSemaphore selected;
-  Builder fbb{Table<Order>::allocBuf()};
+  Builder fbb{new Zdb_::IOBufAlloc<Order>{nullptr, 0}};
   using GroupKey = SplitKey<Order, 0>::GroupKey;
   fbb.finish(Zfb::save(fbb, GroupKey{}));
   table->select(true, false, false, 0, fbb.buf(), 10,
@@ -642,7 +796,7 @@ static void collisions()
   Zfb::saveSchema<Order>(replacement);
   schema = ZuMv(replacement); // release the first open's metadata owner
   store->open(false, "collisions", ZfVFields<Order>(), ZfVKeyFields<Order>(),
-    Schema::from<Order>(schema), Table<Order>::allocBuf,
+    Schema::from<Order>(schema), localBufAllocFn<Order>(),
     [&position, &table, &opened](OpenResult result) {
       if (result.is<OpenData>()) {
 	auto &data = result.p<OpenData>();
@@ -739,13 +893,14 @@ static void repairBindings()
   using namespace Zdb_;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   auto storeFields = ZfCf::handler<zdbtest::ConfigFields>(
     configFields.zdb.p<const ZfCf::AnyNode *>()).ctor();
   ZuCheckRT(store->init(storeFields.store.p<const ZfCf::AnyNode *>(), &mx, 1, {}).is<InitData>());
-  ZuTestCallRT(zdbtest::repairBindings, store.ptr());
+  ZuTestCallRT((zdbtest::repairBindings<false>), store.ptr());
   store->final();
   store = {};
   ZuCheckRT(mx.stop());
@@ -778,7 +933,8 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
 
   auto config = cf(separate);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
@@ -919,10 +1075,10 @@ static void live(unsigned race, bool separate = false, bool secondary = false)
   ZuCheck(db->stop());
   journal = {};
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 // 0: after insert; 1: update intent only; 2: after delete; 3: absent delete;
@@ -939,7 +1095,8 @@ static void recovery(
   int intentStep = cut == 1 ? 1 : cut == 5 ? 0 : cut == 6 ? 2 : -1;
   auto config = cf(separate);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
 
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
@@ -1055,10 +1212,12 @@ static void recovery(
   inactive.wait();
   ZuCheck(db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
 
   active_ = &active;
   db = new zdbtest::LiveDB{};
+  ZuCheck(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = up
   }, store);
@@ -1148,10 +1307,10 @@ static void recovery(
   bool stopped = !started || db->stop();
   ZuCheck(stopped);
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void repeatedRecovery(uint64_t repeats)
@@ -1159,7 +1318,8 @@ static void repeatedRecovery(uint64_t repeats)
   ZuTestScopeRT(repeatedRecovery);
   auto config = cf(true);
   auto fields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", fields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1197,7 +1357,9 @@ static void repeatedRecovery(uint64_t repeats)
   ZuCheckRT(db->stop());
   orders = {};
   context->orders = nullptr;
+  ZuCheckRT(mx.stop());
   db->final();
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{fields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {.upFn = up}, store);
   orders = db->initTable<zdbtest::Order>("o");
   context->orders = orders;
@@ -1231,10 +1393,10 @@ static void repeatedRecovery(uint64_t repeats)
   ZuCheckRT(db->stop());
   orders = {};
   context->orders = nullptr;
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static bool intent(
@@ -1257,7 +1419,8 @@ static void recoveryQueue(bool read = false)
   ZuTestScopeRT(recoveryQueue);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1309,10 +1472,12 @@ static void recoveryQueue(bool read = false)
   });
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
   orders = db->initTable<zdbtest::Order>("o");
   ZmRef<zdbtest::LiveDB> second = db;
@@ -1338,10 +1503,10 @@ static void recoveryQueue(bool read = false)
   ZuCheckRT(clean);
   ZuCheckRT(!started || db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 // 0: no-progress NotReady; 1: missing update row; 2: bad step; 3: bad no-op.
@@ -1350,7 +1515,8 @@ static void recoveryError(unsigned mode)
   ZuTestScopeRT(recoveryError);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1439,10 +1605,12 @@ static void recoveryError(unsigned mode)
   });
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
 
   activations = 0;
   db = new zdbtest::LiveDB{};
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = [](Zdb *, ZdbHost *) { ++activations; }
   }, store);
@@ -1458,10 +1626,10 @@ static void recoveryError(unsigned mode)
   ZuCheckRT(second->completed == 0 && second->errors == 0);
   ZuCheckRT(!started || db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static bool catalogWrite(const Zdb_::OpenData &data, unsigned mode)
@@ -1474,14 +1642,14 @@ static bool catalogWrite(const Zdb_::OpenData &data, unsigned mode)
     SagaOp::T(partial ? SagaOp::Delete : SagaOp::Update)};
   // Catalog columns are immutable: replace a row with delete/insert.
   for (unsigned i = 0, n = partial ? 1 : 2; i < n; ++i) {
-    Builder fbb{Table<SagaTypeStep>::allocBuf()};
+    Builder fbb{new Zdb_::IOBufAlloc<SagaTypeStep>{nullptr, 0}};
     auto nested = fbb.startNested();
     auto payload = fbb.endNested(nested, Zfb::save(fbb, row));
     fbb.finish(saveMsg(fbb,
       saveRecord(fbb, "saga_type", data.un[0] + i + 1,
 	data.sn + i + 1, i ? 0 : -1, 0, payload), Msg::Tag::Replication));
     if (!ZmBlock<bool>{}([
-      table = data.storeTbl, buf = saveHdr(fbb)
+      table = data.storeTbl, buf = saveFrame(fbb)
     ](auto wake) mutable {
       table->write(ZuMv(buf), [wake = ZuMv(wake)](
 	  ZmRef<IOBuf>, CommitResult result) mutable {
@@ -1500,6 +1668,7 @@ static bool catalogStart(
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
   using namespace Zdb_;
   ZmRef<SagaDB> db = new SagaDB{};
+  if (!mx->start()) return false;
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, mx, {}, store);
   auto orders = db->template initTable<zdbtest::Order>("o");
   auto otherOrders = db->template initTable<zdbtest::Order>("order");
@@ -1518,7 +1687,7 @@ static bool catalogStart(
       store->open(true, "saga_type",
 	ZfVFields<SagaTypeStep>(), ZfVKeyFields<SagaTypeStep>(),
 	Schema::from<SagaTypeStep>(schema),
-	Table<SagaTypeStep>::allocBuf,
+	localBufAllocFn<SagaTypeStep>(),
 	[wake = ZuMv(wake)](OpenResult result) mutable { wake(ZuMv(result)); });
     });
     if (result.is<OpenData>()) {
@@ -1532,6 +1701,7 @@ static bool catalogStart(
   }
   bool stopped = !started || db->stop();
   orders = {}; otherOrders = {}; payments = {};
+  stopped = mx->stop() && stopped;
   db->final();
   // Zero denotes an expected fatal startup, not an empty valid saga bundle.
   return started == bool(expectedCount) && stopped && (!started || reconciled);
@@ -1542,7 +1712,8 @@ static void catalogStartup()
   ZuTestScope(catalogStartup);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1571,7 +1742,8 @@ static void catalogCorrupt(unsigned mode)
   ZuTestScope(catalogCorrupt);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1593,7 +1765,8 @@ static void findFail()
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1617,10 +1790,12 @@ static void findFail()
   });
   ZuCheck(db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
 
   activations = 0;
   db = new zdbtest::LiveDB{};
+  ZuCheck(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {
     .upFn = [](Zdb *, ZdbHost *) { ++activations; }
   }, store);
@@ -1645,10 +1820,10 @@ static void findFail()
   ZuCheck(next->completed == 0);
   ZuCheck(db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void scanError(bool steps)
@@ -1656,7 +1831,8 @@ static void scanError(bool steps)
   ZuTestScopeRT(scanError);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1681,10 +1857,10 @@ static void scanError(bool steps)
   ZuCheckRT(activations == 1);
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static void scanFail(bool steps, bool stopPending)
@@ -1692,7 +1868,8 @@ static void scanFail(bool steps, bool stopPending)
   ZuTestScopeRT(scanFail);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1751,10 +1928,10 @@ static void scanFail(bool steps, bool stopPending)
   ZuCheckRT(activations == 1);
   ZuCheckRT(!restarted || db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static void admission()
@@ -1764,7 +1941,8 @@ static void admission()
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
@@ -1827,10 +2005,10 @@ static void admission()
   ZuCheck(context->inserts == 2 && context->updates == 2 && context->deletes == 2);
   ZuCheck(db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void requiredAdmission()
@@ -1840,7 +2018,8 @@ static void requiredAdmission()
   using M = ZdbAnySaga<SagaDB>;
   auto config = cf(true);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<SagaDB> db = new SagaDB{};
@@ -1870,10 +2049,10 @@ static void requiredAdmission()
   ZuCheck(db->stop());
   ZuCheck(!context->runs && !completed);
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void payloadAdmission(unsigned size)
@@ -1883,7 +2062,8 @@ static void payloadAdmission(unsigned size)
   using M = ZdbAnySaga<zdbtest::PayloadDB>;
   auto config = cf(true);
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
@@ -1933,10 +2113,10 @@ static void payloadAdmission(unsigned size)
   ZuCheckRT(db->stop());
   saga = {};
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static void admissionDeactivated(bool read = false)
@@ -1944,7 +2124,8 @@ static void admissionDeactivated(bool read = false)
   ZuTestScope(admissionDeactivated);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -1989,10 +2170,12 @@ static void admissionDeactivated(bool read = false)
   ZuCheck(context->inserts <= 1);
   ZuCheck(db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheck(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, {}, store);
   orders = db->initTable<zdbtest::Order>("o");
   ZmRef<zdbtest::LiveDB> next = db;
@@ -2007,10 +2190,10 @@ static void admissionDeactivated(bool read = false)
   ZuCheck(next->deletes == 1);
   ZuCheck(db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void gracefulStop(bool failed)
@@ -2018,7 +2201,8 @@ static void gracefulStop(bool failed)
   ZuTestScope(gracefulStop);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2082,10 +2266,12 @@ static void gracefulStop(bool failed)
   ZuCheck(context->runs == (failed ? 3 : 4));
   ZuCheck(context->updates == 1);
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheck(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = up
   }, store);
@@ -2102,10 +2288,10 @@ static void gracefulStop(bool failed)
   ZuCheck(next->deletes == unsigned(failed));
   ZuCheck(!started || db->stop());
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 // Fail after deleting the main row (0), or after each step deletion (1..3).
@@ -2114,7 +2300,8 @@ static void recoveryCleanup(unsigned cut)
   ZuTestScope(recoveryCleanup);
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheck(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2166,10 +2353,12 @@ static void recoveryCleanup(unsigned cut)
   });
   ZuCheck(residue);
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheck(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = up
   }, store);
@@ -2202,10 +2391,10 @@ static void recoveryCleanup(unsigned cut)
     ZuCheck(db->stop());
   }
   orders = {};
+  ZuCheck(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheck(mx.stop());
 }
 
 static void recoveryPages(bool orphan)
@@ -2214,7 +2403,8 @@ static void recoveryPages(bool orphan)
   enum { N = Zdb_::SagaScanSize + 1 }; // cross both main and step scan pages
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2272,10 +2462,12 @@ static void recoveryPages(bool orphan)
   inactive.wait();
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = up
   }, store);
@@ -2305,10 +2497,10 @@ static void recoveryPages(bool orphan)
   }
   ZuCheckRT(!started || db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static void rollback(
@@ -2320,7 +2512,8 @@ static void rollback(
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   ZmRef<DB> db = new DB{};
@@ -2394,11 +2587,11 @@ static void rollback(
   ZuCheckRT(outcome);
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   ZuCheckRT(context->refCount() == contextRefs);
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 static void abandonRollback()
@@ -2408,7 +2601,8 @@ static void abandonRollback()
   using M = ZdbAnySaga<zdbtest::LiveDB>;
   auto config = cf();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
   ZuCheckRT(mx.start());
   ZmRef<zdbtest::Store> store = new zdbtest::Store{};
   store->preserve();
@@ -2456,10 +2650,12 @@ static void abandonRollback()
   ZuCheckRT(retained);
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = up
   }, store);
@@ -2483,10 +2679,12 @@ static void abandonRollback()
   ZuCheckRT(retained);
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
 
   db = new zdbtest::LiveDB{};
 
+  ZuCheckRT(mx.start());
   db->init(ZdbCf{configFields.zdb.p<const ZfCf::AnyNode *>()}, &mx, ZdbHandler{
     .upFn = up
   }, store);
@@ -2509,10 +2707,10 @@ static void abandonRollback()
   ZuCheckRT(!called);
   ZuCheckRT(db->stop());
   orders = {};
+  ZuCheckRT(mx.stop());
   db->final();
   db = {};
   store = {};
-  ZuCheckRT(mx.stop());
 }
 
 #include "../bench/ZdbRepairBench.hh"
@@ -2565,6 +2763,7 @@ int main(int argc, char **argv)
   ZuTestCall(admissionDeactivated, true);
   ZuTestCall(indexes);
   ZuTestCall(tableIDs);
+  ZuTestCall(tableBufPolicies);
   ZuTestCall(collisions);
   ZuTestCall(repairBindings);
   ZuTestCall(repairOwnership);

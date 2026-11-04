@@ -8,7 +8,7 @@ Preconditions: plans 1 through 12 complete.
 `zquic` already uses CRTP hooks and no-op defaults in several places.  The application event surface is incomplete and some unsupported events disappear silently.  This plan expands the CRTP callback surface using local style: safe base defaults, direct `impl()` calls, and no virtual dispatch.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -69,7 +69,7 @@ New or changed data stores: diagnostics add counters for unhandled/defaulted eve
 - Open question: whether callbacks should be allowed to synchronously queue sends; follow existing stream API precedent.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

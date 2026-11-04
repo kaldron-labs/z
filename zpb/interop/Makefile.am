@@ -64,7 +64,7 @@ zpbinterop_LDADD = $(top_builddir)/zpb/src/libZpb.la \
 	$(top_builddir)/zt/src/libZt.la $(top_builddir)/zm/src/libZm.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ @PB_INTEROP_LIBS@
-EXTRA_DIST = README.md zpb.md zpbinterop_generated.proto zpbinterop.valgrind.supp
+EXTRA_DIST = README.md zpbinterop_generated.proto zpbinterop.valgrind.supp
 EXTRA_DIST += go/Makefile go/main.go go/go.mod go/go.sum
 
 if HAVE_GO

@@ -15,11 +15,14 @@
 
 #include <string.h>
 
+#include <zlib/ZuByteSwap.hh>
+
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmContext.hh>
 #include <zlib/ZmHash.hh>
 #include <zlib/ZmList.hh>
+#include <zlib/ZmQueue.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmScheduler.hh>
 
@@ -286,7 +289,47 @@ struct StreamBytes {
   unsigned length() const { return size; }
 };
 
-using HeaderFrames = ZiTxQueue;
+// Protocol pending state owns framing metadata, not the socket context. A
+// complete frame can use its original output buffer. Retained ranges carry
+// the RFC 7540 nine-byte header inline until TLS protects the final wire bytes.
+struct TxFrame {
+  ZmRef<ZiIOBuf> buf;
+  Zi::RxRange payload;
+  ZuBArray<FrameHeaderSize> header;
+
+  TxFrame() = default;
+  TxFrame(ZmRef<ZiIOBuf> buf_) : buf{ZuMv(buf_)} { }
+  TxFrame(FrameHeader h, Zi::RxRange payload_) : payload{ZuMv(payload_)} {
+    putHeader(header, h);
+  }
+
+  bool operator !() const { return !buf && !header.length(); }
+  ZuOpBool
+  bool failed() const {
+    return buf ? buf->failed() : header.length() != FrameHeaderSize;
+  }
+  uint64_t length() const {
+    return (buf ? buf->length : header.length()) + payload.length;
+  }
+  template <typename L>
+  void each(L &&l) const {
+    if (buf) l(ZuBSpan{buf->data(), buf->length});
+    else l(ZuBSpan{header});
+    if (payload.length) l(payload.cspan());
+  }
+  uint8_t *data() { return buf ? buf->data() : header.data(); }
+  const uint8_t *data() const { return buf ? buf->data() : header.data(); }
+};
+
+// One frame is the common case; storage grows only for admitted backlog.
+using HeaderFrames = ZmQueue<TxFrame,
+  ZmQueueHeapID<"Zhttp.H2.Frames", ZmQueueHeapMin<1>>>;
+
+inline TxFrame *headFrame(HeaderFrames &frames)
+{
+  auto i = frames.iter();
+  return i.ptr();
+}
 
 template <typename Lower>
 class DataStream : public ZiTxLayer<DataStream<Lower>, Lower> {
@@ -295,7 +338,7 @@ public:
 
   DataStream(
     Lower &lower, uint32_t streamID, uint64_t remaining = uint64_t(-1)) :
-    Base{lower, 9, 0}, m_remaining{remaining}, m_streamID{streamID} { }
+    Base{lower, 9, 0}, m_lower{lower}, m_remaining{remaining}, m_streamID{streamID} { }
 
   ~DataStream() { this->flush(); }
 
@@ -324,6 +367,26 @@ public:
     out[8] = uint8_t(m_streamID);
     return true;
   }
+  bool prepareRange_(Zi::RxRange range) {
+    if (m_remaining != uint64_t(-1) && m_remaining < range.length) {
+      m_valid = false;
+      range.length = unsigned(m_remaining);
+    }
+    if (m_remaining != uint64_t(-1)) m_remaining -= range.length;
+    unsigned max = this->maxSize() - this->headRoom() - this->tailRoom();
+    while (range.length) {
+      auto n = range.length < max ? range.length : max;
+      if (!n) return false;
+      m_lower << TxFrame{FrameHeader{
+	.length = n, .streamID = m_streamID, .type = FrameType::Data},
+	range.subspan(0, n)};
+      if (m_lower.failed()) return false;
+      range.offset += n;
+      range.length -= n;
+      m_produced += n;
+    }
+    return true;
+  }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid && !Base::operator !(); }
   bool complete() const {
@@ -332,112 +395,20 @@ public:
   }
 
 private:
+  Lower &m_lower;
   uint64_t m_remaining;
   uint64_t m_produced = 0;
   uint32_t m_streamID;
   bool m_valid = true;
 };
 
-template <typename Native>
-class FrameStream : public ZiTxStream<FrameStream<Native>> {
-  using Base = ZiTxStream<FrameStream<Native>>;
-
-public:
-  FrameStream(Native &native, HeaderFrames &frames) :
-    Base(
-      native.txMaxSize(), native.template txHeadRoom<false>(),
-      native.template txTailRoom<false>()),
-    m_native{&native}, m_frames{&frames}
-  { }
-
-  ~FrameStream() { this->flush(); }
-
-  ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-    return m_native->template txAllocBuf<false>(headRoom);
-  }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-    m_frames->pushNode(ZmRef<ZiTxBuf>::acquire(
-      static_cast<ZiTxBuf *>(ZuMv(buf).release())));
-    return true;
-  }
-
-private:
-  Native	*m_native;
-  HeaderFrames	*m_frames;
-};
-
 template <typename Native, bool AppThread = true>
 class HeaderBlock {
-  using FrameTx = FrameStream<Native>;
   using DataFrames =
-    ZtArray<ZmRef<ZiIOBuf>, ZtArrayHeapID<"Zhttp.H2.Data">>;
-
-  class Bytes {
-  public:
-    Bytes(
-      Native &native, uint32_t streamID, uint32_t length,
-      uint32_t frameSize, bool first, bool endStream,
-      HeaderFrames &frames) :
-	m_streamID{streamID}, m_tx{native, frames},
-	m_left{length}, m_frameSize{frameSize},
-	m_first{first}, m_endStream{endStream}
-    {
-      next_();
-    }
-
-    void push(uint8_t value) {
-      if (m_tx.failed()) return;
-      m_tx << char(value);
-      if (m_tx.failed()) return;
-      ++m_length;
-      if (!--m_frameLeft && m_left) next_();
-    }
-    void write(ZuBSpan data) {
-      while (data && !m_tx.failed()) {
-	unsigned n = data.length() < m_frameLeft ?
-	  data.length() : m_frameLeft;
-	m_tx << ZuBSpan{data.data(), n};
-	if (m_tx.failed()) return;
-	m_length += n;
-	m_frameLeft -= n;
-	data.offset(n);
-	if (!m_frameLeft && m_left) next_();
-      }
-    }
-    unsigned length() const { return m_length; }
-    bool flush() { return m_tx.flush(); }
-
-  private:
-    void next_() {
-      if (m_length && !m_tx.flush()) return;
-      uint32_t length = m_left > m_frameSize ? m_frameSize : m_left;
-      m_left -= length;
-      m_frameLeft = length;
-      StreamBytes<FrameTx> sink{m_tx};
-      putHeader(sink, {
-	.length = length,
-	.streamID = m_streamID,
-	.type = uint8_t(m_first ? FrameType::Headers :
-	  FrameType::Continuation),
-	.flags = uint8_t(
-	  (m_first && m_endStream ? Flag::EndStream : 0) |
-	  (!m_left ? Flag::EndHeaders : 0))
-      });
-      m_first = false;
-    }
-
-    uint32_t	m_streamID = 0;
-    FrameTx	m_tx;
-    uint32_t	m_left = 0;
-    uint32_t	m_frameLeft = 0;
-    uint32_t	m_frameSize = DefltFrameSize;
-    unsigned	m_length = 0;
-    bool	m_first = false;
-    bool	m_endStream = false;
-  };
+    ZtArray<TxFrame, ZtArrayHeapID<"Zhttp.H2.Data">>;
 
 public:
-  using HeaderBytes = HPackBytes;
+  using HeaderBytes = Compression::WriterBytes<HeaderBlock>;
   using HeaderSection = Compression::FieldSectionBuffer<HeaderBytes>;
 
   HeaderBlock(
@@ -455,10 +426,11 @@ public:
     ZiAssert(m_native.app()->txInvoked(), "Zhttp", (),
       "H2 header encoding outside Tx thread", return);
     if (failed()) return;
+    if (!section.bytes().valid()) { fail_(); return; }
     m_frames.clean();
     m_section = &section;
     m_block = &section.bytes();
-    m_block->length(0);
+    m_block->length(FrameHeaderSize);
     if (!m_encoder.beginBlock(m_plan, m_reserved)) {
       m_valid = false;
       return;
@@ -525,14 +497,48 @@ public:
     }
     return span;
   }
-  uint8_t *headerBase() { return m_block->data(); }
+  uint8_t *headerBase() { return m_block ? m_block->data() : nullptr; }
   bool endHeaders(bool) {
     if (!m_open || !m_valid) return false;
-    Bytes bytes{
-      m_native, m_streamID, uint32_t(m_section->length()), m_frameSize,
-      true, m_endStream, m_frames};
-    m_section->each(0, [&bytes](ZuBSpan span) { bytes.write(span); });
-    if (!bytes.flush()) { fail_(); return false; }
+    if (!m_block->valid()) return fail_();
+    uint64_t remaining = m_section->length(FrameHeaderSize);
+    bool first = true;
+    auto payload = m_block->buf();
+    struct HeaderSink {
+      uint8_t *data;
+      unsigned offset = 0;
+      void push(uint8_t c) { data[offset++] = c; }
+    };
+    auto emit = [this, &remaining, &first, &payload](
+	uint64_t offset, unsigned length) {
+      do {
+	unsigned chunk = length < m_frameSize ? length : m_frameSize;
+	m_frames.push(TxFrame{FrameHeader{
+	  .length = chunk,
+	  .streamID = m_streamID,
+	  .type = uint8_t(first ? FrameType::Headers : FrameType::Continuation),
+	  .flags = uint8_t((first && m_endStream ? Flag::EndStream : 0) |
+	    (remaining == chunk ? Flag::EndHeaders : 0))},
+	  Zi::RxRange{payload, unsigned(offset), chunk}});
+	remaining -= chunk;
+	offset += chunk;
+	length -= chunk;
+	first = false;
+      } while (length);
+    };
+    if (remaining <= m_frameSize &&
+	remaining == m_block->length() - FrameHeaderSize &&
+	canAdopt_(*payload)) {
+      HeaderSink out{payload->data()};
+      putHeader(out, {
+	.length = uint32_t(remaining),
+	.streamID = m_streamID,
+	.type = FrameType::Headers,
+	.flags = uint8_t(Flag::EndHeaders | (m_endStream ? Flag::EndStream : 0))});
+      m_frames.push(TxFrame{ZuMv(payload)});
+      first = false;
+    } else m_section->eachRange(FrameHeaderSize, emit);
+    if (first) emit(FrameHeaderSize, 0);
     m_open = false;
     m_block = nullptr;
     m_section = nullptr;
@@ -575,20 +581,23 @@ public:
   unsigned tailRoom() const {
     return m_native.template txTailRoom<AppThread>();
   }
+  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+    return Transport_::canAdopt<AppThread>(m_native, buf, head, tail, 0);
+  }
   ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     if (failed()) return nullptr;
     auto buf = m_native.template txAllocBuf<AppThread>(headRoom);
     if (!buf || buf->failed()) { fail_(); return nullptr; }
     return buf;
   }
-  HeaderBlock &operator <<(ZmRef<ZiIOBuf> buf) {
+  HeaderBlock &operator <<(TxFrame frame) {
     if (failed()) return *this;
-    if (!buf || buf->failed()) { fail_(); return *this; }
+    if (!frame || frame.failed()) { fail_(); return *this; }
     if (m_deferred) {
-      m_data.push(ZuMv(buf));
+      m_data.push(ZuMv(frame));
       return *this;
     }
-    if (!m_native.template sendData<AppThread>(m_streamID, ZuMv(buf)))
+    if (!m_native.template sendData<AppThread>(m_streamID, ZuMv(frame)))
       fail_();
     return *this;
   }
@@ -606,20 +615,21 @@ public:
     m_retainedMax = max;
     m_deferred = true;
   }
-  bool valid() const {
+  bool valid() {
     if (!m_valid) return false;
     uint64_t n = 0;
     {
-      auto i = m_frames.citer();
-      while (auto buf = i()) {
-	if (buf->failed() || buf->length > m_retainedMax - n) return false;
-	n += buf->length;
+      auto i = m_frames.iter();
+      while (const auto &frame = i()) {
+	uint64_t size = frame.length();
+	if (frame.failed() || size > m_retainedMax - n) return false;
+	n += size;
       }
     }
     for (unsigned i = 0, l = m_data.length(); i < l; ++i) {
-      if (m_data[i]->failed() ||
-	m_data[i]->length > m_retainedMax - n) return false;
-      n += m_data[i]->length;
+      uint64_t size = m_data[i].length();
+      if (m_data[i].failed() || size > m_retainedMax - n) return false;
+      n += size;
     }
     return m_valid;
   }
@@ -725,7 +735,7 @@ private:
   unsigned	m_plan = unsigned(-1);
   uint64_t	m_retainedMax = uint64_t(-1);
   HeaderFrames	m_frames;
-  HPackBytes	*m_block = nullptr;
+  HeaderBytes	*m_block = nullptr;
   HeaderSection	*m_section = nullptr;
   DataFrames	m_data;
   bool		m_open = false;
@@ -752,7 +762,7 @@ struct TxSchedule {
 };
 
 struct TxWindowEntry {
-  ZiTxQueue	frames;
+  HeaderFrames	frames;
   RecordRef<Native_::FinalCmd> final;
   ZiTxErrorFn	txErrorFn;
   int64_t	window = DefltWindow;
@@ -817,6 +827,9 @@ class Wire : public H2::Connection<Wire<Impl, AppLink>> {
 	wire->impl_()->template txHeadRoom<AppThread>(),
 	wire->impl_()->template txTailRoom<AppThread>()}, m_wire{wire} { }
     ~ControlTx() { this->flush(); }
+    bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
+      return Transport_::canAdopt<AppThread>(*m_wire->impl_(), buf, head, tail, 0);
+    }
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
       return m_wire->impl_()->template txAllocBuf<AppThread>(headRoom);
     }
@@ -1091,25 +1104,25 @@ public:
     return maxSize < capacity ? maxSize : capacity;
   }
   template <bool AppThread = true>
-  bool sendData(uint32_t id, ZmRef<ZiIOBuf> buf) {
+  bool sendData(uint32_t id, TxFrame buf) {
     if constexpr (!AppThread) {
       return sendDataTx_(id, ZuMv(buf));
     }
-    if (m_stopping || !buf || buf->failed() || buf->length < 9) return false;
+    if (m_stopping || !buf || buf.failed() || buf.length() < 9) return false;
     auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return false;
-    uint32_t length = buf->length - 9;
+    uint32_t length = buf.length() - FrameHeaderSize;
     if (length > peerFrameSize()) {
       return streamTxErrorRx_(id, "H2 DATA frame exceeds peer maximum");
     }
     return sendFrame_(id, length, false, ZuMv(buf));
   }
   template <bool AppThread = true>
-  bool sendFrame(uint32_t id, ZmRef<ZiIOBuf> buf) {
+  bool sendFrame(uint32_t id, TxFrame buf) {
     if constexpr (!AppThread) {
       return sendFrameDirectTx_(id, 0, false, ZuMv(buf));
     }
-    if (m_stopping || !buf || buf->failed() || !buf->length) return false;
+    if (m_stopping || !buf || buf.failed() || !buf.length()) return false;
     return sendFrame_(id, 0, false, ZuMv(buf));
   }
   template <bool AppThread = true>
@@ -1118,7 +1131,7 @@ public:
     if constexpr (!AppThread) {
       return sendHeadersDirectTx_(id, ZuMv(frames), endStream);
     }
-    if (m_stopping || frames.empty_()) return false;
+    if (m_stopping || !frames.count_()) return false;
     auto entry_ = h2Stream(id);
     if (!entry_ || entry_->localEndQueued) return false;
     if (!m_frameAdmission.push(frames.count_())) {
@@ -1190,7 +1203,7 @@ public:
       if (rx.length() < length) return 0;
       int64_t n = rx.each(length,
 	[this](ZuSpan<uint8_t> span) -> int64_t { return Base::process(span); });
-      if (ZuUnlikely(n < 0)) return -1;
+      if (ZuUnlikely(n < 0)) return 0; // h2Error owns the terminal GOAWAY
       if (ZuUnlikely(uint64_t(n) != length)) return 0;
       rx.advance(length);
       m_rxPreface = false;
@@ -1203,13 +1216,13 @@ public:
     if (ZuUnlikely(!decodeHeader(bytes.span(), header))) return 0;
     if (auto error = validateFrame(header, m_config.maxFrameSize())) {
       h2Error(error);
-      return -1;
+      return 0;
     }
     if (header.type == FrameType::Data && !m_rxDataValidated) {
       unsigned prefix = (header.flags & Flag::Padded) ? 1U : 0U;
       if (prefix > header.length) {
 	h2Error(Error::FrameSizeError);
-	return -1;
+	return 0;
       }
       unsigned pad = 0;
       if (prefix) {
@@ -1219,7 +1232,7 @@ public:
 	pad = byte[0];
 	if (uint64_t(prefix) + pad > header.length) {
 	  h2Error(Error::ProtocolError);
-	  return -1;
+	  return 0;
 	}
       }
       h2DataLength(
@@ -1232,7 +1245,7 @@ public:
     m_rxData = {};
     int64_t n = rx.each(length,
       [this](ZuSpan<uint8_t> span) -> int64_t { return Base::process(span); });
-    if (ZuUnlikely(n < 0)) return -1;
+    if (ZuUnlikely(n < 0)) return 0; // keep TLS live until GOAWAY is submitted
     if (ZuUnlikely(uint64_t(n) != length)) return 0;
     if (header.type == FrameType::Data) {
       m_rxDataValidated = false;
@@ -1460,13 +1473,12 @@ public:
     if (m_errorSent || m_stopping) return;
     m_errorSent = true;
     stopWire();
-    sendGoaway_(error);
-    impl_()->disconnect_();
+    if (!sendGoaway_(error)) impl_()->disconnect_();
   }
   void graceful() {
     if (m_errorSent) return;
     m_errorSent = true;
-    sendGoaway_(Error::NoError);
+    if (!sendGoaway_(Error::NoError)) impl_()->disconnect_();
   }
 
   bool peerInitialWindow(uint32_t value) {
@@ -1711,11 +1723,11 @@ private:
     tx << value;
     if (!tx.flush()) h2Error(Error::InternalError);
   }
-  void sendGoaway_(Error::T error) {
+  bool sendGoaway_(Error::T error) {
     ControlTx<true> tx{this};
     StreamBytes sink{tx};
     putGoaway(sink, m_lastProcessedPeerStream, error);
-    if (!tx.flush() && !m_stopping) impl_()->disconnect_();
+    return tx.flush();
   }
   bool sendWindowUpdate_(uint32_t id, uint32_t value) {
     if (!value) return true;
@@ -1752,11 +1764,11 @@ private:
       "H2 Tx error callback update outside Tx thread", return);
     if (auto entry_ = txWindow_(id)) entry_->txErrorFn = ZuMv(fn);
   }
-  bool sendDataTx_(uint32_t id, ZmRef<ZiIOBuf> buf) {
+  bool sendDataTx_(uint32_t id, TxFrame buf) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 DATA queue outside Tx thread", return false);
-    if (!buf || buf->failed() || buf->length < 9) return false;
-    uint32_t length = buf->length - 9;
+    if (!buf || buf.failed() || buf.length() < 9) return false;
+    uint32_t length = buf.length() - FrameHeaderSize;
     if (length > m_txFrameSize) {
       txError_(id);
       return false;
@@ -1765,7 +1777,7 @@ private:
   }
   bool sendFrameDirectTx_(
     uint32_t id, uint32_t length, bool endStream,
-    ZmRef<ZiIOBuf> buf) {
+    TxFrame buf) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 direct frame queue outside Tx thread", return false);
     auto entry_ = txWindow_(id);
@@ -1781,7 +1793,7 @@ private:
     uint32_t id, HeaderFrames frames, bool endStream) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 direct header queue outside Tx thread", return false);
-    if (frames.empty_()) return false;
+    if (!frames.count_()) return false;
     auto entry_ = txWindow_(id);
     if (!entry_ || entry_->localEndQueued) return false;
     if (!m_frameAdmission.push(frames.count_())) {
@@ -1816,7 +1828,7 @@ private:
   }
   bool sendFrame_(
     uint32_t id, uint32_t length, bool endStream,
-    ZmRef<ZiIOBuf> buf) {
+    TxFrame buf) {
     if (!m_frameAdmission.push()) {
       return streamTxErrorRx_(id, "H2 transmit queue limit exceeded");
     }
@@ -1828,7 +1840,7 @@ private:
     });
     return true;
   }
-  static uint32_t frameLengthTx_(const ZiIOBuf *buf) {
+  static uint32_t frameLengthTx_(const TxFrame *buf) {
     auto frame = buf->data();
     if (frame[3] != FrameType::Data) return 0;
     return (uint32_t(frame[0])<<16) |
@@ -1864,12 +1876,12 @@ private:
   void scheduleFrameTx_(TxWindowHash::Node *entry_) {
     ZmAssert(entry_->scheduled == TxSchedule::None);
     if (entry_->retiring && m_headerStream != entry_->id) return;
-    auto buf = entry_->frames.headPtr();
+    auto buf = headFrame(entry_->frames);
     if (!buf) {
       if (!entry_->endMarker && !entry_->final) return;
     } else {
       uint32_t length = frameLengthTx_(buf);
-      if (static_cast<ZiIOBuf *>(buf)->data()[3] == FrameType::Data && !length &&
+      if (buf->data()[3] == FrameType::Data && !length &&
 	  entry_->window < 0) {
 	entry_->scheduled = TxSchedule::Stream;
 	m_streamFrames.pushNode(entry_);
@@ -1891,9 +1903,9 @@ private:
     m_readyFrames.pushNode(entry_);
   }
   void queueFrameTx_(
-      TxWindowHash::Node *entry_, ZmRef<ZiIOBuf> buf, bool endStream) {
+      TxWindowHash::Node *entry_, TxFrame buf, bool endStream) {
     if (buf)
-      entry_->frames.pushNode(Transport_::txBufNode(buf.ptr()));
+      entry_->frames.push(ZuMv(buf));
     else {
       ZmAssert(endStream && !entry_->endMarker);
       entry_->endMarker = true;
@@ -1903,7 +1915,7 @@ private:
   }
   static unsigned clearFrameTx_(TxWindowHash::Node *entry_, unsigned &budget) {
     unsigned n = 0;
-    while (budget && entry_->frames.headPtr()) {
+    while (budget && headFrame(entry_->frames)) {
       --budget;
       entry_->frames.shift();
       ++n;
@@ -1923,7 +1935,7 @@ private:
   }
   void sendFrameTx_(
     uint32_t id, uint32_t length, bool endStream,
-    ZmRef<ZiIOBuf> buf) {
+    TxFrame buf) {
     ZiAssert(impl_()->app()->txInvoked(), "Zhttp", (),
       "H2 frame queue outside Tx thread", return);
     auto entry_ = txWindow_(id);
@@ -1946,7 +1958,7 @@ private:
       return;
     }
     if (endStream) entry_->localEndQueued = true;
-    entry_->frames += ZuMv(frames);
+    while (auto frame = frames.shift()) entry_->frames.push(ZuMv(frame));
     if (entry_->scheduled == TxSchedule::None) scheduleFrameTx_(entry_);
     startFrameDrain_();
   }
@@ -2136,7 +2148,7 @@ private:
       unsigned budget = FrameDrainBatch - 1;
       unsigned n = clearFrameTx_(entry_, budget);
       if (n) m_frameAdmission.pop(n);
-      if (entry_->frames.headPtr() || entry_->endMarker || entry_->final) {
+      if (headFrame(entry_->frames) || entry_->endMarker || entry_->final) {
 	impl_()->app()->txRun([
 	  link = impl_(), id, done = ZuMv(done)]() mutable {
 	  link->removeFramesTx_(id, ZuMv(done));
@@ -2172,7 +2184,7 @@ private:
       detachFrameTx_(entry_);
       entry_->retiring = true;
       n += clearFrameTx_(entry_, budget);
-      if (entry_->frames.headPtr() || entry_->endMarker || entry_->final) break;
+      if (headFrame(entry_->frames) || entry_->endMarker || entry_->final) break;
       deleteWindowTx_(entry_);
     }
     if (n) m_frameAdmission.pop(n);
@@ -2197,7 +2209,7 @@ private:
   }
   void deleteWindowTx_(TxWindowHash::Node *entry) {
     ZmAssert_(entry->retiring && entry->scheduled == TxSchedule::None);
-    ZmAssert_(!entry->frames.headPtr() && !entry->endMarker && !entry->final);
+    ZmAssert_(!headFrame(entry->frames) && !entry->endMarker && !entry->final);
     if (m_windowCursor == entry)
       m_windowCursor = entry == m_windowLast ? nullptr : nextWindowTx_(entry);
     if (m_windowLast == entry) m_windowLast = prevWindowTx_(entry);
@@ -2244,7 +2256,7 @@ private:
       ++inspected;
       // Compression state changes only when the accepted DATA prefix has
       // drained. The embedded command owns its producer through this call.
-      if (!entry_->frames.headPtr() && entry_->final) {
+      if (!headFrame(entry_->frames) && entry_->final) {
 	auto command = ZuMv(entry_->final);
 	m_frameAdmission.pop();
 	entry_->localEndQueued = false;
@@ -2254,14 +2266,11 @@ private:
       uint32_t id = entry_->id;
       bool endStream;
       bool partial = false;
-      ZmRef<ZiIOBuf> pending;
-      if (auto node = entry_->frames.headPtr()) {
-	auto head = static_cast<ZiIOBuf *>(node);
+      TxFrame pending;
+      if (auto head = headFrame(entry_->frames)) {
 	uint32_t length = frameLengthTx_(head);
 	int64_t available = m_txWindow < entry_->window ?
 	  m_txWindow : entry_->window;
-	// Another ready stream can consume connection credit before this
-	// entry reaches the head of the ready queue.
 	if ((length && available <= 0) ||
 	    (!length && head->data()[3] == FrameType::Data &&
 	      entry_->window < 0)) {
@@ -2271,34 +2280,24 @@ private:
 	if (length && available < length) {
 	  ZmAssert(available > 0);
 	  unsigned prefix = unsigned(available);
-	  pending = impl_()->template txAllocBuf<false>(
-	    impl_()->template txHeadRoom<false>());
-	  if (!pending || !pending->append(head->data(), 9 + prefix)) {
-	    txError_(id);
-	    return;
-	  }
-	  auto frame = pending->data();
-	  frame[0] = uint8_t(prefix>>16);
-	  frame[1] = uint8_t(prefix>>8);
-	  frame[2] = uint8_t(prefix);
-	  frame[4] &= ~Flag::EndStream;
-	  uint8_t flags = head->data()[4];
-	  head->advance(prefix);
-	  memcpy(head->data(), frame, 9);
-	  length -= prefix;
-	  frame = head->data();
-	  frame[0] = uint8_t(length>>16);
-	  frame[1] = uint8_t(length>>8);
-	  frame[2] = uint8_t(length);
-	  // END_STREAM belongs to the suffix.
-	  frame[4] = flags;
+	  FrameHeader h;
+	  h.length = prefix;
+	  h.streamID = id;
+	  h.type = FrameType::Data;
+	  h.flags = head->data()[4] & ~Flag::EndStream;
+	  auto source = head->payload;
+	  if (!source.buf) source = {head->buf, FrameHeaderSize, length};
+	  pending = TxFrame{h, source.subspan(0, prefix)};
+	  h.length = length - prefix;
+	  h.flags = head->data()[4];
+	  *head = TxFrame{h, source.subspan(prefix, length - prefix)};
 	  partial = true;
 	} else
 	  pending = entry_->frames.shift();
       }
       if (pending) {
-	auto frame = static_cast<ZiIOBuf *>(pending.ptr())->data();
-	uint32_t length = frameLengthTx_(pending);
+	auto frame = pending.data();
+	uint32_t length = frameLengthTx_(&pending);
 	if (length) {
 	  m_txWindow -= length;
 	  entry_->window -= length;
@@ -2311,9 +2310,14 @@ private:
 	    frame[3] == FrameType::Continuation &&
 	    (frame[4] & Flag::EndHeaders))
 	  m_headerStream = 0;
-	auto tx = impl_()->txStream_();
-	tx << ZuMv(pending) << Zi::Flush{};
-	if (tx.failed()) {
+	bool ok;
+	if (pending.buf) {
+	  auto tx = impl_()->txStream_();
+	  tx << ZuMv(pending.buf) << Zi::Flush{};
+	  ok = !tx.failed();
+	} else
+	  ok = impl_()->sendSource_(pending);
+	if (!ok) {
 	  if (!partial) m_frameAdmission.pop();
 	  // A failed header/continuation send leaves peer compression state
 	  // uncertain. Stop the connection rather than continue draining it.
@@ -2347,9 +2351,15 @@ private:
   bool emitControlTx_(ZmRef<ZiIOBuf> buf) {
     bool ack = buf->length >= FrameHeaderSize &&
       buf->data()[3] == FrameType::Settings && (buf->data()[4] & Flag::ACK);
+    bool close = buf->length >= FrameHeaderSize + 8 &&
+      buf->data()[3] == FrameType::Goaway &&
+      ZuBE(*reinterpret_cast<const uint32_t *>(buf->data() + FrameHeaderSize + 4));
     auto tx = impl_()->txStream_();
     tx << ZuMv(buf) << Zi::Flush{};
     if (tx.failed()) { frameTxFailed_(); return false; }
+    // A fatal GOAWAY can sit behind multiple bounded control/header turns.
+    // Hand it to TLS before allowing TLS's close turn to retire transmission.
+    if (close) impl_()->app()->rxRun([link = impl_()]() { link->disconnect_(); });
     if (ack) impl_()->app()->rxRun([wire = this]() {
       if (!wire->m_stopping) wire->impl_()->h2SettingsReceived();
     });
@@ -2358,10 +2368,9 @@ private:
   void frameTxFailed_() {
     m_txStopping = true;
     impl_()->app()->rxRun([wire = this]() {
-      if (!wire->m_errorSent && !wire->m_stopping)
-	wire->h2Error(Error::InternalError);
-      else
-	wire->impl_()->disconnectNative();
+      // Failed transmission cannot carry another control frame.
+      wire->stopWire();
+      wire->impl_()->disconnectNative();
     });
   }
   void txError_(uint32_t id) {

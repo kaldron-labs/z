@@ -22,13 +22,13 @@
 namespace Zum {
 
 struct SagaImage {
-  using Buf = ZiIOBufAlloc<ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    "Zum.Saga.Image">;
+  using Buf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+    ZuStringT<"Zum.Saga.Image">>;
 
   template <typename T>
   static Bytes save(const T &item)
   {
-    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{new Buf{}};
+    Zfb::IOBuilder<Zfb::BufferAlign<T>::N> fbb{new Buf{nullptr, 0}};
     fbb.finish(Zfb::save(fbb, item));
     return Bytes{fbb.span()};
   }

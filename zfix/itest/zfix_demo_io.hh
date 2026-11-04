@@ -23,6 +23,11 @@
 
 namespace ZfixDemo {
 
+struct Auth { ZuCSpan user, password; };
+ZfStruct(, (Auth, FIX), (user, (FIX::ID<553>, Required), String),
+  (password, (FIX::ID<554>, Required), String));
+ZfStructImpl(Auth); ZfStructImpl(Auth, FIX);
+
 namespace Scenario {
 
   ZtEnum(, Scenario, int8_t, RPC, Groups, Events, Reject, Policy);
@@ -196,12 +201,9 @@ public:
 
   Zfix::TxBody::Ref fixLogonTx(Zfix::TxBody::Ref body) {
     if (!options().token.length()) return body;
-    // Handshake only: preserve every managed byte and validate added fields.
     auto token = Client && options().badAuth ? ZuCSpan{"wrong"} : options().token;
-    ZtString<ZtStringHeapID<"Zfix.Demo.Auth">> bytes{body->body()};
-    bytes << "553=demo\1" "554=" << token << '\1';
     Zfix::Fmt::Error error;
-    return Zfix::TxBody::restoreControl<LoginMsg>(bytes, body->id(), error);
+    return Zfix::TxBody::extend<Zfix::MT<Zfix::Session::Logon, "A">>(ZuMv(body), Auth{"demo", token}, error);
   }
 
   unsigned fixAdmissionRx(Zfix::SessionEvent, ZmRef<Zfix::RxQueue::Node> input,

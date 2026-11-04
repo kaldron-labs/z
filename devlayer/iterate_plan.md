@@ -26,11 +26,11 @@ IMPORTANT
 - DO NOT RELY ON MEMORY - `plan.md` may have been edited outside this session
 - RETAIN ALL IMPORTANT DETAIL from `plan.md`
 - `plan.new.md` must be an improved and clarified version of `plan.md`, with no legacy open questions remaining and all details retained
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
-- Read and align with `GUIDELINES.md`
+- Read `AGENTS.md` and `docs/CODEBASE.md` to understand the existing codebase
+- Read and align with `docs/GUIDELINES.md`
 - Be prescriptive and specific about the implementation
 - Each intermediate phase/slice should include handoff acceptance criteria to the next:
-  - Acceptance for each slice should audit against `GUIDELINES.md`, checking all audit flags and repairing all findings before proceeding to the next
+  - Acceptance for each slice should audit against `docs/GUIDELINES.md`, checking all audit flags and repairing all findings before proceeding to the next
 - For each requirement, evaluate its complexity and feasibility, specifically:
   - Evaluate how the requirement depends on the capabilities of the underlying technology stack
   - Comprehensively research the implications of the requirement for the codebase

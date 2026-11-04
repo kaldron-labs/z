@@ -3,7 +3,7 @@
 Audit date: 2026-10-18.
 
 Scope: the current working-tree contents of 26 headers, 19 implementations,
-and `zhttp/src/Makefile.am`, audited against the current `GUIDELINES.md` and
+and `zhttp/src/Makefile.am`, audited against the current `docs/GUIDELINES.md` and
 `AGENTS.md`. Existing modifications were included. The audit made no source
 edits. References identify representative occurrences where a pattern repeats.
 

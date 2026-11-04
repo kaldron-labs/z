@@ -1557,7 +1557,7 @@ with a test shortcut. Outstanding gates remain outstanding, not implicitly waive
 
 ## Implementation requirements and execution scope
 
-Implementation must comply with [GUIDELINES.md](GUIDELINES.md), which extends
+Implementation must comply with [GUIDELINES.md](docs/GUIDELINES.md), which extends
 `AGENTS.md` and is authoritative for engineering style, framework usage,
 performance, ownership, and review. Read applicable module-local guidelines
 before changing those modules. This plan defines behavior and architecture, not
@@ -1609,7 +1609,7 @@ In particular:
   optional protocol fields alone are not a reason to reject interoperable clients.
 
 The following task-specific build and verification limits override the broader
-build-matrix and acceptance prescriptions in `GUIDELINES.md` for this work:
+build-matrix and acceptance prescriptions in `docs/GUIDELINES.md` for this work:
 
 - Continue using the existing clang debug configuration. Release, ASan/LSan,
   GCC, and MinGW builds or verification are out of scope.

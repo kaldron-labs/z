@@ -3,7 +3,7 @@
 Date: 2026-10-18.
 
 Sources: the follow-up review of [zhttp/repair-review.md](zhttp/repair-review.md),
-the current implementation, and [GUIDELINES.md](GUIDELINES.md). Historical
+the current implementation, and [GUIDELINES.md](docs/GUIDELINES.md). Historical
 implementation and validation evidence remains in [findings.md](findings.md).
 
 This document is a plan, not an implementation or a new acceptance result.
@@ -77,10 +77,10 @@ internal machinery chosen by an earlier repair. For every intended element:
    dispatch, reference and post counts. Delete superseded code and its direct
    dependents in the same change; retain unrelated diagnostic probes.
 
-Rules: [Repair procedure](GUIDELINES.md#repair-procedure),
-[Framework fit](GUIDELINES.md#framework-fit),
-[Scope and cleanup](GUIDELINES.md#scope-and-cleanup), and
-[Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints).
+Rules: [Repair procedure](docs/GUIDELINES.md#repair-procedure),
+[Framework fit](docs/GUIDELINES.md#framework-fit),
+[Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup), and
+[Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints).
 
 ### Required framework choices
 
@@ -95,17 +95,17 @@ Rules: [Repair procedure](GUIDELINES.md#repair-procedure),
 | Matching, hashes and containers | Use `ZuMatcher`, `ZuHash`, `ZmHash`/`ZmLHash`, `ZmList` and `ZmRBTree` as appropriate. No local hash, tree, free list, string-match chain or allocator implementation. Prefer existing intrusive links. |
 | Callbacks and completion | Use `ZmFn`, existing owner-shard dispatch and canonical engine hooks. Keep captures to necessary fixed metadata/handles. No blanket captures, worker blocking, or shutdown polling. |
 
-Rules: [Strings](GUIDELINES.md#strings),
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime),
-[Formatting](GUIDELINES.md#formatting), [Metadata](GUIDELINES.md#metadata),
-[Bad casting](GUIDELINES.md#bad-casting),
-[Compile-time data and matching](GUIDELINES.md#compile-time-data-and-matching),
-[I/O and system integration](GUIDELINES.md#io-and-system-integration), and
-[Callbacks](GUIDELINES.md#callbacks).
+Rules: [Strings](docs/GUIDELINES.md#strings),
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime),
+[Formatting](docs/GUIDELINES.md#formatting), [Metadata](docs/GUIDELINES.md#metadata),
+[Bad casting](docs/GUIDELINES.md#bad-casting),
+[Compile-time data and matching](docs/GUIDELINES.md#compile-time-data-and-matching),
+[I/O and system integration](docs/GUIDELINES.md#io-and-system-integration), and
+[Callbacks](docs/GUIDELINES.md#callbacks).
 
 ### Names, structure and audit flags
 
-Apply the complete [Audit flags](GUIDELINES.md#audit-flags) checklist to each
+Apply the complete [Audit flags](docs/GUIDELINES.md#audit-flags) checklist to each
 intended change and its dependent declarations/callers, not only the flags
 that originally found it. Record applicable violations and why any flagged
 construct is necessary; do not turn the checklist into extra runtime checks.
@@ -114,7 +114,7 @@ construct is necessary; do not turn the checklist into extra runtime checks.
   new manager/context/controller vocabulary where an existing owner suffices.
   Use overloaded accessors, standard container verbs and trailing underscores
   for internal/shard-owned functions. Follow module-prefixed source/test names
-  and lowercase integration basenames. See [Naming](GUIDELINES.md#naming).
+  and lowercase integration basenames. See [Naming](docs/GUIDELINES.md#naming).
 - Data: classes have private trailing `m_` members; shared structs have public
   unprefixed data before behavior. No hybrid data ownership, friend access to
   another class's private members, or parameter-independent types nested in
@@ -135,9 +135,9 @@ construct is necessary; do not turn the checklist into extra runtime checks.
   module rules where applicable, and liveness. A flag with no occurrence needs
   no implementation. Do not expand into unrelated modules to manufacture work.
 
-Also apply [Class and struct shape](GUIDELINES.md#class-and-struct-shape),
-[Header layout](GUIDELINES.md#header-layout),
-[I/O sharding](GUIDELINES.md#io-sharding), and the hard-tab/98-column source rules.
+Also apply [Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape),
+[Header layout](docs/GUIDELINES.md#header-layout),
+[I/O sharding](docs/GUIDELINES.md#io-sharding), and the hard-tab/98-column source rules.
 
 ## Findings and priorities
 
@@ -181,9 +181,9 @@ audit scope does not authorize unrelated edits.
 
 Files: `zhttp/src/ZhttpAltSvc.cc`, `ZhttpDiscovery.hh`, relevant cache tests.
 
-Rules: [Assertions](GUIDELINES.md#assertions),
-[Repair procedure](GUIDELINES.md#repair-procedure), and
-[Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+Rules: [Assertions](docs/GUIDELINES.md#assertions),
+[Repair procedure](docs/GUIDELINES.md#repair-procedure), and
+[Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 - Move the required iterator advancement outside the debug-only assertion.
   The iterator must select a victim before deletion regardless of ZDEBUG.
@@ -209,10 +209,10 @@ introduce a second build configuration to verify this repair.
 
 File: `zhttp/src/ZhttpConfig.hh`, with all necessary dependent migrations.
 
-Rules: [Accessors](GUIDELINES.md#accessors),
-[Core language](GUIDELINES.md#core-language),
-[Bad casting](GUIDELINES.md#bad-casting), and
-[Static polymorphism and constraints](GUIDELINES.md#static-polymorphism-and-constraints).
+Rules: [Accessors](docs/GUIDELINES.md#accessors),
+[Core language](docs/GUIDELINES.md#core-language),
+[Bad casting](docs/GUIDELINES.md#bad-casting), and
+[Static polymorphism and constraints](docs/GUIDELINES.md#static-polymorphism-and-constraints).
 
 - Retain the canonical `tls()` accessor and `tls(lambda)` operation returning
   the outer H2Config as an rvalue, following ZiMxParams::scheduler().
@@ -241,10 +241,10 @@ through repository callers rather than preserving the defective interface.
 
 Files: `zm/src/ZmLHash.hh`, `ZmHeap.cc`, related heap/hash tests and codec users.
 
-Rules: [Heap allocation](GUIDELINES.md#heap-allocation),
-[Storage and capacity](GUIDELINES.md#storage-and-capacity),
-[Storage and lifetime](GUIDELINES.md#storage-and-lifetime), and
-[Framework fit](GUIDELINES.md#framework-fit).
+Rules: [Heap allocation](docs/GUIDELINES.md#heap-allocation),
+[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+[Storage and lifetime](docs/GUIDELINES.md#storage-and-lifetime), and
+[Framework fit](docs/GUIDELINES.md#framework-fit).
 
 The current variable heap adds an alignment-sized prefix to a payload whose
 size is already known by the table. A 4,096-byte payload plus 64 bytes selects
@@ -282,10 +282,10 @@ demonstrated boundary and no loss of heap identification.
 Files: `zhttp/src/ZhttpCore.hh`, `ZhttpServerImpl.hh`, response allocation/binding
 sites and response-stream tests.
 
-Rules: [Containers and intrusion](GUIDELINES.md#containers-and-intrusion),
-[Data movement and initialization](GUIDELINES.md#data-movement-and-initialization),
-[Liveness](GUIDELINES.md#liveness), and
-[Repair procedure](GUIDELINES.md#repair-procedure).
+Rules: [Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion),
+[Data movement and initialization](docs/GUIDELINES.md#data-movement-and-initialization),
+[Liveness](docs/GUIDELINES.md#liveness), and
+[Repair procedure](docs/GUIDELINES.md#repair-procedure).
 
 - Keep logarithmic H1 pending insertion; do not restore the unbounded sorted
   list. Keep unique sequence rejection and separate ready-queue membership.
@@ -315,10 +315,10 @@ be described as a footprint repair.
 Files: `zum/src/zumd_daemon.*`, `zumd_server.*`, their concrete request/helper
 families and relevant lifecycle tests.
 
-Rules: [Scope and cleanup](GUIDELINES.md#scope-and-cleanup),
-[Heap allocation](GUIDELINES.md#heap-allocation),
-[Unnecessary atomic operations, locking and copies](GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies),
-[Lifetime](GUIDELINES.md#lifetime), and [Callbacks](GUIDELINES.md#callbacks).
+Rules: [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup),
+[Heap allocation](docs/GUIDELINES.md#heap-allocation),
+[Unnecessary atomic operations, locking and copies](docs/GUIDELINES.md#unnecessary-atomic-operations-locking-and-copies),
+[Lifetime](docs/GUIDELINES.md#lifetime), and [Callbacks](docs/GUIDELINES.md#callbacks).
 
 - Identify the allocation that necessarily outlives each complete admitted
   graph, including descendants remaining after an early application result.
@@ -349,11 +349,11 @@ needed. Do not use synthetic correctness tests as latency evidence.
 
 File: `zrest/src/ZrestServer.hh`, with necessary SSE/producer interfaces.
 
-Rules: [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow),
-[I/O sharding](GUIDELINES.md#io-sharding),
-[Cross-Shard Handoffs](GUIDELINES.md#cross-shard-handoffs),
-[Teardown](GUIDELINES.md#teardown), and
-[Repair procedure](GUIDELINES.md#repair-procedure).
+Rules: [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow),
+[I/O sharding](docs/GUIDELINES.md#io-sharding),
+[Cross-Shard Handoffs](docs/GUIDELINES.md#cross-shard-handoffs),
+[Teardown](docs/GUIDELINES.md#teardown), and
+[Repair procedure](docs/GUIDELINES.md#repair-procedure).
 
 - Polling is forbidden, with no retained exception. Delete the readiness
   self-repost and check affected shutdown callers for equivalent loops, delayed
@@ -389,10 +389,10 @@ polling.
 
 Files: `zhttp/src/ZhttpDiscovery.hh`, `ZhttpAltSvc.cc`, cache lifetime owners.
 
-Rules: [General principles](GUIDELINES.md#general-principles),
-[Storage and capacity](GUIDELINES.md#storage-and-capacity),
-[Timers](GUIDELINES.md#timers), and
-[Repair procedure](GUIDELINES.md#repair-procedure).
+Rules: [General principles](docs/GUIDELINES.md#general-principles),
+[Storage and capacity](docs/GUIDELINES.md#storage-and-capacity),
+[Timers](docs/GUIDELINES.md#timers), and
+[Repair procedure](docs/GUIDELINES.md#repair-procedure).
 
 - Separate logical expiry, admission bounds and physical residency. R1 fixes
   the bound; it does not reclaim entries merely because time passes.

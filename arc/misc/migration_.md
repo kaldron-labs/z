@@ -1,6 +1,6 @@
 `migration.md`: be specific and prescriptive with the implementation
 
-`migration.md`: audit against `GUIDELINES.md` and `zquic/GUIDELINES.md`:
+`migration.md`: audit against `docs/GUIDELINES.md` and `zquic/GUIDELINES.md`:
 - validate all dependencies
 - ensure use of the appropriate Z framework components
 - do not mistakenly assume the need to create functionality that already exists in Z

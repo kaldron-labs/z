@@ -14,3 +14,9 @@ verification against the unsigned wire bytes. Altered payloads, altered
 signatures and missing signatures fail verification. Signing-disabled cases
 also suppress the marked field. The existing `signedBodyTest` checks that
 `prefixBody` bytes are excluded from the span passed to both body signing hooks.
+
+`inputRangesTest` checks adoption of contiguous HTTP body ranges without changing
+source metadata, adjacent-range reuse, one final consolidation for disjoint
+fragments, and immediate release of a view's source after growth. Signed-body
+fixtures also assert that the destination writer's allocated descriptor is the
+one submitted after serialization and signing.

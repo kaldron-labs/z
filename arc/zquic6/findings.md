@@ -1,6 +1,6 @@
 # zquic GUIDELINES.md Audit Findings
 
-Scope: `zquic`, with emphasis on `GUIDELINES.md` I/O sharding and timer
+Scope: `zquic`, with emphasis on `docs/GUIDELINES.md` I/O sharding and timer
 teardown rules.
 
 ## Findings
@@ -36,7 +36,7 @@ teardown rules.
    `m_timerTeardown`, and cancels timers immediately (`zquic/src/Zquic.hh:4237`).
    Timer callbacks read the same flag on Tx (`zquic/src/Zquic.hh:4265`). The
    flag is not atomic and sits in the Rx-exclusive block
-   (`zquic/src/Zquic.hh:5959`). Per `GUIDELINES.md`, cancellation and
+   (`zquic/src/Zquic.hh:5959`). Per `docs/GUIDELINES.md`, cancellation and
    callback-drain continuation need to run on the timer callback thread.
 
 4. Medium: `cancelTimers()` is used as ordinary close/reset logic, but it is not
@@ -79,4 +79,4 @@ For timers, make teardown start by posting to Tx: set the teardown flag on Tx,
 `del()` all timers on Tx, then post a Tx continuation to drain late callbacks,
 then continue object release back on Rx if needed.
 
-Tests were not run; this was a source audit against `GUIDELINES.md`.
+Tests were not run; this was a source audit against `docs/GUIDELINES.md`.

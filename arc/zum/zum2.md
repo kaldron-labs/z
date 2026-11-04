@@ -20,7 +20,7 @@ This plan retains all ten tables currently exposed by `ZumDB.hh`. Simplification
 targets duplicated control flow, misplaced HTTP handling, speculative features,
 and friction in the host API. This follows the project requirement that code
 must align with its concrete goal and dead or historical code must be deleted
-([GUIDELINES: Scope and cleanup](GUIDELINES.md#scope-and-cleanup)).
+([GUIDELINES: Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup)).
 
 ## Deliberate limits
 
@@ -38,8 +38,8 @@ application table, claim tables, generic claim expressions, SAML, SCIM,
 introspection, token exchange, mTLS, a service mesh, dynamic client registration,
 OIDC consent storage, or an HTTP management API. None is required to satisfy the
 goal. A future concrete consumer can justify a separate change. This limit is
-required by [GUIDELINES: General principles](GUIDELINES.md#general-principles)
-and [GUIDELINES: Scope and cleanup](GUIDELINES.md#scope-and-cleanup).
+required by [GUIDELINES: General principles](docs/GUIDELINES.md#general-principles)
+and [GUIDELINES: Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup).
 
 Zum does not need a local browser session for SSO. On every local `/authorize`,
 it redirects to the configured upstream provider. The provider's browser session
@@ -75,7 +75,7 @@ Use the existing `effectiveActions()` semantics: expand both role sets to action
 bitmaps, then intersect. Do not add a separate Permission record or maintain a
 second scope-to-action mapping. Resource ownership and business predicates stay
 in the host resource handler. This keeps the hot check to bitmap operations and
-follows [GUIDELINES: Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow).
+follows [GUIDELINES: Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow).
 
 Upstream OIDC has a separate scope vocabulary. `openid profile email groups`
 asks the provider to release identity claims; those strings are never looked up
@@ -104,16 +104,16 @@ Retain these tables and responsibilities:
 
 | Table | Retained responsibility | Governing guideline |
 | --- | --- | --- |
-| `Issuer` | Local issuer identity, stable action-ID high-water mark, authorization version, and audit-ID high-water mark. | [Persistence](GUIDELINES.md#persistence); no process-local counters for durable IDs. |
-| `User` | Human identity, passkey handle, local roles, lifecycle, OIDC subject binding, and authorization version. | [Persistence](GUIDELINES.md#persistence); [disorderly structs](GUIDELINES.md#storage-and-capacity). |
-| `Cred` | Independently indexed passkey public material, counter, backup state, label, lifecycle, and user version. | [Persistence](GUIDELINES.md#persistence); avoid an oversized/hot `User` row. |
-| `Action` | Persistent action name and stable, never-reused bitmap position. | [Algorithmic efficiency](GUIDELINES.md#algorithm-and-control-flow); bitmap authorization avoids string work. |
-| `Role` | Persistent role name and action bitmap. | [Persistence](GUIDELINES.md#persistence); shared mutable relational state belongs in Zdb. |
-| `Scope` | Audience-bound local OAuth name and referenced roles. | [Scope and cleanup](GUIDELINES.md#scope-and-cleanup); it is retained because both auth paths use it. |
-| `Client` | Local OAuth client, type, credentials, redirects, grants, audiences, scopes, roles, and lifecycle. | [Persistence](GUIDELINES.md#persistence); registrations are durable security state. |
-| `Grant` | Passkey ceremonies/capabilities, authorization codes, refresh families, token digests, reuse evidence, and authority ceilings. | [Persistence](GUIDELINES.md#persistence); sagas protect multi-row activation. |
-| `SignKey` | Public JWK, protected signer reference, activation, and retirement metadata. | [Persistence](GUIDELINES.md#persistence); rotation must survive restart. |
-| `Audit` | Persistent security events with bounded retention. | [Storage and capacity](GUIDELINES.md#storage-and-capacity); indexed bounded deletion, never scans. |
+| `Issuer` | Local issuer identity, stable action-ID high-water mark, authorization version, and audit-ID high-water mark. | [Persistence](docs/GUIDELINES.md#persistence); no process-local counters for durable IDs. |
+| `User` | Human identity, passkey handle, local roles, lifecycle, OIDC subject binding, and authorization version. | [Persistence](docs/GUIDELINES.md#persistence); [disorderly structs](docs/GUIDELINES.md#storage-and-capacity). |
+| `Cred` | Independently indexed passkey public material, counter, backup state, label, lifecycle, and user version. | [Persistence](docs/GUIDELINES.md#persistence); avoid an oversized/hot `User` row. |
+| `Action` | Persistent action name and stable, never-reused bitmap position. | [Algorithmic efficiency](docs/GUIDELINES.md#algorithm-and-control-flow); bitmap authorization avoids string work. |
+| `Role` | Persistent role name and action bitmap. | [Persistence](docs/GUIDELINES.md#persistence); shared mutable relational state belongs in Zdb. |
+| `Scope` | Audience-bound local OAuth name and referenced roles. | [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup); it is retained because both auth paths use it. |
+| `Client` | Local OAuth client, type, credentials, redirects, grants, audiences, scopes, roles, and lifecycle. | [Persistence](docs/GUIDELINES.md#persistence); registrations are durable security state. |
+| `Grant` | Passkey ceremonies/capabilities, authorization codes, refresh families, token digests, reuse evidence, and authority ceilings. | [Persistence](docs/GUIDELINES.md#persistence); sagas protect multi-row activation. |
+| `SignKey` | Public JWK, protected signer reference, activation, and retirement metadata. | [Persistence](docs/GUIDELINES.md#persistence); rotation must survive restart. |
+| `Audit` | Persistent security events with bounded retention. | [Storage and capacity](docs/GUIDELINES.md#storage-and-capacity); indexed bounded deletion, never scans. |
 
 Do not add tables for the upstream provider. Support one optional upstream OIDC
 provider per Zum issuer. Its endpoints, client ID, client authentication, scopes,
@@ -133,16 +133,16 @@ into clearly separated payload groups. Retain the flat record and existing
 surface without changing the table. Reorder the C++ storage by alignment and
 lifecycle and document fields valid for each `GrantKind`; metadata remains in
 schema order. Do not add a private serialization layer. This applies
-[GUIDELINES: disorderly structs](GUIDELINES.md#storage-and-capacity) and
-[GUIDELINES: Metadata](GUIDELINES.md#metadata).
+[GUIDELINES: disorderly structs](docs/GUIDELINES.md#storage-and-capacity) and
+[GUIDELINES: Metadata](docs/GUIDELINES.md#metadata).
 
 Use Zdb sagas only where an invariant spans rows, such as initial user plus
 credential activation and code-to-refresh-family activation. One-row state
 transitions use conditional Zdb commits. This follows
-[GUIDELINES: Persistence](GUIDELINES.md#persistence). Expired grants and audits
+[GUIDELINES: Persistence](docs/GUIDELINES.md#persistence). Expired grants and audits
 are removed through their expiry/time indexes in bounded batches initiated by
 request activity or explicit maintenance. Never scan a table or run timer-based
-GC ([GUIDELINES: Storage and capacity](GUIDELINES.md#storage-and-capacity)).
+GC ([GUIDELINES: Storage and capacity](docs/GUIDELINES.md#storage-and-capacity)).
 
 ## Upstream OIDC login
 
@@ -173,7 +173,7 @@ Hold the upstream PKCE verifier only in a bounded pending object and remove it
 on callback, failure, cancellation, or timeout. Restart invalidates pending OIDC
 login and the local authorization request fails closed. Each object owns one
 `ZmScheduler::Timer`; shutdown uses cancel, same-shard drain continuation, then
-destruction ([GUIDELINES: Timers](GUIDELINES.md#timers)). The timer is that
+destruction ([GUIDELINES: Timers](docs/GUIDELINES.md#timers)). The timer is that
 request's timeout and removes it directly; do not add an expiry index or a
 second cleanup mechanism.
 
@@ -188,9 +188,9 @@ Cache the provider's current bounded JWKS in one `ZmHash` keyed by `kid`, using
 a named `ZmHeapID`. Replace the set after a successful refresh; do not add LRU,
 per-key expiry, or a generic HTTP cache. Refresh asynchronously on an unknown
 `kid` and coalesce concurrent refreshes; cap work per scheduler turn.
-This follows [GUIDELINES: Containers and intrusion](GUIDELINES.md#containers-and-intrusion),
-[GUIDELINES: Heap allocation](GUIDELINES.md#heap-allocation), and
-[GUIDELINES: Liveness](GUIDELINES.md#liveness).
+This follows [GUIDELINES: Containers and intrusion](docs/GUIDELINES.md#containers-and-intrusion),
+[GUIDELINES: Heap allocation](docs/GUIDELINES.md#heap-allocation), and
+[GUIDELINES: Liveness](docs/GUIDELINES.md#liveness).
 
 ## Library-owned HTTP integration
 
@@ -210,22 +210,22 @@ messages or reproduce callback chains.
 
 Keep nondependent state and implementation in `Server` and `.cc` files; request
 templates contain only Zrest type adaptation. This directly applies
-[GUIDELINES: Static polymorphism](GUIDELINES.md#static-polymorphism-and-constraints)
+[GUIDELINES: Static polymorphism](docs/GUIDELINES.md#static-polymorphism-and-constraints)
 and the prohibition on nondependent declarations nested in templates under
-[GUIDELINES: Code structure](GUIDELINES.md#code-structure).
+[GUIDELINES: Code structure](docs/GUIDELINES.md#code-structure).
 
 The retained routes are:
 
 | Route | Owner | Governing guideline |
 | --- | --- | --- |
-| `GET /authorize` | Zum validates the local OAuth request and starts passkey or OIDC authentication. | [Framework fit](GUIDELINES.md#framework-fit): Zrest, ZfURI, and common auth continuation. |
-| `POST /token` | Zum handles code, refresh, and client-credentials grants. | [Data movement](GUIDELINES.md#data-movement-and-initialization): parse mutable form data in place and clear secrets. |
-| `GET /.well-known/oauth-authorization-server` | Zum advertises exactly the implemented OAuth profile. | [Scope and cleanup](GUIDELINES.md#scope-and-cleanup): omit unsupported features. |
-| `GET /jwks` | Zum publishes active and still-valid retiring keys. | [Liveness](GUIDELINES.md#liveness): bounded indexed key traversal. |
-| `POST /revoke` | Zum revokes a refresh family using RFC 7009 response semantics. | [Persistence](GUIDELINES.md#persistence): conditional indexed mutation. |
-| `POST /passkey/begin` | Zum starts an allowed enrollment/add/recovery ceremony. | [Framework fit](GUIDELINES.md#framework-fit): common ZfJSON/WebAuthn parsing. |
-| `POST /passkey/finish` | Zum parses and completes the server-bound ceremony. | [Algorithm and control flow](GUIDELINES.md#algorithm-and-control-flow): switch on stored purpose and flatten errors. |
-| `GET /oidc/callback` | Zum completes configured upstream authentication. | [I/O sharding](GUIDELINES.md#io-sharding): asynchronous exchange and owner-shard handoff. |
+| `GET /authorize` | Zum validates the local OAuth request and starts passkey or OIDC authentication. | [Framework fit](docs/GUIDELINES.md#framework-fit): Zrest, ZfURI, and common auth continuation. |
+| `POST /token` | Zum handles code, refresh, and client-credentials grants. | [Data movement](docs/GUIDELINES.md#data-movement-and-initialization): parse mutable form data in place and clear secrets. |
+| `GET /.well-known/oauth-authorization-server` | Zum advertises exactly the implemented OAuth profile. | [Scope and cleanup](docs/GUIDELINES.md#scope-and-cleanup): omit unsupported features. |
+| `GET /jwks` | Zum publishes active and still-valid retiring keys. | [Liveness](docs/GUIDELINES.md#liveness): bounded indexed key traversal. |
+| `POST /revoke` | Zum revokes a refresh family using RFC 7009 response semantics. | [Persistence](docs/GUIDELINES.md#persistence): conditional indexed mutation. |
+| `POST /passkey/begin` | Zum starts an allowed enrollment/add/recovery ceremony. | [Framework fit](docs/GUIDELINES.md#framework-fit): common ZfJSON/WebAuthn parsing. |
+| `POST /passkey/finish` | Zum parses and completes the server-bound ceremony. | [Algorithm and control flow](docs/GUIDELINES.md#algorithm-and-control-flow): switch on stored purpose and flatten errors. |
+| `GET /oidc/callback` | Zum completes configured upstream authentication. | [I/O sharding](docs/GUIDELINES.md#io-sharding): asynchronous exchange and owner-shard handoff. |
 
 Do not add `/logout`, `/userinfo`, local OIDC-provider metadata, or introspection
 in this change. There is no local browser session to log out. Optional upstream
@@ -239,8 +239,8 @@ algorithms actually implemented.
 All new C++ names are camel-case and at most 28 bytes. Source and unit-test
 basenames are CamelCase with the `Zum` prefix; example program files remain
 lowercase. FlatBuffers files retain lowercase underscore names. These rules come
-from [GUIDELINES: Naming](GUIDELINES.md#naming) and
-[GUIDELINES: Header layout](GUIDELINES.md#header-layout).
+from [GUIDELINES: Naming](docs/GUIDELINES.md#naming) and
+[GUIDELINES: Header layout](docs/GUIDELINES.md#header-layout).
 
 | Purpose | Name |
 | --- | --- |
@@ -263,13 +263,13 @@ first. Use overloaded getters/setters and trailing underscores only for internal
 or owning-shard variants. Internal enums use `namespace E { enum { ... }; }`;
 use `ZtEnum` only for persisted or externally named values needing lookup. Do
 not use `enum class`, concepts, `requires`, anonymous namespaces, or STL
-containers ([GUIDELINES: C++ language](GUIDELINES.md#use-of-c-language),
-[GUIDELINES: Class and struct shape](GUIDELINES.md#class-and-struct-shape), and
-[GUIDELINES: Trailing underscores](GUIDELINES.md#trailing-underscores)).
+containers ([GUIDELINES: C++ language](docs/GUIDELINES.md#use-of-c-language),
+[GUIDELINES: Class and struct shape](docs/GUIDELINES.md#class-and-struct-shape), and
+[GUIDELINES: Trailing underscores](docs/GUIDELINES.md#trailing-underscores)).
 
 ## Performance, ownership, and audit gate
 
-Every implementation review must check every audit flag in `GUIDELINES.md`.
+Every implementation review must check every audit flag in `docs/GUIDELINES.md`.
 The following records how this design addresses them; an exception requires a
 measured or protocol-specific justification in the code.
 
@@ -303,9 +303,9 @@ measured or protocol-specific justification in the code.
 | Needless atomics/locks/copies | Keep authority and provider-cache state on an owner shard; do not add locks to permit foreign-shard access or atomics for approximate diagnostics. |
 | Long scheduler turns | Bound key/row processing per turn and post continuations for remaining work. |
 
-The table above applies [GUIDELINES: Audit flags](GUIDELINES.md#audit-flags),
-[GUIDELINES: Framework capabilities](GUIDELINES.md#leveraging-key-z-framework-capabilities),
-and [GUIDELINES: I/O sharding](GUIDELINES.md#io-sharding).
+The table above applies [GUIDELINES: Audit flags](docs/GUIDELINES.md#audit-flags),
+[GUIDELINES: Framework capabilities](docs/GUIDELINES.md#leveraging-key-z-framework-capabilities),
+and [GUIDELINES: I/O sharding](docs/GUIDELINES.md#io-sharding).
 
 Issuer-owned IAM and grant state stays on its designated Zdb shard. Public calls
 are thin dispatchers to trailing-underscore shard functions. HTTP Rx state stays
@@ -313,9 +313,9 @@ on Rx; response Tx state stays on Tx. Cross-shard posts capture only fixed-size
 metadata or handles; variable input remains in destination-owned/pool-backed
 buffers. No lock makes non-owner access acceptable. Teardown stops ingress,
 drains Rx, drains Tx, then releases owners as required by
-[GUIDELINES: I/O function organization](GUIDELINES.md#io-function-organization),
-[GUIDELINES: Cross-shard handoffs](GUIDELINES.md#cross-shard-handoffs), and
-[GUIDELINES: Teardown](GUIDELINES.md#teardown).
+[GUIDELINES: I/O function organization](docs/GUIDELINES.md#io-function-organization),
+[GUIDELINES: Cross-shard handoffs](docs/GUIDELINES.md#cross-shard-handoffs), and
+[GUIDELINES: Teardown](docs/GUIDELINES.md#teardown).
 
 ## Delivery
 
@@ -347,8 +347,8 @@ cleanup shortcut.
 
 Unit tests in `zum/test` use `ZuTestUtil` and TAP. Full HTTP, restart, persistence,
 and multi-component flows belong in `zum/itest`; independent OIDC/JWT provider
-fixtures belong in `zum/interop` ([GUIDELINES: Module layout](GUIDELINES.md#module-layout)
-and [GUIDELINES: Tests](GUIDELINES.md#tests)).
+fixtures belong in `zum/interop` ([GUIDELINES: Module layout](docs/GUIDELINES.md#module-layout)
+and [GUIDELINES: Tests](docs/GUIDELINES.md#tests)).
 
 Required coverage:
 
@@ -385,9 +385,9 @@ Perform ASan/LSan and valgrind checks only when supported by the existing build;
 do not reconfigure this tree to obtain another build type. Use `libtool exec` for
 source-tree debuggers. This cadence applies the source-before-dependent ordering
 while deliberately constraining reconfiguration and rebuild frequency
-([GUIDELINES: Build configuration](GUIDELINES.md#build-configuration),
-[GUIDELINES: Acceptance](GUIDELINES.md#acceptance), and
-[GUIDELINES: Debugging](GUIDELINES.md#debugging)).
+([GUIDELINES: Build configuration](docs/GUIDELINES.md#build-configuration),
+[GUIDELINES: Acceptance](docs/GUIDELINES.md#acceptance), and
+[GUIDELINES: Debugging](docs/GUIDELINES.md#debugging)).
 
 Completion means a host can mount Zum's OAuth and passkey endpoints, select
 built-in or upstream OIDC authentication, and enforce the same local scope/role

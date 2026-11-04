@@ -90,7 +90,7 @@ Resolve the design questions as follows:
   in-flight HTTP, and secure-backend failure. Test issuer/CA checks with the
   existing local TLS fixture. Keep the wire-test publisher's own bearer
   injection separate from the production agent contract.
-- Follow `GUIDELINES.md` sharding/ownership, repair, allocation, and naming
+- Follow `docs/GUIDELINES.md` sharding/ownership, repair, allocation, and naming
   rules. Snapshot only fixed metadata across shards; keep variable-size
   secret/token buffers owner-held and move handles through continuations.
   Use `ZtScratch` for bounded encoding scratch, `ZiIOBuf` for I/O bodies,

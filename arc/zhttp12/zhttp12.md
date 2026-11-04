@@ -44,7 +44,7 @@ matrix.  Do not run the full interoperability suite during phases 1 through 6
 or while phase 7 implementation, audit, or repair is still in progress.  Full
 interoperability testing is the final action of phase 7, after the clang/debug
 build, functional unit tests, repository-wide removal checks, and final
-`GUIDELINES.md` audit and repairs have completed.
+`docs/GUIDELINES.md` audit and repairs have completed.
 
 ## Phase 1 — Restore message-typed contracts
 
@@ -231,7 +231,7 @@ compatibility traits, or transitional adapters while doing so.
   coercing them to `ZuCSpan`.
 - No compatibility alias, fallback trait, or deprecated direction-prefixed
   callback is introduced.
-- Audit every phase 1 change against `GUIDELINES.md` and repair all identified
+- Audit every phase 1 change against `docs/GUIDELINES.md` and repair all identified
   API, type-system, naming, Z-idiom, layout, and performance issues before the
   phase is accepted.
 
@@ -321,7 +321,7 @@ body construction and should not be forced into the Builder.
   type/header or `requestURL`, `requestReplayable`, and
   `requestReproducible` hooks; historical references in this plan are
   excluded from that check.
-- Audit every phase 2 change against `GUIDELINES.md` and repair all identified
+- Audit every phase 2 change against `docs/GUIDELINES.md` and repair all identified
   ownership, sharding, lifecycle, naming, Z-idiom, allocation, and performance
   issues before the phase is accepted.
 
@@ -1038,7 +1038,7 @@ protocol requirement.
   values fail before commit.
 - HEAD, 1xx, 204, 304, and successful CONNECT behavior follows the documented
   body and `content-length` rules for every protocol.
-- Audit every phase 3 change against `GUIDELINES.md` and repair all identified
+- Audit every phase 3 change against `docs/GUIDELINES.md` and repair all identified
   stream layering, buffer ownership, allocation, copy, framing, Z-idiom,
   layout, and performance issues before the phase is accepted.
 
@@ -1135,7 +1135,7 @@ copy in the client.
 - Focused functional unit tests for PUT, GET, redirect, retry, decoded-record,
   and request telemetry pass without comparing against a retained serialized
   request string when this phase ends at a stable buildable checkpoint.
-- Audit every phase 4 change against `GUIDELINES.md` and repair all identified
+- Audit every phase 4 change against `docs/GUIDELINES.md` and repair all identified
   client ownership, Tx/Rx sharding, callback, allocation, copy, Z-idiom,
   layout, and performance issues before the phase is accepted.
 
@@ -1309,7 +1309,7 @@ it is forbidden, including 1xx, 204, and successful CONNECT responses.
   prove that the server does not call `body` or `bodyHdrs` or emit entity
   framing when prohibited, when this phase ends at a stable buildable
   checkpoint.
-- Audit every phase 5 change against `GUIDELINES.md` and repair all identified
+- Audit every phase 5 change against `docs/GUIDELINES.md` and repair all identified
   service ownership, Tx/Rx handoff, response ordering, callback, allocation,
   copy, Z-idiom, layout, and performance issues before the phase is accepted.
 
@@ -1494,7 +1494,7 @@ machinery speculatively.
   required by the build policy; searches of live source, build manifests,
   configuration, and tests must still find none of the deleted production
   machinery.  Historical and removal text in this plan is excluded.
-- Audit every phase 6 change against `GUIDELINES.md` and repair all identified
+- Audit every phase 6 change against `docs/GUIDELINES.md` and repair all identified
   dead code, compatibility residue, ownership, sharding, allocation, copy,
   Z-idiom, layout, and performance issues before the phase is accepted.
 
@@ -1643,7 +1643,7 @@ until body-dependent headers are final and commits the complete ordered chain.
   cursor/storage, body batch, direction-prefixed message callbacks, or
   compatibility adapters.  Historical and removal references in this plan
   are excluded.
-- Audit the complete refactor against `GUIDELINES.md`, repair every identified
+- Audit the complete refactor against `docs/GUIDELINES.md`, repair every identified
   API, ownership, sharding, allocation, copy, buffer, Z-idiom, layout, and
   performance issue, and rerun the affected clang/debug build and functional
   unit tests.  Only then run the full interoperability suite as the final

@@ -30,7 +30,7 @@ remain unchanged. This document records requirements, not completed work.
 - Preserve existing external-input and saved-definition verification at their
   current boundaries. Adding verification or rejecting previously accepted
   inputs is outside this repair.
-- Apply `GUIDELINES.md`, preserving Z containers, tunable heaps, pooled I/O
+- Apply `docs/GUIDELINES.md`, preserving Z containers, tunable heaps, pooled I/O
   buffers, asynchronous lifetimes and hard-tab style.
 
 ## 1. Eliminate unnecessary copying

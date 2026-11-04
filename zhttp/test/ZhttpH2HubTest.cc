@@ -108,6 +108,7 @@ friend inline ZuStringT<"Zhttp.H1.FlowNative"> ZmNHeapID(FlowH1Native *);
   Tx txStream() { ZmAssert(app->rxInvoked()); return {}; }
   Tx txStream_() { ZmAssert(app->txInvoked()); return {}; }
   void streamTxEnd() { ZmAssert(app->txInvoked()); ++ends; }
+  void closeAfterTx_() { ZmAssert(app->txInvoked()); ++ends; }
   void disconnectNative() { ZmAssert(app->rxInvoked()); ++resets; }
 };
 
@@ -203,34 +204,20 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     ~Tx() { this->flush(); }
 
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      ZmRef<ZiIOBuf> buf = new BufAlloc{};
+      ZmRef<ZiIOBuf> buf = new BufAlloc{nullptr, 0};
       buf->skip = headRoom;
       buf->length = 0;
       return buf;
     }
-    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
-      if (!buf) return false;
-      ++wire->sends;
-      if (wire->rejectControl) return false;
-      uint8_t type = buf->data()[3], flags = buf->data()[4];
-      if (wire->headerOpen && type != Zhttp::H2::FrameType::Continuation)
-	++wire->interleaved;
-      switch (type) {
-	case Zhttp::H2::FrameType::Headers:
-	  ++wire->headerFrames;
-	  wire->headerOpen = !(flags & Zhttp::H2::Flag::EndHeaders);
-	  break;
-	case Zhttp::H2::FrameType::Continuation:
-	  ++wire->continuationFrames;
-	  wire->headerOpen = !(flags & Zhttp::H2::Flag::EndHeaders);
-	  break;
-      }
-      if (buf->data()[3] == Zhttp::H2::FrameType::Data) {
-	wire->dataLength = (unsigned(buf->data()[0])<<16) |
-	  (unsigned(buf->data()[1])<<8) | buf->data()[2];
-	wire->dataFlags = buf->data()[4];
-      }
+    bool sendRange_(Zi::RxRange range) {
+      if (!range.buf || wire->rejectControl || wire->transportClosed) return false;
+      wire->lastRange = ZuMv(range);
+      ++wire->rangeCalls;
       return true;
+    }
+    bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
+      if (!buf || wire->transportClosed) return false;
+      return wire->frameSent_(buf->cspan());
     }
 
     FlowWire *wire;
@@ -243,10 +230,41 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   template <bool> unsigned txHeadRoom() const { return 0; }
   template <bool> unsigned txTailRoom() const { return 0; }
   template <bool> ZmRef<ZiIOBuf> txAllocBuf(unsigned headRoom) {
-    ZmRef<ZiIOBuf> buf = new BufAlloc{};
+    ZmRef<ZiIOBuf> buf = new BufAlloc{nullptr, 0};
     buf->skip = headRoom;
     buf->length = 0;
     return buf;
+  }
+  bool frameSent_(ZuBSpan frame) {
+    ++sends;
+    if (rejectControl) return false;
+    uint8_t type = frame.data()[3], flags = frame.data()[4];
+    if (headerOpen && type != Zhttp::H2::FrameType::Continuation)
+      ++interleaved;
+    switch (type) {
+      case Zhttp::H2::FrameType::Headers:
+	++headerFrames;
+	headerOpen = !(flags & Zhttp::H2::Flag::EndHeaders);
+	break;
+      case Zhttp::H2::FrameType::Continuation:
+	++continuationFrames;
+	headerOpen = !(flags & Zhttp::H2::Flag::EndHeaders);
+	break;
+    }
+    if (frame.data()[3] == Zhttp::H2::FrameType::Data) {
+      dataLength = (unsigned(frame.data()[0])<<16) |
+	(unsigned(frame.data()[1])<<8) | frame.data()[2];
+      dataFlags = frame.data()[4];
+    }
+    return true;
+  }
+  bool sendSource_(const Zhttp::H2_::TxFrame &frame) {
+    if (!frameSent_(frame.header)) return false;
+    if (frame.payload.length) {
+      lastRange = frame.payload;
+      ++rangeCalls;
+    }
+    return true;
   }
   Tx txStream() { return Tx{this}; }
   Tx txStream_() { return Tx{this}; }
@@ -260,14 +278,21 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   void h2Cancel(uint32_t) { }
   bool h2Closed(uint32_t id) const { return streamClosed(id); }
   void h2ResetAppLink(uint32_t, Zhttp::H2::Error::T) { }
-  void disconnect_(bool = true) { ++protocolDisconnects; }
+  void disconnect_(bool = true) {
+    ++protocolDisconnects;
+    // TLS closes its Tx session in a queued owner turn.
+    app_->txRun([this]() { transportClosed = true; });
+  }
   void disconnectNative() {
+    transportClosed = true;
     ++disconnects;
     disconnectShard = app_->shard;
   }
 
   FlowApp	*app_;
   unsigned	sends = 0;
+  Zi::RxRange	lastRange;
+  unsigned	rangeCalls = 0;
   unsigned	dataLength = 0;
   unsigned	dataFlags = 0;
   unsigned	capacityCalls = 0;
@@ -282,7 +307,35 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   bool		capacity = false;
   bool		rejectControl = false;
   bool		headerOpen = false;
+  bool		transportClosed = false;
 };
+
+void runConnectionOverflow()
+{
+  ZuTestScopeRT(runConnectionOverflow);
+  enum { Count = Zhttp::H2_::FrameDrainBatch + 1 };
+  FlowApp app;
+  app.deferred = true;
+  FlowWire wire{&app};
+  ZuCheckRT(wire.initWire(false, Zhttp::H2Config().settingsTimeout(0)
+    .maxQueuedFrames(Count + 1)));
+  uint8_t opaque[8] = {};
+  for (unsigned i = 0; i < Count; ++i) wire.h2Ping(ZuBSpan{opaque, 8});
+  wire.h2WindowUpdate(0, Zhttp::H2::MaxWindow);
+  bool queued = true;
+  for (unsigned i = 0; i < Count; ++i) queued &= app.step(FlowApp::Tx);
+  ZuCheckRT(queued && !wire.sends);
+  ZuCheckRT(app.step(FlowApp::Tx) && app.step(FlowApp::Rx));
+  while (app.step(FlowApp::Tx) || app.step(FlowApp::Rx)) { }
+  ZuCheckRT(wire.sends == Count + 1 && !wire.dataLength &&
+    wire.protocolDisconnects == 1 && !wire.disconnects && wire.transportClosed,
+    log_("fatal GOAWAY drains after a bounded control batch before TLS closes"));
+  bool done = false;
+  wire.clearStreams([&done]() { done = true; });
+  while (app.step(FlowApp::Tx) || app.step(FlowApp::Rx)) { }
+  ZuCheckRT(done);
+  wire.finalWire();
+}
 
 void runInitialControlFailure()
 {
@@ -301,7 +354,8 @@ void runInitialControlFailure()
   ZuCHECK(rejected.initWire(true, config), "initialize rejected control harness");
   rejected.rejectControl = true;
   rejected.sendInitial();
-  ZuCHECK(!rejected.settingsOutstanding() && rejected.protocolDisconnects == 1,
+  ZuCHECK(!rejected.settingsOutstanding() &&
+      rejected.protocolDisconnects + rejected.disconnects == 1,
     "rejected SETTINGS does not arm success state and disconnects once");
   rejected.finalWire();
 
@@ -310,7 +364,7 @@ void runInitialControlFailure()
   ping.rejectControl = true;
   uint8_t opaque[8] = {};
   ping.h2Ping(ZuBSpan{opaque, 8});
-  ZuCHECK(ping.protocolDisconnects == 1,
+  ZuCHECK(ping.protocolDisconnects + ping.disconnects == 1,
     "rejected PING ACK disconnects the connection");
   ping.finalWire();
 
@@ -326,7 +380,7 @@ void runInitialControlFailure()
   ZuCHECK(reset.initWire(true, config), "initialize rejected RESET harness");
   reset.rejectControl = true;
   ZuCHECK(!reset.resetStream(1, Zhttp::H2::Error::Cancel) &&
-      reset.protocolDisconnects == 1,
+      reset.protocolDisconnects + reset.disconnects == 1,
     "rejected RESET reports failure and disconnects the connection");
   reset.finalWire();
 
@@ -334,14 +388,14 @@ void runInitialControlFailure()
   ZuCHECK(ack.initWire(true, config), "initialize rejected SETTINGS ACK harness");
   ack.rejectControl = true;
   ack.h2Settings();
-  ZuCHECK(!ack.settingsApplied && ack.protocolDisconnects == 1,
+  ZuCHECK(!ack.settingsApplied && ack.protocolDisconnects + ack.disconnects == 1,
     "rejected SETTINGS ACK does not publish readiness");
   ack.finalWire();
 }
 
 ZmRef<ZiIOBuf> flowData(unsigned length, uint32_t id = 1)
 {
-  ZmRef<ZiIOBuf> buf = new FlowWire::BufAlloc{};
+  ZmRef<ZiIOBuf> buf = new FlowWire::BufAlloc{nullptr, 0};
   buf->length = length + Zhttp::H2::FrameHeaderSize;
   uint8_t *data = buf->data();
   data[0] = uint8_t(length>>16);
@@ -362,8 +416,7 @@ Zhttp::H2_::HeaderFrames flowHeaders()
   auto buf = flowData(0);
   buf->data()[3] = Zhttp::H2::FrameType::Headers;
   buf->data()[4] = Zhttp::H2::Flag::EndHeaders;
-  frames.pushNode(ZmRef<ZiTxBuf>::acquire(
-    static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+  frames.push(Zhttp::H2_::TxFrame{ZuMv(buf)});
   return frames;
 }
 
@@ -564,8 +617,7 @@ void runHeaderTurns()
       buf->data()[3] = i ? Zhttp::H2::FrameType::Continuation :
 	Zhttp::H2::FrameType::Headers;
       buf->data()[4] = i + 1 == Count ? Zhttp::H2::Flag::EndHeaders : 0;
-      frames.pushNode(ZmRef<ZiTxBuf>::acquire(
-	static_cast<ZiTxBuf *>(ZuMv(buf).release())));
+      frames.push(Zhttp::H2_::TxFrame{ZuMv(buf)});
     }
     app.deferred = true;
     ZuCheckRT(wire.sendHeaders(id, ZuMv(frames), false) &&
@@ -656,7 +708,7 @@ struct FlowFinal : public ZmObject, public ZmNHeap<FlowFinal> {
     command.emit = [](void *ctx) {
       auto self = static_cast<FlowFinal *>(ctx);
       auto headers = flowHeaders();
-      static_cast<ZiIOBuf *>(headers.headPtr())->data()[4] = Zhttp::H2::Flag::EndStream |
+      headers.head().buf->data()[4] = Zhttp::H2::Flag::EndStream |
 	Zhttp::H2::Flag::EndHeaders;
       if (self->wire->sendHeaders<false>(self->id, ZuMv(headers), true))
 	++*self->emitted;
@@ -736,9 +788,14 @@ void runNegativeWindow()
   ZuCHECK(wire.peerInitialWindow(3), "set initial stream credit");
   auto buf = flowData(7);
   buf->data()[4] = Zhttp::H2::Flag::EndStream;
+  memcpy(buf->data() + Zhttp::H2::FrameHeaderSize, "payload", 7);
+  auto original = buf;
+  auto data = original->data();
   ZuCHECK(wire.sendData(id, ZuMv(buf)) && wire.dataLength == 3 &&
       !(wire.dataFlags & Zhttp::H2::Flag::EndStream),
     "queued DATA is split to available credit without ending its prefix");
+  ZuCheck(wire.lastRange.buf == original &&
+    wire.lastRange.offset == Zhttp::H2::FrameHeaderSize && wire.lastRange.length == 3);
   unsigned sends = wire.sends;
   ZuCHECK(wire.peerInitialWindow(2) && wire.sends == sends,
     "negative stream window blocks remaining DATA");
@@ -750,6 +807,12 @@ void runNegativeWindow()
   ZuCHECK(wire.dataLength == 3 &&
       (wire.dataFlags & Zhttp::H2::Flag::EndStream),
     "final suffix retains END_STREAM after multiple DATA splits");
+  ZuCheck(wire.rangeCalls == 3 && wire.lastRange.buf == original &&
+    wire.lastRange.offset == Zhttp::H2::FrameHeaderSize + 4 && wire.lastRange.length == 3);
+  ZuCheck(original->data() == data && original->skip == 0 &&
+    original->length == Zhttp::H2::FrameHeaderSize + 7 &&
+    original->data()[4] == Zhttp::H2::Flag::EndStream &&
+    !memcmp(original->data() + Zhttp::H2::FrameHeaderSize, "payload", 7));
   wire.clearStreams([]() { });
   app.runTx([&wire, id]() {
     ZuCHECK(!wire.sendData<false>(id, flowData(1)),
@@ -1696,7 +1759,9 @@ int SharedClient::process(
 
 ZiMxParams mxParams()
 {
-  return ZiMxParams()
+  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -2127,6 +2192,7 @@ int main(int argc, char **argv)
   ZuTestCall(ZhttpH2HubTest_::runFlowCapacity);
   ZuTestCall(ZhttpH2HubTest_::runBlockedRequeue);
   ZuTestCall(ZhttpH2HubTest_::runWindowChanges);
+  ZuTestCall(ZhttpH2HubTest_::runConnectionOverflow);
   ZuTestCall(ZhttpH2HubTest_::runHeaderTurns);
   ZuTestCall(ZhttpH2HubTest_::runBoundedFrameCleanup);
   ZuTestCall(ZhttpH2HubTest_::runNegativeWindow);

@@ -78,7 +78,7 @@ struct TxLimits {
 //   invokes loaded_ on Tx after the hook returns;
 // unloadTx(TxBody::Ref, TxContext, ticket) -> bool completed; false requires
 //   unloaded_ on Tx before replacing a stale, uncommitted load candidate;
-// frameTx(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime original) -> bool;
+// frameTx(TxBody::Ref, TxContext, TxImage, ZuDateTime original) -> bool;
 //   true transfers the complete frame to transport; false retains no bytes;
 // historyTx(TxContext, acknowledged, ticket) -> TxReload; deferred completion
 //   invokes reloaded_; historyArchive(epoch, begin, end) reports archive ranges;
@@ -97,8 +97,10 @@ template <typename Impl> class Tx : private SeqTx<Tx<Impl>, TxQueue, TxHistory> 
 friend Base;
 public:
   enum { SignMsg = 0 };
-  template <typename S>
-  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+  template <typename S, typename Message>
+  void signMsg(S &, const TxBody *, TxContext, const Message &) const { }
+
+  TxFrameBuf allocFrameTx() { return {}; }
 
   const Impl &signer_() const { return *static_cast<const Impl *>(this); }
 
@@ -277,7 +279,10 @@ public:
     auto next = Base::next_();
     if (next > m_config.sequenceLimit || (!body->administrative() &&
 	next > m_config.sequenceLimit - m_limits.controlHeadroom)) return TxSelect::Limit;
-    uint64_t charge = body->size + sizeof(Msg);
+    uint64_t charge = body->memory();
+    constexpr uint64_t overhead = ZmHeapAllocSize<sizeof(Msg)>{};
+    if (charge > UINT64_MAX - overhead) return TxSelect::Overload;
+    charge += overhead;
     if (!room(body, charge)) return TxSelect::Overload;
     m_pending = new Msg{TxOutput{TxHistory{ZuMv(body), {}, m_epoch, next}, charge, m_connection}};
     auto context = pendingContext();
@@ -392,7 +397,10 @@ private:
   }
 
   ZmRef<Msg> reloadMsgTx(TxHistory history) {
-    uint64_t charge = history.body->size + sizeof(Msg);
+    uint64_t charge = history.body->memory();
+    constexpr uint64_t overhead = ZmHeapAllocSize<sizeof(Msg)>{};
+    if (charge > UINT64_MAX - overhead) return nullptr;
+    charge += overhead;
     if (!room(history.body, charge)) {
       impl()->errorTx(TxContext{m_epoch, m_connection, history.seqNo},
 	{Fmt::ErrorCode::Size});
@@ -454,8 +462,12 @@ private:
     context.sendingTime = now;
     context.origSendingTime = replay ? history.originalTime : ZuDateTime{};
     context.possDup = replay;
+    auto destination = impl()->allocFrameTx();
+    if (!destination) {
+      ++m_stats.outputRefused; impl()->errorTx(context, {Fmt::ErrorCode::Output}); return false;
+    }
     auto frame = txFrame(*history.body, m_config, context, error,
-      m_limits.codec, impl()->signer_());
+      m_limits.codec, impl()->signer_(), ZuMv(destination.buf), destination.tail);
     if (!frame) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     auto original = replay ? history.originalTime : now;
     if (!impl()->frameTx(history.body, context, ZuMv(frame), original)) {
@@ -473,14 +485,18 @@ private:
     reset.gapFill = true;
     control.template p<Session::SeqReset>(reset);
     Fmt::Error error;
-    auto body = TxBody::control(control, error, m_config.mode, m_limits.codec);
+    auto body = TxBody::captureControl(control, error, m_config.mode, m_limits.codec);
     TxContext context{m_epoch, m_connection, gap.key(), true};
     if (!body) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     auto now = impl()->utcTx();
     context.sendingTime = context.origSendingTime = now;
     context.possDup = true;
+    auto destination = impl()->allocFrameTx();
+    if (!destination) {
+      ++m_stats.outputRefused; impl()->errorTx(context, {Fmt::ErrorCode::Output}); return false;
+    }
     auto output = txFrame(*body, m_config, context, error,
-      m_limits.codec, impl()->signer_());
+      m_limits.codec, impl()->signer_(), ZuMv(destination.buf), destination.tail);
     if (!output) { ++m_stats.encodeErrors; impl()->errorTx(context, error); return false; }
     bool ok = impl()->frameTx(ZuMv(body), context, ZuMv(output), now);
     if (!ok) ++m_stats.outputRefused;

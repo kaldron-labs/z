@@ -70,7 +70,7 @@ ZuStructReflect(Blob, ZuFacet::PrefixedPB, ZuFacet::PB);
 
 static bool writeBytes(const Zi::Path &path, ZuBSpan bytes)
 {
-  return write(path, {reinterpret_cast<const char *>(bytes.data()), bytes.length()});
+  return write(path, bytes);
 }
 
 static bool schema(const Zi::Path &path)
@@ -132,7 +132,7 @@ static void row(ZuCSpan mode)
   ZuCheckRT(!builder.failed() && writeBytes(path("input.pb"), wire));
   ZuCheckRT(peer(cwd, "row", mode) == 0, return);
   auto encoded = read(path("output.pb"));
-  ZuBSpan bytes{encoded.data(), encoded.length()};
+  ZuBSpan bytes{encoded};
   ZuCheckRT((Zpb::verify<Row, Facet>(bytes)), return);
   auto response = Zpb::load<Row, Facet>(bytes);
   ZuCheckRT(response.id == 42 && response.delta == input.delta &&
@@ -171,7 +171,7 @@ static void blobs()
   ZuCheckRT(writeBytes(path("input.pb"), sequence));
   ZuCheckRT(peer(cwd, "blob", "delimited") == 0, return);
   auto encoded = read(path("output.pb"));
-  ZuBSpan bytes{encoded.data(), encoded.length()};
+  ZuBSpan bytes{encoded};
   unsigned pos = 0;
   for (auto length : lengths) {
     unsigned begin = pos;

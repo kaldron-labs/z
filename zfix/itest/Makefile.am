@@ -47,7 +47,7 @@ LDADD = $(top_builddir)/zfix/src/libZfix.la \
 	$(top_builddir)/zi/src/libZi.la $(top_builddir)/zf/src/libZf.la \
 	$(top_builddir)/ze/src/libZe.la $(top_builddir)/zt/src/libZt.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs
@@ -86,7 +86,7 @@ asan-io-test:
 
 ZFIX_IO_INST_LIBS = -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	-lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
+	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 installed-io-test: export ZI_LOGDIR = $(abs_top_builddir)/logs
 installed-io-test:
 	$(CXX) $(DEFS) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
@@ -128,7 +128,7 @@ installed-demo-test:
 	  $(top_srcdir)/zfix/test/ZfixDemo.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o zfix_inst_demo
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ -o zfix_inst_demo
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/zfix_demo_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
@@ -167,13 +167,13 @@ installed-test:
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/session_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_session_tcp_test
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/session_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_session_tls_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./inst_session_tcp_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" \
@@ -203,14 +203,14 @@ installed-recovery-test: libZfixITest.la
 	  .libs/libZfixITest.a \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_recovery_tcp_test
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS \
 	  -I$(top_srcdir)/zi/test -I$(ZFIX_PREFIX)/include $(srcdir)/recovery_io_test.cc \
 	  .libs/libZfixITest.a \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_recovery_tls_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./inst_recovery_tcp_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" \
@@ -235,13 +235,13 @@ installed-raw-test:
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/raw_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_raw_tcp_test
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/raw_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_raw_tls_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./inst_raw_tcp_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" \
@@ -266,13 +266,13 @@ installed-reset-test:
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/reset_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_reset_tcp_test
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/reset_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_reset_tls_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./inst_reset_tcp_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" \
@@ -297,13 +297,13 @@ installed-ingress-test:
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/ingress_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_ingress_tcp_test
 	$(CXX) $(CPPFLAGS) @Z_CPPFLAGS@ $(AM_CXXFLAGS) $(CXXFLAGS) -DZFIX_TEST_TLS \
 	  -I$(ZFIX_PREFIX)/include $(srcdir)/ingress_io_test.cc \
 	  -L$(ZFIX_PREFIX)/lib -Wl,-rpath-link,$(ZFIX_PREFIX)/lib \
 	  -lZfix -lZfixFmt -lZtls -lZtcp -lZi -lZf -lZe -lZt -lZm -lZu \
-	  @PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
+	  @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@ \
 	  -o inst_ingress_tls_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" prove ./inst_ingress_tcp_test
 	LD_LIBRARY_PATH="$(ZFIX_PREFIX)/lib:$${LD_LIBRARY_PATH}" \

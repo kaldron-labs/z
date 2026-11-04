@@ -162,7 +162,7 @@ static void scryptFile()
     ZiFile input{path, ZiFile::ReadOnly | ZiFile::GC};
     ZuCheckRT(input);
     auto badTag = age.decrypt(input, {&identity, 1},
-      {recovered.data(), recovered.length()});
+      recovered);
     ZuCheckRT(badTag.template is<ZeException>());
     bool cleared = true;
     for (unsigned i = 0; i < PlainSize; ++i)

@@ -253,7 +253,7 @@ static void client()
             &echoResSerial](
             uint32_t serial) {
           echoResSerial.store_(serial);
-          auto body = frame->cspan(info.bodyOffset);
+          auto body = info.body();
           auto handler = ZfDBUS::handler<IDReply>({body, "s",
             info.bodyOffset, info.order});
           if (!handler) return Zdbus_::BuildResult{{}, {},
@@ -291,7 +291,7 @@ static void client()
           signalOK.store_(1);
           signalSerial.store_(info.serial);
           if (info.headers.signature == "s") {
-            auto body = frame->cspan(info.bodyOffset);
+            auto body = info.body();
             auto handler = ZfDBUS::handler<IDReply>({body, "s",
               info.bodyOffset, info.order});
             if (handler) {
@@ -368,7 +368,7 @@ static void client()
             result.info.headers.signature == "s" &&
             result.info.serial == echoResSerial.load_() &&
             result.info.headers.replySerial == echoReqSerial.load_()) {
-          auto body = result.frame->cspan(result.info.bodyOffset);
+          auto body = result.info.body();
           auto handler = ZfDBUS::handler<IDReply>({body, "s",
             result.info.bodyOffset, result.info.order});
           if (handler && handler.ctor().value == "hello") ++echoOK;
@@ -495,7 +495,7 @@ static void client()
       auto subFn = [&subOK, &subSignalled](ZmRef<ZiIOBuf> frame,
           Zdbus_::FrameInfo info) {
         if (info.headers.signature == "s") {
-          auto body = frame->cspan(info.bodyOffset);
+          auto body = info.body();
           auto handler = ZfDBUS::handler<IDReply>({body, "s",
             info.bodyOffset, info.order});
           if (handler && handler.ctor().value == "changed") ++subOK;

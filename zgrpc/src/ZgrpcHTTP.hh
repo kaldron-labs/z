@@ -79,7 +79,7 @@ public:
       }, [this]() { noteFailure_(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !buf) return fail_(error);
-    if (!m_frames.push(ZuMv(buf), m_limits)) return fail_(Code::RESOURCE_EXHAUSTED);
+    if (!m_frames.push(ZuMv(buf), m_limits, true)) return fail_(Code::RESOURCE_EXHAUSTED);
     return queued_();
   }
   bool send_(ObjectValue<Object> object) { return send_(Message<Object>{ZuMv(object)}); }
@@ -113,9 +113,40 @@ public:
       }, [this]() { noteFailure_(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !buf) return fail_(error);
-    if (!m_frames.push(ZuMv(buf), m_limits)) return fail_(Code::RESOURCE_EXHAUSTED);
+    if (!m_frames.push(ZuMv(buf), m_limits, true)) return fail_(Code::RESOURCE_EXHAUSTED);
     return queued_();
   }
+  // Producers transfer mutable unpublished output with the lower writer's
+  // head/tail room plus PrefixSize reserved before encoding raw protobuf.
+  // writerOwned also guarantees that writer's concrete Base. Other mutable
+  // storage uses ranges after framing; published payloads use the span overload.
+  bool sendRaw_(ZmRef<ZiIOBuf> source, bool writerOwned) {
+    if (m_sealed) return fail_(Code::INTERNAL);
+    if (!source || source->failed() ||
+	m_frames.bytes() + PrefixSize > m_limits.maxQueueBytes ||
+	source->length > messageLimit_()) return fail_(Code::RESOURCE_EXHAUSTED);
+    if (!m_body.message()) return fail_(Code::INTERNAL);
+    if (m_frames.count() >= m_limits.maxQueue) return fail_(Code::RESOURCE_EXHAUSTED);
+    bool prepared = false;
+    bool ok = false;
+    try {
+      ok = m_body.write([this, &source, &prepared](auto &writer) {
+	if (uint64_t(writer.headRoom()) + PrefixSize > source->skip ||
+	    source->avail() < writer.tailRoom()) return true;
+	impl()->signMessage(source->cspan());
+	source->skip -= PrefixSize;
+	source->length += PrefixSize;
+	framePrefix(source->data(), source->length - PrefixSize);
+	prepared = true;
+	return true;
+      }, [this]() { noteFailure_(Code::INTERNAL); });
+    } catch (...) { ok = false; }
+    if (!ok || !prepared) return fail_(Code::INTERNAL);
+    if (!m_frames.push(ZuMv(source), m_limits, writerOwned))
+      return fail_(Code::RESOURCE_EXHAUSTED);
+    return queued_();
+  }
+
   bool drain_() {
     if (m_draining) return true;
     if (!m_body.ready()) return false;
@@ -125,8 +156,15 @@ public:
       ok = m_body.write([this](auto &writer) {
 	unsigned n = 0;
 	while (m_frames.count() && n++ < m_limits.workBatch) {
-	  writer << m_frames.shift();
-	  if (writer.failed()) return false;
+	  auto frame = m_frames.shift();
+	  if (frame.writerOwned && writer.canAdopt_(*frame.buf)) {
+	    if (!writer.allocatedBuf_(frame.buf)) return false;
+	    writer << ZuMv(frame.buf);
+	    if (writer.failed()) return false;
+	  } else {
+	    unsigned length = frame.buf->length;
+	    if (!writer.appendRange(ZuMv(frame.buf), 0, length)) return false;
+	  }
 	}
 	return true;
       }, [this]() { noteFailure_(Code::INTERNAL); });

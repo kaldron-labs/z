@@ -203,7 +203,7 @@ void testParseResolveAndPrint()
 
 void testSpanParse()
 {
-  ZuTestScope(testSpanParse);
+  ZuTestScopeRT(testSpanParse);
 
   static const ZuCSpan valid[] = {
     "127.0.0.1", "::", "::1", "1::", "2001:db8::1",
@@ -212,7 +212,7 @@ void testSpanParse()
   };
   for (auto value : valid) {
     ZiIP ip;
-    ZuCHECK(ZiIP::parse(ip, value), value);
+    ZuCheckRT(ZiIP::parse(ip, value), log_(value));
   }
 
   static const ZuCSpan invalid[] = {
@@ -225,14 +225,13 @@ void testSpanParse()
   };
   for (auto value : invalid) {
     ZiIP ip;
-    ZuCHECK(!ZiIP::parse(ip, value), value);
+    ZuCheckRT(!ZiIP::parse(ip, value), log_(value));
   }
 
   const char framed[] = "x2001:db8::1y";
   ZiIP ip;
-  ZuCHECK(ZiIP::parse(ip, ZuCSpan{framed + 1, sizeof(framed) - 3}),
-    "non-NUL-terminated subspan");
-  ZuCHECK(ip.v6(), "subspan is IPv6");
+  ZuCheckRT(ZiIP::parse(ip, ZuCSpan{framed + 1, sizeof(framed) - 3}), log_("non-NUL-terminated subspan"));
+  ZuCheckRT(ip.v6(), log_("subspan is IPv6"));
 }
 
 void testMulticastBoundaries()

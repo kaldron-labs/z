@@ -6,21 +6,4 @@
 
 #include <zlib/ZfixWire.hh>
 
-namespace Zfix {
-
-struct WireBorrow : public ZmNHeap<WireBorrow>, public WireBuf {
-friend inline ZuStringT<"Zfix.WireBorrow"> ZmNHeapID(WireBorrow *);
-
-  explicit WireBorrow(ZmRef<ZiIOBuf> frame) :
-    WireBuf{frame->data(), frame->length} {
-    length = frame->length; backing = ZuMv(frame);
-  }
-};
-
-ZuAssert(sizeof(WireBorrow) == sizeof(WireBuf));
-
-ZmRef<WireBuf> wireBorrow(ZmRef<ZiIOBuf> frame) {
-  return new WireBorrow{ZuMv(frame)};
-}
-} // Zfix
-
+// Wire admission and completion are template-defined in ZfixWire.hh.

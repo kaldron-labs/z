@@ -179,7 +179,7 @@ work, not OpenSSL normalizations. Existing
   Do not allocate a second whole-file ciphertext or plaintext container.
   Operate in place where the zpicotls AEAD API permits it. Account for
   OpenSSL-owned contexts inside the `Ztls` backend, not in the age parser.
-- Follow `GUIDELINES.md`: direct includes, concise names, no unnecessary
+- Follow `docs/GUIDELINES.md`: direct includes, concise names, no unnecessary
   casts, uninitialized destination storage, and no secret bytes in logs or
   error strings. Validate C2SP structure, authentication, and resource
   bounds, not application policy already guaranteed by types.
@@ -207,7 +207,7 @@ work, not OpenSSL normalizations. Existing
   PQ/classical mixing, readers can interpret it, and scrypt mixing is
   rejected. Keep fixtures local so ordinary unit tests need no
   network or age CLI. Put live CLI interoperability tests in `interop` if
-  added, per `GUIDELINES.md`.
+  added, per `docs/GUIDELINES.md`.
 - SSH private-key loading covers unencrypted OpenSSH and the existing
   `ZtlsPK`-supported private-key encodings. Password-protected OpenSSH
   private keys are explicitly out of scope; the scrypt age recipient profile

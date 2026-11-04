@@ -109,7 +109,7 @@ friend inline ZuStringT<"Zgrpc.Go.Observer"> ZmNHeapID(Observer *);
 
 static void unary(Endpoint &client, State &state, bool empty, bool binary, Code::T code)
 {
-  ZuTestScope(unary);
+  ZuTestScopeRT(unary);
   state.messages = state.terminals = 0;
   state.seq = empty ? 0 : 42;
   state.code = code;
@@ -122,19 +122,19 @@ static void unary(Endpoint &client, State &state, bool empty, bool binary, Code:
   options.timeout = int64_t(peerTimeout()) * 1000000000;
   if (binary) {
     uint8_t value[] = {0, ',', 255};
-    ZuCheck(options.metadata.add("x-test-bin", ZuBSpan{value}));
-    ZuCheck(options.metadata.add("x-test-bin", "second"));
+    ZuCheckRT(options.metadata.add("x-test-bin", ZuBSpan{value}));
+    ZuCheckRT(options.metadata.add("x-test-bin", "second"));
   }
-  ZuCheck(client.call<Unary>(0, request, ZmRef<Observer>{new Observer{&state}}, ZuMv(options)));
-  ZuCheck(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
-  ZuCheck(state.terminals == 1 && state.messages == (code == Code::OK ? 1 : 0));
-  ZuCheck(!state.errors.load_());
+  ZuCheckRT(client.call<Unary>(0, request, ZmRef<Observer>{new Observer{&state}}, ZuMv(options)));
+  ZuCheckRT(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+  ZuCheckRT(state.terminals == 1 && state.messages == (code == Code::OK ? 1 : 0));
+  ZuCheckRT(!state.errors.load_());
   state.binary = false;
 }
 
 template <typename M> static void streaming(Endpoint &client, State &state, unsigned count)
 {
-  ZuTestScope(streaming);
+  ZuTestScopeRT(streaming);
   state.messages = state.terminals = 0;
   state.code = Code::OK;
   state.sequence = M::Kind != Kind::ClientStream;
@@ -146,28 +146,28 @@ template <typename M> static void streaming(Endpoint &client, State &state, unsi
   CallOptions options;
   options.timeout = int64_t(peerTimeout()) * 1000000000;
   auto token = client.open<M>(0, ZmRef<Observer>{new Observer{&state}}, ZuMv(options));
-  ZuCheck(token, (return));
+  ZuCheckRT(token, (return));
   if constexpr (M::Kind == Kind::ServerStream) {
-    ZuCheck(token->send(Packet{42, state.payload, count}));
+    ZuCheckRT(token->send(Packet{42, state.payload, count}));
   } else {
     for (unsigned i = 0; i < count; ++i) {
-      ZuCheck(token->send(Packet{M::Kind == Kind::Duplex ? 42 + i : i + 1, state.payload}));
+      ZuCheckRT(token->send(Packet{M::Kind == Kind::Duplex ? 42 + i : i + 1, state.payload}));
       if constexpr (M::Kind == Kind::Duplex) {
         // A response must arrive before request half-close.
-        ZuCheck(state.received.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+        ZuCheckRT(state.received.timedwait(Zm::now(peerTimeout() + 5)) == 0);
       }
     }
   }
-  ZuCheck(token->end());
-  ZuCheck(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
-  ZuCheck(state.terminals == 1 && state.messages == (M::Kind == Kind::ClientStream ? 1 : count));
-  ZuCheck(!state.errors.load_());
-  ZuCheck(!token->live() && !token->send(Packet{}) && !token->end());
+  ZuCheckRT(token->end());
+  ZuCheckRT(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+  ZuCheckRT(state.terminals == 1 && state.messages == (M::Kind == Kind::ClientStream ? 1 : count));
+  ZuCheckRT(!state.errors.load_());
+  ZuCheckRT(!token->live() && !token->send(Packet{}) && !token->end());
 }
 
 static void cancellation(Endpoint &client, State &state)
 {
-  ZuTestScope(cancellation);
+  ZuTestScopeRT(cancellation);
   state.messages = state.terminals = 0;
   state.code = Code::CANCELLED;
   state.handshake = false;
@@ -175,31 +175,31 @@ static void cancellation(Endpoint &client, State &state)
   CallOptions options;
   options.timeout = int64_t(peerTimeout()) * 1000000000;
   auto token = client.open<Duplex>(0, ZmRef<Observer>{new Observer{&state}}, ZuMv(options));
-  ZuCheck(token, (return));
-  ZuCheck(state.headers.timedwait(Zm::now(peerTimeout() + 5)) == 0);
-  ZuCheck(token->cancel());
-  ZuCheck(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
-  ZuCheck(state.terminals == 1 && !state.messages && !state.errors.load_());
+  ZuCheckRT(token, (return));
+  ZuCheckRT(state.headers.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+  ZuCheckRT(token->cancel());
+  ZuCheckRT(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+  ZuCheckRT(state.terminals == 1 && !state.messages && !state.errors.load_());
   state.waitHeaders = false;
 }
 
 static void deadline(Endpoint &client, State &state)
 {
-  ZuTestScope(deadline);
+  ZuTestScopeRT(deadline);
   state.messages = state.terminals = 0;
   state.code = Code::DEADLINE_EXCEEDED;
   CallOptions options;
   options.timeout = 30000000;
   Packet request;
   request.waitCancel = true;
-  ZuCheck(client.call<Unary>(0, request, ZmRef<Observer>{new Observer{&state}}, ZuMv(options)));
-  ZuCheck(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
-  ZuCheck(state.terminals == 1 && !state.messages && !state.errors.load_());
+  ZuCheckRT(client.call<Unary>(0, request, ZmRef<Observer>{new Observer{&state}}, ZuMv(options)));
+  ZuCheckRT(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+  ZuCheckRT(state.terminals == 1 && !state.messages && !state.errors.load_());
 }
 
 static void concurrent(Endpoint &client, State &state)
 {
-  ZuTestScope(concurrent);
+  ZuTestScopeRT(concurrent);
   state.messages = state.terminals = 0;
   state.seq = state.count = 0;
   state.code = Code::OK;
@@ -208,27 +208,27 @@ static void concurrent(Endpoint &client, State &state)
   for (unsigned i = 0; i < 16; ++i) {
     CallOptions options;
     options.timeout = int64_t(peerTimeout()) * 1000000000;
-    ZuCheck(client.call<Unary>(0, Packet{}, ZmRef<Observer>{new Observer{&state}}, ZuMv(options)));
+    ZuCheckRT(client.call<Unary>(0, Packet{}, ZmRef<Observer>{new Observer{&state}}, ZuMv(options)));
   }
-  for (unsigned i = 0; i < 16; ++i) ZuCheck(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
-  ZuCheck(state.terminals == 16 && state.messages == 16 && !state.errors.load_());
+  for (unsigned i = 0; i < 16; ++i) ZuCheckRT(state.done.timedwait(Zm::now(peerTimeout() + 5)) == 0);
+  ZuCheckRT(state.terminals == 16 && state.messages == 16 && !state.errors.load_());
 }
 
 static void run()
 {
-  ZuTestScope(run);
+  ZuTestScopeRT(run);
   auto ca = getenv("ZGRPC_GO_CA"), port = getenv("ZGRPC_GO_PORT");
-  ZuCheck(ca && port, (return));
-  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
+  ZuCheckRT(ca && port, (return));
+  bool h3 = getenv("ZGRPC_GO_H3");
+  ZiMultiplex mx{peerMxParams(h3).scheduler([](auto &s) {
     s.nThreads(2).thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
   State state{&mx};
-  bool h3 = getenv("ZGRPC_GO_H3");
   state.version = h3 ? Zhttp::Version::H3 : Zhttp::Version::H2;
   App app;
   Endpoint client;
-  ZuCheck(mx.start(), (return));
+  ZuCheckRT(mx.start(), (return));
   ClientConfig config;
   config.links(1).linkMax(16).concurrency(16)
     .protocol(h3 ? Zhttp::ProtoPolicy::ForceH3 : Zhttp::ProtoPolicy::DisableH3);
@@ -239,31 +239,31 @@ static void run()
     {}, Zhttp::H2Config{}.tls([&ca](auto &tls) {
       tls.caPath(ca);
     }).policy(Zhttp::H2Policy::Force), quic);
-  ZuCheck(initialized);
+  ZuCheckRT(initialized);
   bool pooled = initialized && client.pool(0, Zhttp::Destination{"localhost", uint16_t(atoi(port))});
-  ZuCheck(pooled);
+  ZuCheckRT(pooled);
   bool started = pooled && client.start();
-  ZuCheck(started);
+  ZuCheckRT(started);
   if (started) {
-    ZuTestCall(unary, client, state, false, false, Code::OK);
-    ZuTestCall(unary, client, state, true, false, Code::OK);
-    ZuTestCall(unary, client, state, true, false, Code::NOT_FOUND);
-    ZuTestCall(unary, client, state, true, true, Code::OK);
-    ZuTestCall((streaming<ServerStream>), client, state, 3);
-    ZuTestCall((streaming<ServerStream>), client, state, 0);
-    ZuTestCall((streaming<ClientStream>), client, state, 3);
-    ZuTestCall((streaming<ClientStream>), client, state, 0);
-    ZuTestCall((streaming<Duplex>), client, state, 3);
-    ZuTestCall(cancellation, client, state);
-    ZuTestCall(deadline, client, state);
-    ZuTestCall(concurrent, client, state);
-    ZuCheck(client.stop());
+    ZuTestCallRT(unary, client, state, false, false, Code::OK);
+    ZuTestCallRT(unary, client, state, true, false, Code::OK);
+    ZuTestCallRT(unary, client, state, true, false, Code::NOT_FOUND);
+    ZuTestCallRT(unary, client, state, true, true, Code::OK);
+    ZuTestCallRT((streaming<ServerStream>), client, state, 3);
+    ZuTestCallRT((streaming<ServerStream>), client, state, 0);
+    ZuTestCallRT((streaming<ClientStream>), client, state, 3);
+    ZuTestCallRT((streaming<ClientStream>), client, state, 0);
+    ZuTestCallRT((streaming<Duplex>), client, state, 3);
+    ZuTestCallRT(cancellation, client, state);
+    ZuTestCallRT(deadline, client, state);
+    ZuTestCallRT(concurrent, client, state);
+    ZuCheckRT(client.stop());
   }
-  ZuCheck(!client.pending());
+  ZuCheckRT(!client.pending());
   client.final();
   ZiResolver::stopSync();
   ZiResolver::final();
-  ZuCheck(mx.stop());
+  ZuCheckRT(mx.stop());
 }
 
 int main(int argc, char **argv)

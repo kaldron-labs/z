@@ -9,7 +9,7 @@ IMPORTANT
 - FOLLOW the "Detailed Design and Implementation Plan" section in `http3_qpack.new.md`
   - execute the plan phase by phase
 - Think deeply when executing the plan
-- Read `AGENTS.md` and `CODEBASE.md` to understand the existing codebase
+- Read `AGENTS.md` and `docs/CODEBASE.md` to understand the existing codebase
 - Conform to existing coding style, conventions and naming conventions
   - PREFER succinct expressive names to verbose names
   - PREFER succinct expressive code to verbose code

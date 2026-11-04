@@ -227,7 +227,7 @@ Sensitive buffers should be cleared deterministically when released or when a
 load operation fails after partially producing data. Document the callback
 view's lifetime and that the vault does not log identities or values.
 
-These decisions follow `GUIDELINES.md` “Strings” (binary values use
+These decisions follow `docs/GUIDELINES.md` “Strings” (binary values use
 `ZuBSpan`, text names use `ZuCSpan`), “Callbacks” (`ZmFn`), “Bad casting”
 (rely on Z span conversions), “Framework fit” (use `ZiLog`/`ZiFile`), and
 “Unnecessary atomic operations, locking and copies”.
@@ -239,7 +239,7 @@ lifetime rules. Preserve it during subsequent plan iteration unless an
 explicit request changes the contract.
 
 The back-end interface is the installed `ZtlsVaultStore.hh` module contract. It
-must conform to the `ZiModule` guidance in `GUIDELINES.md` and follow
+must conform to the `ZiModule` guidance in `docs/GUIDELINES.md` and follow
 `Zdb_::Store` directly. Do not use a function table, opaque context, ABI
 version negotiation, host-mutation callback, or bespoke callback protocol.
 Every built-in and loaded backend implements this abstract `ZmPolymorph` base:
@@ -339,7 +339,7 @@ its confidentiality relies on filesystem permissions. Use `ZtScratch` with
 heap fallback for bounded call-local scratch and `ZiIOBuf` only where an
 actual I/O buffer is needed; clear owned secret-bearing scratch.
 
-This follows `GUIDELINES.md` “Storage and capacity”, “Heap allocation”,
+This follows `docs/GUIDELINES.md` “Storage and capacity”, “Heap allocation”,
 “Containers and intrusion”, “Data movement and initialization”, “Algorithm
 and control flow” (`switch` and no polling), and “I/O and system
 integration” (`ZiFile`, `ZiIOBuf`).
@@ -388,7 +388,7 @@ through the continuation and parse on the caller thread while the frame is
 alive. This avoids an extra secret-byte copy and permits the load callback to
 borrow the decoded value. Drain callbacks before client/scheduler teardown.
 
-This follows `GUIDELINES.md` “Metadata” (`ZfStruct`/`ZfDBUS`), “Framework
+This follows `docs/GUIDELINES.md` “Metadata” (`ZfStruct`/`ZfDBUS`), “Framework
 fit” (no reimplemented protocol), “I/O sharding”, “Timers”, “Callbacks”,
 “Data movement and initialization”, and “Algorithm and control flow”
 (`ZmBlock`, not polling or a manual semaphore bridge). The wire behavior
@@ -409,7 +409,7 @@ API-allocated memory and clear backend-owned secret scratch. Do not introduce
 for the mandatory `Indirect` variant; its credential blob limit is why
 `Direct` is unavailable there.
 
-This follows `GUIDELINES.md` “Windows”, “Data movement and initialization”,
+This follows `docs/GUIDELINES.md` “Windows”, “Data movement and initialization”,
 “Framework fit”, and “Bad casting”.
 
 ## Indirect variant
@@ -462,7 +462,7 @@ or second whole-file body copy in the age path. The first-write provisioning
 path must fail closed under concurrent processes rather than leave ciphertext
 encrypted under a lost key; do not add a general lock manager to the vault.
 
-This follows `GUIDELINES.md` “Framework fit”, “Data movement and
+This follows `docs/GUIDELINES.md` “Framework fit”, “Data movement and
 initialization”, “Heap allocation”, and “I/O and system integration”.
 
 ## Build and verification
@@ -516,7 +516,7 @@ Use `ZuTestUtil`/`ZuTest` for
 repository-owned TAP tests and `ZmBlock` for concurrent completion; do not
 poll or sleep to make tests pass.
 
-These locations and tools follow `GUIDELINES.md` “Module layout”, “Tests”,
+These locations and tools follow `docs/GUIDELINES.md` “Module layout”, “Tests”,
 “Build configuration”, and “Acceptance”. Build and test incrementally in the
 current configuration, batching source edits and rebuilding `ztls/src` and
 affected test targets only at major milestones. Defer dependent top-level
@@ -526,7 +526,7 @@ tests. Use `libtool exec` for any Valgrind/ASan diagnostic run, and use
 Valgrind sparingly for suspected corruption and the final leak/corruption
 gate. Check secret lifetime and leaks there.
 
-For implementation, also apply `GUIDELINES.md` “Naming” (short camel-case
+For implementation, also apply `docs/GUIDELINES.md` “Naming” (short camel-case
 names, `m_` only for private class state), “Header layout” (direct includes),
 “Class and struct shape”, and “Storage and capacity” (no arbitrary fixed
 buffers). These are review checks, not reasons to add new types or wrappers.

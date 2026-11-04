@@ -9,6 +9,7 @@
 #ifndef ZtlsPico_HH
 #define ZtlsPico_HH
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zlib/ZtlsLib.hh>
@@ -29,6 +30,33 @@ struct Stats {
 ZtlsAPI void install();
 ZtlsAPI Stats stats();
 ZtlsAPI void reset_stats();
+// Export the dependency operations used by public Ztls templates.
+ZtlsAPI ptls_t *create(ptls_context_t *ctx, int server);
+ZtlsAPI void free(ptls_t *tls);
+ZtlsAPI void free(ptls_tx_t *tx);
+ZtlsAPI ptls_async_job_t *asyncJob(ptls_t *tls);
+ZtlsAPI ptls_cipher_suite_t *cipher(ptls_t *tls);
+ZtlsAPI ptls_cipher_suite_t *cipher(ptls_tx_t *tx);
+ZtlsAPI void **data(ptls_t *tls);
+ZtlsAPI uint16_t version(ptls_t *tls);
+ZtlsAPI size_t overhead(ptls_t *tls);
+ZtlsAPI const char *alpn(ptls_t *tls);
+ZtlsAPI int alpn(ptls_t *tls, const char *name, size_t length);
+ZtlsAPI int serverName(ptls_t *tls, const char *name, size_t length);
+ZtlsAPI int handshook(ptls_t *tls);
+ZtlsAPI int psk(ptls_t *tls);
+ZtlsAPI int handshake(ptls_t *tls, ptls_buffer_t *buf, const void *input, size_t *length,
+  ptls_handshake_properties_t *props);
+ZtlsAPI int receive(ptls_t *tls, ptls_buffer_t *buf, const void *input, size_t *length);
+ZtlsAPI int send(ptls_t *tls, ptls_buffer_t *buf, const void *input, size_t length);
+ZtlsAPI int send(ptls_tx_t *tx, ptls_buffer_t *buf, const void *input, size_t length);
+ZtlsAPI int detachTx(ptls_t *tls, ptls_tx_t **tx);
+ZtlsAPI int takeKeyUpdate(ptls_t *tls);
+ZtlsAPI int updateKey(ptls_tx_t *tx, ptls_buffer_t *buf, int request);
+ZtlsAPI int sendAlert(ptls_tx_t *tx, ptls_buffer_t *buf, uint8_t level, uint8_t description);
+ZtlsAPI ptls_get_time_t *time();
+
+ZtlsAPI int sendv(ptls_tx_t *, ptls_buffer_t *, ptls_iovec_t *, size_t);
 
 class ZtlsAPI AeadCtx {
 public:

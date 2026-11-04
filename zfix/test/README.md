@@ -38,7 +38,9 @@ With existing dependencies available, build `make -C zfix/src -j8`,
   asynchronous/synchronous failures, close/stale callbacks and administrative
   reserve. Composes the production `LinkTx` and `WireTx` to check publication
   ordering, completion after the publication callback, and resumption of a loaded
-  body at the same sequence when output capacity returns.
+  body at the same sequence when output capacity returns. Logon abort checks
+  cover failed completion before and after logical close, including exact
+  context, Output fault ordering, charge retirement and repeated close.
 - `ZfixRxFramerTest`: shared TCP/TLS receive-stream adapter, every byte split,
   single-byte buffers, fragmented/coalesced text frames, exact-buffer detachment,
   retained-frame lifetime, malformed headers/checksums, frame limits, allocation
@@ -215,6 +217,14 @@ receive coordination and pooled input handling. Rx requires Zi headers/libraries
 the standalone declaration/codec consumers retain their foundation-only boundary.
 
 ## Retained Tx output and association
+
+`ZfixTxMsgTest` also exercises semantic capture into typed owning storage:
+borrowed text and groups survive source mutation, replay does not retain a
+mutable output frame, custom scalar formatting runs zero times during capture
+and once during final emission, and authentication extensions own binary/string
+values while sharing the original semantic control model. Explicit archive
+materialization is tested separately. Run `./zfix/test/ZfixTxMsgTest` after its
+normal build.
 
 `ZfixTxMsgTest` verifies immutable pooled bodies, opaque application identities,
 control facet selection, ordinary text, independent mutable transport storage,

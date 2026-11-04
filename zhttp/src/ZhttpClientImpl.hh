@@ -392,6 +392,7 @@ private:
   friend inline ZuStringT<"Zhttp.Client.Producer"> ZmNHeapID(Producer *);
     const int txThread;
     BodyEmitRecord record;
+    ZmRef<Transport_::TCPHeader> tcpHeader;
     ClientSession *driver;
     Builder_<true, true> builder;
     int8_t state = StreamState::Initial;
@@ -420,6 +421,7 @@ private:
     auto producer = m_producer;
     if (!producer || !producer->driver) return;
     producer->driver = nullptr; // invalidate every emitter before application close
+    producer->tcpHeader = nullptr;
     bool initial = producer->state <= StreamState::InitialTerminal;
     producer->state = initial ? StreamState::InitialTerminal : StreamState::Terminal;
     if (!initial) {
@@ -432,7 +434,7 @@ private:
     bool beginHeaders;
     if (!Stream_::streamEnter(producer->state, beginHeaders)) return false;
     auto &builder = producer->builder;
-    auto tx = m_link->transmit_(builder);
+    auto tx = streamMessageTx(*m_link, builder, producer->tcpHeader, 0);
     if (beginHeaders) {
       if (!builder.begin(tx)) {
 	closeProducer_();
@@ -462,6 +464,7 @@ private:
 	  (void)failStreamedTx_();
 	  return true;
 	}
+	finishTCPStream(tx, 0);
 	m_commit.final = true;
 	m_txState = ClientSessionTxState::Complete;
 	m_link->finish();
@@ -914,7 +917,7 @@ template <typename App>
 class CliLink :
   public ZmNHeap<CliLink<App>>,
   public Ztls::CliLink<ClientHub<App>, CliLink<App>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSTxBufAlloc>,
   public Wire<CliLink<App>, typename App::Link> {
 friend inline ZuStringT<"Zhttp.H2.Link"> ZmNHeapID(CliLink *);
 
@@ -922,8 +925,9 @@ public:
   using Hub = ClientHub<App>;
   using AppLink = App::Link;
   using Base = Ztls::CliLink<Hub, CliLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSTxBufAlloc>;
   using Wire_ = Wire<CliLink, AppLink>;
+friend Wire_;
   using Base::up;
   using Pending = ZtArray<ZmRef<AppLink>,
     ZtArrayHeapID<"Zhttp.H2">>;
@@ -1630,13 +1634,14 @@ private:
     if (!m_stream.end() || !m_native) return;
     m_app->txRun([
       link = ZmRef(impl()), native = ZmRef(m_native)]() {
-      link->streamEndTx_();
+      link->streamEndTx_(native.ptr());
     });
   }
-  void streamEndTx_() {
+  void streamEndTx_(NativeLink *native) {
     ZmAssert(m_app->txInvoked());
+    if (m_txNative != native) return;
     m_streamTx = false;
-    if (m_txNative) m_txNative->streamTxEnd();
+    native->streamTxEnd();
   }
   void streamResetRx_() {
     ZmAssert(m_app->rxInvoked());
@@ -1946,7 +1951,7 @@ class CliLink :
   public Ztls::CliLink<
     ClientHub<App, H1AppLink_, H2AppLink_>,
     CliLink<App, H1AppLink_, H2AppLink_>,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>,
+    Transport_::TLSTxBufAlloc>,
   public H2_::Wire<
     CliLink<App, H1AppLink_, H2AppLink_>, H2AppLink_> {
 friend inline ZuStringT<"Zhttp.TLS.Link"> ZmNHeapID(CliLink *);
@@ -1957,8 +1962,9 @@ public:
   using H2AppLink = H2AppLink_;
   using Choice = Hub::Choice;
   using Base = Ztls::CliLink<Hub, CliLink,
-    Transport_::TLSRxBufAlloc, Transport_::TLSTxBufAlloc>;
+    Transport_::TLSTxBufAlloc>;
   using Wire = H2_::Wire<CliLink, H2AppLink>;
+friend Wire;
   using Base::up;
   using Pending = Hub::Pending;
   using H1Active = ZtArray<ZmRef<H1AppLink>,
@@ -2133,16 +2139,11 @@ public:
       link->streamTxEnd_();
     });
   }
-  void sent(ZmRef<ZiTxBuf> buffer, bool ok) {
-    Base::sent(ZuMv(buffer), ok);
-    if (!m_streamEnd || (ok && this->txQueue.count_())) return;
-    m_streamEnd = false;
-    streamTxClose_();
-  }
 private:
   void streamTxEnd_() {
     ZmAssert(this->app()->txInvoked());
-    if (this->txQueue.count_()) { m_streamEnd = true; return; }
+    // The TLS close producer follows preceding App Tx records and drains its
+    // final wire buffer; App Tx must not inspect the I/O Tx queue or cursor.
     streamTxClose_();
   }
   void streamTxClose_() {
@@ -2543,10 +2544,6 @@ private:
   bool			m_replacing = false;
   bool			m_admitPosted = false;
   bool			m_goawayPosted = false;
-  // Tx thread exclusive.
-  alignas(Zm::CacheLineSize)
-  bool m_streamEnd = false;
-
 };
 
 } // namespace TLS_
@@ -2939,7 +2936,14 @@ struct ClientStream :
   int process(Zquic::RxStream &rx) {
     if (Zquic::StreamID::uni(uint64_t(this->id())))
       return CxnStream::process(*this);
-    if (!appLink) return -1;
+    if (!appLink) {
+      // Cancellation can detach HTTP before an already-sent response arrives.
+      rx.clean();
+      uint64_t length = this->rxRetirable();
+      if (length && !this->retireRx(length))
+	this->link()->h3StreamError(ZmRef(this), H3::InternalError);
+      return 0;
+    }
     int rc = appLink->process_(rx);
     if (rc < 0) return 0; // parser has scheduled a stream-local reset
     if (this->rxComplete()) this->link()->remoteEnd(this);
@@ -4465,6 +4469,16 @@ public:
     ZuInline auto receive(Parser &parser, Rx &rx) { return parser.process(rx); }
     template <typename Builder>
     auto transmit_(Builder &builder) { return m_link->transmit_(builder); }
+    template <typename Builder, typename P = Profile,
+      typename = ZuIfT<ZuIsSame<typename P::Protocol, TCP>{}>>
+    auto transmit_(Builder &builder, ZmRef<Transport_::TCPHeader> &head) {
+      return m_link->transmit_(builder, head);
+    }
+    template <typename P = Profile,
+      typename = ZuIfT<ZuIsSame<typename P::Protocol, TCP>{}>>
+    bool sendRetained_(RetainedEntries entries) {
+      return m_link->sendRetained_(ZuMv(entries));
+    }
     void finish() { }
     template <typename State> void responseHeadersParsed(State *) { }
     template <typename State> void responseBodyBytes(State *) { }
@@ -7310,12 +7324,12 @@ private:
   }
 
   void emit_(ReqBuilder &request, const Result &result) {
-    if (result.code == ResultCode::Cancelled)
-      cancelled_(request, result);
-    completed_(request, result);
     ++m_completed;
     if (!result.ok()) ++m_failed;
     m_client->poolResult_(!result.ok());
+    if (result.code == ResultCode::Cancelled)
+      cancelled_(request, result);
+    completed_(request, result);
   }
 
   void completeAttempt_(LiveReq &attempt, ResultCode::T code) {

@@ -123,7 +123,7 @@ static bool descriptor(const Zi::Path &path, ZuCSpan fileName = "row.proto")
   Zpb::Builder builder{storage};
   auto wire = Zpb::save(builder, set);
   return !builder.failed() && write(path,
-    {reinterpret_cast<const char *>(wire.data()), wire.length()});
+    wire);
 }
 
 static bool optionalDescriptor(const Zi::Path &path)
@@ -148,7 +148,7 @@ static bool optionalDescriptor(const Zi::Path &path)
   Zpb::Builder builder{storage};
   auto wire = Zpb::save(builder, set);
   return !builder.failed() && Zpb::Reflect::verifySchema(wire) &&
-    write(path, {reinterpret_cast<const char *>(wire.data()), wire.length()});
+    write(path, wire);
 }
 
 static bool importDescriptor(const Zi::Path &path)
@@ -200,7 +200,7 @@ static bool importDescriptor(const Zi::Path &path)
   Zpb::Builder builder{storage};
   auto wire = Zpb::save(builder, set);
   return !builder.failed() && write(path,
-    {reinterpret_cast<const char *>(wire.data()), wire.length()});
+    wire);
 }
 
 static bool fixedDescriptor(const Zi::Path &path, bool bad = false)
@@ -236,7 +236,7 @@ static bool fixedDescriptor(const Zi::Path &path, bool bad = false)
   Zpb::Builder builder{storage};
   auto wire = Zpb::save(builder, set);
   return !builder.failed() && write(path,
-    {reinterpret_cast<const char *>(wire.data()), wire.length()});
+    wire);
 }
 
 static void cases(const Zi::Path &dir)
@@ -428,7 +428,7 @@ static void cases(const Zi::Path &dir)
     0x62, 6, 'p', 'r', 'o', 't', 'o', '3', 0x32, 0};
   auto serviceDescLog = log();
   ZuCheckRT(write(path("service.desc"),
-    {reinterpret_cast<const char *>(serviceDesc), sizeof(serviceDesc)}) &&
+    ZuBSpan{serviceDesc}) &&
     run(tool, cwd, serviceDescLog, "--descriptor", "service.desc", "-o",
       "row") != 0 &&
     read(serviceDescLog).find("unsupported service descriptor") >= 0 &&

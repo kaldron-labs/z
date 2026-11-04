@@ -67,7 +67,7 @@ The implementation must preserve the performance and ownership properties of
 the current stack: compile-time composition, shard-affined state, pooled I/O
 buffers, in-place TLS record protection, and no additional virtual dispatch,
 type erasure, or avoidable allocation on the data path.  Apply
-`GUIDELINES.md` throughout.
+`docs/GUIDELINES.md` throughout.
 
 Optimize the common case for small, unfragmented messages with ultra-low
 latency, no payload copy, and no heap allocation per message.  This workload
@@ -359,7 +359,7 @@ abnormal WebSocket termination.
 ### Entry gate
 
 Begin only after `zhttp5.md` is complete and its normalized logical-stream
-API, four-profile tests, and `GUIDELINES.md` audit are green.  This plan does
+API, four-profile tests, and `docs/GUIDELINES.md` audit are green.  This plan does
 not modify `ztcp`, `ztls`, `zquic`, or `zhttp`.  If implementation appears to
 require such a change, first demonstrate a defect or missing generic contract
 with a focused failing test and revise the owning lower-layer plan explicitly;

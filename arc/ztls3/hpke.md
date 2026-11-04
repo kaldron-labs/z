@@ -93,7 +93,7 @@ modes, exporter APIs, or a general-purpose HPKE framework.
   output-too-small/failure-clearing behavior.
 - Add the public header and source to `ztls/src/Makefile.am`. Keep
   `ZtlsHPKE` independently testable without age parsing or a `.age` file.
-  Follow `GUIDELINES.md` for direct includes, hard tabs, concise names,
+  Follow `docs/GUIDELINES.md` for direct includes, hard tabs, concise names,
   concrete heap identification only where allocation is necessary,
   contract-bound stack scratch, minimal copies, and no redundant
   validation. Reuse the current build configuration and artifacts;

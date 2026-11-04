@@ -14,8 +14,8 @@ namespace {
 struct ClientApp : public Ztls::Client<ClientApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
-  struct Link : public Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc> {
-    using Base = Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc>;
+  struct Link : public Ztls::CliLink<ClientApp, Link, TxBufAlloc> {
+    using Base = Ztls::CliLink<ClientApp, Link, TxBufAlloc>;
     Link(ClientApp *app) : Base(app) { }
     void connected(Ztls::Connected) { }
     void disconnected(bool) { }
@@ -27,8 +27,8 @@ struct ClientApp : public Ztls::Client<ClientApp> {
 struct ServerApp : public Ztls::Server<ServerApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
-  struct Link : public Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc> {
-    using Base = Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc>;
+  struct Link : public Ztls::SrvLink<ServerApp, Link, TxBufAlloc> {
+    using Base = Ztls::SrvLink<ServerApp, Link, TxBufAlloc>;
     Link(ServerApp *app) : Base(app) { }
     void connected(Ztls::Connected) { }
     void disconnected(bool) { }
@@ -98,6 +98,9 @@ void testInitValidation()
 
   ZiMultiplex mx(
       ZiMxParams()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxBuf, (16 << 10), ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Ztls.RxBuf">>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(6)
 	    .thread(1, [](auto &t) { t.isolated(1); })

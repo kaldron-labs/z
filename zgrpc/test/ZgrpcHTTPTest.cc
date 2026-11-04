@@ -39,17 +39,29 @@ ZgrpcCatalogImpl(Matrix);
 struct Sink : ZiTxStream<Sink> {
   Sink() : ZiTxStream<Sink>{1U << 20, 8, 4} { }
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
-    ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<32, 1U << 20, "Zgrpc.HTTPTest">{};
+    ZmRef<ZiIOBuf> buf = new Zi::IOBufAlloc<ZiIOBuf, 32, 1U << 20,
+      ZuStringT<"Zgrpc.HTTPTest">>{nullptr, 0};
     buf->skip = head;
+    allocated = buf;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
     if (reject) return false;
     data << buf->cspan();
+    lastRange = buf;
+    ++buffers;
+    return true;
+  }
+  bool sendRange_(Zi::RxRange range) {
+    if (reject) return false;
+    data << range.cspan();
+    lastRange = ZuMv(range.buf);
     ++buffers;
     return true;
   }
   Bytes data;
+  ZmRef<ZiIOBuf> allocated;
+  ZmRef<ZiIOBuf> lastRange;
   unsigned buffers = 0;
   bool reject = false;
 };
@@ -65,7 +77,20 @@ static const Zhttp::WriterOps writerOps{
   [](const void *p) { return static_cast<const Sink *>(p)->tailRoom(); },
   [](void *p, unsigned n) { return static_cast<Sink *>(p)->allocBuf(n); },
   [](void *p, unsigned n) { return static_cast<Sink *>(p)->reserve(n); },
-  [](void *p, unsigned n) { static_cast<Sink *>(p)->commit(n); }
+  [](void *p, unsigned n) { static_cast<Sink *>(p)->commit(n); },
+  [](void *p, Zi::RxRange range) {
+    return static_cast<Sink *>(p)->appendRange(ZuMv(range));
+  },
+  [](const void *p, const ZiIOBuf &buf, unsigned head, unsigned tail) {
+    return static_cast<const Sink *>(p)->canAdopt_(buf, head, tail);
+  },
+  [](const void *p, const ZiIOBuf *buf) {
+    return static_cast<const Sink *>(p)->allocated.ptr() == buf;
+  },
+  [](void *p, ZmRef<ZiIOBuf> buf) {
+    static_cast<Sink *>(p)->allocated = ZuMv(buf);
+    return true;
+  }
 };
 
 struct Field { String name, value; bool never; };
@@ -246,7 +271,7 @@ static void queuedOutput()
   QueuedRequest req;
   req.limits(limits);
   req.body(Zhttp::BodyEmitter{&emit->record});
-  ZuCheck(req.send_(Packet{1, {}}) && req.sendRaw_({}));
+  ZuCheck(req.send_(Packet{1, {}}) && req.sendRaw_(ZuBSpan{}));
   ZuCheck(req.signs == 2 && req.queuedMessages() == 2 && req.queuedBytes() == 12);
   ZuCheck(!emit->sink.data.length() && emit->open);
   ZuCheck(req.end_() && emit->open);
@@ -281,8 +306,8 @@ static void queueRefusal()
   QueuedRequest req;
   req.limits(limits);
   req.body(Zhttp::BodyEmitter{&emit->record});
-  ZuCheck(req.sendRaw_({}));
-  ZuCheck(!req.sendRaw_({}) && req.failure == Code::RESOURCE_EXHAUSTED);
+  ZuCheck(req.sendRaw_(ZuBSpan{}));
+  ZuCheck(!req.sendRaw_(ZuBSpan{}) && req.failure == Code::RESOURCE_EXHAUSTED);
   ZuCheck(!req.queuedMessages() && !req.queuedBytes() && !emit->sink.data.length());
   ZuCheck(!req.end_() && req.productionCode() == Code::RESOURCE_EXHAUSTED);
   ZuCheck(req.failure == Code::RESOURCE_EXHAUSTED && !emit->open);
@@ -293,7 +318,7 @@ static void queueRefusal()
   QueuedRequest other;
   other.limits(limits);
   other.body(Zhttp::BodyEmitter{&bytes->record});
-  ZuCheck(other.sendRaw_({}));
+  ZuCheck(other.sendRaw_(ZuBSpan{}));
   ZuCheck(!other.send_(Packet{1, {"data"}}));
   ZuCheck(other.failure == Code::RESOURCE_EXHAUSTED && other.signs == 1);
   ZuCheck(!other.queuedMessages() && !other.queuedBytes() && !bytes->sink.data.length());
@@ -322,7 +347,7 @@ friend inline ZuStringT<"Zgrpc.HTTPTest.Recv"> ZmNHeapID(Receiver *);
 };
 struct Parser : ResParser<Parser, Duplex> { };
 
-static void deferredReceive()
+static void deferredReceive(bool advance)
 {
   ZuTestScope(deferredReceive);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)};
@@ -337,16 +362,31 @@ static void deferredReceive()
   };
   field(Zhttp::FieldSection::Final, "content-type", "application/grpc");
   ZuCheck(parser.bodyInfo(nullptr, Zhttp::BodyType::Streamed, 0));
-  ZmRef<ZiIOBuf> coalesced = new ZiRxBufAlloc<>{};
+  ZmRef<ZiRxBuf> coalesced = new ZiRxBufAlloc<>{nullptr, 0};
+  coalesced->append(ZuBSpan{"prefix"});
+  unsigned prefix = coalesced->length;
+  const uint8_t *payload = nullptr;
   for (unsigned i = 1; i <= 3; ++i) {
     FrameError::T error;
-    auto buf = encodeFrame(ZmRef<ZiIOBuf>{new ZiIOBufAlloc<>{}}, 0, 100,
+    auto buf = encodeFrame(ZmRef<ZiIOBuf>{new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}}, 0, 100,
       Packet{i, {"data"}}, error);
+    auto offset = coalesced->length;
     coalesced->append(buf->cspan());
+    if (i == 3)
+      payload = Zpb::handler<Packet>(ZuBSpan{
+	coalesced->cspan().data() + offset + PrefixSize,
+	buf->length - PrefixSize}).ctor().payload.data();
   }
+  coalesced->advance(prefix);
+  auto backing = coalesced;
+  auto storage = backing->data_();
+  auto size = backing->size;
   ZiRxStream<ZiRxQueue> incoming;
   incoming.push(ZuMv(coalesced));
   ZuCheck(parser.body(incoming) && incoming.empty());
+  if (advance) backing->advance(backing->length);
+  ZuCheck(backing->data_() == storage && backing->size == size);
   bool yielded = false;
   scheduler.run([receiver, &yielded]() { yielded = receiver->messages == 1 && !receiver->ends; }, 1);
   field(Zhttp::FieldSection::Trailers, "grpc-status", "0");
@@ -357,7 +397,11 @@ static void deferredReceive()
   receiver->done.wait();
   ZuCheck(scheduler.stop());
   ZuCheck(yielded && receiver->good && receiver->messages == 3 && receiver->ends == 1);
-  ZuCheck(receiver->last.p<Message<Packet>>().object().payload == ZuBSpan{"data"});
+  ZuCheck(receiver->last.is<Message<Packet>>() &&
+    receiver->last.p<Message<Packet>>().object().payload == ZuBSpan{"data"});
+  ZuCheck(receiver->last.is<Message<Packet>>() &&
+    receiver->last.p<Message<Packet>>().backing.ptr() == backing.ptr() &&
+    receiver->last.p<Message<Packet>>().object().payload.data() == payload);
 }
 
 struct MultiRequest : MReqBuilder<MultiRequest, Matrix> {
@@ -448,7 +492,7 @@ friend inline ZuStringT<"Zgrpc.HTTPTest.Terminal"> ZmNHeapID(Terminal *);
 static void failedInput(ZuBSpan wire, Code::T expected, bool overflow = false,
     bool response = false)
 {
-  ZuTestScope(failedInput);
+  ZuTestScopeRT(failedInput);
   ZmScheduler scheduler{ZmSchedParams{}.nThreads(1)};
   Limits limits;
   limits.maxMessageBytes = 2;
@@ -467,24 +511,25 @@ static void failedInput(ZuBSpan wire, Code::T expected, bool overflow = false,
   input->meta().httpStatus(404);
   input->meta().header(initial, "content-type", "application/grpc");
   if (!response) input->meta().header(initial, "te", "trailers");
-  ZuCheck(input->accept(nullptr));
+  ZuCheckRT(input->accept(nullptr));
   if (wire.length()) {
-    ZmRef<ZiIOBuf> buf = new ZiRxBufAlloc<>{};
+    ZmRef<ZiIOBuf> buf = new ZiRxBufAlloc<>{nullptr, 0};
     buf->append(wire);
-    ZuCheck(input->enqueue(buf));
-    if (overflow) ZuCheck(!input->enqueue(ZuMv(buf)));
+    Zi::RxRange range{ZuMv(buf), 0, unsigned(wire.length())};
+    ZuCheckRT(input->enqueue(range));
+    if (overflow) ZuCheckRT(!input->enqueue(ZuMv(range)));
   }
   input->complete(nullptr, true);
   input->complete(nullptr, true);
-  ZuCheck(scheduler.start(), (return));
+  ZuCheckRT(scheduler.start(), (return));
   terminal->done.wait();
-  ZuCheck(scheduler.stop());
-  ZuCheck(input->finished() && input->failed() && !input->retainedBytes());
-  ZuCheck(!terminal->ok && terminal->code == expected && terminal->ends == 1);
-  ZuCheck(!terminal->frames);
+  ZuCheckRT(scheduler.stop());
+  ZuCheckRT(input->finished() && input->failed() && !input->retainedBytes());
+  ZuCheckRT(!terminal->ok && terminal->code == expected && terminal->ends == 1);
+  ZuCheckRT(!terminal->frames);
   input->complete(nullptr, false);
   input->fail(Code::CANCELLED);
-  ZuCheck(terminal->ends == 1 && input->code() == expected);
+  ZuCheckRT(terminal->ends == 1 && input->code() == expected);
 }
 
 static void inputFailures()
@@ -505,7 +550,7 @@ static void inputFailures()
 // selecting its response. Deferred cleanup must not reset that response.
 static void completedInput()
 {
-  ZuTestScope(completedInput);
+  ZuTestScopeRT(completedInput);
   for (unsigned abort = 0; abort != 2; ++abort) {
     unsigned resets = 0, ends = 0;
     Zhttp::ChannelOps ops{};
@@ -524,13 +569,13 @@ static void completedInput()
 	"content-type", "application/grpc");
     input->meta().header(Zhttp::FieldSection::Final, "te", "trailers");
     input->callbacks({}, {}, [&ends](RxInput &, bool) { ++ends; });
-    ZuCheck(input->accept(&channel));
+    ZuCheckRT(input->accept(&channel));
     if (abort) input->fail(Code::CANCELLED);
     else input->complete(&channel, false);
-    ZuCheck(input->finished() && input->failed() && ends == 1);
-    ZuCheck(resets == abort);
+    ZuCheckRT(input->finished() && input->failed() && ends == 1);
+    ZuCheckRT(resets == abort);
     input->complete(&channel, false);
-    ZuCheck(ends == 1 && resets == abort);
+    ZuCheckRT(ends == 1 && resets == abort);
   }
 }
 
@@ -551,7 +596,7 @@ friend inline ZuStringT<"Zgrpc.HTTPTest.Corrupt"> ZmNHeapID(CorruptReceiver *);
 
 static void corruptInput()
 {
-  ZuTestScope(corruptInput);
+  ZuTestScopeRT(corruptInput);
   // Complete gRPC envelopes with corrupt protobuf scalar and bytes fields.
   const uint8_t scalar[] = {0, 0, 0, 0, 2, 0x08, 0x80};
   const uint8_t bytes[] = {0, 0, 0, 0, 3, 0x12, 0x02, 'a'};
@@ -573,18 +618,44 @@ static void corruptInput()
     input->meta().header(Zhttp::FieldSection::Final,
 	"content-type", "application/grpc");
     input->meta().header(Zhttp::FieldSection::Final, "te", "trailers");
-    ZuCheck(input->accept(&channel));
-    ZmRef<ZiIOBuf> buf = new ZiIOBufAlloc<>{};
+    ZuCheckRT(input->accept(&channel));
+    ZmRef<ZiIOBuf> buf = new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0};
     buf->append(i ? ZuBSpan{bytes} : ZuBSpan{scalar});
-    ZuCheck(input->enqueue(ZuMv(buf)));
-    ZuCheck(input->finished() && input->failed() && !input->retainedBytes());
-    ZuCheck(resets == 1 && receiver->ends == 1 && !receiver->ok &&
+    auto length = buf->length;
+    ZuCheckRT(input->enqueue({ZuMv(buf), 0, length}));
+    ZuCheckRT(input->finished() && input->failed() && !input->retainedBytes());
+    ZuCheckRT(resets == 1 && receiver->ends == 1 && !receiver->ok &&
 	receiver->code == Code::INTERNAL && !receiver->messages);
     input->complete(&channel, false);
     input->fail(Code::CANCELLED);
-    ZuCheck(resets == 1 && receiver->ends == 1);
-    ZuCheck(!input->enqueue(new ZiIOBufAlloc<>{}));
+    ZuCheckRT(resets == 1 && receiver->ends == 1);
+    ZuCheckRT(!input->enqueue({new Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+      ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{nullptr, 0}, 0, 0}));
   }
+}
+
+static void ownedRawOutput()
+{
+  ZuTestScope(ownedRawOutput);
+  Response res;
+  ZmRef<Emitter> emit = new Emitter{};
+  emit->initial(res);
+  res.body(Zhttp::BodyEmitter{&emit->record});
+  auto buf = emit->sink.allocBuf(emit->sink.headRoom() + PrefixSize);
+  buf->ensure(3 + emit->sink.tailRoom());
+  buf->append(ZuBSpan{"abc"});
+  auto identity = buf.ptr();
+  ZuCheck(res.sendRaw_(ZuMv(buf), true));
+  ZuCheck(emit->sink.lastRange.ptr() == identity);
+  FrameRx parser;
+  Frame frame;
+  unsigned used;
+  ZuCheck(parser.feed(emit->sink.data, emit->sink.lastRange, used, frame) ==
+    FrameResult::Message);
+  ZuCheck(frame.bytes == ZuBSpan{"abc"});
+  ZuCheck(emit->sink.lastRange->skip >= emit->sink.headRoom());
+  ZuCheck(emit->sink.lastRange->avail() >= emit->sink.tailRoom());
 }
 
 int main(int argc, char **argv)
@@ -593,11 +664,13 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(request);
   ZuTestCall(response);
+  ZuTestCall(ownedRawOutput);
   ZuTestCall(trailersOnly);
   ZuTestCall(outputFailures);
   ZuTestCall(queuedOutput);
   ZuTestCall(queueRefusal);
-  ZuTestCall(deferredReceive);
+  ZuTestCall(deferredReceive, false);
+  ZuTestCall(deferredReceive, true);
   ZuTestCall(inputFailures);
   ZuTestCall(completedInput);
   ZuTestCall(corruptInput);

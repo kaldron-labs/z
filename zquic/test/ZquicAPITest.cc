@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmBlock.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZfJSON.hh>
@@ -21,6 +22,8 @@
 #include "ZiTestResidue.hh"
 
 using namespace ZuTestUtil;
+
+#define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
 namespace {
 
@@ -164,8 +167,13 @@ struct ServerAppStream :
   int process(Zquic::RxStream &) { return 0; }
 };
 struct ServerAppLink :
+  public ZmNHeap<ServerAppLink>,
     public Zquic::SrvLink<
       ServerApp, ServerAppLink, ServerAppStream, StreamTxBufAlloc> {
+  friend inline ZuStringT<"Zquic.API.SrvLink"> ZmNHeapID(ServerAppLink *);
+  using ZmNHeap<ServerAppLink>::operator new;
+  using ZmNHeap<ServerAppLink>::operator delete;
+
   using Base = Zquic::SrvLink<
     ServerApp, ServerAppLink, ServerAppStream, StreamTxBufAlloc>;
 
@@ -188,9 +196,14 @@ struct ClientShapeStream :
 };
 
 struct ClientShapeLink :
+  public ZmNHeap<ClientShapeLink>,
     public Zquic::CliLink<
       ClientShapeApp, ClientShapeLink, ClientShapeStream,
       StreamTxBufAlloc> {
+  friend inline ZuStringT<"Zquic.API.CliShape"> ZmNHeapID(ClientShapeLink *);
+  using ZmNHeap<ClientShapeLink>::operator new;
+  using ZmNHeap<ClientShapeLink>::operator delete;
+
   using Base = Zquic::CliLink<
     ClientShapeApp, ClientShapeLink, ClientShapeStream,
     StreamTxBufAlloc>;
@@ -221,9 +234,14 @@ struct ServerShapeStream :
 };
 
 struct ServerShapeLink :
+  public ZmNHeap<ServerShapeLink>,
     public Zquic::SrvLink<
       ServerShapeApp, ServerShapeLink, ServerShapeStream,
       StreamTxBufAlloc> {
+  friend inline ZuStringT<"Zquic.API.SrvShape"> ZmNHeapID(ServerShapeLink *);
+  using ZmNHeap<ServerShapeLink>::operator new;
+  using ZmNHeap<ServerShapeLink>::operator delete;
+
   using Base = Zquic::SrvLink<
     ServerShapeApp, ServerShapeLink, ServerShapeStream,
     StreamTxBufAlloc>;
@@ -261,9 +279,14 @@ struct ServerShapeLink :
 };
 
 struct TestLink :
+  public ZmNHeap<TestLink>,
     public Zquic::Link<
       HubApp, TestLink, StreamTxBufAlloc,
       TestStream> {
+  friend inline ZuStringT<"Zquic.API.Link"> ZmNHeapID(TestLink *);
+  using ZmNHeap<TestLink>::operator new;
+  using ZmNHeap<TestLink>::operator delete;
+
   using Base = Zquic::Link<
     HubApp, TestLink, StreamTxBufAlloc,
     TestStream>;
@@ -282,7 +305,11 @@ struct TestLink :
       payload.scratch(), payload.scratchAvail());
     if (n <= 0 || !payload.commitScratch(unsigned(n))) return false;
     auto alloc = []() {
-      return ZmRef<ZiIOBuf>{new Zquic::PktTxBufAlloc<>{nullptr}};
+      return ZmRef<ZiIOBuf>{([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktTxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr)};
     };
     auto send = [&packet](auto buf, ZiSockAddr) {
       packet = ZuMv(buf);
@@ -643,7 +670,7 @@ struct HubFixture {
   }
 
   static ZiMxParams mxParams_() {
-    return ZiMxParams()
+    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
       .scheduler([](auto &s) {
 	s.nThreads(4);
       })
@@ -666,7 +693,11 @@ static ZmRef<ZiIOBuf> streamPkt_(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
-  ZmRef<ZiIOBuf> packet = new Zquic::PktRxBufAlloc<>{nullptr};
+  ZmRef<ZiIOBuf> packet = ([](void *owner) {
+      static ZmRef<Zi::IOBufAllocator> allocator =
+	new Zquic::PktRxBufAllocator<>;
+      return allocator->alloc(owner, 0);
+    })(nullptr);
   int n = Zquic::FrameCodec::writeStream(
     packet->data_(), packet->size, id, offset, payload, fin);
   if (n <= 0) return nullptr;
@@ -683,13 +714,13 @@ static ZmRef<ZiIOBuf> streamPkt_(
 
 void testLongProbePadding()
 {
-  ZuTestScope(testLongProbePadding);
+  ZuTestScopeRT(testLongProbePadding);
 
   HubFixture fixture;
   Zquic::TrafficSecret secret;
   ZuBArray<32> material(32, false);
   memset(material.data(), 0x35, material.length());
-  ZuCHECK(Zquic::PktProt::deriveSecret(
+  ZQUIC_CHECK_RT(Zquic::PktProt::deriveSecret(
       secret, &ptls_openssl_aes128gcmsha256, material),
     "long probe secret derivation failed");
   ZmRef<TestLink> link = new TestLink{&fixture.app};
@@ -699,10 +730,10 @@ void testLongProbePadding()
     for (unsigned pnLength = 1; pnLength <= 4; ++pnLength) {
       ZmRef<ZiIOBuf> packet;
       bool sent = link->longProbe(secret, pnLength, bool(early), packet);
-      ZuCHECK(sent && packet, "tiny long probe protection failed");
+      ZQUIC_CHECK_RT(sent && packet, "tiny long probe protection failed");
       if (!sent || !packet) continue;
       Zquic::LongHdr header;
-      ZuCHECK(Zquic::Pkt::parseLong(packet->cspan(), header) >= 0 &&
+      ZQUIC_CHECK_RT(Zquic::Pkt::parseLong(packet->cspan(), header) >= 0 &&
 	packet->length >= header.pnOffset + 4 + 16 &&
 	uint64_t(header.pnOffset) + header.length == packet->length,
         "long padding/sample or encoded packet length mismatch");
@@ -712,15 +743,15 @@ void testLongProbePadding()
         packet->data_(), packet->length, secret, 0,
         header.pnOffset, pn, offset);
       unsigned expected = pnLength < 4 ? 4 - pnLength : 1;
-      ZuCHECK(n == int(expected) && pn == pnLength - 1 &&
+      ZQUIC_CHECK_RT(n == int(expected) && pn == pnLength - 1 &&
 	packet->data_()[offset] == Zquic::FrameType::Ping,
         "long probe plaintext or packet number mismatch");
       for (unsigned i = 1; i < expected; ++i)
-        ZuCHECK(packet->data_()[offset + i] == 0,
+        ZQUIC_CHECK_RT(packet->data_()[offset + i] == 0,
 	"long probe padding is not PADDING");
     }
   }
-  ZuCHECK(!link->diag().failures(), "long probes counted as failures");
+  ZQUIC_CHECK_RT(!link->diag().failures(), "long probes counted as failures");
 }
 
 void testParams()
@@ -2053,7 +2084,7 @@ void testInitValidate()
   }
 
   ZiMultiplex mx(
-      ZiMxParams()
+      ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(5)
 	    .thread(1, [](auto &t) { t.isolated(1); })

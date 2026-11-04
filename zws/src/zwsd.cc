@@ -85,7 +85,9 @@ void usage(int code = 1)
 
 ZiMxParams mxParams()
 {
-  return ZiMxParams()
+  return ZiMxParams().tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })

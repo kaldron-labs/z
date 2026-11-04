@@ -11,6 +11,9 @@
 #include <zlib/ZfixSession.hh>
 #include <zlib/ZfixTrace.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 struct MessageBody {
@@ -45,7 +48,7 @@ static bool contains(ZuCSpan text, ZuCSpan term) {
   return text.find(term) >= 0;
 }
 static ZmRef<ZiIOBuf> wire(ZuCSpan type, ZuCSpan content) {
-  ZmRef<ZiIOBuf> b = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> b = new LocalBuf{nullptr, 0};
   constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
   b->ensure(type.length() + content.length() + Envelope.length());
   ZuSpan<char> storage{b->data(), b->size};
@@ -80,15 +83,15 @@ static void redaction() {
       "HIDDEN"));
 }
 static void escaping() {
-  ZuTestScope(escaping);
+  ZuTestScopeRT(escaping);
   WireTrace t{{.bytes = 64 << 10}};
   auto b = wire("D", "11=a\n\r\"\\b\1");
   auto record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheck(contains(record->data().text(), "a\\x0A\\x0D\\x22\\x5Cb"));
-  for (auto c : record->data().text()) ZuCheck(uint8_t(c) >= 32 && uint8_t(c) < 127);
+  ZuCheckRT(contains(record->data().text(), "a\\x0A\\x0D\\x22\\x5Cb"));
+  for (auto c : record->data().text()) ZuCheckRT(uint8_t(c) >= 32 && uint8_t(c) < 127);
   b->data()[b->length - 2] ^= 1;
   record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheck(record->data().text() == "<invalid frame>");
+  ZuCheckRT(record->data().text() == "<invalid frame>");
 }
 static void bounds() {
   ZuTestScope(bounds);

@@ -58,6 +58,7 @@ public:
   using FindFn = ZmFn<void(ZuCSpan)>;
   using FindResultFn = ZmFn<void(ZuCSpan, RowResult &)>;
   using WriteFn = ZmFn<void(ZuCSpan)>;
+  using CommitObserve = ZmFn<void(ZuCSpan, IOBuf *, IOBuf *, bool)>;
   using SelectFn = ZmFn<void(ZuCSpan)>;
   using SelectResultFn = ZmFn<void(ZuCSpan, TupleResult &)>;
 
@@ -69,6 +70,10 @@ public:
   }
   void writeFn(WriteFn fn) { m_writeFn = ZuMv(fn); }
   void wrote(ZuCSpan id) { if (m_writeFn) m_writeFn(id); }
+  void commitObserve(CommitObserve fn) { m_commitObserve = ZuMv(fn); }
+  void committed(ZuCSpan id, IOBuf *original, IOBuf *buf, bool ok) {
+    if (m_commitObserve) m_commitObserve(id, original, buf, ok);
+  }
   void selectFn(SelectFn fn) { m_selectFn = ZuMv(fn); }
   void selected(ZuCSpan id) { if (m_selectFn) m_selectFn(id); }
   void selectResultFn(SelectResultFn fn) { m_selectResultFn = ZuMv(fn); }
@@ -122,6 +127,7 @@ private:
   FindFn		m_findFn;
   FindResultFn		m_findResultFn;
   WriteFn		m_writeFn;
+  CommitObserve		m_commitObserve;
   SelectFn		m_selectFn;
   SelectResultFn	m_selectResultFn;
   Queue			m_work;
@@ -228,14 +234,16 @@ inline void StoreTbl::write(ZmRef<IOBuf> buf, CommitFn commitFn) {
     this, buf = ZuMv(buf), commitFn = ZuMv(commitFn)
   ]() mutable {
     // ZiLOG(Debug, "ZdbMock", "write() work dequeue");
+    auto original = buf.ptr();
     ZdbMem::StoreTbl::write(ZuMv(buf), [
-      this, commitFn = ZuMv(commitFn)
+      this, original, commitFn = ZuMv(commitFn)
     ](ZmRef<IOBuf> buf, CommitResult result) mutable {
       // ZiLOG(Debug, "ZdbMock", "write() callback enqueue");
       auto callback = [
-	commitFn = ZuMv(commitFn), buf = ZuMv(buf), result = ZuMv(result)
+	this, original, commitFn = ZuMv(commitFn), buf = ZuMv(buf), result = ZuMv(result)
       ]() mutable {
 	// ZiLOG(Debug, "ZdbMock", "write() callback dequeue");
+	store()->committed(id(), original, buf.ptr(), !result.is<Event>());
 	commitFn(ZuMv(buf), ZuMv(result));
       };
       store()->addCallback(ZuMv(callback));

@@ -14,9 +14,12 @@
 #endif
 
 #include <zlib/ZmRef.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 
 #include <zlib/ZfixNotice.hh>
+#include <zlib/ZfixTxImage.hh>
 #include <zlib/ZfixSession.hh>
 #include <zlib/ZfixLinkState.hh>
 #include <zlib/ZfixDispatch.hh>
@@ -24,11 +27,13 @@
 namespace Zfix {
 
 class TxBody;
+class TxFrame;
+template <typename Entry> class TxCaptured;
 
 struct NoSign {
   enum { SignMsg = 0 };
-  template <typename S>
-  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
+  template <typename S, typename Message>
+  void signMsg(S &, const TxBody *, TxContext, const Message &) const { }
 };
 
 inline ZuCSpan beginString(const TxConfig &config) {
@@ -153,23 +158,30 @@ Fmt::Error bodySelector(ZuCSpan bytes, Fmt::Limits limits, Fmt::Sink *out = null
     return match<Key>(bytes, selector);
   }
 }
+struct Check {
+  TxImage::View content;
+  unsigned offset = 0;
+};
+inline Fmt::Error wireError(Fmt::Error error, const Check &check) {
+  if (error && error.code != Fmt::ErrorCode::Required) error.offset += check.offset;
+  return error;
+}
 template <typename Entry>
-Fmt::Error signedFrame(const Fmt::FrameView &frame, Fmt::Limits limits) {
+Fmt::Error signedCheck(const Check &check, Fmt::Limits limits) {
   using O = Entry::Object;
   using Facet = Entry::Mapping;
-  Fmt::Error error;
   enum { Tag = Entry::Discrim::Tag };
-  Fmt::Read input{frame.content, limits, error};
-  input.selectTag = Tag;
-  unsigned offset = 0;
-  Fmt::Scope scope{nullptr, Fmt::scopeContains<O, Facet, Tag>, 0, 0};
-  Fmt::readScope<O, Facet, FrameField, false, Tag, false>(
-    input, nullptr, offset, scope, false);
+  Fmt::FieldPos selector{UINT_MAX, 0};
+  auto error = Fmt::readParts<O, Facet, FrameField, Tag>(check.content, limits, &selector);
   if (!error) {
-    if constexpr (Tag) error = match<typename Entry::Discrim>(frame.content, input.selector);
+    if constexpr (Tag) {
+      if (selector.offset == UINT_MAX) error = {Fmt::ErrorCode::Required, Tag};
+      else if (check.content.spanAt(selector.offset, selector.length) !=
+	  ZuCSpan{Entry::Discrim::Value})
+	error = {Fmt::ErrorCode::Unresolved, Tag, selector.offset};
+    }
   }
-  if (error) return Dispatch_::wireError(error, frame);
-  return {};
+  return wireError(error, check);
 }
 } // TxFrame_
 
@@ -178,32 +190,50 @@ Fmt::Error signedFrame(const Fmt::FrameView &frame, Fmt::Limits limits) {
 // may carry an opaque publication marker in id(); neither is a wire sequence. Const
 // references may cross shards; only the Tx owner builds mutable output frames.
 class ZfixAPI TxBody : public ZiIOBuf {
+  template <typename> friend class TxCaptured;
+  template <typename, typename, typename> friend class TxExtended;
 public:
   using Ref = ZmRef<const TxBody>;
 
-  TxBody(uint8_t *data, unsigned size) : ZiIOBuf{data, size} { }
+  TxBody(uint8_t *data, unsigned size, void *owner, unsigned length) :
+    ZiIOBuf{data, size, owner, length} { }
 
   // Rounded pool object plus jumbo heap prefix/cache class, for factory bodies.
   uint64_t memory() const;
 
   uint64_t id() const { return m_id; }
-  ZuCSpan msgType() const { return {data() + m_slots * sizeof(Fmt::FieldPos), m_typeLen}; }
+  ZuCSpan msgType() const {
+    if (m_archive) return m_modelType;
+    return {data_() + m_slots * sizeof(Fmt::FieldPos), m_typeLen};
+  }
 
+  bool semantic() const { return m_archive; }
+  bool empty() const { return semantic() ? m_modelEmpty : !m_bodyLength; }
+  // Explicit persistence/export materializes an active-cursor-independent
+  // buffer. Transmission retains the original encoded ranges or typed model.
+  Zi::RxRange archive(Fmt::Error &, Fmt::Limits = {}) const;
   ZuCSpan body() const {
-    return {data() + m_bodyOffset, length - m_bodyOffset};
+    ZmAssert(!semantic());
+    return {data_() + m_bodyOffset, m_bodyLength};
   }
-  Fmt::FieldPos *ranges() { return reinterpret_cast<Fmt::FieldPos *>(data()); }
-  const Fmt::FieldPos *ranges() const { return reinterpret_cast<const Fmt::FieldPos *>(data()); }
-  void emit(Fmt::Sink &out, const TxConfig &config, TxContext context) const {
-    if (!m_emit) { out.fail(Fmt::ErrorCode::Unresolved); return; }
-    m_emit(out, *this, config, context);
-  }
+
+  template <typename Entry>
+  static Ref capture(const typename Entry::Object &, uint64_t id,
+    Fmt::Error &, Fmt::Limits = {});
+  template <typename Entry>
+  static Ref captureRaw(const typename Entry::Object &, uint64_t id, bool admin,
+    Fmt::Error &, Fmt::Limits = {});
+  template <typename Entry, typename O, typename Facet = typename Entry::Mapping>
+  static Ref extend(Ref, const O &, Fmt::Error &, Fmt::Limits = {});
+  Fmt::FieldPos *ranges() { return reinterpret_cast<Fmt::FieldPos *>(data_()); }
+  const Fmt::FieldPos *ranges() const { return reinterpret_cast<const Fmt::FieldPos *>(data_()); }
+  void emit(TxFrame &, const TxConfig &, TxContext) const;
 
   bool administrative() const { return m_admin; }
   bool validates() const { return m_validate; }
 
-  Fmt::Error validate(const Fmt::FrameView &frame, Fmt::Limits limits) const {
-    return m_validate ? m_validate(frame, limits) : Fmt::Error{};
+  Fmt::Error validate(const TxFrame_::Check &frame, Fmt::Limits limits) const {
+    return m_validate ? m_validate(*this, frame, limits) : Fmt::Error{};
   }
 
   template <typename Entry>
@@ -231,6 +261,7 @@ public:
     if (!error) error = TxFrame_::bodySelector<Entry>(out.data(), cfg, &out);
     if (error) return {};
     buf->template entry_<Entry>();
+    buf->m_bodyLength = out.length();
     buf->length = buf->m_bodyOffset + out.length();
     return buf;
   }
@@ -259,6 +290,8 @@ public:
   static Ref restoreControl(ZuCSpan msgType, ZuCSpan bytes, uint64_t id,
     Fmt::Error &, Fmt::Limits limits = {});
   static Ref control(const Session::Msg &, Fmt::Error &, unsigned mode = Transport::FIX4,
+    Fmt::Limits limits = {}, uint64_t id = 0);
+  static Ref captureControl(const Session::Msg &, Fmt::Error &, unsigned mode = Transport::FIX4,
     Fmt::Limits limits = {}, uint64_t id = 0);
 
 private:
@@ -343,6 +376,7 @@ private:
     });
     if (error) return {};
     memcpy(buf->data() + buf->m_bodyOffset, bytes.data(), bytes.length());
+    buf->m_bodyLength = bytes.length();
     buf->length = buf->m_bodyOffset + bytes.length();
     buf->template entry_<Entry>();
     return buf;
@@ -353,20 +387,70 @@ private:
   static ZuSpan<char> grow(void *, unsigned used, unsigned needed);
   ZuSpan<char> storage() { return {data() + m_bodyOffset, size - m_bodyOffset}; }
 
-  template <typename Entry> void entry_() {
-    using O = Entry::Object;
-    using Facet = Entry::Mapping;
-    using S = Fmt::Schema<O, Facet>;
-    using Key = Entry::Discrim;
-    m_emit = [](Fmt::Sink &out, const TxBody &body, const TxConfig &config, TxContext context) {
-      out.field(35); out << Entry::MsgType; out.end();
-      auto bytes = body.body();
-      unsigned copied = 0, insertion = 0;
-      auto flush = [&out, bytes, &copied, &insertion] {
-	if (insertion > copied) out << ZuCSpan{bytes.data() + copied, insertion - copied};
-	copied = insertion;
-      };
-      ZuUnroll::all<typename S::Leaves>(
+  template <typename Entry> void entry_();
+
+  void (*m_emit)(TxFrame &, const TxBody &, const TxConfig &, TxContext) = nullptr;
+  void (*m_archive)(Fmt::Sink &, const TxBody &) = nullptr;
+  ZuCSpan m_modelType;
+  unsigned m_slots = 0, m_bodyOffset = 0, m_bodyLength = 0;
+  Fmt::Error	(*m_validate)(const TxBody &, const TxFrame_::Check &, Fmt::Limits) = nullptr;
+  uint64_t	m_id = 0;
+  unsigned	m_typeLen = 0;
+  bool		m_admin = false, m_modelEmpty = false;
+};
+
+// Each attempt owns its complete output until finish succeeds. A transport may
+// then mutate/encrypt/advance it without changing the retained replay body.
+class ZfixAPI TxFrame {
+public:
+  explicit TxFrame(ZuCSpan beginString, Fmt::Limits limits = {});
+  TxFrame(ZmRef<ZiIOBuf> buffer, ZuCSpan beginString,
+    Fmt::Limits limits = {}, unsigned tailRoom = 0);
+  TxFrame(const TxFrame &) = delete;
+  TxFrame &operator =(const TxFrame &) = delete;
+
+  Fmt::Sink &body() { return m_writer.body(); }
+
+  TxImage finish(Fmt::Error &);
+  unsigned length() const { return m_writer.body().length(); }
+  template <typename Fn> void each(Fn fn) const { fn(m_writer.body().data()); }
+
+  template <typename Signer>
+  TxImage finish(Fmt::Error &error, const Signer &signer,
+      const TxBody *body, TxContext context) {
+    return output_(m_writer.finish(signer, body, context), error);
+  }
+
+private:
+  TxImage output_(Fmt::FrameOutput, Fmt::Error &);
+  static ZuSpan<char> grow(void *, unsigned used, unsigned needed);
+
+  ZmRef<ZiIOBuf>	m_buffer;
+  unsigned		m_tailRoom = 0;
+  Fmt::Limits		m_limits;
+  Fmt::FrameWriter	m_writer;
+};
+
+inline void TxBody::emit(TxFrame &out, const TxConfig &config, TxContext context) const {
+  if (!m_emit) { out.body().fail(Fmt::ErrorCode::Unresolved); return; }
+  m_emit(out, *this, config, context);
+}
+
+template <typename Entry> void TxBody::entry_() {
+  using O = Entry::Object;
+  using Facet = Entry::Mapping;
+  using S = Fmt::Schema<O, Facet>;
+  using Key = Entry::Discrim;
+  m_emit = [](TxFrame &frame, const TxBody &body, const TxConfig &config, TxContext context) {
+    auto &out = frame.body();
+    out.field(35); out << Entry::MsgType; out.end();
+    auto bytes = body.body();
+    unsigned emitted = 0, insertion = 0;
+    auto flush = [&out, bytes, &emitted, &insertion] {
+	if (insertion > emitted) out << ZuCSpan{bytes.data() + emitted, insertion - emitted};
+	emitted = insertion;
+    };
+    ZuUnroll::all<typename S::Leaves>(
 	[&out, &body, &config, context, &insertion, &flush]<typename L>() {
 	using F = L::Field;
 	if constexpr (Fmt::SaveField<F>{}) {
@@ -379,59 +463,38 @@ private:
 	      insertion = pos.offset + pos.length;
 	  }
 	}
-      });
-      insertion = bytes.length(); flush();
+    });
+    insertion = bytes.length(); flush();
+  };
+  if constexpr (Fmt::hasSignature<O, Facet>() || Key::Tag)
+    m_validate = [](const TxBody &, const TxFrame_::Check &frame, Fmt::Limits limits) {
+	return TxFrame_::signedCheck<Entry>(frame, limits);
     };
-    if constexpr (Fmt::hasSignature<O, Facet>() || Key::Tag)
-      m_validate = TxFrame_::signedFrame<Entry>;
-  }
+}
 
-  void (*m_emit)(Fmt::Sink &, const TxBody &, const TxConfig &, TxContext) = nullptr;
-  unsigned m_slots = 0, m_bodyOffset = 0;
-  Fmt::Error	(*m_validate)(const Fmt::FrameView &, Fmt::Limits) = nullptr;
-  uint64_t	m_id = 0;
-  unsigned	m_typeLen = 0;
-  bool		m_admin = false;
-};
+struct TxFrameBuf {
+  ZmRef<ZiIOBuf> buf;
+  unsigned tail = 0;
+  bool required = false;
 
-// Each attempt owns its complete output until finish succeeds. A transport may
-// then mutate/encrypt/advance it without changing the retained replay body.
-class ZfixAPI TxFrame {
-public:
-  explicit TxFrame(ZuCSpan beginString, Fmt::Limits limits = {});
-  TxFrame(const TxFrame &) = delete;
-  TxFrame &operator =(const TxFrame &) = delete;
-
-  Fmt::Sink &body() { return m_writer.body(); }
-
-  ZmRef<ZiIOBuf> finish(Fmt::Error &);
-
-  template <typename Signer>
-  ZmRef<ZiIOBuf> finish(Fmt::Error &error, const Signer &signer,
-      const TxBody *body, TxContext context) {
-    return output_(m_writer.finish(signer, body, context), error);
-  }
-
-private:
-  ZmRef<ZiIOBuf> output_(Fmt::FrameOutput, Fmt::Error &);
-  static ZuSpan<char> grow(void *, unsigned used, unsigned needed);
-
-  ZmRef<ZiIOBuf>	m_buffer;
-  Fmt::FrameWriter	m_writer;
+  bool operator !() const { return required && !buf; }
 };
 
 template <typename Signer = NoSign>
-ZmRef<ZiIOBuf> txFrame(const TxBody &body, const TxConfig &config, TxContext context,
-    Fmt::Error &error, Fmt::Limits limits = {}, const Signer &signer = {}) {
-  TxFrame output{beginString(config), limits};
-  body.emit(output.body(), config, context);
+TxImage txFrame(const TxBody &body, const TxConfig &config, TxContext context,
+    Fmt::Error &error, Fmt::Limits limits = {}, const Signer &signer = {},
+    ZmRef<ZiIOBuf> destination = {}, unsigned tailRoom = 0) {
+  TxFrame output{ZuMv(destination), beginString(config), limits, tailRoom};
+  body.emit(output, config, context);
   auto buffer = output.finish(error, signer, &body, context);
   if (!buffer) return {};
   if (!body.validates()) return buffer;
-  auto parsed = Fmt::frame(buffer->cspan(), limits);
+  auto parsed = Fmt::frame(buffer.metadata->cspan(), limits);
   if (parsed.state != Fmt::FrameState::Complete) { error = parsed.error; return {}; }
-  error = body.validate(parsed.view, limits);
-  return error ? ZmRef<ZiIOBuf>{} : ZuMv(buffer);
+  unsigned offset = unsigned(parsed.view.content.data() - parsed.view.wire.data());
+  unsigned length = parsed.view.content.length();
+  error = body.validate(TxFrame_::Check{buffer.view(offset, length), offset}, limits);
+  return error ? TxImage{} : ZuMv(buffer);
 }
 
 template <typename Entry, typename Signer = NoSign>

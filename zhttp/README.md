@@ -5,6 +5,15 @@ HTTP/2 uses `Ztls`, and HTTP/3 uses `Zquic`. HPACK, H2, QPACK, H3, ALPN
 selection, physical-session management, and logical request streams remain
 inside `zhttp/src`.
 
+Applications configure their receive policies with
+`Zhttp::HubConfig::rxBufAllocators(params)` after setting `ZiMxParams` ring sizes
+and before constructing the multiplexer. This public configuration operation
+installs the existing QUIC packet Base/capacity and TLS receive geometry in the
+caller-owned parameters. QUIC payload capacity includes recvmsg metadata;
+generic UDP tuning can be too small for an Initial. Pool initialization remains
+at this explicit application configuration boundary, with no live multiplexer
+mutation or allocator registry. Endpoints retain the original receive buffers.
+
 The HTTP/3 surface includes ordinary messages and ordered Extended CONNECT
 logical streams:
 
@@ -201,6 +210,8 @@ The seven request-event callbacks shown above are optional. `Zhttp::Pool`
 detects each exact signature on the final `ReqBuilder` type and prepares its
 arguments only when that callback exists. `Zhttp::ReqBuilder` does not provide
 no-op implementations for them.
+Client and pool completion/failure counts include the delivered result before
+`cancelled()` or `completed()` runs.
 
 ```c++
 struct ResBuilder_ : ZmObject, Zhttp::ResBuilder {
@@ -699,3 +710,12 @@ definitely, indirectly or possibly lost bytes.
 One initial interoperability-matrix run failed without case diagnostics. Its
 82-case direct and harness reruns, the complete normal endpoint-suite rerun and
 the final sanitizer endpoint suite passed; the initial cause is unconfirmed.
+
+Native I/O pool sizing: `zhttp` and `zhttpd` expose `--rx-ring-size=N` and
+`--tx-ring-size=N` (default 128, range 2..32768), shared across each multiplexer’s
+receive sockets and inherited by producer-owned transmit pools. The integration
+matrix sizes both directions from concurrent exchanges and complete response
+fragments, with request/response/retirement headroom; the HTTP benchmark uses
+four slots per concurrent small-body exchange, subject to the default floor and
+kernel maximum. One-slot lifetime fixtures and retained-pool exhaustion tests
+remain deliberately small.

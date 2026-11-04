@@ -49,13 +49,30 @@
 namespace Zi {
 
 // A retained view owns the original backing, never its slot or packed flags.
+// Positions are relative to data_(), independent of the buffer's active span.
 struct RxRange {
   ZmRef<IOBuf>	buf;
   unsigned	offset = 0;
   unsigned	length = 0;
 
+  RxRange() = default;
+  RxRange(ZmRef<IOBuf> buf_, unsigned offset_, unsigned length_) :
+    buf{ZuMv(buf_)}, offset{offset_ + (buf ? buf->skip : 0)},
+    length{length_} { }
+
+  static RxRange fromStorage(ZmRef<IOBuf> buf, unsigned offset, unsigned length) {
+    RxRange range;
+    range.buf = ZuMv(buf);
+    range.offset = offset;
+    range.length = length;
+    return range;
+  }
+  RxRange subspan(unsigned start, unsigned length_) const {
+    return fromStorage(buf, offset + start, length_);
+  }
+
   auto span() const {
-    return buf ? ZuSpan<uint8_t>{buf->data() + offset, length} :
+    return buf ? ZuSpan<uint8_t>{buf->data_() + offset, length} :
       ZuSpan<uint8_t>{};
   }
   auto cspan() const { return ZuBSpan{span()}; }
@@ -158,7 +175,7 @@ private:
   template <typename Node>
   static RxRange range_(const Node &node, unsigned offset, unsigned length) {
     if (auto range = node->range)
-      return {range->buf, range->offset + offset, length};
+      return range->subspan(offset, length);
     return {static_cast<IOBuf *>(node), offset, length};
   }
 
@@ -183,7 +200,7 @@ public:
     auto range = node->range;
     auto buf = range ? range->buf.ptr() : static_cast<IOBuf *>(&*node);
     // Stream consumption does not reduce the configured receive capacity.
-    return buf->size - buf->skip;
+    return buf->size - (range ? range->offset : buf->skip);
   }
 
 private:
@@ -207,6 +224,12 @@ private:
       auto part = span();
       unsigned remaining = length - buf->length;
       if (part.length() > remaining) part.trunc(remaining);
+#ifdef ZiMultiplex_DEBUG
+      NodeRef node = head();
+      const IOBuf *source = node->range ? node->range->buf.ptr() :
+	static_cast<const IOBuf *>(&*node);
+      buf->mergeRx_(*source, part.length());
+#endif
       buf->append(part);
       advance(part.length());
     }
@@ -343,9 +366,9 @@ public:
       advance(length);
       return framed;
     }
-    out.buf = gather_(length, ZuFwd<Alloc>(alloc));
-    if (ZuUnlikely(!out.buf)) return -1;
-    out.length = length;
+    auto buf = gather_(length, ZuFwd<Alloc>(alloc));
+    if (ZuUnlikely(!buf)) return -1;
+    out = {ZuMv(buf), 0, length};
     return framed;
   }
 

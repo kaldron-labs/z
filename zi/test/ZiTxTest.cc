@@ -18,15 +18,15 @@ namespace {
 using TxAlloc = ZiTxBufAlloc<32, 128>;
 
 struct FakeConnection : ZiConnection {
-  ZiIOContext	io;
+  ZiTxContext	io;
   unsigned	sendCalls = 0;
 
   FakeConnection() : ZiConnection{nullptr, {}} { io.cxn = this; }
 
-  void connected(ZiIOContext &) override { }
+  void connected(ZiRxContext &) override { }
   void disconnected(bool) override { }
 
-  void send(ZiIOFn fn)
+  void send(ZiTxFn fn)
   {
     ++sendCalls;
     fn(io);
@@ -55,7 +55,7 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
 
   FakeConnection *cxn() { return this; }
 
-  void sending(ZiIOContext &io)
+  void sending(ZiTxContext &io)
   {
     io.addr.init(ZiIP{"127.0.0.1"}, 100 + installed++);
     io.tos = uint8_t(0x2e);
@@ -64,7 +64,7 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
   void sent(ZmRef<ZiTxBuf> buf, bool ok)
   {
     if (sentCount < 16) {
-      sentOrder[sentCount] = buf->length ? char(buf->ptr<const uint8_t>()[0]) : 0;
+      sentOrder[sentCount] = buf->skip || buf->length ? char(buf->data_()[0]) : 0;
       sentOK[sentCount] = ok;
     }
     ++sentCount;
@@ -80,12 +80,13 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
     ++abortedCount;
   }
 
-  ZiIOContext dataDone()
+  ZiTxContext dataDone()
   {
     auto done = ZuMv(io);
     io = {};
     io.cxn = this;
     io.fn = done.fn;
+    io.length = done.length;
     io();
     return done;
   }
@@ -94,8 +95,8 @@ struct TxHarness : public FakeConnection, public ZiTx<TxHarness> {
   {
     io.length = length;
     if (length < 0) { io(); return; }
-    io.offset += length;
-    if (io.offset < io.buf->length) return;
+    io.buf->advance(unsigned(length));
+    if (io.buf->length) return;
     auto done = dataDone();
     done();
   }
@@ -133,21 +134,21 @@ void testFifoAndPartialSendContinuation()
 
   tx.step(1);
   ZuCheck(tx.sentCount == 0);
-  ZuCheck(tx.io.offset == 1);
+  ZuCheck(tx.io.buf->skip == 1 && tx.io.buf->length == 2);
 
-  tx.step(int(tx.io.buf->length - tx.io.offset));
+  tx.step(int(tx.io.buf->length));
   ZuCheck(tx.sentCount == 1);
   ZuCheck(tx.sentOrder[0] == 'A');
   ZuCheck(tx.sentOK[0]);
   ZuCheck(tx.io.buf->length == 3);
 
-  tx.step(int(tx.io.buf->length - tx.io.offset));
+  tx.step(int(tx.io.buf->length));
   ZuCheck(tx.sentCount == 2);
   ZuCheck(tx.sentOrder[1] == 'B');
   ZuCheck(tx.sentOK[1]);
   ZuCheck(tx.io.buf->length == 3);
 
-  tx.step(int(tx.io.buf->length - tx.io.offset));
+  tx.step(int(tx.io.buf->length));
   ZuCheck(tx.sentCount == 3);
   ZuCheck(tx.sentOrder[2] == 'C');
   ZuCheck(tx.sentOK[2]);
@@ -174,6 +175,8 @@ void testSendFailureDrainsQueue()
   ZuCheck(tx.sentCount == 1);
   ZuCheck(tx.sentOrder[0] == 'A');
   ZuCheck(!tx.sentOK[0]);
+  ZuCheck(tx.abortedCount == 1 && tx.abortedOrder[0] == 'B' && tx.abortedOK[0]);
+  ZuCheck(a->refCount() == 1 && b->refCount() == 1);
   ZuCheck(tx.txQueue.count_() == 0);
   ZuCheck(tx.io.completed());
 }
@@ -199,8 +202,8 @@ void testAbortQueuedAndHeadCases()
     ZuCheck(tx.abortedOK[0]);
     ZuCheck(tx.txQueue.count_() == 1);
 
-    tx.step(int(tx.io.buf->length - tx.io.offset));
-    tx.step(int(tx.io.buf->length - tx.io.offset));
+    tx.step(int(tx.io.buf->length));
+    tx.step(int(tx.io.buf->length));
 
     ZuCheck(tx.sentCount == 2);
     ZuCheck(tx.sentOrder[0] == 'A');
@@ -221,8 +224,8 @@ void testAbortQueuedAndHeadCases()
     ZuCheck(tx.abortedOrder[0] == 'A');
     ZuCheck(!tx.abortedOK[0]);
 
-    tx.step(int(tx.io.buf->length - tx.io.offset));
-    tx.step(int(tx.io.buf->length - tx.io.offset));
+    tx.step(int(tx.io.buf->length));
+    tx.step(int(tx.io.buf->length));
 
     ZuCheck(tx.sentCount == 2);
     ZuCheck(tx.sentOrder[0] == 'A');
@@ -240,7 +243,7 @@ void testHeldRetirementAndReentry()
   tx.queue(a);
   tx.queue(b);
   tx.queue(c);
-  tx.io.offset = 3;
+  tx.io.buf->advance(3);
   tx.io.length = 3;
   auto held = tx.dataDone();
   ZuCheck(held.buf == a && tx.io.buf == b);
@@ -251,7 +254,7 @@ void testHeldRetirementAndReentry()
   ZuCheck(!tx.abortedOK[0]);
   tx.abort(c); // only pending output is removable
   ZuCheck(tx.abortedOK[1] && tx.txQueue.count_() == 0);
-  tx.io.offset = 3;
+  tx.io.buf->advance(3);
   tx.io.length = 3;
   auto later = tx.dataDone();
   ZuCheck(tx.io.completed() && later.buf == b);
@@ -280,6 +283,39 @@ void testEmptyDatagram()
   ZuCheck(tx.io.completed());
 }
 
+void testInPlaceRange()
+{
+  ZuTestScope(testInPlaceRange);
+  TxHarness tx;
+  ZmRef<ZiTxBuf> source = new TxAlloc{nullptr, 0};
+  source->append(ZuString{"ABCDEF"});
+  auto data = source->data_();
+  unsigned size = source->size;
+  source->advance(1);
+  source->length = 2;
+  tx.queue(source);
+  tx.queue(mkBuf('E', 2));
+  ZuCheck(tx.io.buf == source && tx.io.buf->data() == data + 1);
+  ZuCheck(tx.io.buf->skip == 1 && tx.io.buf->length == 2);
+  tx.step(1);
+  ZuCheck(tx.sentCount == 0 && tx.io.buf->skip == 2 &&
+    tx.io.buf->cspan() == "C");
+  tx.io.buf->advance(1);
+  tx.io.length = 1;
+  auto held = tx.dataDone();
+  ZuCheck(held.buf == source && !held.buf->length &&
+    held.buf->data() == data + 3);
+  ZuCheck(held.buf->data_() == data && held.buf->size == size);
+  ZuCheck(tx.io.buf->cspan() == "EE");
+  tx.step(2);
+  ZuCheck(tx.sentCount == 1 && tx.sentOrder[0] == 'E');
+  ZuCheck(tx.io.completed());
+  held();
+  ZuCheck(tx.sentCount == 2 && tx.sentOrder[1] == 'A');
+  ZuCheck(source->data_() == data && source->size == size);
+  ZuCheck(!source->length && source->skip == 3 && source->refCount() == 1);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -291,5 +327,6 @@ int main(int argc, char **argv)
   ZuTestCall(testAbortQueuedAndHeadCases);
   ZuTestCall(testHeldRetirementAndReentry);
   ZuTestCall(testEmptyDatagram);
+  ZuTestCall(testInPlaceRange);
   return 0;
 }

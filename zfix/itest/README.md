@@ -22,6 +22,11 @@ make -C zfix/itest test
 `tcp_test` and `tls_test` compile the same transport fixture over Ztcp
 and Ztls. Each runs one connection, three simultaneous connections, and two
 connections carrying signed binary FIX frames larger than two TLS plaintext records.
+The transport fixture sizes both rings for its complete simultaneous frame burst,
+using the TCP/TLS buffer capacity and session count, plus the default reserve.
+Small session-state fixtures retain the 128-slot defaults; process fixtures use
+the workload tools' session/in-flight sizing. Deliberately small socket windows
+remain unchanged so partial-write assertions still exercise real backpressure.
 The initiator admits two completed frames through `WireTx` before their socket
 completions. TCP borrows each frame without copying its bytes; TLS uses tagged
 record buffers with the transport's negotiated headroom and plaintext bound. Each acceptor extracts pooled frames with `RxFramer`,
@@ -58,6 +63,13 @@ physical shutdown accounting. A second ordering lets A enter close processing
 before B associates. TLS additionally refuses B before handshake with A's close
 pending, and pauses an already protected A record while B associates: A's
 ciphertext must stay bound to A and B must authenticate and exchange traffic.
+
+Stop-before-bind also retains the real B client while the server closes its
+socket before binding. If B published its Logon, that exact attempt must complete
+once. A failed completion before logical close reports Output; one after close
+only settles the attempt. The fixture correlates publication, false completion
+and optional Output fault/event, rejects other faults, and preserves the server's
+physical accounting, stopped, no-Ready and no-business checks.
 
 The Linux TCP partial-replacement case uses a raw A peer that does not read.
 After real EAGAIN and completion of producer submission, B replaces A and must

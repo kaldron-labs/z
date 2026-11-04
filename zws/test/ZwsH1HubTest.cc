@@ -15,8 +15,11 @@
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiMultiplex.hh>
 
+#include <zlib/Zquic.hh>
+
 #include <zlib/Zws.hh>
 #include <zlib/Ztcp.hh>
+#include <zlib/Ztls.hh>
 
 #include "ZhttpTestUtil.hh"
 #include "ZwsTestPorts.hh"
@@ -51,6 +54,9 @@ struct State {
   ZmAtomic<unsigned>	reconnects = 0;
   unsigned		target = 4;
   bool			stress = false;
+  bool			writerOwned = false;
+  ZtArray<ZmRef<ZiIOBuf>, ZtArrayHeapID<"Zws.Hub.Owned">> ownedPrefixes; // Rx
+
   ZtString<>		request;
   ZtString<>		response;
   uint16_t		port = 0;
@@ -67,6 +73,12 @@ struct State {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+#ifdef ZWS_H3_TEST
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+#endif
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -162,7 +174,21 @@ struct ClientApp {
       return;
     }
     ++state->connected;
-    link.txStream([this](auto &tx) {
+    if (state->writerOwned) {
+      ZmRef<ZiIOBuf> packet;
+      link.channel().streamTx([this, &packet](auto &lower) {
+	packet = lower.allocBuf(lower.headRoom() + 14);
+	if (packet) *packet << state->request.cspan().offset(3);
+      }); // the real Rx build writer is destroyed before AppTx submits it
+      if (!packet) { state->fail(); return; }
+      state->ownedPrefixes.push(packet);
+      link.app()->txRun([hold = ZmRef<Link>{&link}, packet = ZuMv(packet), state = state]() mutable {
+	hold->txStream_([packet = ZuMv(packet), state](auto &tx) mutable {
+	  tx << state->request.cspan().trunc(3);
+	  if (!tx.appendOwned_(ZuMv(packet)) || !tx.flush()) state->fail();
+	}, Zws::Opcode::Text);
+      });
+    } else link.txStream([this](auto &tx) {
       tx << state->request;
       tx.flush();
     }, Zws::Opcode::Text);
@@ -226,7 +252,9 @@ struct RejectClient : public Ztcp::Client<RejectClient> {
   RejectState	*state;
 };
 
-struct RejectClient::Link : public Ztcp::CliLink<RejectClient, Link> {
+struct RejectClient::Link :
+  public ZmNHeap<Link>, public Ztcp::CliLink<RejectClient, Link> {
+  friend inline ZuStringT<"Zws.Test.RejectLink"> ZmNHeapID(Link *);
   using Base = Ztcp::CliLink<RejectClient, Link>;
 
   Link(RejectClient *app) : Base{app} { }
@@ -247,6 +275,47 @@ struct RejectClient::Link : public Ztcp::CliLink<RejectClient, Link> {
   }
   void disconnected(bool) {
     if (app()->state->response.find("HTTP/1.1 400 \r\n") != 0)
+      app()->state->failed = true;
+    app()->state->done.post();
+  }
+  void connectFailed(bool) {
+    app()->state->failed = true;
+    app()->state->done.post();
+  }
+};
+
+struct RejectTLSClient : public Ztls::Client<RejectTLSClient> {
+  struct Link;
+  RejectState	*state;
+
+  RejectTLSClient(RejectState *state_) : state{state_} { }
+
+  unsigned reconnFreq() const { return 0; }
+};
+
+struct RejectTLSClient::Link :
+  public ZmNHeap<Link>, public Ztls::CliLink<RejectTLSClient, Link> {
+  friend inline ZuStringT<"Zws.Test.RejectTLSLink"> ZmNHeapID(Link *);
+  using Base = Ztls::CliLink<RejectTLSClient, Link>;
+
+  Link(RejectTLSClient *app) : Base{app} { }
+
+  void connected(Ztls::Connected) {
+    auto tx = txStream();
+    tx << "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n";
+    tx.flush();
+  }
+  int process(Ztls::RxStream &rx) {
+    while (!rx.empty()) {
+      int64_t n = rx.consume(
+	[](ZuSpan<uint8_t> span) -> int64_t { return span.length(); },
+	[this](ZuSpan<uint8_t> span) { app()->state->response << span; });
+      if (n <= 0) break;
+    }
+    return 1;
+  }
+  void disconnected(bool) {
+    if (app()->state->response != "HTTP/1.1 400 \r\n\r\n")
       app()->state->failed = true;
     app()->state->done.post();
   }
@@ -305,6 +374,7 @@ void run(const TempDir &temp)
   ZuTestScope(run);
 
   State state;
+  state.writerOwned = ZuIsSame<Profile, Zhttp::H1TCP>{};
   state.request.length(4096);
   state.response.length(4096);
   const unsigned payloadLen = state.request.length();
@@ -377,7 +447,9 @@ void run(const TempDir &temp)
     bool rejectInit =
       rejectClient.init(Ztcp::ClientParams{&mx, "3", "4"});
     ZuCHECK(rejectInit);
-    if (rejectInit) {
+    bool rejectStarted = rejectInit && rejectClient.start();
+    ZuCHECK(rejectStarted);
+    if (rejectStarted) {
       ZmRef<RejectClient::Link> reject =
 	new RejectClient::Link{&rejectClient};
       reject->connect("127.0.0.1", state.port);
@@ -388,12 +460,21 @@ void run(const TempDir &temp)
       ZmBlock<>{}([&rejectClient](auto wake) {
 	rejectClient.rxRun(ZuMv(wake));
       });
-      rejectClient.final();
+      ZuCHECK(rejectClient.stop());
     }
+    if (rejectInit) rejectClient.final();
   }
 
   server.stopAccepting();
   ZuCHECK(client.stop() && server.stop());
+  if constexpr (ZuIsSame<Profile, Zhttp::H1TCP>{}) {
+    bool consumed = state.ownedPrefixes.length() == 2;
+    for (const auto &buf : state.ownedPrefixes)
+      consumed &= !buf->length && buf->skip > 14;
+    ZuCHECK(consumed,
+      "delayed owned prefixes must be the actual buffers advanced by TCP");
+    state.ownedPrefixes.length(0); // before the real allocator owner finalizes
+  }
   link = nullptr;
   client.final();
   server.final();
@@ -476,6 +557,60 @@ void runConcurrentWSS(const TempDir &temp)
   ZuCHECK(state.srvMessages.load_() == Clients);
 }
 
+
+void rejectTLS(const TempDir &temp)
+{
+  ZuTestScopeRT(rejectTLS);
+  State state;
+  static unsigned nextPort = ZwsTestPort::H1Hub;
+  state.port = loopbackPort(nextPort++);
+  ZuCheckRT(state.port);
+  if (!state.port) return;
+  ZiMultiplex mx{mxParams()};
+  bool mxStarted = mx.start();
+  ZuCheckRT(mxStarted);
+  if (!mxStarted) return;
+  ServerApp serverApp{&state};
+  Zws::Server<ServerApp, Zhttp::H1TLS> server{
+    &serverApp, ZiIP{"127.0.0.1"}, state.port};
+  bool serverInit = server.init(Zhttp::HubConfig{&mx, "3", "4"},
+    ProfileConfig<Zhttp::H1TLS>::server(temp));
+  ZuCheckRT(serverInit);
+  if (!serverInit) { mx.stop(); return; }
+  bool started = server.start();
+  ZuCheckRT(started);
+  if (!started) { server.final(); mx.stop(); return; }
+  bool listening = state.listening.timedwait(Zm::now(10)) == 0;
+  ZuCheckRT(listening);
+  RejectState response;
+  RejectTLSClient client{&response};
+  bool clientInit = client.init(Ztls::ClientParams{&mx, "3", "4"}.hub(
+    [&temp](auto &p) {
+      p.caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"http/1.1"});
+    }));
+  ZuCheckRT(clientInit);
+  bool clientStarted = clientInit && client.start();
+  ZuCheckRT(clientStarted);
+  ZmRef<RejectTLSClient::Link> link;
+  if (listening && clientStarted) {
+    link = new RejectTLSClient::Link{&client};
+    link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
+    ZuCheckRT(response.done.timedwait(Zm::now(10)) == 0);
+    ZuCheckRT(!response.failed,
+      log_("rejected TLS H1 opening handshake did not drain its 400 response"));
+  }
+  server.stopAccepting();
+  bool clientStopped = !clientStarted || client.stop();
+  bool serverStopped = server.stop();
+  ZuCheckRT(clientStopped && serverStopped);
+  link = nullptr;
+  if (clientInit) client.final();
+  server.final();
+  mx.stop();
+  ZuCheckRT(!state.errors.load_() && state.handshakeErrors.load_() == 1 &&
+    state.disconnected.load_() == 1);
+}
+
 } // namespace ZwsH1HubTest_
 
 int main(int argc, char **argv)
@@ -507,6 +642,7 @@ int main(int argc, char **argv)
     ZuTestCall(run<Zhttp::H1TCP>, temp);
     ZuTestCall(run<Zhttp::H1TLS>, temp);
     ZuTestCall(runConcurrentWSS, temp);
+    ZuTestCall(rejectTLS, temp);
 #endif
   }
 

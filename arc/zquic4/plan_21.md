@@ -9,7 +9,7 @@ Preconditions: plans 1 through 20 complete.
 `zquic` retransmission uses compact `SentFrameRef` records, including stream ranges and small payload copies for path response.  This is efficient, but the audit flagged shallow references and unbounded retransmit queue risk.  This plan validates lifetime assumptions after recovery/scheduler work and hardens stale retransmission filtering.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -69,7 +69,7 @@ New or changed data stores: bounded retransmit queue with counters for dropped s
 - Open question: correct bound should be packet-count, frame-count, or byte-estimate based.  Start with named frame-count bound and diagnostics.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

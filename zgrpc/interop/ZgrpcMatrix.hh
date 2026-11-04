@@ -7,9 +7,27 @@
 #ifndef ZgrpcMatrix_HH
 #define ZgrpcMatrix_HH
 
+#include <zlib/Zquic.hh>
 #include <zlib/Zgrpc.hh>
 
 using namespace Zgrpc;
+
+inline ZiMxParams peerMxParams(bool h3)
+{
+  // Three 256 KiB stream messages plus retirement overlap; the unary
+  // payload adds seven bytes. H2 emits TLS records, H3 path-sized packets.
+  enum { PayloadBytes = (256<<10) + 7 };
+  unsigned rxSlots = ((PayloadBytes + ZiIOBuf_DefltSize - 1)/
+    ZiIOBuf_DefltSize)<<2;
+  unsigned txBytes = h3 ? Zquic::MinUDPPayload : 16U<<10;
+  unsigned txSlots = ((PayloadBytes + txBytes - 1)/txBytes)<<2;
+  return ZiMxParams{}
+    .rxRingSize(rxSlots < ZiIOBuf_DefltRxRingSize ?
+      ZiIOBuf_DefltRxRingSize : rxSlots)
+    .txRingSize(txSlots < ZiIOBuf_DefltTxRingSize ?
+      ZiIOBuf_DefltTxRingSize : txSlots)
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>();
+}
 
 struct Packet {
   uint64_t seq = 0;

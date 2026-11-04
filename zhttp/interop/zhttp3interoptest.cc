@@ -92,6 +92,10 @@ void parseArgs(int argc, char **argv)
 ZiMxParams mxParams(bool h3 = false)
 {
   auto params = ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(5)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -525,7 +529,6 @@ ZiConnection *TCPServer::accepted(const ZiCxnInfo &ci)
 }
 
 struct TLSServer : public Ztls::Server<TLSServer> {
-  using RxBufAlloc = Ztls::RxBufAlloc<8<<10, 4<<20>;
   using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 4<<20>;
   struct Link;
 
@@ -545,10 +548,10 @@ struct TLSServer : public Ztls::Server<TLSServer> {
 
 struct TLSServer::Link :
   public Ztls::SrvLink<TLSServer, TLSServer::Link,
-    TLSServer::RxBufAlloc, TLSServer::TxBufAlloc>,
+    TLSServer::TxBufAlloc>,
   public H1ServerLinkOps<TLSServer::Link> {
   using Base = Ztls::SrvLink<TLSServer, TLSServer::Link,
-    TLSServer::RxBufAlloc, TLSServer::TxBufAlloc>;
+    TLSServer::TxBufAlloc>;
   using Base::Base;
 
   Link(TLSServer *app) : Base{app} { }
@@ -833,13 +836,12 @@ struct TCPClient : public Ztcp::Client<TCPClient> {
 };
 
 struct TLSClient : public Ztls::Client<TLSClient> {
-  using RxBufAlloc = Ztls::RxBufAlloc<8<<10, 4<<20>;
   using TxBufAlloc = Ztls::TxBufAlloc<8<<10, 4<<20>;
   struct Link :
     public H1ClientLinkOps<TLSClient,
-      Ztls::CliLink<TLSClient, Link, RxBufAlloc, TxBufAlloc>> {
+      Ztls::CliLink<TLSClient, Link, TxBufAlloc>> {
     using Base = H1ClientLinkOps<TLSClient,
-      Ztls::CliLink<TLSClient, Link, RxBufAlloc, TxBufAlloc>>;
+      Ztls::CliLink<TLSClient, Link, TxBufAlloc>>;
     using Base::Base;
   };
   TLSClient(ClientState *state_) : state{state_} { }

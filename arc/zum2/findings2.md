@@ -90,7 +90,7 @@ included.
 
 ### 9. Low: the new compile-time assertion uses the wrong project idiom
 
-`zrest/src/ZrestServer.hh:462` uses `static_assert`; `GUIDELINES.md` requires
+`zrest/src/ZrestServer.hh:462` uses `static_assert`; `docs/GUIDELINES.md` requires
 `ZuAssert` for compile-time assertions.
 
 ## Areas that passed

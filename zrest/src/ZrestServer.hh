@@ -125,8 +125,10 @@ struct ReqParser : public Request, public Zhttp::Parser {
     else {
       if (streamed || Impl::Borrowed) return input.body(rx);
       rx.consume(
-	[this](ZuSpan<uint8_t> span) {
-	  return span.length() < bodyLength ? 0U : bodyLength;
+	[remaining = bodyLength](ZuSpan<uint8_t> span) mutable {
+	  if (span.length() >= remaining) return remaining;
+	  remaining -= span.length();
+	  return 0U;
 	},
 	[this](ZuSpan<uint8_t> span) {
 	  decoded = decodeBody_(span);
@@ -259,17 +261,8 @@ struct ResBuilder : public Response, public Zhttp::Builder {
       });
     } else if constexpr (Impl::Body == BodyPolicy::JSON) {
       using Body_JSON_Facet = Impl::Body_JSON_Facet;
-      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
-      const auto &body = impl()->bodyObject(object.ptr());
-      impl()->prefixBody(buf, object.ptr());
-      unsigned offset = buf.length();
-      ZfJSON::save<Body_JSON_Facet, SaveField>(buf, body);
-      impl()->signBody(buf, object.ptr(), buf.cspan().offset(offset));
-      emit([this, &buf](auto &s) {
-	s << buf;
-	s.flush();
-	bodyLength = s.produced();
-	return Zhttp::WriteOutcome::End;
+      emitSignedBody(impl(), ZuFwd<Emit>(emit), [](auto &out, const auto &body) {
+	ZfJSON::save<Body_JSON_Facet, SaveField>(out, body);
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI && !Impl::SignBody) {
       emit([this](auto &s) {
@@ -281,29 +274,12 @@ struct ResBuilder : public Response, public Zhttp::Builder {
       });
     } else if constexpr (Impl::Body == BodyPolicy::URI) {
       using Body_URI_Facet = Impl::Body_URI_Facet;
-      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
-      const auto &body = impl()->bodyObject(object.ptr());
-      impl()->prefixBody(buf, object.ptr());
-      unsigned offset = buf.length();
-      ZfURI::save_<Body_URI_Facet, SaveField>(buf, body);
-      impl()->signBody(buf, object.ptr(), buf.cspan().offset(offset));
-      emit([this, &buf](auto &s) {
-	s << buf;
-	s.flush();
-	bodyLength = s.produced();
-	return Zhttp::WriteOutcome::End;
+      emitSignedBody(impl(), ZuFwd<Emit>(emit), [](auto &out, const auto &body) {
+	ZfURI::save_<Body_URI_Facet, SaveField>(out, body);
       });
     } else if constexpr (Impl::Body == BodyPolicy::Raw && Impl::SignBody) {
-      auto buf = ZtScratch(SignBufScratch, Impl::SignBodyBufSize);
-      impl()->prefixBody(buf, object.ptr());
-      unsigned offset = buf.length();
-      buf << impl()->bodyObject(object.ptr());
-      impl()->signBody(buf, object.ptr(), buf.cspan().offset(offset));
-      emit([this, &buf](auto &s) {
-	s << buf;
-	s.flush();
-	bodyLength = s.produced();
-	return Zhttp::WriteOutcome::End;
+      emitSignedBody(impl(), ZuFwd<Emit>(emit), [](auto &out, const auto &body) {
+	out << body;
       });
     } else if constexpr (Impl::Body == BodyPolicy::Raw) {
       emit([this](auto &s) {

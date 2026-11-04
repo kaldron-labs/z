@@ -1069,7 +1069,7 @@ private:
     unsigned seen = 0;
     bool valid = true;
     constexpr auto matcher = ZuMatcher<OIDCCallbackFields>();
-    valid = formEach({query.data(), query.length()},
+    valid = formEach(query,
       [&code, &stateID, &error, &seen, &valid, &matcher](
           ZuCSpan name, ZuCSpan value) {
         String *target;

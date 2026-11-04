@@ -11,8 +11,11 @@
 
 #include <zlib/ZrestLib.hh>
 
+#include <limits.h>
+
 #include <zlib/ZuAssert.hh>
 #include <zlib/ZuDerive.hh>
+#include <zlib/ZuEquiv.hh>
 #include <zlib/ZuIntrin.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuSwitch.hh>
@@ -20,6 +23,7 @@
 #include <zlib/ZuUnroll.hh>
 
 #include <zlib/ZmLHash.hh>
+#include <zlib/ZmRef.hh>
 
 #include <zlib/ZtEnum.hh>
 #include <zlib/ZtScratch.hh>
@@ -28,6 +32,8 @@
 #include <zlib/ZfStruct.hh>
 #include <zlib/ZfURI.hh>
 #include <zlib/ZfJSON.hh>
+
+#include <zlib/ZiIOBuf.hh>
 
 #include <zlib/Zhttp.hh>
 #include <zlib/ZhttpClient.hh>
@@ -155,6 +161,63 @@ ZuDerive(SignBufScratch, (ZtArray<char, ZtArrayHeapID<"Zrest.SignBuf",
   ZtArraySharded<true>>>));
 ZuDerive(HeaderScratch, (ZtBArray<ZtArrayHeapID<"Zrest.Header.Value",
   ZtArraySharded<true>>>));
+
+// Signing hooks edit unpublished bytes in their destination writer's owner.
+// This sink preserves the mutable length/formatting contract used by signers.
+class SignOutput {
+public:
+  SignOutput(ZmRef<ZiIOBuf> buf, unsigned tail, unsigned tuning) :
+    m_buf{ZuMv(buf)}, m_tail{tail} { reserve_(tuning); }
+
+  unsigned length() const { return m_buf->length; }
+  void length(unsigned n) { if (reserve_(n)) m_buf->length = n; }
+  auto cspan() const { return ZuCSpan{m_buf->cspan()}; }
+  auto span() { return m_buf->span(); }
+  bool failed() const { return m_buf->failed(); }
+  template <typename P> SignOutput &operator <<(P &&value) {
+    if (!failed()) {
+      if constexpr (ZuEquiv<ZuDecay<P>, char>{}) *m_buf << char(value);
+      else *m_buf << ZuFwd<P>(value);
+      reserve_(m_buf->length);
+    }
+    return *this;
+  }
+  ZmRef<ZiIOBuf> take() { return ZuMv(m_buf); }
+
+private:
+  bool reserve_(unsigned n) {
+    if (n > UINT_MAX - m_tail) { m_buf->failed(true); return false; }
+    return m_buf->ensure(n + m_tail);
+  }
+  ZmRef<ZiIOBuf> m_buf;
+  unsigned m_tail;
+};
+
+template <typename Impl, typename Emit, typename Encode>
+void emitSignedBody(const Impl *impl, Emit &&emit, Encode &&encode)
+{
+  emit([impl, encode = ZuFwd<Encode>(encode)](auto &s) {
+    auto buf = s.allocBuf(s.headRoom());
+    if (!buf) return Zhttp::WriteOutcome::Abort;
+    SignOutput out{ZuMv(buf), s.tailRoom(), Impl::SignBodyBufSize};
+    auto object = impl->object.ptr();
+    impl->prefixBody(out, object);
+    unsigned offset = out.length();
+    encode(out, impl->bodyObject(object));
+    impl->signBody(out, object, out.cspan().offset(offset));
+    if (out.failed()) return Zhttp::WriteOutcome::Abort;
+    buf = out.take();
+    if (s.canAdopt_(*buf)) s << ZuMv(buf);
+    else {
+      auto length = buf->length;
+      if (!s.appendRange(Zi::RxRange{ZuMv(buf), 0, length}))
+	return Zhttp::WriteOutcome::Abort;
+    }
+    s.flush();
+    impl->bodyLength = s.produced();
+    return Zhttp::WriteOutcome::End;
+  });
+}
 
 struct DefltHdrs { };
 

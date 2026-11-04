@@ -511,6 +511,40 @@ ptls_hash_algorithm_t *hash_algorithm(MDType type)
   return &ptls_openssl_sha256;
 }
 
+ptls_cipher_suite_t *fusion_cipher_suite(uint16_t id)
+{
+#if Ztls_Fusion
+  // Normal Fusion preserves exact in-place decrypt; non-temporal variants do not.
+  if (!ptls_fusion_is_supported_by_cpu()) return nullptr;
+  switch (id) {
+    case PTLS_CIPHER_SUITE_AES_256_GCM_SHA384: {
+      static ptls_cipher_suite_t suite{
+	.id = PTLS_CIPHER_SUITE_AES_256_GCM_SHA384,
+	.aead = &ptls_fusion_aes256gcm,
+	.hash = hash_algorithm(SHA384),
+	.name = PTLS_CIPHER_SUITE_NAME_AES_256_GCM_SHA384
+      };
+      return &suite;
+    }
+    case PTLS_CIPHER_SUITE_AES_128_GCM_SHA256: {
+      static ptls_cipher_suite_t suite{
+	.id = PTLS_CIPHER_SUITE_AES_128_GCM_SHA256,
+	.aead = &ptls_fusion_aes128gcm,
+	.hash = hash_algorithm(SHA256),
+	.name = PTLS_CIPHER_SUITE_NAME_AES_128_GCM_SHA256
+      };
+      return &suite;
+    }
+  }
+#endif
+  return nullptr;
+}
+
+ptls_hash_context_t *hmac_create(MDType type, ZuBSpan key)
+{
+  return ptls_hmac_create(hash_algorithm(type), key.data(), key.length());
+}
+
 size_t hash_size(MDType type)
 {
   return hash_algorithm(type)->digest_size;

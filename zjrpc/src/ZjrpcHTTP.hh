@@ -208,16 +208,22 @@ struct HTTPFixedBuilder : public Zhttp::ResBuilder {
   }
 };
 
-struct SSEData : public ZiIOBuf {
-  using ZiIOBuf::ZiIOBuf;
+// Queued events retain semantic output until the HTTP writer supplies final
+// wire storage. This node owns no payload backing or transport cursor.
+struct SSEData : public ZmPolymorph {
+  using EncodeFn = ZmFn<void(ZuVStream &), ZmFnHeapID<"Zjrpc.SSE.Model">>;
+
+  EncodeFn encode;
+  unsigned length = 0;
   bool terminal = false;
 };
 
 ZmListDerive(SSEQueue, SSEData,
   ZmListNode<SSEData, ZmListHeapID<"">>);
 
-using SSEBuf = Zi::IOBufAlloc<SSEQueue::Node, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zjrpc.HTTP.SSE">>;
+struct SSERecord : public ZmNHeap<SSERecord>, public SSEQueue::Node {
+  friend inline ZuStringT<"Zjrpc.HTTP.SSE"> ZmNHeapID(SSERecord *);
+};
 
 using ResumeFn = ZmFn<bool(), ZmFnHeapID<"Zjrpc.SSE.Resume">>;
 using SSECloseFn = ZmFn<void(), ZmFnHeapID<"Zjrpc.SSE.Close">>;
@@ -392,8 +398,14 @@ public:
     }
     --m_queued;
     m_queuedBytes -= record->length;
-    out << ZuCSpan{record->cspan()};
-    return record->terminal ?
+    bool terminal = record->terminal;
+    Output wire{out, record->length};
+    writeOwned(wire, record->length, [&record](auto &final) {
+      ZuVStream stream{final};
+      record->encode(stream);
+    }, 0);
+    if (!wire) return Zhttp::WriteOutcome::Abort;
+    return terminal ?
       Zhttp::WriteOutcome::End : Zhttp::WriteOutcome::Stream;
   }
 
@@ -405,36 +417,38 @@ private:
       abort_();
       return false;
     }
-    ZmRef<SSEQueue::Node> buf = new SSEBuf{};
-    Zhttp::saveSSEHead(*buf, uint64_t(m_sequence++), -1);
-    *buf << "data: ";
-    unsigned jsonOffset = buf->length;
+    uint64_t sequence = m_sequence++;
+    CountOutput count;
+    Zhttp::saveSSEHead(count, sequence, -1);
+    count << "data: ";
     unsigned jsonMax = m_limits.maxJSONBytes < m_limits.maxSSEEventBytes ?
       m_limits.maxJSONBytes : m_limits.maxSSEEventBytes;
-    uint64_t outputMax = uint64_t(jsonOffset) + jsonMax;
-    if (ZuUnlikely(outputMax > UINT_MAX)) {
-      abort_();
-      return false;
-    }
-    BufOutput out{*buf, outputMax};
-    message.write(out);
-    if (ZuUnlikely(!out)) {
-      abort_();
-      return false;
-    }
-    unsigned jsonLength = buf->length - jsonOffset;
-    *buf << '\n';
-    Zhttp::saveSSEEnd(*buf);
-    if (ZuUnlikely(buf->failed() || jsonLength > jsonMax ||
+    Output measure{count, jsonMax};
+    message.write(measure);
+    if (!measure) { abort_(); return false; }
+    count << '\n';
+    Zhttp::saveSSEEnd(count);
+    if (ZuUnlikely(count.length > UINT32_MAX ||
 	m_queuedBytes > m_limits.maxQueueBytes ||
-	buf->length > m_limits.maxQueueBytes - m_queuedBytes)) {
+	count.length > m_limits.maxQueueBytes - m_queuedBytes)) {
       abort_();
       return false;
     }
-    m_queuedBytes += buf->length;
+    ZmRef<SSEQueue::Node> record = new SSERecord{};
+    record->length = count.length;
+    record->encode = decltype(record->encode){[
+      message = ZuMv(message), sequence
+    ](ZuVStream &out) {
+      Zhttp::saveSSEHead(out, sequence, -1);
+      out << "data: ";
+      message.write(out);
+      out << '\n';
+      Zhttp::saveSSEEnd(out);
+    }};
+    m_queuedBytes += record->length;
     ++m_queued;
-    buf->terminal = terminal;
-    m_queue.pushNode(ZuMv(buf));
+    record->terminal = terminal;
+    m_queue.pushNode(ZuMv(record));
     if (terminal) m_state = SSEState::TerminalQueued;
     if (m_resume &&
 	(m_owner ? !post_() : !m_resume())) {

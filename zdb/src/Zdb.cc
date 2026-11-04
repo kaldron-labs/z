@@ -204,6 +204,8 @@ void DB::init(
 
     m_cf = ZuMv(config);
     m_mx = mx;
+    m_hbAllocator = new Zi::TxTCPBufAllocator<
+      ZiTxBuf, HBBufSize, MaxBufSize, ZuStringT<"Zdb.HB">>{mx->txRingSize()};
     m_handler = ZuMv(handler);
     {
       if (!m_cf.storeCf)
@@ -870,8 +872,33 @@ void DB::stop_2()
       ZiLogEvent(ZuMv(result).p<Event>());
       ZiLOG(Fatal, "Zdb", "data store stop failed");
     }
-    run([this]() { drainShards(0, [this]() { stopped(true); }); });
+    run([this]() { drainShards(0, [this]() { stop_3(); }); });
   });
+}
+
+void DB::stop_3()
+{
+  ZmAssert(invoked());
+
+  // Producers and connection data/notification holds have drained. Keep their
+  // existing owners alive until allocator service controls detach as well.
+  m_unbinding = 1;
+  all_([this](AnyTable *table) {
+    for (const auto &fn : table->m_bufAllocFn) unbind_(fn.allocator());
+    unbind_(table->m_storeBufAllocFn.allocator());
+  });
+  unbind_(m_hbAllocator.ptr());
+  if (!--m_unbinding) stopped(true);
+}
+
+void DB::unbind_(Zi::IOBufAllocator *allocator)
+{
+  ZmAssert(invoked());
+  if (!allocator) return; // ordinary local/custom allocation callback
+  ++m_unbinding;
+  m_mx->unbind(allocator, {[this] {
+    run([this] { if (!--m_unbinding) stopped(true); });
+  }});
 }
 
 bool DB::disconnectAll()
@@ -1243,7 +1270,7 @@ Cxn_::Cxn_(DB *db, Host *host, const ZiCxnInfo &ci) :
 {
 }
 
-void Cxn_::connected(ZiIOContext &io)
+void Cxn_::connected(ZiRxContext &io)
 {
   if (!m_db->running()) { io.disconnect(); return; }
 
@@ -1642,11 +1669,12 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
   // and nested data. Only the replication/recovery discriminator changes.
   if (auto buf = findBufUN(shard, un)) {
     ZmAssert(record_(msg_(buf->hdr())).get<Msg::ZfField(Record, shard)>() == shard);
-    auto copy = allocBuf();
+    auto copy = allocBuf(shard);
     // Both allocations have pooled base alignment. Preserve the source
     // residue required by this row/envelope, including its nested roots.
-    copy->skip = buf->skip & (rowAlign() - 1);
-    if (!copy->append(buf->cspan())) return nullptr;
+    copy->skip = buf->framePos & (rowAlign() - 1);
+    if (!copy->append(buf->frameSpan())) return nullptr;
+    copy->seal_();
     copy->owner = this;
     auto message = msg_(copy->hdr());
     constexpr unsigned tagID =
@@ -1664,10 +1692,10 @@ ZmRef<IOBuf> AnyTable::mkBuf(Shard shard, UN un)
 // send commit to replica
 void AnyTable::commitSend(Shard shard, UN un)
 {
-  Zfb::IOBuilder<> fbb{allocBuf()};
+  Zfb::IOBuilder<> fbb{allocBuf(shard)};
   auto commit = saveCommit(fbb, config().id, un, shard);
   fbb.finish(saveMsg(fbb, commit, Msg::Tag::Commit));
-  m_db->replicate(saveHdr(fbb, this));
+  m_db->replicate(saveFrame(fbb, this));
 }
 
 // prepare replication data
@@ -1678,7 +1706,7 @@ ZmRef<IOBuf> AnyRow::replicate(int type)
   ZdbDEBUG(m_table->db(), ZeString{}
     << "AnyRow::replicate(" << type << ')');
 
-  Builder fbb{m_table->allocBuf(), m_table->rowAlign()};
+  Builder fbb{m_table->allocBuf(m_shard), m_table->rowAlign()};
   auto nested = fbb.startNested();
   auto root = !m_vn ? m_table->rowSave(fbb, ptr_()) :
     m_vn > 0 ? m_table->rowSaveUpd(fbb, ptr_()) :
@@ -1686,7 +1714,7 @@ ZmRef<IOBuf> AnyRow::replicate(int type)
   auto data = fbb.endNested(nested, root);
   auto record = saveRecord(fbb, m_table->config().id, m_un, m_sn, m_vn, m_shard, data);
   fbb.finish(saveMsg(fbb, record, type));
-  return saveHdr(fbb, m_table);
+  return saveFrame(fbb, m_table);
 }
 
 void DB::repStop()
@@ -1705,14 +1733,26 @@ void DB::repStop()
   m_nPeers = 1;
 }
 
-void Cxn_::msgRead(ZiIOContext &io)
+void Cxn_::msgRead(ZiRxContext &io)
 {
   recv<
-    [](const ZiIOContext &, ZiIOBuf *buf) -> int {
-      return loadHdr(buf);
+    [](const ZiRxContext &, Rx::Stream &stream) -> int {
+      if (stream.length() < sizeof(Hdr)) return INT_MAX;
+      Hdr hdr;
+      stream.copy(0, ZuSpan<uint8_t>{reinterpret_cast<uint8_t *>(&hdr), sizeof(hdr)});
+      unsigned length = hdr.length;
+      return length > INT_MAX - sizeof(Hdr) ? -1 : int(sizeof(Hdr) + length);
     },
-    [](Cxn_ *cxn, const ZiIOContext &, ZmRef<ZiIOBuf> buf) -> int {
-      return cxn->msgRead2(ZuMv(buf));
+    [](Cxn_ *cxn, const ZiRxContext &io, Rx::Stream &stream, unsigned length) -> int {
+      // Consolidate only fragmented frames, into their final receive owner.
+      if (stream.span().length() < length && !stream.gather(length, [&io]() {
+        return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
+          io.cxn->mx()->rxAllocator(false)->alloc().release()));
+      })) return -1;
+      auto range = stream.range();
+      range.length = length;
+      auto result = cxn->msgRead2(new RxFrame{ZuMv(range)});
+      return result < 0 ? result : int(length);
     }>(io);
 }
 int Cxn_::msgRead2(ZmRef<IOBuf> buf)
@@ -1913,7 +1953,8 @@ void Cxn_::hbSend()
   ZmAssert(m_db->invoked());
 
   Host *self = m_db->self();
-  Zfb::IOBuilder<> fbb{new ZiTxBufAlloc<HBBufSize, MaxBufSize, "Zdb.TxBuf">{}};
+  Zfb::IOBuilder<> fbb{m_db->m_hbAllocator->alloc(), Zfb::Wire::Align, UINT32_MAX,
+    0, Zfb::Wire::MaxAlign};
   auto heartbeat = Zfb::save(fbb, Heartbeat{
     self->id(), uint32_t(m_db->state()), m_db->nShards(), &self->dbState()});
   fbb.finish(saveMsg(fbb, heartbeat, Msg::Tag::Heartbeat));
@@ -2006,11 +2047,13 @@ void DB::replicated(Host *host, ZuCSpan tblID, Shard shard, UN un, SN sn)
 }
 
 AnyTable::AnyTable(
-  DB *db, TableCf *cf, bool internal, IOBufAllocFn fn) :
+  DB *db, TableCf *cf, bool internal, IOBufAllocFactory factory) :
   m_db{db}, m_cf{cf}, m_mx{db->mx()}, m_internal{internal},
-  m_bufAllocFn{ZuMv(fn)}
+  m_storeBufAllocFn{factory(m_mx->txRingSize())}
 {
   unsigned n = db->nShards();
+  m_bufAllocFn.length(n);
+  for (unsigned i = 0; i < n; ++i) m_bufAllocFn[i] = factory(m_mx->txRingSize());
   m_nextUN.length(n);
   m_cacheUN.length(n);
   m_bufCacheUN.length(n);
@@ -2026,6 +2069,10 @@ AnyTable::AnyTable(
 AnyTable::~AnyTable() noexcept
 {
   // close(); // must be called while running
+  m_cacheUN.clear();
+  m_bufCacheUN.clear();
+  // ZmFn is POD to ZtArray; release its captured allocators explicitly.
+  for (auto &fn : m_bufAllocFn) fn = IOBufAllocFn{};
 }
 
 Ztc::DBTable::TelKey AnyTable::telKey() const
@@ -2254,7 +2301,7 @@ void AnyTable::open(L &&l)
   db()->store()->open(
     m_internal,
     id(),
-    rowFields(), rowKeyFields(), rowSchema(), m_bufAllocFn,
+    rowFields(), rowKeyFields(), rowSchema(), m_storeBufAllocFn,
     [this, l = ZuFwd<L>(l)](OpenResult result) mutable {
       invoke(0, [this, l = ZuMv(l), result = ZuMv(result)]() mutable {
 	l(opened(ZuMv(result)));

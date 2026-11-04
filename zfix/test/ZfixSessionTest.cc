@@ -9,6 +9,9 @@
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixRxMsg.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 using namespace Zfix::Fmt;
@@ -18,7 +21,7 @@ static bool golden(const O &o, ZuCSpan wire)
 {
   ZtArray<char, ZtArrayHeapID<"Zfix.SessionTest">> bytes;
   bytes.length(wire.length(), false);
-  Sink out{{bytes.data(), bytes.length()}};
+  Sink out{bytes};
   return save<Facet, ArchiveField>(out, o) && out.flush() && out.data() == wire;
 }
 
@@ -55,7 +58,7 @@ template <typename Facet> static void authFacet()
   Session::Logon value;
   value.rawAuth = ZuBSpan{Payload};
   value.nextExpected = 17; value.defaultAppVerID = "9";
-  ZmRef<ZiIOBuf> buffer = new ZiIOBufAlloc<>;
+  ZmRef<ZiIOBuf> buffer = new LocalBuf{nullptr, 0};
   Sink out{{buffer->data(), buffer->size}};
   ZuCheck((save<Facet, ArchiveField>(out, value) && out.flush()));
   Session::Logon received;
@@ -175,7 +178,7 @@ static void dispatch()
   ZuCheck(error.code == ErrorCode::Unresolved && message.is<void>());
   ZtArray<char, ZtArrayHeapID<"Zfix.SessionTest">> malformed;
   malformed.length(Wire.length() + sizeof("112=a\1"), false);
-  FrameWriter bad{{malformed.data(), malformed.length()}, "FIX.4.4"};
+  FrameWriter bad{malformed, "FIX.4.4"};
   bad.body().field(35); bad.body() << '1'; bad.body().end();
   bad.body().field(49); bad.body() << 'S'; bad.body().end();
   bad.body().field(56); bad.body() << 'T'; bad.body().end();
@@ -207,37 +210,37 @@ static void writing()
   ZtArray<char, ZtArrayHeapID<"Zfix.SessionTest">> bytes;
   bytes.length(capacity, false);
   Session::Msg message{Session::HeartBt{}};
-  auto empty = Session::write({bytes.data(), bytes.length()}, config, context, message);
+  auto empty = Session::write(bytes, config, context, message);
   ZuCheck(bool(empty));
   auto framed = frame(empty.data);
   ZuCheck(framed.state == FrameState::Complete && framed.view.msgType == "0");
   ZuCheck(framed.view.content.find("112="_z) < 0);
   message.p<Session::HeartBt>().testReqID = "";
-  auto explicitEmpty = Session::write({bytes.data(), bytes.length()}, config, context, message);
+  auto explicitEmpty = Session::write(bytes, config, context, message);
   ZuCheck(explicitEmpty && frame(explicitEmpty.data).view.content.find("112=\1"_z) >= 0);
   message.p<Session::Logon>(Session::Logon{});
   auto syncMissing = Session::write(
-    {bytes.data(), bytes.length()}, config, context, message, Transport::FIX44A);
+    bytes, config, context, message, Transport::FIX44A);
   ZuCheck(!syncMissing && syncMissing.error.tag == 789);
   message.p<Session::Logon>().nextExpected = 17;
-  auto sync = Session::write({bytes.data(), bytes.length()}, config, context, message, Transport::FIX44A);
+  auto sync = Session::write(bytes, config, context, message, Transport::FIX44A);
   ZuCheck(sync && frame(sync.data).view.content.find("789=17\1"_z) >= 0);
   auto appMissing = Session::write(
-    {bytes.data(), bytes.length()}, config, context, message, Transport::FIXT11);
+    bytes, config, context, message, Transport::FIXT11);
   ZuCheck(!appMissing && appMissing.error.tag == 1137);
   message.p<Session::Logon>().defaultAppVerID = "9";
-  auto app = Session::write({bytes.data(), bytes.length()}, config, context, message, Transport::FIXT11);
+  auto app = Session::write(bytes, config, context, message, Transport::FIXT11);
   ZuCheck(app && frame(app.data).view.content.find("1137=9\1"_z) >= 0);
   Session::Reject reject;
   reject.refSeqNo = 7;
   message.p<Session::Reject>(reject);
-  auto reference = Session::write({bytes.data(), bytes.length()}, config, context, message);
+  auto reference = Session::write(bytes, config, context, message);
   ZuCheck(bool(reference));
   auto body = frame(reference.data).view.content;
   ZuCheck(body.find("45=7\1"_z) >= 0 && body.find("371="_z) < 0 &&
     body.find("373="_z) < 0 && body.find("58="_z) < 0);
   message = Session::Msg{};
-  auto unresolved = Session::write({bytes.data(), bytes.length()}, config, context, message);
+  auto unresolved = Session::write(bytes, config, context, message);
   ZuCheck(!unresolved && !unresolved.data);
 }
 

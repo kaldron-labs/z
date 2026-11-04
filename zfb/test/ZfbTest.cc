@@ -23,6 +23,9 @@
 
 #include "ZfbTest.hh"
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
 using namespace ZuTestUtil;
 
 namespace MetaTest {
@@ -164,7 +167,7 @@ static void run()
   ZuTestScope(meta);
   ZuCheck(MI::N == 5 && ME::N == 5);
   ZuCheck(Zfb::As<Key>::name() == Zfb::As<Implicit>::name());
-  Zfb::IOBuilder<> builder{new ZiIOBufAlloc<>};
+  Zfb::IOBuilder<> builder{new LocalBuf{nullptr, 0}};
   // All includes a read-only getter without ctor/key metadata; Save omits it.
   auto bytes = builder.finish(
     Zfb::save<ZuFacet::FB, ZfFieldFilter::All>(builder, SaveOnly{42}));
@@ -257,36 +260,36 @@ static void prefix()
 
 static void malformed()
 {
-  ZuTestScope(malformed);
+  ZuTestScopeRT(malformed);
   for (unsigned n = 0; n < sizeof(row); ++n)
-    ZuCheck(!verify({row, n}));
+    ZuCheckRT(!verify({row, n}));
   uint8_t bytes[sizeof(row)];
   memcpy(bytes, row, sizeof(row));
   Zfb::write<uint32_t>(bytes, 0);
-  ZuCheck(!verify(bytes));
+  ZuCheckRT(!verify(bytes));
   memcpy(bytes, row, sizeof(row));
   Zfb::write<int32_t>(bytes + 12, INT32_MIN);
-  ZuCheck(!verify(bytes));
+  ZuCheckRT(!verify(bytes));
   memcpy(bytes, row, sizeof(row));
   Zfb::write<uint16_t>(bytes + 8, UINT16_MAX);
-  ZuCheck(!verify(bytes));
+  ZuCheckRT(!verify(bytes));
   memcpy(bytes, row, sizeof(row));
   Zfb::write<uint32_t>(bytes + 20, UINT32_MAX);
-  ZuCheck(!verify(bytes));
+  ZuCheckRT(!verify(bytes));
   memcpy(bytes, row, sizeof(row));
   Zfb::write<uint32_t>(bytes + 24, UINT32_MAX);
-  ZuCheck(!verify(bytes));
+  ZuCheckRT(!verify(bytes));
   memcpy(bytes, row, sizeof(row));
   bytes[31] = 1;
-  ZuCheck(!verify(bytes));
+  ZuCheckRT(!verify(bytes));
 
   Zfb::Verifier limited{row, {.depth = 1, .tables = 2}};
-  ZuCheck(limited.enter());
-  ZuCheck(!limited.enter());
+  ZuCheckRT(limited.enter());
+  ZuCheckRT(!limited.enter());
   limited.leave();
-  ZuCheck(limited.enter());
+  ZuCheckRT(limited.enter());
   limited.leave();
-  ZuCheck(!limited.enter());
+  ZuCheckRT(!limited.enter());
 }
 
 static void emptyVector()
@@ -774,22 +777,22 @@ Zfb::AsTable<"test.BoolCtor"> Zfb_Fmt(BoolCtor *);
 
 static void boolean()
 {
-  ZuTestScope(boolean);
+  ZuTestScopeRT(boolean);
   auto buf = ZtScratch(Zfb::Buffer, 0);
   Zfb::ArrayStorage<> storage{buf};
   Zfb::Builder builder{storage};
   for (bool active : {false, true}) {
     builder.clear();
     auto bytes = builder.finish(Zfb::save(builder, BoolCtor{active}));
-    ZuCheck(Zfb::verify<BoolCtor>(bytes));
+    ZuCheckRT(Zfb::verify<BoolCtor>(bytes));
     auto view = Zfb::view<BoolCtor>(bytes);
     ZuAssert((ZuIsSame<decltype(view.get<ZfField(BoolCtor, active)>()), bool>{}));
-    ZuCheck(view.get<ZfField(BoolCtor, active)>() == active);
+    ZuCheckRT(view.get<ZfField(BoolCtor, active)>() == active);
     auto handler = Zfb::handler(view);
-    ZuCheck(handler.ctor().active == active);
+    ZuCheckRT(handler.ctor().active == active);
     BoolCtor placed;
     handler.new_(&placed);
-    ZuCheck(placed.active == active);
+    ZuCheckRT(placed.active == active);
   }
 }
 

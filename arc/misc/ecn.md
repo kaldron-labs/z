@@ -483,7 +483,7 @@ needed.
 
 ECN is complete only when all of the following are true:
 
-- The implementation has been audited against `GUIDELINES.md` and
+- The implementation has been audited against `docs/GUIDELINES.md` and
   `zquic/GUIDELINES.md`, and any deviations are either removed or explicitly
   justified in review notes.
 - No qlog-only work is evaluated outside `ZquicLOG`; all qlog captures are by

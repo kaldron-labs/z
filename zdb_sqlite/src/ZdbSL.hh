@@ -123,6 +123,7 @@ public:
 	if (key.bufAlign < field.field->bufAlign) key.bufAlign = field.field->bufAlign;
     }
   }
+  void bufAllocFn(IOBufAllocFn fn) { m_bufAllocFn = ZuMv(fn); }
   Store *store() const { return m_store; }
   const IDString &id() const { return m_id; }
   bool internal() const { return m_internal; }

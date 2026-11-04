@@ -95,14 +95,15 @@ template <typename T>
 static void mismatch(
   PGconn *conn, ZuCSpan id, ZuCSpan columns, const char *expected)
 {
-  ZuTestScope(mismatch);
+  ZuTestScopeRT(mismatch);
   using namespace Zdb_;
   auto exec = [conn](const ZtString<> &sql) {
     auto result = PQexec(conn, sql.data());
     bool ok = result && PQresultStatus(result) == PGRES_COMMAND_OK;
     if (!ok) log(PQerrorMessage(conn));
     if (result) PQclear(result);
-    ZuCHECK(ok, "diagnostic fixture DDL");
+    ZuCheckRT(ok,
+      log_("diagnostic fixture DDL"));
     return ok;
   };
   ZtString<> sql;
@@ -116,15 +117,18 @@ static void mismatch(
   auto schema = Schema::from<T>(bytes);
   auto result = ZmBlock<OpenResult>{}([id, schema](auto wake) {
     db->store()->open(false, IDString{id}, ZfVFields<T>(), ZfVKeyFields<T>(),
-      schema, Table<T>::allocBuf, ZuMv(wake));
+      schema, localBufAllocFn<T>(), ZuMv(wake));
   });
-  ZuCHECK(result.template is<Event>(), "OID mismatch completes open with error");
+  ZuCheckRT(result.template is<Event>(),
+    log_("OID mismatch completes open with error"));
   if (result.template is<Event>()) {
     ZtString<> text;
     text << result.template p<Event>();
-    ZuCHECK(strstr(text.data(), expected), "diagnostic identifies failing field or missing-column count");
+    ZuCheckRT(strstr(text.data(), expected),
+      log_("diagnostic identifies failing field or missing-column count"));
     if (!strstr(expected, "field["))
-      ZuCHECK(!strstr(text.data(), "field["), "general diagnostic has no invented field index");
+      ZuCheckRT(!strstr(text.data(), "field["),
+        log_("general diagnostic has no invented field index"));
   } else if (result.template is<OpenData>()) {
     auto table = result.template p<OpenData>().storeTbl;
     ZmBlock<>{}([table](auto wake) { table->close(ZuMv(wake)); });
@@ -139,7 +143,7 @@ static void repairColumns(const char *connect)
   ZuTestScopeRT(repairColumns);
   auto conn = PQconnectdb(connect);
   bool ok = conn && PQstatus(conn) == CONNECTION_OK;
-  ZuCHECK(ok, "conversion fixture connection");
+  ZuCheckRT(ok, log_("conversion fixture connection"));
   if (!ok) { if (conn) PQfinish(conn); return; }
   // Reset this fixture's durable stream position before starting at UN zero.
   auto result = PQexec(conn,
@@ -148,29 +152,30 @@ static void repairColumns(const char *connect)
   if (!ok) log(PQerrorMessage(conn));
   if (result) PQclear(result);
   PQfinish(conn);
-  ZuCHECK(ok, "conversion fixture reset");
-  if (ok) ZuTestCallRT(zdbtest::repairBindings, db->store());
+  ZuCheckRT(ok, log_("conversion fixture reset"));
+  if (ok) ZuTestCallRT((zdbtest::repairBindings<false>), db->store());
 }
 
 static void schemaMismatch(const char *connect)
 {
-  ZuTestScope(schemaMismatch);
+  ZuTestScopeRT(schemaMismatch);
   auto conn = PQconnectdb(connect);
   bool ok = conn && PQstatus(conn) == CONNECTION_OK;
-  ZuCHECK(ok, "diagnostic fixture connection");
+  ZuCheckRT(ok,
+    log_("diagnostic fixture connection"));
   if (!ok) { if (conn) PQfinish(conn); return; }
   const char *reserved = "\"_shard\" uint1, \"_un\" uint8, \"_sn\" uint16, \"_vn\" int8, ";
   ZtString<> columns;
   columns << reserved << "a int4";
-  mismatch<DiagOne>(conn, "repair_diag_one", columns, "field[0]={id=a");
+  ZuTestCallRT(mismatch<DiagOne>, conn, "repair_diag_one", columns, "field[0]={id=a");
   // Physical/catalog order differs from metadata; both names are counted before a fails.
   columns.null(); columns << reserved << "b int8, a int4";
-  mismatch<DiagTwo>(conn, "repair_diag_shuffled", columns, "field[0]={id=a");
+  ZuTestCallRT(mismatch<DiagTwo>, conn, "repair_diag_shuffled", columns, "field[0]={id=a");
   columns.null(); columns << reserved << "a int8, b int4";
-  mismatch<DiagTwo>(conn, "repair_diag_last", columns, "field[1]={id=b");
+  ZuTestCallRT(mismatch<DiagTwo>, conn, "repair_diag_last", columns, "field[1]={id=b");
   columns.null(); columns << reserved << "a int8";
-  mismatch<DiagTwo>(conn, "repair_diag_missing", columns, "matched=1 nFields=2");
-  mismatch<DiagOne>(conn, "repair_diag_reserved",
+  ZuTestCallRT(mismatch<DiagTwo>, conn, "repair_diag_missing", columns, "matched=1 nFields=2");
+  ZuTestCallRT(mismatch<DiagOne>, conn, "repair_diag_reserved",
     "\"_shard\" int4, \"_un\" uint8, \"_sn\" uint16, \"_vn\" int8, a int8",
     "failed=1 matched=0 nFields=1");
   PQfinish(conn);
@@ -198,7 +203,7 @@ void gtfo()
 
 static void cursors()
 {
-  ZuTestScope(cursors);
+  ZuTestScopeRT(cursors);
   for (unsigned i = 0; i < 3; ++i) {
     bool committed = false;
     orders->run(0, [i, &committed]() {
@@ -218,7 +223,7 @@ static void cursors()
       });
     });
     done.wait();
-    ZuCheck(committed);
+    ZuCheckRT(committed);
   }
   for (bool inclusive: {false, true}) {
     unsigned count = 0;
@@ -234,8 +239,8 @@ static void cursors()
 	  key.template p<1>() == (index == 1 ? "b" : "a");
       });
     done.wait();
-    ZuCheck(matched);
-    ZuCheck(count == (inclusive ? 3 : 2));
+    ZuCheckRT(matched);
+    ZuCheckRT(count == (inclusive ? 3 : 2));
     count = 0;
     matched = true;
     orders->nextKeys<2>(ZuFwdTuple("scan-a", uint64_t{102}), inclusive, 3,
@@ -248,8 +253,8 @@ static void cursors()
 	  key.template p<1>() == 102 - index;
       });
     done.wait();
-    ZuCheck(matched);
-    ZuCheck(count == (inclusive ? 2 : 1));
+    ZuCheckRT(matched);
+    ZuCheckRT(count == (inclusive ? 2 : 1));
   }
 }
 
@@ -320,7 +325,8 @@ int main(int argc_, char **argv)
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "multiplexer start failed");
 
@@ -339,6 +345,8 @@ int main(int argc_, char **argv)
     payments = db->initTable<Order>("payment");
 
     if (!db->start()) throw ZeEXCEPT(Fatal, "zdbpqtest", "Zdb start failed");
+
+    ZuTestCall(zdbtest::tableBufPolicy<Order>, orders.ptr(), payments.ptr());
 
     payments->run(1, [] {
       payments->find<0>(1, ZuFwdTuple("MISSING", UINT64_C(0)),

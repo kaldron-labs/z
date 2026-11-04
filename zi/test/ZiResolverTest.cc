@@ -564,8 +564,8 @@ void testFinalCallbacks()
   ZuCheck(ZiResolver::startSync());
   ZiResolver::stop([&completed, &failed](bool ok) {
     if (!ok || ZiResolver::instance()->running()) failed = 1;
-    // Runtime ownership was released before stop completion. final() may run
-    // on this former scheduler control thread without stopping or joining it.
+    // Stop has joined the workers. Finalization on the control thread uses
+    // its self-detach path; external finalization joins the retained handle.
     ZiResolver::final();
     if (ZiResolver::instance()->initialized()) failed = 1;
     completed.post();
@@ -576,6 +576,36 @@ void testFinalCallbacks()
   ZuCheck(ZiResolver::startSync());
   ZuCheck(ZiResolver::stopSync());
   ZiResolver::final();
+}
+
+void testFinalJoin()
+{
+  ZuTestScopeRT(testFinalJoin);
+  ZmSemaphore entered, release, finalizing, finalized;
+  ZmAtomic<unsigned> failed = 0;
+  ZiResolver::init();
+  bool started = ZiResolver::startSync();
+  ZuCheckRT(started);
+  if (!started) { ZiResolver::final(); return; }
+  ZiResolver::stop([&entered, &release, &failed](bool ok) {
+    if (!ok) failed = 1;
+    entered.post();
+    if (!waitFor(release)) failed = 1;
+  });
+  ZuCheckRT(waitFor(entered));
+  ZmThread finalizer{[&finalizing, &finalized]() {
+    finalizing.post();
+    ZiResolver::final();
+    finalized.post();
+  }};
+  ZuCheckRT(waitFor(finalizing));
+  // External finalization must not retire callback destinations while the
+  // stopped resolver's control callback is still publishing to them.
+  bool joined = finalized.timedwait(Zm::now(0.1)) != 0;
+  release.post();
+  finalizer.join();
+  ZuCheckRT(joined && waitFor(finalized));
+  ZuCheckRT(!failed.load_() && !ZiResolver::instance()->initialized());
 }
 
 void testAsyncStop()
@@ -758,6 +788,7 @@ int main(int argc, char **argv)
   ZuTestCall(testStartReentry);
   ZuTestCall(testStopDuringStart);
   ZuTestCall(testFinalCallbacks);
+  ZuTestCall(testFinalJoin);
   ZuTestCall(testAsyncStop);
   ZuTestCall(testNoCallbackAfterStop);
   ZuTestCall(testCancel);

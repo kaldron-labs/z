@@ -180,6 +180,16 @@ struct FrameOutput {
   explicit operator bool() const { return !error; }
 };
 
+// Prefix and checksum remain in the writer's own storage. A segmented caller
+// retains its body ranges separately and publishes these spans in wire order.
+struct FrameParts {
+  ZuCSpan	prefix;
+  ZuCSpan	trailer;
+  Error		error;
+
+  explicit operator bool() const { return !error; }
+};
+
 // Standalone storage only. Publish data only after finish() succeeds. Encoding
 // occurs once in reserved envelope headroom. finish() returns the authoritative
 // output subspan, which can start after storage.data(); body bytes never move.
@@ -194,15 +204,20 @@ public:
   FrameWriter &operator =(const FrameWriter &) = delete;
 
   Sink &body() { return m_body; }
+  const Sink &body() const { return m_body; }
 
   FrameOutput finish();
+  // The caller supplies all logical body bytes, including this writer's
+  // metadata, and checks the final SOH before publishing retained ranges.
+  FrameParts finishParts(unsigned bodyLength, unsigned bodyChecksum);
 
   // Consume this span before appending: a growing sink may relocate storage.
   // Coverage is exactly 35 through the final unsigned field, excluding 8/9/10.
   template <typename Signer, typename Body, typename Context>
   FrameOutput finish(const Signer &signer, const Body *body, Context context) {
     if constexpr (Signer::SignMsg)
-      if (!m_finished && !m_body.failed()) signer.signMsg(m_body, body, context, m_body.data());
+      if (!m_finished && !m_body.failed())
+	signer.signMsg(m_body, body, context, SpanView{m_body.data()});
     return finish();
   }
 
@@ -215,6 +230,8 @@ private:
   static Layout layout(unsigned capacity, unsigned beginLength, Limits);
   FrameWriter(ZuSpan<char>, ZuCSpan, Limits, Layout);
   static ZuSpan<char> growBody(void *, unsigned used, unsigned needed);
+  Error finishBody_();
+  FrameParts envelope_(unsigned bodyLength, unsigned bodyChecksum);
 
   ZuSpan<char>	m_storage;
   ZuCSpan	m_beginString;

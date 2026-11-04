@@ -214,7 +214,7 @@ Do not modify production source and do not rebuild in this slice.
   migration.
 - No lower-layer source change is proposed.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit the proposed shape against the CRTP, naming, layering, Rx/Tx shard
 ownership, borrowed lifetime, allocation, and teardown guidance.  Repair this
@@ -325,7 +325,7 @@ tests without rebuilding between them.
   pass in the unchanged clang debug build.
 - No lower library was rebuilt or modified.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Audit and repair naming, CRTP dispatch, type lengths, direct dependencies,
 hard-tab layout, member ordering, borrowed lifetimes, Rx/Tx ownership,
@@ -393,7 +393,7 @@ Do not rebuild before these tests unless Slice 2 repairs source.
   unchanged.
 - `ws.md` can begin without modifying `ztcp`, `ztls`, `zquic`, or `zhttp`.
 
-### `GUIDELINES.md` alignment audit and repair
+### `docs/GUIDELINES.md` alignment audit and repair
 
 Perform the final repository-wide zhttp audit for dead code, compatibility
 surface, naming, include hygiene, duplicated profile logic, protocol leakage,

@@ -16,7 +16,7 @@ Neither the canonical gRPC runtime nor libprotobuf is a dependency.
 
 ## Basis and correspondence with existing libraries
 
-The design follows [GUIDELINES.md](GUIDELINES.md), including its authoritative
+The design follows [GUIDELINES.md](docs/GUIDELINES.md), including its authoritative
 28-byte name limit, and the metadata/facet model in [zf/README.md](zf/README.md).
 Scope is gRPC protocol behavior and the endpoint capabilities now shared by
 Zrest and Zjrpc: bounded admission, deferred completion, typed replies,

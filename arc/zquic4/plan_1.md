@@ -12,7 +12,7 @@ Preconditions: none.
 The design is to add a small timer-management layer inside the connection/link runtime that owns typed timers directly.  Each callback validates that it is running on the correct shard, checks that the owning object is still live, and delegates to one narrow handler.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` to understand the starting point of this work.
 
@@ -159,7 +159,7 @@ No timer in this plan is `Engine`-owned.  `Engine` provides scheduler access and
   - Resolution: per `Link`
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

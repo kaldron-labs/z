@@ -34,12 +34,6 @@ class Codec {
 public:
   using Stream = Zhttp::Channel;
   using Rx = ZiRxStream<ZiRxQueue>;
-  using BufAlloc = Zi::IOBufAlloc<
-    ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zws.Message.Rx">>;
-  using WireBufAlloc = Zi::IOBufAlloc<
-    ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zws.Wire.Rx">>;
 
   Codec(Link &link, Random &random, Config config = {}) :
     m_link{&link}, m_random{&random}, m_config{config} { }
@@ -70,7 +64,7 @@ public:
 	    return 0;
 	  }
 	  return remaining;
-	}, allocHttp_, allocWire_);
+	});
       if (ZuUnlikely(n <= 0))
 	fail_(Failure::InvalidHeader);
       else
@@ -286,18 +280,6 @@ public:
   void error(Failure::T) { }
 
 private:
-  static ZmRef<ZiRxQueue::Node> allocHttp_() {
-    return new Zhttp::BodyBufAlloc{};
-  }
-
-  static ZmRef<ZiRxQueue::Node> allocMessage_() {
-    return new BufAlloc{};
-  }
-
-  static ZmRef<ZiRxQueue::Node> allocWire_() {
-    return new WireBufAlloc{};
-  }
-
   template <typename HttpRx>
   int frame_(HttpRx &rx) {
     bool progressed = false;
@@ -405,7 +387,7 @@ private:
 	    return 0;
 	  }
 	  return remaining;
-	}, allocWire_, allocMessage_);
+	});
       if (ZuUnlikely(consumed <= 0))
 	return fail_(Failure::InvalidHeader), -1;
       m_frameRemain -= length;

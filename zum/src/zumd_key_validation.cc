@@ -43,7 +43,7 @@ bool signKeyPublic(const SignKey &key, Bytes &output)
   String json{key.publicJwk};
   if (!json.mutable_()) json.length(json.length());
   bool valid = [&json, &key, &output]() {
-    auto parsed = ZfJSON::scan({json.data(), json.length()});
+    auto parsed = ZfJSON::scan(json);
     if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
 	!parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
     auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();

@@ -1,6 +1,6 @@
 # zhttp guideline review
 
-Review scope: `AGENTS.md`, `GUIDELINES.md`, and the maintainable `zhttp`
+Review scope: `AGENTS.md`, `docs/GUIDELINES.md`, and the maintainable `zhttp`
 sources under `zhttp/src`, with tests/examples sampled where they clarify
 intended behavior. Generated build files, objects, libraries and binaries were
 not treated as source.
@@ -49,7 +49,7 @@ not treated as source.
 
    `withString_()` allocates `uint8_t storage[DefltMaxHdr]` on the stack and
    decodes Huffman strings into it (`zhttp/src/Zhttp.hh:1437-1445`). This is
-   both a `GUIDELINES.md` fixed-size array amber flag and a functional limit:
+   both a `docs/GUIDELINES.md` fixed-size array amber flag and a functional limit:
    `Params::maxHeaderListSize()` is configurable, but any single Huffman string
    decoded through this path is capped at `DefltMaxHdr` regardless of params.
 
@@ -63,7 +63,7 @@ not treated as source.
    `name.length() > 256` (`zhttp/src/Zhttp.hh:1510-1516`). The cap is not tied
    to RFC limits or `Params::maxHeaderListSize()`, and the separate buffer plus
    manual length handling is exactly the fixed-size-array pattern called out in
-   `GUIDELINES.md`.
+   `docs/GUIDELINES.md`.
 
    Suggested fix: use `ZtScratch`/`HeaderBytes` scratch sized from the name
    length, with a built-in size if 256 is the expected fast path. Make any hard
@@ -75,7 +75,7 @@ not treated as source.
    `QPackTxEntry` and `QPackTxOrderEntry` both own `name` and `value`
    (`zhttp/src/ZhttpQPackTypes.hh:207-227`), and insertion writes both copies at
    `zhttp/src/ZhttpQPack.cc:206-216`. This increases heap churn and memory
-   footprint in a connection hot path. `GUIDELINES.md` specifically recommends
+   footprint in a connection hot path. `docs/GUIDELINES.md` specifically recommends
    consolidating container overhead, list/order nodes and reference counting in
    one allocated node for this kind of structure.
 
@@ -100,7 +100,7 @@ not treated as source.
 
    `QPackEncoderTx` is a virtual interface (`zhttp/src/ZhttpQPackTypes.hh:291-294`)
    used by the H3 builder through `qpackEncoderTx_()`/`writeAccepted()`
-   (`zhttp/src/Zhttp.hh:2378-2388`). `GUIDELINES.md` asks for CRTP/static
+   (`zhttp/src/Zhttp.hh:2378-2388`). `docs/GUIDELINES.md` asks for CRTP/static
    polymorphism in preference to virtual polymorphism, especially in
    performance-oriented networking paths.
 

@@ -45,20 +45,6 @@ ZuDerive(HeaderScratch, (ZtBArray<ZtArrayHeapID<"Zhttp.H1.Headers",
 
 ZhttpAPI FieldOutput headerOutput(HeaderScratch &);
 
-inline ZmRef<ZiRxQueue::Node> allocRxBuf()
-{
-  return new BodyRx::BufAlloc{};
-}
-
-template <typename Node>
-inline ZmRef<Node> allocWireRxBuf()
-{
-  using Alloc = Zi::IOBufAlloc<
-    Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-    ZuStringT<"Zhttp.Wire.Rx.Split">>;
-  return new Alloc{};
-}
-
 ZtEnumStruct(ZhttpAPI, ParserState, int8_t,
   Initial,	// first line - request operation or response status
   Headers,	// reading headers
@@ -585,7 +571,7 @@ private:
 	    return 0;
 	  }
 	  return remaining;
-	}, allocWireRxBuf<typename Stream::Queue::Node>, allocRxBuf, 0, 0,
+	}, 0, 0,
 	[this, &accepted](auto &rx) { return accepted = impl()->body(rx); });
     if (ZuUnlikely(!accepted))
       fail_(RequestErrorCode::BodyRejected,
@@ -654,6 +640,12 @@ private:
   bool		m_deliverHeaders = true;
 };
 
+template <typename Lower, typename = void>
+struct RetainsBuffers : ZuFalse { };
+template <typename Lower>
+struct RetainsBuffers<Lower, decltype(Lower::RetainBuffers, void())> :
+  ZuBool<Lower::RetainBuffers> { };
+
 // HTTP 1.1 non-chunked body Tx streaming
 template <typename Lower>
 class BodyStream : public ZiTxLayer<BodyStream<Lower>, Lower> {
@@ -661,9 +653,19 @@ public:
   using Base = ZiTxLayer<BodyStream<Lower>, Lower>;
 
   BodyStream(Lower &lower, uint64_t contentLength_) :
-    Base(lower, 0, 0), m_contentLength(contentLength_) { }
+    Base(lower, 0, 0), m_lower{lower}, m_contentLength(contentLength_) { }
 
   ~BodyStream() { this->flush(); }
+
+  bool prepareAppend_(ZmRef<ZiIOBuf> &buf) {
+    if constexpr (RetainsBuffers<Lower>{}) {
+      auto length = buf->length;
+      this->appendRange(Zi::RxRange{ZuMv(buf), 0, length});
+      return true;
+    }
+    return false;
+  }
+
 
   bool prepareBuf_(ZiIOBuf *buf, bool) {
     if (ZuUnlikely(m_contentLength < buf->length)) {
@@ -674,11 +676,21 @@ public:
     m_produced += buf->length;
     return true;
   }
+  bool prepareRange_(Zi::RxRange range) {
+    if (m_contentLength < range.length) {
+      m_valid = false;
+      range.length = unsigned(m_contentLength);
+    }
+    m_contentLength -= range.length;
+    m_produced += range.length;
+    return m_lower.appendRange(ZuMv(range));
+  }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return m_valid && !Base::operator !(); }
   bool complete() const { return valid() && !m_contentLength; }
 
 private:
+  Lower &m_lower;
   // Tx thread exclusive
   uint64_t		m_contentLength;
   uint64_t		m_produced = 0;
@@ -698,9 +710,19 @@ public:
 
   using Base = ZiTxLayer<ChunkedStream<Lower>, Lower>;
 
-  ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize) { }
+  ChunkedStream(Lower &lower) : Base(lower, HdrSize, TrlrSize), m_lower{lower} { }
 
   ~ChunkedStream() { this->flush(); }
+
+  bool prepareAppend_(ZmRef<ZiIOBuf> &buf) {
+    if constexpr (RetainsBuffers<Lower>{}) {
+      auto length = buf->length;
+      this->appendRange(Zi::RxRange{ZuMv(buf), 0, length});
+      return true;
+    }
+    return false;
+  }
+
 
   bool prepareBuf_(ZiIOBuf *buf, bool) {
     m_produced += buf->length;
@@ -719,10 +741,24 @@ public:
     return !buf->failed();
   }
 
+  bool prepareRange_(Zi::RxRange range) {
+    auto length = range.length;
+    auto header = m_lower.allocBuf(m_lower.headRoom());
+    if (!header) return false;
+    using Fmt = ZuFmt::Hex<1, ZuFmt::Right<8>>;
+    *header << ZuBoxed(range.length).template fmt<Fmt>() << "\r\n";
+    m_lower << ZuMv(header);
+    if (m_lower.failed() ||
+	!m_lower.appendRange(ZuMv(range))) return false;
+    m_lower << "\r\n";
+    m_produced += length;
+    return !m_lower.failed();
+  }
   uint64_t produced() const { return m_produced; }
   bool valid() const { return !Base::operator !(); }
 
 private:
+  Lower &m_lower;
   uint64_t	m_produced = 0;
 };
 template <typename Lower>

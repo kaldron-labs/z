@@ -21,6 +21,8 @@
 #include <zlib/ZfCLI.hh>
 #include <zlib/ZfCf.hh>
 
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/ZiHeapTune.hh>
@@ -28,6 +30,7 @@
 #include <zlib/ZtlsVault.hh>
 
 #include <zlib/ZvMxParams.hh>
+#include <zlib/ZhttpNative.hh>
 
 #include <zlib/ZtcApp.hh>
 
@@ -489,7 +492,9 @@ int main(int argc, char **argv)
     Zum::String ssfIssuer = options.ssfIssuer;
     if (!ssfIssuer) ssfIssuer = ssfConfig.issuer;
     if (!ssfIssuer) ssfIssuer = options.issuer;
-    ZiMultiplex mx{ZvMxParams("mx", node(ConfigField::Mx))};
+    ZiMultiplex mx{ZvMxParams("mx", node(ConfigField::Mx))
+      .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
     ZmRef<DB> db = new DB{};
     db->requests = new Zum::Requests{};
     db->bootstrapRequests = new Zum::Requests{};

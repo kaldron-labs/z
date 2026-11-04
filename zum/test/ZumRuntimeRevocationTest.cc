@@ -9,8 +9,11 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZfCf.hh>
 #include "../../zdb/test/ZdbTestCf.hh"
+#include <zlib/ZiIOBuf.hh>
+#include <zlib/ZiRxStream.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/ZvMxParams.hh>
+#include <zlib/ZhttpNative.hh>
 #include <zlib/ZdbMemStore.hh>
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/zumd_admin.hh>
@@ -269,12 +272,14 @@ static void runtimeRevocation()
   ZiLog::sink(ZiLog::lambdaSink([](
       ZeLogBuf &buf, const ZeEventInfo &info) {
     if (info.component == "Zum")
-      logRows.push(Zum::String{" "} << ZuCSpan{buf.data(), buf.length()} << " ");
+      logRows.push(Zum::String{" "} << ZuCSpan{buf} << " ");
   }));
   ZiLog::start();
   auto config = dbConfig();
   auto configFields = ZfCf::handler<zdbtest::ConfigFields>(config).ctor();
-  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())};
+  ZiMultiplex mx{ZvMxParams("mx", configFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<ZiRxQueue::Node, 8<<10, 100<<20,
+      ZuStringT<"Zhttp.TLS.Rx">>>()};
   ZuCheck(mx.start());
   ZmRef<ZdbMem::Store> store = new ZdbMem::Store{};
   ZmRef<TestDB> db = new TestDB{};
@@ -408,11 +413,11 @@ static void runtimeRevocation()
   requestsDown.wait();
   ZuCheck(db->stop());
   context = {};
+  ZuCheck(mx.stop());
   db->final();
   db->requests = {};
   db = {};
   store = {};
-  ZuCheck(mx.stop());
   ZiLog::stop();
   ZiLog::sink(ZiLog::debugSink());
   logRows.null();

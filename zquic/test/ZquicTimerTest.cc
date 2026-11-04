@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/Zquic.hh>
 
@@ -54,7 +55,7 @@ struct TimerApp : public Zquic::Hub<TimerApp> {
 
 private:
   static ZiMxParams mxParams_() {
-    return ZiMxParams()
+    return ZiMxParams().udpBufAllocator<Zquic::PktRxBufAllocator<>>()
       .scheduler([](auto &s) { s.nThreads(4); })
       .rxThread(1).txThread(2);
   }
@@ -72,7 +73,12 @@ struct TimerStream :
 };
 
 struct TimerLink :
+  public ZmNHeap<TimerLink>,
   public Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream> {
+  friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
+  using ZmNHeap<TimerLink>::operator new;
+  using ZmNHeap<TimerLink>::operator delete;
+
   using Base = Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream>;
   using Base::Base;
 

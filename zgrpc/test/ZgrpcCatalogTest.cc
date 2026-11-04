@@ -61,20 +61,20 @@ ZuAssert((!Zgrpc::MethodValid<int>{}));
 
 static void catalog()
 {
-  ZuTestScope(catalog);
-  ZuCheck(Store::methodMatch("/example.Store/Lookup") == 0);
-  ZuCheck(Store::methodMatch("/example.Store/Watch") == 1);
+  ZuTestScopeRT(catalog);
+  ZuCheckRT(Store::methodMatch("/example.Store/Lookup") == 0);
+  ZuCheckRT(Store::methodMatch("/example.Store/Watch") == 1);
   for (auto path : {"/example.Store/lookup", "/example.Store/Lookup?x=1",
     "/example.Store/Lookup/", "/example.Store/%4c ookup", "example.Store/Lookup"})
-    ZuCheck(Store::methodMatch(path) == -1);
-  ZuCheck(Store::ReqHeaders::nameMatch("x-tag") == 0);
-  ZuCheck(Store::ReqHeaders::valueMatch(0, "one") >= 0);
-  ZuCheck(Store::ReqHeaders::valueMatch(0, "two") >= 0);
-  ZuCheck(Store::ReqHeaders::valueMatch(0, "three") == -1);
-  ZuCheck(Zgrpc::valid(Zgrpc::Limits{}));
+    ZuCheckRT(Store::methodMatch(path) == -1);
+  ZuCheckRT(Store::ReqHeaders::nameMatch("x-tag") == 0);
+  ZuCheckRT(Store::ReqHeaders::valueMatch(0, "one") >= 0);
+  ZuCheckRT(Store::ReqHeaders::valueMatch(0, "two") >= 0);
+  ZuCheckRT(Store::ReqHeaders::valueMatch(0, "three") == -1);
+  ZuCheckRT(Zgrpc::valid(Zgrpc::Limits{}));
   Zgrpc::Limits limits;
   limits.maxMessageBytes = 0;
-  ZuCheck(!Zgrpc::valid(limits));
+  ZuCheckRT(!Zgrpc::valid(limits));
 }
 
 int main(int argc, char **argv)

@@ -22,7 +22,7 @@ using RxStream = ZiRxStream<RxQueue>;
 
 static ZmRef<RxQueue::Node> rxBuf(ZuBSpan span)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
   if (span.length()) buf->append(span);
   return buf;
 }
@@ -192,10 +192,10 @@ using namespace ZhttpH3PushTest_;
 
 static void testGoaway()
 {
-  ZuTestScope(testGoaway);
+  ZuTestScopeRT(testGoaway);
   Zhttp::H3::HdrBytes id;
   Zhttp::H3::putVar(id, 1);
-  ZuTestCall(checkCxnError, false, 0x07, id, Zhttp::H3::IDError);
+  ZuTestCallRT(checkCxnError, false, 0x07, id, Zhttp::H3::IDError);
   for (unsigned i = 0; i < 2; ++i) {
     bool server = i;
     CxnInput input;
@@ -205,7 +205,7 @@ static void testGoaway()
     auto bytes = controlFrame(0x07, id);
     input.push(bytes);
     input.process(input);
-    ZuCheck(!input.errors && input.goaways == 1 && input.boundary == (server ? 3 : 4));
+    ZuCheckRT(!input.errors && input.goaways == 1 && input.boundary == (server ? 3 : 4));
     id.length(0);
     Zhttp::H3::putVar(id, 0);
     bytes.length(0);
@@ -213,13 +213,13 @@ static void testGoaway()
     frame(bytes, 0x07, id); // an unchanged boundary is permitted
     input.push(bytes);
     input.process(input);
-    ZuCheck(!input.errors && input.goaways == 3 && !input.boundary);
+    ZuCheckRT(!input.errors && input.goaways == 3 && !input.boundary);
     id.length(0);
     Zhttp::H3::putVar(id, 4);
     bytes.length(0);
     frame(bytes, 0x07, id);
     input.push(bytes);
-    ZuCheck(input.process(input) == Zhttp::H3::CxnState::Error &&
+    ZuCheckRT(input.process(input) == Zhttp::H3::CxnState::Error &&
       input.error == Zhttp::H3::IDError && input.errors == 1 && input.goaways == 3);
   }
 }

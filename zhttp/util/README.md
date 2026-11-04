@@ -1,4 +1,10 @@
-# Zhttp executable boundary manifest
+# Zhttp utility programs
+
+
+
+---
+
+## Zhttp executable boundary manifest
 
 This manifest covers the complete program-only source closure:
 `zhttp.cc` plus `zhttpput.hh` for `zhttp`, and `zhttpd.cc`,
@@ -6,7 +12,14 @@ This manifest covers the complete program-only source closure:
 use the adjacent, non-installed `runtime.hh` semaphore bridge.
 All reusable HTTP mechanism is provided by installed `Zhttp` headers.
 
-## `zhttp.cc`
+The utilities configure caller-owned `ZiMxParams` ring sizes and then call
+`Zhttp::HubConfig::rxBufAllocators(params)` before constructing the multiplexer.
+The public HTTP configuration policy installs the existing QUIC packet Base and
+TLS receive geometry once, using those ring sizes. Native allocation types and
+transport headers stay in libZhttp; utilities do not mutate a running multiplexer
+or use a forwarding alias to name private transport policy.
+
+### `zhttp.cc`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
@@ -24,13 +37,13 @@ It delegates output operations and reporting to the separately classified
 helpers above; it owns no routing, attempt, transport, parser, pool, redirect,
 fallback, or protocol lifecycle mechanism.
 
-## `zhttpput.hh`
+### `zhttpput.hh`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
 | Workload-specific request/response handling | `String`, `Record`, `Record::JSON`, `equals`, `load` | Define the shared typed JSON PUT record and its `ZfJSON` encode/decode validation. |
 
-## `zhttpd.cc`
+### `zhttpd.cc`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
@@ -45,13 +58,13 @@ fallback, or protocol lifecycle mechanism.
 `App::disconnected` are reporting callbacks; the `App` type does
 not own listener state or lifecycle decisions.
 
-## `zhttpdutil.cc`
+### `zhttpdutil.cc`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
 | Protocol-specific configuration | `ZtEnumImplNS(Http2Mode)` | Materialize the static server's CLI HTTP/2 mode mapping out of line. |
 
-## `zhttpd.hh`
+### `zhttpd.hh`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |
@@ -62,7 +75,7 @@ not own listener state or lifecycle decisions.
 | Reporting | `LogSink` | Format and emit workload access records. |
 | Workload selection | `Application` | Share static-file workload/configuration mechanics with QIR without owning signal, wait, logging, or process lifecycle policy. |
 
-## `runtime.hh`
+### `runtime.hh`
 
 | Category | Top-level declarations | Application responsibility |
 | --- | --- | --- |

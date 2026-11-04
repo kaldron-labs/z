@@ -16,7 +16,7 @@ through the public API and storage model:
 - Telemetry, flatbuffers transforms, zdb/zcmd schemas, examples, and higher
   modules use `ZiIP` as if it were always four bytes.
 
-The implementation should follow `GUIDELINES.md`: preserve low-latency value
+The implementation should follow `docs/GUIDELINES.md`: preserve low-latency value
 semantics, avoid heap allocation and STL, use explicit sentinel values, prefer
 compile-time dispatch/switches over virtual abstraction, and propagate breaking
 API changes through dependent code instead of adding compatibility shims.

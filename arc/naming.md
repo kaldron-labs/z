@@ -19,7 +19,7 @@ This is a source-layout migration, not a compatibility exercise. Rename and
 move files directly and update all dependants; do not leave forwarding files,
 duplicate targets, or legacy path aliases.
 
-## Naming decisions to add to `GUIDELINES.md`
+## Naming decisions to add to `docs/GUIDELINES.md`
 
 Add a **Module layout** subsection under **Build system** and extend **Naming /
 Casing and member prefixes** with the following rules:
@@ -30,7 +30,7 @@ Casing and member prefixes** with the following rules:
    additional module-specific directories are permitted as exceptions when
    they represent a distinct facility which does not fit a standard role. For
    example, `zdb_pq/ext` is a PostgreSQL extension and remains `ext`. Document
-   each exception in the module's README or `GUIDELINES.md`; do not invent a
+   each exception in the module's README or `docs/GUIDELINES.md`; do not invent a
    new directory where a standard role already applies. An exceptional
    directory follows its native domain convention or a convention documented
    with the exception; it does not inherit casing merely from its position
@@ -57,7 +57,7 @@ Casing and member prefixes** with the following rules:
    code/data names in `util`, `itest`, `example`, `bench`, and `interop` are
    also lowercase. Preserve
    normal extensions (`.cc`, `.hh`, `.c`, `.h`, `.fbs`, `.sh`, and so on).
-   Conventional control filenames such as `Makefile.am`, `README.md`,
+   Conventional control filenames such as `Makefile.am`, `docs/README.md`,
    `Dockerfile.*`, and `.gitignore` are not renamed merely to satisfy directory
    casing.
 6. A program built in `src` has a succinct lowercase name suitable for
@@ -121,7 +121,7 @@ change all of the following together:
 - `configure.ac` `AC_CONFIG_FILES` entries;
 - C/C++ includes, generated-file rules, shell commands, runtime sibling-binary
   lookup, Docker staging, and test-driver paths;
-- documentation and developer references in `README.md`, `CODEBASE.md`, module
+- documentation and developer references in `docs/README.md`, `docs/CODEBASE.md`, module
   docs, top-level scripts, and comments that name real paths;
 - clean/distribution lists so old names cannot survive in release tarballs.
 
@@ -140,7 +140,7 @@ link, execute, run generated-code checks, or claim build correctness.
 
 ## Phase 1: establish the directory contract
 
-1. Add the rules above to `GUIDELINES.md`.
+1. Add the rules above to `docs/GUIDELINES.md`.
 2. Remove empty optional directories rather than retaining placeholders;
    currently `zhttp/example` contains only `Makefile.am` and should be removed
    from `configure.ac` and `zhttp/Makefile.am` unless real examples are added.
@@ -253,7 +253,7 @@ leaving cross-directory `../test/*.cc` source inclusion.
 - Keep `zdb_pq/ext` as a documented module-specific directory: it is a
   production PostgreSQL extension and does not match any of the seven standard
   roles. Add the exception and its native naming/build convention to the
-  module README or `GUIDELINES.md`. Audit its PGXS paths and module `SUBDIRS`
+  module README or `docs/GUIDELINES.md`. Audit its PGXS paths and module `SUBDIRS`
   entry during the migration, but do not move or rename the directory.
   PostgreSQL-mandated extension, SQL, and regression basenames retain native
   lowercase spelling under the external-tool exception.
@@ -348,7 +348,7 @@ audits only.
    dependent-rebuild command below. Validate changed standalone modules
    directly only when doing so does not build a WIP dependency. Search all
    modules, including WIP modules, for every removed directory and old basename
-   in tracked files. Pay particular attention to `CODEBASE.md`, module READMEs,
+   in tracked files. Pay particular attention to `docs/CODEBASE.md`, module READMEs,
    shell scripts,
    `EXTRA_DIST`, Docker build contexts, source-boundary tests, runtime sibling
    lookup, and comments used as maintenance instructions.

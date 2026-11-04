@@ -20,13 +20,13 @@
 #include <zlib/ZtcMsg.hh>
 #include <zlib/ZtcRing.hh>
 
-using Frame = ZiIOBufAlloc<1024, Ztc::AppCf::DefltMaxFrame,
-  "Zum.ZtcProbe.Frame">;
+using Frame = Zi::IOBufAlloc<ZiIOBuf, 1024, Ztc::AppCf::DefltMaxFrame,
+  ZuStringT<"Zum.ZtcProbe.Frame">>;
 
 static ZmRef<ZiIOBuf> request(ZuCSpan id, Ztc::Group::T group,
     uint64_t seqNo, uint32_t interval, bool subscribe)
 {
-  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+  Ztc::Builder builder{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame{nullptr, 0}})};
   auto nested = builder.startNested();
   Ztc::Request value;
   value.id = id;

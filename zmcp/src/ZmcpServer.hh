@@ -629,6 +629,15 @@ public:
     } else Base::template header<Key>(ZuFwd<L>(l));
   }
 
+  using Message = typename Server_::DispatchPolicy<Catalog>::Message;
+  bool emit(Message message) {
+    bool terminal = message.cdispatch([](auto, const auto &value) {
+      using M = ZuDecay<decltype(value)>;
+      return !ZuIsSame<M, ProgressMessage>{} && !ZuIsSame<M, LogMessage>{};
+    });
+    return Base::emit(ZuMv(message), terminal);
+  }
+
   template <typename M>
   bool emit(M message) {
     ZuAssert((ZuTypeIn<M, Messages>{}));
@@ -821,7 +830,13 @@ public:
     if (m_terminal) return;
     if (message.empty()) { finish(); return; }
     if (m_streaming) {
-      message.dispatch([this](auto, auto &value) { this->emit(ZuMv(value)); });
+      bool terminal = message.cdispatch([](auto, const auto &value) {
+	using M = ZuDecay<decltype(value)>;
+	return !ZuIsSame<M, ProgressMessage>{} && !ZuIsSame<M, LogMessage>{};
+      });
+      auto stream = m_builder->data().streamPtr();
+      if (!stream || !stream->emit(ZuMv(message))) { fail_(); return; }
+      if (terminal) m_terminal = true;
       return;
     }
     // Fixed output retains the whole message, including a borrowed-input pin.

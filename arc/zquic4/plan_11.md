@@ -9,7 +9,7 @@ Preconditions: plans 1 through 10 complete.
 `zquic` already parses and writes RESET_STREAM and STOP_SENDING, and receive-side stream tests cover peer reset/stop behavior.  The gap is local emission: application-initiated reset/stop must enqueue frames, record sent refs, and retransmit on loss while the state remains valid.
 
 ## Mandatory implementation guidelines
-IMPORTANT: Read `GUIDELINES.md` fully and align with it.
+IMPORTANT: Read `docs/GUIDELINES.md` fully and align with it.
 
 Read `arc/zquic4/backlog.md` and `arc/zquic4/log.md` to understand the starting point of this work.
 
@@ -70,7 +70,7 @@ New or changed data stores: sent frame refs need enough data to rebuild reset/st
 - Open question: exact stale suppression rules for STOP_SENDING after a peer reset.
 
 ## Acceptance Criteria
-- Implementation is audited and aligned with `GUIDELINES.md`
+- Implementation is audited and aligned with `docs/GUIDELINES.md`
 - IMPORTANT: Do not stop until this plan is fully implemented and regression tested ok
   - `make -C zquic/test test` must `PASS`
   - `make -C zhttp/test test` must `PASS` (`zhttp` is a dependent user of `zquic`)

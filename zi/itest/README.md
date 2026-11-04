@@ -116,3 +116,25 @@ against real TCP/UDP peers. The fixtures use readiness pipes, exercise concurren
 HTTP clients, split request delimiters, early TCP close, repeated UDP, empty
 packets and queued UDP replies to distinct destinations. This also runs as part
 of `make -C zi/itest test`. No sleeps are used for server startup.
+
+## Independent Tx bindings on one TCP connection
+
+`zmultibinding` alternates A/B fixed-pool output and Jumbo storage on one
+connection, with nonzero payload headroom, short socket writes and ordered
+byte checks. Its echo forwards original receive-buffer references to ordinary
+send. Both peers retain their application-owned allocators until stop completes;
+each peer has four small receive slots. Run it through `make test` or directly.
+Native builds require usable io_uring and execute forced epoll and native cases,
+with shared and separate Rx/Tx threads.
+
+The two peers have independently owned Rx pools. Putting both ends of a large
+self-echo on one multiplexer with four shared receive slots can exhaust all of
+them in queued/active server output while the client needs a slot to drain its
+receive window. Native receive cannot reuse application-held slots; reserve
+capacity for that retention pattern or keep the peers' receive ownership
+independent. The regression does not enlarge the four-slot pools or copy the
+echo payload to work around this circular retention case.
+
+Consistent `ZiMultiplex_BENCH` builds additionally check actual fixed sends on
+both registering rings, ordinary Rx-forward sends, short completions and matching
+data/notification identities. Ordinary Release runs do not contain those hooks.

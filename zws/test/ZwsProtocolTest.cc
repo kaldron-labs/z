@@ -15,12 +15,14 @@
 
 #include <zlib/Zws.hh>
 #include "../../zhttp/src/ZhttpWire.hh"
+#include "../../zhttp/src/ZhttpNative.hh"
 
 using namespace ZuTestUtil;
 
 namespace ZwsProtocolTest_ {
 
-using BufAlloc = ZiIOBufAlloc<256, 1<<20, "ZwsProtocolTest.Buf">;
+using BufAlloc = Zi::IOBufAlloc<ZiIOBuf, 256, 1<<20,
+  ZuStringT<"ZwsProtocolTest.Buf">>;
 
 struct WireTx : public ZiTxStream<WireTx> {
   using Base = ZiTxStream<WireTx>;
@@ -36,15 +38,22 @@ struct WireTx : public ZiTxStream<WireTx> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
     // Admission can reject a request before any Z heap allocation.
     if (!admitOK) return nullptr;
-    ZmRef<ZiIOBuf> buf = new BufAlloc{};
+    ZmRef<ZiIOBuf> buf = new BufAlloc{nullptr, 0};
     buf->skip = headRoom;
     return buf;
   }
   bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
     ++sends;
     if (!sendOK || !buf || !buf->length) return false;
+    parts.push(Zi::RxRange{buf, 0, buf->length});
     bufs.push(ZuMv(buf));
     finals.push(uint8_t(final));
+    return true;
+  }
+  bool sendRange_(Zi::RxRange range) {
+    if (!sendOK) return false;
+    parts.push(ZuMv(range));
+    ++sends;
     return true;
   }
   bool flush() {
@@ -52,6 +61,7 @@ struct WireTx : public ZiTxStream<WireTx> {
     return Base::flush();
   }
 
+  ZtArray<Zi::RxRange, ZtArrayHeapID<"ZwsTest.Parts">> parts;
   Bufs					bufs;
   ZtArray<uint8_t, ZtArrayHeapID<"ZwsTest.Final">> finals;
   unsigned				flushCalls = 0;
@@ -192,7 +202,7 @@ using H1BufAlloc = Zi::IOBufAlloc<
 
 void push(H1Rx &rx, ZuCSpan data)
 {
-  ZmRef<ZiRxQueue::Node> buf = new H1BufAlloc{};
+  ZmRef<ZiRxQueue::Node> buf = new H1BufAlloc{nullptr, 0};
   *buf << data;
   rx.push(ZuMv(buf));
 }
@@ -284,7 +294,7 @@ struct App :
 
   int feed(Bytes &wire) {
     if (wire) {
-      ZmRef<ZiRxQueue::Node> buf = new OuterBufAlloc{};
+      ZmRef<ZiRxQueue::Node> buf = new OuterBufAlloc{nullptr, 0};
       *buf << wire;
       auto span = buf->span();
       wireData = span.data();
@@ -320,7 +330,7 @@ struct App :
 
 void uri()
 {
-  ZuTestScope(uri);
+  ZuTestScopeRT(uri);
 
   struct Test {
     ZuCSpan input;
@@ -342,12 +352,12 @@ void uri()
   for (const auto &test : tests) {
     Zws::URI uri;
     auto error = Zws::URI::parse(uri, test.input);
-    ZuCHECK(error.ok(), test.input);
-    ZuCHECK(uri.host == test.host, test.input);
-    ZuCHECK(uri.target == test.target, test.input);
-    ZuCHECK(uri.port == test.port, test.input);
-    ZuCHECK(uri.secure() == test.secure, test.input);
-    ZuCHECK(uri.explicitPort == test.explicitPort, test.input);
+    ZuCheckRT(error.ok(), log_(test.input));
+    ZuCheckRT(uri.host == test.host, log_(test.input));
+    ZuCheckRT(uri.target == test.target, log_(test.input));
+    ZuCheckRT(uri.port == test.port, log_(test.input));
+    ZuCheckRT(uri.secure() == test.secure, log_(test.input));
+    ZuCheckRT(uri.explicitPort == test.explicitPort, log_(test.input));
   }
   static constexpr const char *invalid[] = {
     "http://example.com/", "ws:///", "ws://user@example.com/",
@@ -357,7 +367,7 @@ void uri()
   };
   for (auto input : invalid) {
     Zws::URI uri;
-    ZuCHECK(!Zws::URI::parse(uri, input).ok(), input);
+    ZuCheckRT(!Zws::URI::parse(uri, input).ok(), log_(input));
   }
 }
 
@@ -469,23 +479,23 @@ bool serverHandshake(ZuCSpan input)
 
 void h1()
 {
-  ZuTestScope(h1);
+  ZuTestScopeRT(h1);
 
   Zws::URI uri;
-  ZuCHECK(Zws::URI::parse(
+  ZuCheckRT(Zws::URI::parse(
     uri, "wss://example.com:8443/feed?x=1").ok());
   ZuCSpan key = "dGhlIHNhbXBsZSBub25jZQ==";
 
   WireTx requestWire{2048};
   H1Builder<Zws::H1::Request, true> request{uri, key, "chat"};
-  ZuCHECK(request.begin(requestWire));
+  ZuCheckRT(request.begin(requestWire));
   requestWire.flush();
-  ZuCHECK(requestWire.bufs.length() == 1);
+  ZuCheckRT(requestWire.bufs.length() == 1);
   auto requestBytes = requestWire.bufs[0]->cspan();
-  ZuCHECK(requestBytes.find("GET /feed?x=1 HTTP/1.1\r\n") == 0);
-  ZuCHECK(requestBytes.find("host: example.com:8443\r\n") >= 0);
-  ZuCHECK(requestBytes.find("upgrade: websocket\r\n") >= 0);
-  ZuCHECK(requestBytes.find(
+  ZuCheckRT(requestBytes.find("GET /feed?x=1 HTTP/1.1\r\n") == 0);
+  ZuCheckRT(requestBytes.find("host: example.com:8443\r\n") >= 0);
+  ZuCheckRT(requestBytes.find("upgrade: websocket\r\n") >= 0);
+  ZuCheckRT(requestBytes.find(
     "sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\n") >= 0);
 
   H1Rx requestRx;
@@ -498,14 +508,14 @@ void h1()
   push(requestRx, second);
   ServerParser requestParser;
   auto state = requestParser.process(requestRx);
-  ZuCHECK(state == ServerParser::State::Complete);
-  ZuCHECK(requestParser.valid());
-  ZuCHECK(requestParser.host() == "example.com:8443");
-  ZuCHECK(requestParser.target() == "/feed?x=1");
-  ZuCHECK(requestParser.protocols() == "chat");
+  ZuCheckRT(state == ServerParser::State::Complete);
+  ZuCheckRT(requestParser.valid());
+  ZuCheckRT(requestParser.host() == "example.com:8443");
+  ZuCheckRT(requestParser.target() == "/feed?x=1");
+  ZuCheckRT(requestParser.protocols() == "chat");
 
   Zws::HandshakeString accept;
-  ZuCHECK(Zws::accept(accept, requestParser.key()));
+  ZuCheckRT(Zws::accept(accept, requestParser.key()));
   WireTx responseWire{2048};
   H1Builder<Zws::H1::Response, false> response{accept, "chat"};
   response.begin(responseWire);
@@ -515,25 +525,25 @@ void h1()
   push(responseRx, responseWire.bufs[0]->cspan());
   ClientParser responseParser{key, "chat"};
   state = responseParser.process(responseRx);
-  ZuCHECK(state == ClientParser::State::Complete);
-  ZuCHECK(responseParser.valid());
-  ZuCHECK(responseParser.selected() == "chat");
+  ZuCheckRT(state == ClientParser::State::Complete);
+  ZuCheckRT(responseParser.valid());
+  ZuCheckRT(responseParser.selected() == "chat");
 
   {
     WireTx requestOut{2048};
     H1Builder<Zws::H1::Request, true> optionalRequest{uri, key};
-    ZuCHECK(optionalRequest.begin(requestOut));
+    ZuCheckRT(optionalRequest.begin(requestOut));
     requestOut.flush();
     auto requestBytes = requestOut.bufs[0]->cspan();
-    ZuCHECK(requestBytes.find("sec-websocket-protocol:") < 0);
-    ZuCHECK(serverHandshake(requestBytes));
+    ZuCheckRT(requestBytes.find("sec-websocket-protocol:") < 0);
+    ZuCheckRT(serverHandshake(requestBytes));
     WireTx responseOut{2048};
     H1Builder<Zws::H1::Response, false> optionalResponse{accept};
     optionalResponse.begin(responseOut);
     responseOut.flush();
     auto responseBytes = responseOut.bufs[0]->cspan();
-    ZuCHECK(responseBytes.find("sec-websocket-protocol:") < 0);
-    ZuCHECK(clientHandshake(responseBytes, key));
+    ZuCheckRT(responseBytes.find("sec-websocket-protocol:") < 0);
+    ZuCheckRT(clientHandshake(responseBytes, key));
   }
 
   {
@@ -543,18 +553,18 @@ void h1()
       "Upgrade: websocket\r\nConnection: Upgrade\r\n"
       "Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n");
     ClientParser parser{key};
-    ZuCHECK(
+    ZuCheckRT(
       parser.process(rx) == ClientParser::State::Headers);
-    ZuCHECK(parser.progressed(),
-      "incomplete H1 parser reports consumed input");
-    ZuCHECK(
+    ZuCheckRT(parser.progressed(), log_(
+      "incomplete H1 parser reports consumed input"));
+    ZuCheckRT(
       parser.process(rx) == ClientParser::State::Headers);
-    ZuCHECK(!parser.progressed(),
-      "stalled H1 parser does not report progress");
+    ZuCheckRT(!parser.progressed(), log_(
+      "stalled H1 parser does not report progress"));
     push(rx, "\r\n");
-    ZuCHECK(
+    ZuCheckRT(
       parser.process(rx) == ClientParser::State::Complete);
-    ZuCHECK(parser.progressed());
+    ZuCheckRT(parser.progressed());
   }
 
   {
@@ -564,10 +574,10 @@ void h1()
     H1Rx rx;
     push(rx, coalesced);
     ClientParser parser{key, "chat"};
-    ZuCHECK(parser.process(rx) == ClientParser::State::Complete);
-    ZuCHECK(parser.valid());
-    ZuCHECK(rx.span() == wsFrame,
-      "opening parser preserves coalesced WebSocket bytes");
+    ZuCheckRT(parser.process(rx) == ClientParser::State::Complete);
+    ZuCheckRT(parser.valid());
+    ZuCheckRT(rx.span() == wsFrame, log_(
+      "opening parser preserves coalesced WebSocket bytes"));
   }
 
   {
@@ -579,10 +589,10 @@ void h1()
     H1Rx rx;
     push(rx, coalesced);
     ClientParser parser{key, "chat"};
-    ZuCHECK(parser.process(rx) == ClientParser::State::Complete);
-    ZuCHECK(parser.valid());
-    ZuCHECK(rx.span() == ZuBSpan{wsFrame},
-      "opening parser does not fold upgraded binary input");
+    ZuCheckRT(parser.process(rx) == ClientParser::State::Complete);
+    ZuCheckRT(parser.valid());
+    ZuCheckRT(rx.span() == ZuBSpan{wsFrame}, log_(
+      "opening parser does not fold upgraded binary input"));
   }
 
   H1Rx badRx;
@@ -591,8 +601,8 @@ void h1()
     "Upgrade: websocket\r\nConnection: Upgrade\r\n"
     "Sec-WebSocket-Accept: bad\r\n\r\n");
   ClientParser bad{key};
-  ZuCHECK(bad.process(badRx) == ClientParser::State::Complete);
-  ZuCHECK(!bad.valid());
+  ZuCheckRT(bad.process(badRx) == ClientParser::State::Complete);
+  ZuCheckRT(!bad.valid());
 
   static constexpr const char *invalidClient[] = {
     "HTTP/1.0 101 Switching Protocols\r\n"
@@ -631,7 +641,7 @@ void h1()
       "Sec-WebSocket-Protocol: other\r\n\r\n"
   };
   for (auto input : invalidClient)
-    ZuCHECK(!clientHandshake(input, key));
+    ZuCheckRT(!clientHandshake(input, key));
 
   static constexpr const char *invalidServer[] = {
     "POST /chat HTTP/1.1\r\nHost: example.com\r\n"
@@ -678,31 +688,31 @@ void h1()
       "Transfer-Encoding: chunked\r\n\r\n"
   };
   for (auto input : invalidServer)
-    ZuCHECK(!serverHandshake(input));
+    ZuCheckRT(!serverHandshake(input));
 }
 
 void header()
 {
-  ZuTestScope(header);
+  ZuTestScopeRT(header);
 
   Zws::HeaderParser parser;
   Zws::Frame parsed;
   Zws::Failure::T failure = Zws::Failure::None;
   const uint8_t raw[] = {0x82, 126, 0, 126};
   ZuBSpan first{raw, 1}, second{raw + 1, 3};
-  ZuCHECK(parser.process(first, parsed, failure) ==
+  ZuCheckRT(parser.process(first, parsed, failure) ==
     Zws::HeaderParser::Result::Wait);
-  ZuCHECK(parser.process(second, parsed, failure) ==
+  ZuCheckRT(parser.process(second, parsed, failure) ==
     Zws::HeaderParser::Result::Complete);
-  ZuCHECK(parsed.final && parsed.opcode == Zws::Opcode::Binary &&
+  ZuCheckRT(parsed.final && parsed.opcode == Zws::Opcode::Binary &&
     parsed.length == 126 && !parsed.masked);
 
   const uint8_t nonCanonical[] = {0x82, 126, 0, 125};
   ZuBSpan bad{nonCanonical};
   failure = Zws::Failure::None;
-  ZuCHECK(parser.process(bad, parsed, failure) ==
+  ZuCheckRT(parser.process(bad, parsed, failure) ==
     Zws::HeaderParser::Result::Error);
-  ZuCHECK(failure == Zws::Failure::NonCanonicalLength);
+  ZuCheckRT(failure == Zws::Failure::NonCanonicalLength);
 
   parser.reset();
   struct LengthCase {
@@ -719,10 +729,10 @@ void header()
     auto wire = frame(Zws::Opcode::Binary, payload);
     ZuBSpan input = wire;
     failure = Zws::Failure::None;
-    ZuCHECK(parser.process(input, parsed, failure) ==
+    ZuCheckRT(parser.process(input, parsed, failure) ==
       Zws::HeaderParser::Result::Complete);
-    ZuCHECK(parsed.length == test.length);
-    ZuCHECK(wire.length() - input.length() == test.headerLength);
+    ZuCheckRT(parsed.length == test.length);
+    ZuCheckRT(wire.length() - input.length() == test.headerLength);
   }
 
   const uint8_t nonCanonical64[] = {
@@ -730,9 +740,9 @@ void header()
   };
   ZuBSpan bad64{nonCanonical64};
   failure = Zws::Failure::None;
-  ZuCHECK(parser.process(bad64, parsed, failure) ==
+  ZuCheckRT(parser.process(bad64, parsed, failure) ==
     Zws::HeaderParser::Result::Error);
-  ZuCHECK(failure == Zws::Failure::NonCanonicalLength);
+  ZuCheckRT(failure == Zws::Failure::NonCanonicalLength);
 
   parser.reset();
   const uint8_t overflow[] = {
@@ -740,56 +750,57 @@ void header()
   };
   ZuBSpan badOverflow{overflow};
   failure = Zws::Failure::None;
-  ZuCHECK(parser.process(badOverflow, parsed, failure) ==
+  ZuCheckRT(parser.process(badOverflow, parsed, failure) ==
     Zws::HeaderParser::Result::Error);
-  ZuCHECK(failure == Zws::Failure::InvalidHeader);
+  ZuCheckRT(failure == Zws::Failure::InvalidHeader);
 }
+
+struct CounterRandom {
+  bool random(uint8_t *data) {
+    uint32_t value = ++next;
+    data[0] = uint8_t(value>>24);
+    data[1] = uint8_t(value>>16);
+    data[2] = uint8_t(value>>8);
+    data[3] = uint8_t(value);
+    return true;
+  }
+  uint32_t next = 0;
+};
 
 void tx()
 {
-  ZuTestScope(tx);
+  ZuTestScopeRT(tx);
 
-  struct CounterRandom {
-    bool random(uint8_t *data) {
-      uint32_t value = ++next;
-      data[0] = uint8_t(value>>24);
-      data[1] = uint8_t(value>>16);
-      data[2] = uint8_t(value>>8);
-      data[3] = uint8_t(value);
-      return true;
-    }
-    uint32_t next = 0;
-  };
   struct FailedRandom {
     bool random(uint8_t *) { return false; }
   };
 
   Ztls::Random random;
-  ZuCHECK(random.init());
+  ZuCheckRT(random.init());
   {
     WireTx lower{20};
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
     tx << "0123456789";
     unsigned flushes = lower.flushCalls;
     tx.flush();
-    ZuCHECK(lower.flushCalls == flushes + 1);
+    ZuCheckRT(lower.flushCalls == flushes + 1);
     tx.flush();
-    ZuCHECK(lower.flushCalls == flushes + 1);
-    ZuCHECK(lower.bufs.length() == 1);
-    ZuCHECK(lower.bufs[0]->data()[0] == 0x81);
-    ZuCHECK(lower.bufs[0]->data()[1] == 10);
-    ZuCHECK(lower.bufs[0]->cspan().offset(2) == "0123456789");
-    ZuCHECK(lower.finals.length() == 1 && lower.finals[0],
-      "exact-capacity payload emitted one final frame");
+    ZuCheckRT(lower.flushCalls == flushes + 1);
+    ZuCheckRT(lower.bufs.length() == 1);
+    ZuCheckRT(lower.bufs[0]->data()[0] == 0x81);
+    ZuCheckRT(lower.bufs[0]->data()[1] == 10);
+    ZuCheckRT(lower.bufs[0]->cspan().offset(2) == "0123456789");
+    ZuCheckRT(lower.finals.length() == 1 && lower.finals[0], log_(
+      "exact-capacity payload emitted one final frame"));
   }
   {
     WireTx lower{20};
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Binary);
     tx << "0123456789abcde";
     tx.flush();
-    ZuCHECK(lower.bufs.length() == 2);
-    ZuCHECK(lower.bufs[0]->data()[0] == 0x02);
-    ZuCHECK(lower.bufs[1]->data()[0] == 0x80);
+    ZuCheckRT(lower.bufs.length() == 2);
+    ZuCheckRT(lower.bufs[0]->data()[0] == 0x02);
+    ZuCheckRT(lower.bufs[1]->data()[0] == 0x80);
   }
   {
     WireTx lower;
@@ -797,22 +808,22 @@ void tx()
       lower, Zws::Opcode::Text, &random);
     tx << "hello";
     tx.flush();
-    ZuCHECK(lower.bufs.length() == 1);
+    ZuCheckRT(lower.bufs.length() == 1);
     auto wire = lower.bufs[0]->span();
-    ZuCHECK(wire[0] == 0x81 && wire[1] == (0x80 | 5));
+    ZuCheckRT(wire[0] == 0x81 && wire[1] == (0x80 | 5));
     uint32_t key =
       (uint32_t(wire[2])<<24) | (uint32_t(wire[3])<<16) |
       (uint32_t(wire[4])<<8) | wire[5];
     Zws::mask(wire.offset(6), key);
-    ZuCHECK(wire == "hello");
+    ZuCheckRT(wire == "hello");
   }
   {
     WireTx lower;
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
     tx.flush();
-    ZuCHECK(lower.bufs.length() == 1);
+    ZuCheckRT(lower.bufs.length() == 1);
     const uint8_t expected[] = {0x81, 0};
-    ZuCHECK(lower.bufs[0]->cspan() == ZuBSpan(expected));
+    ZuCheckRT(lower.bufs[0]->cspan() == ZuBSpan(expected));
   }
   {
     static constexpr unsigned lengths[] = {
@@ -825,16 +836,16 @@ void tx()
       auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Binary);
       tx << payload;
       tx.flush();
-      ZuCHECK(lower.bufs.length() == 1);
+      ZuCheckRT(lower.bufs.length() == 1);
       if (!lower.bufs.length()) continue;
       auto wire = lower.bufs[0]->cspan();
       Zws::HeaderParser parser;
       Zws::Frame parsed;
       Zws::Failure::T failure = Zws::Failure::None;
-      ZuCHECK(parser.process(wire, parsed, failure) ==
+      ZuCheckRT(parser.process(wire, parsed, failure) ==
 	Zws::HeaderParser::Result::Complete);
-      ZuCHECK(parsed.final && parsed.opcode == Zws::Opcode::Binary);
-      ZuCHECK(parsed.length == length && wire.length() == length);
+      ZuCheckRT(parsed.final && parsed.opcode == Zws::Opcode::Binary);
+      ZuCheckRT(parsed.length == length && wire.length() == length);
     }
   }
   {
@@ -853,22 +864,22 @@ void tx()
 	lower, Zws::Opcode::Binary, &counter);
       tx << payload;
       tx.flush();
-      ZuCHECK(lower.bufs.length() == 1);
+      ZuCheckRT(lower.bufs.length() == 1);
       if (!lower.bufs.length()) continue;
       auto mutableWire = lower.bufs[0]->span();
       ZuBSpan wire = mutableWire;
       Zws::HeaderParser parser;
       Zws::Frame parsed;
       Zws::Failure::T failure = Zws::Failure::None;
-      ZuCHECK(parser.process(wire, parsed, failure) ==
+      ZuCheckRT(parser.process(wire, parsed, failure) ==
 	Zws::HeaderParser::Result::Complete);
-      ZuCHECK(parsed.final && parsed.masked &&
+      ZuCheckRT(parsed.final && parsed.masked &&
 	parsed.opcode == Zws::Opcode::Binary &&
 	parsed.length == length);
       mutableWire.offset(mutableWire.length() - wire.length());
       Zws::mask(mutableWire, parsed.key);
-      ZuCHECK(mutableWire == payload,
-	"masked Tx preserves payload across length boundary");
+      ZuCheckRT(mutableWire == payload, log_(
+	"masked Tx preserves payload across length boundary"));
     }
   }
   {
@@ -878,19 +889,19 @@ void tx()
       lower, Zws::Opcode::Binary, &counter);
     tx << "0123456789abcde";
     tx.flush();
-    ZuCHECK(lower.bufs.length() == 3);
+    ZuCheckRT(lower.bufs.length() == 3);
     if (lower.bufs.length() == 3) {
       auto one = lower.bufs[0]->cspan();
       auto two = lower.bufs[1]->cspan();
       auto three = lower.bufs[2]->cspan();
-      ZuCHECK(!(one[0] & 0x80) && (one[0] & 0xf) == Zws::Opcode::Binary);
-      ZuCHECK(!(two[0] & 0x80) &&
+      ZuCheckRT(!(one[0] & 0x80) && (one[0] & 0xf) == Zws::Opcode::Binary);
+      ZuCheckRT(!(two[0] & 0x80) &&
 	(two[0] & 0xf) == Zws::Opcode::Continuation);
-      ZuCHECK((three[0] & 0x80) &&
+      ZuCheckRT((three[0] & 0x80) &&
 	(three[0] & 0xf) == Zws::Opcode::Continuation);
-      ZuCHECK((ZuBSpan{one.data() + 2, 4} !=
+      ZuCheckRT((ZuBSpan{one.data() + 2, 4} !=
 	ZuBSpan{two.data() + 2, 4}));
-      ZuCHECK((ZuBSpan{two.data() + 2, 4} !=
+      ZuCheckRT((ZuBSpan{two.data() + 2, 4} !=
 	ZuBSpan{three.data() + 2, 4}));
     }
   }
@@ -899,12 +910,12 @@ void tx()
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
     tx << "headroom";
     tx.flush();
-    ZuCHECK(lower.bufs.length() == 1);
+    ZuCheckRT(lower.bufs.length() == 1);
     if (lower.bufs.length()) {
-      ZuCHECK(lower.bufs[0]->skip ==
+      ZuCheckRT(lower.bufs[0]->skip ==
 	lower.headRoom() + (10 - 2));
-      ZuCHECK(lower.bufs[0]->avail() >= lower.tailRoom());
-      ZuCHECK(lower.bufs[0]->cspan().offset(2) == "headroom");
+      ZuCheckRT(lower.bufs[0]->avail() >= lower.tailRoom());
+      ZuCheckRT(lower.bufs[0]->cspan().offset(2) == "headroom");
     }
   }
   {
@@ -912,15 +923,15 @@ void tx()
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Ping);
     tx << "0123456789abcde";
     tx.flush();
-    ZuCHECK(!tx.valid());
-    ZuCHECK(!lower.bufs.length());
+    ZuCheckRT(!tx.valid());
+    ZuCheckRT(!lower.bufs.length());
   }
   {
     WireTx lower;
     lower.admitOK = false;
     auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
     tx << "abc";
-    ZuCHECK(tx.failed() && !tx.flush() && !lower.sends);
+    ZuCheckRT(tx.failed() && !tx.flush() && !lower.sends);
   }
   {
     WireTx lower;
@@ -928,10 +939,10 @@ void tx()
     {
       auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
       tx << "abc";
-      ZuCHECK(!tx.flush() && tx.failed() && lower.failed());
-      ZuCHECK(lower.sends == 1 && !tx.flush());
+      ZuCheckRT(!tx.flush() && tx.failed() && lower.failed());
+      ZuCheckRT(lower.sends == 1 && !tx.flush());
     }
-    ZuCHECK(lower.sends == 1);
+    ZuCheckRT(lower.sends == 1);
   }
   {
     FailedRandom failed;
@@ -940,8 +951,8 @@ void tx()
       lower, Zws::Opcode::Binary, &failed);
     tx << "not-sent";
     tx.flush();
-    ZuCHECK(!tx.valid());
-    ZuCHECK(!lower.bufs.length());
+    ZuCheckRT(!tx.valid());
+    ZuCheckRT(!lower.bufs.length());
   }
   {
     WireTx lower;
@@ -949,10 +960,10 @@ void tx()
       auto tx = Zws::txLayer<false>(lower, Zws::Opcode::Text);
       tx << "discard";
       tx.fail();
-      ZuCHECK(!tx.valid() && !tx.flush());
+      ZuCheckRT(!tx.valid() && !tx.flush());
     }
-    ZuCHECK(!lower.sends && !lower.bufs.length(),
-      "aborting an application write must not flush a partial message");
+    ZuCheckRT(!lower.sends && !lower.bufs.length(), log_(
+      "aborting an application write must not flush a partial message"));
   }
 }
 
@@ -1466,6 +1477,245 @@ void codec()
   }
 }
 
+template <bool Masked>
+void txRangeCase()
+{
+  ZuTestScope(txRangeCase);
+  WireTx lower;
+  CounterRandom random;
+  ZmRef<ZiIOBuf> source = new BufAlloc{nullptr, 0};
+  source->skip = 5;
+  *source << "xxpayloadtail";
+  auto data = source->data();
+  auto out = Zws::txLayer<Masked>(lower, Zws::Opcode::Binary, &random);
+  ZuCheck(out.appendRange(source, 2, 7) && out.flush());
+  Bytes bytes;
+  bool retained = false;
+  for (const auto &part : lower.parts) {
+    retained |= part.buf == source && part.offset == 7 && part.length == 7;
+    bytes << part.cspan();
+  }
+  if constexpr (Masked) ZuCheck(!retained);
+  else ZuCheck(retained);
+  ZuCheck(source->data() == data && source->skip == 5 && source->cspan() == "xxpayloadtail");
+  ZuBSpan wire = bytes;
+  Zws::HeaderParser parser;
+  Zws::Frame frame_;
+  Zws::Failure::T failure = Zws::Failure::None;
+  ZuCheck(parser.process(wire, frame_, failure) == Zws::HeaderParser::Result::Complete);
+  ZuCheck(!frame_.final && frame_.length == 7 && frame_.masked == Masked);
+  auto prefix = unsigned(wire.data() - bytes.data());
+  auto payload = bytes.span().offset(prefix).trunc(7);
+  if constexpr (Masked) Zws::mask(payload, frame_.key);
+  ZuCheck(payload == "payload");
+  wire.offset(7);
+  parser.reset();
+  ZuCheck(parser.process(wire, frame_, failure) == Zws::HeaderParser::Result::Complete);
+  ZuCheck(frame_.final && !frame_.length && frame_.opcode == Zws::Opcode::Continuation);
+}
+
+template <bool Masked>
+void txMixedRangeCase()
+{
+  ZuTestScopeRT(txMixedRangeCase);
+  WireTx lower;
+  CounterRandom random;
+  ZmRef<ZiIOBuf> source = new BufAlloc{nullptr, 0};
+  *source << "payload";
+  auto out = Zws::txLayer<Masked>(lower, Zws::Opcode::Binary, &random);
+  out << "pre";
+  ZuCheckRT(out.appendRange(source, 0, source->length) && out.flush());
+  Bytes bytes;
+  for (const auto &part : lower.parts) bytes << part.cspan();
+  ZuBSpan wire = bytes;
+  Bytes decoded;
+  unsigned frames = 0;
+  bool ended = false;
+  while (wire.length()) {
+    Zws::HeaderParser parser;
+    Zws::Frame frame_;
+    Zws::Failure::T failure = Zws::Failure::None;
+    ZuCheckRT(parser.process(wire, frame_, failure) == Zws::HeaderParser::Result::Complete);
+    ZuCheckRT(frame_.length <= wire.length(), log_("mixed range frame exceeds available bytes"));
+    if (frame_.length > wire.length()) break;
+    ZuCheckRT(!ended && frame_.opcode == (frames ? Zws::Opcode::Continuation : Zws::Opcode::Binary));
+    auto payload = bytes.span().offset(unsigned(wire.data() - bytes.data()))
+      .trunc(unsigned(frame_.length));
+    if constexpr (Masked) Zws::mask(payload, frame_.key);
+    decoded << payload;
+    wire.offset(unsigned(frame_.length));
+    ended = frame_.final;
+    if (ended) ZuCheckRT(!wire.length());
+    ++frames;
+  }
+  ZuCheckRT(frames == 3 && ended && decoded == "prepayload" && source->cspan() == "payload");
+}
+
+struct TCPOwnedLink {
+  using TxBufAlloc = Zhttp::Transport_::TCPTxBufAlloc;
+  ZmRef<Zi::IOBufAllocator> allocator = new TxBufAlloc;
+  ZmRef<Zhttp::Transport_::TCPHeader> head;
+  ZtArray<Zi::RxRange, ZtArrayHeapID<"Zws.Test.OwnedParts">> parts;
+  unsigned allocated = 0, ended = 0;
+
+  template <bool> ZmRef<ZiIOBuf> allocTxBuf_() {
+    ++allocated;
+    return allocator->alloc();
+  }
+  bool startTCP_(ZmRef<Zhttp::Transport_::TCPHeader> h, bool) {
+    head = ZuMv(h); return true;
+  }
+  bool partTCP_(ZmRef<Zhttp::Transport_::TCPHeader>, Zi::RxRange range) {
+    parts.push(ZuMv(range)); return true;
+  }
+  void endTCP_(ZmRef<Zhttp::Transport_::TCPHeader>) { ++ended; }
+};
+
+void txOwnedTCP()
+{
+  ZuTestScopeRT(txOwnedTCP);
+  TCPOwnedLink link;
+  Zhttp::Transport_::TCPStream<TCPOwnedLink, false> lower{link};
+  CounterRandom random;
+  ZmRef<ZiIOBuf> first, later;
+  {
+    auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
+    first = out.allocBuf(out.headRoom());
+    *first << "first";
+    out << first;
+    ZuCheckRT(out.flush() && link.allocated == 1 && link.head.ptr() == first.ptr());
+  }
+  {
+    auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
+    later = out.allocBuf(out.headRoom());
+    *later << "later";
+    out << later;
+    ZuCheckRT(out.flush() && link.allocated == 2 && link.parts.length() == 1 &&
+      link.parts[0].buf.ptr() == later.ptr());
+  }
+  Bytes replay;
+  replay << later->cspan();
+  ZuCheckRT(!lower.allocatedBuf_(later.ptr()));
+  {
+    auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
+    out << later;
+    ZuCheckRT(out.flush() && link.allocated == 4 && link.parts.length() == 3 &&
+      link.parts[1].buf.ptr() != later.ptr() && later->cspan() == replay);
+  }
+  ZmRef<ZiIOBuf> borrowed = new BufAlloc{nullptr, 0};
+  *borrowed << "borrowed";
+  {
+    auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
+    out << borrowed;
+    ZuCheckRT(out.flush() && link.allocated == 6 && link.parts.length() == 5 &&
+      link.parts[3].buf.ptr() != borrowed.ptr() && borrowed->cspan() == "borrowed");
+  }
+  // Decode a test-only snapshot; the actual final backing identities above
+  // are the zero-copy oracle, and borrowed input remains immutable.
+  Bytes bytes;
+  bytes << link.head->cspan();
+  for (const auto &part : link.parts) bytes << part.cspan();
+  ZuBSpan wire = bytes;
+  unsigned index = 0;
+  while (wire.length()) {
+    Zws::HeaderParser parser;
+    Zws::Frame frame_;
+    Zws::Failure::T failure = Zws::Failure::None;
+    bool parsed = parser.process(wire, frame_, failure) ==
+      Zws::HeaderParser::Result::Complete;
+    ZuCheckRT(parsed && frame_.masked && frame_.length <= wire.length());
+    if (!parsed || frame_.length > wire.length()) break;
+    auto payload = bytes.span().offset(unsigned(wire.data() - bytes.data()))
+      .trunc(unsigned(frame_.length));
+    Zws::mask(payload, frame_.key);
+    switch (index) {
+      case 0: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "first"); break;
+      case 1: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "later"); break;
+      case 2: ZuCheckRT(!frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == replay); break;
+      case 3: case 5: ZuCheckRT(frame_.final && frame_.opcode == Zws::Opcode::Continuation && !payload.length()); break;
+      case 4: ZuCheckRT(!frame_.final && frame_.opcode == Zws::Opcode::Binary && payload == "borrowed"); break;
+      default: ZuCheckRT(false); break;
+    }
+    wire.offset(unsigned(frame_.length)); ++index;
+  }
+  lower.endTCP_();
+  ZuCheckRT(index == 6 && link.ended == 1 && borrowed->cspan() == "borrowed" &&
+    later->cspan() == replay);
+}
+
+void txOwnedTCPTurns(bool prior)
+{
+  ZuTestScopeRT(txOwnedTCPTurns);
+  TCPOwnedLink link;
+  ZmRef<ZiIOBuf> packet;
+  {
+    Zhttp::Transport_::TCPStream<TCPOwnedLink, true> build{link};
+    Zhttp::Writer writer{&build, Zhttp::Native_::writerOps<decltype(build)>()};
+    packet = writer.allocBuf(14);
+    *packet << "queued";
+  } // allocation authority from the build turn has ended
+  ZuCheckRT(link.allocated == 1 && !link.head && !link.ended);
+  {
+    Zhttp::Transport_::TCPStream<TCPOwnedLink, false> send{link};
+    CounterRandom random;
+    Zhttp::Writer writer{&send, Zhttp::Native_::writerOps<decltype(send)>()};
+    auto out = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
+    if (prior) out << "pre";
+    ZuCheckRT(out.appendOwned_(packet) && out.flush());
+    ZuCheckRT(link.allocated == unsigned(prior ? 2 : 1) &&
+      (prior ? link.parts.length() == 1 && link.parts[0].buf.ptr() == packet.ptr() :
+	link.head.ptr() == packet.ptr()));
+    Bytes bytes;
+    bytes << link.head->cspan();
+    for (const auto &part : link.parts) bytes << part.cspan();
+    ZuBSpan wire = bytes;
+    Bytes decoded;
+    unsigned index = 0;
+    while (wire.length()) {
+      Zws::HeaderParser parser;
+      Zws::Frame frame_;
+      Zws::Failure::T failure = Zws::Failure::None;
+      bool parsed = parser.process(wire, frame_, failure) ==
+	Zws::HeaderParser::Result::Complete;
+      ZuCheckRT(parsed && frame_.masked && frame_.length <= wire.length());
+      if (!parsed || frame_.length > wire.length()) break;
+      auto payload = bytes.span().offset(unsigned(wire.data() - bytes.data()))
+	.trunc(unsigned(frame_.length));
+      Zws::mask(payload, frame_.key); decoded << payload;
+      ZuCheckRT(frame_.opcode == (index ? Zws::Opcode::Continuation : Zws::Opcode::Binary) &&
+	frame_.final == (!prior || index == 1));
+      wire.offset(unsigned(frame_.length)); ++index;
+    }
+    ZuCheckRT(index == unsigned(prior ? 2 : 1) && decoded == (prior ? "prequeued" : "queued"));
+    ZuCheckRT(!writer.allocatedBuf_(packet.ptr()));
+    Bytes original; original << packet->cspan();
+    unsigned allocated = link.allocated, parts = link.parts.length();
+    auto replay = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
+    replay << packet;
+    ZuCheckRT(replay.flush() && link.allocated == allocated + 2 &&
+      link.parts.length() == parts + 2 && link.parts[parts].buf.ptr() != packet.ptr() &&
+      packet->cspan() == original);
+  }
+  ZuCheckRT(link.ended == 1);
+}
+
+void txOwnedNoCapability()
+{
+  ZuTestScope(txOwnedNoCapability);
+  TCPOwnedLink link;
+  Zhttp::Transport_::TCPStream<TCPOwnedLink, false> lower{link};
+  auto ops = Zhttp::Native_::writerOps<decltype(lower)>();
+  ops.allocated = nullptr; ops.takeAllocated = nullptr;
+  Zhttp::Writer writer{&lower, ops};
+  auto packet = link.allocTxBuf_<false>();
+  *packet << "held";
+  CounterRandom random;
+  auto out = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
+  ZuCheck(!writer.allocatedBuf_(packet.ptr()));
+  ZuCheck(!out.appendOwned_(packet) && !out.valid() && writer.failed());
+  ZuCheck(!link.head && !link.parts.length() && packet->cspan() == "held");
+}
+
 } // namespace ZwsProtocolTest_
 
 int main(int argc, char **argv)
@@ -1479,6 +1729,14 @@ int main(int argc, char **argv)
   ZuTestCall(h1);
   ZuTestCall(header);
   ZuTestCall(tx);
+  ZuTestCall(txOwnedTCP);
+  ZuTestCall(txOwnedTCPTurns, false);
+  ZuTestCall(txOwnedTCPTurns, true);
+  ZuTestCall(txOwnedNoCapability);
+  ZuTestCall(txRangeCase<false>);
+  ZuTestCall(txRangeCase<true>);
+  ZuTestCall(txMixedRangeCase<false>);
+  ZuTestCall(txMixedRangeCase<true>);
   ZuTestCall(codec);
   return 0;
 }

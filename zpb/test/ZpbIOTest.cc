@@ -13,7 +13,8 @@
 using namespace ZuTestUtil;
 
 ZuDerive(Output, (ZtArray<uint8_t, ZtArrayHeapID<"ZpbIOTest.Output">>));
-using Pool = ZiIOBufAlloc<32, 1024, "ZpbIOTest.Pool">;
+using Pool = Zi::IOBufAlloc<ZiIOBuf, 32, 1024,
+  ZuStringT<"ZpbIOTest.Pool">>;
 
 struct Payload { ZuBSpan bytes; };
 ZfStruct(, (Payload, PB), (bytes, (PB::FieldID<1>), Bytes));
@@ -49,7 +50,7 @@ static void pooled()
   auto wire = Zpb::save(reference, object);
   ZuCheck(!reference.failed() && Zpb::verify<Envelope>(wire));
 
-  ZmRef<ZiIOBuf> owner = new Pool{};
+  ZmRef<ZiIOBuf> owner = new Pool{nullptr, 0};
   owner->skip = 8;
   owner->owner = owner.ptr();
   memset(owner->data_(), 0xa5, owner->skip);
@@ -80,7 +81,7 @@ static void limits()
   data.length(300);
   memset(data.data(), 0x7f, data.length());
   Envelope object{{data}};
-  Zpb::IOBuilder builder{new Pool{}, 128};
+  Zpb::IOBuilder builder{new Pool{nullptr, 0}, 128};
   auto wire = Zpb::save(builder, object);
   ZuCheck(!wire.length() && builder.failed());
   ZuCheck(builder.error() == Zpb::Error::Limit);
@@ -88,7 +89,7 @@ static void limits()
   ZuCheck(!Zpb::save(builder, object).length() &&
     builder.error() == Zpb::Error::Limit);
 
-  Zpb::IOBuilder prefixed{new Pool{}, 1024};
+  Zpb::IOBuilder prefixed{new Pool{nullptr, 0}, 1024};
   auto framed = Zpb::save<ZuFacet::PrefixedPB>(prefixed, object);
   ZuCheck((!prefixed.failed() &&
     Zpb::verify<Envelope, ZuFacet::PrefixedPB>(framed)));
@@ -98,7 +99,7 @@ static void limits()
 
 static void delimited()
 {
-  ZuTestScope(delimited);
+  ZuTestScopeRT(delimited);
   // Payload lengths straddle the one/two/three-byte varint boundaries.
   const struct {
     unsigned length;
@@ -121,20 +122,20 @@ static void delimited()
     Zpb::ArrayStorage storage{output};
     Zpb::Builder builder{storage, size};
     auto frame = Zpb::save<ZuFacet::PrefixedPB>(builder, object);
-    ZuCheck(!builder.failed() && frame.length() == size);
-    ZuCheck(!memcmp(frame.data(), test.prefix.data(), test.prefix.length()));
+    ZuCheckRT(!builder.failed() && frame.length() == size);
+    ZuCheckRT(!memcmp(frame.data(), test.prefix.data(), test.prefix.length()));
     ZuBSpan payload;
-    ZuCheck(Zpb::Wire::unframe(frame, payload) && payload.length() == test.size);
-    ZuCheck((Zpb::verify<Payload, ZuFacet::PrefixedPB>(frame)));
-    ZuCheck((Zpb::load<Payload, ZuFacet::PrefixedPB>(frame).bytes == data));
-    ZuCheck((!Zpb::verify<Payload, ZuFacet::PrefixedPB>(
+    ZuCheckRT(Zpb::Wire::unframe(frame, payload) && payload.length() == test.size);
+    ZuCheckRT((Zpb::verify<Payload, ZuFacet::PrefixedPB>(frame)));
+    ZuCheckRT((Zpb::load<Payload, ZuFacet::PrefixedPB>(frame).bytes == data));
+    ZuCheckRT((!Zpb::verify<Payload, ZuFacet::PrefixedPB>(
       {frame.data(), frame.length() - 1})));
 
     Output shortOutput;
     Zpb::ArrayStorage shortStorage{shortOutput};
     Zpb::Builder shortBuilder{shortStorage, size - 1};
     auto shortFrame = Zpb::save<ZuFacet::PrefixedPB>(shortBuilder, object);
-    ZuCheck(!shortFrame.length() && shortBuilder.error() == Zpb::Error::Limit);
+    ZuCheckRT(!shortFrame.length() && shortBuilder.error() == Zpb::Error::Limit);
   }
   const ZuBSpan invalid[] = {
     {"", 0},                         // missing prefix
@@ -146,8 +147,8 @@ static void delimited()
   };
   for (auto frame : invalid) {
     ZuBSpan payload;
-    ZuCheck(!Zpb::Wire::unframe(frame, payload));
-    ZuCheck((!Zpb::verify<Payload, ZuFacet::PrefixedPB>(frame)));
+    ZuCheckRT(!Zpb::Wire::unframe(frame, payload));
+    ZuCheckRT((!Zpb::verify<Payload, ZuFacet::PrefixedPB>(frame)));
   }
 }
 
@@ -176,7 +177,7 @@ struct TxTest : public ZiTxStream<TxTest> {
   ZmRef<ZiIOBuf> allocBuf_(unsigned head) {
     ++allocs;
     if (reject) return nullptr;
-    ZmRef<ZiIOBuf> buf = new Pool{};
+    ZmRef<ZiIOBuf> buf = new Pool{nullptr, 0};
     buf->skip = head;
     return buf;
   }

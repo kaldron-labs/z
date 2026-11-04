@@ -28,7 +28,7 @@ ZuDerive(BodyData, (ZtString<ZtStringHeapID<"ZhttpParserTest.BodyData">>));
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = ::strlen(s);
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
   if (n) buf->append(ZuCSpan{s, n});
   return buf;
 }
@@ -560,23 +560,23 @@ void testRequestStartLineFragmentedAcrossManyRxBuffers()
 
 void testInvalidRequestMethod()
 {
-  ZuTestScope(testInvalidRequestMethod);
+  ZuTestScopeRT(testInvalidRequestMethod);
 
   auto test = [](const char *request) {
     RequestParser parser;
     RxStream stream;
     stream.push(mkBuf(request));
-    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
-      "invalid request method was not rejected");
-    ZuCHECK(parser.method < 0 && !parser.hostCalls && !parser.bodyCalls,
-      "invalid request method delivered callbacks");
-    ZuCHECK(parser.completeCalls == 1 &&
-	parser.completeState == Zhttp::H1::ParserState::Error,
-      "invalid request method completion mismatch");
-    ZuCHECK(parser.error().code == Zhttp::RequestErrorCode::NotImplemented &&
+    ZuCheckRT(parser.process(stream) == Zhttp::H1::ParserState::Error, log_(
+      "invalid request method was not rejected"));
+    ZuCheckRT(parser.method < 0 && !parser.hostCalls && !parser.bodyCalls, log_(
+      "invalid request method delivered callbacks"));
+    ZuCheckRT(parser.completeCalls == 1 &&
+	parser.completeState == Zhttp::H1::ParserState::Error, log_(
+      "invalid request method completion mismatch"));
+    ZuCheckRT(parser.error().code == Zhttp::RequestErrorCode::NotImplemented &&
 	parser.error().scope == Zhttp::RequestErrorScope::Connection &&
-	parser.error().responsePossible,
-      "invalid request method classification mismatch");
+	parser.error().responsePossible, log_(
+      "invalid request method classification mismatch"));
   };
 
   test(
@@ -733,7 +733,7 @@ void testEmptySelectedHeaderValues()
 
 void testInvalidContentLengthValues()
 {
-  ZuTestScope(testInvalidContentLengthValues);
+  ZuTestScopeRT(testInvalidContentLengthValues);
 
   static const char *values[] = {
     "", "+5", "-5", "5x", "18446744073709551616"
@@ -745,19 +745,19 @@ void testInvalidContentLengthValues()
     msg << "HTTP/1.1 200 OK\r\ncontent-length: " << values[i] <<
       "\r\n\r\nhello";
     stream.push(mkBuf(msg));
-    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error,
-      "invalid content-length was not rejected");
-    ZuCHECK(parser.contentLengthSeen < 0 && !parser.bodyCalls,
-      "invalid content-length delivered callbacks");
-    ZuCHECK(parser.completeCalls == 1 &&
-	parser.completeState == Zhttp::H1::ParserState::Error,
-      "invalid content-length completion mismatch");
+    ZuCheckRT(parser.process(stream) == Zhttp::H1::ParserState::Error, log_(
+      "invalid content-length was not rejected"));
+    ZuCheckRT(parser.contentLengthSeen < 0 && !parser.bodyCalls, log_(
+      "invalid content-length delivered callbacks"));
+    ZuCheckRT(parser.completeCalls == 1 &&
+	parser.completeState == Zhttp::H1::ParserState::Error, log_(
+      "invalid content-length completion mismatch"));
   }
 }
 
 void testChunkedBodyAcrossRxBuffers()
 {
-  ZuTestScope(testChunkedBodyAcrossRxBuffers);
+  ZuTestScopeRT(testChunkedBodyAcrossRxBuffers);
 
   const char *frags[] = {
     "HTTP/1.1 200 OK\r\n"
@@ -777,27 +777,27 @@ void testChunkedBodyAcrossRxBuffers()
     stream.push(mkBuf(frags[i]));
     auto state = parser.process(stream);
     if (i + 1 < sizeof(frags) / sizeof(frags[0]))
-      ZuCHECK(state != Zhttp::H1::ParserState::Complete,
-	"chunked response completed too early");
+      ZuCheckRT(state != Zhttp::H1::ParserState::Complete, log_(
+	"chunked response completed too early"));
   }
 
-  ZuCHECK(parser.completeState == Zhttp::H1::ParserState::Complete,
-    "chunked response did not complete");
-  ZuCHECK(parser.chunkedSeen, "chunked transfer-encoding was not detected");
-  ZuCHECK(parser.bodyInfoCalls == 1 &&
-      parser.bodyType == Zhttp::BodyType::Streamed && !parser.bodyLength,
-    "chunked body metadata mismatch");
-  ZuCHECK(parser.keySection == Zhttp::FieldSection::Trailers,
-    "trailer header section mismatch");
-  ZuCHECK(parser.bodyBytes == 18, "chunked body total mismatch");
-  ZuCHECK(parser.bodyData == "{\"x\": 42, \"y\": 42}",
-    "chunked body data mismatch");
-  ZuCHECK(!stream, "stream still has data after chunked response");
+  ZuCheckRT(parser.completeState == Zhttp::H1::ParserState::Complete, log_(
+    "chunked response did not complete"));
+  ZuCheckRT(parser.chunkedSeen, log_( "chunked transfer-encoding was not detected"));
+  ZuCheckRT(parser.bodyInfoCalls == 1 &&
+      parser.bodyType == Zhttp::BodyType::Streamed && !parser.bodyLength, log_(
+    "chunked body metadata mismatch"));
+  ZuCheckRT(parser.keySection == Zhttp::FieldSection::Trailers, log_(
+    "trailer header section mismatch"));
+  ZuCheckRT(parser.bodyBytes == 18, log_( "chunked body total mismatch"));
+  ZuCheckRT(parser.bodyData == "{\"x\": 42, \"y\": 42}", log_(
+    "chunked body data mismatch"));
+  ZuCheckRT(!stream, log_( "stream still has data after chunked response"));
 }
 
 void testChunkLengthSyntax()
 {
-  ZuTestScope(testChunkLengthSyntax);
+  ZuTestScopeRT(testChunkLengthSyntax);
 
   {
     ResponseParser parser;
@@ -807,9 +807,9 @@ void testChunkLengthSyntax()
       "transfer-encoding: chunked\r\n"
       "\r\n"
       "3;name=value\r\nabc\r\n0\r\n\r\n"));
-    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
-	parser.bodyData == "abc",
-      "chunk extension was not ignored");
+    ZuCheckRT(parser.process(stream) == Zhttp::H1::ParserState::Complete &&
+	parser.bodyData == "abc", log_(
+      "chunk extension was not ignored"));
   }
   static const char *lengths[] = {
     "10000000000000000", "0x3", "3x"
@@ -821,9 +821,9 @@ void testChunkLengthSyntax()
     msg << "HTTP/1.1 200 OK\r\n"
 	"transfer-encoding: chunked\r\n\r\n" << lengths[i] << "\r\n";
     stream.push(mkBuf(msg));
-    ZuCHECK(parser.process(stream) == Zhttp::H1::ParserState::Error &&
-	!parser.bodyCalls,
-      "invalid chunk length was accepted");
+    ZuCheckRT(parser.process(stream) == Zhttp::H1::ParserState::Error &&
+	!parser.bodyCalls, log_(
+      "invalid chunk length was accepted"));
   }
 }
 

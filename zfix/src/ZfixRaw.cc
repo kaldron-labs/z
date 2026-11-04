@@ -19,9 +19,11 @@ RawOutput::Ref RawOutput::fromFrame(TxBody::Ref body, TxContext context,
       Fmt::ErrorCode::Truncated : Fmt::ErrorCode::Envelope}; return {};
   }
   if (r.view.msgType != body->msgType()) { error = {Fmt::ErrorCode::Value, 35}; return {}; }
-  error = body->validate(r.view, limits);
+  TxImage image{ZuMv(bytes)};
+  unsigned offset = unsigned(r.view.content.data() - r.view.wire.data());
+  error = body->validate(TxFrame_::Check{image.view(offset, r.view.content.length()), offset}, limits);
   if (error) return {};
-  return new RawOutput{ZuMv(body), context, ZuMv(bytes), original};
+  return new RawOutput{ZuMv(body), context, ZuMv(image), original};
 }
 } // Zfix
 

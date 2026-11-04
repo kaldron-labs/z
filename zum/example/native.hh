@@ -537,7 +537,7 @@ public:
     } else ok = false;
     if (!query.mutable_()) query.length(query.length());
     CallbackQuery parsed;
-    if (ok) ok = parseCallback({query.data(), query.length()}, parsed);
+    if (ok) ok = parseCallback(query, parsed);
     ok = ok && !received && parsed.state == expectedState &&
       ((parsed.seen == 3U && parsed.code) ||
         (parsed.seen == 6U && parsed.error));
@@ -589,7 +589,7 @@ static bool tokenJSON(String &json, ZumVaultClient::Credential &tokens)
 {
   if (json.length() > BodyMax) return false;
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();

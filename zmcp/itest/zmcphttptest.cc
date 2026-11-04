@@ -16,6 +16,7 @@
 #include <zlib/ZmHeap.hh>
 
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/Zquic.hh>
 
 #include <zlib/ZmcpClient.hh>
 #include <zlib/ZmcpServer.hh>
@@ -276,27 +277,30 @@ friend inline ZuStringT<"ZmcpITest.ClientCall"> ZmNHeapID(ClientCall *);
 };
 
 class RawHTTP;
+using RawHTTPBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZuStringT<"Zmcp.HTTP.Raw">>;
 
 class RawHTTPCxn : public ZiConnection {
 public:
   RawHTTPCxn(RawHTTP *, ZiMultiplex *, const ZiCxnInfo &);
 
-  void connected(ZiIOContext &) override;
+  void connected(ZiRxContext &) override;
   void disconnected(bool) override;
 
 private:
-  bool recv_(ZiIOContext &);
-  bool send_(ZiIOContext &);
-  bool sent_(ZiIOContext &);
+  bool recv_(ZiRxContext &);
+  bool send_(ZiTxContext &);
+  bool sent_(ZiTxContext &);
 
   RawHTTP		*m_owner;
-  ZmRef<ZiIOBuf>	m_rxBuf;
 };
 
 class RawHTTP {
 public:
   RawHTTP(ZiMultiplex &mx, unsigned port, ZuCSpan request) :
-      m_mx{mx}, m_request{request} {
+      m_mx{mx}, m_request{new RawHTTPBuf{nullptr, 0}} {
+    // Acquire the caller's borrowed malicious-peer wire bytes once.
+    m_request->append(request);
     m_mx.connect(
       ZiConnectFn{this, ZmFnPtr<&RawHTTP::connected>{}},
       ZiFailFn{this, ZmFnPtr<&RawHTTP::failed>{}},
@@ -321,7 +325,7 @@ public:
     return m_ok || (emptyOK && m_peerClosed);
   }
 
-  ZuCSpan request() const { return m_request; }
+  ZmRef<ZiIOBuf> request() { return ZuMv(m_request); }
 
   bool received(ZuCSpan data) {
     m_response << data;
@@ -366,7 +370,7 @@ public:
 
 private:
   ZiMultiplex		&m_mx;
-  ZtString<>		m_request;
+  ZmRef<ZiIOBuf>		m_request;
   ZtString<>		m_response;
   ZmRef<RawHTTPCxn>	m_cxn;
   ZmSemaphore		m_done;
@@ -376,18 +380,14 @@ private:
 
 RawHTTPCxn::RawHTTPCxn(
     RawHTTP *owner, ZiMultiplex *mx, const ZiCxnInfo &ci) :
-    ZiConnection{mx, ci}, m_owner{owner},
-    m_rxBuf{new Zjrpc::InputBuf{}}
+    ZiConnection{mx, ci}, m_owner{owner}
 {
 }
 
-void RawHTTPCxn::connected(ZiIOContext &io)
+void RawHTTPCxn::connected(ZiRxContext &io)
 {
-  m_rxBuf->alloc(ZiIOBuf_DefltSize);
-  io.init(
-    ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}},
-    m_rxBuf->data(), m_rxBuf->size, 0);
-  send(ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::send_>{}});
+  io.init(ZiRxFn{this, ZmFnPtr<&RawHTTPCxn::recv_>{}});
+  send(ZiTxFn{this, ZmFnPtr<&RawHTTPCxn::send_>{}});
 }
 
 void RawHTTPCxn::disconnected(bool peer)
@@ -395,35 +395,27 @@ void RawHTTPCxn::disconnected(bool peer)
   m_owner->disconnected(peer);
 }
 
-bool RawHTTPCxn::recv_(ZiIOContext &io)
+bool RawHTTPCxn::recv_(ZiRxContext &io)
 {
-  if (io.length < 0) {
-    io.disconnect();
-    return true;
-  }
-  bool complete = m_owner->received(
-    ZuCSpan{io.ptr + io.offset, unsigned(io.length)});
-  io.offset = 0;
+  if (!io.buf) return true;
+  auto buf = ZuMv(io.buf);
+  bool complete = m_owner->received(ZuCSpan{buf->cspan()});
   if (complete) io.disconnect();
   return true;
 }
 
-bool RawHTTPCxn::send_(ZiIOContext &io)
+bool RawHTTPCxn::send_(ZiTxContext &io)
 {
-  auto request = m_owner->request();
-  io.init(
-    ZiIOFn{this, ZmFnPtr<&RawHTTPCxn::sent_>{}},
-    request.data(), request.length(), 0);
+  io.init(ZiTxFn{this, ZmFnPtr<&RawHTTPCxn::sent_>{}}, m_owner->request());
   return true;
 }
 
-bool RawHTTPCxn::sent_(ZiIOContext &io)
+bool RawHTTPCxn::sent_(ZiTxContext &io)
 {
   if (io.length < 0) {
     io.disconnect();
     return true;
   }
-  if ((io.offset += io.length) < io.size) return true;
   io.complete();
   return true;
 }
@@ -1106,6 +1098,7 @@ static void secureTest()
     if (!port) continue;
 
     auto params = ZiMxParams()
+      .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
       .scheduler([](auto &scheduler) {
 	scheduler.nThreads(2)
 	  .thread(1, [](auto &thread) { thread.isolated(1); })

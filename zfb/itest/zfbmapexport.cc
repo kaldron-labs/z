@@ -29,8 +29,7 @@ static bool export_(ZuCSpan stem)
   name = stem; name << ".bfbs";
   if (!FlatcFixture::write(name, bfbs)) return false;
   name = stem; name << ".bin";
-  return FlatcFixture::write(name, ZuCSpan{
-    reinterpret_cast<const char *>(bytes.data()), bytes.length()});
+  return FlatcFixture::write(name, bytes);
 }
 
 static bool verify_(ZuCSpan path)

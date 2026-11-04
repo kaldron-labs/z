@@ -148,7 +148,7 @@ public:
     Base{owner, id, pool, expires, owner->limits(), owner->calls().rx(), owner->calls().tx()},
     m_observer{ZuMv(observer)},
     m_token{new Token{id, 1, this->rx, this, this->tx, this, this->limits.maxQueue, ops}} {
-    this->cancelFn = [](WorkEntry *ptr, Code::T code) { static_cast<Self *>(ptr)->failRx_(code); };
+    this->cancelFn = [](WorkData *ptr, Code::T code) { static_cast<Self *>(ptr)->failRx_(code); };
     this->parseFn = [](Base *ptr, ClientParser<App, Catalog> &parser) {
       auto self = static_cast<Self *>(ptr);
       if (!parser.template init<M>(ZmRef<Self>{self}, self->limits)) return;
@@ -492,7 +492,7 @@ public:
   template <typename Done> void stop(Done &&done) { m_calls.stop(EndpointCalls::DoneFn{ZuFwd<Done>(done)}); }
   void final() {
     if (!m_initialized) return;
-    m_calls.final(); HTTP::final(); m_initialized = false; m_app = nullptr;
+    HTTP::final(); m_calls.final(); m_initialized = false; m_app = nullptr;
   }
 
   template <typename M, typename Observer>

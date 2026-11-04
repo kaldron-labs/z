@@ -79,38 +79,38 @@ Canonical FlatBuffers interoperability remains mandatory.
 
 ## Engineering rules
 
-Apply [GUIDELINES.md](GUIDELINES.md) to every touched declaration and caller,
+Apply [GUIDELINES.md](docs/GUIDELINES.md) to every touched declaration and caller,
 including tests, integration programs, benchmarks and interop fixtures. In
 particular:
 
-- [Repair procedure](GUIDELINES.md#repair-procedure): identify the invariant and
+- [Repair procedure](docs/GUIDELINES.md#repair-procedure): identify the invariant and
   its owner; make the smallest demonstrated repair. An unchanged cost is not
   evidence of a migration regression.
-- [Data movement](GUIDELINES.md#data-movement-and-initialization): construct in
+- [Data movement](docs/GUIDELINES.md#data-movement-and-initialization): construct in
   uninitialized destination storage; eliminate owning temporaries and copies at
   last use. Do not default-initialize storage immediately before overwriting it.
-- [Storage](GUIDELINES.md#storage-and-capacity),
-  [heap allocation](GUIDELINES.md#heap-allocation), and
-  [storage/lifetime](GUIDELINES.md#storage-and-lifetime): use existing tunable
+- [Storage](docs/GUIDELINES.md#storage-and-capacity),
+  [heap allocation](docs/GUIDELINES.md#heap-allocation), and
+  [storage/lifetime](docs/GUIDELINES.md#storage-and-lifetime): use existing tunable
   Z heaps, pooled `ZiIOBuf`, and workload-sized `ZtScratch` for temporary arrays.
   Preserve current heap IDs, default capacities, growth and ownership transfer.
   Do not add allocation-null checks handled by `ZmHeapFail`.
-- [Framework fit](GUIDELINES.md#framework-fit),
-  [type mechanics](GUIDELINES.md#type-mechanics), and
-  [compile-time matching](GUIDELINES.md#compile-time-data-and-matching): use Z
+- [Framework fit](docs/GUIDELINES.md#framework-fit),
+  [type mechanics](docs/GUIDELINES.md#type-mechanics), and
+  [compile-time matching](docs/GUIDELINES.md#compile-time-data-and-matching): use Z
   containers, `ZuMv`, traits, `ZuSwitch`, `ZuMatcher` and existing stream/error
   formatting. No private numeric parser/formatter, redundant span casts, STL
   replacement containers or linear name matching.
-- [Static polymorphism](GUIDELINES.md#static-polymorphism-and-constraints): use
+- [Static polymorphism](docs/GUIDELINES.md#static-polymorphism-and-constraints): use
   templates and SFINAE for wire variants; keep schema generation specialized at
   compile time. Runtime BFBS consumers may dispatch cached wire kinds; buffer
   capacity/error/streaming branches remain permitted.
-- [I/O sharding](GUIDELINES.md#io-sharding) and
-  [cross-shard handoffs](GUIDELINES.md#cross-shard-handoffs): preserve owner-thread
+- [I/O sharding](docs/GUIDELINES.md#io-sharding) and
+  [cross-shard handoffs](docs/GUIDELINES.md#cross-shard-handoffs): preserve owner-thread
   access, asynchronous completion and buffer-handle handoffs. Do not capture
   large payloads, add locks, remove required posts, or treat `run` as blocking.
-- [Code layout](GUIDELINES.md#code-style) and
-  [naming](GUIDELINES.md#naming): hard tabs, two-column logical indentation,
+- [Code layout](docs/GUIDELINES.md#code-style) and
+  [naming](docs/GUIDELINES.md#naming): hard tabs, two-column logical indentation,
   98-column lines, vertically aligned `ZfStruct` typecodes, concise names under
   the authoritative 28-byte limit. The adapter and I/O-layer integration live
   in `zi`, in `ZiFB.hh`/`ZiFB.cc` and `ZiFBReflect.hh`/`ZiFBReflect.cc`.

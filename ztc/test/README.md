@@ -21,6 +21,14 @@ entry point renamed for the test. It invokes the actual receive and
 authorization callbacks with a single-threaded transport stub and the real
 hub/verifier. It covers pending frame and byte limits, authorization during
 a partial frame, failed authorization/cleanup, and receive-buffer reuse.
+Segmented delivery cases retain the original nested payload across two differing
+route envelopes and a subsequent incoming message. They check actual prefix
+allocation identity, physical span identity after descriptor advancement,
+complete wire verification, both wire parts in queue/max-frame accounting,
+and nested-root alignment with optional routing fields.
+Writer authority checks retain the producer's provenance reference while adopting
+its actual prefix, and keep compatible prebuilt input immutable on a lower writer
+which would mutate an adopted buffer.
 Input rejection cannot subsequently authorize the link, and malformed queued
 payloads still pass through the production verifier. Timers and transmission
 are inert; network behavior is covered separately by

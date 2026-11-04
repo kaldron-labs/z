@@ -185,7 +185,7 @@ static bool ceremonyQuery(String &query, Bytes &id)
   if (query && query[0] == '?') query.splice(0, 1);
   if (!query.mutable_()) query.length(query.length());
   ZuCSpan encoded;
-  if (!formEach({query.data(), query.length()},
+  if (!formEach(query,
     [&encoded](ZuCSpan name, ZuCSpan value) {
       if (name == "id") encoded = value;
     })) return false;
@@ -195,7 +195,7 @@ static bool ceremonyQuery(String &query, Bytes &id)
 static bool passkeyStart(String &json, PasskeyStart &start)
 {
   if (!json.mutable_()) json.length(json.length());
-  auto parsed = ZfJSON::scan({json.data(), json.length()});
+  auto parsed = ZfJSON::scan(json);
   if (parsed.p<0>() != int(json.length()) || !parsed.p<1>() ||
       !parsed.p<1>()->has<ZfJSON::AnyNode::Array>()) return false;
   auto &roots = parsed.p<1>()->data<ZfJSON::AnyNode::Array>();
@@ -1676,7 +1676,7 @@ void Server::finishGrant_(
       if (purpose == GrantPurpose::Authorization) {
         Bytes sessionGrant{id};
         AssertionInput input;
-        int error = parseAssertion({json.data(), json.length()},
+        int error = parseAssertion(json,
           WebAuthnInputLimits{}, input);
         if (error || !authorizeFinish(work, m_requests, deadline_(), m_db,
             m_rng, ZuMv(id), ZuMv(binding), ZuMv(input),
@@ -1723,7 +1723,7 @@ void Server::finishGrant_(
       }
 
       RegistrationInput input;
-      int error = parseRegistration({json.data(), json.length()},
+      int error = parseRegistration(json,
         WebAuthnInputLimits{}, input);
       if (error) {
         auto reply = jsonReply(OAuthError::AccessDenied);

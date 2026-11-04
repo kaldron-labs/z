@@ -139,7 +139,7 @@ public:
     Base{owner, id},
     m_token{new Token{id, 1, this->rx, this, this->tx, this, this->limits.maxQueue, ops}},
     m_authority{ZuMv(authority)}, m_refusal{refusal} {
-    this->cancelFn = [](WorkEntry *ptr, Code::T code) { static_cast<Self *>(ptr)->failRx_(code); };
+    this->cancelFn = [](WorkData *ptr, Code::T code) { static_cast<Self *>(ptr)->failRx_(code); };
     this->startFn = [](Base *ptr, Response *response) {
       auto self = static_cast<Self *>(ptr);
       if (self->m_txInvalid) return;

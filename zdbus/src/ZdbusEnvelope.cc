@@ -193,6 +193,7 @@ static bool header(FrameResult &result, ZuBSpan bytes)
 FrameResult frame(ZuBSpan bytes, unsigned limit)
 {
   FrameResult result;
+  result.info.data = bytes.data();
   unsigned n = bytes.length();
   if (n < Wire::MinHeaderSize) return result;
   auto p = bytes.begin();

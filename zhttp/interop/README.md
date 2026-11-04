@@ -297,3 +297,10 @@ scripts/qir-report \
 For an upstream registration PR, add the implementation entry in the upstream
 runner repository, include the tested image digest, attach the generated report
 summary, and do not commit credentials or local paths.
+
+QIR endpoints reserve a 1 MiB QUIC packet burst plus 128 control/retirement
+slots in each direction (1002 slots at 1200 bytes). The harness accepts
+`ZHTTP_QIR_RX_RING_SIZE` and `ZHTTP_QIR_TX_RING_SIZE` overrides from 2 through
+32768, propagated to HQ and H3 clients and servers. This is a pooled working
+set rather than storage for the full advertised connection window or every
+file; tune it for concurrent transfers and the simulator loss profile.

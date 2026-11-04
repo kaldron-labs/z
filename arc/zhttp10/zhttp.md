@@ -355,7 +355,7 @@ example/test programs merely to avoid declaring the dependency.
 
 Treat every phase below as a separately reviewable hand-off.  Do not begin the
 next phase until all acceptance criteria pass and the phase-ending
-`GUIDELINES.md` audit has repaired every issue it finds.  A phase may change
+`docs/GUIDELINES.md` audit has repaired every issue it finds.  A phase may change
 public APIs without compatibility shims, but it must leave the tree building
 and tests deterministic.
 
@@ -363,7 +363,7 @@ Each hand-off must record:
 
 - the files/API surface added, changed, and deleted;
 - the acceptance commands and their results;
-- the `GUIDELINES.md` audit findings and the repairs made;
+- the `docs/GUIDELINES.md` audit findings and the repairs made;
 - any remaining work, assigned only to a later phase whose stated scope
   explicitly owns it.
 
@@ -412,9 +412,9 @@ moving implementation.
 - the next phase can change internals while using this test as its behavioral
   oracle.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `GUIDELINES.md`, especially deterministic concurrency tests,
+1. Re-read root `docs/GUIDELINES.md`, especially deterministic concurrency tests,
    lambda captures, allocations, and file/header style.
 2. Audit the complete phase diff for sleeps, polling, broad captures, STL,
    fixed scratch arrays, default-before-overwrite state, and test-only leaks
@@ -487,9 +487,9 @@ without yet replacing the program-owned connection bodies.
 - existing lifecycle and application tests pass unchanged;
 - `make -j8` and `make -C zhttp/test test` pass.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `GUIDELINES.md` sections on static polymorphism, SFINAE,
+1. Re-read root `docs/GUIDELINES.md` sections on static polymorphism, SFINAE,
    header layout, enum conventions, storage/capacity, and template debug-info
    bloat.
 2. Audit the new public/private boundary, includes, member ordering, names,
@@ -567,9 +567,9 @@ library-owned template instantiated for TCP and TLS.
 - lifecycle characterization from Phase 1 remains unchanged;
 - `make -j8` and `make -C zhttp/test test` pass.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `GUIDELINES.md` sections on repeated blocks, CRTP defaults,
+1. Re-read root `docs/GUIDELINES.md` sections on repeated blocks, CRTP defaults,
    I/O buffers, heap allocation, thread ownership, timers, and cleanup.
 2. Audit all H1 link state for Rx/Tx affinity, exact-once removal, unnecessary
    locks, hidden copies, default initialization, padding, broad captures, and
@@ -662,9 +662,9 @@ contract while keeping every physical QUIC and H3 control mechanism inside
   protocols;
 - `make -j8` and `make -C zhttp/test test` pass.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `GUIDELINES.md` and `zquic/GUIDELINES.md`, including sharding,
+1. Re-read root `docs/GUIDELINES.md` and `zquic/GUIDELINES.md`, including sharding,
    buffers, retained data, hidden-copy prohibition, logging/qlog, captures, and
    teardown.
 2. Audit every H3 session/link/stream member by owner thread; inspect every
@@ -759,9 +759,9 @@ application control layer, including partial failure and graceful drain.
   gone;
 - `make -j8` and `make -C zhttp/test test` pass.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `GUIDELINES.md` sections on `ZmEngine`, asynchronous
+1. Re-read root `docs/GUIDELINES.md` sections on `ZmEngine`, asynchronous
    continuations, blocking, cleanup, sentinel state, and dead code.
 2. Audit state transitions, callbacks, partial-failure unwind, iterator/lock
    lifetimes, completion multiplicity, and teardown ordering.
@@ -846,9 +846,9 @@ same templated connection/message logic drives TCP, TLS, and QUIC.
   tests pass;
 - `make -j8` and `make -C zhttp/test test` pass.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read root `GUIDELINES.md` sections on framework fit, repeated blocks,
+1. Re-read root `docs/GUIDELINES.md` sections on framework fit, repeated blocks,
    control flow, names/layout, formatting/logging, files, and dead compatibility
    code.
 2. Audit both complete programs, not only changed hunks, for remaining
@@ -940,9 +940,9 @@ remaining performance, resource, documentation, and build risks.
 - README, installed headers, build files, and implementation describe the same
   final API.
 
-**Concluding `GUIDELINES.md` alignment audit and repair:**
+**Concluding `docs/GUIDELINES.md` alignment audit and repair:**
 
-1. Re-read all applicable guidance: root `AGENTS.md`, root `GUIDELINES.md`, and
+1. Re-read all applicable guidance: root `AGENTS.md`, root `docs/GUIDELINES.md`, and
    `zquic/GUIDELINES.md` for the private QUIC integration.
 2. Audit the complete final `zhttp` diff for architecture, static polymorphism,
    naming/layout, allocation/copy behavior, I/O buffering, sharding, lifecycle,
@@ -1000,7 +1000,7 @@ remaining performance, resource, documentation, and build risks.
   -M` is the native MSYS2 path (`--build=x86_64-w64-mingw32`), not a Linux
   cross-build path.  MinGW compilation therefore remains an environment gate,
   not an HTTP source failure.
-- The concluding root `AGENTS.md`/`GUIDELINES.md` and
+- The concluding root `AGENTS.md`/`docs/GUIDELINES.md` and
   `zquic/GUIDELINES.md` audit repaired the release-only qlog alias warning,
   the release-only `h3Enabled` warning, and the diagnostic-only matrix row.
   It reconfirmed static polymorphism, owner-thread buffer use, no added

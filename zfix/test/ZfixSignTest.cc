@@ -16,6 +16,11 @@
 #include <zlib/ZfixRaw.hh>
 #include <zlib/ZfixTx.hh>
 
+using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
+  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+
+#include "ZfixTxImageTest.hh"
+
 using namespace ZuTestUtil;
 using namespace Zfix;
 using namespace Zfix::Fmt;
@@ -70,19 +75,21 @@ struct HmacSign {
   mutable const TxBody *body = nullptr;
   mutable TxContext context;
 
-  template <typename S>
-  void signMsg(S &out, const TxBody *b, TxContext c, ZuCSpan input) const {
-    ++calls; covered = input; body = b; context = c;
+  template <typename S, typename Message>
+  void signMsg(S &out, const TxBody *b, TxContext c, const Message &input) const {
+    ++calls; covered.null(); body = b; context = c;
+    Ztls::HMAC<> hmac; hmac.start(ZuBSpan{"secret"});
+    input.each([this, &hmac](ZuCSpan span) { covered << span; hmac.update(ZuBSpan{span}); });
     uint8_t digest[Ztls::HMAC<>::Size]; // SHA-256's fixed digest extent
-    mac(input, digest);
+    hmac.finish(digest);
     saveBinary<SigField>(out, digest);
   }
 };
 struct Disabled : HmacSign { enum { SignMsg = 0 }; };
 struct FailSign : NoSign {
   enum { SignMsg = 1 };
-  template <typename S>
-  void signMsg(S &out, const TxBody *, TxContext, ZuCSpan) const {
+  template <typename S, typename Message>
+  void signMsg(S &out, const TxBody *, TxContext, const Message &) const {
     out.fail(ErrorCode::Output); out << "ignored";
   }
 };
@@ -120,7 +127,7 @@ static void signing()
   ZuCheck(restored && !error && restored->body() == body->body());
   HmacSign signer;
   TxContext finalContext = context();
-  auto wire = txFrame(*restored, config(), finalContext, error, {}, signer);
+  auto wire = testFrame(*restored, config(), finalContext, error, {}, signer);
   ZuCheck(wire && !error && signer.calls == 1 && signer.covered == Covered);
   ZuCheck(signer.body == restored.ptr() && signer.context.epoch == 3 &&
     signer.context.connection == 4 && signer.context.seqNo == 7 && !signer.context.replay);
@@ -138,10 +145,10 @@ static void signing()
   auto copy = indexed.ctor();
   ZuCheck(indexed.valid() && copy.signature.data() == received.signature.data());
   auto raw = RawOutput::encode(body, config(), finalContext, error, {}, signer);
-  ZuCheck(raw && !error && signer.calls == 2 && verify(frame(raw->frame()->cspan()).view));
+  ZuCheck(raw && !error && signer.calls == 2 && verify(frame(testBytes(raw->frame())->cspan()).view));
   if (!raw) return;
-  auto direct = RawOutput::fromFrame(body, finalContext, raw->frame(), error);
-  ZuCheck(direct && signer.calls == 2 && direct->frame().ptr() == raw->frame().ptr());
+  auto direct = RawOutput::fromFrame(body, finalContext, testBytes(raw->frame()), error);
+  ZuCheck(direct && signer.calls == 2 && testBytes(direct->frame())->cspan() == testBytes(raw->frame())->cspan());
 
   Text supplied{Body};
   auto scratch = ZtScratch(PrintBuf, wire->length);
@@ -151,14 +158,14 @@ static void signing()
   auto conflict = TxBody::restore<Entry>(pair.data(), 42, error);
   ZuCheck(!conflict && error.code == ErrorCode::Reserved && error.tag == 93);
   error = {};
-  auto unsignedWire = txFrame(*body, config(), context(), error);
+  auto unsignedWire = testFrame(*body, config(), context(), error);
   ZuCheck(!unsignedWire && error.code == ErrorCode::Required && error.tag == 93);
   error = {};
-  auto failed = txFrame(*body, config(), context(), error, {}, FailSign{});
+  auto failed = testFrame(*body, config(), context(), error, {}, FailSign{});
   ZuCheck(!failed && error.code == ErrorCode::Output);
   error = {};
   Limits limits; limits.fieldBytes = 20;
-  failed = txFrame(*body, config(), context(), error, limits, signer);
+  failed = testFrame(*body, config(), context(), error, limits, signer);
   ZuCheck(!failed && error.code == ErrorCode::Size && error.tag == 89);
 
   // A standalone writer invokes the identical hook before 8/9/10 finalization.
@@ -213,56 +220,56 @@ using OptSig = ZfField(OptionalSigned, signature);
 struct VariableSign {
   enum { SignMsg = 1 };
   ZuBSpan value;
-  template <typename S>
-  void signMsg(S &out, const TxBody *, TxContext, ZuCSpan) const { saveBinary<OptSig>(out, value); }
+  template <typename S, typename Message>
+  void signMsg(S &out, const TxBody *, TxContext, const Message &) const { saveBinary<OptSig>(out, value); }
 };
 static void policies()
 {
-  ZuTestScope(policies);
+  ZuTestScopeRT(policies);
   Error error;
   OptionalSigned object{"abc", ZuBSpan{"stale"}};
   auto body = TxBody::encode<OptEntry>(object, 1, error);
-  ZuCheck(body && body->body() == "11=abc\1");
+  ZuCheckRT(body && body->body() == "11=abc\1");
   Disabled disabled;
-  auto wire = txFrame(*body, config(), context(), error, {}, disabled);
-  ZuCheck(wire && !error && !disabled.calls && object.signature == ZuBSpan{"stale"});
+  auto wire = testFrame(*body, config(), context(), error, {}, disabled);
+  ZuCheckRT(wire && !error && !disabled.calls && object.signature == ZuBSpan{"stale"});
   MessageHandler<OptionalSigned> input{frame(wire->cspan()).view};
   auto received = input.ctor();
-  ZuCheck(input.valid() && !received.signature.length());
+  ZuCheckRT(input.valid() && !received.signature.length());
   for (auto payload : {ZuCSpan{""_z}, ZuCSpan{"\0\1\xff"_z},
       ZuCSpan{"variable signature bytes"_z}}) {
     VariableSign signer{ZuBSpan{payload}};
-    wire = txFrame(*body, config(), context(), error, {}, signer);
-    ZuCheck(wire && !error);
+    wire = testFrame(*body, config(), context(), error, {}, signer);
+    ZuCheckRT(wire && !error);
     if (!wire) continue;
     auto parsed = frame(wire->cspan());
     MessageHandler<OptionalSigned> signedInput{parsed.view};
     auto value = signedInput.ctor();
-    ZuCheck(signedInput.valid() && value.signature == ZuBSpan{payload});
+    ZuCheckRT(signedInput.valid() && value.signature == ZuBSpan{payload});
     FieldPos pos;
-    ZuCheck(!inspect<OptionalSigned>(parsed.view.content, 6090, pos));
-    ZuCheck(value.signature.data() == reinterpret_cast<const uint8_t *>(
+    ZuCheckRT(!inspect<OptionalSigned>(parsed.view.content, 6090, pos));
+    ZuCheckRT(value.signature.data() == reinterpret_cast<const uint8_t *>(
       parsed.view.content.data() + pos.offset));
   }
   // A signature larger than the initial pooled output forces sink relocation.
   ZtArray<uint8_t, ZtArrayHeapID<"Zfix.SignGrowth">> large;
-  large.length(ZiIOBufAlloc<>::Size + 1);
+  large.length(LocalBuf::Size + 1);
   memset(large.data(), 0x01, large.length());
   VariableSign signer{ZuBSpan{large}};
-  wire = txFrame(*body, config(), context(), error, {}, signer);
-  ZuCheck(wire && !error);
+  wire = testFrame(*body, config(), context(), error, {}, signer);
+  ZuCheckRT(wire && !error);
   if (wire) {
     auto parsed = frame(wire->cspan());
     MessageHandler<OptionalSigned> input{parsed.view};
     auto value = input.ctor();
     FieldPos pos;
-    ZuCheck(input.valid() && value.signature == ZuBSpan{large});
-    ZuCheck(!inspect<OptionalSigned>(parsed.view.content, 6090, pos));
-    ZuCheck(value.signature.data() == reinterpret_cast<const uint8_t *>(
+    ZuCheckRT(input.valid() && value.signature == ZuBSpan{large});
+    ZuCheckRT(!inspect<OptionalSigned>(parsed.view.content, 6090, pos));
+    ZuCheckRT(value.signature.data() == reinterpret_cast<const uint8_t *>(
       parsed.view.content.data() + pos.offset));
     Limits limit; limit.frameBytes = wire->length - 1;
     error = {};
-    ZuCheck(!txFrame(*body, config(), context(), error, limit, signer) && bool(error));
+    ZuCheckRT(!testFrame(*body, config(), context(), error, limit, signer) && bool(error));
   }
 }
 
@@ -294,8 +301,8 @@ struct Engine : Zfix::Tx<Engine>, HmacSign {
     return c;
   }
   Engine() : Zfix::Tx<Engine>{config()} { }
-  template <typename S>
-  void signMsg(S &out, const TxBody *body, TxContext c, ZuCSpan message) const {
+  template <typename S, typename Message>
+  void signMsg(S &out, const TxBody *body, TxContext c, const Message &message) const {
     HmacSign::signMsg(out, body, c, message);
     if (fail) out.fail(ErrorCode::Output);
   }
@@ -303,7 +310,8 @@ struct Engine : Zfix::Tx<Engine>, HmacSign {
   ZuDateTime utcTx() { return now; }
   unsigned loadTx(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
   bool unloadTx(TxBody::Ref, TxContext, uint64_t) { return true; }
-  bool frameTx(TxBody::Ref body, TxContext c, ZmRef<ZiIOBuf> wire, ZuDateTime original) {
+  bool frameTx(TxBody::Ref body, TxContext c, TxImage image, ZuDateTime original) {
+    auto wire = testBytes(image);
     if (!c.replay) history.push(TxHistory{body, original, c.epoch, c.seqNo});
     output.push(Published{ZuMv(body), c, ZuMv(wire), original});
     return true;
@@ -393,7 +401,7 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   using MessageCatalog = MTList<Entry>;
   Owner *owner;
   PostedState posted;
-  Values<ZmRef<ZiIOBuf>> records;
+  Values<TestTxRecord> records;
   Values<RawOutput::Ref> outputs;
   unsigned faults = 0;
   mutable bool onTx = true;
@@ -405,17 +413,25 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   WorkState workState_() const { return {}; }
   bool txPost_(uint64_t bytes) { posted.bytes += bytes; ++posted.count; return true; }
   void txUnpost_(uint64_t bytes) { posted.bytes -= bytes; --posted.count; }
-  template <typename S>
-  void signMsg(S &out, const TxBody *body, TxContext c, ZuCSpan message) const {
+  template <typename S, typename Message>
+  void signMsg(S &out, const TxBody *body, TxContext c, const Message &message) const {
     onTx &= owner->txInvoked();
     HmacSign::signMsg(out, body, c, message);
   }
   WireGeometry fixGeometryTx() const { return {}; }
+  bool fixSendRangeTx(Zi::RxRange source, ZmRef<WireBuf> wire) {
+    wire->append(source.cspan());
+    return fixSendTx(ZuMv(wire));
+  }
   ZmRef<WireBuf> fixAllocTx(unsigned head) {
-    ZmRef<WireBuf> b = new WireBufAlloc<>; b->skip = head; return b;
+    ZmRef<WireBuf> b = new WireBufAlloc<>{nullptr, 0}; b->skip = head; return b;
   }
   bool fixSendTx(ZmRef<ZiIOBuf> b) {
-    records.push(ZuMv(b)); return true;
+    auto wire = static_cast<WireBuf *>(b.ptr());
+    records.push(TestTxRecord{b, b->skip, b->length, wire->token, wire->part}); return true;
+  }
+  bool fixStartFrameTx(ZmRef<WireQueue::Node> node) {
+    return testParts(node.ptr(), [this](TestTxRecord r) { records.push(ZuMv(r)); return true; });
   }
   void fixRawSubmittedTx(RawOutput::Ref out, unsigned) { outputs.push(ZuMv(out)); }
   void fixRawFaultTx(uint64_t, Error) { ++faults; }
@@ -444,15 +460,20 @@ static void rawOwner()
   ZuCheck(link->onTx && link->calls == 1 && !link->posted.count && !link->posted.bytes);
   ZuCheck(link->outputs.length() == 1 && !link->faults);
   auto output = link->outputs[0];
-  ZuCheck(verify(frame(output->frame()->cspan()).view) && link->covered == Covered);
+  ZuCheck(verify(frame(testBytes(output->frame())->cspan()).view) && link->covered == Covered);
   owner.rx = false;
   // Transport cursor retries reuse the constructed frame and its signature.
   for (const auto &record : link->records) {
-    auto n = record->length / 2;
-    record->advance(n);
-    ZuCheck((record->cspan() == output->frame()->cspan().offset(n)));
-    ZuCheck(link->calls == 1 && link->outputs[0]->frame().ptr() == output->frame().ptr());
-    link->transportSent(static_cast<WireBuf *>(record.ptr()), true);
+    auto skip = record.buf->skip, length = record.buf->length;
+    ZiTxContext io; io.buf = record.buf;
+    io.buf->skip = record.offset; io.buf->length = record.length;
+    auto n = record.length / 2;
+    io.buf->advance(n);
+    ZuCheck(io.buf->cspan() == record.cspan().offset(n));
+    ZuCheck(testBytes(output->frame())->length == output->frame().length());
+    io.buf->skip = skip; io.buf->length = length;
+    ZuCheck(link->calls == 1 && link->outputs[0]->frame().metadata == output->frame().metadata);
+    link->transportSent(record.token, record.part, true);
   }
   owner.rx = true; owner.drain();
   ZuCheck(link->calls == 1);
@@ -487,7 +508,7 @@ static void componentSignature()
   Indexed<ComponentSigned, ZuFacet::FIX> indexed{body->body()};
   ZuCheck(indexed.template check<ArchiveField>());
   HmacSign signer;
-  auto wire = txFrame(*body, config(), context(), error, {}, signer);
+  auto wire = testFrame(*body, config(), context(), error, {}, signer);
   ZuCheck(wire && !error);
   if (!wire) return;
   auto parsed = frame(wire->cspan());
@@ -499,7 +520,7 @@ static void componentSignature()
   ZuCheck(value.part->signature.data() == reinterpret_cast<const uint8_t *>(
     parsed.view.content.data() + pos.offset));
   error = {};
-  auto unsignedFrame = txFrame(*body, config(), context(), error);
+  auto unsignedFrame = testFrame(*body, config(), context(), error);
   ZuCheck(!unsignedFrame && error.code == ErrorCode::Required);
 }
 
@@ -525,8 +546,8 @@ OptionalPartFields ZuFields_(OptionalPartSigned *, ZuFacet::FIX *);
 using OptionalPartEntry = MT<OptionalPartSigned, "D">;
 struct PartialPartSign : NoSign {
   enum { SignMsg = 1 };
-  template <typename S>
-  void signMsg(S &out, const TxBody *, TxContext, ZuCSpan) const {
+  template <typename S, typename Message>
+  void signMsg(S &out, const TxBody *, TxContext, const Message &) const {
     out.field(22); out << "seen"; out.end();
     saveBinary<SigField>(out, ZuBSpan{"sig"});
   }
@@ -541,10 +562,10 @@ static void optionalComponent()
   if (!body) return;
   auto archive = TxBody::restore<OptionalPartEntry>(body->body(), 1, error);
   ZuCheck(archive && !error);
-  auto unsignedWire = txFrame(*body, config(), context(), error);
+  auto unsignedWire = testFrame(*body, config(), context(), error);
   ZuCheck(unsignedWire && !error);
   HmacSign signer;
-  auto wire = txFrame(*body, config(), context(), error, {}, signer);
+  auto wire = testFrame(*body, config(), context(), error, {}, signer);
   ZuCheck(wire && !error);
   if (!wire) return;
   auto parsed = frame(wire->cspan());
@@ -561,14 +582,14 @@ static void optionalComponent()
   mac({first, uint64_t(last - first)}, digest);
   ZuCheck(value.signature == ZuBSpan{digest} && value.signature.data() ==
     reinterpret_cast<const uint8_t *>(parsed.view.content.data() + signature.offset));
-  auto partial = txFrame(*body, config(), context(), error, {}, PartialPartSign{});
+  auto partial = testFrame(*body, config(), context(), error, {}, PartialPartSign{});
   ZuCheck(!partial && error.code == ErrorCode::Required && error.tag == 21);
   object.part = new RequiredPart;
   object.part->id = "part";
   body = TxBody::encode<OptionalPartEntry>(object, 2, error);
   ZuCheck(body && !error);
   if (!body) return;
-  wire = txFrame(*body, config(), context(), error, {}, signer);
+  wire = testFrame(*body, config(), context(), error, {}, signer);
   ZuCheck(wire && !error);
   if (!wire) return;
   MessageHandler<OptionalPartSigned> present{frame(wire->cspan()).view};
@@ -596,7 +617,7 @@ static void constructorValidation()
   ZuCheck(body && !error);
   if (!body) return;
   HmacSign signer;
-  auto wire = txFrame(*body, config(), context(), error, {}, signer);
+  auto wire = testFrame(*body, config(), context(), error, {}, signer);
   ZuCheck(wire && !error);
   if (!wire) return;
   MessageHandler<CtorSigned> input{frame(wire->cspan()).view};
@@ -607,15 +628,18 @@ static void constructorValidation()
   auto malformed = missing.finish(error, signer, body.ptr(), context());
   ZuCheck(malformed && !error);
   if (!malformed) return;
-  auto parsed = frame(malformed->cspan());
+  auto malformedBytes = testBytes(malformed);
+  auto parsed = frame(malformedBytes->cspan());
   MessageHandler<CtorSigned> rejected{parsed.view};
   auto absent = rejected.ctor();
   (void)absent;
   ZuCheck(!rejected.valid() && rejected.error().code == ErrorCode::Required &&
     rejected.error().tag == 21);
-  auto check = body->validate(parsed.view, {});
+  auto offset = unsigned(parsed.view.content.data() - parsed.view.wire.data());
+  auto check = body->validate(TxFrame_::Check{
+    malformed.view(offset, parsed.view.content.length()), offset}, {});
   ZuCheck(check.code == ErrorCode::Required && check.tag == 21);
-  auto output = RawOutput::fromFrame(body, context(), malformed, error);
+  auto output = RawOutput::fromFrame(body, context(), malformedBytes, error);
   ZuCheck(!output && error.code == ErrorCode::Required && error.tag == 21);
 }
 
@@ -652,7 +676,7 @@ static void configuredGroups()
     body->body().find("34=99\1"_z) >= 0);
   if (!body) return;
   HmacSign signer;
-  auto wire = txFrame(*body, config(), context(), error, {}, signer);
+  auto wire = testFrame(*body, config(), context(), error, {}, signer);
   ZuCheck(wire && !error);
   if (!wire) return;
   auto storage = ZtScratch(PrintBuf, wire->length);

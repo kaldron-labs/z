@@ -11,36 +11,37 @@
 using namespace ZuTestUtil;
 using namespace ZfixLoad;
 static void order(unsigned parties, unsigned subs, unsigned text) {
-  ZuTestScope(order);
+  ZuTestScopeRT(order);
   Model model{{parties, subs, text}, 42}; const auto &o = model.next(1001,
     ZuDateTime{Zm::now()});
-  auto wire = frame<NewOrder>(o); auto parsed = Zfix::Fmt::frame(wire);
-  ZuCheck(parsed.state == Zfix::Fmt::FrameState::Complete);
+  auto wire = frame<NewOrder>(o); auto parsed = Zfix::Fmt::frame(ZuCSpan{wire->cspan()});
+  ZuCheckRT(parsed.state == Zfix::Fmt::FrameState::Complete);
   Zfix::RxMsg input; input.frame = parsed.view;
-  ZuCheck(!Zfix::catalogSession<Dictionary>(input));
+  ZuCheckRT(!Zfix::catalogSession<Dictionary>(input));
   unsigned calls = 0;
   auto error = Zfix::dispatch<Dictionary>(parsed.view,
     [&o, &calls, &input, parties, subs](auto *entry, const auto &value) -> Zfix::Fmt::Error {
       using E = ZuDecay<decltype(*entry)>;
       if constexpr (ZuIsSame<E, NewOrder>{}) {
 	++calls;
-	  ZuCheck(valid(value) && value.key == o.key && value.qty == o.qty
+	  ZuCheckRT(valid(value) && value.key == o.key && value.qty == o.qty
 	  && value.price == o.price);
-	ZuCheck(value.time == o.time && value.text == o.text
+	ZuCheckRT(value.time == o.time && value.text == o.text
 	  && input.seqNo == 2);
-	ZuCheck(value.parties.length() == parties);
-	if (parties) ZuCheck(value.parties[parties - 1].subs.length() == subs);
-      } else ZuCheck(false);
+	ZuCheckRT(value.parties.length() == parties);
+	if (parties) ZuCheckRT(value.parties[parties - 1].subs.length() == subs);
+      } else ZuCheckRT(false);
       return {};
     });
-  ZuCheck(!error && calls == 1);
+  ZuCheckRT(!error && calls == 1);
 }
 static void reports() {
   ZuTestScope(reports);
   Model model{{0, 0, 20}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
   auto ack = report(o, 17, "0"), fill = report(o, 18, "F");
   auto a = frame<Ack>(ack), f = frame<Fill>(fill);
-  Zfix::Fmt::MessageHandler<Report> ad{Zfix::Fmt::frame(a).view}, fd{Zfix::Fmt::frame(f).view};
+  Zfix::Fmt::MessageHandler<Report> ad{Zfix::Fmt::frame(ZuCSpan{a->cspan()}).view},
+    fd{Zfix::Fmt::frame(ZuCSpan{f->cspan()}).view};
   auto av = ad.ctor(), fv = fd.ctor();
   ZuCheck(ad.valid() && fd.valid() && matches(av, o) && matches(fv, o));
   ZuCheck(av.exec == 17 && fv.exec == 18);
@@ -52,8 +53,8 @@ static void changes() {
   Cancel cancel{1001, o.key, "ZFIX", "1", o.time, o.qty};
   Replace replace{Order{o}, 1001};
   auto c = frame<CancelOrder>(cancel), g = frame<ReplaceOrder>(replace);
-  Zfix::Fmt::MessageHandler<Cancel> cd{Zfix::Fmt::frame(c).view};
-  Zfix::Fmt::MessageHandler<Replace> gd{Zfix::Fmt::frame(g).view};
+  Zfix::Fmt::MessageHandler<Cancel> cd{Zfix::Fmt::frame(ZuCSpan{c->cspan()}).view};
+  Zfix::Fmt::MessageHandler<Replace> gd{Zfix::Fmt::frame(ZuCSpan{g->cspan()}).view};
   auto cv = cd.ctor(); auto gv = gd.ctor();
   ZuCheck(cd.valid() && gd.valid() && cv.key == 1002 && cv.original == 1001 &&
     gv.original == 1001 && gv.order.key == 1002 && gv.order.price == o.price);
@@ -61,9 +62,9 @@ static void changes() {
   auto replaced = report(o, 22, "5", 1001, 1001);
   auto filled = report(o, 23, "F", 1001, 1001);
   auto cw = frame<Canceled>(canceled), rw = frame<Replaced>(replaced), fw = frame<Fill>(filled);
-  Zfix::Fmt::MessageHandler<Report> cr{Zfix::Fmt::frame(cw).view};
-  Zfix::Fmt::MessageHandler<Report> rr{Zfix::Fmt::frame(rw).view};
-  Zfix::Fmt::MessageHandler<Report> fr{Zfix::Fmt::frame(fw).view};
+  Zfix::Fmt::MessageHandler<Report> cr{Zfix::Fmt::frame(ZuCSpan{cw->cspan()}).view};
+  Zfix::Fmt::MessageHandler<Report> rr{Zfix::Fmt::frame(ZuCSpan{rw->cspan()}).view};
+  Zfix::Fmt::MessageHandler<Report> fr{Zfix::Fmt::frame(ZuCSpan{fw->cspan()}).view};
   auto a = cr.ctor(), b = rr.ctor(), d = fr.ctor();
   ZuCheck(cr.valid() && rr.valid() && fr.valid() && matches(a, o) && matches(b, o) &&
     matches(d, o) && a.original == 1001 && b.original == 1001 && d.original == 1001 &&
@@ -74,7 +75,7 @@ static void scalarReport() {
   ZuTestScope(scalarReport);
   Model model{{}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
   auto wire = frame<Ack>(report(o, 17, "0"));
-  auto parsed = Zfix::Fmt::frame(wire);
+  auto parsed = Zfix::Fmt::frame(ZuCSpan{wire->cspan()});
   Zfix::RxMsg input; input.frame = parsed.view;
   ZuCheck(parsed.state == Zfix::Fmt::FrameState::Complete &&
     !Zfix::catalogSession<Dictionary>(input));
@@ -98,8 +99,8 @@ static void scalarReport() {
 static void absentOriginal() {
   ZuTestScope(absentOriginal);
   Model model{{}}; const auto &o = model.next(1001, ZuDateTime{Zm::now()});
-  Text storage;
-  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, &storage};
+  ZmRef<ZiIOBuf> storage = new FrameAlloc{nullptr, 0};
+  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, storage.ptr()};
   auto &out = writer.body();
   out.field(35); out << '8'; out.end();
   out.field(49); out << "ZFIX-S"; out.end();

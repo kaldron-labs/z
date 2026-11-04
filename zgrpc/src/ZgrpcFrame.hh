@@ -54,8 +54,10 @@ public:
   // span in a bounded scheduler turn. A supplied backing must keep this slice
   // immutable until all returned Frame references are released. Without backing,
   // even a contiguous payload is copied into a consumer-owned pooled buffer.
+  // exclusive permits consuming backing metadata for final fragmented assembly;
+  // callers grant it only when no other reader retains any part of that buffer.
   FrameResult::T feed(ZuBSpan, ZmRef<ZiIOBuf>, unsigned &used, Frame &,
-    unsigned budget = UINT_MAX);
+    unsigned budget = UINT_MAX, bool exclusive = false);
   bool end();
   bool failed() const { return m_error != FrameError::OK; }
   FrameError::T error() const { return m_error; }
@@ -89,6 +91,10 @@ ZmRef<ZiIOBuf> encodeFrame(ZmRef<ZiIOBuf> buf, unsigned tailRoom,
   if (reserve > INT_MAX) { error = FrameError::Limit; return nullptr; }
   uint64_t maxSize = reserve + limit;
   if (maxSize > INT_MAX) maxSize = INT_MAX;
+  // Exclude the envelope from the backwards protobuf arena before encoding.
+  // Detach leaves these five bytes available immediately ahead of the body.
+  if (!buf->ensure(PrefixSize + tailRoom)) { error = FrameError::Limit; return nullptr; }
+  buf->skip += PrefixSize;
   Zpb::IOBuilder builder{ZuMv(buf), unsigned(maxSize), tailRoom};
   auto bytes = Zpb::save<Facet>(builder, object);
   if (builder.failed()) {
@@ -98,10 +104,11 @@ ZmRef<ZiIOBuf> encodeFrame(ZmRef<ZiIOBuf> buf, unsigned tailRoom,
   auto length = bytes.length();
   if (length > limit) { error = FrameError::Limit; return nullptr; }
   ZuFwd<Sign>(sign)(bytes);
-  auto prefix = builder.push(PrefixSize);
-  if (builder.failed()) { error = FrameError::Limit; return nullptr; }
-  framePrefix(prefix, length);
-  return builder.buf();
+  auto output = builder.buf();
+  output->skip -= PrefixSize;
+  output->length += PrefixSize;
+  framePrefix(output->data(), length);
+  return output;
 }
 
 } // Zgrpc

@@ -29,8 +29,8 @@ namespace ZtcTestClient {
 
 using Ring = Ztc::Ring;
 
-using Frame = ZiIOBufAlloc<1024,
-  Ztc::AppCf::DefltMaxFrame, "Ztc.TestClient.Frame">;
+using Frame =
+  Zi::IOBufAlloc<ZiIOBuf, 1024, Ztc::AppCf::DefltMaxFrame, ZuStringT<"Ztc.TestClient.Frame">>;
 
 inline ZmRef<ZiIOBuf> request(
     uint64_t seqNo, Ztc::Group::T group, ZuCSpan filter,
@@ -38,7 +38,7 @@ inline ZmRef<ZiIOBuf> request(
     uint32_t alertDate = 0, uint64_t alertSeqNo = 0,
     ZuCSpan id = {})
 {
-  Ztc::Builder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame})};
+  Ztc::Builder fbb{Ztc::frameBuf(ZmRef<ZiIOBuf>{new Frame{nullptr, 0}})};
   auto nested = fbb.startNested();
   Ztc::Request data;
   data.filter = filter;
@@ -111,7 +111,7 @@ public:
 	continue;
       }
       unsigned size = Ztc::ringSize(ptr);
-      ZmRef<ZiIOBuf> frame = new Frame;
+      ZmRef<ZiIOBuf> frame = new Frame{nullptr, 0};
       if (size <= Ztc::AppCf::DefltMaxFrame) {
 	frame->alloc(size);
 	memcpy(frame->data(), ptr, size);

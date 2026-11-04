@@ -111,7 +111,8 @@ static void run()
 
   try {
     auto cfFields = ZfCf::handler<zdbtest::ConfigFields>(cf).ctor();
-    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())};
+    mx = new ZiMultiplex{ZvMxParams("mx", cfFields.mx.p<const ZfCf::AnyNode *>())
+    .tcpBufAllocator<Zdb_::RxBufAllocator>()};
 
     if (!mx->start()) throw ZeEXCEPT(Fatal, "zdbreptest2", "multiplexer start failed");
 
@@ -289,8 +290,6 @@ static void run()
     for (unsigned i = 0; i < 2; i++)
       db[i]->stop();
 
-    mx->stop();
-
     // ZiLOG(Debug, "zdbreptest2", (ZeString{} << '\n' << Ztc::hashCSV()));
 
     for (unsigned i = 0; i < 2; i++) {
@@ -299,6 +298,8 @@ static void run()
       db[i] = {};
       store[i] = {};
     }
+    ZuCHECK(mx->running(), "DB/table allocator owners retire before multiplexer stop");
+    mx->stop();
 
   } catch (ZeException &e) {
     ZiLogEvent(ZuMv(e));

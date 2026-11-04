@@ -55,6 +55,10 @@ struct State {
 ZiMxParams mxParams()
 {
   return ZiMxParams()
+    .udpBufAllocator<Zquic::PktRxBufAllocator<>>()
+    .tcpBufAllocator<Zi::RxTLSBufAllocator<
+      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
+      ZuStringT<"Zhttp.Net.Rx">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -103,68 +107,68 @@ void sendMsg(Stream &stream, State &state, int event, ZuCSpan data)
 
 void checkTrace(State &state)
 {
-  ZuTestScope(checkTrace);
+  ZuTestScopeRT(checkTrace);
 
   auto &trace = state.trace;
-  ZuCHECK(!state.errors.load_(), "lifecycle transport error");
-  ZuCHECK(trace.count(LifeEvt::Init) == 1, "init event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::Start) == 1, "start event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::CliConnect) == 1,
-    "client connect event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::CliConnected) == 1,
-    "client connected event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::SrvConnected) == 1,
-    "server connected event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::CliTxReady) == 1,
-    "client Tx readiness event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::CliSend) == 1,
-    "client send event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::SrvTxReady) == 1,
-    "server Tx readiness event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::CliProcess) == 1,
-    "client process event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::SrvProcess) == 1,
-    "server process event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::SrvSend) == 1,
-    "server send event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::CliDisconnected) == 1,
-    "client disconnected event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::SrvDisconnected) == 1,
-    "server disconnected event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::Stop) == 1, "stop event count mismatch");
-  ZuCHECK(trace.count(LifeEvt::Final) == 1, "final event count mismatch");
-  ZuCHECK(trace.before(LifeEvt::Init, LifeEvt::Start),
-    "hub started before initialization");
-  ZuCHECK(trace.before(LifeEvt::Start, LifeEvt::CliConnected),
-    "client connected before hub start");
-  ZuCHECK(trace.before(LifeEvt::Start, LifeEvt::CliConnect),
-    "client connect attempted before hub start");
-  ZuCHECK(trace.before(LifeEvt::CliConnect, LifeEvt::CliConnected),
-    "client connected before connect attempt");
-  ZuCHECK(trace.before(LifeEvt::Start, LifeEvt::SrvConnected),
-    "server connected before hub start");
-  ZuCHECK(trace.before(LifeEvt::CliConnected, LifeEvt::CliTxReady),
-    "client Tx stream acquired before connected");
-  ZuCHECK(trace.before(LifeEvt::CliTxReady, LifeEvt::CliSend),
-    "client sent before Tx stream readiness");
-  ZuCHECK(trace.before(LifeEvt::SrvConnected, LifeEvt::SrvTxReady),
-    "server Tx stream acquired before connected");
-  ZuCHECK(trace.before(LifeEvt::SrvTxReady, LifeEvt::SrvProcess),
-    "server processed before Tx stream readiness");
-  ZuCHECK(trace.before(LifeEvt::SrvProcess, LifeEvt::SrvSend),
-    "server sent before processing initial message");
-  ZuCHECK(trace.before(LifeEvt::SrvSend, LifeEvt::CliProcess),
-    "client processed before server response");
-  ZuCHECK(trace.before(LifeEvt::CliProcess, LifeEvt::CliDisconnected),
-    "client disconnected before processing response");
-  ZuCHECK(trace.before(LifeEvt::SrvProcess, LifeEvt::SrvDisconnected),
-    "server disconnected before processing request");
-  ZuCHECK(trace.before(LifeEvt::CliDisconnected, LifeEvt::Stop),
-    "client connection remained live at stop");
-  ZuCHECK(trace.before(LifeEvt::SrvDisconnected, LifeEvt::Stop),
-    "server connection remained live at stop");
-  ZuCHECK(trace.before(LifeEvt::Stop, LifeEvt::Final),
-    "hub finalized before stop");
+  ZuCheckRT(!state.errors.load_(), log_("lifecycle transport error"));
+  ZuCheckRT(trace.count(LifeEvt::Init) == 1, log_("init event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::Start) == 1, log_("start event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::CliConnect) == 1,
+    log_("client connect event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::CliConnected) == 1,
+    log_("client connected event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::SrvConnected) == 1,
+    log_("server connected event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::CliTxReady) == 1,
+    log_("client Tx readiness event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::CliSend) == 1,
+    log_("client send event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::SrvTxReady) == 1,
+    log_("server Tx readiness event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::CliProcess) == 1,
+    log_("client process event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::SrvProcess) == 1,
+    log_("server process event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::SrvSend) == 1,
+    log_("server send event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::CliDisconnected) == 1,
+    log_("client disconnected event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::SrvDisconnected) == 1,
+    log_("server disconnected event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::Stop) == 1, log_("stop event count mismatch"));
+  ZuCheckRT(trace.count(LifeEvt::Final) == 1, log_("final event count mismatch"));
+  ZuCheckRT(trace.before(LifeEvt::Init, LifeEvt::Start),
+    log_("hub started before initialization"));
+  ZuCheckRT(trace.before(LifeEvt::Start, LifeEvt::CliConnected),
+    log_("client connected before hub start"));
+  ZuCheckRT(trace.before(LifeEvt::Start, LifeEvt::CliConnect),
+    log_("client connect attempted before hub start"));
+  ZuCheckRT(trace.before(LifeEvt::CliConnect, LifeEvt::CliConnected),
+    log_("client connected before connect attempt"));
+  ZuCheckRT(trace.before(LifeEvt::Start, LifeEvt::SrvConnected),
+    log_("server connected before hub start"));
+  ZuCheckRT(trace.before(LifeEvt::CliConnected, LifeEvt::CliTxReady),
+    log_("client Tx stream acquired before connected"));
+  ZuCheckRT(trace.before(LifeEvt::CliTxReady, LifeEvt::CliSend),
+    log_("client sent before Tx stream readiness"));
+  ZuCheckRT(trace.before(LifeEvt::SrvConnected, LifeEvt::SrvTxReady),
+    log_("server Tx stream acquired before connected"));
+  ZuCheckRT(trace.before(LifeEvt::SrvTxReady, LifeEvt::SrvProcess),
+    log_("server processed before Tx stream readiness"));
+  ZuCheckRT(trace.before(LifeEvt::SrvProcess, LifeEvt::SrvSend),
+    log_("server sent before processing initial message"));
+  ZuCheckRT(trace.before(LifeEvt::SrvSend, LifeEvt::CliProcess),
+    log_("client processed before server response"));
+  ZuCheckRT(trace.before(LifeEvt::CliProcess, LifeEvt::CliDisconnected),
+    log_("client disconnected before processing response"));
+  ZuCheckRT(trace.before(LifeEvt::SrvProcess, LifeEvt::SrvDisconnected),
+    log_("server disconnected before processing request"));
+  ZuCheckRT(trace.before(LifeEvt::CliDisconnected, LifeEvt::Stop),
+    log_("client connection remained live at stop"));
+  ZuCheckRT(trace.before(LifeEvt::SrvDisconnected, LifeEvt::Stop),
+    log_("server connection remained live at stop"));
+  ZuCheckRT(trace.before(LifeEvt::Stop, LifeEvt::Final),
+    log_("hub finalized before stop"));
 }
 
 struct TCPClient : public Ztcp::Client<TCPClient> {
@@ -242,7 +246,6 @@ ZiConnection *TCPServer::accepted(const ZiCxnInfo &ci)
 }
 
 struct TLSClient : public Ztls::Client<TLSClient> {
-  using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
   struct Link;
 
@@ -253,8 +256,8 @@ struct TLSClient : public Ztls::Client<TLSClient> {
 };
 
 struct TLSClient::Link :
-  public Ztls::CliLink<TLSClient, Link, RxBufAlloc, TxBufAlloc> {
-  using Base = Ztls::CliLink<TLSClient, Link, RxBufAlloc, TxBufAlloc>;
+  public Ztls::CliLink<TLSClient, Link, TxBufAlloc> {
+  using Base = Ztls::CliLink<TLSClient, Link, TxBufAlloc>;
 
   Link(TLSClient *app) : Base{app} { }
 
@@ -277,7 +280,6 @@ struct TLSClient::Link :
 };
 
 struct TLSServer : public Ztls::Server<TLSServer> {
-  using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
   struct Link;
 
@@ -294,8 +296,8 @@ struct TLSServer : public Ztls::Server<TLSServer> {
 };
 
 struct TLSServer::Link :
-  public Ztls::SrvLink<TLSServer, Link, RxBufAlloc, TxBufAlloc> {
-  using Base = Ztls::SrvLink<TLSServer, Link, RxBufAlloc, TxBufAlloc>;
+  public Ztls::SrvLink<TLSServer, Link, TxBufAlloc> {
+  using Base = Ztls::SrvLink<TLSServer, Link, TxBufAlloc>;
 
   Link(TLSServer *app) : Base{app} { }
 
@@ -455,13 +457,13 @@ void runH1(
   ClientParams cliParams, ServerParams srvParams,
   State &state)
 {
-  ZuTestScope(runH1);
+  ZuTestScopeRT(runH1);
 
   Client client{&state};
   Server server{&state};
   bool serverInit = server.init(ZuMv(srvParams));
   bool clientInit = client.init(ZuMv(cliParams));
-  ZuCHECK(serverInit && clientInit, "hub initialization failed");
+  ZuCheckRT(serverInit && clientInit, log_("hub initialization failed"));
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -471,7 +473,7 @@ void runH1(
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "hub start failed");
+  ZuCheckRT(serverStart && clientStart, log_("hub start failed"));
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -483,7 +485,7 @@ void runH1(
 
   server.listen();
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "server listen timed out");
+  ZuCheckRT(listening, log_("server listen timed out"));
 
   ZmRef<typename Client::Link> link;
   if (listening) {
@@ -491,35 +493,35 @@ void runH1(
     state.trace.push(LifeEvt::CliConnect);
     link->connect("127.0.0.1", state.port);
     bool done = state.done.timedwait(Zm::now(10)) == 0;
-    ZuCHECK(done, "message lifecycle timed out");
+    ZuCheckRT(done, log_("message lifecycle timed out"));
     if (!done) state.fail();
   }
 
   server.stopListening();
   bool clientStopped = client.stop();
   bool serverStopped = server.stop();
-  ZuCHECK(clientStopped && serverStopped, "hub stop failed");
+  ZuCheckRT(clientStopped && serverStopped, log_("hub stop failed"));
   state.trace.push(LifeEvt::Stop);
   link = nullptr;
   client.final();
   server.final();
   state.trace.push(LifeEvt::Final);
-  if (listening) checkTrace(state);
+  if (listening) ZuTestCallRT(checkTrace, state);
 }
 
 void testTCP()
 {
-  ZuTestScope(testTCP);
+  ZuTestScopeRT(testTCP);
 
   State state;
   state.port = loopbackPort(ZhttpITestPort::Lifecycle);
-  ZuCHECK(state.port, "TCP loopback port allocation failed");
+  ZuCheckRT(state.port, log_("TCP loopback port allocation failed"));
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "TCP multiplexer start failed");
+  ZuCheckRT(mx.start(), log_("TCP multiplexer start failed"));
   if (!mx.running()) return;
-  runH1<TCPClient, TCPServer>(
+  ZuTestCallRT((runH1<TCPClient, TCPServer>),
     Ztcp::ClientParams(&mx, "3", "4"),
     Ztcp::ServerParams(&mx, "3", "4"), state);
   mx.stop();
@@ -527,17 +529,17 @@ void testTCP()
 
 void testTLS(const TempDir &temp)
 {
-  ZuTestScope(testTLS);
+  ZuTestScopeRT(testTLS);
 
   State state;
   state.port = loopbackPort(ZhttpITestPort::Lifecycle + 1);
-  ZuCHECK(state.port, "TLS loopback port allocation failed");
+  ZuCheckRT(state.port, log_("TLS loopback port allocation failed"));
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "TLS multiplexer start failed");
+  ZuCheckRT(mx.start(), log_("TLS multiplexer start failed"));
   if (!mx.running()) return;
-  runH1<TLSClient, TLSServer>(
+  ZuTestCallRT((runH1<TLSClient, TLSServer>),
     Ztls::ClientParams(&mx, "3", "4").hub(
       [&temp](auto &p) { p.caPath(temp.certPath.cspan()); }),
     Ztls::ServerParams(&mx, "3", "4")
@@ -548,15 +550,15 @@ void testTLS(const TempDir &temp)
 
 void testQUIC(const TempDir &temp)
 {
-  ZuTestScope(testQUIC);
+  ZuTestScopeRT(testQUIC);
 
   State state;
   state.port = loopbackPort(ZhttpITestPort::Lifecycle + 2);
-  ZuCHECK(state.port, "QUIC loopback port allocation failed");
+  ZuCheckRT(state.port, log_("QUIC loopback port allocation failed"));
   if (!state.port) return;
 
   ZiMultiplex mx{mxParams()};
-  ZuCHECK(mx.start(), "QUIC multiplexer start failed");
+  ZuCheckRT(mx.start(), log_("QUIC multiplexer start failed"));
   if (!mx.running()) return;
 
   QUICServer server{&state};
@@ -570,7 +572,7 @@ void testQUIC(const TempDir &temp)
     Zquic::ClientParams(&mx, "3", "4")
       .caPath(temp.certPath.cspan()).alpn(ZuSpan<ZuCSpan>{"h3"})
       .maxStreamsDuplex(4).maxStreamsSimplex(4));
-  ZuCHECK(serverInit && clientInit, "QUIC hub initialization failed");
+  ZuCheckRT(serverInit && clientInit, log_("QUIC hub initialization failed"));
   if (!serverInit || !clientInit) {
     if (clientInit) client.final();
     if (serverInit) server.final();
@@ -581,7 +583,7 @@ void testQUIC(const TempDir &temp)
 
   bool serverStart = server.start();
   bool clientStart = client.start();
-  ZuCHECK(serverStart && clientStart, "QUIC hub start failed");
+  ZuCheckRT(serverStart && clientStart, log_("QUIC hub start failed"));
   if (!serverStart || !clientStart) {
     if (clientStart) client.stop();
     if (serverStart) server.stop();
@@ -593,7 +595,7 @@ void testQUIC(const TempDir &temp)
   state.trace.push(LifeEvt::Start);
 
   bool listening = state.listening.timedwait(Zm::now(10)) == 0;
-  ZuCHECK(listening, "QUIC server listen timed out");
+  ZuCheckRT(listening, log_("QUIC server listen timed out"));
 
   ZmRef<QUICClient::Link> link;
   if (listening) {
@@ -601,15 +603,15 @@ void testQUIC(const TempDir &temp)
     state.trace.push(LifeEvt::CliConnect);
     link->connect(Zquic::Host{"127.0.0.1"}, state.port);
     bool done = state.done.timedwait(Zm::now(10)) == 0;
-    ZuCHECK(done, "QUIC message lifecycle timed out");
+    ZuCheckRT(done, log_("QUIC message lifecycle timed out"));
     if (!done) state.fail();
-    ZuCHECK(state.cliClosed.timedwait(Zm::now(10)) == 0,
-      "QUIC client close timed out");
+    ZuCheckRT(state.cliClosed.timedwait(Zm::now(10)) == 0,
+      log_("QUIC client close timed out"));
   }
 
   bool clientStopped = client.stop();
   bool serverStopped = server.stop();
-  ZuCHECK(clientStopped && serverStopped, "QUIC hub stop failed");
+  ZuCheckRT(clientStopped && serverStopped, log_("QUIC hub stop failed"));
   state.trace.push(LifeEvt::Stop);
   link = nullptr;
   server.link = nullptr;
@@ -617,11 +619,11 @@ void testQUIC(const TempDir &temp)
   server.final();
   state.trace.push(LifeEvt::Final);
   if (listening) {
-    checkTrace(state);
-    ZuCHECK(state.trace.count(LifeEvt::H3CliConnected) == 1,
-      "QUIC private client session connected count mismatch");
-    ZuCHECK(state.trace.count(LifeEvt::H3SrvConnected) == 1,
-      "QUIC private server session connected count mismatch");
+    ZuTestCallRT(checkTrace, state);
+    ZuCheckRT(state.trace.count(LifeEvt::H3CliConnected) == 1,
+      log_("QUIC private client session connected count mismatch"));
+    ZuCheckRT(state.trace.count(LifeEvt::H3SrvConnected) == 1,
+      log_("QUIC private server session connected count mismatch"));
   }
   mx.stop();
 }

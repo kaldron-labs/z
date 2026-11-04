@@ -171,14 +171,14 @@ static bool check(
 
 static void continuations()
 {
-  ZuTestScope(continuations);
+  ZuTestScopeRT(continuations);
   const char *connect = getenv("ZDB_CONNECT");
   if (!connect) {
-    ZuCHECK(true, "ZDB_CONNECT not set - skipped");
+    ZuCheckRT(true, log_("ZDB_CONNECT not set - skipped"));
     return;
   }
   PGconn *conn = PQconnectdb(connect);
-  ZuCHECK(PQstatus(conn) == CONNECTION_OK, "connect");
+  ZuCheckRT(PQstatus(conn) == CONNECTION_OK, log_("connect"));
   if (PQstatus(conn) != CONNECTION_OK) {
     PQfinish(conn);
     return;
@@ -188,7 +188,7 @@ static void continuations()
     "a::int8, b::int8, c::int8, d::int8 "
     "FROM generate_series(0, 2) a, generate_series(0, 2) b, "
     "generate_series(0, 2) c, generate_series(0, 2) d");
-  ZuCHECK(res, "fixture");
+  ZuCheckRT(res, log_("fixture"));
   if (!res) {
     PQfinish(conn);
     return;
@@ -204,8 +204,8 @@ static void continuations()
 	  matched &= check(conn, rows, n, mask, begin, inclusive);
 	  ++queries;
 	}
-  ZuCHECK(matched, "PostgreSQL results match lexicographic oracle");
-  ZuCHECK(queries == 256, "all direction/group/inclusive combinations");
+  ZuCheckRT(matched, log_("PostgreSQL results match lexicographic oracle"));
+  ZuCheckRT(queries == 256, log_("all direction/group/inclusive combinations"));
   PQfinish(conn);
 }
 

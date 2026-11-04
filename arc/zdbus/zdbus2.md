@@ -95,7 +95,7 @@ EXTERNAL authentication, `Hello`, framing, and message semantics follow the
    `ZuSpan` only for run-time views.  Cache invariant lengths/indexed values in
    loops; count elements while traversing instead of snapshotting container
    size; do not default-initialize storage that is immediately overwritten.
-5. Treat every red/amber flag in `GUIDELINES.md` as an implementation and
+5. Treat every red/amber flag in `docs/GUIDELINES.md` as an implementation and
    review requirement across `src`, `test`, `util`, `itest`, `example`, and
    `interop`.
    Any unavoidable exception must be documented beside the declaration with
@@ -401,7 +401,7 @@ the same schemas.
 14. Before completion, audit declarations and uses in every repository-owned
    C++ directory present in the in-scope `zdbus` and `zi` modules--including
    `src`, `test`, `util`, `itest`, `example`, `bench`, and `interop` wherever they
-   exist--against every `GUIDELINES.md` red/amber flag.  Inspect both relevant
+   exist--against every `docs/GUIDELINES.md` red/amber flag.  Inspect both relevant
    declarations and uses.  Remove dead code and compatibility remnants, verify
    immediate deterministic removal from long-lived containers, and document
    any explicitly accepted exception.  The current-configuration restriction

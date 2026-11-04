@@ -23,6 +23,7 @@
 
 #include <zlib/ZhttpCore.hh>
 #include <zlib/ZhttpFields.hh>
+#include <zlib/ZhttpHPack.hh>
 #include "ZhttpFieldImpl.hh"
 #include "ZhttpNative.hh"
 
@@ -30,10 +31,6 @@ namespace Zhttp {
 
 namespace H2 {
 
-template <typename Stream>
-using HeaderScratchBase = Stream::HeaderBytes;
-template <typename Stream>
-ZuDerive(HeaderScratch, (HeaderScratchBase<Stream>));
 
 enum {
   DefltFrameSize = 1U<<14,
@@ -711,7 +708,7 @@ public:
 	  return 0;
 	}
 	return remaining;
-      }, wireAlloc_, alloc_, headLen, tailLen,
+      }, headLen, tailLen,
       [this, &accepted](auto &rx) {
 	if (m_state == State::Stream)
 	  impl()->streamRx_(rx);
@@ -848,13 +845,6 @@ private:
     m_bodyRx.discard();
   }
 
-  static ZmRef<ZiRxQueue::Node> alloc_() {
-    return new BodyRx::BufAlloc{};
-  }
-  static ZmRef<ZiRxQueue::Node> wireAlloc_() {
-    return new BodyRx::WireBufAlloc{};
-  }
-
   Fields::Semantics<Request> m_fields;
   uint64_t		m_bodyMax;
   uint64_t		m_retainedBodyMax;
@@ -887,7 +877,7 @@ public:
 protected:
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
-    auto block = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
+    typename Stream::HeaderBytes block{stream};
     typename Stream::HeaderSection section{block};
     bool sent = false;
     bool endStream = false;
@@ -895,7 +885,7 @@ protected:
     impl()->operation(
       [this, &stream, &section, &sent, &endStream]
       (Method::T method, auto &&emit) {
-      auto protocol = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
+      auto protocol = ZtScratch(HPackScratch, Impl::HdrBufSize);
       if (method == Method::CONNECT)
 	impl()->protocol([&protocol]<typename P>(P &&value) {
 	  protocol.length(0);
@@ -928,7 +918,7 @@ protected:
 
   template <typename Stream>
   void beginResponse_(Stream &stream) {
-    auto block = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
+    typename Stream::HeaderBytes block{stream};
     typename Stream::HeaderSection section{block};
     unsigned value = impl()->status();
     bool informational = value >= 100 && value < 200;
@@ -949,7 +939,7 @@ protected:
 public:
   template <typename Stream, typename Fields>
   bool trailers(Stream &stream, const Fields &fields) {
-    auto block = ZtScratch(HeaderScratch<Stream>, Impl::HdrBufSize);
+    typename Stream::HeaderBytes block{stream};
     typename Stream::HeaderSection section{block};
     stream.beginHeaders(section, true);
     auto output = Native_::compressedFields<Stream,

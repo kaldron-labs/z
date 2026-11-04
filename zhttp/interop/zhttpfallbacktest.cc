@@ -33,7 +33,8 @@ constexpr unsigned FallbackBufSize = 8<<10;
 constexpr unsigned FallbackMaxBody = 64<<10;
 
 using IOBufAlloc =
-  ZiIOBufAlloc<FallbackBufSize, FallbackMaxBody, "Zhttp.Fallback.Buf">;
+  Zi::IOBufAlloc<ZiIOBuf, FallbackBufSize, FallbackMaxBody,
+    ZuStringT<"Zhttp.Fallback.Buf">>;
 
 using RxQueue = ZiRxQueue;
 using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, FallbackBufSize,
@@ -43,7 +44,7 @@ ZuDerive(BodyData, (ZtString<ZtStringHeapID<"Zhttp.Fallback.BodyData">>));
 
 ZmRef<RxQueue::Node> mkBuf(const uint8_t *data, unsigned len)
 {
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{};
+  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
   if (len) buf->append(data, len);
   return buf;
 }
@@ -343,7 +344,7 @@ pid_t startZhttpH1Server_(
   }
 
   ResponseBuilder resp{responseBody.length()};
-  BufTx tx{new IOBufAlloc{}};
+  BufTx tx{new IOBufAlloc{nullptr, 0}};
   resp.begin(tx);
   tx << responseBody;
   resp.finish(tx);
@@ -452,7 +453,7 @@ void testZhttpClientHttp11Fallback()
   }
 
   RequestBuilder req;
-  BufTx tx{new IOBufAlloc{}};
+  BufTx tx{new IOBufAlloc{nullptr, 0}};
   req.begin(tx);
   req.finish(tx);
   ZuCHECK(sendAll_(fd, tx.buf->data(), tx.buf->length),

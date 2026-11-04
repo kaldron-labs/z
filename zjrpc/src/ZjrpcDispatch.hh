@@ -16,6 +16,8 @@
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZuMatcher.hh>
 #include <zlib/ZuSwitch.hh>
+#include <zlib/ZuVStream.hh>
+#include <zlib/ZtArray.hh>
 
 #include <zlib/ZmContext.hh>
 #include <zlib/ZmFn.hh>
@@ -88,10 +90,56 @@ struct ResultMessage {
   }
 };
 
-// Only a real batch needs a retained serialized response store.
-struct BatchMessage {
+// Keep result models and borrowed request storage until a destination writer
+// can serialize the unpublished batch directly into its final allocation.
+struct BatchData : public ZmNHeap<BatchData>, public ZmObject {
+  using WriteFn = ZmFn<void(ZuVStream &), ZmFnHeapID<"Zjrpc.Batch.Item">>;
   ZmRef<ZiIOBuf> body;
-  template <typename S> void write(S &out) const { out << ZuCSpan{*body}; }
+  Parsed parsed;
+  ZtArray<WriteFn, ZtArrayHeapID<"Zjrpc.Batch.Items">> items;
+  unsigned max;
+  unsigned length = 2; // opening and closing batch delimiters
+  bool borrowed = false;
+
+  friend inline ZuStringT<"Zjrpc.Batch.Data"> ZmNHeapID(BatchData *);
+  BatchData(uint64_t count, unsigned max_) : max{max_} { items.size(count); }
+  // ZmFn is POD to array operations; release its owning captures explicitly.
+  ~BatchData() { for (auto &item : items) item = WriteFn{}; }
+
+  template <typename M>
+  bool append(M message, ZmContext input) {
+    unsigned comma = bool(items.length());
+    if (length > max || comma > max - length) return false;
+    CountOutput count;
+    Output measure{count, max - length - comma};
+    message.write(measure);
+    if (!measure) return false;
+    length += unsigned(count.length) + comma;
+    borrowed |= bool(input);
+    items.push(WriteFn{[message = ZuMv(message), input = ZuMv(input)](ZuVStream &out) {
+      message.write(out);
+    }});
+    return true;
+  }
+  template <typename S>
+  void write(S &out) const {
+    out << '[';
+    bool comma = false;
+    ZuVStream stream{out};
+    for (const auto &item : items) {
+      if (comma) out << ',';
+      item(stream);
+      comma = true;
+    }
+    out << ']';
+  }
+};
+
+struct BatchMessage {
+  ZmRef<BatchData> data;
+  template <typename S> void write(S &out) const {
+    writeOwned(out, data->max, [this](auto &wire) { data->write(wire); }, 0);
+  }
 };
 
 template <typename Catalog, template <typename> class Result = ResultMessage,
@@ -293,7 +341,7 @@ private:
 
       WorkData *tail = nullptr;
       PendingHash::NodeMvRef response;
-      ZmRef<ZiIOBuf> output;
+      ZmRef<BatchData> output;
       unsigned next = 0;
       unsigned left;
 
@@ -506,23 +554,25 @@ private:
       if (m_terminal || m_closed) return;
       m_terminal = true;
       pendingDone();
-      if (m_parent) { m_parent->collect(message); return; }
+      if (m_parent) {
+	ZmContext input;
+	if constexpr (Borrowed)
+	  if (m_borrowed) input = ZmContext{ZmRef{static_cast<Work *>(this)}};
+	m_parent->collect(ZuMv(message), ZuMv(input));
+	return;
+      }
       Message output{ZuMv(message)};
       if constexpr (Borrowed)
 	if (m_borrowed) output.input(ZmRef{static_cast<Work *>(this)});
       if (!m_emit(ZuMv(output), m_policy)) fail_();
     }
     template <typename M>
-    void collect(const M &message) {
+    void collect(M message, ZmContext input) {
       if (m_closed || m_terminal) return;
-      if (!m_batch->output) {
-	m_batch->output = new BatchBuf{};
-	*m_batch->output << '[';
-      }
-      BufOutput out{*m_batch->output, m_dispatcher->owner()->limits().maxJSONBytes};
-      if (m_batch->output->length > 1) out << ',';
-      message.write(out);
-      if (!out) fail_();
+      if (!m_batch->output)
+	m_batch->output = new BatchData{nodes().length(),
+	  m_dispatcher->owner()->limits().maxJSONBytes};
+      if (!m_batch->output->append(ZuMv(message), ZuMv(input))) fail_();
     }
     void fail_() {
       if (m_parent) { m_parent->fail_(); return; }
@@ -551,10 +601,11 @@ private:
 	return;
       }
       if (m_batch->output && !m_terminal) {
-	BufOutput out{*m_batch->output, m_dispatcher->owner()->limits().maxJSONBytes};
-	out << ']';
-	if (!out) fail_();
-	else emit(BatchMessage{ZuMv(m_batch->output)});
+	if (m_batch->output->borrowed) {
+	  m_batch->output->body = ZuMv(m_body);
+	  m_batch->output->parsed = ZuMv(m_parsed);
+	}
+	emit(BatchMessage{ZuMv(m_batch->output)});
       } else if (!m_terminal && !m_emit(Message{}, m_policy)) fail_();
       finish();
     }

@@ -288,7 +288,7 @@ static void appTest()
 
   Ztc::Hdr badHdr{uint32_t(4)};
   uint32_t badBody = 0;
-  ZmRef<ZiIOBuf> bad = new ZtcTestClient::Frame;
+  ZmRef<ZiIOBuf> bad = new ZtcTestClient::Frame{nullptr, 0};
   unsigned badSize = sizeof(badHdr) + sizeof(badBody);
   ZuCheck(bad->alloc(badSize));
   memcpy(bad->data(), &badHdr, sizeof(badHdr));
@@ -417,10 +417,8 @@ static void appTest()
     });
   });
   ZuCheck(stopped && app.state() == ZmEngineState::Stopped);
-  if (!stopped) {
-    ZuCheck(app.stop());
-    app.final();
-  }
+  ZuCheck(stopped || app.stop());
+  if (!stopped) app.final();
   ZuCheck(mx.stop());
   ZuCheck(!ZiStat{pidPath}.exists());
 }

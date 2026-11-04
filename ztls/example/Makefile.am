@@ -4,7 +4,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/ztls/src \
 	@Z_CPPFLAGS@ @PTLS_CFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
-AM_LDFLAGS = @Z_LDFLAGS@
+AM_LDFLAGS = @Z_LDFLAGS@ -R@PTLS_LIBDIR@
 LDADD = $(top_builddir)/ztls/src/libZtls.la \
 	$(top_builddir)/zi/src/libZi.la \
 	$(top_builddir)/zf/src/libZf.la $(top_builddir)/ze/src/libZe.la \

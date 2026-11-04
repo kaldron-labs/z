@@ -638,7 +638,7 @@ Checkpoint `zhttp/src` and `zhttp/test`, then run the H1/TCP, H1/TLS,
 
 ## Phase 7: Audit New HTTP/TLS Code Without Expanding QUIC Scope
 
-Apply `GUIDELINES.md` flags to the code introduced or materially changed for
+Apply `docs/GUIDELINES.md` flags to the code introduced or materially changed for
 this project.  Do not convert pre-existing hardened QUIC compromises into a new
 refactoring program.
 
@@ -740,7 +740,7 @@ At final verification:
   ownership repairs, member-placement corrections, the required H3 capacity
   integration point, and their focused tests; do not treat unrelated existing
   implementation as a restoration target;
-- re-audit the pending HTTP/TLS diff against all `GUIDELINES.md` flags;
+- re-audit the pending HTTP/TLS diff against all `docs/GUIDELINES.md` flags;
 - run one incremental top-level `make -j8` in the existing clang debug build;
 - run `make -C zquic/test test`, `make -C ztls/test test`,
   `make -C zhttp/test test`, and `make -C zhttp/itest test`;

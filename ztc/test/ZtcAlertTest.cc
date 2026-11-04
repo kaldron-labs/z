@@ -528,8 +528,9 @@ void crossDateReplay()
   bool identityMutated = false;
   {
     ZiFile data{todayData, ZiFile::GC};
-    ZmRef<ZiIOBuf> frame = new ZiIOBufAlloc<1024,
-      Ztc::AppCf::DefltMaxFrame, "Ztc.Alert.TestRx">{};
+    ZmRef<ZiIOBuf> frame = new
+      Zi::IOBufAlloc<ZiIOBuf,
+        1024, Ztc::AppCf::DefltMaxFrame, ZuStringT<"Ztc.Alert.TestRx">>{nullptr, 0};
     if (data && identitySize > 0 &&
 	identitySize <= Ztc::AppCf::DefltMaxFrame &&
 	frame->alloc(unsigned(identitySize))) {

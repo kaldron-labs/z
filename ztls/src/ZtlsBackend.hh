@@ -83,12 +83,14 @@ using RandomBytesFn = void (*)(void *, size_t);
 ZtlsAPI RandomBytesFn random_bytes_cb();
 ZtlsAPI ptls_key_exchange_algorithm_t **key_exchanges();
 ZtlsAPI ptls_cipher_suite_t **cipher_suites();
+ZtlsAPI ptls_cipher_suite_t *fusion_cipher_suite(uint16_t id);
 ZtlsAPI ptls_cipher_suite_t *cipher_suite(uint16_t id);
 ZtlsAPI ptls_cipher_suite_t *tls12_ecdhe_rsa_aes128gcmsha256();
 ZtlsAPI ptls_cipher_suite_t *tls12_ecdhe_rsa_chacha20poly1305sha256();
 ZtlsAPI ptls_aead_algorithm_t *chacha20poly1305();
 
 ZtlsAPI ptls_hash_algorithm_t *hash_algorithm(MDType type);
+ZtlsAPI ptls_hash_context_t *hmac_create(MDType type, ZuBSpan key);
 ZtlsAPI size_t hash_size(MDType type);
 ZtlsAPI bool shake256(ZuBSpan input, ZuSpan<uint8_t> output);
 ZtlsAPI bool sha3_256(
