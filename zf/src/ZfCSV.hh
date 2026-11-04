@@ -843,7 +843,7 @@ struct Reader {
       unsigned length;
       auto n = split(data, ZuSpan(row_.data(), row_.size()), length);
       row_.template length<false>(length);
-      row = ZuSpan<Cell>(row_.data(), row_.length());
+      row = ZuSpan<Cell>{row_};
       if (n >= 0) ZuFwd<L>(l)(*this);
       row = {};
       return n < 0 ? 0 : n;
