@@ -8,15 +8,17 @@
 // - owns a queue of receive buffers and presents a consumable stream view
 // - applications define:
 //   - queue type, which must support:
-//     count_(), headNode(), shift(), pushNode(node), unshiftNode(node), clean()
+//     count_(), headNode(), shift(), pushNode(node), clean()
 // - stream operations:
 //   - scan(frame, pos) recognizes a complete prefix without consuming it
 //   - consume(frame, data) returns the total number of bytes consumed across all spans
 //     - int64_t frame(mutableSpan) returns the number of bytes to be consumed
 //     - data(mutableSpan) delivers contiguous frame data to the app
-//   - extract(frame, alloc, range) retains original backing and positions
-//     - alloc() is used only for shared fragmented contiguous-only input
-//   - splice(dst, frame, head, tail, transform) transfers retained payload ranges
+//   - extract(frame, alloc, out) detaches one complete frame into out
+//     - frame(span) has the same boundary contract as consume()
+//     - alloc() returns a queue-compatible pooled buffer when gathering or
+//       preserving a coalesced trailing remainder is required
+//     - null rejects the request; nonzero Z heap allocations use ZmHeapFail
 //   - empty()   - true when no readable bytes remain
 //   - length()  - maintained readable-byte count
 // - queue operations:
@@ -46,65 +48,9 @@
 
 #include <zlib/ZiIOBuf.hh>
 
-namespace Zi {
-
-// A retained view owns the original backing, never its slot or packed flags.
-// Positions are relative to data_(), independent of the buffer's active span.
-struct RxRange {
-  ZmRef<IOBuf>	buf;
-  unsigned	offset = 0;
-  unsigned	length = 0;
-
-  RxRange() = default;
-  RxRange(ZmRef<IOBuf> buf_, unsigned offset_, unsigned length_) :
-    buf{ZuMv(buf_)}, offset{offset_ + (buf ? buf->skip : 0)},
-    length{length_} { }
-
-  static RxRange fromStorage(ZmRef<IOBuf> buf, unsigned offset, unsigned length) {
-    RxRange range;
-    range.buf = ZuMv(buf);
-    range.offset = offset;
-    range.length = length;
-    return range;
-  }
-  RxRange subspan(unsigned start, unsigned length_) const {
-    return fromStorage(buf, offset + start, length_);
-  }
-
-  auto span() const {
-    return buf ? ZuSpan<uint8_t>{buf->data_() + offset, length} :
-      ZuSpan<uint8_t>{};
-  }
-  auto cspan() const { return ZuBSpan{span()}; }
-  bool operator !() const { return !buf; }
-  ZuOpBool
-};
-
-// Original receive nodes carry their own queue links. Only a split shared by
-// two queues needs a separate slice node; ordinary nodes have no range owner.
-struct RxBuf : public IOBuf {
-  const RxRange	*range = nullptr;
-
-  using IOBuf::IOBuf;
-};
-
-} // Zi
-
-ZmListDerive(ZiRxQueue, Zi::RxBuf, ZmListNode<Zi::RxBuf, ZmListHeapID<"">>);
+ZmListDerive(ZiRxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
 
 namespace Zi {
-
-template <typename Base>
-struct RxSlice : public ZmNHeap<RxSlice<Base>>, public Base {
-  RxRange value;
-
-  friend inline ZuStringT<"Zi.RxSlice"> ZmNHeapID(RxSlice *);
-  RxSlice(RxRange value_) :
-    Base{nullptr, 0, value_.buf->owner, 0}, value{ZuMv(value_)}
-  {
-    this->range = &value;
-  }
-};
 
 struct RxPass {
   template <typename Span>
@@ -129,34 +75,29 @@ public:
   ~RxStream() = default;
 
   RxStream(RxStream &&stream) :
-    m_queue{ZuMv(stream.m_queue)}, m_length{stream.m_length},
-    m_offset{stream.m_offset}
+    m_queue{ZuMv(stream.m_queue)}, m_length{stream.m_length}
   {
-    stream.m_length = stream.m_offset = 0;
+    stream.m_length = 0;
   }
   RxStream &operator =(RxStream &&stream) {
     if (this == &stream) return *this;
     m_queue = ZuMv(stream.m_queue);
     m_length = stream.m_length;
-    m_offset = stream.m_offset;
-    stream.m_length = stream.m_offset = 0;
+    stream.m_length = 0;
     return *this;
   }
 
   template <typename NodeRef>
   void push(NodeRef &&node) {
-    unsigned length = nodeSpan_(node).length();
-    if (!length) return;
-    ZmAssert(m_length <= UINT64_MAX - length);
-    m_length += length;
-    m_queue.pushNode(ZuFwd<NodeRef>(node));
-  }
-  void push(RxRange range) {
-    if (!range.length) return;
-    push(typename Queue::NodeRef{new RxSlice<typename Queue::Node>{ZuMv(range)}});
+    if (node->length) { // filter out empty buffers
+      ZmAssert(m_length <= UINT64_MAX - node->length);
+      m_length += node->length;
+      m_queue.pushNode(ZuFwd<NodeRef>(node));
+    }
   }
 
-  void clean() { m_queue.clean(); m_length = m_offset = 0; }
+  void clean() { m_queue.clean(); m_length = 0; }
+
   auto count_() const { return m_queue.count_(); }
   uint64_t length() const { return m_length; }
 
@@ -164,106 +105,31 @@ private:
   enum { Locked = !ZuIsSame<ZmNoLock, typename Queue::Lock>{} };
   using NodeRef = ZuIf<Locked, typename Queue::NodeRef, typename Queue::NodePtr>;
   auto head() const {
-    if constexpr (Locked) return m_queue.headNode();
-    else return m_queue.headPtr();
-  }
-  template <typename Node>
-  static auto nodeSpan_(const Node &node) {
-    return node->range ? node->range->span() :
-      static_cast<IOBuf *>(node)->span();
-  }
-  template <typename Node>
-  static RxRange range_(const Node &node, unsigned offset, unsigned length) {
-    if (auto range = node->range)
-      return range->subspan(offset, length);
-    return {static_cast<IOBuf *>(node), offset, length};
+    if constexpr (Locked)
+      return m_queue.headNode();
+    else
+      return m_queue.headPtr();
   }
 
 public:
   auto span() {
     NodeRef node = head();
-    auto span = node ? nodeSpan_(node) : ZuSpan<uint8_t>{};
-    span.offset(m_offset);
-    return span;
+    return node ? node->span() : ZuSpan<uint8_t>{};
   }
   auto span() const {
-    return ZuBSpan{const_cast<RxStream *>(this)->span()};
-  }
-  RxRange range() const {
     NodeRef node = head();
-    return node ? range_(node, m_offset, nodeSpan_(node).length() - m_offset) :
-      RxRange{};
+    return node ? node->span() : ZuSpan<const uint8_t>{};
   }
-  unsigned capacity() const {
-    NodeRef node = head();
-    if (!node) return 0;
-    auto range = node->range;
-    auto buf = range ? range->buf.ptr() : static_cast<IOBuf *>(&*node);
-    // Stream consumption does not reduce the configured receive capacity.
-    return buf->size - (range ? range->offset : buf->skip);
-  }
-
-private:
-  template <typename Alloc>
-  typename Queue::NodeRef gather_(unsigned length, Alloc &&alloc) {
-    NodeRef node = head();
-    typename Queue::NodeRef buf;
-    if (!node->range && node->refCount() == 1 + Locked) {
-      unsigned first = node->length - m_offset;
-      node->skip += m_offset;
-      node->length = first;
-      if (ZuUnlikely(!node->ensure(length))) return {};
-      buf = m_queue.shift();
-      m_length -= first;
-      m_offset = 0;
-    } else {
-      buf = alloc();
-      if (ZuUnlikely(!buf || !buf->ensure(length))) return {};
-    }
-    while (m_length && buf->length < length) {
-      auto part = span();
-      unsigned remaining = length - buf->length;
-      if (part.length() > remaining) part.trunc(remaining);
-#ifdef ZiMultiplex_DEBUG
-      NodeRef node = head();
-      const IOBuf *source = node->range ? node->range->buf.ptr() :
-	static_cast<const IOBuf *>(&*node);
-      buf->mergeRx_(*source, part.length());
-#endif
-      buf->append(part);
-      advance(part.length());
-    }
-    return buf;
-  }
-
-public:
-  // Assemble an oversized frame as it arrives, returning receive slots before
-  // waiting for the suffix. Only the final frame buffer grows; trailing bytes
-  // keep their original backing and an independent position.
-  template <typename Alloc>
-  bool gather(unsigned length, Alloc &&alloc) {
-    auto buf = gather_(length, ZuFwd<Alloc>(alloc));
-    if (ZuUnlikely(!buf)) return false;
-    if (m_offset) {
-      auto tail = range();
-      m_queue.shift();
-      m_queue.unshiftNode(new RxSlice<typename Queue::Node>{ZuMv(tail)});
-      m_offset = 0;
-    }
-    m_length += buf->length;
-    m_queue.unshiftNode(ZuMv(buf));
-    return true;
-  }
-
   uint64_t advance(uint64_t n) {
     if (n > m_length) n = m_length;
     uint64_t advanced = n;
     while (n) {
       NodeRef node = head();
-      unsigned available = nodeSpan_(node).length() - m_offset;
-      unsigned length = n < available ? unsigned(n) : available;
-      if (length < available) m_offset += length;
-      else { m_queue.shift(); m_offset = 0; }
+      unsigned length = n < node->length ? unsigned(n) : node->length;
+      if (length < node->length)
+	node->advance(length);
+      else
+	m_queue.shift();
       m_length -= length;
       n -= length;
     }
@@ -275,11 +141,13 @@ public:
     uint64_t available = m_length - offset;
     if (out.length() > available) out.trunc(unsigned(available));
     unsigned copied = 0;
-    offset += m_offset;
     auto i = m_queue.citer();
     while (auto node = i()) {
-      auto span = nodeSpan_(node);
-      if (offset >= span.length()) { offset -= span.length(); continue; }
+      auto span = node->cspan();
+      if (offset >= span.length()) {
+	offset -= span.length();
+	continue;
+      }
       span.offset(unsigned(offset));
       offset = 0;
       unsigned n = out.length() - copied;
@@ -292,183 +160,336 @@ public:
   }
 
   template <typename L>
-  int64_t each(uint64_t offset, uint64_t length, L &&l) const {
-    return visit_(offset, length, [&l](auto node, unsigned offset, unsigned length) {
-      auto span = nodeSpan_(node);
-      span.offset(offset);
-      span.trunc(length);
-      return l(span);
-    });
+  int64_t each(uint64_t offset, uint64_t length, L &&l) {
+    if (offset > m_length || length > m_length - offset) return 0;
+    if (length > uint64_t(INT64_MAX)) return -1;
+    uint64_t traversed = 0;
+    auto i = m_queue.citer();
+    while (length) {
+      auto node = i();
+      auto span = node->span();
+      if (offset >= span.length()) {
+	offset -= span.length();
+	continue;
+      }
+      span.offset(unsigned(offset));
+      offset = 0;
+      if (span.length() > length) span.trunc(unsigned(length));
+      int64_t n = l(span);
+      if (ZuUnlikely(n < 0)) return n;
+      if (ZuUnlikely(uint64_t(n) != span.length())) return -1;
+      traversed += uint64_t(n);
+      length -= uint64_t(n);
+    }
+    return int64_t(traversed);
   }
+
   template <typename L>
-  int64_t each(uint64_t length, L &&l) const {
+  int64_t each(uint64_t length, L &&l) {
     return each(0, length, ZuFwd<L>(l));
-  }
-  template <typename L>
-  int64_t eachRange(uint64_t length, L &&l) const {
-    return visit_(0, length, [&l](auto node, unsigned offset, unsigned length) {
-      return l(range_(node, offset, length));
-    });
   }
 
   template <typename Frame>
-  int64_t scan(Frame &&frame, RxFramePos &pos, uint64_t offset = 0) {
+  int64_t scan(Frame &&frame, Zi::RxFramePos &pos) {
+    pos = {};
+    return scan_(ZuFwd<Frame>(frame), pos);
+  }
+
+  // Scan from an absolute stream offset; the returned position and total
+  // remain relative to the stream head.
+  template <typename Frame>
+  int64_t scan(Frame &&frame, Zi::RxFramePos &pos, uint64_t offset) {
     pos = {};
     return scan_(ZuFwd<Frame>(frame), pos, offset);
   }
 
-  // This API explicitly requests contiguous callback data. Only fragmented
-  // input needs scratch; span consumers use each()/splice() instead.
-  template <unsigned Padding = 0,
-    ZuString HeapID = typename Queue::HeapID{}(), typename Frame, typename Data>
+  // consume(frame, data) returns the total number of bytes consumed across all spans
+  // - int64_t frame(mutableSpan)
+  //   - returns the number of bytes N to be consumed in span
+  //   - N < 0 indicates an error:
+  //     - iteration ends
+  //     - no consumption occurs
+  //     - data(span) is not called
+  //   - if !N, iteration continues to the next span
+  //   - if N > 0:
+  //     - iteration ends
+  //     - prior spans will be consumed entirely
+  //     - the current span is consumed by N
+  //     - the current span will be included in the data if N > Padding
+  // - data(mutableSpan) delivers contiguous frame data to the app
+  //   (length == total - Padding)
+  // - iteration may complete without any consumption having occurred (will return 0)
+  template <
+    unsigned Padding = 0,
+    ZuString HeapID = typename Queue::HeapID{}(),
+    typename Frame, typename Data>
   int64_t consume(Frame &&frame, Data &&data) {
     RxFramePos pos;
     int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
     if (framed <= 0) return framed;
-    uint64_t length = pos.total > Padding ? pos.total - Padding : 0;
-    auto first = span();
-    if (length <= first.length()) {
-      first.trunc(unsigned(length));
-      data(first);
-    } else {
-      if (ZuUnlikely(length > UINT_MAX)) return -1;
-      using Scratch = ZtArray<uint8_t, ZtArrayHeapID<HeapID>>;
-      auto scratch = ZmScratch(uint8_t, unsigned(length), typename Scratch::VHeap);
-      each(length, [&scratch](auto span) -> int64_t {
-	scratch << span;
-	return span.length();
-      });
-      data(scratch.span());
+    uint64_t count = pos.count;
+    uint64_t total = pos.total;
+    unsigned consumed = pos.length;
+
+    {
+      uint64_t dataLen = total;
+      uint64_t dataCount = count;
+      if constexpr (Padding > 0) {
+	if (dataLen > Padding)
+	  dataLen -= Padding;
+	else
+	  dataLen = 0;
+	if (ZuUnlikely(dataCount == 1 && consumed <= Padding))
+	  // edge case - 2 spans - but 2nd span is entirely padding
+	  dataCount = 0;
+      }
+      if (!dataLen) {
+	// edge case - short data
+	data(ZuSpan<uint8_t>{});
+      } else if (ZuLikely(!dataCount)) {
+	// single span - fast path - can be passed directly
+	NodeRef head = this->head();
+	auto span = head->span();
+	span.trunc(dataLen);
+	data(span);
+      } else {
+	// multiple spans - need gathering into contiguous scratch buffer
+	using Scratch = ZtArray<uint8_t, ZtArrayHeapID<HeapID>>;
+	if (ZuUnlikely(dataLen > UINT_MAX)) return -1;
+	unsigned dataSize = unsigned(dataLen);
+	auto scratch = ZmScratch(
+	  uint8_t, dataSize, typename Scratch::VHeap);
+	auto i = m_queue.citer();
+	while (dataLen) {
+	  auto node = i();
+	  auto span = node->span();
+	  if (span.length() > dataLen) span.trunc(dataLen);
+	  scratch << span;
+	  dataLen -= span.length();
+	}
+	data(scratch.span());
+      }
     }
-    advance(pos.total);
-    return framed;
+
+    while (count--) m_queue.shift();
+    NodeRef head = this->head();
+    if (consumed < head->length)
+      head->advance(consumed);
+    else
+      m_queue.shift();
+    m_length -= total;
+    return total;
   }
 
-  // Retain a contiguous frame by range. Fragmented contiguous-only delivery
-  // reuses exclusive original storage or gathers once into the final owner.
+  // Detach one complete frame.  A frame wholly occupying the head buffer is
+  // returned unchanged.  At a coalesced boundary, copy the smaller of the
+  // frame or trailing remainder.  A fragmented frame is copied directly into
+  // one final pooled buffer.
   template <typename Frame, typename Alloc>
-  int64_t extract(Frame &&frame, Alloc &&alloc, RxRange &out) {
-    out = {};
+  int64_t extract(Frame &&frame, Alloc &&alloc, ZmRef<ZiIOBuf> &out) {
+    out = nullptr;
     RxFramePos pos;
     int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
     if (framed <= 0) return framed;
-    if (ZuUnlikely(pos.total > UINT32_MAX)) return -1;
-    unsigned length = unsigned(pos.total);
-    if (!pos.count) {
+    uint64_t total = pos.total;
+    if (ZuUnlikely(total > UINT32_MAX)) return -1;
+    unsigned consumed = pos.length;
+    unsigned count = unsigned(pos.count);
+    unsigned length = unsigned(total);
+    if (!count) {
       NodeRef node = head();
-      if (!node->range && length == node->length - m_offset) {
-	out = {m_queue.shift(), m_offset, length};
-	m_length -= length;
-	m_offset = 0;
-	return framed;
+      if (ZuUnlikely(consumed < node->length)) {
+	unsigned right = node->length - consumed;
+	if (consumed <= right) {
+	  auto frame = alloc();
+	  if (ZuUnlikely(!frame)) return -1;
+	  frame->alloc(consumed);
+	  frame->append(node->span().data(), consumed);
+	  out = ZuMv(frame);
+	  node->advance(consumed);
+	} else {
+	  auto next = alloc();
+	  if (ZuUnlikely(!next)) return -1;
+	  next->alloc(right);
+	  next->append(node->span().data() + consumed, right);
+	  node->length = consumed;
+	  out = m_queue.shift();
+	  m_queue.unshiftNode(ZuMv(next));
+	}
+      } else {
+	out = m_queue.shift();
       }
-      out = range_(node, m_offset, length);
-      advance(length);
-      return framed;
+      m_length -= length;
+      return length;
     }
-    auto buf = gather_(length, ZuFwd<Alloc>(alloc));
+
+    auto buf = alloc();
     if (ZuUnlikely(!buf)) return -1;
-    out = {ZuMv(buf), 0, length};
-    return framed;
+    buf->alloc(length);
+    {
+      unsigned remaining = length;
+      auto i = m_queue.citer();
+      while (remaining) {
+	auto node = i();
+	auto span = node->span();
+	if (span.length() > remaining) span.trunc(remaining);
+	buf->append(span);
+	remaining -= span.length();
+      }
+    }
+    while (count--) m_queue.shift();
+    NodeRef node = head();
+    if (consumed < node->length)
+      node->advance(consumed);
+    else
+      m_queue.shift();
+    out = ZuMv(buf);
+    m_length -= length;
+    return length;
   }
 
-  // Framing removes positions, not payload. Whole nodes move between queues;
-  // only independently retained partial nodes allocate slice metadata.
-  template <typename Frame, typename Transform = RxPass>
-  int64_t splice(RxStream &dst, Frame &&frame,
-    uint64_t headLen = 0, uint64_t tailLen = 0, Transform &&transform = {})
+  // Atomically consume one complete wire frame and append its decoded payload
+  // to dst.  head/tail bytes are framing.  srcAlloc/dstAlloc provision a
+  // boundary split for the queue which retains the copied side.
+  template <typename Frame,
+    typename SrcAlloc, typename DstAlloc, typename Transform = RxPass>
+  int64_t splice(
+    RxStream &dst, Frame &&frame,
+    SrcAlloc &&srcAlloc, DstAlloc &&dstAlloc,
+    uint64_t headLen = 0, uint64_t tailLen = 0,
+    Transform &&transform = {})
   {
     RxFramePos pos;
     int64_t framed = scan_(ZuFwd<Frame>(frame), pos);
     if (framed <= 0) return framed;
     uint64_t total = pos.total;
-    if (ZuUnlikely(headLen > total || tailLen > total - headLen)) return -1;
-    advance(headLen);
-    uint64_t remaining = total - headLen - tailLen;
+    if (ZuUnlikely(headLen > total || tailLen > total - headLen))
+      return -1;
+    uint64_t payloadLen = total - (headLen + tailLen);
+    if (!payloadLen) {
+      discard_(total);
+      return int64_t(total);
+    }
+
+    uint64_t payloadEnd = headLen + payloadLen;
+    ZiIOBuf *boundary = nullptr;
+    unsigned startOff = 0, endOff = 0;
+    {
+      uint64_t offset = 0;
+      auto i = m_queue.citer();
+      while (auto node = i()) {
+	uint64_t next = offset + node->length;
+	if (payloadEnd < next) {
+	  boundary = node;
+	  endOff = unsigned(payloadEnd - offset);
+	  if (headLen > offset) startOff = unsigned(headLen - offset);
+	  break;
+	}
+	offset = next;
+      }
+    }
+
+    using NodeRef_ = Queue::NodeRef;
+    NodeRef_ srcSplit;
+    NodeRef_ dstSplit;
+    bool copyPayload = false;
+    if (boundary) {
+      unsigned payloadPart = endOff - startOff;
+      unsigned right = boundary->length - endOff;
+      copyPayload = payloadPart <= right;
+      if (copyPayload) {
+	dstSplit = dstAlloc();
+	if (ZuUnlikely(!dstSplit || !dstSplit->ensure(payloadPart))) return -1;
+	dstSplit->append(boundary->data() + startOff, payloadPart);
+      } else {
+	srcSplit = srcAlloc();
+	if (ZuUnlikely(!srcSplit || !srcSplit->ensure(right))) return -1;
+	srcSplit->append(boundary->data() + endOff, right);
+      }
+    }
+
+    discard_(headLen);
+    uint64_t remaining = payloadLen;
     while (remaining) {
       NodeRef node = head();
-      auto part = span();
-      unsigned length = remaining < part.length() ? unsigned(remaining) : part.length();
-      part.trunc(length);
-      transform(part);
-      if (!m_offset && length == nodeSpan_(node).length()) {
+      if (remaining >= node->length) {
+	unsigned length = node->length;
+	transform(node->span());
 	auto moved = m_queue.shift();
 	m_length -= length;
 	dst.push(ZuMv(moved));
-      } else {
-	dst.push(range_(node, m_offset, length));
-	advance(length);
+	remaining -= length;
+	continue;
       }
-      remaining -= length;
+
+      unsigned length = unsigned(remaining);
+      if (copyPayload) {
+	transform(dstSplit->span());
+	dst.push(ZuMv(dstSplit));
+	advance(length);
+      } else {
+	node->length = length;
+	transform(node->span());
+	auto moved = m_queue.shift();
+	m_length -= length;
+	m_queue.unshiftNode(ZuMv(srcSplit));
+	dst.push(ZuMv(moved));
+      }
+      remaining = 0;
     }
-    advance(tailLen);
-    return framed;
+    discard_(tailLen);
+    return int64_t(total);
   }
 
-  bool empty() const { return !m_length; }
+  bool empty() const { return !head(); }
+
   bool operator !() const { return empty(); }
   ZuOpBool
 
 private:
-  template <typename L>
-  int64_t visit_(uint64_t offset, uint64_t length, L &&l) const {
-    if (offset > m_length || length > m_length - offset) return 0;
-    if (length > uint64_t(INT64_MAX)) return -1;
-    uint64_t traversed = 0;
-    offset += m_offset;
-    auto i = m_queue.citer();
-    while (length) {
-      auto node = i();
-      unsigned available = nodeSpan_(node).length();
-      if (offset >= available) { offset -= available; continue; }
-      unsigned start = unsigned(offset);
-      available -= start;
-      offset = 0;
-      unsigned size = length < available ? unsigned(length) : available;
-      int64_t n = l(node, start, size);
-      if (ZuUnlikely(n < 0)) return n;
-      if (ZuUnlikely(uint64_t(n) != size)) return -1;
-      traversed += size;
-      length -= size;
-    }
-    return int64_t(traversed);
-  }
 
   template <typename Frame>
   int64_t scan_(Frame &&frame, RxFramePos &pos, uint64_t offset = 0) {
     if (ZuUnlikely(offset > m_length)) return -1;
-    uint64_t skippedTotal = offset;
-    offset += m_offset;
     auto i = m_queue.citer();
     while (auto node = i()) {
-      auto span = nodeSpan_(node);
+      auto span = node->span();
       if (offset >= span.length()) {
 	offset -= span.length();
 	++pos.count;
+	pos.total += span.length();
 	continue;
       }
       unsigned skipped = unsigned(offset);
-      span.offset(skipped);
-      offset = 0;
+      if (skipped) {
+	span.offset(skipped);
+	pos.total += skipped;
+	offset = 0;
+      }
       int64_t n = frame(span);
       if (ZuUnlikely(n < 0)) return n;
       if (n) {
 	if (ZuUnlikely(uint64_t(n) > span.length())) return -1;
-	if (ZuUnlikely(skippedTotal > uint64_t(INT64_MAX) - uint64_t(n))) return -1;
+	if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - uint64_t(n)))
+	  return -1;
 	pos.length = skipped + unsigned(n);
-	pos.total = skippedTotal + uint64_t(n);
+	pos.total += uint64_t(n);
 	return int64_t(pos.total);
       }
-      if (ZuUnlikely(skippedTotal > uint64_t(INT64_MAX) - span.length())) return -1;
+      if (ZuUnlikely(pos.total > uint64_t(INT64_MAX) - span.length()))
+	return -1;
       ++pos.count;
-      skippedTotal += span.length();
+      pos.total += span.length();
     }
     return 0;
   }
 
+  void discard_(uint64_t length) {
+    advance(length);
+  }
+
   Queue			m_queue;
   uint64_t		m_length = 0;
-  unsigned		m_offset = 0;
 };
 
 // Receive-side protocol geometry.  Each layer adds its framing head/tail room

@@ -10,6 +10,7 @@
 #include <signal.h>
 
 #include <zlib/ZuTime.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtArray.hh>
@@ -73,6 +74,9 @@ struct Packet : public ZiTxBuf {
   ZiTOS tos;
 };
 
+using RxAllocator = Zi::RxUDPBufAllocator<ZiIOBuf, ZiIOBuf_DefltSize>;
+using TxAllocator = Zi::TxUDPBufAllocator<Packet, ZiIOBuf_DefltSize>;
+
 class Connection : public ZiConnection, public ZiTx<Connection> {
 public:
   Connection(
@@ -84,13 +88,17 @@ public:
   ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
+  RxAllocator *rxAllocator() const {
+    return static_cast<RxAllocator *>(info().rxAllocator);
+  }
 
   void disconnected(bool) { Global::post(); }
 
   void connected(ZiRxContext &io) { recvEcho(io); }
 
   bool recvEcho(ZiRxContext &io) {
-    io.init(ZiRxFn{this, ZmFnPtr<&Connection::recvComplete>{}});
+    io.init(ZiRxFn{this, ZmFnPtr<&Connection::recvComplete>{}},
+      rxAllocator()->allocBuf(this));
     return true;
   }
   bool recvComplete(ZiRxContext &);
@@ -114,11 +122,12 @@ public:
   Mx(ZiIP localIP, unsigned localPort, ZiIP remoteIP, unsigned remotePort,
       bool connect, const ZiCxnOptions &options, unsigned nMessages,
       ZiMxParams params) :
-    ZiMultiplex(ZuMv(params).udpBufAllocator<Zi::RxUDPBufAllocator<
-      Packet, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>>()),
+    ZiMultiplex(ZuMv(params)),
     m_localIP(localIP), m_localPort(localPort),
     m_remoteIP(remoteIP), m_remotePort(remotePort),
-    m_connect(connect), m_options(options), m_nMessages(nMessages) { }
+    m_connect(connect), m_options(options), m_nMessages(nMessages) {
+    if (!allocator(m_rx) || !allocator(m_allocator)) ZmFail(allocator_registration);
+  }
   ~Mx() { }
 		
   ZiConnection *connected(const ZiCxnInfo &ci) {
@@ -133,7 +142,7 @@ public:
     ZiMultiplex::udp(
 	ZiConnectFn{this, ZmFnPtr<&Mx::connected>{}},
 	ZiFailFn{this, ZmFnPtr<&Mx::failed>{}},
-	m_localIP, m_localPort, remoteIP, remotePort, m_options);
+	m_localIP, m_localPort, remoteIP, remotePort, m_rx, m_options);
   }
 
 	  void failed(bool transient) {
@@ -145,8 +154,11 @@ public:
 	  }
 
   unsigned nMessages() const { return m_nMessages; }
+  TxAllocator *txAllocator() const { return m_allocator.ptr(); }
 
 private:
+  ZmRef<RxAllocator> m_rx = new RxAllocator{};
+  ZmRef<TxAllocator> m_allocator = new TxAllocator{};
   ZiIP		m_localIP;
   unsigned	m_localPort;
   ZiIP		m_remoteIP;
@@ -159,7 +171,9 @@ private:
 
 bool Connection::recvComplete(ZiRxContext &io)
 {
-  auto buf = ZmRef<Packet>::acquire(static_cast<Packet *>(ZuMv(io.buf).release()));
+  auto buf = mx()->txAllocator()->allocBuf();
+  buf->append(io.buf->cspan());
+  io.buf = rxAllocator()->allocBuf(this);
   buf->addr = !m_dest ? io.addr : m_dest;
   buf->tos = io.tos;
   std::cout << ZtHexDump(

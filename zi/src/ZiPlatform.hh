@@ -68,7 +68,6 @@ enum {
   NameMax = NAME_MAX,
   NVecMax = IOV_MAX
 };
-ZiAPI bool uring();
 #else
 using Handle = HANDLE;
 ZuInline const Handle nullHandle() { return INVALID_HANDLE_VALUE; }
@@ -86,7 +85,6 @@ enum {
   NameMax = 255,	// NTFS & FAT limit
   NVecMax = 2048	// Undocumented system-wide limit
 };
-ZuInline constexpr bool uring() { return false; }
 #endif
 
 enum {

@@ -7,6 +7,7 @@
 // IO Rx
 // - framing CRTP receiver
 // - implementation supplies Hdr, Body functions (see below)
+// - implementation supplies a typed rxAllocator()
 // - ZuInvoke is used - functions can be implementation member functions,
 //   bound functions (first parameter is Impl *), or unbound
 
@@ -17,8 +18,6 @@
 #include <zlib/ZiLib.hh>
 #endif
 
-#include <limits.h>
-
 #include <zlib/ZuInvoke.hh>
 
 #include <zlib/ZmRef.hh>
@@ -28,7 +27,6 @@
 #include <zlib/ZiIOContext.hh>
 #include <zlib/ZiIOBuf.hh>
 #include <zlib/ZiRxStream.hh>
-#include <zlib/ZiMultiplex.hh>
 
 using ZiRxBuf = ZiRxQueue::Node;
 
@@ -38,106 +36,285 @@ template <
   ZuString HeapID = ZiIOBuf_HeapID{}()>
 using ZiRxBufAlloc = Zi::IOBufAlloc<ZiRxBuf, Size, MaxSize, ZuStringT<HeapID>>;
 
-// Hdr examines queued spans and returns the frame size, INT_MAX while its
-// header is incomplete, or a negative error. Body examines that prefix and
-// returns bytes consumed, zero to discard pending input, or a negative error.
-// Body may retain backing/ranges; it must not advance the stream itself.
-// Network callbacks take (Impl *, const ZiRxContext &, Stream &, [size]);
-// memory callbacks omit the context. Neither callback owns a socket destination.
-template <typename Impl_, typename Queue = ZiRxQueue>
+template <typename Impl_, typename BufAlloc_>
 class ZiRx {
 public:
   using Impl = Impl_;
-  using Buf = typename Queue::Node;
-  using Stream = ZiRxStream<Queue>;
-
-  ZiRx(unsigned maxSize = ZiIOBuf_DefltMaxSize) : m_maxSize{maxSize} { }
+  using BufAlloc = BufAlloc_;
+  static constexpr unsigned MaxBufSize = BufAlloc::MaxSize;
 
   auto impl() const { return static_cast<const Impl *>(this); }
   auto impl() { return static_cast<Impl *>(this); }
 
-  template <auto Hdr, auto Body>
-  void recv(ZiRxContext &io) { arm_<Hdr, Body>(io); }
-
-  // Synchronous consumers borrow spans only for the duration of Body.
-  // Asynchronous consumers explicitly retain the original backing/ranges.
-  template <auto Hdr, auto Body>
-  void recvSync(ZiRxContext &io) { arm_<Hdr, Body>(io); }
-
-  void rxReset() { m_stream.clean(); m_frameLen = 0; m_gather = false; }
-  const Stream &rxStream() const { return m_stream; }
-
-  // Borrowed memory needs ownership acquisition. The caller supplies the
-  // final-buffer allocator at this boundary, not as a network receiver policy.
-  template <auto Hdr, auto Body, typename Alloc>
-  int recvMem(const uint8_t *data, unsigned length, Alloc &&alloc) {
-    auto buf = alloc();
-    if (ZuUnlikely(!buf->append(data, length))) return -1;
-    m_stream.push(ZuMv(buf));
-    int result = process_<Hdr, Body, false>(nullptr, alloc);
-    return result > 0 ? int(length) : result;
-  }
-  template <auto Hdr, auto Body, typename Alloc>
-  int recvMemSync(const uint8_t *data, unsigned length, Alloc &&alloc) {
-    return recvMem<Hdr, Body>(data, length, ZuFwd<Alloc>(alloc));
+  static auto impl(const ZiIOBuf *buf) {
+    return static_cast<Impl *>(buf->owner);
   }
 
-private:
+  // I/O receiver
+
+  // int Hdr(Impl *, const ZiRxContext &io, ZiIOBuf *buf)
+  //   +ve - length of hdr+body
+  //   INT_MAX - insufficient data
+  //   -ve - disconnect
+
+  // asynchronous (queued) receive from ZiRxContext
+  //
+  // int Body(Impl *, const ZiRxContext &io, ZmRef<ZiIOBuf> buf)
+  //   0   - skip remaining data (defends against DOS)
+  //   +ve - buffer consumed
+  //   -ve - disconnect immediately
   template <auto Hdr, auto Body>
-  void arm_(ZiRxContext &io) {
-    io.init(ZiRxFn{impl(), [](Impl *self, ZiRxContext &io) {
-      auto rx = static_cast<ZiRx *>(self);
-      if (io.buf) {
-	auto buf = ZmRef<Buf>::acquire(
-	  static_cast<Buf *>(ZuMv(io.buf).release()));
-	buf->owner = self;
-	rx->m_stream.push(ZuMv(buf));
+  void recv(ZiRxContext &io) {
+    auto fn = [](ZiRxContext &io) {
+      auto buf = io.buf.ptr();
+      auto impl_ = impl(buf);
+      unsigned len = buf->length;
+
+      // scan header
+      int frameLen = ZuInvoke<Hdr>(impl_, io, buf);
+      if (ZuUnlikely(frameLen < 0)) {
+	io.disconnect();
+	return true;
       }
-      if (rx->template process_<Hdr, Body, true>(&io, [&io, self]() {
-	auto allocator = io.cxn->mx()->rxAllocator(io.cxn->info().options.udp());
-	return ZmRef<Buf>::acquire(
-	  static_cast<Buf *>(allocator->alloc(self).release()));
-      }) < 0) io.disconnect();
-      return true;
-    }});
+      if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
+	ZiLOG(Error, "ZiRx", "TCP message too big / corrupt");
+	io.disconnect();
+	return true;
+      }
+      if (len < unsigned(frameLen)) {
+	if (frameLen != INT_MAX && ZuUnlikely(buf->size < unsigned(frameLen))) {
+	  // grow buffer
+	  if (ZuUnlikely(!buf->ensure(frameLen))) {
+	    io.disconnect();
+	    return true;
+	  }
+	}
+	return true;
+      }
+
+      // due to queuing, cannot recycle rx msg buffer for the next message
+      ZmRef<ZiIOBuf> next;
+      unsigned nextLen = len - frameLen;
+      uint8_t *nextPtr = nullptr;
+
+      // copy any trailing data that is (part of) the next message(s)
+      if (nextLen) {
+	next = impl_->rxAllocator()->allocBuf(impl_);
+	nextPtr = next->ensure(nextLen);
+	memcpy(nextPtr, buf->data() + frameLen, nextLen);
+	next->length = nextLen;
+	buf->length = frameLen;
+      }
+
+      // process body
+      frameLen = ZuInvoke<Body>(impl_, io, ZuMv(io.buf));
+      if (ZuUnlikely(frameLen < 0)) {
+	io.disconnect();
+	return true;
+      }
+      if (!frameLen) {
+	// Body may have rearmed reception with its own buffer.
+	if (!io.completed() && !io.buf)
+	  io.buf = impl_->rxAllocator()->allocBuf(impl_);
+	return true;
+      }
+
+      // no trailing data - allocate blank next message
+      if (!next) {
+	next = impl_->rxAllocator()->allocBuf(impl_);
+      }
+
+      // set up I/O context for next message
+      io.buf = ZuMv(next);
+      return false;
+    };
+    if (!io.buf) io.buf = impl()->rxAllocator()->allocBuf(impl());
+    if (io.fn)
+      io.fn = ZiRxFn{ZuMv(fn)};
+    else
+      io.init(ZiRxFn{ZuMv(fn)}, ZuMv(io.buf));
   }
 
-  template <auto Hdr, auto Body, bool Network, typename Alloc>
-  int process_(const ZiRxContext *io, Alloc &&alloc) {
-    while (m_stream) {
-      if (!m_frameLen || m_frameLen == INT_MAX) {
-	if constexpr (Network)
-	  m_frameLen = ZuInvoke<Hdr>(impl(), *io, m_stream);
-	else
-	  m_frameLen = ZuInvoke<Hdr>(impl(), m_stream);
-	if (ZuUnlikely(m_frameLen < 0 ||
-	    (m_frameLen != INT_MAX && unsigned(m_frameLen) > m_maxSize)))
-	  return -1;
-	m_gather = m_frameLen != INT_MAX &&
-	  m_stream.length() < unsigned(m_frameLen) &&
-	  unsigned(m_frameLen) > m_stream.capacity();
+  // synchronous receive from ZiRxContext
+  //
+  // int Body(const ZiRxContext &io, ZiIOBuf *buf, unsigned len)
+  //   0   - skip remaining data (defends against DOS)
+  //   +ve - length of hdr+body (may be <= that returned by Hdr())
+  //   -ve - disconnect immediately
+  template <auto Hdr, auto Body>
+  void recvSync(ZiRxContext &io) {
+    auto fn = [](ZiRxContext &io) {
+      auto buf = io.buf.ptr();
+      auto impl_ = impl(buf);
+      unsigned len = buf->length;
+
+      // scan header
+      int frameLen = ZuInvoke<Hdr>(impl_, io, buf);
+      if (ZuUnlikely(frameLen < 0)) {
+	io.disconnect();
+	return true;
       }
-      if (m_frameLen == INT_MAX) return 0;
-      if (m_gather && !m_stream.gather(unsigned(m_frameLen), alloc)) return -1;
-      if (m_stream.length() < unsigned(m_frameLen)) return 0;
-      int consumed;
-      if constexpr (Network)
-	consumed = ZuInvoke<Body>(impl(), *io, m_stream, unsigned(m_frameLen));
-      else
-	consumed = ZuInvoke<Body>(impl(), m_stream, unsigned(m_frameLen));
-      if (ZuUnlikely(consumed < 0)) return consumed;
-      if (!consumed) { rxReset(); return 1; }
-      m_stream.advance(unsigned(consumed));
-      m_frameLen = 0;
-      m_gather = false;
+      if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
+	ZiLOG(Error, "ZiRx", "ZiRx::recv TCP message too big / corrupt");
+	io.disconnect();
+	return true;
+      }
+      if (len < unsigned(frameLen)) {
+	if (frameLen != INT_MAX && ZuUnlikely(buf->size < unsigned(frameLen))) {
+	  // grow buffer
+	  if (ZuUnlikely(!buf->ensure(frameLen))) {
+	    io.disconnect();
+	    return true;
+	  }
+	}
+	return true;
+      }
+
+      // process body
+      frameLen = ZuInvoke<Body>(impl_, io, buf, frameLen);
+      if (ZuUnlikely(frameLen < 0)) {
+	io.disconnect();
+	return true;
+      }
+      if (!frameLen) return true;
+
+      // calculate length of trailing data
+      unsigned nextLen = len - frameLen;
+
+      // move trailing data down - recycle buffer for subsequent messages
+      if (nextLen) memmove(buf->data(), buf->data() + frameLen, nextLen);
+
+      // set up I/O context for next message
+      buf->length = nextLen;
+      return false;
+    };
+    if (!io.buf) io.buf = impl()->rxAllocator()->allocBuf(impl());
+    if (io.fn)
+      io.fn = ZiRxFn{ZuMv(fn)};
+    else
+      io.init(ZiRxFn{ZuMv(fn)}, ZuMv(io.buf));
+  }
+
+  // in-memory receiver
+
+  // int Hdr(Impl *, const ZiIOBuf *buf)
+  //   +ve - length of hdr+body
+  //   INT_MAX - insufficient data
+  //   -ve - disconnect
+
+  // asynchronous recv from memory
+  // returns bytes consumed, -1 on error
+  //
+  // int Body(Impl *, ZmRef<ZiIOBuf> buf)
+  //   0   - skip remaining data (defends against DOS)
+  //   +ve - buffer consumed
+  //   -ve - disconnect immediately
+  template <auto Hdr, auto Body>
+  int recvMem(const uint8_t *data, unsigned rxLen, ZmRef<ZiIOBuf> &buf) {
+    if (!buf) buf = impl()->rxAllocator()->allocBuf(impl());
+    unsigned oldLen = buf->length;
+    unsigned len = oldLen + rxLen;
+    auto rxData = buf->ensure(len);
+    memcpy(rxData + oldLen, data, rxLen);
+    buf->length = len;
+
+    while (len) {
+      // scan header
+      int frameLen = ZuInvoke<Hdr>(impl(buf), buf);
+      if (ZuUnlikely(frameLen < 0)) return -1;
+      if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
+	ZiLOG(Error, "ZiRx", "message too big / corrupt");
+	return -1;
+      }
+      if (len < unsigned(frameLen)) {
+	if (frameLen != INT_MAX && ZuUnlikely(buf->size < unsigned(frameLen))) {
+	  // grow buffer
+	  if (ZuUnlikely(!buf->ensure(frameLen))) return -1;
+	}
+	return 0;
+      }
+
+      // due to queuing, cannot recycle rx msg buffer for the next message
+      ZmRef<ZiIOBuf> next;
+      unsigned nextLen = len - frameLen;
+      uint8_t *nextPtr = nullptr;
+
+      // copy any trailing data that is (part of) the next message
+      if (nextLen) {
+	next = impl()->rxAllocator()->allocBuf(impl());
+	nextPtr = next->ensure(nextLen);
+	memcpy(nextPtr, buf->data() + frameLen, nextLen);
+	next->length = nextLen;
+	buf->length = frameLen;
+      }
+
+      // process body
+      frameLen = ZuInvoke<Body>(impl(buf), ZuMv(buf));
+      if (ZuUnlikely(frameLen < 0)) return -1; // error
+      if (!frameLen) return rxLen; // EOF - discard remainder
+
+      // move on to next message/buffer
+      buf = ZuMv(next);
+      len = nextLen;
     }
-    return 1;
+    return rxLen;
   }
 
-  Stream		m_stream;
-  unsigned		m_maxSize;
-  int			m_frameLen = 0;
-  bool			m_gather = false;
+  // synchronous recv from memory (e.g. TLS)
+  // returns bytes consumed, -1 on error
+  //
+  // int Hdr(Impl *, const ZiIOBuf *buf)
+  //   >=0 - minimum size of body (may be 0)
+  //   -ve - disconnect immediately
+  //
+  // int Body(Impl *, const ZiIOBuf *buf, unsigned len)
+  //   0   - EOF, skip remaining data (defends against DOS)
+  //   +ve - length of hdr+body (may be <= that returned by Hdr())
+  //   -ve - disconnect immediately
+  template <auto Hdr, auto Body>
+  int recvMemSync(const uint8_t *data, unsigned rxLen, ZmRef<ZiIOBuf> &buf) {
+    if (!buf) buf = impl()->rxAllocator()->allocBuf(impl());
+    unsigned oldLen = buf->length;
+    unsigned len = oldLen + rxLen;
+    auto rxData = buf->ensure(len);
+    memcpy(rxData + oldLen, data, rxLen);
+    buf->length = len;
+
+    while (len) {
+      // scan header
+      int frameLen = ZuInvoke<Hdr>(impl(buf), buf);
+      if (ZuUnlikely(frameLen < 0)) return -1;
+      if (ZuUnlikely(frameLen != INT_MAX && unsigned(frameLen) > MaxBufSize)) {
+	ZiLOG(Error, "ZiRx", "message too big / corrupt");
+	return -1;
+      }
+      if (len < unsigned(frameLen)) {
+	if (frameLen != INT_MAX && ZuUnlikely(buf->size < unsigned(frameLen))) {
+	  // grow buffer
+	  if (ZuUnlikely(!buf->ensure(frameLen))) return -1;
+	}
+	return 0;
+      }
+
+      // process body
+      frameLen = ZuInvoke<Body>(impl(buf), buf.ptr(), frameLen);
+      if (ZuUnlikely(frameLen < 0)) return frameLen; // error
+      if (ZuUnlikely(!frameLen)) return rxLen; // EOF - discard remainder
+
+      // skip to next msg
+      buf->skip += frameLen;
+      rxData += frameLen;
+      buf->length = (len -= frameLen);
+    }
+    if (len && buf->skip) {
+      // move down any trailing data
+      buf->skip = 0;
+      memmove(buf->data(), rxData, len);
+    } else
+      buf->skip = 0;
+    buf->length = len;
+    return rxLen;
+  }
 };
 
 #endif /* ZiRx_HH */

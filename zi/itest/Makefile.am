@@ -13,16 +13,15 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	$(top_builddir)/zu/src/libZu.la \
 	@Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
-tap_drivers = zringmatrix zitestresidue zheaptune zhashtune zmultibinding
+tap_drivers = zringmatrix zitestresidue zheaptune zhashtune
 noinst_PROGRAMS = $(tap_drivers) zheapwork zhashwork
 zringmatrix_SOURCES = zringmatrix.cc
-zmultibinding_SOURCES = zmultibinding.cc
 zitestresidue_SOURCES = zitestresidue.cc
 zheaptune_SOURCES = zheaptune.cc zheaptune.hh
 zheapwork_SOURCES = zheapwork.cc zheaptune.hh
 zhashtune_SOURCES = zhashtune.cc zhashtune.hh
 zhashwork_SOURCES = zhashwork.cc zhashtune.hh
-EXTRA_DIST = README.md zimxexamples.py zi_test_residue.py zi_test_residue_test.py \
+EXTRA_DIST = README.md zi_test_residue.py zi_test_residue_test.py \
 	zi-test-residue.sh zi-test-residue-test.sh \
 	residue/go.mod residue/residue.go residue/residue_unix.go \
 	residue/residue_windows.go residue/residue_test.go
@@ -40,10 +39,3 @@ test: $(noinst_PROGRAMS) ZiRingTest
 if HAVE_GO
 	cd $(srcdir)/residue && GOCACHE=$(abs_top_builddir)/.go-cache $(GO) test ./...
 endif
-
-.PHONY: test-examples
-test-examples:
-	$(MAKE) $(AM_MAKEFLAGS) -C $(top_builddir)/zi/example
-	PYTHONDONTWRITEBYTECODE=1 python3 $(srcdir)/zimxexamples.py
-
-test: test-examples

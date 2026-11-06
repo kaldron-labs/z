@@ -13,6 +13,7 @@
 #include <zlib/ZtRegex.hh>
 
 #include <zlib/ZuTime.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtArray.hh>
@@ -35,8 +36,12 @@ const char Request[] =
   "Host: localhost\r\n"
   "\r\n";
 
-class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Connection> {
-  using Rx = ZiRx<Connection>;
+using RxAllocator = Zi::RxTCPBufAllocator<ZiRxBuf, 4096>;
+using TxAllocator = Zi::TxTCPBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+
+class Connection : public ZiConnection,
+    public ZiRx<Connection, ZiRxBufAlloc<4096>>, public ZiTx<Connection> {
+  using Rx = ZiRx<Connection, ZiRxBufAlloc<4096>>;
   using Tx = ZiTx<Connection>;
 
   class Output : public ZiTxStream<Output> {
@@ -44,7 +49,7 @@ class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Con
     Output(Connection *cxn, unsigned size) : ZiTxStream<Output>{size, 0, 0}, m_cxn{cxn} { }
     ~Output() { flush(); }
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      auto buf = m_cxn->m_allocator->alloc();
+      auto buf = m_cxn->m_allocator->allocBuf();
       buf->skip = headRoom;
       return buf;
     }
@@ -57,11 +62,14 @@ class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Con
     Connection *m_cxn;
   };
 public:
-  Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now, Zi::IOBufAllocator *allocator) :
+  Connection(ZiMultiplex *mx, const ZiCxnInfo &ci, ZuTime now, TxAllocator *allocator) :
       ZiConnection(mx, ci), m_headerLen(0), m_connectTime(now), m_allocator(allocator) { }
-  ~Connection() { Tx::clean(); }
+  ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
+  RxAllocator *rxAllocator() const {
+    return static_cast<RxAllocator *>(info().rxAllocator);
+  }
 
   void disconnected(bool);
 
@@ -86,26 +94,22 @@ public:
 
 #include "httpheader.hh"
 
-  int frame(const ZiRxContext &, ZiRxStream<ZiRxQueue> &stream) {
-    if (m_headerDone)
-      return int(stream.length() < m_contentLen - m_contentRcvd ?
-        stream.length() : m_contentLen - m_contentRcvd);
-    bool complete = false;
-    stream.each(m_rcvd, stream.length() - m_rcvd, [this, &complete](auto span) {
-      if (!complete) complete = httpHeaderEnd(span.data(), m_rcvd, span.length());
-      m_rcvd += span.length();
-      return int64_t(span.length());
-    });
+  int frame(const ZiRxContext &, ZiIOBuf *buf) {
+    if (m_headerDone) {
+      if (!buf->length) return INT_MAX;
+      unsigned remaining = m_contentLen - m_contentRcvd;
+      return int(buf->length < remaining ? buf->length : remaining);
+    }
+    bool complete = httpHeaderEnd(buf->data(), m_rcvd, buf->length - m_rcvd);
+    m_rcvd = buf->length;
     return complete ? int(m_headerLen) : INT_MAX;
   }
 
-  int received(const ZiRxContext &, ZiRxStream<ZiRxQueue> &stream, unsigned length) {
+  int received(const ZiRxContext &, ZmRef<ZiIOBuf> buf) {
+    unsigned length = buf->length;
     if (!m_headerDone) {
       m_recvTime = Zm::now();
-      stream.each(length, [this](auto span) {
-        m_header << ZuCSpan{reinterpret_cast<const char *>(span.data()), span.length()};
-        return int64_t(span.length());
-      });
+      m_header << ZuCSpan{buf->cspan()};
       ZtRegex::Captures c(3);
       int n;
       try { n = ZtREGEX("Content-Length:[[:space:]]+([0-9]+)").m(m_header, c); }
@@ -113,15 +117,11 @@ public:
       if (n < 2) return -1;
       m_contentLen = ZuBox<unsigned>(c[2]);
       m_headerDone = true;
+      if (m_contentLen) return int(length);
     } else {
-      // stream.each(length, [](auto span) {
-      //   std::cout.write(reinterpret_cast<const char *>(span.data()), span.length());
-      //   return int64_t(span.length());
-      // });
       m_contentRcvd += length;
     }
-    if (m_headerDone && m_contentRcvd >= m_contentLen) {
-      // std::cout << "Content received\n" << std::flush;
+    if (m_contentRcvd >= m_contentLen) {
       m_completedTime = Zm::now();
       Global::timeInterval(2).add(m_completedTime - m_recvTime);
       Global::rcvd(m_contentRcvd);
@@ -135,7 +135,6 @@ private:
   bool		m_headerDone = false;
   ZtString<>	m_header;
   unsigned	m_headerLen;
-  unsigned	m_headerState = 0;
   unsigned	m_rcvd = 0;
   unsigned	m_contentLen = 0;
   unsigned	m_contentRcvd = 0;
@@ -143,7 +142,8 @@ private:
   ZuTime	m_sendTime;
   ZuTime	m_recvTime;
   ZuTime	m_completedTime;
-  Zi::IOBufAllocator *m_allocator;
+  bool		m_notified = false;
+  TxAllocator *m_allocator;
 };
 
 class Mx : public ZiMultiplex {
@@ -158,7 +158,9 @@ public:
     m_ip(ip), m_port(port), m_options(options),
     m_nConnections(nConnections), m_nConcurrent(nConcurrent),
     m_maxRecv(maxRecv), m_reconnInterval(reconnInterval),
-    m_nDisconnects(0) { }
+    m_nDisconnects(0) {
+    if (!allocator(m_rx) || !allocator(m_allocator)) ZmFail(allocator_registration);
+  }
   ~Mx() { }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
@@ -189,14 +191,14 @@ public:
     ZiMultiplex::connect(
 	ZiConnectFn{this, ZmFnPtr<&Mx::connected>{}},
 	ZiFailFn{this, ZmFnPtr<&Mx::failed>{}},
-	ZiIP(), 0, m_ip, m_port, m_options);
+	ZiIP(), 0, m_ip, m_port, m_rx, m_options);
   }
 
   unsigned maxRecv() const { return m_maxRecv; }
 
 private:
-  ZmRef<Zi::IOBufAllocator> m_allocator = new Zi::TxTCPBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{txRingSize()};
+  ZmRef<RxAllocator> m_rx = new RxAllocator{};
+  ZmRef<TxAllocator> m_allocator = new TxAllocator{};
   ZiIP			m_ip;
   unsigned		m_port;
   ZiCxnOptions		m_options;
@@ -210,6 +212,8 @@ private:
 
 void Connection::disconnected(bool)
 {
+  if (m_notified) return;
+  m_notified = true;
   mx()->disconnected(this);
 }
 
