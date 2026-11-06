@@ -121,6 +121,8 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
   secret protection.
 - `ZquicHandshakeTest` and `ZquicRuntimeTest`: TLS handshake and loopback
   runtime behavior.
+- `ZquicRttLossTest`: falling/rising/constant RTT thresholds, initial fallback,
+  granularity floor, and packet-loss deadline edges at full time precision.
 - `ZquicStreamTest`: stream delivery, retransmission, control queues, PMTUD,
   ECN, 0-RTT, qlog, and key-update state. Reset cases cover unsent and
   flow-stalled output: final size, control retransmission and ACK matching use
@@ -129,9 +131,9 @@ Tests are standalone binaries under `zquic/test`.  Useful entry points:
   `ZquicTimerTest`, `ZquicLogTest`, and `ZquicPQueueTest`: focused subsystem
   coverage. The logger regression holds its old writer during shutdown and
   requires a concurrent restart to wait for ring drain before reopening it.
-  All 175 QUIC groups pass both native debug and ASan/LSan validation. The
-  logger's 12 groups also pass full Valgrind checking with zero errors and
-  zero definitely, indirectly or possibly lost bytes.
+  Earlier validation results do not establish results for the transferred
+  recovery repairs; current validation status is recorded in `zquic_status.md`
+  at the repository root.
 - Migration behavior is covered across `ZquicAPITest`, `ZquicSockTest`,
   `ZquicLogTest`, and runtime loopback tests: public migration params and
   callbacks, endpoint rebinding, CID policy, passive/active validation,

@@ -5,6 +5,7 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/Zquic.hh>
 
@@ -72,7 +73,10 @@ struct TimerStream :
 };
 
 struct TimerLink :
+  public ZmNHeap<TimerLink>,
   public Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream> {
+friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
+
   using Base = Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream>;
   using Base::Base;
 

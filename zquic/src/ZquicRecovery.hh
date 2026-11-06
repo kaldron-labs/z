@@ -1270,15 +1270,7 @@ struct PktTxUpdate {
     ackdBytes += p.bytes;
     switch (p.ecn) {
       case EcnMark::ECT0:
-	++ecnAckdPackets;
-	ecnAckdBytes += p.bytes;
-	if (p.sentTime > ecnAckdSentTime) ecnAckdSentTime = p.sentTime;
-	break;
       case EcnMark::ECT1:
-	++ecnAckdPackets;
-	ecnAckdBytes += p.bytes;
-	if (p.sentTime > ecnAckdSentTime) ecnAckdSentTime = p.sentTime;
-	break;
       case EcnMark::CE:
 	++ecnAckdPackets;
 	ecnAckdBytes += p.bytes;
@@ -1335,8 +1327,6 @@ struct PktTxUpdate {
       "lost frame update truncation", return);
   }
   void clearAckdFrames() { ackdFrames.clear(); }
-
-
 };
 
 struct PktAckBatch {

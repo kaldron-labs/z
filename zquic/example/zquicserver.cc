@@ -10,6 +10,7 @@
 
 #include <iostream>
 
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
@@ -69,7 +70,10 @@ struct AppStream :
 };
 
 struct AppLink :
+  public ZmNHeap<AppLink>,
   public Zquic::SrvLink<App, AppLink, AppStream> {
+friend inline ZuStringT<"Zquic.Example.SrvLink"> ZmNHeapID(AppLink *);
+
   using Base = Zquic::SrvLink<App, AppLink, AppStream>;
   using Base::Base;
 

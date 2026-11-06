@@ -53,16 +53,6 @@ inline void sleepMS(unsigned ms)
 #endif
 }
 
-template <typename L>
-bool waitUntil(L l, unsigned iterations = 2000)
-{
-  for (unsigned i = 0; i < iterations; ++i) {
-    if (l()) return true;
-    sleepMS(1);
-  }
-  return false;
-}
-
 inline void printFile(const char *label, const ZtString<> &path)
 {
   ZiFile file{path, ZiFile::ReadOnly | ZiFile::GC};

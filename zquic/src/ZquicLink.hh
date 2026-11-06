@@ -4555,6 +4555,24 @@ protected:
   }
 
   template <typename AppendAck, typename SendPkt>
+  bool flushCtlStreamsBatch_(
+    ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
+    bool sent = false;
+    for (unsigned i = 0; i < StreamFlushBatch; ++i) {
+      bool last = i + 1 == StreamFlushBatch;
+      uint64_t packetsTx = last ? txPackets_() : 0;
+      bool sent_ = flushCtlStreams_(addr, appendAck, sendPkt);
+      sent |= sent_;
+      if (!sent_ || !scheduledStreamCount_()) break;
+      // Yield after a productive full batch. A flow-blocked result can be
+      // true without a packet; it must await credit rather than repost itself.
+      if (last && txPackets_() != packetsTx)
+	impl()->queueTxFlush_(addr);
+    }
+    return sent;
+  }
+
+  template <typename AppendAck, typename SendPkt>
   bool flushCtlStreams_(
     ZiSockAddr addr, AppendAck appendAck, SendPkt sendPkt) {
     ZiAssert(txInvoked_(), "Zquic", (),

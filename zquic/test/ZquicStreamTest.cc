@@ -6,6 +6,8 @@
 
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZtArray.hh>
 #include <zlib/ZfJSON.hh>
 #include <zlib/ZiFile.hh>
 #include <zlib/Zquic.hh>
@@ -122,9 +124,12 @@ struct TestCIDRoutes {
   unsigned	tombstones = 0;
 };
 struct TestLink :
+  public ZmNHeap<TestLink>,
   public Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>
 {
+friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
+
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
   TestLink(App *app, bool isServer = false) : Base{app, isServer} {
@@ -197,6 +202,17 @@ struct TestLink :
       [](Zquic::PktBuild &) { return true; },
       [](Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &) {
 	return true;
+      });
+  }
+  bool flushStreamBatch() {
+    return Base::flushCtlStreamsBatch_(
+      ZiSockAddr{},
+      [](Zquic::PktBuild &) { return true; },
+      [this](Zquic::PktBuild &build, ZiSockAddr, const Base::TxPktRefs &refs) {
+	bool ok = Base::recordProtPktTx_(
+	  Zquic::PktNumSpace::AppData, sentPkts, build.bytes(), {}, &refs, true);
+	if (ok) ++sentPkts;
+	return ok;
       });
   }
   unsigned flushFrameRefs(
@@ -1812,6 +1828,78 @@ void testCongestionBudgetGatesSends()
   ZuCHECK(!link->queuedControlFrames(),
     "runtime control queue did not drain after ACK opened cwnd");
   link->closeForTest();
+#endif
+}
+
+static void testStreamBatchContinuation()
+{
+  ZuTestScope(testStreamBatchContinuation);
+
+#ifdef Zquic_DEBUG
+  App app;
+  ZmRef<TestLink> link = testLink(&app);
+  using Data = ZtArray<uint8_t, ZtArrayHeapID<"Zquic.Test.StreamBatch">>;
+  Data data;
+  data.length((TestLink::StreamFlushBatch + 1) * Zquic::BufSize);
+  memset(data.data(), 'x', data.length());
+  // Grow the real controller through ACKs until a complete flush batch fits
+  // without waiting for more network input. Each round doubles slow start.
+  while (link->diag().tx.congestionWindow < (data.length()<<1)) {
+    uint64_t before = link->diag().tx.congestionWindow;
+    link->fillCwnd();
+    link->ackThrough(link->sentPkts - 1);
+    if (link->diag().tx.congestionWindow <= before) break;
+  }
+  bool allowance = link->congestionAllowance() >= data.length();
+  ZuCHECK(allowance, "batch continuation setup did not open enough congestion credit");
+  if (!allowance) {
+    link->teardown();
+    return;
+  }
+  auto stream = link->stream(Zquic::StreamType::Duplex);
+  link->grantDataCredit(data.length());
+  stream->txCredit(data.length());
+  {
+    auto tx = stream->txStream_();
+    tx << data;
+    tx.flush();
+  }
+  stream->fin();
+  unsigned queued = link->txFlushQueued;
+  uint64_t before = link->sentPkts;
+  ZuCHECK(link->flushStreamBatch() &&
+      link->sentPkts == before + TestLink::StreamFlushBatch &&
+      link->scheduledStreams() && stream->txBufferedBytes() &&
+      link->txFlushQueued == queued + 1,
+    "productive full batch must yield and schedule only its own remaining output");
+  queued = link->txFlushQueued;
+  ZuCHECK(link->flushStreamBatch() && !link->scheduledStreams() &&
+      !stream->txBufferedBytes() && link->txFlushQueued == queued,
+    "final partial batch must drain without another continuation");
+  link->teardown();
+
+  for (bool congestion : {false, true}) {
+    ZmRef<TestLink> blocked = testLink(&app);
+    auto pending = blocked->stream(Zquic::StreamType::Duplex);
+    blocked->grantDataCredit(100);
+    pending->txCredit(congestion ? 100 : 0);
+    {
+      auto tx = pending->txStream_();
+      tx << "blocked";
+      tx.flush();
+    }
+    if (congestion) blocked->fillCwnd();
+    // A flow-blocked producer may emit its one STREAM_DATA_BLOCKED notice.
+    // Once that notice is sent, only new credit can make further progress.
+    else (void)blocked->flushStreamBatch();
+    queued = blocked->txFlushQueued;
+    before = blocked->sentPkts;
+    (void)blocked->flushStreamBatch();
+    ZuCHECK(blocked->sentPkts == before && pending->txBufferedBytes() &&
+        blocked->txFlushQueued == queued,
+      "credit-blocked batch must await its producer instead of scheduling a spin");
+    blocked->teardown();
+  }
 #endif
 }
 
@@ -3727,6 +3815,7 @@ int main(int argc, char **argv)
   ZuTestCall(testPktNumLength);
   ZuTestCall(testLongHeaderCoalescing);
   ZuTestCall(testCongestionBudgetGatesSends);
+  ZuTestCall(testStreamBatchContinuation);
   ZuTestCall(testActivePathBudget);
   ZuTestCall(testPathValidationStateMachine);
 #ifdef Zquic_DEBUG

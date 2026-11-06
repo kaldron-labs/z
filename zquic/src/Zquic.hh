@@ -1368,10 +1368,6 @@ public:
     });
   }
   void endpointDown_(Endpoint *) { }
-  void endpointTxDrained_() {
-    this->rxRun([this]() { txDrained_(); });
-  }
-
 private:
   template <typename L>
   void allLinks_0(L &&l) const {
@@ -1386,16 +1382,6 @@ private:
 	links.push(LinkRef{static_cast<Link *>(node)});
     }
     links.all(ZuFwd<L>(l));
-  }
-
-  void txDrained_() {
-    auto i = m_links->citer();
-    while (auto node = i()) {
-      LinkRef ref{static_cast<Link *>(node)};
-      ref->app()->txRun([link = ZuMv(ref)]() mutable {
-	link->txDrained_();
-      });
-    }
   }
 
   void failed_0(bool transient) {

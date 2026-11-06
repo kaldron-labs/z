@@ -987,15 +987,19 @@ private:
   }
   template <typename L>
   void close_(Trace &trace, L &&l) {
-    if (!trace.configured) { l(); return; }
+    Guard guard(m_lock);
+    if (!trace.configured) { guard.unlock(); l(); return; }
     if (enabled_()) {
       auto fn_ = [trace = &trace, l = ZuFwd<L>(l)](ZquicLogger *this_) mutable {
 	this_->closeTrace_(*trace);
 	l();
       };
       Fn fn{fn_};
+      // The writer can close the last trace and stop itself as soon as this
+      // record is visible. Keep its ring mapped through push2's bookkeeping.
       log__(fn);
     } else {
+      guard.unlock();
       closeTrace_(trace);
       l();
     }
