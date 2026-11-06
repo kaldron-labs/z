@@ -1,9 +1,12 @@
 # zquic recovery repair plan
 
-Status: source changes integrated and source audit recorded; paused before
-phase 3 at the user's request. No build or test was run. Remaining audit and
-dependency blockers are recorded in `zquic_repair_status.md` and
-`zquic_repair_audit_inventory.md`; this is not a validation pass.
+Status: execution complete on 2026-11-06. Source implementation, local audit,
+requested subagent repairs, native Clang debug phase 3 checks and phase 4 QIR
+have completed. Core QIR is green under the user's third-party-suite policy;
+all supported loss/long-RTT cases pass. Supplemental rebinding retains verified
+baseline failures, and policy/lifetime findings remain explicitly unrepaired.
+See `zquic_status.md` for exact source/image identity, results and limits. Phase
+instructions below retain their original source-only gates and prerequisites.
 
 Repair the three validated defects in [zquic_findings.md](zquic_findings.md):
 the congestion recovery boundary, ACK growth eligibility, and the falling-RTT

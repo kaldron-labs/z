@@ -3,10 +3,15 @@
 These findings concern the existing QUIC implementation, independently of any
 proposed reuse for TCP. They were identified by source inspection against
 RFC 9002. Source repairs and permanent regression sources have now been added.
-No build, compiler check, or test was run in this repair session. Runtime
-validation remains pending; see `zquic_repair_status.md` and
-`zquic_repair_audit_inventory.md` for limits and blockers. The descriptions
-below describe the original defects.
+Native x86-64 Clang debug validation now passes the full QUIC suite, including
+the permanent recovery/ACK/RTT regressions. The independent pre-repair baseline
+fails the intended recovery-boundary, ACK-growth and falling-RTT assertions with
+setup controls passing. Phase 4 QIR has completed: core is green under the accepted third-party policy,
+and all 16 supported loss/long-RTT cells pass. Supplemental rebinding retains
+verified baseline failures. See `zquic_status.md`
+for exact source/configuration, artifacts, accepted exceptions and coverage
+limits, and `zquic_repair_audit_inventory.md` for source dispositions. The
+descriptions below describe the original defects.
 
 1. **Recovery epochs can cause repeated congestion-window reductions.**
 

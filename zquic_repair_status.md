@@ -1,5 +1,12 @@
 # zquic repair source handoff
 
+Current validation update (2026-11-06): this original source handoff is
+historical. The user lifted its phase 3 pause. Current checkout, audited repairs,
+native Clang debug passing suites, baseline failures, accepted H2 exception,
+and completed QIR execution are recorded in `zquic_status.md`. Supported core
+and loss/long-RTT checks pass; baseline rebinding findings remain unrepaired. Its current-state record
+supersedes the untested/paused statements below.
+
 Base revision: `96afee36256c480e1285d598792750ee4eaae082`, with existing local
 I/O migration and unrelated edits preserved. Shared source baselines were
 recorded in `/tmp/zquic-repair-baseline` before feature edits. This is an

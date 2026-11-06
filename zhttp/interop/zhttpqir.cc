@@ -6,6 +6,8 @@
 
 #include "zhttpqir.hh"
 
+#include <zlib/ZiResolver.hh>
+
 #include <stdio.h>
 
 int main(int argc, char **argv)
@@ -25,5 +27,8 @@ int main(int argc, char **argv)
     usage();
     return Usage;
   }
-  return run(role);
+  int status = run(role);
+  ZiResolver::stopSync();
+  ZiResolver::final();
+  return status;
 }
