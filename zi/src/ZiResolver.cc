@@ -293,14 +293,14 @@ void Main::stop(CtrlFn fn)
   instance()->Engine::stop(ZuMv(fn));
 }
 
-bool Main::startSync()
+bool Main::start()
 {
   return ZmBlock<bool>{}([](auto wake) {
     start(ZuMv(wake));
   });
 }
 
-bool Main::stopSync()
+bool Main::stop()
 {
   return ZmBlock<bool>{}([](auto wake) {
     stop(ZuMv(wake));

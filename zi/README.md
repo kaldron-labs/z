@@ -254,15 +254,15 @@ Call `final()` only after stop completion, or directly after init without start
 or a failed start whose rollback completed. It releases quiescent resources and
 never initiates shutdown or waits for a control thread. These preconditions are
 always-fatal assertions. A stop completion callback may call final. The main
-thread can use `startSync()` and `stopSync()` for boolean, blocking completion;
+thread can use `start()` and `stop()` for boolean, blocking completion;
 never use them from resolver, I/O, or worker callbacks.
 
 ```cpp
 ZiResolver::init(ZiResolverParams{}.timeoutMS(2000).tries(2));
-bool started = ZiResolver::startSync();
+bool started = ZiResolver::start();
 if (started) {
   // Submit asynchronous queries, or use ZiIP's main-thread blocking adapters.
-  ZiResolver::stopSync();
+  ZiResolver::stop();
 }
 ZiResolver::final();
 ```

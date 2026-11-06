@@ -263,7 +263,7 @@ void testRestart()
   ZiResolver::init(ZiResolverParams{}.ipv4(true).ipv6(false).
     timeoutMS(500).tries(1).servers(dns.servers()));
   for (unsigned cycle = 0; cycle < 3; ++cycle) {
-    bool started = ZiResolver::startSync();
+    bool started = ZiResolver::start();
     ZuCheckRT(started);
     if (!started) break;
     ZmSemaphore resolved;
@@ -278,7 +278,7 @@ void testRestart()
       }});
     ZuCheckRT(waitFor(resolved));
     ZuCheckRT(!failed.load_() && out == ip4(0xc0000235U));
-    ZuCheckRT(ZiResolver::stopSync());
+    ZuCheckRT(ZiResolver::stop());
     ZuCheckRT(ZiResolver::instance()->initialized() &&
       ZiResolver::instance()->state() == ZmEngineState::Stopped);
   }
@@ -307,7 +307,7 @@ void testLazyNumericResolve()
   ZuCheck(!failed.load_());
   ZuCheck(out == ip4(0x7f000001U));
   ZuCheck(ZiResolver::instance()->initialized());
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -337,7 +337,7 @@ void testIPv6NumericResolve()
   ZuCheck(waitFor(done));
   ZuCheck(!failed.load_());
   ZuCheck(out == ip6(loopback));
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -368,7 +368,7 @@ void testIPv4OnlyResolve()
   ZuCheck(out == ip4(0xc0000235U));
   ZuCheck(dns.a() > 0);
   ZuCheck(dns.aaaa() == 0);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -417,7 +417,7 @@ void testIPv6EnabledResolve()
   ZuCheck(have6.load_());
   ZuCheck(dns.a() > 0);
   ZuCheck(dns.aaaa() > 0);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -480,7 +480,7 @@ void testReverseLookup()
   ZuCheck(waitFor(done));
   ZuCheck(!failed.load_());
   ZuCheck(count.load_() == 2);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -506,7 +506,7 @@ void testAsyncStart()
   starter.join();
   ZuCheck(async && waitFor(completed));
   ZuCheck(!failed.load_());
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
@@ -515,7 +515,7 @@ void testStartReentry()
   ZuTestScope(testStartReentry);
   ZmSemaphore stopped;
   ZmAtomic<unsigned> failed = 0;
-  ZiResolver::startSync();
+  ZiResolver::start();
   ZiResolver::start([&failed, &stopped](bool ok) {
     if (!ok ||
 	!ZiResolver::instance()->running() ||
@@ -561,7 +561,7 @@ void testFinalCallbacks()
   ZiResolver::final(); // initialized without a start has no thread to join
   ZuCheck(!ZiResolver::instance()->initialized());
   ZiResolver::init();
-  ZuCheck(ZiResolver::startSync());
+  ZuCheck(ZiResolver::start());
   ZiResolver::stop([&completed, &failed](bool ok) {
     if (!ok || ZiResolver::instance()->running()) failed = 1;
     // Stop has joined the workers. Finalization on the control thread uses
@@ -573,8 +573,8 @@ void testFinalCallbacks()
   ZuCheck(waitFor(completed));
   ZuCheck(!failed.load_());
   ZiResolver::init();
-  ZuCheck(ZiResolver::startSync());
-  ZuCheck(ZiResolver::stopSync());
+  ZuCheck(ZiResolver::start());
+  ZuCheck(ZiResolver::stop());
   ZiResolver::final();
 }
 
@@ -584,7 +584,7 @@ void testFinalJoin()
   ZmSemaphore entered, release, finalizing, finalized;
   ZmAtomic<unsigned> failed = 0;
   ZiResolver::init();
-  bool started = ZiResolver::startSync();
+  bool started = ZiResolver::start();
   ZuCheckRT(started);
   if (!started) { ZiResolver::final(); return; }
   ZiResolver::stop([&entered, &release, &failed](bool ok) {
@@ -647,7 +647,7 @@ void testAsyncStop()
   ZuCheck(waitFor(stopped));
   ZuCheck(waitFor(restarted));
   ZuCheck(!failed.load_() && ZiResolver::instance()->running());
-  ZuCheck(ZiResolver::stopSync());
+  ZuCheck(ZiResolver::stop());
   ZiResolver::final();
 }
 
@@ -700,7 +700,7 @@ void testCancel()
     }});
   ZuCheck(dns.waitTXT());
   ZiResolver::cancel(ZuMv(handle));
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZuCheck(callback.trywait() != 0);
   ZuCheck(!callbacks.load_());
   ZiResolver::final();
@@ -762,7 +762,7 @@ void testTXTParse()
   ZuCheck(waitFor(done));
   ZuCheck(!failed.load_());
   ZuCheck(n == 2);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
