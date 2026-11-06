@@ -10,8 +10,8 @@
 
 #include <iostream>
 
-#include <zlib/ZtString.hh>
 #include <zlib/ZmHeap.hh>
+#include <zlib/ZtString.hh>
 #include <zlib/Zquic.hh>
 
 namespace {
@@ -67,7 +67,7 @@ struct AppStream :
 struct AppLink :
   public ZmNHeap<AppLink>,
   public Zquic::SrvLink<App, AppLink, AppStream> {
-  friend inline ZuStringT<"Zquic.Example.SrvLink"> ZmNHeapID(AppLink *);
+friend inline ZuStringT<"Zquic.Example.SrvLink"> ZmNHeapID(AppLink *);
   using ZmNHeap<AppLink>::operator new;
   using ZmNHeap<AppLink>::operator delete;
 

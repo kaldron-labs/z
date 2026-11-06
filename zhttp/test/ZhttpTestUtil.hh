@@ -24,7 +24,6 @@ using Zquic::Test::printFile;
 using Zquic::Test::runCurlH3;
 using Zquic::Test::sleepMS;
 using Zquic::Test::systemOK;
-using Zquic::Test::waitUntil;
 using Zquic::Test::writeLocalhostCert;
 
 struct LifeEvt {

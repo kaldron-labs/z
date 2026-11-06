@@ -301,9 +301,9 @@ static void testHQMultiFile()
   ZuCHECK(server > 0, "HQ server forked");
 
   ZtString<> cmd;
-  cmd << "TESTCASE=transfer REQUESTS='https://127.0.0.1:" << port <<
-    "/a.bin https://127.0.0.1:" << port <<
-    "/nested/b.bin https://127.0.0.1:" << port <<
+  cmd << "TESTCASE=transfer REQUESTS='https://localhost:" << port <<
+    "/a.bin https://localhost:" << port <<
+    "/nested/b.bin https://localhost:" << port <<
     "/c.bin' ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
     " QLOGDIR=" << qlogDir <<
@@ -311,7 +311,7 @@ static void testHQMultiFile()
 
   bool ok = runStatus_(cmd, 0);
   bool stopped = stopServer_(server);
-  ZuCHECK(ok, "HQ client downloaded multiple files");
+  ZuCHECK(ok, "HQ hostname client downloaded files and exited cleanly");
   ZuCHECK(stopped, "HQ server stopped");
 
   ZtString<> dst0, dst1, dst2;
@@ -360,9 +360,9 @@ static void testH3MultiFile()
   ZuCHECK(server > 0, "H3 server forked");
 
   ZtString<> cmd;
-  cmd << "TESTCASE=http3 REQUESTS='https://127.0.0.1:" << port <<
-    "/a.bin https://127.0.0.1:" << port <<
-    "/nested/b.bin https://127.0.0.1:" << port <<
+  cmd << "TESTCASE=http3 REQUESTS='https://localhost:" << port <<
+    "/a.bin https://localhost:" << port <<
+    "/nested/b.bin https://localhost:" << port <<
     "/c.bin' ZHTTP_QIR_DOWNLOADS=" << downloads <<
     " ZHTTP_QIR_CA=" << certPath <<
     " QLOGDIR=" << qlogDir <<
@@ -370,7 +370,7 @@ static void testH3MultiFile()
 
   bool ok = runStatus_(cmd, 0);
   bool stopped = stopServer_(server);
-  ZuCHECK(ok, "H3 client downloaded multiple files");
+  ZuCHECK(ok, "H3 hostname client downloaded files and exited cleanly");
   ZuCHECK(stopped, "H3 server stopped");
 
   ZtString<> dst0, dst1, dst2;

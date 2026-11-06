@@ -16,6 +16,12 @@ namespace Zquic_ {
 
 template <typename Link_>
 struct Cxn {
+  CxnID			id;
+  uint64_t		sequence = 0;
+  Link_			*link = nullptr;
+  ResetToken		resetToken;
+  CxnState::T		state = CxnState::Active;
+
   Cxn() = default;
   Cxn(
     const CxnID &id_, uint64_t sequence_, Link_ *link_,
@@ -25,12 +31,6 @@ struct Cxn {
       link{link_},
       resetToken{resetToken_},
       state{state_} { }
-
-  CxnID			id;
-  uint64_t		sequence = 0;
-  Link_			*link = nullptr;
-  ResetToken		resetToken;
-  CxnState::T		state = CxnState::Active;
 };
 
 template <typename Link_>
@@ -239,6 +239,20 @@ using EndpointRebindFn =
 ZmQueueDerive(EndpointDiscFns, EndpointDiscFn,
   ZmQueueHeapID<"Zquic.Endpoint.DiscFns">);
 
+struct EndpointTxData {
+  ZmRef<ZiIOBuf>	buf;
+  ZiSockAddr		addr;
+  EcnMark::T		ecn = EcnMark::NotECT;
+
+  EndpointTxData() = default;
+  EndpointTxData(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
+    buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
+};
+
+ZmListDerive(EndpointTxQueue, EndpointTxData,
+  ZmListNode<EndpointTxData,
+    ZmListHeapID<"Zquic.Endpoint.TxQueue">>);
+
 template <typename Endpoint_>
 class EndpointCxn_ : public ZmNHeap<EndpointCxn_<Endpoint_>>, public ZiConnection {
 friend inline ZuStringT<"Zquic.Endpoint.Cxn"> ZmNHeapID(EndpointCxn_ *);
@@ -248,19 +262,7 @@ friend Endpoint_;
 public:
   static constexpr unsigned EndpointTxQueueLimit = 4096;
 
-  struct TxData {
-    TxData() = default;
-    TxData(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
-	buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
-
-    ZmRef<ZiIOBuf>	buf;
-    ZiSockAddr		addr;
-    EcnMark::T		ecn = EcnMark::NotECT;
-  };
-  ZmListDerive(TxQueue, TxData,
-    ZmListNode<TxData,
-	ZmListHeapID<"Zquic.Endpoint.TxQueue">>);
-  using TxNode = TxQueue::Node;
+  using TxNode = EndpointTxQueue::Node;
 
   EndpointCxn_(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
 	ZiConnection(endpoint->mx_(), ci),
@@ -268,10 +270,7 @@ public:
 	m_generation{generation} { m_endpoint->cxnAdded_(); }
 
   void connected(ZiRxContext &io) override {
-    if (mx()->backend() == ZiMxBackend::URing)
-      m_sendDone = ZiTxFn{this, ZmFnPtr<&EndpointCxn_::template sendDone_<true>>{}};
-    else
-      m_sendDone = ZiTxFn{this, ZmFnPtr<&EndpointCxn_::template sendDone_<false>>{}};
+    m_sendDone = ZiTxFn{this, ZmFnPtr<&EndpointCxn_::sendDone_>{}};
     m_endpoint->connected_(this, io);
   }
   void disconnected(bool) override {
@@ -369,38 +368,35 @@ private:
 	return true;
     }
     m_txActive = true;
-    m_txBytes = m_txBuf->length;
     io.init(
 	m_sendDone,
 	ZuMv(m_txBuf), m_txAddr, ecnTOS(m_txECN));
     return true;
   }
 
-  template <bool Native>
   bool sendDone_(ZiTxContext &io) {
-    // Native next-output callbacks run at data completion, independently of
-    // the later buffer-bearing notification retirement callback.
-    if constexpr (Native) if (io.buf) {
-	if (io.length < 0 && !(io.flags & ZiTxContext::TxDataDone))
-	  m_endpoint->ioError_();
-	io.complete();
-	return true;
-    }
     if (io.length < 0)
 	m_endpoint->ioError_();
-    else if (m_txActive)
-	m_endpoint->sent_(m_txBytes);
+    else {
+	if ((io.offset += io.length) < io.buf->length) return true;
+	m_endpoint->sent_(io.buf->length);
+    }
+    io.complete();
     m_txActive = false;
     if (dequeueTx_()) {
-	// Drain callbacks may send synchronously; publish the selected packet
-	// first so reentrant sends queue behind it.
-	sendStart_(io);
-	m_endpoint->txDrained_();
+	m_txActive = true;
+	scheduleTx_();
 	return true;
     }
     m_txECN = EcnMark::NotECT;
-    io.complete();
     return true;
+  }
+
+  void scheduleTx_() {
+    mx()->txRun([cxn = ZmRef(this)]() mutable {
+	if (cxn->m_closing.load_() || !cxn->m_txBuf) return;
+	cxn->send(ZiTxFn{cxn.ptr(), ZmFnPtr<&EndpointCxn_::sendStart_>{}});
+    });
   }
 
 private:
@@ -415,11 +411,10 @@ private:
   alignas(Zm::CacheLineSize)
   ZiTxFn		m_sendDone; // initialized before socket publication
   ZmRef<ZiIOBuf>	m_txBuf; // pending selection only; active output belongs to io
-  unsigned		m_txBytes = 0;
   bool			m_txActive = false;
   ZiSockAddr		m_txAddr;
   EcnMark::T		m_txECN = EcnMark::NotECT;
-  TxQueue		m_txQueue;
+  EndpointTxQueue	m_txQueue;
 };
 
 template <typename Impl_>
@@ -772,10 +767,6 @@ private:
   void sent_(unsigned bytes) {
     ++m_txDiag.datagramsTx;
     m_txDiag.bytesTx += bytes;
-  }
-
-  void txDrained_() {
-    impl()->endpointTxDrained_();
   }
 
   void ioError_() {
