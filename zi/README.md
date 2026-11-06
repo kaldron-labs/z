@@ -29,7 +29,7 @@ records; in-memory CSV formatting is in Zf.
 
 ## Socket multiplexing and event loops
 
-`ZiMultiplex` combines scheduler destinations with Linux epoll or Windows IOCP.
+`ZiMultiplex` combines scheduler destinations with Linux epoll/io_uring or Windows IOCP.
 Configure `ZiMxParams`, including its nested scheduler and `rxThread`/`txThread`,
 before `start()`. Connections expose receive/transmit callbacks and lifecycle
 notifications; use the higher-level [Ztcp guide](../ztcp/README.md) for a complete
@@ -138,36 +138,81 @@ connection does not correspond one-to-one with a socket.
 `ZiIOBuf` provides pooled, reference-counted I/O storage. Configure the pool for
 your message sizes and keep buffers alive through asynchronous output.
 
-`ZiMxParams::rxRingSize(n)` and `txRingSize(n)` select receive and transmit
-pool/ring counts independently, both defaulting to 128. Native service counts
-must be in `[ZiMxParams::MinRingSize, ZiMxParams::MaxRingSize]` (2..32768);
-non-power-of-two payload counts are preserved while kernel descriptor rings
-round up. A shared Rx/Tx owner loop uses the larger count. `rxBufSize` and
-`txBufSize` still select socket receive/send byte limits.
+Initialize the multiplexer, construct its typed Rx and Tx allocators, register
+both with `mx.allocator(a)`, then start the multiplexer and publish listeners or
+connections. Direct Zi use initializes the multiplexer in its constructor;
+Ztcp/Ztls dependents initialize their hub before preparing its allocator policies.
+Registration returns success only after the binding is complete. The default
+setup path registers immediately after initialization. Registration after start
+is supported from the main/control thread when needed; I/O shards cannot wait
+for it. Selecting an allocator for I/O never registers it implicitly.
 
-Set counts before constructing custom receive pools with
-`params.tcpBufAllocator<Allocator>()` or `udpBufAllocator<Allocator>()`.
-These setters construct immediately using `params.rxRingSize()`. The existing
-reference-taking setters preserve explicitly sized/shared allocators, including
-one-slot allocator tests. TCP/TLS producer policies, QUIC endpoints and Zdb
-table/shard producers use their multiplexer’s `txRingSize()` at initialization.
-The `ZvMxParams` configuration fields use the same names and bounds.
+Each network allocator is permanently dedicated to one multiplexer. Allocators
+are app-owned, and the multiplexer retains one intrusive list entry per bound
+allocator. There is no unbind, restart or reassignment lifecycle. Multiple
+listeners and connections can share an Rx allocator; different listeners can
+select different registered Rx allocators. `listen` and `connect` take the Rx
+allocator immediately before their options argument. Accepted connections inherit
+exactly their listener's selection. UDP setup also requires a registered UDP Rx
+allocator. `ZiMxParams` contains no allocator parameters or multiplexer-wide Rx
+allocator defaults.
 
-Counts are per allocator, not per socket: receive pools are shared by all
-connections using a multiplexer; transmit policies may have separate pools per
-producer/type, endpoint or database table/shard. Account for these owners when
-budgeting memory. Each QUIC Rx slot occupies 1664 mapped bytes with the default
-1472-byte payload policy; 128 slots require 208 KiB per receive allocator.
-A QUIC Tx allocator maps 184 KiB for 128 slots, excluding descriptors and kernel
-queues. Pool counts do not guarantee progress under arbitrary retention: UDP
-keeps an ordinary-backed receive available when mapped buffers are exhausted.
+Each submitted buffer independently selects Tx through its original allocator,
+which must already be registered with that same multiplexer. The original
+allocator pointer is separate from application `owner` metadata and survives
+storage growth and retained ranges. Unregistered or wrong-multiplexer sends are
+fatal in every build and backend, including ordinary and oversized storage.
+Registration does not change compatibility: Rx cannot serve Tx, UDP cannot serve
+streams or vice versa, and App allocators cannot serve Mx I/O. Zi distinguishes
+direction and stream/datagram transport; Ztls owns TCP/TLS-specific checks.
 
-Build-time defaults remain independently overridable through
-`ZiIOBuf_DefltRxRingSize` and `ZiIOBuf_DefltTxRingSize`. Heap tuning controls
-buffer descriptors and ordinary backing; mapped payload storage follows these
-allocator counts and geometry.
-The [workload sizing inventory](test/README.md#network-buffer-pool-sizing-in-workloads) records the policies used
-by protocol tests, interoperability runners and benchmarks.
+Payload slot counts belong to allocator constructors, for example
+`ZiRxTCPBufAllocator<>{256}` or `ZiTxTCPBufAllocator<>{512}` on Linux. The
+independent defaults are 128, overridable through `ZiIOBuf_DefltRxRingSize` and
+`ZiIOBuf_DefltTxRingSize`. Counts apply per allocator, not per connection; budget
+for every app-owned policy and its slot geometry. The payload arena limit is
+`ZiIOBuf_MaxRingSize` (32768). On `_WIN32`, network allocators have zero-argument
+constructors and ring-sizing controls are compiled out.
+
+`ZiMxParams::rxRingSize(n)` and `txRingSize(n)` configure the native owner's
+kernel SQ/CQ capacities, independently of payload pool counts. They are also
+compiled out on Windows. Kernel counts are in
+`[ZiMxParams::MinRingSize, ZiMxParams::MaxRingSize]` (2..32768), with defaults of
+128; kernel descriptor counts round up while allocator payload counts retain
+the requested size. Native operation shares one ordinary Rx kernel ring and one
+SQPOLL Tx kernel ring across the registered arenas, with distinct Rx/Tx threads.
+Native completion dispatch, SQ publication and kernel entry are handled directly
+by `ZiMultiplex` on those shards. Arena, operation and connection queues use
+intrinsic membership; there is no separate native event-loop object.
+`rxBufSize` and `txBufSize` select socket byte limits. The native-only `spin`
+setting defaults to 1000 and controls bounded idle checks before blocking.
+
+When runtime `Zi::uring()` is false, network policies allocate existing builtin
+`IOBufAlloc` backing; they do not initialize or map payload rings. Native arena
+exhaustion also falls back to existing `IOBufAlloc`, preserving original
+provenance and UDP receive metadata capacity. Heap tuning controls descriptors,
+builtin storage and jumbo growth. UDP preserves receive progress when mapped
+slots are retained and silently drops zero-length datagrams. TCP EOF retains its
+normal disconnect semantics.
+
+Arena slot allocation and return use the shared MPMC free list, with free-list
+links in unused aligned buffer heads. A depleted arena's return latch coalesces
+notifications: an Rx-owner return schedules that owner directly, while an
+off-owner return uses the existing scheduler queue and coalesced wake. Arming
+rechecks availability to avoid losing a concurrent return. Stop/detach disarms
+the latch, and service records remain stable until finalization. There is no
+per-arena return eventfd, kernel READ/CQE/rearm stage or separate return poller.
+
+Graceful disconnect drains pending output; abrupt close abandons it. Both finish
+their connection operations and release their I/O contexts before closure is
+reported. Staged Mx stop concludes I/O while retaining registered allocators and
+native resources. Final Mx teardown releases registrations, owner rings and its
+allocator references, clears raw back-pointers and permanently retires bindings.
+It never makes an allocator reusable by another Mx.
+
+The [workload sizing inventory](test/README.md#network-buffer-pool-sizing-in-workloads)
+records payload working-set choices. These API contracts do not establish a
+passing functional gate or measured performance acceptance.
 `ZiRx`/`ZiTx` and `ZiRxStream`/`ZiTxStream` manage receive/transmit flow; stream
 parsers must handle fragmented input, while writers should flush at deliberate
 message boundaries. A span into a buffer is only a view, not an ownership token.

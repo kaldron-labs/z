@@ -4,33 +4,86 @@
 the TCP, UDP and TLS Rx/Tx allocators. It checks metadata, independent pools,
 allocator handle moves, exhaustion, and growth while `ZiTxContext::buf` owns
 the descriptor. The old slot must become reusable immediately and must not be
-returned again when the grown descriptor is destroyed. Native
+returned again when the grown descriptor is destroyed. The backing-operation
+matrix also frees and then grows the same descriptor, checking content and
+allocator provenance while the old slot is held elsewhere; reuse must not
+return that slot a second time. Native
 `testConcurrentReturns` returns a saturated pool from two semaphore-coordinated
 workers and checks that its single allocating owner recovers every slot once.
 
-`ZiMxLoopTest::testIOTurns` checks connection-info null semantics, rejection of
-invalid epoll budgets before worker startup, and Tx fairness for a continuously
-replenished UDP producer with shared and separate Rx/Tx shards. A queued marker
-must run before the producer finishes; semaphore completion avoids sleeps.
+`ZiMxLoopTest::testIOTurns` checks connection-info null semantics and drains a
+continuously replenished UDP producer before a queued marker runs. EPoll covers
+shared and separate Rx/Tx threads; native operation requires separate threads.
+Semaphore acknowledgments synchronize the tests without sleeps.
 
-`ZiMxLoopTest` covers asynchronous allocator unbinding on shared and separate
-Rx/Tx threads. UDP pool tests release the allocator only after unbind completion,
-join explicit detach with global stop, retain registrations across stop/start,
-and detach/rebind both Rx and Tx pools while the multiplexer stays running.
-Native cases exercise terminal kernel-control CQEs before releasing pools;
-they run when the build and runtime support `io_uring`. EPoll runs the same
-owner-handoff and pool-release cases. Build with `make -C zi/test -j8` and run
-`./zi/test/ZiMxLoopTest`.
+Allocator setup follows initialization, constructor-selected payload counts,
+explicit registration, then startup. `testAllocatorBinding` covers App rejection,
+registration before and after start, duplicate registration without another list
+reference, cross-Mx rejection, stop retention, final back-pointer cleanup and
+permanent retirement. Post-start registration here deliberately exercises that
+API; normal dependents register immediately after initialization.
+`testUdpPoolRetire` follows real sends and disconnections through stop and final
+allocator release. `testDisconnectThenClose` forces pending output, queues a
+graceful disconnect and immediately closes abruptly; its callback checks Rx
+context and original backing retirement before exactly one closed notification,
+then attempts fresh peer input and checks no receive occurs afterward.
 
-`ZiMxLoopTest::testRingSizes` checks independent runtime counts, custom receive
-allocator propagation, invalid service-count rejection, and shared/separate
-owner startup. `ZvCfTest::mxRingSizes` checks the corresponding configuration
-fields, bounds and distinction from socket byte limits.
+`testFatalTxRegistration` runs child-process cases for unregistered, wrong-Mx and
+App-backed sends on EPoll and available native operation, including empty UDP
+and oversized storage. Success requires the fatal signal, never a timeout.
+`testIncompatibleTx` exercises registered direction and transport mismatches.
+`testNativeResourceFailure` uses fresh fork/exec children to inject failed native
+setup and registration, checking reported EPoll fallback or successful retry
+without a premature binding. `testNativeSpin` exercises zero, short, default and
+longer bounded spins with acknowledged owner-publication waves and TCP traffic;
+this stress does not directly observe a particular kernel sleep instant.
 
-`ZiMxLoopTest::testUdpRetained` retains the entire native UDP receive pool
-while receiving more datagrams, then releases and repeats to check pool
-recycling. It verifies payload integrity and progress with shared and separate
-Rx/Tx shards, including ordinary backing when every mapped slot is retained.
+`testRingSizes` checks kernel owner counts separately from constructor-selected
+65-slot Rx and 129-slot Tx payload arenas, plus invalid kernel-count rejection.
+`testUdpRetained` retains the native UDP arena while receiving more datagrams,
+then releases and repeats to check recycling and ordinary fallback progress.
+`testUdpGeometry` verifies metadata, truncation and zero-length input/output
+handling with a following positive marker, rather than an absence timeout.
+
+`testNativeRxReturns` shares one native TCP slot between two connections. The
+first retains it; the second queues input while its receive waits for that slot.
+Owner and off-owner return cases check that the original mapped address and
+allocator deliver the queued input. The shared MPMC free-list protocol is
+unchanged. A depletion latch dispatches directly on Rx or through the existing
+coalesced scheduler wake off-owner, without a per-arena eventfd/READ/CQE stage
+or poller. Test assertions establish progress and provenance; external syscall
+traces are needed to establish the absence of that extra kernel stage. The
+fixture's presence alone is not a passing validation result.
+
+`../itest/zmultibinding` checks shared/distinct listener Rx inheritance and
+original received-buffer provenance after listener closure, explicit invalid Rx
+admission and alternating differently sized Tx arenas with retained ranges.
+The maintained tests provide coverage, not a claim that G4, syscall provenance,
+memory checking or the performance acceptance gate has passed. Retain TAP,
+exit status and matching source/build manifests for each validated batch.
+Build provider `src` before `zi/test` default `all`, then run the tests:
+
+```sh
+make -C zi/src -j8
+make -C zi/test -j8
+./zi/test/ZiIOBufTest
+./zi/test/ZiMxLoopTest
+```
+
+`ZiIOBufTest` checks the exact `IOBufAlloc` dynamic type for ordinary/exhausted
+fallbacks, in addition to original allocator pointers and slot recycling. On
+Linux, run the same binary with the memory-lock limit lowered before process
+startup to exercise runtime-unavailable native capability without another build
+configuration:
+
+```sh
+(ulimit -l 0; exec ./zi/test/ZiIOBufTest)
+```
+
+The fallback run must actually report unavailable native capability; elevated
+capabilities may bypass this injection. Windows source assertions exclude sized
+network allocator constructors, but no Windows build is part of this plan's
+Linux-only validation scope.
 
 For native Memcheck runs, opt into the reviewed provided-buffer exceptions:
 
@@ -263,23 +316,28 @@ non-mutable initial fields, mutable fields, and primary-key fields, through
 
 ## Network buffer pool sizing in workloads
 
-`ZiMxParams::rxRingSize()` and `txRingSize()` default independently to 128.
-Receive pools are shared by the multiplexer; transmit pools belong to protocol
-producers, endpoints, and database table/shard/store policies. Set the counts
-before constructing a custom receive allocator with the template setter.
-Explicit allocator instances retain their own policy. See the
-[Zi buffer guide](../README.md#buffers-and-streams) for API, limits and memory
-geometry.
+Pass each payload pool's slot count directly to its typed allocator constructor.
+On Linux the independent Rx and Tx allocator defaults are 128; sizing arguments
+are compiled out on Windows. Runtime-unavailable native capability uses existing
+builtin `IOBufAlloc` storage without mapping arenas. Register the owned policies
+immediately after multiplexer initialization, before publishing listeners or
+connections. Shared and distinct listener Rx policies retain their own counts;
+Tx policies are selected independently by each submitted buffer. Multiplexer
+kernel SQ/CQ capacities are separate from allocator payload capacities.
+See the [Zi buffer guide](../README.md#buffers-and-streams) for API, limits and
+memory geometry.
 
-Automatic workload choices below keep the corresponding direction's default
-as a floor and saturate variable workloads at `ZiMxParams::MaxRingSize` (32768).
+The workload policies below describe working-set choices. Use the corresponding
+allocator direction's default as a floor and `ZiIOBuf_MaxRingSize` (32768) as the
+payload arena limit. Excluded downstream consumers retain their current setup
+until the plan's Phase 2 migration; these rows do not establish their migration.
 Four slots per exchange cover request, response and retirement overlap; this
 is a workload working set, not a bound on arbitrary retention or fragmentation.
 Larger repeating groups or simultaneous transfers may need explicit overrides.
 
 | Workload | Pool policy |
 | --- | --- |
-| Zi native regressions | 257 Rx/513 Tx verifies runtime counts; 128+2 retained UDP packets exercises exhaustion. One-slot allocator and four-slot jumbo tests retain their deliberate small pools. |
+| Zi native regressions | 65 Rx/129 Tx payload slots with independent 257 Rx/513 Tx kernel capacities verify constructor counts; 128+2 retained UDP packets exercises exhaustion. One-slot allocator and four-slot jumbo tests retain their deliberate small pools. |
 | TCP/TLS fixtures and examples | Small sequential fixtures use 128. TLS payload examples reserve four times `ceil(payload bytes / 16 KiB)` in each direction. |
 | QUIC fixtures | Small transport cases use 128 with packet-sized Rx backing; each endpoint inherits the configured Tx count. Standalone codec buffers have no multiplexer policy. |
 | HTTP1/2/3 matrix | Both counts are `4 * jobs * ceil(bodyBytes / 980)`. The unchanged 278528-byte migration response uses 1140 slots. `zhttp` and `zhttpd` expose `--rx-ring-size` and `--tx-ring-size`. |

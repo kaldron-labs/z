@@ -10,309 +10,239 @@
 
 #include <zlib/ZuTestUtil.hh>
 
-#include <zlib/ZtArray.hh>
+#include <zlib/ZiLog.hh>
 #include <zlib/ZiRx.hh>
 
 using namespace ZuTestUtil;
 
 namespace ZiRxTest_ {
 
-using RxBufAlloc = Zi::IOBufAlloc<ZiRxBuf, 32, 64, ZuStringT<"ZiRxTest.Buf">>;
+struct RxBuf : public ZiIOBuf {
+  using ZiIOBuf::ZiIOBuf;
+};
+using RxBufAlloc = Zi::IOBufAlloc<RxBuf, 32, 64, ZuStringT<"ZiRxTest.Buf">>;
 
-struct RxHarness : public ZiRx<RxHarness> {
-  enum { Normal, DropRemainder, Fail };
-  int mode = Normal;
-  unsigned hdrCalls = 0;
-  unsigned bodyCalls = 0;
-  unsigned frames = 0;
-  ZtArray<Zi::RxRange> retained;
+struct RxHarness : public ZiRx<RxHarness, RxBufAlloc> {
+  enum BodyMode {
+    Normal,
+    DropRemainder,
+    Fail
+  };
 
-  RxHarness(unsigned maxSize = 64) : ZiRx{maxSize} { }
+  Zi::AppBufAllocator<RxBuf, 32, 64> allocator;
+  BodyMode	mode = Normal;
 
-  auto alloc() { return ZmRef<ZiRxBuf>{new RxBufAlloc{this, 0}}; }
+  unsigned	hdrCalls = 0;
+  unsigned	hdrInsufficient = 0;
+  unsigned	bodyCalls = 0;
+  unsigned	frames = 0;
 
-  int hdr(Stream &stream) {
-    ++hdrCalls;
-    // This protocol has exactly two header bytes; fragmented-header scratch
-    // does not require assembling or rescanning the payload.
-    uint8_t header[2];
-    if (stream.copy(0, header) != sizeof(header)) return INT_MAX;
-    return unsigned(header[0]) + sizeof(header);
+  unsigned	syncBodyCalls = 0;
+  unsigned	syncFrames = 0;
+
+  unsigned	payloadLen[8] = {};
+  char		payloadFirst[8] = {};
+
+  auto rxAllocator() { return &allocator; }
+
+  void reset(BodyMode mode_ = Normal)
+  {
+    mode = mode_;
+    hdrCalls = 0;
+    hdrInsufficient = 0;
+    bodyCalls = 0;
+    frames = 0;
+    syncBodyCalls = 0;
+    syncFrames = 0;
+    ::memset(payloadLen, 0, sizeof(payloadLen));
+    ::memset(payloadFirst, 0, sizeof(payloadFirst));
   }
-  int body(Stream &stream, unsigned frameLen) {
+
+  int hdr(const ZiIOBuf *buf)
+  {
+    ++hdrCalls;
+    if (buf->length < 2) {
+      ++hdrInsufficient;
+      return INT_MAX;
+    }
+    return int(buf->data()[0]) + 2;
+  }
+
+  int body(ZmRef<ZiIOBuf> buf)
+  {
     ++bodyCalls;
+
+    unsigned frameLen = buf->length;
+    unsigned payload = buf->data()[0];
+    if (frames < 8) {
+      payloadLen[frames] = payload;
+      payloadFirst[frames] = payload ? char(buf->data()[2]) : 0;
+    }
+
     if (mode == Fail) return -1;
     if (mode == DropRemainder) return 0;
-    stream.eachRange(frameLen, [this](Zi::RxRange range) -> int64_t {
-      unsigned length = range.length;
-      retained.push(ZuMv(range));
-      return length;
-    });
+
     ++frames;
-    return frameLen;
+    return int(frameLen);
   }
-  int hdrIO(const ZiRxContext &, Stream &stream) { return hdr(stream); }
-  int bodyIO(const ZiRxContext &, Stream &stream, unsigned frameLen) {
-    return body(stream, frameLen);
-  }
-  int feed(const uint8_t *data, unsigned length) {
-    return recvMem<&RxHarness::hdr, &RxHarness::body>(data, length,
-      [this]() { return alloc(); });
-  }
-  int feedSync(const uint8_t *data, unsigned length) {
-    return recvMemSync<&RxHarness::hdr, &RxHarness::body>(data, length,
-      [this]() { return alloc(); });
+
+  int bodySync(ZiIOBuf *buf, unsigned frameLen)
+  {
+    ++syncBodyCalls;
+
+    unsigned payload = buf->data()[0];
+    if (syncFrames < 8) {
+      payloadLen[syncFrames] = payload;
+      payloadFirst[syncFrames] = payload ? char(buf->data()[2]) : 0;
+    }
+
+    if (mode == Fail) return -1;
+    if (mode == DropRemainder) return 0;
+
+    ++syncFrames;
+    return int(frameLen);
   }
 };
 
-void testMemoryFrames()
+void testRecvMemFragmentedAndIntMax()
 {
-  ZuTestScope(testMemoryFrames);
+  ZuTestScope(testRecvMemFragmentedAndIntMax);
 
   RxHarness rx;
-  const uint8_t first[] = {3};
-  const uint8_t second[] = {0xaa, 'x', 'y', 'z', 1, 0xbb, 'q'};
-  ZuCheck(!rx.feed(first, sizeof(first)));
-  ZuCheck(rx.hdrCalls == 1);
-  ZuCheck(rx.rxStream().length() == 1);
-  ZuCheck(rx.feed(second, sizeof(second)) == sizeof(second));
-  ZuCheck(rx.frames == 2);
-  ZuCheck(rx.retained.length() == 3);
-  ZuCheck(rx.retained[0].length == 1);
-  ZuCheck(rx.retained[1].length == 4);
-  ZuCheck(!memcmp(rx.retained[1].span().data(), second, 4));
-  ZuCheck(rx.retained[2].length == 3);
-  ZuCheck(rx.retained[1].buf.ptr() == rx.retained[2].buf.ptr());
-  ZuCheck(rx.retained[2].offset == 4);
-  ZuCheck(!rx.rxStream());
-}
+  rx.reset();
 
-void testKnownLengthIsCached()
-{
-  ZuTestScope(testKnownLengthIsCached);
+  ZmRef<ZiIOBuf> buf;
 
-  RxHarness rx;
-  const uint8_t first[] = {3, 0xaa};
-  const uint8_t second[] = {'x'};
-  const uint8_t third[] = {'y', 'z'};
-  ZuCheck(!rx.feed(first, sizeof(first)));
-  ZuCheck(!rx.feed(second, sizeof(second)));
-  ZuCheck(rx.hdrCalls == 1);
-  ZuCheck(rx.feed(third, sizeof(third)) == sizeof(third));
-  ZuCheck(rx.hdrCalls == 1);
-  ZuCheck(rx.frames == 1);
-  ZuCheck(rx.retained.length() == 3);
-}
-
-void testMemorySizeAndBodyResults()
-{
-  ZuTestScope(testMemorySizeAndBodyResults);
-
-  const uint8_t oversize[] = {120, 1};
-  const uint8_t frames[] = {1, 1, 'a', 1, 2, 'b'};
-  RxHarness rx;
-  ZuCheck(rx.feed(oversize, sizeof(oversize)) == -1);
-  ZuCheck(!rx.bodyCalls);
-  rx.rxReset();
-  rx.mode = RxHarness::DropRemainder;
-  ZuCheck(rx.feed(frames, sizeof(frames)) == sizeof(frames));
-  ZuCheck(rx.bodyCalls == 1);
-  ZuCheck(!rx.rxStream());
-  rx.mode = RxHarness::Fail;
-  ZuCheck(rx.feed(frames, sizeof(frames)) == -1);
-  ZuCheck(rx.bodyCalls == 2);
-}
-
-void testSyncMemoryKeepsTrailingRanges()
-{
-  ZuTestScope(testSyncMemoryKeepsTrailingRanges);
-
-  const uint8_t first[] = {2, 1, 'a', 'b', 2, 2};
-  const uint8_t second[] = {'c', 'd'};
-  RxHarness rx;
-  ZuCheck(!rx.feedSync(first, sizeof(first)));
-  auto retained = rx.retained[0];
-  ZuCheck(retained.length == 4);
-  ZuCheck(retained.buf->skip == 0);
-  ZuCheck(retained.buf->length == sizeof(first));
-  ZuCheck(rx.rxStream().length() == 2);
-  ZuCheck(rx.feedSync(second, sizeof(second)) == sizeof(second));
-  ZuCheck(rx.frames == 2);
-  ZuCheck(!memcmp(retained.span().data(), first, 4));
-  ZuCheck(retained.buf->length == sizeof(first));
-  ZuCheck(!rx.rxStream());
-}
-
-void testNetworkOriginalBacking()
-{
-  ZuTestScope(testNetworkOriginalBacking);
-
-  RxHarness rx;
-  ZiRxContext io;
-  rx.recv<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
-  auto input = rx.alloc();
-  const uint8_t frames[] = {1, 1, 'a', 1, 2, 'b'};
-  input->append(frames, sizeof(frames));
-  auto original = input.ptr();
-  io.buf = ZuMv(input);
-  ZuCheck(io());
-  ZuCheck(!io.buf);
-  ZuCheck(io.initialized());
-  ZuCheck(rx.frames == 2);
-  ZuCheck(rx.retained[0].buf.ptr() == original);
-  ZuCheck(rx.retained[1].buf.ptr() == original);
-  ZuCheck(rx.retained[0].offset == 0);
-  ZuCheck(rx.retained[1].offset == 3);
-  ZuCheck(original->length == sizeof(frames));
-  ZuCheck(original->skip == 0);
-  rx.rxReset();
-  ZuCheck(rx.retained[0].span()[2] == 'a');
-  ZuCheck(rx.retained[1].span()[2] == 'b');
-}
-
-void testSyncNetworkFragments()
-{
-  ZuTestScope(testSyncNetworkFragments);
-
-  RxHarness rx;
-  ZiRxContext io;
-  rx.recvSync<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
-  auto first = rx.alloc();
-  const uint8_t head[] = {2, 1};
-  first->append(head, sizeof(head));
-  auto original = first.ptr();
-  io.buf = ZuMv(first);
-  ZuCheck(io());
-  ZuCheck(!rx.frames);
-  auto second = rx.alloc();
-  const uint8_t body[] = {'a', 'b'};
-  second->append(body, sizeof(body));
-  io.buf = ZuMv(second);
-  ZuCheck(io());
-  ZuCheck(rx.hdrCalls == 1);
-  ZuCheck(rx.frames == 1);
-  ZuCheck(rx.retained.length() == 2);
-  ZuCheck(rx.retained[0].buf.ptr() == original);
-  ZuCheck(rx.retained[1].span()[0] == 'a');
-  ZuCheck(!rx.rxStream());
-}
-
-// The test protocol permits 255 payload bytes; a 64-byte slot cannot hold
-// the 200-byte frame, and two slots cannot hold it by retaining fragments.
-struct JumboBuf : public ZiRxBuf {
-  using ZiRxBuf::ZiRxBuf;
-  unsigned cookie = 0x1234;
-};
-using JumboAlloc = Zi::IOBufAlloc_<JumboBuf, 64, 512, ZuStringT<"ZiRxTest.Jumbo">>;
-
-void testSharedOversize()
-{
-  ZuTestScopeRT(testSharedOversize);
-  RxHarness rx{512};
-  unsigned allocations = 0;
-  auto alloc = [&]() {
-    ++allocations;
-    return ZmRef<ZiRxBuf>{new JumboAlloc{&rx, 0}};
-  };
-  auto feed = [&](ZuBSpan bytes) {
-    return rx.recvMem<&RxHarness::hdr, &RxHarness::body>(
-      bytes.data(), bytes.length(), alloc);
-  };
-  const uint8_t prefix[] = {1, 1, 'a', 198, 0xaa};
-  ZuCheckRT(!feed(prefix));
-  ZuCheckRT(allocations == 2); // shared first backing requires final storage
-  auto first = rx.retained[0];
-  ZuCheckRT(first.buf->length == sizeof(prefix));
-  ZuCheckRT(!first.buf->jumbo());
-  uint8_t chunk[64];
-  memset(chunk, 'x', sizeof(chunk));
-  for (unsigned i = 0; i < 3; ++i) ZuCheckRT(!feed(chunk));
-  const uint8_t tail[] = {'x', 'x', 'x', 'x', 'x', 'x', 1, 2, 'b'};
-  ZuCheckRT(feed(tail) == sizeof(tail));
-  ZuCheckRT(rx.frames == 3 && rx.retained.length() == 3);
-  const auto &frame = rx.retained[1];
-  ZuCheckRT(frame.length == 200 && frame.buf->jumbo());
-  ZuCheckRT(static_cast<JumboBuf *>(frame.buf.ptr())->cookie == 0x1234);
-  ZuCheckRT(frame.span()[0] == 198 && frame.span()[1] == 0xaa);
-  for (unsigned i = 2; i < frame.length; ++i) ZuCheckRT(frame.span()[i] == 'x');
-  ZuCheckRT(!memcmp(first.span().data(), prefix, 3));
-  ZuCheckRT(first.buf->length == sizeof(prefix) && first.buf->skip == 0);
-  ZuCheckRT(rx.retained[2].length == 3 && rx.retained[2].offset == 6);
-  ZuCheckRT(rx.retained[2].buf->length == sizeof(tail));
-  ZuCheckRT(!rx.rxStream());
-}
-
-#ifndef _WIN32
-void testOversizeSlotReturn()
-{
-  ZuTestScopeRT(testOversizeSlotReturn);
-  if (!Zi::uring()) { ZuCheckRT(!Zi::uring()); return; }
-  using Alloc = Zi::RxTCPBufAllocator<JumboBuf, 64, 512,
-    ZuStringT<"ZiRxTest.Jumbo">>;
-  ZmRef<Zi::IOBufAllocator> allocator = new Alloc{2};
-  RxHarness rx{512};
-  ZiRxContext io;
-  rx.recv<&RxHarness::hdrIO, &RxHarness::bodyIO>(io);
-  auto first = allocator->alloc(&rx);
-  auto held = allocator->alloc(&rx);
-  ZuCheckRT(first->uring() && held->uring());
-  auto original = first.ptr();
-  auto slot = first->data_();
-  const uint8_t header[] = {198, 0xaa};
-  first->append(header, sizeof(header));
-  io.buf = ZuMv(first);
-  ZuCheckRT(io());
-  ZuCheckRT(original->jumbo() && !original->uring());
-  auto reused = allocator->alloc(&rx);
-  ZuCheckRT(reused->uring() && reused->data_() == slot);
-  reused = held = nullptr;
-  unsigned remaining = 198;
-  while (remaining) {
-    auto input = allocator->alloc(&rx);
-    ZuCheckRT(input->uring());
-    unsigned n = remaining < 64 ? remaining : 64;
-    memset(input->data(), 'x', n);
-    input->length = n;
-    io.buf = ZuMv(input);
-    ZuCheckRT(io());
-    remaining -= n;
+  // Header requires at least 2 bytes; this should return INT_MAX path.
+  {
+    const uint8_t p1[] = { 3 };
+    int rc = rx.recvMem<&RxHarness::hdr, &RxHarness::body>(p1, 1, buf);
+    ZuCheck(rc == 0);
+    ZuCheck(rx.hdrInsufficient == 1);
+    ZuCheck(rx.bodyCalls == 0);
+    ZuCheck(!!buf);
+    ZuCheck(buf->length == 1);
   }
-  ZuCheckRT(rx.hdrCalls == 1 && rx.frames == 1);
-  ZuCheckRT(rx.retained.length() == 1);
-  ZuCheckRT(rx.retained[0].buf.ptr() == original);
-  ZuCheckRT(rx.retained[0].length == 200);
-  ZuCheckRT(static_cast<JumboBuf *>(original)->cookie == 0x1234);
-  for (unsigned i = 2; i < 200; ++i) ZuCheckRT(original->data()[i] == 'x');
-  ZuCheckRT(!rx.rxStream());
-  rx.retained.null();
-  // Reset an incomplete oversized frame too; no slot remains held by it.
-  auto input = allocator->alloc(&rx);
-  input->append(header, sizeof(header));
-  io.buf = ZuMv(input);
-  ZuCheckRT(io());
-  rx.rxReset();
-  first = allocator->alloc(&rx);
-  held = allocator->alloc(&rx);
-  ZuCheckRT(first->uring() && held->uring());
+
+  {
+    // complete frame: [payload-len=3][tag][payload...]
+    const uint8_t p2[] = { 0xAA, 'x', 'y', 'z' };
+    int rc = rx.recvMem<&RxHarness::hdr, &RxHarness::body>(p2, 4, buf);
+    ZuCheck(rc == 4);
+    ZuCheck(rx.bodyCalls == 1);
+    ZuCheck(rx.frames == 1);
+    ZuCheck(rx.payloadLen[0] == 3);
+    ZuCheck(rx.payloadFirst[0] == 'x');
+    ZuCheck(!buf);
+  }
 }
-#endif
+
+void testRecvMemOversizeAndBodyModes()
+{
+  ZuTestScope(testRecvMemOversizeAndBodyModes);
+
+  RxHarness rx;
+  ZmRef<ZiIOBuf> buf;
+
+  // Oversize frame rejected before body processing.
+  rx.reset();
+  {
+    const uint8_t oversize[] = { 120, 0x01 };
+    int rc = rx.recvMem<&RxHarness::hdr, &RxHarness::body>(oversize, 2, buf);
+    ZuCheck(rc == -1);
+    ZuCheck(rx.bodyCalls == 0);
+  }
+
+  // Body can explicitly drop all trailing data by returning 0.
+  rx.reset(RxHarness::DropRemainder);
+  buf = nullptr;
+  {
+    const uint8_t twoFrames[] = {
+      1, 0x01, 'a',
+      1, 0x02, 'b'
+    };
+    int rc = rx.recvMem<&RxHarness::hdr, &RxHarness::body>(twoFrames, 6, buf);
+    ZuCheck(rc == 6);
+    ZuCheck(rx.bodyCalls == 1);
+    ZuCheck(rx.frames == 0);
+  }
+
+  // Body error disconnect path.
+  rx.reset(RxHarness::Fail);
+  buf = nullptr;
+  {
+    const uint8_t oneFrame[] = { 1, 0x01, 'q' };
+    int rc = rx.recvMem<&RxHarness::hdr, &RxHarness::body>(oneFrame, 3, buf);
+    ZuCheck(rc == -1);
+    ZuCheck(rx.bodyCalls == 1);
+  }
+}
+
+void testRecvMemSyncTrailingAndErrors()
+{
+  ZuTestScope(testRecvMemSyncTrailingAndErrors);
+
+  RxHarness rx;
+  rx.reset();
+
+  ZmRef<ZiIOBuf> buf;
+
+  {
+    // one full frame + partial next frame header (tests trailing-data retention)
+    const uint8_t p1[] = { 2, 0x01, 'a', 'b', 2, 0x02 };
+    int rc = rx.recvMemSync<&RxHarness::hdr, &RxHarness::bodySync>(p1, 6, buf);
+    ZuCheck(rc == 0);
+    ZuCheck(rx.syncBodyCalls == 1);
+    ZuCheck(rx.syncFrames == 1);
+    ZuCheck(!!buf);
+    ZuCheck(buf->skip == 4);
+    ZuCheck(buf->length == 2);
+  }
+
+  {
+    const uint8_t p2[] = { 'c', 'd' };
+    int rc = rx.recvMemSync<&RxHarness::hdr, &RxHarness::bodySync>(p2, 2, buf);
+    ZuCheck(rc == 2);
+    ZuCheck(rx.syncBodyCalls == 2);
+    ZuCheck(rx.syncFrames == 2);
+    ZuCheck(!!buf);
+    ZuCheck(buf->skip == 0);
+    ZuCheck(buf->length == 0);
+  }
+
+  rx.reset();
+  buf = nullptr;
+  {
+    const uint8_t oversize[] = { 120, 0x01 };
+    int rc = rx.recvMemSync<&RxHarness::hdr, &RxHarness::bodySync>(oversize, 2, buf);
+    ZuCheck(rc == -1);
+    ZuCheck(rx.syncBodyCalls == 0);
+  }
+
+  rx.reset(RxHarness::Fail);
+  buf = nullptr;
+  {
+    const uint8_t oneFrame[] = { 1, 0x01, 'z' };
+    int rc = rx.recvMemSync<&RxHarness::hdr, &RxHarness::bodySync>(oneFrame, 3, buf);
+    ZuCheck(rc == -1);
+    ZuCheck(rx.syncBodyCalls == 1);
+  }
+}
 
 } // ZiRxTest_
 
+using namespace ZiRxTest_;
+
 int main(int argc, char **argv)
 {
-  using namespace ZiRxTest_;
+  ZiLog::init("ZiRxTest");
+  ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
+
   parse(argc, argv);
   ZuTestMain();
-  ZuTestCall(testMemoryFrames);
-  ZuTestCall(testKnownLengthIsCached);
-  ZuTestCall(testMemorySizeAndBodyResults);
-  ZuTestCall(testSyncMemoryKeepsTrailingRanges);
-  ZuTestCall(testNetworkOriginalBacking);
-  ZuTestCall(testSyncNetworkFragments);
-  ZuTestCall(testSharedOversize);
-#ifndef _WIN32
-  ZuTestCall(testOversizeSlotReturn);
-#endif
+  ZuTestCall(testRecvMemFragmentedAndIntMax);
+  ZuTestCall(testRecvMemOversizeAndBodyModes);
+  ZuTestCall(testRecvMemSyncTrailingAndErrors);
+  ZiLog::stop();
   return 0;
 }

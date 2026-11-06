@@ -8,9 +8,10 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSingleton.hh>
+
 #include <zlib/ZuDerive.hh>
 #include <zlib/ZmList.hh>
-#include <zlib/ZmHeap.hh>
 
 #include <zlib/ZtString.hh>
 
@@ -21,14 +22,13 @@ using namespace ZuTestUtil;
 
 namespace ZiRxStreamTest_ {
 
-ZmListDerive(RxQueue, Zi::RxBuf, ZmListNode<Zi::RxBuf, ZmListHeapID<"">>);
-using RxBufAlloc = Zi::IOBufAlloc<RxQueue::Node, 64, 256,
-  ZuStringT<"ZiRxStreamTest.Buf">>;
+ZmListDerive(RxQueue, ZiIOBuf, ZmListNode<ZiIOBuf, ZmListHeapID<"">>);
+using RxAllocator = Zi::AppBufAllocator<RxQueue::Node, 64, 256>;
 
 ZmRef<RxQueue::Node> mkBuf(const char *s)
 {
   unsigned n = static_cast<unsigned>(::strlen(s));
-  ZmRef<RxQueue::Node> buf = new RxBufAlloc{nullptr, 0};
+  ZmRef<RxQueue::Node> buf = ZmSingleton<RxAllocator>::instance()->allocBuf();
   auto iobuf = static_cast<ZiIOBuf *>(buf.ptr());
   if (n) {
     ::memcpy(iobuf->data(), s, n);
@@ -221,7 +221,7 @@ void testCleanResetsState()
 
 int64_t extractN(
     ZiRxStream<RxQueue> &stream, unsigned n,
-    Zi::RxRange &out, unsigned &allocs)
+    ZmRef<ZiIOBuf> &out, unsigned &allocs)
 {
   unsigned remaining = n;
   return stream.extract(
@@ -234,7 +234,7 @@ int64_t extractN(
     },
     [&allocs]() -> ZmRef<RxQueue::Node> {
       ++allocs;
-      return new RxBufAlloc{nullptr, 0};
+      return ZmSingleton<RxAllocator>::instance()->allocBuf();
     },
     out);
 }
@@ -248,11 +248,11 @@ void testExtractCompleteFrames()
     auto input = mkBuf("frame");
     auto inputPtr = input.ptr();
     stream.push(ZuMv(input));
-    Zi::RxRange out;
+    ZmRef<ZiIOBuf> out;
     unsigned allocs = 0;
     ZuCheck(extractN(stream, 5, out, allocs) == 5);
-    ZuCheck(out.buf.ptr() == inputPtr);
-    ZuCheck(spanEq(out.span(), "frame"));
+    ZuCheck(out.ptr() == inputPtr);
+    ZuCheck(spanEq(out->span(), "frame"));
     ZuCheck(!allocs);
     ZuCheck(!stream);
     ZuCheck(!stream.length());
@@ -262,12 +262,12 @@ void testExtractCompleteFrames()
     auto input = mkBuf("frameNEXT");
     auto inputPtr = input.ptr();
     stream.push(ZuMv(input));
-    Zi::RxRange out;
+    ZmRef<ZiIOBuf> out;
     unsigned allocs = 0;
     ZuCheck(extractN(stream, 5, out, allocs) == 5);
-    ZuCheck(out.buf.ptr() == inputPtr);
-    ZuCheck(spanEq(out.span(), "frame"));
-    ZuCheck(!allocs);
+    ZuCheck(out.ptr() == inputPtr);
+    ZuCheck(spanEq(out->span(), "frame"));
+    ZuCheck(allocs == 1);
     ZuCheck(spanEq(stream.span(), "NEXT"));
     ZuCheck(stream.length() == 4);
   }
@@ -275,11 +275,11 @@ void testExtractCompleteFrames()
     ZiRxStream<RxQueue> stream;
     stream.push(mkBuf("abc"));
     stream.push(mkBuf("deNEXT"));
-    Zi::RxRange out;
+    ZmRef<ZiIOBuf> out;
     unsigned allocs = 0;
     ZuCheck(extractN(stream, 5, out, allocs) == 5);
-    ZuCheck(spanEq(out.span(), "abcde"));
-    ZuCheck(!allocs);
+    ZuCheck(spanEq(out->span(), "abcde"));
+    ZuCheck(allocs == 1);
     ZuCheck(spanEq(stream.span(), "NEXT"));
     ZuCheck(stream.length() == 4);
   }
@@ -292,7 +292,7 @@ void testExtractWaitAndError()
   ZiRxStream<RxQueue> stream;
   stream.push(mkBuf("abc"));
   stream.push(mkBuf("de"));
-  Zi::RxRange out;
+  ZmRef<ZiIOBuf> out;
   unsigned allocs = 0;
   ZuCheck(!extractN(stream, 6, out, allocs));
   ZuCheck(!out);
@@ -304,7 +304,7 @@ void testExtractWaitAndError()
     [](ZuBSpan) -> int64_t { return -1; },
     [&allocs]() -> ZmRef<RxQueue::Node> {
       ++allocs;
-      return new RxBufAlloc{nullptr, 0};
+      return ZmSingleton<RxAllocator>::instance()->allocBuf();
     },
     out);
   ZuCheck(n < 0);
@@ -316,17 +316,26 @@ void testExtractWaitAndError()
 
 int64_t spliceN(
   ZiRxStream<RxQueue> &src, ZiRxStream<RxQueue> &dst,
-  unsigned total, unsigned head, unsigned tail)
+  unsigned total, unsigned head, unsigned tail,
+  unsigned &allocs, bool reject = false)
 {
   unsigned remaining = total;
-  return src.splice(dst,
+  auto alloc = [&allocs, reject]() -> ZmRef<RxQueue::Node> {
+    ++allocs;
+    // Model a rejected buffer request; nonzero Z heap allocations do not fail.
+    if (reject) return {};
+    return ZmSingleton<RxAllocator>::instance()->allocBuf();
+  };
+  return src.splice(
+    dst,
     [&remaining](ZuBSpan span) -> int64_t {
       if (remaining > span.length()) {
 	remaining -= span.length();
 	return 0;
       }
       return remaining;
-    }, head, tail);
+    },
+    alloc, alloc, head, tail);
 }
 
 void testSpliceWaitAndFullNode()
@@ -337,30 +346,35 @@ void testSpliceWaitAndFullNode()
   ZiRxStream<RxQueue> dst;
   src.push(mkBuf("abc"));
   dst.push(mkBuf("old"));
+  unsigned allocs = 0;
 
-  ZuCheck(!spliceN(src, dst, 4, 0, 0));
+  ZuCheck(!spliceN(src, dst, 4, 0, 0, allocs));
+  ZuCheck(!allocs);
   ZuCheck(src.length() == 3);
   ZuCheck(dst.length() == 3);
 
   auto tail = mkBuf("d");
   auto tailPtr = tail.ptr();
   src.push(ZuMv(tail));
-  ZuCheck(spliceN(src, dst, 4, 0, 0) == 4);
+  ZuCheck(spliceN(src, dst, 4, 0, 0, allocs) == 4);
+  ZuCheck(!allocs);
   ZuCheck(!src);
   ZuCheck(dst.length() == 7);
   ZuCheck(consumeExact(dst, 7, "oldabcd"));
   ZuCheck(tailPtr);
 }
 
-void testSpliceBoundaryRanges()
+void testSpliceBoundaryCopies()
 {
-  ZuTestScope(testSpliceBoundaryRanges);
+  ZuTestScope(testSpliceBoundaryCopies);
 
   {
     ZiRxStream<RxQueue> src;
     ZiRxStream<RxQueue> dst;
     src.push(mkBuf("[abc]NEXT"));
-    ZuCheck(spliceN(src, dst, 5, 1, 1) == 5);
+    unsigned allocs = 0;
+    ZuCheck(spliceN(src, dst, 5, 1, 1, allocs) == 5);
+    ZuCheck(allocs == 1);
     ZuCheck(dst.length() == 3);
     ZuCheck(consumeExact(dst, 3, "abc"));
     ZuCheck(src.length() == 4);
@@ -372,8 +386,10 @@ void testSpliceBoundaryRanges()
     auto input = mkBuf("[abcdefgh]N");
     auto inputPtr = input.ptr();
     src.push(ZuMv(input));
-    ZuCheck(spliceN(src, dst, 10, 1, 1) == 10);
-    ZuCheck(dst.span().data() == static_cast<ZiIOBuf *>(inputPtr)->data() + 1);
+    unsigned allocs = 0;
+    ZuCheck(spliceN(src, dst, 10, 1, 1, allocs) == 10);
+    ZuCheck(allocs == 1);
+    ZuCheck(dst.span().data() == static_cast<ZiIOBuf *>(inputPtr)->data());
     ZuCheck(consumeExact(dst, 8, "abcdefgh"));
     ZuCheck(consumeExact(src, 1, "N"));
   }
@@ -389,28 +405,32 @@ void testSpliceFragmentedAndEmpty()
   src.push(mkBuf("[a"));
   src.push(mkBuf("bc"));
   src.push(mkBuf("d]NEXT"));
+  unsigned allocs = 0;
 
-  ZuCheck(spliceN(src, dst, 6, 1, 1) == 6);
+  ZuCheck(spliceN(src, dst, 6, 1, 1, allocs) == 6);
+  ZuCheck(allocs == 1);
   ZuCheck(dst.length() == 11);
   ZuCheck(consumeExact(dst, 11, "partialabcd"));
   ZuCheck(consumeExact(src, 4, "NEXT"));
 
   src.push(mkBuf("[]rest"));
-  ZuCheck(spliceN(src, dst, 2, 1, 1) == 2);
+  ZuCheck(spliceN(src, dst, 2, 1, 1, allocs) == 2);
   ZuCheck(!dst);
   ZuCheck(consumeExact(src, 4, "rest"));
 }
 
-void testSpliceFramingRejection()
+void testSpliceAdmissionRejection()
 {
-  ZuTestScope(testSpliceFramingRejection);
+  ZuTestScope(testSpliceAdmissionRejection);
 
   ZiRxStream<RxQueue> src;
   ZiRxStream<RxQueue> dst;
   src.push(mkBuf("[abc]NEXT"));
   dst.push(mkBuf("old"));
+  unsigned allocs = 0;
 
-  ZuCheck(spliceN(src, dst, 5, 4, 2) < 0);
+  ZuCheck(spliceN(src, dst, 5, 1, 1, allocs, true) < 0);
+  ZuCheck(allocs == 1);
   ZuCheck(src.length() == 9);
   ZuCheck(dst.length() == 3);
   ZuCheck(consumeExact(src, 9, "[abc]NEXT"));
@@ -425,6 +445,11 @@ void testSpliceTransform()
   ZiRxStream<RxQueue> dst;
   src.push(mkBuf("abcNEXT"));
   unsigned remaining = 3;
+  unsigned allocs = 0;
+  auto alloc = [&allocs]() -> ZmRef<RxQueue::Node> {
+    ++allocs;
+    return ZmSingleton<RxAllocator>::instance()->allocBuf();
+  };
   int64_t n = src.splice(
     dst,
     [&remaining](ZuBSpan span) -> int64_t {
@@ -434,12 +459,13 @@ void testSpliceTransform()
       }
       return remaining;
     },
-    0, 0,
+    alloc, alloc, 0, 0,
     [](ZuSpan<uint8_t> span) {
       for (auto &c : span) c -= 'a' - 'A';
     });
 
   ZuCheck(n == 3);
+  ZuCheck(allocs == 1);
   ZuCheck(consumeExact(dst, 3, "ABC"));
   ZuCheck(consumeExact(src, 4, "NEXT"));
 }
@@ -563,356 +589,6 @@ void testGeometry()
   ZuCheck(base.allocTail == 20);
 }
 
-struct TrackedRx : public RxQueue::Node {
-  using Node = RxQueue::Node;
-  using Node::Node;
-  ~TrackedRx() { ++*static_cast<unsigned *>(owner); }
-};
-using TrackedAlloc = Zi::IOBufAlloc<TrackedRx, 64, 256,
-  ZuStringT<"ZiRxStreamTest.Lifetime">>;
-
-void testRetainedCoalescedLifetime()
-{
-  ZuTestScope(testRetainedCoalescedLifetime);
-
-  unsigned destroyed = 0, allocs = 0;
-  ZiRxStream<RxQueue> stream;
-  ZmRef<RxQueue::Node> input = new TrackedAlloc{&destroyed, 0};
-  *static_cast<ZiIOBuf *>(input.ptr()) << "abcNEXT";
-  auto original = static_cast<ZiIOBuf *>(input.ptr());
-  auto data = original->data();
-  stream.push(ZuMv(input));
-  Zi::RxRange first;
-  ZuCheck(extractN(stream, 3, first, allocs) == 3);
-  auto tail = stream.range();
-  ZuCheck(!allocs);
-  ZuCheck(first.buf.ptr() == original && first.offset == 0);
-  ZuCheck(tail.buf.ptr() == original && tail.offset == 3);
-  ZuCheck(first.span().data() == data);
-  ZuCheck(tail.span().data() == data + 3);
-  ZuCheck(stream.advance(2) == 2);
-  ZuCheck(original->skip == 0 && original->length == 7);
-  stream.clean();
-  ZuCheck(!destroyed);
-  ZuCheck(spanEq(first.span(), "abc"));
-  ZuCheck(spanEq(tail.span(), "NEXT"));
-  first = {};
-  ZuCheck(!destroyed);
-  tail = {};
-  ZuCheck(destroyed == 1);
-}
-
-void testSharedFragmentsUseFinalOwner()
-{
-  ZuTestScope(testSharedFragmentsUseFinalOwner);
-
-  ZiRxStream<RxQueue> stream;
-  auto first = mkBuf("abc");
-  auto second = mkBuf("deNEXT");
-  auto firstData = static_cast<ZiIOBuf *>(first.ptr())->data();
-  auto secondData = static_cast<ZiIOBuf *>(second.ptr())->data();
-  stream.push(first);
-  stream.push(second);
-  unsigned allocs = 0;
-  Zi::RxRange out;
-  ZuCheck(extractN(stream, 5, out, allocs) == 5);
-  ZuCheck(allocs == 1);
-  ZuCheck(out.buf.ptr() != first.ptr() && out.buf.ptr() != second.ptr());
-  ZuCheck(spanEq(out.span(), "abcde"));
-  ZuCheck(first->skip == 0 && first->length == 3);
-  ZuCheck(second->skip == 0 && second->length == 6);
-  ZuCheck(static_cast<ZiIOBuf *>(first.ptr())->data() == firstData);
-  ZuCheck(stream.span().data() == secondData + 2);
-  stream.clean();
-  ZuCheck(spanEq(first->span(), "abc"));
-  ZuCheck(spanEq(second->span(), "deNEXT"));
-  ZuCheck(spanEq(out.span(), "abcde"));
-}
-
-void testRejectedConsolidationKeepsInput()
-{
-  ZuTestScope(testRejectedConsolidationKeepsInput);
-
-  ZiRxStream<RxQueue> stream;
-  auto first = mkBuf("abc");
-  stream.push(first);
-  stream.push(mkBuf("def"));
-  unsigned remaining = 5, allocs = 0;
-  Zi::RxRange out;
-  auto n = stream.extract([&remaining](ZuBSpan span) -> int64_t {
-    if (remaining > span.length()) { remaining -= span.length(); return 0; }
-    return remaining;
-  }, [&allocs]() -> ZmRef<RxQueue::Node> { ++allocs; return {}; }, out);
-  ZuCheck(n == -1);
-  ZuCheck(!out && allocs == 1);
-  ZuCheck(stream.length() == 6 && stream.count_() == 2);
-  ZuCheck(spanEq(stream.span(), "abc"));
-  ZuCheck(first->skip == 0 && first->length == 3);
-}
-
-void testSplicedRangesRetainBacking()
-{
-  ZuTestScope(testSplicedRangesRetainBacking);
-
-  unsigned destroyed = 0;
-  ZiRxStream<RxQueue> src, payload, inner;
-  ZmRef<RxQueue::Node> input = new TrackedAlloc{&destroyed, 0};
-  *static_cast<ZiIOBuf *>(input.ptr()) << "[abc]NEXT";
-  auto original = static_cast<ZiIOBuf *>(input.ptr());
-  auto data = original->data();
-  src.push(ZuMv(input));
-  ZuCheck(spliceN(src, payload, 5, 1, 1) == 5);
-  ZuCheck(payload.span().data() == data + 1);
-  ZuCheck(src.span().data() == data + 5);
-  ZuCheck(spliceN(payload, inner, 3, 1, 1) == 3);
-  auto retained = inner.range();
-  ZuCheck(retained.buf.ptr() == original && retained.offset == 2);
-  ZuCheck(retained.span().data() == data + 2);
-  ZuCheck(original->skip == 0 && original->length == 9);
-  src.clean(); payload.clean(); inner.clean();
-  ZuCheck(!destroyed);
-  ZuCheck(spanEq(retained.span(), "b"));
-  retained = {};
-  ZuCheck(destroyed == 1);
-}
-
-void testExclusivePartialHeadReuse()
-{
-  ZuTestScope(testExclusivePartialHeadReuse);
-
-  ZiRxStream<RxQueue> stream;
-  auto first = mkBuf("abcd");
-  auto original = static_cast<ZiIOBuf *>(first.ptr());
-  stream.push(ZuMv(first));
-  ZuCheck(stream.advance(2) == 2);
-  stream.push(mkBuf("eNEXT"));
-  unsigned allocs = 0;
-  Zi::RxRange out;
-  ZuCheck(extractN(stream, 3, out, allocs) == 3);
-  ZuCheck(out.buf.ptr() == original);
-  ZuCheck(!allocs);
-  ZuCheck(spanEq(out.span(), "cde"));
-  ZuCheck(spanEq(stream.span(), "NEXT"));
-}
-
-uint64_t sliceAllocs()
-{
-  using Slice = Zi::RxSlice<RxQueue::Node>;
-  using Cache = ZmHeapCacheT<ZmNHeapID_<Slice>,
-    ZmHeapAllocSize<sizeof(Slice)>{}, alignof(Slice), ZmNHeapSharded_<Slice>{}>;
-  const auto &stats = Cache::instance()->cache()->stats();
-  return stats.allocs.load_() + stats.heapAllocs.load_();
-}
-
-void testRangeSurvivesActiveSpanChanges()
-{
-  ZuTestScope(testRangeSurvivesActiveSpanChanges);
-
-  auto input = mkBuf("..abcdef!!");
-  input->advance(2);
-  input->length = 6;
-  auto original = static_cast<ZiIOBuf *>(input.ptr());
-  auto data = original->data_();
-  unsigned size = original->size;
-  auto before = sliceAllocs();
-  Zi::RxRange retained{input, 1, 4};
-  auto inner = retained.subspan(1, 2);
-  ZuCheck(retained.buf.ptr() == original && retained.offset == 3);
-  ZuCheck(inner.buf.ptr() == original && inner.offset == 4);
-  ZuCheck(sliceAllocs() == before);
-
-  ZiRxStream<RxQueue> stream;
-  stream.push(retained);
-  ZuCheck(sliceAllocs() == before + 1);
-  ZuCheck(stream.range().buf.ptr() == original && stream.range().offset == 3);
-  ZuCheck(stream.span().data() == data + 3 && spanEq(stream.span(), "bcde"));
-  input->advance(3);
-  input->length = 1;
-  ZuCheck(spanEq(input->span(), "d"));
-  ZuCheck(spanEq(retained.span(), "bcde") && spanEq(inner.span(), "cd"));
-  ZuCheck(retained.span().data() == data + 3 && inner.span().data() == data + 4);
-  ZuCheck(original->data_() == data && original->size == size);
-  ZuCheck(stream.advance(1) == 1);
-  ZuCheck(stream.range().offset == 4 && spanEq(stream.span(), "cde"));
-  unsigned allocs = 0;
-  Zi::RxRange out;
-  ZuCheck(extractN(stream, 2, out, allocs) == 2);
-  ZuCheck(out.buf.ptr() == original && out.offset == 4 && spanEq(out.span(), "cd"));
-  ZuCheck(!allocs && sliceAllocs() == before + 1);
-  ZuCheck(spanEq(stream.span(), "e"));
-  stream.clean();
-  ZuCheck(spanEq(retained.span(), "bcde") && spanEq(inner.span(), "cd"));
-  ZuCheck(original->data_() == data && original->size == size);
-}
-
-void testSlicesOnlyAtSharedBoundaries()
-{
-  ZuTestScope(testSlicesOnlyAtSharedBoundaries);
-
-  auto before = sliceAllocs();
-  ZiRxStream<RxQueue> src, dst;
-  auto first = mkBuf("abc");
-  auto firstData = static_cast<ZiIOBuf *>(first.ptr())->data();
-  src.push(ZuMv(first));
-  src.push(mkBuf("def"));
-  ZuCheck(sliceAllocs() == before);
-  ZuCheck(spliceN(src, dst, 3, 0, 0) == 3);
-  ZuCheck(dst.span().data() == firstData);
-  ZuCheck(sliceAllocs() == before);
-  ZuCheck(spliceN(src, dst, 2, 0, 0) == 2);
-  ZuCheck(sliceAllocs() == before + 1);
-  ZuCheck(dst.length() == 5 && src.length() == 1);
-  unsigned allocs = 0;
-  Zi::RxRange out;
-  ZuCheck(extractN(dst, 2, out, allocs) == 2);
-  ZuCheck(!allocs && sliceAllocs() == before + 1);
-  ZuCheck(out.span().data() == firstData);
-  src.clean(); dst.clean();
-  ZuCheck(spanEq(out.span(), "ab"));
-}
-
-void testExtractAfterEarlyGrowth()
-{
-  ZuTestScope(testExtractAfterEarlyGrowth);
-  ZiRxStream<RxQueue> stream;
-  auto first = mkBuf("abc");
-  auto original = first.ptr();
-  unsigned length = first->size * 2;
-  stream.push(ZuMv(first));
-  unsigned allocs = 0;
-  auto alloc = [&]() -> ZmRef<RxQueue::Node> {
-    ++allocs;
-    return new RxBufAlloc{nullptr, 0};
-  };
-  ZuCheck(stream.gather(length, alloc));
-  ZuCheck(original->jumbo() && !allocs);
-  auto backing = original->span().data();
-  auto rest = alloc();
-  rest->ensure(length);
-  memset(rest->span().data(), 'x', length);
-  rest->length = length;
-  memcpy(rest->span().data() + length - 3, "end", 3);
-  stream.push(rest);
-  ZuCheck(stream.gather(length, alloc));
-  Zi::RxRange out;
-  ZuCheck(extractN(stream, length, out, allocs) == length);
-  ZuCheck(allocs == 1); // only the incoming fragment, no extraction allocation
-  ZuCheck(out.buf.ptr() == original && out.span().data() == backing);
-  ZuCheck(!memcmp(out.span().data(), "abc", 3));
-  bool bytes = true;
-  for (unsigned i = 3; i < length; ++i) bytes &= out.span()[i] == 'x';
-  ZuCheck(bytes);
-  ZuCheck(stream.length() == 3 && spanEq(stream.span(), "end"));
-  ZuCheck(rest->length == length && rest->skip == 0);
-  ZuCheck(stream.range().buf.ptr() == rest.ptr());
-}
-
-#ifdef ZiMultiplex_DEBUG
-// Metadata belongs to original completions, even when queue nodes are slices.
-struct DiagRx : Zi::RxBuf {
-  uint64_t completion = 0;
-  unsigned gathered = 0;
-  unsigned preserved = 0;
-  using Zi::RxBuf::RxBuf;
-
-  void mergeRx_(const ZiIOBuf &source, unsigned n) override {
-    auto &rx = static_cast<const DiagRx &>(source);
-    if (completion < rx.completion) completion = rx.completion;
-    gathered += n;
-  }
-
-protected:
-  void copied_(uint64_t n, bool) override { preserved += n; }
-};
-ZmListDerive(DiagQueue, DiagRx, ZmListNode<DiagRx, ZmListHeapID<"">>);
-using DiagAlloc = Zi::IOBufAlloc<DiagQueue::Node, 16, 4096,
-  ZuStringT<"Zi.RxDiagTest">>;
-
-ZmRef<DiagQueue::Node> diagBuf(const char *s, uint64_t completion)
-{
-  ZmRef<DiagQueue::Node> buf = new DiagAlloc{nullptr, 0};
-  *buf << s;
-  buf->completion = completion;
-  return buf;
-}
-
-int64_t diagExtract(
-    ZiRxStream<DiagQueue> &stream, unsigned n, Zi::RxRange &out)
-{
-  return stream.extract(
-    [remaining = n](ZuBSpan span) mutable -> int64_t {
-      if (remaining > span.length()) {
-	remaining -= span.length();
-	return 0;
-      }
-      return remaining;
-    },
-    []() -> ZmRef<DiagQueue::Node> { return new DiagAlloc{nullptr, 0}; }, out);
-}
-
-void testRxObservations()
-{
-  ZuTestScope(testRxObservations);
-  ZiRxStream<DiagQueue> stream;
-  auto first = diagBuf("abc", 10);
-  auto original = first.ptr();
-  stream.push(ZuMv(first));
-  Zi::RxRange out;
-  ZuCheck(diagExtract(stream, 3, out) == 3);
-  auto rx = static_cast<DiagRx *>(out.buf.ptr());
-  ZuCheck(rx == original && rx->completion == 10);
-  ZuCheck(!rx->gathered && !rx->preserved);
-  out = {};
-
-  // Reuse an exclusive first fragment, fold the latest completion, and copy
-  // only the missing suffix. An earlier timestamp cannot replace a later one.
-  first = diagBuf("ab", 20);
-  original = first.ptr();
-  stream.push(ZuMv(first));
-  stream.push(diagBuf("cd", 40));
-  stream.push(diagBuf("ef", 30));
-  ZuCheck(diagExtract(stream, 6, out) == 6);
-  rx = static_cast<DiagRx *>(out.buf.ptr());
-  ZuCheck(rx == original && rx->completion == 40);
-  ZuCheck(rx->gathered == 4 && !rx->preserved);
-  ZuCheck(spanEq(out.span(), "abcdef") && !stream);
-  out = {};
-
-  // Shared range nodes carry no completion of their own. Consolidation must
-  // merge their original source metadata into the final destination exactly.
-  first = diagBuf("!abc?", 50);
-  auto second = diagBuf("!de?", 60);
-  stream.push(Zi::RxRange{first, 1, 3});
-  stream.push(Zi::RxRange{second, 1, 2});
-  ZuCheck(diagExtract(stream, 5, out) == 5);
-  rx = static_cast<DiagRx *>(out.buf.ptr());
-  ZuCheck(rx != first.ptr() && rx != second.ptr());
-  ZuCheck(rx->completion == 60 && rx->gathered == 5 && !rx->preserved);
-  ZuCheck(spanEq(out.span(), "abcde"));
-  ZuCheck(first->cspan() == "!abc?" && second->cspan() == "!de?");
-  out = {};
-
-  // Early growth preserves the original prefix before the next completion;
-  // appending its suffix counts the gather separately from preservation.
-  first = diagBuf("abc", 70);
-  original = first.ptr();
-  auto total = first->size + 1;
-  stream.push(ZuMv(first));
-  auto alloc = []() -> ZmRef<DiagQueue::Node> {
-    return new DiagAlloc{nullptr, 0};
-  };
-  ZuCheck(stream.gather(total, alloc));
-  ZuCheck(original->preserved == 3 && !original->gathered);
-  second = diagBuf("de", 80);
-  stream.push(ZuMv(second));
-  ZuCheck(diagExtract(stream, 5, out) == 5);
-  rx = static_cast<DiagRx *>(out.buf.ptr());
-  ZuCheck(rx == original && rx->completion == 80);
-  ZuCheck(rx->preserved == 3 && rx->gathered == 2);
-  ZuCheck(spanEq(out.span(), "abcde") && !stream);
-}
-#endif
-
 } // namespace ZiRxStreamTest_
 
 int main(int argc, char **argv)
@@ -930,25 +606,14 @@ int main(int argc, char **argv)
   ZuTestCall(testExtractCompleteFrames);
   ZuTestCall(testExtractWaitAndError);
   ZuTestCall(testSpliceWaitAndFullNode);
-  ZuTestCall(testSpliceBoundaryRanges);
+  ZuTestCall(testSpliceBoundaryCopies);
   ZuTestCall(testSpliceFragmentedAndEmpty);
-  ZuTestCall(testSpliceFramingRejection);
+  ZuTestCall(testSpliceAdmissionRejection);
   ZuTestCall(testSpliceTransform);
   ZuTestCall(testIncompleteAppend);
   ZuTestCall(testCopyAndEach);
   ZuTestCall(testMoveAndClean);
   ZuTestCall(testEmptyIsPassive);
   ZuTestCall(testGeometry);
-  ZuTestCall(testRetainedCoalescedLifetime);
-  ZuTestCall(testSharedFragmentsUseFinalOwner);
-  ZuTestCall(testRejectedConsolidationKeepsInput);
-  ZuTestCall(testSplicedRangesRetainBacking);
-  ZuTestCall(testExclusivePartialHeadReuse);
-  ZuTestCall(testRangeSurvivesActiveSpanChanges);
-  ZuTestCall(testSlicesOnlyAtSharedBoundaries);
-  ZuTestCall(testExtractAfterEarlyGrowth);
-#ifdef ZiMultiplex_DEBUG
-  ZuTestCall(testRxObservations);
-#endif
   return 0;
 }

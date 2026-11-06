@@ -119,22 +119,24 @@ of `make -C zi/itest test`. No sleeps are used for server startup.
 
 ## Independent Tx bindings on one TCP connection
 
-`zmultibinding` alternates A/B fixed-pool output and Jumbo storage on one
-connection, with nonzero payload headroom, short socket writes and ordered
-byte checks. Its echo forwards original receive-buffer references to ordinary
-send. Both peers retain their application-owned allocators until stop completes;
-each peer has four small receive slots. Run it through `make test` or directly.
-Native builds require usable io_uring and execute forced epoll and native cases,
-with shared and separate Rx/Tx threads.
+`zmultibinding` alternates differently sized A/B fixed Tx pools and oversized
+ordinary backing on one connection, with nonzero payload headroom, short socket
+writes and ordered byte checks. Its echo allocates output from its registered
+Tx policy; Rx storage cannot be sent. Each peer owns four small Rx slots and
+keeps its allocator bindings through stop, until final multiplexer destruction.
+Run it through `make test` or directly. Native cases use separate Rx/Tx threads;
+epoll also covers shared threads.
 
-The two peers have independently owned Rx pools. Putting both ends of a large
-self-echo on one multiplexer with four shared receive slots can exhaust all of
-them in queued/active server output while the client needs a slot to drain its
-receive window. Native receive cannot reuse application-held slots; reserve
-capacity for that retention pattern or keep the peers' receive ownership
-independent. The regression does not enlarge the four-slot pools or copy the
-echo payload to work around this circular retention case.
+The included listener-binding fixture opens three ephemeral listeners sharing
+two Rx policies. It checks allocator inheritance and original receive-buffer
+provenance, then proves accepted connections receive after their listeners close.
+It also rejects unregistered or incompatible Rx selection and exercises a failed
+listen on an occupied address without disturbing the original listener.
+A separate rejected-accept fixture returns a null connection, observes socket
+retirement and peer closure, then receives on a new connection through the same
+listener with the selected Rx policy.
 
-Consistent `ZiMultiplex_BENCH` builds additionally check actual fixed sends on
-both registering rings, ordinary Rx-forward sends, short completions and matching
-data/notification identities. Ordinary Release runs do not contain those hooks.
+Consistent `ZiMultiplex_BENCH` builds additionally check fixed sends from both
+registered regions on the shared Tx owner ring, ordinary oversized sends, short
+completions and matching DATA/NOTIF identities. Ordinary Release runs do not
+contain those hooks.

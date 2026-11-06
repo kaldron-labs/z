@@ -10,6 +10,8 @@
 
 #include <zlib/ZuTestUtil.hh>
 
+#include <zlib/ZmSingleton.hh>
+
 #include <zlib/ZtArray.hh>
 
 #include <zlib/ZiTxStream.hh>
@@ -18,7 +20,7 @@ using namespace ZuTestUtil;
 
 namespace ZiTxStreamTest_ {
 
-using StreamAlloc = Zi::IOBufAlloc<ZiIOBuf, 64, 256, ZuStringT<"ZiTxStreamTest.Buf">>;
+using StreamAllocator = Zi::AppBufAllocator<ZiIOBuf, 64, 256>;
 
 struct BigPrint_Print;
 struct BigPrint {
@@ -46,7 +48,6 @@ struct StreamHarness {
     ZtArray<Sent, ZtArrayHeapID<"ZiTxStreamTest.Sent">>;
 
   SentBufs		sent;
-  Zi::RxRange		range;
   unsigned		allocCount = 0;
   bool			sendOK = true;
   unsigned		rejectAt = 0;
@@ -54,7 +55,7 @@ struct StreamHarness {
   ZmRef<ZiIOBuf> alloc(unsigned headRoom) {
     // Model lower-layer admission rejection, not Z heap allocation failure.
     if (++allocCount == rejectAt) return nullptr;
-    ZmRef<ZiIOBuf> buf = new StreamAlloc{nullptr, 0};
+    ZmRef<ZiIOBuf> buf = ZmSingleton<StreamAllocator>::instance()->allocBuf();
     buf->skip = headRoom;
     buf->length = 0;
     return buf;
@@ -91,11 +92,6 @@ struct TestTxStream : public Zi::TxStream<TestTxStream> {
     return h->sendOK;
   }
 
-  bool sendRange_(Zi::RxRange range) {
-    h->range = ZuMv(range);
-    return h->sendOK;
-  }
-
   StreamHarness	*h;
 };
 
@@ -129,79 +125,49 @@ void testSplitAndFlush()
   ZuCheck(h.sent[2].final);
 }
 
-void testRetainedPhysicalRange()
-{
-  ZuTestScope(testRetainedPhysicalRange);
-  ZmRef<ZiIOBuf> source = new StreamAlloc{nullptr, 0};
-  *source << "..abcdef";
-  source->advance(2);
-  Zi::RxRange range{source, 1, 3};
-  source->advance(3);
-  source->length = 1;
-  auto base = source->data_();
-  auto size = source->size;
-
-  StreamHarness h;
-  TestTxStream stream{h, 12, 2, 1};
-  stream << "H";
-  ZuCheck(stream.appendRange(range));
-  ZuCheck(h.allocCount == 1 && h.sent.length() == 1 && !h.sent[0].final);
-  ZuCheck(h.sent[0].buf->cspan() == "H");
-  ZuCheck(h.range.buf == source && h.range.offset == 3 && h.range.cspan() == "bcd");
-  ZuCheck(source->data_() == base && source->size == size &&
-    source->skip == 5 && source->length == 1);
-  ZuCheck(!stream.appendRange(Zi::RxRange::fromStorage(source, size, 1)));
-  ZuCheck(stream.failed() && !stream.flush());
-
-  StreamHarness logical;
-  TestTxStream next{logical, 12, 2, 1};
-  ZuCheck(next.appendRange(source, 0, 1));
-  ZuCheck(!logical.allocCount && logical.range.offset == 5 && logical.range.cspan() == "d");
-}
-
 void testAdoptedBuffers()
 {
-  ZuTestScopeRT(testAdoptedBuffers);
+  ZuTestScope(testAdoptedBuffers);
   StreamHarness direct;
   TestTxStream same{direct, 12, 2, 1};
-  ZmRef<ZiIOBuf> small = new StreamAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> small = ZmSingleton<StreamAllocator>::instance()->allocBuf();
   small->skip = 3;
   small->append(ZuBSpan{"small"});
   same << small;
-  ZuCheckRT(same.flush() && direct.sent.length() == 1);
-  ZuCheckRT(direct.sent[0].buf.ptr() == small.ptr() && direct.sent[0].skip == 3);
-  ZuCheckRT(!direct.allocCount);
+  ZuCheck(same.flush() && direct.sent.length() == 1);
+  ZuCheck(direct.sent[0].buf.ptr() == small.ptr() && direct.sent[0].skip == 3);
+  ZuCheck(!direct.allocCount);
 
   StreamHarness split;
   TestTxStream frames{split, 12, 2, 1};
-  ZmRef<ZiIOBuf> large = new StreamAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> large = ZmSingleton<StreamAllocator>::instance()->allocBuf();
   large->skip = 7;
   large->append(ZuBSpan{"abcdefghijklmnopqrst"});
   frames << large;
-  ZuCheckRT(frames.flush() && split.sent.length() == 3);
+  ZuCheck(frames.flush() && split.sent.length() == 3);
   ZtString<> joined;
   for (const auto &sent : split.sent) {
-    ZuCheckRT(sent.length <= 9 && sent.skip >= 2 && sent.buf->avail() >= 1);
+    ZuCheck(sent.length <= 9 && sent.skip >= 2 && sent.buf->avail() >= 1);
     joined << sent.buf->cspan();
   }
-  ZuCheckRT(joined == "abcdefghijklmnopqrst" && large->skip == 7 && large->length == 20);
+  ZuCheck(joined == "abcdefghijklmnopqrst" && large->skip == 7 && large->length == 20);
 
   StreamHarness geometry;
   TestTxStream adjusted{geometry, 12, 2, 1};
-  ZmRef<ZiIOBuf> noRoom = new StreamAlloc{nullptr, 0};
+  ZmRef<ZiIOBuf> noRoom = ZmSingleton<StreamAllocator>::instance()->allocBuf();
   noRoom->append(ZuBSpan{"space"});
   noRoom->size = noRoom->length; // readable storage has no head or tail space
   adjusted << noRoom;
-  ZuCheckRT(adjusted.flush() && geometry.sent.length() == 1);
-  ZuCheckRT(geometry.sent[0].buf.ptr() != noRoom.ptr() && geometry.sent[0].skip == 2);
-  ZuCheckRT(geometry.sent[0].buf->cspan() == "space");
+  ZuCheck(adjusted.flush() && geometry.sent.length() == 1);
+  ZuCheck(geometry.sent[0].buf.ptr() != noRoom.ptr() && geometry.sent[0].skip == 2);
+  ZuCheck(geometry.sent[0].buf->cspan() == "space");
 
   StreamHarness refused;
   refused.rejectAt = 2;
   TestTxStream rejected{refused, 12, 2, 1};
   rejected << large;
-  ZuCheckRT(rejected.failed() && !rejected.flush() && refused.sent.length() == 1);
-  ZuCheckRT(refused.sent[0].buf->cspan() == "abcdefghi");
+  ZuCheck(rejected.failed() && !rejected.flush() && refused.sent.length() == 1);
+  ZuCheck(refused.sent[0].buf->cspan() == "abcdefghi");
 }
 
 void testPrimitiveAppendAccounting()
@@ -464,46 +430,6 @@ struct TestLayer : public ZiTxLayer<TestLayer<Lower>, Lower> {
   bool prepareOK = true;
 };
 
-// Model a lower transform that can reclaim surplus source headroom for its
-// final trailer. Upper framing must still have its own writable trailer room.
-struct ShiftTxStream : Zi::TxStream<ShiftTxStream> {
-  StreamHarness &h;
-
-  ShiftTxStream(StreamHarness &h_) : Zi::TxStream<ShiftTxStream>{64, 2, 4}, h{h_} { }
-  ~ShiftTxStream() { this->flush(); }
-  ZmRef<ZiIOBuf> allocBuf_(unsigned head) { return h.alloc(head); }
-  bool sendBuf_(ZmRef<ZiIOBuf> buf, bool final) {
-    h.send(ZuMv(buf), final); return true;
-  }
-  bool canAdopt_(const ZiIOBuf &buf, unsigned head = 0, unsigned tail = 0) const {
-    uint64_t length = uint64_t(buf.length) + head + tail;
-    return head <= buf.skip && tail <= buf.avail() && buf.skip - head >= 2 &&
-      length <= 58 && uint64_t(buf.size) >= length + 6;
-  }
-};
-
-void testLayerAdoption()
-{
-  ZuTestScope(testLayerAdoption);
-  StreamHarness h;
-  ShiftTxStream lower{h};
-  TestLayer layer{lower, 4, 4, 0};
-  auto buf = h.alloc(10);
-  *buf << "payload123";
-  buf->size = buf->skip + buf->length;
-  auto identity = buf.ptr();
-  ZuCheck(!buf->avail());
-  ZuCheck(layer.canAdopt_(*buf));
-  {
-    TestLayer trailer{lower, 4, 4, 2};
-    ZuCheck(!trailer.canAdopt_(*buf));
-  }
-  layer << ZuMv(buf) << Zi::flush();
-  ZuCheck(h.allocCount == 1 && h.sent.length() == 1);
-  ZuCheck(h.sent[0].buf.ptr() == identity);
-  ZuCheck(h.sent[0].buf->cspan() == "4444payload123");
-}
-
 void testLayerComposition()
 {
   ZuTestScope(testLayerComposition);
@@ -564,7 +490,6 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testSplitAndFlush);
-  ZuTestCall(testRetainedPhysicalRange);
   ZuTestCall(testAdoptedBuffers);
   ZuTestCall(testPrimitiveAppendAccounting);
   ZuTestCall(testRealPrimitiveFormatting);
@@ -577,6 +502,5 @@ int main(int argc, char **argv)
   ZuTestCall(testMove);
   ZuTestCall(testFailureState);
   ZuTestCall(testLayerComposition);
-  ZuTestCall(testLayerAdoption);
   return 0;
 }

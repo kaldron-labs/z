@@ -8,8 +8,6 @@ AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-DZI_EXPORTS @Z_CPPFLAGS@
 AM_CXXFLAGS = @Z_CXXFLAGS@
 AM_LDFLAGS = @Z_LDFLAGS@ @Z_SO_LDFLAGS@
-nodist_pkginclude_HEADERS = ZiConfig.hh
-EXTRA_DIST = ZiConfig.hh.in
 pkginclude_HEADERS = \
 	ZiDir.hh ZiFile.hh ZiGlob.hh ZiIP.hh ZiLib.hh ZiModule.hh \
 	ZiMultiplex.hh ZiPlatform.hh ZiProgram.hh ZiRing.hh ZiDaemon.hh ZiPIDFile.hh \

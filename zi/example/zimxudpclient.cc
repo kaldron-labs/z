@@ -11,6 +11,7 @@
 #include <iostream>
 
 #include <zlib/ZuTime.hh>
+#include <zlib/ZmAssert.hh>
 #include <zlib/ZmTrap.hh>
 
 #include <zlib/ZtArray.hh>
@@ -70,8 +71,12 @@ bool parseEndpoint(ZuCSpan s, ZiIP &ip, unsigned &port)
 
 class Mx;
 
-class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Connection> {
-  using Rx = ZiRx<Connection>;
+using RxAllocator = Zi::RxUDPBufAllocator<ZiRxBuf, ZiIOBuf_DefltSize>;
+using TxAllocator = Zi::TxUDPBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+
+class Connection : public ZiConnection,
+    public ZiRx<Connection, ZiRxBufAlloc<>>, public ZiTx<Connection> {
+  using Rx = ZiRx<Connection, ZiRxBufAlloc<>>;
   using Tx = ZiTx<Connection>;
 
   class Output : public ZiTxStream<Output> {
@@ -79,7 +84,7 @@ class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Con
     Output(Connection *cxn, unsigned size) : ZiTxStream<Output>{size, 0, 0}, m_cxn{cxn} { }
     ~Output() { flush(); }
     ZmRef<ZiIOBuf> allocBuf_(unsigned headRoom) {
-      auto buf = m_cxn->m_allocator->alloc();
+      auto buf = m_cxn->m_allocator->allocBuf();
       buf->skip = headRoom;
       return buf;
     }
@@ -94,11 +99,14 @@ class Connection : public ZiConnection, public ZiRx<Connection>, public ZiTx<Con
 public:
   Connection(
       ZiMultiplex *mx, const ZiCxnInfo &ci, const ZiSockAddr &dest,
-      Zi::IOBufAllocator *allocator) :
+      TxAllocator *allocator) :
     ZiConnection(mx, ci), m_counter(0), m_dest(dest), m_allocator(allocator) { }
-  ~Connection() { Tx::clean(); }
+  ~Connection() { }
 
   Mx *mx() { return (Mx *)ZiConnection::mx(); }
+  RxAllocator *rxAllocator() const {
+    return static_cast<RxAllocator *>(info().rxAllocator);
+  }
 
   void disconnected(bool) { Global::post(); }
 
@@ -110,10 +118,8 @@ public:
   void recvEcho(ZiRxContext &io) {
     Rx::recv<&Connection::frame, &Connection::recvComplete>(io);
   }
-  int frame(const ZiRxContext &, ZiRxStream<ZiRxQueue> &stream) {
-    return int(stream.span().length());
-  }
-  int recvComplete(const ZiRxContext &, ZiRxStream<ZiRxQueue> &, unsigned);
+  int frame(const ZiRxContext &, ZiIOBuf *buf) { return int(buf->length); }
+  int recvComplete(const ZiRxContext &, ZmRef<ZiIOBuf>);
 
   void sendEcho() {
     Output out{this, ZiIOBuf_DefltSize};
@@ -129,7 +135,7 @@ public:
 private:
   unsigned   	m_counter;
   ZiSockAddr	m_dest;
-  Zi::IOBufAllocator *m_allocator;
+  TxAllocator *m_allocator;
   ZiSockAddr	m_addr;
 };
 
@@ -141,7 +147,9 @@ public:
     ZiMultiplex(ZuMv(params)),
     m_localIP(localIP), m_localPort(localPort),
     m_remoteIP(remoteIP), m_remotePort(remotePort),
-    m_connect(connect), m_options(options), m_nMessages(nMessages) { }
+    m_connect(connect), m_options(options), m_nMessages(nMessages) {
+    if (!allocator(m_rx) || !allocator(m_allocator)) ZmFail(allocator_registration);
+  }
   ~Mx() { }
 
   ZiConnection *connected(const ZiCxnInfo &ci) {
@@ -156,7 +164,7 @@ public:
     ZiMultiplex::udp(
 	ZiConnectFn{this, ZmFnPtr<&Mx::connected>{}},
 	ZiFailFn{this, ZmFnPtr<&Mx::failed>{}},
-	m_localIP, m_localPort, remoteIP, remotePort, m_options);
+	m_localIP, m_localPort, remoteIP, remotePort, m_rx, m_options);
   }
 
 	  void failed(bool transient) {
@@ -170,8 +178,8 @@ public:
   unsigned nMessages() const { return m_nMessages; }
 
 private:
-  ZmRef<Zi::IOBufAllocator> m_allocator = new Zi::TxUDPBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>{txRingSize()};
+  ZmRef<RxAllocator> m_rx = new RxAllocator{};
+  ZmRef<TxAllocator> m_allocator = new TxAllocator{};
   ZiIP		m_localIP;
   unsigned	m_localPort;
   ZiIP		m_remoteIP;
@@ -361,8 +369,9 @@ int main(int argc, const char *argv[])
 }
 
 int Connection::recvComplete(
-  const ZiRxContext &io, ZiRxStream<ZiRxQueue> &stream, unsigned length)
+  const ZiRxContext &io, ZmRef<ZiIOBuf> buf)
 {
+  unsigned length = buf->length;
   if (length < strlen(Messages[index()])) {
     ZiLOG(Error, "zimxudpclient", "recvEcho - short packet");
     disconnect();
@@ -377,7 +386,7 @@ int Connection::recvComplete(
 
   std::cout << ZtHexDump(
       ZtString<>{} << io.addr.ip() << ':' << ZuBoxed(io.addr.port()) << ' ' <<
-      ZuCSpan(stream.span().data(), length), stream.span().data(), length);
+      ZuCSpan(buf->data(), length), buf->data(), length);
 
   std::cout << std::flush;
 
