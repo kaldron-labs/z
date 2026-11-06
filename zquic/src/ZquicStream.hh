@@ -46,11 +46,6 @@ class Stream :
   public ZmPQTx<
     Stream<Link_, Impl, TxBufAlloc_>,
     TxDataPQueue> {
-template <typename, typename, typename, typename>
-friend class CliLink;
-template <typename, typename, typename, typename>
-friend class SrvLink;
-
 public:
   enum { DefltTxQueueMax = 4096 };
 
@@ -734,8 +729,7 @@ private:
       if (payloadOffset > frame.payload.length() ||
 	  length64 > frame.payload.length() - payloadOffset)
 	return false;
-      const uint8_t *data = reinterpret_cast<const uint8_t *>(
-	frame.payload.data() + payloadOffset);
+      auto data = frame.payload.data() + payloadOffset;
       Rx::rcvd(new StreamRxPQueue::Node{
 	packet, data, unsigned(length64), this, spans[i].first});
     }

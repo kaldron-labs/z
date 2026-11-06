@@ -1578,7 +1578,7 @@ void testQLogTypedMigrationEvents()
   };
   ZquicLogger::migrationUpdated(trace, ZuMv(promoted));
 
-  auto emit = [&](uint64_t attemptID, MigrationAction::T action,
+  auto emit = [&trace, &started](uint64_t attemptID, MigrationAction::T action,
       MigrationReason::T reason, MigrationState::T state,
       bool localRebind = false, bool closeOnFailure = false,
       PathRole::T pathRole = PathRole::Candidate) {
@@ -1729,11 +1729,11 @@ void testQLogTypedMigrationEvents()
   ZuCHECK(data.find<"\"state\":\"\"">() < 0,
     "migration qlog emitted empty state");
 
-  auto ordered = [&](uint64_t attemptID,
+  auto ordered = [&data](uint64_t attemptID,
       ZuCSpan a0, ZuCSpan a1, ZuCSpan a2 = {}, ZuCSpan a3 = {},
       ZuCSpan a4 = {}, ZuCSpan a5 = {}, ZuCSpan a6 = {}) {
     unsigned off = 0, n = data.length();
-    auto next = [&](ZuCSpan action) {
+    auto next = [&data, &off, n, attemptID](ZuCSpan action) {
       if (!action) return true;
       ZtString<> needle;
       needle << "\"attempt_id\":" << attemptID << ',';
@@ -1888,11 +1888,41 @@ void testQLogRestartDrain()
   ZuCheck(restarted.timedwait(Zm::now(10)) == 0);
   ZuCheck(completions == 2);
   ZuCheck(ZquicLogger::enabled());
-  closeQLog_(next);
+  ZquicLogger::Trace sibling;
+  ZuCheck(ZquicLogger::init(sibling, params, Zquic::Vantage::Client));
+  ZmSemaphore nextClosed, siblingClosed;
+  // Match Hub shutdown: trace close immediately requests idle stop from the
+  // writer callback, potentially before the producer has returned from push2.
+  ZquicLogger::close(next, [&nextClosed, &completions]() {
+    ZquicLogger::stopIdle([&nextClosed, &completions](bool ok) {
+      if (ok) ++completions;
+      nextClosed.post();
+    });
+  });
+  ZuCheck(nextClosed.timedwait(Zm::now(10)) == 0);
+  ZuCheck(completions == 3);
+  ZuCheck(ZquicLogger::enabled());
+  ZquicLogger::close(sibling, [&siblingClosed, &completions]() {
+    ZquicLogger::stopIdle([&siblingClosed, &completions](bool ok) {
+      if (ok) ++completions;
+      siblingClosed.post();
+    });
+  });
+  ZuCheck(siblingClosed.timedwait(Zm::now(10)) == 0);
+  ZuCheck(completions == 4);
+  ZuCheck(!ZquicLogger::enabled());
+  // A stopped final-close callback must leave the singleton reusable.
+  ZuCheck(ZquicLogger::init(first, params, Zquic::Vantage::Client));
+  ZuCheck(ZquicLogger::start());
+  ZmAtomic<unsigned> delivered = 0;
+  ZquicLogger::log(first, [&delivered](auto &, ZuTime) { ++delivered; });
+  closeQLog_(first);
   ZuCheck(ZquicLogger::stop());
   ZuCheck(ZquicLogger::stop());
+  ZuCheck(delivered == 1);
   ZquicLogger::final(first);
   ZquicLogger::final(next);
+  ZquicLogger::final(sibling);
   ZuCheck(!ZquicLogger::enabled());
 #endif
 }

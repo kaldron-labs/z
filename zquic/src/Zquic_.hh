@@ -14,6 +14,12 @@ namespace Zquic_ {
 
 template <typename Link_>
 struct Cxn {
+  CxnID			id;
+  uint64_t		sequence = 0;
+  Link_			*link = nullptr;
+  ResetToken		resetToken;
+  CxnState::T		state = CxnState::Active;
+
   Cxn() = default;
   Cxn(
     const CxnID &id_, uint64_t sequence_, Link_ *link_,
@@ -23,12 +29,6 @@ struct Cxn {
       link{link_},
       resetToken{resetToken_},
       state{state_} { }
-
-  CxnID			id;
-  uint64_t		sequence = 0;
-  Link_			*link = nullptr;
-  ResetToken		resetToken;
-  CxnState::T		state = CxnState::Active;
 };
 
 template <typename Link_>
@@ -237,6 +237,20 @@ using EndpointRebindFn =
 ZmQueueDerive(EndpointDiscFns, EndpointDiscFn,
   ZmQueueHeapID<"Zquic.Endpoint.DiscFns">);
 
+struct EndpointTxData {
+  ZmRef<ZiIOBuf>	buf;
+  ZiSockAddr		addr;
+  EcnMark::T		ecn = EcnMark::NotECT;
+
+  EndpointTxData() = default;
+  EndpointTxData(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
+    buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
+};
+
+ZmListDerive(EndpointTxQueue, EndpointTxData,
+  ZmListNode<EndpointTxData,
+    ZmListHeapID<"Zquic.Endpoint.TxQueue">>);
+
 template <typename Endpoint_>
 class EndpointCxn_ : public ZmNHeap<EndpointCxn_<Endpoint_>>, public ZiConnection {
 friend inline ZuStringT<"Zquic.Endpoint.Cxn"> ZmNHeapID(EndpointCxn_ *);
@@ -246,19 +260,7 @@ friend Endpoint_;
 public:
   static constexpr unsigned EndpointTxQueueLimit = 4096;
 
-  struct TxData {
-    TxData() = default;
-    TxData(ZmRef<ZiIOBuf> buf_, ZiSockAddr addr_, EcnMark::T ecn_) :
-	buf{ZuMv(buf_)}, addr{ZuMv(addr_)}, ecn{ecn_} { }
-
-    ZmRef<ZiIOBuf>	buf;
-    ZiSockAddr		addr;
-    EcnMark::T		ecn = EcnMark::NotECT;
-  };
-  ZmListDerive(TxQueue, TxData,
-    ZmListNode<TxData,
-	ZmListHeapID<"Zquic.Endpoint.TxQueue">>);
-  using TxNode = TxQueue::Node;
+  using TxNode = EndpointTxQueue::Node;
 
   EndpointCxn_(Endpoint_ *endpoint, const ZiCxnInfo &ci, unsigned generation) :
 	ZiConnection(endpoint->mx_(), ci),
@@ -390,30 +392,24 @@ private:
   bool sendDone_(ZiIOContext &io) {
     if (io.length < 0) {
 	m_endpoint->ioError_();
-	bool hadQueue = m_txQueue.count_();
 	m_txBuf = nullptr;
 	if (dequeueTx_()) {
-	  if (hadQueue) m_endpoint->txDrained_();
 	  io.complete();
 	  scheduleTx_();
 	  return true;
 	}
-	if (hadQueue) m_endpoint->txDrained_();
 	io.complete();
 	return true;
     }
     if ((io.offset += io.length) < io.size) return true;
-    bool hadQueue = m_txQueue.count_();
     m_endpoint->sent_(io.size);
     m_txBuf = nullptr;
     if (dequeueTx_()) {
-	if (hadQueue) m_endpoint->txDrained_();
 	io.complete();
 	scheduleTx_();
 	return true;
     }
     m_txECN = EcnMark::NotECT;
-    if (hadQueue) m_endpoint->txDrained_();
     io.complete();
     return true;
   }
@@ -435,7 +431,7 @@ private:
   ZmRef<ZiIOBuf>	m_txBuf;
   ZiSockAddr		m_txAddr;
   EcnMark::T		m_txECN = EcnMark::NotECT;
-  TxQueue		m_txQueue;
+  EndpointTxQueue	m_txQueue;
 };
 
 template <typename Impl_>
@@ -757,10 +753,6 @@ private:
   void sent_(unsigned bytes) {
     ++m_txDiag.datagramsTx;
     m_txDiag.bytesTx += bytes;
-  }
-
-  void txDrained_() {
-    impl()->endpointTxDrained_();
   }
 
   void ioError_() {

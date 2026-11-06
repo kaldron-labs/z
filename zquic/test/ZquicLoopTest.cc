@@ -8,6 +8,7 @@
 #include <errno.h>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmHeap.hh>
 #include <zlib/ZiLog.hh>
 #include <zlib/Zquic.hh>
 
@@ -64,9 +65,12 @@ struct TestStream :
   unsigned processed = 0;
 };
 struct TestLink :
+  public ZmNHeap<TestLink>,
   public Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>
 {
+friend inline ZuStringT<"Zquic.LoopTest.Link"> ZmNHeapID(TestLink *);
+
   using Base = Zquic::Link<App, TestLink,
     StreamTxBufAlloc, TestStream>;
   TestLink(App *app) : Base{app, false, ZuID{"client"}} { }

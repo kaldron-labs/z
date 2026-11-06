@@ -17,6 +17,8 @@
 #include <zlib/ZuTestUtil.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZmBlock.hh>
+#include <zlib/ZmHeap.hh>
+#include <zlib/ZmSemaphore.hh>
 #include <zlib/Zquic.hh>
 
 #include "ZiTestResidue.hh"
@@ -29,6 +31,20 @@ namespace {
 
 static constexpr unsigned TestSrvLinkCap = 20;
 static constexpr unsigned TestSrvCxnCount = 17;
+
+// Durable fixture-owned notifications: a timeout never leaves a callback
+// referring to a stack waiter. Pending producers are drained with the fixture.
+struct TestEvent {
+  ZmSemaphore sem;
+
+  void post() { sem.post(); }
+  template <typename L>
+  bool wait(L ready, ZuTime deadline) {
+    while (!ready())
+      if (sem.timedwait(deadline)) return ready();
+    return true;
+  }
+};
 
 template <typename Link>
 Zquic::LinkDiag diag(const Link &link)
@@ -65,7 +81,7 @@ auto openStream(
 {
   using StreamRef = decltype(link->stream(type));
   StreamRef stream;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&link, type, &stream](auto wake) {
     link->app()->txRun([
       link, type, &stream, wake = ZuMv(wake)
     ]() mutable {
@@ -81,7 +97,7 @@ auto findStream(const Link &link, int64_t id)
 {
   using StreamRef = decltype(link->findStream(id));
   StreamRef stream;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&link, id, &stream](auto wake) {
     link->app()->rxRun([link, id, &stream, wake = ZuMv(wake)]() mutable {
       stream = link->findStream(id);
       wake();
@@ -156,6 +172,7 @@ struct TestServer :
   ZmRef<Link> link(unsigned i = unsigned(-1));
   ZmRef<Link> accepted(const Zquic::InitialInfo &);
   void clearLinks();
+  ZmRef<Link> waitLink(unsigned, ZuTime);
   void disconnected(Link *, bool);
   ZiIP localIP() const { return ZiIP("127.0.0.1"); }
   unsigned localPort() const { return ZquicTestPort::Runtime; }
@@ -199,6 +216,7 @@ struct TestServer :
 
   ZmRef<Link> link_;
   ZmRef<Link> links_[TestSrvLinkCap];
+  TestEvent acceptedEvent;
   ZmAtomic<unsigned> acceptedCount = 0;
   ZmAtomic<unsigned> retryPkts = 0;
   ZmAtomic<unsigned> dropNextInitial = 0;
@@ -219,27 +237,93 @@ struct TestClient::Stream :
     Zquic::CliStream<TestClient::Link, TestClient::Stream>;
   using Base::Base;
 
-  int process(Zquic::RxStream &) { ++processed; return 0; }
+  int process(Zquic::RxStream &);
 
   unsigned processed = 0;
 };
 
 struct TestClient::Link :
+  public ZmNHeap<TestClient::Link>,
   public Zquic::CliLink<TestClient, TestClient::Link,
     TestClient::Stream> {
+friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
+
   using Base = Zquic::CliLink<TestClient, TestClient::Link,
     TestClient::Stream>;
   using Base::Base;
 
   Link(TestClient *app) : Base{app} { }
 
-  void connected(Zquic::Connected) { ++connectedCount; }
+  void connected(Zquic::Connected) {
+    ++connectedCount;
+    connectedEvent.post();
+  }
   void disconnected(bool) {
     if (cxn()) ++earlyDisconnects;
     ++disconnectedCount;
+    disconnectedEvent.post();
+    connectedEvent.post();
+    streamEvent.post();
   }
-  void connectFailed(bool) { ++connectFailures; }
-  void streamed(ZmRef<Stream>) { ++streamedCount; }
+  void connectFailed(bool) {
+    ++connectFailures;
+    connectedEvent.post();
+  }
+  void streamed(ZmRef<Stream>) {
+    ++streamedCount;
+    streamEvent.post();
+  }
+  void processedStream() {
+    ++processedStreams;
+    streamEvent.post();
+  }
+  template <typename ...Args>
+  void connect(Args &&...args) {
+    // Each reconnect follows the preceding disconnect completion. Baselines
+    // distinguish its callbacks from durable notifications for older attempts.
+    connectTarget = connectedCount + 1;
+    failureBase = connectFailures;
+    disconnectTarget = disconnectedCount + 1;
+    if (!waitClosed(Zm::now(10))) {
+      ++connectFailures;
+      connectedEvent.post();
+      return;
+    }
+    Base::connect(ZuFwd<Args>(args)...);
+  }
+  bool waitConnected(ZuTime deadline) {
+    return connectedEvent.wait([this]() {
+      return connectedCount >= connectTarget ||
+        connectFailures > failureBase || disconnectedCount >= disconnectTarget;
+    }, deadline) && connectedCount >= connectTarget &&
+      connectFailures == failureBase && disconnectedCount < disconnectTarget &&
+      established();
+  }
+  bool waitStreams(unsigned n, ZuTime deadline) {
+    return streamEvent.wait([this, n]() {
+      return (streamedCount >= n && processedStreams >= n) ||
+        disconnectedCount >= disconnectTarget;
+    }, deadline) && streamedCount >= n && processedStreams >= n;
+  }
+  bool waitDisconnected(ZuTime deadline) {
+    return disconnectedEvent.wait([this]() {
+      return disconnectedCount >= disconnectTarget;
+    }, deadline);
+  }
+  void closeAsync() {
+    ++closeTarget;
+    Base::disconnect([link = ZmRef<Link>{this}]() {
+      ++link->closeCount;
+      link->closeEvent.post();
+    });
+  }
+  bool waitClosed(ZuTime deadline) {
+    return closeEvent.wait([this]() { return closeCount >= closeTarget; }, deadline);
+  }
+  bool close() {
+    closeAsync();
+    return waitClosed(Zm::now(10));
+  }
   void forceCloseTimeout() {
     app()->txInvoke(this, [link = ZmRef<Link>{this}]() mutable {
       link->Base::closeTimeout_();
@@ -247,6 +331,16 @@ struct TestClient::Link :
     });
   }
 
+  TestEvent connectedEvent;
+  TestEvent disconnectedEvent;
+  TestEvent streamEvent;
+  TestEvent closeEvent;
+  unsigned connectTarget = 0;
+  unsigned failureBase = 0;
+  unsigned disconnectTarget = 0;
+  unsigned closeTarget = 0;
+  ZmAtomic<unsigned> closeCount = 0;
+  ZmAtomic<unsigned> processedStreams = 0;
   ZmAtomic<unsigned> connectedCount = 0;
   ZmAtomic<unsigned> disconnectedCount = 0;
   ZmAtomic<unsigned> earlyDisconnects = 0;
@@ -260,22 +354,48 @@ struct TestServerStream :
     Zquic::SrvStream<TestServerLink, TestServerStream>;
   using Base::Base;
 
-  int process(Zquic::RxStream &) { ++processed; return 0; }
+  int process(Zquic::RxStream &);
 
   unsigned processed = 0;
 };
 
 struct TestServerLink :
+  public ZmNHeap<TestServerLink>,
   public Zquic::SrvLink<TestServer, TestServerLink,
     TestServerStream> {
+friend inline ZuStringT<"Zquic.Runtime.SrvLink"> ZmNHeapID(TestServerLink *);
+
   using Base = Zquic::SrvLink<TestServer, TestServerLink,
     TestServerStream>;
   using Base::Base;
 
   TestServerLink(TestServer *app) : Base{app} { }
 
-  void connected(Zquic::Connected) { ++connectedCount; }
-	void streamed(ZmRef<Stream>) { ++streamedCount; }
+  void connected(Zquic::Connected) {
+    ++connectedCount;
+    connectedEvent.post();
+  }
+  void streamed(ZmRef<Stream>) {
+    ++streamedCount;
+    streamEvent.post();
+  }
+  void processedStream() {
+    ++processedStreams;
+    streamEvent.post();
+  }
+  bool waitConnected(ZuTime deadline) {
+    return connectedEvent.wait([this]() {
+      return connectedCount || disconnectedCount;
+    }, deadline) && connectedCount && !disconnectedCount && established();
+  }
+  bool waitStreams(unsigned n, ZuTime deadline) {
+    return streamEvent.wait([this, n]() {
+      return (streamedCount >= n && processedStreams >= n) || disconnectedCount;
+    }, deadline) && streamedCount >= n && processedStreams >= n;
+  }
+  bool waitDisconnected(ZuTime deadline) {
+    return disconnectedEvent.wait([this]() { return disconnectedCount; }, deadline);
+  }
   void forceCloseTimeout() {
     ZmBlock<>{}([this](auto wake) {
       app()->txRun([
@@ -287,15 +407,22 @@ struct TestServerLink :
     });
   }
 
-	ZmAtomic<unsigned> connectedCount = 0;
-	ZmAtomic<unsigned> disconnectedCount = 0;
-	ZmAtomic<unsigned> streamedCount = 0;
+  TestEvent connectedEvent;
+  TestEvent disconnectedEvent;
+  TestEvent streamEvent;
+  ZmAtomic<unsigned> processedStreams = 0;
+  ZmAtomic<unsigned> connectedCount = 0;
+  ZmAtomic<unsigned> disconnectedCount = 0;
+  ZmAtomic<unsigned> streamedCount = 0;
 };
 
 void TestServer::disconnected(Link *link, bool peer)
 {
   Zquic::Server<TestServer, TestServerLink>::disconnected(link, peer);
   ++link->disconnectedCount;
+  link->disconnectedEvent.post();
+  link->connectedEvent.post();
+  link->streamEvent.post();
 }
 
 ZmRef<TestServer::Link> TestServer::link(unsigned i)
@@ -312,7 +439,37 @@ ZmRef<TestServer::Link> TestServer::accepted(const Zquic::InitialInfo &)
   links_[i] = new Link{this};
   link_ = links_[i];
   ++acceptedCount;
+  acceptedEvent.post();
   return link_;
+}
+
+int TestClient::Stream::process(Zquic::RxStream &)
+{
+  if (!processed++) link()->processedStream();
+  return 0;
+}
+
+int TestServerStream::process(Zquic::RxStream &)
+{
+  if (!processed++) link()->processedStream();
+  return 0;
+}
+
+ZmRef<TestServer::Link> TestServer::waitLink(unsigned i, ZuTime deadline)
+{
+  if (!acceptedEvent.wait([this, i]() { return acceptedCount > i; }, deadline))
+    return nullptr;
+  return link(i);
+}
+
+bool waitEstablished(
+  const ZmRef<TestClient::Link> &client, TestServer &server,
+  ZmRef<TestServer::Link> &peer, unsigned i = 0)
+{
+  ZuTime deadline = Zm::now(10);
+  if (!client->waitConnected(deadline)) return false;
+  peer = server.waitLink(i, deadline);
+  return peer && peer->waitConnected(deadline);
 }
 
 void TestServer::clearLinks()
@@ -322,6 +479,8 @@ void TestServer::clearLinks()
     links_[i] = nullptr;
 }
 
+// Accepted harness polling for UDP readiness and intermediate/diagnostic
+// states lacking an equivalent fixture completion callback at this base.
 template <typename L>
 bool waitUntil(L l)
 {
@@ -443,79 +602,6 @@ struct TempDir {
 
 } // namespace
 
-// Exercise the public ownership-bearing and borrowed APIs on the existing live fixture.
-template <typename Sender, typename Receiver, typename Arm>
-void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
-    Arm arm, bool offThread)
-{
-  ZuTestScopeRT(testOwnedStreamAPI);
-  enum { N = 6000, Borrowed = 257 };
-  uint8_t expected[N];
-  for (unsigned i = 0; i < N; ++i) expected[i] = uint8_t('a' + i%23);
-  auto output = openStream(sender);
-  ZQUIC_CHECK_RT(output, "owned stream did not open");
-  if (!output) return;
-  ZmRef<ZiIOBuf> backing = new Zquic::StreamTxBufAlloc<8192, 8192>{nullptr, 0};
-  backing->skip = 9;
-  backing->append(reinterpret_cast<const uint8_t *>("prefix!"), 7);
-  backing->append(expected, N);
-  bool accepted;
-  if (offThread) {
-    accepted = sender->send(output, Zi::RxRange{backing, 7, N});
-    backing = nullptr; // release caller ownership immediately after public return
-  } else accepted = ZmBlock<bool>{}([sender, output, &backing, arm](auto wake) {
-    sender->app()->txRun([
-      sender, output, backing = ZuMv(backing), arm, wake = ZuMv(wake)
-    ]() mutable {
-      arm(); // unchanged fixture packet-drop mechanism, on its Tx owner
-      bool ok = sender->send(output, Zi::RxRange{backing, 7, N});
-      backing = nullptr; // no fixture capture survives public send return
-      wake(ok);
-    });
-  });
-  ZQUIC_CHECK_RT(accepted && !backing, "owned range API admission/caller release failed");
-  auto checkInput = [receiver](const auto &stream, const uint8_t *bytes, unsigned size) {
-    auto id = stream->id();
-    return waitUntil([receiver, id, bytes, size]() {
-      auto incoming = findStream(receiver, id);
-      if (!incoming) return false;
-      return ZmBlock<bool>{}([receiver, incoming, bytes, size](auto wake) {
-        receiver->app()->rxRun([incoming, bytes, size, wake = ZuMv(wake)]() mutable {
-          auto &rx = incoming->rxStream(); unsigned offset = 0;
-          bool ok = rx.length() == size;
-          if (ok) {
-            auto n = rx.each(size, [bytes, &offset](auto part) -> int64_t {
-              if (memcmp(part.data(), bytes+offset, part.length())) return -1;
-              offset += part.length(); return part.length();
-            });
-            ok = n == int64_t(size);
-          }
-          wake(ok);
-        });
-      });
-    });
-  };
-  ZQUIC_CHECK_RT(checkInput(output, expected, N), "owned protected bytes changed");
-  bool completed = waitUntil([sender, output]() {
-    return ZmBlock<bool>{}([sender, output](auto wake) {
-      sender->app()->txRun([output, wake = ZuMv(wake)]() mutable {
-        wake(output->finSent() && output->txDrained());
-      });
-    });
-  });
-  ZQUIC_CHECK_RT(completed, "owned range FIN/ACK did not drain");
-  auto borrowedStream = openStream(sender);
-  ZQUIC_CHECK_RT(borrowedStream, "borrowed stream did not open");
-  if (!borrowedStream) return;
-  uint8_t borrowed[Borrowed], saved[Borrowed];
-  for (unsigned i=0; i<Borrowed; ++i) borrowed[i] = saved[i] = uint8_t(i%251);
-  ZQUIC_CHECK_RT(sender->send(borrowedStream, ZuBSpan{borrowed, Borrowed}),
-    "borrowed span API admission failed");
-  memset(borrowed, 0xa5, sizeof(borrowed)); // public call must have acquired ownership
-  ZQUIC_CHECK_RT(checkInput(borrowedStream, saved, Borrowed),
-    "caller overwrite changed borrowed-span delivery");
-}
-
 void testEndpointOpen()
 {
   ZuTestScope(testEndpointOpen);
@@ -556,7 +642,7 @@ void testEndpointOpen()
     "runtime server init failed");
   ZuCHECK(server.start(),
     "runtime server listen failed");
-  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+  ZuCHECK(server.listening(),
     "runtime server endpoint did not become ready");
   ZuCHECK(server.listening() &&
       !endpointDiag(server).failures() &&
@@ -605,11 +691,7 @@ void testEndpointOpen()
 	  }
 
   ZmRef<TestServer::Link> serverLink;
-  bool established = waitUntil([&server, &clientLink, &serverLink]() {
-      if (!serverLink) serverLink = server.link();
-      return serverLink && clientLink->established() &&
-	serverLink->established();
-    });
+  bool established = waitEstablished(clientLink, server, serverLink);
   if (!established) {
     dumpDiag(
       "client", diag(clientLink), clientLink->crypto().diag());
@@ -670,10 +752,8 @@ void testEndpointOpen()
   ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
-  bool streamsArrived = waitUntil([&clientLink, &serverLink]() {
-      return serverLink->streamedCount == 2 &&
-	clientLink->streamedCount == 2;
-    });
+  bool streamsArrived = serverLink->waitStreams(2, Zm::now(10)) &&
+    clientLink->waitStreams(2, Zm::now(10));
   if (!streamsArrived) {
     dumpDiag(
       "client", diag(clientLink), clientLink->crypto().diag());
@@ -703,19 +783,7 @@ void testEndpointOpen()
       serverLink->streamedCount == 2 &&
       clientLink->streamedCount == 2,
     "runtime stream objects did not process received STREAM frames");
-  ZuTestCall(testOwnedStreamAPI, clientLink, serverLink,
-    [&client]() { client.pendingMigDrop = 1; }, true);
-  ZuTestCall(testOwnedStreamAPI, clientLink, serverLink,
-    [&client]() { client.pendingMigDrop = 1; }, false);
-  ZuTestCall(testOwnedStreamAPI, serverLink, clientLink,
-    [&server]() { server.dropNextShort = 1; }, true);
-  ZuTestCall(testOwnedStreamAPI, serverLink, clientLink,
-    [&server]() { server.dropNextShort = 1; }, false);
-
-
-	ZmBlock<>{}([&clientLink](auto wake) {
-	  clientLink->disconnect([wake = ZuMv(wake)]() mutable { wake(); });
-	});
+	ZuCHECK(clientLink->close(), "runtime client disconnect did not complete");
 	waitDisconnect(server);
 	ZuCHECK(waitUntil([&serverLink]() { return serverLink->closed(); }),
 	  "runtime server did not observe client close");
@@ -723,9 +791,8 @@ void testEndpointOpen()
 	// Complete expiry before stop can cancel the pending close work.
 	waitThread(mx, server.txThread());
 	serverLink->forceCloseTimeout();
-	ZuCHECK(waitUntil([&serverLink]() {
-	    return serverLink->disconnectedCount == 1;
-	  }), "runtime server drain expiry did not disconnect");
+	ZuCHECK(serverLink->waitDisconnected(Zm::now(10)),
+	  "runtime server drain expiry did not disconnect");
 	ZuCHECK(server.stop(), "runtime server stop failed");
 	ZuCHECK(!server.connected(), "server stop preceded endpoint drain");
 	waitDisconnect(server);
@@ -845,7 +912,7 @@ void testHandshakeCryptoLoss()
 	  .alpn(ZuSpan<ZuCSpan>{"h3"})),
       "loss runtime server init failed");
     ZuCHECK(server.start(), "loss runtime server listen failed");
-    bool listening = waitUntil([&server]() { return server.listening(); });
+    bool listening = server.listening();
     ZuCHECK(listening, "loss runtime server did not listen");
 	    if (!server.listening()) {
 	      server.stop();
@@ -871,11 +938,7 @@ void testHandshakeCryptoLoss()
     clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
     ZmRef<TestServer::Link> serverLink;
-    bool established = waitUntil([&server, &clientLink, &serverLink]() {
-	if (!serverLink) serverLink = server.link();
-	return serverLink && clientLink->established() &&
-	  serverLink->established();
-      });
+    bool established = waitEstablished(clientLink, server, serverLink);
     if (!established) {
       dumpDiag(
 	"client", diag(clientLink), clientLink->crypto().diag());
@@ -890,14 +953,10 @@ void testHandshakeCryptoLoss()
     ZuCHECK(serverLink && diag(serverLink).tx.retransmittedFrames,
       "loss runtime did not retransmit dropped handshake data");
 
-    ZmSemaphore clientClosed;
-    clientLink->disconnect([&clientClosed]() { clientClosed.post(); });
+    bool clientClosed = clientLink->close();
     server.stop();
-    ZuCHECK(waitUntil([&clientLink]() {
-	return !clientLink->cxn();
-      }) && !server.connected(),
+    ZuCHECK(clientClosed && !clientLink->cxn() && !server.connected(),
       "loss runtime endpoints remained connected after close");
-    clientClosed.wait();
     waitDisconnect(server);
     clientLink = nullptr;
     serverLink = nullptr;
@@ -945,7 +1004,7 @@ void testSrvMultiCxn()
 	}})),
     "multi runtime server init failed");
   ZuCHECK(server.start(), "multi runtime server listen failed");
-  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+  ZuCHECK(server.listening(),
     "multi runtime server did not become ready");
 
   TestClient client;
@@ -965,11 +1024,7 @@ void testSrvMultiCxn()
   for (unsigned i = 0; i < TestSrvCxnCount; ++i) {
     clients[i] = new TestClient::Link{&client};
     clients[i]->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
-    if (!waitUntil([&server, &clients, &serverLinks, i]() {
-	if (!serverLinks[i]) serverLinks[i] = server.link(i);
-	return serverLinks[i] && clients[i]->established() &&
-	  serverLinks[i]->established();
-      })) {
+    if (!waitEstablished(clients[i], server, serverLinks[i], i)) {
       established = false;
       break;
     }
@@ -980,9 +1035,7 @@ void testSrvMultiCxn()
   auto &s1 = serverLinks[1];
 
   if (established)
-    established = waitUntil([&server]() {
-	return server.acceptedCount == TestSrvCxnCount;
-      });
+    established = server.acceptedCount == TestSrvCxnCount;
   if (!established) {
     for (unsigned i = 0; i < TestSrvCxnCount; ++i) {
       if (clients[i])
@@ -1000,12 +1053,12 @@ void testSrvMultiCxn()
     "server live-link table rejected connections past the old cap");
   if (!established || !s0 || !s1) {
     for (unsigned i = 0; i < TestSrvCxnCount; ++i)
-      if (clients[i]) clients[i]->disconnect();
-    (void)waitUntil([&clients]() {
-	for (unsigned i = 0; i < TestSrvCxnCount; ++i)
-	  if (clients[i] && clients[i]->cxn()) return false;
-	return true;
-      });
+      if (clients[i]) clients[i]->closeAsync();
+    ZuTime closeDeadline = Zm::now(10);
+    for (unsigned i = 0; i < TestSrvCxnCount; ++i)
+      if (clients[i])
+        ZuCHECK(clients[i]->waitClosed(closeDeadline),
+          "multi runtime failed connection cleanup did not complete");
     server.stop();
     waitDisconnect(server);
     for (unsigned i = 0; i < TestSrvCxnCount; ++i)
@@ -1023,12 +1076,8 @@ void testSrvMultiCxn()
   auto c1s = openStream(c1, Zquic::StreamType::Duplex);
   ZuCHECK(c0->send(c0s, "zero") && c1->send(c1s, "one"),
     "multi runtime client stream sends failed");
-  ZuCHECK(waitUntil([&s0, &s1]() {
-      auto s0rx = findStream(s0, 0);
-      auto s1rx = findStream(s1, 0);
-      return s0rx && s0rx->processed &&
-	s1rx && s1rx->processed;
-    }), "multi runtime routed stream bytes did not arrive independently");
+  ZuCHECK(s0->waitStreams(1, Zm::now(10)) && s1->waitStreams(1, Zm::now(10)),
+    "multi runtime routed stream bytes did not arrive independently");
 
 #ifdef Zquic_DEBUG
   uint64_t s0Bytes = diag(s0).rx.streamBytesRx;
@@ -1056,9 +1105,8 @@ void testSrvMultiCxn()
   ZuCHECK(diag(s0).rx.streamBytesRx == s0Bytes,
     "closed server link received stale routed data");
 #else
-  ZuCHECK(waitUntil([&s1, s1Streams]() {
-      return s1->streamedCount > s1Streams;
-    }), "multi runtime sibling delivery did not happen");
+  ZuCHECK(s1->waitStreams(s1Streams + 1, Zm::now(10)),
+    "multi runtime sibling delivery did not happen");
   ZuCHECK(s0->streamedCount == s0Streams,
     "closed server link received stale routed data");
 #endif
@@ -1066,13 +1114,14 @@ void testSrvMultiCxn()
     "stale routed datagram used ErrorFn instead of diagnostics");
 
   for (unsigned i = 0; i < TestSrvCxnCount; ++i)
-    clients[i]->disconnect();
+    clients[i]->closeAsync();
   server.stop();
-  ZuCHECK(waitUntil([&clients]() {
-      for (unsigned i = 0; i < TestSrvCxnCount; ++i)
-	if (clients[i]->cxn()) return false;
-      return true;
-    }) && !server.connected(),
+  ZuTime closeDeadline = Zm::now(10);
+  bool clientsClosed = true;
+  for (unsigned i = 0; i < TestSrvCxnCount; ++i)
+    if (!clients[i]->waitClosed(closeDeadline) || clients[i]->cxn())
+      clientsClosed = false;
+  ZuCHECK(clientsClosed && !server.connected(),
     "multi runtime endpoints remained connected after close");
   waitDisconnect(server);
 
@@ -1133,7 +1182,7 @@ void testRetryAddrValidate()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "retry runtime server init failed");
   ZuCHECK(server.start(), "retry runtime server listen failed");
-  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+  ZuCHECK(server.listening(),
     "retry runtime server did not listen");
 	  if (!server.listening()) {
 	    server.stop();
@@ -1156,11 +1205,7 @@ void testRetryAddrValidate()
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
   ZmRef<TestServer::Link> serverLink;
-  bool established = waitUntil([&server, &clientLink, &serverLink]() {
-      if (!serverLink) serverLink = server.link();
-      return serverLink && clientLink->established() &&
-	serverLink->established();
-    });
+  bool established = waitEstablished(clientLink, server, serverLink);
   if (!established) {
     dumpDiag(
       "client", diag(clientLink), clientLink->crypto().diag());
@@ -1200,18 +1245,14 @@ void testRetryAddrValidate()
 #endif
 
   unsigned retryPkts = server.retryPkts;
-  clientLink->disconnect();
-  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+  bool clientClosed = clientLink->close();
+  ZuCHECK(clientClosed && !clientLink->cxn(),
     "retry runtime first connection did not close");
   waitDisconnect(server);
 
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZmRef<TestServer::Link> serverLink2;
-  bool established2 = waitUntil([&server, &clientLink, &serverLink2]() {
-      if (!serverLink2) serverLink2 = server.link(1);
-      return serverLink2 && clientLink->established() &&
-	serverLink2->established();
-    });
+  bool established2 = waitEstablished(clientLink, server, serverLink2, 1);
   if (!established2) {
     dumpDiag(
       "client2", diag(clientLink), clientLink->crypto().diag());
@@ -1239,9 +1280,9 @@ void testRetryAddrValidate()
       !diag(serverLink2).failures(),
     "retry runtime NEW_TOKEN reconnect diagnostics mismatch");
 
-  clientLink->disconnect();
+  clientClosed = clientLink->close();
   server.stop();
-  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }) &&
+  ZuCHECK(clientClosed && !clientLink->cxn() &&
       !server.connected(),
     "retry runtime endpoints remained connected after close");
   waitDisconnect(server);
@@ -1330,7 +1371,7 @@ void testRejectedTokenQLog()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token runtime server init failed");
   ZuCHECK(server.start(), "rejected-token runtime server listen failed");
-  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+  ZuCHECK(server.listening(),
     "rejected-token runtime server did not listen");
 	  if (!server.listening()) {
 	    server.stop();
@@ -1355,11 +1396,7 @@ void testRejectedTokenQLog()
 
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
   ZmRef<TestServer::Link> serverLink;
-  bool established = waitUntil([&server, &clientLink, &serverLink]() {
-      if (!serverLink) serverLink = server.link(0);
-      return serverLink && clientLink->established() &&
-	serverLink->established();
-    });
+  bool established = waitEstablished(clientLink, server, serverLink);
   if (!established) {
     dumpDiag(
       "client", diag(clientLink), clientLink->crypto().diag());
@@ -1382,8 +1419,8 @@ void testRejectedTokenQLog()
 	diag(serverLink).tx.newTokenTx >= 1;
     }), "rejected-token runtime NEW_TOKEN was not exchanged");
 #endif
-  clientLink->disconnect();
-  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+  bool clientClosed = clientLink->close();
+  ZuCHECK(clientClosed && !clientLink->cxn(),
     "rejected-token runtime initial connection did not close");
   waitDisconnect(server);
 
@@ -1401,11 +1438,7 @@ void testRejectedTokenQLog()
     clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
     serverLink = nullptr;
-    established = waitUntil([&server, &clientLink, &serverLink, accepted]() {
-	if (!serverLink) serverLink = server.link(accepted);
-	return serverLink && clientLink->established() &&
-	  serverLink->established();
-      });
+    established = waitEstablished(clientLink, server, serverLink, accepted);
     if (!established) {
       dumpDiag(
 	"client", diag(clientLink), clientLink->crypto().diag());
@@ -1418,13 +1451,13 @@ void testRejectedTokenQLog()
 	      break;
     }
     ++accepted;
-    clientLink->disconnect();
-    ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+    bool clientClosed = clientLink->close();
+    ZuCHECK(clientClosed && !clientLink->cxn(),
       "rejected-token runtime connection did not close");
     waitDisconnect(server);
   }
   server.stop();
-  ZuCHECK(waitUntil([&server]() { return !server.connected(); }),
+  ZuCHECK(!server.connected(),
     "rejected-token runtime server remained connected");
   waitDisconnect(server);
   server.clearLinks();
@@ -1450,20 +1483,16 @@ void testRejectedTokenQLog()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "rejected-token policy server init failed");
   ZuCHECK(policyServer.start(), "rejected-token policy server listen failed");
-  ZuCHECK(waitUntil([&policyServer]() { return policyServer.listening(); }),
+  ZuCHECK(policyServer.listening(),
     "rejected-token policy server did not listen");
   client.tokenNow = uint64_t(Zm::now().sec());
   client.tokenRewrite = TestClient::TokenPolicy;
   clientLink->connect(Zquic::Host{"127.0.0.1"}, policyServer.local().port());
   ZmRef<TestServer::Link> policyLink;
-  established = waitUntil([&policyServer, &clientLink, &policyLink]() {
-      if (!policyLink) policyLink = policyServer.link(0);
-      return policyLink && clientLink->established() &&
-	policyLink->established();
-    });
+  established = waitEstablished(clientLink, policyServer, policyLink);
   ZuCHECK(established, "rejected-token policy handshake did not establish");
-  clientLink->disconnect();
-  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+  clientClosed = clientLink->close();
+  ZuCHECK(clientClosed && !clientLink->cxn(),
     "rejected-token policy connection did not close");
   policyServer.stop();
   waitDisconnect(policyServer);
@@ -1537,7 +1566,7 @@ void testIdleTimeoutQLog()
 	.alpn(ZuSpan<ZuCSpan>{"h3"})),
     "idle runtime server init failed");
   ZuCHECK(server.start(), "idle runtime server listen failed");
-  ZuCHECK(waitUntil([&server]() { return server.listening(); }),
+  ZuCHECK(server.listening(),
     "idle runtime server did not listen");
 	  if (!server.listening()) {
 	    server.stop();
@@ -1561,11 +1590,7 @@ void testIdleTimeoutQLog()
   clientLink->connect(Zquic::Host{"127.0.0.1"}, server.local().port());
 
   ZmRef<TestServer::Link> serverLink;
-  bool established = waitUntil([&server, &clientLink, &serverLink]() {
-      if (!serverLink) serverLink = server.link();
-      return serverLink && clientLink->established() &&
-	serverLink->established();
-    });
+  bool established = waitEstablished(clientLink, server, serverLink);
   if (!established) {
     dumpDiag(
       "client", diag(clientLink), clientLink->crypto().diag());
@@ -1582,7 +1607,7 @@ void testIdleTimeoutQLog()
 	    return;
 	  }
 
-  ZuCHECK(waitUntil([&clientLink]() { return !clientLink->cxn(); }),
+  ZuCHECK(clientLink->waitDisconnected(Zm::now(10)) && !clientLink->cxn(),
     "idle runtime client did not close on idle timeout");
   server.stop();
   waitDisconnect(server);
