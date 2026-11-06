@@ -5,10 +5,15 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixDispatch.hh>
 #include <zlib/ZfixRxMsg.hh>
 #include "ZfixDemo.hh"
-#include "ZfixTxImageTest.hh"
+static ZmRef<ZiIOBuf> frameBuf() {
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  return ZmSingleton<Allocator>::instance()->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using namespace ZfixDemo;
@@ -129,31 +134,31 @@ static Zfix::TxContext replayContext() {
     .origSendingTime = ZuDateTime{Zm::now(-10)}, .possDup = true};
 }
 static void wireReplay() {
-  ZuTestScopeRT(wireReplay);
-  Results results{2}; ZuCheckRT(results.restore(1001, {10, 17, 18}));
+  ZuTestScope(wireReplay);
+  Results results{2}; ZuCheck(results.restore(1001, {10, 17, 18}));
   for (uint64_t key = 1001; key <= 1002; ++key) {
     Zfix::Fmt::Error error;
     auto body = Zfix::TxBody::encode<Req>(Request{key, 10, "DEMO", {}}, key, error);
-    auto output = testFrame(*body, replayConfig(), replayContext(), error);
-    ZuCheckRT(output && !error);
+    auto output = Zfix::txFrame(frameBuf(), *body, replayConfig(), replayContext(), error);
+    ZuCheck(output && !error);
     auto parsed = Zfix::Fmt::frame(output->cspan());
     Zfix::RxMsg input; input.frame = parsed.view;
-    ZuCheckRT(!Zfix::catalogSession<Dictionary>(input));
+    ZuCheck(!Zfix::catalogSession<Dictionary>(input));
     unsigned seen = 0;
     error = Zfix::dispatch<Dictionary>(parsed.view,
       [&results, &seen, &input, key](auto *entry, const auto &object) -> Zfix::Fmt::Error {
 	using E = ZuDecay<decltype(*entry)>;
 	if constexpr (ZuIsSame<E, Req>{}) {
-	  ++seen; ZuCheckRT(input.possDup && *input.origSendingTime && object.key == key);
+	  ++seen; ZuCheck(input.possDup && *input.origSendingTime && object.key == key);
 	  auto decision = results.admit(object.key, object.qty, input.possDup);
-	  ZuCheckRT(decision == (key == 1001 ? Decision::Cached : Decision::UnknownReplay));
-	} else ZuCheckRT(false);
+	  ZuCheck(decision == (key == 1001 ? Decision::Cached : Decision::UnknownReplay));
+	} else ZuCheck(false);
 	return {};
       });
-    ZuCheckRT(!error && seen == 1 && results.count() == 1 && !results.stats().fresh);
+    ZuCheck(!error && seen == 1 && results.count() == 1 && !results.stats().fresh);
   }
-  ZuCheckRT(results.stats().cached == 1 && results.stats().unknownReplay == 1);
-  ZuCheckRT(results.find(1001)->ack == 17 && results.find(1001)->fill == 18);
+  ZuCheck(results.stats().cached == 1 && results.stats().unknownReplay == 1);
+  ZuCheck(results.find(1001)->ack == 17 && results.find(1001)->fill == 18);
 }
 static void authCodec() {
   ZuTestScope(authCodec);
@@ -162,7 +167,8 @@ static void authCodec() {
     "98=0\1" "108=30\1" "553=demo\1" "554=example\1", 1, error);
   ZuCheck(body && !error);
   auto h = replayContext(); h.possDup = false; h.origSendingTime = ZuDateTime{};
-  auto output = testFrame(*body, replayConfig(), h, error); ZuCheck(output && !error);
+  auto output = Zfix::txFrame(frameBuf(), *body, replayConfig(), h, error);
+  ZuCheck(output && !error);
   Zfix::Fmt::MessageHandler<Login> decoded{Zfix::Fmt::frame(output->cspan()).view};
   auto login = decoded.ctor();
   ZuCheck(decoded.valid() && login.user == "demo" && login.password == "example" &&

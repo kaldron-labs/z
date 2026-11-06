@@ -6,6 +6,7 @@
 
 #include <zlib/ZuBox.hh>
 #include <zlib/ZuFmt.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZfixTrace.hh>
 #include <zlib/ZfixIOBuf.hh>
 #include <zlib/ZfixSession.hh>
@@ -60,20 +61,14 @@ static void escaped(Fmt::Sink &out, ZuCSpan value)
 
 TraceRef WireTrace::capture_(ZuCSpan wire, TxContext context, Resolve resolve, void *owner)
 {
-  return capture_(wire, nullptr, nullptr, {}, context, resolve, owner);
+  return capture_(wire, nullptr, context, resolve, owner);
 }
 TraceRef WireTrace::capture_(
   const Fmt::FrameView &frame, TxContext context, Resolve resolve, void *owner)
 {
-  return capture_(frame.wire, &frame, nullptr, {}, context, resolve, owner);
-}
-TraceRef WireTrace::capture_(const TxImage &image, ZuCSpan type,
-  TxContext context, Resolve resolve, void *owner)
-{
-  return capture_({}, nullptr, &image, type, context, resolve, owner);
+  return capture_(frame.wire, &frame, context, resolve, owner);
 }
 TraceRef WireTrace::capture_(ZuCSpan wire, const Fmt::FrameView *known,
-  const TxImage *image, ZuCSpan imageType,
   TxContext context, Resolve resolve, void *owner)
 {
   if (!enabled_()) return {};
@@ -85,11 +80,14 @@ TraceRef WireTrace::capture_(ZuCSpan wire, const Fmt::FrameView *known,
     ++m_stats.dropped; return {};
   }
   while (m_stats.bytes > m_limits.bytes - charge) { pop_(); ++m_stats.rotated; }
-  ZmRef<TraceQueue::Node> node = new Alloc{nullptr, 0};
+  using Allocator = Zi::AppBufAllocator<TraceQueue::Node,
+    ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize>;
+  ZmRef<TraceQueue::Node> node = ZmSingleton<Allocator,
+    ZmSingletonCleanup<ZmCleanup::Platform>>::instance()->allocBuf();
   ZiIOBuf *buffer = node.ptr();
   buffer->alloc(m_limits.recordBytes);
   Fmt::FrameResult parsed;
-  if (!image && !known) {
+  if (!known) {
     Fmt::Limits limits; limits.frameBytes = wire.length(); limits.fieldBytes = wire.length();
     parsed = Fmt::frame(wire, limits);
     if (parsed.state == Fmt::FrameState::Complete && parsed.consumed == wire.length())
@@ -99,65 +97,56 @@ TraceRef WireTrace::capture_(ZuCSpan wire, const Fmt::FrameView *known,
   Fmt::Sink out{{buffer->data(), m_limits.recordBytes}, outputLimits};
   // The sink's logical frame bound also follows this explicit excerpt budget.
   bool truncated = false;
-  if (!image && !known)
+  if (!known)
     out << "<invalid frame>";
   else {
-    auto type = image ? imageType : known->msgType;
+    auto type = known->msgType;
     bool logon = type == "A";
-    bool stopped = false;
-    unsigned rendered = 0;
-    unsigned total = image ? image->length() : wire.length();
-    auto render = [&](ZuCSpan wire) {
-      if (stopped) return;
-      unsigned offset = 0;
-      unsigned length = wire.length();
-      while (offset < length && out.available() && !out.failed()) {
-	Fmt::Token token;
-	if (Fmt::prefix(wire, offset, token)) { out << "<malformed>"; stopped = true; break; }
-	auto field = traceBuiltin(type, token.tag);
-	if (resolve) field.merge(resolve(owner, type, token.tag));
-	if (!field.known || field.ambiguous) { out << "<opaque>"; stopped = true; break; }
-	Fmt::Limits limits;
-	// Only content can contain declared pairs. Never lend a binary count
-	// the outer checksum or the next coalesced frame.
-	auto bounded = field.reader && !image ?
+    unsigned offset = 0;
+    unsigned length = wire.length();
+    while (offset < length && out.available() && !out.failed()) {
+      Fmt::Token token;
+      if (Fmt::prefix(wire, offset, token)) { out << "<malformed>"; break; }
+      auto field = traceBuiltin(type, token.tag);
+      if (resolve) field.merge(resolve(owner, type, token.tag));
+      if (!field.known || field.ambiguous) { out << "<opaque>"; break; }
+      Fmt::Limits limits;
+      // Only content can contain declared pairs. Never lend a binary count
+      // the outer checksum or the next coalesced frame.
+      auto bounded = field.reader ?
 	ZuCSpan{wire.data(), uint64_t(known->content.data() - wire.data()) +
 	  known->content.length()} : wire;
-	limits.fieldBytes = limits.frameBytes = bounded.length();
-	Fmt::Error error;
-	unsigned value = token.offset;
-	unsigned consumed = field.reader ? field.reader(bounded, token, limits, error) :
+      limits.fieldBytes = limits.frameBytes = bounded.length();
+      Fmt::Error error;
+      unsigned value = token.offset;
+      unsigned consumed = field.reader ? field.reader(bounded, token, limits, error) :
 	Fmt::consume(bounded, token, limits, error);
-	if (!consumed) { out << "<malformed>"; stopped = true; break; }
-	out << token.tag << '=';
-	bool sensitive = field.secret || secret(token.tag);
-	if (logon) switch (token.tag) {
+      if (!consumed) { out << "<malformed>"; break; }
+      out << token.tag << '=';
+      bool sensitive = field.secret || secret(token.tag);
+      if (logon) switch (token.tag) {
 	case 8: case 9: case 35: case 10: break;
 	default: sensitive = true; break;
-	}
-	if (sensitive) out << "<redacted>";
-	else {
+      }
+      if (sensitive) out << "<redacted>";
+      else {
 	if (field.reader) {
 	  escaped(out, {wire.data() + value, token.countLength});
 	  out << "\\x01" << token.valueTag << '=';
 	}
 	escaped(out, {wire.data() + token.offset, token.length});
-	}
-	out << "\\x01";
-	if (sensitive) { out << "<opaque>"; stopped = true; break; }
-	offset = value + consumed;
-	if (!out.available() && (offset < length || rendered + offset < total)) truncated = true;
       }
-      rendered += offset;
-    };
-    if (image) image->each(render);
-    else render(wire);
+      out << "\\x01";
+      if (sensitive) { out << "<opaque>"; break; }
+      offset = value + consumed;
+      if (!out.available() && offset < length) truncated = true;
+    }
   }
   truncated |= out.failed();
   buffer->length = out.length();
   auto &record = node->data();
   record.context = context; record.charge = charge;
-  record.wireBytes = image ? image->length() : wire.length(); record.truncated = truncated;
+  record.wireBytes = wire.length(); record.truncated = truncated;
   m_queue.pushNode(node);
   ++m_stats.records; m_stats.bytes += charge;
   if (truncated) ++m_stats.truncated;

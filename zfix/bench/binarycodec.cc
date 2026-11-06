@@ -92,8 +92,8 @@ static bool run(ZuCSpan mode, ZuCSpan phase, unsigned size, unsigned count, unsi
   // Decimal uint64 values need up to twenty octets even for an empty payload.
   limits.fieldBytes = size > 20 ? size : 20;
   O object; object.data = typename O::Data{payload};
-  auto encode = [&storage, &object, limits]() -> ZuCSpan {
-    Sink out{storage, limits};
+  auto encode = [&storage, &object, limits, capacity]() -> ZuCSpan {
+    Sink out{{reinterpret_cast<char *>(storage.data()), capacity}, limits};
     if (!save(out, object) || !out.flush()) return {};
     return out.data();
   };

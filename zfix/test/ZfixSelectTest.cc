@@ -5,13 +5,18 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixRaw.hh>
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixLinkState.hh>
 
-#include "ZfixTxImageTest.hh"
+static ZmRef<ZiIOBuf> frameBuf() {
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  return ZmSingleton<Allocator>::instance()->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -55,7 +60,7 @@ static void unmodelled() {
     error);
   ZuCheck(body && !error
     && body->body() == "150=\1" "11=id\1" "9000=A\1");
-  auto wire = body ? testFrame(*body, config(), context(), error) : ZmRef<ZiIOBuf>{};
+  auto wire = body ? txFrame(frameBuf(), *body, config(), context(), error) : ZmRef<ZiIOBuf>{};
   ZuCheck(wire && !error);
   unsigned called = 0;
   if (wire) {
@@ -86,7 +91,7 @@ static void negative() {
   auto body = TxBody::encode<Selected<-9000, "A">>(Order{{}, "id"}, 42, error);
   ZuCheck(body && !error && body->body() == "150=\1" "11=id\1" "-9000=A\1");
   if (!body) return;
-  auto wire = testFrame(*body, config(), context(), error);
+  auto wire = txFrame(frameBuf(), *body, config(), context(), error);
   ZuCheck(wire && !error);
   if (!wire) return;
   auto parsed = frame(wire->cspan());
@@ -99,7 +104,7 @@ static void negative() {
   auto known = TxBody::encode<SignedEntry>(SignedOrder{"A"}, 43, error);
   ZuCheck(known && !error);
   if (!known) return;
-  wire = testFrame(*known, config(), context(), error);
+  wire = txFrame(frameBuf(), *known, config(), context(), error);
   ZuCheck(wire && !error);
   if (!wire) return;
   parsed = frame(wire->cspan());
@@ -137,19 +142,19 @@ static void sessionSelector() {
   auto body = TxBody::encode<Selected<49, "CLIENT">>(Order{{}, "id"}, 42, error);
   ZuCheck(body && !error && body->validates());
   if (!body) return;
-  auto cfg = config(); auto wire = testFrame(*body, cfg, context(), error);
+  auto cfg = config(); auto wire = txFrame(frameBuf(), *body, cfg, context(), error);
   ZuCheck(wire && !error);
   auto unqualified = TxBody::encode<MT<Order, "X">>(Order{{}, "id"}, 42, error);
   cfg.identity.local = "OTHER";
-  auto otherWire = testFrame(*unqualified, cfg, context(), error);
+  auto otherWire = txFrame(frameBuf(), *unqualified, cfg, context(), error);
   auto raw = RawOutput::fromFrame(body, {}, otherWire, error);
   ZuCheck(!raw && error.code == ErrorCode::Unresolved && error.tag == 49);
 
-  wire = testFrame(*body, cfg, context(), error);
+  wire = txFrame(frameBuf(), *body, cfg, context(), error);
   ZuCheck(!wire && error.code == ErrorCode::Unresolved && error.tag == 49 && error.offset);
   auto restored = TxBody::restore<Selected<49, "CLIENT">>(body->body(), 42, error);
   ZuCheck(restored && !error && restored->validates());
-  wire = restored ? testFrame(*restored, cfg, context(), error) : ZmRef<ZiIOBuf>{};
+  wire = restored ? txFrame(frameBuf(), *restored, cfg, context(), error) : ZmRef<ZiIOBuf>{};
   ZuCheck(!wire && error.code == ErrorCode::Unresolved && error.tag == 49);
 }
 struct BinaryOrder {
@@ -181,7 +186,7 @@ static void binaryUnmodelled()
     body->body()[selector.offset] == 'A');
   auto restored = TxBody::restore<BinarySelected>(body->body(), 1, error);
   ZuCheck(restored && !error);
-  auto wire = testFrame(*body, config(), context(), error);
+  auto wire = txFrame(frameBuf(), *body, config(), context(), error);
   ZuCheck(wire && !error);
   if (!wire) return;
   unsigned called = 0;
@@ -223,12 +228,11 @@ static void binaryPairKeys()
   auto restored = TxBody::restore<PaddedLength>("212=0004\1" "213=A\1\0B\1" "11=id\1"_z,
     1, error);
   ZuCheck(restored && !error);
-  auto raw = RawOutput::encode(payload, config(), context(), error);
+  auto raw = RawOutput::encode(frameBuf(), payload, config(), context(), error);
   ZuCheck(raw && !error);
   if (!raw) return;
   FieldPos selector;
-  auto bytes = testBytes(raw->frame());
-  auto parsed = frame(bytes->cspan());
+  auto parsed = frame(raw->frame()->cspan());
   ZuCheck(!inspect<BinaryOrder>(parsed.view.content, 213, selector));
   ZuCheck(selector.length == 4 && parsed.view.content[selector.offset] == 'A' &&
     parsed.view.content[selector.offset + 2] == '\0');
@@ -237,7 +241,8 @@ static void binaryPairKeys()
   ZuCheck(!invalid && error.code == ErrorCode::Unresolved && error.tag == 213);
   using Plain = MT<BinaryOrder, "J">;
   auto otherBody = TxBody::encode<Plain>(object, 2, error);
-  auto otherWire = otherBody ? testFrame(*otherBody, config(), context(), error) : ZmRef<ZiIOBuf>{};
+  auto otherWire = otherBody ?
+    txFrame(frameBuf(), *otherBody, config(), context(), error) : ZmRef<ZiIOBuf>{};
   ZuCheck(otherWire && !error);
   if (!otherWire) return;
   auto mismatch = RawOutput::fromFrame(payload, context(), otherWire, error);

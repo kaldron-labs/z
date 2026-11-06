@@ -19,6 +19,7 @@
 #include <iostream>
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZtArray.hh>
@@ -45,56 +46,6 @@ constexpr unsigned MaxSize = (1u << 20);
 constexpr unsigned JumboPayloadSize = 64u * 1024u;
 constexpr unsigned SmallPayloadSize = 4u * 1024u;
 constexpr unsigned TimeoutSeconds = 15;
-
-struct PolicyHub : public Ztls::Client<PolicyHub> { };
-
-template <unsigned Size>
-struct PolicyAlloc : Zi::TxTLSBufAllocator<ZiTxBuf, Size, MaxSize,
-    ZuStringT<"Ztls.PolicyTest">> {
-  inline static unsigned live = 0;
-
-  explicit PolicyAlloc(unsigned ringSize) :
-    Zi::TxTLSBufAllocator<ZiTxBuf, Size, MaxSize,
-      ZuStringT<"Ztls.PolicyTest">>{ringSize} { ++live; }
-  ~PolicyAlloc() { --live; }
-};
-
-template <unsigned Size>
-struct PolicyLink : Ztls::CliLink<PolicyHub, PolicyLink<Size>, PolicyAlloc<Size>> {
-  using Base = Ztls::CliLink<PolicyHub, PolicyLink<Size>, PolicyAlloc<Size>>;
-  using Base::Base;
-
-  void connected(Ztls::Connected) { }
-  void disconnected(bool) { }
-  int process(Ztls::RxStream &) { return 0; }
-};
-
-void testAllocatorPolicies()
-{
-  ZuTestScopeRT(testAllocatorPolicies);
-  ZTLS_CHECK_RT(!PolicyAlloc<32768>::live && !PolicyAlloc<65536>::live);
-  {
-    PolicyHub app;
-    {
-      PolicyLink<32768> small{&app};
-      PolicyLink<32768> other{&app};
-      PolicyLink<65536> large{&app};
-      // Application, Tx and Rx-control output have independent pools per type.
-      ZTLS_CHECK_RT(PolicyAlloc<32768>::live == 3);
-      ZTLS_CHECK_RT(PolicyAlloc<65536>::live == 3);
-      auto a = small.template txAllocBuf<true>(small.template txHeadRoom<true>());
-      auto b = other.template txAllocBuf<false>(other.template txHeadRoom<false>());
-      auto c = large.template txAllocBuf<true>(large.template txHeadRoom<true>());
-      ZTLS_CHECK_RT(a->size >= 32768 && a->size == b->size && c->size >= 65536 && a->size < c->size);
-      ZTLS_CHECK_RT(a->owner == &small && b->owner == &other && c->owner == &large);
-      if (a->uring()) {
-	ZTLS_CHECK_RT(a->ring() != b->ring() && a->ring() != c->ring());
-      }
-    }
-    ZTLS_CHECK_RT(PolicyAlloc<32768>::live == 3 && PolicyAlloc<65536>::live == 3);
-  }
-  ZTLS_CHECK_RT(!PolicyAlloc<32768>::live && !PolicyAlloc<65536>::live);
-}
 
 struct TempDir {
   Zi::Path	path;
@@ -168,12 +119,6 @@ struct LogCapture {
   }
 };
 
-struct FinalRx {
-  uint64_t bytes = 0, records = 0, pending = 0;
-  unsigned nodes = 0;
-  bool captured = false, pendingKnown = false, peer = false;
-};
-
 struct TestState {
   ZmSemaphore		done;
   ZmSemaphore		listening;
@@ -187,8 +132,6 @@ struct TestState {
   bool			serverKeyUpdate = false;
   bool			serverDisconnectAfterSend = false;
   bool			multi = false;
-  bool			retainedTx = false;
-  bool			vectorTx = false;
   bool			expectConnectFailure = false;
   unsigned		txHeadroom = 0;
   unsigned		txTailroom = 0;
@@ -220,7 +163,6 @@ struct TestState {
   Ztc::QueueTelemetry	client_tx;
   Ztc::QueueTelemetry	server_rx;
   Ztc::QueueTelemetry	server_tx;
-  FinalRx		clientFinalRx, serverFinalRx;
   const char		*error_msg = nullptr;
 
   void done_one() {
@@ -446,9 +388,6 @@ uint16_t reserve_loopback_port(ZiIP ip = ZiIP{"127.0.0.1"})
 ZiMxParams mx_params()
 {
   return ZiMxParams()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxBuf, (16 << 10), ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Ztls.RxBuf">>>()
     .scheduler([](auto &s) {
       s.nThreads(4)
 	.thread(1, [](auto &t) { t.isolated(1); })
@@ -471,55 +410,12 @@ struct ReserveLayer : public ZiTxLayer<ReserveLayer<Lower>, Lower> {
   bool prepareBuf_(ZiIOBuf *, bool) { return true; }
 };
 
-struct VectorSource {
-  ZuBSpan bytes;
-  unsigned length() const { return bytes.length(); }
-  template <typename Fn> void each(Fn fn) const {
-    unsigned head = bytes.length() < 9 ? bytes.length() : 9;
-    fn(ZuBSpan{bytes.data(), head});
-    fn(ZuBSpan{});
-    fn(ZuBSpan{bytes.data() + head, bytes.length() - head});
-  }
-};
-
 template <typename Link>
 void send_payload(Link *link, const ZtArray<uint8_t> &payload)
 {
   if (!payload.length()) return;
-  auto &state = link->app()->state;
-  if (state.vectorTx) {
-    using Buf = Zi::IOBufAlloc<ZiIOBuf, BufSize, MaxSize, ZuStringT<"Ztls.Test.Source">>;
-    ZmRef<ZiIOBuf> buf = new Buf{link, 0};
-    *buf << "prefix";
-    buf->append(payload);
-    buf->advance(6);
-    link->app()->txInvoke([buf = ZuMv(buf), expected = ZuBSpan{payload}]() mutable {
-      auto link = static_cast<Link *>(buf->owner);
-      VectorSource source{{buf->data(), buf->length}};
-      auto base = buf->data_();
-      auto size = buf->size;
-      if (!link->sendSource_(source)) link->app()->state.fail("vector admission failed");
-      if (buf->data_() != base || buf->size != size || buf->skip != 6 ||
-	  buf->length != source.length() ||
-	  memcmp(buf->data(), expected.data(), expected.length()))
-	link->app()->state.fail("TLS changed vector source metadata");
-    });
-    return;
-  }
   auto tx = link->txStream();
-  if (state.retainedTx) {
-    using Buf = Zi::IOBufAlloc<ZiIOBuf, BufSize, MaxSize, ZuStringT<"Ztls.Test.Source">>;
-    ZmRef<ZiIOBuf> buf = new Buf{nullptr, 0};
-    *buf << "prefix";
-    buf->append(payload);
-    auto data = buf->data();
-    auto length = buf->length;
-    bool ok = tx.appendRange(buf, 6, payload.length()) && tx.flush();
-    if (!ok) state.fail("retained plaintext admission failed");
-    if (buf->data() != data || buf->length != length || buf->skip)
-      state.fail("TLS changed immutable source metadata");
-    return;
-  }
+  auto &state = link->app()->state;
   unsigned head1 = state.txHeadroom >> 1;
   unsigned tail1 = state.txTailroom >> 1;
   ReserveLayer first{tx, head1, tail1};
@@ -529,50 +425,39 @@ void send_payload(Link *link, const ZtArray<uint8_t> &payload)
   second << Zi::flush();
 }
 
-// Application Rx snapshots persistent ingress counters after both Tx drains.
-// Pending bytes are recorded separately by process(), before TLS clears them.
-template <typename Link>
-void final_rx(Link &link, bool peer, FinalRx &snapshot)
-{
-  link.allQueues([&snapshot](Ztc::Queue *queue) {
-    if (queue->telKey().template p<2>() != Ztc::QueueType::Rx) return;
-    Ztc::QueueTelemetry data;
-    queue->telemetry(data);
-    snapshot.bytes = data.inBytes;
-    snapshot.records = data.inCount;
-  });
-  snapshot.peer = peer;
-  snapshot.captured = true;
-}
-
-void final_pending(const Ztls::RxStream &rx, FinalRx &snapshot)
-{
-  snapshot.pending = rx.length();
-  snapshot.nodes = rx.count_();
-  snapshot.pendingKnown = true;
-}
-
-void final_rx_diag(const char *side, const FinalRx &snapshot,
-    unsigned cipher, unsigned application, unsigned expected,
-    uint64_t wireBytes, uint64_t wireCount)
-{
-  log_("# TLS final ", side, " captured=", snapshot.captured,
-    " cipher=", cipher, " appBytes=", application, " expected=", expected,
-    " tlsBytes=", snapshot.bytes, " tlsRecords=", snapshot.records,
-    " processSeen=", snapshot.pendingKnown, " lastProcessPending=", snapshot.pending,
-    " lastProcessNodes=", snapshot.nodes, " peer=", snapshot.peer,
-    " retiredWireBytes=", wireBytes, " retiredWireCount=", wireCount);
-}
-
 template <typename State>
 struct BaseClient : public Ztls::Client<BaseClient<State>> {
   using RxBufAlloc = Ztls::RxBufAlloc<BufSize, MaxSize>;
   using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Client<BaseClient<State>>;
 
-  struct Link : public Ztls::CliLink<BaseClient, Link, TxBufAlloc> {
-    using BaseLink = Ztls::CliLink<BaseClient, Link, TxBufAlloc>;
-    using BaseLink::sendSource_;
+  using RxPolicy = Zi::RxTLSBufAllocator<
+    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
+  using TxPolicy = Zi::TxTLSBufAllocator<
+    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  ZmRef<RxPolicy> rxBufAllocator;
+  ZmRef<TxPolicy> txBufAllocator;
+
+  template <typename Params>
+  Params buffers(Params params) {
+    if (!params.rxAllocator()) {
+      rxBufAllocator = new RxPolicy{};
+      params.rxAllocator(rxBufAllocator.ptr());
+    }
+    if (!params.txAllocator()) {
+      txBufAllocator = new TxPolicy{};
+      params.txAllocator(txBufAllocator.ptr());
+    }
+    return params;
+  }
+
+  template <typename Params>
+  bool init(Params params) {
+    return Base::init(buffers(ZuMv(params)));
+  }
+
+  struct Link : public Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc> {
+    using BaseLink = Ztls::CliLink<BaseClient, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseClient *app) : BaseLink{app, ZuID{"client"}} { }
     ZmAtomic<unsigned> rx_offset{0};
 
@@ -590,7 +475,6 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
     }
     void disconnected(bool peer) {
       auto &state = this->app()->state;
-      final_rx(*this, peer, state.clientFinalRx);
       if (!this->txQueue.empty_())
 	state.fail("client disconnect completed before I/O Tx drained");
       state.client_peer_closed = peer;
@@ -625,18 +509,16 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
 	return;
       }
       state.client_wire_count.xchAdd(1);
-      state.client_wire_bytes.xchAdd(buf->skip);
+      state.client_wire_bytes.xchAdd(buf->length);
     }
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
-      final_pending(rx, state.clientFinalRx);
       while (!rx.empty()) {
 	bool complete = false;
 	int consumed = consume_payload_frame(
 	  state, state.multi ? rx_offset : state.client_rx_bytes,
 	  state.serverPayload, rx,
 	  "client received unexpected payload", complete);
-	final_pending(rx, state.clientFinalRx);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
 	if (complete && (state.multi || !state.client_closed.xch(1))) {
@@ -669,9 +551,33 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
   using TxBufAlloc = Ztls::TxBufAlloc<BufSize, MaxSize>;
   using Base = Ztls::Server<BaseServer<State>>;
 
-  struct Link : public Ztls::SrvLink<BaseServer, Link, TxBufAlloc> {
-    using BaseLink = Ztls::SrvLink<BaseServer, Link, TxBufAlloc>;
-    using BaseLink::sendSource_;
+  using RxPolicy = Zi::RxTLSBufAllocator<
+    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
+  using TxPolicy = Zi::TxTLSBufAllocator<
+    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  ZmRef<RxPolicy> rxBufAllocator;
+  ZmRef<TxPolicy> txBufAllocator;
+
+  template <typename Params>
+  Params buffers(Params params) {
+    if (!params.rxAllocator()) {
+      rxBufAllocator = new RxPolicy{};
+      params.rxAllocator(rxBufAllocator.ptr());
+    }
+    if (!params.txAllocator()) {
+      txBufAllocator = new TxPolicy{};
+      params.txAllocator(txBufAllocator.ptr());
+    }
+    return params;
+  }
+
+  template <typename Params>
+  bool init(Params params) {
+    return Base::init(buffers(ZuMv(params)));
+  }
+
+  struct Link : public Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc> {
+    using BaseLink = Ztls::SrvLink<BaseServer, Link, RxBufAlloc, TxBufAlloc>;
     Link(BaseServer *app) : BaseLink{app} { }
     ZmAtomic<unsigned> rx_offset{0};
 
@@ -683,9 +589,8 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
       state.server_tlsver = unsigned(info.version);
       state.server_cipher = this->tlsInfo().cipherID;
     }
-    void disconnected(bool peer) {
+    void disconnected(bool) {
       auto &state = this->app()->state;
-      final_rx(*this, peer, state.serverFinalRx);
       if (!this->txQueue.empty_())
 	state.fail("server disconnect completed before I/O Tx drained");
       state.done_one();
@@ -707,18 +612,16 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 	return;
       }
       state.server_wire_count.xchAdd(1);
-      state.server_wire_bytes.xchAdd(buf->skip);
+      state.server_wire_bytes.xchAdd(buf->length);
     }
     int process(Ztls::RxStream &rx) {
       auto &state = this->app()->state;
-      final_pending(rx, state.serverFinalRx);
       while (!rx.empty()) {
 	bool complete = false;
 	int consumed = consume_payload_frame(
 	  state, state.multi ? rx_offset : state.server_rx_bytes,
 	  state.clientPayload, rx,
 	  "server received unexpected payload", complete);
-	final_pending(rx, state.serverFinalRx);
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
 	if (complete && (state.multi || !state.server_replied.xch(1))) {
@@ -785,17 +688,13 @@ void run_in_process(
     unsigned txTailroom = 0,
     ZmRef<Ztls::PK::AnyPK> clientKey = {},
     Ztls::Certs clientCerts = {},
-    Ztls::Certs caCerts = {},
-    bool retainedTx = false,
-    bool vectorTx = false)
+    Ztls::Certs caCerts = {})
 {
   Ztls::Pico::reset_stats();
   capture.reset();
 
   TestState state;
   state.target = 2;
-  state.retainedTx = retainedTx;
-  state.vectorTx = vectorTx;
   state.ip = ip;
   state.port = reserve_loopback_port(ip);
   state.clientKeyUpdate = clientKeyUpdate;
@@ -876,24 +775,6 @@ void run_in_process(
   client.final();
   server.final();
   mx.stop();
-
-  if (!done || capture.errors.load_() || state.errors.load_() ||
-      state.client_rx_bytes.load_() != serverLen ||
-      state.server_rx_bytes.load_() != clientLen ||
-      state.client_rx.inBytes != serverLen || state.server_rx.inBytes != clientLen ||
-      !state.client_tx.inCount || !state.server_tx.inCount ||
-      (expectedCipher && (state.client_cipher.load_() != expectedCipher ||
-	state.server_cipher.load_() != expectedCipher))) {
-    log_("# TLS final expectedCipher=", expectedCipher,
-      " headroom=", txHeadroom, " tailroom=", txTailroom,
-      " done=", done, " doneCount=", state.done_count.load_());
-    final_rx_diag("client", state.clientFinalRx, state.client_cipher.load_(),
-      state.client_rx_bytes.load_(), serverLen,
-      state.client_wire_bytes.load_(), state.client_wire_count.load_());
-    final_rx_diag("server", state.serverFinalRx, state.server_cipher.load_(),
-      state.server_rx_bytes.load_(), clientLen,
-      state.server_wire_bytes.load_(), state.server_wire_count.load_());
-  }
 
   ZTLS_CHECK_RT(!capture.errors.load_(), "unexpected error logs");
   ZTLS_CHECK_RT(!state.errors.load_(),
@@ -1446,10 +1327,9 @@ bool tls12_roundtrip(
 {
   constexpr unsigned TxRecordCapacity = 16 * 1024;
   unsigned headroom = 5 + suite->aead->tls12.record_iv_size;
-  using TestBuf = Zi::IOBufAlloc<ZiIOBuf, BufSize, MaxSize,
-    ZuStringT<"Ztls.RoundTripTest">>;
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, BufSize, MaxSize>;
 
-  ZmRef<ZiIOBuf> buf = new TestBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> buf = ZmSingleton<Allocator>::instance()->allocBuf();
   if (!buf || !buf->ensure(TxRecordCapacity)) return false;
   memcpy(buf->data_() + headroom, payload.data(), payload.length());
 
@@ -1476,36 +1356,6 @@ bool tls12_roundtrip(
     return false;
   if (rx.off != payload.length()) return false;
   return !payload.length() || !memcmp(rx.base, payload.data(), payload.length());
-}
-
-void testOriginGrowth()
-{
-  ZuTestScopeRT(testOriginGrowth);
-  Ztls::Pico::install();
-  ZmRef<Zi::IOBufAllocator> allocator = new Zi::TxTLSBufAllocator<
-    ZiIOBuf, BufSize, MaxSize, ZuStringT<"Ztls.Test.Grow">>;
-  auto buf = allocator->alloc();
-  auto size = buf->size;
-  // Output has not been published in length; plaintext occupies another span.
-  buf->skip = 16;
-  buf->length = 16;
-  memset(buf->data(), 0x37, buf->length);
-  ptls_buffer_t pbuf;
-  ptls_buffer_init_tx(&pbuf, buf->data_() + 64, size - 64);
-  pbuf.origin = buf.ptr();
-  pbuf.off = 16;
-  memset(pbuf.base, 0xa9, pbuf.off);
-  int result = ptls_buffer_reserve(&pbuf, size * 2, 1);
-  ZTLS_CHECK_RT(!result, "origin-backed reserve failed");
-  ZTLS_CHECK_RT(pbuf.origin == buf.ptr() && pbuf.base == buf->data_() + 64,
-    "origin/base changed across growth");
-  ZTLS_CHECK_RT(buf->skip == 16 && buf->length == 16,
-    "growth changed published span");
-  bool preserved = true;
-  for (unsigned n = 0; n < 16; ++n)
-    preserved &= buf->data()[n] == 0x37 && pbuf.base[n] == 0xa9;
-  ZTLS_CHECK_RT(preserved, "growth lost live plaintext or unpublished output");
-  ZTLS_CHECK_RT(!buf->uring(), "Jumbo retained registration");
 }
 
 void run_tls12_records(ptls_cipher_suite_t *suite)
@@ -1625,25 +1475,6 @@ void run_tls12_handshake_rejected(
     state.error_msg ? state.error_msg : "state error");
   ZTLS_CHECK_RT(!state.server_connected.load_(),
     "TLS 1.2 rejection reached application connected()");
-}
-
-void testTLS13RetainedTx(TempDir &temp, LogCapture &capture)
-{
-  ZuTestScopeRT(testTLS13RetainedTx);
-  run_in_process(temp, capture, JumboPayloadSize, JumboPayloadSize, false,
-    false, false, ZiIP{"127.0.0.1"}, "127.0.0.1", nullptr, 0, 0, 0,
-    {}, {}, {}, true);
-}
-
-void testTLS13VectorTx(TempDir &temp, LogCapture &capture)
-{
-  ZuTestScopeRT(testTLS13VectorTx);
-  run_in_process(temp, capture, JumboPayloadSize, JumboPayloadSize, false,
-    false, false, ZiIP{"127.0.0.1"}, "127.0.0.1", nullptr, 0, 0, 0,
-    {}, {}, {}, false, true);
-  run_in_process(temp, capture, SmallPayloadSize, SmallPayloadSize, true,
-    true, false, ZiIP{"127.0.0.1"}, "127.0.0.1", nullptr, 0, 0, 0,
-    {}, {}, {}, false, true);
 }
 
 void testTLS13JumboBuffers(TempDir &temp, LogCapture &capture)
@@ -1838,8 +1669,6 @@ int main(int argc, char **argv)
   ZiLog::start();
 
   ZuTestMain();
-  ZuTestCall(testAllocatorPolicies);
-  ZuTestCall(testOriginGrowth);
   TempDir temp;
   bool tempOK = temp.init();
   ZuCHECK(tempOK, "failed to generate cert/key");
@@ -1847,8 +1676,6 @@ int main(int argc, char **argv)
     ZuTestCall(testConnectFailureShard, temp, capture);
     ZuTestCall(testWrongHostname, temp, capture);
     ZuTestCall(testTLS13JumboBuffers, temp, capture);
-    ZuTestCall(testTLS13RetainedTx, temp, capture);
-    ZuTestCall(testTLS13VectorTx, temp, capture);
     ZuTestCall(testTLS13ConcurrentRecords, temp, capture);
     ZuTestCall(testTLS13IPv6Loopback, temp, capture);
     ZuTestCall(testTLS13KeyUpdate, temp, capture);

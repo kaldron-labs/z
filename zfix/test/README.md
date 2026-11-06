@@ -218,14 +218,6 @@ the standalone declaration/codec consumers retain their foundation-only boundary
 
 ## Retained Tx output and association
 
-`ZfixTxMsgTest` also exercises semantic capture into typed owning storage:
-borrowed text and groups survive source mutation, replay does not retain a
-mutable output frame, custom scalar formatting runs zero times during capture
-and once during final emission, and authentication extensions own binary/string
-values while sharing the original semantic control model. Explicit archive
-materialization is tested separately. Run `./zfix/test/ZfixTxMsgTest` after its
-normal build.
-
 `ZfixTxMsgTest` verifies immutable pooled bodies, opaque application identities,
 control facet selection, ordinary text, independent mutable transport storage,
 original/current replay timestamps, jumbo growth, exact frame limits, long

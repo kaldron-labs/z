@@ -6,6 +6,7 @@
 
 #include <stdlib.h>
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAtomic.hh>
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmList.hh>
@@ -13,11 +14,9 @@
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiMultiplex.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
-
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -129,12 +128,11 @@ struct Peer : Base {
 
   RawOutput::Ref packet(uint64_t connection, unsigned i) {
     Fmt::Error error;
-    auto body = TxBody::captureRaw<Entry>(Packet{Client ? "req" : "res", state()->text->cspan()},
+    auto body = TxBody::encodeRaw<Entry>(Packet{Client ? "req" : "res", state()->text->cspan()},
       (Client ? 101 : 201) + i, true, error);
     if (error) { state()->fail(); return {}; }
-    auto out = RawOutput::encode(body, routing(), context(connection, i), error,
-      ::limits(state()).tx.codec, NoSign{},
-      this->fixFrameBuf());
+    auto out = RawOutput::encode(this->txAllocator()->allocBuf(this),
+      body, routing(), context(connection, i), error);
     if (error) state()->fail(); return out;
   }
 
@@ -260,6 +258,8 @@ struct CliHub : RawClient<CliHub, Dictionary, Network> {
   explicit CliHub(TestState *s) : Base{HubLimits{.link = limits(s)}}, state{s} { }
 
   unsigned reconnFreq() const { return 0; }
+
+  bool init(Network::ClientParams params);
 };
 
 struct CliHub::Link : public ZmNHeap<Link>, Peer<Link, RawCliLink<CliHub, Link, Dictionary,
@@ -267,6 +267,20 @@ struct CliHub::Link : public ZmNHeap<Link>, Peer<Link, RawCliLink<CliHub, Link, 
 friend inline ZuStringT<"Zfix.raw_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
+
+bool CliHub::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::RawClient<CliHub, Dictionary, Network>::init(ZuMv(params));
+}
 
 struct SrvHub : RawServer<SrvHub, Dictionary, Network> {
   using Base = RawServer<SrvHub, Dictionary, Network>;
@@ -284,6 +298,8 @@ struct SrvHub : RawServer<SrvHub, Dictionary, Network> {
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
 
   void listenFailed(bool) { state->fail(); state->listening.post(); }
+
+  bool init(Network::ServerParams params);
 };
 
 struct SrvHub::Link : public ZmNHeap<Link>, Peer<Link, RawSrvLink<SrvHub, Link, Dictionary,
@@ -292,93 +308,105 @@ friend inline ZuStringT<"Zfix.raw_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
 
+bool SrvHub::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::RawServer<SrvHub, Dictionary, Network>::init(ZuMv(params));
+}
+
 ZiConnection *SrvHub::accepted(const ZiCxnInfo &i) { return new Link::Cxn{new Link{this}, i}; }
 static void loopback(bool pause, bool stop, bool quota, unsigned payload = 4) {
-  ZuTestScopeRT(loopback);
+  ZuTestScope(loopback);
   TestState state; state.pause = pause; state.deferStop = stop; state.quota = quota;
     state.payload = payload;
-  state.text = new LocalBuf{nullptr, 0}; state.text->ensure(payload);
+  state.text = ZmSingleton<Zi::AppBufAllocator<
+    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+  state.text->ensure(payload);
   constexpr auto Bits = "ABCD"_z;
   for (unsigned i = 0; i < payload; ++i) state.text->data()[i] = Bits[i % Bits.length()];
   state.text->length = payload;
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ServerParams sp{&mx, "3", "4"}; typename Network::ClientParams cp{&mx, "3",
     "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
-  if (!cert || !key) { ZuCheckRT(cert && key); mx.stop(); return; }
+  if (!cert || !key) { ZuCheck(cert && key); mx.stop(); return; }
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
-  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
+  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0);
 #ifdef ZFIX_TEST_TLS
   link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
 #else
   link->connect("127.0.0.1", state.port);
 #endif
-  ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0);
-  link->disconnect(); ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  ZuCheck(state.done.timedwait(Zm::now(5)) == 0);
+  link->disconnect(); ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop(); link = nullptr;
-  ZuCheckRT(!state.errors.load_() && state.closed.load_() == 2);
-  if (quota) ZuCheckRT(state.refused.load_() && !state.published.load_()
+  ZuCheck(!state.errors.load_() && state.closed.load_() == 2);
+  if (quota) ZuCheck(state.refused.load_() && !state.published.load_()
     && !state.complete.load_() && !state.received.load_());
   else {
-    ZuCheckRT(state.published.load_() == 8 && state.complete.load_() == 8
+    ZuCheck(state.published.load_() == 8 && state.complete.load_() == 8
       && state.received.load_() == 8);
-    ZuCheckRT(state.paused.load_() == unsigned(pause));
+    ZuCheck(state.paused.load_() == unsigned(pause));
   }
-  ZuCheckRT(state.cancelled.load_() == (stop ? 4 : 0));
+  ZuCheck(state.cancelled.load_() == (stop ? 4 : 0));
 }
 // Repeated stop during setup drains its continuation before notifying the manager.
 // Each stop must await both owners even when the connection counter stays zero.
 static void setupCleanup(bool deferred) {
-  ZuTestScopeRT(setupCleanup);
+  ZuTestScope(setupCleanup);
   TestState state; state.setup = true; state.deferStop = deferred;
   CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ClientParams params{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   params.caPath(getenv("ZFIX_TEST_CERT"));
 #endif
-  bool init = client.init(ZuMv(params)); ZuCheckRT(init);
-  bool up = init && client.start(); ZuCheckRT(up);
+  bool init = client.init(ZuMv(params)); ZuCheck(init);
+  bool up = init && client.start(); ZuCheck(up);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   for (unsigned i = 0; i < 3; ++i) {
     client.rxRun([link] { link->connect("127.0.0.1", 1); link->disconnect_(false); });
     if (deferred) {
-      ZuCheckRT(state.stopPending.timedwait(Zm::now(5)) == 0 && state.release);
-      ZuCheckRT(state.rxStopped.timedwait(Zm::now(5)) == 0);
-      ZuCheckRT(state.stoppedOne.trywait() != 0);
+      ZuCheck(state.stopPending.timedwait(Zm::now(5)) == 0 && state.release);
+      ZuCheck(state.rxStopped.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.stoppedOne.trywait() != 0);
       auto release = ZuMv(state.release); if (release) release();
     }
-    ZuCheckRT(state.stoppedOne.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.closed.load_() == i + 1);
-    ZuCheckRT(state.cancelled.load_() == (deferred ? 2*(i + 1) : 0));
-    ZuCheckRT(!state.published.load_() && !state.complete.load_() && !state.received.load_());
+    ZuCheck(state.stoppedOne.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.closed.load_() == i + 1);
+    ZuCheck(state.cancelled.load_() == (deferred ? 2*(i + 1) : 0));
+    ZuCheck(!state.published.load_() && !state.complete.load_() && !state.received.load_());
   }
-  bool stopped = client.stop(); ZuCheckRT(stopped);
+  bool stopped = client.stop(); ZuCheck(stopped);
   client.final(); mx.stop(); link = nullptr;
-  ZuCheckRT(!state.errors.load_());
+  ZuCheck(!state.errors.load_());
 }
 
 // Keep the application's server link while three physical clients displace one
@@ -394,60 +422,14 @@ struct SwapState {
   void fail() { ++errors; reply.post(); }
 };
 
-#ifdef ZFIX_TEST_TLS
-using SwapNetwork = Network;
-#else
-// Intercept the existing frame producer only in this fixture. Its original
-// backing and fixed completion remain held while replacement drains the owner.
-struct SwapOps : WireOps {
-  template <typename Impl> static void select(Impl *impl, Ref node, ZiTxContext &io) {
-    WireOps::select(impl, node, io);
-    impl->holdIO_(ZuMv(node), io);
-  }
-};
-struct SwapNetwork : Network {
-  template <typename App, typename Impl, typename Tx>
-  using SrvLink = Ztcp::SrvLink<App, Impl, Tx, SwapOps>;
-};
-#endif
-
 template <typename Impl, typename Base, bool Client>
 struct SwapPeer : Base {
   // The application owns each deferred stop handle on its named shard.
   RawStopFn		rxStop;
   alignas(Zm::CacheLineSize)
   RawStopFn		txStop;
-  ZmRef<ZiIOBuf>	oldOutput;
-  uint64_t		oldToken = 0;
-  unsigned		oldPart = 0;
-#ifndef ZFIX_TEST_TLS
-  alignas(Zm::CacheLineSize)
-  uint64_t		ioOldToken = 0;
-
-  void holdIO_(ZmRef<WirePending::Node> node, ZiTxContext &io) {
-    if (!ioOldToken) ioOldToken = node->token;
-    if (node->token != ioOldToken) return;
-    io.fn = ZiTxFn{ZmRef<WireQueue::Node>{static_cast<WireQueue::Node *>(node.ptr())},
-      [](WireQueue::Node *node, ZiTxContext &io) {
-	return static_cast<Impl *>(node->io.sender)->holdRecordIO_(node, io);
-      }};
-  }
-
-  bool holdRecordIO_(WireQueue::Node *node, ZiTxContext &io) {
-    if (io.buf && io.length >= 0) {
-      auto buf = ZuMv(io.buf);
-      auto token = node->token;
-      auto part = ++node->io.retired;
-      this->app()->txRun([this, buf = ZuMv(buf), token, part]() mutable {
-	if (oldOutput || part != 1) state()->fail();
-	oldOutput = ZuMv(buf); oldToken = token; oldPart = part;
-	state()->oldOutput.post();
-      });
-      if (io.flags & ZiTxContext::TxDataDone) { io.complete(); return true; }
-    }
-    return node->produce(node, io);
-  }
-#endif
+  ZmRef<ZiTxBuf>	oldOutput;
+  ZmRef<ZiIOBuf>	firstOutput;
 
   template <typename Hub> explicit SwapPeer(Hub *hub) : Base{hub, config()} { }
 
@@ -501,13 +483,8 @@ struct SwapPeer : Base {
   }
 
   bool fixSendTx(ZmRef<ZiIOBuf> b) {
-    if constexpr (!Client) if (!oldToken) oldToken = static_cast<WireBuf *>(b.ptr())->token;
+    if constexpr (!Client) if (!firstOutput) firstOutput = b;
     return Base::fixSendTx(ZuMv(b));
-  }
-
-  bool fixSendRangeTx(Zi::RxRange source, ZmRef<WireBuf> wire) {
-    if constexpr (!Client) if (!oldToken) oldToken = wire->token;
-    return Base::fixSendRangeTx(ZuMv(source), ZuMv(wire));
   }
 
   Fmt::Error fixReplyRx(Entry *, Response *, const RawInput &input) {
@@ -520,17 +497,15 @@ struct SwapPeer : Base {
     else {
       // Keep native socket accounting intact. Hold only this real buffer's Raw
       // completion, which Wire must retire when the next connection is bound.
-      if (static_cast<WireBuf *>(b.ptr())->token)
-	this->app()->txRun([this, b, ok]() mutable {
-	  if (static_cast<WireBuf *>(b.ptr())->token == oldToken) {
+      this->app()->txRun([this, b, ok]() mutable {
+	  if (b.ptr() == firstOutput.ptr()) {
 	    if (oldOutput || !ok) state()->fail();
-	    oldPart = static_cast<WireBuf *>(b.ptr())->part;
 	    oldOutput = ZuMv(b); state()->oldOutput.post(); return;
 	  }
-	  this->transportSent(static_cast<WireBuf *>(b.ptr()), ok);
+	  this->transportSent(b, ok);
 	});
-      using Native = typename SwapNetwork::template SrvLink<
-	typename Impl::Hub, Impl, typename Base::TxBufAlloc>;
+      using Native = typename Network::template SrvLink<
+	typename Impl::Hub, Impl, typename Base::RxBufAlloc, typename Base::TxBufAlloc>;
       Native::sent(ZuMv(b), ok);
     }
   }
@@ -592,7 +567,8 @@ struct SwapPeer : Base {
   void releaseRecord() {
     this->app()->txRun([this] {
       auto b = ZuMv(oldOutput); if (!b) { state()->fail(); return; }
-      this->transportSent(oldToken, oldPart, true);
+      firstOutput = nullptr;
+      this->transportSent(b, true);
       this->app()->txRun([this] { state()->recordReleased.post(); });
     });
   }
@@ -612,6 +588,8 @@ struct SwapClient : RawClient<SwapClient, Dictionary, Network> {
   explicit SwapClient(SwapState *s) : state{s} { }
 
   unsigned reconnFreq() const { return 0; }
+
+  bool init(Network::ClientParams params);
 };
 
 struct SwapClient::Link : ZmNHeap<Link>, SwapPeer<Link,
@@ -622,7 +600,21 @@ friend inline ZuStringT<"Zfix.RawSwap.Client"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete;
 };
 
-struct SwapServer : RawServer<SwapServer, Dictionary, SwapNetwork> {
+bool SwapClient::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::RawClient<SwapClient, Dictionary, Network>::init(ZuMv(params));
+}
+
+struct SwapServer : RawServer<SwapServer, Dictionary, Network> {
   struct Link;
   SwapState	*state;
   ZmRef<Link>	link;
@@ -635,10 +627,12 @@ struct SwapServer : RawServer<SwapServer, Dictionary, SwapNetwork> {
   unsigned nAccepts() const { return 1; }
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
   void listenFailed(bool) { state->fail(); state->listening.post(); }
+
+  bool init(Network::ServerParams params);
 };
 
 struct SwapServer::Link : ZmNHeap<Link>, SwapPeer<Link,
-  RawSrvLink<SwapServer, Link, Dictionary, SwapNetwork>, false> {
+  RawSrvLink<SwapServer, Link, Dictionary, Network>, false> {
 friend inline ZuStringT<"Zfix.RawSwap.Server"> ZmNHeapID(Link *);
   using Hub = SwapServer;
   using SwapPeer::SwapPeer;
@@ -646,32 +640,44 @@ friend inline ZuStringT<"Zfix.RawSwap.Server"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete;
 };
 
+bool SwapServer::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::RawServer<SwapServer, Dictionary, Network>::init(ZuMv(params));
+}
+
 ZiConnection *SwapServer::accepted(const ZiCxnInfo &i) {
   if (!link) link = new Link{this};
   return new Link::Cxn{link, i};
 }
 
 static void replacement() {
-  ZuTestScopeRT(replacement);
+  ZuTestScope(replacement);
   SwapState state; SwapServer server{&state}; SwapClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   typename Network::ServerParams sp{&mx, "3", "4"};
   typename Network::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
-  if (!cert || !key) { ZuCheckRT(cert && key); mx.stop(); return; }
+  if (!cert || !key) { ZuCheck(cert && key); mx.stop(); return; }
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
-  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0);
+  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0);
   ZmRef<SwapClient::Link> a = new SwapClient::Link{&client};
   ZmRef<SwapClient::Link> b = new SwapClient::Link{&client};
   ZmRef<SwapClient::Link> c = new SwapClient::Link{&client};
@@ -681,38 +687,38 @@ static void replacement() {
 #else
     link->connect("127.0.0.1", state.port);
 #endif
-    ZuCheckRT(state.clientUp.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.serverUp.timedwait(Zm::now(5)) == 0);
-    link->request(); ZuCheckRT(state.reply.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.replies.load_() == state.clientUps.load_());
-    if (link == a) ZuCheckRT(state.oldOutput.timedwait(Zm::now(5)) == 0);
-    else ZuCheckRT(state.outputDone.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.clientUp.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.serverUp.timedwait(Zm::now(5)) == 0);
+    link->request(); ZuCheck(state.reply.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.replies.load_() == state.clientUps.load_());
+    if (link == a) ZuCheck(state.oldOutput.timedwait(Zm::now(5)) == 0);
+    else ZuCheck(state.outputDone.timedwait(Zm::now(5)) == 0);
     if (link == b) {
-      ZuCheckRT(state.rxPending.timedwait(Zm::now(5)) == 0);
-      ZuCheckRT(state.txPending.timedwait(Zm::now(5)) == 0);
-      ZuCheckRT(!state.serverStops.load_());
-      server.link->releaseRx(); ZuCheckRT(state.rxReleased.timedwait(Zm::now(5)) == 0);
-      ZuCheckRT(!state.serverStops.load_());
+      ZuCheck(state.rxPending.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.txPending.timedwait(Zm::now(5)) == 0);
+      ZuCheck(!state.serverStops.load_());
+      server.link->releaseRx(); ZuCheck(state.rxReleased.timedwait(Zm::now(5)) == 0);
+      ZuCheck(!state.serverStops.load_());
     }
   }
-  server.link->releaseRecord(); ZuCheckRT(state.recordReleased.timedwait(Zm::now(5)) == 0);
-  c->request(); ZuCheckRT(state.reply.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(state.replies.load_() == 4);
-  ZuCheckRT(state.outputDone.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(state.clientUps.load_() == 3 && state.serverUps.load_() == 3 &&
+  server.link->releaseRecord(); ZuCheck(state.recordReleased.timedwait(Zm::now(5)) == 0);
+  c->request(); ZuCheck(state.reply.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.replies.load_() == 4);
+  ZuCheck(state.outputDone.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.clientUps.load_() == 3 && state.serverUps.load_() == 3 &&
     state.replies.load_() == 4 && state.failed.load_() == 1 && !state.serverStops.load_());
   c->disconnect();
   for (unsigned i = 0; i < 3; ++i)
-    ZuCheckRT(state.clientStopped.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.clientStopped.timedwait(Zm::now(5)) == 0);
   // Both actual C stop hooks ran. A's external Tx drain remains outstanding.
   for (unsigned i = 0; i < 2; ++i)
-    ZuCheckRT(state.lastClosed.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(state.rxStops.load_() == 3 && state.txStops.load_() == 3 &&
+    ZuCheck(state.lastClosed.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.rxStops.load_() == 3 && state.txStops.load_() == 3 &&
     !state.serverStops.load_());
-  server.link->releaseTx(); ZuCheckRT(state.serverStopped.timedwait(Zm::now(5)) == 0);
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  server.link->releaseTx(); ZuCheck(state.serverStopped.timedwait(Zm::now(5)) == 0);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop(); a = b = c = nullptr; server.link = nullptr;
-  ZuCheckRT(!state.errors.load_() && state.serverStops.load_() == 1 &&
+  ZuCheck(!state.errors.load_() && state.serverStops.load_() == 1 &&
     state.clientStops.load_() == 3 && state.completed.load_() == 3);
 }
 

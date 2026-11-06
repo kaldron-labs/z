@@ -33,17 +33,6 @@ whichever comes first, and drains accepted calls. A nonzero rate uses intended
 submission times rather than sleeping after each order; lateness is reported in
 `scheduleNs`. Warmup completion starts each session's measured window.
 
-Native peers size Rx and Tx rings at startup for four overlapping buffers per
-in-flight order (request, two reports and retirement), with a minimum of 128.
-Rx capacity covers all sessions. Client Tx policies cover all sessions; server
-Tx policies belong to individual session hubs. Counts are capped at the native
-ring limit of 32768. `--rx-ring-size N` and `--tx-ring-size N` override these
-counts; zero selects workload sizing. Large fragmented frames or deliberately
-retained input may need larger explicit counts. The native `ready` and `result`
-records report both selected counts. External engines report zero for these
-native-only fields. This policy applies equally to TCP and TLS and is shared by
-the interop, integration and benchmark process harnesses.
-
 `--deadline` bounds startup/warmup/work and the normal close wait; it must exceed
 an explicit duration. Error or close timeout forces local retirement and waits
 for actual logical stop callbacks before retiring owners. Native DNS is explicitly

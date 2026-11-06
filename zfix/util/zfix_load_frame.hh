@@ -7,35 +7,21 @@
 #ifndef ZfixLoadFrame_HH
 #define ZfixLoadFrame_HH
 
-#include <zlib/ZmRef.hh>
-#include <zlib/ZiIOBuf.hh>
+#include <string.h>
 #include <zlib/ZfixTxMsg.hh>
 #include "load_fix.hh"
 
 namespace ZfixLoad {
 
-using FrameAlloc = Zi::IOBufAlloc<ZiIOBuf,
-  ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.Load.Frame">>;
-
-inline ZmRef<ZiIOBuf> frameOutput(
-  ZmRef<ZiIOBuf> storage, Zfix::Fmt::FrameOutput output)
-{
-  if (!output) return {};
-  storage->skip = unsigned(output.data.data() -
-    reinterpret_cast<char *>(storage->data_()));
-  storage->length = output.data.length();
-  return storage;
-}
-
 inline ZuSpan<char> grow(void *owner, unsigned used, unsigned needed) {
-  auto buf = static_cast<ZiIOBuf *>(owner);
-  buf->length = used;
-  if (!buf->ensure(needed)) return {};
-  return {reinterpret_cast<char *>(buf->data_()), buf->size};
+  auto &s = *static_cast<Text *>(owner);
+  s.length(used < s.length() ? used : s.length());
+  s.length(needed);
+  return {s.data(), s.length()};
 }
-template <typename Entry> ZmRef<ZiIOBuf> frame(const typename Entry::Object &o) {
-  ZmRef<ZiIOBuf> storage = new FrameAlloc{nullptr, 0};
-  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, storage.ptr()};
+template <typename Entry> Text frame(const typename Entry::Object &o) {
+  Text storage;
+  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, &storage};
   Zfix::TxConfig config;
   config.identity.local = "ZFIX-C"; config.identity.peer = "ZFIX-S";
   Zfix::TxContext context{.seqNo = 2, .sendingTime = ZuDateTime{Zm::now()}};
@@ -45,7 +31,11 @@ template <typename Entry> ZmRef<ZiIOBuf> frame(const typename Entry::Object &o) 
     Zfix::Fmt::save<Facet>(out, o);
   });
   auto result = writer.finish();
-  return frameOutput(ZuMv(storage), result);
+  if (!result) return {};
+  // Return one owning fixture buffer; Text cannot own an interior data pointer.
+  memmove(storage.data(), result.data.data(), result.data.length());
+  storage.length(result.data.length());
+  return storage;
 }
 } // ZfixLoad
 

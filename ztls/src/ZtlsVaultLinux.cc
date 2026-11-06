@@ -71,7 +71,7 @@ public:
       return ZeEXCEPT(Error, "ZtlsVault", "session bus connection failed");
 
     SS::OpenSessionArg arg{"plain", SS::Variant{SS::Text{""}}};
-    return call_<SS::OpenSessionArg, SS::OpenSessionRes>(
+    return call<SS::OpenSessionArg, SS::OpenSessionRes>(
       ServicePath, ServiceIF, "OpenSession", arg,
       [this](SS::OpenSessionRes &reply) -> Ztls::VaultResult {
         if (!reply.output.template is<SS::Text>())
@@ -85,7 +85,7 @@ public:
     if (!m_live) return;
     if (m_session && m_ready.load_() == 1) {
       SS::Empty empty;
-      call_<SS::Empty, SS::Empty>(m_session, SessionIF, "Close", empty,
+      call<SS::Empty, SS::Empty>(m_session, SessionIF, "Close", empty,
         [](SS::Empty &) -> Ztls::VaultResult { return {}; });
     }
     m_session.clear();
@@ -105,7 +105,7 @@ public:
     SS::Attrs attrs{m_program, m_account, key};
     SS::SearchArg arg{SS::AttrsView{&attrs}};
     SS::Paths unlocked, locked;
-    auto result = call_<SS::SearchArg, SS::SearchRes>(
+    auto result = call<SS::SearchArg, SS::SearchRes>(
       ServicePath, ServiceIF, "SearchItems", arg,
       [&unlocked, &locked](SS::SearchRes &reply) -> Ztls::VaultResult {
         unlocked = ZuMv(reply.unlocked);
@@ -114,7 +114,7 @@ public:
       });
     if (result.template is<ZeException>()) return result;
     if (!unlocked.length() && locked.length()) {
-      result = unlock_(locked, unlocked);
+      result = unlock(locked, unlocked);
       if (result.template is<ZeException>()) return result;
     }
     if (!unlocked.length() && locked.length())
@@ -122,7 +122,7 @@ public:
     if (!unlocked.length())
       return ZeEXCEPT(Error, "ZtlsVault", "credential missing");
     SS::GetSecretArg secretArg{m_session};
-    return call_<SS::GetSecretArg, SS::GetSecretRes>(
+    return call<SS::GetSecretArg, SS::GetSecretRes>(
       unlocked[0], ItemIF, "GetSecret", secretArg,
       [&fn](SS::GetSecretRes &reply) -> Ztls::VaultResult {
         // D-Bus decoding retains a view into the mutable receive buffer.
@@ -135,7 +135,7 @@ public:
   Ztls::VaultResult save(ZuCSpan key, ZuBSpan value) override {
     SS::ReadAliasArg alias{"default"};
     SS::Text collection;
-    auto result = call_<SS::ReadAliasArg, SS::ReadAliasRes>(
+    auto result = call<SS::ReadAliasArg, SS::ReadAliasRes>(
       ServicePath, ServiceIF, "ReadAlias", alias,
       [&collection](SS::ReadAliasRes &reply) -> Ztls::VaultResult {
         collection = ZuMv(reply.collection);
@@ -146,12 +146,12 @@ public:
       SS::CreateCollectionArg arg;
       arg.properties.label = SS::Text{m_program};
       arg.alias = "default";
-      result = call_<SS::CreateCollectionArg, SS::CreateCollectionRes>(
+      result = call<SS::CreateCollectionArg, SS::CreateCollectionRes>(
         ServicePath, ServiceIF, "CreateCollection", arg,
         [this, &collection](SS::CreateCollectionRes &reply) -> Ztls::VaultResult {
           if (reply.prompt != "/") {
             SS::PromptPath resolved;
-            auto prompted = prompt_(reply.prompt, resolved);
+            auto prompted = prompt(reply.prompt, resolved);
             if (prompted.template is<ZeException>()) return prompted;
             collection = ZuMv(resolved.path);
             return {};
@@ -166,7 +166,7 @@ public:
     SS::Paths objects;
     objects.push(collection);
     SS::Paths unlocked;
-    result = unlock_(objects, unlocked);
+    result = unlock(objects, unlocked);
     if (result.template is<ZeException>()) return result;
     if (!unlocked.length())
       return ZeEXCEPT(Error, "ZtlsVault", "collection remains locked");
@@ -178,28 +178,28 @@ public:
     item.secret = SS::Secret{m_session, {}, value,
       SS::Text{"application/octet-stream"}};
     item.replace = true;
-    return call_<SS::CreateItemArg, SS::CreateItemRes>(
+    return call<SS::CreateItemArg, SS::CreateItemRes>(
       collection, CollectionIF, "CreateItem", item,
       [this](SS::CreateItemRes &reply) -> Ztls::VaultResult {
         if (reply.prompt != "/") {
           SS::PromptPath resolved;
-          return prompt_(reply.prompt, resolved);
+          return prompt(reply.prompt, resolved);
         }
         return {};
       });
   }
 
 private:
-  Ztls::VaultResult unlock_(const SS::Paths &objects,
+  Ztls::VaultResult unlock(const SS::Paths &objects,
       SS::Paths &unlocked) {
     SS::UnlockArg arg{objects};
-    return call_<SS::UnlockArg, SS::UnlockRes>(
+    return call<SS::UnlockArg, SS::UnlockRes>(
       ServicePath, ServiceIF, "Unlock", arg,
       [this, &unlocked](SS::UnlockRes &reply) -> Ztls::VaultResult {
         unlocked = ZuMv(reply.unlocked);
         if (reply.prompt != "/") {
           SS::PromptPaths resolved;
-          auto prompted = prompt_(reply.prompt, resolved);
+          auto prompted = prompt(reply.prompt, resolved);
           if (prompted.template is<ZeException>()) return prompted;
           for (auto &path : resolved.paths)
             unlocked.push(ZuMv(path));
@@ -210,7 +210,7 @@ private:
   }
 
   template <typename Out>
-  Ztls::VaultResult prompt_(ZuCSpan path, Out &output) {
+  Ztls::VaultResult prompt(ZuCSpan path, Out &output) {
     ZmSemaphore signalSem;
     ZmRef<ZiIOBuf> signalFrame;
     Zdbus_::FrameInfo signalInfo;
@@ -247,7 +247,7 @@ private:
       return ZeEXCEPT(Error, "ZtlsVault", "prompt match failed");
     matched = true;
     SS::PromptArg arg{""};
-    auto result = call_<SS::PromptArg, SS::Empty>(
+    auto result = call<SS::PromptArg, SS::Empty>(
       path, PromptIF, "Prompt", arg,
       [](SS::Empty &) -> Ztls::VaultResult { return {}; });
     if (result.template is<ZeException>()) return result;
@@ -274,7 +274,7 @@ private:
   }
 
   template <typename Arg, typename Res, typename Fn>
-  Ztls::VaultResult call_(ZuCSpan path, ZuCSpan interface,
+  Ztls::VaultResult call(ZuCSpan path, ZuCSpan interface,
       ZuCSpan member, const Arg &arg, Fn &&fn) {
     auto result = ZmBlock<Zdbus_::CallResult>{}(
       [this, path, interface, member, &arg](auto done) {

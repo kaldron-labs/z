@@ -17,7 +17,6 @@ def main():
     manifest = None
     groups = collections.defaultdict(list)
     processes = collections.defaultdict(list)
-    backends = set()
     for root in roots:
         current = json.loads((root / "manifest.json").read_text())
         if manifest is None:
@@ -32,7 +31,7 @@ def main():
                         f"different {key}: {root}")
             for key in ("count", "warmup", "inflight", "rate", "overload_rate", "retain",
                         "cache_bytes", "queue_bytes", "parties", "subs", "text",
-                        "fragment", "seed", "backend"):
+                        "fragment", "seed"):
                 assert current["arguments"][key] == manifest["arguments"][key], (
                     f"different workload {key}: {root}")
         summary = json.loads((root / "summary.json").read_text())
@@ -46,33 +45,17 @@ def main():
                 continue
             sessions = current["arguments"]["sessions"]
             assert len(case["clients"]) == sessions, f"missing client results: {path}"
-            requested = current["arguments"]["backend"]
-            assert requested in ("auto", "epoll", "uring"), requested
-            for row in case["clients"] + case["servers"]:
-                backend = row["backend"]
-                if row["engine"] == "zfix":
-                    assert backend in ("epoll", "uring"), f"unresolved native backend: {path}"
-                    assert requested == "auto" or backend == requested, (
-                        f"backend mismatch: requested {requested}, resolved {backend}: {path}")
-                    backends.add(backend)
-                else:
-                    assert backend == "external", f"unexpected peer backend: {path}"
             key = (case["pair"], case["transport"], case["profile"], sessions)
             processes[key].append(case)
             for row in case["clients"]:
                 assert row["progress"]["complete"] > 0 and row["elapsedNs"] > 0, path
                 groups[(*key, row["session"])].append(row)
     assert groups, "no retained timing cases"
-    assert len(backends) <= 1, f"different resolved backends: {sorted(backends)}"
-    requested_backend = manifest["arguments"]["backend"]
-    resolved_backend = next(iter(backends), "external")
     flags = manifest["buildFlags"]
     lines = ["# FIX measured baseline", "",
              f"Build label: `{manifest['buildLabel']}`. Platform: {manifest['platform']}.",
              f"CPU: {'; '.join(manifest['cpu'])}. Affinity: {manifest['affinity']}.",
              f"Compiler: `{flags.get('CXX')}`. Flags: `{flags.get('CXXFLAGS')}`.", "",
-             f"Native backend requested: `{requested_backend}`; resolved: `{resolved_backend}`. "
-             "QuickFIX uses its independent external transport.", "",
              "These are local process measurements on the recorded host. The table uses "
              "median per-session completion rate and median p50 across repeats; worst p99 "
              "is the largest individual-run p99. Quantiles are never added or merged. "
@@ -186,11 +169,9 @@ def main():
     lines += ["", "Raw artifacts: " + ", ".join(f"`{root}`" for root in roots) + ".", ""]
     options.output.write_text("\n".join(lines))
     (options.output.parent / "budgets.json").write_text(json.dumps({"scope": manifest["buildLabel"],
-        "requestedBackend": requested_backend, "resolvedBackend": resolved_backend,
         "multiplier": 1.25, "hostSpecific": True, "budgets": budgets}, indent=2) + "\n")
     options.output.with_suffix(".json").write_text(json.dumps({
-        "buildLabel": manifest["buildLabel"], "requestedBackend": requested_backend,
-        "resolvedBackend": resolved_backend, "comparison": comparison}, indent=2) + "\n")
+        "buildLabel": manifest["buildLabel"], "comparison": comparison}, indent=2) + "\n")
 
 
 if __name__ == "__main__":

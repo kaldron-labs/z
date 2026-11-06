@@ -87,34 +87,34 @@ static void samples() {
   Text json; ZfJSON::save(json, q); ZuCheck(json.length() && json[0] == '{');
 }
 static void workflowCalls(unsigned flow) {
-  ZuTestScopeRT(workflowCalls);
+  ZuTestScope(workflowCalls);
   Model model{{}}; auto original = model.next(1, ZuDateTime{Zm::now()});
   Calls calls{2, flow}; Samples acks{1}, terms{1};
-  ZuCheckRT(calls.add(original, 100, 100));
+  ZuCheck(calls.add(original, 100, 100));
   auto ack = report(original, 10, "0", 99);
-  ZuCheckRT(calls.receive(ack, 110, &acks, &terms) == Outcome::Ack);
+  ZuCheck(calls.receive(ack, 110, &acks, &terms) == Outcome::Ack);
   Order next{original}; next.key = 2;
   if (flow == Workflow::Replace) { ++next.qty; next.price += ZuDecimal{1, 2}; }
-  ZuCheckRT(calls.follow(1, next) && !calls.follow(1, next));
-  ZuCheckRT(calls.receive(ack, 111) == Outcome::Duplicate);
+  ZuCheck(calls.follow(1, next) && !calls.follow(1, next));
+  ZuCheck(calls.receive(ack, 111) == Outcome::Duplicate);
   auto terminal = report(next, 12, flow == Workflow::Cancel ? "4" : "F", 99, 1);
   auto wrong = terminal; wrong.original = 3;
-  ZuCheckRT(calls.receive(wrong, 115) == Outcome::Unknown);
+  ZuCheck(calls.receive(wrong, 115) == Outcome::Unknown);
   wrong = terminal; wrong.order = 100;
-  ZuCheckRT(calls.receive(wrong, 115) == Outcome::Invalid);
+  ZuCheck(calls.receive(wrong, 115) == Outcome::Invalid);
   if (flow == Workflow::Replace) {
-    ZuCheckRT(calls.receive(terminal, 115) == Outcome::Invalid);
+    ZuCheck(calls.receive(terminal, 115) == Outcome::Invalid);
     auto changed = report(next, 11, "5", 99, 1);
-    ZuCheckRT(calls.receive(changed, 120) == Outcome::Changed);
-    ZuCheckRT(calls.receive(changed, 121) == Outcome::Duplicate);
+    ZuCheck(calls.receive(changed, 120) == Outcome::Changed);
+    ZuCheck(calls.receive(changed, 121) == Outcome::Duplicate);
     wrong = terminal; wrong.exec = 11;
-    ZuCheckRT(calls.receive(wrong, 125) == Outcome::Invalid);
+    ZuCheck(calls.receive(wrong, 125) == Outcome::Invalid);
   }
-  ZuCheckRT(calls.receive(terminal, 130, &acks, &terms) == Outcome::Complete);
-  ZuCheckRT(calls.receive(terminal, 131) == Outcome::Duplicate && calls.release(1));
+  ZuCheck(calls.receive(terminal, 130, &acks, &terms) == Outcome::Complete);
+  ZuCheck(calls.receive(terminal, 131) == Outcome::Duplicate && calls.release(1));
   const auto &p = calls.progress();
-  ZuCheckRT(p.offered == 1 && p.admitted == 1 && p.ack == 1 && p.complete == 1 && !p.inFlight);
-  ZuCheckRT(acks.finish().max == 10 && terms.finish().max == 30);
+  ZuCheck(p.offered == 1 && p.admitted == 1 && p.ack == 1 && p.complete == 1 && !p.inFlight);
+  ZuCheck(acks.finish().max == 10 && terms.finish().max == 30);
 }
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();

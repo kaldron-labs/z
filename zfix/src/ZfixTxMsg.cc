@@ -4,23 +4,22 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixIOBuf.hh>
-#include <zlib/ZfixTxCapture.hh>
 
 namespace Zfix {
 
 using TxBodyAlloc = Zi::IOBufAlloc<TxBody, ZiIOBuf_DefltSize,
   ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.TxBody">>;
-using TxFrameAlloc = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.TxFrame">>;
+using BodyAllocator = Zi::AppBufAllocator<TxBody, ZiIOBuf_DefltSize>;
 
 unsigned TxBody::TxBodyAllocMax_() { return TxBodyAlloc::MaxSize; }
 
 uint64_t TxBody::memory() const
 {
   return ZmHeapAllocSize<sizeof(TxBodyAlloc)>{} +
-    ((data__ & ZiIOBuf::Jumbo) ? Zfix::jumboBytes(size) : 0);
+    (!builtin() ? Zfix::jumboBytes(size) : 0);
 }
 
 ZmRef<TxBody> TxBody::start(ZuCSpan type, unsigned slots, uint64_t id, bool admin,
@@ -36,7 +35,8 @@ ZmRef<TxBody> TxBody::start(ZuCSpan type, unsigned slots, uint64_t id, bool admi
   if (metadata > TxBodyAlloc::MaxSize || type.length() > TxBodyAlloc::MaxSize - metadata) {
     error = {Fmt::ErrorCode::Size}; return {};
   }
-  ZmRef<TxBody> buf = new TxBodyAlloc{nullptr, 0};
+  ZmRef<TxBody> buf = ZmSingleton<BodyAllocator,
+    ZmSingletonCleanup<ZmCleanup::Platform>>::instance()->allocBuf();
   if (!buf->ensure(metadata + type.length())) { error = {Fmt::ErrorCode::Size}; return {}; }
   memcpy(buf->data() + metadata, type.data(), type.length());
   buf->m_slots = slots;
@@ -67,19 +67,6 @@ TxBody::Ref TxBody::control(const Session::Msg &control, Fmt::Error &error,
   return error ? Ref{} : ZuMv(result);
 }
 
-TxBody::Ref TxBody::captureControl(const Session::Msg &control, Fmt::Error &error,
-    unsigned mode, Fmt::Limits limits, uint64_t id)
-{
-  Ref result;
-  error = Session::visit(control, mode,
-    [&result, id, limits]<typename O, typename Facet>(const O &message) {
-      Fmt::Error error;
-      result = captureRaw<MT<O, O::MsgType, Facet>>(message, id, true, error, limits);
-      return error;
-    });
-  return error ? Ref{} : ZuMv(result);
-}
-
 TxBody::Ref TxBody::restoreControl(ZuCSpan type, ZuCSpan bytes, uint64_t id,
     Fmt::Error &error, Fmt::Limits limits)
 {
@@ -94,70 +81,36 @@ TxBody::Ref TxBody::restoreControl(ZuCSpan type, ZuCSpan bytes, uint64_t id,
   return result;
 }
 
-struct TxArchiveOutput {
-  using Buffer = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-    ZiIOBuf_DefltMaxSize, ZuStringT<"Zfix.TxArchive">>;
-  ZmRef<ZiIOBuf> buffer{new Buffer{nullptr, 0}};
-  static ZuSpan<char> grow(void *owner, unsigned used, unsigned needed) {
-    auto &buf = static_cast<TxArchiveOutput *>(owner)->buffer;
-    buf->length = used;
-    if (!buf->ensure(needed)) return {};
-    return {buf->data(), buf->size - buf->skip};
-  }
-};
-
-Zi::RxRange TxBody::archive(Fmt::Error &error, Fmt::Limits limits) const
-{
-  error = {};
-  TxArchiveOutput output;
-  Fmt::Sink sink{{output.buffer->data(), output.buffer->size}, limits,
-    TxArchiveOutput::grow, &output};
-  if (m_archive) m_archive(sink, *this);
-  else sink << body();
-  if ((error = sink.error())) return {};
-  output.buffer->length = sink.length();
-  return {ZuMv(output.buffer), 0, sink.length()};
-}
-
-TxFrame::TxFrame(ZuCSpan beginString, Fmt::Limits limits) :
-  TxFrame{ZmRef<ZiIOBuf>{}, beginString, limits} { }
-
-TxFrame::TxFrame(ZmRef<ZiIOBuf> buffer, ZuCSpan beginString,
-    Fmt::Limits limits, unsigned tailRoom) :
-  m_buffer{buffer ? ZuMv(buffer) : ZmRef<ZiIOBuf>{new TxFrameAlloc{nullptr, 0}}},
-  m_tailRoom{tailRoom}, m_limits{limits},
-  m_writer{{m_buffer->data(),
-    m_buffer->size - m_buffer->skip > tailRoom ?
-      m_buffer->size - m_buffer->skip - tailRoom : 0},
-    beginString, grow, this, limits}
+TxFrame::TxFrame(ZmRef<ZiIOBuf> buf, ZuCSpan beginString, Fmt::Limits limits) :
+  m_buf{ZuMv(buf)},
+  m_writer{{m_buf->data(), m_buf->size - m_buf->skip},
+    beginString, grow, m_buf.ptr(), limits}
 {
 }
 ZuSpan<char> TxFrame::grow(void *owner, unsigned used, unsigned needed)
 {
-  auto self = static_cast<TxFrame *>(owner);
-  auto &buf = self->m_buffer;
-  if (needed > self->m_limits.frameBytes ||
-      needed > UINT32_MAX - self->m_tailRoom) return {};
-  // FrameWriter may reserve an envelope beyond the initial slot. Only retain
-  // initialized bytes present in that slot; outer transport room stays outside
-  // the writer's arena throughout growth and final output selection.
+  auto buf = static_cast<ZiIOBuf *>(owner);
+  if (needed > ZiIOBuf_DefltMaxSize) return {};
+  // Initial envelope headroom may exceed an empty built-in buffer when an
+  // application supplies a long BeginString. Those bytes are not initialized
+  // until finish, so preserve only the part present in the current allocation.
   unsigned capacity = buf->size - buf->skip;
   buf->length = used < capacity ? used : capacity;
-  if (!buf->ensure(needed + self->m_tailRoom)) return {};
-  return {buf->data(), buf->size - buf->skip - self->m_tailRoom};
+  if (!buf->ensure(needed)) return {};
+  return {buf->data(), buf->size - buf->skip};
 }
-TxImage TxFrame::finish(Fmt::Error &error)
+ZmRef<ZiIOBuf> TxFrame::finish(Fmt::Error &error)
 {
   return output_(m_writer.finish(), error);
 }
-TxImage TxFrame::output_(Fmt::FrameOutput output, Fmt::Error &error)
+ZmRef<ZiIOBuf> TxFrame::output_(Fmt::FrameOutput output, Fmt::Error &error)
 {
   error = output.error;
   if (error) return {};
-  ZuCSpan storage{m_buffer->data_(), m_buffer->size};
-  m_buffer->skip = unsigned(output.data.data() - storage.data());
-  m_buffer->length = output.data.length();
-  return TxImage{ZuMv(m_buffer)};
+  ZuCSpan storage{m_buf->data_(), m_buf->size};
+  m_buf->skip = unsigned(output.data.data() - storage.data());
+  m_buf->length = output.data.length();
+  return ZuMv(m_buf);
 }
 } // Zfix
 

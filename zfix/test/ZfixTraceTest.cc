@@ -5,14 +5,12 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZtString.hh>
 #include <zlib/ZfixSession.hh>
 #include <zlib/ZfixTrace.hh>
-
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -48,7 +46,8 @@ static bool contains(ZuCSpan text, ZuCSpan term) {
   return text.find(term) >= 0;
 }
 static ZmRef<ZiIOBuf> wire(ZuCSpan type, ZuCSpan content) {
-  ZmRef<ZiIOBuf> b = new LocalBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> b = ZmSingleton<Zi::AppBufAllocator<
+    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   constexpr auto Envelope = "8=FIX.4.4\1" "9=4294967295\1" "35=\1" "10=255\1"_z;
   b->ensure(type.length() + content.length() + Envelope.length());
   ZuSpan<char> storage{b->data(), b->size};
@@ -83,15 +82,15 @@ static void redaction() {
       "HIDDEN"));
 }
 static void escaping() {
-  ZuTestScopeRT(escaping);
+  ZuTestScope(escaping);
   WireTrace t{{.bytes = 64 << 10}};
   auto b = wire("D", "11=a\n\r\"\\b\1");
   auto record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheckRT(contains(record->data().text(), "a\\x0A\\x0D\\x22\\x5Cb"));
-  for (auto c : record->data().text()) ZuCheckRT(uint8_t(c) >= 32 && uint8_t(c) < 127);
+  ZuCheck(contains(record->data().text(), "a\\x0A\\x0D\\x22\\x5Cb"));
+  for (auto c : record->data().text()) ZuCheck(uint8_t(c) >= 32 && uint8_t(c) < 127);
   b->data()[b->length - 2] ^= 1;
   record = t.capture_(ZuCSpan{b->cspan()}, {}, resolve);
-  ZuCheckRT(record->data().text() == "<invalid frame>");
+  ZuCheck(record->data().text() == "<invalid frame>");
 }
 static void bounds() {
   ZuTestScope(bounds);

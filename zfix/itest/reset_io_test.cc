@@ -173,8 +173,7 @@ struct Peer : Base {
   void fixControlTx(TxBody::Ref body, TxContext c) {
     if (body->msgType() != "A") return;
     Session::Logon logon; Fmt::Error error;
-    auto bytes = body->archive(error);
-    if (!error) Fmt::read<Session::Logon, ZuFacet::FIX, ArchiveField>(logon, bytes.cspan(), error);
+    Fmt::read<Session::Logon, ZuFacet::FIX, ArchiveField>(logon, body->body(), error);
     if (error || c.epoch != side()->txEpoch) side()->fail();
     if (app()->test->fault && c.connection > 1 && logon.resetSeqNum) side()->fail();
     if (logon.resetSeqNum) {
@@ -257,6 +256,8 @@ struct CliHub : Zfix::Client<CliHub, Dictionary, Network> {
   explicit CliHub(TestState *s) : test{s} { }
 
   unsigned reconnFreq() const { return 0; }
+
+  bool init(Network::ClientParams params);
 };
 
 struct CliHub::Link : public ZmNHeap<Link>, Peer<Link, Zfix::CliLink<CliHub, Link, Dictionary,
@@ -266,6 +267,20 @@ friend inline ZuStringT<"Zfix.reset_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete;
   using Peer::Peer;
 };
+
+bool CliHub::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
+}
 
 struct SrvHub : Zfix::Server<SrvHub, Dictionary, Network> {
   struct Link;
@@ -283,6 +298,8 @@ struct SrvHub : Zfix::Server<SrvHub, Dictionary, Network> {
   void listening(const ZiListenInfo &i) { test->port = i.port; test->listening.post(); }
 
   void listenFailed(bool) { test->srv.fail(); test->listening.post(); }
+
+  bool init(Network::ServerParams params);
 };
 
 struct SrvHub::Link : public ZmNHeap<Link>, Peer<Link, Zfix::SrvLink<SrvHub, Link, Dictionary,
@@ -292,6 +309,20 @@ friend inline ZuStringT<"Zfix.reset_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator delete;
   using Peer::Peer;
 };
+
+bool SrvHub::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
+}
 
 ZiConnection *SrvHub::accepted(const ZiCxnInfo &i) { return new Link::Cxn{link.ptr(), i}; }
 struct Progress {
@@ -338,26 +369,24 @@ template <typename Link> static bool command(Link *link, Side &side, ResetReques
 }
 static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
   bool initial = false, unsigned fault = Fault::None) {
-  ZuTestScopeRT(resetLoop);
+  ZuTestScope(resetLoop);
   TestState state{mode}; state.fault = fault; CliHub client{&state}; SrvHub server{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Network::ClientParams cp{&mx, "3", "4"}; Network::ServerParams sp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
-  ZuCheckRT(cert && key); if (!cert || !key) { mx.stop(); return; }
+  ZuCheck(cert && key); if (!cert || !key) { mx.stop(); return; }
   cp.caPath(cert); sp.certPath(cert).keyPath(key);
 #endif
-  bool ci = client.init(ZuMv(cp)), si = server.init(ZuMv(sp)); ZuCheckRT(ci && si);
+  bool ci = client.init(ZuMv(cp)), si = server.init(ZuMv(sp)); ZuCheck(ci && si);
   if (!ci || !si) { client.final(); server.final(); mx.stop(); return; }
-  bool cs = client.start(), ss = server.start(); ZuCheckRT(cs && ss);
+  bool cs = client.start(), ss = server.start(); ZuCheck(cs && ss);
   if (!cs || !ss) {
     if (cs) client.stop(); if (ss) server.stop();
     client.final(); server.final(); mx.stop(); return;
@@ -365,13 +394,13 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
   ZmRef<CliHub::Link> link = new CliHub::Link{&client}; server.link = new SrvHub::Link{&server};
   Snapshot c, s;
   if (initial) {
-    ZuCheckRT(!command(link.ptr(), state.cli, {.connection = 1, .epoch = 1,
+    ZuCheck(!command(link.ptr(), state.cli, {.connection = 1, .epoch = 1,
       .op = ResetOp::OnOpen}));
-    ZuCheckRT(!command(link.ptr(), state.cli, {.epoch = 0, .op = ResetOp::OnOpen}));
-    ZuCheckRT(command(link.ptr(), state.cli, {.epoch = 1, .op = ResetOp::OnOpen}));
-    ZuCheckRT(command(server.link.ptr(), state.srv, {.epoch = 1, .op = ResetOp::OnOpen}));
+    ZuCheck(!command(link.ptr(), state.cli, {.epoch = 0, .op = ResetOp::OnOpen}));
+    ZuCheck(command(link.ptr(), state.cli, {.epoch = 1, .op = ResetOp::OnOpen}));
+    ZuCheck(command(server.link.ptr(), state.srv, {.epoch = 1, .op = ResetOp::OnOpen}));
   }
-  server.listen(); ZuCheckRT(wait(state.listening) && state.port);
+  server.listen(); ZuCheck(wait(state.listening) && state.port);
   auto connect = [&link, &state] {
 #ifdef ZFIX_TEST_TLS
     link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
@@ -379,74 +408,74 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
     link->connect("127.0.0.1", state.port);
 #endif
   };
-  connect(); ZuCheckRT(wait(state.cli.ready)); ZuCheckRT(wait(state.srv.ready));
+  connect(); ZuCheck(wait(state.cli.ready)); ZuCheck(wait(state.srv.ready));
   link->order(1);
-  ZuCheckRT(wait(state.cli.received)); ZuCheckRT(wait(state.srv.received));
-  ZuCheckRT(wait(state.cli.completed)); ZuCheckRT(wait(state.srv.completed));
-  ZuCheckRT(inspect(link.ptr(), c)); ZuCheckRT(inspect(server.link.ptr(), s));
-  ZuCheckRT(!command(link.ptr(), state.cli, c.request(ResetOp::Prepare, 2)));
-  ZuCheckRT(command(link.ptr(), state.cli, c.request(ResetOp::Drain)));
-  ZuCheckRT(command(server.link.ptr(), state.srv, s.request(ResetOp::Drain)));
-  ZuCheckRT(wait(state.cli.drained)); ZuCheckRT(wait(state.srv.drained));
-  ZuCheckRT(inspect(link.ptr(), c)); ZuCheckRT(inspect(server.link.ptr(), s));
-  ZuCheckRT(c.drained && s.drained && c.state.epoch == 1 && s.state.epoch == 1);
+  ZuCheck(wait(state.cli.received)); ZuCheck(wait(state.srv.received));
+  ZuCheck(wait(state.cli.completed)); ZuCheck(wait(state.srv.completed));
+  ZuCheck(inspect(link.ptr(), c)); ZuCheck(inspect(server.link.ptr(), s));
+  ZuCheck(!command(link.ptr(), state.cli, c.request(ResetOp::Prepare, 2)));
+  ZuCheck(command(link.ptr(), state.cli, c.request(ResetOp::Drain)));
+  ZuCheck(command(server.link.ptr(), state.srv, s.request(ResetOp::Drain)));
+  ZuCheck(wait(state.cli.drained)); ZuCheck(wait(state.srv.drained));
+  ZuCheck(inspect(link.ptr(), c)); ZuCheck(inspect(server.link.ptr(), s));
+  ZuCheck(c.drained && s.drained && c.state.epoch == 1 && s.state.epoch == 1);
   // Retain unsequenced work through live turnover; reconnect uses an empty queue.
   if (path == ResetPath::Live) link->order(2);
   auto invalid = c.request(ResetOp::Prepare, 2); invalid.path = ResetPath::Reconnect + 1;
-  ZuCheckRT(!command(link.ptr(), state.cli, invalid));
-  invalid = c.request(ResetOp::Prepare, 1); ZuCheckRT(!command(link.ptr(), state.cli, invalid));
+  ZuCheck(!command(link.ptr(), state.cli, invalid));
+  invalid = c.request(ResetOp::Prepare, 1); ZuCheck(!command(link.ptr(), state.cli, invalid));
   auto cr = c.request(ResetOp::Prepare, 2), sr = s.request(ResetOp::Prepare, 2);
   cr.initiator = clientDriver; sr.initiator = !clientDriver; cr.path = sr.path = path;
-  ZuCheckRT(command(link.ptr(), state.cli, cr)); ZuCheckRT(command(server.link.ptr(), state.srv, sr));
-  ZuCheckRT(wait(state.cli.prepared)); ZuCheckRT(wait(state.srv.prepared));
-  ZuCheckRT(inspect(link.ptr(), c)); ZuCheckRT(inspect(server.link.ptr(), s));
-  ZuCheckRT(c.state.epoch == 2 && s.state.epoch == 2 && c.state.tx.loaded == 1
+  ZuCheck(command(link.ptr(), state.cli, cr)); ZuCheck(command(server.link.ptr(), state.srv, sr));
+  ZuCheck(wait(state.cli.prepared)); ZuCheck(wait(state.srv.prepared));
+  ZuCheck(inspect(link.ptr(), c)); ZuCheck(inspect(server.link.ptr(), s));
+  ZuCheck(c.state.epoch == 2 && s.state.epoch == 2 && c.state.tx.loaded == 1
     && s.state.tx.loaded == 1);
-  ZuCheckRT(c.state.rx.processed == 1 && s.state.rx.processed == 1);
-  ZuCheckRT(!command(link.ptr(), state.cli, cr)); // stale old-epoch prepare
+  ZuCheck(c.state.rx.processed == 1 && s.state.rx.processed == 1);
+  ZuCheck(!command(link.ptr(), state.cli, cr)); // stale old-epoch prepare
   if (fault) {
     bool startedLogon = fault == Fault::StartedClose || fault == Fault::StartedTimeout;
     if (startedLogon || fault == Fault::RefusedLogon)
-      ZuCheckRT(command(link.ptr(), state.cli, c.request(ResetOp::Start)));
+      ZuCheck(command(link.ptr(), state.cli, c.request(ResetOp::Start)));
     if (startedLogon) {
       // The reset Session::Logon was locally written and is now a retained complete
       // frame on the peer, whose reset coordinator has not started Session::Logon.
-      ZuCheckRT(wait(state.cli.resetSent)); ZuCheckRT(wait(state.srv.blocked));
+      ZuCheck(wait(state.cli.resetSent)); ZuCheck(wait(state.srv.blocked));
     }
     if (fault == Fault::PreparedClose || fault == Fault::StartedClose) link->disconnect();
     // Other cases close through the actual owner deadline or preparation fault.
     bool cliStopped = wait(state.cli.stopped), srvStopped = wait(state.srv.stopped);
-    ZuCheckRT(cliStopped && srvStopped);
+    ZuCheck(cliStopped && srvStopped);
     if (!cliStopped || !srvStopped) {
       // A missing deadline must fail without leaving this fixture connected.
       link->disconnect();
-      if (!cliStopped) ZuCheckRT(wait(state.cli.stopped));
-      if (!srvStopped) ZuCheckRT(wait(state.srv.stopped));
+      if (!cliStopped) ZuCheck(wait(state.cli.stopped));
+      if (!srvStopped) ZuCheck(wait(state.srv.stopped));
     }
-    ZuCheckRT(inspect(link.ptr(), c)); ZuCheckRT(inspect(server.link.ptr(), s));
-    ZuCheckRT(c.phase == State::Disconnected && s.phase == State::Disconnected);
-    ZuCheckRT(c.state.epoch == 2 && s.state.epoch == 2 && c.connection == 1 && s.connection == 1);
-    ZuCheckRT(c.state.tx.loaded == unsigned(startedLogon ? 2 : 1) && s.state.tx.loaded == 1);
-    ZuCheckRT(c.state.tx.sent == c.state.tx.loaded && s.state.tx.sent == 1);
-    ZuCheckRT(c.state.rx.processed == 1 && s.state.rx.processed == 1 && c.queued == 1 && !s.queued);
-    ZuCheckRT(!c.timers && !s.timers && !c.admin.count && !s.admin.count);
-    ZuCheckRT(!c.rx.pendingBytes && !s.rx.pendingBytes);
-    ZuCheckRT(!c.tx.wire.queuedCount && !s.tx.wire.queuedCount && !c.tx.inFlight && !s.tx.inFlight);
-    ZuCheckRT(state.cli.readyCount.load_() == 1 && state.srv.readyCount.load_() == 1);
-    ZuCheckRT(state.cli.failures.load_() && state.srv.failures.load_());
+    ZuCheck(inspect(link.ptr(), c)); ZuCheck(inspect(server.link.ptr(), s));
+    ZuCheck(c.phase == State::Disconnected && s.phase == State::Disconnected);
+    ZuCheck(c.state.epoch == 2 && s.state.epoch == 2 && c.connection == 1 && s.connection == 1);
+    ZuCheck(c.state.tx.loaded == unsigned(startedLogon ? 2 : 1) && s.state.tx.loaded == 1);
+    ZuCheck(c.state.tx.sent == c.state.tx.loaded && s.state.tx.sent == 1);
+    ZuCheck(c.state.rx.processed == 1 && s.state.rx.processed == 1 && c.queued == 1 && !s.queued);
+    ZuCheck(!c.timers && !s.timers && !c.admin.count && !s.admin.count);
+    ZuCheck(!c.rx.pendingBytes && !s.rx.pendingBytes);
+    ZuCheck(!c.tx.wire.queuedCount && !s.tx.wire.queuedCount && !c.tx.inFlight && !s.tx.inFlight);
+    ZuCheck(state.cli.readyCount.load_() == 1 && state.srv.readyCount.load_() == 1);
+    ZuCheck(state.cli.failures.load_() && state.srv.failures.load_());
     if (fault == Fault::PreparedTimeout || fault == Fault::StartedTimeout)
-      ZuCheckRT(state.cli.timeouts.load_() + state.srv.timeouts.load_() > 0);
-    if (fault == Fault::RefusedLogon) ZuCheckRT(state.cli.outputs.load_() == 1);
+      ZuCheck(state.cli.timeouts.load_() + state.srv.timeouts.load_() > 0);
+    if (fault == Fault::RefusedLogon) ZuCheck(state.cli.outputs.load_() == 1);
     auto previous = c;
-    ZuCheckRT(!command(link.ptr(), state.cli, c.request(ResetOp::Start)));
+    ZuCheck(!command(link.ptr(), state.cli, c.request(ResetOp::Start)));
     connect();
     // Continuing epoch 2 retains every assigned reset-Session::Logon sequence. A
     // missing first Session::Logon is recovered; reopening never arms another reset.
-    ZuCheckRT(wait(state.cli.ready)); ZuCheckRT(wait(state.srv.ready));
-    ZuCheckRT(inspect(link.ptr(), c)); ZuCheckRT(inspect(server.link.ptr(), s));
-    ZuCheckRT(c.state.epoch == 2 && s.state.epoch == 2 && c.connection == 2 && s.connection == 2);
-    ZuCheckRT(c.state.tx.loaded > previous.state.tx.loaded);
-    ZuCheckRT(!command(link.ptr(), state.cli, previous.request(ResetOp::Start)));
+    ZuCheck(wait(state.cli.ready)); ZuCheck(wait(state.srv.ready));
+    ZuCheck(inspect(link.ptr(), c)); ZuCheck(inspect(server.link.ptr(), s));
+    ZuCheck(c.state.epoch == 2 && s.state.epoch == 2 && c.connection == 2 && s.connection == 2);
+    ZuCheck(c.state.tx.loaded > previous.state.tx.loaded);
+    ZuCheck(!command(link.ptr(), state.cli, previous.request(ResetOp::Start)));
   } else if (path == ResetPath::Reconnect) {
     bool ca = false, sa = false; ZmSemaphore issued;
     // Both local owners agreed before either side releases physical transport.
@@ -454,41 +483,41 @@ static void resetLoop(unsigned mode, unsigned path, bool clientDriver = true,
 	sr = s.request(ResetOp::Disconnect), &ca, &sa, &issued] {
       ca = link->reset_(cr); sa = peer->reset_(sr); issued.post();
     });
-    ZuCheckRT(wait(issued) && ca && sa);
-    ZuCheckRT(wait(state.cli.stopped)); ZuCheckRT(wait(state.srv.stopped));
+    ZuCheck(wait(issued) && ca && sa);
+    ZuCheck(wait(state.cli.stopped)); ZuCheck(wait(state.srv.stopped));
     connect();
   } else if (clientDriver) {
-    ZuCheckRT(command(link.ptr(), state.cli, c.request(ResetOp::Start)));
-    ZuCheckRT(command(server.link.ptr(), state.srv, s.request(ResetOp::Start)));
+    ZuCheck(command(link.ptr(), state.cli, c.request(ResetOp::Start)));
+    ZuCheck(command(server.link.ptr(), state.srv, s.request(ResetOp::Start)));
   } else {
-    ZuCheckRT(command(server.link.ptr(), state.srv, s.request(ResetOp::Start)));
-    ZuCheckRT(command(link.ptr(), state.cli, c.request(ResetOp::Start)));
+    ZuCheck(command(server.link.ptr(), state.srv, s.request(ResetOp::Start)));
+    ZuCheck(command(link.ptr(), state.cli, c.request(ResetOp::Start)));
   }
-  if (!fault) { ZuCheckRT(wait(state.cli.ready)); ZuCheckRT(wait(state.srv.ready)); }
+  if (!fault) { ZuCheck(wait(state.cli.ready)); ZuCheck(wait(state.srv.ready)); }
   if (path == ResetPath::Reconnect) link->order(2);
-  ZuCheckRT(wait(state.cli.received)); ZuCheckRT(wait(state.srv.received));
-  ZuCheckRT(wait(state.cli.completed)); ZuCheckRT(wait(state.srv.completed));
-  ZuCheckRT(inspect(link.ptr(), c)); ZuCheckRT(inspect(server.link.ptr(), s));
-  ZuCheckRT(c.state.epoch == 2 && s.state.epoch == 2 && c.phase == State::Established
+  ZuCheck(wait(state.cli.received)); ZuCheck(wait(state.srv.received));
+  ZuCheck(wait(state.cli.completed)); ZuCheck(wait(state.srv.completed));
+  ZuCheck(inspect(link.ptr(), c)); ZuCheck(inspect(server.link.ptr(), s));
+  ZuCheck(c.state.epoch == 2 && s.state.epoch == 2 && c.phase == State::Established
     && s.phase == State::Established);
-  ZuCheckRT(c.connection == (fault || path == ResetPath::Reconnect ? 2 : 1)
+  ZuCheck(c.connection == (fault || path == ResetPath::Reconnect ? 2 : 1)
     && s.connection == c.connection);
-  ZuCheckRT(state.cli.epochsRx.load_() == 1 && state.srv.epochsRx.load_() == 1);
-  ZuCheckRT(state.cli.epochsTx.load_() == 1 && state.srv.epochsTx.load_() == 1);
+  ZuCheck(state.cli.epochsRx.load_() == 1 && state.srv.epochsRx.load_() == 1);
+  ZuCheck(state.cli.epochsTx.load_() == 1 && state.srv.epochsTx.load_() == 1);
   unsigned cliLogons = fault ? unsigned(fault == Fault::StartedClose
     || fault == Fault::StartedTimeout) : (initial ? 2 : 1);
   unsigned srvLogons = fault ? 0 : (initial ? 2 : 1);
-  ZuCheckRT(state.cli.resetLogons.load_() == cliLogons
+  ZuCheck(state.cli.resetLogons.load_() == cliLogons
     && state.srv.resetLogons.load_() == srvLogons);
-  ZuCheckRT(!c.queued && !s.queued);
+  ZuCheck(!c.queued && !s.queued);
   // A later peer ResendReq may legitimately pause/reopen readiness after Logon.
-  ZuCheckRT(readyTransitions(state.cli) && readyTransitions(state.srv));
+  ZuCheck(readyTransitions(state.cli) && readyTransitions(state.srv));
   auto stale = c.request(ResetOp::Drain); stale.connection = 0;
-  ZuCheckRT(!command(link.ptr(), state.cli, stale));
-  link->logout(); ZuCheckRT(wait(state.cli.stopped)); ZuCheckRT(wait(state.srv.stopped));
-  bool stoppedC = client.stop(), stoppedS = server.stop(); ZuCheckRT(stoppedC && stoppedS);
+  ZuCheck(!command(link.ptr(), state.cli, stale));
+  link->logout(); ZuCheck(wait(state.cli.stopped)); ZuCheck(wait(state.srv.stopped));
+  bool stoppedC = client.stop(), stoppedS = server.stop(); ZuCheck(stoppedC && stoppedS);
   client.final(); server.final(); mx.stop(); link = nullptr; server.link = nullptr;
-  ZuCheckRT(!state.cli.errors.load_() && !state.srv.errors.load_());
+  ZuCheck(!state.cli.errors.load_() && !state.srv.errors.load_());
 }
 int main(int argc, char **argv) {
   parse(argc, argv); ZuTestMain();

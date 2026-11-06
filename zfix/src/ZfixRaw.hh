@@ -10,6 +10,7 @@
 #define ZfixRaw_HH
 
 #ifndef ZfixLib_HH
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixLib.hh>
 #endif
 
@@ -33,19 +34,18 @@ friend inline ZuStringT<"Zfix.RawInput"> ZmNHeapID(RawInput *);
 // Routing configuration and fixed transmission metadata are supplied by the
 // external manager. Only retained complete-frame handles cross
 // to Tx. Neither the engine nor this envelope assigns sequence/epoch values.
+// Each transmission attempt uses its own buffer; retain bodies for reconstruction.
 class ZfixAPI RawOutput : public ZmNHeap<RawOutput>, public ZmObject {
 friend inline ZuStringT<"Zfix.RawOutput"> ZmNHeapID(RawOutput *);
 public:
   using Ref = ZmRef<const RawOutput>;
 
   template <typename Signer = NoSign>
-  static Ref encode(TxBody::Ref body, const TxConfig &config, TxContext context,
-      Fmt::Error &error, Fmt::Limits limits = {}, const Signer &signer = {},
-      TxFrameBuf destination = {}) {
+  static Ref encode(
+      ZmRef<ZiIOBuf> buf, TxBody::Ref body, const TxConfig &config, TxContext context,
+      Fmt::Error &error, Fmt::Limits limits = {}, const Signer &signer = {}) {
     if (!body) { error = {Fmt::ErrorCode::Required, 35}; return {}; }
-    if (!destination) { error = {Fmt::ErrorCode::Output}; return {}; }
-    auto frame = txFrame(*body, config, context, error, limits, signer,
-      ZuMv(destination.buf), destination.tail);
+    auto frame = txFrame(ZuMv(buf), *body, config, context, error, limits, signer);
     if (!frame) return {};
     return new RawOutput{ZuMv(body), context, ZuMv(frame),
       (context.possDup || context.replay) ? context.origSendingTime : context.sendingTime};
@@ -58,17 +58,16 @@ public:
 
   const TxBody::Ref &body() const { return m_body; }
   TxContext context() const { return m_context; }
-  const TxImage &frame() const { return m_frame; }
+  const ZmRef<ZiIOBuf> &frame() const { return m_frame; }
   ZuDateTime originalTime() const { return m_original; }
 
 private:
-  RawOutput(TxBody::Ref b, TxContext c, TxImage f, ZuDateTime original) :
-    m_body{ZuMv(b)}, m_context{c}, m_frame{ZuMv(f)},
-    m_original{original} { }
+  RawOutput(TxBody::Ref b, TxContext c, ZmRef<ZiIOBuf> f, ZuDateTime original) :
+    m_body{ZuMv(b)}, m_context{c}, m_frame{ZuMv(f)}, m_original{original} { }
 
   const TxBody::Ref	m_body;
   const TxContext	m_context;
-  const TxImage		m_frame;
+  const ZmRef<ZiIOBuf>	m_frame;
   const ZuDateTime	m_original;
 };
 
@@ -153,8 +152,8 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
     }
   };
 
-  struct TxSide : public WireTx<TxSide, NativeRx::WireMode> {
-    using Wire = WireTx<TxSide, NativeRx::WireMode>;
+  struct TxSide : public WireTx<TxSide> {
+    using Wire = WireTx<TxSide>;
     Raw		*link;
     uint64_t	connection = 0;
     uint64_t	completions = 0;
@@ -184,7 +183,7 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
     unsigned send(const RawOutput::Ref &out) {
       if (!out) return RawSend::Invalid;
       if (!live || out->context().connection != connection) return RawSend::Held;
-      if (out->frame().length() > link->outputLimits_().frameBytes ||
+      if (out->frame()->length > link->outputLimits_().frameBytes ||
 	  !Wire::admitRaw_(out->body(), out->context(), out->frame())) {
 	++outputRefused; return RawSend::Overload;
       }
@@ -193,35 +192,11 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
       Wire::flush_(); return RawSend::Accepted;
     }
 
-    void frameTrace(const TxImage &wire, ZuCSpan type, TxContext c) { link->traceTx_(wire, type, c); }
+    void frameTrace(ZuCSpan wire, TxContext c) { link->traceTx_(wire, c); }
 
-    ZmRef<WireBuf> recordAlloc(unsigned head) { return link->impl()->fixAllocTx(head); }
+    ZmRef<ZiIOBuf> recordAlloc(unsigned head) { return link->impl()->fixAllocTx(head); }
 
     bool recordSend(ZmRef<ZiIOBuf> b) { return link->impl()->fixSendTx(ZuMv(b)); }
-    bool recordStart(ZmRef<WireQueue::Node> node) {
-      return link->impl()->fixStartFrameTx(ZuMv(node));
-    }
-    void recordDoneIO(ZmRef<WireQueue::Node> node, unsigned part, bool ok) {
-      link->app()->txRun([node = ZuMv(node), part, ok]() mutable {
-	auto owner = static_cast<TxSide *>(node->owner);
-	owner->Wire::record_(node->token, part, ok);
-	owner->Wire::ack_(node); owner->checkStop();
-      });
-    }
-    void recordAckIO(ZmRef<WireQueue::Node> node) {
-      link->app()->txRun([held = ZuMv(node)] {
-	auto node = held.ptr();
-	auto owner = static_cast<TxSide *>(node->owner);
-	owner->Wire::ack_(ZmRef<WireQueue::Node>{node}); owner->checkStop();
-      });
-    }
-    bool recordSendRange(Zi::RxRange source, ZmRef<WireBuf> wire) {
-      return link->impl()->fixSendRangeTx(ZuMv(source), ZuMv(wire));
-    }
-    void recordRun(uint64_t connection, uint64_t token) {
-      link->app()->txRun([this, connection, token] { Wire::resume_(connection, token); });
-    }
-
 
     void outputDone(TxBody::Ref b, TxContext c, bool ok) {
       link->app()->txRun([this, b = ZuMv(b), c, ok]() mutable {
@@ -300,37 +275,35 @@ public:
     retireRx_(m_connection);
   }
 
-  void transportSent(const WireBuf *b, bool ok) { transportSent(b->token, b->part, ok); }
-  void transportSent(uint64_t token, unsigned part, bool ok) {
-    if (!token) return;
-    app()->txRun([this, token, part, ok] { m_tx.record_(token, part, ok); });
-  }
-  bool fixStartFrameTx(ZmRef<WireQueue::Node> node) {
-    return impl()->sendFrame_(ZuMv(node));
+  void transportSent(ZmRef<ZiIOBuf> buf, bool ok) {
+    app()->txRun([this, buf = ZuMv(buf), ok] {
+      m_tx.record_(buf.ptr(), ok);
+    });
   }
 
   template <typename Stream> int process_(Stream &stream) {
     ZmAssert(app()->rxInvoked());
     if (!m_live) return -1;
     if (!m_ready || m_pending) return 0;
-    Zi::RxRange bytes; Fmt::FrameView frame;
+    ZmRef<ZiIOBuf> bytes; Fmt::FrameView frame;
     int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx(); }, bytes, &frame);
     if (n < 0) {
       ++m_rxStats.framingErrors;
       faultRx_(m_framer.error_()); return -1;
     }
     if (!n) return 0;
-    impl()->fixFrameRx(bytes, frame);
     ++m_rxStats.frames; m_rxStats.bytes += frame.wire.length();
     uint64_t cap = m_bufferBytes;
     if (!cap) {
       cap = m_framer.limits().frameBytes;
-      if (!bytes.buf->jumbo() && cap < bytes.buf->size) cap = bytes.buf->size;
+      if (cap < Impl::RxBufAlloc::Size) cap = Impl::RxBufAlloc::Size;
     }
-    if (bytes.buf->size > cap) { faultRx_({Fmt::ErrorCode::Size}); return -1; }
+    if (bytes->size > cap) { faultRx_({Fmt::ErrorCode::Size}); return -1; }
     m_pending = new RawInput;
-    m_pending->charge = bytes.buf->memory() + ZmHeapAllocSize<sizeof(RawInput)>{};
-    m_pending->buffer = ZuMv(bytes.buf); m_pending->frame = frame;
+    m_pending->charge = ZmHeapAllocSize<sizeof(typename Impl::RxBufAlloc)>{} +
+      ZmHeapAllocSize<sizeof(RawInput)>{} +
+      (!bytes->builtin() ? Zfix::jumboBytes(bytes->size) : 0);
+    m_pending->buffer = ZuMv(bytes); m_pending->frame = frame;
     m_pending->connection = m_connection; m_pending->received = Zm::now();
     if (m_traceRx.enabled_()) {
       auto entry = m_traceRx.capture_(frame, {0, m_connection, 0}, traceField_, impl());
@@ -343,15 +316,11 @@ public:
   TraceStats txTraceStats_() const { ZmAssert(app()->txInvoked()); return m_traceTx.stats_(); }
 
   enum { SignMsg = 0 };
-  template <typename S, typename Message>
-  void signMsg(S &, const TxBody *, TxContext, const Message &) const { }
+  template <typename S>
+  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
 
   TraceField fixTraceField(ZuCSpan, unsigned) { return {}; }
   bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
-  // Rx-owner diagnostic boundary: a complete validated frame is ready, before
-  // message allocation or semantic parsing. The default has no side effects.
-  void fixFrameRx(const Zi::RxRange &, const Fmt::FrameView &) { }
-
   void fixTraceRx(TraceRef) { }
   void fixTraceTx(TraceRef) { }
 
@@ -380,8 +349,8 @@ public:
       unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx(out, result); return true;
     }
     if (!app()->rxInvoked() || !m_live) return false;
-    uint64_t bytes = ZmHeapAllocSize<sizeof(RawOutput)>{} +
-      out->body()->memory() + out->frame().memory();
+    uint64_t bytes = sizeof(RawOutput) + out->body()->memory() +
+      sizeof(ZiTxBuf) + uint64_t(out->frame()->size);
     if (!impl()->txPost_(bytes)) return false;
     app()->txRun([this, out, bytes] {
       unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx(out, result);
@@ -390,13 +359,6 @@ public:
     return true;
   }
 
-private:
-  TxFrameBuf frameStorage_() {
-    const auto &geometry = m_tx.geometry_();
-    return {impl()->fixAllocTx(geometry.head), geometry.tail, true};
-  }
-
-public:
   // External managers explicitly supply routing configuration and transmission metadata.
   template <typename Entry>
   [[nodiscard]] bool send(const typename Entry::Object &object, uint64_t id,
@@ -406,9 +368,9 @@ public:
     if (!app()->rxInvoked() && !app()->txInvoked()) {
       error = {Fmt::ErrorCode::Output}; return false;
     }
-    auto body = TxBody::captureRaw<Entry>(object, id, admin, error, m_outputLimits);
+    auto body = TxBody::encodeRaw<Entry>(object, id, admin, error, m_outputLimits);
     if (!body) return false;
-    {
+    if constexpr (Impl::SignMsg) {
       if (!app()->txInvoked()) {
 	if (!m_live) { error = {Fmt::ErrorCode::Output}; return false; }
 	ZmRef<Encode> pending = new Encode{ZuMv(body), config, context};
@@ -416,8 +378,8 @@ public:
 	if (!impl()->txPost_(bytes)) { error = {Fmt::ErrorCode::Output}; return false; }
 	app()->txRun([this, pending = ZuMv(pending), bytes] {
 	  Fmt::Error error;
-	  auto output = RawOutput::encode(pending->body, pending->config,
-	    pending->context, error, m_outputLimits, *impl(), frameStorage_());
+	  auto output = RawOutput::encode(impl()->fixAllocTx(0), pending->body, pending->config,
+	    pending->context, error, m_outputLimits, *impl());
 	  if (output) {
 	    unsigned result = sendRaw_(output); impl()->fixRawSubmittedTx(output, result);
 	  } else impl()->fixRawFaultTx(pending->context.connection, error);
@@ -426,8 +388,8 @@ public:
 	return true;
       }
     }
-    auto output = RawOutput::encode(ZuMv(body), config, context, error,
-      m_outputLimits, *impl(), frameStorage_());
+    auto output = RawOutput::encode(impl()->fixAllocTx(0), ZuMv(body), config, context,
+      error, m_outputLimits, *impl());
     if (!output) return false;
     if (!sendRaw(output)) { error = {Fmt::ErrorCode::Output}; return false; }
     return true;
@@ -526,9 +488,9 @@ private:
     f.secret |= p->fixTraceSecret(type, tag); return f;
   }
 
-  void traceTx_(const TxImage &wire, ZuCSpan type, TxContext c) {
+  void traceTx_(ZuCSpan wire, TxContext c) {
     if (!m_traceTx.enabled_()) return;
-    auto entry = m_traceTx.capture_(wire, type, c, traceField_, impl());
+    auto entry = m_traceTx.capture_(wire, c, traceField_, impl());
     if (entry) impl()->fixTraceTx(ZuMv(entry));
   }
 

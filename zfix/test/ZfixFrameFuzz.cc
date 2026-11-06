@@ -118,7 +118,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
     encoded = writer.finish();
   } else {
     bytes.length(cfg.frameBytes, false);
-    encoded = writeFrame<OutEntry>(bytes, "FIX.4.4", output, cfg);
+    encoded = writeFrame<OutEntry>({bytes.data(), bytes.length()}, "FIX.4.4", output, cfg);
   }
   if (!encoded) {
     if (encoded.error.code != ErrorCode::Size) abort();

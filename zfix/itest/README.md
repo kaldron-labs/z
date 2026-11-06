@@ -22,11 +22,6 @@ make -C zfix/itest test
 `tcp_test` and `tls_test` compile the same transport fixture over Ztcp
 and Ztls. Each runs one connection, three simultaneous connections, and two
 connections carrying signed binary FIX frames larger than two TLS plaintext records.
-The transport fixture sizes both rings for its complete simultaneous frame burst,
-using the TCP/TLS buffer capacity and session count, plus the default reserve.
-Small session-state fixtures retain the 128-slot defaults; process fixtures use
-the workload tools' session/in-flight sizing. Deliberately small socket windows
-remain unchanged so partial-write assertions still exercise real backpressure.
 The initiator admits two completed frames through `WireTx` before their socket
 completions. TCP borrows each frame without copying its bytes; TLS uses tagged
 record buffers with the transport's negotiated headroom and plaintext bound. Each acceptor extracts pooled frames with `RxFramer`,

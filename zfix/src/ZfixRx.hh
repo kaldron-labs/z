@@ -317,16 +317,15 @@ private:
     uint64_t cap = m_limits.bufferBytes;
     if (!cap) {
       cap = m_limits.codec.frameBytes;
-      if (input.buffer && cap < input.buffer->size && !input.buffer->jumbo())
-	cap = input.buffer->size;
+      using Buffer = Zi::IOBufAlloc<ZiIOBuf>;
+      if (cap < Buffer::Size) cap = Buffer::Size;
     }
     if (!input.buffer || input.buffer->size > cap ||
 	input.frame.wire.length() > m_limits.codec.frameBytes) {
       apply(m_session.fault_(connection, SessionError::Overload, 0, now, false));
       return RxResult::Overload;
     }
-    if (!input.nativeMemory)
-      input.charge = input.buffer->memory() + ZmHeapAllocSize<sizeof(Msg)>{};
+    if (!input.nativeMemory) input.charge = uint64_t(input.buffer->size) + sizeof(Msg);
     if (Session::type(input.frame.msgType)) {
       input.error = catalogSession<Session::MTs>(input, m_limits.codec);
       if (!input.error) input.error = Session::read(input.frame, input.control, m_limits.codec);

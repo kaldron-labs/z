@@ -37,7 +37,7 @@ TxBody::Ref controlBody(unsigned action, const SessionEvent &event,
       auto probe = ZtScratch(SessionString, size);
       LinkState::printProbe(probe, event);
       control.p<Session::TestReq>(Session::TestReq{.testReqID = probe});
-      return TxBody::captureControl(control, error, config.mode, txLimits, event.probe);
+      return TxBody::control(control, error, config.mode, txLimits, event.probe);
     }
     case SessionAction::SendHeartbeat: control.p<Session::HeartBt>(Session::HeartBt{}); break;
     case SessionAction::Echo: {
@@ -51,7 +51,7 @@ TxBody::Ref controlBody(unsigned action, const SessionEvent &event,
     case SessionAction::SendLogout: control.p<Session::Logout>(Session::Logout{}); break;
     default: error = {Fmt::ErrorCode::Unresolved, 35}; return {};
   }
-  return TxBody::captureControl(control, error, config.mode, txLimits);
+  return TxBody::control(control, error, config.mode, txLimits);
 }
 } // Zfix
 

@@ -22,9 +22,6 @@
 #include "load_run.hh"
 #include "load_cache.hh"
 #include "load_fix.hh"
-#ifdef ZiMultiplex_BENCH
-#include "load_diag.hh"
-#endif
 
 namespace ZfixLoad {
 
@@ -51,13 +48,6 @@ struct NativeCheckpoint {
 };
 
 struct NativeState {
-#ifndef _WIN32
-  ZuPtr<WindowClient> window;
-  ZuPtr<WindowServer> serverWindow;
-#endif
-#ifdef ZiMultiplex_BENCH
-  ZuPtr<NativeDiag>	diag; // outlives links, mux and allocator caches
-#endif
   const Options		&options;
   Ports			ports;
   Rows<Result>		results;
@@ -73,16 +63,7 @@ struct NativeState {
   ZmSemaphore		listening, readySem, done, stopped;
 
   explicit NativeState(const Options &o, Ports p, bool server = false) :
-#ifdef ZiMultiplex_BENCH
-      diag{o.observeIO ? new NativeDiag{o} : nullptr},
-#endif
       options{o}, ports{ZuMv(p)}, expected{o.sessions * (server ? o.connections : 1)} {
-#ifndef _WIN32
-    if (getenv("ZFIX_WINDOW_FD")) {
-      if (server) serverWindow = new WindowServer{o.deadline};
-      else window = new WindowClient{o.sessions, o.deadline};
-    }
-#endif
     results.length(o.sessions); measurements.length(o.sessions); starters.length(o.sessions);
     for (unsigned i = 0; i < o.sessions; ++i) results[i].session = i + 1;
   }
@@ -145,6 +126,20 @@ template <typename Net> struct NativeHub<Net, true> : Zfix::Client<NativeHub<Net
 
   explicit NativeHub(NativeState *s) : Zfix::Client<NativeHub, Dictionary,
     Net>{nativeLimits(s->options, s->options.sessions)}, state{s} { }
+
+  bool init(typename Net::ClientParams params) {
+    ZmRef<typename Link::RxAllocator> rx;
+    ZmRef<typename Link::TxAllocator> tx;
+    if (!params.rxAllocator()) {
+      rx = new typename Link::RxAllocator{};
+      params.rxAllocator(rx.ptr());
+    }
+    if (!params.txAllocator()) {
+      tx = new typename Link::TxAllocator{};
+      params.txAllocator(tx.ptr());
+    }
+    return Zfix::Client<NativeHub, Dictionary, Net>::init(ZuMv(params));
+  }
 };
 
 template <typename Net> struct NativeHub<Net, false> final :
@@ -226,6 +221,20 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
       else hub->state->stopped.post(); // A cannot finish a newer connection.
     });
   }
+
+  bool init(typename Net::ServerParams params) {
+    ZmRef<typename Link::RxAllocator> rx;
+    ZmRef<typename Link::TxAllocator> tx;
+    if (!params.rxAllocator()) {
+      rx = new typename Link::RxAllocator{};
+      params.rxAllocator(rx.ptr());
+    }
+    if (!params.txAllocator()) {
+      tx = new typename Link::TxAllocator{};
+      params.txAllocator(tx.ptr());
+    }
+    return Zfix::Server<NativeHub, Dictionary, Net>::init(ZuMv(params));
+  }
 };
 
 template <typename Net, bool Client>
@@ -248,12 +257,6 @@ public:
     Base{hub, nativeConfig(Client, hub->state->options, index), epoch_(hub)},
     m_index{index}, m_round{round}, m_run{hub->state->options, index},
     m_store{hub->state->options, index} { }
-
-  void fixFrameRx(const Zi::RxRange &source, const Zfix::Fmt::FrameView &frame) {
-#if defined(ZiMultiplex_BENCH) && defined(ZiMultiplex_DEBUG)
-    if (state()->diag) state()->diag->framed(m_index, Client, source, frame);
-#endif
-  }
 
   unsigned admissionRound() const { return m_round; }
 
@@ -522,7 +525,7 @@ private:
     auto body = mapping(o, [&o, id, &error]<typename Facet>(Facet) {
       using E = Zfix::MT<typename Entry::Object, Entry::MsgType, Facet,
 	typename Entry::Discrim>;
-      return Zfix::TxBody::capture<E>(o, id, error);
+      return Zfix::TxBody::encode<E>(o, id, error);
     });
     if (!body || error) return false;
     if (Base::submit(ZuMv(body))) return true;
@@ -540,21 +543,6 @@ private:
       m_run.pump(monotonic(), [this](const Order &o) {
 	Zfix::Fmt::Error error; return submit<NewOrder>(o, o.key, error);
       });
-#ifndef _WIN32
-      if (m_run.phase() == Phase::MeasuredGate) {
-        if (m_run.registerMeasuredGate()) {
-          // The main-owned links array survives mx.stop(). Dispatcher returns
-          // this bounded control to the same AppRx owner before that drain.
-          state()->window->begin(m_index, WindowClient::Fn{[this] {
-            if (!m_live || m_done || state()->errors.load_()) {
-              state()->fail(); return;
-            }
-            m_run.beginMeasured(monotonic()); pump_();
-          }});
-        }
-        return;
-      }
-#endif
       if (m_run.phase() == Phase::Failed) { state()->fail(); return; }
       if (m_run.phase() == Phase::Complete) { m_done = true; state()->doneRx_(); return; }
       auto now = monotonic(), at = m_run.nextDue(now); if (!at) return;

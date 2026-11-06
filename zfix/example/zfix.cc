@@ -184,6 +184,20 @@ template <typename Net> struct Client : Zfix::Client<Client<Net>, MTList, Net> {
     if (!errors.xchAdd(1)) ZiLOG(Error, "zfix", reason);
     done.post();
   }
+
+  bool init(typename Net::ClientParams params) {
+    ZmRef<typename Link::RxAllocator> rx;
+    ZmRef<typename Link::TxAllocator> tx;
+    if (!params.rxAllocator()) {
+      rx = new typename Link::RxAllocator{};
+      params.rxAllocator(rx.ptr());
+    }
+    if (!params.txAllocator()) {
+      tx = new typename Link::TxAllocator{};
+      params.txAllocator(tx.ptr());
+    }
+    return Zfix::Client<Client<Net>, MTList, Net>::init(ZuMv(params));
+  }
 };
 
 template <typename Net> static int run(const Options &options) {
@@ -209,7 +223,7 @@ template <typename Net> static int run(const Options &options) {
   }
   if (running && !client.stop()) client.fail("client stop failed");
   client.final(); // also release any resources retained by a failed init()
-  if (!ZiResolver::stopSync()) client.fail("resolver drain failed");
+  if (!ZiResolver::stop()) client.fail("resolver drain failed");
   ZiResolver::final();
   mx.stop(); link = nullptr;
   if (!client.errors.load_()) std::cout << "completed order=1001\n";

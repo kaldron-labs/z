@@ -30,7 +30,7 @@ ZfStruct(, (DispatchResult, JSON), (mode, , String), (parties, , UInt32),
 
 static ZuSpan<char> grow(void *owner, unsigned, unsigned needed) {
   auto &s = *static_cast<Text *>(owner); s.length(needed);
-  return s;
+  return {s.data(), s.length()};
 }
 template <typename Dictionary>
 static bool run(ZuCSpan mode, unsigned parties, unsigned count, unsigned warmup,

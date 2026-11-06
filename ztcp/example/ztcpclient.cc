@@ -17,6 +17,7 @@
 
 struct App : public Ztcp::Client<App> {
   struct Link;
+  using RxBufAlloc = Ztcp::RxBufAlloc<8<<10>;
   using TxBufAlloc = Ztcp::TxBufAlloc<8<<10>;
 
   App(unsigned repeat_) : repeat{repeat_} { }
@@ -30,8 +31,8 @@ struct App : public Ztcp::Client<App> {
 };
 
 struct App::Link :
-  public Ztcp::CliLink<App, App::Link, App::TxBufAlloc> {
-  using Base = Ztcp::CliLink<App, Link, App::TxBufAlloc>;
+  public Ztcp::CliLink<App, App::Link, App::RxBufAlloc, App::TxBufAlloc> {
+  using Base = Ztcp::CliLink<App, Link, App::RxBufAlloc, App::TxBufAlloc>;
 
   Link(App *app) : Base{app} {
     txErrorFn(ZiTxErrorFn{[](ZeException &e) {
@@ -106,9 +107,6 @@ int main(int argc, char **argv)
   App app(repeat);
   ZiMultiplex mx(
       ZiMxParams()
-    .tcpBufAllocator<Zi::RxTCPBufAllocator<
-      ZiRxQueue::Node, ZiIOBuf_DefltSize, ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Ztcp.RxBuf">>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
@@ -117,7 +115,11 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
   if (!mx.start()) return 1;
-  if (!app.init(Ztcp::ClientParams(&mx, "3", "4"))) return 1;
+  ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
+  ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+  Ztcp::ClientParams params(&mx, "3", "4");
+  params.rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+  if (!app.init(ZuMv(params))) return 1;
   {
     ZmRef<App::Link> link = new App::Link(&app);
     link->connect(server, port);

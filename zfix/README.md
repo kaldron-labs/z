@@ -44,26 +44,41 @@ Installed headers use `<zlib/Zfix*.hh>`. `Zfix::Fmt` does not include session or
 network headers. ADL `Zfix_Fmt(T *)` selects object/array/union/string handling;
 `Zfix_Config(Facet *)` selects facet configuration and `Zfix_StringFmt(T *)`
 supplies checked custom scalar handling. Managed and raw endpoint hubs/links are described in [ENDPOINTS.md](ENDPOINTS.md). The shared `RxFramer` adapter extracts
-complete frame ranges retaining the original TCP/TLS `ZiRxStream` backing.
-Retain that backing across application admission pauses and resume extraction
-after consumption; reset the
+one complete pooled frame from a TCP/TLS `ZiRxStream`. Retain that frame across
+application admission pauses and resume extraction after consumption; reset the
 adapter together with its physical stream on disconnect. Actual TCP/TLS loopback
 fixtures are documented in [itest/README.md](itest/README.md). `WireTx` admits
-complete frames before publication, submits TCP backing through independent
-attempt metadata when shared, and splits retained TLS source ranges into tagged
-final ciphertext records. Its completion hook posts back
+complete frames before publication, sends the same buffer over TCP without a
+byte copy, and splits TLS output into records. Its completion hook posts back
 to `LinkTx::sent_`, followed by `writable_` on success; local completion never
 advances peer acknowledgement. Close the adapter after physical I/O Tx drains,
 then drain its posted completions before releasing the enclosing owner.
 
-Native output customizations cover both `fixSendTx(buffer)` for an original
-final-wire buffer and `fixSendRangeTx(source, wire)` for an immutable TLS source
-range and its final ciphertext destination. Each destination already carries
-its attempt token and record part. Observers or fault-injection adapters that
-intercept output must handle both paths and preserve those values when
-forwarding. Construct native frames through the link's cached allocator with
-its reserved head/tail geometry; use `buffer->memory()` for retained storage
-charges rather than estimating its descriptor and payload size.
+The application selects and supplies its Rx and primary Tx allocators through
+the transport parameters' `rxAllocator()` and `txAllocator()` setters before
+endpoint initialization. The FIX endpoint inherits transport initialization;
+it does not select or construct network allocators. The concrete policies match
+the link's `RxAllocator` and `TxAllocator` types. Additional TxTCP or TxTLS
+policies register through the inherited `allocator()` method. Transport hubs
+register the supplied policies. Network buffers are created through the selected
+allocator's `allocBuf()`. Frame construction consumes a supplied `ZiIOBuf`;
+standalone encoded bodies and trace records use their existing typed App allocators.
+Each retained buffer keeps its original allocator pointer through growth, and
+its allocator outlives it.
+
+The application uses Zi's ordinary Tx buffer base for its output allocator;
+FIX requires no derived buffer type. `TxFrame` serializes directly into the
+supplied buffer, and TCP transmits it directly. TLS copies
+each record's plaintext into its final encryption buffer. Each transmission
+attempt uses a separate buffer; retained replay bodies can construct new attempts.
+The default link
+buffer geometry retains the baseline built-in size; applications can select a
+different geometry with the link's buffer template parameters and matching
+allocators. Retention charges cover the complete frame and any TLS record buffers.
+Socket completions retain the completed buffer reference and follow the existing
+`ZiTx` queue and `ZiTxContext` cursor. FIFO completion of the final TLS record
+completes its frame; native send errors close the connection and fail unfinished
+frames through the existing teardown path.
 
 ## Catalog decoding
 
@@ -361,46 +376,11 @@ make a pending replay prefix eligible without a circular readiness dependency.
 
 ## Tx bodies, association and replay
 
-`TxBody` retains replay content independently of a wire sequence or SendingTime.
-Include `ZfixTxCapture.hh` and use `TxBody::capture<Entry>(object, id, error)` for
-typed application submissions. Native link sends and built-in controls use this
-path. Capture owns scalar values, component records and group arrays in typed
-schema storage; borrowed strings and binary values move into bounded pooled raw
-storage. Capture does not format the body. Each output attempt writes the saved
-values directly into its reserved final `TxFrame` buffer, with current session
-fields and signing. The retained model survives mutation of the original object,
-local completion and later replay.
-
-`TxBody::extend(base, extra, error)` attaches a typed owning snapshot of extra
-fields, such as authentication data, without encoding the base. Its final-frame
-validation checks both the base schema and the extension. Extra fields must not
-be envelope or session-header tags. Custom scalar UDTs supply an explicit
-`TxModel_::ScalarOwn<T, Facet>` owning capture, `emit<Props>` and `memory()`
-implementation; a shallow copy of a borrowed custom type is not assumed safe.
-
-At persistence or export boundaries, `body->archive(error)` returns an owning
-`Zi::RxRange`. A semantic body formats archive bytes only for that explicit call;
-it has no encoded cache. `body()` is valid only for deliberately encoded or
-restored bodies. The standalone `encode`/`control` APIs build such encoded
-archives. Queue admission charges concrete model/storage memory and rounded
-queue nodes, rather than treating encoded length as model occupancy.
+`TxBody` in `ZfixTxMsg.hh` is independently owned encoded content, without a
+new wire sequence or SendingTime. `TxFrame` builds a complete output attempt;
+the body and mutable transport frame have separate operational lifetimes.
 `MT<Object, MsgType, Facet, Selector, Responses>` describes a type, and
 `MTList<...>` supplies the explicit compile-time dictionary.
-
-`txFrame` and `TxFrame::finish` return `TxImage`. The contiguous path owns its
-actual final buffer without a parts allocation. Restored encoded bodies retain
-original physical ranges and write only per-attempt framing/session/signature
-metadata. Visit the complete image with `each(span)`; it deliberately has no
-aggregate `cspan()`. Physical offsets remain valid after the backend advances a
-buffer's active `skip`/`length`.
-
-TCP hands its actual framing buffer from the intrinsic transport queue to a
-producer bound to the existing frame admission. Physical I/O Tx selects each
-original span and keeps its own producer/retirement counters. App Tx receives
-fixed token/part results. Reusing one prebuilt buffer on the same link remains
-logically admitted while physical handoff waits for its older admission to
-retire. TLS encrypts spans directly into capacity-filled final records through
-Ztls; no payload gather or extra submission buffer represents an original range.
 
 `Tx` associates new work on Tx before committing its sequence. A refused
 association consumes no number; a Pending association completes through its
@@ -801,19 +781,17 @@ Managed and raw endpoints can select `SignMsg = 1` and implement this const
 CRTP hook, with Tx-owned keys/profile state prepared before transmission:
 
 ```cpp
-template <typename S, typename Message>
+template <typename S>
 void signMsg(S &out, const Zfix::TxBody *body,
-    Zfix::TxContext context, const Message &message) const;
+    Zfix::TxContext context, ZuCSpan message) const;
 ```
 
 The default policy is disabled and the default hook has no effect. The hook
-receives the retained body and final transmission context. Its borrowed
+receives the immutable encoded body and final transmission context. Its borrowed
 `message` covers exactly the serialized bytes from `35=` through the final
 unsigned field, including the final sequence, SendingTime, PossDup and
 OrigSendingTime. The application's profile chooses any narrower cryptographic
-coverage. `message.length()` is logical coverage and `message.each(fn)` visits
-borrowed spans in wire order; update a streaming MAC for each span. The codec
-supplies no algorithm or implicit signature verification.
+coverage. The codec supplies no algorithm or implicit signature verification.
 
 Compute the signature before appending anything that can grow the sink. Append
 its complete pair with `Fmt::saveBinary<ZfField(Message, signature)>(out, bytes)`;
@@ -825,15 +803,16 @@ prevents publication. BodyLength and CheckSum are finalized after the hook.
 Signing runs on the Tx owner for managed publication, replay, and raw typed
 endpoint sends. An Rx-side raw typed submission queues a retained unsigned body
 and an owned snapshot of its borrowed routing metadata; encoding failures after
-that admission are reported through `fixRawFaultTx`. A Tx-side typed submission
-encodes synchronously on that same owner. Administrative messages also declare
+that admission are reported through `fixRawFaultTx`. The disabled raw path keeps
+its ordinary synchronous encoding behavior. Administrative messages also declare
 an optional signature field and load it normally. Each reconstructed replay is
 signed with its new session fields; transport cursor retries retain the already
 constructed frame and signature.
 
 A standalone `FrameWriter::finish(signer, body, context)` and
-`txFrame(body, config, context, error, limits, signer)` use the same hook.
-`RawOutput::encode` also accepts the signer after its limits argument; its caller
+`txFrame(buf, body, config, context, error, limits, signer)` use the same hook.
+`TxFrame(buf, beginString, limits)` and `RawOutput::encode(buf, ...)` consume
+caller-allocated buffers. `RawOutput::encode` accepts the signer after its limits argument; its caller
 supplies the appropriate owner. Admission of a complete `RawOutput::fromFrame`
 preserves the supplied frame without signing it again.
 

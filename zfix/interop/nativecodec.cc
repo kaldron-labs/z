@@ -59,37 +59,45 @@ static constexpr auto XMLPayload = "RTRF<8=FIX.4.4\1" "9=5\1" "35=D\1" "10=999\1
 static constexpr auto AuthPayload = "user\0credential\1" "35=A\1" "10=999\1=\xff"_z;
 static constexpr auto SigPayload = "S\0\1=\xff"_z;
 
-template <typename Entry> static ZmRef<ZiIOBuf> binaryFrame(const typename Entry::Object &object)
+static ZuSpan<char> binaryGrow(void *owner, unsigned used, unsigned needed)
 {
-  ZmRef<ZiIOBuf> storage = new FrameAlloc{nullptr, 0};
-  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, storage.ptr()};
+  auto &storage = *static_cast<Text *>(owner);
+  storage.length(used < storage.length() ? used : storage.length());
+  storage.length(needed); return {storage.data(), storage.length()};
+}
+
+template <typename Entry> static Text binaryFrame(const typename Entry::Object &object)
+{
+  Text storage;
+  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", binaryGrow, &storage};
   writer.body().field(35); writer.body() << Entry::MsgType; writer.body().end();
   if (!Zfix::Fmt::save<typename Entry::Mapping>(writer.body(), object)) return {};
   auto out = writer.finish();
-  return frameOutput(ZuMv(storage), out);
+  if (!out) return {};
+  memmove(storage.data(), out.data.data(), out.data.length());
+  storage.length(out.data.length()); return storage;
 }
-static ZmRef<ZiIOBuf> signatureFrame(const ZmRef<ZiIOBuf> &original)
+static Text signatureFrame(ZuCSpan original)
 {
-  if (!original) return {};
-  auto parsed = Zfix::Fmt::frame(ZuCSpan{original->cspan()});
+  auto parsed = Zfix::Fmt::frame(original);
   if (parsed.state != Zfix::Fmt::FrameState::Complete) return {};
   auto first = parsed.view.msgType.data() - 3; // fixed 35= prefix
   auto end = parsed.view.content.data() + parsed.view.content.length();
-  ZmRef<ZiIOBuf> storage = new FrameAlloc{nullptr, 0};
-  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", grow, storage.ptr()};
+  Text storage;
+  Zfix::Fmt::FrameWriter writer{{}, "FIX.4.4", binaryGrow, &storage};
   writer.body() << ZuCSpan{first, uint64_t(end - first)};
   Zfix::Fmt::saveBinary<ZfField(SignedOrder, signature)>(writer.body(), SigPayload);
   auto out = writer.finish();
-  return frameOutput(ZuMv(storage), out);
+  if (!out) return {};
+  memmove(storage.data(), out.data.data(), out.data.length());
+  storage.length(out.data.length()); return storage;
 }
 
-static bool write(
-  ZuCSpan directory, ZuCSpan name, const ZmRef<ZiIOBuf> &wire)
-{
-  if (!wire || !wire->length) return false;
+static bool write(ZuCSpan directory, ZuCSpan name, const Text &wire) {
+  if (!wire.length()) return false;
   Text path; path << directory << '/' << name << ".fix";
   auto file = fopen(path, "wb"); if (!file) return false;
-  bool ok = fwrite(wire->data(), 1, wire->length, file) == wire->length;
+  bool ok = fwrite(wire.data(), 1, wire.length(), file) == wire.length();
   return !fclose(file) && ok;
 }
 static int dump(const char *directory) {

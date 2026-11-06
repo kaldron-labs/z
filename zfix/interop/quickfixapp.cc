@@ -34,7 +34,7 @@ namespace QfLoad {
 bool Store::set(FIX::SEQNUM seq, const std::string &bytes) {
   FIX::Locker guard{m_lock};
   if (bytes.length() > UINT_MAX || !m_messages.fits(bytes.length())) return false;
-  Text copy{ZuCSpan{bytes}};
+  Text copy{ZuCSpan{bytes.data(), unsigned(bytes.length())}};
   m_messages.erase(seq);
   return m_messages.put(seq, ZuMv(copy), bytes.length());
 }
@@ -100,8 +100,8 @@ bool Store::save(const char *path, const FIX::SessionID &id, uint64_t completed)
   const auto &name = id.toStringFrozen();
   auto created = FIX::UtcTimeStampConvertor::convert(m_creation, 9);
   if (!file || !write(file, magic, version, completed, m_sender, m_target, count) ||
-      !writeText(file, name) ||
-      !writeText(file, created)) return false;
+      !writeText(file, {name.data(), unsigned(name.length())}) ||
+      !writeText(file, {created.data(), unsigned(created.length())})) return false;
   bool ok = true;
   m_messages.each([&file, &ok](auto seq, const Text &wire) {
     ok = ok && write(file, seq) && writeText(file, wire);
@@ -121,7 +121,7 @@ bool Store::load(const char *path, const FIX::SessionID &id, uint64_t completed,
       magic != 0x51465331 || version != 1 || boundary != completed ||
       !sender || !target || count > m_limit ||
       !readText(file, name, identity.length()) ||
-      name != ZuCSpan{identity} ||
+      name != ZuCSpan{identity.data(), unsigned(identity.length())} ||
       !readText(file, created, FIX::UtcTimeStampConvertor::convert(m_creation, 9).length()))
     return false;
   try {
@@ -194,16 +194,6 @@ template <bool Client> class App : public FIX::Application, public FIX::MessageS
 public:
   App(const Options &o, const Ports &ports, ZmScheduler &scheduler) :
     m_options{o}, m_scheduler{scheduler}, m_budget{o.queueBytes * o.sessions} {
-#ifndef _WIN32
-    if (getenv("ZFIX_WINDOW_FD")) {
-      if constexpr (Client) {
-        m_window = new WindowClient{o.sessions, o.deadline};
-        m_window->configure(WindowClient::Post{[this](WindowClient::Fn fn) {
-          m_scheduler.run([fn = ZuMv(fn)] { fn(); }, 1);
-        }}, WindowClient::Fn{[this] { fail("process window control"); }});
-      } else m_serverWindow = new WindowServer{o.deadline};
-    }
-#endif
     m_slots.size(o.sessions);
     for (unsigned i = 0; i < o.sessions; ++i) {
       Text sender; sender << o.sender << '-' << i + 1;
@@ -213,7 +203,7 @@ public:
     }
     for (unsigned i = 0; i < o.sessions; ++i) {
       const auto &frozen = m_slots[i]->id.toStringFrozen();
-      m_index.add(ZuCSpan{frozen}, i);
+      m_index.add(ZuCSpan{frozen.data(), unsigned(frozen.length())}, i);
     }
     FIX::Dictionary defaults;
     defaults.setString(FIX::CONNECTION_TYPE, Client ? "initiator" : "acceptor");
@@ -248,13 +238,6 @@ public:
     }
   }
 
-#ifndef _WIN32
-  void stopWindowWorker() { if (m_window) m_window->shutdown(); }
-  bool finishWindow(ZuTime deadline) {
-    if constexpr (Client) return !m_window || m_window->finish("quickfix", deadline);
-    else return !m_serverWindow || m_serverWindow->finish("quickfix", m_options.sessions);
-  }
-#endif
   const FIX::SessionSettings &settings() const { return m_settings; }
   const Rows<ZuPtr<Item>> &slots() const { return m_slots; }
   unsigned errors() const { return m_errors.load_(); }
@@ -442,7 +425,7 @@ private:
 
   unsigned index(const FIX::SessionID &id) const {
     const auto &value = id.toStringFrozen();
-    auto n = m_index.findPtr(ZuCSpan{value});
+    auto n = m_index.findPtr(ZuCSpan{value.data(), unsigned(value.length())});
     ZmAssert_(n); return n->val();
   }
 
@@ -525,15 +508,6 @@ private:
       if (s.run.phase() == Phase::Complete) return;
       ++s.generation; m_scheduler.del(&s.pace);
       s.run.pump(monotonic(), [this, i](const Order &o) { return send(i, o); });
-#ifndef _WIN32
-      if (s.run.phase() == Phase::MeasuredGate) {
-        if (s.run.registerMeasuredGate()) m_window->begin(i, WindowClient::Fn{[this, i] {
-          if (!m_live || errors()) { fail("measured gate cancelled"); return; }
-          m_slots[i]->run.beginMeasured(monotonic()); pump(i);
-        }});
-        return;
-      }
-#endif
       if (s.run.phase() == Phase::Failed) { fail("pump"); return; }
       if (s.run.phase() == Phase::Complete) {
 	if (++m_complete == m_slots.length()) m_completeSem.post(); return;
@@ -550,10 +524,6 @@ private:
     }
   }
 
-#ifndef _WIN32
-  ZuPtr<WindowClient> m_window;
-  ZuPtr<WindowServer> m_serverWindow;
-#endif
   const Options		&m_options;
   ZmScheduler		&m_scheduler;
   const uint64_t	m_budget;
@@ -600,9 +570,6 @@ static bool execute(App<Client> &app, Peer &peer, ZmScheduler &scheduler,
 	Ready ready; ready.engine = "quickfix"; ready.role = "initiator";
 	ready.ports = ports; output(ready);
 	if (app.waitComplete(deadline)) app.fail("workload deadline");
-#ifndef _WIN32
-        if (!app.errors() && !app.finishWindow(deadline)) app.fail("process window deadline");
-#endif
       }
       ZmSemaphore posted;
       scheduler.run([&app, &posted] { app.quiesce(); app.logout(); posted.post(); }, 1);
@@ -615,9 +582,6 @@ static bool execute(App<Client> &app, Peer &peer, ZmScheduler &scheduler,
     }));
     app.fail("startup");
   }
-#ifndef _WIN32
-  app.stopWindowWorker();
-#endif
   // Only main blocks in the SDK stop/join. Keep app and timer owners alive until
   // all callbacks queued by that IO thread have crossed their application owner.
   ZmSemaphore held;
@@ -625,9 +589,6 @@ static bool execute(App<Client> &app, Peer &peer, ZmScheduler &scheduler,
   if (started) peer.stop(app.errors() != 0);
   ZmSemaphore callbacks;
   scheduler.run([&callbacks] { callbacks.post(); }, 1); callbacks.wait();
-#ifndef _WIN32
-  if constexpr (!Client) if (!app.finishWindow(deadline)) app.fail("server process window");
-#endif
   if (!app.save()) app.fail("checkpoint write");
   ZmSemaphore drained;
   scheduler.run([&app, &drained, start] { app.finish(start); drained.post(); }, 1);

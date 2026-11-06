@@ -7,8 +7,6 @@
 #ifndef managed_partial_test_HH
 #define managed_partial_test_HH
 
-#include "../test/ZfixTxImageTest.hh"
-
 #if defined(__linux__) && !defined(ZFIX_TEST_TLS)
 #include <arpa/inet.h>
 #include <errno.h>
@@ -18,8 +16,8 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
+#include <zlib/ZmSingleton.hh>
+#include <zlib/ZiTx.hh>
 
 // Real kernel backpressure is the only injected output condition. The native
 // close callback is retained separately, after displacement physically closes A.
@@ -72,6 +70,8 @@ struct PartialServer : Zfix::Server<PartialServer, Dictionary, Network> {
   void listening(const ZiListenInfo &i) { state->port = i.port; state->listening.post(); }
   void listenFailed(bool) { state->fail(); state->listening.post(); }
   ZiConnection *accepted(const ZiCxnInfo &);
+
+  bool init(Network::ServerParams params);
 };
 
 struct PartialClient : Zfix::Client<PartialClient, Dictionary, Network> {
@@ -79,6 +79,8 @@ struct PartialClient : Zfix::Client<PartialClient, Dictionary, Network> {
   PartialState	*state;
 
   explicit PartialClient(PartialState *s) : state{s} { }
+
+  bool init(Network::ClientParams params);
 };
 
 struct PartialServer::Link : ZmNHeap<Link>,
@@ -147,6 +149,20 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Server"> ZmNHeapID(Link *);
   void fixStoppedRx(bool) { ++state()->serverStops; state()->serverStopped.post(); }
 };
 
+inline bool PartialServer::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Server<PartialServer, Dictionary, Network>::init(ZuMv(params));
+}
+
 struct PartialServer::Cxn : ZmNHeap<Cxn>, Link::Cxn {
 friend inline ZuStringT<"Zfix.ManagedPartial.Cxn"> ZmNHeapID(Cxn *);
   using ZmNHeap<Cxn>::operator new;
@@ -208,6 +224,20 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Client"> ZmNHeapID(Link *);
   void fixStoppedRx(bool) { ++state()->bStops; state()->cliStopped.post(); }
 };
 
+inline bool PartialClient::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Client<PartialClient, Dictionary, Network>::init(ZuMv(params));
+}
+
 // Main is the raw peer: no worker is blocked and no callback changes native
 // socket lifecycle. poll bounds the real socket operations without sleep loops.
 static bool partialWrite(int fd, ZuCSpan bytes)
@@ -227,11 +257,14 @@ static bool partialLogon(int fd)
   Session::Msg msg; msg.p<Session::Logon>(Session::Logon{});
   Fmt::Error error;
   auto body = TxBody::control(msg, error);
-  auto frame = body ? testFrame(*body, txConfig(config(true,
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  auto frame = body ? txFrame(ZmSingleton<Allocator>::instance()->allocBuf(),
+    *body, txConfig(config(true,
     Transport::FIX4, Version::V4_4)), TxContext{.seqNo = 1,
       .sendingTime = ZuDateTime{Zm::now()}}, error) : ZmRef<ZiIOBuf>{};
   if (error || !frame || !partialWrite(fd, frame->cspan())) return false;
-  ZmRef<ZiIOBuf> input = new LocalBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> input = ZmSingleton<Zi::AppBufAllocator<
+    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   for (;;) {
     auto r = Fmt::frame(input->cspan());
     if (r.state == Fmt::FrameState::Complete) {
@@ -254,11 +287,7 @@ static void managedPartial()
   enum { PayloadBytes = 200<<10 };
   PartialState state;
   PartialServer server{&state}; PartialClient client{&state};
-  // This scope observes libc send results through the executable's interposer.
-  ZiMultiplex mx{ZiMxParams{}
-    .backend(ZiMxBackend::EPoll)
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
@@ -294,7 +323,9 @@ static void managedPartial()
       if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size))) { s->fail(); return; }
       s->socket = fd; s->watch = 1;
       link->app()->txRun([link] {
-	ZmRef<ZiIOBuf> data = new LocalBuf{nullptr, 0}; data->ensure(PayloadBytes);
+	ZmRef<ZiIOBuf> data = ZmSingleton<Zi::AppBufAllocator<
+	  ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+	data->ensure(PayloadBytes);
 	memset(data->data(), 'X', PayloadBytes); data->length = PayloadBytes;
 	Fmt::Error error;
 	auto body = TxBody::encode<OrderMsg>(Order{data->cspan()}, 301, error);

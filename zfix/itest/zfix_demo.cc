@@ -22,9 +22,7 @@ using namespace ZfixDemo;
 template <typename Net> static int run(Options options) {
   State state{options};
   Hub<Net, false> server{&state}; Hub<Net, true> client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<typename Net::template RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })

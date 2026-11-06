@@ -117,7 +117,7 @@ The native and QuickFIX scalar/group/binary frames have matching lengths of
 without rewriting them; the repository report adds context and code-size tables.
 
 The dated archives retain process manifests, individual case results, peer JSON
-and stderr, allocation/copy observations, codec result rows and their executable
+and stderr, allocation observations, codec result rows and their executable
 provenance. Public fixture certificates are included; generated private keys and
 binaries are excluded. Original absolute paths and commands remain as provenance.
 
