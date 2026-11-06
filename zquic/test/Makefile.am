@@ -18,7 +18,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = ZquicAPITest ZquicSockTest \
 	ZquicCodecTest ZquicCryptoTest ZquicPacketProtectionTest \
-	ZquicHandshakeTest ZquicRecoveryTest \
+	ZquicHandshakeTest ZquicRecoveryTest ZquicRttLossTest \
 	ZquicStreamStateTest ZquicPMTUDTest ZquicVersionTest ZquicCIDTest \
 	ZquicStreamTest ZquicFlowTest ZquicBufferTest \
 	ZquicCongestionTest ZquicPQueueTest ZquicLoopTest ZquicRuntimeTest \
@@ -31,6 +31,7 @@ ZquicCryptoTest_SOURCES = ZquicCryptoTest.cc
 ZquicPacketProtectionTest_SOURCES = ZquicPacketProtectionTest.cc
 ZquicHandshakeTest_SOURCES = ZquicHandshakeTest.cc
 ZquicRecoveryTest_SOURCES = ZquicRecoveryTest.cc
+ZquicRttLossTest_SOURCES = ZquicRttLossTest.cc
 ZquicStreamStateTest_SOURCES = ZquicStreamStateTest.cc
 ZquicPMTUDTest_SOURCES = ZquicPMTUDTest.cc
 ZquicVersionTest_SOURCES = ZquicVersionTest.cc
