@@ -199,8 +199,8 @@ public:
   static void start(CtrlFn);
   static void stop(CtrlFn);
   // Main-thread waits only; never block from a resolver callback.
-  static bool startSync();
-  static bool stopSync();
+  static bool start();
+  static bool stop();
   // Stop must have completed. Releases quiescent resources without waiting.
   static void final();
 

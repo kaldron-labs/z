@@ -197,7 +197,7 @@ void testParseResolveAndPrint()
 
   ZiIP bad;
   ZuCheck(bad.resolve("missing.test", &e) == Zi::IOError);
-  ZiResolver::stopSync();
+  ZiResolver::stop();
   ZiResolver::final();
 }
 
