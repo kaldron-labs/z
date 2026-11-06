@@ -17,6 +17,8 @@
 namespace Zquic {
 
 struct OpenSSLCipherCtx {
+  EVP_CIPHER_CTX	*ctx = nullptr;
+
   OpenSSLCipherCtx() = default;
   ~OpenSSLCipherCtx() { if (ctx) EVP_CIPHER_CTX_free(ctx); }
 
@@ -25,8 +27,6 @@ struct OpenSSLCipherCtx {
     EVP_CIPHER_CTX_reset(ctx);
     return ctx;
   }
-
-  EVP_CIPHER_CTX	*ctx = nullptr;
 };
 
 inline EVP_CIPHER_CTX *opensslCipherCtx()

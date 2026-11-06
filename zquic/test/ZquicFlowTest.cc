@@ -164,7 +164,7 @@ void testReceiveFlowControl()
 
   FlowApp app;
   FlowLink link{&app};
-  ZmRef<FlowStream> stream = new FlowStream{&link, 0};
+  ZmRef<FlowStream> stream = new FlowLink::Streams::Node{&link, 0};
   Zquic::ReceiveFlow flow{8, 5};
   auto packet = streamPkt_(stream->id(), 3, "de", false, frame, used);
   ZuCHECK(packet,
@@ -197,7 +197,7 @@ void testReceiveFlowControl()
       flow.streamUsed() == 5,
     "stream-level flow violation was not rejected cleanly");
 
-  ZmRef<FlowStream> connLimited = new FlowStream{&link, 4};
+  ZmRef<FlowStream> connLimited = new FlowLink::Streams::Node{&link, 4};
   Zquic::ReceiveFlow connFlow{6, 20};
   packet = streamPkt_(connLimited->id(), 0, "hello", false, frame, used);
   ZuCHECK(packet &&

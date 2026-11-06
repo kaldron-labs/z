@@ -196,11 +196,11 @@ struct ClientShapeStream :
 };
 
 struct ClientShapeLink :
-  public ZmNHeap<ClientShapeLink>,
+    public ZmNHeap<ClientShapeLink>,
     public Zquic::CliLink<
       ClientShapeApp, ClientShapeLink, ClientShapeStream,
       StreamTxBufAlloc> {
-  friend inline ZuStringT<"Zquic.API.CliShape"> ZmNHeapID(ClientShapeLink *);
+friend inline ZuStringT<"Zquic.APITest.CliLink"> ZmNHeapID(ClientShapeLink *);
   using ZmNHeap<ClientShapeLink>::operator new;
   using ZmNHeap<ClientShapeLink>::operator delete;
 
@@ -234,11 +234,11 @@ struct ServerShapeStream :
 };
 
 struct ServerShapeLink :
-  public ZmNHeap<ServerShapeLink>,
+    public ZmNHeap<ServerShapeLink>,
     public Zquic::SrvLink<
       ServerShapeApp, ServerShapeLink, ServerShapeStream,
       StreamTxBufAlloc> {
-  friend inline ZuStringT<"Zquic.API.SrvShape"> ZmNHeapID(ServerShapeLink *);
+friend inline ZuStringT<"Zquic.APITest.SrvLink"> ZmNHeapID(ServerShapeLink *);
   using ZmNHeap<ServerShapeLink>::operator new;
   using ZmNHeap<ServerShapeLink>::operator delete;
 
@@ -279,11 +279,11 @@ struct ServerShapeLink :
 };
 
 struct TestLink :
-  public ZmNHeap<TestLink>,
+    public ZmNHeap<TestLink>,
     public Zquic::Link<
       HubApp, TestLink, StreamTxBufAlloc,
       TestStream> {
-  friend inline ZuStringT<"Zquic.API.Link"> ZmNHeapID(TestLink *);
+friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   using ZmNHeap<TestLink>::operator new;
   using ZmNHeap<TestLink>::operator delete;
 
@@ -292,6 +292,42 @@ struct TestLink :
     TestStream>;
   TestLink(HubApp *app, bool isServer = false) : Base{app, isServer} {
     Base::configLocalParams_(app);
+  }
+
+  static constexpr unsigned RecBatch = Base::RecoveryScanBatch;
+
+  bool recoveryPackets(unsigned count, bool ecn = false) {
+    if (ecn) Base::setEcnDisabled_(false);
+    Base::setTxPN_(Zquic::PktNumSpace::Handshake, count + 1);
+    for (unsigned pn = 1; pn <= count; ++pn)
+      if (!Base::recordTxPkt_(Zquic::PktNumSpace::Handshake, pn, 1200,
+	  Zquic::SentFrameRef{}, true, false, 0, Zquic::PktNumSpace::N, 0,
+	  Zquic::PktType::Handshake,
+	  ecn ? Zquic::EcnMark::ECT0 : Zquic::EcnMark::NotECT))
+	return false;
+    return true;
+  }
+  void recoveryAck(unsigned largest, unsigned first, bool ecn = false) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::PktNumSpace::Handshake;
+    ack.ranges.push(Zquic::AckRange{largest, first});
+    if (ecn) {
+      ack.ecn.ect0 = largest - first;
+      ack.ecn.ce = 1;
+    }
+    Base::processAckFrameTx_(ack);
+  }
+  auto recoveryDiag() {
+    // Continuation assertions inspect the controller after partial retirement,
+    // before production publishes its end-of-ACK diagnostic update.
+    Base::updateCongestionDiag_();
+    return Base::txDiag_();
+  }
+  auto recoveryPathDiag() const { return Base::pathDiag_(); }
+  void recoveryStop() { Base::cancelTimers_(); }
+  void recoveryReset() { Base::resetTx_(); }
+  void recoveryDiscard() {
+    Base::discardTxPktNumSpace_(Zquic::PktNumSpace::Handshake);
   }
 
   bool longProbe(
@@ -647,16 +683,6 @@ struct TestLink :
   bool lastPathValidated = false;
 	};
 
-template <typename L>
-bool waitUntil(L l)
-{
-  for (unsigned i = 0; i < 2000; ++i) {
-    if (l()) return true;
-    usleep(1000);
-  }
-  return false;
-}
-
 struct HubFixture {
   HubFixture() : mx{mxParams_()} {
     ZiAssert(mx.start(), "Zquic", (),
@@ -919,7 +945,7 @@ void testAlignedSurfaceShape()
   }
   ZmRef<ClientShapeLink> client = new ClientShapeLink{&clientApp};
   ZmRef<ClientShapeStream> c0;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&clientApp, &client, &c0](auto wake) {
     clientApp.txRun([client, &c0, wake = ZuMv(wake)]() mutable {
       c0 = client->stream();
       wake();
@@ -947,7 +973,7 @@ void testAlignedSurfaceShape()
   }
   ZmRef<ServerShapeLink> server = new ServerShapeLink{&serverApp};
   ZmRef<ServerShapeStream> s0;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&serverApp, &server, &s0](auto wake) {
     serverApp.txRun([server, &s0, wake = ZuMv(wake)]() mutable {
       s0 = server->stream();
       wake();
@@ -963,7 +989,7 @@ void testAlignedSurfaceShape()
   remoteIP.s_addr = htonl(0x0a000002);
   ZiSockAddr localAddr{ZiIP{localIP}, 4433};
   ZiSockAddr remoteAddr{ZiIP{remoteIP}, 50000};
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&serverApp, &server, &localAddr, &remoteAddr](auto wake) {
     serverApp.txRun([
       server, localAddr, remoteAddr, wake = ZuMv(wake)
     ]() mutable {
@@ -974,7 +1000,7 @@ void testAlignedSurfaceShape()
   bool pathInfoSeen = false;
   Zquic::PathInfo activePath;
   Zquic::PathInfo candidatePath;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&server, &activePath, &candidatePath, &pathInfoSeen](auto wake) {
     server->pathInfo([
       &activePath, &candidatePath, &pathInfoSeen, wake = ZuMv(wake)
     ](const Zquic::PathInfo &active, const Zquic::PathInfo &candidate)
@@ -994,7 +1020,7 @@ void testAlignedSurfaceShape()
 	    "posted server pathInfo snapshot mismatch");
   bool migrationStateSeen = false;
   Zquic::MigrationResult migrationState;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&server, &migrationState, &migrationStateSeen](auto wake) {
     server->migrationState([
       &migrationState, &migrationStateSeen, wake = ZuMv(wake)
     ](const Zquic::MigrationResult &result) mutable {
@@ -1013,19 +1039,19 @@ void testAlignedSurfaceShape()
   ZiSockAddr promotedRemote{ZiIP{remoteIP}, 50001};
   bool promoted = false;
   ZiSockAddr peerAfterPromotion;
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&serverApp, &server, &localAddr, &promotedRemote](auto wake) {
     server->onStarted(ZuMv(wake));
     serverApp.txRun([server, localAddr, promotedRemote]() mutable {
       server->observePath(localAddr, promotedRemote);
     });
   });
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&serverApp, &server, &promoted](auto wake) {
     server->onPromoted(ZuMv(wake));
     serverApp.txRun([server, &promoted]() mutable {
       promoted = server->promoteObservedPath();
     });
   });
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&serverApp, &server, &peerAfterPromotion](auto wake) {
     serverApp.txRun([server, &peerAfterPromotion, wake = ZuMv(wake)]() mutable {
       peerAfterPromotion = server->peer();
       wake();
@@ -1265,6 +1291,53 @@ void testStatelessResetDetection()
   ZuCHECK(qlog.find<"\"reason\":\"token_match\"">() >= 0,
     "stateless reset qlog reason missing");
 #endif
+}
+
+void testRecoveryRuntimeOrdering()
+{
+  ZuTestScope(testRecoveryRuntimeOrdering);
+  for (unsigned mode = 0; mode < 3; ++mode) {
+    bool ecn = mode != 0;
+    unsigned count = mode == 2 ? 2 : 4;
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    link->recoveryReset();
+    uint64_t initial = link->recoveryDiag().congestionWindow;
+    ZuCHECK(link->recoveryPackets(count, ecn), "runtime recovery packet setup");
+    link->recoveryAck(count, count, ecn);
+    auto diag = link->recoveryDiag();
+    ZuCHECK(diag.congestionWindow == initial/2 &&
+      diag.bytesInFlight == (mode == 2 ? 1200 : 2400),
+      "runtime same ACK must establish loss/ECN before growth");
+    ZuCHECK(link->recoveryPathDiag().ecnCEEvents == unsigned(ecn) &&
+      !link->recoveryPathDiag().ecnValidationFailures,
+      "ECN variant must exercise the validated CE response");
+    link->recoveryStop();
+  }
+  for (bool reset : {false, true}) {
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    link->recoveryReset();
+    uint64_t initial = link->recoveryDiag().congestionWindow;
+    ZuCHECK(link->recoveryPackets(TestLink::RecBatch + 1),
+      "runtime continuation packet setup");
+    fixture.app.defer();
+    fixture.app.enterTx();
+    link->recoveryAck(TestLink::RecBatch + 1, 1);
+    ZuCHECK(fixture.app.txPending() &&
+      link->recoveryDiag().congestionWindow == initial &&
+      link->recoveryDiag().bytesInFlight == 1200,
+      "runtime first continuation retires without committing growth");
+    if (reset) link->recoveryReset();
+    else link->recoveryDiscard();
+    while (fixture.app.txPending()) fixture.app.runTx();
+    ZuCHECK(link->recoveryDiag().congestionWindow == initial &&
+      !link->recoveryDiag().bytesInFlight,
+      "runtime reset/discard must reject queued growth and retire once");
+    while (fixture.app.rxPending()) fixture.app.runRx();
+    fixture.app.enterTx();
+    link->recoveryStop();
+  }
 }
 
 void testApplicationCallbacks()
@@ -1894,8 +1967,9 @@ void testMigrationQLogEvents()
   Zquic::TransportParams peerParams;
   peerParams.disableActiveMigration = false;
 
-  auto initActive = [&](ZuCSpan localCID, ZuCSpan peerCID,
-      ZuCSpan spareCID, ZuCSpan token) {
+  auto initActive = [
+    &fixture, &localAddr, &oldRemote, &rx, &tx, &peerParams
+  ](ZuCSpan localCID, ZuCSpan peerCID, ZuCSpan spareCID, ZuCSpan token) {
     ZmRef<TestLink> link = new TestLink{&fixture.app};
     link->initClientPath(localAddr, oldRemote);
     link->setRuntimeCIDs(Zquic::CxnID{localCID}, Zquic::CxnID{peerCID});
@@ -2022,10 +2096,10 @@ void testMigrationQLogEvents()
       qlog.find<"\"peer_cid_sequence\":1">() >= 0,
     "runtime migration qlog correlation fields missing");
 
-  auto ordered = [&](ZuCSpan a0, ZuCSpan a1, ZuCSpan a2 = {},
+  auto ordered = [&qlog](ZuCSpan a0, ZuCSpan a1, ZuCSpan a2 = {},
       ZuCSpan a3 = {}, ZuCSpan a4 = {}, ZuCSpan a5 = {}) {
     unsigned off = 0;
-    auto next = [&](ZuCSpan action) {
+    auto next = [&qlog, &off](ZuCSpan action) {
       if (!action) return true;
       int pos = ZuCSpan{qlog.data() + off, qlog.length() - off}.find(action);
       if (pos < 0) return false;
@@ -2188,6 +2262,7 @@ int main(int argc, char **argv)
   ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testStreamLimitOwnership);
   ZuTestCall(testStatelessResetDetection);
+  ZuTestCall(testRecoveryRuntimeOrdering);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);
   ZuTestCall(testStreamRegistryOwnership);

@@ -75,7 +75,7 @@ struct TimerStream :
 struct TimerLink :
   public ZmNHeap<TimerLink>,
   public Zquic::Link<TimerApp, TimerLink, StreamTxBufAlloc, TimerStream> {
-  friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
+friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
   using ZmNHeap<TimerLink>::operator new;
   using ZmNHeap<TimerLink>::operator delete;
 

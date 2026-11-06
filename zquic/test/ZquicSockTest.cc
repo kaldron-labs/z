@@ -31,17 +31,86 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
     if (fn) fn(false);
   }
   void endpointDatagram_(Zquic::Datagram) { ++datagrams; }
-  void endpointTxDrained_() { ++drained; }
 
   ReadyFn readyFn;
   unsigned ready = 0;
   unsigned down = 0;
   unsigned failed = 0;
   unsigned datagrams = 0;
-  unsigned drained = 0;
 };
 
 } // namespace
+
+// Exercise the real endpoint connection's queue and completion callback with
+// synthetic I/O results. The endpoint is already its friend; no socket, thread,
+// private-data access or production test interface is needed.
+struct QueuedEndpoint {
+  using Impl = QueuedEndpoint;
+  using Cxn = Zquic_::EndpointCxn_<QueuedEndpoint>;
+  enum { EndpointRef = false };
+
+  unsigned scheduled = 0;
+  unsigned submitted = 0;
+  unsigned sent = 0;
+  unsigned errors = 0;
+  unsigned wakeups = 0;
+
+  ZiMultiplex *mx_() const { return nullptr; }
+  QueuedEndpoint *impl() { return this; }
+  bool endpointTxInvoked_() const { return true; }
+  void connected_(Cxn *, ZiIOContext &) { }
+  void disconnected_0(Cxn *, QueuedEndpoint *) { }
+  void txSubmitted_(unsigned) { ++submitted; }
+  void txBackPressure_() { }
+  void sent_(unsigned) { ++sent; }
+  void ioError_() { ++errors; }
+  // Negative sentinel: the pre-fix completion path calls this for every
+  // queued datagram. Protocol producers must not be woken by socket progress.
+  void txDrained_() { ++wakeups; }
+  template <typename L> void txRun_(L) { ++scheduled; }
+
+  void exercise(bool fail)
+  {
+    ZuTestScopeRT(queuedSendCompletion);
+    enum { N = 3 }; // active packet plus two FIFO followers
+    ZiCxnInfo ci{.type = ZiCxnType::UDP, .socket = Zi::nullSocket()};
+    ZmRef<Cxn> cxn = new Cxn{this, ci, 1};
+    for (unsigned i = 0; i < N; ++i) {
+      ZmRef<ZiIOBuf> buf = new Zquic::PktTxBufAlloc<>{nullptr};
+      uint8_t value = i;
+      buf->append(&value, 1);
+      ZuCheckRT(cxn->enqueueTx_(ZuMv(buf), ZiSockAddr{}, Zquic::EcnMark::ECT0),
+        log_("queued datagram admission failed"));
+    }
+    ZuCheckRT(submitted == N && cxn->dequeueTx_(),
+      log_("queued datagrams did not select their first send"));
+    ZiIOContext io;
+    for (unsigned i = 0; i < N; ++i) {
+      bool started = cxn->sendStart_(io);
+      bool ready = started && io.ptr && io.size == 1;
+      ZuCheckRT(ready && *io.ptr == i,
+        log_("UDP completion did not advance queued datagrams in FIFO order"));
+      if (!ready) return;
+      io.length = fail && !i ? -1 : 1;
+      ZuCheckRT(io() && io.completed(),
+        log_("UDP completion did not retire its I/O context"));
+      ZuCheckRT(scheduled == (i + 1 < N ? i + 1 : N - 1) && !wakeups,
+        log_("UDP completion must schedule only the next socket send"));
+    }
+    ZuCheckRT(sent == N - unsigned(fail) && errors == unsigned(fail) &&
+        !cxn->txPending() && !cxn->txQueued() && !wakeups,
+      log_("UDP queue did not drain independently of protocol producers"));
+  }
+};
+
+static void testQueuedSendCompletion()
+{
+  ZuTestScope(testQueuedSendCompletion);
+  QueuedEndpoint success;
+  ZuTestCall(success.exercise, false);
+  QueuedEndpoint failure;
+  ZuTestCall(failure.exercise, true);
+}
 
 void testPlans()
 {
@@ -116,7 +185,7 @@ void testEndpointRebind()
   TestEndpoint endpoint;
   ZuCHECK(endpoint.init(&mx), "endpoint rebind init failed");
   ZiIP localIP{"127.0.0.1"};
-  bool openReady = ZmBlock<bool>{}([&](auto wake) {
+  bool openReady = ZmBlock<bool>{}([&endpoint, localIP](auto wake) {
     endpoint.readyFn = [wake = ZuMv(wake)](bool ok) mutable {
       wake(ok);
     };
@@ -134,7 +203,7 @@ void testEndpointRebind()
   ZuCHECK(endpoint.ready == 1 && oldGeneration && oldPort,
     "endpoint initial UDP open state mismatch");
 
-  bool rebindOK = ZmBlock<bool>{}([&](auto wake) {
+  bool rebindOK = ZmBlock<bool>{}([&mx, &endpoint](auto wake) {
     mx.rxRun([&endpoint, wake = ZuMv(wake)]() mutable {
       endpoint.rebindUDP(
 	ZiIP{"127.0.0.1"}, ZquicTestPort::SockRebind, ZiIP{}, 0,
@@ -150,7 +219,7 @@ void testEndpointRebind()
       endpoint.local().port() && endpoint.local().port() != oldPort,
     "endpoint UDP rebind did not refresh local endpoint");
 
-  ZmBlock<>{}([&](auto wake) {
+  ZmBlock<>{}([&endpoint](auto wake) {
     endpoint.disconnect([wake = ZuMv(wake)]() mutable { wake(); });
   });
   mx.stop();
@@ -162,5 +231,6 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testPlans);
   ZuTestCall(testECNTOS);
+  ZuTestCall(testQueuedSendCompletion);
   ZuTestCall(testEndpointRebind);
 }

@@ -817,12 +817,6 @@ private:
       });
   }
 
-  void txDrained_() {
-    ZiAssert(app()->txInvoked(), "Zquic", (),
-      "QUIC client Tx drain outside Tx thread", return);
-    flushTx_();
-  }
-
   void flushStreamWritable_(StreamRef stream) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC client stream Tx flush outside Tx thread", return);
@@ -855,9 +849,7 @@ private:
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	}) || sent;
     }
-    bool sent = false;
-    for (unsigned i = 0; i < Base::StreamFlushBatch; ++i) {
-      bool sent_ = Base::flushCtlStreams_(
+    bool sent = Base::flushCtlStreamsBatch_(
 	addr,
 	[this](PktBuild &build) {
 	  return appendPendingAck_(PktNumSpace::AppData, build);
@@ -868,9 +860,6 @@ private:
 	  return sendShortPkt_(
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	});
-      sent |= sent_;
-      if (!sent_ || !Base::scheduledStreamCount_()) break;
-    }
     sent |= sendPMTUDProbe_(ZuMv(addr));
     if (!sent) sent = flushPendingAcks_(ZuMv(addr));
     return sent;
@@ -1615,14 +1604,6 @@ public:
       return link;
     });
   }
-  void endpointTxDrained_() {
-    if (Base::disconnecting_()) return;
-    app()->txInvoke(impl(), [link = impl()]() mutable {
-      if (!link->disconnecting_()) link->txDrained_();
-      return link;
-    });
-  }
-
 private:
   void endpointReadyRx_(Endpoint *ep) {
     if (ep != this) return;
