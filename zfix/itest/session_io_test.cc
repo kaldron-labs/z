@@ -32,67 +32,8 @@ namespace Net = Ztcp;
 #include <zlib/ZfixSeq.hh>
 #include <zlib/ZfixServer.hh>
 
-#include "../test/ZfixTxImageTest.hh"
-
 using namespace ZuTestUtil;
 using namespace Zfix;
-
-// Deliberate wire/session faults bypass managed publication, but still own
-// one normal frame attempt in the physical pending queue. No buffer carrier,
-// alternate transport queue or stream-flush path is introduced.
-template <typename Impl> struct Inject {
-  uint64_t injectCount = 0, injectDone = 0;
-
-  static void ack_(WireQueue::Node *node) {
-    node->posts.xchSub(1);
-    if ((unsigned(node->ended) & 2) &&
-	node->posts.cmpXch(WireFrame::Closed, 0) == 0) node->end_(1);
-  }
-
-  void recordDoneIO(ZmRef<WireQueue::Node> node, unsigned, bool) {
-    static_cast<Impl *>(this)->app()->txRun([this, node = ZuMv(node)] {
-      ++injectDone; ack_(node.ptr());
-    });
-  }
-  void recordAckIO(ZmRef<WireQueue::Node> node) {
-    static_cast<Impl *>(this)->app()->txRun([held = ZuMv(node)] {
-	auto node = held.ptr();
-      ack_(node);
-    });
-  }
-
-  bool inject_(ZmRef<WireBuf> buf) {
-    auto link = static_cast<Impl *>(this);
-#ifdef ZFIX_TEST_TLS
-    return link->sendRecord_(ZuMv(buf));
-#else
-    ZmRef<WireQueue::Node> node = new WireQueue::Node{TxBody::Ref{}, TxContext{},
-      TxImage{ZuMv(buf)}, ++injectCount, 0, 1, false, this,
-      [](WireFrame *frame, ZiTxContext &io) {
-	WireTx<Inject, WireMode::Pending>::startIO_(
-	  ZmRef<WireQueue::Node>{static_cast<WireQueue::Node *>(frame)}, io);
-	return true;
-      }, [](WireFrame *frame) {
-	if (frame->post()) static_cast<Inject *>(frame->owner)->recordDoneIO(
-	  ZmRef<WireQueue::Node>{static_cast<WireQueue::Node *>(frame)}, 1, false);
-      }, [](WireFrame *frame) {
-	static_cast<Inject *>(frame->owner)->recordAckIO(
-	  ZmRef<WireQueue::Node>{static_cast<WireQueue::Node *>(frame)});
-      }};
-    return link->sendFrame_(ZuMv(node));
-#endif
-  }
-};
-
-struct Auth {
-  ZuBSpan raw;
-  ZuCSpan user, password, privateText;
-};
-ZfStruct(, (Auth, FIX), (raw, (FIX::ID<95>, FIX::Binary<96>, FIX::Opt), Bytes),
-  (user, (FIX::ID<553>, FIX::Opt), String),
-  (password, (FIX::ID<554>, FIX::Opt), String),
-  (privateText, (FIX::ID<10001>, FIX::Opt), String));
-ZfStructImpl(Auth); ZfStructImpl(Auth, FIX);
 
 struct Progress {
   uint64_t	epoch = 0;
@@ -311,14 +252,14 @@ template <typename Impl> struct Peer {
   auto state() { return self()->test; }
 
   enum { SignMsg = 1 };
-  template <typename S, typename Message>
-  void signMsg(S &out, const TxBody *, TxContext, const Message &message) const {
+  template <typename S>
+  void signMsg(S &out, const TxBody *, TxContext, ZuCSpan message) const {
     auto link = static_cast<const Impl *>(this);
     auto s = link->test;
     if (!s->signing) return;
     if (!link->app()->txInvoked()) { s->fail(); out.fail(Fmt::ErrorCode::Output); return; }
     Ztls::HMAC<> mac;
-    mac.start(ZuBSpan{"session fixture"}); message.each([&mac](ZuCSpan span) { mac.update(ZuBSpan{span}); });
+    mac.start(ZuBSpan{"session fixture"}); mac.update(ZuBSpan{message});
     uint8_t digest[Ztls::HMAC<>::Size]; mac.finish(digest);
     Fmt::saveBinary<ZfField(Order, signature)>(out, digest);
     if (client) ++s->signedClient; else ++s->signedServer;
@@ -381,13 +322,13 @@ template <typename Impl> struct Peer {
     if (!self()->app()->txInvoked()) state()->fail();
     if (client && state()->scenario == Scenario::PrepareRefused) return {};
     if (!state()->trace && !state()->signing) return body;
-    Auth auth{.raw = SignedPayload};
-    if (state()->trace) {
-      auth.user = "trace-user"; auth.password = "trace-secret";
-      auth.privateText = "auth-private";
-    }
+    SessionString auth;
+    auth << body->body() << "95=" << ZuBoxed(SignedPayload.length()) << '\1' <<
+      "96=" << SignedPayload << '\1';
+    if (state()->trace)
+      auth << "553=trace-user\1" "554=trace-secret\1" "10001=auth-private\1";
     Fmt::Error error;
-    auto out = TxBody::extend<MT<Session::Logon, "A">>(ZuMv(body), auth, error);
+    auto out = TxBody::restoreControl("A", auth, body->id(), error);
     if (error) state()->fail(); return out;
   }
 
@@ -491,7 +432,7 @@ template <typename Impl> struct Peer {
   }
 
   void fixControlTx(TxBody::Ref body, TxContext) {
-    if (body->msgType() == "0" && body->empty())
+    if (body->msgType() == "0" && !body->body().length())
       if (state()->periodic.xchAdd(1) == 1) state()->timerDone.post();
   }
 
@@ -713,10 +654,12 @@ struct CliHub : public Zfix::Client<CliHub, Dictionary, Network> {
   explicit CliHub(TestState *s, HubLimits limits = {}) : Base{limits}, state{s} { }
 
   unsigned reconnFreq() const { return state->reconn; }
+
+  bool init(Network::ClientParams params);
 };
 
 struct CliHub::Link : public ZmNHeap<Link>, public Zfix::CliLink<CliHub, Link, Dictionary,
-  Network>, public Peer<Link>, public Inject<Link> {
+  Network>, public Peer<Link> {
 friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete;
@@ -772,6 +715,20 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(Link *);
   using Peer<Link>::fixStopTx;
 };
 
+bool CliHub::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Client<CliHub, Dictionary, Network>::init(ZuMv(params));
+}
+
 struct SrvHub : public Zfix::Server<SrvHub, Dictionary, Network> {
   using Base = Zfix::Server<SrvHub, Dictionary, Network>;
   using Link = ServerLink;
@@ -796,6 +753,8 @@ struct SrvHub : public Zfix::Server<SrvHub, Dictionary, Network> {
     if (!state->expectListenFailure) state->fail();
     state->listening.post();
   }
+
+  bool init(Network::ServerParams params);
 };
 
 struct ServerLink : public ZmNHeap<ServerLink>,
@@ -836,6 +795,20 @@ friend inline ZuStringT<"Zfix.session_io_test.Link"> ZmNHeapID(ServerLink *);
   using Peer<ServerLink>::fixStopTx;
 };
 
+bool SrvHub::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Server<SrvHub, Dictionary, Network>::init(ZuMv(params));
+}
+
 void SrvHub::final() {
   auto clear = [this](TestState *s) {
     if (s->serverLink && s->serverLink->app() == this) s->serverLink = nullptr;
@@ -851,7 +824,7 @@ ZiConnection *SrvHub::accepted(const ZiCxnInfo &ci) {
 static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
   unsigned scenario = Scenario::Normal, bool forceBusy = false, bool keepContext = false,
   bool reverse = false, unsigned workCase = 0, bool signing = false) {
-  ZuTestScopeRT(loopback);
+  ZuTestScope(loopback);
   TestState state; state.mode = mode; state.asyncAdmission = async; state.heartbeat = heartbeat;
     state.scenario = scenario; state.forceBusy = forceBusy;
   state.asymmetric = true; state.signing = signing;
@@ -861,9 +834,7 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
   state.keepContext = keepContext; state.reverse = reverse; state.workCase = workCase;
   if (workCase) sl.link.work.count = sl.work.count = 1;
   SrvHub server{&state, sl}; CliHub client{&state, cl};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); })
       .thread(2, [](auto &t) { t.isolated(1); })
@@ -871,19 +842,19 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
       .thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Net::ServerParams sp{&mx, "3", "4"}; Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   const char *cert = getenv("ZFIX_TEST_CERT"), *key = getenv("ZFIX_TEST_KEY");
-  if (!cert || !key) { ZuCheckRT(cert && key); mx.stop(); return; }
+  if (!cert || !key) { ZuCheck(cert && key); mx.stop(); return; }
   sp.certPath(cert).keyPath(key); cp.caPath(cert);
 #endif
-  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
+  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<CliHub::Link> link;
   if (ss && cs) {
     server.listen();
-    bool listening = state.listening.timedwait(Zm::now(5)) == 0; ZuCheckRT(listening && state.port);
+    bool listening = state.listening.timedwait(Zm::now(5)) == 0; ZuCheck(listening && state.port);
     if (listening && state.port) {
       link = new CliHub::Link{&client};
 #ifdef ZFIX_TEST_TLS
@@ -892,22 +863,13 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
       link->connect("127.0.0.1", state.port);
 #endif
       if (workCase >= 2) {
-	ZuCheckRT(state.workReady.timedwait(Zm::now(5)) == 0);
-	ZuCheckRT(state.workSent.timedwait(Zm::now(5)) == 0);
+	ZuCheck(state.workReady.timedwait(Zm::now(5)) == 0);
+	ZuCheck(state.workSent.timedwait(Zm::now(5)) == 0);
 	if (workCase == 2) {
-	  link->disconnect(); ZuCheckRT(state.workStop.timedwait(Zm::now(5)) == 0);
-	  // workStop observes the server's stop request. Its App fences do not
-	  // order client physical I/O retirement or the final stopped observer.
-	  // Wait for the existing counter-publication event before checking that
-	  // exactly the client stopped while the server still holds its work.
-	  ZuCheckRT(state.stoppedOne.timedwait(Zm::now(5)) == 0);
-	  bool clientStopped = ZmBlock<bool>{}([&client, link = link.ptr()](auto wake) {
-	    client.rxRun([link, wake = ZuMv(wake)]() mutable { wake(link->stopReports == 1); });
-	  });
-	  ZuCheckRT(clientStopped);
+	  link->disconnect(); ZuCheck(state.workStop.timedwait(Zm::now(5)) == 0);
 	} else {
-	  ZuCheckRT(bool(state.workDrain)); if (state.workDrain) state.workDrain();
-	  ZuCheckRT(state.workStarted.timedwait(Zm::now(5)) == 0);
+	  ZuCheck(bool(state.workDrain)); if (state.workDrain) state.workDrain();
+	  ZuCheck(state.workStarted.timedwait(Zm::now(5)) == 0);
 	}
 	ZmBlock<>{}([&server](auto wake) {
 	  server.txRun([&server, wake = ZuMv(wake)]() mutable {
@@ -919,7 +881,7 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
 	  });
 	});
 	if (workCase == 2) {
-	  ZuCheckRT(state.closed.load_() == 1 && state.drained.trywait() != 0);
+	  ZuCheck(state.closed.load_() == 1 && state.drained.trywait() != 0);
 	} else {
 	  bool drained = true;
 	  ZmBlock<>{}([&server, &state, &drained](auto wake) {
@@ -927,41 +889,41 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
 	      if (state.workIsDrained) drained = state.workIsDrained(); wake();
 	    });
 	  });
-	  ZuCheckRT(!drained && state.workDrained.trywait() != 0);
+	  ZuCheck(!drained && state.workDrained.trywait() != 0);
 	}
-	ZuCheckRT(bool(state.workRelease));
+	ZuCheck(bool(state.workRelease));
 	if (state.workRelease) { auto release = ZuMv(state.workRelease); release(); }
 	if (workCase == 3) {
-	  ZuCheckRT(state.workDrained.timedwait(Zm::now(5)) == 0);
+	  ZuCheck(state.workDrained.timedwait(Zm::now(5)) == 0);
 	  link->logout();
 	}
       } else
       switch (scenario) {
 	case Scenario::PendingClose:
 	case Scenario::LoadClose:
-	  ZuCheckRT(state.pending.timedwait(Zm::now(5)) == 0); link->disconnect(); break;
+	  ZuCheck(state.pending.timedwait(Zm::now(5)) == 0); link->disconnect(); break;
 	case Scenario::PrepareRefused:
 	case Scenario::Refused:
-	  ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0); break;
+	  ZuCheck(state.done.timedwait(Zm::now(5)) == 0); break;
 	default:
-	  ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0);
-	  if (heartbeat == 1) ZuCheckRT(state.timerDone.timedwait(Zm::now(5)) == 0);
-	  if (async) ZuCheckRT(state.blocked.load_() > 0);
-	  if (keepContext) ZuCheckRT(state.contextReady.timedwait(Zm::now(5)) == 0);
+	  ZuCheck(state.done.timedwait(Zm::now(5)) == 0);
+	  if (heartbeat == 1) ZuCheck(state.timerDone.timedwait(Zm::now(5)) == 0);
+	  if (async) ZuCheck(state.blocked.load_() > 0);
+	  if (keepContext) ZuCheck(state.contextReady.timedwait(Zm::now(5)) == 0);
 	  link->logout(); break;
       }
-      ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
       if (workCase >= 2) {
-	ZuCheckRT(state.ready.load_() == 2 && state.received.load_() == 1
+	ZuCheck(state.ready.load_() == 2 && state.received.load_() == 1
 	  && state.businessSent.load_() == 1);
       } else if (scenario == Scenario::Normal) {
-	ZuCheckRT(state.ready.load_() == 2 && state.received.load_() == 2);
-	ZuCheckRT(state.admission.load_() == 2 && state.businessSent.load_() == 2);
-	if (forceBusy) ZuCheckRT(state.busy.load_() > 0);
+	ZuCheck(state.ready.load_() == 2 && state.received.load_() == 2);
+	ZuCheck(state.admission.load_() == 2 && state.businessSent.load_() == 2);
+	if (forceBusy) ZuCheck(state.busy.load_() > 0);
       } else {
-	ZuCheckRT(!state.received.load_() && !state.businessSent.load_() && state.failures.load_());
+	ZuCheck(!state.received.load_() && !state.businessSent.load_() && state.failures.load_());
 	if (scenario == Scenario::PendingClose || scenario == Scenario::LoadClose)
-	  ZuCheckRT(state.cancelled.load_() == 1);
+	  ZuCheck(state.cancelled.load_() == 1);
       }
     }
   }
@@ -972,45 +934,45 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
 	work = server.fixWorkRx_().state_(); wake();
       });
     });
-    ZuCheckRT(!work.count && !work.bytes && work.peakCount == 2 && work.refused == 4);
+    ZuCheck(!work.count && !work.bytes && work.peakCount == 2 && work.refused == 4);
   }
-  if (cs) { bool stopped = client.stop(); ZuCheckRT(stopped); }
-  if (ss) { bool stopped = server.stop(); ZuCheckRT(stopped); }
+  if (cs) { bool stopped = client.stop(); ZuCheck(stopped); }
+  if (ss) { bool stopped = server.stop(); ZuCheck(stopped); }
   client.final(); server.final(); mx.stop(); link = nullptr;
   if (keepContext) {
     auto copy = state.retained;
     state.retained = {};
-    ZuCheckRT(bool(copy) && copy.context().session && copy.context().epoch == 1);
-    ZuCheckRT(copy.context().connection == 1 && copy.context().seqNo >= 2
+    ZuCheck(bool(copy) && copy.context().session && copy.context().epoch == 1);
+    ZuCheck(copy.context().connection == 1 && copy.context().seqNo >= 2
       && !copy.context().replay);
-    ZuCheckRT(copy.sender() == "CLIENT" && copy.target() == "SERVER");
-    ZuCheckRT(state.retainedID == "req" && copy.frame().wire.length());
+    ZuCheck(copy.sender() == "CLIENT" && copy.target() == "SERVER");
+    ZuCheck(state.retainedID == "req" && copy.frame().wire.length());
     auto parsed = Fmt::frame(copy.frame().wire);
-    ZuCheckRT(parsed.state == Fmt::FrameState::Complete && parsed.view.msgType == "D");
+    ZuCheck(parsed.state == Fmt::FrameState::Complete && parsed.view.msgType == "D");
     if (signing) {
-      ZuCheckRT(copy.frame().wire.data() == state.retainedWire);
-      ZuCheckRT(state.retainedData == ZuBSpan{SignedPayload} &&
+      ZuCheck(copy.frame().wire.data() == state.retainedWire);
+      ZuCheck(state.retainedData == ZuBSpan{SignedPayload} &&
 	verifySignature<Order>(copy.frame(), state.retainedSignature));
       Fmt::FieldPos data, signature;
-      ZuCheckRT(!Fmt::inspect<Order>(copy.frame().content, 96, data));
-      ZuCheckRT(!Fmt::inspect<Order>(copy.frame().content, 89, signature));
-      ZuCheckRT(state.retainedData.data() == reinterpret_cast<const uint8_t *>(
+      ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 96, data));
+      ZuCheck(!Fmt::inspect<Order>(copy.frame().content, 89, signature));
+      ZuCheck(state.retainedData.data() == reinterpret_cast<const uint8_t *>(
 	copy.frame().content.data() + data.offset));
-      ZuCheckRT(state.retainedSignature.data() == reinterpret_cast<const uint8_t *>(
+      ZuCheck(state.retainedSignature.data() == reinterpret_cast<const uint8_t *>(
 	copy.frame().content.data() + signature.offset));
     }
   }
   if (signing) {
-    ZuCheckRT(state.signedClient.load_() && state.signedServer.load_());
-    ZuCheckRT(state.verifiedData.load_() == 2 && state.verifiedAdmin.load_() >= 2);
+    ZuCheck(state.signedClient.load_() && state.signedServer.load_());
+    ZuCheck(state.verifiedData.load_() == 2 && state.verifiedAdmin.load_() >= 2);
   }
-  ZuCheckRT(!state.errors.load_() && state.closed.load_() == 2);
-  ZuCheckRT(state.snapshots.load_() == 4);
+  ZuCheck(!state.errors.load_() && state.closed.load_() == 2);
+  ZuCheck(state.snapshots.load_() == 4);
 }
 // Independent application-routed logical links share the same hub owners.
 // Closing one must not disturb traffic or lifecycle on the other links.
 static void routeMatrix(unsigned mode) {
-  ZuTestScopeRT(routeMatrix);
+  ZuTestScope(routeMatrix);
   TestState first, second, third;
   Items<TestState *> states; states << &first << &second << &third;
   unsigned lane = 0;
@@ -1020,15 +982,13 @@ static void routeMatrix(unsigned mode) {
   SrvHub server{&first}, other{&third};
   server.routes << &first << &second; other.routes << &third;
   CliHub client{&first};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   auto srvParams = [&mx] {
     Net::ServerParams p{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
@@ -1044,12 +1004,12 @@ static void routeMatrix(unsigned mode) {
     return p;
   };
   bool si = server.init(srvParams()), oi = other.init(srvParams());
-  bool ci = client.init(cliParams()); ZuCheckRT(si && oi && ci);
+  bool ci = client.init(cliParams()); ZuCheck(si && oi && ci);
   bool ss = si && server.start(), os = oi && other.start();
-  bool cs = ci && client.start(); ZuCheckRT(ss && os && cs);
+  bool cs = ci && client.start(); ZuCheck(ss && os && cs);
   server.listen(); other.listen();
-  ZuCheckRT(first.listening.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(third.listening.timedwait(Zm::now(5)) == 0);
+  ZuCheck(first.listening.timedwait(Zm::now(5)) == 0);
+  ZuCheck(third.listening.timedwait(Zm::now(5)) == 0);
   Items<ZmRef<CliHub::Link>> links;
   auto connect = [&links](CliHub *hub, TestState *s, unsigned port) {
     ZmRef<CliHub::Link> link = new CliHub::Link{hub, s}; links << link;
@@ -1060,37 +1020,37 @@ static void routeMatrix(unsigned mode) {
 #endif
   };
   connect(&client, &first, first.port);
-  ZuCheckRT(first.done.timedwait(Zm::now(5)) == 0);
+  ZuCheck(first.done.timedwait(Zm::now(5)) == 0);
   connect(&client, &second, first.port);
-  ZuCheckRT(second.done.timedwait(Zm::now(5)) == 0);
+  ZuCheck(second.done.timedwait(Zm::now(5)) == 0);
   connect(&client, &third, third.port);
-  ZuCheckRT(third.done.timedwait(Zm::now(5)) == 0);
-  links[0]->logout(); ZuCheckRT(first.drained.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(!second.closed.load_() && !third.closed.load_());
+  ZuCheck(third.done.timedwait(Zm::now(5)) == 0);
+  links[0]->logout(); ZuCheck(first.drained.timedwait(Zm::now(5)) == 0);
+  ZuCheck(!second.closed.load_() && !third.closed.load_());
   unsigned begin = 1, end = links.length();
   for (unsigned i = begin; i < end; ++i) {
     auto *s = states[i]; Fmt::Error error;
     auto body = TxBody::encode<OrderMsg>(Order{"req", s->lane}, 301 + i, error);
-    ZuCheckRT(body && !error);
+    ZuCheck(body && !error);
     client.rxRun([link = links[i], body = ZuMv(body), s] {
       if (!link->submit(body)) ++s->errors;
     });
   }
   for (unsigned i = begin; i < end; ++i) {
-    auto *s = states[i]; ZuCheckRT(s->done.timedwait(Zm::now(5)) == 0);
-    links[i]->logout(); ZuCheckRT(s->drained.timedwait(Zm::now(5)) == 0);
+    auto *s = states[i]; ZuCheck(s->done.timedwait(Zm::now(5)) == 0);
+    links[i]->logout(); ZuCheck(s->drained.timedwait(Zm::now(5)) == 0);
   }
   bool cstop = client.stop(), sstop = server.stop(), ostop = other.stop();
-  ZuCheckRT(cstop && sstop && ostop);
+  ZuCheck(cstop && sstop && ostop);
   client.final(); server.final(); other.final(); mx.stop(); links.length(0);
   unsigned n = states.length();
   for (unsigned i = 0; i < n; ++i) {
     auto *s = states[i]; unsigned traffic = !i ? 2 : 4;
-    ZuCheckRT(!s->errors.load_() && s->closed.load_() == 2 && s->snapshots.load_() == 4,
+    ZuCheck(!s->errors.load_() && s->closed.load_() == 2 && s->snapshots.load_() == 4,
       log_("lane=", s->lane, " errors=", s->errors.load_(), " closed=", s->closed.load_(),
 	" snapshots=", s->snapshots.load_()));
-    ZuCheckRT(s->ready.load_() == 2 && s->admission.load_() == 2);
-    ZuCheckRT(s->received.load_() == traffic && s->businessSent.load_() == traffic,
+    ZuCheck(s->ready.load_() == 2 && s->admission.load_() == 2);
+    ZuCheck(s->received.load_() == traffic && s->businessSent.load_() == traffic,
       log_("lane=", s->lane, " received=", s->received.load_(), " sent=",
 	s->businessSent.load_(), " expected=", traffic));
   }
@@ -1114,57 +1074,53 @@ static Net::ClientParams cliParams(ZiMultiplex *mx, const char *rx = "3",
 // A live multiplexer must outlast hub stop/restart. Rebinding the exact old
 // ephemeral address proves the old listening socket was actually removed.
 static void listenerCleanup() {
-  ZuTestScopeRT(listenerCleanup);
+  ZuTestScope(listenerCleanup);
   TestState state, retry; retry.expectListenFailure = true;
   SrvHub server{&state}, rival{&retry};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
-  bool si = server.init(srvParams(&mx)); ZuCheckRT(si);
-  bool ss = si && server.start(); ZuCheckRT(ss);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
+  bool si = server.init(srvParams(&mx)); ZuCheck(si);
+  bool ss = si && server.start(); ZuCheck(ss);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   retry.listenPort = state.port;
-  bool ri = rival.init(srvParams(&mx)), rs = ri && rival.start(); ZuCheckRT(ri && rs);
-  rival.listen(); ZuCheckRT(retry.listening.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(retry.listenFailures.load_() == 1 && !retry.port);
-  bool rstop = rival.stop(), sstop = server.stop(); ZuCheckRT(rstop && sstop);
-  rs = rival.start(); ZuCheckRT(rs);
-  rival.listen(); ZuCheckRT(retry.listening.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(retry.listenFailures.load_() == 1 && retry.port == retry.listenPort);
-  rstop = rival.stop(); ZuCheckRT(rstop);
-  ss = server.start(); ZuCheckRT(ss);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
-  sstop = server.stop(); ZuCheckRT(sstop);
-  rs = rival.start(); ZuCheckRT(rs);
-  rival.listen(); ZuCheckRT(retry.listening.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(retry.listenFailures.load_() == 1 && retry.port == retry.listenPort);
-  rstop = rival.stop(); ZuCheckRT(rstop);
+  bool ri = rival.init(srvParams(&mx)), rs = ri && rival.start(); ZuCheck(ri && rs);
+  rival.listen(); ZuCheck(retry.listening.timedwait(Zm::now(5)) == 0);
+  ZuCheck(retry.listenFailures.load_() == 1 && !retry.port);
+  bool rstop = rival.stop(), sstop = server.stop(); ZuCheck(rstop && sstop);
+  rs = rival.start(); ZuCheck(rs);
+  rival.listen(); ZuCheck(retry.listening.timedwait(Zm::now(5)) == 0);
+  ZuCheck(retry.listenFailures.load_() == 1 && retry.port == retry.listenPort);
+  rstop = rival.stop(); ZuCheck(rstop);
+  ss = server.start(); ZuCheck(ss);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
+  sstop = server.stop(); ZuCheck(sstop);
+  rs = rival.start(); ZuCheck(rs);
+  rival.listen(); ZuCheck(retry.listening.timedwait(Zm::now(5)) == 0);
+  ZuCheck(retry.listenFailures.load_() == 1 && retry.port == retry.listenPort);
+  rstop = rival.stop(); ZuCheck(rstop);
   state.listenPort = retry.listenPort;
   // Do not wait for bind completion before requesting stop. Each exact-port
   // rebind after stop proves a late success cannot leave its listener alive.
   for (unsigned i = 0; i < 32; ++i) {
-    ss = server.start(); ZuCheckRT(ss); server.listen();
-    sstop = server.stop(); ZuCheckRT(sstop);
-    rs = rival.start(); ZuCheckRT(rs); rival.listen();
-    ZuCheckRT(retry.listening.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(retry.listenFailures.load_() == 1);
-    rstop = rival.stop(); ZuCheckRT(rstop);
+    ss = server.start(); ZuCheck(ss); server.listen();
+    sstop = server.stop(); ZuCheck(sstop);
+    rs = rival.start(); ZuCheck(rs); rival.listen();
+    ZuCheck(retry.listening.timedwait(Zm::now(5)) == 0);
+    ZuCheck(retry.listenFailures.load_() == 1);
+    rstop = rival.stop(); ZuCheck(rstop);
   }
   rival.final(); server.final(); mx.stop();
-  ZuCheckRT(!state.errors.load_() && !retry.errors.load_());
+  ZuCheck(!state.errors.load_() && !retry.errors.load_());
 }
 static void startupCleanup(unsigned mode) {
-  ZuTestScopeRT(startupCleanup);
+  ZuTestScope(startupCleanup);
   TestState state; state.mode = mode;
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(4)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); });
@@ -1178,12 +1134,12 @@ static void startupCleanup(unsigned mode) {
       client.ZmEngine<CliHub>::state() == ZmEngineState::Stopped;
     client.final(); server.final(); return !si && !ci && stopped;
   };
-  ZuCheckRT(failInit(srvParams(nullptr), cliParams(nullptr)));
-  ZuCheckRT(failInit(srvParams(&mx), cliParams(&mx)));
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
-  ZuCheckRT(failInit(srvParams(&mx, "3", "3"), cliParams(&mx, "3", "3")));
-  ZuCheckRT(failInit(srvParams(&mx, "9", "4"), cliParams(&mx, "9", "4")));
-  ZuCheckRT(errors.load_() == 8);
+  ZuCheck(failInit(srvParams(nullptr), cliParams(nullptr)));
+  ZuCheck(failInit(srvParams(&mx), cliParams(&mx)));
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
+  ZuCheck(failInit(srvParams(&mx, "3", "3"), cliParams(&mx, "3", "3")));
+  ZuCheck(failInit(srvParams(&mx, "9", "4"), cliParams(&mx, "9", "4")));
+  ZuCheck(errors.load_() == 8);
 #ifdef ZFIX_TEST_TLS
   // Fail after CA/certificate allocation, then explicitly finalize. No rollback
   // or implicit reinitialization policy is imposed by the FIX endpoint wrapper.
@@ -1191,25 +1147,25 @@ static void startupCleanup(unsigned mode) {
     SessionString missing; missing << getenv("ZFIX_TEST_CERT") << ".missing";
     auto sp = srvParams(&mx); sp.keyPath(missing);
     auto cp = cliParams(&mx); cp.caPath(missing);
-    ZuCheckRT(failInit(ZuMv(sp), ZuMv(cp)));
+    ZuCheck(failInit(ZuMv(sp), ZuMv(cp)));
   }
 #endif
-  bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx)); ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
+  bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx)); ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
 #ifdef ZFIX_TEST_TLS
   link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
 #else
   link->connect("127.0.0.1", state.port);
 #endif
-  ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0); link->logout();
-  ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  ZuCheck(state.done.timedwait(Zm::now(5)) == 0); link->logout();
+  ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop(); link = nullptr;
-  ZuCheckRT(!state.errors.load_() && state.closed.load_() == 2 && state.snapshots.load_() == 4);
-  ZuCheckRT(state.ready.load_() == 2 && state.admission.load_() == 2);
-  ZuCheckRT(state.received.load_() == 2 && state.businessSent.load_() == 2);
+  ZuCheck(!state.errors.load_() && state.closed.load_() == 2 && state.snapshots.load_() == 4);
+  ZuCheck(state.ready.load_() == 2 && state.admission.load_() == 2);
+  ZuCheck(state.received.load_() == 2 && state.businessSent.load_() == 2);
 }
 
 // A raw peer accepts TCP and deliberately never answers the TLS handshake.
@@ -1231,43 +1187,41 @@ private:
 };
 
 static void setupCleanup(unsigned mode) {
-  ZuTestScopeRT(setupCleanup);
+  ZuTestScope(setupCleanup);
   TestState state; state.mode = mode; state.setup = true;
   SrvHub server{&state}; CliHub client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   Net::ServerParams sp{&mx, "3", "4"}; Net::ClientParams cp{&mx, "3", "4"};
 #ifdef ZFIX_TEST_TLS
   sp.certPath(getenv("ZFIX_TEST_CERT")).keyPath(getenv("ZFIX_TEST_KEY"));
   cp.caPath(getenv("ZFIX_TEST_CERT"));
 #endif
-  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
+  bool si = server.init(ZuMv(sp)), ci = client.init(ZuMv(cp)); ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   // A bound UDP socket with no responder makes DNS wait deterministically.
   auto dns = ::socket(AF_INET, SOCK_DGRAM, 0);
   sockaddr_in addr{}; addr.sin_family = AF_INET;
   addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
   bool bound = !Zi::nullSocket(dns) && !::bind(dns, reinterpret_cast<sockaddr *>(&addr),
     sizeof(addr));
-  ZuCheckRT(bound);
+  ZuCheck(bound);
   socklen_t size = sizeof(addr);
-  ZuCheckRT(!::getsockname(dns, reinterpret_cast<sockaddr *>(&addr), &size));
+  ZuCheck(!::getsockname(dns, reinterpret_cast<sockaddr *>(&addr), &size));
   Zi::Name servers; servers << "127.0.0.1:" << ZuBoxed(ntohs(addr.sin_port));
   ZiResolver::init(ZiResolverParams{}.ipv6(false).timeoutMS(200).tries(1).servers(servers));
   auto refused = ::socket(AF_INET, SOCK_STREAM, 0);
   addr.sin_port = 0;
-  ZuCheckRT(!Zi::nullSocket(refused) && !::bind(refused, reinterpret_cast<sockaddr *>(&addr),
+  ZuCheck(!Zi::nullSocket(refused) && !::bind(refused, reinterpret_cast<sockaddr *>(&addr),
     sizeof(addr)));
   size = sizeof(addr);
-  ZuCheckRT(!::getsockname(refused, reinterpret_cast<sockaddr *>(&addr), &size));
+  ZuCheck(!::getsockname(refused, reinterpret_cast<sockaddr *>(&addr), &size));
   unsigned refusedPort = ntohs(addr.sin_port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
   Progress progress;
@@ -1291,17 +1245,17 @@ static void setupCleanup(unsigned mode) {
       });
     });
   };
-  ZuCheckRT(snapshot());
+  ZuCheck(snapshot());
   progress.rx.received = progress.rx.processed = 19;
   progress.tx.loaded = progress.tx.sent = progress.tx.acknowledged = 27;
-  ZuCheckRT(restore());
+  ZuCheck(restore());
   // Stop during numeric/DNS/socket setup. Submitted operations must finish
   // normally before the endpoint reports stopped; no setup deadline cancels them.
   for (unsigned i = 0; i < 6; ++i) {
     ZmSemaphore blocked, release, cancelled;
     if (i == 5) {
       mx.rxRun([&blocked, &release] { blocked.post(); release.wait(); });
-      ZuCheckRT(blocked.timedwait(Zm::now(5)) == 0);
+      ZuCheck(blocked.timedwait(Zm::now(5)) == 0);
     }
     client.rxRun([link, &state, i, refusedPort] {
       state.socketGate = i == 5;
@@ -1310,17 +1264,17 @@ static void setupCleanup(unsigned mode) {
       if (i < 3) link->disconnect_(false);
     });
     if (i == 5) {
-      ZuCheckRT(state.socketSubmitted.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.socketSubmitted.timedwait(Zm::now(5)) == 0);
       client.rxRun([link, &cancelled] { link->disconnect_(false); cancelled.post(); });
-      ZuCheckRT(cancelled.timedwait(Zm::now(5)) == 0);
-      ZuCheckRT(state.stoppedOne.trywait() != 0);
+      ZuCheck(cancelled.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.stoppedOne.trywait() != 0);
       release.post();
     }
-    ZuCheckRT(state.stoppedOne.timedwait(Zm::now(3)) == 0);
-    ZuCheckRT(snapshot());
-    ZuCheckRT(progress.epoch == 1 && progress.rx.received == 19 && progress.rx.processed == 19);
-    ZuCheckRT(progress.tx.loaded == 27 && progress.tx.sent == 27 && progress.tx.acknowledged == 27);
-    ZuCheckRT(!state.ready.load_() && !state.admission.load_() && !link->lastLoad);
+    ZuCheck(state.stoppedOne.timedwait(Zm::now(3)) == 0);
+    ZuCheck(snapshot());
+    ZuCheck(progress.epoch == 1 && progress.rx.received == 19 && progress.rx.processed == 19);
+    ZuCheck(progress.tx.loaded == 27 && progress.tx.sent == 27 && progress.tx.acknowledged == 27);
+    ZuCheck(!state.ready.load_() && !state.admission.load_() && !link->lastLoad);
   }
 #ifdef ZFIX_TEST_TLS
   for (unsigned i = 0; i < 2; ++i) {
@@ -1331,23 +1285,23 @@ static void setupCleanup(unsigned mode) {
     }, [&listening](bool) { listening.post(); },
       [&mx, &sink, &closed, &accepted](const ZiCxnInfo &info) -> ZiConnection * {
 	sink = new SetupSink{&mx, info, &closed}; accepted.post(); return sink;
-      }, ZiIP{"127.0.0.1"}, 0, 1);
-    ZuCheckRT(listening.timedwait(Zm::now(5)) == 0 && port);
+      }, ZiIP{"127.0.0.1"}, 0, 1, server.rxAllocator());
+    ZuCheck(listening.timedwait(Zm::now(5)) == 0 && port);
     link->connect("localhost", port, ZiIP{"127.0.0.1"});
-    ZuCheckRT(accepted.timedwait(Zm::now(5)) == 0 && sink);
-    ZuCheckRT(state.socketInstalled.timedwait(Zm::now(5)) == 0);
+    ZuCheck(accepted.timedwait(Zm::now(5)) == 0 && sink);
+    ZuCheck(state.socketInstalled.timedwait(Zm::now(5)) == 0);
     if (i) link->disconnect();
     else if (sink) sink->close();
-    ZuCheckRT(state.stoppedOne.timedwait(Zm::now(3)) == 0);
-    ZuCheckRT(snapshot());
-    ZuCheckRT(progress.rx.received == 19 && progress.tx.loaded == 27 && !state.ready.load_()
+    ZuCheck(state.stoppedOne.timedwait(Zm::now(3)) == 0);
+    ZuCheck(snapshot());
+    ZuCheck(progress.rx.received == 19 && progress.tx.loaded == 27 && !state.ready.load_()
       && !link->lastLoad);
     if (sink) sink->close();
-    ZuCheckRT(closed.timedwait(Zm::now(5)) == 0); sink = nullptr;
+    ZuCheck(closed.timedwait(Zm::now(5)) == 0); sink = nullptr;
     mx.stopListening(ZiIP{"127.0.0.1"}, port);
   }
 #endif
-  ZuCheckRT(state.setupFailures.load_() == 4);
+  ZuCheck(state.setupFailures.load_() == 4);
   // A later prepared owner completes normal Session::Logon/business/logout.
   progress.rx.received = progress.rx.processed = 1;
   progress.tx.loaded = progress.tx.sent = progress.tx.acknowledged = 1;
@@ -1355,35 +1309,35 @@ static void setupCleanup(unsigned mode) {
   // TLS socket association now allocates its FIX connection before auth.
   // Restoring this used owner must fail; cold restore uses a fresh owner after
   // the preceding setup/owner stop obligations have all completed.
-  ZuCheckRT(!restore());
+  ZuCheck(!restore());
   link = nullptr; link = new CliHub::Link{&client};
 #endif
-  ZuCheckRT(restore());
+  ZuCheck(restore());
   client.rxRun([link, &state, refusedPort] {
     state.socketGate = false; state.reconn = 1;
     link->connect("localhost", refusedPort);
   });
-  ZuCheckRT(state.stoppedOne.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.stoppedOne.timedwait(Zm::now(5)) == 0);
   // The second failure is an automatic native attempt on the same owner.
-  ZuCheckRT(state.stoppedOne.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(state.setupFailures.load_() == 6);
-  ZuCheckRT(!state.ready.load_() && !link->lastLoad);
-  bool stopped = server.stop(); ZuCheckRT(stopped);
+  ZuCheck(state.stoppedOne.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.setupFailures.load_() == 6);
+  ZuCheck(!state.ready.load_() && !link->lastLoad);
+  bool stopped = server.stop(); ZuCheck(stopped);
   Zi::closeSocket(refused);
   state.listenPort = refusedPort;
-  bool restarted = server.start(); ZuCheckRT(restarted);
+  bool restarted = server.start(); ZuCheck(restarted);
   server.listen();
-  ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port == refusedPort);
+  ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port == refusedPort);
   unsigned earlier = state.closed.load_();
   // The next automatic attempt reaches the new listener and exchanges FIX.
-  ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0); link->logout();
-  ZuCheckRT(state.stoppedOne.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(state.stoppedOne.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(state.closed.load_() == earlier + 2 && state.ready.load_() == 2
+  ZuCheck(state.done.timedwait(Zm::now(5)) == 0); link->logout();
+  ZuCheck(state.stoppedOne.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.stoppedOne.timedwait(Zm::now(5)) == 0);
+  ZuCheck(state.closed.load_() == earlier + 2 && state.ready.load_() == 2
     && state.received.load_() == 2);
-  ZuCheckRT(!state.errors.load_());
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
-  client.final(); server.final(); ZiResolver::stopSync(); ZiResolver::final();
+  ZuCheck(!state.errors.load_());
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
+  client.final(); server.final(); ZiResolver::stop(); ZiResolver::final();
   Zi::closeSocket(dns); mx.stop(); link = nullptr;
 }
 struct AdminGate {
@@ -1395,32 +1349,30 @@ struct AdminGate {
 // Public history completion admission is independent of application history
 // retention. Repeated stale responses still need bounded owner handoffs.
 static void reloadBudget(bool local) {
-  ZuTestScopeRT(reloadBudget);
+  ZuTestScope(reloadBudget);
   TestState state; state.heartbeat = 0; state.scenario = Scenario::PostedOverflow;
   HubLimits limits;
   // Between the jumbo response's serialized bytes and heap cache class.
   if (local) limits.link.postedAdminBytes = 24 * 1024;
   CliHub client{&state, limits}; SrvHub server{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
-  ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
+  ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client};
 #ifdef ZFIX_TEST_TLS
   link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
 #else
   link->connect("127.0.0.1", state.port);
 #endif
-  ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0 && state.received.load_() == 2);
+  ZuCheck(state.done.timedwait(Zm::now(5)) == 0 && state.received.load_() == 2);
   PostedState posted, hub;
   bool clientStopped = false;
   auto sample = [&client, &link, &posted, &hub, &clientStopped] {
@@ -1437,20 +1389,20 @@ static void reloadBudget(bool local) {
     do { sample(); if (!posted.count && !hub.count) return true; } while (Zm::now() < deadline);
     return false;
   };
-  ZuCheckRT(settle());
+  ZuCheck(settle());
   ZtString text{16 * 1024, 16 * 1024 + 1};
   memset(text.data(), 'x', text.length());
   Fmt::Error error;
   TxHistory history{TxBody::encode<OrderMsg>(Order{text}, 999, error), {}, 1, 1};
-  ZuCheckRT(!error && history.body && (history.body->data__ & ZiIOBuf::Jumbo));
+  ZuCheck(!error && history.body && !history.body->builtin());
   auto original = history.body;
-  ZuCheckRT(!link->reloaded(UINT64_MAX, history)); // main is not an owner
+  ZuCheck(!link->reloaded(UINT64_MAX, history)); // main is not an owner
   bool nativeRefused = false;
   ZmBlock<>{}([&mx, &link, &history, &nativeRefused](auto wake) {
     mx.run([&link, &history, &nativeRefused, wake = ZuMv(wake)]() mutable {
       nativeRefused = !link->reloaded(UINT64_MAX, history); wake();
     }, 1);
-  }); ZuCheckRT(nativeRefused && history.body == original);
+  }); ZuCheck(nativeRefused && history.body == original);
   bool accepted = false, empty = true, tuned = true;
   ZmBlock<>{}([&client, &link, &history, &accepted, &empty, &tuned, local](auto wake) {
     client.rxRun([&client, &link, &history, &accepted, &empty, &tuned, local,
@@ -1460,10 +1412,10 @@ static void reloadBudget(bool local) {
       empty = link->reloaded(UINT64_MAX, {}); wake();
     });
   });
-  ZuCheckRT(tuned && !accepted && empty == local && history.body == original);
-  ZuCheckRT(settle()); sample();
-  ZuCheckRT(posted.refused == unsigned(local ? 1 : 2) && hub.refused == posted.refused);
-  ZuCheckRT(!state.failures.load_() && !state.overloadEvents.load_() && !state.closed.load_());
+  ZuCheck(tuned && !accepted && empty == local && history.body == original);
+  ZuCheck(settle()); sample();
+  ZuCheck(posted.refused == unsigned(local ? 1 : 2) && hub.refused == posted.refused);
+  ZuCheck(!state.failures.load_() && !state.overloadEvents.load_() && !state.closed.load_());
   if (!local) {
     ZmBlock<>{}([&client](auto wake) {
       client.rxRun([&client, wake = ZuMv(wake)]() mutable {
@@ -1471,14 +1423,14 @@ static void reloadBudget(bool local) {
       });
     });
     AdminGate tx; client.txRun([&tx] { tx.block(); });
-    ZuCheckRT(tx.entered.timedwait(Zm::now(5)) == 0);
+    ZuCheck(tx.entered.timedwait(Zm::now(5)) == 0);
     ZmBlock<>{}([&client, &link, &history, &accepted](auto wake) {
       client.rxRun([&link, &history, &accepted, wake = ZuMv(wake)]() mutable {
 	accepted = link->reloaded(UINT64_MAX, history); wake();
       });
-    }); ZuCheckRT(accepted);
+    }); ZuCheck(accepted);
     sample(); auto one = posted;
-    ZuCheckRT(one.count == 1 && one.bytes > history.body->memory() && one.bytes == hub.bytes);
+    ZuCheck(one.count == 1 && one.bytes > history.body->memory() && one.bytes == hub.bytes);
     bool refused = false;
     ZmBlock<>{}([&client, &link, &history, &refused, &tuned, one](auto wake) {
       client.rxRun([&client, &link, &history, &refused, &tuned, one,
@@ -1486,38 +1438,38 @@ static void reloadBudget(bool local) {
 	tuned = client.fixAdminRx_().limits_({one.bytes});
 	refused = !link->reloaded(UINT64_MAX, history); wake();
       });
-    }); ZuCheckRT(tuned && refused && history.body == original);
-    sample(); ZuCheckRT(posted.bytes == one.bytes && posted.count == 1 && posted.refused == 3);
+    }); ZuCheck(tuned && refused && history.body == original);
+    sample(); ZuCheck(posted.bytes == one.bytes && posted.count == 1 && posted.refused == 3);
     AdminGate rx; PostedState returning;
     client.rxRun([&link, &rx, &returning] {
       rx.entered.post(); rx.release.wait(); returning = link->adminPosted_(); rx.done.post();
     });
-    ZuCheckRT(rx.entered.timedwait(Zm::now(5)) == 0);
+    ZuCheck(rx.entered.timedwait(Zm::now(5)) == 0);
     tx.release.post();
     ZmBlock<>{}([&client](auto wake) { client.txRun([wake = ZuMv(wake)]() mutable { wake(); });
       });
-    rx.release.post(); ZuCheckRT(rx.done.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(returning.count == 1 && returning.bytes == one.bytes);
-    ZuCheckRT(settle());
+    rx.release.post(); ZuCheck(rx.done.timedwait(Zm::now(5)) == 0);
+    ZuCheck(returning.count == 1 && returning.bytes == one.bytes);
+    ZuCheck(settle());
     // Reuse the exact returned reservation and close while Tx is held.
     AdminGate closing; client.txRun([&closing] { closing.block(); });
-    ZuCheckRT(closing.entered.timedwait(Zm::now(5)) == 0);
+    ZuCheck(closing.entered.timedwait(Zm::now(5)) == 0);
     ZmBlock<>{}([&client, &link, &history, &accepted](auto wake) {
       client.rxRun([&link, &history, &accepted, wake = ZuMv(wake)]() mutable {
 	accepted = link->reloaded(UINT64_MAX, history); wake();
       });
-    }); ZuCheckRT(accepted);
+    }); ZuCheck(accepted);
     link->disconnect();
     // Only client Tx is held. The peer may finish its independent close first;
     // the client must retain this reservation until its own owner drain.
     sample();
-    ZuCheckRT(posted.count == 1 && posted.bytes == one.bytes && !clientStopped,
+    ZuCheck(posted.count == 1 && posted.bytes == one.bytes && !clientStopped,
       log_("count=", posted.count, " bytes=", posted.bytes, " expected=", one.bytes,
 	" clientStopped=", clientStopped, " peerCloses=", state.closed.load_()));
     closing.release.post();
   } else link->disconnect();
-  ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
-  ZuCheckRT(settle());
+  ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
+  ZuCheck(settle());
   bool lateRefused = false, direct = false;
   ZmBlock<>{}([&client, &link, &history, &lateRefused, &direct](auto wake) {
     client.rxRun([&client, &link, &history, &lateRefused, &direct, wake = ZuMv(wake)]() mutable {
@@ -1527,13 +1479,13 @@ static void reloadBudget(bool local) {
       });
     });
   });
-  ZuCheckRT(lateRefused && direct && history.body == original);
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  ZuCheck(lateRefused && direct && history.body == original);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop(); link = nullptr;
-  ZuCheckRT(!state.errors.load_() && state.closed.load_() == 2);
+  ZuCheck(!state.errors.load_() && state.closed.load_() == 2);
 }
 static void adminBudget(unsigned kind) {
-  ZuTestScopeRT(adminBudget);
+  ZuTestScope(adminBudget);
   TestState state; state.scenario = Scenario::PostedOverflow;
   state.heartbeat = 0; state.adminTest = true; state.cutReplay = kind == 4;
   HubLimits cliLimits;
@@ -1543,19 +1495,17 @@ static void adminBudget(unsigned kind) {
   other.heartbeat = 0; other.adminTest = true; other.lane = 1;
   CliHub client{&state, cliLimits}; SrvHub server{&state};
   if (kind == 6) { server.routes << &state << &other; }
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, kind == 8 ? "1" : "5",
-    kind == 8 ? "2" : "6")); ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
-  server.listen(); ZuCheckRT(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
+    kind == 8 ? "2" : "6")); ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
+  server.listen(); ZuCheck(state.listening.timedwait(Zm::now(5)) == 0 && state.port);
   ZmRef<CliHub::Link> link = new CliHub::Link{&client}, rival;
 #ifdef ZFIX_TEST_TLS
   link->connect("localhost", state.port, ZiIP{"127.0.0.1"});
@@ -1563,7 +1513,7 @@ static void adminBudget(unsigned kind) {
   link->connect("127.0.0.1", state.port);
 #endif
   if (kind < 2 || kind == 8) {
-    ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
     PostedState local, hub; TxProgress p;
     ZmBlock<>{}([&client, &link, &local, &hub](auto wake) {
       client.rxRun([&client, &link, &local, &hub, wake = ZuMv(wake)]() mutable {
@@ -1573,12 +1523,12 @@ static void adminBudget(unsigned kind) {
     ZmBlock<>{}([&client, &link, &p](auto wake) {
       client.txRun([&link, &p, wake = ZuMv(wake)]() mutable { p = link->txProgress_(); wake(); });
     });
-    ZuCheckRT(!local.bytes && !local.count && !local.peak && local.refused == 1);
-    ZuCheckRT(!hub.bytes && !hub.count && !hub.peak && hub.refused == 1);
-    ZuCheckRT(!state.ready.load_() && !state.received.load_() && !link->lastLoad);
-    ZuCheckRT(p.loaded == 1 && p.sent == 1 && p.acknowledged == 1);
+    ZuCheck(!local.bytes && !local.count && !local.peak && local.refused == 1);
+    ZuCheck(!hub.bytes && !hub.count && !hub.peak && hub.refused == 1);
+    ZuCheck(!state.ready.load_() && !state.received.load_() && !link->lastLoad);
+    ZuCheck(p.loaded == 1 && p.sent == 1 && p.acknowledged == 1);
   } else {
-    ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0 && state.received.load_() == 2);
+    ZuCheck(state.done.timedwait(Zm::now(5)) == 0 && state.received.load_() == 2);
     if (kind == 6) {
       rival = new CliHub::Link{&client, &other, ZuID{"fixSecond"}};
 #ifdef ZFIX_TEST_TLS
@@ -1586,7 +1536,7 @@ static void adminBudget(unsigned kind) {
 #else
       rival->connect("127.0.0.1", state.port);
 #endif
-      ZuCheckRT(other.done.timedwait(Zm::now(5)) == 0 && other.received.load_() == 2);
+      ZuCheck(other.done.timedwait(Zm::now(5)) == 0 && other.received.load_() == 2);
     }
     PostedState local, hub; RxStats rx; TxStats tx, otherTx;
     auto sampleRx = [&server, &state, &local, &hub, &rx] {
@@ -1612,24 +1562,24 @@ static void adminBudget(unsigned kind) {
       } while (Zm::now() < deadline);
       return false;
     };
-    ZuCheckRT(settle());
+    ZuCheck(settle());
     if (kind == 7) {
       bool tuned = false;
       ZmBlock<>{}([&server, &tuned](auto wake) {
 	server.rxRun([&server, &tuned, wake = ZuMv(wake)]() mutable {
 	  tuned = server.fixAdminRx_().limits_({0}); wake();
 	});
-      }); ZuCheckRT(tuned);
-      link->disconnect(); ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
+      }); ZuCheck(tuned);
+      link->disconnect(); ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
       sampleRx();
-      ZuCheckRT(!local.bytes && !local.count && local.refused == 1 && hub.refused == 1);
-      ZuCheckRT(state.failures.load_() == 2 && state.downEvents.load_() == 2);
+      ZuCheck(!local.bytes && !local.count && local.refused == 1 && hub.refused == 1);
+      ZuCheck(state.failures.load_() == 2 && state.downEvents.load_() == 2);
     } else {
       auto initial = rx.frames;
       Session::Msg control; control.p<Session::HeartBt>(Session::HeartBt{});
-      Fmt::Error error; auto body = TxBody::control(control, error); ZuCheckRT(body && !error);
+      Fmt::Error error; auto body = TxBody::control(control, error); ZuCheck(body && !error);
       unsigned size = body->size;
-      if (size < ZiIOBuf_DefltSize) size = ZiIOBuf_DefltSize;
+      if (size < SrvHub::Link::RxBufAlloc::Size) size = SrvHub::Link::RxBufAlloc::Size;
       ZtString text(size + 1, size + 2);
       memset(text.data(), 'x', text.length());
       switch (kind) {
@@ -1644,7 +1594,7 @@ static void adminBudget(unsigned kind) {
 	  control.p<Session::ResendReq>(Session::ResendReq{
 	    .beginSeqNo = 2, .endSeqNo = 1}); break;
       }
-      body = TxBody::control(control, error); ZuCheckRT(body && !error);
+      body = TxBody::control(control, error); ZuCheck(body && !error);
       auto inject = [&client, &link, &rival, &body, kind](unsigned ordinal, bool second = false) {
 	auto peer = second ? rival : link;
 	client.txRun([link = ZuMv(peer), body, ordinal, kind] {
@@ -1652,7 +1602,7 @@ static void adminBudget(unsigned kind) {
 	  Fmt::Error error;
 	  auto cfg = txConfig(config(true, &state));
 	  TxContext c{.seqNo = link->lastLoad + ordinal, .sendingTime = ZuDateTime{Zm::now()}};
-	  auto frame = testFrame(*body, cfg, c, error); unsigned head = 0;
+	  auto frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error); unsigned head = 0;
 #ifdef ZFIX_TEST_TLS
 	  head = link->template txHeadRoom<false>();
 #endif
@@ -1661,10 +1611,10 @@ static void adminBudget(unsigned kind) {
 	  if (kind == 5 && ordinal == 3) {
 	    // Two complete frames in one native write/TLS record. Overload on the
 	    // first must stop parsing the second, even before physical down arrives.
-	    ++c.seqNo; frame = testFrame(*body, cfg, c, error);
+	    ++c.seqNo; frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error);
 	    if (error || !frame || !buf->append(frame->cspan())) { state.fail(); return; }
 	  }
-	  if (!link->inject_(ZuMv(buf))) state.fail();
+	  if (!link->sendRecord_(ZuMv(buf))) state.fail();
 	});
       };
       auto received = [&sampleRx, &rx, &local, &hub, initial](unsigned n) {
@@ -1680,7 +1630,7 @@ static void adminBudget(unsigned kind) {
 	server.rxRun([&server, &separated, wake = ZuMv(wake)]() mutable {
 	  separated = server.fixSubmitRx_().limits_({0}); wake();
 	});
-      }); ZuCheckRT(separated);
+      }); ZuCheck(separated);
       TxProgress baseline;
       ZmBlock<>{}([&server, &state, &baseline](auto wake) {
 	server.txRun([&state, &baseline, wake = ZuMv(wake)]() mutable {
@@ -1688,27 +1638,27 @@ static void adminBudget(unsigned kind) {
 	});
       });
       AdminGate first; server.txRun([&first] { first.block(); });
-      ZuCheckRT(first.entered.timedwait(Zm::now(5)) == 0);
-      inject(1); ZuCheckRT(received(1));
+      ZuCheck(first.entered.timedwait(Zm::now(5)) == 0);
+      inject(1); ZuCheck(received(1));
       auto one = local;
-      ZuCheckRT(one.count && one.bytes && one.bytes == hub.bytes && one.count == hub.count);
-      if (kind == 2 || kind == 6) ZuCheckRT(one.bytes > body->memory());
-      if (kind == 3) ZuCheckRT(one.bytes > body->body().length());
+      ZuCheck(one.count && one.bytes && one.bytes == hub.bytes && one.count == hub.count);
+      if (kind == 2 || kind == 6) ZuCheck(one.bytes > body->memory());
+      if (kind == 3) ZuCheck(one.bytes > body->body().length());
       if (kind == 4) {
-	ZuCheckRT(state.done.timedwait(Zm::now(5)) == 0);
+	ZuCheck(state.done.timedwait(Zm::now(5)) == 0);
 	sampleRx();
-	ZuCheckRT(state.replayCut.count && local.count == state.replayCut.count &&
+	ZuCheck(state.replayCut.count && local.count == state.replayCut.count &&
 	  local.bytes == state.replayCut.bytes && local.refused == 1);
-	ZuCheckRT(hub.bytes == local.bytes && hub.refused == 1 && state.closed.load_() < 2);
-	first.release.post(); ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
-	sampleRx(); ZuCheckRT(!local.bytes && !local.count && !hub.bytes && !hub.count);
+	ZuCheck(hub.bytes == local.bytes && hub.refused == 1 && state.closed.load_() < 2);
+	first.release.post(); ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
+	sampleRx(); ZuCheck(!local.bytes && !local.count && !hub.bytes && !hub.count);
 	TxProgress after;
 	ZmBlock<>{}([&server, &state, &after](auto wake) {
 	  server.txRun([&state, &after, wake = ZuMv(wake)]() mutable {
 	    after = state.adminProgress(); wake();
 	  });
 	});
-	ZuCheckRT(after.loaded == baseline.loaded);
+	ZuCheck(after.loaded == baseline.loaded);
       } else {
 	// Work may finish on Tx while its credit return waits behind Rx work.
 	// Both observations stay on Rx; the ledger must remain reserved until
@@ -1718,14 +1668,14 @@ static void adminBudget(unsigned kind) {
 	  refund.entered.post(); refund.release.wait();
 	  returning = state.adminSample(); refund.done.post();
 	});
-	ZuCheckRT(refund.entered.timedwait(Zm::now(5)) == 0);
+	ZuCheck(refund.entered.timedwait(Zm::now(5)) == 0);
 	first.release.post();
 	ZmBlock<>{}([&server](auto wake) {
 	  server.txRun([wake = ZuMv(wake)]() mutable { wake(); });
 	});
-	refund.release.post(); ZuCheckRT(refund.done.timedwait(Zm::now(5)) == 0);
-	ZuCheckRT(returning.count == one.count && returning.bytes == one.bytes);
-	ZuCheckRT(settle());
+	refund.release.post(); ZuCheck(refund.done.timedwait(Zm::now(5)) == 0);
+	ZuCheck(returning.count == one.count && returning.bytes == one.bytes);
+	ZuCheck(settle());
 	// Reuse exactly one packet's observed work reservation, then refuse the
 	// next packet before it adds a second retained command to the Tx owner.
 	bool tuned = false;
@@ -1733,7 +1683,7 @@ static void adminBudget(unsigned kind) {
 	  server.rxRun([&server, &tuned, one, wake = ZuMv(wake)]() mutable {
 	    tuned = server.fixAdminRx_().limits_({one.bytes}); wake();
 	  });
-	}); ZuCheckRT(tuned);
+	}); ZuCheck(tuned);
 	TxProgress before, after, rivalBefore, rivalAfter;
 	ZmBlock<>{}([&server, &state, &other, &before, &rivalBefore, kind](auto wake) {
 	  server.txRun([&state, &other, &before, &rivalBefore, kind,
@@ -1743,29 +1693,29 @@ static void adminBudget(unsigned kind) {
 	  });
 	});
 	AdminGate second; server.txRun([&second] { second.block(); });
-	ZuCheckRT(second.entered.timedwait(Zm::now(5)) == 0);
-	inject(2); ZuCheckRT(received(2));
+	ZuCheck(second.entered.timedwait(Zm::now(5)) == 0);
+	inject(2); ZuCheck(received(2));
 	auto held = local;
-	ZuCheckRT(held.bytes == one.bytes && held.count == one.count && !held.refused);
+	ZuCheck(held.bytes == one.bytes && held.count == one.count && !held.refused);
 	auto &victim = kind == 6 ? other : state;
 	inject(kind == 6 ? 1 : 3, kind == 6);
-	ZuCheckRT(victim.done.timedwait(Zm::now(5)) == 0);
+	ZuCheck(victim.done.timedwait(Zm::now(5)) == 0);
 	sampleRx();
-	ZuCheckRT(local.bytes == held.bytes && local.count == held.count
+	ZuCheck(local.bytes == held.bytes && local.count == held.count
 	  && local.refused == unsigned(kind != 6));
-	ZuCheckRT(hub.bytes == held.bytes && hub.refused == 1 && local.peak == held.peak);
-	ZuCheckRT(victim.closed.load_() < 2); // server Tx still owns admitted work
+	ZuCheck(hub.bytes == held.bytes && hub.refused == 1 && local.peak == held.peak);
+	ZuCheck(victim.closed.load_() < 2); // server Tx still owns admitted work
 	second.release.post();
-	ZuCheckRT(victim.drained.timedwait(Zm::now(5)) == 0);
+	ZuCheck(victim.drained.timedwait(Zm::now(5)) == 0);
 	if (kind == 6) {
-	  ZuCheckRT(settle());
-	  ZuCheckRT(!state.closed.load_() && !state.overloadEvents.load_());
-	  inject(3); ZuCheckRT(received(3)); ZuCheckRT(settle());
-	  link->disconnect(); ZuCheckRT(state.drained.timedwait(Zm::now(5)) == 0);
+	  ZuCheck(settle());
+	  ZuCheck(!state.closed.load_() && !state.overloadEvents.load_());
+	  inject(3); ZuCheck(received(3)); ZuCheck(settle());
+	  link->disconnect(); ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
 	}
-	sampleRx(); ZuCheckRT(!local.bytes && !local.count && !hub.bytes && !hub.count);
-	ZuCheckRT(!rx.pendingBytes);
-	if (kind == 5) ZuCheckRT(rx.frames == initial + 3 && !rx.framingErrors);
+	sampleRx(); ZuCheck(!local.bytes && !local.count && !hub.bytes && !hub.count);
+	ZuCheck(!rx.pendingBytes);
+	if (kind == 5) ZuCheck(rx.frames == initial + 3 && !rx.framingErrors);
 	ZmBlock<>{}([&server, &state, &other, &after, &rivalAfter, kind](auto wake) {
 	  server.txRun([&state, &other, &after, &rivalAfter, kind, wake = ZuMv(wake)]() mutable {
 	    after = state.adminProgress();
@@ -1773,31 +1723,31 @@ static void adminBudget(unsigned kind) {
 	  });
 	});
 	if (kind == 6) {
-	  ZuCheckRT(after.loaded <= before.loaded + 2 && rivalAfter.loaded == rivalBefore.loaded);
+	  ZuCheck(after.loaded <= before.loaded + 2 && rivalAfter.loaded == rivalBefore.loaded);
 	  PostedState refused;
 	  ZmBlock<>{}([&server, &other, &refused](auto wake) {
 	    server.rxRun([&other, &refused, wake = ZuMv(wake)]() mutable {
 	      refused = other.adminSample(); wake();
 	    });
 	  });
-	  ZuCheckRT(!refused.count && !refused.bytes && refused.refused == 1);
-	} else if (kind == 2 || kind == 5) ZuCheckRT(after.loaded <= before.loaded + 1);
-	else ZuCheckRT(after.loaded == before.loaded);
+	  ZuCheck(!refused.count && !refused.bytes && refused.refused == 1);
+	} else if (kind == 2 || kind == 5) ZuCheck(after.loaded <= before.loaded + 1);
+	else ZuCheck(after.loaded == before.loaded);
       }
     }
     state.adminSample = {}; state.adminTx = {}; state.rxSample = {}; state.adminProgress = {};
   }
   auto &failed = kind == 6 ? other : state;
-  ZuCheckRT(failed.overloadEvents.load_() == unsigned(kind != 7) && failed.closed.load_() == 2);
+  ZuCheck(failed.overloadEvents.load_() == unsigned(kind != 7) && failed.closed.load_() == 2);
   if (kind == 6) {
-    ZuCheckRT(!state.overloadEvents.load_() && other.snapshots.load_() == 4
+    ZuCheck(!state.overloadEvents.load_() && other.snapshots.load_() == 4
       && !other.errors.load_());
     other.adminSample = {}; other.adminTx = {}; other.rxSample = {}; other.adminProgress = {};
   }
-  ZuCheckRT(state.snapshots.load_() == 4);
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  ZuCheck(state.snapshots.load_() == 4);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop(); link = rival = nullptr;
-  ZuCheckRT(!state.errors.load_());
+  ZuCheck(!state.errors.load_());
 }
 static void readAheadOverload() {
   ZuTestScope(readAheadOverload);
@@ -1814,9 +1764,7 @@ static void readAheadOverload() {
   CliHub client{&state, limits};
   limits.link.rx.readAheadCount = 0;
   SrvHub server{&state, limits};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(5)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
@@ -1880,14 +1828,14 @@ static void readAheadOverload() {
     Fmt::Error error;
     auto cfg = txConfig(config(true, &state));
     TxContext c{.seqNo = link->txProgress_().loaded + 1, .sendingTime = ZuDateTime{Zm::now()}};
-    auto frame = testFrame(*body, cfg, c, error);
+    auto frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error);
     unsigned head = 0;
 #ifdef ZFIX_TEST_TLS
     head = link->template txHeadRoom<false>();
 #endif
     auto buf = link->fixAllocTx(head);
     if (error || !frame || !buf || !buf->append(frame->cspan()) ||
-	  !link->inject_(ZuMv(buf))) state.fail();
+	  !link->sendRecord_(ZuMv(buf))) state.fail();
   });
   ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
   ZuCheck(state.overloadEvents.load_() == 1);
@@ -2024,7 +1972,6 @@ struct OwnState {
   ZmAtomic<unsigned>	errors{0}, accepted{0}, logical{0}, physicalOpen{0}, physicalClosed{0},
     serverStops{0}, aReady{0}, bReady{0}, bStarted{0}, served{0}, received{0}, oldDecisions{0},
     loadPublished{0}, workReplied{0};
-  ZmAtomic<unsigned>	abortDone{0}, abortFailed{0}, abortFaults{0}, abortEvents{0};
   unsigned		port = 0;
   uint64_t		bLogon = 0; // client Tx; published before business semaphore
   AdmitFn		admit; // server AppRx
@@ -2043,7 +1990,7 @@ struct OwnState {
   unsigned connection() const { return independent ? 1U : preauth || chain ? 3U : 2U; }
 
   void fail(const char *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
-    log_("# replacement failure ", file, ":", line, " mode=", mode);
+    log("# replacement failure ", file, ":", line, " mode=", mode);
     ++errors;
   }
 };
@@ -2151,6 +2098,8 @@ struct OwnServer : Zfix::Server<OwnServer, Dictionary, Network> {
     if (state->terminal) this->rxRun([state = state] { state->stopGate.block(); });
     Base::stop_();
   }
+
+  bool init(Network::ServerParams params);
 };
 
 struct OwnSrvLink : ZmNHeap<OwnSrvLink>,
@@ -2187,7 +2136,7 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
     if (replacing || ((state->preauth || state->chain) && session_().connection_() >= 2)) {
       const auto &s = session_();
       if (s.connection_() < 2 || s.connection_() > state->connection() ||
-	  s.state_() != Zfix::State::Disconnected ||
+	  s.state_() != State::Disconnected ||
 	  s.ready_() || *s.deadline_(SessionTimer::Logon)) state->fail();
       if (s.connection_() == 2) {
 	if (state->established) {
@@ -2322,6 +2271,20 @@ friend inline ZuStringT<"Zfix.Own.Server"> ZmNHeapID(OwnSrvLink *);
   }
 };
 
+bool OwnServer::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Server<OwnServer, Dictionary, Network>::init(ZuMv(params));
+}
+
 struct OwnCxn : ZmNHeap<OwnCxn>, OwnSrvLink::Cxn {
 friend inline ZuStringT<"Zfix.Own.Cxn"> ZmNHeapID(OwnCxn *);
   using ZmNHeap<OwnCxn>::operator new;
@@ -2366,10 +2329,12 @@ struct OwnClient : Zfix::Client<OwnClient, Dictionary, Network> {
   OwnState	*const state;
 
   explicit OwnClient(OwnState *s) : state{s} { }
+
+  bool init(Network::ClientParams params);
 };
 
 struct OwnCliLink : ZmNHeap<OwnCliLink>,
-    Zfix::CliLink<OwnClient, OwnCliLink, Dictionary, Network>, public Inject<OwnCliLink> {
+    Zfix::CliLink<OwnClient, OwnCliLink, Dictionary, Network> {
 friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
   using ZmNHeap<OwnCliLink>::operator new;
   using ZmNHeap<OwnCliLink>::operator delete;
@@ -2415,15 +2380,6 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
   }
 
   void fixEventRx(SessionEvent e, ZmRef<Zfix::RxQueue::Node>) {
-    // The forced server abort can fail B's published Logon before its Rx
-    // disconnect arrives. Only that exact Tx fault can authorize Output here.
-    if (!primary && test->terminal && (e.actions & SessionAction::Failure) &&
-	!(e.actions & SessionAction::Ready) && e.state == Zfix::State::Closing &&
-	e.error == SessionError::Output && !e.tag && e.epoch == 1 &&
-	e.connection == 1 && test->abortFaults.load_() == 1) {
-      if (test->abortEvents.xchAdd(1)) test->fail();
-      return;
-    }
     if ((e.actions & SessionAction::Failure) && !primary &&
 	(e.error != SessionError::Transport ||
 	 (!test->terminal && !(middle && test->accepted.load_() >= 4)))) {
@@ -2466,25 +2422,9 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
 
   void fixFaultTx(TxContext c, Fmt::Error error) {
     if (primary) return;
-    if (test->terminal && error.code == Fmt::ErrorCode::Output && !error.tag &&
-	c.epoch == 1 && c.connection == 1 && !c.replay && test->bLogon &&
-	c.seqNo == test->bLogon + 1) {
-      if (test->abortFaults.xchAdd(1)) test->fail();
-      return;
-    }
     log("# replacement B Tx fault code=", error.code, " tag=", error.tag, " epoch=", c.epoch,
       " conn=", c.connection, " seq=", c.seqNo);
     test->fail();
-  }
-
-  void fixCompleteTx(TxBody::Ref body, TxContext c, bool ok) {
-    if (!test->terminal || primary) return;
-    if (!body || body->msgType() != "A" || c.epoch != 1 || c.connection != 1 ||
-	c.replay || !test->bLogon || c.seqNo != test->bLogon) {
-      test->fail(); return;
-    }
-    if (test->abortDone.xchAdd(1)) test->fail();
-    if (!ok) ++test->abortFailed;
   }
 
   void fixStoppedRx(bool) {
@@ -2493,28 +2433,40 @@ friend inline ZuStringT<"Zfix.Own.Client"> ZmNHeapID(OwnCliLink *);
   }
 };
 
+bool OwnClient::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::Client<OwnClient, Dictionary, Network>::init(ZuMv(params));
+}
+
 static void nativeReplacement(unsigned mode, bool established = false)
 {
-  ZuTestScopeRT(nativeReplacement);
+  ZuTestScope(nativeReplacement);
   OwnState state{mode, established}; OwnServer server{&state}; OwnClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
-  ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
+  ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<OwnCliLink> a, b;
   bool attemptedA = false, attemptedB = false, exchangedAll = false;
   if (ss && cs) do {
     server.listen();
     bool listening = state.listening.timedwait(Zm::now(5)) == 0 && state.port;
-    ZuCheckRT(listening); if (!listening) break;
+    ZuCheck(listening); if (!listening) break;
     a = new OwnCliLink{&client, true}; b = new OwnCliLink{&client, false};
     auto connect = [&state](OwnCliLink *link) {
 #ifdef ZFIX_TEST_TLS
@@ -2527,8 +2479,8 @@ static void nativeReplacement(unsigned mode, bool established = false)
     bool pending = established ? state.workReady.timedwait(Zm::now(5)) == 0 &&
       state.loadStarted.timedwait(Zm::now(5)) == 0 :
       state.admission.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(pending); if (!pending) break;
-    if (established) ZuCheckRT(state.aReady.load_() == 1 && state.loadContext.connection == 1 &&
+    ZuCheck(pending); if (!pending) break;
+    if (established) ZuCheck(state.aReady.load_() == 1 && state.loadContext.connection == 1 &&
       state.loadContext.epoch == 1 && state.loadContext.seqNo);
     Progress snapshot;
     bool saved = ZmBlock<bool>{}([&client, &a, &snapshot](auto wake) {
@@ -2539,7 +2491,7 @@ static void nativeReplacement(unsigned mode, bool established = false)
 	});
       });
     });
-    ZuCheckRT(saved && snapshot.epoch == 1 && snapshot.tx.loaded == (established ? 4U : 2U) &&
+    ZuCheck(saved && snapshot.epoch == 1 && snapshot.tx.loaded == (established ? 4U : 2U) &&
       snapshot.tx.sent == snapshot.tx.loaded && snapshot.rx.processed == (established ? 2U : 1U));
     bool restored = ZmBlock<bool>{}([&client, &b, &snapshot](auto wake) {
       client.rxRun([&client, &b, &snapshot, wake = ZuMv(wake)]() mutable {
@@ -2549,11 +2501,11 @@ static void nativeReplacement(unsigned mode, bool established = false)
 	});
       });
     });
-    ZuCheckRT(restored); if (!restored) break;
+    ZuCheck(restored); if (!restored) break;
     attemptedB = true; connect(b.ptr());
-    ZuCheckRT(state.bound.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.bound.timedwait(Zm::now(5)) == 0);
     if (established) {
-      ZuCheckRT(state.authenticated.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.authenticated.timedwait(Zm::now(5)) == 0);
       bool completed = ZmBlock<bool>{}([&server, link = state.serverLink](auto wake) {
 	server.txRun([link, wake = ZuMv(wake)]() mutable {
 	  auto ticket = link->pendingLoad; link->pendingLoad = 0;
@@ -2561,13 +2513,13 @@ static void nativeReplacement(unsigned mode, bool established = false)
 	  wake(bool(ticket));
 	});
       });
-      ZuCheckRT(completed);
+      ZuCheck(completed);
     }
     bool exchanged = state.business.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(exchanged); if (!exchanged) break;
-    if (established) ZuCheckRT(state.readyB.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.oldClosed.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.logical.load_() == 1 && state.accepted.load_() == 2 &&
+    ZuCheck(exchanged); if (!exchanged) break;
+    if (established) ZuCheck(state.readyB.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.oldClosed.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.logical.load_() == 1 && state.accepted.load_() == 2 &&
       state.physicalOpen.load_() == 2 && !state.physicalClosed.load_() &&
       !state.serverStops.load_() && state.oldDecisions.load_() == unsigned(!established) &&
       state.bReady.load_() >= 1 && state.bStarted.load_() == 1 &&
@@ -2575,8 +2527,8 @@ static void nativeReplacement(unsigned mode, bool established = false)
     mx.rxRun([&state] {
       auto close = ZuMv(state.oldClose); if (close) close();
     });
-    ZuCheckRT(state.physicalOne.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(!state.serverStops.load_());
+    ZuCheck(state.physicalOne.timedwait(Zm::now(5)) == 0);
+    ZuCheck(!state.serverStops.load_());
     if (established) {
       WorkState local, hub;
       auto sample = [&server, &state, &local, &hub] {
@@ -2588,25 +2540,18 @@ static void nativeReplacement(unsigned mode, bool established = false)
 	});
       };
       sample();
-      ZuCheckRT(local.count == 1 && local.bytes && hub.count == 1 && hub.bytes == local.bytes &&
+      ZuCheck(local.count == 1 && local.bytes && hub.count == 1 && hub.bytes == local.bytes &&
 	state.loadPublished.load_() == 1);
-      ZmBlock<>{}([&server, link = state.serverLink](auto wake) {
-	server.rxRun([&server, link, wake = ZuMv(wake)]() mutable {
-	  link->completeWork();
-	  // The local Work's final release posts WorkReturn to this owner.
-	  // Queue the fence after that release, before sampling its credits.
-	  server.rxRun([wake = ZuMv(wake)]() mutable { wake(); });
-	});
-      });
-      ZuCheckRT(state.business.timedwait(Zm::now(5)) == 0);
+      server.rxRun([link = state.serverLink] { link->completeWork(); });
+      ZuCheck(state.business.timedwait(Zm::now(5)) == 0);
       sample();
-      ZuCheckRT(!local.count && !local.bytes && !hub.count && !hub.bytes &&
+      ZuCheck(!local.count && !local.bytes && !hub.count && !hub.bytes &&
 	state.workReplied.load_() == 1);
     } else {
       client.rxRun([b] { b->business("after"); });
-      ZuCheckRT(state.business.timedwait(Zm::now(5)) == 0);
+      ZuCheck(state.business.timedwait(Zm::now(5)) == 0);
     }
-    ZuCheckRT(state.received.load_() == 2 && state.served.load_() == 2);
+    ZuCheck(state.received.load_() == 2 && state.served.load_() == 2);
     b->logout();
     exchangedAll = true;
   } while (false);
@@ -2626,25 +2571,25 @@ static void nativeReplacement(unsigned mode, bool established = false)
   bool drained = true;
   if (attemptedA) {
     bool stopped = state.stoppedA.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(stopped); drained &= stopped;
+    ZuCheck(stopped); drained &= stopped;
   }
   if (attemptedB) {
     bool stopped = state.stoppedB.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(stopped); drained &= stopped;
+    ZuCheck(stopped); drained &= stopped;
   }
   if (state.accepted.load_()) {
     bool stopped = state.stoppedServer.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(stopped); drained &= stopped;
+    ZuCheck(stopped); drained &= stopped;
   }
   if (!drained) {
     log_("Bail out! replacement owner did not drain mode=", mode);
     abort();
   }
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop();
   state.serverLink = nullptr; a = b = nullptr;
-  ZuCheckRT(exchangedAll && !state.errors.load_() && !state.admit && !state.oldClose);
-  ZuCheckRT(state.serverStops.load_() == 1 && state.physicalClosed.load_() == 2 &&
+  ZuCheck(exchangedAll && !state.errors.load_() && !state.admit && !state.oldClose);
+  ZuCheck(state.serverStops.load_() == 1 && state.physicalClosed.load_() == 2 &&
     state.bReady.load_() >= 1 && state.bStarted.load_() == 1 &&
     state.received.load_() == 2 && state.served.load_() == 2);
 }
@@ -2653,23 +2598,21 @@ static void nativeReplacement(unsigned mode, bool established = false)
 // work and an outstanding Tx association while SIDE exchanges across both swaps.
 static void nativeChain(unsigned mode)
 {
-  ZuTestScopeRT(nativeChain);
+  ZuTestScope(nativeChain);
   OwnState state{mode, true, false, false, true}, side{mode, false, false, false,
     false, true};
   OwnServer server{&state}; server.side = &side;
   OwnClient client{&state};
-  ZiMultiplex mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
       .thread(5, [](auto &t) { t.isolated(1); }).thread(6, [](auto &t) { t.isolated(1); });
   }).rxThread(1).txThread(2)};
-  bool started = mx.start(); ZuCheckRT(started); if (!started) return;
+  bool started = mx.start(); ZuCheck(started); if (!started) return;
   bool si = server.init(srvParams(&mx)), ci = client.init(cliParams(&mx, "5", "6"));
-  ZuCheckRT(si && ci);
-  bool ss = si && server.start(), cs = ci && client.start(); ZuCheckRT(ss && cs);
+  ZuCheck(si && ci);
+  bool ss = si && server.start(), cs = ci && client.start(); ZuCheck(ss && cs);
   ZmRef<OwnCliLink> a, b, c, other;
   bool triedA = false, triedB = false, triedC = false, triedSide = false, exchanged = false;
   auto connect = [&state](OwnCliLink *link) {
@@ -2704,7 +2647,7 @@ static void nativeChain(unsigned mode)
   if (ss && cs) do {
     server.listen();
     bool listening = state.listening.timedwait(Zm::now(5)) == 0 && state.port;
-    ZuCheckRT(listening); if (!listening) break;
+    ZuCheck(listening); if (!listening) break;
     a = new OwnCliLink{&client, true};
     b = new OwnCliLink{&client, false, &state, ZuID{"ownB"}, true};
     c = new OwnCliLink{&client, false, &state, ZuID{"ownC"}};
@@ -2712,53 +2655,50 @@ static void nativeChain(unsigned mode)
     triedA = true; connect(a.ptr());
     bool pending = state.workReady.timedwait(Zm::now(5)) == 0 &&
       state.loadStarted.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(pending); if (!pending) break;
-    ZuCheckRT(state.aReady.load_() == 1 && state.loadContext.connection == 1 &&
+    ZuCheck(pending); if (!pending) break;
+    ZuCheck(state.aReady.load_() == 1 && state.loadContext.connection == 1 &&
       state.loadContext.epoch == 1 && state.loadContext.seqNo == 2);
     client.txRun([a, &state] {
-      auto output = a->template fixFrameBuf<false>();
-      if (!output.buf || !output.buf->append("8=F")) { state.fail(); return; }
-      auto buf = ZmRef<WireBuf>::acquire(
-	static_cast<WireBuf *>(ZuMv(output.buf).release()));
-      if (!a->inject_(ZuMv(buf))) state.fail();
+      auto output = a->txStream_(); output << "8=F";
+      if (!output.flush()) state.fail();
     });
     bool prefix = state.prefix.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(prefix); if (!prefix) break;
+    ZuCheck(prefix); if (!prefix) break;
     Progress snapshot;
     bool saved = checkpoint(a.ptr(), snapshot, false);
-    ZuCheckRT(saved && snapshot.epoch == 1 && snapshot.tx.loaded == 4 &&
+    ZuCheck(saved && snapshot.epoch == 1 && snapshot.tx.loaded == 4 &&
       snapshot.tx.sent == 4 && snapshot.rx.processed == 2);
     if (!saved) break;
     triedSide = true; connect(other.ptr());
     bool sideReady = side.readyB.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(sideReady); if (!sideReady) break;
+    ZuCheck(sideReady); if (!sideReady) break;
     bool restored = checkpoint(b.ptr(), snapshot, true);
-    ZuCheckRT(restored); if (!restored) break;
+    ZuCheck(restored); if (!restored) break;
     triedB = true; connect(b.ptr());
     bool boundB = state.bound.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(boundB); if (!boundB) break;
+    ZuCheck(boundB); if (!boundB) break;
     client.rxRun([other] { other->business("before"); });
     bool sideBefore = side.business.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(sideBefore); if (!sideBefore) break;
-    ZuCheckRT(state.authenticated.timedwait(Zm::now(5)) == 0);
+    ZuCheck(sideBefore); if (!sideBefore) break;
+    ZuCheck(state.authenticated.timedwait(Zm::now(5)) == 0);
     bool logonB = state.clientLogon.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(logonB); if (!logonB) break;
+    ZuCheck(logonB); if (!logonB) break;
     Progress successor;
     bool savedB = checkpoint(b.ptr(), successor, false);
-    ZuCheckRT(savedB && successor.epoch == 1 && successor.tx.loaded == 5 &&
+    ZuCheck(savedB && successor.epoch == 1 && successor.tx.loaded == 5 &&
       successor.tx.sent == 5 && successor.rx.processed == 2 && state.bLogon == 4);
     if (!savedB) break;
     restored = checkpoint(c.ptr(), successor, true);
-    ZuCheckRT(restored); if (!restored) break;
+    ZuCheck(restored); if (!restored) break;
     triedC = true; connect(c.ptr());
     bool boundC = state.bound.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(boundC); if (!boundC) break;
+    ZuCheck(boundC); if (!boundC) break;
     client.rxRun([other] { other->business("after"); });
     bool sideAfter = side.business.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(sideAfter); if (!sideAfter) break;
-    ZuCheckRT(state.authenticated.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.clientLogon.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(!state.bStarted.load_() && !state.loadPublished.load_() &&
+    ZuCheck(sideAfter); if (!sideAfter) break;
+    ZuCheck(state.authenticated.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.clientLogon.timedwait(Zm::now(5)) == 0);
+    ZuCheck(!state.bStarted.load_() && !state.loadPublished.load_() &&
       !state.workReplied.load_() && side.received.load_() == 2 && side.served.load_() == 2);
     bool completed = ZmBlock<bool>{}([&server, link = state.serverLink](auto wake) {
       server.txRun([link, wake = ZuMv(wake)]() mutable {
@@ -2767,13 +2707,13 @@ static void nativeChain(unsigned mode)
 	wake(bool(ticket));
       });
     });
-    ZuCheckRT(completed);
+    ZuCheck(completed);
     bool received = state.business.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(received); if (!received) break;
-    ZuCheckRT(state.readyB.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(state.oldClosed.timedwait(Zm::now(5)) == 0);
-    ZuCheckRT(physical(1)); // B retired, while A's physical callback remains held.
-    ZuCheckRT(state.logical.load_() == 1 && side.logical.load_() == 1 &&
+    ZuCheck(received); if (!received) break;
+    ZuCheck(state.readyB.timedwait(Zm::now(5)) == 0);
+    ZuCheck(state.oldClosed.timedwait(Zm::now(5)) == 0);
+    ZuCheck(physical(1)); // B retired, while A's physical callback remains held.
+    ZuCheck(state.logical.load_() == 1 && side.logical.load_() == 1 &&
       state.accepted.load_() == 4 && state.physicalOpen.load_() == 4 &&
       !state.serverStops.load_() && !side.serverStops.load_() &&
       state.bStarted.load_() == 1 && state.bLogon == 5);
@@ -2787,22 +2727,15 @@ static void nativeChain(unsigned mode)
       });
     };
     sample();
-    ZuCheckRT(local.count == 1 && local.bytes && hub.count == 1 && hub.bytes == local.bytes &&
+    ZuCheck(local.count == 1 && local.bytes && hub.count == 1 && hub.bytes == local.bytes &&
       state.loadPublished.load_() == 1);
     mx.rxRun([&state] { auto close = ZuMv(state.oldClose); if (close) close(); });
-    ZuCheckRT(physical(2));
-    ZuCheckRT(!state.serverStops.load_() && !side.serverStops.load_());
-    ZmBlock<>{}([&server, link = state.serverLink](auto wake) {
-      server.rxRun([&server, link, wake = ZuMv(wake)]() mutable {
-	link->completeWork();
-	// The local Work's final release posts WorkReturn to this owner.
-	// Queue the fence after that release, before sampling its credits.
-	server.rxRun([wake = ZuMv(wake)]() mutable { wake(); });
-      });
-    });
-    ZuCheckRT(state.business.timedwait(Zm::now(5)) == 0);
+    ZuCheck(physical(2));
+    ZuCheck(!state.serverStops.load_() && !side.serverStops.load_());
+    server.rxRun([link = state.serverLink] { link->completeWork(); });
+    ZuCheck(state.business.timedwait(Zm::now(5)) == 0);
     sample();
-    ZuCheckRT(!local.count && !local.bytes && !hub.count && !hub.bytes &&
+    ZuCheck(!local.count && !local.bytes && !hub.count && !hub.bytes &&
       state.workReplied.load_() == 1 && state.received.load_() == 2 &&
       state.served.load_() == 2);
     c->logout(); other->logout(); exchanged = true;
@@ -2822,7 +2755,7 @@ static void nativeChain(unsigned mode)
   auto stop = [&drained](bool attempted, ZmSemaphore &done) {
     if (!attempted) return;
     bool stopped = done.timedwait(Zm::now(5)) == 0;
-    ZuCheckRT(stopped); drained &= stopped;
+    ZuCheck(stopped); drained &= stopped;
   };
   stop(triedA, state.stoppedA); stop(triedB, state.stoppedMiddle);
   stop(triedC, state.stoppedB); stop(triedSide, side.stoppedB);
@@ -2832,12 +2765,12 @@ static void nativeChain(unsigned mode)
     log_("Bail out! replacement chain owner did not drain mode=", mode);
     abort();
   }
-  bool cstop = client.stop(), sstop = server.stop(); ZuCheckRT(cstop && sstop);
+  bool cstop = client.stop(), sstop = server.stop(); ZuCheck(cstop && sstop);
   client.final(); server.final(); mx.stop();
   state.serverLink = side.serverLink = nullptr; a = b = c = other = nullptr;
-  ZuCheckRT(exchanged && !state.errors.load_() && !side.errors.load_() &&
+  ZuCheck(exchanged && !state.errors.load_() && !side.errors.load_() &&
     !state.admit && !side.admit && !state.oldClose);
-  ZuCheckRT(state.serverStops.load_() == 1 && side.serverStops.load_() == 1 &&
+  ZuCheck(state.serverStops.load_() == 1 && side.serverStops.load_() == 1 &&
     state.physicalClosed.load_() == 4 && state.bStarted.load_() == 1 &&
     side.bStarted.load_() == 1 && state.received.load_() == 2 &&
     state.served.load_() == 2 && side.received.load_() == 2 && side.served.load_() == 2);

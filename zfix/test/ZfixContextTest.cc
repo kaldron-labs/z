@@ -5,12 +5,17 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixContext.hh>
 #include <zlib/ZfixTxMsg.hh>
 #include <zlib/ZfixLinkState.hh>
 
-#include "ZfixTxImageTest.hh"
+static ZmRef<ZiIOBuf> frameBuf() {
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  return ZmSingleton<Allocator>::instance()->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -37,7 +42,7 @@ template <typename E = Entry> static RequestContext make(ZuCSpan &id) {
   TxContext tx{.epoch = 3, .connection = 7, .seqNo = 9, .replay = true,
     .sendingTime = stamp, .origSendingTime = stamp, .possDup = true};
   if (!body || error) return {};
-  auto buffer = testFrame(*body, txConfig(ZuMv(c)), tx, error);
+  auto buffer = txFrame(frameBuf(), *body, txConfig(ZuMv(c)), tx, error);
   if (!buffer || error) return {};
   auto parsed = Fmt::frame(buffer->cspan());
   if (parsed.state != Fmt::FrameState::Complete) return {};
@@ -134,21 +139,21 @@ static void replyPolicy() {
 using SelectedA = MT<Order, "D", ZuFacet::FIX, Discrim<9000, "A">>;
 using SelectedB = MT<Order, "D", ZuFacet::FIX, Discrim<9000, "B">>;
 static void selection() {
-  ZuTestScopeRT(selection);
+  ZuTestScope(selection);
   ZuCSpan id; auto context = make<SelectedA>(id);
-  ZuCheckRT(bool(context)); if (!context) return;
-  ZuCheckRT(context.is<SelectedA>() && !context.is<SelectedB>() && !context.is<Entry>());
+  ZuCheck(bool(context)); if (!context) return;
+  ZuCheck(context.is<SelectedA>() && !context.is<SelectedB>() && !context.is<Entry>());
   auto copy = context; context = {};
-  ZuCheckRT(!context.is<SelectedA>() && copy.is<SelectedA>() && id == "retained");
+  ZuCheck(!context.is<SelectedA>() && copy.is<SelectedA>() && id == "retained");
   unsigned called = 0;
   auto error = dispatch<MTList<SelectedA, SelectedB>>(copy.frame(),
     [&called](auto *type, const Order &object) -> Fmt::Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*type)>, SelectedA>{}) {
-	++called; ZuCheckRT(object.id == "retained");
-      } else ZuCheckRT(false);
+	++called; ZuCheck(object.id == "retained");
+      } else ZuCheck(false);
       return {};
     });
-  ZuCheckRT(!error && called == 1);
+  ZuCheck(!error && called == 1);
 }
 struct BinaryRequest {
   ZuCSpan id;
@@ -173,14 +178,15 @@ static void binaryRetention()
     "8=FIX.4.4\1" "35=8\1" "10=001\1"_z;
   constexpr auto Signature = "\0\1\xff"_z;
   Fmt::Error error;
-  TxFrame writer{"FIX.4.4"};
+  auto buf = frameBuf();
+  TxFrame writer{buf, "FIX.4.4"};
   writer.body() << "35=n\1" "49=PEER\1" "56=LOCAL\1" "34=9\1"
     "43=Y\1" "52=20261027-12:34:56\1" "122=20261027-12:34:55\1" "11=retained\1";
   Fmt::saveBinary<ZfField(BinaryRequest, xml)>(writer.body(), XML);
   Fmt::saveBinary<ZfField(BinaryRequest, replay)>(writer.body(), Replay);
   Fmt::saveBinary<ZfField(BinaryRequest, signature)>(writer.body(), Signature);
-  auto buffer = testBytes(writer.finish(error));
-  ZuCheck(buffer && !error);
+  auto buffer = writer.finish(error);
+  ZuCheck(buffer == buf && !error);
   if (!buffer) return;
   auto parsed = Fmt::frame(buffer->cspan());
   ZuCheck(parsed.state == Fmt::FrameState::Complete);

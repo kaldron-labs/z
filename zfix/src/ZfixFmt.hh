@@ -207,29 +207,6 @@ struct Error {
   explicit operator bool() const { return code != ErrorCode::OK; }
 };
 
-// A synchronous single-span input uses the same visitor contract as retained
-// frame parts, without allocating or dispatching through an erased callback.
-class SpanView {
-public:
-  explicit SpanView(ZuCSpan span) : m_span{span} { }
-  unsigned length() const { return m_span.length(); }
-  template <typename Fn> void each(Fn fn) const { fn(m_span); }
-  struct Cursor {
-    ZuCSpan span;
-    bool next(ZuCSpan &out) {
-      if (!span) return false;
-      out = span; span = {}; return true;
-    }
-  };
-  Cursor cursor() const { return {m_span}; }
-  ZuCSpan spanAt(unsigned offset, unsigned length) const {
-    return offset <= m_span.length() && length <= m_span.length() - offset ?
-      ZuCSpan{m_span.data() + offset, length} : ZuCSpan{};
-  }
-private:
-  ZuCSpan m_span;
-};
-
 // Standalone, non-publishing output into caller-selected storage. Printers
 // write directly to the destination; only a tight-tail upper-bound fallback
 // uses scratch. Failure is sticky, and flush() must be checked by the caller.
@@ -864,7 +841,7 @@ template <unsigned Fmt> struct BytesPrint;
 template <unsigned Fmt> struct BytesPrinter : ZuPrintBuffer {
   static unsigned length(const BytesPrint<Fmt> &v) { return v.size; }
   static unsigned print(char *out, unsigned n, const BytesPrint<Fmt> &v) {
-    return BytesCodec<Fmt>::encode({out, n}, v.bytes);
+    return BytesCodec<Fmt>::encode({reinterpret_cast<uint8_t *>(out), n}, v.bytes);
   }
 };
 
@@ -1636,11 +1613,6 @@ struct Read {
   FieldPos selector{UINT_MAX, 0};
   int32_t selectTag = 0;
 
-  unsigned position() const { return 0; }
-  auto remaining(unsigned offset) const { return input.length() - offset; }
-  bool advance(unsigned &) const { return false; }
-  void rebaseError() const { }
-
   bool observe(int32_t tag, unsigned offset, unsigned length) {
     if (!selectTag || tag != selectTag) return true;
     if (selector.offset != UINT_MAX) return fail(ErrorCode::Duplicate, tag, offset);
@@ -1651,35 +1623,6 @@ struct Read {
   bool fail(unsigned code, int32_t tag, unsigned offset) {
     if (!error) error = {code, tag, offset};
     return false;
-  }
-};
-
-// Segmented validation advances complete fields without gathering payloads.
-// The cursor is a borrowed, synchronous enumeration of the frame's backing.
-// Ordinary Read keeps its existing layout and statically folds these methods.
-template <typename Cursor> struct PartsRead : Read {
-  Cursor cursor;
-  unsigned base = 0, total = 0;
-
-  unsigned position() const { return base; }
-  unsigned remaining(unsigned offset) const { return total - base - offset; }
-  bool advance(unsigned &offset) {
-    while (offset == input.length()) {
-      ZuCSpan next;
-      if (!cursor.next(next)) return false;
-      base += input.length(); input = next; offset = 0;
-    }
-    return offset < input.length();
-  }
-  bool fail(unsigned code, int32_t tag, unsigned offset) {
-    return Read::fail(code, tag, base + offset);
-  }
-  void rebaseError() { if (error) error.offset += base; }
-  bool observe(int32_t tag, unsigned offset, unsigned length) {
-    if (!selectTag || tag != selectTag) return true;
-    if (selector.offset != UINT_MAX) return fail(ErrorCode::Duplicate, tag, offset);
-    selector = {base + offset, length};
-    return true;
   }
 };
 
@@ -1723,20 +1666,19 @@ void readRequired(Read &p, const ZuBitmap<N> &seen, unsigned base = 0) {
 template <typename> using ReadNone = ZuFalse;
 
 template <typename O, typename Facet, template <typename> class Filter,
-  bool Recover = false, int32_t SelectTag = 0, bool Assign = true, typename Reader>
-bool readScope(Reader &, ZuIf<Assign, O &, O *>, unsigned &, Scope &, bool, bool = true);
+  bool Recover = false, int32_t SelectTag = 0, bool Assign = true>
+bool readScope(Read &, ZuIf<Assign, O &, O *>, unsigned &, Scope &, bool, bool = true);
 
 template <typename T, typename Facet, bool Apply,
-  template <typename> class Check = ReadNone, typename Reader>
-bool readGroup(Reader &p, ZuIf<Apply, T &, T *> out, Token &token, Scope &parent) {
+  template <typename> class Check = ReadNone>
+bool readGroup(Read &p, ZuIf<Apply, T &, T *> out, Token &token, Scope &parent) {
   using E = GroupElem<T>;
   unsigned n = ZuBox<unsigned>{ZuCSpan{p.input.data() + token.offset, token.length}}.val();
   if (parent.depth >= p.limits.groupDepth)
     return p.fail(ErrorCode::Depth, token.tag, token.offset);
   if (n > p.limits.groupEntries - p.entries)
     return p.fail(ErrorCode::Size, token.tag, token.offset);
-  auto available = p.remaining(token.next);
-  if (n > available/3)
+  if (n > (p.input.length() - token.next)/3)
     return p.fail(ErrorCode::Group, token.tag, token.offset);
   p.entries += n;
   if constexpr (Apply) { out.length(0); out.ensure(n); }
@@ -1754,7 +1696,6 @@ bool readGroup(Reader &p, ZuIf<Apply, T &, T *> out, Token &token, Scope &parent
 	return false;
     }
   }
-  p.advance(offset);
   if (offset < p.input.length()) {
     Token next;
     if (auto error = prefix(p.input, offset, next)) {
@@ -1769,8 +1710,7 @@ bool readGroup(Reader &p, ZuIf<Apply, T &, T *> out, Token &token, Scope &parent
 
 // The wire loop looks up and calls a typed loader directly. The policy is
 // part of the table type; selectors and recovery do not duplicate the table.
-template <typename O, typename Facet, template <typename> class Filter, bool Assign,
-  typename Reader = Read>
+template <typename O, typename Facet, template <typename> class Filter, bool Assign>
 struct ReadFields {
   using S = Schema<O, Facet>;
   using Loader = unsigned (*)(ReadFields &, Token &);
@@ -1790,7 +1730,7 @@ struct ReadFields {
 
   inline static const Index index{};
 
-  Reader &p;
+  Read &p;
   ZuIf<Assign, O &, O *> o;
   unsigned &offset;
   Scope &scope;
@@ -1802,10 +1742,8 @@ struct ReadFields {
   template <typename L> ZuInline unsigned field(Token &token) {
     using F = L::Field;
     enum { I = ZuTypeIndex<L, typename S::Leaves>{} };
-    unsigned origin = p.position(), value = token.offset;
-    if (!consume(p.input, token, p.limits, p.error, payloadTag<F>())) {
-      p.rebaseError(); return 0;
-    }
+    unsigned value = token.offset;
+    if (!consume(p.input, token, p.limits, p.error, payloadTag<F>())) return 0;
     if (!entry) {
     if constexpr (Binary<F>{}) {
       if (!p.observe(token.tag, value, token.countLength) ||
@@ -1829,21 +1767,24 @@ struct ReadFields {
       if (!error) setField<F>(ReadPath<typename L::Path>::get(o), ZuMv(value));
       if (error) p.fail(error.code, token.tag, token.offset);
     }
-    return p.error ? 0 : p.position() - origin + token.next - value;
+    return p.error ? 0 : token.next - value;
   }
 };
 
-// Both readers use this wire loop. Only a parts reader advances to another
-// complete field span; group recursion keeps its ordinary presence/order state.
-template <bool Recover = false, typename Fields>
-ZuInline bool readChunk(Fields &fields) {
-  auto &p = fields.p;
-  auto &offset = fields.offset;
-  auto &scope = fields.scope;
+template <typename O, typename Facet, template <typename> class Filter,
+  bool Recover, int32_t SelectTag, bool Assign>
+bool readScope(Read &p, ZuIf<Assign, O &, O *> o,
+    unsigned &offset, Scope &scope, bool entry, bool lastEntry) {
+  using S = Schema<O, Facet>;
+  enum { Charge = ((S::Leaves::N + 63)>>6) * sizeof(uint64_t) };
+  if (Charge > p.limits.parseBytes - p.bytes)
+    return p.fail(ErrorCode::Size, 0, offset);
+  p.bytes += Charge;
+  struct Leave { Read &p; ~Leave() { p.bytes -= Charge; } } leave{p};
+  using Fields = ReadFields<O, Facet, Filter, Assign>;
+  Fields fields{p, o, offset, scope, entry, lastEntry};
   auto &seen = fields.seen;
-  bool entry = fields.entry, lastEntry = fields.lastEntry;
-  while (offset < p.input.length() || p.advance(offset)) {
-    unsigned origin = p.position();
+  while (offset < p.input.length()) {
     Token token;
     if (auto error = prefix(p.input, offset, token))
       return p.fail(error.code, error.tag, error.offset);
@@ -1874,33 +1815,15 @@ ZuInline bool readChunk(Fields &fields) {
     if (item) consumed = item->load(fields, token);
     else {
       consumed = consume(p.input, token, p.limits, p.error);
-      if (!consumed) p.rebaseError();
       if (consumed && !entry && !p.observe(token.tag, token.offset, token.length))
 	consumed = 0;
     }
     if (!consumed) return false;
     if constexpr (!Recover) if (p.error) return false;
-    offset = value + consumed - (p.position() - origin);
+    offset = value + consumed;
   }
   if (entry && !fields.started) return p.fail(ErrorCode::Group, 0, offset);
   if (p.error) return false;
-  return true;
-}
-
-template <typename O, typename Facet, template <typename> class Filter,
-  bool Recover, int32_t SelectTag, bool Assign, typename Reader>
-bool readScope(Reader &p, ZuIf<Assign, O &, O *> o,
-    unsigned &offset, Scope &scope, bool entry, bool lastEntry) {
-  using S = Schema<O, Facet>;
-  enum { Charge = ((S::Leaves::N + 63)>>6) * sizeof(uint64_t) };
-  if (Charge > p.limits.parseBytes - p.bytes)
-    return p.fail(ErrorCode::Size, 0, offset);
-  p.bytes += Charge;
-  struct Leave { Reader &p; ~Leave() { p.bytes -= Charge; } } leave{p};
-  using Fields = ReadFields<O, Facet, Filter, Assign, Reader>;
-  Fields fields{p, o, offset, scope, entry, lastEntry};
-  auto &seen = fields.seen;
-  if (!readChunk<Recover>(fields)) return false;
   if constexpr (!Assign) readRequired<O, Facet, Filter>(p, seen);
   else {
     ZuUnroll::all<typename S::Fields>([&p, &seen]<typename F>() {
@@ -1929,24 +1852,6 @@ bool readScope(Reader &p, ZuIf<Assign, O &, O *> o,
     });
   }
   return !p.error;
-}
-
-// Input excludes 8/9/35/10. Chunks contain complete fields and binary pairs;
-// group entries can continue into a following chunk without changing policy.
-template <typename O, typename Facet, template <typename> class Filter,
-  int32_t SelectTag = 0, typename Chunks>
-Error readParts(const Chunks &chunks, Limits limits = {}, FieldPos *selector = nullptr) {
-  Error error;
-  if (chunks.length() > limits.frameBytes) return {ErrorCode::Size};
-  using Cursor = decltype(chunks.cursor());
-  PartsRead<Cursor> p{{{}, limits, error}, chunks.cursor(), 0,
-    unsigned(chunks.length())};
-  p.selectTag = SelectTag;
-  unsigned offset = 0;
-  Scope scope{nullptr, scopeContains<O, Facet, SelectTag>, 0, 0};
-  readScope<O, Facet, Filter, false, SelectTag, false>(p, nullptr, offset, scope, false);
-  if (selector) *selector = p.selector;
-  return error;
 }
 
 template <typename O, typename Facet, template <typename> class Filter, int32_t SelectTag = 0>

@@ -5,9 +5,16 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixLinkTx.hh>
 #include <zlib/ZfixRx.hh>
+
+static ZmRef<ZiIOBuf> frameBuf() {
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  return ZmSingleton<Allocator>::instance()->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -40,6 +47,8 @@ struct Sender : Tx<Sender> {
   void txPost(unsigned, uint64_t) { }
   unsigned loadTx(TxBody::Ref, TxContext, uint64_t) { return TxLoad::Accepted; }
   bool unloadTx(TxBody::Ref, TxContext, uint64_t) { return true; }
+  ZmRef<ZiIOBuf> allocTx() { return frameBuf(); }
+
   bool frameTx(TxBody::Ref, TxContext, ZmRef<ZiIOBuf>, ZuDateTime) { return false; }
   TxReload historyTx(TxContext, uint64_t, uint64_t) { return {}; }
   void historyArchive(uint64_t, uint64_t, uint64_t) { }

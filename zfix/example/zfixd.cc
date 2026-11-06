@@ -183,6 +183,20 @@ template <typename Net> struct Server : Zfix::Server<Server<Net>, MTList, Net> {
   void retired() { this->mx()->rxRun([this] {
     stopped.post(); done.post();
   }); }
+
+  bool init(typename Net::ServerParams params) {
+    ZmRef<typename Link::RxAllocator> rx;
+    ZmRef<typename Link::TxAllocator> tx;
+    if (!params.rxAllocator()) {
+      rx = new typename Link::RxAllocator{};
+      params.rxAllocator(rx.ptr());
+    }
+    if (!params.txAllocator()) {
+      tx = new typename Link::TxAllocator{};
+      params.txAllocator(tx.ptr());
+    }
+    return Zfix::Server<Server<Net>, MTList, Net>::init(ZuMv(params));
+  }
 };
 
 template <typename Net> static int run(const Options &options) {

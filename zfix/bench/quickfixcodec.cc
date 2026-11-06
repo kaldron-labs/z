@@ -25,7 +25,7 @@ struct QuickfixCodec {
     time << o.time.fmt(ZuDateTimeFmt::FIX<9>{});
     h.setField(52, std::string{time.data(), time.length()});
     storage = message.toString();
-    return storage;
+    return {storage.data(), unsigned(storage.length())};
   }
 
   uint64_t decode(ZuCSpan bytes, unsigned qty) {

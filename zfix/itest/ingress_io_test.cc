@@ -10,6 +10,7 @@
 #include <zlib/ZmHeap.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZmSemaphore.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixClient.hh>
 #include <zlib/ZfixServer.hh>
 
@@ -102,7 +103,8 @@ struct Peer : Base {
     TxConfig config; config.beginString = "FIX.9.9";
     config.identity.local = "EXTERNAL-C"; config.identity.peer = "EXTERNAL-S";
     TxContext context{.connection = 1, .seqNo = 17, .sendingTime = ZuDateTime{Zm::now()}};
-    auto output = RawOutput::encode(ZuMv(body), config, context, error);
+    auto output = RawOutput::encode(this->txAllocator()->allocBuf(this),
+      ZuMv(body), config, context, error);
     if (error || !output) state->fail();
     return output;
   }
@@ -131,6 +133,8 @@ struct CliHub : RawClient<CliHub, Dictionary, Network> {
   struct Link;
 
   unsigned reconnFreq() const { return 0; }
+
+  bool init(Network::ClientParams params);
 };
 
 struct CliHub::Link : public ZmNHeap<Link>, Peer<Link, RawCliLink<CliHub, Link, Dictionary,
@@ -138,6 +142,20 @@ struct CliHub::Link : public ZmNHeap<Link>, Peer<Link, RawCliLink<CliHub, Link, 
 friend inline ZuStringT<"Zfix.ingress_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
+
+bool CliHub::init(Network::ClientParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::RawClient<CliHub, Dictionary, Network>::init(ZuMv(params));
+}
 
 struct SrvHub : RawServer<SrvHub, Dictionary, Network> {
   using Base = RawServer<SrvHub, Dictionary, Network>;
@@ -157,6 +175,8 @@ struct SrvHub : RawServer<SrvHub, Dictionary, Network> {
   void listenFailed(bool) { state->srv1.fail(); state->listening.post(); }
 
   ZiConnection *accepted(const ZiCxnInfo &);
+
+  bool init(Network::ServerParams params);
 };
 
 struct SrvHub::Link : public ZmNHeap<Link>, Peer<Link, RawSrvLink<SrvHub, Link, Dictionary,
@@ -164,6 +184,20 @@ struct SrvHub::Link : public ZmNHeap<Link>, Peer<Link, RawSrvLink<SrvHub, Link, 
 friend inline ZuStringT<"Zfix.ingress_io_test.Link"> ZmNHeapID(Link *);
   using ZmNHeap<Link>::operator new;
   using ZmNHeap<Link>::operator delete; using Peer::Peer; };
+
+bool SrvHub::init(Network::ServerParams params) {
+  ZmRef<Link::RxAllocator> rx;
+  ZmRef<Link::TxAllocator> tx;
+  if (!params.rxAllocator()) {
+    rx = new Link::RxAllocator{};
+    params.rxAllocator(rx.ptr());
+  }
+  if (!params.txAllocator()) {
+    tx = new Link::TxAllocator{};
+    params.txAllocator(tx.ptr());
+  }
+  return Zfix::RawServer<SrvHub, Dictionary, Network>::init(ZuMv(params));
+}
 
 ZiConnection *SrvHub::accepted(const ZiCxnInfo &i) {
   auto link = next++ ? second : first;
@@ -173,9 +207,7 @@ struct Harness {
   TestState		state;
   CliHub		client;
   SrvHub		server;
-  ZiMultiplex		mx{ZiMxParams{}
-    .tcpBufAllocator<Network::RxAllocator<>>()
-    .scheduler([](auto &s) {
+  ZiMultiplex		mx{ZiMxParams{}.scheduler([](auto &s) {
     s.nThreads(6)
       .thread(1, [](auto &t) { t.isolated(1); }).thread(2, [](auto &t) { t.isolated(1); })
       .thread(3, [](auto &t) { t.isolated(1); }).thread(4, [](auto &t) { t.isolated(1); })
@@ -285,8 +317,8 @@ static void submitBudget(bool local) {
   Gate tx; h.client.txRun([&tx] { tx.block(); }); ZuCheck(wait(tx.entered));
   bool first = false, second = false, tuned = false;
   PostedState charged, link;
-  const uint64_t bytes = ZmHeapAllocSize<sizeof(RawOutput)>{} +
-    output->body()->memory() + output->frame().memory();
+  const uint64_t bytes = sizeof(RawOutput) + output->body()->memory() +
+    sizeof(ZiTxBuf) + uint64_t(output->frame()->size);
   ZmBlock<>{}([&h, &output, &first, &second, &tuned, &charged, &link, bytes](auto wake) {
     h.client.rxRun([&h, &output, &first, &second, &tuned, &charged, &link,
 	bytes, wake = ZuMv(wake)]() mutable {
@@ -310,6 +342,7 @@ static void submitBudget(bool local) {
   });
   ZuCheck(!drained.bytes && !drained.count);
   // Reuse the released domain capacity and then close with a submission pending.
+  output = h.second->output();
   Gate last; h.client.txRun([&last] { last.block(); }); ZuCheck(wait(last.entered));
   bool reused = false;
   ZmBlock<>{}([&h, &output, &reused](auto wake) {
@@ -327,26 +360,26 @@ static void submitBudget(bool local) {
   ZuCheck(!h.state.srv1.errors.load_() && !h.state.srv2.errors.load_());
 }
 static void hubLimits(unsigned kind) {
-  ZuTestScopeRT(hubLimits);
+  ZuTestScope(hubLimits);
   HubLimits cli, srv;
   switch (kind) {
     case 0: srv.link.rx.codec.frameBytes = 1; break;
     case 1: cli.link.tx.codec.frameBytes = 1; break;
     case 2: cli.link.wire.queuedBytes = cli.link.wire.adminBytes = 0; break;
   }
-  Harness h{cli, srv}; bool up = h.start(); ZuCheckRT(up); if (!up) return;
+  Harness h{cli, srv}; bool up = h.start(); ZuCheck(up); if (!up) return;
   h.state.cli1.expectedSubmit = kind ? RawSend::Overload : RawSend::Accepted;
-  h.connect(h.first.ptr()); ZuCheckRT(wait(h.state.cli1.ready)); ZuCheckRT(wait(h.state.srv1.ready));
-  h.first->packet(); ZuCheckRT(wait(h.state.cli1.submitted));
+  h.connect(h.first.ptr()); ZuCheck(wait(h.state.cli1.ready)); ZuCheck(wait(h.state.srv1.ready));
+  h.first->packet(); ZuCheck(wait(h.state.cli1.submitted));
   if (!kind) {
-    ZuCheckRT(stopped(h.state.srv1) && stopped(h.state.cli1));
-    ZuCheckRT(h.state.srv1.faults.load_() == 1 && !h.state.srv1.receives.load_());
+    ZuCheck(stopped(h.state.srv1) && stopped(h.state.cli1));
+    ZuCheck(h.state.srv1.faults.load_() == 1 && !h.state.srv1.receives.load_());
   } else {
-    ZuCheckRT(!h.state.cli1.published.load_() && !h.state.cli1.complete.load_());
-    ZuCheckRT(!h.state.cli1.stops.load_() && !h.state.srv1.stops.load_());
+    ZuCheck(!h.state.cli1.published.load_() && !h.state.cli1.complete.load_());
+    ZuCheck(!h.state.cli1.stops.load_() && !h.state.srv1.stops.load_());
   }
-  ZuCheckRT(h.finish(false));
-  ZuCheckRT(!h.state.cli1.errors.load_() && !h.state.srv1.errors.load_());
+  ZuCheck(h.finish(false));
+  ZuCheck(!h.state.cli1.errors.load_() && !h.state.srv1.errors.load_());
 }
 static void tracing() {
   ZuTestScope(tracing);

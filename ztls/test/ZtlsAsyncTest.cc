@@ -14,8 +14,34 @@ namespace {
 struct ClientApp : public Ztls::Client<ClientApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
-  struct Link : public Ztls::CliLink<ClientApp, Link, TxBufAlloc> {
-    using Base = Ztls::CliLink<ClientApp, Link, TxBufAlloc>;
+
+  using RxPolicy = Zi::RxTLSBufAllocator<
+    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
+  using TxPolicy = Zi::TxTLSBufAllocator<
+    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  ZmRef<RxPolicy> rxBufAllocator;
+  ZmRef<TxPolicy> txBufAllocator;
+
+  template <typename Params>
+  Params buffers(Params params) {
+    if (!params.rxAllocator()) {
+      rxBufAllocator = new RxPolicy{};
+      params.rxAllocator(rxBufAllocator.ptr());
+    }
+    if (!params.txAllocator()) {
+      txBufAllocator = new TxPolicy{};
+      params.txAllocator(txBufAllocator.ptr());
+    }
+    return params;
+  }
+
+  template <typename Params>
+  bool init(Params params) {
+    return Ztls::Client<ClientApp>::init(buffers(ZuMv(params)));
+  }
+
+  struct Link : public Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc> {
+    using Base = Ztls::CliLink<ClientApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ClientApp *app) : Base(app) { }
     void connected(Ztls::Connected) { }
     void disconnected(bool) { }
@@ -27,8 +53,34 @@ struct ClientApp : public Ztls::Client<ClientApp> {
 struct ServerApp : public Ztls::Server<ServerApp> {
   using RxBufAlloc = Ztls::RxBufAlloc<>;
   using TxBufAlloc = Ztls::TxBufAlloc<>;
-  struct Link : public Ztls::SrvLink<ServerApp, Link, TxBufAlloc> {
-    using Base = Ztls::SrvLink<ServerApp, Link, TxBufAlloc>;
+
+  using RxPolicy = Zi::RxTLSBufAllocator<
+    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
+  using TxPolicy = Zi::TxTLSBufAllocator<
+    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  ZmRef<RxPolicy> rxBufAllocator;
+  ZmRef<TxPolicy> txBufAllocator;
+
+  template <typename Params>
+  Params buffers(Params params) {
+    if (!params.rxAllocator()) {
+      rxBufAllocator = new RxPolicy{};
+      params.rxAllocator(rxBufAllocator.ptr());
+    }
+    if (!params.txAllocator()) {
+      txBufAllocator = new TxPolicy{};
+      params.txAllocator(txBufAllocator.ptr());
+    }
+    return params;
+  }
+
+  template <typename Params>
+  bool init(Params params) {
+    return Ztls::Server<ServerApp>::init(buffers(ZuMv(params)));
+  }
+
+  struct Link : public Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc> {
+    using Base = Ztls::SrvLink<ServerApp, Link, RxBufAlloc, TxBufAlloc>;
     Link(ServerApp *app) : Base(app) { }
     void connected(Ztls::Connected) { }
     void disconnected(bool) { }
@@ -41,7 +93,35 @@ struct ServerApp : public Ztls::Server<ServerApp> {
   }
 };
 
-struct HubApp : public Ztls::Hub<HubApp> { };
+struct HubApp : public Ztls::Hub<HubApp> {
+  using RxBufAlloc = Ztls::RxBufAlloc<>;
+  using TxBufAlloc = Ztls::TxBufAlloc<>;
+  using RxPolicy = Zi::RxTLSBufAllocator<
+    typename RxBufAlloc::Buf, RxBufAlloc::Size, RxBufAlloc::MaxSize>;
+  using TxPolicy = Zi::TxTLSBufAllocator<
+    typename TxBufAlloc::Buf, TxBufAlloc::Size, TxBufAlloc::MaxSize>;
+  ZmRef<RxPolicy> rxBufAllocator;
+  ZmRef<TxPolicy> txBufAllocator;
+
+  template <typename Params>
+  Params buffers(Params params) {
+    if (!params.rxAllocator()) {
+      rxBufAllocator = new RxPolicy{};
+      params.rxAllocator(rxBufAllocator.ptr());
+    }
+    if (!params.txAllocator()) {
+      txBufAllocator = new TxPolicy{};
+      params.txAllocator(txBufAllocator.ptr());
+    }
+    return params;
+  }
+
+  template <typename Params>
+  bool init(Params params) {
+    return Ztls::Hub<HubApp>::init(buffers(ZuMv(params)));
+  }
+
+};
 
 } // namespace
 
@@ -98,9 +178,6 @@ void testInitValidation()
 
   ZiMultiplex mx(
       ZiMxParams()
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxBuf, (16 << 10), ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Ztls.RxBuf">>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(6)
 	    .thread(1, [](auto &t) { t.isolated(1); })
@@ -115,6 +192,43 @@ void testInitValidation()
   if (!mxStarted) {
     ZiLog::stop();
     return;
+  }
+
+  {
+    ClientApp app;
+    Ztls::Hub<ClientApp> &hub = app;
+    bool initialized = hub.init(app.buffers(Ztls::HubParams(&mx, "3", "4").alpn(alpn)));
+    ZuCHECK(initialized, "client stream fixture hub init failed");
+    if (initialized) {
+      using OutputPolicy = Zi::TxTLSBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize * 2>;
+      ZmRef<OutputPolicy> output = new OutputPolicy{};
+      bool prepared = hub.allocator(output.ptr());
+      ZuCHECK(prepared, "client stream fixture allocator registration failed");
+      ZuCHECK(!hub.allocator(app.rxBufAllocator.ptr()), "RxTLS allocator accepted for Tx");
+      if (prepared) {
+	auto buf = output->allocBuf();
+	ZuCHECK(buf->allocator == output.ptr() && output->mx() == &mx,
+	  "additional TLS output lost its registered allocator");
+	ClientApp::Link link(&app);
+	ZuCHECK(link.stream() == &link, "TLS client bidi stream is not link");
+      }
+      hub.final();
+    }
+  }
+  {
+    ServerApp app;
+    Ztls::Hub<ServerApp> &hub = app;
+    bool initialized = hub.init(app.buffers(Ztls::HubParams(&mx, "3", "4").alpn(alpn)));
+    ZuCHECK(initialized, "server stream fixture hub init failed");
+    if (initialized) {
+      bool prepared = hub.allocator(app.txBufAllocator.ptr());
+      ZuCHECK(prepared, "server stream fixture allocator registration failed");
+      if (prepared) {
+	ServerApp::Link link(&app);
+	ZuCHECK(link.stream() == &link, "TLS server bidi stream is not link");
+      }
+      hub.final();
+    }
   }
 
   {

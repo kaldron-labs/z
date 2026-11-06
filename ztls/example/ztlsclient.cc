@@ -216,18 +216,8 @@ int main(int argc, char **argv)
 
   App app(repeats, payload_len);
 
-  uint64_t needed = 4 * ((uint64_t(payload_len) + (16U<<10) - 1) / (16U<<10));
-  unsigned ringSize = needed > ZiMxParams::MaxRingSize ?
-    unsigned(ZiMxParams::MaxRingSize) : unsigned(needed);
   ZiMultiplex mx(
       ZiMxParams()
-    .rxRingSize(ringSize < ZiIOBuf_DefltRxRingSize ?
-      ZiIOBuf_DefltRxRingSize : ringSize)
-    .txRingSize(ringSize < ZiIOBuf_DefltTxRingSize ?
-      ZiIOBuf_DefltTxRingSize : ringSize)
-    .tcpBufAllocator<Zi::RxTLSBufAllocator<
-      ZiRxBuf, (16 << 10), ZiIOBuf_DefltMaxSize,
-      ZuStringT<"Ztls.RxBuf">>>()
 	.scheduler([](auto &s) {
 	  s.nThreads(4)
 	  .thread(1, [](auto &t) { t.isolated(1); })
@@ -236,13 +226,18 @@ int main(int argc, char **argv)
 	  .thread(4, [](auto &t) { t.isolated(1); }); })
 	.rxThread(1).txThread(2));
 
+  ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
+  ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+
   if (!mx.start()) {
     std::cerr << "ZiMultiplex start failed\n" << std::flush;
     return 1;
   }
 
   if (!app.init(Ztls::ClientParams(&mx, "3", "4").hub(
-      [&alpn, ca](auto &p) { p.alpn(alpn).caPath(ca); }))) {
+      [&alpn, ca, &rx, &tx](auto &p) {
+	p.alpn(alpn).caPath(ca).rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+      }))) {
     std::cerr << "TLS client initialization failed\n" << std::flush;
     return 1;
   }

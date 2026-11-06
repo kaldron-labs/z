@@ -5,12 +5,17 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixTx.hh>
 #include <zlib/ZfixRxMsg.hh>
 
-#include "ZfixTxImageTest.hh"
+static ZmRef<ZiIOBuf> frameBuf() {
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  return ZmSingleton<Allocator>::instance()->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -147,8 +152,9 @@ struct Engine : Zfix::Tx<Engine> {
     return !delayUnload;
   }
 
-  bool frameTx(TxBody::Ref body, TxContext context, TxImage image, ZuDateTime original) {
-    auto wire = testBytes(image);
+  ZmRef<ZiIOBuf> allocTx() { return frameBuf(); }
+
+  bool frameTx(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> wire, ZuDateTime original) {
     if (refuseOutput || (outputLimit && output.length() >= outputLimit)) return false;
     bool associated = context.replay;
     for (unsigned i = 0, n = associations.length(); i < n; ++i) {
@@ -538,7 +544,7 @@ static void clockReversal()
 
 static void modes()
 {
-  ZuTestScopeRT(modes);
+  ZuTestScope(modes);
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode) {
     auto c = config();
     c.mode = mode;
@@ -549,12 +555,12 @@ static void modes()
     auto version = Version::Wire::v2s(c.identity.version);
     Engine tx{{}, ZuMv(c)};
     tx.start();
-    ZuCheckRT(tx.send(1) == TxSelect::Accepted); tx.drain();
+    ZuCheck(tx.send(1) == TxSelect::Accepted); tx.drain();
     MessageHandler<Order> message{view(tx.output[0])};
-    ZuCheckRT(message.valid() && view(tx.output[0]).beginString == version);
-    ZuCheckRT(message.ctor().senderSub == "DESK" && message.ctor().targetLocation == "LOC");
-    if (mode == Transport::FIXT11) ZuCheckRT(message.ctor().appVerID == "9");
-    else ZuCheckRT(!message.ctor().appVerID.data());
+    ZuCheck(message.valid() && view(tx.output[0]).beginString == version);
+    ZuCheck(message.ctor().senderSub == "DESK" && message.ctor().targetLocation == "LOC");
+    if (mode == Transport::FIXT11) ZuCheck(message.ctor().appVerID == "9");
+    else ZuCheck(!message.ctor().appVerID.data());
   }
 }
 
@@ -635,30 +641,30 @@ static void repeatedReconnect()
 
 static void priorityReentry()
 {
-  ZuTestScopeRT(priorityReentry);
+  ZuTestScope(priorityReentry);
   for (bool detach : {false, true}) {
     Engine tx;
     tx.start(); tx.hold_();
-    ZuCheckRT(tx.send(31) == TxSelect::Accepted && tx.next_() == 2);
-    ZuCheckRT(tx.detach_(1) && tx.attach_(2));
+    ZuCheck(tx.send(31) == TxSelect::Accepted && tx.next_() == 2);
+    ZuCheck(tx.detach_(1) && tx.attach_(2));
     Session::Msg logon;
     logon.p<Session::Logon>(Session::Logon{});
-    ZuCheckRT(tx.control(logon) == TxSelect::Accepted);
+    ZuCheck(tx.control(logon) == TxSelect::Accepted);
     tx.holdOnLogon = !detach;
     tx.detachOnLogon = detach;
-    ZuCheckRT(!tx.resume_());
-    ZuCheckRT(tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
+    ZuCheck(!tx.resume_());
+    ZuCheck(tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
       tx.output[0].context.seqNo == 2 && tx.output[0].context.connection == 2 &&
       tx.next_() == 3 && tx.published_() == 1);
     auto bytes = tx.queuedBytes_();
-    ZuCheckRT(!tx.abortTx_(tx.epoch_(), 2));
-    ZuCheckRT(tx.abortTx_(tx.epoch_(), 1) && tx.next_() == 3 && tx.queuedBytes_() < bytes);
+    ZuCheck(!tx.abortTx_(tx.epoch_(), 2));
+    ZuCheck(tx.abortTx_(tx.epoch_(), 1) && tx.next_() == 3 && tx.queuedBytes_() < bytes);
     tx.drain();
-    ZuCheckRT(tx.output.length() == 1 && tx.published_() == 1 &&
+    ZuCheck(tx.output.length() == 1 && tx.published_() == 1 &&
       tx.next_() == 3 && !tx.unloaded.length());
-    ZuCheckRT(tx.ready_(2, true) == !detach);
-    if (tx.attached_()) ZuCheckRT(tx.detach_(2));
-    ZuCheckRT(tx.attach_(3) && !tx.abortTx_(tx.epoch_(), 2));
+    ZuCheck(tx.ready_(2, true) == !detach);
+    if (tx.attached_()) ZuCheck(tx.detach_(2));
+    ZuCheck(tx.attach_(3) && !tx.abortTx_(tx.epoch_(), 2));
   }
 }
 
@@ -691,34 +697,34 @@ static void restoredRetained()
 
 static void priorityPendingReplay()
 {
-  ZuTestScopeRT(priorityPendingReplay);
+  ZuTestScope(priorityPendingReplay);
   for (bool bounded : {false, true}) {
     Engine tx;
     Fmt::Error error;
     auto body = TxBody::encode<OrderMsg>(Order{"pending"}, 42, error);
-      ZuCheckRT(tx.restore_(1, 2, 1, 1) && tx.attach_(1));
+      ZuCheck(tx.restore_(1, 2, 1, 1) && tx.attach_(1));
     tx.delayHistory = true;
     Session::Msg logon;
     logon.p<Session::Logon>(Session::Logon{});
-    ZuCheckRT(tx.control(logon) == TxSelect::Accepted && tx.resume_()); tx.drain();
-    ZuCheckRT(tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
+    ZuCheck(tx.control(logon) == TxSelect::Accepted && tx.resume_()); tx.drain();
+    ZuCheck(tx.output.length() == 1 && tx.output[0].body->msgType() == "A" &&
       tx.output[0].context.seqNo == 2 && tx.published_() == 1 && tx.waiting_());
-    ZuCheckRT(tx.replay_(1, 1, bounded ? 1 : 0));
+    ZuCheck(tx.replay_(1, 1, bounded ? 1 : 0));
     auto progress = tx.progress_();
-    ZuCheckRT(progress.replayBegin == 1 && progress.replayEnd == (bounded ? 2 : 3));
+    ZuCheck(progress.replayBegin == 1 && progress.replayEnd == (bounded ? 2 : 3));
     tx.drain();
-    ZuCheckRT(tx.output.length() == 1 && tx.waiting_());
+    ZuCheck(tx.output.length() == 1 && tx.waiting_());
     tx.delayHistory = false;
-    ZuCheckRT(tx.reloaded_(tx.historyTicket, TxHistory{body, {}, 1, 1})); tx.drain();
-    ZuCheckRT(tx.output.length() == (bounded ? 3 : 4) && !tx.waiting_() &&
+    ZuCheck(tx.reloaded_(tx.historyTicket, TxHistory{body, {}, 1, 1})); tx.drain();
+    ZuCheck(tx.output.length() == (bounded ? 3 : 4) && !tx.waiting_() &&
       !tx.replaying_() && !tx.failed_() && !tx.error && tx.next_() == 3 &&
       tx.published_() == 3 && !tx.queuedBytes_());
     if (tx.output.length() >= 3) {
-      ZuCheckRT(tx.output[1].body->id() == 42 && tx.output[1].context.seqNo == 1 &&
+      ZuCheck(tx.output[1].body->id() == 42 && tx.output[1].context.seqNo == 1 &&
 	!tx.output[1].context.replay && tx.output[2].body->id() == 42 &&
 	tx.output[2].context.seqNo == 1 && tx.output[2].context.replay);
       MessageHandler<Order> replayed{view(tx.output[2])};
-      ZuCheckRT(replayed.valid() && replayed.ctor().possDup &&
+      ZuCheck(replayed.valid() && replayed.ctor().possDup &&
 	replayed.ctor().origSendingTime == tx.output[1].original);
     }
   }
@@ -753,42 +759,42 @@ static void unavailableAssigned()
 
 static void abortedAssigned()
 {
-  ZuTestScopeRT(abortedAssigned);
+  ZuTestScope(abortedAssigned);
   Engine tx;
   tx.start();
-  ZuCheckRT(tx.send(1) == TxSelect::Accepted); tx.drain();
+  ZuCheck(tx.send(1) == TxSelect::Accepted); tx.drain();
   tx.hold_();
-  ZuCheckRT(tx.send(2) == TxSelect::Accepted);
+  ZuCheck(tx.send(2) == TxSelect::Accepted);
   Session::Msg heartbeat;
   heartbeat.p<Session::HeartBt>(Session::HeartBt{});
-  ZuCheckRT(tx.control(heartbeat) == TxSelect::Accepted);
-  ZuCheckRT(tx.send(3) == TxSelect::Accepted && tx.next_() == 5);
+  ZuCheck(tx.control(heartbeat) == TxSelect::Accepted);
+  ZuCheck(tx.send(3) == TxSelect::Accepted && tx.next_() == 5);
   auto bytes = tx.queuedBytes_();
-  ZuCheckRT(tx.abortTx_(tx.epoch_(), 2) && tx.next_() == 5 && tx.queuedBytes_() < bytes);
+  ZuCheck(tx.abortTx_(tx.epoch_(), 2) && tx.next_() == 5 && tx.queuedBytes_() < bytes);
   auto after = tx.queuedBytes_();
-  ZuCheckRT(!tx.abortTx_(tx.epoch_(), 2) && !tx.abortTx_(tx.epoch_(), 1) &&
+  ZuCheck(!tx.abortTx_(tx.epoch_(), 2) && !tx.abortTx_(tx.epoch_(), 1) &&
     tx.queuedBytes_() == after);
-  ZuCheckRT(tx.abortTx_(tx.epoch_(), 4) && tx.next_() == 5 && tx.published_() == 2 &&
+  ZuCheck(tx.abortTx_(tx.epoch_(), 4) && tx.next_() == 5 && tx.published_() == 2 &&
     tx.retained_() == 1 && tx.queuedBytes_() < after);
-  ZuCheckRT(tx.detach_(1) && tx.attach_(2));
+  ZuCheck(tx.detach_(1) && tx.attach_(2));
   Session::Msg logon;
   logon.p<Session::Logon>(Session::Logon{});
-  ZuCheckRT(tx.control(logon) == TxSelect::Accepted && tx.resume_()); tx.drain();
-  ZuCheckRT(tx.output.length() >= 3 && tx.output[1].body->msgType() == "A" &&
+  ZuCheck(tx.control(logon) == TxSelect::Accepted && tx.resume_()); tx.drain();
+  ZuCheck(tx.output.length() >= 3 && tx.output[1].body->msgType() == "A" &&
     tx.output[1].context.seqNo == 5 && tx.output[1].context.connection == 2);
   uint64_t next = 2;
   for (unsigned i = 2, n = tx.output.length(); i < n; ++i) {
     Session::Msg fill;
     RxMsg header;
 
-    ZuCheckRT(!readControl(view(tx.output[i]), fill, header));
-    ZuCheckRT(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
+    ZuCheck(!readControl(view(tx.output[i]), fill, header));
+    ZuCheck(fill.is<Session::SeqReset>() && fill.p<Session::SeqReset>().gapFill &&
       header.seqNo == next && header.possDup);
     auto end = fill.p<Session::SeqReset>().newSeqNo;
-    ZuCheckRT(end > next && end <= 5);
+    ZuCheck(end > next && end <= 5);
     next = end;
   }
-  ZuCheckRT(next == 5 && tx.next_() == 6 && tx.published_() == 6 &&
+  ZuCheck(next == 5 && tx.next_() == 6 && tx.published_() == 6 &&
     tx.acknowledged_() == 1 && !tx.queuedBytes_() && !tx.unloaded.length());
 }
 
@@ -881,20 +887,20 @@ static void epochTurnover()
 
 static void retireControls()
 {
-  ZuTestScopeRT(retireControls);
+  ZuTestScope(retireControls);
   Engine tx; tx.start();
   Session::Msg heartbeat; heartbeat.p<Session::HeartBt>(Session::HeartBt{});
-  for (unsigned i = 0; i < 7; ++i) ZuCheckRT(tx.control(heartbeat) == TxSelect::Accepted);
+  for (unsigned i = 0; i < 7; ++i) ZuCheck(tx.control(heartbeat) == TxSelect::Accepted);
   tx.drain(); tx.ready_(1, false); tx.hold_();
-  ZuCheckRT(!tx.retained_() && !tx.queuedBytes_());
+  ZuCheck(!tx.retained_() && !tx.queuedBytes_());
   auto id = tx.resetBegin_(1, 2);
-  ZuCheckRT(id && tx.resetting_() && tx.epoch_() == 1 && !tx.resets.length());
-  ZuCheckRT(tx.send(17) == TxSelect::Busy && !tx.resume_());
+  ZuCheck(id && tx.resetting_() && tx.epoch_() == 1 && !tx.resets.length());
+  ZuCheck(tx.send(17) == TxSelect::Busy && !tx.resume_());
   auto stale = tx.tasks[tx.tasks.length() - 1]; tx.drain();
-  ZuCheckRT(tx.epoch_() == 2 && tx.next_() == 1 && tx.resets.length() == 1 &&
+  ZuCheck(tx.epoch_() == 2 && tx.next_() == 1 && tx.resets.length() == 1 &&
     tx.resets[0].id == id && tx.resets[0].previous.sent == 8);
   tx.run_(stale.kind, stale.ticket);
-  ZuCheckRT(tx.resets.length() == 1 && !tx.history.length() && !tx.archives.length());
+  ZuCheck(tx.resets.length() == 1 && !tx.history.length() && !tx.archives.length());
 }
 
 static void retireGuards()
@@ -960,21 +966,21 @@ static void appReplayChoice()
 
 static void lookupReattach()
 {
-  ZuTestScopeRT(lookupReattach);
+  ZuTestScope(lookupReattach);
   for (bool replay : {false, true}) {
     Engine tx;
     if (replay) { tx.start(); tx.send(1); tx.drain(); }
-    else ZuCheckRT(tx.restore_(1, 2, 1, 1));
+    else ZuCheck(tx.restore_(1, 2, 1, 1));
     tx.delayHistory = true; tx.detachHistory = true;
     if (!replay) tx.start();
-    if (replay) ZuCheckRT(tx.replay_(1, 1));
+    if (replay) ZuCheck(tx.replay_(1, 1));
     else tx.resume_();
     tx.drain();
-    ZuCheckRT(tx.waiting_() && tx.attached_() && tx.reattachedHistory &&
+    ZuCheck(tx.waiting_() && tx.attached_() && tx.reattachedHistory &&
       tx.connection_() == 2);
     auto calls = tx.historyCalls;
-    ZuCheckRT(tx.reloaded_(tx.historyTicket, {}) && !tx.waiting_() && !tx.error);
-    ZuCheckRT(tx.attached_() && tx.connection_() == 2 && tx.historyCalls == calls);
+    ZuCheck(tx.reloaded_(tx.historyTicket, {}) && !tx.waiting_() && !tx.error);
+    ZuCheck(tx.attached_() && tx.connection_() == 2 && tx.historyCalls == calls);
   }
 }
 
@@ -984,8 +990,8 @@ static void reloadReservation()
   Fmt::Error error;
   auto old = TxBody::encode<OrderMsg>(Order{"old"}, 17, error);
   auto next = TxBody::encode<OrderMsg>(Order{"next"}, 18, error);
-  uint64_t oldCharge = old->memory() + ZmHeapAllocSize<sizeof(Engine::Msg)>{};
-  uint64_t nextCharge = next->memory() + ZmHeapAllocSize<sizeof(Engine::Msg)>{};
+  uint64_t oldCharge = old->size + sizeof(Engine::Msg);
+  uint64_t nextCharge = next->size + sizeof(Engine::Msg);
   TxLimits limits;
   limits.queuedOutputBytes = oldCharge + nextCharge - 1;
   limits.adminReserveBytes = 0;

@@ -23,11 +23,6 @@
 
 namespace ZfixDemo {
 
-struct Auth { ZuCSpan user, password; };
-ZfStruct(, (Auth, FIX), (user, (FIX::ID<553>, Required), String),
-  (password, (FIX::ID<554>, Required), String));
-ZfStructImpl(Auth); ZfStructImpl(Auth, FIX);
-
 namespace Scenario {
 
   ZtEnum(, Scenario, int8_t, RPC, Groups, Events, Reject, Policy);
@@ -88,6 +83,20 @@ template <typename Net> struct Hub<Net, true> : Zfix::Client<Hub<Net, true>, Dic
   State	*state;
 
   explicit Hub(State *value) : state{value} { }
+
+  bool init(typename Net::ClientParams params) {
+    ZmRef<typename Link::RxAllocator> rx;
+    ZmRef<typename Link::TxAllocator> tx;
+    if (!params.rxAllocator()) {
+      rx = new typename Link::RxAllocator{};
+      params.rxAllocator(rx.ptr());
+    }
+    if (!params.txAllocator()) {
+      tx = new typename Link::TxAllocator{};
+      params.txAllocator(tx.ptr());
+    }
+    return Zfix::Client<Hub, Dictionary, Net>::init(ZuMv(params));
+  }
 };
 
 template <typename Net> struct Hub<Net, false> : Zfix::Server<Hub<Net, false>, Dictionary, Net> {
@@ -106,6 +115,20 @@ template <typename Net> struct Hub<Net, false> : Zfix::Server<Hub<Net, false>, D
   void listening(const ZiListenInfo &info) { state->port = info.port; state->listening.post(); }
 
   void listenFailed(bool) { state->fail(); state->listening.post(); }
+
+  bool init(typename Net::ServerParams params) {
+    ZmRef<typename Link::RxAllocator> rx;
+    ZmRef<typename Link::TxAllocator> tx;
+    if (!params.rxAllocator()) {
+      rx = new typename Link::RxAllocator{};
+      params.rxAllocator(rx.ptr());
+    }
+    if (!params.txAllocator()) {
+      tx = new typename Link::TxAllocator{};
+      params.txAllocator(tx.ptr());
+    }
+    return Zfix::Server<Hub, Dictionary, Net>::init(ZuMv(params));
+  }
 };
 
 template <typename Net, bool Client>
@@ -201,9 +224,12 @@ public:
 
   Zfix::TxBody::Ref fixLogonTx(Zfix::TxBody::Ref body) {
     if (!options().token.length()) return body;
+    // Handshake only: preserve every managed byte and validate added fields.
     auto token = Client && options().badAuth ? ZuCSpan{"wrong"} : options().token;
+    ZtString<ZtStringHeapID<"Zfix.Demo.Auth">> bytes{body->body()};
+    bytes << "553=demo\1" "554=" << token << '\1';
     Zfix::Fmt::Error error;
-    return Zfix::TxBody::extend<Zfix::MT<Zfix::Session::Logon, "A">>(ZuMv(body), Auth{"demo", token}, error);
+    return Zfix::TxBody::restoreControl<LoginMsg>(bytes, body->id(), error);
   }
 
   unsigned fixAdmissionRx(Zfix::SessionEvent, ZmRef<Zfix::RxQueue::Node> input,

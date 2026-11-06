@@ -20,21 +20,6 @@ ZfStructImpl(Ready); ZfStructImpl(Ready, JSON);
 ZfStructImpl(ReconnectReady); ZfStructImpl(ReconnectReady, JSON);
 ZfStructImpl(Result); ZfStructImpl(Result, JSON);
 ZfStructImpl(HeapEvent); ZfStructImpl(HeapEvent, JSON);
-#ifndef _WIN32
-ZfStructImpl(WindowSample); ZfStructImpl(WindowSample, JSON);
-ZfStructImpl(WindowRecord); ZfStructImpl(WindowRecord, JSON);
-void outputWindow(ZuCSpan engine, ZuCSpan role, const WindowWire &wire,
-    unsigned sessions, unsigned overlappingWarmup) {
-  WindowRecord record;
-  record.engine = engine; record.role = role; record.pid = wire.pid;
-  record.token = wire.token; record.error = wire.error; record.sessions = sessions;
-  record.overlappingWarmupSessions = overlappingWarmup;
-  record.controlSends = wire.sends; record.controlReceives = wire.receives;
-  record.controlPolls = wire.polls; record.start = wire.start; record.end = wire.end;
-  output(record);
-}
-
-#endif
 void heapEvent() {
   auto enabled = getenv("ZFIX_HEAPSTATS");
   if (!enabled || !*enabled || !strcmp(enabled, "0")) return;
@@ -57,9 +42,7 @@ void usage(bool server) {
     "  [--version FIX.4.0|FIX.4.1|FIX.4.2|FIX.4.3|FIX.4.4|FIXT.1.1]\n"
     "  [--retain N --cache-bytes N --queue-bytes N]\n"
     "  [--state-in FILE --state-out FILE --key-offset N --connections N --reset-logon]\n"
-    "  [--recover-rx N] [--backend auto|epoll|uring (native engine only)]\n"
-    "  [--rx-ring-size N --tx-ring-size N (native; 0 sizes for workload)]\n"
-    "  [--observe-io] [--diag-samples N (native diagnostic peers only)]\n";
+    "  [--recover-rx N]\n";
 }
 bool options(Options &o, bool server, int argc, char **argv, Ports &ports) {
   ports.length(0);
@@ -67,7 +50,6 @@ bool options(Options &o, bool server, int argc, char **argv, Ports &ports) {
   catch (const ZeException &e) { std::cerr << e << '\n';
     return false; }
   if (o.help) return true;
-  if (o.backend != "auto" && o.backend != "epoll" && o.backend != "uring") return false;
   if (argc != 1 || !o.sessions || !o.count || !o.inFlight || !o.deadline || !o.retain ||
       !o.cacheBytes || !o.queueBytes || o.queueBytes > UINT64_MAX - (1U<<20) || o.port > 65535
 	|| o.sessions > 65535 ||
@@ -179,14 +161,7 @@ Prepared Broker::change(uint64_t key, uint64_t original, unsigned qty, ZuDecimal
 }
 bool Run::start(uint64_t now) {
   if (m_phase != Phase::Idle || !now) return false;
-#ifndef _WIN32
-  auto window = WindowClient::active();
-  if (window) window->warmup(m_index, bool(m_options.warmup));
-  m_phase = m_options.warmup ? Phase::Warmup :
-    window && !window->open() ? Phase::MeasuredGate : Phase::Measured;
-#else
   m_phase = m_options.warmup ? Phase::Warmup : Phase::Measured;
-#endif
   m_start = now; return true;
 }
 void Run::settle(uint64_t now) {
@@ -195,20 +170,10 @@ void Run::settle(uint64_t now) {
     case Phase::Warmup:
       if (m_completed != m_options.warmup) return;
       m_baseline = m_calls.progress(); m_offered = m_completed = 0;
-#ifndef _WIN32
-      if (auto window = WindowClient::active()) {
-        window->warmup(m_index, false);
-        if (!window->open()) { m_phase = Phase::MeasuredGate; break; }
-      }
-#endif
       m_phase = Phase::Measured; m_start = now; break;
     case Phase::Measured:
       if (m_offered < m_options.count && !expired(now)) return;
-      m_phase = Phase::Complete; m_end = now;
-#ifndef _WIN32
-      if (auto window = WindowClient::active()) window->complete(m_index);
-#endif
-      break;
+      m_phase = Phase::Complete; m_end = now; break;
   }
 }
 unsigned Run::receive(const Report &r, uint64_t now) {

@@ -6,10 +6,7 @@ import json
 import os
 from pathlib import Path
 import platform
-import random
 import shlex
-import shutil
-import socket
 import subprocess
 import sys
 import tempfile
@@ -78,8 +75,7 @@ def metadata(options, pair, programs):
     if makefile.exists():
         for line in makefile.read_text().splitlines():
             name, separator, value = line.partition(" = ")
-            if separator and name in ("CXX", "CPPFLAGS", "Z_CPPFLAGS",
-                                       "CXXFLAGS", "Z_CXXFLAGS", "Z_LDFLAGS",
+            if separator and name in ("CXX", "CXXFLAGS", "Z_CXXFLAGS", "Z_LDFLAGS",
                                        "QUICKFIX_CFLAGS", "QUICKFIX_LIBS", "QUICKFIX_DICT"):
                 variables[name] = value
     cpu = Path("/proc/cpuinfo")
@@ -93,17 +89,8 @@ def metadata(options, pair, programs):
         sources += [path for path in (BASE / role).rglob("*")
                     if path.is_file() and path.suffix in extensions and
                     not excluded.intersection(path.relative_to(BASE).parts)]
-    sources += [BASE.parent / name for name in (
-        "configure.ac", "m4/zi_uring.m4", "zi/src/ZiConfig.hh",
-        "zi/src/ZiIOBuf.hh", "zi/src/ZiIOBuf.cc", "zi/src/ZiIOContext.hh",
-        "zi/src/ZiMultiplex.hh", "zi/src/ZiMultiplex.cc", "zi/src/ZiPlatform.cc",
-        "zi/src/ZiRx.hh", "zi/src/ZiRxStream.hh", "zi/src/ZiTx.hh", "zi/src/ZiTxStream.hh",
-        "zm/src/ZmPQueue.hh", "zm/src/ZmList.hh", "zm/src/ZmCache.hh", "zm/src/ZmPolyCache.hh",
-        "zm/src/ZmNode.hh", "zm/src/ZmNodeFn.hh", "zm/src/ZmPolymorph.hh",
-        "zm/src/ZmFn.hh", "zm/src/ZmFn_.hh",
-        "ztcp/src/Ztcp.hh", "ztls/src/Ztls.hh", "ztls/src/ZtlsPico.hh",
-        "ztls/src/ZtlsPico.cc", "ztls/src/ZtlsBackend.hh", "ztls/src/ZtlsBackend.cc",
-        "ztls/src/ZtlsHMAC.hh")]
+    sources += [BASE.parent / name for name in
+                ("zm/src/ZmPQueue.hh", "ztcp/src/Ztcp.hh", "ztls/src/Ztls.hh")]
     result = {"platform": platform.platform(), "machine": platform.machine(),
               "cpu": hardware, "logicalCpus": os.cpu_count(),
               "affinity": sorted(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity")
@@ -141,26 +128,6 @@ def metadata(options, pair, programs):
                            "termination/re-encryption; compare to same relay profile only",
                   "remote": "remote server resources and binary identity unmeasured unless "
                             "provided separately; remote service lifecycle externally managed"}}
-    if options.process_window:
-        result["processWindowObserver"] = {
-            "scope": "paired control-bracketed shared measured-workload process counters",
-            "protocol": "inherited task-owned UnixSEQPACKET; fixed27u64 START/END exchanges",
-            "sampling": "two process CPU/resource snapshots per peer, no per-order CPU calls",
-            "overhead": "one sleeping helper per peer; CPU deltas, calls and sample/guard brackets retained",
-            "warmup": "existing independent session warmup preserved; overlap at client envelope open recorded",
-            "fallback": "none; missing/invalid paired samples fail the case"}
-    if options.interface:
-        spec = importlib.util.spec_from_file_location("zfix_netmeta", HERE / "netmeta.py")
-        helper = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(helper)
-        result["network"] = helper.capture(options.interface)
-    else:
-        result["network"] = {"scope": "local interface metadata not requested"}
-    if options.syscalls:
-        result["syscallObserver"] = {
-            "version": command_output(["strace", "-V"]),
-            "arguments": ["strace", "-f", "-c", "-qq", "-o", "PER_PEER_SUMMARY"],
-            "scope": "whole peer process tree including wrapper/startup/warmup/shutdown"}
     for name, path in programs.items():
         binary = pair.executable(path)
         result["programs"][name] = {
@@ -189,47 +156,9 @@ def metadata(options, pair, programs):
     return result
 
 
-def syscall_summary(text):
-    """Parse strace -f -c output; reject incomplete or inconsistent evidence."""
-    entries, total = {}, None
-    for line in text.splitlines():
-        fields = line.split()
-        if not fields or fields[0].startswith(("%", "-")):
-            continue
-        if len(fields) not in (5, 6):
-            raise ValueError(f"unexpected strace summary row: {line}")
-        percent, seconds, micros, calls = fields[:4]
-        value = {"calls": int(calls), "errors": int(fields[4]) if len(fields) == 6 else 0,
-                 "seconds": float(seconds), "usecsPerCall": int(micros),
-                 "percentTime": float(percent)}
-        if any(value[key] < 0 for key in value):
-            raise ValueError(f"negative strace summary row: {line}")
-        name = fields[-1]
-        if name == "total":
-            if total is not None:
-                raise ValueError("duplicate strace total")
-            total = value
-        elif name in entries:
-            raise ValueError(f"duplicate strace syscall: {name}")
-        else:
-            entries[name] = value
-    if total is None or not entries:
-        raise ValueError("missing strace syscall summary")
-    for key in ("calls", "errors"):
-        if sum(item[key] for item in entries.values()) != total[key]:
-            raise ValueError(f"inconsistent strace {key} total")
-    return {"scope": "strace -f -c whole peer process tree including wrapper/startup/warmup/shutdown",
-            "total": total, "syscalls": entries}
-
-
 def peer_command(options, command, directory, role, diagnostic):
     environment = ["ZFIX_HEAPSTATS=1"] if options.framework_heaps else []
-    if diagnostic and options.syscalls:
-        if environment:
-            command = [str(BASE.parent / "libtool"), "--mode=execute", "env", *environment, *command]
-        return ["strace", "-f", "-c", "-qq", "-o",
-                str(directory / f"{role}-syscalls.txt"), *command]
-    if diagnostic and not options.io_diagnostics:
+    if diagnostic:
         if options.audittrace:
             environment += [f"LD_AUDIT={options.audittrace.resolve()}",
                             f"ZFIX_AUDITTRACE_FILE={directory / (role + '-audit.json')}"]
@@ -264,37 +193,8 @@ def rows(pair, path):
     return [row for row in pair.records(path) if row.get("event") == "result"]
 
 
-def io_metric_coverage(case, client_kind, server_kind):
-    result = {}
-    for role, kind, key in (("client", client_kind, "clients"),
-                            ("server", server_kind, "servers")):
-        observed = case.get("ioDiagnostics", {}).get(role)
-        backends = {row.get("backend") for row in case.get(key, [])}
-        backend = observed["backend"] if observed else next(iter(backends)) if len(backends) == 1 else None
-        native = kind == "native"
-        fallback_applies = native and backend == "uring"
-        result[role] = {
-            "engine": kind, "backend": backend,
-            "nativeDiagnosticRecord": observed is not None,
-            "ordinaryFallback": {
-                "applicable": fallback_applies,
-                "status": "observed" if fallback_applies and observed else
-                          "not-collected" if fallback_applies else
-                          "unavailable" if native and backend is None else "not-applicable",
-                "scope": "actual io_uring TxData policy-classified ordinary results/bytes; not all socket attempts",
-                "excluded": "epoll has no ring TxData event channel; QuickFIX is external; syscall attempts are a separate gate"},
-            "deliveryToFramer": {
-                "applicable": native,
-                "status": "observed" if native and observed and observed["provenance"] else
-                          "not-collected" if native else "not-applicable",
-                "origin": "latest contributing userspace payload-delivery callback to native FIX framing",
-                "excluded": "not raw CQE dequeue, kernel/NIC arrival, first-fragment delay or an all-engine framer comparison"}}
-    return result
-
-
 def run_case(options, pair, root, programs, label, profile, transport, repeat, diagnostic):
-    observer = ("syscalls" if options.syscalls else "io" if options.io_diagnostics else
-                "audit" if options.audittrace else "heap") if diagnostic else None
+    observer = ("audit" if options.audittrace else "heap") if diagnostic else None
     tag = f"{label}-{transport}-{profile}-{repeat}" + (f"-{observer}" if diagnostic else "")
     directory = root / tag
     directory.mkdir()
@@ -314,34 +214,16 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
             "resources": {}, "status": "running", "timeouts": 0,
             "expectedOrders": options.count * options.sessions}
     processes = {}
-    window_sockets = None
-    if options.process_window:
-        if sys.platform != "linux":
-            raise ValueError("process-window measurement requires Linux; ordinary benchmark remains available")
-        if remote:
-            raise ValueError("process window requires both local task-owned peers")
-        window_sockets = socket.socketpair(socket.AF_UNIX, socket.SOCK_SEQPACKET)
     started = time.monotonic()
     try:
         ports = options.remote_ports
         if not remote:
             command = [str(programs[f"{server_kind}_server"]), "--port", "0", *common]
-            if server_kind == "native":
-                command += ["--backend", options.backend]
-                command += ["--rx-ring-size", str(options.rx_ring_size),
-                            "--tx-ring-size", str(options.tx_ring_size)]
-                if diagnostic and options.io_diagnostics:
-                    command += ["--observe-io", "--diag-samples", str(options.diag_samples)]
             command = peer_command(options, command, directory, "server", diagnostic)
             case["commands"]["server"] = command
             with (directory / "server.log").open("wb") as errors:
-                extra = {}
-                if window_sockets:
-                    extra = dict(pass_fds=(window_sockets[0].fileno(),),
-                                 env=dict(os.environ, ZFIX_WINDOW_FD=str(window_sockets[0].fileno())))
                 server = Process(command, stdout=subprocess.PIPE, stderr=errors,
-                                 start_new_session=True, **extra)
-                if window_sockets: window_sockets[0].close()
+                                 start_new_session=True)
             processes["server"] = server
             opened = pair.ready(server, directory / "server.jsonl", options.ready_timeout)
             ports = opened["ports"]
@@ -376,12 +258,6 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
             host = "localhost"
         command = [str(programs[f"{client_kind}_client"]), "--host", host,
                    "--ports", ",".join(map(str, ports)), *common]
-        if client_kind == "native":
-            command += ["--backend", options.backend]
-            command += ["--rx-ring-size", str(options.rx_ring_size),
-                        "--tx-ring-size", str(options.tx_ring_size)]
-            if diagnostic and options.io_diagnostics:
-                command += ["--observe-io", "--diag-samples", str(options.diag_samples)]
         if remote and profile in ("fragmentation", "replay") and transport == "tls":
             # The client verifies the local relay cert; relay verifies the remote CA/name.
             command[command.index("--ca") + 1] = str(root / "cert.pem")
@@ -389,13 +265,8 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
         case["commands"]["client"] = command
         with (directory / "client.jsonl").open("wb") as output:
             with (directory / "client.log").open("wb") as errors:
-                extra = {}
-                if window_sockets:
-                    extra = dict(pass_fds=(window_sockets[1].fileno(),),
-                                 env=dict(os.environ, ZFIX_WINDOW_FD=str(window_sockets[1].fileno())))
                 processes["client"] = Process(command, stdout=output, stderr=errors,
-                                              start_new_session=True, **extra)
-                if window_sockets: window_sockets[1].close()
+                                              start_new_session=True)
         end = time.monotonic() + options.process_timeout
         for role in ("server", "client", "relay"):
             process = processes.get(role)
@@ -409,12 +280,6 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
         clients = rows(pair, directory / "client.jsonl")
         servers = rows(pair, directory / "server.jsonl") if not remote else []
         case.update(clients=clients, servers=servers)
-        for kind, observations in ((client_kind, clients), (server_kind, servers)):
-            if kind == "native":
-                assert all(row.get("backend") in ("epoll", "uring") for row in observations)
-                if options.backend != "auto":
-                    assert all(row["backend"] == options.backend for row in observations)
-
         assert len(clients) == options.sessions, clients
         if not remote:
             assert len(servers) == options.sessions, servers
@@ -446,8 +311,6 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
     except Exception:
         case.update(status="failed", error=traceback.format_exc())
     finally:
-        if window_sockets:
-            for sock in window_sockets: sock.close()
         for process in processes.values():
             pair.stop(process)
         for role, process in processes.items():
@@ -478,36 +341,7 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
                         case.setdefault("frameworkHeap", {})[role] = value
                 except (ValueError, AssertionError, KeyError):
                     case.update(status="failed", outputError=f"invalid JSON: {role}")
-            if diagnostic and options.io_diagnostics and path.exists():
-                kind = client_kind if role == "client" else server_kind
-                if kind == "native":
-                    try:
-                        events = [item for item in pair.records(path)
-                                  if item.get("event") == "io_diag"]
-                        assert len(events) == 1, "missing or duplicate native I/O diagnostics"
-                        value = events[0]
-                        assert value["backend"] in ("epoll", "uring"), value
-                        for owner in value["owners"]:
-                            assert owner["pendingNotifs"] == owner["unpairedNotifs"] == 0, owner
-                            assert owner["droppedSamples"] == 0, owner
-                        if value["provenance"]:
-                            assert value["rxOrigin"] == "userspace receive completion", value
-                            assert value["rxPool"]["appSlots"] == value["rxPool"]["appBytes"] == 0, value
-                            for frame in value["frames"]:
-                                assert frame["completionToFramerNs"]["count"] > 0, frame
-                                assert frame["missingOrigin"] == frame["droppedSamples"] == 0, frame
-                        else:
-                            assert not value["frames"] and not value["rxOrigin"], value
-                        case.setdefault("ioDiagnostics", {})[role] = value
-                    except (OSError, ValueError, KeyError, AssertionError, TypeError) as error:
-                        case.update(status="failed", observerError=f"invalid io output: {role}: {error}")
-            if diagnostic and options.syscalls and role in processes:
-                try:
-                    value = syscall_summary((directory / f"{role}-syscalls.txt").read_text())
-                    case.setdefault("syscalls", {})[role] = value
-                except (OSError, ValueError) as error:
-                    case.update(status="failed", observerError=f"invalid syscall output: {role}: {error}")
-            if diagnostic and not options.io_diagnostics and not options.syscalls and role in processes:
+            if diagnostic and role in processes:
                 path = directory / f"{role}-{observer}.json"
                 try:
                     value = json.loads(path.read_text())
@@ -523,30 +357,9 @@ def run_case(options, pair, root, programs, label, profile, transport, repeat, d
                 except (OSError, ValueError, KeyError, AssertionError, AttributeError, TypeError):
                     case.update(status="failed",
                                 observerError=f"invalid {observer} output: {role}")
-        case["ioMetricCoverage"] = io_metric_coverage(case, client_kind, server_kind)
-        if options.process_window:
-            try:
-                source = HERE / "window-validate.py"
-                spec = importlib.util.spec_from_file_location("zfix_window_validate", source)
-                helper = importlib.util.module_from_spec(spec); spec.loader.exec_module(helper)
-                raw = {}
-                for role in ("client", "server"):
-                    events = [v for v in pair.records(directory / f"{role}.jsonl")
-                              if v.get("event") == "process_window"]
-                    assert len(events) == 1, (role, "missing/duplicate measured process window")
-                    raw[role] = events[0]
-                case["processWindow"] = helper.validate(raw, case, options.sessions, options.count)
-            except Exception:
-                case.update(status="failed", processWindowError=traceback.format_exc())
         case["wallSeconds"] = time.monotonic() - started
         case["complete"] = sum(row["progress"]["complete"] for row in case.get("clients", []))
         case["unfinished"] = max(0, case["expectedOrders"] - case["complete"])
-        if not diagnostic and case["complete"]:
-            for observed in case["resources"].values():
-                usage = observed["wait4"]
-                if usage is not None:
-                    observed["cpuNsPerMeasuredOrder"] = (
-                        (usage["userSeconds"] + usage["systemSeconds"]) * 1e9 / case["complete"])
         case["errors"] = sum(row["errors"] for row in case.get("clients", []) +
                               case.get("servers", []))
         case["processErrors"] = sum(value["exit"] != 0 for value in case["resources"].values())
@@ -558,7 +371,6 @@ def report(root, manifest, results):
     lines = ["# FIX process load measurements", "",
              f"Build label: {manifest['buildLabel']}. Platform: {manifest['platform']}.",
              "No configured clean release or platform acceptance is inferred from a label.", "",
-             "Timing tables exclude instrumented reruns; their raw resource usage includes observer overhead. "
              "CPU/RSS cover whole local processes; latency and orders/s use each client's "
              "measured phase. Wire bytes include warmup and controls, so wire B/s uses "
              "case wall duration including setup/teardown. Shared-window orders/s divides "
@@ -568,21 +380,17 @@ def report(root, manifest, results):
              "separately and are not averaged across sessions or repeats.", "",
              "| Pair / profile / transport / repeat | Transport | Status | Complete / unfinished | "
              "Errors / bad exits / timeouts | Shared-window orders/s | Sum session orders/s | "
-             "Client CPU s / CPU ns per measured order / RSS bytes | "
-             "Server CPU s / CPU ns per measured order / RSS bytes |",
+             "Client CPU s / RSS bytes | "
+             "Server CPU s / RSS bytes |",
              "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
 
     def resource(case, role):
         value = case["resources"].get(role, {}).get("wait4")
         if value is None:
             return "unmeasured"
-        cpu = value["userSeconds"] + value["systemSeconds"]
-        per_order = f"{cpu * 1e9 / case['complete']:.3f}" if case["complete"] else "unmeasured"
-        return f"{cpu:.6f} / {per_order} / {value['maxRssBytes']}"
+        return f"{value['userSeconds'] + value['systemSeconds']:.6f} / {value['maxRssBytes']}"
 
     for case in results:
-        if case["diagnostic"]:
-            continue
         clients = case.get("clients", [])
         throughput = sum(row["progress"]["complete"] * 1e9 / row["elapsedNs"]
                          for row in clients if row["elapsedNs"])
@@ -613,31 +421,6 @@ def report(root, manifest, results):
                              f"{p['ack']} / {p['reports']} | {p['inFlight']} / {p['peak']} | "
                              f"{row['rxFrames']} / {row['txFrames']} | "
                              f"{row['rxBytes']} / {row['txBytes']} | {row['retainedPeak']} |")
-    lines += ["", "Whole-process CPU/order includes startup, warmup and shutdown; "
-              "its denominator is completed measured client orders across sessions.", "",
-              "| Case / role | Voluntary / involuntary context switches |",
-              "| --- | --- |"]
-    for case in results:
-        if case["diagnostic"]:
-            continue
-        for role, observed in case["resources"].items():
-            usage = observed.get("wait4")
-            if usage is None:
-                continue
-            label = f"{case['pair']}/{case['profile']}/{case['transport']}/{case['repeat']}"
-            lines.append(f"| {label} / {role} | {usage['voluntarySwitches']} / "
-                         f"{usage['involuntarySwitches']} |")
-    lines += ["", "## Measured-workload process CPU", "",
-              "Both endpoint intervals bracket the shared measured workload. Raw CPU includes the explicit control helper; helper-adjusted CPU bounds and monotonic sample/guard brackets remain in case.json. Warmup overlap is recorded, never silently subtracted.", "",
-              "| Case / role | Phase CPU ns per measured order | Phase voluntary / involuntary switches | Helper CPU ns | Boundary sample bracket ns |",
-              "| --- | --- | --- | --- | --- |"]
-    for case in results:
-        if case["diagnostic"] or "processWindow" not in case: continue
-        for role, value in case["processWindow"]["peers"].items():
-            label = "/".join(str(case[k]) for k in ("pair", "profile", "transport", "repeat"))
-            delta = value["counterDelta"]
-            cells = [label + " / " + role, value["phaseProcessCpuNsPerMeasuredOrder"], str(delta["voluntary"]) + " / " + str(delta["involuntary"]), delta["helperCpuNs"], value["boundarySampleBracketNs"]]
-            lines.append("| " + " | ".join(str(v) for v in cells) + " |")
     lines += ["", "## Per-session latency and retention", "",
               "All latency entries are ns, in p50 / p95 / p99 / p99.9 / max order.", "",
               "| Case / session | Ack | Terminal | Scheduling delay | Intended ack | "
@@ -695,75 +478,6 @@ def report(root, manifest, results):
                          ("allocAttempts", "requestedBytes", "requestOverflows", "freeCalls",
                           "copyCalls", "copyBytes")) +
                          f" | {observed['asanCopyCalls']} / {observed['asanCopyBytes']} |")
-    lines += ["", "## Whole-process syscall observations", "",
-              "Separate strace -f -c reruns cover each local native/QuickFIX peer process tree, "
-              "including wrapper, startup, warmup and shutdown. Tracing perturbs execution; "
-              "these are not latency comparisons. Raw per-syscall/error counts remain in case JSON.", "",
-              "| Case / role | Syscall calls | Syscall errors | Traced syscall seconds |",
-              "| --- | --- | --- | --- |"]
-    for case in results:
-        for role, observed in case.get("syscalls", {}).items():
-            label = f"{case['pair']}/{case['profile']}/{case['transport']}/{case['repeat']}"
-            total = observed["total"]
-            lines.append(f"| {label} / {role} | {total['calls']} | {total['errors']} | "
-                         f"{total['seconds']} |")
-    lines += ["", "## Per-role I/O metric coverage", "",
-              "n/a means no applicable observation channel; raw zero counters are not reinterpreted as measured socket sends.", "",
-              "| Case / role | Engine / backend | Ordinary-fallback coverage | Native delivery-to-framer coverage |",
-              "| --- | --- | --- | --- |"]
-    for case in results:
-        if not case["diagnostic"] or case.get("diagnosticObserver") != "io": continue
-        for role, coverage in case.get("ioMetricCoverage", {}).items():
-            label = "/".join(str(case[k]) for k in ("pair", "profile", "transport", "repeat"))
-            status = lambda field: "n/a" if coverage[field]["status"] == "not-applicable" else coverage[field]["status"]
-            lines.append(f"| {label} / {role} | {coverage['engine']} / {coverage['backend']} | "
-                         f"{status('ordinaryFallback')} | {status('deliveryToFramer')} |")
-    lines += ["", "## Native I/O observations", "",
-              "Instrumented reruns only. Enter counts are actual ring syscalls; "
-              "epoll has no ring events. Pool/copy provenance requires ZiMultiplex_DEBUG. "
-              "Fallback counts are actual io_uring TxData policy-classified ordinary results/bytes, "
-              "not all ordinary socket attempts. Epoll has no ring TxData event channel and "
-              "QuickFIX is external: fallback is n/a for both; syscall attempts are measured separately. "
-              "Copy bytes cover buffer preservation/moves/gathers, "
-              "excluding crypto internals. Full per-SID/opcode and pool snapshots remain in case JSON.", "",
-              "| Case / role | Enter calls / waits | Accepted SQEs / CQEs | "
-              "io_uring fallback results / bytes | Rx / Tx peak slot bytes | Pool depletion | Copy bytes |",
-              "| --- | --- | --- | --- | --- | --- | --- |"]
-    for case in results:
-        for role, observed in case.get("ioDiagnostics", {}).items():
-            label = f"{case['pair']}/{case['profile']}/{case['transport']}/{case['repeat']}"
-            owners = observed["owners"]
-            total = lambda key: sum(owner[key] for owner in owners)
-            fallback = (f"{total('ordinarySends')} / {total('ordinaryBytes')}"
-                        if observed["backend"] == "uring" else "n/a")
-            pool_stats = "disabled | disabled | disabled"
-            if observed["provenance"]:
-                rx, tx = observed["rxPool"], observed["txPool"]
-                copies = sum(pool[key] for pool in (rx, tx)
-                             for key in ("preserveBytes", "moveBytes", "gatherBytes"))
-                pool_stats = (f"{rx['peakSlotBytes']} / {tx['peakSlotBytes']} | "
-                              f"{rx['depletion'] + tx['depletion']} | {copies}")
-            lines.append(f"| {label} / {role} | {total('enterCalls')} / {total('enterWaits')} | "
-                         f"{total('acceptedSQEs')} / {total('cqes')} | "
-                         f"{fallback} | "
-                         f"{pool_stats} |")
-    lines += ["", "Native DEBUG latest-delivery-to-framer ns (p50 / p99 / p99.9 / max); "
-              "origin is the latest contributing userspace payload-delivery callback. "
-              "This is not raw CQE dequeue, kernel/NIC arrival, first-fragment delay or "
-              "an all-engine framer comparison.", "",
-              "| Case / role / session | Completion-to-framer | Data-CQE-to-NOTIF by SID |",
-              "| --- | --- | --- |"]
-    for case in results:
-        for role, observed in case.get("ioDiagnostics", {}).items():
-            label = f"{case['pair']}/{case['profile']}/{case['transport']}/{case['repeat']}"
-            fmt = lambda q: " / ".join(str(q[k]) for k in ("p50", "p99", "p999", "max"))
-            notif = "; ".join(f"{owner['sid']}: {fmt(owner['notificationNs'])}"
-                              for owner in observed["owners"] if owner["notificationNs"]["count"])
-            if not observed["provenance"]:
-                lines.append(f"| {label} / {role} | disabled | {notif or 'no notifications'} |")
-            for frame in observed["frames"]:
-                lines.append(f"| {label} / {role} / {frame['session']} | "
-                             f"{fmt(frame['completionToFramerNs'])} | {notif or 'no notifications'} |")
     lines += ["", "## Framework heap observations", "",
               "Cold logical-drain samples cover Ztc::HeapMgr arenas only. They exclude SDK, "
               "STL and libc allocation paths; live bytes are a drain-time sample, not peak "
@@ -799,11 +513,6 @@ def main():
     parser.add_argument("--pair", choices=PAIRS, action="append")
     parser.add_argument("--profile", choices=PROFILES, action="append")
     parser.add_argument("--transport", choices=("tcp", "tls"), action="append")
-    parser.add_argument("--backend", choices=("auto", "epoll", "uring"), default="auto")
-    parser.add_argument("--rx-ring-size", type=int, default=0,
-                        help="native Rx slots; zero sizes for sessions/in-flight traffic")
-    parser.add_argument("--tx-ring-size", type=int, default=0,
-                        help="native Tx slots per policy; zero sizes for in-flight traffic")
     parser.add_argument("--count", type=int, default=10000)
     parser.add_argument("--warmup", type=int, default=1000)
     parser.add_argument("--rate", type=int, default=0)
@@ -828,16 +537,7 @@ def main():
     observer = parser.add_mutually_exclusive_group()
     observer.add_argument("--heaptrace", type=Path)
     observer.add_argument("--audittrace", type=Path)
-    observer.add_argument("--syscalls", action="store_true",
-                          help="repeat cases under strace -f -c; exclude from timing tables")
-    observer.add_argument("--io-diagnostics", action="store_true",
-                          help="collect diagnostic cases only; use an ordinary build for timing")
-    parser.add_argument("--diag-samples", type=int, default=0,
-                        help="native per-session sample cap; zero derives a bounded cap from workload")
     parser.add_argument("--framework-heaps", action="store_true")
-    parser.add_argument("--process-window", action="store_true",
-                        help="require exact paired process CPU windows around shared measured work")
-    parser.add_argument("--interface", help="capture passive metadata for this explicit local interface")
     parser.add_argument("--remote-host")
     parser.add_argument("--remote-ports",
                         type=lambda value: [int(port) for port in value.split(",")])
@@ -845,12 +545,6 @@ def main():
     parser.add_argument("--remote-server-label", default="external")
     parser.add_argument("--ca", type=Path)
     options = parser.parse_args()
-    if options.syscalls and (sys.platform != "linux" or not shutil.which("strace")):
-        parser.error("--syscalls requires Linux strace")
-    if options.diag_samples < 0:
-        parser.error("--diag-samples must be nonnegative")
-    if options.rx_ring_size < 0 or options.tx_ring_size < 0:
-        parser.error("ring sizes must be nonnegative; native peers validate kernel bounds")
     if not hasattr(os, "wait4"):
         parser.error("wait4 process resource measurement requires a supported POSIX host")
     if any(getattr(options, name) <= 0 for name in (
@@ -905,30 +599,20 @@ def main():
     labels = options.pair or PAIRS
     if options.remote_host:
         labels = [f"{options.remote_client}-{options.remote_server_label}"]
-    instrumented = options.heaptrace or options.audittrace or options.io_diagnostics or options.syscalls
-    modes = [False]
-    if options.io_diagnostics:
-        modes = [True]
-    elif instrumented:
-        modes.append(True)
-    jobs = [(label, transport, profile, repeat, diagnostic)
-            for label in labels
-            for transport in transports
-            for profile in options.profile or PROFILES
-            for repeat in range(1, options.repeat + 1)
-            for diagnostic in modes]
-    random.Random(options.seed).shuffle(jobs)
-    manifest["executionOrder"] = jobs
-    (root / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     results = []
-    for label, transport, profile, repeat, diagnostic in jobs:
-        case = run_case(options, pair, root, programs, label, profile,
-                        transport, repeat, diagnostic)
-        results.append(case)
-        report(root, manifest, results)
-        print(json.dumps({key: case[key] for key in (
-            "pair", "profile", "transport", "repeat", "diagnostic", "status",
-            "complete", "unfinished", "errors", "timeouts")}), flush=True)
+    for label in labels:
+        for transport in transports:
+            for profile in options.profile or PROFILES:
+                for repeat in range(1, options.repeat + 1):
+                    for diagnostic in ([False, True] if options.heaptrace or options.audittrace
+                                       else [False]):
+                        case = run_case(options, pair, root, programs, label, profile,
+                                        transport, repeat, diagnostic)
+                        results.append(case)
+                        report(root, manifest, results)
+                        print(json.dumps({key: case[key] for key in (
+                            "pair", "profile", "transport", "repeat", "diagnostic", "status",
+                            "complete", "unfinished", "errors", "timeouts")}), flush=True)
     summary = {"cases": len(results),
                "failed": sum(case["status"] != "passed" for case in results),
                "buildLabel": options.build_label, "artifacts": str(root)}

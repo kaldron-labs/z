@@ -5,16 +5,18 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmList.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
+#include <zlib/ZiTx.hh>
 #include <zlib/ZfixRaw.hh>
 #include <zlib/ZfixRxMsg.hh>
 
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
-
-#include "ZfixTxImageTest.hh"
+static ZmRef<ZiIOBuf> frameBuf() {
+  using Allocator = Zi::AppBufAllocator<ZiTxBuf, ZiIOBuf_DefltSize>;
+  return ZmSingleton<Allocator>::instance()->allocBuf();
+}
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -36,7 +38,8 @@ ZfStructImpl(RoutingValue); ZfStructImpl(RoutingValue, FIX);
 using RoutingLogon = MT<RoutingValue, "A">;
 constexpr auto Wire = "8=FIX.4.4\1" "9=12\1" "35=D\1" "11=abc\1" "10=171\1"_z;
 static auto buffer(ZuCSpan bytes) {
-  ZmRef<ZiIOBuf> b = new LocalBuf{nullptr, 0}; b->append(bytes); return b;
+  auto b = frameBuf();
+  b->append(bytes); return b;
 }
 static void controls() {
   ZuTestScope(controls);
@@ -57,17 +60,16 @@ static void routingFields() {
   cfg.identity.local = "EXTERNAL"; cfg.identity.peer = "PEER";
   TxContext ctx{.connection = 5, .seqNo = 17,
     .sendingTime = ZuDateTime{ZuDateTimeScan::FIX{}, "20000101-00:00:00"}};
-  auto out = RawOutput::encode(body, cfg, ctx, error);
+  auto out = RawOutput::encode(frameBuf(), body, cfg, ctx, error);
   ZuCheck(out && !error && out->context().epoch == 0 && out->context().seqNo == 17);
-  auto bytes = testBytes(out->frame());
-  auto parsed = Fmt::frame(ZuCSpan{bytes->cspan()});
+  auto parsed = Fmt::frame(ZuCSpan{out->frame()->cspan()});
   RxMsg got; got.frame = parsed.view;
   ZuCheck(!catalogSession<MTList<RoutingLogon>>(got) && got.seqNo == 17 &&
     parsed.view.beginString == "FIX.9.9");
   ZuCheck(got.sender == "EXTERNAL" && got.sendingTime == ctx.sendingTime
     && parsed.view.msgType == "A");
   ctx.seqNo = 2; ctx.replay = true; ctx.possDup = true; ctx.origSendingTime = ctx.sendingTime;
-  auto low = RawOutput::encode(body, cfg, ctx, error);
+  auto low = RawOutput::encode(frameBuf(), body, cfg, ctx, error);
   ZuCheck(low && !error && low->originalTime() == ctx.origSendingTime && low->context().replay);
 }
 static void opaque() {
@@ -75,7 +77,7 @@ static void opaque() {
   Fmt::Error error; auto body = TxBody::encode<Order>(Value{"abc"}, 23, error);
   auto bytes = buffer(Wire);
   auto out = RawOutput::fromFrame(body, {0, 1, 0}, bytes, error);
-  ZuCheck(out && !error && out->frame().metadata == bytes && out->body() == body);
+  ZuCheck(out && !error && out->frame() == bytes && out->body() == body);
   ZuCheck(out->context().epoch == 0 && out->context().seqNo == 0 && !*out->originalTime());
   auto wrong = TxBody::encodeRaw<CustomLogon>(Value{"abc"}, 24, true, error);
   ZuCheck(!RawOutput::fromFrame(wrong, {0, 1, 0}, bytes, error) && error.tag == 35);
@@ -138,7 +140,9 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
     RawStopFn	fn;
   };
 
-  using Record = TestTxRecord;
+  struct Record {
+    ZmRef<ZiIOBuf>	buf;
+  };
 
   Owner		*owner;
   Items<Stop>		rxStops, txStops;
@@ -160,21 +164,13 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
   WorkState workState_() const { return {}; }
   WireGeometry fixGeometryTx() const { return {}; }
 
-  bool fixSendRangeTx(Zi::RxRange source, ZmRef<WireBuf> wire) {
-    wire->append(source.cspan());
-    return fixSendTx(ZuMv(wire));
-  }
-  ZmRef<WireBuf> fixAllocTx(unsigned head) {
-    ZmRef<WireBuf> b = new WireBufAlloc<>{nullptr, 0}; b->skip = head; return b;
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
+    ZmRef<ZiIOBuf> b = ZmSingleton<Zi::AppBufAllocator<
+      ZiTxBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
+    b->skip = head; return b;
   }
 
-  bool fixSendTx(ZmRef<ZiIOBuf> b) {
-    auto wire = static_cast<WireBuf *>(b.ptr());
-    records.push(Record{b, b->skip, b->length, wire->token, wire->part}); return true;
-  }
-  bool fixStartFrameTx(ZmRef<WireQueue::Node> node) {
-    return testParts(node.ptr(), [this](Record r) { records.push(ZuMv(r)); return true; });
-  }
+  bool fixSendTx(ZmRef<ZiIOBuf> b) { records.push(Record{ZuMv(b)}); return true; }
   void disconnect_(bool = true) { ++closes; }
   void resumeRx_() { }
   void fixRawUpRx(uint64_t c) { up.push(c); }
@@ -232,7 +228,7 @@ static void replacement() {
     link->up.length() == 2 && link->send(3) == RawSend::Held);
   link->release(0);
   for (const auto &record : link->records)
-    link->transportSent(record.token, record.part, false);
+    link->transportSent(record.buf, false);
   app.drain();
   ZuCheck(!link->faults && !link->closes && !link->stopped.length());
   link->transportUp_(); app.drain();
@@ -248,20 +244,20 @@ static void replacement() {
 }
 
 static void setupStops(bool deferred) {
-  ZuTestScopeRT(setupStops);
+  ZuTestScope(setupStops);
   Owner app; ZmRef<Endpoint> link = new Endpoint{&app};
   link->deferred = deferred;
   for (unsigned i = 0; i < 3; ++i) {
     link->transportDown_(false); link->transportDown_(false); app.drain();
     if (deferred) {
-      ZuCheckRT(link->rxStops.length() == i + 1 && link->txStops.length() == i + 1 &&
+      ZuCheck(link->rxStops.length() == i + 1 && link->txStops.length() == i + 1 &&
 	link->rxStops[i].connection == 0 && link->stopped.length() == i);
       link->release(i);
-    } else ZuCheckRT(!link->rxStops.length() && !link->txStops.length());
-    ZuCheckRT(link->stopped.length() == i + 1 && link->stopped[i] == 0);
+    } else ZuCheck(!link->rxStops.length() && !link->txStops.length());
+    ZuCheck(link->stopped.length() == i + 1 && link->stopped[i] == 0);
   }
   link->clearReplies(); link = nullptr;
-  ZuCheckRT(app.destroyed == 1);
+  ZuCheck(app.destroyed == 1);
 }
 
 static void preauthFailure() {

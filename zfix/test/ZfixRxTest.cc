@@ -5,13 +5,11 @@
 // This code is licensed by the MIT license (see LICENSE for details)
 
 #include <zlib/ZuTestUtil.hh>
+#include <zlib/ZmSingleton.hh>
 #include <zlib/ZmAssert.hh>
 #include <zlib/ZmRef.hh>
 #include <zlib/ZtArray.hh>
 #include <zlib/ZfixRx.hh>
-
-using LocalBuf = Zi::IOBufAlloc<ZiIOBuf, ZiIOBuf_DefltSize,
-  ZiIOBuf_DefltMaxSize, ZiIOBuf_HeapID>;
 
 using namespace ZuTestUtil;
 using namespace Zfix;
@@ -43,7 +41,8 @@ static SessionConfig config(unsigned mode = Transport::FIX4)
 }
 static ZmRef<RxQueue::Node> rawFrame(ZuCSpan content)
 {
-  ZmRef<ZiIOBuf> buffer = new LocalBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::AppBufAllocator<
+    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   ZuSpan<char> storage{buffer->data(), buffer->size};
   Fmt::FrameWriter writer{storage, "FIX.4.4"};
   writer.body() << content;
@@ -62,7 +61,8 @@ static ZmRef<RxQueue::Node> rawFrame(ZuCSpan content)
 static ZmRef<RxQueue::Node> frame(uint64_t seqNo, ZuCSpan type, ZuCSpan body,
     bool dup = false, int age = 0, ZuCSpan sender = "PEER")
 {
-  ZmRef<ZiIOBuf> buffer = new LocalBuf{nullptr, 0};
+  ZmRef<ZiIOBuf> buffer = ZmSingleton<Zi::AppBufAllocator<
+    ZiIOBuf, ZiIOBuf_DefltSize>>::instance()->allocBuf();
   ZuSpan<char> storage{buffer->data(), buffer->size};
   Fmt::FrameWriter writer{storage, "FIX.4.4"};
   auto &out = writer.body();
@@ -238,29 +238,29 @@ static void admission()
 }
 static void ownerReadiness()
 {
-  ZuTestScopeRT(ownerReadiness);
+  ZuTestScope(ownerReadiness);
   Receiver r{config()}; r.begin(); r.admit();
-  ZuCheckRT(r.expected_() == 2 && !r.session_().ready_() &&
+  ZuCheck(r.expected_() == 2 && !r.session_().ready_() &&
     !r.session_().probeID_().length());
-  for (const auto &e : r.events) ZuCheckRT(!(e.actions & (A::Ready | A::SendProbe)));
+  for (const auto &e : r.events) ZuCheck(!(e.actions & (A::Ready | A::SendProbe)));
   r.txRecovery_(1, false, r.now);
-  ZuCheckRT(!r.session_().ready_());
+  ZuCheck(!r.session_().ready_());
   auto frames = r.stats_().frames;
   r.txRecovery_(1, true, r.now);
-  ZuCheckRT(r.session_().ready_() && r.expected_() == 2 && r.stats_().frames == frames &&
+  ZuCheck(r.session_().ready_() && r.expected_() == 2 && r.stats_().frames == frames &&
     !r.session_().probeID_().length() && (r.events[r.events.length() - 1].actions & A::Ready));
   r.txRecovery_(1, false, r.now);
-  ZuCheckRT(!r.session_().ready_() && (r.events[r.events.length() - 1].actions & A::Pause));
+  ZuCheck(!r.session_().ready_() && (r.events[r.events.length() - 1].actions & A::Pause));
   r.txRecovery_(1, true, r.now);
-  ZuCheckRT(r.session_().ready_() && r.stats_().frames == frames);
+  ZuCheck(r.session_().ready_() && r.stats_().frames == frames);
 
   Receiver peer{config()}; peer.begin(); peer.admit();
-  ZuCheckRT(peer.send(4, "5") == RxResult::Accepted && !peer.session_().ready_());
+  ZuCheck(peer.send(4, "5") == RxResult::Accepted && !peer.session_().ready_());
   peer.txRecovery_(1, true, peer.now);
-  ZuCheckRT(peer.send(2, "4", "36=4\1" "123=Y\1", true) == RxResult::Accepted);
+  ZuCheck(peer.send(2, "4", "36=4\1" "123=Y\1", true) == RxResult::Accepted);
   peer.drain();
-  ZuCheckRT(peer.session_().state_() == State::Closing && !peer.session_().ready_());
-  for (const auto &e : peer.events) ZuCheckRT(!(e.actions & A::Ready));
+  ZuCheck(peer.session_().state_() == State::Closing && !peer.session_().ready_());
+  for (const auto &e : peer.events) ZuCheck(!(e.actions & A::Ready));
 }
 
 static void steadyRecovery()
@@ -310,7 +310,7 @@ static void ordered()
   ZuCheck(r.send(4, "D", "11=44\1") == RxResult::Accepted);
   ZuCheck(!r.session_().ready_() && r.expected_() == 3 && !r.business.length());
   ZuCheck(r.retained_() == 1
-    && r.retainedBytes_() >= ZmHeapAllocSize<sizeof(LocalBuf)>{} + ZmHeapAllocSize<sizeof(RxQueue::Node)>{});
+    && r.retainedBytes_() >= Zi::IOBufAlloc<ZiIOBuf>::Size + sizeof(RxQueue::Node));
   ZuCheck(r.send(3, "D", "11=33\1") == RxResult::Accepted);
   r.drain();
   ZuCheck(r.business.length() == 2 && r.business[0] == 33 && r.business[1] == 44);
@@ -522,7 +522,7 @@ static void businessLimits()
 static void limitsAndRaw()
 {
   ZuTestScope(limitsAndRaw);
-  enum { Charge = ZmHeapAllocSize<sizeof(LocalBuf)>{} + ZmHeapAllocSize<sizeof(RxQueue::Node)>{} };
+  enum { Charge = Zi::IOBufAlloc<ZiIOBuf>::Size + sizeof(RxQueue::Node) };
   Receiver r{config(), RxLimits{.readAheadBytes = Charge}}; r.ready();
   r.send(5, "D", "11=55\1");
   ZuCheck(r.retainedBytes_() == Charge);
@@ -575,7 +575,7 @@ static void publicationNotices()
 
 static void earlyProbeReply()
 {
-  ZuTestScopeRT(earlyProbeReply);
+  ZuTestScope(earlyProbeReply);
   Receiver r{config()}; r.ready(); r.events.clear();
   r.now = r.session_().deadline_(SessionTimer::Receive);
   r.timer_(r.session_().connection_(), SessionTimer::Receive, r.now);
@@ -583,12 +583,12 @@ static void earlyProbeReply()
   r.notice_(TxNotice{.context = {1, r.session_().connection_(), 7},
     .marker = r.session_().probe_(), .kind = TxNoticeKind::Probe}, r.now);
   SessionString body; body << "112=" << id << '\1';
-  ZuCheckRT(r.send(5, "0", body) == RxResult::Accepted && !r.session_().ready_());
-  for (const auto &event : r.events) ZuCheckRT(!(event.actions & A::Ackd));
-  ZuCheckRT(r.send(3, "4", "36=5\1" "123=Y\1", true) == RxResult::Accepted);
+  ZuCheck(r.send(5, "0", body) == RxResult::Accepted && !r.session_().ready_());
+  for (const auto &event : r.events) ZuCheck(!(event.actions & A::Ackd));
+  ZuCheck(r.send(3, "4", "36=5\1" "123=Y\1", true) == RxResult::Accepted);
   r.drain();
-  ZuCheckRT(r.expected_() == 6 && !r.session_().probeID_().length() && r.session_().ready_());
-  for (const auto &event : r.events) ZuCheckRT(!(event.actions & A::Ackd));
+  ZuCheck(r.expected_() == 6 && !r.session_().probeID_().length() && r.session_().ready_());
+  for (const auto &event : r.events) ZuCheck(!(event.actions & A::Ackd));
 }
 
 static void restoredDrainGap()
@@ -780,8 +780,8 @@ static void stateChanges()
 
 static void faultMatrix()
 {
-  ZuTestScopeRT(faultMatrix);
-  enum { Charge = ZmHeapAllocSize<sizeof(LocalBuf)>{} + ZmHeapAllocSize<sizeof(RxQueue::Node)>{} };
+  ZuTestScope(faultMatrix);
+  enum { Charge = Zi::IOBufAlloc<ZiIOBuf>::Size + sizeof(RxQueue::Node) };
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool driver : {false, true})
       for (unsigned n = 0; n < 10; ++n) {
@@ -790,7 +790,7 @@ static void faultMatrix()
 	r.begin("98=0\1" "108=30\1" "789=2\1" "1137=9\1"); r.admit();
 	if (!driver) r.logonSent_(1, 1, r.now);
 	r.heartbeat();
-	ZuCheckRT(r.session_().ready_()); r.events.clear();
+	ZuCheck(r.session_().ready_()); r.events.clear();
 	auto seqNo = r.expected_();
 	unsigned result = RxResult::Accepted, state = State::Established,
 	  error = SessionError::None;
@@ -822,7 +822,7 @@ static void faultMatrix()
 	    consume = reject = false; break;
 	  }
 	  case 6:
-	    ZuCheckRT(r.send(seqNo + 2, "D",
+	    ZuCheck(r.send(seqNo + 2, "D",
 	      "11=55\1") == RxResult::Accepted && r.retainedBytes_() == Charge);
 	    result = r.send(seqNo + 3, "1", "112=blocked\1");
 	    state = State::Closing; error = SessionError::Overload; tag = 0;
@@ -835,21 +835,21 @@ static void faultMatrix()
 	}
 	unsigned expectedResult = RxResult::Accepted;
 	if (!consume) expectedResult = n == 6 ? RxResult::Overload : RxResult::Refused;
-	ZuCheckRT(result == expectedResult && r.expected_() == seqNo + unsigned(consume) &&
+	ZuCheck(result == expectedResult && r.expected_() == seqNo + unsigned(consume) &&
 	  r.session_().state_() == state && !r.business.length() && !r.echoed
 	    && !r.peerRejects.length());
-	if (reject) ZuCheckRT(r.rejected.length() == 3 && r.rejected[0] == seqNo &&
+	if (reject) ZuCheck(r.rejected.length() == 3 && r.rejected[0] == seqNo &&
 	  r.rejected[1] == tag && r.rejected[2] == unsigned(reason));
-	else ZuCheckRT(!r.rejected.length());
+	else ZuCheck(!r.rejected.length());
 	SessionEvent failure;
 	for (const auto &event : r.events)
 	  if (event.actions & A::Failure) failure = event;
-	if (error) ZuCheckRT(failure.error == error && failure.tag == tag && failure.epoch == 1 &&
+	if (error) ZuCheck(failure.error == error && failure.tag == tag && failure.epoch == 1 &&
 	  failure.connection == 1 && !r.session_().ready_());
-	else ZuCheckRT(!(failure.actions & A::Failure) && r.session_().ready_());
+	else ZuCheck(!(failure.actions & A::Failure) && r.session_().ready_());
 	switch (state) {
 	  case State::Logout:
-	    ZuCheckRT((failure.actions & A::SendLogout) && !(failure.actions & A::Close) &&
+	    ZuCheck((failure.actions & A::SendLogout) && !(failure.actions & A::Close) &&
 	      r.session_().deadline_(SessionTimer::Logout) == r.now + ZuTime{2} &&
 	      !*r.session_().deadline_(SessionTimer::Receive)
 		&& !*r.session_().deadline_(SessionTimer::Probe));
@@ -858,12 +858,12 @@ static void faultMatrix()
 	    bool cancelled = true;
 	    for (unsigned timer = SessionTimer::Logon; timer <= SessionTimer::Drain; ++timer)
 	      cancelled &= !*r.session_().deadline_(timer);
-	    ZuCheckRT((failure.actions & A::Close) && !(failure.actions & A::SendLogout) &&
+	    ZuCheck((failure.actions & A::Close) && !(failure.actions & A::SendLogout) &&
 	      cancelled && r.retainedBytes_() <= Charge); break;
 	  }
-	  default: ZuCheckRT(!*r.session_().deadline_(SessionTimer::Logout)); break;
+	  default: ZuCheck(!*r.session_().deadline_(SessionTimer::Logout)); break;
 	}
-	ZuCheckRT(r.changeBeforeEvent);
+	ZuCheck(r.changeBeforeEvent);
       }
 }
 

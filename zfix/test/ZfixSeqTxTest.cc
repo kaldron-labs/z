@@ -124,17 +124,17 @@ static void publicationFailure()
 
 static void replay()
 {
-  ZuTestScopeRT(replay);
+  ZuTestScope(replay);
   Tx tx{{.replayBatch = 2}};
-  for (uint64_t key = 1; key <= 5; ++key) ZuCheckRT(tx.commit(key) == SeqResult::Accepted);
+  for (uint64_t key = 1; key <= 5; ++key) ZuCheck(tx.commit(key) == SeqResult::Accepted);
   tx.resume_(); tx.drain();
-  ZuCheckRT(tx.replay_(2) && tx.commit(6) == SeqResult::Accepted); tx.drain();
-  ZuCheckRT(tx.replayed.length() == 4 && tx.replayed[0] == 2 && tx.replayed[3] == 5);
-  ZuCheckRT(tx.requests.length() == 8 && tx.sent.length() == 6 && !tx.retained_());
+  ZuCheck(tx.replay_(2) && tx.commit(6) == SeqResult::Accepted); tx.drain();
+  ZuCheck(tx.replayed.length() == 4 && tx.replayed[0] == 2 && tx.replayed[3] == 5);
+  ZuCheck(tx.requests.length() == 8 && tx.sent.length() == 6 && !tx.retained_());
   tx.value = 99;
-  ZuCheckRT(tx.replay_(2, 2)); tx.drain();
-  ZuCheckRT(tx.requests.length() == 10 && tx.values[4] == 99 && !tx.retained_());
-  ZuCheckRT(!tx.replay_(0) && !tx.replay_(7) && !tx.replay_(4, 3));
+  ZuCheck(tx.replay_(2, 2)); tx.drain();
+  ZuCheck(tx.requests.length() == 10 && tx.values[4] == 99 && !tx.retained_());
+  ZuCheck(!tx.replay_(0) && !tx.replay_(7) && !tx.replay_(4, 3));
 }
 
 static void boundedMissing()
@@ -261,29 +261,29 @@ static void replayRefusal()
 
 static void archives()
 {
-  ZuTestScopeRT(archives);
+  ZuTestScope(archives);
   Tx tx{{.replayBatch = 2}};
-  ZuCheckRT(tx.restore_(8, 8, 1)); tx.resume_();
+  ZuCheck(tx.restore_(8, 8, 1)); tx.resume_();
   tx.holdArchive = true; tx.ackOnArchive = 8;
-  ZuCheckRT(tx.acknowledge_(4)); tx.drain();
-  ZuCheckRT(!tx.running_() && tx.archived.length() == 2 && tx.archived[0] == 1 &&
+  ZuCheck(tx.acknowledge_(4)); tx.drain();
+  ZuCheck(!tx.running_() && tx.archived.length() == 2 && tx.archived[0] == 1 &&
     tx.archived[1] == 3 && !tx.retained_());
   tx.resume_(); tx.drain();
   uint64_t begin = 1;
   for (unsigned i = 0, n = tx.archived.length(); i < n; i += 2) {
-    ZuCheckRT(tx.archived[i] == begin && tx.archived[i + 1] - begin <= 2);
+    ZuCheck(tx.archived[i] == begin && tx.archived[i + 1] - begin <= 2);
     begin = tx.archived[i + 1];
   }
-  ZuCheckRT(begin == 8 && tx.acknowledged_() == 8 && !tx.requests.length());
+  ZuCheck(begin == 8 && tx.acknowledged_() == 8 && !tx.requests.length());
   Tx restored;
-  ZuCheckRT(restored.restore_(8, 8, 8)); restored.resume_(); restored.drain();
-  ZuCheckRT(!restored.archived.length());
+  ZuCheck(restored.restore_(8, 8, 8)); restored.resume_(); restored.drain();
+  ZuCheck(!restored.archived.length());
 
   Tx reentrant{{.replayBatch = 2}};
-  ZuCheckRT(reentrant.restore_(8, 8, 1)); reentrant.resume_();
+  ZuCheck(reentrant.restore_(8, 8, 1)); reentrant.resume_();
   reentrant.ackOnArchive = 8;
-  ZuCheckRT(reentrant.acknowledge_(4)); reentrant.drain();
-  ZuCheckRT(reentrant.archived.length() == 8 && reentrant.archived[0] == 1 &&
+  ZuCheck(reentrant.acknowledge_(4)); reentrant.drain();
+  ZuCheck(reentrant.archived.length() == 8 && reentrant.archived[0] == 1 &&
     reentrant.archived[1] == 3 && reentrant.archived[2] == 3 &&
     reentrant.archived[3] == 5 && reentrant.archived[4] == 5 &&
     reentrant.archived[5] == 7 && reentrant.archived[6] == 7 &&

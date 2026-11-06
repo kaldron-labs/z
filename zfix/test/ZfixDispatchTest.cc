@@ -81,7 +81,7 @@ using Plain = MT<A, "D">;
 using Dictionary = MTList<AMsg, Plain, BMsg>;
 static ZuSpan<char> grow(void *owner, unsigned, unsigned needed) {
   auto &text = *static_cast<Text *>(owner); text.length(needed);
-  return text;
+  return {text.data(), text.length()};
 }
 static Text packet(ZuCSpan body, ZuCSpan type = "X", ZuCSpan version = "FIX.4.4") {
   Text storage;
@@ -92,79 +92,79 @@ static Text packet(ZuCSpan body, ZuCSpan type = "X", ZuCSpan version = "FIX.4.4"
   return result ? Text{result.data} : Text{};
 }
 static void primary() {
-  ZuTestScopeRT(primary);
+  ZuTestScope(primary);
   auto wire = packet("150=A\1" "11=plain\1" "44=12\1", "D");
-  auto parsed = frame(wire); ZuCheckRT(parsed.state == FrameState::Complete);
+  auto parsed = frame(wire); ZuCheck(parsed.state == FrameState::Complete);
   unsigned calls = 0;
   auto error = dispatch<Dictionary>(parsed.view, [&calls](auto *type, const auto &o) -> Error {
     using E = ZuDecay<decltype(*type)>;
     if constexpr (ZuIsSame<E, Plain>{}) {
-      ++calls; ZuCheckRT(o.id == "plain" && o.amount == 12 && o.seqNo == 7);
-      ZuCheckRT(o.sender == "CLIENT" && o.target == "SERVER");
-    } else ZuCheckRT(false);
+      ++calls; ZuCheck(o.id == "plain" && o.amount == 12 && o.seqNo == 7);
+      ZuCheck(o.sender == "CLIENT" && o.target == "SERVER");
+    } else ZuCheck(false);
     return {};
   });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
   wire = packet("11=x\1", "UNKNOWN"); parsed = frame(wire);
   error = dispatch<Dictionary>(parsed.view, [](auto *, const auto &) -> Error {
-    ZuCheckRT(false); return {};
+    ZuCheck(false); return {};
   });
-  ZuCheckRT(error.code == ErrorCode::Unresolved && error.tag == 35);
+  ZuCheck(error.code == ErrorCode::Unresolved && error.tag == 35);
 }
 static void selected() {
-  ZuTestScopeRT(selected);
+  ZuTestScope(selected);
   auto wire = packet("11=selected\1" "44=not-an-integer\1" "58=valid\1"
     "453=2\1"
     "448=p1\1" "447=extra\1" "452=4\1" "9003=A\1"
     "448=p2\1" "452=5\1" "9003=A\1" "150=B\1");
-  auto parsed = frame(wire); ZuCheckRT(parsed.state == FrameState::Complete);
+  auto parsed = frame(wire); ZuCheck(parsed.state == FrameState::Complete);
   unsigned calls = 0;
   auto error = dispatch<Dictionary>(parsed.view, [&calls](auto *type, const auto &o) -> Error {
     using E = ZuDecay<decltype(*type)>;
     if constexpr (ZuIsSame<E, BMsg>{}) {
-      ++calls; ZuCheckRT(o.kind == "B" && o.id == "selected" && o.text == "valid");
-      ZuCheckRT(o.parties.length() == 2);
+      ++calls; ZuCheck(o.kind == "B" && o.id == "selected" && o.text == "valid");
+      ZuCheck(o.parties.length() == 2);
       if (o.parties.length() == 2) {
-	ZuCheckRT(o.parties[0].id == "p1" && o.parties[0].extra == "extra"
+	ZuCheck(o.parties[0].id == "p1" && o.parties[0].extra == "extra"
 	  && o.parties[0].rank == 4);
-	ZuCheckRT(o.parties[1].id == "p2" && o.parties[1].rank == 5 && o.parties[1].kind == "A");
+	ZuCheck(o.parties[1].id == "p2" && o.parties[1].rank == 5 && o.parties[1].kind == "A");
       }
-    } else ZuCheckRT(false);
+    } else ZuCheck(false);
     return {};
   });
   if (error) log("# selected error ", error.code, " tag ", error.tag, " at ", error.offset);
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
 }
 static void prepared() {
-  ZuTestScopeRT(prepared);
+  ZuTestScope(prepared);
   for (ZuCSpan type : {ZuCSpan{"D"}, ZuCSpan{"X"}}) {
     auto wire = packet("150=A\1" "11=x\1" "453=2\1"
       "448=p1\1" "452=4\1" "448=p2\1" "452=5\1", type);
     auto parsed = frame(wire); RxMsg metadata; metadata.frame = parsed.view;
-    ZuCheckRT(!catalogSession<Dictionary>(metadata));
-    ZuCheckRT(metadata.seqNo == 7 && metadata.sender == "CLIENT");
+    ZuCheck(!catalogSession<Dictionary>(metadata));
+    ZuCheck(metadata.seqNo == 7 && metadata.sender == "CLIENT");
     unsigned calls = 0;
     auto error = dispatch<Dictionary>(parsed.view,
       [&calls]<typename E>(E *, const auto &o) -> Error {
 	if constexpr (!ZuIsSame<E, BMsg>{}) {
 	  ++calls;
-	  ZuCheckRT(o.seqNo == 7 && o.sender == "CLIENT" && o.id == "x");
-	  ZuCheckRT(o.parties.length() == 2);
+	  ZuCheck(o.seqNo == 7 && o.sender == "CLIENT" && o.id == "x");
+	  ZuCheck(o.parties.length() == 2);
 	  if (o.parties.length() == 2)
-	    ZuCheckRT(o.parties[0].id == "p1" && o.parties[1].id == "p2");
+	    ZuCheck(o.parties[0].id == "p1" && o.parties[1].id == "p2");
 	}
 	return {};
       });
-    ZuCheckRT(!error && calls == 1);
+    ZuCheck(!error && calls == 1);
   }
   auto wire = packet("150=A\1" "11=x\1" "49=LATE\1", "D");
   auto parsed = frame(wire); RxMsg metadata; metadata.frame = parsed.view;
-  ZuCheckRT(!catalogSession<Dictionary>(metadata));
+  ZuCheck(!catalogSession<Dictionary>(metadata));
   auto error = dispatch<Dictionary>(parsed.view,
     [](auto *, const auto &) -> Error {
-      ZuCheckRT(false); return {};
+      ZuCheck(false); return {};
     });
-  ZuCheckRT(error.code == ErrorCode::Duplicate && error.tag == 49);
+  ZuCheck(error.code == ErrorCode::Duplicate && error.tag == 49);
 }
 static void failures() {
   ZuTestScopeRT(failures);
@@ -237,34 +237,34 @@ using Empty = MT<One, "K", ZuFacet::FIX, Discrim<9000, "">>;
 using Named = MT<One, "K", ZuFacet::FIX, Discrim<9000, "named">>;
 using KeyDictionary = MTList<Empty, Named>;
 static void opaqueKeys() {
-  ZuTestScopeRT(opaqueKeys);
+  ZuTestScope(opaqueKeys);
   auto wire = packet("11=key\1" "9000=\1", "K");
   auto parsed = frame(wire); unsigned calls = 0;
   auto error = dispatch<KeyDictionary>(parsed.view, [&calls](auto *type, const One &o) -> Error {
     if constexpr (ZuIsSame<ZuDecay<decltype(*type)>, Empty>{}) { ++calls;
-      ZuCheckRT(o.id == "key"); }
-    else ZuCheckRT(false);
+      ZuCheck(o.id == "key"); }
+    else ZuCheck(false);
     return {};
   });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
 
 }
 static void nested() {
-  ZuTestScopeRT(nested);
+  ZuTestScope(nested);
   auto wire = packet("11=nested\1" "58=valid\1" "453=1\1" "448=p\1" "9003=A\1"
     "802=2\1" "523=s1\1" "9004=A\1" "523=s2\1" "9004=B\1" "150=B\1");
   auto parsed = frame(wire); unsigned calls = 0;
   auto error = dispatch<Dictionary>(parsed.view, [&calls](auto *type, const auto &o) -> Error {
     if constexpr (ZuIsSame<ZuDecay<decltype(*type)>, BMsg>{}) {
-      ++calls; ZuCheckRT(o.parties.length() == 1 && o.parties[0].subs.length() == 2);
+      ++calls; ZuCheck(o.parties.length() == 1 && o.parties[0].subs.length() == 2);
       if (o.parties.length() == 1 && o.parties[0].subs.length() == 2) {
-	ZuCheckRT(o.parties[0].subs[0].kind == "A");
-	ZuCheckRT(o.parties[0].subs[1].id == "s2");
+	ZuCheck(o.parties[0].subs[0].kind == "A");
+	ZuCheck(o.parties[0].subs[1].id == "s2");
       }
-    } else ZuCheckRT(false);
+    } else ZuCheck(false);
     return {};
   });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
 }
 ZuStructFacet(Alternate);
 ZfixConfig(Alternate, DefltConfig);
@@ -278,18 +278,18 @@ ZfStruct(, (Other, Alternate), (id, (FIX::ID<11>, Required), String),
 ZfStructImpl(Other); ZfStructImpl(Other, Alternate);
 using OtherMsg = MT<Other, "X", ZuFacet::Alternate, Discrim<150, "Q">>;
 static void facets() {
-  ZuTestScopeRT(facets);
+  ZuTestScope(facets);
   auto wire = packet("11=alternate\1" "44=bad\1" "58=text 150=A\1"
     "9002=42\1" "150=Q\1");
   auto parsed = frame(wire); unsigned calls = 0;
   auto error = dispatch<MTList<AMsg, OtherMsg>>(parsed.view,
     [&calls](auto *type, const auto &o) -> Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*type)>, OtherMsg>{}) {
-	++calls; ZuCheckRT(o.value == 42 && o.id == "alternate");
-      } else ZuCheckRT(false);
+	++calls; ZuCheck(o.value == 42 && o.id == "alternate");
+      } else ZuCheck(false);
       return {};
     });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
 }
 static void lifetime() {
   ZuTestScopeRT(lifetime);
@@ -379,36 +379,36 @@ static void sameSource()
 
 static void inspection()
 {
-  ZuTestScopeRT(inspection);
+  ZuTestScope(inspection);
   auto callback = [](auto *, const auto &) -> Error {
-    ZuCheckRT(false); return {};
+    ZuCheck(false); return {};
   };
   auto wire = packet("11=text 150=A\1" "150=Z\1");
   auto parsed = frame(wire);
   auto error = dispatch<Dictionary>(parsed.view, callback);
   auto value = static_cast<const char *>(memchr(wire.data(), 'Z', wire.length()));
-  ZuCheckRT(error.code == ErrorCode::Unresolved && error.tag == 150 &&
+  ZuCheck(error.code == ErrorCode::Unresolved && error.tag == 150 &&
     error.offset == unsigned(value - wire.data()));
   wire = packet("11=x\1" "150=A\1" "150=A\1"); parsed = frame(wire);
   error = dispatch<Dictionary>(parsed.view, callback);
-  ZuCheckRT(error.code == ErrorCode::Duplicate && error.tag == 150 &&
+  ZuCheck(error.code == ErrorCode::Duplicate && error.tag == 150 &&
     error.offset == unsigned(parsed.view.content.data() - wire.data()) +
       parsed.view.content.length() - 2);
   wire = packet("11=x\1"); parsed = frame(wire);
   error = dispatch<Dictionary>(parsed.view, callback);
-  ZuCheckRT(error.code == ErrorCode::Required && error.tag == 150 && !error.offset);
+  ZuCheck(error.code == ErrorCode::Required && error.tag == 150 && !error.offset);
 
   FieldPos pos;
   Limits cfg; cfg.parseBytes = 0;
   error = inspect("58=text 150=B\1" "150=A\1", 150, pos, cfg);
-  ZuCheckRT(!error && pos.offset == 18 && pos.length == 1);
+  ZuCheck(!error && pos.offset == 18 && pos.length == 1);
   error = inspect("150=A\1" "bad\1", 150, pos);
-  ZuCheckRT(error.code == ErrorCode::Tag && error.offset == 6);
+  ZuCheck(error.code == ErrorCode::Tag && error.offset == 6);
   error = inspect("150=A\1" "11=unterminated", 150, pos);
-  ZuCheckRT(error.code == ErrorCode::Truncated);
+  ZuCheck(error.code == ErrorCode::Truncated);
   cfg.fieldBytes = 1;
   error = inspect("150=AB\1", 150, pos, cfg);
-  ZuCheckRT(error.code == ErrorCode::Size && error.tag == 150 && error.offset == 4);
+  ZuCheck(error.code == ErrorCode::Size && error.tag == 150 && error.offset == 4);
 }
 
 struct BinaryA {
@@ -466,7 +466,7 @@ static void binarySame()
 }
 static void binaryCandidates()
 {
-  ZuTestScopeRT(binaryCandidates);
+  ZuTestScope(binaryCandidates);
   // A's required amount is absent; its inactive scalar and layout must not be validated.
   auto wire = packet("212=8\1" "213=150=A\1XX\1" "44=not-an-int\1"
     "11=real\1" "58=selected-B\1" "150=B\1", "J");
@@ -475,25 +475,25 @@ static void binaryCandidates()
     [&calls, &parsed](auto *entry, const auto &object) -> Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*entry)>, BinaryBMsg>{}) {
 	++calls;
-	ZuCheckRT(object.id == "real" && object.text == "selected-B" && object.kind == "B");
-	ZuCheckRT(object.data.data() == reinterpret_cast<const uint8_t *>(
+	ZuCheck(object.id == "real" && object.text == "selected-B" && object.kind == "B");
+	ZuCheck(object.data.data() == reinterpret_cast<const uint8_t *>(
 	  parsed.view.content.data() + unsigned(parsed.view.content.find("213=")) + 4));
-	ZuCheckRT(object.data == ZuBSpan{"150=A\1XX"_z});
-      } else ZuCheckRT(false);
+	ZuCheck(object.data == ZuBSpan{"150=A\1XX"_z});
+      } else ZuCheck(false);
       return {};
     });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
   FieldPos selector;
   Limits limits; limits.parseBytes = 0;
   using Sources = ZuTypeList<Dispatch_::Source<BinaryA, ZuFacet::FIX>,
     Dispatch_::Source<BinaryB, ZuFacet::FIX>>;
   using Inspect = InspectFields<typename Dispatch_::CandidateFields<Sources>::T>;
   error = Inspect::inspect(parsed.view.content, 150, selector, limits);
-  ZuCheckRT(!error && selector.length == 1 && parsed.view.content[selector.offset] == 'B');
+  ZuCheck(!error && selector.length == 1 && parsed.view.content[selector.offset] == 'B');
 }
 static void binaryPairSelectors()
 {
-  ZuTestScopeRT(binaryPairSelectors);
+  ZuTestScope(binaryPairSelectors);
   using LengthA = MT<BinaryA, "L", ZuFacet::FIX, Discrim<212, "3">>;
   using LengthB = MT<BinaryA, "L", ZuFacet::FIX, Discrim<212, "0008">>;
   auto wire = packet("150=B\1" "212=0008\1" "213=150=A\1XX\1" "11=real\1" "44=7\1", "L");
@@ -501,11 +501,11 @@ static void binaryPairSelectors()
   auto error = dispatch<MTList<LengthA, LengthB>>(parsed.view,
     [&calls](auto *entry, const BinaryA &object) -> Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*entry)>, LengthB>{}) {
-	++calls; ZuCheckRT(object.data.length() == 8 && object.id == "real");
-      } else ZuCheckRT(false);
+	++calls; ZuCheck(object.data.length() == 8 && object.id == "real");
+      } else ZuCheck(false);
       return {};
     });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
   using PayloadA = MT<BinaryA, "P", ZuFacet::FIX, Discrim<213, "A\1\0B">>;
   using PayloadB = MT<BinaryB, "P", ZuFacet::FIX, Discrim<213, "Z\1\0Q">>;
   wire = packet("150=B\1" "212=4\1" "213=Z\1\0Q\1" "11=real\1" "58=bytes\1"_z, "P");
@@ -513,13 +513,13 @@ static void binaryPairSelectors()
   error = dispatch<MTList<PayloadA, PayloadB>>(parsed.view,
     [&calls, &parsed](auto *entry, const auto &object) -> Error {
       if constexpr (ZuIsSame<ZuDecay<decltype(*entry)>, PayloadB>{}) {
-	++calls; ZuCheckRT(object.data == ZuBSpan{"Z\1\0Q"_z});
-	ZuCheckRT(object.data.data() == reinterpret_cast<const uint8_t *>(
+	++calls; ZuCheck(object.data == ZuBSpan{"Z\1\0Q"_z});
+	ZuCheck(object.data.data() == reinterpret_cast<const uint8_t *>(
 	  parsed.view.content.data() + unsigned(parsed.view.content.find("213=")) + 4));
-      } else ZuCheckRT(false);
+      } else ZuCheck(false);
       return {};
     });
-  ZuCheckRT(!error && calls == 1);
+  ZuCheck(!error && calls == 1);
 }
 struct BinaryParty {
   ZuCSpan id;

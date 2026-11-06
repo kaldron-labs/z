@@ -10,16 +10,15 @@ For encrypted transport see [Ztls](../ztls/README.md); for HTTP applications use
 ## Clients and servers
 
 A client derives from `Ztcp::Client<App>` and defines a link derived from
-`Ztcp::CliLink<App, Link, TxBufAlloc>`. A server uses
+`Ztcp::CliLink<App, Link, RxBufAlloc, TxBufAlloc>`. A server uses
 `Ztcp::Server<App>` and `Ztcp::SrvLink` instead. Select pooled buffer sizes with
-`Zi::RxTCPBufAllocator<ZiRxBuf, N, MaxSize, HeapID>` in
-`ZiMxParams::tcpBufAllocator()` and `Ztcp::TxBufAlloc<N>` on the link.
-The receive allocator must preserve the `ZiRxBuf` queue node base.
-The hub retains separate application and Tx producer allocators for each concrete
-`TxBufAlloc` type. Links with identical policies share those pools; different
-Base, size or heap policies remain independent. Keep the hub alive through
-multiplexer stop and release retained wire buffers before destroying it. Link
-teardown and `Hub::final()` do not release pools still watched by the multiplexer.
+`Ztcp::RxBufAlloc<N, MaxSize, HeapID>` and `Ztcp::TxBufAlloc<N>` on the link.
+The application supplies primary allocators matching `App::Link::RxAllocator`
+and `App::Link::TxAllocator` through the hub parameters' `rxAllocator()` and
+`txAllocator()` setters. Hub initialization registers them with the multiplexer
+before links or listeners are published. The receive allocator preserves the
+`ZiRxBuf` queue node base. Keep the hub alive through multiplexer stop; allocators
+must outlive all buffers allocated from them.
 
 Client links implement `connected(Ztcp::Connected)`, `connectFailed(bool)`,
 `disconnected(bool)` and `process(Ztcp::RxStream &)`. The application may set
@@ -42,11 +41,28 @@ the snippets here are extracts used inside those application/link types.
 
 ## Multiplexer and lifecycle
 
-Start a configured `ZiMultiplex`, then initialize the client/server with
-`Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or `ServerParams`. The IDs
-select transport work destinations in that scheduler; they need not be the
-multiplexer's low-level socket Rx/Tx threads. The examples use four isolated
-threads to make the separation explicit.
+Initialize and start a configured `ZiMultiplex`, then initialize the client/server
+with `Ztcp::ClientParams(&mx, rxThreadID, txThreadID)` or `ServerParams`. The hub
+requires a running scheduler. Create the application-owned allocators after
+multiplexer initialization and supply them before hub initialization:
+
+```cpp
+ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
+ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+Ztcp::ClientParams params(&mx, rxThreadID, txThreadID);
+params.rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+if (!app.init(ZuMv(params))) return false;
+```
+
+Check initialization and start results. The thread IDs select transport work
+destinations; they may differ from the low-level socket Rx/Tx threads. Both
+application and Tx streams allocate through the supplied primary Tx policy.
+Additional application-owned Tx TCP allocators register through
+`hub.allocator(allocator)`; send buffers allocated from them directly with
+`link.send(buf)`. Callers of `allocBuf()` know their concrete allocator type.
+Ordinary `IOBufAlloc` supplies built-in storage, with growth through the original
+allocator. Each allocator stays dedicated to its multiplexer; the hub and
+multiplexer retain registered allocators until their owning lifetimes end.
 
 For clients, retain the link with `ZmRef`, call `connect(host, port)` and handle
 completion asynchronously. For servers, call `start()` after successful

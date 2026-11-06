@@ -16,6 +16,47 @@ and ALPN before initiating connections. `connected(Ztls::Connected)` reports
 handshake completion and negotiated information; consume plaintext through the
 receive stream and emit plaintext through `txStream()` for encryption/output.
 
+The application owns its buffer allocators. Supply the RxTLS allocator and a
+primary TxTLS allocator in `HubParams` through `rxAllocator(rx)` and
+`txAllocator(tx)`. Their concrete types match the link's `RxAllocator` and
+`TxAllocator` declarations. The primary Tx allocator supplies handshake/control
+output and the link's default Tx stream. Initialization registers both with the
+underlying multiplexer; TLS does not manufacture producer policies.
+
+Register additional application-owned TxTLS allocators with
+`hub.allocator(allocator)`, mirroring `ZiMultiplex::allocator`. Registration
+checks the TxTLS type and binds it to the hub's multiplexer. Each outgoing
+buffer retains the allocator that created it, including when it is encrypted
+in place or grows. Application output is not restricted to the primary factory.
+
+```cpp
+ZmRef<App::Link::RxAllocator> rx = new App::Link::RxAllocator{};
+ZmRef<App::Link::TxAllocator> tx = new App::Link::TxAllocator{};
+auto params = Ztls::ClientParams{&mx, "3", "4"}.hub([&rx, &tx](auto &p) {
+  p.rxAllocator(rx.ptr()).txAllocator(tx.ptr());
+});
+bool initialized = app.init(ZuMv(params));
+
+using OutputAllocator = Zi::TxTLSBufAllocator<ZiTxBuf, 4096>;
+ZmRef<OutputAllocator> output = new OutputAllocator{};
+bool registered = initialized && app.allocator(output.ptr());
+// Once connected, reserve the link's TLS framing room before appending data.
+if (registered) {
+  auto buf = output->allocBuf();
+  buf->skip = link.txHeadRoom<true>();
+  buf->append(payload);
+  link.send(ZuMv(buf));
+}
+```
+
+Initialize and start the multiplexer before TLS hub initialization, which uses
+its scheduler for TLS setup and any configured async event loop. Supply and
+register allocators immediately on that setup path, before links or listeners
+are published. Allocators stay dedicated to their multiplexer, and their owners
+must outlive retained buffers. There are no ring-count arguments or first-send
+registration. Additional Tx allocators need not share the primary allocator's
+capacity, provided their buffers satisfy the link's TLS framing limits.
+
 Configure `txErrorFn(ZiTxErrorFn{...})` before using the link. Queued protection
 and validation failures notify on Rx. A `false` result requests close only when
 the originating TLS generation is still current after the callback and has a
@@ -193,8 +234,8 @@ fusion is enabled, and excludes the non-temporal variants.
 
 - Before `ptls_handshake_is_complete(m_tls)`, incoming records are routed to
   `handshake_()`, not `rcvd_()`.
-- Incoming records are retained `Zi::RxRange` values from the transport stream.
-  The range owns the original buffer and identifies the complete record span.
+- `ZiRx` supplies each complete record as an owning `ZmRef<ZiIOBuf>`.
+  Its active `data()` and `length` identify the record passed to the handshake.
 - `ptls_handshake(m_tls, &pbuf, input, inlen, &m_props)` receives the incoming
   record base as `input`.
 - The incoming record is read-only for ztls. It is not converted into
@@ -206,19 +247,19 @@ fusion is enabled, and excludes the non-temporal variants.
 
 ### Allocator lifetime
 
-The hub retains independent application, Tx and Rx-control producer pools for
-all concrete link allocation policies. Reusing a policy shares its pools across
-links; changing Base, capacity or heap selects a separate policy. Links cache
-allocator references, while the hub keeps them alive after links disappear and
-through multiplexer stop. `Hub::final()` leaves that ownership intact. Destroy
-the hub only after multiplexer stop and release of retained wire buffers.
+The application chooses and owns the Rx and primary Tx policies. The hub retains
+those supplied allocators, and the multiplexer retains all registered policies.
+Additional Tx policies are registered directly, without a per-type or per-thread
+policy registry. Links use the primary Tx policy for their own control output;
+application buffers retain their own registered allocator. Stop/finalization and
+retained-buffer release must complete before allocator owners are destroyed.
 
 ### Handshake Tx
 
 - Handshake Tx uses `txBuf()`.
-- `rxTxBuf_()` and `txBuf_()` allocate through independent cached Tx TLS
-  allocators on their respective producers. Normal slots accommodate
-  `TxRecordCapacity` without growth; each starts with `buf->skip == 0`.
+- `rxTxBuf_()` and `txBuf_()` allocate through the supplied primary Tx TLS
+  allocator on their respective producers. Buffers grow to
+  `TxRecordCapacity` when necessary; each starts with `buf->skip == 0`.
 - The handshake record base is `buf->data_()`. Since `skip == 0`, this is also
   `buf->data()`.
 - Ztls initializes zpicotls with
@@ -231,60 +272,23 @@ the hub only after multiplexer stop and release of retained wire buffers.
 
 ### Application Rx
 
-- After `ptls_handshake_is_complete(m_tls)`, application records are routed to
-  `rcvd_()` and use `rxBuf()`.
-- A retained `Zi::RxRange` identifies the record base within the original
-  network buffer. Neighboring records and the stream tail keep independent
-  positions; their buffer metadata is not changed during decryption.
-- Ztls passes the TLS record base as the input pointer to
-  `ptls_receive(m_tls, &pbuf, base, &inlen)`.
-- Ztls initializes the receive output buffer with
-  `ptls_buffer_init_rx(&pbuf, base + m_headroom, range.length - m_headroom)`.
-- The receive output base is the plaintext location inside the same `ZiIOBuf`,
-  after the record header and any explicit TLS 1.2 record IV.
-- Complete-record plaintext fits within the ciphertext body. `rxBuf()` reserves
-  that original span before calling crypto; it never grows storage shared
-  with a neighboring record or tail.
-- Origin-backed Rx growth inside `ptls_receive()` is invalid. Picotls parses
-  input pointers before reserving output; relocating the `ZiIOBuf` after that
-  would stale the parsed ciphertext pointer.
-- On successful application receive, `pbuf.origin == buf.ptr()` and
-  `pbuf.base == base + m_headroom`.
-- Plaintext is valid in `[pbuf.base, pbuf.base + pbuf.off)`.
-- Application plaintext is published as a range with the original buffer,
-  its record offset plus `m_headroom`, and `pbuf.off` length. The application
-  stream retains it through existing `Zi::RxSlice` metadata.
-- `ptls_receive()` must consume the entire supplied TLS record buffer. A partial
-  `inlen` result is a protocol or framing failure for this path.
+`ZiRx` frames a complete contiguous TLS record before handing its buffer to the
+TLS Rx owner. Trailing records are preserved by the existing receive helper.
+After handshake completion, `rcvd_()` passes the record to `ptls_receive()` and
+writes plaintext into the same buffer after the negotiated record headroom.
+The full record must be consumed. The buffer then advances past the headroom,
+sets its length to the plaintext size and enters the application `RxStream`.
+No retained-range or slice metadata is involved.
 
 ### Application Tx
 
-- Mutable application output starts at `buf->data()`. The buffer reserves the
-  headroom exposed by `txHeadRoom`; the negotiated Tx state validates that room.
-- Each plaintext record is bounded by `TxMaxPlaintext`, leaving worst-case
-  crypto overhead within `TxRecordCapacity`.
-- `protectRecord_(source, wire)` consumes one immutable source synchronously on
-  App Tx into the caller's actual final wire buffer. A multi-span source exposes
-  `length()` and `each(span)`; only vector metadata uses workload-sized scratch.
-- `sendSource_(source)` splits immutable protocol output at record boundaries
-  and allocates the actual final ciphertext records. It does not gather the
-  plaintext or allocate submission IOBufs.
-- Retained `Zi::RxRange` positions are relative to `data_()`. Later advancement
-  of the source buffer's active skip/length does not alter the retained view.
-- The selected zpicotls dependency must provide `ptls_tx_sendv`; configure
-  verifies the symbol. Its vector API consumes immutable payload spans and one
-  extra writable metadata entry for the TLS 1.3 content type.
-- `zfix` calls the Ztls interface. The dependency call is implemented in
-  `Ztls::Pico`; FIX does not call or explicitly link zpicotls.
-- Ztls pre-sizes the final wire buffer to `TxRecordCapacity`, initializes
-  `ptls_buffer_init_tx` at `buf->data_()`, and supplies its original buffer as
-  `pbuf.origin`. Crypto must preserve that origin, base and capacity.
-- Mutable output uses `ptls_tx_send(m_txTLS, ...)`; vector output passes the
-  spans through `Ztls::Pico::sendv`. Both write the record header and ciphertext
-  directly into the final wire allocation.
-- Finalization publishes `buf->skip = 0` and `buf->length = pbuf.off`. The
-  transport advances that same buffer as bytes are accepted. Its original
-  `data_()`, size and registration remain available until release.
+Application output reserves `txHeadRoom()` and `txTailRoom()` within
+`TxRecordCapacity`. `txStream()` hands completed buffers to the TLS Tx owner;
+`txStream_()` performs the same work directly on that owner. Encryption uses
+`ptls_tx_send()` in the buffer that will be submitted to `ZiTx`, retaining the
+existing origin, base and capacity checks. `ZiTxContext::offset` tracks partial
+socket sends without modifying the buffer's published bytes. Handshake and
+control output use their existing separate producer paths.
 
 ### Post-Handshake Control Rx
 

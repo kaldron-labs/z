@@ -13,8 +13,6 @@
 #include <zlib/ZfixLib.hh>
 #endif
 
-#include <limits.h>
-
 #include <zlib/Ztcp.hh>
 #include <zlib/Ztls.hh>
 #include <zlib/ZfixLink.hh>
@@ -45,14 +43,6 @@ protected:
   void clearInput_() { static_cast<Impl *>(this)->nativeRx_().input = nullptr; }
 };
 
-// Growing framing reserves the maximum BodyLength width. Its final subspan
-// can leave this much unused prefix room even for a single TLS-sized frame.
-inline constexpr unsigned wirePrefixGap() {
-  unsigned digits = 0;
-  for (unsigned n = UINT_MAX; n; n /= 10) ++digits;
-  return digits - 1;
-}
-
 struct TCP {
   enum { Encrypted = false };
   using Connected = Ztcp::Connected;
@@ -60,17 +50,14 @@ struct TCP {
   using ServerParams = Ztcp::ServerParams;
   template <typename App> using Client = Ztcp::Client<App>;
   template <typename App> using Server = Ztcp::Server<App>;
-  template <typename App, typename Impl, typename Tx>
-  using CliLink = Ztcp::CliLink<App, Impl, Tx, WireOps>;
-  template <typename App, typename Impl, typename Tx>
-  using SrvLink = Ztcp::SrvLink<App, Impl, Tx, WireOps>;
-  template <unsigned Size = ZiIOBuf_DefltSize,
-    unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TCP.Tx">
-  using TxAllocator = Zi::TxTCPBufAllocator<WireBuf, Size, Max, ZuStringT<Heap>>;
+  template <typename App, typename Impl, typename Rx, typename Tx>
+  using CliLink = Ztcp::CliLink<App, Impl, Rx, Tx>;
+  template <typename App, typename Impl, typename Rx, typename Tx>
+  using SrvLink = Ztcp::SrvLink<App, Impl, Rx, Tx>;
+  using RxStream = Ztcp::RxStream;
   template <unsigned Size = ZiIOBuf_DefltSize,
     unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TCP.Rx">
-  using RxAllocator = Zi::RxTCPBufAllocator<ZiRxBuf, Size, Max, ZuStringT<Heap>>;
-  using RxStream = Ztcp::RxStream;
+  using RxBufAlloc = Ztcp::RxBufAlloc<Size, Max, Heap>;
 };
 
 struct TLS {
@@ -80,17 +67,14 @@ struct TLS {
   using ServerParams = Ztls::ServerParams;
   template <typename App> using Client = Ztls::Client<App>;
   template <typename App> using Server = Ztls::Server<App>;
-  template <typename App, typename Impl, typename Tx>
-  using CliLink = Ztls::CliLink<App, Impl, Tx>;
-  template <typename App, typename Impl, typename Tx>
-  using SrvLink = Ztls::SrvLink<App, Impl, Tx>;
-  template <unsigned Size = Ztls_::TxRecordCapacity + wirePrefixGap(),
-    unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TLS.Tx">
-  using TxAllocator = Zi::TxTLSBufAllocator<WireBuf, Size, Max, ZuStringT<Heap>>;
-  template <unsigned Size = Ztls_::TxRecordCapacity,
-    unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TLS.Rx">
-  using RxAllocator = Zi::RxTLSBufAllocator<ZiRxBuf, Size, Max, ZuStringT<Heap>>;
+  template <typename App, typename Impl, typename Rx, typename Tx>
+  using CliLink = Ztls::CliLink<App, Impl, Rx, Tx>;
+  template <typename App, typename Impl, typename Rx, typename Tx>
+  using SrvLink = Ztls::SrvLink<App, Impl, Rx, Tx>;
   using RxStream = Ztls::RxStream;
+  template <unsigned Size = ZiIOBuf_DefltSize,
+    unsigned Max = ZiIOBuf_DefltMaxSize, ZuString Heap = "Zfix.TLS.Rx">
+  using RxBufAlloc = Ztls::RxBufAlloc<Size, Max, Heap>;
 };
 
 // Immutable defaults shared by newly constructed links; posted quotas are hub
@@ -118,7 +102,6 @@ private:
 // Stored inside the selected engine's Rx group, never in an additional base
 // after that engine's Tx group. Both managed and raw engines use these credits.
 template <typename Net> struct NativeRx {
-  enum { WireMode = Net::Encrypted ? Zfix::WireMode::Records : Zfix::WireMode::Pending };
   PostedIngress			submit;
   WorkBudget			work;
   typename Net::RxStream	*input = nullptr;
@@ -201,9 +184,7 @@ public:
   }
 
   ZmRef<ZiRxQueue::Node> fixAllocRx() {
-    auto allocator = impl()->app()->mx()->rxAllocator(false);
-    return ZmRef<ZiRxQueue::Node>::acquire(static_cast<ZiRxQueue::Node *>(
-      allocator->alloc(impl()).release()));
+    return impl()->rxAllocator()->allocBuf(impl());
   }
 
   WireGeometry fixGeometryTx() {
@@ -213,48 +194,22 @@ public:
       g.size = impl()->txMaxSize();
       g.head = impl()->template txHeadRoom<false>();
       g.tail = impl()->template txTailRoom<false>();
-      auto probe = fixAllocTx(g.head);
-      g.memory = probe->memory();
-      // Reserve the larger ordinary fallback if the registered pool depletes.
-      // This is admission geometry sampled once at connection initialization.
-      if (probe->uring()) {
-	auto fallback = g.memory - probe->size + jumboBytes(probe->size);
-	if (fallback > g.memory) g.memory = fallback;
-      }
+      g.memory = ZmHeapAllocSize<sizeof(typename Impl::TxBufAlloc)>{} +
+	(g.size > Impl::TxBufAlloc::Size ? Zfix::jumboBytes(g.size) : 0);
     }
     return g;
   }
 
-  ZmRef<WireBuf> fixAllocTx(unsigned head) {
-    ZmRef<ZiIOBuf> buf;
-    if constexpr (Net::Encrypted)
-      buf = impl()->template txAllocBuf<false>(head);
-    else {
-      buf = impl()->template allocTxBuf_<false>();
-      buf->skip = head;
-    }
-    return ZmRef<WireBuf>::acquire(static_cast<WireBuf *>(ZuMv(buf).release()));
-  }
-
-  template <bool AppThread = true> TxFrameBuf fixFrameBuf() {
-    ZmAssert(AppThread != impl()->app()->txInvoked());
-    unsigned head = 0, tail = 0;
-    ZmRef<ZiIOBuf> buf;
+  ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
+    ZmRef<ZiIOBuf> b = impl()->txAllocator()->allocBuf(impl()); b->skip = head;
     if constexpr (Net::Encrypted) {
-      head = impl()->template txHeadRoom<AppThread>();
-      tail = impl()->template txTailRoom<AppThread>();
-      buf = impl()->template txAllocBuf<AppThread>(head);
-    } else {
-      buf = impl()->template allocTxBuf_<AppThread>();
+      unsigned size = impl()->txMaxSize();
+      if (b->size < size) b->ensure(size - head);
     }
-    return {ZuMv(buf), tail, true};
+    return b;
   }
 
   bool fixSendTx(ZmRef<ZiIOBuf> b) { return impl()->sendRecord_(ZuMv(b)); }
-  bool fixSendRangeTx(Zi::RxRange source, ZmRef<WireBuf> wire) {
-    return impl()->sendRecord_(ZuMv(source), ZuMv(wire));
-  }
-
 
   static SessionConfig role(SessionConfig config, bool initiator) {
     config.initiator = initiator; return config;

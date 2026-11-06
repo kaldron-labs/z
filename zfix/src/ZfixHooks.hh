@@ -34,10 +34,8 @@ struct PeerReject {
 template <typename App> class Hooks {
 public:
   enum { SignMsg = 0 };
-  template <typename S, typename Message>
-  void signMsg(S &, const TxBody *, TxContext, const Message &) const { }
-
-  TxFrameBuf frameStorageTx() { return {}; }
+  template <typename S>
+  void signMsg(S &, const TxBody *, TxContext, ZuCSpan) const { }
 
   bool enqueueTx(TxBody::Ref) { return false; }
   TxBody::Ref dequeueTx() { return {}; }
