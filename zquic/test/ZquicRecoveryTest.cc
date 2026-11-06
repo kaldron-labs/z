@@ -193,21 +193,21 @@ void testRecovery()
   Zquic::NewReno cc(1200);
   uint64_t cwnd = cc.cwnd();
   cc.sent(1200);
-  cc.ackd(1200);
+  cc.ackd(1200, 1200);
   ZuCHECK(cc.cwnd() > cwnd, "NewReno did not grow in slow start");
   cwnd = cc.cwnd();
   cc.sent(1200);
-  cc.lost(1200, true);
+  cc.lostAt(1200, 1, 10, true);
   ZuCHECK(cc.cwnd() == cwnd, "PMTUD probe loss changed cwnd");
   cc.sent(1200);
-  cc.lost(1200);
+  cc.lostAt(1200, 1, 10);
   ZuCHECK(cc.cwnd() < cwnd, "data loss did not reduce cwnd");
   cwnd = cc.cwnd();
-  cc.lostAt(0, 100);
-  ZuCHECK(cc.cwnd() < cwnd && cc.recoveryStartTime() == 100,
+  cc.lostAt(0, 100, 200);
+  ZuCHECK(cc.cwnd() < cwnd && cc.recoveryStartTime() == 200,
     "timed loss did not enter recovery");
   cwnd = cc.cwnd();
-  cc.lostAt(0, 90);
+  cc.lostAt(0, 90, 210);
   ZuCHECK(cc.cwnd() == cwnd, "old packet loss reduced cwnd during recovery");
 
   Zquic::PktTxSpace tx;
@@ -939,7 +939,7 @@ void testLosslessFrameUpdates()
 	  Zquic::SentFrameRef::crypto(packetNo * 8 + frameNo, 1),
 	  reinterpret_cast<void *>(
 	    uintptr_t(packetNo * 8 + frameNo + 1)));
-    ackd.ackd(packet);
+    ackd.ackd(packet, packet.inFlight);
   }
   ZuCHECK(ackdSetup &&
       ackd.ackdFrames.length() == 256 * Zquic::SentPkt::MaxFrames &&

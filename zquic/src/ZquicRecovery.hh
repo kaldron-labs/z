@@ -485,10 +485,9 @@ public:
     return *maxAckDelay && maxAckDelay ? pto + maxAckDelay : pto;
   }
   ZuTime timeThreshold() const {
-    ZuTime rtt = m_latest ? m_latest : m_smoothed;
-    if (!*rtt) rtt = m_min;
+    ZuTime rtt = m_latest;
+    if (*m_smoothed && (!*rtt || m_smoothed > rtt)) rtt = m_smoothed;
     if (!*rtt) rtt = InitialRTT;
-    if (*m_min && m_min > rtt) rtt = m_min;
     ZuTime threshold =
       (rtt * ZuDecimal{TimeThresholdNumerator}) /
 	ZuDecimal{TimeThresholdDenominator};
@@ -519,36 +518,36 @@ public:
   void sent(unsigned bytes, bool inFlight = true) {
     if (inFlight) m_bytesInFlight += bytes;
   }
-  void ackd(unsigned bytes) {
-    ackd(bytes, false);
+  // Retirement is independent of congestion-epoch growth eligibility.
+  void ackd(uint64_t bytes, uint64_t eligibleBytes) {
+    release(bytes);
+    grow(eligibleBytes);
   }
-  void ackd(unsigned bytes, bool pmtudProbe) {
-    if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
-    else m_bytesInFlight -= bytes;
-    if (pmtudProbe) return;
+  void grow(uint64_t bytes) {
+    if (!bytes) return;
     if (m_cwnd < m_ssthresh)
       m_cwnd += bytes;
     else {
-      uint64_t n = (uint64_t(m_maxDatagram) * bytes) / m_cwnd;
+      uint64_t n = (uint64_t(m_maxDatagram) * bytes)/m_cwnd;
       m_cwnd += n ? n : 1;
     }
   }
+  uint64_t epoch() const { return m_epoch; }
   void release(uint64_t bytes) {
     if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
     else m_bytesInFlight -= bytes;
   }
-  void lost(unsigned bytes, bool pmtudProbe = false) {
-    lostAt(bytes, 0, pmtudProbe);
+  void lostAt(
+    uint64_t bytes, uint64_t sentTime, uint64_t eventTime,
+    bool pmtudProbe = false)
+  {
+    release(bytes);
+    if (!pmtudProbe) congestionEventAt(sentTime, eventTime);
   }
-  void lostAt(unsigned bytes, uint64_t sentTime, bool pmtudProbe = false) {
-    if (bytes > m_bytesInFlight) m_bytesInFlight = 0;
-    else m_bytesInFlight -= bytes;
-    if (pmtudProbe) return;
-    congestionEventAt(sentTime);
-  }
-  bool congestionEventAt(uint64_t sentTime) {
+  bool congestionEventAt(uint64_t sentTime, uint64_t eventTime) {
     if (m_recoveryStartTime && sentTime <= m_recoveryStartTime) return false;
-    m_recoveryStartTime = sentTime;
+    m_recoveryStartTime = eventTime;
+    ++m_epoch;
     m_ssthresh = m_cwnd >> 1;
     if (m_ssthresh < uint64_t(m_maxDatagram) * 2)
       m_ssthresh = uint64_t(m_maxDatagram) * 2;
@@ -556,6 +555,7 @@ public:
     return true;
   }
   void persistentCongestion() {
+    ++m_epoch;
     m_cwnd = uint64_t(m_maxDatagram) * 2;
     m_ssthresh = m_cwnd;
   }
@@ -566,6 +566,26 @@ private:
   uint64_t	m_ssthresh = uint64_t(-1);
   uint64_t	m_bytesInFlight = 0;
   uint64_t	m_recoveryStartTime = 0;
+  uint64_t	m_epoch = 0;
+};
+
+// Bounded ACK continuation state: all credited transmissions precede a new
+// congestion event's processing time, so an epoch change invalidates the sum.
+struct AckGrowth {
+  uint64_t epoch = 0;
+  uint64_t bytes = 0;
+
+  void stage(const NewReno &cc, uint64_t classifiedEpoch, uint64_t eligible) {
+    if (epoch != cc.epoch()) {
+      bytes = 0;
+      epoch = cc.epoch();
+    }
+    if (classifiedEpoch == epoch) bytes += eligible;
+  }
+  void commit(NewReno &cc) {
+    if (epoch == cc.epoch()) cc.grow(bytes);
+    bytes = 0;
+  }
 };
 
 struct SentFrameRef {
@@ -1209,7 +1229,37 @@ struct PktTxUpdate {
   static constexpr unsigned AckedPNSampleMax = 64;
   static constexpr unsigned MaxAckedPNs = AckedPNSampleMax;
 
-  void ackd(const SentPkt &p) {
+  using PNSample = ZuArray<uint64_t, AckedPNSampleMax>;
+  using AckFlags = ZuArray<bool, PktNumSpace::N>;
+  using AckLargest = ZuArray<uint64_t, PktNumSpace::N>;
+
+  uint64_t	ackdBytes = 0;
+  PNSample	ackedPNs =
+		  fixedArray<uint64_t, AckedPNSampleMax>();
+  PktNumSpace::T	level = PktNumSpace::Initial;
+  unsigned	ecnAckdPackets = 0;
+  uint64_t	ecnAckdBytes = 0;
+  ZuTime	ecnAckdSentTime;
+  uint64_t	normalAckdBytes = 0;
+  uint64_t	eligibleAckdBytes = 0;
+  uint64_t	pmtudAckdBytes = 0;
+  unsigned	pmtudAckdSize = 0;
+  uint64_t	lostBytes = 0;
+  uint64_t	normalLostBytes = 0;
+  uint64_t	pmtudLostBytes = 0;
+  unsigned	pmtudLostSize = 0;
+  ZuTime	normalLostSentTime;
+  ZuTime	pmtudLostSentTime;
+  AckFlags	ackdAck =
+		  fixedArray<bool, PktNumSpace::N>();
+  AckLargest	ackLargest =
+		  fixedArray<uint64_t, PktNumSpace::N>();
+  SentFrameUpdates ackdFrames;
+  SentFrameUpdates lostFrames;
+  unsigned	nAckedPNs = 0;
+  bool		ackedPNsTruncated = false;
+
+  void ackd(const SentPkt &p, bool wasInFlight, uint64_t boundary = 0) {
     if (nAckedPNs < AckedPNSampleMax)
       ackedPNs[nAckedPNs++] = p.pn;
     else
@@ -1237,12 +1287,16 @@ struct PktTxUpdate {
       default:
 	break;
     }
+    if (!wasInFlight) return;
     if (p.pmtudProbe) {
       pmtudAckdBytes += p.bytes;
       if (p.pmtudSize > pmtudAckdSize)
 	pmtudAckdSize = p.pmtudSize;
-    } else
+    } else {
       normalAckdBytes += p.bytes;
+      if (!boundary || uint64_t(p.sentTime.microsecs()) > boundary)
+	eligibleAckdBytes += p.bytes;
+    }
   }
   void lost(const SentPkt &p) {
     lostFrames_(p);
@@ -1282,33 +1336,7 @@ struct PktTxUpdate {
   }
   void clearAckdFrames() { ackdFrames.clear(); }
 
-  uint64_t	ackdBytes = 0;
-  ZuArray<uint64_t, AckedPNSampleMax>
-		ackedPNs =
-		  fixedArray<uint64_t, AckedPNSampleMax>();
-  PktNumSpace::T	level = PktNumSpace::Initial;
-  unsigned	ecnAckdPackets = 0;
-  uint64_t	ecnAckdBytes = 0;
-  ZuTime	ecnAckdSentTime;
-  uint64_t	normalAckdBytes = 0;
-  uint64_t	pmtudAckdBytes = 0;
-  unsigned	pmtudAckdSize = 0;
-  uint64_t	lostBytes = 0;
-  uint64_t	normalLostBytes = 0;
-  uint64_t	pmtudLostBytes = 0;
-  unsigned	pmtudLostSize = 0;
-  ZuTime	normalLostSentTime;
-  ZuTime	pmtudLostSentTime;
-  ZuArray<bool, PktNumSpace::N>
-		ackdAck =
-		  fixedArray<bool, PktNumSpace::N>();
-  ZuArray<uint64_t, PktNumSpace::N>
-		ackLargest =
-		  fixedArray<uint64_t, PktNumSpace::N>();
-  SentFrameUpdates ackdFrames;
-  SentFrameUpdates lostFrames;
-  unsigned	nAckedPNs = 0;
-  bool		ackedPNsTruncated = false;
+
 };
 
 struct PktAckBatch {
@@ -1477,7 +1505,8 @@ public:
     const AckRange *ranges, unsigned nRanges, unsigned *lost = nullptr,
     unsigned packetThreshold = 3, ZuTime *latestSentTime = nullptr,
     uint64_t *ackdBytes = nullptr, uint64_t *lostBytes = nullptr,
-    ZuTime *lostSentTime = nullptr, PktTxUpdate *update = nullptr)
+    ZuTime *lostSentTime = nullptr, PktTxUpdate *update = nullptr,
+    uint64_t boundary = 0)
   {
     unsigned n = 0;
     uint64_t ackdBytes_ = 0;
@@ -1497,9 +1526,10 @@ public:
 	TxPkt &p = node->data();
 	if (p.pn > range.largest) break;
 	bool wasLost = p.lost;
+	bool wasInFlight = p.inFlight;
 	if (ack_(p)) {
 	  if (!wasLost) ackdBytes_ += p.bytes;
-	  if (update) update->ackd(p);
+	  if (update) update->ackd(p, wasInFlight, boundary);
 	  if (!wasLost) {
 	    ++n;
 	    if (!haveAckForLoss || p.pn > largestAckdForLoss) {
@@ -1527,7 +1557,8 @@ public:
 
   bool ackBatch(
     const AckRange *ranges, unsigned nRanges, PktAckBatch &batch,
-    unsigned budget, PktNumSpace::T level, PktTxUpdate *update = nullptr)
+    unsigned budget, PktNumSpace::T level, PktTxUpdate *update = nullptr,
+    uint64_t boundary = 0)
   {
     if (!budget) return false;
     if (update) update->level = level;
@@ -1546,8 +1577,9 @@ public:
 	if (p.pn > range.largest) break;
 	uint64_t nextPN = p.pn + 1;
 	bool wasLost = p.lost;
+	bool wasInFlight = p.inFlight;
 	if (ack_(p)) {
-	  if (update) update->ackd(p);
+	  if (update) update->ackd(p, wasInFlight, boundary);
 	  if (!wasLost) {
 	    ++batch.ackd;
 	    if (!batch.haveAckForLoss || p.pn > batch.largestAckdForLoss) {

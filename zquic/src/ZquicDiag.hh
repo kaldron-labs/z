@@ -37,6 +37,30 @@ struct DiagCounter {
 #endif
 
 struct ZquicAPI Diag {
+#ifdef Zquic_DEBUG
+  DiagText	handshakeState;
+#endif
+  [[no_unique_address]] DiagCounter packetsRx = 0;
+  [[no_unique_address]] DiagCounter packetsTx = 0;
+  [[no_unique_address]] DiagCounter bytesRx = 0;
+  [[no_unique_address]] DiagCounter bytesTx = 0;
+  [[no_unique_address]] DiagCounter headerBytesRx = 0;
+  [[no_unique_address]] DiagCounter headerBytesTx = 0;
+  [[no_unique_address]] DiagCounter bodyBytesRx = 0;
+  [[no_unique_address]] DiagCounter bodyBytesTx = 0;
+  [[no_unique_address]] DiagCounter streamBytesRx = 0;
+  [[no_unique_address]] DiagCounter streamBytesTx = 0;
+  [[no_unique_address]] DiagCounter packetsLost = 0;
+  [[no_unique_address]] DiagCounter ptoCount = 0;
+  [[no_unique_address]] DiagCounter retransmittedFrames = 0;
+  [[no_unique_address]] DiagCounter cwnd = 0;
+  [[no_unique_address]] DiagCounter bytesInFlight = 0;
+  [[no_unique_address]] DiagCounter openStreams = 0;
+  [[no_unique_address]] DiagCounter closedStreams = 0;
+  [[no_unique_address]] DiagCounter pmtudProbes = 0;
+  [[no_unique_address]] DiagCounter pmtudSuccess = 0;
+  [[no_unique_address]] DiagCounter pmtudFailure = 0;
+
   static ZuCSpan packetSpaceName(PktNumSpace::T);
   static ZuCSpan frameTypeName(FrameType::T);
   static ZuCSpan streamTypeName(Zquic::StreamType::T);
@@ -100,30 +124,6 @@ struct ZquicAPI Diag {
     streamSummary(out);
     return out;
   }
-
-#ifdef Zquic_DEBUG
-  DiagText	handshakeState;
-#endif
-  [[no_unique_address]] DiagCounter packetsRx = 0;
-  [[no_unique_address]] DiagCounter packetsTx = 0;
-  [[no_unique_address]] DiagCounter bytesRx = 0;
-  [[no_unique_address]] DiagCounter bytesTx = 0;
-  [[no_unique_address]] DiagCounter headerBytesRx = 0;
-  [[no_unique_address]] DiagCounter headerBytesTx = 0;
-  [[no_unique_address]] DiagCounter bodyBytesRx = 0;
-  [[no_unique_address]] DiagCounter bodyBytesTx = 0;
-  [[no_unique_address]] DiagCounter streamBytesRx = 0;
-  [[no_unique_address]] DiagCounter streamBytesTx = 0;
-  [[no_unique_address]] DiagCounter packetsLost = 0;
-  [[no_unique_address]] DiagCounter ptoCount = 0;
-  [[no_unique_address]] DiagCounter retransmittedFrames = 0;
-  [[no_unique_address]] DiagCounter cwnd = 0;
-  [[no_unique_address]] DiagCounter bytesInFlight = 0;
-  [[no_unique_address]] DiagCounter openStreams = 0;
-  [[no_unique_address]] DiagCounter closedStreams = 0;
-  [[no_unique_address]] DiagCounter pmtudProbes = 0;
-  [[no_unique_address]] DiagCounter pmtudSuccess = 0;
-  [[no_unique_address]] DiagCounter pmtudFailure = 0;
 };
 
 struct LinkRxDiag {
@@ -266,6 +266,9 @@ struct LinkTxDiag {
 };
 
 struct LinkDiag {
+  LinkRxDiag	rx;
+  LinkTxDiag	tx;
+
   LinkDiag() = default;
   LinkDiag(const LinkRxDiag &rx_, const LinkTxDiag &tx_) :
     rx{rx_}, tx{tx_} { }
@@ -274,9 +277,6 @@ struct LinkDiag {
   uint64_t unhandledAppEvents() const {
     return rx.unhandledAppEvents + tx.unhandledAppEvents;
   }
-
-  LinkRxDiag	rx;
-  LinkTxDiag	tx;
 };
 
 } // namespace Zquic

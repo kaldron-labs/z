@@ -738,6 +738,7 @@ protected:
   struct TxAckWork {
     AckSnapshot		ack;
     uint64_t		gen = 0;
+    AckGrowth		growth;
     PktAckBatch		ackBatch;
     PktLossBatch	lossBatch;
     bool		ecnValidated = false;
@@ -6672,7 +6673,8 @@ nextSpace:
     if (!ceDelta || !*ceDelta) return;
     m_path.ceECN(update.ecnAckdBytes);
     if (m_congestion.congestionEventAt(
-	uint64_t(update.ecnAckdSentTime.microsecs()))) {
+	uint64_t(update.ecnAckdSentTime.microsecs()),
+	uint64_t(now_().microsecs()))) {
       *ceDelta = 0;
       ZquicLOG(app()->qlogTrace(), ([
 	reason = RecReason::ECNCE,
@@ -6695,10 +6697,11 @@ nextSpace:
     }
   }
   void applyAckUpdateTx_(
-    const PktTxUpdate &update, bool &congestionOpened,
+    const PktTxUpdate &update, TxAckWork &work,
     ReapStreams &reapStreams,
     const AckSnapshot *ack = nullptr, bool *ecnValid = nullptr,
     uint64_t *ceDelta = nullptr) {
+    uint64_t workEpoch = m_congestion.epoch();
     applyAckOfAckTx_(update);
     for (unsigned i = 0, n = update.ackdFrames.length(); i < n; ++i) {
       const SentFrameUpdate &frame = update.ackdFrames[i];
@@ -6724,9 +6727,11 @@ nextSpace:
 	    break;
 	}
     }
+    applyECNAckTx_(ack, update, ecnValid, ceDelta);
+    work.growth.stage(m_congestion, workEpoch, update.eligibleAckdBytes);
     if (update.normalAckdBytes) {
-      m_congestion.ackd(update.normalAckdBytes);
-      congestionOpened = true;
+      m_congestion.release(update.normalAckdBytes);
+      work.congestionOpened = true;
       ZquicLOG(app()->qlogTrace(), ([
       reason = RecReason::Ack,
       cwnd = m_congestion.cwnd(),
@@ -6748,7 +6753,8 @@ nextSpace:
       }));
     }
     if (update.pmtudAckdBytes) {
-      m_congestion.ackd(update.pmtudAckdBytes, true);
+      m_congestion.release(update.pmtudAckdBytes);
+      work.congestionOpened = true;
       onPMTUDProbeAckd_(update.pmtudAckdSize);
       ZquicLOG(app()->qlogTrace(), ([
 		reason = RecReason::PMTUDAck,
@@ -6770,7 +6776,6 @@ nextSpace:
 	o.logCongStateUpd(event, time);
       }));
     }
-    applyECNAckTx_(ack, update, ecnValid, ceDelta);
   }
   void applyAckOfAckTx_(const PktTxUpdate &update) {
     for (unsigned i = 0; i < PktNumSpace::N; ++i) {
@@ -6792,7 +6797,8 @@ nextSpace:
     if (update.normalLostBytes) {
       m_congestion.lostAt(
 	update.normalLostBytes,
-	uint64_t(update.normalLostSentTime.microsecs()));
+	uint64_t(update.normalLostSentTime.microsecs()),
+	uint64_t(now_().microsecs()));
       ZquicLOG(app()->qlogTrace(), ([
 		reason = RecReason::Loss,
 		cwnd = m_congestion.cwnd(),
@@ -6816,7 +6822,8 @@ nextSpace:
     if (update.pmtudLostBytes) {
       m_congestion.lostAt(
 	update.pmtudLostBytes,
-	uint64_t(update.pmtudLostSentTime.microsecs()), true);
+	uint64_t(update.pmtudLostSentTime.microsecs()),
+	uint64_t(now_().microsecs()), true);
       onPMTUDProbeLost_(update.pmtudLostSize);
       ZquicLOG(app()->qlogTrace(), ([
 		reason = RecReason::PMTUDLoss,
@@ -6874,9 +6881,9 @@ nextSpace:
 	      if (!m_txPkts[ack.level].ackBatch(
 		  ack.ranges.data(), ack.ranges.length(),
 		  work.ackBatch, RecoveryScanBatch,
-		  ack.level, &update)) {
+		  ack.level, &update, m_congestion.recoveryStartTime())) {
 		applyAckUpdateTx_(
-		  update, work.congestionOpened, reapStreams,
+		  update, work, reapStreams,
 		  &ack, &work.ecnValid, &work.ceDelta);
 		ZquicLOG(app()->qlogTrace(), ([
 	  level = ack.level,
@@ -6917,7 +6924,7 @@ nextSpace:
 		return;
 	      }
 	      applyAckUpdateTx_(
-		update, work.congestionOpened, reapStreams,
+		update, work, reapStreams,
 		&ack, &work.ecnValid, &work.ceDelta);
 	      ZquicLOG(app()->qlogTrace(), ([
 	level = ack.level,
@@ -6954,7 +6961,7 @@ nextSpace:
 	      work.lossPhase = true;
 	    } else {
 	      applyAckUpdateTx_(
-		update, work.congestionOpened, reapStreams,
+		update, work, reapStreams,
 		&ack, &work.ecnValid, &work.ceDelta);
 	      reapAckedStreams_(update, reapStreams);
 	    }
@@ -7069,6 +7076,9 @@ nextSpace:
       }
       m_ptoBackoff.reset();
     }
+    // Commit only after this ACK's ECN and loss responses, including all
+    // bounded continuations. Reset/discard return above without growth.
+    work.growth.commit(m_congestion);
     updateCongestionDiag_();
     schedulePTO_();
     scheduleLossTimer_();

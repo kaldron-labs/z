@@ -443,6 +443,79 @@ struct TempDir {
 
 } // namespace
 
+// Exercise the public ownership-bearing and borrowed APIs on the existing live fixture.
+template <typename Sender, typename Receiver, typename Arm>
+void testOwnedStreamAPI(const Sender &sender, const Receiver &receiver,
+    Arm arm, bool offThread)
+{
+  ZuTestScopeRT(testOwnedStreamAPI);
+  enum { N = 6000, Borrowed = 257 };
+  uint8_t expected[N];
+  for (unsigned i = 0; i < N; ++i) expected[i] = uint8_t('a' + i%23);
+  auto output = openStream(sender);
+  ZQUIC_CHECK_RT(output, "owned stream did not open");
+  if (!output) return;
+  ZmRef<ZiIOBuf> backing = new Zquic::StreamTxBufAlloc<8192, 8192>{nullptr, 0};
+  backing->skip = 9;
+  backing->append(reinterpret_cast<const uint8_t *>("prefix!"), 7);
+  backing->append(expected, N);
+  bool accepted;
+  if (offThread) {
+    accepted = sender->send(output, Zi::RxRange{backing, 7, N});
+    backing = nullptr; // release caller ownership immediately after public return
+  } else accepted = ZmBlock<bool>{}([sender, output, &backing, arm](auto wake) {
+    sender->app()->txRun([
+      sender, output, backing = ZuMv(backing), arm, wake = ZuMv(wake)
+    ]() mutable {
+      arm(); // unchanged fixture packet-drop mechanism, on its Tx owner
+      bool ok = sender->send(output, Zi::RxRange{backing, 7, N});
+      backing = nullptr; // no fixture capture survives public send return
+      wake(ok);
+    });
+  });
+  ZQUIC_CHECK_RT(accepted && !backing, "owned range API admission/caller release failed");
+  auto checkInput = [receiver](const auto &stream, const uint8_t *bytes, unsigned size) {
+    auto id = stream->id();
+    return waitUntil([receiver, id, bytes, size]() {
+      auto incoming = findStream(receiver, id);
+      if (!incoming) return false;
+      return ZmBlock<bool>{}([receiver, incoming, bytes, size](auto wake) {
+        receiver->app()->rxRun([incoming, bytes, size, wake = ZuMv(wake)]() mutable {
+          auto &rx = incoming->rxStream(); unsigned offset = 0;
+          bool ok = rx.length() == size;
+          if (ok) {
+            auto n = rx.each(size, [bytes, &offset](auto part) -> int64_t {
+              if (memcmp(part.data(), bytes+offset, part.length())) return -1;
+              offset += part.length(); return part.length();
+            });
+            ok = n == int64_t(size);
+          }
+          wake(ok);
+        });
+      });
+    });
+  };
+  ZQUIC_CHECK_RT(checkInput(output, expected, N), "owned protected bytes changed");
+  bool completed = waitUntil([sender, output]() {
+    return ZmBlock<bool>{}([sender, output](auto wake) {
+      sender->app()->txRun([output, wake = ZuMv(wake)]() mutable {
+        wake(output->finSent() && output->txDrained());
+      });
+    });
+  });
+  ZQUIC_CHECK_RT(completed, "owned range FIN/ACK did not drain");
+  auto borrowedStream = openStream(sender);
+  ZQUIC_CHECK_RT(borrowedStream, "borrowed stream did not open");
+  if (!borrowedStream) return;
+  uint8_t borrowed[Borrowed], saved[Borrowed];
+  for (unsigned i=0; i<Borrowed; ++i) borrowed[i] = saved[i] = uint8_t(i%251);
+  ZQUIC_CHECK_RT(sender->send(borrowedStream, ZuBSpan{borrowed, Borrowed}),
+    "borrowed span API admission failed");
+  memset(borrowed, 0xa5, sizeof(borrowed)); // public call must have acquired ownership
+  ZQUIC_CHECK_RT(checkInput(borrowedStream, saved, Borrowed),
+    "caller overwrite changed borrowed-span delivery");
+}
+
 void testEndpointOpen()
 {
   ZuTestScope(testEndpointOpen);
@@ -630,6 +703,15 @@ void testEndpointOpen()
       serverLink->streamedCount == 2 &&
       clientLink->streamedCount == 2,
     "runtime stream objects did not process received STREAM frames");
+  ZuTestCall(testOwnedStreamAPI, clientLink, serverLink,
+    [&client]() { client.pendingMigDrop = 1; }, true);
+  ZuTestCall(testOwnedStreamAPI, clientLink, serverLink,
+    [&client]() { client.pendingMigDrop = 1; }, false);
+  ZuTestCall(testOwnedStreamAPI, serverLink, clientLink,
+    [&server]() { server.dropNextShort = 1; }, true);
+  ZuTestCall(testOwnedStreamAPI, serverLink, clientLink,
+    [&server]() { server.dropNextShort = 1; }, false);
+
 
 	ZmBlock<>{}([&clientLink](auto wake) {
 	  clientLink->disconnect([wake = ZuMv(wake)]() mutable { wake(); });

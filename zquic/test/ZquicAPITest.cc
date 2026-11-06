@@ -271,6 +271,37 @@ struct TestLink :
     Base::configLocalParams_(app);
   }
 
+  static constexpr unsigned RecBatch = Base::RecoveryScanBatch;
+
+  bool recoveryPackets(unsigned count, bool ecn = false) {
+    if (ecn) Base::setEcnDisabled_(false);
+    Base::setTxPN_(Zquic::PktNumSpace::Handshake, count + 1);
+    for (unsigned pn = 1; pn <= count; ++pn)
+      if (!Base::recordTxPkt_(Zquic::PktNumSpace::Handshake, pn, 1200,
+	  Zquic::SentFrameRef{}, true, false, 0, Zquic::PktNumSpace::N, 0,
+	  Zquic::PktType::Handshake,
+	  ecn ? Zquic::EcnMark::ECT0 : Zquic::EcnMark::NotECT))
+	return false;
+    return true;
+  }
+  void recoveryAck(unsigned largest, unsigned first, bool ecn = false) {
+    Base::AckSnapshot ack;
+    ack.level = Zquic::PktNumSpace::Handshake;
+    ack.ranges.push(Zquic::AckRange{largest, first});
+    if (ecn) {
+      ack.ecn.ect0 = largest - first;
+      ack.ecn.ce = 1;
+    }
+    Base::processAckFrameTx_(ack);
+  }
+  auto recoveryDiag() const { return Base::txDiag_(); }
+  auto recoveryPathDiag() const { return Base::pathDiag_(); }
+  void recoveryStop() { Base::cancelTimers_(); }
+  void recoveryReset() { Base::resetTx_(); }
+  void recoveryDiscard() {
+    Base::discardTxPktNumSpace_(Zquic::PktNumSpace::Handshake);
+  }
+
   bool longProbe(
     const Zquic::TrafficSecret &secret, unsigned pnLength, bool early,
     ZmRef<ZiIOBuf> &packet) {
@@ -619,16 +650,6 @@ struct TestLink :
   bool lastDataFin = false;
   bool lastPathValidated = false;
 	};
-
-template <typename L>
-bool waitUntil(L l)
-{
-  for (unsigned i = 0; i < 2000; ++i) {
-    if (l()) return true;
-    usleep(1000);
-  }
-  return false;
-}
 
 struct HubFixture {
   HubFixture() : mx{mxParams_()} {
@@ -1234,6 +1255,53 @@ void testStatelessResetDetection()
   ZuCHECK(qlog.find<"\"reason\":\"token_match\"">() >= 0,
     "stateless reset qlog reason missing");
 #endif
+}
+
+void testRecoveryRuntimeOrdering()
+{
+  ZuTestScope(testRecoveryRuntimeOrdering);
+  for (unsigned mode = 0; mode < 3; ++mode) {
+    bool ecn = mode != 0;
+    unsigned count = mode == 2 ? 2 : 4;
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    link->recoveryReset();
+    uint64_t initial = link->recoveryDiag().congestionWindow;
+    ZuCHECK(link->recoveryPackets(count, ecn), "runtime recovery packet setup");
+    link->recoveryAck(count, count, ecn);
+    auto diag = link->recoveryDiag();
+    ZuCHECK(diag.congestionWindow == initial/2 &&
+      diag.bytesInFlight == (mode == 2 ? 1200 : 2400),
+      "runtime same ACK must establish loss/ECN before growth");
+    ZuCHECK(link->recoveryPathDiag().ecnCEEvents == unsigned(ecn) &&
+      !link->recoveryPathDiag().ecnValidationFailures,
+      "ECN variant must exercise the validated CE response");
+    link->recoveryStop();
+  }
+  for (bool reset : {false, true}) {
+    HubFixture fixture;
+    ZmRef<TestLink> link = new TestLink{&fixture.app};
+    link->recoveryReset();
+    uint64_t initial = link->recoveryDiag().congestionWindow;
+    ZuCHECK(link->recoveryPackets(TestLink::RecBatch + 1),
+      "runtime continuation packet setup");
+    fixture.app.defer();
+    fixture.app.enterTx();
+    link->recoveryAck(TestLink::RecBatch + 1, 1);
+    ZuCHECK(fixture.app.txPending() &&
+      link->recoveryDiag().congestionWindow == initial &&
+      link->recoveryDiag().bytesInFlight == 1200,
+      "runtime first continuation retires without committing growth");
+    if (reset) link->recoveryReset();
+    else link->recoveryDiscard();
+    while (fixture.app.txPending()) fixture.app.runTx();
+    ZuCHECK(link->recoveryDiag().congestionWindow == initial &&
+      !link->recoveryDiag().bytesInFlight,
+      "runtime reset/discard must reject queued growth and retire once");
+    while (fixture.app.rxPending()) fixture.app.runRx();
+    fixture.app.enterTx();
+    link->recoveryStop();
+  }
 }
 
 void testApplicationCallbacks()
@@ -2157,6 +2225,7 @@ int main(int argc, char **argv)
   ZuTestCall(testLinkStateOwnership);
   ZuTestCall(testStreamLimitOwnership);
   ZuTestCall(testStatelessResetDetection);
+  ZuTestCall(testRecoveryRuntimeOrdering);
   ZuTestCall(testApplicationCallbacks);
   ZuTestCall(testStopSendingOwnership);
   ZuTestCall(testStreamRegistryOwnership);

@@ -46,6 +46,11 @@ class Stream :
   public ZmPQTx<
     Stream<Link_, Impl, TxBufAlloc_>,
     TxDataPQueue> {
+template <typename, typename, typename, typename>
+friend class CliLink;
+template <typename, typename, typename, typename>
+friend class SrvLink;
+
 public:
   enum { DefltTxQueueMax = 4096 };
 
