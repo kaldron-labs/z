@@ -12,6 +12,10 @@ IMPORTANT use subagents
 
 IMPORTANT use a make jobserver with concurrency: 8 across all subagents
 
+IMPORTANT keep `/tmp` clean, remove residue once each phase is complete
+
+IMPORTANT keep worktree clean, remove test and crash residue once each phase is complete
+
 IMPORTANT you have authorization for full access to network and system outside sandbox
 - run listeners and other code outside sandbox
 - run debugging and ptrace outside sandbox
