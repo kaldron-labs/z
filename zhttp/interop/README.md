@@ -1,7 +1,7 @@
 # zhttp QUIC Interop Runner Endpoint
 
 This directory contains the `zhttpqir` endpoint for the upstream QUIC Interop
-Runner. The implementation follows `../../quic_interop.md`.
+Runner.
 
 ## Current Status
 

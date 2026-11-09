@@ -72,7 +72,7 @@ struct App : public Zquic::Hub<App> {
   void drainTx() {
     ZmBlock<>{}([this](auto wake) {
 	m_mx.invoke([wake = ZuMv(wake)]() mutable { wake(); },
-	  m_mx.txThread());
+	  Base::txThread());
     });
   }
   template <typename L> void onTx(L l) {
@@ -162,6 +162,7 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
   }
   void closeForTest(uint64_t errorCode = 0) {
     Base::closeState_(errorCode);
+    teardown();
   }
   void streamed(ZmRef<TestStream> stream) {
     lastStream = ZuMv(stream);
@@ -447,7 +448,9 @@ friend inline ZuStringT<"Zquic.StreamTest.Link"> ZmNHeapID(TestLink *);
       used == n;
   }
   void teardown() {
-    Base::disconnect();
+    ZmBlock<>{}([this](auto wake) {
+      Base::disconnect_(false, ZuMv(wake));
+    });
     app()->drainTx();
   }
   void sendStreamRef(
@@ -1735,7 +1738,7 @@ void testStreamProducerCredit()
       retained.length == 3 && callbacks == 1;
     stable &= stream->recordTxUnackd(retained.offset, retained.length, true);
   });
-  app.onTx([&stream, &link, &callbacks, &stable, &retained, &packetize]() {
+  app.onTx([&stream, &callbacks, &stable, &retained, &packetize]() {
     stable &= callbacks == 2 && retained.range.buf &&
       !memcmp(retained.range.buf->data_() + retained.range.offset, "def", 3);
     stable &= stream->ackTxUnackd(0, 6, true) &&
@@ -1743,8 +1746,8 @@ void testStreamProducerCredit()
     Zquic::StreamFrameInfo empty;
     stable &= packetize(3, empty) == 0;
     stream->dequeued = {};
-    link->teardown();
   });
+  link->teardown();
   ZuCHECK(stable && callbacks == 2,
     "producer credit must follow full packetization on AppTx, retain recovery "
     "bytes, allow bounded refill, and leave ACK/FIN idempotent");
@@ -1760,10 +1763,10 @@ void testStreamProducerCredit()
     stable &= pending->dequeueTxRange(range);
     pending->reset(1);
   });
-  app.onTx([&pending, &canceled]() {
+  app.onTx([&pending]() {
     pending->dequeued = {};
-    canceled->teardown();
   });
+  canceled->teardown();
   ZuCHECK(stable && callbacks == 2,
     "a canceled stream must suppress already queued producer credit");
 }

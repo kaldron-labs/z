@@ -2591,6 +2591,7 @@ void ZiConnection::disconnect(bool peer)
 
 void ZiConnection::disconnect_1(bool peer)
 {
+  if (auto plugin = m_mx->plugin()) { plugin->disconnect(this, peer); return; }
   if (!m_txUp.load_()) {
     m_mx->rxRun([cxn = ZmRef(this), peer]() {
       cxn->notifyDisconnected(peer);
@@ -2732,6 +2733,7 @@ void ZiConnection::close(bool peer)
 
 void ZiConnection::close_1(bool peer)
 {
+  if (auto plugin = m_mx->plugin()) { plugin->close(this, peer); return; }
   if (!m_txUp.load_()) {
     m_mx->rxRun([cxn = ZmRef(this), peer]() {
       cxn->notifyDisconnected(peer);

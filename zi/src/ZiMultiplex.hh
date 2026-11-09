@@ -750,7 +750,8 @@ public:
 
   // type will be one of RxUDP, TxUDP, RxTCP, TxTCP, RxTLS, TxTLS
   virtual Zi::IOBufPlugin *allocator(Zi::IOBufType::T type,
-    unsigned size, unsigned maxSize, unsigned align) = 0;
+    unsigned size, unsigned maxSize, unsigned align,
+    unsigned count) = 0;
 
   // Rx thread idempotent start/stop
 
@@ -786,7 +787,10 @@ public:
 
   // Tx thread
 
-  virtual void send(ZiConnection *);	// equivalent of ZiConnection::send()
+  virtual void send(ZiConnection *) = 0;	// equivalent of ZiConnection::send()
+
+  virtual void disconnect(ZiConnection *, bool peer) = 0;	// graceful - drains
+  virtual void close(ZiConnection *, bool peer) = 0;		// abrupt
 
   // non-Rx thread functions
 
@@ -1002,12 +1006,12 @@ public:
     unsigned MaxSize = ZiIOBuf_DefltMaxSize,
     unsigned Align = ZiIOBuf_DefltAlign,
     typename HeapID = ZiIOBuf_HeapID>
-  Zi::IOBufAllocator *allocator() {
+  Zi::IOBufAllocator *allocator(unsigned count = ZiIOBuf_DefltCount) {
     ZmAssert(state() == ZmEngineState::Stopped);
     Zi::IOBufAllocator *a;
     if (m_plugin)
       a = new Zi::IOBufPluginAllocator<Type, Size, Base>(
-	this, m_plugin->allocator(Type, Size, MaxSize, Align));
+	this, m_plugin->allocator(Type, Size, MaxSize, Align, count));
     else
       a = new Zi::IOBufBuiltinAllocator<Type, Base, Size, MaxSize, Align, HeapID>(this);
     m_allocators.pushNode(a);

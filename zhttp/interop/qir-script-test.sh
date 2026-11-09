@@ -99,6 +99,24 @@ printf '%s\n' ngtcp2 >"$tmp/out/unsupported/client"
 printf '%s\n' retry >"$tmp/out/unsupported/tests"
 printf '%s\n' 127 >"$tmp/out/unsupported/status"
 
+mkdir -p "$tmp/out/mixed" "$tmp/out/missing"
+printf '%s\n' 'python run.py -s zquic -c msquic -t handshake,http3,transfer,retry' \
+  >"$tmp/out/mixed/command"
+printf '%s\n' zquic >"$tmp/out/mixed/server"
+printf '%s\n' msquic >"$tmp/out/mixed/client"
+printf '%s\n' handshake,http3,transfer,retry >"$tmp/out/mixed/tests"
+printf '%s\n' 1 >"$tmp/out/mixed/status"
+cat >"$tmp/out/mixed/results.json" <<'EOF'
+{"results": [[
+  {"name": "handshake", "abbr": "H", "result": "succeeded"},
+  {"name": "http3", "abbr": "3", "result": "unsupported"},
+  {"name": "transfer", "abbr": "DC", "result": "failed"}
+]]}
+EOF
+printf '%s\n' 'python run.py -s missing -c missing -t handshake' \
+  >"$tmp/out/missing/command"
+printf '%s\n' 0 >"$tmp/out/missing/status"
+
 "$srcdir/scripts/qir-collect-results" \
   --runner "$tmp/runner" \
   --out "$tmp/timestamped" \
@@ -117,6 +135,11 @@ grep -q '| `zquic` | `ngtcp2` | `retry` | 127 | unsupported |' \
   "$tmp/report.md"
 grep -q '| `collected` | `collected` | `unknown` | 7 | fail |' \
   "$tmp/report.md"
+grep -q '| `zquic` | `msquic` | `handshake` | 1 | pass |' "$tmp/report.md"
+grep -q '| `zquic` | `msquic` | `http3` | 1 | unsupported |' "$tmp/report.md"
+grep -q '| `zquic` | `msquic` | `transfer` | 1 | fail |' "$tmp/report.md"
+grep -q '| `zquic` | `msquic` | `retry` | 1 | unknown |' "$tmp/report.md"
+grep -q '| `missing` | `missing` | `handshake` | 0 | unknown |' "$tmp/report.md"
 grep -q 'logs/a/log.txt' "$tmp/report.md"
 grep -q 'stderr' "$tmp/report.md"
 
@@ -124,9 +147,9 @@ grep -q 'stderr' "$tmp/report.md"
   --in "$srcdir/zhttp/interop/testdata/qir-results/fixture" \
   --out "$tmp/fixture-report.md"
 grep -q 'fixture-kernel' "$tmp/fixture-report.md"
-grep -q '| `zquic` | `ngtcp2` | `handshake` | 0 |' \
+grep -q '| `zquic` | `ngtcp2` | `handshake` | 0 | pass |' \
   "$tmp/fixture-report.md"
-grep -q '| `zquic` | `ngtcp2` | `transfer` | 0 |' \
+grep -q '| `zquic` | `ngtcp2` | `transfer` | 0 | pass |' \
   "$tmp/fixture-report.md"
 
 "$srcdir/scripts/qir-run-local" \
@@ -169,6 +192,7 @@ grep -q '| `zquic` | `ngtcp2` | `http3` | 0 |' "$tmp/run-report.md"
 grep -q '| `ngtcp2` | `zquic` | `handshake` | 0 |' "$tmp/run-report.md"
 grep -q '| `ngtcp2` | `zquic` | `transfer` | 0 |' "$tmp/run-report.md"
 grep -q '| `ngtcp2` | `zquic` | `http3` | 0 |' "$tmp/run-report.md"
+grep -q '| `zquic` | `ngtcp2` | `http3` | 0 | planned |' "$tmp/run-report.md"
 
 "$srcdir/scripts/qir-run-local" \
   --runner "$tmp/runner" \
@@ -191,6 +215,38 @@ grep -q -- '-t rebind-port,rebind-addr' \
   "$tmp/rebind-run/zquic-server_msquic-client/command"
 grep -q -- '-t rebind-port,rebind-addr' \
   "$tmp/rebind-run/msquic-server_zquic-client/command"
+
+cat >"$tmp/runner/run.py" <<'PY'
+import argparse
+import json
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-s")
+parser.add_argument("-c")
+parser.add_argument("-t")
+parser.add_argument("--json", required=True)
+args = parser.parse_args()
+with open(args.json, "w", encoding="utf-8") as f:
+    json.dump({"results": [[
+        {"name": "handshake", "result": "succeeded"},
+        {"name": "transfer", "result": "succeeded"},
+        {"name": "http3", "result": "unsupported"}
+    ]]}, f)
+PY
+"$srcdir/scripts/qir-run-local" \
+  --runner "$tmp/runner" \
+  --image zhttp-qir:test \
+  --peers msquic \
+  --tests handshake,transfer,http3 \
+  --out "$tmp/json-run" >/dev/null 2>&1
+test -f "$tmp/json-run/zquic-server_msquic-client/results.json"
+test -f "$tmp/json-run/msquic-server_zquic-client/results.json"
+grep -q '| `zquic` | `msquic` | `handshake` | 0 | pass |' \
+  "$tmp/json-run/report.md"
+grep -q '| `zquic` | `msquic` | `http3` | 0 | unsupported |' \
+  "$tmp/json-run/report.md"
+grep -q '| `msquic` | `zquic` | `http3` | 0 | unsupported |' \
+  "$tmp/json-run/report.md"
 
 if "$srcdir/scripts/qir-run-local" \
     --runner "$tmp/runner" \

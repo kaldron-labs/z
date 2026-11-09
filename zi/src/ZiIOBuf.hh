@@ -48,6 +48,10 @@
 #define ZiIOBuf_DefltAlign ZiIOBuf_Align
 #endif
 
+#ifndef ZiIOBuf_DefltCount
+#define ZiIOBuf_DefltCount 1024
+#endif
+
 struct ZiIOBuf_HeapID : public ZuStringT<"ZiIOBuf"> { };
 
 class ZiMultiplex;
@@ -466,7 +470,9 @@ struct IOBufPluginAllocator : public IOBufAllocator {
     IOBufAllocator(mx, Type), plugin(plugin_) { }
 
   ZmRef<IOBuf> allocBuf(void *owner = nullptr, uint32_t length = 0) override {
-    return new Buf(plugin->alloc(Size, true), this, owner, length);
+    auto storage = plugin->alloc(Size, true);
+    if (ZuUnlikely(!storage)) return nullptr;
+    return new Buf(storage, this, owner, length);
   }
   uint8_t *alloc(uint32_t size, bool initial = false) const override {
     return plugin->alloc(size, initial);
