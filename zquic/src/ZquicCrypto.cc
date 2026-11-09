@@ -43,7 +43,7 @@ static bool hmacSHA256_(
     n == InitialSecret::SecretLen;
 }
 
-static bool hkdfExtract_(
+static bool hkdfExtract(
   uint8_t *out, const uint8_t *salt, unsigned saltLen, ZuBSpan ikm)
 {
   return hmacSHA256_(
@@ -55,7 +55,7 @@ static char hexDigit_(unsigned v)
   return v < 10 ? char('0' + v) : char('a' + v - 10);
 }
 
-static void hexAppend_(ZtString<> &s, ZuBSpan data)
+static void hexAppend(ZtString<> &s, ZuBSpan data)
 {
   for (unsigned i = 0, n = data.length(); i < n; ++i) {
     unsigned c = data[i];
@@ -63,7 +63,7 @@ static void hexAppend_(ZtString<> &s, ZuBSpan data)
   }
 }
 
-static bool hkdfExpand_(
+static bool hkdfExpand(
   uint8_t *out, unsigned outLen, const uint8_t *secret, unsigned secretLen,
   const uint8_t *info, unsigned infoLen)
 {
@@ -90,7 +90,7 @@ static bool hkdfExpand_(
   return true;
 }
 
-static bool hkdfExpandLabel_(
+static bool hkdfExpandLabel(
   uint8_t *out, unsigned outLen, const uint8_t *secret, unsigned secretLen,
   ZuCSpan label)
 {
@@ -107,22 +107,22 @@ static bool hkdfExpandLabel_(
   memcpy(info.data() + o, label.data(), label.length());
   o += label.length();
   info[o++] = 0;
-  return hkdfExpand_(out, outLen, secret, secretLen, info.data(), o);
+  return hkdfExpand(out, outLen, secret, secretLen, info.data(), o);
 }
 
 static bool deriveSecret_(InitialSecret &out, const uint8_t *initial,
     ZuCSpan label)
 {
-  return hkdfExpandLabel_(
+  return hkdfExpandLabel(
       out.secret.data(), out.secret.length(),
       initial, InitialSecret::SecretLen, label) &&
-    hkdfExpandLabel_(
+    hkdfExpandLabel(
       out.key.data(), out.key.length(),
       out.secret.data(), out.secret.length(), "quic key") &&
-    hkdfExpandLabel_(
+    hkdfExpandLabel(
       out.iv.data(), out.iv.length(),
       out.secret.data(), out.secret.length(), "quic iv") &&
-    hkdfExpandLabel_(
+    hkdfExpandLabel(
       out.hp.data(), out.hp.length(),
       out.secret.data(), out.secret.length(), "quic hp");
 }
@@ -134,7 +134,7 @@ static void nonce_(uint8_t *out, const InitialSecret &secret, uint64_t pn)
     out[InitialSecret::IVLen - 1 - i] ^= uint8_t(pn >> (i * 8));
 }
 
-static bool initCipherSuites_(ptls_cipher_suite_t **suites, unsigned max)
+static bool initCipherSuites(ptls_cipher_suite_t **suites, unsigned max)
 {
   unsigned n = 0;
   for (auto p = ptls_openssl_cipher_suites; *p; ++p) {
@@ -147,7 +147,7 @@ static bool initCipherSuites_(ptls_cipher_suite_t **suites, unsigned max)
   return true;
 }
 
-static void freeCertificates_(ptls_context_t &ctx)
+static void freeCertificates(ptls_context_t &ctx)
 {
   if (ctx.certificates.list) {
     for (unsigned i = 0; i < ctx.certificates.count; ++i)
@@ -158,7 +158,7 @@ static void freeCertificates_(ptls_context_t &ctx)
   ctx.certificates.list = nullptr;
 }
 
-static bool isDir_(ZuCSpan path)
+static bool isDir(ZuCSpan path)
 {
   if (!path) return false;
   struct stat st;
@@ -300,21 +300,21 @@ int CryptoStream::receive(
 	}))
     return -1;
 
-  if (m_asyncDelivery) resumeReadyDequeue_();
+  if (m_asyncDelivery) resumeReadyDequeue();
   if (diag) diag->cryptoBytesRx += bytes;
   if (!m_asyncDelivery && m_delivery)
     contiguous = m_delivery.cspan();
   return 0;
 }
 
-void CryptoStream::resumeReadyDequeue_()
+void CryptoStream::resumeReadyDequeue()
 {
   if (!m_rxQueue.count_()) return;
   if (!m_rxQueue.has(m_rxQueue.head())) return;
   Rx::resumeDequeue();
 }
 
-void CryptoStream::appendDelivery_(const uint8_t *p, uint64_t length)
+void CryptoStream::appendDelivery(const uint8_t *p, uint64_t length)
 {
   if (!p || !length) return;
   uint64_t n = m_delivery.length();
@@ -329,7 +329,7 @@ void CryptoStream::process(Msg *node)
   CryptoRxData &data = node->data();
   if (!data.length) return;
   const uint8_t *p = data.data();
-  appendDelivery_(p, data.length);
+  appendDelivery(p, data.length);
   if (m_asyncDelivery)
     m_deliveryFn(ZuBSpan{p, data.length});
   m_rxOffset += data.length;
@@ -338,7 +338,7 @@ void CryptoStream::process(Msg *node)
 bool InitialCrypto::derive(InitialKeyMaterial &out, const CxnID &dcid)
 {
   out = {};
-  if (!hkdfExtract_(
+  if (!hkdfExtract(
 	out.initial.data(), InitialSaltV1_.data(), InitialSaltV1_.length(), dcid))
     return false;
   return deriveSecret_(out.client, out.initial.data(), "client in") &&
@@ -573,7 +573,7 @@ void PktProtState::clear()
   installed = false;
 }
 
-static bool hkdfExpandLabelPTLS_(
+static bool hkdfExpandLabelPTLS(
   ptls_hash_algorithm_t *hash, uint8_t *out, unsigned outLen,
   ZuBSpan secret, const char *label)
 {
@@ -617,11 +617,11 @@ bool PktProt::deriveSecret(
     return false;
   }
 
-  if (!hkdfExpandLabelPTLS_(cipher->hash, out.key.data(), keyLen,
+  if (!hkdfExpandLabelPTLS(cipher->hash, out.key.data(), keyLen,
 	secret, "quic key") ||
-      !hkdfExpandLabelPTLS_(cipher->hash, out.iv.data(), ivLen,
+      !hkdfExpandLabelPTLS(cipher->hash, out.iv.data(), ivLen,
 	secret, "quic iv") ||
-      !hkdfExpandLabelPTLS_(cipher->hash, out.hp.data(), hpLen,
+      !hkdfExpandLabelPTLS(cipher->hash, out.hp.data(), hpLen,
 	secret, "quic hp"))
     {
       out.clear();
@@ -658,16 +658,16 @@ bool PktProt::deriveNextSecret(
   out.hpCipher = current.hpCipher;
   out.hpSuppCipher = current.hpSuppCipher;
 
-  if (!hkdfExpandLabelPTLS_(
+  if (!hkdfExpandLabelPTLS(
 	current.hash, out.secret.data(), out.secret.length(),
 	current.secret.bspan(), "quic ku")) {
     out.clear();
     return false;
   }
-  if (!hkdfExpandLabelPTLS_(
+  if (!hkdfExpandLabelPTLS(
 	current.hash, out.key.data(), out.key.length(),
 	out.secret.bspan(), "quic key") ||
-      !hkdfExpandLabelPTLS_(
+      !hkdfExpandLabelPTLS(
 	current.hash, out.iv.data(), out.iv.length(),
 	out.secret.bspan(), "quic iv")) {
     out.clear();
@@ -726,7 +726,7 @@ bool Crypto::rxKeySecret(
   return m_rxEarlyProt.init(m_rxEarlySecret, space, false);
 }
 
-static bool trafficMask_(
+static bool trafficMask(
   uint8_t *mask, unsigned len, PktProtState &state, ZuBSpan sample)
 {
   const TrafficSecret &secret = state.secret;
@@ -775,7 +775,7 @@ static int protect_(
 
   ZuBArray<InitialSecret::HPMaskLen>
     mask(InitialSecret::HPMaskLen, false);
-  if (!trafficMask_(
+  if (!trafficMask(
 	mask.data(), mask.length(), state,
 	ZuBSpan{out + pnOffset + 4, 16}))
     return -1;
@@ -806,7 +806,7 @@ static int unprotect_(
   };
   ZuBArray<InitialSecret::HPMaskLen>
     mask(InitialSecret::HPMaskLen, false);
-  if (!trafficMask_(
+  if (!trafficMask(
 	mask.data(), mask.length(), state,
 	ZuBSpan{packet + pnOffset + 4, 16}))
     return fail();
@@ -986,18 +986,18 @@ bool Crypto::init(const CryptoConfig &config)
 bool Crypto::initTLS(const CryptoConfig &config)
 {
   if (!init(config)) return false;
-  if (!initTLSContext_(config)) {
+  if (!initTLSContext(config)) {
     resetTLS_();
     return false;
   }
-  if (!initTLSProperties_(config)) {
+  if (!initTLSProperties(config)) {
     resetTLS_();
     return false;
   }
   return true;
 }
 
-bool Crypto::initTLSContext_(const CryptoConfig &config)
+bool Crypto::initTLSContext(const CryptoConfig &config)
 {
   if (!Ztls::Backend::init()) return false;
 
@@ -1005,14 +1005,14 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   m_tlsCtx.random_bytes = ptls_openssl_random_bytes;
   m_tlsCtx.get_time = &ptls_get_time;
   m_tlsCtx.key_exchanges = ptls_openssl_key_exchanges;
-  if (!initCipherSuites_(m_tlsCipherSuites, TLSMaxCiphers)) return false;
+  if (!initCipherSuites(m_tlsCipherSuites, TLSMaxCiphers)) return false;
   m_tlsCtx.cipher_suites = m_tlsCipherSuites;
   m_tlsCtx.server_cipher_preference = 1;
   m_tlsCtx.max_early_data_size = config.enable0RTT ? UINT32_MAX : 0;
   m_tlsCtx.omit_end_of_early_data = 1;
 
   static ptls_update_traffic_key_t updateTrafficKey{
-    .cb = &Crypto::updateTrafficKeyCB_
+    .cb = &Crypto::updateTrafficKeyCB
   };
   m_tlsCtx.update_traffic_key = &updateTrafficKey;
 
@@ -1026,7 +1026,7 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
     if (!m_sign) return false;
     m_tlsCtx.sign_certificate = Ztls::Backend::sign_cert_cb(m_sign);
     static ptls_on_client_hello_t onClientHello{
-      .cb = &Crypto::onClientHelloCB_
+      .cb = &Crypto::onClientHelloCB
     };
     m_tlsCtx.on_client_hello = &onClientHello;
     if (config.encryptTicket) {
@@ -1036,14 +1036,14 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   } else {
     if (m_saveSessionTicket) {
       static ptls_save_ticket_t saveSessionTicket{
-	.cb = &Crypto::saveSessionTicketCB_
+	.cb = &Crypto::saveSessionTicketCB
       };
       m_tlsCtx.save_ticket = &saveSessionTicket;
     }
     if (config.caPath) {
       m_certStore = Ztls::Backend::cert_store_new();
       if (!m_certStore) return false;
-      bool ok = isDir_(config.caPath) ?
+      bool ok = isDir(config.caPath) ?
 	Ztls::Backend::cert_store_load_path(
 	  m_certStore, config.caPath.data()) :
 	Ztls::Backend::cert_store_load_file(
@@ -1064,7 +1064,7 @@ bool Crypto::initTLSContext_(const CryptoConfig &config)
   return true;
 }
 
-bool Crypto::initTLSProperties_(const CryptoConfig &config)
+bool Crypto::initTLSProperties(const CryptoConfig &config)
 {
   memset(&m_tlsProps, 0, sizeof(m_tlsProps));
   unsigned transportParamsLen =
@@ -1080,8 +1080,8 @@ bool Crypto::initTLSProperties_(const CryptoConfig &config)
   m_tlsExtensions[1].type = UINT16_MAX;
   m_tlsExtensions[1].data = {};
   m_tlsProps.additional_extensions = m_tlsExtensions;
-  m_tlsProps.collect_extension = &Crypto::collectExtensionCB_;
-  m_tlsProps.collected_extensions = &Crypto::collectedExtensionsCB_;
+  m_tlsProps.collect_extension = &Crypto::collectExtensionCB;
+  m_tlsProps.collected_extensions = &Crypto::collectedExtensionsCB;
 
   if (!m_isServer && m_alpn) {
     m_alpnVec = ptls_iovec_init(m_alpn.data(), m_alpn.length());
@@ -1110,7 +1110,7 @@ void Crypto::resetTLS_()
     ptls_free(m_tls);
     m_tls = nullptr;
   }
-  freeCertificates_(m_tlsCtx);
+  freeCertificates(m_tlsCtx);
   if (m_sign) {
     Ztls::Backend::sign_cert_free(m_sign);
     m_sign = nullptr;
@@ -1137,7 +1137,7 @@ void Crypto::resetTLS_()
   m_tlsResult = PTLS_ERROR_IN_PROGRESS;
 }
 
-int Crypto::updateTrafficKeyCB_(
+int Crypto::updateTrafficKeyCB(
   ptls_update_traffic_key_t *, ptls_t *tls, int isEnc, size_t epoch,
   const void *secret)
 {
@@ -1145,7 +1145,7 @@ int Crypto::updateTrafficKeyCB_(
   return crypto ? crypto->updateTrafficKey_(isEnc, epoch, secret) : 0;
 }
 
-int Crypto::onClientHelloCB_(
+int Crypto::onClientHelloCB(
   ptls_on_client_hello_t *, ptls_t *tls,
   ptls_on_client_hello_parameters_t *params)
 {
@@ -1154,7 +1154,7 @@ int Crypto::onClientHelloCB_(
     PTLS_ALERT_TO_PEER_ERROR(PTLS_ALERT_INTERNAL_ERROR);
 }
 
-int Crypto::saveSessionTicketCB_(
+int Crypto::saveSessionTicketCB(
   ptls_save_ticket_t *, ptls_t *tls, ptls_iovec_t input)
 {
   auto crypto = static_cast<Crypto *>(*ptls_get_data_ptr(tls));
@@ -1190,9 +1190,9 @@ void Crypto::keyLog_(int isEnc, PktKeyLevel::T level, ZuBSpan secret)
   }
   ZtString<> line;
   line << label << ' ';
-  hexAppend_(line, ZuBSpan{random.base, unsigned(random.len)});
+  hexAppend(line, ZuBSpan{random.base, unsigned(random.len)});
   line << ' ';
-  hexAppend_(line, secret);
+  hexAppend(line, secret);
   line << '\n';
   ZiFile file;
   if (file.open(m_keyLogPath, ZiFile::Append | ZiFile::GC) != Zi::OK) return;
@@ -1273,13 +1273,13 @@ int Crypto::saveSessionTicket_(ptls_iovec_t input)
   return 0;
 }
 
-int Crypto::collectExtensionCB_(
+int Crypto::collectExtensionCB(
   ptls_t *, ptls_handshake_properties_t *, uint16_t type)
 {
   return type == TLSExtQUICParamsV1;
 }
 
-int Crypto::collectedExtensionsCB_(
+int Crypto::collectedExtensionsCB(
   ptls_t *tls, ptls_handshake_properties_t *, ptls_raw_extension_t *extensions)
 {
   auto crypto = static_cast<Crypto *>(*ptls_get_data_ptr(tls));
@@ -1343,14 +1343,14 @@ int Crypto::handleTLSMessage(
   if (pbuf.is_allocated)
     ptls_buffer_dispose(&pbuf);
   if (!ok) return -1;
-  syncEarlyDataState_();
+  syncEarlyDataState();
   if (!n && ptls_handshake_is_complete(m_tls)) m_oneRTTReady = true;
   if (n == PTLS_ERROR_IN_PROGRESS || n == PTLS_ERROR_ASYNC_OPERATION || !n)
     return int(outLen);
   return -1;
 }
 
-void Crypto::syncEarlyDataState_()
+void Crypto::syncEarlyDataState()
 {
   if (m_isServer || !m_earlyDataEnabled) return;
   switch (m_tlsProps.client.early_data_acceptance) {

@@ -107,7 +107,7 @@ public:
 
   // Raw tracking metadata belongs to the external manager; zero epoch/sequence
   // is allowed here and never interpreted as managed session progress.
-  bool admitRaw_(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame) {
+  bool admitRaw(TxBody::Ref body, TxContext context, ZmRef<ZiIOBuf> frame) {
     return admit(ZuMv(body), context, ZuMv(frame));
   }
 

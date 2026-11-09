@@ -29,9 +29,9 @@ ZfStruct(, (RoleDeleteError, JSON),
 // The scan is bounded per store request and posts the next page. Before-images
 // are revalidated by the saga's ordinary shard-owned mutation continuations.
 template <typename Table>
-class RoleScan_ : public ZmNHeap<RoleScan_<Table>>, public ZmObject,
+class RoleScan : public ZmNHeap<RoleScan<Table>>, public ZmObject,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.role.delete.RoleScan"> ZmNHeapID(RoleScan_ *);
+friend inline ZuStringT<"Zum.zumd.role.delete.RoleScan"> ZmNHeapID(RoleScan *);
 
   using T = Table::T;
   using Tuple = Table::Tuple;
@@ -39,14 +39,14 @@ friend inline ZuStringT<"Zum.zumd.role.delete.RoleScan"> ZmNHeapID(RoleScan_ *);
   using Key = Table::template Key<KeyID>;
 
 public:
-  RoleScan_(ZmRef<ZmPolymorph> work, Table *table, AppID appID, RoleID roleID,
+  RoleScan(ZmRef<ZmPolymorph> work, Table *table, AppID appID, RoleID roleID,
       BytesVec *images, SagaFn complete) :
     RequestHold{ZuMv(work)}, m_table{table}, m_appID{appID}, m_roleID{roleID},
     m_images{images}, m_complete{ZuMv(complete)} { }
 
   void start()
   {
-    m_table->run(0, [self = ZmRef<RoleScan_>{this}]() mutable {
+    m_table->run(0, [self = ZmRef<RoleScan>{this}]() mutable {
       auto receive = [self](ZuUnion<void, Tuple> result, unsigned count) mutable {
 	self->receive_(ZuMv(result), count);
       };
@@ -87,7 +87,7 @@ private:
     }
     if (m_ok && m_count == PageSize) {
       m_count = 0;
-      m_table->run(0, [self = ZmRef<RoleScan_>{this}]() mutable {
+      m_table->run(0, [self = ZmRef<RoleScan>{this}]() mutable {
 	self->m_table->template nextRows<KeyID>(self->m_key, false, PageSize,
 	  [self = ZuMv(self)](ZuUnion<void, Tuple> result, unsigned count) mutable {
 	    self->receive_(ZuMv(result), count);
@@ -109,12 +109,12 @@ private:
   bool		m_ok = true;
 };
 
-class RoleDelete_ : public ZmNHeap<RoleDelete_>, public ZmObject,
+class RoleDelete : public ZmNHeap<RoleDelete>, public ZmObject,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.role.delete.RoleDelete"> ZmNHeapID(RoleDelete_ *);
+friend inline ZuStringT<"Zum.zumd.role.delete.RoleDelete"> ZmNHeapID(RoleDelete *);
 
 public:
-  RoleDelete_(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
+  RoleDelete(ZmRef<ZmPolymorph> work, DB *db, Ztls::Random *rng,
       AppID appID, RoleID roleID, String ifMatch, IdemRequest request,
       AdminDoneFn complete) :
     RequestHold{ZuMv(work)}, m_db{db}, m_rng{rng}, m_appID{appID}, m_roleID{roleID},
@@ -125,7 +125,7 @@ public:
   {
     if (!m_ifMatch) { finish_(428, "precondition_required"); return; }
     auto apps = m_db->apps;
-    apps->run(0, [self = ZmRef<RoleDelete_>{this}, apps]() mutable {
+    apps->run(0, [self = ZmRef<RoleDelete>{this}, apps]() mutable {
       apps->find<0>(0, ZuFwdTuple(self->m_appID), [self = ZuMv(self)](
 	  ZdbRowRef<App> row) mutable {
 	if (!row) { self->finish_(404, "not_found"); return; }
@@ -143,7 +143,7 @@ private:
   void role_()
   {
     auto roles = m_db->roles;
-    roles->run(0, [self = ZmRef<RoleDelete_>{this}, roles]() mutable {
+    roles->run(0, [self = ZmRef<RoleDelete>{this}, roles]() mutable {
       roles->find<0>(0, ZuFwdTuple(self->m_appID, self->m_roleID),
 	[self = ZuMv(self)](ZdbRowRef<Role> row) mutable {
 	  if (!row) { self->finish_(404, "not_found"); return; }
@@ -167,9 +167,9 @@ private:
   template <typename Table>
   void scan_(Table *table, BytesVec &images)
   {
-    ZmRef<RoleScan_<Table>> scan = new RoleScan_<Table>{
+    ZmRef<RoleScan<Table>> scan = new RoleScan<Table>{
       work(), table, m_appID, m_roleID, &images,
-      [self = ZmRef<RoleDelete_>{this}](bool ok) mutable {
+      [self = ZmRef<RoleDelete>{this}](bool ok) mutable {
 	if (!ok) { self->finish_(409, "conflict"); return; }
 	++self->m_phase;
 	self->scan_();
@@ -195,9 +195,9 @@ private:
       finish_(503, "unavailable"); return;
     }
     if (!sagaSubmit(m_db, id, roleDelete(ZuMv(m_change)),
-	[self = ZmRef<RoleDelete_>{this}](bool ok) mutable {
+	[self = ZmRef<RoleDelete>{this}](bool ok) mutable {
 	  if (!ok) self->finish_(503, "unavailable");
-	}, [self = ZmRef<RoleDelete_>{this}](bool ok) mutable {
+	}, [self = ZmRef<RoleDelete>{this}](bool ok) mutable {
 	  self->completed_(ok);
 	})) finish_(503, "unavailable");
   }
@@ -206,7 +206,7 @@ private:
   {
     if (ok) { finish_(200); return; }
     auto roles = m_db->roles;
-    roles->run(0, [self = ZmRef<RoleDelete_>{this}, roles]() mutable {
+    roles->run(0, [self = ZmRef<RoleDelete>{this}, roles]() mutable {
       roles->find<0>(0, ZuFwdTuple(self->m_appID, self->m_roleID),
 	[self = ZuMv(self)](ZdbRowRef<Role> row) mutable {
 	  if (row && row->data().version != self->m_version)
@@ -254,7 +254,7 @@ private:
 void Daemon::roleDelete_(const Work &work, AppID appID, RoleID roleID,
     String ifMatch, IdemRequest request, AdminDoneFn complete)
 {
-  ZmRef<RoleDelete_> remove = new RoleDelete_{
+  ZmRef<RoleDelete> remove = new RoleDelete{
     work, m_db, &m_rng, appID, roleID, ZuMv(ifMatch),
     ZuMv(request), ZuMv(complete)};
   remove->start();

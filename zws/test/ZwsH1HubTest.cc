@@ -180,7 +180,7 @@ struct ClientApp {
       link.app()->txRun([hold = ZmRef<Link>{&link}, packet = ZuMv(packet), state = state]() mutable {
 	hold->txStream_([packet = ZuMv(packet), state](auto &tx) mutable {
 	  tx << state->request.cspan().trunc(3);
-	  if (!tx.appendOwned_(ZuMv(packet)) || !tx.flush()) state->fail();
+	  if (!tx.appendOwned(ZuMv(packet)) || !tx.flush()) state->fail();
 	}, Zws::Opcode::Text);
       });
     } else link.txStream([this](auto &tx) {

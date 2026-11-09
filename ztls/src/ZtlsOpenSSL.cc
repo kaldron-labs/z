@@ -136,7 +136,7 @@ static ptls_hash_algorithm_t sha1_algo = {
   }
 };
 
-static const char *alert_string_(int alert)
+static const char *alert_string(int alert)
 {
   switch (alert) {
     case PTLS_ALERT_CLOSE_NOTIFY: return "close_notify";
@@ -167,7 +167,7 @@ static const char *alert_string_(int alert)
   return nullptr;
 }
 
-static const char *ptls_error_string_(int err)
+static const char *ptls_error_string(int err)
 {
   switch (err) {
     case PTLS_ERROR_NO_MEMORY: return "no_memory";
@@ -186,7 +186,7 @@ static const char *ptls_error_string_(int err)
   return nullptr;
 }
 
-static const EVP_MD *evp_md_(MDType type)
+static const EVP_MD *evp_md(MDType type)
 {
   switch (type) {
     case SHA1: return EVP_sha1();
@@ -197,7 +197,7 @@ static const EVP_MD *evp_md_(MDType type)
   return EVP_sha256();
 }
 
-static bool bn_write_padded_(const BIGNUM *bn, ZuSpan<uint8_t> out)
+static bool bn_write_padded(const BIGNUM *bn, ZuSpan<uint8_t> out)
 {
   if (!bn) return false;
   int n = BN_num_bytes(bn);
@@ -207,22 +207,22 @@ static bool bn_write_padded_(const BIGNUM *bn, ZuSpan<uint8_t> out)
   return true;
 }
 
-static BIGNUM *bn_from_span_(ZuBSpan in)
+static BIGNUM *bn_from_span(ZuBSpan in)
 {
   return BN_bin2bn(in.data(), in.length(), nullptr);
 }
 
-static bool bn_param_write_padded_(
+static bool bn_param_write_padded(
   const EVP_PKEY *pkey, const char *param, ZuSpan<uint8_t> out)
 {
   BIGNUM *bn = nullptr;
   if (EVP_PKEY_get_bn_param(pkey, param, &bn) != 1) return false;
-  bool ok = bn_write_padded_(bn, out);
+  bool ok = bn_write_padded(bn, out);
   BN_free(bn);
   return ok;
 }
 
-static EVP_PKEY *pkey_fromdata_(const char *type, int selection,
+static EVP_PKEY *pkey_fromdata(const char *type, int selection,
     OSSL_PARAM *params)
 {
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_name(nullptr, type, nullptr);
@@ -237,7 +237,7 @@ static EVP_PKEY *pkey_fromdata_(const char *type, int selection,
   return pkey;
 }
 
-static bool pkey_check_(EVP_PKEY *pkey, bool privateKey)
+static bool pkey_check(EVP_PKEY *pkey, bool privateKey)
 {
   EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(nullptr, pkey, nullptr);
   if (!ctx) return false;
@@ -247,7 +247,7 @@ static bool pkey_check_(EVP_PKEY *pkey, bool privateKey)
   return ok == 1;
 }
 
-static int ec_nid_from_pkey_(const EVP_PKEY *pkey)
+static int ec_nid_from_pkey(const EVP_PKEY *pkey)
 {
   char groupName[80];
   size_t len = 0;
@@ -259,7 +259,7 @@ static int ec_nid_from_pkey_(const EVP_PKEY *pkey)
   return OBJ_sn2nid(groupName);
 }
 
-static bool ec_public_from_private_(int nid, const BIGNUM *priv,
+static bool ec_public_from_private(int nid, const BIGNUM *priv,
     uint8_t **pubKey, size_t *pubKeyLen)
 {
   *pubKey = nullptr;
@@ -292,7 +292,7 @@ static bool ec_public_from_private_(int nid, const BIGNUM *priv,
   return ok;
 }
 
-static EVP_PKEY *rsa_fromdata_(bool privateKey,
+static EVP_PKEY *rsa_fromdata(bool privateKey,
     BIGNUM *n, BIGNUM *e, BIGNUM *d = nullptr,
     BIGNUM *p = nullptr, BIGNUM *q = nullptr,
     BIGNUM *dp = nullptr, BIGNUM *dq = nullptr, BIGNUM *qi = nullptr)
@@ -313,18 +313,18 @@ static EVP_PKEY *rsa_fromdata_(bool privateKey,
   }
   OSSL_PARAM *params = ok ? OSSL_PARAM_BLD_to_param(bld) : nullptr;
   EVP_PKEY *pkey = params ?
-    pkey_fromdata_("RSA",
+    pkey_fromdata("RSA",
       privateKey ? EVP_PKEY_KEYPAIR : EVP_PKEY_PUBLIC_KEY, params) : nullptr;
   OSSL_PARAM_free(params);
   OSSL_PARAM_BLD_free(bld);
-  if (pkey && !pkey_check_(pkey, privateKey)) {
+  if (pkey && !pkey_check(pkey, privateKey)) {
     EVP_PKEY_free(pkey);
     pkey = nullptr;
   }
   return pkey;
 }
 
-static EVP_PKEY *ec_fromdata_(int nid, bool privateKey,
+static EVP_PKEY *ec_fromdata(int nid, bool privateKey,
     ZuBSpan pubKey, BIGNUM *priv = nullptr)
 {
   const char *groupName = OBJ_nid2sn(nid);
@@ -340,18 +340,18 @@ static EVP_PKEY *ec_fromdata_(int nid, bool privateKey,
       bld, OSSL_PKEY_PARAM_PUB_KEY, pubKey.data(), pubKey.length()) == 1;
   OSSL_PARAM *params = ok ? OSSL_PARAM_BLD_to_param(bld) : nullptr;
   EVP_PKEY *pkey = params ?
-    pkey_fromdata_("EC",
+    pkey_fromdata("EC",
       privateKey ? EVP_PKEY_KEYPAIR : EVP_PKEY_PUBLIC_KEY, params) : nullptr;
   OSSL_PARAM_free(params);
   OSSL_PARAM_BLD_free(bld);
-  if (pkey && !pkey_check_(pkey, privateKey)) {
+  if (pkey && !pkey_check(pkey, privateKey)) {
     EVP_PKEY_free(pkey);
     pkey = nullptr;
   }
   return pkey;
 }
 
-static int nid_from_oid_(ZuBSpan oid)
+static int nid_from_oid(ZuBSpan oid)
 {
   if (!oid.length()) return NID_undef;
   unsigned char buf[64];
@@ -381,7 +381,7 @@ static int nid_from_oid_(ZuBSpan oid)
   return nid;
 }
 
-static bool oid_from_nid_(int nid, ZuSpan<uint8_t> out)
+static bool oid_from_nid(int nid, ZuSpan<uint8_t> out)
 {
   ASN1_OBJECT *obj = OBJ_nid2obj(nid);
   if (!obj) return false;
@@ -393,13 +393,13 @@ static bool oid_from_nid_(int nid, ZuSpan<uint8_t> out)
   return true;
 }
 
-static void replace_pkey_(PKey *key, EVP_PKEY *pkey)
+static void replace_pkey(PKey *key, EVP_PKEY *pkey)
 {
   if (key->pkey) EVP_PKEY_free(key->pkey);
   key->pkey = pkey;
 }
 
-static int ticket_key_cb_(unsigned char *key_name, unsigned char *iv,
+static int ticket_key_cb(unsigned char *key_name, unsigned char *iv,
   EVP_CIPHER_CTX *ctx, EVP_MAC_CTX *hctx, int enc)
 {
   auto key = ZmTLS<TicketKey *, (int TicketKey::*){}>();
@@ -433,8 +433,8 @@ static int ticket_encrypt_cb_(ptls_encrypt_ticket_t *self, ptls_t *,
   auto &key = ZmTLS<TicketKey *, (int TicketKey::*){}>();
   key = reinterpret_cast<TicketKey *>(self);
   int ret = is_encrypt ?
-    ptls_openssl_encrypt_ticket_evp(dst, src, ticket_key_cb_) :
-    ptls_openssl_decrypt_ticket_evp(dst, src, ticket_key_cb_);
+    ptls_openssl_encrypt_ticket_evp(dst, src, ticket_key_cb) :
+    ptls_openssl_decrypt_ticket_evp(dst, src, ticket_key_cb);
   key = nullptr;
   return ret;
 }
@@ -477,12 +477,12 @@ ptls_cipher_suite_t *cipher_suite(uint16_t id)
   return ptls_find_cipher_suite(cipher_suites(), id);
 }
 
-ptls_cipher_suite_t *tls12_ecdhe_rsa_aes128gcmsha256()
+ptls_cipher_suite_t *tls12RSA_AES128GCM()
 {
   return &ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256;
 }
 
-ptls_cipher_suite_t *tls12_ecdhe_rsa_chacha20poly1305sha256()
+ptls_cipher_suite_t *tls12RSA_ChaCha20()
 {
 #if PTLS_OPENSSL_HAVE_CHACHA20_POLY1305
   return &ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256;
@@ -601,11 +601,11 @@ size_t format_error(int err, char *buf, size_t len)
   }
   if (PTLS_ERROR_GET_CLASS(err) == PTLS_ERROR_CLASS_SELF_ALERT ||
       PTLS_ERROR_GET_CLASS(err) == PTLS_ERROR_CLASS_PEER_ALERT) {
-    if (auto alert = alert_string_(PTLS_ERROR_TO_ALERT(err))) {
+    if (auto alert = alert_string(PTLS_ERROR_TO_ALERT(err))) {
       return snprintf(buf, len, "alert(%s)", alert);
     }
   }
-  if (auto ptls_err = ptls_error_string_(err)) {
+  if (auto ptls_err = ptls_error_string(err)) {
     return snprintf(buf, len, "zpicotls(%s)", ptls_err);
   }
   return snprintf(buf, len, "error(%d)", err);
@@ -646,21 +646,21 @@ bool pkey_rsa_generate(PKey *key, unsigned bits)
   BN_free(e);
   EVP_PKEY_CTX_free(ctx);
   if (!ok) { if (pkey) EVP_PKEY_free(pkey); return false; }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
 bool pkey_rsa_import_public(PKey *key, ZuBSpan modulus, ZuBSpan pubExp)
 {
   if (!key) return false;
-  BIGNUM *n = bn_from_span_(modulus);
-  BIGNUM *e = bn_from_span_(pubExp);
-  EVP_PKEY *pkey = (n && e) ? rsa_fromdata_(false, n, e) : nullptr;
+  BIGNUM *n = bn_from_span(modulus);
+  BIGNUM *e = bn_from_span(pubExp);
+  EVP_PKEY *pkey = (n && e) ? rsa_fromdata(false, n, e) : nullptr;
   BN_free(n);
   BN_free(e);
   if (!pkey)
     return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -669,16 +669,16 @@ bool pkey_rsa_import_private(
   ZuBSpan prime1, ZuBSpan prime2, ZuBSpan exp1, ZuBSpan exp2, ZuBSpan coeff)
 {
   if (!key) return false;
-  BIGNUM *n = bn_from_span_(modulus);
-  BIGNUM *e = bn_from_span_(pubExp);
-  BIGNUM *d = bn_from_span_(prvExp);
-  BIGNUM *p = bn_from_span_(prime1);
-  BIGNUM *q = bn_from_span_(prime2);
-  BIGNUM *dp = bn_from_span_(exp1);
-  BIGNUM *dq = bn_from_span_(exp2);
-  BIGNUM *qi = bn_from_span_(coeff);
+  BIGNUM *n = bn_from_span(modulus);
+  BIGNUM *e = bn_from_span(pubExp);
+  BIGNUM *d = bn_from_span(prvExp);
+  BIGNUM *p = bn_from_span(prime1);
+  BIGNUM *q = bn_from_span(prime2);
+  BIGNUM *dp = bn_from_span(exp1);
+  BIGNUM *dq = bn_from_span(exp2);
+  BIGNUM *qi = bn_from_span(coeff);
   EVP_PKEY *pkey = (n && e && d && p && q && dp && dq && qi) ?
-    rsa_fromdata_(true, n, e, d, p, q, dp, dq, qi) : nullptr;
+    rsa_fromdata(true, n, e, d, p, q, dp, dq, qi) : nullptr;
   BN_free(n);
   BN_free(e);
   BN_free(d);
@@ -688,7 +688,7 @@ bool pkey_rsa_import_private(
   BN_free(dq);
   BN_free(qi);
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -697,9 +697,9 @@ bool pkey_rsa_import_ssh_private(
   ZuBSpan coeff, ZuBSpan prime1, ZuBSpan prime2)
 {
   if (!key) return false;
-  BIGNUM *n = bn_from_span_(modulus), *e = bn_from_span_(pubExp);
-  BIGNUM *d = bn_from_span_(prvExp), *qi = bn_from_span_(coeff);
-  BIGNUM *p = bn_from_span_(prime1), *q = bn_from_span_(prime2);
+  BIGNUM *n = bn_from_span(modulus), *e = bn_from_span(pubExp);
+  BIGNUM *d = bn_from_span(prvExp), *qi = bn_from_span(coeff);
+  BIGNUM *p = bn_from_span(prime1), *q = bn_from_span(prime2);
   BIGNUM *dp = BN_new(), *dq = BN_new(), *minusOne = BN_new();
   BN_CTX *ctx = BN_CTX_new();
   ZuGuard clear{[&]() {
@@ -716,9 +716,9 @@ bool pkey_rsa_import_ssh_private(
       !BN_mod(dp, d, minusOne, ctx) ||
       !BN_copy(minusOne, q) || !BN_sub_word(minusOne, 1) ||
       !BN_mod(dq, d, minusOne, ctx)) return false;
-  EVP_PKEY *pkey = rsa_fromdata_(true, n, e, d, p, q, dp, dq, qi);
+  EVP_PKEY *pkey = rsa_fromdata(true, n, e, d, p, q, dp, dq, qi);
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -727,8 +727,8 @@ bool pkey_rsa_export_public(
 {
   if (!key || !key->pkey) return false;
   return
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_N, modulus) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_E, pubExp);
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_N, modulus) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_E, pubExp);
 }
 
 bool pkey_rsa_export_private(
@@ -738,17 +738,17 @@ bool pkey_rsa_export_private(
 {
   if (!key || !key->pkey) return false;
   return
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_N, modulus) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_E, pubExp) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_D, prvExp) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_FACTOR1, prime1) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_FACTOR2, prime2) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1, exp1) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2, exp2) &&
-    bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1, coeff);
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_N, modulus) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_E, pubExp) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_D, prvExp) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_FACTOR1, prime1) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_FACTOR2, prime2) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT1, exp1) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_EXPONENT2, exp2) &&
+    bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_RSA_COEFFICIENT1, coeff);
 }
 
-static bool rsa_oaep_init_(EVP_PKEY_CTX *ctx, ZuBSpan label)
+static bool rsa_oaep_init(EVP_PKEY_CTX *ctx, ZuBSpan label)
 {
   if (label.length() > INT_MAX ||
       EVP_PKEY_CTX_set_rsa_padding(ctx, RSA_PKCS1_OAEP_PADDING) != 1 ||
@@ -773,7 +773,7 @@ bool pkey_rsa_oaep_encrypt(
   if (!ctx) return false;
   size_t n = ciphertext.length();
   bool ok = EVP_PKEY_encrypt_init(ctx) == 1 &&
-    rsa_oaep_init_(ctx, label) &&
+    rsa_oaep_init(ctx, label) &&
     EVP_PKEY_encrypt(ctx, ciphertext.data(), &n,
       plaintext.data(), plaintext.length()) == 1;
   EVP_PKEY_CTX_free(ctx);
@@ -790,7 +790,7 @@ bool pkey_rsa_oaep_decrypt(
   if (!ctx) return false;
   size_t n = plaintext.length();
   bool ok = EVP_PKEY_decrypt_init(ctx) == 1 &&
-    rsa_oaep_init_(ctx, label) &&
+    rsa_oaep_init(ctx, label) &&
     EVP_PKEY_decrypt(ctx, plaintext.data(), &n,
       ciphertext.data(), ciphertext.length()) == 1;
   EVP_PKEY_CTX_free(ctx);
@@ -801,7 +801,7 @@ bool pkey_rsa_oaep_decrypt(
 size_t pkey_ec_key_size(const PKey *key)
 {
   if (!key || !key->pkey) return 0;
-  int nid = ec_nid_from_pkey_(key->pkey);
+  int nid = ec_nid_from_pkey(key->pkey);
   if (nid == NID_undef) return 0;
   EC_GROUP *group = EC_GROUP_new_by_curve_name(nid);
   if (!group) return 0;
@@ -823,7 +823,7 @@ size_t pkey_ec_public_size(const PKey *key)
 size_t pkey_ec_oid_size(const PKey *key)
 {
   if (!key || !key->pkey) return 0;
-  int nid = ec_nid_from_pkey_(key->pkey);
+  int nid = ec_nid_from_pkey(key->pkey);
   ASN1_OBJECT *obj = OBJ_nid2obj(nid);
   if (!obj) return 0;
   int len = OBJ_length(obj);
@@ -833,7 +833,7 @@ size_t pkey_ec_oid_size(const PKey *key)
 bool pkey_ec_generate(PKey *key, ZuBSpan oid)
 {
   if (!key) return false;
-  int nid = nid_from_oid_(oid);
+  int nid = nid_from_oid(oid);
   if (nid == NID_undef) return false;
   const char *groupName = OBJ_nid2sn(nid);
   if (!groupName) return false;
@@ -845,46 +845,46 @@ bool pkey_ec_generate(PKey *key, ZuBSpan oid)
     EVP_PKEY_keygen(ctx, &pkey) == 1 && pkey;
   EVP_PKEY_CTX_free(ctx);
   if (!ok) { if (pkey) EVP_PKEY_free(pkey); return false; }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
 bool pkey_ec_import_public(PKey *key, ZuBSpan oid, ZuBSpan pubKey)
 {
   if (!key) return false;
-  int nid = nid_from_oid_(oid);
+  int nid = nid_from_oid(oid);
   if (nid == NID_undef) return false;
-  EVP_PKEY *pkey = ec_fromdata_(nid, false, pubKey);
+  EVP_PKEY *pkey = ec_fromdata(nid, false, pubKey);
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
 bool pkey_ec_import_private(PKey *key, ZuBSpan oid, ZuBSpan priv)
 {
   if (!key) return false;
-  int nid = nid_from_oid_(oid);
+  int nid = nid_from_oid(oid);
   if (nid == NID_undef) return false;
-  BIGNUM *d = bn_from_span_(priv);
+  BIGNUM *d = bn_from_span(priv);
   if (!d) return false;
   uint8_t *pubKey = nullptr;
   size_t pubKeyLen = 0;
-  if (!ec_public_from_private_(nid, d, &pubKey, &pubKeyLen)) {
+  if (!ec_public_from_private(nid, d, &pubKey, &pubKeyLen)) {
     BN_free(d);
     return false;
   }
-  EVP_PKEY *pkey = ec_fromdata_(nid, true, {pubKey, unsigned(pubKeyLen)}, d);
+  EVP_PKEY *pkey = ec_fromdata(nid, true, {pubKey, unsigned(pubKeyLen)}, d);
   OPENSSL_free(pubKey);
   BN_free(d);
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
 bool pkey_ec_export_private(const PKey *key, ZuSpan<uint8_t> out)
 {
   if (!key || !key->pkey) return false;
-  return bn_param_write_padded_(key->pkey, OSSL_PKEY_PARAM_PRIV_KEY, out);
+  return bn_param_write_padded(key->pkey, OSSL_PKEY_PARAM_PRIV_KEY, out);
 }
 
 bool pkey_ec_export_public(const PKey *key, ZuSpan<uint8_t> out)
@@ -900,9 +900,9 @@ bool pkey_ec_export_public(const PKey *key, ZuSpan<uint8_t> out)
 bool pkey_ec_export_oid(const PKey *key, ZuSpan<uint8_t> out)
 {
   if (!key || !key->pkey) return false;
-  int nid = ec_nid_from_pkey_(key->pkey);
+  int nid = ec_nid_from_pkey(key->pkey);
   if (nid == NID_undef) return false;
-  return oid_from_nid_(nid, out);
+  return oid_from_nid(nid, out);
 }
 
 bool pkey_ed25519_generate(PKey *key)
@@ -919,7 +919,7 @@ bool pkey_ed25519_generate(PKey *key)
     if (pkey) EVP_PKEY_free(pkey);
     return false;
   }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 #else
   (void)key;
@@ -934,7 +934,7 @@ bool pkey_ed25519_import_public(PKey *key, ZuBSpan pubKey)
   EVP_PKEY *pkey = EVP_PKEY_new_raw_public_key(
     EVP_PKEY_ED25519, nullptr, pubKey.data(), pubKey.length());
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 #else
   (void)key;
@@ -950,7 +950,7 @@ bool pkey_ed25519_import_private(PKey *key, ZuBSpan privKey)
   EVP_PKEY *pkey = EVP_PKEY_new_raw_private_key(
     EVP_PKEY_ED25519, nullptr, privKey.data(), privKey.length());
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 #else
   (void)key;
@@ -1042,7 +1042,7 @@ bool pkey_x25519_generate(PKey *key)
     EVP_PKEY_free(pkey);
     return false;
   }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -1052,7 +1052,7 @@ bool pkey_x25519_import_public(PKey *key, ZuBSpan pubKey)
   auto pkey = EVP_PKEY_new_raw_public_key(
     EVP_PKEY_X25519, nullptr, pubKey.data(), pubKey.length());
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -1062,7 +1062,7 @@ bool pkey_x25519_import_private(PKey *key, ZuBSpan prvKey)
   auto pkey = EVP_PKEY_new_raw_private_key(
     EVP_PKEY_X25519, nullptr, prvKey.data(), prvKey.length());
   if (!pkey) return false;
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -1121,7 +1121,7 @@ bool pkey_mlkem768_generate(PKey *key)
     EVP_PKEY_free(pkey);
     return false;
   }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
@@ -1143,11 +1143,11 @@ bool pkey_mlkem768_import_seed(PKey *key, ZuBSpan seed)
     EVP_PKEY_free(pkey);
     return false;
   }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
-static bool pkey_mlkem768_import_(PKey *key, ZuBSpan bytes,
+static bool pkey_mlkem768_import(PKey *key, ZuBSpan bytes,
   const char *name, int selection)
 {
   if (!key) return false;
@@ -1164,19 +1164,19 @@ static bool pkey_mlkem768_import_(PKey *key, ZuBSpan bytes,
     EVP_PKEY_free(pkey);
     return false;
   }
-  replace_pkey_(key, pkey);
+  replace_pkey(key, pkey);
   return true;
 }
 
 bool pkey_mlkem768_import_private(PKey *key, ZuBSpan prvKey)
 {
-  return prvKey.length() == 2400 && pkey_mlkem768_import_(
+  return prvKey.length() == 2400 && pkey_mlkem768_import(
     key, prvKey, OSSL_PKEY_PARAM_PRIV_KEY, EVP_PKEY_KEYPAIR);
 }
 
 bool pkey_mlkem768_import_public(PKey *key, ZuBSpan pubKey)
 {
-  return pubKey.length() == 1184 && pkey_mlkem768_import_(
+  return pubKey.length() == 1184 && pkey_mlkem768_import(
     key, pubKey, OSSL_PKEY_PARAM_PUB_KEY, EVP_PKEY_PUBLIC_KEY);
 }
 
@@ -1263,7 +1263,7 @@ bool pkey_sign(
     EVP_PKEY_CTX_free(ctx);
     return false;
   }
-  if (EVP_PKEY_CTX_set_signature_md(ctx, evp_md_(md)) <= 0) {
+  if (EVP_PKEY_CTX_set_signature_md(ctx, evp_md(md)) <= 0) {
     EVP_PKEY_CTX_free(ctx);
     return false;
   }
@@ -1299,7 +1299,7 @@ bool pkey_verify(const PKey *key, MDType md, ZuBSpan data, ZuBSpan sig)
     EVP_PKEY_CTX_free(ctx);
     return false;
   }
-  if (EVP_PKEY_CTX_set_signature_md(ctx, evp_md_(md)) <= 0) {
+  if (EVP_PKEY_CTX_set_signature_md(ctx, evp_md(md)) <= 0) {
     EVP_PKEY_CTX_free(ctx);
     return false;
   }
@@ -1314,7 +1314,7 @@ bool pkey_verify(const PKey *key, MDType md, ZuBSpan data, ZuBSpan sig)
 
 bool pkey_csr(const PKey *key, void *ctx, CSRFn fn)
 {
-  if (!key || !key->pkey || !fn || !pkey_check_(key->pkey, true))
+  if (!key || !key->pkey || !fn || !pkey_check(key->pkey, true))
     return false;
 
   const EVP_MD *md = nullptr;
@@ -1375,7 +1375,7 @@ bool cert_store_load_file(CertStore *store, const char *path)
   return X509_STORE_load_locations(store->store, path, nullptr) == 1;
 }
 
-static X509 *x509_der_(ZuBSpan data)
+static X509 *x509_der(ZuBSpan data)
 {
   if (!data) return nullptr;
   const unsigned char *ptr = data.data();
@@ -1405,7 +1405,7 @@ static bool cert_store_add_(CertStore *store, X509 *cert)
 bool cert_store_add_der(CertStore *store, ZuBSpan data)
 {
   if (!store || !store->store) return false;
-  X509 *cert = x509_der_(data);
+  X509 *cert = x509_der(data);
   if (!cert) return false;
   bool ok = cert_store_add_(store, cert);
   X509_free(cert);
@@ -1415,7 +1415,7 @@ bool cert_store_add_der(CertStore *store, ZuBSpan data)
 bool cert_store_add_ca(CertStore *store, ZuBSpan data)
 {
   if (!store || !store->store) return false;
-  X509 *cert = x509_der_(data);
+  X509 *cert = x509_der(data);
   if (!cert) return false;
   bool ok = X509_cmp_current_time(X509_get0_notBefore(cert)) < 0 &&
     X509_cmp_current_time(X509_get0_notAfter(cert)) > 0 &&
@@ -1512,7 +1512,7 @@ bool load_certificates_der(
   ptls_context_t *ctx, ZuSpan<const ZuBSpan> certs, const PKey *key)
 {
   if (!ctx || !certs.length() || !key || !key->pkey ||
-      !pkey_check_(key->pkey, true)) return false;
+      !pkey_check(key->pkey, true)) return false;
 
   STACK_OF(X509) *parsed = sk_X509_new_null();
   STACK_OF(X509) *untrusted = sk_X509_new_null();
@@ -1523,7 +1523,7 @@ bool load_certificates_der(
   unsigned count = certs.length();
 
   for (unsigned i = 0; ok && i < count; ++i) {
-    X509 *cert = x509_der_(certs[i]);
+    X509 *cert = x509_der(certs[i]);
     if (!cert || !sk_X509_push(parsed, cert)) {
       X509_free(cert);
       ok = false;

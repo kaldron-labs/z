@@ -261,30 +261,30 @@ struct Harness {
     if (two) done = stopped(state.cli2) && stopped(state.srv2) && done;
     ZmBlock<>{}([this](auto wake) {
       client.rxRun([this, wake = ZuMv(wake)]() mutable {
-	state.cli1.rx = first->rxStats_(); state.cli2.rx = second->rxStats_();
-	state.cli1.rxTraceState = first->rxTraceStats_();
-	  state.cli2.rxTraceState = second->rxTraceStats_(); wake();
+	state.cli1.rx = first->rxStats(); state.cli2.rx = second->rxStats();
+	state.cli1.rxTraceState = first->rxTraceStats();
+	  state.cli2.rxTraceState = second->rxTraceStats(); wake();
       });
     });
     ZmBlock<>{}([this](auto wake) {
       client.txRun([this, wake = ZuMv(wake)]() mutable {
-	state.cli1.tx = first->txStats_(); state.cli2.tx = second->txStats_();
-	state.cli1.txTraceState = first->txTraceStats_();
-	  state.cli2.txTraceState = second->txTraceStats_(); wake();
+	state.cli1.tx = first->txStats(); state.cli2.tx = second->txStats();
+	state.cli1.txTraceState = first->txTraceStats();
+	  state.cli2.txTraceState = second->txTraceStats(); wake();
       });
     });
     ZmBlock<>{}([this](auto wake) {
       server.rxRun([this, wake = ZuMv(wake)]() mutable {
-	state.srv1.rx = server.first->rxStats_(); state.srv2.rx = server.second->rxStats_();
-	state.srv1.rxTraceState = server.first->rxTraceStats_();
-	  state.srv2.rxTraceState = server.second->rxTraceStats_(); wake();
+	state.srv1.rx = server.first->rxStats(); state.srv2.rx = server.second->rxStats();
+	state.srv1.rxTraceState = server.first->rxTraceStats();
+	  state.srv2.rxTraceState = server.second->rxTraceStats(); wake();
       });
     });
     ZmBlock<>{}([this](auto wake) {
       server.txRun([this, wake = ZuMv(wake)]() mutable {
-	state.srv1.tx = server.first->txStats_(); state.srv2.tx = server.second->txStats_();
-	state.srv1.txTraceState = server.first->txTraceStats_();
-	  state.srv2.txTraceState = server.second->txTraceStats_(); wake();
+	state.srv1.tx = server.first->txStats(); state.srv2.tx = server.second->txStats();
+	state.srv1.txTraceState = server.first->txTraceStats();
+	  state.srv2.txTraceState = server.second->txTraceStats(); wake();
       });
     });
     for (auto s : {&state.cli1, &state.cli2, &state.srv1, &state.srv2}) {
@@ -322,9 +322,9 @@ static void submitBudget(bool local) {
   ZmBlock<>{}([&h, &output, &first, &second, &tuned, &charged, &link, bytes](auto wake) {
     h.client.rxRun([&h, &output, &first, &second, &tuned, &charged, &link,
 	bytes, wake = ZuMv(wake)]() mutable {
-      auto &budget = h.client.fixSubmitRx_(); tuned = budget.limits_({bytes});
+      auto &budget = h.client.fixSubmitRx(); tuned = budget.limits_({bytes});
       first = h.first->sendRaw(output); second = h.second->sendRaw(output);
-      charged = budget.state_(); link = h.first->txPosted_(); wake();
+      charged = budget.state_(); link = h.first->txPosted(); wake();
     });
   });
   ZuCheck(tuned && first == !local && second == local);
@@ -336,7 +336,7 @@ static void submitBudget(bool local) {
   ZmBlock<>{}([&h, &drained](auto wake) {
     h.client.txRun([&h, &drained, wake = ZuMv(wake)]() mutable {
       h.client.rxRun([&h, &drained, wake = ZuMv(wake)]() mutable {
-	drained = h.client.fixSubmitRx_().state_(); wake();
+	drained = h.client.fixSubmitRx().state_(); wake();
       });
     });
   });

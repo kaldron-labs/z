@@ -16,24 +16,24 @@ namespace Zquic {
 ZtEnumImplStruct(TokenKind);
 ZtEnumImplStruct(TokenStatus);
 
-static uint64_t tokenNowSec_()
+static uint64_t tokenNowSec()
 {
   return uint64_t(Zm::now().sec());
 }
 
-static void tokenPut64_(uint8_t *out, uint64_t v)
+static void tokenPut64(uint8_t *out, uint64_t v)
 {
   for (unsigned i = 0; i < 8; ++i) out[i] = uint8_t(v >> (56 - i * 8));
 }
 
-static uint64_t tokenGet64_(const uint8_t *in)
+static uint64_t tokenGet64(const uint8_t *in)
 {
   uint64_t v = 0;
   for (unsigned i = 0; i < 8; ++i) v = (v << 8) | in[i];
   return v;
 }
 
-static bool tokenHMAC_(uint8_t *out, ZuBSpan secret, ZuBSpan data)
+static bool tokenHMAC(uint8_t *out, ZuBSpan secret, ZuBSpan data)
 {
   if (!secret || secret.length() < AddressToken::SecretLength) return false;
   Ztls::HMAC<> hmac;
@@ -45,7 +45,7 @@ static bool tokenHMAC_(uint8_t *out, ZuBSpan secret, ZuBSpan data)
   return true;
 }
 
-static bool tokenTagEquals_(ZuBSpan a, const uint8_t *b)
+static bool tokenTagEquals(ZuBSpan a, const uint8_t *b)
 {
   if (a.length() != AddressToken::TagLength) return false;
   // Authentication tags require a full constant-time byte traversal.
@@ -104,7 +104,7 @@ bool AddressToken::encode(
   out[o++] = bindPort ? 1 : 0;
   out[o++] = origDCID.length();
   out[o++] = serverCID.length();
-  tokenPut64_(out + o, nowSec ? nowSec : tokenNowSec_()); o += 8;
+  tokenPut64(out + o, nowSec ? nowSec : tokenNowSec()); o += 8;
   out[o++] = uint8_t(ip.type());
   out[o++] = uint8_t(addrLen);
   switch (ip.type()) {
@@ -132,7 +132,7 @@ bool AddressToken::encode(
     o += serverCID.length();
   }
   ZuBArray<TagLength> tag(TagLength, false);
-  if (!tokenHMAC_(tag.data(), secret, ZuBSpan{out, o})) return false;
+  if (!tokenHMAC(tag.data(), secret, ZuBSpan{out, o})) return false;
   memcpy(out + o, tag.data(), TagLength);
   return true;
 }
@@ -175,11 +175,11 @@ TokenStatus::T AddressToken::validate(
   ZuBArray<TagLength> tag(TagLength, false);
   auto auth = token;
   auth.trunc(token.length() - TagLength);
-  if (!tokenHMAC_(tag.data(), secret, auth))
+  if (!tokenHMAC(tag.data(), secret, auth))
     return TokenStatus::Auth;
   auto tokenTag = token;
   tokenTag.offset(token.length() - TagLength);
-  if (!tokenTagEquals_(tokenTag, tag.data()))
+  if (!tokenTagEquals(tokenTag, tag.data()))
     return TokenStatus::Auth;
   switch (uint8_t(token[5])) {
     case TokenKind::Retry:
@@ -192,7 +192,7 @@ TokenStatus::T AddressToken::validate(
   bool tokenBindPort = uint8_t(token[6]) & 1;
   if (bindPort != tokenBindPort) return TokenStatus::Address;
   o = 9;
-  uint64_t issueSec = tokenGet64_(token.data() + o); o += 8;
+  uint64_t issueSec = tokenGet64(token.data() + o); o += 8;
   ipType = ZiIPType::T(uint8_t(token[o++]));
   addrLen = uint8_t(token[o++]);
   ZiIP ip;
@@ -217,7 +217,7 @@ TokenStatus::T AddressToken::validate(
   o += addrLen;
   uint16_t port = (uint16_t(token[o]) << 8) | token[o + 1];
   o += 2 + NonceLength;
-  uint64_t now = nowSec ? nowSec : tokenNowSec_();
+  uint64_t now = nowSec ? nowSec : tokenNowSec();
   if (lifetimeSec && (issueSec > now || now - issueSec > lifetimeSec))
     return TokenStatus::Expired;
   if (ip != addr.ip() || (bindPort && port != addr.port()))

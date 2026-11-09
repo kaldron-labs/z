@@ -77,7 +77,7 @@ public:
 
   // Transfer mutable output from the destination writer. Foreign or replay
   // storage uses the span overload and is serialized into final output.
-  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
+  bool appendOwned(ZmRef<ZiIOBuf> buf) {
     uint64_t reserve = uint64_t(this->headRoom()) + this->tailRoom();
     if (m_finalized || !valid() || !buf || buf->failed() ||
 	reserve >= this->maxSize() ||
@@ -106,7 +106,7 @@ public:
     if (m_finalized) return valid();
     unsigned emitted = m_emitted;
     bool ok = Base::flush();
-    if (ok && m_valid && m_emitted == emitted) ok = emitEmpty_();
+    if (ok && m_valid && m_emitted == emitted) ok = emitEmpty();
     if (!ok || !m_valid) this->fail();
     m_finalized = true;
     return valid();
@@ -129,13 +129,13 @@ private:
 
   template <typename T>
   static auto allocated_(const T &lower, const ZiIOBuf *buf, int)
-    -> decltype(lower.allocatedBuf_(buf)) { return lower.allocatedBuf_(buf); }
+    -> decltype(lower.allocatedBuf(buf)) { return lower.allocatedBuf(buf); }
   template <typename T>
   static bool allocated_(const T &, const ZiIOBuf *, ...) { return true; }
   template <typename T>
   static auto takeOwned_(T &lower, ZmRef<ZiIOBuf> buf, int)
-    -> decltype(lower.allocatedBuf_(ZuMv(buf))) {
-    return lower.allocatedBuf_(ZuMv(buf));
+    -> decltype(lower.allocatedBuf(ZuMv(buf))) {
+    return lower.allocatedBuf(ZuMv(buf));
   }
   template <typename T>
   static bool takeOwned_(T &, ZmRef<ZiIOBuf>, ...) { return true; }
@@ -193,7 +193,7 @@ private:
   }
 
 private:
-  bool emitEmpty_() {
+  bool emitEmpty() {
     auto buf = this->allocBuf_(this->headRoom());
     if (ZuUnlikely(!buf || buf->failed() || !prepareBuf_(buf, true)))
       return false;

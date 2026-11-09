@@ -445,7 +445,7 @@ public:
       return;
     }
     send_<BootstrapPage, BootstrapReq>(
-      link, bootstrapPage_(m_config.bootstrap.coreAppID));
+      link, bootstrapPage(m_config.bootstrap.coreAppID));
   }
 
   template <typename Link>
@@ -457,7 +457,7 @@ public:
       return;
     }
     send_<BootstrapPage, EnrollReq>(
-      link, enrollPage_(m_config.bootstrap.coreAppID));
+      link, enrollPage(m_config.bootstrap.coreAppID));
   }
 
   template <typename Link>
@@ -487,13 +487,13 @@ public:
     }
     String correlationID = correlation_();
     if (!m_requests->active()) {
-      send_<HealthUnavailable, Request>(link, correlate_(
+      send_<HealthUnavailable, Request>(link, correlate(
         error_("unavailable", "server is inactive"), correlationID));
       return;
     }
     if (!ok || !request.object) {
       send_<AdminBadRequest, Request>(
-        link, correlate_(error_("invalid_request", "invalid request"),
+        link, correlate(error_("invalid_request", "invalid request"),
 	  correlationID));
       return;
     }
@@ -502,17 +502,17 @@ public:
       String allow = request.object->allow;
       if (allow)
         send_<AdminMethodNotAllowed, Request>(link,
-          correlate_(error_("method_not_allowed", "method is not allowed"),
+          correlate(error_("method_not_allowed", "method is not allowed"),
 	    correlationID), ZuMv(allow));
       else
         send_<AdminNotFound, Request>(
-          link, correlate_(error_("not_found", "unknown administrative endpoint"),
+          link, correlate(error_("not_found", "unknown administrative endpoint"),
 	    correlationID));
       return;
     }
     auto work = work_();
     if (!work) {
-      send_<HealthUnavailable, Request>(link, correlate_(
+      send_<HealthUnavailable, Request>(link, correlate(
         error_("unavailable", "server is stopping"), correlationID));
       return;
     }
@@ -527,8 +527,8 @@ public:
         AdminResult result) mutable {
       auto work = ZuMv(credit);
       if (result.status >= 400)
-	result.body = correlate_(ZuMv(result.body), correlationID);
-      adminSend_<Request>(hold, ZuMv(result), correlationID);
+	result.body = correlate(ZuMv(result.body), correlationID);
+      adminSend<Request>(hold, ZuMv(result), correlationID);
     }};
     auto cancel = [credit = work, reply]() mutable {
       auto work = ZuMv(credit);
@@ -542,7 +542,7 @@ public:
           correlationID = ZuMv(correlationID), reply](
             ZmRef<Zum::Request> pending) mutable {
       auto work = ZuMv(credit);
-      adminRequest_(work, op, ZuMv(authorization), ZuMv(target), ZuMv(query),
+      adminRequest_0(work, op, ZuMv(authorization), ZuMv(target), ZuMv(query),
         ZuMv(body), ZuMv(ifMatch), ZuMv(ifNoneMatch),
         ZuMv(idempotence), ZuMv(correlationID),
         [
@@ -572,23 +572,23 @@ private:
   Work work_();
   void workDone_();
   void start_();
-  void startHTTP_();
-  void startRuntime_();
+  void start_0();
+  void start_1();
   void stop_();
-  void stopOwner_();
-  void stopHTTP_();
-  void stopRequests_();
-  void childDown_();
-  void postDrain_();
+  void stop_0();
+  void stop_4();
+  void stop_1();
+  void stop_2();
+  void stop_3();
   template <typename L> void post_(L &&l) {
     m_requests->scheduler()->run(ZuFwd<L>(l), m_requests->sid());
   }
 
   template <typename Request, typename Dest>
-  void adminSend_(const Dest &link, AdminResult result, ZuCSpan correlationID)
+  void adminSend(const Dest &link, AdminResult result, ZuCSpan correlationID)
   {
     if (!m_requests->active()) {
-      send_<HealthUnavailable, Request>(link, correlate_(
+      send_<HealthUnavailable, Request>(link, correlate(
         error_("unavailable", "server is inactive"), correlationID));
       return;
     }
@@ -627,31 +627,31 @@ private:
   }
 
   static String page_(AppID, Bytes, String);
-  static String bootstrapPage_(AppID);
-  static String enrollPage_(AppID);
+  static String bootstrapPage(AppID);
+  static String enrollPage(AppID);
   static String error_(ZuCSpan, ZuCSpan);
   String correlation_();
-  static String correlate_(String, ZuCSpan);
-  static String issuerJSON_(const Issuer &);
-  static String operationsJSON_(unsigned, unsigned, ZuBSpan);
-  void adminAuth_(const Work &, String, AdminAuthFn);
-  void adminRequest_(const Work &, int, String, String, String, String,
+  static String correlate(String, ZuCSpan);
+  static String issuerJSON(const Issuer &);
+  static String operationsJSON(unsigned, unsigned, ZuBSpan);
+  void adminRequest_1(const Work &, String, AdminAuthFn);
+  void adminRequest_0(const Work &, int, String, String, String, String,
     String, String, String, String, AdminDoneFn);
   static bool adminTargetApp(ZuCSpan, AppID &);
   void adminAccess_(const Work &, int, String, bool, AppID, bool, AdminAccessFn);
-  static Bytes idemDigest_(int, ZuCSpan, ZuCSpan, ZuCSpan, ZuCSpan);
-  void idemBegin_(const Work &, int, ActorKind::T, String, Bytes, String, IdemBeginFn);
-  void adminAudit_(const Work &, int, String, AppID, String, String,
+  static Bytes idemDigest(int, ZuCSpan, ZuCSpan, ZuCSpan, ZuCSpan);
+  void adminRequest_2(const Work &, int, ActorKind::T, String, Bytes, String, IdemBeginFn);
+  void adminRequest_4(const Work &, int, String, AppID, String, String,
     AdminResult, AdminDoneFn);
-  void adminCall_(const Work &, int, Principal, AdminPermit, String, String, String,
+  void adminRequest_3(const Work &, int, Principal, AdminPermit, String, String, String,
     String, String, String, IdemRequest, AdminDoneFn);
   void roleDelete_(const Work &, AppID, RoleID, String, IdemRequest, AdminDoneFn);
   void authRoute_(AppID, String, AuthRouteDoneFn);
-  bool loadKey_();
-  void cleanup_();
-  void cleanupStart_();
-  void cleanupStop_();
-  void cleanupDone_(MaintenanceResult);
+  bool loadKey();
+  void cleanup_0();
+  void cleanupStart();
+  void cleanupStop();
+  void cleanup_1(MaintenanceResult);
 
   using Key = ZmRef<Ztls::PK::SK_EC>;
   using SSF = ZmRef<SSFTransmitter>;

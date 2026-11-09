@@ -218,21 +218,21 @@ consteval bool validToolID()
   return Zjrpc::validName<ID_>();
 }
 
-template <typename> struct StructuredFmt_ : public ZuFalse { };
-template <> struct StructuredFmt_<ZfJSON::AsObject> : public ZuTrue { };
+template <typename> struct StructuredFmt : public ZuFalse { };
+template <> struct StructuredFmt<ZfJSON::AsObject> : public ZuTrue { };
 template <unsigned Code, typename Props>
-struct StructuredFmt_<ZfJSON::AsArray<Code, Props>> : public ZuTrue { };
+struct StructuredFmt<ZfJSON::AsArray<Code, Props>> : public ZuTrue { };
 template <unsigned Code, typename Props>
-struct StructuredFmt_<ZfJSON::AsMap<Code, Props>> : public ZuTrue { };
+struct StructuredFmt<ZfJSON::AsMap<Code, Props>> : public ZuTrue { };
 
 template <typename T>
 using IsStructured = ZuBool<
-  bool(ZuFields<T, ZuFacet::JSON>::N) || bool(StructuredFmt_<ZfJSON::As<T>>{})>;
+  bool(ZuFields<T, ZuFacet::JSON>::N) || bool(StructuredFmt<ZfJSON::As<T>>{})>;
 
 template <typename T>
 using IsObjectStructured = ZuBool<
   !ZuIsSame<void, ZuStructured<T>>{} &&
-  (!StructuredFmt_<ZfJSON::As<T>>{} ||
+  (!StructuredFmt<ZfJSON::As<T>>{} ||
     ZuIsSame<ZfJSON::As<T>, ZfJSON::AsObject>{})>;
 
 template <typename Res, typename = void>
@@ -245,9 +245,9 @@ struct ResponseValid<Res,
     (ZuIsSame<void, typename Res::Body>{} ||
       IsStructured<typename Res::Body>{})> { };
 
-template <typename> struct ResponsesValid_;
+template <typename> struct ResponsesValid;
 template <typename ...Res>
-struct ResponsesValid_<ZuTypeList<Res...>> {
+struct ResponsesValid<ZuTypeList<Res...>> {
   using Statuses = ZuTypeList<GetStatus<Res>...>;
   enum {
     Status = (ResponseValid<Res>{} && ...),
@@ -266,7 +266,7 @@ struct Contract<ZuTypeList<Req...>> {
   ZuAssert((validToolID<GetToolID<Req>>() && ...));
   ZuAssert((Zjrpc::validName<GetOperationID<Req>>() && ...));
   ZuAssert((IsObjectStructured<typename Req::Object>{} && ...));
-  ZuAssert((ResponsesValid_<Zjrpc::GetResponses<Req>>::Valid && ...));
+  ZuAssert((ResponsesValid<Zjrpc::GetResponses<Req>>::Valid && ...));
   ZuAssert(((Req::ResponseBody == Zjrpc::BodyPolicy::Fixed ||
 	Req::ResponseBody == Zjrpc::BodyPolicy::SSE) && ...));
   ZuAssert(ZuTypeUnique<ToolIDs>::N == ToolIDs::N);
@@ -1046,10 +1046,10 @@ template <typename Field>
 using FieldSchemaT = FieldSchema<Field>;
 
 template <typename Fields>
-struct Properties_;
+struct Properties;
 
 template <typename ...Field>
-struct Properties_<ZuTypeList<Field...>> {
+struct Properties<ZuTypeList<Field...>> {
   using Key = ZuCSpan;
   using Types = ZuTypeList<FieldSchema<Field>...>;
   using Val = ZuTypeApply<ZfJSON::Union,
@@ -1078,7 +1078,7 @@ struct Properties_<ZuTypeList<Field...>> {
 
   Iterator citer() const { return {}; }
   friend inline ZfJSON::AsMap<ZfFieldTC::UDT>
-    ZfJSON_Fmt(Properties_ *) { return {}; }
+    ZfJSON_Fmt(Properties *) { return {}; }
 };
 
 template <typename Field>
@@ -1136,7 +1136,7 @@ struct Object : public ZuStructShim<Object<O>, ObjectShape> {
   using Fields = ZuActiveFields<O, ZuFacet::JSON>;
 
   ZuCSpan type() const { return "object"; }
-  Properties_<Fields> properties() const { return {}; }
+  Properties<Fields> properties() const { return {}; }
   Required<Fields> required() const { return {}; }
   bool additionalProperties() const { return false; }
 };
@@ -1385,10 +1385,10 @@ struct Tool : public ZuStructShim<Tool<Req>, ToolShape> {
 };
 
 template <typename Reqs>
-struct ToolList_;
+struct ToolList;
 
 template <typename ...Req>
-struct ToolList_<ZuTypeList<Req...>> {
+struct ToolList<ZuTypeList<Req...>> {
   using Values = ZuTypeList<Tool<Req>...>;
   using Value = ZuTypeApply<ZfJSON::Union,
     typename Values::template Unshift<Zjrpc::EmptyObject>>;
@@ -1409,7 +1409,7 @@ struct ToolList_<ZuTypeList<Req...>> {
     return out;
   }
   friend inline ZfJSON::AsArray<ZfFieldTC::UDT>
-    ZfJSON_Fmt(ToolList_ *) { return {}; }
+    ZfJSON_Fmt(ToolList *) { return {}; }
 };
 
 struct ToolsResultShape {
@@ -1433,7 +1433,7 @@ struct ToolsResult :
 
   ToolsResult(int era_) : era{era_} { }
 
-  ToolList_<Reqs> tools() const { return {}; }
+  ToolList<Reqs> tools() const { return {}; }
   ServerMetaOpt meta() const { return serverMeta(era); }
   ZuCSpan resultType() const {
     return era == Era::Modern ? ZuCSpan{"complete"} : ZuCSpan{};
@@ -1531,11 +1531,11 @@ public:
       ZuCSpan message = {}) {
     if (!this->live() || m_progressToken.template is<void>()) return false;
     if (!this->route().invoked()) {
-      if (!this->sendPost_()) return false;
+      if (!this->sendPost()) return false;
       using Action = Token_::ProgressAction<Completion>;
       ZmRef<Action> action = new Action{this, value, total, message};
       this->route().run([action = ZuMv(action)]() mutable {
-	action->token()->sendPosted_();
+	action->token()->sendPosted();
 	action->token()->progress_(action->value(), action->total(), action->message());
       });
       return true;
@@ -1547,11 +1547,11 @@ public:
     if (!this->live() || m_logLevel == LogLevel::Disabled ||
 	logLevel(level) < m_logLevel) return false;
     if (!this->route().invoked()) {
-      if (!this->sendPost_()) return false;
+      if (!this->sendPost()) return false;
       using Action = Token_::LogAction<Completion>;
       ZmRef<Action> action = new Action{this, level, data, logger};
       this->route().run([action = ZuMv(action)]() mutable {
-	action->token()->sendPosted_();
+	action->token()->sendPosted();
 	action->token()->log_(action->level(), action->data(), action->logger());
       });
       return true;
@@ -1874,7 +1874,7 @@ public:
     if (m_legacyState == LegacyState::Closed) return false;
     auto call = [this, &completions, &emit, &tool](
 	const Zjrpc::Envelope &envelope) {
-      return callAsync_(completions, emit, envelope, tool);
+      return callAsync(completions, emit, envelope, tool);
     };
     auto cancel = [&completions](const CancelledParams &params) {
       if (!params.requestID.template is<void>())
@@ -1966,7 +1966,7 @@ private:
 
   template <typename Emit>
   void emptyResult_(Emit &emit, const Zjrpc::ID &id) const {
-    emit(EmptyResultMessage{id, responseEra_()});
+    emit(EmptyResultMessage{id, responseEra()});
   }
 
   template <typename Emit>
@@ -1987,7 +1987,7 @@ private:
     if constexpr (!Reqs::N) {
       if (!ZfJSON::handler<ToolsCallShape>(Zjrpc::raw(envelope.params())).valid)
 	return false;
-      emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
+      emit(ToolErrorMessage{envelope.id(), 404, responseEra()});
       return true;
     } else {
       using Params = ToolsCallParams<Reqs>;
@@ -1996,11 +1996,11 @@ private:
       auto params = handler.ctor();
       int index = params.match();
       if (index < 0) {
-	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
+	emit(ToolErrorMessage{envelope.id(), 404, responseEra()});
 	return true;
       }
       if (params.narrow() < 0) return false;
-      int era = responseEra_();
+      int era = responseEra();
       bool completed = false;
       try {
 	ZuSwitch::dispatch<Reqs::N>(index,
@@ -2023,29 +2023,29 @@ private:
       } catch (const Zjrpc::Error &error) {
 	if (!completed)
 	  emit(ToolErrorMessage{
-	    envelope.id(), error.code, responseEra_()});
+	    envelope.id(), error.code, responseEra()});
 	return true;
       } catch (...) {
 	if (!completed)
 	  emit(ToolErrorMessage{
-	    envelope.id(), ErrorCode::Internal, responseEra_()});
+	    envelope.id(), ErrorCode::Internal, responseEra()});
 	return true;
       }
       if (!completed)
 	emit(ToolErrorMessage{
-	  envelope.id(), ErrorCode::Internal, responseEra_()});
+	  envelope.id(), ErrorCode::Internal, responseEra()});
     }
     return true;
   }
 
   template <typename Completions, typename Emit, typename Tool>
-  bool callAsync_(
+  bool callAsync(
       Completions &completions, Emit &emit,
       const Zjrpc::Envelope &envelope, Tool &tool) {
     if constexpr (!Reqs::N) {
       if (!ZfJSON::handler<ToolsCallShape>(Zjrpc::raw(envelope.params())).valid)
 	return false;
-      emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
+      emit(ToolErrorMessage{envelope.id(), 404, responseEra()});
       return true;
     } else {
       using Params = ToolsCallParams<Reqs>;
@@ -2054,12 +2054,12 @@ private:
       auto params = handler.ctor();
       int index = params.match();
       if (index < 0) {
-	emit(ToolErrorMessage{envelope.id(), 404, responseEra_()});
+	emit(ToolErrorMessage{envelope.id(), 404, responseEra()});
 	return true;
       }
       if (params.narrow() < 0) return false;
       int logLevel_ = m_era == Era::Legacy ? m_logLevel : params.logLevel;
-      int era = responseEra_();
+      int era = responseEra();
       try {
 	ZuSwitch::dispatch<Reqs::N>(index,
 	    [&completions, &emit, &envelope, &params, &tool,
@@ -2079,17 +2079,17 @@ private:
       } catch (const Zjrpc::Error &error) {
 	(void)completions.fail(envelope.id());
 	emit(ToolErrorMessage{
-	  envelope.id(), error.code, responseEra_()});
+	  envelope.id(), error.code, responseEra()});
       } catch (...) {
 	(void)completions.fail(envelope.id());
 	emit(ToolErrorMessage{
-	  envelope.id(), ErrorCode::Internal, responseEra_()});
+	  envelope.id(), ErrorCode::Internal, responseEra()});
       }
     }
     return true;
   }
 
-  int responseEra_() const {
+  int responseEra() const {
     return m_era == Era::Legacy ? Era::Legacy : Era::Modern;
   }
 

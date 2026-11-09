@@ -282,8 +282,8 @@ ZuDerive(Delivery,
   using TxRanges = ZtArray<TxRange, ZtArrayHeapID<"Zquic.CryptoTx.Ranges">>;
 
   bool matches_(uint64_t, ZuBSpan) const;
-  void appendDelivery_(const uint8_t *, uint64_t);
-  void resumeReadyDequeue_();
+  void appendDelivery(const uint8_t *, uint64_t);
+  void resumeReadyDequeue();
 
   uint64_t		m_txOffset = 0;
   uint64_t		m_rxOffset = 0;
@@ -432,23 +432,23 @@ public:
 
 private:
   void resetTLS_();
-  bool initTLSContext_(const CryptoConfig &);
-  bool initTLSProperties_(const CryptoConfig &);
+  bool initTLSContext(const CryptoConfig &);
+  bool initTLSProperties(const CryptoConfig &);
   int updateTrafficKey_(int, size_t, const void *);
   void keyLog_(int, PktKeyLevel::T, ZuBSpan);
-  void syncEarlyDataState_();
+  void syncEarlyDataState();
   int onClientHello_(ptls_on_client_hello_parameters_t *);
   int saveSessionTicket_(ptls_iovec_t);
   int collectedExtensions_(ptls_raw_extension_t *);
-  static int updateTrafficKeyCB_(
+  static int updateTrafficKeyCB(
     ptls_update_traffic_key_t *, ptls_t *, int, size_t, const void *);
-  static int onClientHelloCB_(
+  static int onClientHelloCB(
     ptls_on_client_hello_t *, ptls_t *, ptls_on_client_hello_parameters_t *);
-  static int saveSessionTicketCB_(
+  static int saveSessionTicketCB(
     ptls_save_ticket_t *, ptls_t *, ptls_iovec_t);
-  static int collectExtensionCB_(
+  static int collectExtensionCB(
     ptls_t *, ptls_handshake_properties_t *, uint16_t);
-  static int collectedExtensionsCB_(
+  static int collectedExtensionsCB(
     ptls_t *, ptls_handshake_properties_t *, ptls_raw_extension_t *);
 
   bool				m_isServer = false;

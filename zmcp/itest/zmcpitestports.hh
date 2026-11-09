@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZmcpITestPorts_HH
-#define ZmcpITestPorts_HH
+#ifndef zmcpitestports_HH
+#define zmcpitestports_HH
 
 namespace ZmcpITestPort {
   enum {
@@ -22,4 +22,4 @@ namespace ZmcpITestPort {
   };
 }
 
-#endif /* ZmcpITestPorts_HH */
+#endif /* zmcpitestports_HH */

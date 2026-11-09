@@ -112,12 +112,12 @@ public:
   bool rxInvoked() const { return m_rx.invoked(); }
 
 private:
-  void start_(DoneFn);
-  void started_(DoneFn, bool);
-  void stop_(DoneFn);
-  void cancelBatch_();
-  void stopHTTP_();
-  void drain_();
+  void start_0(DoneFn);
+  void start_1(DoneFn, bool);
+  void stop_0(DoneFn);
+  void stop_1();
+  void stop_2();
+  void stop_3();
 
   CallRoute m_rx, m_tx;
   Limits m_limits;

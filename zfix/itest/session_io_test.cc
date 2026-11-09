@@ -223,7 +223,7 @@ template <typename Impl> struct Peer {
     Fmt::Error error;
     auto work = self()->template work<Entry>(context, error, extra);
     if (!work || error) { state()->fail(); return work; }
-    auto &local = self()->workBudget_(); auto &hub = self()->app()->fixWorkRx_();
+    auto &local = self()->workBudget(); auto &hub = self()->app()->fixWorkRx();
     if (local.limits_().count != 1 || hub.limits_().count != 1) state()->fail();
     auto failed = self()->template work<Entry>(context, error, UINT64_MAX);
     if (failed || error.code != Fmt::ErrorCode::Size) state()->fail();
@@ -277,7 +277,7 @@ template <typename Impl> struct Peer {
 
   void fixStopTx(uint64_t) {
     queue.clean();
-    if (!self()->txProgress_().loaded) state()->fail();
+    if (!self()->txProgress().loaded) state()->fail();
     ++state()->snapshots;
     if (pendingLoad) {
       if (state()->scenario == Scenario::DrainHold) {
@@ -297,7 +297,7 @@ template <typename Impl> struct Peer {
   void fixStopRx(uint64_t, uint64_t) {
     if (!client && state()->workCase == 2)
       self()->app()->rxRun([this] { state()->workStop.post(); });
-    if (!self()->rxProgress_().processed) state()->fail();
+    if (!self()->rxProgress().processed) state()->fail();
     ++state()->snapshots;
     if (admission) {
       ++state()->cancelled;
@@ -425,9 +425,9 @@ template <typename Impl> struct Peer {
       || !msg->data().control.template is<Session::ResendReq>()) return;
     // Recovery's fixed lifecycle event has been admitted. Leave exactly that
     // reservation in the hub so the following replay command must be refused.
-    state()->replayCut = self()->adminPosted_();
+    state()->replayCut = self()->adminPosted();
     if (!state()->replayCut.count ||
-	!self()->app()->fixAdminRx_().limits_({state()->replayCut.bytes})) state()->fail();
+	!self()->app()->fixAdminRx().limits_({state()->replayCut.bytes})) state()->fail();
     state()->cutReplay = false;
   }
 
@@ -457,11 +457,11 @@ template <typename Impl> struct Peer {
       // pending admission's backpressure. Ordinary readiness sends no probe.
       if (!client && state()->asyncAdmission) self()->probe_();
       if (!client && state()->adminTest)
-	state()->rxSample = [link = ZmRef<Impl>{self()}] { return link->rxStats_(); };
+	state()->rxSample = [link = ZmRef<Impl>{self()}] { return link->rxStats(); };
       if (!client && state()->adminTest) {
-	state()->adminSample = [link = ZmRef<Impl>{self()}] { return link->adminPosted_(); };
-	state()->adminTx = [link = ZmRef<Impl>{self()}] { return link->txStats_(); };
-	state()->adminProgress = [link = ZmRef<Impl>{self()}] { return link->txProgress_(); };
+	state()->adminSample = [link = ZmRef<Impl>{self()}] { return link->adminPosted(); };
+	state()->adminTx = [link = ZmRef<Impl>{self()}] { return link->txStats(); };
+	state()->adminProgress = [link = ZmRef<Impl>{self()}] { return link->txProgress(); };
       }
       if (client != state()->reverse) {
 	Fmt::Error error;
@@ -931,7 +931,7 @@ static void loopback(unsigned mode, bool async = false, unsigned heartbeat = 30,
     WorkState work;
     ZmBlock<>{}([&server, &work](auto wake) {
       server.rxRun([&server, &work, wake = ZuMv(wake)]() mutable {
-	work = server.fixWorkRx_().state_(); wake();
+	work = server.fixWorkRx().state_(); wake();
       });
     });
     ZuCheck(!work.count && !work.bytes && work.peakCount == 2 && work.refused == 4);
@@ -1228,9 +1228,9 @@ static void setupCleanup(unsigned mode) {
   auto snapshot = [&client, &link, &progress] {
     return ZmBlock<bool>{}([&client, &link, &progress](auto wake) {
       client.rxRun([&client, &link, &progress, wake = ZuMv(wake)]() mutable {
-	progress.epoch = link->session_().epoch_(); progress.rx = link->rxProgress_();
+	progress.epoch = link->session_().epoch_(); progress.rx = link->rxProgress();
 	client.txRun([&link, &progress, wake = ZuMv(wake)]() mutable {
-	  progress.tx = link->txProgress_(); wake(true);
+	  progress.tx = link->txProgress(); wake(true);
 	});
       });
     });
@@ -1238,9 +1238,9 @@ static void setupCleanup(unsigned mode) {
   auto restore = [&client, &link, &progress] {
     return ZmBlock<bool>{}([&client, &link, &progress](auto wake) {
       client.rxRun([&client, &link, &progress, wake = ZuMv(wake)]() mutable {
-	bool ok = link->restoreRx_(progress.epoch, progress.rx);
+	bool ok = link->restoreRx(progress.epoch, progress.rx);
 	client.txRun([&link, &progress, ok, wake = ZuMv(wake)]() mutable {
-	  wake(link->restoreTx_(progress.epoch, progress.tx) && ok);
+	  wake(link->restoreTx(progress.epoch, progress.tx) && ok);
 	});
       });
     });
@@ -1379,7 +1379,7 @@ static void reloadBudget(bool local) {
     ZmBlock<>{}([&client, &link, &posted, &hub, &clientStopped](auto wake) {
       client.rxRun([&client, &link, &posted, &hub, &clientStopped,
 	  wake = ZuMv(wake)]() mutable {
-	posted = link->adminPosted_(); hub = client.fixAdminRx_().state_();
+	posted = link->adminPosted(); hub = client.fixAdminRx().state_();
 	clientStopped = link->stopReports != 0; wake();
       });
     });
@@ -1407,7 +1407,7 @@ static void reloadBudget(bool local) {
   ZmBlock<>{}([&client, &link, &history, &accepted, &empty, &tuned, local](auto wake) {
     client.rxRun([&client, &link, &history, &accepted, &empty, &tuned, local,
       wake = ZuMv(wake)]() mutable {
-      if (!local) tuned = client.fixAdminRx_().limits_({0});
+      if (!local) tuned = client.fixAdminRx().limits_({0});
       accepted = link->reloaded(UINT64_MAX, history);
       empty = link->reloaded(UINT64_MAX, {}); wake();
     });
@@ -1419,7 +1419,7 @@ static void reloadBudget(bool local) {
   if (!local) {
     ZmBlock<>{}([&client](auto wake) {
       client.rxRun([&client, wake = ZuMv(wake)]() mutable {
-	client.fixAdminRx_().limits_({PostedLimits{}.bytes}); wake();
+	client.fixAdminRx().limits_({PostedLimits{}.bytes}); wake();
       });
     });
     AdminGate tx; client.txRun([&tx] { tx.block(); });
@@ -1435,14 +1435,14 @@ static void reloadBudget(bool local) {
     ZmBlock<>{}([&client, &link, &history, &refused, &tuned, one](auto wake) {
       client.rxRun([&client, &link, &history, &refused, &tuned, one,
 	wake = ZuMv(wake)]() mutable {
-	tuned = client.fixAdminRx_().limits_({one.bytes});
+	tuned = client.fixAdminRx().limits_({one.bytes});
 	refused = !link->reloaded(UINT64_MAX, history); wake();
       });
     }); ZuCheck(tuned && refused && history.body == original);
     sample(); ZuCheck(posted.bytes == one.bytes && posted.count == 1 && posted.refused == 3);
     AdminGate rx; PostedState returning;
     client.rxRun([&link, &rx, &returning] {
-      rx.entered.post(); rx.release.wait(); returning = link->adminPosted_(); rx.done.post();
+      rx.entered.post(); rx.release.wait(); returning = link->adminPosted(); rx.done.post();
     });
     ZuCheck(rx.entered.timedwait(Zm::now(5)) == 0);
     tx.release.post();
@@ -1517,11 +1517,11 @@ static void adminBudget(unsigned kind) {
     PostedState local, hub; TxProgress p;
     ZmBlock<>{}([&client, &link, &local, &hub](auto wake) {
       client.rxRun([&client, &link, &local, &hub, wake = ZuMv(wake)]() mutable {
-	local = link->adminPosted_(); hub = client.fixAdminRx_().state_(); wake();
+	local = link->adminPosted(); hub = client.fixAdminRx().state_(); wake();
       });
     });
     ZmBlock<>{}([&client, &link, &p](auto wake) {
-      client.txRun([&link, &p, wake = ZuMv(wake)]() mutable { p = link->txProgress_(); wake(); });
+      client.txRun([&link, &p, wake = ZuMv(wake)]() mutable { p = link->txProgress(); wake(); });
     });
     ZuCheck(!local.bytes && !local.count && !local.peak && local.refused == 1);
     ZuCheck(!hub.bytes && !hub.count && !hub.peak && hub.refused == 1);
@@ -1542,7 +1542,7 @@ static void adminBudget(unsigned kind) {
     auto sampleRx = [&server, &state, &local, &hub, &rx] {
       ZmBlock<>{}([&server, &state, &local, &hub, &rx](auto wake) {
 	server.rxRun([&server, &state, &local, &hub, &rx, wake = ZuMv(wake)]() mutable {
-	  local = state.adminSample(); hub = server.fixAdminRx_().state_();
+	  local = state.adminSample(); hub = server.fixAdminRx().state_();
 	  rx = state.rxSample(); wake();
 	});
       });
@@ -1567,7 +1567,7 @@ static void adminBudget(unsigned kind) {
       bool tuned = false;
       ZmBlock<>{}([&server, &tuned](auto wake) {
 	server.rxRun([&server, &tuned, wake = ZuMv(wake)]() mutable {
-	  tuned = server.fixAdminRx_().limits_({0}); wake();
+	  tuned = server.fixAdminRx().limits_({0}); wake();
 	});
       }); ZuCheck(tuned);
       link->disconnect(); ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
@@ -1614,7 +1614,7 @@ static void adminBudget(unsigned kind) {
 	    ++c.seqNo; frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error);
 	    if (error || !frame || !buf->append(frame->cspan())) { state.fail(); return; }
 	  }
-	  if (!link->sendRecord_(ZuMv(buf))) state.fail();
+	  if (!link->sendRecord(ZuMv(buf))) state.fail();
 	});
       };
       auto received = [&sampleRx, &rx, &local, &hub, initial](unsigned n) {
@@ -1628,7 +1628,7 @@ static void adminBudget(unsigned kind) {
       bool separated = false;
       ZmBlock<>{}([&server, &separated](auto wake) {
 	server.rxRun([&server, &separated, wake = ZuMv(wake)]() mutable {
-	  separated = server.fixSubmitRx_().limits_({0}); wake();
+	  separated = server.fixSubmitRx().limits_({0}); wake();
 	});
       }); ZuCheck(separated);
       TxProgress baseline;
@@ -1681,7 +1681,7 @@ static void adminBudget(unsigned kind) {
 	bool tuned = false;
 	ZmBlock<>{}([&server, &tuned, one](auto wake) {
 	  server.rxRun([&server, &tuned, one, wake = ZuMv(wake)]() mutable {
-	    tuned = server.fixAdminRx_().limits_({one.bytes}); wake();
+	    tuned = server.fixAdminRx().limits_({one.bytes}); wake();
 	  });
 	}); ZuCheck(tuned);
 	TxProgress before, after, rivalBefore, rivalAfter;
@@ -1793,13 +1793,13 @@ static void readAheadOverload() {
   TxProgress before, after;
   ZmBlock<>{}([&client, &link, &before](auto wake) {
     client.txRun([&link, &before, wake = ZuMv(wake)]() mutable {
-      before = link->txProgress_(); wake();
+      before = link->txProgress(); wake();
     });
   });
   ZmBlock<>{}([&client, &link, &refused, &submitState](auto wake) {
     client.rxRun([&client, &link, &refused, &submitState,
 	wake = ZuMv(wake)]() mutable {
-      auto &budget = client.fixSubmitRx_();
+      auto &budget = client.fixSubmitRx();
       bool tuned = budget.limits_({0});
       Fmt::Error error;
       refused = tuned && !link->send<Lane0>(Order{"req", 0}, 300, error) &&
@@ -1809,7 +1809,7 @@ static void readAheadOverload() {
   });
   ZmBlock<>{}([&client, &link, &after](auto wake) {
     client.txRun([&link, &after, wake = ZuMv(wake)]() mutable {
-      after = link->txProgress_(); wake();
+      after = link->txProgress(); wake();
     });
   });
   ZuCheck(refused && refusedBody && !submitState.bytes && !submitState.count
@@ -1827,7 +1827,7 @@ static void readAheadOverload() {
   client.txRun([link, body = ZuMv(body), &state] {
     Fmt::Error error;
     auto cfg = txConfig(config(true, &state));
-    TxContext c{.seqNo = link->txProgress_().loaded + 1, .sendingTime = ZuDateTime{Zm::now()}};
+    TxContext c{.seqNo = link->txProgress().loaded + 1, .sendingTime = ZuDateTime{Zm::now()}};
     auto frame = txFrame(link->fixAllocTx(0), *body, cfg, c, error);
     unsigned head = 0;
 #ifdef ZFIX_TEST_TLS
@@ -1835,7 +1835,7 @@ static void readAheadOverload() {
 #endif
     auto buf = link->fixAllocTx(head);
     if (error || !frame || !buf || !buf->append(frame->cspan()) ||
-	  !link->sendRecord_(ZuMv(buf))) state.fail();
+	  !link->sendRecord(ZuMv(buf))) state.fail();
   });
   ZuCheck(state.drained.timedwait(Zm::now(5)) == 0);
   ZuCheck(state.overloadEvents.load_() == 1);
@@ -1844,12 +1844,12 @@ static void readAheadOverload() {
   RxStats rx; TxStats tx; TraceStats rxTrace, txTrace;
   ZmBlock<>{}([&client, &link, &rx, &rxTrace](auto wake) {
     client.rxRun([&link, &rx, &rxTrace, wake = ZuMv(wake)]() mutable {
-      rx = link->rxStats_(); rxTrace = link->rxTraceStats_(); wake();
+      rx = link->rxStats(); rxTrace = link->rxTraceStats(); wake();
     });
   });
   ZmBlock<>{}([&client, &link, &tx, &txTrace](auto wake) {
     client.txRun([&link, &tx, &txTrace, wake = ZuMv(wake)]() mutable {
-      tx = link->txStats_(); txTrace = link->txTraceStats_(); wake();
+      tx = link->txStats(); txTrace = link->txTraceStats(); wake();
     });
   });
   ZuCheck(rx.frames > 0 && rx.bytes > 0 && !rx.pendingBytes);
@@ -2485,9 +2485,9 @@ static void nativeReplacement(unsigned mode, bool established = false)
     Progress snapshot;
     bool saved = ZmBlock<bool>{}([&client, &a, &snapshot](auto wake) {
       client.rxRun([&client, &a, &snapshot, wake = ZuMv(wake)]() mutable {
-	snapshot.epoch = a->session_().epoch_(); snapshot.rx = a->rxProgress_();
+	snapshot.epoch = a->session_().epoch_(); snapshot.rx = a->rxProgress();
 	client.txRun([&a, &snapshot, wake = ZuMv(wake)]() mutable {
-	  snapshot.tx = a->txProgress_(); wake(true);
+	  snapshot.tx = a->txProgress(); wake(true);
 	});
       });
     });
@@ -2495,9 +2495,9 @@ static void nativeReplacement(unsigned mode, bool established = false)
       snapshot.tx.sent == snapshot.tx.loaded && snapshot.rx.processed == (established ? 2U : 1U));
     bool restored = ZmBlock<bool>{}([&client, &b, &snapshot](auto wake) {
       client.rxRun([&client, &b, &snapshot, wake = ZuMv(wake)]() mutable {
-	bool ok = b->restoreRx_(snapshot.epoch, snapshot.rx);
+	bool ok = b->restoreRx(snapshot.epoch, snapshot.rx);
 	client.txRun([&b, &snapshot, ok, wake = ZuMv(wake)]() mutable {
-	  wake(b->restoreTx_(snapshot.epoch, snapshot.tx) && ok);
+	  wake(b->restoreTx(snapshot.epoch, snapshot.tx) && ok);
 	});
       });
     });
@@ -2535,7 +2535,7 @@ static void nativeReplacement(unsigned mode, bool established = false)
 	ZmBlock<>{}([&server, &state, &local, &hub](auto wake) {
 	  server.rxRun([&server, link = state.serverLink, &local, &hub,
 	      wake = ZuMv(wake)]() mutable {
-	    local = link->workState_(); hub = server.fixWorkRx_().state_(); wake();
+	    local = link->workState(); hub = server.fixWorkRx().state_(); wake();
 	  });
 	});
       };
@@ -2626,13 +2626,13 @@ static void nativeChain(unsigned mode)
     return ZmBlock<bool>{}([&client, link, &snapshot, restore](auto wake) {
       client.rxRun([&client, link, &snapshot, restore, wake = ZuMv(wake)]() mutable {
 	bool ok = true;
-	if (restore) ok = link->restoreRx_(snapshot.epoch, snapshot.rx);
+	if (restore) ok = link->restoreRx(snapshot.epoch, snapshot.rx);
 	else {
-	  snapshot.epoch = link->session_().epoch_(); snapshot.rx = link->rxProgress_();
+	  snapshot.epoch = link->session_().epoch_(); snapshot.rx = link->rxProgress();
 	}
 	client.txRun([link, &snapshot, restore, ok, wake = ZuMv(wake)]() mutable {
-	  if (restore) ok = link->restoreTx_(snapshot.epoch, snapshot.tx) && ok;
-	  else snapshot.tx = link->txProgress_();
+	  if (restore) ok = link->restoreTx(snapshot.epoch, snapshot.tx) && ok;
+	  else snapshot.tx = link->txProgress();
 	  wake(ok);
 	});
       });
@@ -2722,7 +2722,7 @@ static void nativeChain(unsigned mode)
       ZmBlock<>{}([&server, &state, &local, &hub](auto wake) {
 	server.rxRun([&server, link = state.serverLink, &local, &hub,
 	    wake = ZuMv(wake)]() mutable {
-	  local = link->workState_(); hub = server.fixWorkRx_().state_(); wake();
+	  local = link->workState(); hub = server.fixWorkRx().state_(); wake();
 	});
       });
     };

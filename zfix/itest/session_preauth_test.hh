@@ -17,9 +17,9 @@ static bool preauthSnapshot(Hub &hub, ZmRef<Link> link, Progress &snapshot)
 {
   return ZmBlock<bool>{}([&hub, link = ZuMv(link), &snapshot](auto wake) mutable {
     hub.rxRun([&hub, link = ZuMv(link), &snapshot, wake = ZuMv(wake)]() mutable {
-      snapshot.epoch = link->session_().epoch_(); snapshot.rx = link->rxProgress_();
+      snapshot.epoch = link->session_().epoch_(); snapshot.rx = link->rxProgress();
       hub.txRun([link = ZuMv(link), &snapshot, wake = ZuMv(wake)]() mutable {
-	snapshot.tx = link->txProgress_(); wake(true);
+	snapshot.tx = link->txProgress(); wake(true);
       });
     });
   });
@@ -79,9 +79,9 @@ static void nativePreauth(unsigned mode, bool alert)
     if (!saved) break;
     bool restored = ZmBlock<bool>{}([&client, c, &peer](auto wake) {
       client.rxRun([&client, c, &peer, wake = ZuMv(wake)]() mutable {
-	bool ok = c->restoreRx_(peer.epoch, peer.rx);
+	bool ok = c->restoreRx(peer.epoch, peer.rx);
 	client.txRun([c, &peer, ok, wake = ZuMv(wake)]() mutable {
-	  wake(c->restoreTx_(peer.epoch, peer.tx) && ok);
+	  wake(c->restoreTx(peer.epoch, peer.tx) && ok);
 	});
       });
     });
@@ -99,9 +99,9 @@ static void nativePreauth(unsigned mode, bool alert)
     ZuCheck(state.oldClosed.timedwait(Zm::now(5)) == 0);
     bool socketOnly = ZmBlock<bool>{}([&server, owner](auto wake) {
       server.rxRun([owner, wake = ZuMv(wake)]() mutable {
-	const auto &s = owner->session_(); ZuTime at; s.nextTimer_(at);
+	const auto &s = owner->session_(); ZuTime at; s.nextTimer(at);
 	wake(s.connection_() == 2 && s.state_() == State::Disconnected &&
-	  s.epoch_() == 1 && !s.ready_() && !s.admissionPending_() && !*at);
+	  s.epoch_() == 1 && !s.ready_() && !s.admissionPending() && !*at);
       });
     });
     Progress bound;
@@ -211,9 +211,9 @@ static void nativeStopBeforeBind(unsigned mode)
     ZuCheck(saved); if (!saved) break;
     bool restored = ZmBlock<bool>{}([&client, b, &snapshot](auto wake) {
       client.rxRun([&client, b, &snapshot, wake = ZuMv(wake)]() mutable {
-	bool ok = b->restoreRx_(snapshot.epoch, snapshot.rx);
+	bool ok = b->restoreRx(snapshot.epoch, snapshot.rx);
 	client.txRun([b, &snapshot, ok, wake = ZuMv(wake)]() mutable {
-	  wake(b->restoreTx_(snapshot.epoch, snapshot.tx) && ok);
+	  wake(b->restoreTx(snapshot.epoch, snapshot.tx) && ok);
 	});
       });
     });

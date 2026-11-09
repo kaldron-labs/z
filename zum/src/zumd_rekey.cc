@@ -16,17 +16,17 @@ namespace Zum {
 // One row and one saga in flight: offline traversal has bounded memory and
 // returns to the table scheduler between records. Never retain a scan iterator.
 template <typename Table, typename Apply>
-class RekeyScan_ : public ZmNHeap<RekeyScan_<Table, Apply>>, public ZmObject  {
-friend inline ZuStringT<"Zum.zumd.rekey.RekeyScan"> ZmNHeapID(RekeyScan_ *);
+class RekeyScan : public ZmNHeap<RekeyScan<Table, Apply>>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.rekey.RekeyScan"> ZmNHeapID(RekeyScan *);
 
   using Key = Table::template Key<0>;
 public:
-  RekeyScan_(Table *table, Apply apply, RekeyFn complete) :
+  RekeyScan(Table *table, Apply apply, RekeyFn complete) :
     m_table{table}, m_apply{ZuMv(apply)}, m_complete{ZuMv(complete)} { }
 
   void start(bool next = false)
   {
-    m_table->run(0, [self = ZmRef<RekeyScan_>{this}, next]() mutable {
+    m_table->run(0, [self = ZmRef<RekeyScan>{this}, next]() mutable {
       self->m_found = false;
       auto receive = [self](ZuUnion<void, Key> result, unsigned) mutable {
 	if (result.template is<Key>()) {
@@ -66,17 +66,17 @@ private:
   bool m_found = false;
 };
 
-class Rekey_ : public ZmNHeap<Rekey_>, public ZmObject  {
-friend inline ZuStringT<"Zum.zumd.rekey.Rekey"> ZmNHeapID(Rekey_ *);
+class Rekey : public ZmNHeap<Rekey>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.rekey.Rekey"> ZmNHeapID(Rekey *);
 
 public:
-  Rekey_(DB *db, Ztls::Random &rng, String issuer,
+  Rekey(DB *db, Ztls::Random &rng, String issuer,
       Bytes oldKey, Bytes newKey, RekeyFn complete) :
     m_db{db}, m_rng{&rng}, m_issuer{ZuMv(issuer)},
     m_oldKey{ZuMv(oldKey)}, m_newKey{ZuMv(newKey)},
     m_complete{ZuMv(complete)} { }
 
-  ~Rekey_()
+  ~Rekey()
   {
     if (m_oldKey) ZuClear(m_oldKey);
     if (m_newKey) ZuClear(m_newKey);
@@ -90,7 +90,7 @@ public:
       finish_(false); return;
     }
     auto table = m_db->issuers;
-    table->run(0, [self = ZmRef<Rekey_>{this}, table]() mutable {
+    table->run(0, [self = ZmRef<Rekey>{this}, table]() mutable {
       table->find<0>(0, ZuFwdTuple(self->m_issuer),
 	[self](ZdbRowRef<Issuer> row) mutable {
 	  if (!row || row->data().schemaVersion != SchemaVersion) {
@@ -100,7 +100,7 @@ public:
 	  if (Ztls::ctEqual(value.keyCheck, self->m_newCheck) &&
 	      !value.pendingKeyCheck) {
 	    self->m_verify = self->m_committed = true;
-	    self->providers_();
+	    self->rekey_0();
 	    return;
 	  }
 	  if (!Ztls::ctEqual(value.keyCheck, self->m_oldCheck) ||
@@ -108,13 +108,13 @@ public:
 	       !Ztls::ctEqual(value.pendingKeyCheck, self->m_newCheck))) {
 	    self->finish_(false); return;
 	  }
-	  if (value.pendingKeyCheck) { self->providers_(); return; }
+	  if (value.pendingKeyCheck) { self->rekey_0(); return; }
 	  self->submit_(KeyBindingArgs{
 	    .issuer = self->m_issuer, .beforeCheck = self->m_oldCheck,
 	    .afterCheck = self->m_oldCheck, .afterPending = self->m_newCheck},
 	    [self](bool ok) mutable {
 	      if (!ok) self->finish_(false);
-	      else self->providers_();
+	      else self->rekey_0();
 	    });
 	});
     });
@@ -135,7 +135,7 @@ private:
 	return secretRekey(ZuMv(def));
     }();
     m_next = ZuMv(complete);
-    auto done = [self = ZmRef<Rekey_>{this}](bool ok) mutable {
+    auto done = [self = ZmRef<Rekey>{this}](bool ok) mutable {
       auto next = ZuMv(self->m_next);
       if (next) next(ok);
     };
@@ -146,23 +146,23 @@ private:
   template <typename Table, typename Next>
   void scan_(Table *table, Next next)
   {
-    auto apply = [self = ZmRef<Rekey_>{this}](const auto &row, RekeyFn done) {
+    auto apply = [self = ZmRef<Rekey>{this}](const auto &row, RekeyFn done) {
       self->record_(row, ZuMv(done));
     };
-    ZmRef<RekeyScan_<Table, decltype(apply)>> scan =
-      new RekeyScan_<Table, decltype(apply)>{table, ZuMv(apply),
-	[self = ZmRef<Rekey_>{this}, next](bool ok) mutable {
+    ZmRef<RekeyScan<Table, decltype(apply)>> scan =
+      new RekeyScan<Table, decltype(apply)>{table, ZuMv(apply),
+	[self = ZmRef<Rekey>{this}, next](bool ok) mutable {
 	  if (!ok) self->finish_(false);
 	  else (self.ptr()->*next)();
 	}};
     scan->start();
   }
 
-  void providers_() { scan_(m_db->providers, &Rekey_::evidence_); }
-  void evidence_() { scan_(m_db->evidence, &Rekey_::signers_); }
-  void signers_() { scan_(m_db->signKeys, &Rekey_::receivers_); }
+  void rekey_0() { scan_(m_db->providers, &Rekey::rekey_1); }
+  void rekey_1() { scan_(m_db->evidence, &Rekey::rekey_2); }
+  void rekey_2() { scan_(m_db->signKeys, &Rekey::rekey_3); }
 
-  void receivers_() { scan_(m_db->ssfRx, &Rekey_::scanned_); }
+  void rekey_3() { scan_(m_db->ssfRx, &Rekey::rekey_4); }
 
   void record_(const SSFRx &value, RekeyFn done)
   {
@@ -216,14 +216,14 @@ private:
     submit_(ZuMv(change), ZuMv(done));
   }
 
-  void scanned_()
+  void rekey_4()
   {
-    if (!m_verify) { m_verify = true; providers_(); return; }
+    if (!m_verify) { m_verify = true; rekey_0(); return; }
     if (m_committed) { finish_(true); return; }
     submit_(KeyBindingArgs{
       .issuer = m_issuer, .beforeCheck = m_oldCheck, .afterCheck = m_newCheck,
       .beforePending = m_newCheck},
-      [self = ZmRef<Rekey_>{this}](bool ok) mutable { self->finish_(ok); });
+      [self = ZmRef<Rekey>{this}](bool ok) mutable { self->finish_(ok); });
   }
   void finish_(bool ok)
   {
@@ -247,7 +247,7 @@ private:
 void serverRekey(DB *db, Ztls::Random &rng, String issuer,
     Bytes oldKey, Bytes newKey, RekeyFn complete)
 {
-  ZmRef<Rekey_> rekey = new Rekey_{db, rng, ZuMv(issuer),
+  ZmRef<Rekey> rekey = new Rekey{db, rng, ZuMv(issuer),
     ZuMv(oldKey), ZuMv(newKey), ZuMv(complete)};
   rekey->start();
 }

@@ -281,15 +281,15 @@ public:
   explicit HTTPSSEBuilder(Limits limits_) : m_limits{limits_} { }
 
   template <typename Owner,
-    typename = decltype(ZuDeclVal<Owner * &>()->postSSE_(),
-	ZuDeclVal<Owner * &>()->discardSSE_(SSEQueue{}), void())>
+    typename = decltype(ZuDeclVal<Owner * &>()->postSSE(),
+	ZuDeclVal<Owner * &>()->discardSSE(SSEQueue{}), void())>
   void owner(Owner *owner_, int) {
     m_owner = owner_;
     m_postFn = [](void *owner__) {
-      return static_cast<Owner *>(owner__)->postSSE_();
+      return static_cast<Owner *>(owner__)->postSSE();
     };
     m_discardFn = [](void *owner__, SSEQueue queue) {
-      return static_cast<Owner *>(owner__)->discardSSE_(ZuMv(queue));
+      return static_cast<Owner *>(owner__)->discardSSE(ZuMv(queue));
     };
   }
   template <typename Owner>

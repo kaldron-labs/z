@@ -72,7 +72,7 @@ struct DrainLink : ZmNHeap<DrainLink>, DrainProtocol {
   unsigned drained = 0, notified = 0, peers = 0;
 
   using DrainProtocol::DrainProtocol;
-  void tcpDrained_() { ++drained; }
+  void tcpDrained() { ++drained; }
 };
 
 void drainBatches()
@@ -92,17 +92,17 @@ void drainBatches()
   for (unsigned i = 0; i < 2; ++i) {
     ZmRef<Header> header = new Alloc{ZmSingleton<typename Alloc::Allocator>::instance()};
     header->link = ZmRef<ZmPolymorph>{link.ptr()};
-    header->endIO_();
+    header->endIO();
     header->appTerminal = true;
     ZuCheckRT(header->posts == 1);
-    link->registerTCP_(header.ptr());
-    link->drainTCP_(i == 0, [](ZmRef<DrainLink> link, bool peer) {
+    link->registerTCP(header.ptr());
+    link->drainTCP(i == 0, [](ZmRef<DrainLink> link, bool peer) {
       ZuCheckRT(bool(link));
       if (!link) return;
       ++link->notified;
       link->peers += peer;
     });
-    link->ackTCP_(ZuMv(header));
+    link->ackTCP(ZuMv(header));
   }
   ZuCheckRT(link->drained == 2 && !link->notified && app.posts.length() == 2);
   app.deliver();
@@ -1122,7 +1122,7 @@ void testRetainedTCPBatch()
   ZuTestScope(testRetainedTCPBatch);
   struct Owner {
     Zhttp::RetainedEntries entries;
-    bool sendRetained_(Zhttp::RetainedEntries entries_) {
+    bool sendRetained(Zhttp::RetainedEntries entries_) {
       entries = ZuMv(entries_);
       return true;
     }

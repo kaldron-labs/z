@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZdbusTestTool_HH
-#define ZdbusTestTool_HH
+#ifndef zdbustesttool_HH
+#define zdbustesttool_HH
 
 #include <errno.h>
 #include <signal.h>
@@ -162,4 +162,4 @@ inline bool available(const char *tool)
 
 } // ZdbusTestTool
 
-#endif /* ZdbusTestTool_HH */
+#endif /* zdbustesttool_HH */

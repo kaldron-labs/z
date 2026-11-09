@@ -218,7 +218,7 @@ public:
     // Local queue admission policy, not a protocol or retained-byte limit.
     // Queues grow on demand; this numeric workload default is unmeasured.
     DefltMaxQueuedFrames = 4096,
-    DefltMigrationCIDReserve = 1,
+    DefltMigCIDRes = 1,
     // Bound per-connection QPACK storage to 16MiB/1M sections.  These are
     // trusted local policy limits, not protocol limits or peer permissions.
     MaxQPackCapacity = 1U<<24,
@@ -363,7 +363,7 @@ private:
   uint64_t	m_migrateAfterBytes = 0;
   ZuTime	m_heartbeat;
   unsigned	m_maxUDP = 0;
-  unsigned	m_migrationCIDReserve = DefltMigrationCIDReserve;
+  unsigned	m_migrationCIDReserve = DefltMigCIDRes;
   unsigned	m_qlogRingSize = 0;
   unsigned	m_qlogAge = 0;
   unsigned	m_qpackRxCapacity = 0;

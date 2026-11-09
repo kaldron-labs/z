@@ -220,72 +220,72 @@ private:
     return m_scheduler.is<ZmScheduler>() ? &m_scheduler.p<ZmScheduler>() : nullptr;
   }
 
-  void reqRun_();
+  void req_0();
   void request_(ZmRef<ZiIOBuf>);
-  void constructScheduler_();
+  void constructScheduler();
   void start_();
-  void startRuntime_();
-  void startReady_(bool);
+  void start_0();
+  void start_1(bool);
   void stop_();
-  void stopWorker_(bool);
-  void clearBatch_(bool);
-  void postDrain_(bool);
-  void closeRuntime_(bool, bool);
-  void reqDone_(bool);
+  void stop_0(bool);
+  void stop_1(bool);
+  void stop_2(bool);
+  void stop_3(bool, bool);
+  void req_1(bool);
   bool admit_() const;
-  void postedDone_();
+  void postedDone();
   bool active_() const { return Engine::state() == ZmEngineState::Running; }
-  void timerFired_(uint64_t, ZuTime);
+  void timerFired(uint64_t, ZuTime);
   void rag_(RAG::T);
   void alert_(ZmRef<App_::AlertEvent>);
-  bool snapshot_(
+  bool snapshot_0(
     uint64_t, Group::T, const Filter_::Filter &,
     App_::Subscription_ * = nullptr);
-  void snapshotBatch_(uint64_t);
-  void snapshotDone_(App_::Pending_ *);
+  void snapshot_1(uint64_t);
+  void snapshot_2(App_::Pending_ *);
   void subscribe_(
     uint64_t, Group::T, Filter_::Filter, uint32_t,
     uint32_t = 0, uint64_t = 0);
   void unsubscribe_(
     uint64_t, Group::T, const Filter_::Filter &);
-  void runSubscription_(App_::Subscription_ *);
-  void replay_(App_::Subscription_ *);
-  void replayBatch_(uint64_t);
-  void finishReplay_(App_::Subscription_ *);
-  void failReplay_(App_::Subscription_ *, ZuCSpan);
+  void runSubscription(App_::Subscription_ *);
+  void replay_0(App_::Subscription_ *);
+  void replay_1(uint64_t);
+  void replay_2(App_::Subscription_ *);
+  void failReplay(App_::Subscription_ *, ZuCSpan);
   void armTimer_();
-  bool clearSubscriptions_(unsigned = UINT_MAX);
-  bool publishRaw_(ZmRef<ZiIOBuf>, int);
+  bool clearSubscriptions(unsigned = UINT_MAX);
+  bool publishRaw(ZmRef<ZiIOBuf>, int);
   bool publish_(ZmRef<ZiIOBuf>);
-  bool publishApp_(uint64_t);
-  void appTelemetry_(AppTelemetry &);
-  void sendAck_(uint64_t, AckStatus::T, uint32_t = 0);
-  void sendError_(uint64_t, int32_t, ZuCSpan);
-  void sendEOS_(uint64_t);
+  bool publishApp(uint64_t);
+  void appTelemetry(AppTelemetry &);
+  void sendAck(uint64_t, AckStatus::T, uint32_t = 0);
+  void sendError(uint64_t, int32_t, ZuCSpan);
+  void sendEOS(uint64_t);
 
-  void warmIndices_();
-  bool clearIndices_(unsigned = UINT_MAX);
+  void warmIndices();
+  bool clearIndices(unsigned = UINT_MAX);
   void watch_();
   void unwatch_();
 
-  void mxAdded_(Ztc::Mx *);
-  void mxDeleted_(Ztc::Mx *);
-  void mxQueueAdded_(Ztc::Queue *);
-  void mxQueueDeleted_(Ztc::Queue *);
-  void hubAdded_(Ztc::Hub *);
-  void hubDeleted_(Ztc::Hub *);
-  void idxLinkAdded_(Ztc::Link *);
-  void idxLinkDeleted_(Ztc::Link *);
+  void mxAdded(Ztc::Mx *);
+  void mxDeleted(Ztc::Mx *);
+  void mxQueueAdded(Ztc::Queue *);
+  void mxQueueDeleted(Ztc::Queue *);
+  void hubAdded(Ztc::Hub *);
+  void hubDeleted(Ztc::Hub *);
+  void idxLinkAdded(Ztc::Link *);
+  void idxLinkDeleted(Ztc::Link *);
   void poolAdded_(Ztc::Pool *);
   void poolDeleted_(Ztc::Pool *);
-  void hubQueueAdded_(Ztc::Queue *);
-  void hubQueueDeleted_(Ztc::Queue *);
-  void dbAdded_(DB *);
-  void dbDeleted_(DB *);
-  void dbHostAdded_(DBHost *);
-  void dbHostDeleted_(DBHost *);
-  void dbTableAdded_(DBTable *);
-  void dbTableDeleted_(DBTable *);
+  void hubQueueAdded(Ztc::Queue *);
+  void hubQueueDeleted(Ztc::Queue *);
+  void dbAdded(DB *);
+  void dbDeleted(DB *);
+  void dbHostAdded(DBHost *);
+  void dbHostDeleted(DBHost *);
+  void dbTableAdded(DBTable *);
+  void dbTableDeleted(DBTable *);
 
 private:
   AppCf				m_cf;

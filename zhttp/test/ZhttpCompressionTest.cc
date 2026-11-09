@@ -26,7 +26,7 @@ struct StreamValue {
   unsigned *calls = nullptr;
 };
 
-static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
+static bool encodeEq(ZuCSpan in, const uint8_t *expected, unsigned n)
 {
   HdrBytes encoded;
   encoded.length(Zhttp::Compression::Huffman::enclen(in.length()));
@@ -36,7 +36,7 @@ static bool encodeEq_(ZuCSpan in, const uint8_t *expected, unsigned n)
     encoded == ZuBSpan{expected, n};
 }
 
-static bool decodeEq_(const uint8_t *in, unsigned n, ZuCSpan expected)
+static bool decodeEq(const uint8_t *in, unsigned n, ZuCSpan expected)
 {
   HdrBytes decoded;
   decoded.length(Zhttp::Compression::Huffman::declen(n));
@@ -72,44 +72,44 @@ void testHPackHuffmanKnownVectors()
     0xf1, 0xe3, 0xc2, 0xe5, 0xf2, 0x3a, 0x6b, 0xa0,
     0xab, 0x90, 0xf4, 0xff
   };
-  ZuCHECK(decodeEq_(www, sizeof(www), "www.example.com"),
+  ZuCHECK(decodeEq(www, sizeof(www), "www.example.com"),
     "HPACK Huffman RFC example decode failed");
-  ZuCHECK(encodeEq_("www.example.com", www, sizeof(www)),
+  ZuCHECK(encodeEq("www.example.com", www, sizeof(www)),
     "HPACK Huffman RFC example encode failed");
 
   uint8_t highOctets[] = {
     0xff, 0xfe, 0x6f, 0xff, 0xff, 0xbb
   };
   uint8_t highRaw[] = { 0x80, 0xff };
-  ZuCHECK(decodeEq_(highOctets, sizeof(highOctets),
+  ZuCHECK(decodeEq(highOctets, sizeof(highOctets),
       ZuBSpan{highRaw}),
     "HPACK Huffman high-octet decode failed");
-  ZuCHECK(encodeEq_(ZuBSpan{highRaw},
+  ZuCHECK(encodeEq(ZuBSpan{highRaw},
       highOctets, sizeof(highOctets)),
     "HPACK Huffman high-octet encode failed");
 
   uint8_t zero[] = { 0x07 };
-  ZuCHECK(decodeEq_(zero, sizeof(zero), "0"),
+  ZuCHECK(decodeEq(zero, sizeof(zero), "0"),
     "HPACK Huffman single 5-bit symbol decode failed");
-  ZuCHECK(encodeEq_("0", zero, sizeof(zero)),
+  ZuCHECK(encodeEq("0", zero, sizeof(zero)),
     "HPACK Huffman single 5-bit symbol encode failed");
 
   uint8_t space[] = { 0x53 };
-  ZuCHECK(decodeEq_(space, sizeof(space), " "),
+  ZuCHECK(decodeEq(space, sizeof(space), " "),
     "HPACK Huffman single 6-bit symbol decode failed");
-  ZuCHECK(encodeEq_(" ", space, sizeof(space)),
+  ZuCHECK(encodeEq(" ", space, sizeof(space)),
     "HPACK Huffman single 6-bit symbol encode failed");
 
   uint8_t amp[] = { 0xf8 };
-  ZuCHECK(decodeEq_(amp, sizeof(amp), "&"),
+  ZuCHECK(decodeEq(amp, sizeof(amp), "&"),
     "HPACK Huffman single 8-bit symbol decode failed");
-  ZuCHECK(encodeEq_("&", amp, sizeof(amp)),
+  ZuCHECK(encodeEq("&", amp, sizeof(amp)),
     "HPACK Huffman single 8-bit symbol encode failed");
 
   uint8_t packedZeros[] = { 0x00, 0x3f };
-  ZuCHECK(decodeEq_(packedZeros, sizeof(packedZeros), "00"),
+  ZuCHECK(decodeEq(packedZeros, sizeof(packedZeros), "00"),
     "HPACK Huffman packed symbols decode failed");
-  ZuCHECK(encodeEq_("00", packedZeros, sizeof(packedZeros)),
+  ZuCHECK(encodeEq("00", packedZeros, sizeof(packedZeros)),
     "HPACK Huffman packed symbols encode failed");
 }
 
@@ -275,7 +275,7 @@ void testPrefixIntegers()
     "overflowing prefix integer");
 }
 
-static bool fragmentedString_(ZuBSpan encoded, ZuBSpan expected)
+static bool fragmentedString(ZuBSpan encoded, ZuBSpan expected)
 {
   for (unsigned split = 1, n = encoded.length(); split <= n; ++split) {
     Zhttp::Compression::StringDecoder<HdrBytes> decoder;
@@ -302,7 +302,7 @@ void testStrings()
 
   HdrBytes raw;
   Zhttp::Compression::putString(raw, 0, 7, "www.example.com");
-  ZuCHECK(fragmentedString_(raw, "www.example.com"),
+  ZuCHECK(fragmentedString(raw, "www.example.com"),
     "decode raw string at every byte split");
 
   HdrBytes huffman;
@@ -314,7 +314,7 @@ void testStrings()
   Zhttp::Compression::putPref(encoded, 0x80, 7, huffman.length());
   for (unsigned i = 0, n = huffman.length(); i < n; ++i)
     encoded.push(huffman[i]);
-  ZuCHECK(fragmentedString_(encoded, "www.example.com"),
+  ZuCHECK(fragmentedString(encoded, "www.example.com"),
     "decode Huffman string at every byte split");
 }
 

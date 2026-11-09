@@ -21,7 +21,7 @@ using namespace ZquicLog_;
 #ifdef Zquic_DEBUG
 static Zi::Path g_residue;
 
-static Zi::Path testPath_(ZuCSpan name)
+static Zi::Path testPath(ZuCSpan name)
 {
   return ZiFile::append(g_residue, name);
 }
@@ -42,7 +42,7 @@ static ZtString<> readFile_(const Zi::Path &path)
   return data;
 }
 
-static unsigned parseJSONSeq_(ZuCSpan data)
+static unsigned parseJSONSeq(ZuCSpan data)
 {
   unsigned n = 0;
   unsigned i = 0, l = data.length();
@@ -63,7 +63,7 @@ static unsigned parseJSONSeq_(ZuCSpan data)
   return n;
 }
 
-static bool hasQLogFileSchema_(ZuCSpan data)
+static bool hasQLogFileSchema(ZuCSpan data)
 {
   return
     data.find<"file_schema">() >= 0 &&
@@ -72,7 +72,7 @@ static bool hasQLogFileSchema_(ZuCSpan data)
     data.find<"application/qlog+json-seq">() >= 0;
 }
 
-static bool hasQLogHeaderMetadata_(ZuCSpan data)
+static bool hasQLogHeaderMetadata(ZuCSpan data)
 {
   return
     data.find<"vantage_point">() >= 0 &&
@@ -87,14 +87,14 @@ static bool hasQLogHeaderMetadata_(ZuCSpan data)
     data.find<"zquic">() >= 0;
 }
 
-static bool hasQLogVantage_(ZuCSpan data, ZuCSpan vantage)
+static bool hasQLogVantage(ZuCSpan data, ZuCSpan vantage)
 {
   ZtString<> s;
   s << "\"type\":\"" << vantage << '"';
   return data.find(s) >= 0;
 }
 
-static bool hasQLogConnectionMetadata_(ZuCSpan data)
+static bool hasQLogConnectionMetadata(ZuCSpan data)
 {
   return
     data.find<"common_fields">() >= 0 &&
@@ -108,42 +108,42 @@ static bool hasQLogConnectionMetadata_(ZuCSpan data)
     data.find<"21222324">() >= 0;
 }
 
-static bool hasPacketSent_(ZuCSpan data)
+static bool hasPacketSent(ZuCSpan data)
 {
   return data.find<"packet_sent">() >= 0;
 }
 
-static bool hasTransportPacketSent_(ZuCSpan data)
+static bool hasTransportPacketSent(ZuCSpan data)
 {
   return data.find<"quic:packet_sent">() >= 0;
 }
 
-static bool hasTransportPacketReceived_(ZuCSpan data)
+static bool hasTransportPacketReceived(ZuCSpan data)
 {
   return data.find<"quic:packet_received">() >= 0;
 }
 
-static bool hasTransportPacketBuffered_(ZuCSpan data)
+static bool hasTransportPacketBuffered(ZuCSpan data)
 {
   return data.find<"quic:packet_buffered">() >= 0;
 }
 
-static bool hasTransportPacketDropped_(ZuCSpan data)
+static bool hasTransportPacketDropped(ZuCSpan data)
 {
   return data.find<"quic:packet_dropped">() >= 0;
 }
 
-static bool hasDatagramReceived_(ZuCSpan data)
+static bool hasDatagramReceived(ZuCSpan data)
 {
   return data.find<"quic:udp_datagrams_received">() >= 0;
 }
 
-static bool hasDatagramSent_(ZuCSpan data)
+static bool hasDatagramSent(ZuCSpan data)
 {
   return data.find<"quic:udp_datagrams_sent">() >= 0;
 }
 
-static bool hasTypedPacketFields_(ZuCSpan data)
+static bool hasTypedPacketFields(ZuCSpan data)
 {
   return
     data.find<"header">() >= 0 &&
@@ -159,7 +159,7 @@ static bool hasTypedPacketFields_(ZuCSpan data)
     data.find<"ack_eliciting">() >= 0;
 }
 
-static bool hasTypedDatagramFields_(ZuCSpan data)
+static bool hasTypedDatagramFields(ZuCSpan data)
 {
   return
     data.find<"\"count\":1">() >= 0 &&
@@ -169,7 +169,7 @@ static bool hasTypedDatagramFields_(ZuCSpan data)
     data.find<"\"ecn\":[\"ECT0\"">() >= 0;
 }
 
-static bool hasRecoveryEvents_(ZuCSpan data)
+static bool hasRecoveryEvents(ZuCSpan data)
 {
   return
     data.find<"quic:packets_acked">() >= 0 &&
@@ -182,7 +182,7 @@ static bool hasRecoveryEvents_(ZuCSpan data)
     data.find<"quic:ecn_state_updated">() >= 0;
 }
 
-static bool hasRecoveryFields_(ZuCSpan data)
+static bool hasRecoveryFields(ZuCSpan data)
 {
   return
     data.find<"packet_number_space">() >= 0 &&
@@ -211,7 +211,7 @@ static bool hasRecoveryFields_(ZuCSpan data)
       "\"capable\",\"new\":\"failed\"">() >= 0;
 }
 
-static bool hasSecEvents_(ZuCSpan data)
+static bool hasSecEvents(ZuCSpan data)
 {
   return
     data.find<"quic:key_updated">() >= 0 &&
@@ -230,7 +230,7 @@ static bool hasSecEvents_(ZuCSpan data)
     data.find<"zquic:zero_rtt_accepted">() >= 0;
 }
 
-static bool hasSecFields_(ZuCSpan data)
+static bool hasSecFields(ZuCSpan data)
 {
 	  return
 	    data.find<"key_type">() >= 0 &&
@@ -239,7 +239,7 @@ static bool hasSecFields_(ZuCSpan data)
 	    data.find<"success">() >= 0;
 }
 
-static bool hasPathCIDEvents_(ZuCSpan data)
+static bool hasPathCIDEvents(ZuCSpan data)
 {
   return
     data.find<"quic:tuple_assigned">() >= 0 &&
@@ -248,7 +248,7 @@ static bool hasPathCIDEvents_(ZuCSpan data)
     data.find<"quic:connection_id_updated">() >= 0;
 }
 
-static bool hasPathCIDFields_(ZuCSpan data)
+static bool hasPathCIDFields(ZuCSpan data)
 {
   return
     data.find<"tuple_id">() >= 0 &&
@@ -259,7 +259,7 @@ static bool hasPathCIDFields_(ZuCSpan data)
     data.find<"new">() >= 0;
 }
 
-static bool hasStreamEvents_(ZuCSpan data)
+static bool hasStreamEvents(ZuCSpan data)
 {
   return data.find<"quic:stream_state_updated">() >= 0 &&
     data.find<"quic:stream_data_moved">() >= 0 &&
@@ -267,7 +267,7 @@ static bool hasStreamEvents_(ZuCSpan data)
     data.find<"quic:stream_data_blocked_updated">() >= 0;
 }
 
-static bool hasStreamFields_(ZuCSpan data)
+static bool hasStreamFields(ZuCSpan data)
 {
   return
     data.find<"stream_id">() >= 0 &&
@@ -283,12 +283,12 @@ static bool hasStreamFields_(ZuCSpan data)
     data.find<"stream_flow_control">() >= 0;
 }
 
-static bool hasCloseEvents_(ZuCSpan data)
+static bool hasCloseEvents(ZuCSpan data)
 {
   return data.find<"quic:connection_closed">() >= 0;
 }
 
-static bool hasCloseFields_(ZuCSpan data)
+static bool hasCloseFields(ZuCSpan data)
 {
   return
     data.find<"initiator">() >= 0 &&
@@ -298,13 +298,13 @@ static bool hasCloseFields_(ZuCSpan data)
     data.find<"error_code">() >= 0;
 }
 
-static bool hasZiLogPrefix_(ZuCSpan data)
+static bool hasZiLogPrefix(ZuCSpan data)
 {
   return data.find<"[Zquic]">() >= 0;
 }
 #endif
 
-static void closeQLog_(ZquicLogger::Trace &trace)
+static void closeQLog(ZquicLogger::Trace &trace)
 {
   ZmSemaphore done;
   ZquicLogger::close(trace, [&done]() { done.post(); });
@@ -316,7 +316,7 @@ void testQLogFileOutput()
   ZuTestScope(testQLogFileOutput);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogTest.sqlog");
+  Zi::Path path = testPath("ZquicLogTest.sqlog");
   Zi::Path agedPath;
   agedPath << path << ".1";
   ZiFile::remove(path);
@@ -376,7 +376,7 @@ void testQLogFileOutput()
       .scid = scid2
     }
   });
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -387,12 +387,12 @@ void testQLogFileOutput()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 3, "qlog JSON-SEQ parse failed");
-  ZuCHECK(hasQLogFileSchema_(data), "qlog header missing file schema");
-  ZuCHECK(hasQLogHeaderMetadata_(data), "qlog header linkInfo missing");
-  ZuCHECK(hasQLogVantage_(data, "unknown"),
+  ZuCHECK(parseJSONSeq(data) >= 3, "qlog JSON-SEQ parse failed");
+  ZuCHECK(hasQLogFileSchema(data), "qlog header missing file schema");
+  ZuCHECK(hasQLogHeaderMetadata(data), "qlog header linkInfo missing");
+  ZuCHECK(hasQLogVantage(data, "unknown"),
     "qlog header should not assume a process-wide vantage point");
-  ZuCHECK(hasQLogConnectionMetadata_(data),
+  ZuCHECK(hasQLogConnectionMetadata(data),
     "qlog packet event missing connection linkInfo");
   ZuCHECK(data.find<"CAFEBABE">() >= 0 &&
       data.find<"05060708">() >= 0 &&
@@ -403,8 +403,8 @@ void testQLogFileOutput()
     "\"local\":{\"ip_v4\":\"127.0.0.1\",\"port_v4\":4443},"
     "\"remote\":{\"ip_v4\":\"127.0.0.1\",\"port_v4\":5555}}">() >= 0,
     "connection_started endpoint data missing");
-  ZuCHECK(hasPacketSent_(data), "qlog event missing packet_sent");
-  ZuCHECK(!hasZiLogPrefix_(data), "qlog contains ZiLog text prefix");
+  ZuCHECK(hasPacketSent(data), "qlog event missing packet_sent");
+  ZuCHECK(!hasZiLogPrefix(data), "qlog contains ZiLog text prefix");
 
   ZtString<> aged = readFile_(agedPath);
   ZuCHECK(aged.find<"old-qlog">() >= 0, "qlog output was not aged");
@@ -418,7 +418,7 @@ void testQLogFileOutput()
   PktEvt packet;
   ZquicLogger::pktSent(trace, ZuMv(packet));
   ZquicLogDiag diag = ZquicLogger::diag();
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogger::final(trace);
   ZuCHECK(!diag.recordsEnqueued && !diag.recordsWritten,
@@ -431,7 +431,7 @@ void testQLogBackPressure()
   ZuTestScope(testQLogBackPressure);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogDropTest.sqlog");
+  Zi::Path path = testPath("ZquicLogDropTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -447,7 +447,7 @@ void testQLogBackPressure()
     packet.packetSize = 1200;
     ZquicLogger::pktRecv(trace, ZuMv(packet));
   }
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -462,7 +462,7 @@ void testQLogAppTrace()
   ZuTestScope(testQLogAppTrace);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogAppTraceTest.sqlog");
+  Zi::Path path = testPath("ZquicLogAppTraceTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -478,7 +478,7 @@ void testQLogAppTrace()
     packet.packetSize = 1200;
     o.logPktSent(packet, time);
   });
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -489,10 +489,10 @@ void testQLogAppTrace()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "app trace qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 2, "app trace qlog JSON-SEQ parse failed");
-  ZuCHECK(hasQLogVantage_(data, "client"),
+  ZuCHECK(parseJSONSeq(data) >= 2, "app trace qlog JSON-SEQ parse failed");
+  ZuCHECK(hasQLogVantage(data, "client"),
     "app trace qlog missing client vantage");
-  ZuCHECK(hasPacketSent_(data), "app trace qlog missing packet_sent");
+  ZuCHECK(hasPacketSent(data), "app trace qlog missing packet_sent");
 #endif
 }
 
@@ -501,8 +501,8 @@ void testQLogMultiTraceGroups()
   ZuTestScope(testQLogMultiTraceGroups);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path1 = testPath_("ZquicLogMultiTrace1.sqlog");
-  Zi::Path path2 = testPath_("ZquicLogMultiTrace2.sqlog");
+  Zi::Path path1 = testPath("ZquicLogMultiTrace1.sqlog");
+  Zi::Path path2 = testPath("ZquicLogMultiTrace2.sqlog");
   ZiFile::remove(path1);
   ZiFile::remove(path2);
 
@@ -550,8 +550,8 @@ void testQLogMultiTraceGroups()
   ZquicLogger::pktSent(trace1, pkt(group2, 2));
   ZquicLogger::pktSent(trace2, pkt(group3, 3));
 
-  closeQLog_(trace1);
-  closeQLog_(trace2);
+  closeQLog(trace1);
+  closeQLog(trace2);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace1);
@@ -565,13 +565,13 @@ void testQLogMultiTraceGroups()
   ZtString<> data2 = readFile_(path2);
   ZuCHECK(data1, "multi trace 1 output was not written");
   ZuCHECK(data2, "multi trace 2 output was not written");
-  ZuCHECK(parseJSONSeq_(data1) >= 3,
+  ZuCHECK(parseJSONSeq(data1) >= 3,
     "multi trace 1 qlog JSON-SEQ parse failed");
-  ZuCHECK(parseJSONSeq_(data2) >= 2,
+  ZuCHECK(parseJSONSeq(data2) >= 2,
     "multi trace 2 qlog JSON-SEQ parse failed");
-  ZuCHECK(hasQLogVantage_(data1, "client"),
+  ZuCHECK(hasQLogVantage(data1, "client"),
     "multi trace 1 missing client vantage");
-  ZuCHECK(hasQLogVantage_(data2, "server"),
+  ZuCHECK(hasQLogVantage(data2, "server"),
     "multi trace 2 missing server vantage");
   ZuCHECK(data1.find<"10111213">() >= 0 &&
       data1.find<"20212223">() >= 0,
@@ -591,7 +591,7 @@ void testQLogTypedTransportEvents()
   ZuTestScope(testQLogTypedTransportEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogTypedTest.sqlog");
+  Zi::Path path = testPath("ZquicLogTypedTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -754,7 +754,7 @@ void testQLogTypedTransportEvents()
   drop.reason = Reason::ParseLong;
   ZquicLogger::pktDrop(trace, ZuMv(drop));
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -765,16 +765,16 @@ void testQLogTypedTransportEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "typed qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 8, "typed qlog JSON-SEQ parse failed");
-  ZuCHECK(hasDatagramReceived_(data), "datagram event missing");
-  ZuCHECK(hasDatagramSent_(data), "datagram sent event missing");
-  ZuCHECK(hasTypedDatagramFields_(data), "typed datagram fields missing");
-  ZuCHECK(hasTransportPacketSent_(data), "packet_sent event missing");
-  ZuCHECK(hasTransportPacketReceived_(data), "packet_received event missing");
-  ZuCHECK(hasTransportPacketBuffered_(data),
+  ZuCHECK(parseJSONSeq(data) >= 8, "typed qlog JSON-SEQ parse failed");
+  ZuCHECK(hasDatagramReceived(data), "datagram event missing");
+  ZuCHECK(hasDatagramSent(data), "datagram sent event missing");
+  ZuCHECK(hasTypedDatagramFields(data), "typed datagram fields missing");
+  ZuCHECK(hasTransportPacketSent(data), "packet_sent event missing");
+  ZuCHECK(hasTransportPacketReceived(data), "packet_received event missing");
+  ZuCHECK(hasTransportPacketBuffered(data),
     "packet_buffered event missing");
-  ZuCHECK(hasTransportPacketDropped_(data), "packet_dropped event missing");
-  ZuCHECK(hasTypedPacketFields_(data), "typed packet fields missing");
+  ZuCHECK(hasTransportPacketDropped(data), "packet_dropped event missing");
+  ZuCHECK(hasTypedPacketFields(data), "typed packet fields missing");
   ZuCHECK(data.find<"reset_stream">() >= 0, "RESET_STREAM summary missing");
   ZuCHECK(data.find<"stop_sending">() >= 0, "STOP_SENDING summary missing");
   ZuCHECK(data.find<"max_stream_data">() >= 0,
@@ -839,7 +839,7 @@ void testQLogTypedRecoveryEvents()
   ZuTestScope(testQLogTypedRecoveryEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogRecoveryTest.sqlog");
+  Zi::Path path = testPath("ZquicLogRecoveryTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -985,7 +985,7 @@ void testQLogTypedRecoveryEvents()
   };
   ZquicLogger::ecnStateUpd(trace, ZuMv(fallback));
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -996,9 +996,9 @@ void testQLogTypedRecoveryEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "recovery qlog output was not written");
-	  ZuCHECK(parseJSONSeq_(data) >= 13, "recovery qlog JSON-SEQ parse failed");
-	  ZuCHECK(hasRecoveryEvents_(data), "recovery event coverage missing");
-	  ZuCHECK(hasRecoveryFields_(data), "recovery fields missing");
+	  ZuCHECK(parseJSONSeq(data) >= 13, "recovery qlog JSON-SEQ parse failed");
+	  ZuCHECK(hasRecoveryEvents(data), "recovery event coverage missing");
+	  ZuCHECK(hasRecoveryFields(data), "recovery fields missing");
 	  ZuCHECK(data.find<"smoothed_rtt_us">() < 0,
 	    "old recovery metric smoothed_rtt_us emitted");
 	  ZuCHECK(data.find<"rtt_variance_us">() < 0,
@@ -1038,7 +1038,7 @@ void testQLogTypedSecEvents()
   ZuTestScope(testQLogTypedSecEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogSecurityTest.sqlog");
+  Zi::Path path = testPath("ZquicLogSecurityTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -1091,10 +1091,10 @@ void testQLogTypedSecEvents()
     .maxAckDelay = 25,
     .activeCxnIDLimit = 4,
     .initialMaxData = 65536,
-    .initialMaxStreamDataBidiLocal = 4096,
-    .initialMaxStreamDataBidiRemote = 8192,
+    .initMaxStreamDataDuplexLcl = 4096,
+    .initMaxStreamDataDuplexRmt = 8192,
     .initialMaxStreamDataUni = 2048,
-    .initialMaxStreamsBidi = 8,
+    .initMaxStreamsDuplex = 8,
     .initialMaxStreamsUni = 4,
     .initiator = Initiator::Remote,
     .disableActiveMigration = true
@@ -1199,7 +1199,7 @@ void testQLogTypedSecEvents()
       .success = false
     });
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -1210,9 +1210,9 @@ void testQLogTypedSecEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "security qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 17, "security qlog JSON-SEQ parse failed");
-  ZuCHECK(hasSecEvents_(data), "security event coverage missing");
-  ZuCHECK(hasSecFields_(data), "security fields missing");
+  ZuCHECK(parseJSONSeq(data) >= 17, "security qlog JSON-SEQ parse failed");
+  ZuCHECK(hasSecEvents(data), "security event coverage missing");
+  ZuCHECK(hasSecFields(data), "security fields missing");
   ZuCHECK(data.find<"\"name\":\"quic:key_updated\",\"data\":{\"key_type\":"
     "\"server_1rtt_secret\",\"key_phase\":1,\"trigger\":\"remote_update\"}">()
       >= 0, "key update fields missing");
@@ -1300,7 +1300,7 @@ void testQLogTypedPathCIDEvents()
   ZuTestScope(testQLogTypedPathCIDEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogPathCIDTest.sqlog");
+  Zi::Path path = testPath("ZquicLogPathCIDTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -1375,7 +1375,7 @@ void testQLogTypedPathCIDEvents()
   };
   ZquicLogger::cidUpdated(trace, ZuMv(cid));
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -1386,9 +1386,9 @@ void testQLogTypedPathCIDEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "path qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 5, "path qlog JSON-SEQ parse failed");
-  ZuCHECK(hasPathCIDEvents_(data), "path/CID event coverage missing");
-  ZuCHECK(hasPathCIDFields_(data), "path/CID fields missing");
+  ZuCHECK(parseJSONSeq(data) >= 5, "path qlog JSON-SEQ parse failed");
+  ZuCHECK(hasPathCIDEvents(data), "path/CID event coverage missing");
+  ZuCHECK(hasPathCIDFields(data), "path/CID fields missing");
 	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\",\"data\":{"
 	    "\"tuple_id\":\"7\"}">() >= 0, "tuple_assigned fields missing");
 	  ZuCHECK(data.find<"\"name\":\"quic:tuple_assigned\",\"data\":{"
@@ -1429,7 +1429,7 @@ void testQLogTypedStreamEvents()
   ZuTestScope(testQLogTypedStreamEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogStreamTest.sqlog");
+  Zi::Path path = testPath("ZquicLogStreamTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -1494,7 +1494,7 @@ void testQLogTypedStreamEvents()
       .reason = BlockedReason::StreamFlowCtrl
     });
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -1505,9 +1505,9 @@ void testQLogTypedStreamEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "stream qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 7, "stream qlog JSON-SEQ parse failed");
-  ZuCHECK(hasStreamEvents_(data), "stream event coverage missing");
-  ZuCHECK(hasStreamFields_(data), "stream fields missing");
+  ZuCHECK(parseJSONSeq(data) >= 7, "stream qlog JSON-SEQ parse failed");
+  ZuCHECK(hasStreamEvents(data), "stream event coverage missing");
+  ZuCHECK(hasStreamFields(data), "stream fields missing");
   ZuCHECK(data.find<"local_open">() >= 0, "stream open reason missing");
   ZuCHECK(data.find<"reaped">() >= 0, "stream close reason missing");
   ZuCHECK(data.find<"application">() >= 0, "stream data source missing");
@@ -1525,7 +1525,7 @@ void testQLogTypedMigrationEvents()
   ZuTestScope(testQLogTypedMigrationEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogMigrationTest.sqlog");
+  Zi::Path path = testPath("ZquicLogMigrationTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -1652,7 +1652,7 @@ void testQLogTypedMigrationEvents()
   emit(48, MigrationAction::Promoted, MigrationReason::Passive,
     MigrationState::Promoted, false, false, PathRole::Active);
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -1663,7 +1663,7 @@ void testQLogTypedMigrationEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "migration qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 20,
+  ZuCHECK(parseJSONSeq(data) >= 20,
     "migration qlog JSON-SEQ parse failed");
   ZuCHECK(data.find<"zquic:migration_updated">() >= 0,
     "migration event name missing");
@@ -1789,7 +1789,7 @@ void testQLogTypedCloseEvents()
   ZuTestScope(testQLogTypedCloseEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogCloseTest.sqlog");
+  Zi::Path path = testPath("ZquicLogCloseTest.sqlog");
   ZiFile::remove(path);
 
   ZquicLogParams params;
@@ -1825,7 +1825,7 @@ void testQLogTypedCloseEvents()
   };
   ZquicLogger::cxnClosed(trace, ZuMv(frameEncoding));
 
-  closeQLog_(trace);
+  closeQLog(trace);
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(trace);
@@ -1836,9 +1836,9 @@ void testQLogTypedCloseEvents()
 
   ZtString<> data = readFile_(path);
   ZuCHECK(data, "close qlog output was not written");
-  ZuCHECK(parseJSONSeq_(data) >= 4, "close qlog JSON-SEQ parse failed");
-  ZuCHECK(hasCloseEvents_(data), "close event coverage missing");
-  ZuCHECK(hasCloseFields_(data), "close fields missing");
+  ZuCHECK(parseJSONSeq(data) >= 4, "close qlog JSON-SEQ parse failed");
+  ZuCHECK(hasCloseEvents(data), "close event coverage missing");
+  ZuCHECK(hasCloseFields(data), "close fields missing");
   ZuCHECK(data.find<"local_close">() >= 0, "local close reason missing");
   ZuCHECK(data.find<"idle_timeout">() >= 0, "idle close trigger missing");
   ZuCHECK(data.find<"frame_encoding_error">() >= 0,
@@ -1860,7 +1860,7 @@ void testQLogRestartDrain()
 {
   ZuTestScope(testQLogRestartDrain);
 #ifdef Zquic_DEBUG
-  Zi::Path path = testPath_("ZquicLogRestart.sqlog");
+  Zi::Path path = testPath("ZquicLogRestart.sqlog");
   ZquicLogParams params;
   params.enabled(true).path(path).ringSize(1<<15);
   ZquicLogger::Trace first, next;
@@ -1916,7 +1916,7 @@ void testQLogRestartDrain()
   ZuCheck(ZquicLogger::start());
   ZmAtomic<unsigned> delivered = 0;
   ZquicLogger::log(first, [&delivered](auto &, ZuTime) { ++delivered; });
-  closeQLog_(first);
+  closeQLog(first);
   ZuCheck(ZquicLogger::stop());
   ZuCheck(ZquicLogger::stop());
   ZuCheck(delivered == 1);
@@ -1932,7 +1932,7 @@ void testQLogStopDrain()
   ZuTestScope(testQLogStopDrain);
 #ifdef Zquic_DEBUG
   ZquicLogParams params;
-  params.enabled(true).path(testPath_("ZquicLogDrain.sqlog")).ringSize(4096);
+  params.enabled(true).path(testPath("ZquicLogDrain.sqlog")).ringSize(4096);
   ZquicLogger::Trace trace;
   ZuCheck(ZquicLogger::init(trace, params, Zquic::Vantage::Client));
   ZuCheck(ZquicLogger::start());

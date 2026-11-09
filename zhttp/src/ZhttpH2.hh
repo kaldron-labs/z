@@ -656,14 +656,14 @@ public:
       return true;
     }
     if (section == Zhttp::FieldSection::Trailers) {
-      if (!endStream || !bodyComplete_()) return fail_();
+      if (!endStream || !bodyComplete()) return fail_();
       m_state = State::Trailers;
       complete_();
       return true;
     }
     m_bodyAllowed = m_fields.bodyAllowed();
     if (endStream) {
-      if (m_bodyAllowed && !bodyComplete_()) return fail_();
+      if (m_bodyAllowed && !bodyComplete()) return fail_();
     } else if (!m_bodyAllowed)
       return fail_();
     if (ZuUnlikely(!impl()->bodyInfo(
@@ -711,7 +711,7 @@ public:
       }, headLen, tailLen,
       [this, &accepted](auto &rx) {
 	if (m_state == State::Stream)
-	  impl()->streamRx_(rx);
+	  impl()->streamRx(rx);
 	else
 	  accepted = impl()->body(rx);
 	return accepted;
@@ -724,7 +724,7 @@ public:
     transferred = true;
     if (m_state == State::Stream) {
       if (endStream) {
-	impl()->streamPeerEnd_();
+	impl()->streamPeerEnd();
 	m_bodyRx.discard();
 	m_state = State::RemoteClosed;
       }
@@ -765,8 +765,8 @@ public:
   }
 
   template <typename Rx>
-  void streamRx_(Rx &rx) { bodyDrain(rx); }
-  void streamPeerEnd_() { }
+  void streamRx(Rx &rx) { bodyDrain(rx); }
+  void streamPeerEnd() { }
   void streamError_() { }
 
 private:
@@ -821,7 +821,7 @@ private:
     if (m_deliverHeaders) impl()->status(value);
   }
 
-  bool bodyComplete_() const {
+  bool bodyComplete() const {
     return m_contentLength < 0 ||
       m_bodyLength == uint64_t(m_contentLength);
   }
@@ -979,22 +979,22 @@ private:
   template <typename Stream, typename I = Impl,
     typename = decltype(ZuDeclVal<Stream &>().headerBase(),
       ZuDeclVal<I &>().headerBase(ZuDeclVal<Stream &>().headerBase()), void())>
-  void patchBase_(Stream &stream, int) {
+  void patchBase(Stream &stream, int) {
     impl()->headerBase(stream.headerBase());
   }
   template <typename Stream>
-  void patchBase_(Stream &, ...) { }
+  void patchBase(Stream &, ...) { }
   template <typename I = Impl,
     typename = decltype(ZuDeclVal<I &>().patch(), void())>
-  void patchImpl_(int) {
+  void patchImpl(int) {
     impl()->patch();
   }
-  void patchImpl_(...) { }
+  void patchImpl(...) { }
   template <typename Stream>
   void patch_(Stream &stream) {
     if constexpr (HasBody && !Streaming) {
-      patchBase_(stream, 0);
-      patchImpl_(0);
+      patchBase(stream, 0);
+      patchImpl(0);
     }
   }
 

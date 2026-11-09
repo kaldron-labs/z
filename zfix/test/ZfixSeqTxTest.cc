@@ -73,7 +73,7 @@ struct Tx : SeqTx<Tx, Queue> {
     archived.push(begin); archived.push(end);
     if (holdArchive) { holdArchive = false; hold_(); }
     if (ackOnArchive) {
-      auto next = ackOnArchive; ackOnArchive = 0; acknowledge_(next);
+      auto next = ackOnArchive; ackOnArchive = 0; acknowledge(next);
     }
   }
 
@@ -100,7 +100,7 @@ static void newSend()
   tx.resume_(); tx.drain();
   ZuCheck(tx.published_() == 3 && !tx.retained_() && !tx.queuedBytes_());
   ZuCheck(tx.sent.length() == 2 && !tx.requests.length() && !tx.archived.length());
-  ZuCheck(!tx.acknowledge_(4) && tx.acknowledge_(3)); tx.drain();
+  ZuCheck(!tx.acknowledge(4) && tx.acknowledge(3)); tx.drain();
   ZuCheck(tx.archived.length() == 2 && tx.archived[0] == 1 && tx.archived[1] == 3);
 }
 
@@ -210,14 +210,14 @@ static void deferred()
   auto first = tx.reloadTicket;
   ZuCheck(tx.waiting_() && !tx.retained_() && !tx.replayed.length());
   tx.hold_();
-  ZuCheck(tx.completeReload_(first, new Tx::Msg{Item{1, 20, 44}}));
+  ZuCheck(tx.completeReload(first, new Tx::Msg{Item{1, 20, 44}}));
   ZuCheck(!tx.waiting_() && tx.replaying_() && !tx.replayed.length());
   tx.resume_(); tx.drain(); auto second = tx.reloadTicket;
   ZuCheck(second != first && tx.waiting_());
-  ZuCheck(!tx.completeReload_(first, new Tx::Msg{Item{1, 20}}) && tx.waiting_());
-  ZuCheck(tx.completeReload_(second, new Tx::Msg{Item{1, 20, 99}})); tx.drain();
+  ZuCheck(!tx.completeReload(first, new Tx::Msg{Item{1, 20}}) && tx.waiting_());
+  ZuCheck(tx.completeReload(second, new Tx::Msg{Item{1, 20, 99}})); tx.drain();
   ZuCheck(tx.replayed.length() == 1 && tx.values[0] == 99 && !tx.retained_());
-  ZuCheck(!tx.completeReload_(second, {}) && !tx.replaying_());
+  ZuCheck(!tx.completeReload(second, {}) && !tx.replaying_());
 }
 
 static void pendingPrefix()
@@ -231,7 +231,7 @@ static void pendingPrefix()
   tx.refuseGap = false; tx.resume_(); tx.drain(); // writable before completion
   ZuCheck(tx.waiting_());
   tx.deferAt = 0; tx.retrieveFrom = tx.retrieveUntil = 2;
-  ZuCheck(tx.completeReload_(ticket, new Tx::Msg{Item{2, 20, 88}})); tx.drain();
+  ZuCheck(tx.completeReload(ticket, new Tx::Msg{Item{2, 20, 88}})); tx.drain();
   ZuCheck(!tx.waiting_() && !tx.replaying_() && tx.gaps.length() == 2);
   ZuCheck(tx.replayed.length() == 1 && tx.values[0] == tx.value && !tx.retained_());
 }
@@ -243,7 +243,7 @@ static void pendingHold()
   ZuCheck(tx.restore_(2, 2, 1)); tx.deferAt = 1; tx.holdLookup = true;
   tx.resume_(); ZuCheck(tx.replay_(1)); tx.drain();
   ZuCheck(!tx.running_() && tx.waiting_());
-  ZuCheck(tx.completeReload_(tx.reloadTicket, {}) && !tx.waiting_() && tx.replaying_());
+  ZuCheck(tx.completeReload(tx.reloadTicket, {}) && !tx.waiting_() && tx.replaying_());
   tx.deferAt = 0; tx.resume_(); tx.drain();
   ZuCheck(!tx.replaying_() && tx.gaps.length() == 2 && tx.requests.length() == 4);
 }
@@ -265,7 +265,7 @@ static void archives()
   Tx tx{{.replayBatch = 2}};
   ZuCheck(tx.restore_(8, 8, 1)); tx.resume_();
   tx.holdArchive = true; tx.ackOnArchive = 8;
-  ZuCheck(tx.acknowledge_(4)); tx.drain();
+  ZuCheck(tx.acknowledge(4)); tx.drain();
   ZuCheck(!tx.running_() && tx.archived.length() == 2 && tx.archived[0] == 1 &&
     tx.archived[1] == 3 && !tx.retained_());
   tx.resume_(); tx.drain();
@@ -282,7 +282,7 @@ static void archives()
   Tx reentrant{{.replayBatch = 2}};
   ZuCheck(reentrant.restore_(8, 8, 1)); reentrant.resume_();
   reentrant.ackOnArchive = 8;
-  ZuCheck(reentrant.acknowledge_(4)); reentrant.drain();
+  ZuCheck(reentrant.acknowledge(4)); reentrant.drain();
   ZuCheck(reentrant.archived.length() == 8 && reentrant.archived[0] == 1 &&
     reentrant.archived[1] == 3 && reentrant.archived[2] == 3 &&
     reentrant.archived[3] == 5 && reentrant.archived[4] == 5 &&
@@ -295,7 +295,7 @@ static void warmArchive()
   ZuTestScope(warmArchive);
   Tx tx{{.replayBatch = 2}};
   ZuCheck(tx.restore_(8, 8, 1)); tx.resume_();
-  ZuCheck(tx.acknowledge_(8) && tx.tasks.length() == 1 && !tx.archived.length());
+  ZuCheck(tx.acknowledge(8) && tx.tasks.length() == 1 && !tx.archived.length());
   auto stale = tx.tasks[0];
   tx.hold_();
   tx.run_(stale.kind, stale.ticket);
@@ -318,10 +318,10 @@ static void futureReplay()
   ZuCheck(tx.restore_(4, 1, 1)); tx.admitted_(4);
   tx.deferAt = 1; tx.resume_(); tx.drain();
   ZuCheck(tx.waiting_() && tx.replay_(1));
-  auto range = tx.replayRange_();
+  auto range = tx.replayRange();
   ZuCheck(range.key() == 1 && range.length() == 3);
   tx.deferAt = 0; tx.retrieveUntil = 2;
-  ZuCheck(tx.completeReload_(tx.reloadTicket, new Tx::Msg{Item{1, 20}})); tx.drain();
+  ZuCheck(tx.completeReload(tx.reloadTicket, new Tx::Msg{Item{1, 20}})); tx.drain();
   ZuCheck(tx.published_() == 4 && !tx.replaying_() && tx.replayed.length() == 2);
   ZuCheck(tx.sent.length() == 2 && !tx.retained_());
   Tx restored;
@@ -335,7 +335,7 @@ static void invalidReload()
   Tx tx;
   ZuCheck(tx.restore_(2, 2, 1)); tx.deferAt = 1;
   tx.resume_(); ZuCheck(tx.replay_(1)); tx.drain();
-  ZuCheck(tx.completeReload_(tx.reloadTicket, new Tx::Msg{Item{2, 20}}));
+  ZuCheck(tx.completeReload(tx.reloadTicket, new Tx::Msg{Item{2, 20}}));
   ZuCheck(tx.failed_() && !tx.waiting_() && tx.replaying_() && !tx.retained_());
 }
 

@@ -21,10 +21,10 @@ struct ZquicAPI TransportParams {
   uint64_t	maxIdleTimeout = 0;
   uint64_t	maxUDPPayloadSize = MinUDPPayload;
   uint64_t	initialMaxData = 0;
-  uint64_t	initialMaxStreamDataBidiLocal = 0;
-  uint64_t	initialMaxStreamDataBidiRemote = 0;
+  uint64_t	initMaxStreamDataDuplexLcl = 0;
+  uint64_t	initMaxStreamDataDuplexRmt = 0;
   uint64_t	initialMaxStreamDataUni = 0;
-  uint64_t	initialMaxStreamsBidi = 0;
+  uint64_t	initMaxStreamsDuplex = 0;
   uint64_t	initialMaxStreamsUni = 0;
   uint64_t	ackDelayExponent = 3;
   uint64_t	maxAckDelay = 25;

@@ -160,11 +160,11 @@ struct App {
       case Count:
 	phase = Cases;
 	caseNo = 1;
-	connectCase_();
+	connectCase();
 	break;
       case Cases:
 	if (++caseNo <= caseCount)
-	  connectCase_();
+	  connectCase();
 	else {
 	  phase = Update;
 	  ZtString<> target;
@@ -182,7 +182,7 @@ struct App {
   }
 
 private:
-  void connectCase_() {
+  void connectCase() {
     if (verbose)
       std::cerr << "Autobahn case " << caseNo << '/' << caseCount << '\n';
     ZtString<> target;

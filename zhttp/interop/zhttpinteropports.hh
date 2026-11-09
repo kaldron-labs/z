@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZhttpInteropPorts_HH
-#define ZhttpInteropPorts_HH
+#ifndef zhttpinteropports_HH
+#define zhttpinteropports_HH
 
 namespace ZhttpInteropPort {
   enum {
@@ -23,4 +23,4 @@ namespace ZhttpInteropPort {
   };
 }
 
-#endif /* ZhttpInteropPorts_HH */
+#endif /* zhttpinteropports_HH */

@@ -296,7 +296,7 @@ static void transmit(Agent::State *state, BuildFn build, uint64_t generation)
     });
     if (!frame) return;
     link->txStream([frame = ZuMv(frame)](auto &tx) mutable {
-      tx.appendOwned_(ZuMv(frame));
+      tx.appendOwned(ZuMv(frame));
       tx.flush();
     }, Zws::Opcode::Binary);
   });
@@ -989,7 +989,7 @@ void Agent::start_()
       Engine::started(false);
       return;
     }
-    m_state->mx->rxRun([this]() { startHTTP_(); });
+    m_state->mx->rxRun([this]() { start_0(); });
   });
 }
 
@@ -1012,35 +1012,35 @@ bool Agent::initRuntime_()
     Zhttp::Destination{m_state->uri.host, m_state->uri.port, m_state->uri.ipv6Literal}, ws);
 }
 
-void Agent::startHTTP_()
+void Agent::start_0()
 {
   m_state->http.start([this](bool ok) {
     m_state->mx->rxRun([this, ok]() {
-      if (!ok) { stopRx_(true); return; }
+      if (!ok) { stop_0(true); return; }
       m_state->httpFn = m_state->http.fn();
-      startWS_();
+      start_1();
     });
   });
 }
 
-void Agent::startWS_()
+void Agent::start_1()
 {
   m_state->client.start([this](bool ok) {
     m_state->mx->rxRun([this, ok]() {
-      if (!ok) { stopRx_(true); return; }
-      startScan_();
+      if (!ok) { stop_0(true); return; }
+      start_2();
     });
   });
 }
 
-void Agent::startScan_()
+void Agent::start_2()
 {
   m_state->telRing.init(ZiRingParams{m_state->env.ring, m_state->cf.telSize}
     .ll(m_state->cf.telLL).spin(m_state->cf.telSpin)
     .timeout(m_state->cf.telTimeout));
   if (m_state->telRing.open(Ring::Read) != Zu::OK ||
       m_state->telRing.attach() != Zu::OK) {
-    stopRx_(true);
+    stop_0(true);
     return;
   }
   // Routing initialization precedes the telemetry producer and public ingress.
@@ -1048,13 +1048,13 @@ void Agent::startScan_()
   m_state->reconnectDelay = m_state->cf.reconnMin;
   if (m_state->scanDir.open(
       ZiFile::append(ZiFile::tmpDir(), m_state->env.pidDir)) != Zi::OK) {
-    startReady_(); // A missing publisher registry is an empty inventory.
+    start_4(); // A missing publisher registry is an empty inventory.
     return;
   }
-  scanBatch_();
+  start_3();
 }
 
-void Agent::scanBatch_()
+void Agent::start_3()
 {
   unsigned budget = m_state->cf.fanoutBatch;
   while (budget--) {
@@ -1062,10 +1062,10 @@ void Agent::scanBatch_()
     int result = m_state->scanDir.read(name);
     if (result == Zi::EndOfFile) {
       m_state->scanDir.close();
-      startReady_();
+      start_4();
       return;
     }
-    if (result != Zi::OK) { stopRx_(true); return; }
+    if (result != Zi::OK) { stop_0(true); return; }
     unsigned length = name.length();
     if (name == "." || name == ".." || length <= 4 ||
         name.rfind(".pid") != int64_t(length - 4)) continue;
@@ -1075,15 +1075,15 @@ void Agent::scanBatch_()
     if (id != stem) continue;
     (void)Agent_::addPub(m_state, ZuMv(id));
   }
-  m_state->mx->rxRun([this]() { scanBatch_(); });
+  m_state->mx->rxRun([this]() { start_3(); });
 }
 
-void Agent::startReady_()
+void Agent::start_4()
 {
   m_state->telExited = false;
   m_state->mx->run([this]() {
     Agent_::telemetry(m_state);
-    m_state->mx->rxRun([this]() { telDone_(); });
+    m_state->mx->rxRun([this]() { telDone(); });
   }, 3);
   m_credit = 0;
   Agent_::pubGC(m_state);
@@ -1095,10 +1095,10 @@ void Agent::stop_()
 {
   m_credit |= AgentCredit::Closed;
   m_state->stop = 1;
-  m_state->mx->rxRun([this]() { stopRx_(false); });
+  m_state->mx->rxRun([this]() { stop_0(false); });
 }
 
-void Agent::stopRx_(bool failed)
+void Agent::stop_0(bool failed)
 {
   m_state->stop = 1;
   m_state->stopOK = true;
@@ -1126,28 +1126,28 @@ void Agent::stopRx_(bool failed)
         m_state->mx->rxRun([this, failed, ok]() {
           m_state->stopOK &= ok;
           m_state->childrenDrained = true;
-          drain_(failed);
+          stop_1(failed);
         });
       });
     });
   });
 }
 
-void Agent::telDone_()
+void Agent::telDone()
 {
   m_state->telExited = true;
-  drain_(false);
+  stop_1(false);
 }
 
-void Agent::drain_(bool failed)
+void Agent::stop_1(bool failed)
 {
   if (!m_state->childrenDrained || !m_state->telExited ||
       m_state->drainPosted || (m_credit.load_() & AgentCredit::Count)) return;
   m_state->drainPosted = true;
-  clearBatch_(failed);
+  stop_2(failed);
 }
 
-void Agent::clearBatch_(bool failed)
+void Agent::stop_2(bool failed)
 {
   unsigned budget = m_state->cf.fanoutBatch;
   while (budget && m_state->reqs.count_()) {
@@ -1182,7 +1182,7 @@ void Agent::clearBatch_(bool failed)
     --budget;
   }
   if (m_state->reqs.count_() || m_state->pubs.count_()) {
-    m_state->mx->rxRun([this, failed]() { clearBatch_(failed); });
+    m_state->mx->rxRun([this, failed]() { stop_2(failed); });
     return;
   }
   m_state->mx->rxRun([this, failed]() {
@@ -1194,14 +1194,14 @@ void Agent::clearBatch_(bool failed)
         m_state->http.final();
         m_state->mx->ZmEngine<ZmScheduler>::stop([this, failed](bool ok) {
           m_state->stopOK &= ok;
-          closeRuntime_(failed);
+          stop_3(failed);
         });
       });
     });
   });
 }
 
-void Agent::closeRuntime_(bool failed)
+void Agent::stop_3(bool failed)
 {
   // All workers, including the telemetry slot, have joined. Dispose the
   // multiplex on its existing control thread, which detaches its own handle.
@@ -1245,7 +1245,7 @@ void Agent::provisioned(bool ok)
       }
     }
     --m_credit;
-    drain_(false);
+    stop_1(false);
   });
 }
 

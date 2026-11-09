@@ -160,7 +160,7 @@ enum {
   HybridExpandedSize = MLKEM768SeedSize + X25519KeySize
 };
 
-inline bool hybridCombine_(
+inline bool hybridCombine(
   ZuBSpan pq, ZuBSpan x, ZuBSpan ephemeral, ZuBSpan recipient,
   ZuSpan<uint8_t> secret)
 {
@@ -220,7 +220,7 @@ public:
 	{shared + MLKEM768SecretSize, X25519KeySize});
       if (r.template is<ZeException>())
 	return ZuMv(r).template p<ZeException>();
-      if (!hybridCombine_(
+      if (!hybridCombine(
 	{shared, MLKEM768SecretSize},
 	{shared + MLKEM768SecretSize, X25519KeySize},
 	ephPub, xPublic, secret))
@@ -280,7 +280,7 @@ friend inline ZuStringT<"Ztls.SK_MLKEM768_X25519"> ZmNHeapID(SK_MLKEM768_X25519 
     if (!Backend::pkey_x25519_agree(xKey, ephPub,
 	{shared + MLKEM768SecretSize, X25519KeySize}))
       return ZeEXCEPT(Error, "ZtlsKEM", "hybrid X25519 agreement failed");
-    if (!hybridCombine_(
+    if (!hybridCombine(
 	{shared, MLKEM768SecretSize},
 	{shared + MLKEM768SecretSize, X25519KeySize},
 	ephPub, xPublic, secret))

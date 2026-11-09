@@ -340,7 +340,7 @@ static void pending()
   Engine tx;
   tx.loadResult = TxLoad::Pending;
   tx.start();
-  ZuCheck(!tx.output.length() && tx.loading_() && tx.controlBytes_() && tx.next_() == 1);
+  ZuCheck(!tx.output.length() && tx.loading() && tx.controlBytes_() && tx.next_() == 1);
   auto ticket = tx.loadTicket;
   auto e = tx.event(State::Logon, SessionAction::SendHeartbeat);
   ZuCheck(tx.send(e, SessionAction::SendHeartbeat) == TxSelect::Accepted);
@@ -418,7 +418,7 @@ static void replayBeforeLogon()
   tx.start();
   tx.apply_(tx.event(State::Established, SessionAction::Ready));
   ZuCheck(tx.sendOrder(3) == TxSelect::Accepted); tx.drain();
-  ZuCheck(tx.acknowledge_(1, 1, 3)); tx.drain();
+  ZuCheck(tx.acknowledge(1, 1, 3)); tx.drain();
   tx.block = true;
   ZuCheck(tx.replay_(1, 1, 2, 2)); tx.drain();
   tx.apply_(tx.event(State::Closing, SessionAction::Close));
@@ -666,7 +666,7 @@ static void acknowledgement()
   ZuCheck(tx.apply_(e) == TxSelect::Invalid && tx.acks.length() == 1);
   --e.epoch; ++e.connection;
   ZuCheck(tx.apply_(e) == TxSelect::Invalid && tx.acks.length() == 1);
-  ZuCheck(!tx.acknowledge_(1, 2, 3) && !tx.replay_(1, 2, 1, 2) &&
+  ZuCheck(!tx.acknowledge(1, 2, 3) && !tx.replay_(1, 2, 1, 2) &&
     tx.acks.length() == 1 && tx.acknowledged_() == 3);
 
 }
@@ -851,12 +851,12 @@ static void earlyBinding()
   tx.loadResult = TxLoad::Pending;
   ZuCheck(tx.queueOrder(101)); tx.drain();
   auto ticket = tx.loadTicket;
-  ZuCheck(tx.loading_() && tx.next_() == 2);
+  ZuCheck(tx.loading() && tx.next_() == 2);
   ZuCheck(tx.bind_(tx.event(State::Disconnected, 0, 2)) == TxSelect::Accepted &&
-    tx.connection_() == 2 && tx.loading_() && tx.sendOrder(102) == TxSelect::Held);
+    tx.connection_() == 2 && tx.loading() && tx.sendOrder(102) == TxSelect::Held);
   tx.loadResult = TxLoad::Accepted;
   ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted); tx.drain();
-  ZuCheck(!tx.loading_() && tx.next_() == 3 && tx.output.length() == 1 &&
+  ZuCheck(!tx.loading() && tx.next_() == 3 && tx.output.length() == 1 &&
     tx.selections.length() == 1 && tx.selections[0].body->id() == 101 &&
     tx.selections[0].result == TxSelect::Accepted && !tx.released.length());
   tx.sent_(tx.output[0].body, tx.output[0].context, false);
@@ -916,11 +916,11 @@ static void initialReset()
   e.nextEpoch = 1;
   ZuCheck(fresh.apply_(e) == TxSelect::Accepted && fresh.next_() == 1);
   Engine pending; pending.loadResult = TxLoad::Pending; pending.start();
-  ZuCheck(pending.loading_() && pending.next_() == 1);
+  ZuCheck(pending.loading() && pending.next_() == 1);
   pending.apply_(pending.event(State::Closing, SessionAction::Close));
   e = pending.event(State::Logon, 0, 2); e.nextEpoch = 1;
   ZuCheck(pending.apply_(e) == TxSelect::Invalid && pending.connection_() == 1 &&
-    pending.loading_() && pending.next_() == 1 && !pending.output.length());
+    pending.loading() && pending.next_() == 1 && !pending.output.length());
 }
 
 static void applicationQueue()
@@ -957,7 +957,7 @@ static void queueAssociation()
   tx.loadResult = TxLoad::Pending;
   ZuCheck(tx.queueOrder(101) && tx.queueOrder(102)); tx.drain();
   auto ticket = tx.loadTicket;
-  ZuCheck(tx.loading_() && tx.next_() == 2 && tx.appQueue.count_() == 1 &&
+  ZuCheck(tx.loading() && tx.next_() == 2 && tx.appQueue.count_() == 1 &&
     !tx.selections.length() && tx.output.length() == 1);
   auto e = tx.event(State::Established, SessionAction::SendHeartbeat);
   ZuCheck(tx.send(e, SessionAction::SendHeartbeat) == TxSelect::Accepted); tx.drain();
@@ -1008,8 +1008,8 @@ static void queueReplacement()
   ZuCheck(tx.queueOrder(101)); tx.drain();
   auto ticket = tx.loadTicket;
   auto next = tx.next_();
-  ZuCheck(tx.loading_() && tx.apply_(tx.event(State::Logon, 0, 2)) == TxSelect::Accepted);
-  ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted && !tx.loading_() &&
+  ZuCheck(tx.loading() && tx.apply_(tx.event(State::Logon, 0, 2)) == TxSelect::Accepted);
+  ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted && !tx.loading() &&
     !tx.released.length() && tx.next_() == next + 1 && tx.selections.length() == 1);
   tx.loadResult = TxLoad::Accepted;
   auto e = tx.event(State::Logon, SessionAction::SendLogon, 2);
@@ -1028,7 +1028,7 @@ static void queueClose(bool physical = false)
   tx.loadResult = TxLoad::Pending;
   ZuCheck(tx.queueOrder(101)); tx.drain(); auto ticket = tx.loadTicket;
   if (physical) {
-    tx.close_(2); ZuCheck(tx.loading_());
+    tx.close_(2); ZuCheck(tx.loading());
     tx.close_(1); tx.close_(1);
   } else tx.apply_(tx.event(State::Closing, SessionAction::Close));
   tx.loadResult = TxLoad::Accepted;
@@ -1062,7 +1062,7 @@ static void queueBounds()
   ZuCheck(tx.queueOrder(101)); tx.drain();
   ZuCheck(tx.selections.length() == 1 && tx.selections[0].body->id() == 101 &&
     tx.selections[0].result == TxSelect::Overload && tx.next_() == 2 && tx.output.length() == 1);
-  ZuCheck(tx.task == tx.tasks.length() && !tx.loading_());
+  ZuCheck(tx.task == tx.tasks.length() && !tx.loading());
 }
 
 static PeerReject rejectReport(uint64_t refSeqNo = 2)
@@ -1149,7 +1149,7 @@ static void managedAbort()
   tx.apply_(tx.event(State::Established, SessionAction::Ready));
   ZuCheck(tx.sendOrder(17) == TxSelect::Accepted && tx.next_() == 3);
   tx.close_(1);
-  ZuCheck(!tx.abortTx_(2, 2) && tx.abortTx_(1, 2) && !tx.abortTx_(1, 2));
+  ZuCheck(!tx.abortTx(2, 2) && tx.abortTx(1, 2) && !tx.abortTx(1, 2));
   ZuCheck(tx.next_() == 3 && !tx.queuedBytes_() && !tx.retained_());
   tx.start(2);
   ZuCheck(tx.output.length() == 3 && tx.output[1].body->msgType() == "A" &&

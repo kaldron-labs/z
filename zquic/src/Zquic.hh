@@ -512,7 +512,7 @@ public:
     return ZuMv(*this);
   }
   HubParams &&heartBeat(ZuTime v) {
-    m_heartBeat = normalizeHeartBeat_(v);
+    m_heartBeat = normalizeHeartBeat(v);
     return ZuMv(*this);
   }
   HubParams &&maxUDP(unsigned v) { m_maxUDP = v; return ZuMv(*this); }
@@ -526,7 +526,7 @@ public:
     return ZuMv(*this);
   }
   HubParams &&migCIDRes(unsigned v) {
-    m_migCIDRes = clampMigCIDRes_(v);
+    m_migCIDRes = clampMigCIDRes(v);
     return ZuMv(*this);
   }
   HubParams &&migCloseOnFail(bool v) {
@@ -605,11 +605,11 @@ public:
   ErrorFn &errorFn() { return m_errorFn; }
 
 private:
-  static unsigned clampMigCIDRes_(unsigned v) {
+  static unsigned clampMigCIDRes(unsigned v) {
     enum { Max = LocalCIDLimit - 1 };
     return v > Max ? Max : v;
   }
-  static ZuTime normalizeHeartBeat_(ZuTime v) {
+  static ZuTime normalizeHeartBeat(ZuTime v) {
     if (!*v || v == ZuTime{0}) return {};
     if (v < ZuTime{0} || v.nsec() < 0 || v.nsec() >= 1000000000)
       throw ZeEXCEPT(Error, "Zquic",
@@ -886,7 +886,7 @@ protected:
 	  !m_tokenSecret &&
 	  !AddressToken::generateSecret(m_tokenSecret))
 	return false;
-      init_alpn_(params.alpn());
+      init_alpn(params.alpn());
       if (m_qlogParams.enabled() &&
 	  !ZquicLogger::init(m_qlogTrace, m_qlogParams, vantage))
 	return false;
@@ -922,7 +922,7 @@ protected:
   }
 
   void start_() {
-    startQLog_([this]() {
+    startQLog([this]() {
       warmup_();
       this->started(true);
     });
@@ -937,7 +937,7 @@ protected:
   }
 
   void stop_1() {		// Tx thread - stop qlog
-    stopQLog_([this]() { stop_2(true); });
+    stopQLog([this]() { stop_2(true); });
   }
 
   void stop_2(bool ok) {	// qlog callback - complete stop
@@ -957,7 +957,7 @@ protected:
   }
 
   template <typename L>
-  void startQLog_(L &&l) {
+  void startQLog(L &&l) {
     if (!m_qlogParams.enabled()) { l(); return; }
     ZquicLogger::start([this, l = ZuFwd<L>(l)](bool) mutable {
       rxRun(ZuMv(l));
@@ -965,7 +965,7 @@ protected:
   }
 
   template <typename L>
-  void stopQLog_(L &&l) {
+  void stopQLog(L &&l) {
     if (!m_qlogParams.enabled()) { l(); return; }
     ZquicLogger::close(m_qlogTrace, [this, l = ZuFwd<L>(l)]() mutable {
       ZquicLogger::stopIdle([this, l = ZuMv(l)](bool) mutable {
@@ -977,7 +977,7 @@ protected:
   template <typename Link>
   void disconnected(Link *, bool) { }
   template <typename Link>
-  void retireLinkRoutes_(Link *) { }
+  void retireLinkRoutes(Link *) { }
   template <typename Link>
   bool earlyData(
     Link *, ZuBSpan &, const TransportParams *&, ZuBSpan &) {
@@ -1074,7 +1074,7 @@ private:
     return true;
   }
 
-  void init_alpn_(const ParamStrings &alpn) {
+  void init_alpn(const ParamStrings &alpn) {
     m_alpn = {};
     m_alpnData = {};
     if (!alpn) return;
@@ -1228,7 +1228,7 @@ template <typename, typename, typename, typename>
 friend class SrvLink;
 friend ZmEngine<App>;
 
-  ~Server() { finalTicketKey_(); }
+  ~Server() { finalTicketKey(); }
 
   bool init(ServerParams params) {
     if (!params.certPath() || !params.keyPath()) {
@@ -1248,7 +1248,7 @@ friend ZmEngine<App>;
     m_links = nullptr;
     m_routes.final();
     Base::final();
-    finalTicketKey_();
+    finalTicketKey();
   }
 
   bool listening() const { return Endpoint::listening(); }
@@ -1329,28 +1329,28 @@ friend ZmEngine<App>;
   ZmRef<ZiIOBuf> allocTxPkt_() {
     return Endpoint::allocTxPkt();
   }
-  ptls_encrypt_ticket_t *ticketEncryptCB_() {
+  ptls_encrypt_ticket_t *ticketEncryptCB() {
     return Ztls::Backend::ticket_encrypt_cb(m_ticketKey);
   }
   bool sendPkt_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     if (!this->app()->sendPkt(buf)) return true;
     return Endpoint::send(ZuMv(buf), ZuMv(addr));
   }
-  bool sendPktRaw_(
+  bool sendPktRaw(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
       EcnMark::T ecn = EcnMark::NotECT, bool priority = false) {
     return Endpoint::send(ZuMv(buf), ZuMv(addr), ecn, priority);
   }
-  void tombstoneRoute_(const CxnID &id) {
+  void tombstoneRoute(const CxnID &id) {
     m_routes.tombstone(id);
   }
-  void refreshLinkRoutes_(Link *link) {
+  void refreshLinkRoutes(Link *link) {
     if (this->state() == ZmEngineState::Running && link)
       link->installRoutes_(m_routes);
   }
 
 public:
-  void endpointDatagram_(Datagram d) {
+  void endpointDatagram(Datagram d) {
     this->rxRun([this, d = ZuMv(d)]() mutable {
       received_(ZuMv(d));
     });
@@ -1368,7 +1368,7 @@ public:
       this->app()->listening();
     });
   }
-  void endpointFailed_(bool transient) {
+  void endpointFailed(bool transient) {
     this->rxRun([this, transient]() {
       failed_0(transient);
     });
@@ -1411,11 +1411,11 @@ private:
     ResetToken resetToken;
     Link *link = route_(d, &routedDCID, &resetToken);
     if (!link) {
-      sendStatelessReset_(d, resetToken);
+      sendStatelessReset(d, resetToken);
       Endpoint::failure();
       return;
     }
-    if (link->receivedRouted_(ZuMv(d), routedDCID))
+    if (link->receivedRouted(ZuMv(d), routedDCID))
       link->installRoutes_(m_routes);
     else
       link->disconnect();
@@ -1426,35 +1426,35 @@ private:
       ResetToken *resetToken = nullptr) {
     if (!d.buf || !d.buf->length) return nullptr;
     auto packet = d.buf->cspan();
-    if (Pkt::isLong(packet)) return routeLong_(d, packet);
-    return routeShort_(d, packet, routedDCID, resetToken);
+    if (Pkt::isLong(packet)) return routeLong(d, packet);
+    return routeShort(d, packet, routedDCID, resetToken);
   }
 
-  Link *routeLong_(const Datagram &d, ZuBSpan packet) {
+  Link *routeLong(const Datagram &d, ZuBSpan packet) {
     LongHdr h;
     if (Pkt::parseLong(packet, h) < 0) return nullptr;
     if (!VersionNeg::supported(h.version)) {
-      sendVerNeg_(h, d.addr);
+      sendVerNeg(h, d.addr);
       return nullptr;
     }
     if (Link *link = m_routes.find(h.dcid)) return link;
     if (h.type != PktType::Initial) return nullptr;
     InitialInfo info{h, d.addr, d.buf->length};
-    if (!validateInitial_(info, packet)) {
+    if (!validateInitial(info, packet)) {
       if (app()->retryAddrValidate())
-	sendRetry_(h, d.addr);
+	sendRetry(h, d.addr);
       return nullptr;
     }
     return accept_(info);
   }
 
-  Link *routeShort_(
+  Link *routeShort(
       const Datagram &, ZuBSpan packet, CxnID *routedDCID,
       ResetToken *resetToken) {
     return m_routes.matchShort(packet, routedDCID, resetToken);
   }
 
-  bool sendStatelessReset_(const Datagram &d, const ResetToken &token) {
+  bool sendStatelessReset(const Datagram &d, const ResetToken &token) {
     if (!d.buf || !d.buf->length) return false;
     auto packet = d.buf->cspan();
     if (Pkt::isLong(packet) || !token.valid()) return false;
@@ -1505,12 +1505,12 @@ private:
 	time);
     }));
     Link *ptr = link.ptr();
-    ptr->acceptInitialInfo_(info);
-    if (!addLink_(ZuMv(link))) return nullptr;
+    ptr->acceptInitialInfo(info);
+    if (!addLink(ZuMv(link))) return nullptr;
     return ptr;
   }
 
-  bool addLink_(LinkRef link) {
+  bool addLink(LinkRef link) {
     if (!link) return false;
     if (this->state() != ZmEngineState::Running) return false;
     Link *ptr = link.ptr();
@@ -1529,7 +1529,7 @@ public:
     m_links->del(link);
   }
 
-  void retireLinkRoutes_(Link *link) {
+  void retireLinkRoutes(Link *link) {
     if (this->state() == ZmEngineState::Running && link)
       link->retireRoutes_(m_routes);
   }
@@ -1541,7 +1541,7 @@ private:
 	ZmHashParams().bits(5).loadFactor(1).cBits(3)};
     m_routes.init();
     m_stopCount = 0;
-    Base::startQLog_([this]() { start_1(); });
+    Base::startQLog([this]() { start_1(); });
   }
 
   void start_1() {
@@ -1550,7 +1550,7 @@ private:
     uint16_t localPort = this->app()->localPort();
     if (!Endpoint::init(this->mx(), this->rxPktAllocator(), this->txPktAllocator()) ||
 	!Endpoint::openUDP(PathMode::ServerUnconnected, localIP, localPort)) {
-      Base::stopQLog_([this]() { this->started(false); });
+      Base::stopQLog([this]() { this->started(false); });
     }
   }
 
@@ -1581,7 +1581,7 @@ private:
     });
   }
 
-  bool sendVerNeg_(const LongHdr &h, ZiSockAddr addr) {
+  bool sendVerNeg(const LongHdr &h, ZiSockAddr addr) {
     ZmRef<ZiIOBuf> buf = allocTxPkt_();
     int n = VersionNeg::write(
       buf->data_(), buf->size, h.scid, h.dcid);
@@ -1607,7 +1607,7 @@ private:
     return ZuBSpan{packet.data() + h.tokenOffset, unsigned(h.tokenLength)};
   }
 
-  bool validateInitial_(InitialInfo &info, ZuBSpan packet) {
+  bool validateInitial(InitialInfo &info, ZuBSpan packet) {
     if (!app()->retryAddrValidate()) return true;
     ZuBSpan token = initialToken_(packet, info.header);
     if (!token) {
@@ -1770,7 +1770,7 @@ private:
     return true;
   }
 
-  bool sendRetry_(const LongHdr &h, ZiSockAddr addr) {
+  bool sendRetry(const LongHdr &h, ZiSockAddr addr) {
     CxnID retrySCID;
     TokenBytes token;
     if (!CxnIDGen::random(retrySCID) ||
@@ -1809,7 +1809,7 @@ private:
     return sent;
   }
 
-  void finalTicketKey_() {
+  void finalTicketKey() {
     if (!m_ticketKey) return;
     Ztls::Backend::ticket_key_free(m_ticketKey);
     m_ticketKey = nullptr;

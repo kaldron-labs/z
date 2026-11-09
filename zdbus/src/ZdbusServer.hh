@@ -96,8 +96,8 @@ public:
     uint64_t id, CxnSendFn done = {});
 
 private:
-  void connected_(ZuCSpan);
-  void nameReply_(CallResult);
+  void connected_0(ZuCSpan);
+  void connected_1(CallResult);
   void method_(ZmRef<ZiIOBuf>, FrameInfo);
 
 private:

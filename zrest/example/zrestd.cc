@@ -1086,10 +1086,10 @@ private:
     send_<Response>(token, request, failure.ptr());
   }
 
-  bool issuePair_(Application &, ZuCSpan, ZuCSpan, ZuCSpan, ZuCSpan,
+  bool issuePair(Application &, ZuCSpan, ZuCSpan, ZuCSpan, ZuCSpan,
     ZuCSpan, OAuthTokenRes &, OAuthString = {});
   template <typename Token, typename Request>
-  void redirectError_(Token *, const Request &, ZuCSpan, ZuCSpan, ZuCSpan,
+  void redirectError(Token *, const Request &, ZuCSpan, ZuCSpan, ZuCSpan,
     ZuCSpan);
   void event_(ZuCSpan);
   void fail_();
@@ -1150,7 +1150,7 @@ void App::request(Req *, const Req &parser,
 }
 
 template <typename Token, typename Request>
-void App::redirectError_(Token *token, const Request &request,
+void App::redirectError(Token *token, const Request &request,
     ZuCSpan redirect, ZuCSpan state, ZuCSpan issuerURL, ZuCSpan code)
 {
   ZmRef<Redirect> response = new Redirect{};
@@ -1179,7 +1179,7 @@ void App::authorize(
     request.codeChallengeMethod == "S256";
   if (!valid) {
     if (redirectOK)
-      redirectError_(token, parser, request.redirectURI, request.state,
+      redirectError(token, parser, request.redirectURI, request.state,
         state.issuerURL, "invalid_request");
     else
       error_<OAuthBadRequest>(token, parser,
@@ -1322,7 +1322,7 @@ void App::authorize(
   event_("authorize");
 }
 
-bool App::issuePair_(Application &application, ZuCSpan issuerURL,
+bool App::issuePair(Application &application, ZuCSpan issuerURL,
     ZuCSpan audience, ZuCSpan subject, ZuCSpan clientID, ZuCSpan scope,
     OAuthTokenRes &response, OAuthString family)
 {
@@ -1408,7 +1408,7 @@ void App::token(Token *token, const TokenParser &parser,
     state.application->codes.del(key);
     state.application->codeExpiries.del(ExpiryKey{grant.expires, key});
     if (!state.application->active ||
-        !issuePair_(*state.application, state.issuerURL, state.audience,
+        !issuePair(*state.application, state.issuerURL, state.audience,
           grant.subject, grant.clientID, grant.scope, *response)) {
       error_<OAuthInternalError>(token, parser, "server_error",
         "token issuance failed");
@@ -1441,7 +1441,7 @@ void App::token(Token *token, const TokenParser &parser,
     RefreshGrant grant = node->val();
     node->val().active = false;
     if (!state.application->active ||
-        !issuePair_(*state.application, state.issuerURL, state.audience,
+        !issuePair(*state.application, state.issuerURL, state.audience,
           grant.subject, grant.clientID, scope, *response, grant.family)) {
       error_<OAuthInternalError>(token, parser, "server_error",
         "token issuance failed");

@@ -231,7 +231,7 @@ struct RequestBuilder :
 };
 
 #ifndef _WIN32
-int listenLoopback_(unsigned &port)
+int listenLoopback(unsigned &port)
 {
   port = 0;
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -259,7 +259,7 @@ int listenLoopback_(unsigned &port)
   return fd;
 }
 
-bool sendAll_(int fd, const uint8_t *data, unsigned len)
+bool sendAll(int fd, const uint8_t *data, unsigned len)
 {
   unsigned o = 0;
   while (o < len) {
@@ -284,7 +284,7 @@ bool readRequest_(int fd, uint8_t *buf, unsigned size, unsigned &len)
   return false;
 }
 
-bool recvAll_(int fd, uint8_t *buf, unsigned size, unsigned &len)
+bool recvAll(int fd, uint8_t *buf, unsigned size, unsigned &len)
 {
   len = 0;
   while (len < size) {
@@ -296,7 +296,7 @@ bool recvAll_(int fd, uint8_t *buf, unsigned size, unsigned &len)
   return false;
 }
 
-bool localhostHost_(ZuCSpan host)
+bool localhostHost(ZuCSpan host)
 {
   if (host == "localhost") return true;
   if (host.length() > 10 &&
@@ -324,7 +324,7 @@ int connectLoopback_(unsigned port)
   return fd;
 }
 
-pid_t startZhttpH1Server_(
+pid_t startZhttpH1Server(
     int listener, ZuCSpan expectedPath, ZuCSpan responseBody)
 {
   pid_t pid = ::fork();
@@ -348,7 +348,7 @@ pid_t startZhttpH1Server_(
   if (reqState != Zhttp::H1::ParserState::Complete ||
       req.method != Zhttp::Method::GET ||
       req.path != expectedPath ||
-      !localhostHost_(req.host)) {
+      !localhostHost(req.host)) {
     ::close(fd);
     _exit(4);
   }
@@ -359,20 +359,20 @@ pid_t startZhttpH1Server_(
   resp.begin(tx);
   tx << responseBody;
   resp.finish(tx);
-  bool sent = sendAll_(fd, tx.buf->data(), tx.buf->length);
+  bool sent = sendAll(fd, tx.buf->data(), tx.buf->length);
   ::shutdown(fd, SHUT_RDWR);
   ::close(fd);
   _exit(sent ? 0 : 5);
 }
 
-bool waitServerOK_(pid_t pid)
+bool waitServerOK(pid_t pid)
 {
   int status = 0;
   return ::waitpid(pid, &status, 0) == pid &&
     Zhttp::Test::systemOK(status);
 }
 
-bool runCurlZhttpH1_(unsigned port, ZuCSpan expectedBody)
+bool runCurlZhttpH1(unsigned port, ZuCSpan expectedBody)
 {
   Zhttp::Test::TempDir temp;
   if (!temp.init("ZhttpFallbackCurl")) return false;
@@ -394,10 +394,10 @@ bool runCurlZhttpH1_(unsigned port, ZuCSpan expectedBody)
   return Zhttp::Test::systemOK(::system(cmd.data()));
 }
 #else
-int listenLoopback_(unsigned &port) { port = 0; return -1; }
-pid_t startZhttpH1Server_(int, ZuCSpan, ZuCSpan) { return -1; }
-bool waitServerOK_(pid_t) { return false; }
-bool runCurlZhttpH1_(unsigned, ZuCSpan) { return false; }
+int listenLoopback(unsigned &port) { port = 0; return -1; }
+pid_t startZhttpH1Server(int, ZuCSpan, ZuCSpan) { return -1; }
+bool waitServerOK(pid_t) { return false; }
+bool runCurlZhttpH1(unsigned, ZuCSpan) { return false; }
 #endif
 
 } // namespace ZhttpFallbackTest_
@@ -417,12 +417,12 @@ void testCurlZhttpHttp11Fallback()
   ZuTestScope(testCurlZhttpHttp11Fallback);
 
   unsigned port = 0;
-  int listener = listenLoopback_(port);
+  int listener = listenLoopback(port);
   ZuCHECK(listener >= 0 && port,
     "curl->Zhttp fallback HTTP/1.1 listener setup failed");
   if (listener < 0) return;
 
-  pid_t pid = startZhttpH1Server_(
+  pid_t pid = startZhttpH1Server(
     listener, "/zhttp-fallback", "zhttp-h1-ok");
   ZuCHECK(pid > 0, "curl->Zhttp fallback HTTP/1.1 server fork failed");
   if (pid <= 0) {
@@ -431,23 +431,23 @@ void testCurlZhttpHttp11Fallback()
   }
   ::close(listener);
 
-  ZuCHECK(runCurlZhttpH1_(port, "zhttp-h1-ok"),
+  ZuCHECK(runCurlZhttpH1(port, "zhttp-h1-ok"),
     "curl HTTP/1.1 request to local Zhttp fallback route failed");
-  ZuCHECK(waitServerOK_(pid),
+  ZuCHECK(waitServerOK(pid),
     "curl->Zhttp fallback server did not parse request and send response");
 }
 
-void testZhttpClientHttp11Fallback()
+void cliHttp11Fallback()
 {
-  ZuTestScope(testZhttpClientHttp11Fallback);
+  ZuTestScope(cliHttp11Fallback);
 
   unsigned port = 0;
-  int listener = listenLoopback_(port);
+  int listener = listenLoopback(port);
   ZuCHECK(listener >= 0 && port,
     "Zhttp client fallback HTTP/1.1 listener setup failed");
   if (listener < 0) return;
 
-  pid_t pid = startZhttpH1Server_(
+  pid_t pid = startZhttpH1Server(
     listener, "/zhttp-fallback", "zhttp-h1-ok");
   ZuCHECK(pid > 0, "Zhttp client fallback HTTP/1.1 server fork failed");
   if (pid <= 0) {
@@ -459,7 +459,7 @@ void testZhttpClientHttp11Fallback()
   int fd = connectLoopback_(port);
   ZuCHECK(fd >= 0, "Zhttp client fallback connect failed");
   if (fd < 0) {
-    waitServerOK_(pid);
+    waitServerOK(pid);
     return;
   }
 
@@ -468,13 +468,13 @@ void testZhttpClientHttp11Fallback()
     ZmSingleton<typename IOBufAlloc::Allocator>::instance(), nullptr, 0}};
   req.begin(tx);
   req.finish(tx);
-  ZuCHECK(sendAll_(fd, tx.buf->data(), tx.buf->length),
+  ZuCHECK(sendAll(fd, tx.buf->data(), tx.buf->length),
     "Zhttp client fallback request send failed");
   ::shutdown(fd, SHUT_WR);
 
   uint8_t respBuf[FallbackBufSize];
   unsigned respLen = 0;
-  ZuCHECK(recvAll_(fd, respBuf, sizeof(respBuf), respLen) && respLen,
+  ZuCHECK(recvAll(fd, respBuf, sizeof(respBuf), respLen) && respLen,
     "Zhttp client fallback response receive failed");
   ::close(fd);
 
@@ -501,7 +501,7 @@ void testZhttpClientHttp11Fallback()
       rx.bodyData == "zhttp-h1-ok" &&
       !stream,
     "Zhttp client fallback response parse mismatch");
-  ZuCHECK(waitServerOK_(pid),
+  ZuCHECK(waitServerOK(pid),
     "Zhttp client fallback server did not parse request and send response");
 }
 
@@ -512,5 +512,5 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testInteropPrerequisites);
   ZuTestCall(testCurlZhttpHttp11Fallback);
-  ZuTestCall(testZhttpClientHttp11Fallback);
+  ZuTestCall(cliHttp11Fallback);
 }

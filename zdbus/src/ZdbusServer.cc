@@ -63,7 +63,7 @@ void Server::init(ZmScheduler *sched, unsigned rxSid, unsigned txSid,
   if (!m_params.routeLimit) m_params.routeLimit = 1;
   m_cli = new ServerClient{};
   m_cli->cli.init(sched, rxSid, txSid, ZuMv(addr), params.cli,
-    [this](ZuCSpan uniqueName) { connected_(uniqueName); },
+    [this](ZuCSpan uniqueName) { connected_0(uniqueName); },
     ZuMv(signalFn),
     [this](ZmRef<ZiIOBuf> frame, FrameInfo info) {
       method_(ZuMv(frame), info);
@@ -150,17 +150,17 @@ void Server::unsubscribe(ZuCSpan path, ZuCSpan interface, ZuCSpan member,
   m_cli->cli.unsubscribe(path, interface, member, id, ZuMv(done));
 }
 
-void Server::connected_(ZuCSpan)
+void Server::connected_0(ZuCSpan)
 {
   m_cli->cli.call([this](uint32_t serial) {
     NameArgs args{m_name, 0};
     NameReq req;
     req.init(&args);
     return req.build(serial);
-  }, [this](CallResult result) { nameReply_(ZuMv(result)); });
+  }, [this](CallResult result) { connected_1(ZuMv(result)); });
 }
 
-void Server::nameReply_(CallResult result)
+void Server::connected_1(CallResult result)
 {
   // Stop/disconnect cancels the in-flight RequestName; it is not a bad reply.
   if (result.error == ClientError::Stopped ||

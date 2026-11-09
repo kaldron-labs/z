@@ -544,12 +544,12 @@ protected:
   bool send_(RequestRecord *, bool);
   bool gap_();
   void *clientContext() const;
-  void idleTx_();
+  void idleTx();
   void scheduleSend();
   void scheduleResend();
   void scheduleArchive();
-  void cancelQueued_(RequestRef);
-  void cancelActive_(unsigned, const void *);
+  void cancelQueued(RequestRef);
+  void cancelActive(unsigned, const void *);
 
 private:
   PoolImpl &impl() { return *m_impl; }
@@ -618,13 +618,13 @@ protected:
 
 private:
   void start_();
-  void startBatch_(unsigned);
-  void startPools_();
+  void start_0(unsigned);
+  void start_1();
   void stop_();
   void *context() const { return m_app; }
-  void poolIdle_(unsigned);
-  void poolResult_(bool);
-  void poolActive_(bool);
+  void poolIdle(unsigned);
+  void poolResult(bool);
+  void poolActive(bool);
 
   using Pools = ZtArray<PoolRef, ZtArrayHeapID<"Zhttp.Client.Pools">>;
   using Idle = ZtArray<uint8_t, ZtArrayHeapID<"Zhttp.Client.Idle">>;
@@ -712,12 +712,12 @@ public:
   void cancel(typename Tx::Key key) {
     this->txRun([this, key]() {
       if (auto request = Tx::abort(key)) {
-	cancelQueued_(bindRequest(ZuMv(request), requestCatalog()));
+	cancelQueued(bindRequest(ZuMv(request), requestCatalog()));
 	return;
       }
       this->rxRun([this, key]() {
 	auto active = m_activeReqs->findPtr(key);
-	cancelActive_(active ? active->data().slot : NullSlot, &key);
+	cancelActive(active ? active->data().slot : NullSlot, &key);
       });
     });
   }
@@ -737,9 +737,9 @@ public:
   void rescheduleSend() { scheduleSend(); }
   void rescheduleResend() { scheduleResend(); }
   void rescheduleArchive() { scheduleArchive(); }
-  void idleSend() { idleTx_(); }
-  void idleResend() { idleTx_(); }
-  void idleArchive() { idleTx_(); }
+  void idleSend() { idleTx(); }
+  void idleResend() { idleTx(); }
+  void idleArchive() { idleTx(); }
   void idle() { }
 
 private:

@@ -70,7 +70,7 @@ static void catalogTest()
 static void idempotentTest()
 {
   ZuTestScope(idempotent);
-  Zmcp::ToolCallRequestMessage<Catalog> message;
+  Zmcp::ToolCallReqMsg<Catalog> message;
   message.params.arguments() = Zmcp::ToolArg<Add>{AddReq{2, 3}};
   ZuCheck(message.idempotent());
   message.params.arguments() = Zmcp::ToolArg<Mul>{MulReq{2, 3}};

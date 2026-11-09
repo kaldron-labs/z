@@ -206,24 +206,24 @@ private:
   Work work_();
   void workDone_();
   void start_();
-  void startOwner_();
+  void start_0();
   void stop_();
-  void postDrain_();
+  void stop_0();
   template <typename L> void post_(L &&l) {
     m_requests->scheduler()->run(ZuFwd<L>(l), m_requests->sid());
   }
 
   void app_(const Work &, AppID, AppServerFn);
   void policy_(const Work &, AppServer, AppServerFn);
-  void authorize_(const Work &, AppServer, String, String, ServerFn);
+  void authorize_0(const Work &, AppServer, String, String, ServerFn);
   void login_(const Work &, AppServer, String, ServerFn);
   void login_(const Work &, AppServer, String, String, ServerFn);
   void consent_(const Work &, AppServer, String, String, ServerFn);
   void logout_(const Work &, AppServer, String, String, ServerFn);
-  void userInfo_(const Work &, AppServer, String, ServerFn);
-  void userInfoVerify_(const Work &, AppServer, String, ServerFn);
-  void passkeyBegin_(const Work &, AppServer, String, ServerFn);
-  void passkeyFinish_(const Work &, AppServer, String, String, String, ServerFn);
+  void userInfo_0(const Work &, AppServer, String, ServerFn);
+  void userInfo_1(const Work &, AppServer, String, ServerFn);
+  void passkeyBegin_0(const Work &, AppServer, String, ServerFn);
+  void passkeyFinish_0(const Work &, AppServer, String, String, String, ServerFn);
   void oidcCallback_(const Work &, AppServer, String, String, ServerFn);
   int64_t now_() const;
   ZuTime deadline_() const;
@@ -233,14 +233,14 @@ private:
   bool binding_(String &, Bytes &) const;
   bool binding_(String &, String &, Bytes &) const;
   String csrf_(ZuBSpan) const;
-  void passkeyAdmitted_(const Work &, AppServer, PasskeyStart, PasskeyAdmission, Bytes,
+  void passkeyBegin_1(const Work &, AppServer, PasskeyStart, PasskeyAdmission, Bytes,
     String setCookie, ServerFn);
-  void finishGrant_(const Work &, AppServer, Bytes, Bytes, String, ServerFn);
+  void passkeyFinish_1(const Work &, AppServer, Bytes, Bytes, String, ServerFn);
   void sessionReply_(const Work &, Bytes, String, String, uint32_t, uint32_t, ServerFn);
   void userInfo_(const Work &, String, ServerFn);
-  void userInfo_(const Work &, Principal, ServerFn);
-  void authorizeReply_(const Work &, int, AuthorizeResult, String, ServerFn);
-  void sessionAuthorize_(
+  void userInfo_2(const Work &, Principal, ServerFn);
+  void authorize_2(const Work &, int, AuthorizeResult, String, ServerFn);
+  void authorize_1(
     const Work &, AuthorizeResult, Bytes, String, String, uint32_t, ServerFn);
 
   DB		*m_db = nullptr;

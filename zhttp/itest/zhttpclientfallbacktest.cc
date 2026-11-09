@@ -32,7 +32,7 @@
 #include <zlib/ZhttpDiscovery.hh>
 
 #include "ZhttpTestUtil.hh"
-#include "ZhttpITestPorts.hh"
+#include "zhttpitestports.hh"
 
 using namespace ZuTestUtil;
 

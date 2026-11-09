@@ -24,7 +24,7 @@
 
 #include "../../zquic/test/ZquicInteropTest.hh"
 
-#include "ZmcpITestPorts.hh"
+#include "zmcpitestports.hh"
 
 #include "zmcpitestbatch.hh"
 
@@ -80,8 +80,8 @@ struct App {
   ZmSemaphore called_;
   ZmSemaphore sessionClosed_;
   ZmFn<bool()> complete_;
-  ZmFn<bool()> complete1_;
-  ZmFn<bool()> complete2_;
+  ZmFn<bool()> complete1;
+  ZmFn<bool()> complete2;
   unsigned failures = 0;
   unsigned cancellations = 0;
   unsigned transportOpens = 0;
@@ -163,8 +163,8 @@ struct App {
 	return;
     }
     switch (request.value) {
-      case 73: complete1_ = ZuMv(complete); break;
-      case 74: complete2_ = ZuMv(complete); break;
+      case 73: complete1 = ZuMv(complete); break;
+      case 74: complete2 = ZuMv(complete); break;
       default: complete_ = ZuMv(complete); break;
     }
     called_.post();
@@ -840,7 +840,7 @@ static void httpTest()
   ZmRef<ZmcpITest::BatchCall> mixedReply = new ZmcpITest::BatchCall{};
   ZuCheck(client.callBatch(ZuMv(mixed), mixedReply));
   app.called_.wait();
-  auto completeMixed = ZuMv(app.complete1_);
+  auto completeMixed = ZuMv(app.complete1);
   ZuCheck(completeMixed && completeMixed());
   mixedReply->done.wait();
   ZuCheck(mixedReply->completions == 1 && !mixedReply->failures);
@@ -1200,16 +1200,16 @@ static void secureTest()
       secondSent = client.call<Echo>(EchoReq{74}, second);
       ZuCheckRT(secondSent);
       if (secondSent) app.called_.wait();
-      ZuCheckRT(bool(app.complete1_) && bool(app.complete2_));
-      ZuCheckRT(app.complete1_ && app.complete1_());
-      ZuCheckRT(app.complete2_ && app.complete2_());
+      ZuCheckRT(bool(app.complete1) && bool(app.complete2));
+      ZuCheckRT(app.complete1 && app.complete1());
+      ZuCheckRT(app.complete2 && app.complete2());
     } else {
-      ZuCheckRT(app.complete1_ && app.complete1_());
+      ZuCheckRT(app.complete1 && app.complete1());
       if (firstSent) first->done.wait();
       secondSent = client.call<Echo>(EchoReq{74}, second);
       ZuCheckRT(secondSent);
       if (secondSent) app.called_.wait();
-      ZuCheckRT(app.complete2_ && app.complete2_());
+      ZuCheckRT(app.complete2 && app.complete2());
     }
     if (firstSent && multiplexed) first->done.wait();
     if (secondSent) second->done.wait();

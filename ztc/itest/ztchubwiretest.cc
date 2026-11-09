@@ -38,7 +38,7 @@
 #include <zlib/ZumURI.hh>
 #include <zlib/Zws.hh>
 
-#include "ZtcControlled.hh"
+#include "ztccontrolled.hh"
 
 namespace ZtcHubWireTest_ {
 

@@ -39,7 +39,7 @@ using CtxHeap = ZmVHeap<
 using BufHeap = ZmVHeap<
   "Ztls.Pico.Buf", ZmVHeap_DefltMin, ZmVHeap_DefltMax, ZiIOBuf_Align>;
 
-constexpr unsigned log2_align_(unsigned value) {
+constexpr unsigned alignBits(unsigned value) {
   unsigned bits = 0;
   while ((1u << bits) < value) ++bits;
   return bits;
@@ -48,7 +48,7 @@ constexpr unsigned log2_align_(unsigned value) {
 ZuAssert((ZiIOBuf_Align & (ZiIOBuf_Align - 1)) == 0,
   "ZiIOBuf_Align must be a power of two");
 
-constexpr unsigned IOBufAlignBits = log2_align_(ZiIOBuf_Align);
+constexpr unsigned IOBufAlignBits = alignBits(ZiIOBuf_Align);
 
 #if defined(__has_feature)
 # if __has_feature(address_sanitizer)
@@ -86,7 +86,7 @@ static void internal_free_(void *ptr)
 #endif
 }
 
-static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
+static void *buffer_alloc(ptls_buffer_t *pbuf, size_t capacity,
     uint8_t align_bits, int tx)
 {
   pbuf->tx = tx ? 1 : 0;
@@ -150,7 +150,7 @@ static void *buffer_alloc_(ptls_buffer_t *pbuf, size_t capacity,
   return newp;
 }
 
-static void buffer_free_(ptls_buffer_t *pbuf, int tx)
+static void buffer_free(ptls_buffer_t *pbuf, int tx)
 {
   (void)tx;
   if (ZuUnlikely(!pbuf || !pbuf->base)) return;
@@ -169,8 +169,8 @@ void install()
   static bool done = false;
   if (done) return;
   done = true;
-  ptls_buffer_alloc = buffer_alloc_;
-  ptls_buffer_free = buffer_free_;
+  ptls_buffer_alloc = buffer_alloc;
+  ptls_buffer_free = buffer_free;
 }
 
 Stats stats()

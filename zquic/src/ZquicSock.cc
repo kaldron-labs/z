@@ -46,22 +46,22 @@ SockPlan Sock::plan(const SockConfig &config)
   return p;
 }
 
-static void diagAttempt_(SockDiag *diag)
+static void diagAttempt(SockDiag *diag)
 {
   if (diag) ++diag->optionsAttempted;
 }
 
-static void diagApplied_(SockDiag *diag)
+static void diagApplied(SockDiag *diag)
 {
   if (diag) ++diag->optionsApplied;
 }
 
-static void diagUnsupported_(SockDiag *diag)
+static void diagUnsupported(SockDiag *diag)
 {
   if (diag) ++diag->optionsUnsupported;
 }
 
-static void diagError_(SockDiag *diag)
+static void diagError(SockDiag *diag)
 {
   if (diag) ++diag->optionErrors;
 }
@@ -75,48 +75,48 @@ bool Sock::initUDP(Zi::Socket s, const SockConfig &config, SockDiag *diag)
   if (config.family == IPFamily::IPv4) {
 #ifdef IP_DONTFRAGMENT
     BOOL yes = TRUE;
-    diagAttempt_(diag);
+    diagAttempt(diag);
     if (::setsockopt(s, IPPROTO_IP, IP_DONTFRAGMENT,
 	  reinterpret_cast<const char *>(&yes), sizeof(yes)))
-      diagError_(diag), ok = false;
+      diagError(diag), ok = false;
     else
-      diagApplied_(diag);
+      diagApplied(diag);
 #else
-    diagUnsupported_(diag);
+    diagUnsupported(diag);
 #endif
 #ifdef IP_MTU_DISCOVER
     DWORD mode = config.probe ? 2U : 1U;
-    diagAttempt_(diag);
+    diagAttempt(diag);
     if (::setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER,
 	  reinterpret_cast<const char *>(&mode), sizeof(mode)))
-      diagError_(diag);
+      diagError(diag);
     else
-      diagApplied_(diag);
+      diagApplied(diag);
 #else
-    diagUnsupported_(diag);
+    diagUnsupported(diag);
 #endif
   } else {
 #ifdef IPV6_DONTFRAG
     BOOL yes = TRUE;
-    diagAttempt_(diag);
+    diagAttempt(diag);
     if (::setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG,
 	  reinterpret_cast<const char *>(&yes), sizeof(yes)))
-      diagError_(diag), ok = false;
+      diagError(diag), ok = false;
     else
-      diagApplied_(diag);
+      diagApplied(diag);
 #else
-    diagUnsupported_(diag);
+    diagUnsupported(diag);
 #endif
 #ifdef IPV6_MTU_DISCOVER
     DWORD mode = config.probe ? 2U : 1U;
-    diagAttempt_(diag);
+    diagAttempt(diag);
     if (::setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER,
 	  reinterpret_cast<const char *>(&mode), sizeof(mode)))
-      diagError_(diag);
+      diagError(diag);
     else
-      diagApplied_(diag);
+      diagApplied(diag);
 #else
-    diagUnsupported_(diag);
+    diagUnsupported(diag);
 #endif
   }
 #else
@@ -132,25 +132,25 @@ bool Sock::initUDP(Zi::Socket s, const SockConfig &config, SockDiag *diag)
       2
 #endif
       ;
-    diagAttempt_(diag);
+    diagAttempt(diag);
     if (::setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER, &mode, sizeof(mode)) < 0)
-      diagError_(diag), ok = false;
+      diagError(diag), ok = false;
     else
-      diagApplied_(diag);
+      diagApplied(diag);
 #else
-    diagUnsupported_(diag);
+    diagUnsupported(diag);
 #endif
 #ifdef IP_RECVERR
     if (config.errorQueue) {
       int yes = 1;
-      diagAttempt_(diag);
+      diagAttempt(diag);
       if (::setsockopt(s, IPPROTO_IP, IP_RECVERR, &yes, sizeof(yes)) < 0)
-	diagError_(diag);
+	diagError(diag);
       else
-	diagApplied_(diag);
+	diagApplied(diag);
     }
 #else
-    if (config.errorQueue) diagUnsupported_(diag);
+    if (config.errorQueue) diagUnsupported(diag);
 #endif
   } else {
 #ifdef IPV6_MTU_DISCOVER
@@ -164,26 +164,26 @@ bool Sock::initUDP(Zi::Socket s, const SockConfig &config, SockDiag *diag)
       2
 #endif
       ;
-    diagAttempt_(diag);
+    diagAttempt(diag);
     if (::setsockopt(
 	  s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &mode, sizeof(mode)) < 0)
-      diagError_(diag), ok = false;
+      diagError(diag), ok = false;
     else
-      diagApplied_(diag);
+      diagApplied(diag);
 #else
-    diagUnsupported_(diag);
+    diagUnsupported(diag);
 #endif
 #ifdef IPV6_RECVERR
     if (config.errorQueue) {
       int yes = 1;
-      diagAttempt_(diag);
+      diagAttempt(diag);
       if (::setsockopt(s, IPPROTO_IPV6, IPV6_RECVERR, &yes, sizeof(yes)) < 0)
-	diagError_(diag);
+	diagError(diag);
       else
-	diagApplied_(diag);
+	diagApplied(diag);
     }
 #else
-    if (config.errorQueue) diagUnsupported_(diag);
+    if (config.errorQueue) diagUnsupported(diag);
 #endif
   }
 #endif

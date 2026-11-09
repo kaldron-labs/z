@@ -67,11 +67,11 @@ public:
   explicit PostedHub(PostedLimits submit = {}, PostedLimits admin = {}) :
     m_submit{submit}, m_admin{admin} { }
 
-  PostedIngress &fixSubmitRx_() {
+  PostedIngress &fixSubmitRx() {
     ZmAssert(static_cast<App *>(this)->rxInvoked()); return m_submit;
   }
 
-  PostedIngress &fixAdminRx_() {
+  PostedIngress &fixAdminRx() {
     ZmAssert(static_cast<App *>(this)->rxInvoked()); return m_admin;
   }
 

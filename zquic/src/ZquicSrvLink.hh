@@ -32,7 +32,7 @@ public:
 
   template <typename, typename> friend class Server;
 
-  SrvLink(App *app) : Base{app, true} { Base::initCryptoDelivery_(); }
+  SrvLink(App *app) : Base{app, true} { Base::initCryptoDelivery(); }
 
   bool established() const { return Base::established(); }
   template <typename L>
@@ -84,7 +84,7 @@ public:
     app()->txInvoke([link = this->impl(), stream = ZuMv(stream), fin]() mutable {
       if (link->disconnecting_()) return;
       if (fin) stream->fin();
-      link->queueTxFlush_();
+      link->queueTxFlush();
     });
     return true;
   }
@@ -103,7 +103,7 @@ public:
     if (Base::linkClosedTx_() || !stream || (!payload && !fin)) return false;
     if (payload && payload->length && !stream->send_(ZuMv(payload))) return false;
     if (fin) stream->fin();
-    queueTxFlush_();
+    queueTxFlush();
     return true;
   }
   bool send_(StreamRef stream, ZuBSpan payload, bool fin = true) {
@@ -118,7 +118,7 @@ public:
       if (!tx.flush()) return false;
     }
     if (fin) stream->fin();
-    queueTxFlush_();
+    queueTxFlush();
     return true;
   }
 
@@ -127,19 +127,19 @@ public:
       "QUIC server PTO outside Tx thread", return);
     if (Base::linkClosedTx_() || !m_peerAddr)
       return;
-    Base::ptoRecovery_(
+    Base::ptoRecovery(
       [this](
 	  PktNumSpace::T level, PktBuild &build,
 	  const SentFrameRef &cryptoRef) {
 	return level == PktNumSpace::Initial ?
-	  sendInitialPkt_(build, m_peerAddr, {}, &cryptoRef, true, false) :
-	  sendHandshakePkt_(build, m_peerAddr, {}, &cryptoRef, true, false);
+	  sendInitialPkt(build, m_peerAddr, {}, &cryptoRef, true, false) :
+	  sendHandshakePkt(build, m_peerAddr, {}, &cryptoRef, true, false);
       },
       [this]() { return flushTx_(); },
-      [this](PktNumSpace::T level) { return sendPingProbe_(level); });
+      [this](PktNumSpace::T level) { return sendPingProbe(level); });
   }
 
-  void queueRetransmit_() {
+  void queueRetransmit() {
     ZiAssert(app() && app()->mx(), "Zquic", (),
       "QUIC server retransmit before app initialization", return);
     app()->txRun([link = impl()]() mutable {
@@ -162,13 +162,13 @@ public:
       ++processed;
       PktBuild build;
       if (ref.kind == SentFrameKind::Crypto) {
-	if (!Base::buildRetxCrypto_(level, build, ref)) continue;
+	if (!Base::buildRetxCrypto(level, build, ref)) continue;
 	bool ok =
 	  level == PktNumSpace::Initial ?
-	    sendInitialPkt_(build, m_peerAddr, {}, &ref, true, false) :
+	    sendInitialPkt(build, m_peerAddr, {}, &ref, true, false) :
 	  level == PktNumSpace::Handshake ?
-	    sendHandshakePkt_(build, m_peerAddr, {}, &ref, true, false) :
-	    sendShortPkt_(build, m_peerAddr, {}, &ref, true);
+	    sendHandshakePkt(build, m_peerAddr, {}, &ref, true, false) :
+	    sendShortPkt(build, m_peerAddr, {}, &ref, true);
 	if (!ok) {
 	  Base::requeueRetransmit_(level, ref);
 	  break;
@@ -176,7 +176,7 @@ public:
 	sent = true;
 	continue;
       }
-      if (level != PktNumSpace::AppData || !Base::establishedTx_())
+      if (level != PktNumSpace::AppData || !Base::establishedTx())
 	continue;
       if (!pto && !Base::congestionAllowance_()) {
 	Base::requeueRetransmit_(level, ref);
@@ -185,7 +185,7 @@ public:
       if (ref.kind == SentFrameKind::Control &&
 	  ref.controlType == FrameType::PathChallenge) {
 	// Validation recovery belongs to the candidate tuple and peer CID.
-	if (!sendPassiveMigChal_()) {
+	if (!sendPassiveMigChal()) {
 	  Base::requeueRetransmit_(level, ref);
 	  break;
 	}
@@ -193,28 +193,28 @@ public:
 	continue;
       }
       if (ref.kind == SentFrameKind::Stream) {
-	if (!Base::buildRetxStream_(build, ref)) {
-	  if (Base::debugLog_())
+	if (!Base::buildRetxStream(build, ref)) {
+	  if (Base::debugLog())
 	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
 	      s << "stream retransmit build failed streamID=" <<
 		ref.streamID << " offset=" << ref.offset <<
 		" length=" << ref.length << " fin=" << int(ref.fin);
 	    }));
-	  (void)Base::requeueStreamRef_(level, ref);
+	  (void)Base::requeueStreamRef(level, ref);
 	  break;
 	}
-      } else if (!Base::buildRetxCtl_(build, ref))
+      } else if (!Base::buildRetxCtl(build, ref))
 	continue;
-      if (!sendShortPkt_(build, m_peerAddr, {}, &ref, true)) {
+      if (!sendShortPkt(build, m_peerAddr, {}, &ref, true)) {
 	if (ref.kind == SentFrameKind::Stream)
-	  if (Base::debugLog_())
+	  if (Base::debugLog())
 	    ZiLOG(Debug, "Zquic", ([ref](auto &s) {
 	      s << "stream retransmit send failed streamID=" <<
 		ref.streamID << " offset=" << ref.offset <<
 		" length=" << ref.length << " fin=" << int(ref.fin);
 	    }));
 	if (ref.kind == SentFrameKind::Stream)
-	  (void)Base::requeueStreamRef_(level, ref);
+	  (void)Base::requeueStreamRef(level, ref);
 	else
 	  Base::requeueRetransmit_(level, ref);
 	break;
@@ -222,36 +222,36 @@ public:
       sent = true;
     }
     if (sent) Base::schedulePTO_();
-    if (sent && processed == MaxBatch) queueRetransmit_();
+    if (sent && processed == MaxBatch) queueRetransmit();
     return sent;
   }
 
-  bool sendPingProbe_(PktNumSpace::T level) {
+  bool sendPingProbe(PktNumSpace::T level) {
     PktBuild build;
-    if (!Base::buildPingProbe_(level, build)) return false;
+    if (!Base::buildPingProbe(level, build)) return false;
     typename Base::TxPktRefs refs;
     switch (level) {
       case PktNumSpace::Initial:
-	return sendInitialPkt_(
+	return sendInitialPkt(
 	  build, m_peerAddr, {}, nullptr, true, false);
       case PktNumSpace::Handshake:
-	return sendHandshakePkt_(
+	return sendHandshakePkt(
 	  build, m_peerAddr, {}, nullptr, true, false);
       default:
-	return sendShortPkt_(
+	return sendShortPkt(
 	  build, m_peerAddr, {}, &refs, true);
     }
   }
-  void heartBeatExpired_() {
-    (void)sendPingProbe_(PktNumSpace::AppData);
+  void heartBeatExpired() {
+    (void)sendPingProbe(PktNumSpace::AppData);
   }
 
-  bool sendPMTUDProbe_(ZiSockAddr addr) {
-    return Base::sendPMTUDProbe_(
+  bool sendPMTUDProbe(ZiSockAddr addr) {
+    return Base::sendPMTUDProbe(
       ZuMv(addr),
       [this](PktBuild &build, ZiSockAddr addr_, unsigned size) {
 	typename Base::TxPktRefs refs;
-	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, true, size);
+	return sendShortPkt(build, ZuMv(addr_), {}, &refs, true, size);
       });
   }
   bool disconnect(uint64_t errorCode = 0) {
@@ -267,14 +267,14 @@ public:
   void disconnectRx_(uint64_t errorCode) {
     ZiAssert(app()->rxInvoked(), "Zquic", (),
       "QUIC server disconnect outside Rx thread", return);
-    if (!Base::linkClosedRx_()) Base::closeState_(errorCode, true);
-    if (Base::establishedRx_()) {
+    if (!Base::linkClosedRx_()) Base::closeState(errorCode, true);
+    if (Base::establishedRx()) {
       app()->txRun([link = impl()]() mutable {
 	if (link->disconnecting_()) return;
 	if (ZiSockAddr addr = link->m_peerAddr) {
-	  (void)link->sendCloseFrame_(ZuMv(addr), true);
+	  (void)link->sendCloseFrame(ZuMv(addr), true);
 	  link->m_closePeer = false;
-	  link->enterLocalClosingTx_();
+	  link->enterLocalClosingTx();
 	} else
 	  link->Base::disconnect(false);
       });
@@ -283,7 +283,7 @@ public:
     (void)Base::disconnect(false);
   }
 
-  void closeExpired_() {
+  void closeExpired() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server close expiry outside Tx thread", return);
     bool peer = m_closePeer;
@@ -305,12 +305,12 @@ public:
     }));
     Base::disconnect(peer);
   }
-  void peerDrainingTx_() {
+  void peerDrainingTx() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server peer-draining handoff outside Tx thread", return);
     m_closePeer = true;
   }
-  void idleExpired_() {
+  void idleExpired() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server idle expiry outside Tx thread", return);
 	    Base::cancelTimers_();
@@ -332,11 +332,11 @@ private:
   using InitialKeyDir = Base::InitialKeyDir;
   using CIDSel = Base::CIDSel;
 
-  void acceptInitialInfo_(const InitialInfo &info) {
+  void acceptInitialInfo(const InitialInfo &info) {
     m_initialInfo = info;
   }
 
-  void resetRuntimeState_() {
+  void resetRuntimeState() {
     Base::resetLink_();
     app()->txInvoke(impl(), [link = impl()]() mutable {
       link->m_peerAddr.null();
@@ -346,10 +346,10 @@ private:
     m_handshakeDoneSent = 0;
   }
 
-  bool initRuntimeCrypto_(const LongHdr &h, unsigned datagramLen) {
+  bool initRuntimeCrypto(const LongHdr &h, unsigned datagramLen) {
     if (h.type != PktType::Initial ||
 	!m_bootstrap.acceptInitial(m_initialInfo, h, datagramLen)) {
-      Base::packetParseFailure_();
+      Base::packetParseFailure();
       return false;
     }
     Base::setRuntimeCIDs_(
@@ -358,8 +358,8 @@ private:
       m_bootstrap.origDCID(), m_bootstrap.origDCID());
     Base::addLocalCID_(
       m_bootstrap.localInitialSCID(), 0, m_bootstrap.statelessResetToken());
-    if (!Base::loadSrvParams_(m_bootstrap)) return false;
-    Base::configLocalParams_(app());
+    if (!Base::loadSrvParams(m_bootstrap)) return false;
+    Base::configLocalParams(app());
     if (!Base::deriveInitial_()) return false;
     uint32_t maxEarlyData = app()->maxEarlyData(impl());
     if (!Base::initTLS_(CryptoConfig{
@@ -370,18 +370,18 @@ private:
 	  .keyPath = app()->keyPath(),
 	  .keyLogPath = app()->keyLogPath(),
 	  .qlogTrace = &app()->qlogTrace(),
-	  .encryptTicket = app()->ticketEncryptCB_()
+	  .encryptTicket = app()->ticketEncryptCB()
 	}))
       return false;
-    if (!Base::startHandshake_()) return false;
+    if (!Base::startHandshake()) return false;
     return true;
   }
 
   void markEstablished_() {
-    if (!Base::readyToEstablish_())
+    if (!Base::readyToEstablish())
       return;
-    if (!Base::validateClientParams_()) {
-      Base::tlsFailure_();
+    if (!Base::validateClientParams()) {
+      Base::tlsFailure();
       app()->error_(ZeEXCEPT(Error, "Zquic",
 	"client QUIC transport parameters failed validation"));
       return;
@@ -389,9 +389,9 @@ private:
     Base::establish_();
     Base::validatePath_();
     Base::schedulePMTUD();
-    Base::scheduleMigrationCIDs_();
+    Base::scheduleMigrationCIDs();
     if (app()->newTokenAddrValidate())
-      queueNewToken_(m_bootstrap.origDCID());
+      queueNewToken(m_bootstrap.origDCID());
     impl()->connected(Connected{
       .alpn = Base::negotiatedProtocol_(),
       .version = Version1
@@ -399,7 +399,7 @@ private:
   }
 
   bool emitTLS_(size_t inEpoch, ZuBSpan input, ZiSockAddr addr) {
-    return Base::template advanceTLS_<TLSBufSize>(
+    return Base::template advanceTLS<TLSBufSize>(
       inEpoch, input, ZuMv(addr),
       [this](
 	  ZmRef<ZiIOBuf> data, const CryptoOffsets &offsets,
@@ -408,10 +408,10 @@ private:
       },
       [this]() { markEstablished_(); },
       [this](ZiSockAddr addr_) {
-	if (Base::establishedRx_() && !m_handshakeDoneSent)
+	if (Base::establishedRx() && !m_handshakeDoneSent)
 	  app()->txRun([link = impl(), addr = ZuMv(addr_)]() mutable {
 	    if (link->disconnecting_()) return;
-	    (void)link->sendHandshakeDone_(ZuMv(addr));
+	    (void)link->sendHandshakeDone(ZuMv(addr));
 	  });
 	return true;
       });
@@ -423,12 +423,12 @@ private:
     if (!data || !validCryptoOffsets(offsets, data->length)) {
       app()->txRun([link = impl()]() {
 	if (!link->disconnecting_())
-	  link->invalidCryptoOffsetsTx_();
+	  link->invalidCryptoOffsetsTx();
       });
       return true;
     }
     typename Base::TxCryptoSnapshot txCrypto;
-    Base::snapshotTxCrypto_(txCrypto);
+    Base::snapshotTxCrypto(txCrypto);
     app()->txRun([
       link = impl(),
       txCrypto,
@@ -437,7 +437,7 @@ private:
       addr = ZuMv(addr)
     ]() mutable {
       if (link->disconnecting_()) return;
-      if (!link->installTxCrypto_(txCrypto)) return;
+      if (!link->installTxCrypto(txCrypto)) return;
       (void)link->sendCryptoFlightsTx_(
 	ZuMv(payload), offsets, ZuMv(addr));
     });
@@ -449,7 +449,7 @@ private:
     ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server crypto send outside Tx thread", return false);
-    Base::beginLongCoalesce_();
+    Base::beginLongCoalesce();
     bool ok = Base::sendCryptoFlights_(
       ZuMv(data), offsets, CryptoChunk, ZuMv(addr),
       [this](
@@ -458,11 +458,11 @@ private:
 	return sendCryptoPkt_(
 	  level, prefix, payload, ref, ZuMv(addr_));
       });
-    ok = Base::flushCoalescedInitial_(
+    ok = Base::flushCoalescedInitial(
       [this](auto buf, ZiSockAddr addr_) {
-	return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+	return sendPathBuf(ZuMv(buf), ZuMv(addr_));
       }) && ok;
-    Base::endLongCoalesce_();
+    Base::endLongCoalesce();
     return ok;
   }
 
@@ -475,39 +475,39 @@ private:
 	return buildPayload_(level_, build, frame_);
       },
       [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
-	return sendInitialPkt_(build, ZuMv(addr_), frame_);
+	return sendInitialPkt(build, ZuMv(addr_), frame_);
       },
       [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
-	return sendHandshakePkt_(build, ZuMv(addr_), frame_);
+	return sendHandshakePkt(build, ZuMv(addr_), frame_);
       },
       [this](PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_) {
-	return sendShortPkt_(build, ZuMv(addr_), frame_);
+	return sendShortPkt(build, ZuMv(addr_), frame_);
       });
   }
 
-  bool sendPktPath_(
+  bool sendPktPath(
       ZmRef<ZiIOBuf> buf, ZiSockAddr addr, EcnMark::T ecn, bool &sent) {
     sent = false;
     if (!app()->sendPkt(buf)) return true;
-    sent = app()->sendPktRaw_(ZuMv(buf), ZuMv(addr), ecn);
+    sent = app()->sendPktRaw(ZuMv(buf), ZuMv(addr), ecn);
     return sent;
   }
 
-  void flushStreamWritable_(StreamRef stream) {
+  void flushStreamWritable(StreamRef stream) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server stream Tx flush outside Tx thread", return);
     if (!stream || stream->id() < 0) return;
-    Base::streamWritable_(stream);
-    if (!flushTx_()) queueTxFlush_();
+    Base::streamWritable(stream);
+    if (!flushTx_()) queueTxFlush();
   }
 
-  void queueTxFlush_() {
+  void queueTxFlush() {
     app()->txRun([link = impl()]() mutable {
       if (link->disconnecting_()) return;
       link->flushTx_();
     });
   }
-  void queueTxFlush_(ZiSockAddr addr) {
+  void queueTxFlush(ZiSockAddr addr) {
     app()->txRun([
       link = impl(),
       addr = ZuMv(addr)
@@ -517,37 +517,37 @@ private:
     });
   }
 
-  bool sendPassiveMigChal_() {
+  bool sendPassiveMigChal() {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server passive migration challenge outside Tx thread",
       return false);
     PktBuild build;
     typename Base::TxPktRefs refs;
     ControlFrame frame;
-    if (!Base::buildPassiveMigChal_(build, refs, frame))
+    if (!Base::buildPassiveMigChal(build, refs, frame))
       return false;
-    ZiSockAddr addr = Base::validatingRemote_();
+    ZiSockAddr addr = Base::validatingRemote();
     ZiSockAddr retryAddr = addr;
-    bool sent = sendStrictShortPkt_(
-      Base::validatingPeerCID_(), build, ZuMv(addr),
+    bool sent = sendStrictShortPkt(
+      Base::validatingPeerCID(), build, ZuMv(addr),
       &refs);
     if (!sent) {
       PktBuild retry;
       typename Base::TxPktRefs retryRefs;
       ControlFrame retryFrame;
-      if (!Base::buildPassiveMigChal_(
+      if (!Base::buildPassiveMigChal(
 	    retry, retryRefs, retryFrame))
 	return false;
-      sent = sendStrictShortPkt_(
-	Base::validatingPeerCID_(), retry, ZuMv(retryAddr),
+      sent = sendStrictShortPkt(
+	Base::validatingPeerCID(), retry, ZuMv(retryAddr),
 	nullptr);
       frame = retryFrame;
     }
     if (sent)
-      Base::passiveMigChalSent_(frame);
+      Base::passiveMigChalSent(frame);
     return sent;
   }
-  bool sendPathResponse_(
+  bool sendPathResponse(
     ZuBSpan data, ZiSockAddr addr, ZiSockAddr local, unsigned rxBytes) {
     if (data.length() != PathChallenge::Length) return false;
     PathData payload{data};
@@ -571,19 +571,19 @@ private:
   bool sendPathResponseTx_(ZuBSpan data, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server PATH_RESPONSE outside Tx thread", return false);
-    return Base::sendPathResponsePkt_(
+    return Base::sendPathResponsePkt(
       data, ZuMv(addr),
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
 	  const Base::TxPktRefs *refs) {
-	return sendStrictShortPkt_(build, ZuMv(addr_), refs);
+	return sendStrictShortPkt(build, ZuMv(addr_), refs);
       });
   }
 
   bool flushTx_() { // direct call from within tx thread
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server flush outside Tx thread", return false);
-    if (Base::linkClosedTx_() || !Base::establishedTx_() || !m_peerAddr)
+    if (Base::linkClosedTx_() || !Base::establishedTx() || !m_peerAddr)
       return false;
     return flushTx_(m_peerAddr);
   }
@@ -592,8 +592,8 @@ private:
       "QUIC server flush outside Tx thread", return false);
     if (!addr) return flushTx_();
     if (Base::linkClosedTx_()) return false;
-    if (!Base::establishedTx_()) {
-      return flushPendingAcks_(addr);
+    if (!Base::establishedTx()) {
+      return flushPendingAcks(addr);
     }
     // Ingress ACK snapshots can precede candidate CID selection. Ordinary
     // output follows the active tuple; candidate probes use their own route.
@@ -601,16 +601,16 @@ private:
     bool sent = Base::flushCtlStreamsBatch_(
 	addr,
 	[this](PktBuild &build) {
-	  return appendPendingAck_(PktNumSpace::AppData, build);
+	  return appendPendingAck(PktNumSpace::AppData, build);
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
 	    const Base::TxPktRefs &refs) {
-	  return sendShortPkt_(
+	  return sendShortPkt(
 	    build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	});
-    sent |= sendPMTUDProbe_(ZuMv(addr));
-    if (!sent) sent = flushPendingAcks_(ZuMv(addr));
+    sent |= sendPMTUDProbe(ZuMv(addr));
+    if (!sent) sent = flushPendingAcks(ZuMv(addr));
     return sent;
   }
 
@@ -629,25 +629,25 @@ private:
       [this](
 	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendInitialPkt_(
+	return sendInitialPkt(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendHandshakePkt_(
+	return sendHandshakePkt(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_, ZuBSpan frame_,
 	  const SentFrameRef *ref_, bool ackEliciting_) {
-	return sendShortPkt_(
+	return sendShortPkt(
 	  build, ZuMv(addr_), frame_, ref_, ackEliciting_);
       });
   }
 
-  bool appendPendingAck_(PktNumSpace::T level, PktBuild &build) {
-    return Base::appendPendingAck_(level, build);
+  bool appendPendingAck(PktNumSpace::T level, PktBuild &build) {
+    return Base::appendPendingAck(level, build);
   }
 
   bool buildPayload_(PktNumSpace::T level, PktBuild &build, ZuBSpan frame) {
@@ -660,7 +660,7 @@ private:
     return Base::buildPayload_(level, build, prefix, payload);
   }
 
-  bool sendFrameRefs_(const Base::TxPktRefs *recordRefs) {
+  bool sendFrameRefs(const Base::TxPktRefs *recordRefs) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server frame gating outside Tx thread", return false);
     if (!recordRefs) return true;
@@ -669,89 +669,89 @@ private:
     return true;
   }
 
-  bool sendPathBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool sendPathBuf(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server path send outside Tx thread", return false);
-    return Base::sendPathPktApp_(
+    return Base::sendPathPktApp(
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn, bool &sent) {
-	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn, sent);
+	return sendPktPath(ZuMv(buf_), ZuMv(addr_), ecn, sent);
       });
   }
 
-  bool sendPathProbeBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool sendPathProbeBuf(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server path probe send outside Tx thread", return false);
-    return Base::sendPathProbePktApp_(
+    return Base::sendPathProbePktApp(
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn, bool &sent) {
-	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn, sent);
+	return sendPktPath(ZuMv(buf_), ZuMv(addr_), ecn, sent);
       });
   }
 
-  bool sendInitialBuf_(
+  bool sendInitialBuf(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     const Base::TxPktRefs *recordRefs) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Initial buffer send outside Tx thread", return false);
-    if (!sendFrameRefs_(recordRefs)) return false;
-    return Base::holdInitialForCoalesce_(
+    if (!sendFrameRefs(recordRefs)) return false;
+    return Base::holdInitialForCoalesce(
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_) {
-	return sendPathBuf_(ZuMv(buf_), ZuMv(addr_));
+	return sendPathBuf(ZuMv(buf_), ZuMv(addr_));
       });
   }
 
-  bool sendHandshakeBuf_(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
+  bool sendHandshakeBuf(ZmRef<ZiIOBuf> buf, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Handshake buffer send outside Tx thread", return false);
-    return Base::sendHandshakeCoalesced_(
+    return Base::sendHandshakeCoalesced(
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_) {
-	return sendPathBuf_(ZuMv(buf_), ZuMv(addr_));
+	return sendPathBuf(ZuMv(buf_), ZuMv(addr_));
       });
   }
 
-  bool sendShortBuf_(
+  bool sendShortBuf(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     const Base::TxPktRefs *recordRefs,
     EcnMark::T ecn, unsigned pmtudSize = 0) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short buffer send outside Tx thread", return false);
-    if (!sendFrameRefs_(recordRefs)) return false;
-    if (pmtudSize) return sendPathProbeBuf_(ZuMv(buf), ZuMv(addr));
-    return Base::sendPathPktApp_(
+    if (!sendFrameRefs(recordRefs)) return false;
+    if (pmtudSize) return sendPathProbeBuf(ZuMv(buf), ZuMv(addr));
+    return Base::sendPathPktApp(
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn_, bool &sent) {
-	return sendPktPath_(ZuMv(buf_), ZuMv(addr_), ecn_, sent);
+	return sendPktPath(ZuMv(buf_), ZuMv(addr_), ecn_, sent);
       },
       ecn);
   }
-  bool sendStrictShortBuf_(
+  bool sendStrictShortBuf(
     ZmRef<ZiIOBuf> buf, ZiSockAddr addr,
     const Base::TxPktRefs *recordRefs, EcnMark::T ecn) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server strict Short buffer send outside Tx thread", return false);
-    if (!sendFrameRefs_(recordRefs)) return false;
-    return Base::sendValidPathPktApp_(
+    if (!sendFrameRefs(recordRefs)) return false;
+    return Base::sendValidPathPktApp(
       ZuMv(buf), ZuMv(addr),
       [this](auto buf_, ZiSockAddr addr_, EcnMark::T ecn_, bool &sent) {
 	sent = false;
-	sent = app()->sendPktRaw_(ZuMv(buf_), ZuMv(addr_), ecn_, true);
+	sent = app()->sendPktRaw(ZuMv(buf_), ZuMv(addr_), ecn_, true);
 	return sent;
       },
       ecn);
   }
 
-  bool sendInitialPkt_(ZuBSpan frame, ZiSockAddr addr) {
+  bool sendInitialPkt(ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Initial send outside Tx thread", return false);
     PktBuild payload;
     if (!buildPayload_(PktNumSpace::Initial, payload, frame)) return false;
-    return sendInitialPkt_(payload, ZuMv(addr), frame);
+    return sendInitialPkt(payload, ZuMv(addr), frame);
   }
 
-  bool sendInitialPkt_(
+  bool sendInitialPkt(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
     bool coalesce = true) {
@@ -762,29 +762,29 @@ private:
       recordRefs = &refs;
     }
     if (ackEliciting) recordRefs = &refs;
-    return Base::sendProtInitialPkt_(
+    return Base::sendProtInitialPkt(
       InitialKeyDir::Server, CIDSel::Peer, CIDSel::Local,
-      Base::txPNLength_(PktNumSpace::Initial), {}, false, payload, ZuMv(addr),
+      Base::txPNLength(PktNumSpace::Initial), {}, false, payload, ZuMv(addr),
       recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs, coalesce](auto buf, ZiSockAddr addr_) {
 	if (!coalesce) {
-	  if (!sendFrameRefs_(recordRefs)) return false;
-	  return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+	  if (!sendFrameRefs(recordRefs)) return false;
+	  return sendPathBuf(ZuMv(buf), ZuMv(addr_));
 	}
-	return sendInitialBuf_(ZuMv(buf), ZuMv(addr_), recordRefs);
+	return sendInitialBuf(ZuMv(buf), ZuMv(addr_), recordRefs);
       });
   }
 
-  bool sendHandshakePkt_(ZuBSpan frame, ZiSockAddr addr) {
+  bool sendHandshakePkt(ZuBSpan frame, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Handshake send outside Tx thread", return false);
     PktBuild payload;
     if (!buildPayload_(PktNumSpace::Handshake, payload, frame)) return false;
-    return sendHandshakePkt_(payload, ZuMv(addr), frame);
+    return sendHandshakePkt(payload, ZuMv(addr), frame);
   }
 
-  bool sendHandshakePkt_(
+  bool sendHandshakePkt(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
     bool coalesce = true) {
@@ -795,27 +795,27 @@ private:
       recordRefs = &refs;
     }
     if (ackEliciting) recordRefs = &refs;
-    return Base::sendProtHandshakePkt_(
+    return Base::sendProtHandshakePkt(
       CIDSel::Peer, CIDSel::Local,
-      Base::txPNLength_(PktNumSpace::Handshake),
+      Base::txPNLength(PktNumSpace::Handshake),
       payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, coalesce](auto buf, ZiSockAddr addr_) {
-	if (!coalesce) return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
-	return sendHandshakeBuf_(ZuMv(buf), ZuMv(addr_));
+	if (!coalesce) return sendPathBuf(ZuMv(buf), ZuMv(addr_));
+	return sendHandshakeBuf(ZuMv(buf), ZuMv(addr_));
       });
   }
 
-  bool sendZeroRTTPkt_(ZuBSpan payload, ZiSockAddr addr) {
+  bool sendZeroRTTPkt(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server 0-RTT send outside Tx thread", return false);
     PktBuild build;
     if (!buildPayload_(PktNumSpace::AppData, build, payload)) return false;
-    return sendZeroRTTPkt_(build, ZuMv(addr), payload);
+    return sendZeroRTTPkt(build, ZuMv(addr), payload);
   }
 
-  bool sendZeroRTTPkt_(
+  bool sendZeroRTTPkt(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false) {
     typename Base::TxPktRefs refs;
@@ -824,27 +824,27 @@ private:
       refs.add(*recordRef);
       recordRefs = &refs;
     }
-    return Base::sendProtZeroRTTPkt_(
+    return Base::sendProtZeroRTTPkt(
       CIDSel::Peer, CIDSel::Local,
-      Base::txPNLength_(PktNumSpace::AppData),
+      Base::txPNLength(PktNumSpace::AppData),
       payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs](auto buf, ZiSockAddr addr_) {
-	return sendShortBuf_(
+	return sendShortBuf(
 	  ZuMv(buf), ZuMv(addr_), recordRefs, EcnMark::NotECT);
       });
   }
 
-  bool sendShortPkt_(ZuBSpan payload, ZiSockAddr addr) {
+  bool sendShortPkt(ZuBSpan payload, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server Short send outside Tx thread", return false);
     PktBuild build;
     if (!buildPayload_(PktNumSpace::AppData, build, payload)) return false;
-    return sendShortPkt_(build, ZuMv(addr), payload);
+    return sendShortPkt(build, ZuMv(addr), payload);
   }
 
-  bool sendShortPkt_(
+  bool sendShortPkt(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const SentFrameRef *recordRef = nullptr, bool ackEliciting = false,
     unsigned pmtudSize = 0) {
@@ -854,79 +854,79 @@ private:
       refs.add(*recordRef);
       recordRefs = &refs;
     }
-    return sendShortPkt_(payload, ZuMv(addr), recordFrame, recordRefs,
+    return sendShortPkt(payload, ZuMv(addr), recordFrame, recordRefs,
       ackEliciting, pmtudSize);
   }
 
-  bool sendShortPkt_(
+  bool sendShortPkt(
     PktBuild &payload, ZiSockAddr addr, ZuBSpan recordFrame,
     const Base::TxPktRefs *recordRefs, bool ackEliciting,
     unsigned pmtudSize = 0) {
-    return Base::sendProtShortPkt_(
-      CIDSel::Peer, Base::txPNLength_(PktNumSpace::AppData),
+    return Base::sendProtShortPkt(
+      CIDSel::Peer, Base::txPNLength(PktNumSpace::AppData),
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs, pmtudSize](
 	  auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
-	return sendShortBuf_(
+	return sendShortBuf(
 	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn, pmtudSize);
       },
       pmtudSize);
   }
 
-  bool sendShortPkt_(
+  bool sendShortPkt(
     const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
     ZuBSpan recordFrame, const Base::TxPktRefs *recordRefs,
     bool ackEliciting, unsigned pmtudSize = 0) {
-    return Base::sendProtShortPkt_(
-      dcid, Base::txPNLength_(PktNumSpace::AppData),
+    return Base::sendProtShortPkt(
+      dcid, Base::txPNLength(PktNumSpace::AppData),
       payload, ZuMv(addr), recordFrame, recordRefs, ackEliciting,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs, pmtudSize](
 	  auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
-	return sendShortBuf_(
+	return sendShortBuf(
 	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn, pmtudSize);
       },
       pmtudSize);
   }
-  bool sendStrictShortPkt_(
+  bool sendStrictShortPkt(
     PktBuild &payload, ZiSockAddr addr,
     const Base::TxPktRefs *recordRefs) {
-    return Base::sendProtShortPkt_(
-      CIDSel::Peer, Base::txPNLength_(PktNumSpace::AppData),
+    return Base::sendProtShortPkt(
+      CIDSel::Peer, Base::txPNLength(PktNumSpace::AppData),
       payload, ZuMv(addr), {}, recordRefs, true,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
-	return sendStrictShortBuf_(
+	return sendStrictShortBuf(
 	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn);
       });
   }
-  bool sendStrictShortPkt_(
+  bool sendStrictShortPkt(
     const CxnID &dcid, PktBuild &payload, ZiSockAddr addr,
     const Base::TxPktRefs *recordRefs) {
-    return Base::sendProtShortPkt_(
-      dcid, Base::txPNLength_(PktNumSpace::AppData),
+    return Base::sendProtShortPkt(
+      dcid, Base::txPNLength(PktNumSpace::AppData),
       payload, ZuMv(addr), {}, recordRefs, true,
       [this]() { return app()->allocTxPkt_(); },
       [this, recordRefs](auto buf, ZiSockAddr addr_, EcnMark::T ecn) {
-	return sendStrictShortBuf_(
+	return sendStrictShortBuf(
 	  ZuMv(buf), ZuMv(addr_), recordRefs, ecn);
       });
   }
 
-  bool sendCloseFrame_(ZiSockAddr addr, bool closing = false) {
+  bool sendCloseFrame(ZiSockAddr addr, bool closing = false) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server close frame outside Tx thread", return false);
     if ((!closing && Base::linkClosedTx_()) ||
-	(!Base::establishedTx_() &&
+	(!Base::establishedTx() &&
 	  !(closing && Base::closingTx_())) ||
 	!m_peerAddr || !addr)
       return false;
     PktBuild build;
-    bool appClose = Base::appCloseOnDisconnect_();
-    if (!Base::writeCloseFrame_(build, appClose))
+    bool appClose = Base::appCloseOnDisconnect();
+    if (!Base::writeCloseFrame(build, appClose))
       return false;
-    bool sent = sendShortPkt_(build, ZuMv(addr), {});
+    bool sent = sendShortPkt(build, ZuMv(addr), {});
     if (sent) {
       ZquicLOG(app()->qlogTrace(), ([
 	      appClose,
@@ -957,30 +957,30 @@ private:
     return sent;
   }
 
-  bool sendHandshakeDone_(ZiSockAddr addr) {
+  bool sendHandshakeDone(ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server HANDSHAKE_DONE outside Tx thread", return false);
-    Base::queueHandshakeDone_();
-    if (!Base::flushCtlStreams_(
+    Base::queueHandshakeDone();
+    if (!Base::flushCtlStreams(
 	ZuMv(addr),
 	[this](PktBuild &build) {
-	  return appendPendingAck_(PktNumSpace::AppData, build);
+	  return appendPendingAck(PktNumSpace::AppData, build);
 	},
 	[this](
 	    PktBuild &build, ZiSockAddr addr_,
 	    const Base::TxPktRefs &refs) {
-	  return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
+	  return sendShortPkt(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
 	}))
       return false;
     m_handshakeDoneSent = 1;
     Base::handshakeDoneTx_();
     return true;
   }
-  void handshakeDoneAckd_() {
-    Base::discardTxPktNumSpace_(PktNumSpace::Handshake);
+  void handshakeDoneAckd() {
+    Base::discardPktNumSpace_1(PktNumSpace::Handshake);
   }
 
-  void queueNewToken_(CxnID origDCID) {
+  void queueNewToken(CxnID origDCID) {
     app()->txRun([link = impl(), origDCID = ZuMv(origDCID)]() mutable {
       if (link->disconnecting_()) return;
       ZiSockAddr addr = link->m_peerAddr;
@@ -991,21 +991,21 @@ private:
 	    addr, origDCID, {}, uint64_t(Zm::now().sec()),
 	    link->app()->addrValidatePeerPort()))
 	return;
-      (void)link->sendNewToken_(ZuMv(token), ZuMv(addr));
+      (void)link->sendNewToken(ZuMv(token), ZuMv(addr));
     });
   }
 
-  bool sendNewToken_(TokenBytes token, ZiSockAddr addr) {
+  bool sendNewToken(TokenBytes token, ZiSockAddr addr) {
     ZiAssert(app()->txInvoked(), "Zquic", (),
       "QUIC server NEW_TOKEN outside Tx thread", return false);
-    if (!Base::establishedTx_() || !addr) return false;
+    if (!Base::establishedTx() || !addr) return false;
     PktBuild build;
     build.reset();
     int n = FrameCodec::writeNewToken(
       build.scratch(), build.scratchAvail(), token);
     if (n <= 0 || !build.commitScratch(unsigned(n))) return false;
     const typename Base::TxPktRefs *refs = nullptr;
-	    bool sent = sendShortPkt_(build, ZuMv(addr), {}, refs, true);
+	    bool sent = sendShortPkt(build, ZuMv(addr), {}, refs, true);
 	    if (sent) {
 	      ZquicLOG(app()->qlogTrace(), ([
 		tokenLength = token.length(),
@@ -1026,83 +1026,83 @@ private:
     return sent;
   }
 
-  bool sendQueuedStreamPkt_(StreamRef stream, ZiSockAddr addr) {
-    return Base::sendQueuedStreamPkt_(
+  bool sendQueuedStreamPkt(StreamRef stream, ZiSockAddr addr) {
+    return Base::sendQueuedStreamPkt(
       ZuMv(stream), ZuMv(addr),
       [this](PktBuild &build) {
-	return appendPendingAck_(PktNumSpace::AppData, build);
+	return appendPendingAck(PktNumSpace::AppData, build);
       },
       [this](
 	  PktBuild &build, ZiSockAddr addr_,
 	  const Base::TxPktRefs &refs) {
-	return sendShortPkt_(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
+	return sendShortPkt(build, ZuMv(addr_), {}, &refs, refs.count() != 0);
       });
   }
 
-  bool flushPendingAck_(
+  bool flushPendingAck(
     PktNumSpace::T level, ZiSockAddr addr, bool &sent) {
     PktBuild build;
     build.reset();
-    if (!Base::appendPendingAck_(level, build, true)) return false;
+    if (!Base::appendPendingAck(level, build, true)) return false;
     if (!build.bytes()) return true;
     bool ok;
     if (level == PktNumSpace::Initial) {
-      ok = sendInitialPkt_(build, ZuMv(addr), {}, nullptr, false, false);
+      ok = sendInitialPkt(build, ZuMv(addr), {}, nullptr, false, false);
       if (ok) sent = true;
       return ok;
     }
     if (!Base::txSecretInstalled_(level)) return true;
     if (level == PktNumSpace::Handshake)
-      ok = sendHandshakePkt_(build, ZuMv(addr), {});
+      ok = sendHandshakePkt(build, ZuMv(addr), {});
     else
-      ok = sendShortPkt_(build, ZuMv(addr), {});
+      ok = sendShortPkt(build, ZuMv(addr), {});
     if (ok) sent = true;
     return ok;
   }
 
-  bool flushPendingAcks_(ZiSockAddr addr) {
+  bool flushPendingAcks(ZiSockAddr addr) {
     bool sent = false;
-    if (Base::pendingAck_(PktNumSpace::Initial))
-      (void)flushPendingAck_(PktNumSpace::Initial, addr, sent);
-    if (Base::pendingAck_(PktNumSpace::Handshake))
-      (void)flushPendingAck_(PktNumSpace::Handshake, addr, sent);
-    if (Base::pendingAck_(PktNumSpace::AppData))
-      (void)flushPendingAck_(PktNumSpace::AppData, ZuMv(addr), sent);
+    if (Base::pendingAck(PktNumSpace::Initial))
+      (void)flushPendingAck(PktNumSpace::Initial, addr, sent);
+    if (Base::pendingAck(PktNumSpace::Handshake))
+      (void)flushPendingAck(PktNumSpace::Handshake, addr, sent);
+    if (Base::pendingAck(PktNumSpace::AppData))
+      (void)flushPendingAck(PktNumSpace::AppData, ZuMv(addr), sent);
     if (sent)
-      (void)Base::flushCoalescedInitial_(
+      (void)Base::flushCoalescedInitial(
 	[this](auto buf, ZiSockAddr addr_) {
-	  return sendPathBuf_(ZuMv(buf), ZuMv(addr_));
+	  return sendPathBuf(ZuMv(buf), ZuMv(addr_));
 	});
     return sent;
   }
 
   bool received_(Datagram d, const CxnID *routedDCID = nullptr) {
-    if (!Base::handshakeStartedRx_() && d.buf)
+    if (!Base::handshakeStartedRx() && d.buf)
       Base::initServerPath_(app()->local(), d.addr);
     Base::receiveDatagram_(
       ZuMv(d),
       [this](Datagram &d_, unsigned packetOffset, unsigned packetLen) {
-	return receivedLong_(d_, packetOffset, packetLen);
+	return receivedLong(d_, packetOffset, packetLen);
       },
       [this, routedDCID](
 	  Datagram &d_, unsigned packetOffset, unsigned packetLen) {
-	return receivedShort_(d_, packetOffset, packetLen, routedDCID);
+	return receivedShort(d_, packetOffset, packetLen, routedDCID);
       });
     return !Base::disconnecting_();
   }
 
-  bool receivedLong_(Datagram &d, unsigned packetOffset, unsigned packetLen) {
-    return Base::receiveProtLongPkt_(
+  bool receivedLong(Datagram &d, unsigned packetOffset, unsigned packetLen) {
+    return Base::receiveProtLongPkt(
       InitialKeyDir::Client, d, packetOffset, packetLen,
       [this](const LongHdr &h, Datagram &d_) {
-	if (!Base::handshakeStartedRx_()) {
+	if (!Base::handshakeStartedRx()) {
 	  ZiSockAddr peerAddr = d_.addr;
 	  app()->txInvoke(impl(), [link = impl(), peerAddr]() mutable {
 	    link->m_peerAddr = ZuMv(peerAddr);
 	    return link;
 	  });
-	  if (!initRuntimeCrypto_(h, d_.buf->length)) return false;
-	  app()->refreshLinkRoutes_(impl());
+	  if (!initRuntimeCrypto(h, d_.buf->length)) return false;
+	  app()->refreshLinkRoutes(impl());
 	}
 	return true;
       },
@@ -1116,10 +1116,10 @@ private:
       });
   }
 
-  bool receivedShort_(
+  bool receivedShort(
     Datagram &d, unsigned packetOffset, unsigned packetLen,
     const CxnID *routedDCID = nullptr) {
-    return Base::rxProtShortPkt_(
+    return Base::rxProtShortPkt(
       d, packetOffset, packetLen,
       [this](
 	  PktNumSpace::T level, uint64_t pn, ZuBSpan frames,
@@ -1138,39 +1138,39 @@ private:
     ZiSockAddr peer = addr;
     ZiSockAddr local = app()->local();
     unsigned pathBytes = packetBuf ? packetBuf->length : 0;
-    bool ok = Base::consumeProtFrames_(
+    bool ok = Base::consumeProtFrames(
       level, pn, frames, ZuMv(addr), packetBuf, ack, qlog,
       [this](size_t epoch, ZuBSpan input, ZiSockAddr addr_) {
 	return emitTLS_(epoch, input, ZuMv(addr_));
       },
       [this, local, pathBytes](
 	  PktNumSpace::T level_, const Frame &frame, ZiSockAddr addr_) {
-	return handleControlFrame_(
+	return handleControlFrame(
 	  level_, frame, ZuMv(addr_), local, pathBytes);
       },
       earlyData);
-    if (ok && level == PktNumSpace::AppData && Base::establishedRx_())
+    if (ok && level == PktNumSpace::AppData && Base::establishedRx())
       Base::observePathRx_(ZuMv(local), ZuMv(peer), pathBytes);
     return ok;
   }
 
-  bool handleControlFrame_(
+  bool handleControlFrame(
     PktNumSpace::T level, const Frame &frame, ZiSockAddr addr,
     ZiSockAddr local = {}, unsigned pathBytes = 0) {
     switch (frame.type) {
       case FrameType::MaxData:
       case FrameType::MaxStreamData:
       case FrameType::MaxStreams:
-	queueTxFlush_();
+	queueTxFlush();
 	return true;
       case FrameType::PathChallenge: {
-	sendPathResponse_(
+	sendPathResponse(
 	  frame.payload, ZuMv(addr), ZuMv(local),
 	  level == PktNumSpace::AppData ? pathBytes : 0);
 	return true;
       }
       case FrameType::PathResponse:
-	Base::rxPathResponse_(frame.payload);
+	Base::rxPathResponse(frame.payload);
 	return true;
       case FrameType::ConnectionClose:
       case FrameType::ApplicationClose:
@@ -1198,7 +1198,7 @@ private:
 	      CloseError::T(CloseError::None)};
 	  o.logCxnClosed(event, time);
 	}));
-	Base::enterPeerDraining_(frame.errorCode);
+	Base::enterPeerDraining_0(frame.errorCode);
 	return true;
       case FrameType::HandshakeDone:
 	return false;
@@ -1207,43 +1207,43 @@ private:
     }
   }
 
-  void dataBlocked_(uint64_t maximum) {
-    Base::queueBlocked_(FrameType::DataBlocked, 0, maximum);
+  void dataBlocked(uint64_t maximum) {
+    Base::queueBlocked(FrameType::DataBlocked, 0, maximum);
     impl()->flowBlocked(
       FrameType::DataBlocked, 0, Zquic::StreamType::Duplex, maximum);
-    queueTxFlush_();
+    queueTxFlush();
   }
-  void streamDataBlocked_(uint64_t streamID, uint64_t maximum) {
-    Base::queueBlocked_(FrameType::StreamDataBlocked, streamID, maximum);
+  void streamDataBlocked(uint64_t streamID, uint64_t maximum) {
+    Base::queueBlocked(FrameType::StreamDataBlocked, streamID, maximum);
     impl()->flowBlocked(
       FrameType::StreamDataBlocked, streamID,
       Zquic::StreamType::Duplex, maximum);
-    queueTxFlush_();
+    queueTxFlush();
   }
   void streamsBlocked_(Zquic::StreamType::T type, uint64_t maximum) {
-    Base::queueBlocked_(FrameType::StreamsBlocked, 0, maximum, type);
+    Base::queueBlocked(FrameType::StreamsBlocked, 0, maximum, type);
     impl()->flowBlocked(FrameType::StreamsBlocked, 0, type, maximum);
-    queueTxFlush_();
+    queueTxFlush();
   }
 
-  void pathPromoted_() {
+  void pathPromoted() {
     m_peerAddr = Base::activePathRemote_();
   }
-  void refreshPromotedRoutes_() {
+  void refreshPromotedRoutes() {
     if (app()->rxInvoked()) {
-      app()->refreshLinkRoutes_(impl());
+      app()->refreshLinkRoutes(impl());
       return;
     }
     app()->rxRun([link = impl()]() mutable {
-      link->app()->refreshLinkRoutes_(link);
+      link->app()->refreshLinkRoutes(link);
     });
   }
-  void localCIDsIssued_() {
+  void localCIDsIssued() {
     app()->rxRun([link = impl()]() mutable {
-      link->app()->refreshLinkRoutes_(link);
+      link->app()->refreshLinkRoutes(link);
     });
   }
-  void migrationCIDsReady_() {
+  void migrationCIDsReady() {
     app()->rxRun([link = impl()]() mutable {
       link->app()->txRun([link]() mutable {
 	if (link->disconnecting_()) return;
@@ -1252,7 +1252,7 @@ private:
     });
   }
 
-  bool receivedRouted_(Datagram d, const CxnID &routedDCID) {
+  bool receivedRouted(Datagram d, const CxnID &routedDCID) {
     return received_(ZuMv(d), &routedDCID);
   }
 
@@ -1266,9 +1266,9 @@ private:
     Base::tombstoneLocalCIDRoutes_(routes);
   }
 
-  void retiredLocalCID_(uint64_t, const CxnID &id) {
+  void retiredLocalCID(uint64_t, const CxnID &id) {
     app()->rxRun([app = app(), id]() mutable {
-      app->tombstoneRoute_(id);
+      app->tombstoneRoute(id);
     });
   }
 

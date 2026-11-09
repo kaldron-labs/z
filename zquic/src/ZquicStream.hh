@@ -159,7 +159,7 @@ public:
   }
 
   StreamRxPQueue *rxQueue() { return &m_rxQueue; }
-  void closeRx_() {
+  void closeRx() {
     if (m_link && m_link->app() && m_link->app()->mx())
       ZiAssert(rxInvoked_(), "Zquic", (),
 	"QUIC stream Rx close outside Rx thread", return);
@@ -194,25 +194,25 @@ public:
   }
   bool controlQueued() const { return queuedControlFrames(); }
   bool queueMaxStreamData(uint64_t value) {
-    return queueControl_(
+    return queueControl(
       m_maxStreamDataControl,
       ControlFrame::flowUpdate(FlowUpdate{
 	FrameType::MaxStreamData, uint64_t(id()), value,
 	Zquic::StreamType::Duplex}));
   }
   bool queueDataBlocked(uint64_t value) {
-    return queueControl_(
+    return queueControl(
       m_dataBlockedCtl,
       ControlFrame::blocked(
 	FrameType::StreamDataBlocked, uint64_t(id()), value));
   }
   bool queueResetStream(uint64_t appError, uint64_t finalSize) {
-    return queueControl_(
+    return queueControl(
       m_resetStreamControl,
       ControlFrame::resetStream(uint64_t(id()), appError, finalSize));
   }
   bool queueStopSending(uint64_t appError) {
-    return queueControl_(
+    return queueControl(
       m_stopSendingControl,
       ControlFrame::stopSending(uint64_t(id()), appError));
   }
@@ -236,11 +236,11 @@ public:
     return false;
   }
   void controlSent(const ControlFrame &frame) {
-    PendingControl *slot = controlSlot_(frame.type);
+    PendingControl *slot = controlSlot(frame.type);
     if (slot && slot->frame == frame) slot->queued = false;
   }
   void clearControl(const SentFrameRef &ref) {
-    PendingControl *slot = controlSlot_(ref.controlType);
+    PendingControl *slot = controlSlot(ref.controlType);
     if (!slot) return;
     ControlFrame frame = controlFrame_(ref);
     if (slot->frame == frame) *slot = {};
@@ -252,7 +252,7 @@ public:
     m_stopSendingControl = {};
   }
   bool controlStillValid(const ControlFrame &frame) const {
-    const PendingControl *slot = controlSlot_(frame.type);
+    const PendingControl *slot = controlSlot(frame.type);
     if (!slot || !(slot->frame == frame)) return false;
     switch (frame.type) {
       case FrameType::MaxStreamData:
@@ -309,7 +309,7 @@ public:
   void dequeueRx_() {
     Rx::dequeue();
     if (m_link && !m_rx.empty())
-      m_link->streamRxDequeued_(ZmRef<Impl>{impl()});
+      m_link->streamRxDequeued(ZmRef<Impl>{impl()});
   }
 
   bool txRange(unsigned i, TxRange &range) const {
@@ -405,7 +405,7 @@ public:
     if (txDrained()) impl()->txDrained_();
     if (m_finAckd && !m_txUnackd.count_() && !m_txCompleted) {
       m_txCompleted = true;
-      impl()->txComplete_(true);
+      impl()->txComplete(true);
     }
     return true;
   }
@@ -496,7 +496,7 @@ public:
       "QUIC stream reset outside Tx thread", return);
     if (m_resetSent) return;
     m_resetSent = true;
-    setTxError_(StreamError::Reset, appError);
+    setTxError(StreamError::Reset, appError);
     // Queued application bytes may exceed peer credit. Final size covers only
     // the extent committed to STREAM frames, including any lost packets.
     auto finalSize = m_txCredit.used();
@@ -509,13 +509,13 @@ public:
     m_txUnackd.clean();
     m_dataBlockedCtl = {};
     if (m_link && id() >= 0)
-      m_link->localResetStream_(uint64_t(id()), appError, finalSize);
+      m_link->localResetStream(uint64_t(id()), appError, finalSize);
     if (m_link && id() >= 0)
       m_link->streamResetSent_(
 	uint64_t(id()), appError, finalSize);
     if (!m_txCompleted) {
       m_txCompleted = true;
-      impl()->txComplete_(false);
+      impl()->txComplete(false);
     }
     notifyTx_();
   }
@@ -525,10 +525,10 @@ public:
     if (m_stopSent) return;
     m_stopSent = true;
     rxRun_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
-      stream->applyStopRx_(appError);
+      stream->applyStopRx(appError);
     });
     if (m_link && id() >= 0)
-      m_link->localStopSending_(uint64_t(id()), appError);
+      m_link->localStopSending(uint64_t(id()), appError);
     if (m_link && id() >= 0)
       m_link->streamStopSendingSent_(uint64_t(id()), appError);
     notifyTx_();
@@ -576,13 +576,13 @@ public:
     if (frame.type != FrameType::ResetStream || id() < 0 ||
 	frame.streamID != uint64_t(id()) ||
 	m_rxDelivered > frame.length ||
-	rxPendingBeyond_(frame.length))
+	rxPendingBeyond(frame.length))
       return false;
     StreamRxState next = m_rxState;
     if (!next.receive(frame.length, 0, true)) return false;
     m_rxState = next;
     m_resetReceived = true;
-    setRxError_(StreamError::Reset, frame.errorCode);
+    setRxError(StreamError::Reset, frame.errorCode);
     return true;
   }
 
@@ -604,22 +604,22 @@ public:
     m_stopReceived = true;
     uint64_t appError = frame.errorCode;
     txInvoke_([stream = ZmRef<Impl>{impl()}, appError]() mutable {
-      stream->completeStopTx_(appError);
+      stream->completeStopTx(appError);
     });
     return true;
   }
 
-  void completeStopTx_(uint64_t appError) {
+  void completeStopTx(uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC STOP_SENDING completion outside Tx thread", return);
-    setTxError_(StreamError::Stop, appError);
+    setTxError(StreamError::Stop, appError);
     if (!m_txCompleted) {
       m_txCompleted = true;
-      impl()->txComplete_(false);
+      impl()->txComplete(false);
     }
   }
 
-  void txComplete_(bool) { }
+  void txComplete(bool) { }
   void txDrained_() { }
   // AppTx, once per fully packetized source buffer, on a later dispatch turn.
   // This returns producer queue credit; it does not indicate peer ACK receipt.
@@ -634,18 +634,18 @@ private:
     error = next;
     appError = nextAppError;
   }
-  void setRxError_(StreamError::T error, uint64_t appError) {
+  void setRxError(StreamError::T error, uint64_t appError) {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx error update outside Rx thread", return);
     setError_(m_rxAppError, m_rxError, error, appError);
   }
-  void setTxError_(StreamError::T error, uint64_t appError) {
+  void setTxError(StreamError::T error, uint64_t appError) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream Tx error update outside Tx thread", return);
     setError_(m_txAppError, m_txError, error, appError);
   }
-  void applyStopRx_(uint64_t appError) {
-    setRxError_(StreamError::Stop, appError);
+  void applyStopRx(uint64_t appError) {
+    setRxError(StreamError::Stop, appError);
   }
 
   bool receiveFrame_(
@@ -669,11 +669,11 @@ private:
 
     if (!m_rxState.validate(frame.offset, frame.length, frame.fin))
       return false;
-    if (frame.fin && rxPendingBeyond_(end)) return false;
+    if (frame.fin && rxPendingBeyond(end)) return false;
 
     auto spans = ZmScratch(
       RxSpan, m_rxQueue.count_() + 1, RxSpans::VHeap);
-    if (frame.length && !newRxSpans_(frame, spans)) return false;
+    if (frame.length && !newRxSpans(frame, spans)) return false;
     uint64_t newBytes = rxSpanBytes(spans);
     if (flow && !flow->receive(end, newBytes)) return false;
     if (connection) {
@@ -684,7 +684,7 @@ private:
     }
 
     if (spans)
-      if (!queueRxSlices_(frame, spans, ZuMv(packet), diag)) return false;
+      if (!queueRxSlices(frame, spans, ZuMv(packet), diag)) return false;
 
     if (!m_rxState.receive(frame.offset, frame.length, frame.fin)) return false;
     m_rxAdmitted += newBytes;
@@ -692,7 +692,7 @@ private:
   }
 
   template <typename Spans>
-  bool newRxSpans_(const Frame &frame, Spans &spans) const {
+  bool newRxSpans(const Frame &frame, Spans &spans) const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx span check outside Rx thread", return false);
     uint64_t end = frame.offset + frame.length;
@@ -704,7 +704,7 @@ private:
   }
 
   template <typename Spans>
-  bool queueRxSlices_(
+  bool queueRxSlices(
     const Frame &frame, const Spans &spans,
     ZmRef<ZiIOBuf> packet, BufDiag *diag) {
     ZiAssert(rxInvoked_(), "Zquic", (),
@@ -723,7 +723,7 @@ private:
     return true;
   }
 
-  bool rxPendingBeyond_(uint64_t finalSize) const {
+  bool rxPendingBeyond(uint64_t finalSize) const {
     ZiAssert(rxInvoked_(), "Zquic", (),
       "QUIC stream Rx pending check outside Rx thread", return false);
     auto iter = m_rxQueue.citer();
@@ -737,7 +737,7 @@ private:
 
   bool send(ZmRef<ZiIOBuf> buf) {
     if (!buf || buf->failed() || !buf->length) return false;
-    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
+    if (!admitTx()) return sendError("QUIC stream transmit queue limit exceeded");
     txInvoke_([stream = ZmRef<Impl>{impl()}, buf = ZuMv(buf)]() mutable {
       stream->sendAdmitted_(ZuMv(buf));
     });
@@ -746,12 +746,12 @@ private:
   bool send_(ZmRef<ZiIOBuf> buf) {
     ZiAssert(txInvoked_(), "Zquic", (),
       "QUIC stream send outside Tx thread", return false);
-    if (!admitTx_()) return sendError_("QUIC stream transmit queue limit exceeded");
+    if (!admitTx()) return sendError("QUIC stream transmit queue limit exceeded");
     return sendAdmitted_(ZuMv(buf));
   }
 
 private:
-  bool admitTx_() {
+  bool admitTx() {
     if (++m_txQueueCount <= m_txQueueMax) return true;
     --m_txQueueCount;
     return false;
@@ -762,7 +762,7 @@ private:
       --m_txQueueCount; return false);
     if (ZuUnlikely(!buf || buf->failed() || m_resetSent || !buf->length)) {
       --m_txQueueCount;
-      return sendError_("QUIC stream is closed for transmission");
+      return sendError("QUIC stream is closed for transmission");
     }
     ZiAssert(buf->skip + buf->length <= buf->size, "Zquic", (),
       "stream Tx buffer range violation",
@@ -793,7 +793,7 @@ private:
     return true;
   }
 
-  bool sendError_(ZuCSpan message) {
+  bool sendError(ZuCSpan message) {
     auto e = ZeEXCEPT(Error, "Zquic", message);
     if (m_txErrorFn && !m_txErrorFn(e) && m_link)
       m_link->disconnect();
@@ -832,7 +832,7 @@ public:
 
   void notifyTx_() {
     if (m_link && id() >= 0) {
-      m_link->streamWritable_(ZmRef<Impl>{impl()});
+      m_link->streamWritable(ZmRef<Impl>{impl()});
       m_link->flushTx_();
     }
   }
@@ -840,7 +840,7 @@ public:
     ControlFrame	frame;
     bool		queued = false;
   };
-  bool queueControl_(PendingControl &slot, const ControlFrame &frame) {
+  bool queueControl(PendingControl &slot, const ControlFrame &frame) {
     if (id() < 0 || !frame) return false;
     if (slot.frame == frame) {
       if (slot.queued) return false;
@@ -856,7 +856,7 @@ public:
     slot.queued = true;
     return true;
   }
-  PendingControl *controlSlot_(FrameType::T type) {
+  PendingControl *controlSlot(FrameType::T type) {
     switch (type) {
       case FrameType::MaxStreamData: return &m_maxStreamDataControl;
       case FrameType::StreamDataBlocked: return &m_dataBlockedCtl;
@@ -865,8 +865,8 @@ public:
       default: return nullptr;
     }
   }
-  const PendingControl *controlSlot_(FrameType::T type) const {
-    return const_cast<Stream *>(this)->controlSlot_(type);
+  const PendingControl *controlSlot(FrameType::T type) const {
+    return const_cast<Stream *>(this)->controlSlot(type);
   }
   static ControlFrame controlFrame_(const SentFrameRef &ref) {
     ControlFrame frame;

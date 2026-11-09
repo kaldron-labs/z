@@ -15,7 +15,7 @@
 #include "../src/ZhttpWire.hh"
 
 #include "ZhttpTestUtil.hh"
-#include "ZhttpInteropPorts.hh"
+#include "zhttpinteropports.hh"
 
 using namespace ZuTestUtil;
 
@@ -235,25 +235,25 @@ struct RequestSeen {
 };
 
 template <typename Impl, bool H3>
-struct RequestParserBase_;
+struct RequestParserBase;
 template <typename Impl>
-struct RequestParserBase_<Impl, false> :
+struct RequestParserBase<Impl, false> :
   public Zhttp::H1::Parser<Impl, true> {
   using Base = Zhttp::H1::Parser<Impl, true>;
-  RequestParserBase_() : Base{1<<20} { }
+  RequestParserBase() : Base{1<<20} { }
 };
 template <typename Impl>
-struct RequestParserBase_<Impl, true> :
+struct RequestParserBase<Impl, true> :
   public Zhttp::H3::Parser<Impl, true> {
   using Base = Zhttp::H3::Parser<Impl, true>;
-  RequestParserBase_() : Base{1<<20} { }
+  RequestParserBase() : Base{1<<20} { }
 };
 
 template <bool H3>
 struct RequestParser :
   public Zhttp::Parser,
-  public RequestParserBase_<RequestParser<H3>, H3> {
-  using Base = RequestParserBase_<RequestParser<H3>, H3>;
+  public RequestParserBase<RequestParser<H3>, H3> {
+  using Base = RequestParserBase<RequestParser<H3>, H3>;
   using State = Base::State;
   using HdrCatalog = RequestHeaders;
   const Zhttp::CatalogView &catalog() const {
@@ -309,25 +309,25 @@ struct ResponseSeen {
 };
 
 template <typename Impl, bool H3>
-struct ResponseParserBase_;
+struct ResponseParserBase;
 template <typename Impl>
-struct ResponseParserBase_<Impl, false> :
+struct ResponseParserBase<Impl, false> :
   public Zhttp::H1::Parser<Impl, false> {
   using Base = Zhttp::H1::Parser<Impl, false>;
-  ResponseParserBase_() : Base{4<<20} { }
+  ResponseParserBase() : Base{4<<20} { }
 };
 template <typename Impl>
-struct ResponseParserBase_<Impl, true> :
+struct ResponseParserBase<Impl, true> :
   public Zhttp::H3::Parser<Impl, false> {
   using Base = Zhttp::H3::Parser<Impl, false>;
-  ResponseParserBase_() : Base{4<<20} { }
+  ResponseParserBase() : Base{4<<20} { }
 };
 
 template <bool H3>
 struct ResponseParser :
   public Zhttp::Parser,
-  public ResponseParserBase_<ResponseParser<H3>, H3> {
-  using Base = ResponseParserBase_<ResponseParser<H3>, H3>;
+  public ResponseParserBase<ResponseParser<H3>, H3> {
+  using Base = ResponseParserBase<ResponseParser<H3>, H3>;
   using State = Base::State;
   using HdrCatalog = ResponseHeaders;
   const Zhttp::CatalogView &catalog() const {
@@ -378,7 +378,7 @@ struct RequestBuilder_ :
   void patch() { }
 };
 template <typename Impl>
-struct RequestBuilderH3_ :
+struct RequestBuilderH3 :
   public Zhttp::H3::Request<Impl, false> {
   void fields(Zhttp::FieldOutput &) { }
   void headerBase(uint8_t *) { }
@@ -415,7 +415,7 @@ struct RequestBuilder :
 };
 
 using H1RequestBuilder = RequestBuilder<RequestBuilder_>;
-using H3RequestBuilder = RequestBuilder<RequestBuilderH3_>;
+using H3RequestBuilder = RequestBuilder<RequestBuilderH3>;
 
 template <typename Stream>
 void sendH1Request(Stream &stream, ZuCSpan body)
@@ -459,7 +459,7 @@ struct ServerTest {
   ZmAtomic<unsigned> errors = 0;
   ZmAtomic<uint64_t> lastH3StreamID = 0;
   ZmAtomic<unsigned> h3UniStreams = 0;
-  ZmAtomic<unsigned> h3BidiStreams = 0;
+  ZmAtomic<unsigned> h3DuplexStreams = 0;
   ZmAtomic<int>	h3State = Zhttp::H3::CxnState::Init;
   ZmAtomic<int>	h3ParserState = RequestParser<true>::State::Initial;
   ZmAtomic<uint64_t> h3Error = 0;
@@ -679,7 +679,7 @@ int H3ServerStream::process(Zquic::RxStream &rx)
     (void)rx;
     return 0;
   }
-  ++state->h3BidiStreams;
+  ++state->h3DuplexStreams;
   parser.qpackRx_ = &this->link()->h3.qpackRxTable;
   using H3Cxn = ZuDecay<decltype(this->link()->h3)>;
   parser.qpackDecoder_ = &this->link()->h3;
@@ -1286,7 +1286,7 @@ void printH3ServerTest(ServerTest &state)
     " method=" << int(state.request.method) <<
     " path=\"" << state.request.path << '"' <<
     " uniStreams=" << unsigned(state.h3UniStreams) <<
-    " bidiStreams=" << unsigned(state.h3BidiStreams) <<
+    " bidiStreams=" << unsigned(state.h3DuplexStreams) <<
     " lastStreamID=" << uint64_t(state.lastH3StreamID) <<
     " cxnState=" << int(state.h3State) <<
     " parserState=" << int(state.h3ParserState) <<

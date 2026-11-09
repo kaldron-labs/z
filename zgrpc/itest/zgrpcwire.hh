@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZgrpcWire_HH
-#define ZgrpcWire_HH
+#ifndef zgrpcwire_HH
+#define zgrpcwire_HH
 
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZiPlatform.hh>
@@ -137,4 +137,4 @@ inline void RequestParser::init(App &app)
   Base::init(ZmRef<ServerRx>{new ServerRx{app.state}});
 }
 
-#endif /* ZgrpcWire_HH */
+#endif /* zgrpcwire_HH */

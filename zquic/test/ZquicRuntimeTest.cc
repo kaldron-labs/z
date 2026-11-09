@@ -359,7 +359,7 @@ friend inline ZuStringT<"Zquic.Runtime.CliLink"> ZmNHeapID(Link *);
       app()->rxRun([link = ZmRef<Link>{this}, wake = ZuMv(wake)]() mutable {
 	Zquic::CxnID id;
 	uint64_t sequence;
-	wake(link->Base::selectPeerCIDRx_(true, id, sequence));
+	wake(link->Base::selectPeerCIDRx(true, id, sequence));
       });
     });
   }
@@ -934,14 +934,14 @@ void testEndpointOpen()
   ZuCHECK(!diag(serverLink).failures(),
     "runtime server failure diagnostics mismatch");
 
-  auto clientBidi = openStream(clientLink, Zquic::StreamType::Duplex);
+  auto clientDuplex = openStream(clientLink, Zquic::StreamType::Duplex);
   auto clientUni = openStream(clientLink, Zquic::StreamType::Simplex);
-  ZuCHECK(clientLink->send(clientBidi, "client-bidi") &&
+  ZuCHECK(clientLink->send(clientDuplex, "client-bidi") &&
       clientLink->send(clientUni, "client-uni"),
     "runtime client stream send failed");
-  auto serverBidi = openStream(serverLink, Zquic::StreamType::Duplex);
+  auto serverDuplex = openStream(serverLink, Zquic::StreamType::Duplex);
   auto serverUni = openStream(serverLink, Zquic::StreamType::Simplex);
-  ZuCHECK(serverLink->send(serverBidi, "server-bidi") &&
+  ZuCHECK(serverLink->send(serverDuplex, "server-bidi") &&
       serverLink->send(serverUni, "server-uni"),
     "runtime server stream send failed");
   bool streamsArrived = serverLink->waitStreams(2, Zm::now(10)) &&
@@ -960,16 +960,16 @@ void testEndpointOpen()
       diag(serverLink).tx.packetsTx >= 2,
     "runtime stream diagnostics mismatch");
 #endif
-  auto serverRxBidi = findStream(serverLink, 0);
+  auto serverRxDuplex = findStream(serverLink, 0);
   auto serverRxUni = findStream(serverLink, 2);
-  auto clientRxBidi = findStream(clientLink, 1);
+  auto clientRxDuplex = findStream(clientLink, 1);
   auto clientRxUni = findStream(clientLink, 3);
-  ZuCHECK(serverRxBidi && serverRxBidi->link() == serverLink.ptr() &&
-      serverRxBidi->processed >= 1 &&
+  ZuCHECK(serverRxDuplex && serverRxDuplex->link() == serverLink.ptr() &&
+      serverRxDuplex->processed >= 1 &&
       serverRxUni && serverRxUni->link() == serverLink.ptr() &&
       serverRxUni->processed >= 1 &&
-      clientRxBidi && clientRxBidi->link() == clientLink.ptr() &&
-      clientRxBidi->processed >= 1 &&
+      clientRxDuplex && clientRxDuplex->link() == clientLink.ptr() &&
+      clientRxDuplex->processed >= 1 &&
       clientRxUni && clientRxUni->link() == clientLink.ptr() &&
       clientRxUni->processed >= 1 &&
       serverLink->streamedCount == 2 &&
@@ -1004,9 +1004,9 @@ void testEndpointOpen()
 	  "runtime endpoints remained connected after close");
   waitDisconnect(server);
 
-  serverRxBidi = nullptr;
+  serverRxDuplex = nullptr;
   serverRxUni = nullptr;
-  clientRxBidi = nullptr;
+  clientRxDuplex = nullptr;
   clientRxUni = nullptr;
   clientLink = nullptr;
   serverLink = nullptr;

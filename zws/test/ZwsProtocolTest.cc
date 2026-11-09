@@ -1408,7 +1408,7 @@ void codec()
     Zws::Config config;
     config.handshakeTimeout = 1;
     App<false> app{link, random, config};
-    app.opening_();
+    app.opening();
     ZuCHECK(link.hub.mx_.active() == 1);
     ZuCHECK(link.hub.mx_.fire());
     ZuCHECK(app.failure() == Zws::Failure::Timeout);
@@ -1566,15 +1566,15 @@ struct TCPOwnedLink {
     ++allocated;
     return allocator.allocBuf();
   }
-  bool startTCP_(ZmRef<Zhttp::Transport_::TCPHeader> h, bool) {
+  bool startTCP(ZmRef<Zhttp::Transport_::TCPHeader> h, bool) {
     head = ZuMv(h); return true;
   }
-  bool partTCP_(ZmRef<Zhttp::Transport_::TCPHeader>, Zhttp::RetainedEntry entry) {
+  bool partTCP(ZmRef<Zhttp::Transport_::TCPHeader>, Zhttp::RetainedEntry entry) {
     ++owned;
     parts.push(ZuMv(entry.buf));
     return true;
   }
-  void endTCP_(ZmRef<Zhttp::Transport_::TCPHeader>) { ++ended; }
+  void endTCP(ZmRef<Zhttp::Transport_::TCPHeader>) { ++ended; }
 };
 
 void txOwnedAllocationOrder(bool isControl, bool prior)
@@ -1589,7 +1589,7 @@ void txOwnedAllocationOrder(bool isControl, bool prior)
   auto packet = out.allocBuf(out.headRoom());
   auto priorHeader = link.head.ptr();
   *packet << "owned";
-  ZuCheckRT(out.appendOwned_(packet) && out.flush());
+  ZuCheckRT(out.appendOwned(packet) && out.flush());
   if (!prior)
     ZuCheckRT(link.allocated == 1 && link.head.ptr() == packet.ptr());
   else if (!isControl)
@@ -1624,7 +1624,7 @@ void txOwnedAllocationOrder(bool isControl, bool prior)
   }
   ZuCheckRT(index == unsigned(prior && !isControl ? 2 : 1) &&
       decoded == (prior ? "preowned" : "owned"));
-  lower.endTCP_();
+  lower.endTCP();
   link.parts.length(0);
   link.head = nullptr;
   ZuCheckRT(link.ended == 1 && packet->refCount() == 1);
@@ -1654,7 +1654,7 @@ void txOwnedTCP()
   }
   Bytes replay;
   replay << later->cspan();
-  ZuCheckRT(!lower.allocatedBuf_(later.ptr()));
+  ZuCheckRT(!lower.allocatedBuf(later.ptr()));
   {
     auto out = Zws::txLayer<true>(lower, Zws::Opcode::Binary, &random);
     out << later->cspan();
@@ -1696,7 +1696,7 @@ void txOwnedTCP()
     }
     wire.offset(unsigned(frame_.length)); ++index;
   }
-  lower.endTCP_();
+  lower.endTCP();
   ZuCheckRT(index == 4 && link.ended == 1 && borrowed->cspan() == "borrowed" &&
     later->cspan() == replay);
 }
@@ -1719,7 +1719,7 @@ void txOwnedTCPTurns(bool prior)
     Zhttp::Writer writer{&send, Zhttp::Native_::writerOps<decltype(send)>()};
     auto out = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
     if (prior) out << "pre";
-    ZuCheckRT(out.appendOwned_(packet) && out.flush());
+    ZuCheckRT(out.appendOwned(packet) && out.flush());
     ZuCheckRT(link.allocated == unsigned(prior ? 2 : 1) &&
       (prior ? link.parts.length() == 1 && link.parts[0].ptr() == packet.ptr() :
 	link.head.ptr() == packet.ptr()));
@@ -1746,7 +1746,7 @@ void txOwnedTCPTurns(bool prior)
       wire.offset(unsigned(frame_.length)); ++index;
     }
     ZuCheckRT(index == unsigned(prior ? 2 : 1) && decoded == (prior ? "prequeued" : "queued"));
-    ZuCheckRT(!writer.allocatedBuf_(packet.ptr()));
+    ZuCheckRT(!writer.allocatedBuf(packet.ptr()));
     Bytes original; original << packet->cspan();
     unsigned allocated = link.allocated, parts = link.parts.length();
     auto replay = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
@@ -1770,8 +1770,8 @@ void txOwnedNoCapability()
   *packet << "held";
   CounterRandom random;
   auto out = Zws::txLayer<true>(writer, Zws::Opcode::Binary, &random);
-  ZuCheck(!writer.allocatedBuf_(packet.ptr()));
-  ZuCheck(!out.appendOwned_(packet) && !out.valid() && writer.failed());
+  ZuCheck(!writer.allocatedBuf(packet.ptr()));
+  ZuCheck(!out.appendOwned(packet) && !out.valid() && writer.failed());
   ZuCheck(!link.head && !link.parts.length() && packet->cspan() == "held");
 }
 

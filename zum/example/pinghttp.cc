@@ -377,11 +377,11 @@ public:
       }
     } while (m_credit.cmpXch(count + 1, count) != count);
     Work call = new Call{this, ZuMv(request), ZuMv(complete)};
-    post([this, call = ZuMv(call)]() mutable { send_(ZuMv(call)); });
+    post([this, call = ZuMv(call)]() mutable { send_0(ZuMv(call)); });
   }
 
   void retire() {
-    post([this]() { --m_credit; drain_(); });
+    post([this]() { --m_credit; stop_1(); });
   }
 
   void final() {
@@ -446,7 +446,7 @@ private:
     }
     m_clients[offset]->start([this, offset](bool ok) {
       post([this, offset, ok]() {
-        if (!ok) { stopClients_(true); return; }
+        if (!ok) { stop_0(true); return; }
         startClient_(offset + 1);
       });
     });
@@ -454,10 +454,10 @@ private:
 
   void stop_() {
     m_credit |= PingHTTPCredit::Closed;
-    post([this]() { stopClients_(false); });
+    post([this]() { stop_0(false); });
   }
 
-  void stopClients_(bool failed) {
+  void stop_0(bool failed) {
     m_stopOK = true;
     m_draining = true;
     m_children = m_clients.length();
@@ -468,14 +468,14 @@ private:
         post([this, failed, ok]() {
           m_stopOK &= ok;
           --m_children;
-          drain_(failed);
+          stop_1(failed);
         });
       });
     }
-    drain_(failed);
+    stop_1(failed);
   }
 
-  void drain_(bool failed = false) {
+  void stop_1(bool failed = false) {
     if (!m_draining || m_children ||
         (m_credit.load_() & PingHTTPCredit::Count)) return;
     m_draining = false;
@@ -483,20 +483,20 @@ private:
       ZiResolver::stop([this, failed](bool ok) {
         post([this, failed, ok]() {
           m_stopOK &= ok;
-          finish_(failed);
+          stop_2(failed);
         });
       });
       return;
     }
-    finish_(failed);
+    stop_2(failed);
   }
 
-  void finish_(bool failed) {
+  void stop_2(bool failed) {
     if (failed) Engine::started(false);
     else Engine::stopped(m_stopOK);
   }
 
-  void send_(Work call) {
+  void send_0(Work call) {
     if (m_credit.load_() & PingHTTPCredit::Closed) { call->finish(0, {}); return; }
     Zhttp::URL parsed{call->request.url};
     auto url = parsed.url();
@@ -509,7 +509,7 @@ private:
       if (candidate->origin(url)) { client = candidate; break; }
     ZmAssert_(client);
     if (client->state() == ZmEngineState::Running) {
-      sendReady_(client, ZuMv(call));
+      send_1(client, ZuMv(call));
       return;
     }
     client->start([this, client, call = ZuMv(call)](bool ok) mutable {
@@ -517,12 +517,12 @@ private:
       if (!work) return;
       post([this, client, work = ZuMv(work), ok]() mutable {
         if (!ok) { work->finish(0, {}); return; }
-        sendReady_(client, ZuMv(work));
+        send_1(client, ZuMv(work));
       });
     });
   }
 
-  void sendReady_(PingHTTP_::Client *client, Work work) {
+  void send_1(PingHTTP_::Client *client, Work work) {
     if (m_credit.load_() & PingHTTPCredit::Closed) {
       work->finish(0, {});
       return;

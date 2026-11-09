@@ -230,7 +230,7 @@ struct ResParser : public Response, public Zhttp::Parser {
 	  return 0U;
 	},
 	[this](ZuSpan<uint8_t> span) {
-	  decoded = decodeBody_(span);
+	  decoded = decodeBody(span);
 	  bodySeen = true;
 	});
       return decoded;
@@ -244,7 +244,7 @@ struct ResParser : public Response, public Zhttp::Parser {
 	Impl::Body == BodyPolicy::Zero) return bodyValid = bool(object);
     if (streamed || Impl::Borrowed) {
       if (!input.buffer()) return false;
-      decoded = decodeBody_(input.buffer()->span());
+      decoded = decodeBody(input.buffer()->span());
       bodySeen = true;
     }
     if constexpr (Impl::Body == BodyPolicy::JSON ||
@@ -272,7 +272,7 @@ private:
     return *borrowed;
   }
 
-  bool decodeBody_(ZuSpan<uint8_t> span) {
+  bool decodeBody(ZuSpan<uint8_t> span) {
     if constexpr (Impl::Body == BodyPolicy::JSON) {
       using Body_JSON_Facet = Impl::Body_JSON_Facet;
       auto scan = ZfJSON::scan(span);
@@ -432,13 +432,13 @@ struct MResParser : public Zhttp::Parser {
   static Limits sseLimits_(B *, long) { return {}; }
 
   template <typename B, typename Res>
-  static bool sseEvent_(B *builder, Zhttp::SSEEvent event,
+  static bool sseEvent(B *builder, Zhttp::SSEEvent event,
       unsigned status, Res &response) {
     return builder->receiveSSE(ZuMv(event), status, response);
   }
 
   template <typename B>
-  static void sseDone_(B *builder) { builder->sseCompleted(); }
+  static void sseDone(B *builder) { builder->sseCompleted(); }
 
   void init(Builder &builder_) { builder = &builder_; }
   void bodyMax(uint64_t max) { inputMax = max; }
@@ -571,7 +571,7 @@ struct MResParser : public Zhttp::Parser {
 	  }
 	  sseBytes += span.length();
 	  (void)sse.feed(span, [this, &response](Zhttp::SSEEvent event) {
-	    if (!sseEvent_(builder, ZuMv(event), statusCode, response))
+	    if (!sseEvent(builder, ZuMv(event), statusCode, response))
 	      sse.close();
 	  });
 	});
@@ -595,7 +595,7 @@ struct MResParser : public Zhttp::Parser {
       u.dispatch([this, link](auto, auto &response) {
 	using Res = ZuDecay<decltype(response)>;
 	if constexpr (HaveSSE && Res::Body == BodyPolicy::SSE)
-	  sseDone_(builder);
+	  sseDone(builder);
 	else builder->process(link, ZuMv(response));
       });
   }

@@ -372,8 +372,8 @@ struct ParserStream :
     return true;
   }
   template <typename Rx>
-  void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamPeerEnd_() { ++streamEnds; dispatch.disable_(); }
+  void streamRx(Rx &rx) { dispatch.process(rx); }
+  void streamPeerEnd() { ++streamEnds; dispatch.disable_(); }
   void streamError_() { ++streamResets; dispatch.disable_(); }
   template <typename Rx>
   void processStream(Rx &rx) {
@@ -620,7 +620,7 @@ void testRxTable()
 
   Zhttp::H3::QPackRxTable table;
   table.init(128);
-  ZuCHECK(table.setCapacity(128), "rx capacity setup failed");
+  ZuCHECK(table.capacity(128), "rx capacity setup failed");
   ZuCHECK(table.insert({":authority", "www.example.com"}) &&
       table.insert({":path", "/sample/path"}) &&
       table.insertCount() == 2 && table.count() == 2,
@@ -639,7 +639,7 @@ void testRxTable()
 
   ZuCHECK(table.duplicate(0) && table.insertCount() == 3,
     "rx duplicate failed");
-  table.setCapacity(48);
+  table.capacity(48);
   ZuCHECK(table.used() <= table.capacity(), "rx eviction failed");
   ZuCHECK(!table.lookupAbs(0, h), "rx lookup ignored eviction");
   auto count = table.insertCount();
@@ -648,13 +648,13 @@ void testRxTable()
     "rx oversized insert changed state");
 }
 
-void testDynamicFieldSectionDecode()
+void dynamicFieldSectionDecode()
 {
-  ZuTestScope(testDynamicFieldSectionDecode);
+  ZuTestScope(dynamicFieldSectionDecode);
 
   Zhttp::H3::QPackRxTable table;
   table.init(256);
-  table.setCapacity(256);
+  table.capacity(256);
   table.insert({":authority", "www.example.com"});
   table.insert({":path", "/sample/path"});
 
@@ -706,13 +706,13 @@ void testDynamicFieldSectionDecode()
     "dynamic post-base indexed field decode failed");
 }
 
-void testFieldRepresentationGoldens()
+void fieldRepresentationGoldens()
 {
-  ZuTestScope(testFieldRepresentationGoldens);
+  ZuTestScope(fieldRepresentationGoldens);
 
   Zhttp::H3::QPackRxTable table;
   table.init(512);
-  table.setCapacity(512);
+  table.capacity(512);
   table.insert({"x-a", "one"});
   table.insert({"x-b", "two"});
 
@@ -1336,9 +1336,9 @@ void testParserBodyStream()
   }
 }
 
-void testParserHuffmanRuntimeHeader()
+void parserHuffmanRuntimeHeader()
 {
-  ZuTestScope(testParserHuffmanRuntimeHeader);
+  ZuTestScope(parserHuffmanRuntimeHeader);
 
   ParserStream parser;
   Zhttp::H3::HdrBytes payload;
@@ -1397,9 +1397,9 @@ void testParserInvalidFields()
   }
 }
 
-void testParserStrictContentLength()
+void parserStrictContentLength()
 {
-  ZuTestScopeRT(testParserStrictContentLength);
+  ZuTestScopeRT(parserStrictContentLength);
 
   static const char *values[] = { "5x", "18446744073709551616" };
   for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
@@ -1619,9 +1619,9 @@ void testParserMetaCredit()
   }
 }
 
-void testParserHeaderScratchAndLimits()
+void parserHeaderScratchLimits()
 {
-  ZuTestScope(testParserHeaderScratchAndLimits);
+  ZuTestScope(parserHeaderScratchLimits);
 
   ZtString<> longValue;
   for (unsigned i = 0; i < 66000; ++i) longValue << 'a';
@@ -1792,9 +1792,9 @@ void testExtendedConnectRx()
   }
 }
 
-void testFieldDecodeAllocationDiscipline()
+void fieldDecodeAllocDiscipline()
 {
-  ZuTestScope(testFieldDecodeAllocationDiscipline);
+  ZuTestScope(fieldDecodeAllocDiscipline);
 
   Zhttp::H3::HdrBytes bytes;
   bytes.push(0);
@@ -1950,7 +1950,7 @@ void testTxTable()
 
   Zhttp::H3::QPackTxTable table;
   ZuCHECK(table.init(128, 8) && table.peerCapacity(128) &&
-      table.setCapacity(128),
+      table.capacity(128),
     "tx capacity setup failed");
   uint64_t abs = uint64_t(-1);
   ZuCHECK(table.insert({"accept", "application/json"}, &abs) && !abs,
@@ -1982,7 +1982,7 @@ void testTxTable()
     "tx failed insert changed state");
   ZuCHECK(table.insert({"server", "z"}, &abs) && abs == 1,
     "tx second insert failed");
-  table.setCapacity(48);
+  table.capacity(48);
   ZuCHECK(table.used() <= table.capacity(), "tx eviction failed");
 }
 
@@ -1993,7 +1993,7 @@ void testTxNameLookup()
   Zhttp::H3::QPackTxTable table;
   uint64_t first = 0, second = 0;
   ZuCHECK(table.init(256, 8) && table.peerCapacity(256) &&
-      table.setCapacity(256) &&
+      table.capacity(256) &&
       table.insert({"x-name", "one"}, &first) &&
       table.insert({"x-name", "two"}, &second),
     "dynamic name table setup failed");
@@ -2012,7 +2012,7 @@ void testTxNameLookup()
 
   Zhttp::H3::QPackTxTable churn;
   ZuCHECK(churn.init(4096, 8) && churn.peerCapacity(4096) &&
-      churn.setCapacity(4096),
+      churn.capacity(4096),
     "dynamic name churn setup failed");
   bool inserted = true;
   for (unsigned i = 0; i < 300; ++i) {
@@ -2028,7 +2028,7 @@ void testTxNameLookup()
   ZuCHECK(inserted && newest && newest->value == "v299" &&
       !churn.exactResized() && !churn.nameResized(),
     "eviction/compaction did not preserve the newest name mapping");
-  ZuCHECK(churn.setCapacity(64) &&
+  ZuCHECK(churn.capacity(64) &&
       (newest = churn.findName("x-repeat")) &&
       newest->value == "v299",
     "capacity reduction left a stale same-name mapping");
@@ -2052,7 +2052,7 @@ void testBoundedStorage()
     "32-byte Rx capacity did not allocate one entry slot"));
 
   enum { Capacity = 32768, Entries = 300, Sections = 128 };
-  ZuCheckRT(rx.init(Capacity) && rx.setCapacity(Capacity), log_(
+  ZuCheckRT(rx.init(Capacity) && rx.capacity(Capacity), log_(
     "bounded Rx setup failed"));
   uint32_t rxSlots = rx.slots();
   for (unsigned i = 0; i < Entries; ++i) {
@@ -2076,7 +2076,7 @@ void testBoundedStorage()
       tx.nameSlots() == nameSlots &&
       tx.sectionSlots() == sectionSlots &&
       tx.effectiveCapacity() == Capacity &&
-      tx.setCapacity(Capacity), log_(
+      tx.capacity(Capacity), log_(
     "peer capacity changed locally bounded storage"));
   uint64_t newest = 0;
   for (unsigned i = 0; i < Entries; ++i) {
@@ -2123,7 +2123,7 @@ void testRxTxChurn()
 
   Zhttp::H3::QPackRxTable rx;
   rx.init(96);
-  ZuCheckRT(rx.setCapacity(96), log_( "rx churn capacity setup failed"));
+  ZuCheckRT(rx.capacity(96), log_( "rx churn capacity setup failed"));
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
     snprintf(name, sizeof(name), "x-rx-%u", i);
@@ -2142,7 +2142,7 @@ void testRxTxChurn()
 
   Zhttp::H3::QPackTxTable tx;
   ZuCheckRT(tx.init(96, 8) && tx.peerCapacity(96) &&
-      tx.setCapacity(96), log_(
+      tx.capacity(96), log_(
     "tx churn capacity setup failed"));
   for (unsigned i = 0; i < 40; ++i) {
     char name[16], value[16];
@@ -2171,7 +2171,7 @@ void testTxSectionStress()
 
   Zhttp::H3::QPackTxTable table;
   ZuCheckRT(table.init(512, 8) && table.peerCapacity(512) &&
-      table.setCapacity(512), log_(
+      table.capacity(512), log_(
     "tx section stress capacity setup failed"));
   uint64_t abs[6];
   for (unsigned i = 0; i < 6; ++i) {
@@ -2240,9 +2240,9 @@ void testInstructionEncoding()
     "section ack instruction mismatch");
 }
 
-void testHuffmanInstructionStorage()
+void huffmanInstructionStorage()
 {
-  ZuTestScope(testHuffmanInstructionStorage);
+  ZuTestScope(huffmanInstructionStorage);
 
   Zhttp::H3::HdrBytes bytes;
   appendHuffmanString(bytes, 0x60, 5, "accept");
@@ -2476,9 +2476,9 @@ void testBuilderPeerCapacity()
     "builder did not commit dynamic QPACK after peer capacity");
 }
 
-void testBuilderCommitFailureAtomic()
+void builderCommitFailAtomic()
 {
-  ZuTestScope(testBuilderCommitFailureAtomic);
+  ZuTestScope(builderCommitFailAtomic);
 
   {
     BuilderState builder;
@@ -2786,21 +2786,21 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testVar);
   ZuTestCall(testRxTable);
-  ZuTestCall(testDynamicFieldSectionDecode);
-  ZuTestCall(testFieldRepresentationGoldens);
+  ZuTestCall(dynamicFieldSectionDecode);
+  ZuTestCall(fieldRepresentationGoldens);
   ZuTestCall(testParserFieldCallbacks);
   ZuTestCall(testParserBodyStream);
   ZuTestCall(testReceiveLimits);
   ZuTestCall(testPartialData);
-  ZuTestCall(testParserHuffmanRuntimeHeader);
+  ZuTestCall(parserHuffmanRuntimeHeader);
   ZuTestCall(testParserInvalidFields);
-  ZuTestCall(testParserStrictContentLength);
-  ZuTestCall(testParserHeaderScratchAndLimits);
+  ZuTestCall(parserStrictContentLength);
+  ZuTestCall(parserHeaderScratchLimits);
   ZuTestCall(testParserMetaCredit);
   ZuTestCall(testCxnControlCredit);
   ZuTestCall(testCxnQPackCredit);
   ZuTestCall(testExtendedConnectRx);
-  ZuTestCall(testFieldDecodeAllocationDiscipline);
+  ZuTestCall(fieldDecodeAllocDiscipline);
   ZuTestCall(testSettingsKeyBoundary);
   ZuTestCall(testTxTable);
   ZuTestCall(testTxNameLookup);
@@ -2808,7 +2808,7 @@ int main(int argc, char **argv)
   ZuTestCall(testRxTxChurn);
   ZuTestCall(testTxSectionStress);
   ZuTestCall(testInstructionEncoding);
-  ZuTestCall(testHuffmanInstructionStorage);
+  ZuTestCall(huffmanInstructionStorage);
   ZuTestCall(testInstructionParserSplit);
   ZuTestCall(testInitializationSeeds);
   ZuTestCall(testSeedCatalogLookup);

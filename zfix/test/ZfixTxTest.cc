@@ -258,7 +258,7 @@ static void assignment()
   Fmt::Error error;
   auto body = TxBody::encode<OrderMsg>(Order{"first"}, 81, error);
   ZuCheck(body && !error && tx.next_() == 1);
-  ZuCheck(tx.select_(body) == TxSelect::Pending && tx.loading_() && tx.next_() == 1);
+  ZuCheck(tx.select_(body) == TxSelect::Pending && tx.loading() && tx.next_() == 1);
   ZuCheck(tx.send(82) == TxSelect::Busy);
   tx.drain();
   ZuCheck(!tx.output.length());
@@ -295,7 +295,7 @@ static void staleLoad()
   ZuCheck(tx.detach_(1) && tx.attach_(2) && tx.ready_(2, true));
   tx.resume_();
   ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted);
-  ZuCheck(!tx.loading_() && !tx.unloaded.length() && tx.next_() == 2);
+  ZuCheck(!tx.loading() && !tx.unloaded.length() && tx.next_() == 2);
   ZuCheck(tx.loaded_(ticket, true) == TxSelect::Invalid);
   tx.drain();
   ZuCheck(tx.output.length() == 1 && tx.output[0].context.connection == 2 &&
@@ -318,7 +318,7 @@ static void detachedLoad()
   ZuCheck(tx.detach_(1));
   ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted);
   tx.drain();
-  ZuCheck(tx.next_() == 2 && !tx.loading_() && !tx.unloaded.length() &&
+  ZuCheck(tx.next_() == 2 && !tx.loading() && !tx.unloaded.length() &&
     !tx.output.length() && tx.queuedBytes_());
   ZuCheck(tx.attach_(2) && tx.ready_(2, true) && tx.resume_());
   tx.drain();
@@ -360,7 +360,7 @@ static void replay()
     fill.p<Session::SeqReset>().newSeqNo == 3 && h.seqNo == 2 && h.possDup);
   ZuCheck(!readControl(view(tx.output[6]), fill, h) && fill.is<Session::Reject>());
   ZuCheck(h.seqNo == 3 && h.origSendingTime == original);
-  ZuCheck(tx.acknowledge_(tx.epoch_(), 5));
+  ZuCheck(tx.acknowledge(tx.epoch_(), 5));
   tx.drain();
   ZuCheck(!tx.retained_() && tx.history.length() == 3 && tx.acknowledged_() == 5);
   ZuCheck(tx.replay_(tx.epoch_(), 1, 1));
@@ -494,7 +494,7 @@ static void sequenceNotice()
   ZuCheck(tx.replay_(1, 1)); tx.drain();
   ZuCheck(tx.limits.length() == 1 && tx.detach_(1) && tx.attach_(2) &&
     tx.limits.length() == 1);
-  ZuCheck(tx.resume_() && tx.acknowledge_(1, 5)); tx.drain(); tx.hold_();
+  ZuCheck(tx.resume_() && tx.acknowledge(1, 5)); tx.drain(); tx.hold_();
   ZuCheck(tx.reset_(1, 2) && tx.ready_(2, true) && tx.resume_());
   ZuCheck(tx.send(3) == TxSelect::Accepted && tx.send(4) == TxSelect::Accepted &&
     tx.limits.length() == 2 && tx.limits[1].context.epoch == 2 &&
@@ -657,14 +657,14 @@ static void priorityReentry()
       tx.output[0].context.seqNo == 2 && tx.output[0].context.connection == 2 &&
       tx.next_() == 3 && tx.published_() == 1);
     auto bytes = tx.queuedBytes_();
-    ZuCheck(!tx.abortTx_(tx.epoch_(), 2));
-    ZuCheck(tx.abortTx_(tx.epoch_(), 1) && tx.next_() == 3 && tx.queuedBytes_() < bytes);
+    ZuCheck(!tx.abortTx(tx.epoch_(), 2));
+    ZuCheck(tx.abortTx(tx.epoch_(), 1) && tx.next_() == 3 && tx.queuedBytes_() < bytes);
     tx.drain();
     ZuCheck(tx.output.length() == 1 && tx.published_() == 1 &&
       tx.next_() == 3 && !tx.unloaded.length());
     ZuCheck(tx.ready_(2, true) == !detach);
     if (tx.attached_()) ZuCheck(tx.detach_(2));
-    ZuCheck(tx.attach_(3) && !tx.abortTx_(tx.epoch_(), 2));
+    ZuCheck(tx.attach_(3) && !tx.abortTx(tx.epoch_(), 2));
   }
 }
 
@@ -770,11 +770,11 @@ static void abortedAssigned()
   ZuCheck(tx.control(heartbeat) == TxSelect::Accepted);
   ZuCheck(tx.send(3) == TxSelect::Accepted && tx.next_() == 5);
   auto bytes = tx.queuedBytes_();
-  ZuCheck(tx.abortTx_(tx.epoch_(), 2) && tx.next_() == 5 && tx.queuedBytes_() < bytes);
+  ZuCheck(tx.abortTx(tx.epoch_(), 2) && tx.next_() == 5 && tx.queuedBytes_() < bytes);
   auto after = tx.queuedBytes_();
-  ZuCheck(!tx.abortTx_(tx.epoch_(), 2) && !tx.abortTx_(tx.epoch_(), 1) &&
+  ZuCheck(!tx.abortTx(tx.epoch_(), 2) && !tx.abortTx(tx.epoch_(), 1) &&
     tx.queuedBytes_() == after);
-  ZuCheck(tx.abortTx_(tx.epoch_(), 4) && tx.next_() == 5 && tx.published_() == 2 &&
+  ZuCheck(tx.abortTx(tx.epoch_(), 4) && tx.next_() == 5 && tx.published_() == 2 &&
     tx.retained_() == 1 && tx.queuedBytes_() < after);
   ZuCheck(tx.detach_(1) && tx.attach_(2));
   Session::Msg logon;
@@ -808,7 +808,7 @@ static void reconstructedHistory()
     ZuCheck(old.restore_(17, 1, 1, 1));
     old.start();
     ZuCheck(old.send(73, "restored/0007") == TxSelect::Accepted); old.drain();
-    ZuCheck(old.output.length() == 1 && old.acknowledge_(old.epoch_(), 2)); old.drain();
+    ZuCheck(old.output.length() == 1 && old.acknowledge(old.epoch_(), 2)); old.drain();
     state = old.progress_();
     const auto &published = old.output[0];
     record = {SessionString{published.body->body()}, published.original,
@@ -843,13 +843,13 @@ static void ackNotifications()
   tx.start();
   ZuCheck(tx.send(17) == TxSelect::Accepted && tx.send(18) == TxSelect::Accepted); tx.drain();
   ZuCheck(tx.published_() == 3 && tx.acknowledged_() == 1 && !tx.acks.length());
-  ZuCheck(!tx.acknowledge_(tx.epoch_(), 4) && !tx.acks.length());
-  ZuCheck(tx.acknowledge_(tx.epoch_(), 2) && tx.acks.length() == 1);
+  ZuCheck(!tx.acknowledge(tx.epoch_(), 4) && !tx.acks.length());
+  ZuCheck(tx.acknowledge(tx.epoch_(), 2) && tx.acks.length() == 1);
   ZuCheck(tx.acks[0].context.epoch == 1 && tx.acks[0].context.connection == 1 &&
     tx.acks[0].previous == 1 && tx.acks[0].next == 2);
-  ZuCheck(tx.acknowledge_(tx.epoch_(), 2) && tx.acknowledge_(tx.epoch_(),
+  ZuCheck(tx.acknowledge(tx.epoch_(), 2) && tx.acknowledge(tx.epoch_(),
     1) && tx.acks.length() == 1);
-  ZuCheck(tx.acknowledge_(tx.epoch_(), 3) && tx.acks.length() == 2 &&
+  ZuCheck(tx.acknowledge(tx.epoch_(), 3) && tx.acks.length() == 2 &&
     tx.acks[1].previous == 2 && tx.acks[1].next == 3);
 }
 
@@ -865,7 +865,7 @@ static void epochTurnover()
   ZuCheck(tx.resets.length() == 1 && tx.resets[0].previous.loaded == 2 &&
     tx.resets[0].previous.sent == 2 && tx.resets[0].previous.acknowledged == 1);
   ZuCheck(tx.history.length() == 1 && !tx.acks.length() && !tx.archives.length());
-  ZuCheck(!tx.acknowledge_(1, 2) && !tx.replay_(1, 1));
+  ZuCheck(!tx.acknowledge(1, 2) && !tx.replay_(1, 1));
   tx.run_(stale.kind, stale.ticket);
   ZuCheck(tx.output.length() == 1 && !tx.retained_());
   tx.ready_(1, true); tx.resume_();
@@ -893,8 +893,8 @@ static void retireControls()
   for (unsigned i = 0; i < 7; ++i) ZuCheck(tx.control(heartbeat) == TxSelect::Accepted);
   tx.drain(); tx.ready_(1, false); tx.hold_();
   ZuCheck(!tx.retained_() && !tx.queuedBytes_());
-  auto id = tx.resetBegin_(1, 2);
-  ZuCheck(id && tx.resetting_() && tx.epoch_() == 1 && !tx.resets.length());
+  auto id = tx.resetBegin(1, 2);
+  ZuCheck(id && tx.resetting() && tx.epoch_() == 1 && !tx.resets.length());
   ZuCheck(tx.send(17) == TxSelect::Busy && !tx.resume_());
   auto stale = tx.tasks[tx.tasks.length() - 1]; tx.drain();
   ZuCheck(tx.epoch_() == 2 && tx.next_() == 1 && tx.resets.length() == 1 &&
@@ -907,23 +907,23 @@ static void retireGuards()
 {
   ZuTestScope(retireGuards);
   Engine tx; tx.start(); tx.send(17); tx.drain(); tx.ready_(1, false); tx.hold_();
-  auto id = tx.resetBegin_(1, 2);
-  ZuCheck(id && tx.resetting_());
+  auto id = tx.resetBegin(1, 2);
+  ZuCheck(id && tx.resetting());
   auto stale = tx.tasks[tx.tasks.length() - 1];
-  ZuCheck(!tx.cancelReset_(2, id) && !tx.cancelReset_(1, id + 1));
-  ZuCheck(tx.cancelReset_(1, id) && !tx.resetting_() && tx.resetFailures.length() == 1);
+  ZuCheck(!tx.cancelReset(2, id) && !tx.cancelReset(1, id + 1));
+  ZuCheck(tx.cancelReset(1, id) && !tx.resetting() && tx.resetFailures.length() == 1);
   tx.run_(stale.kind, stale.ticket);
   ZuCheck(tx.epoch_() == 1 && tx.history.length() == 1 && !tx.resets.length());
-  auto retry = tx.resetBegin_(1, 3);
+  auto retry = tx.resetBegin(1, 3);
   ZuCheck(retry && retry != id); tx.run_(stale.kind, stale.ticket); tx.drain();
   ZuCheck(tx.epoch_() == 3 && tx.resets.length() == 1 && tx.history.length() == 1);
 
   Engine lost; lost.start(); lost.send(1); lost.drain();
   lost.ready_(1, false); lost.hold_();
-  ZuCheck(lost.resetBegin_(1, 2) && lost.detach_(1)); lost.drain();
-  ZuCheck(!lost.resetting_() && lost.epoch_() == 1 && lost.resetFailures.length() == 1);
+  ZuCheck(lost.resetBegin(1, 2) && lost.detach_(1)); lost.drain();
+  ZuCheck(!lost.resetting() && lost.epoch_() == 1 && lost.resetFailures.length() == 1);
   Engine restored;
-  ZuCheck(restored.restore_(1, 4, 4, 1) && restored.resetBegin_(1, 2)); restored.drain();
+  ZuCheck(restored.restore_(1, 4, 4, 1) && restored.resetBegin(1, 2)); restored.drain();
   ZuCheck(restored.epoch_() == 2 && restored.resets[0].previous.acknowledged == 1);
 }
 
@@ -1002,9 +1002,9 @@ static void reloadReservation()
   ZuCheck(tx.select_(next) == TxSelect::Pending);
   auto ticket = tx.loadTicket;
   tx.drain();
-  ZuCheck(tx.failed_() && tx.error.code == ErrorCode::Size && tx.loading_() &&
+  ZuCheck(tx.failed_() && tx.error.code == ErrorCode::Size && tx.loading() &&
     !tx.queuedBytes_() && !tx.output.length());
-  ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted && !tx.loading_() &&
+  ZuCheck(tx.loaded_(ticket, true) == TxSelect::Accepted && !tx.loading() &&
     tx.queuedBytes_() == nextCharge && tx.next_() == 3);
   tx.error = {}; tx.missingHistory = true; tx.resume_(); tx.drain();
   ZuCheck(tx.published_() == 3 && !tx.queuedBytes_() && !tx.retained_());

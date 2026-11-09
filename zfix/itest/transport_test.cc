@@ -211,7 +211,7 @@ struct Output : public Zfix::WireTx<Output<Link>> {
     return buf;
   }
 
-  bool recordSend(ZmRef<ZiIOBuf> buf) { return link->sendRecord_(ZuMv(buf)); }
+  bool recordSend(ZmRef<ZiIOBuf> buf) { return link->sendRecord(ZuMv(buf)); }
 
   void outputDone(Zfix::TxBody::Ref, Zfix::TxContext context, bool ok) {
     link->app()->txRun([this, context, ok] {
@@ -326,7 +326,7 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
     return 1;
   }
 
-  bool sendRecord_(ZmRef<ZiIOBuf> buf) { return Base::send_(ZuMv(buf)); }
+  bool sendRecord(ZmRef<ZiIOBuf> buf) { return Base::send_(ZuMv(buf)); }
 
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
     output.sent(buf, ok); Base::sent(ZuMv(buf), ok);
@@ -429,7 +429,7 @@ friend inline ZuStringT<"Zfix.transport_test.Link"> ZmNHeapID(Link *);
     return 1;
   }
 
-  bool sendRecord_(ZmRef<ZiIOBuf> buf) { return Base::send_(ZuMv(buf)); }
+  bool sendRecord(ZmRef<ZiIOBuf> buf) { return Base::send_(ZuMv(buf)); }
 
   void sent(ZmRef<ZiTxBuf> buf, bool ok) {
     output.sent(buf, ok); Base::sent(ZuMv(buf), ok);
@@ -719,7 +719,7 @@ friend inline ZuStringT<"Zfix.TransportSwap.Srv"> ZmNHeapID(Link *);
   }
 
 #ifdef ZFIX_TEST_TLS
-  void txProtected_() {
+  void txProtected() {
     auto s = app()->state;
     if (!s->protectNext.xch(0)) return;
     s->protectedRecord.post();

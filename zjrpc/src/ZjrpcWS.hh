@@ -145,12 +145,12 @@ public:
   void pong(Link &link, ZuBSpan payload) { control_<false>(link, 0, payload); }
 
 protected:
-  void wsClosed_() { }
+  void wsClosed() { }
 
   // Rx owner: established peers close through Zws's handshake and timer.
   // A connection still opening has no WebSocket channel to close yet.
   template <typename Link>
-  void stopWS_(Link &link) {
+  void stopWS(Link &link) {
     if (link.state().rx.up()) link.close(Zws::CloseCode::GoingAway);
     else link.disconnect();
   }
@@ -162,7 +162,7 @@ protected:
       (void)code;
       try {
 	if constexpr (Closed) {
-	  endpoint()->wsClosed_();
+	  endpoint()->wsClosed();
 	  Zws::H1_::closed(*endpoint()->impl(), *link, code, ZuBSpan{*body}, 0);
 	} else
 	  Zws::H1_::pong(*endpoint()->impl(), *link, ZuBSpan{*body}, 0);

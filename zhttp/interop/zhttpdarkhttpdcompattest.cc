@@ -12,7 +12,7 @@
 #endif
 
 #include "ZhttpTestUtil.hh"
-#include "ZhttpInteropPorts.hh"
+#include "zhttpinteropports.hh"
 
 using namespace ZuTestUtil;
 

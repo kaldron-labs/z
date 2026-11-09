@@ -86,11 +86,11 @@ using Fields = Fields_<typename W::O, W::TimeIndex>::T;
 
 // map a field to its Decoder type
 template <typename Field, typename Props = Field::Props>
-using FieldDecoderFlags_ = ZuUnsigned<
+using FieldDecoderFlags = ZuUnsigned<
   ((Field::Type::Code == ZfFieldTC::Float) ? 4 : 0) |
   (ZuTypeIn<ZuFieldProp::Delta2, Props>{} ? 2 : 0) |
   (ZuTypeIn<ZuFieldProp::Delta, Props>{} ? 1 : 0)>;
-template <typename Field, unsigned = FieldDecoderFlags_<Field>{}>
+template <typename Field, unsigned = FieldDecoderFlags<Field>{}>
 struct FieldDecoder_;
 template <typename Field>
 struct FieldDecoder_<Field, 0U> { using T = Decoder; };

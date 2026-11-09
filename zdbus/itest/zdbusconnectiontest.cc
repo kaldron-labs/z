@@ -20,7 +20,7 @@
 #include <zlib/ZmSemaphore.hh>
 #include <zlib/ZdbusConnection.hh>
 
-#include "../util/ZdbusTestTool.hh"
+#include "../util/zdbustesttool.hh"
 
 using namespace ZuTestUtil;
 

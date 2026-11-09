@@ -128,7 +128,7 @@ public:
     return ZuMv(*this);
   }
   Params &&qpackIndex(ZuBSpan name) {
-    name = headerName_(name);
+    name = headerName(name);
     if (!m_index || !m_index->find(name)) {
       detach_(m_index);
       m_index->add(HeaderName{name}, true);
@@ -136,7 +136,7 @@ public:
     return ZuMv(*this);
   }
   Params &&qpackNeverIndex(ZuBSpan name) {
-    name = headerName_(name);
+    name = headerName(name);
     if (!m_neverIndex || !m_neverIndex->find(name)) {
       detach_(m_neverIndex);
       m_neverIndex->add(HeaderName{name}, true);
@@ -174,7 +174,7 @@ private:
     set = ZuMv(copy);
   }
 
-  static ZuBSpan headerName_(ZuBSpan name) {
+  static ZuBSpan headerName(ZuBSpan name) {
     for (unsigned i = 0, n = name.length(); i < n; ++i)
       if (!name[i]) {
 	name = {name.data(), i};
@@ -207,18 +207,18 @@ using QPackRxArray =
 
 struct ZhttpAPI QPackRxTable {
   QPackRxArray	entries;	// oldest-to-newest
-  uint32_t	head_ = 0;
+  uint32_t	head = 0;
   uint64_t	baseAbs_ = 0;
   uint64_t	insertCount_ = 0;
-  uint32_t	capacityBytes_ = 0;
-  uint32_t	maxCapacityBytes_ = 0;
-  uint32_t	usedBytes_ = 0;
+  uint32_t	capacity_ = 0;
+  uint32_t	maxCapacity_ = 0;
+  uint32_t	used_ = 0;
 
   // Connection-affine Rx state. Callers must serialize access from the owning
   // receive path; table storage is deliberately unsynchronized.
   bool init(uint32_t);
   void final();
-  bool setCapacity(uint32_t);
+  bool capacity(uint32_t);
   bool insert(Header);
   bool insert(ZuBSpan, ZuBSpan);
   bool duplicate(uint64_t);
@@ -231,11 +231,11 @@ struct ZhttpAPI QPackRxTable {
   void compact();
   uint64_t insertCount() const { return insertCount_; }
   uint64_t baseAbs() const { return baseAbs_; }
-  uint32_t capacity() const { return capacityBytes_; }
-  uint32_t maxCapacity() const { return maxCapacityBytes_; }
-  uint32_t used() const { return usedBytes_; }
-  uint32_t count() const { return entries.length() - head_; }
-  uint32_t maxEntries() const { return maxCapacityBytes_>>5; }
+  uint32_t capacity() const { return capacity_; }
+  uint32_t maxCapacity() const { return maxCapacity_; }
+  uint32_t used() const { return used_; }
+  uint32_t count() const { return entries.length() - head; }
+  uint32_t maxEntries() const { return maxCapacity_>>5; }
   uint32_t slots() const { return entries.size(); }
 };
 
@@ -384,16 +384,16 @@ struct ZhttpAPI QPackTxTable {
   ZuPtr<QPackTxNameHash>	names;
   QPackTxOrder		order;
   ZuPtr<QPackTxSectionHash> sections;
-  uint32_t		orderHead_ = 0;
+  uint32_t		orderHead = 0;
   uint64_t		insertCount_ = 0;
   uint64_t		knownReceivedCount_ = 0;
-  uint32_t		capacityBytes_ = 0;
-  uint32_t		localCapacityBytes_ = 0;
-  uint32_t		peerCapacityBytes_ = 0;
+  uint32_t		capacity_ = 0;
+  uint32_t		localCapacity_ = 0;
+  uint32_t		peerCapacity_ = 0;
   uint32_t		peerBlocked_ = 0;
   uint32_t		maxSections_ = 0;
   uint32_t		sectionCount_ = 0;
-  uint32_t		usedBytes_ = 0;
+  uint32_t		used_ = 0;
   bool			capacitySent = false;
   bool			frozen_ = false;
 
@@ -401,7 +401,7 @@ struct ZhttpAPI QPackTxTable {
   // transmit path.
   bool init(uint32_t, uint32_t);
   void final();
-  bool setCapacity(uint32_t);
+  bool capacity(uint32_t);
   bool peerCapacity(uint32_t);
   void peerBlocked(uint32_t v) { peerBlocked_ = v; }
   const QPackTxEntry *find(ZuBSpan, ZuBSpan) const;
@@ -427,17 +427,17 @@ struct ZhttpAPI QPackTxTable {
 
   uint64_t insertCount() const { return insertCount_; }
   uint64_t knownReceivedCount() const { return knownReceivedCount_; }
-  uint32_t capacity() const { return capacityBytes_; }
-  uint32_t localCapacity() const { return localCapacityBytes_; }
-  uint32_t peerCapacity() const { return peerCapacityBytes_; }
+  uint32_t capacity() const { return capacity_; }
+  uint32_t localCapacity() const { return localCapacity_; }
+  uint32_t peerCapacity() const { return peerCapacity_; }
   uint32_t effectiveCapacity() const {
-    return localCapacityBytes_ < peerCapacityBytes_ ?
-      localCapacityBytes_ : peerCapacityBytes_;
+    return localCapacity_ < peerCapacity_ ?
+      localCapacity_ : peerCapacity_;
   }
   uint32_t peerBlocked() const { return peerBlocked_; }
   uint32_t maxSections() const { return maxSections_; }
-  uint32_t used() const { return usedBytes_; }
-  uint32_t count() const { return order.length() - orderHead_; }
+  uint32_t used() const { return used_; }
+  uint32_t count() const { return order.length() - orderHead; }
   uint32_t orderSlots() const { return order.size(); }
   uint32_t exactSlots() const { return exact ? exact->size() : 0; }
   uint32_t exactResized() const { return exact ? exact->resized() : 0; }

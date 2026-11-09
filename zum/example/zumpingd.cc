@@ -361,7 +361,7 @@ int main(int argc, char **argv)
   if (ok) {
     // Ping has no long-lived sessions; the callback still installs the
     // resource-server revocation hook used by stateful consumers.
-    app.service.setRefreshRevocationFn([](Zum::RefreshID, int64_t) {
+    app.service.refreshFn([](Zum::RefreshID, int64_t) {
       // The example has no renewal state of its own; expose receipt of the
       // shared callback as a lifecycle diagnostic for integration fixtures.
       std::cout << "zumpingd refresh family revoked\n" << std::flush;

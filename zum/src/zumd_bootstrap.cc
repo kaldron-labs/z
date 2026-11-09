@@ -163,14 +163,14 @@ public:
     issuers->run(0, [self = ZmRef<ServerBootstrap_>{this}, issuers,
 	id = ZuMv(id)]() mutable {
       issuers->find<0>(0, ZuFwdTuple(ZuMv(id)), [self = ZuMv(self)](
-	  ZdbRowRef<Issuer> row) mutable { self->issuer_(ZuMv(row)); });
+	  ZdbRowRef<Issuer> row) mutable { self->issuer_0(ZuMv(row)); });
     });
   }
 
 private:
   using Next = void (ServerBootstrap_::*)(bool);
 
-  bool seedOptions_()
+  bool seedOptions()
   {
     String admin{m_config.admin};
     if (!loginNormalize(admin) || admin != m_config.admin || !m_config.output) {
@@ -231,7 +231,7 @@ private:
     });
   }
 
-  void issuer_(ZdbRowRef<Issuer> row)
+  void issuer_0(ZdbRowRef<Issuer> row)
   {
     if (row) {
       m_issuer = row->data();
@@ -243,7 +243,7 @@ private:
       finish_(false);
       return;
     }
-    if (!seedOptions_()) { finish_(false); return; }
+    if (!seedOptions()) { finish_(false); return; }
     Issuer issuer{
       .id = m_config.issuer, .schemaVersion = SchemaVersion,
       .bootstrapPhase = BootstrapPhase::Empty,
@@ -257,10 +257,10 @@ private:
     }
     m_issuer = issuer;
     m_result.initialized = true;
-    ensure_(m_db->issuers, ZuMv(issuer), &ServerBootstrap_::issuerAdded_);
+    ensure_(m_db->issuers, ZuMv(issuer), &ServerBootstrap_::issuer_1);
   }
 
-  void issuerAdded_(bool ok)
+  void issuer_1(bool ok)
   {
     if (!ok) { finish_(false); return; }
     validate_();
@@ -291,13 +291,13 @@ private:
     if (m_config.repairAdmin) { repairAdmin_(); return; }
     switch (m_issuer.bootstrapPhase) {
       case BootstrapPhase::Empty:
-	if (!seedOptions_()) { finish_(false); return; }
-	seedApp_();
+	if (!seedOptions()) { finish_(false); return; }
+	seed_0();
 	return;
-      case BootstrapPhase::Core: admin_(); return;
-      case BootstrapPhase::AdminPending: admin_(); return;
+      case BootstrapPhase::Core: admin_0(); return;
+      case BootstrapPhase::AdminPending: admin_0(); return;
       case BootstrapPhase::Ready:
-	if (m_config.reissue) admin_();
+	if (m_config.reissue) admin_0();
 	else finish_(true);
 	return;
       default: finish_(false); return;
@@ -332,7 +332,7 @@ private:
     });
   }
 
-  void seedApp_()
+  void seed_0()
   {
     String audience = m_config.issuer;
     if (audience[audience.length() - 1] == '/')
@@ -344,16 +344,16 @@ private:
       .state = State::Active, .nextActionID = CoreAction::N,
       .authVersion = 1, .catalogRevision = 1,
       .created = now, .updated = now, .audience = ZuMv(audience)},
-      &ServerBootstrap_::seedActions_);
+      &ServerBootstrap_::seed_1);
   }
 
-  void seedActions_(bool ok)
+  void seed_1(bool ok)
   {
     if (!ok) { finish_(false); return; }
     while (m_actionID < CoreAction::N && !coreAction(m_actionID))
       ++m_actionID;
     if (m_actionID >= CoreAction::N) {
-      seedSuperuser_();
+      seed_2();
       return;
     }
     auto id = m_actionID++;
@@ -363,10 +363,10 @@ private:
       .name = coreAction(id), .label = coreAction(id),
       .state = State::Active, .origin = Origin::Standard,
       .catalogRevision = 1, .created = now, .updated = now},
-      &ServerBootstrap_::seedActions_);
+      &ServerBootstrap_::seed_1);
   }
 
-  void seedSuperuser_()
+  void seed_2()
   {
     ZtBitmap actions{CoreAction::N};
     for (ActionID i = 0; i < CoreAction::N; ++i)
@@ -377,10 +377,10 @@ private:
       .name = "zum.admin", .label = "Zum superuser",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
-      .created = now, .updated = now}, &ServerBootstrap_::seedPublisherRole_);
+      .created = now, .updated = now}, &ServerBootstrap_::seed_3);
   }
 
-  void seedPublisherRole_(bool ok)
+  void seed_3(bool ok)
   {
     if (!ok) { finish_(false); return; }
     ZtBitmap actions{CoreAction::N};
@@ -392,10 +392,10 @@ private:
       .name = "zum.catalog", .label = "Zum catalog publisher",
       .actions = ZuMv(actions), .state = State::Active,
       .origin = Origin::Standard, .catalogRevision = 1,
-      .created = now, .updated = now}, &ServerBootstrap_::seedClient_);
+      .created = now, .updated = now}, &ServerBootstrap_::seed_4);
   }
 
-  void seedClient_(bool ok)
+  void seed_4(bool ok)
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
@@ -408,10 +408,10 @@ private:
       .state = State::Active};
     seedClientSettings(m_config, client);
     ensure_(m_db->clients, ZuMv(client),
-      &ServerBootstrap_::seedClientAccess_);
+      &ServerBootstrap_::seed_5);
   }
 
-  void seedClientAccess_(bool ok)
+  void seed_5(bool ok)
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
@@ -419,10 +419,10 @@ private:
       .clientID = m_issuer.initialClientID, .appID = m_issuer.coreAppID,
       .roleIDs = IDVec{CoreRole::Superuser, CoreRole::CatalogPublisher},
       .state = State::Active,
-      .created = now, .updated = now}, &ServerBootstrap_::seedUser_);
+      .created = now, .updated = now}, &ServerBootstrap_::seed_6);
   }
 
-  void seedUser_(bool ok)
+  void seed_6(bool ok)
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
@@ -430,20 +430,20 @@ private:
       .id = m_issuer.initialUserID, .source = UserSource::Local,
       .name = m_config.admin, .email = m_config.admin,
       .created = now, .updated = now, .state = State::Pending},
-      &ServerBootstrap_::seedAssignment_);
+      &ServerBootstrap_::seed_7);
   }
 
-  void seedAssignment_(bool ok)
+  void seed_7(bool ok)
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
     ensure_(m_db->assignments, Assignment{
       .appID = m_issuer.coreAppID, .userID = m_issuer.initialUserID,
       .roleIDs = IDVec{CoreRole::Superuser}, .state = State::Active,
-      .created = now, .updated = now}, &ServerBootstrap_::seedPolicy_);
+      .created = now, .updated = now}, &ServerBootstrap_::seed_8);
   }
 
-  void seedPolicy_(bool ok)
+  void seed_8(bool ok)
   {
     if (!ok) { finish_(false); return; }
     auto now = m_config.now;
@@ -453,10 +453,10 @@ private:
       .sessionAbsolute = 43200, .tokenLifetime = 300,
       .consentPolicy = ConsentPolicy::Preauthorized,
       .state = State::Active, .created = now, .updated = now},
-      &ServerBootstrap_::seedSigner_);
+      &ServerBootstrap_::seed_9);
   }
 
-  void seedSigner_(bool ok)
+  void seed_9(bool ok)
   {
     if (!ok) { finish_(false); return; }
     SignKey signer;
@@ -465,10 +465,10 @@ private:
       return;
     }
     ensure_(m_db->signKeys, ZuMv(signer),
-      &ServerBootstrap_::seedCoreSigner_);
+      &ServerBootstrap_::seed_10);
   }
 
-  void seedCoreSigner_(bool ok)
+  void seed_10(bool ok)
   {
     if (!ok) { finish_(false); return; }
     String issuer;
@@ -482,10 +482,10 @@ private:
       return;
     }
     ensure_(m_db->signKeys, ZuMv(signer),
-      &ServerBootstrap_::seedComplete_);
+      &ServerBootstrap_::seed_11);
   }
 
-  void seedComplete_(bool ok)
+  void seed_11(bool ok)
   {
     if (!ok) { finish_(false); return; }
     phase_(BootstrapPhase::Empty, BootstrapPhase::Core,
@@ -554,20 +554,20 @@ private:
   void pending_(bool ok)
   {
     if (!ok) { finish_(false); return; }
-    admin_();
+    admin_0();
   }
 
-  void admin_()
+  void admin_0()
   {
     auto users = m_db->users;
     auto id = m_issuer.initialUserID;
     users->run(0, [self = ZmRef<ServerBootstrap_>{this}, users, id]() mutable {
       users->find<0>(0, ZuFwdTuple(id), [self = ZuMv(self)](
-	  ZdbRowRef<User> row) mutable { self->adminLoaded_(ZuMv(row)); });
+	  ZdbRowRef<User> row) mutable { self->admin_1(ZuMv(row)); });
     });
   }
 
-  void adminLoaded_(ZdbRowRef<User> row)
+  void admin_1(ZdbRowRef<User> row)
   {
     if (!row || !row->data().name) { finish_(false); return; }
     m_config.admin = row->data().name;
@@ -580,7 +580,7 @@ private:
 	return;
       }
       if (m_config.reissue && !m_result.capabilityWritten) {
-	reissue_(row->data());
+	reissue_0(row->data());
 	return;
       }
       if (m_issuer.bootstrapPhase == BootstrapPhase::Ready) {
@@ -592,16 +592,16 @@ private:
       finish_(true);
       return;
     }
-    reissue_(row->data());
+    reissue_0(row->data());
   }
 
   void ready_(bool ok)
   {
-    if (ok && m_config.reissue && !m_result.capabilityWritten) admin_();
+    if (ok && m_config.reissue && !m_result.capabilityWritten) admin_0();
     else finish_(ok);
   }
 
-  void reissue_(const User &user)
+  void reissue_0(const User &user)
   {
     bool enrolled = user.state == State::Active && user.handle;
     if (user.owner || user.source != UserSource::Local ||
@@ -657,7 +657,7 @@ private:
 	      new (row->ptr()) Grant{ZuMv(replacement)};
 	      ok = row->commit();
 	    }
-	    self->reissued_(ok, ZuMv(token));
+	    self->reissue_1(ok, ZuMv(token));
 	  });
 	  return;
 	}
@@ -670,16 +670,16 @@ private:
 	     row->data().purpose != GrantPurpose::AddCredential) ||
 	    (row->data().state != State::Active &&
 	     row->data().state != State::Consumed) || row->data().owner) {
-	  self->reissued_(false, ZuMv(token));
+	  self->reissue_1(false, ZuMv(token));
 	  return;
 	}
 	row->data() = ZuMv(replacement);
-	self->reissued_(row->commit(), ZuMv(token));
+	self->reissue_1(row->commit(), ZuMv(token));
       });
     });
   }
 
-  void reissued_(bool ok, String token)
+  void reissue_1(bool ok, String token)
   {
     bool written = ok && writeCapability(
       m_config.output, m_config.issuer, token, true);

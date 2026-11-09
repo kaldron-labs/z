@@ -15,7 +15,7 @@ using namespace ZuTestUtil;
 
 namespace {
 
-int hexNibble_(char c)
+int hexNibble(char c)
 {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'a' && c <= 'f') return c - 'a' + 10;
@@ -23,12 +23,12 @@ int hexNibble_(char c)
   return -1;
 }
 
-bool hexDecode_(uint8_t *out, unsigned len, const char *hex)
+bool hexDecode(uint8_t *out, unsigned len, const char *hex)
 {
   if ((strlen(hex) >> 1) != len || (strlen(hex) & 1)) return false;
   for (unsigned i = 0; i < len; ++i) {
-    int hi = hexNibble_(hex[i<<1]);
-    int lo = hexNibble_(hex[(i<<1) + 1]);
+    int hi = hexNibble(hex[i<<1]);
+    int lo = hexNibble(hex[(i<<1) + 1]);
     if (hi < 0 || lo < 0) return false;
     out[i] = uint8_t((hi<<4) | lo);
   }
@@ -36,18 +36,18 @@ bool hexDecode_(uint8_t *out, unsigned len, const char *hex)
 }
 
 template <unsigned N>
-bool hexEquals_(const uint8_t (&actual)[N], const char *expected)
+bool hexEquals(const uint8_t (&actual)[N], const char *expected)
 {
   uint8_t b[N];
-  return hexDecode_(b, N, expected) && !memcmp(actual, b, N);
+  return hexDecode(b, N, expected) && !memcmp(actual, b, N);
 }
 
 template <unsigned N>
-bool hexEquals_(const ZuBArray<N> &actual, const char *expected)
+bool hexEquals(const ZuBArray<N> &actual, const char *expected)
 {
   uint8_t b[N];
   return actual.length() == N &&
-    hexDecode_(b, N, expected) && !memcmp(actual.data(), b, N);
+    hexDecode(b, N, expected) && !memcmp(actual.data(), b, N);
 }
 
 ZuBSpan bytes_(const uint8_t *data, unsigned len)
@@ -67,37 +67,37 @@ void testRFC9001InitialKeys()
   ZuTestScope(testRFC9001InitialKeys);
 
   uint8_t dcidRaw[8];
-  ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
+  ZuCHECK(hexDecode(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
   Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
   ZuCHECK(Zquic::InitialCrypto::derive(keys, dcid),
     "Initial key derivation failed");
 
-  ZuCHECK(hexEquals_(keys.initial,
+  ZuCHECK(hexEquals(keys.initial,
       "7db5df06e7a69e432496adedb0085192"
       "3595221596ae2ae9fb8115c1e9ed0a44"),
     "RFC 9001 initial secret mismatch");
-  ZuCHECK(hexEquals_(keys.client.secret,
+  ZuCHECK(hexEquals(keys.client.secret,
       "c00cf151ca5be075ed0ebfb5c80323c4"
       "2d6b7db67881289af4008f1f6c357aea"),
     "RFC 9001 client initial secret mismatch");
-  ZuCHECK(hexEquals_(keys.client.key, "1f369613dd76d5467730efcbe3b1a22d"),
+  ZuCHECK(hexEquals(keys.client.key, "1f369613dd76d5467730efcbe3b1a22d"),
     "RFC 9001 client key mismatch");
-  ZuCHECK(hexEquals_(keys.client.iv, "fa044b2f42a3fd3b46fb255c"),
+  ZuCHECK(hexEquals(keys.client.iv, "fa044b2f42a3fd3b46fb255c"),
     "RFC 9001 client IV mismatch");
-  ZuCHECK(hexEquals_(keys.client.hp, "9f50449e04a0e810283a1e9933adedd2"),
+  ZuCHECK(hexEquals(keys.client.hp, "9f50449e04a0e810283a1e9933adedd2"),
     "RFC 9001 client HP key mismatch");
 
-  ZuCHECK(hexEquals_(keys.server.secret,
+  ZuCHECK(hexEquals(keys.server.secret,
       "3c199828fd139efd216c155ad844cc81"
       "fb82fa8d7446fa7d78be803acdda951b"),
     "RFC 9001 server initial secret mismatch");
-  ZuCHECK(hexEquals_(keys.server.key, "cf3a5331653c364c88f0f379b6067e37"),
+  ZuCHECK(hexEquals(keys.server.key, "cf3a5331653c364c88f0f379b6067e37"),
     "RFC 9001 server key mismatch");
-  ZuCHECK(hexEquals_(keys.server.iv, "0ac1493ca1905853b0bba03e"),
+  ZuCHECK(hexEquals(keys.server.iv, "0ac1493ca1905853b0bba03e"),
     "RFC 9001 server IV mismatch");
-  ZuCHECK(hexEquals_(keys.server.hp, "c206b8d9b9f0f37644430b490eeaa314"),
+  ZuCHECK(hexEquals(keys.server.hp, "c206b8d9b9f0f37644430b490eeaa314"),
     "RFC 9001 server HP key mismatch");
 
   Zquic::Crypto crypto;
@@ -115,7 +115,7 @@ void testInitialProt()
   ZuTestScope(testInitialProt);
 
   uint8_t dcidRaw[8];
-  ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
+  ZuCHECK(hexDecode(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
   Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
@@ -163,7 +163,7 @@ void testRFC9001ClientInitialProt()
   ZuTestScope(testRFC9001ClientInitialProt);
 
   uint8_t dcidRaw[8];
-  ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
+  ZuCHECK(hexDecode(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
   Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
@@ -171,7 +171,7 @@ void testRFC9001ClientInitialProt()
     "Initial key derivation failed");
 
   uint8_t header[22];
-  ZuCHECK(hexDecode_(header, sizeof(header),
+  ZuCHECK(hexDecode(header, sizeof(header),
       "c300000001088394c8f03e5157080000449e00000002"),
     "RFC 9001 unprotected Initial header decode failed");
 
@@ -185,7 +185,7 @@ void testRFC9001ClientInitialProt()
     "3900320408ffffffffffffffff05048000ffff07048000ffff08011001048000"
     "75300901100f088394c8f03e51570806048000ffff";
   uint8_t payload[1162] = {};
-  ZuCHECK(hexDecode_(payload, (sizeof(CryptoFrameHex) - 1) >> 1, CryptoFrameHex),
+  ZuCHECK(hexDecode(payload, (sizeof(CryptoFrameHex) - 1) >> 1, CryptoFrameHex),
     "RFC 9001 Initial payload decode failed");
 
   uint8_t ciphertext[sizeof(payload) + Zquic::InitialSecret::TagLen];
@@ -195,7 +195,7 @@ void testRFC9001ClientInitialProt()
   ZuCHECK(n == int(sizeof(ciphertext)),
     "RFC 9001 Initial protected payload length mismatch");
   uint8_t sample[16];
-  ZuCHECK(hexDecode_(sample, sizeof(sample), "d1b1c98dd7689fb8ec11d242b123dc9b"),
+  ZuCHECK(hexDecode(sample, sizeof(sample), "d1b1c98dd7689fb8ec11d242b123dc9b"),
     "RFC 9001 protected payload sample decode failed");
   ZuCHECK(!memcmp(ciphertext, sample, sizeof(sample)),
     "RFC 9001 Initial protected payload sample mismatch");
@@ -207,7 +207,7 @@ void testRFC9001ClientInitialProt()
   header[0] ^= mask[0] & 0x0f;
   for (unsigned i = 0; i < 4; ++i) header[18 + i] ^= mask[1 + i];
   uint8_t protectedHdr[22];
-  ZuCHECK(hexDecode_(protectedHdr, sizeof(protectedHdr),
+  ZuCHECK(hexDecode(protectedHdr, sizeof(protectedHdr),
       "c000000001088394c8f03e5157080000449e7b9aec34"),
     "RFC 9001 protected Initial header decode failed");
   ZuCHECK(!memcmp(header, protectedHdr, sizeof(header)),
@@ -220,7 +220,7 @@ void testRFC9001ClientInitialProt()
   ZuCHECK(n < 0, "invalid Initial packet protection input accepted");
 
   uint8_t unprotectedHdr[22];
-  ZuCHECK(hexDecode_(unprotectedHdr, sizeof(unprotectedHdr),
+  ZuCHECK(hexDecode(unprotectedHdr, sizeof(unprotectedHdr),
       "c300000001088394c8f03e5157080000449e00000002"),
     "RFC 9001 unprotected Initial header re-decode failed");
   n = Zquic::InitialPktProt::protectLong(
@@ -262,7 +262,7 @@ void testHdrProt()
   ZuTestScope(testHdrProt);
 
   uint8_t dcidRaw[8];
-  ZuCHECK(hexDecode_(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
+  ZuCHECK(hexDecode(dcidRaw, sizeof(dcidRaw), "8394c8f03e515708"),
     "test DCID decode failed");
   Zquic::CxnID dcid{bytes_(dcidRaw, sizeof(dcidRaw))};
   Zquic::InitialKeyMaterial keys;
@@ -270,14 +270,14 @@ void testHdrProt()
     "Initial key derivation failed");
 
   uint8_t sample[16];
-  ZuCHECK(hexDecode_(sample, sizeof(sample), "d1b1c98dd7689fb8ec11d242b123dc9b"),
+  ZuCHECK(hexDecode(sample, sizeof(sample), "d1b1c98dd7689fb8ec11d242b123dc9b"),
     "RFC 9001 HP sample decode failed");
   uint8_t mask[Zquic::InitialSecret::HPMaskLen];
   ZuCHECK(Zquic::InitialCrypto::headerMask(
       mask, sizeof(mask), keys.client, bytes_(sample, sizeof(sample))),
     "Initial header mask failed");
   uint8_t expected[Zquic::InitialSecret::HPMaskLen];
-  ZuCHECK(hexDecode_(expected, sizeof(expected), "437b9aec36"),
+  ZuCHECK(hexDecode(expected, sizeof(expected), "437b9aec36"),
     "RFC 9001 HP mask decode failed");
   ZuCHECK(!memcmp(mask, expected, sizeof(mask)),
     "RFC 9001 client Initial HP mask mismatch");

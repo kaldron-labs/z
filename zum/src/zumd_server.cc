@@ -145,11 +145,11 @@ static bool consentForm(String &form, Bytes &id, bool &approve)
   return true;
 }
 
-class ReplyComplete_ : public ZmNHeap<ReplyComplete_>, public ZmObject  {
-friend inline ZuStringT<"Zum.zumd.server.ReplyComplete"> ZmNHeapID(ReplyComplete_ *);
+class ReplyComplete : public ZmNHeap<ReplyComplete>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.server.ReplyComplete"> ZmNHeapID(ReplyComplete *);
 
 public:
-  ReplyComplete_(ServerFn complete) : m_complete{ZuMv(complete)} { }
+  ReplyComplete(ServerFn complete) : m_complete{ZuMv(complete)} { }
 
   void finish(ServerReply reply)
   {
@@ -439,23 +439,23 @@ void Server::workDone_() {
   }
   post_([this]() {
     --m_credit;
-    postDrain_();
+    stop_0();
   });
 }
 
 void Server::start_() {
   if (!m_db) { Engine::started(false); return; }
   if (m_config.authMethod == AuthMethod::Passkey) {
-    post_([this]() { startOwner_(); });
+    post_([this]() { start_0(); });
     return;
   }
   m_oidc.start([this](bool ok) {
     if (!ok) { Engine::started(false); return; }
-    post_([this]() { startOwner_(); });
+    post_([this]() { start_0(); });
   });
 }
 
-void Server::startOwner_() {
+void Server::start_0() {
   ZmAssert_(m_credit.load_() == ServerCredit::Closed);
   ZmAssert_(!m_draining && !m_drainPosted);
   m_credit = 0;
@@ -468,12 +468,12 @@ void Server::stop_() {
     post_([this, ok]() {
       m_stopOK = ok;
       m_draining = true;
-      postDrain_();
+      stop_0();
     });
   });
 }
 
-void Server::postDrain_() {
+void Server::stop_0() {
   if (!m_draining || m_drainPosted || (m_credit.load_() & ServerCredit::Count)) return;
   m_drainPosted = true;
   post_([this]() {
@@ -658,15 +658,15 @@ void Server::authorize(
     String sessionToken;
     Bytes sessionDigest;
     (void)binding_(browserCookie, sessionToken, sessionDigest);
-    authorize_(work, ZuMv(app), ZuMv(query), ZuMv(sessionToken), ZuMv(complete));
+    authorize_0(work, ZuMv(app), ZuMv(query), ZuMv(sessionToken), ZuMv(complete));
   });
 }
 
-void Server::authorize_(
+void Server::authorize_0(
     const Work &work, AppServer app, String query, String sessionToken, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (query.length() > m_config.limits.form) {
     done->finish(jsonReply(OAuthError::InvalidRequest));
     return;
@@ -700,14 +700,14 @@ void Server::authorize_(
           int error, AuthorizeResult result) mutable {
 	auto work = ZuMv(credit);
 	if (error == AuthorizeIssue::OK)
-          sessionAuthorize_(work, ZuMv(result), ZuMv(binding),
+          authorize_1(work, ZuMv(result), ZuMv(binding),
             ZuMv(sessionToken), ZuMv(setCookie), sessionIdle,
             [credit = work, done](ServerReply reply) mutable {
 	      auto work = ZuMv(credit);
 	      done->finish(ZuMv(reply));
             });
         else
-          authorizeReply_(work, error, ZuMv(result), ZuMv(setCookie),
+          authorize_2(work, error, ZuMv(result), ZuMv(setCookie),
             [credit = work, done](ServerReply reply) mutable {
 	      auto work = ZuMv(credit);
 	      done->finish(ZuMv(reply));
@@ -715,12 +715,12 @@ void Server::authorize_(
       })) done->finish(serverError());
 }
 
-void Server::sessionAuthorize_(
+void Server::authorize_1(
     const Work &work, AuthorizeResult result, Bytes binding,
     String sessionToken, String setCookie, uint32_t sessionIdle,
     ServerFn complete)
 {
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   bool none = result.promptPresent && result.prompt == "none";
   bool login = result.promptPresent && result.prompt == "login";
   if (!sessionToken || login) {
@@ -731,7 +731,7 @@ void Server::sessionAuthorize_(
 	.setCookie = setCookie_({}, true), .type = ReplyType::Redirect});
       return;
     }
-    authorizeReply_(work, AuthorizeIssue::OK, ZuMv(result), ZuMv(setCookie),
+    authorize_2(work, AuthorizeIssue::OK, ZuMv(result), ZuMv(setCookie),
       [credit = work, done](ServerReply reply) mutable {
 	auto work = ZuMv(credit);
 	done->finish(ZuMv(reply));
@@ -758,7 +758,7 @@ void Server::sessionAuthorize_(
 	      .setCookie = setCookie_({}, true), .type = ReplyType::Redirect});
 	    return;
 	  }
-	  authorizeReply_(work, AuthorizeIssue::OK, ZuMv(result), ZuMv(setCookie),
+	  authorize_2(work, AuthorizeIssue::OK, ZuMv(result), ZuMv(setCookie),
 	    [credit = work, done](ServerReply reply) mutable {
 	      auto work = ZuMv(credit);
 	      done->finish(ZuMv(reply));
@@ -802,11 +802,11 @@ void Server::sessionAuthorize_(
       })) done->finish(serverError());
 }
 
-void Server::authorizeReply_(
+void Server::authorize_2(
     const Work &work, int error, AuthorizeResult result,
     String setCookie, ServerFn complete)
 {
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (error == AuthorizeIssue::OK) {
           auto local = [credit = work, this, done](AuthorizeResult result,
               String setCookie) mutable {
@@ -905,7 +905,7 @@ void Server::token(
       return;
     }
     if (!m_db) return;
-    ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+    ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
     if (form.length() > m_config.limits.form) {
       done->finish(jsonReply(OAuthError::InvalidRequest));
       return;
@@ -955,7 +955,7 @@ void Server::revoke(
       return;
     }
     if (!m_db) return;
-    ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+    ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
     if (form.length() > m_config.limits.form) {
       done->finish(jsonReply(OAuthError::InvalidRequest));
       return;
@@ -1039,7 +1039,7 @@ void Server::login_(
     const Work &work, AppServer app, String form, String cookie, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (!form || form.length() > m_config.limits.form ||
       cookie.length() > m_config.limits.cookie) {
     done->finish(jsonReply(OAuthError::InvalidRequest));
@@ -1096,7 +1096,7 @@ void Server::login_(
         }
         request->complete([credit = work, this, error, result = ZuMv(result), done]() mutable {
 	  auto work = ZuMv(credit);
-	  authorizeReply_(work, error, ZuMv(result), {},
+	  authorize_2(work, error, ZuMv(result), {},
             [credit = work, done](ServerReply reply) mutable {
 	      auto work = ZuMv(credit);
 	      done->finish(ZuMv(reply));
@@ -1129,7 +1129,7 @@ void Server::consent_(
     const Work &work, AppServer app, String form, String cookie, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (!form || form.length() > m_config.limits.form ||
       cookie.length() > m_config.limits.cookie) {
     done->finish(jsonReply(OAuthError::InvalidRequest));
@@ -1193,7 +1193,7 @@ void Server::logout_(
     const Work &work, AppServer app, String form, String cookie, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (!form || form.length() > m_config.limits.form ||
       cookie.length() > m_config.limits.cookie) {
     done->finish(jsonReply(OAuthError::InvalidRequest));
@@ -1235,8 +1235,8 @@ void Server::logout_(
       })) done->finish(serverError());
 }
 
-struct ReadyKey_ : public ZmNHeap<ReadyKey_>, public ZmObject  {
-friend inline ZuStringT<"Zum.zumd.server.ReadyKey"> ZmNHeapID(ReadyKey_ *);
+struct ReadyKey : public ZmNHeap<ReadyKey>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.server.ReadyKey"> ZmNHeapID(ReadyKey *);
 
   SignKey key;
   Bytes digest;
@@ -1247,7 +1247,7 @@ void Server::ready(ServerFn complete)
   if (!complete) return;
   auto work = work_();
   if (!work) { complete(serverError()); return; }
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (!m_requests->run(deadline_(), [credit = work, this, done](ZmRef<Request> request) mutable {
     auto work = ZuMv(credit);
     ServerFn finish{[credit = work, done, request = ZuMv(request)](ServerReply reply) mutable {
@@ -1274,7 +1274,7 @@ void Server::ready(ServerFn complete)
               finish(serverError());
               return;
             }
-            ZmRef<ReadyKey_> probe = new ReadyKey_{};
+            ZmRef<ReadyKey> probe = new ReadyKey{};
             probe->key = ZuMv(key);
             probe->digest.length(Ztls::MD<>::Size, false);
             Ztls::MD<> md;
@@ -1345,7 +1345,7 @@ void Server::jwks(AppID appID, ServerFn complete)
   app_(work, appID, [credit = work, this, complete = ZuMv(complete)](AppServer app) mutable {
     auto work = ZuMv(credit);
     if (!app) { complete(serverError()); return; }
-    ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+    ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
     int64_t now = now_();
     if (now <= 0 || !jwksLoad(work, m_requests, deadline_(), m_db,
         app.issuer, now, m_config.limits.jwks, [credit = work, done](
@@ -1370,19 +1370,19 @@ void Server::userInfo(
     if (!app) { complete(ServerReply{
       .body = serverJSON(BearerErrorBody{"invalid_token"}),
       .type = ReplyType::BearerError}); return; }
-    userInfo_(work, ZuMv(app), ZuMv(authorization), ZuMv(complete));
+    userInfo_0(work, ZuMv(app), ZuMv(authorization), ZuMv(complete));
   });
 }
 
-void Server::userInfo_(
+void Server::userInfo_0(
     const Work &work, AppServer app, String authorization, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (!m_requests->run(deadline_(), [credit = work, this, app = ZuMv(app), done,
       authorization = ZuMv(authorization)](ZmRef<Request> request) mutable {
     auto work = ZuMv(credit);
-    userInfoVerify_(work, ZuMv(app), ZuMv(authorization), [
+    userInfo_1(work, ZuMv(app), ZuMv(authorization), [
       credit = work, done, request = ZuMv(request)](
         ServerReply reply) mutable {
       auto work = ZuMv(credit);
@@ -1398,10 +1398,10 @@ void Server::userInfo_(
     done->finish(serverError());
 }
 
-void Server::userInfoVerify_(
+void Server::userInfo_1(
     const Work &work, AppServer app, String authorization, ServerFn complete)
 {
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   static constexpr auto prefix = "Bearer "_z;
   if (authorization.length() <= prefix.length() ||
       !ZuICmp<ZuCSpan>::equals(
@@ -1445,7 +1445,7 @@ void Server::userInfoVerify_(
 	  .type = ReplyType::BearerError});
 	return;
       }
-      userInfo_(work, ZuMv(principal), [credit = work, done](ServerReply reply) mutable {
+      userInfo_2(work, ZuMv(principal), [credit = work, done](ServerReply reply) mutable {
 	auto work = ZuMv(credit);
       done->finish(ZuMv(reply));
       });
@@ -1453,10 +1453,10 @@ void Server::userInfoVerify_(
   });
 }
 
-void Server::userInfo_(
+void Server::userInfo_2(
     const Work &work, Principal principal, ServerFn complete)
 {
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   Bytes handle;
   if (!decodeID(principal.subject, handle)) {
     done->finish(ServerReply{
@@ -1501,15 +1501,15 @@ void Server::passkeyBegin(AppID appID, String json, ServerFn complete)
       complete = ZuMv(complete)](AppServer app) mutable {
     auto work = ZuMv(credit);
     if (!app) { complete(jsonReply(OAuthError::InvalidRequest)); return; }
-    passkeyBegin_(work, ZuMv(app), ZuMv(json), ZuMv(complete));
+    passkeyBegin_0(work, ZuMv(app), ZuMv(json), ZuMv(complete));
   });
 }
 
-void Server::passkeyBegin_(
+void Server::passkeyBegin_0(
     const Work &work, AppServer app, String json, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   if (m_config.authMethod == AuthMethod::OIDC) {
     done->finish(jsonReply(OAuthError::AccessDenied));
     return;
@@ -1531,7 +1531,7 @@ void Server::passkeyBegin_(
       setCookie = ZuMv(setCookie), done](
       PasskeyAdmission admission) mutable {
     auto work = ZuMv(credit);
-    passkeyAdmitted_(work, ZuMv(app), ZuMv(start), ZuMv(admission), ZuMv(binding),
+    passkeyBegin_1(work, ZuMv(app), ZuMv(start), ZuMv(admission), ZuMv(binding),
       ZuMv(setCookie), [credit = work, done](ServerReply reply) mutable {
 	auto work = ZuMv(credit);
 	done->finish(ZuMv(reply));
@@ -1539,11 +1539,11 @@ void Server::passkeyBegin_(
   });
 }
 
-void Server::passkeyAdmitted_(
+void Server::passkeyBegin_1(
     const Work &work, AppServer app, PasskeyStart start,
     PasskeyAdmission admission, Bytes binding, String setCookie, ServerFn complete)
 {
-  ZmRef<ReplyComplete_> replyDone = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> replyDone = new ReplyComplete{ZuMv(complete)};
   if (!admission.allowed) {
     auto reply = jsonReply(OAuthError::AccessDenied);
     reply.setCookie = setCookie_({}, true);
@@ -1624,12 +1624,12 @@ void Server::passkeyFinish(
       json = ZuMv(json), complete = ZuMv(complete)](AppServer app) mutable {
     auto work = ZuMv(credit);
     if (!app) { complete(jsonReply(OAuthError::InvalidRequest)); return; }
-    passkeyFinish_(work, ZuMv(app), ZuMv(query), ZuMv(cookie), ZuMv(json),
+    passkeyFinish_0(work, ZuMv(app), ZuMv(query), ZuMv(cookie), ZuMv(json),
       ZuMv(complete));
   });
 }
 
-void Server::passkeyFinish_(
+void Server::passkeyFinish_0(
     const Work &work, AppServer app,
     String query, String cookie, String json, ServerFn complete)
 {
@@ -1646,13 +1646,13 @@ void Server::passkeyFinish_(
     return;
   }
   if (!json.mutable_()) json.length(json.length());
-  finishGrant_(work, ZuMv(app), ZuMv(id), ZuMv(binding), ZuMv(json), ZuMv(complete));
+  passkeyFinish_1(work, ZuMv(app), ZuMv(id), ZuMv(binding), ZuMv(json), ZuMv(complete));
 }
 
-void Server::finishGrant_(
+void Server::passkeyFinish_1(
     const Work &work, AppServer app, Bytes id, Bytes binding, String json, ServerFn complete)
 {
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   auto grants = m_db->grants;
   grants->run(0, [
     credit = work, this, grants, app = ZuMv(app), id = ZuMv(id), binding = ZuMv(binding),
@@ -1834,7 +1834,7 @@ void Server::oidcCallback_(
     const Work &work, AppServer app, String query, String cookie, ServerFn complete)
 {
   if (!m_db || !complete) return;
-  ZmRef<ReplyComplete_> done = new ReplyComplete_{ZuMv(complete)};
+  ZmRef<ReplyComplete> done = new ReplyComplete{ZuMv(complete)};
   Bytes binding;
   if (m_config.authMethod == AuthMethod::Passkey ||
       !binding_(cookie, binding)) {

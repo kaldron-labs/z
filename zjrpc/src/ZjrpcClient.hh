@@ -79,17 +79,17 @@ public:
       return message.empty() || this->send(message);
     }, &m_inbound);
   }
-  void ioClosed(bool failed) { m_failed |= failed; drain_(); }
+  void ioClosed(bool failed) { m_failed |= failed; stop_1(); }
 
 private:
   using IO::send;
   using IO::fail_;
   using IO::continue_;
 
-  void drain_() {
-    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+  void stop_1() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->stop_1(); }};
     if (!Common::close(ready)) {
-      if (!Common::callsWaiting()) this->continue_([this]() { drain_(); });
+      if (!Common::callsWaiting()) this->continue_([this]() { stop_1(); });
       return;
     }
     (void)m_inbound.close(0);
@@ -224,21 +224,21 @@ private:
 	m_failure = false;
 	m_up = true;
 	try { this->impl()->ready(); } catch (...) { fail_(); }
-	if (m_failure) { stopHTTP_(); return; }
+	if (m_failure) { stop_0(); return; }
 	Engine::started(true);
       });
     });
   }
-  void stop_() { continue_([this]() { m_up = false; stopHTTP_(); }); }
-  void stopHTTP_() {
+  void stop_() { continue_([this]() { m_up = false; stop_0(); }); }
+  void stop_0() {
     HTTP::stop([this](bool ok) {
-      continue_([this, ok]() { m_stopOK = ok; drain_(); });
+      continue_([this, ok]() { m_stopOK = ok; stop_1(); });
     });
   }
-  void drain_() {
-    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+  void stop_1() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->stop_1(); }};
     if (!Common::close(ready)) {
-      if (!Common::callsWaiting()) continue_([this]() { drain_(); });
+      if (!Common::callsWaiting()) continue_([this]() { stop_1(); });
       return;
     }
     bool ok = m_stopOK;
@@ -367,7 +367,7 @@ public:
       m_up = false;
       m_down = true;
       m_failed = true;
-      close_();
+      close_0();
     });
   }
   void disconnected(Link &link, bool) {
@@ -375,7 +375,7 @@ public:
     continue_([this]() {
       m_up = false;
       m_down = true;
-      close_();
+      close_0();
     });
   }
   void closed(Link &link, uint16_t code, ZuBSpan reason) {
@@ -400,7 +400,7 @@ public:
   }
 
 private:
-  void wsClosed_() { m_up = false; }
+  void wsClosed() { m_up = false; }
   template <typename M>
   bool send(const M &message) { return up() && m_link && IO::sendWS_(*m_link, message); }
   template <typename L> void continue_(L &&l) { m_ws.txRun(ZuFwd<L>(l)); }
@@ -425,7 +425,7 @@ private:
       previous = m_connect.load_();
     } while (m_connect.cmpXch(previous == WSConnectState::Posted ?
 	WSConnectState::StopPosted : WSConnectState::Stopped, previous) != previous);
-    continue_([this]() { stopLink_(); });
+    continue_([this]() { stop_0(); });
   }
   void connectPosted_(ZmRef<Link> link) {
     int state = m_connect.cmpXch(link ? WSConnectState::Assigned : WSConnectState::Idle,
@@ -438,25 +438,25 @@ private:
     }
     ZmAssert_(state == WSConnectState::StopPosted);
     m_connect = WSConnectState::Stopped;
-    if (m_waitConnect) { m_waitConnect = false; stopLink_(); }
+    if (m_waitConnect) { m_waitConnect = false; stop_0(); }
   }
-  void stopLink_() {
+  void stop_0() {
     m_up = false;
     if (m_connect.load_() == WSConnectState::StopPosted) {
       m_waitConnect = true;
       return;
     }
     if (m_link && !m_down)
-      m_ws.rxRun([this, link = m_link]() { IO::stopWS_(*link); });
+      m_ws.rxRun([this, link = m_link]() { IO::stopWS(*link); });
     m_ws.stop([this](bool ok) {
       continue_([this, ok]() {
 	m_stopOK = ok;
 	m_transportStopped = true;
-	close_();
+	close_0();
       });
     });
   }
-  void stopped_() {
+  void close_2() {
     if (!m_transportStopped || !m_closed || m_closing) return;
     m_transportStopped = false;
     m_ws.rxRun([this]() {
@@ -471,17 +471,17 @@ private:
     m_up = false;
     if (m_link) m_link->close(Zws::CloseCode::Internal);
   }
-  void close_() {
+  void close_0() {
     m_up = false;
-    if (m_closed) { stopped_(); return; }
+    if (m_closed) { close_2(); return; }
     if (m_closing) return;
     m_closing = true;
-    drain_();
+    close_1();
   }
-  void drain_() {
-    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+  void close_1() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->close_1(); }};
     if (!Common::close(ready)) {
-      if (!Common::callsWaiting()) continue_([this]() { drain_(); });
+      if (!Common::callsWaiting()) continue_([this]() { close_1(); });
       return;
     }
     (void)m_inbound.close(0);
@@ -491,7 +491,7 @@ private:
       if (m_failed) this->impl()->failed();
       else this->impl()->closed();
     } catch (...) { }
-    stopped_();
+    close_2();
   }
 
   WS m_ws;

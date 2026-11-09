@@ -22,7 +22,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 
 noinst_PROGRAMS = zrestmatrix zrestendpoint
-noinst_HEADERS = ZrestITestPorts.hh
+noinst_HEADERS = zrestitestports.hh
 zrestmatrix_SOURCES = zrestmatrix.cc
 zrestendpoint_SOURCES = zrestendpoint.cc
 

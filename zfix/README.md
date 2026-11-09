@@ -407,7 +407,7 @@ lookup tickets, actual directional recovery and new-send progress remain distinc
 `SeqTx` retains generic `ZmPQTx` for new send and ordered archive work, while a
 Zfix-only bounded driver implements always-app replay without queue lookups.
 
-`abortTx_(epoch, seq)` exposes held-only removal of unpublished work. It releases
+`abortTx(epoch, seq)` exposes held-only removal of unpublished work. It releases
 the operational charge while preserving the assignment; subsequent retrieval
 can supply replacement content or gap-fill. Actual ordinary replacement loads
 are charged when installed, not from another process's saved memory occupancy.
@@ -444,8 +444,8 @@ queues and survive transport reconnects. There is no separate session key or
 checkpoint registry. Select the logical link directly through the application's
 existing ownership and transport association.
 
-`rxProgress_()` and `txProgress_()` read each owner's cursors and pending range.
-`restoreRx_(epoch, progress)` and `restoreTx_(epoch, progress)` restore those
+`rxProgress()` and `txProgress()` read each owner's cursors and pending range.
+`restoreRx(epoch, progress)` and `restoreTx(epoch, progress)` restore those
 queues while inactive, before opening transport-dependent FIX activity. The
 explicit epoch must match the selected link. Cursor ordering, ranges and
 sequence limits are validated before mutation; cursors and range ends are
@@ -467,7 +467,7 @@ progress does not synthesize archive notifications or a durability guarantee.
 
 ## Drain frontiers before reset
 
-`Rx::drainBegin_(connection, now)` starts an owner-local drain request. Session
+`Rx::drainBegin(connection, now)` starts an owner-local drain request. Session
 pauses readiness and emits a ticketed `Drain` event. Once Tx applies it,
 `candidate_` holds subsequent business candidates without assigning sequences.
 Existing association continuations, publication, local output and replay continue;
@@ -494,9 +494,9 @@ preparation procedure consumes a current drain proof.
 ## Epoch-safe Tx callbacks
 
 The managed Tx APIs require an explicit captured epoch for acknowledgements,
-abort and replay. Core `Tx` uses `acknowledge_(epoch, next)`,
-`abortTx_(epoch, seq)` and `replay_(epoch, begin, end)`. `LinkTx` additionally
-checks connection for `acknowledge_(connection, epoch, next)` and
+abort and replay. Core `Tx` uses `acknowledge(epoch, next)`,
+`abortTx(epoch, seq)` and `replay_(epoch, begin, end)`. `LinkTx` additionally
+checks connection for `acknowledge(connection, epoch, next)` and
 `replay_(connection, epoch, begin, end)`. Body-free archive notifications carry
 their operation's epoch; no application payload-release completion exists.
 The generic `SeqTx` component remains independent of protocol epochs.
@@ -545,14 +545,14 @@ previousProgress)` report the old owner snapshots. Applications can wait for
 both owner notifications and persist combined state before activation; no store
 or mandatory persistence barrier is imposed.
 
-For live reset, call `Rx::startReset_(connection, nextEpoch, now)` after both
+For live reset, call `Rx::startReset(connection, nextEpoch, now)` after both
 peers are prepared. The agreed driver sends Logon 141=Y at sequence one, and the
 receiver replies likewise. `Resetting` returns `RxResult::Blocked` before stamping
 the incoming frame's epoch: the adapter retains that frame and retries it on
 `RetryInput`. Do not stamp it from the sender's context. Existing admission is
 retained for live reset; reconnect performs normal inbound admission again.
 
-For reconnect reset, call `Rx::disconnectReset_(connection, nextEpoch)` after
+For reconnect reset, call `Rx::disconnectReset(connection, nextEpoch)` after
 preparation. It closes without sending the reset Logon on the old connection.
 The next `open_` consumes that authorization once; the new physical connection
 starts with 141=Y and sequence one. Ordinary reconnect without this procedure
@@ -601,10 +601,10 @@ wraps, including a maximum of UINT64_MAX minus one.
 ## Fresh-session reset on connect
 
 Before the first open, an application with explicit peer agreement can call
-`Rx::resetOnOpen_(epoch)` to request 141=Y/34=1 for that first connection.
+`Rx::resetOnOpen(epoch)` to request 141=Y/34=1 for that first connection.
 The owner must be fresh, with received/processed cursors both one and no retained
 input. A captured epoch mismatch, raw mode, invalid config or any previous open
-refuses the operation. Before opening, `resetOnOpen_(epoch, false)` cancels that
+refuses the operation. Before opening, `resetOnOpen(epoch, false)` cancels that
 choice. Restoring advanced receive progress while authorization is armed is
 refused. This operation changes neither epoch nor progress: the application has
 already selected a fresh epoch rather than abandoning old state implicitly.
@@ -730,7 +730,7 @@ replay can reuse epoch, connection and sequence, so those fields alone cannot
 identify a particular queued frame.
 
 A Tx fault post can now call owner-local
-`Rx::outputFailed_(connection, capturedEpoch)`. It closes with Output and cancels
+`Rx::outputFailed(connection, capturedEpoch)`. It closes with Output and cancels
 lifecycle deadlines only for the current epoch/connection. An old failure from
 before a live reset cannot close the reused physical connection in its new epoch.
 The endpoint must terminate all admitted frame completions during teardown;
@@ -764,7 +764,7 @@ STATUS.md for its scope and remaining final memory/platform/delivery checks.
 
 ## Protocol diagnostics
 
-Managed and raw endpoints expose owner-local `rxStats_()`/`txStats_()` snapshots
+Managed and raw endpoints expose owner-local `rxStats()`/`txStats()` snapshots
 and optional bounded Rx/Tx wire traces. Configure trace quotas through HubLimits;
 capture is disabled by default. Records own escaped/redacted text, rotate within
 charged limits, and can be retained through observer handles without retaining

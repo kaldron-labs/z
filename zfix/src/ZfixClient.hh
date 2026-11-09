@@ -23,12 +23,12 @@ template <typename App, typename Impl, typename MTList, typename Net = TCP,
   typename TxAlloc = Zi::IOBufBuiltin<ZiTxBuf, ZiIOBuf_DefltSize, ZiIOBuf_Align, ZiIOBuf_HeapID, ZiIOBuf_DefltMaxSize>,
   template <typename, typename> class Engine = Link>
 class CliLink : public Net::template CliLink<App, Impl, RxAlloc, TxAlloc>,
-    public Engine<Impl, NativeRx<Net>>, public LinkHooks_<Impl, Net>,
+    public Engine<Impl, NativeRx<Net>>, public LinkHooks<Impl, Net>,
     public NetInput<Impl, typename Net::RxStream> {
   ZuAssert((ZuIs_<TxAlloc, ZiTxBuf>{}));
   using NetBase = Net::template CliLink<App, Impl, RxAlloc, TxAlloc>;
   using EngineBase = Engine<Impl, NativeRx<Net>>;
-  using Hooks = LinkHooks_<Impl, Net>;
+  using Hooks = LinkHooks<Impl, Net>;
 public:
   using MessageCatalog = MTList;
   using NetBase::app;
@@ -58,20 +58,20 @@ public:
 
   using EngineBase::connectAllowed_;
 
-  void connectRetired_() { this->clearInput_(); this->transportDown_(false); }
+  void connectRetired_() { this->clearInput(); this->transportDown_0(false); }
 
   bool connectSocket_(bool replacing) {
     if (!NetBase::connectSocket_(replacing)) return false;
-    this->clearInput_(); return this->transportBind_(replacing);
+    this->clearInput(); return this->transportBind(replacing);
   }
 
-  void connected(typename Net::Connected) { this->clearInput_(); this->transportUp_(); }
+  void connected(typename Net::Connected) { this->clearInput(); this->transportUp_0(); }
 
-  void disconnected(bool peer) { this->clearInput_(); this->transportDown_(peer); }
+  void disconnected(bool peer) { this->clearInput(); this->transportDown_0(peer); }
 
   int process(typename Net::RxStream &s) { this->input_(s); return this->process_(s); }
 
-  bool sendRecord_(ZmRef<ZiIOBuf> b) { return NetBase::send_(ZuMv(b)); }
+  bool sendRecord(ZmRef<ZiIOBuf> b) { return NetBase::send_(ZuMv(b)); }
 
   void sent(ZmRef<ZiTxBuf> b, bool ok) {
     this->transportSent(b, ok);

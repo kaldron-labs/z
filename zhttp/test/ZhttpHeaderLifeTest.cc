@@ -151,12 +151,12 @@ void postedLifetime(bool early)
   if (early) {
     ++head->posts;
     mx.txRun([held = HeadRef{head}]() mutable {
-      Zhttp::Transport_::TCPTxOps::postAck_(ZuMv(held));
+      Zhttp::Transport_::TCPTxOps::postAck(ZuMv(held));
     });
   }
   mx.txRun([head = ZuMv(head)]() mutable {
-    head->endIO_();
-    head->postEnd_();
+    head->endIO();
+    head->postEnd();
   });
   bool destroyed = state.gone.timedwait(Zm::now(20)) == 0;
   cxn = nullptr;

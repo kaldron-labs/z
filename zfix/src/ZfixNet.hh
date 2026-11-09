@@ -25,10 +25,10 @@ namespace Zfix {
 // entry point or additional receive queue is needed.
 template <typename Impl, typename Stream> class NetInput {
 public:
-  void resumeRx_() {
+  void resumeRx() {
     auto impl = static_cast<Impl *>(this);
     ZmAssert(impl->app()->rxInvoked());
-    auto &input = impl->nativeRx_().input;
+    auto &input = impl->nativeRx().input;
     auto stream = input;
     if (!stream) return;
     while (input == stream && *stream) {
@@ -39,8 +39,8 @@ public:
   }
 
 protected:
-  void input_(Stream &stream) { static_cast<Impl *>(this)->nativeRx_().input = &stream; }
-  void clearInput_() { static_cast<Impl *>(this)->nativeRx_().input = nullptr; }
+  void input_(Stream &stream) { static_cast<Impl *>(this)->nativeRx().input = &stream; }
+  void clearInput() { static_cast<Impl *>(this)->nativeRx().input = nullptr; }
 };
 
 struct TCP {
@@ -111,7 +111,7 @@ template <typename Net> struct NativeRx {
 };
 
 // Stateless native hooks for managed and raw links.
-template <typename Impl, typename Net> class LinkHooks_ {
+template <typename Impl, typename Net> class LinkHooks {
 public:
   TraceField fixTraceField(ZuCSpan type, int32_t tag) {
     return traceField<typename Impl::MessageCatalog>(type, tag);
@@ -120,54 +120,54 @@ public:
   bool fixTraceSecret(ZuCSpan, unsigned) { return false; }
 
   bool txPost_(uint64_t bytes) {
-    auto &hub = impl()->app()->fixSubmitRx_();
-    auto &submit = impl()->nativeRx_().submit;
+    auto &hub = impl()->app()->fixSubmitRx();
+    auto &submit = impl()->nativeRx().submit;
     if (!submit.fits_(bytes)) { submit.refuse_(); hub.refuse_(); return false; }
     if (!hub.acquire_(bytes)) { submit.refuse_(); return false; }
     [[maybe_unused]] bool acquired = submit.acquire_(bytes); ZmAssert(acquired);
     return true;
   }
 
-  void txUnpost_(uint64_t bytes) {
-    auto &hub = impl()->app()->fixSubmitRx_();
-    impl()->nativeRx_().submit.release_(bytes); hub.release_(bytes);
+  void txUnpost(uint64_t bytes) {
+    auto &hub = impl()->app()->fixSubmitRx();
+    impl()->nativeRx().submit.release_(bytes); hub.release_(bytes);
   }
 
-  PostedState txPosted_() {
-    ZmAssert(impl()->app()->rxInvoked()); return impl()->nativeRx_().submit.state_();
+  PostedState txPosted() {
+    ZmAssert(impl()->app()->rxInvoked()); return impl()->nativeRx().submit.state_();
   }
 
-  WorkState workState_() {
-    ZmAssert(impl()->app()->rxInvoked()); return impl()->nativeRx_().work.state_();
+  WorkState workState() {
+    ZmAssert(impl()->app()->rxInvoked()); return impl()->nativeRx().work.state_();
   }
 
-  WorkBudget &workBudget_() {
-    ZmAssert(impl()->app()->rxInvoked()); return impl()->nativeRx_().work;
+  WorkBudget &workBudget() {
+    ZmAssert(impl()->app()->rxInvoked()); return impl()->nativeRx().work;
   }
 
   template <typename Input> struct WorkReturn {
-    LinkHooks_				*link;
+    LinkHooks				*link;
     const Zfix::Work<Input, Impl>	*work;
 
     void operator ()() {
       auto bytes = work->bytes();
       delete work;
-      link->workReturned_(bytes);
+      link->workDone_1(bytes);
     }
   };
 
-  template <typename Input> void workDone(const Zfix::Work<Input, Impl> *work) {
+  template <typename Input> void workDone_0(const Zfix::Work<Input, Impl> *work) {
     impl()->app()->rxRun(WorkReturn<Input>{this, work});
   }
 
   template <typename Input>
-  auto workRx_(const Input &input, uint64_t retained, uint64_t extra, Fmt::Error &error) {
+  auto workRx(const Input &input, uint64_t retained, uint64_t extra, Fmt::Error &error) {
     ZmAssert(impl()->app()->rxInvoked());
     using W = Zfix::Work<Input, Impl>;
     constexpr uint64_t Overhead = ZmHeapAllocSize<sizeof(W)>{} +
       ZmHeapAllocSize<sizeof(WorkReturn<Input>) + sizeof(ZmRingFn<ZmRingFn_Defaults>)>{};
-    auto &hub = impl()->app()->fixWorkRx_();
-    auto &work = impl()->nativeRx_().work;
+    auto &hub = impl()->app()->fixWorkRx();
+    auto &work = impl()->nativeRx().work;
     if (!retained || Overhead > UINT64_MAX - retained ||
 	extra > UINT64_MAX - (retained + Overhead)) {
       work.refuse_(); hub.refuse_(); error = {Fmt::ErrorCode::Size}; return typename W::Ref{};
@@ -209,7 +209,7 @@ public:
     return b;
   }
 
-  bool fixSendTx(ZmRef<ZiIOBuf> b) { return impl()->sendRecord_(ZuMv(b)); }
+  bool fixSendTx(ZmRef<ZiIOBuf> b) { return impl()->sendRecord(ZuMv(b)); }
 
   static SessionConfig role(SessionConfig config, bool initiator) {
     config.initiator = initiator; return config;
@@ -218,9 +218,9 @@ public:
 private:
   auto impl() { return static_cast<Impl *>(this); }
 
-  void workReturned_(uint64_t bytes) {
-    impl()->nativeRx_().work.release_(bytes); impl()->app()->fixWorkRx_().release_(bytes);
-    impl()->workDrainedRx_();
+  void workDone_1(uint64_t bytes) {
+    impl()->nativeRx().work.release_(bytes); impl()->app()->fixWorkRx().release_(bytes);
+    impl()->workDrainedRx();
   }
 };
 

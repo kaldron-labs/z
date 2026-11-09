@@ -48,7 +48,7 @@ struct GrantTypes {
     "client_credentials">;
 };
 
-int formDecode_(ZuSpan<char> data)
+int formDecode(ZuSpan<char> data)
 {
   if (!data) return 0;
   using Form = ZuPercent::Codec<ZfURI::PercentQuote<true>>;

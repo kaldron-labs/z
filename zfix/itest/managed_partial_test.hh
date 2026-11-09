@@ -142,7 +142,7 @@ friend inline ZuStringT<"Zfix.ManagedPartial.Server"> ZmNHeapID(Link *);
   }
 
   void fixStopTx(uint64_t) {
-    store->tx = this->txProgress_();
+    store->tx = this->txProgress();
     queue.clean();
   }
 
@@ -342,9 +342,9 @@ static void managedPartial()
     checkpoint.rx = {2, 2, 0, 0}; checkpoint.tx = {2, 2, 1, 0, 0};
     bool restored = ZmBlock<bool>{}([&client, &b, &checkpoint](auto wake) {
       client.rxRun([&client, &b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	if (!b->restoreRx_(checkpoint.epoch, checkpoint.rx)) { wake(false); return; }
+	if (!b->restoreRx(checkpoint.epoch, checkpoint.rx)) { wake(false); return; }
 	client.txRun([&b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	  if (!b->restoreTx_(checkpoint.epoch, checkpoint.tx)) { wake(false); return; }
+	  if (!b->restoreTx(checkpoint.epoch, checkpoint.tx)) { wake(false); return; }
 	  b->store->lastLoad = 1; wake(true);
 	});
       });

@@ -164,7 +164,7 @@ void ScopeSelect::begin(const ClientAccess &access, bool restricted,
     id_(id)->val() |= ScopeIDFlag::Access();
 }
 
-void ScopeSelect::addName_(ScopeNames::Node *scope)
+void ScopeSelect::addName(ScopeNames::Node *scope)
 {
   if (scope->val() & ScopeFlag::Selected()) return;
   if (m_next.scope) m_next.scope << ' ';
@@ -199,7 +199,7 @@ int ScopeSelect::step()
 	m_client->refreshAllowed && (m_client->grants & ClientGrant::Refresh());
     }
     if (!identity) return Lookup;
-    addName_(scope);
+    addName(scope);
     m_next.identity = true;
   }
   return m_next.scope ? ScopeError::OK : ScopeError::Malformed;
@@ -214,7 +214,7 @@ int ScopeSelect::role(const Role &role)
       (m_restricted && m_hasGrant && !(node->val() & ScopeIDFlag::Granted())))
     return ScopeError::Unavailable;
   if (!(node->val() & ScopeIDFlag::Selected())) {
-    addName_(scope_(role.name));
+    addName(scope_(role.name));
     node->val() |= ScopeIDFlag::Selected();
     m_next.roleIDs.push(role.id);
   }

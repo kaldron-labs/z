@@ -58,22 +58,22 @@ static void dbDown(Zdb *db, bool)
   static_cast<TestDB *>(db)->requests->deactivate();
 }
 
-struct HelperCredit : ZmNHeap<HelperCredit>, ZmPolymorph {
-friend inline ZuStringT<"ZumRuntimeTokenTest.Credit"> ZmNHeapID(HelperCredit *);
+struct SigningCredit : ZmNHeap<SigningCredit>, ZmPolymorph {
+friend inline ZuStringT<"ZumRuntimeTokenTest.Credit"> ZmNHeapID(SigningCredit *);
   ZmAtomic<unsigned> *released;
   ZmSemaphore *complete;
 
-  HelperCredit(ZmAtomic<unsigned> *released_, ZmSemaphore *complete_) :
+  SigningCredit(ZmAtomic<unsigned> *released_, ZmSemaphore *complete_) :
     released{released_}, complete{complete_} { }
-  ~HelperCredit() {
+  ~SigningCredit() {
     *released = 1;
     complete->post();
   }
 };
 
-static void helperCredit(TestDB *db, Ztls::Random &rng)
+static void signingCredit(TestDB *db, Ztls::Random &rng)
 {
-  ZuTestScopeRT(helperCredit);
+  ZuTestScopeRT(signingCredit);
   auto requests = db->requests;
   auto scheduler = requests->scheduler();
   auto sid = requests->sid();
@@ -83,7 +83,7 @@ static void helperCredit(TestDB *db, Ztls::Random &rng)
   int result = Zum::TokenIssue::OK;
   unsigned completedCalls = 0;
   Zum::SignatureFn pending;
-  ZmRef<HelperCredit> work = new HelperCredit{&released, &retired};
+  ZmRef<SigningCredit> work = new SigningCredit{&released, &retired};
   bool queued = Zum::tokenRequest(ZuMv(work), requests,
     Zm::now() + ZuTime{10}, db, rng,
     "grant_type=client_credentials", "Basic d29ya2xvYWQ6c2VjcmV0",
@@ -179,7 +179,7 @@ static void runtimeToken()
   ZuTestCall(prepareToken, db, context, rng, state, passkeyHandle,
     *passkey, tokenKey, tokenPublic, token);
   ZuCheck(token.browserCode);
-  ZuTestCall(helperCredit, db, rng);
+  ZuTestCall(signingCredit, db, rng);
   ZmSemaphore requestsDown;
   db->requests->deactivate([&requestsDown](bool) { requestsDown.post(); });
   requestsDown.wait();

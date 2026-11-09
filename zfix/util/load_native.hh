@@ -75,7 +75,7 @@ struct NativeState {
     ++errors; readySem.post(); done.post();
   }
 
-  void readyRx_(unsigned index, ZmFn<void()> start = {}) {
+  void readyRx(unsigned index, ZmFn<void()> start = {}) {
     if (errors.load_()) return;
     starters[index] = ZuMv(start);
     if (++ready != options.sessions) return;
@@ -83,9 +83,9 @@ struct NativeState {
     for (auto &fn : starters) { auto start = ZuMv(fn); if (start) start(); }
   }
 
-  void doneRx_() { if (++finished == options.sessions) done.post(); }
+  void doneRx() { if (++finished == options.sessions) done.post(); }
 
-  void stoppedRx_(bool client) {
+  void stoppedRx(bool client) {
     if (client) ++closed;
     stopped.post(); if (closed == expected) done.post();
   }
@@ -174,17 +174,17 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
 
   void close() { this->mx()->rxRun([this] { if (connection) connection->disconnect(); }); }
 
-  void retired_(Link *link, uint64_t epoch, unsigned round,
+  void retired_0(Link *link, uint64_t epoch, unsigned round,
       uint64_t generation) {
     this->mx()->rxRun([this, link = ZmRef<Link>{link}, epoch, round, generation] {
-      if (connection != link) { retiredDone_(link, generation, false); return; }
+      if (connection != link) { retired_1(link, generation, false); return; }
       // Explicit reset/recovery profiles reconstruct a cold owner after its
       // complete drain. Ordinary reconnect retains the same sequencer/link.
       if (!(state->options.resetLogon || state->options.recoverRx) ||
 	  acceptedCount == state->options.connections || state->errors.load_()) {
-	retiredDone_(link, generation, true); return;
+	retired_1(link, generation, true); return;
       }
-      if (acceptedCount != round) { retiredDone_(link, generation, false); return; }
+      if (acceptedCount != round) { retired_1(link, generation, false); return; }
       nextEpoch = state->options.resetLogon ? epoch + 1 : epoch;
       ZmRef<Link> next = new Link{this, index, round + 1};
       auto next_ = next.ptr();
@@ -197,18 +197,18 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
 	  // A newly accepted successor owns the current link even if this cold
 	  // preparation was already queued. It cannot be replaced by its result.
 	  if (connection != link || acceptedCount != round) {
-	    retiredDone_(link, generation, false); return;
+	    retired_1(link, generation, false); return;
 	  }
 	  if (!ok) state->fail();
 	  bool ready = ok && !state->errors.load_();
 	  if (ready) connection = ZuMv(next);
-	  retiredDone_(link, generation, ready);
+	  retired_1(link, generation, ready);
 	});
       });
     });
   }
 
-  void retiredDone_(Link *link, uint64_t generation, bool ready) {
+  void retired_1(Link *link, uint64_t generation, bool ready) {
     if (ready && acceptedCount < state->options.connections && !state->errors.load_()) {
       ReconnectReady event; event.connection = acceptedCount + 1; event.ports = state->ports;
       output(event);
@@ -217,7 +217,7 @@ friend inline ZuStringT<"Zfix.Load.Hub"> ZmNHeapID(NativeHub *);
     // retirement. Keep A alive without gating the successor's activation/stop.
     this->rxRun([link = ZmRef<Link>{link}, generation] {
       auto hub = link->app();
-      if (link->session_().connection_() == generation) hub->state->stoppedRx_(false);
+      if (link->session_().connection_() == generation) hub->state->stoppedRx(false);
       else hub->state->stopped.post(); // A cannot finish a newer connection.
     });
   }
@@ -265,12 +265,12 @@ public:
     return ZmBlock<bool>{}([this](auto wake) {
       app()->rxRun([this, wake = ZuMv(wake)]() mutable {
 	auto &saved = state()->checkpoint;
-	if ((saved.epoch && !this->restoreRx_(saved.epoch, saved.rx)) ||
-	    (options().resetLogon && !resetOpen_())) { wake(false); return; }
+	if ((saved.epoch && !this->restoreRx(saved.epoch, saved.rx)) ||
+	    (options().resetLogon && !resetOpen())) { wake(false); return; }
 	app()->txRun([this, wake = ZuMv(wake)]() mutable {
 	  bool restored = true;
 	  auto &saved = state()->checkpoint;
-	  if (saved.epoch) restored = this->restoreTx_(saved.epoch, saved.tx) && restored;
+	  if (saved.epoch) restored = this->restoreTx(saved.epoch, saved.tx) && restored;
 	  for (const auto &h : saved.history)
 	    restored = store_().history.put({h.epoch, h.seqNo}, h, h.body->memory()) && restored;
 	  saved.history.length(0);
@@ -287,10 +287,10 @@ public:
     app()->rxRun([this, done = ZuMv(done)]() mutable {
       bool reset = options().resetLogon && m_round > 1;
       auto epoch = store_().epoch;
-      bool ok = reset ? resetOpen_() : !epoch || this->restoreRx_(epoch, store_().rx);
+      bool ok = reset ? resetOpen() : !epoch || this->restoreRx(epoch, store_().rx);
       if (!ok) { done(false); return; }
       app()->txRun([this, done = ZuMv(done), reset, epoch]() mutable {
-	bool restored = reset || !epoch || this->restoreTx_(epoch, store_().tx);
+	bool restored = reset || !epoch || this->restoreTx(epoch, store_().tx);
 	app()->rxRun([done = ZuMv(done), restored]() mutable { done(restored); });
       });
     });
@@ -356,7 +356,7 @@ public:
     // A prepared reset owner has not touched the shared store. Clear obsolete
     // history only after this owner is actually bound, before its first Logon.
     if constexpr (!Client)
-      if (options().resetLogon && m_round > 1 && this->txProgress_().loaded == 1)
+      if (options().resetLogon && m_round > 1 && this->txProgress().loaded == 1)
 	store_().history.clear();
     m_stopping = false; return body;
   }
@@ -381,8 +381,8 @@ public:
     if (m_ready) return;
     m_ready = true;
     ++result().connections;
-    if constexpr (Client) state()->readyRx_(m_index, ZmFn<void()>{[this] { start_(); }});
-    else state()->readyRx_(m_index);
+    if constexpr (Client) state()->readyRx(m_index, ZmFn<void()>{[this] { start_(); }});
+    else state()->readyRx(m_index);
   }
 
   Zfix::Fmt::Error fixReceiveRx(NewOrder *, const Order &o,
@@ -431,21 +431,21 @@ public:
       r.progress = broker_().progress; r.cached = broker_().cached;
       r.replayRefused = broker_().replayRefused;
     }
-    store_().rx = this->rxProgress_();
+    store_().rx = this->rxProgress();
     store_().epoch = this->session_().epoch_();
     if constexpr (Client) if (options().stateOut.length()) {
       state()->checkpoint.rx = store_().rx; state()->checkpoint.epoch = store_().epoch;
     }
     r.nextTarget = store_().rx.processed;
-    auto stats = this->rxStats_();
+    auto stats = this->rxStats();
     if (m_round == 1) { r.rxFrames = stats.frames; r.rxBytes = stats.bytes; }
     else { r.rxFrames += stats.frames; r.rxBytes += stats.bytes; }
     state()->starters[m_index] = {};
   }
 
   void fixStopTx(uint64_t) {
-    m_stopping = true; auto stats = this->txStats_(); auto &r = result();
-    store_().tx = this->txProgress_();
+    m_stopping = true; auto stats = this->txStats(); auto &r = result();
+    store_().tx = this->txProgress();
     r.nextSender = store_().tx.loaded;
     if constexpr (Client) if (options().stateOut.length()) {
       auto &saved = state()->checkpoint; saved.tx = store_().tx; saved.history.length(0);
@@ -470,9 +470,9 @@ public:
 	  rx.gapBegin = rx.gapEnd = 0;
 	}
       }
-      app()->retired_(this, this->session_().epoch_(), m_round,
+      app()->retired_0(this, this->session_().epoch_(), m_round,
 	this->session_().connection_());
-    } else state()->stoppedRx_(true);
+    } else state()->stoppedRx(true);
   }
 private:
   static unsigned round_(NativeHub<Net, Client> *hub) {
@@ -487,7 +487,7 @@ private:
     } else return hub->nextEpoch;
   }
 
-  bool resetOpen_() {
+  bool resetOpen() {
     Zfix::ResetRequest request;
     request.op = Zfix::ResetOp::OnOpen; request.epoch = this->session_().epoch_();
     request.enabled = true; return this->reset_(request);
@@ -549,7 +549,7 @@ private:
 	Zfix::Fmt::Error error; return submit<NewOrder>(o, o.key, error);
       });
       if (m_run.phase() == Phase::Failed) { state()->fail(); return; }
-      if (m_run.phase() == Phase::Complete) { m_done = true; state()->doneRx_(); return; }
+      if (m_run.phase() == Phase::Complete) { m_done = true; state()->doneRx(); return; }
       auto now = monotonic(), at = m_run.nextDue(now); if (!at) return;
       auto delay = at > now ? at - now : 0;
       auto serial = m_timerSerial;

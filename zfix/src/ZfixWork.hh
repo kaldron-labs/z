@@ -78,10 +78,10 @@ public:
 
 #ifdef ZmObject_DEBUG
   bool deref(const void *referrer = nullptr) const {
-    if (ZmObject::deref(referrer)) m_owner->workDone(this);
+    if (ZmObject::deref(referrer)) m_owner->workDone_0(this);
 #else
   bool deref() const {
-    if (ZmObject::deref()) m_owner->workDone(this);
+    if (ZmObject::deref()) m_owner->workDone_0(this);
 #endif
     return false;
   }
@@ -101,7 +101,7 @@ template <typename App> class WorkHub {
 public:
   explicit WorkHub(WorkLimits limits = {}) : m_work{limits} { }
 
-  WorkBudget &fixWorkRx_() {
+  WorkBudget &fixWorkRx() {
     ZmAssert(static_cast<App *>(this)->rxInvoked()); return m_work;
   }
 

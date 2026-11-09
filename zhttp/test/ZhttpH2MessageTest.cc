@@ -484,8 +484,8 @@ struct StreamResponse :
     return true;
   }
   template <typename Rx>
-  void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamPeerEnd_() { ++remoteEnds; dispatch.peerEnd(); }
+  void streamRx(Rx &rx) { dispatch.process(rx); }
+  void streamPeerEnd() { ++remoteEnds; dispatch.peerEnd(); }
   void streamError_() { ++resets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {

@@ -257,7 +257,7 @@ complete immediately with ServiceError::Stopped. Stop/final must not race an
 external call that has not returned. A stop callback can finalize the service
 when no opposite lifecycle operation is pending.
 
-`setRefreshRevocationFn` can configure a quiescent Stopped service directly;
+`refreshFn` can configure a quiescent Stopped service directly;
 serialize this configuration with start/final. During Running it posts the
 callback replacement to the owner and its post is covered by stop. The hook
 is retained across restart.

@@ -4,11 +4,11 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZrestITestPorts_HH
-#define ZrestITestPorts_HH
+#ifndef zrestitestports_HH
+#define zrestitestports_HH
 
 namespace ZrestITestPort {
   enum { Matrix = 20700, MatrixEnd = 20720 };
 }
 
-#endif /* ZrestITestPorts_HH */
+#endif /* zrestitestports_HH */

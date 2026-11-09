@@ -15,16 +15,16 @@
 
 namespace Zum {
 
-class SessionComplete_ : public ZmNHeap<SessionComplete_>, public ZmObject,
+class SessionComplete : public ZmNHeap<SessionComplete>, public ZmObject,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.session.SessionComplete"> ZmNHeapID(SessionComplete_ *);
+friend inline ZuStringT<"Zum.zumd.session.SessionComplete"> ZmNHeapID(SessionComplete *);
 
 public:
-  SessionComplete_(ZmRef<ZmPolymorph> work, SessionFn complete) :
+  SessionComplete(ZmRef<ZmPolymorph> work, SessionFn complete) :
     RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error, Session session = {}, String token = {}) {
-    m_request->complete([self = ZmRef<SessionComplete_>{this}, error,
+    m_request->complete([self = ZmRef<SessionComplete>{this}, error,
 	  session = ZuMv(session), token = ZuMv(token)]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(error, ZuMv(session), ZuMv(token));
@@ -39,16 +39,16 @@ private:
   SessionFn	m_complete;
 };
 
-class SessionDoneComplete_ : public ZmNHeap<SessionDoneComplete_>, public ZmObject,
+class SessionDoneComplete : public ZmNHeap<SessionDoneComplete>, public ZmObject,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.session.SessionDoneComplete"> ZmNHeapID(SessionDoneComplete_ *);
+friend inline ZuStringT<"Zum.zumd.session.SessionDoneComplete"> ZmNHeapID(SessionDoneComplete *);
 
 public:
-  SessionDoneComplete_(ZmRef<ZmPolymorph> work, SessionDoneFn complete) :
+  SessionDoneComplete(ZmRef<ZmPolymorph> work, SessionDoneFn complete) :
     RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
   void complete(int error) {
-    m_request->complete([self = ZmRef<SessionDoneComplete_>{this}, error]() {
+    m_request->complete([self = ZmRef<SessionDoneComplete>{this}, error]() {
       auto complete = ZuMv(self->m_complete);
       complete(error);
     });
@@ -216,7 +216,7 @@ bool sessionIssue(
     Ztls::Random &rng, SessionConfig config, SessionFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionComplete_> state = new SessionComplete_{work, ZuMv(complete)};
+  ZmRef<SessionComplete> state = new SessionComplete{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, &rng,
       config = ZuMv(config)](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
@@ -234,7 +234,7 @@ bool sessionIssueGrant(
     SessionFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionComplete_> state = new SessionComplete_{work, ZuMv(complete)};
+  ZmRef<SessionComplete> state = new SessionComplete{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, &rng,
       grantID = ZuMv(grantID), issuer = ZuMv(issuer), now,
       idleLifetime, absoluteLifetime](
@@ -299,7 +299,7 @@ bool sessionUse(
     SessionFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionComplete_> state = new SessionComplete_{work, ZuMv(complete)};
+  ZmRef<SessionComplete> state = new SessionComplete{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, token = ZuMv(token),
       issuer = ZuMv(issuer), now, idleLifetime](ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
@@ -315,8 +315,8 @@ bool sessionRevoke(
     String token, String issuer, int64_t now, SessionDoneFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<SessionDoneComplete_> state =
-    new SessionDoneComplete_{work, ZuMv(complete)};
+  ZmRef<SessionDoneComplete> state =
+    new SessionDoneComplete{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, token = ZuMv(token),
       issuer = ZuMv(issuer), now](
       ZmRef<Request> request) mutable {

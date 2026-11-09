@@ -167,7 +167,7 @@ private:
   Array	&m_array;
 };
 
-inline unsigned ioGrow_(unsigned, unsigned n) { return n; }
+inline unsigned ioGrow(unsigned, unsigned n) { return n; }
 
 class IOStorage {
 public:
@@ -197,7 +197,7 @@ public:
     m_buf->skip = 0;
     unsigned tail = oldSize >= uint64_t(skip) + m_tailRoom ?
       used + m_tailRoom : used;
-    m_buf->template realloc<ioGrow_>(oldSize, unsigned(nextSize), skip, tail);
+    m_buf->template realloc<ioGrow>(oldSize, unsigned(nextSize), skip, tail);
     m_buf->skip = skip;
     return true;
   }
@@ -1153,7 +1153,7 @@ public:
 
   template <typename ...Args>
   O ctor(Args &&...args) const {
-    auto state = ctorState_();
+    auto state = ctorState();
     if constexpr (!InitFields::N)
       return state.ctor(ZuFwd<Args>(args)...);
     else {
@@ -1164,7 +1164,7 @@ public:
   }
   template <typename ...Args>
   O *alloc(Args &&...args) const {
-    auto state = ctorState_();
+    auto state = ctorState();
     auto o = state.alloc(ZuFwd<Args>(args)...);
     if constexpr (InitFields::N)
       load_<ZfFieldFilter::Init>(*o);
@@ -1172,7 +1172,7 @@ public:
   }
   template <typename ...Args>
   void new_(void *p, Args &&...args) const {
-    auto state = ctorState_();
+    auto state = ctorState();
     state.new_(p, ZuFwd<Args>(args)...);
     if constexpr (InitFields::N)
       load_<ZfFieldFilter::Init>(*static_cast<O *>(p));
@@ -1204,7 +1204,7 @@ private:
     builder.tag(field, Wire::Length);
   }
 
-  auto ctorState_() const {
+  auto ctorState() const {
     ZuTypeApply<CtorState, CtorFields> state;
     if constexpr (CtorFields::N) {
       constexpr unsigned seenSize = Fields::N ? Fields::N : 1;

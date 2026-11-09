@@ -552,7 +552,7 @@ static void retryReentry()
 static void restoreFootprint()
 {
   ZuTestScope(restoreFootprint);
-  using Adapter = SeqRxQueue_<Queue>;
+  using Adapter = SeqRxQueue<Queue>;
   ZuAssert((ZuIsSame<Adapter::Node, Queue::Node>{}));
   ZuAssert((ZuIsSame<Adapter::Fn, Queue::Fn>{}));
   ZuAssert((ZuIsSame<Adapter::HeapID, Queue::HeapID>{}));

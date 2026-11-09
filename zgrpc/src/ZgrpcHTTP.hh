@@ -71,12 +71,12 @@ public:
 	  auto first = writer.allocBuf(writer.headRoom());
 	  if (!first) return true;
 	  FrameError::T frameError;
-	  buf = encodeFrame<Facet>(ZuMv(first), writer.tailRoom(), messageLimit_(),
+	  buf = encodeFrame<Facet>(ZuMv(first), writer.tailRoom(), messageLimit(),
 	    message.object(), frameError, [this](ZuBSpan bytes) { impl()->signMessage(bytes); });
 	  if (!buf) error = frameError == FrameError::Limit ? Code::RESOURCE_EXHAUSTED : Code::INTERNAL;
 	} catch (...) { buf = nullptr; }
 	return true;
-      }, [this]() { noteFailure_(Code::INTERNAL); });
+      }, [this]() { noteFailure(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !buf) return fail_(error);
     if (!m_frames.push(ZuMv(buf), m_limits)) return fail_(Code::RESOURCE_EXHAUSTED);
@@ -88,7 +88,7 @@ public:
   // Copy them directly into a final writer-allocated envelope buffer.
   bool sendRaw_(ZuBSpan bytes) {
     if (m_sealed) return fail_(Code::INTERNAL);
-    if (m_frames.bytes() + PrefixSize > m_limits.maxQueueBytes || bytes.length() > messageLimit_())
+    if (m_frames.bytes() + PrefixSize > m_limits.maxQueueBytes || bytes.length() > messageLimit())
       return fail_(Code::RESOURCE_EXHAUSTED);
     if (!m_body.message()) return fail_(Code::INTERNAL);
     if (m_frames.count() >= m_limits.maxQueue) return fail_(Code::RESOURCE_EXHAUSTED);
@@ -103,14 +103,14 @@ public:
 	  if (!buf) return true;
 	  uint64_t size = uint64_t(buf->skip) + PrefixSize + bytes.length() + writer.tailRoom();
 	  if (size > INT_MAX) { error = Code::RESOURCE_EXHAUSTED; buf = nullptr; return true; }
-	  if (!buf->ensure<rawGrow_>(unsigned(size) - buf->skip)) { buf = nullptr; return true; }
+	  if (!buf->ensure<rawGrow>(unsigned(size) - buf->skip)) { buf = nullptr; return true; }
 	  auto out = buf->data();
 	  framePrefix(out, bytes.length());
 	  if (bytes.length()) memcpy(out + PrefixSize, bytes.data(), bytes.length());
 	  buf->length = PrefixSize + bytes.length();
 	} catch (...) { buf = nullptr; }
 	return true;
-      }, [this]() { noteFailure_(Code::INTERNAL); });
+      }, [this]() { noteFailure(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !buf) return fail_(error);
     if (!m_frames.push(ZuMv(buf), m_limits)) return fail_(Code::RESOURCE_EXHAUSTED);
@@ -124,7 +124,7 @@ public:
     if (m_sealed) return fail_(Code::INTERNAL);
     if (!source || source->failed() ||
 	m_frames.bytes() + PrefixSize > m_limits.maxQueueBytes ||
-	source->length > messageLimit_()) return fail_(Code::RESOURCE_EXHAUSTED);
+	source->length > messageLimit()) return fail_(Code::RESOURCE_EXHAUSTED);
     if (!m_body.message()) return fail_(Code::INTERNAL);
     if (m_frames.count() >= m_limits.maxQueue) return fail_(Code::RESOURCE_EXHAUSTED);
     bool prepared = false;
@@ -139,7 +139,7 @@ public:
 	framePrefix(source->data(), source->length - PrefixSize);
 	prepared = true;
 	return true;
-      }, [this]() { noteFailure_(Code::INTERNAL); });
+      }, [this]() { noteFailure(Code::INTERNAL); });
     } catch (...) { ok = false; }
     if (!ok || !prepared) return fail_(Code::INTERNAL);
     if (!m_frames.push(ZuMv(source), m_limits))
@@ -160,7 +160,7 @@ public:
 	  if (!writer.appendBuf(ZuMv(frame))) return false;
 	}
 	return true;
-      }, [this]() { noteFailure_(Code::INTERNAL); });
+      }, [this]() { noteFailure(Code::INTERNAL); });
     }
     m_draining = false;
     if (!ok) return fail_(Code::INTERNAL);
@@ -188,20 +188,20 @@ protected:
     return m_body.finish(code, fields) ? true : fail_(m_body.code());
   }
   bool fail_(Code::T code) {
-    noteFailure_(code);
+    noteFailure(code);
     m_frames.clear();
     m_body.abort(m_error);
     return false;
   }
 
 private:
-  void noteFailure_(Code::T code) {
+  void noteFailure(Code::T code) {
     if (m_error != Code::OK) return;
     m_error = code;
     impl()->productionFailed(code);
   }
-  static unsigned rawGrow_(unsigned, unsigned size) { return size; }
-  unsigned messageLimit_() const {
+  static unsigned rawGrow(unsigned, unsigned size) { return size; }
+  unsigned messageLimit() const {
     unsigned max = M::MessageLimit ? M::MessageLimit : m_limits.maxMessageBytes;
     uint64_t used = m_frames.bytes() + PrefixSize;
     unsigned queued = m_limits.maxQueueBytes > used ? unsigned(m_limits.maxQueueBytes - used) : 0;

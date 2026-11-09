@@ -563,7 +563,7 @@ public:
     ++m_accepted;
     app->scheduler_()->run([app, event = ZuMv(event)]() mutable {
       app->alert_(ZuMv(event));
-      app->postedDone_();
+      app->postedDone();
     }, app->config().workerThread);
   }
   void done() {
@@ -911,11 +911,11 @@ bool App::init(const AppCf &cf)
     m_state->store.init(
       cf.alertPrefix, cf.id, cf.maxFrame, cf.alertRetention);
     App_::warmSamples();
-    warmIndices_();
+    warmIndices();
     return true;
   } catch (...) {
     unwatch_();
-    clearIndices_();
+    clearIndices();
     delete m_state;
     m_state = nullptr;
     App_::release(this);
@@ -923,7 +923,7 @@ bool App::init(const AppCf &cf)
   }
 }
 
-void App::constructScheduler_()
+void App::constructScheduler()
 {
   ZmSchedParams params;
   [
@@ -960,7 +960,7 @@ void App::start_()
   if (!m_state) { Engine::started(false); return; }
   ZmAssert_(!scheduler_() && m_credit.load_() == AppCredit::Closed);
   try {
-    constructScheduler_();
+    constructScheduler();
   } catch (...) {
     // Placement construction did not finish; do not destroy its partial body.
     m_scheduler.new_<void, true>();
@@ -973,11 +973,11 @@ void App::start_()
       Engine::started(false);
       return;
     }
-    scheduler_()->run([this]() { startRuntime_(); }, m_cf.workerThread);
+    scheduler_()->run([this]() { start_0(); }, m_cf.workerThread);
   });
 }
 
-void App::startRuntime_()
+void App::start_0()
 {
   m_state->degraded = false;
   ZuTime now = Zm::now();
@@ -1010,7 +1010,7 @@ void App::startRuntime_()
       ZiRingParams{m_state->telName, 0}.initial(m_cf.telRingSize));
   }
 
-  auto failed = [this]() { stopWorker_(true); };
+  auto failed = [this]() { stop_0(true); };
 
   m_state->reqRing.init(
     ZiRingParams{m_cf.id, m_cf.reqSize}.
@@ -1034,21 +1034,21 @@ void App::startRuntime_()
     // dedicated native-I/O slot, away from subscription/timer work.
     auto pidFile = new (m_state->pidFile.new_<ZiPIDFile>()) ZiPIDFile;
     bool ok = pidFile->init(ZiFile::tmpDir(), m_state->pidName) == ZiPIDFile::OK;
-    scheduler_()->run([this, ok]() { startReady_(ok); }, m_cf.workerThread);
-    if (ok) reqRun_();
-    scheduler_()->run([this, ok]() { reqDone_(!ok); }, m_cf.workerThread);
+    scheduler_()->run([this, ok]() { start_1(ok); }, m_cf.workerThread);
+    if (ok) req_0();
+    scheduler_()->run([this, ok]() { req_1(!ok); }, m_cf.workerThread);
   }, m_cf.scheduler.nThreads + 1);
 }
 
-void App::startReady_(bool ok)
+void App::start_1(bool ok)
 {
-  if (!ok) { stopWorker_(true); return; }
+  if (!ok) { stop_0(true); return; }
   watch_();
   m_startTime = Zm::now();
   m_credit = 0;
   m_state->ingress->open(this);
   m_state->appPending = true;
-  if (publishApp_(0)) m_state->appPending = false;
+  if (publishApp(0)) m_state->appPending = false;
   Engine::started(true);
 }
 
@@ -1064,10 +1064,10 @@ bool App::admit_() const
   return true;
 }
 
-void App::postedDone_()
+void App::postedDone()
 {
   --m_credit;
-  postDrain_(false);
+  stop_2(false);
 }
 
 void App::stop_()
@@ -1075,10 +1075,10 @@ void App::stop_()
   m_credit |= AppCredit::Closed;
   m_state->ingress->close(this);
   m_state->reqStop = 1;
-  scheduler_()->run([this]() { stopWorker_(false); }, m_cf.workerThread);
+  scheduler_()->run([this]() { stop_0(false); }, m_cf.workerThread);
 }
 
-void App::stopWorker_(bool failed)
+void App::stop_0(bool failed)
 {
   m_state->reqStop = 1;
   m_state->ingress->close(this);
@@ -1094,26 +1094,26 @@ void App::stopWorker_(bool failed)
       }
     }
   }
-  clearBatch_(failed);
+  stop_1(failed);
 }
 
-void App::reqDone_(bool failed)
+void App::req_1(bool failed)
 {
   m_state->reqExited = true;
-  postDrain_(failed);
+  stop_2(failed);
 }
 
-void App::clearBatch_(bool failed)
+void App::stop_1(bool failed)
 {
-  if (!clearSubscriptions_(AppWork::Batch) || !clearIndices_(AppWork::Batch)) {
-    scheduler_()->run([this, failed]() { clearBatch_(failed); }, m_cf.workerThread);
+  if (!clearSubscriptions(AppWork::Batch) || !clearIndices(AppWork::Batch)) {
+    scheduler_()->run([this, failed]() { stop_1(failed); }, m_cf.workerThread);
     return;
   }
   m_state->draining = true;
-  postDrain_(failed);
+  stop_2(failed);
 }
 
-void App::postDrain_(bool failed)
+void App::stop_2(bool failed)
 {
   if (!m_state->draining || m_state->drainPosted || !m_state->reqExited ||
       (m_credit.load_() & AppCredit::Count)) return;
@@ -1126,7 +1126,7 @@ void App::postDrain_(bool failed)
     m_state->drainPosted = true;
     scheduler_()->run([this, failed]() {
       m_state->drainPosted = false;
-      postDrain_(failed);
+      stop_2(failed);
     }, m_cf.workerThread);
     return;
   }
@@ -1136,16 +1136,16 @@ void App::postDrain_(bool failed)
       scheduler_()->run([this, failed]() {
         ZmAssert_(m_state->ingress->drained());
         if (!failed)
-          publishRaw_(App_::shutdownFrame(m_cf.id), App_::Delivery::Telemetry);
+          publishRaw(App_::shutdownFrame(m_cf.id), App_::Delivery::Telemetry);
         scheduler_()->ZmEngine<ZmScheduler>::stop([this, failed](bool ok) {
-          closeRuntime_(failed, ok);
+          stop_3(failed, ok);
         });
       }, m_cf.workerThread);
     }, m_cf.timerThread);
   }, m_cf.workerThread);
 }
 
-void App::closeRuntime_(bool failed, bool ok)
+void App::stop_3(bool failed, bool ok)
 {
   // All scheduler threads, including its dedicated request-loop slot, have
   // joined. This callback runs on the existing scheduler control thread.
@@ -1174,7 +1174,7 @@ void App::final()
   ZmAssert_(m_state->reqExited && !m_state->draining && !m_state->drainPosted);
   ZmAssert_(m_state->ingress->drained());
   ZmAssert_(!m_state->pending.count_() && !m_state->subs.count_() && !m_state->tail.count_());
-  clearIndices_();
+  clearIndices();
   delete m_state;
   m_state = nullptr;
   m_cf = {};
@@ -1190,7 +1190,7 @@ void App::rag(RagFn fn) const
     auto complete = ZuMv(fn);
     complete(RAG::T(app->m_rag.load_()));
     complete = {};
-    app->postedDone_();
+    app->postedDone();
   }, m_cf.workerThread);
 }
 
@@ -1205,7 +1205,7 @@ void App::rag(RAG::T rag)
   if (!admit_()) { m_rag = rag; return; }
   scheduler_()->run([this, rag]() {
     rag_(rag);
-    postedDone_();
+    postedDone();
   }, m_cf.workerThread);
 }
 
@@ -1285,7 +1285,7 @@ void App::alert_(ZmRef<App_::AlertEvent> event)
   }
 }
 
-void App::warmIndices_()
+void App::warmIndices()
 {
   delete new App_::Pending_;
   App_::indexWarm(m_state->pending, App_::PendingKey{});
@@ -1304,7 +1304,7 @@ void App::warmIndices_()
   App_::indexWarm(m_dbTableIdx, DBTableKey{ZuID{}, Ztc::DBTableID{}});
 }
 
-bool App::clearIndices_(unsigned budget)
+bool App::clearIndices(unsigned budget)
 {
   auto clear = [&budget](auto &index) {
     while (budget) {
@@ -1333,28 +1333,28 @@ void App::watch_()
   m_watching = true;
 
   MxMgr::watch(
-    {[this](Ztc::Mx *mx_) { mxAdded_(mx_); }},
-    {[this](Ztc::Mx *mx_) { mxDeleted_(mx_); }});
+    {[this](Ztc::Mx *mx_) { mxAdded(mx_); }},
+    {[this](Ztc::Mx *mx_) { mxDeleted(mx_); }});
   HubMgr::watch(
-    {[this](Ztc::Hub *hub) { hubAdded_(hub); }},
-    {[this](Ztc::Hub *hub) { hubDeleted_(hub); }},
-    {[this](Ztc::Link *link) { idxLinkAdded_(link); }},
-    {[this](Ztc::Link *link) { idxLinkDeleted_(link); }},
+    {[this](Ztc::Hub *hub) { hubAdded(hub); }},
+    {[this](Ztc::Hub *hub) { hubDeleted(hub); }},
+    {[this](Ztc::Link *link) { idxLinkAdded(link); }},
+    {[this](Ztc::Link *link) { idxLinkDeleted(link); }},
     {[this](Ztc::Pool *pool) { poolAdded_(pool); }},
     {[this](Ztc::Pool *pool) { poolDeleted_(pool); }},
-    {[this](Ztc::Queue *queue) { hubQueueAdded_(queue); }},
-    {[this](Ztc::Queue *queue) { hubQueueDeleted_(queue); }});
+    {[this](Ztc::Queue *queue) { hubQueueAdded(queue); }},
+    {[this](Ztc::Queue *queue) { hubQueueDeleted(queue); }});
   DBMgr::watch(
-    {[this](DB *db) { dbAdded_(db); }},
-    {[this](DB *db) { dbDeleted_(db); }},
-    {[this](DBHost *host) { dbHostAdded_(host); }},
-    {[this](DBHost *host) { dbHostDeleted_(host); }},
-    {[this](DBTable *table) { dbTableAdded_(table); }},
-    {[this](DBTable *table) { dbTableDeleted_(table); }});
+    {[this](DB *db) { dbAdded(db); }},
+    {[this](DB *db) { dbDeleted(db); }},
+    {[this](DBHost *host) { dbHostAdded(host); }},
+    {[this](DBHost *host) { dbHostDeleted(host); }},
+    {[this](DBTable *table) { dbTableAdded(table); }},
+    {[this](DBTable *table) { dbTableDeleted(table); }});
 
-  MxMgr::all({[this](Ztc::Mx *mx_) { mxAdded_(mx_); }});
-  HubMgr::all({[this](Ztc::Hub *hub) { hubAdded_(hub); }});
-  DBMgr::all({[this](DB *db) { dbAdded_(db); }});
+  MxMgr::all({[this](Ztc::Mx *mx_) { mxAdded(mx_); }});
+  HubMgr::all({[this](Ztc::Hub *hub) { hubAdded(hub); }});
+  DBMgr::all({[this](DB *db) { dbAdded(db); }});
 }
 
 void App::unwatch_()
@@ -1366,21 +1366,21 @@ void App::unwatch_()
   m_watching = false;
 }
 
-void App::mxAdded_(Ztc::Mx *mx_)
+void App::mxAdded(Ztc::Mx *mx_)
 {
   App_::indexAdd(m_mxIdx, ZuID{mx_->telKey().p<0>()}, mx_);
   mx_->allQueues(
-    {[this](Ztc::Queue *queue) { mxQueueAdded_(queue); }});
+    {[this](Ztc::Queue *queue) { mxQueueAdded(queue); }});
 }
 
-void App::mxDeleted_(Ztc::Mx *mx_)
+void App::mxDeleted(Ztc::Mx *mx_)
 {
   mx_->allQueues(
-    {[this](Ztc::Queue *queue) { mxQueueDeleted_(queue); }});
+    {[this](Ztc::Queue *queue) { mxQueueDeleted(queue); }});
   App_::indexDel(m_mxIdx, ZuID{mx_->telKey().p<0>()}, mx_);
 }
 
-void App::mxQueueAdded_(Ztc::Queue *queue)
+void App::mxQueueAdded(Ztc::Queue *queue)
 {
   auto key = queue->telKey();
   QueueKey owned{key.p<0>(), key.p<1>(), key.p<2>()};
@@ -1388,7 +1388,7 @@ void App::mxQueueAdded_(Ztc::Queue *queue)
     App_::indexAdd(m_mxQueueIdx, ZuMv(owned), mx_);
 }
 
-void App::mxQueueDeleted_(Ztc::Queue *queue)
+void App::mxQueueDeleted(Ztc::Queue *queue)
 {
   auto key = queue->telKey();
   QueueKey owned{key.p<0>(), key.p<1>(), key.p<2>()};
@@ -1396,35 +1396,35 @@ void App::mxQueueDeleted_(Ztc::Queue *queue)
     App_::indexDel(m_mxQueueIdx, owned, mx_);
 }
 
-void App::hubAdded_(Ztc::Hub *hub)
+void App::hubAdded(Ztc::Hub *hub)
 {
   auto key = hub->telKey();
   App_::indexAdd(m_hubIdx, HubKey{key.p<0>(), key.p<1>()}, hub);
   hub->allLinks({[this](Ztc::Link *link) {
-    idxLinkAdded_(link);
+    idxLinkAdded(link);
     link->allQueues(
-      {[this](Ztc::Queue *queue) { hubQueueAdded_(queue); }});
+      {[this](Ztc::Queue *queue) { hubQueueAdded(queue); }});
   }});
   hub->allPools({[this](Ztc::Pool *pool) {
     poolAdded_(pool);
     pool->allQueues(
-      {[this](Ztc::Queue *queue) { hubQueueAdded_(queue); }});
+      {[this](Ztc::Queue *queue) { hubQueueAdded(queue); }});
   }});
 }
 
-void App::hubDeleted_(Ztc::Hub *hub)
+void App::hubDeleted(Ztc::Hub *hub)
 {
   auto key = hub->telKey();
   App_::indexDel(m_hubIdx, HubKey{key.p<0>(), key.p<1>()}, hub);
 }
 
-void App::idxLinkAdded_(Ztc::Link *link)
+void App::idxLinkAdded(Ztc::Link *link)
 {
   auto key = link->telKey();
   App_::indexAdd(m_linkIdx, ChildKey{key.p<0>(), key.p<1>()}, link);
 }
 
-void App::idxLinkDeleted_(Ztc::Link *link)
+void App::idxLinkDeleted(Ztc::Link *link)
 {
   auto key = link->telKey();
   App_::indexDel(m_linkIdx, ChildKey{key.p<0>(), key.p<1>()}, link);
@@ -1442,7 +1442,7 @@ void App::poolDeleted_(Ztc::Pool *pool)
   App_::indexDel(m_poolIdx, ChildKey{key.p<0>(), key.p<1>()}, pool);
 }
 
-void App::hubQueueAdded_(Ztc::Queue *queue)
+void App::hubQueueAdded(Ztc::Queue *queue)
 {
   auto key = queue->telKey();
   QueueKey owned{key.p<0>(), key.p<1>(), key.p<2>()};
@@ -1455,7 +1455,7 @@ void App::hubQueueAdded_(Ztc::Queue *queue)
     App_::indexAdd(m_poolQueueIdx, ZuMv(owned), pool);
 }
 
-void App::hubQueueDeleted_(Ztc::Queue *queue)
+void App::hubQueueDeleted(Ztc::Queue *queue)
 {
   auto key = queue->telKey();
   QueueKey owned{key.p<0>(), key.p<1>(), key.p<2>()};
@@ -1467,49 +1467,49 @@ void App::hubQueueDeleted_(Ztc::Queue *queue)
     App_::indexDel(m_poolQueueIdx, owned, pool);
 }
 
-void App::dbAdded_(DB *db)
+void App::dbAdded(DB *db)
 {
   App_::indexAdd(m_dbIdx, ZuID{db->telKey().p<0>()}, db);
   db->allDBHosts(
-    {[this](DBHost *host) { dbHostAdded_(host); }});
+    {[this](DBHost *host) { dbHostAdded(host); }});
   db->allDBTables(
-    {[this](DBTable *table) { dbTableAdded_(table); }});
+    {[this](DBTable *table) { dbTableAdded(table); }});
 }
 
-void App::dbDeleted_(DB *db)
+void App::dbDeleted(DB *db)
 {
   App_::indexDel(m_dbIdx, ZuID{db->telKey().p<0>()}, db);
 }
 
-void App::dbHostAdded_(DBHost *host)
+void App::dbHostAdded(DBHost *host)
 {
   auto key = host->telKey();
   App_::indexAdd(
     m_dbHostIdx, ChildKey{key.p<0>(), key.p<1>()}, host);
 }
 
-void App::dbHostDeleted_(DBHost *host)
+void App::dbHostDeleted(DBHost *host)
 {
   auto key = host->telKey();
   App_::indexDel(
     m_dbHostIdx, ChildKey{key.p<0>(), key.p<1>()}, host);
 }
 
-void App::dbTableAdded_(DBTable *table)
+void App::dbTableAdded(DBTable *table)
 {
   auto key = table->telKey();
   App_::indexAdd(
     m_dbTableIdx, DBTableKey{key.p<0>(), key.p<1>()}, table);
 }
 
-void App::dbTableDeleted_(DBTable *table)
+void App::dbTableDeleted(DBTable *table)
 {
   auto key = table->telKey();
   App_::indexDel(
     m_dbTableIdx, DBTableKey{key.p<0>(), key.p<1>()}, table);
 }
 
-void App::reqRun_()
+void App::req_0()
 {
   try {
     while (!m_state->reqStop.load_()) {
@@ -1539,7 +1539,7 @@ void App::reqRun_()
       if (!buf || !msg(buf->ptr<Hdr>())) {
 	scheduler->run([this]() {
 	  if (active_())
-	    sendError_(ZuCmp<uint64_t>::null(), 1,
+	    sendError(ZuCmp<uint64_t>::null(), 1,
 	      "invalid FlatBuffers message");
 	}, m_cf.workerThread);
 	continue;
@@ -1555,7 +1555,7 @@ void App::reqRun_()
   }
 }
 
-bool App::publishRaw_(ZmRef<ZiIOBuf> buf, int delivery)
+bool App::publishRaw(ZmRef<ZiIOBuf> buf, int delivery)
 {
   if (!buf) return false;
   if (m_state->telRing.closed() &&
@@ -1588,12 +1588,12 @@ bool App::publishRaw_(ZmRef<ZiIOBuf> buf, int delivery)
 
 bool App::publish_(ZmRef<ZiIOBuf> buf)
 {
-  if (m_state->appPending && publishApp_(0))
+  if (m_state->appPending && publishApp(0))
     m_state->appPending = false;
-  return publishRaw_(ZuMv(buf), App_::Delivery::Telemetry);
+  return publishRaw(ZuMv(buf), App_::Delivery::Telemetry);
 }
 
-void App::appTelemetry_(AppTelemetry &data)
+void App::appTelemetry(AppTelemetry &data)
 {
   data.version = m_cf.version;
   data.role = m_cf.role;
@@ -1604,11 +1604,11 @@ void App::appTelemetry_(AppTelemetry &data)
   data.rag = RAG::T(m_rag.load_());
 }
 
-bool App::publishApp_(uint64_t seqNo)
+bool App::publishApp(uint64_t seqNo)
 {
   AppTelemetry data;
-  appTelemetry_(data);
-  return publishRaw_(App_::telemetryFrame(
+  appTelemetry(data);
+  return publishRaw(App_::telemetryFrame(
     m_cf.id, seqNo, TelemetryBody::AppTelemetry, data),
     App_::Delivery::Telemetry);
 }
@@ -1617,7 +1617,7 @@ void App::request_(ZmRef<ZiIOBuf> buf)
 {
   auto root = msg_(buf->ptr<Hdr>());
   if (ZuUnlikely(msgBody(root).tag() != Body::Request)) {
-    sendError_(ZuCmp<uint64_t>::null(), 1, "expected Request message");
+    sendError(ZuCmp<uint64_t>::null(), 1, "expected Request message");
     return;
   }
   auto request = msgBody(root).get<Body::Request>();
@@ -1626,7 +1626,7 @@ void App::request_(ZmRef<ZiIOBuf> buf)
   ZuCSpan id = request.get<ZfField(Request, id)>();
   if (id && id != m_cf.id) return;
   if (seqNo == ZuCmp<uint64_t>::null()) {
-    clearSubscriptions_();
+    clearSubscriptions();
     m_state->minReqSeqNo = 0;
     return;
   }
@@ -1641,31 +1641,31 @@ void App::request_(ZmRef<ZiIOBuf> buf)
   if (ZuUnlikely(
 	int(group) < int(Group::Heap) ||
 	int(group) > int(Group::Alert))) {
-    sendAck_(seqNo, AckStatus::Invalid);
+    sendAck(seqNo, AckStatus::Invalid);
     return;
   }
   Filter_::Filter compiled;
   if (ZuUnlikely(!compiled.compile(group, filter, m_cf.maxFilter))) {
-    sendAck_(seqNo, AckStatus::Invalid);
+    sendAck(seqNo, AckStatus::Invalid);
     return;
   }
   uint32_t alertDate = request.get<ZfField(Request, alertDate)>();
   uint64_t alertSeqNo = request.get<ZfField(Request, alertSeqNo)>();
   if (group != Group::Alert) {
     if (alertDate || alertSeqNo) {
-      sendAck_(seqNo, AckStatus::Invalid);
+      sendAck(seqNo, AckStatus::Invalid);
       return;
     }
   } else if ((alertDate && !App_::AlertStore::validDate(alertDate)) ||
       (!alertDate && alertSeqNo)) {
-    sendAck_(seqNo, AckStatus::Invalid);
+    sendAck(seqNo, AckStatus::Invalid);
     return;
   } else if (alertDate && m_state->alertDate &&
       (alertDate < m_state->store.earliest(m_state->alertDate) ||
        alertDate > m_state->alertDate ||
        (alertDate == m_state->alertDate && m_state->alertSeqNo &&
 	alertSeqNo >= m_state->alertSeqNo))) {
-    sendAck_(seqNo, AckStatus::Invalid);
+    sendAck(seqNo, AckStatus::Invalid);
     return;
   }
   if (!request.get<ZfField(Request, subscribe)>()) {
@@ -1679,15 +1679,15 @@ void App::request_(ZmRef<ZiIOBuf> buf)
 	alertDate, alertSeqNo);
 	return;
       }
-    if (!snapshot_(seqNo, group, compiled)) {
-      sendAck_(seqNo, AckStatus::Failed);
+    if (!snapshot_0(seqNo, group, compiled)) {
+      sendAck(seqNo, AckStatus::Failed);
       return;
     }
-    sendAck_(seqNo, AckStatus::OK);
+    sendAck(seqNo, AckStatus::OK);
     return;
   }
   if (ZuUnlikely(interval > m_cf.maxInterval)) {
-    sendAck_(seqNo, AckStatus::Invalid);
+    sendAck(seqNo, AckStatus::Invalid);
     return;
   }
   if (interval < m_cf.minInterval) interval = m_cf.minInterval;
@@ -1706,7 +1706,7 @@ void App::subscribe_(
       (((!sub || !sub->running) &&
 	m_state->pending.count_() >= m_cf.maxPending) ||
        (sameSeq && (!sub || sameSeq != sub->snapshot)))) {
-    sendAck_(seqNo, AckStatus::Failed);
+    sendAck(seqNo, AckStatus::Failed);
     return;
   }
   if (sub) {
@@ -1718,7 +1718,7 @@ void App::subscribe_(
     sub->dirty = true;
   } else {
     if (ZuUnlikely(m_state->subs.count_() >= m_cf.maxSubs)) {
-      sendAck_(seqNo, AckStatus::Failed);
+      sendAck(seqNo, AckStatus::Failed);
       return;
     }
     sub = new App_::Subscription;
@@ -1731,15 +1731,15 @@ void App::subscribe_(
       sub->pending.init(ZmQueueParams{}.initial(m_cf.alertReplay));
     m_state->subs.addNode(sub);
   }
-  sendAck_(seqNo, AckStatus::OK, interval);
+  sendAck(seqNo, AckStatus::OK, interval);
   if (group == Group::Alert) {
     sub->oneShot = !interval;
     sub->replayDate = alertDate;
     sub->replaySeqNo = alertSeqNo;
-    replay_(sub);
+    replay_0(sub);
     return;
   }
-  runSubscription_(sub);
+  runSubscription(sub);
   armTimer_();
 }
 
@@ -1764,10 +1764,10 @@ void App::unsubscribe_(
     m_state->subs.delNode(sub);
     armTimer_();
   }
-  sendAck_(seqNo, AckStatus::OK);
+  sendAck(seqNo, AckStatus::OK);
 }
 
-void App::runSubscription_(App_::Subscription_ *sub_)
+void App::runSubscription(App_::Subscription_ *sub_)
 {
   auto sub = static_cast<App_::Subscription *>(sub_);
   if (sub->running) {
@@ -1775,7 +1775,7 @@ void App::runSubscription_(App_::Subscription_ *sub_)
     return;
   }
   sub->dirty = false;
-  if (!snapshot_(sub->seqNo, sub->group, sub->filter, sub)) {
+  if (!snapshot_0(sub->seqNo, sub->group, sub->filter, sub)) {
     sub->dirty = true;
     sub->due = Zm::now() + App_::interval(sub->interval);
     m_state->due[unsigned(sub->group)].addNode(sub);
@@ -1787,7 +1787,7 @@ void App::runSubscription_(App_::Subscription_ *sub_)
   }
 }
 
-void App::replay_(App_::Subscription_ *sub_)
+void App::replay_0(App_::Subscription_ *sub_)
 {
   auto sub = static_cast<App_::Subscription *>(sub_);
   sub->pending.clean();
@@ -1798,7 +1798,7 @@ void App::replay_(App_::Subscription_ *sub_)
   sub->highDate = m_state->alertDate;
   sub->highSeqNo = m_state->alertSeqNo ? m_state->alertSeqNo - 1 : 0;
   if (!sub->highDate || !m_state->alertSeqNo) {
-    finishReplay_(sub);
+    replay_2(sub);
     return;
   }
 
@@ -1808,7 +1808,7 @@ void App::replay_(App_::Subscription_ *sub_)
     sub->replaySeqNo = 0;
   } else {
     if (sub->replayDate < earliest || sub->replayDate > sub->highDate) {
-      failReplay_(sub, "invalid alert replay lower bound");
+      failReplay(sub, "invalid alert replay lower bound");
       return;
     }
     if (sub->replaySeqNo == UINT64_MAX) {
@@ -1819,10 +1819,10 @@ void App::replay_(App_::Subscription_ *sub_)
     }
   }
   sub->replaying = true;
-  replayBatch_(sub->order);
+  replay_1(sub->order);
 }
 
-void App::replayBatch_(uint64_t order)
+void App::replay_1(uint64_t order)
 {
   if (!active_()) return;
   App_::Subscription *sub = nullptr;
@@ -1837,7 +1837,7 @@ void App::replayBatch_(uint64_t order)
   }
   if (!sub || !sub->replaying) return;
   if (sub->replayFailed) {
-    failReplay_(sub, "alert replay handoff overflow");
+    failReplay(sub, "alert replay handoff overflow");
     return;
   }
 
@@ -1846,7 +1846,7 @@ void App::replayBatch_(uint64_t order)
     if (sub->replayDate > sub->highDate ||
 	(sub->replayDate == sub->highDate &&
 	 sub->replaySeqNo > sub->highSeqNo)) {
-      finishReplay_(sub);
+      replay_2(sub);
       return;
     }
     ZmRef<ZiIOBuf> frame;
@@ -1862,7 +1862,7 @@ void App::replayBatch_(uint64_t order)
     if (result != App_::AlertStore::LoadResult::Missing ||
 	sub->replayDate == sub->highDate) {
       m_state->degraded = true;
-      failReplay_(sub, "alert replay partition read failed");
+      failReplay(sub, "alert replay partition read failed");
       return;
     }
     sub->replayDate = App_::AlertStore::addDays(sub->replayDate, 1);
@@ -1871,17 +1871,17 @@ void App::replayBatch_(uint64_t order)
 
   auto scheduler = scheduler_();
   if (!scheduler || !scheduler->running()) return;
-  scheduler->run([this, order]() { replayBatch_(order); }, m_cf.workerThread);
+  scheduler->run([this, order]() { replay_1(order); }, m_cf.workerThread);
 }
 
-void App::finishReplay_(App_::Subscription_ *sub_)
+void App::replay_2(App_::Subscription_ *sub_)
 {
   auto sub = static_cast<App_::Subscription *>(sub_);
   sub->replaying = false;
   sub->replayData.close();
   sub->replayIndex.close();
   sub->openDate = 0;
-  sendEOS_(sub->seqNo);
+  sendEOS(sub->seqNo);
   if (sub->oneShot) {
     m_state->subs.delNode(sub);
     return;
@@ -1898,7 +1898,7 @@ void App::finishReplay_(App_::Subscription_ *sub_)
   }
 }
 
-void App::failReplay_(
+void App::failReplay(
     App_::Subscription_ *sub_, ZuCSpan message)
 {
   auto sub = static_cast<App_::Subscription *>(sub_);
@@ -1906,7 +1906,7 @@ void App::failReplay_(
   sub->replayData.close();
   sub->replayIndex.close();
   sub->openDate = 0;
-  sendError_(sub->seqNo, 2, message);
+  sendError(sub->seqNo, 2, message);
   m_state->subs.delNode(sub);
 }
 
@@ -1926,13 +1926,13 @@ void App::armTimer_()
 	auto scheduler = scheduler_();
 	if (!scheduler) return;
 	scheduler->run([this, generation, deadline]() {
-	  timerFired_(generation, deadline);
+	  timerFired(generation, deadline);
 	}, m_cf.workerThread);
       });
     }, m_cf.timerThread);
 }
 
-void App::timerFired_(uint64_t generation, ZuTime)
+void App::timerFired(uint64_t generation, ZuTime)
 {
   if (!active_() || generation != m_state->timerGeneration)
     return;
@@ -1946,13 +1946,13 @@ void App::timerFired_(uint64_t generation, ZuTime)
     if (sub->running)
       sub->dirty = true;
     else
-      runSubscription_(sub);
+      runSubscription(sub);
     ++n;
   }
   armTimer_();
 }
 
-bool App::clearSubscriptions_(unsigned budget)
+bool App::clearSubscriptions(unsigned budget)
 {
   ++m_state->timerGeneration;
   if (auto scheduler = scheduler_()) scheduler->del(&m_state->timer);
@@ -1986,7 +1986,7 @@ bool App::clearSubscriptions_(unsigned budget)
   return !m_state->pending.count_() && !m_state->subs.count_();
 }
 
-bool App::snapshot_(
+bool App::snapshot_0(
     uint64_t seqNo, Group::T group,
     const Filter_::Filter &filter, App_::Subscription_ *sub_)
 {
@@ -2230,7 +2230,7 @@ bool App::snapshot_(
 	  (filter.mode0() == Filter_::Mode::Exact ?
 	    !filter.stringExact(m_cf.id) :
 	    !filter.stringPrefix(m_cf.id))) break;
-      appTelemetry_(pending->app);
+      appTelemetry(pending->app);
       pending->appCaptured = true;
       break;
     case Group::Alert:
@@ -2245,12 +2245,12 @@ bool App::snapshot_(
     sub_->running = true;
   }
   scheduler_()->run([this, seqNo]() {
-    snapshotBatch_(seqNo);
+    snapshot_1(seqNo);
   }, m_cf.workerThread);
   return true;
 }
 
-void App::snapshotBatch_(uint64_t seqNo)
+void App::snapshot_1(uint64_t seqNo)
 {
   if (!active_()) return;
   App_::Pending_ *pending = m_state->pending.findVal(seqNo);
@@ -2353,15 +2353,15 @@ void App::snapshotBatch_(uint64_t seqNo)
   }
 
   if (done) {
-    snapshotDone_(pending);
+    snapshot_2(pending);
     return;
   }
   scheduler_()->run([this, seqNo]() {
-    snapshotBatch_(seqNo);
+    snapshot_1(seqNo);
   }, m_cf.workerThread);
 }
 
-void App::snapshotDone_(App_::Pending_ *pending)
+void App::snapshot_2(App_::Pending_ *pending)
 {
   auto sub = static_cast<App_::Subscription *>(pending->sub);
   App_::indexDel(m_state->pending, pending->seqNo, pending);
@@ -2369,7 +2369,7 @@ void App::snapshotDone_(App_::Pending_ *pending)
     sub->snapshot = nullptr;
     sub->running = false;
   }
-  sendEOS_(pending->seqNo);
+  sendEOS(pending->seqNo);
   delete pending;
 
   if (sub && sub->dirty) {
@@ -2378,12 +2378,12 @@ void App::snapshotDone_(App_::Pending_ *pending)
       m_state->due[unsigned(sub->group)].delNode(sub);
       sub->due.null();
     }
-    runSubscription_(sub);
+    runSubscription(sub);
   }
   armTimer_();
 }
 
-void App::sendAck_(
+void App::sendAck(
     uint64_t seqNo, AckStatus::T status, uint32_t interval)
 {
   Ztc::Builder fbb{
@@ -2392,10 +2392,10 @@ void App::sendAck_(
   auto nested = fbb.startNested();
   auto ack = Zfb::save(fbb, Ack{m_cf.id, seqNo, interval, uint8_t(status)});
   fbb.finish(saveMsg(fbb, nested, Body::Ack, ack));
-  publishRaw_(saveHdr(fbb), App_::Delivery::Control);
+  publishRaw(saveHdr(fbb), App_::Delivery::Control);
 }
 
-void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
+void App::sendError(uint64_t seqNo, int32_t code, ZuCSpan message)
 {
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
@@ -2403,10 +2403,10 @@ void App::sendError_(uint64_t seqNo, int32_t code, ZuCSpan message)
   auto nested = fbb.startNested();
   auto error = Zfb::save(fbb, Error{ErrorMessage{message}, m_cf.id, seqNo, code});
   fbb.finish(saveMsg(fbb, nested, Body::Error, error));
-  publishRaw_(saveHdr(fbb), App_::Delivery::Control);
+  publishRaw(saveHdr(fbb), App_::Delivery::Control);
 }
 
-void App::sendEOS_(uint64_t seqNo)
+void App::sendEOS(uint64_t seqNo)
 {
   Ztc::Builder fbb{
     frameBuf(ZmRef<ZiIOBuf>{new App_::MsgFrame{
@@ -2414,7 +2414,7 @@ void App::sendEOS_(uint64_t seqNo)
   auto nested = fbb.startNested();
   auto eos = Zfb::save(fbb, EOS{m_cf.id, seqNo});
   fbb.finish(saveMsg(fbb, nested, Body::EOS, eos));
-  publishRaw_(saveHdr(fbb), App_::Delivery::Control);
+  publishRaw(saveHdr(fbb), App_::Delivery::Control);
 }
 
 } // Ztc

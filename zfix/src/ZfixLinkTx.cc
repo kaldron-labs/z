@@ -22,7 +22,7 @@ TxBody::Ref controlBody(unsigned action, const SessionEvent &event,
     case SessionAction::SendLogon: {
       Session::Logon logon;
       logon.heartBtInt = session.heartBtInt_();
-      logon.resetSeqNum = session.resetArmed_();
+      logon.resetSeqNum = session.resetArmed();
       logon.maxMessageSize = rxFrameBytes;
       if (config.mode == Transport::FIX44A) logon.nextExpected = expected;
       if (config.mode == Transport::FIXT11)

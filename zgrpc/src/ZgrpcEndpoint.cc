@@ -99,25 +99,25 @@ void EndpointCalls::release()
   ZiAssert(rxInvoked(), "Zgrpc", (), "ingress release outside Rx", return);
   ZiAssert(pending(), "Zgrpc", (), "ingress release without reservation", return);
   --m_gate;
-  drain_();
+  stop_3();
 }
 
 void EndpointCalls::start(DoneFn done)
 {
   if (!m_rx.scheduler || m_gate.cmpXch(Starting, 0)) { done(false); return; }
-  m_rx.run([this, done = ZuMv(done)]() mutable { start_(ZuMv(done)); });
+  m_rx.run([this, done = ZuMv(done)]() mutable { start_0(ZuMv(done)); });
 }
-void EndpointCalls::start_(DoneFn done)
+void EndpointCalls::start_0(DoneFn done)
 {
   m_cancelNext = nullptr;
   m_httpStopped = m_stopSent = false;
   m_stopOK = true;
-  if (m_gate.load_() & Stopping) { started_(ZuMv(done), false); return; }
+  if (m_gate.load_() & Stopping) { start_1(ZuMv(done), false); return; }
   m_start(DoneFn{[this, done = ZuMv(done)](bool ok) mutable {
-    m_rx.run([this, done = ZuMv(done), ok]() mutable { started_(ZuMv(done), ok); });
+    m_rx.run([this, done = ZuMv(done), ok]() mutable { start_1(ZuMv(done), ok); });
   }});
 }
-void EndpointCalls::started_(DoneFn done, bool ok)
+void EndpointCalls::start_1(DoneFn done, bool ok)
 {
   m_httpStarted = ok;
   bool stopping = m_stopping;
@@ -132,7 +132,7 @@ void EndpointCalls::started_(DoneFn done, bool ok)
   }
   try { done(admitted); } catch (...) { }
   // Without a pending stop a failed-start callback may destroy its owner.
-  if (stopping) stopHTTP_();
+  if (stopping) stop_2();
 }
 void EndpointCalls::stop(DoneFn done)
 {
@@ -144,22 +144,22 @@ void EndpointCalls::stop(DoneFn done)
     if (prior == state) break;
     state = prior;
   }
-  if (rxInvoked()) stop_(ZuMv(done));
-  else m_rx.run([this, done = ZuMv(done)]() mutable { stop_(ZuMv(done)); });
+  if (rxInvoked()) stop_0(ZuMv(done));
+  else m_rx.run([this, done = ZuMv(done)]() mutable { stop_0(ZuMv(done)); });
 }
-void EndpointCalls::stop_(DoneFn done)
+void EndpointCalls::stop_0(DoneFn done)
 {
   m_waiters.push(ZuMv(done));
   m_gate -= StopPost;
-  if (m_stopping) { drain_(); return; }
+  if (m_stopping) { stop_3(); return; }
   m_stopping = true;
   m_httpStopped = false;
   m_stopSent = false;
   m_stopOK = true;
   m_cancelNext = m_work.headPtr();
-  cancelBatch_();
+  stop_1();
 }
-void EndpointCalls::cancelBatch_()
+void EndpointCalls::stop_1()
 {
   ZtArray<ZmRef<WorkEntry>, ZtArrayHeapID<"Zgrpc.Endpoint.Cancel">> batch;
   // A retained cursor bounds visits as well as cancellations. If the next
@@ -174,23 +174,23 @@ void EndpointCalls::cancelBatch_()
   }
   for (auto &work : batch) work->cancelFn(work.ptr(), Code::CANCELLED);
   if (m_cancelNext) {
-    m_rx.run([this]() { cancelBatch_(); });
+    m_rx.run([this]() { stop_1(); });
     return;
   }
-  stopHTTP_();
+  stop_2();
 }
-void EndpointCalls::stopHTTP_()
+void EndpointCalls::stop_2()
 {
   if (m_stopSent || (m_gate.load_() & Starting)) return;
   m_stopSent = true;
-  if (!m_httpStarted) { m_httpStopped = true; drain_(); return; }
+  if (!m_httpStarted) { m_httpStopped = true; stop_3(); return; }
   m_stop(DoneFn{[this](bool ok) {
     m_rx.run([this, ok]() {
-      m_httpStarted = !ok; m_httpStopped = true; m_stopOK = ok; drain_();
+      m_httpStarted = !ok; m_httpStopped = true; m_stopOK = ok; stop_3();
     });
   }});
 }
-void EndpointCalls::drain_()
+void EndpointCalls::stop_3()
 {
   if (!m_stopping || !m_httpStopped || m_gate.load_() != Stopping) return;
   ZiAssert(!m_work.count_(), "Zgrpc", (), "registered calls after drain", return);

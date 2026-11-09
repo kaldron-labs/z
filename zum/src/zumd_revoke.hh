@@ -204,10 +204,10 @@ private:
   void workDone_();
   void start_();
   void stop_();
-  void postDrain_();
+  void stop_0();
   void revoke_(const Work &, AppID, RefreshID, int64_t);
-  void gc_(const Work &);
-  void gcArm_(const Work &, int64_t);
+  void gc_0(const Work &);
+  void gc_1(const Work &, int64_t);
   void result_(const Work &, String, uint64_t, int);
   void receivers_(const Work &, AppID, RefreshID, int64_t);
   void issue_(const Work &, SSFRx, RefreshID, int64_t, int64_t);
@@ -215,10 +215,10 @@ private:
   void deliver_(const Work &, SSFRx, SSFDelivery, String);
   void send_(const Work &, SSFRx, SSFDelivery, String);
   String authorization_(const SSFRx &);
-  void retry_(const Work &);
-  void retryPage_(const Work &, SSFDeliveryTable::Key<0>, bool);
-  void arm_(const Work &, int64_t);
-  void armOn_(const Work &, int64_t);
+  void retry_0(const Work &);
+  void retry_1(const Work &, SSFDeliveryTable::Key<0>, bool);
+  void arm_0(const Work &, int64_t);
+  void arm_1(const Work &, int64_t);
 
   SSFTransmitterConfig	m_config;
   alignas(Zm::CacheLineSize)

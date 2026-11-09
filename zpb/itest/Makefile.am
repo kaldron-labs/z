@@ -16,7 +16,7 @@ LDADD = $(top_builddir)/zi/test/libZiTest.la \
 tap_drivers = zprotoctest zprotocproto2
 noinst_PROGRAMS = $(tap_drivers)
 EXTRA_DIST = README.md
-noinst_HEADERS = ZpbTestUtil.hh
+noinst_HEADERS = zpbtestutil.hh
 CLEANFILES =
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

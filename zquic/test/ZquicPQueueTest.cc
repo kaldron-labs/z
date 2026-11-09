@@ -254,7 +254,7 @@ void testTxPktAckRanges()
     "sent packet ACK range processing mismatch");
 }
 
-static Zquic::TxPkt txPkt_(
+static Zquic::TxPkt txPkt(
   uint64_t pn, ZuTime sentTime = {}, unsigned bytes = 100)
 {
   Zquic::TxPkt p;
@@ -294,7 +294,7 @@ void testTxPktLossRetain()
 
   Zquic::SentPktTracker tracker;
   for (uint64_t pn = 10; pn < 15; ++pn)
-    ZQUIC_CHECK_RT(tracker.add(txPkt_(pn)), "lost packet add failed");
+    ZQUIC_CHECK_RT(tracker.add(txPkt(pn)), "lost packet add failed");
   for (uint64_t pn = 10; pn < 15; ++pn)
     ZQUIC_CHECK_RT(tracker.lose(pn), "lost packet setup failed");
 

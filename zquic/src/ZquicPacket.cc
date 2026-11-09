@@ -111,7 +111,7 @@ bool Pkt::isVerNeg(ZuBSpan p)
     !p[1] && !p[2] && !p[3] && !p[4];
 }
 
-static uint32_t load32_(const uint8_t *p)
+static uint32_t load32(const uint8_t *p)
 {
   return (uint32_t(p[0])<<24) |
     (uint32_t(p[1])<<16) |
@@ -122,7 +122,7 @@ static uint32_t load32_(const uint8_t *p)
 int Pkt::parseLong(ZuBSpan p, LongHdr &h)
 {
   if (p.length() < 7 || !isLong(p)) return -1;
-  h.version = load32_(p.data() + 1);
+  h.version = load32(p.data() + 1);
   if (isVerNeg(p)) h.type = PktType::Initial;
   else {
     switch ((p[0] >> 4) & 0x03) {
@@ -253,12 +253,12 @@ int Pkt::parseVerNeg(
   if (o < 0 || ((p.length() - unsigned(o)) % 4)) return -1;
   for (unsigned i = unsigned(o), n = p.length(); i < n; i += 4) {
     if (nVersions >= capacity) return -1;
-    versions[nVersions++] = load32_(p.data() + i);
+    versions[nVersions++] = load32(p.data() + i);
   }
   return 0;
 }
 
-static int longTypeBits_(PktType::T type)
+static int longTypeBits(PktType::T type)
 {
   if (type == PktType::Initial) return 0;
   if (type == PktType::ZeroRTT) return 1;
@@ -272,7 +272,7 @@ int Pkt::longHdrLen(
   uint64_t payloadLength, unsigned pnLength, ZuBSpan token)
 {
   if (pnLength < 1 || pnLength > 4) return -1;
-  int typeBits = longTypeBits_(type);
+  int typeBits = longTypeBits(type);
   if (typeBits < 0 || type == PktType::Retry) return -1;
   if (type != PktType::Initial && token) return -1;
   if (payloadLength > uint64_t(-1) - pnLength) return -1;
@@ -325,7 +325,7 @@ int Pkt::writeLong(
   const CxnID &dcid, const CxnID &scid,
   uint64_t payloadLength, unsigned pnLength, ZuBSpan token)
 {
-  int typeBits = longTypeBits_(type);
+  int typeBits = longTypeBits(type);
   int need = longHdrLen(type, dcid, scid, payloadLength, pnLength, token);
   if (typeBits < 0 || need < 0 || len < unsigned(need)) return -1;
   PktWriter w{out, len};

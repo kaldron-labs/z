@@ -26,12 +26,12 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
     if (fn) fn(true);
   }
   void endpointDown_(Endpoint *) { ++down; }
-  void endpointFailed_(bool) {
+  void endpointFailed(bool) {
     ++failed;
     ReadyFn fn = ZuMv(readyFn);
     if (fn) fn(false);
   }
-  void endpointDatagram_(Zquic::Datagram) { ++datagrams; }
+  void endpointDatagram(Zquic::Datagram) { ++datagrams; }
 
   ReadyFn readyFn;
   unsigned ready = 0;
@@ -47,7 +47,7 @@ struct TestEndpoint : public Zquic_::Endpoint_<TestEndpoint> {
 // friend; no socket or production test interface is needed.
 struct QueuedEndpoint {
   using Impl = QueuedEndpoint;
-  using Cxn = Zquic_::EndpointCxn_<QueuedEndpoint>;
+  using Cxn = Zquic_::EndpointCxn<QueuedEndpoint>;
   enum { EndpointRef = false };
 
   ZiMultiplex *m_mx = nullptr;
@@ -58,11 +58,11 @@ struct QueuedEndpoint {
 
   ZiMultiplex *mx_() const { return m_mx; }
   QueuedEndpoint *impl() { return this; }
-  bool endpointTxInvoked_() const { return m_mx->invoked(m_mx->txThread()); }
-  void cxnAdded_() { }
+  bool endpointTxInvoked() const { return m_mx->invoked(m_mx->txThread()); }
+  void cxnAdded() { }
   void connected_(Cxn *, ZiRxContext &) { }
   void disconnected_0(Cxn *, QueuedEndpoint *) { }
-  void txSubmitted_(unsigned) { ++submitted; }
+  void txSubmitted(unsigned) { ++submitted; }
   void txBackPressure_() { }
   void sent_(unsigned) { ++sent; }
   void ioError_() { ++errors; }
@@ -104,7 +104,7 @@ struct QueuedEndpoint {
 	result.admitted &= submitted == N && cxn->dequeueTx_();
 	ZiTxContext io;
 	for (unsigned i = 0; i < N; ++i) {
-	  bool ready = cxn->sendStart_(io) && io.buf && io.buf->length == 1;
+	  bool ready = cxn->sendPkt_0(io) && io.buf && io.buf->length == 1;
 	  result.fifo &= ready && io.buf->data()[0] == i;
 	  if (!ready) break;
 	  io.length = fail && !i ? -1 : 1;

@@ -123,16 +123,16 @@ static void terminalClaims()
   ZuCheck(rx.completions == 1 && rx.value == 8 && rx.identity);
   ZuCheck(call->cancel() && !call->cancel());
   ZuCheck(rx.cancellations == 1);
-  call->invalidateRx_(true);
-  call->invalidateTx_();
-  call->invalidateRx_();
+  call->invalidateRx(true);
+  call->invalidateTx();
+  call->invalidateRx();
   ZuCheck(!call->live() && call->cancelled());
   ZuCheck(!call->cancel() && !call->finish());
   ZmRef<ClientCall<Unary>> client = new ClientCall<Unary>{7, 9, {}, &rx, {}, &tx, 2, ops};
   ZuCheck(client->send(Item{1}));
   ZuCheck(client->end() && !client->end());
-  client->invalidateRx_();
-  client->invalidateTx_();
+  client->invalidateRx();
+  client->invalidateTx();
   ZuCheck(!client->send(Item{2}));
 }
 
@@ -173,12 +173,12 @@ static void posts()
   bool direct = false;
   scheduler.run([call, &direct, &drained]() {
     direct = call->send(Item{3});
-    call->invalidateTx_();
+    call->invalidateTx();
     drained.post();
   }, 1);
   drained.wait();
   ZuCheck(direct && tx.sent == 4);
-  call->invalidateRx_();
+  call->invalidateRx();
   ZuCheck(!call->send(Item{4}));
   ZuCheck(scheduler.stop());
 }
@@ -198,12 +198,12 @@ static void orderedFinish()
   // Admission behind finish can succeed; Tx later rejects its production.
   ZuCheckRT(call->send(Item{3}));
   ZmSemaphore drained;
-  scheduler.run([call, &drained]() { call->invalidateTx_(); drained.post(); }, 1);
+  scheduler.run([call, &drained]() { call->invalidateTx(); drained.post(); }, 1);
   ZuCheckRT(scheduler.start(), (return));
   drained.wait();
   const uint8_t order[] = {1, 2, 99};
   ZuCheckRT(tx.sent == 2 && tx.finished == 1 && ZuBSpan{tx.order} == ZuBSpan{order});
-  call->invalidateRx_();
+  call->invalidateRx();
   ZuCheckRT(scheduler.stop());
 }
 
@@ -216,7 +216,7 @@ static void invalidatedPosts()
   TxOwner tx;
   ZmRef<ClientCall<Streaming>> call =
     new ClientCall<Streaming>{7, 9, {}, &rx, {&scheduler, 1}, &tx, 2, ops};
-  scheduler.run([call]() { call->invalidateTx_(); }, 1);
+  scheduler.run([call]() { call->invalidateTx(); }, 1);
   ZuCheck(call->send(Item{1}) && call->send(Item{2}));
   ZuCheck(!call->send(Item{3}));
   ZmSemaphore drained;
@@ -233,7 +233,7 @@ static void invalidatedPosts()
   ZuCheck(scheduler.start(), (return));
   drained.wait();
   ZuCheck(!tx.sent);
-  call->invalidateRx_(true);
+  call->invalidateRx(true);
   ZuCheck(!call->send(Item{4}) && !call->end());
   ZuCheck(scheduler.stop());
 }
@@ -259,13 +259,13 @@ static void destroyedOwners()
   ZmRef<ServerCall<Unary>> server =
     new ServerCall<Unary>{7, 9, rxRoute, rx, txRoute, tx, 2, ops};
   scheduler.run([rx, client, server]() {
-    client->invalidateRx_(true);
-    server->invalidateRx_(true);
+    client->invalidateRx(true);
+    server->invalidateRx(true);
     delete rx;
   }, 1);
   scheduler.run([tx, client, server]() {
-    client->invalidateTx_();
-    server->invalidateTx_();
+    client->invalidateTx();
+    server->invalidateTx();
     delete tx;
   }, 2);
   ZuCheck(client->send(Item{1}) && client->send(Item{2}));

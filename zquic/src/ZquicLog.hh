@@ -355,10 +355,10 @@ struct ParamsEvt {
   uint64_t		maxAckDelay = 0;
   uint64_t		activeCxnIDLimit = 0;
   uint64_t		initialMaxData = 0;
-  uint64_t		initialMaxStreamDataBidiLocal = 0;
-  uint64_t		initialMaxStreamDataBidiRemote = 0;
+  uint64_t		initMaxStreamDataDuplexLcl = 0;
+  uint64_t		initMaxStreamDataDuplexRmt = 0;
   uint64_t		initialMaxStreamDataUni = 0;
-  uint64_t		initialMaxStreamsBidi = 0;
+  uint64_t		initMaxStreamsDuplex = 0;
   uint64_t		initialMaxStreamsUni = 0;
   Initiator::T		initiator = Initiator::Local;
   bool			statelessResetTokenPresent = false;
@@ -1054,7 +1054,7 @@ private:
     if (!enabled_()) return;
     ZuTime time = Zm::now();
     auto fn_ = [trace = &trace, l = ZuFwd<L>(l), time](ZquicLogger *this_) mutable {
-      if (!this_->useTrace_(trace)) return;
+      if (!this_->useTrace(trace)) return;
       l(*this_, time);
     };
     Fn fn{fn_};
@@ -1064,7 +1064,7 @@ private:
   void work_();
 
   bool tryPush_(Fn &);
-  bool useTrace_(Trace *);
+  bool useTrace(Trace *);
   void closeTrace_(Trace &);
   bool write_(Trace *, ZuCSpan);
   bool writeHeader_(Trace *);

@@ -273,7 +273,7 @@ struct HTTPRequestBuilder : public Zjrpc::HTTPRequestBuilder<Message> {
   static bool empty_(const M &, long) { return false; }
 };
 
-struct DiscoverRequestMessage {
+struct DiscoverReqMsg {
   Zjrpc::ID id;
   int era = Era::Modern;
 
@@ -286,7 +286,7 @@ struct DiscoverRequestMessage {
   }
 };
 
-struct InitializeRequestMessage {
+struct InitReqMsg {
   Zjrpc::ID id;
 
   static ZuCSpan method() { return "initialize"; }
@@ -331,7 +331,7 @@ struct PingRequestMessage {
   }
 };
 
-struct SetLevelRequestMessage {
+struct SetLevelReqMsg {
   Zjrpc::ID id;
   Zjrpc::ErrorString level;
 
@@ -359,7 +359,7 @@ struct CancelledRequestMessage {
   }
 };
 
-struct ToolsListRequestMessage {
+struct ToolsListReqMsg {
   Zjrpc::ID id;
   int era = Era::Unknown;
 
@@ -373,7 +373,7 @@ struct ToolsListRequestMessage {
 };
 
 template <typename Reqs>
-struct ToolCallRequestMessage {
+struct ToolCallReqMsg {
   Zjrpc::ID id;
   ToolsCallParams<Reqs> params;
 
@@ -437,8 +437,8 @@ struct ToolCallRequestMessage {
 };
 
 template <typename Req>
-struct BatchRequest : public ToolCallRequestMessage<ZuTypeList<Req>> {
-  using Base = ToolCallRequestMessage<ZuTypeList<Req>>;
+struct BatchRequest : public ToolCallReqMsg<ZuTypeList<Req>> {
+  using Base = ToolCallReqMsg<ZuTypeList<Req>>;
   BatchRequest(Zjrpc::ID id, Zjrpc::ObjectValue<typename Req::Object> object,
       int era = Era::Modern, Zjrpc::ID progress = {}, int level = LogLevel::Disabled) :
     Base{ZuMv(id), {}} {
@@ -589,7 +589,7 @@ public:
     m_initializeID = next_();
     if (m_initializeID.is<void>()) return false;
     m_state = ClientState::Initializing;
-    emit(InitializeRequestMessage{m_initializeID});
+    emit(InitReqMsg{m_initializeID});
     return true;
   }
 
@@ -599,7 +599,7 @@ public:
     m_probeID = next_();
     if (m_probeID.is<void>()) return false;
     m_state = ClientState::Discovering;
-    emit(DiscoverRequestMessage{m_probeID});
+    emit(DiscoverReqMsg{m_probeID});
     return true;
   }
 
@@ -646,7 +646,7 @@ public:
     if (!m_toolsID.is<void>()) return m_toolsID;
     m_toolsID = next_();
     if (!m_toolsID.is<void>())
-      emit(ToolsListRequestMessage{m_toolsID, m_era});
+      emit(ToolsListReqMsg{m_toolsID, m_era});
     return m_toolsID;
   }
 
@@ -694,7 +694,7 @@ public:
     if (!ready() || m_era != Era::Legacy) return {};
     Zjrpc::ID id = next_();
     if (!id.is<void>())
-      emit(SetLevelRequestMessage{id, Zjrpc::ErrorString{level}});
+      emit(SetLevelReqMsg{id, Zjrpc::ErrorString{level}});
     return id;
   }
 
@@ -713,7 +713,7 @@ private:
     params.progressToken = ZuMv(progressToken);
     params.logLevel = logLevel;
     params.era = m_era;
-    emit(ToolCallRequestMessage<Reqs>{id, ZuMv(params)});
+    emit(ToolCallReqMsg<Reqs>{id, ZuMv(params)});
     return id;
   }
 
@@ -737,7 +737,7 @@ private:
 	(envelope.kind == Zjrpc::MessageKind::Result ||
 	  envelope.kind == Zjrpc::MessageKind::Error)) {
       if (envelope.kind == Zjrpc::MessageKind::Result &&
-	  supportsModern_(Zjrpc::raw(envelope.result()))) {
+	  supportsModern(Zjrpc::raw(envelope.result()))) {
 	m_era = Era::Modern;
 	m_state = ClientState::Ready;
 	return true;
@@ -767,7 +767,7 @@ private:
     }
     return receive(envelope);
   }
-  static bool supportsModern_(const ZfJSON::AnyNode *result) {
+  static bool supportsModern(const ZfJSON::AnyNode *result) {
     auto discover = Zjrpc::loadObject<DiscoverRxResult>(result);
     for (unsigned i = 0, n = discover.supportedVersions.length(); i < n; ++i)
       if (discover.supportedVersions[i] == ModernVersion{}()) return true;
@@ -779,7 +779,7 @@ private:
     m_initializeID = next_();
     if (m_initializeID.is<void>()) return false;
     m_state = ClientState::Initializing;
-    emit(InitializeRequestMessage{m_initializeID});
+    emit(InitReqMsg{m_initializeID});
     return true;
   }
 
@@ -995,7 +995,7 @@ protected:
     auto emit = [this, &sent](const auto &message) {
       if (sent) sent = static_cast<Derived *>(this)->send_(message);
     };
-    bool ok = receiveWire_(ZuMv(body), emit) && sent;
+    bool ok = receiveWire(ZuMv(body), emit) && sent;
     if (!ok) {
       static_cast<Derived *>(this)->fail_();
       return false;
@@ -1137,7 +1137,7 @@ protected:
   }
 
   template <typename Emit>
-  bool receiveWire_(ZmRef<ZiIOBuf> body, Emit &&emit) {
+  bool receiveWire(ZmRef<ZiIOBuf> body, Emit &&emit) {
     if (!body || !up()) return false;
     auto parsed = Zjrpc::parse(body->span(), m_limits.maxJSONBytes);
     if (!parsed) { m_peer.close(); return false; }
@@ -1148,9 +1148,9 @@ protected:
     return m_peer.receive(ZuMv(body), ZuMv(parsed), ZuFwd<Emit>(emit),
       [this](const Zjrpc::Envelope &envelope) { return notification(envelope); });
   }
-  bool closeInput_() { return Dispatch::close(); }
+  bool closeInput() { return Dispatch::close(); }
 
-  bool initPeer_(Zjrpc::Limits limits) {
+  bool initPeer(Zjrpc::Limits limits) {
     m_limits = limits;
     m_peer = ClientPeer<Catalog>{limits};
     return Calls::init(limits.maxPending);
@@ -1160,7 +1160,7 @@ protected:
   bool closePeer_(L &&ready) {
     m_up = false;
     m_peer.close();
-    bool done = closeInput_();
+    bool done = closeInput();
     return Calls::closeCalls(ZuFwd<L>(ready)) && done;
   }
 
@@ -1186,9 +1186,9 @@ namespace ReqType {
 template <typename Catalog>
 class Message {
   using Data = ZuUnion<void,
-    DiscoverRequestMessage, InitializeRequestMessage, InitializedMessage,
-    PingRequestMessage, SetLevelRequestMessage, ToolsListRequestMessage,
-    ToolCallRequestMessage<Catalog>, CancelledRequestMessage,
+    DiscoverReqMsg, InitReqMsg, InitializedMessage,
+    PingRequestMessage, SetLevelReqMsg, ToolsListReqMsg,
+    ToolCallReqMsg<Catalog>, CancelledRequestMessage,
     DeleteRequestMessage, Zjrpc::BatchWire>;
 
 public:
@@ -1236,7 +1236,7 @@ public:
     bool out = false;
     m_data.cdispatch([&out](auto I, const auto &message) {
       using M = Data::template Type<I>;
-      if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
+      if constexpr (ZuIsSame<M, ToolCallReqMsg<Catalog>>{})
 	out = message.streaming();
     });
     return out;
@@ -1252,7 +1252,7 @@ public:
       case ReqType::Delete:
 	return true;
       case ReqType::ToolCall:
-	return m_data.template p<ToolCallRequestMessage<Catalog>>()
+	return m_data.template p<ToolCallReqMsg<Catalog>>()
 	  .idempotent();
       default:
 	return false;
@@ -1270,7 +1270,7 @@ public:
   void header(L &&l) const {
     m_data.cdispatch([&l](auto I, const auto &message) {
       using M = Data::template Type<I>;
-      if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
+      if constexpr (ZuIsSame<M, ToolCallReqMsg<Catalog>>{})
 	message.header(l);
     });
   }
@@ -1335,7 +1335,7 @@ struct Request_ : public ActiveHash::Node,
     Base::endpoint = endpoint_;
     Base::sessionID = sessionID_;
     Base::maxBodyBytes = client_->limits().maxJSONBytes;
-    if constexpr (ZuIsSame<M, InitializeRequestMessage>{} ||
+    if constexpr (ZuIsSame<M, InitReqMsg>{} ||
 	ZuIsSame<M, InitializedMessage>{} ||
 	ZuIsSame<M, DeleteRequestMessage>{})
       Base::era = Era::Legacy;
@@ -1551,7 +1551,7 @@ public:
     m_legacySessions = config.legacySessions();
     if (!m_ownerThread || !Zjrpc::valid(m_limits))
       goto invalid;
-    if (!Common::initPeer_(m_limits)) goto invalid;
+    if (!Common::initPeer(m_limits)) goto invalid;
     {
       Zhttp::Config http = config;
       http.bodyMax(m_limits.maxJSONBytes)
@@ -1804,7 +1804,7 @@ public:
       }
     }
     if (!m_up.load_()) return;
-    if (!m_current) sendNext_();
+    if (!m_current) sendNext();
   }
 
 private:
@@ -1858,7 +1858,7 @@ private:
     ZmRef<Req> request = new Req{};
     request->init(this, ZuMv(message), m_sequence++, m_endpoint,
       m_sessionID, m_peer.era(), serial);
-    if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{}) {
+    if constexpr (ZuIsSame<M, ToolCallReqMsg<Catalog>>{}) {
       request->ActiveHash::Node::data().id = request->id();
       m_active->addNode(request.ptr());
     }
@@ -1872,7 +1872,7 @@ private:
     if (serial) m_current = request->ReqBase::sequence;
     auto ptr = request.ptr();
     if (Base::send(0, ZuMv(request))) return true;
-    if constexpr (ZuIsSame<M, ToolCallRequestMessage<Catalog>>{})
+    if constexpr (ZuIsSame<M, ToolCallReqMsg<Catalog>>{})
       (void)m_active->delNode(ptr);
     return false;
   }
@@ -1883,7 +1883,7 @@ private:
     auto emit = [self = this, &sent](auto message) {
       if (sent) sent = self->send_(ZuMv(message));
     };
-    bool ok = Common::receiveWire_(ZuMv(body), emit) && sent;
+    bool ok = Common::receiveWire(ZuMv(body), emit) && sent;
     if (!catalog)
       if (const auto *catalog_ = m_peer.toolCatalog())
 	app_([this, catalog_]() { tools_(m_impl, catalog_, 0); });
@@ -2027,7 +2027,7 @@ private:
     m_peer.close();
   }
 
-  void sendNext_() {
+  void sendNext() {
     if (!m_up.load_()) {
       m_drainingSerial = false;
       return;
@@ -2051,7 +2051,7 @@ private:
       if (!Base::send(0, ZuMv(request))) fail_();
       return;
     }
-    m_mx->run([this]() { sendNext_(); }, m_ownerThread);
+    m_mx->run([this]() { sendNext(); }, m_ownerThread);
   }
 
   void start_() {
@@ -2060,7 +2060,7 @@ private:
       if (!ok) { Engine::started(false); return; }
       ownerRun_([this]() {
 	ZmAssert_(!m_active->count_() && !m_serial.count_());
-	ZmAssert_(Common::initPeer_(m_limits));
+	ZmAssert_(Common::initPeer(m_limits));
 	m_failure = m_ready = m_drainingSerial = false;
 	m_terminating = 0;
 	m_stopPhase = 0;
@@ -2072,34 +2072,34 @@ private:
 	  sent = this->send_(ZuMv(message));
 	});
 	if (!probed || !sent) fail_();
-	if (m_failure) { stopHTTP_(); return; }
+	if (m_failure) { stop_0(); return; }
 	Engine::started(true);
       });
     });
   }
 
   void stop_() {
-    ownerRun_([this]() { m_up = false; stopHTTP_(); });
+    ownerRun_([this]() { m_up = false; stop_0(); });
   }
 
-  void stopHTTP_() {
+  void stop_0() {
     m_up = false;
     m_peer.close();
     Base::stop([this](bool ok) {
       ownerRun_([this, ok]() {
 	m_current = 0;
 	m_stopOK = ok;
-	stopBatch_();
+	stop_1();
       });
     });
   }
 
-  void stopBatch_() {
+  void stop_1() {
     unsigned visited = 0;
     switch (m_stopPhase) {
       case 0:
 	while (visited < m_limits.workBatch) {
-	  auto entry = takeActive_();
+	  auto entry = takeActive();
 	  if (!entry) {
 	    m_stopPhase = 1;
 	    break;
@@ -2113,14 +2113,14 @@ private:
 	break;
       case 2:
 	{
-	  typename Common::ReadyFn ready{this, [](auto self) { self->stopBatch_(); }};
+	  typename Common::ReadyFn ready{this, [](auto self) { self->stop_1(); }};
 	  if (Common::closePeer_(ready)) m_stopPhase = 3;
 	  else if (Common::callsWaiting()) return;
 	}
 	break;
     }
     if (m_stopPhase < 3) {
-      m_mx->run([this]() { stopBatch_(); }, m_ownerThread);
+      m_mx->run([this]() { stop_1(); }, m_ownerThread);
       return;
     }
     try {
@@ -2142,7 +2142,7 @@ private:
     });
   }
 
-  ActiveHash::NodeMvRef takeActive_() {
+  ActiveHash::NodeMvRef takeActive() {
     auto i = m_active->iter();
     if (!i()) return decltype(i.del()){};
     return i.del();
@@ -2211,7 +2211,7 @@ public:
 
   void ioStarting() {
     m_failure = false;
-    ZmAssert_(Common::initPeer_(m_limits));
+    ZmAssert_(Common::initPeer(m_limits));
   }
   void ioReady() {
     m_up = true;
@@ -2294,7 +2294,7 @@ public:
   bool init(const Zhttp::HubConfig &hub, Config profile, Zhttp::Destination destination,
     Zjrpc::WSConfig config, Impl *impl) {
     if (m_mx || !hub.mx() || !impl || !Zjrpc::valid(config.limits())) return false;
-    if (!Common::initPeer_(config.limits())) return false;
+    if (!Common::initPeer(config.limits())) return false;
     m_impl = impl;
     m_mx = hub.mx();
     m_ownerThread = hub.txThread() ? m_mx->sid(hub.txThread()) : m_mx->txThread();
@@ -2358,7 +2358,7 @@ public:
       m_up = false;
       m_down = true;
       m_failure = true;
-      close_();
+      close_0();
     });
   }
   void disconnected(Link &link, bool) {
@@ -2366,7 +2366,7 @@ public:
     m_ws.txRun([this]() {
       m_up = false;
       m_down = true;
-      close_();
+      close_0();
     });
   }
   void closed(Link &link, uint16_t code, ZuBSpan reason) {
@@ -2386,7 +2386,7 @@ public:
   }
 
 private:
-  void wsClosed_() { m_up = false; }
+  void wsClosed() { m_up = false; }
   template <typename L> void continue_(L &&l) { m_ws.txRun(ZuFwd<L>(l)); }
   void start_() {
     if (!m_mx) { Engine::started(false); return; }
@@ -2394,7 +2394,7 @@ private:
       if (!ok) { Engine::started(false); return; }
       continue_([this]() {
 	ZmAssert_(!m_link && !m_closing && !m_waitConnect);
-	ZmAssert_(Common::initPeer_(m_limits));
+	ZmAssert_(Common::initPeer(m_limits));
 	m_failure = m_closed = m_down = false;
 	m_transportStopped = false;
 	m_connect = Zjrpc::WSConnectState::Idle;
@@ -2409,7 +2409,7 @@ private:
     } while (m_connect.cmpXch(previous == Zjrpc::WSConnectState::Posted ?
 	Zjrpc::WSConnectState::StopPosted : Zjrpc::WSConnectState::Stopped,
 	previous) != previous);
-    continue_([this]() { stopLink_(); });
+    continue_([this]() { stop_0(); });
   }
   void connectPosted_(ZmRef<Link> link) {
     int state = m_connect.cmpXch(link ?
@@ -2423,25 +2423,25 @@ private:
     }
     ZmAssert_(state == Zjrpc::WSConnectState::StopPosted);
     m_connect = Zjrpc::WSConnectState::Stopped;
-    if (m_waitConnect) { m_waitConnect = false; stopLink_(); }
+    if (m_waitConnect) { m_waitConnect = false; stop_0(); }
   }
-  void stopLink_() {
+  void stop_0() {
     m_up = false;
     if (m_connect.load_() == Zjrpc::WSConnectState::StopPosted) {
       m_waitConnect = true;
       return;
     }
     if (m_link && !m_down)
-      m_ws.rxRun([this, link = m_link]() { IO::stopWS_(*link); });
+      m_ws.rxRun([this, link = m_link]() { IO::stopWS(*link); });
     m_ws.stop([this](bool ok) {
       continue_([this, ok]() {
 	m_stopOK = ok;
 	m_transportStopped = true;
-	close_();
+	close_0();
       });
     });
   }
-  void stopped_() {
+  void close_2() {
     if (!m_transportStopped || !m_closed || m_closing) return;
     m_transportStopped = false;
     m_ws.rxRun([this]() {
@@ -2462,17 +2462,17 @@ private:
     m_peer.close();
     if (m_link) m_link->close(Zws::CloseCode::Internal);
   }
-  void close_() {
+  void close_0() {
     m_up = false;
-    if (m_closed) { stopped_(); return; }
+    if (m_closed) { close_2(); return; }
     if (m_closing) return;
     m_closing = true;
-    drain_();
+    close_1();
   }
-  void drain_() {
-    typename Common::ReadyFn ready{this, [](auto self) { self->drain_(); }};
+  void close_1() {
+    typename Common::ReadyFn ready{this, [](auto self) { self->close_1(); }};
     if (!Common::closePeer_(ready)) {
-      if (!Common::callsWaiting()) continue_([this]() { drain_(); });
+      if (!Common::callsWaiting()) continue_([this]() { close_1(); });
       return;
     }
     m_closing = false;
@@ -2481,7 +2481,7 @@ private:
       if (m_failure) m_impl->failed();
       else m_impl->closed();
     } catch (...) { }
-    stopped_();
+    close_2();
   }
 
   WS m_ws;

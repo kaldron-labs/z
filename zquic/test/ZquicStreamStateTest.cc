@@ -15,7 +15,7 @@ void testStreamUtilities()
 
   uint64_t id = Zquic::StreamID::make(false, Zquic::StreamType::Duplex, 7);
   ZuCHECK(id == 28 && Zquic::StreamID::client(id) &&
-    Zquic::StreamID::bidi(id) && Zquic::StreamID::ordinal(id) == 7,
+    Zquic::StreamID::duplex(id) && Zquic::StreamID::ordinal(id) == 7,
     "client bidi stream ID utility mismatch");
   id = Zquic::StreamID::make(true, Zquic::StreamType::Simplex, 2);
   ZuCHECK(id == 11 && Zquic::StreamID::server(id) && Zquic::StreamID::uni(id),

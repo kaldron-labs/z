@@ -226,7 +226,7 @@ private:
       this->template header_<ZuStringT<"content-length">>(value);
       return;
     }
-    if (!deliverHeaders_()) return;
+    if (!deliverHeaders()) return;
     int id = impl()->catalog().nameMatch(key);
     impl()->header(section_(), id, key, value);
   }
@@ -341,7 +341,7 @@ public:
 	      m_lineScan, stream, [this](ZuSpan<uint8_t> line) {
 	      if (!line) {
 		if constexpr (!Request) {
-		  if (interimResponse_()) {
+		  if (interimResponse()) {
 		    m_state = State::Initial;
 		    m_chunked = false;
 		    m_eofBody = false;
@@ -351,7 +351,7 @@ public:
 		    m_headerBytes = 0;
 		    return;
 		  }
-		  if (noResponseBody_()) {
+		  if (noResponseBody()) {
 		    if (!bodyInfo_(BodyType::None, 0)) return;
 		    m_state = State::Complete;
 		    return;
@@ -598,11 +598,11 @@ private:
     return state;
   }
 
-  bool interimResponse_() const {
+  bool interimResponse() const {
     return m_statusCode >= 100 && m_statusCode < 200 &&
       m_statusCode != 101;
   }
-  bool noResponseBody_() const {
+  bool noResponseBody() const {
     return (m_statusCode >= 100 && m_statusCode < 200) ||
 	m_statusCode == 204 || m_statusCode == 304;
   }
@@ -610,11 +610,11 @@ private:
   Zhttp::FieldSection::T section_() const {
     if (m_state == State::Trailers) return Zhttp::FieldSection::Trailers;
     if constexpr (Request) return Zhttp::FieldSection::Final;
-    return interimResponse_() ?
+    return interimResponse() ?
       Zhttp::FieldSection::Informational : Zhttp::FieldSection::Final;
   }
 
-  bool deliverHeaders_() const {
+  bool deliverHeaders() const {
     if constexpr (Request) return true;
     return m_deliverHeaders;
   }

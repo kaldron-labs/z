@@ -160,8 +160,8 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
   ~Endpoint() { ++owner->destroyed; }
 
   Owner *app() const { return owner; }
-  PostedState txPosted_() const { return {}; }
-  WorkState workState_() const { return {}; }
+  PostedState txPosted() const { return {}; }
+  WorkState workState() const { return {}; }
   WireGeometry fixGeometryTx() const { return {}; }
 
   ZmRef<ZiIOBuf> fixAllocTx(unsigned head) {
@@ -172,7 +172,7 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
 
   bool fixSendTx(ZmRef<ZiIOBuf> b) { records.push(Record{ZuMv(b)}); return true; }
   void disconnect_(bool = true) { ++closes; }
-  void resumeRx_() { }
+  void resumeRx() { }
   void fixRawUpRx(uint64_t c) { up.push(c); }
   void fixRawWritableTx(uint64_t c) { writable.push(c); }
   void fixRawFaultTx(uint64_t, Fmt::Error) { ++faults; }
@@ -209,13 +209,13 @@ friend inline ZuStringT<"Zfix.RawTest.Endpoint"> ZmNHeapID(Endpoint *);
 static void replacement() {
   ZuTestScope(replacement);
   Owner app; ZmRef<Endpoint> link = new Endpoint{&app};
-  ZuCheck(link->transportBind_(false)); link->transportUp_(); app.drain();
+  ZuCheck(link->transportBind(false)); link->transportUp_0(); app.drain();
   ZuCheck(link->up.length() == 1 && link->up[0] == 1);
   ZuCheck(link->send(1) == RawSend::Accepted);
   // A's queued failed-output completion runs after B opens. It must still
   // complete A's admission, without faulting or waking the replacement.
-  ZuCheck(link->transportBind_(true)); link->transportUp_(); app.drain();
-  ZuCheck(link->rawConnection_() == 2 && link->completed == 1 &&
+  ZuCheck(link->transportBind(true)); link->transportUp_0(); app.drain();
+  ZuCheck(link->rawConnection() == 2 && link->completed == 1 &&
     !link->faults && !link->closes && !link->stopped.length());
   ZuCheck(link->writable.length() == 2 && link->writable[1] == 2);
   ZuCheck(link->rxStops.length() == 1 && link->rxStops[0].connection == 1 &&
@@ -223,17 +223,17 @@ static void replacement() {
   ZuCheck(link->send(1) == RawSend::Held && link->send(2) == RawSend::Accepted);
   // C supersedes B before authentication. A/B's asynchronous manager drains
   // remain outstanding; neither their replies nor old record callbacks open C.
-  ZuCheck(link->transportBind_(true)); app.drain();
-  ZuCheck(link->rawConnection_() == 3 && link->completed == 2 &&
+  ZuCheck(link->transportBind(true)); app.drain();
+  ZuCheck(link->rawConnection() == 3 && link->completed == 2 &&
     link->up.length() == 2 && link->send(3) == RawSend::Held);
   link->release(0);
   for (const auto &record : link->records)
     link->transportSent(record.buf, false);
   app.drain();
   ZuCheck(!link->faults && !link->closes && !link->stopped.length());
-  link->transportUp_(); app.drain();
+  link->transportUp_0(); app.drain();
   ZuCheck(link->up.length() == 3 && link->up[2] == 3);
-  link->transportDown_(false); app.drain();
+  link->transportDown_0(false); app.drain();
   link->release(2);
   ZuCheck(!link->stopped.length());
   link->release(1);
@@ -248,7 +248,7 @@ static void setupStops(bool deferred) {
   Owner app; ZmRef<Endpoint> link = new Endpoint{&app};
   link->deferred = deferred;
   for (unsigned i = 0; i < 3; ++i) {
-    link->transportDown_(false); link->transportDown_(false); app.drain();
+    link->transportDown_0(false); link->transportDown_0(false); app.drain();
     if (deferred) {
       ZuCheck(link->rxStops.length() == i + 1 && link->txStops.length() == i + 1 &&
 	link->rxStops[i].connection == 0 && link->stopped.length() == i);
@@ -263,9 +263,9 @@ static void setupStops(bool deferred) {
 static void preauthFailure() {
   ZuTestScope(preauthFailure);
   Owner app; ZmRef<Endpoint> link = new Endpoint{&app};
-  ZuCheck(link->transportBind_(false)); link->transportUp_(); app.drain();
-  ZuCheck(link->transportBind_(true)); app.drain();
-  link->transportDown_(false); app.drain();
+  ZuCheck(link->transportBind(false)); link->transportUp_0(); app.drain();
+  ZuCheck(link->transportBind(true)); app.drain();
+  link->transportDown_0(false); app.drain();
   ZuCheck(link->up.length() == 1 && !link->stopped.length());
   link->release(1); link->release(0);
   ZuCheck(link->stopped.length() == 1 && link->stopped[0] == 2 &&

@@ -108,7 +108,7 @@ void Client::final()
 
 void Client::connected_()
 {
-  m_sched->invoke([this] { txHello_(); }, m_txSid);
+  m_sched->invoke([this] { txHello_0(); }, m_txSid);
 }
 
 void Client::frame_(ZmRef<ZiIOBuf> frame, FrameInfo info)
@@ -117,12 +117,12 @@ void Client::frame_(ZmRef<ZiIOBuf> frame, FrameInfo info)
     case MessageType::MethodReturn:
     case MessageType::Error:
       m_sched->invoke([this, frame = ZuMv(frame), info]() mutable {
-        txReply_(ZuMv(frame), info);
+        txReply(ZuMv(frame), info);
       }, m_txSid);
       return;
     case MessageType::Signal:
       if (m_signalFn) m_signalFn(frame, info);
-      rxSignal_(ZuMv(frame), info, 0, m_nextSub - 1);
+      rxSignal(ZuMv(frame), info, 0, m_nextSub - 1);
       return;
     case MessageType::MethodCall:
       if (m_methodFn) m_methodFn(ZuMv(frame), info);
@@ -136,7 +136,7 @@ void Client::failed_(CxnFailure failure)
   stop();
 }
 
-void Client::txHello_()
+void Client::txHello_0()
 {
   ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
     "Hello off Tx", return);
@@ -147,10 +147,10 @@ void Client::txHello_()
     HelloReq req;
     req.init(&body);
     return req.build(serial);
-  }, [this](CallResult result) { txHelloDone_(ZuMv(result)); }, {}, true);
+  }, [this](CallResult result) { txHello_1(ZuMv(result)); }, {}, true);
 }
 
-void Client::txHelloDone_(CallResult result)
+void Client::txHello_1(CallResult result)
 {
   if (m_phase == ClientPhase::Stopping) return;
   if (!result || !result.frame ||
@@ -275,7 +275,7 @@ void Client::rxUnsubscribe_(ZuPtr<SubDrop> drop, CxnSendFn done)
   if (done) done(removed);
 }
 
-void Client::rxSignal_(ZmRef<ZiIOBuf> frame, FrameInfo info,
+void Client::rxSignal(ZmRef<ZiIOBuf> frame, FrameInfo info,
   uint64_t after, uint64_t ceiling)
 {
   ZiAssert(m_sched->invoked(m_rxSid), "Zdbus", (),
@@ -298,7 +298,7 @@ void Client::rxSignal_(ZmRef<ZiIOBuf> frame, FrameInfo info,
   }
   m_sched->run([this, frame = ZuMv(frame), info, after,
       ceiling]() mutable {
-    rxSignal_(ZuMv(frame), info, after, ceiling);
+    rxSignal(ZuMv(frame), info, after, ceiling);
   }, m_rxSid);
 }
 
@@ -357,20 +357,20 @@ void Client::txCall_(BuildFn build, CallFn fn, ZuTime timeout, bool hello)
   if (*timeout) {
     m_sched->add(&pending->timer, timeout, ZmScheduler::Update,
       [this, serial](auto &&arm) {
-        return arm([this, serial] { txTimeout_(serial); });
+        return arm([this, serial] { txTimeout(serial); });
       }, m_txSid);
   }
   m_cxn.send(ZuMv(made.buf), [this, serial](bool ok) {
-    txSendDone_(serial, ok);
+    txSendDone(serial, ok);
   });
 }
 
-void Client::txSendDone_(uint32_t serial, bool ok)
+void Client::txSendDone(uint32_t serial, bool ok)
 {
   if (!ok) txCancel_(serial, ClientError::Queue);
 }
 
-void Client::txTimeout_(uint32_t serial)
+void Client::txTimeout(uint32_t serial)
 {
   if (m_phase == ClientPhase::Stopping ||
       m_phase == ClientPhase::Terminated) return;
@@ -388,7 +388,7 @@ bool Client::txCancel_(uint32_t serial, int error)
   return true;
 }
 
-void Client::txReply_(ZmRef<ZiIOBuf> frame, FrameInfo info)
+void Client::txReply(ZmRef<ZiIOBuf> frame, FrameInfo info)
 {
   ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
     "reply off Tx", return);
@@ -404,11 +404,11 @@ void Client::txReply_(ZmRef<ZiIOBuf> frame, FrameInfo info)
 void Client::stop(CxnStopFn fn)
 {
   m_sched->invoke([this, fn = ZuMv(fn)]() mutable {
-    txStop_(ZuMv(fn));
+    stop_0(ZuMv(fn));
   }, m_txSid);
 }
 
-void Client::txStop_(CxnStopFn fn)
+void Client::stop_0(CxnStopFn fn)
 {
   if (m_phase == ClientPhase::Terminated) {
     if (fn) fn();
@@ -417,17 +417,17 @@ void Client::txStop_(CxnStopFn fn)
   if (fn) m_stopWaits.pushNode(new CxnStopQueue::Node{ZuMv(fn)});
   if (m_phase == ClientPhase::Stopping) return;
   m_phase = ClientPhase::Stopping;
-  m_cxn.stop([this] { txStopped_(); });
+  m_cxn.stop([this] { stop_1(); });
 }
 
-void Client::txStopped_()
+void Client::stop_1()
 {
   ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
     "stop completion off Tx", return);
-  m_sched->run([this] { rxClearSubs_(); }, m_rxSid);
+  m_sched->run([this] { stop_2(); }, m_rxSid);
 }
 
-void Client::rxClearSubs_()
+void Client::stop_2()
 {
   ZiAssert(m_sched->invoked(m_rxSid), "Zdbus", (),
     "subscription cleanup off Rx", return);
@@ -438,13 +438,13 @@ void Client::rxClearSubs_()
     sub = {};
   }
   if (m_subs.count_()) {
-    m_sched->run([this] { rxClearSubs_(); }, m_rxSid);
+    m_sched->run([this] { stop_2(); }, m_rxSid);
     return;
   }
-  m_sched->run([this] { txDrain_(); }, m_txSid);
+  m_sched->run([this] { stop_3(); }, m_txSid);
 }
 
-void Client::txDrain_()
+void Client::stop_3()
 {
   ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
     "stop drain off Tx", return);
@@ -461,14 +461,14 @@ void Client::txDrain_()
     if (callFn) callFn(CallResult{{}, {}, ClientError::Disconnect});
   }
   if (m_pending.count_()) {
-    m_sched->run([this] { txDrain_(); }, m_txSid);
+    m_sched->run([this] { stop_3(); }, m_txSid);
     return;
   }
   // A timer dispatched before del() may still be queued behind this drain.
-  m_sched->run([this] { txDrained_(); }, m_txSid);
+  m_sched->run([this] { stop_4(); }, m_txSid);
 }
 
-void Client::txDrained_()
+void Client::stop_4()
 {
   ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
     "timer drain completion off Tx", return);

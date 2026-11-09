@@ -171,9 +171,9 @@ ZuInline bool pushPromise(ZuBSpan in, uint64_t &id) {
   return var(in, o, id) >= 0 && n >= o + 2;
 }
 
-template <typename> struct IsTypeList_ : public ZuFalse { };
+template <typename> struct IsTypeList : public ZuFalse { };
 template <typename ...Ts>
-struct IsTypeList_<ZuTypeList<Ts...>> : public ZuTrue { };
+struct IsTypeList<ZuTypeList<Ts...>> : public ZuTrue { };
 
 template <typename Impl, typename = void>
 struct HasH3Cxn : public ZuFalse { };
@@ -233,12 +233,12 @@ public:
   using StreamState = CxnStreamState;
 
 private:
-  bool applyEncoderInstruction_(const QPackDecodedInsn &i) {
+  bool applyEncoderInstruction(const QPackDecodedInsn &i) {
     auto rx = impl()->qpackRx();
     if (!rx) return i.type == QPackInsn::SetCapacity && !i.value;
     if (i.type == QPackInsn::SetCapacity) {
 	if (i.value > uint32_t(-1)) return false;
-	return rx->setCapacity(uint32_t(i.value));
+	return rx->capacity(uint32_t(i.value));
     }
     if (i.type == QPackInsn::InsertWithoutNameRef)
 	return rx->insert(i.header);
@@ -254,7 +254,7 @@ private:
 	return false;
     return rx->insert(Header{name, i.header.value});
   }
-  bool applyDecoderInstruction_(const QPackDecodedInsn &i) {
+  bool applyDecoderInstruction(const QPackDecodedInsn &i) {
     return impl()->qpackTxInsn(i.type, i.value);
   }
 
@@ -312,7 +312,7 @@ private:
   }
 
   template <typename Stream>
-  int controlVar_(Stream &stream, uint64_t &value, uint64_t error) {
+  int controlVar(Stream &stream, uint64_t &value, uint64_t error) {
     auto &rx = stream.rxStream();
     if (!rx) return 0;
     auto bytes = rx.span();
@@ -373,7 +373,7 @@ private:
 	unsigned consumed = 0;
 	if (m_controlKey == uint64_t(-1)) {
 	  uint64_t key = 0;
-	  int n = controlVar_(stream, key, SettingsError);
+	  int n = controlVar(stream, key, SettingsError);
 	  if (n <= 0) return n;
 	  consumed = unsigned(n);
 	  if (m_controlVarLen) return n;
@@ -381,7 +381,7 @@ private:
 	  if (!m_controlRemaining) return fail_(SettingsError) ? 0 : -1;
 	}
 	uint64_t value = 0;
-	int n = controlVar_(stream, value, SettingsError);
+	int n = controlVar(stream, value, SettingsError);
 	if (n < 0) return n;
 	consumed += unsigned(n);
 	if (m_controlVarLen || !n) return int(consumed);
@@ -397,7 +397,7 @@ private:
       case 0x07: // GOAWAY
       case 0x0d: { // MAX_PUSH_ID
 	uint64_t id = 0;
-	int n = controlVar_(stream, id, FrameError);
+	int n = controlVar(stream, id, FrameError);
 	if (n <= 0 || m_controlVarLen) return n;
 	if (m_controlType == 0x05)
 	  return fail_(m_controlRemaining < 2 ?
@@ -535,7 +535,7 @@ public:
 	      [](ZuBSpan bytes, QPackDecodedInsn &i) {
 		return QPack::decodeEncoderInsn(bytes, i);
 	      }, [this](const QPackDecodedInsn &i) {
-		return this->applyEncoderInstruction_(i);
+		return this->applyEncoderInstruction(i);
 	      });
 	    if (consumed < 0) fail_(QPackEncoderError);
 	    break;
@@ -544,7 +544,7 @@ public:
 	      [](ZuBSpan bytes, QPackDecodedInsn &i) {
 		return QPack::decodeDecoderInsn(bytes, i);
 	      }, [this](const QPackDecodedInsn &i) {
-		return this->applyDecoderInstruction_(i);
+		return this->applyDecoderInstruction(i);
 	      });
 	    if (consumed < 0) fail_(QPackDecoderError);
 	    break;
@@ -683,7 +683,7 @@ private:
     return true;
   }
 
-  void latchError_(
+  void latchError(
     RequestErrorCode::T code = RequestErrorCode::Malformed,
     RequestErrorScope::T scope = RequestErrorScope::Stream,
     bool responsePossible = false) {
@@ -695,7 +695,7 @@ private:
     RequestErrorCode::T code = RequestErrorCode::Malformed,
     RequestErrorScope::T scope = RequestErrorScope::Stream,
     bool responsePossible = false) {
-    latchError_(code, scope, responsePossible);
+    latchError(code, scope, responsePossible);
     m_state = State::Error;
   }
   bool fail_(
@@ -719,7 +719,7 @@ private:
 
   using FieldState = Fields::Semantics<Request>;
 
-  bool qpackHeader_(
+  bool qpackHeader(
     FieldState &fields, ZuBSpan name, ZuSpan<uint8_t> value) {
     if (name && name[0] != ':' && !fields.start(
 	[this](Method::T method, Target &target) {
@@ -776,7 +776,7 @@ private:
     if (m_deliverHeaders) impl()->header(section, id, key, value);
   }
 
-  Zhttp::FieldSection::T parseFields_(
+  Zhttp::FieldSection::T parseFields(
       ZuSpan<uint8_t> payload, bool initial) {
     auto rx = impl()->qpackRx();
     FieldSectionPrefix prefix;
@@ -791,7 +791,7 @@ private:
     int used = QPack::decodeFieldSection(
 	payload, rx,
 	[this, &fields, &ok](DecodedHeader h, QPackFieldFlags) {
-	  if (!this->qpackHeader_(fields, h.name, h.value)) ok = false;
+	  if (!this->qpackHeader(fields, h.name, h.value)) ok = false;
 	},
 	impl()->h3Params(), 0, 0, &prefix);
     if (used != int(n) || !ok) return Zhttp::FieldSection::Invalid;
@@ -828,7 +828,7 @@ private:
     return section;
   }
 
-  bool bodyComplete_() const {
+  bool bodyComplete() const {
     return m_contentLen < 0 || m_bodyLen == uint64_t(m_contentLen);
   }
 
@@ -838,19 +838,19 @@ private:
     if (m_deliverHeaders) impl()->status(value);
   }
 
-  bool payloadFrame_(uint64_t type, ZuSpan<uint8_t> payload) {
+  bool payloadFrame(uint64_t type, ZuSpan<uint8_t> payload) {
     switch (type) {
       case 0x01: // HEADERS
 	if (m_state == State::Initial) {
-	  auto section = parseFields_(payload, true);
+	  auto section = parseFields(payload, true);
 	  if (section == Zhttp::FieldSection::Invalid) return false;
 	  if (section == Zhttp::FieldSection::Informational) return true;
 	  if (m_state != State::Stream) m_state = State::Body;
 	  return true;
 	}
 	if (m_state != State::Body) return false;
-	if (!bodyComplete_() ||
-	    parseFields_(payload, false) != Zhttp::FieldSection::Trailers)
+	if (!bodyComplete() ||
+	    parseFields(payload, false) != Zhttp::FieldSection::Trailers)
 	  return false;
 	m_state = State::Trailers;
 	return true;
@@ -928,7 +928,7 @@ private:
       }, frame.header, 0,
       [this, &accepted](auto &body) {
 	if (m_state == State::Stream)
-	  impl()->streamRx_(body);
+	  impl()->streamRx(body);
 	else
 	  accepted = impl()->body(body);
 	return accepted;
@@ -967,18 +967,18 @@ private:
 	  return 0;
 	}
 	return remaining;
-      }, metaAlloc_, buf);
+      }, metaAlloc, buf);
     if (ZuUnlikely(n <= 0)) return fail_(InternalError);
     if (!retire_(stream, frame.total)) return false;
     auto span = buf->span();
     span.offset(frame.header);
-    bool ok = payloadFrame_(frame.type, span);
+    bool ok = payloadFrame(frame.type, span);
     if (!ok) return fail_(MessageError);
     return true;
   }
 
   template <typename Stream>
-  bool metaPart_(Stream &stream) {
+  bool metaPart(Stream &stream) {
     auto &rx = stream.rxStream();
     uint64_t length = rx.length();
     if (length > m_metaRemaining) length = m_metaRemaining;
@@ -995,7 +995,7 @@ private:
     if (!retire_(stream, length)) return false;
     if (m_metaRemaining) return true;
     auto buf = ZuMv(m_metaBuf);
-    return !buf || payloadFrame_(m_metaType, buf->span()) ||
+    return !buf || payloadFrame(m_metaType, buf->span()) ||
       fail_(MessageError);
   }
 
@@ -1021,7 +1021,7 @@ private:
     (void)retire_(stream, length);
   }
 
-  static ZmRef<ZiRxQueue::Node> metaAlloc_() {
+  static ZmRef<ZiRxQueue::Node> metaAlloc() {
     return new BodyRx::MetaBufAlloc{ZmSingleton<typename BodyRx::MetaBufAlloc::Allocator>::instance()};
   }
 
@@ -1046,7 +1046,7 @@ public:
     unsigned processed = 0;
     while (m_state != State::Error && processed < RxProcessBatch) {
       if (m_metaRemaining) {
-	if (!metaPart_(stream)) break;
+	if (!metaPart(stream)) break;
 	++processed;
 	continue;
       }
@@ -1102,10 +1102,10 @@ public:
       if (rx || m_dataRemaining || m_metaRemaining) {
 	fail_(FrameError);
       } else if (m_state == State::Stream) {
-	impl()->streamPeerEnd_();
+	impl()->streamPeerEnd();
 	(void)settle_(stream);
 	m_state = State::RemoteClosed;
-      } else if (m_state == State::Initial || !bodyComplete_()) {
+      } else if (m_state == State::Initial || !bodyComplete()) {
 	fail_(MessageError);
       } else if (m_state != State::Error) {
 	m_state = State::Complete;
@@ -1160,8 +1160,8 @@ public:
   }
 
   template <typename Rx>
-  void streamRx_(Rx &rx) { bodyDrain(rx); }
-  void streamPeerEnd_() { }
+  void streamRx(Rx &rx) { bodyDrain(rx); }
+  void streamPeerEnd() { }
   void streamError_() { }
   bool rxComplete() const { return impl()->finReceived(); }
   QPackRxTable *qpackRx() {
@@ -1411,7 +1411,7 @@ public:
   }
 
 private:
-  static ZuBSpan statusSpan_(unsigned status, ZuBArray<StatusSize> &buf) {
+  static ZuBSpan statusSpan(unsigned status, ZuBArray<StatusSize> &buf) {
     buf[0] = uint8_t('0' + ((status/100) % 10));
     buf[1] = uint8_t('0' + ((status/10) % 10));
     buf[2] = uint8_t('0' + (status % 10));
@@ -1584,12 +1584,12 @@ private:
   }
 
   template <typename Build>
-  static void encodeMethod_(Build &build, Method::T method) {
+  static void encodeMethod(Build &build, Method::T method) {
     build.field(":method", Method::name(method));
   }
 
   template <bool Patch = true, typename Stream, typename Encode>
-  void writeHeaders_(Stream &stream, Encode &&encode) {
+  void writeHeaders(Stream &stream, Encode &&encode) {
     impl()->qpackFailure(QPackBuildFailure::None);
     Compression::WriterBytes fields{stream, HeaderHeadroom};
     if (!fields.valid()) {
@@ -1676,7 +1676,7 @@ protected:
   template <typename Stream>
   bool beginRequest_(Stream &stream) {
     bool valid = true;
-    writeHeaders_(stream, [this, &valid](auto &build) {
+    writeHeaders(stream, [this, &valid](auto &build) {
 	impl()->operation([this, &build, &valid](
 	    Method::T method, auto &&emit) {
 	  auto protocol = ZtScratch(HdrScratch, Impl::HdrBufSize);
@@ -1690,7 +1690,7 @@ protected:
 	    valid = false;
 	    return;
 	  }
-	  encodeMethod_(build, method);
+	  encodeMethod(build, method);
 	  if (method == Method::CONNECT && !protocol) return;
 	  build.field(":scheme", "https");
 	  emit([&build](auto &&write) {
@@ -1713,10 +1713,10 @@ protected:
   // response
   template <typename Stream>
   void beginResponse_(Stream &stream) {
-    writeHeaders_(stream, [this](auto &build) {
+    writeHeaders(stream, [this](auto &build) {
 	unsigned status = impl()->status();
 	ZuBArray<StatusSize> buf;
-	build.field(":status", statusSpan_(status, buf));
+	build.field(":status", statusSpan(status, buf));
 	contentLength_(build);
 	headers_(build);
 	return build.ok;
@@ -1727,7 +1727,7 @@ protected:
 public:
   template <typename Stream, typename Fields>
   bool trailers(Stream &stream, const Fields &fields) {
-    writeHeaders_<false>(stream, [&fields](auto &build) {
+    writeHeaders<false>(stream, [&fields](auto &build) {
       auto output = Native_::compressedFields<ZuDecay<decltype(build)>,
 	ZuStringT<"Zhttp.H3.Final.Name">>(build);
       fields.fields(output);
@@ -2028,7 +2028,7 @@ struct Cxn {
     if (!link_ || !enc || !span) return false;
     return link_->send_(enc, span, false);
   }
-  bool qpackDecoderWrite(ZuBSpan span) { return writeQPack_(dec, span); }
+  bool qpackDecoderWrite(ZuBSpan span) { return writeQPack(dec, span); }
   void error(uint64_t code) {
     if (errorCode) return;
     errorCode = code;
@@ -2062,7 +2062,7 @@ struct Cxn {
     return true;
   }
 
-  bool writeQPack_(StreamRef &stream, ZuBSpan span) {
+  bool writeQPack(StreamRef &stream, ZuBSpan span) {
     if (!link_ || !stream || !span) return false;
     if constexpr (HasStreamSend<Link, StreamRef>{})
       return link_->send(stream, span, false);
@@ -2207,11 +2207,11 @@ public:
   bool streamEnable(bool = true) { return true; }
   bool streamAccept() { return true; }
   bool streamPeerCap() const {
-    auto native = streamImpl_()->h3Native_();
+    auto native = streamImpl()->h3Native();
     return native && native->h3PeerCap();
   }
   bool streamLocalCap() const {
-    auto native = streamImpl_()->h3Native_();
+    auto native = streamImpl()->h3Native();
     return native && native->h3.localExtendedConnect;
   }
   template <typename L>
@@ -2219,13 +2219,13 @@ public:
   template <typename L>
   void streamTx_(L &&l) { write_<true>(ZuFwd<L>(l)); }
   void streamTxEnd() {
-    auto impl = streamImpl_();
-    auto native = impl->h3Native_();
-    auto stream = impl->h3Stream_();
+    auto impl = streamImpl();
+    auto native = impl->h3Native();
+    auto stream = impl->h3Stream();
     if (native && stream) native->finish(stream);
   }
   void streamTxReset() {
-    auto stream_ = streamImpl_()->h3Stream_();
+    auto stream_ = streamImpl()->h3Stream();
     if (!stream_) return;
     auto stream = ZmRef(stream_);
     stream_->link()->app()->txRun([stream = ZuMv(stream)]() mutable {
@@ -2237,7 +2237,7 @@ public:
 private:
   template <bool OnOwner, typename L>
   void write_(L &&l) {
-    auto stream = streamImpl_()->h3Stream_();
+    auto stream = streamImpl()->h3Stream();
     if (!stream) return;
     auto tx = [stream]() {
       if constexpr (OnOwner) return stream->txStream_();
@@ -2246,10 +2246,10 @@ private:
     auto body = H3::dataStream(tx);
     ZuFwd<L>(l)(body);
   }
-  const Impl *streamImpl_() const {
+  const Impl *streamImpl() const {
     return static_cast<const Impl *>(this);
   }
-  Impl *streamImpl_() { return static_cast<Impl *>(this); }
+  Impl *streamImpl() { return static_cast<Impl *>(this); }
 };
 
 } // namespace H3_

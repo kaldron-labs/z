@@ -55,7 +55,7 @@ struct Sink {
     return buf;
   }
   template <typename P> Sink &operator <<(P &&) { return *this; }
-  bool appendOwned_(ZmRef<ZiIOBuf>) { return true; }
+  bool appendOwned(ZmRef<ZiIOBuf>) { return true; }
   void flush() { }
 };
 struct Link_ : public ZmNHeap<Link_>, public ZmObject {
@@ -195,7 +195,7 @@ struct PacketSink {
     parts.push(ZuMv(copy));
     return *this;
   }
-  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
+  bool appendOwned(ZmRef<ZiIOBuf> buf) {
     parts.push(ZuMv(buf));
     return true;
   }
@@ -216,7 +216,7 @@ struct PacketWriter : public PacketSink {
   bool fits(const ZiIOBuf &buf) const {
     return buf.skip >= 32 && buf.avail() >= 16;
   }
-  bool appendOwned_(ZmRef<ZiIOBuf> buf) {
+  bool appendOwned(ZmRef<ZiIOBuf> buf) {
     ++adopted;
     buf->data()[0] ^= 0x5a; // observable stand-in for in-place WS masking
     sent = ZuMv(buf);

@@ -109,22 +109,22 @@ private:
   void connected_();
   void frame_(ZmRef<ZiIOBuf>, FrameInfo);
   void failed_(CxnFailure);
-  void txHello_();
-  void txHelloDone_(CallResult);
+  void txHello_0();
+  void txHello_1(CallResult);
   void txCall_(BuildFn, CallFn, ZuTime, bool hello);
   void txSend_(BuildFn, CxnSendFn);
-  void txReply_(ZmRef<ZiIOBuf>, FrameInfo);
-  void txSendDone_(uint32_t, bool);
-  void txTimeout_(uint32_t);
+  void txReply(ZmRef<ZiIOBuf>, FrameInfo);
+  void txSendDone(uint32_t, bool);
+  void txTimeout(uint32_t);
   bool txCancel_(uint32_t, int);
-  void txStop_(CxnStopFn);
-  void txStopped_();
-  void txDrain_();
-  void txDrained_();
-  void rxClearSubs_();
+  void stop_0(CxnStopFn);
+  void stop_1();
+  void stop_2();
+  void stop_3();
+  void stop_4();
   void rxSubscribe_(ZuPtr<Sub>, SubDoneFn);
   void rxUnsubscribe_(ZuPtr<SubDrop>, CxnSendFn);
-  void rxSignal_(ZmRef<ZiIOBuf>, FrameInfo, uint64_t after,
+  void rxSignal(ZmRef<ZiIOBuf>, FrameInfo, uint64_t after,
     uint64_t ceiling);
   uint32_t serial_();
 

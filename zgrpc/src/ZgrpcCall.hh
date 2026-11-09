@@ -57,22 +57,22 @@ public:
   uint64_t generation() const { return m_generation; }
   bool live() const { return m_rxOwner.load_(); }
   bool cancelled() const { return m_cancelled.load_(); }
-  void invalidateRx_(bool cancelled = false);
-  void invalidateTx_();
+  void invalidateRx(bool cancelled = false);
+  void invalidateTx();
 
 protected:
   const CallRoute &rxRoute() const { return m_rxRoute; }
   const CallRoute &txRoute() const { return m_txRoute; }
   void *rxOwner_() const;
   void *txOwner_() const;
-  bool sendPost_();
-  void sendPosted_() { --m_sendPosts; }
-  bool claimEnd_() { return live() && !m_endClaim.cmpXch(1, 0); }
-  bool claimTerminal_() { return live() && !m_terminalClaim.cmpXch(1, 0); }
-  bool claimCancel_() { return live() && !m_cancelClaim.cmpXch(1, 0); }
-  void unclaimEnd_() { m_endClaim = 0; }
-  void unclaimTerminal_() { m_terminalClaim = 0; }
-  void unclaimCancel_() { m_cancelClaim = 0; }
+  bool sendPost();
+  void sendPosted() { --m_sendPosts; }
+  bool claimEnd() { return live() && !m_endClaim.cmpXch(1, 0); }
+  bool claimTerminal() { return live() && !m_terminalClaim.cmpXch(1, 0); }
+  bool claimCancel() { return live() && !m_cancelClaim.cmpXch(1, 0); }
+  void unclaimEnd() { m_endClaim = 0; }
+  void unclaimTerminal() { m_terminalClaim = 0; }
+  void unclaimCancel() { m_cancelClaim = 0; }
 
 private:
   const uint64_t	m_id;
@@ -139,15 +139,15 @@ public:
   bool send(Message<Input> message) {
     if (!live()) return false;
     if (txRoute().invoked()) return send_(ZuMv(message));
-    if (!sendPost_()) return false;
+    if (!sendPost()) return false;
     try {
       using Action = CallAction<Self, Message<Input>>;
       ZmRef<Action> action = new Action{self(), ZuMv(message)};
       txRoute().run([action = ZuMv(action)]() mutable {
-	action->token->sendPosted_();
+	action->token->sendPosted();
 	(void)action->token->send_(ZuMv(action->data));
       });
-    } catch (...) { sendPosted_(); return false; }
+    } catch (...) { sendPosted(); return false; }
     return true;
   }
 
@@ -160,17 +160,17 @@ public:
 
   template <bool S = Server, typename = ZuIfT<!S>>
   bool end() {
-    if (!claimEnd_()) return false;
+    if (!claimEnd()) return false;
     if (txRoute().invoked()) return end_();
     try {
       txRoute().run([token = ZmRef{self()}]() { (void)token->end_(); });
-    } catch (...) { unclaimEnd_(); return false; }
+    } catch (...) { unclaimEnd(); return false; }
     return true;
   }
 
   template <bool S = Server, typename = ZuIfT<S>>
   bool finish(Status status = {}, Metadata trailers = Metadata{}) {
-    if (!claimTerminal_()) return false;
+    if (!claimTerminal()) return false;
     if (txRoute().invoked()) return finish_({ZuMv(status), ZuMv(trailers)});
     try {
       using Action = CallAction<Self, FinishData>;
@@ -178,13 +178,13 @@ public:
       txRoute().run([action = ZuMv(action)]() mutable {
 	(void)action->token->finish_(ZuMv(action->data));
       });
-    } catch (...) { unclaimTerminal_(); return false; }
+    } catch (...) { unclaimTerminal(); return false; }
     return true;
   }
 
   template <bool S = Server, typename = ZuIfT<S && !StreamOut>>
   bool complete(Reply<Output> reply) {
-    if (!claimTerminal_()) return false;
+    if (!claimTerminal()) return false;
     if (rxRoute().invoked()) return complete_(ZuMv(reply));
     try {
       using Action = CallAction<Self, Reply<Output>>;
@@ -192,7 +192,7 @@ public:
       rxRoute().run([action = ZuMv(action)]() mutable {
 	(void)action->token->complete_(ZuMv(action->data));
       });
-    } catch (...) { unclaimTerminal_(); return false; }
+    } catch (...) { unclaimTerminal(); return false; }
     return true;
   }
 
@@ -202,11 +202,11 @@ public:
   }
 
   bool cancel() {
-    if (!claimCancel_()) return false;
+    if (!claimCancel()) return false;
     if (rxRoute().invoked()) { cancel_(); return true; }
     try {
       rxRoute().run([token = ZmRef{self()}]() { token->cancel_(); });
-    } catch (...) { unclaimCancel_(); return false; }
+    } catch (...) { unclaimCancel(); return false; }
     return true;
   }
 

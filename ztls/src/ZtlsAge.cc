@@ -62,7 +62,7 @@ static char upper_(char c)
   return c >= 'a' && c <= 'z' ? char(c - ('a' - 'A')) : c;
 }
 
-static uint32_t hrpSum_(ZuCSpan hrp)
+static uint32_t hrpSum(ZuCSpan hrp)
 {
   uint32_t sum = 1;
   unsigned n = hrp.length();
@@ -93,7 +93,7 @@ static ZuUnion<size_t, ZeException> encode_(
   for (unsigned i = 0, n = hrp.length(); i < n; ++i)
     *out++ = upper ? upper_(hrp[i]) : hrp[i];
   *out++ = '1';
-  uint32_t sum = hrpSum_(hrp);
+  uint32_t sum = hrpSum(hrp);
   unsigned acc = 0, bits = 0;
   for (unsigned i = 0, n = key.length(); i < n; ++i) {
     acc = (acc << 8) | key[i];
@@ -139,7 +139,7 @@ static ZuUnion<size_t, ZeException> decode_(
   for (unsigned i = 0; i < h; ++i)
     if (lower_(text[i]) != lower_(hrp[i]))
       return ZeEXCEPT(Error, "ZtlsAge", "unexpected Bech32 key type");
-  uint32_t sum = hrpSum_(hrp);
+  uint32_t sum = hrpSum(hrp);
   unsigned acc = 0, bits = 0;
   size_t out = 0;
   size_t end = text.length() - ChecksumSize;
@@ -271,7 +271,7 @@ static constexpr auto PayloadInfo = "payload"_z;
 ZuDerive(AgeHeaderScratch, (ZtBArray<ZtArrayHeapID<"Ztls.Age.Header",
   ZtArraySharded<true>>>));
 
-static bool unb64_(ZuCSpan text, ZuSpan<uint8_t> output)
+static bool unb64(ZuCSpan text, ZuSpan<uint8_t> output)
 {
   unsigned expected = output.length();
   if (text.length() != ZuBase64::enclen<false>(expected)) return false;
@@ -296,7 +296,7 @@ static bool sshString_(ZuBSpan blob, size_t &cursor, ZuBSpan &field)
   return true;
 }
 
-static bool sshU32_(ZuBSpan blob, size_t &cursor, uint32_t &value)
+static bool sshU32(ZuBSpan blob, size_t &cursor, uint32_t &value)
 {
   if (blob.length() - cursor < 4) return false;
   auto p = blob.data() + cursor;
@@ -326,7 +326,7 @@ static bool sshED_(ZuBSpan blob, ZuBSpan &publicKey)
     publicKey.length() == X25519KeySize && cursor == blob.length();
 }
 
-static void sshFingerprint_(ZuBSpan blob, ZuSpan<uint8_t> output)
+static void sshFingerprint(ZuBSpan blob, ZuSpan<uint8_t> output)
 {
   uint8_t digest[Ztls::MD<Ztls::SHA256>::Size];
   Ztls::MD<Ztls::SHA256> md;
@@ -362,7 +362,7 @@ ZuUnion<Age::Recipient, ZeException> Age::decodeSSHRecipient(
         ZeEXCEPT(Error, "ZtlsAge", "invalid SSH public key");
     unsigned expected = ZuBase64::declen(textLength);
     if (expected > output.length()) break;
-    if (!unb64_({encoded.data(), textLength},
+    if (!unb64({encoded.data(), textLength},
         {output.data(), expected})) break;
     ZuBSpan blob{output.data(), expected};
     if (rsa) {
@@ -377,7 +377,7 @@ ZuUnion<Age::Recipient, ZeException> Age::decodeSSHRecipient(
   return ZeEXCEPT(Error, "ZtlsAge", "invalid SSH public key");
 }
 
-static ZeException invalidOpenSSH_()
+static ZeException invalidOpenSSH()
 {
   return ZeEXCEPT(Error, "ZtlsAge", "invalid OpenSSH private key");
 }
@@ -388,63 +388,63 @@ ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
   ZuGuard clear{[&privateKey]() {
     ZuClear(privateKey);
   }};
-  if (privateKey.length() > HeaderMaxSize) return invalidOpenSSH_();
+  if (privateKey.length() > HeaderMaxSize) return invalidOpenSSH();
   constexpr auto begin = "-----BEGIN OPENSSH PRIVATE KEY-----"_z;
   constexpr auto end = "-----END OPENSSH PRIVATE KEY-----"_z;
   size_t start = 0, finish = 0, n = privateKey.length();
   while (start + begin.length() <= n &&
       memcmp(privateKey.data() + start, begin.data(), begin.length()))
     ++start;
-  if (start + begin.length() > n) return invalidOpenSSH_();
+  if (start + begin.length() > n) return invalidOpenSSH();
   start += begin.length();
   finish = start;
   while (finish + end.length() <= n &&
       memcmp(privateKey.data() + finish, end.data(), end.length()))
     ++finish;
-  if (finish + end.length() > n) return invalidOpenSSH_();
+  if (finish + end.length() > n) return invalidOpenSSH();
   unsigned encodedLength = 0;
   for (size_t i = start; i < finish; ++i) {
     auto c = privateKey[i];
     if (c == '\n' || c == '\r') continue;
     privateKey[start + encodedLength++] = c;
   }
-  if (!encodedLength || encodedLength % 4) return invalidOpenSSH_();
+  if (!encodedLength || encodedLength % 4) return invalidOpenSSH();
   auto encoded = ZuBSpan{privateKey.data() + start, encodedLength};
   unsigned padding = encoded[encodedLength - 1] == '=';
   if (padding && encoded[encodedLength - 2] == '=') ++padding;
   for (unsigned i = 0, l = encodedLength - padding; i < l; ++i)
-    if (ZuBase64::lookup(encoded[i]) >= 64) return invalidOpenSSH_();
+    if (ZuBase64::lookup(encoded[i]) >= 64) return invalidOpenSSH();
   if ((padding == 2 &&
         (ZuBase64::lookup(encoded[encodedLength - 3]) & 15)) ||
       (padding == 1 &&
         (ZuBase64::lookup(encoded[encodedLength - 2]) & 3)))
-    return invalidOpenSSH_();
+    return invalidOpenSSH();
   unsigned decodedLength = ZuBase64::decode(
     {privateKey.data() + start, encodedLength}, encoded);
   if (decodedLength != ZuBase64::declen(encodedLength) - padding)
-    return invalidOpenSSH_();
+    return invalidOpenSSH();
   ZuBSpan data{privateKey.data() + start, decodedLength};
   constexpr char magic[] = "openssh-key-v1";
   if (data.length() < sizeof(magic) ||
-      memcmp(data.data(), magic, sizeof(magic))) return invalidOpenSSH_();
+      memcmp(data.data(), magic, sizeof(magic))) return invalidOpenSSH();
   size_t cursor = sizeof(magic);
   ZuBSpan cipher, kdf, options, blob, privateBlock;
   uint32_t count;
   if (!sshString_(data, cursor, cipher) ||
       !sshString_(data, cursor, kdf) ||
       !sshString_(data, cursor, options) ||
-      !sshU32_(data, cursor, count) || count != 1 ||
+      !sshU32(data, cursor, count) || count != 1 ||
       !sshString_(data, cursor, blob) ||
       !sshString_(data, cursor, privateBlock) ||
-      cursor != data.length()) return invalidOpenSSH_();
+      cursor != data.length()) return invalidOpenSSH();
   if (cipher != ZuBSpan{"none"} || kdf != ZuBSpan{"none"} || options)
     return ZeEXCEPT(Error, "ZtlsAge", "encrypted OpenSSH key unsupported");
   cursor = 0;
   uint32_t check1, check2;
   ZuBSpan type, comment;
-  if (!sshU32_(privateBlock, cursor, check1) ||
-      !sshU32_(privateBlock, cursor, check2) || check1 != check2 ||
-      !sshString_(privateBlock, cursor, type)) return invalidOpenSSH_();
+  if (!sshU32(privateBlock, cursor, check1) ||
+      !sshU32(privateBlock, cursor, check2) || check1 != check2 ||
+      !sshString_(privateBlock, cursor, type)) return invalidOpenSSH();
   ZmRef<Ztls::PK::AnyKey> key;
   try {
     if (type == ZuBSpan{"ssh-ed25519"}) {
@@ -454,12 +454,12 @@ ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
           secret.length() != 64 ||
           memcmp(secret.data() + 32, pub.data(), 32) ||
           !sshED_(blob, envelopePub) || envelopePub != pub)
-        return invalidOpenSSH_();
+        return invalidOpenSSH();
       auto *ed = new Ztls::PK::SK_ED25519{{secret.data(), 32}};
       key = ed;
       uint8_t derived[32];
       if (ed->exportPK(derived).template is<ZeException>() ||
-          memcmp(derived, pub.data(), 32)) return invalidOpenSSH_();
+          memcmp(derived, pub.data(), 32)) return invalidOpenSSH();
     } else if (type == ZuBSpan{"ssh-rsa"}) {
       ZuBSpan modulus, pubExp, prvExp, coeff, prime1, prime2;
       Ztls::PK::Data::PK_PKCS1 envelope;
@@ -471,23 +471,23 @@ ZuUnion<Age::SshKey, ZeException> Age::loadOpenSSH(
           !sshString_(privateBlock, cursor, prime2) ||
           !sshRSA_(blob, envelope) ||
           envelope.modulus != modulus || envelope.pubExp != pubExp)
-        return invalidOpenSSH_();
+        return invalidOpenSSH();
       key = new Ztls::PK::SK_RSA{
         modulus, pubExp, prvExp, coeff, prime1, prime2};
-    } else return invalidOpenSSH_();
+    } else return invalidOpenSSH();
   } catch (const ZeException &e) {
     return e;
   }
-  if (!sshString_(privateBlock, cursor, comment)) return invalidOpenSSH_();
+  if (!sshString_(privateBlock, cursor, comment)) return invalidOpenSSH();
   for (unsigned pad = 1; cursor < privateBlock.length(); ++pad, ++cursor)
-    if (privateBlock[cursor] != pad) return invalidOpenSSH_();
+    if (privateBlock[cursor] != pad) return invalidOpenSSH();
   if (privateBlock.length() % 8 || blob.length() > publicKey.length())
-    return invalidOpenSSH_();
+    return invalidOpenSSH();
   memcpy(publicKey.data(), blob.data(), blob.length());
   return SshKey{ZuMv(key), {publicKey.data(), blob.length()}};
 }
 
-static bool hkdf_(
+static bool hkdf(
   ZuBSpan input, ZuBSpan salt, ZuCSpan info, ZuSpan<uint8_t> output)
 {
   uint8_t prk[KeySize];
@@ -506,7 +506,7 @@ static bool write_(ZiFile &file, ZuBSpan data)
   return file.write(data.data(), data.length()) == Zi::OK;
 }
 
-static bool scryptKey_(
+static bool scryptKey(
   ZuBSpan passphrase, ZuBSpan salt, unsigned logN,
   ZuSpan<uint8_t> output)
 {
@@ -518,7 +518,7 @@ static bool scryptKey_(
     uint64_t{1} << logN, 8, 1, ScryptMaxMemory, output);
 }
 
-static bool sealKey_(
+static bool sealKey(
   ZuBSpan wrappingKey, ZuBSpan fileKey, ZuSpan<uint8_t> body)
 {
   uint8_t nonce[12]{};
@@ -529,7 +529,7 @@ static bool sealKey_(
     fileKey.length(), 0, nullptr, 0) == fileKey.length() + TagSize;
 }
 
-static bool openKey_(
+static bool openKey(
   ZuBSpan wrappingKey, ZuBSpan body, ZuSpan<uint8_t> fileKey)
 {
   uint8_t nonce[12]{};
@@ -540,7 +540,7 @@ static bool openKey_(
     body.length(), 0, nullptr, 0) == FileKeySize;
 }
 
-static ZuUnion<void, ZeException> writePayload_(
+static ZuUnion<void, ZeException> writePayload(
   Ztls::Random &rng, ZiFile &file, ZuBSpan fileKey, ZuBSpan plaintext)
 {
   uint8_t nonce[PayloadNonceSize], key[KeySize];
@@ -548,7 +548,7 @@ static ZuUnion<void, ZeException> writePayload_(
     ZuClear(nonce, sizeof(nonce));
     ZuClear(key, sizeof(key));
   }};
-  if (!rng.random(nonce) || !hkdf_(fileKey, nonce, PayloadInfo, key) ||
+  if (!rng.random(nonce) || !hkdf(fileKey, nonce, PayloadInfo, key) ||
       !write_(file, nonce))
     return ZeEXCEPT(Error, "ZtlsAge", "payload setup failed");
   uint8_t baseIV[12]{};
@@ -628,7 +628,7 @@ private:
   unsigned m_end = 0;
 };
 
-static ZuUnion<size_t, ZeException> readPayload_(
+static ZuUnion<size_t, ZeException> readPayload(
   AgeReader &reader, ZuBSpan fileKey, ZuSpan<uint8_t> plaintext)
 {
   uint8_t nonce[PayloadNonceSize], key[KeySize];
@@ -641,7 +641,7 @@ static ZuUnion<size_t, ZeException> readPayload_(
     ZuClear(plaintext.data(), produced);
   }};
   if (reader.read(nonce, sizeof(nonce)) != sizeof(nonce) ||
-      !hkdf_(fileKey, nonce, PayloadInfo, key))
+      !hkdf(fileKey, nonce, PayloadInfo, key))
     return ZeEXCEPT(Error, "ZtlsAge", "invalid payload nonce");
   uint8_t baseIV[12]{};
   Ztls::Pico::AeadCtx ctx;
@@ -678,7 +678,7 @@ static ZuUnion<size_t, ZeException> readPayload_(
   }
 }
 
-static ZuUnion<void, ZeException> appendScrypt_(
+static ZuUnion<void, ZeException> appendScrypt(
   AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan passphrase, ZuBSpan fileKey)
 {
@@ -689,9 +689,9 @@ static ZuUnion<void, ZeException> appendScrypt_(
   } secrets;
   ZuGuard clear{[&secrets]() { ZuClear(&secrets, sizeof(secrets)); }};
   if (!rng.random(secrets.salt) ||
-      !scryptKey_(passphrase, secrets.salt, ScryptLogN,
+      !scryptKey(passphrase, secrets.salt, ScryptLogN,
         secrets.wrapKey) ||
-      !sealKey_(secrets.wrapKey, fileKey, secrets.body))
+      !sealKey(secrets.wrapKey, fileKey, secrets.body))
     return ZeEXCEPT(Error, "ZtlsAge", "scrypt stanza failed");
   ZuBArray<ZuBase64::enclen<false>(SaltSize)> salt64;
   ZuBArray<ZuBase64::enclen<false>(FileKeySize + TagSize)> body64;
@@ -704,7 +704,7 @@ static ZuUnion<void, ZeException> appendScrypt_(
   return {};
 }
 
-static ZuUnion<void, ZeException> appendX25519_(
+static ZuUnion<void, ZeException> appendX25519(
   AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan recipient, ZuBSpan fileKey)
 {
@@ -725,8 +725,8 @@ static ZuUnion<void, ZeException> appendX25519_(
   if (r.template is<ZeException>())
     return ZuMv(r).template p<ZeException>();
   memcpy(data.salt + X25519KeySize, recipient.data(), X25519KeySize);
-  if (!hkdf_(data.shared, data.salt, X25519Info, data.wrapKey) ||
-      !sealKey_(data.wrapKey, fileKey, data.body))
+  if (!hkdf(data.shared, data.salt, X25519Info, data.wrapKey) ||
+      !sealKey(data.wrapKey, fileKey, data.body))
     return ZeEXCEPT(Error, "ZtlsAge", "X25519 stanza failed");
   ZuBArray<ZuBase64::enclen<false>(X25519KeySize)> ephemeral64;
   ZuBArray<ZuBase64::enclen<false>(FileKeySize + TagSize)> body64;
@@ -739,7 +739,7 @@ static ZuUnion<void, ZeException> appendX25519_(
   return {};
 }
 
-static ZuUnion<void, ZeException> appendHybrid_(
+static ZuUnion<void, ZeException> appendHybrid(
   AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan recipient, ZuBSpan fileKey)
 {
@@ -762,7 +762,7 @@ static ZuUnion<void, ZeException> appendHybrid_(
   return {};
 }
 
-static ZuUnion<void, ZeException> appendSshRSA_(
+static ZuUnion<void, ZeException> appendSshRSA(
   AgeHeaderScratch &header, ZuBSpan publicKey, ZuBSpan fileKey)
 {
   Ztls::PK::Data::PK_PKCS1 data;
@@ -786,7 +786,7 @@ static ZuUnion<void, ZeException> appendSshRSA_(
   size_t length = ZuBase64::encode<false>(
     {encoded, b64len}, {wrapped, n});
   uint8_t fingerprint[ZuBase64::enclen<false>(4)];
-  sshFingerprint_(publicKey, fingerprint);
+  sshFingerprint(publicKey, fingerprint);
   header << SshRSAArg << ZuBSpan{fingerprint, sizeof(fingerprint)} << '\n';
   for (size_t offset = 0; offset < length; offset += 64) {
     size_t left = length - offset;
@@ -797,7 +797,7 @@ static ZuUnion<void, ZeException> appendSshRSA_(
   return {};
 }
 
-static ZuUnion<void, ZeException> appendSshED_(
+static ZuUnion<void, ZeException> appendSshED(
   AgeHeaderScratch &header, Ztls::Random &rng,
   ZuBSpan publicKey, ZuBSpan fileKey)
 {
@@ -821,17 +821,17 @@ static ZuUnion<void, ZeException> appendSshED_(
   r = ephemeral.agree({data.salt + 32, 32}, data.shared);
   if (r.template is<ZeException>())
     return ZuMv(r).template p<ZeException>();
-  if (!hkdf_({}, publicKey, SshEDLabel, data.tweak))
+  if (!hkdf({}, publicKey, SshEDLabel, data.tweak))
     return ZeEXCEPT(Error, "ZtlsAge", "SSH ED25519 tweak failed");
   Ztls::PK::SK_X25519 tweak{data.tweak};
   r = tweak.agree(data.shared, data.tweaked);
   if (r.template is<ZeException>())
     return ZuMv(r).template p<ZeException>();
-  if (!hkdf_(data.tweaked, data.salt, SshEDLabel, data.wrapKey) ||
-      !sealKey_(data.wrapKey, fileKey, data.body))
+  if (!hkdf(data.tweaked, data.salt, SshEDLabel, data.wrapKey) ||
+      !sealKey(data.wrapKey, fileKey, data.body))
     return ZeEXCEPT(Error, "ZtlsAge", "SSH ED25519 stanza failed");
   uint8_t fingerprint[ZuBase64::enclen<false>(4)];
-  sshFingerprint_(publicKey, fingerprint);
+  sshFingerprint(publicKey, fingerprint);
   ZuBArray<ZuBase64::enclen<false>(32)> ephemeral64;
   ZuBArray<ZuBase64::enclen<false>(sizeof(data.body))> body64;
   ephemeral64.length(ZuBase64::encode<false>(
@@ -874,19 +874,19 @@ ZuUnion<void, ZeException> Age::encrypt(
       auto &recipient = recipients[i];
       ZuUnion<void, ZeException> r;
       if (recipient.template is<X25519Recipient>())
-        r = appendX25519_(header, rng,
+        r = appendX25519(header, rng,
           recipient.template p<X25519Recipient>().key, fileKey);
       else if (recipient.template is<HybridRecipient>())
-        r = appendHybrid_(header, rng,
+        r = appendHybrid(header, rng,
           recipient.template p<HybridRecipient>().key, fileKey);
       else if (recipient.template is<SshRSARecipient>())
-        r = appendSshRSA_(header,
+        r = appendSshRSA(header,
           recipient.template p<SshRSARecipient>().publicKey, fileKey);
       else if (recipient.template is<SshED25519Recipient>())
-        r = appendSshED_(header, rng,
+        r = appendSshED(header, rng,
           recipient.template p<SshED25519Recipient>().publicKey, fileKey);
       else
-        r = appendScrypt_(header, rng,
+        r = appendScrypt(header, rng,
           recipient.template p<ScryptRecipient>().passphrase, fileKey);
       if (r.template is<ZeException>())
         return ZuMv(r).template p<ZeException>();
@@ -897,7 +897,7 @@ ZuUnion<void, ZeException> Age::encrypt(
     return e;
   }
   header << "---";
-  if (!hkdf_(fileKey, {}, HeaderInfo, headerKey))
+  if (!hkdf(fileKey, {}, HeaderInfo, headerKey))
     return ZeEXCEPT(Error, "ZtlsAge", "header key derivation failed");
   Ztls::HMAC<Ztls::SHA256> mac;
   mac.start(headerKey);
@@ -909,10 +909,10 @@ ZuUnion<void, ZeException> Age::encrypt(
   header << ' ' << mac64 << '\n';
   if (file.write(header.data(), header.length()) != Zi::OK)
     return ZeEXCEPT(Error, "ZtlsAge", "header write failed");
-  return writePayload_(rng, file, fileKey, plaintext);
+  return writePayload(rng, file, fileKey, plaintext);
 }
 
-static bool nextLine_(ZuBSpan header, size_t &cursor, ZuCSpan &line)
+static bool nextLine(ZuBSpan header, size_t &cursor, ZuCSpan &line)
 {
   size_t start = cursor;
   while (cursor < header.length() && header[cursor] != '\n') ++cursor;
@@ -922,7 +922,7 @@ static bool nextLine_(ZuBSpan header, size_t &cursor, ZuCSpan &line)
   return true;
 }
 
-static bool parseScrypt_(
+static bool parseScrypt(
   ZuCSpan args, ZuCSpan body, ZuBSpan passphrase,
   ZuSpan<uint8_t> fileKey)
 {
@@ -949,14 +949,14 @@ static bool parseScrypt_(
     ZuClear(wrapKey, sizeof(wrapKey));
     ZuClear(wrapped, sizeof(wrapped));
   }};
-  if (!unb64_(saltText, salt) ||
-      !unb64_(body, wrapped) ||
-      !scryptKey_(passphrase, salt, parsed, wrapKey))
+  if (!unb64(saltText, salt) ||
+      !unb64(body, wrapped) ||
+      !scryptKey(passphrase, salt, parsed, wrapKey))
     return false;
-  return openKey_(wrapKey, wrapped, fileKey);
+  return openKey(wrapKey, wrapped, fileKey);
 }
 
-static bool parseX25519_(
+static bool parseX25519(
   ZuCSpan args, ZuCSpan body, ZuBSpan seed,
   ZuSpan<uint8_t> fileKey)
 {
@@ -974,18 +974,18 @@ static bool parseX25519_(
   ZuCSpan ephemeralText{
     args.data() + X25519Arg.length(),
     args.length() - X25519Arg.length()};
-  if (!unb64_(ephemeralText, {data.salt, X25519KeySize}) ||
-      !unb64_(body, data.wrapped)) return false;
+  if (!unb64(ephemeralText, {data.salt, X25519KeySize}) ||
+      !unb64(body, data.wrapped)) return false;
   Ztls::PK::SK_X25519 key{seed};
   auto r = key.exportPK({data.salt + X25519KeySize, X25519KeySize});
   if (r.template is<ZeException>()) return false;
   r = key.agree({data.salt, X25519KeySize}, data.shared);
   if (r.template is<ZeException>()) return false;
-  return hkdf_(data.shared, data.salt, X25519Info, data.wrapKey) &&
-    openKey_(data.wrapKey, data.wrapped, fileKey);
+  return hkdf(data.shared, data.salt, X25519Info, data.wrapKey) &&
+    openKey(data.wrapKey, data.wrapped, fileKey);
 }
 
-static bool parseHybrid_(
+static bool parseHybrid(
   ZuCSpan args, ZuCSpan body, ZuBSpan seed,
   ZuSpan<uint8_t> fileKey)
 {
@@ -997,7 +997,7 @@ static bool parseHybrid_(
   uint8_t wrapped[FileKeySize + Ztls::HPKE::TagSize];
   ZuCSpan encText{args.data() + HybridArg.length(),
     args.length() - HybridArg.length()};
-  if (!unb64_(encText, enc) || !unb64_(body, wrapped)) return false;
+  if (!unb64(encText, enc) || !unb64(body, wrapped)) return false;
   Ztls::PK::SK_MLKEM768_X25519 key{seed};
   auto r = Ztls::HPKE::openBase(key, HybridInfo, {},
     enc, wrapped, fileKey);
@@ -1005,7 +1005,7 @@ static bool parseHybrid_(
     r.template p<size_t>() == FileKeySize;
 }
 
-static bool parseSshRSA_(
+static bool parseSshRSA(
   ZuCSpan args, ZuBSpan body, unsigned bodyChars,
   const Age::SshRSAIdentity &identity, ZuSpan<uint8_t> fileKey)
 {
@@ -1015,7 +1015,7 @@ static bool parseSshRSA_(
       memcmp(args.data(), SshRSAArg.data(), SshRSAArg.length()))
     return false;
   uint8_t fingerprint[ZuBase64::enclen<false>(4)];
-  sshFingerprint_(identity.publicKey, fingerprint);
+  sshFingerprint(identity.publicKey, fingerprint);
   if (memcmp(args.data() + SshRSAArg.length(),
       fingerprint, sizeof(fingerprint))) return false;
   size_t keySize = Ztls::Backend::pkey_rsa_size(identity.key->key);
@@ -1030,7 +1030,7 @@ static bool parseSshRSA_(
   for (auto c : body)
     if (c != '\n') encoded[i++] = c;
   if (i != bodyChars ||
-      !unb64_({encoded, bodyChars}, {encoded, n}))
+      !unb64({encoded, bodyChars}, {encoded, n}))
     return false;
   auto r = identity.key->oaepDecrypt(
     {encoded, n}, SshRSALabel, {recovered, n});
@@ -1040,7 +1040,7 @@ static bool parseSshRSA_(
   return true;
 }
 
-static bool parseSshED_(
+static bool parseSshED(
   ZuCSpan args, ZuCSpan body,
   const Age::SshED25519Identity &identity, ZuSpan<uint8_t> fileKey)
 {
@@ -1051,7 +1051,7 @@ static bool parseSshED_(
       memcmp(args.data(), SshEDArg.data(), SshEDArg.length()))
     return false;
   uint8_t fingerprint[ZuBase64::enclen<false>(4)];
-  sshFingerprint_(identity.publicKey, fingerprint);
+  sshFingerprint(identity.publicKey, fingerprint);
   auto arg = args.data() + SshEDArg.length();
   if (memcmp(arg, fingerprint, sizeof(fingerprint)) ||
       arg[sizeof(fingerprint)] != ' ') return false;
@@ -1065,8 +1065,8 @@ static bool parseSshED_(
     uint8_t wrapped[FileKeySize + TagSize];
   } data;
   ZuGuard clear{[&data]() { ZuClear(&data, sizeof(data)); }};
-  if (!unb64_(ephemeralText, {data.salt, 32}) ||
-      !unb64_(body, data.wrapped)) return false;
+  if (!unb64(ephemeralText, {data.salt, 32}) ||
+      !unb64(body, data.wrapped)) return false;
   auto r = identity.key->exportSK(data.seed);
   if (r.template is<ZeException>()) return false;
   Ztls::MD<Ztls::SHA512> sha512;
@@ -1077,15 +1077,15 @@ static bool parseSshED_(
   if (r.template is<ZeException>()) return false;
   r = x.agree({data.salt, 32}, data.shared);
   if (r.template is<ZeException>()) return false;
-  if (!hkdf_({}, identity.publicKey, SshEDLabel, data.tweak)) return false;
+  if (!hkdf({}, identity.publicKey, SshEDLabel, data.tweak)) return false;
   Ztls::PK::SK_X25519 tweak{data.tweak};
   r = tweak.agree(data.shared, data.tweaked);
   if (r.template is<ZeException>()) return false;
-  return hkdf_(data.tweaked, data.salt, SshEDLabel, data.wrapKey) &&
-    openKey_(data.wrapKey, data.wrapped, fileKey);
+  return hkdf(data.tweaked, data.salt, SshEDLabel, data.wrapKey) &&
+    openKey(data.wrapKey, data.wrapped, fileKey);
 }
 
-static bool verifyHeader_(
+static bool verifyHeader(
   ZuBSpan header, size_t macStart,
   ZuBSpan expected, ZuBSpan fileKey)
 {
@@ -1094,7 +1094,7 @@ static bool verifyHeader_(
     ZuClear(key, sizeof(key));
     ZuClear(actual, sizeof(actual));
   }};
-  if (!hkdf_(fileKey, {}, HeaderInfo, key)) return false;
+  if (!hkdf(fileKey, {}, HeaderInfo, key)) return false;
   Ztls::HMAC<Ztls::SHA256> mac;
   mac.start(key);
   mac.update({header.data(), macStart + 3});
@@ -1142,14 +1142,14 @@ ZuUnion<size_t, ZeException> Age::decrypt(
   ZuCSpan macText{header.data() + end, header.length() - end - 1};
   uint8_t expected[KeySize];
   ZuGuard clearMac{[&expected]() { ZuClear(expected, sizeof(expected)); }};
-  if (!unb64_(macText, expected))
+  if (!unb64(macText, expected))
     return ZeEXCEPT(Error, "ZtlsAge", "invalid header MAC");
   size_t cursor = Version.length();
   unsigned stanzas = 0;
   bool scrypt = false, found = false;
   while (cursor < macStart) {
     ZuCSpan args, body;
-    if (!nextLine_({header.data(), macStart}, cursor, args) ||
+    if (!nextLine({header.data(), macStart}, cursor, args) ||
         args.length() < 4 || memcmp(args.data(), "-> ", 3))
       return ZeEXCEPT(Error, "ZtlsAge", "invalid recipient stanza");
     if (++stanzas > RecipientMax)
@@ -1169,7 +1169,7 @@ ZuUnion<size_t, ZeException> Age::decrypt(
     unsigned bodyChars = 0;
     size_t bodyStart = cursor;
     do {
-      if (!nextLine_({header.data(), macStart}, cursor, body) ||
+      if (!nextLine({header.data(), macStart}, cursor, body) ||
           body.length() > 64)
         return ZeEXCEPT(Error, "ZtlsAge", "invalid stanza body");
       ++bodyLines;
@@ -1183,23 +1183,23 @@ ZuUnion<size_t, ZeException> Age::decrypt(
         auto &identity = identities[i];
         bool unwrapped = false;
         if (isScrypt && identity.template is<ScryptIdentity>())
-          unwrapped = parseScrypt_(args, body,
+          unwrapped = parseScrypt(args, body,
             identity.template p<ScryptIdentity>().passphrase, candidate);
         else if (isX25519 && identity.template is<X25519Identity>())
-          unwrapped = parseX25519_(args, body,
+          unwrapped = parseX25519(args, body,
             identity.template p<X25519Identity>().seed, candidate);
         else if (isHybrid && identity.template is<HybridIdentity>())
-          unwrapped = parseHybrid_(args, body,
+          unwrapped = parseHybrid(args, body,
             identity.template p<HybridIdentity>().seed, candidate);
         else if (isSshRSA && identity.template is<SshRSAIdentity>())
-          unwrapped = parseSshRSA_(args,
+          unwrapped = parseSshRSA(args,
             {header.data() + bodyStart, cursor - bodyStart}, bodyChars,
             identity.template p<SshRSAIdentity>(), candidate);
         else if (isSshED && identity.template is<SshED25519Identity>())
-          unwrapped = parseSshED_(args, body,
+          unwrapped = parseSshED(args, body,
             identity.template p<SshED25519Identity>(), candidate);
         if (unwrapped &&
-            verifyHeader_(header, macStart, expected, candidate)) {
+            verifyHeader(header, macStart, expected, candidate)) {
           found = true;
           break;
         }
@@ -1211,7 +1211,7 @@ ZuUnion<size_t, ZeException> Age::decrypt(
   }
   if (cursor != macStart || !stanzas || (scrypt && stanzas != 1) || !found)
     return ZeEXCEPT(Error, "ZtlsAge", "no usable recipient");
-  return readPayload_(reader, candidate, plaintext);
+  return readPayload(reader, candidate, plaintext);
 }
 
 } // Ztls_

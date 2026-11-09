@@ -217,7 +217,7 @@ friend inline ZuStringT<"Ztc.Hub.State"> ZmNHeapID(State *);
     auto run = [this, fn = ZuFwd<L>(fn)]() mutable {
       { auto complete = ZuMv(fn); complete(); }
       --posts;
-      owner->drain_();
+      owner->stop_2();
     };
     if (multiplex) multiplex->rxRun(ZuMv(run));
     else run();
@@ -750,10 +750,10 @@ ZiMultiplex *Hubd::mx_() const
 void Hubd::start_()
 {
   if (!m_state) { Engine::started(false); return; }
-  post_([this]() { startRx_(); });
+  post_([this]() { start_0(); });
 }
 
-void Hubd::startRx_()
+void Hubd::start_0()
 {
   m_state->startError = Zum::ServiceError::OK;
   if (!validManifest(*m_state)) {
@@ -770,7 +770,7 @@ void Hubd::startRx_()
     post_([this, ok]() {
       if (!ok) {
         m_state->startError = m_state->service.startError();
-        stopRx_(true);
+        stop_0(true);
         return;
       }
       m_state->service.publish(manifest(), [this](Zum::ServiceProtocolResult result) {
@@ -778,17 +778,17 @@ void Hubd::startRx_()
         post_([this, error]() {
           if (error != Zum::ServiceError::OK) {
             m_state->startError = Zum::ServiceError::Unavailable;
-            stopRx_(true);
+            stop_0(true);
             return;
           }
-          startDB_();
+          start_1();
         });
       });
     });
   });
 }
 
-void Hubd::startDB_()
+void Hubd::start_1()
 {
   if (!m_state->db) {
     m_state->state = HubdState::Up;
@@ -799,7 +799,7 @@ void Hubd::startDB_()
     post_([this, ok]() {
       if (!ok) {
         m_state->startError = Zum::ServiceError::Unavailable;
-        stopRx_(true);
+        stop_0(true);
         return;
       }
       // DB startup and role activation differ. dbUp owns readiness; a standby
@@ -822,23 +822,23 @@ void Hubd::startDB_()
 
 void Hubd::stop_()
 {
-  post_([this]() { stopRx_(false); });
+  post_([this]() { stop_0(false); });
 }
 
-void Hubd::stopRx_(bool failed)
+void Hubd::stop_0(bool failed)
 {
   m_state->stopOK = true;
-  if (!m_state->db) { stopService_(failed); return; }
+  if (!m_state->db) { stop_1(failed); return; }
   // A failure is diagnostic; all remaining shutdown steps must still run.
   m_state->db->stop([this, failed](bool ok) {
     post_([this, failed, ok]() {
       if (!ok) m_state->stopOK = false;
-      stopService_(failed);
+      stop_1(failed);
     });
   });
 }
 
-void Hubd::stopService_(bool failed)
+void Hubd::stop_1(bool failed)
 {
   // Also joins a role transition when no dbDown callback was needed (e.g.
   // failed startup or an already inactive DB). Engine stop is idempotent.
@@ -847,7 +847,7 @@ void Hubd::stopService_(bool failed)
     m_state->state = HubdState::Down;
     m_state->rollback = failed;
     m_state->draining = true;
-    drain_();
+    stop_2();
   };
   if (!m_state->serviceInit) { drained(); return; }
   m_state->service.stop([this, drained = ZuMv(drained)](bool ok) mutable {
@@ -858,19 +858,19 @@ void Hubd::stopService_(bool failed)
   });
 }
 
-void Hubd::drain_()
+void Hubd::stop_2()
 {
   if (!m_state || !m_state->draining || m_state->drainPosted ||
       m_state->posts.load_()) return;
   m_state->drainPosted = true;
-  clearBatch_();
+  stop_3();
 }
 
-void Hubd::clearBatch_()
+void Hubd::stop_3()
 {
   unsigned budget = mx_() ? m_state->cf.schedulerTurnWork : UINT_MAX;
   if (!Hubd_::clearRouting(*m_state, budget)) {
-    post_([this]() { clearBatch_(); });
+    post_([this]() { stop_3(); });
     return;
   }
   auto finish = [this]() {
@@ -916,7 +916,7 @@ void Hubd::verify(Zum::String token, Zum::ServiceVerifyFn complete)
 void Hubd::setRefreshRevocationFn(Zum::ServiceRefreshFn fn)
 {
   if (!m_state || !m_state->serviceInit) return;
-  m_state->service.setRefreshRevocationFn(ZuMv(fn));
+  m_state->service.refreshFn(ZuMv(fn));
 }
 
 void Hubd::receiveSET(Zum::ServiceSETRequest request,

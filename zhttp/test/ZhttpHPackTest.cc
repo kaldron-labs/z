@@ -225,9 +225,9 @@ void testRFCResponses(bool huffman)
   decoder.final();
 }
 
-void testRepresentationsAndFailures()
+void representationsAndFailures()
 {
-  ZuTestScope(testRepresentationsAndFailures);
+  ZuTestScope(representationsAndFailures);
 
   Zhttp::H2::HPackDecoder decoder;
   Fields fields;
@@ -609,7 +609,7 @@ int main(int argc, char **argv)
   ZuTestCall(testHuffmanRequest);
   ZuTestCall(testRFCResponses, false);
   ZuTestCall(testRFCResponses, true);
-  ZuTestCall(testRepresentationsAndFailures);
+  ZuTestCall(representationsAndFailures);
   ZuTestCall(testEncoder);
   ZuTestCall(testDynamicEncoder);
   ZuTestCall(testTxStorageAndUpdates);

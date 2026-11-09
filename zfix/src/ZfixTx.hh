@@ -135,8 +135,8 @@ public:
   using Base::replaying_;
   using Base::hold_;
 
-  bool abortTx_(uint64_t epoch, uint64_t key) {
-    if (epoch != m_epoch || m_pending || resetting_()) return false;
+  bool abortTx(uint64_t epoch, uint64_t key) {
+    if (epoch != m_epoch || m_pending || resetting()) return false;
     auto msg = Base::assigned_(key);
     if (msg && msg->data().history.body->msgType() == "A" &&
 	*msg->data().history.originalTime) return false;
@@ -145,32 +145,32 @@ public:
 
   uint64_t epoch_() const { return m_epoch; }
   uint64_t connection_() const { return m_connection; }
-  bool loading_() const { return m_pending.ptr(); }
-  bool resetting_() const { return m_resetEpoch; }
+  bool loading() const { return m_pending.ptr(); }
+  bool resetting() const { return m_resetEpoch; }
   bool attached_() const { return m_attached; }
   const TxLimits &limits() const { return m_limits; }
 
-  bool resetReady_() const {
-    return !m_ready && !m_pending && !resetting_() && Base::epochReady_();
+  bool resetReady() const {
+    return !m_ready && !m_pending && !resetting() && Base::epochReady();
   }
 
-  bool acknowledge_(uint64_t epoch, uint64_t next) {
-    if (epoch != m_epoch || resetting_()) return false;
+  bool acknowledge(uint64_t epoch, uint64_t next) {
+    if (epoch != m_epoch || resetting()) return false;
     auto previous = Base::acknowledged_();
-    if (!Base::acknowledge_(next)) return false;
+    if (!Base::acknowledge(next)) return false;
     if (next > previous)
       impl()->ackdTx(TxContext{m_epoch, m_connection, 0}, previous, next);
     return true;
   }
 
   bool replay_(uint64_t epoch, uint64_t begin, uint64_t end = 0) {
-    return epoch == m_epoch && !resetting_() && Base::replay_(begin, end);
+    return epoch == m_epoch && !resetting() && Base::replay_(begin, end);
   }
 
   // Owner execution only after protocol agreement and transport quiescence.
   // Application history remains in its own epoch; no operational work is discarded.
   bool reset_(uint64_t epoch, uint64_t nextEpoch) {
-    if (epoch != m_epoch || nextEpoch <= epoch || m_ready || m_pending || resetting_())
+    if (epoch != m_epoch || nextEpoch <= epoch || m_ready || m_pending || resetting())
       return false;
     auto previous = progress_();
     if (!Base::reset_(1)) return false;
@@ -180,9 +180,9 @@ public:
 
   // Only after explicit reset agreement and ingress/transport preparation.
   // Completion is posted so the coordinator first records its request ID.
-  uint64_t resetBegin_(uint64_t epoch, uint64_t nextEpoch) {
+  uint64_t resetBegin(uint64_t epoch, uint64_t nextEpoch) {
     if (epoch != m_epoch || nextEpoch <= epoch || m_ready || m_pending ||
-	resetting_() || !Base::epochIdle_()) return 0;
+	resetting() || !Base::epochIdle()) return 0;
     m_resetProgress = progress_();
     m_resetEpoch = nextEpoch;
     m_resetID = ++m_ticket;
@@ -190,8 +190,8 @@ public:
     return m_resetID;
   }
 
-  bool cancelReset_(uint64_t epoch, uint64_t id) {
-    if (epoch != m_epoch || !resetting_() || !id || id != m_resetID) return false;
+  bool cancelReset(uint64_t epoch, uint64_t id) {
+    if (epoch != m_epoch || !resetting() || !id || id != m_resetID) return false;
     failReset({Fmt::ErrorCode::Output});
     return true;
   }
@@ -206,7 +206,7 @@ public:
   void limitTx(TxContext, uint64_t, unsigned) { }
 
   bool resume_() {
-    if (!m_attached || resetting_()) return false;
+    if (!m_attached || resetting()) return false;
     if (!Base::running_()) {
       auto latest = Base::latest_();
       if (latest && latest->data().connection == m_connection &&
@@ -222,7 +222,7 @@ public:
 	}
 	if (epoch == m_epoch) Base::admitted_(latest->data().history.seqNo + 1);
 	return m_attached && connection == m_connection && epoch == m_epoch &&
-	  !resetting_() && Base::running_();
+	  !resetting() && Base::running_();
       }
     }
     Base::resume_();
@@ -231,7 +231,7 @@ public:
 
   void run_(unsigned kind, uint64_t ticket) {
     if (kind == TxTask::Reset) {
-      if (!resetting_() || !m_resetTicket || ticket != m_resetTicket) return;
+      if (!resetting() || !m_resetTicket || ticket != m_resetTicket) return;
       m_resetTicket = 0;
       resetNext();
       return;
@@ -242,7 +242,7 @@ public:
   // Attachment does not start publication. The session coordinator separately
   // resumes the queue after establishing its reconnect/recovery boundary.
   bool attach_(uint64_t connection) {
-    if (!connection || connection <= m_connection || m_attached || resetting_())
+    if (!connection || connection <= m_connection || m_attached || resetting())
       return false;
     return attach(connection);
   }
@@ -256,7 +256,7 @@ public:
 
   bool detach_(uint64_t connection) {
     if (!m_attached || connection != m_connection) return false;
-    if (resetting_()) failReset({Fmt::ErrorCode::Output});
+    if (resetting()) failReset({Fmt::ErrorCode::Output});
     Base::hold_();
     m_attached = m_ready = false;
     return true;
@@ -266,14 +266,14 @@ public:
 
   bool ready_(uint64_t connection, bool value) {
     if (!m_attached || connection != m_connection) return false;
-    if (value && resetting_()) return false;
+    if (value && resetting()) return false;
     m_ready = value;
     return true;
   }
 
   unsigned select_(TxBody::Ref body) {
     if (!body || !m_attached) return TxSelect::Invalid;
-    if (m_pending || resetting_()) return TxSelect::Busy;
+    if (m_pending || resetting()) return TxSelect::Busy;
     if (!body->administrative() && !m_ready) return TxSelect::Held;
     auto next = Base::next_();
     if (next > m_config.sequenceLimit || (!body->administrative() &&
@@ -303,11 +303,11 @@ public:
   }
 
   bool reloaded_(uint64_t token, TxHistory history) {
-    return Base::completeReload_(token, ZuMv(history));
+    return Base::completeReload(token, ZuMv(history));
   }
 
   TxProgress progress_() const {
-    auto replay = Base::replayRange_();
+    auto replay = Base::replayRange();
     return {Base::next_(), Base::published_(), Base::acknowledged_(),
       replay.length() ? uint64_t(replay.key()) : 0,
       replay.length() ? uint64_t(replay.key()) + replay.length() : 0};
@@ -321,7 +321,7 @@ public:
 
   bool restore_(uint64_t epoch, uint64_t loaded, uint64_t published,
       uint64_t ackd, Span replay = {}) {
-    if (!epoch || epoch != m_epoch || m_connection || m_attached || m_pending || resetting_())
+    if (!epoch || epoch != m_epoch || m_connection || m_attached || m_pending || resetting())
       return false;
     return Base::restore_(loaded, published, ackd, replay);
   }

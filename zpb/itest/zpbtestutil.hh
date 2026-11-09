@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZpbTestUtil_HH
-#define ZpbTestUtil_HH
+#ifndef zpbtestutil_HH
+#define zpbtestutil_HH
 
 #include <errno.h>
 #include <limits.h>
@@ -115,4 +115,4 @@ static Text read(const Zi::Path &path)
 
 } // ZpbTest
 
-#endif // ZpbTestUtil_HH
+#endif // zpbtestutil_HH

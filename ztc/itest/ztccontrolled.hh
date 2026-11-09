@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZtcControlled_HH
-#define ZtcControlled_HH
+#ifndef ztccontrolled_HH
+#define ztccontrolled_HH
 
 #include <zlib/ZiMultiplex.hh>
 #include <zlib/ZtcDB.hh>

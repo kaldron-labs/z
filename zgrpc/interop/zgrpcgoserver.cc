@@ -11,7 +11,7 @@
 #include <zlib/ZiResolver.hh>
 #include <zlib/ZgrpcServer.hh>
 
-#include "ZgrpcMatrix.hh"
+#include "zgrpcmatrix.hh"
 
 static Metadata fields(const Context &ctx, bool initial)
 {

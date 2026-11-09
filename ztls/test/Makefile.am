@@ -38,7 +38,7 @@ endif
 ZtlsBufHookTest_SOURCES = ZtlsBufHookTest.cc
 ZtlsAsyncTest_SOURCES = ZtlsAsyncTest.cc
 ZtlsSecTest_SOURCES = ZtlsSecTest.cc
-dist_noinst_SCRIPTS = Keygen.sh
+dist_noinst_SCRIPTS = ZtlsKeygen.sh
 
 .PHONY: test
 test: export ZI_LOGDIR = $(abs_top_builddir)/logs

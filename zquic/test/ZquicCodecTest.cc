@@ -23,7 +23,7 @@ static ZuBSpan bspan_(const uint8_t *p, unsigned n)
   return ZuBSpan{p, n};
 }
 
-static int putParam_(uint8_t *out, unsigned len, uint64_t id, ZuBSpan value)
+static int putParam(uint8_t *out, unsigned len, uint64_t id, ZuBSpan value)
 {
   unsigned o = 0;
   if (Zquic::VarInt::put(out, len, id, o) < 0 ||
@@ -34,13 +34,13 @@ static int putParam_(uint8_t *out, unsigned len, uint64_t id, ZuBSpan value)
   return int(o + value.length());
 }
 
-static int putParamVar_(
+static int putParamVar(
   uint8_t *out, unsigned len, uint64_t id, uint64_t value)
 {
   uint8_t v[8];
   int n = Zquic::VarInt::encode(v, sizeof(v), value);
   if (n < 0) return -1;
-  return putParam_(out, len, id, bytes_(v, unsigned(n)));
+  return putParam(out, len, id, bytes_(v, unsigned(n)));
 }
 
 void testVarIntAndPkt()
@@ -688,10 +688,10 @@ void testTransportParamCoverage()
   p.maxIdleTimeout = 16363;
   p.maxUDPPayloadSize = Zquic::BufSize;
   p.initialMaxData = 1000000009;
-  p.initialMaxStreamDataBidiLocal = 1000000007;
-  p.initialMaxStreamDataBidiRemote = 961748941;
+  p.initMaxStreamDataDuplexLcl = 1000000007;
+  p.initMaxStreamDataDuplexRmt = 961748941;
   p.initialMaxStreamDataUni = 982451653;
-  p.initialMaxStreamsBidi = 908;
+  p.initMaxStreamsDuplex = 908;
   p.initialMaxStreamsUni = 16383;
   p.ackDelayExponent = 20;
   p.maxAckDelay = 63;
@@ -711,12 +711,12 @@ void testTransportParamCoverage()
       q.maxIdleTimeout == p.maxIdleTimeout &&
       q.maxUDPPayloadSize == p.maxUDPPayloadSize &&
       q.initialMaxData == p.initialMaxData &&
-      q.initialMaxStreamDataBidiLocal ==
-	p.initialMaxStreamDataBidiLocal &&
-      q.initialMaxStreamDataBidiRemote ==
-	p.initialMaxStreamDataBidiRemote &&
+      q.initMaxStreamDataDuplexLcl ==
+	p.initMaxStreamDataDuplexLcl &&
+      q.initMaxStreamDataDuplexRmt ==
+	p.initMaxStreamDataDuplexRmt &&
       q.initialMaxStreamDataUni == p.initialMaxStreamDataUni &&
-      q.initialMaxStreamsBidi == p.initialMaxStreamsBidi &&
+      q.initMaxStreamsDuplex == p.initMaxStreamsDuplex &&
       q.initialMaxStreamsUni == p.initialMaxStreamsUni &&
       q.ackDelayExponent == p.ackDelayExponent &&
       q.maxAckDelay == p.maxAckDelay &&
@@ -734,45 +734,45 @@ void testTransportParamCoverage()
       !q.disableActiveMigration,
     "absent disable_active_migration decoded as disabled");
 
-  n = putParam_(b, sizeof(b), 0x3f, "abc");
+  n = putParam(b, sizeof(b), 0x3f, "abc");
   ZuCHECK(n > 0 &&
       !q.decode(bytes_(b, unsigned(n))),
     "unknown transport parameter was not ignored");
 
-  n = putParam_(b, sizeof(b), 0x0c, "x");
+  n = putParam(b, sizeof(b), 0x0c, "x");
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "non-empty disable_active_migration accepted");
-  n = putParamVar_(b, sizeof(b), 0x03, Zquic::MinUDPPayload - 1);
+  n = putParamVar(b, sizeof(b), 0x03, Zquic::MinUDPPayload - 1);
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "undersized max_udp_payload_size accepted");
-  n = putParamVar_(b, sizeof(b), 0x0a, 21);
+  n = putParamVar(b, sizeof(b), 0x0a, 21);
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "oversized ack_delay_exponent accepted");
-  n = putParamVar_(b, sizeof(b), 0x0b, 1ULL<<14);
+  n = putParamVar(b, sizeof(b), 0x0b, 1ULL<<14);
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "oversized max_ack_delay accepted");
-  n = putParamVar_(b, sizeof(b), 0x0e, 1);
+  n = putParamVar(b, sizeof(b), 0x0e, 1);
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "undersized active_connection_id_limit accepted");
-  n = putParam_(b, sizeof(b), 0x02, "short-token");
+  n = putParam(b, sizeof(b), 0x02, "short-token");
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
     "short stateless_reset_token accepted");
 
   uint8_t value[32];
   memset(value, 'a', sizeof(value));
-  n = putParam_(b, sizeof(b), 0x0f,
+  n = putParam(b, sizeof(b), 0x0f,
     bytes_(value, Zquic::MinCIDLength - 1));
   ZuCHECK(n > 0 &&
       !q.decode(bytes_(b, unsigned(n))) &&
       q.initialSCID.length() == Zquic::MinCIDLength - 1,
     "short peer initial_source_connection_id was rejected");
-  n = putParam_(b, sizeof(b), 0x0f,
+  n = putParam(b, sizeof(b), 0x0f,
     bytes_(value, Zquic::CxnIDMax + 1));
   ZuCHECK(n > 0 &&
       q.decode(bytes_(b, unsigned(n))) < 0,
@@ -801,10 +801,10 @@ void testZeroRTTTransportParams()
   remembered.maxIdleTimeout = 120;
   remembered.maxUDPPayloadSize = 1280;
   remembered.initialMaxData = 1000;
-  remembered.initialMaxStreamDataBidiLocal = 2000;
-  remembered.initialMaxStreamDataBidiRemote = 3000;
+  remembered.initMaxStreamDataDuplexLcl = 2000;
+  remembered.initMaxStreamDataDuplexRmt = 3000;
   remembered.initialMaxStreamDataUni = 4000;
-  remembered.initialMaxStreamsBidi = 5;
+  remembered.initMaxStreamsDuplex = 5;
   remembered.initialMaxStreamsUni = 6;
   remembered.ackDelayExponent = 3;
   remembered.maxAckDelay = 25;
@@ -817,10 +817,10 @@ void testZeroRTTTransportParams()
     "matching 0-RTT transport parameters rejected");
 
   current.initialMaxData += 1;
-  current.initialMaxStreamDataBidiLocal += 1;
-  current.initialMaxStreamDataBidiRemote += 1;
+  current.initMaxStreamDataDuplexLcl += 1;
+  current.initMaxStreamDataDuplexRmt += 1;
   current.initialMaxStreamDataUni += 1;
-  current.initialMaxStreamsBidi += 1;
+  current.initMaxStreamsDuplex += 1;
   current.initialMaxStreamsUni += 1;
   current.activeCxnIDLimit += 1;
   current.maxUDPPayloadSize += 1;
@@ -834,7 +834,7 @@ void testZeroRTTTransportParams()
       Zquic::ZeroRTTReason::FlowLimit,
     "0-RTT flow limit reduction not rejected");
   current = remembered;
-  current.initialMaxStreamsBidi -= 1;
+  current.initMaxStreamsDuplex -= 1;
   ZuCHECK(Zquic::validateZeroRTTParams(remembered, current) ==
       Zquic::ZeroRTTReason::StreamLimit,
     "0-RTT stream limit reduction not rejected");

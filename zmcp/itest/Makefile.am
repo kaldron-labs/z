@@ -25,7 +25,7 @@ noinst_PROGRAMS = zmcphttptest zmcpstdiotest zmcpwstest
 zmcphttptest_SOURCES = zmcphttptest.cc
 zmcpstdiotest_SOURCES = zmcpstdiotest.cc
 zmcpwstest_SOURCES = zmcpwstest.cc
-noinst_HEADERS = ZmcpITestPorts.hh zmcpitestbatch.hh
+noinst_HEADERS = zmcpitestports.hh zmcpitestbatch.hh
 
 EXTRA_DIST = README.md
 

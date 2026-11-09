@@ -380,11 +380,11 @@ IDVec oidcMapRoles(
   return roles;
 }
 
-class OIDCUserLoad_ : public ZmNHeap<OIDCUserLoad_>, public ZmObject  {
-friend inline ZuStringT<"Zum.zumd.oidc.OIDCUserLoad"> ZmNHeapID(OIDCUserLoad_ *);
+class OIDCUserLoad : public ZmNHeap<OIDCUserLoad>, public ZmObject  {
+friend inline ZuStringT<"Zum.zumd.oidc.OIDCUserLoad"> ZmNHeapID(OIDCUserLoad *);
 
 public:
-  OIDCUserLoad_(DB *db, String subject,
+  OIDCUserLoad(DB *db, String subject,
       const OIDCConfig &config, StringVec roleValues,
       StringVec eligibilityValues, int64_t now, OIDCUserFn complete,
       ZmRef<ZmPolymorph> work) :
@@ -403,7 +403,7 @@ public:
   {
     if (!m_db || !m_subject || !m_appID || !m_providerID ||
         !m_assignmentMaxAge || m_now <= 0 || !m_complete || !m_rng.init()) {
-      finish_(false);
+      load_4(false);
       return;
     }
     switch (m_eligibilityMode) {
@@ -416,79 +416,79 @@ public:
             if (value == allowed) { m_eligible = true; break; }
         break;
       default:
-        finish_(false);
+        load_4(false);
         return;
     }
-    identity_();
+    load_0();
   }
 
 private:
-  void identity_()
+  void load_0()
   {
     auto identities = m_db->extIdentities;
-    identities->run(0, [self = ZmRef<OIDCUserLoad_>{this},
+    identities->run(0, [self = ZmRef<OIDCUserLoad>{this},
         identities]() mutable {
       identities->find<0>(0, ZuFwdTuple(self->m_providerID,
           self->m_issuer, self->m_subject), [self = ZuMv(self)](
             ZdbRowRef<ExtIdentity> row) mutable {
         if (row && !row->data().owner) {
-          self->user_(row->data().userID);
+          self->load_2(row->data().userID);
           return;
         }
-        if (row) { self->finish_(false); return; }
-        self->project_();
+        if (row) { self->load_4(false); return; }
+        self->load_1();
       });
     });
   }
 
-  void project_()
+  void load_1()
   {
     uint64_t userID = 0;
     do {
       if (!m_rng.random({reinterpret_cast<uint8_t *>(&userID),
-          sizeof(userID)})) { finish_(false); return; }
+          sizeof(userID)})) { load_4(false); return; }
     } while (!userID);
     Bytes random;
     random.length(sizeof(ZdbSagaID), false);
-    if (!m_rng.random(random)) { finish_(false); return; }
+    if (!m_rng.random(random)) { load_4(false); return; }
     ZdbSagaID sagaID;
     memcpy(&sagaID, random.data(), sizeof(sagaID));
     String name{"oidc:"};
     name << m_providerID << ':' << userID;
     Bytes handle;
     handle.length(32, false);
-    if (!m_rng.random(handle)) { finish_(false); return; }
+    if (!m_rng.random(handle)) { load_4(false); return; }
     ExternalProjectionArgs projection{.providerID = m_providerID,
       .issuer = m_issuer, .subject = m_subject, .userID = userID,
       .name = ZuMv(name), .handle = ZuMv(handle), .created = m_now};
     auto db = static_cast<DB *>(m_db->users->db());
     if (!sagaSubmit(db, sagaID, externalProjection(ZuMv(projection)),
-        [self = ZmRef<OIDCUserLoad_>{this}](bool ok) mutable {
-          if (!ok) self->finish_(false);
-        }, [self = ZmRef<OIDCUserLoad_>{this}](bool ok) mutable {
-          if (!ok) { self->finish_(false); return; }
-          self->identity_();
-        })) finish_(false);
+        [self = ZmRef<OIDCUserLoad>{this}](bool ok) mutable {
+          if (!ok) self->load_4(false);
+        }, [self = ZmRef<OIDCUserLoad>{this}](bool ok) mutable {
+          if (!ok) { self->load_4(false); return; }
+          self->load_0();
+        })) load_4(false);
   }
 
-  void user_(UserID userID)
+  void load_2(UserID userID)
   {
     auto users = m_db->users;
-    users->run(0, [self = ZmRef<OIDCUserLoad_>{this}, users, userID]() mutable {
+    users->run(0, [self = ZmRef<OIDCUserLoad>{this}, users, userID]() mutable {
       users->find<0>(0, ZuFwdTuple(userID), [
           self = ZuMv(self)](ZdbRowRef<User> row) mutable {
 	if (!row || row->data().source != UserSource::External ||
 	    row->data().state != State::Active || row->data().owner) {
-	  self->finish_(false);
+	  self->load_4(false);
 	  return;
 	}
 	self->m_user = row->data();
-	self->evidence_();
+	self->load_3();
       });
     });
   }
 
-  Evidence evidenceRecord_() const
+  Evidence evidenceRecord() const
   {
     int64_t deadline = m_now > INT64_MAX - int64_t(m_assignmentMaxAge) ?
       INT64_MAX : m_now + int64_t(m_assignmentMaxAge);
@@ -499,39 +499,39 @@ private:
       .created = m_now, .updated = m_now};
   }
 
-  void evidence_()
+  void load_3()
   {
     auto evidence = m_db->evidence;
-    evidence->run(0, [self = ZmRef<OIDCUserLoad_>{this}, evidence]() mutable {
+    evidence->run(0, [self = ZmRef<OIDCUserLoad>{this}, evidence]() mutable {
       auto key = ZuFwdTuple(self->m_appID, self->m_user.id, self->m_providerID);
       evidence->findUpd<0, ZuSeq<1>>(0, ZuMv(key), [self = ZuMv(self), evidence](
           ZdbRow<Evidence> *row) mutable {
 	if (row) {
-	  if (row->data().owner) { self->finish_(false); return; }
-	  auto next = self->evidenceRecord_();
+	  if (row->data().owner) { self->load_4(false); return; }
+	  auto next = self->evidenceRecord();
 	  next.version = row->data().version + 1;
 	  next.created = row->data().created;
 	  // No new provider refresh token was returned; preserve ciphertext.
 	  next.protectedRefreshToken = row->data().protectedRefreshToken;
 	  row->data() = ZuMv(next);
 	  self->m_evidence = row->data();
-	  self->finish_(row->commit() && self->m_eligible);
+	  self->load_4(row->commit() && self->m_eligible);
 	  return;
 	}
 	ZdbRowRef<Evidence> created = new ZdbRow<Evidence>{
 	  evidence, ZdbShard{0}};
 	evidence->insert(ZuMv(created), [self = ZuMv(self)](
 	    ZdbRow<Evidence> *row) mutable {
-	  if (!row) { self->finish_(false); return; }
-	  new (row->ptr()) Evidence{self->evidenceRecord_()};
+	  if (!row) { self->load_4(false); return; }
+	  new (row->ptr()) Evidence{self->evidenceRecord()};
 	  self->m_evidence = row->data();
-	  self->finish_(row->commit() && self->m_eligible);
+	  self->load_4(row->commit() && self->m_eligible);
 	});
       });
     });
   }
 
-  void finish_(bool ok)
+  void load_4(bool ok)
   {
     if (m_done) return;
     m_done = true;
@@ -570,7 +570,7 @@ void oidcLoadUser(
     StringVec roleValues, StringVec eligibilityValues,
     int64_t now, OIDCUserFn complete)
 {
-  ZmRef<OIDCUserLoad_> load = new OIDCUserLoad_{db, ZuMv(subject),
+  ZmRef<OIDCUserLoad> load = new OIDCUserLoad{db, ZuMv(subject),
     config, ZuMv(roleValues), ZuMv(eligibilityValues), now, ZuMv(complete), {}};
   load->start();
 }
@@ -840,7 +840,7 @@ public:
 
   bool begin(Bytes grantID, OIDCConfig config, OIDCBeginFn complete) {
     if (!grantID || !oidcConfigValid(config) || !complete || !admit_()) {
-      clearSecret_(config);
+      clearSecret(config);
       return false;
     }
     BeginWork work = new OIDCBeginWork{this};
@@ -849,7 +849,7 @@ public:
     work->begin = ZuMv(complete);
     invoke_([work = ZuMv(work)]() mutable {
       auto self = work->owner;
-      self->beginSelect_(ZuMv(work));
+      self->begin_0(ZuMv(work));
     });
     return true;
   }
@@ -907,7 +907,7 @@ private:
       ZmRef<OIDCReq> request = static_cast<OIDCReq *>(m_pendingAll.headPtr());
       if (!request) {
         m_draining = true;
-        postDrain_();
+        stop_0();
         return;
       }
       complete_(ZuMv(request), false, {}, {}, {}, {}, 0);
@@ -918,11 +918,11 @@ private:
   void workDone_() {
     invoke_([this]() {
       --m_credit;
-      postDrain_();
+      stop_0();
     });
   }
 
-  void postDrain_() {
+  void stop_0() {
     if (!m_draining || m_drainPosted || (m_credit.load_() & OIDCCredit::Count)) return;
     m_drainPosted = true;
     // Retire cancelled timer callbacks on their own scheduler shard before
@@ -949,22 +949,22 @@ private:
     });
   }
 
-  static void clearSecret_(OIDCConfig &config)
+  static void clearSecret(OIDCConfig &config)
   {
     if (config.clientSecret.mutable_())
       ZuClear(config.clientSecret);
     config.clientSecret.null();
   }
 
-  void beginSelect_(BeginWork work) {
+  void begin_0(BeginWork work) {
     auto &config = work->config;
     if (!active_() || m_pending.count_() + m_discovering >= m_pendingLimit) {
-      clearSecret_(config);
+      clearSecret(config);
       work->begin(false, String{});
       return;
     }
     if (config.authorizeEndpoint) {
-      begin_(ZuMv(work->grantID), ZuMv(config), ZuMv(work->begin));
+      begin_2(ZuMv(work->grantID), ZuMv(config), ZuMv(work->begin));
       return;
     }
     ++m_discovering;
@@ -972,24 +972,24 @@ private:
     String url{config.issuer};
     if (url[url.length() - 1] == '/') url.length(url.length() - 1);
     url << "/.well-known/openid-configuration";
-    send_<&OIDCState::discovered_>(ZuMv(work), OIDCHTTPRequest{.url = ZuMv(url)});
+    send_<&OIDCState::begin_1>(ZuMv(work), OIDCHTTPRequest{.url = ZuMv(url)});
   }
 
-  void discovered_(BeginWork work) {
+  void begin_1(BeginWork work) {
     --m_discovering;
     if (!active_() || work->status != 200 ||
         !discoveryResponse(work->body, m_limits, work->config)) {
-      clearSecret_(work->config);
+      clearSecret(work->config);
       work->begin(false, String{});
       return;
     }
-    begin_(ZuMv(work->grantID), ZuMv(work->config), ZuMv(work->begin));
+    begin_2(ZuMv(work->grantID), ZuMv(work->config), ZuMv(work->begin));
   }
 
-  void begin_(Bytes grantID, OIDCConfig config, OIDCBeginFn complete)
+  void begin_2(Bytes grantID, OIDCConfig config, OIDCBeginFn complete)
   {
     if (!active_() || m_pending.count_() >= m_pendingLimit) {
-      clearSecret_(config);
+      clearSecret(config);
       complete(false, String{});
       return;
     }
@@ -997,7 +997,7 @@ private:
     if (!randomText(m_rng, request->stateID) ||
         !randomText(m_rng, request->nonce) ||
         !randomText(m_rng, request->verifier)) {
-      clearSecret_(config);
+      clearSecret(config);
       complete(false, String{});
       return;
     }
@@ -1011,7 +1011,7 @@ private:
     challenge.length(ZuBase64URL::enclen(digest.length()));
     challenge.length(ZuBase64URL::encode(challenge.span(), digest));
     if (!challenge || m_pending.find(request->stateID)) {
-      clearRequest_(*request);
+      clearRequest(*request);
       complete(false, String{});
       return;
     }
@@ -1215,7 +1215,7 @@ private:
     work->authTime = authTime;
     auto &config = work->request->config;
     auto credit = work;
-    ZmRef<OIDCUserLoad_> load = new OIDCUserLoad_{m_db, ZuMv(subject), config,
+    ZmRef<OIDCUserLoad> load = new OIDCUserLoad{m_db, ZuMv(subject), config,
       ZuMv(roleValues), ZuMv(eligibilityValues), now,
       [credit = ZuMv(work)](bool ok, User user, IDVec roleIDs, Evidence evidence) mutable {
         auto work = ZuMv(credit);
@@ -1248,7 +1248,7 @@ private:
     complete_(request, false, {}, {}, {}, {}, 0);
   }
 
-  static void clearRequest_(OIDCReq &request)
+  static void clearRequest(OIDCReq &request)
   {
     if (request.verifier.mutable_())
       ZuClear(request.verifier);
@@ -1259,7 +1259,7 @@ private:
     if (request.accessToken.mutable_())
       ZuClear(request.accessToken);
     request.accessToken.null();
-    clearSecret_(request.config);
+    clearSecret(request.config);
     request.config = {};
   }
 
@@ -1271,7 +1271,7 @@ private:
     m_pendingAll.delNode(request.ptr());
     m_pending.del(request->stateID);
     request->state = nullptr;
-    clearRequest_(*request);
+    clearRequest(*request);
     auto complete = ZuMv(request->complete);
     if (complete)
       complete(ok, ZuMv(grantID), ZuMv(user), ZuMv(roleIDs),
@@ -1714,7 +1714,7 @@ private:
     if (m_resolverOwned) {
       ZiResolver::start([this](bool ok) {
         if (!ok) { Engine::started(false); return; }
-        post_([this]() { startOwner_(); });
+        post_([this]() { start_0(); });
       });
       return;
     }
@@ -1722,10 +1722,10 @@ private:
       Engine::started(false);
       return;
     }
-    post_([this]() { startOwner_(); });
+    post_([this]() { start_0(); });
   }
 
-  void startOwner_() {
+  void start_0() {
     ZmAssert_(m_credit.load_() == OIDCHTTPCredit::Closed);
     ZmAssert_(!m_clients.length() && !m_children && !m_draining && !m_drainPosted);
     m_credit = 0;
@@ -1739,36 +1739,36 @@ private:
       m_children = m_clients.length();
       m_release = 0;
       m_draining = true;
-      stopBatch_(0);
+      stop_0(0);
     });
   }
 
-  void stopBatch_(unsigned offset) {
+  void stop_0(unsigned offset) {
     unsigned end = offset + OIDCHTTPWork::Batch;
     unsigned count = m_clients.length();
     if (end > count) end = count;
     while (offset < end) {
       auto &entry = m_clients[offset++];
-      if (!entry.client) { stopOne_(); continue; }
+      if (!entry.client) { stop_1(); continue; }
       // A retirement already in progress joins the same native engine stop.
       // Its request keeps its own admission credit until its owner callback.
       entry.client->stop([this](bool ok) {
         post_([this, ok]() {
           m_stopOK &= ok;
-          stopOne_();
+          stop_1();
         });
       });
     }
     if (end < count) {
-      post_([this, end]() { stopBatch_(end); });
+      post_([this, end]() { stop_0(end); });
       return;
     }
-    postDrain_();
+    stop_2();
   }
 
-  void stopOne_() {
+  void stop_1() {
     --m_children;
-    postDrain_();
+    stop_2();
   }
 
   void finish_(Action action, unsigned status = 0, String body = {}) {
@@ -1777,17 +1777,17 @@ private:
     complete = {};
     action = nullptr;
     --m_credit;
-    postDrain_();
+    stop_2();
   }
 
-  void postDrain_() {
+  void stop_2() {
     if (!m_draining || m_drainPosted || m_children ||
         (m_credit.load_() & OIDCHTTPCredit::Count)) return;
     m_drainPosted = true;
-    post_([this]() { drain_(); });
+    post_([this]() { stop_3(); });
   }
 
-  void drain_() {
+  void stop_3() {
     m_drainPosted = false;
     unsigned end = m_release + OIDCHTTPWork::Batch;
     unsigned count = m_clients.length();
@@ -1798,7 +1798,7 @@ private:
       if (entry.client) entry.client->final();
       entry.client = nullptr;
     }
-    if (end < count) { postDrain_(); return; }
+    if (end < count) { stop_2(); return; }
     m_clients.length(0);
     m_release = 0;
     m_draining = false;

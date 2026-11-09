@@ -141,10 +141,10 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
 	auto link = static_cast<Raw *>(reply->owner.ptr());
 	if (reply->tx) {
 	  ZmAssert(link->m_tx.stops); --link->m_tx.stops;
-	  link->m_tx.checkStop();
+	  link->m_tx.transportDown_3();
 	} else {
 	  ZmAssert(link->m_stops); --link->m_stops;
-	  link->finishStop_();
+	  link->transportDown_5();
 	}
       };
       if (tx) owner->app()->txRun(ZuMv(finish));
@@ -168,15 +168,15 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
       connection = c; stopping = posted = false;
     }
 
-    void open(uint64_t c) {
+    void transportUp_1(uint64_t c) {
       if (c != connection || stopping) return;
       live = Wire::open_(c, link->impl()->fixGeometryTx());
       if (!live) {
 	++faults;
 	link->impl()->fixRawFaultTx(c, {Fmt::ErrorCode::Output});
-	link->app()->rxRun([link = link, c] { link->closeRx_(c); }); return;
+	link->app()->rxRun([link = link, c] { link->closeRx(c); }); return;
       }
-      link->app()->rxRun([link = link, c] { link->openedRx_(c); });
+      link->app()->rxRun([link = link, c] { link->transportUp_2(c); });
       link->impl()->fixRawWritableTx(c);
     }
 
@@ -184,7 +184,7 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
       if (!out) return RawSend::Invalid;
       if (!live || out->context().connection != connection) return RawSend::Held;
       if (out->frame()->length > link->outputLimits_().frameBytes ||
-	  !Wire::admitRaw_(out->body(), out->context(), out->frame())) {
+	  !Wire::admitRaw(out->body(), out->context(), out->frame())) {
 	++outputRefused; return RawSend::Overload;
       }
       ++completions;
@@ -208,33 +208,33 @@ template <typename Impl, typename NativeRx = NoLinkRx> class Raw {
 	  ++faults;
 	  live = false;
 	  link->impl()->fixRawFaultTx(connection, {Fmt::ErrorCode::Output});
-	  link->app()->rxRun([link = link, c] { link->closeRx_(c.connection); });
+	  link->app()->rxRun([link = link, c] { link->closeRx(c.connection); });
 	}
-	checkStop();
+	transportDown_3();
       });
     }
 
-    void stop(uint64_t c) {
+    void transportDown_2(uint64_t c) {
       if (c != connection) return;
       live = false; stopping = true; posted = false; Wire::close_(c);
       ++stops;
-      RawStopRequest request{link, deferTx_};
+      RawStopRequest request{link, deferTx};
       link->impl()->fixRawStopTx(c, request);
       if (!request.deferred()) --stops;
-      checkStop();
+      transportDown_3();
     }
 
-    void checkStop() {
+    void transportDown_3() {
       if (!stopping || stops || completions || posted) return;
       posted = true;
       link->app()->txRun([link = link, c = connection] {
-	link->app()->rxRun([link, c] { link->stoppedTx_(c); });
+	link->app()->rxRun([link, c] { link->transportDown_4(c); });
       });
     }
   };
 
 public:
-  NativeRx &nativeRx_() { ZmAssert(app()->rxInvoked()); return m_native; }
+  NativeRx &nativeRx() { ZmAssert(app()->rxInvoked()); return m_native; }
 
   bool connectAllowed_() const { return true; }
 
@@ -247,7 +247,7 @@ public:
   Raw(const Raw &) = delete;
   Raw &operator =(const Raw &) = delete;
 
-  bool transportBind_(bool) {
+  bool transportBind(bool) {
     ZmAssert(app()->rxInvoked());
     if (m_connection == UINT64_MAX) return false;
     uint64_t old = m_connection;
@@ -255,24 +255,24 @@ public:
     m_live = true; m_ready = m_txDone = false;
     m_pending = nullptr; m_framer.reset_();
     ++m_connection;
-    if (retire) retireRx_(old);
+    if (retire) transportDown_1(old);
     app()->txRun([this, c = m_connection] { m_tx.bind(c); });
     return true;
   }
 
-  void transportUp_() {
+  void transportUp_0() {
     ZmAssert(app()->rxInvoked());
     if (!m_live) return;
-    app()->txRun([this, c = m_connection] { m_tx.open(c); });
+    app()->txRun([this, c = m_connection] { m_tx.transportUp_1(c); });
   }
 
-  void transportDown_(bool peer) {
+  void transportDown_0(bool peer) {
     ZmAssert(app()->rxInvoked());
     if (!m_live && m_closeRef) return;
     m_live = m_ready = false; m_peer = peer;
     m_txDone = false;
     m_pending = nullptr; m_framer.reset_();
-    retireRx_(m_connection);
+    transportDown_1(m_connection);
   }
 
   void transportSent(ZmRef<ZiIOBuf> buf, bool ok) {
@@ -289,7 +289,7 @@ public:
     int n = m_framer.next_(stream, [this] { return impl()->fixAllocRx(); }, bytes, &frame);
     if (n < 0) {
       ++m_rxStats.framingErrors;
-      faultRx_(m_framer.error_()); return -1;
+      faultRx(m_framer.error_()); return -1;
     }
     if (!n) return 0;
     ++m_rxStats.frames; m_rxStats.bytes += frame.wire.length();
@@ -298,7 +298,7 @@ public:
       cap = m_framer.limits().frameBytes;
       if (cap < Impl::RxBufAlloc::Size) cap = Impl::RxBufAlloc::Size;
     }
-    if (bytes->size > cap) { faultRx_({Fmt::ErrorCode::Size}); return -1; }
+    if (bytes->size > cap) { faultRx({Fmt::ErrorCode::Size}); return -1; }
     m_pending = new RawInput;
     m_pending->charge = ZmHeapAllocSize<sizeof(typename Impl::RxBufAlloc)>{} +
       ZmHeapAllocSize<sizeof(RawInput)>{} +
@@ -312,8 +312,8 @@ public:
     receive_(); return m_pending ? 0 : 1;
   }
 
-  TraceStats rxTraceStats_() const { ZmAssert(app()->rxInvoked()); return m_traceRx.stats_(); }
-  TraceStats txTraceStats_() const { ZmAssert(app()->txInvoked()); return m_traceTx.stats_(); }
+  TraceStats rxTraceStats() const { ZmAssert(app()->rxInvoked()); return m_traceRx.stats_(); }
+  TraceStats txTraceStats() const { ZmAssert(app()->txInvoked()); return m_traceTx.stats_(); }
 
   enum { SignMsg = 0 };
   template <typename S>
@@ -324,20 +324,20 @@ public:
   void fixTraceRx(TraceRef) { }
   void fixTraceTx(TraceRef) { }
 
-  RxStats rxStats_() const {
+  RxStats rxStats() const {
     ZmAssert(app()->rxInvoked()); RxStats s{m_rxStats};
     s.pendingBytes = m_pending ? m_pending->buffer->size : 0; return s;
   }
 
-  TxStats txStats_() const {
+  TxStats txStats() const {
     ZmAssert(app()->txInvoked()); TxStats s; s.wire = m_tx.stats_();
     s.faults = m_tx.faults; s.outputRefused = m_tx.outputRefused;
     s.inFlight = m_tx.completions; return s;
   }
 
-  uint64_t rawConnection_() const { ZmAssert(app()->rxInvoked()); return m_connection; }
-  uint64_t rawOutputBytes_() const { ZmAssert(app()->txInvoked()); return m_tx.bytes_(); }
-  uint64_t rawInFlight_() const { ZmAssert(app()->txInvoked()); return m_tx.completions; }
+  uint64_t rawConnection() const { ZmAssert(app()->rxInvoked()); return m_connection; }
+  uint64_t rawOutputBytes() const { ZmAssert(app()->txInvoked()); return m_tx.bytes_(); }
+  uint64_t rawInFlight() const { ZmAssert(app()->txInvoked()); return m_tx.completions; }
 
   unsigned sendRaw_(const RawOutput::Ref &out) {
     ZmAssert(app()->txInvoked()); return m_tx.send(out);
@@ -354,7 +354,7 @@ public:
     if (!impl()->txPost_(bytes)) return false;
     app()->txRun([this, out, bytes] {
       unsigned result = sendRaw_(out); impl()->fixRawSubmittedTx(out, result);
-      app()->rxRun([this, bytes] { impl()->txUnpost_(bytes); finishStop_(); });
+      app()->rxRun([this, bytes] { impl()->txUnpost(bytes); transportDown_5(); });
     });
     return true;
   }
@@ -383,7 +383,7 @@ public:
 	  if (output) {
 	    unsigned result = sendRaw_(output); impl()->fixRawSubmittedTx(output, result);
 	  } else impl()->fixRawFaultTx(pending->context.connection, error);
-	  app()->rxRun([this, bytes] { impl()->txUnpost_(bytes); finishStop_(); });
+	  app()->rxRun([this, bytes] { impl()->txUnpost(bytes); transportDown_5(); });
 	});
 	return true;
       }
@@ -418,15 +418,15 @@ public:
     if (!input || !input->buffer) {
       error = {Fmt::ErrorCode::Required}; return typename W::Ref{};
     }
-    return impl()->workRx_(input, input->charge, extra, error);
+    return impl()->workRx(input, input->charge, extra, error);
   }
 
-  void workDrainedRx_() { ZmAssert(app()->rxInvoked()); finishStop_(); }
+  void workDrainedRx() { ZmAssert(app()->rxInvoked()); transportDown_5(); }
 
   void resumeRaw_(uint64_t connection) {
     ZmAssert(app()->rxInvoked());
     if (!m_live || !m_ready || connection != m_connection) return;
-    receive_(); if (!m_pending) impl()->resumeRx_();
+    receive_(); if (!m_pending) impl()->resumeRx();
   }
 
   void resumeRaw(uint64_t connection) {
@@ -446,8 +446,8 @@ public:
   void fixRawStoppedRx(uint64_t, bool) { }
 
 private:
-  static RawStopFn deferRx_(void *owner) { return defer_(owner, false); }
-  static RawStopFn deferTx_(void *owner) { return defer_(owner, true); }
+  static RawStopFn deferRx(void *owner) { return defer_(owner, false); }
+  static RawStopFn deferTx(void *owner) { return defer_(owner, true); }
 
   static RawStopFn defer_(void *owner, bool tx) {
     auto link = static_cast<Raw *>(owner);
@@ -461,26 +461,26 @@ private:
   auto app() const { return static_cast<const Impl *>(this)->app(); }
   const Fmt::Limits &outputLimits_() const { return m_outputLimits; }
 
-  void openedRx_(uint64_t connection) {
+  void transportUp_2(uint64_t connection) {
     if (!m_live || connection != m_connection) return;
     m_ready = true;
     impl()->fixRawUpRx(connection);
-    if (m_live) impl()->resumeRx_();
+    if (m_live) impl()->resumeRx();
   }
 
-  void stoppedTx_(uint64_t c) {
+  void transportDown_4(uint64_t c) {
     if (m_live || c != m_connection) return;
-    m_txDone = true; finishStop_();
+    m_txDone = true; transportDown_5();
   }
 
-  void retireRx_(uint64_t c) {
+  void transportDown_1(uint64_t c) {
     if (!m_closeRef) m_closeRef = impl();
     ++m_stops;
-    RawStopRequest request{this, deferRx_};
+    RawStopRequest request{this, deferRx};
     impl()->fixRawStopRx(c, request);
     if (!request.deferred()) --m_stops;
-    app()->txRun([this, c] { m_tx.stop(c); });
-    finishStop_();
+    app()->txRun([this, c] { m_tx.transportDown_2(c); });
+    transportDown_5();
   }
 
   static TraceField traceField_(void *owner, ZuCSpan type, int32_t tag) {
@@ -498,16 +498,16 @@ private:
     if (m_pending && impl()->fixRawRx(m_pending, m_framer.limits())) m_pending = nullptr;
   }
 
-  void faultRx_(Fmt::Error error) {
+  void faultRx(Fmt::Error error) {
     ++m_rxStats.faults; if (error.code == Fmt::ErrorCode::Size) ++m_rxStats.overloads;
     impl()->fixRawFaultRx(m_connection, error);
   }
 
-  void closeRx_(uint64_t c) { if (m_live && c == m_connection) impl()->disconnect_(); }
+  void closeRx(uint64_t c) { if (m_live && c == m_connection) impl()->disconnect_(); }
 
-  void finishStop_() {
-    if (m_live || !m_closeRef || m_stops || !m_txDone || impl()->txPosted_().count ||
-	impl()->workState_().count) return;
+  void transportDown_5() {
+    if (m_live || !m_closeRef || m_stops || !m_txDone || impl()->txPosted().count ||
+	impl()->workState().count) return;
     auto retain = ZuMv(m_closeRef);
     impl()->fixRawStoppedRx(m_connection, m_peer);
   }

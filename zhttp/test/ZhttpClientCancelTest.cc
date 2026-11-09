@@ -659,7 +659,7 @@ public:
   bool reset(int listener) {
     ZmGuard<ZmLock> guard(m_lock);
     if (m_stopping || m_listener >= 0) {
-      closeFD_(listener);
+      closeFD(listener);
       return false;
     }
     m_listener = listener;
@@ -682,7 +682,7 @@ public:
 	return fd;
       }
     }
-    closeFD_(fd);
+    closeFD(fd);
     return -1;
   }
 
@@ -693,7 +693,7 @@ public:
       fd = m_listener;
       m_listener = -1;
     }
-    closeFD_(fd);
+    closeFD(fd);
   }
 
   void close(int fd) {
@@ -708,7 +708,7 @@ public:
 	  break;
 	}
     }
-    if (owned) closeFD_(fd);
+    if (owned) closeFD(fd);
   }
 
   void stop() {
@@ -723,12 +723,12 @@ public:
       fds = ZuMv(m_fds);
       m_fds.init_();
     }
-    closeFD_(listener);
-    for (int fd: fds) closeFD_(fd);
+    closeFD(listener);
+    for (int fd: fds) closeFD(fd);
   }
 
 private:
-  static void closeFD_(int fd) {
+  static void closeFD(int fd) {
     if (fd < 0) return;
     ::shutdown(fd, SHUT_RDWR);
     ::close(fd);

@@ -109,7 +109,7 @@ friend inline ZuStringT<"Zhttp.H1.FlowNative"> ZmNHeapID(FlowH1Native *);
   Tx txStream() { ZmAssert(app->rxInvoked()); return {}; }
   Tx txStream_() { ZmAssert(app->txInvoked()); return {}; }
   void streamTxEnd() { ZmAssert(app->txInvoked()); ++ends; }
-  void closeAfterTx_() { ZmAssert(app->txInvoked()); ++ends; }
+  void closeAfterTx() { ZmAssert(app->txInvoked()); ++ends; }
   void disconnectNative() { ZmAssert(app->rxInvoked()); ++resets; }
 };
 
@@ -222,7 +222,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     }
     bool sendBuf_(ZmRef<ZiIOBuf> buf, bool) {
       if (!buf || wire->transportClosed) return false;
-      return wire->frameSent_(buf->cspan());
+      return wire->frameSent(buf->cspan());
     }
 
     FlowWire *wire;
@@ -240,7 +240,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     buf->length = 0;
     return buf;
   }
-  bool frameSent_(ZuBSpan frame) {
+  bool frameSent(ZuBSpan frame) {
     ++sends;
     if (rejectControl) return false;
     uint8_t type = frame.data()[3], flags = frame.data()[4];
@@ -263,8 +263,8 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
     }
     return true;
   }
-  bool sendSource_(const Zhttp::H2_::TxFrame &frame) {
-    if (!frameSent_(frame.header)) return false;
+  bool sendSource(const Zhttp::H2_::TxFrame &frame) {
+    if (!frameSent(frame.header)) return false;
     if (frame.payload && frame.payload->length) {
       lastBuf = frame.payload;
       ++ownedCalls;
@@ -273,7 +273,7 @@ struct FlowWire : public Zhttp::H2_::Wire<FlowWire, FlowAppLink> {
   }
   Tx txStream() { return Tx{this}; }
   Tx txStream_() { return Tx{this}; }
-  void h2CapacityTx_(bool value) {
+  void h2CapacityTx(bool value) {
     capacity = value;
     ++capacityCalls;
     if (value) ++saturatedCalls;
@@ -697,6 +697,49 @@ void runBoundedFrameCleanup()
   }
 }
 
+void runRemovalTeardown()
+{
+  ZuTestScopeRT(runRemovalTeardown);
+  enum { Streams = 2, Count = Zhttp::H2_::FrameDrainBatch + 1 };
+  FlowApp app;
+  FlowWire wire{&app};
+  auto config = Zhttp::H2Config().maxConcurrentStreams(Streams)
+    .maxQueuedFrames(Streams * Count);
+  ZuCheckRT(wire.initWire(false, config), log_("initialize pending-removal teardown"));
+  ZuCheckRT(wire.peerInitialWindow(0), log_("stall stream output before removal"));
+  ZuArray<uint32_t, Streams> ids;
+  bool queued = true;
+  for (unsigned i = 0; i < Streams; ++i) {
+    ZmRef<FlowAppLink> link = new FlowAppLink;
+    uint32_t id = wire.openLocalStream(link)->id;
+    ids.push(id);
+    for (unsigned n = 0; n < Count; ++n)
+      queued &= wire.sendData(id, flowData(1, id));
+  }
+  ZuCheckRT(queued && !wire.sends, log_("each stream needs bounded removal turns"));
+  app.deferred = true;
+  unsigned removed = 0, retired = 0;
+  bool complete = false, ordered = false, drained = false;
+  for (auto id : ids)
+    wire.removeStream(id, [&app, &removed, &retired]() {
+      ++removed;
+      app.txRun([&retired]() { ++retired; });
+    });
+  wire.clearStreams([&removed, &retired, &complete, &ordered, &drained]() {
+    ordered = removed == Streams;
+    drained = retired == Streams;
+    complete = true;
+  });
+  while (app.step(FlowApp::Rx) || app.step(FlowApp::Tx)) { }
+  ZuCheckRT(complete && removed == Streams && retired == Streams && !wire.streamCount(),
+    log_("teardown and both pending removals finish"));
+  ZuCheckRT(ordered,
+    log_("physical teardown must follow all pending stream-removal callbacks"));
+  ZuCheckRT(drained,
+    log_("physical teardown must drain Tx work posted by removal callbacks"));
+  wire.finalWire();
+}
+
 struct FlowFinal : public ZmObject, public ZmNHeap<FlowFinal> {
   friend inline ZuStringT<"Zhttp.H2.FlowFinal"> ZmNHeapID(FlowFinal *);
 
@@ -743,11 +786,11 @@ void runFinalQueue()
   ZmRef<FlowFinal> final = new FlowFinal{
     &wire, id, &emitted, &cancelled, &destroyed};
   app.runTx([&]() {
-    ZuCHECK(wire.queueFinal_(id, &final->command) && !emitted,
+    ZuCHECK(wire.queueFinal(id, &final->command) && !emitted,
       "final command waits behind flow-stalled DATA");
     ZuCHECK(!wire.sendData<false>(id, flowData(1, id)) &&
 	!wire.endData<false>(id) &&
-	!wire.queueFinal_(id, &final->command),
+	!wire.queueFinal(id, &final->command),
       "terminal admission rejects later DATA, end and final commands");
   });
   final = nullptr;
@@ -764,7 +807,7 @@ void runFinalQueue()
     "second stream stalls DATA for cancellation");
   final = new FlowFinal{&wire, id, &emitted, &cancelled, &destroyed};
   app.runTx([&]() {
-    ZuCHECK(wire.queueFinal_(id, &final->command),
+    ZuCHECK(wire.queueFinal(id, &final->command),
       "second stream admits pending final command");
   });
   final = nullptr;
@@ -773,7 +816,7 @@ void runFinalQueue()
     "teardown cancels and releases a pending embedded command once");
   app.runTx([&]() {
     final = new FlowFinal{&wire, id, &emitted, &cancelled, &destroyed};
-    ZuCHECK(!wire.queueFinal_(id, &final->command),
+    ZuCHECK(!wire.queueFinal(id, &final->command),
       "late final command cannot recreate retired stream state");
     final = nullptr;
   });
@@ -1105,8 +1148,8 @@ struct ClientParser :
     return true;
   }
   template <typename Rx>
-  void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamPeerEnd_() { ++streamEnds; dispatch.peerEnd(); }
+  void streamRx(Rx &rx) { dispatch.process(rx); }
+  void streamPeerEnd() { ++streamEnds; dispatch.peerEnd(); }
   void streamError_() { ++streamResets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {
@@ -1319,8 +1362,8 @@ struct ServerParser :
   template <typename Rx>
   bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
-  void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamPeerEnd_() { remoteEnded = true; dispatch.peerEnd(); }
+  void streamRx(Rx &rx) { dispatch.process(rx); }
+  void streamPeerEnd() { remoteEnded = true; dispatch.peerEnd(); }
   void streamError_() { ++streamResets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {
@@ -2193,6 +2236,7 @@ int main(int argc, char **argv)
   ZuTestCall(ZhttpH2HubTest_::runConnectionOverflow);
   ZuTestCall(ZhttpH2HubTest_::runHeaderTurns);
   ZuTestCall(ZhttpH2HubTest_::runBoundedFrameCleanup);
+  ZuTestCall(ZhttpH2HubTest_::runRemovalTeardown);
   ZuTestCall(ZhttpH2HubTest_::runNegativeWindow);
   ZuTestCall(ZhttpH2HubTest_::runFinalQueue);
   ZuTestCall(ZhttpH2HubTest_::runTeardownDrain);

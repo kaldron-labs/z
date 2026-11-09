@@ -80,9 +80,9 @@ public:
 	break;
       }
       progressed = true;
-      armPing_();
+      armPing();
     }
-    if (m_failure != Failure::None) notifyError_();
+    if (m_failure != Failure::None) notifyError();
     bool ended = m_errorEnded;
     m_stream = nullptr;
     if (ended) return progressed ? 1 : 0;
@@ -95,7 +95,7 @@ public:
     m_stream = &stream;
     if (!m_peerClosed) {
       fail_(Failure::AbnormalClose);
-      notifyError_();
+      notifyError();
     }
     m_stream = nullptr;
   }
@@ -104,7 +104,7 @@ public:
     if (m_terminal || !m_link) return;
     m_stream = &stream;
     fail_(Failure::AbnormalClose);
-    notifyError_();
+    notifyError();
     m_stream = nullptr;
   }
 
@@ -123,7 +123,7 @@ public:
     if (valid) return;
     auto app = link->app();
     app->rxRun([impl = ZmRef(this->impl())]() mutable {
-      impl->transmitFailed_();
+      impl->transmitFailed();
     });
   }
 
@@ -142,7 +142,7 @@ public:
     if (valid) return;
     auto app = link->app();
     app->rxRun([impl = ZmRef(this->impl())]() mutable {
-      impl->transmitFailed_();
+      impl->transmitFailed();
     });
   }
 
@@ -185,13 +185,13 @@ public:
     for (unsigned i = 0; i < reasonLen; ++i)
       payload[i + 2] = reason[i];
     m_closeSent = true;
-    stopPing_();
-    if (!sendControl_(Opcode::Close, {payload, reasonLen + 2})) {
-      transmitFailed_();
+    stopPing();
+    if (!sendControl(Opcode::Close, {payload, reasonLen + 2})) {
+      transmitFailed();
       return false;
     }
     m_txEnabled = 0;
-    armClose_();
+    armClose();
     return true;
   }
 
@@ -204,15 +204,15 @@ public:
     for (unsigned i = 0; i < payloadLen; ++i)
       m_pingPayload[i] = payload[i];
     m_pingPending = true;
-    if (!sendControl_(Opcode::Ping, payload)) {
-      transmitFailed_();
+    if (!sendControl(Opcode::Ping, payload)) {
+      transmitFailed();
       return false;
     }
-    armPong_();
+    armPong();
     return true;
   }
 
-  void opening_() {
+  void opening() {
     if (!m_config.handshakeTimeout) return;
     m_link->app()->mx()->add(
       &m_handshakeTimer, Zm::now(m_config.handshakeTimeout),
@@ -226,7 +226,7 @@ public:
     m_established = true;
     m_link->app()->mx()->del(&m_handshakeTimer);
     m_txEnabled = 1;
-    armPing_();
+    armPing();
   }
 
   Failure::T failure() const { return m_failure; }
@@ -236,7 +236,7 @@ public:
   bool closeSent() const { return m_closeSent; }
 
   void reopen_(Link &link) {
-    if (m_link) stopTimers_();
+    if (m_link) stopTimers();
     m_txEnabled = 0;
     m_link = &link;
     m_wire.clean();
@@ -264,7 +264,7 @@ public:
     m_txEnabled = 0;
     m_terminal = true;
     m_stream = nullptr;
-    stopTimers_();
+    stopTimers();
   }
 
   void final_() {
@@ -451,7 +451,7 @@ private:
     ZuBSpan payload{m_control, unsigned(m_frameOffset)};
     switch (m_frame.opcode) {
       case Opcode::Ping:
-	if (!sendControl_(Opcode::Pong, payload))
+	if (!sendControl(Opcode::Pong, payload))
 	  return fail_(Failure::Transmit), -1;
 	break;
       case Opcode::Pong:
@@ -486,11 +486,11 @@ private:
     m_wire.clean();
     m_rx.clean();
     m_msgActive = false;
-    stopTimers_();
+    stopTimers();
     impl()->closed(code, reason);
     if (!m_closeSent) {
       m_closeSent = true;
-      if (!sendControl_(Opcode::Close, payload))
+      if (!sendControl(Opcode::Close, payload))
 	return fail_(Failure::Transmit), false;
     }
     m_txEnabled = 0;
@@ -499,7 +499,7 @@ private:
     return true;
   }
 
-  bool sendControl_(Opcode::T opcode, ZuBSpan payload) {
+  bool sendControl(Opcode::T opcode, ZuBSpan payload) {
     if (!m_link) return false;
     bool valid = true;
     auto send = [this, opcode, payload, &valid](auto &stream) {
@@ -521,20 +521,20 @@ private:
     if (m_failure == Failure::None) m_failure = failure;
   }
 
-  void notifyError_() {
+  void notifyError() {
     if (m_errorNotified) return;
     m_errorNotified = true;
     m_txEnabled = 0;
-    stopTimers_();
+    stopTimers();
     m_wire.clean();
     m_rx.clean();
     m_msgActive = false;
-    errorClose_();
+    errorClose();
     impl()->error(m_failure);
     m_terminal = true;
   }
 
-  void errorClose_() {
+  void errorClose() {
     if (!m_established || !m_stream || m_closeSent) return;
     uint16_t code;
     switch (m_failure) {
@@ -554,7 +554,7 @@ private:
     }
     uint8_t payload[] = {uint8_t(code>>8), uint8_t(code)};
     m_closeSent = true;
-    if (!sendControl_(Opcode::Close, payload)) return;
+    if (!sendControl(Opcode::Close, payload)) return;
     m_stream->streamTxEnd();
     m_errorEnded = true;
   }
@@ -564,12 +564,12 @@ private:
       m_pingPending = false;
       m_pingPayload.length(0);
       m_link->app()->mx()->del(&m_pongTimer);
-      armPing_();
+      armPing();
     }
     impl()->pong(payload);
   }
 
-  void armClose_() {
+  void armClose() {
     if (!m_config.closeTimeout) return;
     m_link->app()->mx()->add(
       &m_closeTimer, Zm::now(m_config.closeTimeout), ZmScheduler::Update,
@@ -578,7 +578,7 @@ private:
       }, m_link->app()->rxThread());
   }
 
-  void armPing_() {
+  void armPing() {
     if (m_terminal || m_closeSent || m_pingPending ||
 	!m_config.pingInterval)
       return;
@@ -591,7 +591,7 @@ private:
       }, m_link->app()->rxThread());
   }
 
-  void armPong_() {
+  void armPong() {
     if (!m_config.pongTimeout) return;
     m_link->app()->mx()->add(
       &m_pongTimer, Zm::now(m_config.pongTimeout), ZmScheduler::Update,
@@ -600,7 +600,7 @@ private:
       }, m_link->app()->rxThread());
   }
 
-  void stopPing_() {
+  void stopPing() {
     if (!m_link) return;
     m_link->app()->mx()->del(&m_pingTimer);
     m_link->app()->mx()->del(&m_pongTimer);
@@ -608,9 +608,9 @@ private:
     m_pingPayload.length(0);
   }
 
-  void stopTimers_() {
+  void stopTimers() {
     if (!m_link) return;
-    stopPing_();
+    stopPing();
     m_link->app()->mx()->del(&m_handshakeTimer);
     m_link->app()->mx()->del(&m_closeTimer);
   }
@@ -618,17 +618,17 @@ private:
   void timeout_() {
     if (m_terminal || !m_link) return;
     fail_(Failure::Timeout);
-    stopTimers_();
-    notifyError_();
+    stopTimers();
+    notifyError();
     m_link->channel().streamTxReset();
   }
 
-  void transmitFailed_() {
+  void transmitFailed() {
     if (m_terminal || !m_link) return;
     fail_(Failure::Transmit);
     if (m_stream) return;
-    stopTimers_();
-    notifyError_();
+    stopTimers();
+    notifyError();
     m_link->channel().streamTxReset();
   }
 

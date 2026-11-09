@@ -16,7 +16,7 @@
 #include <zlib/ZdbusClient.hh>
 #include <zlib/ZdbusServer.hh>
 
-#include "../util/ZdbusTestTool.hh"
+#include "../util/zdbustesttool.hh"
 
 using namespace ZuTestUtil;
 

@@ -266,7 +266,7 @@ QPackSeedResult::T installQPackSeeds(
     Compression::putBytes(bytes, insn);
   }
   if (!ZuFwd<Write>(write)(bytes)) return QPackSeedResult::Failed;
-  if (!tx.setCapacity(capacity)) return QPackSeedResult::Failed;
+  if (!tx.capacity(capacity)) return QPackSeedResult::Failed;
   tx.capacitySent = true;
   for (unsigned i = 0; i < count; ++i)
     if (!tx.insertView({seeds[i].name, seeds[i].value}))
@@ -324,7 +324,7 @@ template <typename Lower, typename = void>
 struct HasRetainedTCP : ZuFalse { };
 template <typename Lower>
 struct HasRetainedTCP<Lower, decltype(
-  ZuDeclVal<Lower &>().sendRetained_(ZuDeclVal<RetainedEntries>()), void())> :
+  ZuDeclVal<Lower &>().sendRetained(ZuDeclVal<RetainedEntries>()), void())> :
     ZuTrue { };
 
 template <typename Lower, bool KeepBuffers = false>
@@ -384,7 +384,7 @@ public:
       if (!seal() || !body.seal()) return false;
       for (auto &part : body.m_entries) m_entries.push(ZuMv(part));
       body.m_entries.length(0);
-      if (owner.sendRetained_(ZuMv(m_entries))) return true;
+      if (owner.sendRetained(ZuMv(m_entries))) return true;
       this->fail();
       return false;
     }
@@ -465,8 +465,8 @@ public:
       });
       if (emitted && outcome == WriteOutcome::End) builder.finish(tx);
     }
-    if (!validCardinality_(optional, emitted, duplicate) ||
-	!writerEnded_(outcome) ||
+    if (!validCardinality(optional, emitted, duplicate) ||
+	!writerEnded(outcome) ||
 	!headersOK || !tx.flush())
       return m_ops->template fail<true>();
     if (!m_ops->complete(produced)) return false;
@@ -479,7 +479,7 @@ public:
     auto &link = m_ops->link();
     auto native = link.transmit_(builder);
     if constexpr (Message::ID == Version::H2)
-      return fixedH2_(builder, native, optional);
+      return fixedH2(builder, native, optional);
     else {
       RetainedBudget budget{.max = m_ops->retainedMax()};
       constexpr bool KeepBuffers = HasRetainedTCP<ZuDecay<decltype(link)>>{};
@@ -500,8 +500,8 @@ public:
 	builder.produced = body.produced();
 	m_ops->template produced<false>(builder.produced);
       }
-      if (!validCardinality_(optional, emitted, duplicate) ||
-	  (emitted && (!bodyOK || !writerEnded_(outcome) || !body.valid())))
+      if (!validCardinality(optional, emitted, duplicate) ||
+	  (emitted && (!bodyOK || !writerEnded(outcome) || !body.valid())))
 	return m_ops->template fail<false>();
       if (!emitted) return m_ops->empty(builder.appBuilder());
       if (!begin_(builder, headerTx)) return m_ops->template fail<false>();
@@ -518,7 +518,7 @@ public:
   }
 
 private:
-  static bool validCardinality_(
+  static bool validCardinality(
       bool optional, bool emitted, bool duplicate) {
     ZiAssert(optional || emitted, "Zhttp", (),
       "required body emitted no writer", return false);
@@ -527,7 +527,7 @@ private:
     return (optional || emitted) && !duplicate;
   }
 
-  static bool writerEnded_(WriteOutcome::T outcome) {
+  static bool writerEnded(WriteOutcome::T outcome) {
     switch (outcome) {
       case WriteOutcome::End: return true;
       case WriteOutcome::Failed: return false;
@@ -553,7 +553,7 @@ private:
   }
 
   template <typename Builder, typename Tx>
-  bool fixedH2_(Builder &builder, Tx &tx, bool optional) {
+  bool fixedH2(Builder &builder, Tx &tx, bool optional) {
     tx.defer(m_ops->retainedMax());
     auto body = builder.body(tx, m_ops->fixedBodyMax());
     bool emitted = false;
@@ -570,8 +570,8 @@ private:
       builder.produced = body.produced();
       m_ops->template produced<false>(builder.produced);
     }
-    if (!validCardinality_(optional, emitted, duplicate) ||
-	(emitted && (!bodyOK || !writerEnded_(outcome) || !body.valid())))
+    if (!validCardinality(optional, emitted, duplicate) ||
+	(emitted && (!bodyOK || !writerEnded(outcome) || !body.valid())))
       return m_ops->template fail<false>();
     if (!emitted) return m_ops->empty(builder.appBuilder());
     if (!begin_(builder, tx))

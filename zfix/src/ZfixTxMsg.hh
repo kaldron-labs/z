@@ -315,7 +315,7 @@ private:
     auto buf = start(Entry::MsgType, S::Leaves::N, id, admin, error, limits);
     if (!buf) return {};
     if (bytes.length() > limits.frameBytes - buf->m_typeLen ||
-	bytes.length() > TxBodyAllocMax_() - buf->m_bodyOffset) {
+	bytes.length() > TxBodyAllocMax() - buf->m_bodyOffset) {
       error = {Fmt::ErrorCode::Size}; return {};
     }
     if (bytes.length() > buf->size - buf->m_bodyOffset &&
@@ -350,7 +350,7 @@ private:
     return buf;
   }
 
-  static unsigned TxBodyAllocMax_();
+  static unsigned TxBodyAllocMax();
   static ZmRef<TxBody> start(ZuCSpan, unsigned slots, uint64_t, bool, Fmt::Error &, Fmt::Limits);
   static ZuSpan<char> grow(void *, unsigned used, unsigned needed);
   ZuSpan<char> storage() { return {data() + m_bodyOffset, size - m_bodyOffset}; }

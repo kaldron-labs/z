@@ -1,4 +1,5 @@
 METASOURCES = AUTO
+noinst_HEADERS = zdbustesttool.hh
 AM_CPPFLAGS = -I$(top_srcdir)/zu/src -I$(top_srcdir)/zm/src \
 	-I$(top_srcdir)/zt/src -I$(top_srcdir)/ze/src -I$(top_srcdir)/zf/src \
 	-I$(top_srcdir)/zi/src -I$(top_srcdir)/zdbus/src @Z_CPPFLAGS@

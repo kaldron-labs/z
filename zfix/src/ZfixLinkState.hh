@@ -158,58 +158,58 @@ public:
   uint32_t heartBtInt_() const { return m_heartBtInt; }
   bool ready_() const { return m_ready; }
   bool txDone_() const { return m_txDone; }
-  bool resetArmed_() const { return m_nextEpoch && m_nextEpoch == m_epoch; }
-  bool resetPreparing_() const { return m_nextEpoch > m_epoch; }
+  bool resetArmed() const { return m_nextEpoch && m_nextEpoch == m_epoch; }
+  bool resetPreparing() const { return m_nextEpoch > m_epoch; }
   bool draining_() const { return m_draining; }
   uint64_t drainBoundary_() const { return m_drainBoundary; }
   bool drained_() const { return m_state == State::Established && m_draining && m_drained; }
-  bool admissionPending_() const { return m_admission; }
-  const SessionString &probeID_() const { return m_probeID; }
+  bool admissionPending() const { return m_admission; }
+  const SessionString &probeID() const { return m_probeID; }
 
   ZuTime deadline_(unsigned timer) const;
-  unsigned nextTimer_(ZuTime &at) const;
+  unsigned nextTimer(ZuTime &at) const;
 
-  SessionFault validateSession_(const RxMsg &) const;
+  SessionFault validateSession(const RxMsg &) const;
   SessionEvent fault_(uint64_t connection, unsigned error, int32_t tag,
     ZuTime now, bool logout);
 
   // Explicit initial reset agreement; only on a never-opened session owner.
-  bool resetOnOpen_() const { return m_resetOnOpen; }
+  bool resetOnOpen() const { return m_resetOnOpen; }
 
-  bool resetOnOpen_(uint64_t epoch, bool enabled = true);
+  bool resetOnOpen(uint64_t epoch, bool enabled = true);
   // Binding revokes predecessor authority without starting FIX or its timers.
   SessionEvent bind_(bool replace);
   // Start only after the current native association has authenticated.
   SessionEvent start_(ZuTime now);
   SessionEvent open_(ZuTime now);
   SessionEvent replace_(ZuTime now);
-  SessionEvent logonSent_(uint64_t connection, uint64_t seqNo, ZuTime now);
-  SessionEvent peerLogon_(uint64_t connection, const RxMsg &,
+  SessionEvent logonSent(uint64_t connection, uint64_t seqNo, ZuTime now);
+  SessionEvent peerLogon(uint64_t connection, const RxMsg &,
     const Session::Logon &, uint64_t expected, ZuTime now);
   SessionEvent admit_(uint64_t connection, uint64_t ticket, bool accepted, ZuTime now);
   SessionEvent recovery_(uint64_t connection, bool rxDone, bool txDone, ZuTime now);
-  SessionEvent probeSent_(uint64_t connection, uint64_t marker, uint64_t seqNo, ZuTime now);
+  SessionEvent probeSent(uint64_t connection, uint64_t marker, uint64_t seqNo, ZuTime now);
   SessionEvent flushed_(uint64_t connection);
-  SessionEvent resetPrepare_(uint64_t connection, uint64_t epoch,
+  SessionEvent resetPrepare(uint64_t connection, uint64_t epoch,
     uint64_t nextEpoch, bool initiator, ZuTime now, unsigned path = ResetPath::Live);
-  bool resetMatches_(uint64_t connection, uint64_t epoch,
+  bool resetMatches(uint64_t connection, uint64_t epoch,
     uint64_t nextEpoch, uint64_t drain) const;
-  SessionEvent resetReady_(uint64_t connection, uint64_t nextEpoch,
+  SessionEvent resetReady(uint64_t connection, uint64_t nextEpoch,
     ZuTime now, bool associated = false);
-  SessionEvent resetStart_(uint64_t connection, ZuTime now);
-  SessionEvent resetDisconnect_(uint64_t connection);
-  SessionEvent resetAbort_(uint64_t connection, uint64_t nextEpoch, uint64_t drain);
+  SessionEvent resetStart(uint64_t connection, ZuTime now);
+  SessionEvent resetDisconnect(uint64_t connection);
+  SessionEvent resetAbort(uint64_t connection, uint64_t nextEpoch, uint64_t drain);
   SessionEvent drain_(uint64_t connection, ZuTime now);
   SessionEvent drainTx_(uint64_t connection, uint64_t ticket, uint64_t boundary, ZuTime now);
   SessionEvent heartbeat_(uint64_t connection, ZuCSpan id, ZuTime now);
   SessionEvent testRequest_(uint64_t connection, ZuTime now);
   SessionEvent probe_(uint64_t connection, ZuTime now);
-  void activity_(uint64_t connection, ZuTime now);
+  void activity(uint64_t connection, ZuTime now);
   SessionEvent logout_(uint64_t connection, ZuTime now);
-  SessionEvent peerLogoutEarly_(uint64_t connection);
-  SessionEvent peerLogout_(uint64_t connection, ZuTime now);
+  SessionEvent peerLogoutEarly(uint64_t connection);
+  SessionEvent peerLogout(uint64_t connection, ZuTime now);
   SessionEvent lost_(uint64_t connection);
-  SessionEvent outputFailed_(uint64_t connection);
+  SessionEvent outputFailed(uint64_t connection);
   SessionEvent closed_(uint64_t connection);
   SessionEvent timer_(uint64_t connection, unsigned timer, ZuTime now);
 

@@ -20,7 +20,7 @@ static ZuBSpan span_(const uint8_t *data, unsigned len)
   return ZuBSpan{data, len};
 }
 
-static bool trafficSecret_(Zquic::TrafficSecret &secret, uint8_t seed)
+static bool trafficSecret(Zquic::TrafficSecret &secret, uint8_t seed)
 {
   uint8_t bytes[32];
   for (unsigned i = 0; i < sizeof(bytes); ++i) bytes[i] = seed + i;
@@ -83,34 +83,34 @@ friend inline ZuStringT<"Zquic.TimerTest.Link"> ZmNHeapID(TimerLink *);
   using Base::Base;
 
   void armAll(ZuTime out) {
-    Base::scheduleAckDelayTimer_(out);
-    Base::scheduleLossTimer_(out);
-    Base::schedulePTOTimer_(out);
-    Base::startIdleTimerTx_(out - Zm::now());
-    Base::scheduleHBTimer_(out);
-    Base::scheduleCloseTimer_(out);
-    Base::scheduleKeyDiscardTimer_(out);
-    Base::schedulePMTUDTimer_(out);
-    Base::schedulePathTimer_(out);
+    Base::scheduleAckDelayTimer(out);
+    Base::scheduleLossTimer(out);
+    Base::schedulePTOTimer(out);
+    Base::startIdleTimerTx(out - Zm::now());
+    Base::scheduleHBTimer(out);
+    Base::scheduleCloseTimer(out);
+    Base::scheduleKeyDiscardTimer(out);
+    Base::schedulePMTUDTimer(out);
+    Base::schedulePathTimer(out);
   }
   void cancelAll() { Base::cancelTimers_(); }
   void armAckPTO(ZuTime ack, ZuTime pto) {
-    Base::scheduleAckDelayTimer_(ack);
-    Base::schedulePTOTimer_(pto);
+    Base::scheduleAckDelayTimer(ack);
+    Base::schedulePTOTimer(pto);
   }
   bool installOneRTT(const Zquic::TrafficSecret &secret) {
     return Base::installAppDataKeys_(secret, secret, {});
   }
 
-  void ackDelayExpired_() { fired_(ackDelay); }
-  void lossTimeExpired_() { fired_(lossTime); }
+  void ackDelayExpired() { fired_(ackDelay); }
+  void lossTimeExpired() { fired_(lossTime); }
   void pto_() { fired_(pto); }
-  void idleExpired_() { fired_(idle); }
-  void heartBeatExpired_() { fired_(heartBeat); }
-  void closeExpired_() { fired_(close); }
-  void keyDiscardExpired_() { fired_(keyDiscard); }
+  void idleExpired() { fired_(idle); }
+  void heartBeatExpired() { fired_(heartBeat); }
+  void closeExpired() { fired_(close); }
+  void keyDiscardExpired() { fired_(keyDiscard); }
   void pmtudExpired_() { fired_(pmtud); }
-  void pathExpired_() { fired_(path); }
+  void pathExpired() { fired_(path); }
 
   unsigned fired() const {
     return ackDelay + lossTime + pto + idle + close +
@@ -150,7 +150,7 @@ void testTimerInventory()
       !hubData.down && !hubData.up,
     "new QUIC link was not reflected in hub telemetry");
 
-  ZuCHECK(trafficSecret_(secret, 1) && link->installOneRTT(secret),
+  ZuCHECK(trafficSecret(secret, 1) && link->installOneRTT(secret),
     "timer test link establish failed");
   app.telemetry(hubData);
   ZuCHECK(hubData.nLinks == 1 && hubData.up == 1 &&
@@ -185,7 +185,7 @@ void testTimerCancel()
   ZmRef<TimerLink> link = new TimerLink{&app};
   Zquic::TrafficSecret secret;
 
-  ZuCHECK(trafficSecret_(secret, 2) && link->installOneRTT(secret),
+  ZuCHECK(trafficSecret(secret, 2) && link->installOneRTT(secret),
     "timer cancel link establish failed");
   ZmRef<TimerLink> sentinel = new TimerLink{&app};
   ZuTime now = Zm::now();

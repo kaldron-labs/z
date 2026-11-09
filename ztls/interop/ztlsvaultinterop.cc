@@ -24,7 +24,7 @@
 #include <zlib/ZtlsVault.hh>
 #include <zlib/ZdbusAddress.hh>
 
-#include "../../zdbus/util/ZdbusTestTool.hh"
+#include "../../zdbus/util/zdbustesttool.hh"
 
 using namespace ZuTestUtil;
 

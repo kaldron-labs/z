@@ -401,7 +401,7 @@ static void serviceToken()
   ZuCheckRT(checkContext(",\"amr\":[\"passkey\"]", "passkey"));
   ZuCheckRT(checkContext(",\"amr\":[\"oidc\"]", "oidc"));
   ZuCheckRT(checkContext(",\"amr\":[\"unknown\"]", ""));
-  service.setRefreshRevocationFn([&refreshRevoked](Zum::RefreshID refreshID,
+  service.refreshFn([&refreshRevoked](Zum::RefreshID refreshID,
       int64_t expires) {
     ++refreshRevoked;
     ZuCheckRT(refreshID.issuerURL == "https://issuer/oauth2/9" &&

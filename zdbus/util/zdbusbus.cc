@@ -16,7 +16,7 @@
 
 #include <zlib/ZdbusAddress.hh>
 
-#include "ZdbusTestTool.hh"
+#include "zdbustesttool.hh"
 
 int main()
 {

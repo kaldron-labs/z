@@ -160,7 +160,7 @@ struct OpaqueToken {
 // brute-force resistance for opaque OAuth artifacts.
 enum { OpaqueIDSize = 16, OpaqueSecretSize = 32 };
 
-ZumExtern int formDecode_(ZuSpan<char>);
+ZumExtern int formDecode(ZuSpan<char>);
 
 template <typename L>
 bool formEach(ZuSpan<char> data, L field)
@@ -188,8 +188,8 @@ bool formEach(ZuSpan<char> data, L field)
     else
       value = {part.data() + partLength, 0};
 
-    int nameLength = formDecode_(name);
-    int valueLength = formDecode_(value);
+    int nameLength = formDecode(name);
+    int valueLength = formDecode(value);
     if (nameLength < 0 || valueLength < 0) return false;
     field(ZuCSpan{name.data(), unsigned(nameLength)},
       ZuCSpan{value.data(), unsigned(valueLength)});

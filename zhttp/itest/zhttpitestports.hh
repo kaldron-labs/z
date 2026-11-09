@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZhttpITestPorts_HH
-#define ZhttpITestPorts_HH
+#ifndef zhttpitestports_HH
+#define zhttpitestports_HH
 
 namespace ZhttpITestPort {
   enum {
@@ -23,4 +23,4 @@ namespace ZhttpITestPort {
   };
 }
 
-#endif /* ZhttpITestPorts_HH */
+#endif /* zhttpitestports_HH */

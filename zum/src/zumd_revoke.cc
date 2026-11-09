@@ -96,7 +96,7 @@ void SSFTransmitter::workDone_()
 {
   m_config.requests->scheduler()->run([this]() {
     --m_credit;
-    postDrain_();
+    stop_0();
   }, m_config.requests->sid());
 }
 
@@ -108,8 +108,8 @@ void SSFTransmitter::start_()
     m_credit = 0;
     m_draining = false;
     auto work = work_();
-    gc_(work);
-    retry_(work);
+    gc_0(work);
+    retry_0(work);
     Engine::started(true);
   }, m_config.requests->sid());
 }
@@ -124,11 +124,11 @@ void SSFTransmitter::stop_()
     m_gcArmed = m_armed = false;
     m_nextDelivery = 0;
     m_draining = true;
-    postDrain_();
+    stop_0();
   }, m_config.requests->sid());
 }
 
-void SSFTransmitter::postDrain_()
+void SSFTransmitter::stop_0()
 {
   if (!m_draining || m_drainPosted) return;
   m_drainPosted = true;
@@ -221,12 +221,12 @@ void SSFTransmitter::add(AppID appID, String clientID,
             if (after.mutable_()) ZuClear(after);
             row->data() = ZuMv(receiver);
             bool ok = row->commit();
-            if (ok) self->gc_(work);
+            if (ok) self->gc_0(work);
             complete(ok ? 200 : 503, ok ? lease : SSFLease{});
             return;
           }
           if (table->count() >= self->m_config.receiverMax) {
-            self->gc_(work);
+            self->gc_0(work);
             complete(429, SSFLease{});
             return;
           }
@@ -239,7 +239,7 @@ void SSFTransmitter::add(AppID appID, String clientID,
             if (!row) { complete(503, SSFLease{}); return; }
             new (row->ptr()) SSFRx{ZuMv(receiver)};
             bool ok = row->commit();
-            if (ok) self->gc_(work);
+            if (ok) self->gc_0(work);
             complete(ok ? 200 : 503, ok ? lease : SSFLease{});
           });
         });
@@ -250,7 +250,7 @@ void SSFTransmitter::add(AppID appID, String clientID,
 
 // Read only the earliest lease. Wake at its deadline, rather than scanning
 // receivers periodically; the persisted expiry index also restores GC.
-void SSFTransmitter::gc_(const Work &work)
+void SSFTransmitter::gc_0(const Work &work)
 {
   if (!active_()) return;
   auto table = m_config.db->ssfRx;
@@ -262,12 +262,12 @@ void SSFTransmitter::gc_(const Work &work)
       if (result.template is<void>()) credit = nullptr;
       auto self = work->owner;
       if (!result.template is<SSFRxTable::Tuple>()) {
-        if (!count) self->gcArm_(work, 0);
+        if (!count) self->gc_1(work, 0);
         return;
       }
       auto tuple = ZuMv(result).template p<SSFRxTable::Tuple>();
       int64_t expires = tuple.template p<0>();
-      if (expires > Zm::now().sec()) { self->gcArm_(work, expires); return; }
+      if (expires > Zm::now().sec()) { self->gc_1(work, expires); return; }
       String id = ZuMv(tuple.template p<2>());
       table->run(0, [credit = work, table, id = ZuMv(id)]() mutable {
         auto work = ZuMv(credit);
@@ -275,10 +275,10 @@ void SSFTransmitter::gc_(const Work &work)
             ZdbRow<SSFRx> *row) mutable {
           auto work = ZuMv(credit);
           auto self = work->owner;
-          if (!row) { self->gc_(work); return; }
+          if (!row) { self->gc_0(work); return; }
           if (row->data().expires > Zm::now().sec()) {
             row->abort();
-            self->gc_(work);
+            self->gc_0(work);
             return;
           }
           ZdbRowRef<SSFRx> hold{row};
@@ -286,7 +286,7 @@ void SSFTransmitter::gc_(const Work &work)
           table->del(ZuMv(hold), [credit = work](ZdbRow<SSFRx> *row) mutable {
             auto work = ZuMv(credit);
             auto self = work->owner;
-            if (row && row->commit()) { self->retry_(work); self->gc_(work); }
+            if (row && row->commit()) { self->retry_0(work); self->gc_0(work); }
           });
         });
       });
@@ -294,7 +294,7 @@ void SSFTransmitter::gc_(const Work &work)
   });
 }
 
-void SSFTransmitter::gcArm_(const Work &work, int64_t expires)
+void SSFTransmitter::gc_1(const Work &work, int64_t expires)
 {
   if (!active_()) return;
   auto scheduler = m_config.requests->scheduler();
@@ -314,7 +314,7 @@ void SSFTransmitter::gcArm_(const Work &work, int64_t expires)
 	  auto self = work->owner;
 	  if (!self->active_()) return;
 	  self->m_gcArmed = false;
-	  self->gc_(work);
+	  self->gc_0(work);
 	});
       }, self->m_config.requests->sid());
   }, m_config.requests->sid());
@@ -343,7 +343,7 @@ void SSFTransmitter::result_(const Work &work, String id, uint64_t revision, int
         table->del(ZuMv(hold), [credit = work](ZdbRow<SSFRx> *row) mutable {
           auto work = ZuMv(credit);
           auto self = work->owner;
-          if (row && row->commit()) { self->retry_(work); self->gc_(work); }
+          if (row && row->commit()) { self->retry_0(work); self->gc_0(work); }
         });
         return;
       }
@@ -392,7 +392,7 @@ void SSFTransmitter::receivers_(const Work &work,
         ZuTupleCall(ZuMv(tuple), [&work, &refreshID, expires](auto &&...args) {
           auto self = work->owner;
           SSFRx receiver{ZuFwd<decltype(args)>(args)...};
-          if (receiver.expires <= Zm::now().sec()) { self->gc_(work); return; }
+          if (receiver.expires <= Zm::now().sec()) { self->gc_0(work); return; }
           RefreshID id{refreshID.issuerURL, refreshID.familyID};
           auto scheduler = self->m_config.requests->scheduler();
           auto sid = self->m_config.requests->sid();
@@ -555,7 +555,7 @@ void SSFTransmitter::deliver_(const Work &work, SSFRx receiver, SSFDelivery deli
 void SSFTransmitter::send_(const Work &work, SSFRx receiver, SSFDelivery delivery,
     String authorization)
 {
-  if (receiver.expires <= Zm::now().sec()) { gc_(work); retry_(work); return; }
+  if (receiver.expires <= Zm::now().sec()) { gc_0(work); retry_0(work); return; }
   uint64_t revision = receiver.revision;
   unsigned errors = receiver.errors < 31 ? receiver.errors : 31;
   uint64_t delay = uint64_t(m_config.retryBase)<<errors;
@@ -606,18 +606,18 @@ void SSFTransmitter::send_(const Work &work, SSFRx receiver, SSFDelivery deliver
             }
             item.nextDelivery = now + int64_t(delay);
             row->commit();
-            self->arm_(work, item.nextDelivery);
+            self->arm_0(work, item.nextDelivery);
           });
       });
     });
 }
 
-void SSFTransmitter::retry_(const Work &work)
+void SSFTransmitter::retry_0(const Work &work)
 {
-  retryPage_(work, {}, true);
+  retry_1(work, {}, true);
 }
 
-void SSFTransmitter::retryPage_(const Work &work, SSFDeliveryTable::Key<0> key, bool first)
+void SSFTransmitter::retry_1(const Work &work, SSFDeliveryTable::Key<0> key, bool first)
 {
   if (!active_() || !m_config.db->ssfDeliveries) return;
   auto table = m_config.db->ssfDeliveries;
@@ -639,9 +639,9 @@ void SSFTransmitter::retryPage_(const Work &work, SSFDeliveryTable::Key<0> key, 
           scheduler->run([credit = work, key = ZuMv(key)]() mutable {
             auto work = ZuMv(credit);
             auto self = work->owner;
-            if (self->active_()) self->retryPage_(work, ZuMv(key), false);
+            if (self->active_()) self->retry_1(work, ZuMv(key), false);
           }, sid);
-        } else if (next) self->arm_(work, next);
+        } else if (next) self->arm_0(work, next);
         return;
       }
       auto tuple = ZuMv(result).template p<SSFDeliveryTable::Tuple>();
@@ -667,7 +667,7 @@ void SSFTransmitter::retryPage_(const Work &work, SSFDeliveryTable::Key<0> key, 
       String receiverID = tuple.template p<1>();
       auto rx = self->m_config.db->ssfRx;
       if (!rx) {
-        self->arm_(work, Zm::now().sec() + self->m_config.retryBase);
+        self->arm_0(work, Zm::now().sec() + self->m_config.retryBase);
         return;
       }
       rx->run(0, [credit = work, rx, receiverID = ZuMv(receiverID),
@@ -689,7 +689,7 @@ void SSFTransmitter::retryPage_(const Work &work, SSFDeliveryTable::Key<0> key, 
                       if (row) row->commit();
                     });
               });
-              self->gc_(work);
+              self->gc_0(work);
               return;
             }
             SSFDelivery delivery{
@@ -715,7 +715,7 @@ void SSFTransmitter::retryPage_(const Work &work, SSFDeliveryTable::Key<0> key, 
                 self->deliver_(work, ZuMv(receiver), ZuMv(delivery),
                     ZuMv(authorization));
               else
-                self->arm_(work, Zm::now().sec() + self->m_config.retryBase);
+                self->arm_0(work, Zm::now().sec() + self->m_config.retryBase);
             }, sid);
           });
       });
@@ -728,18 +728,18 @@ void SSFTransmitter::retryPage_(const Work &work, SSFDeliveryTable::Key<0> key, 
   });
 }
 
-void SSFTransmitter::arm_(const Work &work, int64_t when)
+void SSFTransmitter::arm_0(const Work &work, int64_t when)
 {
   if (!active_() || !when) return;
   auto scheduler = m_config.requests->scheduler();
   scheduler->run([credit = work, when]() mutable {
     auto work = ZuMv(credit);
     auto self = work->owner;
-    self->armOn_(work, when);
+    self->arm_1(work, when);
   }, m_config.requests->sid());
 }
 
-void SSFTransmitter::armOn_(const Work &work, int64_t when)
+void SSFTransmitter::arm_1(const Work &work, int64_t when)
 {
   if (!active_() || !when) return;
   auto scheduler = m_config.requests->scheduler();
@@ -756,7 +756,7 @@ void SSFTransmitter::armOn_(const Work &work, int64_t when)
 	if (!self->active_()) return;
 	self->m_armed = false;
 	self->m_nextDelivery = 0;
-	self->retry_(work);
+	self->retry_0(work);
       });
     }, m_config.requests->sid());
 }

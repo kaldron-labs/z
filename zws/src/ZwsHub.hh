@@ -222,7 +222,7 @@ public:
     m_down = false;
     m_handshakeFailed = false;
     m_info = ZuMv(info);
-    Base::opening_();
+    Base::opening();
   }
   void retain_(Zhttp::Channel *channel) { m_channel = channel; }
   bool bind_(Zhttp::Channel *channel) {
@@ -246,7 +246,7 @@ public:
     H1_::connected(*m_hub->app(), actual(), ZuMv(m_info), 0);
     return true;
   }
-  void failHandshake_(Failure::T failure = Failure::Handshake) {
+  void failHandshake(Failure::T failure = Failure::Handshake) {
     if (m_handshakeFailed) return;
     m_handshakeFailed = true;
     H1_::error(*m_hub->app(), actual(), failure, 0);
@@ -327,10 +327,10 @@ public:
     this->open_(info);
     if constexpr (Profile::Multiplexed) {
       m_ready = enabled && channel->streamPeerCap();
-      if (!m_ready) this->failHandshake_(Failure::Capability);
+      if (!m_ready) this->failHandshake(Failure::Capability);
     } else {
       m_ready = enabled && nonce(this->app()->random(), m_key);
-      if (!m_ready) this->failHandshake_();
+      if (!m_ready) this->failHandshake();
     }
     if (!m_ready) this->disconnect();
   }
@@ -381,11 +381,11 @@ public:
   }
   bool bodyInfo(Zhttp::Channel *channel, Zhttp::BodyType::T type, uint64_t length) {
     Base::bodyInfo(channel, type, length);
-    if (!Base::valid()) { m_link->failHandshake_(); return false; }
+    if (!Base::valid()) { m_link->failHandshake(); return false; }
     return m_link->establish_(Base::selected());
   }
   void complete(Zhttp::Channel *, bool ok) {
-    if (!ok && !m_link->down()) m_link->failHandshake_();
+    if (!ok && !m_link->down()) m_link->failHandshake();
   }
 private:
   ClientLink<App, Profile> *m_link = nullptr;
@@ -541,7 +541,7 @@ public:
     HandshakeString key;
     if constexpr (!Profile::Multiplexed)
       if (accepted && !accept(key, Base::key())) accepted = false;
-    if (!accepted) m_link->failHandshake_();
+    if (!accepted) m_link->failHandshake();
     using Node = typename Zhttp::ResponseQ<Response<Profile>, ZuStringT<"Zws.Response">>::Node;
     channel->send(ZmRef<Node>{new Node{key, selected, accepted}});
     if (!accepted) return true;

@@ -143,12 +143,12 @@ public:
   }
 
 protected:
-  bool sendPost_() {
+  bool sendPost() {
     if (++m_sendPosts <= m_route.maxQueue) return true;
     --m_sendPosts;
     return false;
   }
-  void sendPosted_() { --m_sendPosts; }
+  void sendPosted() { --m_sendPosts; }
 
   Owner *owner() const { return m_owner.load_(); }
   const CompletionRoute &route() const { return m_route; }

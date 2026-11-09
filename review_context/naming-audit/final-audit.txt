@@ -1,0 +1,248 @@
+{
+  "coverage": {
+    "zdbus": {
+      "rows": 26,
+      "missing": []
+    },
+    "zdf": {
+      "rows": 1,
+      "missing": []
+    },
+    "zfix": {
+      "rows": 99,
+      "missing": []
+    },
+    "zgrpc": {
+      "rows": 28,
+      "missing": []
+    },
+    "zhttp": {
+      "rows": 302,
+      "missing": []
+    },
+    "zjrpc": {
+      "rows": 28,
+      "missing": []
+    },
+    "zmcp": {
+      "rows": 47,
+      "missing": []
+    },
+    "zpb": {
+      "rows": 2,
+      "missing": []
+    },
+    "zquic": {
+      "rows": 667,
+      "missing": []
+    },
+    "zrest": {
+      "rows": 11,
+      "missing": []
+    },
+    "ztc": {
+      "rows": 49,
+      "missing": []
+    },
+    "ztls": {
+      "rows": 98,
+      "missing": []
+    },
+    "zum": {
+      "rows": 158,
+      "missing": []
+    },
+    "zws": {
+      "rows": 21,
+      "missing": []
+    }
+  },
+  "conditional_total": 1537,
+  "confirmed_count": 45,
+  "confirmed_residuals": [],
+  "confirmed_dest_missing": [],
+  "new_overlength": {},
+  "literal_changed_files": [
+    "zdbus/interop/zdbusinteroptest.cc",
+    "zdbus/itest/zdbusconnectiontest.cc",
+    "zdbus/itest/zdbusclienttest.cc",
+    "zdbus/util/zdbusbus.cc",
+    "zgrpc/interop/zgrpcgoserver.cc",
+    "zgrpc/interop/zgrpcgoclient.cc",
+    "zgrpc/itest/zgrpcservertest.cc",
+    "zgrpc/itest/zgrpcdeadlinetest.cc",
+    "zgrpc/itest/zgrpcflowtest.cc",
+    "zgrpc/itest/zgrpcclienttest.cc",
+    "zgrpc/itest/zgrpcwiretest.cc",
+    "zhttp/src/ZhttpH2Hub.hh",
+    "zhttp/test/ZhttpH2HubTest.cc",
+    "zhttp/interop/zhttpqirsmoketest.cc",
+    "zhttp/interop/zhttpdarkhttpdcompattest.cc",
+    "zhttp/interop/zhttp3interoptest.cc",
+    "zhttp/itest/zhttpmultirequesttest.cc",
+    "zhttp/itest/zhttpserverstreamtest.cc",
+    "zhttp/itest/zhttplifecycletest.cc",
+    "zhttp/itest/zhttpapptest.cc",
+    "zhttp/itest/zhttpclientstreamtest.cc",
+    "zhttp/itest/zhttpmatrix.cc",
+    "zhttp/itest/zhttpclientfallbacktest.cc",
+    "zmcp/itest/zmcpwstest.cc",
+    "zmcp/itest/zmcphttptest.cc",
+    "zpb/itest/zprotoctest.cc",
+    "zpb/itest/zpbgotest.cc",
+    "zrest/itest/zrestmatrix.cc",
+    "ztc/itest/ztchubwiretest.cc",
+    "ztls/interop/ztlsvaultinterop.cc",
+    "ztls/itest/ztlsvaultdbustest.cc"
+  ],
+  "cpp_files": 796
+}
+remaining_overlength 92
+CRED_MAX_CREDENTIAL_BLOB_SIZE ztls/src/ZtlsVaultWindows.cc
+CRED_MAX_GENERIC_TARGET_NAME_LENGTH ztls/src/ZtlsVaultWindows.cc
+DBUS_MESSAGE_TYPE_METHOD_RETURN zdbus/util/zdbuspeer.cc
+DBUS_REQUEST_NAME_REPLY_PRIMARY_OWNER zdbus/util/zdbuspeer.cc
+EVP_PKEY_CTX_set0_rsa_oaep_label ztls/src/ZtlsOpenSSL.cc
+EVP_PKEY_CTX_set1_rsa_keygen_pubexp ztls/src/ZtlsOpenSSL.cc
+EVP_PKEY_CTX_set_rsa_keygen_bits ztls/src/ZtlsOpenSSL.cc
+EVP_PKEY_CTX_set_signature_md ztls/src/ZtlsOpenSSL.cc
+EVP_PKEY_get_octet_string_param ztls/src/ZtlsOpenSSL.cc
+EVP_PKEY_get_utf8_string_param ztls/src/ZtlsOpenSSL.cc
+FLATBUFFERS_GENERATED_TELEMETRY_PEER_H_ ztc/interop/telemetry_generated.h
+FLATBUFFERS_VTABLE_UNDERLYING_TYPE ztc/interop/telemetry_generated.h
+OSSL_PARAM_BLD_push_octet_string ztls/src/ZtlsOpenSSL.cc
+OSSL_PARAM_BLD_push_utf8_string ztls/src/ZtlsOpenSSL.cc
+OSSL_PARAM_construct_octet_string ztls/src/ZtlsOpenSSL.cc
+OSSL_PARAM_construct_utf8_string ztls/src/ZtlsOpenSSL.cc
+OSSL_PKEY_PARAM_RSA_COEFFICIENT1 ztls/src/ZtlsOpenSSL.cc
+OSSL_PKEY_PARAM_RSA_EXPONENT1 ztls/src/ZtlsOpenSSL.cc
+OSSL_PKEY_PARAM_RSA_EXPONENT2 ztls/src/ZtlsOpenSSL.cc
+POINT_CONVERSION_UNCOMPRESSED ztls/src/ZtlsOpenSSL.cc
+PROCESS_QUERY_LIMITED_INFORMATION zfix/itest/ZiTestResidue.cc
+PTLS_ALERT_CERTIFICATE_EXPIRED ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_CERTIFICATE_REQUIRED ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_CERTIFICATE_REVOKED ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_CERTIFICATE_UNKNOWN ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_NO_APPLICATION_PROTOCOL zquic/src/ZquicCrypto.cc
+PTLS_ALERT_UNEXPECTED_MESSAGE ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_UNKNOWN_PSK_IDENTITY ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_UNSUPPORTED_CERTIFICATE ztls/src/ZtlsOpenSSL.cc
+PTLS_ALERT_UNSUPPORTED_EXTENSION ztls/src/ZtlsOpenSSL.cc
+PTLS_CIPHER_SUITE_AES_128_GCM_SHA256 ztls/src/ZtlsOpenSSL.cc
+PTLS_CIPHER_SUITE_AES_256_GCM_SHA384 ztls/src/ZtlsOpenSSL.cc
+PTLS_CIPHER_SUITE_NAME_AES_128_GCM_SHA256 ztls/src/ZtlsOpenSSL.cc
+PTLS_CIPHER_SUITE_NAME_AES_256_GCM_SHA384 ztls/src/ZtlsOpenSSL.cc
+PTLS_EARLY_DATA_ACCEPTANCE_UNKNOWN zquic/src/ZquicCrypto.cc
+PTLS_ERROR_COMPRESSION_FAILURE ztls/src/ZtlsOpenSSL.cc
+PTLS_HASH_FINAL_MODE_SNAPSHOT ztls/src/ZtlsMD.hh
+PTLS_OPENSSL_HAVE_CHACHA20_POLY1305 ztls/src/ZtlsOpenSSL.cc
+PTLS_TLS12_MASTER_SECRET_SIZE ztls/test/ZtlsBufHookTest.cc
+PTLS_X86_CACHE_LINE_ALIGN_BITS ztls/src/ZtlsPico.cc
+ParseDelimitedFromZeroCopyStream zpb/interop/zpbinterop.cc
+SerializeDelimitedToZeroCopyStream zpb/interop/zpbinterop.cc
+X509_R_CERT_ALREADY_IN_HASH_TABLE ztls/src/ZtlsOpenSSL.cc
+Zprotoc_zpb_2Dgen_2Finterop_HH zpb/interop/zpb-gen/interop.hh
+Zprotoc_zpb_2Dgen_2Fzprotoc_5Faddress_HH zpb/interop/zpb-gen/zprotoc_address.hh
+Zprotoc_zpb_2Dgen_2Fzprotoc_5Fvalues_5Frow_HH zpb/interop/zpb-gen/zprotoc_values_row.hh
+Zprotoc_zpb_2Dgen_2Fzprotoc_5Fvalues_HH zpb/interop/zpb-gen/zprotoc_values.hh
+Zprotoc_zprotoc_2Dout_2Fproto2_HH zpb/itest/zprotoc-out/proto2.hh
+Zprotoc_zprotoc_2Dout_2Fsimple_HH zpb/itest/zprotoc-out/simple.hh
+Zprotoc_zprotoc_2Dout_2Fzprotoc_5Faddress_HH zpb/itest/zprotoc-out/zprotoc_address.hh
+Zprotoc_zprotoc_2Dout_2Fzprotoc_5Fbase_HH zpb/itest/zprotoc-out/zprotoc_base.hh
+Zprotoc_zprotoc_2Dout_2Fzprotoc_5Fuser_HH zpb/itest/zprotoc-out/zprotoc_user.hh
+Zprotoc_zprotoc_2Dout_2Fzprotoc_5Fvalues_5Frow_HH zpb/itest/zprotoc-out/zprotoc_values_row.hh
+Zprotoc_zprotoc_2Dout_2Fzprotoc_5Fvalues_HH zpb/itest/zprotoc-out/zprotoc_values.hh
+dbus_connection_send_with_reply zdbus/util/zdbuspeer.cc
+dbus_connection_set_exit_on_disconnect zdbus/util/zdbuspeer.cc
+dbus_message_get_reply_serial zdbus/util/zdbuspeer.cc
+dbus_message_iter_append_basic zdbus/util/zdbuspeer.cc
+dbus_message_iter_close_container zdbus/util/zdbuspeer.cc
+dbus_message_iter_get_arg_type zdbus/util/zdbuspeer.cc
+dbus_message_iter_init_append zdbus/util/zdbuspeer.cc
+dbus_message_iter_open_container zdbus/util/zdbuspeer.cc
+dbus_message_new_method_return zdbus/util/zdbuspeer.cc
+dbus_pending_call_steal_reply zdbus/util/zdbuspeer.cc
+ptls_build_tls12_export_params ztls/test/ZtlsBufHookTest.cc
+ptls_fusion_is_supported_by_cpu ztls/src/ZtlsOpenSSL.cc
+ptls_key_exchange_algorithm_t ztls/src/ZtlsOpenSSL.cc
+ptls_on_client_hello_parameters_t zquic/src/ZquicCrypto.hh
+ptls_openssl_chacha20poly1305 ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_decrypt_ticket_evp ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_dispose_sign_certificate ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_dispose_verify_certificate ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_encrypt_ticket_evp ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_init_sign_certificate ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_init_verify_certificate ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_key_exchanges_all ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_sign_certificate_t ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_tls12_ecdhe_rsa_aes128gcmsha256 ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_tls12_ecdhe_rsa_chacha20poly1305sha256 ztls/src/ZtlsOpenSSL.cc
+ptls_openssl_verify_certificate_t ztls/src/ZtlsOpenSSL.cc
+require_client_authentication ztls/src/Ztls.hh
+zumd_saga_admin_access_put_HH zum/src/zumd_saga_admin_access_put.hh
+zumd_saga_admin_access_state_HH zum/src/zumd_saga_admin_access_state.hh
+zumd_saga_assignment_change_HH zum/src/zumd_saga_assignment_change.hh
+zumd_saga_client_access_put_HH zum/src/zumd_saga_client_access_put.hh
+zumd_saga_client_access_state zum/src/zumd_saga_client_access_state.cc
+zumd_saga_client_access_state_HH zum/src/zumd_saga_client_access_state.hh
+zumd_saga_external_projection zum/src/zumd_saga_external_projection.cc
+zumd_saga_external_projection_HH zum/src/zumd_saga_external_projection.hh
+zumd_saga_session_cleanup_data zum/src/zumd_saga_session_cleanup.hh
+zumd_saga_session_cleanup_data_HH zum/src/zumd_saga_session_cleanup_data.hh
+zumd_saga_ssf_delivery_add_HH zum/src/zumd_saga_ssf_delivery_add.hh
+
+LITERAL DIFFS
+zdbus/interop/zdbusinteroptest.cc ['-"../util/ZdbusTestTool.hh"', '+"../util/zdbustesttool.hh"']
+zdbus/itest/zdbusconnectiontest.cc ['-"../util/ZdbusTestTool.hh"', '+"../util/zdbustesttool.hh"']
+zdbus/itest/zdbusclienttest.cc ['-"../util/ZdbusTestTool.hh"', '+"../util/zdbustesttool.hh"']
+zdbus/util/zdbusbus.cc ['-"ZdbusTestTool.hh"', '+"zdbustesttool.hh"']
+zgrpc/interop/zgrpcgoserver.cc ['-"ZgrpcMatrix.hh"', '+"zgrpcmatrix.hh"']
+zgrpc/interop/zgrpcgoclient.cc ['-"ZgrpcMatrix.hh"', '+"zgrpcmatrix.hh"']
+zgrpc/itest/zgrpcservertest.cc ['-"ZgrpcWire.hh"', '+"zgrpcwire.hh"']
+zgrpc/itest/zgrpcdeadlinetest.cc ['-"ZgrpcWire.hh"', '+"zgrpcwire.hh"']
+zgrpc/itest/zgrpcflowtest.cc ['-"ZgrpcWire.hh"', '+"zgrpcwire.hh"']
+zgrpc/itest/zgrpcclienttest.cc ['-"ZgrpcWire.hh"', '+"zgrpcwire.hh"']
+zgrpc/itest/zgrpcwiretest.cc ['-"ZgrpcWire.hh"', '+"zgrpcwire.hh"']
+zhttp/src/ZhttpH2Hub.hh ['+"Zhttp.H2.Clear"']
+zhttp/test/ZhttpH2HubTest.cc ['+"initialize pending-removal teardown"', '+"stall stream output before removal"', '+"each stream needs bounded removal turns"', '+"teardown and both pending removals finish"', '+"physical teardown must follow all pending stream-removal callbacks"', '+"physical teardown must drain Tx work posted by removal callbacks"']
+zhttp/interop/zhttpqirsmoketest.cc ['-"ZhttpInteropPorts.hh"', '+"zhttpinteropports.hh"']
+zhttp/interop/zhttpdarkhttpdcompattest.cc ['-"ZhttpInteropPorts.hh"', '+"zhttpinteropports.hh"']
+zhttp/interop/zhttp3interoptest.cc ['-"ZhttpInteropPorts.hh"', '+"zhttpinteropports.hh"']
+zhttp/itest/zhttpmultirequesttest.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zhttp/itest/zhttpserverstreamtest.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zhttp/itest/zhttplifecycletest.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zhttp/itest/zhttpapptest.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zhttp/itest/zhttpclientstreamtest.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zhttp/itest/zhttpmatrix.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zhttp/itest/zhttpclientfallbacktest.cc ['-"ZhttpITestPorts.hh"', '+"zhttpitestports.hh"']
+zmcp/itest/zmcpwstest.cc ['-"ZmcpITestPorts.hh"', '+"zmcpitestports.hh"']
+zmcp/itest/zmcphttptest.cc ['-"ZmcpITestPorts.hh"', '+"zmcpitestports.hh"']
+zpb/itest/zprotoctest.cc ['-"ZpbTestUtil.hh"', '+"zpbtestutil.hh"']
+zpb/itest/zpbgotest.cc ['-"ZpbTestUtil.hh"', '+"zpbtestutil.hh"']
+zrest/itest/zrestmatrix.cc ['-"ZrestITestPorts.hh"', '+"zrestitestports.hh"']
+ztc/itest/ztchubwiretest.cc ['-"ZtcControlled.hh"', '+"ztccontrolled.hh"']
+ztls/interop/ztlsvaultinterop.cc ['-"../../zdbus/util/ZdbusTestTool.hh"', '+"../../zdbus/util/zdbustesttool.hh"']
+ztls/itest/ztlsvaultdbustest.cc ['-"../../zdbus/util/ZdbusTestTool.hh"', '+"../../zdbus/util/zdbustesttool.hh"']
+
+HEADER AUDIT
+zhttp/itest/ZhttpITestPorts.hh -> zhttp/itest/zhttpitestports.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zhttp/interop/ZhttpInteropPorts.hh -> zhttp/interop/zhttpinteropports.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zpb/itest/ZpbTestUtil.hh -> zpb/itest/zpbtestutil.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zmcp/itest/ZmcpITestPorts.hh -> zmcp/itest/zmcpitestports.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zdbus/util/ZdbusTestTool.hh -> zdbus/util/zdbustesttool.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zrest/itest/ZrestITestPorts.hh -> zrest/itest/zrestitestports.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zgrpc/itest/ZgrpcWire.hh -> zgrpc/itest/zgrpcwire.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+ztc/itest/ZtcControlled.hh -> ztc/itest/ztccontrolled.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+zgrpc/interop/ZgrpcMatrix.hh -> zgrpc/interop/zgrpcmatrix.hh old_exists False guards True old_source_build_refs []
+  renamed header literals unchanged True
+
+EXCLUDED CHANGES
+['zdash/src/zdash_oauth.hh']

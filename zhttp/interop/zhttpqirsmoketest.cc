@@ -15,7 +15,7 @@
 #include <zlib/ZtString.hh>
 
 #include "ZhttpTestUtil.hh"
-#include "ZhttpInteropPorts.hh"
+#include "zhttpinteropports.hh"
 
 using namespace ZuTestUtil;
 using Zhttp::Test::TempDir;
@@ -29,7 +29,7 @@ static int exitCode_(int status)
   return WEXITSTATUS(status);
 }
 
-static bool runStatus_(ZuCSpan cmd, int expected)
+static bool runStatus(ZuCSpan cmd, int expected)
 {
   ZtString<> script;
   script << cmd << " >/dev/null 2>&1";
@@ -105,7 +105,7 @@ static bool writeFile_(ZuCSpan path, ZuCSpan body)
   return file.write(body.data(), body.length()) == Zi::OK;
 }
 
-static bool cmpFile_(ZuCSpan a, ZuCSpan b)
+static bool cmpFile(ZuCSpan a, ZuCSpan b)
 {
   ZtString<> cmd;
   cmd << "cmp " << a << ' ' << b;
@@ -116,12 +116,12 @@ static void testExecutableContract()
 {
   ZuTestScope(testExecutableContract);
 
-  ZuCHECK(runStatus_("./zhttpqir --help", 0), "help exits 0");
-  ZuCHECK(runStatus_("./zhttpqir", 2), "missing role exits 2");
-  ZuCHECK(runStatus_("./zhttpqir bogus", 2), "bad role exits 2");
-  ZuCHECK(runStatus_("TESTCASE=retry ./zhttpqir client", 127),
+  ZuCHECK(runStatus("./zhttpqir --help", 0), "help exits 0");
+  ZuCHECK(runStatus("./zhttpqir", 2), "missing role exits 2");
+  ZuCHECK(runStatus("./zhttpqir bogus", 2), "bad role exits 2");
+  ZuCHECK(runStatus("TESTCASE=retry ./zhttpqir client", 127),
     "unsupported testcase exits 127");
-  ZuCHECK(runStatus_("TESTCASE=http3 ./zhttpqir client", 2),
+  ZuCHECK(runStatus("TESTCASE=http3 ./zhttpqir client", 2),
     "supported client without requests exits 2");
 }
 
@@ -137,7 +137,7 @@ static void testClientFilesystemPrep()
   cmd << "TESTCASE=http3 REQUESTS='https://server/a/b/file.bin "
     "https://other/file.bin' "
     "ZHTTP_QIR_DOWNLOADS=" << downloads << " ./zhttpqir client";
-  ZuCHECK(runStatus_(cmd, 2),
+  ZuCHECK(runStatus(cmd, 2),
     "valid client request creates dirs before authority validation");
   ZtString<> parent;
   parent << downloads << "/a/b";
@@ -146,10 +146,10 @@ static void testClientFilesystemPrep()
   cmd.length(0);
   cmd << "TESTCASE=http3 REQUESTS=https://server/a/../bad "
     "ZHTTP_QIR_DOWNLOADS=" << downloads << " ./zhttpqir client";
-  ZuCHECK(runStatus_(cmd, 2), "client rejects escaped output path");
+  ZuCHECK(runStatus(cmd, 2), "client rejects escaped output path");
 }
 
-static bool runHQSingleFile_(ZuCSpan testCase, unsigned largeSize = 0)
+static bool runHQSingleFile(ZuCSpan testCase, unsigned largeSize = 0)
 {
   TempDir temp;
   if (!temp.init("ZhttpQIRHQ")) return false;
@@ -198,26 +198,26 @@ static bool runHQSingleFile_(ZuCSpan testCase, unsigned largeSize = 0)
     " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
-  bool ok = runStatus_(cmd, 0);
+  bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
 
   ZtString<> dst;
   dst << downloads << "/file.bin";
-  return ok && stopped && cmpFile_(src, dst);
+  return ok && stopped && cmpFile(src, dst);
 }
 
 static void testHQSingleFile()
 {
   ZuTestScope(testHQSingleFile);
 
-  ZuCHECK(runHQSingleFile_("transfer"), "transfer hq single-file");
+  ZuCHECK(runHQSingleFile("transfer"), "transfer hq single-file");
 }
 
 static void testHQLargeFile()
 {
   ZuTestScope(testHQLargeFile);
 
-  ZuCHECK(runHQSingleFile_("transfer", 10<<20),
+  ZuCHECK(runHQSingleFile("transfer", 10<<20),
     "10 MiB HQ transfer exceeds the former whole-file transmit queue limit");
 }
 
@@ -225,21 +225,21 @@ static void testHQHandshakeFile()
 {
   ZuTestScope(testHQHandshakeFile);
 
-  ZuCHECK(runHQSingleFile_("handshake"), "handshake hq single-file");
+  ZuCHECK(runHQSingleFile("handshake"), "handshake hq single-file");
 }
 
 static void testHQRebindPortFile()
 {
   ZuTestScope(testHQRebindPortFile);
 
-  ZuCHECK(runHQSingleFile_("rebind-port"), "rebind-port hq single-file");
+  ZuCHECK(runHQSingleFile("rebind-port"), "rebind-port hq single-file");
 }
 
 static void testHQRebindAddrFile()
 {
   ZuTestScope(testHQRebindAddrFile);
 
-  ZuCHECK(runHQSingleFile_("rebind-addr"), "rebind-addr hq single-file");
+  ZuCHECK(runHQSingleFile("rebind-addr"), "rebind-addr hq single-file");
 }
 
 static void testH3SingleFile()
@@ -277,14 +277,14 @@ static void testH3SingleFile()
     " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
-  bool ok = runStatus_(cmd, 0);
+  bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
   ZuCHECK(ok, "H3 client downloaded file");
   ZuCHECK(stopped, "H3 server stopped");
 
   ZtString<> dst;
   dst << downloads << "/file.bin";
-  ZuCHECK(cmpFile_(src, dst), "H3 downloaded file matches");
+  ZuCHECK(cmpFile(src, dst), "H3 downloaded file matches");
 }
 
 static void testHQMultiFile()
@@ -332,7 +332,7 @@ static void testHQMultiFile()
     " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
-  bool ok = runStatus_(cmd, 0);
+  bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
   ZuCHECK(ok, "HQ hostname client downloaded files and exited cleanly");
   ZuCHECK(stopped, "HQ server stopped");
@@ -341,9 +341,9 @@ static void testHQMultiFile()
   dst0 << downloads << "/a.bin";
   dst1 << downloads << "/nested/b.bin";
   dst2 << downloads << "/c.bin";
-  ZuCHECK(cmpFile_(src0, dst0), "HQ a matches");
-  ZuCHECK(cmpFile_(src1, dst1), "HQ b matches");
-  ZuCHECK(cmpFile_(src2, dst2), "HQ c matches");
+  ZuCHECK(cmpFile(src0, dst0), "HQ a matches");
+  ZuCHECK(cmpFile(src1, dst1), "HQ b matches");
+  ZuCHECK(cmpFile(src2, dst2), "HQ c matches");
 }
 
 static void testH3MultiFile()
@@ -391,7 +391,7 @@ static void testH3MultiFile()
     " QLOGDIR=" << qlogDir <<
     " ZHTTP_QIR_PORT=" << port << " ./zhttpqir client";
 
-  bool ok = runStatus_(cmd, 0);
+  bool ok = runStatus(cmd, 0);
   bool stopped = stopServer_(server);
   ZuCHECK(ok, "H3 hostname client downloaded files and exited cleanly");
   ZuCHECK(stopped, "H3 server stopped");
@@ -400,9 +400,9 @@ static void testH3MultiFile()
   dst0 << downloads << "/a.bin";
   dst1 << downloads << "/nested/b.bin";
   dst2 << downloads << "/c.bin";
-  ZuCHECK(cmpFile_(src0, dst0), "H3 a matches");
-  ZuCHECK(cmpFile_(src1, dst1), "H3 b matches");
-  ZuCHECK(cmpFile_(src2, dst2), "H3 c matches");
+  ZuCHECK(cmpFile(src0, dst0), "H3 a matches");
+  ZuCHECK(cmpFile(src1, dst1), "H3 b matches");
+  ZuCHECK(cmpFile(src2, dst2), "H3 c matches");
 }
 
 int main(int argc, char **argv)

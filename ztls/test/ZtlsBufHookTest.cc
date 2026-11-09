@@ -470,7 +470,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       state.client_connected = 1;
       state.client_tlsver = unsigned(info.version);
       state.client_cipher = this->tlsInfo().cipherID;
-      if (state.clientKeyUpdate && !this->updateKey_(true)) {
+      if (state.clientKeyUpdate && !this->updateKey_0(true)) {
 	state.fail("client key update failed");
 	return;
       }
@@ -495,7 +495,7 @@ struct BaseClient : public Ztls::Client<BaseClient<State>> {
       state.connect_failed.xchAdd(1);
       state.done.post();
     }
-    void txProtected_() {
+    void txProtected() {
       auto app = this->app();
       auto tid = Zm::getTID();
       if (!app->mx()->invoked_(tid, app->txThread()) ||
@@ -601,7 +601,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 	state.fail("server disconnect completed before I/O Tx drained");
       state.done_one();
     }
-    void txProtected_() {
+    void txProtected() {
       auto app = this->app();
       auto tid = Zm::getTID();
       if (!app->mx()->invoked_(tid, app->txThread()) ||
@@ -631,7 +631,7 @@ struct BaseServer : public Ztls::Server<BaseServer<State>> {
 	if (ZuUnlikely(consumed < 0)) return -1;
 	if (!consumed) return 0;
 	if (complete && (state.multi || !state.server_replied.xch(1))) {
-	  if (state.serverKeyUpdate && !this->updateKey_(true)) {
+	  if (state.serverKeyUpdate && !this->updateKey_0(true)) {
 	    state.fail("server key update failed");
 	    return -1;
 	  }
@@ -1404,7 +1404,7 @@ void run_tls12_handshake_rejected(
   capture.reset();
 
   SuiteList suites;
-  auto suite = Ztls::Backend::tls12_ecdhe_rsa_aes128gcmsha256();
+  auto suite = Ztls::Backend::tls12RSA_AES128GCM();
   ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
   if (!suite) return;
   suites.set(suite);
@@ -1610,7 +1610,7 @@ void testTLS12ExplicitIV(TempDir &temp, LogCapture &capture)
   (void)temp;
   (void)capture;
   ZuTestScopeRT(testTLS12ExplicitIV);
-  auto suite = Ztls::Backend::tls12_ecdhe_rsa_aes128gcmsha256();
+  auto suite = Ztls::Backend::tls12RSA_AES128GCM();
   ZTLS_CHECK_RT(suite, "TLS 1.2 AES-GCM suite unavailable");
   if (!suite) return;
   ZTLS_CHECK_RT(suite->aead->tls12.record_iv_size > 0,
@@ -1623,7 +1623,7 @@ void testTLS12NoExplicitIV(TempDir &temp, LogCapture &capture)
   (void)temp;
   (void)capture;
   ZuTestScopeRT(testTLS12NoExplicitIV);
-  auto suite = Ztls::Backend::tls12_ecdhe_rsa_chacha20poly1305sha256();
+  auto suite = Ztls::Backend::tls12RSA_ChaCha20();
   if (!suite) {
     std::cout << "# TLS 1.2 ChaCha20-Poly1305 unavailable in this backend\n";
     return;

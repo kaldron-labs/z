@@ -281,7 +281,7 @@ private:
       if (policy == RoutePolicy::Abort) { abort_(); return true; }
       ZmRef<Response> response = new Response{};
       response->data().init(m_server->impl(), ZuMv(message), policy, m_server->limits());
-      clearHook_();
+      clearHook();
       m_route.send(ZuMv(response));
       m_route.reset();
       return true;
@@ -289,12 +289,12 @@ private:
     void abort_() {
       ZiAssert(m_server->invoked(), "Zjrpc", (), "HTTP abort outside Rx", return);
       if (!m_route) return;
-      clearHook_();
+      clearHook();
       m_route.close();
       m_route.reset();
     }
   private:
-    void clearHook_() {
+    void clearHook() {
       if (!m_hook) return;
       m_hook = false;
       Zhttp::ChannelRef channel{m_route.channel()};

@@ -193,7 +193,7 @@ struct Receiver : public Rx<Receiver> {
 
   void begin(ZuCSpan logon = "98=0\1" "108=30\1") {
     auto e = open_(now);
-    logonSent_(e.connection, 1, now);
+    logonSent(e.connection, 1, now);
     send(1, "A", logon);
   }
 
@@ -202,12 +202,12 @@ struct Receiver : public Rx<Receiver> {
   // The ordinary Heartbeat keeps existing sequence fixtures at their explicit
   // business start. Readiness is confirmed by Tx, without requiring that packet.
   void heartbeat(uint64_t seqNo = 2) {
-    txRecovery_(session_().connection_(), true, now);
+    txRecovery(session_().connection_(), true, now);
     SessionString body;
-    if (session_().probeID_().length()) {
+    if (session_().probeID().length()) {
       notice_(TxNotice{.context = {session_().epoch_(), session_().connection_(), seqNo},
 	.marker = session_().probe_(), .kind = TxNoticeKind::Probe}, now);
-      body << "112=" << session_().probeID_() << '\1';
+      body << "112=" << session_().probeID() << '\1';
     }
     send(expected_(), "0", body);
     drain();
@@ -241,22 +241,22 @@ static void ownerReadiness()
   ZuTestScope(ownerReadiness);
   Receiver r{config()}; r.begin(); r.admit();
   ZuCheck(r.expected_() == 2 && !r.session_().ready_() &&
-    !r.session_().probeID_().length());
+    !r.session_().probeID().length());
   for (const auto &e : r.events) ZuCheck(!(e.actions & (A::Ready | A::SendProbe)));
-  r.txRecovery_(1, false, r.now);
+  r.txRecovery(1, false, r.now);
   ZuCheck(!r.session_().ready_());
   auto frames = r.stats_().frames;
-  r.txRecovery_(1, true, r.now);
+  r.txRecovery(1, true, r.now);
   ZuCheck(r.session_().ready_() && r.expected_() == 2 && r.stats_().frames == frames &&
-    !r.session_().probeID_().length() && (r.events[r.events.length() - 1].actions & A::Ready));
-  r.txRecovery_(1, false, r.now);
+    !r.session_().probeID().length() && (r.events[r.events.length() - 1].actions & A::Ready));
+  r.txRecovery(1, false, r.now);
   ZuCheck(!r.session_().ready_() && (r.events[r.events.length() - 1].actions & A::Pause));
-  r.txRecovery_(1, true, r.now);
+  r.txRecovery(1, true, r.now);
   ZuCheck(r.session_().ready_() && r.stats_().frames == frames);
 
   Receiver peer{config()}; peer.begin(); peer.admit();
   ZuCheck(peer.send(4, "5") == RxResult::Accepted && !peer.session_().ready_());
-  peer.txRecovery_(1, true, peer.now);
+  peer.txRecovery(1, true, peer.now);
   ZuCheck(peer.send(2, "4", "36=4\1" "123=Y\1", true) == RxResult::Accepted);
   peer.drain();
   ZuCheck(peer.session_().state_() == State::Closing && !peer.session_().ready_());
@@ -278,11 +278,11 @@ static void steadyRecovery()
   r.probe_(1, r.now);
   r.notice_(TxNotice{.context = {1, 1, 3}, .marker = r.session_().probe_(),
     .kind = TxNoticeKind::Probe}, r.now);
-  SessionString echo; echo << "112=" << r.session_().probeID_() << '\1';
+  SessionString echo; echo << "112=" << r.session_().probeID() << '\1';
   clocks = r.clocks;
-  ZuCheck(r.session_().ready_() && r.session_().probeID_().length());
+  ZuCheck(r.session_().ready_() && r.session_().probeID().length());
   ZuCheck(r.send(4, "0", echo) == RxResult::Accepted);
-  ZuCheck(r.session_().ready_() && !r.session_().probeID_().length() && r.clocks == clocks);
+  ZuCheck(r.session_().ready_() && !r.session_().probeID().length() && r.clocks == clocks);
   ZuCheck(r.events[r.events.length() - 1].actions & A::Ackd);
 
   clocks = r.clocks;
@@ -293,7 +293,7 @@ static void steadyRecovery()
   ZuCheck(r.session_().ready_() && r.business.length() == 3);
 
   Receiver d{config()}; d.ready();
-  ZuCheck(d.drainBegin_(1, d.now));
+  ZuCheck(d.drainBegin(1, d.now));
   auto ticket = d.events[d.events.length() - 1].drain;
   d.notice_(TxNotice{.context = {1, 1, 0}, .marker = ticket, .loaded = 3,
     .kind = TxNoticeKind::DrainBoundary}, d.now);
@@ -356,7 +356,7 @@ static void earlyControls()
   ZuCheck(resend.send(3, "4", "36=8\1" "123=Y\1", true) == RxResult::Accepted);
   resend.drain();
   ZuCheck(resend.expected_() == 8 && resend.replay.length() == 3 && !resend.session_().ready_());
-  resend.txRecovery_(resend.session_().connection_(), true, resend.now);
+  resend.txRecovery(resend.session_().connection_(), true, resend.now);
   resend.heartbeat();
   ZuCheck(resend.session_().ready_());
 }
@@ -417,7 +417,7 @@ static void modes()
   ZuCheck(r.session_().ready_());
   Receiver ahead{config(Transport::FIX44A)};
   auto e = ahead.open_(ahead.now);
-  ahead.logonSent_(e.connection, 1, ahead.now);
+  ahead.logonSent(e.connection, 1, ahead.now);
   ahead.send(5, "A", "98=0\1" "108=30\1" "789=2\1"); ahead.admit();
   bool request = false;
   for (const auto &event : ahead.events) if (event.actions & A::RequestGap) request = true;
@@ -451,7 +451,7 @@ static void reconnect()
   r.lost_(old); r.closed_(old);
   auto e = r.open_(r.now);
   ZuCheck(e.connection != old && r.expected_() == 3 && r.retained_() == 2);
-  r.logonSent_(e.connection, 8, r.now);
+  r.logonSent(e.connection, 8, r.now);
   r.send(3, "A", "98=0\1" "108=30\1"); r.admit();
   r.send(4, "D", "11=44\1"); r.drain();
   ZuCheck(r.business.length() == 2 && r.business[0] == 44 && r.business[1] == 55);
@@ -471,7 +471,7 @@ static void rejectedAdmission()
   ZuCheck(r.expected_() == 1 && !r.retained_());
   r.lost_(old); r.closed_(old);
   auto e = r.open_(r.now);
-  r.logonSent_(e.connection, 2, r.now);
+  r.logonSent(e.connection, 2, r.now);
   ZuCheck(r.receive_(e.connection, msg, r.now, stamp) == RxResult::Ignored && !msg);
   r.send(1, "A", "98=0\1" "108=30\1"); r.admit(); r.heartbeat();
   ZuCheck(r.session_().ready_() && r.expected_() == 3 && !r.business.length());
@@ -548,7 +548,7 @@ static void publicationNotices()
   r.begin(); r.admit();
   r.probe_(r.session_().connection_(), r.now);
   SessionString heartbeat;
-  heartbeat << "112=" << r.session_().probeID_() << '\1';
+  heartbeat << "112=" << r.session_().probeID() << '\1';
   ZuCheck(r.send(r.expected_(), "0", heartbeat) == RxResult::Accepted);
   r.drain();
   ZuCheck(!r.session_().ready_());
@@ -581,7 +581,7 @@ static void earlyProbeReply()
   Receiver r{config()}; r.ready(); r.events.clear();
   r.now = r.session_().deadline_(SessionTimer::Receive);
   r.timer_(r.session_().connection_(), SessionTimer::Receive, r.now);
-  SessionString id{r.session_().probeID_()};
+  SessionString id{r.session_().probeID()};
   r.notice_(TxNotice{.context = {1, r.session_().connection_(), 7},
     .marker = r.session_().probe_(), .kind = TxNoticeKind::Probe}, r.now);
   SessionString body; body << "112=" << id << '\1';
@@ -589,7 +589,7 @@ static void earlyProbeReply()
   for (const auto &event : r.events) ZuCheck(!(event.actions & A::Ackd));
   ZuCheck(r.send(3, "4", "36=5\1" "123=Y\1", true) == RxResult::Accepted);
   r.drain();
-  ZuCheck(r.expected_() == 6 && !r.session_().probeID_().length() && r.session_().ready_());
+  ZuCheck(r.expected_() == 6 && !r.session_().probeID().length() && r.session_().ready_());
   for (const auto &event : r.events) ZuCheck(!(event.actions & A::Ackd));
 }
 
@@ -600,16 +600,16 @@ static void restoredDrainGap()
   ZuCheck(r.restore_(1, RxProgress{8, 1, 2, 8}));
   r.begin(); r.admit();
   ZuCheck(r.expected_() == 2 && !r.retained_() && !r.session_().ready_() &&
-    !r.session_().probeID_().length());
-  r.txRecovery_(r.session_().connection_(), true, r.now);
-  r.drainBegin_(r.session_().connection_(), r.now);
+    !r.session_().probeID().length());
+  r.txRecovery(r.session_().connection_(), true, r.now);
+  r.drainBegin(r.session_().connection_(), r.now);
   auto ticket = r.events[r.events.length() - 1].drain;
   r.notice_(TxNotice{.context = {1, r.session_().connection_(), 0}, .marker = ticket,
     .loaded = 2, .kind = TxNoticeKind::DrainBoundary}, r.now);
-  ZuCheck(ticket && !r.session_().drained_() && !r.session_().probeID_().length());
+  ZuCheck(ticket && !r.session_().drained_() && !r.session_().probeID().length());
   ZuCheck(r.send(2, "4", "36=8\1" "123=Y\1", true) == RxResult::Accepted);
   r.drain();
-  ZuCheck(r.expected_() == 8 && r.session_().probeID_().length());
+  ZuCheck(r.expected_() == 8 && r.session_().probeID().length());
   r.heartbeat();
   ZuCheck(r.expected_() == 9 && r.session_().drained_() && !r.session_().ready_());
 }
@@ -619,7 +619,7 @@ static void resetPreparation()
   ZuTestScope(resetPreparation);
   Receiver r{config()}; r.ready();
   ZuCheck(!r.prepareReset_(1, 1, 2, true, r.now));
-  r.drainBegin_(1, r.now);
+  r.drainBegin(1, r.now);
   auto ticket = r.events[r.events.length() - 1].drain;
   r.notice_(TxNotice{.context = {1, 1, 0}, .marker = ticket,
     .loaded = 2, .kind = TxNoticeKind::DrainBoundary}, r.now);
@@ -637,13 +637,13 @@ static void resetPreparation()
   r.notice_(ready, r.now);
   ZuCheck(r.session_().epoch_() == 2 && r.expected_() == 1 && r.epochChanges == 1 &&
     r.oldEpoch == 1 && r.newEpoch == 2 && r.oldProgress.processed == expected);
-  ZuCheck(!r.startReset_(1, 1, r.now) && r.startReset_(1, 2, r.now));
-  r.logonSent_(1, 1, r.now);
+  ZuCheck(!r.startReset(1, 1, r.now) && r.startReset(1, 2, r.now));
+  r.logonSent(1, 1, r.now);
   ZuCheck(r.receive_(1, msg, r.now, stamp) == RxResult::Accepted && !msg);
   r.heartbeat();
   ZuCheck(r.session_().ready_() && r.session_().epoch_() == 2);
   auto events = r.events.length();
-  r.outputFailed_(1, 1); r.outputFailed_(2, 2);
+  r.outputFailed(1, 1); r.outputFailed(2, 2);
   ZuCheck(r.session_().ready_() && r.session_().epoch_() == 2 && r.events.length() == events);
   auto old = frame(1, "0", {});
   old->data().epoch = 1; old->data().connection = 1; old->data().received = r.now;
@@ -658,7 +658,7 @@ static void resetReplacement()
 {
   ZuTestScope(resetReplacement);
   Receiver r{config()}; r.ready();
-  r.drainBegin_(1, r.now);
+  r.drainBegin(1, r.now);
   auto ticket = r.events[r.events.length() - 1].drain;
   r.notice_(TxNotice{.context = {1, 1, 0}, .marker = ticket,
     .loaded = 2, .kind = TxNoticeKind::DrainBoundary}, r.now);
@@ -670,7 +670,7 @@ static void resetReplacement()
     .kind = TxNoticeKind::ResetReady, .nextEpoch = 2, .request = 1};
   auto e = r.replace_(r.now);
   ZuCheck(e.connection == 2 && e.epoch == 1 && e.nextEpoch == 2 &&
-    !(e.actions & A::SendLogon) && r.session_().resetPreparing_());
+    !(e.actions & A::SendLogon) && r.session_().resetPreparing());
   auto msg = frame(1, "A", "98=0\1" "108=30\1" "141=Y\1");
   ZuCheck(r.receive_(2, msg, r.now, stamp) == RxResult::Blocked && msg &&
     !msg->data().epoch && r.expected_() == expected);
@@ -680,8 +680,8 @@ static void resetReplacement()
   r.notice_(ready, r.now);
   ZuCheck(r.session_().connection_() == 2 && r.session_().epoch_() == 2 &&
     r.expected_() == 1 && r.epochChanges == 1 && r.oldProgress.processed == expected &&
-    r.session_().resetArmed_() && !r.session_().resetPreparing_());
-  r.logonSent_(2, 1, r.now);
+    r.session_().resetArmed() && !r.session_().resetPreparing());
+  r.logonSent(2, 1, r.now);
   ZuCheck(r.receive_(2, msg, r.now, stamp) == RxResult::Held && !msg);
   r.admit(); r.heartbeat();
   ZuCheck(r.session_().ready_() && r.session_().epoch_() == 2 &&
@@ -695,21 +695,21 @@ static void initialReset()
   ZuTestScope(initialReset);
   Receiver r{config()};
   RxProgress state{2, 2};
-  ZuCheck(r.restore_(1, state) && !r.resetOnOpen_(1) && r.expected_() == 2);
+  ZuCheck(r.restore_(1, state) && !r.resetOnOpen(1) && r.expected_() == 2);
   state = {};
-  ZuCheck(r.restore_(1, state) && !r.resetOnOpen_(2) && r.resetOnOpen_(1));
+  ZuCheck(r.restore_(1, state) && !r.resetOnOpen(2) && r.resetOnOpen(1));
   state = {2, 2};
-  ZuCheck(!r.restore_(1, state) && r.expected_() == 1 && r.session_().resetOnOpen_());
-  ZuCheck(r.resetOnOpen_(1, false) && r.restore_(1, state) && !r.resetOnOpen_(1));
-  state = {}; ZuCheck(r.restore_(1, state) && r.resetOnOpen_(1));
+  ZuCheck(!r.restore_(1, state) && r.expected_() == 1 && r.session_().resetOnOpen());
+  ZuCheck(r.resetOnOpen(1, false) && r.restore_(1, state) && !r.resetOnOpen(1));
+  state = {}; ZuCheck(r.restore_(1, state) && r.resetOnOpen(1));
   r.begin("98=0\1" "108=30\1" "141=Y\1");
   ZuCheck(r.admission && !r.session_().ready_() && r.expected_() == 1);
   r.admit(); r.heartbeat();
   ZuCheck(r.session_().ready_() && r.session_().epoch_() == 1 && !r.epochChanges &&
-    !r.resetOnOpen_(1) && r.send(r.expected_(), "D", "11=42\1") == RxResult::Accepted);
+    !r.resetOnOpen(1) && r.send(r.expected_(), "D", "11=42\1") == RxResult::Accepted);
   ZuCheck(r.business.length() == 1 && r.business[0] == 42);
   Receiver raw{config(Transport::Raw)};
-  ZuCheck(!raw.resetOnOpen_(1));
+  ZuCheck(!raw.resetOnOpen(1));
 }
 
 static void peerReject()
@@ -749,7 +749,7 @@ static void stateChanges()
   ZuCheck(r.changes.length() == 1 && r.changes[0].state == State::Logon &&
     r.changes[0].connection == e.connection && r.changes[0].epoch == 1);
   auto n = r.changes.length();
-  r.logonSent_(1, 1, r.now);
+  r.logonSent(1, 1, r.now);
   ZuCheck(n == 1 && r.changes.length() == n);
   r.send(1, "A", "98=0\1" "108=30\1");
   ZuCheck(r.admission && r.changes.length() == n);
@@ -790,7 +790,7 @@ static void faultMatrix()
 	auto c = config(mode); c.initiator = driver;
 	Receiver r{ZuMv(c), RxLimits{.readAheadBytes = Charge}};
 	r.begin("98=0\1" "108=30\1" "789=2\1" "1137=9\1"); r.admit();
-	if (!driver) r.logonSent_(1, 1, r.now);
+	if (!driver) r.logonSent(1, 1, r.now);
 	r.heartbeat();
 	ZuCheck(r.session_().ready_()); r.events.clear();
 	auto seqNo = r.expected_();
@@ -904,14 +904,14 @@ static void association()
   ZuTestScope(association);
   Receiver r{config()}; r.begin();
   auto ticket = r.admission;
-  ZuCheck(r.stats_().pendingBytes && r.session_().admissionPending_());
+  ZuCheck(r.stats_().pendingBytes && r.session_().admissionPending());
   auto e = r.bind_(true);
   ZuCheck(e.connection == 2 && e.state == State::Disconnected &&
     !(e.actions & (A::Failure | A::Close | A::SendLogon)) &&
-    !r.stats_().pendingBytes && !r.session_().admissionPending_());
+    !r.stats_().pendingBytes && !r.session_().admissionPending());
   auto events = r.events.length();
   r.admit_(1, ticket, true, r.now);
-  r.outputFailed_(1, 1);
+  r.outputFailed(1, 1);
   r.timer_(1, SessionTimer::Logon, r.now + ZuTime{100});
   r.notice_(TxNotice{.context = {1, 1, 1}, .kind = TxNoticeKind::Logon}, r.now);
   r.notice_(TxNotice{.context = {1, 1, 0}, .kind = TxNoticeKind::Recovery,
@@ -922,9 +922,9 @@ static void association()
   e = r.start_(r.now);
   ZuCheck(e.connection == 2 && e.state == State::Logon && (e.actions & A::SendLogon) &&
     r.session_().deadline_(SessionTimer::Logon) == r.now + ZuTime{10});
-  r.logonSent_(2, 1, r.now);
+  r.logonSent(2, 1, r.now);
   ZuCheck(r.send(1, "A", "98=0\1" "108=30\1") == RxResult::Held);
-  r.admit(); r.txRecovery_(2, true, r.now);
+  r.admit(); r.txRecovery(2, true, r.now);
   ZuCheck(r.session_().ready_() && r.expected_() == 2 && r.session_().connection_() == 2);
 }
 
@@ -932,7 +932,7 @@ static void resetAssociation()
 {
   ZuTestScope(resetAssociation);
   Receiver r{config()}; r.ready();
-  r.drainBegin_(1, r.now);
+  r.drainBegin(1, r.now);
   auto ticket = r.events[r.events.length() - 1].drain;
   r.notice_(TxNotice{.context = {1, 1, 0}, .marker = ticket,
     .loaded = 2, .kind = TxNoticeKind::DrainBoundary}, r.now);
@@ -942,29 +942,29 @@ static void resetAssociation()
     .kind = TxNoticeKind::ResetReady, .nextEpoch = 2, .request = 1};
   auto e = r.bind_(true);
   ZuCheck(e.connection == 2 && e.state == State::Disconnected &&
-    r.session_().resetPreparing_());
+    r.session_().resetPreparing());
   auto events = r.events.length();
   r.notice_(ready, r.now, true);
   ZuCheck(r.epochChanges == 1 && r.expected_() == 1 && r.session_().epoch_() == 2 &&
-    r.session_().resetArmed_() && r.session_().state_() == State::Disconnected &&
+    r.session_().resetArmed() && r.session_().state_() == State::Disconnected &&
     !r.session_().ready_() && r.events.length() == events + 1);
   ZuTime deadline;
-  r.session_().nextTimer_(deadline);
+  r.session_().nextTimer(deadline);
   ZuCheck(!*deadline && (r.events[events].actions & A::ResetReady) &&
     !(r.events[events].actions & (A::SendLogon | A::RetryInput | A::Close)));
   r.notice_(ready, r.now, true);
   ZuCheck(r.epochChanges == 1 && r.events.length() == events + 1);
   e = r.bind_(true); // Preserve the armed reset when C replaces unauthenticated B.
-  r.session_().nextTimer_(deadline);
+  r.session_().nextTimer(deadline);
   ZuCheck(e.connection == 3 && e.epoch == 2 && e.state == State::Disconnected &&
-    r.epochChanges == 1 && r.session_().resetArmed_() && r.expected_() == 1 &&
+    r.epochChanges == 1 && r.session_().resetArmed() && r.expected_() == 1 &&
     !*deadline && !(e.actions & A::SendLogon));
   e = r.start_(r.now);
   ZuCheck(e.connection == 3 && e.epoch == 2 && e.nextEpoch == 2 &&
-    (e.actions & A::SendLogon) && r.session_().resetArmed_());
-  r.logonSent_(3, 1, r.now);
+    (e.actions & A::SendLogon) && r.session_().resetArmed());
+  r.logonSent(3, 1, r.now);
   ZuCheck(r.send(1, "A", "98=0\1" "108=30\1" "141=Y\1") == RxResult::Held);
-  r.admit(); r.txRecovery_(3, true, r.now);
+  r.admit(); r.txRecovery(3, true, r.now);
   ZuCheck(r.session_().ready_() && r.session_().epoch_() == 2 &&
     r.session_().connection_() == 3 && r.expected_() == 2);
 }
@@ -986,11 +986,11 @@ static void replacement()
     r.expected_() == progress.processed && r.retainedBytes_() == bytes);
   e = r.start_(r.now);
   ZuCheck(e.connection == 2 && e.state == State::Logon && (e.actions & A::SendLogon));
-  r.logonSent_(2, 2, r.now);
+  r.logonSent(2, 2, r.now);
   ZuCheck(r.send(3, "A", "98=0\1" "108=30\1") == RxResult::Held);
   r.admit();
   ZuCheck(r.send(4, "D", "11=44\1") == RxResult::Accepted);
-  r.drain(); r.txRecovery_(2, true, r.now);
+  r.drain(); r.txRecovery(2, true, r.now);
   ZuCheck(r.expected_() == 7 && !r.retained_() && r.business.length() == 2 &&
     r.business[0] == 44 && r.business[1] == 55 && !r.echoed && r.session_().ready_());
 
@@ -1000,9 +1000,9 @@ static void replacement()
   pending.admit_(1, ticket, true, pending.now);
   ZuCheck(e.connection == 2 && pending.session_().state_() == State::Logon &&
     !pending.session_().ready_() && !pending.retained_());
-  pending.logonSent_(2, 1, pending.now);
+  pending.logonSent(2, 1, pending.now);
   ZuCheck(pending.send(1, "A", "98=0\1" "108=30\1") == RxResult::Held);
-  pending.admit(); pending.txRecovery_(2, true, pending.now);
+  pending.admit(); pending.txRecovery(2, true, pending.now);
   ZuCheck(pending.expected_() == 2 && pending.session_().ready_());
 }
 

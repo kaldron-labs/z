@@ -34,12 +34,12 @@ struct ServerImpl::TLSHub final : public ZmNHeap<ServerImpl::TLSHub>,
     template <typename Link_>
     void connected(Link_ &link, const ConnectedInfo &info) {
       link.rxState().parser.connectedInfo(info);
-      server->registerTxError_(link);
+      server->registerTxError(link);
       server->impl()->connected(Transport::TLS);
     }
     template <typename Link_>
     void disconnected(Link_ &link, bool) {
-      link.responseDisconnected_();
+      link.responseDisconnected();
     }
     void connected(Zhttp::Session session) {
       server->sessionConnected_(session);
@@ -53,7 +53,7 @@ struct ServerImpl::TLSHub final : public ZmNHeap<ServerImpl::TLSHub>,
     }
     void listenFailed(bool transient) {
       server->impl()->listenFailed(Transport::TLS, transient);
-      server->failServer_();
+      server->failServer();
     }
   };
 

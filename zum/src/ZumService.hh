@@ -145,7 +145,7 @@ public:
   bool init(ServiceConfig, ServiceHTTPFn);
   int startError() const;
   void verify(String accessToken, ServiceVerifyFn);
-  void setRefreshRevocationFn(ServiceRefreshFn);
+  void refreshFn(ServiceRefreshFn);
   void receiveSET(ServiceSETRequest, ServiceSETDoneFn);
   void publish(ServiceManifest, ServiceProtocolFn);
   void final();

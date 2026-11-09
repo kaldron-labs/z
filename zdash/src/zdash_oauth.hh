@@ -768,10 +768,20 @@ bool run(const Config &config, bool noBrowser, L &&useToken)
   ZmTrap::trap();
 
   ZiMultiplex mx{mxParams()};
-  auto tcpRx = mx.allocator<Zi::IOBufType::RxTCP>();
-  auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP, ZiTxBuf>();
-  auto tlsRx = mx.allocator<Zi::IOBufType::RxTLS>();
-  auto tlsTx = mx.allocator<Zi::IOBufType::TxTLS, ZiTxBuf>();
+  using TCP = Zhttp::NativeTraits<Zhttp::H1TCP>::Transport;
+  using TLS = Zhttp::NativeTraits<Zhttp::H1TLS>::Transport;
+  auto tcpRx = mx.allocator<Zi::IOBufType::RxTCP,
+    TCP::RxAllocator::Buf, TCP::RxAllocator::Size, TCP::RxAllocator::MaxSize,
+    TCP::RxAllocator::Align, TCP::RxAllocator::Heap>();
+  auto tcpTx = mx.allocator<Zi::IOBufType::TxTCP,
+    TCP::TxAllocator::Buf, TCP::TxAllocator::Size, TCP::TxAllocator::MaxSize,
+    TCP::TxAllocator::Align, TCP::TxAllocator::Heap>();
+  auto tlsRx = mx.allocator<Zi::IOBufType::RxTLS,
+    TLS::RxAllocator::Buf, TLS::RxAllocator::Size, TLS::RxAllocator::MaxSize,
+    TLS::RxAllocator::Align, TLS::RxAllocator::Heap>();
+  auto tlsTx = mx.allocator<Zi::IOBufType::TxTLS,
+    TLS::TxAllocator::Buf, TLS::TxAllocator::Size, TLS::TxAllocator::MaxSize,
+    TLS::TxAllocator::Align, TLS::TxAllocator::Heap>();
   auto tcp = Zhttp::TCPConfig{}.rxAllocator(tcpRx).txAllocator(tcpTx);
   auto tls = Zhttp::TLSConfig{}.rxAllocator(tlsRx).txAllocator(tlsTx);
   Clients clients{tcp, tls};

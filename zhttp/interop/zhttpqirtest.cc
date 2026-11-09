@@ -23,7 +23,7 @@ struct TestEnvKV {
 
 static const TestEnvKV *testEnv_;
 
-static const char *testGetenv_(const char *name)
+static const char *testGetenv(const char *name)
 {
   if (!testEnv_) return nullptr;
   for (unsigned i = 0; testEnv_[i].name; ++i)
@@ -31,10 +31,10 @@ static const char *testGetenv_(const char *name)
   return nullptr;
 }
 
-static void testGetpath_(const char *name, Zi::Path &out)
+static void testGetpath(const char *name, Zi::Path &out)
 {
   out.length(0);
-  if (auto path = testGetenv_(name)) out = path;
+  if (auto path = testGetenv(name)) out = path;
 }
 
 static bool eq_(ZuCSpan a, ZuCSpan b)
@@ -115,7 +115,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == OK,
+    ZuCHECK(loadEnv(Client, out, testGetenv, testGetpath) == OK,
       "default client env loads");
     ZuCHECK(out.testCase == HTTP3, "env testcase");
     ZuCHECK(eq_(out.requests, "https://server/file"), "env requests");
@@ -143,7 +143,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == OK,
+    ZuCHECK(loadEnv(Client, out, testGetenv, testGetpath) == OK,
       "override client env loads");
     ZuCHECK(out.testCase == Transfer, "override testcase");
     ZuCHECK(eq_(out.keyLog, "/tmp/keylog"), "keylog override");
@@ -164,7 +164,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == OK,
+    ZuCHECK(loadEnv(Client, out, testGetenv, testGetpath) == OK,
       "rebind client env loads");
     ZuCHECK(out.heartBeat == qirHeartBeat(RebindPort),
       "rebind heartbeat enabled");
@@ -173,7 +173,7 @@ static void testEnvLoading()
     const TestEnvKV env[] = {{nullptr, nullptr}};
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == Usage,
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == Usage,
       "missing testcase is usage");
   }
   {
@@ -183,7 +183,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == UnsupportedStatus,
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == UnsupportedStatus,
       "unsupported testcase exits 127 before server startup");
   }
   {
@@ -194,7 +194,7 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == Usage,
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == Usage,
       "invalid port rejected");
   }
   {
@@ -204,9 +204,9 @@ static void testEnvLoading()
     };
     testEnv_ = env;
     Env out;
-    ZuCHECK(loadEnv(Client, out, testGetenv_, testGetpath_) == Usage,
+    ZuCHECK(loadEnv(Client, out, testGetenv, testGetpath) == Usage,
       "client requires requests");
-    ZuCHECK(loadEnv(Server, out, testGetenv_, testGetpath_) == OK,
+    ZuCHECK(loadEnv(Server, out, testGetenv, testGetpath) == OK,
       "server permits empty requests");
   }
 }

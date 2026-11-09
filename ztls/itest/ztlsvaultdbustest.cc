@@ -23,7 +23,7 @@
 #include <zlib/ZtlsRandom.hh>
 #include <zlib/ZtlsVault.hh>
 
-#include "../../zdbus/util/ZdbusTestTool.hh"
+#include "../../zdbus/util/zdbustesttool.hh"
 #include "../src/ZtlsVaultSS.hh"
 
 using namespace ZuTestUtil;

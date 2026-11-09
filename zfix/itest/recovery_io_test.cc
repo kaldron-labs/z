@@ -230,7 +230,7 @@ struct Peer : public Base {
       this->app()->rxRun([this, ticket, history = ZuMv(history)]() mutable {
 	// Alternate real response delivery with a full hub budget. Existing
 	// reservations stay intact; restore its limit before another Rx task.
-	auto &budget = this->app()->fixAdminRx_(); auto limits = budget.limits_();
+	auto &budget = this->app()->fixAdminRx(); auto limits = budget.limits_();
 	bool force = !(state()->responses++ & 1);
 	if (force && !budget.limits_({budget.state_().bytes})) state()->fail();
 	bool accepted = this->reloaded(ticket, history);
@@ -282,15 +282,15 @@ struct Peer : public Base {
       bool first = !pendingWire.count_();
       if (first) state()->newBuf = bytes;
       pendingWire.push(ZuMv(bytes));
-      if (wireHeld_()) state()->wirePending.post();
+      if (wireHeld()) state()->wirePending.post();
       return true;
     }
     return Base::fixSendTx(ZuMv(bytes));
   }
 
-  bool wireHeld_() const {
+  bool wireHeld() const {
     return holdWire && pendingWire.count_() &&
-      this->txStats_().wire.queuedCount == pendingWire.count_();
+      this->txStats().wire.queuedCount == pendingWire.count_();
   }
 
   void releaseWire() {
@@ -336,7 +336,7 @@ struct Peer : public Base {
     if (!this->app()->txInvoked()) state()->fail();
     if (Client && state()->failover && state()->phase && body->msgType() == "D" && !c.replay)
       ++state()->newCompleted;
-    if (wireHeld_()) state()->wirePending.post();
+    if (wireHeld()) state()->wirePending.post();
   }
 
   void fixFaultTx(TxContext, Fmt::Error) { state()->fail(); }
@@ -386,7 +386,7 @@ struct Peer : public Base {
   }
 
   void fixStopRx(uint64_t, uint64_t ticket) {
-    store->rx = this->rxProgress_();
+    store->rx = this->rxProgress();
     if (ticket) state()->fail();
   }
 
@@ -396,7 +396,7 @@ struct Peer : public Base {
       state()->fail(); this->loaded(pendingLoad, false); pendingLoad = 0;
     }
     bool retain = Client && state()->failover && !state()->newPublished.load_();
-    store->tx = this->txProgress_();
+    store->tx = this->txProgress();
     if (queue.count_() && (!retain || queue.count_() != 1)) state()->fail();
   }
 
@@ -404,9 +404,9 @@ struct Peer : public Base {
 
   void restore() {
     this->app()->rxRun([this] {
-      if (!this->restoreRx_(1, store->rx)) state()->fail();
+      if (!this->restoreRx(1, store->rx)) state()->fail();
       this->app()->txRun([this] {
-	if (!this->restoreTx_(1, store->tx)) state()->fail();
+	if (!this->restoreTx(1, store->tx)) state()->fail();
 	++state()->restoredCount; state()->restored.post();
       });
     });
@@ -633,8 +633,8 @@ static void failover(unsigned mode, bool cold) {
   auto snapshot = [&client, &link](RxProgress &rx, TxProgress &tx, uint64_t &connection) {
     ZmBlock<>{}([&client, &link, &rx, &tx, &connection](auto wake) {
       client.rxRun([&client, &link, &rx, &tx, &connection, wake = ZuMv(wake)]() mutable {
-	rx = link->rxProgress_(); connection = link->session_().connection_();
-	client.txRun([&link, &tx, wake = ZuMv(wake)]() mutable { tx = link->txProgress_();
+	rx = link->rxProgress(); connection = link->session_().connection_();
+	client.txRun([&link, &tx, wake = ZuMv(wake)]() mutable { tx = link->txProgress();
 	  wake(); });
       });
     });
@@ -650,7 +650,7 @@ static void failover(unsigned mode, bool cold) {
   ZmBlock<>{}([&client, &link, &state, &retained](auto wake) {
     client.txRun([&link, &state, &retained, wake = ZuMv(wake)]() mutable {
       retained = link->queue.count_() == 1 && link->queue.headNode()->data()->id() == 102 &&
-	!state.newLoad && link->txProgress_().loaded == state.client->lastLoad + 1;
+	!state.newLoad && link->txProgress().loaded == state.client->lastLoad + 1;
       wake();
     });
   });
@@ -719,7 +719,7 @@ static void failover(unsigned mode, bool cold) {
   TxStats stale; TxProgress pending;
   ZmBlock<>{}([&client, &link, &stale, &pending](auto wake) {
     client.txRun([&link, &stale, &pending, wake = ZuMv(wake)]() mutable {
-      stale = link->txStats_(); pending = link->txProgress_(); wake();
+      stale = link->txStats(); pending = link->txProgress(); wake();
     });
   });
   ZuCheck(!stale.loadRefused && pending.loaded == state.pendingSeq
@@ -730,14 +730,14 @@ static void failover(unsigned mode, bool cold) {
   auto release = ZuMv(state.releaseLoad); ZuCheck(release); if (release) release();
   ZuCheck(wait(state.wirePending));
   bool held = ZmBlock<bool>{}([&client, &link](auto wake) {
-    client.txRun([&link, wake = ZuMv(wake)]() mutable { wake(link->wireHeld_()); });
+    client.txRun([&link, wake = ZuMv(wake)]() mutable { wake(link->wireHeld()); });
   });
   ZuCheck(held && state.newBuf && state.newBuf != state.oldBuf && state.newPublished.load_() == 1
     && !state.newCompleted.load_());
   ZmBlock<>{}([&client, &link, &state, &stale](auto wake) {
     client.txRun([&client, &link, &state, &stale, wake = ZuMv(wake)]() mutable {
       link->transportSent(state.oldBuf, false); // Current wire head is held and live.
-      client.txRun([&link, &stale, wake = ZuMv(wake)]() mutable { stale = link->txStats_();
+      client.txRun([&link, &stale, wake = ZuMv(wake)]() mutable { stale = link->txStats();
 	wake(); });
     });
   });

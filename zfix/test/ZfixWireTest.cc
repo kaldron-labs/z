@@ -373,11 +373,11 @@ static void rawMetadata() {
   ZuTestScope(rawMetadata);
   Harness h; ZuCheck(h.open_(1));
   ZuCheck(!h.admit_(body(), {0, 1, 0}, frame()));
-  ZuCheck(h.admitRaw_(body(), {0, 1, 0}, frame())); h.flush();
+  ZuCheck(h.admitRaw(body(), {0, 1, 0}, frame())); h.flush();
   h.finish(0);
   ZuCheck(h.done.length() == 1 && h.done[0].ok && !h.done[0].context.epoch
     && !h.done[0].context.seqNo);
-  ZuCheck(!h.admitRaw_(body(), {0, 2, 0}, frame()));
+  ZuCheck(!h.admitRaw(body(), {0, 2, 0}, frame()));
 }
 static void statistics() {
   ZuTestScope(statistics);
@@ -452,7 +452,7 @@ struct AdmitApp {
   unsigned txThread() const { return 2; }
   bool rxInvoked() const { return rx; }
   bool txInvoked() const { return !rx; }
-  PostedIngress &fixAdminRx_() { return admin; }
+  PostedIngress &fixAdminRx() { return admin; }
 
   template <typename Fn> void rxRun(Fn &&fn) {
     queue.push(AdmitTask{ZmFn<>{ZuFwd<Fn>(fn)}, true});
@@ -524,8 +524,8 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
   ~AdmitLink() { ++owner->destroyed; }
 
   AdmitApp *app() const { return owner; }
-  WorkState workState_() const { return {}; }
-  PostedState txPosted_() const { return {}; }
+  WorkState workState() const { return {}; }
+  PostedState txPosted() const { return {}; }
   WireGeometry fixGeometryTx() { ++geometries; return {}; }
 
   ZmRef<ZiRxQueue::Node> fixAllocRx() {
@@ -547,19 +547,19 @@ friend inline ZuStringT<"Zfix.WireTest.Link"> ZmNHeapID(AdmitLink *);
 
   void finish(unsigned i, bool ok) { transportSent(records[i], ok); }
 
-  void resumeRx_() { }
+  void resumeRx() { }
   void disconnect_(bool = true) { ++closes; }
 
   AdmitLink *cxn() { return native ? this : nullptr; }
 
   bool bind() {
     bool replacing = native; native = true;
-    return transportBind_(replacing);
+    return transportBind(replacing);
   }
 
-  void up() { ZmAssert_(bind()); transportUp_(); }
+  void up() { ZmAssert_(bind()); transportUp_0(); }
 
-  void down(bool peer) { native = false; transportDown_(peer); }
+  void down(bool peer) { native = false; transportDown_0(peer); }
 
   unsigned fixAdmissionRx(SessionEvent, ZmRef<Msg>, AdmitRequest &request) {
     replies.push(Reply{request.defer()}); return Admission::Pending;
@@ -615,7 +615,7 @@ static void earlyAssociation()
   link->up(); app.drain();
   ZuCheck(link->records.length() == 1 && link->geometries == 1);
   ZuCheck(link->logon() == 1); app.drain();
-  ZuCheck(link->replies.length() == 1 && link->session_().admissionPending_());
+  ZuCheck(link->replies.length() == 1 && link->session_().admissionPending());
   auto admission = link->replies[0].fn;
   auto timer = app.mux.rxTimer;
   ZuCheck(timer);
@@ -633,7 +633,7 @@ static void earlyAssociation()
     link->pureTimers == observed && link->faults == 1);
   ZuCheck(link->completions.length() == 1 &&
     link->completions[0].context.connection == 1 && !link->completions[0].ok);
-  link->transportUp_(); app.drain();
+  link->transportUp_0(); app.drain();
   ZuCheck(link->session_().connection_() == 2 && link->geometries == 2 &&
     link->records.length() == 2 && link->session_().state_() == State::Logon);
   link->finish(1, true); app.drain();
@@ -689,7 +689,7 @@ static void resetTimerOrder()
   ResetRequest request{.connection = 1, .epoch = 1, .nextEpoch = 2,
     .op = ResetOp::Drain, .initiator = true};
   ZuCheck(link->reset_(request)); app.drain();
-  SessionString id{link->session_().probeID_()};
+  SessionString id{link->session_().probeID()};
   ZuCheck(id.length());
   Session::Msg echo; echo.p<Session::HeartBt>(Session::HeartBt{.testReqID = id});
   ZuCheck(link->control(2, echo) == 1); app.drain();
@@ -709,7 +709,7 @@ static void resetTimerOrder()
   // Tx commits before Rx adopts ResetReady. The old-epoch timer remains an
   // Rx deadline notification, never a Tx failure or a new administrative post.
   app.drain();
-  ZuCheck(link->session_().epoch_() == 2 && link->session_().resetArmed_() &&
+  ZuCheck(link->session_().epoch_() == 2 && link->session_().resetArmed() &&
     !link->faults && !link->closes && !app.admin.state_().count);
   link->down(true); app.drain();
   ZuCheck(link->stopped == 1);
@@ -731,7 +731,7 @@ static void resetAssociation()
       .op = ResetOp::Drain, .initiator = true};
     ZuCheck(link->reset_(request)); app.drain();
     Session::Msg echo;
-    echo.p<Session::HeartBt>(Session::HeartBt{.testReqID = link->session_().probeID_()});
+    echo.p<Session::HeartBt>(Session::HeartBt{.testReqID = link->session_().probeID()});
     ZuCheck(link->control(2, echo) == 1); app.drain();
     ZuCheck(link->session_().drained_());
     request.op = ResetOp::Prepare;
@@ -744,13 +744,13 @@ static void resetAssociation()
     app.drain();
     if (stage == 2) { ZuCheck(link->bind()); app.drain(); }
     ZuCheck(link->session_().connection_() == 2 && link->session_().epoch_() == 2 &&
-      link->session_().state_() == State::Disconnected && link->session_().resetArmed_() &&
+      link->session_().state_() == State::Disconnected && link->session_().resetArmed() &&
       !*link->session_().deadline_(SessionTimer::Logon) &&
       link->geometries == 1 && link->completions.length() == before &&
       !link->faults && !link->closes && !app.admin.state_().count);
     ZuCheck(link->bind()); app.drain();
-    ZuCheck(link->session_().connection_() == 3 && link->session_().resetArmed_());
-    link->transportUp_(); app.drain();
+    ZuCheck(link->session_().connection_() == 3 && link->session_().resetArmed());
+    link->transportUp_0(); app.drain();
     ZuCheck(link->session_().connection_() == 3 && link->geometries == 2 &&
       link->completions.length() == before + 1);
     const auto &sent = link->completions[before];
@@ -782,7 +782,7 @@ static void resetCloseOutcome(bool committed, unsigned stage)
     .op = ResetOp::Drain, .initiator = true};
   ZuCheck(link->reset_(request)); app.drain();
   Session::Msg echo;
-  echo.p<Session::HeartBt>(Session::HeartBt{.testReqID = link->session_().probeID_()});
+  echo.p<Session::HeartBt>(Session::HeartBt{.testReqID = link->session_().probeID()});
   ZuCheck(link->control(2, echo) == 1); app.drain();
   ZuCheck(link->session_().drained_());
   request.op = ResetOp::Prepare;
@@ -795,24 +795,24 @@ static void resetCloseOutcome(bool committed, unsigned stage)
   // Committed: Tx has queued ResetReady, but Rx has not consumed that outcome.
   link->down(true);
   while (app.step(false));
-  ZuCheck(link->session_().resetPreparing_() && link->session_().epoch_() == 1 &&
+  ZuCheck(link->session_().resetPreparing() && link->session_().epoch_() == 1 &&
     link->epochs == unsigned(committed) && !link->faults && !link->closes);
   link->holdOutput = true;
   if (stage) {
     ZuCheck(link->bind());
-    if (stage == 2) link->transportUp_();
+    if (stage == 2) link->transportUp_0();
     while (app.step(false));
     ZuCheck(link->session_().connection_() == 2 &&
-      link->session_().resetPreparing_() && !link->records.length() &&
+      link->session_().resetPreparing() && !link->records.length() &&
       !link->faults && !link->closes);
   }
   app.drain();
   ZuCheck(link->session_().epoch_() == unsigned(committed ? 2 : 1) &&
-    !link->session_().resetPreparing_() && !link->faults && !link->closes);
+    !link->session_().resetPreparing() && !link->faults && !link->closes);
   if (stage == 1) {
     ZuCheck(link->session_().state_() == State::Disconnected &&
       !*link->session_().deadline_(SessionTimer::Logon) && !link->records.length());
-    link->transportUp_();
+    link->transportUp_0();
   } else if (!stage) link->up();
   app.drain();
   ZuCheck(link->records.length() == 1 && link->session_().connection_() == 2);
@@ -892,18 +892,18 @@ static void overlapAdmission()
       ZmRef<AdmitLink> link = new AdmitLink{&app};
       link->up(); app.drain();
       ZuCheck(link->logon() == 1); app.drain();
-      ZuCheck(link->replies.length() == 1 && link->session_().admissionPending_());
+      ZuCheck(link->replies.length() == 1 && link->session_().admissionPending());
       if (closeOld) { link->down(true); app.drain(); }
       link->up(); app.drain();
       ZuCheck(link->session_().connection_() == 2 && !link->stopped);
       ZuCheck(link->logon() == 1); app.drain();
-      ZuCheck(link->replies.length() == 2 && link->session_().admissionPending_());
+      ZuCheck(link->replies.length() == 2 && link->session_().admissionPending());
       auto a = link->replies[0].fn, b = link->replies[1].fn;
       if (oldFirst) {
         auto closes = link->closes;
         a(true); a(false); app.drain();
         ZuCheck(link->session_().connection_() == 2 &&
-          link->session_().admissionPending_() && !link->session_().ready_() &&
+          link->session_().admissionPending() && !link->session_().ready_() &&
           link->closes == closes);
       }
       link->down(true); app.drain();

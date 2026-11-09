@@ -75,10 +75,10 @@ using CxnSendFn = ZmFn<void(bool), ZmFnHeapID<"Zdbus.CxnSendFn">>;
 using CxnStopFn = ZmFn<void(), ZmFnHeapID<"Zdbus.CxnStopFn">>;
 
 // Retain the original backing while advancing its unfinished input range.
-ZdbusExtern ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input,
+ZdbusExtern ZmRef<ZiIOBuf> splitFrame(ZmRef<ZiIOBuf> &input,
   const FrameInfo &info);
 // Copy an unfinished shared tail directly into final input storage.
-ZdbusExtern bool detachInput_(ZmRef<ZiIOBuf> &input, unsigned size);
+ZdbusExtern bool detachInput(ZmRef<ZiIOBuf> &input, unsigned size);
 
 struct Out_ : public ZmObject {
   ZmRef<ZiIOBuf>	buf;
@@ -94,13 +94,13 @@ ZmListDerive(OutQueue, Out_,
   ZmListNode<Out_, ZmListHeapID<"Zdbus.Out">>);
 using Out = OutQueue::Node;
 
-struct CxnStopWait_ {
+struct CxnStopWait {
   CxnStopFn fn;
 
-  explicit CxnStopWait_(CxnStopFn fn_) : fn{ZuMv(fn_)} { }
+  explicit CxnStopWait(CxnStopFn fn_) : fn{ZuMv(fn_)} { }
 };
-ZmListDerive(CxnStopQueue, CxnStopWait_,
-  ZmListNode<CxnStopWait_, ZmListHeapID<"Zdbus.CxnStop">>);
+ZmListDerive(CxnStopQueue, CxnStopWait,
+  ZmListNode<CxnStopWait, ZmListHeapID<"Zdbus.CxnStop">>);
 
 class ZdbusAPI Connection {
 public:
@@ -122,17 +122,17 @@ private:
   void txStart_();
   void connect_();
   void connected_();
-  void rxRead_();
-  void rxWrite_();
-  void rxSend_(ZmRef<Out>);
+  void rxRead();
+  void rxWrite();
+  void rxSend(ZmRef<Out>);
   void txSend_(ZmRef<ZiIOBuf>, CxnSendFn);
   void txDone_(ZmRef<Out>, bool);
   void rxReady_();
-  void rxFail_(CxnFailure);
-  void rxFailDrain_();
-  void rxStop_();
-  void rxDrain_();
-  void txStopped_();
+  void rxFail_0(CxnFailure);
+  void rxFail_1();
+  void stop_0();
+  void stop_1();
+  void stop_2();
   void close_();
   bool consume_(unsigned &);
   bool frame_();

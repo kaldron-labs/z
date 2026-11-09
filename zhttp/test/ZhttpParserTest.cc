@@ -385,9 +385,9 @@ void testBodyRejection()
     "operation rejection status mapping mismatch");
 }
 
-void testSelectedHeaderValueSplitAcrossRxBuffers()
+void selectedHeaderRxFragments()
 {
-  ZuTestScope(testSelectedHeaderValueSplitAcrossRxBuffers);
+  ZuTestScope(selectedHeaderRxFragments);
 
   static const char frag0[] =
     "HTTP/1.1 200 OK\r\n"
@@ -429,9 +429,9 @@ void testSelectedHeaderValueSplitAcrossRxBuffers()
   ZuCHECK(!stream, "stream still has data after full response");
 }
 
-void testCanonicalContentLengthHeader()
+void canonicalContentLength()
 {
-  ZuTestScope(testCanonicalContentLengthHeader);
+  ZuTestScope(canonicalContentLength);
 
   ResponseParser parser;
   RxStream stream;
@@ -480,9 +480,9 @@ void testRuntimeHeaderCallback()
     "fixed empty body metadata mismatch");
 }
 
-void testResponseStartLineFragmentedAcrossManyRxBuffers()
+void resLineRxFragments()
 {
-  ZuTestScope(testResponseStartLineFragmentedAcrossManyRxBuffers);
+  ZuTestScope(resLineRxFragments);
 
   const char *frags[] = {
     "HT", "TP", "/1", ".1", " ", "2", "0", "0", " ", "O", "K", "\r"
@@ -518,9 +518,9 @@ void testResponseStartLineFragmentedAcrossManyRxBuffers()
   ZuCHECK(!stream, "stream still has data after response");
 }
 
-void testRequestStartLineFragmentedAcrossManyRxBuffers()
+void reqLineRxFragments()
 {
-  ZuTestScope(testRequestStartLineFragmentedAcrossManyRxBuffers);
+  ZuTestScope(reqLineRxFragments);
 
   const char *frags[] = {
     "G", "E", "T", " ", "/", "v", "1", "/x", "?", "q=1",
@@ -594,9 +594,9 @@ void testInvalidRequestMethod()
     "\r\n");
 }
 
-void testRequestErrorClassification()
+void requestErrorClassification()
 {
-  ZuTestScope(testRequestErrorClassification);
+  ZuTestScope(requestErrorClassification);
 
   {
     RequestParser parser;
@@ -704,9 +704,9 @@ void testRuntimeBodyLimit()
     "runtime body limit admits an exact-size request through bounded fragments");
 }
 
-void testEmptySelectedHeaderValues()
+void emptySelectedHeaderValues()
 {
-  ZuTestScope(testEmptySelectedHeaderValues);
+  ZuTestScope(emptySelectedHeaderValues);
 
   {
     ResponseParser parser;
@@ -736,9 +736,9 @@ void testEmptySelectedHeaderValues()
   }
 }
 
-void testInvalidContentLengthValues()
+void invalidContentLengthValues()
 {
-  ZuTestScopeRT(testInvalidContentLengthValues);
+  ZuTestScopeRT(invalidContentLengthValues);
 
   static const char *values[] = {
     "", "+5", "-5", "5x", "18446744073709551616"
@@ -760,9 +760,9 @@ void testInvalidContentLengthValues()
   }
 }
 
-void testChunkedBodyAcrossRxBuffers()
+void chunkedBodyRxFragments()
 {
-  ZuTestScopeRT(testChunkedBodyAcrossRxBuffers);
+  ZuTestScopeRT(chunkedBodyRxFragments);
 
   const char *frags[] = {
     "HTTP/1.1 200 OK\r\n"
@@ -832,9 +832,9 @@ void testChunkLengthSyntax()
   }
 }
 
-void testCloseDelimitedResponseBody()
+void closeDelimitedResBody()
 {
-  ZuTestScope(testCloseDelimitedResponseBody);
+  ZuTestScope(closeDelimitedResBody);
 
   const char *frags[] = {
     "HTTP/1.1 200 OK\r\n"
@@ -996,9 +996,9 @@ void testPartialBodyBoundaries()
     "EOF-framed prefixes cannot bypass the cumulative bound");
 }
 
-void testCloseDelimitedResponseTooLarge()
+void closeDelimitedResTooLarge()
 {
-  ZuTestScope(testCloseDelimitedResponseTooLarge);
+  ZuTestScope(closeDelimitedResTooLarge);
 
   ZtString<> msg;
   msg << "HTTP/1.1 200 OK\r\n\r\n";
@@ -1014,9 +1014,9 @@ void testCloseDelimitedResponseTooLarge()
     "oversized close-delimited completion mismatch");
 }
 
-void testNoBodyStatusWithoutLengthCompletesAtHeaders()
+void noBodyNoLengthEndsAtHeaders()
 {
-  ZuTestScope(testNoBodyStatusWithoutLengthCompletesAtHeaders);
+  ZuTestScope(noBodyNoLengthEndsAtHeaders);
 
   ResponseParser parser;
   RxStream stream;
@@ -1040,9 +1040,9 @@ void testNoBodyStatusWithoutLengthCompletesAtHeaders()
   ZuCHECK(!stream, "stream still has data after no-body status response");
 }
 
-void testInformationalThenFinalResponse()
+void infoThenFinalRes()
 {
-  ZuTestScope(testInformationalThenFinalResponse);
+  ZuTestScope(infoThenFinalRes);
 
   ResponseParser parser;
   parser.informational = true;
@@ -1139,9 +1139,9 @@ void testUpgradeLeavesInput()
   }
 }
 
-void testEarlyDataSafeRequestPolicy()
+void earlyDataSafeRequestPolicy()
 {
-  ZuTestScope(testEarlyDataSafeRequestPolicy);
+  ZuTestScope(earlyDataSafeRequestPolicy);
 
   ZuCHECK(Zhttp::earlyDataSafeRequest(Zhttp::Method::GET, false),
     "GET without body should be 0-RTT eligible");
@@ -1170,30 +1170,30 @@ int main(int argc, char **argv)
   ZiLog::sink(ZiLog::fileSink(ZiSinkOptions{}.path("&2")));
   ZiLog::start();
   ZuTestMain();
-  ZuTestCall(testSelectedHeaderValueSplitAcrossRxBuffers);
-  ZuTestCall(testCanonicalContentLengthHeader);
+  ZuTestCall(selectedHeaderRxFragments);
+  ZuTestCall(canonicalContentLength);
   ZuTestCall(testRuntimeHeaderCallback);
   ZuTestCall(testInvalidRequestMethod);
-  ZuTestCall(testRequestErrorClassification);
+  ZuTestCall(requestErrorClassification);
   ZuTestCall(testBodyRejection);
   ZuTestCall(testRuntimeBodyLimit);
-  ZuTestCall(testEmptySelectedHeaderValues);
-  ZuTestCall(testInvalidContentLengthValues);
-  ZuTestCall(testResponseStartLineFragmentedAcrossManyRxBuffers);
-  ZuTestCall(testRequestStartLineFragmentedAcrossManyRxBuffers);
-  ZuTestCall(testChunkedBodyAcrossRxBuffers);
+  ZuTestCall(emptySelectedHeaderValues);
+  ZuTestCall(invalidContentLengthValues);
+  ZuTestCall(resLineRxFragments);
+  ZuTestCall(reqLineRxFragments);
+  ZuTestCall(chunkedBodyRxFragments);
   ZuTestCall(testChunkLengthSyntax);
   ZuTestCall(testContentLengthIncremental);
   ZuTestCall(testChunkBodyIncremental);
   ZuTestCall(testAppFrameAcrossChunks);
   ZuTestCall(testPartialBodyBoundaries);
-  ZuTestCall(testCloseDelimitedResponseBody);
-  ZuTestCall(testCloseDelimitedResponseTooLarge);
-  ZuTestCall(testNoBodyStatusWithoutLengthCompletesAtHeaders);
+  ZuTestCall(closeDelimitedResBody);
+  ZuTestCall(closeDelimitedResTooLarge);
+  ZuTestCall(noBodyNoLengthEndsAtHeaders);
   ZuTestCall(testInformationalSuppressed);
-  ZuTestCall(testInformationalThenFinalResponse);
+  ZuTestCall(infoThenFinalRes);
   ZuTestCall(testUpgradeLeavesInput);
-  ZuTestCall(testEarlyDataSafeRequestPolicy);
+  ZuTestCall(earlyDataSafeRequestPolicy);
   ZiLog::stop();
   return 0;
 }

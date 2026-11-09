@@ -137,7 +137,7 @@ friend inline ZuStringT<"Zfix.ReplaySwap.Server"> ZmNHeapID(Link *);
   }
 
   void fixStopTx(uint64_t) {
-    store->tx = this->txProgress_();
+    store->tx = this->txProgress();
     queue.clean();
   }
 
@@ -279,7 +279,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
     Progress checkpoint;
     bool snapshot = ZmBlock<bool>{}([&client, &a, &checkpoint](auto wake) {
       client.rxRun([&a, &checkpoint, wake = ZuMv(wake)]() mutable {
-	checkpoint.epoch = a->session_().epoch_(); checkpoint.rx = a->rxProgress_(); wake(true);
+	checkpoint.epoch = a->session_().epoch_(); checkpoint.rx = a->rxProgress(); wake(true);
       });
     });
     ZuCheck(snapshot && checkpoint.rx.processed == 2);
@@ -294,7 +294,7 @@ static void replayReplacement(unsigned mode, bool logoutA)
     if (!pending) break;
     snapshot = ZmBlock<bool>{}([&client, &a, &checkpoint](auto wake) {
       client.txRun([&a, &checkpoint, wake = ZuMv(wake)]() mutable {
-	checkpoint.tx = a->txProgress_(); wake(true);
+	checkpoint.tx = a->txProgress(); wake(true);
       });
     });
     ZuCheck(snapshot && checkpoint.tx.loaded > 2 && state.request.connection == 1 &&
@@ -303,9 +303,9 @@ static void replayReplacement(unsigned mode, bool logoutA)
     b = new ReplayClient::Link{&client, false};
     bool restored = ZmBlock<bool>{}([&client, &b, &checkpoint](auto wake) {
       client.rxRun([&client, &b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	if (!b->restoreRx_(checkpoint.epoch, checkpoint.rx)) { wake(false); return; }
+	if (!b->restoreRx(checkpoint.epoch, checkpoint.rx)) { wake(false); return; }
 	client.txRun([&b, &checkpoint, wake = ZuMv(wake)]() mutable {
-	  if (!b->restoreTx_(checkpoint.epoch, checkpoint.tx)) { wake(false); return; }
+	  if (!b->restoreTx(checkpoint.epoch, checkpoint.tx)) { wake(false); return; }
 	  b->store->lastLoad = checkpoint.tx.loaded - 1; wake(true);
 	});
       });

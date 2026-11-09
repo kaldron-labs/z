@@ -60,7 +60,7 @@ struct Owner {
   const W	*pending = nullptr;
   unsigned	posted = 0, bad = 0;
 
-  void workDone(const W *work) { if (pending) ++bad; pending = work; ++posted; }
+  void workDone_0(const W *work) { if (pending) ++bad; pending = work; ++posted; }
 
   void drain() {
     auto work = pending; pending = nullptr;

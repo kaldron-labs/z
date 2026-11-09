@@ -411,10 +411,10 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   static SessionConfig config() { SessionConfig c; c.mode = Transport::Raw; return c; }
   explicit RawEndpoint(Owner *o) : Raw{config()}, owner{o} { }
   Owner *app() const { return owner; }
-  PostedState txPosted_() const { return posted; }
-  WorkState workState_() const { return {}; }
+  PostedState txPosted() const { return posted; }
+  WorkState workState() const { return {}; }
   bool txPost_(uint64_t bytes) { posted.bytes += bytes; ++posted.count; return true; }
-  void txUnpost_(uint64_t bytes) { posted.bytes -= bytes; --posted.count; }
+  void txUnpost(uint64_t bytes) { posted.bytes -= bytes; --posted.count; }
   template <typename S>
   void signMsg(S &out, const TxBody *body, TxContext c, ZuCSpan message) const {
     onTx &= owner->txInvoked();
@@ -432,13 +432,13 @@ friend ZuStringT<"Zfix.SignRaw"> ZmNHeapID(RawEndpoint *);
   void fixRawSubmittedTx(RawOutput::Ref out, unsigned) { outputs.push(ZuMv(out)); }
   void fixRawFaultTx(uint64_t, Error) { ++faults; }
   void disconnect_(bool = true) { }
-  void resumeRx_() { }
+  void resumeRx() { }
 };
 static void rawOwner()
 {
   ZuTestScope(rawOwner);
   Owner owner; ZmRef<RawEndpoint> link = new RawEndpoint{&owner};
-  ZuCheck(link->transportBind_(false)); link->transportUp_(); owner.drain();
+  ZuCheck(link->transportBind(false)); link->transportUp_0(); owner.drain();
   Error error;
   Text peer{"SERVER"}, local{"CLIENT"}, version{"FIX.4.4"};
   auto route = config(); route.identity.local = local; route.identity.peer = peer;
@@ -470,7 +470,7 @@ static void rawOwner()
   }
   owner.rx = true; owner.drain();
   ZuCheck(link->calls == 1);
-  link->transportDown_(false); owner.drain();
+  link->transportDown_0(false); owner.drain();
   link->records.clear(); link->outputs.clear(); link = nullptr;
 }
 

@@ -45,7 +45,7 @@ is not evidence for the lifecycle batch.
 
 The embedded provider fixture in `ZumRuntimeOIDCTest` now explicitly starts and
 stops Server. It adds never-started final, repeated operations, restart without
-init and completion-driven final. `ZumRuntimeTokenTest::helperCredit` holds a signing completion, cancels request
+init and completion-driven final. `ZumRuntimeTokenTest::signingCredit` holds a signing completion, cancels request
 admission, and checks that the helper retains its caller credit after the
 application cancellation result. It then releases signing while retaining and
 repeating the fired completion, requiring one application result and complete

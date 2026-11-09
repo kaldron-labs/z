@@ -17,7 +17,7 @@ LDADD = $(top_builddir)/zgrpc/src/libZgrpc.la \
 	$(top_builddir)/zm/src/libZm.la $(top_builddir)/zu/src/libZu.la \
 	@PTLS_LIBS@ @Z_IO_LIBS@ @Z_ZT_LIBS@ @Z_MT_LIBS@ @Z_LIBS@
 noinst_PROGRAMS = zgrpcgoclient zgrpcgoserver
-noinst_HEADERS = ZgrpcMatrix.hh
+noinst_HEADERS = zgrpcmatrix.hh
 zgrpcgoserver_SOURCES = zgrpcgoserver.cc
 zgrpcgoclient_SOURCES = zgrpcgoclient.cc
 

@@ -32,7 +32,7 @@ using StreamTxBufAlloc = Zquic::StreamTxBufAlloc<>;
 #ifdef Zquic_DEBUG
 static Zi::Path g_residue;
 
-static Zi::Path testPath_(ZuCSpan name)
+static Zi::Path testPath(ZuCSpan name)
 {
   return ZiFile::append(g_residue, name);
 }
@@ -53,7 +53,7 @@ static ZtString<> readFile_(const Zi::Path &path)
   return data;
 }
 
-static unsigned parseJSONSeq_(ZuCSpan data)
+static unsigned parseJSONSeq(ZuCSpan data)
 {
   unsigned n = 0;
   unsigned i = 0, l = data.length();
@@ -74,7 +74,7 @@ static unsigned parseJSONSeq_(ZuCSpan data)
   return n;
 }
 
-static void closeQLog_(ZquicLogger::Trace &trace)
+static void closeQLog(ZquicLogger::Trace &trace)
 {
   ZmBlock<>{}([&trace](auto wake) {
     ZquicLogger::close(trace, ZuMv(wake));
@@ -89,7 +89,7 @@ struct TestStream :
   using Base::Base;
 
   int process(Zquic::RxStream &) { return 0; }
-  void txComplete_(bool) { ++txCompleteCount; }
+  void txComplete(bool) { ++txCompleteCount; }
 
   unsigned txCompleteCount = 0;
 };
@@ -291,16 +291,16 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     HubApp, TestLink, StreamTxBufAlloc,
     TestStream>;
   TestLink(HubApp *app, bool isServer = false) : Base{app, isServer} {
-    Base::configLocalParams_(app);
+    Base::configLocalParams(app);
   }
 
   static constexpr unsigned RecBatch = Base::RecoveryScanBatch;
 
   bool recoveryPackets(unsigned count, bool ecn = false) {
     if (ecn) Base::setEcnDisabled_(false);
-    Base::setTxPN_(Zquic::PktNumSpace::Handshake, count + 1);
+    Base::setTxPN(Zquic::PktNumSpace::Handshake, count + 1);
     for (unsigned pn = 1; pn <= count; ++pn)
-      if (!Base::recordTxPkt_(Zquic::PktNumSpace::Handshake, pn, 1200,
+      if (!Base::recordTxPkt(Zquic::PktNumSpace::Handshake, pn, 1200,
 	  Zquic::SentFrameRef{}, true, false, 0, Zquic::PktNumSpace::N, 0,
 	  Zquic::PktType::Handshake,
 	  ecn ? Zquic::EcnMark::ECT0 : Zquic::EcnMark::NotECT))
@@ -320,20 +320,20 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
   auto recoveryDiag() {
     // Continuation assertions inspect the controller after partial retirement,
     // before production publishes its end-of-ACK diagnostic update.
-    Base::updateCongestionDiag_();
+    Base::updateCongestionDiag();
     return Base::txDiag_();
   }
   auto recoveryPathDiag() const { return Base::pathDiag_(); }
   void recoveryStop() { Base::cancelTimers_(); }
   void recoveryReset() { Base::resetTx_(); }
   void recoveryDiscard() {
-    Base::discardTxPktNumSpace_(Zquic::PktNumSpace::Handshake);
+    Base::discardPktNumSpace_1(Zquic::PktNumSpace::Handshake);
   }
 
   bool longProbe(
     const Zquic::TrafficSecret &secret, unsigned pnLength, bool early,
     ZmRef<ZiIOBuf> &packet) {
-    if (!Base::txInstallKeySecret_(early ?
+    if (!Base::txInstallKeySecret(early ?
 	Zquic::PktKeyLevel::ZeroRTT : Zquic::PktKeyLevel::Handshake, secret))
       return false;
     Zquic::PktBuild payload;
@@ -352,16 +352,16 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
       return true;
     };
     if (early)
-      return Base::sendProtZeroRTTPkt_(
+      return Base::sendProtZeroRTTPkt(
 	Base::CIDSel::Peer, Base::CIDSel::Local, pnLength,
 	payload, {}, {}, nullptr, false, alloc, send);
-    return Base::sendProtHandshakePkt_(
+    return Base::sendProtHandshakePkt(
       Base::CIDSel::Peer, Base::CIDSel::Local, pnLength,
       payload, {}, {}, nullptr, false, alloc, send);
   }
 
   const Zquic::TransportParams &localParams() const {
-    return Base::localTransportParams_();
+    return Base::localTransportParams();
   }
 
   void streamed(ZmRef<TestStream>) { }
@@ -418,7 +418,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     ++transportCloseCount;
   }
   void pto_() { }
-  void queueRetransmit_() { }
+  void queueRetransmit() { }
   void statelessReset() { ++statelessResetCount; }
   void migrationStarted(const Zquic::MigrationResult &result) {
     lastMigration = result;
@@ -465,7 +465,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	  bool chooseMigrationPeerCID(
 	    bool requireNewPeerCID, Zquic::CxnID &id, uint64_t &sequence,
 	    Zquic::MigrationReason::T &reason) {
-	    bool ok = Base::selectPeerCIDRx_(
+	    bool ok = Base::selectPeerCIDRx(
 	      requireNewPeerCID, id, sequence);
 	    reason = ok ? Zquic::MigrationReason::T(Zquic::MigrationReason::None) :
 	      Zquic::MigrationReason::T(Zquic::MigrationReason::NoPeerCID);
@@ -477,23 +477,23 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	  bool prepareActiveMigration(
 	    const Zquic::MigrationParams &params,
 	    Zquic::MigrationReason::T &reason) {
-	    return Base::prepareMig_(params, reason);
+	    return Base::prepareMig(params, reason);
 	  }
 	  bool activateActiveMigration() {
-	    return Base::activateMig_(false);
+	    return Base::activateMig(false);
 	  }
 	  void activeRebindStart() {
-	    Base::migRebindStart_();
+	    Base::migRebindStart();
 	  }
 	  void activeRebindFail(Zquic::MigrationReason::T reason) {
-	    Base::migRebindFail_(reason);
-	    Base::failMig_(reason);
+	    Base::migRebindFail(reason);
+	    Base::failMig(reason);
 	  }
-	  bool buildActiveMigrationChallenge(Zquic::Frame &frame) {
+	  bool buildActiveMigChallenge(Zquic::Frame &frame) {
 	    Zquic::PktBuild build;
 	    Base::TxPktRefs refs;
 	    Zquic::ControlFrame control;
-	    if (!Base::buildMigChal_(build, refs, control))
+	    if (!Base::buildMigChal(build, refs, control))
 	      return false;
 	    if (refs.count() != 1) return false;
 	    unsigned used = 0;
@@ -532,7 +532,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     auto cid = Base::localCID_(sequence);
     return cid && cid->state == Zquic::CxnState::Retired;
   }
-  void retiredLocalCID_(uint64_t sequence, const Zquic::CxnID &id) {
+  void retiredLocalCID(uint64_t sequence, const Zquic::CxnID &id) {
     retiredSeq = sequence;
     retiredCID = id;
     ++retiredCount;
@@ -540,13 +540,13 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	  bool checkStatelessReset(ZuBSpan datagram) {
 	    return Base::checkStatelessReset_(datagram);
 	  }
-	  bool draining() const { return Base::drainingRx_(); }
-	  bool startHandshakeForTest() { return Base::startHandshake_(); }
+	  bool draining() const { return Base::drainingRx(); }
+	  bool startHandshakeForTest() { return Base::startHandshake(); }
 	  bool handshakingRx() const {
-	    return Base::handshakeStartedRx_() && !Base::establishedRx_();
+	    return Base::handshakeStartedRx() && !Base::establishedRx();
 	  }
 	  bool handshakingTx() const {
-	    return Base::handshakeStartedTx_() && !Base::establishedTx_();
+	    return Base::handshakeStartedTx() && !Base::establishedTx();
 	  }
 	  bool closingRx() const { return Base::closingRx_(); }
 	  bool closingTx() const { return Base::closingTx_(); }
@@ -555,17 +555,17 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	  uint64_t closeErrorRx() const { return Base::closeErrorRx_(); }
 	  uint64_t closeErrorTx() const { return Base::closeErrorTx_(); }
 	  void closeTxForTest(uint64_t errorCode, bool application = false) {
-	    Base::closeStateTx_(errorCode, application);
+	    Base::closeStateTx(errorCode, application);
 	  }
   void scheduleStream(const ZmRef<TestStream> &stream) {
-    Base::streamWritable_(stream);
+    Base::streamWritable(stream);
   }
   ZmRef<TestStream> nextScheduledStream() {
-    return Base::nextWritableStream_();
+    return Base::nextWritableStream();
   }
-  void clearScheduledStreams() { Base::clearWritableStreams_(); }
+  void clearScheduledStreams() { Base::clearWritableStreams(); }
   void postPeerLimits(uint64_t duplex, uint64_t simplex) {
-    Base::postPeerStreamLimitsTx_(duplex, simplex);
+    Base::postPeerStreamLimitsTx(duplex, simplex);
   }
   bool receiveMaxStreams(
     Zquic::StreamType::T type, uint64_t maximum) {
@@ -573,7 +573,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     frame.type = Zquic::FrameType::MaxStreams;
     frame.streamType = type;
     frame.value = maximum;
-    return Base::rxApplyMaxStreams_(frame);
+    return Base::rxApplyMaxStreams(frame);
   }
   bool queueMaxStreams(
     Zquic::StreamType::T type, uint64_t maximum) {
@@ -582,7 +582,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
 	Zquic::FrameType::MaxStreams, 0, maximum, type}));
   }
   bool flushControlSends() {
-    return Base::flushCtlStreams_(
+    return Base::flushCtlStreams(
       ZiSockAddr{},
       [](Zquic::PktBuild &) { return true; },
       [](Zquic::PktBuild &, ZiSockAddr, const Base::TxPktRefs &) {
@@ -590,20 +590,20 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
       });
   }
   unsigned scheduledStreams() const {
-    return Base::scheduledStreamCount_();
+    return Base::scheduledStreamCount();
   }
   ZmRef<TestStream> findTxStream(int64_t id) const {
     return Base::findTxStream_(id);
   }
   void dataBlockedForTest(uint64_t maximum) {
-    Base::dataBlocked_(maximum);
+    Base::dataBlocked(maximum);
   }
 	  void closeTransport(Zquic::FrameType::T type, uint64_t errorCode) {
-	    Base::closeLink_(errorCode);
+	    Base::closeLink(errorCode);
 	    Base::transportClose_(type, errorCode);
 	  }
 	  void closeForTest(uint64_t errorCode = 0) {
-	    Base::closeState_(errorCode);
+	    Base::closeState(errorCode);
 	  }
   void initServerPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initServerPathTx_(ZuMv(local), ZuMv(remote));
@@ -612,7 +612,7 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
   }
   void observePath(ZiSockAddr local, ZiSockAddr remote) {
-    Base::startPathValidation_(ZuMv(local), ZuMv(remote));
+    Base::startPathValidation(ZuMv(local), ZuMv(remote));
   }
   void observePathRx(ZiSockAddr local, ZiSockAddr remote) {
     Base::observePathRxTx_(ZuMv(local), ZuMv(remote), false);
@@ -625,11 +625,11 @@ friend inline ZuStringT<"Zquic.APITest.Link"> ZmNHeapID(TestLink *);
     return Base::validatingChallenge_();
   }
   bool pathResponse(ZuBSpan data) { return Base::onPathResponse_(data); }
-  void pathTimeout() { Base::pathExpired_(); }
+  void pathTimeout() { Base::pathExpired(); }
   void flushTx_() { ++txFlushQueued; }
   void flushTx_(ZiSockAddr) { ++txFlushQueued; }
-  void queueTxFlush_() { ++txFlushQueued; }
-  void queueTxFlush_(ZiSockAddr) { ++txFlushQueued; }
+  void queueTxFlush() { ++txFlushQueued; }
+  void queueTxFlush(ZiSockAddr) { ++txFlushQueued; }
   Zquic::LinkDiag diag() const { return Base::diag_(); }
 
   ZmRef<TestStream> lastOpened;
@@ -707,7 +707,7 @@ struct HubFixture {
   HubApp	app;
 };
 
-static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
+static bool parseFrame(const uint8_t *b, int n, Zquic::Frame &frame)
 {
   unsigned used = 0;
   return n > 0 && !Zquic::FrameCodec::parse(
@@ -715,7 +715,7 @@ static bool parseFrame_(const uint8_t *b, int n, Zquic::Frame &frame)
     used == unsigned(n);
 }
 
-static ZmRef<ZiIOBuf> streamPkt_(
+static ZmRef<ZiIOBuf> streamPkt(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
@@ -1219,7 +1219,7 @@ void testStatelessResetDetection()
   ZuTestScope(testStatelessResetDetection);
 
 #ifdef Zquic_DEBUG
-	Zi::Path qlogPath = testPath_("ZquicAPIStatelessReset.sqlog");
+	Zi::Path qlogPath = testPath("ZquicAPIStatelessReset.sqlog");
 	ZiFile::remove(qlogPath);
 	ZquicLogParams params;
 	params.enabled(true).path(qlogPath);
@@ -1272,7 +1272,7 @@ void testStatelessResetDetection()
     "stateless reset Rx completion did not fire exactly once");
 
 #ifdef Zquic_DEBUG
-	closeQLog_(fixture.app.qlogTrace());
+	closeQLog(fixture.app.qlogTrace());
 	ZquicLogger::stop();
 	ZquicLogDiag diag = ZquicLogger::diag();
 	ZquicLogger::final(fixture.app.qlogTrace());
@@ -1356,7 +1356,7 @@ void testApplicationCallbacks()
       client->localStreamOpens == 1 && client->lastOpened == local,
     "local stream-open callback mismatch");
 
-  auto packet = streamPkt_(0, 0, "abc", false, frame, used);
+  auto packet = streamPkt(0, 0, "abc", false, frame, used);
   ZuCHECK(packet && server->receiveFrame(frame, packet) == 0,
     "peer STREAM callback setup failed");
   auto peer = server->findStream(0);
@@ -1370,7 +1370,7 @@ void testApplicationCallbacks()
     "peer stream/data callbacks mismatch");
 
   int n = Zquic::FrameCodec::writeResetStream(b, sizeof(b), 0, 7, 3);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZuCHECK(parseFrame(b, n, frame) &&
       server->receiveFrame(frame) == 0 &&
       server->resetReceivedCount == 1 &&
       server->lastResetStream == peer &&
@@ -1379,7 +1379,7 @@ void testApplicationCallbacks()
     "RESET_STREAM receive callback mismatch");
 
   n = Zquic::FrameCodec::writeStopSending(b, sizeof(b), local->id(), 9);
-  ZuCHECK(parseFrame_(b, n, frame) &&
+  ZuCHECK(parseFrame(b, n, frame) &&
       client->receiveFrame(frame) == 0 &&
       client->stopReceivedCount == 1 &&
       client->lastStopStream == local &&
@@ -1501,7 +1501,7 @@ void testStopSendingOwnership()
   Zquic::Frame frame;
   int n = Zquic::FrameCodec::writeStopSending(
     b, sizeof(b), stream->id(), 9);
-  ZuCHECK(parseFrame_(b, n, frame),
+  ZuCHECK(parseFrame(b, n, frame),
     "STOP_SENDING ownership setup failed");
 
   fixture.app.defer();
@@ -1542,7 +1542,7 @@ void testStopSendingOwnership()
 
   n = Zquic::FrameCodec::writeResetStream(
     b, sizeof(b), resetStream->id(), 17, 0);
-  ZuCHECK(parseFrame_(b, n, frame),
+  ZuCHECK(parseFrame(b, n, frame),
     "RESET_STREAM ownership setup failed");
   resetFixture.app.enterRx();
   ZuCHECK(resetLink->receiveFrame(frame) == 0 &&
@@ -1574,7 +1574,7 @@ void testStreamRegistryOwnership()
 
   Zquic::Frame frame;
   unsigned used = 0;
-  auto packet = streamPkt_(2, 0, "", true, frame, used);
+  auto packet = streamPkt(2, 0, "", true, frame, used);
   ZuCHECK(packet && link->receiveFrame(frame, packet) == 0,
     "peer stream ownership setup failed");
   ZmRef<TestStream> stream = link->lastDataStream;
@@ -1769,7 +1769,7 @@ void testActiveMigrationAPI()
 	Zquic::MigrationState::Validating,
     "active migration activation callback/state mismatch");
   Zquic::Frame challenge;
-  ZuCHECK(link->buildActiveMigrationChallenge(challenge) &&
+  ZuCHECK(link->buildActiveMigChallenge(challenge) &&
       challenge.type == Zquic::FrameType::PathChallenge &&
       challenge.payload.length() == Zquic::PathChallenge::Length,
     "active migration PATH_CHALLENGE was not built");
@@ -1893,7 +1893,7 @@ void testCxnIDMigrationOverlap()
   ZuCHECK(link->activateActiveMigration(),
     "migration-overlap candidate activation failed");
   Zquic::Frame challenge;
-  ZuCHECK(link->buildActiveMigrationChallenge(challenge),
+  ZuCHECK(link->buildActiveMigChallenge(challenge),
     "migration-overlap challenge setup failed");
 
   fixture.app.enterRx();
@@ -1944,7 +1944,7 @@ void testMigrationQLogEvents()
   ZuTestScope(testMigrationQLogEvents);
 
 #ifdef Zquic_DEBUG
-  Zi::Path qlogPath = testPath_("ZquicAPIMigrationQLog.sqlog");
+  Zi::Path qlogPath = testPath("ZquicAPIMigrationQLog.sqlog");
   ZiFile::remove(qlogPath);
   ZquicLogParams qlogParams;
   qlogParams.enabled(true).path(qlogPath).ringSize(1<<15);
@@ -1990,7 +1990,7 @@ void testMigrationQLogEvents()
       active->activateActiveMigration(),
     "qlog active migration setup failed");
   Zquic::Frame frame;
-  ZuCHECK(active->buildActiveMigrationChallenge(frame),
+  ZuCHECK(active->buildActiveMigChallenge(frame),
     "qlog active migration challenge build failed");
   uint8_t response[Zquic::PathChallenge::Length]{};
   ZuBSpan challenge = active->validatingChallenge();
@@ -2051,7 +2051,7 @@ void testMigrationQLogEvents()
   rebind->activeRebindStart();
   rebind->activeRebindFail(Zquic::MigrationReason::Endpoint);
 
-  closeQLog_(fixture.app.qlogTrace());
+  closeQLog(fixture.app.qlogTrace());
   ZquicLogger::stop();
   ZquicLogDiag diag = ZquicLogger::diag();
   ZquicLogger::final(fixture.app.qlogTrace());
@@ -2065,7 +2065,7 @@ void testMigrationQLogEvents()
 
   ZtString<> qlog = readFile_(qlogPath);
   ZuCHECK(qlog, "migration runtime qlog output missing");
-  ZuCHECK(parseJSONSeq_(qlog) >= 25,
+  ZuCHECK(parseJSONSeq(qlog) >= 25,
     "migration runtime qlog JSON-SEQ parse failed");
   ZuCHECK(qlog.find<"zquic:migration_updated">() >= 0,
     "runtime migration qlog event missing");

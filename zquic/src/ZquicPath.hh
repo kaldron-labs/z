@@ -114,7 +114,7 @@ public:
       ecnDisabledState();
   }
   void ecnTesting() {
-    clearECNCounters_();
+    clearECNCounters();
     m_ecnState = PathECNState::Testing;
     m_activeECN = EcnMark::ECT0;
   }
@@ -128,7 +128,7 @@ public:
     m_activeECN = EcnMark::NotECT;
   }
   void ecnDisabledState() {
-    clearECNCounters_();
+    clearECNCounters();
     m_ecnState = PathECNState::Disabled;
     m_activeECN = EcnMark::NotECT;
   }
@@ -179,13 +179,13 @@ public:
     ZiAssert(v >= MinUDPPayload && v <= BufSize, "Zquic", (v),
       "invalid peer max UDP payload " << v, return);
     m_peerMaxUDP = v;
-    clampActive_();
+    clampActive();
   }
   void configuredMaxUDP(unsigned v) {
     ZiAssert(v >= MinUDPPayload && v <= BufSize, "Zquic", (v),
       "invalid configured max UDP payload " << v, return);
     m_configuredMaxUDP = v;
-    clampActive_();
+    clampActive();
   }
 
   unsigned ceiling() const {
@@ -299,7 +299,7 @@ public:
     if (!m_probeSize) return;
     unsigned size = m_probeSize;
     m_probeSize = 0;
-    failProbe_(size);
+    failProbe(size);
   }
   bool probeExpired() {
     if (!m_probeSize) return false;
@@ -315,7 +315,7 @@ public:
       blackhole();
       return false;
     }
-    failProbe_(size);
+    failProbe(size);
     return false;
   }
   void blackhole() {
@@ -345,22 +345,22 @@ public:
       m_probeAttempts = 0;
       m_pmtudState = PMTUDState::Base;
     }
-    clampActive_();
+    clampActive();
   }
 
 private:
-  void clearECNCounters_() {
+  void clearECNCounters() {
     for (auto &ecn : m_peerAckECN) ecn.reset();
     for (auto &ecn : m_sentECN) ecn.reset();
     m_ecnProbeSent = 0;
     m_ecnProbeAckd = 0;
   }
-  void clampActive_() {
+  void clampActive() {
     unsigned c = ceiling();
     if (m_activeMaxUDP > c) m_activeMaxUDP = c;
     if (m_activeMaxUDP < MinUDPPayload) m_activeMaxUDP = MinUDPPayload;
   }
-  void failProbe_(unsigned size) {
+  void failProbe(unsigned size) {
     if (size && (!m_failureFloor || size < m_failureFloor))
       m_failureFloor = size;
     m_retryProbeSize = 0;

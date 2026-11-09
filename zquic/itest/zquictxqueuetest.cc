@@ -23,14 +23,14 @@ struct Endpoint : public Zquic_::Endpoint_<Endpoint> {
   bool ordered = true;
 
   void endpointReady_(Base *) { auto fn = ZuMv(readyFn); fn(true); }
-  void endpointFailed_(bool) { auto fn = ZuMv(readyFn); fn(false); }
+  void endpointFailed(bool) { auto fn = ZuMv(readyFn); fn(false); }
   void endpointDown_(Base *) { }
-  void endpointDatagram_(Zquic::Datagram d) {
+  void endpointDatagram(Zquic::Datagram d) {
     if (!d.buf || d.buf->length != 1 || d.buf->data()[0] != received + 1)
       ordered = false;
     if (++received == 3) done.post();
   }
-  void endpointTxDrained_() {
+  void endpointTxDrained() {
     auto fn = ZuMv(drainFn);
     if (fn) fn();
   }

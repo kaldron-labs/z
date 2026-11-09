@@ -352,13 +352,13 @@ template <typename Link> static bool inspect(Link *link, Snapshot &out) {
     link->app()->rxRun([link, &out, wake = ZuMv(wake)]() mutable {
       const auto &s = link->session_();
       out.connection = s.connection_(); out.phase = s.state_(); out.drained = s.drained_();
-      out.rx = link->rxStats_(); out.admin = link->adminPosted_();
+      out.rx = link->rxStats(); out.admin = link->adminPosted();
       for (unsigned kind = SessionTimer::Logon; kind <= SessionTimer::Drain; ++kind)
 	out.timers |= *s.deadline_(kind);
-      out.state.epoch = link->session_().epoch_(); out.state.rx = link->rxProgress_();
+      out.state.epoch = link->session_().epoch_(); out.state.rx = link->rxProgress();
       link->app()->txRun([link, &out, wake = ZuMv(wake)]() mutable {
-	out.tx = link->txStats_(); out.queued = link->side()->queue.count_();
-	out.state.tx = link->txProgress_(); wake(true);
+	out.tx = link->txStats(); out.queued = link->side()->queue.count_();
+	out.state.tx = link->txProgress(); wake(true);
       });
     });
   });

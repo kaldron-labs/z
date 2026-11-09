@@ -13,7 +13,7 @@
 
 #include "ZiTestResidue.hh"
 #include "ZquicInteropTest.hh"
-#include "ZmcpITestPorts.hh"
+#include "zmcpitestports.hh"
 
 #include "zmcpitestbatch.hh"
 

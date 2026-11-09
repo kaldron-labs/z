@@ -25,7 +25,7 @@ make -C zpb/itest -j4
 make -C zpb/itest test
 ```
 
-The process/file helpers in `ZpbTestUtil.hh` are shared with `zprotoctest`.
+The process/file helpers in `zpbtestutil.hh` are shared with `zprotoctest`.
 
 ## zprotoc integration
 

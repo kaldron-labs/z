@@ -153,15 +153,15 @@ private:
 
   void start_();
 
-  void startNext_();
+  void start_0();
 
-  void started_(unsigned i, bool ok);
+  void start_1(unsigned i, bool ok);
 
   void stop_();
 
-  void stopNext_();
+  void stop_0();
 
-  void stopped_(bool ok);
+  void stop_1(bool ok);
 
   void final_();
 

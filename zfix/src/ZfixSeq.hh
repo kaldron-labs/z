@@ -34,7 +34,7 @@ namespace SeqResult {
 }
 
 // Recovery metadata does not manufacture a payload node or alter node operations.
-template <typename Queue> class SeqRxQueue_ : public Queue {
+template <typename Queue> class SeqRxQueue : public Queue {
 public:
   using Key = Queue::Key;
   using Span = Queue::Span;
@@ -73,8 +73,8 @@ private:
 // armGap calls retry_(ticket) at an absolute deadline on the same owner.
 // Holding invalidates posted work but preserves accepted read-ahead.
 template <typename Impl, typename Queue> class SeqRx :
-    private ZmPQRx<SeqRx<Impl, Queue>, SeqRxQueue_<Queue>, ZmPQRxGapObserve<>> {
-  using RxQueue = SeqRxQueue_<Queue>;
+    private ZmPQRx<SeqRx<Impl, Queue>, SeqRxQueue<Queue>, ZmPQRxGapObserve<>> {
+  using RxQueue = SeqRxQueue<Queue>;
   using Base = ZmPQRx<SeqRx<Impl, Queue>, RxQueue, ZmPQRxGapObserve<>>;
 friend Base;
 public:
@@ -146,7 +146,7 @@ public:
     m_held = false;
     Base::stopQueuing(expected_());
     if (m_queue.count_()) scheduleDequeue();
-    reconcile_(gap_(), held || !m_retry);
+    reconcile(gap_(), held || !m_retry);
   }
 
   bool restore_(uint64_t received, uint64_t processed, Span gap = {}) {
@@ -208,7 +208,7 @@ public:
     m_scheduled = false;
     auto expected = expected_();
     Base::dequeue();
-    if (!m_held && expected_() == expected) reconcile_(gap_());
+    if (!m_held && expected_() == expected) reconcile(gap_());
   }
 
   void retry_(uint64_t ticket) {
@@ -216,7 +216,7 @@ public:
     cancelReRequest();
     auto gap = gap_();
     if (!gap.length() || gap != m_requested) {
-      reconcile_(gap);
+      reconcile(gap);
       return;
     }
     auto generation = m_retryTicket;
@@ -239,10 +239,10 @@ private:
   }
 
   void request(const Span &, const Span &now) {
-    if (!m_held) reconcile_(now);
+    if (!m_held) reconcile(now);
   }
 
-  void reconcile_(Span gap, bool advertise = false) {
+  void reconcile(Span gap, bool advertise = false) {
     if (!gap.length()) {
       m_requested = {};
       cancelReRequest();
@@ -315,7 +315,7 @@ namespace TxTask {
 }
 
 // Bound a missing-key scan to one owner turn without changing physical storage.
-template <typename Queue> class SeqTxQueue_ : public Queue {
+template <typename Queue> class SeqTxQueue : public Queue {
 public:
   using Key = Queue::Key;
 
@@ -343,8 +343,8 @@ template <typename Record> struct SeqReload {
 // gapTx(Span), archiveTx(begin,end), postTx(kind,ticket).
 template <typename Impl, typename Queue,
   typename Record = ZmRef<typename Queue::Node>> class SeqTx :
-    private ZmPQTx<SeqTx<Impl, Queue, Record>, SeqTxQueue_<Queue>> {
-  using TxQueue = SeqTxQueue_<Queue>;
+    private ZmPQTx<SeqTx<Impl, Queue, Record>, SeqTxQueue<Queue>> {
+  using TxQueue = SeqTxQueue<Queue>;
   using Base = ZmPQTx<SeqTx<Impl, Queue, Record>, TxQueue>;
 friend Base;
 public:
@@ -442,7 +442,7 @@ public:
     return true;
   }
 
-  bool acknowledge_(uint64_t next) {
+  bool acknowledge(uint64_t next) {
     if (!next || next > m_published) return false;
     if (next <= m_ackd) return true;
     m_ackd = next;
@@ -450,7 +450,7 @@ public:
     return true;
   }
 
-  Span replayRange_() const {
+  Span replayRange() const {
     const auto &active = m_active;
     if (!active.length()) return m_pending.length() ? m_pending : Span{};
     if (!m_pending.length()) return active;
@@ -482,13 +482,13 @@ public:
   }
 
   bool reset_(uint64_t next = 1) {
-    if (!epochIdle_()) return false;
+    if (!epochIdle()) return false;
     return restore_(next, next, next);
   }
 
-  bool epochIdle_() const { return !m_running && epochReady_(); }
+  bool epochIdle() const { return !m_running && epochReady(); }
 
-  bool epochReady_() const {
+  bool epochReady() const {
     return !m_queue.count_() && !m_bytes && m_next == m_published &&
       m_archiveScan == m_ackd && m_archiveTarget == m_ackd &&
       !replaying_() && !waiting_();
@@ -503,7 +503,7 @@ public:
   ZmRef<Msg> reloadMsgTx(Record record) { return record; }
 
   // Only the matching obligation retires. Replay results never enter m_queue.
-  bool completeReload_(uint64_t token, Record record) {
+  bool completeReload(uint64_t token, Record record) {
     if (!waiting_() || token != m_reloadTicket) return false;
     auto key = m_reloadKey;
     auto kind = m_reloadKind;

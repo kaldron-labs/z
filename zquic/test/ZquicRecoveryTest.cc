@@ -13,7 +13,7 @@ using namespace ZuTestUtil;
 
 #define ZQUIC_CHECK_RT(x, ...) ZuCheckRT(x, log_(__VA_ARGS__))
 
-static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
+static bool getVar(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
 {
   unsigned n = 0;
   if (Zquic::VarInt::decode(
@@ -23,7 +23,7 @@ static bool getVar_(const uint8_t *b, unsigned len, unsigned &o, uint64_t &v)
   return true;
 }
 
-static Zquic::TxPkt txPkt_(
+static Zquic::TxPkt txPkt(
   uint64_t pn, unsigned bytes = 100, bool ackEliciting = true,
   Zquic::PktNumSpace::T space = Zquic::PktNumSpace::AppData)
 {
@@ -38,21 +38,21 @@ static Zquic::TxPkt txPkt_(
   return p;
 }
 
-static Zquic::TxPkt txCryptoPkt_(
+static Zquic::TxPkt txCryptoPkt(
   uint64_t pn, uint64_t offset, uint64_t length,
   unsigned bytes = 100)
 {
-  Zquic::TxPkt p = txPkt_(pn, bytes);
+  Zquic::TxPkt p = txPkt(pn, bytes);
   p.frames.clear();
   p.addFrame(Zquic::SentFrameRef::crypto(offset, length));
   return p;
 }
 
-static Zquic::TxPkt txStreamPkt_(
+static Zquic::TxPkt txStreamPkt(
   uint64_t pn, uint64_t streamID, uint64_t offset, uint32_t length,
   bool fin = false, unsigned bytes = 100)
 {
-  Zquic::TxPkt p = txPkt_(pn, bytes);
+  Zquic::TxPkt p = txPkt(pn, bytes);
   p.frames.clear();
   Zquic::TxRange range;
   range.offset = uint32_t(offset);
@@ -133,14 +133,14 @@ void testRecovery()
   unsigned o = 1;
   uint64_t largest = 0, delay = 0, rangeCount = 0, firstRange = 0;
   uint64_t gap0 = 0, range0 = 0, gap1 = 0, range1 = 0;
-  ZuCHECK(getVar_(b, unsigned(n), o, largest) &&
-      getVar_(b, unsigned(n), o, delay) &&
-      getVar_(b, unsigned(n), o, rangeCount) &&
-      getVar_(b, unsigned(n), o, firstRange) &&
-      getVar_(b, unsigned(n), o, gap0) &&
-      getVar_(b, unsigned(n), o, range0) &&
-      getVar_(b, unsigned(n), o, gap1) &&
-      getVar_(b, unsigned(n), o, range1) &&
+  ZuCHECK(getVar(b, unsigned(n), o, largest) &&
+      getVar(b, unsigned(n), o, delay) &&
+      getVar(b, unsigned(n), o, rangeCount) &&
+      getVar(b, unsigned(n), o, firstRange) &&
+      getVar(b, unsigned(n), o, gap0) &&
+      getVar(b, unsigned(n), o, range0) &&
+      getVar(b, unsigned(n), o, gap1) &&
+      getVar(b, unsigned(n), o, range1) &&
       o == unsigned(n) &&
       largest == 15 &&
       delay == 3 &&
@@ -217,8 +217,8 @@ void testRecovery()
     "unbounded retransmit queue reported dropped frames");
 
   Zquic::PktTxSpace rttTx;
-  ZuCHECK(rttTx.add(txPkt_(1)) && rttTx.add(txPkt_(2)) &&
-      rttTx.add(txPkt_(3)), "RTT sent-packet setup failed");
+  ZuCHECK(rttTx.add(txPkt(1)) && rttTx.add(txPkt(2)) &&
+      rttTx.add(txPkt(3)), "RTT sent-packet setup failed");
   Zquic::AckRange rttRanges[] = {
     Zquic::AckRange{1, 1}, Zquic::AckRange{3, 3} };
   ZuTime sentTime;
@@ -253,7 +253,7 @@ void testPktReorderDuplicateLoss()
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
-    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)), "sent packet setup failed");
+    ZQUIC_CHECK_RT(tx.add(txPkt(pn)), "sent packet setup failed");
   ZQUIC_CHECK_RT(tx.bytesInFlight() == 600,
     "sent packet bytes-in-flight setup mismatch");
 
@@ -289,15 +289,15 @@ void testPktReorderDuplicateLoss()
     "duplicate ACK range mutated sent-packet state");
 }
 
-void testAckdFrameStopsLossReclaim()
+void ackdFrameStopsLossReclaim()
 {
-  ZuTestScope(testAckdFrameStopsLossReclaim);
+  ZuTestScope(ackdFrameStopsLossReclaim);
 
   Zquic::PktTxSpace tx;
-  ZuCHECK(tx.add(txCryptoPkt_(0, 0, 46)) &&
-      tx.add(txCryptoPkt_(1, 100, 10)) &&
-      tx.add(txCryptoPkt_(2, 200, 10)) &&
-      tx.add(txCryptoPkt_(4, 0, 46)),
+  ZuCHECK(tx.add(txCryptoPkt(0, 0, 46)) &&
+      tx.add(txCryptoPkt(1, 100, 10)) &&
+      tx.add(txCryptoPkt(2, 200, 10)) &&
+      tx.add(txCryptoPkt(4, 0, 46)),
     "duplicate-frame sent packet setup failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
@@ -328,11 +328,11 @@ void testAckdFrameStopsLossReclaim()
     "loss reclaim did not leave range-frame ACK filtering to owner");
 
   Zquic::PktTxSpace late;
-  ZuCHECK(late.add(txCryptoPkt_(0, 0, 46)) &&
-      late.add(txCryptoPkt_(1, 100, 10)) &&
-      late.add(txCryptoPkt_(2, 200, 10)) &&
-      late.add(txCryptoPkt_(4, 400, 10)) &&
-      late.add(txCryptoPkt_(5, 0, 46)),
+  ZuCHECK(late.add(txCryptoPkt(0, 0, 46)) &&
+      late.add(txCryptoPkt(1, 100, 10)) &&
+      late.add(txCryptoPkt(2, 200, 10)) &&
+      late.add(txCryptoPkt(4, 400, 10)) &&
+      late.add(txCryptoPkt(5, 0, 46)),
     "late-ACK duplicate-frame sent packet setup failed");
   Zquic::AckRange lossRanges[] = { Zquic::AckRange{4, 4} };
   ZuCHECK(late.ack(lossRanges, 1, &lost) == 1 &&
@@ -350,9 +350,9 @@ void testAckdFrameStopsLossReclaim()
     "retransmit pop did not skip a late-ACKd frame");
 
   Zquic::PktTxSpace dup;
-  ZuCHECK(dup.add(txCryptoPkt_(0, 0, 46)) &&
-      dup.add(txCryptoPkt_(1, 0, 46)) &&
-      dup.add(txCryptoPkt_(3, 300, 10)),
+  ZuCHECK(dup.add(txCryptoPkt(0, 0, 46)) &&
+      dup.add(txCryptoPkt(1, 0, 46)) &&
+      dup.add(txCryptoPkt(3, 300, 10)),
     "duplicate outstanding frame setup failed");
   Zquic::AckRange dupLoss[] = { Zquic::AckRange{3, 3} };
   lost = 0;
@@ -364,9 +364,9 @@ void testAckdFrameStopsLossReclaim()
     "duplicate outstanding frame suppression mismatch");
 
   Zquic::PktTxSpace lateLost;
-  ZuCHECK(lateLost.add(txCryptoPkt_(0, 0, 46)) &&
-      lateLost.add(txCryptoPkt_(1, 100, 10)) &&
-      lateLost.add(txCryptoPkt_(4, 400, 10)),
+  ZuCHECK(lateLost.add(txCryptoPkt(0, 0, 46)) &&
+      lateLost.add(txCryptoPkt(1, 100, 10)) &&
+      lateLost.add(txCryptoPkt(4, 400, 10)),
     "late-ACK lost-packet setup failed");
   ZuCHECK(lateLost.ack(lossRanges, 1, &lost) == 1 &&
       lost == 2 &&
@@ -402,8 +402,8 @@ void testLossThresholds()
     "sampled RTT time-threshold mismatch");
 
   Zquic::PktTxSpace tx;
-  ZuCHECK(tx.add(txPkt_(1)) && tx.add(txPkt_(2)) &&
-      tx.add(txPkt_(3)), "sent packet setup failed");
+  ZuCHECK(tx.add(txPkt(1)) && tx.add(txPkt(2)) &&
+      tx.add(txPkt(3)), "sent packet setup failed");
   ZuTime threshold = Zquic::timeUS(150);
   ZuCHECK(!tx.nextLossTime(ZuCmp<uint64_t>::null(), threshold),
     "loss deadline was scheduled before any largest ACKed packet");
@@ -423,12 +423,12 @@ void testLossThresholds()
     "loss deadline remained after all eligible packets were lost");
 
   Zquic::PktTxSpace ackOnly;
-  Zquic::SentPkt pkt = txPkt_(5, 100, false);
+  Zquic::SentPkt pkt = txPkt(5, 100, false);
   ZuCHECK(ackOnly.add(pkt) && !ackOnly.nextLossTime(6, threshold),
     "non-ack-eliciting packet scheduled a loss deadline");
 
   Zquic::PktTxSpace sameLargest;
-  ZuCHECK(sameLargest.add(txPkt_(4)) &&
+  ZuCHECK(sameLargest.add(txPkt(4)) &&
       !sameLargest.nextLossTime(4, threshold),
     "largest ACKed packet scheduled a loss deadline");
   ZuCHECK(!sameLargest.markTimeThreshLoss(
@@ -436,9 +436,9 @@ void testLossThresholds()
     "largest ACKed packet was marked time-threshold lost");
 
   Zquic::PktTxSpace ackOnlyLargest;
-  ZuCHECK(ackOnlyLargest.add(txPkt_(1)) &&
-      ackOnlyLargest.add(txPkt_(2)) &&
-      ackOnlyLargest.add(txPkt_(3)),
+  ZuCHECK(ackOnlyLargest.add(txPkt(1)) &&
+      ackOnlyLargest.add(txPkt(2)) &&
+      ackOnlyLargest.add(txPkt(3)),
     "ACK-only largest setup failed");
   Zquic::AckRange ranges[] = { Zquic::AckRange{100, 3} };
   unsigned lost = 0;
@@ -455,9 +455,9 @@ void testRetainedLossFrontier()
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 1; pn <= 1024; ++pn)
-    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)) && tx.lose(pn),
+    ZQUIC_CHECK_RT(tx.add(txPkt(pn)) && tx.lose(pn),
       "retained-loss frontier setup failed");
-  ZQUIC_CHECK_RT(tx.add(txPkt_(1200)) && tx.retainedLost() == 1024 &&
+  ZQUIC_CHECK_RT(tx.add(txPkt(1200)) && tx.retainedLost() == 1024 &&
       tx.recoveryCount() == 1,
     "active recovery frontier retained final packet history");
 #ifdef ZDEBUG
@@ -478,9 +478,9 @@ void testRetainedLossFrontier()
 #endif
 }
 
-void testOutstandingLifecycleIndex()
+void outstandingLifecycleIndex()
 {
-  ZuTestScope(testOutstandingLifecycleIndex);
+  ZuTestScope(outstandingLifecycleIndex);
 
 #ifdef ZDEBUG
   Zquic::PktTxSpace tx;
@@ -489,9 +489,9 @@ void testOutstandingLifecycleIndex()
     random = random * 1664525U + 1013904223U;
     bool stream = random & 1;
     Zquic::TxPkt packet = stream ?
-      txStreamPkt_(pn, random & 7, (random >> 3) & 255, 32,
+      txStreamPkt(pn, random & 7, (random >> 3) & 255, 32,
 	!(pn & 31)) :
-      txCryptoPkt_(pn, (random >> 3) & 255, 32);
+      txCryptoPkt(pn, (random >> 3) & 255, 32);
     ZuCHECK(tx.add(packet), "outstanding-index packet add failed");
     switch ((random >> 16) & 3) {
       case 0: (void)tx.ack(pn); break;
@@ -522,7 +522,7 @@ void testPktNumSpaceAckLoss()
   for (auto space : spaces) {
     Zquic::PktTxSpace tx;
     for (uint64_t pn = 0; pn < 6; ++pn)
-      ZQUIC_CHECK_RT(tx.add(txPkt_(pn, 100, true, space)),
+      ZQUIC_CHECK_RT(tx.add(txPkt(pn, 100, true, space)),
 	"packet-space sent packet setup failed");
     Zquic::AckRange ranges[] = { Zquic::AckRange{5, 3} };
     unsigned lost = 0;
@@ -553,8 +553,8 @@ void testPTOReclaimUsesRetxQueue()
   ZuTestScope(testPTOReclaimUsesRetxQueue);
 
   Zquic::PktTxSpace tx;
-  ZuCHECK(tx.add(txPkt_(7, 1200)) &&
-      tx.add(txPkt_(8, 1200)) &&
+  ZuCHECK(tx.add(txPkt(7, 1200)) &&
+      tx.add(txPkt(8, 1200)) &&
       tx.bytesInFlight() == 2400,
     "PTO packet setup failed");
   ZuCHECK(tx.reclaimOnPTO(1) == 1 &&
@@ -588,7 +588,7 @@ void testAckLeavesOnlyRetxPending()
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn < 6; ++pn)
-    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)), "sent packet setup failed");
+    ZQUIC_CHECK_RT(tx.add(txPkt(pn)), "sent packet setup failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{5, 2} };
   unsigned lost = 0;
@@ -615,14 +615,14 @@ void testAckLeavesOnlyRetxPending()
     "second zero-flight retransmit ref mismatch");
 }
 
-void testRetxSkipsUnackdStreamBytes()
+void retxSkipsUnackdStreamBytes()
 {
-  ZuTestScope(testRetxSkipsUnackdStreamBytes);
+  ZuTestScope(retxSkipsUnackdStreamBytes);
 
   Zquic::PktTxSpace tx;
-  ZuCHECK(tx.add(txStreamPkt_(1, 7, 0, 100)) &&
-      tx.add(txStreamPkt_(2, 7, 0, 50)) &&
-      tx.add(txPkt_(4)),
+  ZuCHECK(tx.add(txStreamPkt(1, 7, 0, 100)) &&
+      tx.add(txStreamPkt(2, 7, 0, 50)) &&
+      tx.add(txPkt(4)),
     "overlapping stream sent-packet setup failed");
   Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
   unsigned lost = 0;
@@ -677,10 +677,10 @@ void testTypedControlRefs()
     "typed HANDSHAKE_DONE control ref mismatch");
 }
 
-static Zquic::TxPkt txControlPkt_(
+static Zquic::TxPkt txControlPkt(
   uint64_t pn, const Zquic::SentFrameRef &ref, unsigned bytes = 100)
 {
-  Zquic::TxPkt p = txPkt_(pn, bytes);
+  Zquic::TxPkt p = txPkt(pn, bytes);
   p.frames.clear();
   p.addFrame(ref);
   return p;
@@ -693,11 +693,11 @@ void testFlowControlRetransmit()
   Zquic::PktTxSpace tx;
   Zquic::FlowUpdate update{
     Zquic::FrameType::MaxStreams, 0, 129, Zquic::StreamType::Duplex};
-  ZuCHECK(tx.add(txControlPkt_(0, Zquic::SentFrameRef::flowUpdate(update))) &&
-      tx.add(txControlPkt_(1, Zquic::SentFrameRef::blocked(
+  ZuCHECK(tx.add(txControlPkt(0, Zquic::SentFrameRef::flowUpdate(update))) &&
+      tx.add(txControlPkt(1, Zquic::SentFrameRef::blocked(
 	Zquic::FrameType::StreamsBlocked, 0, 128,
 	Zquic::StreamType::Duplex))) &&
-      tx.add(txPkt_(4)),
+      tx.add(txPkt(4)),
     "flow-control retransmit packet setup failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{4, 4} };
@@ -725,7 +725,7 @@ void testPktNumSpaceBatchCursors()
 
   Zquic::PktTxSpace tx;
   for (uint64_t pn = 0; pn <= 5; ++pn)
-    ZQUIC_CHECK_RT(tx.add(txPkt_(pn)), "batch cursor sent-packet add failed");
+    ZQUIC_CHECK_RT(tx.add(txPkt(pn)), "batch cursor sent-packet add failed");
 
   Zquic::AckRange ranges[] = { Zquic::AckRange{5, 5} };
   Zquic::PktAckBatch ackBatch;
@@ -958,14 +958,14 @@ int main(int argc, char **argv)
   ZuTestMain();
   ZuTestCall(testRecovery);
   ZuTestCall(testPktReorderDuplicateLoss);
-  ZuTestCall(testAckdFrameStopsLossReclaim);
+  ZuTestCall(ackdFrameStopsLossReclaim);
   ZuTestCall(testLossThresholds);
   ZuTestCall(testRetainedLossFrontier);
-  ZuTestCall(testOutstandingLifecycleIndex);
+  ZuTestCall(outstandingLifecycleIndex);
   ZuTestCall(testPktNumSpaceAckLoss);
   ZuTestCall(testPTOReclaimUsesRetxQueue);
   ZuTestCall(testAckLeavesOnlyRetxPending);
-  ZuTestCall(testRetxSkipsUnackdStreamBytes);
+  ZuTestCall(retxSkipsUnackdStreamBytes);
   ZuTestCall(testTypedControlRefs);
   ZuTestCall(testFlowControlRetransmit);
   ZuTestCall(testPktNumSpaceBatchCursors);

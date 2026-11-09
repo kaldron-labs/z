@@ -4,8 +4,8 @@
 // (c) Copyright 2026 Huw Rogers
 // This code is licensed by the MIT license (see LICENSE for details)
 
-#ifndef ZgrpcMatrix_HH
-#define ZgrpcMatrix_HH
+#ifndef zgrpcmatrix_HH
+#define zgrpcmatrix_HH
 
 #include <zlib/Zquic.hh>
 #include <zlib/Zgrpc.hh>
@@ -50,4 +50,4 @@ ZgrpcCatalogDerive(Matrix, Methods);
 ZgrpcCatalogImpl(Matrix);
 
 
-#endif /* ZgrpcMatrix_HH */
+#endif /* zgrpcmatrix_HH */

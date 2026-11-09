@@ -74,7 +74,7 @@ struct HubPacket {
   void write(Tx &tx, bool writerOwned) && {
     // Only an unpublished allocation from this writer grants mutability.
     // Serialize foreign/replayed storage into the transport's registered allocator.
-    if (writerOwned) tx.appendOwned_(ZuMv(head));
+    if (writerOwned) tx.appendOwned(ZuMv(head));
     else tx << head->cspan();
     if (tail) tx << tail->cspan();
   }
@@ -282,13 +282,13 @@ public:
 
 private:
   void start_();
-  void startRx_();
-  void startDB_();
+  void start_0();
+  void start_1();
   void stop_();
-  void stopRx_(bool);
-  void stopService_(bool);
-  void drain_();
-  void clearBatch_();
+  void stop_0(bool);
+  void stop_1(bool);
+  void stop_2();
+  void stop_3();
   ZiMultiplex *mx_() const;
   template <typename L> void post_(L &&fn) {
     if (auto mx = mx_()) mx->rxRun(ZuFwd<L>(fn));

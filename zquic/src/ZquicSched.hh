@@ -262,15 +262,15 @@ public:
     bool fin = false;
     if (!stream.nextTxRange(budget, range, fin)) return 0;
     if (!fin)
-      return writeRange_(out, avail, budget, assembly, stream, uint64_t(id),
+      return writeRange(out, avail, budget, assembly, stream, uint64_t(id),
 	info, range);
 
-    return writeFin_(out, avail, budget, assembly, stream, uint64_t(id), info);
+    return writeFin(out, avail, budget, assembly, stream, uint64_t(id), info);
   }
 
 private:
   template <typename Stream>
-  static int writeRange_(
+  static int writeRange(
     uint8_t *out, unsigned len, PktBudget &budget,
     PktAssembly &assembly, Stream &stream, uint64_t id,
     StreamFrameInfo *info, const TxRange &range)
@@ -321,7 +321,7 @@ private:
   }
 
   template <typename Stream>
-  static int writeFin_(
+  static int writeFin(
     uint8_t *out, unsigned len, PktBudget &budget,
     PktAssembly &assembly, Stream &stream, uint64_t id,
     StreamFrameInfo *info)

@@ -69,7 +69,7 @@ public:
       bool terminal = false) {
     if (!m_open) return false;
     if (body.length() > m_limits.maxSSEEventBytes ||
-	!lineLengths_(body, id, retry)) return fail_();
+	!lineLengths(body, id, retry)) return fail_();
     uint64_t framed = frameBytes_(body, id, retry);
     if (framed > UINT_MAX) return fail_();
     if (++m_sendPosts > m_limits.maxQueue) {
@@ -170,7 +170,7 @@ public:
   }
 
 private:
-  bool lineLengths_(ZuCSpan body, ZuCSpan id, int64_t retry) const {
+  bool lineLengths(ZuCSpan body, ZuCSpan id, int64_t retry) const {
     unsigned max = m_limits.maxSSELineBytes;
     if (max < 6 || id.length() > max - 4) return false;
     if (retry >= 0) {

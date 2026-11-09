@@ -191,8 +191,8 @@ public:
   ZdbTable<DB::BlkData> *blkDataTbl() const { return m_blkDataTbl; }
 
 private:
-  void open_recoverNextSeriesID_Fixed();
-  void open_recoverNextSeriesID_Float();
+  void open_0();
+  void open_1();
   void opened(bool ok);
 
 private:

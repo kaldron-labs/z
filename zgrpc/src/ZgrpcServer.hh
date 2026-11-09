@@ -131,7 +131,7 @@ friend inline ZuStringT<"Zgrpc.Server.Work"> ZmNHeapID(ServerWorkT *);
       });
       return true;
     },
-    [](void *ptr, uint64_t, uint64_t) { static_cast<Self *>(ptr)->failRx_(Code::CANCELLED); }
+    [](void *ptr, uint64_t, uint64_t) { static_cast<Self *>(ptr)->failRx(Code::CANCELLED); }
   };
 
 public:
@@ -139,7 +139,7 @@ public:
     Base{owner, id},
     m_token{new Token{id, 1, this->rx, this, this->tx, this, this->limits.maxQueue, ops}},
     m_authority{ZuMv(authority)}, m_refusal{refusal} {
-    this->cancelFn = [](WorkData *ptr, Code::T code) { static_cast<Self *>(ptr)->failRx_(code); };
+    this->cancelFn = [](WorkData *ptr, Code::T code) { static_cast<Self *>(ptr)->failRx(code); };
     this->startFn = [](Base *ptr, Response *response) {
       auto self = static_cast<Self *>(ptr);
       if (self->m_txInvalid) return;
@@ -147,9 +147,9 @@ public:
       self->drainTx_();
     };
     this->queueFn = [](Base *ptr) { static_cast<Self *>(ptr)->queueTx_(); };
-    this->failFn = [](Base *ptr, Code::T code) { static_cast<Self *>(ptr)->failTx_(code); };
+    this->failFn = [](Base *ptr, Code::T code) { static_cast<Self *>(ptr)->failTx(code); };
     this->closeFn = [](Base *ptr) { static_cast<Self *>(ptr)->m_response = nullptr; };
-    this->doneFn = [](Base *ptr, bool ok) { static_cast<Self *>(ptr)->doneTx_(ok); };
+    this->doneFn = [](Base *ptr, bool ok) { static_cast<Self *>(ptr)->doneTx(ok); };
     this->signFn = [](Base *ptr, ZuBSpan bytes) {
       serverSign(ptr->server->app(), static_cast<M *>(nullptr), bytes, 0);
     };
@@ -175,30 +175,30 @@ public:
       self->m_txChannel = ZuMv(start->data.channel);
       self->m_headers = ZuMv(start->data.headers);
       self->m_txChannel->responseCancel(Zhttp::StreamCancelFn{
-	[self = ZmRef<Self>{self}]() { self->failTx_(Code::CANCELLED); }});
+	[self = ZmRef<Self>{self}]() { self->failTx(Code::CANCELLED); }});
     });
     if (m_refusal != Code::OK) {
-      this->tx.run([self = ZmRef<Self>{this}]() { self->rejectTx_(); });
+      this->tx.run([self = ZmRef<Self>{this}]() { self->rejectTx(); });
       return;
     }
     // Publish the response route before expiry can select terminal status.
     // Expired calls bypass application callbacks but still return gRPC status.
     if (m_expires >= 0) {
-      armRx_();
-      if (!liveRx_()) return;
+      armRx();
+      if (!liveRx()) return;
     }
-    if (headerError) { errorRx_(Code::INTERNAL); return; }
+    if (headerError) { errorRx(Code::INTERNAL); return; }
     if constexpr (StreamIn) {
       try {
 	auto ctx = context_(input);
 	m_observer = this->server->app()->open(static_cast<M *>(nullptr), ctx, m_token);
-	if (!m_observer) { errorRx_(Code::INTERNAL); return; }
-      } catch (...) { errorRx_(Code::INTERNAL); return; }
-      this->tx.run([self = ZmRef<Self>{this}]() { self->ensureTx_(); });
+	if (!m_observer) { errorRx(Code::INTERNAL); return; }
+      } catch (...) { errorRx(Code::INTERNAL); return; }
+      this->tx.run([self = ZmRef<Self>{this}]() { self->ensureTx(); });
     }
   }
   bool message(Message<Req> value) {
-    if (!liveRx_() || m_refusal != Code::OK) return true;
+    if (!liveRx() || m_refusal != Code::OK) return true;
     if constexpr (StreamIn) {
       if (!m_observer) return false;
       using R = decltype(m_observer->message(ZuMv(value)));
@@ -208,26 +208,26 @@ public:
   }
   void finished(RxInput &input, bool ok) {
     m_rxEnd = true;
-    if (!liveRx_()) { releaseRx_(); return; }
-    if (!ok) { failRx_(input.code()); return; }
+    if (!liveRx()) { releaseRx_(); return; }
+    if (!ok) { failRx(input.code()); return; }
     if (m_refusal != Code::OK) return;
     try {
       if constexpr (StreamIn) {
 	if (m_observer) m_observer->peerEnd();
       } else {
-	if (!m_request.template is<Message<Req>>()) { failRx_(Code::INTERNAL); return; }
+	if (!m_request.template is<Message<Req>>()) { failRx(Code::INTERNAL); return; }
 	auto ctx = context_(input);
 	this->server->app()->request(static_cast<M *>(nullptr), ctx,
 	  ZuMv(m_request.template p<Message<Req>>()), m_token);
       }
-    } catch (...) { errorRx_(Code::INTERNAL); }
+    } catch (...) { errorRx(Code::INTERNAL); }
   }
 
 private:
-  bool liveRx_() {
+  bool liveRx() {
     if (this->terminal) return false;
     if (m_expires >= 0 && remaining(m_expires) <= 0) {
-      errorRx_(Code::DEADLINE_EXCEEDED);
+      errorRx(Code::DEADLINE_EXCEEDED);
       return false;
     }
     return true;
@@ -240,10 +240,10 @@ private:
   bool send_(Message<Res> message) {
     ZiAssert(this->tx.invoked(), "Zgrpc", (), "server send outside Tx", return false);
     if (m_txError != Code::OK) return false;
-    if (m_txInvalid || m_finishing) return failTx_(Code::INTERNAL);
-    if (m_messages.count_() >= this->limits.maxQueue) return failTx_(Code::RESOURCE_EXHAUSTED);
+    if (m_txInvalid || m_finishing) return failTx(Code::INTERNAL);
+    if (m_messages.count_() >= this->limits.maxQueue) return failTx(Code::RESOURCE_EXHAUSTED);
     m_messages.push(ZuMv(message));
-    ensureTx_(); drainTx_();
+    ensureTx(); drainTx_();
     return !m_txInvalid && m_txError == Code::OK;
   }
   bool finish_(FinishData finish) {
@@ -251,10 +251,10 @@ private:
     if (m_txInvalid || m_txError != Code::OK || m_finishing) return false;
     m_finishing = true;
     m_finish = ZuMv(finish);
-    ensureTx_(); drainTx_();
+    ensureTx(); drainTx_();
     return !m_txInvalid && m_txError == Code::OK;
   }
-  void ensureTx_() {
+  void ensureTx() {
     if (m_txInvalid || m_txError != Code::OK || m_submitted || !m_txChannel) return;
     ZmRef<Node> response = new Node{};
     response->work = this;
@@ -262,20 +262,20 @@ private:
     builder.metadata = ZuMv(m_headers);
     if (m_finishing && !m_messages.count_() && m_finish.status.code != Code::OK) {
       if (!builder.trailersOnly(ZuMv(m_finish.status), ZuMv(m_finish.trailers))) {
-	failTx_(Code::INTERNAL); return;
+	failTx(Code::INTERNAL); return;
       }
-      selectTx_();
+      selectTx();
     }
     m_submitted = true;
     m_txChannel->send(ZuMv(response));
   }
-  void rejectTx_() {
+  void rejectTx() {
     if (m_txInvalid || !m_txChannel) return;
     ZmRef<Node> response = new Node{};
     response->work = this;
     response->error = m_refusal;
     m_submitted = true;
-    selectTx_();
+    selectTx();
     m_txChannel->send(ZuMv(response));
   }
   void drainTx_() {
@@ -294,9 +294,9 @@ private:
 	m_finishSubmitted = true;
 	ZmRef<Node> response = static_cast<Node *>(m_response);
 	if (response->finish_(ZuMv(m_finish.status), ZuMv(m_finish.trailers))) {
-	  if (!response->template builder<M>()->queuedMessages()) selectTx_();
+	  if (!response->template builder<M>()->queuedMessages()) selectTx();
 	}
-	else failTx_(Code::INTERNAL);
+	else failTx(Code::INTERNAL);
       }
     }
     m_draining = false;
@@ -310,27 +310,27 @@ private:
       ZmRef<Node> response = static_cast<Node *>(self->m_response);
       auto builder = response->template builder<M>();
       if (builder->drain_() && self->m_finishSubmitted && !builder->queuedMessages())
-	self->selectTx_();
+	self->selectTx();
     });
   }
-  void selectTx_() {
+  void selectTx() {
     if (m_txFinished) return;
     m_txFinished = true;
-    m_token->invalidateTx_();
+    m_token->invalidateTx();
     this->rx.run([self = ZmRef<Self>{this}]() {
       if (!self->terminal) {
 	self->terminal = true;
-	self->m_token->invalidateRx_();
+	self->m_token->invalidateRx();
 	self->rx.scheduler->del(&self->m_timer);
       }
       self->releaseRx_();
     });
   }
-  void doneTx_(bool ok) {
+  void doneTx(bool ok) {
     if (m_txDone) return;
     m_txDone = true;
     m_txInvalid = true;
-    m_token->invalidateTx_();
+    m_token->invalidateTx();
     m_messages.clean();
     m_response = nullptr;
     if (m_txChannel && !m_submitted) m_txChannel->responseCancel({});
@@ -340,35 +340,35 @@ private:
     this->rx.run([self = ZmRef<Self>{this}, ok, code, transport]() {
       self->m_txAck = true;
       if (!ok && !self->terminal) {
-	if (transport) self->transportFailRx_(code);
-	else self->failRx_(code);
+	if (transport) self->transportFailRx(code);
+	else self->failRx(code);
       }
       self->releaseRx_();
     });
   }
-  bool failTx_(Code::T code) {
+  bool failTx(Code::T code) {
     if (m_txInvalid || m_txError != Code::OK) return false;
     m_txError = code;
     m_messages.clean();
     this->rx.run([self = ZmRef<Self>{this}, code]() {
-      if (code == Code::CANCELLED) self->transportFailRx_(code);
-      else self->failRx_(code);
+      if (code == Code::CANCELLED) self->transportFailRx(code);
+      else self->failRx(code);
     });
     return false;
   }
-  void transportFailRx_(Code::T code) {
-    if (!liveRx_()) return;
+  void transportFailRx(Code::T code) {
+    if (!liveRx()) return;
     // Transport completion can precede deferred receive failure delivery.
     if (this->input) {
       if (this->input->failed()) code = this->input->code();
       else if (this->input->meta().failed()) code = this->input->meta().status().code;
     }
-    failRx_(code);
+    failRx(code);
   }
-  void errorRx_(Code::T code) {
+  void errorRx(Code::T code) {
     if (this->terminal) return;
     this->terminal = true;
-    m_token->invalidateRx_(code == Code::DEADLINE_EXCEEDED || code == Code::CANCELLED);
+    m_token->invalidateRx(code == Code::DEADLINE_EXCEEDED || code == Code::CANCELLED);
     this->rx.scheduler->del(&m_timer);
     if constexpr (StreamIn) {
       if (m_observer) { try { serverCancel(m_observer.ptr(), code, 0); } catch (...) { } }
@@ -382,13 +382,13 @@ private:
       self->m_messages.clean();
       self->m_finish = ZuMv(action->data);
       self->m_finishing = true;
-      self->ensureTx_(); self->drainTx_();
+      self->ensureTx(); self->drainTx_();
     });
   }
-  void failRx_(Code::T code) {
+  void failRx(Code::T code) {
     if (this->terminal) return;
     this->terminal = true;
-    m_token->invalidateRx_(true);
+    m_token->invalidateRx(true);
     this->rx.scheduler->del(&m_timer);
     if (this->input) this->input->fail(code);
     else m_rxEnd = true;
@@ -398,13 +398,13 @@ private:
     this->tx.run([self = ZmRef<Self>{this}]() {
       if (self->m_txInvalid || self->m_txDone) return;
       self->m_txInvalid = true;
-      self->m_token->invalidateTx_();
+      self->m_token->invalidateTx();
       self->m_messages.clean();
       if (self->m_txChannel) {
 	if (!self->m_submitted) self->m_txChannel->responseCancel({});
 	self->m_txChannel->disconnect();
       }
-      if (!self->m_submitted) self->doneTx_(false);
+      if (!self->m_submitted) self->doneTx(false);
     });
     releaseRx_();
   }
@@ -420,12 +420,12 @@ private:
       self->server->calls().release(self.ptr());
     });
   }
-  void armRx_() {
+  void armRx() {
     auto left = remaining(m_expires);
-    if (left <= 0) { errorRx_(Code::DEADLINE_EXCEEDED); return; }
+    if (left <= 0) { errorRx(Code::DEADLINE_EXCEEDED); return; }
     this->rx.scheduler->add(&m_timer, ZuTime{ZuTime::Nano{m_expires}},
       ZmScheduler::Update, [this](auto &&arm) {
-	return arm([this]() { if (!this->terminal) this->armRx_(); });
+	return arm([this]() { if (!this->terminal) this->armRx(); });
       }, this->rx.thread);
   }
 

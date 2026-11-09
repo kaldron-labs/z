@@ -1,0 +1,1222 @@
+Naming repair verification excerpts, 2026-11-09. Full per-owner decisions and phase results are in naming_*_execution.md.
+
+=== combined-build.log ===
+make[4]: Leaving directory '/home/ubuntu/src/z/zu/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zu/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zu/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zu'
+make[3]: Leaving directory '/home/ubuntu/src/z/zu'
+make[4]: Leaving directory '/home/ubuntu/src/z/zm/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zm/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zm/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zm'
+make[3]: Leaving directory '/home/ubuntu/src/z/zm'
+make[4]: Leaving directory '/home/ubuntu/src/z/zt/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zt/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zt'
+make[3]: Leaving directory '/home/ubuntu/src/z/zt'
+make[4]: Leaving directory '/home/ubuntu/src/z/ze/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/ze/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/ze'
+make[3]: Leaving directory '/home/ubuntu/src/z/ze'
+make[4]: Leaving directory '/home/ubuntu/src/z/zf/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zf/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zf'
+make[3]: Leaving directory '/home/ubuntu/src/z/zf'
+make[4]: Leaving directory '/home/ubuntu/src/z/zi/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zi/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zi/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zi/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zi'
+make[3]: Leaving directory '/home/ubuntu/src/z/zi'
+make[4]: Leaving directory '/home/ubuntu/src/z/zpb/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zpb/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zpb/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zpb'
+make[3]: Leaving directory '/home/ubuntu/src/z/zpb'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfb/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfb/test'
+make[5]: Leaving directory '/home/ubuntu/src/z/zfb/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfb/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfb'
+make[3]: Leaving directory '/home/ubuntu/src/z/zfb'
+make[4]: Leaving directory '/home/ubuntu/src/z/zv/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zv/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zv/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zv'
+make[3]: Leaving directory '/home/ubuntu/src/z/zv'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrl/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrl/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrl/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrl'
+make[3]: Leaving directory '/home/ubuntu/src/z/zrl'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus/util'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdbus'
+make[3]: Leaving directory '/home/ubuntu/src/z/zdbus'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztcp/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztcp/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztcp/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztcp'
+make[3]: Leaving directory '/home/ubuntu/src/z/ztcp'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztls/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztls/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztls/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztls/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztls/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztls'
+make[3]: Leaving directory '/home/ubuntu/src/z/ztls'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/util'
+make[5]: Leaving directory '/home/ubuntu/src/z/zfix/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zfix'
+make[3]: Leaving directory '/home/ubuntu/src/z/zfix'
+make[4]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zquic/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zquic/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zquic'
+make[3]: Leaving directory '/home/ubuntu/src/z/zquic'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp/util'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zhttp'
+make[3]: Leaving directory '/home/ubuntu/src/z/zhttp'
+make[4]: Leaving directory '/home/ubuntu/src/z/zws/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zws/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zws/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zws/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zws'
+make[3]: Leaving directory '/home/ubuntu/src/z/zws'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgrpc/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgrpc/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgrpc'
+make[3]: Leaving directory '/home/ubuntu/src/z/zgrpc'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrest/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrest/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrest/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrest/example'
+make[5]: Leaving directory '/home/ubuntu/src/z/zrest/interop/go'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrest/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zrest'
+make[3]: Leaving directory '/home/ubuntu/src/z/zrest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zjrpc/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zjrpc/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zjrpc/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zjrpc/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zjrpc'
+make[3]: Leaving directory '/home/ubuntu/src/z/zjrpc'
+make[4]: Leaving directory '/home/ubuntu/src/z/zmcp/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zmcp/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zmcp/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zmcp/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zmcp/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zmcp'
+make[3]: Leaving directory '/home/ubuntu/src/z/zmcp'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb'
+make[3]: Leaving directory '/home/ubuntu/src/z/zdb'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_pq/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_pq/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_pq/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_pq/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_pq/ext'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_pq'
+make[3]: Leaving directory '/home/ubuntu/src/z/zdb_pq'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/bench'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite'
+make[3]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite'
+make[5]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zum/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zum/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zum/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zum/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zum/interop'
+make[4]: Leaving directory '/home/ubuntu/src/z/zum'
+make[3]: Leaving directory '/home/ubuntu/src/z/zum'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztc/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztc/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/ztc'
+make[3]: Leaving directory '/home/ubuntu/src/z/ztc'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdf/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdf/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdf/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zdf'
+make[3]: Leaving directory '/home/ubuntu/src/z/zdf'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgtk/src'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgtk/test'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgtk/itest'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgtk/example'
+make[4]: Leaving directory '/home/ubuntu/src/z/zgtk'
+make[3]: Leaving directory '/home/ubuntu/src/z/zgtk'
+make[3]: Leaving directory '/home/ubuntu/src/z'
+make[2]: Leaving directory '/home/ubuntu/src/z'
+make[1]: Leaving directory '/home/ubuntu/src/z'
+
+=== h2-native-recheck.log ===
+1..7
+ok 1 - core offline interoperability tools
+ok 2 - Zhttp client to Zhttp server over H2
+ok 3 - curl client to Zhttp server over H2
+ok 4 - Zhttp client to Caddy server over H2
+ok 5 - h2spec against Zhttp server
+ok 6 - nghttp client to Zhttp server
+ok 7 - Zhttp client to nghttpd server
+
+=== h2-regression-build.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+
+=== h2-removal-after.log ===
+1..18
+ok 1 - ZhttpH2HubTest_::runH1Shards
+ok 2 - ZhttpH2HubTest_::runInitialControlFailure
+ok 3 - ZhttpH2HubTest_::runFlowCapacity
+ok 4 - ZhttpH2HubTest_::runBlockedRequeue
+ok 5 - ZhttpH2HubTest_::runWindowChanges
+ok 6 - ZhttpH2HubTest_::runConnectionOverflow
+ok 7 - ZhttpH2HubTest_::runHeaderTurns
+ok 8 - ZhttpH2HubTest_::runBoundedFrameCleanup
+ok 9 - ZhttpH2HubTest_::runRemovalTeardown
+ok 10 - ZhttpH2HubTest_::runNegativeWindow
+ok 11 - ZhttpH2HubTest_::runFinalQueue
+ok 12 - ZhttpH2HubTest_::runTeardownDrain
+ok 13 - ZhttpH2HubTest_::runReadyCredit
+ok 14 - ZhttpH2HubTest_::runAdmissionErrors
+ok 15 - ZhttpH2HubTest_::run
+ok 16 - ZhttpH2HubTest_::runStream
+ok 17 - ZhttpH2HubTest_::runSharedTLS
+ok 18 - ZhttpH2HubTest_::runForceMismatch
+
+=== h2-removal-before.log ===
+1..18
+ok 1 - ZhttpH2HubTest_::runH1Shards
+ok 2 - ZhttpH2HubTest_::runInitialControlFailure
+ok 3 - ZhttpH2HubTest_::runFlowCapacity
+ok 4 - ZhttpH2HubTest_::runBlockedRequeue
+ok 5 - ZhttpH2HubTest_::runWindowChanges
+ok 6 - ZhttpH2HubTest_::runConnectionOverflow
+ok 7 - ZhttpH2HubTest_::runHeaderTurns
+ok 8 - ZhttpH2HubTest_::runBoundedFrameCleanup
+ok 10 - ZhttpH2HubTest_::runNegativeWindow
+ok 11 - ZhttpH2HubTest_::runFinalQueue
+ok 12 - ZhttpH2HubTest_::runTeardownDrain
+ok 13 - ZhttpH2HubTest_::runReadyCredit
+ok 14 - ZhttpH2HubTest_::runAdmissionErrors
+ok 15 - ZhttpH2HubTest_::run
+ok 16 - ZhttpH2HubTest_::runStream
+ok 17 - ZhttpH2HubTest_::runSharedTLS
+ok 18 - ZhttpH2HubTest_::runForceMismatch
+
+=== h2-removal-fix-build.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+
+=== header-dist.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zrest/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zmcp/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z/zrest/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zmcp/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+
+=== http-install.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+
+=== http-interop-dist.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+
+=== http-itest-dist.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+
+=== phase16-tests.log ===
+make[3]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum'
+ZumRecordsTest ............ ok
+ZumMgmtTest ............... ok
+ZumHTTPTest ............... ok
+ZumOAuthTest .............. ok
+ZumAuthTest ............... ok
+ZumDiscoveryTest .......... ok
+ZumJWTTest ................ ok
+ZumWebAuthnTest ........... ok
+ZumSagaCatalogTest ........ ok
+ZumSagaIdentityTest ....... ok
+ZumSagaOrganizationTest ... ok
+ZumSagaAdminTest .......... ok
+ZumSagaSessionTest ........ ok
+ZumSagaKeysTest ........... ok
+ZumRuntimeIdentityTest .... ok
+ZumRuntimeOIDCTest ........ ok
+ZumRuntimeTokenTest ....... ok
+ZumRuntimeRecoveryTest .... ok
+ZumRuntimeKeysTest ........ ok
+ZumRuntimeManagementTest .. ok
+ZumRuntimeRoleTest ........ ok
+ZumRuntimeConsentTest ..... ok
+ZumRuntimeRevocationTest .. ok
+ZumOIDCHTTPTest ........... ok
+ZumClientTest ............. ok
+ZumSecretTest ............. ok
+ZumScopeTest .............. ok
+ZumDaemonTest ............. ok
+All tests successful.
+Files=28, Tests=55,  4 wallclock secs ( 0.18 usr  0.03 sys +  2.45 cusr  0.66 csys =  3.32 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/test'
+./zumdztcgctest.py .. ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.00 usr  0.00 sys +  0.04 cusr  0.03 csys =  0.07 CPU)
+Result: PASS
+./zumdztctest.py .. ok
+All tests successful.
+Files=1, Tests=18,  3 wallclock secs ( 0.02 usr  0.00 sys +  1.12 cusr  0.71 csys =  1.85 CPU)
+Result: PASS
+./zumdztccluster.py .. ok
+All tests successful.
+Files=1, Tests=1, 16 wallclock secs ( 0.01 usr  0.00 sys +  1.65 cusr  0.85 csys =  2.51 CPU)
+Result: PASS
+./zumpingdiscoverytest.py .. ok
+All tests successful.
+Files=1, Tests=9,  2 wallclock secs ( 0.01 usr  0.00 sys +  0.20 cusr  0.14 csys =  0.35 CPU)
+Result: PASS
+./zumvaulttest .. ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.01 cusr  0.01 csys =  0.04 CPU)
+Result: PASS
+./zumrestarttest .. ok
+All tests successful.
+Files=1, Tests=15,  8 wallclock secs ( 0.15 usr  0.01 sys +  5.59 cusr  0.61 csys =  6.36 CPU)
+Result: PASS
+./zumhttptest .. ok
+All tests successful.
+Files=1, Tests=1, 10 wallclock secs ( 0.02 usr  0.00 sys +  5.91 cusr  1.88 csys =  7.81 CPU)
+Result: PASS
+./zumdvault.py .. ok
+All tests successful.
+Files=1, Tests=1,  2 wallclock secs ( 0.02 usr  0.00 sys +  1.28 cusr  0.64 csys =  1.94 CPU)
+Result: PASS
+./zumdrekey.py .. ok
+All tests successful.
+Files=1, Tests=1,  1 wallclock secs ( 0.02 usr  0.00 sys +  0.81 cusr  0.36 csys =  1.19 CPU)
+Result: PASS
+./zumssf.py .. ok
+All tests successful.
+Files=1, Tests=1, 23 wallclock secs ( 0.01 usr  0.00 sys +  2.63 cusr  0.98 csys =  3.62 CPU)
+Result: PASS
+./zumoidchttptest .. ok
+All tests successful.
+Files=1, Tests=3, 75 wallclock secs ( 0.02 usr  0.00 sys + 81.96 cusr 11.68 csys = 93.66 CPU)
+Result: PASS
+./zumfederationtest .. ok
+All tests successful.
+Files=1, Tests=1, 13 wallclock secs ( 0.01 usr  0.00 sys +  3.98 cusr  1.32 csys =  5.31 CPU)
+Result: PASS
+./zumclustertest .. ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.26 cusr  0.09 csys =  0.37 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/itest'
+1..1
+ok 1 - verify
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z/zum'
+
+=== phase18-tests.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash'
+./ZdashTest.sh .. ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.00 sys +  0.14 cusr  0.06 csys =  0.21 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/test'
+./zdashoauthtest .. ok
+All tests successful.
+Files=1, Tests=1,  5 wallclock secs ( 0.01 usr  0.00 sys +  0.27 cusr  0.17 csys =  0.45 CPU)
+Result: PASS
+./zdashlivetest.py .. ok
+All tests successful.
+Files=1, Tests=1, 50 wallclock secs ( 0.01 usr  0.00 sys + 16.02 cusr  4.51 csys = 20.54 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdash'
+
+=== postgres-init.log ===
+creating directory /tmp/naming-repair/postgres ... ok
+creating subdirectories ... ok
+creating configuration files ... ok
+running bootstrap script ... ok
+performing post-bootstrap initialization ... ok
+syncing data to disk ... ok
+
+=== qir-smoke-trace-tap.log ===
+1..10
+ok 1 - testExecutableContract
+ok 2 - testClientFilesystemPrep
+ok 3 - testH3SingleFile
+ok 4 - testH3MultiFile
+ok 5 - testHQSingleFile
+ok 6 - testHQLargeFile
+ok 7 - testHQMultiFile
+ok 8 - testHQHandshakeFile
+ok 9 - testHQRebindPortFile
+
+=== regenerate.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z'
+
+=== zdash-all.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdash'
+
+=== zdash-allocator-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdash'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdash'
+
+=== zdb-all.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb'
+
+=== zdb-test-test.log ===
+ZdbSagaTest ........ ok
+ZdbSagaRepeatTest .. ok
+ZdbTelTest ......... ok
+ZtcDBTest .......... ok
+ZdbFBTest .......... ok
+All tests successful.
+Files=5, Tests=108,  0 wallclock secs ( 0.08 usr  0.01 sys +  0.46 cusr  0.14 csys =  0.69 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb/test'
+
+=== zdb_pq-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_pq/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_pq/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_pq/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_pq/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_pq/ext'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_pq'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb_pq'
+
+=== zdb_pq-itest.log ===
+./zdbpqtest .............. ok
+1..1
+1..1
+./zdbsagatest ............ ok
+./zdbpqcontinuationtest .. ok
+All tests successful.
+Files=3, Tests=23,  2 wallclock secs ( 0.09 usr  0.01 sys +  0.59 cusr  0.31 csys =  1.00 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb_pq/itest'
+
+=== zdb_pq-test.log ===
+ZdbPQTest .. ok
+All tests successful.
+Files=1, Tests=13,  0 wallclock secs ( 0.03 usr  0.00 sys +  0.00 cusr  0.01 csys =  0.04 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb_pq/test'
+
+=== zdb_sqlite-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite'
+
+=== zdb_sqlite-itest.log ===
+./zdbsltest ......... ok
+1..1
+1..1
+./zdbsagatest ....... ok
+./zdbslrepltest ..... ok
+./zdbslconfigtest ... ok
+./zdbslinspecttest .. ok
+./zdbslschematest ... ok
+./zdbslplantest ..... ok
+All tests successful.
+Files=7, Tests=59,  4 wallclock secs ( 0.07 usr  0.01 sys +  0.95 cusr  0.54 csys =  1.57 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/itest'
+
+=== zdb_sqlite-test.log ===
+ZdbSLTest .. ok
+All tests successful.
+Files=1, Tests=6,  0 wallclock secs ( 0.02 usr +  0.00 sys =  0.02 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdb_sqlite/test'
+
+=== zdbus-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/util'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdbus'
+
+=== zdbus-dist.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/util'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdbus/util'
+
+=== zdbus-install.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zdbus/util'
+
+=== zdbus-test.log ===
+ZdbusAddressTest ... ok
+ZdbusAuthTest ...... ok
+ZdbusEnvelopeTest .. ok
+ZdbusMessageTest ... ok
+ZdbusAdapterTest ... ok
+ZdbusClientTest .... ok
+ZdbusServerTest .... ok
+All tests successful.
+Files=7, Tests=26,  1 wallclock secs ( 0.03 usr  0.00 sys +  0.06 cusr  0.06 csys =  0.15 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdbus/test'
+
+=== zdf-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zdf/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdf/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdf/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdf'
+make[1]: Leaving directory '/home/ubuntu/src/z/zdf'
+
+=== zdf-itest.log ===
+./zdffptest .. ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.01 sys +  0.04 cusr  0.02 csys =  0.09 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdf/itest'
+
+=== zdf-test.log ===
+ZdfSeriesTest .... ok
+ZdfCompressTest .. ok
+ZdfStoreTest ..... ok
+ZdfTest .......... ok
+ZdfStatsTest ..... ok
+All tests successful.
+Files=5, Tests=6,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.05 cusr  0.05 csys =  0.12 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zdf/test'
+
+=== zfb-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zfb/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfb/test'
+make[3]: Leaving directory '/home/ubuntu/src/z/zfb/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfb/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfb'
+make[1]: Leaving directory '/home/ubuntu/src/z/zfb'
+
+=== zfb-unit-unrestricted.log ===
+ZfbTest ......... ok
+ZfbMapTest ...... ok
+ZfbFlatcTest .... ok
+ZfbReflectTest .. ok
+ZfbIOTest ....... ok
+All tests successful.
+Files=5, Tests=53,  0 wallclock secs ( 0.05 usr  0.01 sys +  0.04 cusr  0.05 csys =  0.15 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zfb/test'
+
+=== zfix-all.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/util'
+make[3]: Leaving directory '/home/ubuntu/src/z/zfix/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zfix'
+make[1]: Leaving directory '/home/ubuntu/src/z/zfix'
+
+=== zfix-test.log ===
+./ZfixSignTest .. ok
+All tests successful.
+Files=1, Tests=9,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.01 cusr  0.01 csys =  0.04 CPU)
+Result: PASS
+./ZfixLoadTest ....... ok
+./ZfixLoadFIXTest .... ok
+./ZfixLoadRunTest .... ok
+./ZfixDemoTest ....... ok
+./ZfixWorkTest ....... ok
+./ZfixSelectTest ..... ok
+./ZfixContextTest .... ok
+./ZfixDispatchTest ... ok
+./ZfixTraceTest ...... ok
+./ZfixIngressTest .... ok
+./ZfixRawTest ........ ok
+./ZfixWireTest ....... ok
+./ZfixRxFramerTest ... ok
+./ZfixDeclTest ....... ok
+./ZfixLinkTest ....... ok
+./ZfixCodecTest ...... ok
+./ZfixGroupTest ...... ok
+./ZfixUnionTest ...... ok
+./ZfixFrameTest ...... ok
+./ZfixSessionTest .... ok
+./ZfixSeqTest ........ ok
+./ZfixSeqTxTest ...... ok
+./ZfixLinkStateTest .. ok
+./ZfixRxTest ......... ok
+./ZfixTxMsgTest ...... ok
+./ZfixTxTest ......... ok
+./ZfixLinkTxTest ..... ok
+./ZfixManagedTest .... ok
+./ZfixRestoreTest .... ok
+All tests successful.
+Files=29, Tests=382,  1 wallclock secs ( 0.69 usr  0.03 sys +  0.49 cusr  0.36 csys =  1.57 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zfix/test'
+
+=== zgrpc-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc'
+
+=== zgrpc-interop-header-check.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/interop'
+
+=== zgrpc-itest-header-check.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/itest'
+
+=== zgrpc-unit-unrestricted.log ===
+ZgrpcFrameTest .... ok
+ZgrpcMetaTest ..... ok
+ZgrpcCatalogTest .. ok
+ZgrpcCallTest ..... ok
+ZgrpcHTTPTest ..... ok
+All tests successful.
+Files=5, Tests=44,  0 wallclock secs ( 0.05 usr  0.02 sys +  0.06 cusr  0.08 csys =  0.21 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zgrpc/test'
+
+=== zgtk-all.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zgtk/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgtk/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgtk/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgtk/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zgtk'
+make[1]: Leaving directory '/home/ubuntu/src/z/zgtk'
+
+=== zgtk-test-test.log ===
+ZGtkValueTest .. ok
+All tests successful.
+Files=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.01 sys +  0.01 cusr  0.01 csys =  0.05 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zgtk/test'
+
+=== zhttp-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/util'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp'
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp'
+
+=== zhttp-final-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/util'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp'
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp'
+
+=== zhttp-interop-recheck.log ===
+zhttpqirtest .............. ok
+zhttpqirsmoketest ......... ok
+zhttp3interoptest ......... ok
+zhttpdarkhttpdcompattest .. ok
+zhttpfallbacktest ......... ok
+All tests successful.
+Files=5, Tests=31,  7 wallclock secs ( 0.06 usr  0.01 sys +  2.87 cusr  1.19 csys =  4.13 CPU)
+Result: PASS
+1..7
+ok 1 - core offline interoperability tools
+ok 2 - Zhttp client to Zhttp server over H2
+ok 3 - curl client to Zhttp server over H2
+ok 4 - Zhttp client to Caddy server over H2
+ok 7 - Zhttp client to nghttpd server
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+
+=== zhttp-interop-test.log ===
+zhttpqirtest .............. ok
+zhttpqirsmoketest ......... ok
+zhttp3interoptest ......... ok
+zhttpdarkhttpdcompattest .. ok
+zhttpfallbacktest ......... ok
+All tests successful.
+Files=5, Tests=31,  2 wallclock secs ( 0.03 usr  0.01 sys +  2.50 cusr  0.98 csys =  3.52 CPU)
+Result: PASS
+1..7
+ok 1 - core offline interoperability tools
+ok 2 - Zhttp client to Zhttp server over H2
+ok 3 - curl client to Zhttp server over H2
+ok 4 - Zhttp client to Caddy server over H2
+ok 5 - h2spec against Zhttp server
+ok 6 - nghttp client to Zhttp server
+ok 7 - Zhttp client to nghttpd server
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+
+=== zhttp-qir-image.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zu/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zm/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zt/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ze/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zf/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zi/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztcp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/util'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[3]: Leaving directory '/home/ubuntu/src/z/zu/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zu/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zm/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zm/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zt/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zt/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/ze/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ze/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zf/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zf/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zi/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zi/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zdbus/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zdbus/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/ztcp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztcp/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/ztls/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+make[3]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[1]: Leaving directory '/home/ubuntu/src/z'
+
+=== zhttp-qir-smoke-recheck.log ===
+1..10
+ok 1 - testExecutableContract
+ok 2 - testClientFilesystemPrep
+ok 3 - testH3SingleFile
+ok 4 - testH3MultiFile
+ok 5 - testHQSingleFile
+ok 6 - testHQLargeFile
+ok 7 - testHQMultiFile
+ok 8 - testHQHandshakeFile
+ok 9 - testHQRebindPortFile
+ok 10 - testHQRebindAddrFile
+
+=== zhttp-repair-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/util'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zhttp'
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp'
+
+=== zhttp-test.log ===
+ZhttpParserTest ............. ok
+ZhttpCompressionTest ........ ok
+ZhttpFieldsTest ............. ok
+ZhttpH2FrameTest ............ ok
+ZhttpH2StreamTest ........... ok
+ZhttpH2MessageTest .......... ok
+ZhttpH2HubTest .............. ok
+ZhttpMessageH1TCPTest ....... ok
+ZhttpMessageH1TLSTest ....... ok
+ZhttpMessageH2Test .......... ok
+ZhttpMessageH3Test .......... ok
+ZhttpHPackTest .............. ok
+ZhttpQPackTest .............. ok
+ZhttpQPackDynamicTest ....... ok
+ZhttpTransportContractTest .. ok
+ZhttpHeaderLifeTest ......... ok
+ZhttpH1HubTest .............. ok
+ZhttpH3HubTest .............. ok
+ZhttpH3PushTest ............. ok
+ZhttpHubLifecycleTest ....... ok
+ZhttpURLTest ................ ok
+ZhttpAltSvcTest ............. ok
+ZhttpDiscoveryTest .......... ok
+ZhttpClientCancelTest ....... ok
+ZhttpClientPoolTest ......... ok
+ZhttpServerIdleTest ......... ok
+ZhttpBoundaryTest ........... ok
+All tests successful.
+Files=27, Tests=275, 15 wallclock secs ( 0.14 usr  0.02 sys +  1.52 cusr  0.62 csys =  2.30 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zhttp/test'
+
+=== zjrpc-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zjrpc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zjrpc/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zjrpc/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zjrpc/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zjrpc'
+make[1]: Leaving directory '/home/ubuntu/src/z/zjrpc'
+
+=== zjrpc-unit-unrestricted.log ===
+ZjrpcJSONTest ...... ok
+ZjrpcCallsTest ..... ok
+ZjrpcWireTest ...... ok
+ZjrpcDispatchTest .. ok
+All tests successful.
+Files=4, Tests=37,  0 wallclock secs ( 0.03 usr  0.00 sys +  0.04 cusr  0.04 csys =  0.11 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zjrpc/test'
+
+=== zmcp-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zmcp'
+make[1]: Leaving directory '/home/ubuntu/src/z/zmcp'
+
+=== zmcp-unit-unrestricted.log ===
+ZmcpJSONTest .... ok
+ZmcpPeerTest .... ok
+ZmcpSchemaTest .. ok
+ZmcpToolTest .... ok
+ZmcpZrestTest ... ok
+All tests successful.
+Files=5, Tests=28,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.10 cusr  0.05 csys =  0.17 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zmcp/test'
+
+=== zpb-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb'
+make[1]: Leaving directory '/home/ubuntu/src/z/zpb'
+
+=== zpb-itest-header-check.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zpb/itest'
+
+=== zpb-unit-unrestricted.log ===
+ZpbTest ......... ok
+ZpbIOTest ....... ok
+ZpbReflectTest .. ok
+ZpbBench ........ ok
+All tests successful.
+Files=4, Tests=65,  0 wallclock secs ( 0.04 usr  0.00 sys +  0.04 cusr  0.03 csys =  0.11 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zpb/test'
+
+=== zquic-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic'
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic'
+
+=== zquic-src-build.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+
+=== zquic-src-final.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+
+=== zquic-supplemental-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zquic'
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic'
+
+=== zquic-supplemental-unit.log ===
+ZquicAPITest ............... ok
+ZquicSockTest .............. ok
+ZquicCodecTest ............. ok
+ZquicCryptoTest ............ ok
+ZquicPacketProtectionTest .. ok
+ZquicHandshakeTest ......... ok
+ZquicRecoveryTest .......... ok
+ZquicRttLossTest ........... ok
+ZquicStreamStateTest ....... ok
+ZquicPMTUDTest ............. ok
+ZquicVersionTest ........... ok
+ZquicCIDTest ............... ok
+ZquicStreamTest ............ ok
+ZquicFlowTest .............. ok
+ZquicBufferTest ............ ok
+ZquicCongestionTest ........ ok
+ZquicPQueueTest ............ ok
+ZquicLoopTest .............. ok
+ZquicRuntimeTest ........... ok
+ZquicTimerTest ............. ok
+ZquicLogTest ............... ok
+All tests successful.
+Files=21, Tests=197,  9 wallclock secs ( 0.20 usr  0.02 sys +  1.15 cusr  0.47 csys =  1.84 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+
+=== zquic-test-outside.log ===
+ZquicAPITest ............... ok
+ZquicSockTest .............. ok
+ZquicCodecTest ............. ok
+ZquicCryptoTest ............ ok
+ZquicPacketProtectionTest .. ok
+ZquicHandshakeTest ......... ok
+ZquicRecoveryTest .......... ok
+ZquicRttLossTest ........... ok
+ZquicStreamStateTest ....... ok
+ZquicPMTUDTest ............. ok
+ZquicVersionTest ........... ok
+ZquicCIDTest ............... ok
+ZquicStreamTest ............ ok
+ZquicFlowTest .............. ok
+ZquicBufferTest ............ ok
+ZquicCongestionTest ........ ok
+ZquicPQueueTest ............ ok
+ZquicLoopTest .............. ok
+ZquicRuntimeTest ........... ok
+ZquicTimerTest ............. ok
+ZquicLogTest ............... ok
+All tests successful.
+Files=21, Tests=197,  9 wallclock secs ( 0.22 usr  0.02 sys +  1.15 cusr  0.54 csys =  1.93 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+
+=== zquic-test-unrestricted.log ===
+ZquicAPITest ............... ok
+ZquicSockTest .............. ok
+ZquicCodecTest ............. ok
+ZquicCryptoTest ............ ok
+ZquicPacketProtectionTest .. ok
+ZquicHandshakeTest ......... ok
+ZquicRecoveryTest .......... ok
+ZquicRttLossTest ........... ok
+ZquicStreamStateTest ....... ok
+ZquicPMTUDTest ............. ok
+ZquicVersionTest ........... ok
+ZquicCIDTest ............... ok
+ZquicStreamTest ............ ok
+ZquicFlowTest .............. ok
+ZquicBufferTest ............ ok
+ZquicCongestionTest ........ ok
+ZquicPQueueTest ............ ok
+ZquicLoopTest .............. ok
+ZquicRuntimeTest ........... ok
+ZquicTimerTest ............. ok
+ZquicLogTest ............... ok
+All tests successful.
+Files=21, Tests=197,  9 wallclock secs ( 0.20 usr  0.03 sys +  1.33 cusr  0.58 csys =  2.14 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+
+=== zquic-test.log ===
+ZquicAPITest ............... ok
+ZquicCodecTest ............. ok
+ZquicCryptoTest ............ ok
+ZquicPacketProtectionTest .. ok
+ZquicHandshakeTest ......... ok
+ZquicRecoveryTest .......... ok
+ZquicRttLossTest ........... ok
+ZquicStreamStateTest ....... ok
+ZquicPMTUDTest ............. ok
+ZquicVersionTest ........... ok
+ZquicCIDTest ............... ok
+ZquicStreamTest ............ ok
+ZquicFlowTest .............. ok
+ZquicBufferTest ............ ok
+ZquicCongestionTest ........ ok
+ZquicPQueueTest ............ ok
+ZquicLoopTest .............. ok
+ZquicTimerTest ............. ok
+ZquicLogTest ............... ok
+Files=21, Tests=197,  4 wallclock secs ( 0.19 usr  0.03 sys +  0.96 cusr  0.40 csys =  1.58 CPU)
+Result: FAIL
+make[1]: Leaving directory '/home/ubuntu/src/z/zquic/test'
+
+=== zrest-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest/example'
+make[3]: Leaving directory '/home/ubuntu/src/z/zrest/interop/go'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrest'
+make[1]: Leaving directory '/home/ubuntu/src/z/zrest'
+
+=== zrest-unit-unrestricted.log ===
+ZrestTest ......... ok
+ZrestExampleTest .. ok
+All tests successful.
+Files=2, Tests=24,  0 wallclock secs ( 0.03 usr  0.00 sys +  0.02 cusr  0.02 csys =  0.07 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zrest/test'
+
+=== zrl-all.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zrl/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrl/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrl/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zrl'
+make[1]: Leaving directory '/home/ubuntu/src/z/zrl'
+
+=== zrl-test-test.log ===
+ZrlLineTest ...... ok
+ZrlTerminfoTest .. ok
+All tests successful.
+Files=2, Tests=2,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.01 cusr  0.01 csys =  0.04 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zrl/test'
+
+=== ztc-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc'
+
+=== ztc-db-final.log ===
+./ztcagenttest .. ok
+./ztchubitest ... ok
+All tests successful.
+Files=2, Tests=5,  0 wallclock secs ( 0.03 usr  0.00 sys +  0.15 cusr  0.02 csys =  0.20 CPU)
+Result: PASS
+1..1
+ok 1 - ztcagent Vault provisioning and restart
+1..1
+ok 1 - ztchub OAuth, WSS routing, overflow, and restart
+1..1
+ok 1 - ztchub OAuth, WSS routing, overflow, and restart
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+
+=== ztc-final-dependent-test.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc'
+ZtcMgrTest ...... ok
+ZtcSchemaTest ... ok
+ZtcFilterTest ... ok
+ZtcAppTest ...... ok
+ZtcAlertTest .... ok
+ZtcAgentTest .... ok
+ZtcHubTest ...... ok
+ZtcHubRxTest .... ok
+ZtcHubRoleTest .. ok
+All tests successful.
+Files=9, Tests=48,  1 wallclock secs ( 0.05 usr  0.01 sys +  0.12 cusr  0.16 csys =  0.34 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/test'
+./ztcagenttest .. ok
+./ztchubitest ... ok
+All tests successful.
+Files=2, Tests=5,  0 wallclock secs ( 0.03 usr  0.00 sys +  0.15 cusr  0.02 csys =  0.20 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc'
+
+=== ztc-lib-build.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+
+=== ztc-test.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc'
+ZtcMgrTest ...... ok
+ZtcSchemaTest ... ok
+ZtcFilterTest ... ok
+ZtcAppTest ...... ok
+ZtcAlertTest .... ok
+ZtcAgentTest .... ok
+ZtcHubTest ...... ok
+ZtcHubRxTest .... ok
+ZtcHubRoleTest .. ok
+All tests successful.
+Files=9, Tests=48,  2 wallclock secs ( 0.06 usr  0.02 sys +  0.16 cusr  0.20 csys =  0.44 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/test'
+./ztcagenttest .. ok
+./ztchubitest ... ok
+All tests successful.
+Files=2, Tests=5,  0 wallclock secs ( 0.05 usr  0.01 sys +  0.20 cusr  0.04 csys =  0.30 CPU)
+Result: PASS
+make[2]: Leaving directory '/home/ubuntu/src/z/ztc/itest'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztc'
+
+=== ztcp-all.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/ztcp/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztcp/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztcp/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztcp'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztcp'
+
+=== ztcp-test.log ===
+ZtcpInitTest .... ok
+ZtcpLoopTest .... ok
+ZtcpStreamTest .. ok
+All tests successful.
+Files=3, Tests=6,  0 wallclock secs ( 0.03 usr  0.01 sys +  0.02 cusr  0.05 csys =  0.11 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/ztcp/test'
+
+=== ztls-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztls'
+
+=== ztls-test-dist.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/ztls/test'
+make[1]: Leaving directory '/home/ubuntu/src/z/ztls/test'
+
+=== ztls-test.log ===
+ZtlsPKTest ....... ok
+ZtlsX25519Test ... ok
+ZtlsKEMTest ...... ok
+ZtlsHybridTest ... ok
+ZtlsHPKETest ..... ok
+ZtlsAgeTest ...... ok
+ZtlsVaultTest .... ok
+ZtlsBufHookTest .. ok
+ZtlsAsyncTest .... ok
+ZtlsSecTest ...... ok
+ZtlsVaultSSTest .. ok
+All tests successful.
+Files=11, Tests=67, 29 wallclock secs ( 0.14 usr  0.02 sys + 25.29 cusr  3.65 csys = 29.10 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/ztls/test'
+
+=== zum-all.log ===
+make[3]: Leaving directory '/home/ubuntu/src/z/ztc/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/itest'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/example'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zum'
+make[1]: Leaving directory '/home/ubuntu/src/z/zum'
+
+=== zum-lib-bootstrap.log ===
+make[1]: Leaving directory '/home/ubuntu/src/z/zum/src'
+
+=== zws-build.log ===
+make[2]: Leaving directory '/home/ubuntu/src/z/zws/src'
+make[2]: Leaving directory '/home/ubuntu/src/z/zws/test'
+make[2]: Leaving directory '/home/ubuntu/src/z/zws/bench'
+make[2]: Leaving directory '/home/ubuntu/src/z/zws/interop'
+make[2]: Leaving directory '/home/ubuntu/src/z/zws'
+make[1]: Leaving directory '/home/ubuntu/src/z/zws'
+
+=== zws-unit-unrestricted.log ===
+ZwsProtocolTest ........ ok
+ZwsH1HubTest ........... ok
+ZwsH2HubTest ........... ok
+ZwsH3HubTest ........... ok
+ZwsSourceBoundaryTest .. ok
+All tests successful.
+Files=5, Tests=28,  0 wallclock secs ( 0.03 usr  0.01 sys +  0.51 cusr  0.13 csys =  0.68 CPU)
+Result: PASS
+make[1]: Leaving directory '/home/ubuntu/src/z/zws/test'
+
+=== post-fix OAuth Memcheck ===
+==1078028== Memcheck, a memory error detector
+==1078028== Copyright (C) 2002-2024, and GNU GPL'd, by Julian Seward et al.
+==1078028== Using Valgrind-3.26.0 and LibVEX; rerun with -h for copyright info
+==1078028== Command: /home/ubuntu/src/z/zdash/itest/.libs/zdashoauthtest run http://127.0.0.1:39281/oauth2/1 access-1 2
+==1078028== Parent PID: 1078012
+==1078028==
+==1078028==
+==1078028== HEAP SUMMARY:
+==1078028==     in use at exit: 33,496 bytes in 65 blocks
+==1078028==   total heap usage: 8,724 allocs, 8,659 frees, 1,397,006 bytes allocated
+==1078028==
+==1078028== LEAK SUMMARY:
+==1078028==    definitely lost: 0 bytes in 0 blocks
+==1078028==    indirectly lost: 0 bytes in 0 blocks
+==1078028==      possibly lost: 0 bytes in 0 blocks
+==1078028==    still reachable: 33,496 bytes in 65 blocks
+==1078028==         suppressed: 0 bytes in 0 blocks
+==1078028== Rerun with --leak-check=full to see details of leaked memory
+==1078028==
+==1078028== For lists of detected and suppressed errors, rerun with: -s
+==1078028== ERROR SUMMARY: 0 errors from 0 contexts (suppressed: 0 from 0)
+
+=== QIR current-source comparison ===
+426 recorded runtime source fingerprints checked: 0 mismatches. Registration restoration SHA256 unchanged.

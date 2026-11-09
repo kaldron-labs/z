@@ -89,9 +89,9 @@ void Store::final()
 void Store::open(OpenFn fn)
 {
   m_openFn = ZuMv(fn);
-  open_recoverNextSeriesID_Fixed();
+  open_0();
 }
-void Store::open_recoverNextSeriesID_Fixed()
+void Store::open_0()
 {
   m_seriesFixedTbl->selectKeys<0>(ZuTuple<>{}, 1, [this](auto max, unsigned) {
     run(0, [this, max = ZuMv(max)]() mutable {
@@ -99,11 +99,11 @@ void Store::open_recoverNextSeriesID_Fixed()
       if (max.template is<Key>())
 	m_nextSeriesID = max.template p<Key>().template p<0>() + 1;
       else
-	open_recoverNextSeriesID_Float();
+	open_1();
     });
   });
 }
-void Store::open_recoverNextSeriesID_Float()
+void Store::open_1()
 {
   m_seriesFloatTbl->selectKeys<0>(ZuTuple<>{}, 1, [this](auto max, unsigned) {
     run(0, [this, max = ZuMv(max)]() mutable {

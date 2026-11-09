@@ -211,8 +211,8 @@ struct ClientParser :
       rx, [this](ZuSpan<uint8_t> value) { body_ << value; });
   }
   template <typename Rx>
-  void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamPeerEnd_() { ++streamEnds; dispatch.peerEnd(); }
+  void streamRx(Rx &rx) { dispatch.process(rx); }
+  void streamPeerEnd() { ++streamEnds; dispatch.peerEnd(); }
   void streamError_() { ++streamResets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {
@@ -456,8 +456,8 @@ struct ServerParser :
   template <typename Rx>
   bool body(Rx &rx) { return Zhttp::bodyDrain(rx); }
   template <typename Rx>
-  void streamRx_(Rx &rx) { dispatch.process(rx); }
-  void streamPeerEnd_() { remoteEnded = true; dispatch.peerEnd(); }
+  void streamRx(Rx &rx) { dispatch.process(rx); }
+  void streamPeerEnd() { remoteEnded = true; dispatch.peerEnd(); }
   void streamError_() { ++streamResets; dispatch.error(); }
   template <typename Rx>
   void processStream(Rx &rx) {

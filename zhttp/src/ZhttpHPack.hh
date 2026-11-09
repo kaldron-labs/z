@@ -441,7 +441,7 @@ public:
 	    m_suppressed[unsigned(entry->abs)] = 1;
 	    ++m_suppressedCount;
 	  }
-	  return emitLookup_(out, field, true);
+	  return emitLookup(out, field, true);
 	}
 	auto seed = m_plan->seed(unsigned(entry->abs));
 	Compression::putBytes(
@@ -449,11 +449,11 @@ public:
 	    seed.incremental : seed.fallback);
 	return int(out.length());
       }
-    return emitLookup_(out, field, never);
+    return emitLookup(out, field, never);
   }
   template <typename Bytes>
   int emitRuntime(Bytes &out, Field field, bool never = false) const {
-    return emitLookup_(out, field, never);
+    return emitLookup(out, field, never);
   }
   void neverIndex(ZuBSpan);
   bool neverIndexed(ZuBSpan) const;
@@ -522,7 +522,7 @@ private:
     ZtArray<BoundPlan, ZtArrayHeapID<"Zhttp.H2.HPack.BoundPlans">>;
 
   template <typename Bytes>
-  int emitLookup_(Bytes &out, Field field, bool never) const {
+  int emitLookup(Bytes &out, Field field, bool never) const {
     never |= neverIndexed(field.name);
     if (!never) {
       int index = HPack::staticIndex(field.name, field.value);
@@ -551,9 +551,9 @@ private:
     return int(out.length());
   }
 
-  void detachNeverIndex_();
+  void detachNeverIndex();
   void pending_(uint32_t);
-  void prepareUpdates_();
+  void prepareUpdates();
 
   HPackTxTable	m_table;
   HPackBytes	m_updateBytes;

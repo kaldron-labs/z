@@ -38,7 +38,7 @@ ZuAssert(Cancel::Discrim::Value == "4");
 struct LayoutLink;
 template <typename Net> static void layout() {
   ZuTestScope(layout);
-  using Hooks = Zfix::LinkHooks_<LayoutLink, Net>;
+  using Hooks = Zfix::LinkHooks<LayoutLink, Net>;
   using Input = Zfix::NetInput<LayoutLink, typename Net::RxStream>;
   ZuCheck(ZuTraits<Hooks>::IsEmpty);
   ZuCheck(ZuTraits<Input>::IsEmpty);

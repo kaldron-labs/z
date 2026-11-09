@@ -17,12 +17,12 @@ ZtEnumImplStruct(HPackFailure);
 ZtEnumImplStruct(HPackSeedState);
 ZtEnumImplStruct(HPackRep);
 
-using HPackStatic_ = StaticTable<HPackTbl>;
-struct HPackNameIDs { using Keys = HPackStatic_::Names; };
+using HPackStatic = StaticTable<HPackTbl>;
+struct HPackNameIDs { using Keys = HPackStatic::Names; };
 template <unsigned I>
 struct HPackValueIDs {
-  using Key = ZuType<I, HPackStatic_::Names>;
-  using Keys = HPackStatic_::Values<Key>;
+  using Key = ZuType<I, HPackStatic::Names>;
+  using Keys = HPackStatic::Values<Key>;
 };
 struct NeverIndexIDs {
   using Keys = ZuStringTL<"authorization", "cookie", "set-cookie">;
@@ -39,10 +39,10 @@ static int staticNameIndex_(ZuBSpan value)
   int i = staticName_(value);
   if (i < 0) return -1;
   int index = -1;
-  ZuSwitch::dispatch<HPackStatic_::Names::N>(
+  ZuSwitch::dispatch<HPackStatic::Names::N>(
     unsigned(i), [&index](auto i) {
-      using Key = ZuType<i, HPackStatic_::Names>;
-      index = ZuTypeIndex<Key, HPackStatic_::Keys>{};
+      using Key = ZuType<i, HPackStatic::Names>;
+      index = ZuTypeIndex<Key, HPackStatic::Keys>{};
     });
   return index;
 }
@@ -52,10 +52,10 @@ static int staticIndex_(ZuBSpan name, ZuBSpan value)
   int i = staticName_(name);
   if (i < 0) return -1;
   int index = -1;
-  ZuSwitch::dispatch<HPackStatic_::Names::N>(
+  ZuSwitch::dispatch<HPackStatic::Names::N>(
     unsigned(i), [&index, &value](auto nameIndex) {
-      using Key = ZuType<nameIndex, HPackStatic_::Names>;
-      using KeyEntries = HPackStatic_::Entries<Key>;
+      using Key = ZuType<nameIndex, HPackStatic::Names>;
+      using KeyEntries = HPackStatic::Entries<Key>;
       static constexpr auto matcher = ZuMatcher<HPackValueIDs<nameIndex>>();
       int j = matcher.exact(value);
       if (j < 0) return;
@@ -71,7 +71,7 @@ static int staticIndex_(ZuBSpan name, ZuBSpan value)
 
 ZuAssert(HPackTbl::N == 61);
 
-static uint32_t entrySize_(ZuBSpan name, ZuBSpan value)
+static uint32_t entrySize(ZuBSpan name, ZuBSpan value)
 {
   uint64_t size = uint64_t(name.length()) + value.length() + 32;
   return size > uint32_t(-1) ? uint32_t(-1) : uint32_t(size);
@@ -86,7 +86,7 @@ bool HPackTable::capacity(uint32_t value)
 
 bool HPackTable::insert(ZuBSpan name, ZuBSpan value)
 {
-  uint32_t size = entrySize_(name, value);
+  uint32_t size = entrySize(name, value);
   if (size > m_capacity) {
     reset();
     return true;
@@ -531,7 +531,7 @@ void HPackEncoder::final()
 {
   m_table.final();
   m_updateBytes.length(0);
-  detachNeverIndex_();
+  detachNeverIndex();
   m_neverIndex->clean();
   m_generation = 0;
   m_localCapacity = 0;
@@ -635,15 +635,15 @@ void HPackEncoder::pending_(uint32_t capacity)
   if (!m_pending) {
     m_pendingMin = m_pendingFinal = capacity;
     m_pending = true;
-    prepareUpdates_();
+    prepareUpdates();
     return;
   }
   if (capacity < m_pendingMin) m_pendingMin = capacity;
   m_pendingFinal = capacity;
-  prepareUpdates_();
+  prepareUpdates();
 }
 
-void HPackEncoder::prepareUpdates_()
+void HPackEncoder::prepareUpdates()
 {
   m_updateBytes.length(0);
   if (!m_pending) return;
@@ -714,7 +714,7 @@ void HPackEncoder::commitUpdates()
 void HPackEncoder::neverIndex(ZuBSpan name)
 {
   if (!m_neverIndex->find(name)) {
-    detachNeverIndex_();
+    detachNeverIndex();
     m_neverIndex->add(HPackString{name}, true);
   }
 }
@@ -736,7 +736,7 @@ uint64_t HPackEncoder::nameIndex(ZuBSpan name) const
   return 0;
 }
 
-void HPackEncoder::detachNeverIndex_()
+void HPackEncoder::detachNeverIndex()
 {
   if (m_neverIndex->refCount() <= 1) return;
   ZmRef<HPackNameSet> copy{new HPackNameSet};

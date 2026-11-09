@@ -964,7 +964,7 @@ struct App {
 	~(Ztc::Builder::Align - 1);
       auto buf = tx.allocBuf(head);
       if (!buf) return;
-      tx.appendOwned_(requestFrame(
+      tx.appendOwned(requestFrame(
 	ZuMv(buf), tx.tailRoom(), deviceID, subID, true));
       tx.flush();
     }, Zws::Opcode::Binary);
@@ -1125,7 +1125,7 @@ static int session(const ZtcHubClient_::Options &options, ZuCSpan token)
 	  ~(Ztc::Builder::Align - 1);
 	auto buf = tx.allocBuf(head);
 	if (!buf) return;
-	tx.appendOwned_(requestFrame(
+	tx.appendOwned(requestFrame(
 	  ZuMv(buf), tx.tailRoom(), app->deviceID, app->subID, false));
 	tx.flush();
       }, Zws::Opcode::Binary);

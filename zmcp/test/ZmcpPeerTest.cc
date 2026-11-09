@@ -90,8 +90,8 @@ struct SSEPostHarness {
   Zmcp::HTTPSSEBuilder<EchoCatalog> *builder = nullptr;
   unsigned posts = 0;
 
-  bool postSSE_() { ++posts; return true; }
-  bool discardSSE_(Zjrpc::SSEQueue queue) {
+  bool postSSE() { ++posts; return true; }
+  bool discardSSE(Zjrpc::SSEQueue queue) {
     while (queue.shift()) { }
     return true;
   }
@@ -415,7 +415,7 @@ struct HTTPResponderHarness : public Zjrpc::Dispatcher<HTTPResponderHarness<Cata
     }, &inbound, &context);
   }
   void send(ZmRef<Builder> value) { builder = ZuMv(value); ++sends; }
-  void responseClosed_() { }
+  void responseClosed() { }
   void fail_() { failed(); }
   void failed() { ++failures; }
   template <typename Req, typename Token>
@@ -1274,7 +1274,7 @@ static void httpTest()
   params.arguments() = Zmcp::ToolArg<Echo>{EchoReq{21}};
   params.progressToken = Zjrpc::IDString{"progress-21"};
   params.logLevel = Zmcp::LogLevel::Warning;
-  using CallMessage = Zmcp::ToolCallRequestMessage<EchoCatalog>;
+  using CallMessage = Zmcp::ToolCallReqMsg<EchoCatalog>;
   Zmcp::HTTPRequestBuilder<CallMessage> request;
   request.message = CallMessage{Zjrpc::ID{int64_t{21}}, ZuMv(params)};
   request.endpoint = "/mcp";

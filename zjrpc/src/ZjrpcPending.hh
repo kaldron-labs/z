@@ -520,7 +520,7 @@ protected:
   }
   void releaseCalls(unsigned n = 1) {
     uint64_t ingress = m_ingress -= n;
-    if ((ingress & Waiting) && !(ingress & CountMask)) notifyCalls_(ingress);
+    if ((ingress & Waiting) && !(ingress & CountMask)) waitCalls_1(ingress);
   }
   bool callsWaiting() const { return bool(m_callsReady); }
   bool fail(const ID &id) { return m_pending.fail(id); }
@@ -539,12 +539,12 @@ protected:
     // Its registered callback remains a prerequisite until that post runs.
     if (m_callsReady) return false;
     if (m_ingress.load_() & CountMask) {
-      waitCalls_(ZuFwd<L>(ready));
+      waitCalls_0(ZuFwd<L>(ready));
       return false;
     }
     bool done = m_pending.close(derived()->limits().workBatch);
     if (m_ingress.load_() & CountMask) {
-      waitCalls_(ZuFwd<L>(ready));
+      waitCalls_0(ZuFwd<L>(ready));
       return false;
     }
     ZmAssert_(!m_sendPosts.load_());
@@ -557,12 +557,12 @@ private:
   static constexpr uint64_t CountMask = ~(Closed | Waiting);
 
   template <typename L>
-  void waitCalls_(L &&ready) {
+  void waitCalls_0(L &&ready) {
     m_callsReady = ZuFwd<L>(ready);
     uint64_t ingress = m_ingress |= Waiting;
-    if (!(ingress & CountMask)) notifyCalls_(ingress);
+    if (!(ingress & CountMask)) waitCalls_1(ingress);
   }
-  void notifyCalls_(uint64_t ingress) {
+  void waitCalls_1(uint64_t ingress) {
     if (m_ingress.cmpXch(ingress & ~Waiting, ingress) != ingress) return;
     derived()->continue_([this]() {
       auto ready = ZuMv(m_callsReady);

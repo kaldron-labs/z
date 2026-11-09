@@ -72,16 +72,16 @@ public:
   bool add(uint64_t pn) {
     if (contains(pn)) return true;
     if (pn == m_ackHead)
-      advanceHead_(pn + 1);
+      advanceHead(pn + 1);
     else
-      insertSparse_(pn);
-    trimSparseRanges_();
+      insertSparse(pn);
+    trimSparseRanges();
     return true;
   }
 
   bool contains(uint64_t pn) const {
     if (pn < m_ackHead) return true;
-    unsigned i = findSparse_(pn);
+    unsigned i = findSparse(pn);
     return i < m_sparse.length() && m_sparse[i].first <= pn;
   }
 
@@ -188,7 +188,7 @@ public:
   }
 
   void dequeueFn(DequeueFn fn) { m_dequeueFn = ZuMv(fn); }
-  void dequeueRx_() { }
+  void dequeueRx() { }
   uint64_t retiredRanges() const { return m_retiredRanges; }
 
 private:
@@ -196,13 +196,13 @@ private:
     return largest < first && first - largest > 1;
   }
 
-  unsigned findSparse_(uint64_t pn) const {
+  unsigned findSparse(uint64_t pn) const {
     return ackRangeLowerBound(m_sparse.cspan(), pn);
   }
 
-  void insertSparse_(uint64_t pn) {
+  void insertSparse(uint64_t pn) {
     AckRange range{pn, pn};
-    unsigned i = findSparse_(pn);
+    unsigned i = findSparse(pn);
     unsigned begin = i;
     if (i && !before_(m_sparse[i - 1].largest, range.first)) {
       begin = --i;
@@ -228,7 +228,7 @@ private:
       begin, end - begin, ZuSpan<const AckRange>{&range, 1});
   }
 
-  void advanceHead_(uint64_t head) {
+  void advanceHead(uint64_t head) {
     m_ackHead = head;
     unsigned consumed = 0, n = m_sparse.length();
     while (consumed < n &&
@@ -240,7 +240,7 @@ private:
     if (consumed) m_sparse.splice(0, consumed);
   }
 
-  void trimSparseRanges_() {
+  void trimSparseRanges() {
     unsigned total = m_sparse.length() + (m_ackHead > m_ackBase);
     if (total <= MaxRetained || !m_sparse) return;
     unsigned retire = total - MaxRetained;
@@ -293,12 +293,12 @@ public:
     bool haveLargest = m_ack[i].largest(largest);
     if (m_ack[i].contains(pn)) return false;
     if (!m_ack[i].add(pn)) return false;
-    noteECN_(i, ecn);
+    noteECN(i, ecn);
     if (!haveLargest || pn >= largest) m_largestRxTime[i] = now;
     if (ackEliciting) {
       ++m_gen[i];
       m_pending[i] = true;
-      noteAckEliciting_(i, now, maxAckDelay, immediate);
+      noteAckEliciting(i, now, maxAckDelay, immediate);
     }
     return true;
   }
@@ -312,7 +312,7 @@ public:
     ++m_gen[i];
     if (m_ack[i].largest() == pn) m_largestRxTime[i] = now;
     m_pending[i] = true;
-    noteAckEliciting_(i, now, maxAckDelay, immediate);
+    noteAckEliciting(i, now, maxAckDelay, immediate);
     return true;
   }
 
@@ -391,7 +391,7 @@ public:
   }
 
 private:
-  void noteAckEliciting_(
+  void noteAckEliciting(
     unsigned i, uint64_t now, uint64_t maxAckDelay, bool immediate)
   {
     m_ackEliciting[i] = true;
@@ -410,7 +410,7 @@ private:
     }
   }
 
-  void noteECN_(unsigned i, EcnMark::T ecn) {
+  void noteECN(unsigned i, EcnMark::T ecn) {
     switch (ecn) {
       case EcnMark::ECT0: ++m_ecn[i].ect0; break;
       case EcnMark::ECT1: ++m_ecn[i].ect1; break;
@@ -956,10 +956,10 @@ public:
       return exact_(SentFrameKey{frame});
     uint64_t end;
     if (!rangeEnd_(frame, end)) return false;
-    if (frame.length && covered_(flowKey_(frame), frame.offset, end))
+    if (frame.length && covered_(flowKey(frame), frame.offset, end))
       return true;
     return frame.kind == SentFrameKind::Stream && frame.fin &&
-      exact_(finKey_(frame, end));
+      exact_(finKey(frame, end));
   }
   template <typename Queue>
   bool clip(SentFrameRef &frame, Queue &queue) const {
@@ -969,8 +969,8 @@ public:
     uint64_t end;
     if (!rangeEnd_(frame, end)) return false;
     bool sendFin = frame.kind == SentFrameKind::Stream && frame.fin &&
-      !exact_(finKey_(frame, end));
-    const Flow *flow = findFlow_(flowKey_(frame));
+      !exact_(finKey(frame, end));
+    const Flow *flow = findFlow(flowKey(frame));
     uint64_t pos = frame.offset;
     bool have = false, finQueued = false;
     SentFrameRef first;
@@ -1052,11 +1052,11 @@ private:
     end = frame.offset + frame.length;
     return end >= frame.offset;
   }
-  static OutstandingFlowKey flowKey_(const SentFrameRef &frame) {
+  static OutstandingFlowKey flowKey(const SentFrameRef &frame) {
     return {frame.kind,
       frame.kind == SentFrameKind::Stream ? frame.streamID : 0};
   }
-  static SentFrameKey finKey_(const SentFrameRef &frame, uint64_t end) {
+  static SentFrameKey finKey(const SentFrameRef &frame, uint64_t end) {
     SentFrameKey key{frame};
     key.offset = end;
     key.length = 0;
@@ -1089,7 +1089,7 @@ private:
       m_flows = new Flows{ZmHashParams().bits(3).loadFactor(1).cBits(2)};
     return m_flows->add(key);
   }
-  const Flow *findFlow_(const OutstandingFlowKey &key) const {
+  const Flow *findFlow(const OutstandingFlowKey &key) const {
     if (!m_flows) return nullptr;
     return m_flows->findPtr(key);
   }
@@ -1111,7 +1111,7 @@ private:
     left->val().end = right->val().end;
     (void)flow.ranges.del(offset);
   }
-  void addRange_(const OutstandingFlowKey &key, uint64_t first, uint64_t end) {
+  void addRange(const OutstandingFlowKey &key, uint64_t first, uint64_t end) {
     if (first >= end) return;
     Flow &flow = *flow_(key);
     split_(flow, first);
@@ -1132,7 +1132,7 @@ private:
     }
     merge_(flow, end);
   }
-  void delRange_(const OutstandingFlowKey &key, uint64_t first, uint64_t end) {
+  void delRange(const OutstandingFlowKey &key, uint64_t first, uint64_t end) {
     if (first >= end || !m_flows) return;
     auto flowNode = m_flows->findPtr(key);
     if (!flowNode) return;
@@ -1154,7 +1154,7 @@ private:
   }
   bool covered_(
       const OutstandingFlowKey &key, uint64_t first, uint64_t end) const {
-    const Flow *flow = findFlow_(key);
+    const Flow *flow = findFlow(key);
     if (!flow) return false;
 #ifdef ZDEBUG
     ++m_visits;
@@ -1162,13 +1162,13 @@ private:
     auto node = flow->ranges.template findPtr<ZmRBTreeLessEqual>(first);
     return node && node->val().end >= end;
   }
-  void addExact_(const SentFrameKey &key) {
+  void addExact(const SentFrameKey &key) {
     if (!m_exact)
       m_exact = new Exact{ZmHashParams().bits(4).loadFactor(1).cBits(2)};
     if (auto node = m_exact->findPtr(key)) ++node->val();
     else m_exact->add(key, 1U);
   }
-  void delExact_(const SentFrameKey &key) {
+  void delExact(const SentFrameKey &key) {
     if (!m_exact) return;
     auto node = m_exact->findPtr(key);
     if (!node) return;
@@ -1184,26 +1184,26 @@ private:
   void add_(const SentFrameRef &frame) {
     if (!SentFrameKey::retransmittable(frame)) return;
     if (frame.kind == SentFrameKind::Control) {
-      addExact_(SentFrameKey{frame});
+      addExact(SentFrameKey{frame});
       return;
     }
     uint64_t end;
     if (!rangeEnd_(frame, end)) return;
-    addRange_(flowKey_(frame), frame.offset, end);
+    addRange(flowKey(frame), frame.offset, end);
     if (frame.kind == SentFrameKind::Stream && frame.fin)
-      addExact_(finKey_(frame, end));
+      addExact(finKey(frame, end));
   }
   void del_(const SentFrameRef &frame) {
     if (!SentFrameKey::retransmittable(frame)) return;
     if (frame.kind == SentFrameKind::Control) {
-      delExact_(SentFrameKey{frame});
+      delExact(SentFrameKey{frame});
       return;
     }
     uint64_t end;
     if (!rangeEnd_(frame, end)) return;
-    delRange_(flowKey_(frame), frame.offset, end);
+    delRange(flowKey(frame), frame.offset, end);
     if (frame.kind == SentFrameKind::Stream && frame.fin)
-      delExact_(finKey_(frame, end));
+      delExact(finKey(frame, end));
   }
 
   ZmRef<Flows> m_flows;
@@ -1449,7 +1449,7 @@ public:
     if (packet.inFlight) {
       m_bytesInFlight += packet.bytes;
       if (packet.ackEliciting) {
-	linkRecovery_(packet);
+	linkRecovery(packet);
 	if (!*m_latestAckSentTime || packet.sentTime > m_latestAckSentTime)
 	  m_latestAckSentTime = packet.sentTime;
       }
@@ -1783,7 +1783,7 @@ public:
   unsigned retransmitDropped() const { return m_retransmit.dropped(); }
   bool nextRetransmit(SentFrameRef &frame) {
     while (m_retransmit.pop(frame))
-      if (clipOutstanding_(frame)) return true;
+      if (clipOutstanding(frame)) return true;
     return false;
   }
   bool requeueRetransmit(const SentFrameRef &frame) {
@@ -1901,19 +1901,19 @@ private:
       ++m_retransmittable;
       enqueueRetransmit_(p);
     }
-    trimLost_();
+    trimLost();
     ++m_lost;
     return true;
   }
 
   void release_(TxPkt &p, bool unlink = true) {
     p.inFlight = false;
-    if (p.ackEliciting && unlink) unlinkRecovery_(p);
+    if (p.ackEliciting && unlink) unlinkRecovery(p);
     if (p.bytes > m_bytesInFlight) m_bytesInFlight = 0;
     else m_bytesInFlight -= p.bytes;
   }
 
-  void linkRecovery_(TxPkt &p) {
+  void linkRecovery(TxPkt &p) {
 #ifdef ZDEBUG
     const auto *tail = m_recovery.tailPtr();
     ZmAssert(!tail || tail->data()->pn < p.pn);
@@ -1921,7 +1921,7 @@ private:
     p.recoveryNode = m_recovery.push(&p);
   }
 
-  void unlinkRecovery_(TxPkt &p) {
+  void unlinkRecovery(TxPkt &p) {
     if (!p.recoveryNode) return;
     (void)m_recovery.delNode(
       static_cast<RecoveryPktList::Node *>(p.recoveryNode));
@@ -1936,10 +1936,10 @@ private:
     }
   }
 
-  bool clipOutstanding_(SentFrameRef &frame) {
+  bool clipOutstanding(SentFrameRef &frame) {
     return m_outstanding.clip(frame, m_retransmit);
   }
-  void trimLost_() {
+  void trimLost() {
     while (m_retainedLost > RetainedLostMax) {
       uint64_t pn = m_lostPNs.shift();
       auto node = m_packets.find(pn);

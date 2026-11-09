@@ -190,7 +190,7 @@ struct Peer : Base {
   Fmt::Error fixReplyRx(Entry *, Response *, const RawInput &input) {
     if (!this->app()->rxInvoked()) state()->fail();
     // Raw manager accepts the fixture's repeated/low wire sequences explicitly.
-    return input.connection == this->rawConnection_() ? Fmt::Error{} :
+    return input.connection == this->rawConnection() ? Fmt::Error{} :
       Fmt::Error{Fmt::ErrorCode::Unresolved, 35};
   }
 
@@ -462,14 +462,14 @@ struct SwapPeer : Base {
     this->app()->rxRun([this] {
       Fmt::Error error;
       if (!this->template send<Entry>(Packet{"req", "ABCD"_z}, 101, routing(),
-	  context(this->rawConnection_()), true, error)) state()->fail();
+	  context(this->rawConnection()), true, error)) state()->fail();
     });
   }
 
   bool fixRawRx(ZmRef<RawInput> msg, Fmt::Limits limits) {
     Fmt::MessageHandler<Packet> handler{msg->frame, limits}; auto p = handler.ctor();
     if (!this->app()->rxInvoked() || !handler.valid() ||
-	msg->connection != this->rawConnection_() || p.data != "ABCD"_z ||
+	msg->connection != this->rawConnection() || p.data != "ABCD"_z ||
 	p.value != (Client ? "res" : "req") || p.seqNo != 17) {
       state()->fail(); return true;
     }
@@ -488,7 +488,7 @@ struct SwapPeer : Base {
   }
 
   Fmt::Error fixReplyRx(Entry *, Response *, const RawInput &input) {
-    return input.connection == this->rawConnection_() ? Fmt::Error{} :
+    return input.connection == this->rawConnection() ? Fmt::Error{} :
       Fmt::Error{Fmt::ErrorCode::Unresolved, 35};
   }
 

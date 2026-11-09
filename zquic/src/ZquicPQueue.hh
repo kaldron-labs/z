@@ -222,9 +222,9 @@ public:
     uint64_t first = range.offset;
     uint64_t end = first + length;
     if (m_index)
-      return addIndexed_(range);
+      return addIndexed(range);
     bool fin = range.fin;
-    unsigned i = lowerBound_(first);
+    unsigned i = lowerBound(first);
     if (i && end_(m_ranges[i - 1]) >= first)
       --i;
     unsigned begin = i;
@@ -243,10 +243,10 @@ public:
       removed += m_ranges[i].length();
       ++i;
     }
-    TxUnackdRange merged = makeRange_(first, end, fin);
+    TxUnackdRange merged = makeRange(first, end, fin);
     if (m_ranges.length() - (i - begin) + 1 > BuiltinRanges) {
-      promote_();
-      return addIndexed_(range);
+      promote();
+      return addIndexed(range);
     }
     m_ranges.splice(
       begin, i - begin, ZuSpan<const TxUnackdRange>{&merged, 1});
@@ -257,8 +257,8 @@ public:
   bool clear(uint64_t offset, uint64_t length) {
     if (!length || offset > uint64_t(-1) - length) return false;
     uint64_t end = offset + length;
-    if (m_index) return clearIndexed_(offset, end);
-    unsigned i = lowerBound_(offset);
+    if (m_index) return clearIndexed(offset, end);
+    unsigned i = lowerBound(offset);
     if (i && end_(m_ranges[i - 1]) > offset) --i;
     unsigned begin = i;
     uint64_t removed = 0;
@@ -271,9 +271,9 @@ public:
       if (first >= end) break;
       removed += range.length();
       if (first < offset)
-	survivors.push(slice_(range, first, offset));
+	survivors.push(slice(range, first, offset));
       if (rangeEnd > end)
-	survivors.push(slice_(range, end, rangeEnd));
+	survivors.push(slice(range, end, rangeEnd));
       ++i;
     }
     if (i == begin) return false;
@@ -299,7 +299,7 @@ public:
       }
       return true;
     }
-    unsigned i = lowerBound_(offset);
+    unsigned i = lowerBound(offset);
     if (i && end_(m_ranges[i - 1]) > offset) --i;
     for (unsigned n = m_ranges.length(); i < n; ++i) {
       uint64_t first = m_ranges[i].offset;
@@ -315,7 +315,7 @@ public:
 	return new Node{node->data()};
       return nullptr;
     }
-    unsigned i = lowerBound_(offset);
+    unsigned i = lowerBound(offset);
     if (i < m_ranges.length() && m_ranges[i].offset == offset)
       return new Node{m_ranges[i]};
     return nullptr;
@@ -354,7 +354,7 @@ public:
   }
 
 private:
-  void promote_() {
+  void promote() {
     m_index = new Indexed{0};
     for (unsigned i = 0, n = m_ranges.length(); i < n; ++i)
       m_index->add(new Indexed::Node{m_ranges[i]});
@@ -363,7 +363,7 @@ private:
     ++m_promotions;
 #endif
   }
-  ZmPQResult::T addIndexed_(const TxUnackdRange &range) {
+  ZmPQResult::T addIndexed(const TxUnackdRange &range) {
     uint64_t first = range.offset;
     uint64_t end = end_(range);
     bool fin = range.fin;
@@ -392,10 +392,10 @@ private:
 	fin = fin || old.fin;
       (void)iter.del();
     }
-    m_index->add(new Indexed::Node{makeRange_(first, end, fin)});
+    m_index->add(new Indexed::Node{makeRange(first, end, fin)});
     return ZmPQResult::Inserted;
   }
-  bool clearIndexed_(uint64_t offset, uint64_t end) {
+  bool clearIndexed(uint64_t offset, uint64_t end) {
     ZuArray<TxUnackdRange, 2> survivors;
     bool changed = false;
     auto iter = m_index->iter(offset);
@@ -408,18 +408,18 @@ private:
       changed = true;
       (void)iter.del();
       if (first < offset)
-	survivors.push(slice_(range, first, offset));
+	survivors.push(slice(range, first, offset));
       if (rangeEnd > end)
-	survivors.push(slice_(range, end, rangeEnd));
+	survivors.push(slice(range, end, rangeEnd));
     }
     for (unsigned i = 0, n = survivors.length(); i < n; ++i)
-      addIndexed_(survivors[i]);
+      addIndexed(survivors[i]);
     return changed;
   }
   static uint64_t end_(const TxUnackdRange &range) {
     return range.offset + range.length();
   }
-  unsigned lowerBound_(uint64_t offset) const {
+  unsigned lowerBound(uint64_t offset) const {
     unsigned l = 0, r = m_ranges.length();
     while (l < r) {
       unsigned m = (l + r) >> 1;
@@ -430,12 +430,12 @@ private:
     }
     return l;
   }
-  static TxUnackdRange makeRange_(
+  static TxUnackdRange makeRange(
     uint64_t first, uint64_t end, bool fin) {
     if (fin) return TxUnackdRange{first, end - first - 1, true};
     return TxUnackdRange{first, end - first, false};
   }
-  static TxUnackdRange slice_(
+  static TxUnackdRange slice(
     const TxUnackdRange &range, uint64_t first, uint64_t end) {
     uint64_t dataEnd = range.offset + range.bytes;
     bool fin = range.fin && end == dataEnd + 1;

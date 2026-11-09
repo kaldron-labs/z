@@ -83,10 +83,10 @@ void Hubs::start_()
 	return;
   }
   m_next = 0;
-  startNext_();
+  start_0();
 }
 
-void Hubs::startNext_()
+void Hubs::start_0()
 {
   if (m_next >= m_entries.length()) {
     Engine::started(true);
@@ -95,21 +95,21 @@ void Hubs::startNext_()
   unsigned i = m_next++;
   auto &entry = m_entries[i];
   entry.start(entry.ptr, DoneFn{this, [i](Hubs *hubs, bool ok) {
-    hubs->started_(i, ok);
+    hubs->start_1(i, ok);
   }});
 }
 
-void Hubs::started_(unsigned i, bool ok)
+void Hubs::start_1(unsigned i, bool ok)
 {
   if (ok) {
     m_entries[i].started = true;
-    startNext_();
+    start_0();
     return;
   }
   m_rollback = true;
   m_stopOK = true;
   m_next = i;
-  stopNext_();
+  stop_0();
 }
 
 void Hubs::stopAccepting()
@@ -124,10 +124,10 @@ void Hubs::stop_()
   m_stopOK = true;
   m_next = m_entries.length();
   stopAccepting();
-  stopNext_();
+  stop_0();
 }
 
-void Hubs::stopNext_()
+void Hubs::stop_0()
 {
   while (m_next) {
     auto &entry = m_entries[--m_next];
@@ -136,7 +136,7 @@ void Hubs::stopNext_()
     if (m_rollback && !entry.started) continue;
     entry.stop(entry.ptr,
 	DoneFn{this, [](Hubs *hubs, bool ok) {
-	  hubs->stopped_(ok);
+	  hubs->stop_1(ok);
 	}});
     return;
   }
@@ -147,12 +147,12 @@ void Hubs::stopNext_()
     Engine::stopped(m_stopOK);
 }
 
-void Hubs::stopped_(bool ok)
+void Hubs::stop_1(bool ok)
 {
   if (!ok) m_stopOK = false;
   // A completed stop retires this activation even when cleanup reports failure.
   m_entries[m_next].started = false;
-  stopNext_();
+  stop_0();
 }
 
 void Hubs::final_()

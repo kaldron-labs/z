@@ -9,7 +9,7 @@
 #include <zlib/ZpbReflect.hh>
 
 #include "ZiTestResidue.hh"
-#include "ZpbTestUtil.hh"
+#include "zpbtestutil.hh"
 
 using namespace ZuTestUtil;
 using namespace ZpbTest;

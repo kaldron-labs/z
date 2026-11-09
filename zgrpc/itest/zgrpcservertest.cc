@@ -17,7 +17,7 @@
 using namespace ZuTestUtil;
 using namespace Zgrpc;
 
-#include "ZgrpcWire.hh"
+#include "zgrpcwire.hh"
 
 #include <zlib/ZgrpcClient.hh>
 #include <zlib/ZgrpcServer.hh>

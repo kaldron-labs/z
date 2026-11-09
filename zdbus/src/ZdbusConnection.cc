@@ -101,7 +101,7 @@ void Connection::init(
   m_frameFn = ZuMv(frameFn);
   m_failFn = ZuMv(failFn);
   m_loop.init(sched, rxSid, [this](ZeException) {
-    rxFail_({0, 0, CxnError::System});
+    rxFail_0({0, 0, CxnError::System});
   });
 }
 
@@ -132,7 +132,7 @@ void Connection::txStart_()
   if (m_txStopping || m_txStopped) return;
   m_loop.start([this](ZiEvent::StartResult result) {
     if (result.is<ZiEvent::Exception>()) {
-      rxFail_({0, 0, CxnError::System});
+      rxFail_0({0, 0, CxnError::System});
       return;
     }
     m_loopStarted = true;
@@ -173,7 +173,7 @@ void Connection::txSend_(ZmRef<ZiIOBuf> buf, CxnSendFn fn)
   ++m_txMsgs;
   ZmRef<Out> out = new Out{ZuMv(buf), ZuMv(fn), n};
   m_sched->invoke([this, out = ZuMv(out)]() mutable {
-    rxSend_(ZuMv(out));
+    rxSend(ZuMv(out));
   }, m_rxSid);
 }
 
@@ -186,7 +186,7 @@ void Connection::txDone_(ZmRef<Out> out, bool ok)
   if (out->fn) out->fn(ok);
 }
 
-void Connection::rxSend_(ZmRef<Out> out)
+void Connection::rxSend(ZmRef<Out> out)
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (), "enqueue off Rx", return);
   if (m_state == CxnState::Stopped || m_state == CxnState::Stopping ||
@@ -197,7 +197,7 @@ void Connection::rxSend_(ZmRef<Out> out)
     return;
   }
   m_output.pushNode(ZuMv(out));
-  rxWrite_();
+  rxWrite();
 }
 
 void Connection::connect_()
@@ -207,29 +207,29 @@ void Connection::connect_()
   sockaddr_un addr;
   socklen_t length;
   if (!m_addr.socketAddr(addr, length)) {
-    rxFail_({0, EINVAL, CxnError::System});
+    rxFail_0({0, EINVAL, CxnError::System});
     return;
   }
   m_socket = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (m_socket < 0 || !ZiEventLoop::unblock(m_socket)) {
-    rxFail_({0, errno, CxnError::System});
+    rxFail_0({0, errno, CxnError::System});
     return;
   }
   int rc = ::connect(m_socket, reinterpret_cast<sockaddr *>(&addr), length);
   if (rc < 0 && errno != EINPROGRESS) {
-    rxFail_({0, errno, CxnError::System});
+    rxFail_0({0, errno, CxnError::System});
     return;
   }
   if (!m_loop.addSocket(m_socket,
-      [this](Zi::Socket) { rxWrite_(); },
-      [this](Zi::Socket) { rxRead_(); }, false)) {
-    rxFail_({0, errno, CxnError::System});
+      [this](Zi::Socket) { rxWrite(); },
+      [this](Zi::Socket) { rxRead(); }, false)) {
+    rxFail_0({0, errno, CxnError::System});
     return;
   }
   m_state = CxnState::Connecting;
   if (!rc) {
     connected_();
-    rxWrite_();
+    rxWrite();
   }
 }
 
@@ -242,7 +242,7 @@ void Connection::connected_()
   m_output.pushNode(new Out{ZuMv(buf), {}, 0});
 }
 
-void Connection::rxWrite_()
+void Connection::rxWrite()
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (), "write off Rx", return);
   if (m_socket < 0 || m_state == CxnState::Stopping) return;
@@ -252,7 +252,7 @@ void Connection::rxWrite_()
     if (getsockopt(m_socket, SOL_SOCKET, SO_ERROR, &error, &length) < 0)
       error = errno;
     if (error) {
-      rxFail_({0, error, CxnError::System});
+      rxFail_0({0, error, CxnError::System});
       return;
     }
     connected_();
@@ -267,11 +267,11 @@ void Connection::rxWrite_()
     if (sent < 0) {
       if (errno == EINTR) continue;
       if (errno == EAGAIN || errno == EWOULDBLOCK) break;
-      rxFail_({0, errno, CxnError::System});
+      rxFail_0({0, errno, CxnError::System});
       return;
     }
     if (!sent) {
-      rxFail_({0, ECONNRESET, CxnError::System});
+      rxFail_0({0, ECONNRESET, CxnError::System});
       return;
     }
     out->offset += unsigned(sent);
@@ -284,7 +284,7 @@ void Connection::rxWrite_()
       }, m_txSid);
   }
   if (!budget && m_output.count_())
-    m_loop.run([this] { rxWrite_(); });
+    m_loop.run([this] { rxWrite(); });
 }
 
 bool Connection::auth_()
@@ -292,7 +292,7 @@ bool Connection::auth_()
   unsigned consumed = m_auth.feed(m_input->cspan());
   m_input->advance(consumed);
   if (m_auth.state() == AuthState::Failed) {
-    rxFail_({0, 0, CxnError::Auth});
+    rxFail_0({0, 0, CxnError::Auth});
     return false;
   }
   if (m_auth.state() != AuthState::Ready) {
@@ -303,14 +303,14 @@ bool Connection::auth_()
   ZmRef<ZiIOBuf> begin = ZmSingleton<FrameAlloc>::instance()->allocBuf();
   *begin << Auth::begin();
   m_output.pushNode(new Out{ZuMv(begin), {}, 0});
-  rxWrite_();
+  rxWrite();
   if (m_state != CxnState::Hello) return false;
   m_sched->invoke([this] { m_txActive = true; }, m_txSid);
   if (m_readyFn) m_readyFn();
   return true;
 }
 
-ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input, const FrameInfo &info)
+ZmRef<ZiIOBuf> splitFrame(ZmRef<ZiIOBuf> &input, const FrameInfo &info)
 {
   ZmAssert_(input && info.total && input->length > info.total);
   auto complete = input;
@@ -318,7 +318,7 @@ ZmRef<ZiIOBuf> splitFrame_(ZmRef<ZiIOBuf> &input, const FrameInfo &info)
   return complete;
 }
 
-bool detachInput_(ZmRef<ZiIOBuf> &input, unsigned size)
+bool detachInput(ZmRef<ZiIOBuf> &input, unsigned size)
 {
   ZmAssert_(input && size >= input->length);
   // A delivered frame still borrows this backing. Construct only the
@@ -337,7 +337,7 @@ bool Connection::frame_()
   auto parsed = frame(m_input->cspan(), m_params.frameLimit);
   if (parsed.error == FrameError::NeedMore) return false;
   if (!parsed) {
-    rxFail_({parsed.offset, 0, CxnError::Frame});
+    rxFail_0({parsed.offset, 0, CxnError::Frame});
     return false;
   }
   ZmRef<ZiIOBuf> complete;
@@ -345,7 +345,7 @@ bool Connection::frame_()
   if (m_input->length == parsed.info.total)
     complete = ZuMv(m_input);
   else
-    complete = splitFrame_(m_input, info);
+    complete = splitFrame(m_input, info);
   if (m_frameFn) m_frameFn(ZuMv(complete), info);
   return true;
 }
@@ -362,7 +362,7 @@ bool Connection::consume_(unsigned &msgs)
   return true;
 }
 
-void Connection::rxRead_()
+void Connection::rxRead()
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (), "read off Rx", return);
   if (m_socket < 0 || m_state == CxnState::Connecting ||
@@ -378,7 +378,7 @@ void Connection::rxRead_()
     unsigned want, reserve;
     if (m_state == CxnState::Authenticating) {
       if (n >= Auth::MaxLine + 1) {
-        rxFail_({0, 0, CxnError::Auth});
+        rxFail_0({0, 0, CxnError::Auth});
         return;
       }
       // A malformed auth line cannot drive allocation up to rxBytes.
@@ -398,27 +398,27 @@ void Connection::rxRead_()
     }
     if (want > budget) want = budget;
     bool reserved = m_input->refCount() > 1 ?
-      detachInput_(m_input, reserve) : bool(m_input->ensure(reserve));
+      detachInput(m_input, reserve) : bool(m_input->ensure(reserve));
     if (!reserved) {
-      rxFail_({0, 0, CxnError::Resource});
+      rxFail_0({0, 0, CxnError::Resource});
       return;
     }
     int received = int(::recv(m_socket, m_input->end(), want, 0));
     if (received < 0) {
       if (errno == EINTR) continue;
       if (errno == EAGAIN || errno == EWOULDBLOCK) return;
-      rxFail_({0, errno, CxnError::System});
+      rxFail_0({0, errno, CxnError::System});
       return;
     }
     if (!received) {
-      rxFail_({0, ECONNRESET, CxnError::System});
+      rxFail_0({0, ECONNRESET, CxnError::System});
       return;
     }
     m_input->length += unsigned(received);
     budget -= unsigned(received);
   }
   if (m_socket >= 0)
-    m_loop.run([this] { rxRead_(); });
+    m_loop.run([this] { rxRead(); });
 }
 
 void Connection::close_()
@@ -429,17 +429,17 @@ void Connection::close_()
   m_socket = -1;
 }
 
-void Connection::rxFail_(CxnFailure failure)
+void Connection::rxFail_0(CxnFailure failure)
 {
   if (m_state == CxnState::Stopping) return;
   m_state = CxnState::Stopping;
   close_();
   m_input = {};
   if (m_failFn) m_failFn(failure);
-  rxFailDrain_();
+  rxFail_1();
 }
 
-void Connection::rxFailDrain_()
+void Connection::rxFail_1()
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (),
     "failure drain off Rx", return);
@@ -453,7 +453,7 @@ void Connection::rxFailDrain_()
       }, m_txSid);
   }
   if (m_output.count_())
-    m_loop.run([this] { rxFailDrain_(); });
+    m_loop.run([this] { rxFail_1(); });
 }
 
 void Connection::stop(CxnStopFn fn)
@@ -463,20 +463,20 @@ void Connection::stop(CxnStopFn fn)
     if (fn) m_stopWaits.pushNode(new CxnStopQueue::Node{ZuMv(fn)});
     if (m_txStopping) return;
     m_txStopping = true;
-    m_sched->invoke([this] { rxStop_(); }, m_rxSid);
+    m_sched->invoke([this] { stop_0(); }, m_rxSid);
   }, m_txSid);
 }
 
-void Connection::rxStop_()
+void Connection::stop_0()
 {
   ZiAssert(m_loop.invoked(), "Zdbus", (), "stop off Rx", return);
   m_state = CxnState::Stopping;
   close_();
   m_input = {};
-  rxDrain_();
+  stop_1();
 }
 
-void Connection::rxDrain_()
+void Connection::stop_1()
 {
   unsigned budget = m_params.msgs;
   while (budget-- && m_output.count_()) {
@@ -487,22 +487,22 @@ void Connection::rxDrain_()
       }, m_txSid);
   }
   if (m_output.count_()) {
-    m_loop.run([this] { rxDrain_(); });
+    m_loop.run([this] { stop_1(); });
     return;
   }
   if (!m_loopStarted) {
     m_state = CxnState::Stopped;
-    m_sched->invoke([this] { txStopped_(); }, m_txSid);
+    m_sched->invoke([this] { stop_2(); }, m_txSid);
     return;
   }
   m_loop.stop([this](ZiEvent::StopResult) {
     m_loopStarted = false;
     m_state = CxnState::Stopped;
-    m_sched->invoke([this] { txStopped_(); }, m_txSid);
+    m_sched->invoke([this] { stop_2(); }, m_txSid);
   });
 }
 
-void Connection::txStopped_()
+void Connection::stop_2()
 {
   ZiAssert(m_sched->invoked(m_txSid), "Zdbus", (),
     "stop completion off Tx", return);

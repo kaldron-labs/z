@@ -23,7 +23,7 @@
 #include <zlib/ZtString.hh>
 
 #include "ZhttpTestUtil.hh"
-#include "ZrestITestPorts.hh"
+#include "zrestitestports.hh"
 
 enum { CaseTimeout = 15, ReadyTimeout = 5 };
 

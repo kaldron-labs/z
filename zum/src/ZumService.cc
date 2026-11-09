@@ -446,7 +446,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     appID{appID_}, managementAppID{managementAppID_} { }
 
   ~ServiceState() {
-    ZmAssert_(quiescent_());
+    ZmAssert_(quiescent());
     if (config.clientSecret.mutable_()) ZuClear(config.clientSecret);
     if (config.introspectionSecret.mutable_()) ZuClear(config.introspectionSecret);
     if (config.ssf.callbackAuth.mutable_()) ZuClear(config.ssf.callbackAuth);
@@ -461,7 +461,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     }
     return false;
   }
-  bool quiescent_() const {
+  bool quiescent() const {
     return !(ingress.load_() & ServiceIngress::Count) && !inflight && !settlePosted &&
       !registerArmed && !expiryArmed && !renewing && !keysRefreshing;
   }
@@ -514,18 +514,18 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     });
   }
 
-  void start_()
+  void start_0()
   {
-    ZmAssert_(quiescent_());
+    ZmAssert_(quiescent());
     startupError = ServiceError::OK;
     startResult = -1;
-    discovery_([this](bool ok) {
-      if (!ok) { finishStart_(ServiceError::Invalid); return; }
-      authenticate_([this](bool ok) {
-	if (!ok) { finishStart_(ServiceError::Unavailable); return; }
+    discovery_0([this](bool ok) {
+      if (!ok) { start_2(ServiceError::Invalid); return; }
+      authenticate([this](bool ok) {
+	if (!ok) { start_2(ServiceError::Unavailable); return; }
 	keys_(workloadManagement, [this](bool ok) {
-	  if (!ok || !verifyWorkload_()) {
-	    finishStart_(ServiceError::Unauthorized);
+	  if (!ok || !verifyWorkload()) {
+	    start_2(ServiceError::Unauthorized);
 	    return;
 	  }
 	  if (config.ssf.enabled &&
@@ -539,15 +539,15 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
 	    ssfKeys = ZuMv(next);
 	  }
 	  keys_(false, [this](bool ok) {
-	    if (!ok) { finishStart_(ServiceError::Unauthorized); return; }
+	    if (!ok) { start_2(ServiceError::Unauthorized); return; }
 	    if (!config.ssf.enabled ||
 		config.ssf.transmitterIssuer == config.managementIssuerURL) {
-	      started_();
+	      start_1();
 	      return;
 	    }
 	    ssfKeys_([this](bool ok) {
-	      if (!ok) { finishStart_(ServiceError::Unauthorized); return; }
-	      started_();
+	      if (!ok) { start_2(ServiceError::Unauthorized); return; }
+	      start_1();
 	    });
 	  });
 	});
@@ -555,17 +555,17 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     });
   }
 
-  void started_()
+  void start_1()
   {
-    if (!config.ssf.enabled) { finishStart_(ServiceError::OK); return; }
+    if (!config.ssf.enabled) { start_2(ServiceError::OK); return; }
     register_([self = this](bool ok) mutable {
-      self->finishStart_(ok ? ServiceError::OK : ServiceError::Unavailable);
+      self->start_2(ok ? ServiceError::OK : ServiceError::Unavailable);
     });
   }
 
   void register_(ServiceReadyFn complete)
   {
-    token_([self = this, complete = ZuMv(complete)](
+    token_0([self = this, complete = ZuMv(complete)](
         bool ok) mutable {
       if (!ok || !self->active_()) { complete(false); return; }
       String url = endpoint(self->config.managementURL, "/admin/apps/");
@@ -586,13 +586,13 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
           bool ok = self->active_() && response.status == 200 &&
             jsonLoad(response.body, self->config.responseMax, lease) &&
             lease.expiresIn >= 2 && lease.expires > Zm::now().sec();
-          if (ok) self->registerArm_(lease.expiresIn>>1);
+          if (ok) self->registerArm(lease.expiresIn>>1);
           complete(ok);
         });
     });
   }
 
-  void registerArm_(uint32_t delay)
+  void registerArm(uint32_t delay)
   {
     if (!active_()) return;
     if (registerArmed) config.scheduler->del(&registerTimer);
@@ -603,18 +603,18 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
           registerArmed = false;
           if (!active_()) return;
           register_([self = this](bool ok) mutable {
-            if (!ok) self->registerArm_(1);
+            if (!ok) self->registerArm(1);
           });
         });
       }, config.sid);
   }
 
-  void authenticate_(ServiceReadyFn complete)
+  void authenticate(ServiceReadyFn complete)
   {
-    authenticateURL_(tokenURL, true, ZuMv(complete));
+    authenticateURL(tokenURL, true, ZuMv(complete));
   }
 
-  void authenticateURL_(String url, bool management, ServiceReadyFn complete)
+  void authenticateURL(String url, bool management, ServiceReadyFn complete)
   {
     String form{"grant_type=client_credentials&scope=zum.catalog"};
     send_(ServiceHTTPRequest{.method = ServiceMethod::POST,
@@ -637,14 +637,14 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       }
       if (!ok && management && self->resourceTokenURL &&
 	  self->resourceTokenURL != self->tokenURL) {
-	self->authenticateURL_(self->resourceTokenURL, false, ZuMv(complete));
+	self->authenticateURL(self->resourceTokenURL, false, ZuMv(complete));
 	return;
       }
       complete(ok);
     });
   }
 
-  void discovery_(ServiceReadyFn complete)
+  void discovery_0(ServiceReadyFn complete)
   {
     String url, managementURL;
     if (!serviceIssuer(config.issuerURL, &url) ||
@@ -663,15 +663,15 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       if (!ok) { complete(false); return; }
       self->resourceTokenURL = ZuMv(token);
       self->jwksURL = ZuMv(jwks);
-      self->managementDiscovery_(ZuMv(managementURL), [self,
+      self->discovery_1(ZuMv(managementURL), [self,
           complete = ZuMv(complete)](bool ok) mutable {
         if (!ok) { complete(false); return; }
-        self->transmitterDiscovery_(ZuMv(complete));
+        self->discovery_2(ZuMv(complete));
       });
     });
   }
 
-  void managementDiscovery_(String url, ServiceReadyFn complete)
+  void discovery_1(String url, ServiceReadyFn complete)
   {
     send_(ServiceHTTPRequest{.url = ZuMv(url)}, [self = this,
         complete = ZuMv(complete)](ServiceHTTPResponse response) mutable {
@@ -688,7 +688,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     });
   }
 
-  void transmitterDiscovery_(ServiceReadyFn complete)
+  void discovery_2(ServiceReadyFn complete)
   {
     if (!config.ssf.enabled) { complete(true); return; }
     if (config.ssf.transmitterIssuer == config.managementIssuerURL) {
@@ -774,7 +774,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     }
   }
 
-  void scheduleExpiry_()
+  void scheduleExpiry()
   {
     if (expiryArmed) {
       config.scheduler->del(&expiryTimer);
@@ -794,12 +794,12 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
           expiryArmed = false;
           if (!active_()) return;
           expire_();
-          scheduleExpiry_();
+          scheduleExpiry();
         });
       }, config.sid);
   }
 
-  void setRefreshRevocationFn_(ServiceRefreshFn fn)
+  void refreshFn_(ServiceRefreshFn fn)
   {
     refreshFn = ZuMv(fn);
   }
@@ -866,12 +866,12 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     if (refreshFn) refreshFn(RefreshID{
       .issuerURL = ZuMv(subject.issuerURL), .familyID = ZuMv(subject.familyID)},
       subject.expires);
-    scheduleExpiry_();
+    scheduleExpiry();
     complete(ServiceError::OK);
   }
 
 
-  void refreshKeys_(ServiceReadyFn complete)
+  void refreshKeys(ServiceReadyFn complete)
   {
     keyWaiters.push(ZuMv(complete));
     if (keysRefreshing) return;
@@ -887,7 +887,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     });
   }
 
-  bool verifyWorkload_()
+  bool verifyWorkload()
   {
     JWTHeader header;
     if (!jwtHeader(accessToken, config.jwtLimits, header)) return false;
@@ -909,13 +909,13 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     return true;
   }
 
-  void renewed_(bool ok)
+  void token_1(bool ok)
   {
     renewing = false;
     completeAll(tokenWaiters, ok);
   }
 
-  void token_(ServiceReadyFn complete)
+  void token_0(ServiceReadyFn complete)
   {
     if (!active_()) { complete(false); return; }
     int64_t now = Zm::now().sec();
@@ -926,16 +926,16 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     tokenWaiters.push(ZuMv(complete));
     if (renewing) return;
     renewing = true;
-    authenticate_([self = this](bool ok) mutable {
-      if (!ok || !self->active_()) { self->renewed_(false); return; }
+    authenticate([self = this](bool ok) mutable {
+      if (!ok || !self->active_()) { self->token_1(false); return; }
       self->keys_(true, [self](bool ok) mutable {
-        self->renewed_(ok && self->active_() &&
-          self->verifyWorkload_());
+        self->token_1(ok && self->active_() &&
+          self->verifyWorkload());
       });
     });
   }
 
-  void introspect_(String token, ServiceVerifyFn complete)
+  void introspect(String token, ServiceVerifyFn complete)
   {
     if (!config.introspectionURL || !config.introspectionClientID ||
         !config.introspectionSecret) {
@@ -1011,7 +1011,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
       complete(ServiceError::Unauthorized, ServicePrincipal{});
       return;
     }
-    refreshKeys_([self = this, token = ZuMv(token),
+    refreshKeys([self = this, token = ZuMv(token),
         complete = ZuMv(complete)](bool ok) mutable {
       Principal principal;
       if (!self->active_()) {
@@ -1037,13 +1037,13 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
         complete(ServiceError::Unauthorized, ServicePrincipal{});
         return;
       }
-      self->introspect_(ZuMv(token), ZuMv(complete));
+      self->introspect(ZuMv(token), ZuMv(complete));
     });
   }
 
   void publish_(ServiceManifest manifest, ServiceProtocolFn complete)
   {
-    token_([self = this, manifest = ZuMv(manifest),
+    token_0([self = this, manifest = ZuMv(manifest),
         complete = ZuMv(complete)](bool ok) mutable {
       if (!ok || !manifest.revision) {
         complete(ServiceProtocolResult{.error = ok ? ServiceError::Invalid :
@@ -1069,7 +1069,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     });
   }
 
-  void finishStart_(int error)
+  void start_2(int error)
   {
     startupError = error;
     startResult = error == ServiceError::OK;
@@ -1102,7 +1102,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
     if (!set->count_()) set = nullptr;
   }
 
-  bool clearRuntime_()
+  bool clearRuntime()
   {
     unsigned left = ServiceWork::Batch;
     clearKeys_(keys, left);
@@ -1142,7 +1142,7 @@ friend inline ZuStringT<"Zum.ZumService.ServiceState"> ZmNHeapID(ServiceState *)
         owner->started(true);
         return;
       }
-      if (!clearRuntime_()) { settle_(); return; }
+      if (!clearRuntime()) { settle_(); return; }
       bool failedStart = startResult == 0;
       startResult = -1;
       if (failedStart) owner->started(false);
@@ -1185,7 +1185,7 @@ void Service::start_()
 {
   if (!m_state) { Engine::started(false); return; }
   auto state = m_state.ptr();
-  state->post([state]() { state->start_(); });
+  state->post([state]() { state->start_0(); });
 }
 
 void Service::stop_()
@@ -1215,17 +1215,17 @@ void Service::verify(String accessToken, ServiceVerifyFn complete)
     });
 }
 
-void Service::setRefreshRevocationFn(ServiceRefreshFn fn)
+void Service::refreshFn(ServiceRefreshFn fn)
 {
   if (!m_state) return;
   auto state = m_state.ptr();
   if (Engine::state() == ZmEngineState::Stopped) {
-    state->setRefreshRevocationFn_(ZuMv(fn));
+    state->refreshFn_(ZuMv(fn));
     return;
   }
   if (Engine::state() != ZmEngineState::Running || !state->admit_()) return;
   state->submit_(ZuMv(fn), ZuVoid{},
-    [state](ServiceRefreshFn fn, ZuVoid) { state->setRefreshRevocationFn_(ZuMv(fn)); });
+    [state](ServiceRefreshFn fn, ZuVoid) { state->refreshFn_(ZuMv(fn)); });
 }
 
 void Service::receiveSET(ServiceSETRequest request, ServiceSETDoneFn complete)
@@ -1259,7 +1259,7 @@ void Service::publish(ServiceManifest manifest, ServiceProtocolFn complete)
 void Service::final()
 {
   ZmAssert_(Engine::state() == ZmEngineState::Stopped);
-  if (m_state) ZmAssert_(m_state->quiescent_());
+  if (m_state) ZmAssert_(m_state->quiescent());
   m_state = nullptr;
 }
 

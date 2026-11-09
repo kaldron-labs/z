@@ -16,7 +16,7 @@
 using namespace ZuTestUtil;
 using namespace Zgrpc;
 
-#include "ZgrpcWire.hh"
+#include "zgrpcwire.hh"
 
 struct ClientRx : ZmObject, ZmNHeap<ClientRx> {
 friend inline ZuStringT<"Zgrpc.Wire.ClientRx"> ZmNHeapID(ClientRx *);

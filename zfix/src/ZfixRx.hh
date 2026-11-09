@@ -89,7 +89,7 @@ public:
     return s;
   }
 
-  void framingError_() { ++m_stats.framingErrors; }
+  void framingError() { ++m_stats.framingErrors; }
 
   using Base::expected_;
   using Base::retained_;
@@ -112,16 +112,16 @@ public:
 	m_session.config_().mode == Transport::Raw || m_session.connection_() ||
 	m_session.state_() != State::Disconnected || m_first ||
 	(p.gapBegin ? p.gapEnd <= p.gapBegin : p.gapEnd != 0)) return false;
-    if (m_session.resetOnOpen_() && (p.received != 1 || p.processed != 1 || p.gapBegin))
+    if (m_session.resetOnOpen() && (p.received != 1 || p.processed != 1 || p.gapBegin))
       return false;
     return Base::restore_(p.received, p.processed,
       p.gapBegin ? Span{p.gapBegin, p.gapEnd - p.gapBegin} : Span{});
   }
 
-  bool resetOnOpen_(uint64_t epoch, bool enabled = true) {
+  bool resetOnOpen(uint64_t epoch, bool enabled = true) {
     if (enabled && (m_first || Base::retained_() ||
 	Base::received_() != 1 || Base::expected_() != 1)) return false;
-    return m_session.resetOnOpen_(epoch, enabled);
+    return m_session.resetOnOpen(epoch, enabled);
   }
 
   SessionEvent open_(ZuTime now) {
@@ -142,8 +142,8 @@ public:
     return opened(m_session.replace_(now));
   }
 
-  void logonSent_(uint64_t connection, uint64_t seqNo, ZuTime now) {
-    apply(m_session.logonSent_(connection, seqNo, now));
+  void logonSent(uint64_t connection, uint64_t seqNo, ZuTime now) {
+    apply(m_session.logonSent(connection, seqNo, now));
   }
 
   void admit_(uint64_t connection, uint64_t ticket, bool accepted, ZuTime now) {
@@ -161,13 +161,13 @@ public:
 
   void lost_(uint64_t connection) { apply(m_session.lost_(connection)); }
 
-  void outputFailed_(uint64_t connection, uint64_t epoch) {
-    if (epoch == m_session.epoch_()) apply(m_session.outputFailed_(connection));
+  void outputFailed(uint64_t connection, uint64_t epoch) {
+    if (epoch == m_session.epoch_()) apply(m_session.outputFailed(connection));
   }
 
   void logout_(uint64_t connection, ZuTime now) { apply(m_session.logout_(connection, now)); }
 
-  bool drainBegin_(uint64_t connection, ZuTime now) {
+  bool drainBegin(uint64_t connection, ZuTime now) {
     auto e = m_session.drain_(connection, now);
     bool accepted = e.actions & SessionAction::Drain;
     if (accepted && !impl()->workIdleRx()) {
@@ -180,21 +180,21 @@ public:
   bool prepareReset_(uint64_t connection, uint64_t epoch, uint64_t nextEpoch,
       bool initiator, ZuTime now, unsigned path = ResetPath::Live) {
     if (m_first || !rxDone()) return false;
-    auto e = m_session.resetPrepare_(connection, epoch, nextEpoch, initiator, now, path);
+    auto e = m_session.resetPrepare(connection, epoch, nextEpoch, initiator, now, path);
     if (!(e.actions & SessionAction::ResetPrepare)) return false;
     Base::hold_(); emit(e); return true;
   }
 
-  bool startReset_(uint64_t connection, uint64_t epoch, ZuTime now) {
+  bool startReset(uint64_t connection, uint64_t epoch, ZuTime now) {
     if (epoch != m_session.epoch_()) return false;
-    auto e = m_session.resetStart_(connection, now);
+    auto e = m_session.resetStart(connection, now);
     if (!(e.actions & SessionAction::Changed)) return false;
     apply(e); return true;
   }
 
-  bool disconnectReset_(uint64_t connection, uint64_t epoch) {
+  bool disconnectReset(uint64_t connection, uint64_t epoch) {
     if (epoch != m_session.epoch_()) return false;
-    auto e = m_session.resetDisconnect_(connection);
+    auto e = m_session.resetDisconnect(connection);
     if (!(e.actions & SessionAction::Close)) return false;
     apply(e); return true;
   }
@@ -203,7 +203,7 @@ public:
 
   void probe_(uint64_t connection, ZuTime now) { apply(m_session.probe_(connection, now)); }
 
-  void txRecovery_(uint64_t connection, bool done, ZuTime now) {
+  void txRecovery(uint64_t connection, bool done, ZuTime now) {
     if (connection != m_session.connection_() || m_session.state_() != State::Established) return;
     emit(m_session.recovery_(connection, rxDone(), done, now));
   }
@@ -222,34 +222,34 @@ public:
       return;
     switch (notice.kind) {
       case TxNoticeKind::ResetAborted: {
-	if (!m_session.resetMatches_(context.connection, context.epoch,
+	if (!m_session.resetMatches(context.connection, context.epoch,
 	    notice.nextEpoch, notice.marker)) break;
-	auto e = m_session.resetAbort_(context.connection, notice.nextEpoch, notice.marker);
+	auto e = m_session.resetAbort(context.connection, notice.nextEpoch, notice.marker);
 	e.ticket = notice.request;
 	apply(e);
 	break;
       }
       case TxNoticeKind::ResetReady: {
 	if (!notice.request || notice.loaded != 1 || notice.published != 1 ||
-	    notice.acknowledged != 1 || !m_session.resetMatches_(context.connection,
+	    notice.acknowledged != 1 || !m_session.resetMatches(context.connection,
 	      context.epoch, notice.nextEpoch, notice.marker)) break;
 	auto previous = progress_();
 	if (!Base::reset_(1)) {
 	  apply(m_session.fault_(context.connection, SessionError::Protocol, 34, now, false));
 	  break;
 	}
-	auto e = m_session.resetReady_(context.connection, notice.nextEpoch, now, associated);
+	auto e = m_session.resetReady(context.connection, notice.nextEpoch, now, associated);
 	e.ticket = notice.request;
 	m_logonGap = 0;
 	impl()->epochRx(m_session.connection_(), context.epoch, notice.nextEpoch, previous);
 	emit(e);
 	break;
       }
-      case TxNoticeKind::Logon: logonSent_(context.connection, context.seqNo, now); break;
+      case TxNoticeKind::Logon: logonSent(context.connection, context.seqNo, now); break;
       case TxNoticeKind::Probe:
-	apply(m_session.probeSent_(context.connection, notice.marker, context.seqNo, now));
+	apply(m_session.probeSent(context.connection, notice.marker, context.seqNo, now));
 	break;
-      case TxNoticeKind::Recovery: txRecovery_(context.connection, notice.done, now); break;
+      case TxNoticeKind::Recovery: txRecovery(context.connection, notice.done, now); break;
       case TxNoticeKind::DrainBoundary:
 	apply(m_session.drainTx_(context.connection, notice.marker, notice.loaded, now)); break;
       case TxNoticeKind::Drained: apply(m_session.flushed_(context.connection)); break;
@@ -267,7 +267,7 @@ public:
     }
     if (m_session.config_().mode != Transport::Raw) {
       if (connection == m_session.connection_() &&
-	  (m_session.state_() == State::Resetting || m_session.resetPreparing_()))
+	  (m_session.state_() == State::Resetting || m_session.resetPreparing()))
 	return RxResult::Blocked;
       auto &input = msg->data();
       if (!*input.received) {
@@ -331,7 +331,7 @@ private:
       if (!input.error) input.error = Session::read(input.frame, input.control, m_limits.codec);
     } else input.error = impl()->sessionRx(input, m_limits.codec);
     if (input.error) ++m_stats.decodeErrors;
-    input.fault = m_session.validateSession_(input);
+    input.fault = m_session.validateSession(input);
     if (!input.seqNo) {
       bool logout = state == State::Established &&
 	!m_session.config_().identity.mismatch(input);
@@ -388,7 +388,7 @@ private:
   void first() {
     auto msg = m_first;
     auto &input = msg->data();
-    auto e = m_session.peerLogon_(m_session.connection_(), input,
+    auto e = m_session.peerLogon(m_session.connection_(), input,
       input.control.template p<Session::Logon>(), Base::expected_(), impl()->nowRx());
     if (e.state == State::Established) {
       e.actions &= ~SessionAction::RequestGap; // ZmPQRx owns gap notifications.
@@ -478,7 +478,7 @@ private:
 	  control.template p<Session::HeartBt>().testReqID, input.received), msg);
 	break;
       case Session::Msg::Index<Session::Logout>{}: {
-	auto e = m_session.peerLogoutEarly_(m_session.connection_());
+	auto e = m_session.peerLogoutEarly(m_session.connection_());
 	emit(e, msg);
 	input.logoutReply = bool(e.actions & SessionAction::Observe);
 	return; // Ordered disposition must still complete the close.
@@ -509,7 +509,7 @@ private:
 	input.fault.error, tag, impl()->nowRx(), true));
       return;
     }
-    m_session.activity_(input.connection, input.received);
+    m_session.activity(input.connection, input.received);
     if (input.early) return;
     auto &control = input.control;
     switch (control.type()) {
@@ -536,7 +536,7 @@ private:
       }
       case Session::Msg::Index<Session::Logout>{}: {
 	if (input.connection == m_session.connection_()) {
-	  auto e = m_session.peerLogout_(m_session.connection_(), impl()->nowRx());
+	  auto e = m_session.peerLogout(m_session.connection_(), impl()->nowRx());
 	  if (input.logoutReply) e.actions &= ~SessionAction::Observe;
 	  apply(e, msg);
 	} else if (!input.logoutReply) impl()->sessionRx(ZmRef<Msg>{msg});

@@ -45,7 +45,7 @@ static ZtString<> readFile_(const Zi::Path &path)
   return data;
 }
 
-static void closeQLog_(ZquicLogger::Trace &trace)
+static void closeQLog(ZquicLogger::Trace &trace)
 {
   ZmBlock<>{}([&trace](auto wake) {
     ZquicLogger::close(trace, ZuMv(wake));
@@ -110,7 +110,7 @@ friend inline ZuStringT<"Zquic.Test.TLSPeer"> ZmNHeapID(TLSPeer *);
     crypto{crypto_}, tx(4), rx(4) { }
 };
 
-bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
+bool enqueueFlight(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
     size_t offsets[5])
 {
   for (size_t epoch = 0; epoch < 4; ++epoch) {
@@ -132,7 +132,7 @@ bool enqueueFlight_(TLSPeer &peer, TLSQueue &queue, const uint8_t *data,
   return true;
 }
 
-bool handleTLS_(
+bool handleTLS(
   TLSPeer &dst, TLSQueue &out, const TLSMessage *msg)
 {
   ZmRef<ZiIOBuf> buf =
@@ -152,27 +152,27 @@ bool handleTLS_(
     if (!in) return true;
   }
   int n = dst.crypto->handleTLSMessage(buf.ptr(), offsets, inEpoch, in);
-  return n >= 0 && enqueueFlight_(dst, out, buf->data(), offsets);
+  return n >= 0 && enqueueFlight(dst, out, buf->data(), offsets);
 }
 
-bool drainTLS_(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
+bool drainTLS(TLSPeer &dst, TLSQueue &in, TLSQueue &out)
 {
   while (auto msg = in.shift()) {
     if (dst.crypto->tlsReadEpoch() != msg->epoch) return false;
-    if (!handleTLS_(dst, out, msg.ptr())) return false;
+    if (!handleTLS(dst, out, msg.ptr())) return false;
   }
   return true;
 }
 
-bool exchangeTLS_(Zquic::Crypto &client, Zquic::Crypto &server)
+bool exchangeTLS(Zquic::Crypto &client, Zquic::Crypto &server)
 {
   ZuPtr<TLSPeer> c = new TLSPeer{&client};
   ZuPtr<TLSPeer> s = new TLSPeer{&server};
   TLSQueue c2s, s2c;
-  if (!handleTLS_(*c, c2s, nullptr)) return false;
+  if (!handleTLS(*c, c2s, nullptr)) return false;
   for (unsigned round = 0; round < 16; ++round) {
-    if (!drainTLS_(*s, c2s, s2c)) return false;
-    if (!drainTLS_(*c, s2c, c2s)) return false;
+    if (!drainTLS(*s, c2s, s2c)) return false;
+    if (!drainTLS(*c, s2c, c2s)) return false;
     if (client.oneRTTReady() && server.oneRTTReady())
       return true;
     if (!c2s.count_() && !s2c.count_()) break;
@@ -321,7 +321,7 @@ void testMessageLevelTLSHandshake()
   Zquic::TransportParams clientParams;
   clientParams.maxUDPPayloadSize = 1400;
   clientParams.initialMaxData = 8192;
-  clientParams.initialMaxStreamsBidi = 8;
+  clientParams.initMaxStreamsDuplex = 8;
   clientParams.initialSCID = "clienttp";
 
   Zquic::TransportParams serverParams;
@@ -343,7 +343,7 @@ void testMessageLevelTLSHandshake()
   ZuCHECK(!client.earlyDataEnabled() && !server.earlyDataEnabled(),
     "0-RTT enabled in TLS message path");
 
-  ZuCHECK(exchangeTLS_(client, server),
+  ZuCHECK(exchangeTLS(client, server),
     "message-level TLS handshake did not complete");
   ZuCHECK(client.oneRTTReady() && server.oneRTTReady(),
     "1-RTT readiness not set after TLS handshake");
@@ -460,7 +460,7 @@ void testZeroRTTPktDrop()
       server.diag().zeroRTTRejected == 1,
     "0-RTT reject affected handshake readiness");
 #ifdef Zquic_DEBUG
-	closeQLog_(trace);
+	closeQLog(trace);
 	ZquicLogger::stop();
 	ZquicLogger::final(trace);
 	ZtString<> qlog = readFile_(qlogPath);

@@ -690,7 +690,7 @@ struct Client : public Zhttp::Client<Client, Pool> {
   void idle() { ZhttpUtil::Runtime::post(); }
 
   void archive(ReqBuilder *) {
-    produce_();
+    produce();
     if (m_generated == m_options->requests) seal(0);
   }
 
@@ -700,13 +700,13 @@ struct Client : public Zhttp::Client<Client, Pool> {
       m_url = url;
       unsigned n = options->requests;
       if (n > options->concurrency) n = options->concurrency;
-      while (n--) produce_();
+      while (n--) produce();
       if (m_generated == options->requests) seal(0);
     });
   }
 
 private:
-  void produce_() {
+  void produce() {
     if (!m_options || m_generated >= m_options->requests) return;
     ZmRef<ReqBuilder> request = new ReqBuilder;
     initReq(*request, *m_options, *m_url, m_generated++);

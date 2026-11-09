@@ -299,12 +299,12 @@ public:
   ZmRef<ZiIOBuf> allocBuf(unsigned headRoom) {
     return m_ops->alloc(m_ctx, headRoom);
   }
-  bool allocatedBuf_(const ZiIOBuf *buf) const {
+  bool allocatedBuf(const ZiIOBuf *buf) const {
     return m_ops->allocated && m_ops->allocated(m_ctx, buf);
   }
   template <typename Buf,
     typename = ZuIfT<ZuIsSame<ZuDecay<Buf>, ZmRef<ZiIOBuf>>{}>>
-  bool allocatedBuf_(Buf &&buf) {
+  bool allocatedBuf(Buf &&buf) {
     m_span = {};
     ZmRef<ZiIOBuf> held = ZuFwd<Buf>(buf);
     if (failed() || !held || held->failed() || !m_ops->takeAllocated ||

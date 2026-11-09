@@ -36,7 +36,7 @@ static RxMsg header(uint64_t seqNo = 1, ZuCSpan version = "FIX.4.4")
 static SessionEvent start(LinkState &s, uint64_t seqNo = 1)
 {
   auto e = s.open_(ZuTime{100});
-  if (s.config_().initiator) s.logonSent_(e.connection, seqNo, ZuTime{102});
+  if (s.config_().initiator) s.logonSent(e.connection, seqNo, ZuTime{102});
   return e;
 }
 static SessionEvent establish(LinkState &s, uint64_t peerSeq = 1, uint64_t expected = 1,
@@ -45,10 +45,10 @@ static SessionEvent establish(LinkState &s, uint64_t peerSeq = 1, uint64_t expec
   auto e = start(s, localSeq);
   Session::Logon logon; logon.nextExpected = nextExpected; logon.defaultAppVerID = "9";
   auto h = header(peerSeq, Version::Wire::v2s(s.config_().identity.version));
-  auto admission = s.peerLogon_(e.connection, h, logon, expected, ZuTime{102});
+  auto admission = s.peerLogon(e.connection, h, logon, expected, ZuTime{102});
   s.admit_(e.connection, admission.ticket, true, ZuTime{103});
-  if (!s.config_().initiator) s.logonSent_(e.connection, localSeq, ZuTime{104});
-  return s.peerLogon_(e.connection, h, logon, expected, ZuTime{104});
+  if (!s.config_().initiator) s.logonSent(e.connection, localSeq, ZuTime{104});
+  return s.peerLogon(e.connection, h, logon, expected, ZuTime{104});
 }
 static SessionEvent recover(LinkState &s, ZuTime now = ZuTime{105})
 {
@@ -67,27 +67,27 @@ static void initiator()
   ZuCheck(busy.error == E::Busy && (busy.actions & A::Refuse) &&
     busy.connection == connection && busy.change == e.change);
   Session::Logon peer;
-  e = s.peerLogon_(connection, header(), peer, 1, ZuTime{102});
-  ZuCheck((e.actions & A::Admission) && e.ticket && s.admissionPending_());
+  e = s.peerLogon(connection, header(), peer, 1, ZuTime{102});
+  ZuCheck((e.actions & A::Admission) && e.ticket && s.admissionPending());
   auto ticket = e.ticket;
-  ZuCheck(!s.peerLogon_(connection, header(), peer, 1, ZuTime{102}).actions);
+  ZuCheck(!s.peerLogon(connection, header(), peer, 1, ZuTime{102}).actions);
   ZuCheck(!s.admit_(connection, ticket + 1, true, ZuTime{103}).actions);
   e = s.admit_(connection, ticket, true, ZuTime{103});
-  ZuCheck((e.actions & A::RetryInput) && !s.admissionPending_());
-  ZuCheck(!s.peerLogon_(connection, header(), peer, 1, ZuTime{103}).actions);
+  ZuCheck((e.actions & A::RetryInput) && !s.admissionPending());
+  ZuCheck(!s.peerLogon(connection, header(), peer, 1, ZuTime{103}).actions);
   ZuCheck(s.state_() == State::Logon && !s.ready_());
-  e = s.logonSent_(connection, 1, ZuTime{104});
+  e = s.logonSent(connection, 1, ZuTime{104});
   ZuCheck(e.actions & A::RetryInput);
-  e = s.peerLogon_(connection, header(), peer, 1, ZuTime{104});
+  e = s.peerLogon(connection, header(), peer, 1, ZuTime{104});
   ZuCheck(e.state == State::Established && !(e.actions & (A::SendProbe | A::Ready)) &&
-    !s.ready_() && !s.txDone_() && !s.probeID_().length());
+    !s.ready_() && !s.txDone_() && !s.probeID().length());
   ZuCheck(!*s.deadline_(T::Logon) && s.deadline_(T::Receive) == ZuTime{140});
   auto before = e.change;
   e = s.recovery_(connection, true, false, ZuTime{105});
   ZuCheck(!s.ready_() && !(e.actions & A::Ready));
   e = recover(s);
   ZuCheck((e.actions & A::Ready) && s.ready_() && e.change > before);
-  ZuCheck(!*s.deadline_(T::Probe) && !s.probeID_().length());
+  ZuCheck(!*s.deadline_(T::Probe) && !s.probeID().length());
   ZuCheck(!s.admit_(connection, ticket, true, ZuTime{106}).actions);
 }
 
@@ -99,13 +99,13 @@ static void acceptor()
   auto connection = e.connection;
   ZuCheck(e.state == State::Accepting && !(e.actions & A::SendLogon));
   Session::Logon peer; peer.heartBtInt = 7;
-  e = s.peerLogon_(connection, header(), peer, 1, ZuTime{101});
+  e = s.peerLogon(connection, header(), peer, 1, ZuTime{101});
   ZuCheck((e.actions & A::Admission) && s.heartBtInt_() == 7 && e.heartBtInt == 7);
   auto ticket = e.ticket;
   e = s.admit_(connection, ticket, true, ZuTime{102});
   ZuCheck(e.state == State::Logon && (e.actions & A::SendLogon));
-  s.logonSent_(connection, 1, ZuTime{103});
-  e = s.peerLogon_(connection, header(), peer, 1, ZuTime{103});
+  s.logonSent(connection, 1, ZuTime{103});
+  e = s.peerLogon(connection, header(), peer, 1, ZuTime{103});
   ZuCheck(e.state == State::Established && !(e.actions & (A::SendProbe | A::Ready)));
   ZuCheck(!*s.deadline_(T::Probe) &&
     s.deadline_(T::Receive) == ZuTime(111, 400000000));
@@ -115,7 +115,7 @@ static void acceptor()
 
   LinkState denied{config(false)};
   e = denied.open_(ZuTime{100}); connection = e.connection;
-  e = denied.peerLogon_(connection, header(), peer, 1, ZuTime{101});
+  e = denied.peerLogon(connection, header(), peer, 1, ZuTime{101});
   e = denied.admit_(connection, e.ticket, false, ZuTime{102});
   ZuCheck(e.error == E::Admission && e.state == State::Logout && (e.actions & A::SendLogout));
   ZuCheck(!denied.ready_() && !*denied.deadline_(T::Logon));
@@ -137,7 +137,7 @@ static void identities()
   ZuCheck(cfg.identity.mismatch(h) == 56);
   LinkState s{ZuMv(cfg)};
   auto e = s.open_(ZuTime{100});
-  e = s.peerLogon_(e.connection, h, Session::Logon{}, 1, ZuTime{101});
+  e = s.peerLogon(e.connection, h, Session::Logon{}, 1, ZuTime{101});
   ZuCheck(e.error == E::Identity && e.tag == 56 && e.state == State::Closing);
   ZuCheck((e.actions & A::Refuse) && !(e.actions & (A::Admission | A::SendLogout)));
 }
@@ -176,10 +176,10 @@ static void invalidLogon()
   auto invalid = [](unsigned mode, RxMsg h, Session::Logon peer) {
     LinkState s{config(true, mode)};
     auto e = start(s);
-    e = s.peerLogon_(e.connection, h, peer, 1, ZuTime{103});
+    e = s.peerLogon(e.connection, h, peer, 1, ZuTime{103});
     if (e.actions & A::Admission) {
       s.admit_(e.connection, e.ticket, true, ZuTime{103});
-      e = s.peerLogon_(e.connection, h, peer, 1, ZuTime{104});
+      e = s.peerLogon(e.connection, h, peer, 1, ZuTime{104});
     }
     return e;
   };
@@ -209,7 +209,7 @@ static void invalidLogon()
   ZuCheck(e.actions == A::NeedReset);
   LinkState low{config()};
   e = start(low);
-  e = low.peerLogon_(e.connection, header(1), Session::Logon{}, 2, ZuTime{103});
+  e = low.peerLogon(e.connection, header(1), Session::Logon{}, 2, ZuTime{103});
   ZuCheck(e.error == E::Sequence && !(e.actions & A::Admission));
 }
 
@@ -219,14 +219,14 @@ static void clocks()
   LinkState s{config()};
   establish(s); recover(s);
   auto connection = s.connection_();
-  s.activity_(connection, ZuTime{120});
+  s.activity(connection, ZuTime{120});
   auto e = s.timer_(connection, T::Receive, ZuTime{141});
   ZuCheck(e.actions == A::Timers && s.deadline_(T::Receive) == ZuTime{156});
   e = s.timer_(connection, T::Receive, ZuTime{156});
   ZuCheck(e.actions & A::SendProbe);
   ZuCheck(s.deadline_(T::Probe) == ZuTime{192});
   ZuCheck(!*s.deadline_(T::Receive));
-  s.activity_(connection, ZuTime{170});
+  s.activity(connection, ZuTime{170});
   ZuCheck(!*s.deadline_(T::Receive));
   e = s.heartbeat_(connection, "123", ZuTime{180});
   ZuCheck(!(e.actions & A::Ready) && s.deadline_(T::Probe) == ZuTime{192});
@@ -240,9 +240,9 @@ static void clocks()
   ZuCheck(e.error == E::Timeout && e.state == State::Closing);
   LinkState admission{config(false)};
   e = admission.open_(ZuTime{100});
-  auto pending = admission.peerLogon_(e.connection, header(), Session::Logon{}, 1, ZuTime{101});
+  auto pending = admission.peerLogon(e.connection, header(), Session::Logon{}, 1, ZuTime{101});
   e = admission.timer_(e.connection, T::Logon, ZuTime{110});
-  ZuCheck(e.error == E::Timeout && !admission.admissionPending_());
+  ZuCheck(e.error == E::Timeout && !admission.admissionPending());
   ZuCheck(!admission.admit_(e.connection, pending.ticket, true, ZuTime{111}).actions);
 }
 
@@ -261,14 +261,14 @@ static void recovery()
   e = s.recovery_(connection, true, false, ZuTime{109});
   ZuCheck((e.actions & A::Pause) && !s.ready_() && e.change > change);
   e = s.probe_(connection, ZuTime{110});
-  SessionString id{s.probeID_()};
+  SessionString id{s.probeID()};
   ZuCheck(e.actions & A::SendProbe);
   e = s.recovery_(connection, true, true, ZuTime{111});
-  ZuCheck((e.actions & A::Ready) && s.ready_() && s.probeID_() == id);
-  s.probeSent_(connection, s.probe_(), 7, ZuTime{112});
+  ZuCheck((e.actions & A::Ready) && s.ready_() && s.probeID() == id);
+  s.probeSent(connection, s.probe_(), 7, ZuTime{112});
   e = s.heartbeat_(connection, id, ZuTime{113});
   ZuCheck((e.actions & A::Ackd) && e.acknowledged == 8 && s.ready_());
-  e = s.peerLogoutEarly_(connection);
+  e = s.peerLogoutEarly(connection);
   ZuCheck((e.actions & A::Pause) && !s.ready_());
   ZuCheck(!(recover(s, ZuTime{114}).actions & A::Ready) && !s.ready_());
 }
@@ -282,7 +282,7 @@ static void logoutReconnect()
   auto e = s.logout_(connection, ZuTime{120});
   ZuCheck(e.state == State::Logout && (e.actions & A::SendLogout) && !(e.actions & A::Failure));
   ZuCheck(s.deadline_(T::Logout) == ZuTime{122} && !s.ready_());
-  e = s.peerLogout_(connection, ZuTime{121});
+  e = s.peerLogout(connection, ZuTime{121});
   ZuCheck(e.state == State::Closing && !(e.actions & A::SendLogout)
     && (e.actions & A::CloseAfterTx));
   e = s.closed_(connection);
@@ -291,11 +291,11 @@ static void logoutReconnect()
   e = s.open_(ZuTime{130});
   ZuCheck(e.state == State::Logon && e.connection != connection && e.epoch == 17);
   ZuCheck(!s.lost_(connection).actions && !s.timer_(connection, T::Logon, ZuTime{140}).actions);
-  e = s.outputFailed_(e.connection);
+  e = s.outputFailed(e.connection);
   ZuCheck(e.state == State::Closing && e.error == E::Output && (e.actions & A::Close));
 
   LinkState peer{config()}; establish(peer); recover(peer);
-  e = peer.peerLogout_(peer.connection_(), ZuTime{120});
+  e = peer.peerLogout(peer.connection_(), ZuTime{120});
   ZuCheck((e.actions & A::SendLogout) && (e.actions & A::CloseAfterTx));
   e = peer.timer_(peer.connection_(), T::Logout, ZuTime{122});
   ZuCheck(e.actions & A::Close);
@@ -308,17 +308,17 @@ static void zeroHeartbeat()
   LinkState s{ZuMv(cfg)};
   auto e = start(s);
   Session::Logon peer; peer.heartBtInt = 0;
-  e = s.peerLogon_(e.connection, header(), peer, 1, ZuTime{102});
+  e = s.peerLogon(e.connection, header(), peer, 1, ZuTime{102});
   s.admit_(e.connection, e.ticket, true, ZuTime{103});
-  e = s.peerLogon_(e.connection, header(), peer, 1, ZuTime{104});
+  e = s.peerLogon(e.connection, header(), peer, 1, ZuTime{104});
   ZuCheck(!(e.actions & (A::SendProbe | A::Ready)) && !*s.deadline_(T::Probe));
   recover(s);
   ZuCheck(s.ready_() && !*s.deadline_(T::Receive) && !e.heartBtInt);
   e = s.probe_(e.connection, ZuTime{120});
   ZuCheck(e.actions & A::SendProbe);
   ZuCheck(s.deadline_(T::Probe) == ZuTime{130});
-  SessionString id{s.probeID_()};
-  s.probeSent_(1, s.probe_(), 2, ZuTime{121});
+  SessionString id{s.probeID()};
+  s.probeSent(1, s.probe_(), 2, ZuTime{121});
   e = s.heartbeat_(1, id, ZuTime{122});
   ZuCheck((e.actions & A::Ackd) && e.acknowledged == 3 && s.ready_() &&
     !*s.deadline_(T::Receive) && !*s.deadline_(T::Probe));
@@ -326,7 +326,7 @@ static void zeroHeartbeat()
   e = s.drainTx_(1, e.drain, 4, ZuTime{124});
   ZuCheck((e.actions & A::SendProbe) && !*s.deadline_(T::Receive) &&
     s.deadline_(T::Probe) == ZuTime{134});
-  id = s.probeID_(); s.probeSent_(1, s.probe_(), 4, ZuTime{125});
+  id = s.probeID(); s.probeSent(1, s.probe_(), 4, ZuTime{125});
   e = s.heartbeat_(1, id, ZuTime{126});
   ZuCheck((e.actions & (A::Ackd | A::Drained)) == (A::Ackd | A::Drained) &&
     e.acknowledged == 5 && s.drained_() && !*s.deadline_(T::Receive) &&
@@ -388,7 +388,7 @@ static void configBounds()
     for (bool driver : {false, true}) {
       LinkState epoch{config(driver, mode), 0}; e = epoch.open_(ZuTime{100});
       ZuCheck(e.error == E::Config && (e.actions & A::Refuse) && !e.connection
-	&& !epoch.resetOnOpen_(0));
+	&& !epoch.resetOnOpen(0));
     }
   LinkState raw{config(false, Transport::Raw), 0};
   ZuCheck(raw.open_(ZuTime{100}).actions == A::Bypass);
@@ -402,7 +402,7 @@ static void raw()
   SessionConfig cfg; cfg.mode = Transport::Raw;
   LinkState s{ZuMv(cfg)};
   ZuCheck(s.open_(ZuTime{100}).actions == A::Bypass);
-  ZuCheck(s.peerLogon_(1, {}, {}, 0, ZuTime{100}).actions == A::Bypass);
+  ZuCheck(s.peerLogon(1, {}, {}, 0, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.admit_(1, 1, false, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.recovery_(1, false, false, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.heartbeat_(1, "0", ZuTime{100}).actions == A::Bypass);
@@ -410,14 +410,14 @@ static void raw()
   ZuCheck(s.probe_(1, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.drain_(1, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.drainTx_(1, 1, 1, ZuTime{100}).actions == A::Bypass);
-  ZuCheck(s.resetPrepare_(1, 1, 2, true, ZuTime{100}).actions == A::Bypass);
-  ZuCheck(s.resetReady_(1, 2, ZuTime{100}).actions == A::Bypass);
-  ZuCheck(s.resetStart_(1, ZuTime{100}).actions == A::Bypass);
-  ZuCheck(s.resetDisconnect_(1).actions == A::Bypass);
+  ZuCheck(s.resetPrepare(1, 1, 2, true, ZuTime{100}).actions == A::Bypass);
+  ZuCheck(s.resetReady(1, 2, ZuTime{100}).actions == A::Bypass);
+  ZuCheck(s.resetStart(1, ZuTime{100}).actions == A::Bypass);
+  ZuCheck(s.resetDisconnect(1).actions == A::Bypass);
   ZuCheck(s.logout_(1, ZuTime{100}).actions == A::Bypass);
-  ZuCheck(s.peerLogout_(1, ZuTime{100}).actions == A::Bypass);
+  ZuCheck(s.peerLogout(1, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.lost_(1).actions == A::Bypass);
-  ZuCheck(s.outputFailed_(1).actions == A::Bypass);
+  ZuCheck(s.outputFailed(1).actions == A::Bypass);
   ZuCheck(s.closed_(1).actions == A::Bypass);
   ZuCheck(s.timer_(1, T::Logon, ZuTime{100}).actions == A::Bypass);
   ZuCheck(s.state_() == State::Disconnected && !s.connection_() && !s.ready_());
@@ -429,16 +429,16 @@ static void probePublication()
   LinkState s{config()}; establish(s); recover(s);
   auto event = s.probe_(s.connection_(), ZuTime{105});
   ZuCheck(event.actions & A::SendProbe);
-  SessionString id{s.probeID_()};
+  SessionString id{s.probeID()};
   auto early = s.heartbeat_(s.connection_(), id, ZuTime{105});
-  ZuCheck(!(early.actions & A::Ackd) && s.ready_() && s.probeID_() == id);
+  ZuCheck(!(early.actions & A::Ackd) && s.ready_() && s.probeID() == id);
   auto deadline = s.deadline_(T::Probe);
-  ZuCheck(!s.probeSent_(s.connection_(), s.probe_() + 1, 2, ZuTime{106}).actions);
+  ZuCheck(!s.probeSent(s.connection_(), s.probe_() + 1, 2, ZuTime{106}).actions);
   ZuCheck(s.deadline_(T::Probe) == deadline);
-  ZuCheck(s.probeSent_(s.connection_(), s.probe_(), 2, ZuTime{106}).actions & A::Timers);
+  ZuCheck(s.probeSent(s.connection_(), s.probe_(), 2, ZuTime{106}).actions & A::Timers);
   auto published = s.deadline_(T::Probe);
   ZuCheck(published > deadline);
-  ZuCheck(!s.probeSent_(s.connection_(), s.probe_(), 2, ZuTime{107}).actions &&
+  ZuCheck(!s.probeSent(s.connection_(), s.probe_(), 2, ZuTime{107}).actions &&
     s.deadline_(T::Probe) == published);
   event = s.heartbeat_(s.connection_(), id, ZuTime{108});
   ZuCheck((event.actions & A::Ackd) && event.acknowledged == 3 && s.ready_() &&
@@ -451,16 +451,16 @@ static void recreatedProbe()
   SessionString stale;
   {
     LinkState old{config(), 17}; establish(old); recover(old);
-    old.probe_(1, ZuTime{105}); stale = old.probeID_();
+    old.probe_(1, ZuTime{105}); stale = old.probeID();
   }
   LinkState restored{config(), 17}; establish(restored); recover(restored);
   auto event = restored.probe_(1, ZuTime{105});
   ZuCheck(restored.epoch_() == 17 && event.connection == 1);
-  ZuCheck(restored.probeID_() != stale);
-  restored.probeSent_(1, restored.probe_(), 2, ZuTime{105});
+  ZuCheck(restored.probeID() != stale);
+  restored.probeSent(1, restored.probe_(), 2, ZuTime{105});
   auto ignored = restored.heartbeat_(1, stale, ZuTime{106});
   ZuCheck(restored.ready_() && !(ignored.actions & A::Ackd));
-  SessionString current{restored.probeID_()};
+  SessionString current{restored.probeID()};
   auto ack = restored.heartbeat_(1, current, ZuTime{107});
   ZuCheck(restored.ready_() && (ack.actions & A::Ackd) && ack.acknowledged == 3);
 }
@@ -470,12 +470,12 @@ static void probeWatermark()
   ZuTestScope(probeWatermark);
   LinkState s{config(), 17};
   establish(s); recover(s); s.probe_(s.connection_(), ZuTime{104});
-  SessionString id{s.probeID_()};
+  SessionString id{s.probeID()};
   auto e = s.heartbeat_(s.connection_(), id, ZuTime{105});
   ZuCheck(!(e.actions & A::Ackd) && !e.acknowledged);
-  ZuCheck(!s.probeSent_(s.connection_(), s.probe_(), 0, ZuTime{106}).actions);
-  ZuCheck(!s.probeSent_(s.connection_(), s.probe_(), UINT64_MAX, ZuTime{106}).actions);
-  ZuCheck(s.probeSent_(s.connection_(), s.probe_(), 7, ZuTime{106}).actions & A::Timers);
+  ZuCheck(!s.probeSent(s.connection_(), s.probe_(), 0, ZuTime{106}).actions);
+  ZuCheck(!s.probeSent(s.connection_(), s.probe_(), UINT64_MAX, ZuTime{106}).actions);
+  ZuCheck(s.probeSent(s.connection_(), s.probe_(), 7, ZuTime{106}).actions & A::Timers);
   e = s.heartbeat_(s.connection_(), "8", ZuTime{107});
   ZuCheck(!(e.actions & A::Ackd) && !e.acknowledged);
   e = s.heartbeat_(s.connection_(), id, ZuTime{108});
@@ -484,16 +484,16 @@ static void probeWatermark()
   ZuCheck(!(e.actions & A::Ackd) && !e.acknowledged);
 
   s.probe_(s.connection_(), ZuTime{110});
-  id = s.probeID_();
-  s.probeSent_(s.connection_(), s.probe_(), 11, ZuTime{111});
+  id = s.probeID();
+  s.probeSent(s.connection_(), s.probe_(), 11, ZuTime{111});
   s.recovery_(s.connection_(), true, false, ZuTime{112});
   e = s.heartbeat_(s.connection_(), id, ZuTime{113});
   ZuCheck(!(e.actions & A::Ackd) && !e.acknowledged && !s.ready_());
   e = s.recovery_(s.connection_(), true, true, ZuTime{114});
-  ZuCheck((e.actions & A::Ready) && !s.probeID_().length());
+  ZuCheck((e.actions & A::Ready) && !s.probeID().length());
   s.probe_(s.connection_(), ZuTime{114});
-  id = s.probeID_();
-  s.probeSent_(s.connection_(), s.probe_(), 15, ZuTime{115});
+  id = s.probeID();
+  s.probeSent(s.connection_(), s.probe_(), 15, ZuTime{115});
   e = s.heartbeat_(s.connection_(), id, ZuTime{116});
   ZuCheck((e.actions & A::Ackd) && e.acknowledged == 16 && s.ready_());
 
@@ -520,12 +520,12 @@ static void draining()
   ZuCheck(!s.drainTx_(s.connection_(), ticket, 0, ZuTime{111}).actions);
   e = s.drainTx_(s.connection_(), ticket, 8, ZuTime{111});
   ZuCheck(e.actions & A::SendProbe);
-  SessionString id{s.probeID_()};
-  s.probeSent_(s.connection_(), s.probe_(), 2, ZuTime{111});
+  SessionString id{s.probeID()};
+  s.probeSent(s.connection_(), s.probe_(), 2, ZuTime{111});
   e = s.heartbeat_(s.connection_(), id, ZuTime{112});
   ZuCheck(!(e.actions & A::Drained) && (e.actions & A::SendProbe) && !s.drained_());
-  id = s.probeID_();
-  s.probeSent_(s.connection_(), s.probe_(), 9, ZuTime{112});
+  id = s.probeID();
+  s.probeSent(s.connection_(), s.probe_(), 9, ZuTime{112});
   e = s.heartbeat_(s.connection_(), id, ZuTime{113});
   ZuCheck((e.actions & A::Drained) && (e.actions & A::Ackd) &&
     e.acknowledged == 10 && e.drain == ticket && s.drained_() && !s.ready_());
@@ -535,8 +535,8 @@ static void draining()
   ZuCheck(!s.drained_() && s.deadline_(T::Drain) == ZuTime{125});
   e = s.recovery_(s.connection_(), true, true, ZuTime{116});
   ZuCheck(e.actions & A::SendProbe);
-  id = s.probeID_();
-  s.probeSent_(s.connection_(), s.probe_(), 12, ZuTime{117});
+  id = s.probeID();
+  s.probeSent(s.connection_(), s.probe_(), 12, ZuTime{117});
   e = s.heartbeat_(s.connection_(), id, ZuTime{118});
   ZuCheck((e.actions & A::Drained) && s.drained_() && !s.ready_());
 
@@ -555,27 +555,27 @@ static void freshDrainProbe()
   auto e = s.drain_(1, ZuTime{110});
   auto ticket = e.drain;
   s.probe_(1, ZuTime{111});
-  SessionString old{s.probeID_()}; auto marker = s.probe_();
-  s.probeSent_(1, marker, 3, ZuTime{111});
+  SessionString old{s.probeID()}; auto marker = s.probe_();
+  s.probeSent(1, marker, 3, ZuTime{111});
   e = s.drainTx_(1, ticket, 8, ZuTime{112});
-  ZuCheck((e.actions & A::SendProbe) && s.probeID_() != old && s.probe_() > marker);
-  ZuCheck(!s.probeSent_(1, marker, 9, ZuTime{112}).actions);
+  ZuCheck((e.actions & A::SendProbe) && s.probeID() != old && s.probe_() > marker);
+  ZuCheck(!s.probeSent(1, marker, 9, ZuTime{112}).actions);
   ZuCheck(!(s.heartbeat_(1, old, ZuTime{113}).actions & A::Drained));
-  SessionString pending{s.probeID_()}; marker = s.probe_();
-  s.probeSent_(1, marker, 9, ZuTime{113});
+  SessionString pending{s.probeID()}; marker = s.probe_();
+  s.probeSent(1, marker, 9, ZuTime{113});
   s.recovery_(1, false, true, ZuTime{114});
-  ZuCheck(!s.probeID_().length() && !s.drained_());
+  ZuCheck(!s.probeID().length() && !s.drained_());
   ZuCheck(!(s.heartbeat_(1, pending, ZuTime{115}).actions & (A::Ackd | A::Drained)));
   e = recover(s, ZuTime{116});
   ZuCheck((e.actions & A::SendProbe) && s.probe_() > marker);
-  SessionString current{s.probeID_()};
-  s.probeSent_(1, s.probe_(), 11, ZuTime{117});
+  SessionString current{s.probeID()};
+  s.probeSent(1, s.probe_(), 11, ZuTime{117});
   e = s.heartbeat_(1, current, ZuTime{118});
   ZuCheck((e.actions & (A::Ackd | A::Drained)) == (A::Ackd | A::Drained) &&
     e.acknowledged == 12 && s.drained_() && !*s.deadline_(T::Drain));
   ZuCheck(!(recover(s, ZuTime{119}).actions & (A::Drained | A::SendProbe)));
   s.probe_(1, ZuTime{120});
-  current = s.probeID_(); s.probeSent_(1, s.probe_(), 12, ZuTime{120});
+  current = s.probeID(); s.probeSent(1, s.probe_(), 12, ZuTime{120});
   e = s.heartbeat_(1, current, ZuTime{121});
   ZuCheck((e.actions & A::Ackd) && !(e.actions & A::Drained) && s.drained_());
 
@@ -583,13 +583,13 @@ static void freshDrainProbe()
   e = pendingRx.drain_(1, ZuTime{110}); ticket = e.drain;
   pendingRx.recovery_(1, false, true, ZuTime{111});
   pendingRx.probe_(1, ZuTime{112});
-  old = pendingRx.probeID_(); marker = pendingRx.probe_();
+  old = pendingRx.probeID(); marker = pendingRx.probe_();
   e = pendingRx.drainTx_(1, ticket, 8, ZuTime{113});
   ZuCheck((e.actions & A::Timers) && !(e.actions & A::SendProbe) &&
-    !pendingRx.probeID_().length() && !*pendingRx.deadline_(T::Probe) &&
+    !pendingRx.probeID().length() && !*pendingRx.deadline_(T::Probe) &&
     pendingRx.deadline_(T::Receive) == ZuTime{149});
   e = recover(pendingRx, ZuTime{114});
-  ZuCheck((e.actions & A::SendProbe) && pendingRx.probeID_() != old &&
+  ZuCheck((e.actions & A::SendProbe) && pendingRx.probeID() != old &&
     pendingRx.probe_() > marker && !pendingRx.drained_());
 }
 
@@ -600,40 +600,40 @@ static void resetPreparation()
     establish(session); recover(session);
     auto e = session.drain_(session.connection_(), ZuTime{110});
     session.drainTx_(session.connection_(), e.drain, 3, ZuTime{111});
-    SessionString id{session.probeID_()};
-    session.probeSent_(session.connection_(), session.probe_(), 3, ZuTime{112});
+    SessionString id{session.probeID()};
+    session.probeSent(session.connection_(), session.probe_(), 3, ZuTime{112});
     return session.heartbeat_(session.connection_(), id, ZuTime{113});
   };
   LinkState session{config()};
   auto e = drain(session);
   auto ticket = e.drain;
-  ZuCheck(!session.resetPrepare_(1, 1, 1, true, ZuTime{114}).actions);
-  ZuCheck(!session.resetPrepare_(1, 1, 2, false, ZuTime{114}, ResetPath::Reconnect).actions);
-  e = session.resetPrepare_(1, 1, 2, true, ZuTime{114});
+  ZuCheck(!session.resetPrepare(1, 1, 1, true, ZuTime{114}).actions);
+  ZuCheck(!session.resetPrepare(1, 1, 2, false, ZuTime{114}, ResetPath::Reconnect).actions);
+  e = session.resetPrepare(1, 1, 2, true, ZuTime{114});
   ZuCheck((e.actions & A::ResetPrepare) && e.epoch == 1 && e.nextEpoch == 2 &&
-    session.resetPreparing_() && e.state == State::Resetting);
-  ZuCheck(!session.resetMatches_(1, 1, 2, ticket + 1) && session.resetMatches_(1, 1, 2, ticket));
-  ZuCheck(!session.resetReady_(1, 3, ZuTime{115}).actions && session.epoch_() == 1);
-  e = session.resetReady_(1, 2, ZuTime{115});
-  ZuCheck((e.actions & A::ResetReady) && e.epoch == 2 && session.resetArmed_());
-  e = session.resetStart_(1, ZuTime{116});
+    session.resetPreparing() && e.state == State::Resetting);
+  ZuCheck(!session.resetMatches(1, 1, 2, ticket + 1) && session.resetMatches(1, 1, 2, ticket));
+  ZuCheck(!session.resetReady(1, 3, ZuTime{115}).actions && session.epoch_() == 1);
+  e = session.resetReady(1, 2, ZuTime{115});
+  ZuCheck((e.actions & A::ResetReady) && e.epoch == 2 && session.resetArmed());
+  e = session.resetStart(1, ZuTime{116});
   ZuCheck((e.actions & A::SendLogon) && e.state == State::Logon);
-  session.logonSent_(1, 1, ZuTime{117});
+  session.logonSent(1, 1, ZuTime{117});
   Session::Logon logon; logon.resetSeqNum = true;
-  e = session.peerLogon_(1, header(), logon, 1, ZuTime{118});
-  ZuCheck(e.state == State::Established && !(e.actions & A::Admission) && !session.resetArmed_());
+  e = session.peerLogon(1, header(), logon, 1, ZuTime{118});
+  ZuCheck(e.state == State::Established && !(e.actions & A::Admission) && !session.resetArmed());
   recover(session, ZuTime{119});
   ZuCheck(session.ready_() && session.epoch_() == 2 && session.connection_() == 1);
 
   LinkState timeout{config()}; drain(timeout);
-  timeout.resetPrepare_(1, 1, 2, true, ZuTime{114});
+  timeout.resetPrepare(1, 1, 2, true, ZuTime{114});
   e = timeout.timer_(1, T::Logon, ZuTime{124});
   ZuCheck(e.state == State::Closing && e.error == E::Timeout && timeout.epoch_() == 1);
 
   LinkState bad{config()}; drain(bad);
-  bad.resetPrepare_(1, 1, 2, true, ZuTime{114}); bad.resetReady_(1, 2, ZuTime{115});
-  bad.resetStart_(1, ZuTime{116}); bad.logonSent_(1, 1, ZuTime{117});
-  e = bad.peerLogon_(1, header(), Session::Logon{}, 1, ZuTime{118});
+  bad.resetPrepare(1, 1, 2, true, ZuTime{114}); bad.resetReady(1, 2, ZuTime{115});
+  bad.resetStart(1, ZuTime{116}); bad.logonSent(1, 1, ZuTime{117});
+  e = bad.peerLogon(1, header(), Session::Logon{}, 1, ZuTime{118});
   ZuCheck(e.state == State::Logout && e.tag == 141 && !bad.ready_());
 }
 
@@ -645,7 +645,7 @@ static void association()
       LinkState cold{config(initiator, mode)};
       auto initial = cold.bind_(false);
       ZuTime at;
-      cold.nextTimer_(at);
+      cold.nextTimer(at);
       ZuCheck(initial.connection == 1 && initial.state == State::Disconnected &&
 	!cold.ready_() && !*at && !(initial.actions & (A::SendLogon | A::Ready)));
       initial = cold.start_(ZuTime{1000});
@@ -655,20 +655,20 @@ static void association()
       establish(s); recover(s);
       s.probe_(1, ZuTime{106});
       auto marker = s.probe_();
-      SessionString id{s.probeID_()};
+      SessionString id{s.probeID()};
       auto e = s.bind_(true);
       ZuCheck(e.connection == 2 && e.epoch == 1 && e.state == State::Disconnected &&
 	(e.actions & (A::Pause | A::Timers)) == (A::Pause | A::Timers) &&
 	!(e.actions & (A::Close | A::Failure | A::SendLogon | A::Ready)) &&
-	!s.ready_() && !s.probeID_().length());
+	!s.ready_() && !s.probeID().length());
       ZuTime deadline;
-      s.nextTimer_(deadline);
+      s.nextTimer(deadline);
       ZuCheck(!*deadline && !s.timer_(1, T::Probe, ZuTime{1000}).actions &&
 	!s.heartbeat_(1, id, ZuTime{1000}).actions &&
-	!s.probeSent_(1, marker, 3, ZuTime{1000}).actions &&
-	!s.outputFailed_(1).actions && !s.recovery_(1, true, true, ZuTime{1000}).actions);
-      ZuCheck(!s.outputFailed_(2).actions && !s.lost_(2).actions &&
-	!s.logonSent_(2, 3, ZuTime{1000}).actions);
+	!s.probeSent(1, marker, 3, ZuTime{1000}).actions &&
+	!s.outputFailed(1).actions && !s.recovery_(1, true, true, ZuTime{1000}).actions);
+      ZuCheck(!s.outputFailed(2).actions && !s.lost_(2).actions &&
+	!s.logonSent(2, 3, ZuTime{1000}).actions);
       e = s.start_(ZuTime{1000});
       ZuCheck(e.connection == 2 && e.epoch == 1 &&
 	e.state == (initiator ? State::Logon : State::Accepting) &&
@@ -696,36 +696,36 @@ static void resetAssociation()
       auto e = s.drain_(1, ZuTime{110});
       auto ticket = e.drain;
       s.drainTx_(1, ticket, 3, ZuTime{111});
-      SessionString id{s.probeID_()};
-      s.probeSent_(1, s.probe_(), 3, ZuTime{112});
+      SessionString id{s.probeID()};
+      s.probeSent(1, s.probe_(), 3, ZuTime{112});
       s.heartbeat_(1, id, ZuTime{113});
-      ZuCheck(s.resetPrepare_(1, 1, 2, initiator, ZuTime{114}).actions & A::ResetPrepare);
+      ZuCheck(s.resetPrepare(1, 1, 2, initiator, ZuTime{114}).actions & A::ResetPrepare);
       e = s.bind_(true);
       if (stage == 1) e = s.bind_(true); // C wins before B authenticates.
       auto connection = e.connection;
-      ZuCheck(e.state == State::Disconnected && s.resetPreparing_() &&
+      ZuCheck(e.state == State::Disconnected && s.resetPreparing() &&
 	e.drain == ticket && !(e.actions & A::SendLogon) &&
-	!s.resetAbort_(1, 3, ticket).actions &&
-	!s.resetAbort_(connection + 1, 2, ticket).actions);
-      e = s.resetReady_(1, 2, ZuTime{115}, stage != 2);
+	!s.resetAbort(1, 3, ticket).actions &&
+	!s.resetAbort(connection + 1, 2, ticket).actions);
+      e = s.resetReady(1, 2, ZuTime{115}, stage != 2);
       ZuCheck(e.connection == connection && e.epoch == 2 &&
-	e.state == State::Disconnected && !s.resetPreparing_() &&
-	s.resetArmed_() == (stage != 2) && !s.ready_() &&
+	e.state == State::Disconnected && !s.resetPreparing() &&
+	s.resetArmed() == (stage != 2) && !s.ready_() &&
 	(e.actions & A::ResetReady) &&
 	!(e.actions & (A::SendLogon | A::RetryInput | A::Close)));
       ZuTime deadline;
-      s.nextTimer_(deadline);
-      ZuCheck(!*deadline && !s.resetReady_(1, 2, ZuTime{116}, true).actions);
+      s.nextTimer(deadline);
+      ZuCheck(!*deadline && !s.resetReady(1, 2, ZuTime{116}, true).actions);
       if (stage == 2) continue; // No current socket: retain closed-reset reconciliation.
       if (!stage) {
 	e = s.bind_(true); // C replaces B after commit, before authentication.
 	++connection;
-	s.nextTimer_(deadline);
-	ZuCheck(e.connection == connection && e.epoch == 2 && s.resetArmed_() &&
+	s.nextTimer(deadline);
+	ZuCheck(e.connection == connection && e.epoch == 2 && s.resetArmed() &&
 	  e.state == State::Disconnected && !*deadline && !(e.actions & A::SendLogon));
       }
       e = s.start_(ZuTime{200});
-      ZuCheck(e.connection == connection && e.epoch == 2 && s.resetArmed_() &&
+      ZuCheck(e.connection == connection && e.epoch == 2 && s.resetArmed() &&
 	bool(e.actions & A::SendLogon) == initiator &&
 	s.deadline_(T::Logon) == ZuTime{210});
     }
@@ -740,24 +740,24 @@ static void resetReplacement()
     auto e = s.drain_(1, ZuTime{110});
     auto ticket = e.drain;
     s.drainTx_(1, ticket, 3, ZuTime{111});
-    SessionString id{s.probeID_()};
-    s.probeSent_(1, s.probe_(), 3, ZuTime{112});
+    SessionString id{s.probeID()};
+    s.probeSent(1, s.probe_(), 3, ZuTime{112});
     s.heartbeat_(1, id, ZuTime{113});
-    e = s.resetPrepare_(1, 1, 2, initiator, ZuTime{114});
-    ZuCheck((e.actions & A::ResetPrepare) && s.resetPreparing_());
+    e = s.resetPrepare(1, 1, 2, initiator, ZuTime{114});
+    ZuCheck((e.actions & A::ResetPrepare) && s.resetPreparing());
     e = s.replace_(ZuTime{115});
     ZuCheck(e.connection == 2 && e.epoch == 1 && e.nextEpoch == 2 &&
-      e.drain == ticket && !(e.actions & A::SendLogon) && s.resetPreparing_());
-    ZuCheck(s.resetMatches_(1, 1, 2, ticket) &&
-      !s.resetMatches_(1, 1, 2, ticket + 1));
-    e = s.resetReady_(1, 2, ZuTime{116});
-    ZuCheck(e.connection == 2 && e.epoch == 2 && s.resetArmed_() &&
-      !s.resetPreparing_() && !s.draining_() && (e.actions & A::RetryInput) &&
+      e.drain == ticket && !(e.actions & A::SendLogon) && s.resetPreparing());
+    ZuCheck(s.resetMatches(1, 1, 2, ticket) &&
+      !s.resetMatches(1, 1, 2, ticket + 1));
+    e = s.resetReady(1, 2, ZuTime{116});
+    ZuCheck(e.connection == 2 && e.epoch == 2 && s.resetArmed() &&
+      !s.resetPreparing() && !s.draining_() && (e.actions & A::RetryInput) &&
       bool(e.actions & A::SendLogon) == initiator);
-    ZuCheck(!s.resetReady_(1, 2, ZuTime{117}).actions &&
+    ZuCheck(!s.resetReady(1, 2, ZuTime{117}).actions &&
       !s.closed_(1).actions && !s.ready_());
     e = s.replace_(ZuTime{118});
-    ZuCheck(e.connection == 3 && e.epoch == 2 && s.resetArmed_());
+    ZuCheck(e.connection == 3 && e.epoch == 2 && s.resetArmed());
   }
 }
 
@@ -767,37 +767,37 @@ static void initialReset()
   for (unsigned mode = Transport::FIX4; mode <= Transport::FIXT11; ++mode)
     for (bool driver : {false, true}) {
       LinkState s{config(driver, mode), 7};
-      ZuCheck(!s.resetOnOpen_(6) && !s.resetOnOpen_());
-      ZuCheck(s.resetOnOpen_(7) && s.resetOnOpen_() && s.resetOnOpen_(7, false) &&
-	!s.resetOnOpen_() && s.resetOnOpen_(7));
+      ZuCheck(!s.resetOnOpen(6) && !s.resetOnOpen());
+      ZuCheck(s.resetOnOpen(7) && s.resetOnOpen() && s.resetOnOpen(7, false) &&
+	!s.resetOnOpen() && s.resetOnOpen(7));
       auto e = s.open_(ZuTime{100});
-      ZuCheck(e.nextEpoch == 7 && s.resetArmed_() && !s.resetOnOpen_() && !s.resetOnOpen_(7));
-      if (driver) s.logonSent_(1, 1, ZuTime{101});
+      ZuCheck(e.nextEpoch == 7 && s.resetArmed() && !s.resetOnOpen() && !s.resetOnOpen(7));
+      if (driver) s.logonSent(1, 1, ZuTime{101});
       Session::Logon logon; logon.resetSeqNum = true; logon.nextExpected = 1;
       logon.defaultAppVerID = "9";
-      e = s.peerLogon_(1, header(), logon, 1, ZuTime{102});
+      e = s.peerLogon(1, header(), logon, 1, ZuTime{102});
       ZuCheck((e.actions & A::Admission) && !s.ready_());
       s.admit_(1, e.ticket, true, ZuTime{103});
-      if (!driver) s.logonSent_(1, 1, ZuTime{103});
-      e = s.peerLogon_(1, header(), logon, 1, ZuTime{104});
-      ZuCheck(e.state == State::Established && !s.resetArmed_() && s.epoch_() == 7);
+      if (!driver) s.logonSent(1, 1, ZuTime{103});
+      e = s.peerLogon(1, header(), logon, 1, ZuTime{104});
+      ZuCheck(e.state == State::Established && !s.resetArmed() && s.epoch_() == 7);
       recover(s, ZuTime{105});
       ZuCheck(s.ready_());
       s.lost_(1); s.closed_(1);
       e = s.open_(ZuTime{106});
-      ZuCheck(!e.nextEpoch && !s.resetArmed_() && s.epoch_() == 7 && e.connection == 2);
+      ZuCheck(!e.nextEpoch && !s.resetArmed() && s.epoch_() == 7 && e.connection == 2);
     }
   LinkState plain{config(false)};
   plain.open_(ZuTime{100});
   Session::Logon logon; logon.resetSeqNum = true;
-  auto e = plain.peerLogon_(1, header(), logon, 1, ZuTime{101});
-  ZuCheck((e.actions & A::NeedReset) && !plain.admissionPending_() && plain.epoch_() == 1);
+  auto e = plain.peerLogon(1, header(), logon, 1, ZuTime{101});
+  ZuCheck((e.actions & A::NeedReset) && !plain.admissionPending() && plain.epoch_() == 1);
   LinkState missing{config(false)};
-  ZuCheck(missing.resetOnOpen_(1)); missing.open_(ZuTime{100});
-  e = missing.peerLogon_(1, header(), Session::Logon{}, 1, ZuTime{101});
-  ZuCheck(e.state == State::Logout && e.tag == 141 && !missing.admissionPending_());
+  ZuCheck(missing.resetOnOpen(1)); missing.open_(ZuTime{100});
+  e = missing.peerLogon(1, header(), Session::Logon{}, 1, ZuTime{101});
+  ZuCheck(e.state == State::Logout && e.tag == 141 && !missing.admissionPending());
   LinkState raw{config(false, Transport::Raw)};
-  ZuCheck(!raw.resetOnOpen_(1) && !raw.resetOnOpen_());
+  ZuCheck(!raw.resetOnOpen(1) && !raw.resetOnOpen());
 }
 
 // Initial connection, pending admission, admitted Session::Logon, established, Session::Logout.
@@ -807,7 +807,7 @@ static SessionEvent phase(LinkState &s, unsigned n)
   if (n < 3) {
     auto e = start(s);
     Session::Logon peer; peer.nextExpected = 2; peer.defaultAppVerID = "9";
-    e = s.peerLogon_(e.connection, header(1, Version::Wire::v2s(s.config_().identity.version)),
+    e = s.peerLogon(e.connection, header(1, Version::Wire::v2s(s.config_().identity.version)),
       peer, 1, ZuTime{102});
     return n == 1 ? e : s.admit_(e.connection, e.ticket, true, ZuTime{103});
   }
@@ -836,14 +836,14 @@ static void failureMatrix()
 	    case 3: state = State::Established; break;
 	    case 4: state = State::Logout; break;
 	  }
-	  ZuCheck(s.state_() == state && bool(s.admissionPending_()) == (n == 1));
-	  auto e = output ? s.outputFailed_(1) : s.lost_(1);
+	  ZuCheck(s.state_() == state && bool(s.admissionPending()) == (n == 1));
+	  auto e = output ? s.outputFailed(1) : s.lost_(1);
 	  enum { Actions = A::Close | A::Failure | A::Pause | A::Timers | A::Changed };
 	  ZuCheck(e.state == State::Closing && e.error == (output ? E::Output : E::Transport) &&
 	    (e.actions & Actions) == Actions && !(e.actions & A::SendLogout) &&
 	    e.epoch == 17 && e.connection == 1 && e.change > before.change);
-	  ZuCheck(!s.ready_() && !s.admissionPending_() && cancelled(s));
-	  ZuCheck(!s.lost_(1).actions && !s.outputFailed_(1).actions &&
+	  ZuCheck(!s.ready_() && !s.admissionPending() && cancelled(s));
+	  ZuCheck(!s.lost_(1).actions && !s.outputFailed(1).actions &&
 	    !s.timer_(1, T::Logon, ZuTime{200}).actions && !s.admit_(1, before.ticket, true,
 	      ZuTime{200}).actions);
 	  e = s.closed_(1);
@@ -851,7 +851,7 @@ static void failureMatrix()
 	    && cancelled(s));
 	  e = s.open_(ZuTime{210});
 	  ZuCheck(e.connection == 2 && e.epoch == 17 && !s.lost_(1).actions &&
-	    !s.outputFailed_(1).actions &&
+	    !s.outputFailed(1).actions &&
 	    !s.timer_(1, T::Logon, ZuTime{250}).actions && s.state_() == e.state);
 	}
 }
@@ -886,7 +886,7 @@ static void timeoutMatrix()
 	ZuCheck(e.state == State::Closing && e.error == E::Timeout &&
 	  (e.actions & (A::Close | A::Failure | A::Pause)) == (
 	    A::Close | A::Failure | A::Pause) &&
-	  e.epoch == 9 && cancelled(s) && !s.ready_() && !s.admissionPending_());
+	  e.epoch == 9 && cancelled(s) && !s.ready_() && !s.admissionPending());
 	ZuCheck(!s.timer_(1, timer, deadline).actions && !s.admit_(1, ticket, true,
 	  deadline).actions);
 	ZuCheck(s.closed_(1).state == State::Disconnected && s.epoch_() == 9);
@@ -903,7 +903,7 @@ static void logonMatrix()
 	  Session::Logon peer; peer.nextExpected = 8; peer.defaultAppVerID = "9";
 	  if (!driver) peer.heartBtInt = 7;
 	  auto h = header(seqNo, Version::Wire::v2s(version));
-	  auto e = s.peerLogon_(1, h, peer, 5, ZuTime{103});
+	  auto e = s.peerLogon(1, h, peer, 5, ZuTime{103});
 	  if (seqNo < 5) {
 	    ZuCheck(e.state == State::Logout && e.error == E::Sequence && e.tag == 34 &&
 	      (e.actions & A::SendLogout) && !(e.actions & A::Admission) &&
@@ -913,11 +913,11 @@ static void logonMatrix()
 	  ZuCheck((e.actions & A::Admission) && e.ticket && !s.ready_());
 	  auto ticket = e.ticket;
 	  ZuCheck(!s.admit_(1, ticket + 1, true, ZuTime{103}).actions &&
-	    !s.peerLogon_(1, h, peer, 5, ZuTime{103}).actions);
+	    !s.peerLogon(1, h, peer, 5, ZuTime{103}).actions);
 	  e = s.admit_(1, ticket, true, ZuTime{104});
 	  ZuCheck((e.actions & A::RetryInput) && bool(e.actions & A::SendLogon) == !driver);
-	  if (!driver) s.logonSent_(1, 7, ZuTime{104});
-	  e = s.peerLogon_(1, h, peer, 5, ZuTime{104});
+	  if (!driver) s.logonSent(1, 7, ZuTime{104});
+	  e = s.peerLogon(1, h, peer, 5, ZuTime{104});
 	  ZuCheck(e.state == State::Established && (e.actions & A::Observe) && !s.ready_() &&
 	    !*s.deadline_(T::Logon) && s.heartBtInt_() == peer.heartBtInt);
 	  if (seqNo == 5) ZuCheck(!(e.actions & (A::SendProbe | A::RequestGap | A::Replay)) &&
@@ -933,8 +933,8 @@ static void logonMatrix()
 	  }
 	  recover(s, ZuTime{106});
 	  s.probe_(1, ZuTime{107});
-	  SessionString id{s.probeID_()};
-	  s.probeSent_(1, s.probe_(), 8, ZuTime{107});
+	  SessionString id{s.probeID()};
+	  s.probeSent(1, s.probe_(), 8, ZuTime{107});
 	  e = s.heartbeat_(1, id, ZuTime{108});
 	  ZuCheck(s.ready_() && (e.actions & A::Ackd) && e.acknowledged == 9 && e.epoch == 9);
 	}
@@ -942,11 +942,11 @@ static void logonMatrix()
     for (uint64_t next : {uint64_t(0), uint64_t(1), uint64_t(7), uint64_t(8), uint64_t(9)}) {
       LinkState s{config(driver, Transport::FIX44A)}; start(s, 7);
       Session::Logon peer; peer.nextExpected = next;
-      auto e = s.peerLogon_(1, header(5), peer, 5, ZuTime{103});
+      auto e = s.peerLogon(1, header(5), peer, 5, ZuTime{103});
       if (e.actions & A::Admission) {
 	s.admit_(1, e.ticket, true, ZuTime{104});
-	if (!driver) s.logonSent_(1, 7, ZuTime{104});
-	e = s.peerLogon_(1, header(5), peer, 5, ZuTime{104});
+	if (!driver) s.logonSent(1, 7, ZuTime{104});
+	e = s.peerLogon(1, header(5), peer, 5, ZuTime{104});
       }
       if (!next || next > 8) ZuCheck(e.state == State::Logout && e.error == E::Sync
 	&& e.tag == 789 && !e.acknowledged);
@@ -981,20 +981,20 @@ static void admissionMatrix()
 	  A::SendLogout | A::Pause | A::Failure) &&
 	!(e.actions & (A::Ready | A::Replay | A::SendProbe)) &&
 	s.deadline_(T::Logout) == ZuTime{106} && !*s.deadline_(T::Logon)
-	  && !s.admissionPending_());
+	  && !s.admissionPending());
       ZuCheck(!s.admit_(1, ticket, true, ZuTime{105}).actions && !s.ready_());
       LinkState reset{config(driver, mode), 17}; start(reset);
       Session::Logon peer; peer.resetSeqNum = true; peer.nextExpected = 2;
       peer.defaultAppVerID = "9";
       auto state = reset.state_(); auto deadline = reset.deadline_(T::Logon);
-      e = reset.peerLogon_(1, header(), peer, 1, ZuTime{103});
+      e = reset.peerLogon(1, header(), peer, 1, ZuTime{103});
       ZuCheck(e.actions == A::NeedReset && reset.state_() == state && reset.epoch_() == 17 &&
-	reset.deadline_(T::Logon) == deadline && !reset.admissionPending_());
+	reset.deadline_(T::Logon) == deadline && !reset.admissionPending());
       if (mode == Transport::FIXT11) {
 	LinkState missing{config(driver, mode)}; start(missing);
-	e = missing.peerLogon_(1, header(), Session::Logon{}, 1, ZuTime{103});
+	e = missing.peerLogon(1, header(), Session::Logon{}, 1, ZuTime{103});
 	ZuCheck(e.state == State::Logout && e.error == E::AppVersion && e.tag == 1137 &&
-	  (e.actions & A::SendLogout) && !missing.admissionPending_());
+	  (e.actions & A::SendLogout) && !missing.admissionPending());
       }
     }
 }
@@ -1033,12 +1033,12 @@ static void nextTimerActivity()
   ZuTestScope(nextTimerActivity);
   LinkState s{config()}; establish(s); recover(s);
   ZuTime at;
-  auto kind = s.nextTimer_(at);
+  auto kind = s.nextTimer(at);
   ZuCheck(kind == T::Receive && at == ZuTime{140});
-  s.activity_(1, ZuTime{110});
+  s.activity(1, ZuTime{110});
   auto e = s.timer_(1, kind, at); // retained physical wake after logical activity
   ZuCheck(e.actions == A::Timers && s.deadline_(T::Receive) == ZuTime{146});
-  ZuCheck(s.nextTimer_(at) == T::Receive && at == ZuTime{146});
+  ZuCheck(s.nextTimer(at) == T::Receive && at == ZuTime{146});
 }
 
 static void nextTimerTie()
@@ -1048,17 +1048,17 @@ static void nextTimerTie()
   cfg.heartBtInt = 1; cfg.receivePct = 100; cfg.drainTimeout = ZuTime{1};
   LinkState s{cfg}; start(s);
   Session::Logon peer; peer.heartBtInt = 1;
-  auto admission = s.peerLogon_(1, header(), peer, 1, ZuTime{102});
+  auto admission = s.peerLogon(1, header(), peer, 1, ZuTime{102});
   s.admit_(1, admission.ticket, true, ZuTime{103});
-  s.peerLogon_(1, header(), peer, 1, ZuTime{104});
+  s.peerLogon(1, header(), peer, 1, ZuTime{104});
   recover(s);
   s.drain_(1, ZuTime{105});
   ZuTime at;
-  ZuCheck(s.nextTimer_(at) == T::Receive && at == ZuTime{106} &&
+  ZuCheck(s.nextTimer(at) == T::Receive && at == ZuTime{106} &&
     s.deadline_(T::Drain) == at);
   auto e = s.timer_(1, T::Receive, at);
   ZuCheck((e.actions & A::SendProbe) && !(e.actions & A::Failure));
-  ZuCheck(s.nextTimer_(at) == T::Drain && at == ZuTime{106});
+  ZuCheck(s.nextTimer(at) == T::Drain && at == ZuTime{106});
   e = s.timer_(1, T::Drain, at);
   ZuCheck(e.state == State::Closing && e.error == E::Timeout);
 }
@@ -1068,10 +1068,10 @@ static void nextTimerKind()
   ZuTestScope(nextTimerKind);
   LinkState s{config()}; establish(s); recover(s);
   ZuTime oldWake;
-  ZuCheck(s.nextTimer_(oldWake) == T::Receive && oldWake == ZuTime{140});
+  ZuCheck(s.nextTimer(oldWake) == T::Receive && oldWake == ZuTime{140});
   s.probe_(1, ZuTime{111});
   ZuTime at;
-  auto kind = s.nextTimer_(at);
+  auto kind = s.nextTimer(at);
   ZuCheck(kind == T::Probe && at == ZuTime{147});
   auto e = s.timer_(1, kind, oldWake); // callback reselects the current kind
   ZuCheck(e.actions == A::Timers && s.deadline_(T::Probe) == at);
@@ -1088,7 +1088,7 @@ static void replacement()
       if (!phase) {
         auto e = start(s);
         Session::Logon logon; logon.defaultAppVerID = "9"; logon.nextExpected = 2;
-        e = s.peerLogon_(e.connection, header(1, Version::Wire::v2s(version)),
+        e = s.peerLogon(e.connection, header(1, Version::Wire::v2s(version)),
           logon, 1, ZuTime{102});
         oldTicket = e.ticket;
         ZuCheck((e.actions & A::Admission) && oldTicket);

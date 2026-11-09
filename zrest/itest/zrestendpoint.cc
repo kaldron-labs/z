@@ -556,7 +556,7 @@ using StreamResHeaderList = ZhttpHeaders("content-type", "content-length");
 ZhttpHdrCatalogDerive(StreamResHeaders, StreamResHeaderList);
 ZhttpHdrCatalogImpl(StreamResHeaders)
 
-struct StreamResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
+struct StreamResBuilder : public ZmObject, public Zhttp::ResBuilder {
   using HdrCatalog = StreamResHeaders;
   bool json = false;
   bool events = false;
@@ -600,8 +600,8 @@ struct StreamResBuilder_ : public ZmObject, public Zhttp::ResBuilder {
   }
   void close() { }
 };
-using StreamResQ = ZmList<StreamResBuilder_,
-  ZmListNode<StreamResBuilder_, ZmListHeapID<"Zrest.Stream.Response">>>;
+using StreamResQ = ZmList<StreamResBuilder,
+  ZmListNode<StreamResBuilder, ZmListHeapID<"Zrest.Stream.Response">>>;
 
 struct StreamResServer;
 struct StreamResParser : public Zhttp::Parser {

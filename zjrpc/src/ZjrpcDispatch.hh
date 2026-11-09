@@ -285,7 +285,7 @@ protected:
     ZmRef<Work> work = new Work{this, ZuMv(body), ZuMv(parsed), ZuMv(emit), inbound, context};
     if (control) work->control(control);
     m_works.pushNode(work);
-    if (work->batch()) work->runBatch_();
+    if (work->batch()) work->runBatch();
     else work->run();
     return true;
   }
@@ -426,7 +426,7 @@ private:
       if (!this->count()) finish();
     }
 
-    void runBatch_() {
+    void runBatch() {
       if (m_closed) return;
       unsigned n = nodes().length();
       if (!n) {
@@ -452,7 +452,7 @@ private:
       }
       if (m_batch->next < n) {
 	auto self = ZmRef{static_cast<Work *>(this)};
-	m_dispatcher->owner()->continue_([self = ZuMv(self)]() { self->runBatch_(); });
+	m_dispatcher->owner()->continue_([self = ZuMv(self)]() { self->runBatch(); });
       }
     }
 

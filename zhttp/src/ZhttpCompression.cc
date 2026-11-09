@@ -11,14 +11,14 @@
 
 namespace Zhttp { namespace Compression {
 
-struct HuffmanSymbol_ {
+struct HuffmanSymbol {
   uint32_t	code;
   uint8_t	bits;
   uint16_t	symbol;
 };
 
 // RFC 7541 Appendix B defines 256 octets plus EOS.
-static constexpr ZuArray<HuffmanSymbol_, 257> huffman_ = {
+static constexpr ZuArray<HuffmanSymbol, 257> huffman_ = {
   {0x1ff8U, 13, 0}, {0x7fffd8U, 23, 1}, {0xfffffe2U, 28, 2},
   {0xfffffe3U, 28, 3}, {0xfffffe4U, 28, 4}, {0xfffffe5U, 28, 5},
   {0xfffffe6U, 28, 6}, {0xfffffe7U, 28, 7}, {0xfffffe8U, 28, 8},
@@ -99,17 +99,17 @@ static constexpr ZuArray<HuffmanSymbol_, 257> huffman_ = {
   {0x7fffff0U, 27, 254}, {0x3ffffeeU, 26, 255}, {0x3fffffffU, 30, 256}
 };
 
-static constexpr uint16_t huffmanPack_(unsigned bits, unsigned symbol)
+static constexpr uint16_t huffmanPack(unsigned bits, unsigned symbol)
 {
   return uint16_t((bits << 9) | symbol);
 }
 
-static ZuInline unsigned huffmanEntryBits_(uint16_t v)
+static ZuInline unsigned huffmanEntryBits(uint16_t v)
 {
   return v >> 9;
 }
 
-static ZuInline unsigned huffmanEntrySymbol_(uint16_t v)
+static ZuInline unsigned huffmanEntrySymbol(uint16_t v)
 {
   return v & 0x1ffU;
 }
@@ -117,7 +117,7 @@ static ZuInline unsigned huffmanEntrySymbol_(uint16_t v)
 // Compile-time instantiated.  The 16-bit primary fanout keeps the common
 // decode path to one dependent lookup; the two suffix tables cover only the
 // RFC codes beginning 0xfffe and 0xffff.
-struct HuffmanDecode_ {
+struct HuffmanDecode {
   enum { PrimaryBits = 16 };
   enum { FFFEBits = 5 };
   enum { FFFFBits = 14 };
@@ -143,20 +143,20 @@ struct HuffmanDecode_ {
     ZuAssert(N == (1U << TableBits));
     uint32_t first = code << (TableBits - codeBits);
     uint32_t n = 1U << (TableBits - codeBits);
-    uint16_t v = huffmanPack_(bits, symbol);
+    uint16_t v = huffmanPack(bits, symbol);
     for (uint32_t i = 0; i < n; ++i) table[first + i] = v;
   }
 
-  constexpr void fillPrimary_(
+  constexpr void fillPrimary(
     uint32_t code, unsigned codeBits, unsigned bits, unsigned symbol)
   {
     uint32_t first = code << (PrimaryBits - codeBits);
     uint32_t n = 1U << (PrimaryBits - codeBits);
-    uint16_t v = huffmanPack_(bits, symbol);
+    uint16_t v = huffmanPack(bits, symbol);
     for (uint32_t i = 0; i < n; ++i) primary(first + i) = v;
   }
 
-  constexpr HuffmanDecode_() :
+  constexpr HuffmanDecode() :
     primaryLo(PrimaryHalf),
     primaryHi(PrimaryHalf),
     fffe(1U << FFFEBits),
@@ -166,7 +166,7 @@ struct HuffmanDecode_ {
       const auto &sym = huffman_[i];
       if (sym.bits <= PrimaryBits) {
 	if (sym.symbol < 256)
-	  fillPrimary_(sym.code, sym.bits, sym.bits, sym.symbol);
+	  fillPrimary(sym.code, sym.bits, sym.bits, sym.symbol);
 	continue;
       }
 
@@ -181,39 +181,39 @@ struct HuffmanDecode_ {
   }
 };
 
-static constexpr HuffmanDecode_ huffmanDecode_;
+static constexpr HuffmanDecode huffmanDecode;
 
-static inline uint16_t huffmanLongLookup_(
+static inline uint16_t huffmanLongLookup(
   const uint16_t *table, unsigned tableBits, uint64_t bits, unsigned nBits)
 {
-  if (nBits <= HuffmanDecode_::PrimaryBits) return 0;
-  unsigned suffixBits = nBits - HuffmanDecode_::PrimaryBits;
+  if (nBits <= HuffmanDecode::PrimaryBits) return 0;
+  unsigned suffixBits = nBits - HuffmanDecode::PrimaryBits;
   if (suffixBits > tableBits) suffixBits = tableBits;
   uint32_t suffix =
-    uint32_t(bits >> (64 - HuffmanDecode_::PrimaryBits - suffixBits)) &
+    uint32_t(bits >> (64 - HuffmanDecode::PrimaryBits - suffixBits)) &
     ((1U << suffixBits) - 1U);
   uint16_t v = table[suffix << (tableBits - suffixBits)];
-  return v && huffmanEntryBits_(v) <= nBits ? v : 0;
+  return v && huffmanEntryBits(v) <= nBits ? v : 0;
 }
 
-static inline uint16_t huffmanLookup_(uint64_t bits, unsigned nBits)
+static inline uint16_t huffmanLookup(uint64_t bits, unsigned nBits)
 {
   if (!nBits) return 0;
 
   uint16_t prefix = uint16_t(bits >> 48);
-  uint16_t v = huffmanDecode_.primary(prefix);
+  uint16_t v = huffmanDecode.primary(prefix);
   if (ZuLikely(v))
-    return huffmanEntryBits_(v) <= nBits ? v : 0;
+    return huffmanEntryBits(v) <= nBits ? v : 0;
   if (ZuUnlikely(prefix == 0xfffeU))
-    return huffmanLongLookup_(
-      huffmanDecode_.fffe.data(), HuffmanDecode_::FFFEBits, bits, nBits);
+    return huffmanLongLookup(
+      huffmanDecode.fffe.data(), HuffmanDecode::FFFEBits, bits, nBits);
   if (ZuUnlikely(prefix == 0xffffU))
-    return huffmanLongLookup_(
-      huffmanDecode_.ffff.data(), HuffmanDecode_::FFFFBits, bits, nBits);
+    return huffmanLongLookup(
+      huffmanDecode.ffff.data(), HuffmanDecode::FFFFBits, bits, nBits);
   return 0;
 }
 
-static inline void huffmanRefill_(
+static inline void huffmanRefill(
   uint64_t &bits, unsigned &nBits, Huffman::BitReader &in, unsigned want)
 {
   if (nBits >= want) return;
@@ -225,7 +225,7 @@ static inline void huffmanRefill_(
   nBits += rBits;
 }
 
-static ZuInline bool huffmanEOSPadding_(uint64_t bits, unsigned nBits)
+static ZuInline bool huffmanEOSPadding(uint64_t bits, unsigned nBits)
 {
   if (!nBits) return true;
   if (nBits > 7) return false;
@@ -256,23 +256,23 @@ int64_t Huffman::decode(ZuSpan<uint8_t> out, ZuBSpan bytes)
   unsigned nBits = 0;
 
   for (;;) {
-    huffmanRefill_(bits, nBits, in, HuffmanDecode_::PrimaryBits);
-    uint16_t v = huffmanLookup_(bits, nBits);
+    huffmanRefill(bits, nBits, in, HuffmanDecode::PrimaryBits);
+    uint16_t v = huffmanLookup(bits, nBits);
     if (ZuUnlikely(!v)) {
-      huffmanRefill_(bits, nBits, in, 30);
-      v = huffmanLookup_(bits, nBits);
+      huffmanRefill(bits, nBits, in, 30);
+      v = huffmanLookup(bits, nBits);
       if (ZuUnlikely(!v)) {
-	if (in.pos() == in.end() && huffmanEOSPadding_(bits, nBits))
+	if (in.pos() == in.end() && huffmanEOSPadding(bits, nBits))
 	  return o - out.data();
 	return -1;
       }
     }
 
-    unsigned symbol = huffmanEntrySymbol_(v);
+    unsigned symbol = huffmanEntrySymbol(v);
     if (ZuUnlikely(symbol == 256)) return -1;
     if (ZuUnlikely(o >= end)) return -1;
     *o++ = uint8_t(symbol);
-    unsigned used = huffmanEntryBits_(v);
+    unsigned used = huffmanEntryBits(v);
     bits <<= used;
     nBits -= used;
   }

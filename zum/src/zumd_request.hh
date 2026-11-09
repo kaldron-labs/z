@@ -156,8 +156,8 @@ public:
 private:
   void start_();
   void stop_();
-  void retire_();
-  void postRetire_();
+  void retire_1();
+  void retire_0();
   bool admit_(Node *, ZuTime);
   void start_(RequestData *, ZuTime);
   bool finish_(RequestData *);

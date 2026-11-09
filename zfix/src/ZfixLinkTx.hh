@@ -114,7 +114,7 @@ public:
   using Base::retained_;
   using Base::epoch_;
   using Base::connection_;
-  using Base::loading_;
+  using Base::loading;
   using Base::failed_;
   using Base::waiting_;
   using Base::restore_;
@@ -135,7 +135,7 @@ public:
   uint64_t inFlight_() const { return m_inFlight; }
   bool preparing_() const { return m_preparing; }
 
-  using Base::abortTx_;
+  using Base::abortTx;
 
   void epochTx(TxContext, uint64_t, TxProgress, uint64_t) { }
 
@@ -155,7 +155,7 @@ public:
       auto p = Base::progress_();
       if (event.nextEpoch != event.epoch || p.loaded != 1 || p.sent != 1 ||
 	  p.acknowledged != 1 || p.replayBegin || Base::retained_() ||
-	  Base::loading_() || Base::waiting_()) return TxSelect::Invalid;
+	  Base::loading() || Base::waiting_()) return TxSelect::Invalid;
     }
     bool attached = Base::attached_();
     if (!(attached ? Base::replace_(event.connection) : Base::attach_(event.connection)))
@@ -247,7 +247,7 @@ public:
       closeTx(); return TxSelect::Refused;
     }
     if ((event.actions & SessionAction::Ackd) &&
-	!Base::acknowledge_(event.epoch, event.acknowledged))
+	!Base::acknowledge(event.epoch, event.acknowledged))
       return TxSelect::Invalid;
     if (event.actions & SessionAction::Replay) {
       // Lifecycle snapshots use an exclusive boundary; Session::ResendReq uses the
@@ -328,7 +328,7 @@ public:
     if (result != TxSelect::Invalid && m_selected) {
       bool current = m_selected->data().connection == Base::connection_();
       dropSelected();
-      if (current && result == TxSelect::Refused && !Base::loading_())
+      if (current && result == TxSelect::Refused && !Base::loading())
 	fail({Fmt::ErrorCode::Output});
       if (result == TxSelect::Accepted) start();
     }
@@ -357,9 +357,9 @@ public:
     return true;
   }
 
-  bool acknowledge_(uint64_t connection, uint64_t epoch, uint64_t next) {
+  bool acknowledge(uint64_t connection, uint64_t epoch, uint64_t next) {
     return Base::attached_() && connection == Base::connection_() &&
-      Base::acknowledge_(epoch, next);
+      Base::acknowledge(epoch, next);
   }
 
   bool writable_(uint64_t connection) {
@@ -397,7 +397,7 @@ public:
     auto now = impl()->nowTx();
     if (now < m_idleDeadline) { armIdle(); return true; }
     m_idleDeadline = now + ZuTime{m_heartBtInt};
-    if (!m_commands.count_() && !m_selected && !Base::loading_() &&
+    if (!m_commands.count_() && !m_selected && !Base::loading() &&
 	Base::next_() == Base::published_()) {
       Session::Msg control;
       control.p<Session::HeartBt>(Session::HeartBt{});
@@ -493,9 +493,9 @@ private:
 
   void postPump() {
     if (m_started && !m_wireStarted) return;
-    if (!Base::attached_() || m_faulted || Base::resetting_() || m_resetCommitted ||
+    if (!Base::attached_() || m_faulted || Base::resetting() || m_resetCommitted ||
 	m_pumpPosted || m_selected || (!m_commands.count_() && !businessReady()) ||
-	Base::loading_()) return;
+	Base::loading()) return;
     m_pumpPosted = true;
     impl()->txSchedule(ControlTask::Pump, ++m_pumpTicket);
   }
@@ -508,8 +508,8 @@ private:
 
   void pump() {
     if (m_started && !m_wireStarted) return;
-    if (!Base::attached_() || m_faulted || Base::resetting_() || m_resetCommitted ||
-	m_selected || Base::loading_()) return;
+    if (!Base::attached_() || m_faulted || Base::resetting() || m_resetCommitted ||
+	m_selected || Base::loading()) return;
     auto item = m_commands.headPtr();
     if (!item) {
       if (!businessReady()) return;
@@ -555,16 +555,16 @@ private:
   }
 
   bool outputIdle() const {
-    return !m_inFlight && !m_commands.count_() && !m_selected && !Base::loading_() &&
+    return !m_inFlight && !m_commands.count_() && !m_selected && !Base::loading() &&
       !Base::replaying_() && !Base::waiting_() &&
       Base::next_() == Base::published_();
   }
 
   void resetProgress() {
     if (!Base::attached_() || m_faulted || !m_preparing || m_resetCommitted ||
-	m_resetRequest || !outputIdle() || !Base::resetReady_()) return;
+	m_resetRequest || !outputIdle() || !Base::resetReady()) return;
     Base::hold_();
-    m_resetRequest = Base::resetBegin_(m_prepareEpoch, m_resetTarget);
+    m_resetRequest = Base::resetBegin(m_prepareEpoch, m_resetTarget);
     if (!m_resetRequest) fail({Fmt::ErrorCode::Output});
   }
 

@@ -51,7 +51,7 @@ ZhttpHdrCatalogImpl(H3RespHeaders)
 enum {
   H3DataMax = 100<<20,
   H3StreamDataMax = 16<<20,
-  H3BidiMax = 4096,
+  H3DuplexMax = 4096,
   H3UniMax = 16,
   H3RespBodyMax = 100<<20
 };
@@ -93,7 +93,7 @@ const char *qirMigrationCIDReserveArg()
 }
 
 template <typename Params>
-static Params qirParams_(Params params, const Env &env)
+static Params qirParams(Params params, const Env &env)
 {
   return ZuMv(params)
     .migrationMode(qirMigrationMode())
@@ -107,7 +107,7 @@ static void setString_(ZtString<> &out, ZuCSpan in)
   out << in;
 }
 
-static void setQLogPath_(Zi::Path &out, Role role)
+static void setQLogPath(Zi::Path &out, Role role)
 {
   if (!out.length()) return;
   if (out[out.length() - 1] != '/') out << '/';
@@ -131,7 +131,7 @@ static void getpath_(const char *name, Zi::Path &out)
   if (auto path = Zt::getpath(name)) out = path;
 }
 
-static bool scanPort_(ZuCSpan s, unsigned &port)
+static bool scanPort(ZuCSpan s, unsigned &port)
 {
   if (!s.length()) return false;
   ZuBox<unsigned> box;
@@ -143,7 +143,7 @@ static bool scanPort_(ZuCSpan s, unsigned &port)
   return true;
 }
 
-static ZuCSpan trimCRLF_(ZuCSpan s)
+static ZuCSpan trimCRLF(ZuCSpan s)
 {
   while (s.length()) {
     char c = s[s.length() - 1];
@@ -153,7 +153,7 @@ static ZuCSpan trimCRLF_(ZuCSpan s)
   return s;
 }
 
-static bool pathEscape_(ZuCSpan path)
+static bool pathEscape(ZuCSpan path)
 {
   if (!path.length() || path[0] != '/') return true;
   ZuCSpan rest{path.data() + 1, path.length() - 1};
@@ -164,12 +164,12 @@ static bool pathEscape_(ZuCSpan path)
   return false;
 }
 
-static PathStatus appendOutput_(ZuCSpan path, const Zi::Path &downloads,
+static PathStatus appendOutput(ZuCSpan path, const Zi::Path &downloads,
     Zi::Path &out)
 {
   if (!path.length() || path[0] != '/') return PathEmpty;
   if (path[path.length() - 1] == '/') return PathDir;
-  if (pathEscape_(path)) return PathEscape;
+  if (pathEscape(path)) return PathEscape;
   out.length(0);
   out << downloads;
   if (downloads.length() && downloads[downloads.length() - 1] == '/')
@@ -194,23 +194,23 @@ static ZiMxParams mxParams_()
 
 static ZmSemaphore *sigDone_;
 
-static void sigHandler_(int)
+static void sigHandler(int)
 {
   if (sigDone_) sigDone_->post();
 }
 
-static void installSigHandlers_(
+static void installSigHandlers(
   ZmSemaphore *done, struct sigaction &oldInt, struct sigaction &oldTerm)
 {
   sigDone_ = done;
   struct sigaction action{};
-  action.sa_handler = sigHandler_;
+  action.sa_handler = sigHandler;
   sigemptyset(&action.sa_mask);
   sigaction(SIGINT, &action, &oldInt);
   sigaction(SIGTERM, &action, &oldTerm);
 }
 
-static void restoreSigHandlers_(
+static void restoreSigHandlers(
   const struct sigaction &oldInt, const struct sigaction &oldTerm)
 {
   sigaction(SIGINT, &oldInt, nullptr);
@@ -219,7 +219,7 @@ static void restoreSigHandlers_(
 }
 
 template <typename L>
-static int consumeRx_(Zquic::RxStream &rx, L l)
+static int consumeRx(Zquic::RxStream &rx, L l)
 {
   int n = 0;
   while (!rx.empty()) {
@@ -372,7 +372,7 @@ ZmRef<HQServer::Link> HQServer::accepted(const Zquic::InitialInfo &)
 int HQServerStream::process(Zquic::RxStream &rx)
 {
   if (done) return -1;
-  int n = consumeRx_(rx, [this](ZuSpan<uint8_t> span) {
+  int n = consumeRx(rx, [this](ZuSpan<uint8_t> span) {
     request << span;
   });
   if (n < 0 || (n && !retireRx(unsigned(n)))) return -1;
@@ -551,7 +551,7 @@ int HQClient::Stream::process(Zquic::RxStream &rx)
     return -1;
   }
   bool ok = true;
-  int n = consumeRx_(rx, [this, &ok](ZuSpan<uint8_t> span) {
+  int n = consumeRx(rx, [this, &ok](ZuSpan<uint8_t> span) {
     if (span.length() &&
 	file.write(span.data(), span.length()) != Zi::OK)
       ok = false;
@@ -585,7 +585,7 @@ struct H3Client : public Zquic::Client<H3Client> {
     done.post();
   }
   uint64_t maxStreamsDuplex() const {
-    return requests.length() > H3BidiMax ? requests.length() : H3BidiMax;
+    return requests.length() > H3DuplexMax ? requests.length() : H3DuplexMax;
   }
   uint64_t maxStreamsSimplex() const { return H3UniMax; }
 
@@ -953,11 +953,11 @@ int loadEnv(Role role, Env &env, const char *(*getenvFn)(const char *),
   getpathFn("ZHTTP_QIR_KEY", env.key);
   if (!env.key) env.key = DefaultKey;
   getpathFn("QLOGDIR", env.qlogPath);
-  setQLogPath_(env.qlogPath, role);
+  setQLogPath(env.qlogPath, role);
 
   env.port = DefaultPort;
   ZuCSpan port = env_(getenvFn, "ZHTTP_QIR_PORT");
-  if (port.length() && !scanPort_(port, env.port)) return Usage;
+  if (port.length() && !scanPort(port, env.port)) return Usage;
   if (role == Client && !env.requests.length()) return Usage;
 
   return OK;
@@ -995,7 +995,7 @@ PathStatus mapURL(ZuCSpan url, const Zi::Path &downloads, Request &request)
     unsigned portStart = ++i;
     while (i < n && url[i] >= '0' && url[i] <= '9') ++i;
     if (i <= portStart ||
-	!scanPort_(ZuCSpan{url.data() + portStart, i - portStart},
+	!scanPort(ZuCSpan{url.data() + portStart, i - portStart},
 	  request.port))
       return PathEmpty;
   }
@@ -1006,17 +1006,17 @@ PathStatus mapURL(ZuCSpan url, const Zi::Path &downloads, Request &request)
   ZuCSpan path{url.data() + pathStart, i - pathStart};
   if (!path.length() || path == "/") return PathEmpty;
   setString_(request.path, path);
-  return appendOutput_(path, downloads, request.output);
+  return appendOutput(path, downloads, request.output);
 }
 
 PathStatus parseHQRequest(ZuCSpan line, HqRequest &request)
 {
-  line = trimCRLF_(line);
+  line = trimCRLF(line);
   if (!line.match(HQGet)) return PathEscape;
   ZuCSpan path{line.data() + HQGet.length(), line.length() - HQGet.length()};
   if (!path.length()) return PathEmpty;
   if (path[path.length() - 1] == '/') return PathDir;
-  if (pathEscape_(path)) return PathEscape;
+  if (pathEscape(path)) return PathEscape;
   setString_(request.path, path);
   return PathOK;
 }
@@ -1025,7 +1025,7 @@ PathStatus mapHQPath(ZuCSpan path, const Zi::Path &www, Zi::Path &file)
 {
   if (!path.length() || path[0] != '/') return PathEmpty;
   if (path[path.length() - 1] == '/') return PathDir;
-  if (pathEscape_(path)) return PathEscape;
+  if (pathEscape(path)) return PathEscape;
   file.length(0);
   file << www;
   if (www.length() && www[www.length() - 1] == '/')
@@ -1038,7 +1038,7 @@ PathStatus mapHQPath(ZuCSpan path, const Zi::Path &www, Zi::Path &file)
 bool buildHQRequestLine(ZuCSpan path, ZtString<> &line)
 {
   if (!path.length() || path[0] != '/' || path[path.length() - 1] == '/' ||
-      pathEscape_(path))
+      pathEscape(path))
     return false;
   line.length(0);
   line << "GET " << path << "\r\n";
@@ -1064,7 +1064,7 @@ bool ensureParentDirs(const Zi::Path &path)
   return ZiStat{dir}.isdir();
 }
 
-static int runHQServer_(const Env &env)
+static int runHQServer(const Env &env)
 {
   ZiLog::init("zhttpqir");
   ZiLog::level(0);
@@ -1076,10 +1076,10 @@ static int runHQServer_(const Env &env)
   HQServer server{env};
   struct sigaction oldInt{};
   struct sigaction oldTerm{};
-  installSigHandlers_(&server.done, oldInt, oldTerm);
+  installSigHandlers(&server.done, oldInt, oldTerm);
   int rc = Error;
   if (server.init(
-	qirParams_(Zquic::ServerParams(&mx, "3", "4")
+	qirParams(Zquic::ServerParams(&mx, "3", "4")
 	  .certPath(env.cert).keyPath(env.key)
 	  .alpn(ZuSpan<ZuCSpan>{HQALPN})
 	  .keyLogPath(env.keyLog)
@@ -1091,13 +1091,13 @@ static int runHQServer_(const Env &env)
     server.stop();
   }
   server.final();
-  restoreSigHandlers_(oldInt, oldTerm);
+  restoreSigHandlers(oldInt, oldTerm);
   mx.stop();
   ZiLog::stop();
   return rc;
 }
 
-static int runHQClient_(const Env &env, Requests requests)
+static int runHQClient(const Env &env, Requests requests)
 {
   if (!requests.length()) return Usage;
 
@@ -1111,7 +1111,7 @@ static int runHQClient_(const Env &env, Requests requests)
   HQClient client{env, ZuMv(requests)};
   int rc = Error;
   if (client.init(
-	qirParams_(Zquic::ClientParams(&mx, "3", "4")
+	qirParams(Zquic::ClientParams(&mx, "3", "4")
 	  .caPath(env.ca)
 	  .alpn(ZuSpan<ZuCSpan>{HQALPN})
 	  .keyLogPath(env.keyLog)
@@ -1132,7 +1132,7 @@ static int runHQClient_(const Env &env, Requests requests)
   return rc;
 }
 
-static bool sameAuthority_(const Requests &requests)
+static bool sameAuthority(const Requests &requests)
 {
   if (!requests.length()) return false;
   ZuCSpan host{requests[0].host};
@@ -1143,9 +1143,9 @@ static bool sameAuthority_(const Requests &requests)
   return true;
 }
 
-static int runH3Client_(const Env &env, Requests requests)
+static int runH3Client(const Env &env, Requests requests)
 {
-  if (!sameAuthority_(requests)) return Usage;
+  if (!sameAuthority(requests)) return Usage;
 
   ZiLog::init("zhttpqir");
   ZiLog::level(0);
@@ -1157,7 +1157,7 @@ static int runH3Client_(const Env &env, Requests requests)
   H3Client client{env, ZuMv(requests)};
   int rc = Error;
   if (client.init(
-	qirParams_(Zquic::ClientParams(&mx, "3", "4")
+	qirParams(Zquic::ClientParams(&mx, "3", "4")
 	  .caPath(env.ca)
 	  .alpn(ZuSpan<ZuCSpan>{H3ALPN})
 	  .keyLogPath(env.keyLog)
@@ -1182,7 +1182,7 @@ static int runH3Client_(const Env &env, Requests requests)
   return rc;
 }
 
-static int runH3Server_(const Env &env)
+static int runH3Server(const Env &env)
 {
   Zhttpd::Options options;
   options.root = env.www;
@@ -1210,7 +1210,7 @@ static int runH3Server_(const Env &env)
   ZmSemaphore done;
   struct sigaction oldInt{};
   struct sigaction oldTerm{};
-  installSigHandlers_(&done, oldInt, oldTerm);
+  installSigHandlers(&done, oldInt, oldTerm);
 
   Zhttpd::Application app;
   int rc = Error;
@@ -1225,7 +1225,7 @@ static int runH3Server_(const Env &env)
     app.stopMultiplex();
   }
   app.final();
-  restoreSigHandlers_(oldInt, oldTerm);
+  restoreSigHandlers(oldInt, oldTerm);
   ZiLog::stop();
   return rc;
 }
@@ -1242,14 +1242,14 @@ int run(Role role)
     for (unsigned i = 0, n = requests.length(); i < n; ++i)
       if (!ensureParentDirs(requests[i].output)) return Error;
     if (!ZiStat{env.ca}.exists()) return Usage;
-    if (caseH3(env.testCase)) return runH3Client_(env, ZuMv(requests));
-    if (caseHQ(env.testCase)) return runHQClient_(env, ZuMv(requests));
+    if (caseH3(env.testCase)) return runH3Client(env, ZuMv(requests));
+    if (caseHQ(env.testCase)) return runHQClient(env, ZuMv(requests));
   } else {
     if (!ZiStat{env.www}.isdir() || !ZiStat{env.cert}.exists() ||
 	!ZiStat{env.key}.exists())
       return Usage;
-    if (caseH3(env.testCase)) return runH3Server_(env);
-    if (caseHQ(env.testCase)) return runHQServer_(env);
+    if (caseH3(env.testCase)) return runH3Server(env);
+    if (caseHQ(env.testCase)) return runHQServer(env);
   }
   return Error;
 }

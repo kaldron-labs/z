@@ -86,17 +86,17 @@ public:
 private:
   void start_();
   bool initRuntime_();
-  void startHTTP_();
-  void startWS_();
-  void startScan_();
-  void scanBatch_();
-  void startReady_();
+  void start_0();
+  void start_1();
+  void start_2();
+  void start_3();
+  void start_4();
   void stop_();
-  void stopRx_(bool);
-  void telDone_();
-  void drain_(bool);
-  void clearBatch_(bool);
-  void closeRuntime_(bool);
+  void stop_0(bool);
+  void telDone();
+  void stop_1(bool);
+  void stop_2(bool);
+  void stop_3(bool);
 
 private:
   alignas(Zm::CacheLineSize)

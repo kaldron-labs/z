@@ -13,7 +13,7 @@ bool FrameCodec::ackEliciting(FrameType::T t)
   return t != FrameType::Padding && t != FrameType::Ack;
 }
 
-static int getVar_(ZuBSpan in, unsigned &o, uint64_t &v)
+static int getVar(ZuBSpan in, unsigned &o, uint64_t &v)
 {
   unsigned n = 0;
   if (VarInt::decode(ZuBSpan{in.data() + o, in.length() - o}, v, n) < 0)
@@ -46,10 +46,10 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
     case 0x03: {
       f.type = FrameType::Ack;
       uint64_t rangeCount = 0;
-      if (getVar_(in, o, f.offset) < 0 ||
-	  getVar_(in, o, f.value) < 0 ||
-	  getVar_(in, o, rangeCount) < 0 ||
-	  getVar_(in, o, f.length) < 0)
+      if (getVar(in, o, f.offset) < 0 ||
+	  getVar(in, o, f.value) < 0 ||
+	  getVar(in, o, rangeCount) < 0 ||
+	  getVar(in, o, f.length) < 0)
 	return -1;
       if (rangeCount + 1 > Frame::MaxAckRanges) return -1;
       if (f.length > f.offset) return -1;
@@ -57,7 +57,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       f.ackRanges.push(AckRange{f.offset, smallest});
       for (uint64_t i = 0; i < rangeCount; ++i) {
 	uint64_t gap = 0, range = 0;
-	if (getVar_(in, o, gap) < 0 || getVar_(in, o, range) < 0)
+	if (getVar(in, o, gap) < 0 || getVar(in, o, range) < 0)
 	  return -1;
 	if (gap > smallest || smallest - gap < 2) return -1;
 	uint64_t base = smallest - gap - 2;
@@ -71,9 +71,9 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
 	f.ackRanges[j] = tmp;
       }
       if (t == 0x03) {
-	if (getVar_(in, o, f.ackECN.ect0) < 0 ||
-	    getVar_(in, o, f.ackECN.ect1) < 0 ||
-	    getVar_(in, o, f.ackECN.ce) < 0)
+	if (getVar(in, o, f.ackECN.ect0) < 0 ||
+	    getVar(in, o, f.ackECN.ect1) < 0 ||
+	    getVar(in, o, f.ackECN.ce) < 0)
 	  return -1;
       }
       used = o;
@@ -81,23 +81,23 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
     }
     case 0x04:
       f.type = FrameType::ResetStream;
-      if (getVar_(in, o, f.streamID) < 0 ||
-	  getVar_(in, o, f.errorCode) < 0 ||
-	  getVar_(in, o, f.length) < 0)
+      if (getVar(in, o, f.streamID) < 0 ||
+	  getVar(in, o, f.errorCode) < 0 ||
+	  getVar(in, o, f.length) < 0)
 	return -1;
       used = o;
       return 0;
     case 0x05:
       f.type = FrameType::StopSending;
-      if (getVar_(in, o, f.streamID) < 0 ||
-	  getVar_(in, o, f.errorCode) < 0)
+      if (getVar(in, o, f.streamID) < 0 ||
+	  getVar(in, o, f.errorCode) < 0)
 	return -1;
       used = o;
       return 0;
     case 0x06:
       f.type = FrameType::Crypto;
-      if (getVar_(in, o, f.offset) < 0 ||
-	  getVar_(in, o, f.length) < 0)
+      if (getVar(in, o, f.offset) < 0 ||
+	  getVar(in, o, f.length) < 0)
 	return -1;
       if (in.length() < o + f.length) return -1;
       f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
@@ -105,7 +105,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       return 0;
     case 0x07:
       f.type = FrameType::NewToken;
-      if (getVar_(in, o, f.length) < 0) return -1;
+      if (getVar(in, o, f.length) < 0) return -1;
       if (in.length() < o + f.length) return -1;
       f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
       used = o + f.length;
@@ -113,10 +113,10 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
     case 0x08 ... 0x0f:
       f.type = FrameType::Stream;
       f.fin = t & 0x01;
-      if (getVar_(in, o, f.streamID) < 0) return -1;
-      if ((t & 0x04) && getVar_(in, o, f.offset) < 0) return -1;
+      if (getVar(in, o, f.streamID) < 0) return -1;
+      if ((t & 0x04) && getVar(in, o, f.offset) < 0) return -1;
       if (t & 0x02) {
-	if (getVar_(in, o, f.length) < 0) return -1;
+	if (getVar(in, o, f.length) < 0) return -1;
 	if (in.length() < o + f.length) return -1;
       } else
 	f.length = in.length() - o;
@@ -125,13 +125,13 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       return 0;
     case 0x10:
       f.type = FrameType::MaxData;
-      if (getVar_(in, o, f.value) < 0) return -1;
+      if (getVar(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
     case 0x11:
       f.type = FrameType::MaxStreamData;
-      if (getVar_(in, o, f.streamID) < 0 ||
-	  getVar_(in, o, f.value) < 0)
+      if (getVar(in, o, f.streamID) < 0 ||
+	  getVar(in, o, f.value) < 0)
 	return -1;
       used = o;
       return 0;
@@ -140,18 +140,18 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       f.type = FrameType::MaxStreams;
       f.streamType =
 	t == 0x12 ? Zquic::StreamType::Duplex : Zquic::StreamType::Simplex;
-      if (getVar_(in, o, f.value) < 0) return -1;
+      if (getVar(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
     case 0x14:
       f.type = FrameType::DataBlocked;
-      if (getVar_(in, o, f.value) < 0) return -1;
+      if (getVar(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
     case 0x15:
       f.type = FrameType::StreamDataBlocked;
-      if (getVar_(in, o, f.streamID) < 0 ||
-	  getVar_(in, o, f.value) < 0)
+      if (getVar(in, o, f.streamID) < 0 ||
+	  getVar(in, o, f.value) < 0)
 	return -1;
       used = o;
       return 0;
@@ -160,13 +160,13 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       f.type = FrameType::StreamsBlocked;
       f.streamType =
 	t == 0x16 ? Zquic::StreamType::Duplex : Zquic::StreamType::Simplex;
-      if (getVar_(in, o, f.value) < 0) return -1;
+      if (getVar(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
     case 0x18:
       f.type = FrameType::NewCxnID;
-      if (getVar_(in, o, f.value) < 0 ||
-	  getVar_(in, o, f.offset) < 0)
+      if (getVar(in, o, f.value) < 0 ||
+	  getVar(in, o, f.offset) < 0)
 	return -1;
       if (in.length() < o + 1) return -1;
       f.length = uint8_t(in[o++]);
@@ -180,7 +180,7 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       return 0;
     case 0x19:
       f.type = FrameType::RetireCxnID;
-      if (getVar_(in, o, f.value) < 0) return -1;
+      if (getVar(in, o, f.value) < 0) return -1;
       used = o;
       return 0;
     case 0x1a:
@@ -193,9 +193,9 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       return 0;
     case 0x1c:
       f.type = FrameType::ConnectionClose;
-      if (getVar_(in, o, f.errorCode) < 0 ||
-	  getVar_(in, o, f.value) < 0 ||
-	  getVar_(in, o, f.length) < 0)
+      if (getVar(in, o, f.errorCode) < 0 ||
+	  getVar(in, o, f.value) < 0 ||
+	  getVar(in, o, f.length) < 0)
 	return -1;
       if (in.length() < o + f.length) return -1;
       f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};
@@ -203,8 +203,8 @@ int FrameCodec::parse(ZuBSpan in, Frame &f, unsigned &used)
       return 0;
     case 0x1d:
       f.type = FrameType::ApplicationClose;
-      if (getVar_(in, o, f.errorCode) < 0 ||
-	  getVar_(in, o, f.length) < 0)
+      if (getVar(in, o, f.errorCode) < 0 ||
+	  getVar(in, o, f.length) < 0)
 	return -1;
       if (in.length() < o + f.length) return -1;
       f.payload = ZuBSpan{in.data() + o, unsigned(f.length)};

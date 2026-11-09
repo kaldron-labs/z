@@ -31,10 +31,10 @@ static MaintenanceResult maintenanceAdd(
   return lhs;
 }
 
-class MaintenanceRun_ : public ZmNHeap<MaintenanceRun_>, public ZmPolymorph {
-friend inline ZuStringT<"Zum.Daemon.Maintenance"> ZmNHeapID(MaintenanceRun_ *);
+class MaintenanceRun : public ZmNHeap<MaintenanceRun>, public ZmPolymorph {
+friend inline ZuStringT<"Zum.Daemon.Maintenance"> ZmNHeapID(MaintenanceRun *);
 public:
-  MaintenanceRun_(ZmFn<> retire, DB *db, Ztls::Random *rng,
+  MaintenanceRun(ZmFn<> retire, DB *db, Ztls::Random *rng,
       ZmScheduler *scheduler, unsigned sid, MaintenanceFn complete) :
     m_retire{ZuMv(retire)}, m_db{db}, m_rng{rng}, m_scheduler{scheduler},
     m_sid{sid}, m_complete{ZuMv(complete)} { }
@@ -43,7 +43,7 @@ public:
   {
     ZmAssert(m_scheduler->invoked(m_sid));
     daemonGrantCleanup(ZmRef<ZmPolymorph>{this}, m_db, m_rng, DaemonCleanupLimit::Rows,
-      [self = ZmRef<MaintenanceRun_>{this}](MaintenanceResult result) mutable {
+      [self = ZmRef<MaintenanceRun>{this}](MaintenanceResult result) mutable {
 	self->post_([self = ZuMv(self), result = ZuMv(result)]() mutable {
 	  self->grant_(ZuMv(result));
 	});
@@ -68,7 +68,7 @@ private:
     ZmAssert(m_scheduler->invoked(m_sid));
     if (m_stopping) { finish_(ZuMv(grant)); return; }
     daemonRefreshCleanup(ZmRef<ZmPolymorph>{this}, m_db, m_rng, DaemonCleanupLimit::Rows,
-      [self = ZmRef<MaintenanceRun_>{this}, grant = ZuMv(grant)](
+      [self = ZmRef<MaintenanceRun>{this}, grant = ZuMv(grant)](
 	  MaintenanceResult refresh) mutable {
 	self->post_([self = ZuMv(self), grant = ZuMv(grant),
 	    refresh = ZuMv(refresh)]() mutable {
@@ -83,7 +83,7 @@ private:
     auto result = maintenanceAdd(ZuMv(grant), ZuMv(refresh));
     if (m_stopping) { finish_(ZuMv(result)); return; }
     daemonSessionCleanup(ZmRef<ZmPolymorph>{this}, m_db, m_rng, DaemonCleanupLimit::Rows,
-      [self = ZmRef<MaintenanceRun_>{this}, result = ZuMv(result)](
+      [self = ZmRef<MaintenanceRun>{this}, result = ZuMv(result)](
 	  MaintenanceResult session) mutable {
 	self->post_([self = ZuMv(self), result = ZuMv(result),
 	    session = ZuMv(session)]() mutable {
@@ -113,9 +113,9 @@ private:
   bool		m_done = false;
 };
 
-static void maintenanceStop_(ZmPolymorph *run)
+static void maintenanceStop(ZmPolymorph *run)
 {
-  static_cast<MaintenanceRun_ *>(run)->stop();
+  static_cast<MaintenanceRun *>(run)->stop();
 }
 
 // Auth-route discovery has a wider fixed mapping ceiling than token
@@ -173,7 +173,7 @@ String Daemon::page_(AppID appID, Bytes ceremonyID, String options)
   return page;
 }
 
-String Daemon::bootstrapPage_(AppID appID)
+String Daemon::bootstrapPage(AppID appID)
 {
   String beginPath, finishPath;
   if (!appNestedEndpointPath(appID, "v1", "passkey", "begin", beginPath) ||
@@ -204,7 +204,7 @@ String Daemon::bootstrapPage_(AppID appID)
   return page;
 }
 
-String Daemon::enrollPage_(AppID appID)
+String Daemon::enrollPage(AppID appID)
 {
   String beginPath, finishPath;
   if (!appNestedEndpointPath(appID, "v1", "passkey", "begin", beginPath) ||
@@ -236,17 +236,17 @@ String Daemon::enrollPage_(AppID appID)
   return page;
 }
 
-class AuthRouteLoad_ : public ZmNHeap<AuthRouteLoad_>, public ZmObject {
-friend inline ZuStringT<"Zum.zumd.daemon.AuthRouteLoad"> ZmNHeapID(AuthRouteLoad_ *);
+class AuthRouteLoad : public ZmNHeap<AuthRouteLoad>, public ZmObject {
+friend inline ZuStringT<"Zum.zumd.daemon.AuthRouteLoad"> ZmNHeapID(AuthRouteLoad *);
 
 public:
-  AuthRouteLoad_(ZmFn<> retire, DB *db, Bytes dbKey, String authorizationBase,
+  AuthRouteLoad(ZmFn<> retire, DB *db, Bytes dbKey, String authorizationBase,
       AppID appID, String login, AuthRouteDoneFn complete) :
     m_retire{ZuMv(retire)}, m_db{db}, m_dbKey{ZuMv(dbKey)},
     m_authorizationBase{ZuMv(authorizationBase)}, m_appID{appID},
     m_login{ZuMv(login)}, m_complete{ZuMv(complete)} { }
 
-  ~AuthRouteLoad_()
+  ~AuthRouteLoad()
   {
     if (m_dbKey && m_dbKey.mutable_())
       ZuClear(m_dbKey);
@@ -259,7 +259,7 @@ public:
       return;
     }
     auto users = m_db->users;
-    users->run(0, [self = ZmRef<AuthRouteLoad_>{this}, users]() mutable {
+    users->run(0, [self = ZmRef<AuthRouteLoad>{this}, users]() mutable {
       auto key = ZuMvTuple(UserSource::Local, self->m_login);
       users->find<2>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<User> user) mutable {
@@ -275,7 +275,7 @@ private:
   void policy_()
   {
     auto policies = m_db->authPolicies;
-    policies->run(0, [self = ZmRef<AuthRouteLoad_>{this}, policies]() mutable {
+    policies->run(0, [self = ZmRef<AuthRouteLoad>{this}, policies]() mutable {
       auto key = ZuFwdTuple(self->m_appID);
       policies->find<0>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<AuthPolicy> row) mutable {
@@ -307,7 +307,7 @@ private:
   void provider_()
   {
     auto providers = m_db->providers;
-    providers->run(0, [self = ZmRef<AuthRouteLoad_>{this}, providers]() mutable {
+    providers->run(0, [self = ZmRef<AuthRouteLoad>{this}, providers]() mutable {
       auto key = ZuFwdTuple(self->m_providerID);
       providers->find<0>(0, ZuMv(key), [
           self = ZuMv(self)](ZdbRowRef<Provider> row) mutable {
@@ -366,7 +366,7 @@ private:
     auto maps = m_db->roleMaps;
     maps->selectRows<0>(ZuFwdTuple(m_appID, m_providerID),
         AuthRouteLimit::Scan, [
-        self = ZmRef<AuthRouteLoad_>{this}](
+        self = ZmRef<AuthRouteLoad>{this}](
           ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
         if (count > AuthRouteLimit::RoleMappings) {
@@ -397,7 +397,7 @@ private:
       return;
     }
     auto roles = m_db->roles;
-    roles->run(0, [self = ZmRef<AuthRouteLoad_>{this}, roles]() mutable {
+    roles->run(0, [self = ZmRef<AuthRouteLoad>{this}, roles]() mutable {
       auto map = self->m_maps[self->m_mapIndex++];
       auto key = ZuFwdTuple(self->m_appID, map.roleID);
       roles->find<0>(0, ZuMv(key), [
@@ -443,14 +443,14 @@ void Daemon::authRoute_(
     AppID appID, String login, AuthRouteDoneFn complete)
 {
   if (!admit_()) { complete(AuthRoute{.type = AuthRouteType::Error}); return; }
-  ZmRef<AuthRouteLoad_> load = new AuthRouteLoad_{
+  ZmRef<AuthRouteLoad> load = new AuthRouteLoad{
     ZmFn<>{this, ZmFnPtr<&Daemon::workDone_>{}},
     m_db, m_config.dbKey, m_config.issuer, appID,
     ZuMv(login), ZuMv(complete)};
   load->start();
 }
 
-bool Daemon::loadKey_()
+bool Daemon::loadKey()
 {
   ServerConfig config;
   int64_t now = Zm::now().sec();
@@ -609,7 +609,7 @@ bool Daemon::prepare(ServerBootstrapResult bootstrap)
     m_ssf->final();
     m_ssf = nullptr;
   }
-  if (!loadKey_()) return false;
+  if (!loadKey()) return false;
   m_config.bootstrap = ZuMv(bootstrap);
   if (m_config.oidcHTTP) {
     if (!m_config.ssfIssuer) m_config.ssfIssuer = m_config.issuer;
@@ -667,7 +667,7 @@ void Daemon::workDone_() {
   }
   post_([this]() {
     --m_credit;
-    postDrain_();
+    stop_3();
   });
 }
 
@@ -675,10 +675,10 @@ void Daemon::start_() {
   if (!m_httpInited) { Engine::started(false); return; }
   m_provider.start([this](bool ok) {
     if (!ok) { Engine::started(false); return; }
-    if (!m_ssf) { startHTTP_(); return; }
+    if (!m_ssf) { start_0(); return; }
     // Revocation consumers precede the listener that can admit producers.
     m_ssf->start([this](bool ok) {
-      if (ok) { startHTTP_(); return; }
+      if (ok) { start_0(); return; }
       m_provider.stop([this](bool) {
         Engine::started(false);
       });
@@ -686,9 +686,9 @@ void Daemon::start_() {
   });
 }
 
-void Daemon::startHTTP_() {
+void Daemon::start_0() {
   HTTPServer::start([this](bool ok) {
-    if (ok) { post_([this]() { startRuntime_(); }); return; }
+    if (ok) { post_([this]() { start_1(); }); return; }
     auto stoppedSSF = [this](bool) {
       m_provider.stop([this](bool) {
         Engine::started(false);
@@ -699,55 +699,55 @@ void Daemon::startHTTP_() {
   });
 }
 
-void Daemon::startRuntime_() {
+void Daemon::start_1() {
   ZmAssert_(m_credit.load_() == DaemonCredit::Closed);
   ZmAssert_(!m_children && !m_cleanupRun && !m_draining && !m_drainPosted);
   m_credit = 0;
-  cleanupStart_();
+  cleanupStart();
   Engine::started(true);
 }
 
 void Daemon::stop_() {
   m_credit |= DaemonCredit::Closed;
   HTTPServer::stopAccepting();
-  post_([this]() { stopOwner_(); });
+  post_([this]() { stop_0(); });
 }
 
-void Daemon::stopOwner_() {
+void Daemon::stop_0() {
   m_stopOK = true;
   m_children = 2;
   m_draining = true;
-  cleanupStop_();
-  stopRequests_();
+  cleanupStop();
+  stop_1();
   m_provider.stop([this](bool ok) {
     post_([this, ok]() {
       m_stopOK &= ok;
-      childDown_();
+      stop_2();
     });
   });
 }
 
-void Daemon::stopRequests_() {
+void Daemon::stop_1() {
   m_requests->deactivate([this](bool ok) {
     post_([this, ok]() {
       // An opposite activation can supersede a queued stop. Such a callback
       // is not a completed admission drain; join the newly requested stop.
       if (m_requests->state() != ZmEngineState::Stopped) {
-        stopRequests_();
+        stop_1();
         return;
       }
       m_stopOK &= ok;
-      childDown_();
+      stop_2();
     });
   });
 }
 
-void Daemon::childDown_() {
+void Daemon::stop_2() {
   --m_children;
-  postDrain_();
+  stop_3();
 }
 
-void Daemon::postDrain_() {
+void Daemon::stop_3() {
   if (!m_draining || m_children || m_cleanupRun || m_drainPosted ||
       (m_credit.load_() & DaemonCredit::Count)) return;
   m_drainPosted = true;
@@ -758,14 +758,14 @@ void Daemon::postDrain_() {
       m_ssf->stop([this](bool ok) {
         post_([this, ok]() {
           m_stopOK &= ok;
-          stopHTTP_();
+          stop_4();
         });
       });
-    } else stopHTTP_();
+    } else stop_4();
   });
 }
 
-void Daemon::stopHTTP_() {
+void Daemon::stop_4() {
   HTTPServer::rxRun([this]() {
     HTTPServer::txRun([this]() {
       HTTPServer::stop([this](bool ok) {
@@ -780,7 +780,7 @@ void Daemon::stopHTTP_() {
   });
 }
 
-void Daemon::cleanupStart_()
+void Daemon::cleanupStart()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
   m_cleanupState = DaemonCleanupState::Idle;
@@ -789,21 +789,21 @@ void Daemon::cleanupStart_()
   m_mx->add(&m_cleanupTimer,
     Zm::now() + ZuTime{int64_t(m_config.cleanupInterval)},
     ZmScheduler::Update,
-    [this](auto &&arm) { return arm([this]() { cleanup_(); }); },
+    [this](auto &&arm) { return arm([this]() { cleanup_0(); }); },
     m_requests->sid());
 }
 
-void Daemon::cleanupStop_()
+void Daemon::cleanupStop()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
   if (m_mx) m_mx->del(&m_cleanupTimer);
   if (m_cleanupState != DaemonCleanupState::Running) return;
   m_cleanupState = DaemonCleanupState::Stopping;
   ZmAssert(m_cleanupRun);
-  maintenanceStop_(m_cleanupRun.ptr());
+  maintenanceStop(m_cleanupRun.ptr());
 }
 
-void Daemon::cleanup_()
+void Daemon::cleanup_0()
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
   if (Engine::state() != ZmEngineState::Running || m_cleanupState != DaemonCleanupState::Idle ||
@@ -811,15 +811,15 @@ void Daemon::cleanup_()
   if (!admit_()) return;
   m_cleanupState = DaemonCleanupState::Running;
   ZiLOG(Debug, "zumd", "maintenance cleanup started");
-  ZmRef<MaintenanceRun_> run = new MaintenanceRun_{
+  ZmRef<MaintenanceRun> run = new MaintenanceRun{
     ZmFn<>{this, ZmFnPtr<&Daemon::workDone_>{}}, m_db, &m_rng,
     m_requests->scheduler(), m_requests->sid(),
-    [this](MaintenanceResult result) mutable { cleanupDone_(ZuMv(result)); }};
+    [this](MaintenanceResult result) mutable { cleanup_1(ZuMv(result)); }};
   m_cleanupRun = run;
   run->start();
 }
 
-void Daemon::cleanupDone_(MaintenanceResult result)
+void Daemon::cleanup_1(MaintenanceResult result)
 {
   ZmAssert(m_requests->scheduler()->invoked(m_requests->sid()));
   auto stopping = m_cleanupState == DaemonCleanupState::Stopping;
@@ -845,14 +845,14 @@ void Daemon::cleanupDone_(MaintenanceResult result)
         << " rescheduled=" << result.rescheduled;
     }));
   if (stopping) {
-    postDrain_();
+    stop_3();
     return;
   }
   if (!reschedule) return;
   m_mx->add(&m_cleanupTimer,
     Zm::now() + ZuTime{int64_t(m_cleanupBackoff)},
     ZmScheduler::Update,
-    [this](auto &&arm) { return arm([this]() { cleanup_(); }); },
+    [this](auto &&arm) { return arm([this]() { cleanup_0(); }); },
     m_requests->sid());
 }
 

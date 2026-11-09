@@ -79,12 +79,12 @@ template <int K> class Pipe {
     [](void *ptr, uint64_t id, uint64_t gen) {
       auto self = static_cast<Pipe *>(ptr);
       self->m_txOK &= id == 1 && gen == 1 && self->m_txDir.end();
-      self->m_call->invalidateTx_();
+      self->m_call->invalidateTx();
       self->m_scheduler.run([self]() {
 	self->m_rxOK &= self->m_frame.end() && self->m_meta.end() &&
 	  self->m_rxDir.end();
 	++self->m_completions;
-	self->m_call->invalidateRx_();
+	self->m_call->invalidateRx();
 	self->m_endDone.post();
       }, Rx);
       return self->m_txOK;
@@ -93,7 +93,7 @@ template <int K> class Pipe {
     [](void *ptr, uint64_t, uint64_t) {
       auto self = static_cast<Pipe *>(ptr);
       self->m_rxOK = false;
-      self->m_call->invalidateRx_(true);
+      self->m_call->invalidateRx(true);
     }
   };
 

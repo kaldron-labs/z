@@ -62,7 +62,7 @@ private:
   ScopeNames::Node *scope_(ZuCSpan);
   ScopeIDs::Node *id_(RoleID);
   void request_(ScopeNames::Node *);
-  void addName_(ScopeNames::Node *);
+  void addName(ScopeNames::Node *);
   void next_();
   void finish_(int);
 

@@ -76,17 +76,17 @@ struct TestLink :
   TestLink(App *app) : Base{app, false, ZuID{"client"}} { }
   TestLink(App *app, bool isServer) : Base{app, isServer} { }
   void flushTx_() { }
-  void queueTxFlush_() { }
+  void queueTxFlush() { }
   void pto_() { }
-  void queueRetransmit_() { }
+  void queueRetransmit() { }
   void initPath(ZiSockAddr local, ZiSockAddr remote) {
     Base::initClientPathTx_(ZuMv(local), ZuMv(remote));
   }
   void closeForTest(uint64_t errorCode = 0) {
-    Base::closeState_(errorCode);
+    Base::closeState(errorCode);
   }
   bool recordTx(unsigned bytes) {
-    return Base::recordProtPktTx_(
+    return Base::recordProtPktTx(
       Zquic::PktNumSpace::AppData, 0, bytes, {}, nullptr, false);
   }
   void receiveDatagram(unsigned bytes) {
@@ -127,7 +127,7 @@ struct TestLink :
   }
   uint64_t txQueueCount() const { return Base::txQueueCount_(); }
 #ifdef Zquic_DEBUG
-  void growActivePath(unsigned size) { Base::forceActivePathMTU_(size); }
+  void growActivePath(unsigned size) { Base::forceActivePathMTU(size); }
   bool startPMTUDProbe(unsigned size) {
     return Base::startPMTUDProbe_(size);
   }
@@ -253,7 +253,7 @@ ZuBSpan bytes_(const uint8_t *data, unsigned len)
   return ZuBSpan{data, len};
 }
 
-static ZmRef<ZiIOBuf> streamPkt_(
+static ZmRef<ZiIOBuf> streamPkt(
   uint64_t id, uint64_t offset, ZuBSpan payload, bool fin,
   Zquic::Frame &frame, unsigned &used)
 {
@@ -324,9 +324,9 @@ void testHandshakeStreamsAndClose()
     "loop graceful close failed");
 }
 
-void testSplitReorderedStreamFrames()
+void splitReorderedStreamFrames()
 {
-  ZuTestScope(testSplitReorderedStreamFrames);
+  ZuTestScope(splitReorderedStreamFrames);
 
   uint8_t p0[700], p1[700], p2[200];
   memset(p0, 'a', sizeof(p0));
@@ -338,7 +338,7 @@ void testSplitReorderedStreamFrames()
   ZmRef<TestLink> client = new TestLink{&app};
   auto stream = client->stream(Zquic::StreamType::Duplex);
 
-  auto packet = streamPkt_(
+  auto packet = streamPkt(
     stream->id(), sizeof(p0), bytes_(p1, sizeof(p1)), false, f, used);
   ZuCHECK(packet &&
       f.offset == sizeof(p0) && f.length == sizeof(p1),
@@ -348,7 +348,7 @@ void testSplitReorderedStreamFrames()
       !stream->rxBytes(),
     "loop out-of-order stream receive failed");
 
-  packet = streamPkt_(
+  packet = streamPkt(
     stream->id(), 0, bytes_(p0, sizeof(p0)), false, f, used);
   ZuCHECK(packet &&
       f.offset == 0 && f.length == sizeof(p0),
@@ -358,7 +358,7 @@ void testSplitReorderedStreamFrames()
       !stream->rxPending(),
     "loop stream gap fill failed");
 
-  packet = streamPkt_(
+  packet = streamPkt(
     stream->id(), sizeof(p0) + sizeof(p1), bytes_(p2, sizeof(p2)), true,
     f, used);
   ZuCHECK(packet &&
@@ -583,7 +583,7 @@ int main(int argc, char **argv)
   parse(argc, argv);
   ZuTestMain();
   ZuTestCall(testHandshakeStreamsAndClose);
-  ZuTestCall(testSplitReorderedStreamFrames);
+  ZuTestCall(splitReorderedStreamFrames);
   ZuTestCall(testRecoveryFlowAndPMTUD);
   ZuTestCall(testDatagramPayloadHeadroom, 0);
   ZuTestCall(testDatagramPayloadHeadroom, Zm::CacheLineSize);

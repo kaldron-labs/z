@@ -65,7 +65,7 @@ SessionEvent LinkState::event(unsigned actions, unsigned error, int32_t tag) con
 {
   return {.actions = actions, .state = m_state, .error = error, .tag = tag,
     .connection = m_connection, .epoch = m_epoch, .change = m_change,
-    .probe = m_probe, .drain = m_draining || resetPreparing_() || resetArmed_() ? m_drain : 0,
+    .probe = m_probe, .drain = m_draining || resetPreparing() || resetArmed() ? m_drain : 0,
     .nextEpoch = m_nextEpoch, .resetInitiator = m_resetInitiator,
     .instance = m_instance, .heartBtInt = m_heartBtInt};
 }
@@ -90,7 +90,7 @@ ZuTime LinkState::deadline_(unsigned timer) const
     default: return {};
   }
 }
-unsigned LinkState::nextTimer_(ZuTime &at) const
+unsigned LinkState::nextTimer(ZuTime &at) const
 {
   at.null();
   unsigned kind = SessionTimer::Logon;
@@ -100,7 +100,7 @@ unsigned LinkState::nextTimer_(ZuTime &at) const
   }
   return kind;
 }
-SessionFault LinkState::validateSession_(const RxMsg &h) const
+SessionFault LinkState::validateSession(const RxMsg &h) const
 {
   if (m_config.mode == Transport::Raw) return {};
   if (!h.seqNo || h.seqNo > m_config.sequenceLimit)
@@ -123,10 +123,10 @@ SessionEvent LinkState::fault_(uint64_t connection, unsigned error, int32_t tag,
   return e;
 }
 
-bool LinkState::resetOnOpen_(uint64_t epoch, bool enabled)
+bool LinkState::resetOnOpen(uint64_t epoch, bool enabled)
 {
   if (m_config.mode == Transport::Raw || !m_config.valid() || !epoch || epoch != m_epoch ||
-      m_connection || m_state != State::Disconnected || resetPreparing_()) return false;
+      m_connection || m_state != State::Disconnected || resetPreparing()) return false;
   m_resetOnOpen = enabled;
   return true;
 }
@@ -151,11 +151,11 @@ SessionEvent LinkState::bind_(bool replace)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!m_epoch || !m_config.valid()) return event(SessionAction::Refuse, SessionError::Config);
-  if (!replace && (m_state != State::Disconnected || resetPreparing_()))
+  if (!replace && (m_state != State::Disconnected || resetPreparing()))
     return event(SessionAction::Refuse, SessionError::Busy);
   if (m_connection == UINT64_MAX) return event(SessionAction::Refuse, SessionError::Limit);
-  bool preparing = replace && resetPreparing_();
-  bool armed = replace && resetArmed_();
+  bool preparing = replace && resetPreparing();
+  bool armed = replace && resetArmed();
   ++m_connection;
   m_admission = m_txBoundary = 0;
   m_admitted = m_peerLogout = m_ready = false;
@@ -179,13 +179,13 @@ SessionEvent LinkState::start_(ZuTime now)
   m_deadlines.logon = now + m_config.logonTimeout;
   return transition(m_config.initiator ? State::Logon : State::Accepting,
     SessionAction::Timers | SessionAction::Pause |
-      (m_config.initiator && !resetPreparing_() ? SessionAction::SendLogon : 0));
+      (m_config.initiator && !resetPreparing() ? SessionAction::SendLogon : 0));
 }
-SessionEvent LinkState::logonSent_(uint64_t connection, uint64_t seqNo, ZuTime)
+SessionEvent LinkState::logonSent(uint64_t connection, uint64_t seqNo, ZuTime)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || m_state != State::Logon || m_txBoundary) return event();
-  if (!seqNo || seqNo > m_config.sequenceLimit || (resetArmed_() && seqNo != 1))
+  if (!seqNo || seqNo > m_config.sequenceLimit || (resetArmed() && seqNo != 1))
     return close(SessionError::Sequence);
   // This snapshot is after the Session::Logon assignment, before later new traffic.
   m_txBoundary = seqNo + 1;
@@ -203,7 +203,7 @@ SessionEvent LinkState::reject(unsigned error, int32_t tag, ZuTime now)
   e.error = error; e.tag = tag;
   return e;
 }
-SessionEvent LinkState::peerLogon_(uint64_t connection, const RxMsg &h,
+SessionEvent LinkState::peerLogon(uint64_t connection, const RxMsg &h,
     const Session::Logon &logon, uint64_t expected, ZuTime now)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
@@ -225,11 +225,11 @@ SessionEvent LinkState::peerLogon_(uint64_t connection, const RxMsg &h,
     return reject(SessionError::Sequence, 34, now);
   // Reset negotiation is a separate, drain-coordinated operation. Do not
   // consume the peer's reset proposal or silently reset continuing progress.
-  if (logon.resetSeqNum && !resetArmed_()) return event(SessionAction::NeedReset);
-  if (resetArmed_() && (!logon.resetSeqNum || h.seqNo != 1 || expected != 1 || h.possDup))
+  if (logon.resetSeqNum && !resetArmed()) return event(SessionAction::NeedReset);
+  if (resetArmed() && (!logon.resetSeqNum || h.seqNo != 1 || expected != 1 || h.possDup))
     return reject(SessionError::Sync, 141, now);
   if (h.seqNo < expected) return reject(SessionError::Sequence, 34, now);
-  if ((resetArmed_() ? m_resetInitiator : m_config.initiator) &&
+  if ((resetArmed() ? m_resetInitiator : m_config.initiator) &&
       logon.heartBtInt != m_config.heartBtInt)
     return reject(SessionError::Heartbeat, 108, now);
   if (m_config.mode == Transport::FIXT11 &&
@@ -237,7 +237,7 @@ SessionEvent LinkState::peerLogon_(uint64_t connection, const RxMsg &h,
     return reject(SessionError::AppVersion, 1137, now);
   if (m_config.mode == Transport::FIX44A && !logon.nextExpected)
     return reject(SessionError::Sync, 789, now);
-  if (resetArmed_() && m_admitted && !m_resetInitiator && !m_txBoundary &&
+  if (resetArmed() && m_admitted && !m_resetInitiator && !m_txBoundary &&
       m_state == State::Accepting)
     return transition(State::Logon, SessionAction::SendLogon | SessionAction::RetryInput);
   if (!m_admitted) {
@@ -251,7 +251,7 @@ SessionEvent LinkState::peerLogon_(uint64_t connection, const RxMsg &h,
   if (!m_txBoundary) return event(); // retained input retries after logonSent_
   if (m_config.mode == Transport::FIX44A && logon.nextExpected > m_txBoundary)
     return reject(SessionError::Sync, 789, now);
-  bool reset = resetArmed_();
+  bool reset = resetArmed();
   m_nextEpoch = 0;
   m_deadlines.logon.null();
   bool rxGap = h.seqNo > expected;
@@ -344,7 +344,7 @@ SessionEvent LinkState::recovery_(uint64_t connection, bool rxDone, bool txDone,
   } else actions |= synchronize(now).actions;
   return event(actions);
 }
-void LinkState::activity_(uint64_t connection, ZuTime now)
+void LinkState::activity(uint64_t connection, ZuTime now)
 {
   if (current(connection) && m_state == State::Established &&
       m_heartBtInt && !m_probeID.length()) {
@@ -352,7 +352,7 @@ void LinkState::activity_(uint64_t connection, ZuTime now)
     if (!*m_deadlines.receive || next > m_deadlines.receive) m_deadlines.receive = next;
   }
 }
-SessionEvent LinkState::probeSent_(uint64_t connection, uint64_t marker,
+SessionEvent LinkState::probeSent(uint64_t connection, uint64_t marker,
     uint64_t seqNo, ZuTime now)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
@@ -391,7 +391,7 @@ SessionEvent LinkState::drainTx_(uint64_t connection, uint64_t ticket,
   e.actions |= SessionAction::Timers;
   return e;
 }
-SessionEvent LinkState::resetPrepare_(uint64_t connection, uint64_t epoch,
+SessionEvent LinkState::resetPrepare(uint64_t connection, uint64_t epoch,
     uint64_t nextEpoch, bool initiator, ZuTime now, unsigned path)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
@@ -408,17 +408,17 @@ SessionEvent LinkState::resetPrepare_(uint64_t connection, uint64_t epoch,
   return transition(State::Resetting,
     SessionAction::ResetPrepare | SessionAction::Pause | SessionAction::Timers);
 }
-bool LinkState::resetMatches_(uint64_t connection, uint64_t epoch,
+bool LinkState::resetMatches(uint64_t connection, uint64_t epoch,
     uint64_t nextEpoch, uint64_t drain) const
 {
-  return connection && connection <= m_connection && resetPreparing_() &&
+  return connection && connection <= m_connection && resetPreparing() &&
     epoch == m_epoch && nextEpoch == m_nextEpoch && drain == m_drain;
 }
-SessionEvent LinkState::resetReady_(uint64_t connection, uint64_t nextEpoch,
+SessionEvent LinkState::resetReady(uint64_t connection, uint64_t nextEpoch,
     ZuTime now, bool associated)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
-  if (!connection || connection > m_connection || !resetPreparing_() ||
+  if (!connection || connection > m_connection || !resetPreparing() ||
       nextEpoch != m_nextEpoch) return event();
   bool started = m_state == State::Logon || m_state == State::Accepting;
   bool pending = associated && m_state == State::Disconnected;
@@ -444,11 +444,11 @@ SessionEvent LinkState::resetReady_(uint64_t connection, uint64_t nextEpoch,
   e.drain = m_drain;
   return e;
 }
-SessionEvent LinkState::resetStart_(uint64_t connection, ZuTime now)
+SessionEvent LinkState::resetStart(uint64_t connection, ZuTime now)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || m_state != State::Resetting ||
-      resetPreparing_() || !resetArmed_() ||
+      resetPreparing() || !resetArmed() ||
       m_resetPath != ResetPath::Live)
     return event();
 
@@ -457,18 +457,18 @@ SessionEvent LinkState::resetStart_(uint64_t connection, ZuTime now)
     SessionAction::RetryInput | SessionAction::Timers |
       (m_resetInitiator ? SessionAction::SendLogon : 0));
 }
-SessionEvent LinkState::resetDisconnect_(uint64_t connection)
+SessionEvent LinkState::resetDisconnect(uint64_t connection)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || m_state != State::Resetting ||
-      resetPreparing_() || !resetArmed_() ||
+      resetPreparing() || !resetArmed() ||
       m_resetPath != ResetPath::Reconnect) return event();
   m_resetOnOpen = true;
   return close(SessionError::None);
 }
-SessionEvent LinkState::resetAbort_(uint64_t connection, uint64_t nextEpoch, uint64_t drain)
+SessionEvent LinkState::resetAbort(uint64_t connection, uint64_t nextEpoch, uint64_t drain)
 {
-  if (!connection || connection > m_connection || !resetPreparing_() ||
+  if (!connection || connection > m_connection || !resetPreparing() ||
       nextEpoch != m_nextEpoch || drain != m_drain ||
       (m_state != State::Closing && m_state != State::Disconnected &&
        m_state != State::Logon && m_state != State::Accepting)) return event();
@@ -494,12 +494,12 @@ SessionEvent LinkState::heartbeat_(uint64_t connection, ZuCSpan id, ZuTime now)
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || (m_state != State::Established && m_state != State::Logout))
     return event();
-  activity_(connection, now);
+  activity(connection, now);
   unsigned actions = SessionAction::Observe;
   uint64_t acknowledged = 0;
   if (m_probeID.length() && m_probeBoundary && id == m_probeID) {
     m_probeID.clear(); m_deadlines.probe.null();
-    activity_(connection, now);
+    activity(connection, now);
     actions |= SessionAction::Timers;
     // The exact published challenge bounds peer session progress. An early
     // Session::HeartBt or unresolved replay/gap is liveness evidence only.
@@ -525,7 +525,7 @@ SessionEvent LinkState::testRequest_(uint64_t connection, ZuTime now)
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || (m_state != State::Established && m_state != State::Logout))
     return event();
-  activity_(connection, now);
+  activity(connection, now);
   // Echo borrows the enclosing retained input, never a numeric interpretation.
   return event(SessionAction::Observe | SessionAction::Echo);
 }
@@ -543,7 +543,7 @@ SessionEvent LinkState::logout_(uint64_t connection, ZuTime now)
   if (m_state == State::Resetting) return close(SessionError::None);
   return reject(SessionError::None, 0, now);
 }
-SessionEvent LinkState::peerLogoutEarly_(uint64_t connection)
+SessionEvent LinkState::peerLogoutEarly(uint64_t connection)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || m_state != State::Established || m_peerLogout) return event();
@@ -557,7 +557,7 @@ SessionEvent LinkState::peerLogoutEarly_(uint64_t connection)
   // the requestor closes the connection. Ordered disposition can close later.
   return event(actions);
 }
-SessionEvent LinkState::peerLogout_(uint64_t connection, ZuTime now)
+SessionEvent LinkState::peerLogout(uint64_t connection, ZuTime now)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || m_state == State::Closing) return event();
@@ -584,7 +584,7 @@ SessionEvent LinkState::lost_(uint64_t connection)
   if (!current(connection) || m_state == State::Closing) return event();
   return close(SessionError::Transport);
 }
-SessionEvent LinkState::outputFailed_(uint64_t connection)
+SessionEvent LinkState::outputFailed(uint64_t connection)
 {
   if (m_config.mode == Transport::Raw) return event(SessionAction::Bypass);
   if (!current(connection) || m_state == State::Closing) return event();

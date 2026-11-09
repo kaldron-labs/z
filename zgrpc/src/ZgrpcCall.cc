@@ -39,7 +39,7 @@ void *CallCore::txOwner_() const
   return m_txOwner.load_();
 }
 
-void CallCore::invalidateRx_(bool cancelled)
+void CallCore::invalidateRx(bool cancelled)
 {
   ZiAssert(m_rxRoute.invoked(), "Zgrpc", (), "call invalidation outside Rx", return);
   if (!m_rxOwner.load_()) return;
@@ -47,13 +47,13 @@ void CallCore::invalidateRx_(bool cancelled)
   m_rxOwner = nullptr;
 }
 
-void CallCore::invalidateTx_()
+void CallCore::invalidateTx()
 {
   ZiAssert(m_txRoute.invoked(), "Zgrpc", (), "call invalidation outside Tx", return);
   m_txOwner = nullptr;
 }
 
-bool CallCore::sendPost_()
+bool CallCore::sendPost()
 {
   if (++m_sendPosts <= m_maxQueue) return true;
   --m_sendPosts;

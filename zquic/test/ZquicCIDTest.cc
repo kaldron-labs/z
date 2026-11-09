@@ -160,9 +160,9 @@ void testStatelessReset()
       invalid) < 0, "invalid token produced stateless reset");
 }
 
-void testVariableShortCIDRouteMatch()
+void variableShortCIDRouteMatch()
 {
-  ZuTestScope(testVariableShortCIDRouteMatch);
+  ZuTestScope(variableShortCIDRouteMatch);
 
   TestRouteLink shortLink;
   TestRouteLink longLink;
@@ -347,7 +347,7 @@ int main(int argc, char **argv)
   ZuTestCall(testCxnRouter);
   ZuTestCall(testCxnRouterTombstoneFIFO);
   ZuTestCall(testStatelessReset);
-  ZuTestCall(testVariableShortCIDRouteMatch);
+  ZuTestCall(variableShortCIDRouteMatch);
   ZuTestCall(testAllShortCIDLengths);
   ZuTestCall(testCxnIDGen);
   ZuTestCall(testServerInitialBootstrap);

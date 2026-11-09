@@ -258,8 +258,8 @@ public:
     m_state = StdioState::Open;
     m_mx->wakeFn(m_rxThread,
       ZmScheduler::WakeFn{this, [](IOLink *io) { io->wakeRx_(); }});
-    m_mx->run([this]() { rxWork_(); }, m_rxThread);
-    m_mx->run([this]() { txWork_(); }, m_txThread);
+    m_mx->run([this]() { rxWork(); }, m_rxThread);
+    m_mx->run([this]() { txWork(); }, m_txThread);
     return true;
   }
 
@@ -324,7 +324,7 @@ private:
     Private::interruptStdio(m_rxNative);
   }
 
-  void rxWork_() {
+  void rxWork() {
     ZiFile input{m_input};
     uintptr_t native = Private::stdioThread();
     {
@@ -334,7 +334,7 @@ private:
     try {
       for (;;) {
 	if (!native) {
-	  rxOutcome_(StdioOutcome::Failed);
+	  rxOutcome(StdioOutcome::Failed);
 	  break;
 	}
 	ZmRef<StdioRxQueue::Node> buf = new StdioRxBuf{
@@ -342,29 +342,29 @@ private:
 	int n = input.read(buf->ZiIOBuf::data(), buf->size, false);
 	if (m_rxStopping) break;
 	if (n <= 0) {
-	  rxOutcome_(n == Zi::EndOfFile ?
+	  rxOutcome(n == Zi::EndOfFile ?
 	    StdioOutcome::EOF_ : StdioOutcome::Failed);
 	  break;
 	}
 	buf->length = unsigned(n);
-	if (!rxEnqueue_(ZuMv(buf))) {
-	  rxOutcome_(StdioOutcome::Failed);
+	if (!rxEnqueue(ZuMv(buf))) {
+	  rxOutcome(StdioOutcome::Failed);
 	  break;
 	}
       }
     } catch (...) {
-      rxOutcome_(StdioOutcome::Failed);
+      rxOutcome(StdioOutcome::Failed);
     }
-    if (m_rxStopping) rxOutcome_(StdioOutcome::Stopped);
+    if (m_rxStopping) rxOutcome(StdioOutcome::Stopped);
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
       m_rxNative = 0;
       Private::closeStdioThread(native);
     }
-    m_mx->push([this]() { rxExited_(); }, m_rxThread);
+    m_mx->push([this]() { rxExited(); }, m_rxThread);
   }
 
-  void txWork_() {
+  void txWork() {
     ZiFile output{m_output};
     for (;;) {
       m_txSem.wait();
@@ -394,10 +394,10 @@ private:
       }
       if (m_txClosing && drained) break;
     }
-    m_mx->push([this]() { txExited_(); }, m_txThread);
+    m_mx->push([this]() { txExited(); }, m_txThread);
   }
 
-  bool rxEnqueue_(ZmRef<StdioRxQueue::Node> buf) {
+  bool rxEnqueue(ZmRef<StdioRxQueue::Node> buf) {
     bool post = false;
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
@@ -412,25 +412,25 @@ private:
       ++m_rxQueued;
       if (!m_rxDequeuing) post = m_rxDequeuing = true;
     }
-    if (post) m_mx->run([this]() { drainRx_(); }, m_ownerThread);
+    if (post) m_mx->run([this]() { drainRx(); }, m_ownerThread);
     return true;
   }
 
-  void rxOutcome_(int outcome) {
+  void rxOutcome(int outcome) {
     bool post = false;
     {
       ZmGuard<ZmPLock> guard(m_rxLock);
       if (!m_rxOutcome) m_rxOutcome = outcome;
       if (!m_rxDequeuing) post = m_rxDequeuing = true;
     }
-    if (post) m_mx->run([this]() { drainRx_(); }, m_ownerThread);
+    if (post) m_mx->run([this]() { drainRx(); }, m_ownerThread);
   }
 
-  void drainRx_() {
+  void drainRx() {
     ZiAssert(invoked_(), "Zjrpc", (),
 	"stdio drain outside owner shard", return);
     if (m_state == StdioState::Failed) {
-      drainFailedRx_();
+      drainFailedRx();
       return;
     }
     unsigned visited = 0;
@@ -479,7 +479,7 @@ private:
       }
     }
     if (repost) {
-      m_mx->run([this]() { drainRx_(); }, m_ownerThread);
+      m_mx->run([this]() { drainRx(); }, m_ownerThread);
       return;
     }
     if (!outcome) return;
@@ -487,7 +487,7 @@ private:
 	(outcome == StdioOutcome::EOF_ && !m_framer.eof()))
       fail_();
     else
-      rxDrained_(outcome == StdioOutcome::EOF_);
+      rxDrained(outcome == StdioOutcome::EOF_);
   }
 
   void fail_() {
@@ -495,10 +495,10 @@ private:
     m_state = StdioState::Failed;
     m_framer.close();
     stopRx_();
-    drainFailedRx_();
+    drainFailedRx();
   }
 
-  void drainFailedRx_() {
+  void drainFailedRx() {
     if (m_rxDrained || m_rxFailDraining) return;
     m_rxFailDraining = true;
     unsigned visited = 0;
@@ -517,10 +517,10 @@ private:
     }
     m_rxFailDraining = false;
     if (remaining) {
-      m_mx->run([this]() { drainFailedRx_(); }, m_ownerThread);
+      m_mx->run([this]() { drainFailedRx(); }, m_ownerThread);
       return;
     }
-    rxDrained_();
+    rxDrained();
   }
 
   void stopRx_() {
@@ -528,16 +528,16 @@ private:
     m_mx->run([]() { }, m_rxThread);
   }
 
-  void rxDrained_(bool flush = false) {
+  void rxDrained(bool flush = false) {
     if (m_rxDrained) return;
     m_rxDrained = true;
     m_framer.close();
     if (m_state == StdioState::Open) m_state = StdioState::Closing;
-    stopTx_(flush);
+    stopTx(flush);
     closed_();
   }
 
-  void stopTx_(bool flush = false) {
+  void stopTx(bool flush = false) {
     if (flush) {
       if (m_txStopping || m_txClosing.cmpXch(1, 0) != 0) return;
       m_txSem.post();
@@ -553,10 +553,10 @@ private:
 	"stdio failure outside owner shard", return);
     if (m_state != StdioState::Closed) m_state = StdioState::Failed;
     stopRx_();
-    stopTx_();
+    stopTx();
   }
 
-  void rxExited_() {
+  void rxExited() {
     m_mx->wakeFn(m_rxThread, {});
     m_mx->run([this]() {
       m_rxExited = true;
@@ -564,7 +564,7 @@ private:
     }, m_ownerThread);
   }
 
-  void txExited_() {
+  void txExited() {
     m_mx->run([this]() {
       m_txExited = true;
       drainTx_();

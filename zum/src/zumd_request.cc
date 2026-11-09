@@ -109,19 +109,19 @@ void Requests::remove_(RequestData *request)
       ZmAssert_(false);
   }
   request->m_list = RequestListState::Retiring;
-  postRetire_();
+  retire_0();
 }
 
-void Requests::postRetire_()
+void Requests::retire_0()
 {
   if (m_retirePosted) return;
   m_retirePosted = true;
   // del() precedes this owner continuation. Any timeout that was already
   // enqueued can still inspect the retained node, whose done flag is set.
-  m_scheduler->run([this]() { retire_(); }, m_sid);
+  m_scheduler->run([this]() { retire_1(); }, m_sid);
 }
 
-void Requests::retire_()
+void Requests::retire_1()
 {
   m_retirePosted = false;
   unsigned left = RequestWork::Batch;
@@ -132,7 +132,7 @@ void Requests::retire_()
     request = nullptr;
     --m_credit; // retirement storage is part of the admission bound
   }
-  if (!m_retiring.empty_()) postRetire_();
+  if (!m_retiring.empty_()) retire_0();
   else if (m_draining) deactivated_();
 }
 

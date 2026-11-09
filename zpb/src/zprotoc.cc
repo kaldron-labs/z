@@ -2028,7 +2028,7 @@ static void supportedBuiltins(const Decls &decls)
 
 struct Symbol {
   Text		name;
-  unsigned	helper;
+  unsigned	symbolKind;
   bool		namespace_;
 };
 using Symbols = ZtArray<Symbol, ZtArrayHeapID<"zprotoc.Symbols">>;
@@ -2072,24 +2072,24 @@ static void generatedNames(const DescSet &set, const FileDesc &selected,
   }
   Symbols symbols;
   SymbolIndex index;
-  auto add = [&](ZuCSpan name, unsigned helper, bool namespace_) {
+  auto add = [&](ZuCSpan name, unsigned symbolKind, bool namespace_) {
     if (auto found = index.find(SymbolKey{nullptr, UINT_MAX, name})) {
 	const auto &symbol = symbols[found->data().offset];
 	if (namespace_ && symbol.namespace_) return;
 	if (namespace_ || symbol.namespace_)
 	  fail(UINT_MAX, "generated namespace name collision");
-	if (helper || symbol.helper) {
-	  if (helper == 3 || symbol.helper == 3)
+	if (symbolKind || symbol.symbolKind) {
+	  if (symbolKind == 3 || symbol.symbolKind == 3)
 	    fail(UINT_MAX, "generated map name collision");
-	  if (helper == 2 || symbol.helper == 2)
+	  if (symbolKind == 2 || symbol.symbolKind == 2)
 	    fail(UINT_MAX, "generated union name collision");
-	  if (helper != symbol.helper)
+	  if (symbolKind != symbol.symbolKind)
 	    fail(UINT_MAX, "generated array name collides with message");
 	  fail(UINT_MAX, "generated array name collision");
 	}
 	fail(UINT_MAX, "generated message name collision");
     }
-    symbols.push(Symbol{Text{name}, helper, namespace_});
+    symbols.push(Symbol{Text{name}, symbolKind, namespace_});
     index.add(SymbolKey{&symbols, unsigned(symbols.length() - 1), {}});
   };
   for (auto i : queue) {
@@ -2125,24 +2125,24 @@ static void generatedNames(const DescSet &set, const FileDesc &selected,
       for (unsigned f = 0, n = message.fields.length(); f < n; ++f) {
 	const auto &field = message.fields[f];
 	if (mapEntry(decls, field)) {
-	  Text helper;
-	  if (file.package.length()) helper << file.package << '.';
-	  helper << mapName(decl.ordinal, f);
-	  add(helper, 3, false);
+	  Text mapSymbol;
+	  if (file.package.length()) mapSymbol << file.package << '.';
+	  mapSymbol << mapName(decl.ordinal, f);
+	  add(mapSymbol, 3, false);
 	  continue;
 	}
 	if (field.type == Type::Message && field.label == 3) {
-	  Text helper;
-	  if (file.package.length()) helper << file.package << '.';
-	  helper << arrayName(decl.ordinal, f);
-	  add(helper, 1, false);
+	  Text arraySymbol;
+	  if (file.package.length()) arraySymbol << file.package << '.';
+	  arraySymbol << arrayName(decl.ordinal, f);
+	  add(arraySymbol, 1, false);
 	}
       }
       for (unsigned u = 0, n = message.oneofs.length(); u < n; ++u) {
-	Text helper;
-	if (file.package.length()) helper << file.package << '.';
-	helper << unionName(decl.ordinal, u);
-	add(helper, 2, false);
+	Text unionSymbol;
+	if (file.package.length()) unionSymbol << file.package << '.';
+	unionSymbol << unionName(decl.ordinal, u);
+	add(unionSymbol, 2, false);
       }
     }
   }

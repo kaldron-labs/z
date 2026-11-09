@@ -103,12 +103,12 @@ void PoolCore::seal() { m_impl->seal(); }
 bool PoolCore::limited(unsigned slot, bool value) { return m_impl->limited(slot, value); }
 bool PoolCore::send_(RequestRecord *request, bool more) { return m_impl->send_(request, more); }
 bool PoolCore::gap_() { return m_impl->gap_(); }
-void PoolCore::idleTx_() { m_impl->idleTx_(); }
+void PoolCore::idleTx() { m_impl->idleTx(); }
 void PoolCore::scheduleSend() { m_impl->scheduleSend(); }
 void PoolCore::scheduleResend() { m_impl->scheduleResend(); }
 void PoolCore::scheduleArchive() { m_impl->scheduleArchive(); }
-void PoolCore::cancelQueued_(RequestRef request) { m_impl->cancelQueued_(ZuMv(request)); }
-void PoolCore::cancelActive_(unsigned slot, const void *key) { m_impl->cancelActive_(slot, key); }
+void PoolCore::cancelQueued(RequestRef request) { m_impl->cancelQueued(ZuMv(request)); }
+void PoolCore::cancelActive(unsigned slot, const void *key) { m_impl->cancelActive(slot, key); }
 ClientCore::ClientCore(void *app, const ClientAppOps &ops) :
   m_app{app}, m_ops{&ops} { }
 ClientCore::~ClientCore() {
@@ -178,10 +178,10 @@ bool ClientCore::pool(
 
 void ClientCore::start_() {
   if (!m_inited) { Engine::started(false); return; }
-  txRun([this]() { startBatch_(0); });
+  txRun([this]() { start_0(0); });
 }
 
-void ClientCore::startBatch_(unsigned i) {
+void ClientCore::start_0(unsigned i) {
   ZiAssert(mx()->invoked(txThread()), "Zhttp", (), "client start off Tx", return);
   unsigned end = i + ClientWorkBatch;
   if (end > m_pools.length()) end = m_pools.length();
@@ -190,14 +190,14 @@ void ClientCore::startBatch_(unsigned i) {
     m_idle[i++] = 0;
   }
   if (i < m_pools.length()) {
-    txRun([this, i]() { startBatch_(i); });
+    txRun([this, i]() { start_0(i); });
     return;
   }
   m_idleCount = 0;
   if (m_resolverOwned) {
     ZiResolver::start([this](bool ok) {
       if (!ok) { Engine::started(false); return; }
-      startPools_();
+      start_1();
     });
     return;
   }
@@ -205,10 +205,10 @@ void ClientCore::startBatch_(unsigned i) {
     Engine::started(false);
     return;
   }
-  startPools_();
+  start_1();
 }
 
-void ClientCore::startPools_() {
+void ClientCore::start_1() {
   m_ctl.start([this](bool ok) {
     if (ok || !m_resolverOwned) { Engine::started(ok); return; }
     // The pool aggregate has completed its own rollback. Release only the
@@ -285,16 +285,16 @@ void ClientCore::printQUICDiag() {
   for (auto &pool: m_pools) if (pool) pool->printQUICDiag();
 }
 
-void ClientCore::poolIdle_(unsigned slot) {
+void ClientCore::poolIdle(unsigned slot) {
   if (slot >= m_idle.length() || m_idle[slot]) return;
   m_idle[slot] = 1;
   if (++m_idleCount == m_idle.length()) m_ops->idle(m_app);
 }
-void ClientCore::poolResult_(bool failed_) {
+void ClientCore::poolResult(bool failed_) {
   ++m_completed;
   if (failed_) ++m_failed;
 }
-void ClientCore::poolActive_(bool active_) {
+void ClientCore::poolActive(bool active_) {
   if (active_) ++m_active;
   else --m_active;
 }

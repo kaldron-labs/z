@@ -192,7 +192,7 @@ static void frameRanges(bool shortTail)
   auto backing = input;
   auto original = input->data();
   unsigned capacity = input->size;
-  auto observed = splitFrame_(input, info);
+  auto observed = splitFrame(input, info);
   ZuCheckRT(bool(observed), log_("frame split failed"));
   if (!observed) return;
   ZuCheckRT(observed.ptr() == backing.ptr() && input.ptr() == backing.ptr());
@@ -224,7 +224,7 @@ static void frameRanges(bool shortTail)
   if (shortTail) {
     // The unfinished tail constructs directly in its final ordinary owner.
     // The delivered frame and its borrowed views keep the original backing.
-    ZuCheckRT(detachInput_(input, total));
+    ZuCheckRT(detachInput(input, total));
     ZuCheckRT(input.ptr() != backing.ptr());
     ZuCheckRT(backing->refCount() == 2);
     ZuCheckRT(input->append(made.buf->cspan(tail)));
@@ -288,13 +288,13 @@ static void frameAssembly()
   ZuCheckRT(bool(parsed));
   if (!parsed) return;
   auto info = parsed.info;
-  auto observed = splitFrame_(input, info);
+  auto observed = splitFrame(input, info);
   ZuCheckRT(observed.ptr() == input.ptr());
   auto pending = frame(input->cspan());
   ZuCheckRT(pending.error == FrameError::NeedMore &&
     pending.info.total == second.buf->length &&
     pending.info.total > CxnDefault::RxBytes);
-  ZuCheckRT(detachInput_(input, pending.info.total));
+  ZuCheckRT(detachInput(input, pending.info.total));
   auto storage = input->data();
   unsigned capacity = input->size;
   ZuCheckRT(capacity >= pending.info.total && input.ptr() != observed.ptr());

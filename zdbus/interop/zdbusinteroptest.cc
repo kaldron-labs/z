@@ -22,7 +22,7 @@
 #include <zlib/ZdbusServer.hh>
 
 #include "ZfMapTest.hh"
-#include "../util/ZdbusTestTool.hh"
+#include "../util/zdbustesttool.hh"
 
 using namespace ZuTestUtil;
 

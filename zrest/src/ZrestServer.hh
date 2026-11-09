@@ -131,7 +131,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
 	  return 0U;
 	},
 	[this](ZuSpan<uint8_t> span) {
-	  decoded = decodeBody_(span);
+	  decoded = decodeBody(span);
 	  bodySeen = true;
 	});
       return decoded;
@@ -145,7 +145,7 @@ struct ReqParser : public Request, public Zhttp::Parser {
 	Impl::Body == BodyPolicy::Zero) return bodyValid = bool(object);
     if (streamed || Impl::Borrowed) {
       if (!input.buffer()) return false;
-      decoded = decodeBody_(input.buffer()->span());
+      decoded = decodeBody(input.buffer()->span());
       bodySeen = true;
     }
     if constexpr (Impl::Body == BodyPolicy::JSON ||
@@ -173,7 +173,7 @@ private:
     return *borrowed;
   }
 
-  bool decodeBody_(ZuSpan<uint8_t> span) {
+  bool decodeBody(ZuSpan<uint8_t> span) {
     if constexpr (Impl::Body == BodyPolicy::JSON) {
       using Body_JSON_Facet = Impl::Body_JSON_Facet;
       auto scan = ZfJSON::scan(span);
@@ -1239,7 +1239,7 @@ public:
 	m_cancelSessions.push(Server_::CancelSession{session, m_workSeq});
 	if (!m_cancelling) {
 	  m_cancelling = true;
-	  cancelBatch_();
+	  cancelBatch();
 	}
       }
       if constexpr (Server_::HasDisconnected<App, Zhttp::Session>{})
@@ -1279,9 +1279,9 @@ private:
     m_cancelCursor = m_work.headPtr();
     if (m_cancelling) return;
     m_cancelling = true;
-    cancelBatch_();
+    cancelBatch();
   }
-  void cancelBatch_() {
+  void cancelBatch() {
     unsigned visited = 0;
     for (;;) {
       if (m_cancelCursor) {
@@ -1324,7 +1324,7 @@ private:
     }
     // A cursor entry or a queued event remains; this turn exhausted actual
     // inspected work. No readiness-only continuation is posted.
-    m_mx->run([this]() { cancelBatch_(); }, m_owner);
+    m_mx->run([this]() { cancelBatch(); }, m_owner);
   }
   void stopped_() {
     if (m_stopResult.is<void>() || !m_work.empty_() || m_cancelling) return;

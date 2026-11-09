@@ -171,12 +171,12 @@ static bool jwksJSON_(StringVec &sources, String &json, bool strict)
   return true;
 }
 
-class SignKeyLoad_ : public ZmNHeap<SignKeyLoad_>, public ZmObject,
+class SignKeyLoad : public ZmNHeap<SignKeyLoad>, public ZmObject,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.discovery.SignKeyLoad"> ZmNHeapID(SignKeyLoad_ *);
+friend inline ZuStringT<"Zum.zumd.discovery.SignKeyLoad"> ZmNHeapID(SignKeyLoad *);
 
 public:
-  SignKeyLoad_(ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now,
+  SignKeyLoad(ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now,
       int64_t expires, unsigned maxKeys, SignKeyFn complete) :
     RequestHold{ZuMv(work)}, m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now},
     m_expires{expires}, m_maxKeys{maxKeys}, m_complete{ZuMv(complete)} { }
@@ -190,7 +190,7 @@ public:
     }
     using Tuple = SignKeyTable::Tuple;
     m_db->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
-      self = ZmRef<SignKeyLoad_>{this}
+      self = ZmRef<SignKeyLoad>{this}
     ](ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
 	if (count > self->m_maxKeys) {
@@ -253,17 +253,17 @@ void signKeyLoad(
     ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now,
     int64_t expires, unsigned maxKeys, SignKeyFn complete)
 {
-  ZmRef<SignKeyLoad_> load = new SignKeyLoad_{
+  ZmRef<SignKeyLoad> load = new SignKeyLoad{
     work, db, ZuMv(issuer), now, expires, maxKeys, ZuMv(complete)};
   load->start();
 }
 
-class DiscoveryComplete_ : public ZmNHeap<DiscoveryComplete_>, public ZmObject,
+class DiscoveryComplete : public ZmNHeap<DiscoveryComplete>, public ZmObject,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.discovery.DiscoveryComplete"> ZmNHeapID(DiscoveryComplete_ *);
+friend inline ZuStringT<"Zum.zumd.discovery.DiscoveryComplete"> ZmNHeapID(DiscoveryComplete *);
 
 public:
-  DiscoveryComplete_(ZmRef<ZmPolymorph> work, DiscoveryFn complete) :
+  DiscoveryComplete(ZmRef<ZmPolymorph> work, DiscoveryFn complete) :
     RequestHold{ZuMv(work)}, m_complete{ZuMv(complete)} { }
 
   void request(ZmRef<Request> request) { m_request = ZuMv(request); }
@@ -271,7 +271,7 @@ public:
   void complete(bool ok, String value)
   {
     m_request->complete([
-      self = ZmRef<DiscoveryComplete_>{this}, ok, value = ZuMv(value)
+      self = ZmRef<DiscoveryComplete>{this}, ok, value = ZuMv(value)
     ]() mutable {
       auto complete = ZuMv(self->m_complete);
       complete(ok, ZuMv(value));
@@ -358,12 +358,12 @@ String jwksJSON(const StringVec &publicJwks)
   return json;
 }
 
-class JWKSLoad_ : public ZmNHeap<JWKSLoad_>, public ZmPolymorph,
+class JWKSLoad : public ZmNHeap<JWKSLoad>, public ZmPolymorph,
     public RequestHold {
-friend inline ZuStringT<"Zum.zumd.discovery.JWKSLoad"> ZmNHeapID(JWKSLoad_ *);
+friend inline ZuStringT<"Zum.zumd.discovery.JWKSLoad"> ZmNHeapID(JWKSLoad *);
 
 public:
-  JWKSLoad_(ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now, unsigned maxKeys,
+  JWKSLoad(ZmRef<ZmPolymorph> work, DB *db, String issuer, int64_t now, unsigned maxKeys,
       DiscoveryFn complete) :
     RequestHold{ZuMv(work)}, m_db{db}, m_issuer{ZuMv(issuer)}, m_now{now}, m_maxKeys{maxKeys},
     m_complete{ZuMv(complete)} { }
@@ -377,7 +377,7 @@ public:
     using Table = SignKeyTable;
     using Tuple = Table::Tuple;
     m_db->signKeys->selectRows<2>(ZuFwdTuple(m_issuer), m_maxKeys + 1, [
-      self = ZmRef<JWKSLoad_>{this}
+      self = ZmRef<JWKSLoad>{this}
     ](ZuUnion<void, Tuple> result, unsigned count) mutable {
       if (result.template is<Tuple>()) {
 	if (count > self->m_maxKeys) {
@@ -424,13 +424,13 @@ bool jwksLoad(
     ZuCSpan issuer, int64_t now, unsigned maxKeys, DiscoveryFn complete)
 {
   if (!requests || !complete) return false;
-  ZmRef<DiscoveryComplete_> state =
-    new DiscoveryComplete_{work, ZuMv(complete)};
+  ZmRef<DiscoveryComplete> state =
+    new DiscoveryComplete{work, ZuMv(complete)};
   return requests->run(deadline, [state, db, issuer = String{issuer},
       now, maxKeys](
       ZmRef<Request> request) mutable {
     state->request(ZuMv(request));
-    ZmRef<JWKSLoad_> load = new JWKSLoad_{
+    ZmRef<JWKSLoad> load = new JWKSLoad{
       state->work(), db, ZuMv(issuer), now, maxKeys, [state](
 	bool ok, String value) mutable {
       state->complete(ok, ZuMv(value));
